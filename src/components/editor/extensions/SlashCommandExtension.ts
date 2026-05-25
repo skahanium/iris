@@ -48,7 +48,7 @@ export const SlashCommandExtension = Extension.create<SlashCommandOptions>({
             onStart: (props) => {
               el = document.createElement("div");
               el.className =
-                "z-50 rounded-md border border-primary/20 bg-chrome shadow-lg text-sm";
+                "z-50 rounded-md border border-primary/20 bg-panel shadow-lg text-sm";
               document.body.appendChild(el);
               props.items.forEach((item) => {
                 const it = item as { id: string; label: string; icon?: string };
