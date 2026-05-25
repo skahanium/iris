@@ -352,7 +352,7 @@ CREATE TABLE settings (
 );
 ```
 
-### 版本系统
+### 版本系统（v0.3 已实现，见 `src-tauri/src/version/mod.rs`）
 
 #### 触发策略
 

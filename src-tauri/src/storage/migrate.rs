@@ -9,6 +9,8 @@ const MIGRATION_UP: &str = include_str!("../../migrations/001_core.sql");
 const MIGRATION_DOWN: &str = include_str!("../../migrations/001_core.down.sql");
 const MIGRATION_002_UP: &str = include_str!("../../migrations/002_vec.sql");
 const MIGRATION_002_DOWN: &str = include_str!("../../migrations/002_vec.down.sql");
+const MIGRATION_003_UP: &str = include_str!("../../migrations/003_versions.sql");
+const MIGRATION_003_DOWN: &str = include_str!("../../migrations/003_versions.down.sql");
 
 /// Apply core schema migrations idempotently.
 pub fn migrate_up(conn: &Connection) -> AppResult<()> {
@@ -55,11 +57,31 @@ pub fn migrate_up(conn: &Connection) -> AppResult<()> {
         );
     }
 
+    // Migration 003: version snapshots
+    let v3_applied: bool = conn
+        .query_row(
+            "SELECT COUNT(*) FROM _migrations WHERE name = '003_versions'",
+            [],
+            |row| row.get::<_, i64>(0),
+        )
+        .map(|c| c > 0)
+        .unwrap_or(false);
+
+    if !v3_applied {
+        conn.execute_batch(MIGRATION_003_UP)?;
+        conn.execute(
+            "INSERT INTO _migrations (name, applied_at) VALUES ('003_versions', datetime('now'))",
+            [],
+        )?;
+    }
+
     Ok(())
 }
 
-/// Roll back core migration (for tests).
+/// Roll back all migrations (for tests).
 pub fn migrate_down(conn: &Connection) -> AppResult<()> {
+    let _ = conn.execute_batch(MIGRATION_003_DOWN);
+    let _ = conn.execute("DELETE FROM _migrations WHERE name = '003_versions'", []);
     let _ = conn.execute_batch(MIGRATION_002_DOWN);
     let _ = conn.execute("DELETE FROM _migrations WHERE name = '002_vec'", []);
     conn.execute_batch(MIGRATION_DOWN)?;

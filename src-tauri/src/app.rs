@@ -28,6 +28,8 @@ impl AppState {
         if let Some(v) = state.load_vault_setting()? {
             state.set_vault(PathBuf::from(v))?;
         }
+        // Clean up stale version snapshots on startup
+        let _ = crate::version::version_cleanup(&state);
         Ok(state)
     }
 

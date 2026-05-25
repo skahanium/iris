@@ -1,10 +1,20 @@
-import { FolderPlus, Pencil, Trash2 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { FileDown, FolderPlus, Pencil, Trash2 } from "lucide-react";
+import { useCallback, useEffect, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { fileCreate, fileDelete, fileList, fileRename } from "@/lib/ipc";
+import {
+  exportFile,
+  fileCreate,
+  fileDelete,
+  fileList,
+  fileRead,
+  fileRename,
+  templateCreate,
+  templateList,
+} from "@/lib/ipc";
+import { markdownToHtml, markdownToHtmlPage } from "@/lib/markdown";
 import type { FileListItem } from "@/types/ipc";
 
 interface FileSheetProps {
@@ -16,12 +26,39 @@ interface FileSheetProps {
 export function FileSheet({ open, onClose, onOpen }: FileSheetProps) {
   const [files, setFiles] = useState<FileListItem[]>([]);
   const [newName, setNewName] = useState("新笔记.md");
+  const [templates, setTemplates] = useState<{ name: string }[]>([]);
+  const [showTemplates, setShowTemplates] = useState(false);
 
   const refresh = () => void fileList().then(setFiles);
 
   useEffect(() => {
-    if (open) refresh();
+    if (open) {
+      refresh();
+      void templateList().then(setTemplates);
+      setShowTemplates(false);
+    }
   }, [open]);
+
+  const createFromTemplate = async (tmplName: string) => {
+    await templateCreate(newName, tmplName);
+    refresh();
+    onOpen(newName);
+    setShowTemplates(false);
+  };
+
+  const handleExportHtml = useCallback(async (path: string) => {
+    const md = await fileRead(path);
+    const title = path.replace(/\.md$/, "").split("/").pop() ?? "note";
+    const html = markdownToHtmlPage(md, title);
+    const destPath = path.replace(/\.md$/, ".html");
+    await exportFile(destPath, html);
+  }, []);
+
+  const handleExportMd = useCallback(async (path: string) => {
+    const md = await fileRead(path);
+    const destPath = path.replace(/\.md$/, ".copy.md");
+    await exportFile(destPath, md);
+  }, []);
 
   if (!open) return null;
 
@@ -45,6 +82,7 @@ export function FileSheet({ open, onClose, onOpen }: FileSheetProps) {
           variant="outline"
           title="新建"
           onClick={async () => {
+            if (showTemplates && templates.length > 0) return;
             await fileCreate(newName);
             refresh();
             onOpen(newName);
@@ -53,6 +91,33 @@ export function FileSheet({ open, onClose, onOpen }: FileSheetProps) {
           <FolderPlus className="h-4 w-4" />
         </Button>
       </div>
+      {templates.length > 0 && (
+        <div className="border-b border-border px-2 pb-2">
+          <button
+            type="button"
+            className="text-xs text-muted-foreground hover:text-primary"
+            onClick={() => setShowTemplates(!showTemplates)}
+          >
+            {showTemplates ? "收起模板" : "从模板新建…"}
+          </button>
+          {showTemplates && (
+            <div className="mt-1 flex flex-wrap gap-1">
+              {templates.map((t) => (
+                <Button
+                  key={t.name}
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  className="text-xs"
+                  onClick={() => void createFromTemplate(t.name)}
+                >
+                  {t.name}
+                </Button>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
       <ScrollArea className="flex-1">
         {files.map((f) => (
           <div
@@ -95,6 +160,15 @@ export function FileSheet({ open, onClose, onOpen }: FileSheetProps) {
               }}
             >
               <Trash2 className="h-3 w-3" />
+            </Button>
+            <Button
+              type="button"
+              size="icon"
+              variant="ghost"
+              title="导出 HTML"
+              onClick={() => void handleExportHtml(f.path)}
+            >
+              <FileDown className="h-3 w-3" />
             </Button>
           </div>
         ))}

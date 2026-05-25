@@ -81,3 +81,14 @@ export interface GraphData {
   nodes: GraphNode[];
   edges: GraphEdge[];
 }
+
+export interface VersionEntry {
+  id: number;
+  file_id: number;
+  version_no: string;
+  label: string | null;
+  content_hash: string;
+  word_count: number;
+  is_finalized: boolean;
+  created_at: string;
+}

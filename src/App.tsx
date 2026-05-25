@@ -5,12 +5,14 @@ import { AiPanel, type ContextQuote } from "@/components/ai/AiPanel";
 import { TipTapEditor } from "@/components/editor/TipTapEditor";
 import { FloatingToolbar } from "@/components/editor/FloatingToolbar";
 import { BacklinksPanel } from "@/components/file/BacklinksPanel";
+import { ConflictDialog } from "@/components/file/ConflictDialog";
 import { FileSheet } from "@/components/file/FileSheet";
 import { GraphView } from "@/components/graph/GraphView";
 import { QuickOpen } from "@/components/file/QuickOpen";
 import { SearchPanel } from "@/components/file/SearchPanel";
 import { SettingsPanel } from "@/components/settings/SettingsPanel";
 import { TagView } from "@/components/tag/TagView";
+import { VersionTimeline } from "@/components/version/VersionTimeline";
 import { AppShell } from "@/components/layout/AppShell";
 import { StatusBar } from "@/components/layout/StatusBar";
 import { TabBar, type TabItem } from "@/components/layout/TabBar";
@@ -39,6 +41,10 @@ function App() {
   const [backlinksOpen, setBacklinksOpen] = useState(false);
   const [tagViewOpen, setTagViewOpen] = useState(false);
   const [graphOpen, setGraphOpen] = useState(false);
+  const [versionOpen, setVersionOpen] = useState(false);
+  const [conflictOpen, setConflictOpen] = useState(false);
+  const [conflictPath, setConflictPath] = useState("");
+  const [conflictExternal, setConflictExternal] = useState("");
   const [quote, setQuote] = useState<ContextQuote | null>(null);
   const [aiStatus, setAiStatus] = useState("AI 空闲");
   const [reloadPrompt, setReloadPrompt] = useState<string | null>(null);
@@ -84,6 +90,10 @@ function App() {
         e.preventDefault();
         setAiPanelOpen((open) => !open);
       }
+      if (e.ctrlKey && e.shiftKey && (e.key === "V" || e.key === "v") && activePath) {
+        e.preventDefault();
+        setVersionOpen((open) => !open);
+      }
       if (e.ctrlKey && e.key === "w" && activePath) {
         e.preventDefault();
         setTabs((t) => t.filter((x) => x.path !== activePath));
@@ -109,11 +119,20 @@ function App() {
   useEffect(() => {
     void listenFileChanged((payload) => {
       const ev = payload as FileChangedEvent;
-      if (ev.path === activePath) {
+      if (ev.path === activePath && ev.event_type === "modify") {
+        // L3: open file modified externally → trigger conflict
+        void fileRead(ev.path).then((extContent) => {
+          if (extContent !== markdown) {
+            setConflictPath(ev.path);
+            setConflictExternal(extContent);
+            setConflictOpen(true);
+          }
+        });
+      } else if (ev.path === activePath) {
         setReloadPrompt(`外部已修改 ${ev.path}，是否重新加载？`);
       }
     });
-  }, [activePath]);
+  }, [activePath, markdown]);
 
   const handleHtmlUpdate = useCallback(
     (html: string) => {
@@ -313,10 +332,32 @@ function App() {
             open={tagViewOpen}
             onClose={() => setTagViewOpen(false)}
           />
-          <GraphView
-            open={graphOpen}
-            onClose={() => setGraphOpen(false)}
-            onOpenNote={(p) => void openFile(p)}
+          <VersionTimeline
+            open={versionOpen}
+            onClose={() => setVersionOpen(false)}
+            notePath={activePath}
+            currentContent={markdown}
+            onRestore={(content) => {
+              setMarkdown(content);
+              if (editor) {
+                editor.commands.setContent(content, false);
+              }
+            }}
+          />
+          <ConflictDialog
+            open={conflictOpen}
+            localContent={markdown}
+            externalContent={conflictExternal}
+            filePath={conflictPath}
+            onKeepLocal={() => setConflictOpen(false)}
+            onAcceptExternal={() => {
+              setMarkdown(conflictExternal);
+              if (editor) {
+                editor.commands.setContent(conflictExternal, false);
+              }
+              setConflictOpen(false);
+            }}
+            onManualEdit={() => setConflictOpen(false)}
           />
         </>
       }

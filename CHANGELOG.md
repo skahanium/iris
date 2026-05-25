@@ -4,6 +4,25 @@
 
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/)，版本号遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [0.3.0] - Unreleased
+
+### Added
+
+- **版本记录系统**（`Ctrl+Shift+V`）：自动快照（Ctrl+S 时）、手动定稿、预览、恢复（恢复前自动保护当前状态）
+- **版本清理**：应用启动时自动删除 7 天前的非定稿快照；定稿版本永久保留
+- **文件冲突解决**（L3）：外部修改已打开的笔记时 → 弹出 diff 对比对话框（保留本地 / 采用外部 / 手动编辑）
+- **笔记模板系统**：4 个内置模板（会议纪要、读书笔记、项目复盘、每日记录），用户可自定义 `.iris/templates/*.md`
+- **HTML 导出**：一键导出为自包含 HTML 文件（纸墨 CSS 内嵌），浏览器直接可看
+- **Markdown 导出**：复制 `.md` 文件到目标路径
+- Migration `003_versions.sql`：versions 表、索引
+
+### Changed
+
+- `file_write` 写入成功后自动调用 `create_snapshot()` 创建版本快照
+- `AppState::new()` 启动时自动执行 `version_cleanup()` 清理过期快照
+- `FileSheet` 增加「从模板新建」和导出按钮
+- `App.tsx` 文件冲突从简单 prompt 升级为 ConflictDialog
+
 ## [0.2.0] - Unreleased
 
 ### Added

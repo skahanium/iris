@@ -10,6 +10,7 @@ import type {
   LlmGenerateParams,
   LlmProviderInfo,
   SemanticHit,
+  VersionEntry,
 } from "@/types/ipc";
 
 export async function settingsGet<T>(key: string): Promise<T | null> {
@@ -64,6 +65,53 @@ export async function fileBacklinks(path: string): Promise<BacklinkEntry[]> {
 
 export async function graphData(): Promise<GraphData> {
   return invoke<GraphData>("graph_data");
+}
+
+export async function versionList(path: string): Promise<VersionEntry[]> {
+  return invoke<VersionEntry[]>("version_list_cmd", { path });
+}
+
+export async function versionPreview(versionId: number): Promise<string> {
+  return invoke<string>("version_preview_cmd", { versionId });
+}
+
+export async function versionRestore(
+  versionId: number,
+  currentContent: string,
+): Promise<{ content: string }> {
+  return invoke<{ content: string }>("version_restore_cmd", {
+    versionId,
+    currentContent,
+  });
+}
+
+export async function versionDelete(versionId: number): Promise<void> {
+  return invoke("version_delete_cmd", { versionId });
+}
+
+export async function versionFinalize(
+  versionId: number,
+  label: string | null,
+): Promise<void> {
+  return invoke("version_finalize_cmd", { versionId, label });
+}
+
+export async function templateList(): Promise<{ name: string }[]> {
+  return invoke<{ name: string }[]>("template_list");
+}
+
+export async function templateCreate(
+  path: string,
+  templateName: string,
+): Promise<FileEntry> {
+  return invoke<FileEntry>("template_create", { path, templateName });
+}
+
+export async function exportFile(
+  destPath: string,
+  content: string,
+): Promise<void> {
+  return invoke("export_file", { destPath, content });
 }
 
 export async function searchKeyword(

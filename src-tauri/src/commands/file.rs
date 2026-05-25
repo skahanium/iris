@@ -8,6 +8,7 @@ use crate::app::AppState;
 use crate::error::{AppError, AppResult};
 use crate::indexer::scan::{index_file, remove_file_index, scan_vault, FileEntry};
 use crate::storage::paths::resolve_vault_path;
+use crate::version;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct FileListItem {
@@ -52,7 +53,12 @@ pub fn file_write(
     fs::write(&tmp, &content)?;
     fs::rename(&tmp, &abs)?;
 
-    state.db.with_conn(|conn| index_file(conn, &vault, &abs))
+    let entry = state.db.with_conn(|conn| index_file(conn, &vault, &abs))?;
+
+    // Auto-snapshot after save
+    let _ = version::create_snapshot(&state, &path, &content);
+
+    Ok(entry)
 }
 
 #[tauri::command]

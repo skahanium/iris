@@ -6,6 +6,7 @@ pub mod error;
 pub mod indexer;
 mod llm;
 pub mod storage;
+pub mod version;
 mod watcher;
 
 use std::sync::Arc;
@@ -59,6 +60,15 @@ pub fn run() {
             commands::llm::llm_chat,
             commands::llm::llm_abort_cmd,
             commands::graph::graph_data,
+            commands::version::version_list_cmd,
+            commands::version::version_preview_cmd,
+            commands::version::version_restore_cmd,
+            commands::version::version_delete_cmd,
+            commands::version::version_finalize_cmd,
+            commands::version::version_cleanup_cmd,
+            commands::template::template_list,
+            commands::template::template_create,
+            commands::export::export_file,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
