@@ -82,6 +82,11 @@ export interface GraphData {
   edges: GraphEdge[];
 }
 
+export interface TagGroup {
+  name: string;
+  files: FileListItem[];
+}
+
 export interface VersionEntry {
   id: number;
   file_id: number;

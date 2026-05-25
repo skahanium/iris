@@ -71,6 +71,7 @@ pub fn run() {
             commands::version::version_cleanup_cmd,
             commands::template::template_list,
             commands::template::template_create,
+            commands::tag::tag_list,
             commands::export::export_file,
         ])
         .run(tauri::generate_context!())

@@ -70,8 +70,7 @@ export function TipTapEditor({
     },
     editorProps: {
       attributes: {
-        class:
-          "prose prose-invert max-w-none min-h-[60vh] font-mono text-sm focus:outline-none px-6 py-4",
+        class: "focus:outline-none",
       },
     },
   });
@@ -89,7 +88,12 @@ export function TipTapEditor({
   }, [initialMarkdown, editor]);
 
   return (
-    <div className={cn("iris-editor flex-1 overflow-auto bg-editor-paper", className)}>
+    <div
+      className={cn(
+        "iris-editor flex-1 overflow-auto bg-editor-paper",
+        className,
+      )}
+    >
       <EditorContent editor={editor} />
     </div>
   );

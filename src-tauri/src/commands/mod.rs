@@ -4,5 +4,6 @@ pub mod graph;
 pub mod llm;
 pub mod search;
 pub mod settings;
+pub mod tag;
 pub mod template;
 pub mod version;

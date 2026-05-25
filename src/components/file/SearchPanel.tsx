@@ -17,17 +17,29 @@ export function SearchPanel({ open, onClose, onOpen }: SearchPanelProps) {
   const [mode, setMode] = useState<"keyword" | "semantic">("keyword");
   const [keywordHits, setKeywordHits] = useState<KeywordHit[]>([]);
   const [semanticHits, setSemanticHits] = useState<SemanticHit[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   if (!open) return null;
 
   const runSearch = async () => {
     if (!query.trim()) return;
-    if (mode === "keyword") {
-      setKeywordHits(await searchKeyword(query, 20));
-      setSemanticHits([]);
-    } else {
-      setSemanticHits(await searchSemantic(query, 5));
+    setLoading(true);
+    setError(null);
+    try {
+      if (mode === "keyword") {
+        setKeywordHits(await searchKeyword(query, 20));
+        setSemanticHits([]);
+      } else {
+        setSemanticHits(await searchSemantic(query, 5));
+        setKeywordHits([]);
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "搜索失败");
       setKeywordHits([]);
+      setSemanticHits([]);
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -63,10 +75,16 @@ export function SearchPanel({ open, onClose, onOpen }: SearchPanelProps) {
           >
             语义
           </Button>
-          <Button type="button" size="sm" onClick={() => void runSearch()}>
-            搜索
+          <Button
+            type="button"
+            size="sm"
+            disabled={loading}
+            onClick={() => void runSearch()}
+          >
+            {loading ? "搜索中…" : "搜索"}
           </Button>
         </div>
+        {error && <p className="text-xs text-red-400/90">{error}</p>}
       </div>
       <ScrollArea className="flex-1 px-2">
         {keywordHits.map((h) => (
@@ -81,10 +99,9 @@ export function SearchPanel({ open, onClose, onOpen }: SearchPanelProps) {
           >
             <div className="font-medium">{h.title}</div>
             <div className="text-xs text-muted-foreground">{h.path}</div>
-            <div
-              className="mt-1 text-xs"
-              dangerouslySetInnerHTML={{ __html: h.snippet }}
-            />
+            <div className="mt-1 line-clamp-3 text-xs text-muted-foreground">
+              {h.snippet.replace(/<[^>]+>/g, "")}
+            </div>
           </button>
         ))}
         {semanticHits.map((h) => (
@@ -99,7 +116,9 @@ export function SearchPanel({ open, onClose, onOpen }: SearchPanelProps) {
           >
             <div className="font-medium">
               {h.title}{" "}
-              <span className="text-primary">{(h.score * 100).toFixed(0)}%</span>
+              <span className="text-primary">
+                {(h.score * 100).toFixed(0)}%
+              </span>
             </div>
             <div className="text-xs text-muted-foreground">{h.snippet}</div>
           </button>

@@ -22,7 +22,7 @@ function DialogOverlay({
   return (
     <DialogPrimitive.Overlay
       className={cn(
-        "fixed inset-0 z-50 bg-black/40 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0",
+        "data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 fixed inset-0 z-50 bg-black/40",
         className,
       )}
       {...props}
@@ -55,13 +55,13 @@ function DialogContent({
   );
 }
 
-function DialogHeader({ className, ...props }: React.ComponentPropsWithoutRef<"div">) {
+function DialogHeader({
+  className,
+  ...props
+}: React.ComponentPropsWithoutRef<"div">) {
   return (
     <div
-      className={cn(
-        "flex flex-col space-y-1.5 px-4 pt-4 pb-2",
-        className,
-      )}
+      className={cn("flex flex-col space-y-1.5 px-4 pb-2 pt-4", className)}
       {...props}
     />
   );
@@ -74,6 +74,21 @@ function DialogTitle({
   return (
     <DialogPrimitive.Title
       className={cn("text-sm font-medium leading-tight", className)}
+      {...props}
+    />
+  );
+}
+
+function DialogFooter({
+  className,
+  ...props
+}: React.ComponentPropsWithoutRef<"div">) {
+  return (
+    <div
+      className={cn(
+        "flex flex-col-reverse gap-2 px-4 pb-4 sm:flex-row sm:justify-end",
+        className,
+      )}
       {...props}
     />
   );
@@ -96,6 +111,7 @@ export {
   DialogClose,
   DialogContent,
   DialogDescription,
+  DialogFooter,
   DialogHeader,
   DialogOverlay,
   DialogPortal,

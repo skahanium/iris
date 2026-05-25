@@ -526,10 +526,10 @@ CREATE TABLE settings (
 
 | 层级 | CSS Token | 色值 | 用途 |
 |------|-----------|------|------|
-| 编辑区背景 | --background | `#0d0d0d` | 编辑器主背景 |
-| 面板色 | --panel | `#171717` | AI 面板、Sheet、Dialog |
-| 卡片色 | --card | `#1a1a1a` | AI 输入框、搜索框 |
-| 分割线 | --border | `#262626` | 面板与编辑器的边界 |
+| 外壳背景 | --background | 暖深灰 HSL（见 `globals.css`） | 标签栏、状态栏、侧栏 chrome |
+| 面板色 | --panel | 暖深灰 HSL | AI 面板、Sheet、Dialog |
+| 卡片色 | --card | 略亮于 panel | AI 输入框、搜索框 |
+| 分割线 | --border | 低饱和暖灰 | 面板与编辑器的边界 |
 | 主色调 | --primary / accent | 赭石 `hsl(28 42% 38%)` | 按钮、选中态、链接、AI 标识 |
 | 编辑纸面 | --editor-paper | `#f4f0e8` | 主编辑区背景 |
 | 正文墨色 | --editor-ink | `#2c2926` | 编辑器正文 |

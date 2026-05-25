@@ -1,7 +1,12 @@
 import { useEffect, useState } from "react";
 
 import { Button } from "@/components/ui/button";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { fileList } from "@/lib/ipc";
@@ -36,7 +41,7 @@ export function QuickOpen({ open, onClose, onSelect }: QuickOpenProps) {
           <DialogTitle>搜索笔记</DialogTitle>
         </DialogHeader>
         <Input
-          className="border-0 border-b rounded-none focus-visible:ring-0"
+          className="rounded-none border-0 border-b focus-visible:ring-0"
           placeholder="搜索笔记…"
           value={query}
           autoFocus

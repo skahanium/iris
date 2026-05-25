@@ -1,6 +1,6 @@
-import { listen } from "@tauri-apps/api/event";
+import { marked } from "marked";
 import { Send, Sparkles } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -11,12 +11,14 @@ import {
   RELATED_NOTES_FETCH_LIMIT,
   type ContextQuote,
 } from "@/lib/ai-context";
+import { sanitizeHtml } from "@/lib/sanitize";
 import {
   llmGenerate,
+  listenLlmDone,
   listenLlmToken,
   searchSemantic,
 } from "@/lib/ipc";
-import type { ChatMessage, LlmTokenEvent, SemanticHit } from "@/types/ipc";
+import type { ChatMessage, SemanticHit } from "@/types/ipc";
 
 export type { ContextQuote };
 
@@ -32,6 +34,20 @@ interface AiPanelProps {
 interface ChatLine {
   role: "user" | "assistant";
   content: string;
+}
+
+function AssistantMessage({ content }: { content: string }) {
+  const html = useMemo(() => {
+    const raw = marked.parse(content || "", { async: false }) as string;
+    return sanitizeHtml(raw);
+  }, [content]);
+
+  return (
+    <div
+      className="ai-msg text-sm leading-relaxed [&_code]:rounded [&_code]:bg-muted/60 [&_code]:px-1 [&_p]:mb-2 [&_ul]:mb-2 [&_ul]:list-disc [&_ul]:pl-5"
+      dangerouslySetInnerHTML={{ __html: html }}
+    />
+  );
 }
 
 export function AiPanel({
@@ -54,31 +70,37 @@ export function AiPanel({
   const requestIdRef = useRef<string | null>(null);
 
   useEffect(() => {
-    let unlisten: (() => void) | undefined;
-    void listenLlmToken((payload) => {
-      const ev = payload as LlmTokenEvent;
-      if (requestIdRef.current && ev.request_id !== requestIdRef.current) return;
+    let unlistenToken: (() => void) | undefined;
+    let unlistenDone: (() => void) | undefined;
+    void listenLlmToken((ev) => {
+      if (requestIdRef.current && ev.request_id !== requestIdRef.current)
+        return;
       streamBuf.current += ev.token;
       setMessages((prev) => {
         const copy = [...prev];
         const last = copy[copy.length - 1];
         if (last?.role === "assistant") {
-          copy[copy.length - 1] = { role: "assistant", content: streamBuf.current };
+          copy[copy.length - 1] = {
+            role: "assistant",
+            content: streamBuf.current,
+          };
         } else {
           copy.push({ role: "assistant", content: streamBuf.current });
         }
         return copy;
       });
     }).then((fn) => {
-      unlisten = fn;
+      unlistenToken = fn;
     });
-    const doneUn = listen("llm:done", () => {
+    void listenLlmDone(() => {
       setStreaming(false);
       streamBuf.current = "";
+    }).then((fn) => {
+      unlistenDone = fn;
     });
     return () => {
-      unlisten?.();
-      void doneUn.then((fn) => fn());
+      unlistenToken?.();
+      unlistenDone?.();
     };
   }, []);
 
@@ -137,7 +159,16 @@ export function AiPanel({
         },
       ]);
     }
-  }, [input, streaming, messages, notePath, noteContent, quote, provider, webSearch]);
+  }, [
+    input,
+    streaming,
+    messages,
+    notePath,
+    noteContent,
+    quote,
+    provider,
+    webSearch,
+  ]);
 
   return (
     <div className="flex h-full flex-col">
@@ -257,7 +288,15 @@ export function AiPanel({
                   : "rounded border border-border/50 p-2"
               }
             >
-              {m.content || (streaming && m.role === "assistant" ? "…" : "")}
+              {m.role === "assistant" ? (
+                m.content ? (
+                  <AssistantMessage content={m.content} />
+                ) : streaming ? (
+                  "…"
+                ) : null
+              ) : (
+                m.content
+              )}
             </div>
           ))}
         </div>
@@ -275,7 +314,12 @@ export function AiPanel({
             }
           }}
         />
-        <Button type="button" size="icon" disabled={streaming} onClick={() => void send()}>
+        <Button
+          type="button"
+          size="icon"
+          disabled={streaming}
+          onClick={() => void send()}
+        >
           <Send className="h-4 w-4" />
         </Button>
       </div>

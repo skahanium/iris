@@ -43,7 +43,7 @@ export const WikiLinkExtension = Mark.create<WikiLinkOptions>({
   },
 
   parseHTML() {
-    return [{ tag: 'span[data-wiki-link]' }];
+    return [{ tag: "span[data-wiki-link]" }];
   },
 
   renderHTML({ HTMLAttributes }) {

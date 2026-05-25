@@ -35,9 +35,7 @@ export function filterRelatedSemanticHits(
       byPath.set(hit.path, hit);
     }
   }
-  return [...byPath.values()]
-    .sort((a, b) => b.score - a.score)
-    .slice(0, limit);
+  return [...byPath.values()].sort((a, b) => b.score - a.score).slice(0, limit);
 }
 
 /**
@@ -54,9 +52,7 @@ export function formatRelatedNotesSection(hits: SemanticHit[]): string | null {
 
 /** 组装 AI 侧栏 system 提示各段。 */
 export function buildAiSystemParts(input: BuildAiSystemContextInput): string[] {
-  const parts: string[] = [
-    "你是 Iris 笔记助手，基于用户笔记内容回答问题。",
-  ];
+  const parts: string[] = ["你是 Iris 笔记助手，基于用户笔记内容回答问题。"];
 
   if (input.notePath && input.noteContent) {
     parts.push(

@@ -229,6 +229,6 @@ v0.1 已用 `fastembed` + `chunk_embeddings` BLOB + Rust 全量余弦（见 [doc
 | 阶段 | Epic / 审计 |
 |------|-------------|
 | v0.1.0（已发布） | [v0.1.0-epic](docs/v0.1.0-epic.md)、[v0.1.0-completion-prs](docs/v0.1.0-completion-prs.md)（冻结） |
-| v0.1.1（进行中） | [v0.1.1-epic](docs/v0.1.1-epic.md) |
+| v0.1.1（已发布） | [v0.1.1-epic](docs/v0.1.1-epic.md) |
 | 界面 | [design-system](docs/design-system.md) |
 | 架构 | [ARCHITECTURE](ARCHITECTURE.md) |

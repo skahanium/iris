@@ -16,14 +16,17 @@ import { VersionTimeline } from "@/components/version/VersionTimeline";
 import { AppShell } from "@/components/layout/AppShell";
 import { StatusBar } from "@/components/layout/StatusBar";
 import { TabBar, type TabItem } from "@/components/layout/TabBar";
+import { WelcomeEmpty } from "@/components/layout/WelcomeEmpty";
+import { createDefaultNote } from "@/lib/note-create";
 import { Button } from "@/components/ui/button";
 import { useEditorSave } from "@/hooks/useEditorSave";
 import { useInlineAi } from "@/hooks/useInlineAi";
 import { useLlmProvider } from "@/hooks/useLlmProvider";
+import { useOverlayManager } from "@/hooks/useOverlayManager";
 import { useTheme, useVault } from "@/hooks/useVault";
-import { htmlToMarkdown } from "@/lib/markdown";
-import { fileCreate, fileRead, listenFileChanged } from "@/lib/ipc";
-import type { FileChangedEvent } from "@/types/ipc";
+import { htmlToMarkdown, markdownToHtml } from "@/lib/markdown";
+import { fileRead, listenFileChanged } from "@/lib/ipc";
+import { isModKey } from "@/lib/utils";
 
 function App() {
   const { vaultPath, loading, pickVault } = useVault();
@@ -32,24 +35,27 @@ function App() {
   const [activePath, setActivePath] = useState<string | null>(null);
   const [markdown, setMarkdown] = useState("");
   const htmlRef = useRef("");
+  const activePathRef = useRef<string | null>(null);
+  const markdownRef = useRef("");
+  const skipNextDirtyRef = useRef(false);
   const [editor, setEditor] = useState<Editor | null>(null);
-  const [quickOpen, setQuickOpen] = useState(false);
-  const [fileSheet, setFileSheet] = useState(false);
-  const [searchOpen, setSearchOpen] = useState(false);
+  const overlays = useOverlayManager();
   const [aiPanelOpen, setAiPanelOpen] = useState(true);
-  const [settingsOpen, setSettingsOpen] = useState(false);
-  const [backlinksOpen, setBacklinksOpen] = useState(false);
-  const [tagViewOpen, setTagViewOpen] = useState(false);
-  const [graphOpen, setGraphOpen] = useState(false);
-  const [versionOpen, setVersionOpen] = useState(false);
   const [conflictOpen, setConflictOpen] = useState(false);
   const [conflictPath, setConflictPath] = useState("");
   const [conflictExternal, setConflictExternal] = useState("");
   const [quote, setQuote] = useState<ContextQuote | null>(null);
   const [aiStatus, setAiStatus] = useState("AI 空闲");
   const [reloadPrompt, setReloadPrompt] = useState<string | null>(null);
-  const { provider: llmProvider, setProvider: setLlmProvider } = useLlmProvider();
-  const inlineAi = useInlineAi({ provider: llmProvider, onStatus: setAiStatus });
+  const { provider: llmProvider, setProvider: setLlmProvider } =
+    useLlmProvider();
+  const inlineAi = useInlineAi({
+    provider: llmProvider,
+    onStatus: setAiStatus,
+  });
+
+  activePathRef.current = activePath;
+  markdownRef.current = markdown;
 
   const { scheduleSave } = useEditorSave(activePath, () => {
     setTabs((t) =>
@@ -63,6 +69,7 @@ function App() {
     const content = await fileRead(path);
     setMarkdown(content);
     htmlRef.current = "";
+    skipNextDirtyRef.current = true;
     setActivePath(path);
     setTabs((prev) => {
       if (prev.some((t) => t.path === path)) return prev;
@@ -72,81 +79,132 @@ function App() {
     setReloadPrompt(null);
   }, []);
 
+  const closeTab = useCallback(
+    (path: string) => {
+      setTabs((prev) => {
+        const idx = prev.findIndex((t) => t.path === path);
+        const next = prev.filter((t) => t.path !== path);
+        if (activePathRef.current === path) {
+          if (next.length === 0) {
+            setActivePath(null);
+            setMarkdown("");
+          } else {
+            const newIdx = Math.min(Math.max(0, idx), next.length - 1);
+            const newPath = next[newIdx]!.path;
+            void openFile(newPath);
+          }
+        }
+        return next;
+      });
+    },
+    [openFile],
+  );
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.ctrlKey && e.key === "p") {
+      if (isModKey(e) && e.key === "p") {
         e.preventDefault();
-        setQuickOpen(true);
+        overlays.setQuickOpen(true);
       }
-      if (e.ctrlKey && e.shiftKey && (e.key === "E" || e.key === "e")) {
+      if (isModKey(e) && e.shiftKey && (e.key === "E" || e.key === "e")) {
         e.preventDefault();
-        setFileSheet(true);
+        overlays.openSidePanel("fileSheet");
       }
-      if (e.ctrlKey && e.shiftKey && (e.key === "F" || e.key === "f")) {
+      if (isModKey(e) && e.shiftKey && (e.key === "F" || e.key === "f")) {
         e.preventDefault();
-        setSearchOpen(true);
+        overlays.openSidePanel("search");
       }
-      if (e.ctrlKey && e.shiftKey && (e.key === "A" || e.key === "a")) {
+      if (isModKey(e) && e.shiftKey && (e.key === "A" || e.key === "a")) {
         e.preventDefault();
         setAiPanelOpen((open) => !open);
       }
-      if (e.ctrlKey && e.shiftKey && (e.key === "V" || e.key === "v") && activePath) {
+      if (
+        isModKey(e) &&
+        e.shiftKey &&
+        (e.key === "V" || e.key === "v") &&
+        activePathRef.current
+      ) {
         e.preventDefault();
-        setVersionOpen((open) => !open);
+        overlays.toggleSidePanel("version");
       }
-      if (e.ctrlKey && e.key === "w" && activePath) {
+      if (isModKey(e) && e.key === "w" && activePathRef.current) {
         e.preventDefault();
-        setTabs((t) => t.filter((x) => x.path !== activePath));
-        setActivePath(null);
+        closeTab(activePathRef.current);
       }
-      if (e.ctrlKey && e.key === ",") {
+      if (isModKey(e) && e.key === ",") {
         e.preventDefault();
-        setSettingsOpen((open) => !open);
+        overlays.toggleSidePanel("settings");
       }
-      if (e.ctrlKey && e.shiftKey && (e.key === "B" || e.key === "b")) {
+      if (isModKey(e) && e.shiftKey && (e.key === "B" || e.key === "b")) {
         e.preventDefault();
-        setBacklinksOpen((open) => !open);
+        overlays.toggleSidePanel("backlinks");
       }
-      if (e.ctrlKey && e.shiftKey && (e.key === "G" || e.key === "g")) {
+      if (isModKey(e) && e.shiftKey && (e.key === "G" || e.key === "g")) {
         e.preventDefault();
-        setGraphOpen((open) => !open);
+        overlays.toggleSidePanel("graph");
+      }
+      if (isModKey(e) && e.shiftKey && (e.key === "T" || e.key === "t")) {
+        e.preventDefault();
+        overlays.toggleSidePanel("tags");
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [activePath]);
+  }, [overlays, closeTab]);
 
   useEffect(() => {
-    void listenFileChanged((payload) => {
-      const ev = payload as FileChangedEvent;
-      if (ev.path === activePath && ev.event_type === "modify") {
-        // L3: open file modified externally → trigger conflict
+    let unlisten: (() => void) | undefined;
+    void listenFileChanged((ev) => {
+      const path = activePathRef.current;
+      if (!path || ev.path !== path) return;
+      if (ev.event_type === "modify") {
         void fileRead(ev.path).then((extContent) => {
-          if (extContent !== markdown) {
+          if (extContent !== markdownRef.current) {
             setConflictPath(ev.path);
             setConflictExternal(extContent);
             setConflictOpen(true);
           }
         });
-      } else if (ev.path === activePath) {
+      } else {
         setReloadPrompt(`外部已修改 ${ev.path}，是否重新加载？`);
       }
+    }).then((fn) => {
+      unlisten = fn;
     });
-  }, [activePath, markdown]);
+    return () => {
+      unlisten?.();
+    };
+  }, []);
+
+  const applyMarkdownToEditor = useCallback(
+    (content: string) => {
+      setMarkdown(content);
+      if (editor) {
+        editor.commands.setContent(markdownToHtml(content), false);
+      }
+    },
+    [editor],
+  );
 
   const handleHtmlUpdate = useCallback(
     (html: string) => {
       htmlRef.current = html;
       const md = htmlToMarkdown(html);
       setMarkdown(md);
-      if (activePath) {
-        scheduleSave(md);
-        setTabs((t) =>
-          t.map((tab) =>
-            tab.path === activePath ? { ...tab, dirty: true } : tab,
-          ),
-        );
+
+      if (!activePath) return;
+
+      if (skipNextDirtyRef.current) {
+        skipNextDirtyRef.current = false;
+        return;
       }
+
+      scheduleSave(md);
+      setTabs((t) =>
+        t.map((tab) =>
+          tab.path === activePath ? { ...tab, dirty: true } : tab,
+        ),
+      );
     },
     [activePath, scheduleSave],
   );
@@ -175,6 +233,11 @@ function App() {
     setQuote({ filePath: activePath, text });
   }, [editor, activePath]);
 
+  const handleNewNote = useCallback(async () => {
+    const name = await createDefaultNote();
+    await openFile(name);
+  }, [openFile]);
+
   if (loading) {
     return (
       <div className="flex h-screen items-center justify-center">加载中…</div>
@@ -201,15 +264,8 @@ function App() {
           tabs={tabs}
           activePath={activePath}
           onSelect={(p) => void openFile(p)}
-          onClose={(p) => {
-            setTabs((t) => t.filter((x) => x.path !== p));
-            if (activePath === p) setActivePath(null);
-          }}
-          onNew={async () => {
-            const name = `note-${Date.now()}.md`;
-            await fileCreate(name);
-            await openFile(name);
-          }}
+          onClose={closeTab}
+          onNew={() => void handleNewNote()}
         />
       }
       editor={
@@ -245,12 +301,10 @@ function App() {
               onOpenWikiLink={(title) => void openFile(`${title}.md`)}
             />
           ) : (
-            <div className="flex flex-1 flex-col items-center justify-center gap-2 font-sans text-editor-muted">
-              <p className="font-editor text-lg text-editor-ink/80">铺开纸面，开始写</p>
-              <p className="text-sm">
-                Ctrl+P 打开 · Ctrl+Shift+E 文件 · Ctrl+Shift+A AI 侧栏
-              </p>
-            </div>
+            <WelcomeEmpty
+              onOpen={(p) => void openFile(p)}
+              onNew={() => void handleNewNote()}
+            />
           )}
           <FloatingToolbar
             editor={editor}
@@ -303,50 +357,46 @@ function App() {
             </Button>
           </div>
           <QuickOpen
-            open={quickOpen}
-            onClose={() => setQuickOpen(false)}
+            open={overlays.quickOpen}
+            onClose={() => overlays.setQuickOpen(false)}
             onSelect={(p) => void openFile(p)}
           />
           <FileSheet
-            open={fileSheet}
-            onClose={() => setFileSheet(false)}
+            open={overlays.fileSheet}
+            onClose={() => overlays.setFileSheet(false)}
             onOpen={(p) => void openFile(p)}
           />
           <SearchPanel
-            open={searchOpen}
-            onClose={() => setSearchOpen(false)}
+            open={overlays.searchOpen}
+            onClose={() => overlays.setSearchOpen(false)}
             onOpen={(p) => void openFile(p)}
           />
           <SettingsPanel
-            open={settingsOpen}
-            onClose={() => setSettingsOpen(false)}
+            open={overlays.settingsOpen}
+            onClose={() => overlays.setSettingsOpen(false)}
             provider={llmProvider}
           />
           <BacklinksPanel
-            open={backlinksOpen}
-            onClose={() => setBacklinksOpen(false)}
+            open={overlays.backlinksOpen}
+            onClose={() => overlays.setBacklinksOpen(false)}
             notePath={activePath}
             onOpen={(p) => void openFile(p)}
           />
           <TagView
-            open={tagViewOpen}
-            onClose={() => setTagViewOpen(false)}
+            open={overlays.tagViewOpen}
+            onClose={() => overlays.setTagViewOpen(false)}
+            onOpen={(p) => void openFile(p)}
           />
           <VersionTimeline
-            open={versionOpen}
-            onClose={() => setVersionOpen(false)}
+            open={overlays.versionOpen}
+            onClose={() => overlays.setVersionOpen(false)}
             notePath={activePath}
             currentContent={markdown}
-            onRestore={(content) => {
-              setMarkdown(content);
-              if (editor) {
-                editor.commands.setContent(content, false);
-              }
-            }}
+            onRestore={applyMarkdownToEditor}
           />
           <GraphView
-            open={graphOpen}
-            onClose={() => setGraphOpen(false)}
+            open={overlays.graphOpen}
+            onClose={() => overlays.setGraphOpen(false)}
             onOpenNote={(p) => void openFile(p)}
           />
           <ConflictDialog
@@ -356,10 +406,7 @@ function App() {
             filePath={conflictPath}
             onKeepLocal={() => setConflictOpen(false)}
             onAcceptExternal={() => {
-              setMarkdown(conflictExternal);
-              if (editor) {
-                editor.commands.setContent(conflictExternal, false);
-              }
+              applyMarkdownToEditor(conflictExternal);
               setConflictOpen(false);
             }}
             onManualEdit={() => setConflictOpen(false)}

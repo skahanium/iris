@@ -1,9 +1,25 @@
 import { Extension } from "@tiptap/core";
-import Suggestion from "@tiptap/suggestion";
+import { ReactRenderer } from "@tiptap/react";
+import Suggestion, { type SuggestionProps } from "@tiptap/suggestion";
+import tippy, { type Instance as TippyInstance } from "tippy.js";
+
+import {
+  SlashCommandList,
+  type SlashCommandListRef,
+  type SlashItem,
+} from "../SlashCommandList";
 
 export interface SlashCommandOptions {
   onCommand?: (command: string) => void;
 }
+
+const ALL_ITEMS: SlashItem[] = [
+  { id: "summarize", label: "总结", icon: "FileText" },
+  { id: "outline", label: "生成大纲", icon: "ListTree" },
+  { id: "brainstorm", label: "头脑风暴", icon: "Lightbulb" },
+  { id: "fix-grammar", label: "修复语法", icon: "Languages" },
+  { id: "translate", label: "翻译", icon: "Globe" },
+];
 
 export const SlashCommandExtension = Extension.create<SlashCommandOptions>({
   name: "slashCommand",
@@ -14,86 +30,69 @@ export const SlashCommandExtension = Extension.create<SlashCommandOptions>({
 
   addProseMirrorPlugins() {
     const onCommand = this.options.onCommand;
+
     return [
       Suggestion({
         editor: this.editor,
         char: "/",
         command: ({ editor, range, props }) => {
-          const item = props as { id: string; label: string };
+          const item = props as SlashItem;
           editor.chain().focus().deleteRange(range).run();
           onCommand?.(item.id);
         },
-        items: ({ query }) => {
-          const all = [
-            { id: "summarize", label: "总结", icon: "FileText" },
-            { id: "outline", label: "生成大纲", icon: "ListTree" },
-            { id: "brainstorm", label: "头脑风暴", icon: "Lightbulb" },
-            { id: "fix-grammar", label: "修复语法", icon: "Languages" },
-            { id: "translate", label: "翻译", icon: "Globe" },
-          ];
-          return all.filter((i) =>
+        items: ({ query }) =>
+          ALL_ITEMS.filter((i) =>
             i.label.toLowerCase().includes(query.toLowerCase()),
-          );
-        },
+          ),
         render: () => {
-          let el: HTMLDivElement | null = null;
-          const iconMap: Record<string, string> = {
-            FileText: "📄",
-            ListTree: "🌲",
-            Lightbulb: "💡",
-            Languages: "🔤",
-            Globe: "🌐",
-          };
+          let component: ReactRenderer<SlashCommandListRef> | null = null;
+          let popup: TippyInstance[] | null = null;
+
           return {
-            onStart: (props) => {
-              el = document.createElement("div");
-              el.className =
-                "z-50 rounded-md border border-primary/20 bg-panel shadow-lg text-sm";
-              document.body.appendChild(el);
-              props.items.forEach((item) => {
-                const it = item as { id: string; label: string; icon?: string };
-                const btn = document.createElement("button");
-                btn.className =
-                  "flex w-full items-center gap-2 rounded px-3 py-1.5 text-left hover:bg-muted";
-                const icon = document.createElement("span");
-                icon.className = "text-xs";
-                icon.textContent = iconMap[it.icon ?? ""] ?? "";
-                btn.appendChild(icon);
-                const label = document.createElement("span");
-                label.textContent = it.label;
-                btn.appendChild(label);
-                btn.onclick = () => props.command(item);
-                el?.appendChild(btn);
+            onStart: (props: SuggestionProps<SlashItem>) => {
+              component = new ReactRenderer(SlashCommandList, {
+                props: {
+                  items: props.items,
+                  command: props.command,
+                },
+                editor: props.editor,
+              });
+
+              if (!props.clientRect) return;
+
+              popup = tippy("body", {
+                getReferenceClientRect: props.clientRect as () => DOMRect,
+                appendTo: () => document.body,
+                content: component.element,
+                showOnCreate: true,
+                interactive: true,
+                trigger: "manual",
+                placement: "bottom-start",
               });
             },
-            onUpdate(props) {
-              if (!el) return;
-              el.innerHTML = "";
-              props.items.forEach((item) => {
-                const it = item as { id: string; label: string; icon?: string };
-                const btn = document.createElement("button");
-                btn.className =
-                  "flex w-full items-center gap-2 rounded px-3 py-1.5 text-left hover:bg-muted";
-                const icon = document.createElement("span");
-                icon.className = "text-xs";
-                icon.textContent = iconMap[it.icon ?? ""] ?? "";
-                btn.appendChild(icon);
-                const label = document.createElement("span");
-                label.textContent = it.label;
-                btn.appendChild(label);
-                btn.onclick = () => props.command(item);
-                el?.appendChild(btn);
+            onUpdate(props: SuggestionProps<SlashItem>) {
+              component?.updateProps({
+                items: props.items,
+                command: props.command,
               });
+              if (props.clientRect && popup?.[0]) {
+                popup[0].setProps({
+                  getReferenceClientRect: props.clientRect as () => DOMRect,
+                });
+              }
             },
-            onKeyDown(props) {
+            onKeyDown(props: { event: KeyboardEvent }) {
               if (props.event.key === "Escape") {
-                el?.remove();
+                popup?.[0]?.hide();
                 return true;
               }
-              return false;
+              return component?.ref?.onKeyDown(props) ?? false;
             },
             onExit() {
-              el?.remove();
+              popup?.[0]?.destroy();
+              component?.destroy();
+              popup = null;
+              component = null;
             },
           };
         },

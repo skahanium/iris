@@ -50,7 +50,9 @@ export function BacklinksPanel({
               }}
             >
               <div className="font-medium text-primary">{b.source_title}</div>
-              <div className="text-xs text-muted-foreground">{b.source_path}</div>
+              <div className="text-xs text-muted-foreground">
+                {b.source_path}
+              </div>
               {b.context && (
                 <div className="mt-1 line-clamp-2 text-xs text-muted-foreground/70">
                   {b.context}

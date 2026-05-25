@@ -130,7 +130,7 @@ export function VersionTimeline({
 
               {previewId === v.id && preview !== null && (
                 <div className="mt-2 rounded border border-border bg-muted/30 p-2 text-xs">
-                  <pre className="whitespace-pre-wrap font-mono max-h-40 overflow-auto">
+                  <pre className="max-h-40 overflow-auto whitespace-pre-wrap font-mono">
                     {preview.slice(0, 1000)}
                     {preview.length > 1000 && "…"}
                   </pre>

@@ -14,7 +14,7 @@ import {
   llmAbort,
   llmGenerate,
 } from "@/lib/ipc";
-import type { ChatMessage, LlmTokenEvent } from "@/types/ipc";
+import type { ChatMessage } from "@/types/ipc";
 
 export interface UseInlineAiOptions {
   provider?: string;
@@ -73,7 +73,10 @@ export function buildRetryRequest(ctx: {
 /**
  * 内联 AI：选区 → ai-stream 流式生成；支持接受 / 回退 / 重试；`/` 命令写入 ai-stream。
  */
-export function useInlineAi({ provider = "openai", onStatus }: UseInlineAiOptions = {}) {
+export function useInlineAi({
+  provider = "openai",
+  onStatus,
+}: UseInlineAiOptions = {}) {
   const requestIdRef = useRef<string | null>(null);
   const streamBufRef = useRef("");
   const unlistenRef = useRef<Array<() => void>>([]);
@@ -87,23 +90,20 @@ export function useInlineAi({ provider = "openai", onStatus }: UseInlineAiOption
   const attachListeners = useCallback(
     async (editor: Editor) => {
       detachListeners();
-      const unlistenToken = await listenLlmToken((payload) => {
-        const ev = payload as LlmTokenEvent;
+      const unlistenToken = await listenLlmToken((ev) => {
         if (requestIdRef.current && ev.request_id !== requestIdRef.current) {
           return;
         }
         streamBufRef.current += ev.token;
         editor.commands.updateAiStream(streamBufRef.current);
       });
-      const unlistenDone = await listenLlmDone((payload) => {
-        const ev = payload as { request_id?: string };
+      const unlistenDone = await listenLlmDone((ev) => {
         if (requestIdRef.current && ev.request_id === requestIdRef.current) {
           editor.commands.setAiStreamStatus("ready");
           onStatus?.("AI 空闲");
         }
       });
-      const unlistenError = await listenLlmError((payload) => {
-        const ev = payload as { request_id?: string; error?: string };
+      const unlistenError = await listenLlmError((ev) => {
         if (requestIdRef.current && ev.request_id === requestIdRef.current) {
           editor.commands.setAiStreamStatus("error");
           onStatus?.(`AI 错误: ${ev.error ?? "未知错误"}`);

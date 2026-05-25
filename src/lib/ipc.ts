@@ -3,13 +3,16 @@ import { listen } from "@tauri-apps/api/event";
 
 import type {
   BacklinkEntry,
+  FileChangedEvent,
   FileEntry,
   FileListItem,
   GraphData,
   KeywordHit,
   LlmGenerateParams,
   LlmProviderInfo,
+  LlmTokenEvent,
   SemanticHit,
+  TagGroup,
   VersionEntry,
 } from "@/types/ipc";
 
@@ -55,12 +58,19 @@ export async function fileDelete(path: string): Promise<void> {
   return invoke("file_delete", { path });
 }
 
-export async function fileRename(path: string, newPath: string): Promise<FileEntry> {
+export async function fileRename(
+  path: string,
+  newPath: string,
+): Promise<FileEntry> {
   return invoke<FileEntry>("file_rename", { path, newPath });
 }
 
 export async function fileBacklinks(path: string): Promise<BacklinkEntry[]> {
   return invoke<BacklinkEntry[]>("file_backlinks", { path });
+}
+
+export async function tagList(): Promise<TagGroup[]> {
+  return invoke<TagGroup[]>("tag_list");
 }
 
 export async function graphData(): Promise<GraphData> {
@@ -160,25 +170,27 @@ export async function credentialDelete(service: string): Promise<void> {
 }
 
 export async function listenFileChanged(
-  handler: (payload: unknown) => void,
+  handler: (payload: FileChangedEvent) => void,
 ): Promise<() => void> {
-  return listen("file:changed", (e) => handler(e.payload));
+  return listen<FileChangedEvent>("file:changed", (e) => handler(e.payload));
 }
 
 export async function listenLlmToken(
-  handler: (payload: unknown) => void,
+  handler: (payload: LlmTokenEvent) => void,
 ): Promise<() => void> {
-  return listen("llm:token", (e) => handler(e.payload));
+  return listen<LlmTokenEvent>("llm:token", (e) => handler(e.payload));
 }
 
 export async function listenLlmDone(
-  handler: (payload: unknown) => void,
+  handler: (payload: { request_id?: string }) => void,
 ): Promise<() => void> {
-  return listen("llm:done", (e) => handler(e.payload));
+  return listen<{ request_id?: string }>("llm:done", (e) => handler(e.payload));
 }
 
 export async function listenLlmError(
-  handler: (payload: unknown) => void,
+  handler: (payload: { request_id?: string; error?: string }) => void,
 ): Promise<() => void> {
-  return listen("llm:error", (e) => handler(e.payload));
+  return listen<{ request_id?: string; error?: string }>("llm:error", (e) =>
+    handler(e.payload),
+  );
 }

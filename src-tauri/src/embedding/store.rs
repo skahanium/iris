@@ -13,7 +13,13 @@ pub fn store_chunk_embeddings(conn: &Connection, file_id: i64) -> AppResult<()> 
 
     for row in rows.flatten() {
         let (chunk_id, content) = row;
-        let embedding = embed_text(&content)?;
+        let embedding = match embed_text(&content) {
+            Ok(v) => v,
+            Err(e) => {
+                tracing::warn!("chunk {chunk_id} embedding skipped: {e}");
+                continue;
+            }
+        };
         let blob = f32_to_bytes(&embedding);
         conn.execute(
             "INSERT OR REPLACE INTO chunk_embeddings (chunk_id, embedding) VALUES (?1, ?2)",

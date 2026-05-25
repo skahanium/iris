@@ -94,8 +94,9 @@
   }
 
   .light .iris-editor .ProseMirror pre {
-    background: hsl(30 10% 18%);
-    color: hsl(40 25% 94%);
+    background: hsl(35 14% 92%);
+    color: hsl(25 22% 16%);
+    border: 1px solid hsl(var(--editor-border));
   }
 
   .iris-editor .ProseMirror blockquote {
@@ -118,7 +119,7 @@
 
   /* Wiki-link — accent underline */
   .wiki-link {
-    @apply text-primary underline decoration-primary/40 underline-offset-2 cursor-pointer;
+    @apply cursor-pointer text-primary underline decoration-primary/40 underline-offset-2;
   }
 
   .wiki-link-bracket {
