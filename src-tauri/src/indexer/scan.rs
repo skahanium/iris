@@ -337,4 +337,65 @@ mod tests {
         })
         .unwrap();
     }
+
+    #[test]
+    fn index_file_extracts_wiki_links() {
+        let (_dir, vault, db) = setup_vault();
+        write_note(&vault, "a.md", "# Note A");
+        write_note(&vault, "b.md", "# Note B\n\nSee [[Note A]] for context.");
+
+        db.with_conn(|conn| {
+            let _entry_a = index_file(conn, &vault, &vault.join("a.md"))?;
+            let entry_b = index_file(conn, &vault, &vault.join("b.md"))?;
+
+            // Verify link from B → A exists
+            let link_count: i64 = conn.query_row(
+                "SELECT COUNT(*) FROM links WHERE source_id = ?1",
+                [entry_b.id],
+                |r| r.get(0),
+            )?;
+            assert_eq!(link_count, 1, "should have one outbound link from B");
+
+            let context: String = conn.query_row(
+                "SELECT context FROM links WHERE source_id = ?1",
+                [entry_b.id],
+                |r| r.get(0),
+            )?;
+            assert!(context.contains("[[Note A]]"));
+            Ok(())
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn index_file_clears_links_on_reindex() {
+        let (_dir, vault, db) = setup_vault();
+        write_note(&vault, "a.md", "# A");
+        write_note(&vault, "b.md", "# B\n\n[[A]]");
+
+        db.with_conn(|conn| {
+            let _a = index_file(conn, &vault, &vault.join("a.md"))?;
+            let b = index_file(conn, &vault, &vault.join("b.md"))?;
+
+            let count1: i64 = conn.query_row(
+                "SELECT COUNT(*) FROM links WHERE source_id = ?1",
+                [b.id],
+                |r| r.get(0),
+            )?;
+            assert_eq!(count1, 1);
+
+            // Rewrite B without wikilinks
+            fs::write(&vault.join("b.md"), "# B\n\nNo links anymore.").unwrap();
+            index_file(conn, &vault, &vault.join("b.md"))?;
+
+            let count2: i64 = conn.query_row(
+                "SELECT COUNT(*) FROM links WHERE source_id = ?1",
+                [b.id],
+                |r| r.get(0),
+            )?;
+            assert_eq!(count2, 0, "old links should be cleared on reindex");
+            Ok(())
+        })
+        .unwrap();
+    }
 }

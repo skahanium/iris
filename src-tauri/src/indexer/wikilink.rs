@@ -82,6 +82,9 @@ fn extract_link_context(content: &str, title: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::storage::db::Database;
+    use std::fs;
+    use tempfile::tempdir;
 
     #[test]
     fn extracts_single_wiki_link() {
@@ -111,5 +114,117 @@ mod tests {
     fn no_links_returns_empty() {
         let links = extract_wiki_links("No links here.");
         assert!(links.is_empty());
+    }
+
+    #[test]
+    fn extract_link_context_returns_surrounding_text() {
+        let content = "Some context before [[MyPage]] and after.";
+        let ctx = extract_link_context(content, "MyPage");
+        assert!(ctx.contains("[[MyPage]]"));
+    }
+
+    #[test]
+    fn index_wiki_links_inserts_and_counts() {
+        let db = Database::open_in_memory().unwrap();
+        db.with_conn(|conn| {
+            // Create source and target files
+            conn.execute(
+                "INSERT INTO files (id, path, title, content_hash, created_at, updated_at)
+                 VALUES (1, 'source.md', 'Source', 'abc', '', '')",
+                [],
+            )?;
+            conn.execute(
+                "INSERT INTO files (id, path, title, content_hash, created_at, updated_at)
+                 VALUES (2, 'target.md', 'Target Page', 'def', '', '')",
+                [],
+            )?;
+
+            let count = index_wiki_links(conn, 1, "See [[Target Page]] for more.")?;
+            assert_eq!(count, 1);
+
+            // Verify link record
+            let link_count: i64 = conn.query_row(
+                "SELECT COUNT(*) FROM links WHERE source_id = 1 AND target_id = 2",
+                [],
+                |r| r.get(0),
+            )?;
+            assert_eq!(link_count, 1);
+            Ok(())
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn index_wiki_links_skips_self_links() {
+        let db = Database::open_in_memory().unwrap();
+        db.with_conn(|conn| {
+            conn.execute(
+                "INSERT INTO files (id, path, title, content_hash, created_at, updated_at)
+                 VALUES (1, 'self.md', 'Self', 'abc', '', '')",
+                [],
+            )?;
+
+            // Link to self should be skipped
+            let count = index_wiki_links(conn, 1, "See [[Self]] here.")?;
+            assert_eq!(count, 0);
+            Ok(())
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn index_wiki_links_clears_old_on_reindex() {
+        let db = Database::open_in_memory().unwrap();
+        db.with_conn(|conn| {
+            conn.execute(
+                "INSERT INTO files (id, path, title, content_hash, created_at, updated_at)
+                 VALUES (1, 'a.md', 'A', 'abc', '', ''),
+                      (2, 'b.md', 'B', 'def', '', ''),
+                      (3, 'c.md', 'C', 'ghi', '', '')",
+                [],
+            )?;
+
+            // First index: A links to B
+            index_wiki_links(conn, 1, "[[B]]")?;
+            // Re-index: A now links to C instead
+            let count = index_wiki_links(conn, 1, "[[C]]")?;
+            assert_eq!(count, 1);
+
+            let old: i64 = conn.query_row(
+                "SELECT COUNT(*) FROM links WHERE source_id = 1 AND target_id = 2",
+                [],
+                |r| r.get(0),
+            )?;
+            assert_eq!(old, 0, "old link should be deleted");
+            Ok(())
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn sync_wiki_links_clears_source() {
+        let db = Database::open_in_memory().unwrap();
+        db.with_conn(|conn| {
+            conn.execute(
+                "INSERT INTO files (id, path, title, content_hash, created_at, updated_at)
+                 VALUES (1, 'a.md', 'A', 'abc', '', ''),
+                      (2, 'b.md', 'B', 'def', '', '')",
+                [],
+            )?;
+            conn.execute(
+                "INSERT INTO links (source_id, target_id, context) VALUES (1, 2, 'ctx')",
+                [],
+            )?;
+
+            sync_wiki_links(conn, 1)?;
+            let count: i64 = conn.query_row(
+                "SELECT COUNT(*) FROM links WHERE source_id = 1",
+                [],
+                |r| r.get(0),
+            )?;
+            assert_eq!(count, 0);
+            Ok(())
+        })
+        .unwrap();
     }
 }

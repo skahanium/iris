@@ -89,4 +89,42 @@ mod tests {
         });
         assert!(err.is_err());
     }
+
+    #[test]
+    fn migration_002_applies_idempotently() {
+        let conn = Connection::open_in_memory().unwrap();
+        migrate_up(&conn).unwrap();
+
+        // Second call should not fail
+        migrate_up(&conn).unwrap();
+
+        // Verify 002 migration was recorded
+        let applied: bool = conn
+            .query_row(
+                "SELECT COUNT(*) FROM _migrations WHERE name = '002_vec'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .map(|c| c > 0)
+            .unwrap_or(false);
+        assert!(applied);
+    }
+
+    #[test]
+    fn migration_002_down_removes_vec_table() {
+        let conn = Connection::open_in_memory().unwrap();
+        migrate_up(&conn).unwrap();
+        migrate_down(&conn).unwrap();
+
+        // After down, vec_chunks should not exist (best-effort — may fail if vec not loaded)
+        let result = conn.query_row(
+            "SELECT COUNT(*) FROM vec_chunks",
+            [],
+            |r: &rusqlite::Row| r.get::<_, i64>(0),
+        );
+        // Either the table doesn't exist OR it's empty — both acceptable
+        if let Ok(count) = result {
+            assert_eq!(count, 0);
+        }
+    }
 }

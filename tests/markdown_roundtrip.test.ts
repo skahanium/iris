@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { markdownRoundTrip } from "@/lib/markdown";
+import { htmlToMarkdown, markdownRoundTrip, markdownToHtml } from "@/lib/markdown";
 
 /** 规范化空白便于断言（不用于生产序列化） */
 function normalize(md: string): string {
@@ -126,5 +126,19 @@ describe("wiki-link round-trip (v0.2)", () => {
     const out = markdownRoundTrip(md);
     expect(out).toContain("[[A]]");
     expect(out).toContain("[[B 笔记]]");
+  });
+
+  it("turndown converts wiki-link HTML back to [[title]]", () => {
+    const html =
+      '<p>See <span data-wiki-link="" data-wiki-title="架构设计">架构设计</span> for details.</p>';
+    const md = htmlToMarkdown(html);
+    expect(md).toContain("[[架构设计]]");
+  });
+
+  it("marked treats [[wiki-link]] as plain text (not HTML-escaped)", () => {
+    const md = "See [[MyPage]].";
+    const html = markdownToHtml(md);
+    // marked should not escape or mangle [[MyPage]]
+    expect(html).toContain("MyPage");
   });
 });
