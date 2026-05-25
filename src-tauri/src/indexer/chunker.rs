@@ -48,4 +48,38 @@ mod tests {
         let chunks = chunk_markdown(md, 512);
         assert!(!chunks.is_empty());
     }
+
+    #[test]
+    fn single_paragraph_one_chunk() {
+        let chunks = chunk_markdown("Just one paragraph.", 512);
+        assert_eq!(chunks.len(), 1);
+        assert_eq!(chunks[0], "Just one paragraph.");
+    }
+
+    #[test]
+    fn heading_split_creates_multiple_chunks() {
+        let md = "# One\n\nContent one.\n\n# Two\n\nContent two.";
+        let chunks = chunk_markdown(md, 512);
+        assert!(chunks.len() >= 2, "should split at headings");
+        assert!(chunks[0].contains("# One"));
+    }
+
+    #[test]
+    fn max_chars_splits_long_paragraph() {
+        let long = "word ".repeat(200);
+        let chunks = chunk_markdown(&long, 100);
+        assert!(chunks.len() > 1, "long paragraph should be split");
+    }
+
+    #[test]
+    fn empty_content_returns_empty() {
+        let chunks = chunk_markdown("", 512);
+        assert!(chunks.is_empty());
+    }
+
+    #[test]
+    fn whitespace_only_returns_empty() {
+        let chunks = chunk_markdown("   \n\n  ", 512);
+        assert!(chunks.is_empty());
+    }
 }

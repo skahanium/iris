@@ -7,6 +7,7 @@ import { FloatingToolbar } from "@/components/editor/FloatingToolbar";
 import { FileSheet } from "@/components/file/FileSheet";
 import { QuickOpen } from "@/components/file/QuickOpen";
 import { SearchPanel } from "@/components/file/SearchPanel";
+import { SettingsPanel } from "@/components/settings/SettingsPanel";
 import { AppShell } from "@/components/layout/AppShell";
 import { StatusBar } from "@/components/layout/StatusBar";
 import { TabBar, type TabItem } from "@/components/layout/TabBar";
@@ -31,6 +32,7 @@ function App() {
   const [fileSheet, setFileSheet] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const [aiPanelOpen, setAiPanelOpen] = useState(true);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [quote, setQuote] = useState<ContextQuote | null>(null);
   const [aiStatus, setAiStatus] = useState("AI 空闲");
   const [reloadPrompt, setReloadPrompt] = useState<string | null>(null);
@@ -80,6 +82,10 @@ function App() {
         e.preventDefault();
         setTabs((t) => t.filter((x) => x.path !== activePath));
         setActivePath(null);
+      }
+      if (e.ctrlKey && e.key === ",") {
+        e.preventDefault();
+        setSettingsOpen((open) => !open);
       }
     };
     window.addEventListener("keydown", onKey);
@@ -276,6 +282,11 @@ function App() {
             open={searchOpen}
             onClose={() => setSearchOpen(false)}
             onOpen={(p) => void openFile(p)}
+          />
+          <SettingsPanel
+            open={settingsOpen}
+            onClose={() => setSettingsOpen(false)}
+            provider={llmProvider}
           />
         </>
       }

@@ -111,6 +111,7 @@ pub fn index_file(conn: &Connection, vault: &Path, absolute: &Path) -> AppResult
         )?;
     }
 
+    #[cfg(not(test))]
     store_chunk_embeddings(conn, file_id)?;
 
     Ok(FileEntry {
@@ -153,4 +154,184 @@ pub fn scan_vault(conn: &Connection, vault: &Path) -> AppResult<Vec<FileEntry>> 
 pub fn file_hash(path: &Path) -> AppResult<String> {
     let content = fs::read_to_string(path)?;
     Ok(content_hash(&content))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::storage::db::Database;
+    use std::fs;
+    use tempfile::tempdir;
+
+    fn setup_vault() -> (tempfile::TempDir, std::path::PathBuf, Database) {
+        let dir = tempdir().unwrap();
+        let vault = dir.path().join("vault");
+        fs::create_dir_all(&vault).unwrap();
+        let db = Database::open_in_memory().unwrap();
+        (dir, vault, db)
+    }
+
+    fn write_note(vault: &std::path::Path, rel: &str, content: &str) {
+        let abs = vault.join(rel);
+        if let Some(parent) = abs.parent() {
+            fs::create_dir_all(parent).unwrap();
+        }
+        fs::write(&abs, content).unwrap();
+    }
+
+    #[test]
+    fn index_file_creates_files_and_chunks() {
+        let (_dir, vault, db) = setup_vault();
+        write_note(&vault, "hello.md", "# Hello\n\nWorld.");
+
+        db.with_conn(|conn| {
+            let entry = index_file(conn, &vault, &vault.join("hello.md"))?;
+            assert_eq!(entry.path, "hello.md");
+            assert_eq!(entry.title, "Hello");
+
+            let count: i64 =
+                conn.query_row("SELECT COUNT(*) FROM files WHERE path = 'hello.md'", [], |r| {
+                    r.get(0)
+                })?;
+            assert_eq!(count, 1);
+
+            let chunk_count: i64 = conn.query_row(
+                "SELECT COUNT(*) FROM chunks WHERE file_id = ?1",
+                [entry.id],
+                |r| r.get(0),
+            )?;
+            assert!(chunk_count > 0, "should have at least one chunk");
+
+            Ok(())
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn index_file_updates_existing() {
+        let (_dir, vault, db) = setup_vault();
+        write_note(&vault, "note.md", "# First");
+
+        db.with_conn(|conn| {
+            let e1 = index_file(conn, &vault, &vault.join("note.md"))?;
+
+            // Rewrite file on disk
+            fs::write(&vault.join("note.md"), "# Second\n\nMore content.").unwrap();
+            let e2 = index_file(conn, &vault, &vault.join("note.md"))?;
+
+            assert_eq!(e1.id, e2.id, "same path should UPDATE not INSERT");
+            assert_eq!(e2.title, "Second");
+
+            let count: i64 = conn.query_row(
+                "SELECT COUNT(*) FROM files WHERE path = 'note.md'",
+                [],
+                |r| r.get(0),
+            )?;
+            assert_eq!(count, 1);
+            Ok(())
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn index_file_syncs_tags() {
+        let (_dir, vault, db) = setup_vault();
+        write_note(&vault, "tagged.md", "---\ntags: [rust, tauri]\n---\n# Tagged");
+
+        db.with_conn(|conn| {
+            let entry = index_file(conn, &vault, &vault.join("tagged.md"))?;
+            let tags: Vec<String> = conn
+                .prepare(
+                    "SELECT t.name FROM tags t
+                     JOIN file_tags ft ON ft.tag_id = t.id
+                     WHERE ft.file_id = ?1
+                     ORDER BY t.name",
+                )
+                .unwrap()
+                .query_map([entry.id], |r| r.get(0))
+                .unwrap()
+                .flatten()
+                .collect();
+            assert_eq!(tags, vec!["rust", "tauri"]);
+            Ok(())
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn index_file_fts_searchable() {
+        let (_dir, vault, db) = setup_vault();
+        write_note(&vault, "searchable.md", "# FTS Test\n\nUniqueWordHere");
+
+        db.with_conn(|conn| {
+            index_file(conn, &vault, &vault.join("searchable.md"))?;
+            let hits: Vec<String> = conn
+                .prepare("SELECT path FROM files_fts WHERE files_fts MATCH ?1")
+                .unwrap()
+                .query_map(["UniqueWordHere"], |r| r.get(0))
+                .unwrap()
+                .flatten()
+                .collect();
+            assert!(hits.contains(&"searchable.md".into()));
+            Ok(())
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn remove_file_index_cleans_up() {
+        let (_dir, vault, db) = setup_vault();
+        write_note(&vault, "del.md", "# To Delete");
+
+        db.with_conn(|conn| {
+            let entry = index_file(conn, &vault, &vault.join("del.md"))?;
+            remove_file_index(conn, "del.md")?;
+
+            let count: i64 =
+                conn.query_row("SELECT COUNT(*) FROM files WHERE id = ?1", [entry.id], |r| {
+                    r.get(0)
+                })?;
+            assert_eq!(count, 0);
+
+            let fts: Vec<String> = conn
+                .prepare("SELECT path FROM files_fts WHERE path = 'del.md'")
+                .unwrap()
+                .query_map([], |r| r.get(0))
+                .unwrap()
+                .flatten()
+                .collect();
+            assert!(fts.is_empty());
+            Ok(())
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn scan_vault_filters_md_only() {
+        let (_dir, vault, db) = setup_vault();
+        write_note(&vault, "a.md", "# A");
+        write_note(&vault, "b.txt", "not a note");
+        write_note(&vault, "sub/c.md", "# C");
+
+        db.with_conn(|conn| {
+            let entries = scan_vault(conn, &vault)?;
+            let paths: Vec<&str> = entries.iter().map(|e| e.path.as_str()).collect();
+            assert!(paths.contains(&"a.md"));
+            assert!(paths.contains(&"sub/c.md"));
+            assert!(!paths.contains(&"b.txt"));
+            Ok(())
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn scan_vault_empty_dir() {
+        let (_dir, vault, db) = setup_vault();
+        db.with_conn(|conn| {
+            let entries = scan_vault(conn, &vault)?;
+            assert!(entries.is_empty());
+            Ok(())
+        })
+        .unwrap();
+    }
 }

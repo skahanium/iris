@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 
 import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { fileList } from "@/lib/ipc";
@@ -22,8 +23,6 @@ export function QuickOpen({ open, onClose, onSelect }: QuickOpenProps) {
     setQuery("");
   }, [open]);
 
-  if (!open) return null;
-
   const filtered = files.filter(
     (f) =>
       f.title.toLowerCase().includes(query.toLowerCase()) ||
@@ -31,14 +30,11 @@ export function QuickOpen({ open, onClose, onSelect }: QuickOpenProps) {
   );
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-start justify-center bg-black/40 pt-[15vh]"
-      onClick={onClose}
-    >
-      <div
-        className="w-full max-w-lg rounded-lg border border-border bg-panel shadow-xl"
-        onClick={(e) => e.stopPropagation()}
-      >
+    <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="top-[15vh] translate-y-0 gap-0 p-0">
+        <DialogHeader className="sr-only">
+          <DialogTitle>搜索笔记</DialogTitle>
+        </DialogHeader>
         <Input
           className="border-0 border-b rounded-none focus-visible:ring-0"
           placeholder="搜索笔记…"
@@ -67,7 +63,7 @@ export function QuickOpen({ open, onClose, onSelect }: QuickOpenProps) {
             Esc 关闭
           </Button>
         </div>
-      </div>
-    </div>
+      </DialogContent>
+    </Dialog>
   );
 }

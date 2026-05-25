@@ -12,13 +12,6 @@ import {
   type ContextQuote,
 } from "@/lib/ai-context";
 import {
-  BING_SEARCH_CREDENTIAL_SERVICE,
-  llmCredentialService,
-} from "@/lib/credentials";
-import {
-  credentialDelete,
-  credentialHas,
-  credentialSet,
   llmGenerate,
   listenLlmToken,
   searchSemantic,
@@ -53,22 +46,10 @@ export function AiPanel({
   const [input, setInput] = useState("");
   const [webSearch, setWebSearch] = useState(false);
   const [streaming, setStreaming] = useState(false);
-  const [llmKeyInput, setLlmKeyInput] = useState("");
-  const [bingKeyInput, setBingKeyInput] = useState("");
-  const [bingKeyConfigured, setBingKeyConfigured] = useState(false);
   const [relatedNotes, setRelatedNotes] = useState<SemanticHit[]>([]);
   const [contextStatus, setContextStatus] = useState<string | null>(null);
   const streamBuf = useRef("");
   const requestIdRef = useRef<string | null>(null);
-
-  const refreshBingKeyStatus = useCallback(async () => {
-    const has = await credentialHas(BING_SEARCH_CREDENTIAL_SERVICE);
-    setBingKeyConfigured(has);
-  }, []);
-
-  useEffect(() => {
-    void refreshBingKeyStatus();
-  }, [refreshBingKeyStatus]);
 
   useEffect(() => {
     let unlisten: (() => void) | undefined;
@@ -98,25 +79,6 @@ export function AiPanel({
       void doneUn.then((fn) => fn());
     };
   }, []);
-
-  const saveLlmApiKey = useCallback(async () => {
-    if (!llmKeyInput.trim()) return;
-    await credentialSet(llmCredentialService(provider), llmKeyInput.trim());
-    setLlmKeyInput("");
-  }, [llmKeyInput, provider]);
-
-  const saveBingApiKey = useCallback(async () => {
-    if (!bingKeyInput.trim()) return;
-    await credentialSet(BING_SEARCH_CREDENTIAL_SERVICE, bingKeyInput.trim());
-    setBingKeyInput("");
-    await refreshBingKeyStatus();
-  }, [bingKeyInput, refreshBingKeyStatus]);
-
-  const clearBingApiKey = useCallback(async () => {
-    await credentialDelete(BING_SEARCH_CREDENTIAL_SERVICE);
-    setBingKeyInput("");
-    await refreshBingKeyStatus();
-  }, [refreshBingKeyStatus]);
 
   const send = useCallback(async () => {
     if (!input.trim() || streaming) return;
@@ -193,48 +155,6 @@ export function AiPanel({
       </div>
 
       <div className="space-y-3 border-b border-border px-3 py-2">
-        <div>
-          <label className="mb-1 block text-xs text-muted-foreground">
-            LLM API Key（系统凭据）
-          </label>
-          <Input
-            type="password"
-            placeholder="按当前提供商保存"
-            value={llmKeyInput}
-            onChange={(e) => setLlmKeyInput(e.target.value)}
-            onBlur={() => void saveLlmApiKey()}
-          />
-        </div>
-
-        <div>
-          <label className="mb-1 block text-xs text-muted-foreground">
-            Bing 搜索 API Key（系统凭据 · iris/bing-search）
-          </label>
-          <Input
-            type="password"
-            placeholder="Azure Bing Web Search v7 订阅密钥"
-            value={bingKeyInput}
-            onChange={(e) => setBingKeyInput(e.target.value)}
-            onBlur={() => void saveBingApiKey()}
-          />
-          <p className="mt-1 text-xs text-muted-foreground">
-            {bingKeyConfigured
-              ? "已配置 Bing：联网搜索优先走 Bing API。"
-              : "未配置 Bing：联网搜索使用 DuckDuckGo（无需 Key）。"}
-          </p>
-          {bingKeyConfigured && (
-            <Button
-              type="button"
-              size="sm"
-              variant="ghost"
-              className="mt-1 h-7 px-2 text-xs"
-              onClick={() => void clearBingApiKey()}
-            >
-              清除 Bing Key
-            </Button>
-          )}
-        </div>
-
         <label className="flex items-center gap-2 text-xs text-muted-foreground">
           <input
             type="checkbox"

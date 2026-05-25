@@ -35,3 +35,39 @@ impl Serialize for AppError {
 }
 
 pub type AppResult<T> = Result<T, AppError>;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn message_variant_serializes() {
+        let err = AppError::msg("something broke");
+        let json = serde_json::to_string(&err).unwrap();
+        assert!(json.contains("something broke"));
+    }
+
+    #[test]
+    fn io_error_serializes() {
+        let io = std::io::Error::new(std::io::ErrorKind::NotFound, "file missing");
+        let err = AppError::Io(io);
+        let json = serde_json::to_string(&err).unwrap();
+        assert!(json.contains("file missing"));
+    }
+
+    #[test]
+    fn db_error_serializes() {
+        let db_err = rusqlite::Error::InvalidParameterName("bad".into());
+        let err = AppError::Db(db_err);
+        let json = serde_json::to_string(&err).unwrap();
+        assert!(json.contains("Database error"));
+    }
+
+    #[test]
+    fn json_error_serializes() {
+        let json_err = serde_json::from_str::<serde_json::Value>("not json").unwrap_err();
+        let err = AppError::Json(json_err);
+        let serialized = serde_json::to_string(&err).unwrap();
+        assert!(serialized.contains("JSON error"));
+    }
+}

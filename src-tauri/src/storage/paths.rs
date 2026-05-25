@@ -54,4 +54,37 @@ mod tests {
         let err = resolve_vault_path(&vault, "../secret").unwrap_err();
         assert!(err.to_string().contains("traversal"));
     }
+
+    #[test]
+    fn rejects_absolute_path() {
+        let dir = tempdir().unwrap();
+        let vault = dir.path().join("vault");
+        fs::create_dir_all(&vault).unwrap();
+        let err = resolve_vault_path(&vault, "/etc/passwd").unwrap_err();
+        assert!(err.to_string().contains("traversal"));
+    }
+
+    #[test]
+    fn resolves_valid_subdirectory_file() {
+        let dir = tempdir().unwrap();
+        let vault = dir.path().join("vault");
+        let sub = vault.join("sub");
+        fs::create_dir_all(&sub).unwrap();
+        let note = sub.join("note.md");
+        fs::write(&note, "hello").unwrap();
+        let resolved = resolve_vault_path(&vault, "sub/note.md").unwrap();
+        assert_eq!(resolved, note.canonicalize().unwrap());
+    }
+
+    #[test]
+    fn relative_path_normal_case() {
+        let dir = tempdir().unwrap();
+        let vault = dir.path().join("vault");
+        fs::create_dir_all(&vault).unwrap();
+        let note = vault.join("notes/readme.md");
+        fs::create_dir_all(note.parent().unwrap()).unwrap();
+        fs::write(&note, "").unwrap();
+        let rel = relative_path(&vault, &note).unwrap();
+        assert_eq!(rel, "notes/readme.md");
+    }
 }

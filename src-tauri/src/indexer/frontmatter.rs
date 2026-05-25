@@ -172,4 +172,34 @@ mod tests {
         assert!(note.frontmatter_json.is_none());
         assert!(note.tags.is_empty());
     }
+
+    #[test]
+    fn bom_prefixed_content_strips_bom() {
+        let md = "\u{feff}---\ntitle: T\ntags: [a]\n---\nbody";
+        let (yaml, _body) = split_frontmatter(md);
+        assert!(yaml.is_some());
+    }
+
+    #[test]
+    fn empty_frontmatter_returns_none() {
+        let md = "---\n---\nbody";
+        let (yaml, body) = split_frontmatter(md);
+        assert!(yaml.is_none());
+        assert!(body.contains("body"));
+    }
+
+    #[test]
+    fn missing_closing_delimiter_treats_all_as_body() {
+        let md = "---\ntitle: T\nno closing";
+        let (yaml, body) = split_frontmatter(md);
+        assert!(yaml.is_none());
+        assert!(body.contains("---"));
+    }
+
+    #[test]
+    fn invalid_yaml_returns_err() {
+        let md = "---\n\tbad: :::\n---\nbody";
+        let result = parse_note(md);
+        assert!(result.is_err());
+    }
 }

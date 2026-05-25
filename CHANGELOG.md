@@ -4,21 +4,27 @@
 
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/)，版本号遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
-## [Unreleased]
-
-### Planned
-
-- **v0.1.1**：纸墨体验阶段 0 扫尾、自定义 API Base URL、可选 Playwright E2E（见 [ROADMAP.md](./ROADMAP.md)）
-- **v0.2**：双向链接、知识图谱、sqlite-vec、纸墨体验阶段 1
+## [0.1.1] - Unreleased
 
 ### Added
 
-- 设计系统 [docs/design-system.md](./docs/design-system.md)：纸墨（B）为主、命令优先（C）为辅；赭石 accent、编辑区纸面、衬线正文、`Ctrl+Shift+A` 收起 AI 侧栏
+- 设置面板（`Ctrl+,`）：LLM API Key、Bing 搜索 Key、自定义 API Base URL 收纳于统一设置 Sheet
+- `src/components/ui/dialog.tsx`：标准 shadcn/ui Dialog 封装（基于 @radix-ui/react-dialog）
+- Quick Open 改用 Dialog 组件，统一 chrome overlay 蒙版
+- Rust 测试补全：路径穿越（4 cases）、索引流水线（7 cases）、数据库初始化（3 cases）、错误序列化（4 cases）
+- frontmatter 边界用例测试（BOM、空 frontmatter、非法 YAML）
+- chunker 边界用例测试（单段落、max_chars、空输入）
+- `tests/prompts.test.ts`：内联 AI 和 `/` 命令 prompt 构建器测试
 
 ### Changed
 
-- 路线图：删除 v0.4 插件与「未来探索」冗项；**AI 自动标签**为待定特色；新增 **v0.1.1** 并将体验阶段与 v0.1.1 / v0.2 / v0.3 / v1.0 绑定（见 [ROADMAP.md](./ROADMAP.md)）
-- 文档体系：新增 [docs/README.md](./docs/README.md)、[v0.1.1-epic](./docs/v0.1.1-epic.md)；统一 README / CONTRIBUTING / ARCHITECTURE / AGENTS / completion-prs 交叉引用
+- **移除**：AI 侧栏中的 API Key 输入区。Key 管理统一移至设置面板（`Ctrl+,`）
+- 精简 AiPanel：移除 Key 管理相关 state 与 imports，侧栏仅保留对话功能
+- QuickOpen 组件由自定义 overlay div 重构为 Dialog + DialogContent
+
+### Fixed
+
+- QuickOpen 开启后搜索框自动聚焦（Dialog 原生支持）
 
 ## [0.1.0] - 2026-05-25
 
