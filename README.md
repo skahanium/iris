@@ -124,4 +124,4 @@ iris/
 
 Iris 采用 [GNU Affero General Public License v3.0](./LICENSE) 开源。
 
-版权所有 (C) 2025 Iris 贡献者。
+版权所有 (C) 2026 Iris 贡献者。
