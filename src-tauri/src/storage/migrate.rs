@@ -151,4 +151,22 @@ mod tests {
             assert_eq!(count, 0);
         }
     }
+
+    #[test]
+    fn migration_003_creates_versions_table() {
+        let conn = Connection::open_in_memory().unwrap();
+        migrate_up(&conn).unwrap();
+
+        let count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM versions", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(count, 0);
+
+        conn.execute(
+            "INSERT INTO versions (file_id, version_no, content_hash, storage_path, created_at)
+             VALUES (1, '20260501000000000', 'abc', '1/test.md', datetime('now'))",
+            [],
+        )
+        .unwrap();
+    }
 }

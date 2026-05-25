@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { htmlToMarkdown, markdownRoundTrip, markdownToHtml } from "@/lib/markdown";
+import { htmlToMarkdown, markdownRoundTrip, markdownToHtml, markdownToHtmlPage } from "@/lib/markdown";
 
 /** 规范化空白便于断言（不用于生产序列化） */
 function normalize(md: string): string {
@@ -140,5 +140,21 @@ describe("wiki-link round-trip (v0.2)", () => {
     const html = markdownToHtml(md);
     // marked should not escape or mangle [[MyPage]]
     expect(html).toContain("MyPage");
+  });
+});
+
+describe("html page export (v0.3)", () => {
+  it("produces self-contained HTML with paper-ink styles", () => {
+    const page = markdownToHtmlPage("# Hello\n\nWorld.", "Test Note");
+    expect(page).toContain("<!DOCTYPE html>");
+    expect(page).toContain("<title>Test Note</title>");
+    expect(page).toContain("<h1>Hello</h1>");
+    expect(page).toContain("Noto Serif SC");
+    expect(page).toContain("background: #f4f0e8");
+  });
+
+  it("falls back to default title", () => {
+    const page = markdownToHtmlPage("Content");
+    expect(page).toContain("Iris Note");
   });
 });
