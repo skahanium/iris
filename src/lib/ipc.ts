@@ -2,8 +2,10 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 
 import type {
+  BacklinkEntry,
   FileEntry,
   FileListItem,
+  GraphData,
   KeywordHit,
   LlmGenerateParams,
   LlmProviderInfo,
@@ -54,6 +56,14 @@ export async function fileDelete(path: string): Promise<void> {
 
 export async function fileRename(path: string, newPath: string): Promise<FileEntry> {
   return invoke<FileEntry>("file_rename", { path, newPath });
+}
+
+export async function fileBacklinks(path: string): Promise<BacklinkEntry[]> {
+  return invoke<BacklinkEntry[]>("file_backlinks", { path });
+}
+
+export async function graphData(): Promise<GraphData> {
+  return invoke<GraphData>("graph_data");
 }
 
 export async function searchKeyword(

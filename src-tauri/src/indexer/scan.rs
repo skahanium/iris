@@ -9,6 +9,7 @@ use walkdir::WalkDir;
 use super::chunker::chunk_markdown;
 use super::frontmatter::parse_note;
 use super::fts::{delete_fts, upsert_fts};
+use super::wikilink::index_wiki_links;
 use crate::embedding::store::store_chunk_embeddings;
 use crate::error::AppResult;
 use crate::storage::paths::relative_path;
@@ -100,6 +101,8 @@ pub fn index_file(conn: &Connection, vault: &Path, absolute: &Path) -> AppResult
     };
 
     sync_file_tags(conn, file_id, &parsed.tags)?;
+
+    let _link_count = index_wiki_links(conn, file_id, &parsed.body)?;
 
     upsert_fts(conn, &rel, &title, &parsed.body)?;
 

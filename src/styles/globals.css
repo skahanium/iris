@@ -115,4 +115,13 @@
   .iris-editor .ProseMirror [data-ai-stream] {
     @apply my-3 rounded-md border border-primary/25 bg-editor-border/30 px-3 py-2;
   }
+
+  /* Wiki-link — accent underline */
+  .wiki-link {
+    @apply text-primary underline decoration-primary/40 underline-offset-2 cursor-pointer;
+  }
+
+  .wiki-link-bracket {
+    @apply text-editor-muted/50;
+  }
 }

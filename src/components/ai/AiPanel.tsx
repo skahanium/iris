@@ -48,6 +48,8 @@ export function AiPanel({
   const [streaming, setStreaming] = useState(false);
   const [relatedNotes, setRelatedNotes] = useState<SemanticHit[]>([]);
   const [contextStatus, setContextStatus] = useState<string | null>(null);
+  const [quoteOnceOnly, setQuoteOnceOnly] = useState(false);
+  const [quoteExpanded, setQuoteExpanded] = useState(false);
   const streamBuf = useRef("");
   const requestIdRef = useRef<string | null>(null);
 
@@ -166,22 +168,55 @@ export function AiPanel({
       </div>
 
       {quote && (
-        <div className="m-2 rounded border border-primary/25 bg-editor-paper/5 p-2.5 text-xs">
-          <div className="font-medium text-muted-foreground">
-            引用自 {quote.filePath}
+        <div className="m-2 rounded border border-primary/30 bg-editor-paper/10 p-2.5 text-xs">
+          <div className="mb-1 flex items-center justify-between">
+            <span className="font-medium text-muted-foreground">
+              引用自 {quote.filePath}
+              {quote.heading ? ` / ${quote.heading}` : ""}
+            </span>
+            <label className="flex items-center gap-1 text-muted-foreground/70">
+              <input
+                type="checkbox"
+                checked={quoteOnceOnly}
+                onChange={(e) => setQuoteOnceOnly(e.target.checked)}
+                className="h-3 w-3"
+              />
+              仅此次
+            </label>
           </div>
-          <p className="mt-1.5 line-clamp-4 font-editor leading-relaxed text-foreground/90">
+          <p
+            className={
+              quoteExpanded
+                ? "font-editor leading-relaxed text-foreground/90"
+                : "line-clamp-5 font-editor leading-relaxed text-foreground/90"
+            }
+          >
             {quote.text}
           </p>
-          <Button
-            type="button"
-            size="sm"
-            variant="ghost"
-            className="mt-1"
-            onClick={onClearQuote}
-          >
-            移除引用
-          </Button>
+          {quote.text.length > 200 && (
+            <button
+              type="button"
+              className="mt-1 text-primary/70 hover:text-primary"
+              onClick={() => setQuoteExpanded(!quoteExpanded)}
+            >
+              {quoteExpanded ? "收起" : "展开"}
+            </button>
+          )}
+          <div className="mt-1.5 flex gap-2">
+            <Button
+              type="button"
+              size="sm"
+              variant="ghost"
+              className="h-7 px-2 text-xs"
+              onClick={() => {
+                onClearQuote();
+                setQuoteExpanded(false);
+                setQuoteOnceOnly(false);
+              }}
+            >
+              移除引用
+            </Button>
+          </div>
         </div>
       )}
 
@@ -192,17 +227,22 @@ export function AiPanel({
       )}
 
       {relatedNotes.length > 0 && (
-        <div className="mx-2 mb-2 rounded border border-border/60 bg-card/50 p-2 text-xs">
-          <div className="font-medium text-muted-foreground">本次关联笔记</div>
-          <ul className="mt-1 space-y-1">
+        <div className="mx-2 mb-2 space-y-1">
+          <p className="px-1 text-xs text-muted-foreground">关联笔记</p>
+          <div className="flex flex-wrap gap-1.5">
             {relatedNotes.map((h) => (
-              <li key={`${h.path}-${h.chunk_id}`}>
-                <span className="text-primary">{h.title}</span>
-                <span className="text-muted-foreground"> · {h.path}</span>
-                <p className="line-clamp-2 text-foreground/80">{h.snippet}</p>
-              </li>
+              <span
+                key={`${h.path}-${h.chunk_id}`}
+                className="inline-flex items-center rounded-full border border-primary/20 bg-editor-paper/10 px-2.5 py-0.5 text-xs text-primary"
+                title={h.snippet}
+              >
+                {h.title}
+                <span className="ml-1 text-muted-foreground/60">
+                  {Math.round(h.score * 100)}%
+                </span>
+              </span>
             ))}
-          </ul>
+          </div>
         </div>
       )}
 

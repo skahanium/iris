@@ -113,3 +113,18 @@ describe("markdown round-trip limitations (documented)", () => {
     expect(typeof out).toBe("string");
   });
 });
+
+describe("wiki-link round-trip (v0.2)", () => {
+  it("preserves single wiki-link", () => {
+    const md = "See [[架构设计]] for details.";
+    const out = markdownRoundTrip(md);
+    expect(out).toContain("[[架构设计]]");
+  });
+
+  it("preserves multiple wiki-links", () => {
+    const md = "[[A]] and [[B 笔记]] together.";
+    const out = markdownRoundTrip(md);
+    expect(out).toContain("[[A]]");
+    expect(out).toContain("[[B 笔记]]");
+  });
+});

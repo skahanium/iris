@@ -16,6 +16,7 @@ import { cn } from "@/lib/utils";
 
 import { AiStreamExtension } from "./extensions/AiStreamExtension";
 import { SlashCommandExtension } from "./extensions/SlashCommandExtension";
+import { WikiLinkExtension } from "./extensions/WikiLinkExtension";
 /**
  * TipTap 扩展 = v0.1「核心 GFM」schema（非完整 GFM）。
  * @see ./gfm-schema.ts — SUPPORTED_CORE_GFM / UNSUPPORTED_OR_BEST_EFFORT_GFM
@@ -29,6 +30,7 @@ interface TipTapEditorProps {
   onSlashCommand?: (command: string) => void;
   onEditorReady?: (editor: Editor) => void;
   onInlineAiRetry?: (editor: Editor) => void;
+  onOpenWikiLink?: (title: string) => void;
   className?: string;
 }
 
@@ -38,6 +40,7 @@ export function TipTapEditor({
   onSlashCommand,
   onEditorReady,
   onInlineAiRetry,
+  onOpenWikiLink,
   className,
 }: TipTapEditorProps) {
   const inlineAiRetryRef = useRef(onInlineAiRetry);
@@ -59,6 +62,7 @@ export function TipTapEditor({
         onRetry: (ed) => inlineAiRetryRef.current?.(ed),
       }),
       SlashCommandExtension.configure({ onCommand: onSlashCommand }),
+      WikiLinkExtension.configure({ onOpenNote: onOpenWikiLink }),
     ],
     content: markdownToHtml(initialMarkdown),
     onUpdate: ({ editor: ed }) => {

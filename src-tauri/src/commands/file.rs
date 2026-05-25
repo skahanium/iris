@@ -132,3 +132,35 @@ pub fn index_rescan(state: State<'_, Arc<AppState>>) -> AppResult<Vec<FileEntry>
     let vault = state.vault_path()?;
     state.db.with_conn(|conn| scan_vault(conn, &vault))
 }
+
+#[derive(Debug, Clone, Serialize)]
+pub struct BacklinkEntry {
+    pub source_path: String,
+    pub source_title: String,
+    pub context: Option<String>,
+}
+
+#[tauri::command]
+pub fn file_backlinks(
+    state: State<'_, Arc<AppState>>,
+    path: String,
+) -> AppResult<Vec<BacklinkEntry>> {
+    state.db.with_conn(|conn| {
+        let mut stmt = conn.prepare(
+            "SELECT f.path, f.title, l.context
+             FROM links l
+             JOIN files f ON f.id = l.source_id
+             JOIN files t ON t.id = l.target_id
+             WHERE t.path = ?1
+             ORDER BY f.title",
+        )?;
+        let rows = stmt.query_map([&path], |row| {
+            Ok(BacklinkEntry {
+                source_path: row.get(0)?,
+                source_title: row.get(1)?,
+                context: row.get(2)?,
+            })
+        })?;
+        Ok(rows.flatten().collect())
+    })
+}

@@ -14,6 +14,17 @@ const turndown = new TurndownService({
 });
 turndown.use(turndownPluginGfm.gfm);
 
+// Wiki-link: convert <span data-wiki-link data-wiki-title="X"> to [[X]]
+turndown.addRule("wikiLink", {
+  filter: (node) =>
+    node instanceof HTMLElement && node.hasAttribute("data-wiki-link"),
+  replacement: (_content, node) => {
+    const el = node as HTMLElement;
+    const title = el.getAttribute("data-wiki-title") ?? "";
+    return `[[${title}]]`;
+  },
+});
+
 marked.setOptions({ gfm: true, breaks: true });
 
 /** Parse Markdown string to HTML for TipTap initial content. */

@@ -49,8 +49,58 @@ pub fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
     }
 }
 
-/// Semantic search over chunk embeddings (Rust cosine, v0.1).
+/// Semantic search over chunk embeddings.
+/// v0.2: tries sqlite-vec virtual table first; falls back to Rust cosine scan (v0.1).
 pub fn semantic_search(
+    conn: &Connection,
+    query: &str,
+    limit: usize,
+) -> AppResult<Vec<SemanticHit>> {
+    // Try vec0 virtual table first (v0.2)
+    if let Ok(hits) = semantic_search_vec(conn, query, limit) {
+        if !hits.is_empty() {
+            return Ok(hits);
+        }
+    }
+
+    // Fallback: Rust cosine scan (v0.1)
+    semantic_search_cosine(conn, query, limit)
+}
+
+/// sqlite-vec path: uses vec0 virtual table for approximate KNN.
+fn semantic_search_vec(
+    conn: &Connection,
+    query: &str,
+    limit: usize,
+) -> AppResult<Vec<SemanticHit>> {
+    let query_vec = embed_text(query)?;
+    let blob = f32_to_bytes(&query_vec);
+
+    let mut stmt = conn.prepare(
+        "SELECT vc.rowid, c.content, f.path, f.title, vc.distance
+         FROM vec_chunks vc
+         JOIN chunks c ON c.id = vc.rowid
+         JOIN files f ON f.id = c.file_id
+         WHERE vc.embedding MATCH ?1
+         ORDER BY vc.distance
+         LIMIT ?2",
+    )?;
+
+    let rows = stmt.query_map(rusqlite::params![blob, limit as i64], |row| {
+        Ok(SemanticHit {
+            chunk_id: row.get(0)?,
+            path: row.get(2)?,
+            title: row.get(3)?,
+            snippet: truncate_snippet(&row.get::<_, String>(1)?, 200),
+            score: 1.0 - row.get::<_, f64>(4)? as f32,
+        })
+    })?;
+
+    Ok(rows.flatten().collect())
+}
+
+/// v0.1 cosine scan: loads all embeddings and computes cosine in Rust.
+fn semantic_search_cosine(
     conn: &Connection,
     query: &str,
     limit: usize,

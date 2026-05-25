@@ -58,3 +58,26 @@ export interface LlmTokenEvent {
   token: string;
   index: number;
 }
+
+export interface BacklinkEntry {
+  source_path: string;
+  source_title: string;
+  context: string | null;
+}
+
+export interface GraphNode {
+  id: number;
+  path: string;
+  title: string;
+  link_count: number;
+}
+
+export interface GraphEdge {
+  source: number;
+  target: number;
+}
+
+export interface GraphData {
+  nodes: GraphNode[];
+  edges: GraphEdge[];
+}

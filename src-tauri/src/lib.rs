@@ -50,6 +50,7 @@ pub fn run() {
             commands::file::vault_set,
             commands::file::vault_get,
             commands::file::index_rescan,
+            commands::file::file_backlinks,
             commands::search::search_keyword,
             commands::search::search_semantic,
             commands::search::search_reindex,
@@ -57,6 +58,7 @@ pub fn run() {
             commands::llm::llm_generate,
             commands::llm::llm_chat,
             commands::llm::llm_abort_cmd,
+            commands::graph::graph_data,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

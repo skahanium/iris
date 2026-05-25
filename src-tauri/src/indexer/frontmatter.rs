@@ -112,21 +112,42 @@ fn extract_fields(yaml: &str) -> (Option<String>, Vec<String>) {
     (title, tags)
 }
 
-/// 解析笔记：提取 body、可选 title/tags、frontmatter JSON。
+/// Extract `#tag` from body text (e.g. `#rust`, `#机器学习`, `#hello-world`).
+/// Returns deduplicated tags.
+pub fn extract_body_tags(body: &str) -> Vec<String> {
+    let re = regex::Regex::new(r"#[\w\u{4e00}-\u{9fff}\-]+").unwrap();
+    let mut tags: Vec<String> = re
+        .find_iter(body)
+        .map(|m| m.as_str().trim_start_matches('#').to_string())
+        .filter(|s| !s.is_empty() && s.len() <= 64)
+        .collect();
+    tags.sort();
+    tags.dedup();
+    tags
+}
+
+/// 解析笔记：提取 body、可选 title/tags（YAML + body）、frontmatter JSON。
 pub fn parse_note(content: &str) -> AppResult<ParsedNote> {
     let (yaml, body) = split_frontmatter(content);
     let Some(yaml) = yaml else {
+        let body_tags = extract_body_tags(&body);
         return Ok(ParsedNote {
             body,
             title: None,
-            tags: vec![],
+            tags: body_tags,
             frontmatter_json: None,
         });
     };
 
     let value: Value = serde_yaml::from_str(&yaml)
         .map_err(|e| AppError::msg(format!("Invalid frontmatter YAML: {e}")))?;
-    let (title, tags) = extract_fields(&yaml);
+    let (title, mut tags) = extract_fields(&yaml);
+    let body_tags = extract_body_tags(&body);
+    for t in body_tags {
+        if !tags.contains(&t) {
+            tags.push(t);
+        }
+    }
     let frontmatter_json = serde_json::to_string(&value)?;
 
     Ok(ParsedNote {
@@ -201,5 +222,32 @@ mod tests {
         let md = "---\n\tbad: :::\n---\nbody";
         let result = parse_note(md);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn extracts_body_tags() {
+        let tags = extract_body_tags("Some text #rust and #tauri are cool.");
+        assert_eq!(tags, vec!["rust", "tauri"]);
+    }
+
+    #[test]
+    fn body_tags_dedup() {
+        let tags = extract_body_tags("#rust #rust #rust");
+        assert_eq!(tags, vec!["rust"]);
+    }
+
+    #[test]
+    fn merges_yaml_and_body_tags() {
+        let md = "---\ntags: [yaml-tag]\n---\nbody with #body-tag";
+        let note = parse_note(md).unwrap();
+        assert!(note.tags.contains(&"yaml-tag".into()));
+        assert!(note.tags.contains(&"body-tag".into()));
+    }
+
+    #[test]
+    fn body_only_tags_work() {
+        let note = parse_note("No frontmatter #solo").unwrap();
+        assert_eq!(note.tags, vec!["solo"]);
+        assert!(note.frontmatter_json.is_none());
     }
 }

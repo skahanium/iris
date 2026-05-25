@@ -25,11 +25,11 @@ export const SlashCommandExtension = Extension.create<SlashCommandOptions>({
         },
         items: ({ query }) => {
           const all = [
-            { id: "summarize", label: "总结" },
-            { id: "outline", label: "生成大纲" },
-            { id: "brainstorm", label: "头脑风暴" },
-            { id: "fix-grammar", label: "修复语法" },
-            { id: "translate", label: "翻译" },
+            { id: "summarize", label: "总结", icon: "FileText" },
+            { id: "outline", label: "生成大纲", icon: "ListTree" },
+            { id: "brainstorm", label: "头脑风暴", icon: "Lightbulb" },
+            { id: "fix-grammar", label: "修复语法", icon: "Languages" },
+            { id: "translate", label: "翻译", icon: "Globe" },
           ];
           return all.filter((i) =>
             i.label.toLowerCase().includes(query.toLowerCase()),
@@ -37,17 +37,31 @@ export const SlashCommandExtension = Extension.create<SlashCommandOptions>({
         },
         render: () => {
           let el: HTMLDivElement | null = null;
+          const iconMap: Record<string, string> = {
+            FileText: "📄",
+            ListTree: "🌲",
+            Lightbulb: "💡",
+            Languages: "🔤",
+            Globe: "🌐",
+          };
           return {
             onStart: (props) => {
               el = document.createElement("div");
               el.className =
-                "z-50 rounded-md border border-border bg-panel p-1 shadow-lg text-sm";
+                "z-50 rounded-md border border-primary/20 bg-chrome shadow-lg text-sm";
               document.body.appendChild(el);
               props.items.forEach((item) => {
+                const it = item as { id: string; label: string; icon?: string };
                 const btn = document.createElement("button");
                 btn.className =
-                  "block w-full rounded px-3 py-1.5 text-left hover:bg-muted";
-                btn.textContent = (item as { label: string }).label;
+                  "flex w-full items-center gap-2 rounded px-3 py-1.5 text-left hover:bg-muted";
+                const icon = document.createElement("span");
+                icon.className = "text-xs";
+                icon.textContent = iconMap[it.icon ?? ""] ?? "";
+                btn.appendChild(icon);
+                const label = document.createElement("span");
+                label.textContent = it.label;
+                btn.appendChild(label);
                 btn.onclick = () => props.command(item);
                 el?.appendChild(btn);
               });
@@ -56,10 +70,17 @@ export const SlashCommandExtension = Extension.create<SlashCommandOptions>({
               if (!el) return;
               el.innerHTML = "";
               props.items.forEach((item) => {
+                const it = item as { id: string; label: string; icon?: string };
                 const btn = document.createElement("button");
                 btn.className =
-                  "block w-full rounded px-3 py-1.5 text-left hover:bg-muted";
-                btn.textContent = (item as { label: string }).label;
+                  "flex w-full items-center gap-2 rounded px-3 py-1.5 text-left hover:bg-muted";
+                const icon = document.createElement("span");
+                icon.className = "text-xs";
+                icon.textContent = iconMap[it.icon ?? ""] ?? "";
+                btn.appendChild(icon);
+                const label = document.createElement("span");
+                label.textContent = it.label;
+                btn.appendChild(label);
                 btn.onclick = () => props.command(item);
                 el?.appendChild(btn);
               });

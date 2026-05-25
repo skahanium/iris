@@ -4,10 +4,13 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { AiPanel, type ContextQuote } from "@/components/ai/AiPanel";
 import { TipTapEditor } from "@/components/editor/TipTapEditor";
 import { FloatingToolbar } from "@/components/editor/FloatingToolbar";
+import { BacklinksPanel } from "@/components/file/BacklinksPanel";
 import { FileSheet } from "@/components/file/FileSheet";
+import { GraphView } from "@/components/graph/GraphView";
 import { QuickOpen } from "@/components/file/QuickOpen";
 import { SearchPanel } from "@/components/file/SearchPanel";
 import { SettingsPanel } from "@/components/settings/SettingsPanel";
+import { TagView } from "@/components/tag/TagView";
 import { AppShell } from "@/components/layout/AppShell";
 import { StatusBar } from "@/components/layout/StatusBar";
 import { TabBar, type TabItem } from "@/components/layout/TabBar";
@@ -33,6 +36,9 @@ function App() {
   const [searchOpen, setSearchOpen] = useState(false);
   const [aiPanelOpen, setAiPanelOpen] = useState(true);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [backlinksOpen, setBacklinksOpen] = useState(false);
+  const [tagViewOpen, setTagViewOpen] = useState(false);
+  const [graphOpen, setGraphOpen] = useState(false);
   const [quote, setQuote] = useState<ContextQuote | null>(null);
   const [aiStatus, setAiStatus] = useState("AI 空闲");
   const [reloadPrompt, setReloadPrompt] = useState<string | null>(null);
@@ -86,6 +92,14 @@ function App() {
       if (e.ctrlKey && e.key === ",") {
         e.preventDefault();
         setSettingsOpen((open) => !open);
+      }
+      if (e.ctrlKey && e.shiftKey && (e.key === "B" || e.key === "b")) {
+        e.preventDefault();
+        setBacklinksOpen((open) => !open);
+      }
+      if (e.ctrlKey && e.shiftKey && (e.key === "G" || e.key === "g")) {
+        e.preventDefault();
+        setGraphOpen((open) => !open);
       }
     };
     window.addEventListener("keydown", onKey);
@@ -209,6 +223,7 @@ function App() {
               onSlashCommand={handleSlashCommand}
               onEditorReady={setEditor}
               onInlineAiRetry={(ed) => void inlineAi.retry(ed)}
+              onOpenWikiLink={(title) => void openFile(`${title}.md`)}
             />
           ) : (
             <div className="flex flex-1 flex-col items-center justify-center gap-2 font-sans text-editor-muted">
@@ -287,6 +302,21 @@ function App() {
             open={settingsOpen}
             onClose={() => setSettingsOpen(false)}
             provider={llmProvider}
+          />
+          <BacklinksPanel
+            open={backlinksOpen}
+            onClose={() => setBacklinksOpen(false)}
+            notePath={activePath}
+            onOpen={(p) => void openFile(p)}
+          />
+          <TagView
+            open={tagViewOpen}
+            onClose={() => setTagViewOpen(false)}
+          />
+          <GraphView
+            open={graphOpen}
+            onClose={() => setGraphOpen(false)}
+            onOpenNote={(p) => void openFile(p)}
           />
         </>
       }

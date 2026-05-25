@@ -7,6 +7,8 @@ use crate::error::{AppError, AppResult};
 
 const MIGRATION_UP: &str = include_str!("../../migrations/001_core.sql");
 const MIGRATION_DOWN: &str = include_str!("../../migrations/001_core.down.sql");
+const MIGRATION_002_UP: &str = include_str!("../../migrations/002_vec.sql");
+const MIGRATION_002_DOWN: &str = include_str!("../../migrations/002_vec.down.sql");
 
 /// Apply core schema migrations idempotently.
 pub fn migrate_up(conn: &Connection) -> AppResult<()> {
@@ -33,6 +35,24 @@ pub fn migrate_up(conn: &Connection) -> AppResult<()> {
             "INSERT INTO _migrations (name, applied_at) VALUES ('001_core', datetime('now'))",
             [],
         )?;
+    }
+
+    // Migration 002: sqlite-vec (best-effort; fails gracefully if sqlite-vec not loaded)
+    let vec_applied: bool = conn
+        .query_row(
+            "SELECT COUNT(*) FROM _migrations WHERE name = '002_vec'",
+            [],
+            |row| row.get::<_, i64>(0),
+        )
+        .map(|c| c > 0)
+        .unwrap_or(false);
+
+    if !vec_applied {
+        let _ = conn.execute_batch(MIGRATION_002_UP);
+        let _ = conn.execute(
+            "INSERT INTO _migrations (name, applied_at) VALUES ('002_vec', datetime('now'))",
+            [],
+        );
     }
 
     Ok(())

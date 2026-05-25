@@ -18,6 +18,7 @@ export const SUPPORTED_CORE_GFM = [
   "GFM 表格",
   "引用块（>）",
   "链接 [text](url)",
+  "Wiki 链接 [[title]]（v0.2）",
 ] as const;
 
 /**
