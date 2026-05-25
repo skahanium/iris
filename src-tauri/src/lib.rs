@@ -30,6 +30,9 @@ pub fn run() {
             let state = Arc::new(AppState::new(data_dir)?);
             app.manage(state.clone());
 
+            // Clean up stale version snapshots on startup
+            let _ = crate::version::version_cleanup(&state);
+
             if state.vault_path().is_ok() {
                 let _ = state.restart_file_watcher(app.handle().clone());
             }

@@ -21,10 +21,7 @@ pub fn version_list_cmd(
 }
 
 #[tauri::command]
-pub fn version_preview_cmd(
-    state: State<'_, Arc<AppState>>,
-    version_id: i64,
-) -> AppResult<String> {
+pub fn version_preview_cmd(state: State<'_, Arc<AppState>>, version_id: i64) -> AppResult<String> {
     version::version_preview(&state, version_id)
 }
 
@@ -39,10 +36,7 @@ pub fn version_restore_cmd(
 }
 
 #[tauri::command]
-pub fn version_delete_cmd(
-    state: State<'_, Arc<AppState>>,
-    version_id: i64,
-) -> AppResult<()> {
+pub fn version_delete_cmd(state: State<'_, Arc<AppState>>, version_id: i64) -> AppResult<()> {
     version::version_delete(&state, version_id)
 }
 
@@ -56,8 +50,6 @@ pub fn version_finalize_cmd(
 }
 
 #[tauri::command]
-pub fn version_cleanup_cmd(
-    state: State<'_, Arc<AppState>>,
-) -> AppResult<usize> {
+pub fn version_cleanup_cmd(state: State<'_, Arc<AppState>>) -> AppResult<usize> {
     version::version_cleanup(&state)
 }

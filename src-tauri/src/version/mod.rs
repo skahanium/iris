@@ -3,7 +3,6 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use chrono::Utc;
-use rusqlite::Connection;
 use serde::Serialize;
 
 use crate::app::AppState;
@@ -23,7 +22,10 @@ pub struct VersionEntry {
 }
 
 fn versions_dir(vault: &std::path::Path, file_id: i64) -> PathBuf {
-    vault.join(".iris").join("versions").join(file_id.to_string())
+    vault
+        .join(".iris")
+        .join("versions")
+        .join(file_id.to_string())
 }
 
 fn ensure_versions_dir(vault: &std::path::Path, file_id: i64) -> AppResult<PathBuf> {
@@ -84,15 +86,13 @@ pub fn create_snapshot(
 
     // Get file_id
     let file_id: i64 = state.db.with_conn(|conn| {
-        conn.query_row("SELECT id FROM files WHERE path = ?1", [path], |r| {
-            r.get(0)
-        })
-        .map_err(|e| AppError::msg(format!("File not indexed: {e}")))
+        conn.query_row("SELECT id FROM files WHERE path = ?1", [path], |r| r.get(0))
+            .map_err(|e| AppError::msg(format!("File not indexed: {e}")))
     })?;
 
     let version_no = timestamp_version_no();
     let dir = ensure_versions_dir(&vault, file_id)?;
-    let storage_path = format!("{}/{}.md", file_id, version_no);
+    let _storage_path = format!("{}/{}.md", file_id, version_no);
     let abs_storage = dir.join(format!("{}.md", version_no));
 
     fs::write(&abs_storage, content)?;
@@ -158,11 +158,11 @@ pub fn version_list(state: &Arc<AppState>, path: &str) -> AppResult<Vec<VersionE
 
 pub fn version_preview(state: &Arc<AppState>, version_id: i64) -> AppResult<String> {
     let (file_id, storage_path): (i64, String) = state.db.with_conn(|conn| {
-        conn.query_row(
+        Ok(conn.query_row(
             "SELECT file_id, storage_path FROM versions WHERE id = ?1",
             [version_id],
             |r| Ok((r.get(0)?, r.get(1)?)),
-        )
+        )?)
     })?;
 
     let vault = state.vault_path()?;
@@ -170,15 +170,19 @@ pub fn version_preview(state: &Arc<AppState>, version_id: i64) -> AppResult<Stri
     Ok(fs::read_to_string(&abs)?)
 }
 
-pub fn version_restore(state: &Arc<AppState>, version_id: i64, current_content: &str) -> AppResult<String> {
+pub fn version_restore(
+    state: &Arc<AppState>,
+    version_id: i64,
+    current_content: &str,
+) -> AppResult<String> {
     let (file_id, storage_path, path): (i64, String, String) = state.db.with_conn(|conn| {
-        conn.query_row(
+        Ok(conn.query_row(
             "SELECT v.file_id, v.storage_path, f.path
              FROM versions v JOIN files f ON f.id = v.file_id
              WHERE v.id = ?1",
             [version_id],
             |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
-        )
+        )?)
     })?;
 
     // Snapshot current state before restoring (protect pre-restore state)
@@ -195,20 +199,20 @@ pub fn version_restore(state: &Arc<AppState>, version_id: i64, current_content: 
     fs::rename(&tmp, &abs_note)?;
 
     // Re-index
-    state.db.with_conn(|conn| {
-        crate::indexer::scan::index_file(conn, &vault, &abs_note)
-    })?;
+    state
+        .db
+        .with_conn(|conn| crate::indexer::scan::index_file(conn, &vault, &abs_note))?;
 
     Ok(content)
 }
 
 pub fn version_delete(state: &Arc<AppState>, version_id: i64) -> AppResult<()> {
     let (file_id, storage_path): (i64, String) = state.db.with_conn(|conn| {
-        conn.query_row(
+        Ok(conn.query_row(
             "SELECT file_id, storage_path FROM versions WHERE id = ?1",
             [version_id],
             |r| Ok((r.get(0)?, r.get(1)?)),
-        )
+        )?)
     })?;
 
     let vault = state.vault_path()?;
@@ -221,7 +225,11 @@ pub fn version_delete(state: &Arc<AppState>, version_id: i64) -> AppResult<()> {
     })
 }
 
-pub fn version_finalize(state: &Arc<AppState>, version_id: i64, label: Option<String>) -> AppResult<()> {
+pub fn version_finalize(
+    state: &Arc<AppState>,
+    version_id: i64,
+    label: Option<String>,
+) -> AppResult<()> {
     state.db.with_conn(|conn| {
         conn.execute(
             "UPDATE versions SET is_finalized = 1, label = ?1 WHERE id = ?2",
@@ -297,9 +305,8 @@ mod tests {
         })
         .unwrap();
 
-        // Build a minimal AppState manually for testing
-        // We need AppState to have a db and vault — but fields are private.
-        // Instead test internal functions directly.
+        // verify vault dir exists
+        assert!(vault.exists());
     }
 
     #[test]

@@ -1,8 +1,8 @@
 use std::fs;
 
 use serde::Serialize;
-use tauri::State;
 use std::sync::Arc;
+use tauri::State;
 
 use crate::app::AppState;
 use crate::error::AppResult;
@@ -13,10 +13,22 @@ pub struct TemplateInfo {
 }
 
 const BUILTIN_TEMPLATES: &[(&str, &str)] = &[
-    ("会议纪要.md", "# 会议纪要\n\n**日期**：\n**参与者**：\n\n## 议题\n\n## 决议\n\n## 待办\n\n- [ ] "),
-    ("读书笔记.md", "# 读书笔记\n\n**书名**：\n**作者**：\n\n## 摘要\n\n## 关键摘录\n\n> \n\n## 读后感\n"),
-    ("项目复盘.md", "# 项目复盘\n\n**项目名**：\n**时间线**：\n\n## 成果\n\n## 问题\n\n## 改进\n"),
-    ("每日记录.md", "# 每日记录\n\n**日期**：\n\n## 今日完成\n\n- \n\n## 明日计划\n\n- \n\n## 备忘\n"),
+    (
+        "会议纪要.md",
+        "# 会议纪要\n\n**日期**：\n**参与者**：\n\n## 议题\n\n## 决议\n\n## 待办\n\n- [ ] ",
+    ),
+    (
+        "读书笔记.md",
+        "# 读书笔记\n\n**书名**：\n**作者**：\n\n## 摘要\n\n## 关键摘录\n\n> \n\n## 读后感\n",
+    ),
+    (
+        "项目复盘.md",
+        "# 项目复盘\n\n**项目名**：\n**时间线**：\n\n## 成果\n\n## 问题\n\n## 改进\n",
+    ),
+    (
+        "每日记录.md",
+        "# 每日记录\n\n**日期**：\n\n## 今日完成\n\n- \n\n## 明日计划\n\n- \n\n## 备忘\n",
+    ),
 ];
 
 fn templates_dir(vault: &std::path::Path) -> std::path::PathBuf {
@@ -80,5 +92,7 @@ pub fn template_create(
         fs::create_dir_all(parent)?;
     }
     fs::write(&abs, &content)?;
-    state.db.with_conn(|conn| crate::indexer::scan::index_file(conn, &vault, &abs))
+    state
+        .db
+        .with_conn(|conn| crate::indexer::scan::index_file(conn, &vault, &abs))
 }

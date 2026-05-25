@@ -281,7 +281,10 @@ mod tests {
                 .unwrap()
                 .flatten()
                 .collect();
-            assert!(hits.contains(&"searchable.md".into()), "FTS should find pineapple in searchable.md");
+            assert!(
+                hits.contains(&"searchable.md".into()),
+                "FTS should find pineapple in searchable.md"
+            );
             Ok(())
         })
         .unwrap();
