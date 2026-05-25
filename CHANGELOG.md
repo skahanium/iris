@@ -4,7 +4,32 @@
 
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/)，版本号遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
-## [0.1.1] - Unreleased
+## [0.2.0] - Unreleased
+
+### Added
+
+- **`[[wiki-link]]` 双向链接**：编辑器语法支持、自动补全、click 导航、links 表索引、turndown 往返序列化
+- **反向链接面板**（`Ctrl+Shift+B`）：显示链接到当前笔记的所有源笔记
+- **body `#tag` 解析**：正文 `#tag` 与 YAML frontmatter tags 合并索引
+- **标签聚合视图**（`Ctrl+Shift+T`）：标签云 + 统计面板（笔记数、标签数）
+- **知识图谱可视化**（`Ctrl+Shift+G`）：Canvas 力导向图，零外部依赖，节点大小按被引用数缩放
+- **sqlite-vec 迁移**：`002_vec.sql` 虚拟表 + vec 优先搜索 + cosine fallback 双路径
+- **纸墨阶段 1 UI**：引用卡完整形态（heading / "仅此次" / 折叠展开）、关联笔记芯片、`/` 命令菜单图标
+- Rust 测试 55 个（+23 from v0.1.1），TypeScript 测试 43 个（+6 from v0.1.1）
+- `links` 表加入 `001_core.sql` migration（ARCHITECTURE 文档已定义但此前未执行）
+
+### Changed
+
+- `index_file()` 流水线新增 wikilink 提取与 body tag 合并步骤
+- AiPanel 引用卡从简单 quote 卡片升级为完整形态（纸墨 token、折叠、"仅此次"）
+- 关联笔记从列表改为芯片（chip）展示
+- `/` 命令菜单从纯文本改为图标 + 纸墨 border token
+
+### Fixed
+
+- FTS5 migration 移除 `content=''` 避免 contentless 模式导致 MATCH 查询失败
+
+## [0.1.1] - 2026-05-25
 
 ### Added
 

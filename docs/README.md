@@ -26,8 +26,8 @@
 | 版本 | 功能 / 体验说明 | 施工 / 审计 |
 |------|-----------------|-------------|
 | **v0.1.0**（已发布） | [ROADMAP § v0.1.0](../ROADMAP.md#v010--ai-原生-mvp) | [v0.1.0-epic.md](./v0.1.0-epic.md)、[v0.1.0-completion-prs.md](./v0.1.0-completion-prs.md) |
-| **v0.1.1**（进行中） | [ROADMAP § v0.1.1](../ROADMAP.md#v011--体验定稿与质量补齐) | [v0.1.1-epic.md](./v0.1.1-epic.md) |
-| **v0.2.0** | [ROADMAP § v0.2.0](../ROADMAP.md#v020--知识网络) | 知识网络 + 纸墨阶段 1 + sqlite-vec |
+| **v0.1.1**（已发布） | [ROADMAP § v0.1.1](../ROADMAP.md#v011--体验定稿与质量补齐) | [v0.1.1-epic.md](./v0.1.1-epic.md) |
+| **v0.2.0**（已实现） | [ROADMAP § v0.2.0](../ROADMAP.md#v020--知识网络) | 知识网络 + 纸墨阶段 1 + sqlite-vec |
 | **v0.3.0** | [ROADMAP § v0.3.0](../ROADMAP.md#v030--安全与版本) | 加密、版本、diff UI |
 | **v1.0.0** | [ROADMAP § v1.0.0](../ROADMAP.md#v100--完整发布) | 国际化、无障碍、体验收尾 |
 

@@ -324,8 +324,8 @@ CREATE TABLE chunk_embeddings (
     embedding  BLOB NOT NULL                    -- f32 小端；AllMiniLML6V2 为 384 维
 );
 
--- v0.2+ 可选：sqlite-vec 虚拟表以加速大规模近似检索
--- CREATE VIRTUAL TABLE vec_chunks USING vec0(...);
+-- v0.2+：sqlite-vec 虚拟表以加速大规模近似检索（migration 002_vec.sql 已实现）
+-- CREATE VIRTUAL TABLE vec_chunks USING vec0(embedding float[384]);
 
 -- 版本快照元数据（内容全文存储在 .iris/versions/ 目录中）
 CREATE TABLE versions (
