@@ -157,7 +157,7 @@ pub fn version_list(state: &Arc<AppState>, path: &str) -> AppResult<Vec<VersionE
 }
 
 pub fn version_preview(state: &Arc<AppState>, version_id: i64) -> AppResult<String> {
-    let (file_id, storage_path): (i64, String) = state.db.with_conn(|conn| {
+    let (_file_id, storage_path): (i64, String) = state.db.with_conn(|conn| {
         Ok(conn.query_row(
             "SELECT file_id, storage_path FROM versions WHERE id = ?1",
             [version_id],
@@ -175,7 +175,7 @@ pub fn version_restore(
     version_id: i64,
     current_content: &str,
 ) -> AppResult<String> {
-    let (file_id, storage_path, path): (i64, String, String) = state.db.with_conn(|conn| {
+    let (_file_id, storage_path, path): (i64, String, String) = state.db.with_conn(|conn| {
         Ok(conn.query_row(
             "SELECT v.file_id, v.storage_path, f.path
              FROM versions v JOIN files f ON f.id = v.file_id
@@ -207,7 +207,7 @@ pub fn version_restore(
 }
 
 pub fn version_delete(state: &Arc<AppState>, version_id: i64) -> AppResult<()> {
-    let (file_id, storage_path): (i64, String) = state.db.with_conn(|conn| {
+    let (_file_id, storage_path): (i64, String) = state.db.with_conn(|conn| {
         Ok(conn.query_row(
             "SELECT file_id, storage_path FROM versions WHERE id = ?1",
             [version_id],
@@ -275,6 +275,7 @@ pub fn version_cleanup(state: &Arc<AppState>) -> AppResult<usize> {
 mod tests {
     use super::*;
     use crate::storage::db::Database;
+    use rusqlite::Connection;
     use std::fs;
     use tempfile::tempdir;
 

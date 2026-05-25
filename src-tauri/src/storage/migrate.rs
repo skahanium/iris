@@ -162,6 +162,14 @@ mod tests {
             .unwrap();
         assert_eq!(count, 0);
 
+        // Need a file first to satisfy FK constraint
+        conn.execute(
+            "INSERT INTO files (path, title, content_hash, created_at, updated_at)
+             VALUES ('test.md', 'Test', 'abc', datetime('now'), datetime('now'))",
+            [],
+        )
+        .unwrap();
+
         conn.execute(
             "INSERT INTO versions (file_id, version_no, content_hash, storage_path, created_at)
              VALUES (1, '20260501000000000', 'abc', '1/test.md', datetime('now'))",
