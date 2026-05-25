@@ -1,0 +1,68 @@
+[package]
+name = "iris"
+version = "0.1.0"
+description = "Local-first AI-native Markdown notes"
+authors = ["Iris Contributors"]
+license = "AGPL-3.0"
+edition = "2021"
+rust-version = "1.80"
+
+[lib]
+name = "iris_lib"
+crate-type = ["lib", "cdylib", "staticlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_yaml = "0.9"
+tokio = { version = "1", features = ["full"] }
+rusqlite = { version = "0.33", features = ["bundled"] }
+thiserror = "2"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+sha2 = "0.10"
+hex = "0.4"
+chrono = { version = "0.4", features = ["serde"] }
+notify = "7"
+notify-debouncer-full = "0.4"
+keyring = { version = "3", features = ["apple-native", "windows-native", "linux-native"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
+futures-util = "0.3"
+uuid = { version = "1", features = ["v4"] }
+regex = "1"
+walkdir = "2"
+tempfile = "3"
+fastembed = "4"
+scraper = "0.22"
+urlencoding = "2"
+
+[dev-dependencies]
+tempfile = "3"
+
+[[test]]
+name = "file_ops"
+path = "tests/file_ops.rs"
+
+[[test]]
+name = "frontmatter_index"
+path = "tests/frontmatter_index.rs"
+
+[[test]]
+name = "vault_watcher"
+path = "tests/vault_watcher.rs"
+
+[[test]]
+name = "semantic_recall_eval"
+path = "tests/semantic_recall_eval.rs"
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+strip = true
+panic = "abort"

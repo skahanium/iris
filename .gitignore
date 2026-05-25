@@ -1,0 +1,86 @@
+# =============================================================================
+# Iris — local build artifacts, caches, secrets (see AGENTS.md security rules)
+# =============================================================================
+
+# --- Dependencies & frontend build ---
+node_modules/
+dist/
+.vite/
+*.tsbuildinfo
+
+# --- Rust / Tauri ---
+**/target/
+src-tauri/gen/
+src-tauri/WixTools/
+
+# ONNX / embedding model cache (fastembed; any cwd)
+.fastembed_cache/
+**/.fastembed_cache/
+
+# Regenerate branding: npm run icon:gen (do not commit root copy)
+/app-icon.png
+
+# --- Local app data (dev vault DB under repo, if used) ---
+.iris/
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+
+# --- Logs & temp ---
+*.log
+*.tmp
+*.temp
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# --- Test & coverage ---
+coverage/
+.nyc_output/
+test-results/
+playwright-report/
+blob-report/
+playwright/.cache/
+
+# --- Tool caches ---
+.eslintcache
+.prettiercache
+
+# --- Secrets & credentials (never commit) ---
+.env
+.env.*
+!.env.example
+.env.local
+.env.*.local
+*.pem
+*.key
+credentials.json
+secrets.json
+
+# --- OS junk ---
+.DS_Store
+._*
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# --- Editor (team may commit shared .vscode/*) ---
+.idea/
+*.swp
+*.swo
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+!.vscode/launch.json
+!.vscode/tasks.json
+*.code-workspace
+
+# --- Cursor / agent local state (rules under .cursor/rules/ may be committed) ---
+.cursor/plans/
+.cursor/projects/
+.cursor/agent-transcripts/
+.agent/
