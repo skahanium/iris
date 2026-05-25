@@ -30,12 +30,14 @@ pub struct GraphData {
 pub fn graph_data(state: State<'_, Arc<AppState>>) -> AppResult<GraphData> {
     state.db.with_conn(|conn| {
         // Nodes: all indexed files
-        let mut stmt = conn.prepare(
-            "SELECT id, path, title FROM files ORDER BY title",
-        )?;
+        let mut stmt = conn.prepare("SELECT id, path, title FROM files ORDER BY title")?;
         let nodes: Vec<GraphNode> = stmt
             .query_map([], |row| {
-                Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?))
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                ))
             })?
             .flatten()
             .map(|(id, path, title)| {
@@ -75,13 +77,12 @@ pub fn graph_data(state: State<'_, Arc<AppState>>) -> AppResult<GraphData> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::app::AppState;
-    use std::sync::Arc;
+    use crate::storage::db::Database;
 
-    fn setup_state() -> Arc<AppState> {
-        let db = crate::storage::db::Database::open_in_memory().unwrap();
+    #[test]
+    fn graph_queries_return_nodes_and_edges() {
+        let db = Database::open_in_memory().unwrap();
         db.with_conn(|conn| {
-            // Seed test files
             conn.execute_batch(
                 "INSERT INTO files (id, path, title, content_hash, created_at, updated_at)
                  VALUES (1, 'a.md', 'Note A', 'aa', '', ''),
@@ -92,70 +93,61 @@ mod tests {
                         (2, 3, 'link from B to C');",
             )
             .unwrap();
+
+            // Nodes
+            let nodes: Vec<GraphNode> = conn
+                .prepare("SELECT id, path, title FROM files ORDER BY title")
+                .unwrap()
+                .query_map([], |row| {
+                    Ok((
+                        row.get::<_, i64>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                    ))
+                })
+                .unwrap()
+                .flatten()
+                .map(|(id, path, title)| {
+                    let link_count: usize = conn
+                        .query_row(
+                            "SELECT COUNT(*) FROM links WHERE source_id = ?1 OR target_id = ?1",
+                            [id],
+                            |r| r.get(0),
+                        )
+                        .unwrap_or(0);
+                    GraphNode {
+                        id,
+                        path,
+                        title,
+                        link_count,
+                    }
+                })
+                .collect();
+
+            assert_eq!(nodes.len(), 3);
+            let a = nodes.iter().find(|n| n.id == 1).unwrap();
+            let b = nodes.iter().find(|n| n.id == 2).unwrap();
+            let c = nodes.iter().find(|n| n.id == 3).unwrap();
+            assert_eq!(a.link_count, 1);
+            assert_eq!(b.link_count, 2);
+            assert_eq!(c.link_count, 1);
+
+            // Edges
+            let edges: Vec<GraphEdge> = conn
+                .prepare("SELECT source_id, target_id FROM links")
+                .unwrap()
+                .query_map([], |row| {
+                    Ok(GraphEdge {
+                        source: row.get(0)?,
+                        target: row.get(1)?,
+                    })
+                })
+                .unwrap()
+                .flatten()
+                .collect();
+            assert_eq!(edges.len(), 2);
             Ok(())
         })
         .unwrap();
-
-        // We need a minimal AppState — but graph_data only needs db
-        // Use a temp dir for data_dir
-        let tmp = tempfile::tempdir().unwrap();
-        let state = AppState {
-            db,
-            vault: std::sync::Mutex::new(None),
-            data_dir: tmp.into_path(),
-            watcher: std::sync::Mutex::new(None),
-        };
-        Arc::new(state)
-    }
-
-    #[test]
-    fn graph_data_returns_all_nodes_and_edges() {
-        let state = setup_state();
-        // We can't easily create a Tauri State, so test with the internal DB directly
-        state
-            .db
-            .with_conn(|conn| {
-                let nodes: Vec<GraphNode> = conn
-                    .prepare("SELECT id, path, title FROM files ORDER BY title")
-                    .unwrap()
-                    .query_map([], |row| {
-                        Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?))
-                    })
-                    .unwrap()
-                    .flatten()
-                    .map(|(id, path, title)| {
-                        let link_count: usize = conn
-                            .query_row(
-                                "SELECT COUNT(*) FROM links WHERE source_id = ?1 OR target_id = ?1",
-                                [id],
-                                |r| r.get(0),
-                            )
-                            .unwrap_or(0);
-                        GraphNode { id, path, title, link_count }
-                    })
-                    .collect();
-
-                assert_eq!(nodes.len(), 3);
-                // Note A has 1 link (to B), B has 2 (from A, to C), C has 1 (from B)
-                let a = nodes.iter().find(|n| n.id == 1).unwrap();
-                let b = nodes.iter().find(|n| n.id == 2).unwrap();
-                let c = nodes.iter().find(|n| n.id == 3).unwrap();
-                assert_eq!(a.link_count, 1);
-                assert_eq!(b.link_count, 2);
-                assert_eq!(c.link_count, 1);
-
-                let edges: Vec<GraphEdge> = conn
-                    .prepare("SELECT source_id, target_id FROM links")
-                    .unwrap()
-                    .query_map([], |row| {
-                        Ok(GraphEdge { source: row.get(0)?, target: row.get(1)? })
-                    })
-                    .unwrap()
-                    .flatten()
-                    .collect();
-                assert_eq!(edges.len(), 2);
-                Ok(())
-            })
-            .unwrap();
     }
 }

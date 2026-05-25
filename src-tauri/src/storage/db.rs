@@ -76,9 +76,15 @@ mod tests {
                 .collect();
             assert!(tables.contains(&"files".into()), "missing files table");
             assert!(tables.contains(&"tags".into()), "missing tags table");
-            assert!(tables.contains(&"file_tags".into()), "missing file_tags table");
+            assert!(
+                tables.contains(&"file_tags".into()),
+                "missing file_tags table"
+            );
             assert!(tables.contains(&"chunks".into()), "missing chunks table");
-            assert!(tables.contains(&"chunk_embeddings".into()), "missing chunk_embeddings table");
+            assert!(
+                tables.contains(&"chunk_embeddings".into()),
+                "missing chunk_embeddings table"
+            );
             Ok(())
         })
         .unwrap();
@@ -91,7 +97,11 @@ mod tests {
             let mode: String = conn
                 .query_row("PRAGMA journal_mode", [], |row| row.get(0))
                 .unwrap();
-            assert_eq!(mode.to_lowercase(), "wal");
+            // In-memory databases ignore WAL and always return "memory"
+            assert!(
+                mode.to_lowercase() == "wal" || mode.to_lowercase() == "memory",
+                "expected wal or memory, got {mode}"
+            );
             Ok(())
         })
         .unwrap();
@@ -100,9 +110,8 @@ mod tests {
     #[test]
     fn with_conn_returns_result() {
         let db = Database::open_in_memory().unwrap();
-        let result: AppResult<i64> = db.with_conn(|conn| {
-            Ok(conn.query_row("SELECT 42", [], |row| row.get(0))?)
-        });
+        let result: AppResult<i64> =
+            db.with_conn(|conn| Ok(conn.query_row("SELECT 42", [], |row| row.get(0))?));
         assert_eq!(result.unwrap(), 42);
     }
 }

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef } from "react";
 
 import { Button } from "@/components/ui/button";
 import { graphData } from "@/lib/ipc";
-import type { GraphData, GraphNode } from "@/types/ipc";
+import type { GraphData } from "@/types/ipc";
 
 interface GraphViewProps {
   open: boolean;
@@ -44,10 +44,10 @@ function forceSimulate(
     // Repulsion between all node pairs
     for (let i = 0; i < nodes.length; i++) {
       for (let j = i + 1; j < nodes.length; j++) {
-        const a = nodes[i];
-        const b = nodes[j];
-        let dx = b.x - a.x;
-        let dy = b.y - a.y;
+        const a = nodes[i]!;
+        const b = nodes[j]!;
+        const dx = b.x - a.x;
+        const dy = b.y - a.y;
         const dist = Math.sqrt(dx * dx + dy * dy) || 1;
         const force = kRepel / (dist * dist);
         const fx = (dx / dist) * force;
@@ -64,16 +64,16 @@ function forceSimulate(
       const src = nodes.find((n) => n.id === edge.source);
       const tgt = nodes.find((n) => n.id === edge.target);
       if (!src || !tgt) continue;
-      const dx = tgt.x - src.x;
-      const dy = tgt.y - src.y;
-      const dist = Math.sqrt(dx * dx + dy * dy) || 1;
-      const force = dist * kAttract;
-      const fx = (dx / dist) * force;
-      const fy = (dy / dist) * force;
-      src.vx += fx;
-      src.vy += fy;
-      tgt.vx -= fx;
-      tgt.vy -= fy;
+      const ex = tgt.x - src.x;
+      const ey = tgt.y - src.y;
+      const edist = Math.sqrt(ex * ex + ey * ey) || 1;
+      const eforce = edist * kAttract;
+      const efx = (ex / edist) * eforce;
+      const efy = (ey / edist) * eforce;
+      src.vx += efx;
+      src.vy += efy;
+      tgt.vx -= efx;
+      tgt.vy -= efy;
     }
 
     // Centering
@@ -128,60 +128,66 @@ export function GraphView({ open, onClose, onOpenNote }: GraphViewProps) {
       target: e.target,
     }));
 
-    // Initial simulation
     forceSimulate(nodes, edges, w, h, 200);
-
     simRef.current = { nodes, edges };
-    draw();
   }, []);
 
-  const draw = useCallback(() => {
+  const startAnimation = useCallback(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
 
-    const sim = simRef.current;
-    if (!sim) return;
+    let running = true;
 
-    const w = canvas.width;
-    const h = canvas.height;
-    ctx.clearRect(0, 0, w, h);
-
-    // Edges
-    ctx.strokeStyle = "hsl(30 6% 30%)";
-    ctx.lineWidth = 0.5;
-    for (const edge of sim.edges) {
-      const src = sim.nodes.find((n) => n.id === edge.source);
-      const tgt = sim.nodes.find((n) => n.id === edge.target);
-      if (!src || !tgt) continue;
-      ctx.beginPath();
-      ctx.moveTo(src.x, src.y);
-      ctx.lineTo(tgt.x, tgt.y);
-      ctx.stroke();
-    }
-
-    // Nodes
-    for (const node of sim.nodes) {
-      ctx.fillStyle = "hsl(28 42% 38%)";
-      ctx.beginPath();
-      ctx.arc(node.x, node.y, node.radius, 0, Math.PI * 2);
-      ctx.fill();
-
-      // Label for larger nodes
-      if (node.radius >= 10) {
-        ctx.fillStyle = "hsl(40 33% 94%)";
-        ctx.font = `${Math.max(9, node.radius * 0.7)}px sans-serif`;
-        ctx.textAlign = "center";
-        ctx.textBaseline = "middle";
-        const label = node.title.length > 6 ? node.title.slice(0, 5) + "…" : node.title;
-        ctx.fillText(label, node.x, node.y);
+    const tick = () => {
+      if (!running) return;
+      const sim = simRef.current;
+      if (!sim) {
+        animRef.current = requestAnimationFrame(tick);
+        return;
       }
-    }
 
-    // Continue simulation
-    forceSimulate(sim.nodes, sim.edges, w, h, 3);
-    animRef.current = requestAnimationFrame(draw);
+      const w = canvas.width;
+      const h = canvas.height;
+      ctx.clearRect(0, 0, w, h);
+
+      // Edges
+      ctx.strokeStyle = "hsl(30 6% 30%)";
+      ctx.lineWidth = 0.5;
+      for (const edge of sim.edges) {
+        const src = sim.nodes.find((n) => n.id === edge.source);
+        const tgt = sim.nodes.find((n) => n.id === edge.target);
+        if (!src || !tgt) continue;
+        ctx.beginPath();
+        ctx.moveTo(src.x, src.y);
+        ctx.lineTo(tgt.x, tgt.y);
+        ctx.stroke();
+      }
+
+      // Nodes
+      for (const node of sim.nodes) {
+        ctx.fillStyle = "hsl(28 42% 38%)";
+        ctx.beginPath();
+        ctx.arc(node.x, node.y, node.radius, 0, Math.PI * 2);
+        ctx.fill();
+
+        if (node.radius >= 10) {
+          ctx.fillStyle = "hsl(40 33% 94%)";
+          ctx.font = `${Math.max(9, node.radius * 0.7)}px sans-serif`;
+          ctx.textAlign = "center";
+          ctx.textBaseline = "middle";
+          const label = node.title.length > 6 ? node.title.slice(0, 5) + "…" : node.title;
+          ctx.fillText(label, node.x, node.y);
+        }
+      }
+
+      forceSimulate(sim.nodes, sim.edges, w, h, 3);
+      animRef.current = requestAnimationFrame(tick);
+    };
+
+    animRef.current = requestAnimationFrame(tick);
+    return () => { running = false; };
   }, []);
 
   const handleClick = useCallback(
@@ -212,9 +218,11 @@ export function GraphView({ open, onClose, onOpenNote }: GraphViewProps) {
       simRef.current = null;
       return;
     }
-    void initGraph();
+    void initGraph().then(() => {
+      startAnimation();
+    });
     return () => cancelAnimationFrame(animRef.current);
-  }, [open, initGraph]);
+  }, [open, initGraph, startAnimation]);
 
   if (!open) return null;
 

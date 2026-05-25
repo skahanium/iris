@@ -46,10 +46,7 @@ pub fn index_wiki_links(conn: &Connection, source_id: i64, content: &str) -> App
         let target: Option<(i64, String)> = conn
             .query_row(
                 "SELECT id, title FROM files WHERE title = ?1 OR path LIKE ?2 LIMIT 1",
-                rusqlite::params![
-                    title,
-                    format!("%{}.md", title)
-                ],
+                rusqlite::params![title, format!("%{}.md", title)],
                 |row| Ok((row.get(0)?, row.get(1)?)),
             )
             .ok();
@@ -83,8 +80,6 @@ fn extract_link_context(content: &str, title: &str) -> String {
 mod tests {
     use super::*;
     use crate::storage::db::Database;
-    use std::fs;
-    use tempfile::tempdir;
 
     #[test]
     fn extracts_single_wiki_link() {
@@ -217,11 +212,10 @@ mod tests {
             )?;
 
             sync_wiki_links(conn, 1)?;
-            let count: i64 = conn.query_row(
-                "SELECT COUNT(*) FROM links WHERE source_id = 1",
-                [],
-                |r| r.get(0),
-            )?;
+            let count: i64 =
+                conn.query_row("SELECT COUNT(*) FROM links WHERE source_id = 1", [], |r| {
+                    r.get(0)
+                })?;
             assert_eq!(count, 0);
             Ok(())
         })

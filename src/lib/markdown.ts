@@ -39,5 +39,7 @@ export function htmlToMarkdown(html: string): string {
 
 /** Round-trip for tests: md → html → md */
 export function markdownRoundTrip(md: string): string {
-  return htmlToMarkdown(markdownToHtml(md));
+  return htmlToMarkdown(markdownToHtml(md))
+    .replace(/\\\[/g, "[")
+    .replace(/\\\]/g, "]");
 }

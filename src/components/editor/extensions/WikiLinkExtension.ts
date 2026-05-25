@@ -1,6 +1,5 @@
 import { Mark, mergeAttributes } from "@tiptap/core";
 import { Plugin, PluginKey } from "@tiptap/pm/state";
-import type { Editor } from "@tiptap/core";
 
 export interface WikiLinkOptions {
   HTMLAttributes: Record<string, unknown>;
@@ -86,7 +85,7 @@ export const WikiLinkExtension = Mark.create<WikiLinkOptions>({
       new Plugin({
         key: new PluginKey("wikiLinkClick"),
         props: {
-          handleClick: (view, pos, event) => {
+          handleClick: (_view, _pos, event) => {
             const target = event.target as HTMLElement;
             const wikiEl = target.closest("[data-wiki-link]");
             if (!wikiEl) return false;

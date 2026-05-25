@@ -48,9 +48,7 @@ fn fixture_vault_path() -> PathBuf {
 }
 
 fn recall_at_k(hits: &[SemanticHit], expected: &str, k: usize) -> bool {
-    hits.iter()
-        .take(k)
-        .any(|h| h.path == expected)
+    hits.iter().take(k).any(|h| h.path == expected)
 }
 
 #[test]
@@ -107,10 +105,7 @@ fn semantic_recall_via_app_state_db() {
     let dir = tempfile::tempdir().unwrap();
     let state = Arc::new(AppState::new(dir.path().to_path_buf()).unwrap());
     state.set_vault(vault.clone()).unwrap();
-    state
-        .db
-        .with_conn(|conn| scan_vault(conn, &vault))
-        .unwrap();
+    state.db.with_conn(|conn| scan_vault(conn, &vault)).unwrap();
 
     let (query, expected) = EVAL_QUERIES[0];
     let hits = state

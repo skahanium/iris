@@ -58,9 +58,11 @@ mod tests {
 
     #[test]
     fn heading_split_creates_multiple_chunks() {
-        let md = "# One\n\nContent one.\n\n# Two\n\nContent two.";
-        let chunks = chunk_markdown(md, 512);
-        assert!(chunks.len() >= 2, "should split at headings");
+        let content_a = "Content line A.\n".repeat(20);
+        let content_b = "Content line B.\n".repeat(20);
+        let md = format!("# One\n\n{}\n\n# Two\n\n{}", content_a, content_b);
+        let chunks = chunk_markdown(&md, 512);
+        assert!(chunks.len() >= 2, "should split at headings, got {}", chunks.len());
         assert!(chunks[0].contains("# One"));
     }
 

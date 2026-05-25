@@ -60,6 +60,8 @@ pub fn migrate_up(conn: &Connection) -> AppResult<()> {
 
 /// Roll back core migration (for tests).
 pub fn migrate_down(conn: &Connection) -> AppResult<()> {
+    let _ = conn.execute_batch(MIGRATION_002_DOWN);
+    let _ = conn.execute("DELETE FROM _migrations WHERE name = '002_vec'", []);
     conn.execute_batch(MIGRATION_DOWN)?;
     conn.execute("DELETE FROM _migrations WHERE name = '001_core'", [])?;
     Ok(())

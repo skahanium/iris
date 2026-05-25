@@ -10,6 +10,7 @@ use super::chunker::chunk_markdown;
 use super::frontmatter::parse_note;
 use super::fts::{delete_fts, upsert_fts};
 use super::wikilink::index_wiki_links;
+#[cfg(not(test))]
 use crate::embedding::store::store_chunk_embeddings;
 use crate::error::AppResult;
 use crate::storage::paths::relative_path;
@@ -192,10 +193,11 @@ mod tests {
             assert_eq!(entry.path, "hello.md");
             assert_eq!(entry.title, "Hello");
 
-            let count: i64 =
-                conn.query_row("SELECT COUNT(*) FROM files WHERE path = 'hello.md'", [], |r| {
-                    r.get(0)
-                })?;
+            let count: i64 = conn.query_row(
+                "SELECT COUNT(*) FROM files WHERE path = 'hello.md'",
+                [],
+                |r| r.get(0),
+            )?;
             assert_eq!(count, 1);
 
             let chunk_count: i64 = conn.query_row(
@@ -219,7 +221,7 @@ mod tests {
             let e1 = index_file(conn, &vault, &vault.join("note.md"))?;
 
             // Rewrite file on disk
-            fs::write(&vault.join("note.md"), "# Second\n\nMore content.").unwrap();
+            fs::write(vault.join("note.md"), "# Second\n\nMore content.").unwrap();
             let e2 = index_file(conn, &vault, &vault.join("note.md"))?;
 
             assert_eq!(e1.id, e2.id, "same path should UPDATE not INSERT");
@@ -239,7 +241,11 @@ mod tests {
     #[test]
     fn index_file_syncs_tags() {
         let (_dir, vault, db) = setup_vault();
-        write_note(&vault, "tagged.md", "---\ntags: [rust, tauri]\n---\n# Tagged");
+        write_note(
+            &vault,
+            "tagged.md",
+            "---\ntags: [rust, tauri]\n---\n# Tagged",
+        );
 
         db.with_conn(|conn| {
             let entry = index_file(conn, &vault, &vault.join("tagged.md"))?;
@@ -264,18 +270,18 @@ mod tests {
     #[test]
     fn index_file_fts_searchable() {
         let (_dir, vault, db) = setup_vault();
-        write_note(&vault, "searchable.md", "# FTS Test\n\nUniqueWordHere");
+        write_note(&vault, "searchable.md", "# FTS Test\n\npineapple");
 
         db.with_conn(|conn| {
             index_file(conn, &vault, &vault.join("searchable.md"))?;
             let hits: Vec<String> = conn
                 .prepare("SELECT path FROM files_fts WHERE files_fts MATCH ?1")
                 .unwrap()
-                .query_map(["UniqueWordHere"], |r| r.get(0))
+                .query_map(["pineapple"], |r| r.get(0))
                 .unwrap()
                 .flatten()
                 .collect();
-            assert!(hits.contains(&"searchable.md".into()));
+            assert!(hits.contains(&"searchable.md".into()), "FTS should find pineapple in searchable.md");
             Ok(())
         })
         .unwrap();
@@ -290,10 +296,11 @@ mod tests {
             let entry = index_file(conn, &vault, &vault.join("del.md"))?;
             remove_file_index(conn, "del.md")?;
 
-            let count: i64 =
-                conn.query_row("SELECT COUNT(*) FROM files WHERE id = ?1", [entry.id], |r| {
-                    r.get(0)
-                })?;
+            let count: i64 = conn.query_row(
+                "SELECT COUNT(*) FROM files WHERE id = ?1",
+                [entry.id],
+                |r| r.get(0),
+            )?;
             assert_eq!(count, 0);
 
             let fts: Vec<String> = conn
@@ -385,7 +392,7 @@ mod tests {
             assert_eq!(count1, 1);
 
             // Rewrite B without wikilinks
-            fs::write(&vault.join("b.md"), "# B\n\nNo links anymore.").unwrap();
+            fs::write(vault.join("b.md"), "# B\n\nNo links anymore.").unwrap();
             index_file(conn, &vault, &vault.join("b.md"))?;
 
             let count2: i64 = conn.query_row(

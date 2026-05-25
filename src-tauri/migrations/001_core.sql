@@ -21,6 +21,14 @@ CREATE TABLE IF NOT EXISTS file_tags (
     PRIMARY KEY (file_id, tag_id)
 );
 
+CREATE TABLE IF NOT EXISTS links (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    source_id  INTEGER REFERENCES files(id) ON DELETE CASCADE,
+    target_id  INTEGER REFERENCES files(id) ON DELETE CASCADE,
+    context    TEXT,
+    UNIQUE(source_id, target_id)
+);
+
 CREATE TABLE IF NOT EXISTS chunks (
     id           INTEGER PRIMARY KEY AUTOINCREMENT,
     file_id      INTEGER NOT NULL REFERENCES files(id) ON DELETE CASCADE,
@@ -39,7 +47,6 @@ CREATE VIRTUAL TABLE IF NOT EXISTS files_fts USING fts5(
     path,
     title,
     content,
-    content='',
     tokenize='unicode61'
 );
 
