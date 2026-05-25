@@ -76,7 +76,7 @@ pnpm vite
 iris/
 ├── src/                    # React 前端源码
 │   ├── components/
-│   │   ├── editor/         # TipTap 编辑器扩展（自定义节点、Mark、插件）
+│   │   ├── editor/         # TipTap 编辑器扩展（自定义节点、Mark；非第三方插件）
 │   │   ├── ai/             # AI 交互相关组件（面板、内联操作按钮）
 │   │   ├── layout/         # 布局组件（侧边栏、标签栏、主区域）
 │   │   └── ui/             # shadcn/ui 基础组件（按钮、输入框、对话框等）

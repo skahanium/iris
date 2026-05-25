@@ -11,6 +11,10 @@
 - v0.1.1：自定义 API Base URL 设置 UI、可选 Playwright E2E
 - v0.2：双向链接、知识图谱、sqlite-vec 语义检索升级
 
+### Changed
+
+- 路线图：删除 v0.4 第三方插件里程碑；移除「未来探索」中的移动端/协作/语音/手写/Web Clipper；合并为永久非目标；**AI 自动标签**单列「待定特色方向」（见 [ROADMAP.md](./ROADMAP.md)）
+
 ## [0.1.0] - 2026-05-25
 
 首个可本地运行的 AI 原生 Markdown 笔记 MVP。数据以用户目录中的 `.md` 为权威来源，SQLite 为索引缓存。

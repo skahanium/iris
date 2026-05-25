@@ -16,6 +16,7 @@
 | 打包体积 | ~10MB | ~200MB | N/A | ~300MB |
 | 开源许可证 | AGPL-3.0 | 专有 | 专有 | AGPL-3.0 |
 | 向量语义搜索 | :white_check_mark: 内置 | :x: | :white_check_mark: | :x: |
+| 第三方插件生态 | :x: **不计划** | :white_check_mark: | :x: | :x: |
 
 
 ## 技术栈
