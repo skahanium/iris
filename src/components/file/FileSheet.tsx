@@ -14,7 +14,7 @@ import {
   templateCreate,
   templateList,
 } from "@/lib/ipc";
-import { markdownToHtml, markdownToHtmlPage } from "@/lib/markdown";
+import { markdownToHtmlPage } from "@/lib/markdown";
 import type { FileListItem } from "@/types/ipc";
 
 interface FileSheetProps {
@@ -52,12 +52,6 @@ export function FileSheet({ open, onClose, onOpen }: FileSheetProps) {
     const html = markdownToHtmlPage(md, title);
     const destPath = path.replace(/\.md$/, ".html");
     await exportFile(destPath, html);
-  }, []);
-
-  const handleExportMd = useCallback(async (path: string) => {
-    const md = await fileRead(path);
-    const destPath = path.replace(/\.md$/, ".copy.md");
-    await exportFile(destPath, md);
   }, []);
 
   if (!open) return null;

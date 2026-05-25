@@ -344,6 +344,11 @@ function App() {
               }
             }}
           />
+          <GraphView
+            open={graphOpen}
+            onClose={() => setGraphOpen(false)}
+            onOpenNote={(p) => void openFile(p)}
+          />
           <ConflictDialog
             open={conflictOpen}
             localContent={markdown}
