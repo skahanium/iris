@@ -1,5 +1,7 @@
 # 语义搜索评估（v0.1.0）
 
+> **文档索引**：[docs/README.md](../README.md) · **排期**：[ROADMAP § v0.2 语义检索升级](../../ROADMAP.md#搜索与索引中后期-mvp--语义检索升级)
+
 ## v0.1 实现路径（非 sqlite-vec 虚拟表）
 
 Iris v0.1 的语义检索采用**本地嵌入 + SQLite BLOB + Rust 全量余弦**，与 ROADMAP 早期「sqlite-vec 虚拟表」表述不同，以本文档与 [ROADMAP.md](../../ROADMAP.md) 为准。

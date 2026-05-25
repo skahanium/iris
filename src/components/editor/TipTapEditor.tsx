@@ -85,7 +85,7 @@ export function TipTapEditor({
   }, [initialMarkdown, editor]);
 
   return (
-    <div className={cn("flex-1 overflow-auto", className)}>
+    <div className={cn("iris-editor flex-1 overflow-auto bg-editor-paper", className)}>
       <EditorContent editor={editor} />
     </div>
   );

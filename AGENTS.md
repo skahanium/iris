@@ -199,6 +199,14 @@ Closes #42
 - 必须通过完整的 round-trip test suite
 - 如果新版本引入了 breaking change，必须在 PR 中注明并提供迁移方案
 
+### 4.6 文档与路线图
+
+- **版本排期唯一来源**：[ROADMAP.md](./ROADMAP.md)（含体验 checklist，如 v0.1.1 纸墨阶段 0）
+- **界面 token 与纸墨规范**：[docs/design-system.md](./docs/design-system.md)
+- **文档索引**：[docs/README.md](./docs/README.md)
+- 修改 UI：先 design-system + ROADMAP 对应节，再 `src/styles/globals.css` 与组件
+- 勿在 `ARCHITECTURE.md` 或 `v0.1.0-completion-prs.md` 中新增与 ROADMAP 冲突的版本承诺；v0.1.0 补齐清单已冻结
+
 
 ## 五、命令速查
 
@@ -260,4 +268,4 @@ pnpm run test:e2e                   # 运行端到端测试
 
 ---
 
-*最后更新: 2025 年 5 月（项目初始化）*
+*最后更新: 2026 年 5 月（v0.1.0 发布；文档体系与 v0.1.1 体验里程碑对齐）*

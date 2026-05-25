@@ -1,5 +1,7 @@
 # 安全策略
 
+> 架构与安全实现见 [ARCHITECTURE.md](./ARCHITECTURE.md)；文档索引见 [docs/README.md](./docs/README.md)。
+
 ## 支持版本
 
 | 版本   | 支持状态         |

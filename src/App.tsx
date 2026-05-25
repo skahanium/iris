@@ -30,6 +30,7 @@ function App() {
   const [quickOpen, setQuickOpen] = useState(false);
   const [fileSheet, setFileSheet] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
+  const [aiPanelOpen, setAiPanelOpen] = useState(true);
   const [quote, setQuote] = useState<ContextQuote | null>(null);
   const [aiStatus, setAiStatus] = useState("AI 空闲");
   const [reloadPrompt, setReloadPrompt] = useState<string | null>(null);
@@ -70,6 +71,10 @@ function App() {
       if (e.ctrlKey && e.shiftKey && (e.key === "F" || e.key === "f")) {
         e.preventDefault();
         setSearchOpen(true);
+      }
+      if (e.ctrlKey && e.shiftKey && (e.key === "A" || e.key === "a")) {
+        e.preventDefault();
+        setAiPanelOpen((open) => !open);
       }
       if (e.ctrlKey && e.key === "w" && activePath) {
         e.preventDefault();
@@ -151,6 +156,7 @@ function App() {
 
   return (
     <AppShell
+      aiPanelOpen={aiPanelOpen}
       tabBar={
         <TabBar
           tabs={tabs}
@@ -170,7 +176,7 @@ function App() {
       editor={
         <div className="relative flex min-h-0 flex-1 flex-col">
           {reloadPrompt && (
-            <div className="flex items-center gap-2 border-b border-primary/30 bg-primary/10 px-4 py-2 text-sm">
+            <div className="flex items-center gap-2 border-b border-primary/25 bg-editor-border/40 px-4 py-2 font-sans text-sm text-editor-ink">
               <span>{reloadPrompt}</span>
               <Button
                 type="button"
@@ -199,8 +205,11 @@ function App() {
               onInlineAiRetry={(ed) => void inlineAi.retry(ed)}
             />
           ) : (
-            <div className="flex flex-1 items-center justify-center text-muted-foreground">
-              Ctrl+P 打开笔记，Ctrl+Shift+E 管理文件
+            <div className="flex flex-1 flex-col items-center justify-center gap-2 font-sans text-editor-muted">
+              <p className="font-editor text-lg text-editor-ink/80">铺开纸面，开始写</p>
+              <p className="text-sm">
+                Ctrl+P 打开 · Ctrl+Shift+E 文件 · Ctrl+Shift+A AI 侧栏
+              </p>
             </div>
           )}
           <FloatingToolbar
@@ -229,7 +238,21 @@ function App() {
       }
       overlays={
         <>
-          <div className="fixed right-[300px] top-2 z-30">
+          <div
+            className={
+              aiPanelOpen
+                ? "fixed right-[292px] top-2 z-30 flex gap-1"
+                : "fixed right-3 top-2 z-30 flex gap-1"
+            }
+          >
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              onClick={() => setAiPanelOpen((o) => !o)}
+            >
+              {aiPanelOpen ? "收起 AI" : "AI"}
+            </Button>
             <Button
               type="button"
               size="sm"

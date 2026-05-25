@@ -2,29 +2,46 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Iris · 纸墨（B）+ chrome 外壳；token 定义见 docs/design-system.md */
+
 @layer base {
   :root {
-    --background: 0 0% 5%;
-    --foreground: 0 0% 90%;
-    --panel: 0 0% 9%;
-    --card: 0 0% 10%;
-    --border: 0 0% 15%;
-    --primary: 258 89% 66%;
-    --primary-foreground: 0 0% 100%;
-    --muted: 0 0% 15%;
-    --muted-foreground: 0 0% 64%;
+    /* Chrome — warm dark shell */
+    --background: 30 10% 8%;
+    --foreground: 40 12% 90%;
+    --panel: 30 8% 12%;
+    --card: 30 7% 14%;
+    --border: 30 6% 20%;
+    --muted: 30 6% 18%;
+    --muted-foreground: 35 8% 58%;
+
+    /* Accent — sepia / copper (not violet) */
+    --primary: 28 42% 38%;
+    --primary-foreground: 40 33% 96%;
+
+    /* Editor paper — always “sheet” tone even in dark app chrome */
+    --editor-paper: 40 33% 94%;
+    --editor-ink: 25 22% 16%;
+    --editor-muted: 30 12% 42%;
+    --editor-border: 35 20% 82%;
   }
 
   .light {
-    --background: 0 0% 98%;
-    --foreground: 0 0% 9%;
-    --panel: 0 0% 96%;
-    --card: 0 0% 100%;
-    --border: 0 0% 90%;
-    --primary: 262 83% 58%;
-    --primary-foreground: 0 0% 100%;
-    --muted: 0 0% 96%;
-    --muted-foreground: 0 0% 45%;
+    --background: 40 15% 96%;
+    --foreground: 25 20% 14%;
+    --panel: 40 12% 93%;
+    --card: 40 20% 98%;
+    --border: 35 14% 86%;
+    --muted: 40 10% 90%;
+    --muted-foreground: 30 8% 42%;
+
+    --primary: 28 48% 34%;
+    --primary-foreground: 40 33% 98%;
+
+    --editor-paper: 40 40% 97%;
+    --editor-ink: 25 25% 12%;
+    --editor-muted: 30 10% 38%;
+    --editor-border: 35 18% 88%;
   }
 
   * {
@@ -32,6 +49,70 @@
   }
 
   body {
-    @apply bg-background text-foreground font-sans antialiased;
+    @apply bg-background font-sans text-foreground antialiased;
+  }
+}
+
+@layer components {
+  /* TipTap / ProseMirror — centered “page” on paper */
+  .iris-editor .ProseMirror {
+    @apply mx-auto min-h-full max-w-[65ch] font-editor text-editor-ink;
+    padding: 2.75rem 2rem 5rem;
+    font-size: 1.0625rem;
+    line-height: 1.75;
+    outline: none;
+  }
+
+  .iris-editor .ProseMirror h1 {
+    @apply mb-4 mt-8 font-editor text-3xl font-semibold tracking-tight text-editor-ink;
+  }
+
+  .iris-editor .ProseMirror h2 {
+    @apply mb-3 mt-6 font-editor text-2xl font-semibold text-editor-ink;
+  }
+
+  .iris-editor .ProseMirror h3 {
+    @apply mb-2 mt-5 font-editor text-xl font-semibold text-editor-ink;
+  }
+
+  .iris-editor .ProseMirror p {
+    @apply mb-4;
+  }
+
+  .iris-editor .ProseMirror a {
+    @apply text-primary underline decoration-primary/40 underline-offset-2;
+  }
+
+  .iris-editor .ProseMirror code {
+    @apply rounded bg-editor-border/60 px-1 py-0.5 font-mono text-[0.9em] text-editor-ink;
+  }
+
+  .iris-editor .ProseMirror pre {
+    @apply my-4 overflow-x-auto rounded-md border border-editor-border p-4 font-mono text-sm;
+    background: hsl(30 12% 12%);
+    color: hsl(40 20% 92%);
+  }
+
+  .light .iris-editor .ProseMirror pre {
+    background: hsl(30 10% 18%);
+    color: hsl(40 25% 94%);
+  }
+
+  .iris-editor .ProseMirror blockquote {
+    @apply border-l-2 border-primary/50 pl-4 italic text-editor-muted;
+  }
+
+  .iris-editor .ProseMirror ul,
+  .iris-editor .ProseMirror ol {
+    @apply mb-4 pl-6;
+  }
+
+  .iris-editor .ProseMirror .is-empty::before {
+    @apply text-editor-muted;
+  }
+
+  /* AI stream node — subtle accent frame */
+  .iris-editor .ProseMirror [data-ai-stream] {
+    @apply my-3 rounded-md border border-primary/25 bg-editor-border/30 px-3 py-2;
   }
 }

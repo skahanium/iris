@@ -54,41 +54,45 @@
 ### 数据自主权
 每个笔记是独立的 `.md` 文件。用 VS Code、Typora、任何编辑器都能打开。SQLite 是缓存，文件是数据。
 
+### 界面取向
+**纸墨编辑**（暖纸色写作区 + 低干扰外壳）为主，**命令优先**（`Ctrl+P` / 可收起 AI 侧栏）为辅；不做第三方插件生态。见 [设计系统](docs/design-system.md) 与 [路线图 · 体验方向](ROADMAP.md#体验方向与路线图绑定)。
+
 
 ## 快速开始
 
-> **当前状态**: v0.1.0 MVP 已实现（本地开发可运行）。详见 [Roadmap](./ROADMAP.md) 与 [CHANGELOG](./CHANGELOG.md)。
+> **当前状态**：**v0.1.0** 已发布；**v0.1.1** 推进纸墨体验与质量补齐。排期见 [ROADMAP.md](./ROADMAP.md)，变更见 [CHANGELOG.md](./CHANGELOG.md)，文档索引见 [docs/README.md](docs/README.md)。
 
 ### 环境要求
 
 - [Rust](https://rustup.rs/) 1.75+
 - [Node.js](https://nodejs.org/) 20+
-- [pnpm](https://pnpm.io/) 9+
+- [Node 包管理器](https://nodejs.org/)：`npm`（仓库含 `package-lock.json`）或 [pnpm](https://pnpm.io/) 9+
 - Windows 10+ / macOS 13+ / Linux (X11/Wayland)
 
 ### 开发
 
 ```bash
 # 克隆仓库
-git clone https://github.com/iris-notes/iris.git
+git clone https://github.com/skahanium/iris.git
 cd iris
 
 # 安装前端依赖
-pnpm install
+npm ci
+# 或：pnpm install
 
 # 启动开发模式（热更新）
-pnpm tauri dev
+npm run tauri dev
 
 # 构建生产版本
-pnpm tauri build
+npm run tauri build
 ```
 
 ### 配置 AI
 
-1. 打开 Iris → 设置 → AI
-2. 选择提供商（OpenAI / Claude / Ollama / 自定义 API）
-3. 填入 API Key（存储在操作系统凭据管理器中，不落盘）
-4. 可选：自定义 System Prompt
+1. 启动应用并选择笔记目录（Vault）
+2. 右栏 **AI** 面板选择提供商（OpenAI / Claude / Ollama / 自定义）
+3. 填入 API Key（存入操作系统凭据管理器，不落盘）
+4. 可选：联网搜索需配置 Bing Key（见侧栏说明）；`Ctrl+Shift+A` 可收起 AI 侧栏以专注写作
 
 
 ## 项目结构
@@ -98,7 +102,7 @@ iris/
 ├── src/                    # React 前端源码
 ├── src-tauri/              # Rust / Tauri 后端
 ├── tests/                  # 前端与 E2E 测试
-├── docs/                   # Epic、补齐 PR、评测说明
+├── docs/                   # [文档索引](docs/README.md)：Epic、设计系统、语义评测
 ├── scripts/                # 维护脚本（图标生成等）
 │   └── assets/             # 品牌源图（非根目录）
 ├── package.json            # 前端依赖（Vite/Tauri 惯例在根目录）
@@ -118,6 +122,17 @@ iris/
 - **结构化是 AI 的前提** — Prosemirror 的文档节点树让 AI 理解文档结构，而非猜测。
 - **速度是功能** — Tauri 2.x 的 Rust 后端消除 GC 停顿，50MB 内存运行。
 - **开源就是安全** — AGPL-3.0。代码可审计，数据在你自己手里。
+- **克制的产品边界** — 无第三方插件、无移动端/实时协作；扩展靠主线版本与 fork（见 [ROADMAP](ROADMAP.md)）。
+
+## 文档
+
+| 你想… | 阅读 |
+|--------|------|
+| 看版本计划与体验排期 | [ROADMAP.md](./ROADMAP.md) |
+| 改界面 / token / 纸墨规范 | [docs/design-system.md](docs/design-system.md) |
+| 查架构、IPC、数据流 | [ARCHITECTURE.md](./ARCHITECTURE.md) |
+| 参与开发 | [CONTRIBUTING.md](./CONTRIBUTING.md) · [AGENTS.md](./AGENTS.md) |
+| 全部文档列表 | [docs/README.md](docs/README.md) |
 
 
 ## 许可证

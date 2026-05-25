@@ -25,7 +25,7 @@ export function TabBar({
   onNew,
 }: TabBarProps) {
   return (
-    <div className="flex h-10 items-center gap-1 border-b border-border bg-panel px-2">
+    <div className="flex h-9 items-center gap-0.5 border-b border-border bg-panel/95 px-2">
       {tabs.map((tab) => (
         <button
           key={tab.path}
@@ -33,8 +33,8 @@ export function TabBar({
           className={cn(
             "flex max-w-[200px] items-center gap-1 rounded px-2 py-1 text-xs",
             activePath === tab.path
-              ? "bg-muted text-foreground"
-              : "text-muted-foreground hover:bg-muted/50",
+              ? "bg-muted/80 text-foreground"
+              : "text-muted-foreground hover:bg-muted/40",
           )}
           onClick={() => onSelect(tab.path)}
         >

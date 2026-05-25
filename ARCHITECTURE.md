@@ -2,6 +2,15 @@
 
 > 本文档描述 Iris 的系统架构、数据流、安全模型和关键设计决策。
 
+**文档分工**（勿在本文件重复维护版本排期）：
+
+| 文档 | 内容 |
+|------|------|
+| [ROADMAP.md](./ROADMAP.md) | 版本里程碑：功能 + 体验 |
+| [docs/design-system.md](./docs/design-system.md) | 纸墨 token、组件与 B/C 原则 |
+| [docs/README.md](./docs/README.md) | 全库文档索引 |
+| 本文档 | 分层、IPC、数据流、AI 线框 |
+
 ---
 
 ## 概览
@@ -505,9 +514,15 @@ CREATE TABLE settings (
 - Rust: 接收结构化上下文后，拼入 LLM 请求的 `system` 或 `user` 消息中，附带位置元数据
 - AI 响应中的引用标记解析后在编辑器侧高亮对应段落
 
-### 配色方案
+### 配色与排版
 
-深色主题为默认，面向长时间写作场景。
+**设计定稿**：主攻 **纸墨编辑（B）**，备选 **命令优先（C）**。完整 token、字体与阶段规划见 [docs/design-system.md](./docs/design-system.md)。
+
+深色 **chrome** + 亮色 **编辑纸面** 为默认组合；主强调色为赭石系（非紫色）。
+
+#### 配色方案（摘要）
+
+深色 chrome 为默认外壳，编辑区为暖纸色，面向长时间写作。
 
 | 层级 | CSS Token | 色值 | 用途 |
 |------|-----------|------|------|
@@ -515,8 +530,9 @@ CREATE TABLE settings (
 | 面板色 | --panel | `#171717` | AI 面板、Sheet、Dialog |
 | 卡片色 | --card | `#1a1a1a` | AI 输入框、搜索框 |
 | 分割线 | --border | `#262626` | 面板与编辑器的边界 |
-| 主色调 | --primary | `#a78bfa` (violet-400) | 按钮、选中态、链接、AI 标识 |
-| 主色调悬停 | --primary-hover | `#c4b5fd` (violet-300) | hover/focus 状态 |
+| 主色调 | --primary / accent | 赭石 `hsl(28 42% 38%)` | 按钮、选中态、链接、AI 标识 |
+| 编辑纸面 | --editor-paper | `#f4f0e8` | 主编辑区背景 |
+| 正文墨色 | --editor-ink | `#2c2926` | 编辑器正文 |
 | 一级文字 | --text-primary | `#e5e5e5` | 标题、正文 |
 | 二级文字 | --text-secondary | `#a3a3a3` | 元信息、辅助文字 |
 | 三级文字 | --text-tertiary | `#737373` | 占位符、禁用态 |
@@ -527,13 +543,13 @@ CREATE TABLE settings (
 |------|------|
 | 编辑区 | `#fafafa` |
 | 面板 | `#f5f5f5` |
-| 主色 | `#7c3aed` (violet-600) |
+| 主色 | 赭石（与暗色 chrome 一致） |
 
 ### 字体
 
 | 场景 | 推荐 | CSS fallback |
 |------|------|-------------|
-| 编辑器正文 | JetBrains Mono / Iosevka | `"JetBrains Mono", "Iosevka", monospace` |
+| 编辑器正文 | 衬线栈（见 design-system） | `"Noto Serif SC", "Source Han Serif SC", Georgia, serif` |
 | 代码块 | Fira Code / JetBrains Mono | `"Fira Code", "JetBrains Mono", monospace` |
 | UI 文本 | 系统原生字体栈 | `-apple-system, "Microsoft YaHei", "PingFang SC", sans-serif` |
 

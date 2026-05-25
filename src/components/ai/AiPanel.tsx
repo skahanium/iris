@@ -246,9 +246,13 @@ export function AiPanel({
       </div>
 
       {quote && (
-        <div className="m-2 rounded border border-border bg-card p-2 text-xs">
-          <div className="text-muted-foreground">引用自 {quote.filePath}</div>
-          <p className="mt-1 line-clamp-4">{quote.text}</p>
+        <div className="m-2 rounded border border-primary/25 bg-editor-paper/5 p-2.5 text-xs">
+          <div className="font-medium text-muted-foreground">
+            引用自 {quote.filePath}
+          </div>
+          <p className="mt-1.5 line-clamp-4 font-editor leading-relaxed text-foreground/90">
+            {quote.text}
+          </p>
           <Button
             type="button"
             size="sm"

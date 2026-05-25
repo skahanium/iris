@@ -4,6 +4,18 @@
 
 ---
 
+## 文档体系
+
+贡献前请知悉 **[docs/README.md](./docs/README.md)** 中的层级：
+
+- **排期（唯一）**：[ROADMAP.md](./ROADMAP.md) — 功能与体验同一里程碑
+- **界面**：[docs/design-system.md](./docs/design-system.md) — 纸墨 B / 命令 C
+- **实现**：[ARCHITECTURE.md](./ARCHITECTURE.md)
+- **v0.1.0 历史补齐**：[docs/v0.1.0-completion-prs.md](./docs/v0.1.0-completion-prs.md)（已冻结）
+- **当前 Epic**：[docs/v0.1.1-epic.md](./docs/v0.1.1-epic.md)
+
+修改 UI 时同步 design-system + ROADMAP 对应版本 checklist；修改 IPC 时见下文与 AGENTS.md §4.2。
+
 ## 目录
 
 - [行为准则](#行为准则)
@@ -30,7 +42,7 @@
 |------|----------|----------|
 | Rust | 1.75+ | `curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \| sh` |
 | Node.js | 20+ | [nodejs.org](https://nodejs.org/) 或 `fnm` / `nvm` |
-| pnpm | 9+ | `npm install -g pnpm` |
+| npm 或 pnpm | npm 10+ / pnpm 9+ | 仓库含 `package-lock.json`，推荐 `npm ci`；pnpm 亦可 |
 
 ### Windows 额外要求
 
@@ -56,17 +68,17 @@ sudo pacman -S webkit2gtk-4.1 base-devel openssl libappindicator-gtk3 librsvg
 
 ```bash
 # 克隆仓库
-git clone https://github.com/iris-notes/iris.git
+git clone https://github.com/skahanium/iris.git
 cd iris
 
 # 安装前端依赖
-pnpm install
+npm ci
 
 # 启动 Tauri 开发模式（含热更新）
-pnpm tauri dev
+npm run tauri dev
 
 # 仅启动前端开发服务器（不启动 Rust 后端，用于 UI 调试）
-pnpm vite
+npm run dev
 ```
 
 
@@ -102,9 +114,15 @@ iris/
 │   ├── migrations/         # SQLite 数据库迁移文件
 │   ├── Cargo.toml
 │   └── tauri.conf.json
+├── docs/                   # 文档索引、Epic、design-system、eval
+│   ├── README.md           # 全库文档入口
+│   ├── design-system.md    # 纸墨 B / 命令 C
+│   ├── v0.1.0-epic.md
+│   ├── v0.1.0-completion-prs.md  # 已冻结
+│   └── v0.1.1-epic.md      # 当前 Epic
 ├── AGENTS.md               # AI 开发规范
-├── ARCHITECTURE.md         # 技术架构白皮书
-├── ROADMAP.md              # 版本路线图
+├── ARCHITECTURE.md         # 技术架构
+├── ROADMAP.md              # 版本路线图（排期唯一来源）
 └── README.md               # 项目门面
 ```
 
@@ -126,15 +144,15 @@ cargo clippy --all-targets -- -D warnings  # Lint 检查（警告即错误）
 cargo test                         # 运行 Rust 测试
 cargo audit                        # 依赖安全审计
 
-# 前端
-pnpm run lint         # ESLint 检查
-pnpm run format:check # Prettier 格式检查
-pnpm run typecheck    # TypeScript 类型检查
-pnpm run test         # 运行前端测试
+# 前端（npm；pnpm 将 `npm run` 换为 `pnpm` 即可）
+npm run lint
+npm run format:check
+npm run typecheck
+npm run test
 
 # E2E（端到端）
-pnpm tauri build --debug
-pnpm run test:e2e
+npm run tauri build -- --debug
+npm run test:e2e
 ```
 
 
@@ -248,22 +266,16 @@ cargo test markdown_roundtrip
 ### 前端测试
 
 ```bash
-# 运行所有测试
-pnpm run test
-
-# 监听模式
-pnpm run test:watch
-
-# 生成覆盖率报告
-pnpm run test:coverage
+npm run test
+npm run test:watch
+npm run test:coverage
 ```
 
 ### 端到端测试
 
 ```bash
-# Debug 模式构建并运行 E2E
-pnpm tauri build --debug
-pnpm run test:e2e
+npm run tauri build -- --debug
+npm run test:e2e
 ```
 
 
