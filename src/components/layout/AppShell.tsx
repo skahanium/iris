@@ -8,6 +8,7 @@ interface AppShellProps {
   aiPanel: ReactNode;
   statusBar: ReactNode;
   aiPanelOpen?: boolean;
+  zen?: boolean;
   overlays?: ReactNode;
 }
 
@@ -17,33 +18,38 @@ export function AppShell({
   aiPanel,
   statusBar,
   aiPanelOpen = true,
+  zen = false,
   overlays,
 }: AppShellProps) {
   return (
     <div className="flex h-dvh flex-col overflow-hidden bg-background">
-      {tabBar}
+      {!zen ? tabBar : null}
       <div className="flex min-h-0 flex-1">
         <main className="relative flex min-w-0 flex-1 flex-col bg-background">
           {editor}
         </main>
-        <aside
-          className={cn(
-            "flex shrink-0 flex-col border-l border-border bg-panel transition-[width] duration-200 ease-out",
-            aiPanelOpen ? "w-[280px]" : "w-0 overflow-hidden border-transparent",
-          )}
-          aria-hidden={!aiPanelOpen}
-        >
-          <div
+        {!zen ? (
+          <aside
             className={cn(
-              "flex h-full w-[280px] flex-col",
-              !aiPanelOpen && "pointer-events-none opacity-0",
+              "z-ai flex shrink-0 flex-col border-l border-border bg-panel transition-[width] duration-200 ease-out",
+              aiPanelOpen
+                ? "w-[280px]"
+                : "w-0 overflow-hidden border-transparent",
             )}
+            aria-hidden={!aiPanelOpen}
           >
-            {aiPanel}
-          </div>
-        </aside>
+            <div
+              className={cn(
+                "flex h-full w-[280px] flex-col",
+                !aiPanelOpen && "pointer-events-none opacity-0",
+              )}
+            >
+              {aiPanel}
+            </div>
+          </aside>
+        ) : null}
       </div>
-      {statusBar}
+      {!zen ? statusBar : null}
       {overlays}
     </div>
   );

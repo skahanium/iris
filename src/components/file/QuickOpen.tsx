@@ -36,12 +36,15 @@ export function QuickOpen({ open, onClose, onSelect }: QuickOpenProps) {
 
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="top-[12vh] max-w-xl translate-y-0 gap-0 overflow-hidden p-0">
+      <DialogContent
+        size="compact"
+        className="gap-0 overflow-hidden p-0"
+      >
         <DialogHeader className="sr-only">
           <DialogTitle>搜索笔记</DialogTitle>
         </DialogHeader>
         <Input
-          className="rounded-none border-0 border-b focus-visible:ring-0"
+          className="rounded-none border-0 border-b pr-10 focus-visible:ring-0"
           placeholder="搜索笔记…"
           value={query}
           autoFocus

@@ -24,7 +24,7 @@ export function FloatingToolbar({
   ];
 
   return (
-    <div className="fixed bottom-20 left-1/2 z-30 flex -translate-x-1/2 gap-1 rounded-lg border border-border bg-panel/95 px-2 py-1.5 shadow-lg backdrop-blur-sm">
+    <div className="fixed bottom-20 left-1/2 z-30 flex -translate-x-1/2 gap-1 rounded-2xl border border-border/70 bg-panel/95 px-2 py-1.5 shadow-floating backdrop-blur-sm">
       {actions.map((a) => (
         <Button
           key={a.id}

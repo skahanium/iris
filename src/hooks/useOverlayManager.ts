@@ -19,112 +19,110 @@ const SIDE_PANELS: OverlayId[] = [
   "version",
 ];
 
+export interface OverlayState {
+  activeOverlay: OverlayId | null;
+}
+
+export function openOverlayState(
+  _state: OverlayState,
+  id: OverlayId,
+): OverlayState {
+  return { activeOverlay: id };
+}
+
+export function closeOverlayState(
+  state: OverlayState,
+  id?: OverlayId,
+): OverlayState {
+  if (id && state.activeOverlay !== id) return state;
+  return { activeOverlay: null };
+}
+
+export function toggleOverlayState(
+  state: OverlayState,
+  id: OverlayId,
+): OverlayState {
+  if (state.activeOverlay === id) return { activeOverlay: null };
+  return { activeOverlay: id };
+}
+
 export function useOverlayManager() {
-  const [quickOpen, setQuickOpen] = useState(false);
-  const [fileSheet, setFileSheet] = useState(false);
-  const [searchOpen, setSearchOpen] = useState(false);
-  const [settingsOpen, setSettingsOpen] = useState(false);
-  const [backlinksOpen, setBacklinksOpen] = useState(false);
-  const [tagViewOpen, setTagViewOpen] = useState(false);
-  const [graphOpen, setGraphOpen] = useState(false);
-  const [versionOpen, setVersionOpen] = useState(false);
+  const [activeOverlay, setActiveOverlay] =
+    useState<OverlayState["activeOverlay"]>(null);
+
+  const updateOverlay = useCallback(
+    (recipe: (state: OverlayState) => OverlayState) => {
+      setActiveOverlay(
+        (current) => recipe({ activeOverlay: current }).activeOverlay,
+      );
+    },
+    [],
+  );
+
+  const openOverlay = useCallback(
+    (id: OverlayId) => updateOverlay((state) => openOverlayState(state, id)),
+    [updateOverlay],
+  );
+
+  const closeOverlay = useCallback(
+    (id?: OverlayId) => updateOverlay((state) => closeOverlayState(state, id)),
+    [updateOverlay],
+  );
+
+  const toggleOverlay = useCallback(
+    (id: OverlayId) => updateOverlay((state) => toggleOverlayState(state, id)),
+    [updateOverlay],
+  );
+
+  const setOverlayOpen = useCallback(
+    (id: OverlayId, open: boolean) => {
+      if (open) openOverlay(id);
+      else closeOverlay(id);
+    },
+    [closeOverlay, openOverlay],
+  );
 
   const closeSidePanels = useCallback(() => {
-    setFileSheet(false);
-    setSearchOpen(false);
-    setSettingsOpen(false);
-    setBacklinksOpen(false);
-    setTagViewOpen(false);
-    setVersionOpen(false);
+    setActiveOverlay((current) =>
+      current && SIDE_PANELS.includes(current) ? null : current,
+    );
   }, []);
 
-  const openSidePanel = useCallback(
-    (id: OverlayId) => {
-      if (id === "quickOpen") {
-        setQuickOpen(true);
-        return;
-      }
-      if (id === "graph") {
-        closeSidePanels();
-        setGraphOpen(true);
-        return;
-      }
-      if (SIDE_PANELS.includes(id)) {
-        closeSidePanels();
-        setGraphOpen(false);
-        switch (id) {
-          case "fileSheet":
-            setFileSheet(true);
-            break;
-          case "search":
-            setSearchOpen(true);
-            break;
-          case "settings":
-            setSettingsOpen(true);
-            break;
-          case "backlinks":
-            setBacklinksOpen(true);
-            break;
-          case "tags":
-            setTagViewOpen(true);
-            break;
-          case "version":
-            setVersionOpen(true);
-            break;
-        }
-      }
-    },
-    [closeSidePanels],
-  );
+  const openSidePanel = openOverlay;
 
-  const toggleSidePanel = useCallback(
-    (id: OverlayId) => {
-      const isOpen =
-        (id === "fileSheet" && fileSheet) ||
-        (id === "search" && searchOpen) ||
-        (id === "settings" && settingsOpen) ||
-        (id === "backlinks" && backlinksOpen) ||
-        (id === "tags" && tagViewOpen) ||
-        (id === "version" && versionOpen) ||
-        (id === "graph" && graphOpen);
+  const toggleSidePanel = toggleOverlay;
 
-      if (isOpen) {
-        if (id === "graph") setGraphOpen(false);
-        else closeSidePanels();
-        return;
-      }
-      openSidePanel(id);
-    },
-    [
-      fileSheet,
-      searchOpen,
-      settingsOpen,
-      backlinksOpen,
-      tagViewOpen,
-      versionOpen,
-      graphOpen,
-      closeSidePanels,
-      openSidePanel,
-    ],
-  );
+  const quickOpen = activeOverlay === "quickOpen";
+  const fileSheet = activeOverlay === "fileSheet";
+  const searchOpen = activeOverlay === "search";
+  const settingsOpen = activeOverlay === "settings";
+  const backlinksOpen = activeOverlay === "backlinks";
+  const tagViewOpen = activeOverlay === "tags";
+  const graphOpen = activeOverlay === "graph";
+  const versionOpen = activeOverlay === "version";
 
   return {
+    activeOverlay,
+    openOverlay,
+    closeOverlay,
+    toggleOverlay,
+    isOverlayOpen: (id: OverlayId) => activeOverlay === id,
     quickOpen,
-    setQuickOpen,
+    setQuickOpen: (open: boolean) => setOverlayOpen("quickOpen", open),
     fileSheet,
-    setFileSheet,
+    setFileSheet: (open: boolean) => setOverlayOpen("fileSheet", open),
     searchOpen,
-    setSearchOpen,
+    setSearchOpen: (open: boolean) => setOverlayOpen("search", open),
     settingsOpen,
-    setSettingsOpen,
+    setSettingsOpen: (open: boolean) => setOverlayOpen("settings", open),
     backlinksOpen,
-    setBacklinksOpen,
+    setBacklinksOpen: (open: boolean) => setOverlayOpen("backlinks", open),
     tagViewOpen,
-    setTagViewOpen,
+    setTagViewOpen: (open: boolean) => setOverlayOpen("tags", open),
     graphOpen,
-    setGraphOpen,
+    setGraphOpen: (open: boolean) => setOverlayOpen("graph", open),
     versionOpen,
-    setVersionOpen,
+    setVersionOpen: (open: boolean) => setOverlayOpen("version", open),
     openSidePanel,
     toggleSidePanel,
     closeSidePanels,

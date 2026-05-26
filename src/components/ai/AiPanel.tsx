@@ -264,7 +264,7 @@ export function AiPanel({
             {relatedNotes.map((h) => (
               <span
                 key={`${h.path}-${h.chunk_id}`}
-                className="inline-flex items-center rounded-full border border-primary/25 bg-card px-2.5 py-0.5 text-xs text-primary"
+                className="inline-flex items-center rounded-xl border border-primary/20 bg-card px-2.5 py-0.5 text-xs text-primary"
                 title={h.snippet}
               >
                 {h.title}
@@ -282,9 +282,7 @@ export function AiPanel({
           {messages.map((m, i) => (
             <div
               key={`${i}-${m.role}`}
-              className={
-                m.role === "user" ? "ai-msg-user" : "ai-msg-assistant"
-              }
+              className={m.role === "user" ? "ai-msg-user" : "ai-msg-assistant"}
             >
               {m.role === "assistant" ? (
                 m.content ? (

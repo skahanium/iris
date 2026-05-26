@@ -115,6 +115,28 @@
 
 ---
 
+## 信纸编辑（Letterhead）
+
+写作区在纸墨纸页之上叠加**信纸行线**与**版式约束**，强化长文阅读与书写感。
+
+| 元素 | 实现 | 说明 |
+|------|------|------|
+| **行线网格** | `--editor-line-height`（2.125rem，字号仍 1.0625rem） | 行线步长 = 行距；字与光标落在线上 |
+| **块间距** | `gap-flow` 空 1 行 / `gap-tight` 0 | 段↔段、段↔标题 空 1 行；父标题→子标题、标题→正文 无空行 |
+| **文档标题** | `noteTitle` / frontmatter `title:` | 脱离网格 |
+| **章节标题** | H1 1.5rem / H2 1.25rem / H3 1.0625rem，各占 1 格 | 立足行上方隐线 |
+| **段首缩进** | `p { text-indent: 2em }` | 列表/引用内不缩进 |
+| **笔尖光标** | `caret-color: hsl(var(--primary))` | 赭铜色 caret |
+| **Zen** | `Ctrl+.` 隐藏 Tab/状态栏/AI，纸宽 `52rem`；`Esc` 退出 | 编辑区仍可输入 |
+| **章节折叠** | H1–H3 左侧**行线区外**（纸页左内边距）▸/▾，与立足行同高；Decoration 隐藏 | `noteTitle` 不可折叠 |
+| **编辑器缩放** | 纸页 `zoom` 75%–150%；状态栏 ± / 百分比；`⌘=``⌘-``⌘0` | `localStorage: iris-editor-zoom` |
+| **悬浮目录** | 编辑区左上 `EditorOutline`，H1–H3 跳转；`⌘⇧O` 显隐 | `localStorage: iris-outline-open` |
+| **标题字数** | ≤80 不提示；81–200 显示 `N/200`；>200 拒绝输入 | 显示名与物理文件名解耦（`untitled-<ts>.md` 不变） |
+
+关闭行线（预留）：容器 `data-letterhead="off"`。
+
+---
+
 ## 圆角、阴影与动效
 
 ### 圆角尺度（柔和 SaaS）
@@ -162,7 +184,7 @@
 | 导航 | `Ctrl+P` Quick Open |
 | 次级功能 | **居中命令浮层**（v0.3.1-ui），非右侧 Sheet |
 | **AI 侧栏** | `Ctrl+Shift+A` 收起/展开 |
-| 弱化常驻 chrome | Zen、标签栏自动隐藏 → v1.0 阶段 2 |
+| 弱化常驻 chrome | Zen（`Ctrl+.`，已交付）；标签栏自动隐藏 → v1.0 阶段 2 |
 
 ---
 

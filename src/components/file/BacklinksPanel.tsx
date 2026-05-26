@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 
+import { IrisOverlay } from "@/components/ui/iris-overlay";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { SidePanel } from "@/components/ui/side-panel";
 import { fileBacklinks } from "@/lib/ipc";
 import type { BacklinkEntry } from "@/types/ipc";
 
@@ -10,7 +10,6 @@ interface BacklinksPanelProps {
   onClose: () => void;
   notePath: string | null;
   onOpen: (path: string) => void;
-  aiPanelOpen?: boolean;
 }
 
 export function BacklinksPanel({
@@ -18,7 +17,6 @@ export function BacklinksPanel({
   onClose,
   notePath,
   onOpen,
-  aiPanelOpen = false,
 }: BacklinksPanelProps) {
   const [backlinks, setBacklinks] = useState<BacklinkEntry[]>([]);
 
@@ -28,13 +26,7 @@ export function BacklinksPanel({
   }, [open, notePath]);
 
   return (
-    <SidePanel
-      open={open}
-      onClose={onClose}
-      title="反向链接"
-      width="sm"
-      aiPanelOpen={aiPanelOpen}
-    >
+    <IrisOverlay open={open} onClose={onClose} title="反向链接" size="command">
       <ScrollArea className="min-h-0 flex-1">
         {backlinks.length === 0 ? (
           <p className="p-3 text-xs text-muted-foreground">无反向链接</p>
@@ -62,6 +54,6 @@ export function BacklinksPanel({
           ))
         )}
       </ScrollArea>
-    </SidePanel>
+    </IrisOverlay>
   );
 }

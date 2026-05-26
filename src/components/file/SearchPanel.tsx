@@ -1,9 +1,9 @@
 import { useState } from "react";
 
 import { Button } from "@/components/ui/button";
+import { IrisOverlay } from "@/components/ui/iris-overlay";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { SidePanel } from "@/components/ui/side-panel";
 import { searchKeyword, searchSemantic } from "@/lib/ipc";
 import type { KeywordHit, SemanticHit } from "@/types/ipc";
 
@@ -11,15 +11,9 @@ interface SearchPanelProps {
   open: boolean;
   onClose: () => void;
   onOpen: (path: string) => void;
-  aiPanelOpen?: boolean;
 }
 
-export function SearchPanel({
-  open,
-  onClose,
-  onOpen,
-  aiPanelOpen = false,
-}: SearchPanelProps) {
+export function SearchPanel({ open, onClose, onOpen }: SearchPanelProps) {
   const [query, setQuery] = useState("");
   const [mode, setMode] = useState<"keyword" | "semantic">("keyword");
   const [keywordHits, setKeywordHits] = useState<KeywordHit[]>([]);
@@ -49,13 +43,7 @@ export function SearchPanel({
   };
 
   return (
-    <SidePanel
-      open={open}
-      onClose={onClose}
-      title="搜索"
-      width="lg"
-      aiPanelOpen={aiPanelOpen}
-    >
+    <IrisOverlay open={open} onClose={onClose} title="搜索" size="command">
       <div className="space-y-2 border-b border-border p-3">
         <Input
           placeholder="输入关键词或自然语言…"
@@ -129,6 +117,6 @@ export function SearchPanel({
           </button>
         ))}
       </ScrollArea>
-    </SidePanel>
+    </IrisOverlay>
   );
 }

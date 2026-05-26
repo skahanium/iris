@@ -2,9 +2,9 @@ import { Moon, Sun } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 
 import { Button } from "@/components/ui/button";
+import { IrisOverlay } from "@/components/ui/iris-overlay";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { SidePanel } from "@/components/ui/side-panel";
 import {
   BING_SEARCH_CREDENTIAL_SERVICE,
   llmCredentialService,
@@ -21,7 +21,6 @@ interface SettingsPanelProps {
   open: boolean;
   onClose: () => void;
   provider: string;
-  aiPanelOpen?: boolean;
   theme: "dark" | "light";
   onThemeChange: (theme: "dark" | "light") => void;
 }
@@ -30,7 +29,6 @@ export function SettingsPanel({
   open,
   onClose,
   provider,
-  aiPanelOpen = false,
   theme,
   onThemeChange,
 }: SettingsPanelProps) {
@@ -80,12 +78,7 @@ export function SettingsPanel({
   };
 
   return (
-    <SidePanel
-      open={open}
-      onClose={onClose}
-      title="设置"
-      aiPanelOpen={aiPanelOpen}
-    >
+    <IrisOverlay open={open} onClose={onClose} title="设置" size="command">
       <ScrollArea className="flex-1">
         <div className="space-y-5 p-3">
           <div>
@@ -191,6 +184,6 @@ export function SettingsPanel({
           </div>
         </div>
       </ScrollArea>
-    </SidePanel>
+    </IrisOverlay>
   );
 }

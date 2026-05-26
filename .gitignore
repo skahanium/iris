@@ -80,7 +80,6 @@ $RECYCLE.BIN/
 *.code-workspace
 
 # --- Cursor / agent local state (rules under .cursor/rules/ may be committed) ---
-.cursor/plans/
-.cursor/projects/
-.cursor/agent-transcripts/
+.cursor/
 .agent/
+.claude/

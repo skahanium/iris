@@ -23,9 +23,7 @@ export function WelcomeEmpty({ onOpen, onNew }: WelcomeEmptyProps) {
   const [recent, setRecent] = useState<FileListItem[]>([]);
 
   const loadRecent = useCallback(() => {
-    void fileList().then((files) =>
-      setRecent(dedupeByPath(files).slice(0, 5)),
-    );
+    void fileList().then((files) => setRecent(dedupeByPath(files).slice(0, 5)));
   }, []);
 
   useEffect(() => {
@@ -34,7 +32,7 @@ export function WelcomeEmpty({ onOpen, onNew }: WelcomeEmptyProps) {
 
   return (
     <div className="flex flex-1 flex-col items-center justify-center gap-8 bg-background px-6 py-12">
-      <div className="w-full max-w-md rounded-sm border border-editor-border/60 bg-editor-paper px-8 py-10 text-center shadow-sm">
+      <div className="w-full max-w-md rounded-lg border border-editor-border/60 bg-editor-paper px-8 py-10 text-center shadow-paper">
         <p className="font-editor text-2xl font-semibold tracking-tight text-editor-ink">
           铺开纸面，开始写
         </p>

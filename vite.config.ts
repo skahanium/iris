@@ -21,14 +21,15 @@ export default defineConfig({
   },
   envPrefix: ["VITE_", "TAURI_"],
   build: {
-    target: process.env.TAURI_ENV_PLATFORM === "windows" ? "chrome105" : "safari13",
+    target:
+      process.env.TAURI_ENV_PLATFORM === "windows" ? "chrome105" : "safari13",
     minify: !process.env.TAURI_ENV_DEBUG ? "esbuild" : false,
     sourcemap: !!process.env.TAURI_ENV_DEBUG,
     rollupOptions: {
       output: {
-        manualChunks: {
-          prosemirror: ["@tiptap/pm"],
-          tiptap: ["@tiptap/react", "@tiptap/core"],
+        manualChunks(id) {
+          if (id.includes("node_modules/@tiptap/pm/")) return "prosemirror";
+          if (id.includes("node_modules/@tiptap/")) return "tiptap";
         },
       },
     },

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import { Button } from "@/components/ui/button";
+import { IrisOverlay } from "@/components/ui/iris-overlay";
 import { graphData } from "@/lib/ipc";
 import type { GraphData } from "@/types/ipc";
 
@@ -303,16 +303,14 @@ export function GraphView({ open, onClose, onOpenNote }: GraphViewProps) {
     };
   }, [open, initGraph, startAnimation, resizeCanvas]);
 
-  if (!open) return null;
-
   return (
-    <div className="fixed inset-0 z-50 flex flex-col bg-background/95">
-      <div className="flex items-center justify-between border-b border-border px-3 py-2">
-        <span className="text-sm font-medium">知识图谱</span>
-        <Button type="button" size="sm" variant="ghost" onClick={onClose}>
-          Esc
-        </Button>
-      </div>
+    <IrisOverlay
+      open={open}
+      onClose={onClose}
+      title="知识图谱"
+      size="graph"
+      bodyClassName="relative"
+    >
       {error && (
         <p className="border-b border-border px-3 py-2 text-xs text-destructive">
           {error}
@@ -330,7 +328,7 @@ export function GraphView({ open, onClose, onOpenNote }: GraphViewProps) {
           onClick={handleClick}
         />
       </div>
-    </div>
+    </IrisOverlay>
   );
 }
 

@@ -3,10 +3,10 @@ import { useCallback, useEffect, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
+import { IrisOverlay } from "@/components/ui/iris-overlay";
 import { Input } from "@/components/ui/input";
 import { PromptDialog } from "@/components/ui/PromptDialog";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { SidePanel } from "@/components/ui/side-panel";
 import {
   exportFile,
   fileCreate,
@@ -25,15 +25,9 @@ interface FileSheetProps {
   open: boolean;
   onClose: () => void;
   onOpen: (path: string) => void;
-  aiPanelOpen?: boolean;
 }
 
-export function FileSheet({
-  open,
-  onClose,
-  onOpen,
-  aiPanelOpen = false,
-}: FileSheetProps) {
+export function FileSheet({ open, onClose, onOpen }: FileSheetProps) {
   const [files, setFiles] = useState<FileListItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -79,12 +73,7 @@ export function FileSheet({
 
   return (
     <>
-      <SidePanel
-        open={open}
-        onClose={onClose}
-        title="文件"
-        aiPanelOpen={aiPanelOpen}
-      >
+      <IrisOverlay open={open} onClose={onClose} title="文件" size="command">
         <div className="flex gap-2 border-b border-border p-2">
           <Input
             className="text-xs"
@@ -140,9 +129,7 @@ export function FileSheet({
             )}
           </div>
         )}
-        {error && (
-          <p className="px-3 py-2 text-xs text-destructive">{error}</p>
-        )}
+        {error && <p className="px-3 py-2 text-xs text-destructive">{error}</p>}
         <ScrollArea className="min-h-0 flex-1">
           {loading ? (
             <p className="p-3 text-xs text-muted-foreground">加载中…</p>
@@ -191,7 +178,7 @@ export function FileSheet({
             ))
           )}
         </ScrollArea>
-      </SidePanel>
+      </IrisOverlay>
 
       <PromptDialog
         open={renameTarget !== null}

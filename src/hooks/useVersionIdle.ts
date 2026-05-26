@@ -9,10 +9,7 @@ export const VERSION_IDLE_MS = 10 * 60 * 1000;
  * After `VERSION_IDLE_MS` without `onActivity`, creates an `auto_idle` snapshot
  * when content is available.
  */
-export function useVersionIdle(
-  path: string | null,
-  getContent: () => string,
-) {
+export function useVersionIdle(path: string | null, getContent: () => string) {
   const pathRef = useRef(path);
   const getContentRef = useRef(getContent);
   pathRef.current = path;

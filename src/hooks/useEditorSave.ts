@@ -23,6 +23,7 @@ export function useEditorSave(
   path: string | null,
   editorRef: React.RefObject<Editor | null>,
   onSaved?: (md: string) => void,
+  serializeHtml: (html: string) => string = htmlToMarkdown,
 ) {
   const pathRef = useRef(path);
   pathRef.current = path;
@@ -30,12 +31,15 @@ export function useEditorSave(
   const onSavedRef = useRef(onSaved);
   onSavedRef.current = onSaved;
 
+  const serializeRef = useRef(serializeHtml);
+  serializeRef.current = serializeHtml;
+
   const saveFromEditor = useCallback(async () => {
     const target = pathRef.current;
     const ed = editorRef.current;
     if (!target || !ed) return;
     const html = ed.getHTML();
-    const md = htmlToMarkdown(html);
+    const md = serializeRef.current(html);
     await fileWrite(target, md);
     onSavedRef.current?.(md);
   }, [editorRef]);

@@ -9,8 +9,8 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { IrisOverlay } from "@/components/ui/iris-overlay";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { SidePanel } from "@/components/ui/side-panel";
 import {
   versionDelete,
   versionFinalizeCurrent,
@@ -36,7 +36,6 @@ interface VersionTimelineProps {
   currentContent: string;
   hasUnsavedEdits?: boolean;
   onRestore: (content: string) => void;
-  aiPanelOpen?: boolean;
 }
 
 const PREVIEW_MAX = 2000;
@@ -48,7 +47,6 @@ export function VersionTimeline({
   currentContent,
   hasUnsavedEdits = false,
   onRestore,
-  aiPanelOpen = false,
 }: VersionTimelineProps) {
   const [versions, setVersions] = useState<VersionEntry[]>([]);
   const [preview, setPreview] = useState<string | null>(null);
@@ -225,12 +223,7 @@ export function VersionTimeline({
   const historyPreview = preview?.slice(0, PREVIEW_MAX) ?? "";
 
   return (
-    <SidePanel
-      open={open}
-      onClose={onClose}
-      title="版本历史"
-      aiPanelOpen={aiPanelOpen}
-    >
+    <IrisOverlay open={open} onClose={onClose} title="版本历史" size="wide">
       {notePath && (
         <div className="shrink-0 border-b border-border/50 px-3 py-2.5">
           <p className="mb-2 text-xs text-muted-foreground">
@@ -270,9 +263,7 @@ export function VersionTimeline({
               </pre>
             </div>
             <div className="min-w-0">
-              <p className="mb-1 text-[10px] text-muted-foreground">
-                选中版本
-              </p>
+              <p className="mb-1 text-[10px] text-muted-foreground">选中版本</p>
               <pre className="max-h-32 overflow-auto whitespace-pre-wrap rounded border border-border bg-muted/20 p-2 font-mono text-[10px] leading-relaxed">
                 {historyPreview}
                 {(preview?.length ?? 0) > PREVIEW_MAX && "…"}
@@ -307,6 +298,6 @@ export function VersionTimeline({
           </>
         )}
       </ScrollArea>
-    </SidePanel>
+    </IrisOverlay>
   );
 }

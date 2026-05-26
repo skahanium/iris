@@ -1,7 +1,8 @@
 import type { Editor } from "@tiptap/react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { AiPanel, type ContextQuote } from "@/components/ai/AiPanel";
+import { EditorOutline } from "@/components/editor/EditorOutline";
 import { TipTapEditor } from "@/components/editor/TipTapEditor";
 import { FloatingToolbar } from "@/components/editor/FloatingToolbar";
 import { BacklinksPanel } from "@/components/file/BacklinksPanel";
@@ -23,15 +24,43 @@ import { Moon, PanelRight, Sun } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { useEditorSave } from "@/hooks/useEditorSave";
+import { useEditorZoom } from "@/hooks/useEditorZoom";
 import { useVersionIdle } from "@/hooks/useVersionIdle";
 import { useInlineAi } from "@/hooks/useInlineAi";
 import { useLlmProvider } from "@/hooks/useLlmProvider";
 import { useOverlayManager } from "@/hooks/useOverlayManager";
 import { useTheme, useVault } from "@/hooks/useVault";
-import { htmlToMarkdown, markdownToHtml } from "@/lib/markdown";
+import { titleFromFields, splitFrontmatter } from "@/lib/frontmatter";
+import {
+  editorHtmlToMarkdown,
+  extractFrontmatterYaml,
+  markdownToEditorHtml,
+} from "@/lib/markdown";
 import { fileRead, versionSaveManual } from "@/lib/ipc";
 import { isTauriRuntime } from "@/lib/tauri-runtime";
-import { isModKey } from "@/lib/utils";
+import { debounce, isModKey } from "@/lib/utils";
+
+function pathStem(path: string): string {
+  return path.replace(/\.md$/i, "").split("/").pop() ?? path;
+}
+
+const OUTLINE_OPEN_KEY = "iris-outline-open";
+
+function loadOutlineOpen(): boolean {
+  try {
+    return localStorage.getItem(OUTLINE_OPEN_KEY) !== "false";
+  } catch {
+    return true;
+  }
+}
+
+function saveOutlineOpen(open: boolean): void {
+  try {
+    localStorage.setItem(OUTLINE_OPEN_KEY, open ? "true" : "false");
+  } catch {
+    /* ignore */
+  }
+}
 
 function App() {
   const { vaultPath, loading, pickVault } = useVault();
@@ -42,10 +71,16 @@ function App() {
   const activePathRef = useRef<string | null>(null);
   const markdownRef = useRef("");
   const editorRef = useRef<Editor | null>(null);
+  const [editorInstance, setEditorInstance] = useState<Editor | null>(null);
   const overlays = useOverlayManager();
   const [aiPanelOpen, setAiPanelOpen] = useState(true);
   const [quote, setQuote] = useState<ContextQuote | null>(null);
   const [aiStatus, setAiStatus] = useState("AI 空闲");
+  const [zen, setZen] = useState(false);
+  const [outlineOpen, setOutlineOpen] = useState(loadOutlineOpen);
+  const { zoom: editorZoom, zoomIn, zoomOut, resetZoom } = useEditorZoom();
+  const frontmatterYamlRef = useRef<string | null>(null);
+  const editorUpdateCleanupRef = useRef<(() => void) | null>(null);
   const { provider: llmProvider, setProvider: setLlmProvider } =
     useLlmProvider();
   const inlineAi = useInlineAi({
@@ -58,12 +93,18 @@ function App() {
 
   const dirtyRef = useRef(false);
 
+  const serializeEditorHtml = useCallback(
+    (html: string) => editorHtmlToMarkdown(html, frontmatterYamlRef.current),
+    [],
+  );
+
   const { notifyDirty, flushSave } = useEditorSave(
     activePath,
     editorRef,
     (md) => {
       markdownRef.current = md;
       setMarkdown(md);
+      frontmatterYamlRef.current = extractFrontmatterYaml(md);
       dirtyRef.current = false;
       setTabs((t) =>
         t.map((tab) =>
@@ -71,11 +112,14 @@ function App() {
         ),
       );
     },
+    serializeEditorHtml,
   );
 
   const getEditorMarkdown = useCallback(() => {
     const ed = editorRef.current;
-    if (ed) return htmlToMarkdown(ed.getHTML());
+    if (ed) {
+      return editorHtmlToMarkdown(ed.getHTML(), frontmatterYamlRef.current);
+    }
     return markdownRef.current;
   }, []);
 
@@ -96,9 +140,7 @@ function App() {
       dirtyRef.current = true;
       setTabs((t) =>
         t.map((tab) =>
-          tab.path === activePathRef.current
-            ? { ...tab, dirty: true }
-            : tab,
+          tab.path === activePathRef.current ? { ...tab, dirty: true } : tab,
         ),
       );
     }
@@ -106,9 +148,28 @@ function App() {
     resetVersionIdle();
   }, [notifyDirty, resetVersionIdle]);
 
+  const titleDebounce = useMemo(
+    () =>
+      debounce((newTitle: string) => {
+        const path = activePathRef.current;
+        if (!path) return;
+        setTabs((prev) =>
+          prev.map((t) =>
+            t.path === path ? { ...t, title: newTitle || "无标题" } : t,
+          ),
+        );
+      }, 300),
+    [],
+  );
+
   const openFile = useCallback(async (path: string, titleHint?: string) => {
     const content = await fileRead(path);
-    const title = await resolveDocumentTitle(path, titleHint);
+    frontmatterYamlRef.current = extractFrontmatterYaml(content);
+    const fromFile = titleFromFields(splitFrontmatter(content).fields);
+    const title =
+      fromFile ||
+      (titleHint?.trim() ?? "") ||
+      (await resolveDocumentTitle(path, titleHint));
     setMarkdown(content);
     markdownRef.current = content;
     dirtyRef.current = false;
@@ -155,15 +216,15 @@ function App() {
       }
       if (isModKey(e) && e.key === "p") {
         e.preventDefault();
-        overlays.setQuickOpen(true);
+        overlays.openOverlay("quickOpen");
       }
       if (isModKey(e) && e.shiftKey && (e.key === "E" || e.key === "e")) {
         e.preventDefault();
-        overlays.openSidePanel("fileSheet");
+        overlays.openOverlay("fileSheet");
       }
       if (isModKey(e) && e.shiftKey && (e.key === "F" || e.key === "f")) {
         e.preventDefault();
-        overlays.openSidePanel("search");
+        overlays.openOverlay("search");
       }
       if (isModKey(e) && e.shiftKey && (e.key === "A" || e.key === "a")) {
         e.preventDefault();
@@ -176,7 +237,7 @@ function App() {
         activePathRef.current
       ) {
         e.preventDefault();
-        overlays.toggleSidePanel("version");
+        overlays.toggleOverlay("version");
       }
       if (isModKey(e) && e.key === "w" && activePathRef.current) {
         e.preventDefault();
@@ -184,44 +245,121 @@ function App() {
       }
       if (isModKey(e) && e.key === ",") {
         e.preventDefault();
-        overlays.toggleSidePanel("settings");
+        overlays.toggleOverlay("settings");
       }
       if (isModKey(e) && e.shiftKey && (e.key === "B" || e.key === "b")) {
         e.preventDefault();
-        overlays.toggleSidePanel("backlinks");
+        overlays.toggleOverlay("backlinks");
       }
       if (isModKey(e) && e.shiftKey && (e.key === "G" || e.key === "g")) {
         e.preventDefault();
-        overlays.toggleSidePanel("graph");
+        overlays.toggleOverlay("graph");
       }
       if (isModKey(e) && e.shiftKey && (e.key === "T" || e.key === "t")) {
         e.preventDefault();
-        overlays.toggleSidePanel("tags");
+        overlays.toggleOverlay("tags");
+      }
+      if (isModKey(e) && e.key === ".") {
+        e.preventDefault();
+        setZen((z) => !z);
+      }
+      if (
+        isModKey(e) &&
+        e.shiftKey &&
+        (e.key === "O" || e.key === "o") &&
+        activePathRef.current
+      ) {
+        e.preventDefault();
+        setOutlineOpen((open) => {
+          const next = !open;
+          saveOutlineOpen(next);
+          return next;
+        });
+      }
+      if (isModKey(e) && !e.shiftKey && (e.key === "=" || e.key === "+")) {
+        e.preventDefault();
+        zoomIn();
+      }
+      if (isModKey(e) && !e.shiftKey && e.key === "-") {
+        e.preventDefault();
+        zoomOut();
+      }
+      if (isModKey(e) && !e.shiftKey && e.key === "0") {
+        e.preventDefault();
+        resetZoom();
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [overlays, closeTab, handleSaveVersion]);
+  }, [overlays, closeTab, handleSaveVersion, zoomIn, zoomOut, resetZoom]);
 
-  const applyMarkdownToEditor = useCallback(
-    (content: string) => {
-      setMarkdown(content);
-      markdownRef.current = content;
-      if (editorRef.current) {
-        editorRef.current.commands.setContent(markdownToHtml(content), false);
+  useEffect(() => {
+    if (!zen) return;
+    const onEsc = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        setZen(false);
+        editorRef.current?.commands.focus();
       }
+    };
+    window.addEventListener("keydown", onEsc);
+    return () => window.removeEventListener("keydown", onEsc);
+  }, [zen]);
+
+  useEffect(
+    () => () => {
+      editorUpdateCleanupRef.current?.();
+      titleDebounce.cancel();
     },
-    [],
+    [titleDebounce],
   );
 
-  const handleEditorReady = useCallback((ed: Editor) => {
-    editorRef.current = ed;
+  const applyMarkdownToEditor = useCallback((content: string) => {
+    frontmatterYamlRef.current = extractFrontmatterYaml(content);
+    setMarkdown(content);
+    markdownRef.current = content;
+    const stem = activePathRef.current
+      ? pathStem(activePathRef.current)
+      : "";
+    if (editorRef.current) {
+      editorRef.current.commands.setContent(
+        markdownToEditorHtml(content, stem),
+        false,
+      );
+    }
   }, []);
+
+  useEffect(() => {
+    if (!activePath) setEditorInstance(null);
+  }, [activePath]);
+
+  const handleEditorReady = useCallback(
+    (ed: Editor) => {
+      editorRef.current = ed;
+      setEditorInstance(ed);
+      editorUpdateCleanupRef.current?.();
+      let lastSyncedTitle = "";
+      const onTitleUpdate = () => {
+        const first = ed.state.doc.firstChild;
+        if (first?.type.name !== "noteTitle") return;
+        const next = first.textContent.trim();
+        if (next === lastSyncedTitle) return;
+        lastSyncedTitle = next;
+        titleDebounce(next);
+      };
+      ed.on("update", onTitleUpdate);
+      editorUpdateCleanupRef.current = () => {
+        ed.off("update", onTitleUpdate);
+      };
+      onTitleUpdate();
+    },
+    [titleDebounce],
+  );
 
   const runInlineAi = useCallback(
     (action: string) => {
-      if (!editorRef.current) return;
-      void inlineAi.run(editorRef.current, action);
+      const ed = editorRef.current;
+      if (!ed || ed.isActive("noteTitle")) return;
+      void inlineAi.run(ed, action);
     },
     [inlineAi],
   );
@@ -229,11 +367,7 @@ function App() {
   const handleSlashCommand = useCallback(
     (command: string) => {
       if (!editorRef.current) return;
-      void inlineAi.runSlash(
-        editorRef.current,
-        command,
-        markdownRef.current,
-      );
+      void inlineAi.runSlash(editorRef.current, command, markdownRef.current);
     },
     [inlineAi],
   );
@@ -268,7 +402,9 @@ function App() {
         aria-label={aiPanelOpen ? "收起 AI 侧栏" : "展开 AI 侧栏"}
       >
         <PanelRight className="h-3.5 w-3.5" />
-        <span className="hidden sm:inline">{aiPanelOpen ? "收起 AI" : "AI"}</span>
+        <span className="hidden sm:inline">
+          {aiPanelOpen ? "收起 AI" : "AI"}
+        </span>
       </Button>
       <Button
         type="button"
@@ -303,10 +439,11 @@ function App() {
           只是 Vite 前端热更新地址，浏览器里没有 Rust 后端，无法读写笔记目录。
         </p>
         <p className="max-w-md text-sm text-muted-foreground">
-          方式 B 需要两个终端：一个{" "}
-          <code className="text-xs">npm run dev</code>，另一个启动{" "}
-          <code className="text-xs">npx tauri dev …</code>，使用弹出的{" "}
-          <strong className="font-medium text-foreground">Iris</strong> 窗口操作。
+          方式 B 需要两个终端：一个 <code className="text-xs">npm run dev</code>
+          ，另一个启动 <code className="text-xs">npx tauri dev …</code>
+          ，使用弹出的{" "}
+          <strong className="font-medium text-foreground">Iris</strong>{" "}
+          窗口操作。
         </p>
       </div>
     );
@@ -355,6 +492,7 @@ function App() {
   return (
     <AppShell
       aiPanelOpen={aiPanelOpen}
+      zen={zen}
       tabBar={
         <TabBar
           tabs={tabs}
@@ -368,15 +506,29 @@ function App() {
       editor={
         <div className="relative flex min-h-0 flex-1 flex-col">
           {activePath ? (
-            <TipTapEditor
-              key={activePath}
-              initialMarkdown={markdown}
-              onDirty={handleDirty}
-              onSlashCommand={handleSlashCommand}
-              onEditorReady={handleEditorReady}
-              onInlineAiRetry={(ed) => void inlineAi.retry(ed)}
-              onOpenWikiLink={(title) => void openFile(`${title}.md`)}
-            />
+            <>
+              <TipTapEditor
+                key={activePath}
+                initialMarkdown={markdown}
+                titleFallback={pathStem(activePath)}
+                zen={zen}
+                zoom={editorZoom}
+                onDirty={handleDirty}
+                onSlashCommand={handleSlashCommand}
+                onEditorReady={handleEditorReady}
+                onInlineAiRetry={(ed) => void inlineAi.retry(ed)}
+                onOpenWikiLink={(title) => void openFile(`${title}.md`)}
+              />
+              <EditorOutline
+                editor={editorInstance}
+                open={outlineOpen}
+                zen={zen}
+                onOpenChange={(open) => {
+                  setOutlineOpen(open);
+                  saveOutlineOpen(open);
+                }}
+              />
+            </>
           ) : (
             <WelcomeEmpty
               onOpen={(p) => void openFile(p)}
@@ -404,54 +556,55 @@ function App() {
         <StatusBar
           path={activePath}
           documentTitle={activeDocumentTitle}
-          wordCount={markdown.split(/\s+/).filter(Boolean).length}
+          markdown={markdown}
+          wordCount={splitFrontmatter(markdown).body
+            .replace(/\s+/g, "")
+            .length}
           aiStatus={aiStatus}
+          editorZoom={editorZoom}
+          onEditorZoomIn={zoomIn}
+          onEditorZoomOut={zoomOut}
+          onEditorZoomReset={resetZoom}
         />
       }
       overlays={
         <>
           <QuickOpen
             open={overlays.quickOpen}
-            onClose={() => overlays.setQuickOpen(false)}
+            onClose={() => overlays.closeOverlay("quickOpen")}
             onSelect={(p) => void openFile(p)}
           />
           <FileSheet
             open={overlays.fileSheet}
-            aiPanelOpen={aiPanelOpen}
-            onClose={() => overlays.setFileSheet(false)}
+            onClose={() => overlays.closeOverlay("fileSheet")}
             onOpen={(p) => void openFile(p)}
           />
           <SearchPanel
             open={overlays.searchOpen}
-            aiPanelOpen={aiPanelOpen}
-            onClose={() => overlays.setSearchOpen(false)}
+            onClose={() => overlays.closeOverlay("search")}
             onOpen={(p) => void openFile(p)}
           />
           <SettingsPanel
             open={overlays.settingsOpen}
-            aiPanelOpen={aiPanelOpen}
-            onClose={() => overlays.setSettingsOpen(false)}
+            onClose={() => overlays.closeOverlay("settings")}
             provider={llmProvider}
             theme={theme}
             onThemeChange={(t) => void setTheme(t)}
           />
           <BacklinksPanel
             open={overlays.backlinksOpen}
-            aiPanelOpen={aiPanelOpen}
-            onClose={() => overlays.setBacklinksOpen(false)}
+            onClose={() => overlays.closeOverlay("backlinks")}
             notePath={activePath}
             onOpen={(p) => void openFile(p)}
           />
           <TagView
             open={overlays.tagViewOpen}
-            aiPanelOpen={aiPanelOpen}
-            onClose={() => overlays.setTagViewOpen(false)}
+            onClose={() => overlays.closeOverlay("tags")}
             onOpen={(p) => void openFile(p)}
           />
           <VersionTimeline
             open={overlays.versionOpen}
-            aiPanelOpen={aiPanelOpen}
-            onClose={() => overlays.setVersionOpen(false)}
+            onClose={() => overlays.closeOverlay("version")}
             notePath={activePath}
             currentContent={markdown}
             hasUnsavedEdits={
@@ -461,7 +614,7 @@ function App() {
           />
           <GraphView
             open={overlays.graphOpen}
-            onClose={() => overlays.setGraphOpen(false)}
+            onClose={() => overlays.closeOverlay("graph")}
             onOpenNote={(p) => void openFile(p)}
           />
           <ConflictDialog

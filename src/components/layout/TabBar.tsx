@@ -34,15 +34,14 @@ export function TabBar({
           <div
             key={tab.path}
             className={cn(
-              "flex max-w-[220px] shrink-0 items-center rounded-md border border-transparent",
-              activePath === tab.path &&
-                "border-border/80 bg-card shadow-sm",
+              "flex max-w-[220px] shrink-0 items-center rounded-xl border border-transparent transition-[background-color,box-shadow,border-color] duration-150",
+              activePath === tab.path && "border-border/80 bg-card shadow-sm",
             )}
           >
             <button
               type="button"
               className={cn(
-                "min-w-0 flex-1 truncate px-2.5 py-1.5 text-left text-xs",
+                "min-w-0 flex-1 truncate rounded-xl px-2.5 py-1.5 text-left text-xs transition-colors duration-150 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-1 focus-visible:ring-offset-panel",
                 activePath === tab.path
                   ? "text-foreground"
                   : "text-muted-foreground hover:text-foreground",
@@ -59,7 +58,7 @@ export function TabBar({
             </button>
             <button
               type="button"
-              className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
+              className="flex h-7 w-7 shrink-0 items-center justify-center rounded-xl text-muted-foreground transition-colors duration-150 hover:bg-muted hover:text-foreground focus:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-1 focus-visible:ring-offset-panel"
               aria-label={`关闭 ${tab.title}`}
               onClick={() => onClose(tab.path)}
             >
@@ -71,7 +70,7 @@ export function TabBar({
           type="button"
           size="icon"
           variant="ghost"
-          className="h-8 w-8 shrink-0"
+          className="h-8 w-8 shrink-0 rounded-xl transition-colors duration-150"
           onClick={onNew}
           aria-label="新建笔记"
         >

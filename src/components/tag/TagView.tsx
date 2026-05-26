@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
 
+import { IrisOverlay } from "@/components/ui/iris-overlay";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { SidePanel } from "@/components/ui/side-panel";
 import { tagList } from "@/lib/ipc";
 import type { TagGroup } from "@/types/ipc";
 
@@ -10,15 +10,9 @@ interface TagViewProps {
   open: boolean;
   onClose: () => void;
   onOpen: (path: string) => void;
-  aiPanelOpen?: boolean;
 }
 
-export function TagView({
-  open,
-  onClose,
-  onOpen,
-  aiPanelOpen = false,
-}: TagViewProps) {
+export function TagView({ open, onClose, onOpen }: TagViewProps) {
   const [tags, setTags] = useState<TagGroup[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -43,13 +37,7 @@ export function TagView({
     .size;
 
   return (
-    <SidePanel
-      open={open}
-      onClose={onClose}
-      title="标签"
-      width="sm"
-      aiPanelOpen={aiPanelOpen}
-    >
+    <IrisOverlay open={open} onClose={onClose} title="标签" size="command">
       <div className="flex gap-3 border-b border-border px-3 py-2 text-xs text-muted-foreground">
         <span>{totalNotes} 笔记</span>
         <span>{tags.length} 标签</span>
@@ -64,9 +52,7 @@ export function TagView({
         />
       </div>
 
-      {error && (
-        <p className="px-3 py-2 text-xs text-destructive">{error}</p>
-      )}
+      {error && <p className="px-3 py-2 text-xs text-destructive">{error}</p>}
 
       <ScrollArea className="min-h-0 flex-1">
         {loading ? (
@@ -107,6 +93,6 @@ export function TagView({
           ))
         )}
       </ScrollArea>
-    </SidePanel>
+    </IrisOverlay>
   );
 }

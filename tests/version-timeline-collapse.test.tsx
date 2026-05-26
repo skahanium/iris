@@ -70,9 +70,9 @@ describe("VersionTimeline collapsed auto backups", () => {
       await Promise.resolve();
     });
 
-    expect(container.textContent).toContain("自动备份（5）");
+    expect(document.body.textContent).toContain("自动备份（5）");
     expect(
-      container.querySelectorAll('[data-testid="version-entry-row"]'),
+      document.body.querySelectorAll('[data-testid="version-entry-row"]'),
     ).toHaveLength(0);
   });
 
@@ -90,7 +90,9 @@ describe("VersionTimeline collapsed auto backups", () => {
       await Promise.resolve();
     });
 
-    const toggle = container.querySelector('[data-testid="version-group-toggle"]');
+    const toggle = document.body.querySelector(
+      '[data-testid="version-group-toggle"]',
+    );
     expect(toggle).toBeTruthy();
 
     await act(async () => {
@@ -98,7 +100,7 @@ describe("VersionTimeline collapsed auto backups", () => {
     });
 
     expect(
-      container.querySelectorAll('[data-testid="version-entry-row"]'),
+      document.body.querySelectorAll('[data-testid="version-entry-row"]'),
     ).toHaveLength(5);
   });
 });
