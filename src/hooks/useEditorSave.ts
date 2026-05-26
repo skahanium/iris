@@ -13,6 +13,11 @@ export const EDITOR_SAVE_DEBOUNCE_MS = 1200;
  * Debounced editor save. Call `notifyDirty()` on every keystroke (zero-cost).
  * Actual HTML serialization + markdown conversion + IPC write only happen
  * when the debounce fires. Version checkpoints use `versionSaveManual` / idle.
+ *
+ * `onSaved` is captured via ref so callers can pass an inline lambda without
+ * destabilizing the debounced save (otherwise every parent re-render would
+ * rebuild the debounce and the effect cleanup would `flush()` the pending
+ * timer immediately, effectively making each keystroke trigger a full save).
  */
 export function useEditorSave(
   path: string | null,
@@ -22,6 +27,9 @@ export function useEditorSave(
   const pathRef = useRef(path);
   pathRef.current = path;
 
+  const onSavedRef = useRef(onSaved);
+  onSavedRef.current = onSaved;
+
   const saveFromEditor = useCallback(async () => {
     const target = pathRef.current;
     const ed = editorRef.current;
@@ -29,8 +37,8 @@ export function useEditorSave(
     const html = ed.getHTML();
     const md = htmlToMarkdown(html);
     await fileWrite(target, md);
-    onSaved?.(md);
-  }, [editorRef, onSaved]);
+    onSavedRef.current?.(md);
+  }, [editorRef]);
 
   const debouncedSave = useMemo(
     () =>
