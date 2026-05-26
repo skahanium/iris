@@ -116,7 +116,9 @@ pub fn index_file(conn: &Connection, vault: &Path, absolute: &Path) -> AppResult
     }
 
     #[cfg(not(test))]
-    store_chunk_embeddings(conn, file_id)?;
+    if let Err(e) = store_chunk_embeddings(conn, file_id) {
+        tracing::warn!("embedding skipped for file {file_id}: {e}");
+    }
 
     Ok(FileEntry {
         id: file_id,

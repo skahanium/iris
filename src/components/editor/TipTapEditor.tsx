@@ -17,16 +17,12 @@ import { cn } from "@/lib/utils";
 import { AiStreamExtension } from "./extensions/AiStreamExtension";
 import { SlashCommandExtension } from "./extensions/SlashCommandExtension";
 import { WikiLinkExtension } from "./extensions/WikiLinkExtension";
-/**
- * TipTap 扩展 = v0.1「核心 GFM」schema（非完整 GFM）。
- * @see ./gfm-schema.ts — SUPPORTED_CORE_GFM / UNSUPPORTED_OR_BEST_EFFORT_GFM
- */
 
 const lowlight = createLowlight(common);
 
 interface TipTapEditorProps {
   initialMarkdown: string;
-  onUpdateHtml: (html: string) => void;
+  onDirty?: () => void;
   onSlashCommand?: (command: string) => void;
   onEditorReady?: (editor: Editor) => void;
   onInlineAiRetry?: (editor: Editor) => void;
@@ -36,7 +32,7 @@ interface TipTapEditorProps {
 
 export function TipTapEditor({
   initialMarkdown,
-  onUpdateHtml,
+  onDirty,
   onSlashCommand,
   onEditorReady,
   onInlineAiRetry,
@@ -46,9 +42,13 @@ export function TipTapEditor({
   const inlineAiRetryRef = useRef(onInlineAiRetry);
   inlineAiRetryRef.current = onInlineAiRetry;
 
+  const onDirtyRef = useRef(onDirty);
+  onDirtyRef.current = onDirty;
+
+  const firedInitialRef = useRef(false);
+
   const editor = useEditor({
     extensions: [
-      // StarterKit: 标题、段落、粗体/斜体/删除线、列表、引用、水平线、行内 code 等
       StarterKit.configure({ codeBlock: false }),
       TaskList,
       TaskItem.configure({ nested: true }),
@@ -65,8 +65,12 @@ export function TipTapEditor({
       WikiLinkExtension.configure({ onOpenNote: onOpenWikiLink }),
     ],
     content: markdownToHtml(initialMarkdown),
-    onUpdate: ({ editor: ed }) => {
-      onUpdateHtml(ed.getHTML());
+    onUpdate: () => {
+      if (!firedInitialRef.current) {
+        firedInitialRef.current = true;
+        return;
+      }
+      onDirtyRef.current?.();
     },
     editorProps: {
       attributes: {
@@ -78,14 +82,6 @@ export function TipTapEditor({
   useEffect(() => {
     if (editor) onEditorReady?.(editor);
   }, [editor, onEditorReady]);
-
-  useEffect(() => {
-    if (!editor) return;
-    const html = markdownToHtml(initialMarkdown);
-    if (editor.getHTML() !== html) {
-      editor.commands.setContent(html, false);
-    }
-  }, [initialMarkdown, editor]);
 
   return (
     <div

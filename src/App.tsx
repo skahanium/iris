@@ -24,8 +24,8 @@ import { useInlineAi } from "@/hooks/useInlineAi";
 import { useLlmProvider } from "@/hooks/useLlmProvider";
 import { useOverlayManager } from "@/hooks/useOverlayManager";
 import { useTheme, useVault } from "@/hooks/useVault";
-import { htmlToMarkdown, markdownToHtml } from "@/lib/markdown";
-import { fileRead, listenFileChanged } from "@/lib/ipc";
+import { markdownToHtml } from "@/lib/markdown";
+import { fileRead } from "@/lib/ipc";
 import { isModKey } from "@/lib/utils";
 
 function App() {
@@ -34,19 +34,13 @@ function App() {
   const [tabs, setTabs] = useState<TabItem[]>([]);
   const [activePath, setActivePath] = useState<string | null>(null);
   const [markdown, setMarkdown] = useState("");
-  const htmlRef = useRef("");
   const activePathRef = useRef<string | null>(null);
   const markdownRef = useRef("");
-  const skipNextDirtyRef = useRef(false);
-  const [editor, setEditor] = useState<Editor | null>(null);
+  const editorRef = useRef<Editor | null>(null);
   const overlays = useOverlayManager();
   const [aiPanelOpen, setAiPanelOpen] = useState(true);
-  const [conflictOpen, setConflictOpen] = useState(false);
-  const [conflictPath, setConflictPath] = useState("");
-  const [conflictExternal, setConflictExternal] = useState("");
   const [quote, setQuote] = useState<ContextQuote | null>(null);
   const [aiStatus, setAiStatus] = useState("AI 空闲");
-  const [reloadPrompt, setReloadPrompt] = useState<string | null>(null);
   const { provider: llmProvider, setProvider: setLlmProvider } =
     useLlmProvider();
   const inlineAi = useInlineAi({
@@ -57,26 +51,48 @@ function App() {
   activePathRef.current = activePath;
   markdownRef.current = markdown;
 
-  const { scheduleSave } = useEditorSave(activePath, () => {
-    setTabs((t) =>
-      t.map((tab) =>
-        tab.path === activePath ? { ...tab, dirty: false } : tab,
-      ),
-    );
-  });
+  const dirtyRef = useRef(false);
+
+  const { notifyDirty } = useEditorSave(
+    activePath,
+    editorRef,
+    (md) => {
+      markdownRef.current = md;
+      setMarkdown(md);
+      dirtyRef.current = false;
+      setTabs((t) =>
+        t.map((tab) =>
+          tab.path === activePath ? { ...tab, dirty: false } : tab,
+        ),
+      );
+    },
+  );
+
+  const handleDirty = useCallback(() => {
+    if (!dirtyRef.current) {
+      dirtyRef.current = true;
+      setTabs((t) =>
+        t.map((tab) =>
+          tab.path === activePathRef.current
+            ? { ...tab, dirty: true }
+            : tab,
+        ),
+      );
+    }
+    notifyDirty();
+  }, [notifyDirty]);
 
   const openFile = useCallback(async (path: string) => {
     const content = await fileRead(path);
     setMarkdown(content);
-    htmlRef.current = "";
-    skipNextDirtyRef.current = true;
+    markdownRef.current = content;
+    dirtyRef.current = false;
     setActivePath(path);
     setTabs((prev) => {
       if (prev.some((t) => t.path === path)) return prev;
       const title = path.replace(/\.md$/, "").split("/").pop() ?? path;
       return [...prev, { path, title, dirty: false }];
     });
-    setReloadPrompt(null);
   }, []);
 
   const closeTab = useCallback(
@@ -152,86 +168,50 @@ function App() {
     return () => window.removeEventListener("keydown", onKey);
   }, [overlays, closeTab]);
 
-  useEffect(() => {
-    let unlisten: (() => void) | undefined;
-    void listenFileChanged((ev) => {
-      const path = activePathRef.current;
-      if (!path || ev.path !== path) return;
-      if (ev.event_type === "modify") {
-        void fileRead(ev.path).then((extContent) => {
-          if (extContent !== markdownRef.current) {
-            setConflictPath(ev.path);
-            setConflictExternal(extContent);
-            setConflictOpen(true);
-          }
-        });
-      } else {
-        setReloadPrompt(`外部已修改 ${ev.path}，是否重新加载？`);
-      }
-    }).then((fn) => {
-      unlisten = fn;
-    });
-    return () => {
-      unlisten?.();
-    };
-  }, []);
-
   const applyMarkdownToEditor = useCallback(
     (content: string) => {
       setMarkdown(content);
-      if (editor) {
-        editor.commands.setContent(markdownToHtml(content), false);
+      markdownRef.current = content;
+      if (editorRef.current) {
+        editorRef.current.commands.setContent(markdownToHtml(content), false);
       }
     },
-    [editor],
+    [],
   );
 
-  const handleHtmlUpdate = useCallback(
-    (html: string) => {
-      htmlRef.current = html;
-      const md = htmlToMarkdown(html);
-      setMarkdown(md);
-
-      if (!activePath) return;
-
-      if (skipNextDirtyRef.current) {
-        skipNextDirtyRef.current = false;
-        return;
-      }
-
-      scheduleSave(md);
-      setTabs((t) =>
-        t.map((tab) =>
-          tab.path === activePath ? { ...tab, dirty: true } : tab,
-        ),
-      );
-    },
-    [activePath, scheduleSave],
-  );
+  const handleEditorReady = useCallback((ed: Editor) => {
+    editorRef.current = ed;
+  }, []);
 
   const runInlineAi = useCallback(
     (action: string) => {
-      if (!editor) return;
-      void inlineAi.run(editor, action);
+      if (!editorRef.current) return;
+      void inlineAi.run(editorRef.current, action);
     },
-    [editor, inlineAi],
+    [inlineAi],
   );
 
   const handleSlashCommand = useCallback(
     (command: string) => {
-      if (!editor) return;
-      void inlineAi.runSlash(editor, command, markdown);
+      if (!editorRef.current) return;
+      void inlineAi.runSlash(
+        editorRef.current,
+        command,
+        markdownRef.current,
+      );
     },
-    [editor, inlineAi, markdown],
+    [inlineAi],
   );
 
   const sendSelectionToAi = useCallback(() => {
-    if (!editor || !activePath) return;
-    const { from, to } = editor.state.selection;
-    const text = editor.state.doc.textBetween(from, to, "\n");
+    const ed = editorRef.current;
+    const path = activePathRef.current;
+    if (!ed || !path) return;
+    const { from, to } = ed.state.selection;
+    const text = ed.state.doc.textBetween(from, to, "\n");
     if (!text) return;
-    setQuote({ filePath: activePath, text });
-  }, [editor, activePath]);
+    setQuote({ filePath: path, text });
+  }, []);
 
   const handleNewNote = useCallback(async () => {
     const name = await createDefaultNote();
@@ -270,33 +250,13 @@ function App() {
       }
       editor={
         <div className="relative flex min-h-0 flex-1 flex-col">
-          {reloadPrompt && (
-            <div className="flex items-center gap-2 border-b border-primary/25 bg-editor-border/40 px-4 py-2 font-sans text-sm text-editor-ink">
-              <span>{reloadPrompt}</span>
-              <Button
-                type="button"
-                size="sm"
-                onClick={() => activePath && void openFile(activePath)}
-              >
-                重新加载
-              </Button>
-              <Button
-                type="button"
-                size="sm"
-                variant="ghost"
-                onClick={() => setReloadPrompt(null)}
-              >
-                忽略
-              </Button>
-            </div>
-          )}
           {activePath ? (
             <TipTapEditor
               key={activePath}
               initialMarkdown={markdown}
-              onUpdateHtml={handleHtmlUpdate}
+              onDirty={handleDirty}
               onSlashCommand={handleSlashCommand}
-              onEditorReady={setEditor}
+              onEditorReady={handleEditorReady}
               onInlineAiRetry={(ed) => void inlineAi.retry(ed)}
               onOpenWikiLink={(title) => void openFile(`${title}.md`)}
             />
@@ -307,7 +267,7 @@ function App() {
             />
           )}
           <FloatingToolbar
-            editor={editor}
+            editor={editorRef.current}
             onInlineAi={(a) => void runInlineAi(a)}
             onSendToAi={sendSelectionToAi}
           />
@@ -400,16 +360,13 @@ function App() {
             onOpenNote={(p) => void openFile(p)}
           />
           <ConflictDialog
-            open={conflictOpen}
-            localContent={markdown}
-            externalContent={conflictExternal}
-            filePath={conflictPath}
-            onKeepLocal={() => setConflictOpen(false)}
-            onAcceptExternal={() => {
-              applyMarkdownToEditor(conflictExternal);
-              setConflictOpen(false);
-            }}
-            onManualEdit={() => setConflictOpen(false)}
+            open={false}
+            localContent=""
+            externalContent=""
+            filePath=""
+            onKeepLocal={() => {}}
+            onAcceptExternal={() => {}}
+            onManualEdit={() => {}}
           />
         </>
       }

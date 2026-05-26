@@ -1,45 +1,51 @@
 import { useCallback, useEffect, useMemo, useRef } from "react";
 
+import type { Editor } from "@tiptap/react";
+
 import { fileWrite } from "@/lib/ipc";
+import { htmlToMarkdown } from "@/lib/markdown";
 import { debounce } from "@/lib/utils";
 
-export function useEditorSave(path: string | null, onSaved?: () => void) {
-  const dirtyRef = useRef(false);
+/**
+ * Debounced editor save. Call `notifyDirty()` on every keystroke (zero-cost).
+ * Actual HTML serialization + markdown conversion + IPC write only happen
+ * when the 500ms debounce fires.
+ */
+export function useEditorSave(
+  path: string | null,
+  editorRef: React.RefObject<Editor | null>,
+  onSaved?: (md: string) => void,
+) {
   const pathRef = useRef(path);
   pathRef.current = path;
 
-  const saveNow = useCallback(
-    async (content: string) => {
-      const target = pathRef.current;
-      if (!target) return;
-      await fileWrite(target, content);
-      dirtyRef.current = false;
-      onSaved?.();
-    },
-    [onSaved],
-  );
+  const saveFromEditor = useCallback(async () => {
+    const target = pathRef.current;
+    const ed = editorRef.current;
+    if (!target || !ed) return;
+    const html = ed.getHTML();
+    const md = htmlToMarkdown(html);
+    await fileWrite(target, md);
+    onSaved?.(md);
+  }, [editorRef, onSaved]);
 
-  const saveDebounced = useMemo(
+  const debouncedSave = useMemo(
     () =>
-      debounce((content: string) => {
-        void saveNow(content);
+      debounce(() => {
+        void saveFromEditor();
       }, 500),
-    [saveNow],
+    [saveFromEditor],
   );
 
   useEffect(() => {
     return () => {
-      saveDebounced.flush();
+      debouncedSave.flush();
     };
-  }, [path, saveDebounced]);
+  }, [path, debouncedSave]);
 
-  const scheduleSave = useCallback(
-    (content: string) => {
-      dirtyRef.current = true;
-      saveDebounced(content);
-    },
-    [saveDebounced],
-  );
+  const notifyDirty = useCallback(() => {
+    debouncedSave();
+  }, [debouncedSave]);
 
-  return { scheduleSave, saveNow, isDirty: () => dirtyRef.current };
+  return { notifyDirty };
 }

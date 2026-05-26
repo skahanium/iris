@@ -19,15 +19,31 @@ pub fn resolve_vault_path(vault: &Path, relative: &str) -> AppResult<PathBuf> {
         }
     }
 
-    let canonical = joined
-        .canonicalize()
-        .map_err(|_| AppError::msg("Path is outside the vault"))?;
-
-    if !canonical.starts_with(&vault) {
-        return Err(AppError::msg("Path is outside the vault"));
+    // For new files that don't exist yet, canonicalize would fail.
+    // Canonicalize the parent (which must exist) and append the filename.
+    if joined.exists() {
+        let canonical = joined
+            .canonicalize()
+            .map_err(|_| AppError::msg("Path is outside the vault"))?;
+        if !canonical.starts_with(&vault) {
+            return Err(AppError::msg("Path is outside the vault"));
+        }
+        Ok(canonical)
+    } else {
+        let parent = joined
+            .parent()
+            .ok_or_else(|| AppError::msg("Invalid path"))?;
+        let file_name = joined
+            .file_name()
+            .ok_or_else(|| AppError::msg("Invalid path"))?;
+        let canonical_parent = parent
+            .canonicalize()
+            .map_err(|_| AppError::msg("Path is outside the vault"))?;
+        if !canonical_parent.starts_with(&vault) {
+            return Err(AppError::msg("Path is outside the vault"));
+        }
+        Ok(canonical_parent.join(file_name))
     }
-
-    Ok(canonical)
 }
 
 /// Relative path from vault root (forward slashes).

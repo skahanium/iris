@@ -53,10 +53,25 @@ pub fn file_write(
     fs::write(&tmp, &content)?;
     fs::rename(&tmp, &abs)?;
 
-    let entry = state.db.with_conn(|conn| index_file(conn, &vault, &abs))?;
+    let wc = content.split_whitespace().count() as i64;
+    let title = path.trim_end_matches(".md").split('/').last().unwrap_or(&path).to_string();
+    let now = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%S").to_string();
 
-    // Auto-snapshot after save
-    let _ = version::create_snapshot(&state, &path, &content);
+    let entry = FileEntry {
+        id: 0,
+        path: path.clone(),
+        title,
+        updated_at: now,
+        word_count: wc,
+    };
+
+    let state_clone = state.inner().clone();
+    let abs_clone = abs.clone();
+    let vault_clone = vault.clone();
+    std::thread::spawn(move || {
+        let _ = state_clone.db.with_conn(|conn| index_file(conn, &vault_clone, &abs_clone));
+        let _ = version::create_snapshot(&state_clone, &path, &content);
+    });
 
     Ok(entry)
 }
