@@ -485,27 +485,42 @@ CREATE TABLE settings (
 | **编辑器** | 全宽主区域 | 所见即所得 Markdown 编辑，占满所有可用空间 |
 | **AI 面板** | 固定右栏，280px 宽 | 可一键折叠。对话式 AI 交互，流式渲染回复 |
 | **大纲** | 编辑器左侧悬浮 | 快捷键 `Ctrl+Shift+O` 切换显示，浮动在编辑器左边缘，不占用布局宽度 |
-| **反向链接** | 编辑器右侧悬浮 | 同上，浮动在编辑器右边缘，位于 AI 面板左侧 |
+| **反向链接** | 命令浮层 `Ctrl+Shift+B` | 非常驻；v0.3.1-ui 起为居中浮层，非贴边 |
 | **标签页栏** | 顶部固定 | 多笔记标签页，拖拽排序，Ctrl+W 关闭 |
 | **状态栏** | 底部固定 | 当前文件路径、字数、AI 处理状态指示 |
 
-### 悬浮层系统
+### 悬浮层系统（命令浮层 · v0.3.1-ui 目标态）
 
-无左侧固定边栏。所有文件操作和次级功能通过快捷键呼出浮层：
+无左侧固定边栏。**AI 侧栏（280px）为唯一常驻右侧 dock**。其余快捷键功能通过 **居中命令浮层（`IrisOverlay`）** 打开，非右侧贴边长条。
 
-| 快捷键 | 组件 | 形态 | 说明 |
-|--------|------|------|------|
-| `Ctrl+P` | QuickOpen | 居中 Dialog | 文件搜索/切换，类似 VS Code Quick Open |
-| `Ctrl+Shift+F` | SearchPanel | 右侧 Sheet 滑出 | 全文关键词 + 语义搜索 |
-| `Ctrl+Shift+V` | VersionTimeline | 右侧 Sheet 滑出 | 版本时间线：折叠自动备份、双栏对比、定稿当前版、恢复 |
-| `Ctrl+S` | （编辑器） | — | 保存当前 `.md` 并创建 `manual` 版本快照 |
-| `Ctrl+Space` | AiPanel 或 AiCommand | 聚焦右栏 / 居中 Dialog | 聚焦 AI 对话面板；编辑器内未选中文本时弹出 AI 命令选择 |
-| `Ctrl+Shift+O` | OutlineWidget | 编辑器左侧浮动 | 标题大纲树，点击跳转到对应段落 |
-| `/` | SlashCommand | 光标处浮动 Popover | AI 和内建命令菜单 |
-| 选中文本 | FloatingToolbar | 选区上方浮动 | 粗体/斜体/链接；AI 内联操作；**发送到 AI 面板** |
-| 选中文本 + 拖拽 | — | 拖拽到右栏 AI 面板 | 将选区作为上下文传递给 AI，面板自动展开 |
+| 快捷键 | 组件 | 浮层 size | 说明 |
+|--------|------|-----------|------|
+| `Ctrl+P` | QuickOpen | `compact` | 文件搜索/切换 |
+| `Ctrl+Shift+E` | FileSheet | `command` | 文件管理 |
+| `Ctrl+Shift+F` | SearchPanel | `command` | 全文 + 语义搜索 |
+| `Ctrl+Shift+V` | VersionTimeline | `wide` | 版本时间线；双栏对比，近全屏（约 92vw×88vh） |
+| `Ctrl+Shift+B` | BacklinksPanel | `command` | 反向链接 |
+| `Ctrl+Shift+T` | TagView | `command` | 标签聚合 |
+| `Ctrl+Shift+G` | GraphView | `graph` | 知识图谱，几乎全屏（约 96vw×92vh） |
+| `Ctrl+,` | SettingsPanel | `command` | 设置 |
+| `Ctrl+S` | （编辑器） | — | 保存 `.md` + `manual` 版本快照 |
+| `Ctrl+Shift+A` | AiPanel | — | 收起/展开 AI dock（非浮层） |
+| `/` | SlashCommand | Popover | 光标处命令菜单 |
+| 选中文本 | FloatingToolbar | 浮动条 | 内联 AI、发送到 AI |
 
-所有 Dialog 和 Sheet 使用 shadcn/ui 组件，蒙版 `bg-black/40`，`Esc` 关闭。Sheet 滑出方向统一为右侧。
+**浮层行为（已定稿）**
+
+- 全窗 scrim（约 45–55% 前景色 + 可选轻 blur），**盖住含 AI 在内的整窗**；**不自动收起 AI**，**不裁切**编辑区宽度。
+- **同时仅一个** 命令浮层；新开替换旧开。
+- `Esc`、点击 scrim、关闭按钮均可关闭；焦点陷阱。
+
+实现计划见 [docs/plans/2026-05-26-ui-overlay-refresh.md](./docs/plans/2026-05-26-ui-overlay-refresh.md)。**当前仓库**可能仍使用过渡态 `SidePanel`，以该文档验收后为准。
+
+### 编辑纸页（纸页视口 · v0.3.1-ui）
+
+- **墨底** `.iris-editor` + **定高纸页** `.iris-paper`（`100dvh` 减去 chrome）。
+- **仅纸内滚动**；纸边圆角 16–20px 与阴影常显。
+- **暗色主题**：暗暖灰纸 + 浅字（方案 A），见 [design-system.md](./docs/design-system.md)。
 
 ### 编辑器 → AI 面板的上下文传递
 

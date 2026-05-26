@@ -29,6 +29,7 @@
 | **v0.1.1**（已发布） | [ROADMAP § v0.1.1](../ROADMAP.md#v011--体验定稿与质量补齐) | [v0.1.1-epic.md](./v0.1.1-epic.md) |
 | **v0.2.0**（已发布） | [ROADMAP § v0.2.0](../ROADMAP.md#v020--知识网络) | 知识网络 + 纸墨阶段 1 + sqlite-vec |
 | **v0.3.0**（已实现） | [ROADMAP § v0.3.0](../ROADMAP.md#v030--安全与版本) | 版本系统、冲突解决、模板、导出 |
+| **v0.3.1-ui**（体验） | [ROADMAP § v0.3.1-ui](../ROADMAP.md#v031-ui--命令浮层与纸墨抛光) | [UI 实现计划](./plans/2026-05-26-ui-overlay-refresh.md) |
 | **v1.0.0** | [ROADMAP § v1.0.0](../ROADMAP.md#v100--完整发布) | 国际化、无障碍、体验收尾 |
 
 ---
@@ -40,6 +41,7 @@
 | 语义搜索与 Recall@5 | [eval/semantic-search.md](./eval/semantic-search.md) |
 | 语义评测 fixture vault | [eval/fixtures/semantic-vault/](./eval/fixtures/semantic-vault/) |
 | 文档版本 / 历史（B+ 双层保存） | [plans/2026-05-26-document-version-design.md](./plans/2026-05-26-document-version-design.md) |
+| 命令浮层与纸墨抛光（v0.3.1-ui） | [plans/2026-05-26-ui-overlay-refresh.md](./plans/2026-05-26-ui-overlay-refresh.md) |
 | 品牌图标 | [../scripts/assets/README.md](../scripts/assets/README.md) |
 
 ---

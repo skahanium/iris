@@ -36,7 +36,7 @@ export function QuickOpen({ open, onClose, onSelect }: QuickOpenProps) {
 
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="top-[15vh] translate-y-0 gap-0 p-0">
+      <DialogContent className="top-[12vh] max-w-xl translate-y-0 gap-0 overflow-hidden p-0">
         <DialogHeader className="sr-only">
           <DialogTitle>搜索笔记</DialogTitle>
         </DialogHeader>
