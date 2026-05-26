@@ -86,7 +86,7 @@ export function TipTapEditor({
   return (
     <div
       className={cn(
-        "iris-editor flex-1 overflow-auto bg-editor-paper",
+        "iris-editor flex-1",
         className,
       )}
     >

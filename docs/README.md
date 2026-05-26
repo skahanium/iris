@@ -39,6 +39,7 @@
 |------|------|
 | 语义搜索与 Recall@5 | [eval/semantic-search.md](./eval/semantic-search.md) |
 | 语义评测 fixture vault | [eval/fixtures/semantic-vault/](./eval/fixtures/semantic-vault/) |
+| 文档版本 / 历史（B+ 双层保存） | [plans/2026-05-26-document-version-design.md](./plans/2026-05-26-document-version-design.md) |
 | 品牌图标 | [../scripts/assets/README.md](../scripts/assets/README.md) |
 
 ---

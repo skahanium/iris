@@ -137,44 +137,59 @@
   → 用户抉择后 → write_file() 或 discard()
 ```
 
-### 5. 版本快照
+### 5. 持久化与版本快照（双层）
+
+**层 1 · 写当前 `.md`（非版本）**
 
 ```
-触发条件 (Ctrl+S 或 定时扫描)
-  → Rust: 计算当前文件内容 SHA-256
-  → 与最近一次快照的 SHA-256 比较
-  → 无变更 → 跳过
-  → 有变更 → 写入 .iris/versions/<file_id>/<timestamp>.md
-             → INSERT INTO versions (元数据记录)
-             → emit("version:created") 通知 WebView 刷新版本列表
+编辑输入 → 防抖（默认 1200ms）→ file_write(path, content)
+  → 原子写入 vault/<path>.md
+  → 后台 index_file() 更新 SQLite 索引
+  → 不调用 create_snapshot
 ```
+
+**层 2 · 版本快照（检查点）**
+
+```
+显式/策略触发 → version_save_manual | version_save_idle | version_finalize_current | create_snapshot(pre_restore)
+  → policy::should_create_snapshot（按 kind 节流、与最新快照 hash 去重）
+  → 允许插入 → 写入 .iris/versions/<file_id>/<version_no>.md
+             → INSERT INTO versions（含 kind、is_finalized、storage_path）
+             → auto_idle 插入后 enforce_auto_idle_cap（每篇最多 30 条）
+```
+
+| `kind` | 触发 |
+|--------|------|
+| `manual` | `Ctrl+S`（先 flush 层 1，再 `version_save_manual`） |
+| `auto_idle` | 该文档打开且连续无编辑 ≥ 10 分钟（`useVersionIdle`） |
+| `finalize` | 版本面板「定稿当前正文」（`version_finalize_current`） |
+| `pre_restore` | `version_restore` 前自动保护当前正文 |
+| `pre_close` | 规划项（P2），尚未实现 |
+
+设计说明见 [docs/plans/2026-05-26-document-version-design.md](./docs/plans/2026-05-26-document-version-design.md)。
 
 ### 6. 版本恢复
 
 ```
-用户在版本面板选择目标版本 → IPC: version_preview(id)
-  → Rust: 读取 .iris/versions/<file_id>/<timestamp>.md
-  → 返回内容到 WebView 的只读预览窗口
+用户在版本面板选择目标版本 → version_preview(id)
+  → 读取 .iris/versions/<storage_path>（形如 <file_id>/<version_no>.md）
 
-用户点击恢复 → IPC: version_restore(id)
-  → 第一步: 对当前编辑器内容执行快照（保护操作前状态）
-  → 第二步: 读取目标版本内容 → 替换编辑器内容
-  → 第三步: write_file() 写回主 .md 文件
-  → 关闭版本面板
+用户确认恢复 → version_restore(id, current_content)
+  → 必须成功创建 pre_restore 快照，否则中止恢复
+  → 读取目标快照 → 写回主 .md → index_file
+  → WebView 刷新编辑器内容
 ```
 
 ### 7. 版本清理
 
 ```
-触发条件 (应用启动 + 每 24 小时)
-  → SQL: DELETE FROM versions
-         WHERE is_finalized = 0
-         AND created_at < datetime('now', '-7 days')
-  → 对每条待删记录:
-      删除 .iris/versions/<file_id>/<timestamp>.md
-      删除 versions 表中的元数据行
-  → emit("version:cleanup") 通知 WebView 更新
+应用启动 → version_cleanup()
+  → DELETE 元数据：kind = 'auto_idle' AND is_finalized = 0 AND created_at < 7 日前
+  → 删除对应 .iris/versions/ 下快照文件
+  → manual / finalize / pre_restore 等不因 7 天规则自动删除
 ```
+
+> 注：周期性（如每 24 小时）后台清理仍为规划项；当前仅在启动时执行。
 
 ---
 
@@ -190,7 +205,7 @@ Tauri 的命令式 IPC 基于 JSON 序列化。所有 Rust 函数通过 `#[tauri
 | `llm_*` | AI 集成 | `llm_generate`, `llm_chat`, `llm_abort`, `llm_providers` |
 | `search_*` | 搜索 | `search_keyword`, `search_semantic`, `search_reindex` |
 | `index_*` | 索引/元数据 | `index_tags`, `index_links`, `index_stats` |
-| `version_*` | 版本快照 | `version_list`, `version_create`, `version_preview`, `version_restore`, `version_delete`, `version_finalize`, `version_rename` |
+| `version_*` | 版本快照 | `version_list`, `version_preview`, `version_restore`, `version_delete`, `version_save_manual`, `version_save_idle`, `version_finalize_current`, `version_cleanup` |
 | `crypto_*` | 加密 | `crypto_lock`, `crypto_unlock`, `crypto_status` |
 | `settings_*` | 配置 | `settings_get`, `settings_set`, `settings_reset` |
 
@@ -327,16 +342,17 @@ CREATE TABLE chunk_embeddings (
 -- v0.2+：sqlite-vec 虚拟表以加速大规模近似检索（migration 002_vec.sql 已实现）
 -- CREATE VIRTUAL TABLE vec_chunks USING vec0(embedding float[384]);
 
--- 版本快照元数据（内容全文存储在 .iris/versions/ 目录中）
+-- 版本快照元数据（内容全文存储在 .iris/versions/ 目录中；migration 006 增加 kind）
 CREATE TABLE versions (
     id           INTEGER PRIMARY KEY AUTOINCREMENT,
     file_id      INTEGER REFERENCES files(id) ON DELETE CASCADE,
     version_no   TEXT NOT NULL,                 -- 毫秒级时间戳，如 20260525143052123
-    label        TEXT,                           -- 用户可自定义的版本名（可选）
+    label        TEXT,                           -- 定稿名等（可选）
     content_hash TEXT NOT NULL,                 -- 快照内容的 SHA-256
-    storage_path TEXT NOT NULL,                 -- 相对于 .iris/versions/ 的快照文件路径
+    storage_path TEXT NOT NULL,                 -- 相对 .iris/versions/，如 1/20260525143052123.md
     word_count   INTEGER,
-    is_finalized INTEGER DEFAULT 0,             -- 0=自动快照 1=已定稿
+    is_finalized INTEGER DEFAULT 0,             -- 定稿快照为 1
+    kind         TEXT NOT NULL,                 -- manual | auto_idle | pre_restore | finalize | pre_close
     created_at   TEXT NOT NULL,
     UNIQUE(file_id, version_no)
 );
@@ -352,49 +368,65 @@ CREATE TABLE settings (
 );
 ```
 
-### 版本系统（v0.3 已实现，见 `src-tauri/src/version/mod.rs`）
+### 版本系统（v0.3 已实现，见 `src-tauri/src/version/`）
+
+#### 双层保存
+
+| 层级 | 行为 |
+|------|------|
+| 层 1 | 编辑防抖写 `vault/*.md`；用户感知为「自动保存」，**不**产生版本行 |
+| 层 2 | 稀疏检查点写入 `.iris/versions/`；`files.title` 为文档名，历史不进文件列表 |
+
+整库版本历史仍推荐用户在 vault 目录外自行使用 Git（见 ROADMAP「Vault 外工具链」）。
 
 #### 触发策略
 
 | 触发方式 | 行为 |
 |----------|------|
-| 手动保存 (Ctrl+S) | 立即生成一次快照 |
-| 定时快照 | 每 N 分钟自动扫描已打开的笔记，仅在内容有变更时生成快照 |
-| 定稿 (Finalize) | 立即创建新快照并标记 `is_finalized = 1`，不可被自动清理 |
+| `Ctrl+S` | flush 层 1 + `version_save_manual`（`kind=manual`） |
+| 空闲 10 分钟 | 打开中的文档无编辑 → `version_save_idle`（`kind=auto_idle`） |
+| 定稿 | 对**当前正文**新建快照，`is_finalized=1`，`kind=finalize` |
+| 恢复前 | `version_restore` 内建 `pre_restore` |
+
+`file_write` **不再**自动创建快照。与「定时扫描全库已打开笔记」的旧设计已废弃。
 
 #### 存储结构
 
 ```
 <笔记目录>/
-├── note-a.md
-├── note-b.md
-└── .iris/                  # 隐藏目录
-    ├── config.json          # Iris 本地配置
-    └── versions/            # 版本快照存储
-        ├── <file_id>/
-        │   ├── 20260525143052123.md
-        │   ├── 20260526120000000.md
-        │   └── ...
+├── 新建文档.md
+├── 新建文档（1）.md
+└── .iris/
+    ├── config.json
+    └── versions/
+        └── <file_id>/
+            ├── 20260525143052123.md
+            └── ...
 ```
 
-#### 清理策略
+`storage_path` 列为 `<file_id>/<version_no>.md`（相对 `.iris/versions/`）。
 
-- **自动版本**（`is_finalized = 0`）：创建后存留 7 天，到期自动删除
-- **定稿版本**（`is_finalized = 1`）：永不自动删除，只能手动删除
-- 清理时机：应用启动时 + 每 24 小时定时执行一次
-- 清理逻辑：先删快照文件，再删 SQLite 记录，保持文件和元数据一致性
+#### 清理与配额
+
+- **`auto_idle`**：每篇最多保留 30 条（超出删最旧）；启动时删除 7 天前的 `auto_idle` 且未定稿记录
+- **定稿**（`is_finalized=1`）：不参与 7 天自动清理；用户可手动删除（强确认）
+- **其他 kind**（`manual`、`pre_restore` 等）：不因 7 天 `auto_idle` 规则被删
 
 #### 版本号
 
-- 格式：17 位毫秒级 Unix 时间戳（如 `20260525143052123`）
-- 全局唯一，天然按时间排序
-- 定稿版本可额外设置一个可读的 `label`（如"提交专栏"、"会议前版本"）
+- `version_no`：17 位毫秒时间戳字符串，按时间排序
+- 定稿可选 `label`（如「会议前版本」）
+
+#### 时间线 UI（`Ctrl+Shift+V`）
+
+- 定稿区置顶；其余按**今天 / 昨天 / 更早**分组
+- **自动备份（N）**、**恢复相关（N）** 默认折叠，展开后列出条目
+- 选中版本后顶部**双栏对比**（当前正文 | 历史快照）；恢复前浏览器确认
 
 #### 版本恢复
 
-1. 用户在版本管理面板选择目标版本 → 预览
-2. 点击恢复 → 当前编辑器内容被替换为目标版本内容
-3. 替换前自动创建一次快照（保护"恢复前"的状态，可撤销）
+1. 预览历史快照（只读）
+2. 确认后将当前正文替换为目标版本；失败保护：无法创建 `pre_restore` 时不覆盖当前正文
 
 
 ## 分块策略
@@ -465,7 +497,8 @@ CREATE TABLE settings (
 |--------|------|------|------|
 | `Ctrl+P` | QuickOpen | 居中 Dialog | 文件搜索/切换，类似 VS Code Quick Open |
 | `Ctrl+Shift+F` | SearchPanel | 右侧 Sheet 滑出 | 全文关键词 + 语义搜索 |
-| `Ctrl+Shift+V` | VersionTimeline | 右侧 Sheet 滑出 | 笔记版本时间线，预览与恢复 |
+| `Ctrl+Shift+V` | VersionTimeline | 右侧 Sheet 滑出 | 版本时间线：折叠自动备份、双栏对比、定稿当前版、恢复 |
+| `Ctrl+S` | （编辑器） | — | 保存当前 `.md` 并创建 `manual` 版本快照 |
 | `Ctrl+Space` | AiPanel 或 AiCommand | 聚焦右栏 / 居中 Dialog | 聚焦 AI 对话面板；编辑器内未选中文本时弹出 AI 命令选择 |
 | `Ctrl+Shift+O` | OutlineWidget | 编辑器左侧浮动 | 标题大纲树，点击跳转到对应段落 |
 | `/` | SlashCommand | 光标处浮动 Popover | AI 和内建命令菜单 |
@@ -603,7 +636,10 @@ src/components/
 ├── file/
 │   ├── QuickOpen.tsx          # Ctrl+P 文件搜索切换
 │   ├── SearchPanel.tsx        # Ctrl+Shift+F 全文/语义搜索
-│   └── VersionTimeline.tsx    # Ctrl+Shift+V 版本时间线
+│   └── version/
+│       ├── VersionTimeline.tsx           # Ctrl+Shift+V 版本时间线
+│       ├── version-timeline-groups.ts    # 按日 / kind 分组
+│       └── version-restore-confirm.ts  # 恢复确认文案
 └── outline/
     └── OutlinePanel.tsx       # 大纲和反向链接共享的数据逻辑
 ```

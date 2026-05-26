@@ -41,11 +41,7 @@ export function ConfirmDialog({
           </Button>
           <Button
             type="button"
-            className={
-              variant === "destructive"
-                ? "bg-red-900/80 text-primary-foreground hover:opacity-90"
-                : undefined
-            }
+            variant={variant === "destructive" ? "destructive" : "default"}
             onClick={onConfirm}
           >
             {confirmLabel}

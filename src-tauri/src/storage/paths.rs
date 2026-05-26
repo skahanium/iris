@@ -46,6 +46,12 @@ pub fn resolve_vault_path(vault: &Path, relative: &str) -> AppResult<PathBuf> {
     }
 }
 
+/// 用户笔记（非 `.iris` 元数据目录下的版本快照、模板等）。
+pub fn is_user_note_path(relative: &str) -> bool {
+    let normalized = relative.replace('\\', "/");
+    !normalized.starts_with(".iris/") && normalized != ".iris"
+}
+
 /// Relative path from vault root (forward slashes).
 pub fn relative_path(vault: &Path, absolute: &Path) -> AppResult<String> {
     let vault = vault.canonicalize()?;
@@ -90,6 +96,12 @@ mod tests {
         fs::write(&note, "hello").unwrap();
         let resolved = resolve_vault_path(&vault, "sub/note.md").unwrap();
         assert_eq!(resolved, note.canonicalize().unwrap());
+    }
+
+    #[test]
+    fn is_user_note_path_rejects_iris_metadata() {
+        assert!(!is_user_note_path(".iris/versions/1/20260101120000.md"));
+        assert!(is_user_note_path("notes/readme.md"));
     }
 
     #[test]

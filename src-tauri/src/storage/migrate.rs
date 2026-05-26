@@ -11,6 +11,13 @@ const MIGRATION_002_UP: &str = include_str!("../../migrations/002_vec.sql");
 const MIGRATION_002_DOWN: &str = include_str!("../../migrations/002_vec.down.sql");
 const MIGRATION_003_UP: &str = include_str!("../../migrations/003_versions.sql");
 const MIGRATION_003_DOWN: &str = include_str!("../../migrations/003_versions.down.sql");
+const MIGRATION_004_UP: &str = include_str!("../../migrations/004_files_dedupe.sql");
+const MIGRATION_004_DOWN: &str = include_str!("../../migrations/004_files_dedupe.down.sql");
+const MIGRATION_005_UP: &str = include_str!("../../migrations/005_drop_iris_metadata_files.sql");
+const MIGRATION_005_DOWN: &str =
+    include_str!("../../migrations/005_drop_iris_metadata_files.down.sql");
+const MIGRATION_006_UP: &str = include_str!("../../migrations/006_versions_kind.sql");
+const MIGRATION_006_DOWN: &str = include_str!("../../migrations/006_versions_kind.down.sql");
 
 /// Apply core schema migrations idempotently.
 pub fn migrate_up(conn: &Connection) -> AppResult<()> {
@@ -75,11 +82,77 @@ pub fn migrate_up(conn: &Connection) -> AppResult<()> {
         )?;
     }
 
+    let v4_applied: bool = conn
+        .query_row(
+            "SELECT COUNT(*) FROM _migrations WHERE name = '004_files_dedupe'",
+            [],
+            |row| row.get::<_, i64>(0),
+        )
+        .map(|c| c > 0)
+        .unwrap_or(false);
+
+    if !v4_applied {
+        conn.execute_batch(MIGRATION_004_UP)?;
+        conn.execute(
+            "INSERT INTO _migrations (name, applied_at) VALUES ('004_files_dedupe', datetime('now'))",
+            [],
+        )?;
+    }
+
+    let v5_applied: bool = conn
+        .query_row(
+            "SELECT COUNT(*) FROM _migrations WHERE name = '005_drop_iris_metadata_files'",
+            [],
+            |row| row.get::<_, i64>(0),
+        )
+        .map(|c| c > 0)
+        .unwrap_or(false);
+
+    if !v5_applied {
+        conn.execute_batch(MIGRATION_005_UP)?;
+        conn.execute(
+            "INSERT INTO _migrations (name, applied_at) VALUES ('005_drop_iris_metadata_files', datetime('now'))",
+            [],
+        )?;
+    }
+
+    let v6_applied: bool = conn
+        .query_row(
+            "SELECT COUNT(*) FROM _migrations WHERE name = '006_versions_kind'",
+            [],
+            |row| row.get::<_, i64>(0),
+        )
+        .map(|c| c > 0)
+        .unwrap_or(false);
+
+    if !v6_applied {
+        conn.execute_batch(MIGRATION_006_UP)?;
+        conn.execute(
+            "INSERT INTO _migrations (name, applied_at) VALUES ('006_versions_kind', datetime('now'))",
+            [],
+        )?;
+    }
+
     Ok(())
 }
 
 /// Roll back all migrations (for tests).
 pub fn migrate_down(conn: &Connection) -> AppResult<()> {
+    let _ = conn.execute_batch(MIGRATION_006_DOWN);
+    let _ = conn.execute(
+        "DELETE FROM _migrations WHERE name = '006_versions_kind'",
+        [],
+    );
+    let _ = conn.execute_batch(MIGRATION_005_DOWN);
+    let _ = conn.execute(
+        "DELETE FROM _migrations WHERE name = '005_drop_iris_metadata_files'",
+        [],
+    );
+    let _ = conn.execute_batch(MIGRATION_004_DOWN);
+    let _ = conn.execute(
+        "DELETE FROM _migrations WHERE name = '004_files_dedupe'",
+        [],
+    );
     let _ = conn.execute_batch(MIGRATION_003_DOWN);
     let _ = conn.execute("DELETE FROM _migrations WHERE name = '003_versions'", []);
     let _ = conn.execute_batch(MIGRATION_002_DOWN);
@@ -153,6 +226,43 @@ mod tests {
     }
 
     #[test]
+    fn migration_004_dedupes_duplicate_paths() {
+        let conn = Connection::open_in_memory().unwrap();
+        migrate_up(&conn).unwrap();
+        conn.execute_batch(
+            "CREATE TABLE files_dup AS SELECT * FROM files;
+             DROP TABLE files;
+             CREATE TABLE files (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                path TEXT NOT NULL,
+                title TEXT,
+                frontmatter TEXT,
+                content_hash TEXT NOT NULL,
+                word_count INTEGER DEFAULT 0,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+             );
+             INSERT INTO files SELECT * FROM files_dup;
+             INSERT INTO files (path, title, content_hash, created_at, updated_at)
+             VALUES ('dup.md', 'Dup', 'h2', '2020-01-01', '2026-01-02'),
+                    ('dup.md', 'Dup', 'h3', '2020-01-01', '2026-01-03');
+             DROP TABLE files_dup;",
+        )
+        .unwrap();
+
+        conn.execute_batch(MIGRATION_004_UP).unwrap();
+
+        let count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM files WHERE path = 'dup.md'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(count, 1);
+    }
+
+    #[test]
     fn migration_003_creates_versions_table() {
         let conn = Connection::open_in_memory().unwrap();
         migrate_up(&conn).unwrap();
@@ -176,5 +286,80 @@ mod tests {
             [],
         )
         .unwrap();
+    }
+
+    fn versions_has_kind_column(conn: &Connection) -> bool {
+        let mut stmt = conn.prepare("PRAGMA table_info(versions)").expect("pragma");
+        let names: Vec<String> = stmt
+            .query_map([], |row| row.get(1))
+            .expect("query")
+            .flatten()
+            .collect();
+        names.iter().any(|name| name == "kind")
+    }
+
+    #[test]
+    fn migration_006_applies_idempotently() {
+        let conn = Connection::open_in_memory().unwrap();
+        migrate_up(&conn).unwrap();
+        migrate_up(&conn).unwrap();
+
+        let applied: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM _migrations WHERE name = '006_versions_kind'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(applied, 1);
+        assert!(versions_has_kind_column(&conn));
+    }
+
+    #[test]
+    fn migration_006_backfills_kind_and_storage_path() {
+        let conn = Connection::open_in_memory().unwrap();
+        migrate_up(&conn).unwrap();
+
+        conn.execute_batch(MIGRATION_006_DOWN).unwrap();
+        conn.execute(
+            "DELETE FROM _migrations WHERE name = '006_versions_kind'",
+            [],
+        )
+        .unwrap();
+
+        conn.execute(
+            "INSERT INTO files (path, title, content_hash, created_at, updated_at)
+             VALUES ('note.md', 'Note', 'abc', datetime('now'), datetime('now'))",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO versions (file_id, version_no, content_hash, storage_path, is_finalized, created_at)
+             VALUES (1, '20260525143052123', 'hash1', 'note.md', 1, datetime('now'))",
+            [],
+        )
+        .unwrap();
+
+        migrate_up(&conn).unwrap();
+
+        let (kind, storage_path): (String, String) = conn
+            .query_row(
+                "SELECT kind, storage_path FROM versions WHERE version_no = '20260525143052123'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(kind, "finalize");
+        assert_eq!(storage_path, "1/20260525143052123.md");
+    }
+
+    #[test]
+    fn migration_006_down_removes_kind_column() {
+        let conn = Connection::open_in_memory().unwrap();
+        migrate_up(&conn).unwrap();
+        assert!(versions_has_kind_column(&conn));
+
+        conn.execute_batch(MIGRATION_006_DOWN).unwrap();
+        assert!(!versions_has_kind_column(&conn));
     }
 }

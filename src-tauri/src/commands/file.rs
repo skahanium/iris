@@ -8,7 +8,14 @@ use crate::app::AppState;
 use crate::error::{AppError, AppResult};
 use crate::indexer::scan::{index_file, remove_file_index, scan_vault, FileEntry};
 use crate::storage::paths::resolve_vault_path;
-use crate::version;
+
+fn title_from_path(path: &str) -> String {
+    path.trim_end_matches(".md")
+        .split('/')
+        .next_back()
+        .unwrap_or(path)
+        .to_string()
+}
 
 #[derive(Debug, Clone, Serialize)]
 pub struct FileListItem {
@@ -17,11 +24,17 @@ pub struct FileListItem {
     pub updated_at: String,
 }
 
+/// 列出受追踪的用户笔记（每篇文档一条，不含版本快照）。
+/// `title` 为创建时确定的文档名；版本历史见 `version_list_cmd`。
 #[tauri::command]
 pub fn file_list(state: State<'_, Arc<AppState>>) -> AppResult<Vec<FileListItem>> {
     state.db.with_conn(|conn| {
-        let mut stmt =
-            conn.prepare("SELECT path, title, updated_at FROM files ORDER BY updated_at DESC")?;
+        let mut stmt = conn.prepare(
+            "SELECT path, title, updated_at FROM files
+             WHERE id IN (SELECT MAX(id) FROM files GROUP BY path)
+               AND path NOT LIKE '.iris/%'
+             ORDER BY updated_at DESC",
+        )?;
         let rows = stmt.query_map([], |row| {
             Ok(FileListItem {
                 path: row.get(0)?,
@@ -54,7 +67,14 @@ pub fn file_write(
     fs::rename(&tmp, &abs)?;
 
     let wc = content.split_whitespace().count() as i64;
-    let title = path.trim_end_matches(".md").split('/').last().unwrap_or(&path).to_string();
+    let title = state.db.with_conn(|conn| {
+        match conn.query_row("SELECT title FROM files WHERE path = ?1", [&path], |r| {
+            r.get::<_, String>(0)
+        }) {
+            Ok(t) => Ok(t),
+            Err(_) => Ok(title_from_path(&path)),
+        }
+    })?;
     let now = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%S").to_string();
 
     let entry = FileEntry {
@@ -69,8 +89,9 @@ pub fn file_write(
     let abs_clone = abs.clone();
     let vault_clone = vault.clone();
     std::thread::spawn(move || {
-        let _ = state_clone.db.with_conn(|conn| index_file(conn, &vault_clone, &abs_clone));
-        let _ = version::create_snapshot(&state_clone, &path, &content);
+        let _ = state_clone
+            .db
+            .with_conn(|conn| index_file(conn, &vault_clone, &abs_clone));
     });
 
     Ok(entry)
@@ -120,7 +141,12 @@ pub fn file_create(
     if let Some(parent) = abs.parent() {
         fs::create_dir_all(parent)?;
     }
-    let body = content.unwrap_or_else(|| format!("# {}\n\n", path.trim_end_matches(".md")));
+    let document_title = abs
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .map(str::to_string)
+        .unwrap_or_else(|| title_from_path(&path));
+    let body = content.unwrap_or_else(|| format!("# {document_title}\n\n"));
     fs::write(&abs, &body)?;
     state.db.with_conn(|conn| index_file(conn, &vault, &abs))
 }

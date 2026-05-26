@@ -26,9 +26,24 @@ impl AppState {
             watcher: Mutex::new(None),
         };
         if let Some(v) = state.load_vault_setting()? {
-            state.set_vault(PathBuf::from(v))?;
+            let path = PathBuf::from(v);
+            if let Err(e) = state.set_vault(path) {
+                tracing::warn!("stored vault_path invalid, cleared: {e}");
+                state.clear_vault_setting()?;
+            }
         }
         Ok(state)
+    }
+
+    fn clear_vault_setting(&self) -> AppResult<()> {
+        {
+            let mut guard = self.vault.lock().map_err(|_| AppError::msg("Lock error"))?;
+            *guard = None;
+        }
+        self.db.with_conn(|conn| {
+            conn.execute("DELETE FROM settings WHERE key = 'vault_path'", [])?;
+            Ok(())
+        })
     }
 
     fn load_vault_setting(&self) -> AppResult<Option<String>> {

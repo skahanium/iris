@@ -172,11 +172,11 @@ export function AiPanel({
 
   return (
     <div className="flex h-full flex-col">
-      <div className="flex items-center gap-2 border-b border-border px-3 py-2">
-        <Sparkles className="h-4 w-4 text-primary" />
-        <span className="text-sm font-medium">AI</span>
+      <div className="flex h-10 shrink-0 items-center gap-2 border-b border-border px-3">
+        <Sparkles className="h-4 w-4 shrink-0 text-primary" />
+        <span className="text-sm font-medium tracking-tight">AI</span>
         <select
-          className="ml-auto rounded border border-border bg-card px-2 py-0.5 text-xs"
+          className="iris-select ml-auto"
           value={provider}
           onChange={(e) => onProviderChange(e.target.value)}
         >
@@ -199,7 +199,7 @@ export function AiPanel({
       </div>
 
       {quote && (
-        <div className="m-2 rounded border border-primary/30 bg-editor-paper/10 p-2.5 text-xs">
+        <div className="iris-quote-card m-2 text-xs">
           <div className="mb-1 flex items-center justify-between">
             <span className="font-medium text-muted-foreground">
               引用自 {quote.filePath}
@@ -264,7 +264,7 @@ export function AiPanel({
             {relatedNotes.map((h) => (
               <span
                 key={`${h.path}-${h.chunk_id}`}
-                className="inline-flex items-center rounded-full border border-primary/20 bg-editor-paper/10 px-2.5 py-0.5 text-xs text-primary"
+                className="inline-flex items-center rounded-full border border-primary/25 bg-card px-2.5 py-0.5 text-xs text-primary"
                 title={h.snippet}
               >
                 {h.title}
@@ -283,9 +283,7 @@ export function AiPanel({
             <div
               key={`${i}-${m.role}`}
               className={
-                m.role === "user"
-                  ? "rounded bg-muted/50 p-2"
-                  : "rounded border border-border/50 p-2"
+                m.role === "user" ? "ai-msg-user" : "ai-msg-assistant"
               }
             >
               {m.role === "assistant" ? (

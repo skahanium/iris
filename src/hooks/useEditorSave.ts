@@ -6,10 +6,13 @@ import { fileWrite } from "@/lib/ipc";
 import { htmlToMarkdown } from "@/lib/markdown";
 import { debounce } from "@/lib/utils";
 
+/** Debounce for layer-1 persistence to `.md` only (not version snapshots). */
+export const EDITOR_SAVE_DEBOUNCE_MS = 1200;
+
 /**
  * Debounced editor save. Call `notifyDirty()` on every keystroke (zero-cost).
  * Actual HTML serialization + markdown conversion + IPC write only happen
- * when the 500ms debounce fires.
+ * when the debounce fires. Version checkpoints use `versionSaveManual` / idle.
  */
 export function useEditorSave(
   path: string | null,
@@ -33,7 +36,7 @@ export function useEditorSave(
     () =>
       debounce(() => {
         void saveFromEditor();
-      }, 500),
+      }, EDITOR_SAVE_DEBOUNCE_MS),
     [saveFromEditor],
   );
 
@@ -47,5 +50,10 @@ export function useEditorSave(
     debouncedSave();
   }, [debouncedSave]);
 
-  return { notifyDirty };
+  const flushSave = useCallback(async () => {
+    debouncedSave.cancel();
+    await saveFromEditor();
+  }, [debouncedSave, saveFromEditor]);
+
+  return { notifyDirty, flushSave };
 }

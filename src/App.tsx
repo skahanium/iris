@@ -17,15 +17,20 @@ import { AppShell } from "@/components/layout/AppShell";
 import { StatusBar } from "@/components/layout/StatusBar";
 import { TabBar, type TabItem } from "@/components/layout/TabBar";
 import { WelcomeEmpty } from "@/components/layout/WelcomeEmpty";
+import { resolveDocumentTitle } from "@/lib/document-title";
 import { createDefaultNote } from "@/lib/note-create";
+import { Moon, PanelRight, Sun } from "lucide-react";
+
 import { Button } from "@/components/ui/button";
 import { useEditorSave } from "@/hooks/useEditorSave";
+import { useVersionIdle } from "@/hooks/useVersionIdle";
 import { useInlineAi } from "@/hooks/useInlineAi";
 import { useLlmProvider } from "@/hooks/useLlmProvider";
 import { useOverlayManager } from "@/hooks/useOverlayManager";
 import { useTheme, useVault } from "@/hooks/useVault";
-import { markdownToHtml } from "@/lib/markdown";
-import { fileRead } from "@/lib/ipc";
+import { htmlToMarkdown, markdownToHtml } from "@/lib/markdown";
+import { fileRead, versionSaveManual } from "@/lib/ipc";
+import { isTauriRuntime } from "@/lib/tauri-runtime";
 import { isModKey } from "@/lib/utils";
 
 function App() {
@@ -53,7 +58,7 @@ function App() {
 
   const dirtyRef = useRef(false);
 
-  const { notifyDirty } = useEditorSave(
+  const { notifyDirty, flushSave } = useEditorSave(
     activePath,
     editorRef,
     (md) => {
@@ -68,6 +73,24 @@ function App() {
     },
   );
 
+  const getEditorMarkdown = useCallback(() => {
+    const ed = editorRef.current;
+    if (ed) return htmlToMarkdown(ed.getHTML());
+    return markdownRef.current;
+  }, []);
+
+  const { onActivity: resetVersionIdle } = useVersionIdle(
+    activePath,
+    getEditorMarkdown,
+  );
+
+  const handleSaveVersion = useCallback(async () => {
+    const path = activePathRef.current;
+    if (!path) return;
+    await flushSave();
+    await versionSaveManual(path, getEditorMarkdown());
+  }, [flushSave, getEditorMarkdown]);
+
   const handleDirty = useCallback(() => {
     if (!dirtyRef.current) {
       dirtyRef.current = true;
@@ -80,17 +103,20 @@ function App() {
       );
     }
     notifyDirty();
-  }, [notifyDirty]);
+    resetVersionIdle();
+  }, [notifyDirty, resetVersionIdle]);
 
-  const openFile = useCallback(async (path: string) => {
+  const openFile = useCallback(async (path: string, titleHint?: string) => {
     const content = await fileRead(path);
+    const title = await resolveDocumentTitle(path, titleHint);
     setMarkdown(content);
     markdownRef.current = content;
     dirtyRef.current = false;
     setActivePath(path);
     setTabs((prev) => {
-      if (prev.some((t) => t.path === path)) return prev;
-      const title = path.replace(/\.md$/, "").split("/").pop() ?? path;
+      if (prev.some((t) => t.path === path)) {
+        return prev.map((t) => (t.path === path ? { ...t, title } : t));
+      }
       return [...prev, { path, title, dirty: false }];
     });
   }, []);
@@ -118,6 +144,15 @@ function App() {
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      if (
+        isModKey(e) &&
+        !e.shiftKey &&
+        (e.key === "s" || e.key === "S") &&
+        activePathRef.current
+      ) {
+        e.preventDefault();
+        void handleSaveVersion();
+      }
       if (isModKey(e) && e.key === "p") {
         e.preventDefault();
         overlays.setQuickOpen(true);
@@ -166,7 +201,7 @@ function App() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [overlays, closeTab]);
+  }, [overlays, closeTab, handleSaveVersion]);
 
   const applyMarkdownToEditor = useCallback(
     (content: string) => {
@@ -214,23 +249,104 @@ function App() {
   }, []);
 
   const handleNewNote = useCallback(async () => {
-    const name = await createDefaultNote();
-    await openFile(name);
+    const created = await createDefaultNote();
+    await openFile(created.path, created.title);
   }, [openFile]);
+
+  const activeDocumentTitle =
+    tabs.find((t) => t.path === activePath)?.title ?? null;
+
+  const chromeActions = (
+    <>
+      <Button
+        type="button"
+        size="sm"
+        variant="outline"
+        className="h-8 gap-1.5 px-2.5"
+        onClick={() => setAiPanelOpen((o) => !o)}
+        aria-pressed={aiPanelOpen}
+        aria-label={aiPanelOpen ? "收起 AI 侧栏" : "展开 AI 侧栏"}
+      >
+        <PanelRight className="h-3.5 w-3.5" />
+        <span className="hidden sm:inline">{aiPanelOpen ? "收起 AI" : "AI"}</span>
+      </Button>
+      <Button
+        type="button"
+        size="sm"
+        variant="outline"
+        className="h-8 gap-1.5 px-2.5"
+        onClick={() => void setTheme(theme === "dark" ? "light" : "dark")}
+        aria-label={theme === "dark" ? "切换为亮色" : "切换为暗色"}
+      >
+        {theme === "dark" ? (
+          <Sun className="h-3.5 w-3.5" />
+        ) : (
+          <Moon className="h-3.5 w-3.5" />
+        )}
+        <span className="hidden sm:inline">
+          {theme === "dark" ? "亮色" : "暗色"}
+        </span>
+      </Button>
+    </>
+  );
+
+  if (!isTauriRuntime()) {
+    return (
+      <div className="flex h-dvh flex-col items-center justify-center gap-4 bg-background px-6 text-center">
+        <h1 className="font-editor text-xl font-semibold text-foreground">
+          请在 Iris 桌面窗口中使用
+        </h1>
+        <p className="max-w-md text-sm leading-relaxed text-muted-foreground">
+          <code className="rounded bg-muted px-1 py-0.5 text-xs">
+            http://127.0.0.1:1420
+          </code>{" "}
+          只是 Vite 前端热更新地址，浏览器里没有 Rust 后端，无法读写笔记目录。
+        </p>
+        <p className="max-w-md text-sm text-muted-foreground">
+          方式 B 需要两个终端：一个{" "}
+          <code className="text-xs">npm run dev</code>，另一个启动{" "}
+          <code className="text-xs">npx tauri dev …</code>，使用弹出的{" "}
+          <strong className="font-medium text-foreground">Iris</strong> 窗口操作。
+        </p>
+      </div>
+    );
+  }
 
   if (loading) {
     return (
-      <div className="flex h-screen items-center justify-center">加载中…</div>
+      <div className="flex h-dvh items-center justify-center bg-background text-muted-foreground">
+        加载中…
+      </div>
     );
   }
 
   if (!vaultPath) {
     return (
-      <div className="flex h-screen flex-col items-center justify-center gap-4">
-        <h1 className="text-2xl font-semibold">Iris</h1>
-        <p className="text-muted-foreground">选择笔记目录以开始</p>
+      <div className="flex h-dvh flex-col items-center justify-center gap-6 bg-background px-6">
+        <div className="text-center">
+          <h1 className="font-editor text-3xl font-semibold tracking-tight text-foreground">
+            Iris
+          </h1>
+          <p className="mt-2 text-sm text-muted-foreground">
+            纸墨笔记 · 本地优先
+          </p>
+        </div>
         <Button type="button" onClick={() => void pickVault()}>
           选择笔记目录
+        </Button>
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          className="gap-1.5"
+          onClick={() => void setTheme(theme === "dark" ? "light" : "dark")}
+        >
+          {theme === "dark" ? (
+            <Sun className="h-3.5 w-3.5" />
+          ) : (
+            <Moon className="h-3.5 w-3.5" />
+          )}
+          {theme === "dark" ? "亮色模式" : "暗色模式"}
         </Button>
       </div>
     );
@@ -246,6 +362,7 @@ function App() {
           onSelect={(p) => void openFile(p)}
           onClose={closeTab}
           onNew={() => void handleNewNote()}
+          chromeActions={chromeActions}
         />
       }
       editor={
@@ -286,36 +403,13 @@ function App() {
       statusBar={
         <StatusBar
           path={activePath}
+          documentTitle={activeDocumentTitle}
           wordCount={markdown.split(/\s+/).filter(Boolean).length}
           aiStatus={aiStatus}
         />
       }
       overlays={
         <>
-          <div
-            className={
-              aiPanelOpen
-                ? "fixed right-[292px] top-2 z-30 flex gap-1"
-                : "fixed right-3 top-2 z-30 flex gap-1"
-            }
-          >
-            <Button
-              type="button"
-              size="sm"
-              variant="outline"
-              onClick={() => setAiPanelOpen((o) => !o)}
-            >
-              {aiPanelOpen ? "收起 AI" : "AI"}
-            </Button>
-            <Button
-              type="button"
-              size="sm"
-              variant="outline"
-              onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
-            >
-              {theme === "dark" ? "亮色" : "暗色"}
-            </Button>
-          </div>
           <QuickOpen
             open={overlays.quickOpen}
             onClose={() => overlays.setQuickOpen(false)}
@@ -323,35 +417,46 @@ function App() {
           />
           <FileSheet
             open={overlays.fileSheet}
+            aiPanelOpen={aiPanelOpen}
             onClose={() => overlays.setFileSheet(false)}
             onOpen={(p) => void openFile(p)}
           />
           <SearchPanel
             open={overlays.searchOpen}
+            aiPanelOpen={aiPanelOpen}
             onClose={() => overlays.setSearchOpen(false)}
             onOpen={(p) => void openFile(p)}
           />
           <SettingsPanel
             open={overlays.settingsOpen}
+            aiPanelOpen={aiPanelOpen}
             onClose={() => overlays.setSettingsOpen(false)}
             provider={llmProvider}
+            theme={theme}
+            onThemeChange={(t) => void setTheme(t)}
           />
           <BacklinksPanel
             open={overlays.backlinksOpen}
+            aiPanelOpen={aiPanelOpen}
             onClose={() => overlays.setBacklinksOpen(false)}
             notePath={activePath}
             onOpen={(p) => void openFile(p)}
           />
           <TagView
             open={overlays.tagViewOpen}
+            aiPanelOpen={aiPanelOpen}
             onClose={() => overlays.setTagViewOpen(false)}
             onOpen={(p) => void openFile(p)}
           />
           <VersionTimeline
             open={overlays.versionOpen}
+            aiPanelOpen={aiPanelOpen}
             onClose={() => overlays.setVersionOpen(false)}
             notePath={activePath}
             currentContent={markdown}
+            hasUnsavedEdits={
+              tabs.find((t) => t.path === activePath)?.dirty ?? false
+            }
             onRestore={applyMarkdownToEditor}
           />
           <GraphView

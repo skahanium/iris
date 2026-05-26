@@ -6,6 +6,7 @@ import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { Input } from "@/components/ui/input";
 import { PromptDialog } from "@/components/ui/PromptDialog";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { SidePanel } from "@/components/ui/side-panel";
 import {
   exportFile,
   fileCreate,
@@ -16,6 +17,7 @@ import {
   templateCreate,
   templateList,
 } from "@/lib/ipc";
+import { createDefaultNote } from "@/lib/note-create";
 import { markdownToHtmlPage } from "@/lib/markdown";
 import type { FileListItem } from "@/types/ipc";
 
@@ -23,9 +25,15 @@ interface FileSheetProps {
   open: boolean;
   onClose: () => void;
   onOpen: (path: string) => void;
+  aiPanelOpen?: boolean;
 }
 
-export function FileSheet({ open, onClose, onOpen }: FileSheetProps) {
+export function FileSheet({
+  open,
+  onClose,
+  onOpen,
+  aiPanelOpen = false,
+}: FileSheetProps) {
   const [files, setFiles] = useState<FileListItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -69,17 +77,14 @@ export function FileSheet({ open, onClose, onOpen }: FileSheetProps) {
     await exportFile(destPath, html);
   }, []);
 
-  if (!open) return null;
-
   return (
     <>
-      <div className="fixed inset-y-0 right-0 z-50 flex w-80 flex-col border-l border-border bg-panel shadow-xl">
-        <div className="flex items-center justify-between border-b border-border px-3 py-2">
-          <span className="text-sm font-medium">文件</span>
-          <Button type="button" size="sm" variant="ghost" onClick={onClose}>
-            Esc
-          </Button>
-        </div>
+      <SidePanel
+        open={open}
+        onClose={onClose}
+        title="文件"
+        aiPanelOpen={aiPanelOpen}
+      >
         <div className="flex gap-2 border-b border-border p-2">
           <Input
             className="text-xs"
@@ -93,9 +98,16 @@ export function FileSheet({ open, onClose, onOpen }: FileSheetProps) {
             title="新建"
             onClick={async () => {
               if (showTemplates && templates.length > 0) return;
-              await fileCreate(newName);
+              const trimmed = newName.trim();
+              if (trimmed) {
+                await fileCreate(trimmed);
+                refresh();
+                onOpen(trimmed);
+                return;
+              }
+              const created = await createDefaultNote();
               refresh();
-              onOpen(newName);
+              onOpen(created.path);
             }}
           >
             <FolderPlus className="h-4 w-4" />
@@ -128,8 +140,10 @@ export function FileSheet({ open, onClose, onOpen }: FileSheetProps) {
             )}
           </div>
         )}
-        {error && <p className="px-3 py-2 text-xs text-red-400/90">{error}</p>}
-        <ScrollArea className="flex-1">
+        {error && (
+          <p className="px-3 py-2 text-xs text-destructive">{error}</p>
+        )}
+        <ScrollArea className="min-h-0 flex-1">
           {loading ? (
             <p className="p-3 text-xs text-muted-foreground">加载中…</p>
           ) : (
@@ -177,7 +191,7 @@ export function FileSheet({ open, onClose, onOpen }: FileSheetProps) {
             ))
           )}
         </ScrollArea>
-      </div>
+      </SidePanel>
 
       <PromptDialog
         open={renameTarget !== null}

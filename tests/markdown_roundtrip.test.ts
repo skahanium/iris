@@ -150,7 +150,7 @@ describe("html page export (v0.3)", () => {
     expect(page).toContain("<title>Test Note</title>");
     expect(page).toContain("<h1>Hello</h1>");
     expect(page).toContain("Noto Serif SC");
-    expect(page).toContain("background: #f4f0e8");
+    expect(page).toContain("background: #fafaf9");
   });
 
   it("falls back to default title", () => {

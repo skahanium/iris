@@ -4,20 +4,24 @@
   "version": "0.1.0",
   "identifier": "com.iris.notes",
   "build": {
-    "beforeDevCommand": "pnpm run dev",
-    "devUrl": "http://localhost:1420",
-    "beforeBuildCommand": "pnpm run build",
+    "beforeDevCommand": "npm run dev",
+    "devUrl": "http://127.0.0.1:1420",
+    "beforeBuildCommand": "npm run build",
     "frontendDist": "../dist"
   },
   "app": {
     "withGlobalTauri": false,
     "windows": [
       {
+        "label": "main",
         "title": "Iris",
         "width": 1280,
         "height": 800,
         "minWidth": 800,
-        "minHeight": 600
+        "minHeight": 600,
+        "visible": true,
+        "center": true,
+        "focus": true
       }
     ],
     "security": {

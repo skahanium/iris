@@ -3,6 +3,7 @@ import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { SidePanel } from "@/components/ui/side-panel";
 import { searchKeyword, searchSemantic } from "@/lib/ipc";
 import type { KeywordHit, SemanticHit } from "@/types/ipc";
 
@@ -10,17 +11,21 @@ interface SearchPanelProps {
   open: boolean;
   onClose: () => void;
   onOpen: (path: string) => void;
+  aiPanelOpen?: boolean;
 }
 
-export function SearchPanel({ open, onClose, onOpen }: SearchPanelProps) {
+export function SearchPanel({
+  open,
+  onClose,
+  onOpen,
+  aiPanelOpen = false,
+}: SearchPanelProps) {
   const [query, setQuery] = useState("");
   const [mode, setMode] = useState<"keyword" | "semantic">("keyword");
   const [keywordHits, setKeywordHits] = useState<KeywordHit[]>([]);
   const [semanticHits, setSemanticHits] = useState<SemanticHit[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-
-  if (!open) return null;
 
   const runSearch = async () => {
     if (!query.trim()) return;
@@ -44,13 +49,13 @@ export function SearchPanel({ open, onClose, onOpen }: SearchPanelProps) {
   };
 
   return (
-    <div className="fixed inset-y-0 right-0 z-50 flex w-96 flex-col border-l border-border bg-panel shadow-xl">
-      <div className="flex items-center justify-between border-b border-border px-3 py-2">
-        <span className="text-sm font-medium">搜索</span>
-        <Button type="button" size="sm" variant="ghost" onClick={onClose}>
-          Esc
-        </Button>
-      </div>
+    <SidePanel
+      open={open}
+      onClose={onClose}
+      title="搜索"
+      width="lg"
+      aiPanelOpen={aiPanelOpen}
+    >
       <div className="space-y-2 border-b border-border p-3">
         <Input
           placeholder="输入关键词或自然语言…"
@@ -84,9 +89,9 @@ export function SearchPanel({ open, onClose, onOpen }: SearchPanelProps) {
             {loading ? "搜索中…" : "搜索"}
           </Button>
         </div>
-        {error && <p className="text-xs text-red-400/90">{error}</p>}
+        {error && <p className="text-xs text-destructive">{error}</p>}
       </div>
-      <ScrollArea className="flex-1 px-2">
+      <ScrollArea className="min-h-0 flex-1 px-2">
         {keywordHits.map((h) => (
           <button
             key={h.path}
@@ -124,6 +129,6 @@ export function SearchPanel({ open, onClose, onOpen }: SearchPanelProps) {
           </button>
         ))}
       </ScrollArea>
-    </div>
+    </SidePanel>
   );
 }

@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 
-import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { SidePanel } from "@/components/ui/side-panel";
 import { fileBacklinks } from "@/lib/ipc";
 import type { BacklinkEntry } from "@/types/ipc";
 
@@ -10,6 +10,7 @@ interface BacklinksPanelProps {
   onClose: () => void;
   notePath: string | null;
   onOpen: (path: string) => void;
+  aiPanelOpen?: boolean;
 }
 
 export function BacklinksPanel({
@@ -17,6 +18,7 @@ export function BacklinksPanel({
   onClose,
   notePath,
   onOpen,
+  aiPanelOpen = false,
 }: BacklinksPanelProps) {
   const [backlinks, setBacklinks] = useState<BacklinkEntry[]>([]);
 
@@ -25,17 +27,15 @@ export function BacklinksPanel({
     void fileBacklinks(notePath).then(setBacklinks);
   }, [open, notePath]);
 
-  if (!open) return null;
-
   return (
-    <div className="fixed inset-y-0 right-0 z-50 flex w-72 flex-col border-l border-border bg-panel shadow-xl">
-      <div className="flex items-center justify-between border-b border-border px-3 py-2">
-        <span className="text-sm font-medium">反向链接</span>
-        <Button type="button" size="sm" variant="ghost" onClick={onClose}>
-          Esc
-        </Button>
-      </div>
-      <ScrollArea className="flex-1">
+    <SidePanel
+      open={open}
+      onClose={onClose}
+      title="反向链接"
+      width="sm"
+      aiPanelOpen={aiPanelOpen}
+    >
+      <ScrollArea className="min-h-0 flex-1">
         {backlinks.length === 0 ? (
           <p className="p-3 text-xs text-muted-foreground">无反向链接</p>
         ) : (
@@ -62,6 +62,6 @@ export function BacklinksPanel({
           ))
         )}
       </ScrollArea>
-    </div>
+    </SidePanel>
   );
 }

@@ -314,7 +314,7 @@ export function GraphView({ open, onClose, onOpenNote }: GraphViewProps) {
         </Button>
       </div>
       {error && (
-        <p className="border-b border-border px-3 py-2 text-xs text-red-400/90">
+        <p className="border-b border-border px-3 py-2 text-xs text-destructive">
           {error}
         </p>
       )}

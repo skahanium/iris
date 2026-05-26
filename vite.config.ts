@@ -11,8 +11,13 @@ export default defineConfig({
   },
   clearScreen: false,
   server: {
+    // 127.0.0.1 避免 Windows WebView2 / 系统代理下 localhost 无法加载
+    host: "127.0.0.1",
     port: 1420,
     strictPort: true,
+    watch: {
+      ignored: ["**/src-tauri/**"],
+    },
   },
   envPrefix: ["VITE_", "TAURI_"],
   build: {

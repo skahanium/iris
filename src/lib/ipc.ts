@@ -99,11 +99,36 @@ export async function versionDelete(versionId: number): Promise<void> {
   return invoke("version_delete_cmd", { versionId });
 }
 
-export async function versionFinalize(
-  versionId: number,
+export async function versionFinalizeCurrent(
+  path: string,
+  content: string,
   label: string | null,
-): Promise<void> {
-  return invoke("version_finalize_cmd", { versionId, label });
+): Promise<VersionEntry | null> {
+  return invoke<VersionEntry | null>("version_finalize_current_cmd", {
+    path,
+    content,
+    label,
+  });
+}
+
+export async function versionSaveManual(
+  path: string,
+  content: string,
+): Promise<VersionEntry | null> {
+  return invoke<VersionEntry | null>("version_save_manual_cmd", {
+    path,
+    content,
+  });
+}
+
+export async function versionSaveIdle(
+  path: string,
+  content: string,
+): Promise<VersionEntry | null> {
+  return invoke<VersionEntry | null>("version_save_idle_cmd", {
+    path,
+    content,
+  });
 }
 
 export async function templateList(): Promise<{ name: string }[]> {

@@ -13,7 +13,7 @@ use super::wikilink::index_wiki_links;
 #[cfg(not(test))]
 use crate::embedding::store::store_chunk_embeddings;
 use crate::error::AppResult;
-use crate::storage::paths::relative_path;
+use crate::storage::paths::{is_user_note_path, relative_path};
 
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct FileEntry {
@@ -28,17 +28,6 @@ fn content_hash(content: &str) -> String {
     let mut hasher = Sha256::new();
     hasher.update(content.as_bytes());
     hex::encode(hasher.finalize())
-}
-
-fn parse_title(path: &str, content: &str) -> String {
-    if let Some(line) = content.lines().find(|l| l.starts_with("# ")) {
-        return line.trim_start_matches("# ").trim().to_string();
-    }
-    Path::new(path)
-        .file_stem()
-        .and_then(|s| s.to_str())
-        .unwrap_or(path)
-        .to_string()
 }
 
 fn word_count(content: &str) -> i64 {
@@ -68,13 +57,19 @@ pub fn sync_file_tags(conn: &Connection, file_id: i64, tags: &[String]) -> AppRe
 /// Index a single file into SQLite.
 pub fn index_file(conn: &Connection, vault: &Path, absolute: &Path) -> AppResult<FileEntry> {
     let rel = relative_path(vault, absolute)?;
+    if !is_user_note_path(&rel) {
+        return Err(crate::error::AppError::msg(
+            "Path is not a user note (metadata paths are not indexed)",
+        ));
+    }
     let content = fs::read_to_string(absolute)?;
     let hash = content_hash(&content);
     let parsed = parse_note(&content)?;
-    let title = parsed
-        .title
-        .clone()
-        .unwrap_or_else(|| parse_title(&rel, &parsed.body));
+    let document_name = Path::new(&rel)
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or(&rel)
+        .to_string();
     let wc = word_count(&parsed.body);
     let now = Utc::now().to_rfc3339();
     let frontmatter = parsed.frontmatter_json.as_deref();
@@ -87,12 +82,17 @@ pub fn index_file(conn: &Connection, vault: &Path, absolute: &Path) -> AppResult
 
     let file_id = if let Some(id) = existing_id {
         conn.execute(
-            "UPDATE files SET title = ?1, frontmatter = ?2, content_hash = ?3, word_count = ?4, updated_at = ?5 WHERE id = ?6",
-            rusqlite::params![title, frontmatter, hash, wc, now, id],
+            "UPDATE files SET frontmatter = ?1, content_hash = ?2, word_count = ?3, updated_at = ?4 WHERE id = ?5",
+            rusqlite::params![frontmatter, hash, wc, now, id],
         )?;
         conn.execute("DELETE FROM chunks WHERE file_id = ?1", [id])?;
         id
     } else {
+        let title = parsed
+            .title
+            .clone()
+            .filter(|t| !t.is_empty())
+            .unwrap_or(document_name);
         conn.execute(
             "INSERT INTO files (path, title, frontmatter, content_hash, word_count, created_at, updated_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6)",
@@ -100,6 +100,11 @@ pub fn index_file(conn: &Connection, vault: &Path, absolute: &Path) -> AppResult
         )?;
         conn.last_insert_rowid()
     };
+
+    let title: String =
+        conn.query_row("SELECT title FROM files WHERE id = ?1", [file_id], |r| {
+            r.get(0)
+        })?;
 
     sync_file_tags(conn, file_id, &parsed.tags)?;
 
@@ -145,6 +150,11 @@ pub fn scan_vault(conn: &Connection, vault: &Path) -> AppResult<Vec<FileEntry>> 
 
     for entry in WalkDir::new(vault)
         .into_iter()
+        .filter_entry(|e| {
+            e.path()
+                .strip_prefix(vault)
+                .is_ok_and(|rel| !rel.components().any(|c| c.as_os_str() == ".iris"))
+        })
         .filter_map(|e| e.ok())
         .filter(|e| e.path().extension().is_some_and(|ext| ext == "md"))
     {
@@ -177,6 +187,25 @@ mod tests {
         (dir, vault, db)
     }
 
+    #[test]
+    fn scan_vault_skips_iris_version_snapshots() {
+        let (_dir, vault, db) = setup_vault();
+        write_note(&vault, "real.md", "# Real\n\nBody.");
+        let snap_dir = vault.join(".iris/versions/1");
+        fs::create_dir_all(&snap_dir).unwrap();
+        fs::write(snap_dir.join("20260101120000.md"), "# Snapshot\n\nOld.").unwrap();
+
+        db.with_conn(|conn| {
+            let entries = scan_vault(conn, &vault)?;
+            assert_eq!(entries.len(), 1);
+            assert_eq!(entries[0].path, "real.md");
+            let count: i64 = conn.query_row("SELECT COUNT(*) FROM files", [], |r| r.get(0))?;
+            assert_eq!(count, 1);
+            Ok(())
+        })
+        .unwrap();
+    }
+
     fn write_note(vault: &std::path::Path, rel: &str, content: &str) {
         let abs = vault.join(rel);
         if let Some(parent) = abs.parent() {
@@ -193,7 +222,7 @@ mod tests {
         db.with_conn(|conn| {
             let entry = index_file(conn, &vault, &vault.join("hello.md"))?;
             assert_eq!(entry.path, "hello.md");
-            assert_eq!(entry.title, "Hello");
+            assert_eq!(entry.title, "hello");
 
             let count: i64 = conn.query_row(
                 "SELECT COUNT(*) FROM files WHERE path = 'hello.md'",
@@ -227,7 +256,7 @@ mod tests {
             let e2 = index_file(conn, &vault, &vault.join("note.md"))?;
 
             assert_eq!(e1.id, e2.id, "same path should UPDATE not INSERT");
-            assert_eq!(e2.title, "Second");
+            assert_eq!(e2.title, "note", "document title is fixed at creation");
 
             let count: i64 = conn.query_row(
                 "SELECT COUNT(*) FROM files WHERE path = 'note.md'",
@@ -354,7 +383,7 @@ mod tests {
     fn index_file_extracts_wiki_links() {
         let (_dir, vault, db) = setup_vault();
         write_note(&vault, "a.md", "# Note A");
-        write_note(&vault, "b.md", "# Note B\n\nSee [[Note A]] for context.");
+        write_note(&vault, "b.md", "# Note B\n\nSee [[a]] for context.");
 
         db.with_conn(|conn| {
             let _entry_a = index_file(conn, &vault, &vault.join("a.md"))?;
@@ -373,7 +402,7 @@ mod tests {
                 [entry_b.id],
                 |r| r.get(0),
             )?;
-            assert!(context.contains("[[Note A]]"));
+            assert!(context.contains("[[a]]"));
             Ok(())
         })
         .unwrap();

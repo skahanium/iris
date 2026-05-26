@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
 
-import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { SidePanel } from "@/components/ui/side-panel";
 import { tagList } from "@/lib/ipc";
 import type { TagGroup } from "@/types/ipc";
 
@@ -10,9 +10,15 @@ interface TagViewProps {
   open: boolean;
   onClose: () => void;
   onOpen: (path: string) => void;
+  aiPanelOpen?: boolean;
 }
 
-export function TagView({ open, onClose, onOpen }: TagViewProps) {
+export function TagView({
+  open,
+  onClose,
+  onOpen,
+  aiPanelOpen = false,
+}: TagViewProps) {
   const [tags, setTags] = useState<TagGroup[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -29,8 +35,6 @@ export function TagView({ open, onClose, onOpen }: TagViewProps) {
       .finally(() => setLoading(false));
   }, [open]);
 
-  if (!open) return null;
-
   const filtered = tags.filter((t) =>
     t.name.toLowerCase().includes(search.toLowerCase()),
   );
@@ -39,14 +43,13 @@ export function TagView({ open, onClose, onOpen }: TagViewProps) {
     .size;
 
   return (
-    <div className="fixed inset-y-0 right-0 z-50 flex w-72 flex-col border-l border-border bg-panel shadow-xl">
-      <div className="flex items-center justify-between border-b border-border px-3 py-2">
-        <span className="text-sm font-medium">标签</span>
-        <Button type="button" size="sm" variant="ghost" onClick={onClose}>
-          Esc
-        </Button>
-      </div>
-
+    <SidePanel
+      open={open}
+      onClose={onClose}
+      title="标签"
+      width="sm"
+      aiPanelOpen={aiPanelOpen}
+    >
       <div className="flex gap-3 border-b border-border px-3 py-2 text-xs text-muted-foreground">
         <span>{totalNotes} 笔记</span>
         <span>{tags.length} 标签</span>
@@ -61,9 +64,11 @@ export function TagView({ open, onClose, onOpen }: TagViewProps) {
         />
       </div>
 
-      {error && <p className="px-3 py-2 text-xs text-red-400/90">{error}</p>}
+      {error && (
+        <p className="px-3 py-2 text-xs text-destructive">{error}</p>
+      )}
 
-      <ScrollArea className="flex-1">
+      <ScrollArea className="min-h-0 flex-1">
         {loading ? (
           <p className="p-3 text-xs text-muted-foreground">加载中…</p>
         ) : filtered.length === 0 ? (
@@ -102,6 +107,6 @@ export function TagView({ open, onClose, onOpen }: TagViewProps) {
           ))
         )}
       </ScrollArea>
-    </div>
+    </SidePanel>
   );
 }

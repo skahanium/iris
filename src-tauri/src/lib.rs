@@ -25,7 +25,10 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
-            let data_dir = app.path().app_data_dir().expect("app data dir");
+            let data_dir = app
+                .path()
+                .app_data_dir()
+                .map_err(|e| crate::error::AppError::msg(format!("无法解析应用数据目录: {e}")))?;
             std::fs::create_dir_all(&data_dir)?;
             let state = Arc::new(AppState::new(data_dir)?);
             app.manage(state.clone());
@@ -36,6 +39,17 @@ pub fn run() {
             if state.vault_path().is_ok() {
                 let _ = state.restart_file_watcher(app.handle().clone());
             }
+
+            if let Some(window) = app.get_webview_window("main") {
+                window
+                    .show()
+                    .map_err(|e| crate::error::AppError::msg(format!("无法显示主窗口: {e}")))?;
+                let _ = window.set_focus();
+            } else {
+                tracing::warn!("main window not found after setup");
+            }
+
+            eprintln!("Iris 已启动 — 若未见窗口，请检查任务栏或 WebView2 运行时。");
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -67,8 +81,10 @@ pub fn run() {
             commands::version::version_preview_cmd,
             commands::version::version_restore_cmd,
             commands::version::version_delete_cmd,
-            commands::version::version_finalize_cmd,
+            commands::version::version_finalize_current_cmd,
             commands::version::version_cleanup_cmd,
+            commands::version::version_save_manual_cmd,
+            commands::version::version_save_idle_cmd,
             commands::template::template_list,
             commands::template::template_create,
             commands::tag::tag_list,

@@ -1,8 +1,10 @@
+import { Moon, Sun } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { SidePanel } from "@/components/ui/side-panel";
 import {
   BING_SEARCH_CREDENTIAL_SERVICE,
   llmCredentialService,
@@ -19,9 +21,19 @@ interface SettingsPanelProps {
   open: boolean;
   onClose: () => void;
   provider: string;
+  aiPanelOpen?: boolean;
+  theme: "dark" | "light";
+  onThemeChange: (theme: "dark" | "light") => void;
 }
 
-export function SettingsPanel({ open, onClose, provider }: SettingsPanelProps) {
+export function SettingsPanel({
+  open,
+  onClose,
+  provider,
+  aiPanelOpen = false,
+  theme,
+  onThemeChange,
+}: SettingsPanelProps) {
   const [llmKeyInput, setLlmKeyInput] = useState("");
   const [bingKeyInput, setBingKeyInput] = useState("");
   const [bingKeyConfigured, setBingKeyConfigured] = useState(false);
@@ -39,8 +51,6 @@ export function SettingsPanel({ open, onClose, provider }: SettingsPanelProps) {
       if (v) setCustomBaseUrl(v);
     });
   }, [open, refreshBingKeyStatus]);
-
-  if (!open) return null;
 
   const saveLlmApiKey = async () => {
     if (!llmKeyInput.trim()) return;
@@ -70,16 +80,40 @@ export function SettingsPanel({ open, onClose, provider }: SettingsPanelProps) {
   };
 
   return (
-    <div className="fixed inset-y-0 right-0 z-50 flex w-80 flex-col border-l border-border bg-panel shadow-xl">
-      <div className="flex items-center justify-between border-b border-border px-3 py-2">
-        <span className="text-sm font-medium">设置</span>
-        <Button type="button" size="sm" variant="ghost" onClick={onClose}>
-          Esc
-        </Button>
-      </div>
-
+    <SidePanel
+      open={open}
+      onClose={onClose}
+      title="设置"
+      aiPanelOpen={aiPanelOpen}
+    >
       <ScrollArea className="flex-1">
-        <div className="space-y-4 p-3">
+        <div className="space-y-5 p-3">
+          <div>
+            <label className="mb-1.5 block text-xs font-medium">外观</label>
+            <div className="flex gap-2">
+              <Button
+                type="button"
+                size="sm"
+                variant={theme === "dark" ? "default" : "outline"}
+                className="gap-1.5"
+                onClick={() => onThemeChange("dark")}
+              >
+                <Moon className="h-3.5 w-3.5" />
+                暗色
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant={theme === "light" ? "default" : "outline"}
+                className="gap-1.5"
+                onClick={() => onThemeChange("light")}
+              >
+                <Sun className="h-3.5 w-3.5" />
+                亮色
+              </Button>
+            </div>
+          </div>
+
           <div>
             <label className="mb-1 block text-xs font-medium">
               LLM API Key
@@ -157,6 +191,6 @@ export function SettingsPanel({ open, onClose, provider }: SettingsPanelProps) {
           </div>
         </div>
       </ScrollArea>
-    </div>
+    </SidePanel>
   );
 }

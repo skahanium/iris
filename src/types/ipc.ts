@@ -87,6 +87,13 @@ export interface TagGroup {
   files: FileListItem[];
 }
 
+export type VersionKind =
+  | "auto_idle"
+  | "manual"
+  | "pre_restore"
+  | "finalize"
+  | "pre_close";
+
 export interface VersionEntry {
   id: number;
   file_id: number;
@@ -95,5 +102,6 @@ export interface VersionEntry {
   content_hash: string;
   word_count: number;
   is_finalized: boolean;
+  kind: VersionKind;
   created_at: string;
 }

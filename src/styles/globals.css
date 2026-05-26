@@ -2,46 +2,63 @@
 @tailwind components;
 @tailwind utilities;
 
-/* Iris · 纸墨（B）+ chrome 外壳；token 定义见 docs/design-system.md */
+/* Iris · 纸墨（B）现代版：中性纸面 + 低饱和墨壳，见 docs/design-system.md */
 
 @layer base {
   :root {
-    /* Chrome — warm dark shell */
-    --background: 30 10% 8%;
-    --foreground: 40 12% 90%;
-    --panel: 30 8% 12%;
-    --card: 30 7% 14%;
-    --border: 30 6% 20%;
-    --muted: 30 6% 18%;
-    --muted-foreground: 35 8% 58%;
+    color-scheme: dark;
 
-    /* Accent — sepia / copper (not violet) */
-    --primary: 28 42% 38%;
-    --primary-foreground: 40 33% 96%;
+    /* Chrome — 冷灰炭墨（低饱和，避免泛黄棕） */
+    --background: 240 6% 7%;
+    --foreground: 240 5% 93%;
+    --panel: 240 5% 10%;
+    --card: 240 4% 13%;
+    --border: 240 4% 18%;
+    --muted: 240 4% 16%;
+    --muted-foreground: 240 4% 58%;
+    --ring: 22 32% 52%;
 
-    /* Editor paper — always “sheet” tone even in dark app chrome */
-    --editor-paper: 40 33% 94%;
-    --editor-ink: 25 22% 16%;
-    --editor-muted: 30 12% 42%;
-    --editor-border: 35 20% 82%;
+    /* Accent — 克制赭铜 */
+    --primary: 22 32% 52%;
+    --primary-foreground: 40 20% 98%;
+
+    --destructive: 0 45% 48%;
+    --destructive-foreground: 0 0% 98%;
+
+    /* 编辑纸面 — 暗色壳上的浅灰纸（非奶油黄） */
+    --editor-paper: 40 6% 90%;
+    --editor-ink: 240 8% 14%;
+    --editor-muted: 240 5% 42%;
+    --editor-border: 40 5% 82%;
+    --editor-code-bg: 240 6% 14%;
+    --editor-code-fg: 240 8% 90%;
   }
 
   .light {
-    --background: 40 15% 96%;
-    --foreground: 25 20% 14%;
-    --panel: 40 12% 93%;
-    --card: 40 20% 98%;
-    --border: 35 14% 86%;
-    --muted: 40 10% 90%;
-    --muted-foreground: 30 8% 42%;
+    color-scheme: light;
 
-    --primary: 28 48% 34%;
-    --primary-foreground: 40 33% 98%;
+    --background: 240 6% 97%;
+    --foreground: 240 8% 12%;
+    --panel: 240 5% 95%;
+    --card: 0 0% 100%;
+    --border: 240 6% 90%;
+    --muted: 240 5% 93%;
+    --muted-foreground: 240 4% 44%;
+    --ring: 22 36% 42%;
 
-    --editor-paper: 40 40% 97%;
-    --editor-ink: 25 25% 12%;
-    --editor-muted: 30 10% 38%;
-    --editor-border: 35 18% 88%;
+    --primary: 22 36% 42%;
+    --primary-foreground: 40 15% 99%;
+
+    --destructive: 0 50% 44%;
+    --destructive-foreground: 0 0% 100%;
+
+    /* 近白冷纸，仅一丝暖调 */
+    --editor-paper: 40 4% 99%;
+    --editor-ink: 240 9% 11%;
+    --editor-muted: 240 4% 46%;
+    --editor-border: 240 6% 91%;
+    --editor-code-bg: 240 8% 96%;
+    --editor-code-fg: 240 10% 18%;
   }
 
   * {
@@ -50,79 +67,158 @@
 
   body {
     @apply bg-background font-sans text-foreground antialiased;
+    font-feature-settings: "kern" 1, "liga" 1;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+    }
   }
 }
 
 @layer components {
-  /* TipTap / ProseMirror — centered “page” on paper */
+  .iris-select {
+    @apply rounded-md border border-border bg-card px-2 py-1 text-xs text-foreground shadow-sm;
+  }
+
+  .iris-select:focus-visible {
+    @apply outline-none ring-2 ring-primary ring-offset-1 ring-offset-panel;
+  }
+
+  /* 编辑区外层：壳与纸面分离 */
+  .iris-editor {
+    @apply flex-1 overflow-y-auto bg-background;
+  }
+
+  /* TipTap / ProseMirror — 居中纸栏，现代行距与边距 */
   .iris-editor .ProseMirror {
-    @apply mx-auto min-h-full max-w-[65ch] font-editor text-editor-ink;
-    padding: 2.75rem 2rem 5rem;
+    @apply mx-auto min-h-full max-w-[42rem] font-editor text-editor-ink;
+    padding: clamp(2.5rem, 7vh, 4.5rem) clamp(1.5rem, 5vw, 2.75rem)
+      clamp(3.5rem, 12vh, 6rem);
     font-size: 1.0625rem;
-    line-height: 1.75;
+    line-height: 1.65;
+    letter-spacing: 0.012em;
     outline: none;
+    background: hsl(var(--editor-paper));
+    box-shadow: 0 0 0 1px hsl(var(--editor-border) / 0.45);
+  }
+
+  .light .iris-editor .ProseMirror {
+    margin-top: clamp(1.25rem, 4vh, 2.5rem);
+    margin-bottom: clamp(1.25rem, 4vh, 2.5rem);
+    min-height: calc(100% - clamp(2.5rem, 8vh, 5rem));
+    border-radius: 3px;
+    box-shadow:
+      0 1px 2px hsl(240 10% 10% / 0.04),
+      0 8px 24px hsl(240 10% 10% / 0.05),
+      0 0 0 1px hsl(var(--editor-border) / 0.65);
+  }
+
+  :root:not(.light) .iris-editor .ProseMirror {
+    margin-top: clamp(1rem, 3vh, 2rem);
+    margin-bottom: clamp(1rem, 3vh, 2rem);
+    min-height: calc(100% - clamp(2rem, 6vh, 4rem));
+    border-radius: 2px;
+    box-shadow:
+      0 12px 40px hsl(240 8% 4% / 0.35),
+      0 0 0 1px hsl(var(--editor-border) / 0.25);
   }
 
   .iris-editor .ProseMirror h1 {
-    @apply mb-4 mt-8 font-editor text-3xl font-semibold tracking-tight text-editor-ink;
+    @apply mb-5 mt-10 font-editor text-[1.75rem] font-semibold leading-tight tracking-tight text-editor-ink;
   }
 
   .iris-editor .ProseMirror h2 {
-    @apply mb-3 mt-6 font-editor text-2xl font-semibold text-editor-ink;
+    @apply mb-4 mt-8 font-editor text-[1.375rem] font-semibold leading-snug tracking-tight text-editor-ink;
   }
 
   .iris-editor .ProseMirror h3 {
-    @apply mb-2 mt-5 font-editor text-xl font-semibold text-editor-ink;
+    @apply mb-3 mt-6 font-editor text-[1.125rem] font-semibold leading-snug text-editor-ink;
   }
 
   .iris-editor .ProseMirror p {
-    @apply mb-4;
+    margin-bottom: 1.15em;
+  }
+
+  .iris-editor .ProseMirror p:last-child {
+    margin-bottom: 0;
+  }
+
+  .iris-editor .ProseMirror li {
+    margin-bottom: 0.35em;
   }
 
   .iris-editor .ProseMirror a {
-    @apply text-primary underline decoration-primary/40 underline-offset-2;
+    @apply text-primary underline decoration-primary/35 underline-offset-[3px] transition-colors hover:decoration-primary/60;
   }
 
   .iris-editor .ProseMirror code {
-    @apply rounded bg-editor-border/60 px-1 py-0.5 font-mono text-[0.9em] text-editor-ink;
+    @apply rounded-[4px] px-1.5 py-0.5 font-mono text-[0.88em];
+    background: hsl(var(--editor-code-bg));
+    color: hsl(var(--editor-code-fg));
   }
 
   .iris-editor .ProseMirror pre {
-    @apply my-4 overflow-x-auto rounded-md border border-editor-border p-4 font-mono text-sm;
-    background: hsl(30 12% 12%);
-    color: hsl(40 20% 92%);
+    @apply my-5 overflow-x-auto rounded-lg border border-editor-border/80 p-4 font-mono text-[0.9rem] leading-relaxed;
+    background: hsl(var(--editor-code-bg));
+    color: hsl(var(--editor-code-fg));
   }
 
-  .light .iris-editor .ProseMirror pre {
-    background: hsl(35 14% 92%);
-    color: hsl(25 22% 16%);
-    border: 1px solid hsl(var(--editor-border));
+  .iris-editor .ProseMirror pre code {
+    background: transparent;
+    padding: 0;
+    color: inherit;
   }
 
   .iris-editor .ProseMirror blockquote {
-    @apply border-l-2 border-primary/50 pl-4 italic text-editor-muted;
+    @apply my-5 border-l-[3px] border-primary/40 py-0.5 pl-4 text-editor-muted;
+    font-style: normal;
   }
 
   .iris-editor .ProseMirror ul,
   .iris-editor .ProseMirror ol {
-    @apply mb-4 pl-6;
+    @apply mb-5 pl-6;
+  }
+
+  .iris-editor .ProseMirror hr {
+    @apply my-10 border-0 border-t border-editor-border;
   }
 
   .iris-editor .ProseMirror .is-empty::before {
-    @apply text-editor-muted;
+    @apply text-editor-muted/80;
+    font-style: normal;
   }
 
-  /* AI stream node — subtle accent frame */
   .iris-editor .ProseMirror [data-ai-stream] {
-    @apply my-3 rounded-md border border-primary/25 bg-editor-border/30 px-3 py-2;
+    @apply my-4 rounded-lg border border-primary/20 bg-editor-code-bg/50 px-3.5 py-2.5;
   }
 
-  /* Wiki-link — accent underline */
   .wiki-link {
-    @apply cursor-pointer text-primary underline decoration-primary/40 underline-offset-2;
+    @apply cursor-pointer text-primary underline decoration-primary/35 underline-offset-[3px];
   }
 
   .wiki-link-bracket {
-    @apply text-editor-muted/50;
+    @apply text-editor-muted/45;
+  }
+
+  .ai-msg {
+    @apply text-foreground;
+  }
+
+  .ai-msg-user {
+    @apply rounded-lg bg-muted/60 p-2.5 text-foreground;
+  }
+
+  .ai-msg-assistant {
+    @apply rounded-lg border border-border/70 bg-card/60 p-2.5;
+  }
+
+  .iris-quote-card {
+    @apply rounded-lg border border-primary/25 bg-card/90 p-2.5 text-xs shadow-sm;
   }
 }

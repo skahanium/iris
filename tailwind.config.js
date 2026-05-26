@@ -18,11 +18,20 @@ export default {
           DEFAULT: "hsl(var(--muted))",
           foreground: "hsl(var(--muted-foreground))",
         },
+        destructive: {
+          DEFAULT: "hsl(var(--destructive))",
+          foreground: "hsl(var(--destructive-foreground))",
+        },
+        ring: "hsl(var(--ring))",
         editor: {
           paper: "hsl(var(--editor-paper))",
           ink: "hsl(var(--editor-ink))",
           muted: "hsl(var(--editor-muted))",
           border: "hsl(var(--editor-border))",
+          code: {
+            bg: "hsl(var(--editor-code-bg))",
+            fg: "hsl(var(--editor-code-fg))",
+          },
         },
       },
       fontFamily: {

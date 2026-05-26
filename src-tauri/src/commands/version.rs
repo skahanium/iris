@@ -41,15 +41,34 @@ pub fn version_delete_cmd(state: State<'_, Arc<AppState>>, version_id: i64) -> A
 }
 
 #[tauri::command]
-pub fn version_finalize_cmd(
+pub fn version_finalize_current_cmd(
     state: State<'_, Arc<AppState>>,
-    version_id: i64,
+    path: String,
+    content: String,
     label: Option<String>,
-) -> AppResult<()> {
-    version::version_finalize(&state, version_id, label)
+) -> AppResult<Option<VersionEntry>> {
+    version::version_finalize_current(&state, &path, &content, label)
 }
 
 #[tauri::command]
 pub fn version_cleanup_cmd(state: State<'_, Arc<AppState>>) -> AppResult<usize> {
     version::version_cleanup(&state)
+}
+
+#[tauri::command]
+pub fn version_save_manual_cmd(
+    state: State<'_, Arc<AppState>>,
+    path: String,
+    content: String,
+) -> AppResult<Option<VersionEntry>> {
+    version::version_save_manual(&state, &path, &content)
+}
+
+#[tauri::command]
+pub fn version_save_idle_cmd(
+    state: State<'_, Arc<AppState>>,
+    path: String,
+    content: String,
+) -> AppResult<Option<VersionEntry>> {
+    version::version_save_idle(&state, &path, &content)
 }

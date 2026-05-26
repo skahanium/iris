@@ -1,38 +1,65 @@
-import { Bookmark, RotateCw, Trash2 } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import {
+  Bookmark,
+  ChevronDown,
+  ChevronRight,
+  RotateCw,
+  Trash2,
+} from "lucide-react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { SidePanel } from "@/components/ui/side-panel";
 import {
   versionDelete,
-  versionFinalize,
+  versionFinalizeCurrent,
   versionList,
   versionPreview,
   versionRestore,
 } from "@/lib/ipc";
 import type { VersionEntry } from "@/types/ipc";
 
+import { buildRestoreConfirmMessage } from "./version-restore-confirm";
+import {
+  formatVersionTime,
+  groupVersions,
+  isGroupExpanded,
+  kindLabel,
+  type CollapsedVersionGroup,
+} from "./version-timeline-groups";
+
 interface VersionTimelineProps {
   open: boolean;
   onClose: () => void;
   notePath: string | null;
   currentContent: string;
+  hasUnsavedEdits?: boolean;
   onRestore: (content: string) => void;
+  aiPanelOpen?: boolean;
 }
+
+const PREVIEW_MAX = 2000;
 
 export function VersionTimeline({
   open,
   onClose,
   notePath,
   currentContent,
+  hasUnsavedEdits = false,
   onRestore,
+  aiPanelOpen = false,
 }: VersionTimelineProps) {
   const [versions, setVersions] = useState<VersionEntry[]>([]);
   const [preview, setPreview] = useState<string | null>(null);
   const [previewId, setPreviewId] = useState<number | null>(null);
-  const [label, setLabel] = useState("");
-  const [finalizing, setFinalizing] = useState<number | null>(null);
+  const [finalizeLabel, setFinalizeLabel] = useState("");
+  const [finalizing, setFinalizing] = useState(false);
+  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(
+    () => new Set(),
+  );
+
+  const layout = useMemo(() => groupVersions(versions), [versions]);
 
   const refresh = useCallback(() => {
     if (!notePath) return;
@@ -43,7 +70,17 @@ export function VersionTimeline({
     if (open) refresh();
   }, [open, refresh]);
 
-  if (!open) return null;
+  const toggleGroup = (groupKey: string) => {
+    setExpandedGroups((prev) => {
+      const next = new Set(prev);
+      if (next.has(groupKey)) {
+        next.delete(groupKey);
+      } else {
+        next.add(groupKey);
+      }
+      return next;
+    });
+  };
 
   const handlePreview = async (id: number) => {
     const content = await versionPreview(id);
@@ -52,6 +89,12 @@ export function VersionTimeline({
   };
 
   const handleRestore = async (id: number) => {
+    const target = versions.find((v) => v.id === id);
+    if (!target) return;
+
+    const message = buildRestoreConfirmMessage(target, hasUnsavedEdits);
+    if (!window.confirm(message)) return;
+
     const result = await versionRestore(id, currentContent);
     onRestore(result.content);
     refresh();
@@ -60,6 +103,15 @@ export function VersionTimeline({
   };
 
   const handleDelete = async (id: number) => {
+    const target = versions.find((v) => v.id === id);
+    if (
+      target &&
+      (target.is_finalized || target.kind === "finalize") &&
+      !window.confirm("确定删除此定稿版本？删除后无法恢复。")
+    ) {
+      return;
+    }
+
     await versionDelete(id);
     refresh();
     if (previewId === id) {
@@ -68,126 +120,193 @@ export function VersionTimeline({
     }
   };
 
-  const handleFinalize = async (id: number) => {
-    await versionFinalize(id, label || null);
-    setFinalizing(null);
-    setLabel("");
-    refresh();
-  };
-
-  const formatTime = (ts: string) => {
-    // version_no is like 20260525143052000
-    if (ts.length >= 14) {
-      return `${ts.slice(0, 4)}-${ts.slice(4, 6)}-${ts.slice(6, 8)} ${ts.slice(8, 10)}:${ts.slice(10, 12)}:${ts.slice(12, 14)}`;
+  const handleFinalizeCurrent = async () => {
+    if (!notePath) return;
+    setFinalizing(true);
+    try {
+      await versionFinalizeCurrent(
+        notePath,
+        currentContent,
+        finalizeLabel.trim() || null,
+      );
+      setFinalizeLabel("");
+      refresh();
+    } finally {
+      setFinalizing(false);
     }
-    return ts;
   };
 
-  return (
-    <div className="fixed inset-y-0 right-0 z-50 flex w-80 flex-col border-l border-border bg-panel shadow-xl">
-      <div className="flex items-center justify-between border-b border-border px-3 py-2">
-        <span className="text-sm font-medium">版本历史</span>
-        <Button type="button" size="sm" variant="ghost" onClick={onClose}>
-          Esc
+  const renderEntryActions = (v: VersionEntry) =>
+    previewId === v.id &&
+    preview !== null && (
+      <div className="mt-2 flex gap-1">
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          title="将当前正文替换为此版本（恢复前会自动备份）"
+          onClick={() => void handleRestore(v.id)}
+        >
+          <RotateCw className="mr-1 h-3 w-3" />
+          恢复
+        </Button>
+        <Button
+          type="button"
+          size="sm"
+          variant="ghost"
+          onClick={() => void handleDelete(v.id)}
+        >
+          <Trash2 className="h-3 w-3" />
         </Button>
       </div>
+    );
 
-      <ScrollArea className="flex-1">
-        {versions.length === 0 ? (
+  const renderEntry = (v: VersionEntry) => (
+    <div
+      key={v.id}
+      className={`border-b border-border/50 px-3 py-2.5 text-sm ${
+        previewId === v.id ? "bg-muted/50" : ""
+      }`}
+    >
+      <button
+        type="button"
+        data-testid="version-entry-row"
+        className="w-full text-left"
+        onClick={() => void handlePreview(v.id)}
+      >
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-xs text-muted-foreground">
+            {formatVersionTime(v.version_no)}
+          </span>
+          <span className="rounded bg-muted px-1 py-0 text-[10px] text-muted-foreground">
+            {kindLabel(v.kind)}
+          </span>
+          {v.is_finalized && (
+            <span className="rounded bg-primary/20 px-1 py-0 text-[10px] text-primary">
+              定稿
+            </span>
+          )}
+          {v.label && (
+            <span className="text-xs text-muted-foreground">{v.label}</span>
+          )}
+        </div>
+        <div className="mt-0.5 text-xs text-muted-foreground/70">
+          {v.word_count.toLocaleString()} 字
+        </div>
+      </button>
+      {renderEntryActions(v)}
+    </div>
+  );
+
+  const renderCollapsedGroup = (group: CollapsedVersionGroup) => {
+    const expanded = isGroupExpanded(expandedGroups, group.groupKey);
+    return (
+      <div key={group.groupKey} className="border-b border-border/50">
+        <button
+          type="button"
+          data-testid="version-group-toggle"
+          className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs text-muted-foreground hover:bg-muted/30"
+          onClick={() => toggleGroup(group.groupKey)}
+          aria-expanded={expanded}
+        >
+          {expanded ? (
+            <ChevronDown className="h-3.5 w-3.5 shrink-0" />
+          ) : (
+            <ChevronRight className="h-3.5 w-3.5 shrink-0" />
+          )}
+          <span>{group.label}</span>
+        </button>
+        {expanded && group.entries.map((v) => renderEntry(v))}
+      </div>
+    );
+  };
+
+  const currentPreview = currentContent.slice(0, PREVIEW_MAX);
+  const historyPreview = preview?.slice(0, PREVIEW_MAX) ?? "";
+
+  return (
+    <SidePanel
+      open={open}
+      onClose={onClose}
+      title="版本历史"
+      aiPanelOpen={aiPanelOpen}
+    >
+      {notePath && (
+        <div className="shrink-0 border-b border-border/50 px-3 py-2.5">
+          <p className="mb-2 text-xs text-muted-foreground">
+            将当前正文保存为定稿版本（永久保留）
+          </p>
+          <div className="flex items-center gap-1.5">
+            <Input
+              className="h-8 flex-1 text-xs"
+              placeholder="定稿名称（可选）"
+              value={finalizeLabel}
+              onChange={(e) => setFinalizeLabel(e.target.value)}
+              disabled={finalizing}
+            />
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              disabled={finalizing}
+              onClick={() => void handleFinalizeCurrent()}
+            >
+              <Bookmark className="mr-1 h-3.5 w-3.5" />
+              定稿
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {preview !== null && previewId !== null && (
+        <div className="shrink-0 border-b border-border/50 px-3 py-2.5">
+          <p className="mb-2 text-xs font-medium text-foreground">对比</p>
+          <div className="grid grid-cols-2 gap-2">
+            <div className="min-w-0">
+              <p className="mb-1 text-[10px] text-muted-foreground">当前版</p>
+              <pre className="max-h-32 overflow-auto whitespace-pre-wrap rounded border border-border bg-muted/20 p-2 font-mono text-[10px] leading-relaxed">
+                {currentPreview}
+                {currentContent.length > PREVIEW_MAX && "…"}
+              </pre>
+            </div>
+            <div className="min-w-0">
+              <p className="mb-1 text-[10px] text-muted-foreground">
+                选中版本
+              </p>
+              <pre className="max-h-32 overflow-auto whitespace-pre-wrap rounded border border-border bg-muted/20 p-2 font-mono text-[10px] leading-relaxed">
+                {historyPreview}
+                {(preview?.length ?? 0) > PREVIEW_MAX && "…"}
+              </pre>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <ScrollArea className="min-h-0 flex-1">
+        {layout.isEmpty ? (
           <p className="p-3 text-xs text-muted-foreground">暂无版本快照</p>
         ) : (
-          versions.map((v) => (
-            <div
-              key={v.id}
-              className={`border-b border-border/50 px-3 py-2.5 text-sm ${
-                previewId === v.id ? "bg-muted/50" : ""
-              }`}
-            >
-              <button
-                type="button"
-                className="w-full text-left"
-                onClick={() => handlePreview(v.id)}
-              >
-                <div className="flex items-center gap-2">
-                  <span className="text-xs text-muted-foreground">
-                    {formatTime(v.version_no)}
-                  </span>
-                  {v.is_finalized && (
-                    <span className="rounded bg-primary/20 px-1 py-0 text-[10px] text-primary">
-                      定稿
-                    </span>
-                  )}
-                  {v.label && (
-                    <span className="text-xs text-muted-foreground">
-                      {v.label}
-                    </span>
-                  )}
-                </div>
-                <div className="mt-0.5 text-xs text-muted-foreground/70">
-                  {v.word_count.toLocaleString()} 字
-                </div>
-              </button>
-
-              {previewId === v.id && preview !== null && (
-                <div className="mt-2 rounded border border-border bg-muted/30 p-2 text-xs">
-                  <pre className="max-h-40 overflow-auto whitespace-pre-wrap font-mono">
-                    {preview.slice(0, 1000)}
-                    {preview.length > 1000 && "…"}
-                  </pre>
-                  <div className="mt-2 flex gap-1">
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="outline"
-                      onClick={() => handleRestore(v.id)}
-                    >
-                      <RotateCw className="mr-1 h-3 w-3" />
-                      恢复
-                    </Button>
-                    {!v.is_finalized && finalizing === v.id ? (
-                      <div className="flex items-center gap-1">
-                        <Input
-                          className="h-6 w-20 text-[10px]"
-                          placeholder="版本名"
-                          value={label}
-                          onChange={(e) => setLabel(e.target.value)}
-                        />
-                        <Button
-                          type="button"
-                          size="sm"
-                          variant="outline"
-                          onClick={() => handleFinalize(v.id)}
-                        >
-                          <Bookmark className="h-3 w-3" />
-                        </Button>
-                      </div>
-                    ) : (
-                      !v.is_finalized && (
-                        <Button
-                          type="button"
-                          size="sm"
-                          variant="ghost"
-                          onClick={() => setFinalizing(v.id)}
-                        >
-                          <Bookmark className="h-3 w-3" />
-                        </Button>
-                      )
-                    )}
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="ghost"
-                      onClick={() => handleDelete(v.id)}
-                    >
-                      <Trash2 className="h-3 w-3" />
-                    </Button>
-                  </div>
-                </div>
-              )}
-            </div>
-          ))
+          <>
+            {layout.finalized.length > 0 && (
+              <section>
+                <h3 className="px-3 py-2 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+                  定稿
+                </h3>
+                {layout.finalized.map((v) => renderEntry(v))}
+              </section>
+            )}
+            {layout.days.map((day) => (
+              <section key={day.bucket}>
+                <h3 className="px-3 py-2 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+                  {day.title}
+                </h3>
+                {day.visible.map((v) => renderEntry(v))}
+                {day.collapsed.map((g) => renderCollapsedGroup(g))}
+              </section>
+            ))}
+          </>
         )}
       </ScrollArea>
-    </div>
+    </SidePanel>
   );
 }

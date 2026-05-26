@@ -8,7 +8,7 @@ use tauri::{AppHandle, Emitter};
 use crate::app::AppState;
 use crate::error::AppResult;
 use crate::indexer::scan::{file_hash, index_file, remove_file_index};
-use crate::storage::paths::relative_path;
+use crate::storage::paths::{is_user_note_path, relative_path};
 
 /// 持有 debouncer；Drop 时自动取消目录监听。切换 vault 时需 drop 后重建。
 pub struct FileWatcher {
@@ -45,6 +45,15 @@ impl FileWatcher {
                     let kind = event_kind_label(&event.kind);
                     for path in &event.paths {
                         if path.extension().is_some_and(|e| e == "md") {
+                            let Ok(vault) = state_clone.vault_path() else {
+                                continue;
+                            };
+                            let Ok(rel) = relative_path(&vault, path) else {
+                                continue;
+                            };
+                            if !is_user_note_path(&rel) {
+                                continue;
+                            }
                             let _ = handle_file_event(&app_clone, &state_clone, path, kind);
                         }
                     }
