@@ -101,6 +101,10 @@ pub fn run() {
             commands::template::template_create,
             commands::tag::tag_list,
             commands::export::export_file,
+            commands::ai_commands::context_assemble,
+            commands::ai_commands::ai_send_message,
+            commands::ai_commands::tool_confirm,
+            commands::ai_commands::ai_list_tools,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
