@@ -254,7 +254,7 @@ export async function listenLlmError(
 
 // ─── AI Runtime IPC ───
 
-import type { AiScene, AssembledContext } from "@/types/ai";
+import type { AiScene, AssembledContext, ContextPacket } from "@/types/ai";
 
 export async function contextAssemble(params: {
   scene: AiScene;
@@ -304,4 +304,24 @@ export async function aiListTools(
   scene: AiScene,
 ): Promise<{ name: string; description: string; requires_confirmation: boolean; access_level: string }[]> {
   return invoke("ai_list_tools", { scene });
+}
+
+// ─── Knowledge Index IPC ───
+
+export async function knowledgeReindex(): Promise<{ anchors: number; regulations: number }> {
+  return invoke("knowledge_reindex");
+}
+
+export async function searchHybrid(params: {
+  query: string;
+  scene?: string;
+  note_path?: string | null;
+  limit?: number;
+}): Promise<ContextPacket[]> {
+  return invoke("search_hybrid", {
+    query: params.query,
+    scene: params.scene ?? null,
+    notePath: params.note_path ?? null,
+    limit: params.limit ?? null,
+  });
 }

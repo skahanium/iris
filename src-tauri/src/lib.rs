@@ -106,6 +106,8 @@ pub fn run() {
             commands::ai_commands::ai_send_message,
             commands::ai_commands::tool_confirm,
             commands::ai_commands::ai_list_tools,
+            commands::ai_commands::knowledge_reindex,
+            commands::ai_commands::search_hybrid,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

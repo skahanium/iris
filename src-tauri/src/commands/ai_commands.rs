@@ -34,7 +34,29 @@ pub async fn context_assemble(
     let registry = ToolRegistry::new();
     let tools: Vec<_> = registry.for_scene(scene).into_iter().cloned().collect();
 
-    let (packets, context_status) = build_context_packets(scene, note_path.as_deref(), &query);
+    // Resolve file_id for graph layer
+    let file_id = match &note_path {
+        Some(path) => {
+            state.db.with_conn(|conn| {
+                Ok(conn.query_row(
+                    "SELECT id FROM files WHERE path = ?1",
+                    [path.as_str()],
+                    |r| r.get::<_, i64>(0),
+                ).ok())
+            }).unwrap_or(None)
+        }
+        None => None,
+    };
+
+    let (packets, context_status) = state.db.with_conn(|conn| {
+        build_context_packets(
+            conn,
+            scene,
+            note_path.as_deref(),
+            file_id,
+            &query,
+        )
+    })?;
 
     // Ensure session exists
     let _sid = if let Some(id) = session_id {
@@ -148,4 +170,80 @@ pub fn ai_list_tools(scene: String) -> AppResult<Vec<serde_json::Value>> {
         })
         .collect();
     Ok(tools)
+}
+
+/// Re-index all knowledge: anchors, regulations, block links.
+#[tauri::command]
+pub async fn knowledge_reindex(
+    state: State<'_, AppState>,
+) -> AppResult<serde_json::Value> {
+    let vault = state.vault_path()?;
+    let mut stats = serde_json::json!({
+        "anchors": 0,
+        "regulations": 0,
+    });
+
+    state.db.with_conn(|conn| {
+        // Re-index regulations
+        match crate::knowledge::regulations::reindex_all_regulations(conn, &vault) {
+            Ok(count) => { stats["regulations"] = serde_json::json!(count); }
+            Err(e) => tracing::warn!("regulation reindex error: {e}"),
+        }
+        Ok::<_, crate::error::AppError>(())
+    })?;
+
+    Ok(stats)
+}
+
+/// Hybrid search across all knowledge layers.
+#[tauri::command]
+pub async fn search_hybrid(
+    state: State<'_, AppState>,
+    query: String,
+    scene: Option<String>,
+    note_path: Option<String>,
+    limit: Option<usize>,
+) -> AppResult<Vec<serde_json::Value>> {
+    let scene: AiScene = scene
+        .as_deref()
+        .map(|s| serde_json::from_str(&format!("\"{s}\"")))
+        .transpose()
+        .map_err(|e| AppError::msg(format!("invalid scene: {e}")))?
+        .unwrap_or(AiScene::KnowledgeLookup);
+
+    let file_id = match &note_path {
+        Some(path) => {
+            state.db.with_conn(|conn| {
+                Ok(conn.query_row(
+                    "SELECT id FROM files WHERE path = ?1",
+                    [path.as_str()],
+                    |r| r.get::<_, i64>(0),
+                ).ok())
+            }).unwrap_or(None)
+        }
+        None => None,
+    };
+
+    let layers = crate::ai_runtime::retrieval_broker::RetrievalLayers {
+        fts: true, vector: true, graph: true, exact: true, template: false,
+    };
+
+    let request = crate::ai_runtime::retrieval_broker::RetrievalRequest {
+        query,
+        max_results: limit.unwrap_or(15),
+        layers,
+        note_context: note_path,
+        file_id_context: file_id,
+    };
+
+    let packets = state.db.with_conn(|conn| {
+        crate::ai_runtime::retrieval_broker::hybrid_retrieve(conn, &request)
+    })?;
+
+    let json_packets: Vec<_> = packets
+        .into_iter()
+        .map(|p| serde_json::to_value(p).unwrap_or_default())
+        .collect();
+
+    Ok(json_packets)
 }
