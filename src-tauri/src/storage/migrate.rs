@@ -22,6 +22,8 @@ const MIGRATION_007_UP: &str = include_str!("../../migrations/007_recycle_bin.sq
 const MIGRATION_007_DOWN: &str = include_str!("../../migrations/007_recycle_bin.down.sql");
 const MIGRATION_008_UP: &str = include_str!("../../migrations/008_chunks_char_count.sql");
 const MIGRATION_008_DOWN: &str = include_str!("../../migrations/008_chunks_char_count.down.sql");
+const MIGRATION_009_UP: &str = include_str!("../../migrations/009_ai_runtime.sql");
+const MIGRATION_009_DOWN: &str = include_str!("../../migrations/009_ai_runtime.down.sql");
 
 /// Apply core schema migrations idempotently.
 pub fn migrate_up(conn: &Connection) -> AppResult<()> {
@@ -171,11 +173,33 @@ pub fn migrate_up(conn: &Connection) -> AppResult<()> {
         )?;
     }
 
+    let v9_applied: bool = conn
+        .query_row(
+            "SELECT COUNT(*) FROM _migrations WHERE name = '009_ai_runtime'",
+            [],
+            |row| row.get::<_, i64>(0),
+        )
+        .map(|c| c > 0)
+        .unwrap_or(false);
+
+    if !v9_applied {
+        conn.execute_batch(MIGRATION_009_UP)?;
+        conn.execute(
+            "INSERT INTO _migrations (name, applied_at) VALUES ('009_ai_runtime', datetime('now'))",
+            [],
+        )?;
+    }
+
     Ok(())
 }
 
 /// Roll back all migrations (for tests).
 pub fn migrate_down(conn: &Connection) -> AppResult<()> {
+    let _ = conn.execute_batch(MIGRATION_009_DOWN);
+    let _ = conn.execute(
+        "DELETE FROM _migrations WHERE name = '009_ai_runtime'",
+        [],
+    );
     let _ = conn.execute_batch(MIGRATION_008_DOWN);
     let _ = conn.execute(
         "DELETE FROM _migrations WHERE name = '008_chunks_char_count'",
@@ -409,5 +433,94 @@ mod tests {
 
         conn.execute_batch(MIGRATION_006_DOWN).unwrap();
         assert!(!versions_has_kind_column(&conn));
+    }
+
+    #[test]
+    fn migration_009_creates_ai_runtime_tables() {
+        let conn = Connection::open_in_memory().unwrap();
+        migrate_up(&conn).unwrap();
+
+        let has_sessions: bool = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='sessions'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .map(|c| c > 0)
+            .unwrap();
+        assert!(has_sessions, "missing sessions table");
+
+        let has_traces: bool = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='ai_traces'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .map(|c| c > 0)
+            .unwrap();
+        assert!(has_traces, "missing ai_traces table");
+
+        let has_profile: bool = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='user_profile'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .map(|c| c > 0)
+            .unwrap();
+        assert!(has_profile, "missing user_profile table");
+
+        let has_deposits: bool = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='knowledge_deposits'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .map(|c| c > 0)
+            .unwrap();
+        assert!(has_deposits, "missing knowledge_deposits table");
+
+        // Verify files extended columns exist
+        let col_exists = |table: &str, col: &str| -> bool {
+            let mut stmt = conn
+                .prepare(&format!("PRAGMA table_info({table})"))
+                .expect("pragma");
+            let names: Vec<String> = stmt
+                .query_map([], |row| row.get(1))
+                .expect("query")
+                .flatten()
+                .collect();
+            names.iter().any(|n| n == col)
+        };
+        assert!(col_exists("files", "genre"), "missing files.genre");
+        assert!(col_exists("chunks", "embedding_model"), "missing chunks.embedding_model");
+    }
+
+    #[test]
+    fn migration_009_roundtrip() {
+        let conn = Connection::open_in_memory().unwrap();
+        migrate_up(&conn).unwrap();
+        let has_sessions: bool = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='sessions'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .map(|c| c > 0)
+            .unwrap();
+        assert!(has_sessions);
+
+        let _ = conn.execute_batch(MIGRATION_009_DOWN);
+        let _ = conn.execute("DELETE FROM _migrations WHERE name = '009_ai_runtime'", []);
+
+        let still_has: bool = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='sessions'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .map(|c| c > 0)
+            .unwrap();
+        assert!(!still_has, "sessions should be dropped after down migration");
     }
 }
