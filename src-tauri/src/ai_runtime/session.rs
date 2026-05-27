@@ -45,11 +45,7 @@ pub struct SessionManager;
 
 impl SessionManager {
     /// 获取或创建 session。返回 session id。
-    pub fn ensure(
-        db: &Database,
-        scene: AiScene,
-        note_path: Option<&str>,
-    ) -> AppResult<i64> {
+    pub fn ensure(db: &Database, scene: AiScene, note_path: Option<&str>) -> AppResult<i64> {
         let key = session_key(scene, note_path);
         let now = chrono::Utc::now().to_rfc3339();
 
@@ -119,7 +115,7 @@ impl SessionManager {
                  FROM session_messages
                  WHERE session_id = ?1
                  ORDER BY seq DESC
-                 LIMIT ?2"
+                 LIMIT ?2",
             )?;
             let rows = stmt.query_map(rusqlite::params![session_id, limit], |row| {
                 Ok(SessionMessage {
@@ -128,7 +124,8 @@ impl SessionManager {
                     seq: row.get(2)?,
                     role: row.get(3)?,
                     content: row.get(4)?,
-                    tool_calls: row.get::<_, Option<String>>(5)?
+                    tool_calls: row
+                        .get::<_, Option<String>>(5)?
                         .and_then(|s| serde_json::from_str(&s).ok()),
                     content_hash: row.get(6)?,
                     created_at: row.get(7)?,
@@ -146,10 +143,7 @@ impl SessionManager {
     /// 按 session_key 删除整个 session（级联删除消息）。
     pub fn delete_by_key(db: &Database, key: &str) -> AppResult<bool> {
         db.with_conn(|conn| {
-            let count = conn.execute(
-                "DELETE FROM sessions WHERE session_key = ?1",
-                [key],
-            )?;
+            let count = conn.execute("DELETE FROM sessions WHERE session_key = ?1", [key])?;
             Ok(count > 0)
         })
     }
@@ -246,7 +240,8 @@ mod tests {
     #[test]
     fn delete_session_cascades_messages() {
         let db = setup_db();
-        let sid = SessionManager::ensure(&db, AiScene::ExemplarLearning, Some("/notes/fanwen.md")).unwrap();
+        let sid = SessionManager::ensure(&db, AiScene::ExemplarLearning, Some("/notes/fanwen.md"))
+            .unwrap();
         SessionManager::append_message(&db, sid, "user", "test", None).unwrap();
 
         let key = session_key(AiScene::ExemplarLearning, Some("/notes/fanwen.md"));

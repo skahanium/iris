@@ -105,7 +105,7 @@ fn ensure_versions_dir(vault: &std::path::Path, file_id: i64) -> AppResult<PathB
 }
 
 fn timestamp_version_no() -> String {
-    Utc::now().format("%Y%m%d%H%M%S%3f").to_string()
+    Utc::now().format("%Y%m%d%H%M%S%6f").to_string()
 }
 
 fn map_version_row(row: &Row<'_>) -> rusqlite::Result<VersionEntry> {

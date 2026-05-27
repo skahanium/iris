@@ -74,12 +74,8 @@ pub fn index_file(conn: &Connection, vault: &Path, absolute: &Path) -> AppResult
     let now = Utc::now().to_rfc3339();
     let frontmatter = parsed.frontmatter_json.as_deref();
 
-    let display_title = resolve_display_title(
-        parsed.title.as_deref(),
-        "",
-        frontmatter,
-        &document_name,
-    );
+    let display_title =
+        resolve_display_title(parsed.title.as_deref(), "", frontmatter, &document_name);
 
     let existing_id: Option<i64> = conn
         .query_row("SELECT id FROM files WHERE path = ?1", [&rel], |row| {
@@ -145,9 +141,7 @@ pub fn remove_file_index(conn: &Connection, path: &str) -> AppResult<()> {
 
 /// Drop index rows for user notes whose `.md` files are missing on disk.
 pub fn prune_stale_file_indexes(conn: &Connection, vault: &Path) -> AppResult<usize> {
-    let mut stmt = conn.prepare(
-        "SELECT DISTINCT path FROM files WHERE path NOT LIKE '.iris/%'",
-    )?;
+    let mut stmt = conn.prepare("SELECT DISTINCT path FROM files WHERE path NOT LIKE '.iris/%'")?;
     let paths: Vec<String> = stmt
         .query_map([], |row| row.get(0))?
         .collect::<Result<_, _>>()?;
@@ -282,7 +276,10 @@ mod tests {
             let e2 = index_file(conn, &vault, &vault.join("note.md"))?;
 
             assert_eq!(e1.id, e2.id, "same path should UPDATE not INSERT");
-            assert_eq!(e2.title, "第二版", "title syncs from frontmatter on reindex");
+            assert_eq!(
+                e2.title, "第二版",
+                "title syncs from frontmatter on reindex"
+            );
 
             let count: i64 = conn.query_row(
                 "SELECT COUNT(*) FROM files WHERE path = 'note.md'",

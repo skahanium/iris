@@ -55,8 +55,10 @@ impl FileWatcher {
                                 continue;
                             }
                             match handle_file_event(&app_clone, &state_clone, path, kind) {
-                                Ok(()) => {},
-                                Err(e) => tracing::warn!("File event error for {}: {e}", path.display()),
+                                Ok(()) => {}
+                                Err(e) => {
+                                    tracing::warn!("File event error for {}: {e}", path.display())
+                                }
                             };
                         }
                     }

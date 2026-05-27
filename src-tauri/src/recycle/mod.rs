@@ -10,8 +10,8 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::app::AppState;
-use crate::error::AppResult;
 use crate::error::AppError;
+use crate::error::AppResult;
 use crate::indexer::scan::{index_file, remove_file_index};
 use crate::storage::paths::resolve_vault_path;
 use crate::version::VersionEntry;
@@ -75,10 +75,7 @@ struct VersionRow {
     storage_path: String,
 }
 
-fn load_versions_for_file(
-    conn: &rusqlite::Connection,
-    file_id: i64,
-) -> AppResult<Vec<VersionRow>> {
+fn load_versions_for_file(conn: &rusqlite::Connection, file_id: i64) -> AppResult<Vec<VersionRow>> {
     use crate::version::VersionKind;
     use rusqlite::Row;
 
@@ -252,9 +249,8 @@ pub fn purge_expired(state: &Arc<AppState>) -> AppResult<usize> {
     let vault = state.vault_path()?;
     let now = Utc::now().to_rfc3339();
     let expired: Vec<(String, String)> = state.db.with_conn(|conn| {
-        let mut stmt = conn.prepare(
-            "SELECT id, trash_rel_dir FROM recycle_bin WHERE expires_at <= ?1",
-        )?;
+        let mut stmt =
+            conn.prepare("SELECT id, trash_rel_dir FROM recycle_bin WHERE expires_at <= ?1")?;
         let rows = stmt.query_map([&now], |r| Ok((r.get(0)?, r.get(1)?)))?;
         Ok(rows.flatten().collect())
     })?;
@@ -294,19 +290,21 @@ pub fn list_recycle(state: &Arc<AppState>) -> AppResult<Vec<RecycleBinItem>> {
 
     Ok(rows
         .into_iter()
-        .map(|(id, original_path, title, deleted_at, expires_at, trash_rel)| {
-            let version_count = load_manifest(&vault, &trash_rel)
-                .map(|m| m.versions.len())
-                .unwrap_or(0);
-            RecycleBinItem {
-                id,
-                original_path,
-                title,
-                deleted_at,
-                expires_at,
-                version_count,
-            }
-        })
+        .map(
+            |(id, original_path, title, deleted_at, expires_at, trash_rel)| {
+                let version_count = load_manifest(&vault, &trash_rel)
+                    .map(|m| m.versions.len())
+                    .unwrap_or(0);
+                RecycleBinItem {
+                    id,
+                    original_path,
+                    title,
+                    deleted_at,
+                    expires_at,
+                    version_count,
+                }
+            },
+        )
         .collect())
 }
 
@@ -431,10 +429,7 @@ mod tests {
         let vault = state.vault_path().unwrap();
         let note = vault.join("note.md");
         fs::write(&note, "# Note\n\nBody.").unwrap();
-        state
-            .db
-            .with_conn(|conn| scan_vault(conn, &vault))
-            .unwrap();
+        state.db.with_conn(|conn| scan_vault(conn, &vault)).unwrap();
         version_save_manual(&state, "note.md", "# Note\n\nBody v2.").unwrap();
         trash_document(&state, "note.md").unwrap();
         assert!(!note.exists());
@@ -455,10 +450,7 @@ mod tests {
         let vault = state.vault_path().unwrap();
         let note = vault.join("restore-me.md");
         fs::write(&note, "# Restore\n\nBody.").unwrap();
-        state
-            .db
-            .with_conn(|conn| scan_vault(conn, &vault))
-            .unwrap();
+        state.db.with_conn(|conn| scan_vault(conn, &vault)).unwrap();
         version_save_manual(&state, "restore-me.md", "# Restore\n\nBody v2.").unwrap();
         trash_document(&state, "restore-me.md").unwrap();
         let id = list_recycle(&state).unwrap()[0].id.clone();

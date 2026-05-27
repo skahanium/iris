@@ -22,7 +22,12 @@ pub const EMBEDDING_DIM: i32 = 384;
 ///
 /// Format: `sha256(path).truncate(12) + sha256(content).truncate(12)`
 /// This produces a 24-char hex key that is stable across database rebuilds.
-pub fn make_anchor_key(path: &str, source_start: usize, source_end: usize, content: &str) -> String {
+pub fn make_anchor_key(
+    path: &str,
+    source_start: usize,
+    source_end: usize,
+    content: &str,
+) -> String {
     let mut hasher = Sha256::new();
     hasher.update(path.as_bytes());
     hasher.update(b":");

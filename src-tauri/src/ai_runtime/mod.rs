@@ -9,14 +9,18 @@
 //! - `session`: session / session_messages CRUD
 //! - `packet_builder`: ContextPacket construction from retrieval results
 
+pub mod context_planner;
+pub mod eval;
+pub mod guardrails;
+pub mod model_gateway;
 pub mod model_registry;
+pub mod packet_builder;
+pub mod research_workflow;
+pub mod retrieval_broker;
 pub mod scene_router;
 pub mod session;
 pub mod tool_executor;
 pub mod trace;
-pub mod packet_builder;
-pub mod retrieval_broker;
-pub mod guardrails;
 
 use serde::{Deserialize, Serialize};
 

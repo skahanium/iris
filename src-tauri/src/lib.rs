@@ -1,11 +1,11 @@
 pub mod ai_runtime;
-pub mod knowledge;
 pub mod app;
 mod commands;
 mod credentials;
 pub mod embedding;
 pub mod error;
 pub mod indexer;
+pub mod knowledge;
 mod llm;
 pub mod recycle;
 pub mod storage;
@@ -108,6 +108,20 @@ pub fn run() {
             commands::ai_commands::ai_list_tools,
             commands::ai_commands::knowledge_reindex,
             commands::ai_commands::search_hybrid,
+            // Research Workflow (D)
+            commands::research_commands::research_execute,
+            commands::research_commands::research_status,
+            // Personalization (E)
+            commands::profile_commands::profile_list,
+            commands::profile_commands::profile_get,
+            commands::profile_commands::profile_set,
+            commands::profile_commands::profile_deactivate,
+            commands::profile_commands::profile_delete,
+            commands::profile_commands::inbox_list,
+            commands::profile_commands::inbox_add,
+            commands::profile_commands::inbox_update_status,
+            commands::profile_commands::inbox_delete,
+            commands::profile_commands::inbox_counts,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

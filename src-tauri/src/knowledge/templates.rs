@@ -23,6 +23,7 @@ pub struct GenreTemplate {
 }
 
 /// Store a template (upsert by template_key).
+#[allow(clippy::too_many_arguments)]
 pub fn upsert_template(
     conn: &Connection,
     genre: &str,
@@ -70,7 +71,7 @@ pub fn get_templates_by_genre(conn: &Connection, genre: &str) -> AppResult<Vec<G
     let mut stmt = conn.prepare(
         "SELECT id, template_key, genre, subtype, structure, common_phrases,
                 style_features, user_confirmed, usage_count
-         FROM genre_templates WHERE genre = ?1 ORDER BY usage_count DESC"
+         FROM genre_templates WHERE genre = ?1 ORDER BY usage_count DESC",
     )?;
 
     let rows = stmt.query_map([genre], |row| {
@@ -81,9 +82,11 @@ pub fn get_templates_by_genre(conn: &Connection, genre: &str) -> AppResult<Vec<G
             genre: row.get(2)?,
             subtype: row.get(3)?,
             structure: serde_json::from_str(&row.get::<_, String>(4)?).unwrap_or(Value::Null),
-            common_phrases: row.get::<_, Option<String>>(5)?
+            common_phrases: row
+                .get::<_, Option<String>>(5)?
                 .and_then(|s| serde_json::from_str(&s).ok()),
-            style_features: row.get::<_, Option<String>>(6)?
+            style_features: row
+                .get::<_, Option<String>>(6)?
                 .and_then(|s| serde_json::from_str(&s).ok()),
             user_confirmed: user_confirmed != 0,
             usage_count: row.get(8)?,
@@ -106,11 +109,21 @@ mod tests {
         });
 
         db.with_conn(|conn| {
-            upsert_template(conn, "报告", None, "/notes/report.md", &structure, None, None, false)?;
+            upsert_template(
+                conn,
+                "报告",
+                None,
+                "/notes/report.md",
+                &structure,
+                None,
+                None,
+                false,
+            )?;
             let templates = get_templates_by_genre(conn, "报告")?;
             assert_eq!(templates.len(), 1);
             assert_eq!(templates[0].genre, "报告");
             Ok(())
-        }).unwrap();
+        })
+        .unwrap();
     }
 }

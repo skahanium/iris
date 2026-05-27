@@ -22,9 +22,8 @@ static RE_PARAGRAPH: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?:^|\n)\s*[（(]?[一二三四五六七八九十0-9]+[）)]?\s*款?").expect("paragraph regex")
 });
 
-static RE_REGULATION_NAME: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"《([^》]+)》").expect("regulation name regex")
-});
+static RE_REGULATION_NAME: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"《([^》]+)》").expect("regulation name regex"));
 
 // ─── Data Types ──────────────────────────────────────────
 
@@ -53,8 +52,8 @@ pub struct ParseResult {
 /// Parse a regulation `.md` file into structured clauses.
 /// Uses Rust regex only — no LLM cost.
 pub fn parse_regulation_structure(file_path: &str, raw_text: &str) -> ParseResult {
-    let regulation_name = extract_regulation_name(raw_text)
-        .unwrap_or_else(|| file_name_from_path(file_path));
+    let regulation_name =
+        extract_regulation_name(raw_text).unwrap_or_else(|| file_name_from_path(file_path));
 
     let article_matches: Vec<_> = RE_ARTICLE.find_iter(raw_text).collect();
     let mut clauses = Vec::with_capacity(article_matches.len());
@@ -81,7 +80,12 @@ pub fn parse_regulation_structure(file_path: &str, raw_text: &str) -> ParseResul
         } else {
             ""
         };
-        update_context(preceding, &mut current_chapter, &mut current_section, &mut chapter_names);
+        update_context(
+            preceding,
+            &mut current_chapter,
+            &mut current_section,
+            &mut chapter_names,
+        );
 
         // Split article into paragraphs if present
         let para_splits: Vec<_> = RE_PARAGRAPH.find_iter(article_text).collect();
@@ -157,7 +161,7 @@ fn update_context(
 ) {
     // Detect chapter headings: 第X章 ... or 第一章 ...
     let ch_re = Regex::new(r"第[一二三四五六七八九十百千0-9]+章\s*(.+)").unwrap();
-    if let Some(caps) = ch_re.captures(preceding.split('\n').last().unwrap_or("")) {
+    if let Some(caps) = ch_re.captures(preceding.split('\n').next_back().unwrap_or("")) {
         *chapter = Some(caps[0].trim().to_string());
         if let Some(name) = caps.get(1) {
             chapter_names.push(name.as_str().to_string());
@@ -167,7 +171,7 @@ fn update_context(
 
     // Detect section headings within a chapter
     let sec_re = Regex::new(r"第[一二三四五六七八九十百千0-9]+节\s*(.+)").unwrap();
-    if let Some(caps) = sec_re.captures(preceding.split('\n').last().unwrap_or("")) {
+    if let Some(caps) = sec_re.captures(preceding.split('\n').next_back().unwrap_or("")) {
         *section = Some(caps[0].trim().to_string());
     }
 }
@@ -201,8 +205,8 @@ pub fn index_regulation_clauses(
             rusqlite::params![
                 file_id,
                 clause.regulation_name,
-                None::<String>,  // issuer — Phase C+
-                None::<String>,  // version_label — Phase C+
+                None::<String>, // issuer — Phase C+
+                None::<String>, // version_label — Phase C+
                 clause.chapter,
                 clause.section,
                 clause.article,
@@ -263,7 +267,10 @@ fn extract_keywords_heuristic(content: &str) -> String {
 }
 
 /// Re-index all regulations in the vault.
-pub fn reindex_all_regulations(conn: &Connection, vault_path: &std::path::Path) -> AppResult<usize> {
+pub fn reindex_all_regulations(
+    conn: &Connection,
+    vault_path: &std::path::Path,
+) -> AppResult<usize> {
     // Clear existing regulation index
     conn.execute("DELETE FROM regulation_index", [])?;
 
@@ -322,7 +329,11 @@ mod tests {
     #[test]
     fn parse_extracts_articles() {
         let result = parse_regulation_structure("test.md", SAMPLE_REGULATION);
-        assert!(result.clauses.len() >= 4, "expected >= 4 clauses, got {}", result.clauses.len());
+        assert!(
+            result.clauses.len() >= 4,
+            "expected >= 4 clauses, got {}",
+            result.clauses.len()
+        );
 
         let first = &result.clauses[0];
         assert!(first.article.contains("第一条"));
@@ -335,8 +346,15 @@ mod tests {
     #[test]
     fn parse_includes_chapter_context() {
         let result = parse_regulation_structure("test.md", SAMPLE_REGULATION);
-        let ch1_clause = result.clauses.iter().find(|c| c.article.contains("第一条")).unwrap();
-        assert!(ch1_clause.chapter.as_ref().map_or(false, |c| c.contains("第一章")));
+        let ch1_clause = result
+            .clauses
+            .iter()
+            .find(|c| c.article.contains("第一条"))
+            .unwrap();
+        assert!(ch1_clause
+            .chapter
+            .as_ref()
+            .map_or(false, |c| c.contains("第一章")));
     }
 
     #[test]
@@ -351,7 +369,8 @@ mod tests {
             "INSERT INTO files (path, title, content_hash, created_at, updated_at)
              VALUES ('law.md', 'Law', 'hash1', datetime('now'), datetime('now'))",
             [],
-        ).unwrap();
+        )
+        .unwrap();
 
         let result = parse_regulation_structure("law.md", SAMPLE_REGULATION);
         let count = index_regulation_clauses(&conn, 1, &result.clauses).unwrap();

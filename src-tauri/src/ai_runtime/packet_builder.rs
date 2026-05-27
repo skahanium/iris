@@ -28,11 +28,24 @@ pub fn build_context_packets(
     let packets = hybrid_retrieve(conn, &request)?;
 
     let status = ContextStatus {
-        regulations_loaded: packets.iter().filter(|p| matches!(p.source_type, crate::ai_runtime::SourceType::Regulation)).count(),
+        regulations_loaded: packets
+            .iter()
+            .filter(|p| matches!(p.source_type, crate::ai_runtime::SourceType::Regulation))
+            .count(),
         model_essays_loaded: 0, // Phase C+
-        anchors_loaded: packets.iter().filter(|p| matches!(p.source_type, crate::ai_runtime::SourceType::Anchor)).count(),
-        links_loaded: packets.iter().filter(|p| p.retrieval_reason.starts_with("graph_")).count(),
-        total_tokens_estimate: packets.iter().map(|p| p.excerpt.chars().count()).sum::<usize>() / 2,
+        anchors_loaded: packets
+            .iter()
+            .filter(|p| matches!(p.source_type, crate::ai_runtime::SourceType::Anchor))
+            .count(),
+        links_loaded: packets
+            .iter()
+            .filter(|p| p.retrieval_reason.starts_with("graph_"))
+            .count(),
+        total_tokens_estimate: packets
+            .iter()
+            .map(|p| p.excerpt.chars().count())
+            .sum::<usize>()
+            / 2,
     };
 
     Ok((packets, status))
@@ -41,16 +54,32 @@ pub fn build_context_packets(
 fn layers_for_scene(scene: AiScene) -> RetrievalLayers {
     match scene {
         AiScene::KnowledgeLookup => RetrievalLayers {
-            fts: true, vector: true, graph: true, exact: true, template: false,
+            fts: true,
+            vector: true,
+            graph: true,
+            exact: true,
+            template: false,
         },
         AiScene::ExemplarLearning => RetrievalLayers {
-            fts: true, vector: true, graph: true, exact: false, template: true,
+            fts: true,
+            vector: true,
+            graph: true,
+            exact: false,
+            template: true,
         },
         AiScene::DraftingAssist => RetrievalLayers {
-            fts: true, vector: true, graph: true, exact: true, template: true,
+            fts: true,
+            vector: true,
+            graph: true,
+            exact: true,
+            template: true,
         },
         AiScene::ResearchSynthesis => RetrievalLayers {
-            fts: true, vector: true, graph: true, exact: true, template: true,
+            fts: true,
+            vector: true,
+            graph: true,
+            exact: true,
+            template: true,
         },
     }
 }
@@ -70,7 +99,12 @@ mod tests {
 
     #[test]
     fn layers_per_scene_are_non_empty() {
-        for scene in [AiScene::KnowledgeLookup, AiScene::ExemplarLearning, AiScene::DraftingAssist, AiScene::ResearchSynthesis] {
+        for scene in [
+            AiScene::KnowledgeLookup,
+            AiScene::ExemplarLearning,
+            AiScene::DraftingAssist,
+            AiScene::ResearchSynthesis,
+        ] {
             let layers = layers_for_scene(scene);
             assert!(layers.fts || layers.vector || layers.graph || layers.exact);
         }
@@ -78,6 +112,9 @@ mod tests {
 
     #[test]
     fn research_scene_gets_most_results() {
-        assert!(max_results_for_scene(AiScene::ResearchSynthesis) > max_results_for_scene(AiScene::KnowledgeLookup));
+        assert!(
+            max_results_for_scene(AiScene::ResearchSynthesis)
+                > max_results_for_scene(AiScene::KnowledgeLookup)
+        );
     }
 }

@@ -1,11 +1,13 @@
+pub mod ai_commands;
 pub mod export;
 pub mod file;
 pub mod graph;
-pub mod recycle;
 pub mod llm;
+pub mod profile_commands;
+pub mod recycle;
+pub mod research_commands;
 pub mod search;
 pub mod settings;
 pub mod tag;
 pub mod template;
 pub mod version;
-pub mod ai_commands;

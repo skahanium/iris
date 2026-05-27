@@ -57,11 +57,7 @@ pub struct TraceRecorder;
 
 impl TraceRecorder {
     /// 创建一条新的 trace 记录（status = started）。
-    pub fn start(
-        db: &Database,
-        request_id: &str,
-        scene: AiScene,
-    ) -> AppResult<()> {
+    pub fn start(db: &Database, request_id: &str, scene: AiScene) -> AppResult<()> {
         let scene_str = serde_json::to_string(&scene).unwrap_or_else(|_| format!("{:?}", scene));
         // strip quotes
         let scene_str = scene_str.trim_matches('"');
@@ -77,11 +73,7 @@ impl TraceRecorder {
     }
 
     /// 更新 trace 状态。
-    pub fn update_status(
-        db: &Database,
-        request_id: &str,
-        status: TraceStatus,
-    ) -> AppResult<()> {
+    pub fn update_status(db: &Database, request_id: &str, status: TraceStatus) -> AppResult<()> {
         db.with_conn(|conn| {
             conn.execute(
                 "UPDATE ai_traces SET status = ?1 WHERE request_id = ?2",
@@ -92,6 +84,7 @@ impl TraceRecorder {
     }
 
     /// 完成 trace：记录最终状态、model、latency、tokens。
+    #[allow(clippy::too_many_arguments)]
     pub fn complete(
         db: &Database,
         request_id: &str,
@@ -105,12 +98,8 @@ impl TraceRecorder {
         token_output: Option<u32>,
         error_code: Option<&str>,
     ) -> AppResult<()> {
-        let tools_json = tool_names.map(|names| {
-            serde_json::to_string(names).unwrap_or_default()
-        });
-        let packets_json = packet_ids.map(|ids| {
-            serde_json::to_string(ids).unwrap_or_default()
-        });
+        let tools_json = tool_names.map(|names| serde_json::to_string(names).unwrap_or_default());
+        let packets_json = packet_ids.map(|ids| serde_json::to_string(ids).unwrap_or_default());
         db.with_conn(|conn| {
             conn.execute(
                 "UPDATE ai_traces SET
@@ -143,7 +132,7 @@ impl TraceRecorder {
                 "SELECT request_id, scene, model_slot, provider, tool_names,
                         packet_ids, latency_ms, token_input, token_output,
                         status, error_code, created_at
-                 FROM ai_traces ORDER BY created_at DESC LIMIT ?1"
+                 FROM ai_traces ORDER BY created_at DESC LIMIT ?1",
             )?;
             let rows = stmt.query_map([limit], |row| {
                 let scene_str: String = row.get(1)?;
@@ -154,9 +143,11 @@ impl TraceRecorder {
                     scene,
                     model_slot: row.get(2)?,
                     provider: row.get(3)?,
-                    tool_names: row.get::<_, Option<String>>(4)?
+                    tool_names: row
+                        .get::<_, Option<String>>(4)?
                         .and_then(|s| serde_json::from_str(&s).ok()),
-                    packet_ids: row.get::<_, Option<String>>(5)?
+                    packet_ids: row
+                        .get::<_, Option<String>>(5)?
                         .and_then(|s| serde_json::from_str(&s).ok()),
                     latency_ms: row.get(6)?,
                     token_input: row.get(7)?,
@@ -214,7 +205,8 @@ mod tests {
         TraceRecorder::start(&db, rid, AiScene::KnowledgeLookup).unwrap();
         TraceRecorder::update_status(&db, rid, TraceStatus::ContextAssembled).unwrap();
         TraceRecorder::complete(
-            &db, rid,
+            &db,
+            rid,
             TraceStatus::Completed,
             Some("fast"),
             Some("deepseek"),
@@ -224,7 +216,8 @@ mod tests {
             Some(1500),
             Some(300),
             None,
-        ).unwrap();
+        )
+        .unwrap();
 
         let traces = TraceRecorder::recent(&db, 10).unwrap();
         assert_eq!(traces.len(), 1);
@@ -241,11 +234,19 @@ mod tests {
         let rid = "test-fail-001";
         TraceRecorder::start(&db, rid, AiScene::DraftingAssist).unwrap();
         TraceRecorder::complete(
-            &db, rid,
+            &db,
+            rid,
             TraceStatus::Failed,
-            None, None, None, None, None, None, None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
             Some("TIMEOUT"),
-        ).unwrap();
+        )
+        .unwrap();
 
         let traces = TraceRecorder::recent(&db, 10).unwrap();
         assert_eq!(traces[0].error_code.as_deref(), Some("TIMEOUT"));

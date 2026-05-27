@@ -33,15 +33,11 @@ import { cn } from "@/lib/utils";
 
 
 import { AiStreamExtension } from "./extensions/AiStreamExtension";
-
 import { HeadingFoldExtension } from "./extensions/HeadingFoldExtension";
-
+import { InlineAiExtension } from "./extensions/InlineAiExtension";
 import { IrisDocument } from "./extensions/IrisDocument";
-
 import { NoteTitleExtension } from "./extensions/NoteTitleExtension";
-
 import { SlashCommandExtension } from "./extensions/SlashCommandExtension";
-
 import { WikiLinkExtension } from "./extensions/WikiLinkExtension";
 
 
@@ -181,15 +177,11 @@ export function TipTapEditor({
       }),
 
       HeadingFoldExtension,
-
       AiStreamExtension.configure({
-
         onRetry: (ed) => inlineAiRetryRef.current?.(ed),
-
       }),
-
+      InlineAiExtension,
       SlashCommandExtension.configure({ onCommand: onSlashCommand }),
-
       WikiLinkExtension.configure({ onOpenNote: onOpenWikiLink }),
 
     ],

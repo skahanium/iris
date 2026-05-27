@@ -150,10 +150,7 @@ impl ToolRegistry {
                     "required": ["note_path"]
                 }),
                 access_level: ToolAccessLevel::ReadIndex,
-                scene_allowlist: vec![
-                    AiScene::KnowledgeLookup,
-                    AiScene::ResearchSynthesis,
-                ],
+                scene_allowlist: vec![AiScene::KnowledgeLookup, AiScene::ResearchSynthesis],
                 requires_confirmation: false,
                 max_results: Some(50),
             },
@@ -172,7 +169,6 @@ impl ToolRegistry {
                 requires_confirmation: true,
                 max_results: Some(5),
             },
-
             // ─── 写入操作 (均需确认) ───
             ToolSpec {
                 name: "insert_text_at_cursor".into(),
@@ -301,7 +297,6 @@ pub fn check_tool_permission(
     scene: AiScene,
     allowed_level: AutonomyLevel,
 ) -> Result<(), ToolPermissionError> {
-
     // 1. 场景白名单检查
     if !tool.scene_allowlist.is_empty() && !tool.scene_allowlist.contains(&scene) {
         return Err(ToolPermissionError::SceneNotAllowed {
@@ -320,8 +315,10 @@ pub fn check_tool_permission(
     }
 
     // 3. WriteMarkdown + WriteSettings 在 L1 下禁止
-    if matches!(tool.access_level, ToolAccessLevel::WriteMarkdown | ToolAccessLevel::WriteSettings)
-        && allowed_level < AutonomyLevel::L2
+    if matches!(
+        tool.access_level,
+        ToolAccessLevel::WriteMarkdown | ToolAccessLevel::WriteSettings
+    ) && allowed_level < AutonomyLevel::L2
     {
         return Err(ToolPermissionError::InsufficientAutonomy {
             tool: tool.name.clone(),
@@ -418,7 +415,9 @@ mod tests {
         let reg = ToolRegistry::new();
         let insert = reg.find("insert_text_at_cursor").unwrap();
         // insert_text_at_cursor only for DraftingAssist
-        assert!(check_tool_permission(insert, AiScene::KnowledgeLookup, AutonomyLevel::L2).is_err());
+        assert!(
+            check_tool_permission(insert, AiScene::KnowledgeLookup, AutonomyLevel::L2).is_err()
+        );
     }
 
     #[test]

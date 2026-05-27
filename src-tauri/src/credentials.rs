@@ -26,3 +26,8 @@ pub fn delete_secret(service: &str) -> AppResult<()> {
 pub fn has_secret(service: &str) -> bool {
     get_secret(service).is_ok()
 }
+
+/// Get API key from credential store.
+pub fn get_api_key(service: &str) -> AppResult<String> {
+    get_secret(service)
+}

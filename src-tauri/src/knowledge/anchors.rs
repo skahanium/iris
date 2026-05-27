@@ -51,10 +51,7 @@ pub struct ExtractedAnchor {
 // ─── Extraction ──────────────────────────────────────────
 
 /// Extract anchors from note text using structural heuristics.
-pub fn extract_anchors(
-    file_path: &str,
-    raw_text: &str,
-) -> Vec<ExtractedAnchor> {
+pub fn extract_anchors(file_path: &str, raw_text: &str) -> Vec<ExtractedAnchor> {
     let lines: Vec<&str> = raw_text.lines().collect();
     let headings = collect_headings(&lines);
     let mut anchors = Vec::new();
@@ -76,27 +73,55 @@ pub fn extract_anchors(
         let confidence_base = 0.7;
 
         // Pattern 1: Decision markers
-        if let Some(anchor) = try_decision(line, file_path, line_start, line_end, para_index, &heading, confidence_base) {
+        if let Some(anchor) = try_decision(
+            line,
+            file_path,
+            line_start,
+            line_end,
+            para_index,
+            &heading,
+            confidence_base,
+        ) {
             anchors.push(anchor);
         }
 
         // Pattern 2: Definition / explanation markers
-        if let Some(anchor) = try_definition(line, file_path, line_start, line_end, para_index, &heading, confidence_base) {
+        if let Some(anchor) = try_definition(
+            line,
+            file_path,
+            line_start,
+            line_end,
+            para_index,
+            &heading,
+            confidence_base,
+        ) {
             anchors.push(anchor);
         }
 
         // Pattern 3: Regulation references
-        if let Some(anchor) = try_regulation_ref(line, file_path, line_start, line_end, para_index, &heading, 0.9) {
+        if let Some(anchor) = try_regulation_ref(
+            line, file_path, line_start, line_end, para_index, &heading, 0.9,
+        ) {
             anchors.push(anchor);
         }
 
         // Pattern 4: Fact / data patterns
-        if let Some(anchor) = try_fact(line, file_path, line_start, line_end, para_index, &heading, confidence_base) {
+        if let Some(anchor) = try_fact(
+            line,
+            file_path,
+            line_start,
+            line_end,
+            para_index,
+            &heading,
+            confidence_base,
+        ) {
             anchors.push(anchor);
         }
 
         // Pattern 5: Claim — sentences with judgment keywords
-        if let Some(anchor) = try_claim(line, file_path, line_start, line_end, para_index, &heading, 0.6) {
+        if let Some(anchor) = try_claim(
+            line, file_path, line_start, line_end, para_index, &heading, 0.6,
+        ) {
             anchors.push(anchor);
         }
 
@@ -144,11 +169,24 @@ fn closest_heading(headings: &[HeadingInfo], offset: usize) -> Option<String> {
 // ─── Pattern Matchers ────────────────────────────────────
 
 fn try_decision(
-    line: &str, path: &str, start: usize, end: usize,
-    para: usize, heading: &Option<String>, conf: f64,
+    line: &str,
+    path: &str,
+    start: usize,
+    end: usize,
+    para: usize,
+    heading: &Option<String>,
+    conf: f64,
 ) -> Option<ExtractedAnchor> {
     let trimmed = line.trim();
-    let decision_markers = ["经研究", "决定", "综上所述", "会议决定", "同意", "批准", "不予"];
+    let decision_markers = [
+        "经研究",
+        "决定",
+        "综上所述",
+        "会议决定",
+        "同意",
+        "批准",
+        "不予",
+    ];
     if decision_markers.iter().any(|m| trimmed.contains(m)) && trimmed.chars().count() > 10 {
         let content = trimmed.to_string();
         let hash = content_hash(&content);
@@ -170,8 +208,13 @@ fn try_decision(
 }
 
 fn try_definition(
-    line: &str, path: &str, start: usize, end: usize,
-    para: usize, heading: &Option<String>, conf: f64,
+    line: &str,
+    path: &str,
+    start: usize,
+    end: usize,
+    para: usize,
+    heading: &Option<String>,
+    conf: f64,
 ) -> Option<ExtractedAnchor> {
     let trimmed = line.trim();
     let def_patterns = ["是指", "定义为", "指的是", "即", "所谓"];
@@ -196,8 +239,13 @@ fn try_definition(
 }
 
 fn try_regulation_ref(
-    line: &str, path: &str, start: usize, end: usize,
-    para: usize, heading: &Option<String>, conf: f64,
+    line: &str,
+    path: &str,
+    start: usize,
+    end: usize,
+    para: usize,
+    heading: &Option<String>,
+    conf: f64,
 ) -> Option<ExtractedAnchor> {
     let trimmed = line.trim();
     let re = regex::Regex::new(r"《[^》]+》第[一二三四五六七八九十百千0-9]+条").unwrap();
@@ -222,8 +270,13 @@ fn try_regulation_ref(
 }
 
 fn try_fact(
-    line: &str, path: &str, start: usize, end: usize,
-    para: usize, heading: &Option<String>, conf: f64,
+    line: &str,
+    path: &str,
+    start: usize,
+    end: usize,
+    para: usize,
+    heading: &Option<String>,
+    conf: f64,
 ) -> Option<ExtractedAnchor> {
     let trimmed = line.trim();
     // Contains percentage, year-range, or numeric data with units
@@ -249,11 +302,26 @@ fn try_fact(
 }
 
 fn try_claim(
-    line: &str, path: &str, start: usize, end: usize,
-    para: usize, heading: &Option<String>, conf: f64,
+    line: &str,
+    path: &str,
+    start: usize,
+    end: usize,
+    para: usize,
+    heading: &Option<String>,
+    conf: f64,
 ) -> Option<ExtractedAnchor> {
     let trimmed = line.trim();
-    let claim_markers = ["应当", "必须", "不得", "禁止", "需要", "要坚持", "要始终", "必须坚持", "关键在于"];
+    let claim_markers = [
+        "应当",
+        "必须",
+        "不得",
+        "禁止",
+        "需要",
+        "要坚持",
+        "要始终",
+        "必须坚持",
+        "关键在于",
+    ];
     if claim_markers.iter().any(|m| trimmed.contains(m)) && trimmed.chars().count() > 15 {
         let content = trimmed.to_string();
         let hash = content_hash(&content);
@@ -361,7 +429,10 @@ mod tests {
     #[test]
     fn extract_anchors_finds_decisions() {
         let anchors = extract_anchors("test.md", SAMPLE_NOTE);
-        let decisions: Vec<_> = anchors.iter().filter(|a| a.anchor_type == AnchorType::Decision).collect();
+        let decisions: Vec<_> = anchors
+            .iter()
+            .filter(|a| a.anchor_type == AnchorType::Decision)
+            .collect();
         assert!(!decisions.is_empty(), "should find at least one decision");
         assert!(decisions.iter().any(|d| d.content.contains("决定成立")));
     }
@@ -369,7 +440,10 @@ mod tests {
     #[test]
     fn extract_anchors_finds_definitions() {
         let anchors = extract_anchors("test.md", SAMPLE_NOTE);
-        let defs: Vec<_> = anchors.iter().filter(|a| a.anchor_type == AnchorType::Definition).collect();
+        let defs: Vec<_> = anchors
+            .iter()
+            .filter(|a| a.anchor_type == AnchorType::Definition)
+            .collect();
         assert!(!defs.is_empty());
         assert!(defs.iter().any(|d| d.content.contains("是指")));
     }
@@ -377,21 +451,30 @@ mod tests {
     #[test]
     fn extract_anchors_finds_regulation_refs() {
         let anchors = extract_anchors("test.md", SAMPLE_NOTE);
-        let refs: Vec<_> = anchors.iter().filter(|a| a.anchor_type == AnchorType::RegulationRef).collect();
+        let refs: Vec<_> = anchors
+            .iter()
+            .filter(|a| a.anchor_type == AnchorType::RegulationRef)
+            .collect();
         assert!(!refs.is_empty());
     }
 
     #[test]
     fn extract_anchors_finds_claims() {
         let anchors = extract_anchors("test.md", SAMPLE_NOTE);
-        let claims: Vec<_> = anchors.iter().filter(|a| a.anchor_type == AnchorType::Claim).collect();
+        let claims: Vec<_> = anchors
+            .iter()
+            .filter(|a| a.anchor_type == AnchorType::Claim)
+            .collect();
         assert!(!claims.is_empty());
     }
 
     #[test]
     fn extract_anchors_finds_facts() {
         let anchors = extract_anchors("test.md", SAMPLE_NOTE);
-        let facts: Vec<_> = anchors.iter().filter(|a| a.anchor_type == AnchorType::Fact).collect();
+        let facts: Vec<_> = anchors
+            .iter()
+            .filter(|a| a.anchor_type == AnchorType::Fact)
+            .collect();
         assert!(!facts.is_empty());
     }
 

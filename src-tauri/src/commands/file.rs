@@ -47,12 +47,7 @@ pub fn file_list(state: State<'_, Arc<AppState>>) -> AppResult<Vec<FileListItem>
             let updated_at: String = row.get(2)?;
             let frontmatter: Option<String> = row.get(3)?;
             let stem = title_from_path(&path);
-            let title = resolve_display_title(
-                None,
-                &stored_title,
-                frontmatter.as_deref(),
-                &stem,
-            );
+            let title = resolve_display_title(None, &stored_title, frontmatter.as_deref(), &stem);
             Ok(FileListItem {
                 path,
                 title,

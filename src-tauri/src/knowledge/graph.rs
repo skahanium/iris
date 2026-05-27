@@ -19,6 +19,7 @@ pub struct BlockLink {
 }
 
 /// Insert a block link. Uses INSERT OR IGNORE to avoid duplicates.
+#[allow(clippy::too_many_arguments)]
 pub fn insert_link(
     conn: &Connection,
     source_file_id: i64,
@@ -58,7 +59,7 @@ pub fn get_confirmed_links(conn: &Connection, file_id: i64) -> AppResult<Vec<Blo
                 link_type, confidence, is_confirmed
          FROM block_links
          WHERE source_file_id = ?1 AND is_confirmed = 1
-         ORDER BY confidence DESC"
+         ORDER BY confidence DESC",
     )?;
 
     let rows = stmt.query_map([file_id], |row| {
@@ -117,7 +118,16 @@ mod tests {
                 [],
             )?;
 
-            insert_link(conn, 1, Some("anchor-a"), 2, Some("anchor-b"), "implicit", 0.85, "system")?;
+            insert_link(
+                conn,
+                1,
+                Some("anchor-a"),
+                2,
+                Some("anchor-b"),
+                "implicit",
+                0.85,
+                "system",
+            )?;
 
             // Mark as confirmed
             conn.execute("UPDATE block_links SET is_confirmed = 1 WHERE id = 1", [])?;
@@ -126,7 +136,8 @@ mod tests {
             assert_eq!(links.len(), 1);
             assert_eq!(links[0].target_file_id, 2);
             Ok(())
-        }).unwrap();
+        })
+        .unwrap();
     }
 
     #[test]
@@ -143,6 +154,7 @@ mod tests {
             let deleted = delete_implicit_links(conn, 1)?;
             assert_eq!(deleted, 1);
             Ok(())
-        }).unwrap();
+        })
+        .unwrap();
     }
 }

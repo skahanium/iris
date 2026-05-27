@@ -20,9 +20,26 @@ export const FloatingToolbar = memo(function FloatingToolbar({
   const actions = [
     { id: "rewrite", label: "改写" },
     { id: "expand", label: "扩写" },
-    { id: "translate", label: "翻译" },
     { id: "simplify", label: "简化" },
+    { id: "cite", label: "引用" },
+    { id: "check", label: "检查" },
   ];
+
+  const handleInlineAi = (action: string) => {
+    if (!editor) return;
+
+    // Get selected text
+    const { from, to } = editor.state.selection;
+    const selectedText = editor.state.doc.textBetween(from, to, " ");
+
+    // Insert inline AI node
+    editor.commands.insertInlineAi({
+      action: action as "continue" | "rewrite" | "expand" | "simplify" | "cite" | "check",
+      context: selectedText,
+    });
+
+    onInlineAi(action);
+  };
 
   return (
     <div className="fixed bottom-20 left-1/2 z-30 flex -translate-x-1/2 gap-1 rounded-lg border border-border bg-panel/95 px-2 py-1.5 shadow-floating backdrop-blur-sm">
@@ -32,7 +49,7 @@ export const FloatingToolbar = memo(function FloatingToolbar({
           type="button"
           size="sm"
           variant="ghost"
-          onClick={() => onInlineAi(a.id)}
+          onClick={() => handleInlineAi(a.id)}
         >
           <Sparkles className="mr-1 h-3 w-3" />
           {a.label}

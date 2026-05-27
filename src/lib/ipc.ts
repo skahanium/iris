@@ -277,7 +277,16 @@ export async function aiSendMessage(params: {
   session_id: number | null;
   message: string;
   selected_packet_ids?: string[];
-}): Promise<{ request_id: string; session_id: number; status: string; message?: string }> {
+}): Promise<{
+  request_id: string;
+  session_id: number;
+  status: string;
+  content?: string;
+  tool_calls?: Array<{ id: string; function: { name: string; arguments: string } }>;
+  tool_results?: Array<{ tool_call_id: string; status: string; result?: unknown }>;
+  usage?: { prompt_tokens: number; completion_tokens: number; total_tokens: number };
+  citation_valid?: boolean;
+}> {
   return invoke("ai_send_message", {
     scene: params.scene,
     sessionId: params.session_id,
@@ -324,4 +333,171 @@ export async function searchHybrid(params: {
     notePath: params.note_path ?? null,
     limit: params.limit ?? null,
   });
+}
+
+// ─── Research Workflow IPC (D) ───
+
+export async function researchExecute(params: {
+  topic: string;
+  web_authorized?: boolean;
+}): Promise<{
+  request_id: string;
+  topic: string;
+  rounds: number;
+  evidence_matrix: {
+    topic: string;
+    propositions: Array<{
+      id: string;
+      statement: string;
+      evidence: ContextPacket[];
+      gaps: string[];
+    }>;
+    global_gaps: string[];
+    total_evidence_count: number;
+    coverage_score: number;
+  };
+  argument_chain: {
+    links: Array<{
+      from_proposition_id: string;
+      to_proposition_id: string;
+      link_type: string;
+      strength: number;
+    }>;
+    has_contradictions: boolean;
+    chain_strength: number;
+  };
+  summary: string;
+  total_tokens: { prompt_tokens: number; completion_tokens: number; total_tokens: number };
+}> {
+  return invoke("research_execute", {
+    topic: params.topic,
+    webAuthorized: params.web_authorized ?? false,
+  });
+}
+
+export async function researchStatus(): Promise<{
+  recent_research: Array<{
+    request_id: string;
+    status: string;
+    latency_ms: number | null;
+    created_at: string;
+  }>;
+}> {
+  return invoke("research_status");
+}
+
+// ─── Personalization IPC (E) ───
+
+export async function profileList(params: {
+  include_inactive?: boolean;
+}): Promise<
+  Array<{
+    key: string;
+    value: unknown;
+    source: string;
+    confidence: number;
+    is_active: boolean;
+    updated_at: string;
+  }>
+> {
+  return invoke("profile_list", {
+    includeInactive: params.include_inactive ?? false,
+  });
+}
+
+export async function profileGet(params: {
+  key: string;
+}): Promise<{
+  key: string;
+  value: unknown;
+  source: string;
+  confidence: number;
+  is_active: boolean;
+  updated_at: string;
+} | null> {
+  return invoke("profile_get", { key: params.key });
+}
+
+export async function profileSet(params: {
+  key: string;
+  value: unknown;
+  source: string;
+  confidence?: number;
+}): Promise<void> {
+  return invoke("profile_set", {
+    key: params.key,
+    value: params.value,
+    source: params.source,
+    confidence: params.confidence ?? 1.0,
+  });
+}
+
+export async function profileDeactivate(params: {
+  key: string;
+}): Promise<void> {
+  return invoke("profile_deactivate", { key: params.key });
+}
+
+export async function profileDelete(params: {
+  key: string;
+}): Promise<void> {
+  return invoke("profile_delete", { key: params.key });
+}
+
+export async function inboxList(params: {
+  status?: string;
+}): Promise<
+  Array<{
+    id: number;
+    session_id: number | null;
+    source_note: string | null;
+    deposit_type: string;
+    content: string;
+    status: string;
+    target_path: string | null;
+    created_at: string;
+    updated_at: string;
+  }>
+> {
+  return invoke("inbox_list", { status: params.status ?? "inbox" });
+}
+
+export async function inboxAdd(params: {
+  deposit_type: string;
+  content: string;
+  source_note?: string;
+  session_id?: number;
+}): Promise<number> {
+  return invoke("inbox_add", {
+    depositType: params.deposit_type,
+    content: params.content,
+    sourceNote: params.source_note ?? null,
+    sessionId: params.session_id ?? null,
+  });
+}
+
+export async function inboxUpdateStatus(params: {
+  deposit_id: number;
+  new_status: string;
+  target_path?: string;
+}): Promise<void> {
+  return invoke("inbox_update_status", {
+    depositId: params.deposit_id,
+    newStatus: params.new_status,
+    targetPath: params.target_path ?? null,
+  });
+}
+
+export async function inboxDelete(params: {
+  deposit_id: number;
+}): Promise<void> {
+  return invoke("inbox_delete", { depositId: params.deposit_id });
+}
+
+export async function inboxCounts(): Promise<{
+  inbox: number;
+  archived: number;
+  written: number;
+}> {
+  return invoke("inbox_counts");
 }

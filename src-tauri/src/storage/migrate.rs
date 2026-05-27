@@ -26,6 +26,8 @@ const MIGRATION_009_UP: &str = include_str!("../../migrations/009_ai_runtime.sql
 const MIGRATION_009_DOWN: &str = include_str!("../../migrations/009_ai_runtime.down.sql");
 const MIGRATION_010_UP: &str = include_str!("../../migrations/010_knowledge_index.sql");
 const MIGRATION_010_DOWN: &str = include_str!("../../migrations/010_knowledge_index.down.sql");
+const MIGRATION_011_UP: &str = include_str!("../../migrations/011_eval_results.sql");
+const MIGRATION_011_DOWN: &str = include_str!("../../migrations/011_eval_results.down.sql");
 
 /// Apply core schema migrations idempotently.
 pub fn migrate_up(conn: &Connection) -> AppResult<()> {
@@ -209,16 +211,35 @@ pub fn migrate_up(conn: &Connection) -> AppResult<()> {
         );
     }
 
+    let v11_applied: bool = conn
+        .query_row(
+            "SELECT COUNT(*) FROM _migrations WHERE name = '011_eval_results'",
+            [],
+            |row| row.get::<_, i64>(0),
+        )
+        .map(|c| c > 0)
+        .unwrap_or(false);
+
+    if !v11_applied {
+        let _ = conn.execute_batch(MIGRATION_011_UP);
+        let _ = conn.execute(
+            "INSERT INTO _migrations (name, applied_at) VALUES ('011_eval_results', datetime('now'))",
+            [],
+        );
+    }
+
     Ok(())
 }
 
 /// Roll back all migrations (for tests).
 pub fn migrate_down(conn: &Connection) -> AppResult<()> {
-    let _ = conn.execute_batch(MIGRATION_009_DOWN);
+    let _ = conn.execute_batch(MIGRATION_011_DOWN);
     let _ = conn.execute(
-        "DELETE FROM _migrations WHERE name = '009_ai_runtime'",
+        "DELETE FROM _migrations WHERE name = '011_eval_results'",
         [],
     );
+    let _ = conn.execute_batch(MIGRATION_009_DOWN);
+    let _ = conn.execute("DELETE FROM _migrations WHERE name = '009_ai_runtime'", []);
     let _ = conn.execute_batch(MIGRATION_010_DOWN);
     let _ = conn.execute(
         "DELETE FROM _migrations WHERE name = '010_knowledge_index'",
@@ -230,10 +251,7 @@ pub fn migrate_down(conn: &Connection) -> AppResult<()> {
         [],
     );
     let _ = conn.execute_batch(MIGRATION_007_DOWN);
-    let _ = conn.execute(
-        "DELETE FROM _migrations WHERE name = '007_recycle_bin'",
-        [],
-    );
+    let _ = conn.execute("DELETE FROM _migrations WHERE name = '007_recycle_bin'", []);
     let _ = conn.execute_batch(MIGRATION_006_DOWN);
     let _ = conn.execute(
         "DELETE FROM _migrations WHERE name = '006_versions_kind'",
@@ -518,7 +536,10 @@ mod tests {
             names.iter().any(|n| n == col)
         };
         assert!(col_exists("files", "genre"), "missing files.genre");
-        assert!(col_exists("chunks", "embedding_model"), "missing chunks.embedding_model");
+        assert!(
+            col_exists("chunks", "embedding_model"),
+            "missing chunks.embedding_model"
+        );
     }
 
     #[test]
@@ -546,7 +567,10 @@ mod tests {
             )
             .map(|c| c > 0)
             .unwrap();
-        assert!(!still_has, "sessions should be dropped after down migration");
+        assert!(
+            !still_has,
+            "sessions should be dropped after down migration"
+        );
     }
 
     #[test]
@@ -554,10 +578,17 @@ mod tests {
         let conn = Connection::open_in_memory().unwrap();
         migrate_up(&conn).unwrap();
 
-        for table in &["semantic_anchors", "regulation_index", "genre_templates", "block_links"] {
+        for table in &[
+            "semantic_anchors",
+            "regulation_index",
+            "genre_templates",
+            "block_links",
+        ] {
             let has: bool = conn
                 .query_row(
-                    &format!("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='{table}'"),
+                    &format!(
+                        "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='{table}'"
+                    ),
                     [],
                     |row| row.get::<_, i64>(0),
                 )
@@ -582,7 +613,10 @@ mod tests {
         assert!(has);
 
         let _ = conn.execute_batch(MIGRATION_010_DOWN);
-        let _ = conn.execute("DELETE FROM _migrations WHERE name = '010_knowledge_index'", []);
+        let _ = conn.execute(
+            "DELETE FROM _migrations WHERE name = '010_knowledge_index'",
+            [],
+        );
 
         let gone: bool = conn
             .query_row(

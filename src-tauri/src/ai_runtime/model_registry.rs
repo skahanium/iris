@@ -48,15 +48,11 @@ pub struct ModelCapabilityProfile {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub enum PrivacyLevel {
     Local,
+    #[default]
     External,
-}
-
-impl Default for PrivacyLevel {
-    fn default() -> Self {
-        PrivacyLevel::External
-    }
 }
 
 // ─── Registry ────────────────────────────────────────────
@@ -121,13 +117,11 @@ impl ModelRegistry {
         // 为每个 provider 的默认模型创建 profile。
         // 首个支持 tools 的 external provider 覆盖 Fast/Writer/Reasoner 槽位。
         let external = providers.iter().find(|p| {
-            p.supports_tools
-                && p.supports_streaming
-                && p.privacy_level == PrivacyLevel::External
+            p.supports_tools && p.supports_streaming && p.privacy_level == PrivacyLevel::External
         });
-        let local = providers.iter().find(|p| {
-            p.privacy_level == PrivacyLevel::Local && p.supports_streaming
-        });
+        let local = providers
+            .iter()
+            .find(|p| p.privacy_level == PrivacyLevel::Local && p.supports_streaming);
 
         let mut profiles = Vec::new();
 

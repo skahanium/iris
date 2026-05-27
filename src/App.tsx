@@ -96,7 +96,7 @@ function App() {
   const { theme, setTheme } = useTheme();
   const [aiPanelOpen, setAiPanelOpen] = useState(true);
   const [webSearch, setWebSearch] = useState(false);
-  const [quote, setQuote] = useState<ContextQuote | null>(null);
+  const [, setQuote] = useState<ContextQuote | null>(null);
   const [aiStatus, setAiStatus] = useState("AI 空闲");
   const [zen, setZen] = useState(false);
   const [outlineOpen, setOutlineOpen] = useState(loadOutlineOpen);
@@ -498,10 +498,6 @@ function App() {
         <AiPanel
           notePath={activePath}
           noteContent={markdown}
-          quote={quote}
-          onClearQuote={() => setQuote(null)}
-          provider={llmProvider}
-          webSearch={webSearch}
         />
         </ErrorBoundary>
       }
