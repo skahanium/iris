@@ -1,3 +1,4 @@
+pub mod ai_runtime;
 pub mod app;
 mod commands;
 mod credentials;
