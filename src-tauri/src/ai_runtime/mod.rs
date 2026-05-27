@@ -15,6 +15,7 @@ pub mod session;
 pub mod tool_executor;
 pub mod trace;
 pub mod packet_builder;
+pub mod retrieval_broker;
 pub mod guardrails;
 
 use serde::{Deserialize, Serialize};
