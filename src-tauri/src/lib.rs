@@ -1,4 +1,5 @@
 pub mod ai_runtime;
+pub mod knowledge;
 pub mod app;
 mod commands;
 mod credentials;

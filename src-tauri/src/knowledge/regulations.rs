@@ -9,8 +9,7 @@ use rusqlite::Connection;
 use std::sync::LazyLock;
 
 use crate::embedding::engine::{embed_text, f32_to_bytes};
-use crate::error::{AppError, AppResult};
-use crate::indexer::scan;
+use crate::error::AppResult;
 use crate::knowledge::{content_hash, EMBEDDING_DIM, EMBEDDING_MODEL, EXTRACTOR_VERSION};
 
 // ─── Regex Patterns ──────────────────────────────────────
@@ -341,6 +340,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore] // Requires fastembed AllMiniLML6V2 model download (~80 MB)
     fn index_and_retrieve() {
         let conn = rusqlite::Connection::open_in_memory().unwrap();
         // Need core tables for FK
