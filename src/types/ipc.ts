@@ -114,3 +114,7 @@ export interface VersionEntry {
   kind: VersionKind;
   created_at: string;
 }
+
+// ─── AI Runtime IPC types ───
+
+export type { AiScene, AssembledContext, ContextPacket, ContextStatus, ToolSpec } from "./ai";

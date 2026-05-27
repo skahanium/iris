@@ -251,3 +251,57 @@ export async function listenLlmError(
     handler(e.payload),
   );
 }
+
+// ─── AI Runtime IPC ───
+
+import type { AiScene, AssembledContext } from "@/types/ai";
+
+export async function contextAssemble(params: {
+  scene: AiScene;
+  note_path: string | null;
+  note_content_hash: string | null;
+  query: string;
+  session_id: number | null;
+}): Promise<AssembledContext> {
+  return invoke<AssembledContext>("context_assemble", {
+    scene: params.scene,
+    notePath: params.note_path,
+    noteContentHash: params.note_content_hash,
+    query: params.query,
+    sessionId: params.session_id,
+  });
+}
+
+export async function aiSendMessage(params: {
+  scene: AiScene;
+  session_id: number | null;
+  message: string;
+  selected_packet_ids?: string[];
+}): Promise<{ request_id: string; session_id: number; status: string; message?: string }> {
+  return invoke("ai_send_message", {
+    scene: params.scene,
+    sessionId: params.session_id,
+    message: params.message,
+    selectedPacketIds: params.selected_packet_ids ?? null,
+  });
+}
+
+export async function toolConfirm(params: {
+  request_id: string;
+  tool_call_id: string;
+  decision: "approve" | "reject" | "modify";
+  modified_args?: unknown;
+}): Promise<{ request_id: string; tool_call_id: string; status: string }> {
+  return invoke("tool_confirm", {
+    requestId: params.request_id,
+    toolCallId: params.tool_call_id,
+    decision: params.decision,
+    modifiedArgs: params.modified_args ?? null,
+  });
+}
+
+export async function aiListTools(
+  scene: AiScene,
+): Promise<{ name: string; description: string; requires_confirmation: boolean; access_level: string }[]> {
+  return invoke("ai_list_tools", { scene });
+}
