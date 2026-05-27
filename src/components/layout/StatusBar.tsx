@@ -1,14 +1,17 @@
-import { useMemo } from "react";
+import { memo, useMemo } from "react";
 
 import { Button } from "@/components/ui/button";
 import { formatEditorZoomPercent } from "@/lib/editor-zoom";
 import { splitFrontmatter } from "@/lib/frontmatter";
 import { readingMinutes } from "@/lib/reading-time";
+import { cn } from "@/lib/utils";
 
 interface StatusBarProps {
   path: string | null;
   /** User-facing document name (`files.title`). */
   documentTitle?: string | null;
+  /** Current note has unsaved edits (shown as text, not on tabs). */
+  unsaved?: boolean;
   wordCount: number;
   markdown?: string;
   aiStatus: string;
@@ -16,11 +19,14 @@ interface StatusBarProps {
   onEditorZoomIn?: () => void;
   onEditorZoomOut?: () => void;
   onEditorZoomReset?: () => void;
+  webSearch?: boolean;
+  onWebSearchChange?: (enabled: boolean) => void;
 }
 
-export function StatusBar({
+export const StatusBar = memo(function StatusBar({
   path,
   documentTitle,
+  unsaved = false,
   wordCount,
   markdown = "",
   aiStatus,
@@ -28,8 +34,11 @@ export function StatusBar({
   onEditorZoomIn,
   onEditorZoomOut,
   onEditorZoomReset,
+  webSearch = false,
+  onWebSearchChange,
 }: StatusBarProps) {
-  const label = documentTitle ?? path ?? "未打开文件";
+  const trimmedTitle = documentTitle?.trim();
+  const label = trimmedTitle || (path ? "无标题" : "未打开文件");
 
   const bodyText = useMemo(() => splitFrontmatter(markdown).body, [markdown]);
   const minutes = useMemo(() => readingMinutes(bodyText), [bodyText]);
@@ -89,10 +98,65 @@ export function StatusBar({
           </span>
         </>
       ) : null}
-      <span className="shrink-0 text-muted-foreground/60" aria-hidden>
-        ·
-      </span>
-      <span className="ml-auto shrink-0 truncate">{aiStatus}</span>
+      {path && unsaved ? (
+        <>
+          <span className="shrink-0 text-muted-foreground/60" aria-hidden>
+            ·
+          </span>
+          <span className="shrink-0 text-muted-foreground">未保存</span>
+        </>
+      ) : null}
+      <div className="ml-auto flex min-w-0 shrink-0 items-center gap-3">
+        <span className="max-w-[10rem] truncate" title={aiStatus}>
+          {aiStatus}
+        </span>
+        {onWebSearchChange ? (
+          <>
+            <span className="text-muted-foreground/60" aria-hidden>
+              ·
+            </span>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={webSearch}
+              aria-label={webSearch ? "关闭联网搜索" : "开启联网搜索"}
+              title="联网搜索"
+              className="group inline-flex h-6 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md px-1.5 text-muted-foreground transition-[color,background-color,transform] duration-base ease-iris-out hover:bg-muted/60 active:scale-[0.98] focus:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-1 focus-visible:ring-offset-panel"
+              onClick={() => onWebSearchChange(!webSearch)}
+            >
+              <span
+                className="relative flex size-3.5 shrink-0 items-center justify-center"
+                aria-hidden
+              >
+                <span
+                  className={cn(
+                    "absolute inset-0 rounded-full border transition-[border-color,transform,opacity] duration-base ease-iris-out",
+                    webSearch
+                      ? "scale-100 border-sky-600/50 opacity-100"
+                      : "scale-[0.88] border-muted-foreground/25 opacity-90 group-hover:border-muted-foreground/40",
+                  )}
+                />
+                <span
+                  className={cn(
+                    "relative size-2 rounded-full transition-[transform,box-shadow] duration-base ease-iris-out",
+                    webSearch
+                      ? "scale-110 bg-gradient-to-br from-sky-500 via-sky-600 to-sky-800 shadow-[0_0_0_1px_rgba(2,132,199,0.45),inset_0_1px_0_rgba(255,255,255,0.28)]"
+                      : "scale-90 bg-gradient-to-br from-muted-foreground/50 to-muted-foreground/30 shadow-[inset_0_1px_0_rgba(255,255,255,0.08),inset_0_-1px_0_rgba(0,0,0,0.18)] group-hover:scale-95",
+                  )}
+                />
+              </span>
+              <span
+                className={cn(
+                  "transition-colors duration-base ease-iris-out",
+                  webSearch ? "text-foreground/85" : "text-muted-foreground",
+                )}
+              >
+                联网搜索
+              </span>
+            </button>
+          </>
+        ) : null}
+      </div>
     </footer>
   );
-}
+});

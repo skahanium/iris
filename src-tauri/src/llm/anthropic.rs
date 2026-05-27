@@ -1,11 +1,14 @@
 use futures_util::StreamExt;
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue, CONTENT_TYPE};
 use serde_json::Value;
+use std::time::Duration;
 use tauri::Emitter;
 
 use super::providers::{ANTHROPIC_API_VERSION, ANTHROPIC_DEFAULT_MAX_TOKENS};
 use super::{ChatMessage, LlmStreamContext};
 use crate::error::{AppError, AppResult};
+
+const REQUEST_TIMEOUT_SECS: u64 = 60;
 
 /// 将聊天消息拆为 Anthropic `system` + `messages`（仅 user/assistant）。
 pub fn split_anthropic_messages(
@@ -112,7 +115,10 @@ pub async fn stream_anthropic_messages(ctx: &LlmStreamContext<'_>) -> AppResult<
         HeaderValue::from_static(ANTHROPIC_API_VERSION),
     );
 
-    let client = reqwest::Client::new();
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(REQUEST_TIMEOUT_SECS))
+        .build()
+        .map_err(|e| AppError::msg(format!("Failed to build HTTP client: {e}")))?;
     let response = client
         .post(&url)
         .headers(headers)
@@ -123,11 +129,12 @@ pub async fn stream_anthropic_messages(ctx: &LlmStreamContext<'_>) -> AppResult<
     if !response.status().is_success() {
         let status = response.status();
         let text = response.text().await.unwrap_or_default();
+        let truncated = super::engine::truncate_error_text(&text);
         let _ = ctx.app.emit(
             "llm:error",
             serde_json::json!({
                 "request_id": ctx.request_id,
-                "error": format!("{status}: {text}")
+                "error": format!("{status}: {truncated}")
             }),
         );
         return Err(AppError::msg(format!("Anthropic API error: {status}")));

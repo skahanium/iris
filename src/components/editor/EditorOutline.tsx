@@ -57,7 +57,7 @@ export function EditorOutline({
         type="button"
         size="sm"
         variant="outline"
-        className="pointer-events-auto absolute left-4 top-4 z-editor-chrome h-8 gap-1.5 rounded-xl border-border/70 bg-panel/92 px-2.5 text-xs shadow-floating backdrop-blur-sm"
+        className="pointer-events-auto absolute left-4 top-4 z-editor-chrome h-8 gap-1.5 rounded-md border border-border bg-panel px-2.5 text-xs shadow-floating"
         aria-label="显示目录"
         onClick={() => onOpenChange(true)}
       >
@@ -72,7 +72,7 @@ export function EditorOutline({
       className="pointer-events-none absolute left-4 top-4 z-editor-chrome flex max-h-[min(70dvh,32rem)] w-[min(13rem,42vw)] flex-col"
       aria-label="文档目录"
     >
-      <div className="pointer-events-auto flex min-h-0 flex-col overflow-hidden rounded-2xl border border-border/70 bg-panel/94 shadow-floating backdrop-blur-md">
+      <div className="pointer-events-auto flex min-h-0 flex-col overflow-hidden rounded-lg border border-border bg-panel/95 shadow-floating backdrop-blur-sm">
         <div className="flex shrink-0 items-center justify-between gap-2 border-b border-border/60 px-3 py-2">
           <span className="font-sans text-xs font-medium text-foreground">
             目录

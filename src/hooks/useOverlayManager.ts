@@ -1,6 +1,7 @@
 import { useCallback, useState } from "react";
 
 export type OverlayId =
+  | "commandPalette"
   | "quickOpen"
   | "fileSheet"
   | "search"
@@ -8,15 +9,18 @@ export type OverlayId =
   | "backlinks"
   | "tags"
   | "graph"
-  | "version";
+  | "version"
+  | "recycleBin";
 
 const SIDE_PANELS: OverlayId[] = [
+  "commandPalette",
   "fileSheet",
   "search",
   "settings",
   "backlinks",
   "tags",
   "version",
+  "recycleBin",
 ];
 
 export interface OverlayState {
@@ -92,6 +96,7 @@ export function useOverlayManager() {
 
   const toggleSidePanel = toggleOverlay;
 
+  const commandPaletteOpen = activeOverlay === "commandPalette";
   const quickOpen = activeOverlay === "quickOpen";
   const fileSheet = activeOverlay === "fileSheet";
   const searchOpen = activeOverlay === "search";
@@ -100,6 +105,7 @@ export function useOverlayManager() {
   const tagViewOpen = activeOverlay === "tags";
   const graphOpen = activeOverlay === "graph";
   const versionOpen = activeOverlay === "version";
+  const recycleBinOpen = activeOverlay === "recycleBin";
 
   return {
     activeOverlay,
@@ -107,6 +113,9 @@ export function useOverlayManager() {
     closeOverlay,
     toggleOverlay,
     isOverlayOpen: (id: OverlayId) => activeOverlay === id,
+    commandPaletteOpen,
+    setCommandPaletteOpen: (open: boolean) =>
+      setOverlayOpen("commandPalette", open),
     quickOpen,
     setQuickOpen: (open: boolean) => setOverlayOpen("quickOpen", open),
     fileSheet,
@@ -123,6 +132,8 @@ export function useOverlayManager() {
     setGraphOpen: (open: boolean) => setOverlayOpen("graph", open),
     versionOpen,
     setVersionOpen: (open: boolean) => setOverlayOpen("version", open),
+    recycleBinOpen,
+    setRecycleBinOpen: (open: boolean) => setOverlayOpen("recycleBin", open),
     openSidePanel,
     toggleSidePanel,
     closeSidePanels,

@@ -25,6 +25,8 @@ static SEARCH_CACHE: LazyLock<Mutex<HashMap<String, (Instant, String)>>> =
 
 static LAST_REQUEST: LazyLock<Mutex<Option<Instant>>> = LazyLock::new(|| Mutex::new(None));
 
+const MAX_CACHE_ENTRIES: usize = 200;
+
 /// Fetch web search context (DuckDuckGo default, Bing optional).
 pub async fn fetch_search_context(query: &str, use_bing: bool) -> AppResult<String> {
     if let Some(cached) = cache_get(query) {
@@ -75,6 +77,19 @@ fn cache_set(query: &str, value: &str) {
     if let Ok(mut cache) = SEARCH_CACHE.lock() {
         let key = query_hash_key(query);
         cache.insert(key, (Instant::now(), value.to_string()));
+        if cache.len() > MAX_CACHE_ENTRIES {
+            let mut entries: Vec<_> = cache.iter().collect();
+            entries.sort_by_key(|(_, (t, _))| *t);
+            let evict_count = MAX_CACHE_ENTRIES / 4;
+            let keys_to_remove: Vec<String> = entries
+                .iter()
+                .take(evict_count)
+                .map(|(k, _)| (*k).clone())
+                .collect();
+            for k in keys_to_remove {
+                cache.remove(&k);
+            }
+        }
     }
 }
 

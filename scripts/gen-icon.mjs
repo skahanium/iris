@@ -1,60 +1,91 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import zlib from "node:zlib";
+
+import { Resvg } from "@resvg/resvg-js";
+
+import { exportBrandSvgs, monogramSvg } from "./iris-brand-svg.mjs";
+import { BRAND_INK } from "./iris-mark-paths.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const outPath = path.join(__dirname, "assets", "app-icon.png");
+const assetsDir = path.join(__dirname, "assets");
+const brandPublicDir = path.join(__dirname, "..", "public", "brand");
 
-function crc32(buf) {
-  let table = new Uint32Array(256);
-  for (let n = 0; n < 256; n++) {
-    let c = n;
-    for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
-    table[n] = c >>> 0;
+/**
+ * @param {string} svg
+ * @param {number} width
+ * @param {number} [height]
+ */
+function renderSvgToPng(svg, width, height = width) {
+  const resvg = new Resvg(svg, {
+    fitTo: { mode: "width", value: width },
+  });
+  const rendered = resvg.render();
+  if (height !== width) {
+    const resvgH = new Resvg(svg, {
+      fitTo: { mode: "height", value: height },
+    });
+    return resvgH.render().asPng();
   }
-  let c = 0xffffffff;
-  for (const b of buf) c = table[(c ^ b) & 0xff] ^ (c >>> 8);
-  return (c ^ 0xffffffff) >>> 0;
+  return rendered.asPng();
 }
 
-function chunk(type, data) {
-  const len = Buffer.alloc(4);
-  len.writeUInt32BE(data.length);
-  const body = Buffer.concat([Buffer.from(type), data]);
-  const crc = Buffer.alloc(4);
-  crc.writeUInt32BE(crc32(body));
-  return Buffer.concat([len, Buffer.from(type), data, crc]);
+function writePng(filePath, png) {
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  fs.writeFileSync(filePath, png);
+  console.log(`wrote ${filePath}`);
 }
 
-const w = 32;
-const h = 32;
-const raw = Buffer.alloc((w * 4 + 1) * h);
-for (let y = 0; y < h; y++) {
-  raw[y * (w * 4 + 1)] = 0;
-  for (let x = 0; x < w; x++) {
-    const i = y * (w * 4 + 1) + 1 + x * 4;
-    raw[i] = 0x7c;
-    raw[i + 1] = 0x3a;
-    raw[i + 2] = 0xed;
-    raw[i + 3] = 255;
-  }
+function writeText(filePath, content) {
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  fs.writeFileSync(filePath, content, "utf8");
+  console.log(`wrote ${filePath}`);
 }
 
-const png = Buffer.concat([
-  Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
-  chunk("IHDR", (() => {
-    const b = Buffer.alloc(13);
-    b.writeUInt32BE(w, 0);
-    b.writeUInt32BE(h, 4);
-    b[8] = 8;
-    b[9] = 6;
-    return b;
-  })()),
-  chunk("IDAT", zlib.deflateSync(raw)),
-  chunk("IEND", Buffer.alloc(0)),
-]);
+fs.mkdirSync(assetsDir, { recursive: true });
+fs.mkdirSync(brandPublicDir, { recursive: true });
 
-fs.mkdirSync(path.dirname(outPath), { recursive: true });
-fs.writeFileSync(outPath, png);
-console.log(`wrote ${outPath}`);
+const svgs = exportBrandSvgs();
+
+writeText(path.join(brandPublicDir, "iris-mark.svg"), svgs.monogramTransparent);
+writeText(path.join(brandPublicDir, "iris-mark-tray.svg"), svgs.monogramTray);
+writeText(path.join(brandPublicDir, "iris-mark-app-shell.svg"), svgs.appShell);
+writeText(path.join(brandPublicDir, "iris-mark-app-dark.svg"), svgs.appDark);
+writeText(path.join(brandPublicDir, "iris-mark-app-light.svg"), svgs.appLight);
+
+/** 桌面安装包 / 任务栏：亮色底、大字号 I（非暗色 in-app 标） */
+writePng(
+  path.join(assetsDir, "app-icon.png"),
+  renderSvgToPng(svgs.appShell, 1024),
+);
+writePng(
+  path.join(assetsDir, "app-icon-dark.png"),
+  renderSvgToPng(svgs.appDark, 1024),
+);
+writePng(
+  path.join(assetsDir, "app-icon-light.png"),
+  renderSvgToPng(svgs.appLight, 1024),
+);
+
+const monoTransparent = monogramSvg({
+  frame: BRAND_INK.light.frame,
+  ink: BRAND_INK.light.ink,
+});
+writePng(
+  path.join(assetsDir, "iris-mark-transparent.png"),
+  renderSvgToPng(monoTransparent, 512),
+);
+
+for (const traySize of [16, 22, 32]) {
+  writePng(
+    path.join(assetsDir, `tray-icon-${traySize}.png`),
+    renderSvgToPng(svgs.monogramTray, traySize),
+  );
+}
+
+writePng(
+  path.join(brandPublicDir, "favicon-32.png"),
+  renderSvgToPng(monoTransparent, 32),
+);
+
+console.log("\nNext: npm run icon:tauri  # 生成 src-tauri/icons/*.ico|.icns");

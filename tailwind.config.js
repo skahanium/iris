@@ -46,21 +46,12 @@ export default {
         "3xl": "var(--radius-xl)",
       },
       boxShadow: {
-        paper: "var(--shadow-paper)",
         overlay: "var(--shadow-overlay)",
         floating: "var(--shadow-floating)",
       },
       fontFamily: {
-        editor: [
-          '"Noto Serif SC"',
-          '"Source Han Serif SC"',
-          '"Songti SC"',
-          "Georgia",
-          '"Times New Roman"',
-          "serif",
-        ],
-        mono: ['"JetBrains Mono"', "ui-monospace", "monospace"],
         sans: [
+          "Inter",
           "-apple-system",
           "BlinkMacSystemFont",
           '"Segoe UI"',
@@ -68,6 +59,16 @@ export default {
           '"PingFang SC"',
           "sans-serif",
         ],
+        editor: [
+          "Inter",
+          "-apple-system",
+          "BlinkMacSystemFont",
+          '"Segoe UI"',
+          '"Microsoft YaHei"',
+          '"PingFang SC"',
+          "sans-serif",
+        ],
+        mono: ['"JetBrains Mono"', "ui-monospace", "monospace"],
       },
       transitionDuration: {
         fast: "var(--motion-fast)",

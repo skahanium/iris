@@ -6,7 +6,11 @@ use tauri::{AppHandle, State};
 
 use crate::app::AppState;
 use crate::error::{AppError, AppResult};
-use crate::indexer::scan::{index_file, remove_file_index, scan_vault, FileEntry};
+use crate::indexer::frontmatter::{parse_note, resolve_display_title};
+use crate::indexer::scan::{
+    index_file, prune_stale_file_indexes, remove_file_index, scan_vault, FileEntry,
+};
+use crate::recycle::{discard_document, trash_document};
 use crate::storage::paths::resolve_vault_path;
 
 fn title_from_path(path: &str) -> String {
@@ -28,18 +32,31 @@ pub struct FileListItem {
 /// `title` 为创建时确定的文档名；版本历史见 `version_list_cmd`。
 #[tauri::command]
 pub fn file_list(state: State<'_, Arc<AppState>>) -> AppResult<Vec<FileListItem>> {
+    let vault = state.vault_path()?;
     state.db.with_conn(|conn| {
+        prune_stale_file_indexes(conn, &vault)?;
         let mut stmt = conn.prepare(
-            "SELECT path, title, updated_at FROM files
+            "SELECT path, title, updated_at, frontmatter FROM files
              WHERE id IN (SELECT MAX(id) FROM files GROUP BY path)
                AND path NOT LIKE '.iris/%'
              ORDER BY updated_at DESC",
         )?;
         let rows = stmt.query_map([], |row| {
+            let path: String = row.get(0)?;
+            let stored_title: String = row.get(1)?;
+            let updated_at: String = row.get(2)?;
+            let frontmatter: Option<String> = row.get(3)?;
+            let stem = title_from_path(&path);
+            let title = resolve_display_title(
+                None,
+                &stored_title,
+                frontmatter.as_deref(),
+                &stem,
+            );
             Ok(FileListItem {
-                path: row.get(0)?,
-                title: row.get(1)?,
-                updated_at: row.get(2)?,
+                path,
+                title,
+                updated_at,
             })
         })?;
         Ok(rows.flatten().collect())
@@ -67,14 +84,14 @@ pub fn file_write(
     fs::rename(&tmp, &abs)?;
 
     let wc = content.split_whitespace().count() as i64;
-    let title = state.db.with_conn(|conn| {
-        match conn.query_row("SELECT title FROM files WHERE path = ?1", [&path], |r| {
-            r.get::<_, String>(0)
-        }) {
-            Ok(t) => Ok(t),
-            Err(_) => Ok(title_from_path(&path)),
-        }
-    })?;
+    let parsed = parse_note(&content)?;
+    let stem = title_from_path(&path);
+    let title = resolve_display_title(
+        parsed.title.as_deref(),
+        "",
+        parsed.frontmatter_json.as_deref(),
+        &stem,
+    );
     let now = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%S").to_string();
 
     let entry = FileEntry {
@@ -97,12 +114,16 @@ pub fn file_write(
     Ok(entry)
 }
 
+/// Move note + all version snapshots into recycle bin (15-day retention).
 #[tauri::command]
 pub fn file_delete(state: State<'_, Arc<AppState>>, path: String) -> AppResult<()> {
-    let vault = state.vault_path()?;
-    let abs = resolve_vault_path(&vault, &path)?;
-    fs::remove_file(&abs)?;
-    state.db.with_conn(|conn| remove_file_index(conn, &path))
+    trash_document(state.inner(), &path)
+}
+
+/// Permanently remove a blank note (no recycle bin).
+#[tauri::command]
+pub fn file_discard(state: State<'_, Arc<AppState>>, path: String) -> AppResult<()> {
+    discard_document(state.inner(), &path)
 }
 
 #[tauri::command]

@@ -55,12 +55,12 @@
 每个笔记是独立的 `.md` 文件。用 VS Code、Typora、任何编辑器都能打开。SQLite 是缓存，文件是数据。
 
 ### 界面取向
-**纸墨编辑**（暖纸色写作区 + 低干扰外壳）为主，**命令优先**（`Ctrl+P` / 可收起 AI 侧栏）为辅；不做第三方插件生态。见 [设计系统](docs/design-system.md) 与 [路线图 · 体验方向](ROADMAP.md#体验方向与路线图绑定)。
+**Notion 式扁平编辑**（灰阶壳层 + 居中内容栏）为主，**命令优先**（`Ctrl+P` / 可收起 AI 侧栏）为辅；不做第三方插件生态。见 [设计系统](docs/design-system.md) 与 [路线图 · 体验方向](ROADMAP.md#体验方向与路线图绑定)。
 
 
 ## 快速开始
 
-> **当前状态**：**v0.1.0** 已发布；**v0.1.1** 推进纸墨体验与质量补齐。排期见 [ROADMAP.md](./ROADMAP.md)，变更见 [CHANGELOG.md](./CHANGELOG.md)，文档索引见 [docs/README.md](docs/README.md)。
+> **当前状态**：**v0.1.0** 已发布；**v0.4.0-ui** 推进 Notion 式界面重建。排期见 [ROADMAP.md](./ROADMAP.md)，变更见 [CHANGELOG.md](./CHANGELOG.md)，文档索引见 [docs/README.md](docs/README.md)。
 
 ### 环境要求
 

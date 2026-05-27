@@ -100,6 +100,33 @@ pub fn split_frontmatter(content: &str) -> (Option<String>, String) {
     }
 }
 
+/// Resolve user-visible document title (frontmatter `title:` only; not body `#` headings).
+pub fn resolve_display_title(
+    parsed_title: Option<&str>,
+    stored_title: &str,
+    frontmatter_json: Option<&str>,
+    path_stem: &str,
+) -> String {
+    if let Some(t) = parsed_title.map(str::trim).filter(|t| !t.is_empty()) {
+        return t.to_string();
+    }
+    if let Some(fm) = frontmatter_json {
+        if let Ok(v) = serde_json::from_str::<Value>(fm) {
+            if let Some(t) = v.get("title").and_then(|x| x.as_str()) {
+                let t = t.trim();
+                if !t.is_empty() {
+                    return t.to_string();
+                }
+            }
+        }
+    }
+    let stored = stored_title.trim();
+    if !stored.is_empty() && stored != path_stem {
+        return stored.to_string();
+    }
+    path_stem.to_string()
+}
+
 fn extract_fields(yaml: &str) -> (Option<String>, Vec<String>) {
     let Ok(fields) = serde_yaml::from_str::<FrontmatterFields>(yaml) else {
         return (None, vec![]);
@@ -161,6 +188,13 @@ pub fn parse_note(content: &str) -> AppResult<ParsedNote> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn resolve_display_title_prefers_frontmatter_json() {
+        let fm = r#"{"title":"吃早饭","tags":[]}"#;
+        let title = resolve_display_title(None, "untitled-1", Some(fm), "untitled-1");
+        assert_eq!(title, "吃早饭");
+    }
 
     #[test]
     fn splits_obsidian_style_frontmatter() {

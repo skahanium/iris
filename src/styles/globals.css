@@ -2,64 +2,55 @@
 @tailwind components;
 @tailwind utilities;
 
-/* Iris · 纸墨（B）现代版：中性纸面 + 低饱和墨壳，见 docs/design-system.md */
+/* Iris · Notion（N）扁平编辑：见 docs/design-system.md */
 
 @layer base {
   :root {
     color-scheme: dark;
 
-    /* Chrome — 冷灰炭墨（低饱和，避免泛黄棕） */
-    --background: 240 6% 7%;
-    --foreground: 240 5% 93%;
-    --panel: 240 5% 10%;
-    --card: 240 4% 13%;
-    --border: 240 4% 18%;
-    --muted: 240 4% 16%;
-    --muted-foreground: 240 4% 58%;
-    --ring: 22 32% 52%;
-    --overlay-scrim: 240 5% 7% / 0.52;
+    --background: 0 0% 10%;
+    --foreground: 0 0% 93%;
+    --panel: 0 0% 12%;
+    --card: 0 0% 14%;
+    --border: 0 0% 18%;
+    --muted: 0 0% 16%;
+    --muted-foreground: 0 0% 55%;
+    --ring: 210 18% 62%;
+    --overlay-scrim: 0 0% 5% / 0.55;
 
-    /* Accent — 克制赭铜 */
-    --primary: 22 32% 52%;
-    --primary-foreground: 40 20% 98%;
+    --primary: 210 18% 62%;
+    --primary-foreground: 0 0% 100%;
 
-    --destructive: 0 45% 48%;
+    /* 品牌几何 monogram（见 docs/design-system/brand.md） */
+    --iris-mark-frame: 0 0% 20%;
+    --iris-mark-ink: 0 0% 94%;
+
+    --destructive: 0 55% 55%;
     --destructive-foreground: 0 0% 98%;
 
-    /* 编辑纸面 — 暗暖灰纸（方案 A），避免暗色模式高亮白纸 */
-    --editor-paper: 35 8% 16%;
-    --editor-ink: 40 12% 88%;
-    --editor-muted: 40 7% 62%;
-    --editor-border: 35 8% 24%;
-    --editor-code-bg: 35 8% 11%;
-    --editor-code-fg: 40 10% 88%;
+    /* 与壳层对齐，兼容 editor-* Tailwind 类 */
+    --editor-paper: var(--background);
+    --editor-ink: var(--foreground);
+    --editor-muted: 0 0% 55%;
+    --editor-border: var(--border);
+    --editor-code-bg: 0 0% 14%;
+    --editor-code-fg: 0 0% 88%;
 
-    /* 信纸行线 / 行距（字号不变，仅加宽网格；与 line-height 同步） */
-    --editor-line-height: 2.125rem;
-    --editor-line-alpha: 0.45;
-    /* 块间距：flow = 空 1 行；tight = 无空行（父标题→子标题、标题→正文） */
-    --editor-gap-tight: 0;
-    --editor-gap-flow: var(--editor-line-height);
-    --editor-fold-column: 1.5rem;
-    /* 正文行线起点 = 主标题区底边（由 TipTapEditor ResizeObserver 写入） */
-    --editor-body-lines-start: calc(var(--editor-line-height) * 4);
-    --editor-paper-pad-top: clamp(2.5rem, 7vh, 4.5rem);
-    --editor-paper-pad-x: clamp(1.5rem, 5vw, 2.75rem);
-    --editor-paper-pad-bottom: clamp(3.5rem, 12vh, 6rem);
+    --editor-fold-column: 1.75rem;
+    --editor-canvas-pad-top: clamp(3rem, 8vh, 5rem);
+    --editor-canvas-pad-x: clamp(1.5rem, 5vw, 6rem);
+    --editor-canvas-pad-bottom: clamp(4rem, 12vh, 8rem);
 
-    /* Shape / elevation / motion tokens for v0.3.1-ui overlays and chrome */
-    --radius-sm: 8px;
-    --radius-md: 12px;
-    --radius-lg: 16px;
-    --radius-xl: 20px;
-    --shadow-paper:
-      0 16px 48px hsl(240 8% 3% / 0.38),
-      0 0 0 1px hsl(var(--editor-border) / 0.48);
+    --radius-sm: 6px;
+    --radius-md: 8px;
+    --radius-lg: 12px;
+    --radius-xl: 16px;
+    --window-radius: 12px;
     --shadow-overlay:
-      0 24px 80px hsl(240 8% 3% / 0.5), 0 8px 28px hsl(240 8% 3% / 0.34),
-      0 0 0 1px hsl(var(--border) / 0.6);
+      0 12px 48px hsl(0 0% 0% / 0.45), 0 4px 16px hsl(0 0% 0% / 0.28),
+      0 0 0 1px hsl(var(--border) / 0.65);
     --shadow-floating:
-      0 16px 40px hsl(240 8% 3% / 0.42), 0 0 0 1px hsl(var(--border) / 0.55);
+      0 8px 24px hsl(0 0% 0% / 0.35), 0 0 0 1px hsl(var(--border) / 0.55);
     --motion-fast: 150ms;
     --motion-base: 200ms;
     --motion-exit: 140ms;
@@ -70,42 +61,47 @@
   .light {
     color-scheme: light;
 
-    --background: 240 6% 97%;
-    --foreground: 240 8% 12%;
-    --panel: 240 5% 95%;
+    --background: 0 0% 100%;
+    --foreground: 0 0% 13%;
+    --panel: 0 0% 97%;
     --card: 0 0% 100%;
-    --border: 240 6% 90%;
-    --muted: 240 5% 93%;
-    --muted-foreground: 240 4% 44%;
-    --ring: 22 36% 42%;
-    --overlay-scrim: 240 8% 10% / 0.42;
+    --border: 0 0% 90%;
+    --muted: 0 0% 96%;
+    --muted-foreground: 0 0% 45%;
+    --ring: 210 12% 45%;
+    --overlay-scrim: 0 0% 10% / 0.4;
 
-    --primary: 22 36% 42%;
-    --primary-foreground: 40 15% 99%;
+    --primary: 210 12% 45%;
+    --primary-foreground: 0 0% 100%;
 
-    --destructive: 0 50% 44%;
+    --iris-mark-frame: 0 0% 89%;
+    --iris-mark-ink: 0 0% 10%;
+
+    --destructive: 0 55% 48%;
     --destructive-foreground: 0 0% 100%;
 
-    /* 近白冷纸，仅一丝暖调 */
-    --editor-paper: 40 4% 99%;
-    --editor-ink: 240 9% 11%;
-    --editor-muted: 240 4% 46%;
-    --editor-border: 240 6% 91%;
-    --editor-code-bg: 240 8% 96%;
-    --editor-code-fg: 240 10% 18%;
-    --editor-line-alpha: 0.35;
-    --shadow-paper:
-      0 1px 2px hsl(240 10% 10% / 0.04), 0 10px 30px hsl(240 10% 10% / 0.06),
-      0 0 0 1px hsl(var(--editor-border) / 0.72);
+    --editor-paper: var(--background);
+    --editor-ink: var(--foreground);
+    --editor-muted: 0 0% 45%;
+    --editor-border: var(--border);
+    --editor-code-bg: 0 0% 96%;
+    --editor-code-fg: 0 0% 18%;
+
     --shadow-overlay:
-      0 24px 80px hsl(240 10% 10% / 0.18), 0 8px 28px hsl(240 10% 10% / 0.12),
-      0 0 0 1px hsl(var(--border) / 0.72);
+      0 12px 40px hsl(0 0% 10% / 0.12), 0 4px 12px hsl(0 0% 10% / 0.08),
+      0 0 0 1px hsl(var(--border) / 0.8);
     --shadow-floating:
-      0 14px 36px hsl(240 10% 10% / 0.14), 0 0 0 1px hsl(var(--border) / 0.7);
+      0 8px 20px hsl(0 0% 10% / 0.1), 0 0 0 1px hsl(var(--border) / 0.75);
   }
 
   * {
     @apply border-border;
+  }
+
+  html,
+  body,
+  #root {
+    @apply h-full;
   }
 
   body {
@@ -113,6 +109,21 @@
     font-feature-settings:
       "kern" 1,
       "liga" 1;
+  }
+
+  /* 无边框窗口：内容裁切与 Win11 圆角阴影外轮廓一致 */
+  .iris-desktop-frame {
+    border-radius: var(--window-radius);
+  }
+
+  [data-tauri-drag-region] {
+    -webkit-app-region: drag;
+    app-region: drag;
+  }
+
+  [data-tauri-drag-region-exclude] {
+    -webkit-app-region: no-drag;
+    app-region: no-drag;
   }
 
   @media (prefers-reduced-motion: reduce) {
@@ -134,207 +145,140 @@
 
 @layer components {
   .iris-select {
-    @apply rounded-lg border border-border bg-card px-2 py-1 text-xs text-foreground shadow-sm;
+    @apply rounded-md border border-border bg-card px-2 py-1 text-xs text-foreground shadow-sm;
   }
 
   .iris-select:focus-visible {
     @apply outline-none ring-2 ring-primary ring-offset-1 ring-offset-panel;
   }
 
-  /* 编辑区外层：固定视口，纸内滚动 */
   .iris-editor {
-    @apply flex flex-col flex-1 overflow-hidden bg-background;
+    @apply flex min-h-0 flex-1 flex-col overflow-hidden bg-background;
   }
 
-  /* 缩放时由外层 .iris-editor-zoom-scroll 滚动 */
   .iris-editor-zoom-scroll {
-    @apply min-h-0 flex-1;
+    @apply min-h-0 flex-1 overflow-y-auto overflow-x-hidden;
   }
 
-  /* 纸页：纸边始终可见 */
-  .iris-paper {
-    @apply relative mx-auto w-full max-w-[42rem];
-    padding: var(--editor-paper-pad-top) var(--editor-paper-pad-x)
-      var(--editor-paper-pad-bottom);
-    background-color: hsl(var(--editor-paper));
-    border-radius: var(--radius-lg);
-    box-shadow: var(--shadow-paper);
+  .iris-editor-outline-open .iris-editor-zoom-scroll {
+    padding-left: min(15rem, 40vw);
+    transition: padding-left 200ms ease-out;
   }
 
-  .iris-paper-sheet {
-    display: grid;
-    grid-template-columns: var(--editor-fold-column) minmax(0, 1fr);
+  .iris-editor-canvas {
+    @apply relative mx-auto w-full max-w-[45rem];
+    padding: var(--editor-canvas-pad-top) var(--editor-canvas-pad-x)
+      var(--editor-canvas-pad-bottom);
   }
 
-  .iris-paper-gutter {
-    flex-shrink: 0;
+  .iris-editor[data-zen="true"] .iris-editor-canvas {
+    @apply max-w-[56rem];
+    padding-top: clamp(3.5rem, 10vh, 6rem);
+    padding-bottom: clamp(5rem, 14vh, 9rem);
   }
 
-  .iris-paper-body {
-    min-width: 0;
+  .iris-editor-body {
+    @apply relative min-w-0;
+    padding-left: var(--editor-fold-column);
   }
 
-  .iris-editor[data-zen="true"] .iris-paper {
-    @apply max-w-[52rem];
-    padding-top: clamp(3rem, 10vh, 5rem);
-    padding-bottom: clamp(4rem, 14vh, 7rem);
-  }
-
-  .light .iris-paper {
-    margin-top: clamp(1.25rem, 4vh, 2.5rem);
-    margin-bottom: clamp(1.25rem, 4vh, 2.5rem);
-  }
-
-  :root:not(.light) .iris-paper {
-    margin-top: clamp(1rem, 3vh, 2rem);
-    margin-bottom: clamp(1rem, 3vh, 2rem);
-  }
-
-  /* TipTap / ProseMirror — 行线仅在正文栏（不含左侧折叠列） */
-  .iris-paper-body .ProseMirror {
-    @apply relative z-[1] min-h-full font-editor text-editor-ink outline-none;
-    font-size: 1.0625rem;
-    line-height: var(--editor-line-height);
-    letter-spacing: 0.012em;
+  .iris-editor-body .ProseMirror {
+    @apply relative min-h-[50vh] font-sans text-editor-ink outline-none;
+    font-size: 1rem;
+    line-height: 1.5;
     caret-color: hsl(var(--primary));
-    background-image: repeating-linear-gradient(
-      to bottom,
-      transparent 0,
-      transparent calc(var(--editor-line-height) - 1px),
-      hsl(var(--editor-border) / var(--editor-line-alpha))
-        calc(var(--editor-line-height) - 1px),
-      hsl(var(--editor-border) / var(--editor-line-alpha))
-        var(--editor-line-height)
-    );
-    background-size: 100% var(--editor-line-height);
-    background-repeat: repeat;
-    background-position: 0 var(--editor-body-lines-start);
-    background-attachment: local;
   }
 
-  .iris-editor[data-letterhead="off"] .iris-paper-body .ProseMirror {
-    background-image: none;
-  }
-
-  /* 文档主标题 — 脱离正文网格，不透明遮罩盖住行线 */
   .iris-doc-title-wrap {
-    @apply relative z-[2] mx-auto w-full max-w-full;
-    min-height: calc(var(--editor-line-height) * 3);
-    margin: 0;
-    padding: var(--editor-line-height) 0 0;
-    background: hsl(var(--editor-paper));
-    text-align: center;
+    @apply relative mb-1 w-full pb-2;
   }
 
   .iris-doc-title {
-    @apply m-0 w-full border-0 bg-transparent text-center font-editor font-semibold text-editor-ink outline-none;
-    font-size: 1.875rem;
-    letter-spacing: -0.005em;
-    line-height: var(--editor-line-height);
-    min-height: calc(var(--editor-line-height) * 2);
+    @apply m-0 w-full border-0 bg-transparent text-left text-4xl font-bold text-editor-ink outline-none;
+    line-height: 1.2;
+    letter-spacing: -0.02em;
     padding: 0;
     box-shadow: none;
   }
 
-  .iris-paper-body .ProseMirror h1.iris-doc-title.is-empty::before {
+  .iris-editor-body .ProseMirror h1.iris-doc-title.is-empty::before {
     @apply pointer-events-none text-editor-muted;
     float: none;
     display: block;
     width: 100%;
-    text-align: center;
+    text-align: left;
     height: auto;
   }
 
   .iris-doc-title-count {
-    @apply pointer-events-none absolute right-0 top-1 z-[3] text-[10px] tabular-nums text-muted-foreground;
+    @apply pointer-events-none absolute right-0 top-0 z-[3] text-[10px] tabular-nums text-muted-foreground;
   }
 
   .iris-doc-title-count.is-warning {
     @apply text-primary;
   }
 
-  /*
-   * 行线网格 + 块间距（仅 margin-top）
-   * 段/段、段/标题：空 1 行（gap-flow）
-   * 父标题→子标题、标题→正文：无空行（gap-tight）
-   */
-  .iris-paper-body .ProseMirror > :is(p, h1, h2, h3, ul, ol, blockquote, pre, hr, table) {
+  .iris-editor-body .ProseMirror > :is(p, h1, h2, h3, ul, ol, blockquote, pre, hr, table) {
     margin: 0;
   }
 
-  .iris-paper-body .ProseMirror > * + * {
-    margin-top: var(--editor-gap-flow);
+  .iris-editor-body .ProseMirror > * + * {
+    margin-top: 0.5em;
   }
 
-  .iris-paper-body .ProseMirror > :is(h1:not(.iris-doc-title), h2, h3)
-    + :is(p, ul, ol, blockquote, pre, table) {
-    margin-top: var(--editor-gap-tight);
+  .iris-editor-body .ProseMirror > :is(h1:not(.iris-doc-title), h2, h3) {
+    margin-top: 1.25em;
   }
 
-  .iris-paper-body .ProseMirror > :is(h1:not(.iris-doc-title), h2) + :is(h2, h3) {
-    margin-top: var(--editor-gap-tight);
+  .iris-editor-body .ProseMirror > :is(h1:not(.iris-doc-title), h2, h3):first-child {
+    margin-top: 0;
   }
 
-  .iris-paper-body .ProseMirror > p {
-    min-height: var(--editor-line-height);
-    line-height: var(--editor-line-height);
-    text-indent: 2em;
+  .iris-editor-body .ProseMirror > :is(h1:not(.iris-doc-title), h2, h3) + * {
+    margin-top: 0.25em;
   }
 
-  .iris-paper-body .ProseMirror :where(li, blockquote, td, th) > p {
+  .iris-editor-body .ProseMirror > p {
+    line-height: 1.5;
+    text-indent: 0;
+  }
+
+  .iris-editor-body .ProseMirror :where(li, blockquote, td, th) > p {
     margin: 0;
     text-indent: 0;
-    min-height: var(--editor-line-height);
-    line-height: var(--editor-line-height);
   }
 
-  .iris-paper-body .ProseMirror > :is(h1:not(.iris-doc-title), h2, h3) {
-    @apply relative z-[2] font-editor font-semibold text-editor-ink;
-    min-height: var(--editor-line-height);
-    line-height: var(--editor-line-height);
-    overflow: visible;
+  .iris-editor-body .ProseMirror > :is(h1:not(.iris-doc-title), h2, h3) {
+    @apply relative font-semibold text-editor-ink;
+    line-height: 1.3;
   }
 
-  .iris-paper-body .ProseMirror > h1:not(.iris-doc-title) {
+  .iris-editor-body .ProseMirror > h1:not(.iris-doc-title) {
+    font-size: 1.875rem;
+    letter-spacing: -0.02em;
+  }
+
+  .iris-editor-body .ProseMirror > h2 {
     font-size: 1.5rem;
-    letter-spacing: -0.01em;
+    letter-spacing: -0.015em;
   }
 
-  .iris-paper-body .ProseMirror > h2 {
+  .iris-editor-body .ProseMirror > h3 {
     font-size: 1.25rem;
-    letter-spacing: -0.005em;
   }
 
-  .iris-paper-body .ProseMirror > h3 {
-    font-size: 1.0625rem;
-  }
-
-  /* 隐去标题立足行正上方的那条行线 */
-  .iris-paper-body .ProseMirror > :is(h1:not(.iris-doc-title), h2, h3)::before {
-    content: "";
-    position: absolute;
-    left: 0;
-    right: 0;
-    top: -1px;
-    height: 2px;
-    background: hsl(var(--editor-paper));
-    pointer-events: none;
-    z-index: 3;
-  }
-
-  /* 折叠钮：行线区域左侧（纸页左内边距），与标题立足行同高 */
-  .iris-paper-body .ProseMirror > :is(h1:not(.iris-doc-title), h2, h3) .iris-heading-fold-gutter,
-  .iris-paper-body
+  .iris-editor-body .ProseMirror > :is(h1:not(.iris-doc-title), h2, h3) .iris-heading-fold-gutter,
+  .iris-editor-body
     .ProseMirror
     > :is(h1:not(.iris-doc-title), h2, h3)
     .ProseMirror-widget:has(.iris-heading-fold-btn) {
     position: absolute;
     left: calc(-1 * var(--editor-fold-column));
+    top: 0;
     bottom: 0;
     z-index: 4;
     display: flex;
     width: var(--editor-fold-column);
-    height: var(--editor-line-height);
     align-items: center;
     justify-content: center;
     margin: 0;
@@ -342,16 +286,14 @@
   }
 
   .iris-heading-fold-btn {
-    @apply inline-flex shrink-0 cursor-pointer items-center justify-center rounded border-0 bg-transparent p-0 text-[0.85rem] leading-none text-muted-foreground transition-opacity;
-    width: var(--editor-line-height);
-    height: var(--editor-line-height);
+    @apply inline-flex h-7 w-7 shrink-0 cursor-pointer items-center justify-center rounded-md border-0 bg-transparent p-0 text-sm leading-none text-muted-foreground transition-opacity;
     pointer-events: auto;
-    opacity: 0.45;
+    opacity: 0.35;
   }
 
-  .iris-paper-body .ProseMirror > h1:not(.iris-doc-title):hover .iris-heading-fold-btn,
-  .iris-paper-body .ProseMirror > h2:hover .iris-heading-fold-btn,
-  .iris-paper-body .ProseMirror > h3:hover .iris-heading-fold-btn,
+  .iris-editor-body .ProseMirror > h1:not(.iris-doc-title):hover .iris-heading-fold-btn,
+  .iris-editor-body .ProseMirror > h2:hover .iris-heading-fold-btn,
+  .iris-editor-body .ProseMirror > h3:hover .iris-heading-fold-btn,
   .iris-heading-fold-btn:focus-visible {
     opacity: 1;
   }
@@ -360,77 +302,72 @@
     display: none !important;
   }
 
-  .iris-paper-body .ProseMirror > ul,
-  .iris-paper-body .ProseMirror > ol {
-    padding-left: 1.75rem;
+  .iris-editor-body .ProseMirror > ul,
+  .iris-editor-body .ProseMirror > ol {
+    padding-left: 1.5rem;
   }
 
-  .iris-paper-body .ProseMirror li {
-    margin: 0;
-    min-height: var(--editor-line-height);
-    line-height: var(--editor-line-height);
+  .iris-editor-body .ProseMirror li {
+    margin: 0.15em 0;
   }
 
-  .iris-paper-body .ProseMirror li > p {
+  .iris-editor-body .ProseMirror li > p {
     margin: 0;
   }
 
-  .iris-paper-body .ProseMirror a {
-    @apply text-primary underline decoration-primary/35 underline-offset-[3px] transition-colors hover:decoration-primary/60;
+  .iris-editor-body .ProseMirror a {
+    @apply text-primary underline decoration-primary/40 underline-offset-2 transition-colors hover:decoration-primary/70;
   }
 
-  .iris-paper-body .ProseMirror code {
-    @apply rounded-[4px] px-1.5 py-0.5 font-mono text-[0.88em];
+  .iris-editor-body .ProseMirror code {
+    @apply rounded px-1.5 py-0.5 font-mono text-[0.9em];
     background: hsl(var(--editor-code-bg));
     color: hsl(var(--editor-code-fg));
   }
 
-  .iris-paper-body .ProseMirror pre {
-    @apply overflow-x-auto rounded-lg border border-editor-border/80 p-4 font-mono text-[0.9rem];
-    line-height: var(--editor-line-height);
+  .iris-editor-body .ProseMirror pre {
+    @apply overflow-x-auto rounded-lg border border-border p-4 font-mono text-sm;
+    line-height: 1.5;
     background: hsl(var(--editor-code-bg));
     color: hsl(var(--editor-code-fg));
   }
 
-  .iris-paper-body .ProseMirror pre code {
+  .iris-editor-body .ProseMirror pre code {
     background: transparent;
     padding: 0;
     color: inherit;
   }
 
-  .iris-paper-body .ProseMirror blockquote {
-    @apply border-l-[3px] border-primary/40 pl-4 text-editor-muted;
-    padding: 0;
-    line-height: var(--editor-line-height);
+  .iris-editor-body .ProseMirror blockquote {
+    @apply border-l-[3px] border-border pl-4 text-editor-muted;
     font-style: normal;
   }
 
-  .iris-paper-body .ProseMirror blockquote > p {
+  .iris-editor-body .ProseMirror blockquote > p {
     margin: 0;
-    text-indent: 0;
   }
 
-  .iris-paper-body .ProseMirror hr {
-    height: var(--editor-line-height);
-    border: 0;
+  .iris-editor-body .ProseMirror hr {
+    @apply my-4 border-0 border-t border-border;
+    height: 0;
     background: transparent;
   }
 
-  .iris-paper-body .ProseMirror .is-empty::before {
-    @apply text-editor-muted/80;
+  .iris-editor-body .ProseMirror .is-empty::before {
+    @apply text-editor-muted/75;
     font-style: normal;
   }
 
-  .iris-paper-body .ProseMirror [data-ai-stream] {
-    @apply my-4 rounded-lg border border-primary/20 bg-editor-code-bg/50 px-3.5 py-2.5;
+  .iris-editor-body .ProseMirror [data-ai-stream] {
+    @apply my-3 rounded-lg border border-primary/25 bg-muted/40 px-3 py-2;
   }
 
   .wiki-link {
-    @apply cursor-pointer text-primary underline decoration-primary/35 underline-offset-[3px];
+    @apply cursor-pointer text-primary underline decoration-primary/40 underline-offset-2;
   }
 
   .wiki-link-bracket {
-    @apply text-editor-muted/45;
+    @apply text-editor-muted/50;
   }
 
   .ai-msg {
@@ -438,45 +375,20 @@
   }
 
   .ai-msg-user {
-    @apply rounded-2xl rounded-br-md bg-muted/60 p-2.5 text-foreground;
+    @apply rounded-lg rounded-br-sm bg-muted/70 p-2.5 text-foreground;
   }
 
   .ai-msg-assistant {
-    @apply rounded-2xl rounded-bl-md border border-border/70 bg-card/60 p-2.5;
+    @apply rounded-lg rounded-bl-sm border border-border bg-card/80 p-2.5;
   }
 
   .iris-quote-card {
-    @apply rounded-xl border border-primary/20 bg-card/90 p-2.5 text-xs shadow-sm;
+    @apply rounded-lg border border-border bg-card p-2.5 text-xs shadow-sm;
   }
 }
 
-/* 信纸排版：置于 layer 外，避免被 Tailwind / PM 默认样式覆盖 */
-.iris-editor .iris-paper-body .ProseMirror > :is(p, h1, h2, h3, ul, ol, blockquote, pre, hr) {
-  margin-block: 0 !important;
-}
-
-.iris-editor .iris-paper-body .ProseMirror > * + * {
-  margin-top: var(--editor-line-height) !important;
-}
-
-.iris-editor
-  .iris-paper-body
-  .ProseMirror
-  > :is(h1:not(.iris-doc-title), h2, h3)
-  + :is(p, ul, ol, blockquote, pre, table) {
-  margin-top: 0 !important;
-}
-
-.iris-editor .iris-paper-body .ProseMirror > :is(h1:not(.iris-doc-title), h2) + :is(h2, h3) {
-  margin-top: 0 !important;
-}
-
-/* 标题后多余的空段落（Enter 残留）不占行 */
-.iris-editor
-  .iris-paper-body
-  .ProseMirror
-  > :is(h1:not(.iris-doc-title), h2, h3)
-  + p.is-empty:has(+ *) {
+/* 标题后空段落不占位 */
+.iris-editor .iris-editor-body .ProseMirror > :is(h1:not(.iris-doc-title), h2, h3) + p.is-empty:has(+ *) {
   display: none !important;
   margin: 0 !important;
   min-height: 0 !important;

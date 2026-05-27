@@ -1,4 +1,5 @@
-import { useEffect, useState } from "react";
+import { useVirtualizer } from "@tanstack/react-virtual";
+import { useEffect, useRef, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -8,7 +9,6 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import { fileList } from "@/lib/ipc";
 import type { FileListItem } from "@/types/ipc";
 
@@ -21,6 +21,7 @@ interface QuickOpenProps {
 export function QuickOpen({ open, onClose, onSelect }: QuickOpenProps) {
   const [query, setQuery] = useState("");
   const [files, setFiles] = useState<FileListItem[]>([]);
+  const parentRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (!open) return;
@@ -33,6 +34,13 @@ export function QuickOpen({ open, onClose, onSelect }: QuickOpenProps) {
       f.title.toLowerCase().includes(query.toLowerCase()) ||
       f.path.toLowerCase().includes(query.toLowerCase()),
   );
+
+  const virtualizer = useVirtualizer({
+    count: filtered.length,
+    getScrollElement: () => parentRef.current,
+    estimateSize: () => 52,
+    overscan: 10,
+  });
 
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
@@ -50,22 +58,37 @@ export function QuickOpen({ open, onClose, onSelect }: QuickOpenProps) {
           autoFocus
           onChange={(e) => setQuery(e.target.value)}
         />
-        <ScrollArea className="max-h-80">
-          {filtered.map((f) => (
-            <button
-              key={f.path}
-              type="button"
-              className="flex w-full flex-col px-4 py-2 text-left text-sm hover:bg-muted"
-              onClick={() => {
-                onSelect(f.path);
-                onClose();
-              }}
-            >
-              <span>{f.title}</span>
-              <span className="text-xs text-muted-foreground">{f.path}</span>
-            </button>
-          ))}
-        </ScrollArea>
+        <div ref={parentRef} className="max-h-80 overflow-auto">
+          <div
+            style={{ height: `${virtualizer.getTotalSize()}px`, position: "relative" }}
+          >
+            {virtualizer.getVirtualItems().map((virtualItem) => {
+              const f = filtered[virtualItem.index]!;
+              return (
+                <button
+                  key={f.path}
+                  type="button"
+                  style={{
+                    position: "absolute",
+                    top: 0,
+                    left: 0,
+                    width: "100%",
+                    height: `${virtualItem.size}px`,
+                    transform: `translateY(${virtualItem.start}px)`,
+                  }}
+                  className="flex w-full flex-col px-4 py-2 text-left text-sm hover:bg-muted"
+                  onClick={() => {
+                    onSelect(f.path);
+                    onClose();
+                  }}
+                >
+                  <span>{f.title}</span>
+                  <span className="text-xs text-muted-foreground">{f.path}</span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
         <div className="flex justify-end border-t border-border p-2">
           <Button type="button" size="sm" variant="ghost" onClick={onClose}>
             Esc 关闭

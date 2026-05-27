@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use futures_util::StreamExt;
 use reqwest::header::{AUTHORIZATION, CONTENT_TYPE};
@@ -13,9 +14,21 @@ use crate::credentials;
 use crate::error::{AppError, AppResult};
 use crate::llm::search_web::fetch_search_context;
 
+const REQUEST_TIMEOUT_SECS: u64 = 60;
+
 struct AbortFlag(Arc<Mutex<bool>>);
 
 static IN_FLIGHT: Mutex<Option<HashMap<String, AbortFlag>>> = Mutex::new(None);
+
+/// 截断错误响应文本，防止大段 HTML/JSON 错误体泄露到前端
+pub(crate) fn truncate_error_text(text: &str) -> String {
+    const MAX_LEN: usize = 500;
+    if text.len() <= MAX_LEN {
+        text.to_string()
+    } else {
+        format!("{}…(已截断，共 {} 字符)", &text[..MAX_LEN], text.len())
+    }
+}
 
 fn in_flight() -> std::sync::MutexGuard<'static, Option<HashMap<String, AbortFlag>>> {
     IN_FLIGHT.lock().expect("in_flight lock")
@@ -60,7 +73,10 @@ async fn stream_openai_compatible(ctx: LlmStreamContext<'_>) -> AppResult<()> {
     }
 
     let url = format!("{}/chat/completions", ctx.base);
-    let client = reqwest::Client::new();
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(REQUEST_TIMEOUT_SECS))
+        .build()
+        .map_err(|e| AppError::msg(format!("Failed to build HTTP client: {e}")))?;
     let response = client
         .post(&url)
         .header(CONTENT_TYPE, "application/json")
@@ -72,11 +88,12 @@ async fn stream_openai_compatible(ctx: LlmStreamContext<'_>) -> AppResult<()> {
     if !response.status().is_success() {
         let status = response.status();
         let text = response.text().await.unwrap_or_default();
+        let truncated = truncate_error_text(&text);
         let _ = ctx.app.emit(
             "llm:error",
             serde_json::json!({
                 "request_id": ctx.request_id,
-                "error": format!("{status}: {text}")
+                "error": format!("{status}: {truncated}")
             }),
         );
         return Err(AppError::msg(format!("LLM API error: {status}")));

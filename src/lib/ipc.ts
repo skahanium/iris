@@ -6,6 +6,7 @@ import type {
   FileChangedEvent,
   FileEntry,
   FileListItem,
+  RecycleBinItem,
   GraphData,
   KeywordHit,
   LlmGenerateParams,
@@ -16,10 +17,19 @@ import type {
   VersionEntry,
 } from "@/types/ipc";
 
+export interface SettingsMap {
+  theme: "dark" | "light";
+  llm_custom_base_url: string | null;
+}
+
+export async function settingsGet<K extends keyof SettingsMap>(key: K): Promise<SettingsMap[K] | null>;
+export async function settingsGet<T>(key: string): Promise<T | null>;
 export async function settingsGet<T>(key: string): Promise<T | null> {
   return invoke<T | null>("settings_get", { key });
 }
 
+export async function settingsSet<K extends keyof SettingsMap>(key: K, value: SettingsMap[K]): Promise<void>;
+export async function settingsSet(key: string, value: unknown): Promise<void>;
 export async function settingsSet(key: string, value: unknown): Promise<void> {
   return invoke("settings_set", { key, value });
 }
@@ -58,6 +68,11 @@ export async function fileDelete(path: string): Promise<void> {
   return invoke("file_delete", { path });
 }
 
+/** Permanently remove a blank note (not recycled). */
+export async function fileDiscard(path: string): Promise<void> {
+  return invoke("file_discard", { path });
+}
+
 export async function fileRename(
   path: string,
   newPath: string,
@@ -67,6 +82,23 @@ export async function fileRename(
 
 export async function fileBacklinks(path: string): Promise<BacklinkEntry[]> {
   return invoke<BacklinkEntry[]>("file_backlinks", { path });
+}
+
+export async function recycleList(): Promise<RecycleBinItem[]> {
+  return invoke<RecycleBinItem[]>("recycle_list_cmd");
+}
+
+export async function recycleRestore(id: string): Promise<string> {
+  return invoke<string>("recycle_restore_cmd", { id });
+}
+
+export async function recyclePurge(id: string): Promise<void> {
+  return invoke("recycle_purge_cmd", { id });
+}
+
+/** Rescan vault `.md` files into SQLite (titles, tags, FTS, chunks). */
+export async function indexRescan(): Promise<FileEntry[]> {
+  return invoke<FileEntry[]>("index_rescan");
 }
 
 export async function tagList(): Promise<TagGroup[]> {

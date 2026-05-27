@@ -131,7 +131,9 @@ export const NoteTitleExtension = Node.create({
           if (mutation.type === "selection") return true;
           const target = mutation.target;
           if (!(target instanceof globalThis.Node)) return false;
-          return dom.contains(target);
+          // Only ignore the char-count chip; let ProseMirror sync title text in contentDOM.
+          if (chip.contains(target)) return true;
+          return false;
         },
         destroy: () => {
           void getPos;

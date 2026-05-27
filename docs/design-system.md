@@ -1,80 +1,78 @@
 # Iris 设计系统
 
-**方向定稿**：主攻 **B · 纸墨编辑**；备选 **C · 命令优先**（键盘与可收起面板，不抢编辑区）。
+**方向定稿**：主攻 **N · Notion 编辑**；备选 **C · 命令优先**（键盘与可收起面板，不抢编辑区）。
 
-**排期**：阶段 0～3 与路线图版本的绑定见下文「落地阶段与路线图版本对照」；**版本 checklist 以 [ROADMAP.md](../ROADMAP.md) 为准**。
+**排期**：阶段与路线图版本的绑定见下文「落地阶段与路线图版本对照」；**版本 checklist 以 [ROADMAP.md](../ROADMAP.md) 为准**。
 
 本文档是 **界面** 的单一参考；交互线框见 [ARCHITECTURE.md](../ARCHITECTURE.md)；全库文档索引见 [docs/README.md](./README.md)。
 
-**v0.3.1-ui 施工计划**：[plans/2026-05-26-ui-overlay-refresh.md](./plans/2026-05-26-ui-overlay-refresh.md)
+**v0.4.0-ui 施工计划**：[plans/2026-05-27-notion-ui-rebuild.md](./plans/2026-05-27-notion-ui-rebuild.md)
 
 ---
 
-## B · 纸墨编辑（主方向）
+## N · Notion 编辑（主方向）
 
 ### 气质
 
-长文写作优先：编辑区像**纸**，应用外壳像**墨**（低对比 chrome）。AI 是校对台与侧栏助手，不是聊天 App 主屏。
+内容优先：编辑区与外壳**同色扁平**，无浮动纸页、无行线网格。AI 是校对台与侧栏助手（280px），不是聊天 App 主屏。
 
 ### 分区
 
 | 区域 | 角色 | 默认观感 |
 |------|------|----------|
-| **Chrome** | 标签栏、状态栏、AI 侧栏外壳、命令浮层边框 | 中性炭灰（冷灰低饱和），圆角柔和（14–20px） |
-| **Editor canvas** | 墨底桌面 + **固定视口纸页** | 衬线正文、居中约 42rem；纸内滚动，纸边常显 |
-| **Accent** | 链接、主按钮、AI 标识 | 克制赭铜（**不用** violet 紫） |
+| **Chrome** | 标签栏、状态栏、AI 侧栏、命令浮层 | 中性灰阶，细 `1px` 分隔，小圆角（4–8px） |
+| **Editor canvas** | 居中内容栏约 `45rem`，与背景同色 | 无衬线正文、左对齐文档标题 |
+| **Accent** | 链接、主按钮、AI 标识 | 中性蓝灰（**不用** violet 紫、赭铜） |
 
 ### 色彩 token（CSS 变量）
 
-实现见 `src/styles/globals.css`。
+实现见 `src/styles/globals.css`。详细参考 [design-system/notion-master.md](./design-system/notion-master.md)。
 
-| Token | 亮色 `.light` | 暗色 chrome（`:root`） | 用途 |
-|-------|---------------|----------------------|------|
-| `--background` 等 | 中性浅灰 | 冷灰炭墨 `hsl(240 6% 7%)` 系 | 外壳、侧栏、墨底 |
-| `--editor-paper` | 近白冷纸 `hsl(40 4% 99%)` | **暗暖灰纸** `hsl(35 8% 16%)`（方案 A，护眼） | 居中纸页背景 |
-| `--editor-ink` | 深墨 `hsl(240 9% 11%)` | 浅墨 `hsl(40 12% 88%)` | 正文 |
-| `--editor-border` | 浅灰边 | 略亮于纸 1 阶的边 | 纸页描边 |
-| `--primary` | 赭铜深 | 赭铜亮 | 主操作、AI 强调 |
+**品牌 monogram**（几何「I」v3；桌面图标、顶栏、托盘、欢迎页）：见 [design-system/brand.md](./design-system/brand.md)。
 
-**主题原则（v0.3.1-ui 修订）**
-
-- **亮色**：壳浅、纸更亮，保持「纸浮于桌面」。
-- **暗色**：壳深、**纸为暗暖灰（非亮白纸）**，字为浅灰墨；整体护眼，纸仍比壳略亮 1 阶以保留层次。
-- 禁止暗色模式下仍使用高亮白纸（旧 `hsl(40 6% 90%)` 已废弃）。
+| Token | 亮色 `.light` | 暗色 `:root` | 用途 |
+|-------|---------------|--------------|------|
+| `--background` | 纯白附近 | `#191919` 附近 | 壳层、编辑区、侧栏 |
+| `--foreground` | 深灰字 | 浅灰字 | 正文、标题 |
+| `--primary` | `hsl(210 12% 45%)` | `hsl(210 18% 62%)` | 主操作、链接、caret |
+| `--panel` / `--card` | 略区别于 background | 略区别于 background | 标签选中、浮层、输入 |
+| `--editor-*` | 与 `--background` / `--foreground` 对齐 | 同上 | 兼容旧 `editor-paper` 类名 |
 
 ### 字体
 
 | 场景 | 栈 | 说明 |
 |------|-----|------|
-| **编辑器正文** | `font-editor` | `"Noto Serif SC"`, `"Source Han Serif SC"`, `Georgia`, serif |
-| **UI / 侧栏** | `font-sans` | 系统无衬线（苹方 / 微软雅黑） |
+| **全文（UI + 编辑）** | `font-sans` | `Inter` + 系统无衬线 |
 | **代码块** | `font-mono` | JetBrains Mono 等等宽 |
 
 ### 间距与栏宽
 
-- 编辑区：`max-width: 42rem`，边距 `clamp` 响应式，行高 `1.65`，字间距 `0.012em`
-- AI 侧栏：固定 `280px`，可 `Ctrl+Shift+A` 收起（**唯一**常驻右侧 dock）
+- 编辑区：`max-width: 45rem`，水平 `clamp(1.5rem, 5vw, 6rem)`，正文 `16px` / `line-height: 1.5`
+- AI 侧栏：固定 `280px`，可 `Ctrl+Shift+A` 收起
 
----
+### 编辑区结构
 
-## 纸页视口（方案甲）
+```
+.iris-editor
+  └── .iris-editor-zoom-scroll（滚动）
+        └── .iris-editor-canvas（居中栏 + zoom）
+              └── .iris-editor-body（左侧为折叠钮留白）
+                    └── .ProseMirror
+```
 
-写作区采用 **「稿纸」模型**，非「内容条随字数变高」。
+**无** `.iris-paper` 卡片、**无** 行线 `repeating-linear-gradient`。
 
-| 规则 | 说明 |
+### 文档与块样式
+
+| 元素 | 规则 |
 |------|------|
-| **固定视口高度** | 纸页容器高度 = 视口减去标签栏、状态栏与上下留白（`100dvh` 基准） |
-| **仅纸内滚动** | `overflow-y: auto` 在纸页容器上；墨底桌面不随段落滚动 |
-| **纸边常显** | 四边圆角与阴影始终可见，短文档也不塌成窄条 |
-| **空文档** | 纸仍满高；placeholder 在纸内偏上，不缩小纸容器 |
-
-结构（实现目标）：
-
-```
-.iris-editor（墨底，不滚动或仅极浅背景）
-  └── .iris-paper（定高 + overflow-y: auto + 圆角 + shadow）
-        └── .ProseMirror（内容流）
-```
+| **文档标题** | `noteTitle`，左对齐、`~2.25rem` bold，与正文同背景 |
+| **章节标题** | H1 `1.875rem` / H2 `1.5rem` / H3 `1.25rem`；块间距用 `em` 分级 |
+| **段落** | 无段首缩进 |
+| **章节折叠** | H1–H3 左侧 `▸/▾`，`noteTitle` 不可折叠 |
+| **Zen** | `Ctrl+.` 隐藏 Tab/状态栏/AI，栏宽 `56rem` |
+| **缩放** | canvas `zoom` 75%–150% |
+| **悬浮目录** | `EditorOutline`，`Ctrl+Shift+O` |
 
 ---
 
@@ -86,114 +84,73 @@
 
 | 规则 | 说明 |
 |------|------|
-| **蒙层** | 全窗 scrim（约 `foreground/45–55`），可选轻 `backdrop-blur`；**盖住含 AI 在内的整窗** |
-| **AI** | 打开浮层时 **不自动收起** AI；编辑区 **不被裁切**，仅 dim |
-| **互斥** | **同时仅一个** 命令浮层；新开替换旧开 |
+| **蒙层** | 全窗 scrim；盖住含 AI 在内的整窗 |
+| **AI** | 打开浮层时 **不自动收起** AI |
+| **互斥** | **同时仅一个** 命令浮层 |
 | **关闭** | `Esc`、点击 scrim、显式关闭按钮 |
-| **焦点** | 浮层打开时焦点陷阱；关闭后焦点回到触发源或编辑区 |
 
 ### 尺寸变体（`IrisOverlay`）
 
 | size | 用途 | 约略尺寸 |
 |------|------|----------|
-| `compact` | Quick Open | `max-w-xl`，高度随内容 |
-| `command` | 搜索、文件、设置、反链、标签 | 宽 `80vw` `max-w-3xl`，高 `78vh` |
-| `wide` | 版本时间线（双栏对比） | 宽 `92vw` `max-w-7xl`，高 `88vh` |
+| `compact` | Quick Open | `max-w-xl` |
+| `command` | 搜索、文件、设置等 | `max-w-3xl`，高 `78vh` |
+| `wide` | 版本时间线 | `max-w-7xl`，高 `88vh` |
 | `graph` | 知识图谱 | 宽 `96vw`，高 `92vh` |
 
-浮层卡片：圆角 **`rounded-2xl`（16px）～ `rounded-3xl`（20px）`**，阴影 `--shadow-overlay`，边框 `border-border/60`。
-
-### 快捷键对照（命令层）
-
-| 快捷键 | 浮层 size |
-|--------|-----------|
-| `Ctrl+P` | `compact` |
-| `Ctrl+Shift+E` / `F` / `B` / `T` | `command`（文件、搜索、反链、标签） |
-| `Ctrl+,` | `command`（设置） |
-| `Ctrl+Shift+V` | `wide` |
-| `Ctrl+Shift+G` | `graph` |
-
----
-
-## 信纸编辑（Letterhead）
-
-写作区在纸墨纸页之上叠加**信纸行线**与**版式约束**，强化长文阅读与书写感。
-
-| 元素 | 实现 | 说明 |
-|------|------|------|
-| **行线网格** | `--editor-line-height`（2.125rem，字号仍 1.0625rem） | 行线步长 = 行距；字与光标落在线上 |
-| **块间距** | `gap-flow` 空 1 行 / `gap-tight` 0 | 段↔段、段↔标题 空 1 行；父标题→子标题、标题→正文 无空行 |
-| **文档标题** | `noteTitle` / frontmatter `title:` | 脱离网格 |
-| **章节标题** | H1 1.5rem / H2 1.25rem / H3 1.0625rem，各占 1 格 | 立足行上方隐线 |
-| **段首缩进** | `p { text-indent: 2em }` | 列表/引用内不缩进 |
-| **笔尖光标** | `caret-color: hsl(var(--primary))` | 赭铜色 caret |
-| **Zen** | `Ctrl+.` 隐藏 Tab/状态栏/AI，纸宽 `52rem`；`Esc` 退出 | 编辑区仍可输入 |
-| **章节折叠** | H1–H3 左侧**行线区外**（纸页左内边距）▸/▾，与立足行同高；Decoration 隐藏 | `noteTitle` 不可折叠 |
-| **编辑器缩放** | 纸页 `zoom` 75%–150%；状态栏 ± / 百分比；`⌘=``⌘-``⌘0` | `localStorage: iris-editor-zoom` |
-| **悬浮目录** | 编辑区左上 `EditorOutline`，H1–H3 跳转；`⌘⇧O` 显隐 | `localStorage: iris-outline-open` |
-| **标题字数** | ≤80 不提示；81–200 显示 `N/200`；>200 拒绝输入 | 显示名与物理文件名解耦（`untitled-<ts>.md` 不变） |
-
-关闭行线（预留）：容器 `data-letterhead="off"`。
+浮层：`rounded-xl`（12px），`--shadow-overlay`，`border-border/60`。
 
 ---
 
 ## 圆角、阴影与动效
 
-### 圆角尺度（柔和 SaaS）
+| Token | 值 | 用于 |
+|-------|-----|------|
+| `--radius-sm` | 6px | chip、小控件 |
+| `--radius-md` | 8px | 输入、按钮 |
+| `--radius-lg` | 12px | 卡片、工具条 |
+| `--radius-xl` | 16px | 命令浮层 |
+| `--window-radius` | 12px | 无边框窗口外轮廓（配合 `shadow: true`） |
 
-| Token / 类 | 值 | 用于 |
-|------------|-----|------|
-| `--radius-sm` | 8px | 小标签、chip |
-| `--radius-md` | 12px | 输入框、小按钮 |
-| `--radius-lg` | 16px | 纸页、卡片、对话泡 |
-| `--radius-xl` | 20px | 命令浮层外框、浮动工具条 |
+桌面窗口：`decorations: false`；单行 `TabBar`（Tab + 应用操作 + 窗口按钮，与 `bg-panel` 同色），避免系统黑条。
 
-避免大面积 `rounded-sm`（2–4px）作为默认；直角矩形仅用于 1px 分隔线。
+阴影：仅浮层 / 悬浮工具条使用 `--shadow-overlay` / `--shadow-floating`；**编辑区无纸页阴影**。
 
-### 动效
-
-| 场景 | 时长 | 曲线 | 属性 |
-|------|------|------|------|
-| 浮层 scrim | 150ms | ease-out | opacity |
-| 浮层内容 | 200ms enter / 140ms exit | ease-out | opacity + `scale(0.98→1)` |
-| AI 侧栏收起 | 200ms | ease-out | width |
-| 主题切换 | 200ms | ease | 纸面/壳 background-color |
-
-**`prefers-reduced-motion: reduce`**：跳过 scale，opacity 瞬时或 ≤50ms。
-
-### z-index 层叠
-
-编辑 `0` → AI dock `10` → overlay scrim `40` → overlay content `50`。
+动效：150–200ms，`prefers-reduced-motion` 降级。
 
 ---
 
-## AI 组件（B）
+## AI 组件
 
-- **引用卡**：与当前主题纸色一致 + 细赭石边；`rounded-lg`；来源 meta 一行
-- **对话泡**：用户浅底/助手细边框；`rounded-2xl`；避免大块高饱和色
-- **流式内联节点**（`ai-stream`）：与 accent 同系，勿用紫色渐变
+- **引用卡**：`border-border`，`rounded-lg`，细 primary 边
+- **对话泡**：用户 `bg-muted/60`，助手 `border` + `bg-card/60`，`rounded-lg`
+- **流式节点**：与 primary 同系，无紫色渐变
 
 ---
 
 ## C · 命令优先（备选原则）
 
-同一套 B token 下的布局策略：
-
-| 原则 | 现状 / 规划 |
-|------|-------------|
+| 原则 | 现状 |
+|------|------|
+| 命令面板 | `Ctrl+Shift+P` 总览并执行功能 |
 | 导航 | `Ctrl+P` Quick Open |
-| 次级功能 | **居中命令浮层**（v0.3.1-ui），非右侧 Sheet |
-| **AI 侧栏** | `Ctrl+Shift+A` 收起/展开 |
-| 弱化常驻 chrome | Zen（`Ctrl+.`，已交付）；标签栏自动隐藏 → v1.0 阶段 2 |
+| 次级功能 | 居中命令浮层 |
+| **AI 侧栏** | `Ctrl+Shift+A` |
+| Zen | `Ctrl+.` |
 
 ---
 
 ## 非目标（视觉）
 
-- 紫色渐变、Inter/Space Grotesk 默认 AI 审美
-- 聊天产品式全屏对话
+- 纸墨浮纸、信纸行线、衬线正文、段首缩进
+- 紫色渐变、聊天主屏化
 - 第三方主题 / 插件换肤
-- 快捷键面板以第二条右侧边栏形式叠在 AI 旁
+
+---
+
+## 已废弃：B · 纸墨编辑 / 信纸（Letterhead）
+
+v0.4.0-ui 起不再作为验收标准。历史实现含：`.iris-paper`、赭铜 accent、Noto Serif、`repeating-linear-gradient` 行线、`text-indent: 2em`。勿在新代码中引用。
 
 ---
 
@@ -201,18 +158,16 @@
 
 | 设计阶段 | 路线图版本 | 内容 | 状态 |
 |----------|------------|------|------|
-| **0** | **v0.1.1** | 本文档初版、CSS token、纸面编辑区、赭石 accent、AI 侧栏收起 | 已完成 |
-| **1** | **v0.2.0** | 引用卡、关联笔记芯片、`/` 菜单；图谱/标签/反链纸墨化 | 已完成 |
-| **1.5** | **v0.3.1-ui** | 命令浮层、纸页视口、暗纸 A、圆角/动效、Chrome+AI 抛光 | 待做 |
-| **2** | **v1.0.0**（按需） | Zen 模式、标签栏自动隐藏 | 待做 |
-| **3** | **v1.0.0**（可选） | 克制流式动效（编辑器内） | 待做 |
-
-v0.3.0 版本时间线等功能 UI 已在该版本交付；**交互形态升级**在 v0.3.1-ui 统一完成。
+| **0** | **v0.1.1** | 初版 token、AI 侧栏收起 | 已完成（已被 N 取代视觉） |
+| **1** | **v0.2.0** | 引用卡、`/` 菜单、图谱/标签 | 已完成 |
+| **1.5** | **v0.3.1-ui** | 命令浮层基础设施 | 部分 / 样式并入 v0.4.0-ui |
+| **N** | **v0.4.0-ui** | Notion 扁平编辑、去行线、Inter、蓝灰 accent | **进行中** |
+| **2** | **v1.0.0**（按需） | 标签栏自动隐藏、高对比主题 | 待做 |
 
 ---
 
 ## 参考
 
 - **路线图**：[ROADMAP.md](../ROADMAP.md)
-- **UI 实现计划**：[plans/2026-05-26-ui-overlay-refresh.md](./plans/2026-05-26-ui-overlay-refresh.md)
+- **Notion 参考摘要**：[design-system/notion-master.md](./design-system/notion-master.md)
 - **交互线框**：[ARCHITECTURE.md](../ARCHITECTURE.md)

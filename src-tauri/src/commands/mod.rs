@@ -1,6 +1,7 @@
 pub mod export;
 pub mod file;
 pub mod graph;
+pub mod recycle;
 pub mod llm;
 pub mod search;
 pub mod settings;

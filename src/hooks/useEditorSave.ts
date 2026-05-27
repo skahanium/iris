@@ -4,6 +4,7 @@ import type { Editor } from "@tiptap/react";
 
 import { fileWrite } from "@/lib/ipc";
 import { htmlToMarkdown } from "@/lib/markdown";
+import { isNoteSubstantivelyEmpty } from "@/lib/note-substance";
 import { debounce } from "@/lib/utils";
 
 /** Debounce for layer-1 persistence to `.md` only (not version snapshots). */
@@ -40,6 +41,9 @@ export function useEditorSave(
     if (!target || !ed) return;
     const html = ed.getHTML();
     const md = serializeRef.current(html);
+    if (isNoteSubstantivelyEmpty(md)) {
+      return;
+    }
     await fileWrite(target, md);
     onSavedRef.current?.(md);
   }, [editorRef]);
@@ -67,5 +71,9 @@ export function useEditorSave(
     await saveFromEditor();
   }, [debouncedSave, saveFromEditor]);
 
-  return { notifyDirty, flushSave };
+  const cancelPendingSave = useCallback(() => {
+    debouncedSave.cancel();
+  }, [debouncedSave]);
+
+  return { notifyDirty, flushSave, cancelPendingSave };
 }

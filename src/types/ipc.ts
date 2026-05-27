@@ -87,6 +87,15 @@ export interface TagGroup {
   files: FileListItem[];
 }
 
+export interface RecycleBinItem {
+  id: string;
+  original_path: string;
+  title: string;
+  deleted_at: string;
+  expires_at: string;
+  version_count: number;
+}
+
 export type VersionKind =
   | "auto_idle"
   | "manual"

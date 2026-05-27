@@ -18,6 +18,10 @@ const MIGRATION_005_DOWN: &str =
     include_str!("../../migrations/005_drop_iris_metadata_files.down.sql");
 const MIGRATION_006_UP: &str = include_str!("../../migrations/006_versions_kind.sql");
 const MIGRATION_006_DOWN: &str = include_str!("../../migrations/006_versions_kind.down.sql");
+const MIGRATION_007_UP: &str = include_str!("../../migrations/007_recycle_bin.sql");
+const MIGRATION_007_DOWN: &str = include_str!("../../migrations/007_recycle_bin.down.sql");
+const MIGRATION_008_UP: &str = include_str!("../../migrations/008_chunks_char_count.sql");
+const MIGRATION_008_DOWN: &str = include_str!("../../migrations/008_chunks_char_count.down.sql");
 
 /// Apply core schema migrations idempotently.
 pub fn migrate_up(conn: &Connection) -> AppResult<()> {
@@ -133,11 +137,55 @@ pub fn migrate_up(conn: &Connection) -> AppResult<()> {
         )?;
     }
 
+    let v7_applied: bool = conn
+        .query_row(
+            "SELECT COUNT(*) FROM _migrations WHERE name = '007_recycle_bin'",
+            [],
+            |row| row.get::<_, i64>(0),
+        )
+        .map(|c| c > 0)
+        .unwrap_or(false);
+
+    if !v7_applied {
+        conn.execute_batch(MIGRATION_007_UP)?;
+        conn.execute(
+            "INSERT INTO _migrations (name, applied_at) VALUES ('007_recycle_bin', datetime('now'))",
+            [],
+        )?;
+    }
+
+    let v8_applied: bool = conn
+        .query_row(
+            "SELECT COUNT(*) FROM _migrations WHERE name = '008_chunks_char_count'",
+            [],
+            |row| row.get::<_, i64>(0),
+        )
+        .map(|c| c > 0)
+        .unwrap_or(false);
+
+    if !v8_applied {
+        conn.execute_batch(MIGRATION_008_UP)?;
+        conn.execute(
+            "INSERT INTO _migrations (name, applied_at) VALUES ('008_chunks_char_count', datetime('now'))",
+            [],
+        )?;
+    }
+
     Ok(())
 }
 
 /// Roll back all migrations (for tests).
 pub fn migrate_down(conn: &Connection) -> AppResult<()> {
+    let _ = conn.execute_batch(MIGRATION_008_DOWN);
+    let _ = conn.execute(
+        "DELETE FROM _migrations WHERE name = '008_chunks_char_count'",
+        [],
+    );
+    let _ = conn.execute_batch(MIGRATION_007_DOWN);
+    let _ = conn.execute(
+        "DELETE FROM _migrations WHERE name = '007_recycle_bin'",
+        [],
+    );
     let _ = conn.execute_batch(MIGRATION_006_DOWN);
     let _ = conn.execute(
         "DELETE FROM _migrations WHERE name = '006_versions_kind'",

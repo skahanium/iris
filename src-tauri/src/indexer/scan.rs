@@ -7,13 +7,13 @@ use sha2::{Digest, Sha256};
 use walkdir::WalkDir;
 
 use super::chunker::chunk_markdown;
-use super::frontmatter::parse_note;
+use super::frontmatter::{parse_note, resolve_display_title};
 use super::fts::{delete_fts, upsert_fts};
 use super::wikilink::index_wiki_links;
 #[cfg(not(test))]
 use crate::embedding::store::store_chunk_embeddings;
 use crate::error::AppResult;
-use crate::storage::paths::{is_user_note_path, relative_path};
+use crate::storage::paths::{is_user_note_path, relative_path, resolve_vault_path};
 
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct FileEntry {
@@ -74,6 +74,13 @@ pub fn index_file(conn: &Connection, vault: &Path, absolute: &Path) -> AppResult
     let now = Utc::now().to_rfc3339();
     let frontmatter = parsed.frontmatter_json.as_deref();
 
+    let display_title = resolve_display_title(
+        parsed.title.as_deref(),
+        "",
+        frontmatter,
+        &document_name,
+    );
+
     let existing_id: Option<i64> = conn
         .query_row("SELECT id FROM files WHERE path = ?1", [&rel], |row| {
             row.get(0)
@@ -82,21 +89,16 @@ pub fn index_file(conn: &Connection, vault: &Path, absolute: &Path) -> AppResult
 
     let file_id = if let Some(id) = existing_id {
         conn.execute(
-            "UPDATE files SET frontmatter = ?1, content_hash = ?2, word_count = ?3, updated_at = ?4 WHERE id = ?5",
-            rusqlite::params![frontmatter, hash, wc, now, id],
+            "UPDATE files SET title = ?1, frontmatter = ?2, content_hash = ?3, word_count = ?4, updated_at = ?5 WHERE id = ?6",
+            rusqlite::params![display_title, frontmatter, hash, wc, now, id],
         )?;
         conn.execute("DELETE FROM chunks WHERE file_id = ?1", [id])?;
         id
     } else {
-        let title = parsed
-            .title
-            .clone()
-            .filter(|t| !t.is_empty())
-            .unwrap_or(document_name);
         conn.execute(
             "INSERT INTO files (path, title, frontmatter, content_hash, word_count, created_at, updated_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6)",
-            rusqlite::params![rel, title, frontmatter, hash, wc, now],
+            rusqlite::params![rel, display_title, frontmatter, hash, wc, now],
         )?;
         conn.last_insert_rowid()
     };
@@ -115,7 +117,7 @@ pub fn index_file(conn: &Connection, vault: &Path, absolute: &Path) -> AppResult
     let chunks = chunk_markdown(&parsed.body, 2000);
     for (idx, chunk) in chunks.iter().enumerate() {
         conn.execute(
-            "INSERT INTO chunks (file_id, chunk_index, content, token_count) VALUES (?1, ?2, ?3, ?4)",
+            "INSERT INTO chunks (file_id, chunk_index, content, char_count) VALUES (?1, ?2, ?3, ?4)",
             rusqlite::params![file_id, idx as i64, chunk, chunk.len() as i64],
         )?;
     }
@@ -141,6 +143,25 @@ pub fn remove_file_index(conn: &Connection, path: &str) -> AppResult<()> {
     Ok(())
 }
 
+/// Drop index rows for user notes whose `.md` files are missing on disk.
+pub fn prune_stale_file_indexes(conn: &Connection, vault: &Path) -> AppResult<usize> {
+    let mut stmt = conn.prepare(
+        "SELECT DISTINCT path FROM files WHERE path NOT LIKE '.iris/%'",
+    )?;
+    let paths: Vec<String> = stmt
+        .query_map([], |row| row.get(0))?
+        .collect::<Result<_, _>>()?;
+    let mut pruned = 0usize;
+    for path in paths {
+        let abs = resolve_vault_path(vault, &path)?;
+        if !abs.is_file() {
+            remove_file_index(conn, &path)?;
+            pruned += 1;
+        }
+    }
+    Ok(pruned)
+}
+
 /// Recursively scan vault for `.md` files.
 pub fn scan_vault(conn: &Connection, vault: &Path) -> AppResult<Vec<FileEntry>> {
     let mut entries = Vec::new();
@@ -163,6 +184,7 @@ pub fn scan_vault(conn: &Connection, vault: &Path) -> AppResult<Vec<FileEntry>> 
             entries.push(index_file(conn, vault, path)?);
         }
     }
+    let _ = prune_stale_file_indexes(conn, vault)?;
     Ok(entries)
 }
 
@@ -252,11 +274,15 @@ mod tests {
             let e1 = index_file(conn, &vault, &vault.join("note.md"))?;
 
             // Rewrite file on disk
-            fs::write(vault.join("note.md"), "# Second\n\nMore content.").unwrap();
+            fs::write(
+                vault.join("note.md"),
+                "---\ntitle: 第二版\n---\n\n# Second\n\nMore content.",
+            )
+            .unwrap();
             let e2 = index_file(conn, &vault, &vault.join("note.md"))?;
 
             assert_eq!(e1.id, e2.id, "same path should UPDATE not INSERT");
-            assert_eq!(e2.title, "note", "document title is fixed at creation");
+            assert_eq!(e2.title, "第二版", "title syncs from frontmatter on reindex");
 
             let count: i64 = conn.query_row(
                 "SELECT COUNT(*) FROM files WHERE path = 'note.md'",
@@ -316,6 +342,28 @@ mod tests {
                 hits.contains(&"searchable.md".into()),
                 "FTS should find pineapple in searchable.md"
             );
+            Ok(())
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn prune_stale_file_indexes_removes_missing_files() {
+        let (_dir, vault, db) = setup_vault();
+        write_note(&vault, "live.md", "# Live");
+        write_note(&vault, "gone.md", "# Gone");
+
+        db.with_conn(|conn| {
+            index_file(conn, &vault, &vault.join("live.md"))?;
+            index_file(conn, &vault, &vault.join("gone.md"))?;
+            fs::remove_file(vault.join("gone.md"))?;
+            let pruned = prune_stale_file_indexes(conn, &vault)?;
+            assert_eq!(pruned, 1);
+            let paths: Vec<String> = conn
+                .prepare("SELECT path FROM files")?
+                .query_map([], |r| r.get(0))?
+                .collect::<Result<_, _>>()?;
+            assert_eq!(paths, vec!["live.md".to_string()]);
             Ok(())
         })
         .unwrap();

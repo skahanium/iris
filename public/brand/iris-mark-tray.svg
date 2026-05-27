@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32" fill="none">
+  <rect x="2" y="2" width="28" height="28" rx="8" fill="currentColor"/>
+  <g transform="translate(16 16) skewX(-7) translate(-16 -16)" fill="currentColor">
+  <rect x="8.8" y="7.2" width="13.8" height="3.4" rx="1.7" fill="currentColor"/>
+  <path d="M14.4 10.6 C16.15 16 16.05 16 14.5 21.4 L17.5 21.4 C15.95 16 15.85 16 17.6 10.6 Z" fill="currentColor"/>
+  <rect x="10.2" y="21.4" width="11.6" height="3.4" rx="1.7" fill="currentColor"/>
+</g>
+</svg>

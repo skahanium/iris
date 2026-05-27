@@ -7,7 +7,7 @@
 | 文档 | 内容 |
 |------|------|
 | [ROADMAP.md](./ROADMAP.md) | 版本里程碑：功能 + 体验 |
-| [docs/design-system.md](./docs/design-system.md) | 纸墨 token、组件与 B/C 原则 |
+| [docs/design-system.md](./docs/design-system.md) | Notion（N）token、组件与 C 原则 |
 | [docs/README.md](./docs/README.md) | 全库文档索引 |
 | 本文档 | 分层、IPC、数据流、AI 线框 |
 
@@ -518,7 +518,7 @@ CREATE TABLE settings (
 
 ### 编辑纸页（纸页视口 · v0.3.1-ui）
 
-- **墨底** `.iris-editor` + **定高纸页** `.iris-paper`（`100dvh` 减去 chrome）。
+- **扁平编辑区** `.iris-editor` + 居中栏 `.iris-editor-canvas`（与壳层同色，无纸页卡片）。
 - **仅纸内滚动**；纸边圆角 16–20px 与阴影常显。
 - **暗色主题**：暗暖灰纸 + 浅字（方案 A），见 [design-system.md](./docs/design-system.md)。
 
@@ -564,7 +564,7 @@ CREATE TABLE settings (
 
 ### 配色与排版
 
-**设计定稿**：主攻 **纸墨编辑（B）**，备选 **命令优先（C）**。完整 token、字体与阶段规划见 [docs/design-system.md](./docs/design-system.md)。
+**设计定稿**：主攻 **Notion 编辑（N）**，备选 **命令优先（C）**。完整 token、字体与阶段规划见 [docs/design-system.md](./docs/design-system.md)。
 
 深色 **chrome** + 亮色 **编辑纸面** 为默认组合；主强调色为赭石系（非紫色）。
 

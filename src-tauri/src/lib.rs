@@ -5,6 +5,7 @@ pub mod embedding;
 pub mod error;
 pub mod indexer;
 mod llm;
+pub mod recycle;
 pub mod storage;
 pub mod version;
 mod watcher;
@@ -33,14 +34,20 @@ pub fn run() {
             let state = Arc::new(AppState::new(data_dir)?);
             app.manage(state.clone());
 
-            // Clean up stale version snapshots on startup
+            // Clean up stale version snapshots and expired recycle bin on startup
             let _ = crate::version::version_cleanup(&state);
+            let _ = crate::recycle::purge_expired(&state);
 
             if state.vault_path().is_ok() {
                 let _ = state.restart_file_watcher(app.handle().clone());
             }
 
             if let Some(window) = app.get_webview_window("main") {
+                #[cfg(windows)]
+                {
+                    use tauri::Theme;
+                    let _ = window.set_theme(Some(Theme::Dark));
+                }
                 window
                     .show()
                     .map_err(|e| crate::error::AppError::msg(format!("无法显示主窗口: {e}")))?;
@@ -63,12 +70,16 @@ pub fn run() {
             commands::file::file_read,
             commands::file::file_write,
             commands::file::file_delete,
+            commands::file::file_discard,
             commands::file::file_rename,
             commands::file::file_create,
             commands::file::vault_set,
             commands::file::vault_get,
             commands::file::index_rescan,
             commands::file::file_backlinks,
+            commands::recycle::recycle_list_cmd,
+            commands::recycle::recycle_restore_cmd,
+            commands::recycle::recycle_purge_cmd,
             commands::search::search_keyword,
             commands::search::search_semantic,
             commands::search::search_reindex,

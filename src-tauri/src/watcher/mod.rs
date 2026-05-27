@@ -54,7 +54,10 @@ impl FileWatcher {
                             if !is_user_note_path(&rel) {
                                 continue;
                             }
-                            let _ = handle_file_event(&app_clone, &state_clone, path, kind);
+                            match handle_file_event(&app_clone, &state_clone, path, kind) {
+                                Ok(()) => {},
+                                Err(e) => tracing::warn!("File event error for {}: {e}", path.display()),
+                            };
                         }
                     }
                 }

@@ -1,5 +1,5 @@
 import { marked } from "marked";
-import { Send, Sparkles } from "lucide-react";
+import { Send } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { Button } from "@/components/ui/button";
@@ -28,7 +28,7 @@ interface AiPanelProps {
   quote: ContextQuote | null;
   onClearQuote: () => void;
   provider: string;
-  onProviderChange: (provider: string) => void;
+  webSearch: boolean;
 }
 
 interface ChatLine {
@@ -56,11 +56,10 @@ export function AiPanel({
   quote,
   onClearQuote,
   provider,
-  onProviderChange,
+  webSearch,
 }: AiPanelProps) {
   const [messages, setMessages] = useState<ChatLine[]>([]);
   const [input, setInput] = useState("");
-  const [webSearch, setWebSearch] = useState(false);
   const [streaming, setStreaming] = useState(false);
   const [relatedNotes, setRelatedNotes] = useState<SemanticHit[]>([]);
   const [contextStatus, setContextStatus] = useState<string | null>(null);
@@ -72,7 +71,9 @@ export function AiPanel({
   useEffect(() => {
     let unlistenToken: (() => void) | undefined;
     let unlistenDone: (() => void) | undefined;
-    void listenLlmToken((ev) => {
+    let cleanup: (() => void) | undefined;
+
+    const tokenPromise = listenLlmToken((ev) => {
       if (requestIdRef.current && ev.request_id !== requestIdRef.current)
         return;
       streamBuf.current += ev.token;
@@ -92,15 +93,23 @@ export function AiPanel({
     }).then((fn) => {
       unlistenToken = fn;
     });
-    void listenLlmDone(() => {
+
+    const donePromise = listenLlmDone(() => {
       setStreaming(false);
       streamBuf.current = "";
     }).then((fn) => {
       unlistenDone = fn;
     });
+
+    void Promise.all([tokenPromise, donePromise]).then(() => {
+      cleanup = () => {
+        unlistenToken?.();
+        unlistenDone?.();
+      };
+    });
+
     return () => {
-      unlistenToken?.();
-      unlistenDone?.();
+      cleanup?.();
     };
   }, []);
 
@@ -172,32 +181,6 @@ export function AiPanel({
 
   return (
     <div className="flex h-full flex-col">
-      <div className="flex h-10 shrink-0 items-center gap-2 border-b border-border px-3">
-        <Sparkles className="h-4 w-4 shrink-0 text-primary" />
-        <span className="text-sm font-medium tracking-tight">AI</span>
-        <select
-          className="iris-select ml-auto"
-          value={provider}
-          onChange={(e) => onProviderChange(e.target.value)}
-        >
-          <option value="openai">OpenAI</option>
-          <option value="anthropic">Claude</option>
-          <option value="ollama">Ollama</option>
-          <option value="custom">自定义</option>
-        </select>
-      </div>
-
-      <div className="space-y-3 border-b border-border px-3 py-2">
-        <label className="flex items-center gap-2 text-xs text-muted-foreground">
-          <input
-            type="checkbox"
-            checked={webSearch}
-            onChange={(e) => setWebSearch(e.target.checked)}
-          />
-          联网搜索
-        </label>
-      </div>
-
       {quote && (
         <div className="iris-quote-card m-2 text-xs">
           <div className="mb-1 flex items-center justify-between">
@@ -218,8 +201,8 @@ export function AiPanel({
           <p
             className={
               quoteExpanded
-                ? "font-editor leading-relaxed text-foreground/90"
-                : "line-clamp-5 font-editor leading-relaxed text-foreground/90"
+                ? "leading-relaxed text-foreground/90"
+                : "line-clamp-5 leading-relaxed text-foreground/90"
             }
           >
             {quote.text}
@@ -264,7 +247,7 @@ export function AiPanel({
             {relatedNotes.map((h) => (
               <span
                 key={`${h.path}-${h.chunk_id}`}
-                className="inline-flex items-center rounded-xl border border-primary/20 bg-card px-2.5 py-0.5 text-xs text-primary"
+                className="inline-flex items-center rounded-md border border-border bg-muted/50 px-2.5 py-0.5 text-xs text-primary"
                 title={h.snippet}
               >
                 {h.title}

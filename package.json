@@ -20,12 +20,13 @@
     "test:e2e": "vitest run --config vitest.e2e.config.ts",
     "index:rebuild": "echo \"Use in-app search reindex or Tauri command search_reindex\"",
     "icon:gen": "node scripts/gen-icon.mjs",
-    "icon:tauri": "npm run icon:gen && tauri icon scripts/assets/app-icon.png -o src-tauri/icons"
+    "icon:tauri": "npm run icon:gen && tauri icon scripts/assets/app-icon.png -o src-tauri/icons-staging && node scripts/sync-tauri-icons.mjs"
   },
   "dependencies": {
     "@radix-ui/react-dialog": "^1.1.14",
     "@radix-ui/react-scroll-area": "^1.2.9",
     "@radix-ui/react-slot": "^1.2.3",
+    "@tanstack/react-virtual": "^3.13.26",
     "@tauri-apps/api": "^2.5.0",
     "@tauri-apps/plugin-dialog": "^2.2.2",
     "@tiptap/core": "^2.14.0",
@@ -43,6 +44,7 @@
     "@tiptap/suggestion": "^2.14.0",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
+    "dompurify": "^3.4.6",
     "lowlight": "^3.3.0",
     "lucide-react": "^0.511.0",
     "marked": "^15.0.12",
@@ -55,16 +57,20 @@
   },
   "devDependencies": {
     "@eslint/js": "^9.28.0",
+    "@resvg/resvg-js": "^2.6.2",
     "@tauri-apps/cli": "^2.5.0",
+    "@types/dompurify": "^3.0.5",
     "@types/react": "^19.1.6",
     "@types/react-dom": "^19.1.5",
     "@types/turndown": "^5.0.5",
     "@vitejs/plugin-react": "^4.5.2",
+    "@vitest/coverage-v8": "^3.2.3",
     "autoprefixer": "^10.4.21",
     "eslint": "^9.28.0",
     "eslint-plugin-react-hooks": "^5.2.0",
     "eslint-plugin-react-refresh": "^0.4.20",
     "globals": "^16.2.0",
+    "jsdom": "^26.1.0",
     "postcss": "^8.5.4",
     "prettier": "^3.5.3",
     "prettier-plugin-tailwindcss": "^0.6.12",
@@ -72,8 +78,6 @@
     "typescript": "^5.8.3",
     "typescript-eslint": "^8.33.1",
     "vite": "^6.3.5",
-    "vitest": "^3.2.3",
-    "@vitest/coverage-v8": "^3.2.3",
-    "jsdom": "^26.1.0"
+    "vitest": "^3.2.3"
   }
 }

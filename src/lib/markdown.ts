@@ -78,18 +78,22 @@ export function markdownToEditorHtml(
   md: string,
   titleFallback = "",
 ): string {
-  const { fields, body: rawBody } = splitFrontmatter(md);
+  const { fields, body: rawBody, yaml } = splitFrontmatter(md);
   let title = titleFromFields(fields);
   let body = rawBody;
 
   if (!title) {
-    const legacy = /^#\s+(.+?)\s*(?:\n|$)/.exec(body);
-    if (legacy) {
-      title = legacy[1]!.trim();
-      body = body.slice(legacy[0].length).trimStart();
-    } else {
-      title = titleFallback.trim();
+    if (yaml === null) {
+      // Pre-Iris notes: leading `#` was the document title
+      const legacy = /^#\s+(.+?)\s*(?:\n|$)/.exec(body.trimStart());
+      if (legacy) {
+        title = legacy[1]!.trim();
+        body = body.slice(legacy[0].length).trimStart();
+      } else {
+        title = titleFallback.trim();
+      }
     }
+    // With frontmatter: body `#` stays as section headings; noteTitle may be empty
   } else {
     body = stripLeadingBodyTitleHeading(body, title);
   }

@@ -1,5 +1,6 @@
 import type { Editor } from "@tiptap/react";
 import { Sparkles } from "lucide-react";
+import { memo } from "react";
 
 import { Button } from "@/components/ui/button";
 
@@ -9,7 +10,7 @@ interface FloatingToolbarProps {
   onSendToAi: () => void;
 }
 
-export function FloatingToolbar({
+export const FloatingToolbar = memo(function FloatingToolbar({
   editor,
   onInlineAi,
   onSendToAi,
@@ -24,7 +25,7 @@ export function FloatingToolbar({
   ];
 
   return (
-    <div className="fixed bottom-20 left-1/2 z-30 flex -translate-x-1/2 gap-1 rounded-2xl border border-border/70 bg-panel/95 px-2 py-1.5 shadow-floating backdrop-blur-sm">
+    <div className="fixed bottom-20 left-1/2 z-30 flex -translate-x-1/2 gap-1 rounded-lg border border-border bg-panel/95 px-2 py-1.5 shadow-floating backdrop-blur-sm">
       {actions.map((a) => (
         <Button
           key={a.id}
@@ -42,4 +43,4 @@ export function FloatingToolbar({
       </Button>
     </div>
   );
-}
+});

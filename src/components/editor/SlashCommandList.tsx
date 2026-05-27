@@ -53,7 +53,7 @@ export const SlashCommandList = forwardRef<
   }));
 
   return (
-    <div className="z-50 min-w-[180px] overflow-hidden rounded-md border border-primary/20 bg-panel py-1 text-sm shadow-lg">
+    <div className="z-50 min-w-[180px] overflow-hidden rounded-md border border-border bg-card py-1 text-sm shadow-floating">
       {items.map((item, i) => (
         <button
           key={item.id}

@@ -1,0 +1,327 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Iris 品牌预览 · 几何 monogram</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        font-family: Inter, "Segoe UI", "Microsoft YaHei", sans-serif;
+        background: #f5f5f5;
+        color: #1a1a1a;
+        line-height: 1.5;
+      }
+      .page {
+        max-width: 960px;
+        margin: 0 auto;
+        padding: 2rem 1.5rem 4rem;
+      }
+      h1 {
+        font-size: 1.5rem;
+        font-weight: 600;
+        margin: 0 0 0.25rem;
+      }
+      .sub {
+        color: #666;
+        font-size: 0.875rem;
+        margin-bottom: 2rem;
+      }
+      section {
+        margin-bottom: 2rem;
+      }
+      section h2 {
+        font-size: 0.75rem;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        color: #888;
+        margin: 0 0 1rem;
+      }
+      .grid {
+        display: grid;
+        gap: 1rem;
+      }
+      .grid-2 {
+        grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      }
+      .card {
+        border-radius: 12px;
+        padding: 1.5rem;
+        border: 1px solid #e5e5e5;
+        background: #fff;
+      }
+      .card.dark {
+        background: #191919;
+        border-color: #2a2a2a;
+        color: #ebebeb;
+      }
+      .card.dark h2 {
+        color: #737373;
+      }
+      .sizes {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: flex-end;
+        gap: 1.5rem;
+      }
+      .size-item {
+        text-align: center;
+      }
+      .size-item span {
+        display: block;
+        font-size: 0.6875rem;
+        color: #888;
+        margin-top: 0.5rem;
+      }
+      .card.dark .size-item span {
+        color: #737373;
+      }
+      .app-icon {
+        width: 128px;
+        height: 128px;
+        border-radius: 28px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+      .app-icon.dark-bg {
+        background: #191919;
+      }
+      .app-icon.light-bg {
+        background: #ffffff;
+        border: 1px solid #e5e5e5;
+      }
+      .welcome-mock {
+        text-align: center;
+        padding: 2rem 1rem;
+        border-radius: 8px;
+        border: 1px solid #e5e5e5;
+        background: #fff;
+        max-width: 28rem;
+        margin: 0 auto;
+      }
+      .welcome-mock.dark {
+        background: #191919;
+        border-color: #2a2a2a;
+      }
+      .welcome-mock .title {
+        font-size: 1.5rem;
+        font-weight: 600;
+        margin-top: 1rem;
+      }
+      .welcome-mock .hint {
+        font-size: 0.8125rem;
+        color: #737373;
+        margin-top: 0.75rem;
+      }
+      .welcome-mock .word {
+        font-size: 1.875rem;
+        font-weight: 600;
+        letter-spacing: -0.02em;
+        margin-top: 0.75rem;
+      }
+      .chrome-mock {
+        display: flex;
+        align-items: center;
+        gap: 0.625rem;
+        padding: 0.75rem 1rem;
+        border-bottom: 1px solid #e5e5e5;
+        background: #fff;
+      }
+      .chrome-mock.dark {
+        background: #191919;
+        border-color: #2a2a2a;
+      }
+      .chrome-mock .label {
+        font-size: 0.875rem;
+        font-weight: 600;
+        color: rgba(0, 0, 0, 0.9);
+      }
+      .chrome-mock.dark .label {
+        color: rgba(235, 235, 235, 0.9);
+      }
+      .spec {
+        font-size: 0.8125rem;
+        color: #666;
+        font-family: ui-monospace, monospace;
+        margin-top: 1rem;
+        padding: 0.75rem;
+        background: #f9f9f9;
+        border-radius: 6px;
+      }
+      .card.dark .spec {
+        background: #222;
+        color: #a3a3a3;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="page">
+      <h1>Iris 几何 monogram 预览</h1>
+      <p class="sub">
+        v3：在 v2 可读结构上加轻微斜切、不对称衬线与竖干弧线，偏编辑感；仍保持灰阶几何，非墨迹手写。
+      </p>
+
+      <section>
+        <h2>多尺寸（透明底）</h2>
+        <div class="grid grid-2">
+          <div class="card">
+            <div class="sizes" id="sizes-light"></div>
+            <p class="spec">
+              亮色 UI：frame #e3e3e3 · ink #1a1a1a · 字组 skew −7° · 竖干微弧
+            </p>
+          </div>
+          <div class="card dark">
+            <div class="sizes" id="sizes-dark"></div>
+            <p class="spec">
+              暗色 UI：frame #333333 · ink #f0f0f0
+            </p>
+          </div>
+        </div>
+      </section>
+
+      <section>
+        <h2>应用图标（1024 → 128 示意）</h2>
+        <div class="grid grid-2">
+          <div class="card">
+            <div class="app-icon dark-bg" id="app-dark"></div>
+            <p class="spec" style="margin-top: 1rem">暗色底 #191919 · Windows 任务栏 / 安装包</p>
+          </div>
+          <div class="card">
+            <div class="app-icon light-bg" id="app-light"></div>
+            <p class="spec" style="margin-top: 1rem">亮色底 #ffffff</p>
+          </div>
+        </div>
+      </section>
+
+      <section>
+        <h2>界面示意</h2>
+        <div class="grid grid-2">
+          <div class="card">
+            <div class="chrome-mock" id="chrome-light"></div>
+            <div class="welcome-mock" id="welcome-light" style="margin-top: 1rem"></div>
+          </div>
+          <div class="card dark">
+            <div class="chrome-mock dark" id="chrome-dark"></div>
+            <div class="welcome-mock dark" id="welcome-dark" style="margin-top: 1rem"></div>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <script>
+      const FRAME = { x: 2, y: 2, w: 28, h: 28, rx: 8 };
+      /** v3 大写 I：上宽下窄衬线 + 微弧竖干，整体轻斜 */
+      const I_TOP = { x: 8.8, y: 7.2, w: 13.8, h: 3.4, rx: 1.7 };
+      const I_BOTTOM = { x: 10.2, y: 21.4, w: 11.6, h: 3.4, rx: 1.7 };
+      const I_SKEW = -7;
+      const I_STEM_PATH =
+        "M14.4 10.6 C16.15 16 16.05 16 14.5 21.4 L17.5 21.4 C15.95 16 15.85 16 17.6 10.6 Z";
+
+      const palettes = {
+        light: {
+          frame: "#e3e3e3",
+          ink: "#1a1a1a",
+          frameApp: "#ececec",
+          bg: "#ffffff",
+          text: "#1a1a1a",
+        },
+        dark: {
+          frame: "#333333",
+          ink: "#f0f0f0",
+          frameApp: "#2a2a2a",
+          bg: "#191919",
+          text: "#ebebeb",
+        },
+      };
+
+      function rect(r, fill) {
+        return `<rect x="${r.x}" y="${r.y}" width="${r.w}" height="${r.h}" rx="${r.rx}" fill="${fill}"/>`;
+      }
+
+      function iLetter(ink) {
+        return `<g transform="translate(16 16) skewX(${I_SKEW}) translate(-16 -16)">
+  ${rect(I_TOP, ink)}
+  <path d="${I_STEM_PATH}" fill="${ink}"/>
+  ${rect(I_BOTTOM, ink)}
+</g>`;
+      }
+
+      function markSvg({ frame, ink, size }) {
+        return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="${size}" height="${size}" fill="none" aria-hidden="true">
+  ${rect(FRAME, frame)}
+  ${iLetter(ink)}
+</svg>`;
+      }
+
+      function appIconSvg({ bg, frame, ink, size }) {
+        const pad = size * 0.26;
+        const inner = size - pad * 2;
+        const scale = inner / 32;
+        return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${size} ${size}" width="${size}" height="${size}">
+  <rect width="${size}" height="${size}" fill="${bg}"/>
+  <g transform="translate(${pad}, ${pad}) scale(${scale})">
+    ${rect(FRAME, frame)}
+    ${iLetter(ink)}
+  </g>
+</svg>`;
+      }
+
+      function renderSizes(containerId, palette) {
+        const el = document.getElementById(containerId);
+        [16, 20, 32, 48].forEach((px) => {
+          const wrap = document.createElement("div");
+          wrap.className = "size-item";
+          wrap.innerHTML =
+            markSvg({ frame: palette.frame, ink: palette.ink, size: px }) +
+            `<span>${px}px</span>`;
+          el.appendChild(wrap);
+        });
+      }
+
+      document.getElementById("app-dark").innerHTML = appIconSvg({
+        bg: palettes.dark.bg,
+        frame: palettes.dark.frameApp,
+        ink: palettes.dark.ink,
+        size: 128,
+      });
+      document.getElementById("app-light").innerHTML = appIconSvg({
+        bg: palettes.light.bg,
+        frame: palettes.light.frameApp,
+        ink: palettes.light.ink,
+        size: 128,
+      });
+
+      renderSizes("sizes-light", palettes.light);
+      renderSizes("sizes-dark", palettes.dark);
+
+      function chromeMock(id, p) {
+        document.getElementById(id).innerHTML =
+          markSvg({ frame: p.frame, ink: p.ink, size: 20 }) +
+          `<span class="label">Iris</span>`;
+      }
+      chromeMock("chrome-light", palettes.light);
+      chromeMock("chrome-dark", palettes.dark);
+
+      function welcomeMock(id, p) {
+        document.getElementById(id).innerHTML =
+          markSvg({ frame: p.frame, ink: p.ink, size: 48 }) +
+          `<div class="word" style="color:${p.text}">Iris</div>` +
+          `<div class="title" style="color:${p.text}">开始写作</div>` +
+          `<div class="hint">⌘/Ctrl+Shift+P 命令 · …</div>`;
+      }
+      welcomeMock("welcome-light", palettes.light);
+      welcomeMock("welcome-dark", palettes.dark);
+    </script>
+  </body>
+</html>

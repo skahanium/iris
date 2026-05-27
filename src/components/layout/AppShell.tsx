@@ -22,7 +22,7 @@ export function AppShell({
   overlays,
 }: AppShellProps) {
   return (
-    <div className="flex h-dvh flex-col overflow-hidden bg-background">
+    <div className="flex h-full min-h-0 flex-1 flex-col overflow-hidden bg-background">
       {!zen ? tabBar : null}
       <div className="flex min-h-0 flex-1">
         <main className="relative flex min-w-0 flex-1 flex-col bg-background">

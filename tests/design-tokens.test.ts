@@ -17,14 +17,15 @@ function tailwindMapsToken(key: string, value: string): boolean {
 }
 
 describe("design tokens", () => {
-  it("defines the v0.3.1-ui overlay, radius, shadow, and motion variables", () => {
-    expect(cssVariable("--overlay-scrim")).toBe("240 5% 7% / 0.52");
-    expect(cssVariable("--radius-sm")).toBe("8px");
-    expect(cssVariable("--radius-md")).toBe("12px");
-    expect(cssVariable("--radius-lg")).toBe("16px");
-    expect(cssVariable("--radius-xl")).toBe("20px");
-    expect(cssVariable("--shadow-paper")).toBeDefined();
+  it("defines Notion-style overlay, radius, shadow, and motion variables", () => {
+    expect(cssVariable("--overlay-scrim")).toBe("0 0% 5% / 0.55");
+    expect(cssVariable("--radius-sm")).toBe("6px");
+    expect(cssVariable("--radius-md")).toBe("8px");
+    expect(cssVariable("--radius-lg")).toBe("12px");
+    expect(cssVariable("--radius-xl")).toBe("16px");
+    expect(cssVariable("--window-radius")).toBe("12px");
     expect(cssVariable("--shadow-overlay")).toBeDefined();
+    expect(globalsCss).not.toContain("--shadow-paper");
     expect(cssVariable("--motion-fast")).toBe("150ms");
     expect(cssVariable("--motion-base")).toBe("200ms");
     expect(cssVariable("--motion-exit")).toBe("140ms");
@@ -33,10 +34,10 @@ describe("design tokens", () => {
     );
   });
 
-  it("uses dark warm paper tokens in the default dark theme", () => {
-    expect(cssVariable("--editor-paper")).toBe("35 8% 16%");
-    expect(cssVariable("--editor-ink")).toBe("40 12% 88%");
-    expect(cssVariable("--editor-border")).toBe("35 8% 24%");
+  it("uses neutral dark theme and blue-gray primary", () => {
+    expect(cssVariable("--background")).toBe("0 0% 10%");
+    expect(cssVariable("--primary")).toBe("210 18% 62%");
+    expect(cssVariable("--editor-paper")).toBe("var(--background)");
   });
 
   it("exposes design tokens through Tailwind theme extensions", () => {
@@ -47,12 +48,11 @@ describe("design tokens", () => {
     expect(tailwindMapsToken("md", "var(--radius-md)")).toBe(true);
     expect(tailwindMapsToken("lg", "var(--radius-lg)")).toBe(true);
     expect(tailwindMapsToken("xl", "var(--radius-xl)")).toBe(true);
-    expect(tailwindMapsToken("paper", "var(--shadow-paper)")).toBe(true);
     expect(tailwindMapsToken("overlay", "var(--shadow-overlay)")).toBe(true);
     expect(tailwindMapsToken("fast", "var(--motion-fast)")).toBe(true);
     expect(tailwindMapsToken("base", "var(--motion-base)")).toBe(true);
-    expect(tailwindConfigSource).toContain(
-      '"iris-out": "var(--motion-ease-out)"',
-    );
+    expect(tailwindConfigSource).toContain('"Inter"');
+    expect(tailwindConfigSource).not.toContain("Noto Serif");
+    expect(tailwindConfigSource).not.toContain("shadow-paper");
   });
 });

@@ -12,6 +12,8 @@ dist/
 **/target/
 src-tauri/gen/
 src-tauri/WixTools/
+src-tauri/icons-staging/
+src-tauri/icons-fresh/
 
 # ONNX / embedding model cache (fastembed; any cwd)
 .fastembed_cache/

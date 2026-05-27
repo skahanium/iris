@@ -1,12 +1,12 @@
+import { useVirtualizer } from "@tanstack/react-virtual";
 import { FileDown, FolderPlus, Pencil, Trash2 } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { Button } from "@/components/ui/button";
-import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
+import { ConfirmDialog } from "@/components/common/ConfirmDialog";
 import { IrisOverlay } from "@/components/ui/iris-overlay";
 import { Input } from "@/components/ui/input";
-import { PromptDialog } from "@/components/ui/PromptDialog";
-import { ScrollArea } from "@/components/ui/scroll-area";
+import { PromptDialog } from "@/components/common/PromptDialog";
 import {
   exportFile,
   fileCreate,
@@ -36,6 +36,14 @@ export function FileSheet({ open, onClose, onOpen }: FileSheetProps) {
   const [showTemplates, setShowTemplates] = useState(false);
   const [renameTarget, setRenameTarget] = useState<FileListItem | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<FileListItem | null>(null);
+  const parentRef = useRef<HTMLDivElement>(null);
+
+  const virtualizer = useVirtualizer({
+    count: files.length,
+    getScrollElement: () => parentRef.current,
+    estimateSize: () => 40,
+    overscan: 10,
+  });
 
   const refresh = useCallback(() => {
     setLoading(true);
@@ -130,54 +138,69 @@ export function FileSheet({ open, onClose, onOpen }: FileSheetProps) {
           </div>
         )}
         {error && <p className="px-3 py-2 text-xs text-destructive">{error}</p>}
-        <ScrollArea className="min-h-0 flex-1">
+        <div ref={parentRef} className="min-h-0 flex-1 overflow-auto">
           {loading ? (
             <p className="p-3 text-xs text-muted-foreground">加载中…</p>
           ) : (
-            files.map((f) => (
-              <div
-                key={f.path}
-                className="flex items-center gap-1 border-b border-border/50 px-2 py-1.5 text-sm"
-              >
-                <button
-                  type="button"
-                  className="min-w-0 flex-1 truncate text-left hover:text-primary"
-                  onClick={() => {
-                    onOpen(f.path);
-                    onClose();
-                  }}
-                >
-                  {f.title}
-                </button>
-                <Button
-                  type="button"
-                  size="icon"
-                  variant="ghost"
-                  onClick={() => setRenameTarget(f)}
-                >
-                  <Pencil className="h-3 w-3" />
-                </Button>
-                <Button
-                  type="button"
-                  size="icon"
-                  variant="ghost"
-                  onClick={() => setDeleteTarget(f)}
-                >
-                  <Trash2 className="h-3 w-3" />
-                </Button>
-                <Button
-                  type="button"
-                  size="icon"
-                  variant="ghost"
-                  title="导出 HTML"
-                  onClick={() => void handleExportHtml(f.path)}
-                >
-                  <FileDown className="h-3 w-3" />
-                </Button>
-              </div>
-            ))
+            <div
+              style={{ height: `${virtualizer.getTotalSize()}px`, position: "relative" }}
+            >
+              {virtualizer.getVirtualItems().map((virtualItem) => {
+                const f = files[virtualItem.index]!;
+                return (
+                  <div
+                    key={f.path}
+                    style={{
+                      position: "absolute",
+                      top: 0,
+                      left: 0,
+                      width: "100%",
+                      height: `${virtualItem.size}px`,
+                      transform: `translateY(${virtualItem.start}px)`,
+                    }}
+                    className="flex items-center gap-1 border-b border-border/50 px-2 py-1.5 text-sm"
+                  >
+                    <button
+                      type="button"
+                      className="min-w-0 flex-1 truncate text-left hover:text-primary"
+                      onClick={() => {
+                        onOpen(f.path);
+                        onClose();
+                      }}
+                    >
+                      {f.title}
+                    </button>
+                    <Button
+                      type="button"
+                      size="icon"
+                      variant="ghost"
+                      onClick={() => setRenameTarget(f)}
+                    >
+                      <Pencil className="h-3 w-3" />
+                    </Button>
+                    <Button
+                      type="button"
+                      size="icon"
+                      variant="ghost"
+                      onClick={() => setDeleteTarget(f)}
+                    >
+                      <Trash2 className="h-3 w-3" />
+                    </Button>
+                    <Button
+                      type="button"
+                      size="icon"
+                      variant="ghost"
+                      title="导出 HTML"
+                      onClick={() => void handleExportHtml(f.path)}
+                    >
+                      <FileDown className="h-3 w-3" />
+                    </Button>
+                  </div>
+                );
+              })}
+            </div>
           )}
-        </ScrollArea>
+        </div>
       </IrisOverlay>
 
       <PromptDialog
@@ -200,7 +223,7 @@ export function FileSheet({ open, onClose, onOpen }: FileSheetProps) {
       <ConfirmDialog
         open={deleteTarget !== null}
         title="删除文件"
-        message={`确定删除 ${deleteTarget?.path ?? ""}？此操作不可撤销。`}
+        message={`确定删除「${deleteTarget?.title ?? deleteTarget?.path ?? ""}」？正文、时间线快照与定稿将一并移入回收站，15 天内可恢复。`}
         confirmLabel="删除"
         variant="destructive"
         onCancel={() => setDeleteTarget(null)}

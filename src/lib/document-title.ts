@@ -4,6 +4,8 @@ function pathStem(path: string): string {
   return path.replace(/\.md$/i, "").split("/").pop() ?? path;
 }
 
+export { displayTitleFromMarkdown } from "@/lib/note-title";
+
 /** Resolve `files.title` for a path; falls back to filename stem. */
 export async function resolveDocumentTitle(
   path: string,
