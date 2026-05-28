@@ -9,6 +9,7 @@ pub mod knowledge;
 mod llm;
 mod network;
 pub mod recycle;
+mod security;
 pub mod storage;
 pub mod version;
 mod watcher;
