@@ -8,6 +8,7 @@ use std::sync::Arc;
 use chrono::Utc;
 use rusqlite::Row;
 use serde::Serialize;
+use tracing::info;
 
 use crate::app::AppState;
 use crate::error::{AppError, AppResult};
@@ -285,6 +286,13 @@ pub fn create_snapshot(
     if params.kind == VersionKind::AutoIdle {
         let _ = enforce_auto_idle_cap(state, file_id, AUTO_IDLE_MAX_PER_FILE)?;
     }
+
+    info!(
+        file_id = %file_id,
+        version_no = %version_no,
+        kind = ?params.kind,
+        "Version snapshot created"
+    );
 
     Ok(Some(VersionEntry {
         id,
