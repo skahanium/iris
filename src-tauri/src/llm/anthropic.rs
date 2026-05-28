@@ -10,6 +10,14 @@ use crate::error::{AppError, AppResult};
 
 const REQUEST_TIMEOUT_SECS: u64 = 60;
 
+/// 安全获取 mutex 锁，处理中毒情况
+fn safe_lock<T>(mutex: &std::sync::Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    mutex.lock().unwrap_or_else(|poisoned| {
+        tracing::warn!("Mutex poisoned, recovering inner data");
+        poisoned.into_inner()
+    })
+}
+
 /// 将聊天消息拆为 Anthropic `system` + `messages`（仅 user/assistant）。
 pub fn split_anthropic_messages(
     messages: &[ChatMessage],
@@ -145,7 +153,7 @@ pub async fn stream_anthropic_messages(ctx: &LlmStreamContext<'_>) -> AppResult<
     let mut carry = String::new();
 
     while let Some(chunk) = stream.next().await {
-        if *ctx.abort_flag.lock().expect("abort lock") {
+        if *safe_lock(&ctx.abort_flag) {
             break;
         }
         let chunk = chunk?;

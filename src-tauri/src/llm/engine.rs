@@ -8,7 +8,9 @@ use tauri::{AppHandle, Emitter};
 use uuid::Uuid;
 
 use super::anthropic;
-use super::providers::{api_base, credential_service, uses_anthropic_messages_api};
+use super::providers::{
+    api_base, chat_completions_url, credential_service, uses_anthropic_messages_api,
+};
 use super::{ChatMessage, LlmGenerateParams, LlmStreamContext};
 use crate::credentials;
 use crate::error::{AppError, AppResult};
@@ -30,8 +32,16 @@ pub(crate) fn truncate_error_text(text: &str) -> String {
     }
 }
 
+/// 安全获取 mutex 锁，处理中毒情况
+fn safe_lock<T>(mutex: &std::sync::Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    mutex.lock().unwrap_or_else(|poisoned| {
+        tracing::warn!("Mutex poisoned, recovering inner data");
+        poisoned.into_inner()
+    })
+}
+
 fn in_flight() -> std::sync::MutexGuard<'static, Option<HashMap<String, AbortFlag>>> {
-    IN_FLIGHT.lock().expect("in_flight lock")
+    safe_lock(&IN_FLIGHT)
 }
 
 fn resolve_model(provider: &str, model: Option<String>) -> String {
@@ -72,7 +82,7 @@ async fn stream_openai_compatible(ctx: LlmStreamContext<'_>) -> AppResult<()> {
         body["messages"] = serde_json::Value::Array(msgs);
     }
 
-    let url = format!("{}/chat/completions", ctx.base);
+    let url = chat_completions_url(ctx.base);
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(REQUEST_TIMEOUT_SECS))
         .build()
@@ -103,7 +113,7 @@ async fn stream_openai_compatible(ctx: LlmStreamContext<'_>) -> AppResult<()> {
     let mut index = 0u64;
 
     while let Some(chunk) = stream.next().await {
-        if *ctx.abort_flag.lock().expect("abort lock") {
+        if *safe_lock(&ctx.abort_flag) {
             break;
         }
         let chunk = chunk?;
@@ -150,8 +160,16 @@ pub async fn llm_generate_stream(app: AppHandle, params: LlmGenerateParams) -> A
             .insert(request_id.clone(), AbortFlag(abort_flag.clone()));
     }
 
-    let api_key = credentials::get_secret(&credential_service(&params.provider))?;
-    let base = api_base(&params.provider, params.custom_base_url.as_deref());
+    let api_key = match credentials::get_secret(&credential_service(&params.provider)) {
+        Ok(key) => key,
+        Err(_) if params.provider == "ollama" => String::new(),
+        Err(e) => return Err(e),
+    };
+    let base = if let Some(ref custom) = params.custom_base_url {
+        custom.clone()
+    } else {
+        api_base(&params.provider, None)
+    };
     let model = resolve_model(&params.provider, params.model.clone());
 
     let mut messages = params.messages.clone();
@@ -184,7 +202,7 @@ pub async fn llm_generate_stream(app: AppHandle, params: LlmGenerateParams) -> A
 pub fn llm_abort(request_id: &str) -> AppResult<()> {
     if let Some(map) = in_flight().as_mut() {
         if let Some(flag) = map.get(request_id) {
-            *flag.0.lock().expect("abort lock") = true;
+            *safe_lock(&flag.0) = true;
         }
     }
     Ok(())
