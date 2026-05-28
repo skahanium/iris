@@ -15,23 +15,36 @@ use crate::error::AppResult;
 
 // ─── Retrieval Request ───────────────────────────────────
 
+/// 检索请求，定义查询内容和检索参数。
 #[derive(Debug, Clone)]
 pub struct RetrievalRequest {
+    /// 用户查询文本
     pub query: String,
+    /// 最大返回结果数
     pub max_results: usize,
+    /// 启用的检索层配置
     pub layers: RetrievalLayers,
-    pub note_context: Option<String>, // current note path for graph/backlink boost
+    /// 当前笔记路径，用于图谱反向链接增强
+    pub note_context: Option<String>,
+    /// 当前笔记的文件 ID，用于图谱邻居检索
     pub file_id_context: Option<i64>,
+    /// 检索范围约束
     pub scope: RetrievalScope,
 }
 
+/// 检索层开关，控制启用哪些检索通道。
 #[derive(Debug, Clone)]
 pub struct RetrievalLayers {
+    /// 全文检索（FTS5 关键词匹配）
     pub fts: bool,
+    /// 向量检索（sqlite-vec 语义相似度）
     pub vector: bool,
+    /// 图谱检索（已确认的链接邻居）
     pub graph: bool,
-    pub exact: bool,    // regulation exact match
-    pub template: bool, // genre template match
+    /// 精确匹配（法规条文号解析）
+    pub exact: bool,
+    /// 模板匹配（文种模板）
+    pub template: bool,
 }
 
 impl Default for RetrievalLayers {
@@ -48,7 +61,26 @@ impl Default for RetrievalLayers {
 
 // ─── Unified Retrieval ───────────────────────────────────
 
-/// Execute hybrid retrieval and return ContextPackets.
+/// 执行混合检索，返回融合评分后的证据包列表。
+///
+/// 按以下顺序依次检索各层，结果合并后由 [`fuse_and_rank`] 统一评分：
+///
+/// 1. **FTS** — FTS5 全文关键词匹配
+/// 2. **Vector** — sqlite-vec 向量相似度（chunks / anchors / regulations）
+/// 3. **Graph** — 已确认链接的邻居文件
+/// 4. **Exact** — 法规条文号精确解析（如 `《纪律处分条例》第六条`）
+/// 5. **Template** — 文种模板关键词匹配
+///
+/// 各层内部错误会被静默忽略（表不存在等情况），不会中断整体检索。
+///
+/// # Arguments
+///
+/// - `conn` — SQLite 数据库连接
+/// - `request` — 检索请求参数
+///
+/// # Returns
+///
+/// 按加权评分降序排列的证据包列表，已去重且不超过 `max_results`。
 pub fn hybrid_retrieve(
     conn: &Connection,
     request: &RetrievalRequest,
@@ -110,7 +142,10 @@ pub fn hybrid_retrieve(
     Ok(packets)
 }
 
-/// Compute a stable hash for a retrieval request (query + layers + max_results).
+/// 计算检索请求的稳定哈希值，用于缓存键。
+///
+/// 基于 `query`、`layers` 开关和 `max_results` 生成，
+/// 不包含 `note_context` 和 `file_id_context`（相同查询在不同笔记上下文中应共享缓存）。
 pub fn query_hash(request: &RetrievalRequest) -> String {
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     request.query.hash(&mut hasher);
@@ -123,9 +158,10 @@ pub fn query_hash(request: &RetrievalRequest) -> String {
     format!("{:016x}", hasher.finish())
 }
 
-/// Cached wrapper around [`hybrid_retrieve`].
+/// [`hybrid_retrieve`] 的缓存包装。
 ///
-/// Returns cached results on hit; on miss, runs retrieval and caches the result.
+/// 命中缓存时直接返回；未命中时执行检索并缓存结果。
+/// 缓存键由 [`query_hash`] 生成。
 pub fn hybrid_retrieve_cached(
     conn: &Connection,
     request: &RetrievalRequest,

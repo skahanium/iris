@@ -8,6 +8,7 @@
 
 use crate::ai_runtime::{AiScene, ContextPacket, ToolSpec};
 use crate::error::{AppError, AppResult};
+use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use tauri::{AppHandle, Emitter};
@@ -24,26 +25,39 @@ pub struct ProviderConfig {
     pub slot: CapabilitySlot,
 }
 
-/// Capability slots for model selection.
+/// 能力槽位，用于 provider/model 选择。
+///
+/// 每个场景映射到一个槽位，每个槽位可配置不同的 provider。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CapabilitySlot {
+    /// 快速响应（知识查阅等简单任务）
     Fast,
+    /// 文稿写作（范文学习、写作辅助）
     Writer,
+    /// 深度推理（学术研究、多材料论证）
     Reasoner,
+    /// 长上下文（大文档处理）
     LongContext,
+    /// 文本嵌入（向量检索）
     Embedding,
+    /// 重排序（检索结果重排）
     Reranker,
+    /// 本地私有模型（离线场景）
     LocalPrivate,
 }
 
-/// Message role for LLM conversation.
+/// LLM 对话消息角色。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum MessageRole {
+    /// 系统提示（persona / rules / evidence）
     System,
+    /// 用户消息
     User,
+    /// 助手回复
     Assistant,
+    /// 工具调用结果
     Tool,
 }
 
@@ -114,6 +128,21 @@ pub struct TokenUsage {
     pub prompt_tokens: u32,
     pub completion_tokens: u32,
     pub total_tokens: u32,
+    #[serde(default)]
+    pub prompt_cache_hit_tokens: u32,
+    #[serde(default)]
+    pub prompt_cache_miss_tokens: u32,
+}
+
+fn parse_usage(json: &serde_json::Value) -> TokenUsage {
+    let usage = &json["usage"];
+    TokenUsage {
+        prompt_tokens: usage["prompt_tokens"].as_u64().unwrap_or(0) as u32,
+        completion_tokens: usage["completion_tokens"].as_u64().unwrap_or(0) as u32,
+        total_tokens: usage["total_tokens"].as_u64().unwrap_or(0) as u32,
+        prompt_cache_hit_tokens: usage["prompt_cache_hit_tokens"].as_u64().unwrap_or(0) as u32,
+        prompt_cache_miss_tokens: usage["prompt_cache_miss_tokens"].as_u64().unwrap_or(0) as u32,
+    }
 }
 
 /// Streaming event emitted to frontend.
@@ -149,20 +178,28 @@ pub enum StreamEventData {
 /// Model Gateway: handles LLM provider communication.
 pub struct ModelGateway {
     app_handle: AppHandle,
+    client: Client,
     providers: HashMap<CapabilitySlot, ProviderConfig>,
 }
 
 impl ModelGateway {
-    /// Create a new gateway with provider configurations.
-    pub fn new(app_handle: AppHandle, providers: Vec<ProviderConfig>) -> Self {
+    /// Create a new gateway with injected HTTP client and provider configurations.
+    pub fn new(app_handle: AppHandle, client: Client, providers: Vec<ProviderConfig>) -> Self {
         let mut provider_map = HashMap::new();
         for p in providers {
             provider_map.insert(p.slot, p);
         }
         Self {
             app_handle,
+            client,
             providers: provider_map,
         }
+    }
+
+    /// Create a gateway with default pinned HTTP client.
+    pub fn with_defaults(app_handle: AppHandle, providers: Vec<ProviderConfig>) -> AppResult<Self> {
+        let client = crate::network::cert_pinning::create_pinned_client()?;
+        Ok(Self::new(app_handle, client, providers))
     }
 
     /// Get provider for a capability slot.
@@ -245,6 +282,90 @@ impl ModelGateway {
         prompt
     }
 
+    /// Stable prefix messages for cache-friendly layouts (persona + rules + evidence).
+    pub fn build_stable_prefix(
+        scene: AiScene,
+        packets: &[ContextPacket],
+        user_rules: &[String],
+    ) -> Vec<LlmMessage> {
+        let mut messages = vec![LlmMessage {
+            role: MessageRole::System,
+            content: Self::scene_persona_only(scene),
+            tool_call_id: None,
+            tool_calls: None,
+        }];
+
+        if !user_rules.is_empty() {
+            let mut rules = String::from("## 用户规则\n\n");
+            for rule in user_rules {
+                rules.push_str(&format!("- {rule}\n"));
+            }
+            messages.push(LlmMessage {
+                role: MessageRole::System,
+                content: rules,
+                tool_call_id: None,
+                tool_calls: None,
+            });
+        }
+
+        if !packets.is_empty() {
+            let mut evidence = String::from("## 证据包\n\n");
+            evidence.push_str("以下是检索到的证据材料，回答时必须引用来源：\n\n");
+            for packet in packets {
+                evidence.push_str(&format!(
+                    "### {} ({})\n",
+                    packet.citation_label, packet.title
+                ));
+                if let Some(path) = &packet.source_path {
+                    evidence.push_str(&format!("来源: {path}\n"));
+                }
+                if let Some(heading) = &packet.heading_path {
+                    evidence.push_str(&format!("章节: {heading}\n"));
+                }
+                evidence.push_str(&format!("相关度: {:.0}%\n", packet.score * 100.0));
+                evidence.push_str(&format!("{}\n\n", packet.excerpt));
+            }
+            messages.push(LlmMessage {
+                role: MessageRole::System,
+                content: evidence,
+                tool_call_id: None,
+                tool_calls: None,
+            });
+        }
+
+        messages
+    }
+
+    fn scene_persona_only(scene: AiScene) -> String {
+        match scene {
+            AiScene::KnowledgeLookup => {
+                "你是「知识管家」，帮助用户在本地知识库中查找、解释、引用材料。\n\
+                 你的回答必须基于提供的证据包，引用时使用 [citation_label] 格式。\n\
+                 如果证据不足，直接说明缺少材料，不要编造。\n"
+                    .into()
+            }
+            AiScene::ExemplarLearning => {
+                "你是「学习伴侣」，帮助用户分析范文结构、表达方式和写作技巧。\n\
+                 分析时要指出具体的结构特征、常用句式和法规引用方式。\n\
+                 可以建议可复用的模板，但必须经过用户确认才能保存。\n"
+                    .into()
+            }
+            AiScene::DraftingAssist => {
+                "你是「写作伴侣」，帮助用户在文稿创作中提供低干扰写作辅助。\n\
+                 提供结构建议、段落生成、改写润色和法规引用建议。\n\
+                 写入操作（插入文本、替换选区）必须经过用户确认。\n\
+                 反抄袭保护：不直接注入范文长段原文。\n"
+                    .into()
+            }
+            AiScene::ResearchSynthesis => {
+                "你是「研究助理」，帮助用户对多材料进行论证组织和证据缺口分析。\n\
+                 支持子命题拆解、证据矩阵构建、论证链检测和缺口识别。\n\
+                 联网研究必须经过用户授权。\n"
+                    .into()
+            }
+        }
+    }
+
     /// Convert ToolSpec to LLM tool definition format.
     pub fn tools_to_llm_format(tools: &[ToolSpec]) -> Vec<LlmToolDef> {
         tools
@@ -262,7 +383,7 @@ impl ModelGateway {
 
     /// Send a request to the LLM provider (non-streaming).
     pub async fn send_request(&self, request: GatewayRequest) -> AppResult<GatewayResponse> {
-        let url = format!("{}/v1/chat/completions", request.provider.base_url);
+        let url = crate::llm::providers::chat_completions_url(&request.provider.base_url);
 
         let mut body = serde_json::json!({
             "model": request.provider.model,
@@ -281,8 +402,7 @@ impl ModelGateway {
             body["temperature"] = serde_json::json!(temperature);
         }
 
-        let client = reqwest::Client::new();
-        let mut req_builder = client.post(&url).header("Content-Type", "application/json");
+        let mut req_builder = self.client.post(&url).header("Content-Type", "application/json");
 
         if let Some(api_key) = &request.provider.api_key {
             req_builder = req_builder.header("Authorization", format!("Bearer {}", api_key));
@@ -332,11 +452,7 @@ impl ModelGateway {
             })
             .unwrap_or_default();
 
-        let usage = TokenUsage {
-            prompt_tokens: json["usage"]["prompt_tokens"].as_u64().unwrap_or(0) as u32,
-            completion_tokens: json["usage"]["completion_tokens"].as_u64().unwrap_or(0) as u32,
-            total_tokens: json["usage"]["total_tokens"].as_u64().unwrap_or(0) as u32,
-        };
+        let usage = parse_usage(&json);
 
         let finish_reason = json["choices"][0]["finish_reason"]
             .as_str()
@@ -357,7 +473,7 @@ impl ModelGateway {
         request_id: &str,
         request: GatewayRequest,
     ) -> AppResult<GatewayResponse> {
-        let url = format!("{}/v1/chat/completions", request.provider.base_url);
+        let url = crate::llm::providers::chat_completions_url(&request.provider.base_url);
 
         let mut body = serde_json::json!({
             "model": request.provider.model,
@@ -377,8 +493,7 @@ impl ModelGateway {
             body["temperature"] = serde_json::json!(temperature);
         }
 
-        let client = reqwest::Client::new();
-        let mut req_builder = client.post(&url).header("Content-Type", "application/json");
+        let mut req_builder = self.client.post(&url).header("Content-Type", "application/json");
 
         if let Some(api_key) = &request.provider.api_key {
             req_builder = req_builder.header("Authorization", format!("Bearer {}", api_key));
@@ -402,6 +517,7 @@ impl ModelGateway {
         let mut full_content = String::new();
         let mut tool_calls: Vec<ToolCall> = Vec::new();
         let mut usage = TokenUsage::default();
+        let mut token_index: u32 = 0;
 
         // Process SSE stream
         let mut stream = response.bytes_stream();
@@ -427,7 +543,7 @@ impl ModelGateway {
                             usage: Some(usage.clone()),
                         },
                     };
-                    self.emit_stream_event(&event)?;
+                    self.emit_stream_event(&event, token_index)?;
                     continue;
                 }
 
@@ -442,7 +558,8 @@ impl ModelGateway {
                                 token: delta.to_string(),
                             },
                         };
-                        self.emit_stream_event(&event)?;
+                        self.emit_stream_event(&event, token_index)?;
+                        token_index += 1;
                     }
 
                     // Process tool call deltas
@@ -466,20 +583,13 @@ impl ModelGateway {
                                     event_type: StreamEventType::ToolCall,
                                     data: StreamEventData::ToolCall { tool_call },
                                 };
-                                self.emit_stream_event(&event)?;
+                                self.emit_stream_event(&event, token_index)?;
                             }
                         }
                     }
 
-                    // Update usage if present
-                    if let Some(prompt_tokens) = json["usage"]["prompt_tokens"].as_u64() {
-                        usage.prompt_tokens = prompt_tokens as u32;
-                    }
-                    if let Some(completion_tokens) = json["usage"]["completion_tokens"].as_u64() {
-                        usage.completion_tokens = completion_tokens as u32;
-                    }
-                    if let Some(total_tokens) = json["usage"]["total_tokens"].as_u64() {
-                        usage.total_tokens = total_tokens as u32;
+                    if json.get("usage").is_some() {
+                        usage = parse_usage(&json);
                     }
                 }
             }
@@ -497,24 +607,70 @@ impl ModelGateway {
         })
     }
 
-    /// Emit a stream event to the frontend.
-    fn emit_stream_event(&self, event: &StreamEvent) -> AppResult<()> {
-        let event_name = match event.event_type {
-            StreamEventType::Token => "ai:token",
-            StreamEventType::ToolCall => "ai:tool_call",
-            StreamEventType::Done => "ai:done",
-            StreamEventType::Error => "ai:error",
-        };
-        self.app_handle
-            .emit(event_name, event)
-            .map_err(|e| AppError::msg(format!("Failed to emit stream event: {}", e)))?;
+    /// Emit a stream event to the frontend (`llm:*` 与 `engine.rs` / 侧栏监听一致).
+    fn emit_stream_event(&self, event: &StreamEvent, token_index: u32) -> AppResult<()> {
+        let emit_err = |e: tauri::Error| AppError::msg(format!("Failed to emit stream event: {e}"));
+        match event.event_type {
+            StreamEventType::Token => {
+                if let StreamEventData::Token { token } = &event.data {
+                    self.app_handle
+                        .emit(
+                            "llm:token",
+                            serde_json::json!({
+                                "request_id": event.request_id,
+                                "token": token,
+                                "index": token_index,
+                            }),
+                        )
+                        .map_err(emit_err)?;
+                }
+            }
+            StreamEventType::Done => {
+                self.app_handle
+                    .emit(
+                        "llm:done",
+                        serde_json::json!({ "request_id": event.request_id }),
+                    )
+                    .map_err(emit_err)?;
+            }
+            StreamEventType::Error => {
+                let message = if let StreamEventData::Error { message } = &event.data {
+                    message.clone()
+                } else {
+                    "stream error".to_string()
+                };
+                self.app_handle
+                    .emit(
+                        "llm:error",
+                        serde_json::json!({
+                            "request_id": event.request_id,
+                            "error": message,
+                        }),
+                    )
+                    .map_err(emit_err)?;
+            }
+            StreamEventType::ToolCall => {
+                self.app_handle
+                    .emit("ai:tool_call", event)
+                    .map_err(emit_err)?;
+            }
+        }
         Ok(())
     }
 }
 
 // ─── Prompt Builder ──────────────────────────────────────
 
-/// Build context-aware prompt for drafting scene.
+/// 构建写作场景的上下文感知 prompt。
+///
+/// 将文稿大纲、光标上下文、证据包和写作规则组装为结构化 prompt。
+///
+/// # Arguments
+///
+/// - `document_outline` — 当前文稿的大纲结构
+/// - `cursor_context` — 光标邻域的文本上下文
+/// - `packets` — 参考材料证据包
+/// - `user_rules` — 用户自定义写作规则
 pub fn build_drafting_prompt(
     document_outline: &str,
     cursor_context: &str,
@@ -546,7 +702,12 @@ pub fn build_drafting_prompt(
     prompt
 }
 
-/// Build citation suggestion prompt.
+/// 构建引用建议 prompt，分析段落并推荐合适的法规引用。
+///
+/// # Arguments
+///
+/// - `paragraph` — 待分析的段落文本
+/// - `candidates` — 候选引用的证据包列表
 pub fn build_citation_prompt(paragraph: &str, candidates: &[ContextPacket]) -> String {
     let mut prompt = String::new();
 
