@@ -220,7 +220,8 @@ pub async fn execute_research(
             stream: true,
         };
 
-        let gateway = ModelGateway::new(app_handle.clone(), vec![provider_config.clone()]);
+        let gateway =
+            ModelGateway::with_defaults(app_handle.clone(), vec![provider_config.clone()])?;
         let response = gateway.send_streaming_request(request_id, request).await?;
 
         accumulate_usage(&mut total_usage, &response.usage);
@@ -493,7 +494,7 @@ async fn decompose_topic(
         stream: true,
     };
 
-    let gateway = ModelGateway::new(app_handle.clone(), vec![provider.clone()]);
+    let gateway = ModelGateway::with_defaults(app_handle.clone(), vec![provider.clone()])?;
     let response = gateway.send_streaming_request(_request_id, request).await?;
 
     accumulate_usage(usage, &response.usage);
@@ -678,7 +679,7 @@ async fn detect_argument_chains(
         stream: true,
     };
 
-    let gateway = ModelGateway::new(app_handle.clone(), vec![provider.clone()]);
+    let gateway = ModelGateway::with_defaults(app_handle.clone(), vec![provider.clone()])?;
     let response = gateway.send_streaming_request(_request_id, request).await?;
 
     accumulate_usage(usage, &response.usage);
@@ -824,7 +825,7 @@ async fn synthesize_summary(
         stream: true,
     };
 
-    let gateway = ModelGateway::new(app_handle.clone(), vec![provider.clone()]);
+    let gateway = ModelGateway::with_defaults(app_handle.clone(), vec![provider.clone()])?;
     let response = gateway.send_streaming_request(_request_id, request).await?;
 
     accumulate_usage(usage, &response.usage);

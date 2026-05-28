@@ -402,7 +402,10 @@ impl ModelGateway {
             body["temperature"] = serde_json::json!(temperature);
         }
 
-        let mut req_builder = self.client.post(&url).header("Content-Type", "application/json");
+        let mut req_builder = self
+            .client
+            .post(&url)
+            .header("Content-Type", "application/json");
 
         if let Some(api_key) = &request.provider.api_key {
             req_builder = req_builder.header("Authorization", format!("Bearer {}", api_key));
@@ -493,7 +496,10 @@ impl ModelGateway {
             body["temperature"] = serde_json::json!(temperature);
         }
 
-        let mut req_builder = self.client.post(&url).header("Content-Type", "application/json");
+        let mut req_builder = self
+            .client
+            .post(&url)
+            .header("Content-Type", "application/json");
 
         if let Some(api_key) = &request.provider.api_key {
             req_builder = req_builder.header("Authorization", format!("Bearer {}", api_key));

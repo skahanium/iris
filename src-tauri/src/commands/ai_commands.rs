@@ -258,7 +258,8 @@ pub async fn ai_send_message(
 
     // Create model gateway and send request
     let provider_name = gateway_request.provider.name.clone();
-    let gateway = ModelGateway::new(app_handle.clone(), vec![gateway_request.provider.clone()]);
+    let gateway =
+        ModelGateway::with_defaults(app_handle.clone(), vec![gateway_request.provider.clone()])?;
 
     let response = gateway
         .send_streaming_request(&request_id, gateway_request)
