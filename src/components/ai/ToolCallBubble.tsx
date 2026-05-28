@@ -1,20 +1,18 @@
-import { ChevronDown, ChevronRight, Loader2, CheckCircle2, XCircle, Wrench } from "lucide-react";
+import {
+  ChevronDown,
+  ChevronRight,
+  Loader2,
+  CheckCircle2,
+  XCircle,
+  Wrench,
+} from "lucide-react";
 import { useState } from "react";
 
 import { Badge } from "@/components/ui/badge";
+import type { ToolCallInfo, ToolCallStatus } from "@/types/ai";
 
-// ─── Types ───────────────────────────────────────────────
-
-export type ToolCallStatus = "pending" | "running" | "completed" | "failed" | "rejected";
-
-export interface ToolCallInfo {
-  id: string;
-  name: string;
-  arguments?: Record<string, unknown>;
-  status: ToolCallStatus;
-  result_summary?: string;
-  error?: string;
-}
+// Re-export for backward compatibility
+export type { ToolCallInfo, ToolCallStatus };
 
 // ─── Display Names ───────────────────────────────────────
 
@@ -44,13 +42,13 @@ function StatusIcon({ status }: { status: ToolCallStatus }) {
     case "pending":
       return <Wrench className="h-3 w-3 text-muted-foreground" />;
     case "running":
-      return <Loader2 className="h-3 w-3 text-blue-500 animate-spin" />;
+      return <Loader2 className="h-3 w-3 animate-spin text-primary" />;
     case "completed":
-      return <CheckCircle2 className="h-3 w-3 text-emerald-500" />;
+      return <CheckCircle2 className="h-3 w-3 text-foreground/70" />;
     case "failed":
-      return <XCircle className="h-3 w-3 text-red-500" />;
+      return <XCircle className="h-3 w-3 text-destructive" />;
     case "rejected":
-      return <XCircle className="h-3 w-3 text-amber-500" />;
+      return <XCircle className="h-3 w-3 text-muted-foreground" />;
   }
 }
 
@@ -82,17 +80,29 @@ export function ToolCallBubble({ toolCall }: ToolCallBubbleProps) {
   const displayName = TOOL_DISPLAY_NAMES[toolCall.name] ?? toolCall.name;
 
   return (
-    <div className="rounded-md border border-border bg-muted/30 text-xs">
+    <div className="rounded-lg border border-border/80 bg-surface-elevated text-xs shadow-sm">
       <button
         type="button"
-        className="flex w-full items-center gap-2 px-3 py-2 hover:bg-muted/50 transition-colors"
+        className="flex w-full items-center gap-2 px-3 py-2 transition-colors hover:bg-muted/50"
         onClick={() => setExpanded(!expanded)}
       >
         <StatusIcon status={toolCall.status} />
-        <Badge variant="secondary" className="text-[10px] px-1.5 py-0">
+        <Badge variant="secondary" className="px-1.5 py-0 text-[10px]">
           {displayName}
         </Badge>
-        <span className="text-muted-foreground">{statusLabel(toolCall.status)}</span>
+        <span className="text-muted-foreground">
+          {statusLabel(toolCall.status)}
+        </span>
+        {toolCall.duration_ms !== undefined && (
+          <span className="text-[10px] text-muted-foreground/70">
+            {toolCall.duration_ms}ms
+          </span>
+        )}
+        {toolCall.tokens_used !== undefined && (
+          <span className="text-[10px] text-muted-foreground/70">
+            {toolCall.tokens_used} tokens
+          </span>
+        )}
         <span className="flex-1" />
         {expanded ? (
           <ChevronDown className="h-3 w-3 text-muted-foreground" />
@@ -102,12 +112,14 @@ export function ToolCallBubble({ toolCall }: ToolCallBubbleProps) {
       </button>
 
       {expanded && (
-        <div className="border-t border-border px-3 py-2 space-y-2">
+        <div className="space-y-2 border-t border-border px-3 py-2">
           {/* Arguments */}
           {toolCall.arguments && Object.keys(toolCall.arguments).length > 0 && (
             <div>
-              <p className="text-[10px] font-medium text-muted-foreground mb-1">参数</p>
-              <pre className="text-[10px] whitespace-pre-wrap break-all bg-background/50 rounded p-2">
+              <p className="mb-1 text-[10px] font-medium text-muted-foreground">
+                参数
+              </p>
+              <pre className="whitespace-pre-wrap break-all rounded bg-background/50 p-2 text-[10px]">
                 {JSON.stringify(toolCall.arguments, null, 2)}
               </pre>
             </div>
@@ -116,15 +128,19 @@ export function ToolCallBubble({ toolCall }: ToolCallBubbleProps) {
           {/* Result summary */}
           {toolCall.result_summary && (
             <div>
-              <p className="text-[10px] font-medium text-muted-foreground mb-1">结果</p>
-              <p className="text-[10px] text-foreground/80">{toolCall.result_summary}</p>
+              <p className="mb-1 text-[10px] font-medium text-muted-foreground">
+                结果
+              </p>
+              <p className="text-[10px] text-foreground/80">
+                {toolCall.result_summary}
+              </p>
             </div>
           )}
 
           {/* Error */}
           {toolCall.error && (
             <div>
-              <p className="text-[10px] font-medium text-red-500 mb-1">错误</p>
+              <p className="mb-1 text-[10px] font-medium text-red-500">错误</p>
               <p className="text-[10px] text-red-400">{toolCall.error}</p>
             </div>
           )}

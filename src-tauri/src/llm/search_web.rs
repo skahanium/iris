@@ -10,9 +10,9 @@ use sha2::{Digest, Sha256};
 
 use crate::credentials;
 use crate::error::{AppError, AppResult};
+use crate::network::cert_pinning::{create_pinned_client, pinned_client_builder};
 
-/// Keyring 服务名，与前端 `BING_SEARCH_CREDENTIAL_SERVICE` 一致。
-pub const BING_SEARCH_CREDENTIAL_SERVICE: &str = "iris/bing-search";
+pub use crate::credentials::BING_SEARCH_CREDENTIAL_SERVICE;
 
 fn query_hash_key(query: &str) -> String {
     let mut hasher = Sha256::new();
@@ -98,16 +98,17 @@ async fn duckduckgo_search(query: &str) -> AppResult<String> {
         "https://html.duckduckgo.com/html/?q={}",
         urlencoding::encode(query)
     );
-    let client = reqwest::Client::builder()
+    let client = pinned_client_builder()
         .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
-        .build()?;
+        .build()
+        .map_err(|e| AppError::msg(format!("Failed to build HTTP client: {e}")))?;
     let html = client.get(&url).send().await?.text().await?;
     parse_ddg_html(&html)
 }
 
 async fn bing_search(query: &str) -> AppResult<String> {
     let key = credentials::get_secret(BING_SEARCH_CREDENTIAL_SERVICE)?;
-    let client = reqwest::Client::new();
+    let client = create_pinned_client()?;
     let url = format!(
         "https://api.bing.microsoft.com/v7.0/search?q={}&count=5&mkt=zh-CN",
         urlencoding::encode(query)

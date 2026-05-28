@@ -7,7 +7,9 @@ pub mod error;
 pub mod indexer;
 pub mod knowledge;
 mod llm;
+mod network;
 pub mod recycle;
+mod security;
 pub mod storage;
 pub mod version;
 mod watcher;
@@ -89,6 +91,11 @@ pub fn run() {
             commands::llm::llm_generate,
             commands::llm::llm_chat,
             commands::llm::llm_abort_cmd,
+            commands::llm_config_commands::llm_config_get,
+            commands::llm_config_commands::llm_config_set,
+            commands::llm_config_commands::llm_config_apply_deepseek_defaults,
+            commands::llm_config_commands::connectivity_status,
+            commands::llm_config_commands::llm_config_test,
             commands::graph::graph_data,
             commands::version::version_list_cmd,
             commands::version::version_preview_cmd,

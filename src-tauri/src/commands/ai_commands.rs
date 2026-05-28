@@ -6,10 +6,8 @@
 use crate::ai_runtime::{
     context_planner::plan_context,
     guardrails::{self, GuardResult},
-    model_gateway::{
-        CapabilitySlot, GatewayRequest, LlmMessage, MessageRole, ModelGateway, ProviderConfig,
-    },
-    packet_builder::build_context_packets,
+    model_gateway::{GatewayRequest, LlmMessage, MessageRole, ModelGateway},
+    packet_builder::{build_context_packets, max_results_from_budget, ContextBuildOptions},
     retrieval_scope::ContextScopeDto,
     scene_router::resolve_scene,
     session::SessionManager,
@@ -17,14 +15,17 @@ use crate::ai_runtime::{
     trace::{TraceRecorder, TraceStatus},
     AiScene, AssembledContext,
 };
+use std::sync::Arc;
+
 use crate::app::AppState;
 use crate::error::{AppError, AppResult};
 use tauri::{Emitter, State};
+use tracing::info;
 
 /// Assemble context with intent detection and retrieval planning.
 #[tauri::command]
 pub async fn context_assemble(
-    state: State<'_, AppState>,
+    state: State<'_, Arc<AppState>>,
     scene: String,
     note_path: Option<String>,
     _note_content_hash: Option<String>,
@@ -68,6 +69,16 @@ pub async fn context_assemble(
 
     let vault = state.vault_path()?;
     let user_scope = context_scope.unwrap_or_default();
+    let resolved = crate::llm::config::resolve_for_scene(&state.db, scene)?;
+    let build_opts = ContextBuildOptions {
+        max_results: max_results_from_budget(
+            resolved.input_budget,
+            scene,
+            resolved.context_strategy,
+        ),
+        strategy: resolved.context_strategy,
+        input_budget: resolved.input_budget,
+    };
     let (packets, context_status) = state.db.with_conn(|conn| {
         build_context_packets(
             conn,
@@ -77,6 +88,7 @@ pub async fn context_assemble(
             file_id,
             primary_query,
             &user_scope,
+            build_opts,
         )
     })?;
 
@@ -97,7 +109,7 @@ pub async fn context_assemble(
 /// Send an AI message with full LLM pipeline.
 #[tauri::command]
 pub async fn ai_send_message(
-    state: State<'_, AppState>,
+    state: State<'_, Arc<AppState>>,
     app_handle: tauri::AppHandle,
     scene: String,
     session_id: Option<i64>,
@@ -110,7 +122,7 @@ pub async fn ai_send_message(
     let scene: AiScene = serde_json::from_str(&format!("\"{scene}\""))
         .map_err(|e| AppError::msg(format!("invalid scene: {e}")))?;
 
-    let profile = resolve_scene(scene);
+    let _profile = resolve_scene(scene);
 
     // Start trace
     TraceRecorder::start(&state.db, &request_id, scene)?;
@@ -173,6 +185,16 @@ pub async fn ai_send_message(
             .unwrap_or(None),
         None => None,
     };
+    let resolved = crate::llm::config::resolve_for_scene(&state.db, scene)?;
+    let build_opts = ContextBuildOptions {
+        max_results: max_results_from_budget(
+            resolved.input_budget,
+            scene,
+            resolved.context_strategy,
+        ),
+        strategy: resolved.context_strategy,
+        input_budget: resolved.input_budget,
+    };
     let (packets, _context_status) = state.db.with_conn(|conn| {
         build_context_packets(
             conn,
@@ -182,6 +204,7 @@ pub async fn ai_send_message(
             file_id,
             &message,
             &user_scope,
+            build_opts,
         )
     })?;
 
@@ -195,18 +218,9 @@ pub async fn ai_send_message(
         packets
     };
 
-    // Build system prompt
-    let system_prompt = ModelGateway::build_system_prompt(scene, &filtered_packets, &[]);
+    // Cache-friendly stable prefix + session history (variable content in history tail)
+    let mut messages = ModelGateway::build_stable_prefix(scene, &filtered_packets, &[]);
 
-    // Build messages array
-    let mut messages = vec![LlmMessage {
-        role: MessageRole::System,
-        content: system_prompt,
-        tool_call_id: None,
-        tool_calls: None,
-    }];
-
-    // Add session history
     for msg in &history {
         let role = match msg.role.as_str() {
             "user" => MessageRole::User,
@@ -222,8 +236,7 @@ pub async fn ai_send_message(
         });
     }
 
-    // Get provider configuration
-    let provider_config = get_provider_config(&state, scene).await?;
+    let provider_config = resolved.to_provider_config(scene);
 
     // Build tool definitions
     let registry = ToolRegistry::new();
@@ -235,7 +248,7 @@ pub async fn ai_send_message(
         provider: provider_config,
         messages,
         tools: llm_tools,
-        max_tokens: Some(profile.default_token_budget as u32),
+        max_tokens: Some(resolved.output_budget),
         temperature: Some(0.7),
         stream: true,
     };
@@ -245,7 +258,8 @@ pub async fn ai_send_message(
 
     // Create model gateway and send request
     let provider_name = gateway_request.provider.name.clone();
-    let gateway = ModelGateway::new(app_handle.clone(), vec![gateway_request.provider.clone()]);
+    let gateway =
+        ModelGateway::with_defaults(app_handle.clone(), vec![gateway_request.provider.clone()])?;
 
     let response = gateway
         .send_streaming_request(&request_id, gateway_request)
@@ -316,6 +330,14 @@ pub async fn ai_send_message(
     let citation_result = guardrails::verify_citations(&assistant_content, &filtered_packets);
     let citation_valid = matches!(citation_result, GuardResult::Pass);
 
+    if response.usage.prompt_cache_hit_tokens > 0 || response.usage.prompt_cache_miss_tokens > 0 {
+        let _ = crate::llm::config::save_usage_last(
+            &state.db,
+            response.usage.prompt_cache_hit_tokens,
+            response.usage.prompt_cache_miss_tokens,
+        );
+    }
+
     // Complete trace
     TraceRecorder::complete(
         &state.db,
@@ -342,6 +364,14 @@ pub async fn ai_send_message(
         None,
     )?;
 
+    info!(
+        scene = ?scene,
+        provider = %provider_name,
+        tokens_input = %response.usage.prompt_tokens,
+        tokens_output = %response.usage.completion_tokens,
+        "AI request completed"
+    );
+
     Ok(serde_json::json!({
         "request_id": request_id,
         "session_id": sid,
@@ -357,7 +387,7 @@ pub async fn ai_send_message(
 /// Handle tool confirmation from the user.
 #[tauri::command]
 pub async fn tool_confirm(
-    _state: State<'_, AppState>,
+    _state: State<'_, Arc<AppState>>,
     app_handle: tauri::AppHandle,
     request_id: String,
     tool_call_id: String,
@@ -421,7 +451,7 @@ pub fn ai_list_tools(scene: String) -> AppResult<Vec<serde_json::Value>> {
 
 /// Re-index all knowledge: anchors, regulations, block links.
 #[tauri::command]
-pub async fn knowledge_reindex(state: State<'_, AppState>) -> AppResult<serde_json::Value> {
+pub async fn knowledge_reindex(state: State<'_, Arc<AppState>>) -> AppResult<serde_json::Value> {
     let vault = state.vault_path()?;
     let mut stats = serde_json::json!({
         "anchors": 0,
@@ -445,7 +475,7 @@ pub async fn knowledge_reindex(state: State<'_, AppState>) -> AppResult<serde_js
 /// Hybrid search across all knowledge layers.
 #[tauri::command]
 pub async fn search_hybrid(
-    state: State<'_, AppState>,
+    state: State<'_, Arc<AppState>>,
     query: String,
     scene: Option<String>,
     note_path: Option<String>,
@@ -505,65 +535,9 @@ pub async fn search_hybrid(
 
 // ─── Helper Functions ────────────────────────────────────
 
-/// Get provider configuration for a scene.
-async fn get_provider_config(
-    state: &State<'_, AppState>,
-    scene: AiScene,
-) -> AppResult<ProviderConfig> {
-    let slot = ModelGateway::slot_for_scene(scene);
-
-    // Try to get model preference from user_profile
-    let provider_name: Option<String> = state.db.with_conn(|conn| {
-        let result: Result<String, _> = conn.query_row(
-            "SELECT value FROM user_profile WHERE key = 'model_preferences'",
-            [],
-            |row| row.get(0),
-        );
-        match result {
-            Ok(json_str) => {
-                if let Ok(v) = serde_json::from_str::<serde_json::Value>(&json_str) {
-                    if let Some(model) = v.get(format!("{:?}", slot)).and_then(|v| v.as_str()) {
-                        return Ok(Some(model.to_string()));
-                    }
-                }
-                Ok(None)
-            }
-            Err(_) => Ok(None),
-        }
-    })?;
-
-    // Default provider configuration
-    let base_url: String = state.db.with_conn(|conn| {
-        let result: Result<String, _> = conn.query_row(
-            "SELECT value FROM settings WHERE key = 'llm_base_url'",
-            [],
-            |row| row.get(0),
-        );
-        Ok(result.unwrap_or_else(|_| "https://api.deepseek.com".to_string()))
-    })?;
-
-    let model = provider_name.unwrap_or_else(|| match slot {
-        CapabilitySlot::Fast => "deepseek-chat".to_string(),
-        CapabilitySlot::Writer => "deepseek-chat".to_string(),
-        CapabilitySlot::Reasoner => "deepseek-reasoner".to_string(),
-        _ => "deepseek-chat".to_string(),
-    });
-
-    // Get API key from credential store
-    let api_key = crate::credentials::get_api_key("llm_api_key").ok();
-
-    Ok(ProviderConfig {
-        name: format!("{:?}", slot),
-        base_url,
-        api_key,
-        model,
-        slot,
-    })
-}
-
 /// Auto-execute a read-only tool.
 async fn execute_tool_auto(
-    state: &State<'_, AppState>,
+    state: &State<'_, Arc<AppState>>,
     _scene: AiScene,
     tool_name: &str,
     args_str: &str,

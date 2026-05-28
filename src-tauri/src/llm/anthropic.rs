@@ -1,14 +1,12 @@
 use futures_util::StreamExt;
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue, CONTENT_TYPE};
 use serde_json::Value;
-use std::time::Duration;
 use tauri::Emitter;
 
 use super::providers::{ANTHROPIC_API_VERSION, ANTHROPIC_DEFAULT_MAX_TOKENS};
 use super::{ChatMessage, LlmStreamContext};
 use crate::error::{AppError, AppResult};
-
-const REQUEST_TIMEOUT_SECS: u64 = 60;
+use crate::network::cert_pinning::create_pinned_client;
 
 /// 将聊天消息拆为 Anthropic `system` + `messages`（仅 user/assistant）。
 pub fn split_anthropic_messages(
@@ -115,10 +113,7 @@ pub async fn stream_anthropic_messages(ctx: &LlmStreamContext<'_>) -> AppResult<
         HeaderValue::from_static(ANTHROPIC_API_VERSION),
     );
 
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(REQUEST_TIMEOUT_SECS))
-        .build()
-        .map_err(|e| AppError::msg(format!("Failed to build HTTP client: {e}")))?;
+    let client = create_pinned_client()?;
     let response = client
         .post(&url)
         .headers(headers)
@@ -145,7 +140,7 @@ pub async fn stream_anthropic_messages(ctx: &LlmStreamContext<'_>) -> AppResult<
     let mut carry = String::new();
 
     while let Some(chunk) = stream.next().await {
-        if *ctx.abort_flag.lock().expect("abort lock") {
+        if *super::safe_lock(&ctx.abort_flag) {
             break;
         }
         let chunk = chunk?;

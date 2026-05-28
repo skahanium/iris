@@ -30,8 +30,15 @@ import {
   type MentionToken,
 } from "@/lib/ai-context-scope";
 import { SCENE_META } from "@/lib/ai/scene-types";
+import { invokeErrorMessage } from "@/lib/credentials";
+import { setActiveAiScene } from "@/hooks/useConnectivityStatus";
 import { useListboxKeyboard } from "@/hooks/useListboxKeyboard";
-import type { AiScene, AssembledContext, ContextPacket } from "@/types/ai";
+import type {
+  AiScene,
+  AssembledContext,
+  ContextPacket,
+  ExecutionPlan,
+} from "@/types/ai";
 import type { FileListItem, LlmTokenEvent } from "@/types/ipc";
 
 import { AiMentionPopover } from "./AiMentionPopover";
@@ -39,6 +46,7 @@ import { AiMessageList, type ChatLine } from "./AiMessageList";
 import { ContextPacketDrawer } from "./ContextPacketDrawer";
 import { ContextScopeChips } from "./ContextScopeChips";
 import { ContextStatusBar } from "./ContextStatusBar";
+import { ExecutionPlanPreview } from "./ExecutionPlanPreview";
 import { AiPanelHeader } from "./AiPanelHeader";
 import {
   ToolConfirmDialog,
@@ -60,7 +68,14 @@ export function AiPanel({
   onInsertText: _onInsertText,
   onReplaceSelection: _onReplaceSelection,
 }: AiPanelProps) {
-  const [scene, setScene] = useState<AiScene>("knowledge_lookup");
+  const [scene, setSceneState] = useState<AiScene>("knowledge_lookup");
+  const setScene = useCallback((next: AiScene) => {
+    setSceneState(next);
+    setActiveAiScene(next);
+  }, []);
+  useEffect(() => {
+    setActiveAiScene(scene);
+  }, [scene]);
   const [messages, setMessages] = useState<ChatLine[]>([]);
   const [input, setInput] = useState("");
   const [streaming, setStreaming] = useState(false);
@@ -73,9 +88,14 @@ export function AiPanel({
   const [packetsOpen, setPacketsOpen] = useState(false);
   const [toolConfirmRequest, setToolConfirmRequest] =
     useState<ToolConfirmRequest | null>(null);
+  const [executionPlan, setExecutionPlan] = useState<ExecutionPlan | null>(
+    null,
+  );
 
   const streamBuf = useRef("");
   const requestIdRef = useRef<string | null>(null);
+  /** 侧栏 `send()` 进行中，用于过滤其它 LLM 流与 `llm:done` 竞态 */
+  const panelSendActiveRef = useRef(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const [vaultFiles, setVaultFiles] = useState<FileListItem[]>([]);
   const [mentionOpen, setMentionOpen] = useState(false);
@@ -185,16 +205,21 @@ export function AiPanel({
     let cleanup: (() => void) | undefined;
 
     const tokenPromise = listenLlmToken((ev: LlmTokenEvent) => {
-      if (requestIdRef.current && ev.request_id !== requestIdRef.current)
+      if (!panelSendActiveRef.current) return;
+      if (!requestIdRef.current) {
+        requestIdRef.current = ev.request_id;
+      } else if (ev.request_id !== requestIdRef.current) {
         return;
+      }
       streamBuf.current += ev.token;
+      const snapshot = streamBuf.current;
       setMessages((prev) => {
         const copy = [...prev];
         const last = copy[copy.length - 1];
         if (last?.role === "assistant") {
-          copy[copy.length - 1] = { ...last, content: streamBuf.current };
+          copy[copy.length - 1] = { ...last, content: snapshot };
         } else {
-          copy.push({ role: "assistant", content: streamBuf.current });
+          copy.push({ role: "assistant", content: snapshot });
         }
         return copy;
       });
@@ -202,15 +227,30 @@ export function AiPanel({
       unlistenToken = fn;
     });
 
-    const donePromise = listenLlmDone(() => {
+    const donePromise = listenLlmDone((ev) => {
+      if (!panelSendActiveRef.current) return;
+      if (
+        requestIdRef.current &&
+        ev.request_id &&
+        ev.request_id !== requestIdRef.current
+      ) {
+        return;
+      }
       setStreaming(false);
-      streamBuf.current = "";
-      requestIdRef.current = null;
     }).then((fn) => {
       unlistenDone = fn;
     });
 
     const errorPromise = listenLlmError((ev) => {
+      if (!panelSendActiveRef.current) return;
+      if (
+        requestIdRef.current &&
+        ev.request_id &&
+        ev.request_id !== requestIdRef.current
+      ) {
+        return;
+      }
+      panelSendActiveRef.current = false;
       setStreaming(false);
       streamBuf.current = "";
       requestIdRef.current = null;
@@ -255,26 +295,21 @@ export function AiPanel({
   }, []);
 
   const assembleContext = useCallback(
-    async (query: string) => {
-      try {
-        const result: AssembledContext = await contextAssemble({
-          scene,
-          note_path: notePath,
-          note_content_hash: null,
-          query,
-          session_id: sessionId,
-          context_scope: contextScope,
-        });
-        setPackets(result.packets);
-        setContextStatusData(result.context_status);
-        if (result.packets.length > 0) {
-          setPacketsOpen(true);
-        }
-        return result;
-      } catch {
-        setContextStatusData(null);
-        return null;
+    async (query: string): Promise<AssembledContext> => {
+      const result = await contextAssemble({
+        scene,
+        note_path: notePath,
+        note_content_hash: null,
+        query,
+        session_id: sessionId,
+        context_scope: contextScope,
+      });
+      setPackets(result.packets);
+      setContextStatusData(result.context_status);
+      if (result.packets.length > 0) {
+        setPacketsOpen(true);
       }
+      return result;
     },
     [scene, notePath, sessionId, contextScope],
   );
@@ -287,14 +322,12 @@ export function AiPanel({
     setMessages((m) => [...m, { role: "user", content: userMsg }]);
     setStreaming(true);
     streamBuf.current = "";
-
-    const context = await assembleContext(rawMsg);
-    if (!context) {
-      setStreaming(false);
-      return;
-    }
+    requestIdRef.current = null;
+    panelSendActiveRef.current = true;
 
     try {
+      await assembleContext(rawMsg);
+
       const result = await aiSendMessage({
         scene,
         session_id: sessionId,
@@ -310,35 +343,49 @@ export function AiPanel({
         setSessionId(result.session_id);
       }
 
-      setMessages((m) => [
-        ...m,
-        {
-          role: "assistant",
-          content: result.content ?? "",
-          toolCalls: result.tool_calls?.map(
-            (tc: { function: { name: string }; id: string }) => ({
-              id: tc.id,
-              name: tc.function.name,
-              status: "pending" as const,
-            }),
-          ),
-        },
-      ]);
+      const toolCalls = result.tool_calls?.map(
+        (tc: { function: { name: string }; id: string }) => ({
+          id: tc.id,
+          name: tc.function.name,
+          status: "pending" as const,
+        }),
+      );
+      const finalContent = result.content?.trim() || streamBuf.current || "";
 
-      if (result.status === "completed" && result.content) {
-        setStreaming(false);
-        requestIdRef.current = null;
-      }
+      setMessages((m) => {
+        const copy = [...m];
+        const last = copy[copy.length - 1];
+        if (last?.role === "assistant") {
+          copy[copy.length - 1] = {
+            ...last,
+            content: finalContent,
+            toolCalls,
+          };
+        } else {
+          copy.push({
+            role: "assistant",
+            content: finalContent,
+            toolCalls,
+          });
+        }
+        return copy;
+      });
+
+      setStreaming(false);
     } catch (e) {
       setStreaming(false);
-      requestIdRef.current = null;
+      setContextStatusData(null);
       setMessages((m) => [
         ...m,
         {
           role: "system",
-          content: `错误: ${e instanceof Error ? e.message : String(e)}`,
+          content: `错误: ${invokeErrorMessage(e)}`,
         },
       ]);
+    } finally {
+      panelSendActiveRef.current = false;
+      requestIdRef.current = null;
+      streamBuf.current = "";
     }
   }, [
     input,
@@ -356,6 +403,7 @@ export function AiPanel({
     if (id) {
       void llmAbort(id);
     }
+    panelSendActiveRef.current = false;
     setStreaming(false);
     streamBuf.current = "";
     requestIdRef.current = null;
@@ -394,6 +442,15 @@ export function AiPanel({
     );
   }, []);
 
+  const handlePlanApprove = useCallback(() => {
+    setExecutionPlan(null);
+    void send();
+  }, [send]);
+
+  const handlePlanModify = useCallback(() => {
+    setExecutionPlan(null);
+  }, []);
+
   const sceneLabel = SCENE_META[scene].label;
 
   return (
@@ -416,12 +473,19 @@ export function AiPanel({
         onSelect={togglePacketSelection}
       />
 
+      {executionPlan && (
+        <div className="px-4 py-2">
+          <ExecutionPlanPreview
+            plan={executionPlan}
+            onApprove={handlePlanApprove}
+            onModify={handlePlanModify}
+          />
+        </div>
+      )}
+
       <AiMessageList messages={messages} streaming={streaming} />
 
-      <ContextScopeChips
-        tokens={mentionTokens}
-        onRemove={removeMentionToken}
-      />
+      <ContextScopeChips tokens={mentionTokens} onRemove={removeMentionToken} />
 
       <AiComposer
         value={input}

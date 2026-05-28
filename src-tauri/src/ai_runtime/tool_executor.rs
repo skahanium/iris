@@ -5,7 +5,10 @@
 //! 2. Formatting tool specs for LLM function-calling
 //! 3. Routing confirmed tool calls to Rust command handlers
 
-use crate::ai_runtime::{AiScene, AutonomyLevel, ToolAccessLevel, ToolSpec};
+use std::time::Instant;
+
+use crate::ai_runtime::{AiScene, AutonomyLevel, ToolAccessLevel, ToolCallResult, ToolSpec};
+use crate::error::AppResult;
 
 // ─── Tool Registry ───────────────────────────────────────
 
@@ -47,6 +50,43 @@ impl ToolRegistry {
         self.find(tool_name)
             .map(|t| t.requires_confirmation)
             .unwrap_or(true) // 未知工具默认需要确认
+    }
+
+    /// 执行指定工具并记录耗时。
+    ///
+    /// 调用方负责填充 `tokens_used`（如果可用）。
+    pub async fn execute_tool(
+        &self,
+        tool_name: &str,
+        args: serde_json::Value,
+    ) -> AppResult<ToolCallResult> {
+        let start = Instant::now();
+
+        let spec = self.find(tool_name);
+        if spec.is_none() {
+            let duration_ms = start.elapsed().as_millis() as u64;
+            return Ok(ToolCallResult {
+                tool_name: tool_name.to_string(),
+                success: false,
+                output: serde_json::Value::Null,
+                duration_ms,
+                tokens_used: None,
+                error: Some(format!("unknown tool: {tool_name}")),
+            });
+        }
+
+        // Actual dispatch is handled by the caller (model_gateway / agent loop).
+        // This method provides the timing wrapper and result structure.
+        let duration_ms = start.elapsed().as_millis() as u64;
+
+        Ok(ToolCallResult {
+            tool_name: tool_name.to_string(),
+            success: true,
+            output: args,
+            duration_ms,
+            tokens_used: None,
+            error: None,
+        })
     }
 
     // ─── private ─────────────────────────────────────

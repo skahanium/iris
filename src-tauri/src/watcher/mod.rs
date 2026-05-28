@@ -4,6 +4,7 @@ use std::time::Duration;
 use notify::{EventKind, RecursiveMode};
 use notify_debouncer_full::{new_debouncer, DebounceEventResult, Debouncer, FileIdMap};
 use tauri::{AppHandle, Emitter};
+use tracing::info;
 
 use crate::app::AppState;
 use crate::error::AppResult;
@@ -101,6 +102,12 @@ fn handle_file_event(
     let hash = file_hash(path)?;
     let rel = relative_path(&vault, path)?;
     state.db.with_conn(|conn| index_file(conn, &vault, path))?;
+
+    info!(
+        path = %path.display(),
+        event_type = %event_type,
+        "File change detected and processed"
+    );
 
     let _ = app.emit(
         "file:changed",

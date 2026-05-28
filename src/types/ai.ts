@@ -62,6 +62,15 @@ export interface ToolSpec {
   max_results: number | null;
 }
 
+export interface ToolCallResult {
+  tool_name: string;
+  success: boolean;
+  output: unknown;
+  duration_ms: number;
+  tokens_used?: number;
+  error?: string;
+}
+
 /** Retrieval scope from `@` mentions (IPC camelCase). */
 export interface ContextScope {
   paths: string[];
@@ -90,6 +99,39 @@ export interface ToolConfirmRequest {
   modified_args?: unknown;
 }
 
+export type ToolCallStatus =
+  | "pending"
+  | "running"
+  | "completed"
+  | "failed"
+  | "rejected";
+
+export interface ToolCallInfo {
+  id: string;
+  name: string;
+  arguments?: Record<string, unknown>;
+  status: ToolCallStatus;
+  result_summary?: string;
+  error?: string;
+  duration_ms?: number;
+  tokens_used?: number;
+}
+
+/// 检索计划步骤
+export interface RetrievalStep {
+  layer: "fts" | "vector" | "graph" | "exact" | "template";
+  query: string;
+  expected_results: number;
+  priority: number;
+}
+
+/// 执行计划
+export interface ExecutionPlan {
+  steps: RetrievalStep[];
+  estimated_tokens: number;
+  estimated_duration_ms: number;
+}
+
 // Scene display metadata
 export interface SceneMeta {
   scene: AiScene;
@@ -97,4 +139,23 @@ export interface SceneMeta {
   description: string;
   icon: string;
   defaultScope: "global" | "document";
+}
+
+export type EvidenceRelationType =
+  | "supports"
+  | "contradicts"
+  | "prerequisite"
+  | "consequence"
+  | "parallel";
+
+export interface EvidenceRelation {
+  sourceId: string;
+  targetId: string;
+  relationType: EvidenceRelationType;
+  confidence: number;
+}
+
+export interface EvidenceChain {
+  packets: ContextPacket[];
+  relations: EvidenceRelation[];
 }
