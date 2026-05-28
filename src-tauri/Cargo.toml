@@ -44,6 +44,11 @@ toml = "0.8"
 
 [dev-dependencies]
 tempfile = "3"
+criterion = { version = "0.5", features = ["html_reports"] }
+
+[[bench]]
+name = "ai_benchmarks"
+harness = false
 
 [[test]]
 name = "file_ops"
