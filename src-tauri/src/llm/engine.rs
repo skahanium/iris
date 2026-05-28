@@ -1,6 +1,5 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
 
 use futures_util::StreamExt;
 use reqwest::header::{AUTHORIZATION, CONTENT_TYPE};
@@ -13,8 +12,7 @@ use super::{ChatMessage, LlmGenerateParams, LlmStreamContext};
 use crate::credentials;
 use crate::error::{AppError, AppResult};
 use crate::llm::search_web::fetch_search_context;
-
-const REQUEST_TIMEOUT_SECS: u64 = 60;
+use crate::network::cert_pinning::create_pinned_client;
 
 struct AbortFlag(Arc<Mutex<bool>>);
 
@@ -73,10 +71,7 @@ async fn stream_openai_compatible(ctx: LlmStreamContext<'_>) -> AppResult<()> {
     }
 
     let url = format!("{}/chat/completions", ctx.base);
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(REQUEST_TIMEOUT_SECS))
-        .build()
-        .map_err(|e| AppError::msg(format!("Failed to build HTTP client: {e}")))?;
+    let client = create_pinned_client()?;
     let response = client
         .post(&url)
         .header(CONTENT_TYPE, "application/json")
