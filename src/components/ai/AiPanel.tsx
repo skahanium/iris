@@ -1,5 +1,5 @@
 import { marked } from "marked";
-import { Send, Layers, Settings2 } from "lucide-react";
+import { Send, Layers } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { Button } from "@/components/ui/button";
@@ -25,6 +25,8 @@ import type { AiScene, AssembledContext, ContextPacket } from "@/types/ai";
 import type { LlmTokenEvent } from "@/types/ipc";
 
 import { ContextPacketList } from "./ContextPacketCard";
+import { ContextStatusBar } from "./ContextStatusBar";
+import { ToolCallList, type ToolCallInfo } from "./ToolCallBubble";
 import {
   ToolConfirmDialog,
   type ToolConfirmRequest,
@@ -76,7 +78,7 @@ interface AiPanelProps {
 interface ChatLine {
   role: "user" | "assistant" | "system";
   content: string;
-  toolCalls?: Array<{ name: string; status: string }>;
+  toolCalls?: ToolCallInfo[];
 }
 
 // ─── Assistant Message Renderer ──────────────────────────
@@ -111,7 +113,7 @@ export function AiPanel({
   const [sessionId, setSessionId] = useState<number | null>(null);
   const [packets, setPackets] = useState<ContextPacket[]>([]);
   const [selectedPacketIds, setSelectedPacketIds] = useState<string[]>([]);
-  const [contextStatus, setContextStatus] = useState<string | null>(null);
+  const [contextStatusData, setContextStatusData] = useState<import("@/types/ai").ContextStatus | null>(null);
   const [showPackets, setShowPackets] = useState(false);
   const [toolConfirmRequest, setToolConfirmRequest] =
     useState<ToolConfirmRequest | null>(null);
@@ -207,14 +209,10 @@ export function AiPanel({
           session_id: sessionId,
         });
         setPackets(result.packets);
-        setContextStatus(
-          `已加载 ${result.packets.length} 条证据 | ` +
-            `${result.context_status.regulations_loaded} 条法规 | ` +
-            `${result.context_status.anchors_loaded} 个锚点`
-        );
+        setContextStatusData(result.context_status);
         return result;
-      } catch (e) {
-        setContextStatus(`上下文组装失败: ${e instanceof Error ? e.message : String(e)}`);
+      } catch {
+        setContextStatusData(null);
         return null;
       }
     },
@@ -256,9 +254,10 @@ export function AiPanel({
         {
           role: "assistant",
           content: result.content ?? "",
-          toolCalls: result.tool_calls?.map((tc: { function: { name: string } }) => ({
+          toolCalls: result.tool_calls?.map((tc: { function: { name: string }; id: string }) => ({
+            id: tc.id,
             name: tc.function.name,
-            status: "pending",
+            status: "pending" as const,
           })),
         },
       ]);
@@ -355,11 +354,12 @@ export function AiPanel({
       </div>
 
       {/* Context status bar */}
-      {contextStatus && (
-        <div className="border-b border-border px-3 py-1.5 text-xs text-muted-foreground bg-muted/30">
-          {contextStatus}
-        </div>
-      )}
+      <ContextStatusBar
+        scene={scene}
+        contextStatus={contextStatusData}
+        notePath={notePath}
+        totalPackets={packets.length}
+      />
 
       {/* Evidence packets panel */}
       {showPackets && (
@@ -392,17 +392,7 @@ export function AiPanel({
                   <>
                     <AssistantMessage content={m.content} />
                     {m.toolCalls && m.toolCalls.length > 0 && (
-                      <div className="mt-2 flex flex-wrap gap-1">
-                        {m.toolCalls.map((tc, j) => (
-                          <span
-                            key={j}
-                            className="inline-flex items-center rounded bg-primary/10 px-2 py-0.5 text-xs"
-                          >
-                            <Settings2 className="h-3 w-3 mr-1" />
-                            {tc.name}
-                          </span>
-                        ))}
-                      </div>
+                      <ToolCallList toolCalls={m.toolCalls} />
                     )}
                   </>
                 ) : streaming ? (

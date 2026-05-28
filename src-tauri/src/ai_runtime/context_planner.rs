@@ -169,13 +169,14 @@ fn detect_intent(query: &str, scene: AiScene) -> QueryIntent {
 
 /// Detect regulation lookup intent.
 fn detect_regulation_intent(lower: &str) -> Option<QueryIntent> {
-    // Regulation patterns: XX条例, XX法, XX规定, 第X条, 第X款
-    let regulation_patterns = ["条例", "法规", "规定", "办法", "细则", "准则", "规范"];
-
-    let has_regulation_keyword = regulation_patterns.iter().any(|p| lower.contains(p));
+    // Regulation patterns require structural markers, not just keyword mentions.
+    // "法规" alone is too broad (e.g. "法规依据" is a writing assist request).
+    let structural_patterns = ["条例", "规定", "办法", "细则", "准则", "规范"];
+    let has_structural_keyword = structural_patterns.iter().any(|p| lower.contains(p));
     let has_article = lower.contains("第") && (lower.contains("条") || lower.contains("款"));
+    let has_explicit_ref = lower.contains("《") && lower.contains("》");
 
-    if has_regulation_keyword || has_article {
+    if has_structural_keyword || has_article || has_explicit_ref {
         // Extract regulation name if possible
         let regulation_name = extract_regulation_name(lower);
         let article = extract_article(lower);
@@ -195,16 +196,22 @@ fn extract_regulation_name(query: &str) -> Option<String> {
     let patterns = ["条例", "法规", "规定", "办法", "细则"];
 
     for pattern in patterns {
-        if let Some(pos) = query.find(pattern) {
-            // Look backwards for the start of the name
-            let before = &query[..pos];
-            let start = before
-                .rfind(|c: char| c.is_whitespace() || c == '的' || c == '中')
-                .map(|i| i + 1)
-                .unwrap_or(0);
-            let name = &query[start..pos + pattern.len()];
+        if let Some(byte_pos) = query.find(pattern) {
+            // Find the char index of the pattern start
+            let char_pos = query[..byte_pos].chars().count();
+            // Look backwards for the start of the name (whitespace, 的, 中)
+            let chars: Vec<char> = query.chars().collect();
+            let mut start = 0usize;
+            for i in (0..char_pos).rev() {
+                if chars[i].is_whitespace() || chars[i] == '的' || chars[i] == '中' {
+                    start = i + 1;
+                    break;
+                }
+            }
+            let pattern_char_len = pattern.chars().count();
+            let name: String = chars[start..char_pos + pattern_char_len].iter().collect();
             if !name.is_empty() {
-                return Some(name.to_string());
+                return Some(name);
             }
         }
     }
@@ -215,10 +222,15 @@ fn extract_regulation_name(query: &str) -> Option<String> {
 /// Extract article number from query.
 fn extract_article(query: &str) -> Option<String> {
     // Pattern: 第X条, 第X款
-    if let Some(pos) = query.find('第') {
-        let after = &query[pos..];
-        if let Some(end) = after.find(['条', '款', '项']) {
-            return Some(after[..=end].to_string());
+    if let Some(byte_pos) = query.find('第') {
+        let after = &query[byte_pos..];
+        if let Some(end_byte) = after.find(['条', '款', '项']) {
+            // Use char boundary-safe slicing
+            let article: String = after
+                .chars()
+                .take(after[..end_byte].chars().count() + 1)
+                .collect();
+            return Some(article);
         }
     }
     None

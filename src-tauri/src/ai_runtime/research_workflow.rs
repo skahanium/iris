@@ -14,12 +14,13 @@
 
 use crate::ai_runtime::{
     model_gateway::{
-        GatewayRequest, LlmMessage, MessageRole, ModelGateway, ProviderConfig, TokenUsage,
+        GatewayRequest, LlmMessage, LlmToolDef, MessageRole, ModelGateway, ProviderConfig,
+        TokenUsage, ToolCall,
     },
     scene_router::resolve_scene,
     session::SessionManager,
-    tool_executor::ToolRegistry,
-    AiScene, ContextPacket, TrustLevel,
+    tool_executor::{check_tool_permission, ToolRegistry},
+    AiScene, AutonomyLevel, ContextPacket, TrustLevel,
 };
 use crate::error::{AppError, AppResult};
 use crate::storage::db::Database;
@@ -139,7 +140,7 @@ pub async fn execute_research(
     config.web_research_authorized = web_authorized;
 
     let _profile = resolve_scene(AiScene::ResearchSynthesis);
-    let _registry = ToolRegistry::new();
+    let registry = ToolRegistry::new();
 
     // Ensure session
     let _session_key = "research_synthesis:__global__".to_string();
@@ -149,7 +150,6 @@ pub async fn execute_research(
     SessionManager::append_message(db, sid, "user", topic, None)?;
 
     let mut rounds: Vec<ResearchRound> = Vec::new();
-    let mut all_packets: Vec<ContextPacket> = Vec::new();
     let mut total_usage = TokenUsage::default();
 
     // ── Phase 1: Sub-proposition decomposition ──────────
@@ -162,9 +162,13 @@ pub async fn execute_research(
     )
     .await?;
 
-    // ── Phase 2: Per-proposition retrieval (agentic loop) ──
+    // ── Phase 2: Agentic retrieval loop (LLM-driven tool calling) ──
+    let mut accumulated_evidence: Vec<ContextPacket> = Vec::new();
+    let llm_tools = build_research_tool_defs(&registry, &config);
+
     for round_num in 0..config.max_rounds {
-        if sub_propositions.is_empty() {
+        // Check token budget before each round
+        if total_usage.total_tokens as usize >= config.token_budget {
             break;
         }
 
@@ -176,50 +180,105 @@ pub async fn execute_research(
             llm_output: None,
         };
 
-        // Retrieve evidence for each proposition
-        for prop in &sub_propositions {
+        // Build context from accumulated evidence
+        let evidence_summary = format_evidence_summary(&accumulated_evidence);
+        let propositions_desc = sub_propositions
+            .iter()
+            .map(|p| format!("- {}: {}", p.id, p.statement))
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        let prompt = format!(
+            r#"你是研究助理，正在进行第 {round_num} 轮检索（共 {} 轮）。
+
+研究主题: {topic}
+
+子命题:
+{propositions_desc}
+
+已收集证据摘要:
+{evidence_summary}
+
+请使用可用工具继续检索证据。如果证据已充分，直接输出 "EVIDENCE_SUFFICIENT"。
+每轮最多调用 {} 个工具。"#,
+            config.max_rounds, config.max_tools_per_round
+        );
+
+        let messages = vec![LlmMessage {
+            role: MessageRole::User,
+            content: prompt,
+            tool_call_id: None,
+            tool_calls: None,
+        }];
+
+        let request = GatewayRequest {
+            provider: provider_config.clone(),
+            messages,
+            tools: llm_tools.clone(),
+            max_tokens: Some(2000),
+            temperature: Some(0.3),
+            stream: true,
+        };
+
+        let gateway = ModelGateway::new(app_handle.clone(), vec![provider_config.clone()]);
+        let response = gateway.send_streaming_request(request_id, request).await?;
+
+        accumulate_usage(&mut total_usage, &response.usage);
+
+        // Process tool calls from LLM
+        if let Some(content) = &response.content {
+            if content.contains("EVIDENCE_SUFFICIENT") {
+                round.llm_output = Some(content.clone());
+                rounds.push(round);
+                break;
+            }
+        }
+
+        for tool_call in &response.tool_calls {
             if round.tool_calls_made >= config.max_tools_per_round {
                 break;
             }
+            if total_usage.total_tokens as usize >= config.token_budget {
+                break;
+            }
 
-            let packets = db.with_conn(|conn| {
-                let request = crate::ai_runtime::retrieval_broker::RetrievalRequest {
-                    query: prop.statement.clone(),
-                    max_results: 10,
-                    layers: crate::ai_runtime::retrieval_broker::RetrievalLayers {
-                        fts: true,
-                        vector: true,
-                        graph: true,
-                        exact: true,
-                        template: false,
-                    },
-                    note_context: None,
-                    file_id_context: None,
-                };
-                crate::ai_runtime::retrieval_broker::hybrid_retrieve(conn, &request)
-            })?;
+            // Check tool permission
+            if let Some(tool_spec) = registry.find(&tool_call.function.name) {
+                if check_tool_permission(tool_spec, AiScene::ResearchSynthesis, AutonomyLevel::L3)
+                    .is_err()
+                {
+                    continue;
+                }
+            }
 
-            round.queries_executed.push(prop.statement.clone());
-            round.packets_retrieved.extend(packets.clone());
+            let new_packets =
+                execute_tool_call(db, app_handle, &provider_config, tool_call, &config)
+                    .await
+                    .unwrap_or_default();
+
+            round.queries_executed.push(format!(
+                "{}({})",
+                tool_call.function.name, tool_call.function.arguments
+            ));
+            round.packets_retrieved.extend(new_packets.clone());
             round.tool_calls_made += 1;
-            all_packets.extend(packets);
+            accumulated_evidence.extend(new_packets);
         }
 
-        // Deduplicate packets
-        all_packets.dedup_by(|a, b| a.id == b.id);
+        // Deduplicate
+        accumulated_evidence.dedup_by(|a, b| a.id == b.id);
 
-        // Check if we need another round (only if we found new evidence)
         let new_evidence_count = round.packets_retrieved.len();
+        round.llm_output = response.content.clone();
+        rounds.push(round);
+
         if new_evidence_count == 0 {
-            rounds.push(round);
             break;
         }
-
-        rounds.push(round);
     }
 
     // ── Phase 3: Build evidence matrix ──────────────────
-    let evidence_matrix = build_evidence_matrix(topic, &sub_propositions, &all_packets);
+    let evidence_matrix = build_evidence_matrix(topic, &sub_propositions, &accumulated_evidence);
 
     // ── Phase 4: Argument chain detection ───────────────
     let argument_chain = detect_argument_chains(
@@ -257,6 +316,144 @@ pub async fn execute_research(
     })
 }
 
+// ─── Agentic Loop Helpers ────────────────────────────────
+
+/// Build LLM tool definitions for the research agentic loop.
+fn build_research_tool_defs(registry: &ToolRegistry, config: &ResearchConfig) -> Vec<LlmToolDef> {
+    let tools: Vec<crate::ai_runtime::ToolSpec> = registry
+        .for_scene(AiScene::ResearchSynthesis)
+        .into_iter()
+        .filter(|t| {
+            // Include read tools + web_search if authorized
+            !t.requires_confirmation || (t.name == "web_search" && config.web_research_authorized)
+        })
+        .cloned()
+        .collect();
+
+    ModelGateway::tools_to_llm_format(&tools)
+}
+
+/// Format accumulated evidence into a concise summary for the LLM.
+fn format_evidence_summary(packets: &[ContextPacket]) -> String {
+    if packets.is_empty() {
+        return "暂无已收集证据。".to_string();
+    }
+
+    let mut summary = String::new();
+    for (i, p) in packets.iter().take(20).enumerate() {
+        summary.push_str(&format!(
+            "{}. [{}] {} — {}\n",
+            i + 1,
+            p.citation_label,
+            p.title,
+            truncate_str(&p.excerpt, 100)
+        ));
+    }
+    if packets.len() > 20 {
+        summary.push_str(&format!("... 共 {} 条证据\n", packets.len()));
+    }
+    summary
+}
+
+/// Truncate string helper for evidence summary.
+fn truncate_str(s: &str, max_chars: usize) -> String {
+    if s.chars().count() <= max_chars {
+        s.to_string()
+    } else {
+        format!("{}…", s.chars().take(max_chars).collect::<String>())
+    }
+}
+
+/// Execute a single tool call from the LLM during the agentic loop.
+async fn execute_tool_call(
+    db: &Database,
+    _app_handle: &AppHandle,
+    _provider_config: &ProviderConfig,
+    tool_call: &ToolCall,
+    config: &ResearchConfig,
+) -> AppResult<Vec<ContextPacket>> {
+    let args: serde_json::Value =
+        serde_json::from_str(&tool_call.function.arguments).unwrap_or(serde_json::json!({}));
+
+    match tool_call.function.name.as_str() {
+        "search_hybrid" | "search_semantic" | "search_keyword" => {
+            let query = args["query"].as_str().unwrap_or("");
+            db.with_conn(|conn| {
+                let request = crate::ai_runtime::retrieval_broker::RetrievalRequest {
+                    query: query.to_string(),
+                    max_results: 10,
+                    layers: crate::ai_runtime::retrieval_broker::RetrievalLayers {
+                        fts: tool_call.function.name == "search_hybrid"
+                            || tool_call.function.name == "search_keyword",
+                        vector: tool_call.function.name == "search_hybrid"
+                            || tool_call.function.name == "search_semantic",
+                        graph: false,
+                        exact: false,
+                        template: false,
+                    },
+                    note_context: None,
+                    file_id_context: None,
+                };
+                crate::ai_runtime::retrieval_broker::hybrid_retrieve(conn, &request)
+            })
+        }
+        "get_regulation" => {
+            let reg_name = args["regulation_name"].as_str().unwrap_or("");
+            let article = args["article"].as_str().unwrap_or("");
+            let query = format!("《{reg_name}》{article}");
+            db.with_conn(|conn| {
+                let request = crate::ai_runtime::retrieval_broker::RetrievalRequest {
+                    query,
+                    max_results: 5,
+                    layers: crate::ai_runtime::retrieval_broker::RetrievalLayers {
+                        fts: false,
+                        vector: false,
+                        graph: false,
+                        exact: true,
+                        template: false,
+                    },
+                    note_context: None,
+                    file_id_context: None,
+                };
+                crate::ai_runtime::retrieval_broker::hybrid_retrieve(conn, &request)
+            })
+        }
+        "web_search" => {
+            if !config.web_research_authorized {
+                return Ok(vec![]);
+            }
+            let query = args["query"].as_str().unwrap_or("");
+            // Use the web search module
+            let results_text = crate::llm::search_web::fetch_search_context(query, false)
+                .await
+                .unwrap_or_default();
+            if results_text.is_empty() {
+                return Ok(vec![]);
+            }
+            Ok(vec![ContextPacket {
+                id: format!("web-{}", query.len()),
+                source_type: crate::ai_runtime::SourceType::Web,
+                source_path: None,
+                title: format!("网页搜索: {query}"),
+                heading_path: None,
+                source_span: None,
+                content_hash: String::new(),
+                excerpt: truncate_str(&results_text, 800),
+                retrieval_reason: "web_search".into(),
+                score: 0.5,
+                trust_level: TrustLevel::ExternalWeb,
+                citation_label: "[W0]".into(),
+                stale: false,
+            }])
+        }
+        "get_context_packets" => {
+            // Return already-accumulated packets (no-op, they're tracked externally)
+            Ok(vec![])
+        }
+        _ => Ok(vec![]),
+    }
+}
+
 // ─── Sub-proposition Decomposition ───────────────────────
 
 async fn decompose_topic(
@@ -291,11 +488,11 @@ async fn decompose_topic(
         tools: vec![],
         max_tokens: Some(2000),
         temperature: Some(0.3),
-        stream: false,
+        stream: true,
     };
 
     let gateway = ModelGateway::new(app_handle.clone(), vec![provider.clone()]);
-    let response = gateway.send_request(request).await?;
+    let response = gateway.send_streaming_request(_request_id, request).await?;
 
     accumulate_usage(usage, &response.usage);
 
@@ -476,11 +673,11 @@ async fn detect_argument_chains(
         tools: vec![],
         max_tokens: Some(2000),
         temperature: Some(0.2),
-        stream: false,
+        stream: true,
     };
 
     let gateway = ModelGateway::new(app_handle.clone(), vec![provider.clone()]);
-    let response = gateway.send_request(request).await?;
+    let response = gateway.send_streaming_request(_request_id, request).await?;
 
     accumulate_usage(usage, &response.usage);
 
@@ -622,11 +819,11 @@ async fn synthesize_summary(
         tools: vec![],
         max_tokens: Some(4000),
         temperature: Some(0.5),
-        stream: false,
+        stream: true,
     };
 
     let gateway = ModelGateway::new(app_handle.clone(), vec![provider.clone()]);
-    let response = gateway.send_request(request).await?;
+    let response = gateway.send_streaming_request(_request_id, request).await?;
 
     accumulate_usage(usage, &response.usage);
 

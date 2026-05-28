@@ -6,7 +6,7 @@
 //! - Safety evaluation (prompt injection regression, tool misuse)
 //! - Data boundary verification
 
-use crate::ai_runtime::{ContextPacket, SourceType, TrustLevel};
+use crate::ai_runtime::ContextPacket;
 use crate::error::AppResult;
 use crate::storage::db::Database;
 use serde::{Deserialize, Serialize};
@@ -315,6 +315,7 @@ CREATE TABLE IF NOT EXISTS ai_eval_results (
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ai_runtime::TrustLevel;
 
     #[test]
     fn eval_citation_accuracy_all_valid() {
@@ -372,7 +373,8 @@ mod tests {
         let relevant = vec!["a".into(), "b".into()];
         let (recall, mrr) = eval_retrieval(&retrieved, &relevant, 5);
         assert_eq!(recall, 1.0);
-        assert_eq!(mrr, 1.0);
+        // MRR = (1/1 + 1/2) / 2 = 0.75
+        assert!((mrr - 0.75).abs() < 0.001);
     }
 
     #[test]

@@ -354,7 +354,7 @@ mod tests {
         assert!(ch1_clause
             .chapter
             .as_ref()
-            .map_or(false, |c| c.contains("第一章")));
+            .is_some_and(|c| c.contains("第一章")));
     }
 
     #[test]

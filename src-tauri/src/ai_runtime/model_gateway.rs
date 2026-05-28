@@ -6,7 +6,7 @@
 //! 3. Streaming responses via Tauri events
 //! 4. Processing tool calls from LLM and routing to ToolExecutor
 
-use crate::ai_runtime::{AiScene, ContextPacket, SourceType, ToolSpec, TrustLevel};
+use crate::ai_runtime::{AiScene, ContextPacket, ToolSpec};
 use crate::error::{AppError, AppResult};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -570,6 +570,7 @@ pub fn build_citation_prompt(paragraph: &str, candidates: &[ContextPacket]) -> S
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ai_runtime::{SourceType, TrustLevel};
 
     #[test]
     fn build_system_prompt_includes_packets() {

@@ -57,8 +57,11 @@ pub fn hybrid_retrieve(
         }
     }
 
-    // Layer 2: Vector (anchors + regulations)
+    // Layer 2: Vector (chunks + anchors + regulations)
     if request.layers.vector {
+        if let Ok(chunk_results) = search_vector_chunks(conn, &request.query, request.max_results) {
+            packets.extend(chunk_results);
+        }
         if let Ok(vec_results) = search_vector_anchors(conn, &request.query, request.max_results) {
             packets.extend(vec_results);
         }
@@ -87,19 +90,178 @@ pub fn hybrid_retrieve(
         }
     }
 
-    // Deduplicate and sort by score
-    packets.sort_by(|a, b| {
-        b.score
-            .partial_cmp(&a.score)
-            .unwrap_or(std::cmp::Ordering::Equal)
-    });
-    packets.dedup_by(|a, b| a.id == b.id);
-    packets.truncate(request.max_results);
+    // Layer 5: Template (genre template match)
+    if request.layers.template {
+        if let Ok(template_results) = search_template(conn, &request.query, request.max_results) {
+            packets.extend(template_results);
+        }
+    }
+
+    // Score fusion: normalize and weight by layer, then deduplicate
+    fuse_and_rank(&mut packets, request.max_results);
 
     Ok(packets)
 }
 
 // ─── Layer Implementations ───────────────────────────────
+
+fn search_vector_chunks(
+    conn: &Connection,
+    query: &str,
+    limit: usize,
+) -> AppResult<Vec<ContextPacket>> {
+    let query_vec = engine::embed_text(query)?;
+    let blob = engine::f32_to_bytes(&query_vec);
+
+    let mut stmt = match conn.prepare(
+        "SELECT vc.rowid, c.text, f.path, f.title, c.heading_path,
+                c.char_count, vc.distance
+         FROM vec_chunks vc
+         JOIN chunks c ON c.id = vc.rowid
+         JOIN files f ON f.id = c.file_id
+         WHERE vc.embedding MATCH ?1
+         ORDER BY vc.distance
+         LIMIT ?2",
+    ) {
+        Ok(s) => s,
+        Err(_) => return Ok(vec![]), // vec_chunks table may not exist yet
+    };
+
+    let rows = stmt.query_map(rusqlite::params![blob, limit as i64], |row| {
+        Ok((
+            row.get::<_, i64>(0)?,
+            row.get::<_, String>(1)?,
+            row.get::<_, String>(2)?,
+            row.get::<_, String>(3)?,
+            row.get::<_, Option<String>>(4)?,
+            row.get::<_, i64>(5)?,
+            row.get::<_, f64>(6)?,
+        ))
+    })?;
+
+    let packets: Vec<_> = rows
+        .flatten()
+        .enumerate()
+        .map(
+            |(i, (rowid, text, path, title, heading, _char_count, distance))| {
+                let score = (1.0 - distance).max(0.0);
+                ContextPacket {
+                    id: format!("chunk-{rowid}"),
+                    source_type: SourceType::Note,
+                    source_path: Some(path),
+                    title: title.clone(),
+                    heading_path: heading,
+                    source_span: None,
+                    content_hash: String::new(),
+                    excerpt: truncate(&text, 300),
+                    retrieval_reason: "vector_chunk".into(),
+                    score,
+                    trust_level: TrustLevel::UserNote,
+                    citation_label: format!("[C{i}]"),
+                    stale: false,
+                }
+            },
+        )
+        .collect();
+
+    Ok(packets)
+}
+
+fn search_template(conn: &Connection, query: &str, limit: usize) -> AppResult<Vec<ContextPacket>> {
+    // Search genre_templates by genre keyword match
+    let mut stmt = match conn.prepare(
+        "SELECT id, template_key, genre, subtype, structure, common_phrases,
+                style_features, user_confirmed, usage_count
+         FROM genre_templates
+         WHERE genre LIKE ?1 OR subtype LIKE ?1
+         ORDER BY user_confirmed DESC, usage_count DESC
+         LIMIT ?2",
+    ) {
+        Ok(s) => s,
+        Err(_) => return Ok(vec![]), // genre_templates table may not exist yet
+    };
+
+    let pattern = format!("%{query}%");
+    let rows = stmt.query_map(rusqlite::params![pattern, limit as i64], |row| {
+        let id: i64 = row.get(0)?;
+        let genre: String = row.get(2)?;
+        let structure_str: String = row.get(4)?;
+        let user_confirmed: i64 = row.get(7)?;
+        let usage_count: i64 = row.get(8)?;
+        Ok((id, genre, structure_str, user_confirmed, usage_count))
+    })?;
+
+    let packets: Vec<_> = rows
+        .flatten()
+        .enumerate()
+        .map(
+            |(i, (id, genre, structure_str, user_confirmed, usage_count))| {
+                let structure: serde_json::Value =
+                    serde_json::from_str(&structure_str).unwrap_or(serde_json::Value::Null);
+                let excerpt = format!(
+                    "文种: {genre} | 使用次数: {usage_count} | 结构: {}",
+                    serde_json::to_string(&structure).unwrap_or_default()
+                );
+                let trust = if user_confirmed != 0 {
+                    TrustLevel::UserNote
+                } else {
+                    TrustLevel::DerivedCache
+                };
+                ContextPacket {
+                    id: format!("tmpl-{id}"),
+                    source_type: SourceType::Template,
+                    source_path: None,
+                    title: format!("{genre} 模板"),
+                    heading_path: None,
+                    source_span: None,
+                    content_hash: String::new(),
+                    excerpt: truncate(&excerpt, 400),
+                    retrieval_reason: "template_genre_match".into(),
+                    score: if user_confirmed != 0 { 0.85 } else { 0.6 },
+                    trust_level: trust,
+                    citation_label: format!("[T{i}]"),
+                    stale: false,
+                }
+            },
+        )
+        .collect();
+
+    Ok(packets)
+}
+
+/// Weighted score fusion: normalize scores by layer, apply weights, deduplicate.
+fn fuse_and_rank(packets: &mut Vec<ContextPacket>, max_results: usize) {
+    // Layer weights: exact > regulation > user_note > anchor > chunk > template > graph
+    fn layer_weight(p: &ContextPacket) -> f64 {
+        match p.retrieval_reason.as_str() {
+            r if r.starts_with("exact_") => 1.0,
+            r if r.starts_with("vector_regulation") => 0.95,
+            "fts_keyword_match" => 0.85,
+            r if r.starts_with("vector_chunk") => 0.80,
+            r if r.starts_with("vector_anchor") => 0.75,
+            r if r.starts_with("template_") => 0.70,
+            r if r.starts_with("graph_") => 0.60,
+            _ => 0.50,
+        }
+    }
+
+    // Apply weighted scores
+    for p in packets.iter_mut() {
+        let weight = layer_weight(p);
+        p.score = (p.score * weight).min(1.0);
+    }
+
+    // Sort by weighted score descending
+    packets.sort_by(|a, b| {
+        b.score
+            .partial_cmp(&a.score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+
+    // Deduplicate: keep highest-scoring occurrence of each id
+    packets.dedup_by(|a, b| a.id == b.id);
+    packets.truncate(max_results);
+}
 
 fn search_fts(conn: &Connection, query: &str, limit: usize) -> AppResult<Vec<ContextPacket>> {
     // Use existing FTS5 search
