@@ -15,6 +15,7 @@ pub mod guardrails;
 pub mod model_gateway;
 pub mod model_registry;
 pub mod packet_builder;
+pub mod packet_cache;
 pub mod research_workflow;
 pub mod retrieval_broker;
 pub mod retrieval_scope;

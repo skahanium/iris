@@ -3,8 +3,11 @@
 //! Layers: FTS → Vector → Graph → Exact Parser → Template
 //! Results are fused by weighted score and returned as ContextPackets.
 
+use std::hash::{Hash, Hasher};
+
 use rusqlite::Connection;
 
+use crate::ai_runtime::packet_cache::PacketCache;
 use crate::ai_runtime::retrieval_scope::{filter_packets_by_scope, RetrievalScope};
 use crate::ai_runtime::{ContextPacket, SourceType, TrustLevel};
 use crate::embedding::engine;
@@ -102,10 +105,38 @@ pub fn hybrid_retrieve(
     // Score fusion: normalize and weight by layer, then deduplicate
     fuse_and_rank(&mut packets, request.max_results);
 
-    filter_packets_by_scope(&mut packets, &request.scope, |p| {
-        p.source_path.as_deref()
-    });
+    filter_packets_by_scope(&mut packets, &request.scope, |p| p.source_path.as_deref());
 
+    Ok(packets)
+}
+
+/// Compute a stable hash for a retrieval request (query + layers + max_results).
+pub fn query_hash(request: &RetrievalRequest) -> String {
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    request.query.hash(&mut hasher);
+    request.max_results.hash(&mut hasher);
+    request.layers.fts.hash(&mut hasher);
+    request.layers.vector.hash(&mut hasher);
+    request.layers.graph.hash(&mut hasher);
+    request.layers.exact.hash(&mut hasher);
+    request.layers.template.hash(&mut hasher);
+    format!("{:016x}", hasher.finish())
+}
+
+/// Cached wrapper around [`hybrid_retrieve`].
+///
+/// Returns cached results on hit; on miss, runs retrieval and caches the result.
+pub fn hybrid_retrieve_cached(
+    conn: &Connection,
+    request: &RetrievalRequest,
+    cache: &mut PacketCache,
+) -> AppResult<Vec<ContextPacket>> {
+    let hash = query_hash(request);
+    if let Some(cached) = cache.get(&hash) {
+        return Ok(cached);
+    }
+    let packets = hybrid_retrieve(conn, request)?;
+    cache.insert(hash, packets.clone());
     Ok(packets)
 }
 
