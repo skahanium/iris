@@ -11,6 +11,7 @@ use crate::ai_runtime::ContextPacket;
 struct CacheEntry {
     packets: Vec<ContextPacket>,
     created_at: Instant,
+    last_accessed_at: Instant,
     access_count: u32,
 }
 
@@ -34,6 +35,7 @@ impl PacketCache {
     pub fn get(&mut self, query_hash: &str) -> Option<Vec<ContextPacket>> {
         if let Some(entry) = self.cache.get_mut(query_hash) {
             if entry.created_at.elapsed() < self.ttl {
+                entry.last_accessed_at = Instant::now();
                 entry.access_count += 1;
                 return Some(entry.packets.clone());
             } else {
@@ -56,6 +58,7 @@ impl PacketCache {
             CacheEntry {
                 packets,
                 created_at: Instant::now(),
+                last_accessed_at: Instant::now(),
                 access_count: 1,
             },
         );
@@ -70,7 +73,7 @@ impl PacketCache {
     fn find_oldest_entry(&self) -> Option<String> {
         self.cache
             .iter()
-            .min_by_key(|(_, entry)| entry.created_at)
+            .min_by_key(|(_, entry)| entry.last_accessed_at)
             .map(|(key, _)| key.clone())
     }
 }
@@ -104,6 +107,20 @@ mod tests {
         cache.insert("c".to_string(), vec![]); // should evict oldest ("a")
         assert!(cache.get("a").is_none());
         assert!(cache.get("b").is_some());
+        assert!(cache.get("c").is_some());
+    }
+
+    #[test]
+    fn test_cache_lru_eviction() {
+        let mut cache = PacketCache::new(2, 300);
+        cache.insert("a".to_string(), vec![]);
+        cache.insert("b".to_string(), vec![]);
+        // Access "a" to update its last_accessed_at
+        cache.get("a");
+        // Insert "c" — should evict "b" (least recently used), not "a"
+        cache.insert("c".to_string(), vec![]);
+        assert!(cache.get("a").is_some());
+        assert!(cache.get("b").is_none());
         assert!(cache.get("c").is_some());
     }
 
