@@ -1,0 +1,16 @@
+# 示例：复制为 <vault>/.iris/corpora.toml
+# 语料库为声明式配置，可与笔记一并版本管理。
+
+[[corpus]]
+id = "party_discipline"
+name = "党纪法规"
+path_prefix = "党纪法规/"
+kind = "regulation"
+scenes = ["knowledge_lookup"]
+
+[[corpus]]
+id = "report_exemplars"
+name = "报告范文"
+path_prefix = "范文/报告/"
+kind = "exemplar"
+scenes = ["exemplar_learning", "drafting_assist"]

@@ -8,8 +8,9 @@ import { SCENE_META } from "@/lib/ai/scene-types";
 interface ContextStatusBarProps {
   scene: AiScene;
   contextStatus: ContextStatus | null;
-  notePath: string | null;
+  noteDisplayTitle: string | null;
   totalPackets?: number;
+  corpusNames?: string[];
 }
 
 // ─── Component ───────────────────────────────────────────
@@ -17,26 +18,45 @@ interface ContextStatusBarProps {
 export function ContextStatusBar({
   scene,
   contextStatus,
-  notePath,
+  noteDisplayTitle,
   totalPackets,
+  corpusNames = [],
 }: ContextStatusBarProps) {
   const meta = SCENE_META[scene];
   const isGlobal = meta.defaultScope === "global";
 
   return (
-    <div className="flex items-center gap-3 border-b border-border px-3 py-1.5 text-xs text-muted-foreground bg-muted/30">
-      {/* Scene indicator */}
-      <span className="inline-block h-1.5 w-1.5 rounded-full bg-emerald-500" title="就绪" />
+    <div className="flex items-center gap-3 border-b border-border/60 bg-surface-inset/40 px-3 py-1.5 text-xs text-muted-foreground">
+      <span
+        className="inline-block h-1.5 w-1.5 rounded-full bg-primary/80"
+        title="就绪"
+      />
       <span className="font-medium">{meta.label}</span>
 
       {/* Scope */}
       {isGlobal ? (
-        <span className="text-[10px] px-1.5 py-0 rounded bg-secondary">库级</span>
-      ) : notePath ? (
-        <span className="text-[10px] px-1.5 py-0 rounded bg-secondary truncate max-w-[120px]">
-          {notePath.split("/").pop() ?? notePath}
+        <span className="rounded bg-secondary px-1.5 py-0 text-[10px]">
+          库级
+        </span>
+      ) : noteDisplayTitle ? (
+        <span className="max-w-[120px] truncate rounded bg-secondary px-1.5 py-0 text-[10px]">
+          {noteDisplayTitle}
         </span>
       ) : null}
+
+      {corpusNames.length > 0 && (
+        <>
+          {corpusNames.map((name) => (
+            <span
+              key={name}
+              className="max-w-[100px] truncate rounded bg-secondary px-1.5 py-0 text-[10px]"
+              title={`语料库：${name}`}
+            >
+              {name}
+            </span>
+          ))}
+        </>
+      )}
 
       {/* Separator */}
       <span className="h-3 w-px bg-border" />

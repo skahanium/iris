@@ -1,6 +1,9 @@
+import { isInternalUntitledLabel, isInternalUntitledPath, pathStem } from "@/lib/note-display";
 import type { FileListItem } from "@/types/ipc";
 
 export const DEFAULT_NEW_DOCUMENT_TITLE = "新建文档";
+/** Prefix for auto-allocated names: `无标题1`, `无标题2`, … */
+export const UNTITLED_TITLE_PREFIX = "无标题";
 
 const INVALID_FILE_CHARS = /[\\/:*?"<>|]/g;
 
@@ -14,18 +17,17 @@ export function titleToNotePath(title: string): string {
   return `${sanitizeNoteFileName(title)}.md`;
 }
 
-function pathStem(path: string): string {
-  return path.replace(/\.md$/i, "").split("/").pop() ?? path;
-}
-
 /** Collect display titles and path stems already used in the vault index. */
 export function collectTakenDocumentNames(files: FileListItem[]): Set<string> {
   const taken = new Set<string>();
   for (const f of files) {
-    if (f.title.trim()) {
-      taken.add(f.title.trim());
+    const title = f.title.trim();
+    if (title && !isInternalUntitledLabel(title)) {
+      taken.add(title);
     }
-    taken.add(pathStem(f.path));
+    if (!isInternalUntitledPath(f.path)) {
+      taken.add(pathStem(f.path));
+    }
   }
   return taken;
 }
@@ -48,5 +50,29 @@ export function allocateNewDocumentName(files: FileListItem[]): {
     n += 1;
   }
   const title = `${DEFAULT_NEW_DOCUMENT_TITLE}（${n}）`;
+  return { title, path: titleToNotePath(title) };
+}
+
+/**
+ * Next auto name: `无标题1`, `无标题2`, `无标题3`, …
+ * Filename matches display title (`无标题1.md`).
+ */
+export function allocateUntitledDocumentName(
+  files: FileListItem[],
+  extraTaken?: Iterable<string>,
+): { title: string; path: string } {
+  const taken = collectTakenDocumentNames(files);
+  for (const name of extraTaken ?? []) {
+    const trimmed = name.trim();
+    if (trimmed && !isInternalUntitledLabel(trimmed)) {
+      taken.add(trimmed);
+    }
+  }
+
+  let n = 1;
+  while (taken.has(`${UNTITLED_TITLE_PREFIX}${n}`)) {
+    n += 1;
+  }
+  const title = `${UNTITLED_TITLE_PREFIX}${n}`;
   return { title, path: titleToNotePath(title) };
 }

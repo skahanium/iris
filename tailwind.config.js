@@ -10,9 +10,22 @@ export default {
         panel: "hsl(var(--panel))",
         card: "hsl(var(--card))",
         border: "hsl(var(--border))",
+        input: "hsl(var(--input))",
         primary: {
           DEFAULT: "hsl(var(--primary))",
           foreground: "hsl(var(--primary-foreground))",
+        },
+        secondary: {
+          DEFAULT: "hsl(var(--secondary))",
+          foreground: "hsl(var(--secondary-foreground))",
+        },
+        accent: {
+          DEFAULT: "hsl(var(--accent))",
+          foreground: "hsl(var(--accent-foreground))",
+        },
+        popover: {
+          DEFAULT: "hsl(var(--popover))",
+          foreground: "hsl(var(--popover-foreground))",
         },
         muted: {
           DEFAULT: "hsl(var(--muted))",
@@ -24,6 +37,20 @@ export default {
         },
         overlay: {
           scrim: "hsl(var(--overlay-scrim))",
+        },
+        surface: {
+          chrome: "hsl(var(--surface-chrome))",
+          elevated: "hsl(var(--surface-elevated))",
+          inset: "hsl(var(--surface-inset))",
+        },
+        command: {
+          highlight: "hsl(var(--command-highlight-bg))",
+          ring: "hsl(var(--command-highlight-ring))",
+        },
+        ai: {
+          user: "hsl(var(--ai-user-bg))",
+          composer: "hsl(var(--ai-composer-bg))",
+          pulse: "hsl(var(--ai-stream-pulse))",
         },
         ring: "hsl(var(--ring))",
         editor: {
@@ -82,6 +109,8 @@ export default {
       zIndex: {
         "editor-chrome": "15",
         ai: "10",
+        toolbar: "20",
+        "slash-command": "25",
         "overlay-scrim": "40",
         overlay: "50",
       },

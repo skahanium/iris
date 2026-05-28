@@ -8,7 +8,7 @@ const PANEL_SPECS = [
     size: "command",
   },
   {
-    path: "src/components/file/FileSheet.tsx",
+    path: "src/components/file/VaultNavigator.tsx",
     size: "command",
   },
   {
@@ -35,6 +35,10 @@ const PANEL_SPECS = [
     path: "src/components/file/QuickOpen.tsx",
     size: "compact",
   },
+  {
+    path: "src/components/layout/CommandPalette.tsx",
+    size: "palette",
+  },
 ] as const;
 
 function read(path: string): string {
@@ -49,11 +53,17 @@ describe("panel overlay migration", () => {
       expect(source, spec.path).not.toContain("@/components/ui/side-panel");
       expect(source, spec.path).not.toContain("<SidePanel");
 
-      if (spec.path.endsWith("QuickOpen.tsx")) {
-        expect(source, spec.path).toContain(`size="${spec.size}"`);
-      } else {
-        expect(source, spec.path).toContain("@/components/ui/iris-overlay");
-        expect(source, spec.path).toContain(`size="${spec.size}"`);
+      expect(source, spec.path).toContain("@/components/ui/iris-overlay");
+      expect(source, spec.path).toContain(`size="${spec.size}"`);
+
+      if (
+        spec.path.endsWith("QuickOpen.tsx") ||
+        spec.path.endsWith("CommandPalette.tsx")
+      ) {
+        expect(source, spec.path).toContain("showTitleBar={false}");
+        expect(source, spec.path).toContain("OverlayChrome");
+        expect(source, spec.path).toContain("CommandListOption");
+        expect(source, spec.path).toContain("useListboxKeyboard");
       }
     }
   });

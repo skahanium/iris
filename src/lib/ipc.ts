@@ -22,13 +22,18 @@ export interface SettingsMap {
   llm_custom_base_url: string | null;
 }
 
-export async function settingsGet<K extends keyof SettingsMap>(key: K): Promise<SettingsMap[K] | null>;
+export async function settingsGet<K extends keyof SettingsMap>(
+  key: K,
+): Promise<SettingsMap[K] | null>;
 export async function settingsGet<T>(key: string): Promise<T | null>;
 export async function settingsGet<T>(key: string): Promise<T | null> {
   return invoke<T | null>("settings_get", { key });
 }
 
-export async function settingsSet<K extends keyof SettingsMap>(key: K, value: SettingsMap[K]): Promise<void>;
+export async function settingsSet<K extends keyof SettingsMap>(
+  key: K,
+  value: SettingsMap[K],
+): Promise<void>;
 export async function settingsSet(key: string, value: unknown): Promise<void>;
 export async function settingsSet(key: string, value: unknown): Promise<void> {
   return invoke("settings_set", { key, value });
@@ -254,7 +259,27 @@ export async function listenLlmError(
 
 // ─── AI Runtime IPC ───
 
-import type { AiScene, AssembledContext, ContextPacket } from "@/types/ai";
+import type {
+  AiScene,
+  AssembledContext,
+  ContextPacket,
+  ContextScope,
+} from "@/types/ai";
+import type { CorpusListItem } from "@/types/ipc";
+
+export async function corpusList(): Promise<CorpusListItem[]> {
+  return invoke<CorpusListItem[]>("corpus_list");
+}
+
+export async function corpusUpsert(entry: {
+  id: string;
+  name: string;
+  pathPrefix: string;
+  kind: string;
+  scenes: string[];
+}): Promise<void> {
+  return invoke("corpus_upsert", { entry });
+}
 
 export async function contextAssemble(params: {
   scene: AiScene;
@@ -262,6 +287,7 @@ export async function contextAssemble(params: {
   note_content_hash: string | null;
   query: string;
   session_id: number | null;
+  context_scope?: ContextScope | null;
 }): Promise<AssembledContext> {
   return invoke<AssembledContext>("context_assemble", {
     scene: params.scene,
@@ -269,6 +295,7 @@ export async function contextAssemble(params: {
     noteContentHash: params.note_content_hash,
     query: params.query,
     sessionId: params.session_id,
+    contextScope: params.context_scope ?? null,
   });
 }
 
@@ -276,22 +303,37 @@ export async function aiSendMessage(params: {
   scene: AiScene;
   session_id: number | null;
   message: string;
+  note_path?: string | null;
   selected_packet_ids?: string[];
+  context_scope?: ContextScope | null;
 }): Promise<{
   request_id: string;
   session_id: number;
   status: string;
   content?: string;
-  tool_calls?: Array<{ id: string; function: { name: string; arguments: string } }>;
-  tool_results?: Array<{ tool_call_id: string; status: string; result?: unknown }>;
-  usage?: { prompt_tokens: number; completion_tokens: number; total_tokens: number };
+  tool_calls?: Array<{
+    id: string;
+    function: { name: string; arguments: string };
+  }>;
+  tool_results?: Array<{
+    tool_call_id: string;
+    status: string;
+    result?: unknown;
+  }>;
+  usage?: {
+    prompt_tokens: number;
+    completion_tokens: number;
+    total_tokens: number;
+  };
   citation_valid?: boolean;
 }> {
   return invoke("ai_send_message", {
     scene: params.scene,
     sessionId: params.session_id,
     message: params.message,
+    notePath: params.note_path ?? null,
     selectedPacketIds: params.selected_packet_ids ?? null,
+    contextScope: params.context_scope ?? null,
   });
 }
 
@@ -309,15 +351,23 @@ export async function toolConfirm(params: {
   });
 }
 
-export async function aiListTools(
-  scene: AiScene,
-): Promise<{ name: string; description: string; requires_confirmation: boolean; access_level: string }[]> {
+export async function aiListTools(scene: AiScene): Promise<
+  {
+    name: string;
+    description: string;
+    requires_confirmation: boolean;
+    access_level: string;
+  }[]
+> {
   return invoke("ai_list_tools", { scene });
 }
 
 // ─── Knowledge Index IPC ───
 
-export async function knowledgeReindex(): Promise<{ anchors: number; regulations: number }> {
+export async function knowledgeReindex(): Promise<{
+  anchors: number;
+  regulations: number;
+}> {
   return invoke("knowledge_reindex");
 }
 
@@ -367,7 +417,11 @@ export async function researchExecute(params: {
     chain_strength: number;
   };
   summary: string;
-  total_tokens: { prompt_tokens: number; completion_tokens: number; total_tokens: number };
+  total_tokens: {
+    prompt_tokens: number;
+    completion_tokens: number;
+    total_tokens: number;
+  };
 }> {
   return invoke("research_execute", {
     topic: params.topic,
@@ -405,9 +459,7 @@ export async function profileList(params: {
   });
 }
 
-export async function profileGet(params: {
-  key: string;
-}): Promise<{
+export async function profileGet(params: { key: string }): Promise<{
   key: string;
   value: unknown;
   source: string;
@@ -438,15 +490,11 @@ export async function profileDeactivate(params: {
   return invoke("profile_deactivate", { key: params.key });
 }
 
-export async function profileDelete(params: {
-  key: string;
-}): Promise<void> {
+export async function profileDelete(params: { key: string }): Promise<void> {
   return invoke("profile_delete", { key: params.key });
 }
 
-export async function inboxList(params: {
-  status?: string;
-}): Promise<
+export async function inboxList(params: { status?: string }): Promise<
   Array<{
     id: number;
     session_id: number | null;

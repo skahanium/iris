@@ -5,6 +5,7 @@
 
 use rusqlite::Connection;
 
+use crate::ai_runtime::retrieval_scope::{filter_packets_by_scope, RetrievalScope};
 use crate::ai_runtime::{ContextPacket, SourceType, TrustLevel};
 use crate::embedding::engine;
 use crate::error::AppResult;
@@ -18,6 +19,7 @@ pub struct RetrievalRequest {
     pub layers: RetrievalLayers,
     pub note_context: Option<String>, // current note path for graph/backlink boost
     pub file_id_context: Option<i64>,
+    pub scope: RetrievalScope,
 }
 
 #[derive(Debug, Clone)]
@@ -99,6 +101,10 @@ pub fn hybrid_retrieve(
 
     // Score fusion: normalize and weight by layer, then deduplicate
     fuse_and_rank(&mut packets, request.max_results);
+
+    filter_packets_by_scope(&mut packets, &request.scope, |p| {
+        p.source_path.as_deref()
+    });
 
     Ok(packets)
 }
@@ -569,6 +575,7 @@ mod tests {
             layers: RetrievalLayers::default(),
             note_context: None,
             file_id_context: None,
+            scope: RetrievalScope::default(),
         };
         assert!(req.layers.fts);
         assert!(req.layers.vector);
@@ -593,6 +600,7 @@ mod tests {
             layers: RetrievalLayers::default(),
             note_context: None,
             file_id_context: None,
+            scope: RetrievalScope::default(),
         };
         let packets = hybrid_retrieve(&conn, &req).unwrap();
         // No tables exist in a fresh in-memory DB, so all layers should fail gracefully

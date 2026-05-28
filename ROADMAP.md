@@ -290,6 +290,59 @@ v0.1 已用 `fastembed` + `chunk_embeddings` BLOB + Rust 全量余弦（见 [doc
 
 ---
 
+## v0.4.1-ui — Chrome 现代化
+
+**目标**：命令面板、AI 侧栏及全 Chrome 达到 Notion / Vercel 级现代化观感；**不新增后端/IPC**。
+
+**设计宪章**：[docs/design-system.md](docs/design-system.md)（Chrome 控件选型、表面 token）
+
+### Checklist
+
+#### Token 与基础设施
+
+- [x] `--surface-*`、`--command-highlight-*`、`--ai-*` token 与 Tailwind 映射
+- [x] 共享原语：`OverlayChrome`、`CommandListOption`、`Kbd`、`AiComposer`、`AiMessage`、`SurfaceCard`
+
+#### 命令与导航
+
+- [x] `CommandPalette` / `QuickOpen`：统一浮层壳、图标、匹配高亮、空状态
+- [x] 其余 `IrisOverlay` 面板间距与顶栏对齐
+
+#### AI 侧栏
+
+- [x] `AiPanel` 拆分；`SceneSelector` + `AiComposer`；证据卡/工具卡 token 化
+- [x] 去重复 `SCENE_OPTIONS`、去 emerald/purple 主视觉（核心 AI 面板；ResearchPanel 等待 v0.5）
+
+#### 编辑器 Chrome
+
+- [x] `SlashCommandList`：Lucide + `CommandListOption`
+- [x] `FloatingToolbar`：pill 组 / 更多菜单
+
+#### 壳层
+
+- [x] `TabBar` / `StatusBar`（缩放 popover）/ `WelcomeEmpty`
+
+### 验收标准
+
+- [ ] 亮/暗主题命令面板与 AI 手动走查；`prefers-reduced-motion` 无阻塞动画（需人工）
+- [ ] `pnpm run lint` / `typecheck` / `test` 通过
+
+---
+
+## v0.5.1 — 语料库与范围检索
+
+**目标**：在命令浮层（非侧边栏文件树）前提下，用 `.iris/corpora.toml` 声明场景默认语料库，并在 AI 对话中通过 `@` 指定文件夹/文档检索范围。
+
+### 体验清单
+
+- [x] 命令面板：底栏常驻 `Ctrl+Shift+P`；列表移除「打开命令面板」自指项；边界 `↑↓` 滚动不闪烁
+- [x] `corpora.toml` 解析、`corpus_list` / `corpus_upsert` IPC、`RetrievalScope` 路径过滤
+- [x] AI 输入 `@` 悬浮补全（文件夹/文档）、Scope 芯片、`context_assemble` / `ai_send_message` 传 `contextScope`
+- [x] `VaultNavigator` 树形浮层（由原 FileSheet 演进）、「设为语料库」写回配置
+- [x] 法规索引仅对 `kind=regulation` 语料路径；场景默认 corpus 与 exemplar 模板层联调
+
+---
+
 ## v0.5.0 — AI 建设 MVP
 
 **目标**：把 v0.1 的内联 AI 与上下文问答升级为 Iris 的本地优先 AI 工作流系统。v0.5.0 只做可治理、可评测、可确认的 AI MVP，不做长期自治代理。

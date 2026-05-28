@@ -49,6 +49,26 @@ describe("ensureOptionVisible", () => {
     expect(viewport.scrollTop).toBe(48);
   });
 
+  it("does not scroll on hover (direction 0)", () => {
+    const viewport = mockViewport(0, 100);
+    const item = document.createElement("button");
+    item.getBoundingClientRect = () =>
+      ({
+        top: 110,
+        bottom: 140,
+        left: 0,
+        right: 300,
+        width: 300,
+        height: 30,
+        x: 0,
+        y: 110,
+        toJSON: () => ({}),
+      }) as DOMRect;
+
+    ensureOptionVisible(viewport, item, 0);
+    expect(viewport.scrollTop).toBe(0);
+  });
+
   it("does not scroll when the item is already fully visible", () => {
     const viewport = mockViewport(0, 100);
     const item = document.createElement("button");

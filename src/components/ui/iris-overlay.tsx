@@ -14,6 +14,8 @@ interface IrisOverlayProps {
   title: string;
   children: ReactNode;
   size?: IrisOverlaySize;
+  /** 默认 true；命令面板 / Quick Open 等自管搜索顶栏时设为 false */
+  showTitleBar?: boolean;
   className?: string;
   bodyClassName?: string;
 }
@@ -24,6 +26,7 @@ export function IrisOverlay({
   title,
   children,
   size = "command",
+  showTitleBar = true,
   className,
   bodyClassName,
 }: IrisOverlayProps) {
@@ -56,17 +59,23 @@ export function IrisOverlay({
           aria-describedby={undefined}
           className={irisOverlayPanelClass(size, className)}
         >
-          <div className="flex h-11 shrink-0 items-center justify-between border-b border-border/60 px-4">
-            <DialogPrimitive.Title className="text-sm font-medium tracking-tight text-foreground">
+          {showTitleBar ? (
+            <div className="flex h-11 shrink-0 items-center justify-between border-b border-border/60 bg-surface-elevated px-4">
+              <DialogPrimitive.Title className="text-sm font-semibold tracking-tight text-foreground">
+                {title}
+              </DialogPrimitive.Title>
+              <DialogPrimitive.Close
+                className="inline-flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground duration-fast ease-iris-out hover:bg-surface-inset hover:text-foreground focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-1 focus:ring-offset-panel"
+                aria-label="关闭"
+              >
+                <X className="h-4 w-4" />
+              </DialogPrimitive.Close>
+            </div>
+          ) : (
+            <DialogPrimitive.Title className="sr-only">
               {title}
             </DialogPrimitive.Title>
-            <DialogPrimitive.Close
-              className="inline-flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground duration-fast ease-iris-out hover:bg-muted hover:text-foreground focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-1 focus:ring-offset-panel"
-              aria-label="关闭"
-            >
-              <X className="h-4 w-4" />
-            </DialogPrimitive.Close>
-          </div>
+          )}
           <div className={cn("flex min-h-0 flex-1 flex-col", bodyClassName)}>
             {children}
           </div>

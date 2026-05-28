@@ -9,6 +9,14 @@ export function isModKey(e: KeyboardEvent): boolean {
   return e.ctrlKey || e.metaKey;
 }
 
+/** 状态栏等处的命令面板快捷键展示 */
+export function formatCommandPaletteShortcut(): string {
+  const isMac =
+    typeof navigator !== "undefined" &&
+    /Mac|iPhone|iPad|iPod/.test(navigator.platform);
+  return isMac ? "⌘⇧P" : "Ctrl+Shift+P";
+}
+
 export interface DebouncedFn<T extends (...args: never[]) => void> {
   (...args: Parameters<T>): void;
   flush: () => void;

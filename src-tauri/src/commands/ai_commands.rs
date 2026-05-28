@@ -10,6 +10,7 @@ use crate::ai_runtime::{
         CapabilitySlot, GatewayRequest, LlmMessage, MessageRole, ModelGateway, ProviderConfig,
     },
     packet_builder::build_context_packets,
+    retrieval_scope::ContextScopeDto,
     scene_router::resolve_scene,
     session::SessionManager,
     tool_executor::ToolRegistry,
@@ -29,6 +30,7 @@ pub async fn context_assemble(
     _note_content_hash: Option<String>,
     query: String,
     session_id: Option<i64>,
+    context_scope: Option<ContextScopeDto>,
 ) -> AppResult<AssembledContext> {
     let scene: AiScene = serde_json::from_str(&format!("\"{scene}\""))
         .map_err(|e| AppError::msg(format!("invalid scene: {e}")))?;
@@ -64,8 +66,18 @@ pub async fn context_assemble(
         .map(|sq| sq.query.as_str())
         .unwrap_or(&query);
 
+    let vault = state.vault_path()?;
+    let user_scope = context_scope.unwrap_or_default();
     let (packets, context_status) = state.db.with_conn(|conn| {
-        build_context_packets(conn, scene, note_path.as_deref(), file_id, primary_query)
+        build_context_packets(
+            conn,
+            &vault,
+            scene,
+            note_path.as_deref(),
+            file_id,
+            primary_query,
+            &user_scope,
+        )
     })?;
 
     // Ensure session exists
@@ -91,6 +103,8 @@ pub async fn ai_send_message(
     session_id: Option<i64>,
     message: String,
     selected_packet_ids: Option<Vec<String>>,
+    note_path: Option<String>,
+    context_scope: Option<ContextScopeDto>,
 ) -> AppResult<serde_json::Value> {
     let request_id = uuid::Uuid::new_v4().to_string();
     let scene: AiScene = serde_json::from_str(&format!("\"{scene}\""))
@@ -132,7 +146,7 @@ pub async fn ai_send_message(
     let sid = if let Some(id) = session_id {
         id
     } else {
-        SessionManager::ensure(&state.db, scene, None)?
+        SessionManager::ensure(&state.db, scene, note_path.as_deref())?
     };
 
     // Save user message
@@ -142,9 +156,34 @@ pub async fn ai_send_message(
     let history = SessionManager::recent_messages(&state.db, sid, 20)?;
 
     // Build context packets
-    let (packets, _context_status) = state
-        .db
-        .with_conn(|conn| build_context_packets(conn, scene, None, None, &message))?;
+    let vault = state.vault_path()?;
+    let user_scope = context_scope.unwrap_or_default();
+    let file_id = match &note_path {
+        Some(path) => state
+            .db
+            .with_conn(|conn| {
+                Ok(conn
+                    .query_row(
+                        "SELECT id FROM files WHERE path = ?1",
+                        [path.as_str()],
+                        |r| r.get::<_, i64>(0),
+                    )
+                    .ok())
+            })
+            .unwrap_or(None),
+        None => None,
+    };
+    let (packets, _context_status) = state.db.with_conn(|conn| {
+        build_context_packets(
+            conn,
+            &vault,
+            scene,
+            note_path.as_deref(),
+            file_id,
+            &message,
+            &user_scope,
+        )
+    })?;
 
     // Filter packets by selected IDs if provided
     let filtered_packets = if let Some(ids) = &selected_packet_ids {
@@ -449,6 +488,7 @@ pub async fn search_hybrid(
         layers,
         note_context: note_path,
         file_id_context: file_id,
+        scope: crate::ai_runtime::retrieval_scope::RetrievalScope::default(),
     };
 
     let packets = state
@@ -551,6 +591,7 @@ async fn execute_tool_auto(
                     },
                     note_context: None,
                     file_id_context: None,
+                    scope: crate::ai_runtime::retrieval_scope::RetrievalScope::default(),
                 };
                 crate::ai_runtime::retrieval_broker::hybrid_retrieve(conn, &request)
             })?;
@@ -581,6 +622,7 @@ async fn execute_tool_auto(
                     },
                     note_context: None,
                     file_id_context: None,
+                    scope: crate::ai_runtime::retrieval_scope::RetrievalScope::default(),
                 };
                 crate::ai_runtime::retrieval_broker::hybrid_retrieve(conn, &request)
             })?;

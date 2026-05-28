@@ -1,111 +1,65 @@
-import { marked } from "marked";
-import { Send, Layers } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import { sanitizeHtml } from "@/lib/sanitize";
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type KeyboardEvent,
+} from "react";
+
+import { AiComposer } from "@/components/ui/ai-composer";
 import {
   contextAssemble,
   aiSendMessage,
+  corpusList,
+  fileList,
   toolConfirm as toolConfirmIpc,
   listenLlmToken,
   listenLlmDone,
   listenLlmError,
+  llmAbort,
 } from "@/lib/ipc";
+import {
+  buildMentionCandidates,
+  findActiveMentionQuery,
+  insertMentionToken,
+  parseMentionTokens,
+  stripMentionTokensForDisplay,
+  tokensToContextScope,
+  type MentionCandidate,
+  type MentionToken,
+} from "@/lib/ai-context-scope";
+import { SCENE_META } from "@/lib/ai/scene-types";
+import { useListboxKeyboard } from "@/hooks/useListboxKeyboard";
 import type { AiScene, AssembledContext, ContextPacket } from "@/types/ai";
-import type { LlmTokenEvent } from "@/types/ipc";
+import type { FileListItem, LlmTokenEvent } from "@/types/ipc";
 
-import { ContextPacketList } from "./ContextPacketCard";
+import { AiMentionPopover } from "./AiMentionPopover";
+import { AiMessageList, type ChatLine } from "./AiMessageList";
+import { ContextPacketDrawer } from "./ContextPacketDrawer";
+import { ContextScopeChips } from "./ContextScopeChips";
 import { ContextStatusBar } from "./ContextStatusBar";
-import { ToolCallList, type ToolCallInfo } from "./ToolCallBubble";
+import { AiPanelHeader } from "./AiPanelHeader";
 import {
   ToolConfirmDialog,
   type ToolConfirmRequest,
 } from "./ToolConfirmDialog";
 
-// ─── Backward Compatibility Exports ──────────────────────
-
-/** @deprecated Use ContextPacket instead */
-export interface ContextQuote {
-  filePath: string;
-  heading?: string;
-  text: string;
-}
-
-// ─── Scene Options ───────────────────────────────────────
-
-const SCENE_OPTIONS: { value: AiScene; label: string; description: string }[] = [
-  {
-    value: "knowledge_lookup",
-    label: "知识管家",
-    description: "查找、解释、引用知识库材料",
-  },
-  {
-    value: "exemplar_learning",
-    label: "学习伴侣",
-    description: "分析范文结构和表达方式",
-  },
-  {
-    value: "drafting_assist",
-    label: "写作伴侣",
-    description: "文稿创作辅助",
-  },
-  {
-    value: "research_synthesis",
-    label: "研究助理",
-    description: "多材料论证和证据分析",
-  },
-];
-
-// ─── Types ───────────────────────────────────────────────
-
 interface AiPanelProps {
   notePath: string | null;
+  noteDisplayTitle: string | null;
   noteContent: string;
   onInsertText?: (text: string) => void;
   onReplaceSelection?: (text: string) => void;
 }
 
-interface ChatLine {
-  role: "user" | "assistant" | "system";
-  content: string;
-  toolCalls?: ToolCallInfo[];
-}
-
-// ─── Assistant Message Renderer ──────────────────────────
-
-function AssistantMessage({ content }: { content: string }) {
-  const html = useMemo(() => {
-    const raw = marked.parse(content || "", { async: false }) as string;
-    return sanitizeHtml(raw);
-  }, [content]);
-
-  return (
-    <div
-      className="ai-msg text-sm leading-relaxed [&_code]:rounded [&_code]:bg-muted/60 [&_code]:px-1 [&_p]:mb-2 [&_ul]:mb-2 [&_ul]:list-disc [&_ul]:pl-5"
-      dangerouslySetInnerHTML={{ __html: html }}
-    />
-  );
-}
-
-// ─── Main Component ──────────────────────────────────────
-
 export function AiPanel({
   notePath,
+  noteDisplayTitle,
   noteContent: _noteContent,
   onInsertText: _onInsertText,
   onReplaceSelection: _onReplaceSelection,
 }: AiPanelProps) {
-  // State
   const [scene, setScene] = useState<AiScene>("knowledge_lookup");
   const [messages, setMessages] = useState<ChatLine[]>([]);
   const [input, setInput] = useState("");
@@ -113,16 +67,117 @@ export function AiPanel({
   const [sessionId, setSessionId] = useState<number | null>(null);
   const [packets, setPackets] = useState<ContextPacket[]>([]);
   const [selectedPacketIds, setSelectedPacketIds] = useState<string[]>([]);
-  const [contextStatusData, setContextStatusData] = useState<import("@/types/ai").ContextStatus | null>(null);
-  const [showPackets, setShowPackets] = useState(false);
+  const [contextStatusData, setContextStatusData] = useState<
+    import("@/types/ai").ContextStatus | null
+  >(null);
+  const [packetsOpen, setPacketsOpen] = useState(false);
   const [toolConfirmRequest, setToolConfirmRequest] =
     useState<ToolConfirmRequest | null>(null);
 
-  // Refs
   const streamBuf = useRef("");
   const requestIdRef = useRef<string | null>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const [vaultFiles, setVaultFiles] = useState<FileListItem[]>([]);
+  const [mentionOpen, setMentionOpen] = useState(false);
+  const [mentionStart, setMentionStart] = useState(0);
+  const [mentionQuery, setMentionQuery] = useState("");
+  const [corpusNames, setCorpusNames] = useState<string[]>([]);
 
-  // Listen for streaming events
+  const mentionTokens = useMemo(() => parseMentionTokens(input), [input]);
+  const contextScope = useMemo(
+    () => tokensToContextScope(mentionTokens),
+    [mentionTokens],
+  );
+  const mentionCandidates = useMemo(
+    () => buildMentionCandidates(vaultFiles, mentionQuery),
+    [vaultFiles, mentionQuery],
+  );
+
+  useEffect(() => {
+    void fileList()
+      .then(setVaultFiles)
+      .catch(() => setVaultFiles([]));
+    void corpusList()
+      .then((items) => setCorpusNames(items.map((c) => c.name)))
+      .catch(() => setCorpusNames([]));
+  }, []);
+
+  const syncMentionFromInput = useCallback(() => {
+    const ta = textareaRef.current;
+    if (!ta) {
+      setMentionOpen(false);
+      return;
+    }
+    const active = findActiveMentionQuery(input, ta.selectionStart);
+    if (active) {
+      setMentionOpen(true);
+      setMentionStart(active.start);
+      setMentionQuery(active.query);
+    } else {
+      setMentionOpen(false);
+    }
+  }, [input]);
+
+  useEffect(() => {
+    syncMentionFromInput();
+  }, [input, syncMentionFromInput]);
+
+  const selectMention = useCallback(
+    (candidate: MentionCandidate) => {
+      const ta = textareaRef.current;
+      const cursor = ta?.selectionStart ?? input.length;
+      const { text, cursor: nextCursor } = insertMentionToken(
+        input,
+        cursor,
+        mentionStart,
+        candidate,
+      );
+      setInput(text);
+      setMentionOpen(false);
+      requestAnimationFrame(() => {
+        const el = textareaRef.current;
+        if (!el) return;
+        el.focus();
+        el.setSelectionRange(nextCursor, nextCursor);
+      });
+    },
+    [input, mentionStart],
+  );
+
+  const removeMentionToken = useCallback((token: MentionToken) => {
+    setInput((prev) => prev.replace(token.raw, "").replace(/\s{2,}/g, " "));
+  }, []);
+
+  const {
+    highlight: mentionHighlight,
+    handleKeyDown: handleMentionKeyDown,
+    setHighlight: setMentionHighlight,
+    navDeltaRef: mentionNavDeltaRef,
+  } = useListboxKeyboard({
+    length: mentionCandidates.length,
+    enabled: mentionOpen && mentionCandidates.length > 0,
+    wrap: false,
+    resetKey: `${mentionQuery}:${mentionCandidates.length}`,
+    onActivate: (index) => {
+      const item = mentionCandidates[index];
+      if (item) selectMention(item);
+    },
+  });
+
+  const handleComposerKeyDown = useCallback(
+    (e: KeyboardEvent<HTMLTextAreaElement>) => {
+      if (mentionOpen) {
+        if (e.key === "Escape") {
+          e.preventDefault();
+          setMentionOpen(false);
+          return;
+        }
+        if (handleMentionKeyDown(e)) return;
+      }
+    },
+    [mentionOpen, handleMentionKeyDown],
+  );
+
   useEffect(() => {
     let unlistenToken: (() => void) | undefined;
     let unlistenDone: (() => void) | undefined;
@@ -130,7 +185,8 @@ export function AiPanel({
     let cleanup: (() => void) | undefined;
 
     const tokenPromise = listenLlmToken((ev: LlmTokenEvent) => {
-      if (requestIdRef.current && ev.request_id !== requestIdRef.current) return;
+      if (requestIdRef.current && ev.request_id !== requestIdRef.current)
+        return;
       streamBuf.current += ev.token;
       setMessages((prev) => {
         const copy = [...prev];
@@ -149,6 +205,7 @@ export function AiPanel({
     const donePromise = listenLlmDone(() => {
       setStreaming(false);
       streamBuf.current = "";
+      requestIdRef.current = null;
     }).then((fn) => {
       unlistenDone = fn;
     });
@@ -156,6 +213,7 @@ export function AiPanel({
     const errorPromise = listenLlmError((ev) => {
       setStreaming(false);
       streamBuf.current = "";
+      requestIdRef.current = null;
       setMessages((prev) => [
         ...prev,
         {
@@ -180,7 +238,6 @@ export function AiPanel({
     };
   }, []);
 
-  // Listen for tool confirmation requests
   useEffect(() => {
     let unlisten: (() => void) | undefined;
 
@@ -197,7 +254,6 @@ export function AiPanel({
     };
   }, []);
 
-  // Assemble context when scene or query changes
   const assembleContext = useCallback(
     async (query: string) => {
       try {
@@ -207,29 +263,32 @@ export function AiPanel({
           note_content_hash: null,
           query,
           session_id: sessionId,
+          context_scope: contextScope,
         });
         setPackets(result.packets);
         setContextStatusData(result.context_status);
+        if (result.packets.length > 0) {
+          setPacketsOpen(true);
+        }
         return result;
       } catch {
         setContextStatusData(null);
         return null;
       }
     },
-    [scene, notePath, sessionId]
+    [scene, notePath, sessionId, contextScope],
   );
 
-  // Send message
   const send = useCallback(async () => {
     if (!input.trim() || streaming) return;
-    const userMsg = input.trim();
+    const rawMsg = input.trim();
+    const userMsg = stripMentionTokensForDisplay(rawMsg);
     setInput("");
     setMessages((m) => [...m, { role: "user", content: userMsg }]);
     setStreaming(true);
     streamBuf.current = "";
 
-    // Assemble context first
-    const context = await assembleContext(userMsg);
+    const context = await assembleContext(rawMsg);
     if (!context) {
       setStreaming(false);
       return;
@@ -239,8 +298,11 @@ export function AiPanel({
       const result = await aiSendMessage({
         scene,
         session_id: sessionId,
-        message: userMsg,
-        selected_packet_ids: selectedPacketIds.length > 0 ? selectedPacketIds : undefined,
+        message: rawMsg,
+        note_path: notePath,
+        context_scope: contextScope,
+        selected_packet_ids:
+          selectedPacketIds.length > 0 ? selectedPacketIds : undefined,
       });
 
       requestIdRef.current = result.request_id;
@@ -248,26 +310,28 @@ export function AiPanel({
         setSessionId(result.session_id);
       }
 
-      // Add assistant message placeholder
       setMessages((m) => [
         ...m,
         {
           role: "assistant",
           content: result.content ?? "",
-          toolCalls: result.tool_calls?.map((tc: { function: { name: string }; id: string }) => ({
-            id: tc.id,
-            name: tc.function.name,
-            status: "pending" as const,
-          })),
+          toolCalls: result.tool_calls?.map(
+            (tc: { function: { name: string }; id: string }) => ({
+              id: tc.id,
+              name: tc.function.name,
+              status: "pending" as const,
+            }),
+          ),
         },
       ]);
 
-      // If response is complete (non-streaming fallback)
       if (result.status === "completed" && result.content) {
         setStreaming(false);
+        requestIdRef.current = null;
       }
     } catch (e) {
       setStreaming(false);
+      requestIdRef.current = null;
       setMessages((m) => [
         ...m,
         {
@@ -276,15 +340,33 @@ export function AiPanel({
         },
       ]);
     }
-  }, [input, streaming, scene, sessionId, selectedPacketIds, assembleContext]);
+  }, [
+    input,
+    streaming,
+    scene,
+    sessionId,
+    notePath,
+    contextScope,
+    selectedPacketIds,
+    assembleContext,
+  ]);
 
-  // Handle tool confirmation
+  const stopStreaming = useCallback(() => {
+    const id = requestIdRef.current;
+    if (id) {
+      void llmAbort(id);
+    }
+    setStreaming(false);
+    streamBuf.current = "";
+    requestIdRef.current = null;
+  }, []);
+
   const handleToolConfirm = useCallback(
     async (
       requestId: string,
       toolCallId: string,
       decision: "approve" | "reject" | "modify",
-      modifiedArgs?: unknown
+      modifiedArgs?: unknown,
     ) => {
       try {
         await toolConfirmIpc({
@@ -293,12 +375,6 @@ export function AiPanel({
           decision,
           modified_args: modifiedArgs,
         });
-
-        // If approved, handle tool result
-        if (decision === "approve") {
-          // Tool execution will be handled by the backend
-          // and result will be emitted as ai:tool_result event
-        }
       } catch (e) {
         setMessages((m) => [
           ...m,
@@ -309,128 +385,68 @@ export function AiPanel({
         ]);
       }
     },
-    []
+    [],
   );
 
-  // Toggle packet selection
   const togglePacketSelection = useCallback((id: string) => {
     setSelectedPacketIds((prev) =>
-      prev.includes(id) ? prev.filter((pid) => pid !== id) : [...prev, id]
+      prev.includes(id) ? prev.filter((pid) => pid !== id) : [...prev, id],
     );
   }, []);
 
+  const sceneLabel = SCENE_META[scene].label;
+
   return (
-    <div className="flex h-full flex-col">
-      {/* Header with scene selector */}
-      <div className="flex items-center gap-2 border-b border-border p-3">
-        <Select value={scene} onValueChange={(v: string) => setScene(v as AiScene)}>
-          <SelectTrigger className="w-[180px]">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            {SCENE_OPTIONS.map((opt) => (
-              <SelectItem key={opt.value} value={opt.value}>
-                <div className="flex flex-col">
-                  <span>{opt.label}</span>
-                  <span className="text-[10px] text-muted-foreground">
-                    {opt.description}
-                  </span>
-                </div>
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+    <div className="flex h-full flex-col bg-panel">
+      <AiPanelHeader scene={scene} onSceneChange={setScene} />
 
-        <div className="flex-1" />
-
-        <Button
-          variant="ghost"
-          size="icon"
-          className="h-8 w-8"
-          onClick={() => setShowPackets(!showPackets)}
-        >
-          <Layers className="h-4 w-4" />
-        </Button>
-      </div>
-
-      {/* Context status bar */}
       <ContextStatusBar
         scene={scene}
         contextStatus={contextStatusData}
-        notePath={notePath}
+        noteDisplayTitle={noteDisplayTitle}
         totalPackets={packets.length}
+        corpusNames={corpusNames}
       />
 
-      {/* Evidence packets panel */}
-      {showPackets && (
-        <div className="border-b border-border max-h-[300px] overflow-auto p-3">
-          <ContextPacketList
-            packets={packets}
-            selectedIds={selectedPacketIds}
-            onSelect={togglePacketSelection}
-            compact
+      <ContextPacketDrawer
+        open={packetsOpen}
+        onOpenChange={setPacketsOpen}
+        packets={packets}
+        selectedIds={selectedPacketIds}
+        onSelect={togglePacketSelection}
+      />
+
+      <AiMessageList messages={messages} streaming={streaming} />
+
+      <ContextScopeChips
+        tokens={mentionTokens}
+        onRemove={removeMentionToken}
+      />
+
+      <AiComposer
+        value={input}
+        streaming={streaming}
+        disabled={streaming}
+        placeholder={`向${sceneLabel}提问… 输入 @ 指定范围`}
+        textareaRef={textareaRef}
+        onComposerKeyDown={handleComposerKeyDown}
+        onSelect={syncMentionFromInput}
+        onChange={setInput}
+        onSubmit={() => void send()}
+        onStop={stopStreaming}
+        mentionPopover={
+          <AiMentionPopover
+            open={mentionOpen}
+            query={mentionQuery}
+            candidates={mentionCandidates}
+            highlight={mentionHighlight}
+            onHighlight={setMentionHighlight}
+            navDeltaRef={mentionNavDeltaRef}
+            onSelect={selectMention}
           />
-        </div>
-      )}
+        }
+      />
 
-      {/* Chat messages */}
-      <ScrollArea className="flex-1 px-3 py-2">
-        <div className="space-y-3 text-sm">
-          {messages.map((m, i) => (
-            <div
-              key={`${i}-${m.role}`}
-              className={
-                m.role === "user"
-                  ? "ai-msg-user"
-                  : m.role === "system"
-                    ? "ai-msg-system text-xs text-muted-foreground italic"
-                    : "ai-msg-assistant"
-              }
-            >
-              {m.role === "assistant" ? (
-                m.content ? (
-                  <>
-                    <AssistantMessage content={m.content} />
-                    {m.toolCalls && m.toolCalls.length > 0 && (
-                      <ToolCallList toolCalls={m.toolCalls} />
-                    )}
-                  </>
-                ) : streaming ? (
-                  "…"
-                ) : null
-              ) : (
-                m.content
-              )}
-            </div>
-          ))}
-        </div>
-      </ScrollArea>
-
-      {/* Input area */}
-      <div className="flex gap-2 border-t border-border p-3">
-        <Input
-          value={input}
-          placeholder={`向${SCENE_OPTIONS.find((o) => o.value === scene)?.label ?? "AI"}提问…`}
-          onChange={(e) => setInput(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" && !e.shiftKey) {
-              e.preventDefault();
-              void send();
-            }
-          }}
-          disabled={streaming}
-        />
-        <Button
-          type="button"
-          size="icon"
-          disabled={streaming || !input.trim()}
-          onClick={() => void send()}
-        >
-          <Send className="h-4 w-4" />
-        </Button>
-      </div>
-
-      {/* Tool confirmation dialog */}
       <ToolConfirmDialog
         request={toolConfirmRequest}
         onConfirm={handleToolConfirm}

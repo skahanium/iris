@@ -1,4 +1,5 @@
 pub mod ai_commands;
+pub mod corpus_commands;
 pub mod export;
 pub mod file;
 pub mod graph;

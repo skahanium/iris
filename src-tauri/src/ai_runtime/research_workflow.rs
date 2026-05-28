@@ -380,6 +380,7 @@ async fn execute_tool_call(
             let query = args["query"].as_str().unwrap_or("");
             db.with_conn(|conn| {
                 let request = crate::ai_runtime::retrieval_broker::RetrievalRequest {
+                    scope: crate::ai_runtime::retrieval_scope::RetrievalScope::default(),
                     query: query.to_string(),
                     max_results: 10,
                     layers: crate::ai_runtime::retrieval_broker::RetrievalLayers {
@@ -403,6 +404,7 @@ async fn execute_tool_call(
             let query = format!("《{reg_name}》{article}");
             db.with_conn(|conn| {
                 let request = crate::ai_runtime::retrieval_broker::RetrievalRequest {
+                    scope: crate::ai_runtime::retrieval_scope::RetrievalScope::default(),
                     query,
                     max_results: 5,
                     layers: crate::ai_runtime::retrieval_broker::RetrievalLayers {

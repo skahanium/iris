@@ -28,6 +28,14 @@
     --destructive: 0 55% 55%;
     --destructive-foreground: 0 0% 98%;
 
+    --input: 0 0% 18%;
+    --secondary: 0 0% 16%;
+    --secondary-foreground: 0 0% 80%;
+    --accent: 0 0% 12%;
+    --accent-foreground: 0 0% 93%;
+    --popover: 0 0% 14%;
+    --popover-foreground: 0 0% 93%;
+
     /* 与壳层对齐，兼容 editor-* Tailwind 类 */
     --editor-paper: var(--background);
     --editor-ink: var(--foreground);
@@ -56,6 +64,17 @@
     --motion-exit: 140ms;
     --motion-ease: cubic-bezier(0.2, 0, 0, 1);
     --motion-ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+
+    --surface-chrome: 0 0% 12%;
+    --surface-elevated: 0 0% 14%;
+    --surface-inset: 0 0% 16%;
+    --command-highlight-bg: 210 22% 52% / 0.14;
+    --command-highlight-ring: 210 22% 58% / 0.32;
+    --command-group-label: 0 0% 55%;
+    --ai-user-bg: 0 0% 18%;
+    --ai-assistant-border: 0 0% 22%;
+    --ai-composer-bg: 0 0% 14%;
+    --ai-stream-pulse: 210 18% 62%;
   }
 
   .light {
@@ -80,6 +99,14 @@
     --destructive: 0 55% 48%;
     --destructive-foreground: 0 0% 100%;
 
+    --input: 0 0% 90%;
+    --secondary: 0 0% 96%;
+    --secondary-foreground: 0 0% 30%;
+    --accent: 0 0% 97%;
+    --accent-foreground: 0 0% 13%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 0 0% 13%;
+
     --editor-paper: var(--background);
     --editor-ink: var(--foreground);
     --editor-muted: 0 0% 45%;
@@ -92,6 +119,17 @@
       0 0 0 1px hsl(var(--border) / 0.8);
     --shadow-floating:
       0 8px 20px hsl(0 0% 10% / 0.1), 0 0 0 1px hsl(var(--border) / 0.75);
+
+    --surface-chrome: 0 0% 97%;
+    --surface-elevated: 0 0% 100%;
+    --surface-inset: 0 0% 96%;
+    --command-highlight-bg: 210 14% 42% / 0.1;
+    --command-highlight-ring: 210 14% 42% / 0.22;
+    --command-group-label: 0 0% 45%;
+    --ai-user-bg: 0 0% 94%;
+    --ai-assistant-border: 0 0% 88%;
+    --ai-composer-bg: 0 0% 100%;
+    --ai-stream-pulse: 210 12% 45%;
   }
 
   * {
@@ -218,7 +256,9 @@
     @apply text-primary;
   }
 
-  .iris-editor-body .ProseMirror > :is(p, h1, h2, h3, ul, ol, blockquote, pre, hr, table) {
+  .iris-editor-body
+    .ProseMirror
+    > :is(p, h1, h2, h3, ul, ol, blockquote, pre, hr, table) {
     margin: 0;
   }
 
@@ -230,7 +270,9 @@
     margin-top: 1.25em;
   }
 
-  .iris-editor-body .ProseMirror > :is(h1:not(.iris-doc-title), h2, h3):first-child {
+  .iris-editor-body
+    .ProseMirror
+    > :is(h1:not(.iris-doc-title), h2, h3):first-child {
     margin-top: 0;
   }
 
@@ -267,7 +309,10 @@
     font-size: 1.25rem;
   }
 
-  .iris-editor-body .ProseMirror > :is(h1:not(.iris-doc-title), h2, h3) .iris-heading-fold-gutter,
+  .iris-editor-body
+    .ProseMirror
+    > :is(h1:not(.iris-doc-title), h2, h3)
+    .iris-heading-fold-gutter,
   .iris-editor-body
     .ProseMirror
     > :is(h1:not(.iris-doc-title), h2, h3)
@@ -291,7 +336,10 @@
     opacity: 0.35;
   }
 
-  .iris-editor-body .ProseMirror > h1:not(.iris-doc-title):hover .iris-heading-fold-btn,
+  .iris-editor-body
+    .ProseMirror
+    > h1:not(.iris-doc-title):hover
+    .iris-heading-fold-btn,
   .iris-editor-body .ProseMirror > h2:hover .iris-heading-fold-btn,
   .iris-editor-body .ProseMirror > h3:hover .iris-heading-fold-btn,
   .iris-heading-fold-btn:focus-visible {
@@ -375,11 +423,51 @@
   }
 
   .ai-msg-user {
-    @apply rounded-lg rounded-br-sm bg-muted/70 p-2.5 text-foreground;
+    @apply rounded-lg rounded-br-sm p-2.5 text-foreground;
+    background: hsl(var(--ai-user-bg));
   }
 
   .ai-msg-assistant {
-    @apply rounded-lg rounded-bl-sm border border-border bg-card/80 p-2.5;
+    @apply rounded-lg rounded-bl-sm border bg-card/80 p-2.5;
+    border-color: hsl(var(--ai-assistant-border));
+  }
+
+  .ai-stream-pulse {
+    @apply inline-flex gap-0.5;
+  }
+
+  .ai-stream-pulse > span {
+    @apply h-1.5 w-1.5 rounded-full;
+    background: hsl(var(--ai-stream-pulse));
+    animation: ai-pulse 1.2s ease-in-out infinite;
+  }
+
+  .ai-stream-pulse > span:nth-child(2) {
+    animation-delay: 0.15s;
+  }
+
+  .ai-stream-pulse > span:nth-child(3) {
+    animation-delay: 0.3s;
+  }
+
+  @keyframes ai-pulse {
+    0%,
+    80%,
+    100% {
+      opacity: 0.35;
+      transform: scale(0.85);
+    }
+    40% {
+      opacity: 1;
+      transform: scale(1);
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .ai-stream-pulse > span {
+      animation: none;
+      opacity: 0.6;
+    }
   }
 
   .iris-quote-card {
@@ -388,7 +476,11 @@
 }
 
 /* 标题后空段落不占位 */
-.iris-editor .iris-editor-body .ProseMirror > :is(h1:not(.iris-doc-title), h2, h3) + p.is-empty:has(+ *) {
+.iris-editor
+  .iris-editor-body
+  .ProseMirror
+  > :is(h1:not(.iris-doc-title), h2, h3)
+  + p.is-empty:has(+ *) {
   display: none !important;
   margin: 0 !important;
   min-height: 0 !important;

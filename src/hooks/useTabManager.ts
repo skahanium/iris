@@ -5,10 +5,11 @@ import {
   displayTitleFromMarkdown,
   resolveDocumentTitle,
 } from "@/lib/document-title";
-import { fileDiscard, fileRead } from "@/lib/ipc";
-import { createDefaultNote } from "@/lib/note-create";
-import { isNoteSubstantivelyEmpty } from "@/lib/note-substance";
 import { extractFrontmatterYaml } from "@/lib/markdown";
+import { fileRead } from "@/lib/ipc";
+import { createDefaultNote } from "@/lib/note-create";
+import { discardEmptyNoteIfNeeded } from "@/lib/note-tab-lifecycle";
+import { resolveNoteDisplayTitle } from "@/lib/note-display";
 
 interface UseTabManagerOptions {
   onStatusChange?: (status: string) => void;
@@ -24,29 +25,50 @@ export function useTabManager(options: UseTabManagerOptions = {}) {
   const activePathRef = useRef<string | null>(null);
   const markdownRef = useRef("");
   const frontmatterYamlRef = useRef<string | null>(null);
+  const tabsRef = useRef(tabs);
 
   activePathRef.current = activePath;
   markdownRef.current = markdown;
+  tabsRef.current = tabs;
 
   const getEditorMarkdown = useCallback(() => markdownRef.current, []);
 
-  const maybeDiscardEmptyNote = useCallback(
+  const clearEditorState = useCallback(() => {
+    activePathRef.current = null;
+    markdownRef.current = "";
+    frontmatterYamlRef.current = null;
+    setActivePath(null);
+    setMarkdown("");
+  }, []);
+
+  const maybeDiscardOnLeave = useCallback(
     async (path: string): Promise<boolean> => {
-      const md = markdownRef.current;
-      if (!isNoteSubstantivelyEmpty(md)) {
-        return false;
+      const discarded = await discardEmptyNoteIfNeeded(
+        path,
+        activePathRef.current,
+        markdownRef.current,
+      );
+      if (discarded) {
+        onVaultIndexBump?.();
       }
-      await fileDiscard(path);
-      onVaultIndexBump?.();
-      return true;
+      return discarded;
     },
     [onVaultIndexBump],
   );
 
   const openFile = useCallback(
-    async (path: string, titleHint?: string) => {
+    async (
+      path: string,
+      titleHint?: string,
+      options?: { skipDiscardPrevious?: boolean },
+    ) => {
       const current = activePathRef.current;
-      if (current && current !== path && (await maybeDiscardEmptyNote(current))) {
+      if (
+        !options?.skipDiscardPrevious &&
+        current &&
+        current !== path &&
+        (await maybeDiscardOnLeave(current))
+      ) {
         setTabs((prev) => prev.filter((t) => t.path !== current));
       }
       try {
@@ -54,18 +76,23 @@ export function useTabManager(options: UseTabManagerOptions = {}) {
         frontmatterYamlRef.current = extractFrontmatterYaml(content);
         const fromMarkdown = displayTitleFromMarkdown(content, "");
         const fallbackDb = await resolveDocumentTitle(path, titleHint);
+        const title = resolveNoteDisplayTitle({
+          path,
+          title:
+            fromMarkdown ||
+            titleHint?.trim() ||
+            fallbackDb,
+          markdown: content,
+        });
         setMarkdown(content);
         markdownRef.current = content;
+        activePathRef.current = path;
         setActivePath(path);
         setTabs((prev) => {
-          const existing = prev.find((t) => t.path === path);
-          const title =
-            fromMarkdown ||
-            (titleHint?.trim() ?? "") ||
-            existing?.title ||
-            fallbackDb;
           if (prev.some((t) => t.path === path)) {
-            return prev.map((t) => (t.path === path ? { ...t, title } : t));
+            return prev.map((t) =>
+              t.path === path ? { ...t, title, dirty: false } : t,
+            );
           }
           return [...prev, { path, title, dirty: false }];
         });
@@ -75,60 +102,56 @@ export function useTabManager(options: UseTabManagerOptions = {}) {
         onVaultIndexBump?.();
       }
     },
-    [maybeDiscardEmptyNote, onStatusChange, onVaultIndexBump],
+    [maybeDiscardOnLeave, onStatusChange, onVaultIndexBump],
   );
 
   const closeTab = useCallback(
     async (path: string) => {
-      if (activePathRef.current === path) {
-        if (await maybeDiscardEmptyNote(path)) {
-          setTabs((prev) => {
-            const idx = prev.findIndex((t) => t.path === path);
-            const next = prev.filter((t) => t.path !== path);
-            if (next.length === 0) {
-              setActivePath(null);
-              setMarkdown("");
-              markdownRef.current = "";
-            } else {
-              const newIdx = Math.min(Math.max(0, idx), next.length - 1);
-              void openFile(next[newIdx]!.path);
-            }
-            return next;
-          });
-          return;
-        }
+      const isActive = activePathRef.current === path;
+      try {
+        await maybeDiscardOnLeave(path);
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        onStatusChange?.(`关闭标签失败：${msg}`);
+        return;
       }
-      setTabs((prev) => {
-        const idx = prev.findIndex((t) => t.path === path);
-        const next = prev.filter((t) => t.path !== path);
-        if (activePathRef.current === path) {
-          if (next.length === 0) {
-            setActivePath(null);
-            setMarkdown("");
-            markdownRef.current = "";
-          } else {
-            const newIdx = Math.min(Math.max(0, idx), next.length - 1);
-            const newPath = next[newIdx]!.path;
-            void openFile(newPath);
-          }
-        }
-        return next;
-      });
+
+      const prevTabs = tabsRef.current;
+      const idx = prevTabs.findIndex((t) => t.path === path);
+      const nextTabs = prevTabs.filter((t) => t.path !== path);
+      const switchTo: string | null = isActive
+        ? nextTabs.length === 0
+          ? null
+          : nextTabs[Math.min(Math.max(0, idx), nextTabs.length - 1)]!.path
+        : null;
+      setTabs(nextTabs);
+
+      if (!isActive) {
+        return;
+      }
+      if (switchTo === null) {
+        clearEditorState();
+        return;
+      }
+      await openFile(switchTo, undefined, { skipDiscardPrevious: true });
     },
-    [openFile, maybeDiscardEmptyNote],
+    [clearEditorState, maybeDiscardOnLeave, onStatusChange, openFile],
   );
 
   const handleNewNote = useCallback(async () => {
-    const current = activePathRef.current;
-    if (current && (await maybeDiscardEmptyNote(current))) {
-      setTabs((prev) => prev.filter((t) => t.path !== current));
-      setActivePath(null);
-      setMarkdown("");
-      markdownRef.current = "";
+    try {
+      const created = await createDefaultNote({
+        extraTakenTitles: tabs.map((tab) => tab.title),
+      });
+      onVaultIndexBump?.();
+      await openFile(created.path, created.title, {
+        skipDiscardPrevious: true,
+      });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      onStatusChange?.(`新建笔记失败：${msg}`);
     }
-    const created = await createDefaultNote();
-    await openFile(created.path, created.title);
-  }, [openFile, maybeDiscardEmptyNote]);
+  }, [tabs, openFile, onStatusChange, onVaultIndexBump]);
 
   const markDirty = useCallback(() => {
     setTabs((t) =>
@@ -139,13 +162,24 @@ export function useTabManager(options: UseTabManagerOptions = {}) {
   }, []);
 
   const markClean = useCallback((path: string, title?: string) => {
-    setTabs((t) =>
-      t.map((tab) =>
-        tab.path === path
-          ? { ...tab, dirty: false, title: title || tab.title }
-          : tab,
-      ),
-    );
+    const displayTitle = title
+      ? resolveNoteDisplayTitle({ path, title })
+      : undefined;
+    setTabs((prev) => {
+      let changed = false;
+      const next = prev.map((tab) => {
+        if (tab.path !== path) {
+          return tab;
+        }
+        const nextTitle = displayTitle || tab.title;
+        if (!tab.dirty && nextTitle === tab.title) {
+          return tab;
+        }
+        changed = true;
+        return { ...tab, dirty: false, title: nextTitle };
+      });
+      return changed ? next : prev;
+    });
   }, []);
 
   return {

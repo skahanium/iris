@@ -1,12 +1,16 @@
 /**
- * 仅滚动「刚好露出」候选项的距离，避免贴底对齐导致一次跳过多条。
- * @param direction 键盘方向；0 表示鼠标悬停，取溢出较小的一侧。
+ * 将候选项滚入可视区；优先 `scrollIntoView(nearest)` 减少边界处过度滚动。
+ * @param direction 键盘方向；0 表示鼠标悬停，不强制滚动。
  */
 export function ensureOptionVisible(
   viewport: HTMLElement,
   el: HTMLElement,
   direction: 1 | -1 | 0 = 0,
 ) {
+  if (direction === 0) {
+    return;
+  }
+
   const padding = 8;
   const elRect = el.getBoundingClientRect();
   const vpRect = viewport.getBoundingClientRect();
@@ -18,15 +22,20 @@ export function ensureOptionVisible(
     return;
   }
 
+  if (typeof el.scrollIntoView === "function") {
+    el.scrollIntoView({
+      block: "nearest",
+      inline: "nearest",
+      behavior: "auto",
+    });
+    return;
+  }
+
   if (overflowTop > 0 && overflowBottom > 0) {
     if (direction > 0) {
       viewport.scrollTop += overflowBottom;
-    } else if (direction < 0) {
-      viewport.scrollTop -= overflowTop;
-    } else if (overflowTop >= overflowBottom) {
-      viewport.scrollTop -= overflowTop;
     } else {
-      viewport.scrollTop += overflowBottom;
+      viewport.scrollTop -= overflowTop;
     }
     return;
   }

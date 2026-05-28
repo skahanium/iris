@@ -52,7 +52,19 @@ describe("command palette", () => {
       hasActiveNote: false,
     });
     const filtered = filterCommandPaletteItems(items, "");
-    expect(filtered.map((i) => i.id)).toEqual(items.map((i) => i.id));
+    const visibleIds = items
+      .filter((i) => !i.hiddenInPalette)
+      .map((i) => i.id);
+    expect(filtered.map((i) => i.id)).toEqual(visibleIds);
+  });
+
+  it("hides command-palette self-entry from the list", () => {
+    const items = buildCommandPaletteItems({
+      hasVault: true,
+      hasActiveNote: false,
+    });
+    const filtered = filterCommandPaletteItems(items, "命令面板");
+    expect(filtered.some((i) => i.id === "command-palette")).toBe(false);
   });
 
   it("keeps list order when filtering including disabled items", () => {

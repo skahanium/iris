@@ -23,8 +23,6 @@ interface SettingsPanelProps {
   provider: string;
   theme: "dark" | "light";
   onThemeChange: (theme: "dark" | "light") => void;
-  /** Manual vault rescan (same as ⌘/Ctrl+Shift+I). */
-  onRebuildIndex?: () => void | Promise<void>;
 }
 
 export function SettingsPanel({
@@ -33,14 +31,11 @@ export function SettingsPanel({
   provider,
   theme,
   onThemeChange,
-  onRebuildIndex,
 }: SettingsPanelProps) {
   const [llmKeyInput, setLlmKeyInput] = useState("");
   const [bingKeyInput, setBingKeyInput] = useState("");
   const [bingKeyConfigured, setBingKeyConfigured] = useState(false);
   const [customBaseUrl, setCustomBaseUrl] = useState("");
-  const [indexBusy, setIndexBusy] = useState(false);
-  const [indexMessage, setIndexMessage] = useState<string | null>(null);
 
   const refreshBingKeyStatus = useCallback(async () => {
     const has = await credentialHas(BING_SEARCH_CREDENTIAL_SERVICE);
@@ -82,52 +77,10 @@ export function SettingsPanel({
     }
   };
 
-  const rebuildIndex = async () => {
-    if (!onRebuildIndex) return;
-    setIndexBusy(true);
-    setIndexMessage(null);
-    try {
-      await onRebuildIndex();
-      setIndexMessage("索引任务已执行，请查看状态栏结果");
-    } catch (e) {
-      setIndexMessage(
-        e instanceof Error ? e.message : "重建索引失败",
-      );
-    } finally {
-      setIndexBusy(false);
-    }
-  };
-
   return (
     <IrisOverlay open={open} onClose={onClose} title="设置" size="command">
       <ScrollArea className="flex-1">
-        <div className="space-y-5 p-3">
-          <div>
-            <label className="mb-1.5 block text-xs font-medium">笔记库</label>
-            <p className="mb-1.5 text-xs text-muted-foreground">
-              打开笔记库时会自动同步索引。也可手动从磁盘重新扫描，更新主标题、标签与搜索；最近笔记标题有误时使用。
-            </p>
-            <div className="flex flex-wrap items-center gap-2">
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                disabled={indexBusy}
-                onClick={() => void rebuildIndex()}
-              >
-                {indexBusy ? "正在重建…" : "重建索引"}
-              </Button>
-              <span className="text-xs text-muted-foreground">
-                ⌘/Ctrl+Shift+I
-              </span>
-            </div>
-            {indexMessage ? (
-              <p className="mt-1.5 text-xs text-muted-foreground">
-                {indexMessage}
-              </p>
-            ) : null}
-          </div>
-
+        <div className="space-y-5 px-4 py-4">
           <div>
             <label className="mb-1.5 block text-xs font-medium">外观</label>
             <div className="flex gap-2">

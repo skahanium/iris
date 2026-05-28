@@ -1,10 +1,10 @@
 import { memo, useMemo } from "react";
 
-import { Button } from "@/components/ui/button";
-import { formatEditorZoomPercent } from "@/lib/editor-zoom";
+import { EditorZoomControl } from "@/components/layout/EditorZoomControl";
+import { Kbd } from "@/components/ui/kbd";
 import { splitFrontmatter } from "@/lib/frontmatter";
 import { readingMinutes } from "@/lib/reading-time";
-import { cn } from "@/lib/utils";
+import { cn, formatCommandPaletteShortcut } from "@/lib/utils";
 
 interface StatusBarProps {
   path: string | null;
@@ -44,7 +44,7 @@ export const StatusBar = memo(function StatusBar({
   const minutes = useMemo(() => readingMinutes(bodyText), [bodyText]);
 
   return (
-    <footer className="flex h-8 shrink-0 items-center gap-3 border-t border-border bg-panel px-3 font-sans text-[11px] tracking-wide text-muted-foreground">
+    <footer className="flex h-8 shrink-0 items-center gap-3 border-t border-border/60 bg-surface-chrome px-3 font-sans text-[11px] tracking-wide text-muted-foreground">
       <span className="min-w-0 truncate" title={path ?? undefined}>
         {label}
       </span>
@@ -63,39 +63,12 @@ export const StatusBar = memo(function StatusBar({
           <span className="shrink-0 text-muted-foreground/60" aria-hidden>
             ·
           </span>
-          <span
-            className="flex shrink-0 items-center gap-0.5"
-            role="group"
-            aria-label="编辑器缩放"
-          >
-            <Button
-              type="button"
-              variant="ghost"
-              className="h-6 min-w-6 px-1.5 text-[11px] tabular-nums"
-              aria-label="缩小"
-              onClick={onEditorZoomOut}
-            >
-              −
-            </Button>
-            <Button
-              type="button"
-              variant="ghost"
-              className="h-6 min-w-[2.75rem] px-1.5 text-[11px] tabular-nums"
-              aria-label="重置缩放"
-              onClick={onEditorZoomReset}
-            >
-              {formatEditorZoomPercent(editorZoom)}
-            </Button>
-            <Button
-              type="button"
-              variant="ghost"
-              className="h-6 min-w-6 px-1.5 text-[11px] tabular-nums"
-              aria-label="放大"
-              onClick={onEditorZoomIn}
-            >
-              +
-            </Button>
-          </span>
+          <EditorZoomControl
+            editorZoom={editorZoom}
+            onZoomIn={onEditorZoomIn}
+            onZoomOut={onEditorZoomOut}
+            onZoomReset={onEditorZoomReset}
+          />
         </>
       ) : null}
       {path && unsaved ? (
@@ -107,6 +80,16 @@ export const StatusBar = memo(function StatusBar({
         </>
       ) : null}
       <div className="ml-auto flex min-w-0 shrink-0 items-center gap-3">
+        <span
+          className="hidden shrink-0 items-center gap-1.5 text-muted-foreground sm:inline-flex"
+          title="打开命令面板"
+        >
+          <span>命令</span>
+          <Kbd>{formatCommandPaletteShortcut()}</Kbd>
+        </span>
+        <span className="hidden shrink-0 text-muted-foreground/60 sm:inline" aria-hidden>
+          ·
+        </span>
         <span className="max-w-[10rem] truncate" title={aiStatus}>
           {aiStatus}
         </span>
@@ -121,7 +104,7 @@ export const StatusBar = memo(function StatusBar({
               aria-checked={webSearch}
               aria-label={webSearch ? "关闭联网搜索" : "开启联网搜索"}
               title="联网搜索"
-              className="group inline-flex h-6 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md px-1.5 text-muted-foreground transition-[color,background-color,transform] duration-base ease-iris-out hover:bg-muted/60 active:scale-[0.98] focus:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-1 focus-visible:ring-offset-panel"
+              className="group inline-flex h-6 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md px-1.5 text-muted-foreground transition-[color,background-color,transform] duration-base ease-iris-out hover:bg-muted/60 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-1 focus-visible:ring-offset-panel active:scale-[0.98]"
               onClick={() => onWebSearchChange(!webSearch)}
             >
               <span

@@ -4,6 +4,14 @@ export interface FileListItem {
   updated_at: string;
 }
 
+export interface CorpusListItem {
+  id: string;
+  name: string;
+  pathPrefix: string;
+  kind: string;
+  scenes: string[];
+}
+
 export interface FileEntry {
   id: number;
   path: string;
@@ -117,4 +125,10 @@ export interface VersionEntry {
 
 // ─── AI Runtime IPC types ───
 
-export type { AiScene, AssembledContext, ContextPacket, ContextStatus, ToolSpec } from "./ai";
+export type {
+  AiScene,
+  AssembledContext,
+  ContextPacket,
+  ContextStatus,
+  ToolSpec,
+} from "./ai";

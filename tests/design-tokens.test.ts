@@ -40,6 +40,21 @@ describe("design tokens", () => {
     expect(cssVariable("--editor-paper")).toBe("var(--background)");
   });
 
+  it("defines Chrome surface, command, and AI tokens", () => {
+    expect(cssVariable("--surface-chrome")).toBe("0 0% 12%");
+    expect(cssVariable("--surface-elevated")).toBe("0 0% 14%");
+    expect(cssVariable("--command-highlight-bg")).toBeDefined();
+    expect(cssVariable("--ai-user-bg")).toBe("0 0% 18%");
+    expect(cssVariable("--ai-composer-bg")).toBe("0 0% 14%");
+    expect(tailwindConfigSource).toContain(
+      'chrome: "hsl(var(--surface-chrome))"',
+    );
+    expect(tailwindConfigSource).toContain(
+      'highlight: "hsl(var(--command-highlight-bg))"',
+    );
+    expect(tailwindConfigSource).toContain('user: "hsl(var(--ai-user-bg))"');
+  });
+
   it("exposes design tokens through Tailwind theme extensions", () => {
     expect(tailwindConfigSource).toContain(
       'scrim: "hsl(var(--overlay-scrim))"',

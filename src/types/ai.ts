@@ -62,6 +62,13 @@ export interface ToolSpec {
   max_results: number | null;
 }
 
+/** Retrieval scope from `@` mentions (IPC camelCase). */
+export interface ContextScope {
+  paths: string[];
+  pathPrefixes: string[];
+  corpusIds?: string[];
+}
+
 export interface ContextStatus {
   regulations_loaded: number;
   model_essays_loaded: number;

@@ -17,6 +17,7 @@ pub mod model_registry;
 pub mod packet_builder;
 pub mod research_workflow;
 pub mod retrieval_broker;
+pub mod retrieval_scope;
 pub mod scene_router;
 pub mod session;
 pub mod tool_executor;

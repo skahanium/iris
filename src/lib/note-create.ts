@@ -1,15 +1,27 @@
-import { fileCreate } from "@/lib/ipc";
+import { quoteYamlString } from "@/lib/frontmatter";
+import { fileCreate, fileList } from "@/lib/ipc";
+import { allocateUntitledDocumentName } from "@/lib/note-names";
 
 export interface CreatedNote {
   path: string;
   title: string;
 }
 
-const NEW_NOTE_TEMPLATE = "---\ntitle: \"\"\n---\n\n";
+export interface CreateDefaultNoteOptions {
+  /** Open-tab titles not yet visible in {@link fileList} (e.g. other blank tabs). */
+  extraTakenTitles?: Iterable<string>;
+}
 
-/** Create a note with a stable machine path; display title lives in frontmatter. */
-export async function createDefaultNote(): Promise<CreatedNote> {
-  const path = `untitled-${Date.now()}.md`;
-  const entry = await fileCreate(path, NEW_NOTE_TEMPLATE);
-  return { path: entry.path, title: "无标题" };
+/** Create a note with display title in frontmatter; path aligns with title. */
+export async function createDefaultNote(
+  options: CreateDefaultNoteOptions = {},
+): Promise<CreatedNote> {
+  const files = await fileList();
+  const { title, path } = allocateUntitledDocumentName(
+    files,
+    options.extraTakenTitles,
+  );
+  const content = `---\ntitle: ${quoteYamlString(title)}\n---\n\n`;
+  const entry = await fileCreate(path, content);
+  return { path: entry.path, title };
 }

@@ -271,6 +271,10 @@ pub fn reindex_all_regulations(
     conn: &Connection,
     vault_path: &std::path::Path,
 ) -> AppResult<usize> {
+    use crate::knowledge::corpora::{load_corpora, should_index_regulation_for_path};
+
+    let corpora = load_corpora(vault_path)?;
+
     // Clear existing regulation index
     conn.execute("DELETE FROM regulation_index", [])?;
 
@@ -282,6 +286,9 @@ pub fn reindex_all_regulations(
     };
 
     for (file_id, path) in file_list {
+        if !should_index_regulation_for_path(&corpora, &path) {
+            continue;
+        }
         let abs = vault_path.join(&path);
         if !abs.exists() {
             continue;

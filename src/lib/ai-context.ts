@@ -1,3 +1,4 @@
+import { resolveNoteDisplayTitle } from "@/lib/note-display";
 import type { SemanticHit } from "@/types/ipc";
 
 export interface ContextQuote {
@@ -14,6 +15,8 @@ export const RELATED_NOTES_FETCH_LIMIT = 12;
 
 export interface BuildAiSystemContextInput {
   notePath: string | null;
+  /** User-facing title; never `untitled-*`. */
+  noteDisplayTitle: string | null;
   noteContent: string;
   quote: ContextQuote | null;
   relatedHits: SemanticHit[];
@@ -43,10 +46,13 @@ export function filterRelatedSemanticHits(
  */
 export function formatRelatedNotesSection(hits: SemanticHit[]): string | null {
   if (hits.length === 0) return null;
-  const blocks = hits.map(
-    (h, i) =>
-      `[关联 ${i + 1}] ${h.title} (${h.path}，相关度 ${h.score.toFixed(3)})\n${h.snippet}`,
-  );
+  const blocks = hits.map((h, i) => {
+    const label = resolveNoteDisplayTitle({
+      path: h.path,
+      title: h.title,
+    });
+    return `[关联 ${i + 1}] ${label}（相关度 ${h.score.toFixed(3)}）\n${h.snippet}`;
+  });
   return `以下是与用户问题相关的其他笔记片段（请勿编造未出现的笔记内容）：\n\n${blocks.join("\n\n")}`;
 }
 
@@ -55,8 +61,11 @@ export function buildAiSystemParts(input: BuildAiSystemContextInput): string[] {
   const parts: string[] = ["你是 Iris 笔记助手，基于用户笔记内容回答问题。"];
 
   if (input.notePath && input.noteContent) {
+    const label =
+      input.noteDisplayTitle?.trim() ||
+      resolveNoteDisplayTitle({ path: input.notePath });
     parts.push(
-      `当前笔记 (${input.notePath}):\n${input.noteContent.slice(0, 8000)}`,
+      `当前笔记（${label}）:\n${input.noteContent.slice(0, 8000)}`,
     );
   }
 
@@ -66,8 +75,9 @@ export function buildAiSystemParts(input: BuildAiSystemContextInput): string[] {
   }
 
   if (input.quote) {
+    const quoteLabel = resolveNoteDisplayTitle({ path: input.quote.filePath });
     parts.push(
-      `引用自 ${input.quote.filePath}${input.quote.heading ? ` / ${input.quote.heading}` : ""}:\n${input.quote.text}`,
+      `引用自 ${quoteLabel}${input.quote.heading ? ` / ${input.quote.heading}` : ""}:\n${input.quote.text}`,
     );
   }
 
