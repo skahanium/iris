@@ -112,7 +112,10 @@
 | `--radius-xl`     | 16px | 命令浮层                                |
 | `--window-radius` | 12px | 无边框窗口外轮廓（配合 `shadow: true`） |
 
-桌面窗口：`decorations: false`；单行 `TabBar`（Tab + 应用操作 + 窗口按钮，与 `bg-panel` 同色），避免系统黑条。
+桌面窗口：`decorations: false`、`shadow: true`；单行 `TabBar`（Tab + 应用操作 + 窗口按钮，与 `bg-panel` 同色），避免系统黑条。
+
+- **Windows 11**：`transparent: false`（见 `tauri.windows.conf.json`），圆角由 DWM + `shadow` 提供；**勿**与 `transparent: true` 同开。
+- **macOS**：`transparent: true` + `set_effects`（`radius` = `--window-radius`）+ 前端 `data-iris-desktop-transparent` 裁切，见 `window_chrome.rs`。
 
 阴影：仅浮层 / 悬浮工具条使用 `--shadow-overlay` / `--shadow-floating`；**编辑区无纸页阴影**。
 
@@ -139,8 +142,7 @@
 | AI 发送    | `AiComposer` 多行；Enter 发送、Shift+Enter 换行 |
 | 证据包     | 可折叠 Section 标题 + badge                     |
 | 状态栏缩放 | Popover 滑块/步进（非三个并排按钮）             |
-| 联网搜索   | Switch + 文案（sky 渐变圆点）                   |
-| LLM / 搜索 API | 只读圆点 + 文案；emerald / amber / teal / muted（`--status-llm-*`、`--status-search-api`） |
+| 连通性     | 两枚 8px 圆点成组（LLM · 联网）；灰 / emerald / sky（`--status-*`） |
 | 命令列表   | `CommandListOption` + `Kbd`；Lucide 图标        |
 | `/` 菜单   | 与命令列表同组件，禁止 emoji 图标               |
 | 选区 AI    | 水平 pill 组 +「更多」                          |

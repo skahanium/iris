@@ -5,7 +5,7 @@ use std::sync::Arc;
 use tauri::State;
 
 use crate::app::AppState;
-use crate::error::AppResult;
+use crate::error::{AppError, AppResult};
 
 #[derive(Debug, Clone, Serialize)]
 pub struct TemplateInfo {
@@ -33,6 +33,19 @@ const BUILTIN_TEMPLATES: &[(&str, &str)] = &[
 
 fn templates_dir(vault: &std::path::Path) -> std::path::PathBuf {
     vault.join(".iris").join("templates")
+}
+
+/// Validate template name: no path separators, must end with .md
+fn validate_template_name(name: &str) -> AppResult<String> {
+    if name.contains('/') || name.contains('\\') || name.contains("..") {
+        return Err(AppError::msg("Invalid template name"));
+    }
+    let name = if name.ends_with(".md") {
+        name.to_string()
+    } else {
+        format!("{}.md", name)
+    };
+    Ok(name)
 }
 
 fn ensure_templates(vault: &std::path::Path) -> AppResult<()> {
@@ -95,4 +108,46 @@ pub fn template_create(
     state
         .db
         .with_conn(|conn| crate::indexer::scan::index_file(conn, &vault, &abs))
+}
+
+/// Read template content by name.
+#[tauri::command]
+pub fn template_read(state: State<'_, Arc<AppState>>, name: String) -> AppResult<String> {
+    let vault = state.vault_path()?;
+    ensure_templates(&vault)?;
+    let name = validate_template_name(&name)?;
+    let tmpl_path = templates_dir(&vault).join(&name);
+    if !tmpl_path.exists() {
+        return Err(AppError::msg("Template not found"));
+    }
+    Ok(fs::read_to_string(&tmpl_path)?)
+}
+
+/// Save/update template content. Creates the template if it doesn't exist.
+#[tauri::command]
+pub fn template_save(
+    state: State<'_, Arc<AppState>>,
+    name: String,
+    content: String,
+) -> AppResult<()> {
+    let vault = state.vault_path()?;
+    let dir = templates_dir(&vault);
+    fs::create_dir_all(&dir)?;
+    let name = validate_template_name(&name)?;
+    let tmpl_path = dir.join(&name);
+    fs::write(&tmpl_path, &content)?;
+    Ok(())
+}
+
+/// Delete a template by name. Built-in templates can be deleted.
+#[tauri::command]
+pub fn template_delete(state: State<'_, Arc<AppState>>, name: String) -> AppResult<()> {
+    let vault = state.vault_path()?;
+    let name = validate_template_name(&name)?;
+    let tmpl_path = templates_dir(&vault).join(&name);
+    if !tmpl_path.exists() {
+        return Err(AppError::msg("Template not found"));
+    }
+    fs::remove_file(&tmpl_path)?;
+    Ok(())
 }

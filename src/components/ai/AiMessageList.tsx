@@ -1,5 +1,6 @@
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { AiMessage } from "@/components/ui/ai-message";
+import type { ContextPacket } from "@/types/ai";
 
 import { ToolCallList, type ToolCallInfo } from "./ToolCallBubble";
 
@@ -12,9 +13,15 @@ export interface ChatLine {
 interface AiMessageListProps {
   messages: ChatLine[];
   streaming: boolean;
+  packets?: ContextPacket[];
+  onCitationClick?: (ref: string) => void;
 }
 
-export function AiMessageList({ messages, streaming }: AiMessageListProps) {
+export function AiMessageList({
+  messages,
+  streaming,
+  onCitationClick,
+}: AiMessageListProps) {
   return (
     <ScrollArea className="min-h-0 flex-1">
       <div className="space-y-3 px-3 py-3">
@@ -36,6 +43,7 @@ export function AiMessageList({ messages, streaming }: AiMessageListProps) {
                     role="assistant"
                     content={m.content || undefined}
                     streaming={assistantStreaming}
+                    onCitationClick={onCitationClick}
                   />
                   {m.toolCalls && m.toolCalls.length > 0 ? (
                     <ToolCallList toolCalls={m.toolCalls} />

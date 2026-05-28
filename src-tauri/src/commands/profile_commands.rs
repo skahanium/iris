@@ -98,6 +98,8 @@ pub fn profile_get(state: State<'_, AppState>, key: String) -> AppResult<Option<
 }
 
 /// Set (upsert) a user profile entry.
+///
+/// Safety: rejects values containing API keys, passwords, or sensitive content.
 #[tauri::command]
 pub fn profile_set(
     state: State<'_, AppState>,
@@ -106,9 +108,12 @@ pub fn profile_set(
     source: String,
     confidence: Option<f64>,
 ) -> AppResult<()> {
+    // ── Safety filter: reject sensitive content ──
+    let json_str = serde_json::to_string(&value)?;
+    validate_profile_value(&json_str)?;
+
     let now = chrono::Utc::now().to_rfc3339();
     let conf = confidence.unwrap_or(1.0);
-    let json_str = serde_json::to_string(&value)?;
 
     state.db.with_conn(|conn| {
         conn.execute(
@@ -264,4 +269,46 @@ pub fn inbox_counts(state: State<'_, AppState>) -> AppResult<serde_json::Value> 
             "written": written,
         }))
     })
+}
+
+// ─── Safety Validation ──────────────────────────────────
+
+/// Sensitive content patterns — profiles must never contain these.
+const SENSITIVE_PATTERNS: &[(&str, &str)] = &[
+    ("api.?key", "API Key"),
+    ("api.?secret", "API Secret"),
+    ("access.?token", "Access Token"),
+    ("bearer\\s+[A-Za-z0-9_\\-]{20,}", "Bearer Token"),
+    ("password\\s*[:=]", "Password"),
+    ("sk-[A-Za-z0-9]{20,}", "OpenAI-style API Key"),
+    ("minimax.*key", "MiniMax Key"),
+    (
+        "-----BEGIN\\s+(RSA|DSA|EC|OPENSSH)\\s+PRIVATE\\s+KEY",
+        "Private Key",
+    ),
+];
+
+/// Validate that a profile value does not contain sensitive data.
+fn validate_profile_value(json_str: &str) -> AppResult<()> {
+    let lower = json_str.to_lowercase();
+
+    for (pattern, label) in SENSITIVE_PATTERNS {
+        let re = regex::Regex::new(&format!("(?i){}", pattern))
+            .map_err(|_| crate::error::AppError::msg("Invalid regex pattern"))?;
+        if re.is_match(&lower) {
+            return Err(crate::error::AppError::msg(format!(
+                "安全拒绝：profile 不能包含疑似 {} 的内容",
+                label
+            )));
+        }
+    }
+
+    // Also reject extremely long values (likely accidental content paste)
+    if json_str.len() > 4096 {
+        return Err(crate::error::AppError::msg(
+            "安全拒绝：profile 值过长（超过 4096 字符），疑似粘贴了笔记正文",
+        ));
+    }
+
+    Ok(())
 }

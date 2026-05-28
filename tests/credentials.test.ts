@@ -1,13 +1,13 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  BING_SEARCH_CREDENTIAL_SERVICE,
+  MINIMAX_CREDENTIAL_SERVICE,
   llmCredentialService,
 } from "@/lib/credentials";
 
 describe("credential service names", () => {
-  it("uses iris.bing.search for Bing web search", () => {
-    expect(BING_SEARCH_CREDENTIAL_SERVICE).toBe("iris.bing.search");
+  it("uses iris.minimax for MiniMax web search", () => {
+    expect(MINIMAX_CREDENTIAL_SERVICE).toBe("iris.minimax");
   });
 
   it("scopes LLM keys per provider", () => {

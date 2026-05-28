@@ -20,6 +20,8 @@ import type {
 export interface SettingsMap {
   theme: "dark" | "light";
   llm_custom_base_url: string | null;
+  /** 底栏「联网」开关，跨会话保持 */
+  web_search_enabled: boolean;
 }
 
 export async function settingsGet<K extends keyof SettingsMap>(
@@ -85,8 +87,35 @@ export async function fileRename(
   return invoke<FileEntry>("file_rename", { path, newPath });
 }
 
+export async function pathSyncSuggest(
+  currentPath: string,
+  title: string,
+): Promise<{
+  current_path: string;
+  suggested_path: string;
+  needs_sync: boolean;
+  conflict_resolved: boolean;
+}> {
+  return invoke("path_sync_suggest", { currentPath, title });
+}
+
 export async function fileBacklinks(path: string): Promise<BacklinkEntry[]> {
   return invoke<BacklinkEntry[]>("file_backlinks", { path });
+}
+
+export async function folderCreate(path: string): Promise<void> {
+  return invoke("folder_create", { path });
+}
+
+export async function folderRename(
+  oldPath: string,
+  newPath: string,
+): Promise<void> {
+  return invoke("folder_rename", { oldPath, newPath });
+}
+
+export async function folderDelete(path: string): Promise<void> {
+  return invoke("folder_delete", { path });
 }
 
 export async function recycleList(): Promise<RecycleBinItem[]> {
@@ -177,6 +206,21 @@ export async function templateCreate(
   templateName: string,
 ): Promise<FileEntry> {
   return invoke<FileEntry>("template_create", { path, templateName });
+}
+
+export async function templateRead(name: string): Promise<string> {
+  return invoke<string>("template_read", { name });
+}
+
+export async function templateSave(
+  name: string,
+  content: string,
+): Promise<void> {
+  return invoke("template_save", { name, content });
+}
+
+export async function templateDelete(name: string): Promise<void> {
+  return invoke("template_delete", { name });
 }
 
 export async function exportFile(
@@ -316,6 +360,8 @@ export async function aiSendMessage(params: {
   note_path?: string | null;
   selected_packet_ids?: string[];
   context_scope?: ContextScope | null;
+  /** 为 true 时在发送前注入 MiniMax / DuckDuckGo 网页检索摘要 */
+  web_search?: boolean;
 }): Promise<{
   request_id: string;
   session_id: number;
@@ -336,6 +382,12 @@ export async function aiSendMessage(params: {
     total_tokens: number;
   };
   citation_valid?: boolean;
+  web_search_meta?: {
+    injected: boolean;
+    result_count: number;
+    used_local_date: boolean;
+    backend: string;
+  } | null;
 }> {
   return invoke("ai_send_message", {
     scene: params.scene,
@@ -344,6 +396,7 @@ export async function aiSendMessage(params: {
     notePath: params.note_path ?? null,
     selectedPacketIds: params.selected_packet_ids ?? null,
     contextScope: params.context_scope ?? null,
+    webSearch: params.web_search ?? false,
   });
 }
 
@@ -448,6 +501,396 @@ export async function researchStatus(): Promise<{
   }>;
 }> {
   return invoke("research_status");
+}
+
+export async function researchAbort(requestId: string): Promise<void> {
+  return invoke("research_abort", { requestId });
+}
+
+export async function researchActiveTasks(): Promise<string[]> {
+  return invoke("research_active_tasks");
+}
+
+export async function researchGenerateNote(params: {
+  topic: string;
+  summary: string;
+  evidence_count: number;
+  coverage_score: number;
+  target_path?: string;
+}): Promise<{
+  content: string;
+  suggested_path: string;
+  section_count: number;
+}> {
+  return invoke("research_generate_note", {
+    request: {
+      topic: params.topic,
+      summary: params.summary,
+      evidence_count: params.evidence_count,
+      coverage_score: params.coverage_score,
+      target_path: params.target_path ?? null,
+    },
+  });
+}
+
+export async function listenResearchProgress(
+  handler: (payload: {
+    request_id: string;
+    topic: string;
+    state: string;
+    current_round: number;
+    max_rounds: number;
+    queries_executed: string[];
+    new_evidence_count: number;
+    total_evidence_count: number;
+    tokens_used: number;
+    token_budget: number;
+    progress_pct: number;
+    round_terminated_early: boolean;
+  }) => void,
+): Promise<() => void> {
+  return listen<{
+    request_id: string;
+    topic: string;
+    state: string;
+    current_round: number;
+    max_rounds: number;
+    queries_executed: string[];
+    new_evidence_count: number;
+    total_evidence_count: number;
+    tokens_used: number;
+    token_budget: number;
+    progress_pct: number;
+    round_terminated_early: boolean;
+  }>("ai:research_progress", (e) => handler(e.payload));
+}
+
+// ─── Writing Workflow IPC (Phase 1) ───
+
+export async function writingExecute(params: {
+  target_path: string;
+  base_content_hash: string;
+  selection?: string;
+  cursor_context: string;
+  writing_goal: string;
+  web_authorized?: boolean;
+}): Promise<{
+  request_id: string;
+  suggestions: Array<{
+    id: string;
+    intent: string;
+    explanation: string;
+    confidence: number;
+  }>;
+  patches: Array<{
+    id: string;
+    target_path: string;
+    base_content_hash: string;
+    range: { start: number; end: number };
+    original_text: string;
+    replacement_text: string;
+    evidence_packet_ids: string[];
+    risk_level: string;
+    warnings: string[];
+    created_at: string;
+  }>;
+  evidence_used: ContextPacket[];
+  total_tokens: {
+    prompt_tokens: number;
+    completion_tokens: number;
+    total_tokens: number;
+  };
+}> {
+  return invoke("writing_execute", {
+    input: {
+      target_path: params.target_path,
+      base_content_hash: params.base_content_hash,
+      selection: params.selection ?? null,
+      cursor_context: params.cursor_context,
+      writing_goal: params.writing_goal,
+      web_authorized: params.web_authorized ?? false,
+    },
+  });
+}
+
+export async function patchApply(patch: {
+  id: string;
+  target_path: string;
+  base_content_hash: string;
+  range: { start: number; end: number };
+  original_text: string;
+  replacement_text: string;
+  evidence_packet_ids: string[];
+  risk_level: string;
+  warnings: string[];
+  created_at: string;
+}): Promise<{
+  success: boolean;
+  new_content_hash?: string;
+  error?: string;
+  warnings: string[];
+}> {
+  return invoke("patch_apply", { patch });
+}
+
+// ─── Citation Check IPC (Phase 1) ───
+
+export async function citationCheck(params: {
+  paragraph_text: string;
+  document_path: string;
+  scope?: {
+    paths: string[];
+    pathPrefixes: string[];
+    corpusIds?: string[];
+  };
+  web_authorized?: boolean;
+}): Promise<{
+  request_id: string;
+  claims: Array<{
+    id: string;
+    statement: string;
+    has_support: boolean;
+    supporting_evidence: string[];
+    conflicting_evidence: string[];
+  }>;
+  coverage: string;
+  suggestions: Array<{
+    claim_id: string;
+    action: string;
+    suggested_citation?: string;
+    explanation: string;
+  }>;
+  evidence_used: ContextPacket[];
+  total_tokens: {
+    prompt_tokens: number;
+    completion_tokens: number;
+    total_tokens: number;
+  };
+}> {
+  return invoke("citation_check", {
+    input: {
+      paragraph_text: params.paragraph_text,
+      document_path: params.document_path,
+      scope: params.scope ?? null,
+      web_authorized: params.web_authorized ?? false,
+    },
+  });
+}
+
+// ─── Organize Workflow IPC (Phase 2) ───
+
+export async function organizeExecute(params: {
+  scope?: {
+    paths?: string[];
+    path_prefixes?: string[];
+    corpus_ids?: string[];
+  };
+  task_type: string;
+}): Promise<{
+  request_id: string;
+  batch: {
+    id: string;
+    title: string;
+    description: string;
+    suggestions: Array<{
+      id: string;
+      suggestion_type: string;
+      target_path: string;
+      current_value?: string;
+      suggested_value: string;
+      reason: string;
+      source: string;
+      confidence: number;
+      evidence_packet_ids: string[];
+    }>;
+    created_at: string;
+  };
+  total_tokens: {
+    prompt_tokens: number;
+    completion_tokens: number;
+    total_tokens: number;
+  };
+}> {
+  return invoke("organize_execute", {
+    input: {
+      scope: params.scope ?? null,
+      task_type: params.task_type,
+    },
+  });
+}
+
+export async function organizeApply(suggestions: Array<{
+  id: string;
+  suggestion_type: string;
+  target_path: string;
+  current_value?: string;
+  suggested_value: string;
+  reason: string;
+  source: string;
+  confidence: number;
+  evidence_packet_ids: string[];
+}>): Promise<{
+  applied: string[];
+  skipped: string[];
+  errors: string[];
+}> {
+  return invoke("organize_apply", { request: { suggestions } });
+}
+
+// ─── Chapter & Document Writing IPC (Phase 3) ───
+
+export async function chapterWritingExecute(params: {
+  target_path: string;
+  base_content_hash: string;
+  chapter: {
+    heading_level: number;
+    heading_text: string;
+    content_start: number;
+    content_end: number;
+    content: string;
+    heading_path: string;
+  };
+  writing_goal: string;
+  web_authorized?: boolean;
+}): Promise<{
+  request_id: string;
+  suggestions: Array<{
+    id: string;
+    intent: string;
+    explanation: string;
+    confidence: number;
+  }>;
+  patches: Array<{
+    id: string;
+    target_path: string;
+    base_content_hash: string;
+    range: { start: number; end: number };
+    original_text: string;
+    replacement_text: string;
+    evidence_packet_ids: string[];
+    risk_level: string;
+    warnings: string[];
+    created_at: string;
+  }>;
+  evidence_used: ContextPacket[];
+  total_tokens: {
+    prompt_tokens: number;
+    completion_tokens: number;
+    total_tokens: number;
+  };
+}> {
+  return invoke("chapter_writing_execute", {
+    input: {
+      target_path: params.target_path,
+      base_content_hash: params.base_content_hash,
+      chapter: params.chapter,
+      writing_goal: params.writing_goal,
+      web_authorized: params.web_authorized ?? false,
+    },
+  });
+}
+
+export async function documentCheckExecute(params: {
+  target_path: string;
+  content: string;
+  check_type: string;
+  web_authorized?: boolean;
+}): Promise<{
+  request_id: string;
+  check_type: string;
+  outline_result?: {
+    issues: Array<{
+      issue_type: string;
+      heading_path: string;
+      description: string;
+      severity: string;
+      position: number;
+    }>;
+    suggestions: Array<{
+      suggestion: string;
+      position: number;
+      requires_patch: boolean;
+    }>;
+    outline_entries: Array<{
+      level: number;
+      text: string;
+      position: number;
+      word_count: number;
+    }>;
+  };
+  citation_gap_result?: {
+    uncited_claims: Array<{
+      id: string;
+      statement: string;
+      has_support: boolean;
+      supporting_evidence: string[];
+      conflicting_evidence: string[];
+    }>;
+    weak_citations: Array<{
+      claim: string;
+      current_citation: string;
+      reason: string;
+      suggested_citation?: string;
+    }>;
+    suggestions: Array<{
+      claim_id: string;
+      action: string;
+      suggested_citation?: string;
+      explanation: string;
+    }>;
+  };
+  style_result?: {
+    inconsistencies: Array<{
+      inconsistency_type: string;
+      location: string;
+      description: string;
+      examples: string[];
+    }>;
+    suggestions: Array<{
+      suggestion: string;
+      locations: string[];
+      requires_patch: boolean;
+    }>;
+    consistency_score: number;
+  };
+  patches: Array<{
+    id: string;
+    target_path: string;
+    base_content_hash: string;
+    range: { start: number; end: number };
+    original_text: string;
+    replacement_text: string;
+    evidence_packet_ids: string[];
+    risk_level: string;
+    warnings: string[];
+    created_at: string;
+  }>;
+  evidence_used: ContextPacket[];
+  total_tokens: {
+    prompt_tokens: number;
+    completion_tokens: number;
+    total_tokens: number;
+  };
+}> {
+  return invoke("document_check_execute", {
+    input: {
+      target_path: params.target_path,
+      content: params.content,
+      check_type: params.check_type,
+      web_authorized: params.web_authorized ?? false,
+    },
+  });
+}
+
+export async function parseDocumentChapters(content: string): Promise<Array<{
+  heading_level: number;
+  heading_text: string;
+  content_start: number;
+  content_end: number;
+  content: string;
+  heading_path: string;
+}>> {
+  return invoke("parse_document_chapters", { content });
 }
 
 // ─── Personalization IPC (E) ───

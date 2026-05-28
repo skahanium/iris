@@ -17,6 +17,12 @@ function tailwindMapsToken(key: string, value: string): boolean {
 }
 
 describe("design tokens", () => {
+  it("clips transparent Tauri shell to window radius on non-Windows", () => {
+    expect(globalsCss).toContain("html[data-iris-desktop-transparent]");
+    expect(globalsCss).toContain("background: transparent");
+    expect(globalsCss).toContain(".iris-desktop-frame");
+  });
+
   it("defines Notion-style overlay, radius, shadow, and motion variables", () => {
     expect(cssVariable("--overlay-scrim")).toBe("0 0% 5% / 0.55");
     expect(cssVariable("--radius-sm")).toBe("6px");

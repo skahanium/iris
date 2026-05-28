@@ -49,4 +49,21 @@ describe("v0.4.1-ui chrome modernization", () => {
     expect(source).toContain("EditorZoomControl");
     expect(source).not.toContain('aria-label="缩小"');
   });
+
+  it("ConnectivityIndicators groups unified status balls", () => {
+    const source = read("src/components/layout/ConnectivityIndicators.tsx");
+    const statusBar = read("src/components/layout/StatusBar.tsx");
+    expect(source).toContain('size-2 shrink-0 rounded-full');
+    expect(source).toContain("onWebSearchChange");
+    expect(source).toContain("--status-inactive");
+    expect(source).not.toContain("size-3.5");
+    expect(source).toContain('label="LLM"');
+    expect(source).toContain('label="联网"');
+    expect(source).not.toContain('label="搜索"');
+    expect(read("src/components/settings/SettingsPanel.tsx")).not.toContain(
+      "Bing",
+    );
+    expect(statusBar).toContain("onWebSearchChange={onWebSearchChange}");
+    expect(statusBar).not.toContain("联网搜索");
+  });
 });

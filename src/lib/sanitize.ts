@@ -59,6 +59,7 @@ const ALLOWED_ATTR = [
   "value",
   "target",
   "rel",
+  "data-cite-ref",
 ];
 
 /** 允许的 URI 协议 */

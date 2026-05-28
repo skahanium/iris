@@ -12,6 +12,7 @@ describe("note-display", () => {
     expect(isInternalUntitledPath("untitled-1700000000.md")).toBe(true);
     expect(isInternalUntitledPath("notes/untitled-42.md")).toBe(true);
     expect(isInternalUntitledPath("无标题1.md")).toBe(false);
+    expect(isInternalUntitledPath("新建文档.md")).toBe(false);
   });
 
   it("never exposes untitled-* to users", () => {
@@ -37,5 +38,20 @@ describe("note-display", () => {
         title: "早餐",
       }),
     ).toBe("早餐");
+  });
+
+  it("keeps 新建文档 titles", () => {
+    expect(
+      resolveNoteDisplayTitle({
+        path: "新建文档.md",
+        title: "新建文档",
+      }),
+    ).toBe("新建文档");
+    expect(
+      resolveNoteDisplayTitle({
+        path: "新建文档（1）.md",
+        title: "新建文档（1）",
+      }),
+    ).toBe("新建文档（1）");
   });
 });

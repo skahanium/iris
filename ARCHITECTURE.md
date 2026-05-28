@@ -274,7 +274,7 @@ Content-Security-Policy:
   script-src 'self';
   style-src 'self' 'unsafe-inline';
   img-src 'self' data: https:;
-  connect-src 'self' https://api.openai.com https://api.anthropic.com https://api.bing.microsoft.com;
+  connect-src 'self' https://api.openai.com https://api.anthropic.com https://api.minimaxi.com https://html.duckduckgo.com;
   font-src 'self';
 ```
 
@@ -792,12 +792,12 @@ DeepSeek V4 Pro 的深度推理过程以折叠块形式展示：
 
 **提供商策略**：
 
-| 提供商             | 方式             | 费用            | API Key | 结果质量 | 推荐用途               |
-| ------------------ | ---------------- | --------------- | ------- | -------- | ---------------------- |
-| DuckDuckGo         | HTML 抓取 + 解析 | 免费            | 不需要  | 中等     | 默认，开箱即用         |
-| Bing Search API v7 | REST API         | 1,000 次/月免费 | 需要    | 高       | 对结果质量要求高时升级 |
+| 提供商     | 方式                                      | API Key              | 推荐用途           |
+| ---------- | ----------------------------------------- | -------------------- | ------------------ |
+| MiniMax    | `POST /v1/coding_plan/search`（Token Plan） | `iris.minimax`       | 主通道，摘要质量高 |
+| DuckDuckGo | HTML 抓取 + 解析                          | 不需要               | 无 Key 或失败降级  |
 
-**降级链**：Bing 已配置 → 优先使用；Bing 请求失败 / 配额耗尽 / 未配置 API Key → 自动降级到 DuckDuckGo。
+**降级链**：已配置 MiniMax Key → 优先 Token Plan 搜索；请求失败 / 未配置 Key / 设置强制 `duckduckgo` → DuckDuckGo。
 
 **触发方式**：
 
@@ -827,20 +827,20 @@ DeepSeek V4 Pro 的深度推理过程以折叠块形式展示：
   → LLM 响应中引用搜索来源时保留 [n] 标记，UI 渲染为可点击链接
 ```
 
-**数据流（Bing，升级路径）**：
+**数据流（MiniMax，主路径）**：
 
 ```
-  → reqwest → Bing Search API v7
-      GET https://api.bing.microsoft.com/v7.0/search?q={query}&count=5&mkt=zh-CN
-      Header: Ocp-Apim-Subscription-Key: {BING_API_KEY}
-  → 解析 JSON 响应 → 后续步骤同上
+  → reqwest → MiniMax Coding Plan Search
+      POST https://api.minimaxi.com/v1/coding_plan/search
+      Header: Authorization: Bearer {MINIMAX_TOKEN_PLAN_KEY}
+      Body: {"q": "{query}"}
+  → 解析 organic[] → 格式化为与 DuckDuckGo 相同的引用块 → 拼入 user 消息
 ```
 
-**API Key 配置（仅 Bing 需要）**：
+**API Key 配置**：
 
-- 存储在 OS 凭据管理器，key 名 `iris/bing-search`
-- 在设置 → AI → 联网搜索 中选择提供商、填入 Key
-- 未配置任何提供商时，DuckDuckGo 自动生效
+- MiniMax Token Plan Key 存储在 OS 凭据管理器，服务 ID `iris.minimax`
+- 设置 → MiniMax 联网检索；未配置时自动降级 DuckDuckGo
 
 **防反爬保护（DuckDuckGo）**：
 
@@ -855,7 +855,7 @@ DeepSeek V4 Pro 的深度推理过程以折叠块形式展示：
 
 **安全**：
 
-- Bing API 请求走 HTTPS，Key 仅出现在请求 Header 中
+- MiniMax / DuckDuckGo 请求均走 HTTPS；Key 仅出现在 MiniMax Authorization Header
 - DuckDuckGo 请求匿名，不携带任何用户标识
 - 用户笔记内容不随搜索请求发送，仅发送用户主动输入的查询关键词
 - 搜索结果不在本地持久化，仅当前会话内有效

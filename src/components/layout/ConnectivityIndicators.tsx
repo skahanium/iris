@@ -6,136 +6,134 @@ import type { ConnectivityStatus, LlmConnectivityState } from "@/types/llm";
 interface ConnectivityIndicatorsProps {
   status: ConnectivityStatus | null;
   onOpenSettings?: () => void;
+  webSearch?: boolean;
+  onWebSearchChange?: (enabled: boolean) => void;
 }
 
-function StatusDot({
-  activeClass,
-  inactiveClass,
-  active,
-  title,
-  label,
-  onClick,
-}: {
-  activeClass: string;
-  inactiveClass: string;
-  active: boolean;
-  title: string;
+interface StatusIndicatorProps {
   label: string;
+  active: boolean;
+  activeClass: string;
+  title: string;
+  ariaLabel: string;
   onClick?: () => void;
-}) {
+  role?: "button" | "switch";
+  ariaChecked?: boolean;
+}
+
+/** 底栏统一规格：8px 圆点 + 简短文案，未就绪为灰，就绪为各通道 token 色 */
+function StatusIndicator({
+  label,
+  active,
+  activeClass,
+  title,
+  ariaLabel,
+  onClick,
+  role = "button",
+  ariaChecked,
+}: StatusIndicatorProps) {
   return (
     <button
       type="button"
-      className="group inline-flex h-6 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md px-1.5 text-muted-foreground transition-[color,background-color,transform] duration-base ease-iris-out hover:bg-muted/60 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-1 focus-visible:ring-offset-panel"
+      role={role}
+      aria-checked={role === "switch" ? ariaChecked : undefined}
+      aria-label={ariaLabel}
       title={title}
+      className="inline-flex h-6 shrink-0 items-center gap-1 rounded-sm px-1.5 text-muted-foreground transition-[background-color,color,transform] duration-base ease-iris-out hover:bg-muted/50 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-1 focus-visible:ring-offset-panel active:scale-[0.98]"
       onClick={onClick}
     >
       <span
-        className="relative flex size-3.5 shrink-0 items-center justify-center"
+        className={cn(
+          "size-2 shrink-0 rounded-full transition-[background-color,box-shadow] duration-base ease-iris-out",
+          active
+            ? activeClass
+            : "bg-[hsl(var(--status-inactive)/0.42)] shadow-[inset_0_1px_0_hsl(0_0%_100%/0.12)]",
+        )}
         aria-hidden
+      />
+      <span
+        className={cn(
+          "text-[10px] leading-none tracking-wide transition-colors duration-base ease-iris-out",
+          active ? "text-foreground/80" : "text-muted-foreground",
+        )}
       >
-        <span
-          className={cn(
-            "absolute inset-0 rounded-full border transition-[border-color,transform,opacity] duration-base ease-iris-out",
-            active
-              ? "scale-100 opacity-100"
-              : "scale-[0.88] opacity-90 group-hover:scale-95",
-            active ? activeClass : inactiveClass,
-          )}
-        />
-        <span
-          className={cn(
-            "relative size-2 rounded-full transition-[transform,box-shadow] duration-base ease-iris-out",
-            active ? "scale-110" : "scale-90 group-hover:scale-95",
-            active ? activeClass : inactiveClass,
-          )}
-        />
+        {label}
       </span>
-      <span className="hidden text-[11px] sm:inline">{label}</span>
     </button>
   );
 }
 
-function llmDotClasses(state: LlmConnectivityState): {
-  active: string;
-  inactive: string;
-  on: boolean;
-} {
+function llmBallActiveClass(state: LlmConnectivityState): string {
   switch (state) {
     case "ready":
-      return {
-        on: true,
-        active:
-          "border-emerald-600/50 bg-gradient-to-br from-emerald-500 via-emerald-600 to-emerald-800 shadow-[0_0_0_1px_rgba(16,185,129,0.4),inset_0_1px_0_rgba(255,255,255,0.25)]",
-        inactive: "",
-      };
-    case "missing_key":
-      return {
-        on: true,
-        active:
-          "border-amber-500/50 bg-gradient-to-br from-amber-400 via-amber-500 to-amber-700 shadow-[0_0_0_1px_rgba(245,158,11,0.4),inset_0_1px_0_rgba(255,255,255,0.22)]",
-        inactive: "",
-      };
+      return "bg-[hsl(var(--status-llm-ready))] shadow-[0_0_0_1px_hsl(var(--status-llm-ready)/0.35)]";
     case "error":
-      return {
-        on: true,
-        active:
-          "border-destructive/50 bg-gradient-to-br from-red-500 via-red-600 to-red-800 shadow-[0_0_0_1px_rgba(239,68,68,0.4)]",
-        inactive: "",
-      };
+      return "bg-[hsl(var(--status-llm-error))] shadow-[0_0_0_1px_hsl(var(--status-llm-error)/0.35)]";
     default:
-      return {
-        on: false,
-        active: "",
-        inactive:
-          "border-muted-foreground/25 bg-gradient-to-br from-muted-foreground/50 to-muted-foreground/30",
-      };
+      return "";
   }
+}
+
+function llmBallActive(state: LlmConnectivityState): boolean {
+  return state === "ready" || state === "error";
 }
 
 export const ConnectivityIndicators = memo(function ConnectivityIndicators({
   status,
   onOpenSettings,
+  webSearch = false,
+  onWebSearchChange,
 }: ConnectivityIndicatorsProps) {
   const llm = status?.llm;
-  const search = status?.searchApi;
-  const llmClasses = llmDotClasses(llm?.state ?? "misconfigured");
-  const searchOn = search?.bingConfigured ?? false;
+  const llmState = llm?.state ?? "misconfigured";
 
   const hit = status?.usageLast?.promptCacheHitTokens ?? 0;
   const miss = status?.usageLast?.promptCacheMissTokens ?? 0;
   const cachePct =
     hit + miss > 0 ? Math.round((hit / (hit + miss)) * 100) : null;
 
+  const search = status?.searchApi;
+  const searchLabel =
+    search?.effectiveBackend === "minimax" ? "MiniMax" : "DuckDuckGo";
+
   const llmTitle = [
     llm?.message ?? "LLM 未检测",
     cachePct != null ? `上次缓存命中约 ${cachePct}%` : null,
+    search ? `检索：${searchLabel}` : null,
   ]
     .filter(Boolean)
     .join(" · ");
 
   return (
-    <>
-      <StatusDot
+    <div
+      className="inline-flex shrink-0 items-center gap-px rounded-md border border-border/40 bg-surface-inset/30 py-px pl-0.5 pr-1"
+      role="group"
+      aria-label="连通性"
+    >
+      <StatusIndicator
         label="LLM"
+        active={llmBallActive(llmState)}
+        activeClass={llmBallActiveClass(llmState)}
         title={llmTitle}
-        active={llmClasses.on}
-        activeClass={llmClasses.active}
-        inactiveClass={llmClasses.inactive}
+        ariaLabel={`LLM：${llm?.message ?? "未检测"}`}
         onClick={onOpenSettings}
       />
-      <StatusDot
-        label="搜索 API"
-        title={
-          searchOn
-            ? "Bing 搜索 API 已配置"
-            : "未配置 Bing Key，使用 DuckDuckGo 降级"
-        }
-        active={searchOn}
-        activeClass="border-teal-600/50 bg-gradient-to-br from-teal-500 via-teal-600 to-teal-800 shadow-[0_0_0_1px_rgba(20,184,166,0.4),inset_0_1px_0_rgba(255,255,255,0.25)]"
-        inactiveClass="border-muted-foreground/25 bg-gradient-to-br from-muted-foreground/45 to-muted-foreground/28"
-        onClick={onOpenSettings}
-      />
-    </>
+      {onWebSearchChange ? (
+        <StatusIndicator
+          role="switch"
+          ariaChecked={webSearch}
+          label="联网"
+          active={webSearch}
+          activeClass="bg-[hsl(var(--status-web-search))] shadow-[0_0_0_1px_hsl(var(--status-web-search)/0.35)]"
+          title={
+            webSearch
+              ? `联网搜索：已开启 · 检索：${searchLabel}`
+              : "联网搜索：已关闭"
+          }
+          ariaLabel={webSearch ? "关闭联网搜索" : "开启联网搜索"}
+          onClick={() => onWebSearchChange(!webSearch)}
+        />
+      ) : null}
+    </div>
   );
 });

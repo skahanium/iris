@@ -32,6 +32,7 @@ impl ContextBuildOptions {
 }
 
 /// Build context packets for a query in the given scene.
+#[allow(clippy::too_many_arguments)]
 pub fn build_context_packets(
     conn: &Connection,
     vault_path: &Path,
@@ -206,6 +207,7 @@ fn note_fulltext_packet(
         trust_level: TrustLevel::UserNote,
         citation_label: "note_full".into(),
         stale: false,
+        web: None,
     })
 }
 

@@ -35,11 +35,18 @@ export function collectTakenDocumentNames(files: FileListItem[]): Set<string> {
 /**
  * Next available display name: `新建文档`, `新建文档（1）`, `新建文档（2）`, …
  */
-export function allocateNewDocumentName(files: FileListItem[]): {
-  title: string;
-  path: string;
-} {
+export function allocateNewDocumentName(
+  files: FileListItem[],
+  extraTaken?: Iterable<string>,
+): { title: string; path: string } {
   const taken = collectTakenDocumentNames(files);
+  for (const name of extraTaken ?? []) {
+    const trimmed = name.trim();
+    if (trimmed && !isInternalUntitledLabel(trimmed)) {
+      taken.add(trimmed);
+    }
+  }
+
   if (!taken.has(DEFAULT_NEW_DOCUMENT_TITLE)) {
     const title = DEFAULT_NEW_DOCUMENT_TITLE;
     return { title, path: titleToNotePath(title) };
@@ -56,6 +63,7 @@ export function allocateNewDocumentName(files: FileListItem[]): {
 /**
  * Next auto name: `无标题1`, `无标题2`, `无标题3`, …
  * Filename matches display title (`无标题1.md`).
+ * @deprecated 使用 {@link allocateNewDocumentName} 代替，新文档默认使用 `新建文档` 命名。
  */
 export function allocateUntitledDocumentName(
   files: FileListItem[],

@@ -108,7 +108,7 @@ pub struct LlmConnectivityDto {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SearchApiConnectivityDto {
-    pub bing_configured: bool,
+    pub minimax_configured: bool,
     pub effective_backend: String,
 }
 
@@ -126,15 +126,13 @@ impl LlmRoutingConfig {
     pub fn migrate(config: &mut serde_json::Value) -> AppResult<()> {
         let schema_version = config["schemaVersion"].as_u64().unwrap_or(0) as u32;
 
-        if schema_version < Self::CURRENT_SCHEMA_VERSION {
-            if schema_version < 1 {
+        if schema_version < 1 {
                 // v0 → v1：补充 schemaVersion、createdAt
                 config["schemaVersion"] = serde_json::json!(1);
                 if config["createdAt"].is_null() {
                     config["createdAt"] = serde_json::json!(chrono::Utc::now().to_rfc3339());
                 }
             }
-        }
 
         Ok(())
     }
@@ -442,15 +440,16 @@ pub fn connectivity_status(
         _ => format!("{} / {}", resolved.provider_id, resolved.model),
     };
 
-    let bing_configured =
-        credentials::has_secret(crate::llm::search_web::BING_SEARCH_CREDENTIAL_SERVICE);
+    let minimax_configured =
+        credentials::has_secret(crate::credentials::MINIMAX_CREDENTIAL_SERVICE);
+    let prefs = crate::llm::web_search_config::load(db)?;
+    let effective_backend =
+        crate::llm::search_web::expected_search_backend_for_connectivity(&prefs)
+            .as_str()
+            .to_string();
     let search_api = SearchApiConnectivityDto {
-        bing_configured,
-        effective_backend: if bing_configured {
-            "bing".into()
-        } else {
-            "duckduckgo".into()
-        },
+        minimax_configured,
+        effective_backend,
     };
 
     let usage_last = read_usage_last(db)?;

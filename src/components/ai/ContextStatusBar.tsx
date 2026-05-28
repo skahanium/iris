@@ -1,5 +1,6 @@
 import { FileText, Link2, Scale, Anchor, BookOpen } from "lucide-react";
 
+import { cn } from "@/lib/utils";
 import type { AiScene, ContextStatus } from "@/types/ai";
 import { SCENE_META } from "@/lib/ai/scene-types";
 
@@ -11,6 +12,8 @@ interface ContextStatusBarProps {
   noteDisplayTitle: string | null;
   totalPackets?: number;
   corpusNames?: string[];
+  /** 底栏联网开关：仅底边一条蓝线表示，无其它标签 */
+  webSearchEnabled?: boolean;
 }
 
 // ─── Component ───────────────────────────────────────────
@@ -21,12 +24,20 @@ export function ContextStatusBar({
   noteDisplayTitle,
   totalPackets,
   corpusNames = [],
+  webSearchEnabled = false,
 }: ContextStatusBarProps) {
   const meta = SCENE_META[scene];
   const isGlobal = meta.defaultScope === "global";
 
   return (
-    <div className="flex items-center gap-3 border-b border-border/60 bg-surface-inset/40 px-3 py-1.5 text-xs text-muted-foreground">
+    <div className="relative flex items-center gap-3 border-b border-border/60 bg-surface-inset/40 px-3 py-1.5 text-xs text-muted-foreground">
+      <span
+        className={cn(
+          "iris-web-accent-line",
+          webSearchEnabled && "iris-web-accent-line--on",
+        )}
+        aria-hidden
+      />
       <span
         className="inline-block h-1.5 w-1.5 rounded-full bg-primary/80"
         title="就绪"
@@ -58,8 +69,7 @@ export function ContextStatusBar({
         </>
       )}
 
-      {/* Separator */}
-      <span className="h-3 w-px bg-border" />
+      <span className="h-3 w-px shrink-0 bg-border" aria-hidden />
 
       {/* Context stats */}
       {contextStatus ? (

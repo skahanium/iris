@@ -54,7 +54,7 @@
 
 ### Added
 
-- 设置面板（`Ctrl+,`）：LLM API Key、Bing 搜索 Key、自定义 API Base URL 收纳于统一设置 Sheet
+- 设置面板（`Ctrl+,`）：LLM API Key、自定义 API Base URL 收纳于统一设置 Sheet
 - `src/components/ui/dialog.tsx`：标准 shadcn/ui Dialog 封装（基于 @radix-ui/react-dialog）
 - Quick Open 改用 Dialog 组件，统一 chrome overlay 蒙版
 - Rust 测试补全：路径穿越（4 cases）、索引流水线（7 cases）、数据库初始化（3 cases）、错误序列化（4 cases）
@@ -88,8 +88,8 @@
 - 右栏 AI 面板：语义 **关联笔记** Top-K 注入上下文、共享 **provider** 选择
 - 内联 AI：**接受 / 重试 / 回退**（`ai-stream` 节点 + 原文快照）
 - `/` 命令流式写入 `ai-stream`；与侧栏使用同一 provider
-- 可选联网搜索：**Bing**（`iris/bing-search` 凭据）或 **DuckDuckGo** 降级
-- OS 凭据管理器：`credential_*` IPC（LLM + Bing）
+- 可选联网搜索：**DuckDuckGo** HTML 降级（后续版本主通道为 MiniMax Token Plan）
+- OS 凭据管理器：`credential_*` IPC（LLM 与各服务 Key）
 - Quick Open（Ctrl+P）、文件 Sheet（Ctrl+Shift+E）、搜索面板（Ctrl+Shift+F）
 - Markdown 往返测试扩充（`tests/markdown_roundtrip.test.ts`）
 - 语义 Recall@5 fixture 集与 `#[ignore]` 集成测试（`semantic_recall_eval.rs`）
@@ -134,7 +134,7 @@
 | C4  | 关联笔记          | `ai-context.ts`、`AiPanel`                                    |
 | C5  | frontmatter/tags  | `indexer/frontmatter.rs`、`tests/frontmatter_index.rs`        |
 | C6  | vault 监听        | `AppState::restart_file_watcher`、`tests/vault_watcher.rs`    |
-| C7  | Bing Key UI       | `AiPanel`、`search_web.rs`                                    |
+| C7  | 联网检索 Key UI   | 设置页、`search_web.rs`                                       |
 | C8  | 语义评测文档      | `docs/eval/semantic-search.md`                                |
 | C9  | GFM 往返测试      | `tests/markdown_roundtrip.test.ts`、`gfm-schema.ts`           |
 | C10 | ROADMAP/CHANGELOG | 本文件、`ROADMAP.md`                                          |

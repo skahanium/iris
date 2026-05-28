@@ -333,6 +333,7 @@ mod tests {
             trust_level: TrustLevel::UserNote,
             citation_label: "[1]".into(),
             stale: false,
+            web: None,
         }];
 
         let score = eval_citation_accuracy("根据 [1] 的规定...", &packets);
@@ -355,6 +356,7 @@ mod tests {
             trust_level: TrustLevel::UserNote,
             citation_label: "[1]".into(),
             stale: false,
+            web: None,
         }];
 
         let score = eval_citation_accuracy("根据 [1] 和 [2] 的规定...", &packets);

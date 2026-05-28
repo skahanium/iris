@@ -225,21 +225,6 @@ impl ToolRegistry {
                 requires_confirmation: false,
                 max_results: Some(50),
             },
-            ToolSpec {
-                name: "web_search".into(),
-                description: "联网搜索外部信息（需用户授权）".into(),
-                input_schema: serde_json::json!({
-                    "type": "object",
-                    "properties": {
-                        "query": {"type": "string"}
-                    },
-                    "required": ["query"]
-                }),
-                access_level: ToolAccessLevel::Network,
-                scene_allowlist: vec![AiScene::ResearchSynthesis],
-                requires_confirmation: true,
-                max_results: Some(5),
-            },
             // ─── 写入操作 (均需确认) ───
             ToolSpec {
                 name: "insert_text_at_cursor".into(),
@@ -462,15 +447,6 @@ mod tests {
     fn unknown_tool_defaults_to_confirmation() {
         let reg = ToolRegistry::new();
         assert!(reg.requires_confirmation("nonexistent_tool"));
-    }
-
-    #[test]
-    fn network_tool_requires_l3() {
-        let reg = ToolRegistry::new();
-        let web = reg.find("web_search").unwrap();
-        assert!(check_tool_permission(web, AiScene::ResearchSynthesis, AutonomyLevel::L3).is_ok());
-        assert!(check_tool_permission(web, AiScene::ResearchSynthesis, AutonomyLevel::L2).is_err());
-        assert!(check_tool_permission(web, AiScene::ResearchSynthesis, AutonomyLevel::L1).is_err());
     }
 
     #[test]

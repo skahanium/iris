@@ -26,7 +26,7 @@ pub async fn llm_generate(
     if merged.custom_base_url.is_none() {
         merged.custom_base_url = Some(resolved.base_url);
     }
-    llm_generate_stream(app, merged).await
+    llm_generate_stream(app, &state.db, merged).await
 }
 
 #[tauri::command]

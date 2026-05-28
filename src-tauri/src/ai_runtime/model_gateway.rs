@@ -217,6 +217,59 @@ impl ModelGateway {
         }
     }
 
+    /// Load active user rules from the DB, filtered by scene relevance.
+    ///
+    /// Rules are only injected for the scenes where they apply:
+    /// - `writing_style`, `citation_habits` → DraftingAssist, ExemplarLearning
+    /// - `citation_habits` (also) → KnowledgeLookup, ResearchSynthesis
+    /// - `tool_preferences`, `model_preferences`, `custom_rules`, `agent_behavior` → All scenes
+    pub fn load_active_rules_for_scene(
+        db: &crate::storage::db::Database,
+        scene: AiScene,
+    ) -> crate::error::AppResult<Vec<String>> {
+        let mut rules = Vec::new();
+
+        db.with_conn(|conn| {
+            let mut stmt = conn
+                .prepare("SELECT key, value FROM user_profile WHERE is_active = 1 ORDER BY key")?;
+
+            let rows = stmt.query_map([], |row| {
+                let key: String = row.get(0)?;
+                let json_str: String = row.get(1)?;
+                Ok((key, json_str))
+            })?;
+
+            for row in rows {
+                let (key, json_str) = row?;
+                if !is_rule_applicable_for_scene(&key, scene) {
+                    continue;
+                }
+
+                // Extract human-readable rule text from JSON value
+                if let Ok(value) = serde_json::from_str::<serde_json::Value>(&json_str) {
+                    let rule_text = match &value {
+                        serde_json::Value::String(s) => s.clone(),
+                        serde_json::Value::Object(obj) => {
+                            if let Some(desc) = obj.get("description").and_then(|v| v.as_str()) {
+                                desc.to_string()
+                            } else {
+                                format!("{key}: {value}")
+                            }
+                        }
+                        other => format!("{key}: {other}"),
+                    };
+                    if !rule_text.is_empty() {
+                        rules.push(rule_text);
+                    }
+                }
+            }
+
+            Ok(())
+        })?;
+
+        Ok(rules)
+    }
+
     /// Build system prompt for a scene with context packets.
     pub fn build_system_prompt(
         scene: AiScene,
@@ -287,10 +340,20 @@ impl ModelGateway {
         scene: AiScene,
         packets: &[ContextPacket],
         user_rules: &[String],
+        web_search: bool,
     ) -> Vec<LlmMessage> {
+        let mut persona = Self::scene_persona_only(scene);
+        if web_search {
+            persona.push_str(
+                "\n用户已在底栏开启「联网」。若用户消息中含「【本机日期】」或\
+                 「以下是与问题相关的网页搜索结果」区块，可据此回答实时性问题；\
+                 问「今天几号」时优先采用【本机日期】。本地证据包仍优先用于用户笔记。\
+                 未出现上述区块时不要声称已联网检索。\n",
+            );
+        }
         let mut messages = vec![LlmMessage {
             role: MessageRole::System,
-            content: Self::scene_persona_only(scene),
+            content: persona,
             tool_call_id: None,
             tool_calls: None,
         }];
@@ -359,8 +422,7 @@ impl ModelGateway {
             }
             AiScene::ResearchSynthesis => {
                 "你是「研究助理」，帮助用户对多材料进行论证组织和证据缺口分析。\n\
-                 支持子命题拆解、证据矩阵构建、论证链检测和缺口识别。\n\
-                 联网研究必须经过用户授权。\n"
+                 支持子命题拆解、证据矩阵构建、论证链检测和缺口识别。\n"
                     .into()
             }
         }
@@ -514,10 +576,7 @@ impl ModelGateway {
         if !response.status().is_success() {
             let status = response.status();
             let text = response.text().await.unwrap_or_default();
-            return Err(AppError::msg(format!(
-                "LLM streaming request failed with status {}: {}",
-                status, text
-            )));
+            return Err(AppError::msg(format_llm_http_error(status, &text)));
         }
 
         let mut full_content = String::new();
@@ -732,7 +791,55 @@ pub fn build_citation_prompt(paragraph: &str, candidates: &[ContextPacket]) -> S
     prompt
 }
 
+// ─── Rule Scene Mapping ─────────────────────────────────
+
+/// Determine whether a user profile rule applies to a given AI scene.
+///
+/// Scoped rules (writing_style, citation_habits) only apply to relevant scenes.
+/// Global rules (custom_rules, tool_preferences, etc.) apply everywhere.
+fn is_rule_applicable_for_scene(key: &str, scene: AiScene) -> bool {
+    match key {
+        "writing_style" => {
+            matches!(scene, AiScene::DraftingAssist | AiScene::ExemplarLearning)
+        }
+        "citation_habits" => {
+            matches!(
+                scene,
+                AiScene::DraftingAssist | AiScene::ResearchSynthesis | AiScene::KnowledgeLookup
+            )
+        }
+        "tool_preferences" | "model_preferences" | "custom_rules" | "agent_behavior" => true,
+        _ => {
+            // Unknown keys: conservative approach — don't inject into knowledge-lookup
+            // to avoid polluting retrieval with irrelevant preferences
+            !matches!(scene, AiScene::KnowledgeLookup)
+        }
+    }
+}
+
 // ─── Tests ───────────────────────────────────────────────
+
+fn format_llm_http_error(status: reqwest::StatusCode, text: &str) -> String {
+    let lower = text.to_lowercase();
+    if status == reqwest::StatusCode::SERVICE_UNAVAILABLE
+        || lower.contains("service_unavailable")
+        || lower.contains("too busy")
+        || lower.contains("overloaded")
+    {
+        return "模型服务繁忙，请稍后重试或在设置中更换模型。".into();
+    }
+    if status == reqwest::StatusCode::TOO_MANY_REQUESTS || lower.contains("rate limit") {
+        return "请求过于频繁，请稍后再试。".into();
+    }
+    if status == reqwest::StatusCode::UNAUTHORIZED || lower.contains("invalid_api_key") {
+        return "API Key 无效或未配置，请在设置中检查。".into();
+    }
+    if text.len() > 200 {
+        format!("模型请求失败（{}）", status)
+    } else {
+        format!("模型请求失败（{}）：{}", status, text)
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -755,6 +862,7 @@ mod tests {
             trust_level: TrustLevel::UserNote,
             citation_label: "[1]".into(),
             stale: false,
+            web: None,
         }];
 
         let prompt = ModelGateway::build_system_prompt(AiScene::KnowledgeLookup, &packets, &[]);
@@ -791,6 +899,14 @@ mod tests {
             ModelGateway::slot_for_scene(AiScene::ResearchSynthesis),
             CapabilitySlot::Reasoner
         );
+    }
+
+    #[test]
+    fn format_busy_service_error() {
+        let body =
+            r#"{"error":{"type":"service_unavailable_error","message":"Service is too busy"}}"#;
+        let msg = super::format_llm_http_error(reqwest::StatusCode::SERVICE_UNAVAILABLE, body);
+        assert!(msg.contains("繁忙"));
     }
 
     #[test]

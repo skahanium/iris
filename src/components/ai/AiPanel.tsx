@@ -14,11 +14,10 @@ import {
   corpusList,
   fileList,
   toolConfirm as toolConfirmIpc,
-  listenLlmToken,
-  listenLlmDone,
-  listenLlmError,
+  profileSet,
   llmAbort,
 } from "@/lib/ipc";
+import { useAiPanelLlmStream } from "@/hooks/useAiPanelLlmStream";
 import {
   buildMentionCandidates,
   findActiveMentionQuery,
@@ -29,6 +28,7 @@ import {
   type MentionCandidate,
   type MentionToken,
 } from "@/lib/ai-context-scope";
+import { findPacketByCitationRef } from "@/lib/ai/citation-markdown";
 import { SCENE_META } from "@/lib/ai/scene-types";
 import { invokeErrorMessage } from "@/lib/credentials";
 import { setActiveAiScene } from "@/hooks/useConnectivityStatus";
@@ -39,7 +39,7 @@ import type {
   ContextPacket,
   ExecutionPlan,
 } from "@/types/ai";
-import type { FileListItem, LlmTokenEvent } from "@/types/ipc";
+import type { FileListItem } from "@/types/ipc";
 
 import { AiMentionPopover } from "./AiMentionPopover";
 import { AiMessageList, type ChatLine } from "./AiMessageList";
@@ -52,11 +52,17 @@ import {
   ToolConfirmDialog,
   type ToolConfirmRequest,
 } from "./ToolConfirmDialog";
+import {
+  RuleConfirmDialog,
+  type RuleConfirmRequest,
+} from "./RuleConfirmDialog";
 
 interface AiPanelProps {
   notePath: string | null;
   noteDisplayTitle: string | null;
   noteContent: string;
+  /** 底栏「联网」开关：为 true 时注入 MiniMax / DuckDuckGo 检索摘要 */
+  webSearch?: boolean;
   onInsertText?: (text: string) => void;
   onReplaceSelection?: (text: string) => void;
 }
@@ -65,6 +71,7 @@ export function AiPanel({
   notePath,
   noteDisplayTitle,
   noteContent: _noteContent,
+  webSearch = false,
   onInsertText: _onInsertText,
   onReplaceSelection: _onReplaceSelection,
 }: AiPanelProps) {
@@ -76,6 +83,7 @@ export function AiPanel({
   useEffect(() => {
     setActiveAiScene(scene);
   }, [scene]);
+
   const [messages, setMessages] = useState<ChatLine[]>([]);
   const [input, setInput] = useState("");
   const [streaming, setStreaming] = useState(false);
@@ -88,6 +96,8 @@ export function AiPanel({
   const [packetsOpen, setPacketsOpen] = useState(false);
   const [toolConfirmRequest, setToolConfirmRequest] =
     useState<ToolConfirmRequest | null>(null);
+  const [ruleConfirmRequest, setRuleConfirmRequest] =
+    useState<RuleConfirmRequest | null>(null);
   const [executionPlan, setExecutionPlan] = useState<ExecutionPlan | null>(
     null,
   );
@@ -198,92 +208,37 @@ export function AiPanel({
     [mentionOpen, handleMentionKeyDown],
   );
 
-  useEffect(() => {
-    let unlistenToken: (() => void) | undefined;
-    let unlistenDone: (() => void) | undefined;
-    let unlistenError: (() => void) | undefined;
-    let cleanup: (() => void) | undefined;
-
-    const tokenPromise = listenLlmToken((ev: LlmTokenEvent) => {
-      if (!panelSendActiveRef.current) return;
-      if (!requestIdRef.current) {
-        requestIdRef.current = ev.request_id;
-      } else if (ev.request_id !== requestIdRef.current) {
-        return;
-      }
-      streamBuf.current += ev.token;
-      const snapshot = streamBuf.current;
-      setMessages((prev) => {
-        const copy = [...prev];
-        const last = copy[copy.length - 1];
-        if (last?.role === "assistant") {
-          copy[copy.length - 1] = { ...last, content: snapshot };
-        } else {
-          copy.push({ role: "assistant", content: snapshot });
-        }
-        return copy;
-      });
-    }).then((fn) => {
-      unlistenToken = fn;
-    });
-
-    const donePromise = listenLlmDone((ev) => {
-      if (!panelSendActiveRef.current) return;
-      if (
-        requestIdRef.current &&
-        ev.request_id &&
-        ev.request_id !== requestIdRef.current
-      ) {
-        return;
-      }
-      setStreaming(false);
-    }).then((fn) => {
-      unlistenDone = fn;
-    });
-
-    const errorPromise = listenLlmError((ev) => {
-      if (!panelSendActiveRef.current) return;
-      if (
-        requestIdRef.current &&
-        ev.request_id &&
-        ev.request_id !== requestIdRef.current
-      ) {
-        return;
-      }
-      panelSendActiveRef.current = false;
-      setStreaming(false);
-      streamBuf.current = "";
-      requestIdRef.current = null;
-      setMessages((prev) => [
-        ...prev,
-        {
-          role: "system",
-          content: `错误: ${ev.error ?? "未知错误"}`,
-        },
-      ]);
-    }).then((fn) => {
-      unlistenError = fn;
-    });
-
-    void Promise.all([tokenPromise, donePromise, errorPromise]).then(() => {
-      cleanup = () => {
-        unlistenToken?.();
-        unlistenDone?.();
-        unlistenError?.();
-      };
-    });
-
-    return () => {
-      cleanup?.();
-    };
-  }, []);
+  useAiPanelLlmStream({
+    panelSendActiveRef,
+    requestIdRef,
+    streamBufRef: streamBuf,
+    setMessages,
+    setStreaming,
+  });
 
   useEffect(() => {
     let unlisten: (() => void) | undefined;
 
     import("@tauri-apps/api/event").then(({ listen }) => {
       listen<ToolConfirmRequest>("ai:tool_confirm_request", (event) => {
-        setToolConfirmRequest(event.payload);
+        const req = event.payload;
+        if (req.tool_name === "update_user_rule") {
+          const ruleType =
+            typeof req.arguments.rule_type === "string"
+              ? req.arguments.rule_type
+              : "custom_rules";
+          const ruleText =
+            typeof req.arguments.rule === "string"
+              ? req.arguments.rule
+              : JSON.stringify(req.arguments);
+          setRuleConfirmRequest({
+            rule: ruleText,
+            rule_type: ruleType,
+            source: "ai_detected",
+          });
+        } else {
+          setToolConfirmRequest(req);
+        }
       }).then((fn) => {
         unlisten = fn;
       });
@@ -336,13 +291,13 @@ export function AiPanel({
         context_scope: contextScope,
         selected_packet_ids:
           selectedPacketIds.length > 0 ? selectedPacketIds : undefined,
+        web_search: webSearch,
       });
 
       requestIdRef.current = result.request_id;
       if (result.session_id) {
         setSessionId(result.session_id);
       }
-
       const toolCalls = result.tool_calls?.map(
         (tc: { function: { name: string }; id: string }) => ({
           id: tc.id,
@@ -350,7 +305,9 @@ export function AiPanel({
           status: "pending" as const,
         }),
       );
-      const finalContent = result.content?.trim() || streamBuf.current || "";
+      const serverContent = result.content?.trim() ?? "";
+      const finalContent =
+        serverContent.length > 0 ? serverContent : streamBuf.current;
 
       setMessages((m) => {
         const copy = [...m];
@@ -395,6 +352,7 @@ export function AiPanel({
     notePath,
     contextScope,
     selectedPacketIds,
+    webSearch,
     assembleContext,
   ]);
 
@@ -442,6 +400,17 @@ export function AiPanel({
     );
   }, []);
 
+  const handleCitationClick = useCallback(
+    (ref: string) => {
+      const packet = findPacketByCitationRef(ref, packets);
+      setPacketsOpen(true);
+      if (packet) {
+        setSelectedPacketIds([packet.id]);
+      }
+    },
+    [packets],
+  );
+
   const handlePlanApprove = useCallback(() => {
     setExecutionPlan(null);
     void send();
@@ -463,6 +432,7 @@ export function AiPanel({
         noteDisplayTitle={noteDisplayTitle}
         totalPackets={packets.length}
         corpusNames={corpusNames}
+        webSearchEnabled={webSearch}
       />
 
       <ContextPacketDrawer
@@ -483,7 +453,11 @@ export function AiPanel({
         </div>
       )}
 
-      <AiMessageList messages={messages} streaming={streaming} />
+      <AiMessageList
+        messages={messages}
+        streaming={streaming}
+        onCitationClick={handleCitationClick}
+      />
 
       <ContextScopeChips tokens={mentionTokens} onRemove={removeMentionToken} />
 
@@ -515,6 +489,19 @@ export function AiPanel({
         request={toolConfirmRequest}
         onConfirm={handleToolConfirm}
         onClose={() => setToolConfirmRequest(null)}
+      />
+      <RuleConfirmDialog
+        request={ruleConfirmRequest}
+        onConfirm={async (r) => {
+          void profileSet({
+            key: `ai_rule_${Date.now()}`,
+            value: r.rule,
+            source: r.source,
+          });
+          setRuleConfirmRequest(null);
+        }}
+        onReject={() => setRuleConfirmRequest(null)}
+        onClose={() => setRuleConfirmRequest(null)}
       />
     </div>
   );

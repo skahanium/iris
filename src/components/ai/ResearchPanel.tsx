@@ -1,21 +1,28 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   BookOpen,
   ChevronDown,
   ChevronRight,
+  FileText,
   GitBranch,
   Layers,
   Loader2,
   Search,
   Shield,
-  Webhook,
+  StopCircle,
 } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { researchExecute, researchStatus } from "@/lib/ipc";
+import {
+  researchAbort,
+  researchExecute,
+  researchGenerateNote,
+  researchStatus,
+  listenResearchProgress,
+} from "@/lib/ipc";
 
 // ─── Types ───────────────────────────────────────────────
 
@@ -68,6 +75,21 @@ interface ResearchResult {
   };
 }
 
+interface ResearchProgressData {
+  request_id: string;
+  topic: string;
+  state: string;
+  current_round: number;
+  max_rounds: number;
+  queries_executed: string[];
+  new_evidence_count: number;
+  total_evidence_count: number;
+  tokens_used: number;
+  token_budget: number;
+  progress_pct: number;
+  round_terminated_early: boolean;
+}
+
 // ─── Link Type Labels ────────────────────────────────────
 
 const LINK_TYPE_LABELS: Record<string, { label: string; className: string }> = {
@@ -88,26 +110,53 @@ function coverageScoreClass(score: number): string {
 
 interface ResearchPanelProps {
   notePath: string | null;
+  /** 与底栏「联网」开关一致；勿在面板内重复授权 */
+  webSearch?: boolean;
 }
 
-export function ResearchPanel({ notePath: _notePath }: ResearchPanelProps) {
+export function ResearchPanel({
+  notePath: _notePath,
+  webSearch = false,
+}: ResearchPanelProps) {
   const [topic, setTopic] = useState("");
   const [loading, setLoading] = useState(false);
-  const [webAuthorized, setWebAuthorized] = useState(false);
   const [result, setResult] = useState<ResearchResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [expandedProps, setExpandedProps] = useState<Set<string>>(new Set());
-  const [, setRecentResearch] = useState<
-    Array<{ request_id: string; status: string; created_at: string }>
-  >([]);
+  const [progress, setProgress] = useState<ResearchProgressData | null>(null);
+  const [generatingNote, setGeneratingNote] = useState(false);
+
+  const requestIdRef = useRef<string | null>(null);
+  const unlistenRef = useRef<(() => void) | null>(null);
 
   // Load recent research on mount
   useEffect(() => {
     researchStatus()
       .then((status) => {
-        setRecentResearch(status.recent_research ?? []);
+        // status loaded but not displayed
+        void status;
       })
       .catch(() => {});
+  }, []);
+
+  // Listen to research progress events
+  useEffect(() => {
+    const setupListener = async () => {
+      const unlisten = await listenResearchProgress((payload) => {
+        setProgress(payload);
+
+        const state = payload.state;
+        if (state === "completed" || state === "failed" || state === "aborted") {
+          setLoading(false);
+        }
+      });
+      unlistenRef.current = unlisten;
+    };
+    void setupListener();
+
+    return () => {
+      unlistenRef.current?.();
+    };
   }, []);
 
   const toggleProp = useCallback((id: string) => {
@@ -125,19 +174,57 @@ export function ResearchPanel({ notePath: _notePath }: ResearchPanelProps) {
     setLoading(true);
     setError(null);
     setResult(null);
+    setProgress(null);
 
     try {
       const res = await researchExecute({
         topic: topic.trim(),
-        web_authorized: webAuthorized,
+        web_authorized: webSearch,
       });
+      requestIdRef.current = res.request_id;
       setResult(res as unknown as ResearchResult);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
       setLoading(false);
     }
-  }, [topic, loading, webAuthorized]);
+  }, [topic, loading, webSearch]);
+
+  const handleAbort = useCallback(async () => {
+    if (!requestIdRef.current) return;
+    try {
+      await researchAbort(requestIdRef.current);
+      setLoading(false);
+      setProgress((prev) =>
+        prev
+          ? { ...prev, state: "aborted" }
+          : null,
+      );
+    } catch (e) {
+      console.error("Abort failed:", e);
+    }
+  }, []);
+
+  const handleGenerateNote = useCallback(async () => {
+    if (!result) return;
+    setGeneratingNote(true);
+    try {
+      const note = await researchGenerateNote({
+        topic: result.topic,
+        summary: result.summary,
+        evidence_count: result.evidence_matrix.total_evidence_count,
+        coverage_score: result.evidence_matrix.coverage_score,
+      });
+      // Alert user with the suggested path
+      alert(
+        `研究笔记已生成，建议路径: ${note.suggested_path}\n\n${note.content.substring(0, 200)}...`,
+      );
+    } catch (e) {
+      console.error("Generate note failed:", e);
+    } finally {
+      setGeneratingNote(false);
+    }
+  }, [result]);
 
   return (
     <div className="flex h-full flex-col">
@@ -147,7 +234,7 @@ export function ResearchPanel({ notePath: _notePath }: ResearchPanelProps) {
           <BookOpen className="h-4 w-4 text-primary" />
           <span className="text-sm font-medium">研究助理</span>
           <Badge variant="secondary" className="text-[10px]">
-            L3 有限循环
+            L3 半自治
           </Badge>
         </div>
 
@@ -166,32 +253,51 @@ export function ResearchPanel({ notePath: _notePath }: ResearchPanelProps) {
             className="flex-1 rounded-md border border-input bg-background px-3 py-1.5 text-sm"
             disabled={loading}
           />
-          <Button
-            size="sm"
-            disabled={loading || !topic.trim()}
-            onClick={() => void executeResearch()}
-          >
-            {loading ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
-            ) : (
+          {loading ? (
+            <Button size="sm" variant="destructive" onClick={handleAbort}>
+              <StopCircle className="h-4 w-4" />
+              中止
+            </Button>
+          ) : (
+            <Button
+              size="sm"
+              disabled={!topic.trim()}
+              onClick={() => void executeResearch()}
+            >
               <Search className="h-4 w-4" />
-            )}
-            研究
-          </Button>
+              研究
+            </Button>
+          )}
         </div>
 
-        <div className="mt-2 flex items-center gap-3">
-          <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
-            <input
-              type="checkbox"
-              checked={webAuthorized}
-              onChange={(e) => setWebAuthorized(e.target.checked)}
-              className="h-3 w-3"
-            />
-            <Webhook className="h-3 w-3" />
-            允许联网研究
-          </label>
-        </div>
+        {/* Progress bar */}
+        {progress && loading && (
+          <div className="mt-2 space-y-1">
+            <div className="flex items-center justify-between text-xs text-muted-foreground">
+              <span>
+                第 {progress.current_round}/{progress.max_rounds} 轮
+                {progress.round_terminated_early && "（已充分）"}
+              </span>
+              <span>
+                {progress.total_evidence_count} 条证据 |
+                {progress.tokens_used.toLocaleString()} tokens
+              </span>
+            </div>
+            <div className="h-1.5 overflow-hidden rounded-full bg-muted">
+              <div
+                className="h-full rounded-full bg-primary transition-all duration-500"
+                style={{
+                  width: `${Math.round(progress.progress_pct * 100)}%`,
+                }}
+              />
+            </div>
+            {progress.queries_executed.length > 0 && (
+              <div className="text-[10px] text-muted-foreground">
+                {progress.queries_executed.slice(-2).join(" · ")}
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Content */}
@@ -204,6 +310,26 @@ export function ResearchPanel({ notePath: _notePath }: ResearchPanelProps) {
 
         {result && (
           <div className="space-y-3 p-3">
+            {/* Action bar */}
+            <div className="flex items-center justify-between">
+              <span className="text-xs text-muted-foreground">
+                请求 ID: {result.request_id.substring(0, 8)}…
+              </span>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={handleGenerateNote}
+                disabled={generatingNote}
+              >
+                {generatingNote ? (
+                  <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <FileText className="mr-1 h-3.5 w-3.5" />
+                )}
+                生成研究笔记
+              </Button>
+            </div>
+
             {/* Coverage Summary */}
             <Card>
               <CardHeader className="p-3 pb-2">
@@ -381,8 +507,8 @@ export function ResearchPanel({ notePath: _notePath }: ResearchPanelProps) {
 
             {/* Token Usage */}
             <div className="text-center text-[10px] text-muted-foreground">
-              消耗 {result.total_tokens.total_tokens} tokens |{result.rounds}{" "}
-              轮检索
+              消耗 {result.total_tokens.total_tokens} tokens |{" "}
+              {result.rounds} 轮检索
             </div>
           </div>
         )}
@@ -391,7 +517,12 @@ export function ResearchPanel({ notePath: _notePath }: ResearchPanelProps) {
           <div className="flex h-full flex-col items-center justify-center text-muted-foreground">
             <BookOpen className="mb-2 h-8 w-8 opacity-30" />
             <p className="text-sm">输入研究主题开始</p>
-            <p className="mt-1 text-xs">支持子命题拆解、证据矩阵、论证链分析</p>
+            <p className="mt-1 text-xs">
+              支持子命题拆解、证据矩阵、论证链分析
+            </p>
+            <p className="mt-1 text-xs text-muted-foreground/60">
+              每轮可见进度 · 可随时中止
+            </p>
           </div>
         )}
       </ScrollArea>

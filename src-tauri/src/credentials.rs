@@ -2,8 +2,8 @@ use keyring::Entry;
 
 use crate::error::{AppError, AppResult};
 
-/// Bing Web Search 凭据 ID（与前端 `BING_SEARCH_CREDENTIAL_SERVICE` 一致）。
-pub const BING_SEARCH_CREDENTIAL_SERVICE: &str = "iris.bing.search";
+/// MiniMax Token Plan 凭据 ID（与前端 `MINIMAX_CREDENTIAL_SERVICE` 一致）。
+pub const MINIMAX_CREDENTIAL_SERVICE: &str = "iris.minimax";
 
 const KEYRING_ACCOUNT: &str = "api_key";
 
@@ -80,7 +80,6 @@ mod tests {
             canonical_service_id("iris/llm/deepseek"),
             "iris.llm.deepseek"
         );
-        assert_eq!(canonical_service_id("iris.bing.search"), "iris.bing.search");
     }
 
     #[test]

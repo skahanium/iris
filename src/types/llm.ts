@@ -58,8 +58,8 @@ export interface ConnectivityStatus {
     message: string;
   };
   searchApi: {
-    bingConfigured: boolean;
-    effectiveBackend: "bing" | "duckduckgo";
+    minimaxConfigured: boolean;
+    effectiveBackend: "minimax" | "duckduckgo";
   };
   usageLast?: {
     promptCacheHitTokens: number;

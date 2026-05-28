@@ -1,0 +1,66 @@
+<h2>Iris AI 从“聊天框”升级成“笔记工作流 Agent”</h2>
+<p class="subtitle">这页只看方向：Iris 的 AI 不再只是问答，而是围绕笔记库完成“研究、找证据、写作、生成可确认补丁”。</p>
+
+<div class="options">
+  <div class="option" data-choice="a" onclick="toggleSelect(this)">
+    <div class="letter">A</div>
+    <div class="content">
+      <h3>推荐：手动选择工作流 Agent</h3>
+      <p>用户先选择任务类型，例如“研究这个问题”“帮我补写这一节”“根据资料生成提纲”。Iris 显示计划，执行本地检索和可选联网搜索，最后给证据和可确认的文档补丁。</p>
+    </div>
+  </div>
+  <div class="option" data-choice="b" onclick="toggleSelect(this)">
+    <div class="letter">B</div>
+    <div class="content">
+      <h3>保守：聊天框增强</h3>
+      <p>保留现在的 AI 侧栏，只把搜索结果、引用卡、插入/替换按钮做得更好。改动小，但还是容易像普通聊天软件，Iris 的特色不明显。</p>
+    </div>
+  </div>
+  <div class="option" data-choice="c" onclick="toggleSelect(this)">
+    <div class="letter">C</div>
+    <div class="content">
+      <h3>激进：高度自治 Agent</h3>
+      <p>用户只说目标，Iris 自己规划、多轮搜索、整理、写入。看起来像 Codex，但用于笔记会更难控制，也更容易误改 Markdown。</p>
+    </div>
+  </div>
+</div>
+
+<div class="section">
+  <h3>推荐方案的一次任务流程</h3>
+  <div class="mockup">
+    <div class="mockup-header">研究 + 写作 Agent</div>
+    <div class="mockup-body">
+      <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:10px;align-items:stretch">
+        <div class="placeholder">1. 用户选择任务<br>研究 / 写作</div>
+        <div class="placeholder">2. 搜索本地笔记<br>标题 / 段落 / 条款</div>
+        <div class="placeholder">3. 可选联网搜索<br>官方 / 学术优先</div>
+        <div class="placeholder">4. 合成答案<br>证据矩阵 / 引用</div>
+        <div class="placeholder">5. 生成补丁<br>预览 / 确认写入</div>
+      </div>
+      <div style="margin-top:12px;display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px">
+        <div class="placeholder">文档标题和路径<br>不依赖 Untitled</div>
+        <div class="placeholder">文件夹和模板<br>基础管理完整</div>
+        <div class="placeholder">工具轨迹和评测<br>可追踪、可复现</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="pros-cons">
+  <div class="pros">
+    <h4>为什么推荐 A</h4>
+    <ul>
+      <li>比聊天框更像 Iris 自己的能力。</li>
+      <li>能把本地搜索和联网搜索统一成“证据包”。</li>
+      <li>AI 改文档前必须给补丁预览，符合 Markdown 权威原则。</li>
+    </ul>
+  </div>
+  <div class="cons">
+    <h4>需要补的地基</h4>
+    <ul>
+      <li>搜索结果必须有来源、可信度、引用标签。</li>
+      <li>联网搜索要能处理失败、降级、去重和来源分级。</li>
+      <li>文件标题、路径、文件夹、模板要先稳定下来。</li>
+    </ul>
+  </div>
+</div>

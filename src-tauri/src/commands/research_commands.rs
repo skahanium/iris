@@ -1,21 +1,21 @@
-//! Research workflow IPC commands.
+//! Research workflow IPC commands — Phase 4 semi-autonomous research.
 //!
-//! Exposes the L3 research pipeline (sub-proposition decomposition,
-//! evidence matrix, argument chain, summary) to the React frontend.
+//! Exposes the L3 research pipeline with per-round progress events,
+//! abort/pause support, and research note generation.
 
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+
+use crate::ai_runtime::research_workflow::{execute_research, ResearchConfig};
+use crate::ai_runtime::trace::{TraceRecorder, TraceStatus};
 use crate::ai_runtime::{
-    research_workflow::{execute_research, ResearchConfig},
-    trace::{TraceRecorder, TraceStatus},
-    AiScene,
+    AiScene, ResearchNoteRequest, ResearchNoteResult, ResearchProgress, ResearchTaskState,
 };
 use crate::app::AppState;
 use crate::error::AppResult;
 use tauri::{Emitter, State};
 
-/// Execute a full research workflow on a topic.
-///
-/// Returns `ResearchResult` with sub-propositions, evidence matrix,
-/// argument chain, and synthesized summary.
+/// Execute a full research workflow on a topic with per-round progress events.
 #[tauri::command]
 pub async fn research_execute(
     state: State<'_, AppState>,
@@ -29,6 +29,16 @@ pub async fn research_execute(
     // Start trace
     TraceRecorder::start(&state.db, &request_id, scene)?;
 
+    // Register cancel token
+    let cancel_token = Arc::new(AtomicBool::new(false));
+    {
+        let mut guard = state
+            .active_research
+            .lock()
+            .map_err(|_| crate::error::AppError::msg("Lock error"))?;
+        guard.insert(request_id.clone(), cancel_token.clone());
+    }
+
     let resolved = crate::llm::config::resolve_for_scene(&state.db, scene)?;
     let provider_config = resolved.to_provider_config(scene);
 
@@ -37,17 +47,46 @@ pub async fn research_execute(
         ..Default::default()
     };
 
+    // Emit planning state
+    let _ = app_handle.emit(
+        "ai:research_progress",
+        &ResearchProgress {
+            request_id: request_id.clone(),
+            topic: topic.clone(),
+            state: ResearchTaskState::Planning,
+            current_round: 0,
+            max_rounds: config.max_rounds,
+            queries_executed: vec![],
+            new_evidence_count: 0,
+            total_evidence_count: 0,
+            tokens_used: 0,
+            token_budget: config.token_budget,
+            progress_pct: 0.0,
+            round_terminated_early: false,
+        },
+    );
+
     // Execute research workflow
     let result = execute_research(
         &state.db,
         &app_handle,
         &request_id,
         &topic,
-        config,
+        config.clone(),
         provider_config,
         web_authorized.unwrap_or(false),
+        Some(cancel_token.clone()),
     )
     .await?;
+
+    // Clean up cancel token
+    {
+        let mut guard = state
+            .active_research
+            .lock()
+            .map_err(|_| crate::error::AppError::msg("Lock error"))?;
+        guard.remove(&request_id);
+    }
 
     // Complete trace
     TraceRecorder::complete(
@@ -64,7 +103,28 @@ pub async fn research_execute(
         None,
     )?;
 
-    // Emit completion event
+    // Emit completion progress
+    let _ = app_handle
+        .emit(
+            "ai:research_progress",
+            &ResearchProgress {
+                request_id: request_id.clone(),
+                topic: topic.clone(),
+                state: ResearchTaskState::Completed,
+                current_round: result.rounds.len() as u32,
+                max_rounds: config.max_rounds,
+                queries_executed: vec![],
+                new_evidence_count: 0,
+                total_evidence_count: result.evidence_matrix.total_evidence_count,
+                tokens_used: result.total_tokens.total_tokens,
+                token_budget: config.token_budget,
+                progress_pct: 1.0,
+                round_terminated_early: false,
+            },
+        )
+        .ok();
+
+    // Emit completion event (backward compat)
     app_handle
         .emit(
             "ai:research_complete",
@@ -86,6 +146,147 @@ pub async fn research_execute(
         "summary": result.summary,
         "total_tokens": result.total_tokens,
     }))
+}
+
+/// Abort a running research task by its request_id.
+#[tauri::command]
+pub fn research_abort(
+    state: State<'_, AppState>,
+    app_handle: tauri::AppHandle,
+    request_id: String,
+) -> AppResult<()> {
+    let mut guard = state
+        .active_research
+        .lock()
+        .map_err(|_| crate::error::AppError::msg("Lock error"))?;
+
+    if let Some(token) = guard.get(&request_id) {
+        token.store(true, Ordering::Relaxed);
+        guard.remove(&request_id);
+
+        // Update trace
+        let _ = TraceRecorder::update_status(&state.db, &request_id, TraceStatus::Aborted);
+
+        // Emit aborted progress
+        let _ = app_handle.emit(
+            "ai:research_progress",
+            &ResearchProgress {
+                request_id: request_id.clone(),
+                topic: String::new(),
+                state: ResearchTaskState::Aborted,
+                current_round: 0,
+                max_rounds: 0,
+                queries_executed: vec![],
+                new_evidence_count: 0,
+                total_evidence_count: 0,
+                tokens_used: 0,
+                token_budget: 0,
+                progress_pct: 0.0,
+                round_terminated_early: false,
+            },
+        );
+
+        Ok(())
+    } else {
+        Err(crate::error::AppError::msg("No active research task found"))
+    }
+}
+
+/// List all active research task IDs.
+#[tauri::command]
+pub fn research_active_tasks(state: State<'_, AppState>) -> AppResult<Vec<String>> {
+    let guard = state
+        .active_research
+        .lock()
+        .map_err(|_| crate::error::AppError::msg("Lock error"))?;
+    Ok(guard.keys().cloned().collect())
+}
+
+/// Generate a structured research note from research results.
+#[tauri::command]
+pub fn research_generate_note(
+    _state: State<'_, AppState>,
+    request: ResearchNoteRequest,
+) -> AppResult<ResearchNoteResult> {
+    let now = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%S");
+    let date_simple = chrono::Utc::now().format("%Y-%m-%d");
+
+    // Generate file-safe title
+    let safe_title = request
+        .topic
+        .chars()
+        .map(|c| {
+            if c == '/'
+                || c == '\\'
+                || c == ':'
+                || c == '*'
+                || c == '?'
+                || c == '"'
+                || c == '<'
+                || c == '>'
+                || c == '|'
+            {
+                '_'
+            } else {
+                c
+            }
+        })
+        .collect::<String>()
+        .trim()
+        .to_string();
+    let suggested_path = format!("研究笔记/{safe_title}.md");
+
+    let section_count = 5;
+    let content = format!(
+        r#"---
+title: "研究：{topic}"
+created: "{now}"
+evidence_count: {evidence_count}
+coverage_score: {coverage_score:.2}
+---
+
+# 研究：{topic}
+
+> 研究日期：{date_simple}
+> 证据条目：{evidence_count} 条
+> 覆盖度评分：{coverage_ratio}%
+
+## 一、研究背景
+
+本文档由 Iris 研究助理通过多轮检索自动生成，围绕「{topic}」展开系统性的证据收集与分析。
+
+## 二、研究摘要
+
+{summary}
+
+## 三、证据概览
+
+- 总计收集 {evidence_count} 条证据
+- 覆盖度评分：{coverage_ratio}%
+- 证据来源包括用户笔记、法规条款、语义锚点及外部网页
+
+## 四、后续研究方向
+
+- 补充本地笔记以提升证据覆盖度
+- 对低可信度来源进行人工核实
+- 根据研究结果撰写决策建议或政策分析
+
+## 五、参考文献
+
+{{引用列表将在用户确认后填充}}
+"#,
+        topic = request.topic,
+        summary = request.summary,
+        evidence_count = request.evidence_count,
+        coverage_score = request.coverage_score,
+        coverage_ratio = (request.coverage_score * 100.0).round() as u32,
+    );
+
+    Ok(ResearchNoteResult {
+        content,
+        suggested_path,
+        section_count,
+    })
 }
 
 /// Get research workflow status for a session.

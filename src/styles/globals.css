@@ -34,6 +34,8 @@
     --status-llm-error: 0 72% 51%;
     --status-search-api: 173 80% 40%;
     --status-search-fallback: 0 0% 45%;
+    --status-web-search: 199 89% 48%;
+    --status-inactive: 0 0% 55%;
 
     --input: 0 0% 18%;
     --secondary: 0 0% 16%;
@@ -82,6 +84,8 @@
     --ai-assistant-border: 0 0% 22%;
     --ai-composer-bg: 0 0% 14%;
     --ai-stream-pulse: 210 18% 62%;
+    --ai-citation: 212 85% 42%;
+    --ai-citation-hover: 212 90% 36%;
   }
 
   .light {
@@ -137,6 +141,179 @@
     --ai-assistant-border: 0 0% 88%;
     --ai-composer-bg: 0 0% 100%;
     --ai-stream-pulse: 210 12% 45%;
+    --ai-citation: 212 72% 32%;
+    --ai-citation-hover: 212 78% 26%;
+
+    --status-web-search: 199 89% 42%;
+    --status-inactive: 0 0% 62%;
+  }
+
+  /* 联网：场景条底边光带（绝对定位，不改变条高、不挤动下方内容） */
+  .iris-web-accent-line {
+    pointer-events: none;
+    position: absolute;
+    z-index: 1;
+    right: 0.75rem;
+    bottom: 0;
+    left: 0.75rem;
+    height: 1.5px;
+    overflow: hidden;
+    border-radius: 9999px;
+    opacity: 0;
+    transform: scaleX(0);
+    transform-origin: left center;
+    transition:
+      transform 420ms cubic-bezier(0.4, 0, 0.2, 1),
+      opacity 260ms ease;
+    will-change: transform, opacity;
+    background-image: linear-gradient(
+      90deg,
+      hsl(var(--status-web-search) / 0) 0%,
+      hsl(var(--status-web-search) / 0.28) 12%,
+      hsl(199 88% 52%) 28%,
+      hsl(199 96% 68%) 42%,
+      hsl(199 92% 58%) 50%,
+      hsl(199 96% 68%) 58%,
+      hsl(199 88% 52%) 72%,
+      hsl(var(--status-web-search) / 0.28) 88%,
+      hsl(var(--status-web-search) / 0) 100%
+    );
+    background-repeat: no-repeat;
+    background-position: 0% 50%;
+    background-size: 240% 100%;
+    box-shadow:
+      0 0 18px hsl(var(--status-web-search) / 0.38),
+      0 0 4px hsl(var(--status-web-search) / 0.55);
+    mask-image: linear-gradient(
+      90deg,
+      transparent 0%,
+      #000 10%,
+      #000 90%,
+      transparent 100%
+    );
+  }
+
+  .iris-web-accent-line::before {
+    position: absolute;
+    inset: 0;
+    z-index: 1;
+    border-radius: inherit;
+    background: linear-gradient(
+      180deg,
+      hsl(0 0% 100% / 0.45) 0%,
+      transparent 72%
+    );
+    content: "";
+    opacity: 0.55;
+  }
+
+  .iris-web-accent-line::after {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: -35%;
+    z-index: 2;
+    width: 32%;
+    border-radius: inherit;
+    background: linear-gradient(
+      90deg,
+      transparent 0%,
+      hsl(0 0% 100% / 0.15) 28%,
+      hsl(0 0% 100% / 0.65) 50%,
+      hsl(0 0% 100% / 0.15) 72%,
+      transparent 100%
+    );
+    content: "";
+    opacity: 0;
+    transform: translateX(0);
+  }
+
+  .iris-web-accent-line--on {
+    opacity: 1;
+    transition: none;
+    animation:
+      iris-web-line-unfold 640ms cubic-bezier(0.22, 1, 0.36, 1) forwards,
+      iris-web-line-drift 5.5s ease-in-out 640ms infinite;
+  }
+
+  .iris-web-accent-line--on::after {
+    opacity: 1;
+    animation:
+      iris-web-line-unfold-sweep 640ms cubic-bezier(0.22, 1, 0.36, 1) forwards,
+      iris-web-line-shimmer 3.8s ease-in-out 900ms infinite;
+  }
+
+  .light .iris-web-accent-line::before {
+    opacity: 0.7;
+  }
+
+  @keyframes iris-web-line-unfold {
+    0% {
+      transform: scaleX(0);
+      opacity: 0.4;
+    }
+    100% {
+      transform: scaleX(1);
+      opacity: 1;
+    }
+  }
+
+  /* 展开时高光随线头从左扫到右 */
+  @keyframes iris-web-line-unfold-sweep {
+    0% {
+      transform: translateX(-10%);
+      opacity: 0.95;
+    }
+    100% {
+      transform: translateX(340%);
+      opacity: 0;
+    }
+  }
+
+  @keyframes iris-web-line-drift {
+    0%,
+    100% {
+      background-position: 0% 50%;
+    }
+    50% {
+      background-position: 100% 50%;
+    }
+  }
+
+  @keyframes iris-web-line-shimmer {
+    0% {
+      transform: translateX(0);
+      opacity: 0;
+    }
+    12% {
+      opacity: 0.85;
+    }
+    88% {
+      opacity: 0.85;
+    }
+    100% {
+      transform: translateX(420%);
+      opacity: 0;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .iris-web-accent-line {
+      transition: opacity 200ms ease;
+    }
+
+    .iris-web-accent-line--on {
+      transform: scaleX(1);
+      animation: none;
+      background-position: 50% 50%;
+      opacity: 1;
+      transition: opacity 200ms ease;
+    }
+
+    .iris-web-accent-line--on::after {
+      animation: none;
+      opacity: 0;
+    }
   }
 
   * {
@@ -150,14 +327,33 @@
   }
 
   body {
-    @apply bg-background font-sans text-foreground antialiased;
+    @apply font-sans text-foreground antialiased;
     font-feature-settings:
       "kern" 1,
       "liga" 1;
   }
 
-  /* 无边框窗口：内容裁切与 Win11 圆角阴影外轮廓一致 */
-  .iris-desktop-frame {
+  html:not([data-iris-desktop-transparent]) body {
+    @apply bg-background;
+  }
+
+  /*
+   * macOS / Linux：透明 WebView + html 圆角裁切（含 Portal 蒙层），
+   * 背景仅由 .iris-desktop-frame 绘制。
+   * Windows 使用非透明窗口，圆角由系统 DWM（decorations:false + shadow:true）提供。
+   */
+  html[data-iris-desktop-transparent] {
+    border-radius: var(--window-radius);
+    overflow: hidden;
+    background: transparent;
+  }
+
+  html[data-iris-desktop-transparent] body,
+  html[data-iris-desktop-transparent] #root {
+    background: transparent;
+  }
+
+  html[data-iris-desktop-transparent] .iris-desktop-frame {
     border-radius: var(--window-radius);
   }
 

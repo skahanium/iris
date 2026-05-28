@@ -16,6 +16,7 @@ import { ConfirmDialog } from "@/components/common/ConfirmDialog";
 import { IrisOverlay } from "@/components/ui/iris-overlay";
 import { Input } from "@/components/ui/input";
 import { PromptDialog } from "@/components/common/PromptDialog";
+import { TemplateEditor } from "@/components/file/TemplateEditor";
 import {
   corpusUpsert,
   exportFile,
@@ -24,6 +25,9 @@ import {
   fileList,
   fileRead,
   fileRename,
+  folderCreate,
+  folderDelete,
+  folderRename,
   templateCreate,
   templateList,
 } from "@/lib/ipc";
@@ -73,6 +77,8 @@ function TreeFolder({
   expanded,
   onSelect,
   onToggle,
+  onRename,
+  onDelete,
 }: {
   node: VaultTreeNode;
   depth: number;
@@ -80,6 +86,8 @@ function TreeFolder({
   expanded: Set<string>;
   onSelect: (path: string) => void;
   onToggle: (path: string) => void;
+  onRename: (path: string) => void;
+  onDelete: (path: string, name: string) => void;
 }) {
   if (node.kind !== "folder") return null;
   const isOpen = expanded.has(node.path);
@@ -90,7 +98,7 @@ function TreeFolder({
       <button
         type="button"
         className={cn(
-          "flex w-full items-center gap-1 rounded-md px-2 py-1 text-left text-xs hover:bg-accent",
+          "group flex w-full items-center gap-1 rounded-md px-2 py-1 text-left text-xs hover:bg-accent",
           isSelected && "bg-accent font-medium text-accent-foreground",
         )}
         style={{ paddingLeft: `${depth * 12 + 8}px` }}
@@ -106,7 +114,31 @@ function TreeFolder({
           )}
         />
         <Folder className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-        <span className="truncate">{node.name}</span>
+        <span className="min-w-0 flex-1 truncate">{node.name}</span>
+        <span className="hidden shrink-0 gap-0.5 group-hover:flex">
+          <button
+            type="button"
+            className="rounded p-0.5 hover:bg-accent-foreground/10"
+            title="重命名文件夹"
+            onClick={(e) => {
+              e.stopPropagation();
+              onRename(node.path);
+            }}
+          >
+            <Pencil className="h-3 w-3" />
+          </button>
+          <button
+            type="button"
+            className="rounded p-0.5 hover:bg-destructive/10 hover:text-destructive"
+            title="删除空文件夹"
+            onClick={(e) => {
+              e.stopPropagation();
+              onDelete(node.path, node.name);
+            }}
+          >
+            <Trash2 className="h-3 w-3" />
+          </button>
+        </span>
       </button>
       {isOpen &&
         node.children?.map((child) =>
@@ -119,6 +151,8 @@ function TreeFolder({
               expanded={expanded}
               onSelect={onSelect}
               onToggle={onToggle}
+              onRename={onRename}
+              onDelete={onDelete}
             />
           ) : null,
         )}
@@ -130,7 +164,7 @@ export function VaultNavigator({ open, onClose, onOpen }: VaultNavigatorProps) {
   const [files, setFiles] = useState<FileListItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [newName, setNewName] = useState("新笔记.md");
+  const [newName, setNewName] = useState("新建文档.md");
   const [templates, setTemplates] = useState<{ name: string }[]>([]);
   const [showTemplates, setShowTemplates] = useState(false);
   const [renameTarget, setRenameTarget] = useState<FileListItem | null>(null);
@@ -139,6 +173,12 @@ export function VaultNavigator({ open, onClose, onOpen }: VaultNavigatorProps) {
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [corpusDialogOpen, setCorpusDialogOpen] = useState(false);
   const [corpusKind, setCorpusKind] = useState("regulation");
+  const [newFolderParent, setNewFolderParent] = useState<string | null>(null);
+  const [newFolderName, setNewFolderName] = useState("");
+  const [folderRenameTarget, setFolderRenameTarget] = useState<string | null>(null);
+  const [folderRenameNewName, setFolderRenameNewName] = useState("");
+  const [folderDeleteTarget, setFolderDeleteTarget] = useState<{ path: string; name: string } | null>(null);
+  const [editingTemplate, setEditingTemplate] = useState<string | null>(null);
   const parentRef = useRef<HTMLDivElement>(null);
 
   const tree = useMemo(() => buildVaultTree(files), [files]);
@@ -181,6 +221,48 @@ export function VaultNavigator({ open, onClose, onOpen }: VaultNavigatorProps) {
       return next;
     });
   }, []);
+
+  const handleFolderCreate = useCallback(async () => {
+    const name = newFolderName.trim();
+    if (!name) return;
+    const parentPath = newFolderParent ?? "";
+    const folderPath = parentPath ? `${parentPath}${name}` : name;
+    try {
+      await folderCreate(folderPath);
+      setNewFolderParent(null);
+      setNewFolderName("");
+      refresh();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "创建文件夹失败");
+    }
+  }, [newFolderName, newFolderParent, refresh]);
+
+  const handleFolderRename = useCallback(async () => {
+    if (!folderRenameTarget) return;
+    const newName = folderRenameNewName.trim();
+    if (!newName) return;
+    const parentPath = folderRenameTarget.split("/").slice(0, -2).join("/");
+    const newPath = parentPath ? `${parentPath}/${newName}` : newName;
+    try {
+      await folderRename(folderRenameTarget, newPath);
+      setFolderRenameTarget(null);
+      setFolderRenameNewName("");
+      refresh();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "重命名文件夹失败");
+    }
+  }, [folderRenameTarget, folderRenameNewName, refresh]);
+
+  const handleFolderDelete = useCallback(async () => {
+    if (!folderDeleteTarget) return;
+    try {
+      await folderDelete(folderDeleteTarget.path);
+      setFolderDeleteTarget(null);
+      refresh();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "删除文件夹失败");
+    }
+  }, [folderDeleteTarget, refresh]);
 
   const createFromTemplate = async (tmplName: string) => {
     await templateCreate(newName, tmplName);
@@ -233,7 +315,7 @@ export function VaultNavigator({ open, onClose, onOpen }: VaultNavigatorProps) {
             type="button"
             size="icon"
             variant="outline"
-            title="新建"
+            title="新建笔记"
             onClick={async () => {
               if (showTemplates && templates.length > 0) return;
               const trimmed = newName.trim();
@@ -249,6 +331,18 @@ export function VaultNavigator({ open, onClose, onOpen }: VaultNavigatorProps) {
             }}
           >
             <FolderPlus className="h-4 w-4" />
+          </Button>
+          <Button
+            type="button"
+            size="icon"
+            variant="outline"
+            title="新建文件夹"
+            onClick={() => {
+              setNewFolderParent(selectedFolder || null);
+              setNewFolderName("");
+            }}
+          >
+            <Folder className="h-4 w-4" />
           </Button>
           {selectedFolder && (
             <Button
@@ -276,16 +370,27 @@ export function VaultNavigator({ open, onClose, onOpen }: VaultNavigatorProps) {
             {showTemplates && (
               <div className="mt-1 flex flex-wrap gap-1">
                 {templates.map((t) => (
-                  <Button
-                    key={t.name}
-                    type="button"
-                    size="sm"
-                    variant="outline"
-                    className="text-xs"
-                    onClick={() => void createFromTemplate(t.name)}
-                  >
-                    {t.name}
-                  </Button>
+                  <div key={t.name} className="flex items-center gap-0.5">
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      className="text-xs"
+                      onClick={() => void createFromTemplate(t.name)}
+                    >
+                      {t.name}
+                    </Button>
+                    <Button
+                      type="button"
+                      size="icon"
+                      variant="ghost"
+                      className="h-6 w-6"
+                      title="编辑模板"
+                      onClick={() => setEditingTemplate(t.name)}
+                    >
+                      <Pencil className="h-3 w-3" />
+                    </Button>
+                  </div>
                 ))}
               </div>
             )}
@@ -315,6 +420,14 @@ export function VaultNavigator({ open, onClose, onOpen }: VaultNavigatorProps) {
                   expanded={expanded}
                   onSelect={setSelectedFolder}
                   onToggle={toggleExpanded}
+                  onRename={(path) => {
+                    const name = path.split("/").filter(Boolean).pop() ?? "";
+                    setFolderRenameTarget(path);
+                    setFolderRenameNewName(name);
+                  }}
+                  onDelete={(path, name) => {
+                    setFolderDeleteTarget({ path, name });
+                  }}
                 />
               ) : null,
             )}
@@ -436,6 +549,44 @@ export function VaultNavigator({ open, onClose, onOpen }: VaultNavigatorProps) {
           await fileDelete(deleteTarget.path);
           setDeleteTarget(null);
           refresh();
+        }}
+      />
+
+      <PromptDialog
+        open={newFolderParent !== null}
+        title="新建文件夹"
+        label="文件夹名称"
+        defaultValue=""
+        onCancel={() => setNewFolderParent(null)}
+        onSubmit={handleFolderCreate}
+      />
+
+      <PromptDialog
+        open={folderRenameTarget !== null}
+        title="重命名文件夹"
+        label="新名称"
+        defaultValue={folderRenameNewName}
+        onCancel={() => setFolderRenameTarget(null)}
+        onSubmit={handleFolderRename}
+      />
+
+      <ConfirmDialog
+        open={folderDeleteTarget !== null}
+        title="删除文件夹"
+        message={`确定删除文件夹「${folderDeleteTarget?.name ?? ""}」？`}
+        description="只能删除空文件夹。"
+        confirmLabel="删除"
+        variant="destructive"
+        onCancel={() => setFolderDeleteTarget(null)}
+        onConfirm={handleFolderDelete}
+      />
+
+      <TemplateEditor
+        open={editingTemplate !== null}
+        templateName={editingTemplate}
+        onClose={() => setEditingTemplate(null)}
+        onSaved={() => {
+          void templateList().then(setTemplates);
         }}
       />
     </>

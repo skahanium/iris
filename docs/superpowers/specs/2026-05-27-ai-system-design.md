@@ -376,7 +376,7 @@ CREATE TABLE genre_templates (
 | 显式偏好   | 用户确认的规则、模型偏好                 | 否       | SQLite settings/profile，可查看可删除 |
 | 会话缓存   | 对话消息、工具调用摘要                   | 部分     | 默认可删除，提供保留期设置            |
 | 临时 trace | 检索分数、latency、工具名                | 是       | 默认不存原文，只存元数据              |
-| 凭据       | LLM/Bing API Key                         | 否       | OS 凭据管理器，禁止落盘明文           |
+| 凭据       | LLM / MiniMax 检索 API Key               | 否       | OS 凭据管理器，禁止落盘明文           |
 
 ### 8.2 用户画像
 

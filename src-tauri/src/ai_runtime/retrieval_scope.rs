@@ -97,7 +97,10 @@ pub fn filter_packets_by_scope<T>(
     if scope.is_unrestricted() {
         return;
     }
-    packets.retain(|p| path_fn(p).is_none_or(|path| scope.matches_path(path)));
+    packets.retain(|p| match path_fn(p) {
+        None => true,
+        Some(path) => scope.matches_path(path),
+    });
 }
 
 #[cfg(test)]

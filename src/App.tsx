@@ -10,7 +10,8 @@ import {
   useState,
 } from "react";
 
-import { AiPanel } from "@/components/ai/AiPanel";
+import { AiWorkflowPanel } from "@/components/ai/AiWorkflowPanel";
+import type { WritingEditorContext } from "@/components/ai/WritingTaskPanel";
 import type { ContextQuote } from "@/components/ai/ContextPacketCard";
 import { EditorOutline } from "@/components/editor/EditorOutline";
 import { FloatingToolbar } from "@/components/editor/FloatingToolbar";
@@ -55,7 +56,14 @@ import {
   extractFrontmatterYaml,
   markdownToEditorHtml,
 } from "@/lib/markdown";
-import { versionSaveManual } from "@/lib/ipc";
+import { isPlaceholderTitle } from "@/lib/path-sync";
+import {
+  fileRename,
+  pathSyncSuggest,
+  settingsGet,
+  settingsSet,
+  versionSaveManual,
+} from "@/lib/ipc";
 import { noteTitleFromEditor } from "@/lib/note-title";
 import { isTauriRuntime } from "@/lib/tauri-runtime";
 import { cn } from "@/lib/utils";
@@ -108,7 +116,28 @@ function App() {
   const { vaultPath, loading, pickVault } = useVault();
   const { theme, setTheme } = useTheme();
   const [aiPanelOpen, setAiPanelOpen] = useState(true);
-  const [webSearch, setWebSearch] = useState(false);
+  const [webSearch, setWebSearchState] = useState(false);
+
+  useEffect(() => {
+    void settingsGet<boolean>("web_search_enabled").then((enabled) => {
+      if (enabled === true) {
+        setWebSearchState(true);
+      }
+    });
+  }, []);
+
+  const setWebSearch = useCallback((enabled: boolean) => {
+    setWebSearchState(enabled);
+    void settingsSet("web_search_enabled", enabled);
+  }, []);
+
+  const toggleWebSearch = useCallback(() => {
+    setWebSearchState((prev) => {
+      const next = !prev;
+      void settingsSet("web_search_enabled", next);
+      return next;
+    });
+  }, []);
   const [, setQuote] = useState<ContextQuote | null>(null);
   const [aiStatus, setAiStatus] = useState("AI 空闲");
   const [zen, setZen] = useState(false);
@@ -209,9 +238,54 @@ function App() {
           raw.trim() || tabsRef.current.find((t) => t.path === path)?.title,
       });
       markClean(path, title);
+
+      if (!isPlaceholderTitle(title)) {
+        void pathSyncSuggest(path, title)
+          .then((suggest) => {
+            if (!suggest.needs_sync || suggest.suggested_path === path) {
+              return;
+            }
+            const msg = suggest.conflict_resolved
+              ? `路径「${suggest.suggested_path}」已避开同名冲突。是否同步？`
+              : `是否将文件路径同步为「${suggest.suggested_path}」？`;
+            if (!window.confirm(msg)) return;
+            return fileRename(path, suggest.suggested_path).then((entry) =>
+              openFile(entry.path, title),
+            );
+          })
+          .catch(() => {
+            /* 路径同步为可选增强，失败不阻断编辑 */
+          });
+      }
     },
-    [activePathRef, markClean],
+    [activePathRef, markClean, openFile],
   );
+
+  const getWritingContext = useCallback((): WritingEditorContext | null => {
+    const ed = editorRef.current;
+    const path = activePathRef.current;
+    if (!ed || !path) return null;
+    const { from, to } = ed.state.selection;
+    const selection =
+      from !== to ? ed.state.doc.textBetween(from, to, "\n") : "";
+    return {
+      selection,
+      cursorContext: markdownRef.current,
+    };
+  }, [activePathRef, markdownRef]);
+
+  const getParagraphText = useCallback((): string | null => {
+    const ed = editorRef.current;
+    if (!ed) return null;
+    const { from, to } = ed.state.selection;
+    if (from !== to) {
+      return ed.state.doc.textBetween(from, to, "\n");
+    }
+    const $from = ed.state.doc.resolve(from);
+    const start = $from.start($from.depth);
+    const end = $from.end($from.depth);
+    return ed.state.doc.textBetween(start, end, "\n");
+  }, []);
 
   const { rescanVault } = useAutoVaultIndex(vaultPath, loading, {
     onStatus: setAiStatus,
@@ -236,7 +310,7 @@ function App() {
         return next;
       });
     },
-    onToggleWebSearch: () => setWebSearch((on) => !on),
+    onToggleWebSearch: toggleWebSearch,
     onRescanVault: handleVaultRescan,
     zoomIn,
     zoomOut,
@@ -344,7 +418,7 @@ function App() {
           void setTheme(theme === "dark" ? "light" : "dark");
           break;
         case "toggleWebSearch":
-          setWebSearch((on) => !on);
+          toggleWebSearch();
           break;
         case "rescanVault":
           void handleVaultRescan();
@@ -538,10 +612,28 @@ function App() {
         }
         aiPanel={
           <ErrorBoundary scope="AI面板">
-            <AiPanel
+            <AiWorkflowPanel
               notePath={activePath}
               noteDisplayTitle={activeDocumentTitle}
               noteContent={markdown}
+              webSearch={webSearch}
+              getWritingContext={getWritingContext}
+              getParagraphText={getParagraphText}
+              onVaultRefresh={bumpVaultIndex}
+              onPatchApplied={(newContent) => {
+                applyMarkdownToEditor(newContent);
+                markdownRef.current = newContent;
+                const path = activePathRef.current;
+                if (path) {
+                  markClean(
+                    path,
+                    resolveNoteDisplayTitle({
+                      path,
+                      title: activeDocumentTitle ?? undefined,
+                    }),
+                  );
+                }
+              }}
             />
           </ErrorBoundary>
         }

@@ -121,6 +121,203 @@ pub fn file_discard(state: State<'_, Arc<AppState>>, path: String) -> AppResult<
     discard_document(state.inner(), &path)
 }
 
+/// Create a folder under the vault. Fails if the folder already exists.
+#[tauri::command]
+pub fn folder_create(state: State<'_, Arc<AppState>>, path: String) -> AppResult<()> {
+    let vault = state.vault_path()?;
+    let abs = resolve_vault_path(&vault, &path)?;
+    if abs.exists() {
+        return Err(AppError::msg("Folder already exists"));
+    }
+    fs::create_dir_all(&abs)?;
+    Ok(())
+}
+
+/// Rename/move a folder. Fails if the target already exists.
+#[tauri::command]
+pub fn folder_rename(
+    state: State<'_, Arc<AppState>>,
+    old_path: String,
+    new_path: String,
+) -> AppResult<()> {
+    let vault = state.vault_path()?;
+    let abs = resolve_vault_path(&vault, &old_path)?;
+    let new_abs = resolve_vault_path(&vault, &new_path)?;
+    if !abs.is_dir() {
+        return Err(AppError::msg("Source path is not a folder"));
+    }
+    if new_abs.exists() {
+        return Err(AppError::msg("Target path already exists"));
+    }
+    if let Some(parent) = new_abs.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    fs::rename(&abs, &new_abs)?;
+    // Re-index all files under the renamed folder
+    let vault_clone = vault.clone();
+    state.db.with_conn(|conn| scan_vault(conn, &vault_clone))?;
+    Ok(())
+}
+
+/// Delete an empty folder. Fails if the folder is not empty.
+#[tauri::command]
+pub fn folder_delete(state: State<'_, Arc<AppState>>, path: String) -> AppResult<()> {
+    let vault = state.vault_path()?;
+    let abs = resolve_vault_path(&vault, &path)?;
+    if !abs.is_dir() {
+        return Err(AppError::msg("Path is not a folder"));
+    }
+    // Check if folder is empty
+    let entries: Vec<_> = fs::read_dir(&abs)?.filter_map(|e| e.ok()).collect();
+    if !entries.is_empty() {
+        return Err(AppError::msg("Folder is not empty"));
+    }
+    fs::remove_dir(&abs)?;
+    Ok(())
+}
+
+/// 标题→路径同步建议（spec §7.1）。
+#[derive(Debug, Clone, Serialize)]
+pub struct PathSyncSuggest {
+    pub current_path: String,
+    pub suggested_path: String,
+    pub needs_sync: bool,
+    pub conflict_resolved: bool,
+}
+
+const PLACEHOLDER_TITLE_MARKERS: &[&str] = &["新建文档", "无标题", "untitled"];
+
+fn is_placeholder_title(title: &str) -> bool {
+    let t = title.trim();
+    if t.is_empty() {
+        return true;
+    }
+    let lower = t.to_lowercase();
+    PLACEHOLDER_TITLE_MARKERS.iter().any(|p| lower.contains(p))
+}
+
+fn sanitize_title_for_path(title: &str) -> String {
+    const INVALID: &[char] = &['\\', '/', ':', '*', '?', '"', '<', '>', '|'];
+    let mut s = title.trim().to_string();
+    for c in INVALID {
+        s = s.replace(*c, "_");
+    }
+    if s.is_empty() {
+        "新建文档".to_string()
+    } else {
+        s
+    }
+}
+
+fn allocate_path_for_title(
+    parent: &str,
+    title: &str,
+    exclude_path: &str,
+    conn: &rusqlite::Connection,
+) -> AppResult<(String, bool)> {
+    let base = sanitize_title_for_path(title);
+    let mut candidate = if parent.is_empty() {
+        format!("{base}.md")
+    } else {
+        format!("{parent}/{base}.md")
+    };
+    let mut conflict_resolved = false;
+
+    let exists = |p: &str| -> AppResult<bool> {
+        if p == exclude_path {
+            return Ok(false);
+        }
+        let n: i64 = conn.query_row("SELECT COUNT(*) FROM files WHERE path = ?1", [p], |r| {
+            r.get(0)
+        })?;
+        Ok(n > 0)
+    };
+
+    if !exists(&candidate)? {
+        return Ok((candidate, conflict_resolved));
+    }
+
+    conflict_resolved = true;
+    let mut n = 1u32;
+    loop {
+        let titled = format!("{base}（{n}）");
+        candidate = if parent.is_empty() {
+            format!("{titled}.md")
+        } else {
+            format!("{parent}/{titled}.md")
+        };
+        if !exists(&candidate)? {
+            return Ok((candidate, conflict_resolved));
+        }
+        n += 1;
+        if n > 500 {
+            return Err(AppError::msg("无法分配不冲突的路径"));
+        }
+    }
+}
+
+/// 根据显示标题建议人类可读路径（处理冲突）。
+pub fn path_sync_suggest_inner(
+    state: &AppState,
+    current_path: String,
+    title: String,
+) -> AppResult<PathSyncSuggest> {
+    if is_placeholder_title(&title) {
+        return Ok(PathSyncSuggest {
+            current_path: current_path.clone(),
+            suggested_path: current_path,
+            needs_sync: false,
+            conflict_resolved: false,
+        });
+    }
+
+    let parent = current_path
+        .rsplit_once('/')
+        .map(|(p, _)| p)
+        .unwrap_or("")
+        .to_string();
+
+    let (suggested_path, conflict_resolved) = state
+        .db
+        .with_conn(|conn| allocate_path_for_title(&parent, &title, &current_path, conn))?;
+
+    let current_stem = title_from_path(&current_path);
+    let target_stem = sanitize_title_for_path(&title);
+    let needs_sync = current_stem != target_stem && suggested_path != current_path;
+
+    Ok(PathSyncSuggest {
+        current_path,
+        suggested_path,
+        needs_sync,
+        conflict_resolved,
+    })
+}
+
+#[tauri::command]
+pub fn path_sync_suggest(
+    state: State<'_, Arc<AppState>>,
+    current_path: String,
+    title: String,
+) -> AppResult<PathSyncSuggest> {
+    path_sync_suggest_inner(&state, current_path, title)
+}
+
+#[cfg(test)]
+mod path_sync_tests {
+    use super::*;
+
+    #[test]
+    fn placeholder_skips_sync() {
+        assert!(is_placeholder_title("新建文档"));
+        assert!(!is_placeholder_title("民法总则笔记"));
+    }
+
+    #[test]
+    fn sanitize_strips_invalid_chars() {
+        assert_eq!(sanitize_title_for_path("a/b"), "a_b");
+    }
+}
+
 #[tauri::command]
 pub fn file_rename(
     state: State<'_, Arc<AppState>>,

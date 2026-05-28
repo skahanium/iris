@@ -1,6 +1,15 @@
 import { marked } from "marked";
-import { useMemo, type ReactNode } from "react";
+import {
+  useCallback,
+  useMemo,
+  type MouseEvent,
+  type ReactNode,
+} from "react";
 
+import {
+  linkifyAiCitations,
+  tagCitationLinksInHtml,
+} from "@/lib/ai/citation-markdown";
 import { sanitizeHtml } from "@/lib/sanitize";
 import { cn } from "@/lib/utils";
 
@@ -20,18 +29,47 @@ interface AiMessageProps {
   streaming?: boolean;
   children?: ReactNode;
   className?: string;
+  onCitationClick?: (ref: string) => void;
 }
 
-function AssistantMarkdown({ content }: { content: string }) {
+function AssistantMarkdown({
+  content,
+  onCitationClick,
+}: {
+  content: string;
+  onCitationClick?: (ref: string) => void;
+}) {
   const html = useMemo(() => {
-    const raw = marked.parse(content || "", { async: false }) as string;
-    return sanitizeHtml(raw);
+    const linked = linkifyAiCitations(content || "");
+    const raw = marked.parse(linked, { async: false }) as string;
+    return sanitizeHtml(tagCitationLinksInHtml(raw));
   }, [content]);
+
+  const handleClick = useCallback(
+    (e: MouseEvent<HTMLDivElement>) => {
+      if (!onCitationClick) return;
+      const target = e.target as HTMLElement;
+      const anchor = target.closest("a.ai-citation, a[href^='#iris-cite-']");
+      if (!anchor || !(anchor instanceof HTMLAnchorElement)) return;
+      const ref =
+        anchor.dataset.citeRef ??
+        anchor.getAttribute("href")?.replace(/^#iris-cite-/, "");
+      if (!ref) return;
+      e.preventDefault();
+      try {
+        onCitationClick(decodeURIComponent(ref));
+      } catch {
+        onCitationClick(ref);
+      }
+    },
+    [onCitationClick],
+  );
 
   return (
     <div
-      className="ai-msg text-sm leading-relaxed [&_code]:rounded [&_code]:bg-editor-code-bg [&_code]:px-1 [&_code]:font-mono [&_code]:text-editor-code-fg [&_p]:mb-2 [&_ul]:mb-2 [&_ul]:list-disc [&_ul]:pl-5"
+      className="ai-msg text-sm leading-relaxed [&_a.ai-citation]:font-medium [&_a.ai-citation]:text-ai-citation [&_a.ai-citation]:underline [&_a.ai-citation]:decoration-ai-citation/40 [&_a.ai-citation]:underline-offset-2 hover:[&_a.ai-citation]:text-ai-citation-hover [&_code]:rounded [&_code]:bg-editor-code-bg [&_code]:px-1 [&_code]:font-mono [&_code]:text-editor-code-fg [&_p]:mb-2 [&_ul]:mb-2 [&_ul]:list-disc [&_ul]:pl-5"
       dangerouslySetInnerHTML={{ __html: html }}
+      onClick={onCitationClick ? handleClick : undefined}
     />
   );
 }
@@ -42,6 +80,7 @@ export function AiMessage({
   streaming = false,
   children,
   className,
+  onCitationClick,
 }: AiMessageProps) {
   if (role === "system") {
     return (
@@ -64,7 +103,12 @@ export function AiMessage({
 
   return (
     <div className={cn("ai-msg-assistant", className)}>
-      {content ? <AssistantMarkdown content={content} /> : null}
+      {content ? (
+        <AssistantMarkdown
+          content={content}
+          onCitationClick={onCitationClick}
+        />
+      ) : null}
       {streaming && !content ? <AiStreamPulse /> : null}
       {children}
     </div>

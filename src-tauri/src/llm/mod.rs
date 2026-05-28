@@ -1,9 +1,11 @@
 pub mod anthropic;
 pub mod config;
 pub mod engine;
+pub mod minimax_search;
 pub mod model_catalog;
 pub mod providers;
 pub mod search_web;
+pub mod web_search_config;
 
 use std::sync::{Arc, Mutex, MutexGuard};
 

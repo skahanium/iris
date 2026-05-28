@@ -8,9 +8,12 @@
 //! Constraints (§11.4):
 //! - max_agentic_rounds = 4 (default)
 //! - max_tool_calls_per_round = 6
-//! - web research requires explicit user authorization
+//! - web research uses the global bottom-bar toggle (injected context, not a tool)
 //! - external web evidence has lower trust than user notes & local regulations
 //! - no fabricated citations
+
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 
 use crate::ai_runtime::{
     model_gateway::{
@@ -20,12 +23,12 @@ use crate::ai_runtime::{
     scene_router::resolve_scene,
     session::SessionManager,
     tool_executor::{check_tool_permission, ToolRegistry},
-    AiScene, AutonomyLevel, ContextPacket, TrustLevel,
+    AiScene, AutonomyLevel, ContextPacket, ResearchProgress, ResearchTaskState, TrustLevel,
 };
 use crate::error::{AppError, AppResult};
 use crate::storage::db::Database;
 use serde::{Deserialize, Serialize};
-use tauri::AppHandle;
+use tauri::{AppHandle, Emitter};
 
 // ─── Research Types ──────────────────────────────────────
 
@@ -127,6 +130,9 @@ impl Default for ResearchConfig {
 // ─── Research Workflow Engine ────────────────────────────
 
 /// Execute the research workflow as an L3 agentic loop.
+///
+/// Supports cancel_token for abort and emits `ai:research_progress` events per round.
+#[allow(clippy::too_many_arguments)]
 pub async fn execute_research(
     db: &Database,
     app_handle: &AppHandle,
@@ -135,6 +141,7 @@ pub async fn execute_research(
     config: ResearchConfig,
     provider_config: ProviderConfig,
     web_authorized: bool,
+    cancel_token: Option<Arc<AtomicBool>>,
 ) -> AppResult<ResearchResult> {
     let mut config = config;
     config.web_research_authorized = web_authorized;
@@ -164,9 +171,20 @@ pub async fn execute_research(
 
     // ── Phase 2: Agentic retrieval loop (LLM-driven tool calling) ──
     let mut accumulated_evidence: Vec<ContextPacket> = Vec::new();
-    let llm_tools = build_research_tool_defs(&registry, &config);
+    if config.web_research_authorized {
+        push_topic_web_evidence(db, topic, &mut accumulated_evidence).await;
+    }
+    let llm_tools = build_research_tool_defs(&registry);
 
     for round_num in 0..config.max_rounds {
+        // Check abort signal before each round
+        if let Some(ref token) = cancel_token {
+            if token.load(Ordering::Relaxed) {
+                tracing::info!("Research {request_id} aborted at round {round_num}");
+                break;
+            }
+        }
+
         // Check token budget before each round
         if total_usage.total_tokens as usize >= config.token_budget {
             break;
@@ -230,7 +248,33 @@ pub async fn execute_research(
         if let Some(content) = &response.content {
             if content.contains("EVIDENCE_SUFFICIENT") {
                 round.llm_output = Some(content.clone());
+
+                // Capture values before move
+                let queries = round.queries_executed.clone();
+                let new_evidence = round.packets_retrieved.len();
+                let total_evidence = accumulated_evidence.len();
                 rounds.push(round);
+
+                let _ = app_handle
+                    .emit(
+                        "ai:research_progress",
+                        &ResearchProgress {
+                            request_id: request_id.to_string(),
+                            topic: topic.to_string(),
+                            state: ResearchTaskState::Completed,
+                            current_round: round_num + 1,
+                            max_rounds: config.max_rounds,
+                            queries_executed: queries,
+                            new_evidence_count: new_evidence,
+                            total_evidence_count: total_evidence,
+                            tokens_used: total_usage.total_tokens,
+                            token_budget: config.token_budget,
+                            progress_pct: 1.0,
+                            round_terminated_early: true,
+                        },
+                    )
+                    .ok();
+
                 break;
             }
         }
@@ -272,6 +316,26 @@ pub async fn execute_research(
         let new_evidence_count = round.packets_retrieved.len();
         round.llm_output = response.content.clone();
         rounds.push(round);
+
+        // Emit per-round progress event to frontend
+        let progress = ResearchProgress {
+            request_id: request_id.to_string(),
+            topic: topic.to_string(),
+            state: ResearchTaskState::Retrieving,
+            current_round: round_num + 1,
+            max_rounds: config.max_rounds,
+            queries_executed: rounds
+                .last()
+                .map(|r| r.queries_executed.clone())
+                .unwrap_or_default(),
+            new_evidence_count,
+            total_evidence_count: accumulated_evidence.len(),
+            tokens_used: total_usage.total_tokens,
+            token_budget: config.token_budget,
+            progress_pct: (round_num + 1) as f64 / config.max_rounds as f64,
+            round_terminated_early: false,
+        };
+        let _ = app_handle.emit("ai:research_progress", &progress);
 
         if new_evidence_count == 0 {
             break;
@@ -319,19 +383,29 @@ pub async fn execute_research(
 
 // ─── Agentic Loop Helpers ────────────────────────────────
 
-/// Build LLM tool definitions for the research agentic loop.
-fn build_research_tool_defs(registry: &ToolRegistry, config: &ResearchConfig) -> Vec<LlmToolDef> {
+/// Build LLM tool definitions for the research agentic loop (read-only auto tools only).
+fn build_research_tool_defs(registry: &ToolRegistry) -> Vec<LlmToolDef> {
     let tools: Vec<crate::ai_runtime::ToolSpec> = registry
-        .for_scene(AiScene::ResearchSynthesis)
+        .auto_tools_for_scene(AiScene::ResearchSynthesis)
         .into_iter()
-        .filter(|t| {
-            // Include read tools + web_search if authorized
-            !t.requires_confirmation || (t.name == "web_search" && config.web_research_authorized)
-        })
         .cloned()
         .collect();
 
     ModelGateway::tools_to_llm_format(&tools)
+}
+
+/// Pre-fetch web search results for the research topic when the global toggle is on.
+async fn push_topic_web_evidence(db: &Database, topic: &str, accumulated: &mut Vec<ContextPacket>) {
+    let fetch = match crate::llm::search_web::fetch_search_context_for_db(db, topic).await {
+        Ok(f) => f,
+        Err(e) => {
+            tracing::warn!("Web search for research failed: {e}");
+            return;
+        }
+    };
+    let web_packets =
+        crate::ai_runtime::evidence_mixer::web_packets_from_fetch(&fetch, topic, None);
+    accumulated.extend(web_packets);
 }
 
 /// Format accumulated evidence into a concise summary for the LLM.
@@ -371,7 +445,7 @@ async fn execute_tool_call(
     _app_handle: &AppHandle,
     _provider_config: &ProviderConfig,
     tool_call: &ToolCall,
-    config: &ResearchConfig,
+    _config: &ResearchConfig,
 ) -> AppResult<Vec<ContextPacket>> {
     let args: serde_json::Value =
         serde_json::from_str(&tool_call.function.arguments).unwrap_or(serde_json::json!({}));
@@ -420,34 +494,6 @@ async fn execute_tool_call(
                 };
                 crate::ai_runtime::retrieval_broker::hybrid_retrieve(conn, &request)
             })
-        }
-        "web_search" => {
-            if !config.web_research_authorized {
-                return Ok(vec![]);
-            }
-            let query = args["query"].as_str().unwrap_or("");
-            // Use the web search module
-            let results_text = crate::llm::search_web::fetch_search_context(query, false)
-                .await
-                .unwrap_or_default();
-            if results_text.is_empty() {
-                return Ok(vec![]);
-            }
-            Ok(vec![ContextPacket {
-                id: format!("web-{}", query.len()),
-                source_type: crate::ai_runtime::SourceType::Web,
-                source_path: None,
-                title: format!("网页搜索: {query}"),
-                heading_path: None,
-                source_span: None,
-                content_hash: String::new(),
-                excerpt: truncate_str(&results_text, 800),
-                retrieval_reason: "web_search".into(),
-                score: 0.5,
-                trust_level: TrustLevel::ExternalWeb,
-                citation_label: "[W0]".into(),
-                stale: false,
-            }])
         }
         "get_context_packets" => {
             // Return already-accumulated packets (no-op, they're tracked externally)
@@ -906,6 +952,7 @@ mod tests {
             trust_level: TrustLevel::UserNote,
             citation_label: "[1]".into(),
             stale: false,
+            web: None,
         }];
 
         let matrix = build_evidence_matrix("test topic", &props, &packets);

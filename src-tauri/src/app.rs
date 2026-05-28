@@ -1,4 +1,6 @@
+use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
 
 use serde_json::Value;
@@ -13,6 +15,8 @@ pub struct AppState {
     vault: Mutex<Option<PathBuf>>,
     data_dir: PathBuf,
     pub watcher: Mutex<Option<FileWatcher>>,
+    /// Active research tasks — keyed by request_id, value is cancel flag
+    pub active_research: Mutex<HashMap<String, Arc<AtomicBool>>>,
 }
 
 impl AppState {
@@ -24,6 +28,7 @@ impl AppState {
             vault: Mutex::new(None),
             data_dir,
             watcher: Mutex::new(None),
+            active_research: Mutex::new(HashMap::new()),
         };
         if let Some(v) = state.load_vault_setting()? {
             let path = PathBuf::from(v);

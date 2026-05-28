@@ -11,8 +11,9 @@ use super::providers::{api_base, credential_service, uses_anthropic_messages_api
 use super::{ChatMessage, LlmGenerateParams, LlmStreamContext};
 use crate::credentials;
 use crate::error::{AppError, AppResult};
-use crate::llm::search_web::fetch_search_context;
+use crate::llm::search_web;
 use crate::network::cert_pinning::create_pinned_client;
+use crate::storage::db::Database;
 
 struct AbortFlag(Arc<Mutex<bool>>);
 
@@ -42,14 +43,19 @@ fn resolve_model(provider: &str, model: Option<String>) -> String {
     })
 }
 
-async fn apply_web_search(messages: &mut [ChatMessage], enabled: bool) -> AppResult<()> {
+async fn apply_web_search(
+    db: &Database,
+    messages: &mut [ChatMessage],
+    enabled: bool,
+) -> AppResult<()> {
     if !enabled {
         return Ok(());
     }
     if let Some(last) = messages.last_mut() {
         if last.role == "user" {
-            let ctx = fetch_search_context(&last.content, true).await?;
-            last.content = format!("{ctx}\n\n用户问题: {}", last.content);
+            let (prefixed, _) =
+                search_web::prepend_web_search_context_for_db(db, &last.content).await?;
+            last.content = prefixed;
         }
     }
     Ok(())
@@ -136,7 +142,11 @@ async fn stream_openai_compatible(ctx: LlmStreamContext<'_>) -> AppResult<()> {
 }
 
 /// Stream LLM completion and emit `llm:token` events.
-pub async fn llm_generate_stream(app: AppHandle, params: LlmGenerateParams) -> AppResult<String> {
+pub async fn llm_generate_stream(
+    app: AppHandle,
+    db: &Database,
+    params: LlmGenerateParams,
+) -> AppResult<String> {
     let request_id = Uuid::new_v4().to_string();
     let abort_flag = Arc::new(Mutex::new(false));
     {
@@ -150,7 +160,7 @@ pub async fn llm_generate_stream(app: AppHandle, params: LlmGenerateParams) -> A
     let model = resolve_model(&params.provider, params.model.clone());
 
     let mut messages = params.messages.clone();
-    apply_web_search(&mut messages, params.web_search.unwrap_or(false)).await?;
+    apply_web_search(db, &mut messages, params.web_search.unwrap_or(false)).await?;
 
     let stream_ctx = LlmStreamContext {
         app: &app,

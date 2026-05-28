@@ -96,7 +96,7 @@ npm run tauri build
 1. 启动应用并选择笔记目录（Vault）
 2. 右栏 **AI** 面板选择提供商（OpenAI / Claude / Ollama / 自定义）
 3. 填入 API Key（存入操作系统凭据管理器，不落盘）
-4. 可选：联网搜索需配置 Bing Key（见侧栏说明）；`Ctrl+Shift+A` 可收起 AI 侧栏以专注写作
+4. 可选：底栏「联网」需在设置中配置 MiniMax Token Plan Key（见「MiniMax 联网检索」）；`Ctrl+Shift+A` 可收起 AI 侧栏以专注写作
 
 ## 项目结构
 

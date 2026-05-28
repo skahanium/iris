@@ -365,6 +365,7 @@ mod tests {
                 trust_level: TrustLevel::UserNote,
                 citation_label: "[1]".into(),
                 stale: false,
+                web: None,
             },
             ContextPacket {
                 id: "2".into(),
@@ -380,6 +381,7 @@ mod tests {
                 trust_level: TrustLevel::ExternalWeb,
                 citation_label: "[2]".into(),
                 stale: false,
+                web: None,
             },
         ];
 

@@ -54,10 +54,10 @@ cargo test semantic_recall_at_5_on_fixture_vault -- --ignored --nocapture
 | 2   | SQLite 元数据与 FTS 索引        | `sqlite-arch.md`          | `fts-keyword.md`          | 是     |
 | 3   | Tauri 2 桌面应用                | `tauri-stack.md`          | `tauri-stack.md`          | 是     |
 | 4   | TipTap ai-stream 流式           | `tiptap-editor.md`        | `tiptap-editor.md`        | 是     |
-| 5   | iris/bing-search 凭据           | `credentials-security.md` | `credentials-security.md` | 是     |
+| 5   | iris.minimax 凭据               | `credentials-security.md` | `credentials-security.md` | 是     |
 | 6   | all-MiniLM-L6-v2 嵌入           | `embedding-model.md`      | `embedding-model.md`      | 是     |
 | 7   | search_semantic 关联笔记        | `semantic-search-impl.md` | `semantic-search-impl.md` | 是     |
-| 8   | Bing 失败 DuckDuckGo            | `web-search-fallback.md`  | `web-search-fallback.md`  | 是     |
+| 8   | MiniMax 失败 DuckDuckGo         | `web-search-fallback.md`  | `web-search-fallback.md`  | 是     |
 | 9   | frontmatter tags 表             | `frontmatter-tags.md`     | `frontmatter-tags.md`     | 是     |
 | 10  | FileWatcher notify 监听         | `file-watcher.md`         | `file-watcher.md`         | 是     |
 | 11  | Anthropic content_block_delta   | `anthropic-api.md`        | `anthropic-api.md`        | 是     |

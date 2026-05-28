@@ -25,6 +25,18 @@ describe("isNoteSubstantivelyEmpty", () => {
     );
   });
 
+  it("treats 新建文档 with empty body as empty", () => {
+    expect(isNoteSubstantivelyEmpty('---\ntitle: "新建文档"\n---\n\n')).toBe(
+      true,
+    );
+  });
+
+  it("treats numbered 新建文档（1） placeholders as empty", () => {
+    expect(
+      isNoteSubstantivelyEmpty('---\ntitle: "新建文档（1）"\n---\n\n'),
+    ).toBe(true);
+  });
+
   it("is not empty when title is set", () => {
     expect(isNoteSubstantivelyEmpty('---\ntitle: "我的笔记"\n---\n\n')).toBe(
       false,

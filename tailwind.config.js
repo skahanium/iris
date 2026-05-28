@@ -51,6 +51,8 @@ export default {
           user: "hsl(var(--ai-user-bg))",
           composer: "hsl(var(--ai-composer-bg))",
           pulse: "hsl(var(--ai-stream-pulse))",
+          citation: "hsl(var(--ai-citation))",
+          "citation-hover": "hsl(var(--ai-citation-hover))",
         },
         ring: "hsl(var(--ring))",
         editor: {

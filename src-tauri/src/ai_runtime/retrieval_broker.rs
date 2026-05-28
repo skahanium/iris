@@ -232,6 +232,7 @@ fn search_vector_chunks(
                     trust_level: TrustLevel::UserNote,
                     citation_label: format!("[C{i}]"),
                     stale: false,
+                    web: None,
                 }
             },
         )
@@ -294,6 +295,7 @@ fn search_template(conn: &Connection, query: &str, limit: usize) -> AppResult<Ve
                     trust_level: trust,
                     citation_label: format!("[T{i}]"),
                     stale: false,
+                    web: None,
                 }
             },
         )
@@ -373,6 +375,7 @@ fn search_fts(conn: &Connection, query: &str, limit: usize) -> AppResult<Vec<Con
                 trust_level: TrustLevel::UserNote,
                 citation_label: format!("[F{i}]"),
                 stale: false,
+                web: None,
             }
         })
         .collect();
@@ -435,6 +438,7 @@ fn search_vector_anchors(
                     trust_level: TrustLevel::DerivedCache,
                     citation_label: format!("[A{i}]"),
                     stale: false,
+                    web: None,
                 }
             },
         )
@@ -501,6 +505,7 @@ fn search_vector_regulations(
                     trust_level: TrustLevel::DerivedCache,
                     citation_label: citation,
                     stale: false,
+                    web: None,
                 }
             },
         )
@@ -554,6 +559,7 @@ fn search_graph_neighbors(
                 trust_level: TrustLevel::UserNote,
                 citation_label: format!("[L{i}]"),
                 stale: false,
+                web: None,
             },
         )
         .collect();
@@ -613,6 +619,7 @@ fn search_exact_regulation(conn: &Connection, query: &str) -> AppResult<Vec<Cont
                 trust_level: TrustLevel::UserNote,
                 citation_label: citation,
                 stale: false,
+                web: None,
             }
         })
         .collect();

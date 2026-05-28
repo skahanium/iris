@@ -1,6 +1,6 @@
 import { quoteYamlString } from "@/lib/frontmatter";
 import { fileCreate, fileList } from "@/lib/ipc";
-import { allocateUntitledDocumentName } from "@/lib/note-names";
+import { allocateNewDocumentName } from "@/lib/note-names";
 
 export interface CreatedNote {
   path: string;
@@ -17,10 +17,7 @@ export async function createDefaultNote(
   options: CreateDefaultNoteOptions = {},
 ): Promise<CreatedNote> {
   const files = await fileList();
-  const { title, path } = allocateUntitledDocumentName(
-    files,
-    options.extraTakenTitles,
-  );
+  const { title, path } = allocateNewDocumentName(files, options.extraTakenTitles);
   const content = `---\ntitle: ${quoteYamlString(title)}\n---\n\n`;
   const entry = await fileCreate(path, content);
   return { path: entry.path, title };

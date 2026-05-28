@@ -107,6 +107,7 @@ pub async fn context_assemble(
 }
 
 /// Send an AI message with full LLM pipeline.
+#[allow(clippy::too_many_arguments)]
 #[tauri::command]
 pub async fn ai_send_message(
     state: State<'_, Arc<AppState>>,
@@ -117,7 +118,9 @@ pub async fn ai_send_message(
     selected_packet_ids: Option<Vec<String>>,
     note_path: Option<String>,
     context_scope: Option<ContextScopeDto>,
+    web_search: Option<bool>,
 ) -> AppResult<serde_json::Value> {
+    let web_search = web_search.unwrap_or(false);
     let request_id = uuid::Uuid::new_v4().to_string();
     let scene: AiScene = serde_json::from_str(&format!("\"{scene}\""))
         .map_err(|e| AppError::msg(format!("invalid scene: {e}")))?;
@@ -219,7 +222,7 @@ pub async fn ai_send_message(
     };
 
     // Cache-friendly stable prefix + session history (variable content in history tail)
-    let mut messages = ModelGateway::build_stable_prefix(scene, &filtered_packets, &[]);
+    let mut messages = ModelGateway::build_stable_prefix(scene, &filtered_packets, &[], web_search);
 
     for msg in &history {
         let role = match msg.role.as_str() {
@@ -234,6 +237,22 @@ pub async fn ai_send_message(
             tool_call_id: None,
             tool_calls: None,
         });
+    }
+
+    let mut web_search_meta = None;
+    if web_search {
+        for msg in messages.iter_mut().rev() {
+            if matches!(msg.role, MessageRole::User) {
+                let (prefixed, meta) = crate::llm::search_web::prepend_web_search_context_for_db(
+                    &state.db,
+                    &msg.content,
+                )
+                .await?;
+                msg.content = prefixed;
+                web_search_meta = Some(meta);
+                break;
+            }
+        }
     }
 
     let provider_config = resolved.to_provider_config(scene);
@@ -381,6 +400,7 @@ pub async fn ai_send_message(
         "tool_results": tool_results,
         "usage": response.usage,
         "citation_valid": citation_valid,
+        "web_search_meta": web_search_meta,
     }))
 }
 
