@@ -7,7 +7,8 @@ import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   profileList,
-  profileSet,
+  profileGet,
+  profileSetRule,
   profileDeactivate,
   profileDelete,
 } from "@/lib/ipc";
@@ -58,15 +59,23 @@ export function ProfileManager() {
   }, [refresh]);
 
   const handleToggle = useCallback(
-    async (key: string, isActive: boolean) => {
-      if (isActive) {
-        await profileDeactivate({ key });
+    async (entry: ProfileEntry) => {
+      if (entry.is_active) {
+        await profileDeactivate({ key: entry.key });
       } else {
-        await profileSet({
-          key,
-          value: {},
+        const full = await profileGet({ key: entry.key });
+        const text =
+          typeof full?.value === "object" &&
+          full.value !== null &&
+          "description" in full.value &&
+          typeof (full.value as { description?: unknown }).description ===
+            "string"
+            ? (full.value as { description: string }).description
+            : JSON.stringify(full?.value ?? "");
+        await profileSetRule({
+          key: entry.key,
+          description: text,
           source: "user_reactivate",
-          confidence: 1.0,
         });
       }
       void refresh();
@@ -83,21 +92,31 @@ export function ProfileManager() {
   );
 
   const handleAdd = useCallback(async () => {
-    if (!newKey.trim() || !newValue.trim()) return;
+    const text = newValue.trim();
+    if (!newKey.trim() || !text) return;
     try {
-      const parsed = JSON.parse(newValue);
-      await profileSet({
-        key: newKey.trim(),
-        value: parsed,
-        source: "user_manual",
-        confidence: 1.0,
-      });
+      if (newValue.trimStart().startsWith("{")) {
+        const parsed = JSON.parse(newValue) as { description?: string };
+        const desc =
+          typeof parsed.description === "string" ? parsed.description : newValue;
+        await profileSetRule({
+          key: newKey.trim(),
+          description: desc,
+          source: "user_manual",
+        });
+      } else {
+        await profileSetRule({
+          key: newKey.trim(),
+          description: text,
+          source: "user_manual",
+        });
+      }
       setNewKey("");
       setNewValue("");
       setShowAdd(false);
       void refresh();
     } catch {
-      alert("值必须是有效的 JSON 格式");
+      alert("JSON 格式无效，或直接输入纯文本规则");
     }
   }, [newKey, newValue, refresh]);
 
@@ -236,9 +255,7 @@ export function ProfileManager() {
                       size="icon"
                       className="h-6 w-6"
                       title={entry.is_active ? "停用" : "启用"}
-                      onClick={() =>
-                        void handleToggle(entry.key, entry.is_active)
-                      }
+                      onClick={() => void handleToggle(entry)}
                     >
                       {entry.is_active ? (
                         <ToggleRight className="h-3 w-3 text-primary" />

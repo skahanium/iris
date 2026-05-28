@@ -8,11 +8,19 @@
 //! 5. Cross-document reference suggestion
 
 use sha2::{Digest, Sha256};
+use tauri::AppHandle;
 
+use crate::ai_runtime::chapter_workflow;
+use crate::ai_runtime::model_gateway::{
+    GatewayRequest, LlmMessage, MessageRole, ModelGateway, ProviderConfig,
+};
+use crate::ai_runtime::writing_workflow::build_patch_proposal;
 use crate::ai_runtime::{
-    CitationAction, CitationSuggestion, ContextPacket, FactClaim, PatchProposal, TokenUsage,
+    AiScene, CitationAction, CitationSuggestion, ContextPacket, FactClaim, PatchProposal,
+    SourceSpan, TokenUsage,
 };
 use crate::error::AppResult;
+use crate::storage::db::Database;
 
 /// Document check type.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -39,6 +47,9 @@ pub struct DocumentCheckInput {
     pub check_type: DocumentCheckType,
     /// Whether web search is authorized
     pub web_authorized: bool,
+    /// 基准内容哈希（可选；为空时由 `content` 计算）
+    #[serde(default)]
+    pub base_content_hash: String,
 }
 
 /// Document check result.
@@ -60,6 +71,9 @@ pub struct DocumentCheckResult {
     pub evidence_used: Vec<ContextPacket>,
     /// Token usage
     pub total_tokens: TokenUsage,
+    /// LLM 综合分析摘要（可选）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub analysis_summary: Option<String>,
 }
 
 /// Outline check result.
@@ -555,20 +569,25 @@ pub fn execute_document_check(
             let entries = parse_outline(&input.content);
             let outline_result = check_outline(&entries);
 
-            Ok(DocumentCheckResult {
-                request_id,
-                check_type: input.check_type,
-                outline_result: Some(outline_result),
-                citation_gap_result: None,
-                style_result: None,
-                patches: Vec::new(),
-                evidence_used: evidence,
-                total_tokens: TokenUsage {
-                    prompt_tokens: 0,
-                    completion_tokens: 0,
-                    total_tokens: 0,
+            Ok(finish_check_result(
+                DocumentCheckResult {
+                    request_id,
+                    check_type: input.check_type,
+                    outline_result: Some(outline_result),
+                    citation_gap_result: None,
+                    style_result: None,
+                    patches: Vec::new(),
+                    evidence_used: evidence.clone(),
+                    total_tokens: TokenUsage {
+                        prompt_tokens: 0,
+                        completion_tokens: 0,
+                        total_tokens: 0,
+                    },
+                    analysis_summary: None,
                 },
-            })
+                input,
+                &evidence,
+            ))
         }
         DocumentCheckType::CitationGapCheck => {
             let claims = extract_claims_from_content(&input.content);
@@ -620,63 +639,503 @@ pub fn execute_document_check(
                 suggestions,
             };
 
-            Ok(DocumentCheckResult {
-                request_id,
-                check_type: input.check_type,
-                outline_result: None,
-                citation_gap_result: Some(citation_gap_result),
-                style_result: None,
-                patches: Vec::new(),
-                evidence_used: evidence,
-                total_tokens: TokenUsage {
-                    prompt_tokens: 0,
-                    completion_tokens: 0,
-                    total_tokens: 0,
+            Ok(finish_check_result(
+                DocumentCheckResult {
+                    request_id,
+                    check_type: input.check_type,
+                    outline_result: None,
+                    citation_gap_result: Some(citation_gap_result),
+                    style_result: None,
+                    patches: Vec::new(),
+                    evidence_used: evidence.clone(),
+                    total_tokens: TokenUsage {
+                        prompt_tokens: 0,
+                        completion_tokens: 0,
+                        total_tokens: 0,
+                    },
+                    analysis_summary: None,
                 },
-            })
+                input,
+                &evidence,
+            ))
         }
         DocumentCheckType::StyleConsistency => {
             let style_result = analyze_style_consistency(&input.content);
 
-            Ok(DocumentCheckResult {
-                request_id,
-                check_type: input.check_type,
-                outline_result: None,
-                citation_gap_result: None,
-                style_result: Some(style_result),
-                patches: Vec::new(),
-                evidence_used: evidence,
-                total_tokens: TokenUsage {
-                    prompt_tokens: 0,
-                    completion_tokens: 0,
-                    total_tokens: 0,
+            Ok(finish_check_result(
+                DocumentCheckResult {
+                    request_id,
+                    check_type: input.check_type,
+                    outline_result: None,
+                    citation_gap_result: None,
+                    style_result: Some(style_result),
+                    patches: Vec::new(),
+                    evidence_used: evidence.clone(),
+                    total_tokens: TokenUsage {
+                        prompt_tokens: 0,
+                        completion_tokens: 0,
+                        total_tokens: 0,
+                    },
+                    analysis_summary: None,
                 },
-            })
+                input,
+                &evidence,
+            ))
         }
         DocumentCheckType::CrossDocReference => {
             // Find cross-document references from evidence
             let refs = analyze_cross_doc_references(&input.target_path, &input.content, &evidence);
 
-            Ok(DocumentCheckResult {
-                request_id,
-                check_type: input.check_type,
-                outline_result: None,
-                citation_gap_result: Some(CitationGapCheckResult {
-                    uncited_claims: Vec::new(),
-                    weak_citations: Vec::new(),
-                    suggestions: refs,
-                }),
-                style_result: None,
-                patches: Vec::new(),
-                evidence_used: evidence,
-                total_tokens: TokenUsage {
-                    prompt_tokens: 0,
-                    completion_tokens: 0,
-                    total_tokens: 0,
+            Ok(finish_check_result(
+                DocumentCheckResult {
+                    request_id,
+                    check_type: input.check_type,
+                    outline_result: None,
+                    citation_gap_result: Some(CitationGapCheckResult {
+                        uncited_claims: Vec::new(),
+                        weak_citations: Vec::new(),
+                        suggestions: refs,
+                    }),
+                    style_result: None,
+                    patches: Vec::new(),
+                    evidence_used: evidence.clone(),
+                    total_tokens: TokenUsage {
+                        prompt_tokens: 0,
+                        completion_tokens: 0,
+                        total_tokens: 0,
+                    },
+                    analysis_summary: None,
                 },
-            })
+                input,
+                &evidence,
+            ))
         }
     }
+}
+
+fn content_hash_for_input(input: &DocumentCheckInput) -> String {
+    if input.base_content_hash.trim().is_empty() {
+        chapter_workflow::compute_content_hash(&input.content)
+    } else {
+        input.base_content_hash.clone()
+    }
+}
+
+/// 在文档中定位唯一文本片段（用于补丁 range）。
+fn find_text_span(content: &str, needle: &str) -> Option<SourceSpan> {
+    let needle = needle.trim();
+    if needle.is_empty() {
+        return None;
+    }
+    let start = content.find(needle)?;
+    if content[start + needle.len()..].contains(needle) {
+        return None;
+    }
+    Some(SourceSpan {
+        start,
+        end: start + needle.len(),
+    })
+}
+
+/// 从启发式检查结果生成可确认补丁（引用标注、语气/列表统一等）。
+pub fn build_heuristic_document_patches(
+    input: &DocumentCheckInput,
+    result: &DocumentCheckResult,
+    evidence: &[ContextPacket],
+) -> Vec<PatchProposal> {
+    let hash = content_hash_for_input(input);
+    let evidence_ids: Vec<String> = evidence.iter().take(8).map(|p| p.id.clone()).collect();
+    let mut patches = Vec::new();
+
+    if let Some(ref citation) = result.citation_gap_result {
+        for claim in citation.uncited_claims.iter().take(10) {
+            let Some(span) = find_text_span(&input.content, &claim.statement) else {
+                continue;
+            };
+            let original = input.content[span.start..span.end].to_string();
+            let label = citation
+                .suggestions
+                .iter()
+                .find(|s| s.claim_id == claim.id)
+                .and_then(|s| s.suggested_citation.clone())
+                .or_else(|| evidence.first().map(|p| p.citation_label.clone()))
+                .unwrap_or_else(|| "待补充依据".to_string());
+            let replacement = format!("{original}（依据：{label}）");
+            patches.push(build_patch_proposal(
+                &input.target_path,
+                &hash,
+                &original,
+                &replacement,
+                span,
+                evidence_ids.clone(),
+            ));
+        }
+    }
+
+    if let Some(ref style) = result.style_result {
+        if style
+            .inconsistencies
+            .iter()
+            .any(|i| i.inconsistency_type == StyleInconsistencyType::ToneMismatch)
+        {
+            for (from, to) in [("你", "您"), ("咱们", "我们")] {
+                if let Some(span) = find_text_span(&input.content, from) {
+                    let original = from.to_string();
+                    patches.push(build_patch_proposal(
+                        &input.target_path,
+                        &hash,
+                        &original,
+                        to,
+                        span,
+                        evidence_ids.clone(),
+                    ));
+                }
+            }
+        }
+        if style
+            .inconsistencies
+            .iter()
+            .any(|i| i.inconsistency_type == StyleInconsistencyType::ListFormatMismatch)
+        {
+            if let Some(pos) = input.content.find("\n* ") {
+                let line_start = input.content[..pos].rfind('\n').map(|i| i + 1).unwrap_or(0);
+                let line_end = input.content[line_start..]
+                    .find('\n')
+                    .map(|i| line_start + i)
+                    .unwrap_or(input.content.len());
+                let original = input.content[line_start..line_end].to_string();
+                if original.starts_with("* ") {
+                    let replacement = original.replacen("* ", "- ", 1);
+                    patches.push(build_patch_proposal(
+                        &input.target_path,
+                        &hash,
+                        &original,
+                        &replacement,
+                        SourceSpan {
+                            start: line_start,
+                            end: line_end,
+                        },
+                        evidence_ids.clone(),
+                    ));
+                }
+            }
+        }
+    }
+
+    if let Some(ref outline) = result.outline_result {
+        for issue in outline.issues.iter().take(6) {
+            if issue.issue_type != OutlineIssueType::SkippedLevel {
+                continue;
+            }
+            let Some(entry) = outline
+                .outline_entries
+                .iter()
+                .find(|e| e.position == issue.position)
+            else {
+                continue;
+            };
+            let line_end = input.content[entry.position..]
+                .find('\n')
+                .map(|i| entry.position + i + 1)
+                .unwrap_or(entry.position);
+            let insert = format!(
+                "\n### {}（建议补充）\n\n",
+                entry.text
+            );
+            let original = String::new();
+            patches.push(build_patch_proposal(
+                &input.target_path,
+                &hash,
+                &original,
+                &insert,
+                SourceSpan {
+                    start: line_end,
+                    end: line_end,
+                },
+                evidence_ids.clone(),
+            ));
+        }
+    }
+
+    patches
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct LlmDocumentPatchDraft {
+    original_text: String,
+    replacement_text: String,
+}
+
+/// 解析 LLM 返回的补丁 JSON 数组。
+fn parse_llm_document_patches_json(json_str: &str) -> AppResult<Vec<LlmDocumentPatchDraft>> {
+    let trimmed = json_str.trim();
+    let array_slice = if trimmed.starts_with("```") {
+        let start = trimmed.find('[').unwrap_or(0);
+        let end = trimmed.rfind(']').unwrap_or(trimmed.len());
+        &trimmed[start..=end]
+    } else if let Some(start) = trimmed.find('[') {
+        let end = trimmed.rfind(']').unwrap_or(trimmed.len());
+        &trimmed[start..=end]
+    } else {
+        trimmed
+    };
+
+    let parsed: Vec<serde_json::Value> = serde_json::from_str(array_slice)
+        .map_err(|e| crate::error::AppError::msg(format!("failed to parse document patches: {e}")))?;
+
+    Ok(parsed
+        .into_iter()
+        .filter_map(|v| {
+            let original = v["original_text"].as_str()?.trim().to_string();
+            let replacement = v["replacement_text"].as_str()?.trim().to_string();
+            if original.is_empty() || replacement.is_empty() || original == replacement {
+                return None;
+            }
+            Some(LlmDocumentPatchDraft {
+                original_text: original,
+                replacement_text: replacement,
+            })
+        })
+        .collect())
+}
+
+fn llm_drafts_to_patches(
+    input: &DocumentCheckInput,
+    drafts: Vec<LlmDocumentPatchDraft>,
+    evidence: &[ContextPacket],
+) -> Vec<PatchProposal> {
+    let hash = content_hash_for_input(input);
+    let evidence_ids: Vec<String> = evidence.iter().take(8).map(|p| p.id.clone()).collect();
+    let mut patches = Vec::new();
+
+    for draft in drafts.into_iter().take(12) {
+        let Some(span) = find_text_span(&input.content, &draft.original_text) else {
+            continue;
+        };
+        let original = input.content[span.start..span.end].to_string();
+        patches.push(build_patch_proposal(
+            &input.target_path,
+            &hash,
+            &original,
+            &draft.replacement_text,
+            span,
+            evidence_ids.clone(),
+        ));
+    }
+
+    patches
+}
+
+/// 合并补丁列表，按 `original_text` 去重（保留先出现的项）。
+pub fn merge_document_patches(
+    mut base: Vec<PatchProposal>,
+    extra: Vec<PatchProposal>,
+) -> Vec<PatchProposal> {
+    let mut seen: std::collections::HashSet<String> = base
+        .iter()
+        .map(|p| p.original_text.clone())
+        .collect();
+    for patch in extra {
+        if seen.insert(patch.original_text.clone()) {
+            base.push(patch);
+        }
+    }
+    base
+}
+
+fn finish_check_result(
+    mut result: DocumentCheckResult,
+    input: &DocumentCheckInput,
+    evidence: &[ContextPacket],
+) -> DocumentCheckResult {
+    result.patches = build_heuristic_document_patches(input, &result, evidence);
+    result
+}
+
+/// 调用 LLM 生成最多若干条可定位补丁（`original_text` 必须来自文档原文）。
+#[allow(clippy::too_many_arguments)]
+async fn generate_llm_document_patches(
+    db: &Database,
+    app_handle: &AppHandle,
+    provider: &ProviderConfig,
+    input: &DocumentCheckInput,
+    result: &DocumentCheckResult,
+    evidence: &[ContextPacket],
+) -> AppResult<Vec<PatchProposal>> {
+    let rules = ModelGateway::load_active_rules_for_scene(db, AiScene::DraftingAssist)?;
+    let system = ModelGateway::build_system_prompt(AiScene::DraftingAssist, evidence, &rules);
+    let heuristic = serialize_heuristic_for_llm(result);
+    let excerpt = if input.content.len() > 5000 {
+        format!("{}…", &input.content[..5000])
+    } else {
+        input.content.clone()
+    };
+
+    let user = format!(
+        "任务：{}\n路径：{}\n\n启发式结果：\n{heuristic}\n\n文档摘录：\n{excerpt}\n\n请输出 JSON 数组（不要代码围栏外的文字），每项：\n{{\"original_text\":\"必须从上文摘录的连续原文\",\"replacement_text\":\"修改后文本\"}}\n\n要求：最多 8 条；original_text 必须在摘录中完全一致出现；不要编造法条；优先修复引用缺口与明显文风问题。",
+        check_type_label(input.check_type),
+        input.target_path,
+    );
+
+    let request = GatewayRequest {
+        provider: provider.clone(),
+        messages: vec![
+            LlmMessage {
+                role: MessageRole::System,
+                content: system,
+                tool_call_id: None,
+                tool_calls: None,
+            },
+            LlmMessage {
+                role: MessageRole::User,
+                content: user,
+                tool_call_id: None,
+                tool_calls: None,
+            },
+        ],
+        tools: vec![],
+        max_tokens: Some(3072),
+        temperature: Some(0.25),
+        stream: false,
+    };
+
+    let gateway = ModelGateway::with_defaults(app_handle.clone(), vec![provider.clone()])?;
+    let response = gateway.send_request(request).await?;
+    let content = response.content.unwrap_or_default();
+    let drafts = parse_llm_document_patches_json(&content)?;
+    Ok(llm_drafts_to_patches(input, drafts, evidence))
+}
+
+fn check_type_label(check_type: DocumentCheckType) -> &'static str {
+    match check_type {
+        DocumentCheckType::OutlineCheck => "大纲检查",
+        DocumentCheckType::CitationGapCheck => "引用缺口检查",
+        DocumentCheckType::StyleConsistency => "风格一致性检查",
+        DocumentCheckType::CrossDocReference => "跨文档引用建议",
+    }
+}
+
+fn serialize_heuristic_for_llm(result: &DocumentCheckResult) -> String {
+    let mut parts = Vec::new();
+    if let Some(ref o) = result.outline_result {
+        parts.push(format!(
+            "大纲问题 {} 条，建议 {} 条",
+            o.issues.len(),
+            o.suggestions.len()
+        ));
+        for issue in o.issues.iter().take(8) {
+            parts.push(format!("- [{}] {}", issue.heading_path, issue.description));
+        }
+    }
+    if let Some(ref c) = result.citation_gap_result {
+        parts.push(format!(
+            "未引用声明 {} 条，弱引用 {} 条",
+            c.uncited_claims.len(),
+            c.weak_citations.len()
+        ));
+        for claim in c.uncited_claims.iter().take(5) {
+            parts.push(format!("- 缺依据: {}", claim.statement));
+        }
+    }
+    if let Some(ref s) = result.style_result {
+        parts.push(format!(
+            "风格问题 {} 条，建议 {} 条",
+            s.inconsistencies.len(),
+            s.suggestions.len()
+        ));
+    }
+    parts.join("\n")
+}
+
+/// 在启发式检查结果上叠加 LLM 综合分析。
+pub async fn enhance_document_check_with_llm(
+    db: &Database,
+    app_handle: &AppHandle,
+    provider: &ProviderConfig,
+    input: &DocumentCheckInput,
+    mut result: DocumentCheckResult,
+    evidence: &[ContextPacket],
+) -> AppResult<DocumentCheckResult> {
+    let rules = ModelGateway::load_active_rules_for_scene(db, AiScene::DraftingAssist)?;
+    let system = ModelGateway::build_system_prompt(AiScene::DraftingAssist, evidence, &rules);
+    let heuristic = serialize_heuristic_for_llm(&result);
+    let excerpt = if input.content.len() > 6000 {
+        format!("{}…", &input.content[..6000])
+    } else {
+        input.content.clone()
+    };
+
+    let user = format!(
+        "任务：{}\n文档路径：{}\n\n启发式预检结果：\n{heuristic}\n\n文档摘录：\n{excerpt}\n\n请用中文输出：1) 总体评估 2) 优先修复项（编号列表）3) 是否建议用户手动修改（不要编造法条）。不要输出代码围栏。",
+        check_type_label(input.check_type),
+        input.target_path,
+    );
+
+    let request = GatewayRequest {
+        provider: provider.clone(),
+        messages: vec![
+            LlmMessage {
+                role: MessageRole::System,
+                content: system,
+                tool_call_id: None,
+                tool_calls: None,
+            },
+            LlmMessage {
+                role: MessageRole::User,
+                content: user,
+                tool_call_id: None,
+                tool_calls: None,
+            },
+        ],
+        tools: vec![],
+        max_tokens: Some(2048),
+        temperature: Some(0.3),
+        stream: false,
+    };
+
+    let gateway = ModelGateway::with_defaults(app_handle.clone(), vec![provider.clone()])?;
+    let response = gateway.send_request(request).await?;
+    let summary = response.content.unwrap_or_default().trim().to_string();
+    result.analysis_summary = if summary.is_empty() {
+        None
+    } else {
+        Some(summary)
+    };
+    result.total_tokens.prompt_tokens += response.usage.prompt_tokens;
+    result.total_tokens.completion_tokens += response.usage.completion_tokens;
+    result.total_tokens.total_tokens += response.usage.total_tokens;
+
+    match generate_llm_document_patches(
+        db,
+        app_handle,
+        provider,
+        input,
+        &result,
+        evidence,
+    )
+    .await
+    {
+        Ok(llm_patches) => {
+            result.patches = merge_document_patches(result.patches, llm_patches);
+        }
+        Err(e) => {
+            tracing::warn!("Document check LLM patches failed: {e}");
+        }
+    }
+
+    Ok(result)
+}
+
+/// 启发式 + LLM 文档检查。
+pub async fn execute_document_check_with_llm(
+    db: &Database,
+    app_handle: &AppHandle,
+    provider: &ProviderConfig,
+    input: &DocumentCheckInput,
+    evidence: Vec<ContextPacket>,
+) -> AppResult<DocumentCheckResult> {
+    let base = execute_document_check(input, evidence.clone())?;
+    enhance_document_check_with_llm(db, app_handle, provider, input, base, &evidence).await
 }
 
 /// Find supporting evidence indices for a claim.
@@ -864,5 +1323,75 @@ mod tests {
             result.inconsistencies[0].inconsistency_type,
             StyleInconsistencyType::ListFormatMismatch
         );
+    }
+
+    #[test]
+    fn test_heuristic_citation_patch() {
+        let content = "根据法律规定，该企业应当承担相应责任。";
+        let claims = extract_claims_from_content(content);
+        assert!(!claims.is_empty());
+        let input = DocumentCheckInput {
+            target_path: "notes/a.md".to_string(),
+            content: content.to_string(),
+            check_type: DocumentCheckType::CitationGapCheck,
+            web_authorized: false,
+            base_content_hash: String::new(),
+        };
+        let citation = CitationGapCheckResult {
+            uncited_claims: vec![FactClaim {
+                id: "c1".to_string(),
+                statement: claims[0].statement.clone(),
+                has_support: false,
+                supporting_evidence: vec![],
+                conflicting_evidence: vec![],
+            }],
+            weak_citations: vec![],
+            suggestions: vec![],
+        };
+        let result = DocumentCheckResult {
+            request_id: "t".to_string(),
+            check_type: DocumentCheckType::CitationGapCheck,
+            outline_result: None,
+            citation_gap_result: Some(citation),
+            style_result: None,
+            patches: vec![],
+            evidence_used: vec![],
+            total_tokens: TokenUsage {
+                prompt_tokens: 0,
+                completion_tokens: 0,
+                total_tokens: 0,
+            },
+            analysis_summary: None,
+        };
+        let patches = build_heuristic_document_patches(&input, &result, &[]);
+        assert_eq!(patches.len(), 1);
+        assert!(patches[0].replacement_text.contains("依据"));
+    }
+
+    #[test]
+    fn test_parse_llm_document_patches_json() {
+        let raw = r#"[{"original_text":"你好","replacement_text":"您好"}]"#;
+        let drafts = parse_llm_document_patches_json(raw).expect("parse");
+        assert_eq!(drafts.len(), 1);
+        assert_eq!(drafts[0].replacement_text, "您好");
+    }
+
+    #[test]
+    fn test_merge_document_patches_dedupes() {
+        let a = PatchProposal {
+            id: "1".to_string(),
+            target_path: "x.md".to_string(),
+            base_content_hash: "h".to_string(),
+            range: SourceSpan { start: 0, end: 1 },
+            original_text: "a".to_string(),
+            replacement_text: "b".to_string(),
+            evidence_packet_ids: vec![],
+            risk_level: crate::ai_runtime::RiskLevel::Low,
+            warnings: vec![],
+            created_at: String::new(),
+        };
+        let b = a.clone();
+        let merged = merge_document_patches(vec![a], vec![b]);
+        assert_eq!(merged.len(), 1);
     }
 }

@@ -7,11 +7,17 @@
 //! 4. Generate chunked patches (multiple PatchProposals)
 
 use sha2::{Digest, Sha256};
+use tauri::AppHandle;
 
+use crate::ai_runtime::model_gateway::{
+    GatewayRequest, LlmMessage, MessageRole, ProviderConfig,
+};
 use crate::ai_runtime::{
     ContextPacket, PatchProposal, RiskLevel, SourceSpan, TokenUsage, WritingIntent,
     WritingSuggestion,
 };
+use crate::error::AppResult;
+use crate::storage::db::Database;
 /// Chapter information extracted from document structure.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ChapterInfo {
@@ -299,9 +305,211 @@ fn generate_chapter_warnings(
     warnings
 }
 
+fn chapter_intent_instruction(intent: &WritingIntent) -> &'static str {
+    match intent {
+        WritingIntent::ChapterContinue => {
+            "续写该章节：保留标题结构，在现有内容后自然延伸，不重复已有论述。"
+        }
+        WritingIntent::ChapterRestructure => {
+            "重排该章节结构与段落顺序，保留核心信息，优化层次与衔接。"
+        }
+        _ => "改写该章节：改进结构、表达与论证，保留章节标题行（# 级别不变）。",
+    }
+}
+
+/// 调用 LLM 生成章节级替换 Markdown（含章节标题行）。
+#[allow(clippy::too_many_arguments)]
+pub async fn generate_chapter_content_with_llm(
+    db: &Database,
+    app_handle: &AppHandle,
+    provider: &ProviderConfig,
+    intent: &WritingIntent,
+    chapter: &ChapterInfo,
+    full_document: &str,
+    goal: &str,
+    evidence: &[ContextPacket],
+) -> AppResult<(String, TokenUsage)> {
+    let rules =
+        crate::ai_runtime::model_gateway::ModelGateway::load_active_rules_for_scene(
+            db,
+            crate::ai_runtime::AiScene::DraftingAssist,
+        )?;
+    let system = crate::ai_runtime::model_gateway::ModelGateway::build_system_prompt(
+        crate::ai_runtime::AiScene::DraftingAssist,
+        evidence,
+        &rules,
+    );
+
+    let evidence_block = evidence
+        .iter()
+        .take(12)
+        .map(|p| format!("{} {} — {}", p.citation_label, p.title, p.excerpt))
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    let user = format!(
+        "{}\n\n写作目标：{goal}\n\n章节路径：{}\n\n整篇文档（供语境参考，勿全文照抄）：\n{}\n\n待处理章节原文：\n{}\n\n可用证据：\n{evidence_block}\n\n请只输出替换后的完整章节 Markdown（从章节标题行开始到章节结束），不要输出解释或代码围栏。",
+        chapter_intent_instruction(intent),
+        chapter.heading_path,
+        if full_document.len() > 4000 {
+            format!("{}…", &full_document[..4000])
+        } else {
+            full_document.to_string()
+        },
+        chapter.content,
+    );
+
+    let request = GatewayRequest {
+        provider: provider.clone(),
+        messages: vec![
+            LlmMessage {
+                role: MessageRole::System,
+                content: system,
+                tool_call_id: None,
+                tool_calls: None,
+            },
+            LlmMessage {
+                role: MessageRole::User,
+                content: user,
+                tool_call_id: None,
+                tool_calls: None,
+            },
+        ],
+        tools: vec![],
+        max_tokens: Some(4096),
+        temperature: Some(0.4),
+        stream: false,
+    };
+
+    let gateway =
+        crate::ai_runtime::model_gateway::ModelGateway::with_defaults(
+            app_handle.clone(),
+            vec![provider.clone()],
+        )?;
+    let response = gateway.send_request(request).await?;
+    let usage = response.usage;
+    let mut text = response.content.unwrap_or_default().trim().to_string();
+    if text.starts_with("```") {
+        let inner = text
+            .trim_start_matches('`')
+            .trim_start_matches(|c: char| c.is_alphanumeric() || c == '\n')
+            .trim();
+        text = inner.trim_end_matches('`').trim().to_string();
+    }
+    if text.is_empty() {
+        text = chapter.content.clone();
+    }
+    Ok((
+        text,
+        TokenUsage {
+            prompt_tokens: usage.prompt_tokens,
+            completion_tokens: usage.completion_tokens,
+            total_tokens: usage.total_tokens,
+        },
+    ))
+}
+
+/// 章节 LLM 不可用时的结构化回退（保留标题行，按意图做最小改写）。
+pub fn chapter_heuristic_fallback(
+    intent: &WritingIntent,
+    chapter: &ChapterInfo,
+    goal: &str,
+) -> String {
+    match intent {
+        WritingIntent::ChapterContinue => {
+            let mut out = chapter.content.trim_end().to_string();
+            if !out.ends_with('\n') {
+                out.push('\n');
+            }
+            out.push_str(&format!(
+                "\n\n> **续写提示**（{goal}）：请在此补充后续段落，并与上文语气一致。\n"
+            ));
+            out
+        }
+        WritingIntent::ChapterRestructure => restructure_chapter_paragraphs(&chapter.content),
+        _ => normalize_chapter_markdown(&chapter.content),
+    }
+}
+
+fn normalize_chapter_markdown(content: &str) -> String {
+    let mut lines: Vec<String> = Vec::new();
+    let mut saw_heading = false;
+    for line in content.lines() {
+        let trimmed = line.trim_end();
+        if trimmed.starts_with('#') {
+            if saw_heading && !lines.last().is_some_and(|l| l.is_empty()) {
+                lines.push(String::new());
+            }
+            saw_heading = true;
+            lines.push(trimmed.to_string());
+        } else if trimmed.is_empty() {
+            if !lines.last().is_some_and(|l| l.is_empty()) {
+                lines.push(String::new());
+            }
+        } else {
+            lines.push(trimmed.to_string());
+        }
+    }
+    lines.join("\n")
+}
+
+fn restructure_chapter_paragraphs(content: &str) -> String {
+    let mut heading_lines = Vec::new();
+    let mut body_paragraphs: Vec<String> = Vec::new();
+    let mut current = String::new();
+
+    for line in content.lines() {
+        if line.trim_start().starts_with('#') {
+            if !current.trim().is_empty() {
+                body_paragraphs.push(current.trim().to_string());
+                current.clear();
+            }
+            heading_lines.push(line.trim_end().to_string());
+        } else if line.trim().is_empty() {
+            if !current.trim().is_empty() {
+                body_paragraphs.push(current.trim().to_string());
+                current.clear();
+            }
+        } else {
+            if !current.is_empty() {
+                current.push(' ');
+            }
+            current.push_str(line.trim());
+        }
+    }
+    if !current.trim().is_empty() {
+        body_paragraphs.push(current.trim().to_string());
+    }
+
+    body_paragraphs.sort_by_key(|p| std::cmp::Reverse(p.len()));
+
+    let mut out = heading_lines.join("\n");
+    if !out.is_empty() && !body_paragraphs.is_empty() {
+        out.push_str("\n\n");
+    }
+    out.push_str(&body_paragraphs.join("\n\n"));
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_chapter_heuristic_continue() {
+        let chapter = ChapterInfo {
+            heading_level: 2,
+            heading_text: "小节".to_string(),
+            content_start: 0,
+            content_end: 20,
+            content: "## 小节\n\n已有内容。".to_string(),
+            heading_path: "文档 > 小节".to_string(),
+        };
+        let out =
+            chapter_heuristic_fallback(&WritingIntent::ChapterContinue, &chapter, "续写论证");
+        assert!(out.contains("续写提示"));
+        assert!(out.contains("已有内容"));
+    }
 
     #[test]
     fn test_parse_chapters_empty() {

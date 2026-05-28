@@ -14,7 +14,7 @@ import {
   corpusList,
   fileList,
   toolConfirm as toolConfirmIpc,
-  profileSet,
+  profileSetRule,
   llmAbort,
 } from "@/lib/ipc";
 import { useAiPanelLlmStream } from "@/hooks/useAiPanelLlmStream";
@@ -493,9 +493,13 @@ export function AiPanel({
       <RuleConfirmDialog
         request={ruleConfirmRequest}
         onConfirm={async (r) => {
-          void profileSet({
-            key: `ai_rule_${Date.now()}`,
-            value: r.rule,
+          const key =
+            r.rule_type && r.rule_type !== "custom_rules"
+              ? r.rule_type
+              : "custom_rules";
+          void profileSetRule({
+            key,
+            description: r.rule,
             source: r.source,
           });
           setRuleConfirmRequest(null);

@@ -7,13 +7,17 @@ use tauri::{AppHandle, Emitter, State};
 use crate::ai_runtime::chapter_workflow::{
     self, ChapterInfo, ChapterWritingInput, ChapterWritingResult,
 };
+use crate::ai_runtime::model_gateway::ProviderConfig;
+use crate::ai_runtime::writing_workflow;
 use crate::ai_runtime::document_workflow::{self, DocumentCheckInput, DocumentCheckResult};
+use crate::ai_runtime::evidence_mixer;
 use crate::ai_runtime::retrieval_broker::{RetrievalLayers, RetrievalRequest};
 use crate::ai_runtime::retrieval_scope::RetrievalScope;
 use crate::ai_runtime::trace::{TraceRecorder, TraceStatus};
-use crate::ai_runtime::TokenUsage;
+use crate::ai_runtime::{AiScene, TokenUsage, WritingIntent};
 use crate::app::AppState;
 use crate::error::AppResult;
+use crate::llm::search_web;
 
 /// Execute a chapter-level writing task.
 #[tauri::command]
@@ -24,40 +28,62 @@ pub async fn chapter_writing_execute(
 ) -> AppResult<ChapterWritingResult> {
     let request_id = uuid::Uuid::new_v4().to_string();
 
-    // Start trace
     TraceRecorder::start(
         &state.db,
         &request_id,
-        crate::ai_runtime::AiScene::DraftingAssist,
+        AiScene::DraftingAssist,
     )?;
 
-    // Detect chapter intent
     let intent = chapter_workflow::detect_chapter_intent(&input.writing_goal);
 
-    // Build chapter suggestion
+    let mut evidence = retrieve_chapter_evidence(&state, &input).await?;
+
+    if input.web_authorized {
+        let query = format!("{} {}", input.chapter.heading_text, input.writing_goal);
+        if let Ok(fetch) = search_web::fetch_search_context_for_db(&state.db, query.trim()).await
+        {
+            let web = evidence_mixer::web_packets_from_fetch(&fetch, &input.writing_goal, None);
+            evidence = evidence_mixer::mix_and_rank(evidence, web, 20);
+        }
+    }
+
+    let resolved = crate::llm::config::resolve_for_scene(&state.db, AiScene::DraftingAssist)?;
+    let provider_config = resolved.to_provider_config(AiScene::DraftingAssist);
+
+    let full_content = read_note_content(&state, &input.target_path)?;
+
+    let (replacement, usage, suggestion_note) = resolve_chapter_replacement(
+        &state,
+        &app_handle,
+        &provider_config,
+        &intent,
+        &input,
+        &full_content,
+        &evidence,
+    )
+    .await;
+
     let suggestion = chapter_workflow::build_chapter_suggestion(
         intent,
         &input.chapter,
-        &format!("针对章节「{}」的写作建议", input.chapter.heading_text),
-        0.8,
+        &suggestion_note,
+        if suggestion_note.contains("回退") {
+            0.55
+        } else {
+            0.85
+        },
     );
 
-    // Retrieve local evidence
-    let evidence = retrieve_chapter_evidence(&state, &input).await?;
-
-    // Build evidence packet IDs
     let evidence_ids: Vec<String> = evidence.iter().map(|p| p.id.clone()).collect();
-
-    // Build chapter patch
     let patch = chapter_workflow::build_chapter_patch(
         &input.target_path,
         &input.base_content_hash,
         &input.chapter,
-        &format!("[AI 章节改写内容: {}]", input.writing_goal),
+        &replacement,
         evidence_ids,
     );
 
-    // Complete trace
+    let packet_ids: Vec<String> = evidence.iter().map(|p| p.id.clone()).collect();
     let _ = TraceRecorder::complete(
         &state.db,
         &request_id,
@@ -65,14 +91,13 @@ pub async fn chapter_writing_execute(
         None,
         None,
         None,
-        None,
+        Some(&packet_ids),
         None,
         None,
         None,
         None,
     );
 
-    // Emit event
     let _ = app_handle.emit("ai:chapter_writing_complete", &request_id);
 
     Ok(ChapterWritingResult {
@@ -80,11 +105,7 @@ pub async fn chapter_writing_execute(
         suggestions: vec![suggestion],
         patches: vec![patch],
         evidence_used: evidence,
-        total_tokens: TokenUsage {
-            prompt_tokens: 0,
-            completion_tokens: 0,
-            total_tokens: 0,
-        },
+        total_tokens: usage,
     })
 }
 
@@ -97,20 +118,51 @@ pub async fn document_check_execute(
 ) -> AppResult<DocumentCheckResult> {
     let request_id = uuid::Uuid::new_v4().to_string();
 
-    // Start trace
     TraceRecorder::start(
         &state.db,
         &request_id,
-        crate::ai_runtime::AiScene::KnowledgeLookup,
+        AiScene::KnowledgeLookup,
     )?;
 
-    // Retrieve local evidence
-    let evidence = retrieve_document_evidence(&state, &input).await?;
+    let mut evidence = retrieve_document_evidence(&state, &input).await?;
 
-    // Execute document check
-    let result = document_workflow::execute_document_check(&input, evidence)?;
+    if input.web_authorized {
+        let query = input.content[..input.content.len().min(200)].to_string();
+        if let Ok(fetch) = search_web::fetch_search_context_for_db(&state.db, &query).await {
+            let web = evidence_mixer::web_packets_from_fetch(&fetch, &input.target_path, None);
+            evidence = evidence_mixer::mix_and_rank(evidence, web, 20);
+        }
+    }
 
-    // Complete trace
+    let resolved = crate::llm::config::resolve_for_scene(&state.db, AiScene::DraftingAssist)?;
+    let provider_config = resolved.to_provider_config(AiScene::DraftingAssist);
+
+    let mut result = document_workflow::execute_document_check(&input, evidence.clone())?;
+    let heuristic = result.clone();
+
+    match document_workflow::enhance_document_check_with_llm(
+        &state.db,
+        &app_handle,
+        &provider_config,
+        &input,
+        result,
+        &evidence,
+    )
+    .await
+    {
+        Ok(enhanced) => result = enhanced,
+        Err(e) => {
+            tracing::warn!("Document check LLM failed: {e}");
+            result = heuristic;
+            result.analysis_summary = Some(format!(
+                "启发式检查已完成；LLM 综合分析暂不可用：{e}"
+            ));
+        }
+    }
+
+    result.request_id = request_id.clone();
+
+    let packet_ids: Vec<String> = result.evidence_used.iter().map(|p| p.id.clone()).collect();
     let _ = TraceRecorder::complete(
         &state.db,
         &request_id,
@@ -118,20 +170,101 @@ pub async fn document_check_execute(
         None,
         None,
         None,
-        None,
+        Some(&packet_ids),
         None,
         None,
         None,
         None,
     );
 
-    // Emit event
     let _ = app_handle.emit("ai:document_check_complete", &request_id);
 
     Ok(result)
 }
 
-/// Retrieve evidence for chapter writing.
+fn writing_intent_for_chapter(intent: &WritingIntent) -> WritingIntent {
+    match *intent {
+        WritingIntent::ChapterContinue => WritingIntent::Continue,
+        WritingIntent::ChapterRestructure => WritingIntent::Outline,
+        _ => WritingIntent::Rewrite,
+    }
+}
+
+async fn resolve_chapter_replacement(
+    state: &AppState,
+    app_handle: &AppHandle,
+    provider_config: &ProviderConfig,
+    intent: &WritingIntent,
+    input: &ChapterWritingInput,
+    full_content: &str,
+    evidence: &[crate::ai_runtime::ContextPacket],
+) -> (String, TokenUsage, String) {
+    match chapter_workflow::generate_chapter_content_with_llm(
+        &state.db,
+        app_handle,
+        provider_config,
+        intent,
+        &input.chapter,
+        full_content,
+        &input.writing_goal,
+        evidence,
+    )
+    .await
+    {
+        Ok((text, usage)) => {
+            return (
+                text,
+                usage,
+                "已根据目标生成章节改写建议".to_string(),
+            );
+        }
+        Err(e) => tracing::warn!("Chapter LLM failed: {e}"),
+    }
+
+    let selection_intent = writing_intent_for_chapter(intent);
+    match writing_workflow::generate_replacement_with_llm(
+        &state.db,
+        app_handle,
+        provider_config,
+        &selection_intent,
+        &input.chapter.content,
+        full_content,
+        &input.writing_goal,
+        evidence,
+    )
+    .await
+    {
+        Ok((text, usage)) => {
+            return (
+                text,
+                TokenUsage {
+                    prompt_tokens: usage.prompt_tokens,
+                    completion_tokens: usage.completion_tokens,
+                    total_tokens: usage.total_tokens,
+                },
+                "章节模型不可用，已用选区级写作回退生成建议".to_string(),
+            );
+        }
+        Err(e) => tracing::warn!("Chapter selection-level LLM failed: {e}"),
+    }
+
+    (
+        chapter_workflow::chapter_heuristic_fallback(intent, &input.chapter, &input.writing_goal),
+        TokenUsage {
+            prompt_tokens: 0,
+            completion_tokens: 0,
+            total_tokens: 0,
+        },
+        "模型暂不可用，已应用结构化启发式回退（请人工复核）".to_string(),
+    )
+}
+
+fn read_note_content(state: &AppState, path: &str) -> AppResult<String> {
+    let vault = state.vault_path()?;
+    let abs = crate::storage::paths::resolve_vault_path(&vault, path)?;
+    Ok(std::fs::read_to_string(abs)?)
+}
+
 async fn retrieve_chapter_evidence(
     state: &AppState,
     input: &ChapterWritingInput,
@@ -147,14 +280,11 @@ async fn retrieve_chapter_evidence(
         scope: RetrievalScope::default(),
     };
 
-    let packets = state
+    state
         .db
-        .with_conn(|conn| crate::ai_runtime::retrieval_broker::hybrid_retrieve(conn, &request))?;
-
-    Ok(packets)
+        .with_conn(|conn| crate::ai_runtime::retrieval_broker::hybrid_retrieve(conn, &request))
 }
 
-/// Retrieve evidence for document check.
 async fn retrieve_document_evidence(
     state: &AppState,
     input: &DocumentCheckInput,
@@ -168,11 +298,9 @@ async fn retrieve_document_evidence(
         scope: RetrievalScope::default(),
     };
 
-    let packets = state
+    state
         .db
-        .with_conn(|conn| crate::ai_runtime::retrieval_broker::hybrid_retrieve(conn, &request))?;
-
-    Ok(packets)
+        .with_conn(|conn| crate::ai_runtime::retrieval_broker::hybrid_retrieve(conn, &request))
 }
 
 /// Parse chapters from content (exposed for frontend).

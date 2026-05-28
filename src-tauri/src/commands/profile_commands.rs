@@ -97,6 +97,24 @@ pub fn profile_get(state: State<'_, AppState>, key: String) -> AppResult<Option<
     })
 }
 
+/// 以纯文本描述保存规则（写入 `{"description": "..."}` 结构）。
+#[tauri::command]
+pub fn profile_set_rule(
+    state: State<'_, AppState>,
+    key: String,
+    description: String,
+    source: Option<String>,
+) -> AppResult<()> {
+    let value = serde_json::json!({ "description": description.trim() });
+    profile_set(
+        state,
+        key,
+        value,
+        source.unwrap_or_else(|| "user_manual".to_string()),
+        Some(1.0),
+    )
+}
+
 /// Set (upsert) a user profile entry.
 ///
 /// Safety: rejects values containing API keys, passwords, or sensitive content.

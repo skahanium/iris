@@ -2,6 +2,8 @@ import { useCallback, useState } from "react";
 
 import { AiPanel } from "@/components/ai/AiPanel";
 import { CitationTaskPanel } from "@/components/ai/CitationTaskPanel";
+import { AiRulesPanel } from "@/components/ai/AiRulesPanel";
+import { ChapterDocumentPanel } from "@/components/ai/ChapterDocumentPanel";
 import { OrganizePanel } from "@/components/ai/OrganizePanel";
 import { ResearchPanel } from "@/components/ai/ResearchPanel";
 import {
@@ -9,15 +11,7 @@ import {
   type WritingEditorContext,
 } from "@/components/ai/WritingTaskPanel";
 import { cn } from "@/lib/utils";
-import type { WorkflowTask } from "@/types/ai";
-
-const TASKS: { id: WorkflowTask; label: string }[] = [
-  { id: "research", label: "研究问题" },
-  { id: "writing", label: "辅助写作" },
-  { id: "citation", label: "检查引用" },
-  { id: "organize", label: "整理建库" },
-  { id: "chat", label: "自由对话" },
-];
+import { WORKFLOW_TASK_DEFINITIONS, type WorkflowTask } from "@/types/ai";
 
 interface AiWorkflowPanelProps {
   notePath: string | null;
@@ -68,8 +62,19 @@ export function AiWorkflowPanel({
             webSearch={webSearch}
           />
         );
+      case "chapter_doc":
+        return (
+          <ChapterDocumentPanel
+            notePath={notePath}
+            noteContent={noteContent}
+            webSearch={webSearch}
+            onPatchApplied={onPatchApplied}
+          />
+        );
       case "organize":
         return <OrganizePanel onApplied={onVaultRefresh} />;
+      case "rules":
+        return <AiRulesPanel />;
       case "chat":
         return (
           <AiPanel
@@ -99,7 +104,7 @@ export function AiWorkflowPanel({
   return (
     <div className="flex h-full flex-col bg-panel">
       <div className="flex shrink-0 flex-wrap gap-1 border-b border-border px-2 py-2">
-        {TASKS.map((t) => (
+        {WORKFLOW_TASK_DEFINITIONS.map((t) => (
           <button
             key={t.id}
             type="button"

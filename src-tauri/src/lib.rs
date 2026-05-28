@@ -152,6 +152,7 @@ pub fn run() {
             commands::profile_commands::profile_list,
             commands::profile_commands::profile_get,
             commands::profile_commands::profile_set,
+            commands::profile_commands::profile_set_rule,
             commands::profile_commands::profile_deactivate,
             commands::profile_commands::profile_delete,
             commands::profile_commands::inbox_list,

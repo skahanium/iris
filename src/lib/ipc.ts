@@ -793,6 +793,7 @@ export async function chapterWritingExecute(params: {
 export async function documentCheckExecute(params: {
   target_path: string;
   content: string;
+  base_content_hash?: string;
   check_type: string;
   web_authorized?: boolean;
 }): Promise<{
@@ -871,11 +872,13 @@ export async function documentCheckExecute(params: {
     completion_tokens: number;
     total_tokens: number;
   };
+  analysis_summary?: string | null;
 }> {
   return invoke("document_check_execute", {
     input: {
       target_path: params.target_path,
       content: params.content,
+      base_content_hash: params.base_content_hash ?? "",
       check_type: params.check_type,
       web_authorized: params.web_authorized ?? false,
     },
@@ -934,6 +937,19 @@ export async function profileSet(params: {
     value: params.value,
     source: params.source,
     confidence: params.confidence ?? 1.0,
+  });
+}
+
+/** 以纯文本保存用户确认的规则（Phase 5） */
+export async function profileSetRule(params: {
+  key: string;
+  description: string;
+  source?: string;
+}): Promise<void> {
+  return invoke("profile_set_rule", {
+    key: params.key,
+    description: params.description,
+    source: params.source ?? null,
   });
 }
 

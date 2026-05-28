@@ -2,7 +2,7 @@ import { Moon, Sun } from "lucide-react";
 
 import { LlmRoutingSection } from "@/components/settings/LlmRoutingSection";
 import { MinimaxSearchSection } from "@/components/settings/MinimaxSearchSection";
-import { ProfileManager } from "@/components/ai/ProfileManager";
+import { AiRulesPanel } from "@/components/ai/AiRulesPanel";
 import { Button } from "@/components/ui/button";
 import { IrisOverlay } from "@/components/ui/iris-overlay";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -53,13 +53,15 @@ export function SettingsPanel({
           <LlmRoutingSection open={open} />
           <MinimaxSearchSection open={open} />
 
-          {/* AI 记忆与规则 */}
+          {/* AI 记忆与规则（与侧栏「规则中心」同步） */}
           <div>
             <label className="mb-1.5 block text-xs font-medium">AI 记忆与规则</label>
             <p className="mb-2 text-xs text-muted-foreground">
-              AI 会在对话中学习并请求确认保存规则。规则可在下方查看、停用或删除。
+              与 AI 侧栏「规则中心」相同数据；对话中确认的规则也会出现在此处。
             </p>
-            <ProfileManager />
+            <div className="max-h-[360px] overflow-hidden rounded-md border border-border">
+              <AiRulesPanel compact />
+            </div>
           </div>
         </div>
       </ScrollArea>

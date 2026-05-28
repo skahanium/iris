@@ -78,8 +78,40 @@ export type WorkflowTask =
   | "research"
   | "writing"
   | "citation"
+  | "chapter_doc"
   | "organize"
+  | "rules"
   | "chat";
+
+/** 侧栏任务入口（与 `AiWorkflowPanel` 一致） */
+export const WORKFLOW_TASK_DEFINITIONS: ReadonlyArray<{
+  id: WorkflowTask;
+  label: string;
+}> = [
+  { id: "research", label: "研究问题" },
+  { id: "writing", label: "辅助写作" },
+  { id: "citation", label: "检查引用" },
+  { id: "chapter_doc", label: "章节/文档" },
+  { id: "organize", label: "整理建库" },
+  { id: "rules", label: "规则中心" },
+  { id: "chat", label: "自由对话" },
+] as const;
+
+/** 文档级检查类型 */
+export type DocumentCheckType =
+  | "outline_check"
+  | "citation_gap_check"
+  | "style_consistency"
+  | "cross_doc_reference";
+
+export interface ChapterInfo {
+  heading_level: number;
+  heading_text: string;
+  content_start: number;
+  content_end: number;
+  content: string;
+  heading_path: string;
+}
 
 export interface ToolSpec {
   name: string;
