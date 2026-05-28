@@ -90,7 +90,7 @@ export function RuleConfirmDialog({
           </div>
 
           <div className="flex items-start gap-2 rounded-md border border-muted bg-muted/30 p-2">
-            <AlertTriangle className="h-4 w-4 text-muted-foreground mt-0.5 shrink-0" />
+            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
             <p className="text-xs text-muted-foreground">
               保存后可在"设置 → AI 记忆与规则"中查看、停用或删除此规则。
             </p>
@@ -99,22 +99,18 @@ export function RuleConfirmDialog({
 
         <DialogFooter>
           <Button variant="ghost" size="sm" onClick={handleReject}>
-            <X className="h-4 w-4 mr-1" />
+            <X className="mr-1 h-4 w-4" />
             跳过
           </Button>
-          <Button
-            size="sm"
-            onClick={handleConfirm}
-            disabled={confirmed}
-          >
+          <Button size="sm" onClick={handleConfirm} disabled={confirmed}>
             {confirmed ? (
               <>
-                <Check className="h-4 w-4 mr-1" />
+                <Check className="mr-1 h-4 w-4" />
                 已保存
               </>
             ) : (
               <>
-                <Check className="h-4 w-4 mr-1" />
+                <Check className="mr-1 h-4 w-4" />
                 确认保存
               </>
             )}

@@ -329,6 +329,17 @@ v0.1 已用 `fastembed` + `chunk_embeddings` BLOB + Rust 全量余弦（见 [doc
 
 ---
 
+## v0.5.2 — LLM 连接统一
+
+**目标**：四场景厂商/模型路由、统一凭据与 Base URL、底栏 LLM/搜索 API 连通性指示、长上下文预算与 DeepSeek 前缀缓存可观测。
+
+- [x] `settings.llm_routing` + `llm::config::resolve_for_scene`
+- [x] 设置页 AI 连接（`LlmRoutingSection`）与 `llm_config_*` IPC
+- [x] 底栏 `ConnectivityIndicators` + `connectivity_status`
+- [x] 动态 token 预算、`long_context` 笔记全文注入、分层 messages
+- [x] DeepSeek V4 catalog、usage 缓存写入 `llm_usage_last`
+- 文档：[docs/llm-routing.md](docs/llm-routing.md)
+
 ## v0.5.1 — 语料库与范围检索
 
 **目标**：在命令浮层（非侧边栏文件树）前提下，用 `.iris/corpora.toml` 声明场景默认语料库，并在 AI 对话中通过 `@` 指定文件夹/文档检索范围。

@@ -47,6 +47,29 @@ describe("IrisOverlay", () => {
     expect(scrim?.className).toContain("bg-overlay-scrim");
   });
 
+  it("omits the title bar when showTitleBar is false", () => {
+    renderOverlay(
+      <IrisOverlay
+        open
+        title="命令面板"
+        size="palette"
+        showTitleBar={false}
+        onClose={() => {}}
+      >
+        内容
+      </IrisOverlay>,
+    );
+
+    const dialog = document.querySelector('[role="dialog"]');
+    const visibleTitle = dialog?.querySelector(
+      ".text-sm.font-semibold.tracking-tight",
+    );
+
+    expect(dialog?.getAttribute("aria-label")).toBe("命令面板");
+    expect(visibleTitle).toBeNull();
+    expect(dialog?.textContent).toContain("内容");
+  });
+
   it("closes when the scrim or Escape key is pressed", () => {
     const onClose = vi.fn();
     renderOverlay(

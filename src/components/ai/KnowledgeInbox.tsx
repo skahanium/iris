@@ -49,7 +49,7 @@ export function KnowledgeInbox() {
     written: 0,
   });
   const [activeTab, setActiveTab] = useState<"inbox" | "archived" | "written">(
-    "inbox"
+    "inbox",
   );
   const [expandedId, setExpandedId] = useState<number | null>(null);
 
@@ -78,7 +78,7 @@ export function KnowledgeInbox() {
       });
       void refresh();
     },
-    [refresh]
+    [refresh],
   );
 
   const handleDelete = useCallback(
@@ -86,11 +86,16 @@ export function KnowledgeInbox() {
       await inboxDelete({ deposit_id: id });
       void refresh();
     },
-    [refresh]
+    [refresh],
   );
 
   const tabs = [
-    { key: "inbox" as const, label: "收件箱", count: counts.inbox, icon: Inbox },
+    {
+      key: "inbox" as const,
+      label: "收件箱",
+      count: counts.inbox,
+      icon: Inbox,
+    },
     {
       key: "archived" as const,
       label: "已归档",
@@ -109,7 +114,7 @@ export function KnowledgeInbox() {
     <div className="flex h-full flex-col">
       {/* Header */}
       <div className="border-b border-border p-3">
-        <div className="flex items-center gap-2 mb-2">
+        <div className="mb-2 flex items-center gap-2">
           <Inbox className="h-4 w-4 text-primary" />
           <span className="text-sm font-medium">AI 收件箱</span>
         </div>
@@ -131,7 +136,7 @@ export function KnowledgeInbox() {
               {tab.count > 0 && (
                 <Badge
                   variant={activeTab === tab.key ? "secondary" : "outline"}
-                  className="text-[10px] ml-0.5"
+                  className="ml-0.5 text-[10px]"
                 >
                   {tab.count}
                 </Badge>
@@ -144,8 +149,8 @@ export function KnowledgeInbox() {
       {/* Content */}
       <ScrollArea className="flex-1">
         {deposits.length === 0 ? (
-          <div className="flex flex-col items-center justify-center h-full text-muted-foreground">
-            <Inbox className="h-8 w-8 mb-2 opacity-30" />
+          <div className="flex h-full flex-col items-center justify-center text-muted-foreground">
+            <Inbox className="mb-2 h-8 w-8 opacity-30" />
             <p className="text-sm">
               {activeTab === "inbox" ? "收件箱为空" : "没有记录"}
             </p>
@@ -158,10 +163,10 @@ export function KnowledgeInbox() {
                   <div className="flex items-center gap-2">
                     <button
                       type="button"
-                      className="flex items-center gap-1 flex-1 text-left"
+                      className="flex flex-1 items-center gap-1 text-left"
                       onClick={() =>
                         setExpandedId(
-                          expandedId === deposit.id ? null : deposit.id
+                          expandedId === deposit.id ? null : deposit.id,
                         )
                       }
                     >
@@ -173,14 +178,14 @@ export function KnowledgeInbox() {
                       <Badge variant="outline" className="text-[10px]">
                         {deposit.deposit_type}
                       </Badge>
-                      <span className="text-xs truncate">
+                      <span className="truncate text-xs">
                         {deposit.content.slice(0, 50)}
                         {deposit.content.length > 50 ? "…" : ""}
                       </span>
                     </button>
 
                     {activeTab === "inbox" && (
-                      <div className="flex gap-1 shrink-0">
+                      <div className="flex shrink-0 gap-1">
                         <Button
                           variant="ghost"
                           size="icon"
@@ -206,7 +211,7 @@ export function KnowledgeInbox() {
 
                 {expandedId === deposit.id && (
                   <CardContent className="p-2 pt-0">
-                    <div className="rounded-md bg-muted p-2 text-xs whitespace-pre-wrap">
+                    <div className="whitespace-pre-wrap rounded-md bg-muted p-2 text-xs">
                       {deposit.content}
                     </div>
                     <div className="mt-1 text-[10px] text-muted-foreground">

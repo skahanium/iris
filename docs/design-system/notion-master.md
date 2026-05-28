@@ -8,12 +8,12 @@
 
 ## 色彩（HSL 分量）
 
-| Token | 暗色 `:root` | 亮色 `.light` |
-|-------|--------------|---------------|
-| `--background` | `0 0% 10%` | `0 0% 100%` |
-| `--foreground` | `0 0% 93%` | `0 0% 13%` |
-| `--primary` | `210 18% 62%` | `210 12% 45%` |
-| `--border` | `0 0% 18%` | `0 0% 90%` |
+| Token          | 暗色 `:root`  | 亮色 `.light` |
+| -------------- | ------------- | ------------- |
+| `--background` | `0 0% 10%`    | `0 0% 100%`   |
+| `--foreground` | `0 0% 93%`    | `0 0% 13%`    |
+| `--primary`    | `210 18% 62%` | `210 12% 45%` |
+| `--border`     | `0 0% 18%`    | `0 0% 90%`    |
 
 `--editor-paper` / `--editor-ink` 与 `--background` / `--foreground` 对齐（兼容旧类名）。
 
@@ -26,7 +26,14 @@
 
 `4px` / `6px` / `8px` / `12px`（浮层）
 
+## Chrome token（v0.4.1-ui）
+
+- 表面：`--surface-chrome` / `--surface-elevated` / `--surface-inset`
+- 命令选中：`--command-highlight-*`（细 ring，非色块）
+- AI：`--ai-user-bg`、`--ai-composer-bg`；信任级别用 muted badge，不用 purple 主色
+
 ## 反模式
 
 - 衬线正文、信纸行线、段首缩进、纸页阴影卡片
 - 赭铜 accent、高饱和紫渐变
+- 命令/AI 列表大面积 primary 铺底、emoji 作结构图标

@@ -28,6 +28,13 @@
     --destructive: 0 55% 55%;
     --destructive-foreground: 0 0% 98%;
 
+    /* 底栏连通性指示（见 docs/llm-routing.md） */
+    --status-llm-ready: 160 84% 39%;
+    --status-llm-missing: 38 92% 50%;
+    --status-llm-error: 0 72% 51%;
+    --status-search-api: 173 80% 40%;
+    --status-search-fallback: 0 0% 45%;
+
     --input: 0 0% 18%;
     --secondary: 0 0% 16%;
     --secondary-foreground: 0 0% 80%;

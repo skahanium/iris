@@ -36,6 +36,7 @@ import { useAutoVaultIndex } from "@/hooks/useAutoVaultIndex";
 import { useEditorSave } from "@/hooks/useEditorSave";
 import { useEditorZoom } from "@/hooks/useEditorZoom";
 import { useInlineAi } from "@/hooks/useInlineAi";
+import { useConnectivityStatus } from "@/hooks/useConnectivityStatus";
 import { useLlmProvider } from "@/hooks/useLlmProvider";
 import { useOverlayManager } from "@/hooks/useOverlayManager";
 import { useTabManager } from "@/hooks/useTabManager";
@@ -118,6 +119,7 @@ function App() {
   const [editorInstance, setEditorInstance] = useState<Editor | null>(null);
   const overlays = useOverlayManager();
   const { provider: llmProvider } = useLlmProvider();
+  const { status: connectivityStatus } = useConnectivityStatus();
 
   const bumpVaultIndex = useCallback(
     () => setVaultIndexEpoch((n) => n + 1),
@@ -559,6 +561,8 @@ function App() {
             onEditorZoomReset={resetZoom}
             webSearch={webSearch}
             onWebSearchChange={setWebSearch}
+            connectivity={connectivityStatus}
+            onOpenConnectivitySettings={() => overlays.openOverlay("settings")}
           />
         }
         overlays={
@@ -594,7 +598,6 @@ function App() {
               <SettingsPanel
                 open={overlays.settingsOpen}
                 onClose={() => overlays.closeOverlay("settings")}
-                provider={llmProvider}
                 theme={theme}
                 onThemeChange={(t) => void setTheme(t)}
               />

@@ -8,16 +8,15 @@
 
 ## 为什么选择 Iris
 
-| 特性 | Iris | Obsidian | Notion | Logseq |
-|------|------|----------|--------|--------|
-| 数据格式 | `.md` 纯文本 | `.md` 纯文本 | 专有格式 | `.md` |
-| 本地优先 | :white_check_mark: | :white_check_mark: | :x: | :white_check_mark: |
-| AI 原生编辑器 | :white_check_mark: 内联 AI | :x: 插件实现 | :white_check_mark: | :x: |
-| 打包体积 | ~10MB | ~200MB | N/A | ~300MB |
-| 开源许可证 | AGPL-3.0 | 专有 | 专有 | AGPL-3.0 |
-| 向量语义搜索 | :white_check_mark: 内置 | :x: | :white_check_mark: | :x: |
-| 第三方插件生态 | :x: **不计划** | :white_check_mark: | :x: | :x: |
-
+| 特性           | Iris                       | Obsidian           | Notion             | Logseq             |
+| -------------- | -------------------------- | ------------------ | ------------------ | ------------------ |
+| 数据格式       | `.md` 纯文本               | `.md` 纯文本       | 专有格式           | `.md`              |
+| 本地优先       | :white_check_mark:         | :white_check_mark: | :x:                | :white_check_mark: |
+| AI 原生编辑器  | :white_check_mark: 内联 AI | :x: 插件实现       | :white_check_mark: | :x:                |
+| 打包体积       | ~10MB                      | ~200MB             | N/A                | ~300MB             |
+| 开源许可证     | AGPL-3.0                   | 专有               | 专有               | AGPL-3.0           |
+| 向量语义搜索   | :white_check_mark: 内置    | :x:                | :white_check_mark: | :x:                |
+| 第三方插件生态 | :x: **不计划**             | :white_check_mark: | :x:                | :x:                |
 
 ## 技术栈
 
@@ -40,23 +39,28 @@
 ## 核心能力
 
 ### 内联 AI
+
 选中一段文字 → 改写 / 扩写 / 翻译 / 简化。AI 在编辑器的节点层级上操作，而非字符串拼接。结果以带操作按钮的节点插入（接受 / 重试 / 回退），你决定保留什么。
 
 ### 语义搜索
+
 用自然语言搜索笔记。"上个月关于性能优化的会议记录" — 不是关键词匹配，是语义理解。基于向量嵌入，Top-K 召回。
 
 ### 上下文问答
+
 基于当前笔记和关联笔记的全文内容向 AI 提问。不复制粘贴，不切换窗口。
 
 ### / 命令唤起
+
 在编辑器中输入 `/` → AI 命令菜单：总结、生成大纲、头脑风暴、翻译全文、修复语法……可以在设置中自定义。
 
 ### 数据自主权
+
 每个笔记是独立的 `.md` 文件。用 VS Code、Typora、任何编辑器都能打开。SQLite 是缓存，文件是数据。
 
 ### 界面取向
-**Notion 式扁平编辑**（灰阶壳层 + 居中内容栏）为主，**命令优先**（`Ctrl+P` / 可收起 AI 侧栏）为辅；不做第三方插件生态。见 [设计系统](docs/design-system.md) 与 [路线图 · 体验方向](ROADMAP.md#体验方向与路线图绑定)。
 
+**Notion 式扁平编辑**（灰阶壳层 + 居中内容栏）为主，**命令优先**（`Ctrl+P` / 可收起 AI 侧栏）为辅；不做第三方插件生态。见 [设计系统](docs/design-system.md) 与 [路线图 · 体验方向](ROADMAP.md#体验方向与路线图绑定)。
 
 ## 快速开始
 
@@ -94,7 +98,6 @@ npm run tauri build
 3. 填入 API Key（存入操作系统凭据管理器，不落盘）
 4. 可选：联网搜索需配置 Bing Key（见侧栏说明）；`Ctrl+Shift+A` 可收起 AI 侧栏以专注写作
 
-
 ## 项目结构
 
 ```
@@ -114,7 +117,6 @@ iris/
 
 图标维护见 [scripts/assets/README.md](./scripts/assets/README.md)。
 
-
 ## 设计哲学
 
 - **文件即数据，数据库即缓存** — 你的笔记是 `.md` 文件，永远如此。SQLite 只做索引加速。
@@ -126,14 +128,13 @@ iris/
 
 ## 文档
 
-| 你想… | 阅读 |
-|--------|------|
-| 看版本计划与体验排期 | [ROADMAP.md](./ROADMAP.md) |
-| 改界面 / token / 纸墨规范 | [docs/design-system.md](docs/design-system.md) |
-| 查架构、IPC、数据流 | [ARCHITECTURE.md](./ARCHITECTURE.md) |
-| 参与开发 | [CONTRIBUTING.md](./CONTRIBUTING.md) · [AGENTS.md](./AGENTS.md) |
-| 全部文档列表 | [docs/README.md](docs/README.md) |
-
+| 你想…                     | 阅读                                                            |
+| ------------------------- | --------------------------------------------------------------- |
+| 看版本计划与体验排期      | [ROADMAP.md](./ROADMAP.md)                                      |
+| 改界面 / token / 纸墨规范 | [docs/design-system.md](docs/design-system.md)                  |
+| 查架构、IPC、数据流       | [ARCHITECTURE.md](./ARCHITECTURE.md)                            |
+| 参与开发                  | [CONTRIBUTING.md](./CONTRIBUTING.md) · [AGENTS.md](./AGENTS.md) |
+| 全部文档列表              | [docs/README.md](docs/README.md)                                |
 
 ## 许可证
 

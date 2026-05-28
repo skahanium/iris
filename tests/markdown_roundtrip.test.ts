@@ -183,7 +183,7 @@ describe("iris note title round-trip (frontmatter)", () => {
   });
 
   it("allows empty title in frontmatter", () => {
-    const md = "---\ntitle: \"\"\n---\n\n";
+    const md = '---\ntitle: ""\n---\n\n';
     const out = noteMarkdownRoundTrip(md);
     expect(out).toContain('title: ""');
   });

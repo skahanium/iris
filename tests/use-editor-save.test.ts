@@ -1,19 +1,9 @@
 import type { Editor } from "@tiptap/react";
 import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import {
-  afterEach,
-  beforeEach,
-  describe,
-  expect,
-  it,
-  vi,
-} from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import {
-  EDITOR_SAVE_DEBOUNCE_MS,
-  useEditorSave,
-} from "@/hooks/useEditorSave";
+import { EDITOR_SAVE_DEBOUNCE_MS, useEditorSave } from "@/hooks/useEditorSave";
 
 const fileWrite = vi.fn().mockResolvedValue({
   id: 0,
@@ -32,7 +22,8 @@ vi.mock("@/lib/ipc", () => ({
 }));
 
 vi.mock("@/lib/markdown", () => ({
-  htmlToMarkdown: () => "# saved",
+  htmlToMarkdown: () => "# saved\n\nSubstantive body.",
+  stripLeadingBodyTitleHeading: (body: string) => body,
 }));
 
 function TestHarness({
@@ -96,7 +87,10 @@ describe("useEditorSave", () => {
     });
 
     expect(fileWrite).toHaveBeenCalledTimes(1);
-    expect(fileWrite).toHaveBeenCalledWith("note.md", "# saved");
+    expect(fileWrite).toHaveBeenCalledWith(
+      "note.md",
+      "# saved\n\nSubstantive body.",
+    );
     expect(versionSaveManual).not.toHaveBeenCalled();
     expect(versionSaveIdle).not.toHaveBeenCalled();
   });

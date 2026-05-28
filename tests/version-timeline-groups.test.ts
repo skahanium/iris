@@ -85,9 +85,7 @@ describe("groupVersions", () => {
 describe("isVisibleInDayList", () => {
   it("excludes auto_idle and finalized", () => {
     expect(isVisibleInDayList(entry({ id: 1, kind: "manual" }))).toBe(true);
-    expect(isVisibleInDayList(entry({ id: 2, kind: "auto_idle" }))).toBe(
-      false,
-    );
+    expect(isVisibleInDayList(entry({ id: 2, kind: "auto_idle" }))).toBe(false);
     expect(
       isVisibleInDayList(
         entry({ id: 3, kind: "finalize", is_finalized: true }),

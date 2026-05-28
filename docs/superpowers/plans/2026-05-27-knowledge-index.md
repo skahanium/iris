@@ -12,25 +12,26 @@
 
 ## 文件结构
 
-| 文件 | 职责 |
-|------|------|
-| `migrations/010_knowledge_index.sql` | 4 张新表 + 2 张 vec 虚拟表 |
-| `knowledge/mod.rs` | 模块根 + anchor_key 生成工具 |
-| `knowledge/anchors.rs` | 语义锚点提取（结构启发 + LLM 确认） |
-| `knowledge/regulations.rs` | 法规条款解析（正则切条 + LLM 关键词 + embedding） |
-| `knowledge/templates.rs` | 文种模板提取（LLM 结构分析） |
-| `knowledge/graph.rs` | 块级链接建议（向量相似度 + 显式链接发现） |
-| `ai_runtime/retrieval_broker.rs` | 混合检索引擎（5 层融合） |
-| `ai_runtime/packet_builder.rs` | 对接真实检索结果 |
-| `commands/ai_commands.rs` | 新增知识索引 IPC |
-| `lib.rs` | 注册 knowledge 模块 |
-| `storage/migrate.rs` | 注册 migration 010 |
+| 文件                                 | 职责                                              |
+| ------------------------------------ | ------------------------------------------------- |
+| `migrations/010_knowledge_index.sql` | 4 张新表 + 2 张 vec 虚拟表                        |
+| `knowledge/mod.rs`                   | 模块根 + anchor_key 生成工具                      |
+| `knowledge/anchors.rs`               | 语义锚点提取（结构启发 + LLM 确认）               |
+| `knowledge/regulations.rs`           | 法规条款解析（正则切条 + LLM 关键词 + embedding） |
+| `knowledge/templates.rs`             | 文种模板提取（LLM 结构分析）                      |
+| `knowledge/graph.rs`                 | 块级链接建议（向量相似度 + 显式链接发现）         |
+| `ai_runtime/retrieval_broker.rs`     | 混合检索引擎（5 层融合）                          |
+| `ai_runtime/packet_builder.rs`       | 对接真实检索结果                                  |
+| `commands/ai_commands.rs`            | 新增知识索引 IPC                                  |
+| `lib.rs`                             | 注册 knowledge 模块                               |
+| `storage/migrate.rs`                 | 注册 migration 010                                |
 
 ---
 
 ## Task 1: Migration 010 — Knowledge Index 表
 
 **Files:**
+
 - Create: `src-tauri/migrations/010_knowledge_index.sql`
 - Create: `src-tauri/migrations/010_knowledge_index.down.sql`
 - Modify: `src-tauri/src/storage/migrate.rs`
@@ -150,12 +151,14 @@ DROP TABLE IF EXISTS vec_anchors;
 修改 `src-tauri/src/storage/migrate.rs`：
 
 在 `include_str!` 块末尾添加：
+
 ```rust
 const MIGRATION_010_UP: &str = include_str!("../../migrations/010_knowledge_index.sql");
 const MIGRATION_010_DOWN: &str = include_str!("../../migrations/010_knowledge_index.down.sql");
 ```
 
 在 `migrate_up` 函数末尾（`Ok(())` 前）添加：
+
 ```rust
     let v10_applied: bool = conn
         .query_row(
@@ -176,6 +179,7 @@ const MIGRATION_010_DOWN: &str = include_str!("../../migrations/010_knowledge_in
 ```
 
 在 `migrate_down` 函数开头（`MIGRATION_009_DOWN` 块之后）添加：
+
 ```rust
     let _ = conn.execute_batch(MIGRATION_010_DOWN);
     let _ = conn.execute(
@@ -185,6 +189,7 @@ const MIGRATION_010_DOWN: &str = include_str!("../../migrations/010_knowledge_in
 ```
 
 在 `mod tests` 块末尾添加测试：
+
 ```rust
     #[test]
     fn migration_010_creates_knowledge_tables() {
@@ -253,6 +258,7 @@ git commit -m "feat(knowledge): add migration 010 for semantic_anchors, regulati
 ## Task 2: knowledge/mod.rs — 模块根 + anchor_key 工具
 
 **Files:**
+
 - Create: `src-tauri/src/knowledge/mod.rs`
 
 - [ ] **Step 1: 创建模块根文件**
@@ -367,6 +373,7 @@ git commit -m "feat(knowledge): add knowledge module root with anchor_key genera
 ## Task 3: knowledge/regulations.rs — 法规条款解析
 
 **Files:**
+
 - Create: `src-tauri/src/knowledge/regulations.rs`
 
 - [ ] **Step 1: 创建法规解析模块**
@@ -770,6 +777,7 @@ git commit -m "feat(knowledge): add regulation clause parser with regex chunking
 ## Task 4: knowledge/anchors.rs — 语义锚点提取
 
 **Files:**
+
 - Create: `src-tauri/src/knowledge/anchors.rs`
 
 - [ ] **Step 1: 创建锚点提取模块**
@@ -1206,6 +1214,7 @@ git commit -m "feat(knowledge): add semantic anchor extraction with structural h
 ## Task 5: knowledge/templates.rs + knowledge/graph.rs
 
 **Files:**
+
 - Create: `src-tauri/src/knowledge/templates.rs`
 - Create: `src-tauri/src/knowledge/graph.rs`
 
@@ -1507,6 +1516,7 @@ git commit -m "feat(knowledge): add genre template storage and block link graph 
 ## Task 6: ai_runtime/retrieval_broker.rs — 混合检索引擎
 
 **Files:**
+
 - Create: `src-tauri/src/ai_runtime/retrieval_broker.rs`
 - Modify: `src-tauri/src/ai_runtime/mod.rs` (add `pub mod retrieval_broker;`)
 
@@ -1939,6 +1949,7 @@ git commit -m "feat(ai): add hybrid retrieval broker with FTS+vector+graph+exact
 ## Task 7: 更新 packet_builder 对接真实检索
 
 **Files:**
+
 - Modify: `src-tauri/src/ai_runtime/packet_builder.rs`
 
 - [ ] **Step 1: 重写 packet_builder 使用 retrieval_broker**
@@ -2036,10 +2047,13 @@ mod tests {
 Read `src-tauri/src/commands/ai_commands.rs`, find the `context_assemble` function, and update it to pass `&state.db` and `file_id` to the new `build_context_packets`:
 
 The key change is replacing:
+
 ```rust
 let (packets, context_status) = build_context_packets(scene, note_path.as_deref(), &query);
 ```
+
 with:
+
 ```rust
 // Resolve file_id for graph layer
 let file_id = match &note_path {
@@ -2082,6 +2096,7 @@ git commit -m "feat(ai): wire packet_builder to hybrid retrieval broker"
 ## Task 8: 注册 knowledge 模块 + 新增 IPC 命令
 
 **Files:**
+
 - Modify: `src-tauri/src/lib.rs`
 - Modify: `src-tauri/src/commands/ai_commands.rs`
 
@@ -2189,7 +2204,10 @@ pub async fn search_hybrid(
 在 `src/lib/ipc.ts` 末尾添加：
 
 ```typescript
-export async function knowledgeReindex(): Promise<{ anchors: number; regulations: number }> {
+export async function knowledgeReindex(): Promise<{
+  anchors: number;
+  regulations: number;
+}> {
   return invoke("knowledge_reindex");
 }
 
@@ -2209,6 +2227,7 @@ export async function searchHybrid(params: {
 ```
 
 And add the import at the top:
+
 ```typescript
 import type { ContextPacket } from "@/types/ai";
 ```
@@ -2231,6 +2250,7 @@ git commit -m "feat(knowledge): register knowledge module, add reindex and hybri
 ## Task 9: 整合测试 + 全量验证
 
 **Files:**
+
 - 运行全量测试套件
 
 - [ ] **Step 1: Rust 测试全量**
@@ -2260,6 +2280,7 @@ git add -A && git commit -m "chore: Phase B integration fixes"
 ## 自审清单
 
 **1. Spec coverage:**
+
 - ✅ 7.1 检索层级 (FTS/Vector/Graph/Exact/Template) — Task 6 retrieval_broker
 - ✅ 7.2 语义锚点 — Task 4 anchors.rs + migration 010
 - ✅ 7.3 块级链接图谱 — Task 5 graph.rs + migration 010

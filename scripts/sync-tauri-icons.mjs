@@ -8,7 +8,9 @@ const from = path.join(root, "src-tauri", "icons-staging");
 const to = path.join(root, "src-tauri", "icons");
 
 if (!fs.existsSync(from)) {
-  console.error("Missing icons-staging. Run: tauri icon scripts/assets/app-icon.png -o src-tauri/icons-staging");
+  console.error(
+    "Missing icons-staging. Run: tauri icon scripts/assets/app-icon.png -o src-tauri/icons-staging",
+  );
   process.exit(1);
 }
 
@@ -27,4 +29,6 @@ function copyDir(src, dest) {
 }
 
 copyDir(from, to);
-console.log("Tauri icons synced. Rebuild desktop app: npm run tauri build -- --debug  or restart tauri dev");
+console.log(
+  "Tauri icons synced. Rebuild desktop app: npm run tauri build -- --debug  or restart tauri dev",
+);

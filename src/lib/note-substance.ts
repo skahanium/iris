@@ -4,6 +4,19 @@ import { stripLeadingBodyTitleHeading } from "@/lib/markdown";
 /** Placeholder titles that do not count as user-authored content. */
 const PLACEHOLDER_TITLES = new Set(["", "无标题", "新建文档"]);
 
+function isPlaceholderTitle(title: string): boolean {
+  if (PLACEHOLDER_TITLES.has(title)) {
+    return true;
+  }
+  if (/^无标题\d+$/.test(title)) {
+    return true;
+  }
+  if (/^新建文档（\d+）$/.test(title)) {
+    return true;
+  }
+  return false;
+}
+
 function bodyHasSubstance(body: string): boolean {
   const stripped = body
     .replace(/<!--[\s\S]*?-->/g, "")
@@ -25,7 +38,7 @@ function bodyHasSubstance(body: string): boolean {
 export function isNoteSubstantivelyEmpty(md: string): boolean {
   const { fields, body: rawBody } = splitFrontmatter(md);
   const title = titleFromFields(fields).trim();
-  if (!PLACEHOLDER_TITLES.has(title)) {
+  if (!isPlaceholderTitle(title)) {
     return false;
   }
   const body = stripLeadingBodyTitleHeading(rawBody, title).trim();

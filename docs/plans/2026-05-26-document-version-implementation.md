@@ -15,6 +15,7 @@
 ## Task 1: Migration — `versions.kind` + `storage_path` 修复
 
 **Files:**
+
 - Create: `src-tauri/migrations/006_versions_kind.sql`
 - Create: `src-tauri/migrations/006_versions_kind.down.sql`
 - Modify: `src-tauri/src/storage/migrate.rs`（注册 006）
@@ -39,6 +40,7 @@ UPDATE versions SET storage_path = file_id || '/' || version_no || '.md'
 ## Task 2: Rust — 解耦 `file_write` 与快照
 
 **Files:**
+
 - Modify: `src-tauri/src/commands/file.rs` — 移除 `thread::spawn` 内 `create_snapshot`
 - Modify: `src-tauri/src/version/mod.rs` — `create_snapshot` 增加参数 `kind: VersionKind`
 - Create: `src-tauri/src/version/kind.rs` — 枚举 + `as_str()`
@@ -57,6 +59,7 @@ UPDATE versions SET storage_path = file_id || '/' || version_no || '.md'
 ## Task 3: IPC — 显式「保存版本」与空闲触发
 
 **Files:**
+
 - Modify: `src-tauri/src/lib.rs` / `commands` — 新增 `version_save_manual(path, content)`
 - Modify: `src/types/ipc.ts`, `src/lib/ipc.ts`
 - Modify: `src/hooks/useEditorSave.ts` — 防抖改为 1200ms（或读设置）
@@ -73,6 +76,7 @@ UPDATE versions SET storage_path = file_id || '/' || version_no || '.md'
 ## Task 4: 定稿 = 新建快照
 
 **Files:**
+
 - Modify: `version_finalize` → 重命名为 `version_finalize_current` 或改签名：读当前 path 内容 → `create_snapshot(..., kind=Finalize, is_finalized=true)`
 - Modify: `src/components/version/VersionTimeline.tsx` — 定稿按钮调新 IPC
 - Test: `finalize_creates_new_row_with_is_finalized`
@@ -82,6 +86,7 @@ UPDATE versions SET storage_path = file_id || '/' || version_no || '.md'
 ## Task 5: 恢复与安全确认
 
 **Files:**
+
 - Modify: `version_restore` — 保证 `pre_restore` kind
 - Modify: `VersionTimeline.tsx` — 恢复前 `confirm()`；定稿目标额外文案
 - Test: restore 前快照条数 +1
@@ -91,6 +96,7 @@ UPDATE versions SET storage_path = file_id || '/' || version_no || '.md'
 ## Task 6: 配额与清理
 
 **Files:**
+
 - Modify: `version/mod.rs` — `enforce_auto_idle_cap(file_id, max=30)` 在插入后调用
 - Modify: `version_cleanup` — 仅删 `kind=auto_idle` 且非 finalized（已定稿永不删）
 - Test: 插入第 31 条 auto 时最旧 auto 被删
@@ -100,6 +106,7 @@ UPDATE versions SET storage_path = file_id || '/' || version_no || '.md'
 ## Task 7: 时间线 UI — 折叠自动备份（决策 A）
 
 **Files:**
+
 - Modify: `src/components/version/VersionTimeline.tsx`
 - Create: `src/components/version/version-timeline-groups.ts` — 按日 + kind 分组
 - Modify: `src/types/ipc.ts` — `VersionEntry.kind`
@@ -115,6 +122,7 @@ UPDATE versions SET storage_path = file_id || '/' || version_no || '.md'
 ## Task 8: 新建文档命名与 title 展示
 
 **Files:**
+
 - Modify: `src/lib/note-create.ts`（或等价）
 - Modify: `src-tauri` 创建文件逻辑 / `file_create` 标题推导
 - Modify: 标签栏组件使用 `title` 优先
@@ -126,6 +134,7 @@ UPDATE versions SET storage_path = file_id || '/' || version_no || '.md'
 ## Task 9: 文档同步 ✅
 
 **Files:**
+
 - [x] Modify: `ARCHITECTURE.md` 版本节 — 与双层、kind、折叠 UI 一致
 - [x] Modify: `ROADMAP.md` v0.3 勾选说明（若验收完成）
 - [x] Modify: `CHANGELOG.md`、`docs/README.md` 索引

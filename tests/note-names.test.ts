@@ -35,15 +35,13 @@ describe("allocateNewDocumentName", () => {
   });
 
   it("respects taken titles even when path differs", () => {
-    const { title } = allocateNewDocumentName([
-      file("note-1.md", "新建文档"),
-    ]);
+    const { title } = allocateNewDocumentName([file("note-1.md", "新建文档")]);
     expect(title).toBe("新建文档（1）");
   });
 });
 
 describe("titleToNotePath", () => {
   it("removes invalid path characters", () => {
-    expect(titleToNotePath('bad:name')).toBe("bad_name.md");
+    expect(titleToNotePath("bad:name")).toBe("bad_name.md");
   });
 });

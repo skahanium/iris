@@ -15,10 +15,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import {
-  researchExecute,
-  researchStatus,
-} from "@/lib/ipc";
+import { researchExecute, researchStatus } from "@/lib/ipc";
 
 // ─── Types ───────────────────────────────────────────────
 
@@ -73,13 +70,19 @@ interface ResearchResult {
 
 // ─── Link Type Labels ────────────────────────────────────
 
-const LINK_TYPE_LABELS: Record<string, { label: string; color: string }> = {
-  supports: { label: "支持", color: "text-emerald-600" },
-  contradicts: { label: "矛盾", color: "text-red-600" },
-  prerequisite: { label: "前提", color: "text-blue-600" },
-  consequence: { label: "推论", color: "text-purple-600" },
-  parallel: { label: "并列", color: "text-gray-600" },
+const LINK_TYPE_LABELS: Record<string, { label: string; className: string }> = {
+  supports: { label: "支持", className: "text-foreground" },
+  contradicts: { label: "矛盾", className: "text-destructive" },
+  prerequisite: { label: "前提", className: "text-muted-foreground" },
+  consequence: { label: "推论", className: "text-muted-foreground" },
+  parallel: { label: "并列", className: "text-muted-foreground" },
 };
+
+function coverageScoreClass(score: number): string {
+  if (score < 0.5) return "text-muted-foreground";
+  if (score < 0.8) return "text-foreground/80";
+  return "text-foreground";
+}
 
 // ─── Component ───────────────────────────────────────────
 
@@ -94,17 +97,17 @@ export function ResearchPanel({ notePath: _notePath }: ResearchPanelProps) {
   const [result, setResult] = useState<ResearchResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [expandedProps, setExpandedProps] = useState<Set<string>>(new Set());
-  const [recentResearch, setRecentResearch] = useState<
+  const [, setRecentResearch] = useState<
     Array<{ request_id: string; status: string; created_at: string }>
   >([]);
 
   // Load recent research on mount
   useEffect(() => {
-    researchStatus().then((status) => {
-      setRecentResearch(
-        (status.recent_research as typeof recentResearch) ?? []
-      );
-    }).catch(() => {});
+    researchStatus()
+      .then((status) => {
+        setRecentResearch(status.recent_research ?? []);
+      })
+      .catch(() => {});
   }, []);
 
   const toggleProp = useCallback((id: string) => {
@@ -140,7 +143,7 @@ export function ResearchPanel({ notePath: _notePath }: ResearchPanelProps) {
     <div className="flex h-full flex-col">
       {/* Header */}
       <div className="border-b border-border p-3">
-        <div className="flex items-center gap-2 mb-2">
+        <div className="mb-2 flex items-center gap-2">
           <BookOpen className="h-4 w-4 text-primary" />
           <span className="text-sm font-medium">研究助理</span>
           <Badge variant="secondary" className="text-[10px]">
@@ -229,18 +232,11 @@ export function ResearchPanel({ notePath: _notePath }: ResearchPanelProps) {
                   </div>
                   <div>
                     <div
-                      className={`text-lg font-bold ${
-                        result.evidence_matrix.coverage_score >= 0.8
-                          ? "text-emerald-600"
-                          : result.evidence_matrix.coverage_score >= 0.5
-                            ? "text-amber-600"
-                            : "text-red-600"
-                      }`}
+                      className={`text-lg font-bold tabular-nums ${coverageScoreClass(
+                        result.evidence_matrix.coverage_score,
+                      )}`}
                     >
-                      {Math.round(
-                        result.evidence_matrix.coverage_score * 100
-                      )}
-                      %
+                      {Math.round(result.evidence_matrix.coverage_score * 100)}%
                     </div>
                     <div className="text-[10px] text-muted-foreground">
                       覆盖率
@@ -249,12 +245,12 @@ export function ResearchPanel({ notePath: _notePath }: ResearchPanelProps) {
                 </div>
 
                 {result.evidence_matrix.global_gaps.length > 0 && (
-                  <div className="mt-2 rounded-md border border-amber-200 bg-amber-50 p-2">
-                    <p className="text-[10px] font-medium text-amber-700 mb-1">
+                  <div className="mt-2 rounded-md border border-border/80 bg-surface-inset p-2">
+                    <p className="mb-1 text-[10px] font-medium text-muted-foreground">
                       证据缺口：
                     </p>
                     {result.evidence_matrix.global_gaps.map((gap, i) => (
-                      <p key={i} className="text-xs text-amber-600">
+                      <p key={i} className="text-xs text-muted-foreground">
                         · {gap}
                       </p>
                     ))}
@@ -271,7 +267,7 @@ export function ResearchPanel({ notePath: _notePath }: ResearchPanelProps) {
                   子命题分析
                 </CardTitle>
               </CardHeader>
-              <CardContent className="p-3 pt-0 space-y-2">
+              <CardContent className="space-y-2 p-3 pt-0">
                 {result.evidence_matrix.propositions.map((prop) => (
                   <div
                     key={prop.id}
@@ -297,16 +293,13 @@ export function ResearchPanel({ notePath: _notePath }: ResearchPanelProps) {
                     </button>
 
                     {expandedProps.has(prop.id) && (
-                      <div className="border-t border-border p-2 space-y-1">
+                      <div className="space-y-1 border-t border-border p-2">
                         {prop.evidence.map((ev) => (
                           <div
                             key={ev.id}
                             className="flex items-center gap-2 text-xs"
                           >
-                            <Badge
-                              variant="secondary"
-                              className="text-[10px]"
-                            >
+                            <Badge variant="secondary" className="text-[10px]">
                               {ev.citation_label}
                             </Badge>
                             <span className="truncate">{ev.title}</span>
@@ -316,7 +309,7 @@ export function ResearchPanel({ notePath: _notePath }: ResearchPanelProps) {
                           </div>
                         ))}
                         {prop.gaps.length > 0 && (
-                          <div className="mt-1 text-[10px] text-amber-600">
+                          <div className="mt-1 text-[10px] text-muted-foreground">
                             {prop.gaps.map((g, i) => (
                               <span key={i}>· {g} </span>
                             ))}
@@ -343,21 +336,20 @@ export function ResearchPanel({ notePath: _notePath }: ResearchPanelProps) {
                     )}
                   </CardTitle>
                 </CardHeader>
-                <CardContent className="p-3 pt-0 space-y-1">
+                <CardContent className="space-y-1 p-3 pt-0">
                   {result.argument_chain.links.map((link, i) => {
                     const typeInfo = LINK_TYPE_LABELS[link.link_type] ?? {
                       label: link.link_type,
-                      color: "text-gray-600",
+                      className: "text-muted-foreground",
                     };
                     return (
-                      <div
-                        key={i}
-                        className="flex items-center gap-2 text-xs"
-                      >
+                      <div key={i} className="flex items-center gap-2 text-xs">
                         <Badge variant="outline" className="text-[10px]">
                           {link.from_proposition_id}
                         </Badge>
-                        <span className={typeInfo.color}>{typeInfo.label}</span>
+                        <span className={typeInfo.className}>
+                          {typeInfo.label}
+                        </span>
                         <span className="text-muted-foreground">→</span>
                         <Badge variant="outline" className="text-[10px]">
                           {link.to_proposition_id}
@@ -381,27 +373,25 @@ export function ResearchPanel({ notePath: _notePath }: ResearchPanelProps) {
                 </CardTitle>
               </CardHeader>
               <CardContent className="p-3 pt-0">
-                <div className="text-xs leading-relaxed whitespace-pre-wrap">
+                <div className="whitespace-pre-wrap text-xs leading-relaxed">
                   {result.summary}
                 </div>
               </CardContent>
             </Card>
 
             {/* Token Usage */}
-            <div className="text-[10px] text-muted-foreground text-center">
-              消耗 {result.total_tokens.total_tokens} tokens |
-              {result.rounds} 轮检索
+            <div className="text-center text-[10px] text-muted-foreground">
+              消耗 {result.total_tokens.total_tokens} tokens |{result.rounds}{" "}
+              轮检索
             </div>
           </div>
         )}
 
         {!result && !loading && !error && (
-          <div className="flex flex-col items-center justify-center h-full text-muted-foreground">
-            <BookOpen className="h-8 w-8 mb-2 opacity-30" />
+          <div className="flex h-full flex-col items-center justify-center text-muted-foreground">
+            <BookOpen className="mb-2 h-8 w-8 opacity-30" />
             <p className="text-sm">输入研究主题开始</p>
-            <p className="text-xs mt-1">
-              支持子命题拆解、证据矩阵、论证链分析
-            </p>
+            <p className="mt-1 text-xs">支持子命题拆解、证据矩阵、论证链分析</p>
           </div>
         )}
       </ScrollArea>

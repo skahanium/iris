@@ -36,7 +36,11 @@ export class ErrorBoundary extends Component<Props, State> {
           <p className="max-w-md text-xs text-muted-foreground">
             {this.state.error.message}
           </p>
-          <Button type="button" size="sm" onClick={() => this.setState({ error: null })}>
+          <Button
+            type="button"
+            size="sm"
+            onClick={() => this.setState({ error: null })}
+          >
             重试
           </Button>
         </div>

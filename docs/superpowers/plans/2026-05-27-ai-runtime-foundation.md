@@ -13,6 +13,7 @@
 ## Task 1: 数据库 Migration 009 — AI Runtime 基础表
 
 **Files:**
+
 - Create: `src-tauri/migrations/009_ai_runtime.sql`
 - Create: `src-tauri/migrations/009_ai_runtime.down.sql`
 - Modify: `src-tauri/src/storage/migrate.rs`
@@ -280,6 +281,7 @@ git commit -m "feat(ai): add migration 009 for AI Runtime foundation tables"
 ## Task 2: Rust AI Runtime 核心类型定义
 
 **Files:**
+
 - Create: `src-tauri/src/ai_runtime/mod.rs`
 
 - [ ] **Step 1: 创建 ai_runtime 模块根文件，定义所有核心类型**
@@ -507,6 +509,7 @@ git commit -m "feat(ai): add ai_runtime core types — Scene, ContextPacket, Too
 ## Task 3: Model Registry — 能力槽位与 Provider 注册
 
 **Files:**
+
 - Create: `src-tauri/src/ai_runtime/model_registry.rs`
 
 - [ ] **Step 1: 创建 model_registry 模块**
@@ -812,6 +815,7 @@ git commit -m "feat(ai): add model registry with capability-slot routing"
 ## Task 4: Tool Executor — 工具定义与权限系统
 
 **Files:**
+
 - Create: `src-tauri/src/ai_runtime/tool_executor.rs`
 
 - [ ] **Step 1: 创建 tool_executor 模块**
@@ -1277,6 +1281,7 @@ git commit -m "feat(ai): add tool executor with permission system and 14 builtin
 ## Task 5: Trace — 请求追踪基础设施
 
 **Files:**
+
 - Create: `src-tauri/src/ai_runtime/trace.rs`
 
 - [ ] **Step 1: 创建 trace 模块**
@@ -1579,6 +1584,7 @@ git commit -m "feat(ai): add trace recorder for AI request lifecycle diagnostics
 ## Task 6: Session Manager — 会话 CRUD
 
 **Files:**
+
 - Create: `src-tauri/src/ai_runtime/session.rs`
 
 - [ ] **Step 1: 创建 session 管理模块**
@@ -1881,6 +1887,7 @@ git commit -m "feat(ai): add session manager with CRUD and cascade delete"
 ## Task 7: 骨架模块 — scene_router, packet_builder, guardrails
 
 **Files:**
+
 - Create: `src-tauri/src/ai_runtime/scene_router.rs`
 - Create: `src-tauri/src/ai_runtime/packet_builder.rs`
 - Create: `src-tauri/src/ai_runtime/guardrails.rs`
@@ -2171,6 +2178,7 @@ git commit -m "feat(ai): add scene_router, packet_builder, guardrails skeleton m
 ## Task 8: 注册 ai_runtime 模块 + 创建 IPC Commands
 
 **Files:**
+
 - Create: `src-tauri/src/commands/ai_commands.rs`
 - Modify: `src-tauri/src/lib.rs`
 - Modify: `src-tauri/src/commands/mod.rs`
@@ -2355,11 +2363,13 @@ pub mod ai_commands;
 修改 `src-tauri/src/lib.rs`：
 
 在 `mod llm;` 之后添加：
+
 ```rust
 pub mod ai_runtime;
 ```
 
 在 `invoke_handler` 的 `generate_handler!` 宏中添加四个新 command：
+
 ```rust
             commands::ai_commands::context_assemble,
             commands::ai_commands::ai_send_message,
@@ -2395,6 +2405,7 @@ git commit -m "feat(ai): wire ai_runtime into Tauri IPC with context_assemble, a
 ## Task 9: TypeScript 类型定义 + IPC 封装
 
 **Files:**
+
 - Create: `src/types/ai.ts`
 - Modify: `src/types/ipc.ts`
 - Modify: `src/lib/ipc.ts`
@@ -2574,7 +2585,13 @@ export const SOURCE_LABELS: Record<string, string> = {
 ```typescript
 // ─── AI Runtime IPC types ───
 
-export type { AiScene, AssembledContext, ContextPacket, ContextStatus, ToolSpec } from "./ai";
+export type {
+  AiScene,
+  AssembledContext,
+  ContextPacket,
+  ContextStatus,
+  ToolSpec,
+} from "./ai";
 ```
 
 - [ ] **Step 5: 扩展 src/lib/ipc.ts 添加 AI IPC 封装**
@@ -2607,7 +2624,12 @@ export async function aiSendMessage(params: {
   session_id: number | null;
   message: string;
   selected_packet_ids?: string[];
-}): Promise<{ request_id: string; session_id: number; status: string; message?: string }> {
+}): Promise<{
+  request_id: string;
+  session_id: number;
+  status: string;
+  message?: string;
+}> {
   return invoke("ai_send_message", {
     scene: params.scene,
     sessionId: params.session_id,
@@ -2630,9 +2652,14 @@ export async function toolConfirm(params: {
   });
 }
 
-export async function aiListTools(
-  scene: AiScene,
-): Promise<{ name: string; description: string; requires_confirmation: boolean; access_level: string }[]> {
+export async function aiListTools(scene: AiScene): Promise<
+  {
+    name: string;
+    description: string;
+    requires_confirmation: boolean;
+    access_level: string;
+  }[]
+> {
   return invoke("ai_list_tools", { scene });
 }
 ```
@@ -2657,6 +2684,7 @@ git commit -m "feat(ai): add TypeScript types and IPC wrappers for AI Runtime"
 ## Task 10: 前端骨架组件 — SceneSelector + WorkflowIndicator
 
 **Files:**
+
 - Create: `src/components/ai/SceneSelector.tsx`
 - Create: `src/components/ai/WorkflowIndicator.tsx`
 
@@ -2665,13 +2693,23 @@ git commit -m "feat(ai): add TypeScript types and IPC wrappers for AI Runtime"
 写入 `src/components/ai/SceneSelector.tsx`：
 
 ```tsx
-import { Check, ChevronDown, BookOpen, FlaskConical, PenLine, Search } from "lucide-react";
+import {
+  Check,
+  ChevronDown,
+  BookOpen,
+  FlaskConical,
+  PenLine,
+  Search,
+} from "lucide-react";
 import { useState, useRef, useEffect } from "react";
 
 import type { AiScene } from "@/types/ai";
 import { SCENE_OPTIONS } from "@/lib/ai/scene-types";
 
-const SCENE_ICONS: Record<string, React.ComponentType<{ className?: string }>> = {
+const SCENE_ICONS: Record<
+  string,
+  React.ComponentType<{ className?: string }>
+> = {
   Search,
   BookOpen,
   PenLine,
@@ -2697,7 +2735,8 @@ export function SceneSelector({ scene, onSceneChange }: SceneSelectorProps) {
     return () => document.removeEventListener("mousedown", handleClick);
   }, []);
 
-  const current = SCENE_OPTIONS.find((s) => s.scene === scene) ?? SCENE_OPTIONS[0];
+  const current =
+    SCENE_OPTIONS.find((s) => s.scene === scene) ?? SCENE_OPTIONS[0];
   const Icon = SCENE_ICONS[current.icon] ?? Search;
 
   return (
@@ -2705,7 +2744,7 @@ export function SceneSelector({ scene, onSceneChange }: SceneSelectorProps) {
       <button
         type="button"
         onClick={() => setOpen(!open)}
-        className="flex items-center gap-1.5 rounded-md px-2 py-1 text-xs font-medium text-muted-foreground hover:bg-muted/50 hover:text-foreground transition-colors"
+        className="flex items-center gap-1.5 rounded-md px-2 py-1 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground"
       >
         <Icon className="h-3.5 w-3.5" />
         {current.label}
@@ -2724,14 +2763,18 @@ export function SceneSelector({ scene, onSceneChange }: SceneSelectorProps) {
                   onSceneChange(opt.scene);
                   setOpen(false);
                 }}
-                className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-xs hover:bg-muted/50 transition-colors"
+                className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-xs transition-colors hover:bg-muted/50"
               >
                 <OptIcon className="h-3.5 w-3.5 text-muted-foreground" />
                 <div className="flex-1 text-left">
                   <div className="font-medium">{opt.label}</div>
-                  <div className="text-[10px] text-muted-foreground/70">{opt.description}</div>
+                  <div className="text-[10px] text-muted-foreground/70">
+                    {opt.description}
+                  </div>
                 </div>
-                {opt.scene === scene && <Check className="h-3 w-3 text-primary" />}
+                {opt.scene === scene && (
+                  <Check className="h-3 w-3 text-primary" />
+                )}
               </button>
             );
           })}
@@ -2756,7 +2799,11 @@ interface WorkflowIndicatorProps {
   notePath: string | null;
 }
 
-export function WorkflowIndicator({ scene, contextStatus, notePath }: WorkflowIndicatorProps) {
+export function WorkflowIndicator({
+  scene,
+  contextStatus,
+  notePath,
+}: WorkflowIndicatorProps) {
   const meta = SCENE_META[scene];
   const isGlobal = meta.defaultScope === "global";
 
@@ -2771,17 +2818,23 @@ export function WorkflowIndicator({ scene, contextStatus, notePath }: WorkflowIn
 
   if (contextStatus) {
     const loaded: string[] = [];
-    if (contextStatus.regulations_loaded > 0) loaded.push(`${contextStatus.regulations_loaded} 部法规`);
-    if (contextStatus.anchors_loaded > 0) loaded.push(`${contextStatus.anchors_loaded} 条锚点`);
-    if (contextStatus.links_loaded > 0) loaded.push(`${contextStatus.links_loaded} 条链接`);
+    if (contextStatus.regulations_loaded > 0)
+      loaded.push(`${contextStatus.regulations_loaded} 部法规`);
+    if (contextStatus.anchors_loaded > 0)
+      loaded.push(`${contextStatus.anchors_loaded} 条锚点`);
+    if (contextStatus.links_loaded > 0)
+      loaded.push(`${contextStatus.links_loaded} 条链接`);
     if (loaded.length > 0) {
       parts.push(`已加载: ${loaded.join(" · ")}`);
     }
   }
 
   return (
-    <div className="flex items-center gap-2 px-3 py-1.5 text-xs text-muted-foreground border-b border-border">
-      <span className="inline-block h-1.5 w-1.5 rounded-full bg-emerald-500" title="Agent 就绪" />
+    <div className="flex items-center gap-2 border-b border-border px-3 py-1.5 text-xs text-muted-foreground">
+      <span
+        className="inline-block h-1.5 w-1.5 rounded-full bg-emerald-500"
+        title="Agent 就绪"
+      />
       <span>{parts.join(" · ")}</span>
     </div>
   );
@@ -2808,6 +2861,7 @@ git commit -m "feat(ai): add SceneSelector and WorkflowIndicator frontend compon
 ## 自审清单
 
 **1. Spec coverage:**
+
 - ✅ AI Runtime 架构 (Rust ai_runtime/) — Task 2, 7
 - ✅ Model registry + capability slots — Task 3
 - ✅ Tool permission system — Task 4
@@ -2824,6 +2878,7 @@ git commit -m "feat(ai): add SceneSelector and WorkflowIndicator frontend compon
 **2. Placeholder scan:** No TBD, TODO, or vague placeholders. Every step has concrete code.
 
 **3. Type consistency:**
+
 - `AiScene` enum matches between Rust and TypeScript
 - `ContextPacket` fields match
 - IPC parameter names follow Tauri camelCase convention

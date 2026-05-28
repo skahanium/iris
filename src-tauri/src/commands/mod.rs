@@ -4,6 +4,7 @@ pub mod export;
 pub mod file;
 pub mod graph;
 pub mod llm;
+pub mod llm_config_commands;
 pub mod profile_commands;
 pub mod recycle;
 pub mod research_commands;

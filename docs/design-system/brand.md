@@ -4,36 +4,36 @@
 
 ## 图形规格（viewBox `0 0 32 32`）
 
-| 元素 | 参数 |
-|------|------|
-| 外框 | `x=2 y=2 w=28 h=28 rx=8` |
-| 上衬线 | `x=8.8 y=7.2 w=13.8 h=3.4 rx=1.7` |
+| 元素   | 参数                                |
+| ------ | ----------------------------------- |
+| 外框   | `x=2 y=2 w=28 h=28 rx=8`            |
+| 上衬线 | `x=8.8 y=7.2 w=13.8 h=3.4 rx=1.7`   |
 | 下衬线 | `x=10.2 y=21.4 w=11.6 h=3.4 rx=1.7` |
-| 竖干 | 贝塞尔路径 `I_STEM_PATH` |
-| 字组 | `skewX(-7°)`，中心 `(16,16)` |
+| 竖干   | 贝塞尔路径 `I_STEM_PATH`            |
+| 字组   | `skewX(-7°)`，中心 `(16,16)`        |
 
 ## Token（`globals.css`）
 
-| Token | 暗色 `:root` | 亮色 `.light` |
-|-------|--------------|---------------|
-| `--iris-mark-frame` | `0 0% 20%` | `0 0% 89%` |
-| `--iris-mark-ink` | `0 0% 94%` | `0 0% 10%` |
+| Token               | 暗色 `:root` | 亮色 `.light` |
+| ------------------- | ------------ | ------------- |
+| `--iris-mark-frame` | `0 0% 20%`   | `0 0% 89%`    |
+| `--iris-mark-ink`   | `0 0% 94%`   | `0 0% 10%`    |
 
 **桌面壳图标**（`app-icon.png`）：四角透明 + 圆角矩形灰底 `#e8e8e8` + 放大字组「I」（无内框）。应用内 UI 仍用 `IrisMark`（含方框）。PNG hex 见 `scripts/iris-mark-paths.mjs`。
 
 ## 使用场景
 
-| 场景 | 实现 |
-|------|------|
-| 顶栏、欢迎页 | `IrisMark` + 可选 Inter「Iris」文案 |
-| favicon / 托盘 | `public/brand/iris-mark.svg`、`iris-mark-tray.svg` |
-| Windows 任务栏 / 安装包 | `src-tauri/icons/icon.ico` ← `npm run icon:tauri` |
+| 场景                    | 实现                                               |
+| ----------------------- | -------------------------------------------------- |
+| 顶栏、欢迎页            | `IrisMark` + 可选 Inter「Iris」文案                |
+| favicon / 托盘          | `public/brand/iris-mark.svg`、`iris-mark-tray.svg` |
+| Windows 任务栏 / 安装包 | `src-tauri/icons/icon.ico` ← `npm run icon:tauri`  |
 
 ## 路径源（单一真相）
 
-| 文件 | 说明 |
-|------|------|
-| [scripts/iris-mark-paths.mjs](../../scripts/iris-mark-paths.mjs) | 构建与 SVG 导出 |
+| 文件                                                                                     | 说明                    |
+| ---------------------------------------------------------------------------------------- | ----------------------- |
+| [scripts/iris-mark-paths.mjs](../../scripts/iris-mark-paths.mjs)                         | 构建与 SVG 导出         |
 | [src/components/brand/iris-mark-paths.ts](../../src/components/brand/iris-mark-paths.ts) | React（须与 .mjs 同步） |
 
 ## 生成

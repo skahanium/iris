@@ -52,7 +52,10 @@ describe("shared LLM provider for inline and slash", () => {
 
   it("runSlash uses the configured provider", async () => {
     const editor = new Editor({
-      extensions: [StarterKit.configure({ codeBlock: false }), AiStreamExtension],
+      extensions: [
+        StarterKit.configure({ codeBlock: false }),
+        AiStreamExtension,
+      ],
       content: "<p></p>",
     });
 
@@ -89,7 +92,10 @@ describe("shared LLM provider for inline and slash", () => {
     });
 
     const editor = new Editor({
-      extensions: [StarterKit.configure({ codeBlock: false }), AiStreamExtension],
+      extensions: [
+        StarterKit.configure({ codeBlock: false }),
+        AiStreamExtension,
+      ],
       content: "<p>hello</p>",
     });
     editor.commands.setTextSelection({ from: 1, to: 6 });

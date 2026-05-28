@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { IrisOverlay } from "@/components/ui/iris-overlay";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { displayTitleForFileListItem } from "@/lib/note-display";
 import { tagList } from "@/lib/ipc";
 import type { TagGroup } from "@/types/ipc";
 
@@ -38,12 +39,12 @@ export function TagView({ open, onClose, onOpen }: TagViewProps) {
 
   return (
     <IrisOverlay open={open} onClose={onClose} title="标签" size="command">
-      <div className="flex gap-3 border-b border-border px-3 py-2 text-xs text-muted-foreground">
+      <div className="flex gap-3 border-b border-border/60 bg-surface-inset/30 px-4 py-2 text-xs text-muted-foreground">
         <span>{totalNotes} 笔记</span>
         <span>{tags.length} 标签</span>
       </div>
 
-      <div className="border-b border-border px-2 py-1.5">
+      <div className="border-b border-border/60 px-4 py-2">
         <Input
           className="h-7 text-xs"
           placeholder="过滤标签…"
@@ -64,7 +65,7 @@ export function TagView({ open, onClose, onOpen }: TagViewProps) {
             <div key={t.name}>
               <button
                 type="button"
-                className="flex w-full items-center justify-between border-b border-border/50 px-3 py-2 text-left text-sm hover:bg-muted"
+                className="flex w-full items-center justify-between border-b border-border/50 px-4 py-2 text-left text-sm transition-colors duration-base ease-iris-out hover:bg-surface-inset/80"
                 onClick={() => setExpanded(expanded === t.name ? null : t.name)}
               >
                 <span className="text-primary">#{t.name}</span>
@@ -84,7 +85,7 @@ export function TagView({ open, onClose, onOpen }: TagViewProps) {
                         onClose();
                       }}
                     >
-                      {f.title}
+                      {displayTitleForFileListItem(f)}
                     </button>
                   ))}
                 </div>

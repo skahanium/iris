@@ -28,7 +28,9 @@ function parseYamlArray(raw: string): string[] {
 }
 
 /** Parse `key: value` lines from a frontmatter block. */
-export function parseYamlFields(yaml: string): Record<string, string | string[]> {
+export function parseYamlFields(
+  yaml: string,
+): Record<string, string | string[]> {
   const fields: Record<string, string | string[]> = {};
   for (const line of yaml.split("\n")) {
     const trimmed = line.trim();

@@ -1,18 +1,8 @@
 import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import {
-  afterEach,
-  beforeEach,
-  describe,
-  expect,
-  it,
-  vi,
-} from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import {
-  useVersionIdle,
-  VERSION_IDLE_MS,
-} from "@/hooks/useVersionIdle";
+import { useVersionIdle, VERSION_IDLE_MS } from "@/hooks/useVersionIdle";
 
 const versionSaveIdle = vi.fn().mockResolvedValue(null);
 

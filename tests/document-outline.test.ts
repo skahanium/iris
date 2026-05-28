@@ -1,10 +1,7 @@
 import { Schema } from "@tiptap/pm/model";
 import { describe, expect, it } from "vitest";
 
-import {
-  activeOutlineIndex,
-  outlineFromDoc,
-} from "@/lib/document-outline";
+import { activeOutlineIndex, outlineFromDoc } from "@/lib/document-outline";
 
 const schema = new Schema({
   nodes: {

@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { IrisMark } from "@/components/brand/IrisMark";
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/common/ConfirmDialog";
+import { displayTitleForFileListItem } from "@/lib/note-display";
 import { fileDelete, fileList } from "@/lib/ipc";
 import type { FileListItem } from "@/types/ipc";
 
@@ -38,7 +39,7 @@ export function WelcomeEmpty({ vaultKey, onOpen, onNew }: WelcomeEmptyProps) {
 
   return (
     <div className="flex flex-1 flex-col items-center justify-center gap-8 bg-background px-6 py-12">
-      <div className="w-full max-w-md rounded-lg border border-border bg-card px-8 py-10 text-center shadow-sm">
+      <div className="w-full max-w-md rounded-xl border border-border/80 bg-surface-elevated px-8 py-10 text-center shadow-floating">
         <div className="mb-8 flex justify-center">
           <IrisMark size={56} title="Iris" />
         </div>
@@ -56,26 +57,26 @@ export function WelcomeEmpty({ vaultKey, onOpen, onNew }: WelcomeEmptyProps) {
         </Button>
       </div>
       {recent.length > 0 && (
-        <div className="w-full max-w-md rounded-sm border border-border bg-card p-3 shadow-sm">
+        <div className="w-full max-w-md rounded-lg border border-border/80 bg-surface-elevated p-3 shadow-sm">
           <ul className="space-y-0.5">
             {recent.map((f) => (
               <li
                 key={f.path}
-                className="group flex items-center rounded-md transition-colors hover:bg-muted"
+                className="group flex items-center rounded-md transition-colors duration-base ease-iris-out hover:bg-surface-inset/80"
               >
                 <button
                   type="button"
                   className="min-w-0 flex-1 truncate px-2 py-2 text-left text-sm text-foreground"
                   onClick={() => onOpen(f.path)}
                 >
-                  {f.title}
+                  {displayTitleForFileListItem(f)}
                 </button>
                 <Button
                   type="button"
                   size="icon"
                   variant="ghost"
-                  className="mr-0.5 h-8 w-8 shrink-0 text-muted-foreground opacity-0 transition-opacity hover:text-destructive group-hover:opacity-100 focus-visible:opacity-100"
-                  aria-label={`删除 ${f.title}`}
+                  className="mr-0.5 h-8 w-8 shrink-0 text-muted-foreground opacity-0 transition-opacity hover:text-destructive focus-visible:opacity-100 group-hover:opacity-100"
+                  aria-label={`删除 ${displayTitleForFileListItem(f)}`}
                   onClick={() => setDeleteTarget(f)}
                 >
                   <Trash2 className="h-3.5 w-3.5" />
@@ -89,11 +90,8 @@ export function WelcomeEmpty({ vaultKey, onOpen, onNew }: WelcomeEmptyProps) {
       <ConfirmDialog
         open={deleteTarget !== null}
         title="删除笔记"
-        message={
-          deleteTarget
-            ? `确定删除「${deleteTarget.title}」？正文、时间线快照与定稿将一并移入回收站，15 天内可恢复。`
-            : ""
-        }
+        message={`确定删除「${deleteTarget ? displayTitleForFileListItem(deleteTarget) : ""}」？`}
+        description="正文、时间线快照与定稿将一并移入回收站，15 天内可恢复。"
         confirmLabel="删除"
         variant="destructive"
         onCancel={() => setDeleteTarget(null)}

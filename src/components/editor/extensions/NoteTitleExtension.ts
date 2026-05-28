@@ -123,7 +123,10 @@ export const NoteTitleExtension = Node.create({
         contentDOM: dom,
         update: (updatedNode) => {
           if (updatedNode.type.name !== "noteTitle") return false;
-          dom.classList.toggle("is-empty", updatedNode.textContent.length === 0);
+          dom.classList.toggle(
+            "is-empty",
+            updatedNode.textContent.length === 0,
+          );
           updateChip(updatedNode.textContent);
           return true;
         },

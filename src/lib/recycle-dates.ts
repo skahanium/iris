@@ -14,7 +14,10 @@ export function formatRecycleTimestamp(iso: string): string {
 }
 
 /** Whole days until permanent purge (minimum 0). */
-export function recycleDaysRemaining(expiresAtIso: string, now = Date.now()): number {
+export function recycleDaysRemaining(
+  expiresAtIso: string,
+  now = Date.now(),
+): number {
   const expires = new Date(expiresAtIso).getTime();
   if (Number.isNaN(expires)) {
     return 0;

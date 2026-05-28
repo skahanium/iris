@@ -162,8 +162,10 @@ export function VersionTimeline({
   const renderEntry = (v: VersionEntry) => (
     <div
       key={v.id}
-      className={`border-b border-border/50 px-3 py-2.5 text-sm ${
-        previewId === v.id ? "bg-muted/50" : ""
+      className={`border-b border-border/50 px-4 py-2.5 text-sm transition-colors duration-base ease-iris-out ${
+        previewId === v.id
+          ? "bg-command-highlight"
+          : "hover:bg-surface-inset/50"
       }`}
     >
       <button
@@ -203,7 +205,7 @@ export function VersionTimeline({
         <button
           type="button"
           data-testid="version-group-toggle"
-          className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs text-muted-foreground hover:bg-muted/30"
+          className="flex w-full items-center gap-2 px-4 py-2 text-left text-xs text-muted-foreground transition-colors duration-base ease-iris-out hover:bg-surface-inset/60"
           onClick={() => toggleGroup(group.groupKey)}
           aria-expanded={expanded}
         >
@@ -225,7 +227,7 @@ export function VersionTimeline({
   return (
     <IrisOverlay open={open} onClose={onClose} title="版本历史" size="wide">
       {notePath && (
-        <div className="shrink-0 border-b border-border/50 px-3 py-2.5">
+        <div className="shrink-0 border-b border-border/60 bg-surface-inset/30 px-4 py-3">
           <p className="mb-2 text-xs text-muted-foreground">
             将当前正文保存为定稿版本（永久保留）
           </p>
@@ -252,7 +254,7 @@ export function VersionTimeline({
       )}
 
       {preview !== null && previewId !== null && (
-        <div className="shrink-0 border-b border-border/50 px-3 py-2.5">
+        <div className="shrink-0 border-b border-border/60 bg-surface-inset/30 px-4 py-3">
           <p className="mb-2 text-xs font-medium text-foreground">对比</p>
           <div className="grid grid-cols-2 gap-2">
             <div className="min-w-0">
@@ -280,7 +282,7 @@ export function VersionTimeline({
           <>
             {layout.finalized.length > 0 && (
               <section>
-                <h3 className="px-3 py-2 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+                <h3 className="px-4 py-2 text-[11px] font-medium tracking-wider text-muted-foreground">
                   定稿
                 </h3>
                 {layout.finalized.map((v) => renderEntry(v))}
@@ -288,7 +290,7 @@ export function VersionTimeline({
             )}
             {layout.days.map((day) => (
               <section key={day.bucket}>
-                <h3 className="px-3 py-2 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+                <h3 className="px-4 py-2 text-[11px] font-medium tracking-wider text-muted-foreground">
                   {day.title}
                 </h3>
                 {day.visible.map((v) => renderEntry(v))}

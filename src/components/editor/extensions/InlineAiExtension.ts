@@ -21,7 +21,7 @@ export interface InlineAiOptions {
   onExecute?: (
     editor: Editor,
     action: InlineAiAction,
-    context: string
+    context: string,
   ) => Promise<string>;
 }
 
@@ -78,8 +78,8 @@ export function findInlineAiNode(state: {
           textContent: string;
           attrs: Record<string, unknown>;
         },
-        pos: number
-      ) => boolean | void
+        pos: number,
+      ) => boolean | void,
     ) => void;
   };
 }): {
@@ -139,14 +139,16 @@ export const InlineAiExtension = Node.create<InlineAiOptions>({
     return {
       status: {
         default: "pending",
-        parseHTML: (element) => element.getAttribute("data-status") ?? "pending",
+        parseHTML: (element) =>
+          element.getAttribute("data-status") ?? "pending",
         renderHTML: (attributes) => ({
           "data-status": attributes.status,
         }),
       },
       action: {
         default: "continue",
-        parseHTML: (element) => element.getAttribute("data-action") ?? "continue",
+        parseHTML: (element) =>
+          element.getAttribute("data-action") ?? "continue",
         renderHTML: (attributes) => ({
           "data-action": attributes.action,
         }),
@@ -262,8 +264,8 @@ export const InlineAiExtension = Node.create<InlineAiOptions>({
             found.pos + found.nodeSize,
             state.schema.nodes.paragraph!.create(
               {},
-              text ? state.schema.text(text) : undefined
-            )
+              text ? state.schema.text(text) : undefined,
+            ),
           );
 
           dispatch(tr);
@@ -291,8 +293,8 @@ export const InlineAiExtension = Node.create<InlineAiOptions>({
               found.pos + found.nodeSize,
               state.schema.nodes.paragraph!.create(
                 {},
-                state.schema.text(originalText)
-              )
+                state.schema.text(originalText),
+              ),
             );
           }
 

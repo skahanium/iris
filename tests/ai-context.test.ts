@@ -7,11 +7,7 @@ import {
 } from "@/lib/ai-context";
 import type { SemanticHit } from "@/types/ipc";
 
-function hit(
-  path: string,
-  score: number,
-  snippet = "snippet",
-): SemanticHit {
+function hit(path: string, score: number, snippet = "snippet"): SemanticHit {
   return {
     chunk_id: 1,
     path,
@@ -47,20 +43,23 @@ describe("buildAiSystemParts", () => {
   it("includes related section when hits present", () => {
     const parts = buildAiSystemParts({
       notePath: "a.md",
+      noteDisplayTitle: "a",
       noteContent: "body",
       quote: null,
       relatedHits: [hit("b.md", 0.85, "related text")],
     });
     const joined = parts.join("\n");
-    expect(joined).toContain("当前笔记 (a.md)");
+    expect(joined).toContain("当前笔记（a）");
     expect(joined).toContain("关联 1");
-    expect(joined).toContain("b.md");
+    expect(joined).toContain("b");
+    expect(joined).not.toContain("b.md");
     expect(joined).toContain("related text");
   });
 
   it("degrades to current note only without related hits", () => {
     const parts = buildAiSystemParts({
       notePath: "a.md",
+      noteDisplayTitle: "a",
       noteContent: "only",
       quote: null,
       relatedHits: [],

@@ -1,10 +1,12 @@
 import { memo, useMemo } from "react";
 
+import { ConnectivityIndicators } from "@/components/layout/ConnectivityIndicators";
 import { EditorZoomControl } from "@/components/layout/EditorZoomControl";
 import { Kbd } from "@/components/ui/kbd";
 import { splitFrontmatter } from "@/lib/frontmatter";
 import { readingMinutes } from "@/lib/reading-time";
 import { cn, formatCommandPaletteShortcut } from "@/lib/utils";
+import type { ConnectivityStatus } from "@/types/llm";
 
 interface StatusBarProps {
   path: string | null;
@@ -21,6 +23,8 @@ interface StatusBarProps {
   onEditorZoomReset?: () => void;
   webSearch?: boolean;
   onWebSearchChange?: (enabled: boolean) => void;
+  connectivity?: ConnectivityStatus | null;
+  onOpenConnectivitySettings?: () => void;
 }
 
 export const StatusBar = memo(function StatusBar({
@@ -36,6 +40,8 @@ export const StatusBar = memo(function StatusBar({
   onEditorZoomReset,
   webSearch = false,
   onWebSearchChange,
+  connectivity = null,
+  onOpenConnectivitySettings,
 }: StatusBarProps) {
   const trimmedTitle = documentTitle?.trim();
   const label = trimmedTitle || (path ? "无标题" : "未打开文件");
@@ -88,6 +94,13 @@ export const StatusBar = memo(function StatusBar({
           <Kbd>{formatCommandPaletteShortcut()}</Kbd>
         </span>
         <span className="hidden shrink-0 text-muted-foreground/60 sm:inline" aria-hidden>
+          ·
+        </span>
+        <ConnectivityIndicators
+          status={connectivity}
+          onOpenSettings={onOpenConnectivitySettings}
+        />
+        <span className="text-muted-foreground/60" aria-hidden>
           ·
         </span>
         <span className="max-w-[10rem] truncate" title={aiStatus}>

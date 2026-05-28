@@ -41,9 +41,7 @@ export function RecycleBinSheet({
     setError(null);
     void recycleList()
       .then(setItems)
-      .catch((e) =>
-        setError(e instanceof Error ? e.message : "加载回收站失败"),
-      )
+      .catch((e) => setError(e instanceof Error ? e.message : "加载回收站失败"))
       .finally(() => setLoading(false));
   }, []);
 
@@ -68,7 +66,7 @@ export function RecycleBinSheet({
   return (
     <>
       <IrisOverlay open={open} onClose={onClose} title="回收站" size="command">
-        <div className="border-b border-border/60 px-4 py-3">
+        <div className="border-b border-border/60 bg-surface-inset/30 px-4 py-3">
           <p className="text-xs leading-relaxed text-muted-foreground">
             已删除的笔记、时间线快照与定稿版本将一并保留{" "}
             <span className="font-medium text-foreground">15 天</span>
@@ -78,7 +76,7 @@ export function RecycleBinSheet({
             <p className="mt-2 text-xs text-muted-foreground">
               共 {summary.total} 篇
               {summary.expiringSoon > 0 && (
-                <span className="text-amber-600 dark:text-amber-500">
+                <span className="text-muted-foreground">
                   {" "}
                   · {summary.expiringSoon} 篇即将过期
                 </span>
@@ -142,14 +140,12 @@ export function RecycleBinSheet({
                           {item.version_count > 0 && (
                             <>
                               <span aria-hidden>·</span>
-                              <span>
-                                {item.version_count} 个历史版本
-                              </span>
+                              <span>{item.version_count} 个历史版本</span>
                             </>
                           )}
                         </div>
                       </div>
-                      <div className="flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
+                      <div className="flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity group-focus-within:opacity-100 group-hover:opacity-100">
                         <Button
                           type="button"
                           size="icon"
@@ -220,11 +216,8 @@ export function RecycleBinSheet({
       <ConfirmDialog
         open={purgeTarget !== null}
         title="永久删除"
-        message={
-          purgeTarget
-            ? `确定永久删除「${purgeTarget.title}」？正文、时间线快照与定稿将无法恢复。`
-            : ""
-        }
+        message={`确定永久删除「${purgeTarget?.title ?? ""}」？`}
+        description="此操作不可撤销，正文、时间线快照与定稿将彻底删除。"
         confirmLabel="永久删除"
         variant="destructive"
         onCancel={() => setPurgeTarget(null)}

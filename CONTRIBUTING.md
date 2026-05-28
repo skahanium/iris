@@ -28,21 +28,19 @@
 - [Pull Request 流程](#pull-request-流程)
 - [Issue 规范](#issue-规范)
 
-
 ## 行为准则
 
 参与本项目即表示你同意遵守 [贡献者行为准则](./CODE_OF_CONDUCT.md)。
-
 
 ## 开发环境
 
 ### 必需工具
 
-| 工具 | 最低版本 | 安装方式 |
-|------|----------|----------|
-| Rust | 1.75+ | `curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \| sh` |
-| Node.js | 20+ | [nodejs.org](https://nodejs.org/) 或 `fnm` / `nvm` |
-| npm 或 pnpm | npm 10+ / pnpm 9+ | 仓库含 `package-lock.json`，推荐 `npm ci`；pnpm 亦可 |
+| 工具        | 最低版本          | 安装方式                                                          |
+| ----------- | ----------------- | ----------------------------------------------------------------- |
+| Rust        | 1.75+             | `curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \| sh` |
+| Node.js     | 20+               | [nodejs.org](https://nodejs.org/) 或 `fnm` / `nvm`                |
+| npm 或 pnpm | npm 10+ / pnpm 9+ | 仓库含 `package-lock.json`，推荐 `npm ci`；pnpm 亦可              |
 
 ### Windows 额外要求
 
@@ -80,7 +78,6 @@ npm run tauri dev
 # 仅启动前端开发服务器（不启动 Rust 后端，用于 UI 调试）
 npm run dev
 ```
-
 
 ## 项目结构
 
@@ -126,7 +123,6 @@ iris/
 └── README.md               # 项目门面
 ```
 
-
 ## 开发流程
 
 1. **Fork** 本仓库
@@ -155,7 +151,6 @@ npm run tauri build -- --debug
 npm run test:e2e
 ```
 
-
 ## Commit 规范
 
 本项目使用 [Conventional Commits](https://www.conventionalcommits.org/zh-hans/) 规范。所有 commit 消息使用**中文**。
@@ -172,17 +167,17 @@ npm run test:e2e
 
 ### 类型
 
-| 类型 | 说明 |
-|------|------|
-| `feat` | 新功能 |
-| `fix` | 漏洞修复 |
-| `docs` | 仅文档变更 |
-| `style` | 不影响代码含义的变更（空格、格式、分号等） |
-| `refactor` | 既不修复 bug 也不增加功能的代码变更 |
-| `perf` | 提升性能的代码变更 |
-| `test` | 添加或修正测试 |
-| `chore` | 构建过程或辅助工具的变更 |
-| `ci` | CI 配置文件和脚本的变更 |
+| 类型       | 说明                                       |
+| ---------- | ------------------------------------------ |
+| `feat`     | 新功能                                     |
+| `fix`      | 漏洞修复                                   |
+| `docs`     | 仅文档变更                                 |
+| `style`    | 不影响代码含义的变更（空格、格式、分号等） |
+| `refactor` | 既不修复 bug 也不增加功能的代码变更        |
+| `perf`     | 提升性能的代码变更                         |
+| `test`     | 添加或修正测试                             |
+| `chore`    | 构建过程或辅助工具的变更                   |
+| `ci`       | CI 配置文件和脚本的变更                    |
 
 ### 范围（可选）
 
@@ -207,7 +202,6 @@ fix(search): 修复中文分词后的搜索召回率下降
 Closes #128
 ```
 
-
 ## 代码风格
 
 ### Rust
@@ -231,16 +225,15 @@ Closes #128
 
 ### 命名约定
 
-| 上下文 | 约定 | 示例 |
-|--------|------|------|
-| React 组件 | PascalCase | `AiPanel.tsx` |
-| 组件目录 | kebab-case | `ai-panel/` |
-| Rust 源文件 | snake_case | `file_ops.rs` |
-| Rust 类型/结构体 | PascalCase | `FileMetadata` |
-| Rust 函数/变量 | snake_case | `read_file()` |
-| SQLite 表名 | snake_case 复数 | `file_tags` |
-| SQLite 列名 | snake_case | `created_at` |
-
+| 上下文           | 约定            | 示例           |
+| ---------------- | --------------- | -------------- |
+| React 组件       | PascalCase      | `AiPanel.tsx`  |
+| 组件目录         | kebab-case      | `ai-panel/`    |
+| Rust 源文件      | snake_case      | `file_ops.rs`  |
+| Rust 类型/结构体 | PascalCase      | `FileMetadata` |
+| Rust 函数/变量   | snake_case      | `read_file()`  |
+| SQLite 表名      | snake_case 复数 | `file_tags`    |
+| SQLite 列名      | snake_case      | `created_at`   |
 
 ## 测试
 
@@ -278,7 +271,6 @@ npm run tauri build -- --debug
 npm run test:e2e
 ```
 
-
 ## Pull Request 流程
 
 1. 确保你的分支基于最新的 `main` 分支（先 `rebase`，不要 `merge`）
@@ -299,13 +291,11 @@ npm run test:e2e
 
 在 PR 描述中说明新增依赖的理由和替代方案考虑。不设硬性审批门禁，但 maintainer 可能要求讨论。
 
-
 ## Issue 规范
 
 - **Bug 报告**：使用 [Bug 报告模板](./.github/ISSUE_TEMPLATE/bug_report.md)
 - **功能请求**：使用 [功能请求模板](./.github/ISSUE_TEMPLATE/feature_request.md)
 - **安全漏洞**：**不要公开提交 Issue**，请参阅 [安全策略](./SECURITY.md)
-
 
 ## 问题求助
 

@@ -7,20 +7,32 @@ describe("isNoteSubstantivelyEmpty", () => {
     expect(isNoteSubstantivelyEmpty('---\ntitle: ""\n---\n\n')).toBe(true);
   });
 
-  it("treats frontmatter 无标题 with empty body as empty", () => {
-    expect(
-      isNoteSubstantivelyEmpty('---\ntitle: "无标题"\n---\n\n'),
-    ).toBe(true);
+  it("treats frontmatter 无标题1 with empty body as empty", () => {
+    expect(isNoteSubstantivelyEmpty('---\ntitle: "无标题1"\n---\n\n')).toBe(
+      true,
+    );
+  });
+
+  it("treats legacy frontmatter 无标题 with empty body as empty", () => {
+    expect(isNoteSubstantivelyEmpty('---\ntitle: "无标题"\n---\n\n')).toBe(
+      true,
+    );
+  });
+
+  it("treats numbered 无标题2 placeholders as empty", () => {
+    expect(isNoteSubstantivelyEmpty('---\ntitle: "无标题2"\n---\n\n')).toBe(
+      true,
+    );
   });
 
   it("is not empty when title is set", () => {
-    expect(
-      isNoteSubstantivelyEmpty('---\ntitle: "我的笔记"\n---\n\n'),
-    ).toBe(false);
+    expect(isNoteSubstantivelyEmpty('---\ntitle: "我的笔记"\n---\n\n')).toBe(
+      false,
+    );
   });
 
   it("is not empty when body has text", () => {
-    expect(isNoteSubstantivelyEmpty("---\ntitle: \"\"\n---\n\nHello")).toBe(
+    expect(isNoteSubstantivelyEmpty('---\ntitle: ""\n---\n\nHello')).toBe(
       false,
     );
   });

@@ -21,7 +21,7 @@ export function buildPromptDisplay(
   scene: AiScene,
   packets: ContextPacket[],
   userRules: string[],
-  query: string
+  query: string,
 ): PromptSection[] {
   const sections: PromptSection[] = [];
 
@@ -40,7 +40,7 @@ export function buildPromptDisplay(
         `[${p.citation_label}] ${p.title}\n` +
         `  来源: ${p.source_path ?? "未知"}\n` +
         `  相关度: ${Math.round(p.score * 100)}%\n` +
-        `  ${p.excerpt}`
+        `  ${p.excerpt}`,
     );
     sections.push({
       label: `证据包 (${packets.length} 条)`,
@@ -100,7 +100,7 @@ export function buildPromptSummary(
   scene: AiScene,
   packetCount: number,
   ruleCount: number,
-  estimatedTokens: number
+  estimatedTokens: number,
 ): string {
   const parts: string[] = [];
   parts.push(getPersonaDescription(scene).slice(0, 30) + "…");

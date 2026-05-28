@@ -6,7 +6,10 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
-import type { InlineAiAction, InlineAiStatus } from "./extensions/InlineAiExtension";
+import type {
+  InlineAiAction,
+  InlineAiStatus,
+} from "./extensions/InlineAiExtension";
 import { INLINE_AI_ACTION_LABELS } from "./extensions/InlineAiExtension";
 
 // ─── Component ───────────────────────────────────────────
@@ -96,7 +99,7 @@ export function InlineAiNodeView({
           ? "border-primary/50 bg-primary/5"
           : status === "ready"
             ? "border-emerald-500/50 bg-emerald-500/5"
-            : "border-destructive/50 bg-destructive/5"
+            : "border-destructive/50 bg-destructive/5",
       )}
       data-type="inline-ai"
     >
@@ -163,8 +166,8 @@ export function InlineAiNodeView({
       {/* Original text preview */}
       {originalText && status !== "ready" && (
         <div className="mb-2 rounded bg-muted/50 p-2">
-          <p className="text-[10px] text-muted-foreground mb-1">原文：</p>
-          <p className="text-xs text-muted-foreground line-clamp-3">
+          <p className="mb-1 text-[10px] text-muted-foreground">原文：</p>
+          <p className="line-clamp-3 text-xs text-muted-foreground">
             {originalText}
           </p>
         </div>
@@ -172,7 +175,7 @@ export function InlineAiNodeView({
 
       {/* Content area */}
       {content && (
-        <div className="text-sm leading-relaxed whitespace-pre-wrap">
+        <div className="whitespace-pre-wrap text-sm leading-relaxed">
           {content}
         </div>
       )}
@@ -200,7 +203,7 @@ export function InlineAiNodeView({
 function buildPrompt(
   action: InlineAiAction,
   context: string,
-  originalText: string
+  originalText: string,
 ): string {
   switch (action) {
     case "continue":

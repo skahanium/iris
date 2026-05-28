@@ -5,10 +5,31 @@ use std::path::Path;
 use rusqlite::Connection;
 
 use crate::ai_runtime::retrieval_broker::{hybrid_retrieve, RetrievalLayers, RetrievalRequest};
-use crate::ai_runtime::retrieval_scope::{resolve_retrieval_scope, ContextScopeDto, RetrievalScope};
-use crate::ai_runtime::{AiScene, ContextPacket, ContextStatus};
+use crate::ai_runtime::retrieval_scope::{
+    resolve_retrieval_scope, ContextScopeDto, RetrievalScope,
+};
+use crate::ai_runtime::{AiScene, ContextPacket, ContextStatus, SourceType, TrustLevel};
 use crate::error::AppResult;
 use crate::knowledge::corpora::{load_corpora, CorpusConfig};
+use crate::llm::config::ContextStrategy;
+
+/// Options for context packet assembly (budget-aware).
+#[derive(Debug, Clone, Copy)]
+pub struct ContextBuildOptions {
+    pub max_results: usize,
+    pub strategy: ContextStrategy,
+    pub input_budget: usize,
+}
+
+impl ContextBuildOptions {
+    pub fn from_scene_defaults(scene: AiScene) -> Self {
+        Self {
+            max_results: max_results_for_scene(scene),
+            strategy: ContextStrategy::Hybrid,
+            input_budget: 12_000,
+        }
+    }
+}
 
 /// Build context packets for a query in the given scene.
 pub fn build_context_packets(
@@ -19,13 +40,14 @@ pub fn build_context_packets(
     note_file_id: Option<i64>,
     query: &str,
     user_scope: &ContextScopeDto,
+    opts: ContextBuildOptions,
 ) -> AppResult<(Vec<ContextPacket>, ContextStatus)> {
     let corpora = load_corpora(vault_path)?;
     let mut scope = resolve_retrieval_scope(&corpora, scene, user_scope);
     apply_exemplar_template_scope(scene, &corpora, &mut scope);
 
     let layers = layers_for_scene(scene);
-    let max_results = max_results_for_scene(scene);
+    let max_results = opts.max_results;
 
     let request = RetrievalRequest {
         query: query.to_string(),
@@ -36,7 +58,15 @@ pub fn build_context_packets(
         scope,
     };
 
-    let packets = hybrid_retrieve(conn, &request)?;
+    let mut packets = hybrid_retrieve(conn, &request)?;
+
+    if matches!(opts.strategy, ContextStrategy::LongContext) {
+        if let Some(path) = note_path {
+            if let Some(full_packet) = note_fulltext_packet(vault_path, path, opts.input_budget) {
+                packets.insert(0, full_packet);
+            }
+        }
+    }
 
     let status = ContextStatus {
         regulations_loaded: packets
@@ -66,11 +96,12 @@ pub fn build_context_packets(
 }
 
 /// When exemplar corpora exist, template search is limited to those prefixes (via post-filter).
-fn apply_exemplar_template_scope(scene: AiScene, corpora: &CorpusConfig, scope: &mut RetrievalScope) {
-    if !matches!(
-        scene,
-        AiScene::ExemplarLearning | AiScene::DraftingAssist
-    ) {
+fn apply_exemplar_template_scope(
+    scene: AiScene,
+    corpora: &CorpusConfig,
+    scope: &mut RetrievalScope,
+) {
+    if !matches!(scene, AiScene::ExemplarLearning | AiScene::DraftingAssist) {
         return;
     }
     let exemplar_prefixes: Vec<String> = corpora
@@ -130,6 +161,52 @@ fn max_results_for_scene(scene: AiScene) -> usize {
         AiScene::DraftingAssist => 15,
         AiScene::ResearchSynthesis => 30,
     }
+}
+
+/// Scale retrieval top-k from effective input token budget.
+pub fn max_results_from_budget(
+    input_budget: usize,
+    scene: AiScene,
+    strategy: ContextStrategy,
+) -> usize {
+    let base = max_results_for_scene(scene);
+    let scaled = (input_budget / 800).clamp(base, 80);
+    if matches!(strategy, ContextStrategy::LongContext) {
+        scaled.min(40)
+    } else {
+        scaled
+    }
+}
+
+fn note_fulltext_packet(
+    vault_path: &Path,
+    note_path: &str,
+    input_budget: usize,
+) -> Option<ContextPacket> {
+    let full_path = vault_path.join(note_path);
+    let content = std::fs::read_to_string(&full_path).ok()?;
+    let max_chars = (input_budget / 2).min(200_000);
+    let excerpt = if content.chars().count() > max_chars {
+        let truncated: String = content.chars().take(max_chars).collect();
+        format!("{truncated}\n\n…（已截断至预算内）")
+    } else {
+        content
+    };
+    Some(ContextPacket {
+        id: format!("note_full_{note_path}"),
+        source_type: SourceType::Note,
+        source_path: Some(note_path.to_string()),
+        title: "当前笔记全文".into(),
+        heading_path: None,
+        source_span: None,
+        content_hash: String::new(),
+        excerpt,
+        retrieval_reason: "long_context_note".into(),
+        score: 1.0,
+        trust_level: TrustLevel::UserNote,
+        citation_label: "note_full".into(),
+        stale: false,
+    })
 }
 
 #[cfg(test)]

@@ -50,7 +50,12 @@ const TOOL_DESCRIPTIONS: Record<string, string> = {
 
 interface ToolConfirmDialogProps {
   request: ToolConfirmRequest | null;
-  onConfirm: (requestId: string, toolCallId: string, decision: "approve" | "reject" | "modify", modifiedArgs?: unknown) => void;
+  onConfirm: (
+    requestId: string,
+    toolCallId: string,
+    decision: "approve" | "reject" | "modify",
+    modifiedArgs?: unknown,
+  ) => void;
   onClose: () => void;
 }
 
@@ -88,8 +93,10 @@ export function ToolConfirmDialog({
 
   if (!request) return null;
 
-  const displayName = TOOL_DISPLAY_NAMES[request.tool_name] ?? request.tool_name;
-  const description = TOOL_DESCRIPTIONS[request.tool_name] ?? "请确认是否执行此操作。";
+  const displayName =
+    TOOL_DISPLAY_NAMES[request.tool_name] ?? request.tool_name;
+  const description =
+    TOOL_DESCRIPTIONS[request.tool_name] ?? "请确认是否执行此操作。";
   const isWriteOperation = [
     "insert_text_at_cursor",
     "replace_selection",
@@ -103,7 +110,9 @@ export function ToolConfirmDialog({
       <DialogContent className="max-w-lg">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
-            {isWriteOperation && <AlertTriangle className="h-5 w-5 text-amber-500" />}
+            {isWriteOperation && (
+              <AlertTriangle className="h-5 w-5 text-amber-500" />
+            )}
             确认工具调用
           </DialogTitle>
           <DialogDescription>{description}</DialogDescription>
@@ -120,51 +129,55 @@ export function ToolConfirmDialog({
 
           {/* Arguments display */}
           <div className="rounded-md bg-muted p-3">
-            <p className="text-xs font-medium text-muted-foreground mb-2">
+            <p className="mb-2 text-xs font-medium text-muted-foreground">
               调用参数：
             </p>
             {editing ? (
               <Textarea
                 value={modifiedArgs}
-                onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => setModifiedArgs(e.target.value)}
+                onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) =>
+                  setModifiedArgs(e.target.value)
+                }
                 className="font-mono text-xs"
                 rows={6}
                 placeholder="修改后的 JSON 参数"
               />
             ) : (
-              <pre className="text-xs whitespace-pre-wrap break-all">
+              <pre className="whitespace-pre-wrap break-all text-xs">
                 {String(JSON.stringify(request.arguments, null, 2))}
               </pre>
             )}
           </div>
 
           {/* Diff preview for text operations */}
-          {request.tool_name === "insert_text_at_cursor" && request.arguments.text && (
-            <div className="rounded-md border border-emerald-200 bg-emerald-50 p-3">
-              <p className="text-xs font-medium text-emerald-700 mb-1">
-                将插入的文本：
-              </p>
-              <p className="text-sm whitespace-pre-wrap">
-                {String(request.arguments.text as string)}
-              </p>
-            </div>
-          )}
+          {request.tool_name === "insert_text_at_cursor" &&
+            request.arguments.text && (
+              <div className="rounded-lg border border-border/80 bg-surface-inset p-3">
+                <p className="mb-1 text-xs font-medium text-foreground">
+                  将插入的文本：
+                </p>
+                <p className="whitespace-pre-wrap text-sm">
+                  {String(request.arguments.text as string)}
+                </p>
+              </div>
+            )}
 
-          {request.tool_name === "replace_selection" && request.arguments.replacement && (
-            <div className="rounded-md border border-amber-200 bg-amber-50 p-3">
-              <p className="text-xs font-medium text-amber-700 mb-1">
-                替换为：
-              </p>
-              <p className="text-sm whitespace-pre-wrap">
-                {String(request.arguments.replacement as string)}
-              </p>
-            </div>
-          )}
+          {request.tool_name === "replace_selection" &&
+            request.arguments.replacement && (
+              <div className="rounded-lg border border-border/80 bg-surface-inset p-3">
+                <p className="mb-1 text-xs font-medium text-foreground">
+                  替换为：
+                </p>
+                <p className="whitespace-pre-wrap text-sm">
+                  {String(request.arguments.replacement as string)}
+                </p>
+              </div>
+            )}
 
           {/* Warning for write operations */}
           {isWriteOperation && (
             <div className="flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 p-3">
-              <AlertTriangle className="h-4 w-4 text-amber-500 mt-0.5 shrink-0" />
+              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-500" />
               <p className="text-xs text-amber-700">
                 此操作将修改您的笔记内容。请仔细确认后再执行。
               </p>
@@ -172,8 +185,8 @@ export function ToolConfirmDialog({
           )}
         </div>
 
-        <DialogFooter className="flex-col sm:flex-row gap-2">
-          <div className="flex gap-2 flex-1">
+        <DialogFooter className="flex-col gap-2 sm:flex-row">
+          <div className="flex flex-1 gap-2">
             {!editing && (
               <Button
                 variant="outline"
@@ -183,24 +196,24 @@ export function ToolConfirmDialog({
                   setEditing(true);
                 }}
               >
-                <Edit3 className="h-4 w-4 mr-1" />
+                <Edit3 className="mr-1 h-4 w-4" />
                 修改参数
               </Button>
             )}
           </div>
           <div className="flex gap-2">
             <Button variant="destructive" size="sm" onClick={handleReject}>
-              <X className="h-4 w-4 mr-1" />
+              <X className="mr-1 h-4 w-4" />
               拒绝
             </Button>
             {editing ? (
               <Button size="sm" onClick={handleModify}>
-                <Check className="h-4 w-4 mr-1" />
+                <Check className="mr-1 h-4 w-4" />
                 确认修改
               </Button>
             ) : (
               <Button size="sm" onClick={handleApprove}>
-                <Check className="h-4 w-4 mr-1" />
+                <Check className="mr-1 h-4 w-4" />
                 批准执行
               </Button>
             )}

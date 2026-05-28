@@ -126,15 +126,15 @@
 
 ### 证据索引（v0.1.0 补齐 PR）
 
-| PR | 主题 | 主要证据 |
-|----|------|----------|
-| C1 | 内联 AI 三按钮 | `AiStreamExtension`、`useInlineAi`、`tests/inline-ai.test.ts` |
-| C2 | Provider 一致 | `useLlmProvider`、`tests/llm-provider.test.ts` |
-| C3 | Anthropic API | `llm/anthropic.rs` |
-| C4 | 关联笔记 | `ai-context.ts`、`AiPanel` |
-| C5 | frontmatter/tags | `indexer/frontmatter.rs`、`tests/frontmatter_index.rs` |
-| C6 | vault 监听 | `AppState::restart_file_watcher`、`tests/vault_watcher.rs` |
-| C7 | Bing Key UI | `AiPanel`、`search_web.rs` |
-| C8 | 语义评测文档 | `docs/eval/semantic-search.md` |
-| C9 | GFM 往返测试 | `tests/markdown_roundtrip.test.ts`、`gfm-schema.ts` |
-| C10 | ROADMAP/CHANGELOG | 本文件、`ROADMAP.md` |
+| PR  | 主题              | 主要证据                                                      |
+| --- | ----------------- | ------------------------------------------------------------- |
+| C1  | 内联 AI 三按钮    | `AiStreamExtension`、`useInlineAi`、`tests/inline-ai.test.ts` |
+| C2  | Provider 一致     | `useLlmProvider`、`tests/llm-provider.test.ts`                |
+| C3  | Anthropic API     | `llm/anthropic.rs`                                            |
+| C4  | 关联笔记          | `ai-context.ts`、`AiPanel`                                    |
+| C5  | frontmatter/tags  | `indexer/frontmatter.rs`、`tests/frontmatter_index.rs`        |
+| C6  | vault 监听        | `AppState::restart_file_watcher`、`tests/vault_watcher.rs`    |
+| C7  | Bing Key UI       | `AiPanel`、`search_web.rs`                                    |
+| C8  | 语义评测文档      | `docs/eval/semantic-search.md`                                |
+| C9  | GFM 往返测试      | `tests/markdown_roundtrip.test.ts`、`gfm-schema.ts`           |
+| C10 | ROADMAP/CHANGELOG | 本文件、`ROADMAP.md`                                          |

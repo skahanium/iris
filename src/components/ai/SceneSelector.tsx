@@ -1,10 +1,20 @@
-import { Check, ChevronDown, BookOpen, FlaskConical, PenLine, Search } from "lucide-react";
+import {
+  Check,
+  ChevronDown,
+  BookOpen,
+  FlaskConical,
+  PenLine,
+  Search,
+} from "lucide-react";
 import { useState, useRef, useEffect } from "react";
 
 import type { AiScene } from "@/types/ai";
 import { SCENE_OPTIONS } from "@/lib/ai/scene-types";
 
-const SCENE_ICONS: Record<string, React.ComponentType<{ className?: string }>> = {
+const SCENE_ICONS: Record<
+  string,
+  React.ComponentType<{ className?: string }>
+> = {
   Search,
   BookOpen,
   PenLine,
@@ -30,7 +40,8 @@ export function SceneSelector({ scene, onSceneChange }: SceneSelectorProps) {
     return () => document.removeEventListener("mousedown", handleClick);
   }, []);
 
-  const current = SCENE_OPTIONS.find((s) => s.scene === scene) ?? SCENE_OPTIONS[0]!;
+  const current =
+    SCENE_OPTIONS.find((s) => s.scene === scene) ?? SCENE_OPTIONS[0]!;
   const Icon = SCENE_ICONS[current.icon] ?? Search;
 
   return (
@@ -38,7 +49,7 @@ export function SceneSelector({ scene, onSceneChange }: SceneSelectorProps) {
       <button
         type="button"
         onClick={() => setOpen(!open)}
-        className="flex items-center gap-1.5 rounded-md px-2 py-1 text-xs font-medium text-muted-foreground hover:bg-muted/50 hover:text-foreground transition-colors"
+        className="flex items-center gap-1.5 rounded-md border border-transparent px-2.5 py-1.5 text-xs font-medium text-foreground transition-[color,background-color,border-color] duration-base ease-iris-out hover:border-border/60 hover:bg-surface-inset/80"
       >
         <Icon className="h-3.5 w-3.5" />
         {current.label}
@@ -46,7 +57,7 @@ export function SceneSelector({ scene, onSceneChange }: SceneSelectorProps) {
       </button>
 
       {open && (
-        <div className="absolute left-0 top-full z-50 mt-1 w-48 rounded-md border border-border bg-panel p-1 shadow-lg">
+        <div className="absolute left-0 top-full z-50 mt-1 w-52 rounded-lg border border-border/80 bg-surface-elevated p-1 shadow-floating">
           {SCENE_OPTIONS.map((opt) => {
             const OptIcon = SCENE_ICONS[opt.icon] ?? Search;
             return (
@@ -57,14 +68,18 @@ export function SceneSelector({ scene, onSceneChange }: SceneSelectorProps) {
                   onSceneChange(opt.scene);
                   setOpen(false);
                 }}
-                className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-xs hover:bg-muted/50 transition-colors"
+                className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-xs transition-colors hover:bg-muted/50"
               >
                 <OptIcon className="h-3.5 w-3.5 text-muted-foreground" />
                 <div className="flex-1 text-left">
                   <div className="font-medium">{opt.label}</div>
-                  <div className="text-[10px] text-muted-foreground/70">{opt.description}</div>
+                  <div className="text-[10px] text-muted-foreground/70">
+                    {opt.description}
+                  </div>
                 </div>
-                {opt.scene === scene && <Check className="h-3 w-3 text-primary" />}
+                {opt.scene === scene && (
+                  <Check className="h-3 w-3 text-primary" />
+                )}
               </button>
             );
           })}

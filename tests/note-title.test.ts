@@ -5,7 +5,7 @@ import { markdownToEditorHtml } from "@/lib/markdown";
 
 describe("displayTitleFromMarkdown", () => {
   it("reads title from frontmatter only", () => {
-    const md = '---\ntitle: 吃早饭\n---\n\n# 一级标题\n\n正文';
+    const md = "---\ntitle: 吃早饭\n---\n\n# 一级标题\n\n正文";
     expect(displayTitleFromMarkdown(md)).toBe("吃早饭");
   });
 
@@ -15,7 +15,7 @@ describe("displayTitleFromMarkdown", () => {
   });
 
   it("returns fallback when frontmatter title is empty", () => {
-    const md = "---\ntitle: \"\"\n---\n\n";
+    const md = '---\ntitle: ""\n---\n\n';
     expect(displayTitleFromMarkdown(md, "无标题")).toBe("无标题");
   });
 });

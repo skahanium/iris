@@ -38,8 +38,8 @@ pub fn load_corpora(vault: &Path) -> AppResult<CorpusConfig> {
         return Ok(CorpusConfig::default());
     }
     let raw = std::fs::read_to_string(&path)?;
-    let config: CorpusConfig = toml::from_str(&raw)
-        .map_err(|e| AppError::msg(format!("Invalid corpora.toml: {e}")))?;
+    let config: CorpusConfig =
+        toml::from_str(&raw).map_err(|e| AppError::msg(format!("Invalid corpora.toml: {e}")))?;
     Ok(config)
 }
 
@@ -104,10 +104,7 @@ pub fn is_regulation_corpus_path(config: &CorpusConfig, path: &str) -> bool {
 
 /// If no regulation corpus is configured, index regulation structure for all notes (legacy).
 pub fn should_index_regulation_for_path(config: &CorpusConfig, path: &str) -> bool {
-    let has_regulation_corpus = config
-        .corpus
-        .iter()
-        .any(|c| c.kind == "regulation");
+    let has_regulation_corpus = config.corpus.iter().any(|c| c.kind == "regulation");
     if !has_regulation_corpus {
         return true;
     }

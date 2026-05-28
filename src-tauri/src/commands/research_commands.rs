@@ -4,7 +4,6 @@
 //! evidence matrix, argument chain, summary) to the React frontend.
 
 use crate::ai_runtime::{
-    model_gateway::{CapabilitySlot, ProviderConfig},
     research_workflow::{execute_research, ResearchConfig},
     trace::{TraceRecorder, TraceStatus},
     AiScene,
@@ -30,8 +29,8 @@ pub async fn research_execute(
     // Start trace
     TraceRecorder::start(&state.db, &request_id, scene)?;
 
-    // Get provider config
-    let provider_config = get_research_provider(&state).await?;
+    let resolved = crate::llm::config::resolve_for_scene(&state.db, scene)?;
+    let provider_config = resolved.to_provider_config(scene);
 
     let config = ResearchConfig {
         web_research_authorized: web_authorized.unwrap_or(false),
@@ -110,47 +109,4 @@ pub fn research_status(state: State<'_, AppState>) -> AppResult<serde_json::Valu
     Ok(serde_json::json!({
         "recent_research": research_traces,
     }))
-}
-
-// ─── Helpers ─────────────────────────────────────────────
-
-async fn get_research_provider(state: &State<'_, AppState>) -> AppResult<ProviderConfig> {
-    // Research uses the reasoner slot
-    let base_url: String = state.db.with_conn(|conn| {
-        let result: Result<String, _> = conn.query_row(
-            "SELECT value FROM settings WHERE key = 'llm_base_url'",
-            [],
-            |row| row.get(0),
-        );
-        Ok(result.unwrap_or_else(|_| "https://api.deepseek.com".to_string()))
-    })?;
-
-    let model: String = state.db.with_conn(|conn| {
-        let result: Result<String, _> = conn.query_row(
-            "SELECT value FROM user_profile WHERE key = 'model_preferences'",
-            [],
-            |row| row.get(0),
-        );
-        match result {
-            Ok(json_str) => {
-                if let Ok(v) = serde_json::from_str::<serde_json::Value>(&json_str) {
-                    if let Some(m) = v.get("reasoner").and_then(|v| v.as_str()) {
-                        return Ok(m.to_string());
-                    }
-                }
-                Ok("deepseek-reasoner".to_string())
-            }
-            Err(_) => Ok("deepseek-reasoner".to_string()),
-        }
-    })?;
-
-    let api_key = crate::credentials::get_api_key("llm_api_key").ok();
-
-    Ok(ProviderConfig {
-        name: "research_reasoner".into(),
-        base_url,
-        api_key,
-        model,
-        slot: CapabilitySlot::Reasoner,
-    })
 }

@@ -22,7 +22,9 @@ function isFoldableHeading(node: ProseMirrorNode): boolean {
   );
 }
 
-function topLevelBlocks(doc: ProseMirrorNode): { pos: number; node: ProseMirrorNode }[] {
+function topLevelBlocks(
+  doc: ProseMirrorNode,
+): { pos: number; node: ProseMirrorNode }[] {
   const blocks: { pos: number; node: ProseMirrorNode }[] = [];
   doc.forEach((child, offset) => {
     if (child.isBlock) {
@@ -156,7 +158,11 @@ function focusFirstBodyAfterHeading(editor: Editor): boolean {
       continue;
     }
     if (node.type.name === "paragraph") {
-      return editor.chain().focus().setTextSelection(insertPos + 1).run();
+      return editor
+        .chain()
+        .focus()
+        .setTextSelection(insertPos + 1)
+        .run();
     }
     break;
   }
@@ -201,11 +207,7 @@ export const HeadingFoldExtension = Extension.create({
             const collapsed = new Set<number>();
             return {
               collapsed,
-              decorations: buildFoldDecorations(
-                state.doc,
-                collapsed,
-                onToggle,
-              ),
+              decorations: buildFoldDecorations(state.doc, collapsed, onToggle),
             };
           },
           apply(tr, value, _oldState, newState) {

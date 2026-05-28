@@ -100,6 +100,14 @@ pub fn split_frontmatter(content: &str) -> (Option<String>, String) {
     }
 }
 
+/// Legacy machine-only stems (`untitled-123`); never show to users.
+fn is_internal_untitled_stem(stem: &str) -> bool {
+    let Some(digits) = stem.strip_prefix("untitled-") else {
+        return false;
+    };
+    !digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit())
+}
+
 /// Resolve user-visible document title (frontmatter `title:` only; not body `#` headings).
 pub fn resolve_display_title(
     parsed_title: Option<&str>,
@@ -121,8 +129,11 @@ pub fn resolve_display_title(
         }
     }
     let stored = stored_title.trim();
-    if !stored.is_empty() && stored != path_stem {
+    if !stored.is_empty() && stored != path_stem && !is_internal_untitled_stem(stored) {
         return stored.to_string();
+    }
+    if is_internal_untitled_stem(path_stem) {
+        return "无标题1".to_string();
     }
     path_stem.to_string()
 }

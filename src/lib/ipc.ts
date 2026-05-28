@@ -216,6 +216,16 @@ export async function llmAbort(requestId: string): Promise<void> {
   return invoke("llm_abort_cmd", { requestId });
 }
 
+export {
+  connectivityStatus,
+  llmConfigApplyDeepseekDefaults,
+  llmConfigGet,
+  llmConfigSet,
+  llmConfigTest,
+  LLM_CONFIG_CHANGED_EVENT,
+  notifyLlmConfigChanged,
+} from "@/lib/llm-ipc";
+
 export async function credentialSet(
   service: string,
   value: string,

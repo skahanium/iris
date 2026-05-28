@@ -74,10 +74,7 @@ export function markdownToHtml(md: string): string {
  * Parse full note markdown → editor HTML (noteTitle h1 + body).
  * `titleFallback` used when frontmatter has no title (e.g. filename stem).
  */
-export function markdownToEditorHtml(
-  md: string,
-  titleFallback = "",
-): string {
+export function markdownToEditorHtml(md: string, titleFallback = ""): string {
   const { fields, body: rawBody, yaml } = splitFrontmatter(md);
   let title = titleFromFields(fields);
   let body = rawBody;
@@ -189,10 +186,7 @@ export function markdownRoundTrip(md: string): string {
 }
 
 /** Round-trip for Iris notes with frontmatter title. */
-export function noteMarkdownRoundTrip(
-  md: string,
-  titleFallback = "",
-): string {
+export function noteMarkdownRoundTrip(md: string, titleFallback = ""): string {
   const yaml = extractFrontmatterYaml(md);
   const html = markdownToEditorHtml(md, titleFallback);
   return editorHtmlToMarkdown(html, yaml);

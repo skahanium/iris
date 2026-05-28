@@ -47,7 +47,10 @@ describe("AiStreamExtension accept / rollback / retry", () => {
 
   beforeEach(() => {
     editor = new Editor({
-      extensions: [StarterKit.configure({ codeBlock: false }), AiStreamExtension],
+      extensions: [
+        StarterKit.configure({ codeBlock: false }),
+        AiStreamExtension,
+      ],
       content: aiStreamDoc("生成结果"),
     });
   });
@@ -130,7 +133,10 @@ describe("useInlineAi with mocked IPC", () => {
 
   it("retry calls llmGenerate with snapshot from ai-stream attrs", async () => {
     const editor = new Editor({
-      extensions: [StarterKit.configure({ codeBlock: false }), AiStreamExtension],
+      extensions: [
+        StarterKit.configure({ codeBlock: false }),
+        AiStreamExtension,
+      ],
       content: aiStreamDoc(),
     });
 

@@ -12,14 +12,14 @@
 
 ### 1.1 技术栈锁定
 
-| 层级 | 技术 | 禁止替代 |
-|------|------|----------|
-| 桌面框架 | Tauri 2.x | 禁止 Electron、Flutter Desktop、.NET MAUI |
-| 后端语言 | Rust | 禁止 Node.js 后端、Python 后端 |
-| 前端框架 | React 19 | 禁止 Vue、Svelte、Solid、Angular |
-| 编辑器 | TipTap (Prosemirror) | 禁止 Slate.js、Lexical、Quill、自研编辑器 |
-| 样式 | TailwindCSS + shadcn/ui | 禁止 CSS Modules、styled-components、Ant Design |
-| 数据库 | SQLite + sqlite-vec | 禁止 PostgreSQL、LanceDB、Qdrant |
+| 层级     | 技术                    | 禁止替代                                        |
+| -------- | ----------------------- | ----------------------------------------------- |
+| 桌面框架 | Tauri 2.x               | 禁止 Electron、Flutter Desktop、.NET MAUI       |
+| 后端语言 | Rust                    | 禁止 Node.js 后端、Python 后端                  |
+| 前端框架 | React 19                | 禁止 Vue、Svelte、Solid、Angular                |
+| 编辑器   | TipTap (Prosemirror)    | 禁止 Slate.js、Lexical、Quill、自研编辑器       |
+| 样式     | TailwindCSS + shadcn/ui | 禁止 CSS Modules、styled-components、Ant Design |
+| 数据库   | SQLite + sqlite-vec     | 禁止 PostgreSQL、LanceDB、Qdrant                |
 
 ### 1.2 许可合规
 
@@ -48,7 +48,6 @@
   1. 在代码注释中明确说明为何 `safe` 替代方案不可行
   2. 在 PR 描述中标注 "含 unsafe 代码" 并说明必要性
   3. 经过至少一个 maintainer 的专门评审
-
 
 ## 二、代码规范
 
@@ -85,21 +84,22 @@ pnpm run typecheck       # TypeScript 类型检查
 
 ### 2.3 文件命名
 
-| 上下文 | 约定 | 示例 |
-|--------|------|------|
-| React 组件文件 | PascalCase | `AiPanel.tsx` |
-| React 组件目录 | kebab-case | `ai-panel/` |
-| Rust 源文件 | snake_case | `file_ops.rs` |
-| Rust 类型/结构体 | PascalCase | `FileMetadata` |
-| Rust 函数/变量 | snake_case | `read_file()` |
-| SQLite 表名 | snake_case 复数 | `file_tags` |
-| SQLite 列名 | snake_case | `created_at` |
+| 上下文           | 约定            | 示例           |
+| ---------------- | --------------- | -------------- |
+| React 组件文件   | PascalCase      | `AiPanel.tsx`  |
+| React 组件目录   | kebab-case      | `ai-panel/`    |
+| Rust 源文件      | snake_case      | `file_ops.rs`  |
+| Rust 类型/结构体 | PascalCase      | `FileMetadata` |
+| Rust 函数/变量   | snake_case      | `read_file()`  |
+| SQLite 表名      | snake_case 复数 | `file_tags`    |
+| SQLite 列名      | snake_case      | `created_at`   |
 
 ### 2.4 Commit 规范
 
 使用 [Conventional Commits](https://www.conventionalcommits.org/zh-hans/)，消息语言使用**中文**。
 
 格式：
+
 ```
 <类型>(<范围>): <描述>
 
@@ -113,18 +113,19 @@ pnpm run typecheck       # TypeScript 类型检查
 范围（常用）：`editor` | `ai` | `storage` | `search` | `crypto` | `ui` | `ipc` | `docs`
 
 示例：
+
 ```
 feat(editor): 添加 / 命令唤起 AI 功能菜单
 
 Closes #42
 ```
 
-
 ## 三、施工纪律
 
 ### 3.1 修改前必读上下文
 
 修改任何函数、类型、组件之前：
+
 1. 阅读该文件的完整内容
 2. 搜索该函数/组件的所有调用处
 3. 理解它在整体数据流中的位置
@@ -134,6 +135,7 @@ Closes #42
 ### 3.2 禁止凭空造轮子
 
 引入新依赖或手写工具函数之前：
+
 1. 搜索代码库中是否已存在类似实现
 2. 检查现有依赖是否已提供该功能
 3. 在 PR 描述中说明为何复用不可行
@@ -147,6 +149,7 @@ Closes #42
 ### 3.4 验证后才能声称完成
 
 在声称任何 "完成了" "修复了" "通过了" 之前，必须：
+
 1. 运行完整的 lint / format / typecheck / test 命令
 2. 确认所有命令的输出无错误
 3. 如果 CI 配置了额外的检查，等待 CI 通过
@@ -159,12 +162,12 @@ Closes #42
 - 列举考虑过的替代方案及不选择的原因
 - 不设硬性审批门禁，但 maintainer 可能要求讨论
 
-
 ## 四、项目特定规则
 
 ### 4.1 编辑器同步逻辑
 
 修改 TipTap schema（节点类型、Mark 类型、序列化/反序列化）时：
+
 - 必须同步更新 Markdown 往返测试套件（round-trip tests）
 - 新增节点类型必须覆盖 `parse → Node Tree → serialize` 的完整往返
 - 如果序列化输出与标准 Markdown 有差异，必须在 schema 文档注释中说明
@@ -172,6 +175,7 @@ Closes #42
 ### 4.2 IPC 接口契约
 
 修改 Tauri `#[tauri::command]` 的函数签名（参数名、类型、返回值）时：
+
 - 必须同步更新 `src/types/ipc.ts` 中的 TypeScript 类型定义
 - 必须同步更新 `src/lib/ipc.ts` 中的类型安全封装函数
 - 前后端类型不一致会导致编译通过但运行时崩溃
@@ -195,6 +199,7 @@ Closes #42
 ### 4.5 Markdown 解析器兼容性
 
 升级 Markdown 解析器（`markdown-it`、`remark` 等）版本时：
+
 - 必须确保旧格式笔记可正常打开和渲染
 - 必须通过完整的 round-trip test suite
 - 如果新版本引入了 breaking change，必须在 PR 中注明并提供迁移方案
@@ -206,7 +211,6 @@ Closes #42
 - **文档索引**：[docs/README.md](./docs/README.md)
 - 修改 UI：先 design-system + ROADMAP 对应节，再 `src/styles/globals.css` 与组件
 - 勿在 `ARCHITECTURE.md` 或 `v0.1.0-completion-prs.md` 中新增与 ROADMAP 冲突的版本承诺；v0.1.0 补齐清单已冻结
-
 
 ## 五、命令速查
 
@@ -253,7 +257,6 @@ cargo run --bin reindex             # 重建全文/向量索引
 pnpm run test:e2e                   # 运行端到端测试
 ```
 
-
 ## 六、AGENTS.md 修订规则
 
 本文档的修改遵循以下流程：
@@ -268,4 +271,4 @@ pnpm run test:e2e                   # 运行端到端测试
 
 ---
 
-*最后更新: 2026 年 5 月（v0.1.0 发布；文档体系与 v0.1.1 体验里程碑对齐）*
+_最后更新: 2026 年 5 月（v0.1.0 发布；文档体系与 v0.1.1 体验里程碑对齐）_
