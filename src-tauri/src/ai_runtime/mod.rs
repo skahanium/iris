@@ -202,3 +202,16 @@ pub enum ToolConfirmDecision {
     Reject,
     Modify,
 }
+
+// ─── Tool Call Result ─────────────────────────────────────
+
+/// 工具调用结果（含可观测性元数据）
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ToolCallResult {
+    pub tool_name: String,
+    pub success: bool,
+    pub output: serde_json::Value,
+    pub duration_ms: u64,
+    pub tokens_used: Option<u32>,
+    pub error: Option<String>,
+}

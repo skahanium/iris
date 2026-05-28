@@ -62,6 +62,15 @@ export interface ToolSpec {
   max_results: number | null;
 }
 
+export interface ToolCallResult {
+  tool_name: string;
+  success: boolean;
+  output: unknown;
+  duration_ms: number;
+  tokens_used?: number;
+  error?: string;
+}
+
 /** Retrieval scope from `@` mentions (IPC camelCase). */
 export interface ContextScope {
   paths: string[];
@@ -88,6 +97,24 @@ export interface ToolConfirmRequest {
   tool_call_id: string;
   decision: "approve" | "reject" | "modify";
   modified_args?: unknown;
+}
+
+export type ToolCallStatus =
+  | "pending"
+  | "running"
+  | "completed"
+  | "failed"
+  | "rejected";
+
+export interface ToolCallInfo {
+  id: string;
+  name: string;
+  arguments?: Record<string, unknown>;
+  status: ToolCallStatus;
+  result_summary?: string;
+  error?: string;
+  duration_ms?: number;
+  tokens_used?: number;
 }
 
 // Scene display metadata
