@@ -7,6 +7,7 @@ import {
   serializeNoteMarkdown,
   titleFromFields,
 } from "@/lib/frontmatter";
+import { sanitizeHtml } from "@/lib/sanitize";
 
 /**
  * Markdown ↔ HTML 往返（编辑器加载/保存）。
@@ -19,6 +20,67 @@ const turndown = new TurndownService({
   hr: "---",
 });
 turndown.use(turndownPluginGfm.gfm);
+
+function escapeMarkdownTableCell(text: string): string {
+  return text
+    .replace(/\r?\n+/g, "<br>")
+    .replace(/\|/g, "\\|")
+    .trim();
+}
+
+function markdownFromTableCell(cell: Element): string {
+  const clone = cell.cloneNode(true) as Element;
+  clone.querySelectorAll("colgroup, label").forEach((node) => node.remove());
+  return escapeMarkdownTableCell(turndown.turndown(clone.innerHTML));
+}
+
+turndown.addRule("gfmTableFromTipTap", {
+  filter: (node) => node instanceof HTMLTableElement,
+  replacement: (_content, node) => {
+    const table = node as HTMLTableElement;
+    const rows = Array.from(table.querySelectorAll("tr"));
+    if (rows.length === 0) return "";
+
+    const serialized = rows
+      .map((row) => {
+        const cells = Array.from(row.children).filter(
+          (cell) => cell.tagName === "TH" || cell.tagName === "TD",
+        );
+        return `| ${cells.map(markdownFromTableCell).join(" | ")} |`;
+      })
+      .filter((row) => row !== "|  |");
+
+    if (serialized.length === 0) return "";
+
+    const columnCount = Array.from(rows[0]!.children).filter(
+      (cell) => cell.tagName === "TH" || cell.tagName === "TD",
+    ).length;
+    const separator = `| ${Array.from({ length: columnCount })
+      .map(() => "---")
+      .join(" | ")} |`;
+    return `\n\n${[serialized[0], separator, ...serialized.slice(1)].join(
+      "\n",
+    )}\n\n`;
+  },
+});
+
+turndown.addRule("taskItemFromTipTap", {
+  filter: (node) =>
+    node instanceof HTMLLIElement &&
+    node.getAttribute("data-type") === "taskItem",
+  replacement: (_content, node) => {
+    const item = node as HTMLLIElement;
+    const checked = item.getAttribute("data-checked") === "true" ? "x" : " ";
+    const clone = item.cloneNode(true) as HTMLLIElement;
+    clone.querySelectorAll("label").forEach((label) => label.remove());
+    const body = turndown
+      .turndown(clone.innerHTML)
+      .trim()
+      .replace(/\n{2,}/g, "\n")
+      .replace(/\n/g, "\n  ");
+    return `- [${checked}] ${body}\n`;
+  },
+});
 
 // Wiki-link: convert <span data-wiki-link data-wiki-title="X"> to [[X]]
 turndown.addRule("wikiLink", {
@@ -41,6 +103,117 @@ turndown.addRule("irisDocTitle", {
 });
 
 marked.setOptions({ gfm: true, breaks: true });
+
+function replaceWikiLinksInTextNode(textNode: Text): void {
+  const value = textNode.nodeValue ?? "";
+  const matches = Array.from(value.matchAll(/\[\[([^\]\n]+)\]\]/g));
+  if (matches.length === 0) return;
+
+  const doc = textNode.ownerDocument;
+  const fragment = doc.createDocumentFragment();
+  let cursor = 0;
+
+  for (const match of matches) {
+    const raw = match[0]!;
+    const title = match[1]!.trim();
+    const index = match.index ?? 0;
+    if (index > cursor) {
+      fragment.appendChild(doc.createTextNode(value.slice(cursor, index)));
+    }
+    if (title) {
+      const span = doc.createElement("span");
+      span.setAttribute("data-wiki-link", "");
+      span.setAttribute("data-wiki-title", title);
+      span.textContent = title;
+      fragment.appendChild(span);
+    } else {
+      fragment.appendChild(doc.createTextNode(raw));
+    }
+    cursor = index + raw.length;
+  }
+
+  if (cursor < value.length) {
+    fragment.appendChild(doc.createTextNode(value.slice(cursor)));
+  }
+  textNode.replaceWith(fragment);
+}
+
+function adaptTaskListsForTipTap(root: Element): void {
+  root.querySelectorAll("li").forEach((item) => {
+    const firstElement = item.firstElementChild;
+    if (
+      firstElement instanceof HTMLInputElement &&
+      firstElement.type === "checkbox"
+    ) {
+      const parent = item.parentElement;
+      if (parent?.tagName === "UL") {
+        parent.setAttribute("data-type", "taskList");
+      }
+      item.setAttribute("data-type", "taskItem");
+      item.setAttribute(
+        "data-checked",
+        firstElement.checked ? "true" : "false",
+      );
+      firstElement.remove();
+    }
+  });
+}
+
+function adaptWikiLinksForTipTap(root: Element): void {
+  const walker = root.ownerDocument.createTreeWalker(
+    root,
+    NodeFilter.SHOW_TEXT,
+    {
+      acceptNode: (node) => {
+        const parent = node.parentElement;
+        if (!parent) return NodeFilter.FILTER_REJECT;
+        if (parent.closest("code, pre, a, [data-wiki-link]")) {
+          return NodeFilter.FILTER_REJECT;
+        }
+        return /\[\[[^\]\n]+\]\]/.test(node.nodeValue ?? "")
+          ? NodeFilter.FILTER_ACCEPT
+          : NodeFilter.FILTER_SKIP;
+      },
+    },
+  );
+  const nodes: Text[] = [];
+  let current = walker.nextNode();
+  while (current) {
+    nodes.push(current as Text);
+    current = walker.nextNode();
+  }
+  nodes.forEach(replaceWikiLinksInTextNode);
+}
+
+function adaptMarkdownHtmlForTipTap(html: string): string {
+  const doc = new DOMParser().parseFromString(
+    `<div>${html}</div>`,
+    "text/html",
+  );
+  const root = doc.body.firstElementChild;
+  if (!root) return html;
+  adaptTaskListsForTipTap(root);
+  adaptWikiLinksForTipTap(root);
+  return root.innerHTML;
+}
+
+function removeTransientAiNodes(root: Element): void {
+  root
+    .querySelectorAll('[data-type="ai-stream"], [data-ai-stream]')
+    .forEach((node) => {
+      const originalText =
+        node.getAttribute("originalText") ??
+        node.getAttribute("originaltext") ??
+        "";
+      if (!originalText.trim()) {
+        node.remove();
+        return;
+      }
+      const paragraph = node.ownerDocument.createElement("p");
+      paragraph.textContent = originalText;
+      node.replaceWith(paragraph);
+    });
+}
 
 /**
  * 正文开头的 ATX `# 标题` 若与 frontmatter 主标题相同则去掉，避免编辑器出现两个标题。
@@ -97,7 +270,9 @@ export function markdownToEditorHtml(md: string, titleFallback = ""): string {
 
   const titleHtml = `<h1 class="iris-doc-title">${escapeHtml(title)}</h1>`;
   const bodyTrimmed = body.trim();
-  const bodyHtml = bodyTrimmed ? markdownToHtml(bodyTrimmed) : "<p></p>";
+  const bodyHtml = bodyTrimmed
+    ? adaptMarkdownHtmlForTipTap(markdownToHtml(bodyTrimmed))
+    : "<p></p>";
   return `${titleHtml}${bodyHtml}`;
 }
 
@@ -124,9 +299,13 @@ export function editorHtmlToMarkdown(
   const title = titleEl?.textContent?.trim() ?? "";
   titleEl?.remove();
 
-  const duplicateBodyH1 = root.querySelector(
-    ":scope > h1:not(.iris-doc-title)",
-  );
+  removeTransientAiNodes(root);
+
+  const duplicateBodyH1 = root.firstElementChild?.matches(
+    "h1:not(.iris-doc-title)",
+  )
+    ? root.firstElementChild
+    : null;
   if (
     duplicateBodyH1 &&
     title &&
@@ -150,7 +329,7 @@ export function htmlToMarkdown(html: string): string {
 export function markdownToHtmlPage(md: string, title?: string): string {
   const { fields, body } = splitFrontmatter(md);
   const docTitle = (title ?? titleFromFields(fields)) || "Iris Note";
-  const bodyHtml = markdownToHtml(body);
+  const bodyHtml = sanitizeHtml(markdownToHtml(body));
   const cleanTitle = escapeHtml(docTitle);
   return `<!DOCTYPE html>
 <html lang="zh-CN">

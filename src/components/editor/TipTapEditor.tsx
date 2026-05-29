@@ -30,7 +30,9 @@ import { cn } from "@/lib/utils";
 
 import { AiStreamExtension } from "./extensions/AiStreamExtension";
 import { HeadingFoldExtension } from "./extensions/HeadingFoldExtension";
+import { ImageExtension } from "./extensions/ImageExtension";
 import { IrisDocument } from "./extensions/IrisDocument";
+import { LinkExtension } from "./extensions/LinkExtension";
 import { NoteTitleExtension } from "./extensions/NoteTitleExtension";
 import { SlashCommandExtension } from "./extensions/SlashCommandExtension";
 import { WikiLinkExtension } from "./extensions/WikiLinkExtension";
@@ -121,10 +123,12 @@ export function TipTapEditor({
         document: false,
         codeBlock: false,
         heading: {
-          levels: [1, 2, 3],
+          levels: [1, 2, 3, 4, 5, 6],
           HTMLAttributes: { class: "iris-section-heading" },
         },
       }),
+      LinkExtension,
+      ImageExtension,
       TaskList,
       TaskItem.configure({ nested: true }),
       Table.configure({ resizable: true }),

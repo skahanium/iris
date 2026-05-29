@@ -24,7 +24,6 @@ export const NoteTitleExtension = Node.create({
   marks: "",
   defining: true,
   isolating: true,
-  group: "block",
 
   parseHTML() {
     return [{ tag: "h1.iris-doc-title" }];

@@ -398,7 +398,7 @@
   }
 
   .iris-editor-zoom-scroll {
-    @apply min-h-0 flex-1 overflow-y-auto overflow-x-hidden;
+    @apply min-h-0 flex-1 overflow-auto;
   }
 
   .iris-editor-outline-open .iris-editor-zoom-scroll {
@@ -461,7 +461,23 @@
 
   .iris-editor-body
     .ProseMirror
-    > :is(p, h1, h2, h3, ul, ol, blockquote, pre, hr, table) {
+    > :is(
+      p,
+      h1,
+      h2,
+      h3,
+      h4,
+      h5,
+      h6,
+      ul,
+      ol,
+      blockquote,
+      pre,
+      hr,
+      table,
+      .tableWrapper,
+      img
+    ) {
     margin: 0;
   }
 
@@ -469,17 +485,22 @@
     margin-top: 0.5em;
   }
 
-  .iris-editor-body .ProseMirror > :is(h1:not(.iris-doc-title), h2, h3) {
+  .iris-editor-body
+    .ProseMirror
+    > :is(h1:not(.iris-doc-title), h2, h3, h4, h5, h6) {
     margin-top: 1.25em;
   }
 
   .iris-editor-body
     .ProseMirror
-    > :is(h1:not(.iris-doc-title), h2, h3):first-child {
+    > :is(h1:not(.iris-doc-title), h2, h3, h4, h5, h6):first-child {
     margin-top: 0;
   }
 
-  .iris-editor-body .ProseMirror > :is(h1:not(.iris-doc-title), h2, h3) + * {
+  .iris-editor-body
+    .ProseMirror
+    > :is(h1:not(.iris-doc-title), h2, h3, h4, h5, h6)
+    + * {
     margin-top: 0.25em;
   }
 
@@ -493,7 +514,9 @@
     text-indent: 0;
   }
 
-  .iris-editor-body .ProseMirror > :is(h1:not(.iris-doc-title), h2, h3) {
+  .iris-editor-body
+    .ProseMirror
+    > :is(h1:not(.iris-doc-title), h2, h3, h4, h5, h6) {
     @apply relative font-semibold text-editor-ink;
     line-height: 1.3;
   }
@@ -510,6 +533,15 @@
 
   .iris-editor-body .ProseMirror > h3 {
     font-size: 1.25rem;
+  }
+
+  .iris-editor-body .ProseMirror > h4 {
+    font-size: 1.075rem;
+  }
+
+  .iris-editor-body .ProseMirror > h5,
+  .iris-editor-body .ProseMirror > h6 {
+    font-size: 1rem;
   }
 
   .iris-editor-body
@@ -566,6 +598,29 @@
     margin: 0;
   }
 
+  .iris-editor-body .ProseMirror ul[data-type="taskList"] {
+    @apply list-none pl-0;
+  }
+
+  .iris-editor-body .ProseMirror li[data-type="taskItem"] {
+    @apply flex gap-2;
+  }
+
+  .iris-editor-body .ProseMirror li[data-type="taskItem"] > label {
+    @apply mt-0.5 inline-flex h-5 w-5 shrink-0 items-center justify-center;
+  }
+
+  .iris-editor-body
+    .ProseMirror
+    li[data-type="taskItem"]
+    input[type="checkbox"] {
+    @apply h-4 w-4 rounded border-border accent-primary;
+  }
+
+  .iris-editor-body .ProseMirror li[data-type="taskItem"] > div {
+    @apply min-w-0 flex-1;
+  }
+
   .iris-editor-body .ProseMirror a {
     @apply text-primary underline decoration-primary/40 underline-offset-2 transition-colors hover:decoration-primary/70;
   }
@@ -602,6 +657,35 @@
     @apply my-4 border-0 border-t border-border;
     height: 0;
     background: transparent;
+  }
+
+  .iris-editor-body .ProseMirror .tableWrapper {
+    @apply overflow-x-auto;
+  }
+
+  .iris-editor-body .ProseMirror table {
+    @apply w-full min-w-full border-collapse text-sm;
+  }
+
+  .iris-editor-body .ProseMirror th {
+    @apply border border-border bg-muted/45 px-2.5 py-1.5 text-left font-semibold;
+  }
+
+  .iris-editor-body .ProseMirror td {
+    @apply border border-border px-2.5 py-1.5 align-top;
+  }
+
+  .iris-editor-body .ProseMirror .selectedCell {
+    position: relative;
+  }
+
+  .iris-editor-body .ProseMirror .selectedCell::after {
+    @apply pointer-events-none absolute inset-0 bg-primary/10;
+    content: "";
+  }
+
+  .iris-editor-body .ProseMirror img {
+    @apply my-3 max-w-full rounded-md border border-border;
   }
 
   .iris-editor-body .ProseMirror .is-empty::before {
