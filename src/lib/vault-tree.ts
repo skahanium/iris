@@ -23,7 +23,11 @@ export function buildVaultTree(files: FileListItem[]): VaultTreeNode[] {
     };
     folderMap.set(folderPath, node);
     if (folderPath.includes("/")) {
-      const parentPath = folderPath.replace(/\/$/, "").split("/").slice(0, -1).join("/");
+      const parentPath = folderPath
+        .replace(/\/$/, "")
+        .split("/")
+        .slice(0, -1)
+        .join("/");
       const parentName = parentPath.split("/").pop() ?? parentPath;
       const parent = ensureFolder(`${parentPath}/`, parentName);
       parent.children = parent.children ?? [];

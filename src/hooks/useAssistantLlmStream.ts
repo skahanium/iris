@@ -1,26 +1,20 @@
-import { useEffect, useRef, type Dispatch, type MutableRefObject, type SetStateAction } from "react";
-
 import {
-  listenLlmDone,
-  listenLlmError,
-  listenLlmToken,
-} from "@/lib/ipc";
+  useEffect,
+  useRef,
+  type Dispatch,
+  type MutableRefObject,
+  type SetStateAction,
+} from "react";
+
+import { listenLlmDone, listenLlmError, listenLlmToken } from "@/lib/ipc";
 import type { LlmTokenEvent } from "@/types/ipc";
 
 import type { ChatLine } from "@/components/ai/AiMessageList";
 
 /**
- * Register AI panel LLM stream event listeners.
- *
- * Uses requestAnimationFrame to throttle React state updates during streaming:
- * the text buffer accumulates every token, but the UI only re-renders at most
- * once per animation frame (~60fps). For a typical 2000-token response this
- * reduces re-renders from ~2000 to ~125 — a ~16x reduction.
- *
- * Handles StrictMode double-subscription by filtering on request_id and a
- * `panelSendActiveRef` gate.
+ * 统一助手 LLM 流式事件监听（RAF 节流 + request_id 过滤）。
  */
-export function useAiPanelLlmStream(options: {
+export function useAssistantLlmStream(options: {
   panelSendActiveRef: MutableRefObject<boolean>;
   requestIdRef: MutableRefObject<string | null>;
   streamBufRef: MutableRefObject<string>;
@@ -43,10 +37,6 @@ export function useAiPanelLlmStream(options: {
     let unlistenDone: (() => void) | undefined;
     let unlistenError: (() => void) | undefined;
 
-    /**
-     * Push the latest stream buffer snapshot to React state.
-     * Called from RAF callback (throttled) or from llm:done (flush).
-     */
     function flushSnapshot() {
       const snapshot = streamBufRef.current;
       setMessages((prev) => {
@@ -70,8 +60,6 @@ export function useAiPanelLlmStream(options: {
       }
       streamBufRef.current += ev.token;
 
-      // Throttle React re-renders to once per animation frame.
-      // The buffer is always current; flushSnapshot picks up the latest.
       if (rafRef.current === undefined) {
         rafRef.current = requestAnimationFrame(() => {
           rafRef.current = undefined;
@@ -93,7 +81,6 @@ export function useAiPanelLlmStream(options: {
       ) {
         return;
       }
-      // Flush any pending RAF to capture the final snapshot before finishing
       if (rafRef.current !== undefined) {
         cancelAnimationFrame(rafRef.current);
         rafRef.current = undefined;
@@ -152,3 +139,6 @@ export function useAiPanelLlmStream(options: {
     setStreaming,
   ]);
 }
+
+/** @deprecated 使用 useAssistantLlmStream */
+export const useAiPanelLlmStream = useAssistantLlmStream;

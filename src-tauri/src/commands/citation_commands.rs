@@ -20,10 +20,9 @@ use crate::error::AppResult;
 /// 3. Optionally searches the web if authorized
 /// 4. Outputs citation coverage assessment
 /// 5. Gives suggestions for adding citations or rewriting
-#[tauri::command]
-pub async fn citation_check(
-    state: State<'_, Arc<AppState>>,
-    app_handle: AppHandle,
+pub(crate) async fn execute_citation_check(
+    state: &AppState,
+    app_handle: &AppHandle,
     input: CitationCheckInput,
 ) -> AppResult<CitationCheckResult> {
     let request_id = uuid::Uuid::new_v4().to_string();
@@ -35,7 +34,7 @@ pub async fn citation_check(
         crate::ai_runtime::AiScene::KnowledgeLookup,
     )?;
 
-    let mut evidence = retrieve_citation_evidence(&state, &input).await?;
+    let mut evidence = retrieve_citation_evidence(state, &input).await?;
 
     if input.web_authorized {
         if let Ok(fetch) =
@@ -73,6 +72,16 @@ pub async fn citation_check(
     let _ = app_handle.emit("ai:citation_check_complete", &request_id);
 
     Ok(result)
+}
+
+/// Execute a citation check task.
+#[tauri::command]
+pub async fn citation_check(
+    state: State<'_, Arc<AppState>>,
+    app_handle: AppHandle,
+    input: CitationCheckInput,
+) -> AppResult<CitationCheckResult> {
+    execute_citation_check(state.inner().as_ref(), &app_handle, input).await
 }
 
 /// Retrieve local evidence for citation checking.

@@ -52,9 +52,7 @@ describe("command palette", () => {
       hasActiveNote: false,
     });
     const filtered = filterCommandPaletteItems(items, "");
-    const visibleIds = items
-      .filter((i) => !i.hiddenInPalette)
-      .map((i) => i.id);
+    const visibleIds = items.filter((i) => !i.hiddenInPalette).map((i) => i.id);
     expect(filtered.map((i) => i.id)).toEqual(visibleIds);
   });
 

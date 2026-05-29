@@ -50,7 +50,10 @@ export const StatusBar = memo(function StatusBar({
   const minutes = useMemo(() => readingMinutes(bodyText), [bodyText]);
 
   return (
-    <footer className="flex h-8 shrink-0 items-center gap-3 border-t border-border/60 bg-surface-chrome px-3 font-sans text-[11px] tracking-wide text-muted-foreground">
+    <footer
+      data-testid="status-bar"
+      className="flex h-8 shrink-0 items-center gap-3 border-t border-border/60 bg-surface-chrome px-3 font-sans text-[11px] tracking-wide text-muted-foreground"
+    >
       <span className="min-w-0 truncate" title={path ?? undefined}>
         {label}
       </span>
@@ -93,7 +96,10 @@ export const StatusBar = memo(function StatusBar({
           <span>命令</span>
           <Kbd>{formatCommandPaletteShortcut()}</Kbd>
         </span>
-        <span className="hidden shrink-0 text-muted-foreground/60 sm:inline" aria-hidden>
+        <span
+          className="hidden shrink-0 text-muted-foreground/60 sm:inline"
+          aria-hidden
+        >
           ·
         </span>
         <ConnectivityIndicators

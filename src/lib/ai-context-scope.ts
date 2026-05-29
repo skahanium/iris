@@ -35,7 +35,10 @@ export function parseMentionTokens(text: string): MentionToken[] {
     const kind = isFolderMention(value) ? "folder" : "file";
     tokens.push({
       raw: match[0] ?? "",
-      value: kind === "folder" ? normalizeFolderPrefix(value) : value.replace(/\\/g, "/"),
+      value:
+        kind === "folder"
+          ? normalizeFolderPrefix(value)
+          : value.replace(/\\/g, "/"),
       kind,
       label: value.replace(/\\/g, "/").replace(/\/$/, "") || value,
     });

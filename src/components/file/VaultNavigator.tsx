@@ -174,10 +174,14 @@ export function VaultNavigator({ open, onClose, onOpen }: VaultNavigatorProps) {
   const [corpusDialogOpen, setCorpusDialogOpen] = useState(false);
   const [corpusKind, setCorpusKind] = useState("regulation");
   const [newFolderParent, setNewFolderParent] = useState<string | null>(null);
-  const [newFolderName, setNewFolderName] = useState("");
-  const [folderRenameTarget, setFolderRenameTarget] = useState<string | null>(null);
+  const [folderRenameTarget, setFolderRenameTarget] = useState<string | null>(
+    null,
+  );
   const [folderRenameNewName, setFolderRenameNewName] = useState("");
-  const [folderDeleteTarget, setFolderDeleteTarget] = useState<{ path: string; name: string } | null>(null);
+  const [folderDeleteTarget, setFolderDeleteTarget] = useState<{
+    path: string;
+    name: string;
+  } | null>(null);
   const [editingTemplate, setEditingTemplate] = useState<string | null>(null);
   const parentRef = useRef<HTMLDivElement>(null);
 
@@ -222,36 +226,39 @@ export function VaultNavigator({ open, onClose, onOpen }: VaultNavigatorProps) {
     });
   }, []);
 
-  const handleFolderCreate = useCallback(async () => {
-    const name = newFolderName.trim();
-    if (!name) return;
-    const parentPath = newFolderParent ?? "";
-    const folderPath = parentPath ? `${parentPath}${name}` : name;
-    try {
-      await folderCreate(folderPath);
-      setNewFolderParent(null);
-      setNewFolderName("");
-      refresh();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "创建文件夹失败");
-    }
-  }, [newFolderName, newFolderParent, refresh]);
+  const handleFolderCreate = useCallback(
+    async (name: string) => {
+      const trimmed = name.trim();
+      if (!trimmed) return;
+      const parentPath = newFolderParent ?? "";
+      const folderPath = parentPath ? `${parentPath}${trimmed}` : trimmed;
+      try {
+        await folderCreate(folderPath);
+        setNewFolderParent(null);
+        refresh();
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "创建文件夹失败");
+      }
+    },
+    [newFolderParent, refresh],
+  );
 
-  const handleFolderRename = useCallback(async () => {
-    if (!folderRenameTarget) return;
-    const newName = folderRenameNewName.trim();
-    if (!newName) return;
-    const parentPath = folderRenameTarget.split("/").slice(0, -2).join("/");
-    const newPath = parentPath ? `${parentPath}/${newName}` : newName;
-    try {
-      await folderRename(folderRenameTarget, newPath);
-      setFolderRenameTarget(null);
-      setFolderRenameNewName("");
-      refresh();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "重命名文件夹失败");
-    }
-  }, [folderRenameTarget, folderRenameNewName, refresh]);
+  const handleFolderRename = useCallback(
+    async (newName: string) => {
+      const trimmed = newName.trim();
+      if (!trimmed || !folderRenameTarget) return;
+      const parentPath = folderRenameTarget.split("/").slice(0, -2).join("/");
+      const newPath = parentPath ? `${parentPath}/${trimmed}` : trimmed;
+      try {
+        await folderRename(folderRenameTarget, newPath);
+        setFolderRenameTarget(null);
+        refresh();
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "重命名文件夹失败");
+      }
+    },
+    [folderRenameTarget, refresh],
+  );
 
   const handleFolderDelete = useCallback(async () => {
     if (!folderDeleteTarget) return;
@@ -339,7 +346,6 @@ export function VaultNavigator({ open, onClose, onOpen }: VaultNavigatorProps) {
             title="新建文件夹"
             onClick={() => {
               setNewFolderParent(selectedFolder || null);
-              setNewFolderName("");
             }}
           >
             <Folder className="h-4 w-4" />

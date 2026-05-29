@@ -7,10 +7,10 @@ const BAD_CITATION_LINK =
   /\[(citation:\d+)\]\((?:citation:\d+|iris-cite:[^)]*)\)/gi;
 
 /** 尚未成链接的方括号引用（含 citation:N、[C1]、纯数字等） */
-const BARE_CITATION =
-  /(?<!\\)\[(citation:\d+|[CTFAWL]\d+|\d+)\](?!\()/gi;
+const BARE_CITATION = /(?<!\\)\[(citation:\d+|[CTFAWL]\d+|\d+)\](?!\()/gi;
 
-const ALREADY_LINKIFIED = /#iris-cite-|\\\[(?:citation:\d+|[CTFAWL]\d+|\d+)\\\]/i;
+const ALREADY_LINKIFIED =
+  /#iris-cite-|\\\[(?:citation:\d+|[CTFAWL]\d+|\d+)\\\]/i;
 
 export function encodeCitationRef(label: string): string {
   return encodeURIComponent(label);

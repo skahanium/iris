@@ -136,6 +136,7 @@ pub fn run() {
             commands::document_commands::chapter_writing_execute,
             commands::document_commands::document_check_execute,
             commands::document_commands::parse_document_chapters,
+            commands::assistant_commands::assistant_execute,
             commands::ai_commands::context_assemble,
             commands::ai_commands::ai_send_message,
             commands::ai_commands::tool_confirm,

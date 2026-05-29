@@ -1,8 +1,12 @@
 import { describe, expect, it } from "vitest";
 
 import { isPlaceholderTitle } from "@/lib/path-sync";
-import { sha256Hex } from "@/lib/content-hash";
-import { WORKFLOW_TASK_DEFINITIONS } from "@/types/ai";
+import type {
+  AssistantActionState,
+  AssistantIntent,
+  AssistantSurfaceState,
+  AssistantTaskStatus,
+} from "@/types/ai";
 
 describe("note workflow helpers", () => {
   it("detects placeholder titles", () => {
@@ -10,20 +14,42 @@ describe("note workflow helpers", () => {
     expect(isPlaceholderTitle("untitled-1")).toBe(true);
     expect(isPlaceholderTitle("民法笔记")).toBe(false);
   });
-
-  it("computes stable sha256 hex", async () => {
-    const a = await sha256Hex("hello");
-    const b = await sha256Hex("hello");
-    expect(a).toBe(b);
-    expect(a).toHaveLength(64);
-  });
 });
 
-describe("AI workflow task rail", () => {
-  it("includes chapter/document and rules center tabs", () => {
-    const ids = WORKFLOW_TASK_DEFINITIONS.map((t) => t.id);
-    expect(ids).toContain("chapter_doc");
-    expect(ids).toContain("rules");
-    expect(ids).toHaveLength(7);
+describe("assistant state types", () => {
+  it("supports unified assistant intents and surface states", () => {
+    const intents: AssistantIntent[] = [
+      "chat",
+      "knowledge",
+      "writing",
+      "citation",
+      "organize",
+      "research",
+      "chapter",
+      "document",
+    ];
+    const statuses: AssistantTaskStatus[] = [
+      "idle",
+      "running",
+      "awaiting_confirmation",
+      "completed",
+      "error",
+    ];
+    const surfaceStates: AssistantSurfaceState[] = [
+      "conversation",
+      "inline_suggestion",
+      "diff_review",
+      "research_focus",
+    ];
+    const action: AssistantActionState = {
+      intent: "knowledge",
+      status: "idle",
+      label: "知识查阅",
+    };
+
+    expect(intents).toHaveLength(8);
+    expect(statuses).toContain("awaiting_confirmation");
+    expect(surfaceStates).toContain("research_focus");
+    expect(action.intent).toBe("knowledge");
   });
 });

@@ -6,7 +6,8 @@
 
 use tauri::WebviewWindow;
 
-/// 与 `src/styles/globals.css` 中 `--window-radius` 保持一致。
+/// 与 `src/styles/globals.css` 中 `--window-radius` 保持一致（仅 macOS 壳层与跨平台单测引用）。
+#[cfg(any(target_os = "macos", test))]
 const WINDOW_CORNER_RADIUS: f64 = 12.0;
 
 /// 为主窗口应用平台圆角；失败时仅记录日志，不阻断启动。

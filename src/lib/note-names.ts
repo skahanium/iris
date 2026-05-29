@@ -1,4 +1,8 @@
-import { isInternalUntitledLabel, isInternalUntitledPath, pathStem } from "@/lib/note-display";
+import {
+  isInternalUntitledLabel,
+  isInternalUntitledPath,
+  pathStem,
+} from "@/lib/note-display";
 import type { FileListItem } from "@/types/ipc";
 
 export const DEFAULT_NEW_DOCUMENT_TITLE = "新建文档";

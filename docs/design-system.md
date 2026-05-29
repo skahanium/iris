@@ -136,16 +136,16 @@
 
 ## Chrome 控件选型
 
-| 场景       | 形态                                            |
-| ---------- | ----------------------------------------------- |
-| AI 场景    | `SceneSelector` 弹出（图标 + 描述）             |
-| AI 发送    | `AiComposer` 多行；Enter 发送、Shift+Enter 换行 |
-| 证据包     | 可折叠 Section 标题 + badge                     |
-| 状态栏缩放 | Popover 滑块/步进（非三个并排按钮）             |
+| 场景       | 形态                                                                |
+| ---------- | ------------------------------------------------------------------- |
+| AI 场景    | `SceneSelector` 弹出（图标 + 描述）                                 |
+| AI 发送    | `AiComposer` 多行；Enter 发送、Shift+Enter 换行                     |
+| 证据包     | 可折叠 Section 标题 + badge                                         |
+| 状态栏缩放 | Popover 滑块/步进（非三个并排按钮）                                 |
 | 连通性     | 两枚 8px 圆点成组（LLM · 联网）；灰 / emerald / sky（`--status-*`） |
-| 命令列表   | `CommandListOption` + `Kbd`；Lucide 图标        |
-| `/` 菜单   | 与命令列表同组件，禁止 emoji 图标               |
-| 选区 AI    | 水平 pill 组 +「更多」                          |
+| 命令列表   | `CommandListOption` + `Kbd`；Lucide 图标                            |
+| `/` 菜单   | 与命令列表同组件，禁止 emoji 图标                                   |
+| 选区 AI    | 水平 pill 组 +「更多」                                              |
 
 主路径保留可见控件或快捷键；StatusBar 避免超过 3 个并排 icon-only 按钮。
 

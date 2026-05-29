@@ -29,20 +29,6 @@ fn generate_claim_id() -> String {
     format!("claim-{}", &hash[..12])
 }
 
-/// Generate a unique suggestion ID.
-#[allow(dead_code)]
-fn generate_suggestion_id() -> String {
-    use std::time::{SystemTime, UNIX_EPOCH};
-    let timestamp = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_nanos();
-    let mut hasher = Sha256::new();
-    hasher.update(timestamp.to_be_bytes());
-    let hash = format!("{:x}", hasher.finalize());
-    format!("sug-{}", &hash[..12])
-}
-
 /// Extract fact claims from paragraph text.
 ///
 /// This is a simplified implementation that splits sentences and identifies
@@ -266,11 +252,7 @@ pub fn execute_citation_check(
         coverage,
         suggestions,
         evidence_used: evidence,
-        total_tokens: TokenUsage {
-            prompt_tokens: 0,
-            completion_tokens: 0,
-            total_tokens: 0,
-        },
+        total_tokens: TokenUsage::default(),
     })
 }
 

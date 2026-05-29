@@ -9,12 +9,13 @@
 //! - `session`: session / session_messages CRUD
 //! - `packet_builder`: ContextPacket construction from retrieval results
 
+pub mod assistant_facade;
 pub mod chapter_workflow;
 pub mod citation_workflow;
 pub mod context_planner;
 pub mod document_workflow;
-pub mod eval;
 pub mod evidence_mixer;
+pub mod execution_plan;
 pub mod guardrails;
 pub mod model_gateway;
 pub mod model_registry;
@@ -143,7 +144,7 @@ pub struct WebEvidenceMeta {
 /// # Examples
 ///
 /// ```rust
-/// use iris::ai_runtime::{ContextPacket, SourceType, TrustLevel};
+/// use iris_lib::ai_runtime::{ContextPacket, SourceType, TrustLevel};
 ///
 /// let packet = ContextPacket {
 ///     id: "pkt_001".to_string(),
@@ -159,6 +160,7 @@ pub struct WebEvidenceMeta {
 ///     trust_level: TrustLevel::UserNote,
 ///     citation_label: "[C0]".to_string(),
 ///     stale: false,
+///     web: None,
 /// };
 /// assert_eq!(packet.source_type, SourceType::Note);
 /// ```
@@ -311,6 +313,8 @@ pub struct AssembledContext {
     pub tools: Vec<ToolSpec>,
     /// 上下文状态摘要
     pub context_status: ContextStatus,
+    /// 本轮检索执行计划（由 context planner 生成）
+    pub execution_plan: Option<crate::ai_runtime::execution_plan::ExecutionPlanDto>,
 }
 
 /// 上下文状态摘要，用于前端显示和调试。
@@ -652,12 +656,7 @@ pub struct WritingTaskResult {
 }
 
 /// Token 使用量。
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TokenUsage {
-    pub prompt_tokens: u32,
-    pub completion_tokens: u32,
-    pub total_tokens: u32,
-}
+pub use model_gateway::TokenUsage;
 
 // ─── Citation Check Types ────────────────────────────────
 

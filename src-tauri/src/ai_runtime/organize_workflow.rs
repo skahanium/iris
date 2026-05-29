@@ -333,11 +333,7 @@ pub fn execute_organize_with_metadata(
     Ok(OrganizeTaskResult {
         request_id,
         batch,
-        total_tokens: TokenUsage {
-            prompt_tokens: 0,
-            completion_tokens: 0,
-            total_tokens: 0,
-        },
+        total_tokens: TokenUsage::default(),
     })
 }
 

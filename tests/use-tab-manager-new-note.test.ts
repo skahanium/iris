@@ -32,7 +32,11 @@ import { useTabManager } from "@/hooks/useTabManager";
 
 const EMPTY_MD = '---\ntitle: "无标题1"\n---\n\n';
 
-function Harness({ apiRef }: { apiRef: { current: ReturnType<typeof useTabManager> | null } }) {
+function Harness({
+  apiRef,
+}: {
+  apiRef: { current: ReturnType<typeof useTabManager> | null };
+}) {
   const api = useTabManager();
   apiRef.current = api;
   return null;

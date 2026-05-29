@@ -256,7 +256,7 @@ v0.1 已用 `fastembed` + `chunk_embeddings` BLOB + Rust 全量余弦（见 [doc
 #### Chrome + AI
 
 - [ ] `TabBar` / `StatusBar` 圆角与动效
-- [ ] `AiPanel` 对话泡与引用卡翻新
+- [x] `UnifiedAssistantPanel` 对话泡与引用卡（取代旧 `AiPanel` 多入口）
 - [ ] `FloatingToolbar`、基础 `button` / `input` / `dialog` token 对齐
 
 ### 验收标准
@@ -279,7 +279,7 @@ v0.1 已用 `fastembed` + `chunk_embeddings` BLOB + Rust 全量余弦（见 [doc
 
 - [x] Token：Inter、蓝灰 accent、小圆角、去 `--shadow-paper`
 - [x] 编辑区：`.iris-editor-canvas`，无行线、无纸页卡片、左对齐主标题
-- [x] Chrome：TabBar / StatusBar / Welcome / AiPanel 对齐 N token
+- [x] Chrome：TabBar / StatusBar / Welcome / 统一助手侧栏对齐 N token
 - [ ] 命令浮层组件（若 v0.3.1-ui 未完成）样式对齐
 - [ ] 亮/暗对比度与缩放/目录/Zen 手动验收
 
@@ -310,7 +310,7 @@ v0.1 已用 `fastembed` + `chunk_embeddings` BLOB + Rust 全量余弦（见 [doc
 
 #### AI 侧栏
 
-- [x] `AiPanel` 拆分；`SceneSelector` + `AiComposer`；证据卡/工具卡 token 化
+- [x] `UnifiedAssistantPanel` + `AiComposer`；内部 scene 路由（无用户可见 `SceneSelector`）；证据卡/工具卡 token 化
 - [x] 去重复 `SCENE_OPTIONS`、去 emerald/purple 主视觉（核心 AI 面板；ResearchPanel 等待 v0.5）
 
 #### 编辑器 Chrome
@@ -396,7 +396,7 @@ v0.1 已用 `fastembed` + `chunk_embeddings` BLOB + Rust 全量余弦（见 [doc
 
 #### 场景化 AI 面板
 
-- [ ] `SceneSelector`：知识查阅、文稿学习、文稿创作、学术研究四个场景
+- [x] 场景策略：`AiScene` 由 `assistant-scene` 按 intent 内部解析（用户不再手动切 scene）
 - [ ] `ContextStatusBar`：显示当前使用的笔记、证据包数量、联网状态和索引状态
 - [ ] `ContextPacketCard`：显示可展开的证据包引用卡
 - [ ] `ToolConfirmDialog`：写入 `.md`、规则、模板、标签前展示 diff / 预览

@@ -1,5 +1,11 @@
 import { useCallback, useEffect, useState } from "react";
-import { BookMarked, Plus, Trash2, ToggleLeft, ToggleRight } from "lucide-react";
+import {
+  BookMarked,
+  Plus,
+  Trash2,
+  ToggleLeft,
+  ToggleRight,
+} from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -233,7 +239,9 @@ export function AiRulesPanel({ compact = false }: AiRulesPanelProps) {
                 </Badge>
               </CardHeader>
               <CardContent className="p-2 pt-1">
-                <p className="whitespace-pre-wrap text-xs">{ruleText(entry.value)}</p>
+                <p className="whitespace-pre-wrap text-xs">
+                  {ruleText(entry.value)}
+                </p>
                 <div className="mt-2 flex gap-1">
                   <Button
                     type="button"

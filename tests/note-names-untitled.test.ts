@@ -34,7 +34,10 @@ describe("allocateNewDocumentName", () => {
   });
 
   it("respects extraTaken from open tabs", () => {
-    const { title } = allocateNewDocumentName([], ["新建文档", "新建文档（1）"]);
+    const { title } = allocateNewDocumentName(
+      [],
+      ["新建文档", "新建文档（1）"],
+    );
     expect(title).toBe("新建文档（2）");
   });
 

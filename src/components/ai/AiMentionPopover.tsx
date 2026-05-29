@@ -89,7 +89,9 @@ export function AiMentionPopover({
                   active={highlight === i}
                   icon={Folder}
                   subtitle={
-                    c.subtitle && c.subtitle !== c.label ? c.subtitle : undefined
+                    c.subtitle && c.subtitle !== c.label
+                      ? c.subtitle
+                      : undefined
                   }
                   className="px-1.5 py-0"
                   buttonRef={(el) => {

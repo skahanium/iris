@@ -64,10 +64,7 @@ export function ContextPacketDrawer({
             />
             {hasEvidenceChain && (
               <div className="mt-3 border-t border-border/40 pt-3">
-                <EvidenceChainView
-                  packets={packets}
-                  relations={relations}
-                />
+                <EvidenceChainView packets={packets} relations={relations} />
               </div>
             )}
           </div>

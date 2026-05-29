@@ -30,6 +30,7 @@ export function AppShell({
         </main>
         {!zen ? (
           <aside
+            data-testid="unified-assistant-dock"
             className={cn(
               "z-ai flex shrink-0 flex-col border-l border-border bg-panel transition-[width] duration-200 ease-out",
               aiPanelOpen

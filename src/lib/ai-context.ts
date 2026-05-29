@@ -64,9 +64,7 @@ export function buildAiSystemParts(input: BuildAiSystemContextInput): string[] {
     const label =
       input.noteDisplayTitle?.trim() ||
       resolveNoteDisplayTitle({ path: input.notePath });
-    parts.push(
-      `当前笔记（${label}）:\n${input.noteContent.slice(0, 8000)}`,
-    );
+    parts.push(`当前笔记（${label}）:\n${input.noteContent.slice(0, 8000)}`);
   }
 
   const relatedSection = formatRelatedNotesSection(input.relatedHits);

@@ -127,12 +127,12 @@ impl LlmRoutingConfig {
         let schema_version = config["schemaVersion"].as_u64().unwrap_or(0) as u32;
 
         if schema_version < 1 {
-                // v0 → v1：补充 schemaVersion、createdAt
-                config["schemaVersion"] = serde_json::json!(1);
-                if config["createdAt"].is_null() {
-                    config["createdAt"] = serde_json::json!(chrono::Utc::now().to_rfc3339());
-                }
+            // v0 → v1：补充 schemaVersion、createdAt
+            config["schemaVersion"] = serde_json::json!(1);
+            if config["createdAt"].is_null() {
+                config["createdAt"] = serde_json::json!(chrono::Utc::now().to_rfc3339());
             }
+        }
 
         Ok(())
     }

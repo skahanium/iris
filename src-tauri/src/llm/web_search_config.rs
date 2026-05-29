@@ -21,7 +21,6 @@ pub enum WebSearchBackendMode {
     Duckduckgo,
 }
 
-
 impl WebSearchBackendMode {
     pub fn parse(s: &str) -> Self {
         match s.trim().to_lowercase().as_str() {

@@ -15,11 +15,7 @@ import {
   invokeErrorMessage,
   MINIMAX_CREDENTIAL_SERVICE,
 } from "@/lib/credentials";
-import {
-  credentialDelete,
-  credentialHas,
-  credentialSet,
-} from "@/lib/ipc";
+import { credentialDelete, credentialHas, credentialSet } from "@/lib/ipc";
 import {
   minimaxConfigGet,
   minimaxConfigSet,
@@ -160,7 +156,9 @@ export function MinimaxSearchSection({ open }: MinimaxSearchSectionProps) {
       </div>
 
       <div className="space-y-2">
-        <label className="text-xs font-medium">MiniMax Token Plan API Key</label>
+        <label className="text-xs font-medium">
+          MiniMax Token Plan API Key
+        </label>
         <Input
           type="password"
           autoComplete="off"
@@ -222,7 +220,9 @@ export function MinimaxSearchSection({ open }: MinimaxSearchSectionProps) {
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="auto">自动（MiniMax 优先，失败降级 DuckDuckGo）</SelectItem>
+            <SelectItem value="auto">
+              自动（MiniMax 优先，失败降级 DuckDuckGo）
+            </SelectItem>
             <SelectItem value="minimax">仅 MiniMax</SelectItem>
             <SelectItem value="duckduckgo">仅 DuckDuckGo</SelectItem>
           </SelectContent>
@@ -242,7 +242,9 @@ export function MinimaxSearchSection({ open }: MinimaxSearchSectionProps) {
       {testResult ? (
         <p
           className={
-            testResult.ok ? "text-xs text-emerald-600" : "text-xs text-destructive"
+            testResult.ok
+              ? "text-xs text-emerald-600"
+              : "text-xs text-destructive"
           }
         >
           {testResult.message}

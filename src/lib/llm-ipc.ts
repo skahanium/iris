@@ -25,7 +25,9 @@ export function connectivityStatus(
   return invoke<ConnectivityStatus>("connectivity_status", { scene });
 }
 
-export function llmConfigTest(providerId: string): Promise<LlmConfigTestResult> {
+export function llmConfigTest(
+  providerId: string,
+): Promise<LlmConfigTestResult> {
   return invoke<LlmConfigTestResult>("llm_config_test", { providerId });
 }
 

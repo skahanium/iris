@@ -64,8 +64,7 @@ export function CommandPalette({
         const item = filteredRef.current[index];
         if (item && !item.disabled) onSelectRef.current(item);
       },
-      isIndexDisabled: (index) =>
-        Boolean(filteredRef.current[index]?.disabled),
+      isIndexDisabled: (index) => Boolean(filteredRef.current[index]?.disabled),
     });
 
   const grouped = useMemo(() => groupCommandPaletteItems(filtered), [filtered]);

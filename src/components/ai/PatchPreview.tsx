@@ -1,11 +1,5 @@
 import { useCallback, useState } from "react";
-import {
-  AlertTriangle,
-  Check,
-  Copy,
-  RefreshCw,
-  X,
-} from "lucide-react";
+import { AlertTriangle, Check, Copy, RefreshCw, X } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -70,7 +64,10 @@ export function PatchPreview({
         <div className="flex items-center justify-between">
           <CardTitle className="text-sm font-medium">补丁建议</CardTitle>
           <div className="flex items-center gap-2">
-            <Badge variant="outline" className={cn("text-xs", riskStyle.className)}>
+            <Badge
+              variant="outline"
+              className={cn("text-xs", riskStyle.className)}
+            >
               {riskStyle.label}
             </Badge>
             <Badge variant="outline" className="text-xs">
@@ -106,9 +103,7 @@ export function PatchPreview({
           <div className="max-h-[200px] overflow-auto font-mono text-xs">
             {/* Original text */}
             <div className="border-b border-border/40">
-              <div className="bg-red-500/5 px-3 py-1 text-red-600">
-                - 原文
-              </div>
+              <div className="bg-red-500/5 px-3 py-1 text-red-600">- 原文</div>
               {originalLines.slice(0, displayLines).map((line, i) => (
                 <div key={i} className="px-3 py-0.5 text-red-600/80">
                   <span className="mr-2 select-none text-red-400">-</span>

@@ -11,10 +11,7 @@ import {
 } from "@/components/ui/select";
 import { isTauri } from "@tauri-apps/api/core";
 
-import {
-  invokeErrorMessage,
-  llmCredentialService,
-} from "@/lib/credentials";
+import { invokeErrorMessage, llmCredentialService } from "@/lib/credentials";
 import {
   credentialDelete,
   credentialHas,
@@ -145,9 +142,7 @@ export function LlmRoutingSection({ open }: LlmRoutingSectionProps) {
       await credentialSet(service, value);
       const verified = await credentialHas(service);
       if (!verified) {
-        setMessage(
-          `${label} Key 写入后校验失败，请重试；输入内容已保留。`,
-        );
+        setMessage(`${label} Key 写入后校验失败，请重试；输入内容已保留。`);
         return;
       }
       setKeyInputs((prev) => ({ ...prev, [providerId]: "" }));
@@ -230,8 +225,7 @@ export function LlmRoutingSection({ open }: LlmRoutingSectionProps) {
                 (isCustomProviderId(providerId)
                   ? `Custom (${providerId})`
                   : p.name),
-              default_model:
-                next.defaultModel?.trim() || p.default_model,
+              default_model: next.defaultModel?.trim() || p.default_model,
             }
           : p,
       ),
@@ -275,7 +269,8 @@ export function LlmRoutingSection({ open }: LlmRoutingSectionProps) {
       setMessage(`无法删除：仍有场景使用 ${providerId}，请先改场景厂商。`);
       return;
     }
-    const { [providerId]: _removed, ...rest } = routing.providers;
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars -- destructured to remove key
+    const { [providerId]: _, ...rest } = routing.providers;
     setRouting({ ...routing, providers: rest });
     setData({
       ...data,
@@ -355,7 +350,8 @@ export function LlmRoutingSection({ open }: LlmRoutingSectionProps) {
       <div>
         <h3 className="text-sm font-medium">AI 连接</h3>
         <p className="mt-0.5 text-xs text-muted-foreground">
-          支持 DeepSeek 与多个 OpenAI 兼容自定义端点；API Key 仅存系统凭据管理器。
+          支持 DeepSeek 与多个 OpenAI 兼容自定义端点；API Key
+          仅存系统凭据管理器。
         </p>
         {loadError ? (
           <p className="mt-2 text-xs text-amber-600">
@@ -507,8 +503,7 @@ export function LlmRoutingSection({ open }: LlmRoutingSectionProps) {
                 onValueChange={(v) =>
                   updateScene(scene, {
                     providerId: v,
-                    model:
-                      modelsFor(v)[0]?.id ?? "deepseek-v4-flash",
+                    model: modelsFor(v)[0]?.id ?? "deepseek-v4-flash",
                   })
                 }
               >
@@ -570,7 +565,8 @@ export function LlmRoutingSection({ open }: LlmRoutingSectionProps) {
           );
         })}
         <p className="text-[10px] text-muted-foreground">
-          deepseek-reasoner 与 Flash 非思考模式勿在同一会话混用，以免影响前缀缓存。
+          deepseek-reasoner 与 Flash
+          非思考模式勿在同一会话混用，以免影响前缀缓存。
         </p>
       </div>
 
@@ -587,7 +583,6 @@ export function LlmRoutingSection({ open }: LlmRoutingSectionProps) {
           <span className="text-xs text-muted-foreground">{message}</span>
         ) : null}
       </div>
-
     </div>
   );
 }
@@ -762,4 +757,3 @@ function normalizeRouting(raw: LlmRoutingConfig | undefined): LlmRoutingConfig {
     },
   };
 }
-

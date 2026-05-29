@@ -1,10 +1,5 @@
 import { aiMarked } from "@/lib/ai/marked-ai";
-import {
-  useCallback,
-  useMemo,
-  type MouseEvent,
-  type ReactNode,
-} from "react";
+import { useCallback, useMemo, type MouseEvent, type ReactNode } from "react";
 
 import {
   linkifyAiCitations,

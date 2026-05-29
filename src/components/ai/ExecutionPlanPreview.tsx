@@ -1,4 +1,5 @@
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import type { ExecutionPlan } from "@/types/ai";
 import { Clock, Layers, Zap } from "lucide-react";
 
@@ -6,6 +7,8 @@ interface ExecutionPlanPreviewProps {
   plan: ExecutionPlan;
   onApprove: () => void;
   onModify: () => void;
+  approveLabel?: string;
+  modifyLabel?: string;
 }
 
 const LAYER_LABELS: Record<string, string> = {
@@ -20,9 +23,14 @@ export function ExecutionPlanPreview({
   plan,
   onApprove,
   onModify,
+  approveLabel = "继续",
+  modifyLabel = "调整证据",
 }: ExecutionPlanPreviewProps) {
   return (
-    <div className="space-y-4 rounded-lg border bg-muted/50 p-4">
+    <div
+      className="space-y-4 rounded-lg border bg-muted/50 p-4"
+      data-testid="execution-plan-preview"
+    >
       <div className="flex items-center gap-2">
         <Layers className="h-4 w-4 text-primary" />
         <h4 className="text-sm font-medium">检索计划</h4>
@@ -49,18 +57,23 @@ export function ExecutionPlanPreview({
       </div>
 
       <div className="flex items-center gap-2">
-        <button
+        <Button
+          type="button"
+          size="sm"
+          className="h-7 text-xs"
           onClick={onApprove}
-          className="rounded-md bg-primary px-3 py-1.5 text-xs text-primary-foreground hover:bg-primary/90"
         >
-          执行
-        </button>
-        <button
+          {approveLabel}
+        </Button>
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          className="h-7 text-xs"
           onClick={onModify}
-          className="rounded-md border px-3 py-1.5 text-xs hover:bg-muted"
         >
-          修改
-        </button>
+          {modifyLabel}
+        </Button>
       </div>
     </div>
   );

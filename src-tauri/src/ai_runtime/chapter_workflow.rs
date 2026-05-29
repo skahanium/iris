@@ -9,9 +9,7 @@
 use sha2::{Digest, Sha256};
 use tauri::AppHandle;
 
-use crate::ai_runtime::model_gateway::{
-    GatewayRequest, LlmMessage, MessageRole, ProviderConfig,
-};
+use crate::ai_runtime::model_gateway::{GatewayRequest, LlmMessage, MessageRole, ProviderConfig};
 use crate::ai_runtime::{
     ContextPacket, PatchProposal, RiskLevel, SourceSpan, TokenUsage, WritingIntent,
     WritingSuggestion,
@@ -329,11 +327,10 @@ pub async fn generate_chapter_content_with_llm(
     goal: &str,
     evidence: &[ContextPacket],
 ) -> AppResult<(String, TokenUsage)> {
-    let rules =
-        crate::ai_runtime::model_gateway::ModelGateway::load_active_rules_for_scene(
-            db,
-            crate::ai_runtime::AiScene::DraftingAssist,
-        )?;
+    let rules = crate::ai_runtime::model_gateway::ModelGateway::load_active_rules_for_scene(
+        db,
+        crate::ai_runtime::AiScene::DraftingAssist,
+    )?;
     let system = crate::ai_runtime::model_gateway::ModelGateway::build_system_prompt(
         crate::ai_runtime::AiScene::DraftingAssist,
         evidence,
@@ -381,11 +378,10 @@ pub async fn generate_chapter_content_with_llm(
         stream: false,
     };
 
-    let gateway =
-        crate::ai_runtime::model_gateway::ModelGateway::with_defaults(
-            app_handle.clone(),
-            vec![provider.clone()],
-        )?;
+    let gateway = crate::ai_runtime::model_gateway::ModelGateway::with_defaults(
+        app_handle.clone(),
+        vec![provider.clone()],
+    )?;
     let response = gateway.send_request(request).await?;
     let usage = response.usage;
     let mut text = response.content.unwrap_or_default().trim().to_string();
@@ -405,6 +401,7 @@ pub async fn generate_chapter_content_with_llm(
             prompt_tokens: usage.prompt_tokens,
             completion_tokens: usage.completion_tokens,
             total_tokens: usage.total_tokens,
+            ..Default::default()
         },
     ))
 }
@@ -505,8 +502,7 @@ mod tests {
             content: "## 小节\n\n已有内容。".to_string(),
             heading_path: "文档 > 小节".to_string(),
         };
-        let out =
-            chapter_heuristic_fallback(&WritingIntent::ChapterContinue, &chapter, "续写论证");
+        let out = chapter_heuristic_fallback(&WritingIntent::ChapterContinue, &chapter, "续写论证");
         assert!(out.contains("续写提示"));
         assert!(out.contains("已有内容"));
     }

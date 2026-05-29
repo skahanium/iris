@@ -167,14 +167,14 @@ Local Knowledge
 
 职责划分：
 
-| 层级 | 职责 | 不做 |
-| --- | --- | --- |
-| React | 任务选择、状态展示、证据卡、diff 确认 | 不绕过 IPC 写文件，不直接保存密钥 |
-| Workflow Runtime | 编排计划、检索、联网、证据融合、补丁生成 | 不静默修改 `.md` |
-| Retrieval Broker | 本地 FTS/vector/graph/exact/template 检索 | 不判断网页可信度 |
-| WebSearch Broker | 联网搜索、降级、标准化、来源分级 | 不把网页当高可信本地事实 |
-| Evidence Mixer | 去重、排序、融合、预算裁剪 | 不编造证据 |
-| File/Template Commands | 文件夹、模板、路径同步 | 不要求用户删除数据库重建 |
+| 层级                   | 职责                                      | 不做                              |
+| ---------------------- | ----------------------------------------- | --------------------------------- |
+| React                  | 任务选择、状态展示、证据卡、diff 确认     | 不绕过 IPC 写文件，不直接保存密钥 |
+| Workflow Runtime       | 编排计划、检索、联网、证据融合、补丁生成  | 不静默修改 `.md`                  |
+| Retrieval Broker       | 本地 FTS/vector/graph/exact/template 检索 | 不判断网页可信度                  |
+| WebSearch Broker       | 联网搜索、降级、标准化、来源分级          | 不把网页当高可信本地事实          |
+| Evidence Mixer         | 去重、排序、融合、预算裁剪                | 不编造证据                        |
+| File/Template Commands | 文件夹、模板、路径同步                    | 不要求用户删除数据库重建          |
 
 ## 四、证据与联网搜索设计
 

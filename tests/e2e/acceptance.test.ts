@@ -1,36 +1,45 @@
 /**
- * E2E acceptance tests — v0.1.0 核心功能验收
- *
- * 注意：这些测试目前为占位符，需要实际 Tauri 环境运行
+ * 核心功能验收（契约层）：在 CI 中验证统一助手接线与关键 testid；
+ * 真机 Tauri/Playwright 驱动可在同一选择器上扩展。
  */
-import { describe, it, expect } from "vitest";
-import { waitForAiPanel } from "./helpers";
+import { readFileSync } from "node:fs";
+
+import { describe, expect, it } from "vitest";
+
+function read(path: string): string {
+  return readFileSync(path, "utf8");
+}
 
 describe("Iris 核心功能验收", () => {
-  it("应用启动并显示主界面", () => {
-    // 在实际 Tauri 环境中，这里会检查 editor、tab-bar、status-bar 是否可见
-    const hasEditor = true;
-    const hasTabBar = true;
-    const hasStatusBar = true;
-    expect(hasEditor).toBe(true);
-    expect(hasTabBar).toBe(true);
-    expect(hasStatusBar).toBe(true);
+  it("主界面包含编辑器、标签栏与状态栏 testid", () => {
+    expect(read("src/components/editor/TipTapEditor.tsx")).toContain(
+      'data-testid="editor"',
+    );
+    expect(read("src/components/layout/TabBar.tsx")).toContain(
+      'data-testid="tab-bar"',
+    );
+    expect(read("src/components/layout/StatusBar.tsx")).toContain(
+      'data-testid="status-bar"',
+    );
   });
 
-  it("AI 面板可打开和关闭", async () => {
-    // 模拟打开 AI 面板
-    await waitForAiPanel();
-    const isPanelOpen = true;
-    expect(isPanelOpen).toBe(true);
-
-    // 模拟关闭 AI 面板
-    const isPanelClosed = true;
-    expect(isPanelClosed).toBe(true);
+  it("统一助手 dock 与面板可被 E2E 定位", () => {
+    const shell = read("src/components/layout/AppShell.tsx");
+    const panel = read("src/components/ai/UnifiedAssistantPanel.tsx");
+    expect(shell).toContain("unified-assistant-dock");
+    expect(panel).toContain("unified-assistant-panel");
   });
 
-  it("创建新笔记", () => {
-    // 在实际 Tauri 环境中，这里会通过快捷键创建新笔记
-    const hasNewTab = true;
-    expect(hasNewTab).toBe(true);
+  it("App 仅渲染一套 MinimalWindowChrome", () => {
+    const source = read("src/App.tsx");
+    const chromeMatches = source.match(/<MinimalWindowChrome\s*\/>/g) ?? [];
+    expect(chromeMatches).toHaveLength(1);
+  });
+
+  it("设置页保留规则管理，主助手不含 AiRulesPanel", () => {
+    const settings = read("src/components/settings/SettingsPanel.tsx");
+    const panel = read("src/components/ai/UnifiedAssistantPanel.tsx");
+    expect(settings).toContain("AiRulesPanel");
+    expect(panel).not.toContain("AiRulesPanel");
   });
 });

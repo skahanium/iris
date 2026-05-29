@@ -73,29 +73,157 @@ export interface ContextPacket {
   web?: WebEvidenceMeta | null;
 }
 
-/** AI 侧栏笔记工作流任务（spec §5） */
-export type WorkflowTask =
-  | "research"
+export type AssistantIntent =
+  | "chat"
+  | "knowledge"
   | "writing"
   | "citation"
-  | "chapter_doc"
   | "organize"
-  | "rules"
-  | "chat";
+  | "research"
+  | "chapter"
+  | "document";
 
-/** 侧栏任务入口（与 `AiWorkflowPanel` 一致） */
-export const WORKFLOW_TASK_DEFINITIONS: ReadonlyArray<{
-  id: WorkflowTask;
+export type AssistantSurfaceState =
+  | "conversation"
+  | "inline_suggestion"
+  | "diff_review"
+  | "research_focus";
+
+export type AssistantContextSource =
+  | "none"
+  | "document"
+  | "selection"
+  | "scope";
+
+export type AssistantTaskStatus =
+  | "idle"
+  | "running"
+  | "awaiting_confirmation"
+  | "completed"
+  | "error";
+
+export interface AssistantActionState {
+  intent: AssistantIntent;
+  status: AssistantTaskStatus;
   label: string;
-}> = [
-  { id: "research", label: "研究问题" },
-  { id: "writing", label: "辅助写作" },
-  { id: "citation", label: "检查引用" },
-  { id: "chapter_doc", label: "章节/文档" },
-  { id: "organize", label: "整理建库" },
-  { id: "rules", label: "规则中心" },
-  { id: "chat", label: "自由对话" },
-] as const;
+  surface?: AssistantSurfaceState;
+  contextSource?: AssistantContextSource;
+  detail?: string | null;
+}
+
+/** 编辑器写作上下文（统一助手 / 写作 IPC） */
+export interface WritingEditorContext {
+  selection: string;
+  cursorContext: string;
+}
+
+/** 统一助手 IPC 请求（`assistant_execute`） */
+export interface AssistantExecuteRequest {
+  intent: AssistantIntent;
+  message: string;
+  notePath?: string | null;
+  noteContent?: string | null;
+  webAuthorized?: boolean;
+  selection?: string | null;
+  cursorContext?: string | null;
+  paragraphText?: string | null;
+  contextScope?: ContextScope;
+  sessionId?: number | null;
+  selectedPacketIds?: string[];
+  chapter?: ChapterInfo | null;
+  documentCheckType?: DocumentCheckType | null;
+  organizeTaskType?: string | null;
+  baseContentHash?: string | null;
+}
+
+export interface AiChatExecutePayload {
+  request_id: string;
+  session_id: number;
+  status: string;
+  content?: string;
+  tool_calls?: ToolCallInfo[];
+  tool_results?: Array<{
+    tool_call_id: string;
+    status: string;
+    result?: unknown;
+  }>;
+  usage?: TokenUsage;
+  citation_valid?: boolean;
+  web_search_meta?: {
+    injected: boolean;
+    result_count: number;
+    used_local_date: boolean;
+    backend?: string;
+  } | null;
+}
+
+export interface ChapterWritingResult {
+  request_id: string;
+  suggestions: WritingSuggestion[];
+  patches: PatchProposal[];
+  evidence_used: ContextPacket[];
+  total_tokens: TokenUsage;
+}
+
+export interface DocumentCheckResult {
+  request_id: string;
+  check_type: DocumentCheckType;
+  analysis_summary?: string | null;
+  outline_result?: { issues: Array<{ description: string }> } | null;
+  citation_gap_result?: {
+    uncited_claims: Array<{ statement: string }>;
+  } | null;
+  style_result?: {
+    inconsistencies: Array<{ description: string }>;
+  } | null;
+  patches: PatchProposal[];
+  evidence_used: ContextPacket[];
+  total_tokens: TokenUsage;
+}
+
+export type AssistantExecuteResponse =
+  | { kind: "chat"; payload: AiChatExecutePayload }
+  | { kind: "writing"; payload: WritingTaskResult }
+  | { kind: "citation"; payload: CitationCheckResult }
+  | { kind: "organize"; payload: OrganizeTaskResult }
+  | { kind: "research"; payload: ResearchFocusPayload }
+  | { kind: "chapter"; payload: ChapterWritingResult }
+  | { kind: "document"; payload: DocumentCheckResult };
+
+/** 研究任务结果（与 `ResearchFocusView` 对齐） */
+export interface ResearchFocusPayload {
+  request_id: string;
+  topic: string;
+  rounds: number;
+  summary: string;
+  evidence_matrix: {
+    total_evidence_count: number;
+    coverage_score: number;
+    global_gaps: string[];
+    propositions: Array<{
+      id: string;
+      statement: string;
+      evidence: Array<{
+        id: string;
+        title: string;
+        citation_label: string;
+        score: number;
+      }>;
+      gaps: string[];
+    }>;
+  };
+  argument_chain: {
+    has_contradictions: boolean;
+    chain_strength: number;
+    links: Array<{
+      from_proposition_id: string;
+      to_proposition_id: string;
+      link_type: string;
+      strength: number;
+    }>;
+  };
+  total_tokens: TokenUsage;
+}
 
 /** 文档级检查类型 */
 export type DocumentCheckType =
@@ -158,6 +286,8 @@ export interface AssembledContext {
   packets: ContextPacket[];
   tools: ToolSpec[];
   context_status: ContextStatus;
+  /** 由 context planner 生成的检索执行计划 */
+  execution_plan?: ExecutionPlan | null;
 }
 
 export interface ToolConfirmRequest {

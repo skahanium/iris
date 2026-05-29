@@ -1,4 +1,4 @@
-import { Extension, type Editor } from "@tiptap/core";
+import { Extension } from "@tiptap/core";
 import type { Node as ProseMirrorNode } from "@tiptap/pm/model";
 import { Plugin, PluginKey, TextSelection } from "@tiptap/pm/state";
 import { Decoration, DecorationSet } from "@tiptap/pm/view";
@@ -142,50 +142,8 @@ function nextVisiblePos(
   return null;
 }
 
-function focusFirstBodyAfterHeading(editor: Editor): boolean {
-  const { state } = editor;
-  const { $from } = state.selection;
-  if ($from.parent.type.name !== "heading") return false;
-
-  const docDepth = 1;
-  const index = $from.index(docDepth);
-  let insertPos = $from.after(docDepth);
-
-  for (let i = index + 1; i < state.doc.childCount; i++) {
-    const node = state.doc.child(i);
-    if (node.type.name === "paragraph" && node.content.size === 0) {
-      insertPos += node.nodeSize;
-      continue;
-    }
-    if (node.type.name === "paragraph") {
-      return editor
-        .chain()
-        .focus()
-        .setTextSelection(insertPos + 1)
-        .run();
-    }
-    break;
-  }
-
-  return editor
-    .chain()
-    .insertContentAt(insertPos, { type: "paragraph" })
-    .focus()
-    .setTextSelection(insertPos + 1)
-    .run();
-}
-
 export const HeadingFoldExtension = Extension.create({
   name: "headingFold",
-
-  addKeyboardShortcuts() {
-    return {
-      Enter: ({ editor }) => {
-        if (!editor.isActive("heading")) return false;
-        return focusFirstBodyAfterHeading(editor);
-      },
-    };
-  },
 
   addProseMirrorPlugins() {
     const editor = this.editor;

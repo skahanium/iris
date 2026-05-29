@@ -38,6 +38,7 @@ export const TabBar = memo(function TabBar({
 
   return (
     <header
+      data-testid="tab-bar"
       className="flex h-9 shrink-0 cursor-default select-none items-stretch border-b border-border/60 bg-surface-chrome"
       data-tauri-drag-region={showWindowControls ? true : undefined}
       onMouseDown={onDragMouseDown}

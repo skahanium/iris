@@ -6,7 +6,6 @@
 
 pub mod anchors;
 pub mod corpora;
-pub mod graph;
 pub mod regulations;
 pub mod templates;
 

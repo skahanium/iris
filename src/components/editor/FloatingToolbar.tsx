@@ -8,7 +8,7 @@ import { cn } from "@/lib/utils";
 interface FloatingToolbarProps {
   editor: Editor | null;
   onInlineAi: (action: string) => void;
-  onSendToAi: () => void;
+  onSendToAi: (options?: { prefill?: string }) => void;
 }
 
 const PRIMARY_ACTIONS = [
@@ -18,8 +18,8 @@ const PRIMARY_ACTIONS = [
 ] as const;
 
 const MORE_ACTIONS = [
-  { id: "cite", label: "引用" },
-  { id: "check", label: "检查" },
+  { id: "cite", label: "引用", prefill: "请为选区补充引用依据" },
+  { id: "check", label: "检查", prefill: "检查这一段的引用是否充分" },
 ] as const;
 
 export const FloatingToolbar = memo(function FloatingToolbar({
@@ -32,22 +32,6 @@ export const FloatingToolbar = memo(function FloatingToolbar({
   if (!editor || editor.state.selection.empty) return null;
 
   const handleInlineAi = (action: string) => {
-    if (!editor) return;
-
-    const { from, to } = editor.state.selection;
-    const selectedText = editor.state.doc.textBetween(from, to, " ");
-
-    editor.commands.insertInlineAi({
-      action: action as
-        | "continue"
-        | "rewrite"
-        | "expand"
-        | "simplify"
-        | "cite"
-        | "check",
-      context: selectedText,
-    });
-
     onInlineAi(action);
     setMoreOpen(false);
   };
@@ -97,7 +81,10 @@ export const FloatingToolbar = memo(function FloatingToolbar({
                   type="button"
                   role="menuitem"
                   className="flex w-full px-3 py-1.5 text-left text-xs hover:bg-surface-inset/80"
-                  onClick={() => handleInlineAi(a.id)}
+                  onClick={() => {
+                    onSendToAi({ prefill: a.prefill });
+                    setMoreOpen(false);
+                  }}
                 >
                   {a.label}
                 </button>
@@ -112,7 +99,7 @@ export const FloatingToolbar = memo(function FloatingToolbar({
         size="sm"
         variant="secondary"
         className="h-7 text-xs"
-        onClick={onSendToAi}
+        onClick={() => onSendToAi()}
       >
         发送到 AI
       </Button>

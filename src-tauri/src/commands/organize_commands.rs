@@ -17,10 +17,9 @@ use crate::error::AppResult;
 /// 2. Analyzes each file's title, tags, folder, links
 /// 3. Generates organize suggestions (rule-based)
 /// 4. Returns a batch change plan
-#[tauri::command]
-pub async fn organize_execute(
-    state: State<'_, Arc<AppState>>,
-    app_handle: AppHandle,
+pub(crate) async fn execute_organize_task(
+    state: &AppState,
+    app_handle: &AppHandle,
     input: OrganizeTaskInput,
 ) -> AppResult<OrganizeTaskResult> {
     let request_id = uuid::Uuid::new_v4().to_string();
@@ -33,7 +32,7 @@ pub async fn organize_execute(
     )?;
 
     // Retrieve file metadata
-    let files = retrieve_file_metadata(&state, &input)?;
+    let files = retrieve_file_metadata(state, &input)?;
 
     // Execute organize task
     let result = organize_workflow::execute_organize_with_metadata(&input, files)?;
@@ -57,6 +56,16 @@ pub async fn organize_execute(
     let _ = app_handle.emit("ai:organize_complete", &request_id);
 
     Ok(result)
+}
+
+/// Execute an organize task.
+#[tauri::command]
+pub async fn organize_execute(
+    state: State<'_, Arc<AppState>>,
+    app_handle: AppHandle,
+    input: OrganizeTaskInput,
+) -> AppResult<OrganizeTaskResult> {
+    execute_organize_task(state.inner().as_ref(), &app_handle, input).await
 }
 
 /// Retrieve file metadata for organize analysis.

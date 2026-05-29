@@ -17,7 +17,10 @@ export async function createDefaultNote(
   options: CreateDefaultNoteOptions = {},
 ): Promise<CreatedNote> {
   const files = await fileList();
-  const { title, path } = allocateNewDocumentName(files, options.extraTakenTitles);
+  const { title, path } = allocateNewDocumentName(
+    files,
+    options.extraTakenTitles,
+  );
   const content = `---\ntitle: ${quoteYamlString(title)}\n---\n\n`;
   const entry = await fileCreate(path, content);
   return { path: entry.path, title };

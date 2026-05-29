@@ -8,11 +8,14 @@ import {
   useMemo,
   useRef,
   useState,
+  type ReactNode,
 } from "react";
 
-import { AiWorkflowPanel } from "@/components/ai/AiWorkflowPanel";
-import type { WritingEditorContext } from "@/components/ai/WritingTaskPanel";
-import type { ContextQuote } from "@/components/ai/ContextPacketCard";
+import {
+  UnifiedAssistantPanel,
+  type AssistantSelectionQuote,
+} from "@/components/ai/UnifiedAssistantPanel";
+import type { WritingEditorContext } from "@/types/ai";
 import { EditorOutline } from "@/components/editor/EditorOutline";
 import { FloatingToolbar } from "@/components/editor/FloatingToolbar";
 import { TipTapEditor } from "@/components/editor/TipTapEditor";
@@ -65,6 +68,7 @@ import {
   versionSaveManual,
 } from "@/lib/ipc";
 import { noteTitleFromEditor } from "@/lib/note-title";
+import { patchNoteTitleInMarkdown } from "@/lib/patch-note-title";
 import { isTauriRuntime } from "@/lib/tauri-runtime";
 import { cn } from "@/lib/utils";
 
@@ -112,6 +116,15 @@ function saveOutlineOpen(open: boolean): void {
   }
 }
 
+function PreVaultDesktopFrame({ children }: { children: ReactNode }) {
+  return (
+    <DesktopFrame>
+      <MinimalWindowChrome />
+      {children}
+    </DesktopFrame>
+  );
+}
+
 function App() {
   const { vaultPath, loading, pickVault } = useVault();
   const { theme, setTheme } = useTheme();
@@ -138,7 +151,9 @@ function App() {
       return next;
     });
   }, []);
-  const [, setQuote] = useState<ContextQuote | null>(null);
+  const [selectionQuote, setSelectionQuote] =
+    useState<AssistantSelectionQuote | null>(null);
+  const [assistantPrefill, setAssistantPrefill] = useState<string | null>(null);
   const [aiStatus, setAiStatus] = useState("AI 空闲");
   const [zen, setZen] = useState(false);
   const [outlineOpen, setOutlineOpen] = useState(loadOutlineOpen);
@@ -167,6 +182,8 @@ function App() {
     handleNewNote,
     markDirty,
     markClean,
+    updateTabTitle,
+    setMarkdown,
     getEditorMarkdown,
   } = useTabManager({
     onStatusChange: setAiStatus,
@@ -194,6 +211,7 @@ function App() {
     (md) => {
       markdownRef.current = md;
       frontmatterYamlRef.current = extractFrontmatterYaml(md);
+      setMarkdown(md);
       dirtyRef.current = false;
       const savedTitle = displayTitleFromMarkdown(md, "");
       markClean(
@@ -232,12 +250,25 @@ function App() {
     (raw: string) => {
       const path = activePathRef.current;
       if (!path) return;
+      const trimmed = raw.trim();
       const title = resolveNoteDisplayTitle({
         path,
-        title:
-          raw.trim() || tabsRef.current.find((t) => t.path === path)?.title,
+        title: trimmed || tabsRef.current.find((t) => t.path === path)?.title,
       });
-      markClean(path, title);
+
+      const patched = patchNoteTitleInMarkdown(markdownRef.current, trimmed);
+      if (patched !== markdownRef.current) {
+        markdownRef.current = patched;
+        frontmatterYamlRef.current = extractFrontmatterYaml(patched);
+        setMarkdown(patched);
+      }
+
+      updateTabTitle(path, title);
+      if (!dirtyRef.current) {
+        dirtyRef.current = true;
+        markDirty();
+      }
+      notifyDirty();
 
       if (!isPlaceholderTitle(title)) {
         void pathSyncSuggest(path, title)
@@ -258,7 +289,16 @@ function App() {
           });
       }
     },
-    [activePathRef, markClean, openFile],
+    [
+      activePathRef,
+      frontmatterYamlRef,
+      markDirty,
+      markdownRef,
+      notifyDirty,
+      openFile,
+      setMarkdown,
+      updateTabTitle,
+    ],
   );
 
   const getWritingContext = useCallback((): WritingEditorContext | null => {
@@ -322,10 +362,15 @@ function App() {
     (content: string) => {
       frontmatterYamlRef.current = extractFrontmatterYaml(content);
       markdownRef.current = content;
-      const stem = activePathRef.current ? pathStem(activePathRef.current) : "";
+      const path = activePathRef.current;
+      const stem = path ? pathStem(path) : "";
+      const titleFallback =
+        displayTitleFromMarkdown(content, stem) ||
+        tabsRef.current.find((t) => t.path === path)?.title ||
+        stem;
       if (editorRef.current) {
         editorRef.current.commands.setContent(
-          markdownToEditorHtml(content, stem),
+          markdownToEditorHtml(content, titleFallback),
           false,
         );
       }
@@ -359,15 +404,20 @@ function App() {
     [inlineAi, markdownRef],
   );
 
-  const sendSelectionToAi = useCallback(() => {
-    const ed = editorRef.current;
-    const path = activePathRef.current;
-    if (!ed || !path) return;
-    const { from, to } = ed.state.selection;
-    const text = ed.state.doc.textBetween(from, to, "\n");
-    if (!text) return;
-    setQuote({ filePath: path, text });
-  }, [activePathRef]);
+  const sendSelectionToAi = useCallback(
+    (options?: { prefill?: string }) => {
+      const ed = editorRef.current;
+      const path = activePathRef.current;
+      if (!ed || !path) return;
+      const { from, to } = ed.state.selection;
+      const text = ed.state.doc.textBetween(from, to, "\n");
+      if (!text) return;
+      setSelectionQuote({ filePath: path, text });
+      setAssistantPrefill(options?.prefill ?? null);
+      setAiPanelOpen(true);
+    },
+    [activePathRef],
+  );
 
   const commandPaletteItems = useMemo(
     () =>
@@ -454,6 +504,7 @@ function App() {
       zoomOut,
       resetZoom,
       sendSelectionToAi,
+      toggleWebSearch,
     ],
   );
 
@@ -508,19 +559,17 @@ function App() {
 
   if (loading) {
     return (
-      <DesktopFrame>
-        <MinimalWindowChrome />
+      <PreVaultDesktopFrame>
         <div className="flex min-h-0 flex-1 items-center justify-center bg-background text-muted-foreground">
           加载中…
         </div>
-      </DesktopFrame>
+      </PreVaultDesktopFrame>
     );
   }
 
   if (!vaultPath) {
     return (
-      <DesktopFrame>
-        <MinimalWindowChrome />
+      <PreVaultDesktopFrame>
         <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-6 bg-background px-6">
           <div className="text-center">
             <h1 className="text-3xl font-semibold tracking-tight text-foreground">
@@ -546,7 +595,7 @@ function App() {
             {theme === "dark" ? "亮色模式" : "暗色模式"}
           </Button>
         </div>
-      </DesktopFrame>
+      </PreVaultDesktopFrame>
     );
   }
 
@@ -566,6 +615,7 @@ function App() {
         }
         editor={
           <div
+            data-testid="editor-shell"
             className={cn(
               "relative flex min-h-0 flex-1 flex-col",
               outlineOpen && activePath && "iris-editor-outline-open",
@@ -606,21 +656,23 @@ function App() {
             <FloatingToolbar
               editor={editorRef.current}
               onInlineAi={(a) => void runInlineAi(a)}
-              onSendToAi={sendSelectionToAi}
+              onSendToAi={(options) => sendSelectionToAi(options)}
             />
           </div>
         }
         aiPanel={
           <ErrorBoundary scope="AI面板">
-            <AiWorkflowPanel
+            <UnifiedAssistantPanel
               notePath={activePath}
               noteDisplayTitle={activeDocumentTitle}
               noteContent={markdown}
               webSearch={webSearch}
               getWritingContext={getWritingContext}
               getParagraphText={getParagraphText}
+              selectionQuote={selectionQuote}
+              prefillMessage={assistantPrefill}
               onVaultRefresh={bumpVaultIndex}
-              onPatchApplied={(newContent) => {
+              onPatchApplied={(newContent: string) => {
                 applyMarkdownToEditor(newContent);
                 markdownRef.current = newContent;
                 const path = activePathRef.current;

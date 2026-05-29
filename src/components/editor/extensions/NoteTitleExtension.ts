@@ -17,6 +17,9 @@ function noteTitleTextLength(doc: {
 export const NoteTitleExtension = Node.create({
   name: "noteTitle",
 
+  /** 优先于 StarterKit 的 Enter，避免在文档标题行内无法换行/退出 */
+  priority: 1000,
+
   content: "text*",
   marks: "",
   defining: true,
@@ -39,16 +42,29 @@ export const NoteTitleExtension = Node.create({
     return {
       Enter: ({ editor }) => {
         if (!editor.isActive("noteTitle")) return false;
-        const afterTitle = editor.state.doc.firstChild?.nodeSize ?? 1;
+        const { state } = editor;
+        const $from = state.selection.$from;
+        if ($from.parent.type.name !== "noteTitle") return false;
+
+        const afterTitle = $from.after();
+        if (state.doc.childCount < 2) {
+          return editor
+            .chain()
+            .insertContentAt(afterTitle, { type: "paragraph" })
+            .setTextSelection(afterTitle + 1)
+            .focus()
+            .run();
+        }
+
         return editor
           .chain()
-          .setTextSelection(afterTitle)
-          .focus(undefined, { scrollIntoView: true })
+          .setTextSelection(afterTitle + 1)
+          .focus()
           .run();
       },
-      "Mod-Enter": ({ editor }) => {
+      "Shift-Enter": ({ editor }) => {
         if (!editor.isActive("noteTitle")) return false;
-        editor.commands.focus("end");
+        // 标题区不支持硬换行，避免误触产生异常选区
         return true;
       },
       Backspace: ({ editor }) => {

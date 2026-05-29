@@ -78,10 +78,7 @@ export function useTabManager(options: UseTabManagerOptions = {}) {
         const fallbackDb = await resolveDocumentTitle(path, titleHint);
         const title = resolveNoteDisplayTitle({
           path,
-          title:
-            fromMarkdown ||
-            titleHint?.trim() ||
-            fallbackDb,
+          title: fromMarkdown || titleHint?.trim() || fallbackDb,
           markdown: content,
         });
         setMarkdown(content);
@@ -161,6 +158,16 @@ export function useTabManager(options: UseTabManagerOptions = {}) {
     );
   }, []);
 
+  /** 更新标签标题并标记为未保存（用于 noteTitle 行编辑） */
+  const updateTabTitle = useCallback((path: string, title: string) => {
+    const displayTitle = resolveNoteDisplayTitle({ path, title });
+    setTabs((prev) =>
+      prev.map((tab) =>
+        tab.path === path ? { ...tab, title: displayTitle, dirty: true } : tab,
+      ),
+    );
+  }, []);
+
   const markClean = useCallback((path: string, title?: string) => {
     const displayTitle = title
       ? resolveNoteDisplayTitle({ path, title })
@@ -196,6 +203,7 @@ export function useTabManager(options: UseTabManagerOptions = {}) {
     handleNewNote,
     markDirty,
     markClean,
+    updateTabTitle,
     getEditorMarkdown,
   };
 }

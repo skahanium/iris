@@ -485,10 +485,7 @@ fn analyze_style_consistency(content: &str) -> StyleConsistencyResult {
         let trimmed = l.trim_start();
         trimmed.len() > 2
             && trimmed.chars().next().is_some_and(|c| c.is_ascii_digit())
-            && trimmed
-                .chars()
-                .nth(1)
-                .is_some_and(|c| c == '.' || c == ')')
+            && trimmed.chars().nth(1).is_some_and(|c| c == '.' || c == ')')
     });
 
     let list_formats = [has_dash_list, has_star_list, has_number_list]
@@ -578,11 +575,7 @@ pub fn execute_document_check(
                     style_result: None,
                     patches: Vec::new(),
                     evidence_used: evidence.clone(),
-                    total_tokens: TokenUsage {
-                        prompt_tokens: 0,
-                        completion_tokens: 0,
-                        total_tokens: 0,
-                    },
+                    total_tokens: TokenUsage::default(),
                     analysis_summary: None,
                 },
                 input,
@@ -648,11 +641,7 @@ pub fn execute_document_check(
                     style_result: None,
                     patches: Vec::new(),
                     evidence_used: evidence.clone(),
-                    total_tokens: TokenUsage {
-                        prompt_tokens: 0,
-                        completion_tokens: 0,
-                        total_tokens: 0,
-                    },
+                    total_tokens: TokenUsage::default(),
                     analysis_summary: None,
                 },
                 input,
@@ -671,11 +660,7 @@ pub fn execute_document_check(
                     style_result: Some(style_result),
                     patches: Vec::new(),
                     evidence_used: evidence.clone(),
-                    total_tokens: TokenUsage {
-                        prompt_tokens: 0,
-                        completion_tokens: 0,
-                        total_tokens: 0,
-                    },
+                    total_tokens: TokenUsage::default(),
                     analysis_summary: None,
                 },
                 input,
@@ -699,11 +684,7 @@ pub fn execute_document_check(
                     style_result: None,
                     patches: Vec::new(),
                     evidence_used: evidence.clone(),
-                    total_tokens: TokenUsage {
-                        prompt_tokens: 0,
-                        completion_tokens: 0,
-                        total_tokens: 0,
-                    },
+                    total_tokens: TokenUsage::default(),
                     analysis_summary: None,
                 },
                 input,
@@ -838,10 +819,7 @@ pub fn build_heuristic_document_patches(
                 .find('\n')
                 .map(|i| entry.position + i + 1)
                 .unwrap_or(entry.position);
-            let insert = format!(
-                "\n### {}（建议补充）\n\n",
-                entry.text
-            );
+            let insert = format!("\n### {}（建议补充）\n\n", entry.text);
             let original = String::new();
             patches.push(build_patch_proposal(
                 &input.target_path,
@@ -880,8 +858,9 @@ fn parse_llm_document_patches_json(json_str: &str) -> AppResult<Vec<LlmDocumentP
         trimmed
     };
 
-    let parsed: Vec<serde_json::Value> = serde_json::from_str(array_slice)
-        .map_err(|e| crate::error::AppError::msg(format!("failed to parse document patches: {e}")))?;
+    let parsed: Vec<serde_json::Value> = serde_json::from_str(array_slice).map_err(|e| {
+        crate::error::AppError::msg(format!("failed to parse document patches: {e}"))
+    })?;
 
     Ok(parsed
         .into_iter()
@@ -931,10 +910,8 @@ pub fn merge_document_patches(
     mut base: Vec<PatchProposal>,
     extra: Vec<PatchProposal>,
 ) -> Vec<PatchProposal> {
-    let mut seen: std::collections::HashSet<String> = base
-        .iter()
-        .map(|p| p.original_text.clone())
-        .collect();
+    let mut seen: std::collections::HashSet<String> =
+        base.iter().map(|p| p.original_text.clone()).collect();
     for patch in extra {
         if seen.insert(patch.original_text.clone()) {
             base.push(patch);
@@ -1105,16 +1082,7 @@ pub async fn enhance_document_check_with_llm(
     result.total_tokens.completion_tokens += response.usage.completion_tokens;
     result.total_tokens.total_tokens += response.usage.total_tokens;
 
-    match generate_llm_document_patches(
-        db,
-        app_handle,
-        provider,
-        input,
-        &result,
-        evidence,
-    )
-    .await
-    {
+    match generate_llm_document_patches(db, app_handle, provider, input, &result, evidence).await {
         Ok(llm_patches) => {
             result.patches = merge_document_patches(result.patches, llm_patches);
         }
@@ -1356,11 +1324,7 @@ mod tests {
             style_result: None,
             patches: vec![],
             evidence_used: vec![],
-            total_tokens: TokenUsage {
-                prompt_tokens: 0,
-                completion_tokens: 0,
-                total_tokens: 0,
-            },
+            total_tokens: TokenUsage::default(),
             analysis_summary: None,
         };
         let patches = build_heuristic_document_patches(&input, &result, &[]);

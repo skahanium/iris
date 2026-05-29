@@ -1,37 +1,90 @@
 /**
- * E2E 测试辅助函数
+ * 统一助手 E2E 契约：选择器与流程断言（可在 Vitest 或未来 Playwright/Tauri 驱动中复用）。
  */
 
+import { resolveAssistantIntent } from "@/lib/assistant-routing";
 
+/** 与 `UnifiedAssistantPanel` / `AppShell` 上 `data-testid` 对齐 */
+export const E2E_SELECTORS = {
+  editor: '[data-testid="editor"]',
+  editorShell: '[data-testid="editor-shell"]',
+  tabBar: '[data-testid="tab-bar"]',
+  statusBar: '[data-testid="status-bar"]',
+  assistantDock: '[data-testid="unified-assistant-dock"]',
+  assistantPanel: '[data-testid="unified-assistant-panel"]',
+  aiInput: '[data-testid="ai-input"]',
+  aiMessages: '[data-testid="ai-message-list"]',
+  executionPlan: '[data-testid="execution-plan-preview"]',
+  researchFocus: '[data-testid="research-focus"]',
+  patchPreview: '[data-testid="patch-preview"]',
+} as const;
+
+export type UnifiedAssistantFlow =
+  | "selection_rewrite"
+  | "mention_scope_lookup"
+  | "web_knowledge_chat"
+  | "citation_check"
+  | "research_focus";
 
 /**
- * 模拟等待 AI 面板加载完成
+ * 将用户场景映射到 `AssistantIntent`（与统一助手自动路由一致）。
  */
+export function intentForFlow(flow: UnifiedAssistantFlow): string {
+  switch (flow) {
+    case "selection_rewrite":
+      return resolveAssistantIntent({
+        message: "帮我改写这段，让它更精炼",
+        hasSelection: true,
+        notePath: "notes/demo.md",
+        explicitScope: false,
+      });
+    case "mention_scope_lookup":
+      return resolveAssistantIntent({
+        message: "查一下 @notes/demo.md 里的向量检索",
+        hasSelection: false,
+        notePath: "notes/demo.md",
+        explicitScope: true,
+      });
+    case "web_knowledge_chat":
+      return resolveAssistantIntent({
+        message: "帮我查一下 SQLite 向量扩展相关的资料",
+        hasSelection: false,
+        notePath: null,
+        explicitScope: false,
+      });
+    case "citation_check":
+      return resolveAssistantIntent({
+        message: "检查这一段的引用是否充分",
+        hasSelection: true,
+        notePath: "notes/demo.md",
+        explicitScope: false,
+      });
+    case "research_focus":
+      return resolveAssistantIntent({
+        message: "研究一下 sqlite-vec 和 FTS5 在本地知识库中的取舍",
+        hasSelection: false,
+        notePath: null,
+        explicitScope: true,
+      });
+  }
+}
+
+/** @deprecated 统一助手不再暴露场景选择器；保留空实现供旧测试迁移 */
 export async function waitForAiPanel(): Promise<void> {
-  // 在实际 Tauri 环境中，这里会使用 Tauri driver 等待面板加载
-  // 目前作为占位符，确保测试结构完整
+  return;
 }
 
-/**
- * 模拟选择 AI 场景
- */
-export async function selectAiScene(scene: string): Promise<void> {
-  // 在实际 Tauri 环境中，这里会通过 Tauri driver 点击场景选择器
-  console.log(`选择场景: ${scene}`);
+/** @deprecated 使用 `intentForFlow` + 自动路由，勿再选择 scene */
+export async function selectAiScene(_scene: string): Promise<void> {
+  return;
 }
 
-/**
- * 模拟发送 AI 消息并等待响应
- */
-export async function sendAiMessage(message: string): Promise<void> {
-  // 在实际 Tauri 环境中，这里会通过 Tauri driver 输入消息并等待响应
-  console.log(`发送消息: ${message}`);
+/** @deprecated 在 Tauri E2E 中应操作 `[data-testid="ai-input"]` */
+export async function sendAiMessage(_message: string): Promise<void> {
+  return;
 }
 
-/**
- * 检查证据包数量
- */
-export function expectContextPackets(count: number): void {
-  // 在实际 Tauri 环境中，这里会检查 UI 上的证据包数量
-  console.log(`期望证据包数量: ${count}`);
+/** @deprecated 在 Tauri E2E 中应检查 `ContextPacketDrawer` / 证据卡 */
+export function expectContextPackets(_count: number): void {
+  return;
 }

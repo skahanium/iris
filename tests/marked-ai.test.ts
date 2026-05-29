@@ -31,7 +31,9 @@ describe("aiMarked code blocks", () => {
 
 describe("aiMarked tables", () => {
   it("wraps table in ai-table-wrap div", () => {
-    const html = aiMarked.parse("| A | B |\n| --- | --- |\n| 1 | 2 |") as string;
+    const html = aiMarked.parse(
+      "| A | B |\n| --- | --- |\n| 1 | 2 |",
+    ) as string;
     expect(html).toContain("ai-table-wrap");
     expect(html).toContain("<table>");
     expect(html).toContain("<thead>");
@@ -39,7 +41,9 @@ describe("aiMarked tables", () => {
   });
 
   it("renders table headers and cells", () => {
-    const html = aiMarked.parse("| Name | Value |\n| --- | --- |\n| foo | 42 |") as string;
+    const html = aiMarked.parse(
+      "| Name | Value |\n| --- | --- |\n| foo | 42 |",
+    ) as string;
     expect(html).toContain("Name");
     expect(html).toContain("Value");
     expect(html).toContain("foo");

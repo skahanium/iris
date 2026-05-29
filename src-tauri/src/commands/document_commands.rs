@@ -7,41 +7,35 @@ use tauri::{AppHandle, Emitter, State};
 use crate::ai_runtime::chapter_workflow::{
     self, ChapterInfo, ChapterWritingInput, ChapterWritingResult,
 };
-use crate::ai_runtime::model_gateway::ProviderConfig;
-use crate::ai_runtime::writing_workflow;
 use crate::ai_runtime::document_workflow::{self, DocumentCheckInput, DocumentCheckResult};
 use crate::ai_runtime::evidence_mixer;
+use crate::ai_runtime::model_gateway::ProviderConfig;
 use crate::ai_runtime::retrieval_broker::{RetrievalLayers, RetrievalRequest};
 use crate::ai_runtime::retrieval_scope::RetrievalScope;
 use crate::ai_runtime::trace::{TraceRecorder, TraceStatus};
+use crate::ai_runtime::writing_workflow;
 use crate::ai_runtime::{AiScene, TokenUsage, WritingIntent};
 use crate::app::AppState;
 use crate::error::AppResult;
 use crate::llm::search_web;
 
-/// Execute a chapter-level writing task.
-#[tauri::command]
-pub async fn chapter_writing_execute(
-    state: State<'_, Arc<AppState>>,
-    app_handle: AppHandle,
+/// Execute a chapter-level writing task (shared by IPC and assistant facade).
+pub(crate) async fn execute_chapter_writing(
+    state: &AppState,
+    app_handle: &AppHandle,
     input: ChapterWritingInput,
 ) -> AppResult<ChapterWritingResult> {
     let request_id = uuid::Uuid::new_v4().to_string();
 
-    TraceRecorder::start(
-        &state.db,
-        &request_id,
-        AiScene::DraftingAssist,
-    )?;
+    TraceRecorder::start(&state.db, &request_id, AiScene::DraftingAssist)?;
 
     let intent = chapter_workflow::detect_chapter_intent(&input.writing_goal);
 
-    let mut evidence = retrieve_chapter_evidence(&state, &input).await?;
+    let mut evidence = retrieve_chapter_evidence(state, &input).await?;
 
     if input.web_authorized {
         let query = format!("{} {}", input.chapter.heading_text, input.writing_goal);
-        if let Ok(fetch) = search_web::fetch_search_context_for_db(&state.db, query.trim()).await
-        {
+        if let Ok(fetch) = search_web::fetch_search_context_for_db(&state.db, query.trim()).await {
             let web = evidence_mixer::web_packets_from_fetch(&fetch, &input.writing_goal, None);
             evidence = evidence_mixer::mix_and_rank(evidence, web, 20);
         }
@@ -50,11 +44,11 @@ pub async fn chapter_writing_execute(
     let resolved = crate::llm::config::resolve_for_scene(&state.db, AiScene::DraftingAssist)?;
     let provider_config = resolved.to_provider_config(AiScene::DraftingAssist);
 
-    let full_content = read_note_content(&state, &input.target_path)?;
+    let full_content = read_note_content(state, &input.target_path)?;
 
     let (replacement, usage, suggestion_note) = resolve_chapter_replacement(
-        &state,
-        &app_handle,
+        state,
+        app_handle,
         &provider_config,
         &intent,
         &input,
@@ -109,22 +103,27 @@ pub async fn chapter_writing_execute(
     })
 }
 
-/// Execute a document-level check.
+/// Execute a chapter-level writing task.
 #[tauri::command]
-pub async fn document_check_execute(
+pub async fn chapter_writing_execute(
     state: State<'_, Arc<AppState>>,
     app_handle: AppHandle,
+    input: ChapterWritingInput,
+) -> AppResult<ChapterWritingResult> {
+    execute_chapter_writing(state.inner().as_ref(), &app_handle, input).await
+}
+
+/// Execute a document-level check (shared by IPC and assistant facade).
+pub(crate) async fn execute_document_check(
+    state: &AppState,
+    app_handle: &AppHandle,
     input: DocumentCheckInput,
 ) -> AppResult<DocumentCheckResult> {
     let request_id = uuid::Uuid::new_v4().to_string();
 
-    TraceRecorder::start(
-        &state.db,
-        &request_id,
-        AiScene::KnowledgeLookup,
-    )?;
+    TraceRecorder::start(&state.db, &request_id, AiScene::KnowledgeLookup)?;
 
-    let mut evidence = retrieve_document_evidence(&state, &input).await?;
+    let mut evidence = retrieve_document_evidence(state, &input).await?;
 
     if input.web_authorized {
         let query = input.content[..input.content.len().min(200)].to_string();
@@ -142,7 +141,7 @@ pub async fn document_check_execute(
 
     match document_workflow::enhance_document_check_with_llm(
         &state.db,
-        &app_handle,
+        app_handle,
         &provider_config,
         &input,
         result,
@@ -154,9 +153,7 @@ pub async fn document_check_execute(
         Err(e) => {
             tracing::warn!("Document check LLM failed: {e}");
             result = heuristic;
-            result.analysis_summary = Some(format!(
-                "启发式检查已完成；LLM 综合分析暂不可用：{e}"
-            ));
+            result.analysis_summary = Some(format!("启发式检查已完成；LLM 综合分析暂不可用：{e}"));
         }
     }
 
@@ -180,6 +177,16 @@ pub async fn document_check_execute(
     let _ = app_handle.emit("ai:document_check_complete", &request_id);
 
     Ok(result)
+}
+
+/// Execute a document-level check.
+#[tauri::command]
+pub async fn document_check_execute(
+    state: State<'_, Arc<AppState>>,
+    app_handle: AppHandle,
+    input: DocumentCheckInput,
+) -> AppResult<DocumentCheckResult> {
+    execute_document_check(state.inner().as_ref(), &app_handle, input).await
 }
 
 fn writing_intent_for_chapter(intent: &WritingIntent) -> WritingIntent {
@@ -212,11 +219,7 @@ async fn resolve_chapter_replacement(
     .await
     {
         Ok((text, usage)) => {
-            return (
-                text,
-                usage,
-                "已根据目标生成章节改写建议".to_string(),
-            );
+            return (text, usage, "已根据目标生成章节改写建议".to_string());
         }
         Err(e) => tracing::warn!("Chapter LLM failed: {e}"),
     }
@@ -241,6 +244,7 @@ async fn resolve_chapter_replacement(
                     prompt_tokens: usage.prompt_tokens,
                     completion_tokens: usage.completion_tokens,
                     total_tokens: usage.total_tokens,
+                    ..Default::default()
                 },
                 "章节模型不可用，已用选区级写作回退生成建议".to_string(),
             );
@@ -250,11 +254,7 @@ async fn resolve_chapter_replacement(
 
     (
         chapter_workflow::chapter_heuristic_fallback(intent, &input.chapter, &input.writing_goal),
-        TokenUsage {
-            prompt_tokens: 0,
-            completion_tokens: 0,
-            total_tokens: 0,
-        },
+        TokenUsage::default(),
         "模型暂不可用，已应用结构化启发式回退（请人工复核）".to_string(),
     )
 }

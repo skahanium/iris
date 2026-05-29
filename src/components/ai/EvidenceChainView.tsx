@@ -49,10 +49,7 @@ export function EvidenceChainView({
             className="rounded-md border border-border/60 bg-surface-inset/40 p-2"
           >
             <div className="flex items-center gap-1.5">
-              <Badge
-                variant="secondary"
-                className="px-1 py-0 text-[10px]"
-              >
+              <Badge variant="secondary" className="px-1 py-0 text-[10px]">
                 {packet.source_type}
               </Badge>
               <span className="truncate text-xs font-medium">

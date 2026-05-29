@@ -2,6 +2,10 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 
 import type {
+  AssistantExecuteRequest,
+  AssistantExecuteResponse,
+} from "@/types/ai";
+import type {
   BacklinkEntry,
   FileChangedEvent,
   FileEntry,
@@ -351,6 +355,13 @@ export async function contextAssemble(params: {
     sessionId: params.session_id,
     contextScope: params.context_scope ?? null,
   });
+}
+
+/** 统一助手执行门面 — 按 intent 路由到既有工作流 */
+export async function assistantExecute(
+  request: AssistantExecuteRequest,
+): Promise<AssistantExecuteResponse> {
+  return invoke<AssistantExecuteResponse>("assistant_execute", { request });
 }
 
 export async function aiSendMessage(params: {
@@ -719,17 +730,19 @@ export async function organizeExecute(params: {
   });
 }
 
-export async function organizeApply(suggestions: Array<{
-  id: string;
-  suggestion_type: string;
-  target_path: string;
-  current_value?: string;
-  suggested_value: string;
-  reason: string;
-  source: string;
-  confidence: number;
-  evidence_packet_ids: string[];
-}>): Promise<{
+export async function organizeApply(
+  suggestions: Array<{
+    id: string;
+    suggestion_type: string;
+    target_path: string;
+    current_value?: string;
+    suggested_value: string;
+    reason: string;
+    source: string;
+    confidence: number;
+    evidence_packet_ids: string[];
+  }>,
+): Promise<{
   applied: string[];
   skipped: string[];
   errors: string[];
@@ -885,14 +898,16 @@ export async function documentCheckExecute(params: {
   });
 }
 
-export async function parseDocumentChapters(content: string): Promise<Array<{
-  heading_level: number;
-  heading_text: string;
-  content_start: number;
-  content_end: number;
-  content: string;
-  heading_path: string;
-}>> {
+export async function parseDocumentChapters(content: string): Promise<
+  Array<{
+    heading_level: number;
+    heading_text: string;
+    content_start: number;
+    content_end: number;
+    content: string;
+    heading_path: string;
+  }>
+> {
   return invoke("parse_document_chapters", { content });
 }
 

@@ -111,7 +111,9 @@ export function ContextStatusBar({
           )}
         </div>
       ) : (
-        <span className="text-muted-foreground/50">等待上下文…</span>
+        <span className="text-muted-foreground/50">
+          检索与证据统计将在此显示
+        </span>
       )}
     </div>
   );

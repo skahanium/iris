@@ -15,11 +15,10 @@ use crate::app::AppState;
 use crate::error::AppResult;
 use tauri::{Emitter, State};
 
-/// Execute a full research workflow on a topic with per-round progress events.
-#[tauri::command]
-pub async fn research_execute(
-    state: State<'_, AppState>,
-    app_handle: tauri::AppHandle,
+/// Execute a full research workflow (shared by IPC and assistant facade).
+pub(crate) async fn execute_research_task(
+    state: &AppState,
+    app_handle: &tauri::AppHandle,
     topic: String,
     web_authorized: Option<bool>,
 ) -> AppResult<serde_json::Value> {
@@ -69,7 +68,7 @@ pub async fn research_execute(
     // Execute research workflow
     let result = execute_research(
         &state.db,
-        &app_handle,
+        app_handle,
         &request_id,
         &topic,
         config.clone(),
@@ -146,6 +145,17 @@ pub async fn research_execute(
         "summary": result.summary,
         "total_tokens": result.total_tokens,
     }))
+}
+
+/// Execute a full research workflow on a topic with per-round progress events.
+#[tauri::command]
+pub async fn research_execute(
+    state: State<'_, AppState>,
+    app_handle: tauri::AppHandle,
+    topic: String,
+    web_authorized: Option<bool>,
+) -> AppResult<serde_json::Value> {
+    execute_research_task(&state, &app_handle, topic, web_authorized).await
 }
 
 /// Abort a running research task by its request_id.

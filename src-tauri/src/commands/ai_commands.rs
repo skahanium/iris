@@ -43,6 +43,15 @@ pub async fn context_assemble(
     // Run intent detection and context planning
     let plan = plan_context(&query, scene, note_path.as_deref())?;
 
+    // Only return an execution plan when there are multiple sub-queries,
+    // so the frontend can show a preview for complex queries.
+    // Single sub-queries (the common case) skip the plan and execute directly.
+    let execution_plan = if plan.sub_queries.len() > 1 {
+        Some(crate::ai_runtime::execution_plan::execution_plan_from_context_plan(&plan))
+    } else {
+        None
+    };
+
     // Resolve file_id for graph layer
     let file_id = match &note_path {
         Some(path) => state
@@ -103,15 +112,15 @@ pub async fn context_assemble(
         packets,
         tools,
         context_status,
+        execution_plan,
     })
 }
 
-/// Send an AI message with full LLM pipeline.
+/// Send an AI message with full LLM pipeline (shared by IPC and assistant facade).
 #[allow(clippy::too_many_arguments)]
-#[tauri::command]
-pub async fn ai_send_message(
-    state: State<'_, Arc<AppState>>,
-    app_handle: tauri::AppHandle,
+pub(crate) async fn execute_ai_send_message(
+    state: &AppState,
+    app_handle: &tauri::AppHandle,
     scene: String,
     session_id: Option<i64>,
     message: String,
@@ -295,6 +304,16 @@ pub async fn ai_send_message(
         for tool_call in &response.tool_calls {
             // Check if tool requires confirmation
             if registry.requires_confirmation(&tool_call.function.name) {
+                // Store pending tool call for later confirmation
+                state.pending_tool_calls.lock().unwrap().insert(
+                    tool_call.id.clone(),
+                    crate::app::PendingToolCall {
+                        tool_name: tool_call.function.name.clone(),
+                        arguments: tool_call.function.arguments.clone(),
+                        request_id: request_id.clone(),
+                    },
+                );
+
                 // Emit tool confirmation request to frontend
                 let confirm_request = serde_json::json!({
                     "request_id": request_id,
@@ -314,7 +333,7 @@ pub async fn ai_send_message(
             } else {
                 // Auto-execute read-only tools
                 let result = execute_tool_auto(
-                    &state,
+                    state,
                     scene,
                     &tool_call.function.name,
                     &tool_call.function.arguments,
@@ -404,24 +423,50 @@ pub async fn ai_send_message(
     }))
 }
 
+/// Send an AI message with full LLM pipeline.
+#[allow(clippy::too_many_arguments)]
+#[tauri::command]
+pub async fn ai_send_message(
+    state: State<'_, Arc<AppState>>,
+    app_handle: tauri::AppHandle,
+    scene: String,
+    session_id: Option<i64>,
+    message: String,
+    selected_packet_ids: Option<Vec<String>>,
+    note_path: Option<String>,
+    context_scope: Option<ContextScopeDto>,
+    web_search: Option<bool>,
+) -> AppResult<serde_json::Value> {
+    execute_ai_send_message(
+        state.inner().as_ref(),
+        &app_handle,
+        scene,
+        session_id,
+        message,
+        selected_packet_ids,
+        note_path,
+        context_scope,
+        web_search,
+    )
+    .await
+}
+
 /// Handle tool confirmation from the user.
 #[tauri::command]
 pub async fn tool_confirm(
-    _state: State<'_, Arc<AppState>>,
+    state: State<'_, Arc<AppState>>,
     app_handle: tauri::AppHandle,
     request_id: String,
     tool_call_id: String,
     decision: String,
-    _modified_args: Option<serde_json::Value>,
+    modified_args: Option<serde_json::Value>,
 ) -> AppResult<serde_json::Value> {
-    let decision_str = match decision.as_str() {
-        "approve" => "approved",
-        "reject" => "rejected",
-        "modify" => "modified",
-        other => return Err(AppError::msg(format!("invalid decision: {other}"))),
-    };
-
-    if decision_str == "rejected" {
+    if decision == "reject" {
+        state
+            .pending_tool_calls
+            .lock()
+            .unwrap()
+            .remove(&tool_call_id);
         return Ok(serde_json::json!({
             "request_id": request_id,
             "tool_call_id": tool_call_id,
@@ -429,23 +474,54 @@ pub async fn tool_confirm(
         }));
     }
 
-    // Get the pending tool call from session or trace
-    // For now, we'll use the modified_args if provided, otherwise use the original args
-    // In a full implementation, we'd store the pending tool calls in the session
+    // Retrieve and remove the pending tool call
+    let pending = state
+        .pending_tool_calls
+        .lock()
+        .unwrap()
+        .remove(&tool_call_id);
+    let Some(pending) = pending else {
+        return Err(AppError::msg(format!(
+            "no pending tool call for id: {tool_call_id}"
+        )));
+    };
 
-    // Emit tool execution result
-    let result = serde_json::json!({
-        "request_id": request_id,
-        "tool_call_id": tool_call_id,
-        "status": decision_str,
-        "executed": true,
-    });
+    // Use modified args if provided, otherwise use original
+    let args_str = if let Some(args) = modified_args {
+        serde_json::to_string(&args).unwrap_or_default()
+    } else {
+        pending.arguments
+    };
+
+    // Execute the tool
+    let result = execute_tool_auto(
+        state.inner(),
+        AiScene::KnowledgeLookup,
+        &pending.tool_name,
+        &args_str,
+    )
+    .await;
+
+    let output = match result {
+        Ok(val) => serde_json::json!({
+            "request_id": request_id,
+            "tool_call_id": tool_call_id,
+            "status": "executed",
+            "output": val,
+        }),
+        Err(e) => serde_json::json!({
+            "request_id": request_id,
+            "tool_call_id": tool_call_id,
+            "status": "error",
+            "error": e.to_string(),
+        }),
+    };
 
     app_handle
-        .emit("ai:tool_result", &result)
+        .emit("ai:tool_result", &output)
         .map_err(|e| AppError::msg(format!("failed to emit tool result: {}", e)))?;
 
-    Ok(result)
+    Ok(output)
 }
 
 /// Get available tools for a scene (for frontend display).
@@ -557,7 +633,7 @@ pub async fn search_hybrid(
 
 /// Auto-execute a read-only tool.
 async fn execute_tool_auto(
-    state: &State<'_, Arc<AppState>>,
+    state: &AppState,
     _scene: AiScene,
     tool_name: &str,
     args_str: &str,

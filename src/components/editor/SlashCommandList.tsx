@@ -30,16 +30,19 @@ export const SlashCommandList = forwardRef<
 
   const itemsKey = items.map((item) => item.id).join(",");
 
-  const { highlight: selected, setHighlight: setSelected, handleKeyDown } =
-    useListboxKeyboard({
-      length: items.length,
-      wrap: true,
-      resetKey: itemsKey,
-      onActivate: (index) => {
-        const item = itemsRef.current[index];
-        if (item) commandRef.current(item);
-      },
-    });
+  const {
+    highlight: selected,
+    setHighlight: setSelected,
+    handleKeyDown,
+  } = useListboxKeyboard({
+    length: items.length,
+    wrap: true,
+    resetKey: itemsKey,
+    onActivate: (index) => {
+      const item = itemsRef.current[index];
+      if (item) commandRef.current(item);
+    },
+  });
 
   useImperativeHandle(
     ref,

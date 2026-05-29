@@ -501,7 +501,7 @@ CREATE TABLE settings (
 | `Ctrl+Shift+G` | GraphView       | `graph`   | 知识图谱，几乎全屏（约 96vw×92vh）           |
 | `Ctrl+,`       | SettingsPanel   | `command` | 设置                                         |
 | `Ctrl+S`       | （编辑器）      | —         | 保存 `.md` + `manual` 版本快照               |
-| `Ctrl+Shift+A` | AiPanel         | —         | 收起/展开 AI dock（非浮层）                  |
+| `Ctrl+Shift+A` | 统一助手侧栏    | —         | 收起/展开右侧 `UnifiedAssistantPanel` dock   |
 | `/`            | SlashCommand    | Popover   | 光标处命令菜单                               |
 | 选中文本       | FloatingToolbar | 浮动条    | 内联 AI、发送到 AI                           |
 
@@ -643,8 +643,9 @@ src/components/
 │   ├── OutlineWidget.tsx      # 编辑器左侧大纲悬浮
 │   └── BacklinksWidget.tsx    # 编辑器右侧反向链接悬浮
 ├── ai/
-│   ├── AiPanel.tsx            # 右栏 AI 对话面板（含流式渲染）
-│   └── AiStatusBadge.tsx      # 状态栏 AI 处理状态指示
+│   ├── UnifiedAssistantPanel.tsx  # 右栏统一助手（自动路由、证据、补丁、研究专注态）
+│   ├── assistant/                 # 研究专注态、文档检查等子视图
+│   └── AiStatusBadge.tsx          # 状态栏 AI 处理状态指示
 ├── file/
 │   ├── QuickOpen.tsx          # Ctrl+P 文件搜索切换
 │   ├── SearchPanel.tsx        # Ctrl+Shift+F 全文/语义搜索
@@ -792,10 +793,10 @@ DeepSeek V4 Pro 的深度推理过程以折叠块形式展示：
 
 **提供商策略**：
 
-| 提供商     | 方式                                      | API Key              | 推荐用途           |
-| ---------- | ----------------------------------------- | -------------------- | ------------------ |
-| MiniMax    | `POST /v1/coding_plan/search`（Token Plan） | `iris.minimax`       | 主通道，摘要质量高 |
-| DuckDuckGo | HTML 抓取 + 解析                          | 不需要               | 无 Key 或失败降级  |
+| 提供商     | 方式                                        | API Key        | 推荐用途           |
+| ---------- | ------------------------------------------- | -------------- | ------------------ |
+| MiniMax    | `POST /v1/coding_plan/search`（Token Plan） | `iris.minimax` | 主通道，摘要质量高 |
+| DuckDuckGo | HTML 抓取 + 解析                            | 不需要         | 无 Key 或失败降级  |
 
 **降级链**：已配置 MiniMax Key → 优先 Token Plan 搜索；请求失败 / 未配置 Key / 设置强制 `duckduckgo` → DuckDuckGo。
 

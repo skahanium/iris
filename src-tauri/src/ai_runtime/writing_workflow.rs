@@ -20,14 +20,6 @@ use crate::ai_runtime::{
 use crate::error::AppResult;
 use crate::storage::db::Database;
 
-/// Token usage statistics.
-#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
-pub struct TokenUsage {
-    pub prompt_tokens: u32,
-    pub completion_tokens: u32,
-    pub total_tokens: u32,
-}
-
 /// Writing task result with token usage.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct WritingTaskOutput {
@@ -35,10 +27,9 @@ pub struct WritingTaskOutput {
     pub suggestions: Vec<WritingSuggestion>,
     pub patches: Vec<PatchProposal>,
     pub evidence_used: Vec<ContextPacket>,
-    pub total_tokens: TokenUsage,
+    pub total_tokens: super::TokenUsage,
 }
 
-/// Generate a unique patch ID.
 /// Generate a unique patch ID.
 pub fn generate_patch_id() -> String {
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -212,7 +203,7 @@ pub async fn generate_replacement_with_llm(
     cursor_context: &str,
     goal: &str,
     evidence: &[ContextPacket],
-) -> AppResult<(String, TokenUsage)> {
+) -> AppResult<(String, super::TokenUsage)> {
     let rules = ModelGateway::load_active_rules_for_scene(db, AiScene::DraftingAssist)?;
     let system = ModelGateway::build_system_prompt(AiScene::DraftingAssist, evidence, &rules);
 
@@ -269,23 +260,23 @@ pub async fn generate_replacement_with_llm(
     let response = gateway.send_request(request).await?;
     let usage = response.usage;
     let mut text = response.content.unwrap_or_default().trim().to_string();
-    if text.starts_with("```")
-        && text.rfind("```").is_some() {
-            let inner = text
-                .trim_start_matches('`')
-                .trim_start_matches(|c: char| c.is_alphanumeric() || c == '\n')
-                .trim();
-            text = inner.trim_end_matches('`').trim().to_string();
-        }
+    if text.starts_with("```") && text.rfind("```").is_some() {
+        let inner = text
+            .trim_start_matches('`')
+            .trim_start_matches(|c: char| c.is_alphanumeric() || c == '\n')
+            .trim();
+        text = inner.trim_end_matches('`').trim().to_string();
+    }
     if text.is_empty() {
         text = selection.to_string();
     }
     Ok((
         text,
-        TokenUsage {
+        super::TokenUsage {
             prompt_tokens: usage.prompt_tokens,
             completion_tokens: usage.completion_tokens,
             total_tokens: usage.total_tokens,
+            ..Default::default()
         },
     ))
 }

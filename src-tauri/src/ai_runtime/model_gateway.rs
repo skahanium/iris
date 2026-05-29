@@ -580,27 +580,38 @@ impl ModelGateway {
         }
 
         let mut full_content = String::new();
-        let mut tool_calls: Vec<ToolCall> = Vec::new();
         let mut usage = TokenUsage::default();
         let mut token_index: u32 = 0;
 
-        // Process SSE stream
+        // Incremental tool call accumulator: index -> (id, name, args_buf).
+        // OpenAI streams tool calls as deltas: id+name arrive first, then
+        // argument fragments across multiple subsequent deltas.
+        let mut tool_call_deltas: std::collections::HashMap<
+            usize,
+            (Option<String>, Option<String>, String),
+        > = std::collections::HashMap::new();
+
+        // Process SSE stream with carry buffer to handle chunks split across TCP boundaries
         let mut stream = response.bytes_stream();
         use futures_util::StreamExt;
+        let mut carry = String::new();
 
         while let Some(chunk_result) = stream.next().await {
             let chunk =
                 chunk_result.map_err(|e| AppError::msg(format!("Stream read error: {}", e)))?;
 
-            let text = String::from_utf8_lossy(&chunk);
-            for line in text.lines() {
+            carry.push_str(&String::from_utf8_lossy(&chunk));
+
+            while let Some(pos) = carry.find('\n') {
+                let line: String = carry.drain(..=pos).collect();
+                let line = line.trim_end_matches('\n').trim_end_matches('\r');
+
                 if !line.starts_with("data: ") {
                     continue;
                 }
 
                 let data = &line[6..];
                 if data == "[DONE]" {
-                    // Emit done event
                     let event = StreamEvent {
                         request_id: request_id.to_string(),
                         event_type: StreamEventType::Done,
@@ -627,37 +638,101 @@ impl ModelGateway {
                         token_index += 1;
                     }
 
-                    // Process tool call deltas
+                    // Accumulate tool call deltas by index
                     if let Some(tc_deltas) = json["choices"][0]["delta"]["tool_calls"].as_array() {
                         for tc_delta in tc_deltas {
-                            if let (Some(id), Some(name), Some(args)) = (
-                                tc_delta["id"].as_str(),
-                                tc_delta["function"]["name"].as_str(),
-                                tc_delta["function"]["arguments"].as_str(),
-                            ) {
-                                let tool_call = ToolCall {
-                                    id: id.to_string(),
-                                    function: FunctionCall {
-                                        name: name.to_string(),
-                                        arguments: args.to_string(),
-                                    },
-                                };
-                                tool_calls.push(tool_call.clone());
-                                let event = StreamEvent {
-                                    request_id: request_id.to_string(),
-                                    event_type: StreamEventType::ToolCall,
-                                    data: StreamEventData::ToolCall { tool_call },
-                                };
-                                self.emit_stream_event(&event, token_index)?;
+                            let idx = tc_delta["index"].as_u64().unwrap_or(0) as usize;
+                            let entry =
+                                tool_call_deltas
+                                    .entry(idx)
+                                    .or_insert((None, None, String::new()));
+
+                            if let Some(id) = tc_delta["id"].as_str() {
+                                entry.0 = Some(id.to_string());
+                            }
+                            if let Some(name) = tc_delta["function"]["name"].as_str() {
+                                entry.1 = Some(name.to_string());
+                            }
+                            if let Some(args) = tc_delta["function"]["arguments"].as_str() {
+                                entry.2.push_str(args);
                             }
                         }
                     }
 
-                    if json.get("usage").is_some() {
+                    if json.get("usage").is_some() && json["usage"].get("prompt_tokens").is_some() {
                         usage = parse_usage(&json);
                     }
                 }
             }
+        }
+
+        // Flush remaining carry buffer
+        if !carry.trim().is_empty() {
+            if let Some(pos) = carry.find("data: ") {
+                let remainder = &carry[pos..];
+                if let Some(data) = remainder.strip_prefix("data: ") {
+                    let data = data.trim();
+                    if data != "[DONE]" {
+                        if let Ok(json) = serde_json::from_str::<serde_json::Value>(data) {
+                            if let Some(delta) = json["choices"][0]["delta"]["content"].as_str() {
+                                full_content.push_str(delta);
+                            }
+                            if let Some(tc_deltas) =
+                                json["choices"][0]["delta"]["tool_calls"].as_array()
+                            {
+                                for tc_delta in tc_deltas {
+                                    let idx = tc_delta["index"].as_u64().unwrap_or(0) as usize;
+                                    let entry = tool_call_deltas.entry(idx).or_insert((
+                                        None,
+                                        None,
+                                        String::new(),
+                                    ));
+                                    if let Some(id) = tc_delta["id"].as_str() {
+                                        entry.0 = Some(id.to_string());
+                                    }
+                                    if let Some(name) = tc_delta["function"]["name"].as_str() {
+                                        entry.1 = Some(name.to_string());
+                                    }
+                                    if let Some(args) = tc_delta["function"]["arguments"].as_str() {
+                                        entry.2.push_str(args);
+                                    }
+                                }
+                            }
+                            if json.get("usage").is_some()
+                                && json["usage"].get("prompt_tokens").is_some()
+                            {
+                                usage = parse_usage(&json);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Assemble tool calls from accumulated deltas (deduplicated by index)
+        let tool_calls: Vec<ToolCall> = tool_call_deltas
+            .into_iter()
+            .filter_map(|(_, (id, name, args))| {
+                Some(ToolCall {
+                    id: id?,
+                    function: FunctionCall {
+                        name: name?,
+                        arguments: args,
+                    },
+                })
+            })
+            .collect();
+
+        // Emit tool call events for each assembled call
+        for tc in &tool_calls {
+            let event = StreamEvent {
+                request_id: request_id.to_string(),
+                event_type: StreamEventType::ToolCall,
+                data: StreamEventData::ToolCall {
+                    tool_call: tc.clone(),
+                },
+            };
+            self.emit_stream_event(&event, token_index)?;
         }
 
         Ok(GatewayResponse {

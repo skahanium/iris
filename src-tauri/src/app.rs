@@ -10,6 +10,13 @@ use crate::error::{AppError, AppResult};
 use crate::storage::db::Database;
 use crate::watcher::FileWatcher;
 
+/// A tool call awaiting user confirmation.
+pub struct PendingToolCall {
+    pub tool_name: String,
+    pub arguments: String,
+    pub request_id: String,
+}
+
 pub struct AppState {
     pub db: Database,
     vault: Mutex<Option<PathBuf>>,
@@ -17,6 +24,8 @@ pub struct AppState {
     pub watcher: Mutex<Option<FileWatcher>>,
     /// Active research tasks — keyed by request_id, value is cancel flag
     pub active_research: Mutex<HashMap<String, Arc<AtomicBool>>>,
+    /// Tool calls pending user confirmation — keyed by tool_call_id
+    pub pending_tool_calls: Mutex<HashMap<String, PendingToolCall>>,
 }
 
 impl AppState {
@@ -29,6 +38,7 @@ impl AppState {
             data_dir,
             watcher: Mutex::new(None),
             active_research: Mutex::new(HashMap::new()),
+            pending_tool_calls: Mutex::new(HashMap::new()),
         };
         if let Some(v) = state.load_vault_setting()? {
             let path = PathBuf::from(v);

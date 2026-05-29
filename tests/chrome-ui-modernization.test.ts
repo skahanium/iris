@@ -7,14 +7,14 @@ function read(path: string): string {
 }
 
 describe("v0.4.1-ui chrome modernization", () => {
-  it("AiPanel uses shared scene data and subcomponents", () => {
-    const source = read("src/components/ai/AiPanel.tsx");
-    expect(source).toContain("AiPanelHeader");
+  it("UnifiedAssistantPanel replaces workflow tabs and scene picker", () => {
+    const source = read("src/components/ai/UnifiedAssistantPanel.tsx");
     expect(source).toContain("AiComposer");
     expect(source).toContain("AiMessageList");
     expect(source).toContain("ContextPacketDrawer");
-    expect(source).not.toContain("SCENE_OPTIONS");
-    expect(source).not.toMatch(/const SCENE_OPTIONS/);
+    expect(source).toContain("AssistantActionState");
+    expect(source).not.toContain("WORKFLOW_TASK_DEFINITIONS");
+    expect(source).not.toContain("SceneSelector");
   });
 
   it("SlashCommandList uses Lucide via CommandListOption", () => {
@@ -26,15 +26,11 @@ describe("v0.4.1-ui chrome modernization", () => {
     expect(source).not.toContain("💡");
   });
 
-  it("ResearchPanel and WorkflowIndicator avoid high-saturation colors", () => {
-    const research = read("src/components/ai/ResearchPanel.tsx");
+  it("ResearchFocusView avoids high-saturation colors", () => {
+    const research = read("src/components/ai/assistant/ResearchFocusView.tsx");
     expect(research).not.toContain("emerald-");
     expect(research).not.toContain("purple-");
     expect(research).not.toContain("amber-");
-
-    const workflow = read("src/components/ai/WorkflowIndicator.tsx");
-    expect(workflow).not.toContain("emerald-");
-    expect(workflow).toContain("bg-primary/80");
   });
 
   it("ContextPacketCard avoids high-saturation trust colors", () => {
@@ -53,7 +49,7 @@ describe("v0.4.1-ui chrome modernization", () => {
   it("ConnectivityIndicators groups unified status balls", () => {
     const source = read("src/components/layout/ConnectivityIndicators.tsx");
     const statusBar = read("src/components/layout/StatusBar.tsx");
-    expect(source).toContain('size-2 shrink-0 rounded-full');
+    expect(source).toContain("size-2 shrink-0 rounded-full");
     expect(source).toContain("onWebSearchChange");
     expect(source).toContain("--status-inactive");
     expect(source).not.toContain("size-3.5");

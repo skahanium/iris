@@ -8,8 +8,8 @@ use crate::ai_runtime::evidence_mixer;
 use crate::ai_runtime::retrieval_broker::{RetrievalLayers, RetrievalRequest};
 use crate::ai_runtime::retrieval_scope::RetrievalScope;
 use crate::ai_runtime::trace::{TraceRecorder, TraceStatus};
-use crate::ai_runtime::writing_workflow::{self, TokenUsage, WritingTaskOutput};
-use crate::ai_runtime::{AiScene, PatchApplyResult, PatchProposal, WritingIntent};
+use crate::ai_runtime::writing_workflow::{self, WritingTaskOutput};
+use crate::ai_runtime::{AiScene, PatchApplyResult, PatchProposal, TokenUsage, WritingIntent};
 use crate::app::AppState;
 use crate::error::AppResult;
 use crate::llm::search_web;
@@ -113,11 +113,10 @@ fn file_write_inner(
     Ok(entry)
 }
 
-/// Execute a writing task.
-#[tauri::command]
-pub async fn writing_execute(
-    state: State<'_, Arc<AppState>>,
-    app_handle: AppHandle,
+/// Execute a writing task (shared by IPC command and assistant facade).
+pub(crate) async fn execute_writing_task(
+    state: &AppState,
+    app_handle: &AppHandle,
     input: WritingTaskInputIpc,
 ) -> AppResult<WritingTaskOutput> {
     let request_id = uuid::Uuid::new_v4().to_string();
@@ -127,7 +126,7 @@ pub async fn writing_execute(
     let intent =
         writing_workflow::detect_writing_intent(&input.writing_goal, input.selection.as_deref());
 
-    let mut evidence = retrieve_writing_evidence(&state, &input).await?;
+    let mut evidence = retrieve_writing_evidence(state, &input).await?;
 
     if input.web_authorized {
         let query = format!(
@@ -164,18 +163,14 @@ pub async fn writing_execute(
     };
 
     let evidence_ids: Vec<String> = evidence.iter().map(|p| p.id.clone()).collect();
-    let mut total_tokens = TokenUsage {
-        prompt_tokens: 0,
-        completion_tokens: 0,
-        total_tokens: 0,
-    };
+    let mut total_tokens = TokenUsage::default();
 
     let patches = if let Some(ref selection) = input.selection {
         if !selection.is_empty() {
             let range = find_selection_range(&input.cursor_context, selection);
             let (replacement, usage) = writing_workflow::generate_replacement_with_llm(
                 &state.db,
-                &app_handle,
+                app_handle,
                 &provider_config,
                 &intent,
                 selection,
@@ -231,6 +226,16 @@ pub async fn writing_execute(
         evidence_used: evidence,
         total_tokens,
     })
+}
+
+/// Execute a writing task.
+#[tauri::command]
+pub async fn writing_execute(
+    state: State<'_, Arc<AppState>>,
+    app_handle: AppHandle,
+    input: WritingTaskInputIpc,
+) -> AppResult<WritingTaskOutput> {
+    execute_writing_task(state.inner().as_ref(), &app_handle, input).await
 }
 
 fn fallback_replacement(intent: &WritingIntent, selection: &str, goal: &str) -> String {

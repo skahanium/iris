@@ -20,9 +20,8 @@ import StarterKit from "@tiptap/starter-kit";
 
 import { common, createLowlight } from "lowlight";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef } from "react";
 
-import { useInlineSuggestion } from "@/hooks/useInlineSuggestion";
 import { markdownToEditorHtml } from "@/lib/markdown";
 
 import { noteTitleFromEditor } from "@/lib/note-title";
@@ -31,8 +30,6 @@ import { cn } from "@/lib/utils";
 
 import { AiStreamExtension } from "./extensions/AiStreamExtension";
 import { HeadingFoldExtension } from "./extensions/HeadingFoldExtension";
-import { InlineAiExtension } from "./extensions/InlineAiExtension";
-import { InlineSuggestion } from "./InlineSuggestion";
 import { IrisDocument } from "./extensions/IrisDocument";
 import { NoteTitleExtension } from "./extensions/NoteTitleExtension";
 import { SlashCommandExtension } from "./extensions/SlashCommandExtension";
@@ -65,10 +62,6 @@ interface TipTapEditorProps {
 
   zoom?: number;
 
-  /** Enable inline AI suggestions (GitHub Copilot style autocomplete). */
-
-  enableInlineSuggestion?: boolean;
-
   className?: string;
 }
 
@@ -93,8 +86,6 @@ export function TipTapEditor({
 
   zoom = 1,
 
-  enableInlineSuggestion = false,
-
   className,
 }: TipTapEditorProps) {
   const inlineAiRetryRef = useRef(onInlineAiRetry);
@@ -113,110 +104,56 @@ export function TipTapEditor({
 
   const firedInitialRef = useRef(false);
 
-  const {
-    suggestion,
-    isLoading,
-    fetchSuggestion,
-    acceptSuggestion,
-    dismissSuggestion,
-  } = useInlineSuggestion();
-
-  const [suggestionPos, setSuggestionPos] = useState<{
-    top: number;
-    left: number;
-  } | null>(null);
-
   const editorRef = useRef<Editor | null>(null);
 
-  const enableSuggestionRef = useRef(enableInlineSuggestion);
-  enableSuggestionRef.current = enableInlineSuggestion;
+  const onSlashCommandRef = useRef(onSlashCommand);
+  onSlashCommandRef.current = onSlashCommand;
 
-  const handleEditorUpdate = useCallback(() => {
-    const ed = editorRef.current;
-    if (!ed || !enableSuggestionRef.current) return;
+  const onOpenWikiLinkRef = useRef(onOpenWikiLink);
+  onOpenWikiLinkRef.current = onOpenWikiLink;
 
-    const { from } = ed.state.selection;
-    const textBefore = ed.state.doc.textBetween(
-      Math.max(0, from - 200),
-      from,
-      "\n",
-    );
-
-    if (textBefore.trim().length > 10) {
-      fetchSuggestion(textBefore, from);
-
-      const coords = ed.view.coordsAtPos(from);
-      setSuggestionPos({
-        top: coords.bottom,
-        left: coords.left,
-      });
-    }
-  }, [fetchSuggestion]);
-
-  const handleAcceptSuggestion = useCallback(() => {
-    const ed = editorRef.current;
-    if (ed && suggestion) {
-      ed.commands.insertContent(suggestion.text);
-    }
-    acceptSuggestion();
-    setSuggestionPos(null);
-  }, [suggestion, acceptSuggestion]);
-
-  const handleDismissSuggestion = useCallback(() => {
-    dismissSuggestion();
-    setSuggestionPos(null);
-  }, [dismissSuggestion]);
-
-  const handleEditorUpdateRef = useRef(handleEditorUpdate);
-  handleEditorUpdateRef.current = handleEditorUpdate;
-
-  const editor = useEditor({
-    extensions: [
+  /** 稳定引用，避免父组件重渲染时销毁并重建编辑器（会从陈旧 markdown 恢复标题） */
+  const extensions = useMemo(
+    () => [
       IrisDocument,
-
       NoteTitleExtension,
-
       StarterKit.configure({
         document: false,
-
         codeBlock: false,
-
         heading: {
           levels: [1, 2, 3],
-
           HTMLAttributes: { class: "iris-section-heading" },
         },
       }),
-
       TaskList,
-
       TaskItem.configure({ nested: true }),
-
       Table.configure({ resizable: true }),
-
       TableRow,
-
       TableHeader,
-
       TableCell,
-
       CodeBlockLowlight.configure({ lowlight }),
-
       Placeholder.configure({
         placeholder: ({ node }) =>
           node.type.name === "noteTitle"
             ? "无标题"
             : "开始写作，或输入 / 唤起 AI…",
       }),
-
       HeadingFoldExtension,
       AiStreamExtension.configure({
         onRetry: (ed) => inlineAiRetryRef.current?.(ed),
       }),
-      InlineAiExtension,
-      SlashCommandExtension.configure({ onCommand: onSlashCommand }),
-      WikiLinkExtension.configure({ onOpenNote: onOpenWikiLink }),
+      SlashCommandExtension.configure({
+        onCommand: (command) => onSlashCommandRef.current?.(command),
+      }),
+      WikiLinkExtension.configure({
+        onOpenNote: (title) => onOpenWikiLinkRef.current?.(title),
+      }),
     ],
+    [],
+  );
+
+  const editor = useEditor({
+    extensions,
 
     content: markdownToEditorHtml(initialMarkdown, titleFallback),
 
@@ -228,7 +165,6 @@ export function TipTapEditor({
       }
 
       onDirtyRef.current?.();
-      handleEditorUpdateRef.current();
     },
 
     editorProps: {
@@ -254,7 +190,10 @@ export function TipTapEditor({
   useEffect(() => {
     if (!editor) return;
 
+    let skipInitial = true;
+
     const emitTitle = () => {
+      if (skipInitial) return;
       const next = noteTitleFromEditor(editor);
 
       if (next === lastEmittedTitleRef.current) return;
@@ -263,8 +202,6 @@ export function TipTapEditor({
 
       onTitleChangeRef.current?.(next);
     };
-
-    emitTitle();
 
     const onTransaction = ({
       transaction,
@@ -276,13 +213,19 @@ export function TipTapEditor({
 
     editor.on("transaction", onTransaction);
 
+    const frame = requestAnimationFrame(() => {
+      skipInitial = false;
+    });
+
     return () => {
       editor.off("transaction", onTransaction);
+      cancelAnimationFrame(frame);
     };
   }, [editor]);
 
   return (
     <div
+      data-testid="editor"
       className={cn("iris-editor flex min-h-0 flex-1 flex-col", className)}
       data-zen={zen ? "true" : undefined}
       data-editor-zoom={zoom}
@@ -297,32 +240,6 @@ export function TipTapEditor({
           </div>
         </div>
       </div>
-
-      {suggestion && suggestionPos && (
-        <div
-          className="pointer-events-auto"
-          style={{
-            position: "fixed",
-            top: suggestionPos.top,
-            left: suggestionPos.left,
-            zIndex: 50,
-          }}
-        >
-          <InlineSuggestion
-            suggestion={suggestion}
-            onAccept={handleAcceptSuggestion}
-            onDismiss={handleDismissSuggestion}
-          />
-        </div>
-      )}
-
-      {isLoading && enableInlineSuggestion && (
-        <div className="fixed bottom-4 right-4 z-50">
-          <div className="rounded-full bg-primary/10 px-3 py-1.5 text-xs text-primary">
-            AI 思考中…
-          </div>
-        </div>
-      )}
     </div>
   );
 }

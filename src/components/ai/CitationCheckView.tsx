@@ -121,7 +121,10 @@ export function CitationCheckView({
       <CardHeader className="pb-2">
         <div className="flex items-center justify-between">
           <CardTitle className="text-sm font-medium">引用检查结果</CardTitle>
-          <Badge variant="outline" className={cn("text-xs", coverageConfig.className)}>
+          <Badge
+            variant="outline"
+            className={cn("text-xs", coverageConfig.className)}
+          >
             <CoverageIcon className="mr-1 h-3.5 w-3.5" />
             {coverageConfig.label}
           </Badge>
@@ -247,7 +250,9 @@ export function CitationCheckView({
                           <BookOpen className="mt-0.5 h-3.5 w-3.5 shrink-0 text-blue-600" />
                           <div className="min-w-0 flex-1">
                             <div className="text-xs font-medium text-blue-600">
-                              建议：{ACTION_LABELS[suggestion.action] ?? suggestion.action}
+                              建议：
+                              {ACTION_LABELS[suggestion.action] ??
+                                suggestion.action}
                             </div>
                             <div className="text-xs text-muted-foreground">
                               {suggestion.explanation}
