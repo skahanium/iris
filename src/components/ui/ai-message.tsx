@@ -1,4 +1,4 @@
-import { marked } from "marked";
+import { aiMarked } from "@/lib/ai/marked-ai";
 import {
   useCallback,
   useMemo,
@@ -12,6 +12,7 @@ import {
 } from "@/lib/ai/citation-markdown";
 import { sanitizeHtml } from "@/lib/sanitize";
 import { cn } from "@/lib/utils";
+import { MarkdownErrorBoundary } from "@/components/ui/markdown-error-boundary";
 
 export function AiStreamPulse() {
   return (
@@ -40,9 +41,19 @@ function AssistantMarkdown({
   onCitationClick?: (ref: string) => void;
 }) {
   const html = useMemo(() => {
-    const linked = linkifyAiCitations(content || "");
-    const raw = marked.parse(linked, { async: false }) as string;
-    return sanitizeHtml(tagCitationLinksInHtml(raw));
+    try {
+      const linked = linkifyAiCitations(content || "");
+      const raw = aiMarked.parse(linked, { async: false }) as string;
+      return sanitizeHtml(tagCitationLinksInHtml(raw));
+    } catch {
+      // If parsing fails, render as escaped plain text
+      const escaped = (content || "")
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/\n/g, "<br>");
+      return `<pre class="text-muted-foreground text-xs whitespace-pre-wrap">${escaped}</pre>`;
+    }
   }, [content]);
 
   const handleClick = useCallback(
@@ -104,10 +115,12 @@ export function AiMessage({
   return (
     <div className={cn("ai-msg-assistant", className)}>
       {content ? (
-        <AssistantMarkdown
-          content={content}
-          onCitationClick={onCitationClick}
-        />
+        <MarkdownErrorBoundary>
+          <AssistantMarkdown
+            content={content}
+            onCitationClick={onCitationClick}
+          />
+        </MarkdownErrorBoundary>
       ) : null}
       {streaming && !content ? <AiStreamPulse /> : null}
       {children}

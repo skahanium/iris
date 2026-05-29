@@ -363,8 +363,9 @@ export function AiPanel({
     }
     panelSendActiveRef.current = false;
     setStreaming(false);
-    streamBuf.current = "";
-    requestIdRef.current = null;
+    // Preserve partial content: do NOT clear streamBuf or requestIdRef here.
+    // The last setMessages update in the token listener already has the latest
+    // snapshot. send() resets streamBuf and requestIdRef when a new message starts.
   }, []);
 
   const handleToolConfirm = useCallback(

@@ -635,6 +635,78 @@
     border-color: hsl(var(--ai-assistant-border));
   }
 
+  /* ── AI message markdown element styles ── */
+
+  .ai-msg h1 { @apply mb-3 mt-4 text-lg font-semibold; }
+  .ai-msg h2 { @apply mb-2.5 mt-3.5 text-base font-semibold; }
+  .ai-msg h3 { @apply mb-2 mt-3 text-sm font-semibold; }
+  .ai-msg h4,
+  .ai-msg h5,
+  .ai-msg h6 { @apply mb-1.5 mt-2.5 text-sm font-medium; }
+
+  .ai-msg blockquote {
+    @apply my-2.5 border-l-[3px] border-border pl-3 text-muted-foreground;
+  }
+  .ai-msg blockquote > p { @apply mb-1; }
+
+  .ai-msg ol { @apply mb-2 list-decimal pl-5; }
+  .ai-msg ol li,
+  .ai-msg ul li { @apply mb-0.5; }
+
+  .ai-msg ul ul,
+  .ai-msg ol ol,
+  .ai-msg ul ol,
+  .ai-msg ol ul { @apply mb-0 mt-0.5; }
+
+  .ai-msg input[type="checkbox"] {
+    @apply mr-1.5 h-3.5 w-3.5 rounded border-border accent-primary align-middle;
+  }
+  .ai-msg li.task-list-item {
+    @apply list-none;
+  }
+
+  .ai-msg hr { @apply my-3 border-0 border-t border-border; }
+
+  .ai-msg table { @apply my-2.5 w-full border-collapse text-xs; }
+  .ai-msg th {
+    @apply border border-border bg-muted/50 px-2 py-1 text-left font-semibold;
+  }
+  .ai-msg td { @apply border border-border px-2 py-1; }
+  .ai-msg tr:nth-child(even) td { @apply bg-muted/20; }
+
+  .ai-msg pre {
+    @apply my-2.5 overflow-x-auto rounded-lg border border-border p-3 font-mono text-xs;
+    background: hsl(var(--editor-code-bg));
+    color: hsl(var(--editor-code-fg));
+    line-height: 1.5;
+  }
+  .ai-msg pre code {
+    background: transparent !important;
+    padding: 0 !important;
+    color: inherit !important;
+  }
+
+  .ai-msg :not(pre) > code {
+    @apply rounded px-1 py-0.5 font-mono text-[0.85em];
+    background: hsl(var(--editor-code-bg));
+    color: hsl(var(--editor-code-fg));
+  }
+
+  .ai-msg img { @apply my-2 max-w-full rounded; }
+
+  .ai-msg strong { @apply font-semibold; }
+  .ai-msg em { @apply italic; }
+  .ai-msg del { @apply text-muted-foreground line-through; }
+  .ai-msg ins { @apply text-primary underline; }
+
+  .ai-msg a:not(.ai-citation):not([href^="#iris-cite-"]) {
+    @apply text-primary underline decoration-primary/40 underline-offset-2 transition-colors hover:decoration-primary/70;
+  }
+
+  .ai-msg .ai-table-wrap {
+    @apply my-2.5 overflow-x-auto;
+  }
+
   .ai-stream-pulse {
     @apply inline-flex gap-0.5;
   }
