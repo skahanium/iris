@@ -1,22 +1,61 @@
 # Iris
 
-> 本地优先、AI 原生的 Markdown 笔记软件
+> 本地优先的 Markdown 笔记应用 — 笔记归你，AI 在编辑器里帮忙
 
-**Iris**（虹膜）是一个完全运行在本地的桌面笔记应用。你的笔记以标准 `.md` 文件存储在你的磁盘上，永远不会被锁定在专有格式中。AI 不是附加功能，而是编辑器的一部分——像键盘一样自然。
+**Iris**（虹膜）是一个完全运行在本地的桌面笔记应用。你的笔记以标准 `.md` 文件存储在磁盘上，可用 VS Code、Typora 或任何编辑器打开——永远不会被锁定在专有格式中。SQLite 只做索引与缓存，删掉也能从 `.md` 完全重建。
+
+在此基础上，Iris 将 AI 集成在编辑器内部（内联改写、`/` 命令、助手面板），而非独立的聊天窗口。引用带来源，写入需你确认。
+
+**当前版本**：v1.0.0-alpha。功能建设已超越原 v0.x 规划，现聚焦 v1.0.0 稳定发布（国际化、无障碍、性能基准、完整图片工作流）。
 
 ---
 
 ## 为什么选择 Iris
 
-| 特性           | Iris                       | Obsidian           | Notion             | Logseq             |
-| -------------- | -------------------------- | ------------------ | ------------------ | ------------------ |
-| 数据格式       | `.md` 纯文本               | `.md` 纯文本       | 专有格式           | `.md`              |
-| 本地优先       | :white_check_mark:         | :white_check_mark: | :x:                | :white_check_mark: |
-| AI 原生编辑器  | :white_check_mark: 内联 AI | :x: 插件实现       | :white_check_mark: | :x:                |
-| 打包体积       | ~10MB                      | ~200MB             | N/A                | ~300MB             |
-| 开源许可证     | AGPL-3.0                   | 专有               | 专有               | AGPL-3.0           |
-| 向量语义搜索   | :white_check_mark: 内置    | :x:                | :white_check_mark: | :x:                |
-| 第三方插件生态 | :x: **不计划**             | :white_check_mark: | :x:                | :x:                |
+| 特性           | Iris                                    | Obsidian              | Notion             |
+| -------------- | --------------------------------------- | --------------------- | ------------------ |
+| 数据格式       | `.md` 纯文本                            | `.md` 纯文本          | 专有格式           |
+| 本地优先       | :white_check_mark:                      | :white_check_mark:    | :x:                |
+| 打包体积       | ~10MB                                   | ~200MB                | N/A                |
+| 混合搜索       | :white_check_mark: 关键词 + 语义        | 关键词为主            | :white_check_mark: |
+| 版本历史       | :white_check_mark: 快照 + 双栏对比      | 插件实现              | 有限               |
+| AI 能力扩展    | Skills 提示词包（用户显式安装）+ 配置   | 通用插件市场          | 封闭生态           |
+| 开源许可证     | AGPL-3.0                                | 专有                  | 专有               |
+
+Iris **不做** Obsidian 式通用插件 API 或插件市场；AI 行为可通过 [Skills](src/components/ai/SkillsPanel.tsx)（Claude 兼容 `SKILL.md`，支持 URL / Git / 本地安装）与声明式配置扩展。深度定制请 fork 或向上游提 PR。
+
+---
+
+## 核心能力
+
+### 数据自主权
+
+每个笔记是独立的 `.md` 文件。文件是数据，SQLite 是缓存。外部修改有 L1/L2/L3 冲突处理。
+
+### 知识网络
+
+`[[双向链接]]`、反向链接面板（`Ctrl+Shift+B`）、`#标签` 聚合（`Ctrl+Shift+T`）、知识图谱（`Ctrl+Shift+G`）。笔记之间的连接自动维护。
+
+### 混合搜索
+
+FTS5 关键词 + 向量语义 + 链接/标签融合。用自然语言找笔记——「上个月关于性能优化的会议记录」，而不只是关键词匹配。
+
+### 版本历史
+
+手动（`Ctrl+S`）、空闲自动、定稿三层快照。双栏对比时间线（`Ctrl+Shift+V`），恢复前强制保护快照。
+
+### 编辑器内 AI
+
+- **内联**：选中文本 → 改写 / 扩写 / 翻译 / 简化，接受 / 重试 / 回退
+- **`/` 命令**：总结、大纲、头脑风暴等，结果流式写入编辑器
+- **助手面板**（`Ctrl+Shift+A`）：按场景自动路由（写作、整理、研究…），引用带来源，所有写入需确认
+- **Skills**：全局或 Vault 级安装 `SKILL.md` 提示词包，注入 AI 行为（命令面板 →「管理 AI Skills」）
+
+### 编辑体验
+
+TipTap WYSIWYG Markdown、多标签页、章节折叠、悬浮大纲（`Ctrl+Shift+O`）、Zen 模式（`Ctrl+.`）。界面取向 Notion 式扁平编辑，详见 [docs/design-system.md](docs/design-system.md)。
+
+---
 
 ## 技术栈
 
@@ -24,79 +63,49 @@
 渲染层    React 19 + TailwindCSS + shadcn/ui + TipTap (Prosemirror)
 ───────────────────────────────────────────────
 逻辑层    Rust (Tauri 2.x)
-          ├─ 文件系统操作、加密 (AES-256-GCM)
-          ├─ SQLite 元数据索引 + fastembed 语义检索（v0.2 计划 sqlite-vec）
-          └─ LLM API 编排 (OpenAI / Claude / Ollama)
+          ├─ 文件系统操作、混合检索
+          └─ LLM API 编排 + AI Runtime
 ───────────────────────────────────────────────
 存储层    .md 文件 (数据) + SQLite (索引/缓存)
 ```
 
-- **桌面框架**: Tauri 2.x — 5-10MB 打包体积，50-100MB 内存占用，Rust 后端天然安全隔离
-- **编辑器核心**: TipTap (Prosemirror) — 结构化文档节点树，AI 原生交互的基础
-- **向量搜索**: fastembed + SQLite BLOB 嵌入（v0.1）；v0.2 升级为 sqlite-vec 虚拟表（见 [docs/eval/semantic-search.md](docs/eval/semantic-search.md)）
-- **AI 集成**: 兼容 OpenAI API 格式，支持远程 API 和本地 Ollama 模型
+- **桌面框架**: Tauri 2.x — 约 5–10MB 打包体积，50–100MB 内存占用
+- **编辑器**: TipTap (Prosemirror) — 结构化文档节点树
+- **搜索**: FTS5 + 向量检索（sqlite-vec vec0，不可用时 cosine fallback）+ fastembed (384-dim)
+- **AI**: 兼容 OpenAI API 格式，支持远程 API 与本地 Ollama
 
-## 核心能力
+架构细节见 [ARCHITECTURE.md](./ARCHITECTURE.md)。
 
-### 内联 AI
-
-选中一段文字 → 改写 / 扩写 / 翻译 / 简化。AI 在编辑器的节点层级上操作，而非字符串拼接。结果以带操作按钮的节点插入（接受 / 重试 / 回退），你决定保留什么。
-
-### 语义搜索
-
-用自然语言搜索笔记。"上个月关于性能优化的会议记录" — 不是关键词匹配，是语义理解。基于向量嵌入，Top-K 召回。
-
-### 上下文问答
-
-基于当前笔记和关联笔记的全文内容向 AI 提问。不复制粘贴，不切换窗口。
-
-### / 命令唤起
-
-在编辑器中输入 `/` → AI 命令菜单：总结、生成大纲、头脑风暴、翻译全文、修复语法……可以在设置中自定义。
-
-### 数据自主权
-
-每个笔记是独立的 `.md` 文件。用 VS Code、Typora、任何编辑器都能打开。SQLite 是缓存，文件是数据。
-
-### 界面取向
-
-**Notion 式扁平编辑**（灰阶壳层 + 居中内容栏）为主，**命令优先**（`Ctrl+P` / 可收起 AI 侧栏）为辅；不做第三方插件生态。见 [设计系统](docs/design-system.md) 与 [路线图 · 体验方向](ROADMAP.md#体验方向与路线图绑定)。
+---
 
 ## 快速开始
 
-> **当前状态**：**v0.1.0** 已发布；**v0.4.0-ui** 推进 Notion 式界面重建。排期见 [ROADMAP.md](./ROADMAP.md)，变更见 [CHANGELOG.md](./CHANGELOG.md)，文档索引见 [docs/README.md](docs/README.md)。
-
 ### 环境要求
 
-- [Rust](https://rustup.rs/) 1.75+
+- [Rust](https://rustup.rs/) 1.80+（见 `src-tauri/Cargo.toml`）
 - [Node.js](https://nodejs.org/) 20+
-- [Node 包管理器](https://nodejs.org/)：`npm`（仓库含 `package-lock.json`）或 [pnpm](https://pnpm.io/) 9+
+- npm 9+
 - Windows 10+ / macOS 13+ / Linux (X11/Wayland)
 
 ### 开发
 
 ```bash
-# 克隆仓库
 git clone https://github.com/skahanium/iris.git
 cd iris
 
-# 安装前端依赖
-npm ci
-# 或：pnpm install
-
-# 启动开发模式（热更新）
-npm run tauri dev
-
-# 构建生产版本
-npm run tauri build
+npm ci              # 安装前端依赖
+npm run tauri dev   # 启动开发模式（热更新）
+npm run tauri build # 构建生产版本
 ```
 
 ### 配置 AI
 
 1. 启动应用并选择笔记目录（Vault）
-2. 右栏 **AI** 面板选择提供商（OpenAI / Claude / Ollama / 自定义）
+2. 右栏 AI 面板选择提供商（OpenAI / Claude / Ollama / 自定义）
 3. 填入 API Key（存入操作系统凭据管理器，不落盘）
-4. 可选：底栏「联网」需在设置中配置 MiniMax Token Plan Key（见「MiniMax 联网检索」）；`Ctrl+Shift+A` 可收起 AI 侧栏以专注写作
+4. 可选：设置页配置 LLM 路由、联网搜索、提示词偏好
+
+---
 
 ## 项目结构
 
@@ -105,36 +114,38 @@ iris/
 ├── src/                    # React 前端源码
 ├── src-tauri/              # Rust / Tauri 后端
 ├── tests/                  # 前端与 E2E 测试
-├── docs/                   # [文档索引](docs/README.md)：Epic、设计系统、语义评测
-├── scripts/                # 维护脚本（图标生成等）
-│   └── assets/             # 品牌源图（非根目录）
-├── package.json            # 前端依赖（Vite/Tauri 惯例在根目录）
+├── docs/                   # 文档索引、设计系统、历史记录
+├── scripts/                # 维护脚本
+├── package.json
 ├── vite.config.ts
-├── index.html
-├── README.md / ROADMAP.md  # 门面文档在根目录
-└── …                       # tsconfig、eslint、tailwind 等工具配置
+└── index.html
 ```
 
-图标维护见 [scripts/assets/README.md](./scripts/assets/README.md)。
+---
 
 ## 设计哲学
 
-- **文件即数据，数据库即缓存** — 你的笔记是 `.md` 文件，永远如此。SQLite 只做索引加速。
-- **AI 是输入方式，不是聊天窗口** — AI 集成在编辑器内部，像键盘一样自然，像鼠标一样精确。
-- **结构化是 AI 的前提** — Prosemirror 的文档节点树让 AI 理解文档结构，而非猜测。
-- **速度是功能** — Tauri 2.x 的 Rust 后端消除 GC 停顿，50MB 内存运行。
-- **开源就是安全** — AGPL-3.0。代码可审计，数据在你自己手里。
-- **克制的产品边界** — 无第三方插件、无移动端/实时协作；扩展靠主线版本与 fork（见 [ROADMAP](ROADMAP.md)）。
+- **文件即数据，数据库即缓存** — 笔记永远是 `.md` 纯文本，SQLite 只做索引加速。
+- **本地优先** — 完全离线可用（AI 可选接入远程或 Ollama 本地模型）。
+- **AI 在编辑器里，不在聊天窗** — 内联、`/` 命令与助手面板均围绕当前文档，写入需确认。
+- **速度是功能** — Tauri + Rust 后端，轻量内存占用。
+- **开源就是安全** — AGPL-3.0，代码可审计，数据在你自己手里。
+- **克制的产品边界** — 无通用插件 API / 插件市场 / 移动端 / 实时协作；AI 行为靠 Skills 与配置扩展，深度定制靠 fork / PR。
+
+---
 
 ## 文档
 
-| 你想…                     | 阅读                                                            |
-| ------------------------- | --------------------------------------------------------------- |
-| 看版本计划与体验排期      | [ROADMAP.md](./ROADMAP.md)                                      |
-| 改界面 / token / 纸墨规范 | [docs/design-system.md](docs/design-system.md)                  |
-| 查架构、IPC、数据流       | [ARCHITECTURE.md](./ARCHITECTURE.md)                            |
-| 参与开发                  | [CONTRIBUTING.md](./CONTRIBUTING.md) · [AGENTS.md](./AGENTS.md) |
-| 全部文档列表              | [docs/README.md](docs/README.md)                                |
+| 你想…                   | 阅读                                                     |
+| ----------------------- | -------------------------------------------------------- |
+| 使用指南（用户向）      | Notion 官方文档站（v1.0.0 交付，URL 待发布）             |
+| 看路线图与里程碑        | [ROADMAP.md](./ROADMAP.md)                               |
+| 改界面 / token / 组件   | [docs/design-system.md](docs/design-system.md)            |
+| 查架构、IPC、数据流     | [ARCHITECTURE.md](./ARCHITECTURE.md)                     |
+| 参与开发                | [CONTRIBUTING.md](./CONTRIBUTING.md) · [AGENTS.md](./AGENTS.md) |
+| 全部文档列表            | [docs/README.md](docs/README.md)                         |
+
+---
 
 ## 许可证
 

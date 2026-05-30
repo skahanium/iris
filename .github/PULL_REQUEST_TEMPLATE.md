@@ -19,8 +19,8 @@ Closes #（填写 Issue 编号）
 
 - [ ] 已添加/更新单元测试
 - [ ] 已通过 `cargo test`（Rust 测试）
-- [ ] 已通过 `pnpm run test`（前端测试）
-- [ ] 已通过 `pnpm tauri build --debug`（构建验证）
+- [ ] 已通过 `npm run test`（前端测试）
+- [ ] 已通过 `npm run tauri build --debug`（构建验证）
 
 ## 安全检查
 

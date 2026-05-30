@@ -1,8 +1,10 @@
 # Iris AI 体系设计
 
+> **归档说明**：本文档为 2026-05-27 历史 spec。其中「不开放 Skills 运行时」等表述已被后续实现取代。Skills 系统见 [2026-05-30-ai-system-enhancement-design.md](./2026-05-30-ai-system-enhancement-design.md) §2.5；产品边界以 [ROADMAP.md](../../ROADMAP.md) 为准。
+
 > 设计日期: 2026-05-27
 > 修订日期: 2026-05-27
-> 状态: 修订版草案
+> 状态: **已归档**（部分结论仍有效，Skills/插件边界以 ROADMAP 为准）
 > 版本: v1.1
 
 ---

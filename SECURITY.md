@@ -53,16 +53,15 @@
 - 应用启动时从凭据管理器读取，仅保存在内存中
 - 向 LLM API 发送请求时，Key 仅出现在 HTTPS 请求的 Authorization Header 中
 
-## 静态加密
+## 笔记静态存储
 
-Iris 在 v0.3 版本将提供可选的 AES-256-GCM 笔记目录加密功能。在此之前，笔记以纯 `.md` 文件存储在用户选择的目录中。如果你需要额外的安全保护，建议使用操作系统级别的全盘加密（Windows BitLocker / macOS FileVault / Linux LUKS）。
+Iris **不提供** Vault 目录级加密。笔记以明文 `.md` 文件存储在用户选择的目录中，与「文件即数据、任意编辑器可打开」的产品原则一致。若需额外保护，请使用操作系统级全盘加密（Windows BitLocker / macOS FileVault / Linux LUKS）。详见 [ROADMAP § 产品原则与非目标](./ROADMAP.md#产品原则与非目标)。
 
 ## 依赖安全
 
-- 所有 Rust 依赖通过 `cargo audit` 定期扫描
-- 所有 Node.js 依赖通过 `pnpm audit` 定期扫描
-- CI 流水线将在每次 PR 时运行安全审计
-- 发现高危漏洞的依赖将在 48 小时内升级或替换
+- 推荐在本地定期运行 `cargo audit`（Rust）与 `npm audit`（Node.js）
+- CI 当前运行 fmt / clippy / test 与 lint / typecheck / test；安全审计接入 CI 为后续改进项
+- 发现高危漏洞的依赖应尽快升级或替换
 
 ## 已公开漏洞
 

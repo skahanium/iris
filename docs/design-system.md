@@ -6,7 +6,7 @@
 
 本文档是 **界面** 的单一参考；交互线框见 [ARCHITECTURE.md](../ARCHITECTURE.md)；全库文档索引见 [docs/README.md](./README.md)。
 
-**v0.4.0-ui 施工计划**：[plans/2026-05-27-notion-ui-rebuild.md](./plans/2026-05-27-notion-ui-rebuild.md)
+**v0.4.0-ui 施工计划**：[history/2026-05-27-notion-ui-rebuild.md](./history/2026-05-27-notion-ui-rebuild.md)
 
 ---
 

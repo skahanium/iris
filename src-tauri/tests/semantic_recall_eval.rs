@@ -32,7 +32,7 @@ const EVAL_QUERIES: &[(&str, &str)] = &[
     ("chunk_markdown 分块", "chunking-strategy.md"),
     ("files_fts unicode61", "fts-keyword.md"),
     ("Ollama 11434 本地", "ollama-local.md"),
-    ("AES-256-GCM 加密", "vault-encryption.md"),
+    ("混合检索 broker 融合", "semantic-search-impl.md"),
     ("Recall@5 0.6 目标", "eval-recall.md"),
 ];
 

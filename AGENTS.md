@@ -69,13 +69,13 @@ cargo clippy --all-targets -- -D warnings  # Lint 检查，警告即错误
 
 ```bash
 # 所有提交前必须通过：
-pnpm run lint            # ESLint
-pnpm run format:check    # Prettier
-pnpm run typecheck       # TypeScript 类型检查
+npm run lint            # ESLint
+npm run format:check    # Prettier
+npm run typecheck       # TypeScript 类型检查
 ```
 
 - 组件文件: PascalCase（如 `AiPanel.tsx`）
-- 组件目录: kebab-case（如 `components/ai-panel/`）
+- 组件目录: kebab-case（如 `components/ai/`）
 - Hooks 文件: `use` 前缀（如 `useFileList.ts`）
 - 类型定义: 优先 `interface`，联合类型用 `type`
 - 禁止 `any`，必须使用 `unknown` + 类型守卫
@@ -87,7 +87,7 @@ pnpm run typecheck       # TypeScript 类型检查
 | 上下文           | 约定            | 示例           |
 | ---------------- | --------------- | -------------- |
 | React 组件文件   | PascalCase      | `AiPanel.tsx`  |
-| React 组件目录   | kebab-case      | `ai-panel/`    |
+| React 组件目录   | kebab-case      | `ai/`          |
 | Rust 源文件      | snake_case      | `file_ops.rs`  |
 | Rust 类型/结构体 | PascalCase      | `FileMetadata` |
 | Rust 函数/变量   | snake_case      | `read_file()`  |
@@ -189,7 +189,7 @@ Closes #42
 
 ### 4.4 前端组件组织
 
-- `components/ui/`: 仅存放 shadcn/ui 基础组件（按钮、输入框、对话框等），不得包含业务逻辑
+- `components/ui/`: 仅存放 shadcn/ui 基础组件和共享 UI 原语，不得包含业务逻辑
 - `components/editor/`: 编辑器相关组件
 - `components/ai/`: AI 交互相关组件
 - `components/layout/`: 布局组件
@@ -204,23 +204,23 @@ Closes #42
 - 必须通过完整的 round-trip test suite
 - 如果新版本引入了 breaking change，必须在 PR 中注明并提供迁移方案
 
-### 4.6 文档与路线图
+### 4.6 文档
 
-- **版本排期唯一来源**：[ROADMAP.md](./ROADMAP.md)（含体验 checklist，如 v0.1.1 纸墨阶段 0）
-- **界面 token 与纸墨规范**：[docs/design-system.md](./docs/design-system.md)
+- **版本排期唯一来源**：[ROADMAP.md](./ROADMAP.md)
+- **界面 token 与组件规范**：[docs/design-system.md](./docs/design-system.md)
 - **文档索引**：[docs/README.md](./docs/README.md)
 - 修改 UI：先 design-system + ROADMAP 对应节，再 `src/styles/globals.css` 与组件
-- 勿在 `ARCHITECTURE.md` 或 `v0.1.0-completion-prs.md` 中新增与 ROADMAP 冲突的版本承诺；v0.1.0 补齐清单已冻结
+- 勿在 `ARCHITECTURE.md` 中新增与 ROADMAP 冲突的版本承诺
 
 ## 五、命令速查
 
 ### 开发
 
 ```bash
-pnpm tauri dev          # 启动完整开发环境（Rust 后端 + React 前端热更新）
-pnpm vite               # 仅启动前端开发服务器（不启动 Rust 后端）
-pnpm tauri build        # 构建生产版本
-pnpm tauri build --debug # 构建 Debug 版本（用于 E2E 测试）
+npm run tauri dev          # 启动完整开发环境（Rust 后端 + React 前端热更新）
+npm run dev                # 仅启动前端开发服务器
+npm run tauri build        # 构建生产版本
+npm run tauri build --debug # 构建 Debug 版本（用于 E2E 测试）
 ```
 
 ### Rust 质量检查
@@ -228,33 +228,32 @@ pnpm tauri build --debug # 构建 Debug 版本（用于 E2E 测试）
 ```bash
 cargo fmt --all -- --check               # 格式检查
 cargo fmt --all                          # 自动格式化
-cargo clippy --all-targets -- -D warnings # Lint 检查（警告即错误）
-cargo clippy --all-targets --fix         # 自动修复 Lint 问题
+cargo clippy --all-targets -- -D warnings # Lint 检查
+cargo clippy --all-targets --fix         # 自动修复
 cargo test                               # 运行所有 Rust 测试
-cargo test <模块名>                      # 运行特定模块测试
 cargo audit                              # 依赖安全审计
 ```
 
 ### 前端质量检查
 
 ```bash
-pnpm run lint            # ESLint 检查
-pnpm run lint:fix        # ESLint 自动修复
-pnpm run format:check    # Prettier 格式检查
-pnpm run format          # Prettier 自动格式化
-pnpm run typecheck       # TypeScript 类型检查
-pnpm run test            # 运行前端测试
-pnpm run test:watch      # 监听模式
-pnpm run test:coverage   # 覆盖率报告
+npm run lint            # ESLint 检查
+npm run lint:fix        # ESLint 自动修复
+npm run format:check    # Prettier 格式检查
+npm run format          # Prettier 自动格式化
+npm run typecheck       # TypeScript 类型检查
+npm run test            # 运行前端测试
+npm run test:watch      # 监听模式
+npm run test:coverage   # 覆盖率报告
 ```
 
 ### 其他
 
 ```bash
-pnpm audit                          # 前端依赖安全审计
-cargo run --bin migrate             # 执行数据库迁移
-cargo run --bin reindex             # 重建全文/向量索引
-pnpm run test:e2e                   # 运行端到端测试
+npm audit                           # 前端依赖安全审计
+# 数据库迁移在应用启动时自动执行（storage::migrate::migrate_up）
+# 重建索引：应用内 search_reindex 或 npm run index:rebuild 说明
+npm run test:e2e                    # 运行端到端测试
 ```
 
 ## 六、AGENTS.md 修订规则
@@ -271,4 +270,4 @@ pnpm run test:e2e                   # 运行端到端测试
 
 ---
 
-_最后更新: 2026 年 5 月（v0.1.0 发布；文档体系与 v0.1.1 体验里程碑对齐）_
+_最后更新: 2026 年 5 月（v1.0.0-alpha；文档体系与当前基线对齐）_

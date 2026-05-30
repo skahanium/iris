@@ -1,29 +1,30 @@
-# 语义搜索评估（v0.1.0）
+# 语义搜索评估（v1.0.0-alpha）
 
-> **文档索引**：[docs/README.md](../README.md) · **排期**：[ROADMAP § v0.2 语义检索升级](../../ROADMAP.md#搜索与索引中后期-mvp--语义检索升级)
+> **文档索引**：[docs/README.md](../README.md) · **排期**：[ROADMAP.md](../../ROADMAP.md)
 
-## v0.1 实现路径（非 sqlite-vec 虚拟表）
+## 当前实现（v1.0.0-alpha）
 
-Iris v0.1 的语义检索采用**本地嵌入 + SQLite BLOB + Rust 全量余弦**，与 ROADMAP 早期「sqlite-vec 虚拟表」表述不同，以本文档与 [ROADMAP.md](../../ROADMAP.md) 为准。
+Iris 语义检索采用**本地嵌入 + 混合存储 + 双路径检索**：
 
 | 环节     | 实现                                                                            |
 | -------- | ------------------------------------------------------------------------------- |
 | 嵌入模型 | [fastembed](https://github.com/Anush008/fastembed-rs) `AllMiniLML6V2`（384 维） |
-| 存储     | `chunk_embeddings.embedding` BLOB（`f32` 小端序列化）                           |
+| 存储     | `chunk_embeddings.embedding` BLOB；migration `002_vec` 另建 sqlite-vec `vec0` 虚拟表 |
 | 分块     | `chunk_markdown`，约 2000 字符/块，见 `indexer/chunker.rs`                      |
-| 检索     | `embedding::engine::semantic_search`：对全部 chunk 计算余弦相似度后排序取 Top-K |
+| 检索     | `embedding::engine::semantic_search`：优先 `vec_chunks`（vec0），失败则 BLOB 全量 cosine |
 | IPC      | `search_semantic(query, limit?)`，默认 `limit=5`                                |
 | 重建索引 | `search_reindex` / 扫描 vault 时 `store_chunk_embeddings`                       |
+| AI 融合  | `retrieval_broker`：FTS + vec + link + exact 多路融合（助手面板上下文）          |
 
 **数据流：**
 
 ```
 .md 文件 → scan_vault → chunks 表
-                    → fastembed → chunk_embeddings BLOB
-用户查询 → embed(query) → 与每条 chunk 余弦 → Top-K SemanticHit { path, title, snippet, score }
+                    → fastembed → chunk_embeddings BLOB + vec0（可用时）
+用户查询 → embed(query) → vec0 Top-K 或 cosine Top-K → SemanticHit { path, title, snippet, score }
 ```
 
-**v0.2+ 方向**：见 [ROADMAP.md](../../ROADMAP.md)「v0.2 — 搜索与索引 · 语义检索升级」：引入 **sqlite-vec 虚拟表**，迁移 BLOB 嵌入并改造 `search_semantic`，在万级 chunk 下替代全表 Rust 余弦扫描。
+**说明**：sqlite-vec 扩展在部分环境可能不可用，此时自动降级为 Rust 全量 cosine；文档与 ROADMAP 均按「优先 vec0，fallback cosine」描述。
 
 ---
 
@@ -68,12 +69,12 @@ cargo test semantic_recall_at_5_on_fixture_vault -- --ignored --nocapture
 | 16  | chunk_markdown 分块             | `chunking-strategy.md`    | `chunking-strategy.md`    | 是     |
 | 17  | files_fts unicode61             | `fts-keyword.md`          | `fts-keyword.md`          | 是     |
 | 18  | Ollama 11434 本地               | `ollama-local.md`         | `ollama-local.md`         | 是     |
-| 19  | AES-256-GCM 加密                | `vault-encryption.md`     | `vault-encryption.md`     | 是     |
-| 20  | Recall@5 0.6 目标               | `eval-recall.md`          | `eval-recall.md`          | 是     |
+| 19  | Recall@5 评测目标               | `eval-recall.md`          | `eval-recall.md`          | 是     |
+| 20  | 混合检索 broker 融合            | `semantic-search-impl.md` | `semantic-search-impl.md` | 是     |
 
 **汇总**：Recall@5 = **20/20 = 1.00**（fixture 集；阈值 ≥ 0.6，达标）
 
-**说明**：过于笼统的中文查询（如仅「性能优化会议记录」）在实测中可能误召回它篇；评测查询宜包含笔记中的 distinctive 关键词（见 `semantic_recall_eval.rs` 中的 `EVAL_QUERIES`）。
+**说明**：`vault-encryption.md` 为已废弃的规划 fixture，不再参与产品能力假设。过于笼统的中文查询在实测中可能误召回它篇；评测查询宜包含 distinctive 关键词（见 `semantic_recall_eval.rs` 中的 `EVAL_QUERIES`）。
 
 ---
 
@@ -89,4 +90,4 @@ cargo test semantic_recall_at_5_on_fixture_vault -- --ignored --nocapture
 ## 与产品功能的关联
 
 - **搜索面板**：语义 Tab 调用 `search_semantic`
-- **AI 侧栏（PR-C4）**：提问前对 vault 语义 Top-5（排除当前文件）注入 system 上下文
+- **AI 助手**：`retrieval_broker` 对 vault 做 FTS + vec + link + exact 融合，组装 `ContextPacket` 证据包

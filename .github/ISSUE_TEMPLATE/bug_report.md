@@ -8,7 +8,7 @@ assignees: ''
 
 ## 环境信息
 
-- **Iris 版本**: [e.g. v0.1.0-alpha]
+- **Iris 版本**: [e.g. v1.0.0-alpha]
 - **操作系统**: [e.g. Windows 11 23H2 / macOS 14.5 / Ubuntu 24.04]
 - **安装方式**: [e.g. .msi 安装包 / 从源码构建]
 
