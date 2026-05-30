@@ -21,11 +21,17 @@ static IN_FLIGHT: Mutex<Option<HashMap<String, AbortFlag>>> = Mutex::new(None);
 
 /// 截断错误响应文本，防止大段 HTML/JSON 错误体泄露到前端
 pub(crate) fn truncate_error_text(text: &str) -> String {
-    const MAX_LEN: usize = 500;
-    if text.len() <= MAX_LEN {
+    const MAX_CHARS: usize = 500;
+    let char_count = text.chars().count();
+    if char_count <= MAX_CHARS {
         text.to_string()
     } else {
-        format!("{}…(已截断，共 {} 字符)", &text[..MAX_LEN], text.len())
+        let end = text
+            .char_indices()
+            .nth(MAX_CHARS)
+            .map(|(i, _)| i)
+            .unwrap_or(text.len());
+        format!("{}…(已截断，共 {} 字符)", &text[..end], char_count)
     }
 }
 

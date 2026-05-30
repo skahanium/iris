@@ -7,12 +7,19 @@
 //! 4. Generate organize suggestions (rule-based, no LLM dependency)
 //! 5. Output batch change plan
 
+use std::sync::LazyLock;
+
 use sha2::{Digest, Sha256};
 
 use crate::ai_runtime::{
     OrganizeBatch, OrganizeSuggestion, OrganizeSuggestionType, OrganizeTaskInput,
     OrganizeTaskResult, OrganizeTaskType, TokenUsage,
 };
+
+static RE_HASHTAG: LazyLock<regex::Regex> =
+    LazyLock::new(|| regex::Regex::new(r"#[\w\u{4e00}-\u{9fff}\-]+").expect("hashtag regex"));
+static RE_BOLD: LazyLock<regex::Regex> =
+    LazyLock::new(|| regex::Regex::new(r"\*\*([^*]+)\*\*").expect("bold regex"));
 use crate::error::AppResult;
 
 /// Generate a unique suggestion ID.
@@ -158,18 +165,14 @@ fn generate_tag_suggestions(
 fn extract_tags_from_content(content: &str) -> Vec<String> {
     let mut tags = Vec::new();
 
-    // Extract hashtags from content
-    let re = regex::Regex::new(r"#[\w\u{4e00}-\u{9fff}\-]+").unwrap();
-    for cap in re.find_iter(content) {
+    for cap in RE_HASHTAG.find_iter(content) {
         let tag = cap.as_str().trim_start_matches('#').to_string();
         if !tag.is_empty() && tag.len() <= 64 && !tags.contains(&tag) {
             tags.push(tag);
         }
     }
 
-    // Extract tags from bold text patterns
-    let re = regex::Regex::new(r"\*\*([^*]+)\*\*").unwrap();
-    for cap in re.captures_iter(content) {
+    for cap in RE_BOLD.captures_iter(content) {
         if let Some(m) = cap.get(1) {
             let text = m.as_str().trim();
             if text.len() >= 2 && text.len() <= 20 && !tags.contains(&text.to_string()) {

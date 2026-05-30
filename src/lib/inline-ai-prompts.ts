@@ -2,8 +2,9 @@
 export const INLINE_AI_PROMPTS: Record<string, string> = {
   rewrite: "请改写以下文字，保持原意：",
   expand: "请扩写以下文字：",
-  translate: "请翻译为英文：",
+  translate: "请翻译以下文字：",
   simplify: "请简化以下文字：",
+  "fix-grammar": "请修复以下文字的语法：",
 };
 
 export function buildInlineAiUserMessage(

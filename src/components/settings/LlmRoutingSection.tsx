@@ -79,7 +79,8 @@ export function LlmRoutingSection({ open }: LlmRoutingSectionProps) {
         providerIds.map(async (id) => {
           try {
             configured[id] = await credentialHas(llmCredentialService(id));
-          } catch {
+          } catch (e) {
+            console.warn(`[LlmRouting] credential check failed for ${id}:`, e);
             configured[id] = false;
           }
         }),

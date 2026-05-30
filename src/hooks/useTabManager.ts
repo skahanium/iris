@@ -57,12 +57,15 @@ export function useTabManager(options: UseTabManagerOptions = {}) {
     [onVaultIndexBump],
   );
 
+  const openFileSeqRef = useRef(0);
+
   const openFile = useCallback(
     async (
       path: string,
       titleHint?: string,
       options?: { skipDiscardPrevious?: boolean },
     ) => {
+      const seq = ++openFileSeqRef.current;
       const current = activePathRef.current;
       if (
         !options?.skipDiscardPrevious &&
@@ -74,9 +77,11 @@ export function useTabManager(options: UseTabManagerOptions = {}) {
       }
       try {
         const content = await fileRead(path);
+        if (openFileSeqRef.current !== seq) return;
         frontmatterYamlRef.current = extractFrontmatterYaml(content);
         const fromMarkdown = displayTitleFromMarkdown(content, "");
         const fallbackDb = await resolveDocumentTitle(path, titleHint);
+        if (openFileSeqRef.current !== seq) return;
         const title = resolveNoteDisplayTitle({
           path,
           title: fromMarkdown || titleHint?.trim() || fallbackDb,
@@ -95,6 +100,7 @@ export function useTabManager(options: UseTabManagerOptions = {}) {
           return [...prev, { path, title, dirty: false }];
         });
       } catch (e) {
+        if (openFileSeqRef.current !== seq) return;
         const msg = e instanceof Error ? e.message : String(e);
         onStatusChange?.(`无法打开笔记：${msg}`);
         onVaultIndexBump?.();

@@ -1,6 +1,9 @@
 import { forwardRef, useImperativeHandle, useRef } from "react";
 
-import { CommandListOption } from "@/components/ui/command-list";
+import {
+  IrisSurfaceMenuItem,
+  IrisSurfaceMenuPanel,
+} from "@/components/ui/iris-surface-menu";
 import { useListboxKeyboard } from "@/hooks/useListboxKeyboard";
 import { resolveCommandIcon } from "@/lib/command-palette-icons";
 
@@ -8,11 +11,13 @@ export interface SlashItem {
   id: string;
   label: string;
   icon?: string;
+  keywords?: string;
 }
 
 interface SlashCommandListProps {
   items: SlashItem[];
   command: (item: SlashItem) => void;
+  selectionHint?: boolean;
 }
 
 export interface SlashCommandListRef {
@@ -22,7 +27,7 @@ export interface SlashCommandListRef {
 export const SlashCommandList = forwardRef<
   SlashCommandListRef,
   SlashCommandListProps
->(function SlashCommandList({ items, command }, ref) {
+>(function SlashCommandList({ items, command, selectionHint = false }, ref) {
   const commandRef = useRef(command);
   commandRef.current = command;
   const itemsRef = useRef(items);
@@ -53,19 +58,32 @@ export const SlashCommandList = forwardRef<
   );
 
   return (
-    <div className="z-slash-command min-w-[200px] overflow-hidden rounded-lg border border-border/80 bg-surface-elevated py-1 shadow-floating">
-      {items.map((item, i) => (
-        <CommandListOption
-          key={item.id}
-          id={`slash-${item.id}`}
-          label={item.label}
-          active={i === selected}
-          icon={resolveCommandIcon(item.icon)}
-          className="py-0"
-          onMouseEnter={() => setSelected(i)}
-          onSelect={() => command(item)}
+    <IrisSurfaceMenuPanel
+      className="z-slash-command max-h-[min(16rem,40vh)] min-w-[12.5rem]"
+      aria-label="斜杠命令"
+    >
+      {items.map((item, i) => {
+        const Icon = resolveCommandIcon(item.icon);
+        return (
+          <IrisSurfaceMenuItem
+            key={item.id}
+            id={`slash-${item.id}`}
+            label={item.label}
+            active={i === selected}
+            icon={Icon ? <Icon className="h-4 w-4" /> : undefined}
+            onMouseEnter={() => setSelected(i)}
+            onSelect={() => command(item)}
+          />
+        );
+      })}
+      {selectionHint ? (
+        <IrisSurfaceMenuItem
+          id="slash-selection-hint"
+          label="选区操作请使用右键菜单"
+          hint
+          onSelect={() => {}}
         />
-      ))}
-    </div>
+      ) : null}
+    </IrisSurfaceMenuPanel>
   );
 });

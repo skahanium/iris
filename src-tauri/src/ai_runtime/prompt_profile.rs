@@ -88,9 +88,7 @@ impl PromptProfile {
     }
 
     pub fn to_system_prompt_fragment(&self) -> String {
-        if self.persona.is_empty()
-            && self.writing_style.is_empty()
-            && self.custom_rules.is_empty()
+        if self.persona.is_empty() && self.writing_style.is_empty() && self.custom_rules.is_empty()
         {
             return String::new();
         }

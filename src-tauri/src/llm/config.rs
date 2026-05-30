@@ -65,17 +65,33 @@ pub enum ContextStrategy {
     LongContext,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ResolvedLlmConfig {
     pub provider_id: String,
     pub model: String,
     pub base_url: String,
+    #[serde(skip)]
     pub api_key: Option<String>,
     pub thinking: bool,
     pub input_budget: usize,
     pub output_budget: u32,
     pub context_strategy: ContextStrategy,
+}
+
+impl std::fmt::Debug for ResolvedLlmConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ResolvedLlmConfig")
+            .field("provider_id", &self.provider_id)
+            .field("model", &self.model)
+            .field("base_url", &self.base_url)
+            .field("api_key", &"[REDACTED]")
+            .field("thinking", &self.thinking)
+            .field("input_budget", &self.input_budget)
+            .field("output_budget", &self.output_budget)
+            .field("context_strategy", &self.context_strategy)
+            .finish()
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

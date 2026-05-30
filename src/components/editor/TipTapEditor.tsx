@@ -9,7 +9,13 @@ import TaskList from "@tiptap/extension-task-list";
 import { EditorContent, useEditor, type Editor } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import { common, createLowlight } from "lowlight";
-import { useEffect, useMemo, useRef, type ReactNode } from "react";
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  type MouseEvent,
+  type ReactNode,
+} from "react";
 
 import { markdownBodyToEditorHtml } from "@/lib/markdown";
 import { cn } from "@/lib/utils";
@@ -37,6 +43,8 @@ interface TipTapEditorProps {
   className?: string;
   /** Document title field rendered above body inside the shared editor canvas. */
   titleSlot?: ReactNode;
+  /** 屏蔽原生右键并打开 Iris 菜单 */
+  onBodyContextMenu?: (event: MouseEvent) => void;
 }
 
 export function TipTapEditor({
@@ -50,6 +58,7 @@ export function TipTapEditor({
   zoom = 1,
   className,
   titleSlot,
+  onBodyContextMenu,
 }: TipTapEditorProps) {
   const inlineAiRetryRef = useRef(onInlineAiRetry);
   inlineAiRetryRef.current = onInlineAiRetry;
@@ -136,7 +145,10 @@ export function TipTapEditor({
           {titleSlot ? (
             <div className="iris-editor-title-slot">{titleSlot}</div>
           ) : null}
-          <div className="iris-editor-body">
+          <div
+            className="iris-editor-body"
+            onContextMenu={onBodyContextMenu}
+          >
             <EditorContent editor={editor} />
           </div>
         </div>

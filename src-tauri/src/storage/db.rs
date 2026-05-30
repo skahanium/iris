@@ -1,14 +1,20 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 use rusqlite::Connection;
 
 use super::migrate::migrate_up;
-use crate::error::AppResult;
+use crate::error::{AppError, AppResult};
 
-/// SQLite connection with WAL and performance PRAGMAs from ARCHITECTURE.md.
+/// SQLite connection pool with WAL and performance PRAGMAs from ARCHITECTURE.md.
+///
+/// Uses separate connections for reads and writes to allow concurrent read
+/// operations while writes are in progress (WAL mode enables this).
 pub struct Database {
-    conn: Mutex<Connection>,
+    write_conn: Mutex<Connection>,
+    read_conn: Mutex<Connection>,
+    #[allow(dead_code)]
+    path: Option<PathBuf>,
 }
 
 impl Database {
@@ -16,21 +22,76 @@ impl Database {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        let conn = Connection::open(path)?;
-        Self::apply_pragmas(&conn)?;
-        migrate_up(&conn)?;
+        let write_conn = Connection::open(path)?;
+        Self::apply_pragmas(&write_conn)?;
+        migrate_up(&write_conn)?;
+
+        let read_conn = Connection::open(path)?;
+        Self::apply_pragmas(&read_conn)?;
+
         Ok(Self {
-            conn: Mutex::new(conn),
+            write_conn: Mutex::new(write_conn),
+            read_conn: Mutex::new(read_conn),
+            path: Some(path.to_path_buf()),
         })
     }
 
     pub fn open_in_memory() -> AppResult<Self> {
-        let conn = Connection::open_in_memory()?;
-        Self::apply_pragmas(&conn)?;
-        migrate_up(&conn)?;
+        let write_conn = Connection::open_in_memory()?;
+        Self::apply_pragmas(&write_conn)?;
+        migrate_up(&write_conn)?;
+
+        let read_conn = Connection::open_in_memory()?;
+        Self::apply_pragmas(&read_conn)?;
+        Self::copy_schema(&write_conn, &read_conn)?;
+
         Ok(Self {
-            conn: Mutex::new(conn),
+            write_conn: Mutex::new(write_conn),
+            read_conn: Mutex::new(read_conn),
+            path: None,
         })
+    }
+
+    fn copy_schema(src: &Connection, dst: &Connection) -> AppResult<()> {
+        let mut stmt = src.prepare(
+            "SELECT sql FROM sqlite_master
+             WHERE type='table' AND sql IS NOT NULL
+               AND name NOT LIKE 'sqlite_%'
+               AND name NOT LIKE '%_data'
+               AND name NOT LIKE '%_idx'
+               AND name NOT LIKE '%_content'
+               AND name NOT LIKE '%_config'
+               AND name NOT LIKE '%_docsize'",
+        )?;
+        let sqls: Vec<String> = stmt
+            .query_map([], |row| row.get(0))?
+            .collect::<Result<_, _>>()?;
+        for sql in sqls {
+            dst.execute_batch(&sql)?;
+        }
+        let mut idx_stmt = src.prepare(
+            "SELECT sql FROM sqlite_master
+             WHERE type='index' AND sql IS NOT NULL
+               AND name NOT LIKE 'sqlite_%'",
+        )?;
+        let idx_sqls: Vec<String> = idx_stmt
+            .query_map([], |row| row.get(0))?
+            .collect::<Result<_, _>>()?;
+        for sql in idx_sqls {
+            dst.execute_batch(&sql)?;
+        }
+        let mut trigger_stmt = src.prepare(
+            "SELECT sql FROM sqlite_master
+             WHERE type='trigger' AND sql IS NOT NULL
+               AND name NOT LIKE 'sqlite_%'",
+        )?;
+        let trigger_sqls: Vec<String> = trigger_stmt
+            .query_map([], |row| row.get(0))?
+            .collect::<Result<_, _>>()?;
+        for sql in trigger_sqls {
+            dst.execute_batch(&sql)?;
+        }
+        Ok(())
     }
 
     fn apply_pragmas(conn: &Connection) -> AppResult<()> {
@@ -47,14 +108,30 @@ impl Database {
         Ok(())
     }
 
+    /// Execute a closure with the write connection (for mutations).
     pub fn with_conn<F, T>(&self, f: F) -> AppResult<T>
     where
         F: FnOnce(&Connection) -> AppResult<T>,
     {
         let guard = self
-            .conn
+            .write_conn
             .lock()
-            .map_err(|_| crate::error::AppError::msg("Database lock poisoned"))?;
+            .map_err(|_| AppError::msg("Database write lock poisoned"))?;
+        f(&guard)
+    }
+
+    /// Execute a closure with the read connection (for queries only).
+    ///
+    /// This allows read operations to proceed concurrently with writes
+    /// when WAL mode is enabled.
+    pub fn with_read_conn<F, T>(&self, f: F) -> AppResult<T>
+    where
+        F: FnOnce(&Connection) -> AppResult<T>,
+    {
+        let guard = self
+            .read_conn
+            .lock()
+            .map_err(|_| AppError::msg("Database read lock poisoned"))?;
         f(&guard)
     }
 }

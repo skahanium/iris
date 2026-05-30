@@ -86,7 +86,11 @@ fn default_tool_call_type() -> String {
 }
 
 impl ToolCall {
-    pub fn new(id: impl Into<String>, name: impl Into<String>, arguments: impl Into<String>) -> Self {
+    pub fn new(
+        id: impl Into<String>,
+        name: impl Into<String>,
+        arguments: impl Into<String>,
+    ) -> Self {
         Self {
             id: id.into(),
             call_type: default_tool_call_type(),
@@ -520,10 +524,7 @@ impl ModelGateway {
         if !response.status().is_success() {
             let status = response.status();
             let text = response.text().await.unwrap_or_default();
-            return Err(AppError::msg(format!(
-                "LLM request failed with status {}: {}",
-                status, text
-            )));
+            return Err(AppError::msg(format_llm_http_error(status, &text)));
         }
 
         let json: serde_json::Value = response
@@ -542,10 +543,7 @@ impl ModelGateway {
                     .filter_map(|tc| {
                         Some(ToolCall {
                             id: tc["id"].as_str()?.to_string(),
-                            call_type: tc["type"]
-                                .as_str()
-                                .unwrap_or("function")
-                                .to_string(),
+                            call_type: tc["type"].as_str().unwrap_or("function").to_string(),
                             function: FunctionCall {
                                 name: tc["function"]["name"].as_str()?.to_string(),
                                 arguments: tc["function"]["arguments"]
@@ -999,8 +997,7 @@ mod tests {
             "输出使用中文".to_string(),
         ];
 
-        let prompt =
-            ModelGateway::build_system_prompt(AiScene::DraftingAssist, &[], &rules, false);
+        let prompt = ModelGateway::build_system_prompt(AiScene::DraftingAssist, &[], &rules, false);
 
         assert!(prompt.contains("砚"));
         assert!(prompt.contains("文稿创作"));
@@ -1020,7 +1017,11 @@ mod tests {
                 role: MessageRole::Assistant,
                 content: String::new(),
                 tool_call_id: None,
-                tool_calls: Some(vec![ToolCall::new("call_1", "search_hybrid", r#"{"query":"x"}"#)]),
+                tool_calls: Some(vec![ToolCall::new(
+                    "call_1",
+                    "search_hybrid",
+                    r#"{"query":"x"}"#,
+                )]),
             },
             LlmMessage {
                 role: MessageRole::Tool,

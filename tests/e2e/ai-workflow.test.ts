@@ -19,11 +19,15 @@ describe("统一助手工作流验收", () => {
     expect(panel).toContain("assistantExecute(");
   });
 
-  it("选区改写：浮动工具条走内联流式建议", () => {
+  it("选区改写：右键菜单与内联流式建议", () => {
     expect(intentForFlow("selection_rewrite")).toBe("writing");
-    const toolbar = read("src/components/editor/FloatingToolbar.tsx");
-    expect(toolbar).toContain("onInlineAi");
-    expect(toolbar).not.toContain("insertInlineAi");
+    expect(read("src/App.tsx")).not.toContain("FloatingToolbar");
+    expect(read("src/lib/editor-actions.ts")).not.toContain(
+      "selection_toolbar",
+    );
+    expect(read("src/hooks/useEditorContextMenu.ts")).toContain(
+      "filterEditorActions",
+    );
     expect(read("src/components/editor/TipTapEditor.tsx")).toContain(
       "AiStreamExtension",
     );

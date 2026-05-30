@@ -23,9 +23,13 @@ export function useAutoVaultIndex(
   onStatusRef.current = onStatus;
   onIndexedRef.current = onIndexed;
 
+  const rescanInProgressRef = useRef(false);
+
   const rescanVault = useCallback(
     async (source: VaultIndexSource) => {
       if (!vaultPath || !isTauriRuntime()) return;
+      if (rescanInProgressRef.current) return;
+      rescanInProgressRef.current = true;
       onStatusRef.current(
         source === "manual" ? "正在重建索引…" : "正在同步笔记库…",
       );
@@ -41,6 +45,8 @@ export function useAutoVaultIndex(
         onStatusRef.current(
           source === "manual" ? "索引失败" : "笔记库同步失败",
         );
+      } finally {
+        rescanInProgressRef.current = false;
       }
     },
     [vaultPath],

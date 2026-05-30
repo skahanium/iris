@@ -5,16 +5,15 @@ use serde::Serialize;
 use tauri::{AppHandle, Emitter};
 
 use crate::ai_runtime::environment::{build_environment_map, EnvironmentInput};
-use crate::ai_runtime::skills::{inject_into_prompt, scan_all};
 use crate::ai_runtime::harness_support::{
-    compact_evidence, compress_history_messages, extract_thinking_blocks,
-    load_harness_checkpoint, save_harness_checkpoint, HarnessCheckpoint, HarnessCheckpointMeta,
+    compact_evidence, compress_history_messages, extract_thinking_blocks, load_harness_checkpoint,
+    save_harness_checkpoint, HarnessCheckpoint, HarnessCheckpointMeta,
 };
 use crate::ai_runtime::model_gateway::{
-    GatewayRequest, LlmMessage, MessageRole, ModelGateway, ProviderConfig, TokenUsage,
-    ToolCall,
+    GatewayRequest, LlmMessage, MessageRole, ModelGateway, ProviderConfig, TokenUsage, ToolCall,
 };
 use crate::ai_runtime::scene_router::resolve_scene;
+use crate::ai_runtime::skills::{inject_into_prompt, scan_all};
 use crate::ai_runtime::tool_dispatch::{dispatch_tool_with_retry, ToolDispatchContext};
 use crate::ai_runtime::tool_executor::{check_tool_permission, ToolRegistry};
 use crate::ai_runtime::tool_fallback::{parse_react_tool_calls, should_retry_tool_parse};
@@ -188,275 +187,275 @@ pub async fn run_harness(
             }
             harness_rounds += 1;
 
-        let request = GatewayRequest {
-            provider: provider_config.clone(),
-            messages: messages.clone(),
-            tools: llm_tools.clone(),
-            max_tokens,
-            temperature: Some(0.7),
-            stream: false,
-        };
+            let request = GatewayRequest {
+                provider: provider_config.clone(),
+                messages: messages.clone(),
+                tools: llm_tools.clone(),
+                max_tokens,
+                temperature: Some(0.7),
+                stream: false,
+            };
 
-        let response = gateway.send_request(request).await?;
-        accumulate_usage(&mut total_usage, &response.usage);
+            let response = gateway.send_request(request).await?;
+            accumulate_usage(&mut total_usage, &response.usage);
 
-        let mut tool_calls = response.tool_calls.clone();
-        if tool_calls.is_empty() {
-            if let Some(content) = &response.content {
-                tool_calls = parse_react_tool_calls(content);
+            let mut tool_calls = response.tool_calls.clone();
+            if tool_calls.is_empty() {
+                if let Some(content) = &response.content {
+                    tool_calls = parse_react_tool_calls(content);
+                }
             }
-        }
 
-        if should_retry_tool_parse(&tool_calls) {
-            messages.push(LlmMessage {
-                role: MessageRole::User,
-                content: "工具参数 JSON 不完整，请重新输出合法的 tool_calls。".into(),
-                tool_call_id: None,
-                tool_calls: None,
-            });
-            continue;
-        }
+            if should_retry_tool_parse(&tool_calls) {
+                messages.push(LlmMessage {
+                    role: MessageRole::User,
+                    content: "工具参数 JSON 不完整，请重新输出合法的 tool_calls。".into(),
+                    tool_call_id: None,
+                    tool_calls: None,
+                });
+                continue;
+            }
 
-        if tool_calls.is_empty() {
-            let (visible, thinking) =
+            if tool_calls.is_empty() {
+                let (visible, thinking) =
+                    extract_thinking_blocks(&response.content.clone().unwrap_or_default());
+                if let Some(t) = thinking {
+                    emit_thinking(app_handle, &input.request_id, harness_rounds, &t)?;
+                }
+                let final_content = visible;
+                return finish_run(
+                    state,
+                    input,
+                    FinishRunParams {
+                        content: final_content,
+                        tool_calls: all_tool_calls,
+                        tool_results: tool_results_json,
+                        usage: total_usage,
+                        harness_rounds,
+                        pending_confirmation,
+                        evidence_packets,
+                    },
+                )
+                .await;
+            }
+
+            if tool_calls
+                .iter()
+                .any(|tc| tc.function.name == "conclude_reasoning")
+            {
+                break 'agent;
+            }
+
+            let (subagent_calls, other_calls): (Vec<_>, Vec<_>) = tool_calls
+                .iter()
+                .partition(|tc| tc.function.name == "spawn_subagent");
+
+            all_tool_calls.extend(tool_calls.clone());
+            let (visible_content, thinking) =
                 extract_thinking_blocks(&response.content.clone().unwrap_or_default());
             if let Some(t) = thinking {
                 emit_thinking(app_handle, &input.request_id, harness_rounds, &t)?;
             }
-            let final_content = visible;
-            return finish_run(
-                state,
-                input,
-                FinishRunParams {
-                    content: final_content,
-                    tool_calls: all_tool_calls,
-                    tool_results: tool_results_json,
-                    usage: total_usage,
-                    harness_rounds,
-                    pending_confirmation,
-                    evidence_packets,
-                },
-            )
-            .await;
-        }
+            let assistant_content = visible_content;
+            messages.push(LlmMessage {
+                role: MessageRole::Assistant,
+                content: assistant_content.clone(),
+                tool_call_id: None,
+                tool_calls: Some(tool_calls.clone()),
+            });
 
-        if tool_calls
-            .iter()
-            .any(|tc| tc.function.name == "conclude_reasoning")
-        {
-            break 'agent;
-        }
-
-        let (subagent_calls, other_calls): (Vec<_>, Vec<_>) = tool_calls
-            .iter()
-            .partition(|tc| tc.function.name == "spawn_subagent");
-
-        all_tool_calls.extend(tool_calls.clone());
-        let (visible_content, thinking) =
-            extract_thinking_blocks(&response.content.clone().unwrap_or_default());
-        if let Some(t) = thinking {
-            emit_thinking(app_handle, &input.request_id, harness_rounds, &t)?;
-        }
-        let assistant_content = visible_content;
-        messages.push(LlmMessage {
-            role: MessageRole::Assistant,
-            content: assistant_content.clone(),
-            tool_call_id: None,
-            tool_calls: Some(tool_calls.clone()),
-        });
-
-        if !subagent_calls.is_empty() && input.depth < 2 {
-            emit_trace_phase(
-                app_handle,
-                &input.request_id,
-                harness_rounds,
-                HarnessPhase::SubagentSpawn,
-                "spawn_subagent",
-                "running",
-                None,
-                None,
-            )?;
-            let sub_futures: Vec<_> = subagent_calls
-                .iter()
-                .map(|tc| {
-                    run_subagent_harness(
-                        state,
-                        app_handle,
-                        &input,
-                        provider_config.clone(),
-                        max_tokens,
-                        tc,
-                    )
-                })
-                .collect();
-            let sub_results: Vec<AppResult<HarnessRunResult>> = join_all(sub_futures).await;
-            for (tc, sub_out) in subagent_calls.iter().zip(sub_results) {
-                let ok = sub_out.is_ok();
-                let output = match &sub_out {
-                    Ok(r) => serde_json::json!({
-                        "content": r.content,
-                        "citation_valid": r.citation_valid,
-                        "harness_rounds": r.harness_rounds,
-                    }),
-                    Err(e) => serde_json::json!({ "error": e.to_string() }),
-                };
-                let output_str = serde_json::to_string(&output).unwrap_or_else(|_| "{}".into());
-                messages.push(LlmMessage {
-                    role: MessageRole::Tool,
-                    content: output_str.clone(),
-                    tool_call_id: Some(tc.id.clone()),
-                    tool_calls: None,
-                });
-                tool_results_json.push(serde_json::json!({
-                    "tool_call_id": tc.id,
-                    "status": if ok { "completed" } else { "error" },
-                    "result": output,
-                }));
+            if !subagent_calls.is_empty() && input.depth < 2 {
                 emit_trace_phase(
                     app_handle,
                     &input.request_id,
                     harness_rounds,
-                    HarnessPhase::SubagentComplete,
+                    HarnessPhase::SubagentSpawn,
                     "spawn_subagent",
-                    if ok { "ok" } else { "error" },
+                    "running",
                     None,
-                    Some(output_str.chars().take(200).collect()),
+                    None,
                 )?;
-            }
-        }
-
-        save_round_checkpoint(
-            state,
-            &input,
-            &checkpoint_meta,
-            harness_rounds,
-            bonus_round_used,
-            &messages,
-            &all_tool_calls,
-            &tool_results_json,
-            &evidence_packets,
-            &total_usage,
-        )?;
-
-        compact_evidence(&mut evidence_packets, profile.default_token_budget);
-
-        let mut tools_this_round = 0u32;
-        for tool_call in &other_calls {
-            if tools_this_round >= profile.max_tool_calls_per_round {
-                break;
-            }
-            let tool_name = &tool_call.function.name;
-            if let Some(spec) = registry.find(tool_name) {
-                if check_tool_permission(spec, input.scene, profile.autonomy_level).is_err() {
-                    continue;
+                let sub_futures: Vec<_> = subagent_calls
+                    .iter()
+                    .map(|tc| {
+                        run_subagent_harness(
+                            state,
+                            app_handle,
+                            &input,
+                            provider_config.clone(),
+                            max_tokens,
+                            tc,
+                        )
+                    })
+                    .collect();
+                let sub_results: Vec<AppResult<HarnessRunResult>> = join_all(sub_futures).await;
+                for (tc, sub_out) in subagent_calls.iter().zip(sub_results) {
+                    let ok = sub_out.is_ok();
+                    let output = match &sub_out {
+                        Ok(r) => serde_json::json!({
+                            "content": r.content,
+                            "citation_valid": r.citation_valid,
+                            "harness_rounds": r.harness_rounds,
+                        }),
+                        Err(e) => serde_json::json!({ "error": e.to_string() }),
+                    };
+                    let output_str = serde_json::to_string(&output).unwrap_or_else(|_| "{}".into());
+                    messages.push(LlmMessage {
+                        role: MessageRole::Tool,
+                        content: output_str.clone(),
+                        tool_call_id: Some(tc.id.clone()),
+                        tool_calls: None,
+                    });
+                    tool_results_json.push(serde_json::json!({
+                        "tool_call_id": tc.id,
+                        "status": if ok { "completed" } else { "error" },
+                        "result": output,
+                    }));
+                    emit_trace_phase(
+                        app_handle,
+                        &input.request_id,
+                        harness_rounds,
+                        HarnessPhase::SubagentComplete,
+                        "spawn_subagent",
+                        if ok { "ok" } else { "error" },
+                        None,
+                        Some(output_str.chars().take(200).collect()),
+                    )?;
                 }
             }
 
-            if registry.requires_confirmation(tool_name) {
-                state.pending_tool_calls.lock().unwrap().insert(
-                    tool_call.id.clone(),
-                    crate::app::PendingToolCall {
-                        tool_name: tool_name.clone(),
-                        arguments: tool_call.function.arguments.clone(),
-                        request_id: input.request_id.clone(),
-                    },
-                );
-                let confirm_request = serde_json::json!({
-                    "request_id": input.request_id,
-                    "tool_call_id": tool_call.id,
-                    "tool_name": tool_name,
-                    "arguments": serde_json::from_str::<serde_json::Value>(&tool_call.function.arguments).unwrap_or_default(),
-                });
-                app_handle
-                    .emit("ai:tool_confirm_request", &confirm_request)
-                    .map_err(|e| AppError::msg(format!("emit tool confirm: {e}")))?;
-                tool_results_json.push(serde_json::json!({
-                    "tool_call_id": tool_call.id,
-                    "status": "pending_confirmation",
-                }));
-                pending_confirmation = true;
+            save_round_checkpoint(
+                state,
+                &input,
+                &checkpoint_meta,
+                harness_rounds,
+                bonus_round_used,
+                &messages,
+                &all_tool_calls,
+                &tool_results_json,
+                &evidence_packets,
+                &total_usage,
+            )?;
+
+            compact_evidence(&mut evidence_packets, profile.default_token_budget);
+
+            let mut tools_this_round = 0u32;
+            for tool_call in &other_calls {
+                if tools_this_round >= profile.max_tool_calls_per_round {
+                    break;
+                }
+                let tool_name = &tool_call.function.name;
+                if let Some(spec) = registry.find(tool_name) {
+                    if check_tool_permission(spec, input.scene, profile.autonomy_level).is_err() {
+                        continue;
+                    }
+                }
+
+                if registry.requires_confirmation(tool_name) {
+                    crate::llm::safe_lock(&state.pending_tool_calls).insert(
+                        tool_call.id.clone(),
+                        crate::app::PendingToolCall {
+                            tool_name: tool_name.clone(),
+                            arguments: tool_call.function.arguments.clone(),
+                            request_id: input.request_id.clone(),
+                        },
+                    );
+                    let confirm_request = serde_json::json!({
+                        "request_id": input.request_id,
+                        "tool_call_id": tool_call.id,
+                        "tool_name": tool_name,
+                        "arguments": serde_json::from_str::<serde_json::Value>(&tool_call.function.arguments).unwrap_or_default(),
+                    });
+                    app_handle
+                        .emit("ai:tool_confirm_request", &confirm_request)
+                        .map_err(|e| AppError::msg(format!("emit tool confirm: {e}")))?;
+                    tool_results_json.push(serde_json::json!({
+                        "tool_call_id": tool_call.id,
+                        "status": "pending_confirmation",
+                    }));
+                    pending_confirmation = true;
+                    emit_trace_phase(
+                        app_handle,
+                        &input.request_id,
+                        harness_rounds,
+                        HarnessPhase::ToolStart,
+                        tool_name,
+                        "pending",
+                        None,
+                        None,
+                    )?;
+                    continue;
+                }
+
                 emit_trace_phase(
                     app_handle,
                     &input.request_id,
                     harness_rounds,
                     HarnessPhase::ToolStart,
                     tool_name,
-                    "pending",
+                    "running",
                     None,
                     None,
                 )?;
-                continue;
-            }
 
-            emit_trace_phase(
-                app_handle,
-                &input.request_id,
-                harness_rounds,
-                HarnessPhase::ToolStart,
-                tool_name,
-                "running",
-                None,
-                None,
-            )?;
-
-            let args: serde_json::Value =
-                serde_json::from_str(&tool_call.function.arguments).unwrap_or_default();
-            let result =
-                dispatch_tool_with_retry(state, &dispatch_ctx, tool_name, &args).await;
-            if result.success {
-                merge_tool_packets_into(tool_name, &result.output, &mut evidence_packets);
-            }
-            let output_str = serde_json::to_string(&result.output).unwrap_or_else(|_| "{}".into());
-            let preview: String = output_str.chars().take(200).collect();
-            emit_trace_phase(
-                app_handle,
-                &input.request_id,
-                harness_rounds,
-                HarnessPhase::ToolComplete,
-                tool_name,
-                if result.success { "ok" } else { "error" },
-                None,
-                Some(preview),
-            )?;
-            messages.push(LlmMessage {
-                role: MessageRole::Tool,
-                content: if result.success {
-                    output_str
-                } else {
-                    format!(
-                        "{{\"error\": {}}}",
-                        serde_json::to_string(result.error.as_deref().unwrap_or("unknown"))
-                            .unwrap_or_default()
-                    )
-                },
-                tool_call_id: Some(tool_call.id.clone()),
-                tool_calls: None,
-            });
-
-            tool_results_json.push(serde_json::json!({
-                "tool_call_id": tool_call.id,
-                "status": if result.success { "completed" } else { "error" },
-                "result": result.output,
-            }));
-            tools_this_round += 1;
-        }
-
-        if pending_confirmation {
-            return finish_run(
-                state,
-                input,
-                FinishRunParams {
-                    content: assistant_content,
-                    tool_calls: all_tool_calls,
-                    tool_results: tool_results_json,
-                    usage: total_usage,
+                let args: serde_json::Value =
+                    serde_json::from_str(&tool_call.function.arguments).unwrap_or_default();
+                let result = dispatch_tool_with_retry(state, &dispatch_ctx, tool_name, &args).await;
+                if result.success {
+                    merge_tool_packets_into(tool_name, &result.output, &mut evidence_packets);
+                }
+                let output_str =
+                    serde_json::to_string(&result.output).unwrap_or_else(|_| "{}".into());
+                let preview: String = output_str.chars().take(200).collect();
+                emit_trace_phase(
+                    app_handle,
+                    &input.request_id,
                     harness_rounds,
-                    pending_confirmation: true,
-                    evidence_packets,
-                },
-            )
-            .await;
-        }
+                    HarnessPhase::ToolComplete,
+                    tool_name,
+                    if result.success { "ok" } else { "error" },
+                    None,
+                    Some(preview),
+                )?;
+                messages.push(LlmMessage {
+                    role: MessageRole::Tool,
+                    content: if result.success {
+                        output_str
+                    } else {
+                        format!(
+                            "{{\"error\": {}}}",
+                            serde_json::to_string(result.error.as_deref().unwrap_or("unknown"))
+                                .unwrap_or_default()
+                        )
+                    },
+                    tool_call_id: Some(tool_call.id.clone()),
+                    tool_calls: None,
+                });
+
+                tool_results_json.push(serde_json::json!({
+                    "tool_call_id": tool_call.id,
+                    "status": if result.success { "completed" } else { "error" },
+                    "result": result.output,
+                }));
+                tools_this_round += 1;
+            }
+
+            if pending_confirmation {
+                return finish_run(
+                    state,
+                    input,
+                    FinishRunParams {
+                        content: assistant_content,
+                        tool_calls: all_tool_calls,
+                        tool_results: tool_results_json,
+                        usage: total_usage,
+                        harness_rounds,
+                        pending_confirmation: true,
+                        evidence_packets,
+                    },
+                )
+                .await;
+            }
         }
 
         if reflection_done || input.depth != 0 {
@@ -504,12 +503,13 @@ pub async fn run_harness(
                     });
                     messages.push(LlmMessage {
                         role: MessageRole::User,
-                        content: "证据仍不足，请继续使用检索类工具补充证据后再作答。"
-                            .into(),
+                        content: "证据仍不足，请继续使用检索类工具补充证据后再作答。".into(),
                         tool_call_id: None,
                         tool_calls: None,
                     });
-                    max_rounds = harness_rounds.saturating_add(1).min(profile.max_agentic_rounds);
+                    max_rounds = harness_rounds
+                        .saturating_add(1)
+                        .min(profile.max_agentic_rounds);
                     continue 'agent;
                 } else if !reflect_resp.tool_calls.is_empty() {
                     // reflection produced tool calls — ignore, proceed to stream
@@ -738,7 +738,10 @@ async fn run_subagent_harness(
         .and_then(|v| v.as_str())
         .unwrap_or("子任务")
         .to_string();
-    let context_hint = args.get("context_hint").and_then(|v| v.as_str()).map(str::to_string);
+    let context_hint = args
+        .get("context_hint")
+        .and_then(|v| v.as_str())
+        .map(str::to_string);
     let sub_rounds = args
         .get("max_rounds")
         .and_then(|v| v.as_u64())
@@ -766,6 +769,7 @@ async fn run_subagent_harness(
     run_harness(state, app_handle, sub_input, provider_config, max_tokens).await
 }
 
+#[allow(clippy::too_many_arguments)]
 fn save_round_checkpoint(
     state: &AppState,
     input: &HarnessRunInput,
@@ -810,6 +814,7 @@ fn emit_thinking(
         .map_err(|e| AppError::msg(format!("emit thinking: {e}")))
 }
 
+#[allow(clippy::too_many_arguments)]
 fn emit_trace_phase(
     app_handle: &AppHandle,
     request_id: &str,
@@ -856,4 +861,3 @@ fn accumulate_usage(total: &mut TokenUsage, delta: &TokenUsage) {
     total.prompt_cache_hit_tokens += delta.prompt_cache_hit_tokens;
     total.prompt_cache_miss_tokens += delta.prompt_cache_miss_tokens;
 }
-

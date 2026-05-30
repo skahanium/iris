@@ -3,7 +3,9 @@ import { describe, expect, it } from "vitest";
 import {
   buildCommandPaletteItems,
   filterCommandPaletteItems,
+  formatCommandPaletteItemShortcut,
   groupCommandPaletteItems,
+  sortCommandPaletteItems,
 } from "@/lib/command-palette";
 
 describe("command palette", () => {
@@ -14,7 +16,7 @@ describe("command palette", () => {
     });
     const recycle = items.find((i) => i.id === "recycle-bin");
     expect(recycle?.disabled).toBe(false);
-    expect(recycle?.shortcut).toContain("U");
+    expect(formatCommandPaletteItemShortcut(recycle!)).toContain("U");
   });
 
   it("disables recycle bin without vault", () => {
@@ -85,9 +87,25 @@ describe("command palette", () => {
       hasVault: true,
       hasActiveNote: true,
     });
-    const groups = groupCommandPaletteItems(items);
-    expect(groups[0]?.group).toBe("通用");
+    const visible = items.filter((i) => !i.hiddenInPalette);
+    const groups = groupCommandPaletteItems(visible);
+    expect(groups[0]?.group).toBe("导航");
     expect(groups.some((g) => g.group === "AI")).toBe(true);
+    expect(groups.some((g) => g.group === "视图")).toBe(true);
+    expect(groups.some((g) => g.group === "通用")).toBe(false);
+    expect(groups.some((g) => g.group === "编辑器")).toBe(false);
+    expect(groups.some((g) => g.group === "库")).toBe(false);
+  });
+
+  it("sorts by usage within groups without reordering groups", () => {
+    const items = buildCommandPaletteItems({
+      hasVault: true,
+      hasActiveNote: true,
+    });
+    const visible = items.filter((i) => !i.hiddenInPalette);
+    const sorted = sortCommandPaletteItems(visible);
+    const groups = groupCommandPaletteItems(sorted);
+    expect(groups.map((g) => g.group)).toEqual(["导航", "笔记", "视图", "AI"]);
   });
 
   it("includes skills management in AI group", () => {
@@ -98,5 +116,25 @@ describe("command palette", () => {
     const skills = items.find((i) => i.id === "skills");
     expect(skills?.group).toBe("AI");
     expect(skills?.action).toEqual({ type: "openOverlay", overlay: "skills" });
+  });
+
+  it("does not register slash writing commands in the palette", () => {
+    const items = buildCommandPaletteItems({
+      hasVault: true,
+      hasActiveNote: true,
+    });
+    expect(items.some((i) => i.id.startsWith("slash-"))).toBe(false);
+    const filtered = filterCommandPaletteItems(items, "AI 总结");
+    expect(filtered.some((i) => i.id === "slash-summarize")).toBe(false);
+  });
+
+  it("keeps send-selection-ai for global shortcut path", () => {
+    const items = buildCommandPaletteItems({
+      hasVault: true,
+      hasActiveNote: true,
+    });
+    expect(items.find((i) => i.id === "send-selection-ai")?.action).toEqual({
+      type: "sendSelectionToAi",
+    });
   });
 });

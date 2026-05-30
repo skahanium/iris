@@ -1,4 +1,9 @@
 import type { OverlayId } from "@/hooks/useOverlayManager";
+import {
+  formatLeaderChordShortcut,
+  formatShortcut,
+  type KeyChord,
+} from "@/lib/utils";
 
 export type CommandPaletteAction =
   | { type: "openOverlay"; overlay: OverlayId }
@@ -14,7 +19,8 @@ export type CommandPaletteAction =
   | { type: "zoomIn" }
   | { type: "zoomOut" }
   | { type: "zoomReset" }
-  | { type: "sendSelectionToAi" };
+  | { type: "sendSelectionToAi" }
+  | { type: "noop" };
 
 export interface CommandPaletteItem {
   id: string;
@@ -23,16 +29,29 @@ export interface CommandPaletteItem {
   keywords: string;
   /** Lucide 组件名，见 command-palette-icons.ts */
   icon?: string;
-  shortcut?: string;
   disabled?: boolean;
   /** 不在命令面板列表中展示（如「打开命令面板」本身） */
   hiddenInPalette?: boolean;
+  /** 全局快捷键绑定（无则仅在命令面板可用） */
+  chord?: KeyChord;
   action: CommandPaletteAction;
 }
 
 export interface CommandPaletteContext {
   hasVault: boolean;
   hasActiveNote: boolean;
+}
+
+/** 由 chord 生成命令面板右侧快捷键展示 */
+export function formatCommandPaletteItemShortcut(
+  item: CommandPaletteItem,
+): string | undefined {
+  const chord = item.chord;
+  if (!chord) return undefined;
+  if (chord.afterLeader === "cmd_k") {
+    return formatLeaderChordShortcut("K", chord.key);
+  }
+  return formatShortcut(chord);
 }
 
 export function buildCommandPaletteItems(
@@ -45,12 +64,21 @@ export function buildCommandPaletteItems(
     {
       id: "command-palette",
       label: "命令面板",
-      group: "通用",
+      group: "视图",
       keywords: "command palette 命令 面板",
       icon: "Command",
-      shortcut: "⌘/Ctrl+Shift+P",
       hiddenInPalette: true,
+      chord: { key: "P", mod: true, shift: true },
       action: { type: "openOverlay", overlay: "commandPalette" },
+    },
+    {
+      id: "leader-cmd-k",
+      label: "和弦前缀",
+      group: "视图",
+      keywords: "leader key prefix",
+      hiddenInPalette: true,
+      chord: { key: "K", mod: true, leader: "cmd_k" },
+      action: { type: "noop" },
     },
     {
       id: "quick-open",
@@ -58,8 +86,8 @@ export function buildCommandPaletteItems(
       group: "导航",
       keywords: "quick open file 文件 搜索 切换",
       icon: "Search",
-      shortcut: "⌘/Ctrl+P",
       disabled: vaultOnly,
+      chord: { key: "P", mod: true, requireVault: true },
       action: { type: "openOverlay", overlay: "quickOpen" },
     },
     {
@@ -68,8 +96,8 @@ export function buildCommandPaletteItems(
       group: "导航",
       keywords: "file tree vault 文件树 浏览 笔记库 管理",
       icon: "FolderTree",
-      shortcut: "⌘/Ctrl+Shift+E",
       disabled: vaultOnly,
+      chord: { key: "E", mod: true, shift: true, requireVault: true },
       action: { type: "openOverlay", overlay: "fileSheet" },
     },
     {
@@ -78,8 +106,8 @@ export function buildCommandPaletteItems(
       group: "导航",
       keywords: "recycle trash bin 回收站 删除 恢复 撤销",
       icon: "Trash2",
-      shortcut: "⌘/Ctrl+Shift+U",
       disabled: vaultOnly,
+      chord: { key: "U", mod: true, shift: true, requireVault: true },
       action: { type: "openOverlay", overlay: "recycleBin" },
     },
     {
@@ -88,8 +116,8 @@ export function buildCommandPaletteItems(
       group: "导航",
       keywords: "search find 查找",
       icon: "FileSearch",
-      shortcut: "⌘/Ctrl+Shift+F",
       disabled: vaultOnly,
+      chord: { key: "F", mod: true, shift: true, requireVault: true },
       action: { type: "openOverlay", overlay: "search" },
     },
     {
@@ -97,9 +125,15 @@ export function buildCommandPaletteItems(
       label: "反向链接",
       group: "导航",
       keywords: "backlink 反链 链接",
-      icon: "GitBranch",
-      shortcut: "⌘/Ctrl+Shift+B",
+      icon: "Link2",
       disabled: vaultOnly || noteOnly,
+      chord: {
+        key: "B",
+        mod: true,
+        shift: true,
+        requireVault: true,
+        requireNote: true,
+      },
       action: { type: "openOverlay", overlay: "backlinks" },
     },
     {
@@ -108,8 +142,8 @@ export function buildCommandPaletteItems(
       group: "导航",
       keywords: "tag 标签",
       icon: "Tag",
-      shortcut: "⌘/Ctrl+Shift+T",
       disabled: vaultOnly,
+      chord: { key: "T", mod: true, shift: true, requireVault: true },
       action: { type: "openOverlay", overlay: "tags" },
     },
     {
@@ -118,9 +152,19 @@ export function buildCommandPaletteItems(
       group: "导航",
       keywords: "graph 图谱 关系",
       icon: "Network",
-      shortcut: "⌘/Ctrl+Shift+G",
       disabled: vaultOnly,
+      chord: { key: "G", mod: true, shift: true, requireVault: true },
       action: { type: "openOverlay", overlay: "graph" },
+    },
+    {
+      id: "rescan-vault",
+      label: "重建库索引",
+      group: "导航",
+      keywords: "index reindex 索引 同步",
+      icon: "RotateCcw",
+      disabled: vaultOnly,
+      chord: { key: "I", mod: false, afterLeader: "cmd_k", requireVault: true },
+      action: { type: "rescanVault" },
     },
     {
       id: "new-note",
@@ -137,8 +181,8 @@ export function buildCommandPaletteItems(
       group: "笔记",
       keywords: "save version 保存 定稿",
       icon: "Save",
-      shortcut: "⌘/Ctrl+S",
       disabled: vaultOnly || noteOnly,
+      chord: { key: "S", mod: true, requireNote: true },
       action: { type: "saveVersion" },
     },
     {
@@ -147,8 +191,8 @@ export function buildCommandPaletteItems(
       group: "笔记",
       keywords: "close tab 关闭",
       icon: "X",
-      shortcut: "⌘/Ctrl+W",
       disabled: noteOnly,
+      chord: { key: "W", mod: true, requireNote: true },
       action: { type: "closeTab" },
     },
     {
@@ -157,8 +201,8 @@ export function buildCommandPaletteItems(
       group: "笔记",
       keywords: "version history 历史 快照",
       icon: "GitBranch",
-      shortcut: "⌘/Ctrl+Shift+V",
       disabled: vaultOnly || noteOnly,
+      chord: { key: "V", mod: true, shift: true, requireNote: true },
       action: { type: "openOverlay", overlay: "version" },
     },
     {
@@ -167,8 +211,8 @@ export function buildCommandPaletteItems(
       group: "视图",
       keywords: "outline 目录 大纲",
       icon: "BookOpen",
-      shortcut: "⌘/Ctrl+Shift+O",
       disabled: noteOnly,
+      chord: { key: "O", mod: true, shift: true, requireNote: true },
       action: { type: "toggleOutline" },
     },
     {
@@ -177,7 +221,7 @@ export function buildCommandPaletteItems(
       group: "视图",
       keywords: "zen focus 专注 沉浸",
       icon: "Minimize2",
-      shortcut: "⌘/Ctrl+.",
+      chord: { key: ".", mod: true },
       action: { type: "toggleZen" },
     },
     {
@@ -194,8 +238,38 @@ export function buildCommandPaletteItems(
       group: "视图",
       keywords: "settings preferences 偏好",
       icon: "Settings",
-      shortcut: "⌘/Ctrl+,",
+      chord: { key: ",", mod: true },
       action: { type: "openOverlay", overlay: "settings" },
+    },
+    {
+      id: "zoom-in",
+      label: "放大编辑器",
+      group: "视图",
+      keywords: "zoom in 放大 字号",
+      icon: "ZoomIn",
+      disabled: noteOnly,
+      chord: { key: "+", mod: true, requireNote: true },
+      action: { type: "zoomIn" },
+    },
+    {
+      id: "zoom-out",
+      label: "缩小编辑器",
+      group: "视图",
+      keywords: "zoom out 缩小 字号",
+      icon: "ZoomOut",
+      disabled: noteOnly,
+      chord: { key: "-", mod: true, requireNote: true },
+      action: { type: "zoomOut" },
+    },
+    {
+      id: "zoom-reset",
+      label: "重置编辑器缩放",
+      group: "视图",
+      keywords: "zoom reset 缩放 100",
+      icon: "Maximize2",
+      disabled: noteOnly,
+      chord: { key: "0", mod: true, requireNote: true },
+      action: { type: "zoomReset" },
     },
     {
       id: "toggle-ai",
@@ -203,7 +277,7 @@ export function buildCommandPaletteItems(
       group: "AI",
       keywords: "ai assistant 助手 侧栏",
       icon: "PanelRight",
-      shortcut: "⌘/Ctrl+Shift+A",
+      chord: { key: "A", mod: true, shift: true },
       action: { type: "toggleAiPanel" },
     },
     {
@@ -221,6 +295,7 @@ export function buildCommandPaletteItems(
       group: "AI",
       keywords: "web search 联网 搜索",
       icon: "Globe",
+      chord: { key: "W", mod: false, afterLeader: "cmd_k" },
       action: { type: "toggleWebSearch" },
     },
     {
@@ -228,48 +303,8 @@ export function buildCommandPaletteItems(
       label: "管理 AI Skills",
       group: "AI",
       keywords: "skills skill 技能 安装 注入 prompt",
-      icon: "Lightbulb",
+      icon: "Wrench",
       action: { type: "openOverlay", overlay: "skills" },
-    },
-    {
-      id: "zoom-in",
-      label: "放大编辑器",
-      group: "编辑器",
-      keywords: "zoom in 放大 字号",
-      icon: "ZoomIn",
-      shortcut: "⌘/Ctrl++",
-      disabled: noteOnly,
-      action: { type: "zoomIn" },
-    },
-    {
-      id: "zoom-out",
-      label: "缩小编辑器",
-      group: "编辑器",
-      keywords: "zoom out 缩小 字号",
-      icon: "ZoomOut",
-      shortcut: "⌘/Ctrl+-",
-      disabled: noteOnly,
-      action: { type: "zoomOut" },
-    },
-    {
-      id: "zoom-reset",
-      label: "重置编辑器缩放",
-      group: "编辑器",
-      keywords: "zoom reset 缩放 100",
-      icon: "RotateCcw",
-      shortcut: "⌘/Ctrl+0",
-      disabled: noteOnly,
-      action: { type: "zoomReset" },
-    },
-    {
-      id: "rescan-vault",
-      label: "重建库索引",
-      group: "库",
-      keywords: "index reindex 索引 同步",
-      icon: "RotateCcw",
-      shortcut: "⌘/Ctrl+Shift+I",
-      disabled: vaultOnly,
-      action: { type: "rescanVault" },
     },
   ];
 }
@@ -287,7 +322,9 @@ export function filterCommandPaletteItems(
     (item) =>
       item.label.toLowerCase().includes(q) ||
       item.group.toLowerCase().includes(q) ||
-      item.keywords.toLowerCase().includes(q),
+      item.keywords.toLowerCase().includes(q) ||
+      (formatCommandPaletteItemShortcut(item)?.toLowerCase().includes(q) ??
+        false),
   );
 }
 
@@ -309,4 +346,48 @@ export function groupCommandPaletteItems(
     group,
     items: map.get(group) ?? [],
   }));
+}
+
+const USAGE_KEY = "iris-command-usage";
+
+function loadUsage(): Record<string, number> {
+  try {
+    return JSON.parse(localStorage.getItem(USAGE_KEY) || "{}");
+  } catch {
+    return {};
+  }
+}
+
+export function recordCommandUsage(id: string): void {
+  try {
+    const usage = loadUsage();
+    usage[id] = (usage[id] || 0) + 1;
+    localStorage.setItem(USAGE_KEY, JSON.stringify(usage));
+  } catch {
+    /* ignore */
+  }
+}
+
+/** 组内按使用频次排序，组间顺序保持稳定。 */
+export function sortCommandPaletteItems(
+  items: CommandPaletteItem[],
+): CommandPaletteItem[] {
+  const usage = loadUsage();
+  const grouped = groupCommandPaletteItems(items);
+
+  return grouped.flatMap(({ items: groupItems }) => {
+    const withUsage = groupItems.map((item, index) => ({
+      item,
+      usage: usage[item.id] || 0,
+      index,
+    }));
+    withUsage.sort((a, b) => {
+      if (a.item.disabled !== b.item.disabled) {
+        return a.item.disabled ? 1 : -1;
+      }
+      if (a.usage !== b.usage) return b.usage - a.usage;
+      return a.index - b.index;
+    });
+    return withUsage.map((x) => x.item);
+  });
 }

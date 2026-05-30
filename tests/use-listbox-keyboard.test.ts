@@ -91,6 +91,81 @@ describe("useListboxKeyboard", () => {
     expect(api.highlight).toBe(2);
   });
 
+  it("allows highlighting disabled indices when skipDisabledOnNavigate is false", async () => {
+    let api!: ReturnType<typeof useListboxKeyboard>;
+
+    function PaletteHarness({
+      onReady,
+    }: {
+      onReady: (api: ReturnType<typeof useListboxKeyboard>) => void;
+    }) {
+      const keyboardApi = useListboxKeyboard({
+        length: 4,
+        skipDisabledOnNavigate: false,
+        isIndexDisabled: (index) => index === 2,
+        onActivate: vi.fn(),
+      });
+      onReady(keyboardApi);
+      return null;
+    }
+
+    await act(async () => {
+      root.render(
+        createElement(PaletteHarness, {
+          onReady: (value) => {
+            api = value;
+          },
+        }),
+      );
+    });
+
+    act(() => {
+      api.handleKeyDown({ key: "ArrowDown", preventDefault: () => {} });
+      api.handleKeyDown({ key: "ArrowDown", preventDefault: () => {} });
+    });
+    expect(api.highlight).toBe(2);
+  });
+
+  it("skips disabled indices when moving highlight", async () => {
+    let api!: ReturnType<typeof useListboxKeyboard>;
+
+    function DisabledHarness({
+      onReady,
+    }: {
+      onReady: (api: ReturnType<typeof useListboxKeyboard>) => void;
+    }) {
+      const keyboardApi = useListboxKeyboard({
+        length: 3,
+        isIndexDisabled: (index) => index === 1,
+        onActivate: vi.fn(),
+      });
+      onReady(keyboardApi);
+      return null;
+    }
+
+    await act(async () => {
+      root.render(
+        createElement(DisabledHarness, {
+          onReady: (value) => {
+            api = value;
+          },
+        }),
+      );
+    });
+
+    expect(api.highlight).toBe(0);
+
+    act(() => {
+      api.handleKeyDown({ key: "ArrowDown", preventDefault: () => {} });
+    });
+    expect(api.highlight).toBe(2);
+
+    act(() => {
+      api.handleKeyDown({ key: "ArrowUp", preventDefault: () => {} });
+    });
+    expect(api.highlight).toBe(0);
+  });
+
   it("resets highlight when resetKey changes", async () => {
     let api!: ReturnType<typeof useListboxKeyboard>;
 

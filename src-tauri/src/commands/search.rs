@@ -22,7 +22,7 @@ pub fn search_keyword(
     limit: Option<u32>,
 ) -> AppResult<Vec<KeywordHit>> {
     let limit = limit.unwrap_or(20) as usize;
-    state.db.with_conn(|conn| {
+    state.db.with_read_conn(|conn| {
         let mut stmt = conn.prepare(
             "SELECT path, title, snippet(files_fts, 2, '<b>', '</b>', '…', 32) as snip
              FROM files_fts WHERE files_fts MATCH ?1 LIMIT ?2",
@@ -47,7 +47,7 @@ pub fn search_semantic(
     let limit = limit.unwrap_or(5) as usize;
     state
         .db
-        .with_conn(|conn| semantic_search(conn, &query, limit))
+        .with_read_conn(|conn| semantic_search(conn, &query, limit))
 }
 
 #[tauri::command]

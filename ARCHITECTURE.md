@@ -503,7 +503,7 @@ CREATE TABLE settings (
 | `Ctrl+S`       | （编辑器）      | —         | 保存 `.md` + `manual` 版本快照               |
 | `Ctrl+Shift+A` | 统一助手侧栏    | —         | 收起/展开右侧 `UnifiedAssistantPanel` dock   |
 | `/`            | SlashCommand    | Popover   | 光标处命令菜单                               |
-| 选中文本       | FloatingToolbar | 浮动条    | 内联 AI、发送到 AI                           |
+| 选中文本       | 右键菜单        | `IrisContextMenu` | 内联 AI、发送到 AI（无自动浮动条）           |
 
 **浮层行为（已定稿）**
 
@@ -639,7 +639,7 @@ src/components/
 │   ├── TipTapEditor.tsx       # WYSIWYG 编辑器主组件
 │   ├── AiNodeView.tsx         # AI 生成内容的节点渲染（接受/重试/回退）
 │   ├── SlashCommand.tsx       # / 弹出命令菜单
-│   ├── FloatingToolbar.tsx    # 选中文本浮动工具条
+│   ├── SlashCommandList.tsx   # `/` 菜单（IrisSurfaceMenu）
 │   ├── OutlineWidget.tsx      # 编辑器左侧大纲悬浮
 │   └── BacklinksWidget.tsx    # 编辑器右侧反向链接悬浮
 ├── ai/

@@ -50,7 +50,10 @@ describe("unified assistant E2E contract", () => {
 
   it("wires Ctrl+Shift+A toggle to the unified assistant dock", () => {
     const keyboard = read("src/hooks/useAppKeyboard.ts");
-    expect(keyboard).toContain("onToggleAiPanel");
+    expect(keyboard).toContain("matchesKeyChord");
+    const items = read("src/lib/command-palette.ts");
+    expect(items).toContain('key: "A"');
+    expect(items).toContain("toggleAiPanel");
     expect(read("src/App.tsx")).toContain("aiPanelOpen");
   });
 });

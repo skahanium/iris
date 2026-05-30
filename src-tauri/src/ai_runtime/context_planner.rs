@@ -479,8 +479,12 @@ mod tests {
 
     #[test]
     fn open_note_does_not_add_graph_sub_query() {
-        let plan =
-            plan_context("今天是什么日子", AiScene::KnowledgeLookup, Some("notes/a.md")).unwrap();
+        let plan = plan_context(
+            "今天是什么日子",
+            AiScene::KnowledgeLookup,
+            Some("notes/a.md"),
+        )
+        .unwrap();
         assert_eq!(plan.sub_queries.len(), 1);
         assert!(!plan
             .sub_queries

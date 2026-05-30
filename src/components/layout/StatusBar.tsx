@@ -25,6 +25,8 @@ interface StatusBarProps {
   onWebSearchChange?: (enabled: boolean) => void;
   connectivity?: ConnectivityStatus | null;
   onOpenConnectivitySettings?: () => void;
+  /** ⌘K 和弦等待第二键 */
+  keyboardLeaderPending?: boolean;
 }
 
 export const StatusBar = memo(function StatusBar({
@@ -42,6 +44,7 @@ export const StatusBar = memo(function StatusBar({
   onWebSearchChange,
   connectivity = null,
   onOpenConnectivitySettings,
+  keyboardLeaderPending = false,
 }: StatusBarProps) {
   const trimmedTitle = documentTitle?.trim();
   const label = trimmedTitle || (path ? "无标题" : "未打开文件");
@@ -111,8 +114,11 @@ export const StatusBar = memo(function StatusBar({
         <span className="text-muted-foreground/60" aria-hidden>
           ·
         </span>
-        <span className="max-w-[10rem] truncate" title={aiStatus}>
-          {aiStatus}
+        <span
+          className="max-w-[14rem] truncate"
+          title={keyboardLeaderPending ? "⌘K 等待第二键，Esc 取消" : aiStatus}
+        >
+          {keyboardLeaderPending ? "⌘K 等待第二键…" : aiStatus}
         </span>
       </div>
     </footer>

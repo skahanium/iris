@@ -339,11 +339,12 @@ pub fn restore_document(state: &Arc<AppState>, id: &str) -> AppResult<String> {
     }
 
     let doc = bundle_dir.join("document.md");
-    if doc.is_file() {
-        fs::rename(&doc, &dest)?;
-    } else {
-        fs::write(&dest, "")?;
+    if !doc.is_file() {
+        return Err(AppError::msg(
+            "回收站中的文档文件已损坏（document.md 缺失），无法恢复",
+        ));
     }
+    fs::rename(&doc, &dest)?;
 
     let file_entry = state.db.with_conn(|conn| index_file(conn, &vault, &dest))?;
     let file_id = file_entry.id;

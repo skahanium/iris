@@ -6,6 +6,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type KeyboardEvent,
 } from "react";
 
 import {
@@ -22,11 +23,14 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { useListboxKeyboard } from "@/hooks/useListboxKeyboard";
 import {
   filterCommandPaletteItems,
+  formatCommandPaletteItemShortcut,
   groupCommandPaletteItems,
+  sortCommandPaletteItems,
   type CommandPaletteItem,
 } from "@/lib/command-palette";
 import { resolveCommandIcon } from "@/lib/command-palette-icons";
 import { ensureOptionVisible } from "@/lib/command-palette-scroll";
+import { formatCommandPaletteShortcut } from "@/lib/utils";
 
 interface CommandPaletteProps {
   open: boolean;
@@ -44,15 +48,18 @@ export function CommandPalette({
   const [query, setQuery] = useState("");
   const itemRefs = useRef(new Map<string, HTMLButtonElement>());
   const listViewportRef = useRef<HTMLDivElement | null>(null);
+  /** false = 键盘导航中，忽略由滚动触发的 mouseenter */
+  const pointerDrivenHighlightRef = useRef(true);
   const wasOpenRef = useRef(false);
   const filteredRef = useRef<CommandPaletteItem[]>([]);
   const onSelectRef = useRef(onSelect);
   onSelectRef.current = onSelect;
 
-  const filtered = useMemo(
-    () => filterCommandPaletteItems(items, query),
-    [items, query],
-  );
+  const filtered = useMemo(() => {
+    const f = filterCommandPaletteItems(items, query);
+    if (query.trim()) return f;
+    return sortCommandPaletteItems(f);
+  }, [items, query]);
   filteredRef.current = filtered;
 
   const { highlight, setHighlight, handleKeyDown, navDeltaRef } =
@@ -65,6 +72,7 @@ export function CommandPalette({
         if (item && !item.disabled) onSelectRef.current(item);
       },
       isIndexDisabled: (index) => Boolean(filteredRef.current[index]?.disabled),
+      skipDisabledOnNavigate: false,
     });
 
   const grouped = useMemo(() => groupCommandPaletteItems(filtered), [filtered]);
@@ -87,8 +95,23 @@ export function CommandPalette({
     if (!wasOpenRef.current) {
       setQuery("");
       wasOpenRef.current = true;
+      pointerDrivenHighlightRef.current = true;
     }
   }, [open, items]);
+
+  const handleListKeyDown = useCallback(
+    (event: KeyboardEvent<HTMLInputElement>) => {
+      if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+        pointerDrivenHighlightRef.current = false;
+      }
+      handleKeyDown(event);
+    },
+    [handleKeyDown],
+  );
+
+  const handleListPointerMove = useCallback(() => {
+    pointerDrivenHighlightRef.current = true;
+  }, []);
 
   const scrollHighlightIntoView = useCallback(() => {
     const item = filteredRef.current[highlight];
@@ -101,16 +124,14 @@ export function CommandPalette({
       el.closest<HTMLElement>("[data-radix-scroll-area-viewport]");
     if (!viewport) return;
 
-    ensureOptionVisible(viewport, el, navDeltaRef.current);
+    const direction = navDeltaRef.current;
+    ensureOptionVisible(viewport, el, direction);
     navDeltaRef.current = 0;
   }, [highlight, navDeltaRef]);
 
   useLayoutEffect(() => {
     if (!open) return;
-    const frame = requestAnimationFrame(() => {
-      scrollHighlightIntoView();
-    });
-    return () => cancelAnimationFrame(frame);
+    scrollHighlightIntoView();
   }, [open, highlight, scrollHighlightIntoView]);
 
   return (
@@ -129,7 +150,7 @@ export function CommandPalette({
             value={query}
             inputAriaLabel="搜索命令"
             onChange={setQuery}
-            onKeyDown={handleKeyDown}
+            onKeyDown={handleListKeyDown}
             onClose={onClose}
           />
         }
@@ -149,6 +170,7 @@ export function CommandPalette({
           className="h-[min(28rem,58vh)]"
           viewportRef={listViewportRef}
           scrollbarVisibility="always"
+          onPointerMove={handleListPointerMove}
         >
           {filtered.length === 0 ? (
             <div className="flex flex-col items-center gap-3 px-6 py-14 text-center">
@@ -164,7 +186,7 @@ export function CommandPalette({
                 </p>
                 <p className="mt-1 text-xs text-muted-foreground">
                   试试「搜索」「设置」或快捷键{" "}
-                  <Kbd className="mx-0.5">Ctrl+Shift+P</Kbd>
+                  <Kbd className="mx-0.5">{formatCommandPaletteShortcut()}</Kbd>
                 </p>
               </div>
             </div>
@@ -193,13 +215,15 @@ export function CommandPalette({
                         query={query}
                         active={active}
                         disabled={item.disabled}
-                        shortcut={item.shortcut}
+                        shortcut={formatCommandPaletteItemShortcut(item)}
                         icon={resolveCommandIcon(item.icon)}
                         buttonRef={(el) => {
                           if (el) itemRefs.current.set(item.id, el);
                           else itemRefs.current.delete(item.id);
                         }}
                         onMouseEnter={() => {
+                          const pointerDriven = pointerDrivenHighlightRef.current;
+                          if (!pointerDriven || item.disabled) return;
                           navDeltaRef.current = 0;
                           setHighlight(index);
                         }}

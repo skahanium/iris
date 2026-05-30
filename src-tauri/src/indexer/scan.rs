@@ -164,6 +164,7 @@ pub fn scan_vault(conn: &Connection, vault: &Path) -> AppResult<Vec<FileEntry>> 
     }
 
     for entry in WalkDir::new(vault)
+        .follow_links(false)
         .into_iter()
         .filter_entry(|e| {
             e.path()
@@ -180,6 +181,26 @@ pub fn scan_vault(conn: &Connection, vault: &Path) -> AppResult<Vec<FileEntry>> 
     }
     let _ = prune_stale_file_indexes(conn, vault)?;
     Ok(entries)
+}
+
+/// Collect all `.md` file paths in the vault without holding a DB lock.
+pub fn collect_vault_files(vault: &Path) -> Vec<std::path::PathBuf> {
+    if !vault.exists() {
+        return Vec::new();
+    }
+    WalkDir::new(vault)
+        .follow_links(false)
+        .into_iter()
+        .filter_entry(|e| {
+            e.path()
+                .strip_prefix(vault)
+                .is_ok_and(|rel| !rel.components().any(|c| c.as_os_str() == ".iris"))
+        })
+        .filter_map(|e| e.ok())
+        .filter(|e| e.path().extension().is_some_and(|ext| ext == "md"))
+        .filter(|e| e.path().is_file())
+        .map(|e| e.path().to_path_buf())
+        .collect()
 }
 
 /// Compute SHA-256 hash for external change detection.

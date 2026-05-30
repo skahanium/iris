@@ -1,163 +1,114 @@
-import { useCallback, useEffect } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
-import type { useOverlayManager } from "@/hooks/useOverlayManager";
-import { isModKey } from "@/lib/utils";
+import type { CommandPaletteItem } from "@/lib/command-palette";
+import { isModKey, matchesKeyChord } from "@/lib/utils";
+
+const LEADER_TIMEOUT_MS = 2000;
 
 interface UseAppKeyboardOptions {
-  overlays: ReturnType<typeof useOverlayManager>;
-  activePathRef: React.MutableRefObject<string | null>;
-  onSaveVersion: () => void;
-  onCloseTab: (path: string) => void;
-  onToggleAiPanel: () => void;
-  onToggleZen: () => void;
-  onToggleOutline: () => void;
-  onToggleWebSearch: () => void;
-  onRescanVault: () => void;
-  zoomIn: () => void;
-  zoomOut: () => void;
-  resetZoom: () => void;
+  items: CommandPaletteItem[];
   vaultPath: string | null;
+  activePathRef: React.MutableRefObject<string | null>;
+  onAction: (item: CommandPaletteItem) => void;
+  /** Leader 等待第二键时回调（用于状态栏提示） */
+  onLeaderPendingChange?: (pending: boolean) => void;
 }
 
 export function useAppKeyboard(options: UseAppKeyboardOptions) {
-  const {
-    overlays,
-    activePathRef,
-    onSaveVersion,
-    onCloseTab,
-    onToggleAiPanel,
-    onToggleZen,
-    onToggleOutline,
-    onToggleWebSearch,
-    onRescanVault,
-    zoomIn,
-    zoomOut,
-    resetZoom,
-    vaultPath,
-  } = options;
+  const { items, vaultPath, activePathRef, onAction, onLeaderPendingChange } =
+    options;
+  const onActionRef = useRef(onAction);
+  const itemsRef = useRef(items);
+  const vaultPathRef = useRef(vaultPath);
+  const activePathRefRef = useRef(activePathRef);
+  const onLeaderPendingChangeRef = useRef(onLeaderPendingChange);
+  const [pendingLeader, setPendingLeader] = useState<string | null>(null);
+  const pendingLeaderRef = useRef<string | null>(null);
+
+  onActionRef.current = onAction;
+  itemsRef.current = items;
+  vaultPathRef.current = vaultPath;
+  activePathRefRef.current = activePathRef;
+  onLeaderPendingChangeRef.current = onLeaderPendingChange;
+
+  const setPending = useCallback((leader: string | null) => {
+    pendingLeaderRef.current = leader;
+    setPendingLeader(leader);
+    onLeaderPendingChangeRef.current?.(leader !== null);
+  }, []);
+
+  useEffect(() => {
+    if (!pendingLeader) return;
+    const timer = window.setTimeout(() => {
+      setPending(null);
+    }, LEADER_TIMEOUT_MS);
+    return () => window.clearTimeout(timer);
+  }, [pendingLeader, setPending]);
 
   const handleKeyDown = useCallback(
     (e: KeyboardEvent) => {
-      if (
-        isModKey(e) &&
-        !e.shiftKey &&
-        (e.key === "s" || e.key === "S") &&
-        activePathRef.current
-      ) {
-        e.preventDefault();
-        onSaveVersion();
+      const pending = pendingLeaderRef.current;
+
+      if (e.key === "Escape") {
+        if (pending) {
+          setPending(null);
+          e.preventDefault();
+          return;
+        }
+        return;
       }
-      if (isModKey(e) && e.shiftKey && (e.key === "P" || e.key === "p")) {
-        e.preventDefault();
-        overlays.openOverlay("commandPalette");
+
+      if (pending) {
+        for (const item of itemsRef.current) {
+          const chord = item.chord;
+          if (!chord || chord.afterLeader !== pending) continue;
+          if (e.key.toLowerCase() !== chord.key.toLowerCase()) continue;
+          if (chord.mod !== isModKey(e)) continue;
+          if (item.disabled) {
+            setPending(null);
+            return;
+          }
+          if (chord.requireNote && !activePathRefRef.current.current) {
+            setPending(null);
+            return;
+          }
+          if (chord.requireVault && !vaultPathRef.current) {
+            setPending(null);
+            return;
+          }
+          e.preventDefault();
+          setPending(null);
+          onActionRef.current(item);
+          return;
+        }
+        setPending(null);
+        return;
       }
-      if (isModKey(e) && !e.shiftKey && e.key === "p") {
+
+      for (const item of itemsRef.current) {
+        const chord = item.chord;
+        if (!chord || chord.afterLeader) continue;
+        if (!matchesKeyChord(e, chord)) continue;
+        if (item.disabled) continue;
+        if (chord.leader) {
+          e.preventDefault();
+          setPending(chord.leader);
+          return;
+        }
+        if (chord.requireNote && !activePathRefRef.current.current) continue;
+        if (chord.requireVault && !vaultPathRef.current) continue;
         e.preventDefault();
-        overlays.openOverlay("quickOpen");
-      }
-      if (isModKey(e) && e.shiftKey && (e.key === "E" || e.key === "e")) {
-        e.preventDefault();
-        overlays.openOverlay("fileSheet");
-      }
-      if (isModKey(e) && e.shiftKey && (e.key === "U" || e.key === "u")) {
-        e.preventDefault();
-        overlays.openOverlay("recycleBin");
-      }
-      if (isModKey(e) && e.shiftKey && (e.key === "F" || e.key === "f")) {
-        e.preventDefault();
-        overlays.openOverlay("search");
-      }
-      if (isModKey(e) && e.shiftKey && (e.key === "A" || e.key === "a")) {
-        e.preventDefault();
-        onToggleAiPanel();
-      }
-      if (
-        isModKey(e) &&
-        e.shiftKey &&
-        (e.key === "V" || e.key === "v") &&
-        activePathRef.current
-      ) {
-        e.preventDefault();
-        overlays.toggleOverlay("version");
-      }
-      if (isModKey(e) && e.key === "w" && activePathRef.current) {
-        e.preventDefault();
-        onCloseTab(activePathRef.current);
-      }
-      if (isModKey(e) && e.key === ",") {
-        e.preventDefault();
-        overlays.toggleOverlay("settings");
-      }
-      if (
-        isModKey(e) &&
-        e.shiftKey &&
-        (e.key === "I" || e.key === "i") &&
-        vaultPath
-      ) {
-        e.preventDefault();
-        onRescanVault();
-      }
-      if (isModKey(e) && e.shiftKey && (e.key === "B" || e.key === "b")) {
-        e.preventDefault();
-        overlays.toggleOverlay("backlinks");
-      }
-      if (isModKey(e) && e.shiftKey && (e.key === "G" || e.key === "g")) {
-        e.preventDefault();
-        overlays.toggleOverlay("graph");
-      }
-      if (isModKey(e) && e.shiftKey && (e.key === "T" || e.key === "t")) {
-        e.preventDefault();
-        overlays.toggleOverlay("tags");
-      }
-      if (isModKey(e) && e.key === ".") {
-        e.preventDefault();
-        onToggleZen();
-      }
-      if (
-        isModKey(e) &&
-        e.shiftKey &&
-        (e.key === "O" || e.key === "o") &&
-        activePathRef.current
-      ) {
-        e.preventDefault();
-        onToggleOutline();
-      }
-      if (isModKey(e) && !e.shiftKey && (e.key === "=" || e.key === "+")) {
-        e.preventDefault();
-        zoomIn();
-      }
-      if (isModKey(e) && !e.shiftKey && e.key === "-") {
-        e.preventDefault();
-        zoomOut();
-      }
-      if (isModKey(e) && !e.shiftKey && e.key === "0") {
-        e.preventDefault();
-        resetZoom();
-      }
-      if (isModKey(e) && e.shiftKey && (e.key === "W" || e.key === "w")) {
-        e.preventDefault();
-        onToggleWebSearch();
+        onActionRef.current(item);
+        return;
       }
     },
-    [
-      overlays,
-      activePathRef,
-      onSaveVersion,
-      onCloseTab,
-      onToggleAiPanel,
-      onToggleZen,
-      onToggleOutline,
-      onToggleWebSearch,
-      onRescanVault,
-      zoomIn,
-      zoomOut,
-      resetZoom,
-      vaultPath,
-    ],
+    [setPending],
   );
 
   useEffect(() => {
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [handleKeyDown]);
+
+  return { pendingLeader };
 }

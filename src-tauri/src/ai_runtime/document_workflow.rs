@@ -7,8 +7,13 @@
 //! 4. Check style consistency across document
 //! 5. Cross-document reference suggestion
 
+use std::sync::LazyLock;
+
 use sha2::{Digest, Sha256};
 use tauri::AppHandle;
+
+static RE_REGULATION_BOOK: LazyLock<regex::Regex> =
+    LazyLock::new(|| regex::Regex::new(r"《([^》]+)》").expect("regulation book regex"));
 
 use crate::ai_runtime::chapter_workflow;
 use crate::ai_runtime::model_gateway::{
@@ -940,7 +945,8 @@ async fn generate_llm_document_patches(
     evidence: &[ContextPacket],
 ) -> AppResult<Vec<PatchProposal>> {
     let rules = ModelGateway::load_active_rules_for_scene(db, AiScene::DraftingAssist)?;
-    let system = ModelGateway::build_system_prompt(AiScene::DraftingAssist, evidence, &rules, false);
+    let system =
+        ModelGateway::build_system_prompt(AiScene::DraftingAssist, evidence, &rules, false);
     let heuristic = serialize_heuristic_for_llm(result);
     let excerpt = if input.content.len() > 5000 {
         format!("{}…", &input.content[..5000])
@@ -1034,7 +1040,8 @@ pub async fn enhance_document_check_with_llm(
     evidence: &[ContextPacket],
 ) -> AppResult<DocumentCheckResult> {
     let rules = ModelGateway::load_active_rules_for_scene(db, AiScene::DraftingAssist)?;
-    let system = ModelGateway::build_system_prompt(AiScene::DraftingAssist, evidence, &rules, false);
+    let system =
+        ModelGateway::build_system_prompt(AiScene::DraftingAssist, evidence, &rules, false);
     let heuristic = serialize_heuristic_for_llm(&result);
     let excerpt = if input.content.len() > 6000 {
         format!("{}…", &input.content[..6000])
@@ -1215,9 +1222,7 @@ fn extract_key_topics(content: &str) -> Vec<String> {
         }
     }
 
-    // Extract named entities (《...》patterns)
-    let re = regex::Regex::new(r"《([^》]+)》").unwrap();
-    for cap in re.captures_iter(content) {
+    for cap in RE_REGULATION_BOOK.captures_iter(content) {
         if let Some(m) = cap.get(1) {
             topics.push(m.as_str().to_string());
         }

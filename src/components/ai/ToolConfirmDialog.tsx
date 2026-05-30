@@ -85,8 +85,8 @@ export function ToolConfirmDialog({
       const parsed = JSON.parse(modifiedArgs);
       onConfirm(request.request_id, request.tool_call_id, "modify", parsed);
       onClose();
-    } catch {
-      // Invalid JSON - show error
+    } catch (e) {
+      console.warn("[ToolConfirm] JSON parse failed:", e);
       alert("修改后的参数必须是有效的 JSON 格式");
     }
   }, [request, modifiedArgs, onConfirm, onClose]);

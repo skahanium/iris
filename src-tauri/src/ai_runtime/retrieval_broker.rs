@@ -3,9 +3,16 @@
 //! Layers: FTS → Vector → Graph → Exact Parser → Template
 //! Results are fused by weighted score and returned as ContextPackets.
 
+use std::collections::HashSet;
 use std::hash::{Hash, Hasher};
+use std::sync::LazyLock;
 
 use rusqlite::Connection;
+
+static RE_REGULATION_ARTICLE: LazyLock<regex::Regex> = LazyLock::new(|| {
+    regex::Regex::new(r"《([^》]+)》\s*第([一二三四五六七八九十百千0-9]+)条")
+        .expect("regulation article regex")
+});
 
 use crate::ai_runtime::packet_cache::PacketCache;
 use crate::ai_runtime::retrieval_scope::{filter_packets_by_scope, RetrievalScope};
@@ -213,7 +220,13 @@ fn search_vector_chunks(
     })?;
 
     let packets: Vec<_> = rows
-        .flatten()
+        .filter_map(|r| match r {
+            Ok(v) => Some(v),
+            Err(e) => {
+                tracing::warn!("vector chunk row parse failed: {e}");
+                None
+            }
+        })
         .enumerate()
         .map(
             |(i, (rowid, text, path, title, heading, _char_count, distance))| {
@@ -266,7 +279,13 @@ fn search_template(conn: &Connection, query: &str, limit: usize) -> AppResult<Ve
     })?;
 
     let packets: Vec<_> = rows
-        .flatten()
+        .filter_map(|r| match r {
+            Ok(v) => Some(v),
+            Err(e) => {
+                tracing::warn!("template row parse failed: {e}");
+                None
+            }
+        })
         .enumerate()
         .map(
             |(i, (id, genre, structure_str, user_confirmed, usage_count))| {
@@ -333,13 +352,38 @@ fn fuse_and_rank(packets: &mut Vec<ContextPacket>, max_results: usize) {
             .unwrap_or(std::cmp::Ordering::Equal)
     });
 
-    // Deduplicate: keep highest-scoring occurrence of each id
-    packets.dedup_by(|a, b| a.id == b.id);
+    // Deduplicate: keep highest-scoring occurrence of each id (HashSet, not dedup_by)
+    let mut seen = HashSet::new();
+    packets.retain(|p| seen.insert(p.id.clone()));
     packets.truncate(max_results);
 }
 
+fn escape_fts5_query(query: &str) -> String {
+    let tokens: Vec<String> = query
+        .split_whitespace()
+        .map(|token| {
+            let cleaned: String = token
+                .chars()
+                .filter(|c| {
+                    c.is_alphanumeric() || *c == '_' || *c == '-' || c.is_ascii_punctuation()
+                })
+                .collect();
+            if cleaned.is_empty() {
+                String::new()
+            } else {
+                format!("\"{}\"", cleaned.replace('"', "\"\""))
+            }
+        })
+        .filter(|s| !s.is_empty())
+        .collect();
+    tokens.join(" ")
+}
+
 fn search_fts(conn: &Connection, query: &str, limit: usize) -> AppResult<Vec<ContextPacket>> {
-    // Use existing FTS5 search
+    let safe_query = escape_fts5_query(query);
+    if safe_query.is_empty() {
+        return Ok(vec![]);
+    }
     let mut stmt = conn.prepare(
         "SELECT f.path, f.title, snippet(files_fts, 2, '<b>', '</b>', '…', 40) as snippet
          FROM files_fts
@@ -348,7 +392,7 @@ fn search_fts(conn: &Connection, query: &str, limit: usize) -> AppResult<Vec<Con
          LIMIT ?2",
     )?;
 
-    let rows = stmt.query_map(rusqlite::params![query, limit as i64], |row| {
+    let rows = stmt.query_map(rusqlite::params![safe_query, limit as i64], |row| {
         Ok((
             row.get::<_, String>(0)?,
             row.get::<_, String>(1)?,
@@ -357,7 +401,13 @@ fn search_fts(conn: &Connection, query: &str, limit: usize) -> AppResult<Vec<Con
     })?;
 
     let packets: Vec<_> = rows
-        .flatten()
+        .filter_map(|r| match r {
+            Ok(v) => Some(v),
+            Err(e) => {
+                tracing::warn!("FTS row parse failed: {e}");
+                None
+            }
+        })
         .enumerate()
         .map(|(i, (path, title, snippet))| {
             let clean_snippet = snippet.replace("<b>", "").replace("</b>", "");
@@ -419,7 +469,13 @@ fn search_vector_anchors(
     })?;
 
     let packets: Vec<_> = rows
-        .flatten()
+        .filter_map(|r| match r {
+            Ok(v) => Some(v),
+            Err(e) => {
+                tracing::warn!("vector anchor row parse failed: {e}");
+                None
+            }
+        })
         .enumerate()
         .map(
             |(i, (rowid, content, path, title, heading, anchor_type, _confidence, distance))| {
@@ -483,7 +539,13 @@ fn search_vector_regulations(
     })?;
 
     let packets: Vec<_> = rows
-        .flatten()
+        .filter_map(|r| match r {
+            Ok(v) => Some(v),
+            Err(e) => {
+                tracing::warn!("vector regulation row parse failed: {e}");
+                None
+            }
+        })
         .map(
             |(rowid, content, path, title, reg_name, article, paragraph, distance)| {
                 let score = (1.0 - distance).max(0.0);
@@ -542,7 +604,13 @@ fn search_graph_neighbors(
     })?;
 
     let packets: Vec<_> = rows
-        .flatten()
+        .filter_map(|r| match r {
+            Ok(v) => Some(v),
+            Err(e) => {
+                tracing::warn!("graph neighbor row parse failed: {e}");
+                None
+            }
+        })
         .enumerate()
         .map(
             |(i, (id, _target_id, path, title, anchor_key, confidence, link_type))| ContextPacket {
@@ -568,9 +636,7 @@ fn search_graph_neighbors(
 }
 
 fn search_exact_regulation(conn: &Connection, query: &str) -> AppResult<Vec<ContextPacket>> {
-    // Try exact article lookup: regulation name + article number
-    let re = regex::Regex::new(r"《([^》]+)》\s*第([一二三四五六七八九十百千0-9]+)条").unwrap();
-    let Some(caps) = re.captures(query) else {
+    let Some(caps) = RE_REGULATION_ARTICLE.captures(query) else {
         return Ok(vec![]);
     };
 
@@ -599,7 +665,13 @@ fn search_exact_regulation(conn: &Connection, query: &str) -> AppResult<Vec<Cont
     })?;
 
     let packets: Vec<_> = rows
-        .flatten()
+        .filter_map(|r| match r {
+            Ok(v) => Some(v),
+            Err(e) => {
+                tracing::warn!("exact regulation row parse failed: {e}");
+                None
+            }
+        })
         .map(|(id, content, path, title, reg_name, article, paragraph)| {
             let citation = match &paragraph {
                 Some(p) => format!("{reg_name} {article}{p}"),

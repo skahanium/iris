@@ -39,7 +39,9 @@ export function useEditorSave(
   const debouncedSave = useMemo(
     () =>
       debounce(() => {
-        void saveNote();
+        saveNote().catch((err) => {
+          console.warn("[useEditorSave] save failed:", err);
+        });
       }, EDITOR_SAVE_DEBOUNCE_MS),
     [saveNote],
   );

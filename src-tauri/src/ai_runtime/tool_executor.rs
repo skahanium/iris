@@ -227,7 +227,9 @@ impl ToolRegistry {
             },
             ToolSpec {
                 name: "web_search".into(),
-                description: "联网搜索实时信息；无需确认，直接调用。结果应与本地检索证据交叉引用、相互印证。".into(),
+                description:
+                    "联网搜索实时信息；无需确认，直接调用。结果应与本地检索证据交叉引用、相互印证。"
+                        .into(),
                 input_schema: serde_json::json!({
                     "type": "object",
                     "properties": {
@@ -401,8 +403,9 @@ impl ToolRegistry {
             },
             ToolSpec {
                 name: "conclude_reasoning".into(),
-                description: "当你认为已收集到足够信息、可以回答用户问题时调用，结束工具循环并生成最终回答。"
-                    .into(),
+                description:
+                    "当你认为已收集到足够信息、可以回答用户问题时调用，结束工具循环并生成最终回答。"
+                        .into(),
                 input_schema: serde_json::json!({
                     "type": "object",
                     "properties": {

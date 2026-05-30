@@ -6,12 +6,12 @@ use tauri::{AppHandle, State};
 
 use crate::app::AppState;
 use crate::error::{AppError, AppResult};
-use crate::indexer::frontmatter::{parse_note, resolve_display_title};
+use crate::indexer::frontmatter::resolve_display_title;
 use crate::indexer::scan::{
     index_file, prune_stale_file_indexes, remove_file_index, scan_vault, FileEntry,
 };
 use crate::recycle::{discard_document, trash_document};
-use crate::storage::paths::resolve_vault_path;
+use crate::storage::paths::{is_user_note_path, resolve_vault_path};
 
 fn title_from_path(path: &str) -> String {
     path.trim_end_matches(".md")
@@ -35,6 +35,9 @@ pub fn file_list(state: State<'_, Arc<AppState>>) -> AppResult<Vec<FileListItem>
     let vault = state.vault_path()?;
     state.db.with_conn(|conn| {
         prune_stale_file_indexes(conn, &vault)?;
+        Ok(())
+    })?;
+    state.db.with_read_conn(|conn| {
         let mut stmt = conn.prepare(
             "SELECT path, title, updated_at, frontmatter FROM files
              WHERE id IN (SELECT MAX(id) FROM files GROUP BY path)
@@ -60,6 +63,9 @@ pub fn file_list(state: State<'_, Arc<AppState>>) -> AppResult<Vec<FileListItem>
 
 #[tauri::command]
 pub fn file_read(state: State<'_, Arc<AppState>>, path: String) -> AppResult<String> {
+    if !is_user_note_path(&path) {
+        return Err(AppError::msg("只能读取用户笔记，不允许访问内部元数据路径"));
+    }
     let vault = state.vault_path()?;
     let abs = resolve_vault_path(&vault, &path)?;
     Ok(fs::read_to_string(abs)?)
@@ -78,35 +84,7 @@ pub fn file_write(
     fs::write(&tmp, &content)?;
     fs::rename(&tmp, &abs)?;
 
-    let wc = content.split_whitespace().count() as i64;
-    let parsed = parse_note(&content)?;
-    let stem = title_from_path(&path);
-    let title = resolve_display_title(
-        parsed.title.as_deref(),
-        "",
-        parsed.frontmatter_json.as_deref(),
-        &stem,
-    );
-    let now = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%S").to_string();
-
-    let entry = FileEntry {
-        id: 0,
-        path: path.clone(),
-        title,
-        updated_at: now,
-        word_count: wc,
-    };
-
-    let state_clone = state.inner().clone();
-    let abs_clone = abs.clone();
-    let vault_clone = vault.clone();
-    std::thread::spawn(move || {
-        let _ = state_clone
-            .db
-            .with_conn(|conn| index_file(conn, &vault_clone, &abs_clone));
-    });
-
-    Ok(entry)
+    state.db.with_conn(|conn| index_file(conn, &vault, &abs))
 }
 
 /// Move note + all version snapshots into recycle bin (15-day retention).
@@ -389,8 +367,20 @@ pub fn vault_get(state: State<'_, Arc<AppState>>) -> AppResult<Option<String>> {
 
 #[tauri::command]
 pub fn index_rescan(state: State<'_, Arc<AppState>>) -> AppResult<Vec<FileEntry>> {
+    use crate::indexer::scan::collect_vault_files;
     let vault = state.vault_path()?;
-    state.db.with_conn(|conn| scan_vault(conn, &vault))
+    let files = collect_vault_files(&vault);
+    let mut entries = Vec::with_capacity(files.len());
+    for abs in &files {
+        match state.db.with_conn(|conn| index_file(conn, &vault, abs)) {
+            Ok(entry) => entries.push(entry),
+            Err(e) => tracing::warn!("index_rescan: failed to index {}: {e}", abs.display()),
+        }
+    }
+    let _ = state
+        .db
+        .with_conn(|conn| crate::indexer::scan::prune_stale_file_indexes(conn, &vault));
+    Ok(entries)
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -405,7 +395,7 @@ pub fn file_backlinks(
     state: State<'_, Arc<AppState>>,
     path: String,
 ) -> AppResult<Vec<BacklinkEntry>> {
-    state.db.with_conn(|conn| {
+    state.db.with_read_conn(|conn| {
         let mut stmt = conn.prepare(
             "SELECT f.path, f.title, l.context
              FROM links l

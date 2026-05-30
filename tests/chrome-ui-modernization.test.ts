@@ -17,11 +17,13 @@ describe("v0.4.1-ui chrome modernization", () => {
     expect(source).not.toContain("SceneSelector");
   });
 
-  it("SlashCommandList uses Lucide via CommandListOption", () => {
+  it("SlashCommandList uses IrisSurfaceMenu and Lucide icons", () => {
     const source = read("src/components/editor/SlashCommandList.tsx");
-    expect(source).toContain("CommandListOption");
+    expect(source).toContain("IrisSurfaceMenuItem");
+    expect(source).toContain("IrisSurfaceMenuPanel");
     expect(source).toContain("resolveCommandIcon");
     expect(source).toContain("useListboxKeyboard");
+    expect(source).not.toContain("CommandListOption");
     expect(source).not.toContain("📄");
     expect(source).not.toContain("💡");
   });

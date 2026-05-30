@@ -2,10 +2,11 @@
 pub fn chunk_markdown(content: &str, max_chars: usize) -> Vec<String> {
     let mut chunks = Vec::new();
     let mut current = String::new();
+    const MIN_CHARS: usize = 100;
 
     for line in content.lines() {
         let is_boundary = line.starts_with('#') || line.trim().is_empty();
-        if is_boundary && !current.is_empty() && current.len() >= 100 {
+        if is_boundary && !current.is_empty() && current.chars().count() >= MIN_CHARS {
             chunks.push(current.trim().to_string());
             current.clear();
         }
@@ -15,7 +16,7 @@ pub fn chunk_markdown(content: &str, max_chars: usize) -> Vec<String> {
             }
             current.push_str(line);
         }
-        while current.len() > max_chars {
+        while current.chars().count() > max_chars {
             let split_at = current
                 .char_indices()
                 .nth(max_chars)

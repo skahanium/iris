@@ -55,6 +55,7 @@ import {
 import { findPacketByCitationRef } from "@/lib/ai/citation-markdown";
 import { mergeContextPackets } from "@/lib/ai/merge-context-packets";
 import { shouldStartNewAiSession } from "@/lib/ai/session-thread";
+import { resolveAssistantDisplayContent } from "@/lib/assistant-message-content";
 import { mapChatToolCallsForUi } from "@/lib/map-chat-tool-calls";
 import { invokeErrorMessage } from "@/lib/credentials";
 import {
@@ -95,7 +96,9 @@ import { AssistantAvatar } from "./AssistantAvatar";
 import { DocumentCheckArtifacts } from "./assistant/DocumentCheckArtifacts";
 import { ResearchFocusView } from "./assistant/ResearchFocusView";
 import { AiMentionPopover } from "./AiMentionPopover";
+import { AiComposerContextMenu } from "./AiComposerContextMenu";
 import { AiMessageList, type ChatLine } from "./AiMessageList";
+import { AiMessageSelectionUi } from "./AiMessageSelectionUi";
 import { CitationCheckView } from "./CitationCheckView";
 import { ContextPacketDrawer } from "./ContextPacketDrawer";
 import { HarnessActivityStrip } from "./HarnessActivityStrip";
@@ -285,6 +288,8 @@ export function UnifiedAssistantPanel({
   const [researchProgress, setResearchProgress] =
     useState<ResearchProgressData | null>(null);
   const [researchRunning, setResearchRunning] = useState(false);
+  const [researchPanelExpanded, setResearchPanelExpanded] = useState(false);
+  const researchDetailRef = useRef<HTMLDivElement>(null);
   const [generatingResearchNote, setGeneratingResearchNote] = useState(false);
   const [docSummary, setDocSummary] = useState<string | null>(null);
   const [docIssues, setDocIssues] = useState<string[]>([]);
@@ -331,6 +336,7 @@ export function UnifiedAssistantPanel({
   const panelSendActiveRef = useRef(false);
   const forceNewSessionRef = useRef(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const messageListRef = useRef<HTMLDivElement>(null);
   const [vaultFiles, setVaultFiles] = useState<FileListItem[]>([]);
   const [mentionOpen, setMentionOpen] = useState(false);
   const [mentionStart, setMentionStart] = useState(0);
@@ -624,7 +630,7 @@ export function UnifiedAssistantPanel({
       setStreaming(true);
       streamBuf.current = "";
       requestIdRef.current = null;
-    setHarnessRequestId(null);
+      setHarnessRequestId(null);
       panelSendActiveRef.current = true;
       setActionState(buildActionState(intent, "running"));
       setExecutionPlan(null);
@@ -642,8 +648,7 @@ export function UnifiedAssistantPanel({
           webAuthorized: webSearch,
           contextScope,
           sessionId,
-          newSession:
-            options?.startNewSession ?? forceNewSessionRef.current,
+          newSession: options?.startNewSession ?? forceNewSessionRef.current,
           selectedPacketIds:
             selectedPacketIds.length > 0 ? selectedPacketIds : undefined,
         });
@@ -662,7 +667,8 @@ export function UnifiedAssistantPanel({
               (prev?.prompt_tokens ?? 0) + result.usage!.prompt_tokens,
             completion_tokens:
               (prev?.completion_tokens ?? 0) + result.usage!.completion_tokens,
-            total_tokens: (prev?.total_tokens ?? 0) + result.usage!.total_tokens,
+            total_tokens:
+              (prev?.total_tokens ?? 0) + result.usage!.total_tokens,
             prompt_cache_hit_tokens:
               (prev?.prompt_cache_hit_tokens ?? 0) +
               (result.usage!.prompt_cache_hit_tokens ?? 0),
@@ -676,8 +682,11 @@ export function UnifiedAssistantPanel({
           result.tool_results,
         );
         const serverContent = result.content?.trim() ?? "";
-        const finalContent =
-          serverContent.length > 0 ? serverContent : streamBuf.current;
+        const finalContent = resolveAssistantDisplayContent(
+          serverContent,
+          streamBuf.current,
+          toolCalls,
+        );
 
         const evidencePackets = mergeContextPackets(
           packets,
@@ -1065,11 +1074,33 @@ export function UnifiedAssistantPanel({
       const result = response.payload;
       researchRequestIdRef.current = result.request_id;
       setResearchResult(result);
+      setResearchPanelExpanded(false);
       setResearchRunning(false);
       setActionState(buildActionState("research", "completed"));
-      appendAssistantSummary("research");
+      setMessages((prev) => [
+        ...prev,
+        {
+          role: "assistant",
+          content: "",
+          kind: "research",
+          research: result,
+        },
+      ]);
     },
-    [appendAssistantSummary, clearArtifacts, webSearch],
+    [clearArtifacts, webSearch],
+  );
+
+  const handleExpandResearchDetail = useCallback(
+    (_result: ResearchFocusPayload) => {
+      setResearchPanelExpanded(true);
+      requestAnimationFrame(() => {
+        researchDetailRef.current?.scrollIntoView({
+          behavior: "smooth",
+          block: "nearest",
+        });
+      });
+    },
+    [],
   );
 
   const abortResearch = useCallback(async () => {
@@ -1491,8 +1522,12 @@ export function UnifiedAssistantPanel({
         </div>
       ) : null}
 
-      {researchResult ? (
-        <div className="min-h-0 flex-1 overflow-y-auto px-3 pt-3">
+      {researchResult && researchPanelExpanded ? (
+        <div
+          ref={researchDetailRef}
+          className="min-h-0 flex-1 overflow-y-auto px-3 pt-3"
+          data-testid="research-detail-panel"
+        >
           <ResearchFocusView
             result={researchResult}
             generatingNote={generatingResearchNote}
@@ -1605,13 +1640,29 @@ export function UnifiedAssistantPanel({
       ) : null}
 
       <div
+        ref={messageListRef}
         data-testid="ai-message-list"
-        className="flex min-h-0 flex-1 flex-col"
+        className="relative flex min-h-0 flex-1 flex-col"
       >
         <AiMessageList
           messages={messages}
           streaming={streaming}
           onCitationClick={handleCitationClick}
+          onExpandResearch={handleExpandResearchDetail}
+        />
+        <AiMessageSelectionUi
+          messageListRef={messageListRef}
+          streaming={streaming}
+          onQuoteToInput={(text) => {
+            const quoted = text
+              .split("\n")
+              .map((line) => `> ${line}`)
+              .join("\n");
+            setInput((prev) =>
+              prev.trim() ? `${prev.trim()}\n\n${quoted}\n\n` : `${quoted}\n\n`,
+            );
+            textareaRef.current?.focus();
+          }}
         />
       </div>
 
@@ -1630,30 +1681,36 @@ export function UnifiedAssistantPanel({
       ) : null}
 
       <div data-testid="ai-input">
-        <AiComposer
-          value={input}
-          streaming={streaming}
-          disabled={streaming}
-          statusHint={streaming ? activityHint : null}
-          placeholder="输入问题，或直接说明你想查、想改、想检、想整理什么"
+        <AiComposerContextMenu
           textareaRef={textareaRef}
-          onComposerKeyDown={handleComposerKeyDown}
-          onSelect={syncMentionFromInput}
-          onChange={setInput}
-          onSubmit={() => void send()}
-          onStop={stopStreaming}
-          mentionPopover={
-            <AiMentionPopover
-              open={mentionOpen}
-              query={mentionQuery}
-              candidates={mentionCandidates}
-              highlight={mentionHighlight}
-              onHighlight={setMentionHighlight}
-              navDeltaRef={mentionNavDeltaRef}
-              onSelect={selectMention}
-            />
-          }
-        />
+          value={input}
+          onValueChange={setInput}
+        >
+          <AiComposer
+            value={input}
+            streaming={streaming}
+            disabled={streaming}
+            statusHint={streaming ? activityHint : null}
+            placeholder="输入问题，或直接说明你想查、想改、想检、想整理什么"
+            textareaRef={textareaRef}
+            onComposerKeyDown={handleComposerKeyDown}
+            onSelect={syncMentionFromInput}
+            onChange={setInput}
+            onSubmit={() => void send()}
+            onStop={stopStreaming}
+            mentionPopover={
+              <AiMentionPopover
+                open={mentionOpen}
+                query={mentionQuery}
+                candidates={mentionCandidates}
+                highlight={mentionHighlight}
+                onHighlight={setMentionHighlight}
+                navDeltaRef={mentionNavDeltaRef}
+                onSelect={selectMention}
+              />
+            }
+          />
+        </AiComposerContextMenu>
       </div>
 
       <ToolConfirmDialog

@@ -19,8 +19,8 @@ import { SkillsPanel } from "@/components/ai/SkillsPanel";
 import type { WritingEditorContext } from "@/types/ai";
 import { DocumentTitleField } from "@/components/editor/DocumentTitleField";
 import { EditorOutline } from "@/components/editor/EditorOutline";
-import { FloatingToolbar } from "@/components/editor/FloatingToolbar";
 import { TipTapEditor } from "@/components/editor/TipTapEditor";
+import { IrisContextMenu } from "@/components/ui/iris-context-menu";
 import { BacklinksPanel } from "@/components/file/BacklinksPanel";
 import { ConflictDialog } from "@/components/file/ConflictDialog";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
@@ -38,6 +38,7 @@ import { WelcomeEmpty } from "@/components/layout/WelcomeEmpty";
 import { TagView } from "@/components/tag/TagView";
 import { Button } from "@/components/ui/button";
 import { useAppKeyboard } from "@/hooks/useAppKeyboard";
+import { useEditorContextMenu } from "@/hooks/useEditorContextMenu";
 import { useAutoVaultIndex } from "@/hooks/useAutoVaultIndex";
 import { useEditorSave } from "@/hooks/useEditorSave";
 import { useOpenNote } from "@/hooks/useOpenNote";
@@ -52,8 +53,10 @@ import { useTheme } from "@/hooks/useTheme";
 import { useVault } from "@/hooks/useVault";
 import {
   buildCommandPaletteItems,
+  recordCommandUsage,
   type CommandPaletteItem,
 } from "@/lib/command-palette";
+import { runEditorAction } from "@/lib/editor-action-executor";
 import { resolveNoteDisplayTitle } from "@/lib/note-display";
 import { splitFrontmatter } from "@/lib/frontmatter";
 import { settingsGet, settingsSet, versionSaveManual } from "@/lib/ipc";
@@ -87,7 +90,8 @@ const OUTLINE_OPEN_KEY = "iris-outline-open";
 function loadOutlineOpen(): boolean {
   try {
     return localStorage.getItem(OUTLINE_OPEN_KEY) !== "false";
-  } catch {
+  } catch (e) {
+    console.warn("[App] localStorage read failed:", e);
     return true;
   }
 }
@@ -95,8 +99,8 @@ function loadOutlineOpen(): boolean {
 function saveOutlineOpen(open: boolean): void {
   try {
     localStorage.setItem(OUTLINE_OPEN_KEY, open ? "true" : "false");
-  } catch {
-    /* ignore */
+  } catch (e) {
+    console.warn("[App] localStorage write failed:", e);
   }
 }
 
@@ -139,6 +143,7 @@ function App() {
     useState<AssistantSelectionQuote | null>(null);
   const [assistantPrefill, setAssistantPrefill] = useState<string | null>(null);
   const [aiStatus, setAiStatus] = useState("AI 空闲");
+  const [keyboardLeaderPending, setKeyboardLeaderPending] = useState(false);
   const [zen, setZen] = useState(false);
   const [outlineOpen, setOutlineOpen] = useState(loadOutlineOpen);
   const [vaultIndexEpoch, setVaultIndexEpoch] = useState(0);
@@ -295,28 +300,6 @@ function App() {
     void rescanVault("manual");
   }, [rescanVault]);
 
-  useAppKeyboard({
-    overlays,
-    activePathRef,
-    onSaveVersion: () => void handleSaveVersion(),
-    onCloseTab: closeTab,
-    onToggleAiPanel: () => setAiPanelOpen((open) => !open),
-    onToggleZen: () => setZen((z) => !z),
-    onToggleOutline: () => {
-      setOutlineOpen((open) => {
-        const next = !open;
-        saveOutlineOpen(next);
-        return next;
-      });
-    },
-    onToggleWebSearch: toggleWebSearch,
-    onRescanVault: handleVaultRescan,
-    zoomIn,
-    zoomOut,
-    resetZoom,
-    vaultPath,
-  });
-
   const applyMarkdownToEditor = useCallback(
     (content: string) => {
       markdownRef.current = content;
@@ -359,12 +342,39 @@ function App() {
       if (!ed || !path) return;
       const { from, to } = ed.state.selection;
       const text = ed.state.doc.textBetween(from, to, "\n");
-      if (!text) return;
+      if (!text) {
+        setAiStatus("请先在编辑器中选中文本");
+        return;
+      }
       setSelectionQuote({ filePath: path, text });
       setAssistantPrefill(options?.prefill ?? null);
       setAiPanelOpen(true);
     },
     [activePathRef],
+  );
+
+  const editorActionHandlers = useMemo(
+    () => ({
+      onInlineAi: (action: string) => runInlineAi(action),
+      onSlashCommand: (command: string) => handleSlashCommand(command),
+      onSendToAi: (options?: { prefill?: string }) =>
+        sendSelectionToAi(options),
+      onStatus: (message: string) => setAiStatus(message),
+    }),
+    [handleSlashCommand, runInlineAi, sendSelectionToAi],
+  );
+
+  const runEditorActionById = useCallback(
+    (actionId: string) => {
+      void runEditorAction(actionId, editorRef.current, editorActionHandlers);
+    },
+    [editorActionHandlers],
+  );
+
+  const editorContextMenu = useEditorContextMenu(
+    editorInstance,
+    Boolean(activePath),
+    () => setAiStatus("选区 AI：请使用右键菜单"),
   );
 
   const commandPaletteItems = useMemo(
@@ -379,12 +389,7 @@ function App() {
   const handleCommandPaletteSelect = useCallback(
     (item: CommandPaletteItem) => {
       const action = item.action;
-      if (
-        action.type === "openOverlay" &&
-        action.overlay === "commandPalette"
-      ) {
-        return;
-      }
+      recordCommandUsage(item.id);
       overlays.closeOverlay("commandPalette");
       switch (action.type) {
         case "openOverlay":
@@ -433,6 +438,8 @@ function App() {
         case "sendSelectionToAi":
           sendSelectionToAi();
           break;
+        case "noop":
+          break;
         default: {
           const _exhaustive: never = action;
           return _exhaustive;
@@ -455,6 +462,14 @@ function App() {
       toggleWebSearch,
     ],
   );
+
+  useAppKeyboard({
+    items: commandPaletteItems,
+    vaultPath,
+    activePathRef,
+    onAction: handleCommandPaletteSelect,
+    onLeaderPendingChange: setKeyboardLeaderPending,
+  });
 
   const activeDocumentTitle = useMemo(() => {
     if (!activePath) return null;
@@ -567,7 +582,8 @@ function App() {
                     />
                   }
                   onDirty={handleDirty}
-                  onSlashCommand={handleSlashCommand}
+                  onSlashCommand={runEditorActionById}
+                  onBodyContextMenu={editorContextMenu.handleContextMenu}
                   onEditorReady={handleEditorReady}
                   onInlineAiRetry={(ed) => void inlineAi.retry(ed)}
                   onOpenWikiLink={(title) => void openFile(`${title}.md`)}
@@ -589,10 +605,13 @@ function App() {
                 onNew={() => void handleNewNote()}
               />
             )}
-            <FloatingToolbar
-              editor={editorRef.current}
-              onInlineAi={(a) => void runInlineAi(a)}
-              onSendToAi={(options) => sendSelectionToAi(options)}
+            <IrisContextMenu
+              open={editorContextMenu.menu.open}
+              x={editorContextMenu.menu.x}
+              y={editorContextMenu.menu.y}
+              groups={editorContextMenu.groups}
+              onSelect={runEditorActionById}
+              onClose={editorContextMenu.close}
             />
           </div>
         }
@@ -635,6 +654,7 @@ function App() {
               splitFrontmatter(markdown).body.replace(/\s+/g, "").length
             }
             aiStatus={aiStatus}
+            keyboardLeaderPending={keyboardLeaderPending}
             editorZoom={editorZoom}
             onEditorZoomIn={zoomIn}
             onEditorZoomOut={zoomOut}

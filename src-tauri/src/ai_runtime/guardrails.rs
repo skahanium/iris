@@ -3,8 +3,13 @@
 //! Phase A: skeleton — defines the guard interface and basic checks.
 //! Phase C: full prompt injection detection and citation verification.
 
+use std::sync::LazyLock;
+
 use crate::ai_runtime::ContextPacket;
 use serde::{Deserialize, Serialize};
+
+static RE_CITATION: LazyLock<regex::Regex> =
+    LazyLock::new(|| regex::Regex::new(r"\[(\d+|[^\]]+)\]").expect("citation regex"));
 
 /// 检测结果，用于所有 guard 检查的返回值。
 ///
@@ -152,10 +157,7 @@ pub fn perform_citation_verification(
     let mut found_citations = Vec::new();
     let mut missing_citations = Vec::new();
 
-    // Extract citation patterns from response
-    // Pattern: [1], [2], etc. or [citation_label]
-    let citation_regex = regex::Regex::new(r"\[(\d+|[^\]]+)\]").unwrap();
-    let response_citations: Vec<String> = citation_regex
+    let response_citations: Vec<String> = RE_CITATION
         .captures_iter(response_text)
         .map(|cap| cap[1].to_string())
         .collect();
@@ -405,7 +407,10 @@ mod tests {
     fn citation_verification_handles_cjk_truncation_without_panic() {
         let text = "从他的经历来看，他是在 **2017年**（约8年前）开始做短视频，后来转型吃播，推测大概在 **30～40岁** 之间，但这只是估计，没有确凿出处";
         let verification = perform_citation_verification(text, &[]);
-        assert!(verification.unsupported_claims.iter().all(|c| !c.is_empty()));
+        assert!(verification
+            .unsupported_claims
+            .iter()
+            .all(|c| !c.is_empty()));
     }
 
     #[test]

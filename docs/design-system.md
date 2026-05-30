@@ -137,25 +137,29 @@
 
 ## Chrome 控件选型
 
-| 场景       | 形态                                                                |
-| ---------- | ------------------------------------------------------------------- |
-| AI 场景    | `SceneSelector` 弹出（图标 + 描述）                                 |
-| AI 发送    | `AiComposer` 多行；Enter 发送、Shift+Enter 换行                     |
-| 证据包     | 可折叠 Section 标题 + badge                                         |
-| 状态栏缩放 | Popover 滑块/步进（非三个并排按钮）                                 |
-| 连通性     | 两枚 8px 圆点成组（LLM · 联网）；灰 / emerald / sky（`--status-*`） |
-| 命令列表   | `CommandListOption` + `Kbd`；Lucide 图标                            |
-| `/` 菜单   | 与命令列表同组件，禁止 emoji 图标                                   |
-| 选区 AI    | 水平 pill 组 +「更多」                                              |
+| 场景        | 形态                                                                |
+| ----------- | ------------------------------------------------------------------- |
+| AI 场景     | `SceneSelector` 弹出（图标 + 描述）                                 |
+| AI 发送     | `AiComposer` 多行；Enter 发送、Shift+Enter 换行                     |
+| 证据包      | 可折叠 Section 标题 + badge                                         |
+| 状态栏缩放  | Popover 滑块/步进（非三个并排按钮）                                 |
+| 连通性      | 两枚 8px 圆点成组（LLM · 联网）；灰 / emerald / sky（`--status-*`） |
+| 命令列表    | `CommandListOption` + `Kbd`；Lucide 图标                            |
+| `/` 菜单    | `IrisSurfaceMenu`；仅文档级命令；有选区时提示用右键（非命令面板）   |
+| 选区 AI     | **右键为主**；`editor-actions` 注册表；无自动浮动条                 |
+| 右键菜单    | `iris_only`：`IrisContextMenu` + `IrisSurfaceMenu` 分组             |
+| AI 消息选区 | 仅右键：复制、引用到输入；选区高亮限制在 `.ai-message-body` 内      |
+| AI 输入框   | 右键仅剪贴板（复制/粘贴/全选），不含润色类动作                      |
 
-主路径保留可见控件或快捷键；StatusBar 避免超过 3 个并排 icon-only 按钮。
+主路径保留可见控件或快捷键；StatusBar 避免超过 3 个并排 icon-only 按钮。写作型 AI **不**进入 ⌘⇧P 命令面板。
 
 ---
 
 ## AI 组件
 
 - **引用卡**：`border-border`，`rounded-lg`，细 primary 边
-- **对话泡**：用户 `bg-muted/60`，助手 `border` + `bg-card/60`，`rounded-lg`
+- **对话泡**：`AiMessageBubble` — 用户轻底、助手细边框；壳层 `overflow-hidden`；流式左边线 `--ai-stream-pulse`
+- **研究结果卡**：时间线内 `ResearchResultMessage`；详情展开 `ResearchFocusView`
 - **流式节点**：与 primary 同系，无紫色渐变
 
 ---

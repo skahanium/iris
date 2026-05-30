@@ -9,12 +9,58 @@ export function isModKey(e: KeyboardEvent): boolean {
   return e.ctrlKey || e.metaKey;
 }
 
+export interface KeyChord {
+  key: string;
+  mod: boolean;
+  shift?: boolean;
+  requireNote?: boolean;
+  requireVault?: boolean;
+  /** 引导键标识符（如 ⌘K）：按下后进入等待态，不直接分发 */
+  leader?: string;
+  /** 仅在指定引导键后被激活 */
+  afterLeader?: string;
+}
+
+export function matchesKeyChord(e: KeyboardEvent, chord: KeyChord): boolean {
+  if (chord.mod !== isModKey(e)) return false;
+  if ((chord.shift ?? false) !== e.shiftKey) return false;
+  const pressed = e.key;
+  if (pressed === chord.key || pressed.toLowerCase() === chord.key.toLowerCase()) return true;
+  // Zoom in: same physical key produces + or = depending on layout
+  if (chord.key === "+" && pressed === "=") return true;
+  if (chord.key === "=" && pressed === "+") return true;
+  return false;
+}
+
+function isMacPlatform(): boolean {
+  return (
+    typeof navigator !== "undefined" &&
+    /Mac|iPhone|iPad|iPod/.test(navigator.platform)
+  );
+}
+
+export function formatShortcut(chord: KeyChord): string {
+  const isMac = isMacPlatform();
+  const parts: string[] = [];
+  if (chord.mod) parts.push(isMac ? "⌘" : "Ctrl");
+  if (chord.shift) parts.push(isMac ? "⇧" : "Shift");
+  parts.push(chord.key);
+  return parts.join(isMac ? "" : "+");
+}
+
+/** Leader 第二键展示，如 ⌘K W */
+export function formatLeaderChordShortcut(
+  leaderKey: string,
+  secondKey: string,
+): string {
+  const isMac = isMacPlatform();
+  const leader = isMac ? `⌘${leaderKey}` : `Ctrl+${leaderKey}`;
+  return `${leader} ${secondKey.toUpperCase()}`;
+}
+
 /** 状态栏等处的命令面板快捷键展示 */
 export function formatCommandPaletteShortcut(): string {
-  const isMac =
-    typeof navigator !== "undefined" &&
-    /Mac|iPhone|iPad|iPod/.test(navigator.platform);
-  return isMac ? "⌘⇧P" : "Ctrl+Shift+P";
+  return formatShortcut({ key: "P", mod: true, shift: true });
 }
 
 export interface DebouncedFn<T extends (...args: never[]) => void> {

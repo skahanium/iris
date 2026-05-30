@@ -8,7 +8,7 @@ use crate::ai_runtime::retrieval_scope::RetrievalScope;
 use crate::ai_runtime::{AiScene, ContextPacket, ToolCallResult};
 use crate::app::AppState;
 use crate::error::{AppError, AppResult};
-use crate::storage::paths::resolve_vault_path;
+use crate::storage::paths::{is_user_note_path, resolve_vault_path};
 
 /// Context passed into tool dispatch.
 pub struct ToolDispatchContext<'a> {
@@ -137,7 +137,7 @@ async fn hybrid_search(
             template: false,
         },
     };
-    let packets = state.db.with_conn(|conn| {
+    let packets = state.db.with_read_conn(|conn| {
         let request = RetrievalRequest {
             query: query.to_string(),
             max_results: limit,
@@ -162,7 +162,7 @@ async fn regulation_lookup(
         .as_str()
         .ok_or_else(|| AppError::msg("missing article"))?;
     let query = format!("《{regulation_name}》{article}");
-    let packets = state.db.with_conn(|conn| {
+    let packets = state.db.with_read_conn(|conn| {
         let request = RetrievalRequest {
             query,
             max_results: 3,
@@ -210,6 +210,9 @@ async fn read_note(state: &AppState, args: &serde_json::Value) -> AppResult<serd
     let path = args["path"]
         .as_str()
         .ok_or_else(|| AppError::msg("missing path"))?;
+    if !is_user_note_path(path) {
+        return Err(AppError::msg("只能读取用户笔记，不允许访问内部元数据路径"));
+    }
     let vault = state.vault_path()?;
     let abs = resolve_vault_path(&vault, path)?;
     let content = std::fs::read_to_string(abs)?;
@@ -226,7 +229,7 @@ async fn read_note(state: &AppState, args: &serde_json::Value) -> AppResult<serd
 async fn list_vault(state: &AppState, args: &serde_json::Value) -> AppResult<serde_json::Value> {
     let prefix = args["prefix"].as_str().unwrap_or("");
     let limit = args["limit"].as_u64().unwrap_or(50) as usize;
-    let items = state.db.with_conn(|conn| {
+    let items = state.db.with_read_conn(|conn| {
         let mut stmt = conn.prepare(
             "SELECT path, title FROM files
              WHERE id IN (SELECT MAX(id) FROM files GROUP BY path)
@@ -251,6 +254,9 @@ async fn get_outline(state: &AppState, args: &serde_json::Value) -> AppResult<se
     let path = args["path"]
         .as_str()
         .ok_or_else(|| AppError::msg("missing path"))?;
+    if !is_user_note_path(path) {
+        return Err(AppError::msg("只能读取用户笔记，不允许访问内部元数据路径"));
+    }
     let vault = state.vault_path()?;
     let abs = resolve_vault_path(&vault, path)?;
     let content = std::fs::read_to_string(abs)?;
@@ -276,7 +282,7 @@ async fn get_backlinks(state: &AppState, args: &serde_json::Value) -> AppResult<
     let path = args["path"]
         .as_str()
         .ok_or_else(|| AppError::msg("missing path"))?;
-    let entries = state.db.with_conn(|conn| {
+    let entries = state.db.with_read_conn(|conn| {
         let mut stmt = conn.prepare(
             "SELECT f.path, f.title, l.context
              FROM links l
@@ -305,7 +311,7 @@ async fn get_block_links(
         .as_str()
         .ok_or_else(|| AppError::msg("missing note_path"))?;
     let _vault: &Path = &state.vault_path()?;
-    let links = state.db.with_conn(|conn| {
+    let links = state.db.with_read_conn(|conn| {
         let file_id: Option<i64> = conn
             .query_row("SELECT id FROM files WHERE path = ?1", [note_path], |r| {
                 r.get(0)

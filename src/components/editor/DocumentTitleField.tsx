@@ -1,5 +1,7 @@
 import type { Editor } from "@tiptap/react";
-import type { RefObject } from "react";
+import { useRef, type RefObject } from "react";
+
+import { DocumentTitleContextMenu } from "@/components/editor/DocumentTitleContextMenu";
 
 import {
   NOTE_TITLE_HARD_LIMIT,
@@ -27,6 +29,7 @@ export function DocumentTitleField({
   placeholder = "无标题",
   className,
 }: DocumentTitleFieldProps) {
+  const inputRef = useRef<HTMLInputElement>(null);
   const len = value.length;
   const showCount = len > NOTE_TITLE_SOFT_LIMIT;
 
@@ -41,21 +44,27 @@ export function DocumentTitleField({
   };
 
   return (
-    <div
-      className={cn("iris-document-title-field iris-doc-title-wrap", className)}
-      data-testid="document-title-field"
+    <DocumentTitleContextMenu
+      inputRef={inputRef}
+      value={value}
+      onValueChange={commit}
     >
-      <input
-        type="text"
-        data-testid="document-title"
-        className="iris-doc-title"
-        value={value}
-        disabled={disabled}
-        placeholder={placeholder}
-        aria-label="文档标题"
-        onChange={(event) => commit(event.target.value)}
-        onBlur={onBlur}
-        onKeyDown={(event) => {
+      <div
+        className={cn("iris-document-title-field iris-doc-title-wrap", className)}
+        data-testid="document-title-field"
+      >
+        <input
+          ref={inputRef}
+          type="text"
+          data-testid="document-title"
+          className="iris-doc-title"
+          value={value}
+          disabled={disabled}
+          placeholder={placeholder}
+          aria-label="文档标题"
+          onChange={(event) => commit(event.target.value)}
+          onBlur={onBlur}
+          onKeyDown={(event) => {
           if (event.key === "Enter") {
             event.preventDefault();
             const ed = editorRef.current;
@@ -76,8 +85,8 @@ export function DocumentTitleField({
           const merged = sanitizeDocumentTitleInput(value + pasted);
           commit(merged);
         }}
-      />
-      {showCount ? (
+        />
+        {showCount ? (
         <span
           className={cn(
             "iris-doc-title-count",
@@ -92,7 +101,8 @@ export function DocumentTitleField({
         >
           {len}/{NOTE_TITLE_HARD_LIMIT}
         </span>
-      ) : null}
-    </div>
+        ) : null}
+      </div>
+    </DocumentTitleContextMenu>
   );
 }

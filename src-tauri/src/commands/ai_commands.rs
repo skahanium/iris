@@ -403,11 +403,7 @@ pub async fn tool_confirm(
     modified_args: Option<serde_json::Value>,
 ) -> AppResult<serde_json::Value> {
     if decision == "reject" {
-        state
-            .pending_tool_calls
-            .lock()
-            .unwrap()
-            .remove(&tool_call_id);
+        crate::llm::safe_lock(&state.pending_tool_calls).remove(&tool_call_id);
         return Ok(serde_json::json!({
             "request_id": request_id,
             "tool_call_id": tool_call_id,
@@ -415,12 +411,7 @@ pub async fn tool_confirm(
         }));
     }
 
-    // Retrieve and remove the pending tool call
-    let pending = state
-        .pending_tool_calls
-        .lock()
-        .unwrap()
-        .remove(&tool_call_id);
+    let pending = crate::llm::safe_lock(&state.pending_tool_calls).remove(&tool_call_id);
     let Some(pending) = pending else {
         return Err(AppError::msg(format!(
             "no pending tool call for id: {tool_call_id}"
@@ -596,10 +587,7 @@ pub async fn session_list(
 
 /// Delete a session by id.
 #[tauri::command]
-pub async fn session_delete(
-    state: State<'_, Arc<AppState>>,
-    session_id: i64,
-) -> AppResult<bool> {
+pub async fn session_delete(state: State<'_, Arc<AppState>>, session_id: i64) -> AppResult<bool> {
     SessionManager::delete_session(&state.db, session_id)
 }
 
@@ -625,7 +613,9 @@ pub async fn session_load(
 
 /// List installed skills (global + vault).
 #[tauri::command]
-pub async fn skills_list(state: State<'_, Arc<AppState>>) -> AppResult<Vec<crate::ai_runtime::skills::SkillEntry>> {
+pub async fn skills_list(
+    state: State<'_, Arc<AppState>>,
+) -> AppResult<Vec<crate::ai_runtime::skills::SkillEntry>> {
     let vault = state.vault_path()?;
     crate::ai_runtime::skills::scan_all(&vault)
 }
@@ -656,15 +646,18 @@ pub async fn skills_install(
             Ok(serde_json::to_value(entry).unwrap_or_default())
         }
         "git" => {
-            let entries =
-                install_from_git(&request.path_or_url, request.subpath.as_deref(), scope, &vault)
-                    .await?;
+            let entries = install_from_git(
+                &request.path_or_url,
+                request.subpath.as_deref(),
+                scope,
+                &vault,
+            )
+            .await?;
             Ok(serde_json::to_value(entries).unwrap_or_default())
         }
         "local" => {
             let path = std::path::PathBuf::from(&request.path_or_url);
-            let entry =
-                crate::ai_runtime::skills::install_from_local(&path, scope, &vault)?;
+            let entry = crate::ai_runtime::skills::install_from_local(&path, scope, &vault)?;
             Ok(serde_json::to_value(entry).unwrap_or_default())
         }
         other => Err(AppError::msg(format!("unknown install source: {other}"))),
@@ -721,13 +714,10 @@ pub async fn prompt_profile_set(
 
 /// List built-in prompt profile presets.
 #[tauri::command]
-pub fn prompt_profile_presets(
-) -> Vec<serde_json::Value> {
+pub fn prompt_profile_presets() -> Vec<serde_json::Value> {
     crate::ai_runtime::prompt_profile::preset_templates()
         .into_iter()
-        .map(|(label, profile)| {
-            serde_json::json!({ "label": label, "profile": profile })
-        })
+        .map(|(label, profile)| serde_json::json!({ "label": label, "profile": profile }))
         .collect()
 }
 
@@ -795,18 +785,26 @@ pub struct SkillsWriteRequest {
 
 /// Read SKILL.md content for in-app editing.
 #[tauri::command]
-pub async fn skills_read(request: SkillsReadRequest) -> AppResult<String> {
+pub async fn skills_read(
+    state: State<'_, Arc<AppState>>,
+    request: SkillsReadRequest,
+) -> AppResult<String> {
     let path = std::path::PathBuf::from(&request.file_path);
+    let vault = state.vault_path()?;
+    crate::ai_runtime::skills::validate_skill_path(&path, &vault)?;
     crate::ai_runtime::skills::read_skill_content(&path)
 }
 
 /// Write SKILL.md content after editing.
 #[tauri::command]
 pub async fn skills_write(
+    state: State<'_, Arc<AppState>>,
     request: SkillsWriteRequest,
 ) -> AppResult<serde_json::Value> {
     use crate::ai_runtime::skills::{write_skill_content, SkillScope};
     let path = std::path::PathBuf::from(&request.file_path);
+    let vault = state.vault_path()?;
+    crate::ai_runtime::skills::validate_skill_path(&path, &vault)?;
     let scope = if request.scope == "vault" {
         SkillScope::Vault
     } else {

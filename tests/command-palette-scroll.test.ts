@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { ensureOptionVisible } from "@/lib/command-palette-scroll";
 
-function mockViewport(scrollTop = 0, clientHeight = 200) {
+function mockViewport(scrollTop = 0, clientHeight = 100) {
   const el = document.createElement("div");
   let top = scrollTop;
   Object.defineProperty(el, "scrollTop", {

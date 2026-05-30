@@ -1,5 +1,5 @@
 /**
- * 将候选项滚入可视区；优先 `scrollIntoView(nearest)` 减少边界处过度滚动。
+ * 将候选项滚入可视区；在指定 viewport 上手动设置 scrollTop（避免 scrollIntoView 与 Radix 冲突）。
  * @param direction 键盘方向；0 表示鼠标悬停，不强制滚动。
  */
 export function ensureOptionVisible(
@@ -22,30 +22,11 @@ export function ensureOptionVisible(
     return;
   }
 
-  if (typeof el.scrollIntoView === "function") {
-    el.scrollIntoView({
-      block: "nearest",
-      inline: "nearest",
-      behavior: "auto",
-    });
-    return;
-  }
-
   if (overflowTop > 0 && overflowBottom > 0) {
-    if (direction > 0) {
-      viewport.scrollTop += overflowBottom;
-    } else {
-      viewport.scrollTop -= overflowTop;
-    }
-    return;
-  }
-
-  if (overflowTop > 0) {
+    viewport.scrollTop += direction > 0 ? overflowBottom : -overflowTop;
+  } else if (overflowTop > 0) {
     viewport.scrollTop -= overflowTop;
-    return;
-  }
-
-  if (overflowBottom > 0) {
+  } else if (overflowBottom > 0) {
     viewport.scrollTop += overflowBottom;
   }
 }

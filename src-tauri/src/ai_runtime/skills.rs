@@ -175,11 +175,7 @@ fn parse_frontmatter(raw: &str) -> (std::collections::HashMap<String, String>, S
 }
 
 /// Install skill from HTTP(S) URL (raw SKILL.md or GitHub raw link).
-pub async fn install_from_url(
-    url: &str,
-    scope: SkillScope,
-    vault: &Path,
-) -> AppResult<SkillEntry> {
+pub async fn install_from_url(url: &str, scope: SkillScope, vault: &Path) -> AppResult<SkillEntry> {
     let client = reqwest::Client::new();
     let resp = client
         .get(url)
@@ -224,16 +220,20 @@ pub async fn install_from_git(
 ) -> AppResult<Vec<SkillEntry>> {
     let tmp = std::env::temp_dir().join(format!("iris-skill-{}", uuid::Uuid::new_v4()));
     let status = std::process::Command::new("git")
-        .args(["clone", "--depth", "1", repo_url, tmp.to_str().unwrap_or("")])
+        .args([
+            "clone",
+            "--depth",
+            "1",
+            repo_url,
+            tmp.to_str().unwrap_or(""),
+        ])
         .status()
         .map_err(|e| AppError::msg(format!("git not available: {e}")))?;
     if !status.success() {
         return Err(AppError::msg("git clone failed"));
     }
 
-    let src = subpath
-        .map(|p| tmp.join(p))
-        .unwrap_or_else(|| tmp.clone());
+    let src = subpath.map(|p| tmp.join(p)).unwrap_or_else(|| tmp.clone());
 
     let base = match scope {
         SkillScope::Global => global_skills_dir(),
@@ -243,11 +243,7 @@ pub async fn install_from_git(
 
     let mut installed = Vec::new();
     if src.join("SKILL.md").is_file() {
-        let name = slugify(
-            src.file_name()
-                .and_then(|s| s.to_str())
-                .unwrap_or("skill"),
-        );
+        let name = slugify(src.file_name().and_then(|s| s.to_str()).unwrap_or("skill"));
         let dest = base.join(name);
         copy_dir_recursive(&src, &dest)?;
         let skill_path = dest.join("SKILL.md");
@@ -305,12 +301,7 @@ pub fn uninstall(name: &str, scope: SkillScope, vault: &Path) -> AppResult<()> {
     Ok(())
 }
 
-pub fn set_enabled(
-    name: &str,
-    scope: SkillScope,
-    vault: &Path,
-    enabled: bool,
-) -> AppResult<()> {
+pub fn set_enabled(name: &str, scope: SkillScope, vault: &Path, enabled: bool) -> AppResult<()> {
     let mut config = load_config(scope, vault);
     let key = skill_key(scope, name);
     if enabled {
@@ -322,7 +313,7 @@ pub fn set_enabled(
 }
 
 /// Filter enabled skills by optional trigger / scene affinity.
-pub fn skills_for_scene<'a>(skills: &'a [SkillEntry], scene: AiScene) -> Vec<&'a SkillEntry> {
+pub fn skills_for_scene(skills: &[SkillEntry], scene: AiScene) -> Vec<&SkillEntry> {
     let scene_key = scene.profile();
     skills
         .iter()
@@ -363,11 +354,7 @@ pub fn inject_into_prompt(skills: &[SkillEntry], scene: AiScene) -> String {
 }
 
 /// Install SKILL.md from a local file path (copies into skills directory).
-pub fn install_from_local(
-    source: &Path,
-    scope: SkillScope,
-    vault: &Path,
-) -> AppResult<SkillEntry> {
+pub fn install_from_local(source: &Path, scope: SkillScope, vault: &Path) -> AppResult<SkillEntry> {
     if !source.is_file() {
         return Err(AppError::msg("本地安装需要 SKILL.md 文件路径"));
     }
@@ -381,7 +368,7 @@ pub fn install_from_local(
                 .parent()
                 .and_then(|p| p.file_name())
                 .and_then(|s| s.to_str())
-                .map(|s| slugify(s))
+                .map(slugify)
         })
         .unwrap_or_else(|| format!("skill-{}", uuid::Uuid::new_v4()));
 
@@ -400,17 +387,34 @@ pub fn install_from_local(
     Ok(entry)
 }
 
+/// Validate that a path is under a known skills directory (global or vault).
+pub fn validate_skill_path(path: &Path, vault: &Path) -> AppResult<()> {
+    let canonical = path
+        .canonicalize()
+        .map_err(|_| AppError::msg("Skill 文件路径无效或不存在"))?;
+    let global_dir = global_skills_dir();
+    let vault_dir = vault_skills_dir(vault);
+
+    let under_global = global_dir
+        .canonicalize()
+        .is_ok_and(|g| canonical.starts_with(&g));
+    let under_vault = vault_dir
+        .canonicalize()
+        .is_ok_and(|v| canonical.starts_with(&v));
+
+    if !under_global && !under_vault {
+        return Err(AppError::msg("Skill 文件路径必须在已知的 skills 目录下"));
+    }
+    Ok(())
+}
+
 /// Read skill file content for editing.
 pub fn read_skill_content(path: &Path) -> AppResult<String> {
     fs::read_to_string(path).map_err(Into::into)
 }
 
 /// Write updated skill content (must be `SKILL.md`).
-pub fn write_skill_content(
-    path: &Path,
-    scope: SkillScope,
-    content: &str,
-) -> AppResult<SkillEntry> {
+pub fn write_skill_content(path: &Path, scope: SkillScope, content: &str) -> AppResult<SkillEntry> {
     if path.file_name().and_then(|n| n.to_str()) != Some("SKILL.md") {
         return Err(AppError::msg("只能写入 SKILL.md"));
     }

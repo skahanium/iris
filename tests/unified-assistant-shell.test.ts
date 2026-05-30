@@ -35,12 +35,22 @@ describe("unified assistant shell", () => {
     expect(source).not.toContain("setIdentity");
   });
 
-  it("floating toolbar routes inline edits through the editor stream hook", () => {
-    const source = read("src/components/editor/FloatingToolbar.tsx");
+  it("editor context menu routes selection AI through runEditorAction", () => {
+    expect(read("src/App.tsx")).not.toContain("FloatingToolbar");
+    expect(read("src/lib/editor-actions.ts")).toContain("send_prefill");
+    expect(read("src/lib/editor-action-executor.ts")).toContain("onInlineAi");
+    expect(read("src/hooks/useEditorContextMenu.ts")).toContain("context_menu");
+  });
 
-    expect(source).not.toContain("insertInlineAi");
-    expect(source).toContain("onInlineAi(action)");
-    expect(source).toContain("prefill");
+  it("research results appear in message timeline", () => {
+    const panel = read("src/components/ai/UnifiedAssistantPanel.tsx");
+    expect(panel).toContain('kind: "research"');
+    expect(panel).toContain("onExpandResearch");
+    const list = read("src/components/ai/AiMessageList.tsx");
+    expect(list).toContain("ResearchResultMessage");
+    expect(read("src/components/ai/ResearchResultMessage.tsx")).toContain(
+      'data-testid="research-result-message"',
+    );
   });
 
   it("settings panel hosts identity, rules, and model config", () => {

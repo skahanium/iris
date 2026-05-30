@@ -33,6 +33,43 @@ const MIGRATION_012_DOWN: &str = include_str!("../../migrations/012_session_titl
 const MIGRATION_013_UP: &str = include_str!("../../migrations/013_ai_trace_checkpoint.sql");
 const MIGRATION_013_DOWN: &str = include_str!("../../migrations/013_ai_trace_checkpoint.down.sql");
 
+fn is_applied(conn: &Connection, name: &str) -> bool {
+    conn.query_row(
+        "SELECT COUNT(*) FROM _migrations WHERE name = ?1",
+        [name],
+        |row| row.get::<_, i64>(0),
+    )
+    .map(|c| c > 0)
+    .unwrap_or(false)
+}
+
+fn apply_migration(conn: &Connection, name: &str, sql: &str, best_effort: bool) -> AppResult<()> {
+    if is_applied(conn, name) {
+        return Ok(());
+    }
+    conn.execute_batch("BEGIN")?;
+    let exec_result = conn.execute_batch(sql);
+    match exec_result {
+        Ok(()) => {
+            conn.execute(
+                "INSERT INTO _migrations (name, applied_at) VALUES (?1, datetime('now'))",
+                [name],
+            )?;
+            conn.execute_batch("COMMIT")?;
+            Ok(())
+        }
+        Err(e) => {
+            let _ = conn.execute_batch("ROLLBACK");
+            if best_effort {
+                tracing::warn!("best-effort migration '{name}' failed (skipped): {e}");
+                Ok(())
+            } else {
+                Err(AppError::msg(format!("migration '{name}' failed: {e}")))
+            }
+        }
+    }
+}
+
 /// Apply core schema migrations idempotently.
 pub fn migrate_up(conn: &Connection) -> AppResult<()> {
     conn.execute_batch(
@@ -43,272 +80,47 @@ pub fn migrate_up(conn: &Connection) -> AppResult<()> {
         );",
     )?;
 
-    let applied: bool = conn
-        .query_row(
-            "SELECT COUNT(*) FROM _migrations WHERE name = '001_core'",
-            [],
-            |row| row.get::<_, i64>(0),
-        )
-        .map(|c| c > 0)
-        .unwrap_or(false);
-
-    if !applied {
-        conn.execute_batch(MIGRATION_UP)?;
-        conn.execute(
-            "INSERT INTO _migrations (name, applied_at) VALUES ('001_core', datetime('now'))",
-            [],
-        )?;
-    }
-
-    // Migration 002: sqlite-vec (best-effort; fails gracefully if sqlite-vec not loaded)
-    let vec_applied: bool = conn
-        .query_row(
-            "SELECT COUNT(*) FROM _migrations WHERE name = '002_vec'",
-            [],
-            |row| row.get::<_, i64>(0),
-        )
-        .map(|c| c > 0)
-        .unwrap_or(false);
-
-    if !vec_applied {
-        let _ = conn.execute_batch(MIGRATION_002_UP);
-        let _ = conn.execute(
-            "INSERT INTO _migrations (name, applied_at) VALUES ('002_vec', datetime('now'))",
-            [],
-        );
-    }
-
-    // Migration 003: version snapshots
-    let v3_applied: bool = conn
-        .query_row(
-            "SELECT COUNT(*) FROM _migrations WHERE name = '003_versions'",
-            [],
-            |row| row.get::<_, i64>(0),
-        )
-        .map(|c| c > 0)
-        .unwrap_or(false);
-
-    if !v3_applied {
-        conn.execute_batch(MIGRATION_003_UP)?;
-        conn.execute(
-            "INSERT INTO _migrations (name, applied_at) VALUES ('003_versions', datetime('now'))",
-            [],
-        )?;
-    }
-
-    let v4_applied: bool = conn
-        .query_row(
-            "SELECT COUNT(*) FROM _migrations WHERE name = '004_files_dedupe'",
-            [],
-            |row| row.get::<_, i64>(0),
-        )
-        .map(|c| c > 0)
-        .unwrap_or(false);
-
-    if !v4_applied {
-        conn.execute_batch(MIGRATION_004_UP)?;
-        conn.execute(
-            "INSERT INTO _migrations (name, applied_at) VALUES ('004_files_dedupe', datetime('now'))",
-            [],
-        )?;
-    }
-
-    let v5_applied: bool = conn
-        .query_row(
-            "SELECT COUNT(*) FROM _migrations WHERE name = '005_drop_iris_metadata_files'",
-            [],
-            |row| row.get::<_, i64>(0),
-        )
-        .map(|c| c > 0)
-        .unwrap_or(false);
-
-    if !v5_applied {
-        conn.execute_batch(MIGRATION_005_UP)?;
-        conn.execute(
-            "INSERT INTO _migrations (name, applied_at) VALUES ('005_drop_iris_metadata_files', datetime('now'))",
-            [],
-        )?;
-    }
-
-    let v6_applied: bool = conn
-        .query_row(
-            "SELECT COUNT(*) FROM _migrations WHERE name = '006_versions_kind'",
-            [],
-            |row| row.get::<_, i64>(0),
-        )
-        .map(|c| c > 0)
-        .unwrap_or(false);
-
-    if !v6_applied {
-        conn.execute_batch(MIGRATION_006_UP)?;
-        conn.execute(
-            "INSERT INTO _migrations (name, applied_at) VALUES ('006_versions_kind', datetime('now'))",
-            [],
-        )?;
-    }
-
-    let v7_applied: bool = conn
-        .query_row(
-            "SELECT COUNT(*) FROM _migrations WHERE name = '007_recycle_bin'",
-            [],
-            |row| row.get::<_, i64>(0),
-        )
-        .map(|c| c > 0)
-        .unwrap_or(false);
-
-    if !v7_applied {
-        conn.execute_batch(MIGRATION_007_UP)?;
-        conn.execute(
-            "INSERT INTO _migrations (name, applied_at) VALUES ('007_recycle_bin', datetime('now'))",
-            [],
-        )?;
-    }
-
-    let v8_applied: bool = conn
-        .query_row(
-            "SELECT COUNT(*) FROM _migrations WHERE name = '008_chunks_char_count'",
-            [],
-            |row| row.get::<_, i64>(0),
-        )
-        .map(|c| c > 0)
-        .unwrap_or(false);
-
-    if !v8_applied {
-        conn.execute_batch(MIGRATION_008_UP)?;
-        conn.execute(
-            "INSERT INTO _migrations (name, applied_at) VALUES ('008_chunks_char_count', datetime('now'))",
-            [],
-        )?;
-    }
-
-    let v9_applied: bool = conn
-        .query_row(
-            "SELECT COUNT(*) FROM _migrations WHERE name = '009_ai_runtime'",
-            [],
-            |row| row.get::<_, i64>(0),
-        )
-        .map(|c| c > 0)
-        .unwrap_or(false);
-
-    if !v9_applied {
-        conn.execute_batch(MIGRATION_009_UP)?;
-        conn.execute(
-            "INSERT INTO _migrations (name, applied_at) VALUES ('009_ai_runtime', datetime('now'))",
-            [],
-        )?;
-    }
-
-    let v10_applied: bool = conn
-        .query_row(
-            "SELECT COUNT(*) FROM _migrations WHERE name = '010_knowledge_index'",
-            [],
-            |row| row.get::<_, i64>(0),
-        )
-        .map(|c| c > 0)
-        .unwrap_or(false);
-
-    if !v10_applied {
-        let _ = conn.execute_batch(MIGRATION_010_UP);
-        let _ = conn.execute(
-            "INSERT INTO _migrations (name, applied_at) VALUES ('010_knowledge_index', datetime('now'))",
-            [],
-        );
-    }
-
-    let v11_applied: bool = conn
-        .query_row(
-            "SELECT COUNT(*) FROM _migrations WHERE name = '011_eval_results'",
-            [],
-            |row| row.get::<_, i64>(0),
-        )
-        .map(|c| c > 0)
-        .unwrap_or(false);
-
-    if !v11_applied {
-        let _ = conn.execute_batch(MIGRATION_011_UP);
-        let _ = conn.execute(
-            "INSERT INTO _migrations (name, applied_at) VALUES ('011_eval_results', datetime('now'))",
-            [],
-        );
-    }
-
-    let v12_applied: bool = conn
-        .query_row(
-            "SELECT COUNT(*) FROM _migrations WHERE name = '012_session_title'",
-            [],
-            |row| row.get::<_, i64>(0),
-        )
-        .map(|c| c > 0)
-        .unwrap_or(false);
-
-    if !v12_applied {
-        let _ = conn.execute_batch(MIGRATION_012_UP);
-        let _ = conn.execute(
-            "INSERT INTO _migrations (name, applied_at) VALUES ('012_session_title', datetime('now'))",
-            [],
-        );
-    }
-
-    let v13_applied: bool = conn
-        .query_row(
-            "SELECT COUNT(*) FROM _migrations WHERE name = '013_ai_trace_checkpoint'",
-            [],
-            |row| row.get::<_, i64>(0),
-        )
-        .map(|c| c > 0)
-        .unwrap_or(false);
-
-    if !v13_applied {
-        let _ = conn.execute_batch(MIGRATION_013_UP);
-        let _ = conn.execute(
-            "INSERT INTO _migrations (name, applied_at) VALUES ('013_ai_trace_checkpoint', datetime('now'))",
-            [],
-        );
-    }
+    apply_migration(conn, "001_core", MIGRATION_UP, false)?;
+    apply_migration(conn, "002_vec", MIGRATION_002_UP, true)?;
+    apply_migration(conn, "003_versions", MIGRATION_003_UP, false)?;
+    apply_migration(conn, "004_files_dedupe", MIGRATION_004_UP, false)?;
+    apply_migration(
+        conn,
+        "005_drop_iris_metadata_files",
+        MIGRATION_005_UP,
+        false,
+    )?;
+    apply_migration(conn, "006_versions_kind", MIGRATION_006_UP, false)?;
+    apply_migration(conn, "007_recycle_bin", MIGRATION_007_UP, false)?;
+    apply_migration(conn, "008_chunks_char_count", MIGRATION_008_UP, false)?;
+    apply_migration(conn, "009_ai_runtime", MIGRATION_009_UP, false)?;
+    apply_migration(conn, "010_knowledge_index", MIGRATION_010_UP, true)?;
+    apply_migration(conn, "011_eval_results", MIGRATION_011_UP, true)?;
+    apply_migration(conn, "012_session_title", MIGRATION_012_UP, true)?;
+    apply_migration(conn, "013_ai_trace_checkpoint", MIGRATION_013_UP, true)?;
 
     Ok(())
 }
 
-/// Roll back all migrations (for tests).
+fn rollback_migration(conn: &Connection, name: &str, sql: &str) {
+    let _ = conn.execute_batch(sql);
+    let _ = conn.execute("DELETE FROM _migrations WHERE name = ?1", [name]);
+}
+
+/// Roll back all migrations in strict reverse order (for tests).
 pub fn migrate_down(conn: &Connection) -> AppResult<()> {
-    let _ = conn.execute_batch(MIGRATION_011_DOWN);
-    let _ = conn.execute(
-        "DELETE FROM _migrations WHERE name = '011_eval_results'",
-        [],
-    );
-    let _ = conn.execute_batch(MIGRATION_009_DOWN);
-    let _ = conn.execute("DELETE FROM _migrations WHERE name = '009_ai_runtime'", []);
-    let _ = conn.execute_batch(MIGRATION_010_DOWN);
-    let _ = conn.execute(
-        "DELETE FROM _migrations WHERE name = '010_knowledge_index'",
-        [],
-    );
-    let _ = conn.execute_batch(MIGRATION_008_DOWN);
-    let _ = conn.execute(
-        "DELETE FROM _migrations WHERE name = '008_chunks_char_count'",
-        [],
-    );
-    let _ = conn.execute_batch(MIGRATION_007_DOWN);
-    let _ = conn.execute("DELETE FROM _migrations WHERE name = '007_recycle_bin'", []);
-    let _ = conn.execute_batch(MIGRATION_006_DOWN);
-    let _ = conn.execute(
-        "DELETE FROM _migrations WHERE name = '006_versions_kind'",
-        [],
-    );
-    let _ = conn.execute_batch(MIGRATION_005_DOWN);
-    let _ = conn.execute(
-        "DELETE FROM _migrations WHERE name = '005_drop_iris_metadata_files'",
-        [],
-    );
-    let _ = conn.execute_batch(MIGRATION_004_DOWN);
-    let _ = conn.execute(
-        "DELETE FROM _migrations WHERE name = '004_files_dedupe'",
-        [],
-    );
-    let _ = conn.execute_batch(MIGRATION_003_DOWN);
-    let _ = conn.execute("DELETE FROM _migrations WHERE name = '003_versions'", []);
-    let _ = conn.execute_batch(MIGRATION_002_DOWN);
-    let _ = conn.execute("DELETE FROM _migrations WHERE name = '002_vec'", []);
+    rollback_migration(conn, "013_ai_trace_checkpoint", MIGRATION_013_DOWN);
+    rollback_migration(conn, "012_session_title", MIGRATION_012_DOWN);
+    rollback_migration(conn, "011_eval_results", MIGRATION_011_DOWN);
+    rollback_migration(conn, "010_knowledge_index", MIGRATION_010_DOWN);
+    rollback_migration(conn, "009_ai_runtime", MIGRATION_009_DOWN);
+    rollback_migration(conn, "008_chunks_char_count", MIGRATION_008_DOWN);
+    rollback_migration(conn, "007_recycle_bin", MIGRATION_007_DOWN);
+    rollback_migration(conn, "006_versions_kind", MIGRATION_006_DOWN);
+    rollback_migration(conn, "005_drop_iris_metadata_files", MIGRATION_005_DOWN);
+    rollback_migration(conn, "004_files_dedupe", MIGRATION_004_DOWN);
+    rollback_migration(conn, "003_versions", MIGRATION_003_DOWN);
+    rollback_migration(conn, "002_vec", MIGRATION_002_DOWN);
     conn.execute_batch(MIGRATION_DOWN)?;
     conn.execute("DELETE FROM _migrations WHERE name = '001_core'", [])?;
     Ok(())
@@ -347,7 +159,10 @@ mod tests {
         // Second call should not fail
         migrate_up(&conn).unwrap();
 
-        // Verify 002 migration was recorded
+        // Migration 002 is best-effort (depends on sqlite-vec).
+        // If sqlite-vec is not loaded, it should NOT be marked as applied.
+        // If sqlite-vec IS loaded, it should be marked as applied.
+        // Either way, migrate_up should succeed without error.
         let applied: bool = conn
             .query_row(
                 "SELECT COUNT(*) FROM _migrations WHERE name = '002_vec'",
@@ -356,7 +171,21 @@ mod tests {
             )
             .map(|c| c > 0)
             .unwrap_or(false);
-        assert!(applied);
+
+        // Verify the vec_chunks table exists iff the migration was recorded
+        let table_exists: bool = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='vec_chunks'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .map(|c| c > 0)
+            .unwrap_or(false);
+
+        assert_eq!(
+            applied, table_exists,
+            "migration record and table existence must be consistent"
+        );
     }
 
     #[test]
@@ -616,23 +445,37 @@ mod tests {
         let conn = Connection::open_in_memory().unwrap();
         migrate_up(&conn).unwrap();
 
-        for table in &[
-            "semantic_anchors",
-            "regulation_index",
-            "genre_templates",
-            "block_links",
-        ] {
-            let has: bool = conn
-                .query_row(
-                    &format!(
-                        "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='{table}'"
-                    ),
-                    [],
-                    |row| row.get::<_, i64>(0),
-                )
-                .map(|c| c > 0)
-                .unwrap();
-            assert!(has, "missing {table}");
+        // Migration 010 is best-effort (depends on sqlite-vec for vec_anchors).
+        // If sqlite-vec is not loaded, the entire migration fails and no tables are created.
+        // Check if the migration was applied before asserting table existence.
+        let applied: bool = conn
+            .query_row(
+                "SELECT COUNT(*) FROM _migrations WHERE name = '010_knowledge_index'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .map(|c| c > 0)
+            .unwrap_or(false);
+
+        if applied {
+            for table in &[
+                "semantic_anchors",
+                "regulation_index",
+                "genre_templates",
+                "block_links",
+            ] {
+                let has: bool = conn
+                    .query_row(
+                        &format!(
+                            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='{table}'"
+                        ),
+                        [],
+                        |row| row.get::<_, i64>(0),
+                    )
+                    .map(|c| c > 0)
+                    .unwrap();
+                assert!(has, "missing {table}");
+            }
         }
     }
 
@@ -640,30 +483,42 @@ mod tests {
     fn migration_010_roundtrip() {
         let conn = Connection::open_in_memory().unwrap();
         migrate_up(&conn).unwrap();
-        let has: bool = conn
+
+        let applied: bool = conn
             .query_row(
-                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='semantic_anchors'",
+                "SELECT COUNT(*) FROM _migrations WHERE name = '010_knowledge_index'",
                 [],
                 |row| row.get::<_, i64>(0),
             )
             .map(|c| c > 0)
-            .unwrap();
-        assert!(has);
+            .unwrap_or(false);
 
-        let _ = conn.execute_batch(MIGRATION_010_DOWN);
-        let _ = conn.execute(
-            "DELETE FROM _migrations WHERE name = '010_knowledge_index'",
-            [],
-        );
+        if applied {
+            let has: bool = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='semantic_anchors'",
+                    [],
+                    |row| row.get::<_, i64>(0),
+                )
+                .map(|c| c > 0)
+                .unwrap();
+            assert!(has);
 
-        let gone: bool = conn
-            .query_row(
-                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='semantic_anchors'",
+            let _ = conn.execute_batch(MIGRATION_010_DOWN);
+            let _ = conn.execute(
+                "DELETE FROM _migrations WHERE name = '010_knowledge_index'",
                 [],
-                |row| row.get::<_, i64>(0),
-            )
-            .map(|c| c > 0)
-            .unwrap();
-        assert!(!gone);
+            );
+
+            let gone: bool = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='semantic_anchors'",
+                    [],
+                    |row| row.get::<_, i64>(0),
+                )
+                .map(|c| c > 0)
+                .unwrap();
+            assert!(!gone);
+        }
     }
 }

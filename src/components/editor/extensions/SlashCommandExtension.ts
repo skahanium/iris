@@ -3,6 +3,9 @@ import { ReactRenderer } from "@tiptap/react";
 import Suggestion, { type SuggestionProps } from "@tiptap/suggestion";
 import tippy, { type Instance as TippyInstance } from "tippy.js";
 
+import { buildSlashItemsFromContext } from "@/lib/slash-commands";
+import { editorHasActiveAiStream } from "@/lib/editor-ai-stream";
+
 import {
   SlashCommandList,
   type SlashCommandListRef,
@@ -11,15 +14,20 @@ import {
 
 export interface SlashCommandOptions {
   onCommand?: (command: string) => void;
+  hasNote?: () => boolean;
 }
 
-const ALL_ITEMS: SlashItem[] = [
-  { id: "summarize", label: "总结", icon: "FileText" },
-  { id: "outline", label: "生成大纲", icon: "ListTree" },
-  { id: "brainstorm", label: "头脑风暴", icon: "Lightbulb" },
-  { id: "fix-grammar", label: "修复语法", icon: "Languages" },
-  { id: "translate", label: "翻译", icon: "Globe" },
-];
+function slashItemsForEditor(
+  editor: import("@tiptap/core").Editor,
+): SlashItem[] {
+  const { from, to } = editor.state.selection;
+  const ctx = {
+    hasNote: true,
+    hasSelection: from !== to,
+    streaming: editorHasActiveAiStream(editor),
+  };
+  return buildSlashItemsFromContext(ctx);
+}
 
 export const SlashCommandExtension = Extension.create<SlashCommandOptions>({
   name: "slashCommand",
@@ -41,20 +49,27 @@ export const SlashCommandExtension = Extension.create<SlashCommandOptions>({
           editor.chain().focus().deleteRange(range).run();
           onCommand?.(item.id);
         },
-        items: ({ query }) =>
-          ALL_ITEMS.filter((i) =>
-            i.label.toLowerCase().includes(query.toLowerCase()),
-          ),
+        items: ({ query, editor: ed }) => {
+          const items = slashItemsForEditor(ed);
+          const q = query.toLowerCase();
+          return items.filter((i) => {
+            const hay = `${i.label} ${i.id} ${i.keywords ?? ""}`.toLowerCase();
+            return hay.includes(q);
+          });
+        },
         render: () => {
           let component: ReactRenderer<SlashCommandListRef> | null = null;
           let popup: TippyInstance[] | null = null;
 
           return {
             onStart: (props: SuggestionProps<SlashItem>) => {
+              const { from, to } = props.editor.state.selection;
+              const selectionHint = from !== to;
               component = new ReactRenderer(SlashCommandList, {
                 props: {
                   items: props.items,
                   command: props.command,
+                  selectionHint,
                 },
                 editor: props.editor,
               });
@@ -72,9 +87,11 @@ export const SlashCommandExtension = Extension.create<SlashCommandOptions>({
               });
             },
             onUpdate(props: SuggestionProps<SlashItem>) {
+              const { from, to } = props.editor.state.selection;
               component?.updateProps({
                 items: props.items,
                 command: props.command,
+                selectionHint: from !== to,
               });
               if (props.clientRect && popup?.[0]) {
                 popup[0].setProps({

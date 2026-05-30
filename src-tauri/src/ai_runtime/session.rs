@@ -59,11 +59,7 @@ pub struct SessionManager;
 impl SessionManager {
     /// 创建新的独立会话（同 scene + 笔记路径下开启新对话线程，不续接旧消息）。
     pub fn create_fresh(db: &Database, scene: AiScene, note_path: Option<&str>) -> AppResult<i64> {
-        let key = format!(
-            "{}#{}",
-            session_key(scene, note_path),
-            uuid::Uuid::new_v4()
-        );
+        let key = format!("{}#{}", session_key(scene, note_path), uuid::Uuid::new_v4());
         let now = chrono::Utc::now().to_rfc3339();
 
         db.with_conn(|conn| {
@@ -300,8 +296,7 @@ impl SessionManager {
                 sql.push_str(" AND note_path = ?");
                 params.push(Box::new(np.to_string()));
             }
-            let param_refs: Vec<&dyn rusqlite::ToSql> =
-                params.iter().map(|p| p.as_ref()).collect();
+            let param_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
             let count = conn.execute(&sql, param_refs.as_slice())?;
             Ok(count as u32)
         })
@@ -405,8 +400,8 @@ mod tests {
         let db = setup_db();
         let sid = SessionManager::create_fresh(&db, AiScene::KnowledgeLookup, None).unwrap();
         SessionManager::append_message(&db, sid, "user", "第一条用户消息用于标题", None).unwrap();
-        let list = SessionManager::list_sessions(&db, Some("knowledge_lookup"), None, 10, 0)
-            .unwrap();
+        let list =
+            SessionManager::list_sessions(&db, Some("knowledge_lookup"), None, 10, 0).unwrap();
         assert!(!list.is_empty());
         assert!(list[0].title.contains("第一条"));
 

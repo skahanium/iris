@@ -452,6 +452,16 @@
     caret-color: hsl(var(--primary));
   }
 
+  .iris-editor-body .ProseMirror ::selection,
+  .ai-message-body ::selection {
+    background: hsl(var(--primary) / 0.22);
+  }
+
+  .iris-editor-body .ProseMirror ::-moz-selection,
+  .ai-message-body ::-moz-selection {
+    background: hsl(var(--primary) / 0.22);
+  }
+
   .iris-editor-title-slot {
     @apply w-full;
   }
@@ -738,7 +748,7 @@
   }
 
   .iris-prose table {
-    @apply my-2.5 block w-full overflow-x-auto border-collapse text-xs;
+    @apply my-2.5 block w-full border-collapse overflow-x-auto text-xs;
   }
   .iris-prose th {
     @apply border border-border bg-muted/50 px-2 py-1 text-left font-semibold;
@@ -752,14 +762,24 @@
     color: hsl(var(--editor-code-fg));
   }
 
-  .ai-msg-user {
-    @apply rounded-lg rounded-br-sm p-2.5 text-foreground;
-    background: hsl(var(--ai-user-bg));
+  .ai-message-bubble {
+    @apply rounded-lg text-foreground;
+    max-width: 100%;
   }
 
-  .ai-msg-assistant {
-    @apply rounded-lg rounded-bl-sm border bg-card/80 p-2.5;
-    border-color: hsl(var(--ai-assistant-border));
+  .ai-message-bubble-user {
+    background: hsl(var(--ai-user-bg) / 0.85);
+    border-radius: 12px 12px 4px 12px;
+  }
+
+  .ai-message-bubble-assistant {
+    @apply border bg-card/60;
+    border-color: hsl(var(--ai-assistant-border) / 0.65);
+    border-radius: 12px 12px 12px 4px;
+  }
+
+  .ai-message-bubble-streaming {
+    box-shadow: inset 3px 0 0 hsl(var(--ai-stream-pulse));
   }
 
   /* ── AI message markdown element styles ── */

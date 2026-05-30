@@ -11,9 +11,7 @@ const MAX_FULL_HISTORY: usize = 4;
 const HISTORY_SUMMARY_THRESHOLD: usize = 10;
 
 /// Compress old history into a single system summary + recent turns.
-pub fn compress_history_messages(
-    history: &[(String, String)],
-) -> Vec<(String, String)> {
+pub fn compress_history_messages(history: &[(String, String)]) -> Vec<(String, String)> {
     if history.len() <= HISTORY_SUMMARY_THRESHOLD {
         return history.to_vec();
     }
@@ -22,14 +20,15 @@ pub fn compress_history_messages(
     let mut summary_parts = Vec::new();
     for (role, content) in old {
         let snippet: String = content.chars().take(80).collect();
-        let suffix = if content.chars().count() > 80 { "…" } else { "" };
+        let suffix = if content.chars().count() > 80 {
+            "…"
+        } else {
+            ""
+        };
         summary_parts.push(format!("{role}: {snippet}{suffix}"));
     }
     let summary = summary_parts.join(" | ");
-    let mut out = vec![(
-        "system".to_string(),
-        format!("[历史摘要] {summary}"),
-    )];
+    let mut out = vec![("system".to_string(), format!("[历史摘要] {summary}"))];
     out.extend(recent.iter().cloned());
     out
 }
@@ -40,7 +39,7 @@ pub fn estimate_tokens(text: &str) -> usize {
 }
 
 /// Compact evidence packets when over budget (keeps metadata for low-score items).
-pub fn compact_evidence(packets: &mut Vec<ContextPacket>, token_budget: usize) {
+pub fn compact_evidence(packets: &mut [ContextPacket], token_budget: usize) {
     if packets.is_empty() {
         return;
     }
@@ -159,7 +158,6 @@ pub fn load_harness_checkpoint(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ai_runtime::{SourceType, TrustLevel};
 
     #[test]
     fn compress_history_keeps_recent() {
@@ -174,9 +172,7 @@ mod tests {
 
     #[test]
     fn extract_thinking() {
-        let (visible, think) = extract_thinking_blocks(
-            "答案<thinking>先检索法规</thinking>因此…",
-        );
+        let (visible, think) = extract_thinking_blocks("答案<thinking>先检索法规</thinking>因此…");
         assert!(visible.contains("答案"));
         assert!(think.unwrap().contains("检索"));
     }
