@@ -58,6 +58,9 @@ pub struct AssistantExecuteRequest {
     pub organize_task_type: Option<String>,
     #[serde(default)]
     pub base_content_hash: Option<String>,
+    /// 为 true 时创建新的 session 线程，不续接同 scene+笔记 的历史消息。
+    #[serde(default)]
+    pub new_session: bool,
 }
 
 /// Tagged union returned to the frontend.
@@ -258,6 +261,7 @@ pub(crate) async fn route_assistant_execute(
                 request.note_path,
                 request.context_scope,
                 Some(request.web_authorized),
+                Some(request.new_session),
             )
             .await?;
             Ok(AssistantExecuteResponse::Chat { payload })

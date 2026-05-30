@@ -15,7 +15,9 @@ import {
   UnifiedAssistantPanel,
   type AssistantSelectionQuote,
 } from "@/components/ai/UnifiedAssistantPanel";
+import { SkillsPanel } from "@/components/ai/SkillsPanel";
 import type { WritingEditorContext } from "@/types/ai";
+import { DocumentTitleField } from "@/components/editor/DocumentTitleField";
 import { EditorOutline } from "@/components/editor/EditorOutline";
 import { FloatingToolbar } from "@/components/editor/FloatingToolbar";
 import { TipTapEditor } from "@/components/editor/TipTapEditor";
@@ -38,6 +40,7 @@ import { Button } from "@/components/ui/button";
 import { useAppKeyboard } from "@/hooks/useAppKeyboard";
 import { useAutoVaultIndex } from "@/hooks/useAutoVaultIndex";
 import { useEditorSave } from "@/hooks/useEditorSave";
+import { useOpenNote } from "@/hooks/useOpenNote";
 import { useEditorZoom } from "@/hooks/useEditorZoom";
 import { useInlineAi } from "@/hooks/useInlineAi";
 import { useConnectivityStatus } from "@/hooks/useConnectivityStatus";
@@ -51,24 +54,9 @@ import {
   buildCommandPaletteItems,
   type CommandPaletteItem,
 } from "@/lib/command-palette";
-import { displayTitleFromMarkdown } from "@/lib/document-title";
 import { resolveNoteDisplayTitle } from "@/lib/note-display";
 import { splitFrontmatter } from "@/lib/frontmatter";
-import {
-  editorHtmlToMarkdown,
-  extractFrontmatterYaml,
-  markdownToEditorHtml,
-} from "@/lib/markdown";
-import { isPlaceholderTitle } from "@/lib/path-sync";
-import {
-  fileRename,
-  pathSyncSuggest,
-  settingsGet,
-  settingsSet,
-  versionSaveManual,
-} from "@/lib/ipc";
-import { noteTitleFromEditor } from "@/lib/note-title";
-import { patchNoteTitleInMarkdown } from "@/lib/patch-note-title";
+import { settingsGet, settingsSet, versionSaveManual } from "@/lib/ipc";
 import { isTauriRuntime } from "@/lib/tauri-runtime";
 import { cn } from "@/lib/utils";
 
@@ -93,10 +81,6 @@ const LazyFallback = () => (
     加载中…
   </div>
 );
-
-function pathStem(path: string): string {
-  return path.replace(/\.md$/i, "").split("/").pop() ?? path;
-}
 
 const OUTLINE_OPEN_KEY = "iris-outline-open";
 
@@ -183,8 +167,8 @@ function App() {
     markDirty,
     markClean,
     updateTabTitle,
+    replaceOpenTabPath,
     setMarkdown,
-    getEditorMarkdown,
   } = useTabManager({
     onStatusChange: setAiStatus,
     onVaultIndexBump: bumpVaultIndex,
@@ -200,42 +184,59 @@ function App() {
 
   const dirtyRef = useRef(false);
 
-  const serializeEditorHtml = useCallback(
-    (html: string) => editorHtmlToMarkdown(html, frontmatterYamlRef.current),
-    [frontmatterYamlRef],
-  );
+  const getLiveMarkdownRef = useRef(() => markdownRef.current);
+
+  const {
+    noteTitle,
+    bodyMarkdown,
+    getLiveMarkdown,
+    applySavedMarkdown,
+    onTitleChange,
+    onTitleBlur,
+    loadBodyIntoEditor,
+  } = useOpenNote({
+    activePath,
+    markdown,
+    activePathRef,
+    markdownRef,
+    frontmatterYamlRef,
+    editorRef,
+    updateTabTitle,
+    replaceOpenTabPath,
+    onMarkdownSynced: setMarkdown,
+  });
+
+  getLiveMarkdownRef.current = getLiveMarkdown;
 
   const { notifyDirty, flushSave } = useEditorSave(
     activePath,
-    editorRef,
+    () => getLiveMarkdownRef.current(),
     (md) => {
-      markdownRef.current = md;
-      frontmatterYamlRef.current = extractFrontmatterYaml(md);
-      setMarkdown(md);
+      applySavedMarkdown(md);
       dirtyRef.current = false;
-      const savedTitle = displayTitleFromMarkdown(md, "");
-      markClean(
-        activePath ?? "",
-        resolveNoteDisplayTitle({
-          path: activePath ?? "",
-          title: savedTitle,
-        }),
-      );
+      const path = activePathRef.current;
+      if (path) {
+        markClean(
+          path,
+          resolveNoteDisplayTitle({
+            path,
+            title: noteTitle,
+          }),
+        );
+      }
     },
-    serializeEditorHtml,
   );
 
-  const { onActivity: resetVersionIdle } = useVersionIdle(
-    activePath,
-    getEditorMarkdown,
+  const { onActivity: resetVersionIdle } = useVersionIdle(activePath, () =>
+    getLiveMarkdownRef.current(),
   );
 
   const handleSaveVersion = useCallback(async () => {
     const path = activePathRef.current;
     if (!path) return;
     await flushSave();
-    await versionSaveManual(path, getEditorMarkdown());
-  }, [flushSave, getEditorMarkdown, activePathRef]);
+    await versionSaveManual(path, getLiveMarkdown());
+  }, [flushSave, getLiveMarkdown, activePathRef]);
 
   const handleDirty = useCallback(() => {
     if (!dirtyRef.current) {
@@ -248,57 +249,15 @@ function App() {
 
   const handleTitleChange = useCallback(
     (raw: string) => {
-      const path = activePathRef.current;
-      if (!path) return;
-      const trimmed = raw.trim();
-      const title = resolveNoteDisplayTitle({
-        path,
-        title: trimmed || tabsRef.current.find((t) => t.path === path)?.title,
-      });
-
-      const patched = patchNoteTitleInMarkdown(markdownRef.current, trimmed);
-      if (patched !== markdownRef.current) {
-        markdownRef.current = patched;
-        frontmatterYamlRef.current = extractFrontmatterYaml(patched);
-        setMarkdown(patched);
-      }
-
-      updateTabTitle(path, title);
+      onTitleChange(raw);
       if (!dirtyRef.current) {
         dirtyRef.current = true;
         markDirty();
       }
       notifyDirty();
-
-      if (!isPlaceholderTitle(title)) {
-        void pathSyncSuggest(path, title)
-          .then((suggest) => {
-            if (!suggest.needs_sync || suggest.suggested_path === path) {
-              return;
-            }
-            const msg = suggest.conflict_resolved
-              ? `路径「${suggest.suggested_path}」已避开同名冲突。是否同步？`
-              : `是否将文件路径同步为「${suggest.suggested_path}」？`;
-            if (!window.confirm(msg)) return;
-            return fileRename(path, suggest.suggested_path).then((entry) =>
-              openFile(entry.path, title),
-            );
-          })
-          .catch(() => {
-            /* 路径同步为可选增强，失败不阻断编辑 */
-          });
-      }
+      resetVersionIdle();
     },
-    [
-      activePathRef,
-      frontmatterYamlRef,
-      markDirty,
-      markdownRef,
-      notifyDirty,
-      openFile,
-      setMarkdown,
-      updateTabTitle,
-    ],
+    [markDirty, notifyDirty, onTitleChange, resetVersionIdle],
   );
 
   const getWritingContext = useCallback((): WritingEditorContext | null => {
@@ -310,9 +269,9 @@ function App() {
       from !== to ? ed.state.doc.textBetween(from, to, "\n") : "";
     return {
       selection,
-      cursorContext: markdownRef.current,
+      cursorContext: getLiveMarkdown(),
     };
-  }, [activePathRef, markdownRef]);
+  }, [activePathRef, getLiveMarkdown]);
 
   const getParagraphText = useCallback((): string | null => {
     const ed = editorRef.current;
@@ -360,22 +319,11 @@ function App() {
 
   const applyMarkdownToEditor = useCallback(
     (content: string) => {
-      frontmatterYamlRef.current = extractFrontmatterYaml(content);
       markdownRef.current = content;
-      const path = activePathRef.current;
-      const stem = path ? pathStem(path) : "";
-      const titleFallback =
-        displayTitleFromMarkdown(content, stem) ||
-        tabsRef.current.find((t) => t.path === path)?.title ||
-        stem;
-      if (editorRef.current) {
-        editorRef.current.commands.setContent(
-          markdownToEditorHtml(content, titleFallback),
-          false,
-        );
-      }
+      loadBodyIntoEditor(content);
+      setMarkdown(content);
     },
-    [frontmatterYamlRef, markdownRef, activePathRef],
+    [loadBodyIntoEditor, markdownRef, setMarkdown],
   );
 
   useEffect(() => {
@@ -390,7 +338,7 @@ function App() {
   const runInlineAi = useCallback(
     (action: string) => {
       const ed = editorRef.current;
-      if (!ed || ed.isActive("noteTitle")) return;
+      if (!ed) return;
       void inlineAi.run(ed, action);
     },
     [inlineAi],
@@ -399,9 +347,9 @@ function App() {
   const handleSlashCommand = useCallback(
     (command: string) => {
       if (!editorRef.current) return;
-      void inlineAi.runSlash(editorRef.current, command, markdownRef.current);
+      void inlineAi.runSlash(editorRef.current, command, getLiveMarkdown());
     },
-    [inlineAi, markdownRef],
+    [getLiveMarkdown, inlineAi],
   );
 
   const sendSelectionToAi = useCallback(
@@ -510,29 +458,11 @@ function App() {
 
   const activeDocumentTitle = useMemo(() => {
     if (!activePath) return null;
-    const tabTitle = tabs.find((t) => t.path === activePath)?.title;
-    if (editorInstance && editorRef.current) {
-      const live = noteTitleFromEditor(editorRef.current).trim();
-      if (live) {
-        return resolveNoteDisplayTitle({
-          path: activePath,
-          title: live,
-        });
-      }
-    }
     return resolveNoteDisplayTitle({
       path: activePath,
-      title: tabTitle,
+      title: noteTitle || tabs.find((t) => t.path === activePath)?.title,
     });
-  }, [activePath, tabs, editorInstance]);
-
-  const editorTitleFallback = useMemo(() => {
-    if (!activePath) return "无标题1";
-    return resolveNoteDisplayTitle({
-      path: activePath,
-      title: tabs.find((t) => t.path === activePath)?.title,
-    });
-  }, [activePath, tabs]);
+  }, [activePath, noteTitle, tabs]);
 
   if (!isTauriRuntime()) {
     return (
@@ -625,11 +555,17 @@ function App() {
               <ErrorBoundary scope="编辑器">
                 <TipTapEditor
                   key={activePath}
-                  initialMarkdown={markdown}
-                  titleFallback={editorTitleFallback}
+                  initialBodyMarkdown={bodyMarkdown}
                   zen={zen}
                   zoom={editorZoom}
-                  onTitleChange={handleTitleChange}
+                  titleSlot={
+                    <DocumentTitleField
+                      value={noteTitle}
+                      onChange={handleTitleChange}
+                      onBlur={onTitleBlur}
+                      editorRef={editorRef}
+                    />
+                  }
                   onDirty={handleDirty}
                   onSlashCommand={handleSlashCommand}
                   onEditorReady={handleEditorReady}
@@ -746,6 +682,10 @@ function App() {
                 onThemeChange={(t) => void setTheme(t)}
               />
             </Suspense>
+            <SkillsPanel
+              open={overlays.skillsOpen}
+              onClose={() => overlays.closeOverlay("skills")}
+            />
             <BacklinksPanel
               open={overlays.backlinksOpen}
               onClose={() => overlays.closeOverlay("backlinks")}

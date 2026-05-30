@@ -112,8 +112,7 @@ export const AiStreamExtension = Node.create<AiStreamOptions>({
     return {
       insertAiStreamForSelection:
         ({ originalText, action }) =>
-        ({ commands, editor }) => {
-          if (editor.isActive("noteTitle")) return false;
+        ({ commands }) => {
           return commands.insertContent({
             type: this.name,
             attrs: {
@@ -127,8 +126,7 @@ export const AiStreamExtension = Node.create<AiStreamOptions>({
 
       insertAiStreamAtCursor:
         ({ originalText, action }) =>
-        ({ chain, state, editor }) => {
-          if (editor.isActive("noteTitle")) return false;
+        ({ chain, state }) => {
           const { from } = state.selection;
           return chain()
             .insertContentAt(from, {

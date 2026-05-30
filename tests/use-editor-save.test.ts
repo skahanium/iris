@@ -1,4 +1,3 @@
-import type { Editor } from "@tiptap/react";
 import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -21,20 +20,13 @@ vi.mock("@/lib/ipc", () => ({
   versionSaveIdle: (...args: unknown[]) => versionSaveIdle(...args),
 }));
 
-vi.mock("@/lib/markdown", () => ({
-  htmlToMarkdown: () => "# saved\n\nSubstantive body.",
-  stripLeadingBodyTitleHeading: (body: string) => body,
-}));
-
 function TestHarness({
   onReady,
 }: {
   onReady: (api: { notifyDirty: () => void }) => void;
 }) {
-  const editorRef = {
-    current: { getHTML: () => "<p>x</p>" } as Editor,
-  };
-  const { notifyDirty } = useEditorSave("note.md", editorRef);
+  const getMarkdown = () => '---\ntitle: "x"\n---\n\nSubstantive body.';
+  const { notifyDirty } = useEditorSave("note.md", getMarkdown);
   onReady({ notifyDirty });
   return null;
 }
@@ -89,7 +81,7 @@ describe("useEditorSave", () => {
     expect(fileWrite).toHaveBeenCalledTimes(1);
     expect(fileWrite).toHaveBeenCalledWith(
       "note.md",
-      "# saved\n\nSubstantive body.",
+      '---\ntitle: "x"\n---\n\nSubstantive body.',
     );
     expect(versionSaveManual).not.toHaveBeenCalled();
     expect(versionSaveIdle).not.toHaveBeenCalled();

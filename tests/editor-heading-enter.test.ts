@@ -4,13 +4,11 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { HeadingFoldExtension } from "@/components/editor/extensions/HeadingFoldExtension";
 import { IrisDocument } from "@/components/editor/extensions/IrisDocument";
-import { NoteTitleExtension } from "@/components/editor/extensions/NoteTitleExtension";
 
 function createIrisEditor(content: object) {
   return new Editor({
     extensions: [
       IrisDocument,
-      NoteTitleExtension,
       StarterKit.configure({
         document: false,
         codeBlock: false,
@@ -45,7 +43,6 @@ describe("editor heading Enter behavior", () => {
     editor = createIrisEditor({
       type: "doc",
       content: [
-        { type: "noteTitle", content: [{ type: "text", text: "文档名" }] },
         {
           type: "heading",
           attrs: { level: 1 },
@@ -55,43 +52,20 @@ describe("editor heading Enter behavior", () => {
       ],
     });
 
-    const headingStart = blockPos(editor, 1);
+    const headingStart = blockPos(editor, 0);
     editor.commands.setTextSelection(headingStart + 2);
     expect(editor.commands.splitBlock()).toBe(true);
 
-    const heading = editor.state.doc.child(1);
+    const heading = editor.state.doc.child(0);
     expect(heading.type.name).toBe("heading");
     expect(heading.textContent.length).toBeLessThan("章节标题".length);
-    expect(editor.state.doc.childCount).toBeGreaterThanOrEqual(3);
-  });
-
-  it("exits noteTitle to the body block after the title", () => {
-    editor = createIrisEditor({
-      type: "doc",
-      content: [
-        { type: "noteTitle", content: [{ type: "text", text: "我的笔记" }] },
-        { type: "paragraph" },
-      ],
-    });
-
-    editor.commands.setTextSelection(blockPos(editor, 0) + 2);
-    const afterTitle = editor.state.selection.$from.after();
-    expect(
-      editor
-        .chain()
-        .setTextSelection(afterTitle + 1)
-        .focus()
-        .run(),
-    ).toBe(true);
-    expect(editor.state.selection.$from.parent.type.name).toBe("paragraph");
-    expect(editor.state.doc.child(0).textContent).toBe("我的笔记");
+    expect(editor.state.doc.childCount).toBeGreaterThanOrEqual(2);
   });
 
   it("allows splitBlock at end of section h1", () => {
     editor = createIrisEditor({
       type: "doc",
       content: [
-        { type: "noteTitle" },
         {
           type: "heading",
           attrs: { level: 1 },
@@ -100,8 +74,8 @@ describe("editor heading Enter behavior", () => {
       ],
     });
 
-    const heading = editor.state.doc.child(1);
-    const endInside = blockPos(editor, 1) + heading.textContent.length;
+    const heading = editor.state.doc.child(0);
+    const endInside = blockPos(editor, 0) + heading.textContent.length;
     editor.commands.setTextSelection(endInside);
     expect(editor.commands.splitBlock()).toBe(true);
     expect(editor.state.doc.childCount).toBeGreaterThanOrEqual(2);

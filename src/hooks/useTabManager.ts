@@ -10,6 +10,7 @@ import { fileRead } from "@/lib/ipc";
 import { createDefaultNote } from "@/lib/note-create";
 import { discardEmptyNoteIfNeeded } from "@/lib/note-tab-lifecycle";
 import { resolveNoteDisplayTitle } from "@/lib/note-display";
+import { mergeTabsAfterPathRename } from "@/lib/note-tab-rename";
 
 interface UseTabManagerOptions {
   onStatusChange?: (status: string) => void;
@@ -158,7 +159,7 @@ export function useTabManager(options: UseTabManagerOptions = {}) {
     );
   }, []);
 
-  /** 更新标签标题并标记为未保存（用于 noteTitle 行编辑） */
+  /** 更新标签标题并标记为未保存（用于文档标题字段编辑） */
   const updateTabTitle = useCallback((path: string, title: string) => {
     const displayTitle = resolveNoteDisplayTitle({ path, title });
     setTabs((prev) =>
@@ -167,6 +168,26 @@ export function useTabManager(options: UseTabManagerOptions = {}) {
       ),
     );
   }, []);
+
+  /** 重命名已打开笔记的路径（不重新读盘，保留内存中的编辑内容） */
+  const replaceOpenTabPath = useCallback(
+    (oldPath: string, newPath: string, title?: string) => {
+      if (oldPath === newPath) return;
+      const displayTitle = title
+        ? resolveNoteDisplayTitle({ path: newPath, title })
+        : undefined;
+      setTabs((prev) =>
+        mergeTabsAfterPathRename(prev, oldPath, newPath, displayTitle),
+      );
+      if (activePathRef.current === oldPath) {
+        // 路径变更会 remount 编辑器（key=path），须先同步内存正文避免从陈旧 state 恢复
+        setMarkdown(markdownRef.current);
+        activePathRef.current = newPath;
+        setActivePath(newPath);
+      }
+    },
+    [],
+  );
 
   const markClean = useCallback((path: string, title?: string) => {
     const displayTitle = title
@@ -204,6 +225,7 @@ export function useTabManager(options: UseTabManagerOptions = {}) {
     markDirty,
     markClean,
     updateTabTitle,
+    replaceOpenTabPath,
     getEditorMarkdown,
   };
 }

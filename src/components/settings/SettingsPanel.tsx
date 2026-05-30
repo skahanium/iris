@@ -4,6 +4,7 @@ import { LlmRoutingSection } from "@/components/settings/LlmRoutingSection";
 import { MinimaxSearchSection } from "@/components/settings/MinimaxSearchSection";
 import { AiRulesPanel } from "@/components/ai/AiRulesPanel";
 import { AssistantIdentitySection } from "@/components/settings/AssistantIdentitySection";
+import { PromptProfileSection } from "@/components/settings/PromptProfileSection";
 import { Button } from "@/components/ui/button";
 import { IrisOverlay } from "@/components/ui/iris-overlay";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -56,6 +57,9 @@ export function SettingsPanel({
               AI 助手
             </h3>
             <AssistantIdentitySection />
+            <div className="mt-4 border-t border-border/60 pt-4">
+              <PromptProfileSection />
+            </div>
           </section>
 
           <section>

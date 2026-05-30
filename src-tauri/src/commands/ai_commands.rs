@@ -6,11 +6,12 @@
 use crate::ai_runtime::{
     context_planner::plan_context,
     guardrails::{self, GuardResult},
-    model_gateway::{GatewayRequest, LlmMessage, MessageRole, ModelGateway},
+    harness::{run_harness, HarnessRunInput},
+    model_gateway::ModelGateway,
     packet_builder::{build_context_packets, max_results_from_budget, ContextBuildOptions},
     retrieval_scope::ContextScopeDto,
     scene_router::resolve_scene,
-    session::SessionManager,
+    session::{SessionManager, SessionMessage, SessionSummary},
     tool_executor::ToolRegistry,
     trace::{TraceRecorder, TraceStatus},
     AiScene, AssembledContext,
@@ -128,8 +129,10 @@ pub(crate) async fn execute_ai_send_message(
     note_path: Option<String>,
     context_scope: Option<ContextScopeDto>,
     web_search: Option<bool>,
+    new_session: Option<bool>,
 ) -> AppResult<serde_json::Value> {
     let web_search = web_search.unwrap_or(false);
+    let new_session = new_session.unwrap_or(false);
     let request_id = uuid::Uuid::new_v4().to_string();
     let scene: AiScene = serde_json::from_str(&format!("\"{scene}\""))
         .map_err(|e| AppError::msg(format!("invalid scene: {e}")))?;
@@ -138,6 +141,13 @@ pub(crate) async fn execute_ai_send_message(
 
     // Start trace
     TraceRecorder::start(&state.db, &request_id, scene)?;
+
+    app_handle
+        .emit(
+            "ai:request_started",
+            &serde_json::json!({ "request_id": request_id }),
+        )
+        .map_err(|e| AppError::msg(format!("emit request_started: {e}")))?;
 
     // Sanitize query for injection attempts
     match guardrails::sanitize_query(&message) {
@@ -166,8 +176,10 @@ pub(crate) async fn execute_ai_send_message(
         GuardResult::Pass => {}
     }
 
-    // Ensure session
-    let sid = if let Some(id) = session_id {
+    // Ensure session（新对话线程 vs 续接同 key 的历史）
+    let sid = if new_session {
+        SessionManager::create_fresh(&state.db, scene, note_path.as_deref())?
+    } else if let Some(id) = session_id {
         id
     } else {
         SessionManager::ensure(&state.db, scene, note_path.as_deref())?
@@ -230,153 +242,78 @@ pub(crate) async fn execute_ai_send_message(
         packets
     };
 
-    // Cache-friendly stable prefix + session history (variable content in history tail)
-    let mut messages = ModelGateway::build_stable_prefix(scene, &filtered_packets, &[], web_search);
+    let note_title = note_path.as_ref().and_then(|p| {
+        state
+            .db
+            .with_conn(|conn| {
+                Ok(conn
+                    .query_row(
+                        "SELECT title FROM files WHERE path = ?1",
+                        [p.as_str()],
+                        |r| r.get::<_, String>(0),
+                    )
+                    .ok())
+            })
+            .ok()
+            .flatten()
+    });
 
-    for msg in &history {
-        let role = match msg.role.as_str() {
-            "user" => MessageRole::User,
-            "assistant" => MessageRole::Assistant,
-            "tool" => MessageRole::Tool,
-            _ => MessageRole::User,
-        };
-        messages.push(LlmMessage {
-            role,
-            content: msg.content.clone(),
-            tool_call_id: None,
-            tool_calls: None,
-        });
-    }
-
-    let mut web_search_meta = None;
-    if web_search {
-        for msg in messages.iter_mut().rev() {
-            if matches!(msg.role, MessageRole::User) {
-                let (prefixed, meta) = crate::llm::search_web::prepend_web_search_context_for_db(
-                    &state.db,
-                    &msg.content,
-                )
-                .await?;
-                msg.content = prefixed;
-                web_search_meta = Some(meta);
-                break;
-            }
-        }
-    }
+    let history_messages: Vec<(String, String)> = history
+        .iter()
+        .map(|m| (m.role.clone(), m.content.clone()))
+        .collect();
 
     let provider_config = resolved.to_provider_config(scene);
+    let provider_name = provider_config.name.clone();
 
-    // Build tool definitions
-    let registry = ToolRegistry::new();
-    let scene_tools: Vec<_> = registry.for_scene(scene).into_iter().cloned().collect();
-    let llm_tools = ModelGateway::tools_to_llm_format(&scene_tools);
-
-    // Build gateway request
-    let gateway_request = GatewayRequest {
-        provider: provider_config,
-        messages,
-        tools: llm_tools,
-        max_tokens: Some(resolved.output_budget),
-        temperature: Some(0.7),
-        stream: true,
-    };
-
-    // Update trace status
     TraceRecorder::update_status(&state.db, &request_id, TraceStatus::ContextAssembled)?;
 
-    // Create model gateway and send request
-    let provider_name = gateway_request.provider.name.clone();
-    let gateway =
-        ModelGateway::with_defaults(app_handle.clone(), vec![gateway_request.provider.clone()])?;
+    let harness_result = run_harness(
+        state,
+        app_handle,
+        HarnessRunInput {
+            request_id: request_id.clone(),
+            scene,
+            session_id: sid,
+            note_path: note_path.clone(),
+            note_title,
+            selection_excerpt: None,
+            cold_start_packets: filtered_packets.clone(),
+            web_search_enabled: web_search,
+            history_messages,
+            depth: 0,
+            resume_from_checkpoint: false,
+        },
+        provider_config,
+        Some(resolved.output_budget),
+    )
+    .await?;
 
-    let response = gateway
-        .send_streaming_request(&request_id, gateway_request)
-        .await?;
-
-    // Update trace with model info
     TraceRecorder::update_status(&state.db, &request_id, TraceStatus::ModelCalled)?;
 
-    // Process tool calls if any
-    let mut tool_results = Vec::new();
-    if !response.tool_calls.is_empty() {
-        TraceRecorder::update_status(&state.db, &request_id, TraceStatus::Streaming)?;
-
-        for tool_call in &response.tool_calls {
-            // Check if tool requires confirmation
-            if registry.requires_confirmation(&tool_call.function.name) {
-                // Store pending tool call for later confirmation
-                state.pending_tool_calls.lock().unwrap().insert(
-                    tool_call.id.clone(),
-                    crate::app::PendingToolCall {
-                        tool_name: tool_call.function.name.clone(),
-                        arguments: tool_call.function.arguments.clone(),
-                        request_id: request_id.clone(),
-                    },
-                );
-
-                // Emit tool confirmation request to frontend
-                let confirm_request = serde_json::json!({
-                    "request_id": request_id,
-                    "tool_call_id": tool_call.id,
-                    "tool_name": tool_call.function.name,
-                    "arguments": serde_json::from_str::<serde_json::Value>(&tool_call.function.arguments).unwrap_or_default(),
-                });
-
-                app_handle
-                    .emit("ai:tool_confirm_request", &confirm_request)
-                    .map_err(|e| AppError::msg(format!("failed to emit tool confirm: {}", e)))?;
-
-                tool_results.push(serde_json::json!({
-                    "tool_call_id": tool_call.id,
-                    "status": "pending_confirmation",
-                }));
-            } else {
-                // Auto-execute read-only tools
-                let result = execute_tool_auto(
-                    state,
-                    scene,
-                    &tool_call.function.name,
-                    &tool_call.function.arguments,
-                )
-                .await?;
-
-                tool_results.push(serde_json::json!({
-                    "tool_call_id": tool_call.id,
-                    "status": "completed",
-                    "result": result,
-                }));
-            }
-        }
-    }
-
-    // Save assistant message
-    let assistant_content = response.content.clone().unwrap_or_default();
-    let tool_calls_value: Option<serde_json::Value> = if response.tool_calls.is_empty() {
+    let tool_calls_value: Option<serde_json::Value> = if harness_result.tool_calls.is_empty() {
         None
     } else {
-        Some(serde_json::to_value(&response.tool_calls).unwrap_or_default())
+        Some(serde_json::to_value(&harness_result.tool_calls).unwrap_or_default())
     };
     SessionManager::append_message(
         &state.db,
         sid,
         "assistant",
-        &assistant_content,
+        &harness_result.content,
         tool_calls_value.as_ref(),
     )?;
 
-    // Verify citations in response
-    let citation_result = guardrails::verify_citations(&assistant_content, &filtered_packets);
-    let citation_valid = matches!(citation_result, GuardResult::Pass);
-
-    if response.usage.prompt_cache_hit_tokens > 0 || response.usage.prompt_cache_miss_tokens > 0 {
+    if harness_result.usage.prompt_cache_hit_tokens > 0
+        || harness_result.usage.prompt_cache_miss_tokens > 0
+    {
         let _ = crate::llm::config::save_usage_last(
             &state.db,
-            response.usage.prompt_cache_hit_tokens,
-            response.usage.prompt_cache_miss_tokens,
+            harness_result.usage.prompt_cache_hit_tokens,
+            harness_result.usage.prompt_cache_miss_tokens,
         );
     }
 
-    // Complete trace
     TraceRecorder::complete(
         &state.db,
         &request_id,
@@ -384,7 +321,7 @@ pub(crate) async fn execute_ai_send_message(
         Some(&format!("{:?}", ModelGateway::slot_for_scene(scene))),
         Some(&provider_name),
         Some(
-            &response
+            &harness_result
                 .tool_calls
                 .iter()
                 .map(|tc| tc.function.name.clone())
@@ -397,29 +334,31 @@ pub(crate) async fn execute_ai_send_message(
                 .collect::<Vec<_>>(),
         ),
         None,
-        Some(response.usage.prompt_tokens),
-        Some(response.usage.completion_tokens),
+        Some(harness_result.usage.prompt_tokens),
+        Some(harness_result.usage.completion_tokens),
         None,
     )?;
 
     info!(
         scene = ?scene,
         provider = %provider_name,
-        tokens_input = %response.usage.prompt_tokens,
-        tokens_output = %response.usage.completion_tokens,
-        "AI request completed"
+        harness_rounds = harness_result.harness_rounds,
+        tokens_input = %harness_result.usage.prompt_tokens,
+        tokens_output = %harness_result.usage.completion_tokens,
+        "AI harness request completed"
     );
 
     Ok(serde_json::json!({
         "request_id": request_id,
         "session_id": sid,
-        "status": "completed",
-        "content": assistant_content,
-        "tool_calls": response.tool_calls,
-        "tool_results": tool_results,
-        "usage": response.usage,
-        "citation_valid": citation_valid,
-        "web_search_meta": web_search_meta,
+        "status": if harness_result.pending_confirmation { "pending_tools" } else { "completed" },
+        "content": harness_result.content,
+        "tool_calls": harness_result.tool_calls,
+        "tool_results": harness_result.tool_results,
+        "usage": harness_result.usage,
+        "citation_valid": harness_result.citation_valid,
+        "harness_rounds": harness_result.harness_rounds,
+        "evidence_packets": harness_result.evidence_packets,
     }))
 }
 
@@ -436,6 +375,7 @@ pub async fn ai_send_message(
     note_path: Option<String>,
     context_scope: Option<ContextScopeDto>,
     web_search: Option<bool>,
+    new_session: Option<bool>,
 ) -> AppResult<serde_json::Value> {
     execute_ai_send_message(
         state.inner().as_ref(),
@@ -447,6 +387,7 @@ pub async fn ai_send_message(
         note_path,
         context_scope,
         web_search,
+        new_session,
     )
     .await
 }
@@ -493,28 +434,34 @@ pub async fn tool_confirm(
         pending.arguments
     };
 
-    // Execute the tool
-    let result = execute_tool_auto(
+    let result = crate::ai_runtime::tool_dispatch::dispatch_tool(
         state.inner(),
-        AiScene::KnowledgeLookup,
+        &crate::ai_runtime::tool_dispatch::ToolDispatchContext {
+            scene: AiScene::KnowledgeLookup,
+            note_path: None,
+            file_id: None,
+            web_search_enabled: true,
+            cold_start_packets: &[],
+        },
         &pending.tool_name,
-        &args_str,
+        &serde_json::from_str(&args_str).unwrap_or_default(),
     )
     .await;
 
-    let output = match result {
-        Ok(val) => serde_json::json!({
+    let output = if result.success {
+        serde_json::json!({
             "request_id": request_id,
             "tool_call_id": tool_call_id,
             "status": "executed",
-            "output": val,
-        }),
-        Err(e) => serde_json::json!({
+            "output": result.output,
+        })
+    } else {
+        serde_json::json!({
             "request_id": request_id,
             "tool_call_id": tool_call_id,
             "status": "error",
-            "error": e.to_string(),
-        }),
+            "error": result.error.unwrap_or_else(|| "unknown".into()),
+        })
     };
 
     app_handle
@@ -629,82 +576,242 @@ pub async fn search_hybrid(
     Ok(json_packets)
 }
 
-// ─── Helper Functions ────────────────────────────────────
+/// List chat sessions for history UI.
+#[tauri::command]
+pub async fn session_list(
+    state: State<'_, Arc<AppState>>,
+    scene: Option<String>,
+    note_path: Option<String>,
+    limit: Option<u32>,
+    offset: Option<u32>,
+) -> AppResult<Vec<SessionSummary>> {
+    SessionManager::list_sessions(
+        &state.db,
+        scene.as_deref(),
+        note_path.as_deref(),
+        limit.unwrap_or(50),
+        offset.unwrap_or(0),
+    )
+}
 
-/// Auto-execute a read-only tool.
-async fn execute_tool_auto(
-    state: &AppState,
-    _scene: AiScene,
-    tool_name: &str,
-    args_str: &str,
+/// Delete a session by id.
+#[tauri::command]
+pub async fn session_delete(
+    state: State<'_, Arc<AppState>>,
+    session_id: i64,
+) -> AppResult<bool> {
+    SessionManager::delete_session(&state.db, session_id)
+}
+
+/// Rename session title.
+#[tauri::command]
+pub async fn session_rename(
+    state: State<'_, Arc<AppState>>,
+    session_id: i64,
+    title: String,
+) -> AppResult<()> {
+    SessionManager::rename_session(&state.db, session_id, title.trim())
+}
+
+/// Load recent messages for a session.
+#[tauri::command]
+pub async fn session_load(
+    state: State<'_, Arc<AppState>>,
+    session_id: i64,
+    limit: Option<u32>,
+) -> AppResult<Vec<SessionMessage>> {
+    SessionManager::recent_messages(&state.db, session_id, limit.unwrap_or(50))
+}
+
+/// List installed skills (global + vault).
+#[tauri::command]
+pub async fn skills_list(state: State<'_, Arc<AppState>>) -> AppResult<Vec<crate::ai_runtime::skills::SkillEntry>> {
+    let vault = state.vault_path()?;
+    crate::ai_runtime::skills::scan_all(&vault)
+}
+
+#[derive(Debug, serde::Deserialize)]
+pub struct SkillsInstallRequest {
+    pub source: String,
+    pub path_or_url: String,
+    pub scope: String,
+    pub subpath: Option<String>,
+}
+
+/// Install skill from url, git, or local path.
+#[tauri::command]
+pub async fn skills_install(
+    state: State<'_, Arc<AppState>>,
+    request: SkillsInstallRequest,
 ) -> AppResult<serde_json::Value> {
-    let args: serde_json::Value =
-        serde_json::from_str(args_str).unwrap_or_else(|_| serde_json::json!({}));
-
-    match tool_name {
-        "search_hybrid" | "search_semantic" | "search_keyword" => {
-            let query = args["query"]
-                .as_str()
-                .ok_or_else(|| AppError::msg("missing query parameter"))?;
-            let limit = args["limit"].as_u64().unwrap_or(10) as usize;
-
-            let packets = state.db.with_conn(|conn| {
-                let request = crate::ai_runtime::retrieval_broker::RetrievalRequest {
-                    query: query.to_string(),
-                    max_results: limit,
-                    layers: crate::ai_runtime::retrieval_broker::RetrievalLayers {
-                        fts: true,
-                        vector: true,
-                        graph: false,
-                        exact: false,
-                        template: false,
-                    },
-                    note_context: None,
-                    file_id_context: None,
-                    scope: crate::ai_runtime::retrieval_scope::RetrievalScope::default(),
-                };
-                crate::ai_runtime::retrieval_broker::hybrid_retrieve(conn, &request)
-            })?;
-
-            Ok(serde_json::json!({
-                "results": packets,
-                "count": packets.len(),
-            }))
+    use crate::ai_runtime::skills::{install_from_git, install_from_url, SkillScope};
+    let vault = state.vault_path()?;
+    let scope = match request.scope.as_str() {
+        "vault" => SkillScope::Vault,
+        _ => SkillScope::Global,
+    };
+    match request.source.as_str() {
+        "url" => {
+            let entry = install_from_url(&request.path_or_url, scope, &vault).await?;
+            Ok(serde_json::to_value(entry).unwrap_or_default())
         }
-        "get_regulation" => {
-            let regulation_name = args["regulation_name"]
-                .as_str()
-                .ok_or_else(|| AppError::msg("missing regulation_name"))?;
-            let article = args["article"]
-                .as_str()
-                .ok_or_else(|| AppError::msg("missing article"))?;
-
-            let packets = state.db.with_conn(|conn| {
-                let request = crate::ai_runtime::retrieval_broker::RetrievalRequest {
-                    query: format!("{} {}", regulation_name, article),
-                    max_results: 1,
-                    layers: crate::ai_runtime::retrieval_broker::RetrievalLayers {
-                        fts: false,
-                        vector: false,
-                        graph: false,
-                        exact: true,
-                        template: false,
-                    },
-                    note_context: None,
-                    file_id_context: None,
-                    scope: crate::ai_runtime::retrieval_scope::RetrievalScope::default(),
-                };
-                crate::ai_runtime::retrieval_broker::hybrid_retrieve(conn, &request)
-            })?;
-
-            Ok(serde_json::json!({
-                "regulation": packets.first(),
-                "found": !packets.is_empty(),
-            }))
+        "git" => {
+            let entries =
+                install_from_git(&request.path_or_url, request.subpath.as_deref(), scope, &vault)
+                    .await?;
+            Ok(serde_json::to_value(entries).unwrap_or_default())
         }
-        _ => Err(AppError::msg(format!(
-            "unknown or unsupported auto-tool: {}",
-            tool_name
-        ))),
+        "local" => {
+            let path = std::path::PathBuf::from(&request.path_or_url);
+            let entry =
+                crate::ai_runtime::skills::install_from_local(&path, scope, &vault)?;
+            Ok(serde_json::to_value(entry).unwrap_or_default())
+        }
+        other => Err(AppError::msg(format!("unknown install source: {other}"))),
     }
+}
+
+#[tauri::command]
+pub async fn skills_uninstall(
+    state: State<'_, Arc<AppState>>,
+    name: String,
+    scope: String,
+) -> AppResult<()> {
+    use crate::ai_runtime::skills::{uninstall, SkillScope};
+    let vault = state.vault_path()?;
+    let sc = if scope == "vault" {
+        SkillScope::Vault
+    } else {
+        SkillScope::Global
+    };
+    uninstall(&name, sc, &vault)
+}
+
+#[tauri::command]
+pub async fn skills_toggle(
+    state: State<'_, Arc<AppState>>,
+    name: String,
+    scope: String,
+    enabled: bool,
+) -> AppResult<()> {
+    use crate::ai_runtime::skills::{set_enabled, SkillScope};
+    let vault = state.vault_path()?;
+    let sc = if scope == "vault" {
+        SkillScope::Vault
+    } else {
+        SkillScope::Global
+    };
+    set_enabled(&name, sc, &vault, enabled)
+}
+
+#[tauri::command]
+pub async fn prompt_profile_get(
+    state: State<'_, Arc<AppState>>,
+) -> AppResult<crate::ai_runtime::prompt_profile::PromptProfile> {
+    crate::ai_runtime::prompt_profile::PromptProfile::load(&state.db)
+}
+
+#[tauri::command]
+pub async fn prompt_profile_set(
+    state: State<'_, Arc<AppState>>,
+    profile: crate::ai_runtime::prompt_profile::PromptProfile,
+) -> AppResult<()> {
+    crate::ai_runtime::prompt_profile::PromptProfile::save(&state.db, &profile)
+}
+
+/// List built-in prompt profile presets.
+#[tauri::command]
+pub fn prompt_profile_presets(
+) -> Vec<serde_json::Value> {
+    crate::ai_runtime::prompt_profile::preset_templates()
+        .into_iter()
+        .map(|(label, profile)| {
+            serde_json::json!({ "label": label, "profile": profile })
+        })
+        .collect()
+}
+
+/// Delete all sessions matching scene / note_path filter.
+#[tauri::command]
+pub async fn session_clear_all(
+    state: State<'_, Arc<AppState>>,
+    scene: Option<String>,
+    note_path: Option<String>,
+) -> AppResult<u32> {
+    SessionManager::delete_all_filtered(&state.db, scene.as_deref(), note_path.as_deref())
+}
+
+/// Resume an interrupted harness run from checkpoint.
+#[tauri::command]
+pub async fn harness_resume(
+    state: State<'_, Arc<AppState>>,
+    app_handle: tauri::AppHandle,
+    request_id: String,
+) -> AppResult<serde_json::Value> {
+    use crate::ai_runtime::harness_support::load_harness_checkpoint;
+
+    let cp = load_harness_checkpoint(&state.db, &request_id)?
+        .ok_or_else(|| AppError::msg("未找到可恢复的 checkpoint"))?;
+    let scene: AiScene = serde_json::from_str(&format!("\"{}\"", cp.meta.scene))
+        .map_err(|e| AppError::msg(format!("invalid scene in checkpoint: {e}")))?;
+    let resolved = crate::llm::config::resolve_for_scene(&state.db, scene)?;
+    let provider_config = resolved.to_provider_config(scene);
+
+    let harness_result = run_harness(
+        &state,
+        &app_handle,
+        HarnessRunInput {
+            request_id: request_id.clone(),
+            scene,
+            session_id: cp.meta.session_id,
+            note_path: cp.meta.note_path.clone(),
+            note_title: cp.meta.note_title.clone(),
+            selection_excerpt: cp.meta.selection_excerpt.clone(),
+            cold_start_packets: cp.meta.cold_start_packets.clone(),
+            web_search_enabled: cp.meta.web_search_enabled,
+            history_messages: vec![],
+            depth: cp.meta.depth,
+            resume_from_checkpoint: true,
+        },
+        provider_config,
+        Some(resolved.output_budget),
+    )
+    .await?;
+
+    Ok(serde_json::to_value(harness_result).unwrap_or_default())
+}
+
+#[derive(Debug, serde::Deserialize)]
+pub struct SkillsReadRequest {
+    pub file_path: String,
+}
+
+#[derive(Debug, serde::Deserialize)]
+pub struct SkillsWriteRequest {
+    pub file_path: String,
+    pub scope: String,
+    pub content: String,
+}
+
+/// Read SKILL.md content for in-app editing.
+#[tauri::command]
+pub async fn skills_read(request: SkillsReadRequest) -> AppResult<String> {
+    let path = std::path::PathBuf::from(&request.file_path);
+    crate::ai_runtime::skills::read_skill_content(&path)
+}
+
+/// Write SKILL.md content after editing.
+#[tauri::command]
+pub async fn skills_write(
+    request: SkillsWriteRequest,
+) -> AppResult<serde_json::Value> {
+    use crate::ai_runtime::skills::{write_skill_content, SkillScope};
+    let path = std::path::PathBuf::from(&request.file_path);
+    let scope = if request.scope == "vault" {
+        SkillScope::Vault
+    } else {
+        SkillScope::Global
+    };
+    let entry = write_skill_content(&path, scope, &request.content)?;
+    Ok(serde_json::to_value(entry).unwrap_or_default())
 }

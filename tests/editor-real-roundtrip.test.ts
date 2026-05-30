@@ -15,22 +15,21 @@ import { HeadingFoldExtension } from "@/components/editor/extensions/HeadingFold
 import { ImageExtension } from "@/components/editor/extensions/ImageExtension";
 import { IrisDocument } from "@/components/editor/extensions/IrisDocument";
 import { LinkExtension } from "@/components/editor/extensions/LinkExtension";
-import { NoteTitleExtension } from "@/components/editor/extensions/NoteTitleExtension";
 import { WikiLinkExtension } from "@/components/editor/extensions/WikiLinkExtension";
 import {
-  editorHtmlToMarkdown,
-  extractFrontmatterYaml,
-  markdownToEditorHtml,
+  markdownBodyToEditorHtml,
   markdownToHtmlPage,
+  parseNoteForEditor,
 } from "@/lib/markdown";
+import { serializeOpenNote } from "@/lib/serialize-open-note";
 
 const lowlight = createLowlight(common);
 
 function createEditorFromMarkdown(md: string): Editor {
+  const { bodyMd } = parseNoteForEditor(md, "Fallback");
   return new Editor({
     extensions: [
       IrisDocument,
-      NoteTitleExtension,
       StarterKit.configure({
         document: false,
         codeBlock: false,
@@ -52,14 +51,20 @@ function createEditorFromMarkdown(md: string): Editor {
       AiStreamExtension,
       WikiLinkExtension,
     ],
-    content: markdownToEditorHtml(md, "Fallback"),
+    content: markdownBodyToEditorHtml(bodyMd),
   });
 }
 
 function realEditorRoundTrip(md: string): string {
+  const { yaml, title, bodyMd } = parseNoteForEditor(md, "Fallback");
   const editor = createEditorFromMarkdown(md);
   try {
-    return editorHtmlToMarkdown(editor.getHTML(), extractFrontmatterYaml(md));
+    return serializeOpenNote({
+      yaml,
+      title,
+      editor,
+      bodyFallbackMd: bodyMd,
+    });
   } finally {
     editor.destroy();
   }
@@ -154,7 +159,12 @@ describe("real TipTap editor markdown round-trip", () => {
     editor.commands.updateAiStream("Temporary suggestion");
 
     const out = normalize(
-      editorHtmlToMarkdown(editor.getHTML(), 'title: "AI"'),
+      serializeOpenNote({
+        yaml: 'title: "AI"',
+        title: "AI",
+        editor,
+        bodyFallbackMd: "",
+      }),
     );
 
     expect(out).toContain("Start.");
@@ -168,14 +178,19 @@ describe("real TipTap editor markdown round-trip", () => {
       '---\ntitle: "AI"\n---\n\nReplace this sentence.',
     );
     selectParagraphText(editor, "Replace this sentence.");
-    editor.commands.insertAiStreamForSelection({
+    editor.commands.insertAiStreamAtCursor({
       originalText: "Replace this sentence.",
       action: "rewrite",
     });
     editor.commands.updateAiStream("Temporary rewrite");
 
     const out = normalize(
-      editorHtmlToMarkdown(editor.getHTML(), 'title: "AI"'),
+      serializeOpenNote({
+        yaml: 'title: "AI"',
+        title: "AI",
+        editor,
+        bodyFallbackMd: "",
+      }),
     );
 
     expect(out).toContain("Replace this sentence.");

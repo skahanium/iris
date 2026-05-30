@@ -5,6 +5,7 @@ import {
   FolderTree,
   Layers,
   ListChecks,
+  MessageSquarePlus,
   MessageSquareText,
   PenSquare,
   Quote,
@@ -40,6 +41,7 @@ import {
   resolveAiSceneForIntent,
   syncActiveAiScene,
 } from "@/lib/assistant-scene";
+import type { AiScene } from "@/types/ai";
 import {
   buildMentionCandidates,
   findActiveMentionQuery,
@@ -51,6 +53,9 @@ import {
   type MentionToken,
 } from "@/lib/ai-context-scope";
 import { findPacketByCitationRef } from "@/lib/ai/citation-markdown";
+import { mergeContextPackets } from "@/lib/ai/merge-context-packets";
+import { shouldStartNewAiSession } from "@/lib/ai/session-thread";
+import { mapChatToolCallsForUi } from "@/lib/map-chat-tool-calls";
 import { invokeErrorMessage } from "@/lib/credentials";
 import {
   assistantExecute,
@@ -62,6 +67,7 @@ import {
   parseDocumentChapters,
   patchApply,
   profileSetRule,
+  harnessResume,
   researchAbort,
   researchGenerateNote,
   listenResearchProgress,
@@ -80,6 +86,7 @@ import type {
   OrganizeSuggestion,
   PatchProposal,
   ResearchFocusPayload,
+  TokenUsage,
   WritingEditorContext,
 } from "@/types/ai";
 import type { FileListItem } from "@/types/ipc";
@@ -91,6 +98,11 @@ import { AiMentionPopover } from "./AiMentionPopover";
 import { AiMessageList, type ChatLine } from "./AiMessageList";
 import { CitationCheckView } from "./CitationCheckView";
 import { ContextPacketDrawer } from "./ContextPacketDrawer";
+import { HarnessActivityStrip } from "./HarnessActivityStrip";
+import { SessionHistoryDropdown } from "./SessionHistoryDropdown";
+import { TokenUsageBar } from "./TokenUsageBar";
+import { useHarnessActivity } from "@/hooks/useHarnessActivity";
+import { listenAiRequestStarted } from "@/lib/ipc";
 import { ContextScopeChips } from "./ContextScopeChips";
 import { ContextStatusBar } from "./ContextStatusBar";
 import { ExecutionPlanPreview } from "./ExecutionPlanPreview";
@@ -253,6 +265,7 @@ export function UnifiedAssistantPanel({
   const [packets, setPackets] = useState<ContextPacket[]>([]);
   const [selectedPacketIds, setSelectedPacketIds] = useState<string[]>([]);
   const [packetsOpen, setPacketsOpen] = useState(false);
+  const [citationMiss, setCitationMiss] = useState<string | null>(null);
   const [toolConfirmRequest, setToolConfirmRequest] =
     useState<ToolConfirmRequest | null>(null);
   const [ruleConfirmRequest, setRuleConfirmRequest] =
@@ -285,12 +298,38 @@ export function UnifiedAssistantPanel({
   const [pendingKnowledgeChat, setPendingKnowledgeChat] = useState<{
     rawMessage: string;
     intent: AssistantIntent;
+    startNewSession: boolean;
   } | null>(null);
-
+  const [activityHint, setActivityHint] = useState<string | null>(null);
+  const [turnTokenUsage, setTurnTokenUsage] = useState<TokenUsage | null>(null);
+  const [sessionTokenUsage, setSessionTokenUsage] = useState<TokenUsage | null>(
+    null,
+  );
   const streamBuf = useRef("");
   const requestIdRef = useRef<string | null>(null);
+  const [harnessRequestId, setHarnessRequestId] = useState<string | null>(null);
+  const harnessActivity = useHarnessActivity(harnessRequestId, streaming);
+
+  useEffect(() => {
+    if (!streaming) return;
+    let unlisten: (() => void) | undefined;
+    let cancelled = false;
+    void listenAiRequestStarted((payload) => {
+      if (cancelled) return;
+      requestIdRef.current = payload.request_id;
+      setHarnessRequestId(payload.request_id);
+    }).then((fn) => {
+      if (cancelled) fn();
+      else unlisten = fn;
+    });
+    return () => {
+      cancelled = true;
+      unlisten?.();
+    };
+  }, [streaming]);
   const researchRequestIdRef = useRef<string | null>(null);
   const panelSendActiveRef = useRef(false);
+  const forceNewSessionRef = useRef(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const [vaultFiles, setVaultFiles] = useState<FileListItem[]>([]);
   const [mentionOpen, setMentionOpen] = useState(false);
@@ -332,11 +371,6 @@ export function UnifiedAssistantPanel({
       .then((list) => setChapters(list as ChapterInfo[]))
       .catch(() => setChapters([]));
   }, [noteContent]);
-
-  const activeScene = useMemo(
-    () => resolveAiSceneForIntent(actionState.intent),
-    [actionState.intent],
-  );
 
   useEffect(() => {
     void fileList()
@@ -510,6 +544,25 @@ export function UnifiedAssistantPanel({
     setPendingKnowledgeChat(null);
   }, []);
 
+  const handleNewChat = useCallback(() => {
+    clearArtifacts();
+    setCitationMiss(null);
+    setPackets([]);
+    setSelectedPacketIds([]);
+    setMessages([]);
+    setSessionId(null);
+    setTurnTokenUsage(null);
+    setSessionTokenUsage(null);
+    setInput("");
+    setActivityHint(null);
+    setStreaming(false);
+    streamBuf.current = "";
+    requestIdRef.current = null;
+    setHarnessRequestId(null);
+    forceNewSessionRef.current = true;
+    setActionState(buildActionState("chat", "idle"));
+  }, [clearArtifacts]);
+
   const assembleContextForChat = useCallback(
     async (query: string, intent: AssistantIntent) => {
       const scene = resolveAiSceneForIntent(intent);
@@ -541,6 +594,14 @@ export function UnifiedAssistantPanel({
     setMessages((prev) => [...prev, { role: "user", content: display }]);
   }, []);
 
+  const ensureAssistantStreamSlot = useCallback(() => {
+    setMessages((prev) => {
+      const last = prev[prev.length - 1];
+      if (last?.role === "assistant") return prev;
+      return [...prev, { role: "assistant", content: "" }];
+    });
+  }, []);
+
   const appendAssistantSummary = useCallback(
     (intent: AssistantIntent, count?: number) => {
       setMessages((prev) => [
@@ -555,15 +616,23 @@ export function UnifiedAssistantPanel({
   );
 
   const executeKnowledgeChat = useCallback(
-    async (rawMessage: string, intent: AssistantIntent) => {
+    async (
+      rawMessage: string,
+      intent: AssistantIntent,
+      options?: { startNewSession?: boolean },
+    ) => {
       setStreaming(true);
       streamBuf.current = "";
       requestIdRef.current = null;
+    setHarnessRequestId(null);
       panelSendActiveRef.current = true;
       setActionState(buildActionState(intent, "running"));
       setExecutionPlan(null);
       setPendingKnowledgeChat(null);
+      ensureAssistantStreamSlot();
+      setActivityHint("正在连接模型并处理工具调用…");
 
+      let completedOk = false;
       try {
         const response = await assistantExecute({
           intent,
@@ -573,23 +642,51 @@ export function UnifiedAssistantPanel({
           webAuthorized: webSearch,
           contextScope,
           sessionId,
+          newSession:
+            options?.startNewSession ?? forceNewSessionRef.current,
           selectedPacketIds:
             selectedPacketIds.length > 0 ? selectedPacketIds : undefined,
         });
+        forceNewSessionRef.current = false;
         if (response.kind !== "chat") {
           throw new Error("助手路由异常：期望对话结果");
         }
         const result = response.payload;
         requestIdRef.current = result.request_id;
+        setHarnessRequestId(result.request_id);
         setSessionId(result.session_id);
-        const toolCalls = result.tool_calls?.map((toolCall) => ({
-          id: toolCall.id,
-          name: toolCall.name,
-          status: "pending" as const,
-        }));
+        if (result.usage) {
+          setTurnTokenUsage(result.usage);
+          setSessionTokenUsage((prev) => ({
+            prompt_tokens:
+              (prev?.prompt_tokens ?? 0) + result.usage!.prompt_tokens,
+            completion_tokens:
+              (prev?.completion_tokens ?? 0) + result.usage!.completion_tokens,
+            total_tokens: (prev?.total_tokens ?? 0) + result.usage!.total_tokens,
+            prompt_cache_hit_tokens:
+              (prev?.prompt_cache_hit_tokens ?? 0) +
+              (result.usage!.prompt_cache_hit_tokens ?? 0),
+            prompt_cache_miss_tokens:
+              (prev?.prompt_cache_miss_tokens ?? 0) +
+              (result.usage!.prompt_cache_miss_tokens ?? 0),
+          }));
+        }
+        const toolCalls = mapChatToolCallsForUi(
+          result.tool_calls,
+          result.tool_results,
+        );
         const serverContent = result.content?.trim() ?? "";
         const finalContent =
           serverContent.length > 0 ? serverContent : streamBuf.current;
+
+        const evidencePackets = mergeContextPackets(
+          packets,
+          result.evidence_packets,
+        );
+        setPackets(evidencePackets);
+        if (evidencePackets.length > 0) {
+          setPacketsOpen(true);
+        }
 
         setMessages((prev) => {
           const next = [...prev];
@@ -617,6 +714,7 @@ export function UnifiedAssistantPanel({
               : "completed",
           ),
         );
+        completedOk = true;
       } catch (error) {
         const message = invokeErrorMessage(error);
         setLastError(message);
@@ -628,35 +726,98 @@ export function UnifiedAssistantPanel({
       } finally {
         panelSendActiveRef.current = false;
         setStreaming(false);
-        requestIdRef.current = null;
+        setActivityHint(null);
+        if (completedOk) {
+          requestIdRef.current = null;
+          setHarnessRequestId(null);
+        }
         streamBuf.current = "";
       }
     },
     [
       contextScope,
+      ensureAssistantStreamSlot,
       noteContent,
       notePath,
       selectedPacketIds,
+      packets,
       sessionId,
       webSearch,
     ],
   );
 
+  const handleHarnessResume = useCallback(async () => {
+    if (!harnessRequestId) return;
+    setLastError(null);
+    setStreaming(true);
+    setActivityHint("正在从 checkpoint 恢复 Agent…");
+    ensureAssistantStreamSlot();
+    try {
+      const raw = await harnessResume(harnessRequestId);
+      const result = raw as {
+        content?: string;
+        tool_calls?: Parameters<typeof mapChatToolCallsForUi>[0];
+        tool_results?: Parameters<typeof mapChatToolCallsForUi>[1];
+        evidence_packets?: ContextPacket[];
+        usage?: TokenUsage;
+      };
+      const toolCalls = mapChatToolCallsForUi(
+        result.tool_calls,
+        result.tool_results,
+      );
+      const content = result.content?.trim() ?? "";
+      if (result.evidence_packets?.length) {
+        setPackets((prev) =>
+          mergeContextPackets(prev, result.evidence_packets ?? []),
+        );
+      }
+      if (result.usage) {
+        setTurnTokenUsage(result.usage);
+      }
+      setMessages((prev) => {
+        const next = [...prev];
+        const last = next[next.length - 1];
+        if (last?.role === "assistant") {
+          next[next.length - 1] = { ...last, content, toolCalls };
+        } else {
+          next.push({ role: "assistant", content, toolCalls });
+        }
+        return next;
+      });
+    } catch (error) {
+      setLastError(invokeErrorMessage(error));
+    } finally {
+      setStreaming(false);
+      setActivityHint(null);
+    }
+  }, [harnessRequestId, ensureAssistantStreamSlot]);
+
   const runKnowledgeChat = useCallback(
-    async (rawMessage: string, intent: AssistantIntent) => {
+    async (
+      rawMessage: string,
+      intent: AssistantIntent,
+      options?: { startNewSession?: boolean },
+    ) => {
       clearArtifacts();
+      setLastError(null);
       setActionState(buildActionState(intent, "running"));
+      setActivityHint("正在检索知识库与本地笔记…");
 
       try {
         const assembled = await assembleContextForChat(rawMessage, intent);
         const plan = assembled.execution_plan;
         if (plan && plan.steps.length > 0) {
           setExecutionPlan(plan);
-          setPendingKnowledgeChat({ rawMessage, intent });
+          setPendingKnowledgeChat({
+            rawMessage,
+            intent,
+            startNewSession: options?.startNewSession ?? false,
+          });
           setActionState(buildActionState(intent, "awaiting_confirmation"));
+          setActivityHint(null);
           return;
         }
-        await executeKnowledgeChat(rawMessage, intent);
+        await executeKnowledgeChat(rawMessage, intent, options);
       } catch (error) {
         const message = invokeErrorMessage(error);
         setLastError(message);
@@ -665,6 +826,7 @@ export function UnifiedAssistantPanel({
           { role: "system", content: `错误: ${message}` },
         ]);
         setActionState(buildActionState(intent, "error", message));
+        setActivityHint(null);
       }
     },
     [assembleContextForChat, clearArtifacts, executeKnowledgeChat],
@@ -676,7 +838,9 @@ export function UnifiedAssistantPanel({
       setExecutionPlan(null);
       return;
     }
-    void executeKnowledgeChat(pending.rawMessage, pending.intent);
+    void executeKnowledgeChat(pending.rawMessage, pending.intent, {
+      startNewSession: pending.startNewSession,
+    });
   }, [executeKnowledgeChat, pendingKnowledgeChat]);
 
   const handleExecutionPlanModify = useCallback(() => {
@@ -961,7 +1125,14 @@ export function UnifiedAssistantPanel({
     });
 
     setInput("");
+    setLastError(null);
+    const startNewSession = shouldStartNewAiSession(
+      messages,
+      forceNewSessionRef.current,
+    );
+    setCitationMiss(null);
     appendUserMessage(rawMessage);
+    setActivityHint("正在理解你的问题…");
 
     try {
       switch (intent) {
@@ -985,7 +1156,7 @@ export function UnifiedAssistantPanel({
           break;
         case "knowledge":
         case "chat":
-          await runKnowledgeChat(rawMessage, intent);
+          await runKnowledgeChat(rawMessage, intent, { startNewSession });
           break;
       }
     } catch (error) {
@@ -996,11 +1167,13 @@ export function UnifiedAssistantPanel({
         { role: "system", content: `错误: ${message}` },
       ]);
       setActionState(buildActionState(intent, "error", message));
+      setActivityHint(null);
     }
   }, [
     appendUserMessage,
     contextScope.pathPrefixes.length,
     contextScope.paths.length,
+    messages,
     getWritingContext,
     input,
     notePath,
@@ -1022,6 +1195,7 @@ export function UnifiedAssistantPanel({
     }
     panelSendActiveRef.current = false;
     setStreaming(false);
+    setActivityHint(null);
   }, []);
 
   const togglePacketSelection = useCallback((id: string) => {
@@ -1033,10 +1207,14 @@ export function UnifiedAssistantPanel({
   const handleCitationClick = useCallback(
     (ref: string) => {
       const packet = findPacketByCitationRef(ref, packets);
-      setPacketsOpen(true);
-      if (packet) {
-        setSelectedPacketIds([packet.id]);
+      if (!packet) {
+        setCitationMiss(ref);
+        setPacketsOpen(true);
+        return;
       }
+      setCitationMiss(null);
+      setSelectedPacketIds([packet.id]);
+      setPacketsOpen(true);
     },
     [packets],
   );
@@ -1139,6 +1317,19 @@ export function UnifiedAssistantPanel({
     actionState.status !== "idle";
 
   const ActionIcon = assistantIcon(actionState.intent);
+  const activeScene: AiScene = resolveAiSceneForIntent(actionState.intent);
+
+  const handleLoadSession = useCallback(
+    (id: number, loaded: ChatLine[]) => {
+      setSessionId(id);
+      setMessages(loaded);
+      forceNewSessionRef.current = false;
+      clearArtifacts();
+      setCitationMiss(null);
+      setActionState(buildActionState(actionState.intent, "idle"));
+    },
+    [actionState.intent, clearArtifacts],
+  );
 
   return (
     <div
@@ -1179,15 +1370,40 @@ export function UnifiedAssistantPanel({
               </div>
             ) : null}
           </div>
+          <div className="flex shrink-0 items-center gap-1">
+            <SessionHistoryDropdown
+              scene={activeScene}
+              notePath={notePath}
+              currentSessionId={sessionId}
+              disabled={streaming}
+              onSelectSession={handleLoadSession}
+              onDeleted={(id) => {
+                if (sessionId === id) {
+                  handleNewChat();
+                }
+              }}
+            />
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="h-8 gap-1 px-2 text-xs"
+              title="新对话（不加载本笔记下的历史会话）"
+              onClick={handleNewChat}
+              disabled={streaming}
+            >
+              <MessageSquarePlus className="h-3.5 w-3.5" />
+              新对话
+            </Button>
+          </div>
         </div>
       </header>
 
       {showContextStatusBar ? (
         <ContextStatusBar
-          scene={activeScene}
           contextStatus={contextStatusData}
-          noteDisplayTitle={noteDisplayTitle}
           totalPackets={packets.length}
+          webPacketCount={packets.filter((p) => p.source_type === "web").length}
           corpusNames={corpusNames}
           webSearchEnabled={webSearch}
         />
@@ -1199,14 +1415,27 @@ export function UnifiedAssistantPanel({
         packets={packets}
         selectedIds={selectedPacketIds}
         onSelect={togglePacketSelection}
+        citationMiss={citationMiss}
       />
 
       {lastError ? (
-        <div className="px-3 pt-3">
+        <div className="space-y-2 px-3 pt-3">
           <div className="flex items-start gap-2 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-destructive">
             <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
             <span>{lastError}</span>
           </div>
+          {harnessRequestId ? (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="h-7 text-xs"
+              disabled={streaming}
+              onClick={() => void handleHarnessResume()}
+            >
+              从 checkpoint 恢复 Agent
+            </Button>
+          ) : null}
         </div>
       ) : null}
 
@@ -1388,11 +1617,24 @@ export function UnifiedAssistantPanel({
 
       <ContextScopeChips tokens={mentionTokens} onRemove={removeMentionToken} />
 
+      <TokenUsageBar
+        turnUsage={turnTokenUsage}
+        sessionTotal={sessionTokenUsage}
+      />
+
+      {streaming ? (
+        <HarnessActivityStrip
+          activity={harnessActivity}
+          statusHint={activityHint}
+        />
+      ) : null}
+
       <div data-testid="ai-input">
         <AiComposer
           value={input}
           streaming={streaming}
           disabled={streaming}
+          statusHint={streaming ? activityHint : null}
           placeholder="输入问题，或直接说明你想查、想改、想检、想整理什么"
           textareaRef={textareaRef}
           onComposerKeyDown={handleComposerKeyDown}

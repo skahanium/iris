@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { displayTitleFromMarkdown } from "@/lib/note-title";
-import { markdownToEditorHtml } from "@/lib/markdown";
+import { markdownBodyToEditorHtml, parseNoteForEditor } from "@/lib/markdown";
 
 describe("displayTitleFromMarkdown", () => {
   it("reads title from frontmatter only", () => {
@@ -20,12 +20,12 @@ describe("displayTitleFromMarkdown", () => {
   });
 });
 
-describe("markdownToEditorHtml (noteTitle vs section h1)", () => {
+describe("parseNoteForEditor + markdownBodyToEditorHtml", () => {
   it("keeps body h1 as section heading when frontmatter title is empty", () => {
     const md = '---\ntitle: ""\n---\n\n# 一级标题\n\n正文';
-    const html = markdownToEditorHtml(md);
-    expect(html).toMatch(/<h1 class="iris-doc-title"><\/h1>/);
+    const { bodyMd } = parseNoteForEditor(md);
+    const html = markdownBodyToEditorHtml(bodyMd);
     expect(html).toContain("<h1>一级标题</h1>");
-    expect(html).not.toMatch(/iris-doc-title[^>]*>一级标题/);
+    expect(html).not.toContain("iris-doc-title");
   });
 });

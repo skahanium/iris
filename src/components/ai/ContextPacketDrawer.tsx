@@ -13,6 +13,8 @@ interface ContextPacketDrawerProps {
   selectedIds: string[];
   onSelect: (id: string) => void;
   relations?: EvidenceRelation[];
+  /** 点击了回复中的引用，但当前列表中无对应证据包 */
+  citationMiss?: string | null;
 }
 
 export function ContextPacketDrawer({
@@ -22,6 +24,7 @@ export function ContextPacketDrawer({
   selectedIds,
   onSelect,
   relations,
+  citationMiss = null,
 }: ContextPacketDrawerProps) {
   const hasEvidenceChain = relations && relations.length > 0;
 
@@ -61,6 +64,11 @@ export function ContextPacketDrawer({
               selectedIds={selectedIds}
               onSelect={onSelect}
               compact
+              emptyHint={
+                citationMiss
+                  ? `未找到与「${citationMiss}」对应的证据包。该引用可能来自模型概括，或对应的检索结果尚未返回。`
+                  : undefined
+              }
             />
             {hasEvidenceChain && (
               <div className="mt-3 border-t border-border/40 pt-3">

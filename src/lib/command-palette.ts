@@ -224,6 +224,14 @@ export function buildCommandPaletteItems(
       action: { type: "toggleWebSearch" },
     },
     {
+      id: "skills",
+      label: "管理 AI Skills",
+      group: "AI",
+      keywords: "skills skill 技能 安装 注入 prompt",
+      icon: "Lightbulb",
+      action: { type: "openOverlay", overlay: "skills" },
+    },
+    {
       id: "zoom-in",
       label: "放大编辑器",
       group: "编辑器",

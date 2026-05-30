@@ -18,6 +18,8 @@ interface AiComposerProps {
   onSelect?: () => void;
   /** 渲染在输入框圆角容器内、文本区正上方（如 @ 补全）。 */
   mentionPopover?: ReactNode;
+  /** 流式/等待时在输入区上方显示的状态文案。 */
+  statusHint?: string | null;
 }
 
 /** AI 侧栏多行输入区 */
@@ -34,6 +36,7 @@ export function AiComposer({
   onComposerKeyDown,
   onSelect,
   mentionPopover,
+  statusHint,
 }: AiComposerProps) {
   const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     onComposerKeyDown?.(e);
@@ -51,6 +54,16 @@ export function AiComposer({
         className,
       )}
     >
+      {statusHint ? (
+        <p
+          className="mb-2 flex items-center gap-2 text-xs text-muted-foreground"
+          role="status"
+          aria-live="polite"
+        >
+          <span className="inline-block h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-primary" />
+          {statusHint}
+        </p>
+      ) : null}
       <div className="relative flex items-end gap-2 rounded-lg border border-border/80 bg-surface-inset/50 p-2 shadow-sm focus-within:ring-2 focus-within:ring-primary/25">
         {mentionPopover ? (
           <div className="absolute bottom-full left-0 right-0 z-20 mb-1.5">
@@ -64,7 +77,7 @@ export function AiComposer({
           disabled={disabled && !streaming}
           placeholder={placeholder}
           aria-label="AI 输入"
-          className="max-h-32 min-h-[2.75rem] min-w-0 flex-1 resize-none bg-transparent text-sm leading-relaxed text-foreground outline-none placeholder:text-muted-foreground disabled:opacity-50"
+          className="max-h-32 min-h-[2.5rem] min-w-0 flex-1 resize-none bg-transparent text-[13px] leading-snug text-foreground outline-none placeholder:text-muted-foreground disabled:opacity-50"
           onChange={(e) => onChange(e.target.value)}
           onKeyDown={handleKeyDown}
           onSelect={onSelect}

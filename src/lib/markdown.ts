@@ -204,6 +204,7 @@ function removeTransientAiNodes(root: Element): void {
       const originalText =
         node.getAttribute("originalText") ??
         node.getAttribute("originaltext") ??
+        node.getAttribute("data-original-text") ??
         "";
       if (!originalText.trim()) {
         node.remove();
@@ -243,18 +244,26 @@ export function markdownToHtml(md: string): string {
   return marked.parse(md, { async: false }) as string;
 }
 
+export interface ParsedNoteForEditor {
+  yaml: string | null;
+  title: string;
+  bodyMd: string;
+}
+
 /**
- * Parse full note markdown → editor HTML (noteTitle h1 + body).
+ * Split persisted markdown into document title + TipTap body markdown.
  * `titleFallback` used when frontmatter has no title (e.g. filename stem).
  */
-export function markdownToEditorHtml(md: string, titleFallback = ""): string {
+export function parseNoteForEditor(
+  md: string,
+  titleFallback = "",
+): ParsedNoteForEditor {
   const { fields, body: rawBody, yaml } = splitFrontmatter(md);
   let title = titleFromFields(fields);
   let body = rawBody;
 
   if (!title) {
     if (yaml === null) {
-      // Pre-Iris notes: leading `#` was the document title
       const legacy = /^#\s+(.+?)\s*(?:\n|$)/.exec(body.trimStart());
       if (legacy) {
         title = legacy[1]!.trim();
@@ -263,17 +272,51 @@ export function markdownToEditorHtml(md: string, titleFallback = ""): string {
         title = titleFallback.trim();
       }
     }
-    // With frontmatter: body `#` stays as section headings; noteTitle may be empty
   } else {
     body = stripLeadingBodyTitleHeading(body, title);
   }
 
-  const titleHtml = `<h1 class="iris-doc-title">${escapeHtml(title)}</h1>`;
-  const bodyTrimmed = body.trim();
-  const bodyHtml = bodyTrimmed
+  return { yaml, title, bodyMd: body };
+}
+
+/** Parse note body markdown → TipTap HTML (no document title block). */
+export function markdownBodyToEditorHtml(bodyMd: string): string {
+  const bodyTrimmed = bodyMd.trim();
+  return bodyTrimmed
     ? adaptMarkdownHtmlForTipTap(markdownToHtml(bodyTrimmed))
     : "<p></p>";
-  return `${titleHtml}${bodyHtml}`;
+}
+
+/** Serialize TipTap body HTML → markdown (no frontmatter / title). */
+export function editorBodyHtmlToMarkdown(html: string): string {
+  const doc = new DOMParser().parseFromString(
+    `<div>${html}</div>`,
+    "text/html",
+  );
+  const root = doc.body.firstElementChild;
+  if (!root) return "";
+  removeTransientAiNodes(root);
+  const bodyHtml = root.innerHTML.trim();
+  return bodyHtml ? turndown.turndown(bodyHtml) : "";
+}
+
+/** Assemble full note markdown from title + body + preserved YAML. */
+export function buildNoteMarkdown(
+  yaml: string | null,
+  title: string,
+  bodyMd: string,
+): string {
+  return serializeNoteMarkdown(yaml, title, bodyMd);
+}
+
+/**
+ * @deprecated Use `parseNoteForEditor` + `markdownBodyToEditorHtml` for the editor.
+ * Kept for tests comparing legacy combined HTML.
+ */
+export function markdownToEditorHtml(md: string, titleFallback = ""): string {
+  const { title, bodyMd } = parseNoteForEditor(md, titleFallback);
+  const titleHtml = `<h1 class="iris-doc-title">${escapeHtml(title)}</h1>`;
+  return `${titleHtml}${markdownBodyToEditorHtml(bodyMd)}`;
 }
 
 /** Extract raw frontmatter YAML from note markdown (for round-trip preservation). */
@@ -281,7 +324,9 @@ export function extractFrontmatterYaml(md: string): string | null {
   return splitFrontmatter(md).yaml;
 }
 
-/** Serialize editor HTML + preserved frontmatter → full note markdown. */
+/**
+ * @deprecated Use `serializeOpenNote` with separate title state + `editorBodyHtmlToMarkdown`.
+ */
 export function editorHtmlToMarkdown(
   html: string,
   existingYaml: string | null,
@@ -314,10 +359,12 @@ export function editorHtmlToMarkdown(
     duplicateBodyH1.remove();
   }
 
-  const bodyHtml = root.innerHTML.trim();
-  let bodyMd = bodyHtml ? turndown.turndown(bodyHtml) : "";
-  bodyMd = stripLeadingBodyTitleHeading(bodyMd, title);
-  return serializeNoteMarkdown(existingYaml, title, bodyMd);
+  const bodyMd = editorBodyHtmlToMarkdown(root.innerHTML);
+  return serializeNoteMarkdown(
+    existingYaml,
+    title,
+    stripLeadingBodyTitleHeading(bodyMd, title),
+  );
 }
 
 /** Serialize editor HTML to Markdown (body only, legacy). */
@@ -364,9 +411,11 @@ export function markdownRoundTrip(md: string): string {
     .replace(/\\\]/g, "]");
 }
 
-/** Round-trip for Iris notes with frontmatter title. */
+/** Round-trip for Iris notes with frontmatter title (split title + body pipeline). */
 export function noteMarkdownRoundTrip(md: string, titleFallback = ""): string {
-  const yaml = extractFrontmatterYaml(md);
-  const html = markdownToEditorHtml(md, titleFallback);
-  return editorHtmlToMarkdown(html, yaml);
+  const { yaml, title, bodyMd } = parseNoteForEditor(md, titleFallback);
+  const bodyFromHtml = editorBodyHtmlToMarkdown(
+    markdownBodyToEditorHtml(bodyMd),
+  );
+  return buildNoteMarkdown(yaml, title, bodyFromHtml);
 }

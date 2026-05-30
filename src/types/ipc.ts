@@ -67,6 +67,38 @@ export interface LlmTokenEvent {
   index: number;
 }
 
+/** Harness agent loop tool execution trace (backend `ai:harness_trace`). */
+export interface HarnessTraceEvent {
+  request_id: string;
+  round: number;
+  phase?: string;
+  tool_name: string;
+  status: string;
+  message?: string | null;
+  output_preview?: string | null;
+}
+
+export interface SessionSummary {
+  id: number;
+  title: string;
+  scene: string;
+  note_path: string | null;
+  message_count: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface SessionMessageRecord {
+  id: number;
+  session_id: number;
+  seq: number;
+  role: string;
+  content: string;
+  tool_calls?: unknown;
+  content_hash?: string | null;
+  created_at: string;
+}
+
 export interface BacklinkEntry {
   source_path: string;
   source_title: string;

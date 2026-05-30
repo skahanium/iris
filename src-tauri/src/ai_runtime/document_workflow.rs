@@ -940,7 +940,7 @@ async fn generate_llm_document_patches(
     evidence: &[ContextPacket],
 ) -> AppResult<Vec<PatchProposal>> {
     let rules = ModelGateway::load_active_rules_for_scene(db, AiScene::DraftingAssist)?;
-    let system = ModelGateway::build_system_prompt(AiScene::DraftingAssist, evidence, &rules);
+    let system = ModelGateway::build_system_prompt(AiScene::DraftingAssist, evidence, &rules, false);
     let heuristic = serialize_heuristic_for_llm(result);
     let excerpt = if input.content.len() > 5000 {
         format!("{}…", &input.content[..5000])
@@ -1034,7 +1034,7 @@ pub async fn enhance_document_check_with_llm(
     evidence: &[ContextPacket],
 ) -> AppResult<DocumentCheckResult> {
     let rules = ModelGateway::load_active_rules_for_scene(db, AiScene::DraftingAssist)?;
-    let system = ModelGateway::build_system_prompt(AiScene::DraftingAssist, evidence, &rules);
+    let system = ModelGateway::build_system_prompt(AiScene::DraftingAssist, evidence, &rules, false);
     let heuristic = serialize_heuristic_for_llm(&result);
     let excerpt = if input.content.len() > 6000 {
         format!("{}…", &input.content[..6000])

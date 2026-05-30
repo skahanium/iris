@@ -18,7 +18,7 @@ function isSectionHeading(node: ProseMirrorNode): boolean {
   );
 }
 
-/** Extract H1–H3 outline from a ProseMirror document (excludes `noteTitle`). */
+/** Extract H1–H3 section headings from a ProseMirror document. */
 export function outlineFromDoc(doc: ProseMirrorNode): OutlineEntry[] {
   const items: OutlineEntry[] = [];
   doc.forEach((node, offset) => {

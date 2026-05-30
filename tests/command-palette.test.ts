@@ -89,4 +89,14 @@ describe("command palette", () => {
     expect(groups[0]?.group).toBe("通用");
     expect(groups.some((g) => g.group === "AI")).toBe(true);
   });
+
+  it("includes skills management in AI group", () => {
+    const items = buildCommandPaletteItems({
+      hasVault: true,
+      hasActiveNote: false,
+    });
+    const skills = items.find((i) => i.id === "skills");
+    expect(skills?.group).toBe("AI");
+    expect(skills?.action).toEqual({ type: "openOverlay", overlay: "skills" });
+  });
 });

@@ -72,6 +72,23 @@ impl TraceRecorder {
         })
     }
 
+    /// Persist harness checkpoint JSON for recovery/debug.
+    pub fn save_checkpoint(
+        db: &Database,
+        request_id: &str,
+        checkpoint: &serde_json::Value,
+    ) -> AppResult<()> {
+        let json = serde_json::to_string(checkpoint)
+            .map_err(|e| crate::error::AppError::msg(format!("checkpoint serialize: {e}")))?;
+        db.with_conn(|conn| {
+            conn.execute(
+                "UPDATE ai_traces SET checkpoint = ?1 WHERE request_id = ?2",
+                rusqlite::params![json, request_id],
+            )?;
+            Ok(())
+        })
+    }
+
     /// 更新 trace 状态。
     pub fn update_status(db: &Database, request_id: &str, status: TraceStatus) -> AppResult<()> {
         db.with_conn(|conn| {

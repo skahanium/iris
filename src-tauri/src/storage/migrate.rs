@@ -28,6 +28,10 @@ const MIGRATION_010_UP: &str = include_str!("../../migrations/010_knowledge_inde
 const MIGRATION_010_DOWN: &str = include_str!("../../migrations/010_knowledge_index.down.sql");
 const MIGRATION_011_UP: &str = include_str!("../../migrations/011_eval_results.sql");
 const MIGRATION_011_DOWN: &str = include_str!("../../migrations/011_eval_results.down.sql");
+const MIGRATION_012_UP: &str = include_str!("../../migrations/012_session_title.sql");
+const MIGRATION_012_DOWN: &str = include_str!("../../migrations/012_session_title.down.sql");
+const MIGRATION_013_UP: &str = include_str!("../../migrations/013_ai_trace_checkpoint.sql");
+const MIGRATION_013_DOWN: &str = include_str!("../../migrations/013_ai_trace_checkpoint.down.sql");
 
 /// Apply core schema migrations idempotently.
 pub fn migrate_up(conn: &Connection) -> AppResult<()> {
@@ -224,6 +228,40 @@ pub fn migrate_up(conn: &Connection) -> AppResult<()> {
         let _ = conn.execute_batch(MIGRATION_011_UP);
         let _ = conn.execute(
             "INSERT INTO _migrations (name, applied_at) VALUES ('011_eval_results', datetime('now'))",
+            [],
+        );
+    }
+
+    let v12_applied: bool = conn
+        .query_row(
+            "SELECT COUNT(*) FROM _migrations WHERE name = '012_session_title'",
+            [],
+            |row| row.get::<_, i64>(0),
+        )
+        .map(|c| c > 0)
+        .unwrap_or(false);
+
+    if !v12_applied {
+        let _ = conn.execute_batch(MIGRATION_012_UP);
+        let _ = conn.execute(
+            "INSERT INTO _migrations (name, applied_at) VALUES ('012_session_title', datetime('now'))",
+            [],
+        );
+    }
+
+    let v13_applied: bool = conn
+        .query_row(
+            "SELECT COUNT(*) FROM _migrations WHERE name = '013_ai_trace_checkpoint'",
+            [],
+            |row| row.get::<_, i64>(0),
+        )
+        .map(|c| c > 0)
+        .unwrap_or(false);
+
+    if !v13_applied {
+        let _ = conn.execute_batch(MIGRATION_013_UP);
+        let _ = conn.execute(
+            "INSERT INTO _migrations (name, applied_at) VALUES ('013_ai_trace_checkpoint', datetime('now'))",
             [],
         );
     }

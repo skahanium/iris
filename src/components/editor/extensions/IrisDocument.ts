@@ -4,5 +4,5 @@ import { Node } from "@tiptap/core";
 export const IrisDocument = Node.create({
   name: "doc",
   topNode: true,
-  content: "noteTitle block+",
+  content: "block+",
 });

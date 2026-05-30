@@ -35,7 +35,7 @@ export const SlashCommandExtension = Extension.create<SlashCommandOptions>({
       Suggestion({
         editor: this.editor,
         char: "/",
-        allow: ({ editor }) => !editor.isActive("noteTitle"),
+        allow: () => true,
         command: ({ editor, range, props }) => {
           const item = props as SlashItem;
           editor.chain().focus().deleteRange(range).run();

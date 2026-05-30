@@ -1,6 +1,5 @@
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { AiMessage } from "@/components/ui/ai-message";
-import type { ContextPacket } from "@/types/ai";
 
 import { ToolCallList, type ToolCallInfo } from "./ToolCallBubble";
 
@@ -13,7 +12,6 @@ export interface ChatLine {
 interface AiMessageListProps {
   messages: ChatLine[];
   streaming: boolean;
-  packets?: ContextPacket[];
   onCitationClick?: (ref: string) => void;
 }
 
@@ -22,6 +20,13 @@ export function AiMessageList({
   streaming,
   onCitationClick,
 }: AiMessageListProps) {
+  const last = messages[messages.length - 1];
+  const showStandaloneThinking =
+    streaming &&
+    (messages.length === 0 ||
+      last?.role === "user" ||
+      (last?.role === "system" &&
+        !messages.some((m) => m.role === "assistant")));
   return (
     <ScrollArea className="min-h-0 flex-1">
       <div className="space-y-3 px-3 py-3">
@@ -29,6 +34,11 @@ export function AiMessageList({
           <p className="py-8 text-center text-xs text-muted-foreground">
             输入问题开始对话。证据与工具调用将显示在下方。
           </p>
+        ) : null}
+        {showStandaloneThinking ? (
+          <div className="rounded-lg border border-border/60 bg-muted/30 px-3 py-2.5">
+            <AiMessage role="assistant" streaming />
+          </div>
         ) : null}
         {messages.map((m, i) => {
           const isLast = i === messages.length - 1;

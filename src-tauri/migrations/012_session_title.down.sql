@@ -1,0 +1,2 @@
+-- SQLite cannot DROP COLUMN in older versions; recreate would be heavy.
+-- Down migration is a no-op for title column (harmless extra column).

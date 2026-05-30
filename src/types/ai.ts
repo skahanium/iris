@@ -134,6 +134,8 @@ export interface AssistantExecuteRequest {
   documentCheckType?: DocumentCheckType | null;
   organizeTaskType?: string | null;
   baseContentHash?: string | null;
+  /** 为 true 时后端创建新 session，不加载同场景+笔记路径下的旧对话 */
+  newSession?: boolean;
 }
 
 export interface AiChatExecutePayload {
@@ -141,14 +143,22 @@ export interface AiChatExecutePayload {
   session_id: number;
   status: string;
   content?: string;
-  tool_calls?: ToolCallInfo[];
+  tool_calls?: Array<{
+    id: string;
+    name?: string;
+    function?: { name: string; arguments?: string };
+  }>;
   tool_results?: Array<{
     tool_call_id: string;
     status: string;
     result?: unknown;
+    error?: string;
   }>;
+  harness_rounds?: number;
   usage?: TokenUsage;
   citation_valid?: boolean;
+  /** 冷启动 + 工具检索合并后的证据包 */
+  evidence_packets?: ContextPacket[];
   web_search_meta?: {
     injected: boolean;
     result_count: number;
@@ -525,6 +535,8 @@ export interface TokenUsage {
   prompt_tokens: number;
   completion_tokens: number;
   total_tokens: number;
+  prompt_cache_hit_tokens?: number;
+  prompt_cache_miss_tokens?: number;
 }
 
 // ─── Citation Check Workflow ─────────────────────────────

@@ -335,6 +335,7 @@ pub async fn generate_chapter_content_with_llm(
         crate::ai_runtime::AiScene::DraftingAssist,
         evidence,
         &rules,
+        false,
     );
 
     let evidence_block = evidence

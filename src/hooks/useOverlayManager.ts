@@ -10,13 +10,15 @@ export type OverlayId =
   | "tags"
   | "graph"
   | "version"
-  | "recycleBin";
+  | "recycleBin"
+  | "skills";
 
 const SIDE_PANELS: OverlayId[] = [
   "commandPalette",
   "fileSheet",
   "search",
   "settings",
+  "skills",
   "backlinks",
   "tags",
   "version",
@@ -106,6 +108,7 @@ export function useOverlayManager() {
   const graphOpen = activeOverlay === "graph";
   const versionOpen = activeOverlay === "version";
   const recycleBinOpen = activeOverlay === "recycleBin";
+  const skillsOpen = activeOverlay === "skills";
 
   return {
     activeOverlay,
@@ -134,6 +137,8 @@ export function useOverlayManager() {
     setVersionOpen: (open: boolean) => setOverlayOpen("version", open),
     recycleBinOpen,
     setRecycleBinOpen: (open: boolean) => setOverlayOpen("recycleBin", open),
+    skillsOpen,
+    setSkillsOpen: (open: boolean) => setOverlayOpen("skills", open),
     openSidePanel,
     toggleSidePanel,
     closeSidePanels,

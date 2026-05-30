@@ -14,7 +14,20 @@ pub struct Session {
     pub session_key: String,
     pub scene: String,
     pub note_path: Option<String>,
+    pub title: Option<String>,
     pub retention_policy: String,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+/// 会话列表项（供历史下拉使用）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionSummary {
+    pub id: i64,
+    pub title: String,
+    pub scene: String,
+    pub note_path: Option<String>,
+    pub message_count: u32,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -44,6 +57,25 @@ pub fn session_key(scene: AiScene, note_path: Option<&str>) -> String {
 pub struct SessionManager;
 
 impl SessionManager {
+    /// 创建新的独立会话（同 scene + 笔记路径下开启新对话线程，不续接旧消息）。
+    pub fn create_fresh(db: &Database, scene: AiScene, note_path: Option<&str>) -> AppResult<i64> {
+        let key = format!(
+            "{}#{}",
+            session_key(scene, note_path),
+            uuid::Uuid::new_v4()
+        );
+        let now = chrono::Utc::now().to_rfc3339();
+
+        db.with_conn(|conn| {
+            conn.execute(
+                "INSERT INTO sessions (session_key, scene, note_path, created_at, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?4)",
+                rusqlite::params![key, scene.profile(), note_path, now],
+            )?;
+            Ok(conn.last_insert_rowid())
+        })
+    }
+
     /// 获取或创建 session。返回 session id。
     pub fn ensure(db: &Database, scene: AiScene, note_path: Option<&str>) -> AppResult<i64> {
         let key = session_key(scene, note_path);
@@ -161,7 +193,7 @@ impl SessionManager {
     pub fn get_session(db: &Database, session_id: i64) -> AppResult<Option<Session>> {
         db.with_conn(|conn| {
             let result = conn.query_row(
-                "SELECT id, session_key, scene, note_path, retention_policy, created_at, updated_at
+                "SELECT id, session_key, scene, note_path, title, retention_policy, created_at, updated_at
                  FROM sessions WHERE id = ?1",
                 [session_id],
                 |row| {
@@ -170,9 +202,10 @@ impl SessionManager {
                         session_key: row.get(1)?,
                         scene: row.get(2)?,
                         note_path: row.get(3)?,
-                        retention_policy: row.get(4)?,
-                        created_at: row.get(5)?,
-                        updated_at: row.get(6)?,
+                        title: row.get(4)?,
+                        retention_policy: row.get(5)?,
+                        created_at: row.get(6)?,
+                        updated_at: row.get(7)?,
                     })
                 },
             );
@@ -182,6 +215,121 @@ impl SessionManager {
                 Err(e) => Err(e.into()),
             }
         })
+    }
+
+    /// 列出会话（按 updated_at 降序）。
+    pub fn list_sessions(
+        db: &Database,
+        scene: Option<&str>,
+        note_path: Option<&str>,
+        limit: u32,
+        offset: u32,
+    ) -> AppResult<Vec<SessionSummary>> {
+        db.with_conn(|conn| {
+            let mut sql = String::from(
+                "SELECT s.id, s.scene, s.note_path, s.title, s.created_at, s.updated_at,
+                        (SELECT COUNT(*) FROM session_messages m WHERE m.session_id = s.id) AS message_count,
+                        (SELECT content FROM session_messages m
+                         WHERE m.session_id = s.id AND m.role = 'user'
+                         ORDER BY m.seq ASC LIMIT 1) AS first_user
+                 FROM sessions s
+                 WHERE 1=1",
+            );
+            let mut params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+            if let Some(sc) = scene {
+                sql.push_str(" AND s.scene = ?");
+                params.push(Box::new(sc.to_string()));
+            }
+            if let Some(np) = note_path {
+                sql.push_str(" AND s.note_path = ?");
+                params.push(Box::new(np.to_string()));
+            }
+            sql.push_str(" ORDER BY s.updated_at DESC LIMIT ? OFFSET ?");
+            params.push(Box::new(limit));
+            params.push(Box::new(offset));
+
+            let param_refs: Vec<&dyn rusqlite::ToSql> =
+                params.iter().map(|p| p.as_ref()).collect();
+            let mut stmt = conn.prepare(&sql)?;
+            let rows = stmt.query_map(param_refs.as_slice(), |row| {
+                let stored_title: Option<String> = row.get(3)?;
+                let first_user: Option<String> = row.get(7)?;
+                let title = stored_title.unwrap_or_else(|| {
+                    derive_session_title(first_user.as_deref().unwrap_or("新对话"))
+                });
+                Ok(SessionSummary {
+                    id: row.get(0)?,
+                    title,
+                    scene: row.get(1)?,
+                    note_path: row.get(2)?,
+                    message_count: row.get::<_, i64>(6)? as u32,
+                    created_at: row.get(4)?,
+                    updated_at: row.get(5)?,
+                })
+            })?;
+            let mut out = Vec::new();
+            for row in rows {
+                out.push(row?);
+            }
+            Ok(out)
+        })
+    }
+
+    /// 按 ID 删除会话（级联删除消息）。
+    pub fn delete_session(db: &Database, session_id: i64) -> AppResult<bool> {
+        db.with_conn(|conn| {
+            let count = conn.execute("DELETE FROM sessions WHERE id = ?1", [session_id])?;
+            Ok(count > 0)
+        })
+    }
+
+    /// 删除当前筛选条件下的全部会话（级联消息）。
+    pub fn delete_all_filtered(
+        db: &Database,
+        scene: Option<&str>,
+        note_path: Option<&str>,
+    ) -> AppResult<u32> {
+        db.with_conn(|conn| {
+            let mut sql = String::from("DELETE FROM sessions WHERE 1=1");
+            let mut params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+            if let Some(sc) = scene {
+                sql.push_str(" AND scene = ?");
+                params.push(Box::new(sc.to_string()));
+            }
+            if let Some(np) = note_path {
+                sql.push_str(" AND note_path = ?");
+                params.push(Box::new(np.to_string()));
+            }
+            let param_refs: Vec<&dyn rusqlite::ToSql> =
+                params.iter().map(|p| p.as_ref()).collect();
+            let count = conn.execute(&sql, param_refs.as_slice())?;
+            Ok(count as u32)
+        })
+    }
+
+    /// 重命名会话标题。
+    pub fn rename_session(db: &Database, session_id: i64, new_title: &str) -> AppResult<()> {
+        let now = chrono::Utc::now().to_rfc3339();
+        db.with_conn(|conn| {
+            conn.execute(
+                "UPDATE sessions SET title = ?1, updated_at = ?2 WHERE id = ?3",
+                rusqlite::params![new_title, now, session_id],
+            )?;
+            Ok(())
+        })
+    }
+}
+
+fn derive_session_title(first_user_message: &str) -> String {
+    let trimmed = first_user_message.trim();
+    if trimmed.is_empty() {
+        return "新对话".to_string();
+    }
+    let chars: String = trimmed.chars().take(40).collect();
+    if trimmed.chars().count() > 40 {
+        format!("{chars}…")
+    } else {
+        chars
     }
 }
 
@@ -248,6 +396,25 @@ mod tests {
         let deleted = SessionManager::delete_by_key(&db, &key).unwrap();
         assert!(deleted);
 
+        let msgs = SessionManager::recent_messages(&db, sid, 10).unwrap();
+        assert!(msgs.is_empty());
+    }
+
+    #[test]
+    fn list_rename_and_delete_session() {
+        let db = setup_db();
+        let sid = SessionManager::create_fresh(&db, AiScene::KnowledgeLookup, None).unwrap();
+        SessionManager::append_message(&db, sid, "user", "第一条用户消息用于标题", None).unwrap();
+        let list = SessionManager::list_sessions(&db, Some("knowledge_lookup"), None, 10, 0)
+            .unwrap();
+        assert!(!list.is_empty());
+        assert!(list[0].title.contains("第一条"));
+
+        SessionManager::rename_session(&db, sid, "自定义标题").unwrap();
+        let list2 = SessionManager::list_sessions(&db, None, None, 10, 0).unwrap();
+        assert!(list2.iter().any(|s| s.title == "自定义标题"));
+
+        assert!(SessionManager::delete_session(&db, sid).unwrap());
         let msgs = SessionManager::recent_messages(&db, sid, 10).unwrap();
         assert!(msgs.is_empty());
     }

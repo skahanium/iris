@@ -72,11 +72,70 @@ pub struct LlmMessage {
     pub tool_calls: Option<Vec<ToolCall>>,
 }
 
-/// Tool call from LLM.
+/// Tool call from LLM (OpenAI / DeepSeek chat completions format).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolCall {
     pub id: String,
+    #[serde(rename = "type", default = "default_tool_call_type")]
+    pub call_type: String,
     pub function: FunctionCall,
+}
+
+fn default_tool_call_type() -> String {
+    "function".into()
+}
+
+impl ToolCall {
+    pub fn new(id: impl Into<String>, name: impl Into<String>, arguments: impl Into<String>) -> Self {
+        Self {
+            id: id.into(),
+            call_type: default_tool_call_type(),
+            function: FunctionCall {
+                name: name.into(),
+                arguments: arguments.into(),
+            },
+        }
+    }
+}
+
+/// Serialize messages for provider APIs (tool_calls need `type`, tool role needs `tool_call_id`).
+pub fn messages_for_api(messages: &[LlmMessage]) -> Vec<serde_json::Value> {
+    messages
+        .iter()
+        .map(|m| {
+            let role = match m.role {
+                MessageRole::System => "system",
+                MessageRole::User => "user",
+                MessageRole::Assistant => "assistant",
+                MessageRole::Tool => "tool",
+            };
+            if matches!(m.role, MessageRole::Tool) {
+                return serde_json::json!({
+                    "role": "tool",
+                    "tool_call_id": m.tool_call_id,
+                    "content": m.content,
+                });
+            }
+            if matches!(m.role, MessageRole::Assistant)
+                && m.tool_calls.as_ref().is_some_and(|tc| !tc.is_empty())
+            {
+                let content: serde_json::Value = if m.content.is_empty() {
+                    serde_json::Value::Null
+                } else {
+                    serde_json::Value::String(m.content.clone())
+                };
+                return serde_json::json!({
+                    "role": "assistant",
+                    "content": content,
+                    "tool_calls": m.tool_calls,
+                });
+            }
+            serde_json::json!({
+                "role": role,
+                "content": m.content,
+            })
+        })
+        .collect()
 }
 
 /// Function call details.
@@ -275,34 +334,11 @@ impl ModelGateway {
         scene: AiScene,
         packets: &[ContextPacket],
         user_rules: &[String],
+        web_search_enabled: bool,
     ) -> String {
         let mut prompt = String::new();
 
-        // Scene-specific persona
-        match scene {
-            AiScene::KnowledgeLookup => {
-                prompt.push_str("你是「知识管家」，帮助用户在本地知识库中查找、解释、引用材料。\n");
-                prompt
-                    .push_str("你的回答必须基于提供的证据包，引用时使用 [citation_label] 格式。\n");
-                prompt.push_str("如果证据不足，直接说明缺少材料，不要编造。\n");
-            }
-            AiScene::ExemplarLearning => {
-                prompt.push_str("你是「学习伴侣」，帮助用户分析范文结构、表达方式和写作技巧。\n");
-                prompt.push_str("分析时要指出具体的结构特征、常用句式和法规引用方式。\n");
-                prompt.push_str("可以建议可复用的模板，但必须经过用户确认才能保存。\n");
-            }
-            AiScene::DraftingAssist => {
-                prompt.push_str("你是「写作伴侣」，帮助用户在文稿创作中提供低干扰写作辅助。\n");
-                prompt.push_str("提供结构建议、段落生成、改写润色和法规引用建议。\n");
-                prompt.push_str("写入操作（插入文本、替换选区）必须经过用户确认。\n");
-                prompt.push_str("反抄袭保护：不直接注入范文长段原文。\n");
-            }
-            AiScene::ResearchSynthesis => {
-                prompt.push_str("你是「研究助理」，帮助用户对多材料进行论证组织和证据缺口分析。\n");
-                prompt.push_str("支持子命题拆解、证据矩阵构建、论证链检测和缺口识别。\n");
-                prompt.push_str("联网研究必须经过用户授权。\n");
-            }
-        }
+        prompt.push_str(&Self::unified_persona(scene, web_search_enabled));
 
         // Inject context packets as evidence
         if !packets.is_empty() {
@@ -342,15 +378,7 @@ impl ModelGateway {
         user_rules: &[String],
         web_search: bool,
     ) -> Vec<LlmMessage> {
-        let mut persona = Self::scene_persona_only(scene);
-        if web_search {
-            persona.push_str(
-                "\n用户已在底栏开启「联网」。若用户消息中含「【本机日期】」或\
-                 「以下是与问题相关的网页搜索结果」区块，可据此回答实时性问题；\
-                 问「今天几号」时优先采用【本机日期】。本地证据包仍优先用于用户笔记。\
-                 未出现上述区块时不要声称已联网检索。\n",
-            );
-        }
+        let persona = Self::unified_persona(scene, web_search);
         let mut messages = vec![LlmMessage {
             role: MessageRole::System,
             content: persona,
@@ -372,25 +400,9 @@ impl ModelGateway {
         }
 
         if !packets.is_empty() {
-            let mut evidence = String::from("## 证据包\n\n");
-            evidence.push_str("以下是检索到的证据材料，回答时必须引用来源：\n\n");
-            for packet in packets {
-                evidence.push_str(&format!(
-                    "### {} ({})\n",
-                    packet.citation_label, packet.title
-                ));
-                if let Some(path) = &packet.source_path {
-                    evidence.push_str(&format!("来源: {path}\n"));
-                }
-                if let Some(heading) = &packet.heading_path {
-                    evidence.push_str(&format!("章节: {heading}\n"));
-                }
-                evidence.push_str(&format!("相关度: {:.0}%\n", packet.score * 100.0));
-                evidence.push_str(&format!("{}\n\n", packet.excerpt));
-            }
             messages.push(LlmMessage {
                 role: MessageRole::System,
-                content: evidence,
+                content: Self::format_evidence_packets(packets),
                 tool_call_id: None,
                 tool_calls: None,
             });
@@ -399,33 +411,59 @@ impl ModelGateway {
         messages
     }
 
-    fn scene_persona_only(scene: AiScene) -> String {
-        match scene {
+    /// Unified assistant persona「砚」with scene-specific capability focus.
+    pub fn unified_persona(scene: AiScene, web_search_enabled: bool) -> String {
+        let focus = match scene {
             AiScene::KnowledgeLookup => {
-                "你是「知识管家」，帮助用户在本地知识库中查找、解释、引用材料。\n\
-                 你的回答必须基于提供的证据包，引用时使用 [citation_label] 格式。\n\
-                 如果证据不足，直接说明缺少材料，不要编造。\n"
-                    .into()
+                if web_search_enabled {
+                    "知识查阅：先 search_hybrid 检索本地笔记，再 web_search 补充实时信息；\
+                     本地与网络证据结合、交叉引用，不可偏废"
+                } else {
+                    "知识查阅：通过 search_hybrid 检索本地笔记；仅依据本地知识库回答"
+                }
             }
-            AiScene::ExemplarLearning => {
-                "你是「学习伴侣」，帮助用户分析范文结构、表达方式和写作技巧。\n\
-                 分析时要指出具体的结构特征、常用句式和法规引用方式。\n\
-                 可以建议可复用的模板，但必须经过用户确认才能保存。\n"
-                    .into()
+            AiScene::ExemplarLearning => "范文学习：分析结构、句式与表达；模板保存需用户确认",
+            AiScene::DraftingAssist => "文稿创作：低干扰辅助；写入笔记须用户确认；避免大段照搬范文",
+            AiScene::ResearchSynthesis => "研究综合：多材料交叉论证、证据缺口与引用核查",
+        };
+        let web_instruction = if web_search_enabled {
+            "联网搜索已开启——直接调用 web_search 即可，无需询问用户。\n\
+             重要：不要询问用户是否允许联网搜索——开关已打开即表示同意。\n\
+             本地检索与网络搜索必须同时进行、相互印证，不可只做其一。\n"
+        } else {
+            "联网搜索未开启——仅使用本地知识库回答，不要调用 web_search。\n"
+        };
+        format!(
+            "你是「砚」，Iris 本地 Markdown 笔记本的 AI 助手。对用户你始终是同一个身份：\
+             语气克制、清晰、可追溯。\n\
+             Iris 以用户的 .md 为唯一数据源；通过工具检索知识库、读取笔记。\
+             在用户确认后修改文稿。\n\
+             {web_instruction}\
+             当前侧重：{focus}。\n\
+             回答须基于工具结果与证据；引用时请使用证据包中提供的标签（如 [C1]、[W0]），\
+             也可直接指明来源文件名或 URL；证据不足时直接说明，不编造。\n"
+        )
+    }
+
+    /// Format context packets as markdown evidence block.
+    pub fn format_evidence_packets(packets: &[ContextPacket]) -> String {
+        let mut evidence = String::from("## 本地证据包\n\n");
+        evidence.push_str("以下是从你的笔记中检索到的材料，请在回答中引用（使用 [标签] 格式），并结合网络搜索结果交叉验证：\n\n");
+        for packet in packets {
+            evidence.push_str(&format!(
+                "### {} ({})\n",
+                packet.citation_label, packet.title
+            ));
+            if let Some(path) = &packet.source_path {
+                evidence.push_str(&format!("来源: {path}\n"));
             }
-            AiScene::DraftingAssist => {
-                "你是「写作伴侣」，帮助用户在文稿创作中提供低干扰写作辅助。\n\
-                 提供结构建议、段落生成、改写润色和法规引用建议。\n\
-                 写入操作（插入文本、替换选区）必须经过用户确认。\n\
-                 反抄袭保护：不直接注入范文长段原文。\n"
-                    .into()
+            if let Some(heading) = &packet.heading_path {
+                evidence.push_str(&format!("章节: {heading}\n"));
             }
-            AiScene::ResearchSynthesis => {
-                "你是「研究助理」，帮助用户对多材料进行论证组织和证据缺口分析。\n\
-                 支持子命题拆解、证据矩阵构建、论证链检测和缺口识别。\n"
-                    .into()
-            }
+            evidence.push_str(&format!("相关度: {:.0}%\n", packet.score * 100.0));
+            evidence.push_str(&format!("{}\n\n", packet.excerpt));
         }
+        evidence
     }
 
     /// Convert ToolSpec to LLM tool definition format.
@@ -449,7 +487,7 @@ impl ModelGateway {
 
         let mut body = serde_json::json!({
             "model": request.provider.model,
-            "messages": request.messages,
+            "messages": messages_for_api(&request.messages),
         });
 
         if !request.tools.is_empty() {
@@ -504,6 +542,10 @@ impl ModelGateway {
                     .filter_map(|tc| {
                         Some(ToolCall {
                             id: tc["id"].as_str()?.to_string(),
+                            call_type: tc["type"]
+                                .as_str()
+                                .unwrap_or("function")
+                                .to_string(),
                             function: FunctionCall {
                                 name: tc["function"]["name"].as_str()?.to_string(),
                                 arguments: tc["function"]["arguments"]
@@ -542,7 +584,7 @@ impl ModelGateway {
 
         let mut body = serde_json::json!({
             "model": request.provider.model,
-            "messages": request.messages,
+            "messages": messages_for_api(&request.messages),
             "stream": true,
         });
 
@@ -715,6 +757,7 @@ impl ModelGateway {
             .filter_map(|(_, (id, name, args))| {
                 Some(ToolCall {
                     id: id?,
+                    call_type: "function".into(),
                     function: FunctionCall {
                         name: name?,
                         arguments: args,
@@ -940,9 +983,11 @@ mod tests {
             web: None,
         }];
 
-        let prompt = ModelGateway::build_system_prompt(AiScene::KnowledgeLookup, &packets, &[]);
+        let prompt =
+            ModelGateway::build_system_prompt(AiScene::KnowledgeLookup, &packets, &[], false);
 
-        assert!(prompt.contains("知识管家"));
+        assert!(prompt.contains("砚"));
+        assert!(prompt.contains("知识查阅"));
         assert!(prompt.contains("[1]"));
         assert!(prompt.contains("纪律处分条例"));
     }
@@ -954,10 +999,41 @@ mod tests {
             "输出使用中文".to_string(),
         ];
 
-        let prompt = ModelGateway::build_system_prompt(AiScene::DraftingAssist, &[], &rules);
+        let prompt =
+            ModelGateway::build_system_prompt(AiScene::DraftingAssist, &[], &rules, false);
 
-        assert!(prompt.contains("写作伴侣"));
+        assert!(prompt.contains("砚"));
+        assert!(prompt.contains("文稿创作"));
         assert!(prompt.contains("引用法规时使用条/款格式"));
+    }
+
+    #[test]
+    fn messages_for_api_includes_tool_call_type() {
+        let messages = vec![
+            LlmMessage {
+                role: MessageRole::User,
+                content: "查一下".into(),
+                tool_call_id: None,
+                tool_calls: None,
+            },
+            LlmMessage {
+                role: MessageRole::Assistant,
+                content: String::new(),
+                tool_call_id: None,
+                tool_calls: Some(vec![ToolCall::new("call_1", "search_hybrid", r#"{"query":"x"}"#)]),
+            },
+            LlmMessage {
+                role: MessageRole::Tool,
+                content: r#"{"ok":true}"#.into(),
+                tool_call_id: Some("call_1".into()),
+                tool_calls: None,
+            },
+        ];
+        let api = messages_for_api(&messages);
+        assert_eq!(api[1]["tool_calls"][0]["type"], "function");
+        assert!(api[1]["content"].is_null());
+        assert_eq!(api[2]["role"], "tool");
+        assert_eq!(api[2]["tool_call_id"], "call_1");
     }
 
     #[test]

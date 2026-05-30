@@ -225,6 +225,86 @@ impl ToolRegistry {
                 requires_confirmation: false,
                 max_results: Some(50),
             },
+            ToolSpec {
+                name: "web_search".into(),
+                description: "联网搜索实时信息；无需确认，直接调用。结果应与本地检索证据交叉引用、相互印证。".into(),
+                input_schema: serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "query": {"type": "string", "description": "搜索查询"}
+                    },
+                    "required": ["query"]
+                }),
+                access_level: ToolAccessLevel::Network,
+                scene_allowlist: vec![
+                    AiScene::KnowledgeLookup,
+                    AiScene::DraftingAssist,
+                    AiScene::ResearchSynthesis,
+                ],
+                requires_confirmation: false,
+                max_results: Some(8),
+            },
+            ToolSpec {
+                name: "read_note".into(),
+                description: "读取指定笔记的 Markdown 全文（可截断）".into(),
+                input_schema: serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "path": {"type": "string"},
+                        "max_chars": {"type": "integer", "default": 12000}
+                    },
+                    "required": ["path"]
+                }),
+                access_level: ToolAccessLevel::ReadNoteSpan,
+                scene_allowlist: vec![],
+                requires_confirmation: false,
+                max_results: None,
+            },
+            ToolSpec {
+                name: "list_vault".into(),
+                description: "列出知识库中的笔记路径与标题".into(),
+                input_schema: serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "prefix": {"type": "string", "description": "路径前缀过滤"},
+                        "limit": {"type": "integer", "default": 50}
+                    }
+                }),
+                access_level: ToolAccessLevel::ReadIndex,
+                scene_allowlist: vec![],
+                requires_confirmation: false,
+                max_results: Some(100),
+            },
+            ToolSpec {
+                name: "get_outline".into(),
+                description: "提取笔记的标题大纲（Markdown 标题层级）".into(),
+                input_schema: serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "path": {"type": "string"}
+                    },
+                    "required": ["path"]
+                }),
+                access_level: ToolAccessLevel::ReadNoteSpan,
+                scene_allowlist: vec![],
+                requires_confirmation: false,
+                max_results: None,
+            },
+            ToolSpec {
+                name: "get_backlinks".into(),
+                description: "获取链接到指定笔记的反向链接".into(),
+                input_schema: serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "path": {"type": "string"}
+                    },
+                    "required": ["path"]
+                }),
+                access_level: ToolAccessLevel::ReadIndex,
+                scene_allowlist: vec![],
+                requires_confirmation: false,
+                max_results: Some(50),
+            },
             // ─── 写入操作 (均需确认) ───
             ToolSpec {
                 name: "insert_text_at_cursor".into(),
@@ -320,6 +400,48 @@ impl ToolRegistry {
                 max_results: None,
             },
             ToolSpec {
+                name: "conclude_reasoning".into(),
+                description: "当你认为已收集到足够信息、可以回答用户问题时调用，结束工具循环并生成最终回答。"
+                    .into(),
+                input_schema: serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "summary": {"type": "string", "description": "简要说明为何可以结束"}
+                    }
+                }),
+                access_level: ToolAccessLevel::ReadIndex,
+                scene_allowlist: vec![
+                    AiScene::KnowledgeLookup,
+                    AiScene::ExemplarLearning,
+                    AiScene::DraftingAssist,
+                    AiScene::ResearchSynthesis,
+                ],
+                requires_confirmation: false,
+                max_results: None,
+            },
+            ToolSpec {
+                name: "spawn_subagent".into(),
+                description: "将子任务委派给独立 agent 并行执行。适用于多角度检索、子问题分解。"
+                    .into(),
+                input_schema: serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "task": {"type": "string", "description": "子任务完整描述"},
+                        "context_hint": {"type": "string", "description": "可选额外上下文"},
+                        "max_rounds": {"type": "integer", "description": "子任务最大轮次", "default": 2}
+                    },
+                    "required": ["task"]
+                }),
+                access_level: ToolAccessLevel::ReadIndex,
+                scene_allowlist: vec![
+                    AiScene::KnowledgeLookup,
+                    AiScene::DraftingAssist,
+                    AiScene::ResearchSynthesis,
+                ],
+                requires_confirmation: false,
+                max_results: None,
+            },
+            ToolSpec {
                 name: "create_note_from_deposit".into(),
                 description: "从 AI 收件箱创建新 .md 笔记".into(),
                 input_schema: serde_json::json!({
@@ -361,11 +483,11 @@ pub fn check_tool_permission(
         });
     }
 
-    // 2. 自治等级检查：L3 以下不允许 Network 工具
-    if tool.access_level == ToolAccessLevel::Network && allowed_level < AutonomyLevel::L3 {
+    // 2. 联网只读工具（web_search）在 L2 及以上可用
+    if tool.access_level == ToolAccessLevel::Network && allowed_level < AutonomyLevel::L2 {
         return Err(ToolPermissionError::InsufficientAutonomy {
             tool: tool.name.clone(),
-            required: AutonomyLevel::L3,
+            required: AutonomyLevel::L2,
             current: allowed_level,
         });
     }

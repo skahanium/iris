@@ -54,6 +54,14 @@
     --editor-code-fg: 0 0% 88%;
 
     --editor-fold-column: 1.75rem;
+    /** Floating outline panel width + left offset (see EditorOutline). */
+    --editor-outline-width: 10rem;
+    --editor-outline-inset: 0.75rem;
+    --editor-outline-gutter: 0.5rem;
+    --editor-outline-reserve: calc(
+      var(--editor-outline-inset) + var(--editor-outline-width) +
+        var(--editor-outline-gutter)
+    );
     --editor-canvas-pad-top: clamp(3rem, 8vh, 5rem);
     --editor-canvas-pad-x: clamp(1.5rem, 5vw, 6rem);
     --editor-canvas-pad-bottom: clamp(4rem, 12vh, 8rem);
@@ -401,9 +409,23 @@
     @apply min-h-0 flex-1 overflow-auto;
   }
 
+  [data-testid="editor-shell"] {
+    container-type: inline-size;
+    container-name: editor-shell;
+  }
+
   .iris-editor-outline-open .iris-editor-zoom-scroll {
-    padding-left: min(15rem, 40vw);
+    padding-left: min(
+      var(--editor-outline-reserve),
+      max(0px, calc(50cqw - 22.5rem))
+    );
     transition: padding-left 200ms ease-out;
+  }
+
+  @container editor-shell (max-width: 52rem) {
+    .iris-editor-outline-open .iris-editor-zoom-scroll {
+      padding-left: min(var(--editor-outline-reserve), 32vw);
+    }
   }
 
   .iris-editor-canvas {
@@ -430,11 +452,16 @@
     caret-color: hsl(var(--primary));
   }
 
-  .iris-doc-title-wrap {
-    @apply relative mb-1 w-full pb-2;
+  .iris-editor-title-slot {
+    @apply w-full;
   }
 
-  .iris-doc-title {
+  .iris-document-title-field.iris-doc-title-wrap {
+    @apply relative mb-1 w-full pb-2;
+    padding-left: var(--editor-fold-column);
+  }
+
+  .iris-document-title-field .iris-doc-title {
     @apply m-0 w-full border-0 bg-transparent text-left text-4xl font-bold text-editor-ink outline-none;
     line-height: 1.2;
     letter-spacing: -0.02em;
@@ -442,13 +469,8 @@
     box-shadow: none;
   }
 
-  .iris-editor-body .ProseMirror h1.iris-doc-title.is-empty::before {
-    @apply pointer-events-none text-editor-muted;
-    float: none;
-    display: block;
-    width: 100%;
-    text-align: left;
-    height: auto;
+  .iris-document-title-field .iris-doc-title::placeholder {
+    @apply text-editor-muted;
   }
 
   .iris-doc-title-count {
@@ -705,8 +727,29 @@
     @apply text-editor-muted/50;
   }
 
-  .ai-msg {
+  .ai-msg,
+  .iris-prose {
     @apply text-foreground;
+  }
+
+  .iris-prose {
+    font-size: 13px;
+    line-height: 1.375;
+  }
+
+  .iris-prose table {
+    @apply my-2.5 block w-full overflow-x-auto border-collapse text-xs;
+  }
+  .iris-prose th {
+    @apply border border-border bg-muted/50 px-2 py-1 text-left font-semibold;
+  }
+  .iris-prose td {
+    @apply border border-border px-2 py-1;
+  }
+  .iris-prose pre {
+    @apply my-2.5 overflow-x-auto rounded-lg border border-border p-3 font-mono text-xs;
+    background: hsl(var(--editor-code-bg));
+    color: hsl(var(--editor-code-fg));
   }
 
   .ai-msg-user {
@@ -805,7 +848,7 @@
   }
 
   .ai-msg strong {
-    @apply font-semibold;
+    @apply font-bold;
   }
   .ai-msg em {
     @apply italic;
@@ -822,7 +865,7 @@
   }
 
   .ai-msg .ai-table-wrap {
-    @apply my-2.5 overflow-x-auto;
+    @apply my-2.5 max-w-full overflow-x-auto;
   }
 
   .ai-stream-pulse {

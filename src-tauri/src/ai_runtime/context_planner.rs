@@ -306,7 +306,7 @@ fn generate_sub_queries(
     intent: &QueryIntent,
     original_query: &str,
     _scene: AiScene,
-    note_path: Option<&str>,
+    _note_path: Option<&str>,
 ) -> Vec<SubQuery> {
     let mut queries = vec![SubQuery {
         query: original_query.to_string(),
@@ -395,14 +395,7 @@ fn generate_sub_queries(
         _ => {}
     }
 
-    // Add note context if available
-    if let Some(path) = note_path {
-        queries.push(SubQuery {
-            query: path.to_string(),
-            query_type: SubQueryType::Related,
-            priority: 8,
-        });
-    }
+    // 不在打开笔记时自动追加图谱子查询，避免简单对话弹出「检索计划」且与 Harness 工具重复。
 
     // Sort by priority (highest first)
     queries.sort_by(|a, b| b.priority.cmp(&a.priority));
@@ -482,5 +475,16 @@ mod tests {
 
         assert!(!plan.sub_queries.is_empty());
         assert!(plan.estimated_tokens > 0);
+    }
+
+    #[test]
+    fn open_note_does_not_add_graph_sub_query() {
+        let plan =
+            plan_context("今天是什么日子", AiScene::KnowledgeLookup, Some("notes/a.md")).unwrap();
+        assert_eq!(plan.sub_queries.len(), 1);
+        assert!(!plan
+            .sub_queries
+            .iter()
+            .any(|q| matches!(q.query_type, SubQueryType::Related)));
     }
 }

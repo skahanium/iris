@@ -1,10 +1,6 @@
-import { aiMarked } from "@/lib/ai/marked-ai";
 import { useCallback, useMemo, type MouseEvent, type ReactNode } from "react";
 
-import {
-  linkifyAiCitations,
-  tagCitationLinksInHtml,
-} from "@/lib/ai/citation-markdown";
+import { renderAiMarkdownToHtml } from "@/lib/markdown-render";
 import { sanitizeHtml } from "@/lib/sanitize";
 import { cn } from "@/lib/utils";
 import { MarkdownErrorBoundary } from "@/components/ui/markdown-error-boundary";
@@ -30,26 +26,27 @@ interface AiMessageProps {
 
 function AssistantMarkdown({
   content,
+  streaming = false,
   onCitationClick,
 }: {
   content: string;
+  streaming?: boolean;
   onCitationClick?: (ref: string) => void;
 }) {
   const html = useMemo(() => {
     try {
-      const linked = linkifyAiCitations(content || "");
-      const raw = aiMarked.parse(linked, { async: false }) as string;
-      return sanitizeHtml(tagCitationLinksInHtml(raw));
-    } catch {
-      // If parsing fails, render as escaped plain text
+      const raw = renderAiMarkdownToHtml(content || "", { streaming });
+      return sanitizeHtml(raw);
+    } catch (err) {
+      console.warn("[ai-message] Markdown render failed", { content: (content || "").slice(0, 200), error: String(err) });
       const escaped = (content || "")
         .replace(/&/g, "&amp;")
         .replace(/</g, "&lt;")
         .replace(/>/g, "&gt;")
         .replace(/\n/g, "<br>");
-      return `<pre class="text-muted-foreground text-xs whitespace-pre-wrap">${escaped}</pre>`;
+      return `<p class="text-muted-foreground whitespace-pre-wrap">${escaped}</p>`;
     }
-  }, [content]);
+  }, [content, streaming]);
 
   const handleClick = useCallback(
     (e: MouseEvent<HTMLDivElement>) => {
@@ -73,7 +70,7 @@ function AssistantMarkdown({
 
   return (
     <div
-      className="ai-msg text-sm leading-relaxed [&_a.ai-citation]:font-medium [&_a.ai-citation]:text-ai-citation [&_a.ai-citation]:underline [&_a.ai-citation]:decoration-ai-citation/40 [&_a.ai-citation]:underline-offset-2 hover:[&_a.ai-citation]:text-ai-citation-hover [&_code]:rounded [&_code]:bg-editor-code-bg [&_code]:px-1 [&_code]:font-mono [&_code]:text-editor-code-fg [&_p]:mb-2 [&_ul]:mb-2 [&_ul]:list-disc [&_ul]:pl-5"
+      className="ai-msg iris-prose text-[13px] leading-snug [&_a.ai-citation]:font-medium [&_a.ai-citation]:text-ai-citation [&_a.ai-citation]:underline [&_a.ai-citation]:decoration-ai-citation/40 [&_a.ai-citation]:underline-offset-2 hover:[&_a.ai-citation]:text-ai-citation-hover [&_code]:rounded [&_code]:bg-editor-code-bg [&_code]:px-1 [&_code]:font-mono [&_code]:text-editor-code-fg [&_p]:mb-1.5 [&_ul]:mb-1.5 [&_ul]:list-disc [&_ul]:pl-5"
       dangerouslySetInnerHTML={{ __html: html }}
       onClick={onCitationClick ? handleClick : undefined}
     />
@@ -92,7 +89,7 @@ export function AiMessage({
     return (
       <div
         className={cn(
-          "ai-msg-system text-xs italic text-muted-foreground",
+          "ai-msg-system text-[11px] italic leading-snug text-muted-foreground",
           className,
         )}
       >
@@ -103,7 +100,9 @@ export function AiMessage({
 
   if (role === "user") {
     return (
-      <div className={cn("ai-msg-user text-sm", className)}>{content}</div>
+      <div className={cn("ai-msg-user text-[13px] leading-snug", className)}>
+        {content}
+      </div>
     );
   }
 
@@ -113,6 +112,7 @@ export function AiMessage({
         <MarkdownErrorBoundary>
           <AssistantMarkdown
             content={content}
+            streaming={streaming}
             onCitationClick={onCitationClick}
           />
         </MarkdownErrorBoundary>

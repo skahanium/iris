@@ -1,0 +1,1 @@
+-- no-op: checkpoint column left in place on rollback

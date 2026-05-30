@@ -5,8 +5,11 @@ import {
   decodeCitationHref,
   findPacketByCitationRef,
   linkifyAiCitations,
+  postProcessCitations,
+  repairOverEscapedCitationLinks,
   tagCitationLinksInHtml,
 } from "@/lib/ai/citation-markdown";
+import { parseMarkdownToHtml, renderAiMarkdownToHtml } from "@/lib/markdown-render";
 import type { ContextPacket } from "@/types/ai";
 
 describe("linkifyAiCitations", () => {
@@ -26,6 +29,41 @@ describe("linkifyAiCitations", () => {
     const out = linkifyAiCitations("见 [citation:2](citation:2)。");
     expect(out).toContain("#iris-cite-");
     expect(out).not.toContain("(citation:2)");
+  });
+
+  it("repairs over-escaped citation links from model echo", () => {
+    const broken =
+      "**哪里人**：**河北任丘人** [\\\\[citation:4\\\\]](#iris-cite-citation%3A4)";
+    const html = renderAiMarkdownToHtml(broken);
+    expect(html).toContain("<strong>哪里人</strong>");
+    expect(html).toContain('class="ai-citation"');
+    expect(html).toContain("#iris-cite-");
+    expect(html).not.toContain("\\\\[citation");
+  });
+});
+
+describe("postProcessCitations", () => {
+  it("linkifies bare citation after markdown without breaking bold", () => {
+    const html = renderAiMarkdownToHtml("**重点** 见 [citation:2]。");
+    expect(html).toContain("<strong>重点</strong>");
+    expect(html).toContain('class="ai-citation"');
+  });
+
+  it("processes citations in HTML text nodes only", () => {
+    const raw = parseMarkdownToHtml("见 [citation:1]。");
+    const out = postProcessCitations(raw);
+    expect(out).toContain('class="ai-citation"');
+  });
+});
+
+describe("repairOverEscapedCitationLinks", () => {
+  it("normalizes double-backslash bracket links", () => {
+    const broken = "[\\\\[citation:2\\\\]](#iris-cite-citation%3A2)";
+    const out = repairOverEscapedCitationLinks(broken);
+    expect(out).toBe(linkifyAiCitations(broken));
+    expect(tagCitationLinksInHtml(parseMarkdownToHtml(out))).toContain(
+      "ai-citation",
+    );
   });
 });
 

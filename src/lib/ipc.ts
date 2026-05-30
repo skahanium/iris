@@ -17,6 +17,8 @@ import type {
   LlmProviderInfo,
   LlmTokenEvent,
   SemanticHit,
+  SessionMessageRecord,
+  SessionSummary,
   TagGroup,
   VersionEntry,
 } from "@/types/ipc";
@@ -315,6 +317,35 @@ export async function listenLlmError(
   );
 }
 
+export async function listenHarnessTrace(
+  handler: (payload: import("@/types/ipc").HarnessTraceEvent) => void,
+): Promise<() => void> {
+  return listen<import("@/types/ipc").HarnessTraceEvent>(
+    "ai:harness_trace",
+    (e) => handler(e.payload),
+  );
+}
+
+export interface AiThinkingEvent {
+  request_id: string;
+  round: number;
+  content: string;
+}
+
+export async function listenAiThinking(
+  handler: (payload: AiThinkingEvent) => void,
+): Promise<() => void> {
+  return listen<AiThinkingEvent>("ai:thinking", (e) => handler(e.payload));
+}
+
+export async function listenAiRequestStarted(
+  handler: (payload: { request_id: string }) => void,
+): Promise<() => void> {
+  return listen<{ request_id: string }>("ai:request_started", (e) =>
+    handler(e.payload),
+  );
+}
+
 // ─── AI Runtime IPC ───
 
 import type {
@@ -337,6 +368,137 @@ export async function corpusUpsert(entry: {
   scenes: string[];
 }): Promise<void> {
   return invoke("corpus_upsert", { entry });
+}
+
+export async function sessionList(params?: {
+  scene?: string;
+  note_path?: string | null;
+  limit?: number;
+  offset?: number;
+}): Promise<SessionSummary[]> {
+  return invoke<SessionSummary[]>("session_list", {
+    scene: params?.scene ?? null,
+    notePath: params?.note_path ?? null,
+    limit: params?.limit ?? 50,
+    offset: params?.offset ?? 0,
+  });
+}
+
+export async function sessionDelete(sessionId: number): Promise<boolean> {
+  return invoke<boolean>("session_delete", { sessionId });
+}
+
+export async function sessionRename(
+  sessionId: number,
+  title: string,
+): Promise<void> {
+  return invoke("session_rename", { sessionId, title });
+}
+
+export interface SkillEntryDto {
+  name: string;
+  description: string;
+  trigger?: string | null;
+  content: string;
+  scope: string;
+  source_url?: string | null;
+  version?: string | null;
+  author?: string | null;
+  enabled: boolean;
+  file_path: string;
+}
+
+export interface PromptProfileDto {
+  persona: string;
+  writing_style: string;
+  custom_rules: string[];
+  language: string;
+}
+
+export async function skillsList(): Promise<SkillEntryDto[]> {
+  return invoke<SkillEntryDto[]>("skills_list");
+}
+
+export async function skillsInstall(request: {
+  source: string;
+  path_or_url: string;
+  scope: string;
+  subpath?: string;
+}): Promise<unknown> {
+  return invoke("skills_install", { request });
+}
+
+export async function skillsUninstall(
+  name: string,
+  scope: string,
+): Promise<void> {
+  return invoke("skills_uninstall", { name, scope });
+}
+
+export async function skillsToggle(
+  name: string,
+  scope: string,
+  enabled: boolean,
+): Promise<void> {
+  return invoke("skills_toggle", { name, scope, enabled });
+}
+
+export async function promptProfileGet(): Promise<PromptProfileDto> {
+  return invoke<PromptProfileDto>("prompt_profile_get");
+}
+
+export async function promptProfileSet(
+  profile: PromptProfileDto,
+): Promise<void> {
+  return invoke("prompt_profile_set", { profile });
+}
+
+export async function promptProfilePresets(): Promise<
+  { label: string; profile: PromptProfileDto }[]
+> {
+  return invoke("prompt_profile_presets");
+}
+
+export async function sessionClearAll(params?: {
+  scene?: string;
+  note_path?: string | null;
+}): Promise<number> {
+  return invoke<number>("session_clear_all", {
+    scene: params?.scene ?? null,
+    notePath: params?.note_path ?? null,
+  });
+}
+
+export async function harnessResume(
+  requestId: string,
+): Promise<unknown> {
+  return invoke("harness_resume", { requestId });
+}
+
+export async function skillsRead(filePath: string): Promise<string> {
+  return invoke<string>("skills_read", {
+    request: { file_path: filePath },
+  });
+}
+
+export async function skillsWrite(
+  filePath: string,
+  scope: string,
+  content: string,
+): Promise<SkillEntryDto> {
+  return invoke<SkillEntryDto>("skills_write", {
+    request: { file_path: filePath, scope, content },
+  });
+}
+
+export async function sessionLoad(
+  sessionId: number,
+  limit?: number,
+): Promise<SessionMessageRecord[]> {
+  return invoke<SessionMessageRecord[]>("session_load", {
+    sessionId,
+    limit: limit ?? 50,
+  });
 }
 
 export async function contextAssemble(params: {
@@ -393,12 +555,7 @@ export async function aiSendMessage(params: {
     total_tokens: number;
   };
   citation_valid?: boolean;
-  web_search_meta?: {
-    injected: boolean;
-    result_count: number;
-    used_local_date: boolean;
-    backend: string;
-  } | null;
+  harness_rounds?: number;
 }> {
   return invoke("ai_send_message", {
     scene: params.scene,

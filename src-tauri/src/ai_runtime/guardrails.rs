@@ -175,8 +175,10 @@ pub fn perform_citation_verification(
                     citation_label: citation.clone(),
                     packet_id: packet.id.clone(),
                     source_title: packet.title.clone(),
-                    excerpt_used: response_text
-                        .contains(&packet.excerpt[..50.min(packet.excerpt.len())]),
+                    excerpt_used: {
+                        let prefix: String = packet.excerpt.chars().take(50).collect();
+                        !prefix.is_empty() && response_text.contains(&prefix)
+                    },
                 });
             }
             None => {
@@ -257,12 +259,21 @@ fn detect_unsupported_claims(response_text: &str, packets: &[ContextPacket]) -> 
             let has_evidence_support = key_terms.iter().any(|term| evidence_text.contains(term));
 
             if !has_evidence_support && !key_terms.is_empty() {
-                unsupported.push(format!("{}...", &trimmed[..50.min(trimmed.len())]));
+                unsupported.push(format!("{}...", truncate_chars(trimmed, 50)));
             }
         }
     }
 
     unsupported
+}
+
+/// 按 Unicode 字符数截断，避免对多字节字符使用字节索引导致 panic。
+fn truncate_chars(s: &str, max_chars: usize) -> String {
+    if s.chars().count() <= max_chars {
+        s.to_string()
+    } else {
+        s.chars().take(max_chars).collect()
+    }
 }
 
 /// 按最低信任等级过滤证据包。
@@ -388,5 +399,20 @@ mod tests {
         let filtered = filter_by_trust(pkts, TrustLevel::DerivedCache);
         assert_eq!(filtered.len(), 1);
         assert_eq!(filtered[0].id, "1");
+    }
+
+    #[test]
+    fn citation_verification_handles_cjk_truncation_without_panic() {
+        let text = "从他的经历来看，他是在 **2017年**（约8年前）开始做短视频，后来转型吃播，推测大概在 **30～40岁** 之间，但这只是估计，没有确凿出处";
+        let verification = perform_citation_verification(text, &[]);
+        assert!(verification.unsupported_claims.iter().all(|c| !c.is_empty()));
+    }
+
+    #[test]
+    fn truncate_chars_respects_unicode_boundaries() {
+        let s = "从他的经历来看，他是在 **2017年**（约8年前）";
+        let truncated = truncate_chars(s, 50);
+        assert!(truncated.chars().count() <= 50);
+        assert!(std::str::from_utf8(truncated.as_bytes()).is_ok());
     }
 }

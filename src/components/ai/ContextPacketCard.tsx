@@ -128,6 +128,7 @@ interface ContextPacketListProps {
   selectedIds?: string[];
   onSelect?: (id: string) => void;
   compact?: boolean;
+  emptyHint?: string;
 }
 
 export function ContextPacketList({
@@ -135,26 +136,58 @@ export function ContextPacketList({
   selectedIds = [],
   onSelect,
   compact = false,
+  emptyHint,
 }: ContextPacketListProps) {
   if (packets.length === 0) {
     return (
-      <div className="py-4 text-center text-sm text-muted-foreground">
-        未找到相关证据
+      <div className="px-1 py-4 text-center text-xs leading-relaxed text-muted-foreground">
+        {emptyHint ??
+          "本轮未检索到证据包。可尝试用 @ 限定笔记范围，或提出与库内材料相关的问题。"}
       </div>
     );
   }
 
+  const localPackets = packets.filter((p) => p.source_type !== "web");
+  const webPackets = packets.filter((p) => p.source_type === "web");
+
   return (
-    <div className="space-y-2">
-      {packets.map((packet) => (
-        <ContextPacketCard
-          key={packet.id}
-          packet={packet}
-          selected={selectedIds.includes(packet.id)}
-          onSelect={onSelect}
-          compact={compact}
-        />
-      ))}
+    <div className="space-y-3">
+      {localPackets.length > 0 && (
+        <div>
+          <p className="mb-1.5 text-[11px] font-medium text-muted-foreground">
+            本地证据
+          </p>
+          <div className="space-y-2">
+            {localPackets.map((packet) => (
+              <ContextPacketCard
+                key={packet.id}
+                packet={packet}
+                selected={selectedIds.includes(packet.id)}
+                onSelect={onSelect}
+                compact={compact}
+              />
+            ))}
+          </div>
+        </div>
+      )}
+      {webPackets.length > 0 && (
+        <div>
+          <p className="mb-1.5 text-[11px] font-medium text-muted-foreground">
+            网络证据
+          </p>
+          <div className="space-y-2">
+            {webPackets.map((packet) => (
+              <ContextPacketCard
+                key={packet.id}
+                packet={packet}
+                selected={selectedIds.includes(packet.id)}
+                onSelect={onSelect}
+                compact={compact}
+              />
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -64,8 +64,7 @@ export const WikiLinkExtension = Mark.create<WikiLinkOptions>({
     return {
       insertWikiLink:
         (title: string) =>
-        ({ chain, state, editor }) => {
-          if (editor.isActive("noteTitle")) return false;
+        ({ chain, state }) => {
           const { from, to } = state.selection;
           return chain()
             .deleteRange({ from, to })

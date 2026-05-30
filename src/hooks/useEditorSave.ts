@@ -1,9 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef } from "react";
 
-import type { Editor } from "@tiptap/react";
-
 import { fileWrite } from "@/lib/ipc";
-import { htmlToMarkdown } from "@/lib/markdown";
 import { isNoteSubstantivelyEmpty } from "@/lib/note-substance";
 import { debounce } from "@/lib/utils";
 
@@ -11,49 +8,40 @@ import { debounce } from "@/lib/utils";
 export const EDITOR_SAVE_DEBOUNCE_MS = 1200;
 
 /**
- * Debounced editor save. Call `notifyDirty()` on every keystroke (zero-cost).
- * Actual HTML serialization + markdown conversion + IPC write only happen
- * when the debounce fires. Version checkpoints use `versionSaveManual` / idle.
- *
- * `onSaved` is captured via ref so callers can pass an inline lambda without
- * destabilizing the debounced save (otherwise every parent re-render would
- * rebuild the debounce and the effect cleanup would `flush()` the pending
- * timer immediately, effectively making each keystroke trigger a full save).
+ * Debounced note save via a single `getMarkdown` serializer (title + body).
+ * Call `notifyDirty()` on edits; serialization runs only when the debounce fires.
  */
 export function useEditorSave(
   path: string | null,
-  editorRef: React.RefObject<Editor | null>,
+  getMarkdown: () => string,
   onSaved?: (md: string) => void,
-  serializeHtml: (html: string) => string = htmlToMarkdown,
 ) {
   const pathRef = useRef(path);
   pathRef.current = path;
 
+  const getMarkdownRef = useRef(getMarkdown);
+  getMarkdownRef.current = getMarkdown;
+
   const onSavedRef = useRef(onSaved);
   onSavedRef.current = onSaved;
 
-  const serializeRef = useRef(serializeHtml);
-  serializeRef.current = serializeHtml;
-
-  const saveFromEditor = useCallback(async () => {
+  const saveNote = useCallback(async () => {
     const target = pathRef.current;
-    const ed = editorRef.current;
-    if (!target || !ed) return;
-    const html = ed.getHTML();
-    const md = serializeRef.current(html);
+    if (!target) return;
+    const md = getMarkdownRef.current();
     if (isNoteSubstantivelyEmpty(md)) {
       return;
     }
     await fileWrite(target, md);
     onSavedRef.current?.(md);
-  }, [editorRef]);
+  }, []);
 
   const debouncedSave = useMemo(
     () =>
       debounce(() => {
-        void saveFromEditor();
+        void saveNote();
       }, EDITOR_SAVE_DEBOUNCE_MS),
-    [saveFromEditor],
+    [saveNote],
   );
 
   useEffect(() => {
@@ -68,8 +56,8 @@ export function useEditorSave(
 
   const flushSave = useCallback(async () => {
     debouncedSave.cancel();
-    await saveFromEditor();
-  }, [debouncedSave, saveFromEditor]);
+    await saveNote();
+  }, [debouncedSave, saveNote]);
 
   const cancelPendingSave = useCallback(() => {
     debouncedSave.cancel();

@@ -25,6 +25,10 @@ const TOOL_DISPLAY_NAMES: Record<string, string> = {
   get_genre_template: "获取文种模板",
   get_model_essays: "获取范文",
   get_block_links: "获取块级链接",
+  read_note: "读取笔记",
+  list_vault: "列出笔记库",
+  get_outline: "文档大纲",
+  get_backlinks: "反向链接",
   web_search: "联网搜索",
   insert_text_at_cursor: "插入文本",
   replace_selection: "替换选区",
@@ -33,6 +37,8 @@ const TOOL_DISPLAY_NAMES: Record<string, string> = {
   save_genre_template: "保存模板",
   update_user_rule: "更新规则",
   create_note_from_deposit: "创建笔记",
+  spawn_subagent: "子任务 Agent",
+  conclude_reasoning: "结束推理",
 };
 
 // ─── Status Icon ─────────────────────────────────────────
@@ -75,9 +81,21 @@ interface ToolCallBubbleProps {
   toolCall: ToolCallInfo;
 }
 
+function subagentTaskSummary(toolCall: ToolCallInfo): string | null {
+  if (toolCall.name !== "spawn_subagent") return null;
+  const task = toolCall.arguments?.task;
+  return typeof task === "string" ? task : null;
+}
+
 export function ToolCallBubble({ toolCall }: ToolCallBubbleProps) {
   const [expanded, setExpanded] = useState(false);
   const displayName = TOOL_DISPLAY_NAMES[toolCall.name] ?? toolCall.name;
+  const subTask = subagentTaskSummary(toolCall);
+  const statusLine =
+    subTask ??
+    (toolCall.name === "spawn_subagent" && toolCall.result_summary
+      ? toolCall.result_summary
+      : statusLabel(toolCall.status));
 
   return (
     <div className="rounded-lg border border-border/80 bg-surface-elevated text-xs shadow-sm">
@@ -90,8 +108,8 @@ export function ToolCallBubble({ toolCall }: ToolCallBubbleProps) {
         <Badge variant="secondary" className="px-1.5 py-0 text-[10px]">
           {displayName}
         </Badge>
-        <span className="text-muted-foreground">
-          {statusLabel(toolCall.status)}
+        <span className="min-w-0 flex-1 truncate text-muted-foreground">
+          {statusLine}
         </span>
         {toolCall.duration_ms !== undefined && (
           <span className="text-[10px] text-muted-foreground/70">
