@@ -17,8 +17,9 @@ import { describe, expect, it } from "vitest";
 
 import { Marked } from "marked";
 import {
-  SUPPORTED_CORE_GFM,
-  UNSUPPORTED_OR_BEST_EFFORT_GFM,
+  EDITOR_NATIVE_SYNTAX as SUPPORTED_CORE_GFM,
+  EDITOR_PRESERVE_SYNTAX,
+  EDITOR_RENDER_ONLY_SYNTAX,
 } from "@/components/editor/gfm-schema";
 import { marked } from "marked";
 import { proseMarked } from "@/lib/markdown-render";
@@ -84,51 +85,39 @@ const MIXED_PRESERVE = loadCorpus("mixed-preserve.md");
 
 // ── 能力判定：当前 gfm-schema.ts 兼容性验证 ──────────────────
 
-describe("GFM schema contract (existing)", () => {
-  it("SUPPORTED_CORE_GFM declares expected headings", () => {
-    expect(SUPPORTED_CORE_GFM.some((s) => s.includes("heading"))).toBe(true);
+describe("GFM schema contract (contract-aligned)", () => {
+  it("EDITOR_NATIVE_SYNTAX includes heading, bold, italic, code", () => {
+    expect(SUPPORTED_CORE_GFM.has("heading")).toBe(true);
+    expect(SUPPORTED_CORE_GFM.has("bold")).toBe(true);
+    expect(SUPPORTED_CORE_GFM.has("italic")).toBe(true);
+    expect(SUPPORTED_CORE_GFM.has("inline_code")).toBe(true);
   });
 
-  it("SUPPORTED_CORE_GFM declares expected inline formatting", () => {
-    expect(
-      SUPPORTED_CORE_GFM.some((s) =>
-        /bold|italic|strikethrough|inline code/i.test(s),
-      ),
-    ).toBe(true);
+  it("EDITOR_NATIVE_SYNTAX includes lists, tables, blockquotes", () => {
+    expect(SUPPORTED_CORE_GFM.has("list")).toBe(true);
+    expect(SUPPORTED_CORE_GFM.has("task_list")).toBe(true);
+    expect(SUPPORTED_CORE_GFM.has("table")).toBe(true);
+    expect(SUPPORTED_CORE_GFM.has("blockquote")).toBe(true);
   });
 
-  it("SUPPORTED_CORE_GFM declares lists and tables", () => {
-    expect(
-      SUPPORTED_CORE_GFM.some((s) =>
-        /task list|ordered.*unordered|pipe table/i.test(s),
-      ),
-    ).toBe(true);
+  it("EDITOR_NATIVE_SYNTAX includes links, images, horizontal_rule", () => {
+    expect(SUPPORTED_CORE_GFM.has("link")).toBe(true);
+    expect(SUPPORTED_CORE_GFM.has("image")).toBe(true);
+    expect(SUPPORTED_CORE_GFM.has("horizontal_rule")).toBe(true);
   });
 
-  it("SUPPORTED_CORE_GFM declares links, images, blockquotes", () => {
-    expect(
-      SUPPORTED_CORE_GFM.some((s) => /link|image|blockquote/i.test(s)),
-    ).toBe(true);
+  it("EDITOR_RENDER_ONLY_SYNTAX declares callout as render_only", () => {
+    expect(EDITOR_RENDER_ONLY_SYNTAX.has("callout")).toBe(true);
   });
 
-  it("UNSUPPORTED_OR_BEST_EFFORT_GFM declares footnotes", () => {
-    expect(
-      UNSUPPORTED_OR_BEST_EFFORT_GFM.some((s) => /footnote/i.test(s)),
-    ).toBe(true);
+  it("EDITOR_RENDER_ONLY_SYNTAX declares footnotes as render_only", () => {
+    expect(EDITOR_RENDER_ONLY_SYNTAX.has("footnote_ref")).toBe(true);
+    expect(EDITOR_RENDER_ONLY_SYNTAX.has("footnote_def")).toBe(true);
   });
 
-  it("UNSUPPORTED_OR_BEST_EFFORT_GFM declares math", () => {
-    expect(UNSUPPORTED_OR_BEST_EFFORT_GFM.some((s) => /math/i.test(s))).toBe(
-      true,
-    );
-  });
-
-  it("UNSUPPORTED_OR_BEST_EFFORT_GFM declares raw HTML", () => {
-    expect(
-      UNSUPPORTED_OR_BEST_EFFORT_GFM.some((s) =>
-        /raw.*HTML|embedded.*HTML/i.test(s),
-      ),
-    ).toBe(true);
+  it("EDITOR_PRESERVE_SYNTAX declares raw HTML and comments as preserve_only", () => {
+    expect(EDITOR_PRESERVE_SYNTAX.has("raw_html")).toBe(true);
+    expect(EDITOR_PRESERVE_SYNTAX.has("html_comment")).toBe(true);
   });
 });
 

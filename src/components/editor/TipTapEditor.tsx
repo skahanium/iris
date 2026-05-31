@@ -17,7 +17,8 @@ import {
   type ReactNode,
 } from "react";
 
-import { renderMarkdownWithProfile } from "@/lib/markdown-contract";
+import { ingestMarkdownForEditor } from "@/lib/editor-ingest";
+import type { MarkdownSyntaxFragment } from "@/lib/markdown-contract/types";
 import { cn } from "@/lib/utils";
 
 import { AiStreamExtension } from "./extensions/AiStreamExtension";
@@ -25,6 +26,7 @@ import { HeadingFoldExtension } from "./extensions/HeadingFoldExtension";
 import { ImageExtension } from "./extensions/ImageExtension";
 import { IrisDocument } from "./extensions/IrisDocument";
 import { LinkExtension } from "./extensions/LinkExtension";
+import { PreserveBlockExtension } from "./extensions/PreserveBlockExtension";
 import { SlashCommandExtension } from "./extensions/SlashCommandExtension";
 import { WikiLinkExtension } from "./extensions/WikiLinkExtension";
 
@@ -45,6 +47,11 @@ interface TipTapEditorProps {
   titleSlot?: ReactNode;
   /** 屏蔽原生右键并打开 Iris 菜单 */
   onBodyContextMenu?: (event: MouseEvent) => void;
+  /** 编辑器 ingest 完成时回调，传递 preserve 片段信息供 export 使用 */
+  onIngestComplete?: (
+    preserveFragments: MarkdownSyntaxFragment[],
+    originalBodyMd: string,
+  ) => void;
 }
 
 export function TipTapEditor({
@@ -55,6 +62,7 @@ export function TipTapEditor({
   onEditorReady,
   onInlineAiRetry,
   onOpenWikiLink,
+  onIngestComplete,
   zoom = 1,
   className,
   titleSlot,
@@ -73,6 +81,9 @@ export function TipTapEditor({
 
   const onOpenWikiLinkRef = useRef(onOpenWikiLink);
   onOpenWikiLinkRef.current = onOpenWikiLink;
+
+  const onIngestCompleteRef = useRef(onIngestComplete);
+  onIngestCompleteRef.current = onIngestComplete;
 
   const extensions = useMemo(
     () => [
@@ -98,6 +109,7 @@ export function TipTapEditor({
         placeholder: "开始写作，或输入 / 唤起 AI…",
       }),
       HeadingFoldExtension,
+      PreserveBlockExtension,
       AiStreamExtension.configure({
         onRetry: (ed) => inlineAiRetryRef.current?.(ed),
       }),
@@ -111,10 +123,17 @@ export function TipTapEditor({
     [],
   );
 
+  const initialContent = useMemo(() => {
+    const { tipTapHtml, preserveFragments } = ingestMarkdownForEditor({
+      bodyMarkdown: initialBodyMarkdown || "",
+    });
+    onIngestCompleteRef.current?.(preserveFragments, initialBodyMarkdown || "");
+    return tipTapHtml;
+  }, [initialBodyMarkdown]);
+
   const editor = useEditor({
     extensions,
-    content: renderMarkdownWithProfile(initialBodyMarkdown, "editor_ingest")
-      .output,
+    content: initialContent,
     onUpdate: () => {
       onDirtyRef.current?.();
     },

@@ -15,6 +15,7 @@ import { HeadingFoldExtension } from "@/components/editor/extensions/HeadingFold
 import { ImageExtension } from "@/components/editor/extensions/ImageExtension";
 import { IrisDocument } from "@/components/editor/extensions/IrisDocument";
 import { LinkExtension } from "@/components/editor/extensions/LinkExtension";
+import { PreserveBlockExtension } from "@/components/editor/extensions/PreserveBlockExtension";
 import { WikiLinkExtension } from "@/components/editor/extensions/WikiLinkExtension";
 import {
   markdownBodyToEditorHtml,
@@ -48,6 +49,7 @@ function createEditorFromMarkdown(md: string): Editor {
       TableCell,
       CodeBlockLowlight.configure({ lowlight }),
       HeadingFoldExtension,
+      PreserveBlockExtension,
       AiStreamExtension,
       WikiLinkExtension,
     ],
