@@ -4,6 +4,7 @@ import { AlertTriangle, Check, Copy, RefreshCw, X } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { MarkdownRenderable } from "@/components/ai/MarkdownRenderable";
 import { cn } from "@/lib/utils";
 import type { PatchProposal } from "@/types/ai";
 
@@ -86,7 +87,11 @@ export function PatchPreview({
                 className="flex items-start gap-2 rounded-md bg-yellow-500/5 px-2 py-1.5 text-xs text-yellow-600"
               >
                 <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-                <span>{warning}</span>
+                <MarkdownRenderable
+                  content={warning}
+                  profile="patch_preview"
+                  className="text-xs"
+                />
               </div>
             ))}
           </div>

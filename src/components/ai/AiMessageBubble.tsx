@@ -124,7 +124,7 @@ export function AiMessageBubble({
     <div
       className={cn(
         "ai-message-bubble ai-message-bubble-assistant max-w-full overflow-hidden",
-        streaming && "ai-message-bubble-streaming",
+        streaming && "ai-message-bubble-streaming min-h-[2em] contain-layout",
         className,
       )}
       data-streaming={streaming ? "" : undefined}

@@ -701,6 +701,10 @@ function renderByProfile(
       return editorBodyHtmlToMarkdown(markdownBodyToEditorHtml(md));
     case "vault_preview":
       return markdownToHtmlPage(md, options?.context);
+    case "research_card":
+    case "patch_preview":
+    case "citation_panel":
+      return sanitizeHtml(renderAiMarkdownToHtml(md, { streaming: false }));
     default:
       return sanitizeHtml(renderAiMarkdownToHtml(md, { streaming: false }));
   }

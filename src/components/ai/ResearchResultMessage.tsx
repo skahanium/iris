@@ -1,7 +1,7 @@
 import { ChevronRight, FileSearch } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
-import { renderMarkdownWithProfile } from "@/lib/markdown-contract";
+import { MarkdownRenderable } from "@/components/ai/MarkdownRenderable";
 import type { ResearchFocusPayload } from "@/types/ai";
 import { cn } from "@/lib/utils";
 
@@ -24,9 +24,6 @@ export function ResearchResultMessage({
   className,
 }: ResearchResultMessageProps) {
   const preview = summaryPreview(result.summary);
-  const html = renderMarkdownWithProfile(preview, "research_card", {
-    streaming: false,
-  }).output;
   const evidenceCount = result.evidence_matrix.total_evidence_count;
   const coverage = Math.round(result.evidence_matrix.coverage_score * 100);
 
@@ -52,9 +49,11 @@ export function ResearchResultMessage({
           </p>
         </div>
       </header>
-      <div
-        className="ai-message-body iris-prose px-3 py-2.5 text-[13px] leading-snug"
-        dangerouslySetInnerHTML={{ __html: html }}
+      <MarkdownRenderable
+        content={preview}
+        profile="research_card"
+        streaming={false}
+        className="px-3 py-2.5"
       />
       <footer className="border-t border-border/50 px-3 py-2">
         <Button

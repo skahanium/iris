@@ -52,7 +52,6 @@ import {
   type MentionCandidate,
   type MentionToken,
 } from "@/lib/ai-context-scope";
-import { findPacketByCitationRef } from "@/lib/ai/citation-markdown";
 import { mergeContextPackets } from "@/lib/ai/merge-context-packets";
 import { shouldStartNewAiSession } from "@/lib/ai/session-thread";
 import { DEFAULT_ASSISTANT_IDENTITY } from "@/lib/assistant-identity";
@@ -98,8 +97,9 @@ import { DocumentCheckArtifacts } from "./assistant/DocumentCheckArtifacts";
 import { ResearchFocusView } from "./assistant/ResearchFocusView";
 import { AiMentionPopover } from "./AiMentionPopover";
 import { AiComposerContextMenu } from "./AiComposerContextMenu";
-import { AiMessageList, type ChatLine } from "./AiMessageList";
-import { AiMessageSelectionUi } from "./AiMessageSelectionUi";
+import { type ChatLine } from "./AiMessageList";
+import { ConversationSurface } from "./ConversationSurface";
+import { useCitationClick } from "./hooks/useCitationClick";
 import { CitationCheckView } from "./CitationCheckView";
 import { ContextPacketDrawer } from "./ContextPacketDrawer";
 import { HarnessActivityStrip } from "./HarnessActivityStrip";
@@ -269,7 +269,6 @@ export function UnifiedAssistantPanel({
   const [packets, setPackets] = useState<ContextPacket[]>([]);
   const [selectedPacketIds, setSelectedPacketIds] = useState<string[]>([]);
   const [packetsOpen, setPacketsOpen] = useState(false);
-  const [citationMiss, setCitationMiss] = useState<string | null>(null);
   const [toolConfirmRequest, setToolConfirmRequest] =
     useState<ToolConfirmRequest | null>(null);
   const [ruleConfirmRequest, setRuleConfirmRequest] =
@@ -553,7 +552,7 @@ export function UnifiedAssistantPanel({
 
   const handleNewChat = useCallback(() => {
     clearArtifacts();
-    setCitationMiss(null);
+    clearCitationMiss();
     setPackets([]);
     setSelectedPacketIds([]);
     setMessages([]);
@@ -1156,7 +1155,7 @@ export function UnifiedAssistantPanel({
       messages,
       forceNewSessionRef.current,
     );
-    setCitationMiss(null);
+    clearCitationMiss();
     appendUserMessage(rawMessage);
     setActivityHint("正在理解你的问题…");
 
@@ -1230,20 +1229,8 @@ export function UnifiedAssistantPanel({
     );
   }, []);
 
-  const handleCitationClick = useCallback(
-    (ref: string) => {
-      const packet = findPacketByCitationRef(ref, packets);
-      if (!packet) {
-        setCitationMiss(ref);
-        setPacketsOpen(true);
-        return;
-      }
-      setCitationMiss(null);
-      setSelectedPacketIds([packet.id]);
-      setPacketsOpen(true);
-    },
-    [packets],
-  );
+  const { handleCitationClick, citationMiss, clearCitationMiss } =
+    useCitationClick(packets, () => setPacketsOpen(true), setSelectedPacketIds);
 
   const handleToolConfirm = useCallback(
     async (
@@ -1345,8 +1332,7 @@ export function UnifiedAssistantPanel({
   const ActionIcon = assistantIcon(actionState.intent);
   const activeScene: AiScene = resolveAiSceneForIntent(actionState.intent);
   const isDefaultAssistantName =
-    assistantIdentity.displayName ===
-    DEFAULT_ASSISTANT_IDENTITY.displayName;
+    assistantIdentity.displayName === DEFAULT_ASSISTANT_IDENTITY.displayName;
 
   const handleLoadSession = useCallback(
     (id: number, loaded: ChatLine[]) => {
@@ -1354,7 +1340,7 @@ export function UnifiedAssistantPanel({
       setMessages(loaded);
       forceNewSessionRef.current = false;
       clearArtifacts();
-      setCitationMiss(null);
+      clearCitationMiss();
       setActionState(buildActionState(actionState.intent, "idle"));
     },
     [actionState.intent, clearArtifacts],
@@ -1645,32 +1631,23 @@ export function UnifiedAssistantPanel({
         </div>
       ) : null}
 
-      <div
-        ref={messageListRef}
-        data-testid="ai-message-list"
-        className="relative flex min-h-0 flex-1 flex-col"
-      >
-        <AiMessageList
-          messages={messages}
-          streaming={streaming}
-          onCitationClick={handleCitationClick}
-          onExpandResearch={handleExpandResearchDetail}
-        />
-        <AiMessageSelectionUi
-          messageListRef={messageListRef}
-          streaming={streaming}
-          onQuoteToInput={(text) => {
-            const quoted = text
-              .split("\n")
-              .map((line) => `> ${line}`)
-              .join("\n");
-            setInput((prev) =>
-              prev.trim() ? `${prev.trim()}\n\n${quoted}\n\n` : `${quoted}\n\n`,
-            );
-            textareaRef.current?.focus();
-          }}
-        />
-      </div>
+      <ConversationSurface
+        messages={messages}
+        streaming={streaming}
+        messageListRef={messageListRef}
+        onCitationClick={handleCitationClick}
+        onExpandResearch={handleExpandResearchDetail}
+        onQuoteToInput={(text) => {
+          const quoted = text
+            .split("\n")
+            .map((line) => `> ${line}`)
+            .join("\n");
+          setInput((prev) =>
+            prev.trim() ? `${prev.trim()}\n\n${quoted}\n\n` : `${quoted}\n\n`,
+          );
+          textareaRef.current?.focus();
+        }}
+      />
 
       <ContextScopeChips tokens={mentionTokens} onRemove={removeMentionToken} />
 

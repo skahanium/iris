@@ -11,6 +11,7 @@ import {
 
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { MarkdownRenderable } from "@/components/ai/MarkdownRenderable";
 import { cn } from "@/lib/utils";
 import type { ContextPacket } from "@/types/ai";
 
@@ -254,9 +255,10 @@ export function CitationCheckView({
                               {ACTION_LABELS[suggestion.action] ??
                                 suggestion.action}
                             </div>
-                            <div className="text-xs text-muted-foreground">
-                              {suggestion.explanation}
-                            </div>
+                            <MarkdownRenderable
+                              content={suggestion.explanation}
+                              profile="citation_panel"
+                            />
                           </div>
                           {onApplySuggestion && (
                             <button
