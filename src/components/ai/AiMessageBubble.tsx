@@ -2,8 +2,7 @@ import { useCallback, useMemo, type MouseEvent, type ReactNode } from "react";
 
 import { MarkdownErrorBoundary } from "@/components/ui/markdown-error-boundary";
 import { AiStreamPulse } from "@/components/ui/ai-message-stream-pulse";
-import { renderAiMarkdownToHtml } from "@/lib/markdown-render";
-import { sanitizeHtml } from "@/lib/sanitize";
+import { renderMarkdownWithProfile } from "@/lib/markdown-contract";
 import { cn } from "@/lib/utils";
 
 interface AiMessageBubbleProps {
@@ -26,8 +25,14 @@ function AssistantBody({
 }) {
   const html = useMemo(() => {
     try {
-      const raw = renderAiMarkdownToHtml(content || "", { streaming });
-      return sanitizeHtml(raw);
+      const result = renderMarkdownWithProfile(
+        content || "",
+        "chat_assistant",
+        {
+          streaming,
+        },
+      );
+      return result.output;
     } catch (err) {
       console.warn("[ai-message] Markdown render failed", {
         content: (content || "").slice(0, 200),
@@ -56,7 +61,10 @@ function AssistantBody({
       try {
         onCitationClick(decodeURIComponent(ref));
       } catch (e) {
-        console.warn("[ai-message] decodeURIComponent failed, using raw ref:", e);
+        console.warn(
+          "[ai-message] decodeURIComponent failed, using raw ref:",
+          e,
+        );
         onCitationClick(ref);
       }
     },
@@ -82,6 +90,21 @@ export function AiMessageBubble({
   onCitationClick,
 }: AiMessageBubbleProps) {
   if (role === "user") {
+    const userHtml = useMemo(() => {
+      try {
+        const result = renderMarkdownWithProfile(content || "", "chat_user", {
+          streaming: false,
+        });
+        return result.output;
+      } catch {
+        return (content || "")
+          .replace(/&/g, "&amp;")
+          .replace(/</g, "&lt;")
+          .replace(/>/g, "&gt;")
+          .replace(/\n/g, "<br>");
+      }
+    }, [content]);
+
     return (
       <div
         className={cn(
@@ -89,9 +112,10 @@ export function AiMessageBubble({
           className,
         )}
       >
-        <div className="ai-message-body px-3 py-2.5 text-[13px] leading-snug text-foreground">
-          {content}
-        </div>
+        <div
+          className="ai-message-body iris-prose select-text px-3 py-2.5 text-[13px] leading-snug text-foreground"
+          dangerouslySetInnerHTML={{ __html: userHtml }}
+        />
       </div>
     );
   }

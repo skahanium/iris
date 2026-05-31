@@ -53,20 +53,109 @@ function countDelimiter(text: string, delimiter: string): number {
 }
 
 /**
- * Close unbalanced Markdown fences and inline marks so streaming partial content parses cleanly.
+ * Count single `_` occurrences (underscore not part of `__`).
+ */
+function countSingleUnderscore(text: string): number {
+  let count = 0;
+  for (let i = 0; i < text.length; i++) {
+    if (text[i] === "_" && text[i + 1] !== "_" && text[i - 1] !== "_") {
+      count++;
+    }
+  }
+  return count;
+}
+
+/**
+ * Count single `*` occurrences (asterisk not part of `**`, not a list marker).
+ */
+function countSingleAsterisk(text: string): number {
+  let count = 0;
+  const lines = text.split("\n");
+  for (const line of lines) {
+    const trimmed = line.trimStart();
+    // Skip if entire trimmed line starts with * followed by space (list marker)
+    if (!trimmed) continue;
+    for (let i = 0; i < line.length; i++) {
+      if (line[i] === "*" && line[i + 1] !== "*" && line[i - 1] !== "*") {
+        // Check if this is a list marker: at line start (after optional indent) and followed by space
+        const prefix = line.slice(0, i);
+        if (/^\s*$/.test(prefix) && line[i + 1] === " ") {
+          // This is likely a list marker, skip
+          continue;
+        }
+        count++;
+      }
+    }
+  }
+  return count;
+}
+
+/**
+ * Close unbalanced Markdown fences and inline marks so streaming partial
+ * content parses cleanly. Also handles incomplete lists, blockquotes,
+ * callouts, and footnotes.
+ *
+ * New in Phase 4:
+ * - Unclosed italic (`_`, `*`)
+ * - Mid-stream interrupted list items
+ * - Mid-stream interrupted blockquote lines
+ * - Mid-stream interrupted callout blocks
+ * - Mid-stream interrupted footnote references
  */
 export function repairStreamingMarkdown(md: string): string {
   let repaired = md;
+
+  // ── remove incomplete structural elements first ────────────
+  // These must be trimmed before delimiter balancing to avoid
+  // clashes (e.g., list `-` vs italic `*` closers).
+
+  // Incomplete list items (bullet: `- `, `* `)
+  repaired = repaired.replace(/\n[ \t]*[-*]\s+$/m, "\n");
+
+  // Incomplete ordered list items (`1. `, `42. `)
+  repaired = repaired.replace(/\n[ \t]*\d+\.\s+$/m, "\n");
+
+  // Incomplete blockquote lines (`> `, `>   `)
+  repaired = repaired.replace(/\n[ \t]*>\s*$/m, "\n");
+
+  // ── close unbalanced delimiters ────────────────────────────
+
+  // Fences
   const fenceMatches = repaired.match(/```/g);
   if (fenceMatches && fenceMatches.length % 2 !== 0) {
     repaired += "\n```";
   }
+
+  // Bold
   if (countDelimiter(repaired, "**") % 2 !== 0) {
     repaired += "**";
   }
+
+  // Strikethrough
   if (countDelimiter(repaired, "~~") % 2 !== 0) {
     repaired += "~~";
   }
+
+  // Italic (_)
+  if (countSingleUnderscore(repaired) % 2 !== 0) {
+    repaired += "_";
+  }
+
+  // Italic (*)
+  if (countSingleAsterisk(repaired) % 2 !== 0) {
+    repaired += "*";
+  }
+
+  // ── unterminated footnote reference ────────────────────────
+
+  const lastOpen = repaired.lastIndexOf("[^");
+  if (lastOpen !== -1) {
+    const after = repaired.slice(lastOpen);
+    if (!after.includes("]")) {
+      repaired += "]";
+    }
+  }
+
   return repaired;
 }
 

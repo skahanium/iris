@@ -17,7 +17,7 @@ import {
   type ReactNode,
 } from "react";
 
-import { markdownBodyToEditorHtml } from "@/lib/markdown";
+import { renderMarkdownWithProfile } from "@/lib/markdown-contract";
 import { cn } from "@/lib/utils";
 
 import { AiStreamExtension } from "./extensions/AiStreamExtension";
@@ -113,7 +113,8 @@ export function TipTapEditor({
 
   const editor = useEditor({
     extensions,
-    content: markdownBodyToEditorHtml(initialBodyMarkdown),
+    content: renderMarkdownWithProfile(initialBodyMarkdown, "editor_ingest")
+      .output,
     onUpdate: () => {
       onDirtyRef.current?.();
     },
@@ -145,10 +146,7 @@ export function TipTapEditor({
           {titleSlot ? (
             <div className="iris-editor-title-slot">{titleSlot}</div>
           ) : null}
-          <div
-            className="iris-editor-body"
-            onContextMenu={onBodyContextMenu}
-          >
+          <div className="iris-editor-body" onContextMenu={onBodyContextMenu}>
             <EditorContent editor={editor} />
           </div>
         </div>

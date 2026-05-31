@@ -1,8 +1,7 @@
 import { ChevronRight, FileSearch } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
-import { renderAiMarkdownToHtml } from "@/lib/markdown-render";
-import { sanitizeHtml } from "@/lib/sanitize";
+import { renderMarkdownWithProfile } from "@/lib/markdown-contract";
 import type { ResearchFocusPayload } from "@/types/ai";
 import { cn } from "@/lib/utils";
 
@@ -25,9 +24,9 @@ export function ResearchResultMessage({
   className,
 }: ResearchResultMessageProps) {
   const preview = summaryPreview(result.summary);
-  const html = sanitizeHtml(
-    renderAiMarkdownToHtml(preview, { streaming: false }),
-  );
+  const html = renderMarkdownWithProfile(preview, "research_card", {
+    streaming: false,
+  }).output;
   const evidenceCount = result.evidence_matrix.total_evidence_count;
   const coverage = Math.round(result.evidence_matrix.coverage_score * 100);
 

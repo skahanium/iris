@@ -33,7 +33,7 @@ import {
 } from "@/lib/ipc";
 import { createDefaultNote } from "@/lib/note-create";
 import { displayTitleForFileListItem } from "@/lib/note-display";
-import { markdownToHtmlPage } from "@/lib/markdown";
+import { renderMarkdownWithProfile } from "@/lib/markdown-contract";
 import {
   buildVaultTree,
   listFilesInFolder,
@@ -281,7 +281,9 @@ export function VaultNavigator({ open, onClose, onOpen }: VaultNavigatorProps) {
   const handleExportHtml = useCallback(async (path: string) => {
     const md = await fileRead(path);
     const title = path.replace(/\.md$/, "").split("/").pop() ?? "note";
-    const html = markdownToHtmlPage(md, title);
+    const html = renderMarkdownWithProfile(md, "vault_preview", {
+      context: title,
+    }).output;
     const destPath = path.replace(/\.md$/, ".html");
     await exportFile(destPath, html);
   }, []);
