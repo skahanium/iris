@@ -50,6 +50,7 @@ import { useOverlayManager } from "@/hooks/useOverlayManager";
 import { useTabManager } from "@/hooks/useTabManager";
 import { useVersionIdle } from "@/hooks/useVersionIdle";
 import { useTheme } from "@/hooks/useTheme";
+import { useMacOSWindowChromeSync } from "@/hooks/useMacOSWindowChromeSync";
 import { useVault } from "@/hooks/useVault";
 import {
   buildCommandPaletteItems,
@@ -114,6 +115,8 @@ function PreVaultDesktopFrame({ children }: { children: ReactNode }) {
 }
 
 function App() {
+  useMacOSWindowChromeSync();
+
   const { vaultPath, loading, pickVault } = useVault();
   const { theme, setTheme } = useTheme();
   const [aiPanelOpen, setAiPanelOpen] = useState(true);

@@ -71,6 +71,8 @@
     --radius-lg: 12px;
     --radius-xl: 16px;
     --window-radius: 12px;
+    --titlebar-height: 2.5rem;
+    --titlebar-traffic-inset: 0px;
     --shadow-overlay:
       0 12px 48px hsl(0 0% 0% / 0.45), 0 4px 16px hsl(0 0% 0% / 0.28),
       0 0 0 1px hsl(var(--border) / 0.65);
@@ -363,6 +365,20 @@
 
   html[data-iris-desktop-transparent] .iris-desktop-frame {
     border-radius: var(--window-radius);
+  }
+
+  html[data-iris-platform-macos] {
+    /* 32px；与 chrome_metrics::MACOS_TITLEBAR_HEIGHT 一致，hook 可 IPC 覆盖 */
+    --titlebar-height: 2rem;
+    --titlebar-traffic-inset: 72px;
+  }
+
+  html[data-iris-platform-macos] .iris-desktop-titlebar--desktop {
+    padding-left: var(--titlebar-traffic-inset);
+  }
+
+  html[data-iris-platform-macos] .iris-desktop-titlebar--mac-empty {
+    box-sizing: border-box;
   }
 
   [data-tauri-drag-region] {

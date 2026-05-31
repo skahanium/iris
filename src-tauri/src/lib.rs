@@ -1,5 +1,6 @@
 pub mod ai_runtime;
 pub mod app;
+mod chrome_metrics;
 mod commands;
 mod credentials;
 pub mod embedding;
@@ -7,6 +8,8 @@ pub mod error;
 pub mod indexer;
 pub mod knowledge;
 mod llm;
+#[cfg(target_os = "macos")]
+mod macos_traffic_lights;
 mod network;
 pub mod recycle;
 mod security;
@@ -53,10 +56,14 @@ pub fn run() {
                     use tauri::Theme;
                     let _ = window.set_theme(Some(Theme::Dark));
                 }
+                window_chrome::apply_main_window_chrome(&window);
+                #[cfg(target_os = "macos")]
+                window_chrome::attach_macos_traffic_light_listeners(&window);
                 window
                     .show()
                     .map_err(|e| crate::error::AppError::msg(format!("无法显示主窗口: {e}")))?;
-                // macOS 在 show 后再应用 effect，部分系统版本上更稳定
+                // macOS：show / 全屏还原后系统可能重置交通灯，再应用一次
+                #[cfg(target_os = "macos")]
                 window_chrome::apply_main_window_chrome(&window);
                 let _ = window.set_focus();
             } else {
@@ -176,6 +183,8 @@ pub fn run() {
             commands::profile_commands::inbox_update_status,
             commands::profile_commands::inbox_delete,
             commands::profile_commands::inbox_counts,
+            commands::window_chrome_cmd::get_desktop_chrome_metrics,
+            commands::window_chrome_cmd::reapply_window_chrome,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

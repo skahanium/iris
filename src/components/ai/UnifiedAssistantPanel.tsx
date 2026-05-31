@@ -55,6 +55,7 @@ import {
 import { findPacketByCitationRef } from "@/lib/ai/citation-markdown";
 import { mergeContextPackets } from "@/lib/ai/merge-context-packets";
 import { shouldStartNewAiSession } from "@/lib/ai/session-thread";
+import { DEFAULT_ASSISTANT_IDENTITY } from "@/lib/assistant-identity";
 import { resolveAssistantDisplayContent } from "@/lib/assistant-message-content";
 import { mapChatToolCallsForUi } from "@/lib/map-chat-tool-calls";
 import { invokeErrorMessage } from "@/lib/credentials";
@@ -582,9 +583,6 @@ export function UnifiedAssistantPanel({
       });
       setPackets(result.packets);
       setContextStatusData(result.context_status);
-      if (result.packets.length > 0) {
-        setPacketsOpen(true);
-      }
       if (result.execution_plan?.steps?.length) {
         setExecutionPlan(result.execution_plan);
       } else {
@@ -693,9 +691,6 @@ export function UnifiedAssistantPanel({
           result.evidence_packets,
         );
         setPackets(evidencePackets);
-        if (evidencePackets.length > 0) {
-          setPacketsOpen(true);
-        }
 
         setMessages((prev) => {
           const next = [...prev];
@@ -1349,6 +1344,9 @@ export function UnifiedAssistantPanel({
 
   const ActionIcon = assistantIcon(actionState.intent);
   const activeScene: AiScene = resolveAiSceneForIntent(actionState.intent);
+  const isDefaultAssistantName =
+    assistantIdentity.displayName ===
+    DEFAULT_ASSISTANT_IDENTITY.displayName;
 
   const handleLoadSession = useCallback(
     (id: number, loaded: ChatLine[]) => {
@@ -1367,18 +1365,26 @@ export function UnifiedAssistantPanel({
       className="flex h-full flex-col bg-panel"
       data-testid="unified-assistant-panel"
     >
-      <header className="shrink-0 border-b border-border/60 px-3 py-3">
+      <header className="shrink-0 border-b border-border/60 px-3 py-2">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
             <div className="flex items-center gap-2">
               <AssistantAvatar identity={assistantIdentity} />
               <div className="min-w-0">
-                <p className="truncate text-sm font-medium text-foreground">
-                  {assistantIdentity.displayName}
-                </p>
-                <p className="truncate text-xs text-muted-foreground">
-                  {headerSubtitle}
-                </p>
+                {isDefaultAssistantName ? (
+                  <p className="truncate text-sm font-medium text-foreground">
+                    {headerSubtitle}
+                  </p>
+                ) : (
+                  <>
+                    <p className="truncate text-sm font-medium text-foreground">
+                      {assistantIdentity.displayName}
+                    </p>
+                    <p className="truncate text-xs text-muted-foreground">
+                      {headerSubtitle}
+                    </p>
+                  </>
+                )}
               </div>
             </div>
             {showTaskHint || corpusNames.length > 0 ? (

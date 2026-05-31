@@ -18,4 +18,5 @@ pub mod settings;
 pub mod tag;
 pub mod template;
 pub mod version;
+pub mod window_chrome_cmd;
 pub mod writing_commands;

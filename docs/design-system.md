@@ -113,10 +113,20 @@
 | `--radius-xl`     | 16px | 命令浮层                                |
 | `--window-radius` | 12px | 无边框窗口外轮廓（配合 `shadow: true`） |
 
-桌面窗口：`decorations: false`、`shadow: true`；单行 `TabBar`（Tab + 应用操作 + 窗口按钮，与 `bg-panel` 同色），避免系统黑条。
+桌面窗口：单行 **`DesktopTitleBar`**（`bg-surface-chrome`），禁止出现「Tauri App」或双层系统标题栏。顶栏高度按平台区分（**刻意非像素级统一**）：
+
+| 平台 | `--titlebar-height` | 装饰 / 标题 | 窗口按钮 | 顶栏左侧 |
+| ---- | ------------------- | ----------- | -------- | -------- |
+| macOS | **32px（2rem）** | `titleBarStyle: Overlay`、`hiddenTitle: true`、`decorations: true`；内部 title **Iris** | 系统交通灯；`padding-left: var(--titlebar-traffic-inset)`（默认 72px，IPC `get_desktop_chrome_metrics` 可覆盖） | 有 Tab 时不显示宽品牌列；整行 `items-center` |
+| Windows / Linux | **40px（2.5rem）** | `decorations: false`（Win 另 `shadow: true`） | 自定义 `WindowControls` | 无 Tab 时小 Mark + Iris |
+
+指标单一来源：Rust [`chrome_metrics.rs`](../src-tauri/src/chrome_metrics.rs)（macOS 32 / 默认 40）；前端镜像见 [`chrome-metrics.ts`](../src/lib/chrome-metrics.ts)。
 
 - **Windows 11**：`transparent: false`（见 `tauri.windows.conf.json`），圆角由 DWM + `shadow` 提供；**勿**与 `transparent: true` 同开。
-- **macOS**：`transparent: true` + `set_effects`（`radius` = `--window-radius`）+ 前端 `data-iris-desktop-transparent` 裁切，见 `window_chrome.rs`。
+- **macOS**：`transparent: true` + `set_effects`（`radius` = `--window-radius`）+ `data-iris-platform-macos`；交通灯在 32px Overlay 容器内垂直居中（`macos_traffic_lights.rs`）。`set_title` 后须重新 inset。
+- **macOS 全屏**：悬停菜单栏上的交通灯由系统居中，**不与**应用 `DesktopTitleBar` 对齐；退出全屏后 `reapply_window_chrome` + `useMacOSWindowChromeSync` 恢复窗口模式契约。调试可用 `html[data-iris-window-fullscreen]`。
+
+**人工验收**：macOS 窗口模式 — 灯与 Iris / Tab 同一水平线；全屏→退出仍对齐。Windows — 顶栏仍 40px、三键与 Tab 无回归。
 
 阴影：仅浮层 / 悬浮工具条使用 `--shadow-overlay` / `--shadow-floating`；**编辑区无纸页阴影**。
 

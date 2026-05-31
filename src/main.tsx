@@ -13,6 +13,9 @@ if (isTauriRuntime()) {
   if (!/Windows/i.test(navigator.userAgent)) {
     document.documentElement.dataset.irisDesktopTransparent = "";
   }
+  if (/Mac/i.test(navigator.userAgent)) {
+    document.documentElement.dataset.irisPlatformMacos = "";
+  }
 }
 
 createRoot(document.getElementById("root")!).render(

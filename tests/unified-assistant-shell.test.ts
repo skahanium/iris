@@ -16,6 +16,9 @@ describe("unified assistant shell", () => {
 
     const chromeMatches = source.match(/<MinimalWindowChrome\s*\/>/g) ?? [];
     expect(chromeMatches).toHaveLength(1);
+    expect(read("src/components/layout/DesktopTitleBar.tsx")).toContain(
+      'data-testid="desktop-title-bar"',
+    );
     expect(source).toContain("UnifiedAssistantPanel");
     expect(source).not.toContain("AiWorkflowPanel");
   });

@@ -27,7 +27,7 @@ function WindowControlButton({
       aria-label={label}
       data-tauri-drag-region-exclude
       className={cn(
-        "inline-flex h-9 w-10 items-center justify-center text-muted-foreground transition-colors duration-fast hover:bg-muted/80 hover:text-foreground focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary",
+        "inline-flex h-[var(--titlebar-height)] w-11 items-center justify-center text-muted-foreground transition-colors duration-fast hover:bg-muted/80 hover:text-foreground focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary",
         className,
       )}
       onClick={onClick}

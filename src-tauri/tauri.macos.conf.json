@@ -3,7 +3,14 @@
   "app": {
     "windows": [
       {
-        "transparent": true
+        "transparent": true,
+        "decorations": true,
+        "titleBarStyle": "Overlay",
+        "hiddenTitle": true,
+        "trafficLightPosition": {
+          "x": 12,
+          "y": 10
+        }
       }
     ]
   }
