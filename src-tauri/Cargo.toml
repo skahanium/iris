@@ -40,6 +40,11 @@ fastembed = "4"
 scraper = "0.22"
 urlencoding = "2"
 toml = "0.8"
+sqlite-vec = { version = "0.1.10-alpha.4", default-features = false, optional = true }
+
+[features]
+default = []
+sqlite-vec = ["dep:sqlite-vec"]
 
 [dev-dependencies]
 tempfile = "3"

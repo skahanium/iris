@@ -1,6 +1,9 @@
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Mutex, Once};
+use std::sync::Mutex;
+
+#[cfg(feature = "sqlite-vec")]
+use std::sync::Once;
 
 use rusqlite::Connection;
 
@@ -8,6 +11,8 @@ use super::migrate::migrate_up;
 use crate::error::{AppError, AppResult};
 
 static VECTOR_INDEX_READY: AtomicBool = AtomicBool::new(false);
+
+#[cfg(feature = "sqlite-vec")]
 static SQLITE_VEC_REGISTER: Once = Once::new();
 
 /// Whether sqlite-vec vec0 tables are available for this process.
@@ -33,12 +38,16 @@ impl Database {
         }
         let write_conn = Connection::open(path)?;
         Self::apply_pragmas(&write_conn)?;
+        #[cfg(feature = "sqlite-vec")]
         let vec_ready = Self::try_load_sqlite_vec(&write_conn, true);
+        #[cfg(not(feature = "sqlite-vec"))]
+        let vec_ready = false;
         VECTOR_INDEX_READY.store(vec_ready, Ordering::Relaxed);
         migrate_up(&write_conn)?;
 
         let read_conn = Connection::open(path)?;
         Self::apply_pragmas(&read_conn)?;
+        #[cfg(feature = "sqlite-vec")]
         let _ = Self::try_load_sqlite_vec(&read_conn, true);
 
         Ok(Self {
@@ -108,6 +117,7 @@ impl Database {
         Ok(())
     }
 
+    #[cfg(feature = "sqlite-vec")]
     /// Load sqlite-vec extension when the bundled SQLite supports it.
     fn try_load_sqlite_vec(conn: &Connection, persistent_db: bool) -> bool {
         if !persistent_db || cfg!(test) {
