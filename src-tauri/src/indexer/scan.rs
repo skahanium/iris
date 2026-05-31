@@ -10,10 +10,12 @@ use super::chunker::chunk_markdown;
 use super::frontmatter::{parse_note, resolve_display_title};
 use super::fts::{delete_fts, upsert_fts};
 use super::wikilink::index_wiki_links;
+use crate::app::AppState;
 #[cfg(not(test))]
 use crate::embedding::store::store_chunk_embeddings;
 use crate::error::AppResult;
 use crate::storage::paths::{is_user_note_path, relative_path, resolve_vault_path};
+use std::sync::Arc;
 
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct FileEntry {
@@ -56,6 +58,16 @@ pub fn sync_file_tags(conn: &Connection, file_id: i64, tags: &[String]) -> AppRe
 
 /// Index a single file into SQLite.
 pub fn index_file(conn: &Connection, vault: &Path, absolute: &Path) -> AppResult<FileEntry> {
+    index_file_with_embed(conn, vault, absolute, None)
+}
+
+/// Index with optional background embedding queue (production paths should pass `Some`).
+pub fn index_file_with_embed(
+    conn: &Connection,
+    vault: &Path,
+    absolute: &Path,
+    #[allow(unused_variables)] app: Option<&Arc<AppState>>,
+) -> AppResult<FileEntry> {
     let rel = relative_path(vault, absolute)?;
     if !is_user_note_path(&rel) {
         return Err(crate::error::AppError::msg(
@@ -77,11 +89,32 @@ pub fn index_file(conn: &Connection, vault: &Path, absolute: &Path) -> AppResult
     let display_title =
         resolve_display_title(parsed.title.as_deref(), "", frontmatter, &document_name);
 
-    let existing_id: Option<i64> = conn
-        .query_row("SELECT id FROM files WHERE path = ?1", [&rel], |row| {
-            row.get(0)
-        })
+    let existing_row: Option<(i64, String, String, i64)> = conn
+        .query_row(
+            "SELECT id, content_hash, title, word_count FROM files WHERE path = ?1",
+            [&rel],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )
         .ok();
+
+    if let Some((id, stored_hash, title, stored_wc)) = &existing_row {
+        if stored_hash == &hash {
+            tracing::debug!(path = %rel, "index_file skipped: content unchanged");
+            return Ok(FileEntry {
+                id: *id,
+                path: rel,
+                title: title.clone(),
+                updated_at: conn
+                    .query_row("SELECT updated_at FROM files WHERE id = ?1", [id], |r| {
+                        r.get(0)
+                    })
+                    .unwrap_or(now),
+                word_count: *stored_wc,
+            });
+        }
+    }
+
+    let existing_id: Option<i64> = existing_row.as_ref().map(|(id, _, _, _)| *id);
 
     let file_id = if let Some(id) = existing_id {
         conn.execute(
@@ -119,8 +152,13 @@ pub fn index_file(conn: &Connection, vault: &Path, absolute: &Path) -> AppResult
     }
 
     #[cfg(not(test))]
-    if let Err(e) = store_chunk_embeddings(conn, file_id) {
-        tracing::warn!("embedding skipped for file {file_id}: {e}");
+    match app {
+        Some(state) => state.enqueue_embedding(file_id),
+        None => {
+            if let Err(e) = store_chunk_embeddings(conn, file_id) {
+                tracing::warn!("embedding skipped for file {file_id}: {e}");
+            }
+        }
     }
 
     Ok(FileEntry {
@@ -130,6 +168,63 @@ pub fn index_file(conn: &Connection, vault: &Path, absolute: &Path) -> AppResult
         updated_at: now,
         word_count: wc,
     })
+}
+
+/// Incrementally index vault files whose content hash differs from the DB.
+pub fn index_vault_incremental(
+    conn: &Connection,
+    vault: &Path,
+    app: Option<&Arc<AppState>>,
+) -> AppResult<Vec<FileEntry>> {
+    let files = collect_vault_files(vault);
+    let mut entries = Vec::with_capacity(files.len());
+    for abs in files {
+        let rel = match relative_path(vault, &abs) {
+            Ok(r) => r,
+            Err(_) => continue,
+        };
+        if !is_user_note_path(&rel) {
+            continue;
+        }
+        let disk_hash = match file_hash(&abs) {
+            Ok(h) => h,
+            Err(e) => {
+                tracing::warn!("index skip {}: {e}", abs.display());
+                continue;
+            }
+        };
+        let unchanged: bool = conn
+            .query_row(
+                "SELECT 1 FROM files WHERE path = ?1 AND content_hash = ?2",
+                rusqlite::params![rel, disk_hash],
+                |_| Ok(()),
+            )
+            .is_ok();
+        if unchanged {
+            if let Ok(entry) = conn.query_row(
+                "SELECT id, path, title, updated_at, word_count FROM files WHERE path = ?1",
+                [&rel],
+                |row| {
+                    Ok(FileEntry {
+                        id: row.get(0)?,
+                        path: row.get(1)?,
+                        title: row.get(2)?,
+                        updated_at: row.get(3)?,
+                        word_count: row.get(4)?,
+                    })
+                },
+            ) {
+                entries.push(entry);
+            }
+            continue;
+        }
+        match index_file_with_embed(conn, vault, &abs, app) {
+            Ok(entry) => entries.push(entry),
+            Err(e) => tracing::warn!("index failed for {}: {e}", abs.display()),
+        }
+    }
+    let _ = prune_stale_file_indexes(conn, vault)?;
+    Ok(entries)
 }
 
 /// Remove file from index.
@@ -156,31 +251,9 @@ pub fn prune_stale_file_indexes(conn: &Connection, vault: &Path) -> AppResult<us
     Ok(pruned)
 }
 
-/// Recursively scan vault for `.md` files.
+/// Recursively scan vault for `.md` files (full index; prefer `index_vault_incremental`).
 pub fn scan_vault(conn: &Connection, vault: &Path) -> AppResult<Vec<FileEntry>> {
-    let mut entries = Vec::new();
-    if !vault.exists() {
-        return Ok(entries);
-    }
-
-    for entry in WalkDir::new(vault)
-        .follow_links(false)
-        .into_iter()
-        .filter_entry(|e| {
-            e.path()
-                .strip_prefix(vault)
-                .is_ok_and(|rel| !rel.components().any(|c| c.as_os_str() == ".iris"))
-        })
-        .filter_map(|e| e.ok())
-        .filter(|e| e.path().extension().is_some_and(|ext| ext == "md"))
-    {
-        let path = entry.path();
-        if path.is_file() {
-            entries.push(index_file(conn, vault, path)?);
-        }
-    }
-    let _ = prune_stale_file_indexes(conn, vault)?;
-    Ok(entries)
+    index_vault_incremental(conn, vault, None::<&Arc<AppState>>)
 }
 
 /// Collect all `.md` file paths in the vault without holding a DB lock.
@@ -308,6 +381,27 @@ mod tests {
                 |r| r.get(0),
             )?;
             assert_eq!(count, 1);
+            Ok(())
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn index_file_skips_unchanged_content_hash() {
+        let (_dir, vault, db) = setup_vault();
+        write_note(&vault, "note.md", "# Stable\n\nBody.");
+
+        db.with_conn(|conn| {
+            index_file(conn, &vault, &vault.join("note.md"))?;
+            let chunks_after_first: i64 =
+                conn.query_row("SELECT COUNT(*) FROM chunks", [], |r| r.get(0))?;
+            index_file(conn, &vault, &vault.join("note.md"))?;
+            let chunks_after_second: i64 =
+                conn.query_row("SELECT COUNT(*) FROM chunks", [], |r| r.get(0))?;
+            assert_eq!(
+                chunks_after_first, chunks_after_second,
+                "unchanged file should not rebuild chunks"
+            );
             Ok(())
         })
         .unwrap();

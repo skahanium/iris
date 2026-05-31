@@ -54,6 +54,7 @@ export function useAutoVaultIndex(
 
   useEffect(() => {
     if (!vaultPath || vaultLoading || !isTauriRuntime()) return;
+    if (import.meta.env.VITE_SKIP_AUTO_INDEX === "1") return;
     let cancelled = false;
     void (async () => {
       await rescanVault("auto");

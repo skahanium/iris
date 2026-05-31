@@ -191,6 +191,7 @@ export function GraphView({ open, onClose, onOpenNote }: GraphViewProps) {
     if (!ctx) return;
 
     let running = true;
+    let idleFrames = 0;
     const edgeColor = () => readCssHsl("--border", "hsl(30 6% 30%)");
     const nodeColor = () => readCssHsl("--primary", "hsl(28 42% 38%)");
     const labelColor = () =>
@@ -238,6 +239,21 @@ export function GraphView({ open, onClose, onOpenNote }: GraphViewProps) {
       }
 
       forceSimulate(sim.nodes, sim.edges, sim.nodeById, w, h, 3);
+
+      const maxSpeed = sim.nodes.reduce(
+        (max, n) => Math.max(max, Math.hypot(n.vx, n.vy)),
+        0,
+      );
+      if (maxSpeed < 0.08) {
+        idleFrames += 1;
+      } else {
+        idleFrames = 0;
+      }
+      if (idleFrames >= 45) {
+        running = false;
+        return;
+      }
+
       animRef.current = requestAnimationFrame(tick);
     };
 

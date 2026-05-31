@@ -32,7 +32,7 @@ export function matchesKeyChord(e: KeyboardEvent, chord: KeyChord): boolean {
   return false;
 }
 
-function isMacPlatform(): boolean {
+export function isMacPlatform(): boolean {
   return (
     typeof navigator !== "undefined" &&
     /Mac|iPhone|iPad|iPod/.test(navigator.platform)

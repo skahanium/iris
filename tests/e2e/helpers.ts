@@ -8,7 +8,7 @@ import { resolveAssistantIntent } from "@/lib/assistant-routing";
 export const E2E_SELECTORS = {
   editor: '[data-testid="editor"]',
   editorShell: '[data-testid="editor-shell"]',
-  tabBar: '[data-testid="tab-bar"]',
+  tabBar: '[data-testid="desktop-title-bar"]',
   statusBar: '[data-testid="status-bar"]',
   assistantDock: '[data-testid="unified-assistant-dock"]',
   assistantPanel: '[data-testid="unified-assistant-panel"]',

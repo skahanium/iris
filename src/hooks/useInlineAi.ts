@@ -79,10 +79,15 @@ export function useInlineAi({
 }: UseInlineAiOptions = {}) {
   const requestIdRef = useRef<string | null>(null);
   const streamBufRef = useRef("");
+  const rafRef = useRef<number | undefined>(undefined);
   const unlistenRef = useRef<Array<() => void>>([]);
   const slashSystemRef = useRef<string | undefined>(undefined);
 
   const detachListeners = useCallback(() => {
+    if (rafRef.current !== undefined) {
+      cancelAnimationFrame(rafRef.current);
+      rafRef.current = undefined;
+    }
     for (const u of unlistenRef.current) u();
     unlistenRef.current = [];
   }, []);
@@ -95,7 +100,12 @@ export function useInlineAi({
           return;
         }
         streamBufRef.current += ev.token;
-        editor.commands.updateAiStream(streamBufRef.current);
+        if (rafRef.current === undefined) {
+          rafRef.current = requestAnimationFrame(() => {
+            rafRef.current = undefined;
+            editor.commands.updateAiStream(streamBufRef.current);
+          });
+        }
       });
       const unlistenDone = await listenLlmDone((ev) => {
         if (requestIdRef.current && ev.request_id === requestIdRef.current) {

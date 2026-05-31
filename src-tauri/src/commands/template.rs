@@ -90,7 +90,8 @@ pub fn template_create(
 ) -> AppResult<crate::indexer::scan::FileEntry> {
     let vault = state.vault_path()?;
     ensure_templates(&vault)?;
-    let tmpl_path = templates_dir(&vault).join(format!("{}.md", template_name));
+    let safe_name = validate_template_name(&template_name)?;
+    let tmpl_path = templates_dir(&vault).join(&safe_name);
     let content = if tmpl_path.exists() {
         fs::read_to_string(&tmpl_path)?
     } else {

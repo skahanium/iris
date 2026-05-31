@@ -176,7 +176,8 @@ fn parse_frontmatter(raw: &str) -> (std::collections::HashMap<String, String>, S
 
 /// Install skill from HTTP(S) URL (raw SKILL.md or GitHub raw link).
 pub async fn install_from_url(url: &str, scope: SkillScope, vault: &Path) -> AppResult<SkillEntry> {
-    let client = reqwest::Client::new();
+    crate::security::ipc_policy::validate_skill_remote_url(url)?;
+    let client = crate::network::cert_pinning::create_pinned_client()?;
     let resp = client
         .get(url)
         .send()
@@ -218,6 +219,7 @@ pub async fn install_from_git(
     scope: SkillScope,
     vault: &Path,
 ) -> AppResult<Vec<SkillEntry>> {
+    crate::security::ipc_policy::validate_skill_git_url(repo_url)?;
     let tmp = std::env::temp_dir().join(format!("iris-skill-{}", uuid::Uuid::new_v4()));
     let status = std::process::Command::new("git")
         .args([
@@ -355,10 +357,11 @@ pub fn inject_into_prompt(skills: &[SkillEntry], scene: AiScene) -> String {
 
 /// Install SKILL.md from a local file path (copies into skills directory).
 pub fn install_from_local(source: &Path, scope: SkillScope, vault: &Path) -> AppResult<SkillEntry> {
+    let source = crate::security::ipc_policy::validate_local_skill_source(source, vault)?;
     if !source.is_file() {
         return Err(AppError::msg("本地安装需要 SKILL.md 文件路径"));
     }
-    let body = fs::read_to_string(source)?;
+    let body = fs::read_to_string(&source)?;
     let (meta, _) = parse_frontmatter(&body);
     let dir_name = meta
         .get("name")

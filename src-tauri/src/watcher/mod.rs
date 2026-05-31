@@ -8,7 +8,7 @@ use tracing::info;
 
 use crate::app::AppState;
 use crate::error::AppResult;
-use crate::indexer::scan::{file_hash, index_file, remove_file_index};
+use crate::indexer::scan::{file_hash, index_file_with_embed, remove_file_index};
 use crate::storage::paths::{is_user_note_path, relative_path};
 
 /// 持有 debouncer；Drop 时自动取消目录监听。切换 vault 时需 drop 后重建。
@@ -43,6 +43,9 @@ impl FileWatcher {
             move |result: DebounceEventResult| {
                 let Ok(events) = result else { return };
                 for event in events {
+                    if matches!(event.kind, EventKind::Access(_)) {
+                        continue;
+                    }
                     let kind = event_kind_label(&event.kind);
                     for path in &event.paths {
                         if path.extension().is_some_and(|e| e == "md") {
@@ -80,7 +83,7 @@ impl FileWatcher {
 
 fn handle_file_event(
     app: &AppHandle,
-    state: &AppState,
+    state: &Arc<AppState>,
     path: &std::path::Path,
     event_type: &str,
 ) -> AppResult<()> {
@@ -101,7 +104,13 @@ fn handle_file_event(
 
     let hash = file_hash(path)?;
     let rel = relative_path(&vault, path)?;
-    state.db.with_conn(|conn| index_file(conn, &vault, path))?;
+    if state.write_guard.should_skip_watcher(&rel, &hash) {
+        tracing::debug!(path = %rel, "watcher skipped: recent app write");
+        return Ok(());
+    }
+    state
+        .db
+        .with_conn(|conn| index_file_with_embed(conn, &vault, path, Some(state)))?;
 
     info!(
         path = %path.display(),

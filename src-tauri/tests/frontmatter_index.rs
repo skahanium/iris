@@ -1,11 +1,9 @@
-use std::fs;
-use std::sync::Arc;
-
 use iris_lib::app::AppState;
 use iris_lib::error::AppResult;
 use iris_lib::indexer::scan::{index_file, remove_file_index, scan_vault};
 use iris_lib::storage::migrate::migrate_up;
 use rusqlite::Connection;
+use std::fs;
 use tempfile::tempdir;
 
 fn tag_names(conn: &Connection, file_id: i64) -> Vec<String> {
@@ -137,7 +135,7 @@ fn scan_vault_indexes_multiple_notes() {
     fs::write(vault.join("b.md"), "no fm\n").unwrap();
 
     let data = dir.path().join("data");
-    let state = Arc::new(AppState::new(data).unwrap());
+    let state = AppState::new(data).unwrap();
     state.set_vault(vault.clone()).unwrap();
 
     let entries = state.db.with_conn(|conn| scan_vault(conn, &vault)).unwrap();

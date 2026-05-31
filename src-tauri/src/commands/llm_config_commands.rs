@@ -198,5 +198,12 @@ fn validate_routing(routing: &LlmRoutingConfig) -> AppResult<()> {
             return Err(AppError::msg(format!("未知厂商配置项: {id}")));
         }
     }
+    for row in routing.providers.values() {
+        if let Some(url) = row.base_url.as_deref() {
+            if !url.trim().is_empty() {
+                crate::security::ipc_policy::validate_https_url(url)?;
+            }
+        }
+    }
     Ok(())
 }

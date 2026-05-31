@@ -1,10 +1,19 @@
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Mutex, Once};
 
 use rusqlite::Connection;
 
 use super::migrate::migrate_up;
 use crate::error::{AppError, AppResult};
+
+static VECTOR_INDEX_READY: AtomicBool = AtomicBool::new(false);
+static SQLITE_VEC_REGISTER: Once = Once::new();
+
+/// Whether sqlite-vec vec0 tables are available for this process.
+pub fn vector_index_ready() -> bool {
+    VECTOR_INDEX_READY.load(Ordering::Relaxed)
+}
 
 /// SQLite connection pool with WAL and performance PRAGMAs from ARCHITECTURE.md.
 ///
@@ -24,10 +33,13 @@ impl Database {
         }
         let write_conn = Connection::open(path)?;
         Self::apply_pragmas(&write_conn)?;
+        let vec_ready = Self::try_load_sqlite_vec(&write_conn, true);
+        VECTOR_INDEX_READY.store(vec_ready, Ordering::Relaxed);
         migrate_up(&write_conn)?;
 
         let read_conn = Connection::open(path)?;
         Self::apply_pragmas(&read_conn)?;
+        let _ = Self::try_load_sqlite_vec(&read_conn, true);
 
         Ok(Self {
             write_conn: Mutex::new(write_conn),
@@ -39,6 +51,8 @@ impl Database {
     pub fn open_in_memory() -> AppResult<Self> {
         let write_conn = Connection::open_in_memory()?;
         Self::apply_pragmas(&write_conn)?;
+        // In-memory DBs skip sqlite-vec (process-global extension breaks isolated test DBs).
+        VECTOR_INDEX_READY.store(false, Ordering::Relaxed);
         migrate_up(&write_conn)?;
 
         let read_conn = Connection::open_in_memory()?;
@@ -92,6 +106,38 @@ impl Database {
             dst.execute_batch(&sql)?;
         }
         Ok(())
+    }
+
+    /// Load sqlite-vec extension when the bundled SQLite supports it.
+    fn try_load_sqlite_vec(conn: &Connection, persistent_db: bool) -> bool {
+        if !persistent_db || cfg!(test) {
+            return false;
+        }
+        // Register once per process — `sqlite3_auto_extension` is global state.
+        SQLITE_VEC_REGISTER.call_once(|| {
+            // SAFETY: sqlite-vec documents registration via `sqlite3_auto_extension` (see sqlite-vec
+            // crate tests). No safe alternative exists for static extension init with rusqlite bundled.
+            #[allow(clippy::missing_transmute_annotations)]
+            unsafe {
+                rusqlite::ffi::sqlite3_auto_extension(Some(std::mem::transmute(
+                    sqlite_vec::sqlite3_vec_init as *const (),
+                )));
+            }
+        });
+        match conn.query_row("SELECT vec_version()", [], |row| row.get::<_, String>(0)) {
+            Ok(version) => {
+                tracing::info!(%version, "sqlite-vec extension loaded");
+                true
+            }
+            Err(e) => {
+                tracing::warn!("sqlite-vec extension not available: {e}");
+                false
+            }
+        }
+    }
+
+    pub fn vector_index_ready(&self) -> bool {
+        vector_index_ready()
     }
 
     fn apply_pragmas(conn: &Connection) -> AppResult<()> {

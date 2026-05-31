@@ -3,14 +3,12 @@
 //! 首次运行会下载 fastembed 模型，较慢：
 //! `cargo test semantic_recall_at_5_on_fixture_vault -- --ignored --nocapture`
 
-use std::path::PathBuf;
-use std::sync::Arc;
-
 use iris_lib::app::AppState;
 use iris_lib::embedding::engine::{semantic_search, SemanticHit};
 use iris_lib::indexer::scan::scan_vault;
 use iris_lib::storage::migrate::migrate_up;
 use rusqlite::Connection;
+use std::path::PathBuf;
 
 /// (查询, 期望命中的笔记 path)
 const EVAL_QUERIES: &[(&str, &str)] = &[
@@ -103,7 +101,7 @@ fn semantic_recall_at_5_on_fixture_vault() {
 fn semantic_recall_via_app_state_db() {
     let vault = fixture_vault_path();
     let dir = tempfile::tempdir().unwrap();
-    let state = Arc::new(AppState::new(dir.path().to_path_buf()).unwrap());
+    let state = AppState::new(dir.path().to_path_buf()).unwrap();
     state.set_vault(vault.clone()).unwrap();
     state.db.with_conn(|conn| scan_vault(conn, &vault)).unwrap();
 

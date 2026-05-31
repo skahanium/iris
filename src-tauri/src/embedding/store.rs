@@ -2,6 +2,7 @@ use rusqlite::Connection;
 
 use super::engine::{embed_text, f32_to_bytes};
 use crate::error::AppResult;
+use crate::storage::db;
 
 /// Embed all chunks for a file and store in chunk_embeddings.
 pub fn store_chunk_embeddings(conn: &Connection, file_id: i64) -> AppResult<()> {
@@ -25,6 +26,12 @@ pub fn store_chunk_embeddings(conn: &Connection, file_id: i64) -> AppResult<()> 
             "INSERT OR REPLACE INTO chunk_embeddings (chunk_id, embedding) VALUES (?1, ?2)",
             rusqlite::params![chunk_id, blob],
         )?;
+        if db::vector_index_ready() {
+            let _ = conn.execute(
+                "INSERT OR REPLACE INTO vec_chunks (rowid, embedding) VALUES (?1, ?2)",
+                rusqlite::params![chunk_id, blob],
+            );
+        }
     }
     Ok(())
 }

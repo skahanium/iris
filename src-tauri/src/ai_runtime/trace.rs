@@ -123,7 +123,8 @@ impl TraceRecorder {
                     status = ?1, model_slot = ?2, provider = ?3,
                     tool_names = ?4, packet_ids = ?5,
                     latency_ms = ?6, token_input = ?7, token_output = ?8,
-                    error_code = ?9
+                    error_code = ?9,
+                    checkpoint = CASE WHEN ?1 IN ('completed', 'failed', 'aborted') THEN NULL ELSE checkpoint END
                  WHERE request_id = ?10",
                 rusqlite::params![
                     status.as_str(),

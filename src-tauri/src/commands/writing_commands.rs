@@ -37,6 +37,16 @@ pub fn patch_apply(
     state: State<'_, Arc<AppState>>,
     patch: PatchProposal,
 ) -> AppResult<PatchApplyResult> {
+    use crate::storage::paths::is_user_note_path;
+
+    if !is_user_note_path(&patch.target_path) {
+        return Ok(PatchApplyResult {
+            success: false,
+            new_content_hash: None,
+            error: Some("只能修改用户笔记".into()),
+            warnings: vec![],
+        });
+    }
     let content = file_read_inner(state.inner(), &patch.target_path)?;
     let applied = match writing_workflow::apply_patch(&patch, &content) {
         Ok(c) => c,
@@ -73,44 +83,24 @@ fn file_write_inner(
     path: &str,
     content: &str,
 ) -> AppResult<crate::indexer::scan::FileEntry> {
-    // Minimal write path aligned with `file_write` command.
+    use crate::error::AppError;
+    use crate::storage::paths::is_user_note_path;
+
+    if !is_user_note_path(path) {
+        return Err(AppError::msg("只能写入用户笔记，不允许修改内部元数据路径"));
+    }
     let vault = state.vault_path()?;
     let abs = crate::storage::paths::resolve_vault_path(&vault, path)?;
     let tmp = abs.with_extension("md.tmp");
     std::fs::write(&tmp, content)?;
     std::fs::rename(&tmp, &abs)?;
 
-    let wc = content.split_whitespace().count() as i64;
-    let parsed = crate::indexer::frontmatter::parse_note(content)?;
-    let stem = path
-        .trim_end_matches(".md")
-        .split('/')
-        .next_back()
-        .unwrap_or(path)
-        .to_string();
-    let title = crate::indexer::frontmatter::resolve_display_title(
-        parsed.title.as_deref(),
-        "",
-        parsed.frontmatter_json.as_deref(),
-        &stem,
-    );
-    let now = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%S").to_string();
-    let entry = crate::indexer::scan::FileEntry {
-        id: 0,
-        path: path.to_string(),
-        title,
-        updated_at: now,
-        word_count: wc,
-    };
-    let state_clone = Arc::clone(state);
-    let abs_clone = abs.clone();
-    let vault_clone = vault.clone();
-    std::thread::spawn(move || {
-        let _ = state_clone
-            .db
-            .with_conn(|conn| crate::indexer::scan::index_file(conn, &vault_clone, &abs_clone));
-    });
-    Ok(entry)
+    let hash = crate::indexer::scan::file_hash(&abs)?;
+    state.write_guard.mark(path, &hash);
+
+    state.db.with_conn(|conn| {
+        crate::indexer::scan::index_file_with_embed(conn, &vault, &abs, Some(state))
+    })
 }
 
 /// Execute a writing task (shared by IPC command and assistant facade).

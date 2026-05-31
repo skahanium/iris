@@ -440,7 +440,7 @@ mod tests {
         fs::create_dir_all(&vault).unwrap();
         let data_dir = dir.path().join("data");
         fs::create_dir_all(&data_dir).unwrap();
-        let state = Arc::new(AppState::new(data_dir).unwrap());
+        let state = AppState::new(data_dir).unwrap();
         state.set_vault(vault).unwrap();
         (dir, state)
     }

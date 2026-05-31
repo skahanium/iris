@@ -15,8 +15,8 @@ describe("Iris 核心功能验收", () => {
     expect(read("src/components/editor/TipTapEditor.tsx")).toContain(
       'data-testid="editor"',
     );
-    expect(read("src/components/layout/TabBar.tsx")).toContain(
-      'data-testid="tab-bar"',
+    expect(read("src/components/layout/DesktopTitleBar.tsx")).toContain(
+      'data-testid="desktop-title-bar"',
     );
     expect(read("src/components/layout/StatusBar.tsx")).toContain(
       'data-testid="status-bar"',

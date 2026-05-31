@@ -4,6 +4,10 @@ use fastembed::{EmbeddingModel, InitOptions, TextEmbedding};
 use rusqlite::Connection;
 
 use crate::error::{AppError, AppResult};
+use crate::storage::db;
+
+/// Maximum chunks for Rust cosine fallback (avoids loading entire vault into memory).
+const MAX_COSINE_FALLBACK_CHUNKS: i64 = 2_000;
 
 static EMBEDDER: Mutex<Option<TextEmbedding>> = Mutex::new(None);
 
@@ -56,14 +60,14 @@ pub fn semantic_search(
     query: &str,
     limit: usize,
 ) -> AppResult<Vec<SemanticHit>> {
-    // Try vec0 virtual table first (v0.2)
-    if let Ok(hits) = semantic_search_vec(conn, query, limit) {
-        if !hits.is_empty() {
-            return Ok(hits);
+    if db::vector_index_ready() {
+        if let Ok(hits) = semantic_search_vec(conn, query, limit) {
+            if !hits.is_empty() {
+                return Ok(hits);
+            }
         }
     }
 
-    // Fallback: Rust cosine scan (v0.1)
     semantic_search_cosine(conn, query, limit)
 }
 
@@ -105,6 +109,18 @@ fn semantic_search_cosine(
     query: &str,
     limit: usize,
 ) -> AppResult<Vec<SemanticHit>> {
+    let chunk_count: i64 = conn.query_row("SELECT COUNT(*) FROM chunk_embeddings", [], |row| {
+        row.get(0)
+    })?;
+    if chunk_count > MAX_COSINE_FALLBACK_CHUNKS {
+        tracing::warn!(
+            chunks = chunk_count,
+            max = MAX_COSINE_FALLBACK_CHUNKS,
+            "cosine fallback skipped: too many chunks (enable sqlite-vec or reindex)"
+        );
+        return Ok(vec![]);
+    }
+
     let query_vec = embed_text(query)?;
 
     let mut stmt = conn.prepare(

@@ -161,6 +161,9 @@ pub async fn llm_generate_stream(
             .insert(request_id.clone(), AbortFlag(abort_flag.clone()));
     }
 
+    if let Some(url) = params.custom_base_url.as_deref() {
+        crate::security::ipc_policy::validate_https_url(url)?;
+    }
     let api_key = credentials::get_secret(&credential_service(&params.provider))?;
     let base = api_base(&params.provider, params.custom_base_url.as_deref());
     let model = resolve_model(&params.provider, params.model.clone());

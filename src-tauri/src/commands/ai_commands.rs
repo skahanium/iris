@@ -731,6 +731,27 @@ pub async fn session_clear_all(
     SessionManager::delete_all_filtered(&state.db, scene.as_deref(), note_path.as_deref())
 }
 
+/// Clear persisted AI runtime cache (sessions, harness checkpoints, knowledge deposits).
+#[tauri::command]
+pub async fn ai_cache_clear(state: State<'_, Arc<AppState>>) -> AppResult<serde_json::Value> {
+    let sessions = SessionManager::delete_all_filtered(&state.db, None, None)?;
+    let (checkpoints, deposits) = state.db.with_conn(|conn| {
+        let checkpoints = conn.execute(
+            "UPDATE ai_traces SET checkpoint = NULL WHERE checkpoint IS NOT NULL",
+            [],
+        )?;
+        let deposits = conn
+            .execute("DELETE FROM knowledge_deposits", [])
+            .unwrap_or(0);
+        Ok::<_, crate::error::AppError>((checkpoints, deposits))
+    })?;
+    Ok(serde_json::json!({
+        "sessions_deleted": sessions,
+        "checkpoints_cleared": checkpoints,
+        "deposits_deleted": deposits,
+    }))
+}
+
 /// Resume an interrupted harness run from checkpoint.
 #[tauri::command]
 pub async fn harness_resume(

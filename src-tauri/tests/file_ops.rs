@@ -1,9 +1,7 @@
-use std::fs;
-use std::sync::Arc;
-
 use iris_lib::app::AppState;
 use iris_lib::indexer::scan::scan_vault;
 use iris_lib::storage::paths::resolve_vault_path;
+use std::fs;
 use tempfile::tempdir;
 
 #[test]
@@ -15,7 +13,7 @@ fn vault_index_and_read() {
     fs::write(&note, "# Hello\n\nWorld.").unwrap();
 
     let data = dir.path().join("data");
-    let state = Arc::new(AppState::new(data).unwrap());
+    let state = AppState::new(data).unwrap();
     state.set_vault(vault.clone()).unwrap();
 
     let entries = state.db.with_conn(|conn| scan_vault(conn, &vault)).unwrap();

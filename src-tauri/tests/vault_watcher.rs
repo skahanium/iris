@@ -1,9 +1,7 @@
-use std::fs;
-use std::sync::Arc;
-
 use iris_lib::app::AppState;
 use iris_lib::storage::migrate::migrate_up;
 use rusqlite::Connection;
+use std::fs;
 
 #[test]
 fn vault_set_persists_path_for_watcher_restart() {
@@ -13,7 +11,7 @@ fn vault_set_persists_path_for_watcher_restart() {
     fs::create_dir_all(&vault_a).unwrap();
     fs::create_dir_all(&vault_b).unwrap();
 
-    let state = Arc::new(AppState::new(dir.path().join("data")).unwrap());
+    let state = AppState::new(dir.path().join("data")).unwrap();
     assert!(state.watcher.lock().unwrap().is_none());
 
     state.set_vault(vault_a.clone()).unwrap();

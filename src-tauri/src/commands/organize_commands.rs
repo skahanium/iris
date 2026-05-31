@@ -180,23 +180,32 @@ fn read_vault_file(state: &Arc<AppState>, path: &str) -> AppResult<String> {
 }
 
 fn write_vault_file(state: &Arc<AppState>, path: &str, content: &str) -> AppResult<()> {
+    use crate::storage::paths::is_user_note_path;
+
+    if !is_user_note_path(path) {
+        return Err(crate::error::AppError::msg(
+            "只能写入用户笔记，不允许修改内部元数据路径",
+        ));
+    }
     let vault = state.vault_path()?;
     let abs = crate::storage::paths::resolve_vault_path(&vault, path)?;
     let tmp = abs.with_extension("md.tmp");
     std::fs::write(&tmp, content)?;
     std::fs::rename(&tmp, &abs)?;
-    let vault_clone = vault.clone();
-    let abs_clone = abs.clone();
-    let state_clone = Arc::clone(state);
-    std::thread::spawn(move || {
-        let _ = state_clone
-            .db
-            .with_conn(|conn| crate::indexer::scan::index_file(conn, &vault_clone, &abs_clone));
-    });
+    let hash = crate::indexer::scan::file_hash(&abs)?;
+    state.write_guard.mark(path, &hash);
+    state.db.with_conn(|conn| {
+        crate::indexer::scan::index_file_with_embed(conn, &vault, &abs, Some(state))
+    })?;
     Ok(())
 }
 
 fn rename_vault_file(state: &Arc<AppState>, path: &str, new_path: &str) -> AppResult<()> {
+    use crate::storage::paths::is_user_note_path;
+
+    if !is_user_note_path(path) || !is_user_note_path(new_path) {
+        return Err(crate::error::AppError::msg("只能重命名用户笔记路径"));
+    }
     let vault = state.vault_path()?;
     let abs = crate::storage::paths::resolve_vault_path(&vault, path)?;
     let new_abs = crate::storage::paths::resolve_vault_path(&vault, new_path)?;
@@ -207,9 +216,11 @@ fn rename_vault_file(state: &Arc<AppState>, path: &str, new_path: &str) -> AppRe
         std::fs::create_dir_all(parent)?;
     }
     std::fs::rename(&abs, &new_abs)?;
+    let hash = crate::indexer::scan::file_hash(&new_abs)?;
+    state.write_guard.mark(new_path, &hash);
     state.db.with_conn(|conn| {
         crate::indexer::scan::remove_file_index(conn, path)?;
-        crate::indexer::scan::index_file(conn, &vault, &new_abs)
+        crate::indexer::scan::index_file_with_embed(conn, &vault, &new_abs, Some(state))
     })?;
     Ok(())
 }

@@ -8,7 +8,8 @@ use crate::app::AppState;
 use crate::error::{AppError, AppResult};
 use crate::indexer::frontmatter::resolve_display_title;
 use crate::indexer::scan::{
-    index_file, prune_stale_file_indexes, remove_file_index, scan_vault, FileEntry,
+    index_file_with_embed, index_vault_incremental, prune_stale_file_indexes, remove_file_index,
+    FileEntry,
 };
 use crate::recycle::{discard_document, trash_document};
 use crate::storage::paths::{is_user_note_path, resolve_vault_path};
@@ -77,6 +78,9 @@ pub fn file_write(
     path: String,
     content: String,
 ) -> AppResult<FileEntry> {
+    if !is_user_note_path(&path) {
+        return Err(AppError::msg("只能写入用户笔记，不允许修改内部元数据路径"));
+    }
     let vault = state.vault_path()?;
     let abs = resolve_vault_path(&vault, &path)?;
 
@@ -84,7 +88,12 @@ pub fn file_write(
     fs::write(&tmp, &content)?;
     fs::rename(&tmp, &abs)?;
 
-    state.db.with_conn(|conn| index_file(conn, &vault, &abs))
+    let hash = crate::indexer::scan::file_hash(&abs)?;
+    state.write_guard.mark(&path, &hash);
+
+    state
+        .db
+        .with_conn(|conn| index_file_with_embed(conn, &vault, &abs, Some(state.inner())))
 }
 
 /// Move note + all version snapshots into recycle bin (15-day retention).
@@ -131,9 +140,10 @@ pub fn folder_rename(
         fs::create_dir_all(parent)?;
     }
     fs::rename(&abs, &new_abs)?;
-    // Re-index all files under the renamed folder
     let vault_clone = vault.clone();
-    state.db.with_conn(|conn| scan_vault(conn, &vault_clone))?;
+    state
+        .db
+        .with_conn(|conn| index_vault_incremental(conn, &vault_clone, Some(state.inner())))?;
     Ok(())
 }
 
@@ -302,6 +312,9 @@ pub fn file_rename(
     path: String,
     new_path: String,
 ) -> AppResult<FileEntry> {
+    if !is_user_note_path(&path) || !is_user_note_path(&new_path) {
+        return Err(AppError::msg("只能重命名用户笔记路径"));
+    }
     let vault = state.vault_path()?;
     let abs = resolve_vault_path(&vault, &path)?;
     let new_abs = resolve_vault_path(&vault, &new_path)?;
@@ -312,9 +325,11 @@ pub fn file_rename(
         fs::create_dir_all(parent)?;
     }
     fs::rename(&abs, &new_abs)?;
+    let hash = crate::indexer::scan::file_hash(&new_abs)?;
+    state.write_guard.mark(&new_path, &hash);
     state.db.with_conn(|conn| {
         remove_file_index(conn, &path)?;
-        index_file(conn, &vault, &new_abs)
+        index_file_with_embed(conn, &vault, &new_abs, Some(state.inner()))
     })
 }
 
@@ -324,6 +339,9 @@ pub fn file_create(
     path: String,
     content: Option<String>,
 ) -> AppResult<FileEntry> {
+    if !is_user_note_path(&path) {
+        return Err(AppError::msg("只能创建用户笔记，不允许写入内部元数据路径"));
+    }
     let vault = state.vault_path()?;
     let abs = resolve_vault_path(&vault, &path)?;
     if abs.exists() {
@@ -339,7 +357,11 @@ pub fn file_create(
         .unwrap_or_else(|| title_from_path(&path));
     let body = content.unwrap_or_else(|| format!("# {document_title}\n\n"));
     fs::write(&abs, &body)?;
-    state.db.with_conn(|conn| index_file(conn, &vault, &abs))
+    let hash = crate::indexer::scan::file_hash(&abs)?;
+    state.write_guard.mark(&path, &hash);
+    state
+        .db
+        .with_conn(|conn| index_file_with_embed(conn, &vault, &abs, Some(state.inner())))
 }
 
 #[tauri::command]
@@ -351,8 +373,6 @@ pub fn vault_set(app: AppHandle, state: State<'_, Arc<AppState>>, path: String) 
         return Err(AppError::msg("Vault path must be an existing directory"));
     }
     state.set_vault(p)?;
-    let vault = state.vault_path()?;
-    state.db.with_conn(|conn| scan_vault(conn, &vault))?;
     state.restart_file_watcher(app)?;
     Ok(())
 }
@@ -367,20 +387,10 @@ pub fn vault_get(state: State<'_, Arc<AppState>>) -> AppResult<Option<String>> {
 
 #[tauri::command]
 pub fn index_rescan(state: State<'_, Arc<AppState>>) -> AppResult<Vec<FileEntry>> {
-    use crate::indexer::scan::collect_vault_files;
     let vault = state.vault_path()?;
-    let files = collect_vault_files(&vault);
-    let mut entries = Vec::with_capacity(files.len());
-    for abs in &files {
-        match state.db.with_conn(|conn| index_file(conn, &vault, abs)) {
-            Ok(entry) => entries.push(entry),
-            Err(e) => tracing::warn!("index_rescan: failed to index {}: {e}", abs.display()),
-        }
-    }
-    let _ = state
+    state
         .db
-        .with_conn(|conn| crate::indexer::scan::prune_stale_file_indexes(conn, &vault));
-    Ok(entries)
+        .with_conn(|conn| index_vault_incremental(conn, &vault, Some(state.inner())))
 }
 
 #[derive(Debug, Clone, Serialize)]

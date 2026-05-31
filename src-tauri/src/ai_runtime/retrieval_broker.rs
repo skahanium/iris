@@ -102,7 +102,7 @@ pub fn hybrid_retrieve(
     }
 
     // Layer 2: Vector (chunks + anchors + regulations)
-    if request.layers.vector {
+    if request.layers.vector && crate::storage::db::vector_index_ready() {
         if let Ok(chunk_results) = search_vector_chunks(conn, &request.query, request.max_results) {
             packets.extend(chunk_results);
         }

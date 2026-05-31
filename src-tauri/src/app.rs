@@ -1,11 +1,12 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::atomic::AtomicBool;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use serde_json::Value;
 use tauri::AppHandle;
 
+use crate::embedding::queue::{EmbedQueue, WriteGuard};
 use crate::error::{AppError, AppResult};
 use crate::storage::db::Database;
 use crate::watcher::FileWatcher;
@@ -26,20 +27,30 @@ pub struct AppState {
     pub active_research: Mutex<HashMap<String, Arc<AtomicBool>>>,
     /// Tool calls pending user confirmation — keyed by tool_call_id
     pub pending_tool_calls: Mutex<HashMap<String, PendingToolCall>>,
+    /// sqlite-vec vec0 tables available (set at DB open).
+    pub vector_index_ready: std::sync::atomic::AtomicBool,
+    embed_queue: OnceLock<EmbedQueue>,
+    pub write_guard: WriteGuard,
 }
 
 impl AppState {
-    pub fn new(data_dir: PathBuf) -> AppResult<Self> {
+    pub fn new(data_dir: PathBuf) -> AppResult<Arc<Self>> {
         let db_path = data_dir.join("iris.db");
         let db = Database::open(&db_path)?;
-        let state = Self {
+        let vector_ready = db.vector_index_ready();
+
+        let state = Arc::new(Self {
             db,
             vault: Mutex::new(None),
             data_dir,
             watcher: Mutex::new(None),
             active_research: Mutex::new(HashMap::new()),
             pending_tool_calls: Mutex::new(HashMap::new()),
-        };
+            vector_index_ready: std::sync::atomic::AtomicBool::new(vector_ready),
+            embed_queue: OnceLock::new(),
+            write_guard: WriteGuard::default(),
+        });
+
         if let Some(v) = state.load_vault_setting()? {
             let path = PathBuf::from(v);
             if let Err(e) = state.set_vault(path) {
@@ -48,6 +59,21 @@ impl AppState {
             }
         }
         Ok(state)
+    }
+
+    pub fn is_vector_index_ready(&self) -> bool {
+        self.vector_index_ready
+            .load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    fn ensure_embed_queue(self: &Arc<Self>) -> &EmbedQueue {
+        self.embed_queue
+            .get_or_init(|| EmbedQueue::spawn(Arc::clone(self)))
+    }
+
+    /// Queue background embedding for a file after index metadata is written.
+    pub fn enqueue_embedding(self: &Arc<Self>, file_id: i64) {
+        self.ensure_embed_queue().enqueue(file_id);
     }
 
     fn clear_vault_setting(&self) -> AppResult<()> {
