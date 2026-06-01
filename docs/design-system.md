@@ -50,7 +50,7 @@
 - 编辑区：`max-width: 45rem`，水平 `clamp(1.5rem, 5vw, 6rem)`，正文 `16px` / `line-height: 1.5`
 - AI 侧栏：默认 `360px`，左缘拖拽调整（`280px`–`560px`，偏好写入 localStorage），可 `Ctrl+Shift+A` 收起
 - AI 对话排版：`13px` / `line-height: 1.375`（`leading-snug`），与编辑区共用代码高亮 token
-- AI 侧栏 chrome：**对话区仅消息流 + 证据包折叠条**；**Token 累计**、**工具/检索进行中**在全局底栏（`StatusBar` + `StatusBarTokenUsage`）；**N 证据 / M 网络**与「证据包」同一行（`ContextPacketDrawer` 标题）
+- AI 侧栏 chrome：**对话区仅消息流 + 证据包折叠条**；**Token 累计**、**工具/检索进行中**在全局底栏（`StatusBar` + `StatusBarTokenUsage`）；证据包标题行展示 **N 证据**、**M 搜索**（Token Plan 摘要）、**K 正文**（`fetch_web_page` 深读，`ContextPacketDrawer`）
 
 ### 编辑区结构
 

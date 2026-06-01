@@ -3,6 +3,8 @@ import { describe, expect, it } from "vitest";
 import type { ChatLine } from "@/components/ai/AiMessageList";
 import {
   buildAssistantChromeSnapshot,
+  countWebPageFetchPackets,
+  countWebSearchPackets,
   resolveToolActivityLabel,
 } from "@/lib/assistant-chrome";
 
@@ -86,5 +88,65 @@ describe("assistant chrome helpers", () => {
     });
     expect(snap.evidenceCount).toBe(2);
     expect(snap.webPacketCount).toBe(1);
+  });
+
+  it("splits web search vs page fetch packets", () => {
+    const packets = [
+      {
+        id: "w1",
+        source_type: "web" as const,
+        source_path: "https://a.com",
+        title: "A",
+        heading_path: null,
+        source_span: null,
+        content_hash: "h",
+        excerpt: "snippet",
+        retrieval_reason: "web_search",
+        score: 1,
+        trust_level: "external_web" as const,
+        citation_label: "[W0]",
+        stale: false,
+      },
+      {
+        id: "w2",
+        source_type: "web" as const,
+        source_path: "https://b.com",
+        title: "B",
+        heading_path: null,
+        source_span: null,
+        content_hash: "h2",
+        excerpt: "body",
+        retrieval_reason: "web_page_fetch",
+        score: 1,
+        trust_level: "external_web" as const,
+        citation_label: "[Wp]",
+        stale: false,
+      },
+    ];
+    expect(countWebSearchPackets(packets)).toBe(1);
+    expect(countWebPageFetchPackets(packets)).toBe(1);
+  });
+
+  it("resolveToolActivityLabel shows fetch_web_page name", () => {
+    const messages: ChatLine[] = [
+      {
+        role: "assistant",
+        content: "",
+        toolCalls: [
+          {
+            id: "2",
+            name: "fetch_web_page",
+            status: "pending",
+          },
+        ],
+      },
+    ];
+    const label = resolveToolActivityLabel({
+      activityHint: null,
+      streaming: true,
+      messages,
+      harnessPhaseLabel: null,
+    });
+    expect(label).toBe("打开网页正文");
   });
 });

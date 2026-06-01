@@ -8,6 +8,7 @@ use std::collections::HashSet;
 use crate::ai_runtime::{
     ContextPacket, SourceType, TrustLevel, WebEvidenceMeta, WebSearchBackend, WebSourceRank,
 };
+use crate::llm::fetch_web_page::PageFetchResult;
 use crate::llm::search_web::WebSearchFetchResult;
 use crate::llm::web_search_config::WebSearchEffectiveBackend;
 
@@ -198,6 +199,50 @@ pub fn web_packets_from_fetch(
     packets
 }
 
+/// Convert a single-page fetch into one web `ContextPacket`.
+pub fn web_packets_from_page_fetch(fetch: &PageFetchResult) -> Vec<ContextPacket> {
+    let fetched_at = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+    let domain = extract_domain(&fetch.url);
+    let source_rank = domain
+        .as_deref()
+        .map(classify_source_rank)
+        .unwrap_or(WebSourceRank::Unknown);
+    let title = if fetch.title.is_empty() {
+        domain
+            .clone()
+            .unwrap_or_else(|| "网页正文".to_string())
+    } else {
+        fetch.title.clone()
+    };
+    let score = rank_score(source_rank) * 0.9;
+
+    vec![ContextPacket {
+        id: format!("web-page-{}", fetch.content_hash.chars().take(12).collect::<String>()),
+        source_type: SourceType::Web,
+        source_path: Some(fetch.url.clone()),
+        title,
+        heading_path: None,
+        source_span: None,
+        content_hash: fetch.content_hash.clone(),
+        excerpt: fetch.text.clone(),
+        retrieval_reason: "web_page_fetch".into(),
+        score,
+        trust_level: TrustLevel::ExternalWeb,
+        citation_label: "[Wp]".into(),
+        stale: false,
+        web: Some(WebEvidenceMeta {
+            url: Some(fetch.url.clone()),
+            domain,
+            published_at: None,
+            fetched_at,
+            search_backend: WebSearchBackend::Duckduckgo,
+            source_rank,
+            failure_reason: None,
+            fallback_from: None,
+        }),
+    }]
+}
+
 /// Fuse local and web packets: local first, web supplements, dedupe by id/url.
 pub fn mix_and_rank(
     local: Vec<ContextPacket>,
@@ -323,5 +368,23 @@ mod tests {
         };
         let packets = web_packets_from_fetch(&fetch, "q", None);
         assert!(packets.is_empty());
+    }
+
+    #[test]
+    fn web_packets_from_page_fetch_sets_reason() {
+        use crate::llm::fetch_web_page::PageFetchResult;
+
+        let page = PageFetchResult {
+            url: "https://example.com/doc".into(),
+            title: "Doc".into(),
+            text: "正文内容".into(),
+            truncated: false,
+            from_cache: false,
+            content_hash: "abc123".into(),
+        };
+        let packets = web_packets_from_page_fetch(&page);
+        assert_eq!(packets.len(), 1);
+        assert_eq!(packets[0].retrieval_reason, "web_page_fetch");
+        assert!(packets[0].excerpt.contains("正文"));
     }
 }

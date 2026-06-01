@@ -32,6 +32,8 @@ const MIGRATION_012_UP: &str = include_str!("../../migrations/012_session_title.
 const MIGRATION_012_DOWN: &str = include_str!("../../migrations/012_session_title.down.sql");
 const MIGRATION_013_UP: &str = include_str!("../../migrations/013_ai_trace_checkpoint.sql");
 const MIGRATION_013_DOWN: &str = include_str!("../../migrations/013_ai_trace_checkpoint.down.sql");
+const MIGRATION_014_UP: &str = include_str!("../../migrations/014_web_page_cache.sql");
+const MIGRATION_014_DOWN: &str = include_str!("../../migrations/014_web_page_cache.down.sql");
 
 fn is_applied(conn: &Connection, name: &str) -> bool {
     conn.query_row(
@@ -98,6 +100,7 @@ pub fn migrate_up(conn: &Connection) -> AppResult<()> {
     apply_migration(conn, "011_eval_results", MIGRATION_011_UP, true)?;
     apply_migration(conn, "012_session_title", MIGRATION_012_UP, true)?;
     apply_migration(conn, "013_ai_trace_checkpoint", MIGRATION_013_UP, true)?;
+    apply_migration(conn, "014_web_page_cache", MIGRATION_014_UP, true)?;
 
     Ok(())
 }
@@ -109,6 +112,7 @@ fn rollback_migration(conn: &Connection, name: &str, sql: &str) {
 
 /// Roll back all migrations in strict reverse order (for tests).
 pub fn migrate_down(conn: &Connection) -> AppResult<()> {
+    rollback_migration(conn, "014_web_page_cache", MIGRATION_014_DOWN);
     rollback_migration(conn, "013_ai_trace_checkpoint", MIGRATION_013_DOWN);
     rollback_migration(conn, "012_session_title", MIGRATION_012_DOWN);
     rollback_migration(conn, "011_eval_results", MIGRATION_011_DOWN);

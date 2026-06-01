@@ -24,7 +24,7 @@ fn is_retryable_tool_error(tool_name: &str, result: &ToolCallResult) -> bool {
         return false;
     }
     let err = result.error.as_deref().unwrap_or("");
-    tool_name == "web_search"
+    (tool_name == "web_search" || tool_name == "fetch_web_page")
         && (err.contains("timeout") || err.contains("network") || err.contains("连接"))
 }
 
@@ -92,6 +92,7 @@ async fn dispatch_tool_inner(
             "count": ctx.cold_start_packets.len(),
         })),
         "web_search" => web_search_tool(state, args, ctx).await,
+        "fetch_web_page" => fetch_web_page_tool(state, args, ctx).await,
         "read_note" => read_note(state, args).await,
         "list_vault" => list_vault(state, args).await,
         "get_outline" => get_outline(state, args).await,
@@ -201,6 +202,34 @@ async fn web_search_tool(
     Ok(serde_json::json!({
         "context": result.body,
         "backend": format!("{:?}", result.backend),
+        "results": packets,
+        "count": packets.len(),
+    }))
+}
+
+async fn fetch_web_page_tool(
+    state: &AppState,
+    args: &serde_json::Value,
+    ctx: &ToolDispatchContext<'_>,
+) -> AppResult<serde_json::Value> {
+    if !ctx.web_search_enabled {
+        return Err(AppError::msg("web fetch not enabled for this request"));
+    }
+    let url = args["url"]
+        .as_str()
+        .ok_or_else(|| AppError::msg("missing url"))?;
+    let max_chars = args["max_chars"]
+        .as_u64()
+        .map(|n| n as usize)
+        .unwrap_or(crate::llm::fetch_web_page::DEFAULT_MAX_CHARS);
+    let page = crate::llm::fetch_web_page::fetch_web_page(&state.db, url, max_chars).await?;
+    let packets = crate::ai_runtime::evidence_mixer::web_packets_from_page_fetch(&page);
+    Ok(serde_json::json!({
+        "url": page.url,
+        "title": page.title,
+        "truncated": page.truncated,
+        "from_cache": page.from_cache,
+        "char_count": page.text.chars().count(),
         "results": packets,
         "count": packets.len(),
     }))

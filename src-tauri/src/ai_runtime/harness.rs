@@ -16,7 +16,9 @@ use crate::ai_runtime::scene_router::resolve_scene;
 use crate::ai_runtime::skills::{inject_into_prompt, scan_all};
 use crate::ai_runtime::tool_dispatch::{dispatch_tool_with_retry, ToolDispatchContext};
 use crate::ai_runtime::tool_executor::{check_tool_permission, ToolRegistry};
-use crate::ai_runtime::tool_fallback::{parse_react_tool_calls, should_retry_tool_parse};
+use crate::ai_runtime::tool_fallback::{
+    parse_tool_calls_from_content, should_retry_tool_parse, strip_tool_markup_from_visible,
+};
 use crate::ai_runtime::trace::{TraceRecorder, TraceStatus};
 use crate::ai_runtime::{AiScene, ContextPacket};
 use crate::app::AppState;
@@ -97,7 +99,7 @@ pub async fn run_harness(
         .cloned()
         .collect();
     if !input.web_search_enabled {
-        scene_tools.retain(|t| t.name != "web_search");
+        scene_tools.retain(|t| t.name != "web_search" && t.name != "fetch_web_page");
     }
     if input.depth >= 2 {
         scene_tools.retain(|t| t.name != "spawn_subagent");
@@ -202,7 +204,7 @@ pub async fn run_harness(
             let mut tool_calls = response.tool_calls.clone();
             if tool_calls.is_empty() {
                 if let Some(content) = &response.content {
-                    tool_calls = parse_react_tool_calls(content);
+                    tool_calls = parse_tool_calls_from_content(content);
                 }
             }
 
@@ -217,8 +219,9 @@ pub async fn run_harness(
             }
 
             if tool_calls.is_empty() {
-                let (visible, thinking) =
-                    extract_thinking_blocks(&response.content.clone().unwrap_or_default());
+                let raw = response.content.clone().unwrap_or_default();
+                let stripped = strip_tool_markup_from_visible(&raw);
+                let (visible, thinking) = extract_thinking_blocks(&stripped);
                 if let Some(t) = thinking {
                     emit_thinking(app_handle, &input.request_id, harness_rounds, &t)?;
                 }
@@ -251,8 +254,9 @@ pub async fn run_harness(
                 .partition(|tc| tc.function.name == "spawn_subagent");
 
             all_tool_calls.extend(tool_calls.clone());
-            let (visible_content, thinking) =
-                extract_thinking_blocks(&response.content.clone().unwrap_or_default());
+            let stripped_assistant =
+                strip_tool_markup_from_visible(&response.content.clone().unwrap_or_default());
+            let (visible_content, thinking) = extract_thinking_blocks(&stripped_assistant);
             if let Some(t) = thinking {
                 emit_thinking(app_handle, &input.request_id, harness_rounds, &t)?;
             }
@@ -340,11 +344,43 @@ pub async fn run_harness(
             compact_evidence(&mut evidence_packets, profile.default_token_budget);
 
             let mut tools_this_round = 0u32;
+            let mut fetch_this_round = 0u32;
+            let fetch_limit = max_fetch_per_round(input.scene);
             for tool_call in &other_calls {
                 if tools_this_round >= profile.max_tool_calls_per_round {
                     break;
                 }
                 let tool_name = &tool_call.function.name;
+                if tool_name == "fetch_web_page" && fetch_this_round >= fetch_limit {
+                    let err_msg =
+                        format!("本轮 fetch_web_page 已达上限 ({fetch_limit})");
+                    emit_trace_phase(
+                        app_handle,
+                        &input.request_id,
+                        harness_rounds,
+                        HarnessPhase::ToolComplete,
+                        tool_name,
+                        "error",
+                        None,
+                        Some(err_msg.clone()),
+                    )?;
+                    messages.push(LlmMessage {
+                        role: MessageRole::Tool,
+                        content: format!(
+                            "{{\"error\": {}}}",
+                            serde_json::to_string(&err_msg).unwrap_or_default()
+                        ),
+                        tool_call_id: Some(tool_call.id.clone()),
+                        tool_calls: None,
+                    });
+                    tool_results_json.push(serde_json::json!({
+                        "tool_call_id": tool_call.id,
+                        "status": "error",
+                        "error": err_msg,
+                    }));
+                    tools_this_round += 1;
+                    continue;
+                }
                 if let Some(spec) = registry.find(tool_name) {
                     if check_tool_permission(spec, input.scene, profile.autonomy_level).is_err() {
                         continue;
@@ -402,6 +438,9 @@ pub async fn run_harness(
                     serde_json::from_str(&tool_call.function.arguments).unwrap_or_default();
                 let result = dispatch_tool_with_retry(state, &dispatch_ctx, tool_name, &args).await;
                 if result.success {
+                    if tool_name == "fetch_web_page" {
+                        fetch_this_round += 1;
+                    }
                     merge_tool_packets_into(tool_name, &result.output, &mut evidence_packets);
                 }
                 let output_str =
@@ -514,7 +553,8 @@ pub async fn run_harness(
                 } else if !reflect_resp.tool_calls.is_empty() {
                     // reflection produced tool calls — ignore, proceed to stream
                 } else if !text.trim().is_empty() && reflect_resp.tool_calls.is_empty() {
-                    let (visible, thinking) = extract_thinking_blocks(&text);
+                    let stripped = strip_tool_markup_from_visible(&text);
+                    let (visible, thinking) = extract_thinking_blocks(&stripped);
                     if let Some(t) = thinking {
                         emit_thinking(app_handle, &input.request_id, harness_rounds, &t)?;
                     }
@@ -562,17 +602,21 @@ pub async fn run_harness(
             .send_streaming_request(&input.request_id, stream_request)
             .await?;
         accumulate_usage(&mut total_usage, &response.usage);
-        response.content.unwrap_or_default()
+        strip_tool_markup_from_visible(&response.content.unwrap_or_default())
     };
+    let (final_visible, final_thinking) = extract_thinking_blocks(&final_content);
+    if let Some(t) = final_thinking {
+        emit_thinking(app_handle, &input.request_id, harness_rounds, &t)?;
+    }
 
     finish_run(
         state,
         input,
         FinishRunParams {
-            content: if final_content.is_empty() {
+            content: if final_visible.is_empty() {
                 "抱歉，未能在限定轮次内完成回答。请缩小问题或重试。".into()
             } else {
-                final_content
+                final_visible
             },
             tool_calls: all_tool_calls,
             tool_results: tool_results_json,
@@ -631,6 +675,13 @@ async fn finish_run(
 }
 
 /// 将检索类工具返回的 `results` 并入本轮证据包（按 id 去重）。
+fn max_fetch_per_round(scene: AiScene) -> u32 {
+    match scene {
+        AiScene::ResearchSynthesis => 2,
+        _ => 1,
+    }
+}
+
 fn merge_tool_packets_into(
     tool_name: &str,
     output: &serde_json::Value,
@@ -638,7 +689,12 @@ fn merge_tool_packets_into(
 ) {
     if !matches!(
         tool_name,
-        "search_hybrid" | "search_semantic" | "search_keyword" | "get_regulation" | "web_search"
+        "search_hybrid"
+            | "search_semantic"
+            | "search_keyword"
+            | "get_regulation"
+            | "web_search"
+            | "fetch_web_page"
     ) {
         return;
     }

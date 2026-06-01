@@ -247,6 +247,30 @@ impl ToolRegistry {
                 max_results: Some(8),
             },
             ToolSpec {
+                name: "fetch_web_page".into(),
+                description: "打开单个 HTTPS 网页并提取正文片段（需用户确认）。\
+                    仅在 web_search 或本地检索已给出 URL 且摘要不足时使用；\
+                    每轮最多 1～2 次，禁止批量爬取。"
+                    .into(),
+                input_schema: serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "url": {"type": "string", "description": "HTTPS 页面 URL"},
+                        "max_chars": {"type": "integer", "description": "最大正文字符数，默认 24000"},
+                        "reason": {"type": "string", "description": "抓取原因（供用户确认）"}
+                    },
+                    "required": ["url"]
+                }),
+                access_level: ToolAccessLevel::Network,
+                scene_allowlist: vec![
+                    AiScene::KnowledgeLookup,
+                    AiScene::DraftingAssist,
+                    AiScene::ResearchSynthesis,
+                ],
+                requires_confirmation: true,
+                max_results: Some(2),
+            },
+            ToolSpec {
                 name: "read_note".into(),
                 description: "读取指定笔记的 Markdown 全文（可截断）".into(),
                 input_schema: serde_json::json!({

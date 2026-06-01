@@ -420,7 +420,8 @@ impl ModelGateway {
         let focus = match scene {
             AiScene::KnowledgeLookup => {
                 if web_search_enabled {
-                    "知识查阅：先 search_hybrid 检索本地笔记，再 web_search 补充实时信息；\
+                    "知识查阅：先 search_hybrid 检索本地笔记，再 web_search（Token Plan 搜索）补充摘要；\
+                     若摘要不足可对 1～2 个 HTTPS 链接调用 fetch_web_page 读取正文（需用户确认）；\
                      本地与网络证据结合、交叉引用，不可偏废"
                 } else {
                     "知识查阅：通过 search_hybrid 检索本地笔记；仅依据本地知识库回答"
@@ -431,11 +432,13 @@ impl ModelGateway {
             AiScene::ResearchSynthesis => "研究综合：多材料交叉论证、证据缺口与引用核查",
         };
         let web_instruction = if web_search_enabled {
-            "联网搜索已开启——直接调用 web_search 即可，无需询问用户。\n\
-             重要：不要询问用户是否允许联网搜索——开关已打开即表示同意。\n\
-             本地检索与网络搜索必须同时进行、相互印证，不可只做其一。\n"
+            "联网已开启：web_search 使用 MiniMax Token Plan 搜索 API（返回标题/链接/摘要），\
+             无需询问是否允许搜索。\n\
+             需要页面正文时对明确 URL 调用 fetch_web_page（会弹出用户确认，每轮最多 1～2 次）。\n\
+             禁止在正文中输出 DSML 或伪工具标记；必须通过工具 API 调用。\n\
+             本地检索与网络搜索应结合、相互印证，不可只做其一。\n"
         } else {
-            "联网搜索未开启——仅使用本地知识库回答，不要调用 web_search。\n"
+            "联网未开启——仅使用本地知识库，不要调用 web_search 或 fetch_web_page。\n"
         };
         format!(
             "你是「砚」，Iris 本地 Markdown 笔记本的 AI 助手。对用户你始终是同一个身份：\

@@ -1,6 +1,8 @@
 pub mod anthropic;
 pub mod config;
 pub mod engine;
+pub mod fetch_web_page;
+pub mod http_politeness;
 pub mod minimax_search;
 pub mod model_catalog;
 pub mod providers;

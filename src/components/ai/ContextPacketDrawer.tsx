@@ -13,7 +13,10 @@ import { useMemo } from "react";
 import { ContextPacketList } from "@/components/ai/ContextPacketCard";
 import { EvidenceChainView } from "@/components/ai/EvidenceChainView";
 import { Badge } from "@/components/ui/badge";
-import { countWebPackets } from "@/lib/assistant-chrome";
+import {
+  countWebPageFetchPackets,
+  countWebSearchPackets,
+} from "@/lib/assistant-chrome";
 import { cn } from "@/lib/utils";
 import type { ContextPacket, ContextStatus, EvidenceRelation } from "@/types/ai";
 
@@ -40,7 +43,9 @@ export function ContextPacketDrawer({
   citationMiss = null,
 }: ContextPacketDrawerProps) {
   const hasEvidenceChain = relations && relations.length > 0;
-  const webCount = useMemo(() => countWebPackets(packets), [packets]);
+  const webSearchCount = useMemo(() => countWebSearchPackets(packets), [packets]);
+  const webPageCount = useMemo(() => countWebPageFetchPackets(packets), [packets]);
+  const webCount = webSearchCount + webPageCount;
   const localCount = packets.length - webCount;
 
   const extraStats = useMemo(() => {
@@ -100,13 +105,22 @@ export function ContextPacketDrawer({
             {localCount} 证据
           </span>
         ) : null}
-        {webCount > 0 ? (
+        {webSearchCount > 0 ? (
           <span
             className="inline-flex shrink-0 items-center gap-0.5 text-[10px] font-normal tabular-nums"
-            data-testid="evidence-count-web"
+            data-testid="evidence-count-web-search"
           >
             <Globe className="h-3 w-3" />
-            {webCount} 网络
+            {webSearchCount} 搜索
+          </span>
+        ) : null}
+        {webPageCount > 0 ? (
+          <span
+            className="inline-flex shrink-0 items-center gap-0.5 text-[10px] font-normal tabular-nums"
+            data-testid="evidence-count-web-page"
+          >
+            <Globe className="h-3 w-3" />
+            {webPageCount} 正文
           </span>
         ) : null}
         {extraStats.map(({ icon: Icon, label, count }) => (

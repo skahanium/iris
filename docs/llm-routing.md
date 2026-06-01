@@ -43,6 +43,7 @@
 - **联网**：底栏 sky 圆点开/关；四场景共用。开启后 **仅** AI 场景条底边一条质感蓝线；发送前自动注入网页摘要
   - **主通道**：MiniMax Token Plan `POST /v1/coding_plan/search`（国内默认 `https://api.minimaxi.com`，Key 为 `iris.minimax`；可选请求体字段 `model`，设置页「检索模型名称」）
   - **降级**：无 Key、API 失败或设置强制 `duckduckgo` 时使用 DuckDuckGo HTML
+  - **深读（正文）**：助手工具 `fetch_web_page` 对单个 HTTPS URL 受控抓取正文（需用户确认、每轮 1～2 次）；与 Token Plan 搜索（仅摘要）互补，非 MCP 运行时
   - 对话模型不受检索通道影响，仍为 DeepSeek 四场景路由
 
 ## MiniMax 联网检索 IPC

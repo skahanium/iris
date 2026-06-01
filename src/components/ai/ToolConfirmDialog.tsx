@@ -33,6 +33,7 @@ const TOOL_DISPLAY_NAMES: Record<string, string> = {
   update_user_rule: "更新用户规则",
   create_note_from_deposit: "从收件箱创建笔记",
   web_search: "联网搜索",
+  fetch_web_page: "打开网页正文",
 };
 
 const TOOL_DESCRIPTIONS: Record<string, string> = {
@@ -44,6 +45,8 @@ const TOOL_DESCRIPTIONS: Record<string, string> = {
   update_user_rule: "将添加或更新一条长期规则。此规则将在后续对话中生效。",
   create_note_from_deposit: "将从 AI 收件箱创建一个新的 .md 笔记文件。",
   web_search: "将进行联网搜索。注意：外部网页内容可信度较低。",
+  fetch_web_page:
+    "将从指定 HTTPS 地址下载并提取正文片段（受体积与频率限制）。请确认 URL 正确且您有权访问该页面。",
 };
 
 // ─── Component ───────────────────────────────────────────

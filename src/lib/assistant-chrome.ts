@@ -19,6 +19,20 @@ export function countWebPackets(packets: ContextPacket[]): number {
   return packets.filter((p) => p.source_type === "web").length;
 }
 
+export function countWebSearchPackets(packets: ContextPacket[]): number {
+  return packets.filter(
+    (p) =>
+      p.source_type === "web" && p.retrieval_reason !== "web_page_fetch",
+  ).length;
+}
+
+export function countWebPageFetchPackets(packets: ContextPacket[]): number {
+  return packets.filter(
+    (p) =>
+      p.source_type === "web" && p.retrieval_reason === "web_page_fetch",
+  ).length;
+}
+
 export function resolveToolActivityLabel(options: {
   activityHint: string | null;
   streaming: boolean;
