@@ -109,7 +109,14 @@ impl AppState {
         if !path.is_dir() {
             return Err(AppError::msg("Vault must be a directory"));
         }
-        let canonical = path.canonicalize()?;
+        let canonical = path.canonicalize().unwrap_or_else(|e| {
+            tracing::warn!(
+                path = %path.display(),
+                error = %e,
+                "vault canonicalize failed; using path as selected"
+            );
+            path
+        });
         {
             let mut guard = self.vault.lock().map_err(|_| AppError::msg("Lock error"))?;
             *guard = Some(canonical.clone());

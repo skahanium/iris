@@ -10,6 +10,7 @@ describe("editor slash and context menu E2E contract", () => {
   it("wires registry-driven slash and iris-only context menu", () => {
     const app = read("src/App.tsx");
     const panel = read("src/components/ai/UnifiedAssistantPanel.tsx");
+    const conversation = read("src/components/ai/ConversationSurface.tsx");
     const palette = read("src/lib/command-palette.ts");
 
     expect(app).toContain("runEditorAction");
@@ -18,7 +19,7 @@ describe("editor slash and context menu E2E contract", () => {
     expect(app).toContain("onBodyContextMenu");
     expect(app).toContain("useEditorContextMenu");
     expect(palette).not.toContain("slashPaletteItems");
-    expect(panel).toContain("AiMessageSelectionUi");
+    expect(conversation).toContain("AiMessageSelectionUi");
     expect(panel).toContain("AiComposerContextMenu");
     expect(read("src/lib/editor-actions.ts")).not.toContain("selection_toolbar");
     expect(read("src/lib/editor-actions.ts")).toContain("EDITOR_ACTIONS");

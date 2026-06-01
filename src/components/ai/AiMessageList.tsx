@@ -4,7 +4,7 @@ import { AiMessageBubble } from "@/components/ai/AiMessageBubble";
 import { ResearchResultMessage } from "@/components/ai/ResearchResultMessage";
 import type { ResearchFocusPayload } from "@/types/ai";
 
-import { ToolCallList, type ToolCallInfo } from "./ToolCallBubble";
+import type { ToolCallInfo } from "@/types/ai";
 
 export interface ChatLine {
   role: "user" | "assistant" | "system";
@@ -40,7 +40,7 @@ export function AiMessageList({
       <div className="flex flex-col gap-3 px-3 py-3">
         {messages.length === 0 ? (
           <p className="py-8 text-center text-xs text-muted-foreground">
-            输入问题开始对话。证据与工具调用将显示在下方。
+            输入问题开始对话。证据包在上方，工具与 Token 状态见底栏。
           </p>
         ) : null}
         {showStandaloneThinking ? (
@@ -70,16 +70,13 @@ export function AiMessageList({
           if (m.role === "assistant") {
             return (
               <div key={`${i}-${m.role}`} className="flex w-full justify-start">
-                <div className="min-w-0 max-w-full flex-1 space-y-2">
+                <div className="min-w-0 max-w-full flex-1">
                   <AiMessageBubble
                     role="assistant"
                     content={m.content || undefined}
                     streaming={assistantStreaming}
                     onCitationClick={onCitationClick}
                   />
-                  {m.toolCalls && m.toolCalls.length > 0 ? (
-                    <ToolCallList toolCalls={m.toolCalls} />
-                  ) : null}
                 </div>
               </div>
             );

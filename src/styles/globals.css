@@ -73,6 +73,8 @@
     --window-radius: 12px;
     --titlebar-height: 2.5rem;
     --titlebar-traffic-inset: 0px;
+    /** 自定义三键总宽（3 × 2.75rem），顶栏右侧预留，避免 Tab 条盖住最小化/最大化 */
+    --window-controls-width: 8.25rem;
     --shadow-overlay:
       0 12px 48px hsl(0 0% 0% / 0.45), 0 4px 16px hsl(0 0% 0% / 0.28),
       0 0 0 1px hsl(var(--border) / 0.65);
@@ -386,9 +388,21 @@
     app-region: drag;
   }
 
-  [data-tauri-drag-region-exclude] {
+  [data-tauri-drag-region-exclude],
+  .iris-window-controls,
+  .iris-window-control {
     -webkit-app-region: no-drag;
     app-region: no-drag;
+  }
+
+  .iris-window-control:hover {
+    background-color: hsl(var(--foreground) / 0.08);
+    color: hsl(var(--foreground));
+  }
+
+  .iris-window-control--close:hover {
+    background-color: hsl(var(--destructive));
+    color: hsl(var(--destructive-foreground));
   }
 
   @media (prefers-reduced-motion: reduce) {

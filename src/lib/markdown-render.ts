@@ -1,5 +1,5 @@
 import { postProcessCitations } from "@/lib/ai/citation-markdown";
-import { Marked } from "marked";
+import { Marked, type Renderer, type Tokens } from "marked";
 import { common, createLowlight } from "lowlight";
 
 const lowlight = createLowlight(common);
@@ -217,20 +217,17 @@ export const proseMarked = new Marked({
       return `<a href="${href}"${titleAttr} target="_blank" rel="noopener noreferrer">${text}</a>`;
     },
 
-    listitem({
-      text,
-      task,
-      checked,
-    }: {
-      text: string;
-      task: boolean;
-      checked?: boolean;
-    }): string {
-      if (task) {
-        const checkedAttr = checked ? " checked" : "";
-        return `<li class="task-list-item"><input type="checkbox" disabled${checkedAttr} /> ${text}</li>`;
+    listitem(this: Renderer, item: Tokens.ListItem): string {
+      let itemBody = "";
+      if (item.task) {
+        const checkedAttr = item.checked ? " checked" : "";
+        itemBody += `<input type="checkbox" disabled${checkedAttr} /> `;
       }
-      return `<li>${text}</li>`;
+      itemBody += this.parser.parse(item.tokens, !!item.loose);
+      if (item.task) {
+        return `<li class="task-list-item">${itemBody}</li>`;
+      }
+      return `<li>${itemBody}</li>`;
     },
   },
 });

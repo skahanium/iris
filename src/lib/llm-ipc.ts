@@ -34,11 +34,13 @@ export function llmConfigTest(
 export interface MinimaxConfigGetResponse {
   minimaxConfigured: boolean;
   minimaxApiHost: string;
+  minimaxSearchModel: string;
   webSearchBackend: string;
 }
 
 export interface MinimaxConfigSetRequest {
   minimaxApiHost?: string;
+  minimaxSearchModel?: string;
   webSearchBackend?: string;
 }
 

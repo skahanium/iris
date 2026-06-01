@@ -140,5 +140,3 @@ export function useAssistantLlmStream(options: {
   ]);
 }
 
-/** @deprecated 使用 useAssistantLlmStream */
-export const useAiPanelLlmStream = useAssistantLlmStream;

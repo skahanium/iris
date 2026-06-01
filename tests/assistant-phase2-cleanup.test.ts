@@ -41,7 +41,11 @@ describe("assistant phase 2 cleanup", () => {
     const panel = read("src/components/ai/UnifiedAssistantPanel.tsx");
 
     expect(routing).toContain("resolveAiSceneForIntent");
-    expect(panel).toContain("ContextStatusBar");
+    expect(panel).not.toContain("ContextStatusBar");
+    expect(panel).toContain("onChromeChange");
+    expect(read("src/components/ai/ContextPacketDrawer.tsx")).toContain(
+      "证据",
+    );
     expect(panel).not.toContain("SceneSelector");
     expect(panel).toContain("ResearchFocusView");
     expect(panel).toContain("ExecutionPlanPreview");

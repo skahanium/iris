@@ -157,6 +157,13 @@ export interface VersionEntry {
 
 // ─── AI Runtime IPC types ───
 
+/** `ai_cache_clear` 返回值：清空会话、checkpoint 与知识沉淀缓存。 */
+export interface AiCacheClearResult {
+  sessions_deleted: number;
+  checkpoints_cleared: number;
+  deposits_deleted: number;
+}
+
 export type {
   AiScene,
   AssembledContext,

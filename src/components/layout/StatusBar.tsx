@@ -2,10 +2,12 @@ import { memo, useMemo } from "react";
 
 import { ConnectivityIndicators } from "@/components/layout/ConnectivityIndicators";
 import { EditorZoomControl } from "@/components/layout/EditorZoomControl";
+import { StatusBarTokenUsage } from "@/components/layout/StatusBarTokenUsage";
 import { Kbd } from "@/components/ui/kbd";
 import { splitFrontmatter } from "@/lib/frontmatter";
 import { readingMinutes } from "@/lib/reading-time";
 import { formatCommandPaletteShortcut } from "@/lib/utils";
+import type { AssistantChromeSnapshot } from "@/types/assistant-chrome";
 import type { ConnectivityStatus } from "@/types/llm";
 
 interface StatusBarProps {
@@ -27,6 +29,8 @@ interface StatusBarProps {
   onOpenConnectivitySettings?: () => void;
   /** ⌘K 和弦等待第二键 */
   keyboardLeaderPending?: boolean;
+  /** AI 侧栏上报的 Token / 工具活动（见 UnifiedAssistantPanel） */
+  assistantChrome?: AssistantChromeSnapshot | null;
 }
 
 export const StatusBar = memo(function StatusBar({
@@ -45,12 +49,22 @@ export const StatusBar = memo(function StatusBar({
   connectivity = null,
   onOpenConnectivitySettings,
   keyboardLeaderPending = false,
+  assistantChrome = null,
 }: StatusBarProps) {
   const trimmedTitle = documentTitle?.trim();
   const label = trimmedTitle || (path ? "无标题" : "未打开文件");
 
   const bodyText = useMemo(() => splitFrontmatter(markdown).body, [markdown]);
   const minutes = useMemo(() => readingMinutes(bodyText), [bodyText]);
+
+  const toolLabel = assistantChrome?.toolActivityLabel?.trim() ?? null;
+  const statusLine = keyboardLeaderPending
+    ? "⌘K 等待第二键…"
+    : toolLabel || aiStatus;
+  const statusTitle = keyboardLeaderPending
+    ? "⌘K 等待第二键，Esc 取消"
+    : [toolLabel, !toolLabel ? aiStatus : null].filter(Boolean).join(" · ") ||
+      aiStatus;
 
   return (
     <footer
@@ -111,14 +125,26 @@ export const StatusBar = memo(function StatusBar({
           webSearch={webSearch}
           onWebSearchChange={onWebSearchChange}
         />
+        {assistantChrome?.sessionTokenUsage ? (
+          <>
+            <span className="text-muted-foreground/60" aria-hidden>
+              ·
+            </span>
+            <StatusBarTokenUsage
+              sessionUsage={assistantChrome.sessionTokenUsage}
+            />
+          </>
+        ) : null}
         <span className="text-muted-foreground/60" aria-hidden>
           ·
         </span>
         <span
           className="max-w-[14rem] truncate"
-          title={keyboardLeaderPending ? "⌘K 等待第二键，Esc 取消" : aiStatus}
+          title={statusTitle}
+          role="status"
+          aria-live="polite"
         >
-          {keyboardLeaderPending ? "⌘K 等待第二键…" : aiStatus}
+          {statusLine}
         </span>
       </div>
     </footer>

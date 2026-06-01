@@ -10,6 +10,8 @@ export interface CreatedNote {
 export interface CreateDefaultNoteOptions {
   /** Open-tab titles not yet visible in {@link fileList} (e.g. other blank tabs). */
   extraTakenTitles?: Iterable<string>;
+  /** Target folder prefix, e.g. `notes/` — empty for vault root. */
+  folderPrefix?: string;
 }
 
 /** Create a note with display title in frontmatter; path aligns with title. */
@@ -20,6 +22,7 @@ export async function createDefaultNote(
   const { title, path } = allocateNewDocumentName(
     files,
     options.extraTakenTitles,
+    options.folderPrefix ?? "",
   );
   const content = `---\ntitle: ${quoteYamlString(title)}\n---\n\n`;
   const entry = await fileCreate(path, content);

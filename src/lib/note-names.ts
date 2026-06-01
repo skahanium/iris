@@ -3,6 +3,7 @@ import {
   isInternalUntitledPath,
   pathStem,
 } from "@/lib/note-display";
+import { notePathInFolder } from "@/lib/vault-tree";
 import type { FileListItem } from "@/types/ipc";
 
 export const DEFAULT_NEW_DOCUMENT_TITLE = "新建文档";
@@ -42,6 +43,7 @@ export function collectTakenDocumentNames(files: FileListItem[]): Set<string> {
 export function allocateNewDocumentName(
   files: FileListItem[],
   extraTaken?: Iterable<string>,
+  folderPrefix = "",
 ): { title: string; path: string } {
   const taken = collectTakenDocumentNames(files);
   for (const name of extraTaken ?? []) {
@@ -53,7 +55,10 @@ export function allocateNewDocumentName(
 
   if (!taken.has(DEFAULT_NEW_DOCUMENT_TITLE)) {
     const title = DEFAULT_NEW_DOCUMENT_TITLE;
-    return { title, path: titleToNotePath(title) };
+    return {
+      title,
+      path: notePathInFolder(folderPrefix, titleToNotePath(title)),
+    };
   }
 
   let n = 1;
@@ -61,7 +66,10 @@ export function allocateNewDocumentName(
     n += 1;
   }
   const title = `${DEFAULT_NEW_DOCUMENT_TITLE}（${n}）`;
-  return { title, path: titleToNotePath(title) };
+  return {
+    title,
+    path: notePathInFolder(folderPrefix, titleToNotePath(title)),
+  };
 }
 
 /**

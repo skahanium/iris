@@ -17,6 +17,10 @@ import {
 } from "@/components/ai/UnifiedAssistantPanel";
 import { SkillsPanel } from "@/components/ai/SkillsPanel";
 import type { WritingEditorContext } from "@/types/ai";
+import {
+  EMPTY_ASSISTANT_CHROME,
+  type AssistantChromeSnapshot,
+} from "@/types/assistant-chrome";
 import { DocumentTitleField } from "@/components/editor/DocumentTitleField";
 import { EditorOutline } from "@/components/editor/EditorOutline";
 import { TipTapEditor } from "@/components/editor/TipTapEditor";
@@ -24,7 +28,7 @@ import { IrisContextMenu } from "@/components/ui/iris-context-menu";
 import { BacklinksPanel } from "@/components/file/BacklinksPanel";
 import { ConflictDialog } from "@/components/file/ConflictDialog";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
-import { FileSheet } from "@/components/file/FileSheet";
+import { VaultNavigator } from "@/components/file/VaultNavigator";
 import { QuickOpen } from "@/components/file/QuickOpen";
 import { RecycleBinSheet } from "@/components/file/RecycleBinSheet";
 import { SearchPanel } from "@/components/file/SearchPanel";
@@ -117,7 +121,7 @@ function PreVaultDesktopFrame({ children }: { children: ReactNode }) {
 function App() {
   useMacOSWindowChromeSync();
 
-  const { vaultPath, loading, pickVault } = useVault();
+  const { vaultPath, loading, pickVault, error: vaultError } = useVault();
   const { theme, setTheme } = useTheme();
   const [aiPanelOpen, setAiPanelOpen] = useState(true);
   const [webSearch, setWebSearchState] = useState(false);
@@ -146,6 +150,8 @@ function App() {
     useState<AssistantSelectionQuote | null>(null);
   const [assistantPrefill, setAssistantPrefill] = useState<string | null>(null);
   const [aiStatus, setAiStatus] = useState("AI 空闲");
+  const [assistantChrome, setAssistantChrome] =
+    useState<AssistantChromeSnapshot>(EMPTY_ASSISTANT_CHROME);
   const [keyboardLeaderPending, setKeyboardLeaderPending] = useState(false);
   const [zen, setZen] = useState(false);
   const [outlineOpen, setOutlineOpen] = useState(loadOutlineOpen);
@@ -528,6 +534,14 @@ function App() {
           <Button type="button" onClick={() => void pickVault()}>
             选择笔记目录
           </Button>
+          {vaultError ? (
+            <p
+              className="max-w-md text-center text-sm text-destructive"
+              role="alert"
+            >
+              {vaultError}
+            </p>
+          ) : null}
           <Button
             type="button"
             size="sm"
@@ -629,6 +643,7 @@ function App() {
               getParagraphText={getParagraphText}
               selectionQuote={selectionQuote}
               prefillMessage={assistantPrefill}
+              onChromeChange={setAssistantChrome}
               onVaultRefresh={bumpVaultIndex}
               onPatchApplied={(newContent: string) => {
                 applyMarkdownToEditor(newContent);
@@ -657,6 +672,7 @@ function App() {
               splitFrontmatter(markdown).body.replace(/\s+/g, "").length
             }
             aiStatus={aiStatus}
+            assistantChrome={assistantChrome}
             keyboardLeaderPending={keyboardLeaderPending}
             editorZoom={editorZoom}
             onEditorZoomIn={zoomIn}
@@ -681,7 +697,7 @@ function App() {
               onClose={() => overlays.closeOverlay("quickOpen")}
               onSelect={(p) => void openFile(p)}
             />
-            <FileSheet
+            <VaultNavigator
               open={overlays.fileSheet}
               onClose={() => overlays.closeOverlay("fileSheet")}
               onOpen={(p) => void openFile(p)}

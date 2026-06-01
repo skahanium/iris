@@ -44,7 +44,7 @@
 
 ## 历史文档
 
-v0.1.0–v0.5.2 期间的 Epic、施工计划、设计 spec、品牌规划已归档至 [docs/history/](./history/)。
+v0.1.0–v0.5.2 期间的 Epic、施工计划、设计 spec、品牌规划已归档至 [docs/history/](./history/)。`docs/superpowers/specs/` 下为历史施工 spec，界面以 [design-system.md](./design-system.md) 为准。
 
 ---
 

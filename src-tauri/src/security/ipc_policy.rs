@@ -15,6 +15,7 @@ const ALLOWED_SETTINGS_KEYS: &[&str] = &[
     "llm_usage_last",
     "web_search_backend",
     "minimax_api_host",
+    "minimax_search_model",
     "minimax_search_enabled",
 ];
 

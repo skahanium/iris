@@ -32,6 +32,7 @@ interface MinimaxSearchSectionProps {
 export function MinimaxSearchSection({ open }: MinimaxSearchSectionProps) {
   const [configured, setConfigured] = useState(false);
   const [apiHost, setApiHost] = useState("https://api.minimaxi.com");
+  const [searchModel, setSearchModel] = useState("");
   const [backend, setBackend] = useState<WebSearchBackendOption>("auto");
   const [keyInput, setKeyInput] = useState("");
   const [loading, setLoading] = useState(false);
@@ -50,6 +51,7 @@ export function MinimaxSearchSection({ open }: MinimaxSearchSectionProps) {
     try {
       const res = await minimaxConfigGet();
       setApiHost(res.minimaxApiHost);
+      setSearchModel(res.minimaxSearchModel);
       setBackend(res.webSearchBackend as WebSearchBackendOption);
       setConfigured(res.minimaxConfigured);
       setKeyInput("");
@@ -104,9 +106,11 @@ export function MinimaxSearchSection({ open }: MinimaxSearchSectionProps) {
     try {
       const res = await minimaxConfigSet({
         minimaxApiHost: apiHost.trim(),
+        minimaxSearchModel: searchModel.trim(),
         webSearchBackend: backend,
       });
       setApiHost(res.minimaxApiHost);
+      setSearchModel(res.minimaxSearchModel);
       setBackend(res.webSearchBackend as WebSearchBackendOption);
       notifyLlmConfigChanged();
       setMessage("检索偏好已保存");
@@ -128,8 +132,11 @@ export function MinimaxSearchSection({ open }: MinimaxSearchSectionProps) {
         setConfigured(true);
         setKeyInput("");
       }
-      if (apiHost.trim()) {
-        await minimaxConfigSet({ minimaxApiHost: apiHost.trim() });
+      if (apiHost.trim() || searchModel.trim()) {
+        await minimaxConfigSet({
+          minimaxApiHost: apiHost.trim(),
+          minimaxSearchModel: searchModel.trim(),
+        });
       }
       const res = await minimaxConfigTest();
       setTestResult(res);
@@ -207,6 +214,20 @@ export function MinimaxSearchSection({ open }: MinimaxSearchSectionProps) {
           disabled={loading || saving}
           spellCheck={false}
         />
+      </div>
+
+      <div className="space-y-2">
+        <label className="text-xs font-medium">检索模型名称</label>
+        <Input
+          value={searchModel}
+          onChange={(e) => setSearchModel(e.target.value)}
+          disabled={loading || saving}
+          spellCheck={false}
+          placeholder="留空使用服务端默认，例如 MiniMax-M2.5"
+        />
+        <p className="text-xs text-muted-foreground">
+          与 MiniMax 控制台 Coding Plan 中启用的模型名一致；保存后写入联网检索请求。
+        </p>
       </div>
 
       <div className="space-y-2">

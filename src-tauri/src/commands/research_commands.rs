@@ -150,7 +150,7 @@ pub(crate) async fn execute_research_task(
 /// Execute a full research workflow on a topic with per-round progress events.
 #[tauri::command]
 pub async fn research_execute(
-    state: State<'_, AppState>,
+    state: State<'_, Arc<AppState>>,
     app_handle: tauri::AppHandle,
     topic: String,
     web_authorized: Option<bool>,
@@ -161,7 +161,7 @@ pub async fn research_execute(
 /// Abort a running research task by its request_id.
 #[tauri::command]
 pub fn research_abort(
-    state: State<'_, AppState>,
+    state: State<'_, Arc<AppState>>,
     app_handle: tauri::AppHandle,
     request_id: String,
 ) -> AppResult<()> {
@@ -204,7 +204,7 @@ pub fn research_abort(
 
 /// List all active research task IDs.
 #[tauri::command]
-pub fn research_active_tasks(state: State<'_, AppState>) -> AppResult<Vec<String>> {
+pub fn research_active_tasks(state: State<'_, Arc<AppState>>) -> AppResult<Vec<String>> {
     let guard = state
         .active_research
         .lock()
@@ -215,7 +215,7 @@ pub fn research_active_tasks(state: State<'_, AppState>) -> AppResult<Vec<String
 /// Generate a structured research note from research results.
 #[tauri::command]
 pub fn research_generate_note(
-    _state: State<'_, AppState>,
+    _state: State<'_, Arc<AppState>>,
     request: ResearchNoteRequest,
 ) -> AppResult<ResearchNoteResult> {
     let now = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%S");
@@ -301,7 +301,7 @@ coverage_score: {coverage_score:.2}
 
 /// Get research workflow status for a session.
 #[tauri::command]
-pub fn research_status(state: State<'_, AppState>) -> AppResult<serde_json::Value> {
+pub fn research_status(state: State<'_, Arc<AppState>>) -> AppResult<serde_json::Value> {
     let traces = crate::ai_runtime::trace::TraceRecorder::recent(&state.db, 10)?;
 
     let research_traces: Vec<_> = traces

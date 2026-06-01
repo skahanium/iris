@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use tauri::{AppHandle, State};
 
 use crate::app::AppState;
@@ -15,7 +17,7 @@ pub fn llm_providers() -> Vec<LlmProviderInfo> {
 #[tauri::command]
 pub async fn llm_generate(
     app: AppHandle,
-    state: State<'_, AppState>,
+    state: State<'_, Arc<AppState>>,
     params: LlmGenerateParams,
 ) -> AppResult<String> {
     let resolved =
@@ -32,7 +34,7 @@ pub async fn llm_generate(
 #[tauri::command]
 pub async fn llm_chat(
     app: AppHandle,
-    state: State<'_, AppState>,
+    state: State<'_, Arc<AppState>>,
     params: LlmGenerateParams,
 ) -> AppResult<String> {
     llm_generate(app, state, params).await

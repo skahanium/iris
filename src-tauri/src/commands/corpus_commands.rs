@@ -1,5 +1,7 @@
 //! Corpus configuration IPC (`.iris/corpora.toml`).
 
+use std::sync::Arc;
+
 use serde::Serialize;
 use tauri::State;
 
@@ -18,7 +20,7 @@ pub struct CorpusListItem {
 }
 
 #[tauri::command]
-pub fn corpus_list(state: State<'_, AppState>) -> AppResult<Vec<CorpusListItem>> {
+pub fn corpus_list(state: State<'_, Arc<AppState>>) -> AppResult<Vec<CorpusListItem>> {
     let vault = state.vault_path()?;
     let config = load_corpora(&vault)?;
     Ok(config
@@ -46,7 +48,10 @@ pub struct CorpusUpsertPayload {
 
 /// Insert or replace a corpus entry in `.iris/corpora.toml`.
 #[tauri::command]
-pub fn corpus_upsert(state: State<'_, AppState>, entry: CorpusUpsertPayload) -> AppResult<()> {
+pub fn corpus_upsert(
+    state: State<'_, Arc<AppState>>,
+    entry: CorpusUpsertPayload,
+) -> AppResult<()> {
     let vault = state.vault_path()?;
     let mut config = load_corpora(&vault)?;
     let new_entry = CorpusEntry {

@@ -6,6 +6,7 @@ use crate::error::AppResult;
 use crate::storage::db::Database;
 
 pub const MINIMAX_API_HOST_KEY: &str = "minimax_api_host";
+pub const MINIMAX_SEARCH_MODEL_KEY: &str = "minimax_search_model";
 pub const WEB_SEARCH_BACKEND_KEY: &str = "web_search_backend";
 
 pub const DEFAULT_MINIMAX_API_HOST: &str = "https://api.minimaxi.com";
@@ -60,6 +61,8 @@ impl WebSearchEffectiveBackend {
 pub struct WebSearchPreferences {
     pub backend_mode: WebSearchBackendMode,
     pub minimax_api_host: String,
+    /// 联网检索请求体中的 `model` 字段；空字符串表示不传（使用 Coding Plan 服务端默认）。
+    pub minimax_search_model: String,
 }
 
 impl Default for WebSearchPreferences {
@@ -67,6 +70,7 @@ impl Default for WebSearchPreferences {
         Self {
             backend_mode: WebSearchBackendMode::Auto,
             minimax_api_host: DEFAULT_MINIMAX_API_HOST.to_string(),
+            minimax_search_model: String::new(),
         }
     }
 }
@@ -82,6 +86,9 @@ pub fn load(db: &Database) -> AppResult<WebSearchPreferences> {
     }
     if let Ok(Some(mode)) = read_setting(db, WEB_SEARCH_BACKEND_KEY) {
         prefs.backend_mode = WebSearchBackendMode::parse(&mode);
+    }
+    if let Ok(Some(model)) = read_setting(db, MINIMAX_SEARCH_MODEL_KEY) {
+        prefs.minimax_search_model = model.trim().to_string();
     }
     Ok(prefs)
 }
@@ -113,6 +120,11 @@ pub fn save_web_search_backend(db: &Database, mode: WebSearchBackendMode) -> App
     write_setting(db, WEB_SEARCH_BACKEND_KEY, mode.as_str())
 }
 
+/// 保存 MiniMax 联网检索模型名（空字符串表示清除自定义，回退服务端默认）。
+pub fn save_minimax_search_model(db: &Database, model: &str) -> AppResult<()> {
+    write_setting(db, MINIMAX_SEARCH_MODEL_KEY, model.trim())
+}
+
 fn write_setting(db: &Database, key: &str, value: &str) -> AppResult<()> {
     db.with_conn(|conn| {
         conn.execute(
@@ -127,6 +139,14 @@ fn write_setting(db: &Database, key: &str, value: &str) -> AppResult<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn load_persists_minimax_search_model() {
+        let db = crate::storage::db::Database::open_in_memory().unwrap();
+        save_minimax_search_model(&db, "MiniMax-M2.5").unwrap();
+        let prefs = load(&db).unwrap();
+        assert_eq!(prefs.minimax_search_model, "MiniMax-M2.5");
+    }
 
     #[test]
     fn parses_backend_mode() {

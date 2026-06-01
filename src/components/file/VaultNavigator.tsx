@@ -27,6 +27,7 @@ import {
   fileRename,
   folderCreate,
   folderDelete,
+  folderList,
   folderRename,
   templateCreate,
   templateList,
@@ -36,7 +37,10 @@ import { displayTitleForFileListItem } from "@/lib/note-display";
 import { renderMarkdownWithProfile } from "@/lib/markdown-contract";
 import {
   buildVaultTree,
+  folderParentPath,
+  joinVaultChildPath,
   listFilesInFolder,
+  notePathInFolder,
   type VaultTreeNode,
 } from "@/lib/vault-tree";
 import { cn } from "@/lib/utils";
@@ -162,6 +166,7 @@ function TreeFolder({
 
 export function VaultNavigator({ open, onClose, onOpen }: VaultNavigatorProps) {
   const [files, setFiles] = useState<FileListItem[]>([]);
+  const [folders, setFolders] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [newName, setNewName] = useState("新建文档.md");
@@ -185,7 +190,7 @@ export function VaultNavigator({ open, onClose, onOpen }: VaultNavigatorProps) {
   const [editingTemplate, setEditingTemplate] = useState<string | null>(null);
   const parentRef = useRef<HTMLDivElement>(null);
 
-  const tree = useMemo(() => buildVaultTree(files), [files]);
+  const tree = useMemo(() => buildVaultTree(files, folders), [files, folders]);
   const folderFiles = useMemo(
     () => listFilesInFolder(files, selectedFolder),
     [files, selectedFolder],
@@ -201,8 +206,11 @@ export function VaultNavigator({ open, onClose, onOpen }: VaultNavigatorProps) {
   const refresh = useCallback(() => {
     setLoading(true);
     setError(null);
-    void fileList()
-      .then(setFiles)
+    void Promise.all([fileList(), folderList()])
+      .then(([nextFiles, nextFolders]) => {
+        setFiles(nextFiles);
+        setFolders(nextFolders);
+      })
       .catch((e) =>
         setError(e instanceof Error ? e.message : "加载文件列表失败"),
       )
@@ -230,11 +238,12 @@ export function VaultNavigator({ open, onClose, onOpen }: VaultNavigatorProps) {
     async (name: string) => {
       const trimmed = name.trim();
       if (!trimmed) return;
-      const parentPath = newFolderParent ?? "";
-      const folderPath = parentPath ? `${parentPath}${trimmed}` : trimmed;
+      const folderPath = joinVaultChildPath(newFolderParent ?? "", trimmed);
       try {
         await folderCreate(folderPath);
         setNewFolderParent(null);
+        setSelectedFolder(`${folderPath.replace(/\\/g, "/")}/`);
+        setExpanded((prev) => new Set(prev).add(`${folderPath.replace(/\\/g, "/")}/`));
         refresh();
       } catch (e) {
         setError(e instanceof Error ? e.message : "创建文件夹失败");
@@ -247,11 +256,12 @@ export function VaultNavigator({ open, onClose, onOpen }: VaultNavigatorProps) {
     async (newName: string) => {
       const trimmed = newName.trim();
       if (!trimmed || !folderRenameTarget) return;
-      const parentPath = folderRenameTarget.split("/").slice(0, -2).join("/");
-      const newPath = parentPath ? `${parentPath}/${trimmed}` : trimmed;
+      const parentPath = folderParentPath(folderRenameTarget);
+      const newPath = joinVaultChildPath(parentPath, trimmed);
       try {
         await folderRename(folderRenameTarget, newPath);
         setFolderRenameTarget(null);
+        setSelectedFolder(`${newPath.replace(/\\/g, "/")}/`);
         refresh();
       } catch (e) {
         setError(e instanceof Error ? e.message : "重命名文件夹失败");
@@ -272,9 +282,10 @@ export function VaultNavigator({ open, onClose, onOpen }: VaultNavigatorProps) {
   }, [folderDeleteTarget, refresh]);
 
   const createFromTemplate = async (tmplName: string) => {
-    await templateCreate(newName, tmplName);
+    const path = notePathInFolder(selectedFolder, newName);
+    await templateCreate(path, tmplName);
     refresh();
-    onOpen(newName);
+    onOpen(path);
     setShowTemplates(false);
   };
 
@@ -329,12 +340,15 @@ export function VaultNavigator({ open, onClose, onOpen }: VaultNavigatorProps) {
               if (showTemplates && templates.length > 0) return;
               const trimmed = newName.trim();
               if (trimmed) {
-                await fileCreate(trimmed);
+                const path = notePathInFolder(selectedFolder, trimmed);
+                await fileCreate(path);
                 refresh();
-                onOpen(trimmed);
+                onOpen(path);
                 return;
               }
-              const created = await createDefaultNote();
+              const created = await createDefaultNote({
+                folderPrefix: selectedFolder,
+              });
               refresh();
               onOpen(created.path);
             }}

@@ -17,6 +17,7 @@ import type {
   LlmProviderInfo,
   LlmTokenEvent,
   SemanticHit,
+  AiCacheClearResult,
   SessionMessageRecord,
   SessionSummary,
   TagGroup,
@@ -57,6 +58,10 @@ export async function vaultGet(): Promise<string | null> {
 
 export async function fileList(): Promise<FileListItem[]> {
   return invoke<FileListItem[]>("file_list");
+}
+
+export async function folderList(): Promise<string[]> {
+  return invoke<string[]>("folder_list");
 }
 
 export async function fileRead(path: string): Promise<string> {
@@ -467,6 +472,11 @@ export async function sessionClearAll(params?: {
     scene: params?.scene ?? null,
     notePath: params?.note_path ?? null,
   });
+}
+
+/** 清空 AI 运行时持久化缓存（会话、harness checkpoint、知识沉淀）。 */
+export async function aiCacheClear(): Promise<AiCacheClearResult> {
+  return invoke<AiCacheClearResult>("ai_cache_clear");
 }
 
 export async function harnessResume(

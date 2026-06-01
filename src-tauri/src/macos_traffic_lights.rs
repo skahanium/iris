@@ -3,6 +3,8 @@
 //! Tauri 2.11 的 `WebviewWindow` 仅在创建时接受 `traffic_light_position`；
 //! `set_title`、全屏/还原等会重置系统位置，需在运行时调用本模块重新 inset。
 
+use std::time::Duration;
+
 use tauri::WebviewWindow;
 
 use crate::chrome_metrics::{self, MACOS_TITLEBAR_HEIGHT};
@@ -17,6 +19,18 @@ pub const TRAFFIC_LIGHT_Y: f64 = chrome_metrics::button_center_y_offset(
 
 /// 将交通灯移至 32px 标题容器内垂直居中。
 pub fn apply_traffic_light_position(window: &WebviewWindow) {
+    apply_traffic_light_position_once(window);
+    // 窗口 show / WebView 首帧后系统可能再次重置交通灯，延迟再应用一次。
+    let window_for_retry = window.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(200));
+        let _ = window_for_retry.run_on_main_thread(move || {
+            apply_traffic_light_position_once(&window_for_retry);
+        });
+    });
+}
+
+fn apply_traffic_light_position_once(window: &WebviewWindow) {
     let Ok(ns_window_ptr) = window.ns_window() else {
         tracing::warn!("无法获取 NSWindow，跳过交通灯定位");
         return;
@@ -42,7 +56,7 @@ pub fn apply_traffic_light_position(window: &WebviewWindow) {
 ///
 /// # Safety
 ///
-/// `window` 必须为有效的 `NSWindow` 指针；仅由 `apply_traffic_light_position` 在
+/// `window` 必须为有效的 `NSWindow` 指针；仅由 `apply_traffic_light_position_once` 在
 /// `ns_window()` 校验后调用。Tauri 未暴露运行时 `set_traffic_light_position`，故保留此 unsafe。
 unsafe fn inset_traffic_lights(window: &objc2_app_kit::NSWindow, x: f64, target_height: f64) {
     use objc2_app_kit::{NSView, NSWindowButton};
@@ -67,13 +81,16 @@ unsafe fn inset_traffic_lights(window: &objc2_app_kit::NSWindow, x: f64, target_
     title_bar_rect.origin.y = window.frame().size.height - target_height;
     title_bar_container_view.setFrame(title_bar_rect);
 
-    let space_between = NSView::frame(&miniaturize).origin.x - close_rect.origin.x;
-    let vertical_offset = chrome_metrics::button_center_y_offset(button_height, target_height);
+    let container_height = NSView::frame(&title_bar_container_view).size.height;
+    let vertical_offset =
+        chrome_metrics::button_center_y_offset(button_height, container_height);
     debug_assert!(
         (vertical_offset - TRAFFIC_LIGHT_Y).abs() < f64::EPSILON
             || (button_height - chrome_metrics::MACOS_TRAFFIC_BUTTON_HEIGHT).abs() > f64::EPSILON,
         "traffic light y should match chrome_metrics when button height is nominal"
     );
+
+    let space_between = NSView::frame(&miniaturize).origin.x - close_rect.origin.x;
 
     let mut window_buttons = vec![close, miniaturize];
     if let Some(zoom) = zoom {

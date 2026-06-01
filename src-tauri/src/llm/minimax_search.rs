@@ -44,8 +44,18 @@ struct MiniMaxRelatedSearch {
     query: String,
 }
 
+/// 构建 Coding Plan 搜索请求体（`model` 为空时不包含该字段）。
+pub(crate) fn search_request_body(query: &str, model: &str) -> serde_json::Value {
+    let trimmed = model.trim();
+    if trimmed.is_empty() {
+        serde_json::json!({ "q": query })
+    } else {
+        serde_json::json!({ "q": query, "model": trimmed })
+    }
+}
+
 /// 调用 MiniMax Coding Plan 搜索 API，返回与 [`crate::llm::search_web`] 统一的摘要文本块。
-pub async fn search(query: &str, api_host: &str) -> AppResult<String> {
+pub async fn search(query: &str, api_host: &str, model: &str) -> AppResult<String> {
     let api_key = credentials::get_secret(MINIMAX_CREDENTIAL_SERVICE)?;
     let host = normalize_api_host(api_host);
 
@@ -57,7 +67,7 @@ pub async fn search(query: &str, api_host: &str) -> AppResult<String> {
         .header("Authorization", format!("Bearer {api_key}"))
         .header("Content-Type", "application/json")
         .header("MM-API-Source", "Iris")
-        .json(&serde_json::json!({ "q": query }))
+        .json(&search_request_body(query, model))
         .send()
         .await
         .map_err(|e| AppError::msg(format!("MiniMax 搜索请求失败: {e}")))?;
@@ -90,9 +100,9 @@ pub async fn search(query: &str, api_host: &str) -> AppResult<String> {
     Ok(format_search_results(&data))
 }
 
-/// 探测 Key 与 Host 是否可用（极简查询）。
-pub async fn probe(api_host: &str) -> AppResult<()> {
-    let body = search("test", api_host).await?;
+/// 探测 Key、Host 与模型配置是否可用（极简查询）。
+pub async fn probe(api_host: &str, model: &str) -> AppResult<()> {
+    let body = search("test", api_host, model).await?;
     if body.contains("(未找到搜索结果)") {
         // API 可达但无结果仍视为连通成功
         return Ok(());
@@ -165,6 +175,21 @@ mod tests {
         assert!(out.contains("[1] 标题: 示例"));
         assert!(out.contains("https://example.com"));
         assert!(out.contains("相关搜索建议"));
+    }
+
+    #[test]
+    fn search_body_omits_model_when_empty() {
+        let body = search_request_body("hello", "");
+        assert_eq!(body, serde_json::json!({ "q": "hello" }));
+    }
+
+    #[test]
+    fn search_body_includes_model_when_set() {
+        let body = search_request_body("hello", "MiniMax-M2.5");
+        assert_eq!(
+            body,
+            serde_json::json!({ "q": "hello", "model": "MiniMax-M2.5" })
+        );
     }
 
     #[test]

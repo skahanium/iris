@@ -5,10 +5,15 @@ import {
   useEffect,
   useMemo,
   useState,
+  type MouseEvent as ReactMouseEvent,
   type ReactNode,
 } from "react";
 
 import { cn } from "@/lib/utils";
+
+function stopTitlebarDrag(event: ReactMouseEvent) {
+  event.stopPropagation();
+}
 
 function WindowControlButton({
   label,
@@ -27,9 +32,11 @@ function WindowControlButton({
       aria-label={label}
       data-tauri-drag-region-exclude
       className={cn(
-        "inline-flex h-[var(--titlebar-height)] w-11 items-center justify-center text-muted-foreground transition-colors duration-fast hover:bg-muted/80 hover:text-foreground focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary",
+        "iris-window-control inline-flex h-[var(--titlebar-height)] w-11 items-center justify-center text-muted-foreground transition-colors duration-fast focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary",
         className,
       )}
+      onMouseDown={stopTitlebarDrag}
+      onPointerDown={stopTitlebarDrag}
       onClick={onClick}
     >
       {children}
@@ -71,7 +78,12 @@ export function WindowControls() {
   }, [win]);
 
   return (
-    <div className="flex shrink-0 items-stretch" data-tauri-drag-region-exclude>
+    <div
+      className="iris-window-controls relative z-20 flex shrink-0 items-stretch"
+      data-tauri-drag-region-exclude
+      onMouseDown={stopTitlebarDrag}
+      onPointerDown={stopTitlebarDrag}
+    >
       <WindowControlButton label="最小化" onClick={minimize}>
         <Minus className="h-3.5 w-3.5" strokeWidth={1.75} />
       </WindowControlButton>
@@ -84,7 +96,7 @@ export function WindowControls() {
       <WindowControlButton
         label="关闭"
         onClick={close}
-        className="hover:bg-destructive hover:text-destructive-foreground"
+        className="iris-window-control--close"
       >
         <X className="h-3.5 w-3.5" strokeWidth={1.75} />
       </WindowControlButton>

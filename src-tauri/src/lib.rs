@@ -18,8 +18,6 @@ pub mod version;
 mod watcher;
 mod window_chrome;
 
-use std::sync::Arc;
-
 use tauri::Manager;
 use tracing_subscriber::EnvFilter;
 
@@ -39,7 +37,8 @@ pub fn run() {
                 .app_data_dir()
                 .map_err(|e| crate::error::AppError::msg(format!("无法解析应用数据目录: {e}")))?;
             std::fs::create_dir_all(&data_dir)?;
-            let state = Arc::new(AppState::new(data_dir)?);
+            // `AppState::new` 已返回 `Arc<AppState>`；勿再包一层 Arc，否则 Tauri 无法注入 State。
+            let state = AppState::new(data_dir)?;
             app.manage(state.clone());
 
             // Clean up stale version snapshots and expired recycle bin on startup
@@ -91,6 +90,7 @@ pub fn run() {
             commands::file::vault_get,
             commands::file::index_rescan,
             commands::file::file_backlinks,
+            commands::file::folder_list,
             commands::file::folder_create,
             commands::file::folder_rename,
             commands::file::folder_delete,
@@ -155,6 +155,7 @@ pub fn run() {
             commands::ai_commands::session_rename,
             commands::ai_commands::session_load,
             commands::ai_commands::session_clear_all,
+            commands::ai_commands::ai_cache_clear,
             commands::ai_commands::harness_resume,
             commands::ai_commands::skills_list,
             commands::ai_commands::skills_install,

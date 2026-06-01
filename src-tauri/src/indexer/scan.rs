@@ -242,13 +242,51 @@ pub fn prune_stale_file_indexes(conn: &Connection, vault: &Path) -> AppResult<us
         .collect::<Result<_, _>>()?;
     let mut pruned = 0usize;
     for path in paths {
-        let abs = resolve_vault_path(vault, &path)?;
-        if !abs.is_file() {
+        let stale = match resolve_vault_path(vault, &path) {
+            Ok(abs) => !abs.is_file(),
+            Err(e) => {
+                tracing::warn!(path = %path, error = %e, "prune: path outside vault or invalid");
+                true
+            }
+        };
+        if stale {
             remove_file_index(conn, &path)?;
             pruned += 1;
         }
     }
     Ok(pruned)
+}
+
+/// Collect vault subfolders (forward-slash paths with trailing `/`), excluding `.iris`.
+pub fn collect_vault_folders(vault: &Path) -> Vec<String> {
+    if !vault.exists() {
+        return Vec::new();
+    }
+    let mut folders = Vec::new();
+    for entry in WalkDir::new(vault)
+        .follow_links(false)
+        .into_iter()
+        .filter_entry(|e| {
+            e.path()
+                .strip_prefix(vault)
+                .is_ok_and(|rel| !rel.components().any(|c| c.as_os_str() == ".iris"))
+        })
+        .filter_map(|e| e.ok())
+    {
+        if !entry.file_type().is_dir() {
+            continue;
+        }
+        let Ok(rel) = relative_path(vault, entry.path()) else {
+            continue;
+        };
+        if rel.is_empty() {
+            continue;
+        }
+        folders.push(format!("{rel}/"));
+    }
+    folders.sort();
+    folders.dedup();
+    folders
 }
 
 /// Recursively scan vault for `.md` files (full index; prefer `index_vault_incremental`).
@@ -469,6 +507,39 @@ mod tests {
             index_file(conn, &vault, &vault.join("live.md"))?;
             index_file(conn, &vault, &vault.join("gone.md"))?;
             fs::remove_file(vault.join("gone.md"))?;
+            let pruned = prune_stale_file_indexes(conn, &vault)?;
+            assert_eq!(pruned, 1);
+            let paths: Vec<String> = conn
+                .prepare("SELECT path FROM files")?
+                .query_map([], |r| r.get(0))?
+                .collect::<Result<_, _>>()?;
+            assert_eq!(paths, vec!["live.md".to_string()]);
+            Ok(())
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn collect_vault_folders_includes_empty_dirs() {
+        let (_dir, vault, _db) = setup_vault();
+        fs::create_dir_all(vault.join("notes/inbox")).unwrap();
+        let folders = collect_vault_folders(&vault);
+        assert!(folders.contains(&"notes/".to_string()));
+        assert!(folders.contains(&"notes/inbox/".to_string()));
+    }
+
+    #[test]
+    fn prune_stale_file_indexes_drops_invalid_paths() {
+        let (_dir, vault, db) = setup_vault();
+        write_note(&vault, "live.md", "# Live");
+
+        db.with_conn(|conn| {
+            index_file(conn, &vault, &vault.join("live.md"))?;
+            conn.execute(
+                "INSERT INTO files (path, title, content_hash, word_count, created_at, updated_at)
+                 VALUES ('../outside.md', 'x', 'h', 0, 'now', 'now')",
+                [],
+            )?;
             let pruned = prune_stale_file_indexes(conn, &vault)?;
             assert_eq!(pruned, 1);
             let paths: Vec<String> = conn

@@ -8,8 +8,8 @@ use crate::app::AppState;
 use crate::error::{AppError, AppResult};
 use crate::indexer::frontmatter::resolve_display_title;
 use crate::indexer::scan::{
-    index_file_with_embed, index_vault_incremental, prune_stale_file_indexes, remove_file_index,
-    FileEntry,
+    collect_vault_folders, index_file_with_embed, index_vault_incremental, prune_stale_file_indexes,
+    remove_file_index, FileEntry,
 };
 use crate::recycle::{discard_document, trash_document};
 use crate::storage::paths::{is_user_note_path, resolve_vault_path};
@@ -109,6 +109,13 @@ pub fn file_discard(state: State<'_, Arc<AppState>>, path: String) -> AppResult<
 }
 
 /// Create a folder under the vault. Fails if the folder already exists.
+/// List subfolders under the vault (forward slashes, trailing `/`), including empty dirs.
+#[tauri::command]
+pub fn folder_list(state: State<'_, Arc<AppState>>) -> AppResult<Vec<String>> {
+    let vault = state.vault_path()?;
+    Ok(collect_vault_folders(&vault))
+}
+
 #[tauri::command]
 pub fn folder_create(state: State<'_, Arc<AppState>>, path: String) -> AppResult<()> {
     let vault = state.vault_path()?;
@@ -368,12 +375,27 @@ pub fn file_create(
 pub fn vault_set(app: AppHandle, state: State<'_, Arc<AppState>>, path: String) -> AppResult<()> {
     use std::path::PathBuf;
 
-    let p = PathBuf::from(&path);
+    let p = PathBuf::from(path.trim());
+    if p.as_os_str().is_empty() {
+        return Err(AppError::msg("笔记目录路径不能为空"));
+    }
     if !p.is_dir() {
-        return Err(AppError::msg("Vault path must be an existing directory"));
+        return Err(AppError::msg("请选择已存在的文件夹作为笔记目录"));
     }
     state.set_vault(p)?;
-    state.restart_file_watcher(app)?;
+
+    if let Err(e) = state.restart_file_watcher(app) {
+        tracing::warn!("vault_set: file watcher did not start: {e}");
+    }
+
+    if let Ok(vault) = state.vault_path() {
+        if let Err(e) = state.db.with_conn(|conn| {
+            index_vault_incremental(conn, &vault, Some(state.inner()))
+        }) {
+            tracing::warn!("vault_set: initial index skipped: {e}");
+        }
+    }
+
     Ok(())
 }
 

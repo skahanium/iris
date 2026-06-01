@@ -18,6 +18,7 @@ use crate::llm::web_search_config::{
 pub struct MinimaxConfigGetResponse {
     pub minimax_configured: bool,
     pub minimax_api_host: String,
+    pub minimax_search_model: String,
     pub web_search_backend: String,
 }
 
@@ -25,6 +26,7 @@ pub struct MinimaxConfigGetResponse {
 #[serde(rename_all = "camelCase")]
 pub struct MinimaxConfigSetRequest {
     pub minimax_api_host: Option<String>,
+    pub minimax_search_model: Option<String>,
     pub web_search_backend: Option<String>,
 }
 
@@ -49,6 +51,9 @@ pub fn minimax_config_set(
     if let Some(host) = request.minimax_api_host {
         web_search_config::save_minimax_api_host(&state.db, &host)?;
     }
+    if let Some(model) = request.minimax_search_model {
+        web_search_config::save_minimax_search_model(&state.db, &model)?;
+    }
     if let Some(mode) = request.web_search_backend {
         web_search_config::save_web_search_backend(&state.db, WebSearchBackendMode::parse(&mode))?;
     }
@@ -67,7 +72,12 @@ pub async fn minimax_config_test(
         });
     }
     let prefs = load_web_search_preferences(&state.db)?;
-    match minimax_search::probe(prefs.minimax_api_host.as_str()).await {
+    match minimax_search::probe(
+        prefs.minimax_api_host.as_str(),
+        prefs.minimax_search_model.as_str(),
+    )
+    .await
+    {
         Ok(()) => Ok(MinimaxConfigTestResult {
             ok: true,
             message: "MiniMax 联网检索连接成功".into(),
@@ -83,6 +93,7 @@ fn prefs_to_response(prefs: &WebSearchPreferences) -> MinimaxConfigGetResponse {
     MinimaxConfigGetResponse {
         minimax_configured: credentials::has_secret(MINIMAX_CREDENTIAL_SERVICE),
         minimax_api_host: prefs.minimax_api_host.clone(),
+        minimax_search_model: prefs.minimax_search_model.clone(),
         web_search_backend: prefs.backend_mode.as_str().to_string(),
     }
 }

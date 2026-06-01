@@ -12,13 +12,14 @@ describe("unified assistant E2E contract", () => {
   it("exposes stable data-testid hooks for future Tauri/Playwright drivers", () => {
     const app = read("src/App.tsx");
     const panel = read("src/components/ai/UnifiedAssistantPanel.tsx");
+    const conversation = read("src/components/ai/ConversationSurface.tsx");
     const shell = read("src/components/layout/AppShell.tsx");
 
     expect(app).toContain('data-testid="editor-shell"');
     expect(shell).toContain('data-testid="unified-assistant-dock"');
     expect(panel).toContain('data-testid="unified-assistant-panel"');
     expect(panel).toContain('data-testid="ai-input"');
-    expect(panel).toContain('data-testid="ai-message-list"');
+    expect(conversation).toContain('data-testid="ai-message-list"');
     expect(read("src/components/ai/ExecutionPlanPreview.tsx")).toContain(
       'data-testid="execution-plan-preview"',
     );

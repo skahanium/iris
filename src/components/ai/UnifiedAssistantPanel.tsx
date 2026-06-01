@@ -56,6 +56,7 @@ import { mergeContextPackets } from "@/lib/ai/merge-context-packets";
 import { shouldStartNewAiSession } from "@/lib/ai/session-thread";
 import { DEFAULT_ASSISTANT_IDENTITY } from "@/lib/assistant-identity";
 import { resolveAssistantDisplayContent } from "@/lib/assistant-message-content";
+import { buildAssistantChromeSnapshot } from "@/lib/assistant-chrome";
 import { mapChatToolCallsForUi } from "@/lib/map-chat-tool-calls";
 import { invokeErrorMessage } from "@/lib/credentials";
 import {
@@ -90,6 +91,7 @@ import type {
   TokenUsage,
   WritingEditorContext,
 } from "@/types/ai";
+import type { AssistantChromeSnapshot } from "@/types/assistant-chrome";
 import type { FileListItem } from "@/types/ipc";
 
 import { AssistantAvatar } from "./AssistantAvatar";
@@ -102,13 +104,10 @@ import { ConversationSurface } from "./ConversationSurface";
 import { useCitationClick } from "./hooks/useCitationClick";
 import { CitationCheckView } from "./CitationCheckView";
 import { ContextPacketDrawer } from "./ContextPacketDrawer";
-import { HarnessActivityStrip } from "./HarnessActivityStrip";
 import { SessionHistoryDropdown } from "./SessionHistoryDropdown";
-import { TokenUsageBar } from "./TokenUsageBar";
 import { useHarnessActivity } from "@/hooks/useHarnessActivity";
 import { listenAiRequestStarted } from "@/lib/ipc";
 import { ContextScopeChips } from "./ContextScopeChips";
-import { ContextStatusBar } from "./ContextStatusBar";
 import { ExecutionPlanPreview } from "./ExecutionPlanPreview";
 import { PatchPreview } from "./PatchPreview";
 import {
@@ -151,6 +150,7 @@ interface UnifiedAssistantPanelProps {
   onVaultRefresh?: () => void;
   selectionQuote?: AssistantSelectionQuote | null;
   prefillMessage?: string | null;
+  onChromeChange?: (snapshot: AssistantChromeSnapshot) => void;
 }
 
 function assistantIcon(intent: AssistantIntent) {
@@ -258,6 +258,7 @@ export function UnifiedAssistantPanel({
   onVaultRefresh,
   selectionQuote,
   prefillMessage,
+  onChromeChange,
 }: UnifiedAssistantPanelProps) {
   const [actionState, setActionState] = useState<AssistantActionState>(
     buildActionState("chat", "idle"),
@@ -306,7 +307,6 @@ export function UnifiedAssistantPanel({
     startNewSession: boolean;
   } | null>(null);
   const [activityHint, setActivityHint] = useState<string | null>(null);
-  const [turnTokenUsage, setTurnTokenUsage] = useState<TokenUsage | null>(null);
   const [sessionTokenUsage, setSessionTokenUsage] = useState<TokenUsage | null>(
     null,
   );
@@ -314,6 +314,27 @@ export function UnifiedAssistantPanel({
   const requestIdRef = useRef<string | null>(null);
   const [harnessRequestId, setHarnessRequestId] = useState<string | null>(null);
   const harnessActivity = useHarnessActivity(harnessRequestId, streaming);
+
+  useEffect(() => {
+    onChromeChange?.(
+      buildAssistantChromeSnapshot({
+        sessionTokenUsage,
+        activityHint,
+        streaming,
+        messages,
+        harnessPhaseLabel: harnessActivity.latestPhaseLabel,
+        packets,
+      }),
+    );
+  }, [
+    activityHint,
+    harnessActivity.latestPhaseLabel,
+    messages,
+    onChromeChange,
+    packets,
+    sessionTokenUsage,
+    streaming,
+  ]);
 
   useEffect(() => {
     if (!streaming) return;
@@ -557,7 +578,6 @@ export function UnifiedAssistantPanel({
     setSelectedPacketIds([]);
     setMessages([]);
     setSessionId(null);
-    setTurnTokenUsage(null);
     setSessionTokenUsage(null);
     setInput("");
     setActivityHint(null);
@@ -658,7 +678,6 @@ export function UnifiedAssistantPanel({
         setHarnessRequestId(result.request_id);
         setSessionId(result.session_id);
         if (result.usage) {
-          setTurnTokenUsage(result.usage);
           setSessionTokenUsage((prev) => ({
             prompt_tokens:
               (prev?.prompt_tokens ?? 0) + result.usage!.prompt_tokens,
@@ -775,7 +794,20 @@ export function UnifiedAssistantPanel({
         );
       }
       if (result.usage) {
-        setTurnTokenUsage(result.usage);
+        setSessionTokenUsage((prev) => ({
+          prompt_tokens:
+            (prev?.prompt_tokens ?? 0) + result.usage!.prompt_tokens,
+          completion_tokens:
+            (prev?.completion_tokens ?? 0) + result.usage!.completion_tokens,
+          total_tokens:
+            (prev?.total_tokens ?? 0) + result.usage!.total_tokens,
+          prompt_cache_hit_tokens:
+            (prev?.prompt_cache_hit_tokens ?? 0) +
+            (result.usage!.prompt_cache_hit_tokens ?? 0),
+          prompt_cache_miss_tokens:
+            (prev?.prompt_cache_miss_tokens ?? 0) +
+            (result.usage!.prompt_cache_miss_tokens ?? 0),
+        }));
       }
       setMessages((prev) => {
         const next = [...prev];
@@ -1323,12 +1355,6 @@ export function UnifiedAssistantPanel({
     [actionState.label, actionState.status, contextLabel, showTaskHint],
   );
 
-  const showContextStatusBar =
-    streaming ||
-    packets.length > 0 ||
-    contextStatusData !== null ||
-    actionState.status !== "idle";
-
   const ActionIcon = assistantIcon(actionState.intent);
   const activeScene: AiScene = resolveAiSceneForIntent(actionState.intent);
   const isDefaultAssistantName =
@@ -1422,22 +1448,13 @@ export function UnifiedAssistantPanel({
         </div>
       </header>
 
-      {showContextStatusBar ? (
-        <ContextStatusBar
-          contextStatus={contextStatusData}
-          totalPackets={packets.length}
-          webPacketCount={packets.filter((p) => p.source_type === "web").length}
-          corpusNames={corpusNames}
-          webSearchEnabled={webSearch}
-        />
-      ) : null}
-
       <ContextPacketDrawer
         open={packetsOpen}
         onOpenChange={setPacketsOpen}
         packets={packets}
         selectedIds={selectedPacketIds}
         onSelect={togglePacketSelection}
+        contextStatus={contextStatusData}
         citationMiss={citationMiss}
       />
 
@@ -1651,18 +1668,6 @@ export function UnifiedAssistantPanel({
 
       <ContextScopeChips tokens={mentionTokens} onRemove={removeMentionToken} />
 
-      <TokenUsageBar
-        turnUsage={turnTokenUsage}
-        sessionTotal={sessionTokenUsage}
-      />
-
-      {streaming ? (
-        <HarnessActivityStrip
-          activity={harnessActivity}
-          statusHint={activityHint}
-        />
-      ) : null}
-
       <div data-testid="ai-input">
         <AiComposerContextMenu
           textareaRef={textareaRef}
@@ -1673,7 +1678,6 @@ export function UnifiedAssistantPanel({
             value={input}
             streaming={streaming}
             disabled={streaming}
-            statusHint={streaming ? activityHint : null}
             placeholder="输入问题，或直接说明你想查、想改、想检、想整理什么"
             textareaRef={textareaRef}
             onComposerKeyDown={handleComposerKeyDown}

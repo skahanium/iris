@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { aiMarked } from "@/lib/ai/marked-ai";
+import { proseMarked as aiMarked } from "@/lib/markdown-render";
 
 function removeAttrQuirks(html: string): string {
   return html.replace(/=""/g, "");

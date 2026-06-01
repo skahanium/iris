@@ -3,6 +3,8 @@
 //! Manages user_profile CRUD, knowledge_deposits inbox,
 //! and user rule management (§8.2, §8.4, §E).
 
+use std::sync::Arc;
+
 use crate::app::AppState;
 use crate::error::AppResult;
 use serde::{Deserialize, Serialize};
@@ -40,7 +42,7 @@ pub struct KnowledgeDeposit {
 /// List all user profile entries.
 #[tauri::command]
 pub fn profile_list(
-    state: State<'_, AppState>,
+    state: State<'_, Arc<AppState>>,
     include_inactive: Option<bool>,
 ) -> AppResult<Vec<ProfileEntry>> {
     let include = include_inactive.unwrap_or(false);
@@ -71,7 +73,7 @@ pub fn profile_list(
 
 /// Get a single profile entry by key.
 #[tauri::command]
-pub fn profile_get(state: State<'_, AppState>, key: String) -> AppResult<Option<ProfileEntry>> {
+pub fn profile_get(state: State<'_, Arc<AppState>>, key: String) -> AppResult<Option<ProfileEntry>> {
     state.db.with_conn(|conn| {
         let result = conn.query_row(
             "SELECT key, value, source, confidence, is_active, updated_at FROM user_profile WHERE key = ?1",
@@ -100,7 +102,7 @@ pub fn profile_get(state: State<'_, AppState>, key: String) -> AppResult<Option<
 /// 以纯文本描述保存规则（写入 `{"description": "..."}` 结构）。
 #[tauri::command]
 pub fn profile_set_rule(
-    state: State<'_, AppState>,
+    state: State<'_, Arc<AppState>>,
     key: String,
     description: String,
     source: Option<String>,
@@ -120,7 +122,7 @@ pub fn profile_set_rule(
 /// Safety: rejects values containing API keys, passwords, or sensitive content.
 #[tauri::command]
 pub fn profile_set(
-    state: State<'_, AppState>,
+    state: State<'_, Arc<AppState>>,
     key: String,
     value: serde_json::Value,
     source: String,
@@ -151,7 +153,7 @@ pub fn profile_set(
 
 /// Deactivate a profile entry (soft delete).
 #[tauri::command]
-pub fn profile_deactivate(state: State<'_, AppState>, key: String) -> AppResult<()> {
+pub fn profile_deactivate(state: State<'_, Arc<AppState>>, key: String) -> AppResult<()> {
     let now = chrono::Utc::now().to_rfc3339();
     state.db.with_conn(|conn| {
         conn.execute(
@@ -164,7 +166,7 @@ pub fn profile_deactivate(state: State<'_, AppState>, key: String) -> AppResult<
 
 /// Delete a profile entry permanently.
 #[tauri::command]
-pub fn profile_delete(state: State<'_, AppState>, key: String) -> AppResult<()> {
+pub fn profile_delete(state: State<'_, Arc<AppState>>, key: String) -> AppResult<()> {
     state.db.with_conn(|conn| {
         conn.execute("DELETE FROM user_profile WHERE key = ?1", [&key])?;
         Ok(())
@@ -176,7 +178,7 @@ pub fn profile_delete(state: State<'_, AppState>, key: String) -> AppResult<()> 
 /// List knowledge deposits (inbox items).
 #[tauri::command]
 pub fn inbox_list(
-    state: State<'_, AppState>,
+    state: State<'_, Arc<AppState>>,
     status: Option<String>,
 ) -> AppResult<Vec<KnowledgeDeposit>> {
     let status_filter = status.unwrap_or_else(|| "inbox".to_string());
@@ -208,7 +210,7 @@ pub fn inbox_list(
 /// Create a new knowledge deposit (add to inbox).
 #[tauri::command]
 pub fn inbox_add(
-    state: State<'_, AppState>,
+    state: State<'_, Arc<AppState>>,
     deposit_type: String,
     content: String,
     source_note: Option<String>,
@@ -229,7 +231,7 @@ pub fn inbox_add(
 /// Update deposit status (e.g., 'inbox' → 'archived' → 'written').
 #[tauri::command]
 pub fn inbox_update_status(
-    state: State<'_, AppState>,
+    state: State<'_, Arc<AppState>>,
     deposit_id: i64,
     new_status: String,
     target_path: Option<String>,
@@ -254,7 +256,7 @@ pub fn inbox_update_status(
 
 /// Delete a knowledge deposit.
 #[tauri::command]
-pub fn inbox_delete(state: State<'_, AppState>, deposit_id: i64) -> AppResult<()> {
+pub fn inbox_delete(state: State<'_, Arc<AppState>>, deposit_id: i64) -> AppResult<()> {
     state.db.with_conn(|conn| {
         conn.execute("DELETE FROM knowledge_deposits WHERE id = ?1", [deposit_id])?;
         Ok(())
@@ -263,7 +265,7 @@ pub fn inbox_delete(state: State<'_, AppState>, deposit_id: i64) -> AppResult<()
 
 /// Get inbox counts by status.
 #[tauri::command]
-pub fn inbox_counts(state: State<'_, AppState>) -> AppResult<serde_json::Value> {
+pub fn inbox_counts(state: State<'_, Arc<AppState>>) -> AppResult<serde_json::Value> {
     state.db.with_conn(|conn| {
         let inbox: i64 = conn.query_row(
             "SELECT COUNT(*) FROM knowledge_deposits WHERE status = 'inbox'",

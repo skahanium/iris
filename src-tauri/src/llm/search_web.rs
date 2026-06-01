@@ -21,10 +21,17 @@ use super::web_search_config::{
     WebSearchPreferences,
 };
 
-fn query_hash_key(query: &str, backend: WebSearchEffectiveBackend) -> String {
+fn query_hash_key(
+    query: &str,
+    backend: WebSearchEffectiveBackend,
+    minimax_model: &str,
+) -> String {
     let mut hasher = Sha256::new();
     hasher.update(query.as_bytes());
     hasher.update(backend.as_str().as_bytes());
+    if backend == WebSearchEffectiveBackend::Minimax {
+        hasher.update(minimax_model.trim().as_bytes());
+    }
     hex::encode(hasher.finalize())
 }
 
@@ -49,18 +56,19 @@ pub async fn fetch_search_context(
 ) -> AppResult<WebSearchFetchResult> {
     let mode = prefs.backend_mode;
     let host = prefs.minimax_api_host.as_str();
+    let model = prefs.minimax_search_model.as_str();
 
     if mode == WebSearchBackendMode::Duckduckgo {
         return fetch_duckduckgo_only(query).await;
     }
 
     if mode == WebSearchBackendMode::Minimax {
-        return fetch_minimax_only(query, host).await;
+        return fetch_minimax_only(query, host, model).await;
     }
 
     // auto: MiniMax → DuckDuckGo
     if credentials::has_secret(MINIMAX_CREDENTIAL_SERVICE) {
-        match fetch_minimax_cached(query, host).await {
+        match fetch_minimax_cached(query, host, model).await {
             Ok(r) => return Ok(r),
             Err(e) => {
                 tracing::warn!("MiniMax search failed, falling back: {e}");
@@ -80,30 +88,38 @@ pub async fn fetch_search_context_for_db(
     fetch_search_context(query, &prefs).await
 }
 
-async fn fetch_minimax_only(query: &str, host: &str) -> AppResult<WebSearchFetchResult> {
+async fn fetch_minimax_only(
+    query: &str,
+    host: &str,
+    model: &str,
+) -> AppResult<WebSearchFetchResult> {
     if !credentials::has_secret(MINIMAX_CREDENTIAL_SERVICE) {
         return Err(AppError::msg("未配置 MiniMax API Key"));
     }
-    fetch_minimax_cached(query, host).await
+    fetch_minimax_cached(query, host, model).await
 }
 
-async fn fetch_minimax_cached(query: &str, host: &str) -> AppResult<WebSearchFetchResult> {
+async fn fetch_minimax_cached(
+    query: &str,
+    host: &str,
+    model: &str,
+) -> AppResult<WebSearchFetchResult> {
     let backend = WebSearchEffectiveBackend::Minimax;
-    if let Some(cached) = cache_get(query, backend) {
+    if let Some(cached) = cache_get(query, backend, model) {
         return Ok(WebSearchFetchResult {
             body: cached,
             backend,
         });
     }
     throttle()?;
-    let body = minimax_search::search(query, host).await?;
-    cache_set(query, backend, &body);
+    let body = minimax_search::search(query, host, model).await?;
+    cache_set(query, backend, model, &body);
     Ok(WebSearchFetchResult { body, backend })
 }
 
 async fn fetch_duckduckgo_only(query: &str) -> AppResult<WebSearchFetchResult> {
     let backend = WebSearchEffectiveBackend::Duckduckgo;
-    if let Some(cached) = cache_get(query, backend) {
+    if let Some(cached) = cache_get(query, backend, "") {
         return Ok(WebSearchFetchResult {
             body: cached,
             backend,
@@ -111,7 +127,7 @@ async fn fetch_duckduckgo_only(query: &str) -> AppResult<WebSearchFetchResult> {
     }
     throttle()?;
     let body = duckduckgo_search(query).await?;
-    cache_set(query, backend, &body);
+    cache_set(query, backend, "", &body);
     Ok(WebSearchFetchResult { body, backend })
 }
 
@@ -274,8 +290,12 @@ fn throttle() -> AppResult<()> {
     Ok(())
 }
 
-fn cache_get(query: &str, backend: WebSearchEffectiveBackend) -> Option<String> {
-    let key = query_hash_key(query, backend);
+fn cache_get(
+    query: &str,
+    backend: WebSearchEffectiveBackend,
+    minimax_model: &str,
+) -> Option<String> {
+    let key = query_hash_key(query, backend, minimax_model);
     let cache = SEARCH_CACHE.lock().ok()?;
     if let Some((t, v)) = cache.get(&key) {
         if t.elapsed() < Duration::from_secs(1800) {
@@ -285,9 +305,14 @@ fn cache_get(query: &str, backend: WebSearchEffectiveBackend) -> Option<String> 
     None
 }
 
-fn cache_set(query: &str, backend: WebSearchEffectiveBackend, value: &str) {
+fn cache_set(
+    query: &str,
+    backend: WebSearchEffectiveBackend,
+    minimax_model: &str,
+    value: &str,
+) {
     if let Ok(mut cache) = SEARCH_CACHE.lock() {
-        let key = query_hash_key(query, backend);
+        let key = query_hash_key(query, backend, minimax_model);
         cache.insert(key, (Instant::now(), value.to_string()));
         if cache.len() > MAX_CACHE_ENTRIES {
             let mut entries: Vec<_> = cache.iter().collect();

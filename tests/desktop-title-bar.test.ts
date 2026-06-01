@@ -37,12 +37,20 @@ describe("desktop title bar", () => {
     const bar = read("src/components/layout/DesktopTitleBar.tsx");
     expect(bar).toContain('data-testid="desktop-title-bar"');
     expect(bar).toContain("showCustomWindowControls");
+    expect(bar).toContain("customWindowControls");
+    expect(bar).toContain("headerNativeDragRegion");
     expect(bar).toContain("macEmptyToolbar");
     expect(bar).toContain('role="banner"');
 
     const platform = read("src/lib/platform-chrome.ts");
     expect(platform).toContain("isMacOSDesktopChrome");
     expect(platform).toContain("showCustomWindowControls");
+
+    const controls = read("src/components/layout/WindowControls.tsx");
+    expect(controls).toContain("iris-window-controls");
+    expect(controls).toContain("stopPropagation");
+    expect(bar).toContain("--window-controls-width");
+    expect(bar).toContain("absolute inset-y-0 right-0");
   });
 
   it("TabBar re-exports DesktopTitleBar for backward compatibility", () => {

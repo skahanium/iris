@@ -54,6 +54,15 @@ export function useMacOSWindowChromeSync(): void {
       await syncChromeMetrics();
       const fullscreen = await win.isFullscreen();
       setFullscreenDataset(fullscreen);
+      if (!fullscreen) {
+        await reapplyWindowChrome();
+        await new Promise<void>((resolve) => {
+          requestAnimationFrame(() => {
+            requestAnimationFrame(() => resolve());
+          });
+        });
+        await reapplyWindowChrome();
+      }
     })();
 
     const unlistenPromise = Promise.all([

@@ -19,8 +19,9 @@ function read(path: string): string {
 describe("chrome metrics SSOT", () => {
   it("TypeScript mirror matches Rust chrome_metrics constants", () => {
     const rust = read("src-tauri/src/chrome_metrics.rs");
-    expect(rust).toContain("pub const MACOS_TITLEBAR_HEIGHT: f64 = 32.0");
+    expect(rust).toContain("pub const TITLEBAR_HEIGHT: f64 = 32.0");
     expect(rust).toContain("pub const DEFAULT_TITLEBAR_HEIGHT: f64 = 40.0");
+    expect(rust).toContain("TITLEBAR_HEIGHT as MACOS_TITLEBAR_HEIGHT");
     expect(MACOS_TITLEBAR_HEIGHT_PX).toBe(32);
     expect(DEFAULT_TITLEBAR_HEIGHT_PX).toBe(40);
     expect(MACOS_TRAFFIC_INSET_PX).toBe(72);

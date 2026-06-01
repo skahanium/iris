@@ -76,7 +76,7 @@ describe("panel overlay migration", () => {
 
     const appSource = read("src/App.tsx");
     for (const componentName of [
-      "FileSheet",
+      "VaultNavigator",
       "SearchPanel",
       "SettingsPanel",
       "BacklinksPanel",

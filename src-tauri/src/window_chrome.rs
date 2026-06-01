@@ -98,8 +98,13 @@ mod tests {
     }
 
     #[test]
-    fn titlebar_heights_match_chrome_metrics() {
+    fn default_titlebar_height_matches_chrome_metrics() {
         assert_eq!(crate::chrome_metrics::DEFAULT_TITLEBAR_HEIGHT, 40.0);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_titlebar_height_matches_chrome_metrics() {
         assert_eq!(crate::chrome_metrics::MACOS_TITLEBAR_HEIGHT, 32.0);
     }
 

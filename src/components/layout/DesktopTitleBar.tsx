@@ -47,6 +47,10 @@ export const DesktopTitleBar = memo(function DesktopTitleBar({
   /** macOS 窗口模式：整行 items-center，与 32px 交通灯中线对齐 */
   const macCenteredChrome = isMacDesktop && !isSplash;
 
+  const customWindowControls = isDesktop && showCustomWindowControls();
+  /** Win/Linux 自定义三键时勿在 header 根上设 drag-region，否则 WebView2 会吞掉最小化/最大化点击 */
+  const headerNativeDragRegion = isDesktop && !customWindowControls;
+
   const onDragMouseDown = useMemo(() => {
     if (!isDesktop) return undefined;
     return createWindowDragMouseDown(getCurrentWindow());
@@ -60,9 +64,11 @@ export const DesktopTitleBar = memo(function DesktopTitleBar({
         "iris-desktop-titlebar flex h-[var(--titlebar-height)] shrink-0 cursor-default select-none border-b border-border/60 bg-surface-chrome",
         macCenteredChrome ? "items-center" : "items-stretch",
         isDesktop && "iris-desktop-titlebar--desktop",
+        customWindowControls &&
+          "relative pr-[var(--window-controls-width)]",
         macEmptyToolbar && "iris-desktop-titlebar--mac-empty",
       )}
-      data-tauri-drag-region={isDesktop ? true : undefined}
+      data-tauri-drag-region={headerNativeDragRegion ? true : undefined}
       onMouseDown={onDragMouseDown}
     >
       {macEmptyToolbar ? (
@@ -76,7 +82,10 @@ export const DesktopTitleBar = memo(function DesktopTitleBar({
               Iris
             </span>
           </div>
-          <div className="min-w-0 flex-1 self-stretch" data-tauri-drag-region />
+          <div
+            className="min-w-0 flex-1 self-stretch"
+            data-tauri-drag-region={customWindowControls ? true : undefined}
+          />
           <button
             type="button"
             data-tauri-drag-region-exclude
@@ -99,6 +108,7 @@ export const DesktopTitleBar = memo(function DesktopTitleBar({
           <div
             className="flex h-full shrink-0 items-center gap-2 px-3"
             aria-label="拖动窗口"
+            data-tauri-drag-region={customWindowControls ? true : undefined}
           >
             <IrisMark size={18} />
             <span className="text-sm font-semibold tracking-tight text-foreground/90">
@@ -177,10 +187,17 @@ export const DesktopTitleBar = memo(function DesktopTitleBar({
           </div>
         </div>
       ) : !macEmptyToolbar ? (
-        <div className="min-w-0 flex-1" data-tauri-drag-region />
+        <div
+          className="min-w-0 flex-1"
+          data-tauri-drag-region={customWindowControls ? true : undefined}
+        />
       ) : null}
 
-      {isDesktop && showCustomWindowControls() ? <WindowControls /> : null}
+      {customWindowControls ? (
+        <div className="absolute inset-y-0 right-0 z-30 flex">
+          <WindowControls />
+        </div>
+      ) : null}
     </header>
   );
 });
