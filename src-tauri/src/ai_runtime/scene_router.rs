@@ -26,8 +26,8 @@ pub fn resolve_scene(scene: AiScene) -> SceneProfile {
             default_global_scope: true,
             max_agentic_rounds: 3,
             max_tool_calls_per_round: 4,
-            default_token_budget: 6_000,
-            max_token_budget: 12_000,
+            default_token_budget: 30_000,
+            max_token_budget: 80_000,
         },
         AiScene::ExemplarLearning => SceneProfile {
             scene,
@@ -35,8 +35,8 @@ pub fn resolve_scene(scene: AiScene) -> SceneProfile {
             default_global_scope: false,
             max_agentic_rounds: 2,
             max_tool_calls_per_round: 4,
-            default_token_budget: 10_000,
-            max_token_budget: 20_000,
+            default_token_budget: 50_000,
+            max_token_budget: 120_000,
         },
         AiScene::DraftingAssist => SceneProfile {
             scene,
@@ -44,8 +44,8 @@ pub fn resolve_scene(scene: AiScene) -> SceneProfile {
             default_global_scope: false,
             max_agentic_rounds: 3,
             max_tool_calls_per_round: 5,
-            default_token_budget: 12_000,
-            max_token_budget: 25_000,
+            default_token_budget: 60_000,
+            max_token_budget: 160_000,
         },
         AiScene::ResearchSynthesis => SceneProfile {
             scene,
@@ -53,8 +53,8 @@ pub fn resolve_scene(scene: AiScene) -> SceneProfile {
             default_global_scope: true,
             max_agentic_rounds: 4,
             max_tool_calls_per_round: 6,
-            default_token_budget: 20_000,
-            max_token_budget: 50_000,
+            default_token_budget: 100_000,
+            max_token_budget: 240_000,
         },
     }
 }

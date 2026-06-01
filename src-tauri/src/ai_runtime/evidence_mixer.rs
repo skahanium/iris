@@ -28,8 +28,15 @@ pub fn classify_source_rank(domain: &str) -> WebSourceRank {
         || d.ends_with(".gov")
         || d.ends_with(".edu.cn")
         || d.ends_with(".edu")
-        || d.contains("court")
+        || d.ends_with(".mil")
+        || d.contains("court.gov")
         || d.contains("npc.gov")
+        || d.contains("people.cn")
+        || d.contains("people.com.cn")
+        || d.contains("xinhua")
+        || d.contains("cctv.com")
+        || d.contains("mod.gov")
+        || d.ends_with(".政务.cn")
     {
         return WebSourceRank::Official;
     }
@@ -38,12 +45,20 @@ pub fn classify_source_rank(domain: &str) -> WebSourceRank {
         || d.contains("doi.org")
         || d.contains("cnki")
         || d.contains("wanfangdata")
+        || d.contains("webofscience")
+        || d.contains("pubmed")
+        || d.contains("springer")
+        || d.contains("sciencedirect")
     {
         return WebSourceRank::Academic;
     }
     if d.contains("wikipedia")
         || d.contains("news.")
-        || d.ends_with(".com.cn") && (d.contains("xinhua") || d.contains("people.com"))
+        || d.contains("bbc.")
+        || d.contains("reuters")
+        || d.contains("thepaper.cn")
+        || d.contains("caixin.com")
+        || (d.ends_with(".com.cn") && (d.contains("xinhua") || d.contains("people.com")))
     {
         return WebSourceRank::Media;
     }
@@ -52,6 +67,8 @@ pub fn classify_source_rank(domain: &str) -> WebSourceRank {
         || d.contains("zhihu.com")
         || d.contains("weibo")
         || d.contains("tieba")
+        || d.contains("douban")
+        || d.contains("bilibili")
     {
         return WebSourceRank::Community;
     }
@@ -318,6 +335,30 @@ mod tests {
         ));
         assert!(matches!(
             classify_source_rank("arxiv.org"),
+            WebSourceRank::Academic
+        ));
+    }
+
+    #[test]
+    fn classifies_chinese_domains() {
+        assert!(matches!(
+            classify_source_rank("people.cn"),
+            WebSourceRank::Official
+        ));
+        assert!(matches!(
+            classify_source_rank("thepaper.cn"),
+            WebSourceRank::Media
+        ));
+        assert!(matches!(
+            classify_source_rank("cnki.net"),
+            WebSourceRank::Academic
+        ));
+        assert!(matches!(
+            classify_source_rank("bilibili.com"),
+            WebSourceRank::Community
+        ));
+        assert!(matches!(
+            classify_source_rank("sciencedirect.com"),
             WebSourceRank::Academic
         ));
     }

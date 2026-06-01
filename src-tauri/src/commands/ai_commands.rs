@@ -283,6 +283,8 @@ pub(crate) async fn execute_ai_send_message(
             history_messages,
             depth: 0,
             resume_from_checkpoint: false,
+            token_budget: None,
+            max_rounds_override: None,
         },
         provider_config,
         Some(resolved.output_budget),
@@ -428,10 +430,10 @@ pub async fn tool_confirm(
     let result = crate::ai_runtime::tool_dispatch::dispatch_tool(
         state.inner(),
         &crate::ai_runtime::tool_dispatch::ToolDispatchContext {
-            scene: AiScene::KnowledgeLookup,
-            note_path: None,
-            file_id: None,
-            web_search_enabled: true,
+            scene: pending.scene,
+            note_path: pending.note_path.as_deref(),
+            file_id: pending.file_id,
+            web_search_enabled: pending.web_search_enabled,
             cold_start_packets: &[],
         },
         &pending.tool_name,
@@ -745,10 +747,14 @@ pub async fn ai_cache_clear(state: State<'_, Arc<AppState>>) -> AppResult<serde_
             .unwrap_or(0);
         Ok::<_, crate::error::AppError>((checkpoints, deposits))
     })?;
+    let web_pages = crate::llm::fetch_web_page::clear_web_cache(&state.db).unwrap_or(0);
+    let searches = crate::llm::search_web::cleanup_expired_search_cache(&state.db).unwrap_or(0);
     Ok(serde_json::json!({
         "sessions_deleted": sessions,
         "checkpoints_cleared": checkpoints,
         "deposits_deleted": deposits,
+        "web_pages_cleared": web_pages,
+        "searches_cleared": searches,
     }))
 }
 
@@ -783,6 +789,8 @@ pub async fn harness_resume(
             history_messages: vec![],
             depth: cp.meta.depth,
             resume_from_checkpoint: true,
+            token_budget: None,
+            max_rounds_override: None,
         },
         provider_config,
         Some(resolved.output_budget),

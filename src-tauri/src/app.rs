@@ -12,10 +12,17 @@ use crate::storage::db::Database;
 use crate::watcher::FileWatcher;
 
 /// A tool call awaiting user confirmation.
+use crate::ai_runtime::AiScene;
+
+#[derive(Debug, Clone)]
 pub struct PendingToolCall {
     pub tool_name: String,
     pub arguments: String,
     pub request_id: String,
+    pub scene: AiScene,
+    pub note_path: Option<String>,
+    pub file_id: Option<i64>,
+    pub web_search_enabled: bool,
 }
 
 pub struct AppState {
@@ -50,6 +57,14 @@ impl AppState {
             embed_queue: OnceLock::new(),
             write_guard: WriteGuard::default(),
         });
+
+        // 启动时清理过期缓存
+        if let Err(e) = crate::llm::search_web::cleanup_expired_search_cache(&state.db) {
+            tracing::warn!("failed to cleanup expired search cache: {e}");
+        }
+        if let Err(e) = crate::llm::fetch_web_page::cleanup_expired_web_cache(&state.db) {
+            tracing::warn!("failed to cleanup expired web cache: {e}");
+        }
 
         if let Some(v) = state.load_vault_setting()? {
             let path = PathBuf::from(v);

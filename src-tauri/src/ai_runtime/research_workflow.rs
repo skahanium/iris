@@ -122,7 +122,7 @@ impl Default for ResearchConfig {
             max_rounds: 4,
             max_tools_per_round: 6,
             web_research_authorized: false,
-            token_budget: 40_000,
+            token_budget: 240_000,
         }
     }
 }

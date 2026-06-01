@@ -12,22 +12,37 @@ static HOST_LAST_REQUEST: LazyLock<Mutex<HashMap<String, Instant>>> =
 
 const MIN_INTERVAL_SECS: u64 = 2;
 
-/// Block until at least `MIN_INTERVAL_SECS` since the last request to this host.
-pub fn throttle_host(host: &str) -> AppResult<()> {
+/// Async throttle: sleep until at least `MIN_INTERVAL_SECS` since the last request to this host.
+/// Lock is released before the async sleep to avoid blocking the runtime.
+pub async fn throttle_host(host: &str) -> AppResult<()> {
     let key = host.trim().to_lowercase();
     if key.is_empty() {
         return Ok(());
     }
-    let mut map = HOST_LAST_REQUEST
-        .lock()
-        .map_err(|_| AppError::msg("Lock error"))?;
-    if let Some(t) = map.get(&key) {
-        let elapsed = t.elapsed();
-        if elapsed < Duration::from_secs(MIN_INTERVAL_SECS) {
-            std::thread::sleep(Duration::from_secs(MIN_INTERVAL_SECS) - elapsed);
+    let need_wait = {
+        let map = HOST_LAST_REQUEST
+            .lock()
+            .map_err(|_| AppError::msg("Lock error"))?;
+        if let Some(t) = map.get(&key) {
+            let elapsed = t.elapsed();
+            if elapsed < Duration::from_secs(MIN_INTERVAL_SECS) {
+                Some(Duration::from_secs(MIN_INTERVAL_SECS) - elapsed)
+            } else {
+                None
+            }
+        } else {
+            None
         }
+    }; // lock dropped here
+
+    if let Some(wait) = need_wait {
+        tokio::time::sleep(tokio::time::Duration::from_millis(wait.as_millis() as u64)).await;
     }
-    map.insert(key, Instant::now());
+
+    HOST_LAST_REQUEST
+        .lock()
+        .map_err(|_| AppError::msg("Lock error"))?
+        .insert(key, Instant::now());
     Ok(())
 }
 
@@ -35,8 +50,8 @@ pub fn throttle_host(host: &str) -> AppResult<()> {
 mod tests {
     use super::*;
 
-    #[test]
-    fn throttle_host_accepts_empty() {
-        throttle_host("").unwrap();
+    #[tokio::test]
+    async fn throttle_host_accepts_empty() {
+        throttle_host("").await.unwrap();
     }
 }

@@ -98,9 +98,6 @@ async fn dispatch_tool_inner(
         "get_outline" => get_outline(state, args).await,
         "get_backlinks" => get_backlinks(state, args).await,
         "get_block_links" => get_block_links(state, args).await,
-        "get_genre_template" | "get_model_essays" => Err(AppError::msg(format!(
-            "tool {tool_name} not yet wired in harness dispatch"
-        ))),
         _ => Err(AppError::msg(format!("unknown tool: {tool_name}"))),
     }
 }

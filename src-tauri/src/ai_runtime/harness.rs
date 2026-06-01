@@ -81,6 +81,10 @@ pub struct HarnessRunInput {
     pub depth: u32,
     /// Resume from persisted checkpoint (harness_resume).
     pub resume_from_checkpoint: bool,
+    /// Override max agentic rounds (None = use scene profile default).
+    pub max_rounds_override: Option<u32>,
+    /// Override token budget (None = use scene profile default).
+    pub token_budget: Option<u32>,
 }
 
 /// Run the unified agent harness loop.
@@ -156,8 +160,11 @@ pub async fn run_harness(
     let mut pending_confirmation = false;
     let mut reflection_done = false;
     let mut bonus_round_used = false;
-    let token_budget = profile.max_token_budget as u32;
-    let mut max_rounds = profile.max_agentic_rounds;
+    let token_budget = input.token_budget.unwrap_or(profile.max_token_budget as u32);
+    let mut max_rounds = input
+        .max_rounds_override
+        .unwrap_or(profile.max_agentic_rounds)
+        .min(profile.max_agentic_rounds);
 
     if input.resume_from_checkpoint {
         if let Some(cp) = load_harness_checkpoint(&state.db, &input.request_id)? {
@@ -328,7 +335,7 @@ pub async fn run_harness(
                 }
             }
 
-            save_round_checkpoint(
+            if let Err(e) = save_round_checkpoint(
                 state,
                 &input,
                 &checkpoint_meta,
@@ -339,7 +346,9 @@ pub async fn run_harness(
                 &tool_results_json,
                 &evidence_packets,
                 &total_usage,
-            )?;
+            ) {
+                tracing::warn!("checkpoint save failed for {}: {e}", input.request_id);
+            }
 
             compact_evidence(&mut evidence_packets, profile.default_token_budget);
 
@@ -394,6 +403,10 @@ pub async fn run_harness(
                             tool_name: tool_name.clone(),
                             arguments: tool_call.function.arguments.clone(),
                             request_id: input.request_id.clone(),
+                            scene: input.scene,
+                            note_path: input.note_path.clone(),
+                            file_id,
+                            web_search_enabled: input.web_search_enabled,
                         },
                     );
                     let confirm_request = serde_json::json!({
@@ -546,18 +559,16 @@ pub async fn run_harness(
                         tool_call_id: None,
                         tool_calls: None,
                     });
-                    max_rounds = harness_rounds
-                        .saturating_add(1)
-                        .min(profile.max_agentic_rounds);
+                    max_rounds = (harness_rounds + 1).min(profile.max_agentic_rounds);
                     continue 'agent;
-                } else if !reflect_resp.tool_calls.is_empty() {
-                    // reflection produced tool calls — ignore, proceed to stream
-                } else if !text.trim().is_empty() && reflect_resp.tool_calls.is_empty() {
-                    let stripped = strip_tool_markup_from_visible(&text);
-                    let (visible, thinking) = extract_thinking_blocks(&stripped);
-                    if let Some(t) = thinking {
-                        emit_thinking(app_handle, &input.request_id, harness_rounds, &t)?;
-                    }
+                }
+                // Not NEED_MORE_EVIDENCE — use reflection text as final answer
+                let stripped = strip_tool_markup_from_visible(&text);
+                let (visible, thinking) = extract_thinking_blocks(&stripped);
+                if let Some(t) = thinking {
+                    emit_thinking(app_handle, &input.request_id, harness_rounds, &t)?;
+                }
+                if !visible.trim().is_empty() {
                     return finish_run(
                         state,
                         input,
@@ -573,6 +584,7 @@ pub async fn run_harness(
                     )
                     .await;
                 }
+                // Content empty — fall through to break
             }
         }
         break 'agent;
@@ -804,6 +816,12 @@ async fn run_subagent_harness(
         .unwrap_or(2)
         .min(3) as u32;
 
+    let profile = resolve_scene(parent.scene);
+    let parent_budget = parent
+        .token_budget
+        .unwrap_or(profile.max_token_budget as u32);
+    let sub_budget = (parent_budget * 3 / 5).max(2000); // 60%
+
     let sub_id = format!("{}-sub-{}", parent.request_id, uuid::Uuid::new_v4());
     let sub_input = HarnessRunInput {
         request_id: sub_id,
@@ -817,10 +835,9 @@ async fn run_subagent_harness(
         history_messages: vec![("user".to_string(), task)],
         depth: parent.depth + 1,
         resume_from_checkpoint: false,
+        max_rounds_override: Some(sub_rounds.min(profile.max_agentic_rounds)),
+        token_budget: Some(sub_budget),
     };
-
-    let profile = resolve_scene(parent.scene);
-    let _max_rounds = sub_rounds.min(profile.max_agentic_rounds);
 
     run_harness(state, app_handle, sub_input, provider_config, max_tokens).await
 }
@@ -848,8 +865,7 @@ fn save_round_checkpoint(
         usage: usage.clone(),
         bonus_round_used,
     };
-    let _ = save_harness_checkpoint(&state.db, &input.request_id, &checkpoint);
-    Ok(())
+    save_harness_checkpoint(&state.db, &input.request_id, &checkpoint)
 }
 
 fn emit_thinking(

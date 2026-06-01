@@ -19,6 +19,20 @@ const MAX_RESPONSE_BYTES: usize = 2_000_000;
 const FETCH_TIMEOUT_SECS: u64 = 15;
 const CACHE_TTL_HOURS: i64 = 24;
 
+const USER_AGENTS: &[&str] = &[
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+    "Iris/1.0 (+https://github.com/skahanium/iris)",
+];
+
+fn random_user_agent() -> &'static str {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    std::time::Instant::now().hash(&mut hasher);
+    USER_AGENTS[hasher.finish() as usize % USER_AGENTS.len()]
+}
+
 /// Result of fetching and extracting a web page.
 #[derive(Debug, Clone)]
 pub struct PageFetchResult {
@@ -84,10 +98,12 @@ fn extract_host(url: &str) -> Option<String> {
         .or_else(|| url.strip_prefix("http://"))?;
     let host = rest.split('/').next()?.split('?').next()?.split('#').next()?;
     if host.is_empty() {
-        None
-    } else {
-        Some(host.to_string())
+        return None;
     }
+    // Strip IPv6 brackets
+    let host = host.strip_prefix('[').unwrap_or(host);
+    let host = host.strip_suffix(']').unwrap_or(host);
+    Some(host.to_string())
 }
 
 fn is_blocked_ip(ip: IpAddr) -> bool {
@@ -97,29 +113,67 @@ fn is_blocked_ip(ip: IpAddr) -> bool {
                 || v4.is_private()
                 || v4.is_link_local()
                 || v4.is_unspecified()
-                || v4.octets()[0] == 169 && v4.octets()[1] == 254
+                || (v4.octets()[0] == 169 && v4.octets()[1] == 254)
+                // RFC 6598 Carrier-grade NAT
+                || (v4.octets()[0] == 100 && (v4.octets()[1] & 0xC0) == 64)
+                // RFC 2544 benchmarking
+                || (v4.octets()[0] == 198 && v4.octets()[1] >= 18 && v4.octets()[1] <= 19)
         }
-        IpAddr::V6(v6) => v6.is_loopback() || v6.is_unspecified(),
+        IpAddr::V6(v6) => {
+            v6.is_loopback()
+                || v6.is_unspecified()
+                || is_ipv6_private(v6)
+        }
     }
 }
 
-fn is_private_host_hint(host: &str) -> bool {
-    host.starts_with("127.")
-        || host.starts_with("10.")
-        || host.starts_with("192.168.")
-        || host.starts_with("169.254.")
-        || host.starts_with("[::1]")
-        || host == "::1"
-        || host.starts_with("172.16.")
-        || host.starts_with("172.17.")
-        || host.starts_with("172.18.")
-        || host.starts_with("172.19.")
-        || host.starts_with("172.2")
-        || host.starts_with("172.30.")
-        || host.starts_with("172.31.")
+fn is_ipv6_private(v6: std::net::Ipv6Addr) -> bool {
+    let s = v6.segments();
+    // fc00::/7 — Unique Local Address
+    (s[0] & 0xFE00) == 0xFC00
+    // fe80::/10 — Link-local
+    || (s[0] & 0xFFC0) == 0xFE80
+    // ::ffff:0:0/96 — IPv4-mapped IPv6
+    || (s[0] == 0 && s[1] == 0 && s[2] == 0 && s[3] == 0 && s[4] == 0 && s[5] == 0xFFFF)
+    // 64:ff9b::/96 — IPv4/IPv6 translation
+    || (s[0] == 0x0064 && s[1] == 0xFF9B)
+    // ::1 — loopback (defense-in-depth)
+    || v6.is_loopback()
 }
 
-/// Extract readable plain text from HTML.
+fn is_private_host_hint(host: &str) -> bool {
+    // Try parsing as IP address first
+    if let Ok(ip) = host.parse::<IpAddr>() {
+        return is_blocked_ip(ip);
+    }
+
+    // DNS rebinding detection: domain names containing private IP octets
+    let parts: Vec<&str> = host.split('.').collect();
+    if parts.len() >= 4 {
+        if let (Ok(a), Ok(b)) = (parts[0].parse::<u8>(), parts[1].parse::<u8>()) {
+            // 10.x.x.x, 127.x.x.x, 192.168.x.x
+            if a == 10
+                || a == 127
+                || (a == 192 && b == 168)
+                // 172.16-31.x.x
+                || (a == 172 && (16..=31).contains(&b))
+                // 169.254.x.x
+                || (a == 169 && b == 254)
+            {
+                return true;
+            }
+        }
+    }
+
+    // Common private/intranet domain suffixes
+    host.ends_with(".local")
+        || host.ends_with(".internal")
+        || host.ends_with(".localhost")
+        || host.ends_with(".lan")
+        || host == "localhost"
+}
+
+/// Extract readable plain text from HTML with semantic selectors and noise filtering.
 pub fn extract_readable_text(html: &str) -> (String, Option<String>) {
     let document = Html::parse_document(html);
     let title = Selector::parse("title")
@@ -128,22 +182,48 @@ pub fn extract_readable_text(html: &str) -> (String, Option<String>) {
         .map(|el| el.text().collect::<String>().trim().to_string())
         .filter(|t| !t.is_empty());
 
-    for selector in ["main", "article", "[role=main]"] {
+    // Semantic content selectors in priority order
+    for selector in [
+        "main", "article", "[role=main]", "[role=article]",
+        ".post-content", ".article-content", ".entry-content",
+        ".content", ".main-content", "#content", "#main-content",
+        ".markdown-body",
+    ] {
         if let Ok(sel) = Selector::parse(selector) {
             if let Some(el) = document.select(&sel).next() {
                 let text = normalize_whitespace(&el.text().collect::<String>());
-                if text.len() > 80 {
+                if text.len() > 100 {
                     return (text, title);
                 }
             }
         }
     }
-    if let Ok(sel) = Selector::parse("body") {
-        if let Some(el) = document.select(&sel).next() {
-            let text = normalize_whitespace(&el.text().collect::<String>());
-            return (text, title);
+
+    // Fallback: strip noise elements from body
+    if let Ok(body_sel) = Selector::parse("body") {
+        if let Some(el) = document.select(&body_sel).next() {
+            let noise_tags = ["script", "style", "nav", "footer", "header", "aside", "noscript"];
+            let mut body_html = el.html();
+            for tag in &noise_tags {
+                if let Ok(noise_sel) = Selector::parse(tag) {
+                    for noise_el in document.select(&noise_sel) {
+                        let noise_html = noise_el.html();
+                        body_html = body_html.replace(&noise_html, "");
+                    }
+                }
+            }
+            let cleaned = Html::parse_document(&body_html);
+            if let Ok(body_sel2) = Selector::parse("body") {
+                if let Some(cleaned_body) = cleaned.select(&body_sel2).next() {
+                    let text = normalize_whitespace(&cleaned_body.text().collect::<String>());
+                    if !text.is_empty() {
+                        return (text, title);
+                    }
+                }
+            }
         }
     }
+
     (normalize_whitespace(&document.root_element().text().collect::<String>()), title)
 }
 
@@ -220,6 +300,25 @@ fn store_cache(
     })
 }
 
+/// 清除所有网页缓存（供前端 IPC 调用）。
+pub fn clear_web_cache(db: &Database) -> AppResult<usize> {
+    db.with_conn(|conn| {
+        let deleted = conn.execute("DELETE FROM web_page_cache", [])?;
+        Ok(deleted)
+    })
+}
+
+/// 清理过期网页缓存。
+pub fn cleanup_expired_web_cache(db: &Database) -> AppResult<usize> {
+    db.with_conn(|conn| {
+        let deleted = conn.execute(
+            "DELETE FROM web_page_cache WHERE expires_at < datetime('now')",
+            [],
+        )?;
+        Ok(deleted)
+    })
+}
+
 /// Fetch a page (with SQLite cache and per-host throttle).
 pub async fn fetch_web_page(
     db: &Database,
@@ -231,7 +330,17 @@ pub async fn fetch_web_page(
     let max_chars = max_chars.clamp(1, HARD_MAX_CHARS);
     let hash = url_hash(url);
 
+    tracing::info!(
+        url_hash = %&hash[..8],
+        "web_fetch_start"
+    );
+
     if let Some(cached) = load_cache(db, &hash)? {
+        tracing::info!(
+            url_hash = %&hash[..8],
+            from_cache = true,
+            "web_fetch_complete"
+        );
         let truncated = cached.body_text.chars().count() > max_chars;
         let text: String = cached.body_text.chars().take(max_chars).collect();
         return Ok(PageFetchResult {
@@ -245,11 +354,11 @@ pub async fn fetch_web_page(
     }
 
     let host = extract_host(url).unwrap_or_default();
-    throttle_host(&host)?;
+    throttle_host(&host).await?;
 
     let client = pinned_client_builder()
         .timeout(Duration::from_secs(FETCH_TIMEOUT_SECS))
-        .user_agent("Iris/1.0 (+https://github.com/skahanium/iris)")
+        .user_agent(random_user_agent())
         .build()
         .map_err(|e| AppError::msg(format!("Failed to build HTTP client: {e}")))?;
 
@@ -314,6 +423,13 @@ pub async fn fetch_web_page(
         text = text.chars().take(max_chars).collect();
     }
 
+    tracing::info!(
+        url_hash = %&hash[..8],
+        from_cache = false,
+        char_count = text.chars().count(),
+        "web_fetch_complete"
+    );
+
     Ok(PageFetchResult {
         url: url.to_string(),
         title: title_opt.unwrap_or_default(),
@@ -339,6 +455,58 @@ mod tests {
     }
 
     #[test]
+    fn validate_rejects_ipv6_mapped() {
+        assert!(validate_fetch_url("https://[::ffff:192.168.1.1]/").is_err());
+    }
+
+    #[test]
+    fn validate_rejects_ipv6_link_local() {
+        assert!(validate_fetch_url("https://[fe80::1]/").is_err());
+    }
+
+    #[test]
+    fn validate_rejects_ipv6_ula() {
+        assert!(validate_fetch_url("https://[fd00::1]/").is_err());
+    }
+
+    #[test]
+    fn validate_rejects_ipv6_translation() {
+        assert!(validate_fetch_url("https://[64:ff9b::192.168.1.1]/").is_err());
+    }
+
+    #[test]
+    fn validate_rejects_cgnat() {
+        assert!(validate_fetch_url("https://100.64.0.1/").is_err());
+    }
+
+    #[test]
+    fn validate_rejects_benchmark() {
+        assert!(validate_fetch_url("https://198.18.0.1/").is_err());
+    }
+
+    #[test]
+    fn validate_rejects_dns_rebinding() {
+        assert!(validate_fetch_url("https://192.168.1.1.nip.io/").is_err());
+    }
+
+    #[test]
+    fn validate_rejects_172_private() {
+        assert!(validate_fetch_url("https://172.16.0.1/").is_err());
+        assert!(validate_fetch_url("https://172.31.255.255/").is_err());
+    }
+
+    #[test]
+    fn validate_accepts_172_public() {
+        // 172.32.x.x is public — only 172.16-31 is private
+        validate_fetch_url("https://172.32.0.1.example.com/").unwrap();
+    }
+
+    #[test]
+    fn validate_rejects_local_suffix() {
+        assert!(validate_fetch_url("https://myserver.local/").is_err());
+    }
+
+    #[test]
     fn validate_accepts_https_domain() {
         validate_fetch_url("https://www.example.com/doc").unwrap();
     }
@@ -350,6 +518,30 @@ mod tests {
         let (text, title) = extract_readable_text(html);
         assert_eq!(title.as_deref(), Some("Hi"));
         assert!(text.contains("Hello world"));
+    }
+
+    #[test]
+    fn extract_filters_noise() {
+        let html = r#"<!DOCTYPE html><html><head><title>Test</title></head>
+        <body>
+            <nav>Skip this navigation menu</nav>
+            <header>Page header text</header>
+            <main><p>Main content here with enough text to pass the length threshold for extraction testing purposes.</p></main>
+            <footer>Footer copyright info</footer>
+        </body></html>"#;
+        let (text, _title) = extract_readable_text(html);
+        assert!(text.contains("Main content"));
+    }
+
+    #[test]
+    fn extract_content_selector_priority() {
+        let html = r#"<!DOCTYPE html><html><head><title>P</title></head>
+        <body>
+            <div class="article-content">Real article body content here</div>
+            <main>Less specific main content</main>
+        </body></html>"#;
+        let (text, _title) = extract_readable_text(html);
+        assert!(text.contains("Real article body"));
     }
 
     #[test]

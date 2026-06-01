@@ -38,11 +38,23 @@ pub fn estimate_tokens(text: &str) -> usize {
     (text.chars().count() / 4).max(1)
 }
 
-/// Compact evidence packets when over budget (keeps metadata for low-score items).
-pub fn compact_evidence(packets: &mut [ContextPacket], token_budget: usize) {
+const MAX_EVIDENCE_PACKETS: usize = 100;
+
+/// Compact evidence packets: hard cap on count, then trim low-score excerpts to token budget.
+pub fn compact_evidence(packets: &mut Vec<ContextPacket>, token_budget: usize) {
     if packets.is_empty() {
         return;
     }
+    // Hard cap on packet count — sort by score, keep top N
+    if packets.len() > MAX_EVIDENCE_PACKETS {
+        packets.sort_by(|a, b| {
+            b.score
+                .partial_cmp(&a.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+        packets.truncate(MAX_EVIDENCE_PACKETS);
+    }
+    // Trim low-score excerpts to fit within token budget
     packets.sort_by(|a, b| {
         b.score
             .partial_cmp(&a.score)

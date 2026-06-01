@@ -180,37 +180,6 @@ impl ToolRegistry {
                 max_results: None,
             },
             ToolSpec {
-                name: "get_genre_template".into(),
-                description: "获取指定文种的模板结构、常用句式和风格特征".into(),
-                input_schema: serde_json::json!({
-                    "type": "object",
-                    "properties": {
-                        "genre": {"type": "string", "description": "文种名称，如'报告'、'通知'、'请示'"}
-                    },
-                    "required": ["genre"]
-                }),
-                access_level: ToolAccessLevel::ReadIndex,
-                scene_allowlist: vec![AiScene::ExemplarLearning, AiScene::DraftingAssist],
-                requires_confirmation: false,
-                max_results: Some(10),
-            },
-            ToolSpec {
-                name: "get_model_essays".into(),
-                description: "获取同文种范文的结构特征和表达方式".into(),
-                input_schema: serde_json::json!({
-                    "type": "object",
-                    "properties": {
-                        "genre": {"type": "string", "description": "文种名称"},
-                        "limit": {"type": "integer", "default": 5, "description": "最大返回数量"}
-                    },
-                    "required": ["genre"]
-                }),
-                access_level: ToolAccessLevel::ReadIndex,
-                scene_allowlist: vec![AiScene::ExemplarLearning, AiScene::DraftingAssist],
-                requires_confirmation: false,
-                max_results: Some(10),
-            },
-            ToolSpec {
                 name: "get_block_links".into(),
                 description: "获取笔记的显式或已确认块级链接".into(),
                 input_schema: serde_json::json!({
