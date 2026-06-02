@@ -56,6 +56,7 @@ pub struct CommitObject {
 }
 
 /// CAS 对象存储
+#[derive(Clone)]
 pub struct CasObjectStore {
     base_path: PathBuf,
 }

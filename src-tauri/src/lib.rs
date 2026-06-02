@@ -13,6 +13,7 @@ mod llm;
 mod macos_traffic_lights;
 mod network;
 pub mod recycle;
+mod scheduler;
 mod security;
 pub mod storage;
 pub mod version;
