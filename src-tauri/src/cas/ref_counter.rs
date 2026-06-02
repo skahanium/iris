@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use chrono::Utc;
 
 use crate::error::AppResult;
@@ -5,12 +7,12 @@ use crate::storage::db::Database;
 
 /// 引用计数管理器
 pub struct RefCounter {
-    db: Database,
+    db: Arc<Database>,
 }
 
 impl RefCounter {
     /// 创建新的引用计数管理器
-    pub fn new(db: Database) -> Self {
+    pub fn new(db: Arc<Database>) -> Self {
         Self { db }
     }
 

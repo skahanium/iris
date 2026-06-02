@@ -6,6 +6,8 @@ use std::sync::{Arc, Mutex, OnceLock};
 use serde_json::Value;
 use tauri::AppHandle;
 
+use crate::cas::ref_counter::RefCounter;
+use crate::cas::store::CasObjectStore;
 use crate::embedding::queue::{EmbedQueue, WriteGuard};
 use crate::error::{AppError, AppResult};
 use crate::storage::db::Database;
@@ -26,7 +28,7 @@ pub struct PendingToolCall {
 }
 
 pub struct AppState {
-    pub db: Database,
+    pub db: Arc<Database>,
     vault: Mutex<Option<PathBuf>>,
     data_dir: PathBuf,
     pub watcher: Mutex<Option<FileWatcher>>,
@@ -38,12 +40,14 @@ pub struct AppState {
     pub vector_index_ready: std::sync::atomic::AtomicBool,
     embed_queue: OnceLock<EmbedQueue>,
     pub write_guard: WriteGuard,
+    cas_store: OnceLock<CasObjectStore>,
+    ref_counter: OnceLock<RefCounter>,
 }
 
 impl AppState {
     pub fn new(data_dir: PathBuf) -> AppResult<Arc<Self>> {
         let db_path = data_dir.join("iris.db");
-        let db = Database::open(&db_path)?;
+        let db = Arc::new(Database::open(&db_path)?);
         let vector_ready = db.vector_index_ready();
 
         let state = Arc::new(Self {
@@ -56,6 +60,8 @@ impl AppState {
             vector_index_ready: std::sync::atomic::AtomicBool::new(vector_ready),
             embed_queue: OnceLock::new(),
             write_guard: WriteGuard::default(),
+            cas_store: OnceLock::new(),
+            ref_counter: OnceLock::new(),
         });
 
         // 启动时清理过期缓存
@@ -89,6 +95,21 @@ impl AppState {
     /// Queue background embedding for a file after index metadata is written.
     pub fn enqueue_embedding(self: &Arc<Self>, file_id: i64) {
         self.ensure_embed_queue().enqueue(file_id);
+    }
+
+    /// 获取 CAS 存储实例
+    pub fn cas_store(&self) -> &CasObjectStore {
+        self.cas_store.get_or_init(|| {
+            let vault = self.vault_path().expect("Vault not configured");
+            let cas_path = vault.join(".iris").join("cas");
+            CasObjectStore::new(cas_path).expect("Failed to create CAS store")
+        })
+    }
+
+    /// 获取引用计数管理器实例
+    pub fn ref_counter(&self) -> &RefCounter {
+        self.ref_counter
+            .get_or_init(|| RefCounter::new(Arc::clone(&self.db)))
     }
 
     fn clear_vault_setting(&self) -> AppResult<()> {

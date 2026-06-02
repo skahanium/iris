@@ -1,8 +1,10 @@
+use std::sync::Arc;
+
 use iris_lib::cas::ref_counter::RefCounter;
 use iris_lib::storage::db::Database;
 
 fn setup() -> RefCounter {
-    let db = Database::open_in_memory().unwrap();
+    let db = Arc::new(Database::open_in_memory().unwrap());
     RefCounter::new(db)
 }
 
