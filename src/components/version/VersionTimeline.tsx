@@ -33,7 +33,8 @@ interface VersionTimelineProps {
   open: boolean;
   onClose: () => void;
   notePath: string | null;
-  currentContent: string;
+  currentContent?: string;
+  getCurrentContent?: () => string;
   hasUnsavedEdits?: boolean;
   onRestore: (content: string) => void;
 }
@@ -45,6 +46,7 @@ export function VersionTimeline({
   onClose,
   notePath,
   currentContent,
+  getCurrentContent,
   hasUnsavedEdits = false,
   onRestore,
 }: VersionTimelineProps) {
@@ -93,7 +95,8 @@ export function VersionTimeline({
     const message = buildRestoreConfirmMessage(target, hasUnsavedEdits);
     if (!window.confirm(message)) return;
 
-    const result = await versionRestore(id, currentContent);
+    const liveContent = getCurrentContent?.() ?? currentContent ?? "";
+    const result = await versionRestore(id, liveContent);
     onRestore(result.content);
     refresh();
     setPreview(null);
@@ -122,9 +125,10 @@ export function VersionTimeline({
     if (!notePath) return;
     setFinalizing(true);
     try {
+      const liveContent = getCurrentContent?.() ?? currentContent ?? "";
       await versionFinalizeCurrent(
         notePath,
-        currentContent,
+        liveContent,
         finalizeLabel.trim() || null,
       );
       setFinalizeLabel("");
@@ -221,7 +225,8 @@ export function VersionTimeline({
     );
   };
 
-  const currentPreview = currentContent.slice(0, PREVIEW_MAX);
+  const displayContent = currentContent ?? "";
+  const currentPreview = displayContent.slice(0, PREVIEW_MAX);
   const historyPreview = preview?.slice(0, PREVIEW_MAX) ?? "";
 
   return (
@@ -261,7 +266,7 @@ export function VersionTimeline({
               <p className="mb-1 text-[10px] text-muted-foreground">当前版</p>
               <pre className="max-h-32 overflow-auto whitespace-pre-wrap rounded border border-border bg-muted/20 p-2 font-mono text-[10px] leading-relaxed">
                 {currentPreview}
-                {currentContent.length > PREVIEW_MAX && "…"}
+                {displayContent.length > PREVIEW_MAX && "…"}
               </pre>
             </div>
             <div className="min-w-0">

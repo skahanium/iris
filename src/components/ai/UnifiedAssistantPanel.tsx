@@ -94,15 +94,17 @@ import { AiMentionPopover } from "./AiMentionPopover";
 import { AiComposerContextMenu } from "./AiComposerContextMenu";
 import { type ChatLine } from "./AiMessageList";
 import { ConversationSurface } from "./ConversationSurface";
+import { AiSelectionActionBar } from "./AiSelectionActionBar";
 import { useCitationClick } from "./hooks/useCitationClick";
 import { CitationCheckView } from "./CitationCheckView";
 import { ContextPacketDrawer } from "./ContextPacketDrawer";
 import { SessionHistoryDropdown } from "./SessionHistoryDropdown";
+import { useAiBubbleSelection } from "@/hooks/useAiBubbleSelection";
 import { useAssistantActivity } from "@/hooks/useAssistantActivity";
 import { useAssistantArtifacts } from "@/hooks/useAssistantArtifacts";
 import { useAssistantRun } from "@/hooks/useAssistantRun";
 import { mapAssistantExecuteToArtifacts } from "@/lib/map-assistant-execute-response";
-import { listenAiRequestStarted } from "@/lib/ipc";
+import { listenAiRequestStarted, sessionRetract, llmAbort } from "@/lib/ipc";
 import { ContextScopeChips } from "./ContextScopeChips";
 import { ExecutionPlanPreview } from "./ExecutionPlanPreview";
 import { PatchPreview } from "./PatchPreview";
@@ -144,6 +146,7 @@ interface UnifiedAssistantPanelProps {
   getParagraphText: () => string | null;
   onPatchApplied?: (newContent: string) => void;
   onVaultRefresh?: () => void;
+  onInsertToEditor?: (content: string) => void;
   selectionQuote?: AssistantSelectionQuote | null;
   prefillMessage?: string | null;
   onChromeChange?: (snapshot: AssistantChromeSnapshot) => void;
@@ -158,6 +161,7 @@ export function UnifiedAssistantPanel({
   getParagraphText,
   onPatchApplied,
   onVaultRefresh,
+  onInsertToEditor,
   selectionQuote,
   prefillMessage,
   onChromeChange,
@@ -169,6 +173,11 @@ export function UnifiedAssistantPanel({
   const [input, setInput] = useState("");
   const [streaming, setStreaming] = useState(false);
   const [sessionId, setSessionId] = useState<number | null>(null);
+  const bubbleSelection = useAiBubbleSelection();
+  const messagesRef = useRef(messages);
+  messagesRef.current = messages;
+  const sessionIdRef = useRef(sessionId);
+  sessionIdRef.current = sessionId;
   const [packets, setPackets] = useState<ContextPacket[]>([]);
   const [selectedPacketIds, setSelectedPacketIds] = useState<string[]>([]);
   const [packetsOpen, setPacketsOpen] = useState(false);
@@ -498,6 +507,91 @@ export function UnifiedAssistantPanel({
     forceNewSessionRef.current = true;
     setActionState(buildActionState("chat", "idle"));
   }, [clearTaskSurfaces]);
+
+  const handleRetract = useCallback(
+    async (index: number) => {
+      const target = messagesRef.current[index];
+      if (!target) return;
+      // Abort any active stream first
+      if (streaming && requestIdRef.current) {
+        try {
+          await llmAbort(requestIdRef.current);
+        } catch {
+          /* ignore */
+        }
+        setStreaming(false);
+      }
+      // Backend retract by seq
+      const sid = sessionIdRef.current;
+      const seq = target.seq;
+      if (sid && seq) {
+        try {
+          await sessionRetract(sid, seq);
+        } catch (err) {
+          console.warn("[retract] backend failed:", err);
+        }
+      }
+      // Truncate frontend messages
+      setMessages((prev) => prev.slice(0, index));
+    },
+    [streaming],
+  );
+
+  const handleInsertToEditor = useCallback(() => {
+    if (!onInsertToEditor) return;
+    const indices = Array.from(bubbleSelection.selected).sort((a, b) => a - b);
+    const content = indices
+      .map((i) => messagesRef.current[i])
+      .filter((m): m is ChatLine => m != null)
+      .map((m) => {
+        if (m.role === "user") return `> ${m.content}`;
+        return m.content;
+      })
+      .join("\n\n");
+    if (content) {
+      onInsertToEditor(content);
+      bubbleSelection.clear();
+    }
+  }, [onInsertToEditor, bubbleSelection]);
+
+  const handleCopySelected = useCallback(async () => {
+    const indices = Array.from(bubbleSelection.selected).sort((a, b) => a - b);
+    const content = indices
+      .map((i) => messagesRef.current[i])
+      .filter((m): m is ChatLine => m != null)
+      .map((m) => m.content)
+      .join("\n\n");
+    if (content) {
+      try {
+        await navigator.clipboard.writeText(content);
+      } catch {
+        /* ignore */
+      }
+      bubbleSelection.clear();
+    }
+  }, [bubbleSelection]);
+
+  const handleExportSelected = useCallback(() => {
+    const indices = Array.from(bubbleSelection.selected).sort((a, b) => a - b);
+    const lines = indices
+      .map((i) => messagesRef.current[i])
+      .filter((m): m is ChatLine => m != null)
+      .map((m) => {
+        if (m.role === "user") return `## 用户\n\n${m.content}`;
+        if (m.role === "assistant") return `## 助手\n\n${m.content}`;
+        return `## ${m.role}\n\n${m.content}`;
+      });
+    if (lines.length === 0) return;
+    const md = lines.join("\n\n---\n\n");
+    const blob = new Blob([md], { type: "text/markdown;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `iris-export-${new Date().toISOString().slice(0, 10)}.md`;
+    a.click();
+    URL.revokeObjectURL(url);
+    bubbleSelection.clear();
+  }, [bubbleSelection]);
 
   const assembleContextForChat = useCallback(
     async (query: string, intent: AssistantIntent) => {
@@ -1731,9 +1825,12 @@ export function UnifiedAssistantPanel({
       <ConversationSurface
         messages={messages}
         streaming={streaming}
+        selectedIndices={bubbleSelection.selected}
         messageListRef={messageListRef}
         onCitationClick={handleCitationClick}
         onExpandResearch={handleExpandResearchDetail}
+        onRetract={handleRetract}
+        onSelect={bubbleSelection.handleClick}
         onQuoteToInput={(text) => {
           const quoted = text
             .split("\n")
@@ -1745,6 +1842,18 @@ export function UnifiedAssistantPanel({
           textareaRef.current?.focus();
         }}
       />
+
+      {bubbleSelection.selected.size > 0 ? (
+        <div className="flex justify-center px-3 py-1.5">
+          <AiSelectionActionBar
+            count={bubbleSelection.selected.size}
+            onInsert={onInsertToEditor ? handleInsertToEditor : undefined}
+            onCopy={handleCopySelected}
+            onExport={handleExportSelected}
+            onClear={bubbleSelection.clear}
+          />
+        </div>
+      ) : null}
 
       <ContextScopeChips tokens={mentionTokens} onRemove={removeMentionToken} />
 

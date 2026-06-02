@@ -52,6 +52,7 @@ pub mod macos {
 }
 
 #[cfg(target_os = "macos")]
+#[allow(unused_imports)]
 pub use macos::{
     button_center_y_offset, traffic_inset_default as macos_traffic_inset_default,
     traffic_inset_from_layout as macos_traffic_inset_from_layout,

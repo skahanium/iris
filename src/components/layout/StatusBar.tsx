@@ -1,4 +1,5 @@
 import { memo } from "react";
+import { Undo2, Redo2 } from "lucide-react";
 
 import { ConnectivityIndicators } from "@/components/layout/ConnectivityIndicators";
 import { EditorZoomControl } from "@/components/layout/EditorZoomControl";
@@ -21,6 +22,10 @@ interface StatusBarProps {
   onEditorZoomIn?: () => void;
   onEditorZoomOut?: () => void;
   onEditorZoomReset?: () => void;
+  onUndo?: () => void;
+  onRedo?: () => void;
+  canUndo?: boolean;
+  canRedo?: boolean;
   webSearch?: boolean;
   onWebSearchChange?: (enabled: boolean) => void;
   connectivity?: ConnectivityStatus | null;
@@ -42,6 +47,10 @@ export const StatusBar = memo(function StatusBar({
   onEditorZoomIn,
   onEditorZoomOut,
   onEditorZoomReset,
+  onUndo,
+  onRedo,
+  canUndo = false,
+  canRedo = false,
   webSearch = false,
   onWebSearchChange,
   connectivity = null,
@@ -90,6 +99,33 @@ export const StatusBar = memo(function StatusBar({
             onZoomOut={onEditorZoomOut}
             onZoomReset={onEditorZoomReset}
           />
+        </>
+      ) : null}
+      {onUndo && onRedo ? (
+        <>
+          <span className="shrink-0 text-muted-foreground/60" aria-hidden>
+            ·
+          </span>
+          <div className="flex items-center gap-0.5">
+            <button
+              type="button"
+              title="撤销 (⌘Z)"
+              className="flex h-5 w-5 items-center justify-center rounded text-muted-foreground/60 hover:bg-muted hover:text-foreground disabled:opacity-30"
+              onClick={onUndo}
+              disabled={!canUndo}
+            >
+              <Undo2 className="h-3.5 w-3.5" />
+            </button>
+            <button
+              type="button"
+              title="重做 (⌘⇧Z)"
+              className="flex h-5 w-5 items-center justify-center rounded text-muted-foreground/60 hover:bg-muted hover:text-foreground disabled:opacity-30"
+              onClick={onRedo}
+              disabled={!canRedo}
+            >
+              <Redo2 className="h-3.5 w-3.5" />
+            </button>
+          </div>
         </>
       ) : null}
       {path && unsaved ? (

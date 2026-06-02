@@ -111,12 +111,10 @@ pub async fn context_assemble(
         )
     })?;
 
-    // Ensure session exists
-    let _sid = if let Some(id) = session_id {
-        id
-    } else {
-        SessionManager::ensure(&state.db, scene, note_path.as_deref())?
-    };
+    // Session is created explicitly in execute_ai_send_message via create_fresh().
+    // Do NOT call SessionManager::ensure() here — it would recreate a deleted
+    // session with the same session_key, causing the phantom session bug.
+    let _sid = session_id;
 
     Ok(AssembledContext {
         provisional: true,
@@ -705,6 +703,17 @@ pub async fn session_rename(
     title: String,
 ) -> AppResult<()> {
     SessionManager::rename_session(&state.db, session_id, title.trim())
+}
+
+/// 撤回：删除指定 seq 及之后的所有消息。
+/// 返回被删除的消息数量。
+#[tauri::command]
+pub async fn session_retract(
+    state: State<'_, Arc<AppState>>,
+    session_id: i64,
+    from_seq: i64,
+) -> AppResult<u32> {
+    SessionManager::retract_messages(&state.db, session_id, from_seq)
 }
 
 /// Load recent messages for a session.

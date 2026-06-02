@@ -115,7 +115,7 @@ impl Database {
         conn.execute_batch(
             "
             PRAGMA journal_mode=WAL;
-            PRAGMA synchronous=NORMAL;
+            PRAGMA synchronous=FULL;
             PRAGMA cache_size=-8000;
             PRAGMA mmap_size=268435456;
             PRAGMA temp_store=MEMORY;

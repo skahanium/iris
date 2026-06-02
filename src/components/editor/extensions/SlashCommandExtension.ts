@@ -46,7 +46,8 @@ export const SlashCommandExtension = Extension.create<SlashCommandOptions>({
         allow: () => true,
         command: ({ editor, range, props }) => {
           const item = props as SlashItem;
-          editor.chain().focus().deleteRange(range).run();
+          const pos = range.from;
+          editor.chain().focus().deleteRange(range).setTextSelection(pos).run();
           onCommand?.(item.id);
         },
         items: ({ query, editor: ed }) => {

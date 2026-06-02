@@ -400,6 +400,13 @@ export async function sessionRename(
   return invoke("session_rename", { sessionId, title });
 }
 
+export async function sessionRetract(
+  sessionId: number,
+  fromSeq: number,
+): Promise<number> {
+  return invoke<number>("session_retract", { sessionId, fromSeq });
+}
+
 export interface SkillEntryDto {
   name: string;
   description: string;

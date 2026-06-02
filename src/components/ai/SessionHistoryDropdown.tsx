@@ -36,6 +36,8 @@ function toChatLines(
     .map((m) => ({
       role: m.role as ChatLine["role"],
       content: m.content,
+      seq: m.seq,
+      created_at: m.created_at,
     }));
 }
 

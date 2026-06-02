@@ -191,7 +191,10 @@ fn write_vault_file(state: &Arc<AppState>, path: &str, content: &str) -> AppResu
     let abs = crate::storage::paths::resolve_vault_path(&vault, path)?;
     let tmp = abs.with_extension("md.tmp");
     std::fs::write(&tmp, content)?;
-    std::fs::rename(&tmp, &abs)?;
+    if let Err(e) = std::fs::rename(&tmp, &abs) {
+        let _ = crate::security::secure_delete::secure_delete(&tmp);
+        return Err(e.into());
+    }
     let hash = crate::indexer::scan::file_hash(&abs)?;
     state.write_guard.mark(path, &hash);
     state.db.with_conn(|conn| {

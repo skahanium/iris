@@ -12,7 +12,7 @@ use crate::indexer::scan::{
     prune_stale_file_indexes, remove_file_index, FileEntry,
 };
 use crate::recycle::{discard_document, trash_document};
-use crate::storage::paths::{is_user_note_path, resolve_vault_path};
+use crate::storage::paths::{is_user_note_path, read_file_lossy, resolve_vault_path};
 
 fn title_from_path(path: &str) -> String {
     path.trim_end_matches(".md")
@@ -97,7 +97,7 @@ pub fn file_read(state: State<'_, Arc<AppState>>, path: String) -> AppResult<Str
     }
     let vault = state.vault_path()?;
     let abs = resolve_vault_path(&vault, &path)?;
-    Ok(fs::read_to_string(abs)?)
+    read_file_lossy(&abs)
 }
 
 #[tauri::command]
@@ -114,7 +114,10 @@ pub fn file_write(
 
     let tmp = abs.with_extension("md.tmp");
     fs::write(&tmp, &content)?;
-    fs::rename(&tmp, &abs)?;
+    if let Err(e) = fs::rename(&tmp, &abs) {
+        let _ = crate::security::secure_delete::secure_delete(&tmp);
+        return Err(e.into());
+    }
 
     let hash = crate::indexer::scan::file_hash(&abs)?;
     state.write_guard.mark(&path, &hash);
@@ -156,7 +159,7 @@ pub fn folder_create(state: State<'_, Arc<AppState>>, path: String) -> AppResult
     Ok(())
 }
 
-/// Rename/move a folder. Fails if the target already exists.
+/// Rename/move a folder. Cascades wikilink and session updates for all affected files.
 #[tauri::command]
 pub fn folder_rename(
     state: State<'_, Arc<AppState>>,
@@ -174,14 +177,67 @@ pub fn folder_rename(
     if new_abs.exists() {
         return Err(AppError::msg("Target path already exists"));
     }
+
+    // Collect all .md files under the old folder
+    let affected_files: Vec<String> = state.db.with_read_conn(|conn| {
+        let mut stmt = conn.prepare("SELECT path FROM files WHERE path LIKE ?1")?;
+        let prefix = if old_path.ends_with('/') || old_path.is_empty() {
+            old_path.to_string()
+        } else {
+            format!("{}/", old_path)
+        };
+        let rows = stmt.query_map([format!("{}%", prefix)], |row| row.get::<_, String>(0))?;
+        Ok(rows.flatten().collect())
+    })?;
+
+    // Step 1: rewrite wikilinks and sessions for each affected file (disk-only for wikilinks)
+    let mut all_modified_sources: Vec<String> = Vec::new();
+    for file_path in &affected_files {
+        let rel_old = file_path.as_str();
+        let rel_new = if let Some(suffix) = rel_old.strip_prefix(&old_path) {
+            let trimmed = suffix.trim_start_matches('/');
+            if new_path.is_empty() || new_path == "/" {
+                trimmed.to_string()
+            } else {
+                format!("{}/{}", new_path.trim_end_matches('/'), trimmed)
+            }
+        } else {
+            continue;
+        };
+
+        let old_stem = title_from_path(rel_old);
+        let new_stem = title_from_path(&rel_new);
+        let mut mods = cascade_rewrite_wikilinks_on_disk(
+            &state, &vault, rel_old, &rel_new, &old_stem, &new_stem,
+        )?;
+        all_modified_sources.append(&mut mods);
+        cascade_rename_sessions(&state, rel_old, &rel_new)?;
+    }
+
+    // Step 2: rename the folder on disk
     if let Some(parent) = new_abs.parent() {
         fs::create_dir_all(parent)?;
     }
     fs::rename(&abs, &new_abs)?;
+
+    // Step 3: full reindex (target files get new paths)
     let vault_clone = vault.clone();
     state
         .db
         .with_conn(|conn| index_vault_incremental(conn, &vault_clone, Some(state.inner())))?;
+
+    // Step 4: reindex source files that were modified (wikilinks now resolve correctly)
+    for src_path in &all_modified_sources {
+        if let Ok(abs_src) = resolve_vault_path(&vault, src_path) {
+            if let Ok(h) = crate::indexer::scan::file_hash(&abs_src) {
+                state.write_guard.mark(src_path, &h);
+            }
+            let _ = state.db.with_conn(|conn| {
+                index_file_with_embed(conn, &vault, &abs_src, Some(state.inner()))
+            });
+        }
+    }
+
     Ok(())
 }
 
@@ -377,12 +433,145 @@ pub fn file_rename(
     if let Some(parent) = new_abs.parent() {
         fs::create_dir_all(parent)?;
     }
+
+    let old_stem = title_from_path(&path);
+    let new_stem = title_from_path(&new_path);
+
+    // ── Step 1: rewrite wikilink text in source files (disk-only, no reindex yet) ──
+    let modified_sources =
+        cascade_rewrite_wikilinks_on_disk(&state, &vault, &path, &new_path, &old_stem, &new_stem)?;
+
+    // ── Step 2: update session note_path → session_key ──
+    cascade_rename_sessions(&state, &path, &new_path)?;
+
+    // ── Step 3: rename the target file on disk ──
     fs::rename(&abs, &new_abs)?;
     let hash = crate::indexer::scan::file_hash(&new_abs)?;
     state.write_guard.mark(&new_path, &hash);
+
+    // ── Step 4: remove old index, reindex target under new path ──
     state.db.with_conn(|conn| {
         remove_file_index(conn, &path)?;
         index_file_with_embed(conn, &vault, &new_abs, Some(state.inner()))
+    })?;
+
+    // ── Step 5: reindex source files so their wikilinks resolve to the new target row ──
+    for src_path in &modified_sources {
+        if let Ok(abs_src) = resolve_vault_path(&vault, src_path) {
+            if let Ok(h) = crate::indexer::scan::file_hash(&abs_src) {
+                state.write_guard.mark(src_path, &h);
+            }
+            let _ = state.db.with_conn(|conn| {
+                index_file_with_embed(conn, &vault, &abs_src, Some(state.inner()))
+            });
+        }
+    }
+
+    // Return the new file entry
+    state.db.with_read_conn(|conn| {
+        let entry = conn.query_row(
+            "SELECT id, path, title, updated_at, word_count FROM files WHERE path = ?1",
+            [&new_path],
+            |row| {
+                Ok(FileEntry {
+                    id: row.get(0)?,
+                    path: row.get(1)?,
+                    title: row.get(2)?,
+                    updated_at: row.get(3)?,
+                    word_count: row.get(4)?,
+                })
+            },
+        )?;
+        Ok(entry)
+    })
+}
+
+/// Rewrite wikilink text in all files referencing `old_path` on disk.
+/// Returns the list of modified source file paths.
+/// Does NOT reindex — caller must reindex after the target has been reindexed.
+fn cascade_rewrite_wikilinks_on_disk(
+    state: &Arc<AppState>,
+    vault: &std::path::Path,
+    old_path: &str,
+    new_path: &str,
+    old_stem: &str,
+    new_stem: &str,
+) -> AppResult<Vec<String>> {
+    let source_paths: Vec<String> = state.db.with_read_conn(|conn| {
+        let mut stmt = conn.prepare(
+            "SELECT DISTINCT f.path
+             FROM links l
+             JOIN files f ON f.id = l.source_id
+             JOIN files t ON t.id = l.target_id
+             WHERE t.path = ?1",
+        )?;
+        let rows = stmt.query_map([old_path], |row| row.get::<_, String>(0))?;
+        Ok(rows.flatten().collect())
+    })?;
+
+    let mut modified = Vec::new();
+
+    for src_path in &source_paths {
+        let abs = resolve_vault_path(vault, src_path)?;
+        let content = read_file_lossy(&abs)?;
+        let mut updated = content.clone();
+
+        let pattern_stem = format!("[[{}]]", old_stem);
+        let replacement_stem = format!("[[{}]]", new_stem);
+        updated = updated.replace(&pattern_stem, &replacement_stem);
+
+        let pattern_path = format!("[[{}]]", old_path);
+        let replacement_path = format!("[[{}]]", new_path);
+        updated = updated.replace(&pattern_path, &replacement_path);
+
+        if let Some(old_no_ext) = old_path.strip_suffix(".md") {
+            let pattern_noext = format!("[[{}]]", old_no_ext);
+            let new_no_ext = new_path.strip_suffix(".md").unwrap_or(new_path);
+            let replacement_noext = format!("[[{}]]", new_no_ext);
+            updated = updated.replace(&pattern_noext, &replacement_noext);
+        }
+
+        if updated != content {
+            let tmp = abs.with_extension("md.tmp");
+            fs::write(&tmp, &updated)?;
+            if let Err(e) = fs::rename(&tmp, &abs) {
+                let _ = crate::security::secure_delete::secure_delete(&tmp);
+                return Err(e.into());
+            }
+            modified.push(src_path.clone());
+        }
+    }
+
+    Ok(modified)
+}
+
+/// Update all AI session `note_path` and `session_key` references from old to new path.
+fn cascade_rename_sessions(state: &Arc<AppState>, old_path: &str, new_path: &str) -> AppResult<()> {
+    state.db.with_conn(|conn| {
+        // Update note_path (direct reference)
+        let updated_note = conn.execute(
+            "UPDATE sessions SET note_path = ?1 WHERE note_path = ?2",
+            rusqlite::params![new_path, old_path],
+        )?;
+
+        // Update session_key — rebuild it from scene + new note_path
+        // session_key format = "scene:note_path" or "scene:__global__"
+        let updated_key = conn.execute(
+            "UPDATE sessions SET session_key = scene || ':' || ?1
+             WHERE session_key = scene || ':' || ?2",
+            rusqlite::params![new_path, old_path],
+        )?;
+
+        if updated_note > 0 || updated_key > 0 {
+            tracing::info!(
+                old = %old_path,
+                new = %new_path,
+                note_updated = updated_note,
+                key_updated = updated_key,
+                "cascade_rename: updated session references"
+            );
+        }
+        Ok(())
     })
 }
 
@@ -429,6 +618,9 @@ pub fn vault_set(app: AppHandle, state: State<'_, Arc<AppState>>, path: String) 
         return Err(AppError::msg("请选择已存在的文件夹作为笔记目录"));
     }
     state.set_vault(p)?;
+
+    // Clear in-memory AI state to prevent data leakage between vaults
+    state.clear_ai_state();
 
     if let Err(e) = state.restart_file_watcher(app) {
         tracing::warn!("vault_set: file watcher did not start: {e}");

@@ -77,7 +77,7 @@ pub fn run() {
                 tracing::warn!("main window not found after setup");
             }
 
-            eprintln!("Iris 已启动 — 若未见窗口，请检查任务栏或 WebView2 运行时。");
+            tracing::info!("Iris 已启动 — 若未见窗口，请检查任务栏或 WebView2 运行时。");
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -161,6 +161,7 @@ pub fn run() {
             commands::ai_commands::session_list,
             commands::ai_commands::session_delete,
             commands::ai_commands::session_rename,
+            commands::ai_commands::session_retract,
             commands::ai_commands::session_load,
             commands::ai_commands::session_clear_all,
             commands::ai_commands::ai_cache_clear,

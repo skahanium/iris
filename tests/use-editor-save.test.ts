@@ -21,13 +21,20 @@ vi.mock("@/lib/ipc", () => ({
 }));
 
 function TestHarness({
+  getMarkdown,
   onReady,
 }: {
-  onReady: (api: { notifyDirty: () => void }) => void;
+  getMarkdown?: () => string;
+  onReady: (api: {
+    notifyDirty: () => void;
+    flushSave: () => Promise<string | null>;
+  }) => void;
 }) {
-  const getMarkdown = () => '---\ntitle: "x"\n---\n\nSubstantive body.';
-  const { notifyDirty } = useEditorSave("note.md", getMarkdown);
-  onReady({ notifyDirty });
+  const { notifyDirty, flushSave } = useEditorSave(
+    "note.md",
+    getMarkdown ?? (() => '---\ntitle: "x"\n---\n\nSubstantive body.'),
+  );
+  onReady({ notifyDirty, flushSave });
   return null;
 }
 
@@ -85,5 +92,35 @@ describe("useEditorSave", () => {
     );
     expect(versionSaveManual).not.toHaveBeenCalled();
     expect(versionSaveIdle).not.toHaveBeenCalled();
+  });
+
+  it("flushSave returns the markdown it wrote", async () => {
+    let flushSave!: () => Promise<string | null>;
+    const getMarkdown = vi.fn(
+      () => '---\ntitle: "x"\n---\n\nManual checkpoint body.',
+    );
+
+    await act(async () => {
+      root.render(
+        createElement(TestHarness, {
+          getMarkdown,
+          onReady: (api) => {
+            flushSave = api.flushSave;
+          },
+        }),
+      );
+    });
+
+    let saved: string | null = null;
+    await act(async () => {
+      saved = await flushSave();
+    });
+
+    expect(saved).toBe('---\ntitle: "x"\n---\n\nManual checkpoint body.');
+    expect(getMarkdown).toHaveBeenCalledTimes(1);
+    expect(fileWrite).toHaveBeenCalledWith(
+      "note.md",
+      '---\ntitle: "x"\n---\n\nManual checkpoint body.',
+    );
   });
 });

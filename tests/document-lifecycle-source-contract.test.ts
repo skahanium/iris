@@ -34,4 +34,13 @@ describe("document lifecycle source contracts", () => {
     expect(source).toContain("onBodyStatsChange");
     expect(source).not.toContain("splitFrontmatter(markdown).body.replace");
   });
+
+  it("App reuses flushSave markdown when creating a manual version", () => {
+    const source = read("src/App.tsx");
+    expect(source).toContain("const savedMarkdown = await flushSave();");
+    expect(source).toContain("await versionSaveManual(path, savedMarkdown);");
+    expect(source).not.toContain(
+      "await versionSaveManual(path, getLiveMarkdown());",
+    );
+  });
 });

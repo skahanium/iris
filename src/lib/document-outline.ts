@@ -41,10 +41,17 @@ export function activeOutlineIndex(
   head: number,
 ): number {
   if (entries.length === 0) return -1;
+  let low = 0;
+  let high = entries.length - 1;
   let active = -1;
-  for (let i = 0; i < entries.length; i++) {
-    if (head >= entries[i]!.pos) active = i;
-    else break;
+  while (low <= high) {
+    const mid = Math.floor((low + high) / 2);
+    if (head >= entries[mid]!.pos) {
+      active = mid;
+      low = mid + 1;
+    } else {
+      high = mid - 1;
+    }
   }
   return active;
 }

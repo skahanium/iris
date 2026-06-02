@@ -6,6 +6,19 @@ use crate::credentials::MINIMAX_CREDENTIAL_SERVICE;
 use crate::error::{AppError, AppResult};
 use crate::llm::config::SETTINGS_KEY;
 
+/// Cross-platform user home directory.
+/// On Unix: uses `HOME`, on Windows: falls back to `USERPROFILE`.
+fn user_home_dir() -> Option<PathBuf> {
+    if let Ok(home) = std::env::var("HOME") {
+        return Some(PathBuf::from(home));
+    }
+    #[cfg(target_os = "windows")]
+    if let Ok(profile) = std::env::var("USERPROFILE") {
+        return Some(PathBuf::from(profile));
+    }
+    None
+}
+
 /// Settings keys writable via generic `settings_set` IPC.
 const ALLOWED_SETTINGS_KEYS: &[&str] = &[
     "vault_path",
@@ -99,8 +112,7 @@ pub fn validate_local_skill_source(source: &Path, vault: &Path) -> AppResult<Pat
             return Ok(canon);
         }
     }
-    if let Ok(home) = std::env::var("HOME") {
-        let home = PathBuf::from(home);
+    if let Some(home) = user_home_dir() {
         if let Ok(home_canon) = home.canonicalize() {
             if canon.starts_with(&home_canon) {
                 return Ok(canon);

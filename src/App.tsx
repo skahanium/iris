@@ -62,6 +62,7 @@ import {
   type CommandPaletteItem,
 } from "@/lib/command-palette";
 import { runEditorAction } from "@/lib/editor-action-executor";
+import { insertAssistantMarkdownAtCursor } from "@/lib/editor-insert";
 import { resolveNoteDisplayTitle } from "@/lib/note-display";
 import { settingsGet, settingsSet, versionSaveManual } from "@/lib/ipc";
 import { readingMinutes } from "@/lib/reading-time";
@@ -163,6 +164,10 @@ function App() {
   const { zoom: editorZoom, zoomIn, zoomOut, resetZoom } = useEditorZoom();
   const editorRef = useRef<Editor | null>(null);
   const [editorInstance, setEditorInstance] = useState<Editor | null>(null);
+  const [canUndo, setCanUndo] = useState(false);
+  const [canRedo, setCanRedo] = useState(false);
+  const undoRedoStateRef = useRef({ canUndo: false, canRedo: false });
+  const editorTransactionCleanupRef = useRef<(() => void) | null>(null);
   const overlays = useOverlayManager();
   const { provider: llmProvider } = useLlmProvider();
   const { status: connectivityStatus } = useConnectivityStatus();
@@ -252,9 +257,10 @@ function App() {
   const handleSaveVersion = useCallback(async () => {
     const path = activePathRef.current;
     if (!path) return;
-    await flushSave();
-    await versionSaveManual(path, getLiveMarkdown());
-  }, [flushSave, getLiveMarkdown, activePathRef]);
+    const savedMarkdown = await flushSave();
+    if (!savedMarkdown) return;
+    await versionSaveManual(path, savedMarkdown);
+  }, [flushSave, activePathRef]);
 
   const handleDirty = useCallback(() => {
     if (!dirtyRef.current) {
@@ -322,9 +328,31 @@ function App() {
     [loadBodyIntoEditor, markdownRef, setMarkdown],
   );
 
+  const updateUndoRedoState = useCallback((ed: Editor | null) => {
+    const next = ed
+      ? {
+          canUndo: ed.can().undo(),
+          canRedo: ed.can().redo(),
+        }
+      : { canUndo: false, canRedo: false };
+    const prev = undoRedoStateRef.current;
+    undoRedoStateRef.current = next;
+    if (prev.canUndo !== next.canUndo) setCanUndo(next.canUndo);
+    if (prev.canRedo !== next.canRedo) setCanRedo(next.canRedo);
+  }, []);
+
+  const clearEditorTransactionListener = useCallback(() => {
+    editorTransactionCleanupRef.current?.();
+    editorTransactionCleanupRef.current = null;
+  }, []);
+
   useEffect(() => {
-    if (!activePath) setEditorInstance(null);
-  }, [activePath]);
+    if (!activePath) {
+      clearEditorTransactionListener();
+      setEditorInstance(null);
+      updateUndoRedoState(null);
+    }
+  }, [activePath, clearEditorTransactionListener, updateUndoRedoState]);
 
   useEffect(() => {
     if (!activePath) {
@@ -337,10 +365,37 @@ function App() {
     });
   }, [activePath, bodyMarkdown]);
 
-  const handleEditorReady = useCallback((ed: Editor | null) => {
-    editorRef.current = ed;
-    if (ed) setEditorInstance(ed);
-  }, []);
+  const handleEditorReady = useCallback(
+    (ed: Editor | null) => {
+      clearEditorTransactionListener();
+      editorRef.current = ed;
+      if (!ed) {
+        setEditorInstance(null);
+        updateUndoRedoState(null);
+        return;
+      }
+
+      setEditorInstance(ed);
+      updateUndoRedoState(ed);
+
+      const handleTransaction = ({
+        editor: currentEditor,
+        transaction,
+      }: {
+        editor: Editor;
+        transaction: { docChanged: boolean };
+      }) => {
+        if (!transaction.docChanged) return;
+        updateUndoRedoState(currentEditor);
+      };
+
+      ed.on("transaction", handleTransaction);
+      editorTransactionCleanupRef.current = () => {
+        ed.off("transaction", handleTransaction);
+      };
+    },
+    [clearEditorTransactionListener, updateUndoRedoState],
+  );
 
   const runInlineAi = useCallback(
     (action: string) => {
@@ -394,6 +449,20 @@ function App() {
     },
     [editorActionHandlers],
   );
+
+  const handleInsertToEditor = useCallback((content: string) => {
+    const ed = editorRef.current;
+    if (!ed) return;
+    insertAssistantMarkdownAtCursor(ed, content);
+  }, []);
+
+  const handleUndo = useCallback(() => {
+    editorRef.current?.commands.undo();
+  }, []);
+
+  const handleRedo = useCallback(() => {
+    editorRef.current?.commands.redo();
+  }, []);
 
   const editorContextMenu = useEditorContextMenu(
     editorInstance,
@@ -661,6 +730,7 @@ function App() {
               prefillMessage={assistantPrefill}
               onChromeChange={setAssistantChrome}
               onVaultRefresh={bumpVaultIndex}
+              onInsertToEditor={handleInsertToEditor}
               onPatchApplied={(newContent: string) => {
                 applyMarkdownToEditor(newContent);
                 markdownRef.current = newContent;
@@ -692,6 +762,10 @@ function App() {
             onEditorZoomIn={zoomIn}
             onEditorZoomOut={zoomOut}
             onEditorZoomReset={resetZoom}
+            onUndo={handleUndo}
+            onRedo={handleRedo}
+            canUndo={canUndo}
+            canRedo={canRedo}
             webSearch={webSearch}
             onWebSearchChange={setWebSearch}
             connectivity={connectivityStatus}
@@ -756,6 +830,7 @@ function App() {
                 onClose={() => overlays.closeOverlay("version")}
                 notePath={activePath}
                 currentContent={markdown}
+                getCurrentContent={() => getLiveMarkdownRef.current()}
                 hasUnsavedEdits={
                   tabs.find((t) => t.path === activePath)?.dirty ?? false
                 }

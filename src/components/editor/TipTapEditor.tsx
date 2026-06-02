@@ -11,6 +11,7 @@ import StarterKit from "@tiptap/starter-kit";
 import { common, createLowlight } from "lowlight";
 import {
   useEffect,
+  useCallback,
   useMemo,
   useRef,
   type MouseEvent,
@@ -32,6 +33,8 @@ import { SlashCommandExtension } from "./extensions/SlashCommandExtension";
 import { WikiLinkExtension } from "./extensions/WikiLinkExtension";
 
 const lowlight = createLowlight(common);
+
+export const EDITOR_BODY_STATS_DEBOUNCE_MS = 200;
 
 interface TipTapEditorProps {
   /** Body markdown only (frontmatter / document title are separate). */
@@ -84,6 +87,7 @@ export function TipTapEditor({
   onBodyStatsChangeRef.current = onBodyStatsChange;
 
   const editorRef = useRef<Editor | null>(null);
+  const bodyStatsTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const onSlashCommandRef = useRef(onSlashCommand);
   onSlashCommandRef.current = onSlashCommand;
@@ -93,6 +97,34 @@ export function TipTapEditor({
 
   const onIngestCompleteRef = useRef(onIngestComplete);
   onIngestCompleteRef.current = onIngestComplete;
+
+  const cancelScheduledBodyStats = useCallback(() => {
+    if (bodyStatsTimerRef.current !== null) {
+      clearTimeout(bodyStatsTimerRef.current);
+      bodyStatsTimerRef.current = null;
+    }
+  }, []);
+
+  const emitBodyStats = useCallback((targetEditor: Editor) => {
+    const text = targetEditor.getText();
+    onBodyStatsChangeRef.current?.({
+      characterCount: text.replace(/\s+/g, "").length,
+      readingMinutes: readingMinutes(text),
+    });
+  }, []);
+
+  const scheduleBodyStats = useCallback(
+    (targetEditor: Editor) => {
+      cancelScheduledBodyStats();
+      bodyStatsTimerRef.current = setTimeout(() => {
+        bodyStatsTimerRef.current = null;
+        if (editorRef.current === targetEditor) {
+          emitBodyStats(targetEditor);
+        }
+      }, EDITOR_BODY_STATS_DEBOUNCE_MS);
+    },
+    [cancelScheduledBodyStats, emitBodyStats],
+  );
 
   const extensions = useMemo(
     () => [
@@ -145,11 +177,7 @@ export function TipTapEditor({
     content: initialContent,
     onUpdate: ({ editor: updatedEditor }) => {
       onDirtyRef.current?.();
-      const text = updatedEditor.getText();
-      onBodyStatsChangeRef.current?.({
-        characterCount: text.replace(/\s+/g, "").length,
-        readingMinutes: readingMinutes(text),
-      });
+      scheduleBodyStats(updatedEditor);
     },
     editorProps: {
       attributes: {
@@ -162,16 +190,13 @@ export function TipTapEditor({
     if (!editor) return;
     editorRef.current = editor;
     onEditorReady?.(editor);
-    const text = editor.getText();
-    onBodyStatsChangeRef.current?.({
-      characterCount: text.replace(/\s+/g, "").length,
-      readingMinutes: readingMinutes(text),
-    });
+    emitBodyStats(editor);
     return () => {
+      cancelScheduledBodyStats();
       editorRef.current = null;
       onEditorReady?.(null);
     };
-  }, [editor, onEditorReady]);
+  }, [cancelScheduledBodyStats, editor, emitBodyStats, onEditorReady]);
 
   const lastSyncedContentRef = useRef(initialContent);
 
@@ -179,13 +204,10 @@ export function TipTapEditor({
     if (!editor) return;
     if (lastSyncedContentRef.current === initialContent) return;
     lastSyncedContentRef.current = initialContent;
+    cancelScheduledBodyStats();
     editor.commands.setContent(initialContent, false);
-    const text = editor.getText();
-    onBodyStatsChangeRef.current?.({
-      characterCount: text.replace(/\s+/g, "").length,
-      readingMinutes: readingMinutes(text),
-    });
-  }, [editor, initialContent]);
+    emitBodyStats(editor);
+  }, [cancelScheduledBodyStats, editor, emitBodyStats, initialContent]);
 
   return (
     <div

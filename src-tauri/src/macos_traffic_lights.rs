@@ -24,8 +24,9 @@ pub fn apply_traffic_light_position(window: &WebviewWindow) {
     let window_for_retry = window.clone();
     std::thread::spawn(move || {
         std::thread::sleep(Duration::from_millis(200));
+        let value = window_for_retry.clone();
         let _ = window_for_retry.run_on_main_thread(move || {
-            apply_traffic_light_position_once(&window_for_retry);
+            apply_traffic_light_position_once(&value);
         });
     });
 }

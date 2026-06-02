@@ -2,7 +2,6 @@ import DOMPurify from "dompurify";
 
 /** 白名单标签：Markdown 渲染后需要的元素 */
 const ALLOWED_TAGS = [
-  // 块级元素
   "p",
   "br",
   "h1",
@@ -18,14 +17,12 @@ const ALLOWED_TAGS = [
   "li",
   "hr",
   "div",
-  // 表格
   "table",
   "thead",
   "tbody",
   "tr",
   "th",
   "td",
-  // 内联元素
   "strong",
   "em",
   "code",
@@ -37,7 +34,6 @@ const ALLOWED_TAGS = [
   "del",
   "ins",
   "mark",
-  // 任务列表
   "input",
 ];
 
@@ -62,6 +58,19 @@ const ALLOWED_ATTR = [
   "data-cite-ref",
 ];
 
+/** 明确禁止的标签（即使出现在白名单中也被移除） */
+const FORBID_TAGS = ["style", "script", "iframe", "object", "embed", "form"];
+
+/** 明确禁止的属性 */
+const FORBID_ATTR = [
+  "onclick",
+  "onerror",
+  "onload",
+  "onmouseover",
+  "onfocus",
+  "onblur",
+];
+
 /** 允许的 URI 协议 */
 const ALLOWED_URI_REGEXP =
   /^(?:(?:https?|mailto|ftp|tel):|[^a-z]|[a-z+.]+(?:[^a-z+.:]|$))/i;
@@ -75,9 +84,29 @@ export function sanitizeHtml(html: string): string {
     ALLOWED_TAGS,
     ALLOWED_ATTR,
     ALLOWED_URI_REGEXP,
-    // 禁止 data: URI（图片除外，由 ALLOWED_URI_REGEXP 控制）
+    FORBID_TAGS,
+    FORBID_ATTR,
     ALLOW_DATA_ATTR: false,
-    // 保留 HTML 实体
     ALLOW_UNKNOWN_PROTOCOLS: false,
   });
 }
+
+/**
+ * 注册全局 DOMPurify hook：对带有 target 属性的 <a> 标签自动追加 rel="noopener noreferrer"，
+ * 防止 tab-nabbing 攻击。
+ */
+DOMPurify.addHook("uponSanitizeElement", (node, data) => {
+  if (data.tagName === "a" && node instanceof HTMLAnchorElement) {
+    const target = node.getAttribute("target");
+    if (target) {
+      const existingRel = node.getAttribute("rel") ?? "";
+      const rels = existingRel
+        .split(/\s+/)
+        .map((r) => r.trim())
+        .filter(Boolean);
+      if (!rels.includes("noopener")) rels.push("noopener");
+      if (!rels.includes("noreferrer")) rels.push("noreferrer");
+      node.setAttribute("rel", rels.join(" "));
+    }
+  }
+});

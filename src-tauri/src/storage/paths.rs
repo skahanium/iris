@@ -52,6 +52,21 @@ pub fn is_user_note_path(relative: &str) -> bool {
     !normalized.starts_with(".iris/") && normalized != ".iris"
 }
 
+/// Read file content as UTF-8, replacing invalid bytes with U+FFFD.
+/// Prevents crash on non-UTF-8 encoded files. Logs a warning if replacements occurred.
+pub fn read_file_lossy(path: &std::path::Path) -> AppResult<String> {
+    let bytes = std::fs::read(path)?;
+    let content = String::from_utf8_lossy(&bytes);
+    let has_replacements = content.contains('\u{FFFD}');
+    if has_replacements {
+        tracing::warn!(
+            path = %path.display(),
+            "file contains non-UTF-8 bytes; replaced with U+FFFD"
+        );
+    }
+    Ok(content.into_owned())
+}
+
 /// Relative path from vault root (forward slashes).
 pub fn relative_path(vault: &Path, absolute: &Path) -> AppResult<String> {
     let vault = vault.canonicalize()?;

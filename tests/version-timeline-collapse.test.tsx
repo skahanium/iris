@@ -34,6 +34,25 @@ function autoEntry(id: number): VersionEntry {
   };
 }
 
+function manualEntry(id = 1): VersionEntry {
+  return {
+    ...autoEntry(id),
+    kind: "manual",
+    version_no: "20260526143000000",
+    created_at: "2026-05-26T14:30:00Z",
+  };
+}
+
+const VersionTimelineHarness = VersionTimeline as unknown as (props: {
+  open: boolean;
+  onClose: () => void;
+  notePath: string | null;
+  currentContent?: string;
+  getCurrentContent?: () => string;
+  hasUnsavedEdits?: boolean;
+  onRestore: (content: string) => void;
+}) => ReturnType<typeof VersionTimeline>;
+
 describe("VersionTimeline collapsed auto backups", () => {
   let container: HTMLDivElement;
   let root: Root;
@@ -41,6 +60,12 @@ describe("VersionTimeline collapsed auto backups", () => {
   beforeEach(() => {
     versionList.mockReset();
     versionPreview.mockReset();
+    versionRestore.mockReset();
+    versionDelete.mockReset();
+    versionFinalizeCurrent.mockReset();
+    versionPreview.mockResolvedValue("# history");
+    versionRestore.mockResolvedValue({ content: "# restored" });
+    versionFinalizeCurrent.mockResolvedValue(null);
     versionList.mockResolvedValue(
       Array.from({ length: 5 }, (_, i) => autoEntry(i + 1)),
     );
@@ -54,6 +79,7 @@ describe("VersionTimeline collapsed auto backups", () => {
       root.unmount();
     });
     container.remove();
+    vi.restoreAllMocks();
   });
 
   it("renders collapsed auto backup header without five row buttons", async () => {
@@ -102,5 +128,84 @@ describe("VersionTimeline collapsed auto backups", () => {
     expect(
       document.body.querySelectorAll('[data-testid="version-entry-row"]'),
     ).toHaveLength(5);
+  });
+
+  it("reads live current content only when restoring a version", async () => {
+    versionList.mockResolvedValueOnce([manualEntry()]);
+    const getCurrentContent = vi.fn(() => "# fresh current");
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
+    const onRestore = vi.fn();
+
+    await act(async () => {
+      root.render(
+        createElement(VersionTimelineHarness, {
+          open: true,
+          onClose: () => {},
+          notePath: "note.md",
+          currentContent: "# stale current",
+          getCurrentContent,
+          onRestore,
+        }),
+      );
+      await Promise.resolve();
+    });
+
+    expect(getCurrentContent).not.toHaveBeenCalled();
+
+    const row = document.body.querySelector(
+      '[data-testid="version-entry-row"]',
+    ) as HTMLButtonElement;
+    await act(async () => {
+      row.click();
+      await Promise.resolve();
+    });
+
+    const restore = Array.from(document.body.querySelectorAll("button")).find(
+      (button) => button.textContent?.includes("恢复"),
+    ) as HTMLButtonElement;
+    await act(async () => {
+      restore.click();
+      await Promise.resolve();
+    });
+
+    expect(confirm).toHaveBeenCalled();
+    expect(getCurrentContent).toHaveBeenCalledTimes(1);
+    expect(versionRestore).toHaveBeenCalledWith(1, "# fresh current");
+    expect(onRestore).toHaveBeenCalledWith("# restored");
+  });
+
+  it("reads live current content only when finalizing the current note", async () => {
+    const getCurrentContent = vi.fn(() => "# fresh current");
+
+    await act(async () => {
+      root.render(
+        createElement(VersionTimelineHarness, {
+          open: true,
+          onClose: () => {},
+          notePath: "note.md",
+          currentContent: "# stale current",
+          getCurrentContent,
+          onRestore: () => {},
+        }),
+      );
+      await Promise.resolve();
+    });
+
+    expect(getCurrentContent).not.toHaveBeenCalled();
+
+    const finalize = Array.from(document.body.querySelectorAll("button")).find(
+      (button) => button.textContent?.includes("定稿"),
+    ) as HTMLButtonElement;
+    await act(async () => {
+      finalize.click();
+      await Promise.resolve();
+    });
+
+    expect(getCurrentContent).toHaveBeenCalledTimes(1);
+    expect(versionFinalizeCurrent).toHaveBeenCalledWith(
+      "note.md",
+      "# fresh current",
+      null,
+    );
   });
 });

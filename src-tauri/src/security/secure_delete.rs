@@ -11,7 +11,6 @@ use crate::error::AppResult;
 /// 用于处理包含敏感信息的临时文件（如 API 响应缓存）。
 /// 覆写 + `sync_all` 确保操作系统将覆写操作刷入存储介质，
 /// 随后 `remove_file` 释放目录条目。
-#[allow(dead_code)]
 pub fn secure_delete(path: &Path) -> AppResult<()> {
     if !path.exists() {
         return Ok(());

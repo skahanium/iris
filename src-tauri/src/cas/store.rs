@@ -2,8 +2,12 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
+use std::sync::OnceLock;
 
 use crate::error::{AppError, AppResult};
+
+const CRYPT_MAGIC: &[u8; 4] = b"CASE";
+const ENC_KEY_LEN: usize = 32;
 
 /// 对象类型
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -59,6 +63,7 @@ pub struct CommitObject {
 #[derive(Clone)]
 pub struct CasObjectStore {
     base_path: PathBuf,
+    enc_key: OnceLock<Option<[u8; ENC_KEY_LEN]>>,
 }
 
 impl CasObjectStore {
@@ -70,7 +75,22 @@ impl CasObjectStore {
         fs::create_dir_all(&objects_dir)?;
         fs::create_dir_all(&refs_dir)?;
 
-        Ok(Self { base_path })
+        Ok(Self {
+            base_path,
+            enc_key: OnceLock::new(),
+        })
+    }
+
+    /// Enable AES-256-GCM encryption for all future blob writes.
+    /// Existing plaintext blobs remain readable via header detection.
+    /// Call once during initialization; idempotent after the first call.
+    pub fn enable_encryption(&self, key: [u8; ENC_KEY_LEN]) {
+        let _ = self.enc_key.set(Some(key));
+    }
+
+    /// Get the encryption key if configured.
+    fn enc_key(&self) -> Option<[u8; ENC_KEY_LEN]> {
+        self.enc_key.get().copied().flatten()
     }
 
     /// 获取对象文件路径
@@ -82,7 +102,7 @@ impl CasObjectStore {
         Ok(self.base_path.join("objects").join(prefix).join(suffix))
     }
 
-    /// 存储 blob 对象
+    /// 存储 blob 对象。如果启用了加密，写入前加密内容。
     pub fn store_blob(&self, content: &[u8]) -> AppResult<String> {
         let hash = super::hash::content_hash(content);
         let path = self.object_path(&hash)?;
@@ -95,17 +115,37 @@ impl CasObjectStore {
             fs::create_dir_all(parent)?;
         }
 
-        fs::write(&path, content)?;
+        let on_disk = if let Some(key) = self.enc_key() {
+            let encrypted = super::encryption::encrypt_blob(content, &key)?;
+            let mut buf = Vec::with_capacity(CRYPT_MAGIC.len() + encrypted.len());
+            buf.extend_from_slice(CRYPT_MAGIC);
+            buf.extend_from_slice(&encrypted);
+            buf
+        } else {
+            content.to_vec()
+        };
+
+        fs::write(&path, &on_disk)?;
         Ok(hash)
     }
 
-    /// 读取 blob 内容
+    /// 读取 blob 内容。自动检测并解密加密的 blob。
     pub fn read_blob(&self, hash: &str) -> AppResult<Vec<u8>> {
         let path = self.object_path(hash)?;
         if !path.exists() {
             return Err(AppError::msg(format!("Object not found: {}", hash)));
         }
-        Ok(fs::read(path)?)
+        let raw = fs::read(&path)?;
+
+        if raw.len() >= CRYPT_MAGIC.len() && &raw[..CRYPT_MAGIC.len()] == CRYPT_MAGIC {
+            let enc_data = &raw[CRYPT_MAGIC.len()..];
+            let key = self.enc_key().ok_or_else(|| {
+                AppError::msg("encrypted CAS blob detected but no encryption key configured")
+            })?;
+            super::encryption::decrypt_blob(enc_data, &key)
+        } else {
+            Ok(raw)
+        }
     }
 
     /// 读取 blob 内容为字符串
@@ -128,7 +168,17 @@ impl CasObjectStore {
             fs::create_dir_all(parent)?;
         }
 
-        fs::write(&path, &content)?;
+        let on_disk = if let Some(key) = self.enc_key() {
+            let encrypted = super::encryption::encrypt_blob(&content, &key)?;
+            let mut buf = Vec::with_capacity(CRYPT_MAGIC.len() + encrypted.len());
+            buf.extend_from_slice(CRYPT_MAGIC);
+            buf.extend_from_slice(&encrypted);
+            buf
+        } else {
+            content
+        };
+
+        fs::write(&path, &on_disk)?;
         Ok(hash)
     }
 
@@ -153,7 +203,17 @@ impl CasObjectStore {
             fs::create_dir_all(parent)?;
         }
 
-        fs::write(&path, &content)?;
+        let on_disk = if let Some(key) = self.enc_key() {
+            let encrypted = super::encryption::encrypt_blob(&content, &key)?;
+            let mut buf = Vec::with_capacity(CRYPT_MAGIC.len() + encrypted.len());
+            buf.extend_from_slice(CRYPT_MAGIC);
+            buf.extend_from_slice(&encrypted);
+            buf
+        } else {
+            content
+        };
+
+        fs::write(&path, &on_disk)?;
         Ok(hash)
     }
 

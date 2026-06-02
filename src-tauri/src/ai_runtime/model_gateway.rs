@@ -290,7 +290,7 @@ impl ModelGateway {
 
     /// Create a gateway with default pinned HTTP client.
     pub fn with_defaults(app_handle: AppHandle, providers: Vec<ProviderConfig>) -> AppResult<Self> {
-        let client = crate::network::cert_pinning::create_pinned_client()?;
+        let client = crate::network::cert_pinning::create_pinned_client_with_pins(&[])?;
         Ok(Self::new(app_handle, client, providers))
     }
 
@@ -559,10 +559,23 @@ impl ModelGateway {
             return Err(AppError::msg(format_llm_http_error(status, &text)));
         }
 
-        let json: serde_json::Value = response
-            .json()
+        let response_text = response
+            .text()
             .await
-            .map_err(|e| AppError::msg(format!("Failed to parse LLM response: {}", e)))?;
+            .map_err(|e| AppError::msg(format!("Failed to read LLM response body: {}", e)))?;
+
+        let json: serde_json::Value = serde_json::from_str(&response_text).map_err(|e| {
+            let preview: String = response_text.chars().take(500).collect();
+            let suffix = if response_text.chars().count() > 500 {
+                "…"
+            } else {
+                ""
+            };
+            AppError::msg(format!(
+                "Failed to parse LLM response: {}. Body preview: {}{}",
+                e, preview, suffix
+            ))
+        })?;
 
         let content = json["choices"][0]["message"]["content"]
             .as_str()

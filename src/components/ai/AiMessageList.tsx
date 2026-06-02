@@ -1,3 +1,5 @@
+import { memo, useCallback, type MouseEvent } from "react";
+
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { AiMessage } from "@/components/ui/ai-message";
 import { AiMessageBubble } from "@/components/ai/AiMessageBubble";
@@ -9,6 +11,8 @@ import type { ToolCallInfo } from "@/types/ai";
 export interface ChatLine {
   role: "user" | "assistant" | "system";
   content: string;
+  seq?: number;
+  created_at?: string;
   toolCalls?: ToolCallInfo[];
   kind?: "research";
   research?: ResearchFocusPayload;
@@ -17,15 +21,24 @@ export interface ChatLine {
 interface AiMessageListProps {
   messages: ChatLine[];
   streaming: boolean;
+  selectedIndices?: Set<number>;
   onCitationClick?: (ref: string) => void;
   onExpandResearch?: (result: ResearchFocusPayload) => void;
+  onRetract?: (index: number) => void;
+  onSelect?: (
+    index: number,
+    event: { shiftKey: boolean; metaKey: boolean; ctrlKey: boolean },
+  ) => void;
 }
 
-export function AiMessageList({
+export const AiMessageList = memo(function AiMessageList({
   messages,
   streaming,
+  selectedIndices,
   onCitationClick,
   onExpandResearch,
+  onRetract,
+  onSelect,
 }: AiMessageListProps) {
   const last = messages[messages.length - 1];
   const showStandaloneThinking =
@@ -34,6 +47,25 @@ export function AiMessageList({
       last?.role === "user" ||
       (last?.role === "system" &&
         !messages.some((m) => m.role === "assistant")));
+
+  const handleBubbleClick = (index: number, e: MouseEvent) => {
+    if (!onSelect) return;
+    const target = e.target as HTMLElement;
+    if (target.closest("a, button")) return;
+    onSelect(index, {
+      shiftKey: e.shiftKey,
+      metaKey: e.metaKey,
+      ctrlKey: e.ctrlKey,
+    });
+  };
+
+  const handleCopyMessage = useCallback(async (content: string) => {
+    try {
+      await navigator.clipboard.writeText(content);
+    } catch {
+      /* ignore */
+    }
+  }, []);
 
   return (
     <ScrollArea className="min-h-0 flex-1">
@@ -54,6 +86,7 @@ export function AiMessageList({
             m.kind !== "research" &&
             isLast &&
             !m.content;
+          const isSelected = selectedIndices?.has(i) ?? false;
 
           if (m.role === "assistant" && m.kind === "research" && m.research) {
             return (
@@ -68,14 +101,27 @@ export function AiMessageList({
           }
 
           if (m.role === "assistant") {
+            const msgContent = m.content || "";
             return (
-              <div key={`${i}-${m.role}`} className="flex w-full justify-start">
+              <div
+                key={`${i}-${m.role}`}
+                className="flex w-full justify-start"
+                onClick={(e) => handleBubbleClick(i, e)}
+              >
                 <div className="min-w-0 max-w-full flex-1">
                   <AiMessageBubble
                     role="assistant"
-                    content={m.content || undefined}
+                    content={msgContent || undefined}
                     streaming={assistantStreaming}
+                    selected={isSelected}
+                    createdAt={m.created_at}
                     onCitationClick={onCitationClick}
+                    onRetract={onRetract ? () => onRetract(i) : undefined}
+                    onCopy={
+                      msgContent
+                        ? () => handleCopyMessage(msgContent)
+                        : undefined
+                    }
                   />
                 </div>
               </div>
@@ -84,8 +130,16 @@ export function AiMessageList({
 
           if (m.role === "user") {
             return (
-              <div key={`${i}-${m.role}`} className="flex w-full justify-end">
-                <AiMessageBubble role="user" content={m.content} />
+              <div
+                key={`${i}-${m.role}`}
+                className="flex w-full justify-end"
+                onClick={(e) => handleBubbleClick(i, e)}
+              >
+                <AiMessageBubble
+                  role="user"
+                  content={m.content}
+                  selected={isSelected}
+                />
               </div>
             );
           }
@@ -101,4 +155,4 @@ export function AiMessageList({
       </div>
     </ScrollArea>
   );
-}
+});

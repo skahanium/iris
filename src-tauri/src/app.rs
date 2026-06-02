@@ -103,7 +103,12 @@ impl AppState {
         self.cas_store.get_or_init(|| {
             let vault = self.vault_path().expect("Vault not configured");
             let cas_path = vault.join(".iris").join("cas");
-            CasObjectStore::new(cas_path).expect("Failed to create CAS store")
+            let store = CasObjectStore::new(cas_path).expect("Failed to create CAS store");
+            match crate::cas::encryption::get_or_create_cas_key() {
+                Ok(key) => store.enable_encryption(key),
+                Err(e) => tracing::warn!("CAS encryption unavailable: {e}"),
+            }
+            store
         })
     }
 
@@ -174,6 +179,18 @@ impl AppState {
         guard
             .clone()
             .ok_or_else(|| AppError::msg("笔记目录未配置，请先选择 vault"))
+    }
+
+    /// Clear in-memory AI state when switching vaults to prevent data leakage
+    /// between unrelated note collections.
+    pub fn clear_ai_state(&self) {
+        if let Ok(mut pending) = self.pending_tool_calls.lock() {
+            pending.clear();
+        }
+        if let Ok(mut research) = self.active_research.lock() {
+            research.clear();
+        }
+        tracing::info!("vault switch: cleared pending tool calls and active research");
     }
 
     pub fn data_dir(&self) -> &PathBuf {

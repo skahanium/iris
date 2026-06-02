@@ -1,4 +1,4 @@
-import { mergeAttributes, Node } from "@tiptap/core";
+import { mergeAttributes, Node, type RawCommands } from "@tiptap/core";
 import type { Editor } from "@tiptap/core";
 import { ReactNodeViewRenderer } from "@tiptap/react";
 
@@ -108,7 +108,7 @@ export const AiStreamExtension = Node.create<AiStreamOptions>({
     return ReactNodeViewRenderer(AiNodeView);
   },
 
-  addCommands() {
+  addCommands(): Partial<RawCommands> {
     return {
       insertAiStreamForSelection:
         ({ originalText, action }) =>
@@ -226,6 +226,6 @@ export const AiStreamExtension = Node.create<AiStreamOptions>({
         () =>
         ({ commands }) =>
           commands.rollbackAiStream(),
-    };
+    } as Partial<RawCommands>;
   },
 });

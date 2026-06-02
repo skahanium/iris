@@ -7,10 +7,16 @@ import type { ResearchFocusPayload } from "@/types/ai";
 interface ConversationSurfaceProps {
   messages: ChatLine[];
   streaming: boolean;
+  selectedIndices?: Set<number>;
   messageListRef: RefObject<HTMLDivElement | null>;
   onCitationClick: (ref: string) => void;
   onExpandResearch: (result: ResearchFocusPayload) => void;
   onQuoteToInput: (text: string) => void;
+  onRetract?: (index: number) => void;
+  onSelect?: (
+    index: number,
+    event: { shiftKey: boolean; metaKey: boolean; ctrlKey: boolean },
+  ) => void;
 }
 
 /**
@@ -22,10 +28,13 @@ interface ConversationSurfaceProps {
 export function ConversationSurface({
   messages,
   streaming,
+  selectedIndices,
   messageListRef,
   onCitationClick,
   onExpandResearch,
   onQuoteToInput,
+  onRetract,
+  onSelect,
 }: ConversationSurfaceProps) {
   return (
     <div
@@ -36,8 +45,11 @@ export function ConversationSurface({
       <AiMessageList
         messages={messages}
         streaming={streaming}
+        selectedIndices={selectedIndices}
         onCitationClick={onCitationClick}
         onExpandResearch={onExpandResearch}
+        onRetract={onRetract}
+        onSelect={onSelect}
       />
       <AiMessageSelectionUi
         messageListRef={messageListRef}

@@ -25,15 +25,16 @@ export function useEditorSave(
   const onSavedRef = useRef(onSaved);
   onSavedRef.current = onSaved;
 
-  const saveNote = useCallback(async () => {
+  const saveNote = useCallback(async (): Promise<string | null> => {
     const target = pathRef.current;
-    if (!target) return;
+    if (!target) return null;
     const md = getMarkdownRef.current();
     if (isNoteSubstantivelyEmpty(md)) {
-      return;
+      return null;
     }
     await fileWrite(target, md);
     onSavedRef.current?.(md);
+    return md;
   }, []);
 
   const debouncedSave = useMemo(
@@ -56,9 +57,9 @@ export function useEditorSave(
     debouncedSave();
   }, [debouncedSave]);
 
-  const flushSave = useCallback(async () => {
+  const flushSave = useCallback(async (): Promise<string | null> => {
     debouncedSave.cancel();
-    await saveNote();
+    return saveNote();
   }, [debouncedSave, saveNote]);
 
   const cancelPendingSave = useCallback(() => {

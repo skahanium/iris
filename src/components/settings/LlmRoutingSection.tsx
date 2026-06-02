@@ -54,7 +54,8 @@ interface LlmRoutingSectionProps {
 export function LlmRoutingSection({ open }: LlmRoutingSectionProps) {
   const [data, setData] = useState<LlmConfigGetResponse | null>(null);
   const [routing, setRouting] = useState<LlmRoutingConfig | null>(null);
-  const [keyInputs, setKeyInputs] = useState<Record<string, string>>({});
+  const keyInputsRef = useRef<Record<string, string>>({});
+  const [, setKeyInputTouch] = useState(0);
   const [keyConfigured, setKeyConfigured] = useState<Record<string, boolean>>(
     {},
   );
@@ -130,7 +131,7 @@ export function LlmRoutingSection({ open }: LlmRoutingSectionProps) {
   }, [open, load]);
 
   const saveKey = async (providerId: string) => {
-    const value = keyInputs[providerId]?.trim();
+    const value = keyInputsRef.current[providerId]?.trim();
     if (!value) return;
     const service = llmCredentialService(providerId);
     const label =
@@ -146,7 +147,8 @@ export function LlmRoutingSection({ open }: LlmRoutingSectionProps) {
         setMessage(`${label} Key 写入后校验失败，请重试；输入内容已保留。`);
         return;
       }
-      setKeyInputs((prev) => ({ ...prev, [providerId]: "" }));
+      keyInputsRef.current[providerId] = "";
+      setKeyInputTouch((n) => n + 1);
       setKeyConfigured((prev) => ({ ...prev, [providerId]: true }));
       setMessage(
         `${label} Key 已保存到系统凭据管理器（输入框已清空以保护隐私）。`,
@@ -401,13 +403,14 @@ export function LlmRoutingSection({ open }: LlmRoutingSectionProps) {
               provider={p}
               routing={routing}
               keyConfigured={keyConfigured}
-              keyInputs={keyInputs}
+              keyInputsRef={keyInputsRef}
               keySaving={keySaving}
               testing={testing}
               testResult={testResults[p.id]}
-              onKeyInput={(id, value) =>
-                setKeyInputs((prev) => ({ ...prev, [id]: value }))
-              }
+              onKeyInput={(id, value) => {
+                keyInputsRef.current[id] = value;
+                setKeyInputTouch((n) => n + 1);
+              }}
               onSaveKey={(id) => void saveKey(id)}
               onClearKey={(id) => void clearKey(id)}
               onTest={(id) => void testProvider(id)}
@@ -435,14 +438,15 @@ export function LlmRoutingSection({ open }: LlmRoutingSectionProps) {
                 provider={p}
                 routing={routing}
                 keyConfigured={keyConfigured}
-                keyInputs={keyInputs}
+                keyInputsRef={keyInputsRef}
                 keySaving={keySaving}
                 testing={testing}
                 testResult={testResults[p.id]}
                 custom
-                onKeyInput={(id, value) =>
-                  setKeyInputs((prev) => ({ ...prev, [id]: value }))
-                }
+                onKeyInput={(id, value) => {
+                  keyInputsRef.current[id] = value;
+                  setKeyInputTouch((n) => n + 1);
+                }}
                 onSaveKey={(id) => void saveKey(id)}
                 onClearKey={(id) => void clearKey(id)}
                 onTest={(id) => void testProvider(id)}
@@ -592,7 +596,7 @@ interface ProviderCredentialCardProps {
   provider: { id: string; name: string };
   routing: LlmRoutingConfig;
   keyConfigured: Record<string, boolean>;
-  keyInputs: Record<string, string>;
+  keyInputsRef: React.RefObject<Record<string, string>>;
   keySaving: string | null;
   testing: string | null;
   testResult?: { ok: boolean; message: string };
@@ -610,7 +614,7 @@ function ProviderCredentialCard({
   provider: p,
   routing,
   keyConfigured,
-  keyInputs,
+  keyInputsRef,
   keySaving,
   testing,
   testResult,
@@ -652,7 +656,7 @@ function ProviderCredentialCard({
           type="password"
           className="h-8 text-xs"
           placeholder="API Key…"
-          value={keyInputs[p.id] ?? ""}
+          value={keyInputsRef.current?.[p.id] ?? ""}
           onChange={(e) => onKeyInput(p.id, e.target.value)}
         />
         <Button

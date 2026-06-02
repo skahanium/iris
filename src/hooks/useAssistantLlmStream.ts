@@ -30,6 +30,7 @@ export function useAssistantLlmStream(options: {
   } = options;
 
   const rafRef = useRef<number | undefined>(undefined);
+  const lastFlushRef = useRef<number>(0);
 
   useEffect(() => {
     let disposed = false;
@@ -61,11 +62,14 @@ export function useAssistantLlmStream(options: {
       streamBufRef.current += ev.token;
 
       if (rafRef.current === undefined) {
-        rafRef.current = requestAnimationFrame(() => {
+        const elapsed = performance.now() - lastFlushRef.current;
+        const delay = elapsed < 50 ? 50 - elapsed : 0;
+        rafRef.current = window.setTimeout(() => {
           rafRef.current = undefined;
           if (disposed) return;
+          lastFlushRef.current = performance.now();
           flushSnapshot();
-        });
+        }, delay) as unknown as number;
       }
     }).then((fn) => {
       if (disposed) fn();
@@ -82,7 +86,7 @@ export function useAssistantLlmStream(options: {
         return;
       }
       if (rafRef.current !== undefined) {
-        cancelAnimationFrame(rafRef.current);
+        clearTimeout(rafRef.current);
         rafRef.current = undefined;
         flushSnapshot();
       }
@@ -106,7 +110,7 @@ export function useAssistantLlmStream(options: {
       streamBufRef.current = "";
       requestIdRef.current = null;
       if (rafRef.current !== undefined) {
-        cancelAnimationFrame(rafRef.current);
+        clearTimeout(rafRef.current);
         rafRef.current = undefined;
       }
       setMessages((prev) => [
@@ -124,7 +128,7 @@ export function useAssistantLlmStream(options: {
     return () => {
       disposed = true;
       if (rafRef.current !== undefined) {
-        cancelAnimationFrame(rafRef.current);
+        clearTimeout(rafRef.current);
         rafRef.current = undefined;
       }
       unlistenToken?.();
@@ -139,4 +143,3 @@ export function useAssistantLlmStream(options: {
     setStreaming,
   ]);
 }
-

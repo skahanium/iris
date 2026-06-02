@@ -313,6 +313,25 @@ impl SessionManager {
             Ok(())
         })
     }
+
+    /// 撤回：删除指定 seq 及之后的所有消息，并更新 session 时间戳。
+    /// 返回被删除的消息数量。
+    pub fn retract_messages(db: &Database, session_id: i64, from_seq: i64) -> AppResult<u32> {
+        db.with_conn(|conn| {
+            let deleted = conn.execute(
+                "DELETE FROM session_messages WHERE session_id = ?1 AND seq >= ?2",
+                rusqlite::params![session_id, from_seq],
+            )?;
+            if deleted > 0 {
+                let now = chrono::Utc::now().to_rfc3339();
+                conn.execute(
+                    "UPDATE sessions SET updated_at = ?1 WHERE id = ?2",
+                    rusqlite::params![now, session_id],
+                )?;
+            }
+            Ok(deleted as u32)
+        })
+    }
 }
 
 fn derive_session_title(first_user_message: &str) -> String {

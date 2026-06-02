@@ -8,12 +8,15 @@ use walkdir::WalkDir;
 use super::chunker::chunk_markdown;
 use super::frontmatter::{parse_note, resolve_display_title};
 use super::fts::{delete_fts, upsert_fts};
+use super::image_ref::index_image_refs;
 use super::wikilink::index_wiki_links;
 use crate::app::AppState;
 #[cfg(not(test))]
 use crate::embedding::store::store_chunk_embeddings;
 use crate::error::AppResult;
-use crate::storage::paths::{is_user_note_path, relative_path, resolve_vault_path};
+use crate::storage::paths::{
+    is_user_note_path, read_file_lossy, relative_path, resolve_vault_path,
+};
 use std::sync::Arc;
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -71,7 +74,7 @@ pub fn index_file_with_embed(
             "Path is not a user note (metadata paths are not indexed)",
         ));
     }
-    let content = fs::read_to_string(absolute)?;
+    let content = read_file_lossy(absolute)?;
     let hash = content_hash(&content);
     let parsed = parse_note(&content)?;
     let document_name = Path::new(&rel)
@@ -137,6 +140,8 @@ pub fn index_file_with_embed(
     sync_file_tags(conn, file_id, &parsed.tags)?;
 
     let _link_count = index_wiki_links(conn, file_id, &parsed.body)?;
+
+    let _image_count = index_image_refs(conn, file_id, &parsed.body)?;
 
     upsert_fts(conn, &rel, &title, &parsed.body)?;
 
@@ -313,8 +318,8 @@ pub fn collect_vault_files(vault: &Path) -> Vec<std::path::PathBuf> {
 
 /// Compute SHA-256 hash for external change detection.
 pub fn file_hash(path: &Path) -> AppResult<String> {
-    let content = fs::read_to_string(path)?;
-    Ok(content_hash(&content))
+    let content = fs::read(path)?;
+    Ok(crate::cas::hash::content_hash(&content))
 }
 
 #[cfg(test)]

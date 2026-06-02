@@ -3,17 +3,17 @@ use thiserror::Error;
 
 #[derive(Debug, Error)]
 pub enum AppError {
-    #[error("IO error: {0}")]
+    #[error("IO error")]
     Io(#[from] std::io::Error),
-    #[error("Database error: {0}")]
+    #[error("Database error")]
     Db(#[from] rusqlite::Error),
-    #[error("JSON error: {0}")]
+    #[error("JSON error")]
     Json(#[from] serde_json::Error),
-    #[error("HTTP error: {0}")]
+    #[error("HTTP error")]
     Http(#[from] reqwest::Error),
-    #[error("Keyring error: {0}")]
+    #[error("Keyring error")]
     Keyring(#[from] keyring::Error),
-    #[error("Embedding error: {0}")]
+    #[error("Embedding error")]
     Embed(String),
     #[error("{0}")]
     Message(String),
@@ -30,7 +30,32 @@ impl Serialize for AppError {
     where
         S: serde::Serializer,
     {
-        serializer.serialize_str(&self.to_string())
+        let sanitized = match self {
+            Self::Io(_) => "IO error".to_string(),
+            Self::Db(_) => "Database error".to_string(),
+            Self::Json(_) => "JSON error".to_string(),
+            Self::Http(_) => "HTTP error".to_string(),
+            Self::Keyring(_) => "Keyring error".to_string(),
+            Self::Embed(_) => "Embedding error".to_string(),
+            Self::Message(s) => s.clone(),
+        };
+        serializer.serialize_str(&sanitized)
+    }
+}
+
+/// Logs the full error detail (with internal context) for server-side tracing,
+/// while [`AppError::serialize`] only sends sanitized labels to the frontend.
+pub fn log_error(error: &AppError) {
+    match error {
+        AppError::Io(e) => tracing::error!(kind = "io", detail = %e, "IO error"),
+        AppError::Db(e) => tracing::error!(kind = "db", detail = %e, "Database error"),
+        AppError::Json(e) => tracing::error!(kind = "json", detail = %e, "JSON error"),
+        AppError::Http(e) => tracing::error!(kind = "http", detail = %e, "HTTP error"),
+        AppError::Keyring(e) => {
+            tracing::error!(kind = "keyring", detail = %e, "Keyring error")
+        }
+        AppError::Embed(s) => tracing::error!(kind = "embed", detail = %s, "Embedding error"),
+        AppError::Message(s) => tracing::error!(kind = "message", detail = %s, "App error"),
     }
 }
 
@@ -48,26 +73,37 @@ mod tests {
     }
 
     #[test]
-    fn io_error_serializes() {
+    fn io_error_serializes_sanitized() {
         let io = std::io::Error::new(std::io::ErrorKind::NotFound, "file missing");
         let err = AppError::Io(io);
         let json = serde_json::to_string(&err).unwrap();
-        assert!(json.contains("file missing"));
+        assert!(json.contains("IO error"));
+        assert!(!json.contains("file missing"));
     }
 
     #[test]
-    fn db_error_serializes() {
+    fn db_error_serializes_sanitized() {
         let db_err = rusqlite::Error::InvalidParameterName("bad".into());
         let err = AppError::Db(db_err);
         let json = serde_json::to_string(&err).unwrap();
         assert!(json.contains("Database error"));
+        assert!(!json.contains("bad"));
     }
 
     #[test]
-    fn json_error_serializes() {
+    fn json_error_serializes_sanitized() {
         let json_err = serde_json::from_str::<serde_json::Value>("not json").unwrap_err();
         let err = AppError::Json(json_err);
         let serialized = serde_json::to_string(&err).unwrap();
         assert!(serialized.contains("JSON error"));
+        assert!(!serialized.contains("not json"));
+    }
+
+    #[test]
+    fn embed_error_serializes_sanitized() {
+        let err = AppError::Embed("failed to compute embedding for file /secret/path.md".into());
+        let json = serde_json::to_string(&err).unwrap();
+        assert!(json.contains("Embedding error"));
+        assert!(!json.contains("/secret/path.md"));
     }
 }

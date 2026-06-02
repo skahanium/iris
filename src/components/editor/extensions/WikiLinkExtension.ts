@@ -1,4 +1,4 @@
-import { Mark, mergeAttributes } from "@tiptap/core";
+import { Mark, mergeAttributes, type RawCommands } from "@tiptap/core";
 import { Plugin, PluginKey } from "@tiptap/pm/state";
 
 export interface WikiLinkOptions {
@@ -60,7 +60,7 @@ export const WikiLinkExtension = Mark.create<WikiLinkOptions>({
     ];
   },
 
-  addCommands() {
+  addCommands(): Partial<RawCommands> {
     return {
       insertWikiLink:
         (title: string) =>
@@ -75,7 +75,7 @@ export const WikiLinkExtension = Mark.create<WikiLinkOptions>({
             })
             .run();
         },
-    };
+    } as Partial<RawCommands>;
   },
 
   addProseMirrorPlugins() {

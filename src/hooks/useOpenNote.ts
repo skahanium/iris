@@ -59,6 +59,7 @@ export function useOpenNote({
 
   const pathSyncTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pathSyncGenRef = useRef(0);
+  const savedMarkdownRef = useRef<string | null>(null);
 
   const syncFromMarkdown = useCallback(
     (md: string, path: string) => {
@@ -79,6 +80,10 @@ export function useOpenNote({
     if (!activePath) {
       setNoteTitle("");
       setBodyMarkdown("");
+      return;
+    }
+    if (markdown === savedMarkdownRef.current) {
+      savedMarkdownRef.current = null;
       return;
     }
     syncFromMarkdown(markdown, activePath);
@@ -103,6 +108,7 @@ export function useOpenNote({
 
   const applySavedMarkdown = useCallback(
     (md: string) => {
+      savedMarkdownRef.current = md;
       markdownRef.current = md;
       frontmatterYamlRef.current = extractFrontmatterYaml(md);
       onMarkdownSynced?.(md);

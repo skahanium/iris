@@ -12,6 +12,7 @@ use tracing::info;
 
 use crate::app::AppState;
 use crate::error::{AppError, AppResult};
+use crate::storage::paths::read_file_lossy;
 
 pub use kind::VersionKind;
 pub use policy::{SnapshotDecisionInput, AUTO_IDLE_MAX_PER_FILE};
@@ -332,7 +333,7 @@ pub fn version_preview(state: &Arc<AppState>, version_id: i64) -> AppResult<Stri
 
     let vault = state.vault_path()?;
     let abs = vault.join(".iris").join("versions").join(&storage_path);
-    Ok(fs::read_to_string(&abs)?)
+    read_file_lossy(&abs)
 }
 
 pub fn version_restore(
@@ -365,7 +366,10 @@ pub fn version_restore(
 
     let tmp = abs_note.with_extension("md.tmp");
     fs::write(&tmp, &content)?;
-    fs::rename(&tmp, &abs_note)?;
+    if let Err(e) = fs::rename(&tmp, &abs_note) {
+        let _ = crate::security::secure_delete::secure_delete(&tmp);
+        return Err(e.into());
+    }
 
     state
         .db
