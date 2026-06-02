@@ -10,6 +10,7 @@ dist/
 
 # --- Rust / Tauri ---
 **/target/
+**/target-codex-check*/
 src-tauri/gen/
 src-tauri/WixTools/
 src-tauri/icons-staging/
@@ -85,3 +86,5 @@ $RECYCLE.BIN/
 .cursor/
 .agent/
 .claude/
+.codex/
+.opencode/

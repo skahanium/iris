@@ -10,8 +10,37 @@ use crate::ai_runtime::{AiScene, ContextPacket, ToolSpec};
 use crate::error::{AppError, AppResult};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+use std::sync::{Mutex, OnceLock};
 use tauri::{AppHandle, Emitter};
+
+static ABORTED_REQUESTS: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
+
+fn aborted_requests() -> &'static Mutex<HashSet<String>> {
+    ABORTED_REQUESTS.get_or_init(|| Mutex::new(HashSet::new()))
+}
+
+/// Request cancellation for an active harness/model request.
+pub fn request_abort(request_id: &str) {
+    if let Ok(mut aborted) = aborted_requests().lock() {
+        aborted.insert(request_id.to_string());
+    }
+}
+
+/// Return whether a request has been marked for cancellation.
+pub fn is_abort_requested(request_id: &str) -> bool {
+    aborted_requests()
+        .lock()
+        .map(|aborted| aborted.contains(request_id))
+        .unwrap_or(false)
+}
+
+/// Clear a cancellation marker after the active request observes it.
+pub fn clear_abort(request_id: &str) {
+    if let Ok(mut aborted) = aborted_requests().lock() {
+        aborted.remove(request_id);
+    }
+}
 
 // ─── Provider Types ──────────────────────────────────────
 
@@ -581,6 +610,11 @@ impl ModelGateway {
         request_id: &str,
         request: GatewayRequest,
     ) -> AppResult<GatewayResponse> {
+        if is_abort_requested(request_id) {
+            clear_abort(request_id);
+            return Err(AppError::msg("request aborted"));
+        }
+
         let url = crate::llm::providers::chat_completions_url(&request.provider.base_url);
 
         let mut body = serde_json::json!({
@@ -640,6 +674,11 @@ impl ModelGateway {
         let mut carry = String::new();
 
         while let Some(chunk_result) = stream.next().await {
+            if is_abort_requested(request_id) {
+                clear_abort(request_id);
+                return Err(AppError::msg("request aborted"));
+            }
+
             let chunk =
                 chunk_result.map_err(|e| AppError::msg(format!("Stream read error: {}", e)))?;
 

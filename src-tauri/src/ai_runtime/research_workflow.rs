@@ -22,7 +22,7 @@ use crate::ai_runtime::{
     },
     scene_router::resolve_scene,
     session::SessionManager,
-    tool_executor::{check_tool_permission, ToolRegistry},
+    tool_executor::{check_tool_permission, ToolRegistry, ToolSurfaceFilter},
     AiScene, AutonomyLevel, ContextPacket, ResearchProgress, ResearchTaskState, TrustLevel,
 };
 use crate::error::{AppError, AppResult};
@@ -174,7 +174,7 @@ pub async fn execute_research(
     if config.web_research_authorized {
         push_topic_web_evidence(db, topic, &mut accumulated_evidence).await;
     }
-    let llm_tools = build_research_tool_defs(&registry);
+    let llm_tools = build_research_tool_defs(&registry, config.web_research_authorized);
 
     for round_num in 0..config.max_rounds {
         // Check abort signal before each round
@@ -384,13 +384,15 @@ pub async fn execute_research(
 // ─── Agentic Loop Helpers ────────────────────────────────
 
 /// Build LLM tool definitions for the research agentic loop (read-only auto tools only).
-fn build_research_tool_defs(registry: &ToolRegistry) -> Vec<LlmToolDef> {
-    let tools: Vec<crate::ai_runtime::ToolSpec> = registry
-        .auto_tools_for_scene(AiScene::ResearchSynthesis)
-        .into_iter()
-        .cloned()
-        .collect();
-
+fn build_research_tool_defs(registry: &ToolRegistry, web_search_enabled: bool) -> Vec<LlmToolDef> {
+    let tools = registry.tools_for_surface(
+        AiScene::ResearchSynthesis,
+        ToolSurfaceFilter {
+            web_search_enabled,
+            depth: 0,
+            only_auto: true,
+        },
+    );
     ModelGateway::tools_to_llm_format(&tools)
 }
 

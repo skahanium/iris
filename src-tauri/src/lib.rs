@@ -157,6 +157,7 @@ pub fn run() {
             commands::ai_commands::session_clear_all,
             commands::ai_commands::ai_cache_clear,
             commands::ai_commands::harness_resume,
+            commands::ai_commands::harness_abort,
             commands::ai_commands::skills_list,
             commands::ai_commands::skills_install,
             commands::ai_commands::skills_uninstall,

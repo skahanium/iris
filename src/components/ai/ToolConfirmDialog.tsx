@@ -100,6 +100,19 @@ export function ToolConfirmDialog({
     TOOL_DISPLAY_NAMES[request.tool_name] ?? request.tool_name;
   const description =
     TOOL_DESCRIPTIONS[request.tool_name] ?? "请确认是否执行此操作。";
+  const fetchUrl =
+    request.tool_name === "fetch_web_page"
+      ? String(request.arguments.url ?? "")
+      : "";
+  const fetchHost = (() => {
+    if (!fetchUrl) return "";
+    try {
+      return new URL(fetchUrl).hostname;
+    } catch {
+      return "";
+    }
+  })();
+
   const isWriteOperation = [
     "insert_text_at_cursor",
     "replace_selection",
@@ -129,6 +142,19 @@ export function ToolConfirmDialog({
               {request.tool_name}
             </span>
           </div>
+
+          {request.tool_name === "fetch_web_page" && fetchUrl ? (
+            <div className="space-y-1 rounded-md border border-amber-200 bg-amber-50/80 p-3 text-xs">
+              <p className="font-medium text-amber-900">目标 URL</p>
+              <p className="break-all font-mono text-amber-800">{fetchUrl}</p>
+              {fetchHost ? (
+                <p className="text-amber-700">域名：{fetchHost}</p>
+              ) : null}
+              <p className="text-amber-700">
+                受单页体积与每轮抓取次数限制；仅 HTTPS。
+              </p>
+            </div>
+          ) : null}
 
           {/* Arguments display */}
           <div className="rounded-md bg-muted p-3">

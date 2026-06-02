@@ -70,6 +70,8 @@ export interface ContextPacket {
   trust_level: TrustLevel;
   citation_label: string;
   stale: boolean;
+  /** 预览组装（执行前）为 true；正式执行后由后端刷新 */
+  provisional?: boolean;
   web?: WebEvidenceMeta | null;
 }
 
@@ -159,6 +161,9 @@ export interface AiChatExecutePayload {
   citation_valid?: boolean;
   /** 冷启动 + 工具检索合并后的证据包 */
   evidence_packets?: ContextPacket[];
+  pending_confirmation?: boolean;
+  /** 正式执行与预览证据不一致时的提示 */
+  evidence_refresh_notice?: string | null;
   web_search_meta?: {
     injected: boolean;
     result_count: number;
@@ -191,7 +196,17 @@ export interface DocumentCheckResult {
   total_tokens: TokenUsage;
 }
 
-export type AssistantExecuteResponse =
+/** Wire artifact from harness task layer (camelCase via IPC). */
+export interface HarnessArtifactWire {
+  kind: string;
+  title: string;
+  status: string;
+  sourceTask: string;
+  evidenceCount: number;
+  payload: unknown;
+}
+
+export type AssistantExecuteBody =
   | { kind: "chat"; payload: AiChatExecutePayload }
   | { kind: "writing"; payload: WritingTaskResult }
   | { kind: "citation"; payload: CitationCheckResult }
@@ -199,6 +214,14 @@ export type AssistantExecuteResponse =
   | { kind: "research"; payload: ResearchFocusPayload }
   | { kind: "chapter"; payload: ChapterWritingResult }
   | { kind: "document"; payload: DocumentCheckResult };
+
+/** Flattened harness metadata + task body (serde flatten on backend). */
+export type AssistantExecuteResponse = AssistantExecuteBody & {
+  requestId: string;
+  runStatus: string;
+  artifacts: HarnessArtifactWire[];
+  evidenceRefreshNotice?: string | null;
+};
 
 /** 研究任务结果（与 `ResearchFocusView` 对齐） */
 export interface ResearchFocusPayload {
@@ -296,6 +319,8 @@ export interface AssembledContext {
   packets: ContextPacket[];
   tools: ToolSpec[];
   context_status: ContextStatus;
+  /** 预览上下文（尚未正式发送） */
+  provisional?: boolean;
   /** 由 context planner 生成的检索执行计划 */
   execution_plan?: ExecutionPlan | null;
 }

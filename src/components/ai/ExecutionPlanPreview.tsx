@@ -33,7 +33,7 @@ export function ExecutionPlanPreview({
     >
       <div className="flex items-center gap-2">
         <Layers className="h-4 w-4 text-primary" />
-        <h4 className="text-sm font-medium">检索计划</h4>
+        <h4 className="text-sm font-medium">执行前预览 · 检索计划</h4>
       </div>
 
       <div className="space-y-2">

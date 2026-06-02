@@ -58,6 +58,28 @@ describe("统一助手工作流验收", () => {
     );
   });
 
+  it("harness 现代化：tool_confirm 驱动 harness_resume 闭环", () => {
+    const aiCommands = read("src-tauri/src/commands/ai_commands.rs");
+    expect(aiCommands).toContain("resume_harness_after_tool_confirm");
+    expect(aiCommands).toContain("append_rejected_tool_to_checkpoint");
+    const panel = read("src/components/ai/UnifiedAssistantPanel.tsx");
+    expect(panel).toContain("toolConfirmIpc");
+    expect(panel).toContain("已拒绝，正在生成替代回答");
+  });
+
+  it("harness 现代化：工具单源与统一 task 契约", () => {
+    expect(read("src-tauri/src/ai_runtime/tool_dispatch.rs")).toContain(
+      "DISPATCHABLE_TOOL_NAMES",
+    );
+    expect(read("src-tauri/src/ai_runtime/harness_task.rs")).toContain(
+      "run_harness_task",
+    );
+    expect(read("src/hooks/useAssistantRun.ts")).toContain("AssistantRunState");
+    expect(read("src/lib/map-harness-result-to-artifacts.ts")).toContain(
+      "mapChatResultToArtifacts",
+    );
+  });
+
   it("联网问答：助手传递 webAuthorized，状态由底栏指示器展示", () => {
     const panel = read("src/components/ai/UnifiedAssistantPanel.tsx");
     expect(panel).toContain("webAuthorized: webSearch");

@@ -153,7 +153,9 @@ pub fn load_harness_checkpoint(
             |r| Ok((r.get(0)?, r.get(1)?)),
         );
         match row {
-            Ok((Some(json), status)) if status != "completed" && status != "failed" => {
+            Ok((Some(json), status))
+                if status != "completed" && status != "failed" && status != "aborted" =>
+            {
                 let cp: HarnessCheckpoint = match serde_json::from_str(&json) {
                     Ok(cp) => cp,
                     Err(_) => return Ok(None),
@@ -187,5 +189,46 @@ mod tests {
         let (visible, think) = extract_thinking_blocks("答案<thinking>先检索法规</thinking>因此…");
         assert!(visible.contains("答案"));
         assert!(think.unwrap().contains("检索"));
+    }
+
+    #[test]
+    fn load_checkpoint_allows_awaiting_tool_confirmation_status() {
+        let db = crate::storage::db::Database::open_in_memory().unwrap();
+        let rid = "cp-await-confirm";
+        crate::ai_runtime::trace::TraceRecorder::start(
+            &db,
+            rid,
+            crate::ai_runtime::AiScene::KnowledgeLookup,
+        )
+        .unwrap();
+        crate::ai_runtime::trace::TraceRecorder::update_status(
+            &db,
+            rid,
+            crate::ai_runtime::trace::TraceStatus::AwaitingToolConfirmation,
+        )
+        .unwrap();
+        let cp = HarnessCheckpoint {
+            meta: HarnessCheckpointMeta {
+                scene: "knowledge_lookup".into(),
+                session_id: 1,
+                note_path: None,
+                note_title: None,
+                selection_excerpt: None,
+                cold_start_packets: vec![],
+                web_search_enabled: false,
+                depth: 0,
+            },
+            round: 1,
+            messages: vec![],
+            tool_calls: vec![],
+            tool_results: vec![],
+            evidence_packets: vec![],
+            usage: crate::ai_runtime::model_gateway::TokenUsage::default(),
+            bonus_round_used: false,
+        };
+        save_harness_checkpoint(&db, rid, &cp).unwrap();
+        let loaded = load_harness_checkpoint(&db, rid).unwrap();
+        assert!(loaded.is_some());
+        assert_eq!(loaded.unwrap().round, 1);
     }
 }

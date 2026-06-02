@@ -12,7 +12,7 @@ use crate::ai_runtime::{
     retrieval_scope::ContextScopeDto,
     scene_router::resolve_scene,
     session::{SessionManager, SessionMessage, SessionSummary},
-    tool_executor::ToolRegistry,
+    tool_executor::{ToolRegistry, ToolSurfaceFilter},
     trace::{TraceRecorder, TraceStatus},
     AiScene, AssembledContext,
 };
@@ -33,13 +33,21 @@ pub async fn context_assemble(
     query: String,
     session_id: Option<i64>,
     context_scope: Option<ContextScopeDto>,
+    web_search: Option<bool>,
 ) -> AppResult<AssembledContext> {
     let scene: AiScene = serde_json::from_str(&format!("\"{scene}\""))
         .map_err(|e| AppError::msg(format!("invalid scene: {e}")))?;
 
     let _profile = resolve_scene(scene);
     let registry = ToolRegistry::new();
-    let tools: Vec<_> = registry.for_scene(scene).into_iter().cloned().collect();
+    let tools: Vec<_> = registry.tools_for_surface(
+        scene,
+        ToolSurfaceFilter {
+            web_search_enabled: web_search.unwrap_or(false),
+            depth: 0,
+            only_auto: false,
+        },
+    );
 
     // Run intent detection and context planning
     let plan = plan_context(&query, scene, note_path.as_deref())?;
@@ -110,6 +118,7 @@ pub async fn context_assemble(
     };
 
     Ok(AssembledContext {
+        provisional: true,
         packets,
         tools,
         context_status,
@@ -232,14 +241,21 @@ pub(crate) async fn execute_ai_send_message(
         )
     })?;
 
-    // Filter packets by selected IDs if provided
-    let filtered_packets = if let Some(ids) = &selected_packet_ids {
-        packets
-            .into_iter()
-            .filter(|p| ids.contains(&p.id))
-            .collect()
+    let ledger = crate::ai_runtime::evidence_ledger::EvidenceLedger::new(packets);
+    let (resolved_ids, evidence_refresh_notice) = if let Some(ids) = &selected_packet_ids {
+        ledger.resolve_selected_packet_ids(ids, ledger.packets())?
     } else {
-        packets
+        (vec![], None)
+    };
+    let filtered_packets: Vec<_> = if resolved_ids.is_empty() {
+        ledger.packets().to_vec()
+    } else {
+        ledger
+            .packets()
+            .iter()
+            .filter(|p| resolved_ids.contains(&p.id))
+            .cloned()
+            .collect()
     };
 
     let note_title = note_path.as_ref().and_then(|p| {
@@ -293,58 +309,23 @@ pub(crate) async fn execute_ai_send_message(
 
     TraceRecorder::update_status(&state.db, &request_id, TraceStatus::ModelCalled)?;
 
-    let tool_calls_value: Option<serde_json::Value> = if harness_result.tool_calls.is_empty() {
-        None
-    } else {
-        Some(serde_json::to_value(&harness_result.tool_calls).unwrap_or_default())
-    };
-    SessionManager::append_message(
-        &state.db,
-        sid,
-        "assistant",
-        &harness_result.content,
-        tool_calls_value.as_ref(),
-    )?;
-
-    if harness_result.usage.prompt_cache_hit_tokens > 0
-        || harness_result.usage.prompt_cache_miss_tokens > 0
-    {
-        let _ = crate::llm::config::save_usage_last(
-            &state.db,
-            harness_result.usage.prompt_cache_hit_tokens,
-            harness_result.usage.prompt_cache_miss_tokens,
-        );
+    if !harness_result.pending_confirmation {
+        finalize_chat_harness_run(
+            state,
+            &request_id,
+            sid,
+            scene,
+            &provider_name,
+            &harness_result,
+            &filtered_packets,
+        )?;
     }
-
-    TraceRecorder::complete(
-        &state.db,
-        &request_id,
-        TraceStatus::Completed,
-        Some(&format!("{:?}", ModelGateway::slot_for_scene(scene))),
-        Some(&provider_name),
-        Some(
-            &harness_result
-                .tool_calls
-                .iter()
-                .map(|tc| tc.function.name.clone())
-                .collect::<Vec<_>>(),
-        ),
-        Some(
-            &filtered_packets
-                .iter()
-                .map(|p| p.id.clone())
-                .collect::<Vec<_>>(),
-        ),
-        None,
-        Some(harness_result.usage.prompt_tokens),
-        Some(harness_result.usage.completion_tokens),
-        None,
-    )?;
 
     info!(
         scene = ?scene,
         provider = %provider_name,
         harness_rounds = harness_result.harness_rounds,
+        pending_confirmation = harness_result.pending_confirmation,
         tokens_input = %harness_result.usage.prompt_tokens,
         tokens_output = %harness_result.usage.completion_tokens,
         "AI harness request completed"
@@ -361,6 +342,8 @@ pub(crate) async fn execute_ai_send_message(
         "citation_valid": harness_result.citation_valid,
         "harness_rounds": harness_result.harness_rounds,
         "evidence_packets": harness_result.evidence_packets,
+        "pending_confirmation": harness_result.pending_confirmation,
+        "evidence_refresh_notice": evidence_refresh_notice,
     }))
 }
 
@@ -394,6 +377,84 @@ pub async fn ai_send_message(
     .await
 }
 
+/// Persist session + trace after a completed harness run (not pending confirmation).
+fn finalize_chat_harness_run(
+    state: &AppState,
+    request_id: &str,
+    session_id: i64,
+    scene: AiScene,
+    provider_name: &str,
+    harness_result: &crate::ai_runtime::harness::HarnessRunResult,
+    filtered_packets: &[crate::ai_runtime::ContextPacket],
+) -> AppResult<()> {
+    let tool_calls_value: Option<serde_json::Value> = if harness_result.tool_calls.is_empty() {
+        None
+    } else {
+        Some(serde_json::to_value(&harness_result.tool_calls).unwrap_or_default())
+    };
+    SessionManager::append_message(
+        &state.db,
+        session_id,
+        "assistant",
+        &harness_result.content,
+        tool_calls_value.as_ref(),
+    )?;
+
+    if harness_result.usage.prompt_cache_hit_tokens > 0
+        || harness_result.usage.prompt_cache_miss_tokens > 0
+    {
+        let _ = crate::llm::config::save_usage_last(
+            &state.db,
+            harness_result.usage.prompt_cache_hit_tokens,
+            harness_result.usage.prompt_cache_miss_tokens,
+        );
+    }
+
+    TraceRecorder::complete(
+        &state.db,
+        request_id,
+        TraceStatus::Completed,
+        Some(&format!("{:?}", ModelGateway::slot_for_scene(scene))),
+        Some(provider_name),
+        Some(
+            &harness_result
+                .tool_calls
+                .iter()
+                .map(|tc| tc.function.name.clone())
+                .collect::<Vec<_>>(),
+        ),
+        Some(
+            &filtered_packets
+                .iter()
+                .map(|p| p.id.clone())
+                .collect::<Vec<_>>(),
+        ),
+        None,
+        Some(harness_result.usage.prompt_tokens),
+        Some(harness_result.usage.completion_tokens),
+        None,
+    )?;
+    Ok(())
+}
+
+fn harness_run_to_chat_json(
+    harness_result: &crate::ai_runtime::harness::HarnessRunResult,
+) -> serde_json::Value {
+    serde_json::json!({
+        "request_id": harness_result.request_id,
+        "session_id": harness_result.session_id,
+        "status": if harness_result.pending_confirmation { "pending_tools" } else { "completed" },
+        "content": harness_result.content,
+        "tool_calls": harness_result.tool_calls,
+        "tool_results": harness_result.tool_results,
+        "usage": harness_result.usage,
+        "citation_valid": harness_result.citation_valid,
+        "harness_rounds": harness_result.harness_rounds,
+        "evidence_packets": harness_result.evidence_packets,
+        "pending_confirmation": harness_result.pending_confirmation,
+    })
+}
+
 /// Handle tool confirmation from the user.
 #[tauri::command]
 pub async fn tool_confirm(
@@ -404,13 +465,40 @@ pub async fn tool_confirm(
     decision: String,
     modified_args: Option<serde_json::Value>,
 ) -> AppResult<serde_json::Value> {
+    use crate::ai_runtime::harness_confirm::{
+        append_rejected_tool_to_checkpoint, dispatch_approved_tool_to_checkpoint,
+        resume_harness_after_tool_confirm,
+    };
+
     if decision == "reject" {
         crate::llm::safe_lock(&state.pending_tool_calls).remove(&tool_call_id);
-        return Ok(serde_json::json!({
-            "request_id": request_id,
-            "tool_call_id": tool_call_id,
-            "status": "rejected",
-        }));
+        append_rejected_tool_to_checkpoint(state.inner(), &request_id, &tool_call_id)?;
+        let harness_result =
+            resume_harness_after_tool_confirm(state.inner(), &app_handle, &request_id).await?;
+        if !harness_result.pending_confirmation {
+            let scene: AiScene = serde_json::from_str(&format!(
+                "\"{}\"",
+                load_scene_from_checkpoint(state.inner(), &request_id)?
+            ))
+            .map_err(|e| AppError::msg(format!("scene: {e}")))?;
+            let resolved = crate::llm::config::resolve_for_scene(&state.db, scene)?;
+            finalize_chat_harness_run(
+                state.inner(),
+                &request_id,
+                harness_result.session_id,
+                scene,
+                &resolved.to_provider_config(scene).name,
+                &harness_result,
+                &harness_result.evidence_packets,
+            )?;
+        }
+        let mut out = harness_run_to_chat_json(&harness_result);
+        if let Some(obj) = out.as_object_mut() {
+            obj.insert("tool_call_id".into(), serde_json::json!(tool_call_id));
+            obj.insert("decision".into(), serde_json::json!("reject"));
+            obj.insert("resumed".into(), serde_json::json!(true));
+        }
+        return Ok(out);
     }
 
     let pending = crate::llm::safe_lock(&state.pending_tool_calls).remove(&tool_call_id);
@@ -420,48 +508,52 @@ pub async fn tool_confirm(
         )));
     };
 
-    // Use modified args if provided, otherwise use original
-    let args_str = if let Some(args) = modified_args {
-        serde_json::to_string(&args).unwrap_or_default()
+    let args: serde_json::Value = if let Some(args) = modified_args {
+        args
     } else {
-        pending.arguments
+        serde_json::from_str(&pending.arguments).unwrap_or_default()
     };
 
-    let result = crate::ai_runtime::tool_dispatch::dispatch_tool(
-        state.inner(),
-        &crate::ai_runtime::tool_dispatch::ToolDispatchContext {
-            scene: pending.scene,
-            note_path: pending.note_path.as_deref(),
-            file_id: pending.file_id,
-            web_search_enabled: pending.web_search_enabled,
-            cold_start_packets: &[],
-        },
-        &pending.tool_name,
-        &serde_json::from_str(&args_str).unwrap_or_default(),
-    )
-    .await;
+    dispatch_approved_tool_to_checkpoint(state.inner(), &pending, &tool_call_id, &args).await?;
 
-    let output = if result.success {
-        serde_json::json!({
-            "request_id": request_id,
-            "tool_call_id": tool_call_id,
-            "status": "executed",
-            "output": result.output,
-        })
-    } else {
-        serde_json::json!({
-            "request_id": request_id,
-            "tool_call_id": tool_call_id,
-            "status": "error",
-            "error": result.error.unwrap_or_else(|| "unknown".into()),
-        })
-    };
+    let harness_result =
+        resume_harness_after_tool_confirm(state.inner(), &app_handle, &request_id).await?;
 
-    app_handle
-        .emit("ai:tool_result", &output)
-        .map_err(|e| AppError::msg(format!("failed to emit tool result: {}", e)))?;
+    if !harness_result.pending_confirmation {
+        let scene = pending.scene;
+        let resolved = crate::llm::config::resolve_for_scene(&state.db, scene)?;
+        finalize_chat_harness_run(
+            state.inner(),
+            &request_id,
+            harness_result.session_id,
+            scene,
+            &resolved.to_provider_config(scene).name,
+            &harness_result,
+            &harness_result.evidence_packets,
+        )?;
+    }
 
-    Ok(output)
+    let mut out = harness_run_to_chat_json(&harness_result);
+    if let Some(obj) = out.as_object_mut() {
+        obj.insert("tool_call_id".into(), serde_json::json!(tool_call_id));
+        obj.insert(
+            "decision".into(),
+            serde_json::json!(if decision == "modify" { "modify" } else { "approve" }),
+        );
+        obj.insert("resumed".into(), serde_json::json!(true));
+    }
+
+    // Migration-period event; frontend should use resumed harness payload.
+    let _ = app_handle.emit("ai:tool_result", &out);
+
+    Ok(out)
+}
+
+fn load_scene_from_checkpoint(state: &AppState, request_id: &str) -> AppResult<String> {
+    use crate::ai_runtime::harness_support::load_harness_checkpoint;
+    let cp = load_harness_checkpoint(&state.db, request_id)?
+        .ok_or_else(|| AppError::msg("checkpoint missing"))?;
+    Ok(cp.meta.scene)
 }
 
 /// Get available tools for a scene (for frontend display).
@@ -471,8 +563,15 @@ pub fn ai_list_tools(scene: String) -> AppResult<Vec<serde_json::Value>> {
         .map_err(|e| AppError::msg(format!("invalid scene: {e}")))?;
     let registry = ToolRegistry::new();
     let tools: Vec<_> = registry
-        .for_scene(scene)
-        .into_iter()
+        .tools_for_surface(
+            scene,
+            ToolSurfaceFilter {
+                web_search_enabled: true,
+                depth: 0,
+                only_auto: false,
+            },
+        )
+        .iter()
         .map(|t| {
             serde_json::json!({
                 "name": t.name,
@@ -765,39 +864,39 @@ pub async fn harness_resume(
     app_handle: tauri::AppHandle,
     request_id: String,
 ) -> AppResult<serde_json::Value> {
-    use crate::ai_runtime::harness_support::load_harness_checkpoint;
+    use crate::ai_runtime::harness_confirm::resume_harness_after_tool_confirm;
 
-    let cp = load_harness_checkpoint(&state.db, &request_id)?
-        .ok_or_else(|| AppError::msg("未找到可恢复的 checkpoint"))?;
-    let scene: AiScene = serde_json::from_str(&format!("\"{}\"", cp.meta.scene))
-        .map_err(|e| AppError::msg(format!("invalid scene in checkpoint: {e}")))?;
-    let resolved = crate::llm::config::resolve_for_scene(&state.db, scene)?;
-    let provider_config = resolved.to_provider_config(scene);
+    let harness_result =
+        resume_harness_after_tool_confirm(state.inner(), &app_handle, &request_id).await?;
 
-    let harness_result = run_harness(
-        &state,
-        &app_handle,
-        HarnessRunInput {
-            request_id: request_id.clone(),
+    if !harness_result.pending_confirmation {
+        let scene_str = load_scene_from_checkpoint(state.inner(), &request_id)?;
+        let scene: AiScene = serde_json::from_str(&format!("\"{scene_str}\""))
+            .map_err(|e| AppError::msg(format!("invalid scene: {e}")))?;
+        let resolved = crate::llm::config::resolve_for_scene(&state.db, scene)?;
+        finalize_chat_harness_run(
+            state.inner(),
+            &request_id,
+            harness_result.session_id,
             scene,
-            session_id: cp.meta.session_id,
-            note_path: cp.meta.note_path.clone(),
-            note_title: cp.meta.note_title.clone(),
-            selection_excerpt: cp.meta.selection_excerpt.clone(),
-            cold_start_packets: cp.meta.cold_start_packets.clone(),
-            web_search_enabled: cp.meta.web_search_enabled,
-            history_messages: vec![],
-            depth: cp.meta.depth,
-            resume_from_checkpoint: true,
-            token_budget: None,
-            max_rounds_override: None,
-        },
-        provider_config,
-        Some(resolved.output_budget),
-    )
-    .await?;
+            &resolved.to_provider_config(scene).name,
+            &harness_result,
+            &harness_result.evidence_packets,
+        )?;
+    }
 
-    Ok(serde_json::to_value(harness_result).unwrap_or_default())
+    Ok(harness_run_to_chat_json(&harness_result))
+}
+
+/// Abort an active harness/model request.
+#[tauri::command]
+pub async fn harness_abort(
+    state: State<'_, Arc<AppState>>,
+    request_id: String,
+) -> AppResult<()> {
+    crate::ai_runtime::model_gateway::request_abort(&request_id);
+    let _ = TraceRecorder::update_status(&state.db, &request_id, TraceStatus::Aborted);
+    Ok(())
 }
 
 #[derive(Debug, serde::Deserialize)]

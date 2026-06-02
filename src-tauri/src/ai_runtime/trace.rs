@@ -33,6 +33,8 @@ pub enum TraceStatus {
     ContextAssembled,
     ModelCalled,
     Streaming,
+    /// Harness paused waiting for user tool confirmation; checkpoint must remain.
+    AwaitingToolConfirmation,
     Completed,
     Failed,
     Aborted,
@@ -45,6 +47,7 @@ impl TraceStatus {
             TraceStatus::ContextAssembled => "context_assembled",
             TraceStatus::ModelCalled => "model_called",
             TraceStatus::Streaming => "streaming",
+            TraceStatus::AwaitingToolConfirmation => "awaiting_tool_confirmation",
             TraceStatus::Completed => "completed",
             TraceStatus::Failed => "failed",
             TraceStatus::Aborted => "aborted",
@@ -125,6 +128,7 @@ impl TraceRecorder {
                     latency_ms = ?6, token_input = ?7, token_output = ?8,
                     error_code = ?9,
                     checkpoint = CASE WHEN ?1 IN ('completed', 'failed', 'aborted') THEN NULL ELSE checkpoint END
+                    /* awaiting_tool_confirmation keeps checkpoint */
                  WHERE request_id = ?10",
                 rusqlite::params![
                     status.as_str(),

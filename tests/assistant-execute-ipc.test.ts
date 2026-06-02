@@ -19,11 +19,23 @@ describe("assistant_execute IPC contract", () => {
     );
   });
 
-  it("routes intents in Rust assistant_commands", () => {
-    const source = read("src-tauri/src/commands/assistant_commands.rs");
-    expect(source).toContain("AssistantIntent::Writing");
-    expect(source).toContain("AssistantIntent::Research");
-    expect(source).toContain("AssistantIntent::Document");
+  it("returns flattened harness metadata on AssistantExecuteResponse", () => {
+    const facade = read("src-tauri/src/commands/assistant_commands.rs");
+    expect(facade).toContain("pub struct AssistantExecuteResponse");
+    expect(facade).toContain("artifacts:");
+    const types = read("src/types/ai.ts");
+    expect(types).toContain("HarnessArtifactWire");
+    expect(types).toContain("runStatus");
+  });
+
+  it("routes intents via harness_task layer", () => {
+    const facade = read("src-tauri/src/commands/assistant_commands.rs");
+    expect(facade).toContain("run_harness_task");
+
+    const router = read("src-tauri/src/ai_runtime/harness_task.rs");
+    expect(router).toContain("AssistantIntent::Writing");
+    expect(router).toContain("AssistantIntent::Research");
+    expect(router).toContain("AssistantIntent::Document");
   });
 
   it("UnifiedAssistantPanel calls assistantExecute", () => {

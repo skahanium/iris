@@ -7,8 +7,19 @@
 
 use std::time::Instant;
 
+use crate::ai_runtime::tool_dispatch::is_exposable_tool;
 use crate::ai_runtime::{AiScene, AutonomyLevel, ToolAccessLevel, ToolCallResult, ToolSpec};
 use crate::error::AppResult;
+
+/// Filters applied when building the tool surface for LLM / IPC listing.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct ToolSurfaceFilter {
+    pub web_search_enabled: bool,
+    /// Sub-agent nesting depth (hide spawn_subagent when >= 2).
+    pub depth: u32,
+    /// When true, only tools that do not require user confirmation (research loop).
+    pub only_auto: bool,
+}
 
 // ─── Tool Registry ───────────────────────────────────────
 
@@ -29,6 +40,30 @@ impl ToolRegistry {
         self.tools
             .iter()
             .filter(|t| t.scene_allowlist.is_empty() || t.scene_allowlist.contains(&scene))
+            .collect()
+    }
+
+    /// Tools exposed to the model: scene allowlist + dispatch/harness handler + runtime filters.
+    pub fn tools_for_surface(&self, scene: AiScene, filter: ToolSurfaceFilter) -> Vec<ToolSpec> {
+        self.for_scene(scene)
+            .into_iter()
+            .filter(|t| is_exposable_tool(&t.name))
+            .filter(|t| {
+                if filter.web_search_enabled {
+                    true
+                } else {
+                    t.name != "web_search" && t.name != "fetch_web_page"
+                }
+            })
+            .filter(|t| {
+                if filter.depth >= 2 {
+                    t.name != "spawn_subagent"
+                } else {
+                    true
+                }
+            })
+            .filter(|t| !filter.only_auto || !t.requires_confirmation)
+            .cloned()
             .collect()
     }
 
@@ -592,5 +627,65 @@ mod tests {
         let names: Vec<&str> = auto.iter().map(|t| t.name.as_str()).collect();
         assert!(names.contains(&"search_hybrid"));
         assert!(!names.contains(&"insert_text_at_cursor")); // requires confirmation
+    }
+
+    #[test]
+    fn tools_for_surface_excludes_unimplemented_write_tools() {
+        let reg = ToolRegistry::new();
+        let tools = reg.tools_for_surface(
+            AiScene::DraftingAssist,
+            ToolSurfaceFilter::default(),
+        );
+        let names: Vec<&str> = tools.iter().map(|t| t.name.as_str()).collect();
+        assert!(!names.contains(&"insert_text_at_cursor"));
+        assert!(!names.contains(&"replace_selection"));
+        assert!(names.contains(&"search_hybrid"));
+    }
+
+    #[test]
+    fn tools_for_surface_hides_web_when_disabled() {
+        let reg = ToolRegistry::new();
+        let tools = reg.tools_for_surface(
+            AiScene::KnowledgeLookup,
+            ToolSurfaceFilter {
+                web_search_enabled: false,
+                ..Default::default()
+            },
+        );
+        let names: Vec<&str> = tools.iter().map(|t| t.name.as_str()).collect();
+        assert!(!names.contains(&"web_search"));
+        assert!(!names.contains(&"fetch_web_page"));
+    }
+
+    #[test]
+    fn every_exposed_tool_has_handler() {
+        use crate::ai_runtime::tool_dispatch::{
+            is_exposable_tool, DISPATCHABLE_TOOL_NAMES, HARNESS_ONLY_TOOL_NAMES,
+        };
+        let reg = ToolRegistry::new();
+        for scene in [
+            AiScene::KnowledgeLookup,
+            AiScene::ExemplarLearning,
+            AiScene::DraftingAssist,
+            AiScene::ResearchSynthesis,
+        ] {
+            let tools = reg.tools_for_surface(scene, ToolSurfaceFilter::default());
+            for t in tools {
+                assert!(
+                    is_exposable_tool(&t.name),
+                    "exposed tool {} must be dispatchable or harness-only",
+                    t.name
+                );
+                if !t.requires_confirmation
+                    && !HARNESS_ONLY_TOOL_NAMES.contains(&t.name.as_str())
+                {
+                    assert!(
+                        DISPATCHABLE_TOOL_NAMES.contains(&t.name.as_str()),
+                        "auto tool {} must have dispatch handler",
+                        t.name
+                    );
+                }
+            }
+        }
     }
 }

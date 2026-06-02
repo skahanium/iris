@@ -479,10 +479,12 @@ export async function aiCacheClear(): Promise<AiCacheClearResult> {
   return invoke<AiCacheClearResult>("ai_cache_clear");
 }
 
-export async function harnessResume(
-  requestId: string,
-): Promise<unknown> {
+export async function harnessResume(requestId: string): Promise<unknown> {
   return invoke("harness_resume", { requestId });
+}
+
+export async function harnessAbort(requestId: string): Promise<void> {
+  return invoke("harness_abort", { requestId });
 }
 
 export async function skillsRead(filePath: string): Promise<string> {
@@ -518,6 +520,7 @@ export async function contextAssemble(params: {
   query: string;
   session_id: number | null;
   context_scope?: ContextScope | null;
+  web_search?: boolean;
 }): Promise<AssembledContext> {
   return invoke<AssembledContext>("context_assemble", {
     scene: params.scene,
@@ -526,6 +529,7 @@ export async function contextAssemble(params: {
     query: params.query,
     sessionId: params.session_id,
     contextScope: params.context_scope ?? null,
+    webSearch: params.web_search ?? false,
   });
 }
 

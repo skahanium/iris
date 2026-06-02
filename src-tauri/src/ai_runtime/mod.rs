@@ -15,11 +15,16 @@ pub mod citation_workflow;
 pub mod context_planner;
 pub mod document_workflow;
 pub mod environment;
+pub mod evidence_ledger;
 pub mod evidence_mixer;
 pub mod execution_plan;
 pub mod guardrails;
 pub mod harness;
+pub mod harness_confirm;
+#[cfg(test)]
+mod harness_confirm_tests;
 pub mod harness_support;
+pub mod harness_task;
 pub mod model_gateway;
 pub mod model_registry;
 pub mod organize_workflow;
@@ -314,6 +319,9 @@ pub struct AiRequest {
 /// 由 context_planner 组装，直接传入 model_gateway 构建 prompt。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AssembledContext {
+    /// 预览阶段为 true；正式执行会重新检索并校验 packet IDs。
+    #[serde(default)]
+    pub provisional: bool,
     /// 证据包列表
     pub packets: Vec<ContextPacket>,
     /// 当前场景可用的工具列表

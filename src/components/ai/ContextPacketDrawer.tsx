@@ -47,6 +47,10 @@ export function ContextPacketDrawer({
   const webPageCount = useMemo(() => countWebPageFetchPackets(packets), [packets]);
   const webCount = webSearchCount + webPageCount;
   const localCount = packets.length - webCount;
+  const previewCount = useMemo(
+    () => packets.filter((p) => p.provisional === true).length,
+    [packets],
+  );
 
   const extraStats = useMemo(() => {
     if (!contextStatus) return [];
@@ -96,6 +100,14 @@ export function ContextPacketDrawer({
           <ChevronRight className="h-3.5 w-3.5 shrink-0" />
         )}
         <span className="shrink-0">证据包</span>
+        {previewCount > 0 ? (
+          <Badge
+            variant="outline"
+            className="h-5 shrink-0 border-amber-300 px-1.5 text-[10px] text-amber-800"
+          >
+            {previewCount} 预览
+          </Badge>
+        ) : null}
         {localCount > 0 ? (
           <span
             className="inline-flex shrink-0 items-center gap-0.5 text-[10px] font-normal tabular-nums"

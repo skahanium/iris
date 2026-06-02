@@ -1,5 +1,29 @@
 //! Central tool execution for the harness agent loop.
 
+/// Tools with real `dispatch_tool_inner` handlers (single source of truth with LLM exposure).
+pub const DISPATCHABLE_TOOL_NAMES: &[&str] = &[
+    "search_hybrid",
+    "search_semantic",
+    "search_keyword",
+    "get_regulation",
+    "get_context_packets",
+    "web_search",
+    "fetch_web_page",
+    "read_note",
+    "list_vault",
+    "get_outline",
+    "get_backlinks",
+    "get_block_links",
+];
+
+/// Handled inside harness loop, not via `dispatch_tool`.
+pub const HARNESS_ONLY_TOOL_NAMES: &[&str] = &["spawn_subagent", "conclude_reasoning"];
+
+/// Whether the tool may be exposed to the model (has handler or harness branch).
+pub fn is_exposable_tool(name: &str) -> bool {
+    DISPATCHABLE_TOOL_NAMES.contains(&name) || HARNESS_ONLY_TOOL_NAMES.contains(&name)
+}
+
 use std::path::Path;
 use std::time::Instant;
 

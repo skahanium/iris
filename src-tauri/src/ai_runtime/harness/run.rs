@@ -1,91 +1,33 @@
 //! Unified Agent Harness — multi-round tool loop with streaming final response.
 
 use futures_util::future::join_all;
-use serde::Serialize;
 use tauri::{AppHandle, Emitter};
 
-use crate::ai_runtime::environment::{build_environment_map, EnvironmentInput};
+use super::archive::save_round_checkpoint;
+use super::context::{build_initial_messages, prepare_environment_and_skills, resolve_file_id};
+use super::finalize::{finish_run, FinishRunParams, ingest_tool_packets, ledger_to_packets};
+use super::planning::{resolve_max_rounds, resolve_token_budget};
+use super::reflection::{run_reflection_round, ReflectionOutcome};
+use super::tools::max_fetch_per_round;
+use super::trace_emit::{emit_thinking, emit_trace_phase};
+use super::types::{HarnessPhase, HarnessRunInput, HarnessRunResult};
+use super::util::accumulate_usage;
+use crate::ai_runtime::evidence_ledger::EvidenceLedger;
 use crate::ai_runtime::harness_support::{
-    compact_evidence, compress_history_messages, extract_thinking_blocks, load_harness_checkpoint,
-    save_harness_checkpoint, HarnessCheckpoint, HarnessCheckpointMeta,
+    extract_thinking_blocks, load_harness_checkpoint, HarnessCheckpointMeta,
 };
 use crate::ai_runtime::model_gateway::{
-    GatewayRequest, LlmMessage, MessageRole, ModelGateway, ProviderConfig, TokenUsage, ToolCall,
+    clear_abort, is_abort_requested, GatewayRequest, LlmMessage, MessageRole, ModelGateway,
+    ProviderConfig, TokenUsage, ToolCall,
 };
 use crate::ai_runtime::scene_router::resolve_scene;
-use crate::ai_runtime::skills::{inject_into_prompt, scan_all};
 use crate::ai_runtime::tool_dispatch::{dispatch_tool_with_retry, ToolDispatchContext};
-use crate::ai_runtime::tool_executor::{check_tool_permission, ToolRegistry};
+use crate::ai_runtime::tool_executor::{check_tool_permission, ToolRegistry, ToolSurfaceFilter};
 use crate::ai_runtime::tool_fallback::{
     parse_tool_calls_from_content, should_retry_tool_parse, strip_tool_markup_from_visible,
 };
-use crate::ai_runtime::trace::{TraceRecorder, TraceStatus};
-use crate::ai_runtime::{AiScene, ContextPacket};
 use crate::app::AppState;
 use crate::error::{AppError, AppResult};
-
-/// Harness progress phase for structured UI.
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum HarnessPhase {
-    ToolStart,
-    ToolComplete,
-    SubagentSpawn,
-    SubagentComplete,
-    Reflection,
-    FinalStream,
-    Thinking,
-}
-
-/// Harness progress event for the frontend.
-#[derive(Debug, Clone, Serialize)]
-pub struct HarnessTraceEvent {
-    pub request_id: String,
-    pub round: u32,
-    pub phase: HarnessPhase,
-    pub tool_name: String,
-    pub status: String,
-    pub message: Option<String>,
-    pub output_preview: Option<String>,
-}
-
-/// Result of a harness run.
-#[derive(Debug, Clone, Serialize)]
-pub struct HarnessRunResult {
-    pub request_id: String,
-    pub session_id: i64,
-    pub content: String,
-    pub tool_calls: Vec<ToolCall>,
-    pub tool_results: Vec<serde_json::Value>,
-    pub usage: TokenUsage,
-    pub citation_valid: bool,
-    pub harness_rounds: u32,
-    pub pending_confirmation: bool,
-    /// 冷启动 + 工具检索合并后的证据包，供前端证据抽屉与引用跳转。
-    pub evidence_packets: Vec<ContextPacket>,
-}
-
-/// Inputs for a harness run.
-#[derive(Debug, Clone)]
-pub struct HarnessRunInput {
-    pub request_id: String,
-    pub scene: AiScene,
-    pub session_id: i64,
-    pub note_path: Option<String>,
-    pub note_title: Option<String>,
-    pub selection_excerpt: Option<String>,
-    pub cold_start_packets: Vec<ContextPacket>,
-    pub web_search_enabled: bool,
-    pub history_messages: Vec<(String, String)>,
-    /// Sub-agent nesting depth (0 = root harness).
-    pub depth: u32,
-    /// Resume from persisted checkpoint (harness_resume).
-    pub resume_from_checkpoint: bool,
-    /// Override max agentic rounds (None = use scene profile default).
-    pub max_rounds_override: Option<u32>,
-    /// Override token budget (None = use scene profile default).
-    pub token_budget: Option<u32>,
-}
 
 /// Run the unified agent harness loop.
 pub async fn run_harness(
@@ -97,37 +39,27 @@ pub async fn run_harness(
 ) -> AppResult<HarnessRunResult> {
     let profile = resolve_scene(input.scene);
     let registry = ToolRegistry::new();
-    let mut scene_tools: Vec<_> = registry
-        .for_scene(input.scene)
-        .into_iter()
-        .cloned()
-        .collect();
-    if !input.web_search_enabled {
-        scene_tools.retain(|t| t.name != "web_search" && t.name != "fetch_web_page");
-    }
-    if input.depth >= 2 {
-        scene_tools.retain(|t| t.name != "spawn_subagent");
-    }
+    let scene_tools = registry.tools_for_surface(
+        input.scene,
+        ToolSurfaceFilter {
+            web_search_enabled: input.web_search_enabled,
+            depth: input.depth,
+            only_auto: false,
+        },
+    );
     let llm_tools = ModelGateway::tools_to_llm_format(&scene_tools);
 
-    let vault = state.vault_path()?;
-    let env_text = build_environment_map(
-        &state.db,
-        &vault,
-        &EnvironmentInput {
-            scene: input.scene,
-            note_path: input.note_path.as_deref(),
-            note_title: input.note_title.as_deref(),
-            selection_excerpt: input.selection_excerpt.as_deref(),
-            tools: &scene_tools,
-        },
-    )?;
+    let (env_text, skills_prompt) =
+        prepare_environment_and_skills(
+            state,
+            input.scene,
+            input.note_path.as_deref(),
+            input.note_title.as_deref(),
+            input.selection_excerpt.as_deref(),
+            &scene_tools,
+        )?;
 
     let file_id = resolve_file_id(state, input.note_path.as_deref())?;
-
-    let all_skills = scan_all(&vault)?;
-    let enabled_skills: Vec<_> = all_skills.into_iter().filter(|s| s.enabled).collect();
-    let skills_prompt = inject_into_prompt(&enabled_skills, input.scene);
 
     let mut messages = build_initial_messages(
         input.scene,
@@ -144,27 +76,16 @@ pub async fn run_harness(
 
     let gateway = ModelGateway::with_defaults(app_handle.clone(), vec![provider_config.clone()])?;
 
-    let dispatch_ctx = ToolDispatchContext {
-        scene: input.scene,
-        note_path: input.note_path.as_deref(),
-        file_id,
-        web_search_enabled: input.web_search_enabled,
-        cold_start_packets: &input.cold_start_packets,
-    };
-
     let mut total_usage = TokenUsage::default();
     let mut all_tool_calls: Vec<ToolCall> = Vec::new();
     let mut tool_results_json: Vec<serde_json::Value> = Vec::new();
-    let mut evidence_packets = input.cold_start_packets.clone();
+    let mut evidence_ledger = EvidenceLedger::new(input.cold_start_packets.clone());
     let mut harness_rounds: u32 = 0;
-    let mut pending_confirmation = false;
+    let pending_confirmation = false;
     let mut reflection_done = false;
     let mut bonus_round_used = false;
-    let token_budget = input.token_budget.unwrap_or(profile.max_token_budget as u32);
-    let mut max_rounds = input
-        .max_rounds_override
-        .unwrap_or(profile.max_agentic_rounds)
-        .min(profile.max_agentic_rounds);
+    let token_budget = resolve_token_budget(input.scene, input.token_budget);
+    let mut max_rounds = resolve_max_rounds(input.scene, input.max_rounds_override);
 
     if input.resume_from_checkpoint {
         if let Some(cp) = load_harness_checkpoint(&state.db, &input.request_id)? {
@@ -172,7 +93,7 @@ pub async fn run_harness(
             harness_rounds = cp.round;
             all_tool_calls = cp.tool_calls;
             tool_results_json = cp.tool_results;
-            evidence_packets = cp.evidence_packets;
+            evidence_ledger = EvidenceLedger::new(cp.evidence_packets);
             total_usage = cp.usage;
             bonus_round_used = cp.bonus_round_used;
         }
@@ -191,6 +112,7 @@ pub async fn run_harness(
 
     'agent: loop {
         while harness_rounds < max_rounds {
+            abort_if_requested(&input.request_id)?;
             if total_usage.total_tokens >= token_budget {
                 break 'agent;
             }
@@ -243,7 +165,7 @@ pub async fn run_harness(
                         usage: total_usage,
                         harness_rounds,
                         pending_confirmation,
-                        evidence_packets,
+                        evidence_packets: ledger_to_packets(&evidence_ledger, token_budget),
                     },
                 )
                 .await;
@@ -260,7 +182,13 @@ pub async fn run_harness(
                 .iter()
                 .partition(|tc| tc.function.name == "spawn_subagent");
 
-            all_tool_calls.extend(tool_calls.clone());
+            let pending_tool_call = first_pending_confirmation_call(&registry, &tool_calls).cloned();
+            let model_tool_calls = pending_tool_call
+                .as_ref()
+                .map(|tc| vec![tc.clone()])
+                .unwrap_or_else(|| tool_calls.clone());
+
+            all_tool_calls.extend(model_tool_calls.clone());
             let stripped_assistant =
                 strip_tool_markup_from_visible(&response.content.clone().unwrap_or_default());
             let (visible_content, thinking) = extract_thinking_blocks(&stripped_assistant);
@@ -272,8 +200,28 @@ pub async fn run_harness(
                 role: MessageRole::Assistant,
                 content: assistant_content.clone(),
                 tool_call_id: None,
-                tool_calls: Some(tool_calls.clone()),
+                tool_calls: Some(model_tool_calls),
             });
+
+            if let Some(tool_call) = pending_tool_call {
+                return pause_for_tool_confirmation(
+                    state,
+                    app_handle,
+                    input,
+                    &checkpoint_meta,
+                    harness_rounds,
+                    bonus_round_used,
+                    &mut messages,
+                    &all_tool_calls,
+                    &mut tool_results_json,
+                    evidence_ledger.packets(),
+                    total_usage,
+                    assistant_content,
+                    file_id,
+                    &tool_call,
+                )
+                .await;
+            }
 
             if !subagent_calls.is_empty() && input.depth < 2 {
                 emit_trace_phase(
@@ -344,18 +292,17 @@ pub async fn run_harness(
                 &messages,
                 &all_tool_calls,
                 &tool_results_json,
-                &evidence_packets,
+                evidence_ledger.packets(),
                 &total_usage,
             ) {
                 tracing::warn!("checkpoint save failed for {}: {e}", input.request_id);
             }
 
-            compact_evidence(&mut evidence_packets, profile.default_token_budget);
-
             let mut tools_this_round = 0u32;
             let mut fetch_this_round = 0u32;
             let fetch_limit = max_fetch_per_round(input.scene);
             for tool_call in &other_calls {
+                abort_if_requested(&input.request_id)?;
                 if tools_this_round >= profile.max_tool_calls_per_round {
                     break;
                 }
@@ -396,46 +343,6 @@ pub async fn run_harness(
                     }
                 }
 
-                if registry.requires_confirmation(tool_name) {
-                    crate::llm::safe_lock(&state.pending_tool_calls).insert(
-                        tool_call.id.clone(),
-                        crate::app::PendingToolCall {
-                            tool_name: tool_name.clone(),
-                            arguments: tool_call.function.arguments.clone(),
-                            request_id: input.request_id.clone(),
-                            scene: input.scene,
-                            note_path: input.note_path.clone(),
-                            file_id,
-                            web_search_enabled: input.web_search_enabled,
-                        },
-                    );
-                    let confirm_request = serde_json::json!({
-                        "request_id": input.request_id,
-                        "tool_call_id": tool_call.id,
-                        "tool_name": tool_name,
-                        "arguments": serde_json::from_str::<serde_json::Value>(&tool_call.function.arguments).unwrap_or_default(),
-                    });
-                    app_handle
-                        .emit("ai:tool_confirm_request", &confirm_request)
-                        .map_err(|e| AppError::msg(format!("emit tool confirm: {e}")))?;
-                    tool_results_json.push(serde_json::json!({
-                        "tool_call_id": tool_call.id,
-                        "status": "pending_confirmation",
-                    }));
-                    pending_confirmation = true;
-                    emit_trace_phase(
-                        app_handle,
-                        &input.request_id,
-                        harness_rounds,
-                        HarnessPhase::ToolStart,
-                        tool_name,
-                        "pending",
-                        None,
-                        None,
-                    )?;
-                    continue;
-                }
-
                 emit_trace_phase(
                     app_handle,
                     &input.request_id,
@@ -449,12 +356,20 @@ pub async fn run_harness(
 
                 let args: serde_json::Value =
                     serde_json::from_str(&tool_call.function.arguments).unwrap_or_default();
-                let result = dispatch_tool_with_retry(state, &dispatch_ctx, tool_name, &args).await;
+                let dispatch_ctx = ToolDispatchContext {
+                    scene: input.scene,
+                    note_path: input.note_path.as_deref(),
+                    file_id,
+                    web_search_enabled: input.web_search_enabled,
+                    cold_start_packets: evidence_ledger.packets(),
+                };
+                let result =
+                    dispatch_tool_with_retry(state, &dispatch_ctx, tool_name, &args).await;
                 if result.success {
                     if tool_name == "fetch_web_page" {
                         fetch_this_round += 1;
                     }
-                    merge_tool_packets_into(tool_name, &result.output, &mut evidence_packets);
+                    ingest_tool_packets(&mut evidence_ledger, tool_name, &result.output);
                 }
                 let output_str =
                     serde_json::to_string(&result.output).unwrap_or_else(|_| "{}".into());
@@ -503,7 +418,7 @@ pub async fn run_harness(
                         usage: total_usage,
                         harness_rounds,
                         pending_confirmation: true,
-                        evidence_packets,
+                        evidence_packets: ledger_to_packets(&evidence_ledger, token_budget),
                     },
                 )
                 .await;
@@ -514,80 +429,30 @@ pub async fn run_harness(
             break 'agent;
         }
         reflection_done = true;
-        emit_trace_phase(
+        match run_reflection_round(
+            state,
             app_handle,
-            &input.request_id,
-            harness_rounds,
-            HarnessPhase::Reflection,
-            "reflection",
-            "running",
-            None,
-            None,
-        )?;
-        messages.push(LlmMessage {
-            role: MessageRole::User,
-            content: "请审视当前证据是否足以准确回答用户。若不足，回复 NEED_MORE_EVIDENCE；否则直接给出完整回答（勿再调用工具）。"
-                .into(),
-            tool_call_id: None,
-            tool_calls: None,
-        });
-        let reflect_request = GatewayRequest {
-            provider: provider_config.clone(),
-            messages: messages.clone(),
-            tools: vec![],
+            &input,
+            &gateway,
+            &provider_config,
             max_tokens,
-            temperature: Some(0.5),
-            stream: false,
-        };
-        if let Ok(reflect_resp) = gateway.send_request(reflect_request).await {
-            accumulate_usage(&mut total_usage, &reflect_resp.usage);
-            if let Some(text) = reflect_resp.content {
-                if text.contains("NEED_MORE_EVIDENCE")
-                    && !bonus_round_used
-                    && harness_rounds < profile.max_agentic_rounds
-                {
-                    bonus_round_used = true;
-                    messages.push(LlmMessage {
-                        role: MessageRole::Assistant,
-                        content: text,
-                        tool_call_id: None,
-                        tool_calls: None,
-                    });
-                    messages.push(LlmMessage {
-                        role: MessageRole::User,
-                        content: "证据仍不足，请继续使用检索类工具补充证据后再作答。".into(),
-                        tool_call_id: None,
-                        tool_calls: None,
-                    });
-                    max_rounds = (harness_rounds + 1).min(profile.max_agentic_rounds);
-                    continue 'agent;
-                }
-                // Not NEED_MORE_EVIDENCE — use reflection text as final answer
-                let stripped = strip_tool_markup_from_visible(&text);
-                let (visible, thinking) = extract_thinking_blocks(&stripped);
-                if let Some(t) = thinking {
-                    emit_thinking(app_handle, &input.request_id, harness_rounds, &t)?;
-                }
-                if !visible.trim().is_empty() {
-                    return finish_run(
-                        state,
-                        input,
-                        FinishRunParams {
-                            content: visible,
-                            tool_calls: all_tool_calls,
-                            tool_results: tool_results_json,
-                            usage: total_usage,
-                            harness_rounds,
-                            pending_confirmation,
-                            evidence_packets,
-                        },
-                    )
-                    .await;
-                }
-                // Content empty — fall through to break
-            }
+            &mut messages,
+            &evidence_ledger,
+            &all_tool_calls,
+            &tool_results_json,
+            &mut total_usage,
+            harness_rounds,
+            pending_confirmation,
+            &mut bonus_round_used,
+            &mut max_rounds,
+            token_budget,
+        )
+        .await?
+        {
+            ReflectionOutcome::BonusRound => continue 'agent,
+            ReflectionOutcome::Done(result) => return Ok(result),
+            ReflectionOutcome::NoAnswer => break 'agent,
         }
-        break 'agent;
     }
 
     emit_trace_phase(
@@ -602,6 +467,7 @@ pub async fn run_harness(
     )?;
 
     let final_content = {
+        abort_if_requested(&input.request_id)?;
         let stream_request = GatewayRequest {
             provider: provider_config,
             messages,
@@ -635,160 +501,108 @@ pub async fn run_harness(
             usage: total_usage,
             harness_rounds,
             pending_confirmation,
-            evidence_packets,
+            evidence_packets: ledger_to_packets(&evidence_ledger, token_budget),
         },
     )
     .await
 }
 
-struct FinishRunParams {
-    content: String,
-    tool_calls: Vec<ToolCall>,
-    tool_results: Vec<serde_json::Value>,
-    usage: TokenUsage,
-    harness_rounds: u32,
-    pending_confirmation: bool,
-    evidence_packets: Vec<ContextPacket>,
+fn abort_if_requested(request_id: &str) -> AppResult<()> {
+    if is_abort_requested(request_id) {
+        clear_abort(request_id);
+        return Err(AppError::msg("request aborted"));
+    }
+    Ok(())
 }
 
-async fn finish_run(
+fn first_pending_confirmation_call<'a>(
+    registry: &ToolRegistry,
+    tool_calls: &'a [ToolCall],
+) -> Option<&'a ToolCall> {
+    tool_calls
+        .iter()
+        .find(|tc| registry.requires_confirmation(&tc.function.name))
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn pause_for_tool_confirmation(
     state: &AppState,
+    app_handle: &AppHandle,
     input: HarnessRunInput,
-    params: FinishRunParams,
+    checkpoint_meta: &HarnessCheckpointMeta,
+    harness_rounds: u32,
+    bonus_round_used: bool,
+    messages: &mut [LlmMessage],
+    all_tool_calls: &[ToolCall],
+    tool_results_json: &mut Vec<serde_json::Value>,
+    evidence_packets: &[crate::ai_runtime::ContextPacket],
+    total_usage: TokenUsage,
+    assistant_content: String,
+    file_id: Option<i64>,
+    tool_call: &ToolCall,
 ) -> AppResult<HarnessRunResult> {
-    let FinishRunParams {
-        content,
-        tool_calls,
-        tool_results,
-        usage,
-        harness_rounds,
-        pending_confirmation,
-        evidence_packets,
-    } = params;
-    let citation_result =
-        crate::ai_runtime::guardrails::verify_citations(&content, &evidence_packets);
-    let citation_valid = matches!(
-        citation_result,
-        crate::ai_runtime::guardrails::GuardResult::Pass
+    let tool_name = &tool_call.function.name;
+    crate::llm::safe_lock(&state.pending_tool_calls).insert(
+        tool_call.id.clone(),
+        crate::app::PendingToolCall {
+            tool_name: tool_name.clone(),
+            arguments: tool_call.function.arguments.clone(),
+            request_id: input.request_id.clone(),
+            scene: input.scene,
+            note_path: input.note_path.clone(),
+            file_id,
+            web_search_enabled: input.web_search_enabled,
+        },
     );
-    TraceRecorder::update_status(&state.db, &input.request_id, TraceStatus::Completed)?;
-    Ok(HarnessRunResult {
-        request_id: input.request_id,
-        session_id: input.session_id,
-        content,
-        tool_calls,
-        tool_results,
-        usage,
-        citation_valid,
+    let confirm_request = serde_json::json!({
+        "request_id": input.request_id,
+        "tool_call_id": tool_call.id,
+        "tool_name": tool_name,
+        "arguments": serde_json::from_str::<serde_json::Value>(&tool_call.function.arguments).unwrap_or_default(),
+    });
+    app_handle
+        .emit("ai:tool_confirm_request", &confirm_request)
+        .map_err(|e| AppError::msg(format!("emit tool confirm: {e}")))?;
+    tool_results_json.push(serde_json::json!({
+        "tool_call_id": tool_call.id,
+        "status": "pending_confirmation",
+    }));
+    emit_trace_phase(
+        app_handle,
+        &input.request_id,
         harness_rounds,
-        pending_confirmation,
-        evidence_packets,
-    })
-}
-
-/// 将检索类工具返回的 `results` 并入本轮证据包（按 id 去重）。
-fn max_fetch_per_round(scene: AiScene) -> u32 {
-    match scene {
-        AiScene::ResearchSynthesis => 2,
-        _ => 1,
-    }
-}
-
-fn merge_tool_packets_into(
-    tool_name: &str,
-    output: &serde_json::Value,
-    acc: &mut Vec<ContextPacket>,
-) {
-    if !matches!(
+        HarnessPhase::ToolStart,
         tool_name,
-        "search_hybrid"
-            | "search_semantic"
-            | "search_keyword"
-            | "get_regulation"
-            | "web_search"
-            | "fetch_web_page"
-    ) {
-        return;
-    }
-    let Some(results) = output.get("results").and_then(|v| v.as_array()) else {
-        if tool_name == "get_regulation" {
-            if let Ok(packet) = serde_json::from_value::<ContextPacket>(output.clone()) {
-                push_packet_dedup(acc, packet);
-            } else if let Some(reg) = output.get("regulation") {
-                if let Ok(packet) = serde_json::from_value::<ContextPacket>(reg.clone()) {
-                    push_packet_dedup(acc, packet);
-                }
-            }
-        }
-        return;
-    };
-    for value in results {
-        if let Ok(packet) = serde_json::from_value::<ContextPacket>(value.clone()) {
-            push_packet_dedup(acc, packet);
-        }
-    }
-}
-
-fn push_packet_dedup(acc: &mut Vec<ContextPacket>, packet: ContextPacket) {
-    if acc.iter().any(|p| p.id == packet.id) {
-        return;
-    }
-    acc.push(packet);
-}
-
-fn build_initial_messages(
-    scene: AiScene,
-    environment: &str,
-    cold_start_packets: &[ContextPacket],
-    history: &[(String, String)],
-    web_search_enabled: bool,
-    skills_fragment: Option<&str>,
-) -> Vec<LlmMessage> {
-    let persona = ModelGateway::unified_persona(scene, web_search_enabled);
-    let mut system_content = format!("{persona}\n\n{environment}");
-    if let Some(skills) = skills_fragment {
-        if !skills.is_empty() {
-            system_content.push_str("\n\n");
-            system_content.push_str(skills);
-        }
-    }
-    let mut messages = vec![LlmMessage {
-        role: MessageRole::System,
-        content: system_content,
-        tool_call_id: None,
-        tool_calls: None,
-    }];
-
-    if !cold_start_packets.is_empty() {
-        let hint = ModelGateway::format_evidence_packets(cold_start_packets);
-        messages.push(LlmMessage {
-            role: MessageRole::System,
-            content: format!(
-                "## 本地知识库检索材料\n\n\
-                 以下是从你的笔记中预检索到的相关材料，请认真参考并在回答中引用；\
-                 同时结合工具检索与网络搜索交叉验证。\n\n{hint}"
-            ),
-            tool_call_id: None,
-            tool_calls: None,
-        });
-    }
-
-    let compressed = compress_history_messages(history);
-    for (role, content) in compressed {
-        let r = match role.as_str() {
-            "assistant" => MessageRole::Assistant,
-            "tool" => MessageRole::Tool,
-            _ => MessageRole::User,
-        };
-        messages.push(LlmMessage {
-            role: r,
-            content,
-            tool_call_id: None,
-            tool_calls: None,
-        });
-    }
-
-    messages
+        "pending",
+        None,
+        None,
+    )?;
+    save_round_checkpoint(
+        state,
+        &input,
+        checkpoint_meta,
+        harness_rounds,
+        bonus_round_used,
+        messages,
+        all_tool_calls,
+        tool_results_json,
+        evidence_packets,
+        &total_usage,
+    )?;
+    finish_run(
+        state,
+        input,
+        FinishRunParams {
+            content: assistant_content,
+            tool_calls: all_tool_calls.to_vec(),
+            tool_results: tool_results_json.clone(),
+            usage: total_usage,
+            harness_rounds,
+            pending_confirmation: true,
+            evidence_packets: evidence_packets.to_vec(),
+        },
+    )
+    .await
 }
 
 async fn run_subagent_harness(
@@ -842,94 +656,3 @@ async fn run_subagent_harness(
     run_harness(state, app_handle, sub_input, provider_config, max_tokens).await
 }
 
-#[allow(clippy::too_many_arguments)]
-fn save_round_checkpoint(
-    state: &AppState,
-    input: &HarnessRunInput,
-    meta: &HarnessCheckpointMeta,
-    round: u32,
-    bonus_round_used: bool,
-    messages: &[LlmMessage],
-    tool_calls: &[ToolCall],
-    tool_results: &[serde_json::Value],
-    evidence_packets: &[ContextPacket],
-    usage: &TokenUsage,
-) -> AppResult<()> {
-    let checkpoint = HarnessCheckpoint {
-        meta: meta.clone(),
-        round,
-        messages: messages.to_vec(),
-        tool_calls: tool_calls.to_vec(),
-        tool_results: tool_results.to_vec(),
-        evidence_packets: evidence_packets.to_vec(),
-        usage: usage.clone(),
-        bonus_round_used,
-    };
-    save_harness_checkpoint(&state.db, &input.request_id, &checkpoint)
-}
-
-fn emit_thinking(
-    app_handle: &AppHandle,
-    request_id: &str,
-    round: u32,
-    content: &str,
-) -> AppResult<()> {
-    app_handle
-        .emit(
-            "ai:thinking",
-            &serde_json::json!({
-                "request_id": request_id,
-                "round": round,
-                "content": content,
-            }),
-        )
-        .map_err(|e| AppError::msg(format!("emit thinking: {e}")))
-}
-
-#[allow(clippy::too_many_arguments)]
-fn emit_trace_phase(
-    app_handle: &AppHandle,
-    request_id: &str,
-    round: u32,
-    phase: HarnessPhase,
-    tool_name: &str,
-    status: &str,
-    message: Option<String>,
-    output_preview: Option<String>,
-) -> AppResult<()> {
-    app_handle
-        .emit(
-            "ai:harness_trace",
-            &HarnessTraceEvent {
-                request_id: request_id.to_string(),
-                round,
-                phase,
-                tool_name: tool_name.to_string(),
-                status: status.to_string(),
-                message,
-                output_preview,
-            },
-        )
-        .map_err(|e| AppError::msg(format!("emit harness trace: {e}")))
-}
-
-fn resolve_file_id(state: &AppState, note_path: Option<&str>) -> AppResult<Option<i64>> {
-    let Some(path) = note_path else {
-        return Ok(None);
-    };
-    state.db.with_conn(|conn| {
-        Ok(conn
-            .query_row("SELECT id FROM files WHERE path = ?1", [path], |r| {
-                r.get::<_, i64>(0)
-            })
-            .ok())
-    })
-}
-
-fn accumulate_usage(total: &mut TokenUsage, delta: &TokenUsage) {
-    total.prompt_tokens += delta.prompt_tokens;
-    total.completion_tokens += delta.completion_tokens;
-    total.total_tokens += delta.total_tokens;
-    total.prompt_cache_hit_tokens += delta.prompt_cache_hit_tokens;
-    total.prompt_cache_miss_tokens += delta.prompt_cache_miss_tokens;
-}
