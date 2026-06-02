@@ -74,6 +74,10 @@ path = "tests/semantic_recall_eval.rs"
 name = "cas_hash"
 path = "tests/cas/hash_test.rs"
 
+[[test]]
+name = "cas_store"
+path = "tests/cas/store_test.rs"
+
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6.4"
 objc2-app-kit = "0.3.2"
