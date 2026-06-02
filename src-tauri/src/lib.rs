@@ -1,5 +1,6 @@
 pub mod ai_runtime;
 pub mod app;
+pub mod cas;
 mod chrome_metrics;
 mod commands;
 mod credentials;

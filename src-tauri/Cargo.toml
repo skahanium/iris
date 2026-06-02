@@ -70,6 +70,10 @@ path = "tests/vault_watcher.rs"
 name = "semantic_recall_eval"
 path = "tests/semantic_recall_eval.rs"
 
+[[test]]
+name = "cas_hash"
+path = "tests/cas/hash_test.rs"
+
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6.4"
 objc2-app-kit = "0.3.2"
