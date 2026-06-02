@@ -43,6 +43,12 @@ pub fn run() {
             let state = AppState::new(data_dir)?;
             app.manage(state.clone());
 
+            // Start the scheduler for periodic tasks (GC at 3:00 AM daily)
+            // `_scheduler_handle` is intentionally held alive for the app lifetime;
+            // dropping it would not stop the spawned task (tokio::spawn detaches).
+            let scheduler = scheduler::Scheduler::new(state.clone());
+            let _scheduler_handle = scheduler.start();
+
             // Clean up stale version snapshots and expired recycle bin on startup
             let _ = crate::version::version_cleanup(&state);
             let _ = crate::recycle::purge_expired(&state);

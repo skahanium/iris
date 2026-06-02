@@ -26,7 +26,7 @@ impl GarbageCollector {
     }
 
     /// 执行垃圾回收
-    pub fn collect(&self) -> AppResult<GcResult> {
+    pub async fn collect(&self) -> AppResult<GcResult> {
         // TODO: 实现垃圾回收逻辑
         Ok(GcResult {
             deleted_count: 0,
