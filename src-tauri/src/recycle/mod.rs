@@ -236,19 +236,39 @@ pub fn trash_document(state: &Arc<AppState>, path: &str) -> AppResult<()> {
     Ok(())
 }
 
-fn purge_bundle(vault: &Path, trash_rel_dir: &str) -> AppResult<()> {
+pub fn purge_bundle(vault: &Path, trash_rel_dir: &str) -> AppResult<u64> {
     let dir = vault.join(trash_rel_dir);
+    let mut size = 0u64;
     if dir.exists() {
+        size = dir_size(&dir);
         fs::remove_dir_all(dir)?;
     }
-    Ok(())
+    Ok(size)
 }
 
-/// Remove recycle entries whose retention period has ended.
-pub fn purge_expired(state: &Arc<AppState>) -> AppResult<usize> {
-    let vault = state.vault_path()?;
+fn dir_size(path: &Path) -> u64 {
+    let mut total = 0u64;
+    if let Ok(entries) = fs::read_dir(path) {
+        for entry in entries.flatten() {
+            let Ok(meta) = entry.metadata() else { continue };
+            if meta.is_file() {
+                total += meta.len();
+            } else if meta.is_dir() {
+                total += dir_size(&entry.path());
+            }
+        }
+    }
+    total
+}
+
+/// Remove expired recycle entries using the given DB connection and vault path.
+/// Returns (purged_count, bytes_freed).
+pub fn purge_expired_items(
+    db: &crate::storage::db::Database,
+    vault: &Path,
+) -> AppResult<(usize, u64)> {
     let now = Utc::now().to_rfc3339();
-    let expired: Vec<(String, String)> = state.db.with_conn(|conn| {
+    let expired: Vec<(String, String)> = db.with_read_conn(|conn| {
         let mut stmt =
             conn.prepare("SELECT id, trash_rel_dir FROM recycle_bin WHERE expires_at <= ?1")?;
         let rows = stmt.query_map([&now], |r| Ok((r.get(0)?, r.get(1)?)))?;
@@ -256,14 +276,22 @@ pub fn purge_expired(state: &Arc<AppState>) -> AppResult<usize> {
     })?;
 
     let mut count = 0usize;
+    let mut freed = 0u64;
     for (id, trash_rel) in expired {
-        purge_bundle(&vault, &trash_rel)?;
-        state.db.with_conn(|conn| {
+        freed += purge_bundle(vault, &trash_rel)?;
+        db.with_conn(|conn| {
             conn.execute("DELETE FROM recycle_bin WHERE id = ?1", [&id])?;
             Ok(())
         })?;
         count += 1;
     }
+    Ok((count, freed))
+}
+
+/// Remove recycle entries whose retention period has ended.
+pub fn purge_expired(state: &Arc<AppState>) -> AppResult<usize> {
+    let vault = state.vault_path()?;
+    let (count, _) = purge_expired_items(&state.db, &vault)?;
     Ok(count)
 }
 
@@ -434,6 +462,27 @@ mod tests {
         version_save_manual(&state, "note.md", "# Note\n\nBody v2.").unwrap();
         trash_document(&state, "note.md").unwrap();
         assert!(!note.exists());
+        state
+            .db
+            .with_conn(|conn| {
+                let file_rows: i64 = conn.query_row(
+                    "SELECT COUNT(*) FROM files WHERE path = 'note.md'",
+                    [],
+                    |r| r.get(0),
+                )?;
+                let chunk_rows: i64 =
+                    conn.query_row("SELECT COUNT(*) FROM chunks", [], |r| r.get(0))?;
+                let fts_rows: i64 = conn.query_row(
+                    "SELECT COUNT(*) FROM files_fts WHERE path = 'note.md'",
+                    [],
+                    |r| r.get(0),
+                )?;
+                assert_eq!(file_rows, 0);
+                assert_eq!(chunk_rows, 0);
+                assert_eq!(fts_rows, 0);
+                Ok::<_, crate::error::AppError>(())
+            })
+            .unwrap();
         let items = list_recycle(&state).unwrap();
         assert_eq!(items.len(), 1);
         let bundle = trash_root(&vault).join(&items[0].id);

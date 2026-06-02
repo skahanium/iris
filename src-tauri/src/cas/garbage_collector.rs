@@ -1,10 +1,9 @@
 use std::fs;
 use std::sync::Arc;
 
-use chrono::Utc;
-
 use crate::cas::store::CasObjectStore;
 use crate::error::AppResult;
+use crate::recycle::purge_expired_items;
 use crate::storage::db::Database;
 
 /// 垃圾回收结果
@@ -38,16 +37,15 @@ impl GarbageCollector {
 
         // 2. 删除孤立对象
         for object_hash in &orphaned_objects {
-            self.delete_object(object_hash)?;
+            result.space_freed += self.delete_object(object_hash)?;
             result.deleted_count += 1;
         }
 
-        // 3. 清理过期回收站条目
-        let expired_items = self.find_expired_recycle_items()?;
-        for item in expired_items {
-            self.purge_recycle_item(&item)?;
-            result.recycle_purged_count += 1;
-        }
+        // 3. 清理过期回收站条目（复用 recycle 模块逻辑）
+        let vault = self.store.base_path().to_path_buf();
+        let (purged, freed) = purge_expired_items(&self.db, &vault)?;
+        result.recycle_purged_count = purged;
+        result.space_freed += freed;
 
         Ok(result)
     }
@@ -61,15 +59,10 @@ impl GarbageCollector {
         })
     }
 
-    /// 删除对象：物理文件 + 数据库引用记录
-    fn delete_object(&self, object_hash: &str) -> AppResult<()> {
-        // 1. 删除物理文件
-        let object_path = self.store.object_path(object_hash)?;
-        if object_path.exists() {
-            fs::remove_file(&object_path)?;
-        }
-
-        // 2. 删除引用记录
+    /// 删除对象：数据库引用记录 + 物理文件
+    /// 返回释放的字节数
+    fn delete_object(&self, object_hash: &str) -> AppResult<u64> {
+        // 1. 先删除数据库记录（保证原子性：DB 可回滚，文件不可恢复）
         self.db.with_conn(|conn| {
             conn.execute("DELETE FROM cas_refs WHERE object_hash = ?1", [object_hash])?;
             conn.execute(
@@ -79,36 +72,26 @@ impl GarbageCollector {
             Ok(())
         })?;
 
-        Ok(())
-    }
+        // 2. 删除物理文件，记录释放的空间
+        let object_path = self.store.object_path(object_hash)?;
+        let freed = if object_path.exists() {
+            let size = fs::metadata(&object_path).map(|m| m.len()).unwrap_or(0);
+            fs::remove_file(&object_path)?;
+            // 清理空的父目录（objects/ab/）
+            if let Some(parent) = object_path.parent() {
+                if parent
+                    .read_dir()
+                    .map(|mut d| d.next().is_none())
+                    .unwrap_or(false)
+                {
+                    let _ = fs::remove_dir(parent);
+                }
+            }
+            size
+        } else {
+            0
+        };
 
-    /// 查找过期回收站条目
-    fn find_expired_recycle_items(&self) -> AppResult<Vec<(String, String)>> {
-        self.db.with_read_conn(|conn| {
-            let now = Utc::now().to_rfc3339();
-            let mut stmt =
-                conn.prepare("SELECT id, trash_rel_dir FROM recycle_bin WHERE expires_at <= ?1")?;
-            let rows = stmt.query_map([&now], |row| {
-                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
-            })?;
-            Ok(rows.flatten().collect())
-        })
-    }
-
-    /// 清除回收站条目：删除目录 + 数据库记录
-    fn purge_recycle_item(&self, (id, trash_rel_dir): &(String, String)) -> AppResult<()> {
-        // 1. 删除回收站目录
-        let trash_dir = self.store.base_path().join(trash_rel_dir);
-        if trash_dir.exists() {
-            fs::remove_dir_all(&trash_dir)?;
-        }
-
-        // 2. 删除数据库记录
-        self.db.with_conn(|conn| {
-            conn.execute("DELETE FROM recycle_bin WHERE id = ?1", [id])?;
-            Ok(())
-        })?;
-
-        Ok(())
+        Ok(freed)
     }
 }
