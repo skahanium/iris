@@ -58,9 +58,7 @@ fn generate_suggestion_id() -> String {
 
 /// Compute SHA-256 hash of content.
 pub fn compute_content_hash(content: &str) -> String {
-    let mut hasher = Sha256::new();
-    hasher.update(content.as_bytes());
-    format!("{:x}", hasher.finalize())
+    crate::cas::hash::content_hash_str(content)
 }
 
 /// Assess risk level based on the patch characteristics.

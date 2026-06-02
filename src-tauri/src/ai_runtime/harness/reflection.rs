@@ -2,7 +2,7 @@
 
 use tauri::AppHandle;
 
-use super::finalize::{finish_run, FinishRunParams, ledger_to_packets};
+use super::finalize::{finish_run, ledger_to_packets, FinishRunParams};
 use super::trace_emit::{emit_thinking, emit_trace_phase};
 use super::types::{HarnessPhase, HarnessRunInput, HarnessRunResult};
 use super::util::accumulate_usage;

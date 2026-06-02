@@ -85,7 +85,7 @@ describe("useTabManager handleNewNote", () => {
     expect(apiRef.current!.activePath).toBe("无标题1.md");
   });
 
-  it("keeps an empty tab open and adds the next note on +", async () => {
+  it("discards an empty active tab before creating the next note", async () => {
     const apiRef: { current: ReturnType<typeof useTabManager> | null } = {
       current: null,
     };
@@ -108,14 +108,14 @@ describe("useTabManager handleNewNote", () => {
       await apiRef.current!.handleNewNote();
     });
 
-    expect(fileDiscard).not.toHaveBeenCalled();
+    expect(fileDiscard).toHaveBeenCalledWith("无标题1.md");
     expect(createDefaultNote).toHaveBeenCalledWith({
-      extraTakenTitles: ["无标题1"],
+      extraTakenTitles: [],
     });
     expect(apiRef.current!.activePath).toBe("无标题2.md");
     expect(
       apiRef.current!.tabs.some((t: TabItem) => t.path === "无标题1.md"),
-    ).toBe(true);
+    ).toBe(false);
     expect(
       apiRef.current!.tabs.some((t: TabItem) => t.path === "无标题2.md"),
     ).toBe(true);

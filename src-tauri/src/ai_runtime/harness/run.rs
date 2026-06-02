@@ -5,7 +5,7 @@ use tauri::{AppHandle, Emitter};
 
 use super::archive::save_round_checkpoint;
 use super::context::{build_initial_messages, prepare_environment_and_skills, resolve_file_id};
-use super::finalize::{finish_run, FinishRunParams, ingest_tool_packets, ledger_to_packets};
+use super::finalize::{finish_run, ingest_tool_packets, ledger_to_packets, FinishRunParams};
 use super::planning::{resolve_max_rounds, resolve_token_budget};
 use super::reflection::{run_reflection_round, ReflectionOutcome};
 use super::tools::max_fetch_per_round;
@@ -49,15 +49,14 @@ pub async fn run_harness(
     );
     let llm_tools = ModelGateway::tools_to_llm_format(&scene_tools);
 
-    let (env_text, skills_prompt) =
-        prepare_environment_and_skills(
-            state,
-            input.scene,
-            input.note_path.as_deref(),
-            input.note_title.as_deref(),
-            input.selection_excerpt.as_deref(),
-            &scene_tools,
-        )?;
+    let (env_text, skills_prompt) = prepare_environment_and_skills(
+        state,
+        input.scene,
+        input.note_path.as_deref(),
+        input.note_title.as_deref(),
+        input.selection_excerpt.as_deref(),
+        &scene_tools,
+    )?;
 
     let file_id = resolve_file_id(state, input.note_path.as_deref())?;
 
@@ -182,7 +181,8 @@ pub async fn run_harness(
                 .iter()
                 .partition(|tc| tc.function.name == "spawn_subagent");
 
-            let pending_tool_call = first_pending_confirmation_call(&registry, &tool_calls).cloned();
+            let pending_tool_call =
+                first_pending_confirmation_call(&registry, &tool_calls).cloned();
             let model_tool_calls = pending_tool_call
                 .as_ref()
                 .map(|tc| vec![tc.clone()])
@@ -308,8 +308,7 @@ pub async fn run_harness(
                 }
                 let tool_name = &tool_call.function.name;
                 if tool_name == "fetch_web_page" && fetch_this_round >= fetch_limit {
-                    let err_msg =
-                        format!("本轮 fetch_web_page 已达上限 ({fetch_limit})");
+                    let err_msg = format!("本轮 fetch_web_page 已达上限 ({fetch_limit})");
                     emit_trace_phase(
                         app_handle,
                         &input.request_id,
@@ -363,8 +362,7 @@ pub async fn run_harness(
                     web_search_enabled: input.web_search_enabled,
                     cold_start_packets: evidence_ledger.packets(),
                 };
-                let result =
-                    dispatch_tool_with_retry(state, &dispatch_ctx, tool_name, &args).await;
+                let result = dispatch_tool_with_retry(state, &dispatch_ctx, tool_name, &args).await;
                 if result.success {
                     if tool_name == "fetch_web_page" {
                         fetch_this_round += 1;
@@ -655,4 +653,3 @@ async fn run_subagent_harness(
 
     run_harness(state, app_handle, sub_input, provider_config, max_tokens).await
 }
-

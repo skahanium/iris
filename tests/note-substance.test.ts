@@ -52,4 +52,9 @@ describe("isNoteSubstantivelyEmpty", () => {
   it("is not empty for legacy body-only note with content", () => {
     expect(isNoteSubstantivelyEmpty("# Title\n\nParagraph.")).toBe(false);
   });
+
+  it("treats legacy default heading-only new document as empty", () => {
+    expect(isNoteSubstantivelyEmpty("# 新建文档\n\n")).toBe(true);
+    expect(isNoteSubstantivelyEmpty("# 新建文档（1）\n\n")).toBe(true);
+  });
 });

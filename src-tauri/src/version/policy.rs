@@ -61,13 +61,6 @@ pub fn should_create_snapshot(input: &SnapshotDecisionInput<'_>) -> bool {
     true
 }
 
-pub fn content_hash(content: &str) -> String {
-    use sha2::{Digest, Sha256};
-    let mut hasher = Sha256::new();
-    hasher.update(content.as_bytes());
-    hex::encode(hasher.finalize())
-}
-
 pub fn parse_created_at(raw: &str) -> DateTime<Utc> {
     DateTime::parse_from_rfc3339(raw)
         .map(|dt| dt.with_timezone(&Utc))

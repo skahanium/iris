@@ -8,13 +8,13 @@ use crate::ai_runtime::assistant_facade::{
 };
 use crate::ai_runtime::chapter_workflow::{self, ChapterInfo, ChapterWritingInput};
 use crate::ai_runtime::document_workflow::DocumentCheckInput;
+use crate::ai_runtime::document_workflow::DocumentCheckResult;
 use crate::ai_runtime::model_gateway::TokenUsage;
+use crate::ai_runtime::writing_workflow::WritingTaskOutput;
 use crate::ai_runtime::{
     CitationCheckInput, CitationCheckResult, CitationCheckScope, OrganizeTaskInput,
     OrganizeTaskResult, OrganizeTaskScope, PatchProposal,
 };
-use crate::ai_runtime::document_workflow::DocumentCheckResult;
-use crate::ai_runtime::writing_workflow::WritingTaskOutput;
 use crate::app::AppState;
 use crate::commands::assistant_commands::AssistantExecuteRequest;
 use crate::commands::writing_commands::WritingTaskInputIpc;
@@ -126,12 +126,7 @@ fn run_status_wire(status: HarnessRunStatus) -> &'static str {
     }
 }
 
-fn emit_workflow_trace(
-    app_handle: &AppHandle,
-    request_id: &str,
-    task_name: &str,
-    status: &str,
-) {
+fn emit_workflow_trace(app_handle: &AppHandle, request_id: &str, task_name: &str, status: &str) {
     use crate::ai_runtime::harness::{HarnessPhase, HarnessTraceEvent};
     let _ = app_handle.emit(
         "ai:harness_trace",
@@ -184,8 +179,7 @@ pub async fn run_harness_task(
             };
             let trace_id = uuid::Uuid::new_v4().to_string();
             emit_workflow_trace(app_handle, &trace_id, "writing", "running");
-            let payload =
-                writing_commands::execute_writing_task(state, app_handle, input).await?;
+            let payload = writing_commands::execute_writing_task(state, app_handle, input).await?;
             emit_workflow_trace(app_handle, &payload.request_id, "writing", "ok");
             Ok(task_result_from_writing(payload))
         }
@@ -222,12 +216,7 @@ pub async fn run_harness_task(
             };
             let payload =
                 organize_commands::execute_organize_task(state, app_handle, input).await?;
-            emit_workflow_trace(
-                app_handle,
-                &payload.request_id,
-                "organize",
-                "ok",
-            );
+            emit_workflow_trace(app_handle, &payload.request_id, "organize", "ok");
             Ok(task_result_from_organize(payload))
         }
         AssistantIntent::Research => {
@@ -254,7 +243,8 @@ pub async fn run_harness_task(
                 .note_path
                 .clone()
                 .ok_or_else(|| AppError::msg("章节写作需要 notePath"))?;
-            let chapter = resolve_chapter(request.chapter.clone(), request.note_content.as_deref())?;
+            let chapter =
+                resolve_chapter(request.chapter.clone(), request.note_content.as_deref())?;
             let input = ChapterWritingInput {
                 target_path: note_path,
                 base_content_hash: resolve_content_hash(
@@ -339,7 +329,9 @@ fn resolve_content_hash(note_content: Option<&str>, provided: Option<&str>) -> S
         .unwrap_or_default()
 }
 
-fn citation_scope_from_dto(dto: Option<crate::ai_runtime::retrieval_scope::ContextScopeDto>) -> Option<CitationCheckScope> {
+fn citation_scope_from_dto(
+    dto: Option<crate::ai_runtime::retrieval_scope::ContextScopeDto>,
+) -> Option<CitationCheckScope> {
     dto.map(|scope| CitationCheckScope {
         paths: scope.paths,
         path_prefixes: scope.path_prefixes,
@@ -380,10 +372,7 @@ fn resolve_chapter(
 }
 
 fn task_result_from_chat(payload: serde_json::Value) -> HarnessTaskResult {
-    let request_id = payload["request_id"]
-        .as_str()
-        .unwrap_or("")
-        .to_string();
+    let request_id = payload["request_id"].as_str().unwrap_or("").to_string();
     let pending = payload["pending_confirmation"].as_bool().unwrap_or(false)
         || payload["status"].as_str() == Some("pending_tools");
     let run_status = if pending {
@@ -601,7 +590,10 @@ fn task_result_from_document(payload: DocumentCheckResult) -> HarnessTaskResult 
     }
 }
 
-fn artifacts_to_wires(artifacts: &[HarnessArtifact], source_task: &str) -> Vec<HarnessArtifactWire> {
+fn artifacts_to_wires(
+    artifacts: &[HarnessArtifact],
+    source_task: &str,
+) -> Vec<HarnessArtifactWire> {
     artifacts
         .iter()
         .map(|a| {
@@ -635,11 +627,9 @@ fn artifacts_to_wires(artifacts: &[HarnessArtifact], source_task: &str) -> Vec<H
                 HarnessArtifact::ChapterWriting { payload } => {
                     ("chapter_writing", "章节写作", payload.clone())
                 }
-                HarnessArtifact::ToolConfirmation { .. } => (
-                    "tool_confirmation",
-                    "工具确认",
-                    serde_json::Value::Null,
-                ),
+                HarnessArtifact::ToolConfirmation { .. } => {
+                    ("tool_confirmation", "工具确认", serde_json::Value::Null)
+                }
                 HarnessArtifact::LegacyPayload { intent, json } => {
                     (intent.as_str(), "任务结果", json.clone())
                 }
@@ -659,9 +649,7 @@ fn artifacts_to_wires(artifacts: &[HarnessArtifact], source_task: &str) -> Vec<H
 pub fn map_task_result_to_response(
     result: HarnessTaskResult,
 ) -> crate::commands::assistant_commands::AssistantExecuteResponse {
-    use crate::commands::assistant_commands::{
-        AssistantExecuteResponse,
-    };
+    use crate::commands::assistant_commands::AssistantExecuteResponse;
     let body = task_result_to_body(&result);
     AssistantExecuteResponse {
         body,
@@ -672,7 +660,9 @@ pub fn map_task_result_to_response(
     }
 }
 
-fn task_result_to_body(result: &HarnessTaskResult) -> crate::commands::assistant_commands::AssistantExecuteBody {
+fn task_result_to_body(
+    result: &HarnessTaskResult,
+) -> crate::commands::assistant_commands::AssistantExecuteBody {
     use crate::commands::assistant_commands::AssistantExecuteBody;
     if let Some(payload) = &result.chat_payload {
         return AssistantExecuteBody::Chat {

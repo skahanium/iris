@@ -57,9 +57,7 @@ fn url_hash(url: &str) -> String {
 }
 
 fn content_hash(text: &str) -> String {
-    let mut hasher = Sha256::new();
-    hasher.update(text.as_bytes());
-    hex::encode(hasher.finalize())
+    crate::cas::hash::content_hash_str(text)
 }
 
 /// Validate URL for fetch: HTTPS only, no SSRF to private/local hosts.
@@ -96,7 +94,13 @@ fn extract_host(url: &str) -> Option<String> {
     let rest = url
         .strip_prefix("https://")
         .or_else(|| url.strip_prefix("http://"))?;
-    let host = rest.split('/').next()?.split('?').next()?.split('#').next()?;
+    let host = rest
+        .split('/')
+        .next()?
+        .split('?')
+        .next()?
+        .split('#')
+        .next()?;
     if host.is_empty() {
         return None;
     }
@@ -119,11 +123,7 @@ fn is_blocked_ip(ip: IpAddr) -> bool {
                 // RFC 2544 benchmarking
                 || (v4.octets()[0] == 198 && v4.octets()[1] >= 18 && v4.octets()[1] <= 19)
         }
-        IpAddr::V6(v6) => {
-            v6.is_loopback()
-                || v6.is_unspecified()
-                || is_ipv6_private(v6)
-        }
+        IpAddr::V6(v6) => v6.is_loopback() || v6.is_unspecified() || is_ipv6_private(v6),
     }
 }
 
@@ -184,9 +184,17 @@ pub fn extract_readable_text(html: &str) -> (String, Option<String>) {
 
     // Semantic content selectors in priority order
     for selector in [
-        "main", "article", "[role=main]", "[role=article]",
-        ".post-content", ".article-content", ".entry-content",
-        ".content", ".main-content", "#content", "#main-content",
+        "main",
+        "article",
+        "[role=main]",
+        "[role=article]",
+        ".post-content",
+        ".article-content",
+        ".entry-content",
+        ".content",
+        ".main-content",
+        "#content",
+        "#main-content",
         ".markdown-body",
     ] {
         if let Ok(sel) = Selector::parse(selector) {
@@ -202,7 +210,9 @@ pub fn extract_readable_text(html: &str) -> (String, Option<String>) {
     // Fallback: strip noise elements from body
     if let Ok(body_sel) = Selector::parse("body") {
         if let Some(el) = document.select(&body_sel).next() {
-            let noise_tags = ["script", "style", "nav", "footer", "header", "aside", "noscript"];
+            let noise_tags = [
+                "script", "style", "nav", "footer", "header", "aside", "noscript",
+            ];
             let mut body_html = el.html();
             for tag in &noise_tags {
                 if let Ok(noise_sel) = Selector::parse(tag) {
@@ -224,7 +234,10 @@ pub fn extract_readable_text(html: &str) -> (String, Option<String>) {
         }
     }
 
-    (normalize_whitespace(&document.root_element().text().collect::<String>()), title)
+    (
+        normalize_whitespace(&document.root_element().text().collect::<String>()),
+        title,
+    )
 }
 
 pub fn normalize_whitespace(text: &str) -> String {
@@ -409,14 +422,7 @@ pub async fn fetch_web_page(
     }
 
     let full_hash = content_hash(&text);
-    store_cache(
-        db,
-        &hash,
-        url,
-        title_opt.as_deref(),
-        &text,
-        &full_hash,
-    )?;
+    store_cache(db, &hash, url, title_opt.as_deref(), &text, &full_hash)?;
 
     let truncated = text.chars().count() > max_chars;
     if truncated {

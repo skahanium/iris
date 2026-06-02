@@ -144,8 +144,15 @@ export function useTabManager(options: UseTabManagerOptions = {}) {
 
   const handleNewNote = useCallback(async () => {
     try {
+      const current = activePathRef.current;
+      let remainingTabs = tabs;
+      if (current && (await maybeDiscardOnLeave(current))) {
+        remainingTabs = tabs.filter((tab) => tab.path !== current);
+        setTabs(remainingTabs);
+        clearEditorState();
+      }
       const created = await createDefaultNote({
-        extraTakenTitles: tabs.map((tab) => tab.title),
+        extraTakenTitles: remainingTabs.map((tab) => tab.title),
       });
       onVaultIndexBump?.();
       await openFile(created.path, created.title, {
@@ -155,7 +162,14 @@ export function useTabManager(options: UseTabManagerOptions = {}) {
       const msg = e instanceof Error ? e.message : String(e);
       onStatusChange?.(`新建笔记失败：${msg}`);
     }
-  }, [tabs, openFile, onStatusChange, onVaultIndexBump]);
+  }, [
+    tabs,
+    maybeDiscardOnLeave,
+    clearEditorState,
+    openFile,
+    onStatusChange,
+    onVaultIndexBump,
+  ]);
 
   const markDirty = useCallback(() => {
     setTabs((t) =>

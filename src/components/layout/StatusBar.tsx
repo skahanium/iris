@@ -1,11 +1,9 @@
-import { memo, useMemo } from "react";
+import { memo } from "react";
 
 import { ConnectivityIndicators } from "@/components/layout/ConnectivityIndicators";
 import { EditorZoomControl } from "@/components/layout/EditorZoomControl";
 import { StatusBarTokenUsage } from "@/components/layout/StatusBarTokenUsage";
 import { Kbd } from "@/components/ui/kbd";
-import { splitFrontmatter } from "@/lib/frontmatter";
-import { readingMinutes } from "@/lib/reading-time";
 import { formatCommandPaletteShortcut } from "@/lib/utils";
 import type { AssistantChromeSnapshot } from "@/types/assistant-chrome";
 import type { ConnectivityStatus } from "@/types/llm";
@@ -16,8 +14,8 @@ interface StatusBarProps {
   documentTitle?: string | null;
   /** Current note has unsaved edits (shown as text, not on tabs). */
   unsaved?: boolean;
-  wordCount: number;
-  markdown?: string;
+  characterCount: number;
+  readingMinutes: number;
   aiStatus: string;
   editorZoom?: number;
   onEditorZoomIn?: () => void;
@@ -37,8 +35,8 @@ export const StatusBar = memo(function StatusBar({
   path,
   documentTitle,
   unsaved = false,
-  wordCount,
-  markdown = "",
+  characterCount,
+  readingMinutes,
   aiStatus,
   editorZoom = 1,
   onEditorZoomIn,
@@ -53,9 +51,6 @@ export const StatusBar = memo(function StatusBar({
 }: StatusBarProps) {
   const trimmedTitle = documentTitle?.trim();
   const label = trimmedTitle || (path ? "无标题" : "未打开文件");
-
-  const bodyText = useMemo(() => splitFrontmatter(markdown).body, [markdown]);
-  const minutes = useMemo(() => readingMinutes(bodyText), [bodyText]);
 
   const toolLabel = assistantChrome?.toolActivityLabel?.trim() ?? null;
   const statusLine = keyboardLeaderPending
@@ -78,12 +73,12 @@ export const StatusBar = memo(function StatusBar({
         ·
       </span>
       <span className="shrink-0 tabular-nums">
-        {wordCount.toLocaleString()} 字
+        {characterCount.toLocaleString()} 字
       </span>
       <span className="shrink-0 text-muted-foreground/60" aria-hidden>
         ·
       </span>
-      <span className="shrink-0 tabular-nums">约 {minutes} 分钟</span>
+      <span className="shrink-0 tabular-nums">约 {readingMinutes} 分钟</span>
       {onEditorZoomIn && onEditorZoomOut && onEditorZoomReset ? (
         <>
           <span className="shrink-0 text-muted-foreground/60" aria-hidden>

@@ -82,8 +82,7 @@ unsafe fn inset_traffic_lights(window: &objc2_app_kit::NSWindow, x: f64, target_
     title_bar_container_view.setFrame(title_bar_rect);
 
     let container_height = NSView::frame(&title_bar_container_view).size.height;
-    let vertical_offset =
-        chrome_metrics::button_center_y_offset(button_height, container_height);
+    let vertical_offset = chrome_metrics::button_center_y_offset(button_height, container_height);
     debug_assert!(
         (vertical_offset - TRAFFIC_LIGHT_Y).abs() < f64::EPSILON
             || (button_height - chrome_metrics::MACOS_TRAFFIC_BUTTON_HEIGHT).abs() > f64::EPSILON,

@@ -20,7 +20,6 @@ import { TemplateEditor } from "@/components/file/TemplateEditor";
 import {
   corpusUpsert,
   exportFile,
-  fileCreate,
   fileDelete,
   fileList,
   fileRead,
@@ -72,6 +71,10 @@ function defaultScenesForKind(kind: string): string[] {
     default:
       return [];
   }
+}
+
+function isInvalidFolderName(name: string): boolean {
+  return /[\\/:*?"<>|]/.test(name) || name === "." || name === "..";
 }
 
 function TreeFolder({
@@ -178,7 +181,8 @@ export function VaultNavigator({ open, onClose, onOpen }: VaultNavigatorProps) {
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [corpusDialogOpen, setCorpusDialogOpen] = useState(false);
   const [corpusKind, setCorpusKind] = useState("regulation");
-  const [newFolderParent, setNewFolderParent] = useState<string | null>(null);
+  const [folderCreateOpen, setFolderCreateOpen] = useState(false);
+  const [folderCreateParent, setFolderCreateParent] = useState("");
   const [folderRenameTarget, setFolderRenameTarget] = useState<string | null>(
     null,
   );
@@ -238,18 +242,25 @@ export function VaultNavigator({ open, onClose, onOpen }: VaultNavigatorProps) {
     async (name: string) => {
       const trimmed = name.trim();
       if (!trimmed) return;
-      const folderPath = joinVaultChildPath(newFolderParent ?? "", trimmed);
+      if (isInvalidFolderName(trimmed)) {
+        setError("文件夹名称不能包含路径分隔符或非法字符");
+        return;
+      }
+      const folderPath = joinVaultChildPath(folderCreateParent, trimmed);
       try {
         await folderCreate(folderPath);
-        setNewFolderParent(null);
+        setFolderCreateOpen(false);
+        setFolderCreateParent("");
         setSelectedFolder(`${folderPath.replace(/\\/g, "/")}/`);
-        setExpanded((prev) => new Set(prev).add(`${folderPath.replace(/\\/g, "/")}/`));
+        setExpanded((prev) =>
+          new Set(prev).add(`${folderPath.replace(/\\/g, "/")}/`),
+        );
         refresh();
       } catch (e) {
         setError(e instanceof Error ? e.message : "创建文件夹失败");
       }
     },
-    [newFolderParent, refresh],
+    [folderCreateParent, refresh],
   );
 
   const handleFolderRename = useCallback(
@@ -339,15 +350,9 @@ export function VaultNavigator({ open, onClose, onOpen }: VaultNavigatorProps) {
             onClick={async () => {
               if (showTemplates && templates.length > 0) return;
               const trimmed = newName.trim();
-              if (trimmed) {
-                const path = notePathInFolder(selectedFolder, trimmed);
-                await fileCreate(path);
-                refresh();
-                onOpen(path);
-                return;
-              }
               const created = await createDefaultNote({
                 folderPrefix: selectedFolder,
+                titleHint: trimmed,
               });
               refresh();
               onOpen(created.path);
@@ -361,7 +366,9 @@ export function VaultNavigator({ open, onClose, onOpen }: VaultNavigatorProps) {
             variant="outline"
             title="新建文件夹"
             onClick={() => {
-              setNewFolderParent(selectedFolder || null);
+              setFolderCreateParent("");
+              setFolderCreateParent(selectedFolder);
+              setFolderCreateOpen(true);
             }}
           >
             <Folder className="h-4 w-4" />
@@ -575,11 +582,14 @@ export function VaultNavigator({ open, onClose, onOpen }: VaultNavigatorProps) {
       />
 
       <PromptDialog
-        open={newFolderParent !== null}
+        open={folderCreateOpen}
         title="新建文件夹"
         label="文件夹名称"
         defaultValue=""
-        onCancel={() => setNewFolderParent(null)}
+        onCancel={() => {
+          setFolderCreateOpen(false);
+          setFolderCreateParent("");
+        }}
         onSubmit={handleFolderCreate}
       />
 

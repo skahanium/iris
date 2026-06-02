@@ -77,7 +77,7 @@ export async function fileWrite(
 
 export async function fileCreate(
   path: string,
-  content?: string,
+  content: string,
 ): Promise<FileEntry> {
   return invoke<FileEntry>("file_create", { path, content });
 }

@@ -63,8 +63,8 @@ import {
 } from "@/lib/command-palette";
 import { runEditorAction } from "@/lib/editor-action-executor";
 import { resolveNoteDisplayTitle } from "@/lib/note-display";
-import { splitFrontmatter } from "@/lib/frontmatter";
 import { settingsGet, settingsSet, versionSaveManual } from "@/lib/ipc";
+import { readingMinutes } from "@/lib/reading-time";
 import { isTauriRuntime } from "@/lib/tauri-runtime";
 import { cn } from "@/lib/utils";
 
@@ -152,6 +152,10 @@ function App() {
   const [aiStatus, setAiStatus] = useState("AI 空闲");
   const [assistantChrome, setAssistantChrome] =
     useState<AssistantChromeSnapshot>(EMPTY_ASSISTANT_CHROME);
+  const [editorStats, setEditorStats] = useState({
+    characterCount: 0,
+    readingMinutes: 1,
+  });
   const [keyboardLeaderPending, setKeyboardLeaderPending] = useState(false);
   const [zen, setZen] = useState(false);
   const [outlineOpen, setOutlineOpen] = useState(loadOutlineOpen);
@@ -322,9 +326,20 @@ function App() {
     if (!activePath) setEditorInstance(null);
   }, [activePath]);
 
-  const handleEditorReady = useCallback((ed: Editor) => {
+  useEffect(() => {
+    if (!activePath) {
+      setEditorStats({ characterCount: 0, readingMinutes: 1 });
+      return;
+    }
+    setEditorStats({
+      characterCount: bodyMarkdown.replace(/\s+/g, "").length,
+      readingMinutes: readingMinutes(bodyMarkdown),
+    });
+  }, [activePath, bodyMarkdown]);
+
+  const handleEditorReady = useCallback((ed: Editor | null) => {
     editorRef.current = ed;
-    setEditorInstance(ed);
+    if (ed) setEditorInstance(ed);
   }, []);
 
   const runInlineAi = useCallback(
@@ -602,6 +617,7 @@ function App() {
                   onSlashCommand={runEditorActionById}
                   onBodyContextMenu={editorContextMenu.handleContextMenu}
                   onEditorReady={handleEditorReady}
+                  onBodyStatsChange={setEditorStats}
                   onInlineAiRetry={(ed) => void inlineAi.retry(ed)}
                   onOpenWikiLink={(title) => void openFile(`${title}.md`)}
                 />
@@ -667,10 +683,8 @@ function App() {
             path={activePath}
             documentTitle={activeDocumentTitle}
             unsaved={tabs.find((t) => t.path === activePath)?.dirty ?? false}
-            markdown={markdown}
-            wordCount={
-              splitFrontmatter(markdown).body.replace(/\s+/g, "").length
-            }
+            characterCount={editorStats.characterCount}
+            readingMinutes={editorStats.readingMinutes}
             aiStatus={aiStatus}
             assistantChrome={assistantChrome}
             keyboardLeaderPending={keyboardLeaderPending}

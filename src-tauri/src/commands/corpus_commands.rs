@@ -48,10 +48,7 @@ pub struct CorpusUpsertPayload {
 
 /// Insert or replace a corpus entry in `.iris/corpora.toml`.
 #[tauri::command]
-pub fn corpus_upsert(
-    state: State<'_, Arc<AppState>>,
-    entry: CorpusUpsertPayload,
-) -> AppResult<()> {
+pub fn corpus_upsert(state: State<'_, Arc<AppState>>, entry: CorpusUpsertPayload) -> AppResult<()> {
     let vault = state.vault_path()?;
     let mut config = load_corpora(&vault)?;
     let new_entry = CorpusEntry {

@@ -15,7 +15,6 @@ use tauri::AppHandle;
 static RE_REGULATION_BOOK: LazyLock<regex::Regex> =
     LazyLock::new(|| regex::Regex::new(r"《([^》]+)》").expect("regulation book regex"));
 
-use crate::ai_runtime::chapter_workflow;
 use crate::ai_runtime::model_gateway::{
     GatewayRequest, LlmMessage, MessageRole, ModelGateway, ProviderConfig,
 };
@@ -701,7 +700,7 @@ pub fn execute_document_check(
 
 fn content_hash_for_input(input: &DocumentCheckInput) -> String {
     if input.base_content_hash.trim().is_empty() {
-        chapter_workflow::compute_content_hash(&input.content)
+        crate::cas::hash::content_hash_str(&input.content)
     } else {
         input.base_content_hash.clone()
     }

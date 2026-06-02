@@ -84,13 +84,11 @@ impl EvidenceLedger {
         self.packets.sort_by(|a, b| {
             let rank_a = source_rank(&a.source_type);
             let rank_b = source_rank(&b.source_type);
-            rank_a
-                .cmp(&rank_b)
-                .then(
-                    b.score
-                        .partial_cmp(&a.score)
-                        .unwrap_or(std::cmp::Ordering::Equal),
-                )
+            rank_a.cmp(&rank_b).then(
+                b.score
+                    .partial_cmp(&a.score)
+                    .unwrap_or(std::cmp::Ordering::Equal),
+            )
         });
         if self.packets.len() > MAX_PACKETS {
             self.packets.truncate(MAX_PACKETS);

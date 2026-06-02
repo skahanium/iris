@@ -3,7 +3,6 @@ use std::path::Path;
 
 use chrono::Utc;
 use rusqlite::Connection;
-use sha2::{Digest, Sha256};
 use walkdir::WalkDir;
 
 use super::chunker::chunk_markdown;
@@ -27,9 +26,7 @@ pub struct FileEntry {
 }
 
 fn content_hash(content: &str) -> String {
-    let mut hasher = Sha256::new();
-    hasher.update(content.as_bytes());
-    hex::encode(hasher.finalize())
+    crate::cas::hash::content_hash_str(content)
 }
 
 fn word_count(content: &str) -> i64 {

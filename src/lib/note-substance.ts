@@ -41,6 +41,14 @@ export function isNoteSubstantivelyEmpty(md: string): boolean {
   if (!isPlaceholderTitle(title)) {
     return false;
   }
+  if (!title) {
+    const legacy = /^#\s+(.+?)\s*(?:\n|$)/.exec(rawBody.trimStart());
+    if (legacy && isPlaceholderTitle(legacy[1]!.trim())) {
+      return !bodyHasSubstance(
+        rawBody.trimStart().slice(legacy[0].length).trimStart(),
+      );
+    }
+  }
   const body = stripLeadingBodyTitleHeading(rawBody, title).trim();
   return !bodyHasSubstance(body);
 }

@@ -6,9 +6,8 @@ use regex::Regex;
 
 use crate::ai_runtime::model_gateway::ToolCall;
 
-static DSML_INVOKE_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r#"invoke\s+name\s*=\s*"([^"]+)""#).expect("dsml invoke regex")
-});
+static DSML_INVOKE_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r#"invoke\s+name\s*=\s*"([^"]+)""#).expect("dsml invoke regex"));
 
 static DSML_PARAM_RE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r#"parameter\s+name\s*=\s*"([^"]+)"[^>]*>([^<]*)"#).expect("dsml param regex")
@@ -45,10 +44,7 @@ pub fn parse_dsml_tool_calls(content: &str) -> Vec<ToolCall> {
                 val = &val[1..val.len() - 1];
             }
             if !key.is_empty() {
-                args_map.insert(
-                    key.to_string(),
-                    serde_json::Value::String(val.to_string()),
-                );
+                args_map.insert(key.to_string(), serde_json::Value::String(val.to_string()));
             }
         }
         let args = if args_map.is_empty() {

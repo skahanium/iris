@@ -225,16 +225,17 @@ pub fn web_packets_from_page_fetch(fetch: &PageFetchResult) -> Vec<ContextPacket
         .map(classify_source_rank)
         .unwrap_or(WebSourceRank::Unknown);
     let title = if fetch.title.is_empty() {
-        domain
-            .clone()
-            .unwrap_or_else(|| "网页正文".to_string())
+        domain.clone().unwrap_or_else(|| "网页正文".to_string())
     } else {
         fetch.title.clone()
     };
     let score = rank_score(source_rank) * 0.9;
 
     vec![ContextPacket {
-        id: format!("web-page-{}", fetch.content_hash.chars().take(12).collect::<String>()),
+        id: format!(
+            "web-page-{}",
+            fetch.content_hash.chars().take(12).collect::<String>()
+        ),
         source_type: SourceType::Web,
         source_path: Some(fetch.url.clone()),
         title,

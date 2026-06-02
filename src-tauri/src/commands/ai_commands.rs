@@ -24,6 +24,7 @@ use tauri::{Emitter, State};
 use tracing::info;
 
 /// Assemble context with intent detection and retrieval planning.
+#[allow(clippy::too_many_arguments)]
 #[tauri::command]
 pub async fn context_assemble(
     state: State<'_, Arc<AppState>>,
@@ -538,7 +539,11 @@ pub async fn tool_confirm(
         obj.insert("tool_call_id".into(), serde_json::json!(tool_call_id));
         obj.insert(
             "decision".into(),
-            serde_json::json!(if decision == "modify" { "modify" } else { "approve" }),
+            serde_json::json!(if decision == "modify" {
+                "modify"
+            } else {
+                "approve"
+            }),
         );
         obj.insert("resumed".into(), serde_json::json!(true));
     }
@@ -890,10 +895,7 @@ pub async fn harness_resume(
 
 /// Abort an active harness/model request.
 #[tauri::command]
-pub async fn harness_abort(
-    state: State<'_, Arc<AppState>>,
-    request_id: String,
-) -> AppResult<()> {
+pub async fn harness_abort(state: State<'_, Arc<AppState>>, request_id: String) -> AppResult<()> {
     crate::ai_runtime::model_gateway::request_abort(&request_id);
     let _ = TraceRecorder::update_status(&state.db, &request_id, TraceStatus::Aborted);
     Ok(())

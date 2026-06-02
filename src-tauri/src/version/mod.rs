@@ -14,7 +14,7 @@ use crate::app::AppState;
 use crate::error::{AppError, AppResult};
 
 pub use kind::VersionKind;
-pub use policy::{content_hash, SnapshotDecisionInput, AUTO_IDLE_MAX_PER_FILE};
+pub use policy::{SnapshotDecisionInput, AUTO_IDLE_MAX_PER_FILE};
 
 #[derive(Debug, Clone, Serialize)]
 pub struct VersionEntry {
@@ -230,7 +230,7 @@ pub fn create_snapshot(
     params: SnapshotParams,
 ) -> AppResult<Option<VersionEntry>> {
     let vault = state.vault_path()?;
-    let hash = content_hash(content);
+    let hash = crate::cas::hash::content_hash_str(content);
 
     let file_id: i64 = state.db.with_conn(|conn| {
         conn.query_row("SELECT id FROM files WHERE path = ?1", [path], |r| r.get(0))

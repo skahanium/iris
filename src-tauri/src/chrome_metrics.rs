@@ -53,11 +53,11 @@ pub mod macos {
 
 #[cfg(target_os = "macos")]
 pub use macos::{
+    button_center_y_offset, traffic_inset_default as macos_traffic_inset_default,
+    traffic_inset_from_layout as macos_traffic_inset_from_layout,
     TITLEBAR_HEIGHT as MACOS_TITLEBAR_HEIGHT, TRAFFIC_BUTTON_HEIGHT as MACOS_TRAFFIC_BUTTON_HEIGHT,
     TRAFFIC_LIGHT_X, TRAFFIC_SPACE_BETWEEN_DEFAULT as MACOS_TRAFFIC_SPACE_BETWEEN_DEFAULT,
     TRAFFIC_TRAILING_PADDING as MACOS_TRAFFIC_TRAILING_PADDING,
-    button_center_y_offset, traffic_inset_default as macos_traffic_inset_default,
-    traffic_inset_from_layout as macos_traffic_inset_from_layout,
 };
 
 #[cfg(test)]
@@ -72,7 +72,7 @@ mod tests {
     #[cfg(target_os = "macos")]
     mod macos_tests {
         use super::macos;
-        use super::{MACOS_TITLEBAR_HEIGHT, macos_traffic_inset_default};
+        use super::{macos_traffic_inset_default, MACOS_TITLEBAR_HEIGHT};
 
         #[test]
         fn titlebar_height_macos_is_32() {
@@ -82,10 +82,7 @@ mod tests {
         #[test]
         fn button_center_y_for_12px_button_in_32px_bar() {
             assert_eq!(
-                macos::button_center_y_offset(
-                    macos::TRAFFIC_BUTTON_HEIGHT,
-                    MACOS_TITLEBAR_HEIGHT,
-                ),
+                macos::button_center_y_offset(macos::TRAFFIC_BUTTON_HEIGHT, MACOS_TITLEBAR_HEIGHT,),
                 10.0
             );
         }

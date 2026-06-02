@@ -14,4 +14,9 @@ CREATE TABLE IF NOT EXISTS cas_ref_links (
 );
 
 CREATE INDEX IF NOT EXISTS idx_cas_refs_ref_count ON cas_refs(ref_count);
+CREATE INDEX IF NOT EXISTS idx_cas_refs_object_type ON cas_refs(object_type);
+CREATE INDEX IF NOT EXISTS idx_cas_ref_links_source ON cas_ref_links(source_hash);
 CREATE INDEX IF NOT EXISTS idx_cas_ref_links_target ON cas_ref_links(target_hash);
+
+-- chunks 表新增 cas_hash 字段
+ALTER TABLE chunks ADD COLUMN cas_hash TEXT;

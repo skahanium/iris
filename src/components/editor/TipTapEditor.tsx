@@ -19,6 +19,7 @@ import {
 
 import { ingestMarkdownForEditor } from "@/lib/editor-ingest";
 import type { MarkdownSyntaxFragment } from "@/lib/markdown-contract/types";
+import { readingMinutes } from "@/lib/reading-time";
 import { cn } from "@/lib/utils";
 
 import { AiStreamExtension } from "./extensions/AiStreamExtension";
@@ -38,7 +39,11 @@ interface TipTapEditorProps {
   zen?: boolean;
   onDirty?: () => void;
   onSlashCommand?: (command: string) => void;
-  onEditorReady?: (editor: Editor) => void;
+  onEditorReady?: (editor: Editor | null) => void;
+  onBodyStatsChange?: (stats: {
+    characterCount: number;
+    readingMinutes: number;
+  }) => void;
   onInlineAiRetry?: (editor: Editor) => void;
   onOpenWikiLink?: (title: string) => void;
   zoom?: number;
@@ -60,6 +65,7 @@ export function TipTapEditor({
   onDirty,
   onSlashCommand,
   onEditorReady,
+  onBodyStatsChange,
   onInlineAiRetry,
   onOpenWikiLink,
   onIngestComplete,
@@ -73,6 +79,9 @@ export function TipTapEditor({
 
   const onDirtyRef = useRef(onDirty);
   onDirtyRef.current = onDirty;
+
+  const onBodyStatsChangeRef = useRef(onBodyStatsChange);
+  onBodyStatsChangeRef.current = onBodyStatsChange;
 
   const editorRef = useRef<Editor | null>(null);
 
@@ -134,8 +143,13 @@ export function TipTapEditor({
   const editor = useEditor({
     extensions,
     content: initialContent,
-    onUpdate: () => {
+    onUpdate: ({ editor: updatedEditor }) => {
       onDirtyRef.current?.();
+      const text = updatedEditor.getText();
+      onBodyStatsChangeRef.current?.({
+        characterCount: text.replace(/\s+/g, "").length,
+        readingMinutes: readingMinutes(text),
+      });
     },
     editorProps: {
       attributes: {
@@ -148,6 +162,15 @@ export function TipTapEditor({
     if (!editor) return;
     editorRef.current = editor;
     onEditorReady?.(editor);
+    const text = editor.getText();
+    onBodyStatsChangeRef.current?.({
+      characterCount: text.replace(/\s+/g, "").length,
+      readingMinutes: readingMinutes(text),
+    });
+    return () => {
+      editorRef.current = null;
+      onEditorReady?.(null);
+    };
   }, [editor, onEditorReady]);
 
   return (

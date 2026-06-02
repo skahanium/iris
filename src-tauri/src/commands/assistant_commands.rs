@@ -103,9 +103,7 @@ pub(crate) async fn route_assistant_execute(
         crate::ai_runtime::harness_task::HarnessTaskRequest::from_assistant(request),
     )
     .await?;
-    Ok(crate::ai_runtime::harness_task::map_task_result_to_response(
-        task_result,
-    ))
+    Ok(crate::ai_runtime::harness_task::map_task_result_to_response(task_result))
 }
 
 /// Unified assistant entry point for the React frontend.

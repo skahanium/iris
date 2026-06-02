@@ -20,11 +20,7 @@ use super::web_search_config::{
     WebSearchPreferences,
 };
 
-fn query_hash_key(
-    query: &str,
-    backend: WebSearchEffectiveBackend,
-    minimax_model: &str,
-) -> String {
+fn query_hash_key(query: &str, backend: WebSearchEffectiveBackend, minimax_model: &str) -> String {
     let mut hasher = Sha256::new();
     hasher.update(query.as_bytes());
     hasher.update(backend.as_str().as_bytes());
@@ -475,7 +471,11 @@ fn parse_ddg_html(html: &str) -> AppResult<String> {
 
     let result_sels = [".result", ".results_links", ".web-result"];
     let title_sels = [".result__title a", ".result__a", "a[href]"];
-    let snippet_sels = [".result__snippet", ".result__snippet.js-result-snippet", ".snippet"];
+    let snippet_sels = [
+        ".result__snippet",
+        ".result__snippet.js-result-snippet",
+        ".snippet",
+    ];
     let link_re = Regex::new(r#"uddg=([^&"]+)"#).ok();
 
     for result_sel_str in &result_sels {
@@ -530,10 +530,7 @@ fn find_text_with_fallback(element: &scraper::ElementRef, selectors: &[&str]) ->
     String::new()
 }
 
-fn find_link_with_fallback(
-    element: &scraper::ElementRef,
-    link_re: &Option<Regex>,
-) -> String {
+fn find_link_with_fallback(element: &scraper::ElementRef, link_re: &Option<Regex>) -> String {
     if let Ok(sel) = Selector::parse("a") {
         if let Some(a) = element.select(&sel).next() {
             if let Some(href) = a.value().attr("href") {
@@ -593,7 +590,10 @@ mod tests {
     #[test]
     fn normalize_removes_various_hints() {
         assert_eq!(normalize_search_query("帮我查一下最新的法规"), "最新的法规");
-        assert_eq!(normalize_search_query("请帮我搜索 党纪处分条例"), "党纪处分条例");
+        assert_eq!(
+            normalize_search_query("请帮我搜索 党纪处分条例"),
+            "党纪处分条例"
+        );
         assert_eq!(normalize_search_query("search for AI safety"), "AI safety");
     }
 

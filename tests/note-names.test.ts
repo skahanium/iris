@@ -38,6 +38,18 @@ describe("allocateNewDocumentName", () => {
     const { title } = allocateNewDocumentName([file("note-1.md", "新建文档")]);
     expect(title).toBe("新建文档（1）");
   });
+
+  it("uses a custom title hint inside the selected folder", () => {
+    const { title, path } = allocateNewDocumentName(
+      [file("notes/会议.md", "会议")],
+      [],
+      "notes/",
+      "会议",
+    );
+
+    expect(title).toBe("会议（1）");
+    expect(path).toBe("notes/会议（1）.md");
+  });
 });
 
 describe("titleToNotePath", () => {

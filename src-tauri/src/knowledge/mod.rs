@@ -52,9 +52,7 @@ pub fn make_template_key(genre: &str, source_path: &str) -> String {
 
 /// Generate `content_hash` for deduplication and change detection.
 pub fn content_hash(text: &str) -> String {
-    let mut hasher = Sha256::new();
-    hasher.update(text.as_bytes());
-    hex::encode(hasher.finalize())
+    crate::cas::hash::content_hash_str(text)
 }
 
 // ─── Tests ───────────────────────────────────────────────

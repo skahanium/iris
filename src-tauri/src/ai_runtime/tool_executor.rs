@@ -632,10 +632,7 @@ mod tests {
     #[test]
     fn tools_for_surface_excludes_unimplemented_write_tools() {
         let reg = ToolRegistry::new();
-        let tools = reg.tools_for_surface(
-            AiScene::DraftingAssist,
-            ToolSurfaceFilter::default(),
-        );
+        let tools = reg.tools_for_surface(AiScene::DraftingAssist, ToolSurfaceFilter::default());
         let names: Vec<&str> = tools.iter().map(|t| t.name.as_str()).collect();
         assert!(!names.contains(&"insert_text_at_cursor"));
         assert!(!names.contains(&"replace_selection"));
@@ -676,9 +673,7 @@ mod tests {
                     "exposed tool {} must be dispatchable or harness-only",
                     t.name
                 );
-                if !t.requires_confirmation
-                    && !HARNESS_ONLY_TOOL_NAMES.contains(&t.name.as_str())
-                {
+                if !t.requires_confirmation && !HARNESS_ONLY_TOOL_NAMES.contains(&t.name.as_str()) {
                     assert!(
                         DISPATCHABLE_TOOL_NAMES.contains(&t.name.as_str()),
                         "auto tool {} must have dispatch handler",

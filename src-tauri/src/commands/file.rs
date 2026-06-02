@@ -8,8 +8,8 @@ use crate::app::AppState;
 use crate::error::{AppError, AppResult};
 use crate::indexer::frontmatter::resolve_display_title;
 use crate::indexer::scan::{
-    collect_vault_folders, index_file_with_embed, index_vault_incremental, prune_stale_file_indexes,
-    remove_file_index, FileEntry,
+    collect_vault_folders, index_file_with_embed, index_vault_incremental,
+    prune_stale_file_indexes, remove_file_index, FileEntry,
 };
 use crate::recycle::{discard_document, trash_document};
 use crate::storage::paths::{is_user_note_path, resolve_vault_path};
@@ -20,6 +20,34 @@ fn title_from_path(path: &str) -> String {
         .next_back()
         .unwrap_or(path)
         .to_string()
+}
+
+fn default_create_content(_document_title: &str) -> String {
+    String::new()
+}
+
+fn validate_folder_path(path: &str) -> AppResult<()> {
+    if path.contains('\\') {
+        return Err(AppError::msg("Backslashes are not allowed in folder paths"));
+    }
+    let normalized = path.replace('\\', "/");
+    let trimmed = normalized.trim_matches('/');
+    if trimmed.trim().is_empty() {
+        return Err(AppError::msg("Folder path cannot be empty"));
+    }
+    if !is_user_note_path(trimmed) {
+        return Err(AppError::msg("Folder path cannot target Iris metadata"));
+    }
+    const INVALID: &[char] = &[':', '*', '?', '"', '<', '>', '|'];
+    for segment in trimmed.split('/') {
+        if segment.is_empty() || segment == "." || segment == ".." {
+            return Err(AppError::msg("Invalid folder path segment"));
+        }
+        if segment.chars().any(|c| INVALID.contains(&c)) {
+            return Err(AppError::msg("Invalid folder path character"));
+        }
+    }
+    Ok(())
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -118,6 +146,7 @@ pub fn folder_list(state: State<'_, Arc<AppState>>) -> AppResult<Vec<String>> {
 
 #[tauri::command]
 pub fn folder_create(state: State<'_, Arc<AppState>>, path: String) -> AppResult<()> {
+    validate_folder_path(&path)?;
     let vault = state.vault_path()?;
     let abs = resolve_vault_path(&vault, &path)?;
     if abs.exists() {
@@ -134,6 +163,8 @@ pub fn folder_rename(
     old_path: String,
     new_path: String,
 ) -> AppResult<()> {
+    validate_folder_path(&old_path)?;
+    validate_folder_path(&new_path)?;
     let vault = state.vault_path()?;
     let abs = resolve_vault_path(&vault, &old_path)?;
     let new_abs = resolve_vault_path(&vault, &new_path)?;
@@ -157,6 +188,7 @@ pub fn folder_rename(
 /// Delete an empty folder. Fails if the folder is not empty.
 #[tauri::command]
 pub fn folder_delete(state: State<'_, Arc<AppState>>, path: String) -> AppResult<()> {
+    validate_folder_path(&path)?;
     let vault = state.vault_path()?;
     let abs = resolve_vault_path(&vault, &path)?;
     if !abs.is_dir() {
@@ -311,6 +343,20 @@ mod path_sync_tests {
     fn sanitize_strips_invalid_chars() {
         assert_eq!(sanitize_title_for_path("a/b"), "a_b");
     }
+
+    #[test]
+    fn default_create_content_is_frontmatter_free_blank() {
+        assert_eq!(default_create_content("新建文档"), "");
+    }
+
+    #[test]
+    fn folder_paths_accept_nested_relative_paths_only() {
+        assert!(validate_folder_path("inbox").is_ok());
+        assert!(validate_folder_path("notes/inbox").is_ok());
+        assert!(validate_folder_path("notes\\inbox").is_err());
+        assert!(validate_folder_path("../secret").is_err());
+        assert!(validate_folder_path(".iris/trash").is_err());
+    }
 }
 
 #[tauri::command]
@@ -362,7 +408,7 @@ pub fn file_create(
         .and_then(|s| s.to_str())
         .map(str::to_string)
         .unwrap_or_else(|| title_from_path(&path));
-    let body = content.unwrap_or_else(|| format!("# {document_title}\n\n"));
+    let body = content.unwrap_or_else(|| default_create_content(&document_title));
     fs::write(&abs, &body)?;
     let hash = crate::indexer::scan::file_hash(&abs)?;
     state.write_guard.mark(&path, &hash);
@@ -389,9 +435,10 @@ pub fn vault_set(app: AppHandle, state: State<'_, Arc<AppState>>, path: String) 
     }
 
     if let Ok(vault) = state.vault_path() {
-        if let Err(e) = state.db.with_conn(|conn| {
-            index_vault_incremental(conn, &vault, Some(state.inner()))
-        }) {
+        if let Err(e) = state
+            .db
+            .with_conn(|conn| index_vault_incremental(conn, &vault, Some(state.inner())))
+        {
             tracing::warn!("vault_set: initial index skipped: {e}");
         }
     }

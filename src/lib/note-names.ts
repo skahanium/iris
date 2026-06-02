@@ -44,6 +44,7 @@ export function allocateNewDocumentName(
   files: FileListItem[],
   extraTaken?: Iterable<string>,
   folderPrefix = "",
+  titleHint?: string,
 ): { title: string; path: string } {
   const taken = collectTakenDocumentNames(files);
   for (const name of extraTaken ?? []) {
@@ -53,8 +54,12 @@ export function allocateNewDocumentName(
     }
   }
 
-  if (!taken.has(DEFAULT_NEW_DOCUMENT_TITLE)) {
-    const title = DEFAULT_NEW_DOCUMENT_TITLE;
+  const baseTitle = sanitizeNoteFileName(
+    titleHint?.replace(/\.md$/i, "") || DEFAULT_NEW_DOCUMENT_TITLE,
+  );
+
+  if (!taken.has(baseTitle)) {
+    const title = baseTitle;
     return {
       title,
       path: notePathInFolder(folderPrefix, titleToNotePath(title)),
@@ -62,10 +67,10 @@ export function allocateNewDocumentName(
   }
 
   let n = 1;
-  while (taken.has(`${DEFAULT_NEW_DOCUMENT_TITLE}（${n}）`)) {
+  while (taken.has(`${baseTitle}（${n}）`)) {
     n += 1;
   }
-  const title = `${DEFAULT_NEW_DOCUMENT_TITLE}（${n}）`;
+  const title = `${baseTitle}（${n}）`;
   return {
     title,
     path: notePathInFolder(folderPrefix, titleToNotePath(title)),

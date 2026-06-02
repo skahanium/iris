@@ -73,7 +73,10 @@ pub fn profile_list(
 
 /// Get a single profile entry by key.
 #[tauri::command]
-pub fn profile_get(state: State<'_, Arc<AppState>>, key: String) -> AppResult<Option<ProfileEntry>> {
+pub fn profile_get(
+    state: State<'_, Arc<AppState>>,
+    key: String,
+) -> AppResult<Option<ProfileEntry>> {
     state.db.with_conn(|conn| {
         let result = conn.query_row(
             "SELECT key, value, source, confidence, is_active, updated_at FROM user_profile WHERE key = ?1",

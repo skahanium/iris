@@ -2,7 +2,9 @@
 
 use tauri::AppHandle;
 
-use crate::ai_runtime::harness::{merge_tool_packets_into, run_harness, HarnessRunInput, HarnessRunResult};
+use crate::ai_runtime::harness::{
+    merge_tool_packets_into, run_harness, HarnessRunInput, HarnessRunResult,
+};
 use crate::ai_runtime::harness_support::{
     load_harness_checkpoint, save_harness_checkpoint, HarnessCheckpoint,
 };
@@ -119,8 +121,7 @@ pub async fn dispatch_approved_tool_to_checkpoint(
     .await;
 
     let (tool_content, status, output, merge) = if result.success {
-        let output_str =
-            serde_json::to_string(&result.output).unwrap_or_else(|_| "{}".into());
+        let output_str = serde_json::to_string(&result.output).unwrap_or_else(|_| "{}".into());
         (
             output_str,
             "completed",

@@ -2,10 +2,10 @@
 
 #[cfg(test)]
 mod tests {
+    use crate::ai_runtime::harness_confirm::append_rejected_tool_to_checkpoint;
     use crate::ai_runtime::harness_support::{
         load_harness_checkpoint, save_harness_checkpoint, HarnessCheckpoint, HarnessCheckpointMeta,
     };
-    use crate::ai_runtime::harness_confirm::append_rejected_tool_to_checkpoint;
     use crate::ai_runtime::model_gateway::{LlmMessage, MessageRole, TokenUsage};
     use crate::ai_runtime::trace::{TraceRecorder, TraceStatus};
     use crate::ai_runtime::AiScene;
@@ -64,7 +64,8 @@ mod tests {
         let state = test_state();
         let rid = "reject-cp-1";
         TraceRecorder::start(&state.db, rid, AiScene::KnowledgeLookup).unwrap();
-        TraceRecorder::update_status(&state.db, rid, TraceStatus::AwaitingToolConfirmation).unwrap();
+        TraceRecorder::update_status(&state.db, rid, TraceStatus::AwaitingToolConfirmation)
+            .unwrap();
         save_harness_checkpoint(&state.db, rid, &sample_checkpoint(rid)).unwrap();
 
         append_rejected_tool_to_checkpoint(state.as_ref(), rid, "tc1").unwrap();
@@ -73,10 +74,9 @@ mod tests {
         assert_eq!(cp.messages.len(), 2);
         assert!(matches!(cp.messages[1].role, MessageRole::Tool));
         assert!(cp.messages[1].content.contains("rejected"));
-        assert!(
-            cp.tool_results
-                .iter()
-                .any(|r| r.get("status").and_then(|s| s.as_str()) == Some("rejected"))
-        );
+        assert!(cp
+            .tool_results
+            .iter()
+            .any(|r| r.get("status").and_then(|s| s.as_str()) == Some("rejected")));
     }
 }

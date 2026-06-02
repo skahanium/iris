@@ -12,6 +12,8 @@ export interface CreateDefaultNoteOptions {
   extraTakenTitles?: Iterable<string>;
   /** Target folder prefix, e.g. `notes/` — empty for vault root. */
   folderPrefix?: string;
+  /** Optional user-provided title or filename from the file tree input. */
+  titleHint?: string;
 }
 
 /** Create a note with display title in frontmatter; path aligns with title. */
@@ -23,6 +25,7 @@ export async function createDefaultNote(
     files,
     options.extraTakenTitles,
     options.folderPrefix ?? "",
+    options.titleHint,
   );
   const content = `---\ntitle: ${quoteYamlString(title)}\n---\n\n`;
   const entry = await fileCreate(path, content);

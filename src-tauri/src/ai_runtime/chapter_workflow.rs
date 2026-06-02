@@ -217,9 +217,7 @@ pub fn build_chapter_suggestion(
 
 /// Compute SHA-256 hash of content.
 pub fn compute_content_hash(content: &str) -> String {
-    let mut hasher = Sha256::new();
-    hasher.update(content.as_bytes());
-    format!("{:x}", hasher.finalize())
+    crate::cas::hash::content_hash_str(content)
 }
 
 /// Build a patch proposal for a chapter.
