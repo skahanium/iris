@@ -120,6 +120,7 @@ impl Database {
             PRAGMA mmap_size=268435456;
             PRAGMA temp_store=MEMORY;
             PRAGMA busy_timeout=5000;
+            PRAGMA foreign_keys=ON;
             ",
         )?;
         Ok(())

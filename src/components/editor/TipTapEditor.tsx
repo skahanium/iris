@@ -173,6 +173,20 @@ export function TipTapEditor({
     };
   }, [editor, onEditorReady]);
 
+  const lastSyncedContentRef = useRef(initialContent);
+
+  useEffect(() => {
+    if (!editor) return;
+    if (lastSyncedContentRef.current === initialContent) return;
+    lastSyncedContentRef.current = initialContent;
+    editor.commands.setContent(initialContent, false);
+    const text = editor.getText();
+    onBodyStatsChangeRef.current?.({
+      characterCount: text.replace(/\s+/g, "").length,
+      readingMinutes: readingMinutes(text),
+    });
+  }, [editor, initialContent]);
+
   return (
     <div
       data-testid="editor"
