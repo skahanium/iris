@@ -50,7 +50,7 @@ impl RefCounter {
 
     /// 获取引用计数
     pub fn get_count(&self, object_hash: &str) -> AppResult<u32> {
-        self.db.with_conn(|conn| {
+        self.db.with_read_conn(|conn| {
             let count: i64 = conn
                 .query_row(
                     "SELECT ref_count FROM cas_refs WHERE object_hash = ?1",
@@ -85,9 +85,23 @@ impl RefCounter {
         })
     }
 
+    /// 获取最后访问时间
+    pub fn get_last_accessed(&self, object_hash: &str) -> AppResult<Option<String>> {
+        self.db.with_read_conn(|conn| {
+            let result = conn
+                .query_row(
+                    "SELECT last_accessed_at FROM cas_refs WHERE object_hash = ?1",
+                    [object_hash],
+                    |r| r.get::<_, String>(0),
+                )
+                .ok();
+            Ok(result)
+        })
+    }
+
     /// 查找引用计数为 0 的对象
     pub fn find_orphaned_objects(&self) -> AppResult<Vec<String>> {
-        self.db.with_conn(|conn| {
+        self.db.with_read_conn(|conn| {
             let mut stmt = conn.prepare("SELECT object_hash FROM cas_refs WHERE ref_count = 0")?;
             let rows = stmt.query_map([], |row| row.get::<_, String>(0))?;
             Ok(rows.flatten().collect())

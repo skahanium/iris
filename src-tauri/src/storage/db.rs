@@ -1,5 +1,5 @@
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Mutex;
 
 #[cfg(feature = "sqlite-vec")]
@@ -11,6 +11,7 @@ use super::migrate::migrate_up;
 use crate::error::{AppError, AppResult};
 
 static VECTOR_INDEX_READY: AtomicBool = AtomicBool::new(false);
+static IN_MEMORY_DB_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 #[cfg(feature = "sqlite-vec")]
 static SQLITE_VEC_REGISTER: Once = Once::new();
@@ -58,63 +59,23 @@ impl Database {
     }
 
     pub fn open_in_memory() -> AppResult<Self> {
-        let write_conn = Connection::open_in_memory()?;
+        let db_id = IN_MEMORY_DB_COUNTER.fetch_add(1, Ordering::Relaxed);
+        let db_uri = format!("file:memdb_{db_id}?mode=memory&cache=shared");
+
+        let write_conn = Connection::open(&db_uri)?;
         Self::apply_pragmas(&write_conn)?;
         // In-memory DBs skip sqlite-vec (process-global extension breaks isolated test DBs).
         VECTOR_INDEX_READY.store(false, Ordering::Relaxed);
         migrate_up(&write_conn)?;
 
-        let read_conn = Connection::open_in_memory()?;
+        let read_conn = Connection::open(&db_uri)?;
         Self::apply_pragmas(&read_conn)?;
-        Self::copy_schema(&write_conn, &read_conn)?;
 
         Ok(Self {
             write_conn: Mutex::new(write_conn),
             read_conn: Mutex::new(read_conn),
             path: None,
         })
-    }
-
-    fn copy_schema(src: &Connection, dst: &Connection) -> AppResult<()> {
-        let mut stmt = src.prepare(
-            "SELECT sql FROM sqlite_master
-             WHERE type='table' AND sql IS NOT NULL
-               AND name NOT LIKE 'sqlite_%'
-               AND name NOT LIKE '%_data'
-               AND name NOT LIKE '%_idx'
-               AND name NOT LIKE '%_content'
-               AND name NOT LIKE '%_config'
-               AND name NOT LIKE '%_docsize'",
-        )?;
-        let sqls: Vec<String> = stmt
-            .query_map([], |row| row.get(0))?
-            .collect::<Result<_, _>>()?;
-        for sql in sqls {
-            dst.execute_batch(&sql)?;
-        }
-        let mut idx_stmt = src.prepare(
-            "SELECT sql FROM sqlite_master
-             WHERE type='index' AND sql IS NOT NULL
-               AND name NOT LIKE 'sqlite_%'",
-        )?;
-        let idx_sqls: Vec<String> = idx_stmt
-            .query_map([], |row| row.get(0))?
-            .collect::<Result<_, _>>()?;
-        for sql in idx_sqls {
-            dst.execute_batch(&sql)?;
-        }
-        let mut trigger_stmt = src.prepare(
-            "SELECT sql FROM sqlite_master
-             WHERE type='trigger' AND sql IS NOT NULL
-               AND name NOT LIKE 'sqlite_%'",
-        )?;
-        let trigger_sqls: Vec<String> = trigger_stmt
-            .query_map([], |row| row.get(0))?
-            .collect::<Result<_, _>>()?;
-        for sql in trigger_sqls {
-            dst.execute_batch(&sql)?;
-        }
-        Ok(())
     }
 
     #[cfg(feature = "sqlite-vec")]

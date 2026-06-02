@@ -98,5 +98,23 @@ fn test_increment_updates_last_accessed() {
     let hash = "abc123";
 
     ref_counter.increment(hash).unwrap();
+
+    let first_accessed: String = ref_counter
+        .get_last_accessed(hash)
+        .unwrap()
+        .expect("last_accessed_at should exist after increment");
+
+    std::thread::sleep(std::time::Duration::from_millis(10));
+
     ref_counter.increment(hash).unwrap();
+
+    let second_accessed: String = ref_counter
+        .get_last_accessed(hash)
+        .unwrap()
+        .expect("last_accessed_at should still exist after second increment");
+
+    assert_ne!(
+        first_accessed, second_accessed,
+        "last_accessed_at should change on increment"
+    );
 }
