@@ -130,7 +130,7 @@ fn test_write_content() {
     let store = CasObjectStore::new(dir.path().to_path_buf()).unwrap();
 
     let content = "Test content";
-    let hash = store.write_content("test.md", content).unwrap();
+    let hash = store.write_content(content).unwrap();
 
     let retrieved = store.read_blob_content(&hash).unwrap();
     assert_eq!(retrieved, content);
@@ -142,7 +142,7 @@ fn test_object_path_format() {
     let store = CasObjectStore::new(dir.path().to_path_buf()).unwrap();
 
     let hash = "abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890";
-    let path = store.object_path(hash);
+    let path = store.object_path(hash).unwrap();
 
     assert!(path.ends_with("ab/cdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890"));
 }

@@ -14,16 +14,6 @@ pub enum ObjectType {
     Commit,
 }
 
-/// Blob 对象（内容块）
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct BlobObject {
-    pub hash: String,
-    pub content: Vec<u8>,
-    pub size: u64,
-    pub ref_count: u32,
-    pub created_at: DateTime<Utc>,
-}
-
 /// Tree 条目
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TreeEntry {
@@ -75,25 +65,26 @@ impl CasObjectStore {
     pub fn new(base_path: PathBuf) -> AppResult<Self> {
         let objects_dir = base_path.join("objects");
         let refs_dir = base_path.join("refs");
-        let gc_dir = base_path.join("gc");
 
         fs::create_dir_all(&objects_dir)?;
         fs::create_dir_all(&refs_dir)?;
-        fs::create_dir_all(&gc_dir)?;
 
         Ok(Self { base_path })
     }
 
     /// 获取对象文件路径
-    pub fn object_path(&self, hash: &str) -> PathBuf {
+    pub fn object_path(&self, hash: &str) -> AppResult<PathBuf> {
+        if hash.len() < 2 {
+            return Err(AppError::msg(format!("Invalid hash: {}", hash)));
+        }
         let (prefix, suffix) = hash.split_at(2);
-        self.base_path.join("objects").join(prefix).join(suffix)
+        Ok(self.base_path.join("objects").join(prefix).join(suffix))
     }
 
     /// 存储 blob 对象
     pub fn store_blob(&self, content: &[u8]) -> AppResult<String> {
         let hash = super::hash::content_hash(content);
-        let path = self.object_path(&hash);
+        let path = self.object_path(&hash)?;
 
         if path.exists() {
             return Ok(hash);
@@ -109,7 +100,7 @@ impl CasObjectStore {
 
     /// 读取 blob 内容
     pub fn read_blob(&self, hash: &str) -> AppResult<Vec<u8>> {
-        let path = self.object_path(hash);
+        let path = self.object_path(hash)?;
         if !path.exists() {
             return Err(AppError::msg(format!("Object not found: {}", hash)));
         }
@@ -126,7 +117,7 @@ impl CasObjectStore {
     pub fn store_tree(&self, tree: &TreeObject) -> AppResult<String> {
         let content = serde_json::to_vec(tree)?;
         let hash = super::hash::content_hash(&content);
-        let path = self.object_path(&hash);
+        let path = self.object_path(&hash)?;
 
         if path.exists() {
             return Ok(hash);
@@ -151,7 +142,7 @@ impl CasObjectStore {
     pub fn store_commit(&self, commit: &CommitObject) -> AppResult<String> {
         let content = serde_json::to_vec(commit)?;
         let hash = super::hash::content_hash(&content);
-        let path = self.object_path(&hash);
+        let path = self.object_path(&hash)?;
 
         if path.exists() {
             return Ok(hash);
@@ -192,8 +183,8 @@ impl CasObjectStore {
         Ok(Some(hash.trim().to_string()))
     }
 
-    /// 写入文件内容（写入CAS + 更新文件系统）
-    pub fn write_content(&self, _path: &str, content: &str) -> AppResult<String> {
+    /// 写入文件内容（写入CAS）
+    pub fn write_content(&self, content: &str) -> AppResult<String> {
         let hash = super::hash::content_hash_str(content);
         self.store_blob(content.as_bytes())?;
         Ok(hash)
