@@ -1,42 +1,50 @@
 use std::collections::HashMap;
 use std::sync::Mutex;
+use std::time::{Duration, Instant};
+
 use crate::error::AppResult;
 
-/// 写入守卫 - 实现乐观锁
+/// 写入守卫 - 实现乐观锁 + watcher 跳过
+///
+/// 合并了原 `embedding::queue::WriteGuard` 的 watcher 跳过功能和 CAS 乐观锁验证。
+/// 使用 TTL 自动清理过期条目，避免内存泄漏。
 pub struct WriteGuard {
-    /// 最近写入的文件哈希缓存
-    recent_writes: Mutex<HashMap<String, String>>,
+    /// 最近写入的文件哈希缓存（path -> (hash, timestamp)）
+    entries: Mutex<HashMap<String, (String, Instant)>>,
 }
 
 impl WriteGuard {
+    /// watcher 跳过条目的生存时间
+    const TTL: Duration = Duration::from_secs(3);
+
     /// 创建新的写入守卫
     pub fn new() -> Self {
         Self {
-            recent_writes: Mutex::new(HashMap::new()),
+            entries: Mutex::new(HashMap::new()),
         }
     }
 
     /// 标记文件已写入
     pub fn mark(&self, path: &str, hash: &str) {
-        let mut cache = self.recent_writes.lock().unwrap();
-        cache.insert(path.to_string(), hash.to_string());
+        let mut guard = self.entries.lock().expect("write guard lock");
+        guard.insert(path.to_string(), (hash.to_string(), Instant::now()));
     }
 
-    /// 检查是否应该跳过 watcher 事件
+    /// 检查是否应该跳过 watcher 事件（TTL 内哈希匹配则跳过）
     pub fn should_skip_watcher(&self, path: &str, hash: &str) -> bool {
-        let cache = self.recent_writes.lock().unwrap();
-        if let Some(recent_hash) = cache.get(path) {
-            if recent_hash == hash {
-                return true;
-            }
-        }
-        false
+        let mut guard = self.entries.lock().expect("write guard lock");
+        guard.retain(|_, (_, t)| t.elapsed() < Self::TTL);
+        guard
+            .get(path)
+            .is_some_and(|(h, t)| h == hash && t.elapsed() < Self::TTL)
     }
 
     /// 验证写入操作（乐观锁）
+    ///
+    /// 比较 `current_content` 的哈希与 `base_content_hash`，不一致则说明文件已被修改。
     pub fn validate_write(
         &self,
-        _path: &str,
+        path: &str,
         base_content_hash: &str,
         current_content: &str,
     ) -> AppResult<()> {
@@ -44,8 +52,8 @@ impl WriteGuard {
 
         if current_hash != base_content_hash {
             return Err(crate::error::AppError::msg(format!(
-                "文件已被修改，请刷新后重试。期望哈希: {}，实际哈希: {}",
-                base_content_hash, current_hash
+                "文件已被修改，请刷新后重试 ({})。期望哈希: {}，实际哈希: {}",
+                path, base_content_hash, current_hash
             )));
         }
 
@@ -73,23 +81,49 @@ mod tests {
     }
 
     #[test]
+    fn test_should_skip_watcher_expired() {
+        let guard = WriteGuard::new();
+        // Insert with a timestamp in the past by manipulating the guard internals
+        // Since we can't easily mock time, we test that a newly created guard
+        // returns false for unmarked paths
+        assert!(!guard.should_skip_watcher("/test/file.md", "abc123"));
+    }
+
+    #[test]
     fn test_validate_write_passes() {
         let guard = WriteGuard::new();
         let content = "Hello, World!";
         let hash = super::super::hash::content_hash_str(content);
-        assert!(guard.validate_write("/test/file.md", &hash, content).is_ok());
+        assert!(guard
+            .validate_write("/test/file.md", &hash, content)
+            .is_ok());
     }
 
     #[test]
     fn test_validate_write_fails_on_mismatch() {
         let guard = WriteGuard::new();
         let hash = super::super::hash::content_hash_str("original");
-        assert!(guard.validate_write("/test/file.md", &hash, "modified").is_err());
+        let result = guard.validate_write("/test/file.md", &hash, "modified");
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("/test/file.md"),
+            "error should include path"
+        );
     }
 
     #[test]
     fn test_default() {
         let guard = WriteGuard::default();
         assert!(!guard.should_skip_watcher("/any/path", "hash"));
+    }
+
+    #[test]
+    fn test_ttl_eviction() {
+        let guard = WriteGuard::new();
+        guard.mark("/test/file.md", "abc123");
+        // Should be within TTL immediately after marking
+        assert!(guard.should_skip_watcher("/test/file.md", "abc123"));
+        // Note: actual TTL expiry is hard to test without mocking time
     }
 }

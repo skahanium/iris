@@ -8,7 +8,8 @@ use tauri::AppHandle;
 
 use crate::cas::ref_counter::RefCounter;
 use crate::cas::store::CasObjectStore;
-use crate::embedding::queue::{EmbedQueue, WriteGuard};
+use crate::cas::write_guard::WriteGuard;
+use crate::embedding::queue::EmbedQueue;
 use crate::error::{AppError, AppResult};
 use crate::storage::db::Database;
 use crate::watcher::FileWatcher;
