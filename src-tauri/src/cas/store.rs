@@ -184,6 +184,11 @@ impl CasObjectStore {
         Ok(Some(hash.trim().to_string()))
     }
 
+    /// 获取基础路径
+    pub fn base_path(&self) -> &std::path::Path {
+        &self.base_path
+    }
+
     /// 写入文件内容（写入CAS）
     pub fn write_content(&self, content: &str) -> AppResult<String> {
         let hash = super::hash::content_hash_str(content);

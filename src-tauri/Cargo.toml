@@ -82,6 +82,10 @@ path = "tests/cas/store_test.rs"
 name = "cas_ref_counter"
 path = "tests/cas/ref_counter_test.rs"
 
+[[test]]
+name = "cas_garbage_collector"
+path = "tests/cas/garbage_collector_test.rs"
+
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6.4"
 objc2-app-kit = "0.3.2"
