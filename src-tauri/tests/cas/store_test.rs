@@ -146,3 +146,12 @@ fn test_object_path_format() {
 
     assert!(path.ends_with("ab/cdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890"));
 }
+
+#[test]
+fn test_object_path_rejects_short_hash() {
+    let dir = tempdir().unwrap();
+    let store = CasObjectStore::new(dir.path().to_path_buf()).unwrap();
+    assert!(store.object_path("").is_err());
+    assert!(store.object_path("a").is_err());
+    assert!(store.object_path("ab").is_ok());
+}
