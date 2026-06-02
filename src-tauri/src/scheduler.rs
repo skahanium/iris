@@ -32,7 +32,7 @@ impl Scheduler {
         let mut shutdown_rx = self.shutdown_rx.clone();
 
         // 每天凌晨 3:00 执行垃圾回收
-        tokio::spawn(async move {
+        tauri::async_runtime::spawn(async move {
             loop {
                 let now = Utc::now();
                 let next_run = now.date_naive().and_hms_opt(3, 0, 0).unwrap();
