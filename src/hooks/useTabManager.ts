@@ -5,6 +5,7 @@ import {
   displayTitleFromMarkdown,
   resolveDocumentTitle,
 } from "@/lib/document-title";
+import { clearCachedEditorHtml } from "@/lib/editor-html-cache";
 import { extractFrontmatterYaml } from "@/lib/markdown";
 import { fileRead } from "@/lib/ipc";
 import { createDefaultNote } from "@/lib/note-create";
@@ -23,6 +24,8 @@ export function useTabManager(options: UseTabManagerOptions = {}) {
   const [tabs, setTabs] = useState<TabItem[]>([]);
   const [activePath, setActivePath] = useState<string | null>(null);
   const [markdown, setMarkdown] = useState("");
+  /** Incremented when disk content is loaded into tab state (not on editor save). */
+  const [editorContentTick, setEditorContentTick] = useState(0);
   const activePathRef = useRef<string | null>(null);
   const markdownRef = useRef("");
   const frontmatterYamlRef = useRef<string | null>(null);
@@ -58,6 +61,7 @@ export function useTabManager(options: UseTabManagerOptions = {}) {
   );
 
   const openFileSeqRef = useRef(0);
+  const tabMarkdownCacheRef = useRef(new Map<string, string>());
 
   const openFile = useCallback(
     async (
@@ -67,6 +71,9 @@ export function useTabManager(options: UseTabManagerOptions = {}) {
     ) => {
       const seq = ++openFileSeqRef.current;
       const current = activePathRef.current;
+      if (current && current !== path) {
+        tabMarkdownCacheRef.current.set(current, markdownRef.current);
+      }
       if (
         !options?.skipDiscardPrevious &&
         current &&
@@ -87,8 +94,11 @@ export function useTabManager(options: UseTabManagerOptions = {}) {
           title: fromMarkdown || titleHint?.trim() || fallbackDb,
           markdown: content,
         });
+        clearCachedEditorHtml(path);
+        tabMarkdownCacheRef.current.set(path, content);
         setMarkdown(content);
         markdownRef.current = content;
+        setEditorContentTick((t) => t + 1);
         activePathRef.current = path;
         setActivePath(path);
         setTabs((prev) => {
@@ -107,6 +117,47 @@ export function useTabManager(options: UseTabManagerOptions = {}) {
       }
     },
     [maybeDiscardOnLeave, onStatusChange, onVaultIndexBump],
+  );
+
+  /** Switch to an already-open tab without re-reading disk when session cache exists. */
+  const activateTab = useCallback(
+    (path: string) => {
+      if (!tabsRef.current.some((t) => t.path === path)) {
+        void openFile(path);
+        return;
+      }
+      if (activePathRef.current === path) return;
+
+      const leaving = activePathRef.current;
+      if (leaving) {
+        tabMarkdownCacheRef.current.set(leaving, markdownRef.current);
+      }
+
+      const cached = tabMarkdownCacheRef.current.get(path);
+      if (cached) {
+        markdownRef.current = cached;
+        frontmatterYamlRef.current = extractFrontmatterYaml(cached);
+        setMarkdown(cached);
+        activePathRef.current = path;
+        setActivePath(path);
+        return;
+      }
+
+      void openFile(path, undefined, { skipDiscardPrevious: true });
+    },
+    [openFile],
+  );
+
+  /** Open a note from the vault UI: reuse tab session when already open. */
+  const openNote = useCallback(
+    (path: string, titleHint?: string) => {
+      if (tabsRef.current.some((t) => t.path === path)) {
+        activateTab(path);
+        return;
+      }
+      void openFile(path, titleHint);
+    },
+    [activateTab, openFile],
   );
 
   const closeTab = useCallback(
@@ -137,9 +188,9 @@ export function useTabManager(options: UseTabManagerOptions = {}) {
         clearEditorState();
         return;
       }
-      await openFile(switchTo, undefined, { skipDiscardPrevious: true });
+      activateTab(switchTo);
     },
-    [clearEditorState, maybeDiscardOnLeave, onStatusChange, openFile],
+    [activateTab, clearEditorState, maybeDiscardOnLeave, onStatusChange],
   );
 
   const handleNewNote = useCallback(async () => {
@@ -204,6 +255,10 @@ export function useTabManager(options: UseTabManagerOptions = {}) {
     [],
   );
 
+  const syncTabMarkdownCache = useCallback((path: string, markdown: string) => {
+    tabMarkdownCacheRef.current.set(path, markdown);
+  }, []);
+
   const markClean = useCallback((path: string, title?: string) => {
     const displayTitle = title
       ? resolveNoteDisplayTitle({ path, title })
@@ -229,18 +284,22 @@ export function useTabManager(options: UseTabManagerOptions = {}) {
     tabs,
     activePath,
     markdown,
+    editorContentTick,
     activePathRef,
     markdownRef,
     frontmatterYamlRef,
     setActivePath,
     setMarkdown,
     openFile,
+    openNote,
+    activateTab,
     closeTab,
     handleNewNote,
     markDirty,
     markClean,
     updateTabTitle,
     replaceOpenTabPath,
+    syncTabMarkdownCache,
     getEditorMarkdown,
   };
 }

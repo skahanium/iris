@@ -1,27 +1,27 @@
 import { mergeAttributes, Node } from "@tiptap/core";
-import { ReactNodeViewRenderer } from "@tiptap/react";
-
-import { PreserveNodeView } from "../PreserveNodeView";
 
 declare module "@tiptap/core" {
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   interface Commands<ReturnType> {
     preserveBlock: Record<string, never>;
   }
 }
 
+const SYNTAX_KIND_LABELS: Record<string, string> = {
+  raw_html: "Raw HTML",
+  html_comment: "HTML 注释",
+  unknown: "不可编辑",
+};
+
+function truncate(text: string, maxLen = 120): string {
+  if (text.length <= maxLen) return text;
+  return `${text.slice(0, maxLen)}…`;
+}
+
 /**
  * PreserveBlock — 只读保护块节点。
  *
- * 用于承载当前不可完整编辑的 Markdown 语法（Raw HTML、HTML 注释等）。
- *
- * 属性：
- * - `originalRaw`: 原始 Markdown 原文，导出时无操作即可回吐
- * - `syntaxKind`: 语法族标识，用于渲染时展示类型标签
- *
- * 行为：
- * - `atom: true` — 不可进入内部编辑
- * - `selectable: true` — 可选中（复制/删除整块）
- * - NodeView 渲染为只读卡片
+ * 使用原生 DOM NodeView（非 React），避免大文档每键重渲染 React NodeView。
  */
 export const PreserveBlockExtension = Node.create({
   name: "preserveBlock",
@@ -64,6 +64,63 @@ export const PreserveBlockExtension = Node.create({
   },
 
   addNodeView() {
-    return ReactNodeViewRenderer(PreserveNodeView);
+    return ({ node: initialNode }) => {
+      let currentNode = initialNode;
+      const dom = document.createElement("div");
+      dom.className =
+        "my-2 select-none rounded border border-dashed border-muted-foreground/30 bg-muted/30 px-3 py-2";
+      dom.setAttribute("contenteditable", "false");
+
+      const paint = (current: typeof initialNode) => {
+        const originalRaw = (current.attrs.originalRaw as string) || "";
+        const syntaxKind = (current.attrs.syntaxKind as string) || "unknown";
+        const label = SYNTAX_KIND_LABELS[syntaxKind] ?? "不可编辑";
+        const truncated = truncate(originalRaw);
+
+        dom.replaceChildren();
+
+        const header = document.createElement("div");
+        header.className =
+          "flex items-center gap-2 text-[11px] text-muted-foreground";
+
+        const badge = document.createElement("span");
+        badge.className = "font-medium";
+        badge.textContent = label;
+
+        const hint = document.createElement("span");
+        hint.className = "text-muted-foreground/50";
+        hint.textContent = "· 只读 · 原文保留";
+
+        header.append(badge, hint);
+
+        const body = document.createElement("div");
+        body.className =
+          "mt-1 whitespace-pre-wrap break-all font-mono text-[11px] text-muted-foreground/70";
+        if (originalRaw.length > truncated.length) {
+          body.title = originalRaw;
+        }
+        body.textContent = truncated;
+
+        dom.append(header, body);
+      };
+
+      paint(currentNode);
+
+      return {
+        dom,
+        update(updatedNode) {
+          if (updatedNode.type.name !== "preserveBlock") return false;
+          if (
+            updatedNode.attrs.originalRaw === currentNode.attrs.originalRaw &&
+            updatedNode.attrs.syntaxKind === currentNode.attrs.syntaxKind
+          ) {
+            return true;
+          }
+          currentNode = updatedNode;
+          paint(currentNode);
+          return true;
+        },
+      };
+    };
   },
 });

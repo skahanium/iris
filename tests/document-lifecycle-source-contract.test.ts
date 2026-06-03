@@ -37,8 +37,8 @@ describe("document lifecycle source contracts", () => {
 
   it("App reuses flushSave markdown when creating a manual version", () => {
     const source = read("src/App.tsx");
-    expect(source).toContain("const savedMarkdown = await flushSave();");
-    expect(source).toContain("await versionSaveManual(path, savedMarkdown);");
+    expect(source).toContain("const md = await flushSave();");
+    expect(source).toContain("versionSaveManual(path, md)");
     expect(source).not.toContain(
       "await versionSaveManual(path, getLiveMarkdown());",
     );

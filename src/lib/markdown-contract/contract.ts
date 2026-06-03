@@ -108,7 +108,7 @@ function splitTextToken(
 
   // Combined regex: wiki-links [[title]] | footnote refs [^label] | footnote defs [^label]:
   const regex =
-    /\[\[([^\]\n]+)\]\]|(?<!\[)\[\^([^\]]+)\](?!\:)|(?<=\n|^)\[\^([^\]]+)\]:/g;
+    /\[\[([^\]\n]+)\]\]|(?<!\[)\[\^([^\]]+)\](?!:)|(?<=\n|^)\[\^([^\]]+)\]:/g;
 
   let lastIndex = 0;
   let match: RegExpExecArray | null;

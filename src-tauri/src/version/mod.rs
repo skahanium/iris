@@ -12,7 +12,6 @@ use tracing::info;
 
 use crate::app::AppState;
 use crate::error::{AppError, AppResult};
-use crate::storage::paths::read_file_lossy;
 
 pub use kind::VersionKind;
 pub use policy::{SnapshotDecisionInput, AUTO_IDLE_MAX_PER_FILE};
@@ -93,6 +92,7 @@ pub fn version_save_idle(
 const VERSION_SELECT: &str = "SELECT v.id, v.file_id, v.version_no, v.label, v.content_hash,
        v.word_count, v.is_finalized, v.kind, v.created_at";
 
+#[allow(dead_code)]
 fn versions_dir(vault: &std::path::Path, file_id: i64) -> PathBuf {
     vault
         .join(".iris")
@@ -100,6 +100,7 @@ fn versions_dir(vault: &std::path::Path, file_id: i64) -> PathBuf {
         .join(file_id.to_string())
 }
 
+#[allow(dead_code)]
 fn ensure_versions_dir(vault: &std::path::Path, file_id: i64) -> AppResult<PathBuf> {
     let dir = versions_dir(vault, file_id);
     fs::create_dir_all(&dir)?;
@@ -126,11 +127,44 @@ fn map_version_row(row: &Row<'_>) -> rusqlite::Result<VersionEntry> {
     })
 }
 
+const CAS_STORAGE_PREFIX: &str = "cas:";
+
+#[allow(dead_code)]
 fn storage_path_for(file_id: i64, version_no: &str) -> String {
     format!("{file_id}/{version_no}.md")
 }
 
+fn cas_storage_path(content_hash: &str) -> String {
+    format!("{CAS_STORAGE_PREFIX}{content_hash}")
+}
+
+pub(crate) fn is_cas_storage_path(storage_path: &str) -> bool {
+    storage_path.starts_with(CAS_STORAGE_PREFIX)
+}
+
+/// Read snapshot body from CAS blob or legacy `.iris/versions/...` file.
+pub(crate) fn read_version_content(
+    state: &Arc<AppState>,
+    vault: &std::path::Path,
+    storage_path: &str,
+) -> AppResult<String> {
+    if let Some(hash) = storage_path.strip_prefix(CAS_STORAGE_PREFIX) {
+        return state.cas_store().read_blob_content(hash);
+    }
+    let abs = vault.join(".iris").join("versions").join(storage_path);
+    Ok(fs::read_to_string(abs)?)
+}
+
+/// Store snapshot body in CAS; returns `storage_path` for the versions table.
+fn write_version_blob(state: &Arc<AppState>, content: &str) -> AppResult<String> {
+    let hash = state.cas_store().store_blob(content.as_bytes())?;
+    Ok(cas_storage_path(&hash))
+}
+
 fn remove_version_file(vault: &std::path::Path, storage_path: &str) {
+    if is_cas_storage_path(storage_path) {
+        return;
+    }
     let abs = vault.join(".iris").join("versions").join(storage_path);
     let _ = fs::remove_file(&abs);
 }
@@ -230,7 +264,6 @@ pub fn create_snapshot(
     content: &str,
     params: SnapshotParams,
 ) -> AppResult<Option<VersionEntry>> {
-    let vault = state.vault_path()?;
     let hash = crate::cas::hash::content_hash_str(content);
 
     let file_id: i64 = state.db.with_conn(|conn| {
@@ -255,11 +288,7 @@ pub fn create_snapshot(
     }
 
     let version_no = timestamp_version_no();
-    let dir = ensure_versions_dir(&vault, file_id)?;
-    let storage_path = storage_path_for(file_id, &version_no);
-    let abs_storage = dir.join(format!("{version_no}.md"));
-
-    fs::write(&abs_storage, content)?;
+    let storage_path = write_version_blob(state, content)?;
 
     let wc = content.split_whitespace().count() as i64;
     let created_at = now.to_rfc3339();
@@ -271,7 +300,7 @@ pub fn create_snapshot(
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
             rusqlite::params![
                 file_id,
-                version_no,
+                &version_no,
                 params.label,
                 hash,
                 storage_path,
@@ -332,8 +361,7 @@ pub fn version_preview(state: &Arc<AppState>, version_id: i64) -> AppResult<Stri
     })?;
 
     let vault = state.vault_path()?;
-    let abs = vault.join(".iris").join("versions").join(&storage_path);
-    read_file_lossy(&abs)
+    read_version_content(state, &vault, &storage_path)
 }
 
 pub fn version_restore(
@@ -360,16 +388,12 @@ pub fn version_restore(
     }
 
     let vault = state.vault_path()?;
-    let abs = vault.join(".iris").join("versions").join(&storage_path);
-    let content = fs::read_to_string(&abs)?;
+    let content = read_version_content(state, &vault, &storage_path)?;
     let abs_note = crate::storage::paths::resolve_vault_path(&vault, &path)?;
 
     let tmp = abs_note.with_extension("md.tmp");
     fs::write(&tmp, &content)?;
-    if let Err(e) = fs::rename(&tmp, &abs_note) {
-        let _ = crate::security::secure_delete::secure_delete(&tmp);
-        return Err(e.into());
-    }
+    fs::rename(&tmp, &abs_note)?;
 
     state
         .db
@@ -481,8 +505,8 @@ mod tests {
         assert_eq!(entry.kind, VersionKind::Manual);
         assert!(!entry.is_finalized);
 
-        let expected_path = storage_path_for(entry.file_id, &entry.version_no);
-        state
+        let vault = state.vault_path().unwrap();
+        let storage_path: String = state
             .db
             .with_conn(|conn| {
                 let (kind, path): (String, String) = conn.query_row(
@@ -491,15 +515,12 @@ mod tests {
                     |row| Ok((row.get(0)?, row.get(1)?)),
                 )?;
                 assert_eq!(kind, "manual");
-                assert_eq!(path, expected_path);
-                Ok(())
+                assert!(is_cas_storage_path(&path));
+                Ok(path)
             })
             .unwrap();
-
-        let vault = state.vault_path().unwrap();
-        let abs = vault.join(".iris").join("versions").join(&expected_path);
-        assert!(abs.is_file());
-        assert_eq!(fs::read_to_string(abs).unwrap(), "# Hello");
+        let content = read_version_content(&state, &vault, &storage_path).unwrap();
+        assert_eq!(content, "# Hello");
     }
 
     #[test]

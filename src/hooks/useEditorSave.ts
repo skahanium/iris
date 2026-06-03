@@ -25,7 +25,10 @@ export function useEditorSave(
   const onSavedRef = useRef(onSaved);
   onSavedRef.current = onSaved;
 
-  const saveNote = useCallback(async (): Promise<string | null> => {
+  const saveInFlightRef = useRef<Promise<string | null> | null>(null);
+  const saveAgainRef = useRef(false);
+
+  const runSaveOnce = useCallback(async (): Promise<string | null> => {
     const target = pathRef.current;
     if (!target) return null;
     const md = getMarkdownRef.current();
@@ -36,6 +39,28 @@ export function useEditorSave(
     onSavedRef.current?.(md);
     return md;
   }, []);
+
+  const saveNote = useCallback(async (): Promise<string | null> => {
+    if (saveInFlightRef.current) {
+      saveAgainRef.current = true;
+      return saveInFlightRef.current;
+    }
+
+    const loop = async (): Promise<string | null> => {
+      let last: string | null = null;
+      do {
+        saveAgainRef.current = false;
+        last = await runSaveOnce();
+      } while (saveAgainRef.current);
+      return last;
+    };
+
+    const promise = loop().finally(() => {
+      saveInFlightRef.current = null;
+    });
+    saveInFlightRef.current = promise;
+    return promise;
+  }, [runSaveOnce]);
 
   const debouncedSave = useMemo(
     () =>

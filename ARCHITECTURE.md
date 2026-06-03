@@ -84,10 +84,11 @@
 ```
 用户键盘输入 → TipTap 编辑操作
   → ProseMirror Transform (内存状态变化)
-  → MarkdownSerializer (节点树 → 字符串)
+  → editorDocToMarkdown (prosemirror-markdown；callout / wiki / table 等见 docs/markdown-export.md)
+  → 失败时回退 HTML Turndown
   → Tauri IPC: file_write(path, content)
   → Rust: fs::write()
-  → 异步: 更新 SQLite 索引 (frontmatter、标签、链接)
+  → 异步: 合并防抖后更新 SQLite 索引 (frontmatter、标签、链接)
 ```
 
 ### 2. AI 请求 → 编辑器
@@ -159,10 +160,13 @@
 
 **触发策略**：
 
-| 触发方式     | 行为                                                    |
-| ------------ | ------------------------------------------------------- |
-| `Ctrl+S`     | flush 层 1 + `version_save_manual`（`kind=manual`）     |
-| 空闲 10 分钟 | 打开中的文档无编辑 → `version_save_idle`（`kind=auto_idle`） |
+| 触发方式          | 行为                                                                 |
+| ----------------- | -------------------------------------------------------------------- |
+| `Ctrl+S`          | 立即 flush 层 1（仅写当前 `.md`，不创建版本行）                      |
+| `Ctrl+Shift+S`    | flush 层 1 + 后台 `version_save_manual`（`kind=manual`）              |
+| 命令面板「保存笔记」 | 同 `Ctrl+S`                                                          |
+| 命令面板「保存并创建版本快照」 | 同 `Ctrl+Shift+S`                                            |
+| 空闲 10 分钟      | 打开中的文档无编辑 → 后台 `version_save_idle`（`kind=auto_idle`）   |
 | 定稿         | 对当前正文新建快照，`kind=finalize`，永久保留           |
 | 恢复前       | `version_restore` 内建 `pre_restore`                    |
 
@@ -412,7 +416,8 @@ AI 侧栏为唯一常驻右侧 dock。其余功能通过居中命令浮层（`Ir
 | `Ctrl+Shift+T` | TagView         | `command` | 标签聚合       |
 | `Ctrl+Shift+G` | GraphView       | `graph`   | 知识图谱       |
 | `Ctrl+,`       | SettingsPanel   | `command` | 设置           |
-| `Ctrl+S`       | （编辑器）      | —         | 保存 + 版本    |
+| `Ctrl+S`       | （编辑器）      | —         | 保存笔记（层 1） |
+| `Ctrl+Shift+S` | （编辑器）      | —         | 保存 + 版本快照  |
 | `Ctrl+Shift+A` | 统一助手侧栏    | —         | 收起/展开      |
 | `/`            | SlashCommand    | Popover   | 命令菜单       |
 

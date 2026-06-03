@@ -68,9 +68,8 @@ fn embed_file_chunked(state: &Arc<AppState>, file_id: i64) -> AppResult<()> {
     use crate::storage::db;
 
     let chunks: Vec<(i64, String)> = state.db.with_conn(|conn| {
-        let mut stmt = conn.prepare(
-            "SELECT id, content FROM chunks WHERE file_id = ?1 ORDER BY chunk_index",
-        )?;
+        let mut stmt =
+            conn.prepare("SELECT id, content FROM chunks WHERE file_id = ?1 ORDER BY chunk_index")?;
         let rows = stmt.query_map([file_id], |row| {
             Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
         })?;

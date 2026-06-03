@@ -1,7 +1,8 @@
 import type { Editor } from "@tiptap/react";
 
+import { editorDocToMarkdown } from "@/lib/editor-pm-serialize";
 import { splitFrontmatter } from "@/lib/frontmatter";
-import { buildNoteMarkdown, editorBodyHtmlToMarkdown } from "@/lib/markdown";
+import { buildNoteMarkdown } from "@/lib/markdown";
 
 export interface SerializeOpenNoteOptions {
   yaml: string | null;
@@ -14,9 +15,7 @@ export interface SerializeOpenNoteOptions {
 /** Single persistence pipeline: title state + TipTap body → full note markdown. */
 export function serializeOpenNote(options: SerializeOpenNoteOptions): string {
   const { yaml, title, editor, bodyFallbackMd } = options;
-  const bodyMd = editor
-    ? editorBodyHtmlToMarkdown(editor.getHTML())
-    : bodyFallbackMd;
+  const bodyMd = editor ? editorDocToMarkdown(editor) : bodyFallbackMd;
   return buildNoteMarkdown(yaml, title.trim(), bodyMd);
 }
 

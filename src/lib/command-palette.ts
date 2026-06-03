@@ -8,6 +8,7 @@ import {
 export type CommandPaletteAction =
   | { type: "openOverlay"; overlay: OverlayId }
   | { type: "newNote" }
+  | { type: "saveNote" }
   | { type: "saveVersion" }
   | { type: "closeTab" }
   | { type: "toggleAiPanel" }
@@ -176,13 +177,23 @@ export function buildCommandPaletteItems(
       action: { type: "newNote" },
     },
     {
-      id: "save-version",
-      label: "保存并创建版本快照",
+      id: "save-note",
+      label: "保存笔记",
       group: "笔记",
-      keywords: "save version 保存 定稿",
+      keywords: "save 保存 ctrl+s",
       icon: "Save",
       disabled: vaultOnly || noteOnly,
       chord: { key: "S", mod: true, requireNote: true },
+      action: { type: "saveNote" },
+    },
+    {
+      id: "save-version",
+      label: "保存并创建版本快照",
+      group: "笔记",
+      keywords: "save version 保存 定稿 快照",
+      icon: "GitBranch",
+      disabled: vaultOnly || noteOnly,
+      chord: { key: "S", mod: true, shift: true, requireNote: true },
       action: { type: "saveVersion" },
     },
     {

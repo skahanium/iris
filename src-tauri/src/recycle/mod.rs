@@ -130,6 +130,9 @@ pub fn discard_document(state: &Arc<AppState>, path: &str) -> AppResult<()> {
     state.db.with_conn(|conn| {
         if let Some(file_id) = lookup_file_id(conn, path)? {
             for v in load_versions_for_file(conn, file_id)? {
+                if crate::version::is_cas_storage_path(&v.storage_path) {
+                    continue;
+                }
                 let src = versions_root(&vault).join(&v.storage_path);
                 if src.is_file() {
                     let _ = fs::remove_file(src);
@@ -174,13 +177,19 @@ pub fn trash_document(state: &Arc<AppState>, path: &str) -> AppResult<()> {
         if let Some(fid) = file_id {
             for v in load_versions_for_file(conn, fid)? {
                 let trash_file = format!("{}.md", v.entry.version_no);
-                let src = versions_root(&vault).join(&v.storage_path);
-                if src.is_file() {
-                    let dest = versions_dir.join(&trash_file);
-                    if let Some(parent) = dest.parent() {
-                        fs::create_dir_all(parent)?;
+                let dest = versions_dir.join(&trash_file);
+                if let Some(parent) = dest.parent() {
+                    fs::create_dir_all(parent)?;
+                }
+                if crate::version::is_cas_storage_path(&v.storage_path) {
+                    let content =
+                        crate::version::read_version_content(state, &vault, &v.storage_path)?;
+                    fs::write(&dest, content)?;
+                } else {
+                    let src = versions_root(&vault).join(&v.storage_path);
+                    if src.is_file() {
+                        fs::rename(&src, &dest)?;
                     }
-                    fs::rename(&src, &dest)?;
                 }
                 metas.push(TrashVersionMeta {
                     version_no: v.entry.version_no.clone(),
@@ -510,6 +519,70 @@ mod tests {
         assert!(list_recycle(&state).unwrap().is_empty());
         let versions = crate::version::version_list(&state, "restore-me.md").unwrap();
         assert!(!versions.is_empty());
+    }
+
+    #[test]
+    fn trash_and_restore_preserves_cas_version_blob() {
+        let (_dir, state) = setup();
+        let vault = state.vault_path().unwrap();
+        let note = vault.join("cas-note.md");
+        fs::write(&note, "# CAS\n\nv1.").unwrap();
+        state.db.with_conn(|conn| scan_vault(conn, &vault)).unwrap();
+
+        let snapshot_body = "# CAS\n\nv2 unique snapshot body.";
+        let entry = version_save_manual(&state, "cas-note.md", snapshot_body)
+            .unwrap()
+            .expect("manual snapshot");
+
+        let storage_path: String = state
+            .db
+            .with_conn(|conn| {
+                let path: String = conn.query_row(
+                    "SELECT storage_path FROM versions WHERE id = ?1",
+                    [entry.id],
+                    |r| r.get(0),
+                )?;
+                assert!(crate::version::is_cas_storage_path(&path));
+                Ok(path)
+            })
+            .unwrap();
+
+        trash_document(&state, "cas-note.md").unwrap();
+        let items = list_recycle(&state).unwrap();
+        assert_eq!(items.len(), 1);
+        let bundle = trash_root(&vault).join(&items[0].id);
+        let manifest: TrashManifest =
+            serde_json::from_str(&fs::read_to_string(bundle.join("manifest.json")).unwrap())
+                .unwrap();
+        assert_eq!(manifest.versions.len(), 1);
+        let trash_file = &manifest.versions[0].trash_file;
+        let trash_body = fs::read_to_string(bundle.join("versions").join(trash_file)).unwrap();
+        assert_eq!(trash_body, snapshot_body);
+
+        let id = items[0].id.clone();
+        restore_document(&state, &id).unwrap();
+
+        let versions = crate::version::version_list(&state, "cas-note.md").unwrap();
+        assert_eq!(versions.len(), 1);
+        let preview = crate::version::version_preview(&state, versions[0].id).unwrap();
+        assert_eq!(preview, snapshot_body);
+
+        let restored_storage: String = state
+            .db
+            .with_conn(|conn| {
+                conn.query_row(
+                    "SELECT storage_path FROM versions WHERE id = ?1",
+                    [versions[0].id],
+                    |r| r.get(0),
+                )
+                .map_err(Into::into)
+            })
+            .unwrap();
+        assert!(
+            crate::version::read_version_content(&state, &vault, &restored_storage).unwrap()
+                == snapshot_body
+        );
+        assert!(crate::version::is_cas_storage_path(&storage_path));
     }
 
     #[test]

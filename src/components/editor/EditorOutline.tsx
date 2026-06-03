@@ -1,6 +1,6 @@
 import type { Editor } from "@tiptap/react";
 import { ListTree, X } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { memo, useEffect, useRef, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -17,9 +17,7 @@ interface EditorOutlineProps {
   zen?: boolean;
 }
 
-export const EDITOR_OUTLINE_REFRESH_MS = 160;
-
-export function EditorOutline({
+export const EditorOutline = memo(function EditorOutline({
   editor,
   open,
   onOpenChange,
@@ -28,47 +26,41 @@ export function EditorOutline({
   const [entries, setEntries] = useState<OutlineEntry[]>([]);
   const [activeIndex, setActiveIndex] = useState(-1);
   const entriesRef = useRef<OutlineEntry[]>([]);
-  const refreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     if (!editor || !open) return;
 
-    const clearRefreshTimer = () => {
-      if (refreshTimerRef.current !== null) {
-        clearTimeout(refreshTimerRef.current);
-        refreshTimerRef.current = null;
-      }
-    };
-
-    const rebuildOutline = () => {
-      clearRefreshTimer();
+    const updateOutline = () => {
       const next = outlineFromDoc(editor.state.doc);
       entriesRef.current = next;
       setEntries(next);
       setActiveIndex(activeOutlineIndex(next, editor.state.selection.head));
     };
 
-    const scheduleOutlineRefresh = () => {
-      clearRefreshTimer();
-      refreshTimerRef.current = setTimeout(
-        rebuildOutline,
-        EDITOR_OUTLINE_REFRESH_MS,
-      );
-    };
-
-    const updateActiveOutline = () => {
+    const updateActiveIndex = () => {
       setActiveIndex(
         activeOutlineIndex(entriesRef.current, editor.state.selection.head),
       );
     };
 
-    rebuildOutline();
-    editor.on("update", scheduleOutlineRefresh);
-    editor.on("selectionUpdate", updateActiveOutline);
+    const debouncedUpdate = () => {
+      if (timerRef.current) clearTimeout(timerRef.current);
+      timerRef.current = setTimeout(() => {
+        timerRef.current = null;
+        updateOutline();
+      }, 300);
+    };
+
+    // 初始立即更新
+    updateOutline();
+
+    editor.on("update", debouncedUpdate);
+    editor.on("selectionUpdate", updateActiveIndex);
     return () => {
-      clearRefreshTimer();
-      editor.off("update", scheduleOutlineRefresh);
-      editor.off("selectionUpdate", updateActiveOutline);
+      if (timerRef.current) clearTimeout(timerRef.current);
+      editor.off("update", debouncedUpdate);
+      editor.off("selectionUpdate", updateActiveIndex);
     };
   }, [editor, open]);
 
@@ -145,4 +137,4 @@ export function EditorOutline({
       </div>
     </nav>
   );
-}
+});

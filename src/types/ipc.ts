@@ -155,6 +155,15 @@ export interface VersionEntry {
   created_at: string;
 }
 
+/** Emitted on `version:save_complete` after async manual/idle snapshot IPC. */
+export interface VersionSaveCompleteEvent {
+  path: string;
+  kind: VersionKind | "manual" | "auto_idle";
+  created: boolean;
+  versionId: number | null;
+  error: string | null;
+}
+
 // ─── AI Runtime IPC types ───
 
 /** `ai_cache_clear` 返回值：清空会话、checkpoint 与知识沉淀缓存。 */

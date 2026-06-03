@@ -30,6 +30,8 @@ function pathStem(path: string): string {
 interface UseOpenNoteOptions {
   activePath: string | null;
   markdown: string;
+  /** Bumped when a note is read from disk into tab state (openFile); not bumped on save. */
+  editorContentTick: number;
   activePathRef: RefObject<string | null>;
   markdownRef: RefObject<string>;
   frontmatterYamlRef: RefObject<string | null>;
@@ -40,27 +42,24 @@ interface UseOpenNoteOptions {
     newPath: string,
     title?: string,
   ) => void;
-  onMarkdownSynced?: (md: string) => void;
 }
 
 export function useOpenNote({
   activePath,
-  markdown,
+  markdown: _markdown,
+  editorContentTick,
   activePathRef,
   markdownRef,
   frontmatterYamlRef,
   editorRef,
   updateTabTitle,
   replaceOpenTabPath,
-  onMarkdownSynced,
 }: UseOpenNoteOptions) {
   const [noteTitle, setNoteTitle] = useState("");
   const [bodyMarkdown, setBodyMarkdown] = useState("");
 
   const pathSyncTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pathSyncGenRef = useRef(0);
-  const savedMarkdownRef = useRef<string | null>(null);
-
   const syncFromMarkdown = useCallback(
     (md: string, path: string) => {
       const parsed = parseNoteForEditor(md, pathStem(path));
@@ -82,12 +81,9 @@ export function useOpenNote({
       setBodyMarkdown("");
       return;
     }
-    if (markdown === savedMarkdownRef.current) {
-      savedMarkdownRef.current = null;
-      return;
-    }
-    syncFromMarkdown(markdown, activePath);
-  }, [activePath, markdown, syncFromMarkdown]);
+    syncFromMarkdown(markdownRef.current, activePath);
+    // `markdown` state intentionally omitted: layer-1 save only updates `markdownRef`.
+  }, [activePath, editorContentTick, syncFromMarkdown, markdownRef]);
 
   useEffect(() => {
     return () => {
@@ -108,17 +104,17 @@ export function useOpenNote({
 
   const applySavedMarkdown = useCallback(
     (md: string) => {
-      savedMarkdownRef.current = md;
       markdownRef.current = md;
       frontmatterYamlRef.current = extractFrontmatterYaml(md);
-      onMarkdownSynced?.(md);
+      // Intentionally skip onMarkdownSynced: setMarkdown would re-ingest the whole
+      // document into TipTap (ingest + setContent) and freeze the UI on large notes.
       const path = activePathRef.current;
       if (path) {
         const savedTitle = displayTitleFromMarkdown(md, "");
         setNoteTitle(resolveNoteDisplayTitle({ path, title: savedTitle }));
       }
     },
-    [activePathRef, frontmatterYamlRef, markdownRef, onMarkdownSynced],
+    [activePathRef, frontmatterYamlRef, markdownRef],
   );
 
   const onTitleChange = useCallback(

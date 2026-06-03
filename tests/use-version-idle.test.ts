@@ -4,22 +4,22 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { useVersionIdle, VERSION_IDLE_MS } from "@/hooks/useVersionIdle";
 
-const versionSaveIdle = vi.fn().mockResolvedValue(null);
+const versionSaveIdle = vi.fn().mockResolvedValue(undefined);
 
 vi.mock("@/lib/ipc", () => ({
   versionSaveIdle: (...args: unknown[]) => versionSaveIdle(...args),
 }));
 
-function TestHarness({
+function IdleHarness({
   path,
-  getContent,
+  getPersistedContent,
   onReady,
 }: {
   path: string | null;
-  getContent: () => string;
+  getPersistedContent: () => string;
   onReady: (api: { onActivity: () => void }) => void;
 }) {
-  const { onActivity } = useVersionIdle(path, getContent);
+  const { onActivity } = useVersionIdle(path, getPersistedContent);
   onReady({ onActivity });
   return null;
 }
@@ -44,14 +44,14 @@ describe("useVersionIdle", () => {
     vi.useRealTimers();
   });
 
-  it("does not serialize or save just because a note is open", async () => {
-    const getContent = vi.fn(() => "body");
+  it("does not save just because a note is open", async () => {
+    const getPersistedContent = vi.fn(() => "body");
 
     await act(async () => {
       root.render(
-        createElement(TestHarness, {
+        createElement(IdleHarness, {
           path: "note.md",
-          getContent,
+          getPersistedContent,
           onReady: () => {},
         }),
       );
@@ -62,19 +62,19 @@ describe("useVersionIdle", () => {
       vi.runOnlyPendingTimers();
     });
 
-    expect(getContent).not.toHaveBeenCalled();
+    expect(getPersistedContent).not.toHaveBeenCalled();
     expect(versionSaveIdle).not.toHaveBeenCalled();
   });
 
-  it("fires versionSaveIdle after idle interval", async () => {
+  it("fires versionSaveIdle after idle interval following activity", async () => {
     let onActivity!: () => void;
-    const getContent = vi.fn(() => "body");
+    const getPersistedContent = vi.fn(() => "body");
 
     await act(async () => {
       root.render(
-        createElement(TestHarness, {
+        createElement(IdleHarness, {
           path: "note.md",
-          getContent,
+          getPersistedContent,
           onReady: (api) => {
             onActivity = api.onActivity;
           },
@@ -91,25 +91,66 @@ describe("useVersionIdle", () => {
       vi.runOnlyPendingTimers();
     });
 
-    expect(getContent).toHaveBeenCalledTimes(1);
+    expect(getPersistedContent).toHaveBeenCalledTimes(1);
     expect(versionSaveIdle).toHaveBeenCalledTimes(1);
     expect(versionSaveIdle).toHaveBeenCalledWith("note.md", "body");
   });
 
-  it("resets idle timer on activity", async () => {
+  it("uses persisted markdown ref content, not live editor serialization", async () => {
     let onActivity!: () => void;
-    const getContent = vi.fn(() => "body");
+    const getPersistedContent = vi.fn(
+      () => '---\ntitle: "x"\n---\n\nPersisted body text.',
+    );
 
     await act(async () => {
       root.render(
-        createElement(TestHarness, {
+        createElement(IdleHarness, {
           path: "note.md",
-          getContent,
+          getPersistedContent,
           onReady: (api) => {
             onActivity = api.onActivity;
           },
         }),
       );
+    });
+
+    act(() => {
+      onActivity();
+    });
+
+    await act(async () => {
+      vi.advanceTimersByTime(VERSION_IDLE_MS);
+      vi.runOnlyPendingTimers();
+    });
+
+    expect(getPersistedContent).toHaveBeenCalled();
+    expect(versionSaveIdle).toHaveBeenCalledTimes(1);
+    expect(versionSaveIdle).toHaveBeenCalledWith(
+      "note.md",
+      '---\ntitle: "x"\n---\n\nPersisted body text.',
+    );
+  });
+
+  it("resets idle timer on activity", async () => {
+    let onActivity!: () => void;
+    const getPersistedContent = vi.fn(
+      () => '---\ntitle: "x"\n---\n\nPersisted body text.',
+    );
+
+    await act(async () => {
+      root.render(
+        createElement(IdleHarness, {
+          path: "note.md",
+          getPersistedContent,
+          onReady: (api) => {
+            onActivity = api.onActivity;
+          },
+        }),
+      );
+    });
+
+    act(() => {
+      onActivity();
     });
 
     await act(async () => {
@@ -130,13 +171,14 @@ describe("useVersionIdle", () => {
       vi.advanceTimersByTime(1000);
       vi.runOnlyPendingTimers();
     });
+
     expect(versionSaveIdle).toHaveBeenCalledTimes(1);
-    expect(getContent).toHaveBeenCalledTimes(1);
+    expect(getPersistedContent).toHaveBeenCalled();
   });
 
-  it("defers serialization until the browser idle callback runs", async () => {
+  it("defers snapshot until the browser idle callback runs", async () => {
     let onActivity!: () => void;
-    const getContent = vi.fn(() => "body");
+    const getPersistedContent = vi.fn(() => "body");
     let idleCallback: IdleRequestCallback | null = null;
     const requestIdleCallback = vi.fn((cb: IdleRequestCallback) => {
       idleCallback = cb;
@@ -146,9 +188,9 @@ describe("useVersionIdle", () => {
 
     await act(async () => {
       root.render(
-        createElement(TestHarness, {
+        createElement(IdleHarness, {
           path: "note.md",
-          getContent,
+          getPersistedContent,
           onReady: (api) => {
             onActivity = api.onActivity;
           },
@@ -165,7 +207,7 @@ describe("useVersionIdle", () => {
     });
 
     expect(requestIdleCallback).toHaveBeenCalledTimes(1);
-    expect(getContent).not.toHaveBeenCalled();
+    expect(getPersistedContent).not.toHaveBeenCalled();
     expect(versionSaveIdle).not.toHaveBeenCalled();
 
     await act(async () => {
@@ -175,7 +217,7 @@ describe("useVersionIdle", () => {
       });
     });
 
-    expect(getContent).toHaveBeenCalledTimes(1);
+    expect(getPersistedContent).toHaveBeenCalledTimes(1);
     expect(versionSaveIdle).toHaveBeenCalledWith("note.md", "body");
   });
 
@@ -186,9 +228,9 @@ describe("useVersionIdle", () => {
 
     await act(async () => {
       root.render(
-        createElement(TestHarness, {
+        createElement(IdleHarness, {
           path: "first.md",
-          getContent: firstContent,
+          getPersistedContent: firstContent,
           onReady: (api) => {
             onActivity = api.onActivity;
           },
@@ -203,9 +245,9 @@ describe("useVersionIdle", () => {
     await act(async () => {
       vi.advanceTimersByTime(VERSION_IDLE_MS / 2);
       root.render(
-        createElement(TestHarness, {
+        createElement(IdleHarness, {
           path: "second.md",
-          getContent: secondContent,
+          getPersistedContent: secondContent,
           onReady: (api) => {
             onActivity = api.onActivity;
           },
@@ -220,6 +262,33 @@ describe("useVersionIdle", () => {
 
     expect(firstContent).not.toHaveBeenCalled();
     expect(secondContent).not.toHaveBeenCalled();
+    expect(versionSaveIdle).not.toHaveBeenCalled();
+  });
+
+  it("skips idle snapshot for substantively empty content", async () => {
+    let onActivity!: () => void;
+
+    await act(async () => {
+      root.render(
+        createElement(IdleHarness, {
+          path: "note.md",
+          getPersistedContent: () => "",
+          onReady: (api) => {
+            onActivity = api.onActivity;
+          },
+        }),
+      );
+    });
+
+    act(() => {
+      onActivity();
+    });
+
+    await act(async () => {
+      vi.advanceTimersByTime(VERSION_IDLE_MS);
+      vi.runOnlyPendingTimers();
+    });
+
     expect(versionSaveIdle).not.toHaveBeenCalled();
   });
 });

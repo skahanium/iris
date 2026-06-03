@@ -1,79 +1,25 @@
-import CodeBlockLowlight from "@tiptap/extension-code-block-lowlight";
-import Table from "@tiptap/extension-table";
-import TableCell from "@tiptap/extension-table-cell";
-import TableHeader from "@tiptap/extension-table-header";
-import TableRow from "@tiptap/extension-table-row";
-import TaskItem from "@tiptap/extension-task-item";
-import TaskList from "@tiptap/extension-task-list";
 import { Editor } from "@tiptap/core";
-import StarterKit from "@tiptap/starter-kit";
-import { common, createLowlight } from "lowlight";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { AiStreamExtension } from "@/components/editor/extensions/AiStreamExtension";
-import { HeadingFoldExtension } from "@/components/editor/extensions/HeadingFoldExtension";
-import { ImageExtension } from "@/components/editor/extensions/ImageExtension";
-import { IrisDocument } from "@/components/editor/extensions/IrisDocument";
-import { LinkExtension } from "@/components/editor/extensions/LinkExtension";
-import { PreserveBlockExtension } from "@/components/editor/extensions/PreserveBlockExtension";
-import { WikiLinkExtension } from "@/components/editor/extensions/WikiLinkExtension";
-import {
-  markdownBodyToEditorHtml,
-  markdownToHtmlPage,
-  parseNoteForEditor,
-} from "@/lib/markdown";
+import { markdownToHtmlPage } from "@/lib/markdown";
 import { serializeOpenNote } from "@/lib/serialize-open-note";
 
-const lowlight = createLowlight(common);
+import {
+  createProductionEditorFromNote,
+  fullNoteRoundTrip,
+  normalizeMd,
+} from "./helpers/tiptap-serialize-harness";
 
 function createEditorFromMarkdown(md: string): Editor {
-  const { bodyMd } = parseNoteForEditor(md, "Fallback");
-  return new Editor({
-    extensions: [
-      IrisDocument,
-      StarterKit.configure({
-        document: false,
-        codeBlock: false,
-        heading: {
-          levels: [1, 2, 3, 4, 5, 6],
-          HTMLAttributes: { class: "iris-section-heading" },
-        },
-      }),
-      LinkExtension,
-      ImageExtension,
-      TaskList,
-      TaskItem.configure({ nested: true }),
-      Table.configure({ resizable: true }),
-      TableRow,
-      TableHeader,
-      TableCell,
-      CodeBlockLowlight.configure({ lowlight }),
-      HeadingFoldExtension,
-      PreserveBlockExtension,
-      AiStreamExtension,
-      WikiLinkExtension,
-    ],
-    content: markdownBodyToEditorHtml(bodyMd),
-  });
+  return createProductionEditorFromNote(md);
 }
 
 function realEditorRoundTrip(md: string): string {
-  const { yaml, title, bodyMd } = parseNoteForEditor(md, "Fallback");
-  const editor = createEditorFromMarkdown(md);
-  try {
-    return serializeOpenNote({
-      yaml,
-      title,
-      editor,
-      bodyFallbackMd: bodyMd,
-    });
-  } finally {
-    editor.destroy();
-  }
+  return fullNoteRoundTrip(md);
 }
 
 function normalize(md: string): string {
-  return md.replace(/\r\n/g, "\n").trim();
+  return normalizeMd(md);
 }
 
 function selectParagraphText(editor: Editor, text: string): void {
@@ -118,6 +64,9 @@ describe("real TipTap editor markdown round-trip", () => {
       "![diagram](https://example.com/x.png)",
       "",
       "See [[Architecture Notes]].",
+      "",
+      "> [!tip] Hint",
+      "> Optional detail.",
     ].join("\n");
 
     const out = normalize(realEditorRoundTrip(md));
@@ -130,6 +79,8 @@ describe("real TipTap editor markdown round-trip", () => {
     expect(out).toContain("#### Deep Heading");
     expect(out).toContain("![diagram](https://example.com/x.png)");
     expect(out).toContain("[[Architecture Notes]]");
+    expect(out).toContain("[!tip]");
+    expect(out).toContain("Optional detail");
   });
 
   it("does not remove a later body heading just because it matches the document title", () => {

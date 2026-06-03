@@ -40,12 +40,10 @@ function calloutType(raw: string): string {
  */
 function calloutBody(raw: string): string {
   const lines = raw.split("\n");
-  const bodyLines = lines.filter((l) => {
-    // Keep lines that have content after removing `> [!type]` prefix
-    const content = l.replace(/^>\s*/, "");
-    return content && !/^\[![a-zA-Z]+\]/.test(content.trim());
-  });
-  return bodyLines.join("\n");
+  return lines
+    .map((l) => l.replace(/^>\s*/, ""))
+    .filter((content) => content && !/^\[![a-zA-Z]+\]/.test(content.trim()))
+    .join("\n");
 }
 
 /**
@@ -202,8 +200,9 @@ export function ingestMarkdownForEditor(
       const bodyHtml = body
         ? (marked.parse(body, { async: false }) as string)
         : "";
+      const escapedRaw = escapeHtml(frag.raw);
       htmlParts.push(
-        `<blockquote data-callout-type="${type}"><p><strong>${
+        `<blockquote data-callout-type="${type}" data-callout-original-raw="${escapedRaw}"><p><strong>${
           title ? escapeHtml(title) : type
         }</strong></p>${bodyHtml}</blockquote>`,
       );

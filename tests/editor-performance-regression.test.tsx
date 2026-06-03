@@ -65,7 +65,7 @@ describe("editor performance regressions", () => {
     expect(onStats).not.toHaveBeenCalled();
 
     await act(async () => {
-      vi.advanceTimersByTime(250);
+      vi.advanceTimersByTime(450);
     });
 
     expect(onStats).toHaveBeenCalledTimes(1);
@@ -85,7 +85,7 @@ describe("editor performance regressions", () => {
 
     expect(source).not.toContain('editor.on("selectionUpdate", onUpdate)');
     expect(source).toContain(
-      'editor.on("selectionUpdate", updateActiveOutline)',
+      'editor.on("selectionUpdate", updateActiveIndex)',
     );
   });
 

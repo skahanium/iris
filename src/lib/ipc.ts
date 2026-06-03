@@ -22,6 +22,7 @@ import type {
   SessionSummary,
   TagGroup,
   VersionEntry,
+  VersionSaveCompleteEvent,
 } from "@/types/ipc";
 
 export interface SettingsMap {
@@ -188,24 +189,28 @@ export async function versionFinalizeCurrent(
   });
 }
 
+/** Enqueues manual snapshot; completes on `version:save_complete`. */
 export async function versionSaveManual(
   path: string,
   content: string,
-): Promise<VersionEntry | null> {
-  return invoke<VersionEntry | null>("version_save_manual_cmd", {
-    path,
-    content,
-  });
+): Promise<void> {
+  await invoke<void>("version_save_manual_cmd", { path, content });
 }
 
+/** Enqueues idle snapshot; completes on `version:save_complete`. */
 export async function versionSaveIdle(
   path: string,
   content: string,
-): Promise<VersionEntry | null> {
-  return invoke<VersionEntry | null>("version_save_idle_cmd", {
-    path,
-    content,
-  });
+): Promise<void> {
+  await invoke<void>("version_save_idle_cmd", { path, content });
+}
+
+export function listenVersionSaveComplete(
+  handler: (payload: VersionSaveCompleteEvent) => void,
+): Promise<() => void> {
+  return listen<VersionSaveCompleteEvent>("version:save_complete", (event) =>
+    handler(event.payload),
+  );
 }
 
 export async function templateList(): Promise<{ name: string }[]> {

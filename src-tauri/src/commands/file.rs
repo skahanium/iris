@@ -9,7 +9,7 @@ use crate::error::{AppError, AppResult};
 use crate::indexer::frontmatter::resolve_display_title;
 use crate::indexer::scan::{
     collect_vault_folders, index_file_with_embed, index_vault_incremental,
-    prune_stale_file_indexes, remove_file_index, FileEntry,
+    peek_file_entry_after_write_fast, prune_stale_file_indexes, remove_file_index, FileEntry,
 };
 use crate::recycle::{discard_document, trash_document};
 use crate::storage::paths::{is_user_note_path, read_file_lossy, resolve_vault_path};
@@ -119,12 +119,16 @@ pub fn file_write(
         return Err(e.into());
     }
 
-    let hash = crate::indexer::scan::file_hash(&abs)?;
+    let hash = crate::indexer::scan::content_hash(&content);
     state.write_guard.mark(&path, &hash);
 
-    state
+    let entry = state
         .db
-        .with_conn(|conn| index_file_with_embed(conn, &vault, &abs, Some(state.inner())))
+        .with_read_conn(|conn| peek_file_entry_after_write_fast(conn, &vault, &abs))?;
+
+    state.schedule_deferred_index(path, content, hash, abs, vault);
+
+    Ok(entry)
 }
 
 /// Move note + all version snapshots into recycle bin (15-day retention).

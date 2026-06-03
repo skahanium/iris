@@ -14,6 +14,9 @@ export const headingFoldPluginKey = new PluginKey<HeadingFoldState>(
 
 const MAX_FOLD_LEVEL = 3;
 
+/** Beyond this size, skip fold gutter widgets unless a section is collapsed. */
+const LARGE_DOC_FOLD_WIDGET_THRESHOLD = 12_000;
+
 function isFoldableHeading(node: ProseMirrorNode): boolean {
   return (
     node.type.name === "heading" &&
@@ -34,62 +37,83 @@ function topLevelBlocks(
   return blocks;
 }
 
+/**
+ * O(n) 单次遍历构建折叠装饰。
+ *
+ * 维护一个折叠区间状态：遇到折叠标题时标记区间开始，
+ * 遇到同级或更高级标题时结束区间。区间内的节点添加隐藏装饰。
+ */
 function buildFoldDecorations(
   doc: ProseMirrorNode,
   collapsed: Set<number>,
   onToggle: (headingPos: number) => void,
 ): DecorationSet {
+  if (
+    collapsed.size === 0 &&
+    doc.textContent.length > LARGE_DOC_FOLD_WIDGET_THRESHOLD
+  ) {
+    return DecorationSet.empty;
+  }
   const decorations: Decoration[] = [];
   const blocks = topLevelBlocks(doc);
 
+  let foldStartIdx = -1;
+  let foldLevel = 0;
+
   for (let i = 0; i < blocks.length; i++) {
     const { pos, node } = blocks[i]!;
-    if (!isFoldableHeading(node)) continue;
 
-    const level = node.attrs.level as number;
-    const isCollapsed = collapsed.has(pos);
+    if (isFoldableHeading(node)) {
+      const level = node.attrs.level as number;
 
-    decorations.push(
-      Decoration.widget(
-        pos + 1,
-        () => {
-          const wrap = document.createElement("span");
-          wrap.className = "iris-heading-fold-gutter";
-          wrap.setAttribute("contenteditable", "false");
-
-          const btn = document.createElement("button");
-          btn.type = "button";
-          btn.className = "iris-heading-fold-btn";
-          btn.setAttribute("aria-label", isCollapsed ? "展开章节" : "折叠章节");
-          btn.textContent = isCollapsed ? "▸" : "▾";
-          btn.addEventListener("mousedown", (event) => {
-            event.preventDefault();
-            event.stopPropagation();
-            onToggle(pos);
-          });
-          wrap.appendChild(btn);
-          return wrap;
-        },
-        {
-          side: -1,
-          key: `fold-${pos}-${isCollapsed ? "c" : "e"}`,
-          ignoreSelection: true,
-        },
-      ),
-    );
-
-    if (!isCollapsed) continue;
-
-    for (let j = i + 1; j < blocks.length; j++) {
-      const next = blocks[j]!;
-      if (
-        isFoldableHeading(next.node) &&
-        (next.node.attrs.level as number) <= level
-      ) {
-        break;
+      // 遇到同级或更高级标题，结束当前折叠区间
+      if (foldStartIdx >= 0 && level <= foldLevel) {
+        foldStartIdx = -1;
       }
+
+      const isCollapsed = collapsed.has(pos);
+
+      // 折叠按钮装饰
       decorations.push(
-        Decoration.node(next.pos, next.pos + next.node.nodeSize, {
+        Decoration.widget(
+          pos + 1,
+          () => {
+            const wrap = document.createElement("span");
+            wrap.className = "iris-heading-fold-gutter";
+            wrap.setAttribute("contenteditable", "false");
+
+            const btn = document.createElement("button");
+            btn.type = "button";
+            btn.className = "iris-heading-fold-btn";
+            btn.setAttribute(
+              "aria-label",
+              isCollapsed ? "展开章节" : "折叠章节",
+            );
+            btn.textContent = isCollapsed ? "▸" : "▾";
+            btn.addEventListener("mousedown", (event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              onToggle(pos);
+            });
+            wrap.appendChild(btn);
+            return wrap;
+          },
+          {
+            side: -1,
+            key: `fold-${pos}-${isCollapsed ? "c" : "e"}`,
+            ignoreSelection: true,
+          },
+        ),
+      );
+
+      if (isCollapsed) {
+        foldStartIdx = i;
+        foldLevel = level;
+      }
+    } else if (foldStartIdx >= 0) {
+      // 折叠区间内的非标题节点，添加隐藏装饰
+      decorations.push(
+        Decoration.node(pos, pos + node.nodeSize, {
           class: "iris-fold-hidden",
         }),
       );
@@ -172,19 +196,28 @@ export const HeadingFoldExtension = Extension.create({
             let { collapsed, decorations } = value;
             let rebuild = false;
 
+            const meta = tr.getMeta(headingFoldPluginKey) as
+              | { toggle: number }
+              | undefined;
+
             if (tr.docChanged) {
+              // 重新映射折叠位置
               const remapped = new Set<number>();
               for (const p of collapsed) {
                 const mapped = tr.mapping.map(p, 1);
                 if (mapped >= 0) remapped.add(mapped);
               }
               collapsed = remapped;
-              rebuild = true;
+
+              if (collapsed.size > 0) {
+                // 有折叠状态时需要全量重建（折叠区域内的编辑可能改变隐藏范围）
+                rebuild = true;
+              } else {
+                // 无折叠状态，直接映射装饰位置（高效增量更新）
+                decorations = decorations.map(tr.mapping, newState.doc);
+              }
             }
 
-            const meta = tr.getMeta(headingFoldPluginKey) as
-              | { toggle: number }
-              | undefined;
             if (meta?.toggle != null) {
               const next = new Set(collapsed);
               if (next.has(meta.toggle)) {
@@ -202,8 +235,6 @@ export const HeadingFoldExtension = Extension.create({
                 collapsed,
                 onToggle,
               );
-            } else {
-              decorations = decorations.map(tr.mapping, newState.doc);
             }
 
             return { collapsed, decorations };

@@ -106,7 +106,7 @@
 ### 版本系统
 
 - 双层保存：防抖写 `.md`（默认 1.2s）+ 稀疏快照（`.iris/versions/`）
-- `Ctrl+S` 手动版本（`kind=manual`）
+- `Ctrl+S` 层 1 保存当前 `.md`；`Ctrl+Shift+S` 手动版本快照（`kind=manual`）
 - 空闲 10 分钟自动备份（`kind=auto_idle`，每篇上限 30 条）
 - 定稿当前正文（`kind=finalize`，永久保留）
 - 恢复前强制 `pre_restore` 快照

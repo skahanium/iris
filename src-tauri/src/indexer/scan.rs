@@ -28,7 +28,7 @@ pub struct FileEntry {
     pub word_count: i64,
 }
 
-fn content_hash(content: &str) -> String {
+pub fn content_hash(content: &str) -> String {
     crate::cas::hash::content_hash_str(content)
 }
 
@@ -167,6 +167,214 @@ pub fn index_file_with_embed(
         id: file_id,
         path: rel,
         title,
+        updated_at: now,
+        word_count: wc,
+    })
+}
+
+/// 从内存中的 content 索引文件，避免 `file_write` 路径中的重复磁盘读取和哈希计算。
+///
+/// 与 `index_file_with_embed` 逻辑相同，但接受已有的 content 和 hash，
+/// 跳过 `fs::read_to_string` 和重复的 `content_hash` 计算。
+pub fn index_file_from_content(
+    conn: &Connection,
+    vault: &Path,
+    absolute: &Path,
+    content: &str,
+    hash: &str,
+    #[allow(unused_variables)] app: Option<&Arc<AppState>>,
+) -> AppResult<FileEntry> {
+    let rel = relative_path(vault, absolute)?;
+    if !is_user_note_path(&rel) {
+        return Err(crate::error::AppError::msg(
+            "Path is not a user note (metadata paths are not indexed)",
+        ));
+    }
+    let parsed = parse_note(content)?;
+    let document_name = Path::new(&rel)
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or(&rel)
+        .to_string();
+    let wc = word_count(&parsed.body);
+    let now = Utc::now().to_rfc3339();
+    let frontmatter = parsed.frontmatter_json.as_deref();
+
+    let display_title =
+        resolve_display_title(parsed.title.as_deref(), "", frontmatter, &document_name);
+
+    let existing_row: Option<(i64, String, String, i64)> = conn
+        .query_row(
+            "SELECT id, content_hash, title, word_count FROM files WHERE path = ?1",
+            [&rel],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )
+        .ok();
+
+    if let Some((id, stored_hash, title, stored_wc)) = &existing_row {
+        if stored_hash == hash {
+            tracing::debug!(path = %rel, "index_file skipped: content unchanged");
+            return Ok(FileEntry {
+                id: *id,
+                path: rel,
+                title: title.clone(),
+                updated_at: conn
+                    .query_row("SELECT updated_at FROM files WHERE id = ?1", [id], |r| {
+                        r.get(0)
+                    })
+                    .unwrap_or(now),
+                word_count: *stored_wc,
+            });
+        }
+    }
+
+    let existing_id: Option<i64> = existing_row.as_ref().map(|(id, _, _, _)| *id);
+
+    let file_id = if let Some(id) = existing_id {
+        conn.execute(
+            "UPDATE files SET title = ?1, frontmatter = ?2, content_hash = ?3, word_count = ?4, updated_at = ?5 WHERE id = ?6",
+            rusqlite::params![display_title, frontmatter, hash, wc, now, id],
+        )?;
+        conn.execute("DELETE FROM chunks WHERE file_id = ?1", [id])?;
+        id
+    } else {
+        conn.execute(
+            "INSERT INTO files (path, title, frontmatter, content_hash, word_count, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6)",
+            rusqlite::params![rel, display_title, frontmatter, hash, wc, now],
+        )?;
+        conn.last_insert_rowid()
+    };
+
+    let title: String =
+        conn.query_row("SELECT title FROM files WHERE id = ?1", [file_id], |r| {
+            r.get(0)
+        })?;
+
+    sync_file_tags(conn, file_id, &parsed.tags)?;
+
+    let _link_count = index_wiki_links(conn, file_id, &parsed.body)?;
+
+    upsert_fts(conn, &rel, &title, &parsed.body)?;
+
+    let chunks = chunk_markdown(&parsed.body, 2000);
+    for (idx, chunk) in chunks.iter().enumerate() {
+        conn.execute(
+            "INSERT INTO chunks (file_id, chunk_index, content, char_count) VALUES (?1, ?2, ?3, ?4)",
+            rusqlite::params![file_id, idx as i64, chunk, chunk.len() as i64],
+        )?;
+    }
+
+    #[cfg(not(test))]
+    match app {
+        Some(state) => state.enqueue_embedding(file_id),
+        None => {
+            if let Err(e) = store_chunk_embeddings(conn, file_id) {
+                tracing::warn!("embedding skipped for file {file_id}: {e}");
+            }
+        }
+    }
+
+    Ok(FileEntry {
+        id: file_id,
+        path: rel,
+        title,
+        updated_at: now,
+        word_count: wc,
+    })
+}
+
+/// Fast `FileEntry` for `file_write` IPC: DB lookup only, no full-note parse (avoids blocking on 58k+ bodies).
+pub fn peek_file_entry_after_write_fast(
+    conn: &Connection,
+    vault: &Path,
+    absolute: &Path,
+) -> AppResult<FileEntry> {
+    let rel = relative_path(vault, absolute)?;
+    if !is_user_note_path(&rel) {
+        return Err(crate::error::AppError::msg(
+            "Path is not a user note (metadata paths are not indexed)",
+        ));
+    }
+    if let Ok((id, title, updated_at, word_count)) = conn.query_row(
+        "SELECT id, title, updated_at, word_count FROM files WHERE path = ?1",
+        [&rel],
+        |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, i64>(3)?,
+            ))
+        },
+    ) {
+        return Ok(FileEntry {
+            id,
+            path: rel,
+            title,
+            updated_at,
+            word_count,
+        });
+    }
+
+    let document_name = Path::new(&rel)
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or(&rel)
+        .to_string();
+    let now = Utc::now().to_rfc3339();
+    Ok(FileEntry {
+        id: 0,
+        path: rel,
+        title: document_name,
+        updated_at: now,
+        word_count: 0,
+    })
+}
+
+/// Lightweight `FileEntry` for `file_write` IPC return before background indexing finishes.
+pub fn peek_file_entry_after_write(
+    conn: &Connection,
+    vault: &Path,
+    absolute: &Path,
+    content: &str,
+) -> AppResult<FileEntry> {
+    let rel = relative_path(vault, absolute)?;
+    if !is_user_note_path(&rel) {
+        return Err(crate::error::AppError::msg(
+            "Path is not a user note (metadata paths are not indexed)",
+        ));
+    }
+    let parsed = parse_note(content)?;
+    let document_name = Path::new(&rel)
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or(&rel)
+        .to_string();
+    let wc = word_count(&parsed.body);
+    let now = Utc::now().to_rfc3339();
+    let frontmatter = parsed.frontmatter_json.as_deref();
+    let display_title =
+        resolve_display_title(parsed.title.as_deref(), "", frontmatter, &document_name);
+
+    if let Ok((id, updated_at)) = conn.query_row(
+        "SELECT id, updated_at FROM files WHERE path = ?1",
+        [&rel],
+        |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?)),
+    ) {
+        return Ok(FileEntry {
+            id,
+            path: rel,
+            title: display_title,
+            updated_at,
+            word_count: wc,
+        });
+    }
+
+    Ok(FileEntry {
+        id: 0,
+        path: rel,
+        title: display_title,
         updated_at: now,
         word_count: wc,
     })

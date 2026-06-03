@@ -9,6 +9,10 @@
 import TurndownService from "turndown";
 import * as turndownPluginGfm from "turndown-plugin-gfm";
 
+import {
+  calloutMarkdownFromLines,
+  detectCalloutTypeFromElement,
+} from "@/lib/callout-markdown";
 import { editorBodyHtmlToMarkdown } from "@/lib/markdown";
 import type {
   MarkdownCapabilityWarning,
@@ -35,19 +39,6 @@ function mdFromHtml(html: string): string {
 function inlineToMd(html: string): string {
   if (!html.trim()) return "";
   return turndown.turndown(html).replace(/\\\[/g, "[").replace(/\\\]/g, "]");
-}
-
-// ── Callout preservation ───────────────────────────────────────
-
-/**
- * Check if a blockquote element was originally a callout.
- * Detects via data-callout-type attribute or [!type] text pattern.
- */
-function detectCalloutType(element: Element): string | null {
-  const attr = element.getAttribute("data-callout-type");
-  if (attr) return attr;
-  const match = />\s*\[!([a-zA-Z]+)\]/.exec(element.outerHTML);
-  return match?.[1] ?? null;
 }
 
 // ── Public API ─────────────────────────────────────────────────
@@ -97,7 +88,6 @@ export function exportEditorToMarkdown(
   // Otherwise, convert to markdown.
   const parts: string[] = [];
   let preservedCount = 0;
-  let childIndex = 0;
 
   for (const child of Array.from(root.children)) {
     // Check if this is a preserve block
@@ -110,24 +100,21 @@ export function exportEditorToMarkdown(
         parts.push(raw);
         preservedCount++;
       }
-      childIndex++;
       continue;
     }
 
     // Check if this is a callout blockquote
     if (child.tagName === "BLOCKQUOTE") {
-      const calloutType = detectCalloutType(child);
+      const originalRaw = child.getAttribute("data-callout-original-raw");
+      if (originalRaw?.trim()) {
+        parts.push(originalRaw);
+        continue;
+      }
+      const calloutType = detectCalloutTypeFromElement(child);
       if (calloutType) {
         const innerMarkdown = inlineToMd(child.innerHTML);
-        const lines = innerMarkdown.split("\n").filter((l) => l.trim());
-        const first = lines[0] ?? "";
-        const rest = lines.slice(1);
-        const calloutLines = [`> [!${calloutType}] ${first}`];
-        for (const r of rest) {
-          calloutLines.push(`> ${r}`);
-        }
-        parts.push(calloutLines.join("\n"));
-        childIndex++;
+        const lines = innerMarkdown.split("\n");
+        parts.push(calloutMarkdownFromLines(calloutType, lines));
         continue;
       }
     }
@@ -137,7 +124,6 @@ export function exportEditorToMarkdown(
     if (md.trim()) {
       parts.push(md.trim());
     }
-    childIndex++;
   }
 
   // Inject preserve-only fragments from classifiedFragments that

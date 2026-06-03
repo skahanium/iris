@@ -181,9 +181,17 @@
 | ----------- | ----------------------------- |
 | 命令面板    | `Ctrl+Shift+P` 总览并执行功能 |
 | 导航        | `Ctrl+P` Quick Open           |
+| 保存笔记    | `Ctrl+S`（层 1，写当前 `.md`） |
+| 版本快照    | `Ctrl+Shift+S`（层 1 + 手动检查点） |
 | 次级功能    | 居中命令浮层                  |
 | **AI 侧栏** | `Ctrl+Shift+A`                |
 | Zen         | `Ctrl+.`                      |
+
+---
+
+## 编辑器 · Callout 展示
+
+Obsidian 式 `> [!note]` 在编辑区渲染为带左边框的 blockquote（accent 色与 `globals.css` 中 `.ProseMirror blockquote` 一致）。保存时写回 `> [!type]` 前缀，语义见 [markdown-export.md](./markdown-export.md)。
 
 ---
 

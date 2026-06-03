@@ -11,6 +11,7 @@ use crate::cas::store::CasObjectStore;
 use crate::cas::write_guard::WriteGuard;
 use crate::embedding::queue::EmbedQueue;
 use crate::error::{AppError, AppResult};
+use crate::indexer::deferred::DeferredFileIndexer;
 use crate::storage::db::Database;
 use crate::watcher::FileWatcher;
 
@@ -43,6 +44,7 @@ pub struct AppState {
     pub write_guard: WriteGuard,
     cas_store: OnceLock<CasObjectStore>,
     ref_counter: OnceLock<RefCounter>,
+    deferred_indexer: Arc<DeferredFileIndexer>,
 }
 
 impl AppState {
@@ -63,6 +65,7 @@ impl AppState {
             write_guard: WriteGuard::default(),
             cas_store: OnceLock::new(),
             ref_counter: OnceLock::new(),
+            deferred_indexer: Arc::new(DeferredFileIndexer::default()),
         });
 
         // 启动时清理过期缓存
@@ -96,6 +99,26 @@ impl AppState {
     /// Queue background embedding for a file after index metadata is written.
     pub fn enqueue_embedding(self: &Arc<Self>, file_id: i64) {
         self.ensure_embed_queue().enqueue(file_id);
+    }
+
+    /// Debounced per-path background indexing after `file_write`.
+    pub fn schedule_deferred_index(
+        self: &Arc<Self>,
+        path: String,
+        content: String,
+        hash: String,
+        abs: PathBuf,
+        vault: PathBuf,
+    ) {
+        DeferredFileIndexer::schedule(
+            Arc::clone(&self.deferred_indexer),
+            Arc::clone(self),
+            path,
+            content,
+            hash,
+            abs,
+            vault,
+        );
     }
 
     /// 获取 CAS 存储实例

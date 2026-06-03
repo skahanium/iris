@@ -64,8 +64,13 @@ import {
 import { runEditorAction } from "@/lib/editor-action-executor";
 import { insertAssistantMarkdownAtCursor } from "@/lib/editor-insert";
 import { resolveNoteDisplayTitle } from "@/lib/note-display";
-import { settingsGet, settingsSet, versionSaveManual } from "@/lib/ipc";
-import { readingMinutes } from "@/lib/reading-time";
+import {
+  listenVersionSaveComplete,
+  settingsGet,
+  settingsSet,
+  versionSaveManual,
+} from "@/lib/ipc";
+import { formatVersionSaveStatus } from "@/lib/version-save-status";
 import { isTauriRuntime } from "@/lib/tauri-runtime";
 import { cn } from "@/lib/utils";
 
@@ -157,6 +162,19 @@ function App() {
     characterCount: 0,
     readingMinutes: 1,
   });
+  const editorStatsRef = useRef({ characterCount: 0, readingMinutes: 1 });
+  const editorStatsTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const updateEditorStats = useCallback(
+    (stats: { characterCount: number; readingMinutes: number }) => {
+      editorStatsRef.current = stats;
+      if (editorStatsTimerRef.current) return;
+      editorStatsTimerRef.current = setTimeout(() => {
+        editorStatsTimerRef.current = null;
+        setEditorStats({ ...editorStatsRef.current });
+      }, 2000);
+    },
+    [],
+  );
   const [keyboardLeaderPending, setKeyboardLeaderPending] = useState(false);
   const [zen, setZen] = useState(false);
   const [outlineOpen, setOutlineOpen] = useState(loadOutlineOpen);
@@ -181,16 +199,19 @@ function App() {
     tabs,
     activePath,
     markdown,
+    editorContentTick,
     activePathRef,
     markdownRef,
     frontmatterYamlRef,
-    openFile,
+    openNote,
+    activateTab,
     closeTab,
     handleNewNote,
     markDirty,
     markClean,
     updateTabTitle,
     replaceOpenTabPath,
+    syncTabMarkdownCache,
     setMarkdown,
   } = useTabManager({
     onStatusChange: setAiStatus,
@@ -220,13 +241,13 @@ function App() {
   } = useOpenNote({
     activePath,
     markdown,
+    editorContentTick,
     activePathRef,
     markdownRef,
     frontmatterYamlRef,
     editorRef,
     updateTabTitle,
     replaceOpenTabPath,
-    onMarkdownSynced: setMarkdown,
   });
 
   getLiveMarkdownRef.current = getLiveMarkdown;
@@ -239,6 +260,7 @@ function App() {
       dirtyRef.current = false;
       const path = activePathRef.current;
       if (path) {
+        syncTabMarkdownCache(path, md);
         markClean(
           path,
           resolveNoteDisplayTitle({
@@ -250,16 +272,39 @@ function App() {
     },
   );
 
-  const { onActivity: resetVersionIdle } = useVersionIdle(activePath, () =>
-    getLiveMarkdownRef.current(),
+  const { onActivity: resetVersionIdle } = useVersionIdle(
+    activePath,
+    () => markdownRef.current,
   );
+
+  useEffect(() => {
+    if (!isTauriRuntime()) return;
+    let unlisten: (() => void) | undefined;
+    void listenVersionSaveComplete((payload) => {
+      if (payload.path !== activePathRef.current) return;
+      setAiStatus(formatVersionSaveStatus(payload));
+    }).then((fn) => {
+      unlisten = fn;
+    });
+    return () => {
+      unlisten?.();
+    };
+  }, [activePathRef]);
+
+  const handleSaveNote = useCallback(async () => {
+    await flushSave();
+  }, [flushSave]);
 
   const handleSaveVersion = useCallback(async () => {
     const path = activePathRef.current;
     if (!path) return;
-    const savedMarkdown = await flushSave();
-    if (!savedMarkdown) return;
-    await versionSaveManual(path, savedMarkdown);
+    const md = await flushSave();
+    if (!md) return;
+    setAiStatus("正在后台创建版本快照…");
+    void versionSaveManual(path, md).catch((err: unknown) => {
+      const msg = err instanceof Error ? err.message : String(err);
+      setAiStatus(`版本快照提交失败：${msg}`);
+    });
   }, [flushSave, activePathRef]);
 
   const handleDirty = useCallback(() => {
@@ -319,6 +364,11 @@ function App() {
     void rescanVault("manual");
   }, [rescanVault]);
 
+  const handleOpenConnectivitySettings = useCallback(
+    () => overlays.openOverlay("settings"),
+    [overlays],
+  );
+
   const applyMarkdownToEditor = useCallback(
     (content: string) => {
       markdownRef.current = content;
@@ -356,14 +406,10 @@ function App() {
 
   useEffect(() => {
     if (!activePath) {
+      editorStatsRef.current = { characterCount: 0, readingMinutes: 1 };
       setEditorStats({ characterCount: 0, readingMinutes: 1 });
-      return;
     }
-    setEditorStats({
-      characterCount: bodyMarkdown.replace(/\s+/g, "").length,
-      readingMinutes: readingMinutes(bodyMarkdown),
-    });
-  }, [activePath, bodyMarkdown]);
+  }, [activePath]);
 
   const handleEditorReady = useCallback(
     (ed: Editor | null) => {
@@ -395,6 +441,18 @@ function App() {
       };
     },
     [clearEditorTransactionListener, updateUndoRedoState],
+  );
+
+  const editorTitleSlot = useMemo(
+    () => (
+      <DocumentTitleField
+        value={noteTitle}
+        onChange={handleTitleChange}
+        onBlur={onTitleBlur}
+        editorRef={editorRef}
+      />
+    ),
+    [noteTitle, handleTitleChange, onTitleBlur, editorRef],
   );
 
   const runInlineAi = useCallback(
@@ -491,6 +549,9 @@ function App() {
         case "newNote":
           void handleNewNote();
           break;
+        case "saveNote":
+          void handleSaveNote();
+          break;
         case "saveVersion":
           void handleSaveVersion();
           break;
@@ -542,6 +603,7 @@ function App() {
     [
       overlays,
       handleNewNote,
+      handleSaveNote,
       handleSaveVersion,
       closeTab,
       activePathRef,
@@ -654,7 +716,7 @@ function App() {
           <TabBar
             tabs={tabs}
             activePath={activePath}
-            onSelect={(p) => void openFile(p)}
+            onSelect={(p) => activateTab(p)}
             onClose={closeTab}
             onNew={() => void handleNewNote()}
           />
@@ -672,23 +734,18 @@ function App() {
                 <TipTapEditor
                   key={activePath}
                   initialBodyMarkdown={bodyMarkdown}
+                  contentCacheKey={activePath}
+                  reingestKey={editorContentTick}
                   zen={zen}
                   zoom={editorZoom}
-                  titleSlot={
-                    <DocumentTitleField
-                      value={noteTitle}
-                      onChange={handleTitleChange}
-                      onBlur={onTitleBlur}
-                      editorRef={editorRef}
-                    />
-                  }
+                  titleSlot={editorTitleSlot}
                   onDirty={handleDirty}
                   onSlashCommand={runEditorActionById}
                   onBodyContextMenu={editorContextMenu.handleContextMenu}
                   onEditorReady={handleEditorReady}
-                  onBodyStatsChange={setEditorStats}
+                  onBodyStatsChange={updateEditorStats}
                   onInlineAiRetry={(ed) => void inlineAi.retry(ed)}
-                  onOpenWikiLink={(title) => void openFile(`${title}.md`)}
+                  onOpenWikiLink={(title) => void openNote(`${title}.md`)}
                 />
                 <EditorOutline
                   editor={editorInstance}
@@ -703,7 +760,7 @@ function App() {
             ) : (
               <WelcomeEmpty
                 vaultKey={`${vaultPath ?? ""}:${vaultIndexEpoch}`}
-                onOpen={(p) => void openFile(p)}
+                onOpen={(p) => void openNote(p)}
                 onNew={() => void handleNewNote()}
               />
             )}
@@ -769,7 +826,7 @@ function App() {
             webSearch={webSearch}
             onWebSearchChange={setWebSearch}
             connectivity={connectivityStatus}
-            onOpenConnectivitySettings={() => overlays.openOverlay("settings")}
+            onOpenConnectivitySettings={handleOpenConnectivitySettings}
           />
         }
         overlays={
@@ -783,23 +840,23 @@ function App() {
             <QuickOpen
               open={overlays.quickOpen}
               onClose={() => overlays.closeOverlay("quickOpen")}
-              onSelect={(p) => void openFile(p)}
+              onSelect={(p) => void openNote(p)}
             />
             <VaultNavigator
               open={overlays.fileSheet}
               onClose={() => overlays.closeOverlay("fileSheet")}
-              onOpen={(p) => void openFile(p)}
+              onOpen={(p) => void openNote(p)}
             />
             <RecycleBinSheet
               open={overlays.recycleBinOpen}
               onClose={() => overlays.closeOverlay("recycleBin")}
-              onRestored={(p) => void openFile(p)}
+              onRestored={(p) => void openNote(p)}
               onIndexChange={bumpVaultIndex}
             />
             <SearchPanel
               open={overlays.searchOpen}
               onClose={() => overlays.closeOverlay("search")}
-              onOpen={(p) => void openFile(p)}
+              onOpen={(p) => void openNote(p)}
             />
             <Suspense fallback={<LazyFallback />}>
               <SettingsPanel
@@ -817,12 +874,12 @@ function App() {
               open={overlays.backlinksOpen}
               onClose={() => overlays.closeOverlay("backlinks")}
               notePath={activePath}
-              onOpen={(p) => void openFile(p)}
+              onOpen={(p) => void openNote(p)}
             />
             <TagView
               open={overlays.tagViewOpen}
               onClose={() => overlays.closeOverlay("tags")}
-              onOpen={(p) => void openFile(p)}
+              onOpen={(p) => void openNote(p)}
             />
             <Suspense fallback={<LazyFallback />}>
               <VersionTimeline
@@ -842,7 +899,7 @@ function App() {
                 <GraphView
                   open={overlays.graphOpen}
                   onClose={() => overlays.closeOverlay("graph")}
-                  onOpenNote={(p) => void openFile(p)}
+                  onOpenNote={(p) => void openNote(p)}
                 />
               </Suspense>
             </ErrorBoundary>
