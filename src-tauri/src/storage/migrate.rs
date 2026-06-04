@@ -38,6 +38,8 @@ const MIGRATION_015_UP: &str = include_str!("../../migrations/015_search_cache.s
 const MIGRATION_015_DOWN: &str = include_str!("../../migrations/015_search_cache.down.sql");
 const MIGRATION_016_UP: &str = include_str!("../../migrations/016_cas_refs.sql");
 const MIGRATION_016_DOWN: &str = include_str!("../../migrations/016_cas_refs.down.sql");
+const MIGRATION_017_UP: &str = include_str!("../../migrations/017_rename_cascade.sql");
+const MIGRATION_017_DOWN: &str = include_str!("../../migrations/017_rename_cascade.down.sql");
 
 fn is_applied(conn: &Connection, name: &str) -> bool {
     conn.query_row(
@@ -107,6 +109,7 @@ pub fn migrate_up(conn: &Connection) -> AppResult<()> {
     apply_migration(conn, "014_web_page_cache", MIGRATION_014_UP, true)?;
     apply_migration(conn, "015_search_cache", MIGRATION_015_UP, true)?;
     apply_migration(conn, "016_cas_refs", MIGRATION_016_UP, false)?;
+    apply_migration(conn, "017_rename_cascade", MIGRATION_017_UP, false)?;
 
     Ok(())
 }
@@ -118,6 +121,7 @@ fn rollback_migration(conn: &Connection, name: &str, sql: &str) {
 
 /// Roll back all migrations in strict reverse order (for tests).
 pub fn migrate_down(conn: &Connection) -> AppResult<()> {
+    rollback_migration(conn, "017_rename_cascade", MIGRATION_017_DOWN);
     rollback_migration(conn, "016_cas_refs", MIGRATION_016_DOWN);
     rollback_migration(conn, "015_search_cache", MIGRATION_015_DOWN);
     rollback_migration(conn, "014_web_page_cache", MIGRATION_014_DOWN);

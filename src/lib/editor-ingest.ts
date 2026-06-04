@@ -187,14 +187,6 @@ export function ingestMarkdownForEditor(
 
     if (kind === "space") {
       flushNative();
-      const gapCount = Math.max(1, (frag.raw.match(/\n\n/g) ?? []).length);
-      if (gapCount === 1) {
-        htmlParts.push('<p data-iris-spacer="true"></p>');
-      } else {
-        htmlParts.push(
-          `<p data-iris-spacer="true" data-iris-gap-count="${gapCount}"></p>`,
-        );
-      }
       continue;
     }
 

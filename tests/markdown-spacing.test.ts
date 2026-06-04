@@ -8,44 +8,38 @@ import {
   pmSerializeBody,
 } from "./helpers/tiptap-serialize-harness";
 
-describe("markdown block spacing (contract space → spacer paragraph)", () => {
-  it("ingest emits spacer paragraphs for blank lines between blocks", () => {
+describe("markdown block spacing", () => {
+  it("ingest treats blank lines as block boundaries without spacer paragraphs", () => {
     const { tipTapHtml } = ingestMarkdownForEditor({
       bodyMarkdown: "段落 A\n\n段落 B",
     });
-    expect(tipTapHtml).toContain('data-iris-spacer="true"');
+    expect(tipTapHtml).not.toContain("data-iris-spacer");
     expect(tipTapHtml).toContain("段落 A");
     expect(tipTapHtml).toContain("段落 B");
   });
 
-  it("preserves blank line between paragraphs through PM export", () => {
+  it("serializes paragraphs with one standard markdown blank line", () => {
     const editor = createProductionEditorFromIngestedBody("段落 A\n\n段落 B");
     try {
       const md = normalizeMd(pmSerializeBody(editor));
-      expect(md).toMatch(/段落 A[\s\S]*\n\n[\s\S]*段落 B/);
+      expect(md).toBe("段落 A\n\n段落 B");
+      expect(md).not.toMatch(/\n{4,}/);
     } finally {
       editor.destroy();
     }
   });
 
-  it("preserves multiple consecutive blank lines as multiple spacers", () => {
+  it("normalizes multiple consecutive blank lines to one standard block gap", () => {
     const { tipTapHtml } = ingestMarkdownForEditor({
       bodyMarkdown: "A\n\n\n\nB",
     });
-    expect(tipTapHtml).toContain('data-iris-gap-count="2"');
+    expect(tipTapHtml).not.toContain("data-iris-gap-count");
 
     const editor = createProductionEditorFromIngestedBody("A\n\n\n\nB");
     try {
-      let gapAttr: number | null = null;
-      editor.state.doc.descendants((node) => {
-        if (node.type.name === "paragraph" && node.attrs.irisSpacer) {
-          gapAttr = node.attrs.irisGapCount as number;
-        }
-      });
-      expect(gapAttr).toBe(2);
-
       const md = normalizeMd(pmSerializeBody(editor));
-      expect(md).toMatch(/A[\s\S]*\n\n[\s\S]*\n\n[\s\S]*B/);
+      expect(md).toBe("A\n\nB");
+      expect(md).not.toMatch(/\n{4,}/);
     } finally {
       editor.destroy();
     }

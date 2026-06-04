@@ -8,8 +8,8 @@ use crate::app::AppState;
 use crate::error::{AppError, AppResult};
 use crate::indexer::frontmatter::resolve_display_title;
 use crate::indexer::scan::{
-    collect_vault_folders, content_hash, index_file_with_embed, index_vault_incremental,
-    peek_file_entry_after_write, prune_stale_file_indexes, rename_file_index, FileEntry,
+    collect_vault_folders, content_hash, index_file_from_content, index_file_with_embed,
+    index_vault_incremental, prune_stale_file_indexes, rename_file_index, FileEntry,
 };
 use crate::recycle::{discard_document, trash_document};
 use base64::engine::general_purpose::STANDARD;
@@ -99,13 +99,6 @@ pub fn file_list(state: State<'_, Arc<AppState>>) -> AppResult<Vec<FileListItem>
     })
 }
 
-/// Agent debug NDJSON append (dev; workspace `debug-8589f0.log`).
-#[tauri::command]
-pub fn debug_session_log(payload: serde_json::Value) -> Result<(), String> {
-    crate::debug_session_log::append(payload);
-    Ok(())
-}
-
 #[tauri::command]
 pub async fn file_read(state: State<'_, Arc<AppState>>, path: String) -> AppResult<String> {
     if !is_user_note_path(&path) {
@@ -113,26 +106,8 @@ pub async fn file_read(state: State<'_, Arc<AppState>>, path: String) -> AppResu
     }
     let vault = state.vault_path()?;
     let abs = resolve_vault_path(&vault, &path)?;
-    let path_for_log = path.clone();
     tokio::task::spawn_blocking(move || {
         let content = read_file_lossy(&abs)?;
-        let preview: String = content.chars().take(80).collect();
-        crate::debug_session_log::append(serde_json::json!({
-            "sessionId": "8589f0",
-            "location": "file.rs:file_read",
-            "message": "file_read ok",
-            "hypothesisId": "E",
-            "runId": "post-fix-v3",
-            "data": {
-                "path": path_for_log,
-                "contentLen": content.len(),
-                "preview": preview,
-            },
-            "timestamp": std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_millis())
-                .unwrap_or(0),
-        }));
         Ok(content)
     })
     .await
@@ -160,43 +135,12 @@ pub async fn file_write(
             return Err(e.into());
         }
 
-        let hash = crate::indexer::scan::content_hash(&content);
+        let hash = content_hash(&content);
         state.write_guard.mark(&path, &hash);
 
-        let preview: String = content.chars().take(80).collect();
-        let tail: String = content
-            .chars()
-            .rev()
-            .take(80)
-            .collect::<String>()
-            .chars()
-            .rev()
-            .collect();
-        let hash = crate::indexer::scan::content_hash(&content);
-        crate::debug_session_log::append(serde_json::json!({
-            "sessionId": "8589f0",
-            "location": "file.rs:file_write",
-            "message": "file_write ok",
-            "hypothesisId": "D",
-            "runId": "post-fix-v4",
-            "data": {
-                "path": path,
-                "contentLen": content.len(),
-                "contentHash": hash,
-                "preview": preview,
-                "tail": tail,
-            },
-            "timestamp": std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_millis())
-                .unwrap_or(0),
-        }));
-
-        let entry = state
-            .db
-            .with_read_conn(|conn| peek_file_entry_after_write(conn, &vault, &abs, &content))?;
-
-        state.schedule_deferred_index(path, content, hash, abs, vault);
+        let entry = state.db.with_conn(|conn| {
+            index_file_from_content(conn, &vault, &abs, &content, &hash, Some(&state))
+        })?;
 
         Ok(entry)
     })

@@ -13,95 +13,14 @@ async function writeNoteAtPath(
 ): Promise<string | null> {
   const md = getMd();
   const substantivelyEmpty = isNoteSubstantivelyEmpty(md);
-  // #region agent log
-  fetch("http://127.0.0.1:7413/ingest/3336dc9b-75d7-44cd-8238-25a3e4a38bb9", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "X-Debug-Session-Id": "8589f0",
-    },
-    body: JSON.stringify({
-      sessionId: "8589f0",
-      location: "useEditorSave.ts:writeNoteAtPath",
-      message: "writeNoteAtPath attempt",
-      data: {
-        targetPath,
-        mdLen: md.length,
-        substantivelyEmpty,
-        mdPreview: md.slice(0, 80),
-      },
-      timestamp: Date.now(),
-      hypothesisId: "H2",
-    }),
-  }).catch(() => {});
-  // #endregion
   if (substantivelyEmpty) {
     console.debug(
       "[useEditorSave] skip save: note substantively empty",
       targetPath,
     );
-    // #region agent log
-    fetch("http://127.0.0.1:7413/ingest/3336dc9b-75d7-44cd-8238-25a3e4a38bb9", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-Debug-Session-Id": "8589f0",
-      },
-      body: JSON.stringify({
-        sessionId: "8589f0",
-        location: "useEditorSave.ts:writeNoteAtPath",
-        message: "skip save: substantively empty",
-        data: { targetPath, mdLen: md.length },
-        timestamp: Date.now(),
-        hypothesisId: "H2",
-        runId: "post-fix-v3",
-      }),
-    }).catch(() => {});
-    // #endregion
     return null;
   }
-  try {
-    await fileWrite(targetPath, md);
-    // #region agent log
-    fetch("http://127.0.0.1:7413/ingest/3336dc9b-75d7-44cd-8238-25a3e4a38bb9", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-Debug-Session-Id": "8589f0",
-      },
-      body: JSON.stringify({
-        sessionId: "8589f0",
-        location: "useEditorSave.ts:writeNoteAtPath",
-        message: "fileWrite ok",
-        data: { targetPath, mdLen: md.length },
-        timestamp: Date.now(),
-        hypothesisId: "H4",
-      }),
-    }).catch(() => {});
-    // #endregion
-  } catch (err) {
-    // #region agent log
-    fetch("http://127.0.0.1:7413/ingest/3336dc9b-75d7-44cd-8238-25a3e4a38bb9", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-Debug-Session-Id": "8589f0",
-      },
-      body: JSON.stringify({
-        sessionId: "8589f0",
-        location: "useEditorSave.ts:writeNoteAtPath",
-        message: "fileWrite failed",
-        data: {
-          targetPath,
-          error: err instanceof Error ? err.message : String(err),
-        },
-        timestamp: Date.now(),
-        hypothesisId: "H4",
-      }),
-    }).catch(() => {});
-    // #endregion
-    throw err;
-  }
+  await fileWrite(targetPath, md);
   return md;
 }
 
@@ -139,9 +58,7 @@ export function useEditorSave(
   const saveNote = useCallback(async (): Promise<string | null> => {
     if (saveInFlightRef.current) {
       saveAgainRef.current = true;
-      // Wait for the current loop to finish, then run once more with latest content
-      await saveInFlightRef.current;
-      return runSaveOnce();
+      return saveInFlightRef.current;
     }
 
     const loop = async (): Promise<string | null> => {
@@ -163,26 +80,6 @@ export function useEditorSave(
   const debouncedSave = useMemo(
     () =>
       debounce(() => {
-        // #region agent log
-        fetch(
-          "http://127.0.0.1:7413/ingest/3336dc9b-75d7-44cd-8238-25a3e4a38bb9",
-          {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              "X-Debug-Session-Id": "8589f0",
-            },
-            body: JSON.stringify({
-              sessionId: "8589f0",
-              location: "useEditorSave.ts:debouncedSave",
-              message: "debounced save fired",
-              data: { path: pathRef.current },
-              timestamp: Date.now(),
-              hypothesisId: "H5",
-            }),
-          },
-        ).catch(() => {});
-        // #endregion
         saveNote().catch((err) => {
           console.warn("[useEditorSave] save failed:", err);
         });
@@ -193,47 +90,9 @@ export function useEditorSave(
   /** Path changes are persisted via `persistBeforeLeave` in tab manager; do not flush here (pathRef race). */
   useEffect(() => {
     return () => {
-      // #region agent log
-      fetch(
-        "http://127.0.0.1:7413/ingest/3336dc9b-75d7-44cd-8238-25a3e4a38bb9",
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "X-Debug-Session-Id": "8589f0",
-          },
-          body: JSON.stringify({
-            sessionId: "8589f0",
-            location: "useEditorSave.ts:pathEffect",
-            message: "debounced save cancelled (path change/unmount)",
-            data: { path },
-            timestamp: Date.now(),
-            hypothesisId: "H5",
-          }),
-        },
-      ).catch(() => {});
-      // #endregion
       debouncedSave.cancel();
     };
   }, [path, debouncedSave]);
-
-  useEffect(() => {
-    const handleBeforeUnload = () => {
-      const target = pathRef.current;
-      if (!target) return;
-      debouncedSave.cancel();
-      const md = getMarkdownRef.current();
-      if (!isNoteSubstantivelyEmpty(md)) {
-        // Fire-and-forget: best effort save before window closes.
-        // The 1200ms debounced auto-save should have already persisted most changes.
-        void fileWrite(target, md).catch((err: unknown) => {
-          console.warn("[useEditorSave] beforeunload save failed:", err);
-        });
-      }
-    };
-    window.addEventListener("beforeunload", handleBeforeUnload);
-    return () => window.removeEventListener("beforeunload", handleBeforeUnload);
-  }, [debouncedSave]);
 
   const notifyDirty = useCallback(() => {
     debouncedSave();
@@ -251,6 +110,9 @@ export function useEditorSave(
       getMarkdownOverride?: () => string,
     ): Promise<string | null> => {
       debouncedSave.cancel();
+      if (saveInFlightRef.current) {
+        await saveInFlightRef.current;
+      }
       const getMd = getMarkdownOverride ?? (() => getMarkdownRef.current());
       const md = await writeNoteAtPath(targetPath, getMd);
       if (md && targetPath === pathRef.current) {

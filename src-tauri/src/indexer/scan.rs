@@ -259,6 +259,8 @@ pub fn index_file_from_content(
 
     let _link_count = index_wiki_links(&tx, file_id, &parsed.body)?;
 
+    let _image_count = index_image_refs(&tx, file_id, &parsed.body)?;
+
     upsert_fts(&tx, &rel, &title, &parsed.body)?;
 
     let chunks = chunk_markdown(&parsed.body, 2000);

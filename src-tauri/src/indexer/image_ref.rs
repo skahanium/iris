@@ -70,6 +70,17 @@ mod tests {
     use super::*;
     use crate::storage::db::Database;
 
+    fn insert_source_file(conn: &Connection) -> AppResult<()> {
+        conn.execute(
+            "INSERT OR IGNORE INTO files
+                (id, path, title, content_hash, word_count, created_at, updated_at)
+             VALUES
+                (1, 'source.md', 'Source', 'hash', 0, datetime('now'), datetime('now'))",
+            [],
+        )?;
+        Ok(())
+    }
+
     #[test]
     fn extracts_simple_image() {
         let refs = extract_image_refs("![logo](assets/logo.png)");
@@ -109,7 +120,7 @@ mod tests {
         let db = Database::open_in_memory().unwrap();
         db.with_conn(|conn| {
             conn.execute(
-                "CREATE TABLE image_refs (
+                "CREATE TABLE IF NOT EXISTS image_refs (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     source_id INTEGER NOT NULL,
                     image_path TEXT NOT NULL,
@@ -118,6 +129,7 @@ mod tests {
                 )",
                 [],
             )?;
+            insert_source_file(conn)?;
 
             let count = index_image_refs(conn, 1, "![a](a.png) ![b](b.png)")?;
             assert_eq!(count, 2);
@@ -138,7 +150,7 @@ mod tests {
         let db = Database::open_in_memory().unwrap();
         db.with_conn(|conn| {
             conn.execute(
-                "CREATE TABLE image_refs (
+                "CREATE TABLE IF NOT EXISTS image_refs (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     source_id INTEGER NOT NULL,
                     image_path TEXT NOT NULL,
@@ -147,6 +159,7 @@ mod tests {
                 )",
                 [],
             )?;
+            insert_source_file(conn)?;
 
             index_image_refs(conn, 1, "![a](a.png)")?;
             let count = index_image_refs(conn, 1, "![b](b.png)")?;

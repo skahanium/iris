@@ -23,7 +23,6 @@ function Harness({
 }) {
   const api = useOpenNote({
     activePath,
-    markdown,
     editorContentTick,
     activePathRef: { current: activePath },
     markdownRef: { current: markdown },

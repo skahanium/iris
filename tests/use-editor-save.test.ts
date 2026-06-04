@@ -72,7 +72,14 @@ describe("useEditorSave", () => {
 
   beforeEach(() => {
     vi.useFakeTimers();
-    fileWrite.mockClear();
+    fileWrite.mockReset();
+    fileWrite.mockResolvedValue({
+      id: 0,
+      path: "note.md",
+      title: "note",
+      updated_at: "",
+      word_count: 1,
+    });
     versionSaveManual.mockClear();
     versionSaveIdle.mockClear();
     container = document.createElement("div");
@@ -217,5 +224,131 @@ describe("useEditorSave", () => {
     });
 
     expect(fileWrite).not.toHaveBeenCalled();
+  });
+
+  it("coalesces overlapping flushSave calls into the in-flight save loop", async () => {
+    const writes: Array<() => void> = [];
+    fileWrite.mockImplementation(
+      async () =>
+        new Promise((resolve) => {
+          writes.push(() =>
+            resolve({
+              id: 0,
+              path: "note.md",
+              title: "note",
+              updated_at: "",
+              word_count: 1,
+            }),
+          );
+        }),
+    );
+    const getMarkdown = vi
+      .fn()
+      .mockReturnValueOnce('---\ntitle: "x"\n---\n\nFirst body.')
+      .mockReturnValueOnce('---\ntitle: "x"\n---\n\nLatest body.')
+      .mockReturnValue('---\ntitle: "x"\n---\n\nUnexpected third body.');
+    let flushSave!: () => Promise<string | null>;
+
+    await act(async () => {
+      root.render(
+        createElement(TestHarness, {
+          getMarkdown,
+          onReady: (api) => {
+            flushSave = api.flushSave;
+          },
+        }),
+      );
+    });
+
+    const first = flushSave();
+    const second = flushSave();
+    expect(fileWrite).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      writes.shift()?.();
+      await Promise.resolve();
+    });
+    expect(fileWrite).toHaveBeenCalledTimes(2);
+
+    await act(async () => {
+      writes.shift()?.();
+      await Promise.resolve();
+    });
+    if (writes.length > 0) {
+      await act(async () => {
+        writes.shift()?.();
+        await Promise.resolve();
+      });
+    }
+    await act(async () => {
+      await first;
+      await second;
+    });
+
+    expect(fileWrite).toHaveBeenCalledTimes(2);
+    expect(fileWrite).toHaveBeenLastCalledWith(
+      "note.md",
+      '---\ntitle: "x"\n---\n\nLatest body.',
+    );
+  });
+
+  it("flushSaveForPath waits for an active in-flight save before writing a leaving path", async () => {
+    const writes: Array<() => void> = [];
+    fileWrite.mockImplementation(
+      async () =>
+        new Promise((resolve) => {
+          writes.push(() =>
+            resolve({
+              id: 0,
+              path: "note.md",
+              title: "note",
+              updated_at: "",
+              word_count: 1,
+            }),
+          );
+        }),
+    );
+    let flushSave!: () => Promise<string | null>;
+    let flushSaveForPath!: (
+      targetPath: string,
+      getMarkdownOverride?: () => string,
+    ) => Promise<string | null>;
+
+    await act(async () => {
+      root.render(
+        createElement(TestHarness, {
+          getMarkdown: () => '---\ntitle: "x"\n---\n\nActive body.',
+          onReady: (api) => {
+            flushSave = api.flushSave;
+            flushSaveForPath = api.flushSaveForPath;
+          },
+        }),
+      );
+    });
+
+    const active = flushSave();
+    const leaving = flushSaveForPath(
+      "leaving.md",
+      () => '---\ntitle: "leaving"\n---\n\nLeaving body.',
+    );
+    expect(fileWrite).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      writes.shift()?.();
+      await Promise.resolve();
+    });
+    expect(fileWrite).toHaveBeenCalledTimes(2);
+    expect(fileWrite).toHaveBeenLastCalledWith(
+      "leaving.md",
+      '---\ntitle: "leaving"\n---\n\nLeaving body.',
+    );
+
+    await act(async () => {
+      writes.shift()?.();
+      await active;
+      await leaving;
+    });
+
+    expect(fileWrite).toHaveBeenCalledTimes(2);
   });
 });

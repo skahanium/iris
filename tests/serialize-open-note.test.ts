@@ -43,10 +43,9 @@ describe("serializeOpenNote", () => {
     expect(md).toContain("tags: [x]");
   });
 
-  it("captures appended text when PM length stays near stale ref", () => {
+  it("serializes appended tail paragraphs from the live editor", () => {
     const bodyHtml = markdownBodyToEditorHtml("Alpha\n\nBeta");
     editor = bodyEditor(bodyHtml);
-    const baselineDocChars = editor.state.doc.textContent.length;
     editor.commands.insertContentAt(editor.state.doc.content.size, {
       type: "paragraph",
       content: [{ type: "text", text: "SAVE_MARKER" }],
@@ -56,32 +55,43 @@ describe("serializeOpenNote", () => {
       title: "t",
       editor,
       bodyFallbackMd: "Alpha\n\nBeta",
-      isDirty: true,
-      baselineDocChars,
     });
     expect(md).toContain("SAVE_MARKER");
   });
 
-  it("uses PM on clean save even when body fallback is shorter", () => {
-    const bodyHtml = markdownBodyToEditorHtml("Line one.\n\nLine two.");
+  it("serializes edited middle paragraphs from the live editor", () => {
+    const bodyHtml = markdownBodyToEditorHtml("Alpha\n\nBeta\n\nGamma");
     editor = bodyEditor(bodyHtml);
-    const pmOnly = serializeOpenNote({
+    editor.commands.setContent(
+      markdownBodyToEditorHtml("Alpha\n\nEdited Beta\n\nGamma"),
+      false,
+    );
+    const md = serializeOpenNote({
       yaml: null,
       title: "t",
       editor,
-      bodyFallbackMd: "Line one.\n\nLine two.",
-      isDirty: false,
-      baselineDocChars: editor.state.doc.textContent.length,
+      bodyFallbackMd: "Alpha\n\nBeta\n\nGamma",
     });
-    const dirtyHtml = serializeOpenNote({
+    expect(md).toContain("Edited Beta");
+    expect(md).not.toContain("\n\nBeta\n\n");
+  });
+
+  it("serializes deleted paragraphs from the live editor", () => {
+    const bodyHtml = markdownBodyToEditorHtml("Alpha\n\nBeta\n\nGamma");
+    editor = bodyEditor(bodyHtml);
+    editor.commands.setContent(
+      markdownBodyToEditorHtml("Alpha\n\nGamma"),
+      false,
+    );
+    const md = serializeOpenNote({
       yaml: null,
       title: "t",
       editor,
-      bodyFallbackMd: "Line one.\n\nLine two.",
-      isDirty: true,
-      baselineDocChars: 0,
+      bodyFallbackMd: "Alpha\n\nBeta\n\nGamma",
     });
-    expect(pmOnly).toBe(dirtyHtml);
+    expect(md).toContain("Alpha");
+    expect(md).toContain("Gamma");
+    expect(md).not.toContain("Beta");
   });
 
   it("uses bodyFallback when editor is null", () => {

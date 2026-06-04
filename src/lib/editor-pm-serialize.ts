@@ -69,16 +69,7 @@ const irisMarkdownSerializer = new MarkdownSerializer(
   {
     ...defaultMarkdownSerializer.nodes,
     paragraph(state, node, parent, index) {
-      if (isSpacerParagraph(node)) {
-        const gapCount =
-          typeof node.attrs.irisGapCount === "number" &&
-          node.attrs.irisGapCount > 0
-            ? node.attrs.irisGapCount
-            : 1;
-        if (gapCount > 1) {
-          state.write("\n".repeat((gapCount - 1) * 2));
-        }
-        state.closeBlock(node);
+      if (isSpacerParagraph(node) || node.childCount === 0) {
         return;
       }
       baseParagraphSerialize(state, node, parent, index);

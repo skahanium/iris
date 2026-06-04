@@ -12,14 +12,14 @@ vi.mock("@/lib/ipc", () => ({
 
 function IdleHarness({
   path,
-  getPersistedContent,
+  flushSave,
   onReady,
 }: {
   path: string | null;
-  getPersistedContent: () => string;
+  flushSave: () => Promise<string | null>;
   onReady: (api: { onActivity: () => void }) => void;
 }) {
-  const { onActivity } = useVersionIdle(path, getPersistedContent);
+  const { onActivity } = useVersionIdle(path, flushSave);
   onReady({ onActivity });
   return null;
 }
@@ -31,6 +31,7 @@ describe("useVersionIdle", () => {
   beforeEach(() => {
     vi.useFakeTimers();
     versionSaveIdle.mockClear();
+    delete (window as { requestIdleCallback?: unknown }).requestIdleCallback;
     container = document.createElement("div");
     document.body.appendChild(container);
     root = createRoot(container);
@@ -45,13 +46,13 @@ describe("useVersionIdle", () => {
   });
 
   it("does not save just because a note is open", async () => {
-    const getPersistedContent = vi.fn(() => "body");
+    const flushSave = vi.fn(async () => "body");
 
     await act(async () => {
       root.render(
         createElement(IdleHarness, {
           path: "note.md",
-          getPersistedContent,
+          flushSave,
           onReady: () => {},
         }),
       );
@@ -62,19 +63,19 @@ describe("useVersionIdle", () => {
       vi.runOnlyPendingTimers();
     });
 
-    expect(getPersistedContent).not.toHaveBeenCalled();
+    expect(flushSave).not.toHaveBeenCalled();
     expect(versionSaveIdle).not.toHaveBeenCalled();
   });
 
   it("fires versionSaveIdle after idle interval following activity", async () => {
     let onActivity!: () => void;
-    const getPersistedContent = vi.fn(() => "body");
+    const flushSave = vi.fn(async () => "body");
 
     await act(async () => {
       root.render(
         createElement(IdleHarness, {
           path: "note.md",
-          getPersistedContent,
+          flushSave,
           onReady: (api) => {
             onActivity = api.onActivity;
           },
@@ -91,22 +92,22 @@ describe("useVersionIdle", () => {
       vi.runOnlyPendingTimers();
     });
 
-    expect(getPersistedContent).toHaveBeenCalledTimes(1);
+    expect(flushSave).toHaveBeenCalledTimes(1);
     expect(versionSaveIdle).toHaveBeenCalledTimes(1);
     expect(versionSaveIdle).toHaveBeenCalledWith("note.md", "body");
   });
 
-  it("uses persisted markdown ref content, not live editor serialization", async () => {
+  it("uses the markdown returned by flushSave for idle snapshots", async () => {
     let onActivity!: () => void;
-    const getPersistedContent = vi.fn(
-      () => '---\ntitle: "x"\n---\n\nPersisted body text.',
+    const flushSave = vi.fn(
+      async () => '---\ntitle: "x"\n---\n\nFlushed body text.',
     );
 
     await act(async () => {
       root.render(
         createElement(IdleHarness, {
           path: "note.md",
-          getPersistedContent,
+          flushSave,
           onReady: (api) => {
             onActivity = api.onActivity;
           },
@@ -123,25 +124,25 @@ describe("useVersionIdle", () => {
       vi.runOnlyPendingTimers();
     });
 
-    expect(getPersistedContent).toHaveBeenCalled();
+    expect(flushSave).toHaveBeenCalled();
     expect(versionSaveIdle).toHaveBeenCalledTimes(1);
     expect(versionSaveIdle).toHaveBeenCalledWith(
       "note.md",
-      '---\ntitle: "x"\n---\n\nPersisted body text.',
+      '---\ntitle: "x"\n---\n\nFlushed body text.',
     );
   });
 
   it("resets idle timer on activity", async () => {
     let onActivity!: () => void;
-    const getPersistedContent = vi.fn(
-      () => '---\ntitle: "x"\n---\n\nPersisted body text.',
+    const flushSave = vi.fn(
+      async () => '---\ntitle: "x"\n---\n\nPersisted body text.',
     );
 
     await act(async () => {
       root.render(
         createElement(IdleHarness, {
           path: "note.md",
-          getPersistedContent,
+          flushSave,
           onReady: (api) => {
             onActivity = api.onActivity;
           },
@@ -173,12 +174,12 @@ describe("useVersionIdle", () => {
     });
 
     expect(versionSaveIdle).toHaveBeenCalledTimes(1);
-    expect(getPersistedContent).toHaveBeenCalled();
+    expect(flushSave).toHaveBeenCalled();
   });
 
   it("defers snapshot until the browser idle callback runs", async () => {
     let onActivity!: () => void;
-    const getPersistedContent = vi.fn(() => "body");
+    const flushSave = vi.fn(async () => "body");
     let idleCallback: IdleRequestCallback | null = null;
     const requestIdleCallback = vi.fn((cb: IdleRequestCallback) => {
       idleCallback = cb;
@@ -190,7 +191,7 @@ describe("useVersionIdle", () => {
       root.render(
         createElement(IdleHarness, {
           path: "note.md",
-          getPersistedContent,
+          flushSave,
           onReady: (api) => {
             onActivity = api.onActivity;
           },
@@ -207,7 +208,7 @@ describe("useVersionIdle", () => {
     });
 
     expect(requestIdleCallback).toHaveBeenCalledTimes(1);
-    expect(getPersistedContent).not.toHaveBeenCalled();
+    expect(flushSave).not.toHaveBeenCalled();
     expect(versionSaveIdle).not.toHaveBeenCalled();
 
     await act(async () => {
@@ -217,20 +218,20 @@ describe("useVersionIdle", () => {
       });
     });
 
-    expect(getPersistedContent).toHaveBeenCalledTimes(1);
+    expect(flushSave).toHaveBeenCalledTimes(1);
     expect(versionSaveIdle).toHaveBeenCalledWith("note.md", "body");
   });
 
   it("changing path cancels pending idle saves without scheduling a new one", async () => {
     let onActivity!: () => void;
-    const firstContent = vi.fn(() => "first");
-    const secondContent = vi.fn(() => "second");
+    const firstFlush = vi.fn(async () => "first");
+    const secondFlush = vi.fn(async () => "second");
 
     await act(async () => {
       root.render(
         createElement(IdleHarness, {
           path: "first.md",
-          getPersistedContent: firstContent,
+          flushSave: firstFlush,
           onReady: (api) => {
             onActivity = api.onActivity;
           },
@@ -247,7 +248,7 @@ describe("useVersionIdle", () => {
       root.render(
         createElement(IdleHarness, {
           path: "second.md",
-          getPersistedContent: secondContent,
+          flushSave: secondFlush,
           onReady: (api) => {
             onActivity = api.onActivity;
           },
@@ -260,8 +261,8 @@ describe("useVersionIdle", () => {
       vi.runOnlyPendingTimers();
     });
 
-    expect(firstContent).not.toHaveBeenCalled();
-    expect(secondContent).not.toHaveBeenCalled();
+    expect(firstFlush).not.toHaveBeenCalled();
+    expect(secondFlush).not.toHaveBeenCalled();
     expect(versionSaveIdle).not.toHaveBeenCalled();
   });
 
@@ -272,7 +273,7 @@ describe("useVersionIdle", () => {
       root.render(
         createElement(IdleHarness, {
           path: "note.md",
-          getPersistedContent: () => "",
+          flushSave: async () => "",
           onReady: (api) => {
             onActivity = api.onActivity;
           },

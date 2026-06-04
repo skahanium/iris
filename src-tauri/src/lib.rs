@@ -3,7 +3,6 @@ pub mod app;
 pub mod cas;
 mod chrome_metrics;
 mod commands;
-mod debug_session_log;
 mod credentials;
 pub mod embedding;
 pub mod error;
@@ -89,7 +88,6 @@ pub fn run() {
             commands::settings::credential_has,
             commands::settings::credential_delete,
             commands::file::file_list,
-            commands::file::debug_session_log,
             commands::file::file_read,
             commands::file::file_write,
             commands::file::vault_asset_write,

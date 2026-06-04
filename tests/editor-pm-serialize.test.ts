@@ -115,6 +115,43 @@ describe("editorDocToMarkdown (prosemirror-markdown hot path)", () => {
     }
   });
 
+  it("serializes newly appended paragraphs without amplifying blank lines", () => {
+    const editor = createProductionEditorFromIngestedBody("Alpha\n\nBeta");
+    try {
+      editor.commands.insertContentAt(editor.state.doc.content.size, {
+        type: "paragraph",
+        content: [{ type: "text", text: "Gamma" }],
+      });
+
+      const md = normalizeMd(pmSerializeBody(editor));
+      expect(md).toContain("Alpha");
+      expect(md).toContain("Beta");
+      expect(md).toContain("Gamma");
+      expect(md).not.toMatch(/\n{4,}/);
+    } finally {
+      editor.destroy();
+    }
+  });
+
+  it("ignores plain empty paragraphs on save", () => {
+    const editor = createProductionEditorFromIngestedBody("Alpha");
+    try {
+      editor.commands.insertContentAt(editor.state.doc.content.size, {
+        type: "doc",
+        content: [
+          { type: "paragraph" },
+          { type: "paragraph", content: [{ type: "text", text: "Beta" }] },
+        ],
+      });
+
+      const md = normalizeMd(pmSerializeBody(editor));
+      expect(md).toBe("Alpha\n\nBeta");
+      expect(md).not.toMatch(/\n{4,}/);
+    } finally {
+      editor.destroy();
+    }
+  });
+
   it("falls back to Turndown when prosemirror-markdown throws", () => {
     const serializeSpy = vi
       .spyOn(MarkdownSerializer.prototype, "serialize")

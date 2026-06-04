@@ -46,7 +46,6 @@ import {
   readingMinutes,
 } from "@/lib/reading-time";
 
-import { debugSessionLog } from "@/lib/ipc";
 import { isTauriRuntime } from "@/lib/tauri-runtime";
 import { cn } from "@/lib/utils";
 
@@ -173,7 +172,6 @@ function TipTapEditorInner({
   onBodyStatsChangeRef.current = onBodyStatsChange;
 
   const editorRef = useRef<Editor | null>(null);
-  const onUpdateLogRef = useRef<{ docChars: number } | null>(null);
 
   const onSlashCommandRef = useRef(onSlashCommand);
 
@@ -371,27 +369,6 @@ function TipTapEditorInner({
 
     onUpdate: ({ editor: updatedEditor }) => {
       onDirtyRef.current?.();
-
-      // #region agent log
-      if (isTauriRuntime()) {
-        const docChars = updatedEditor.state.doc.textContent.length;
-        const prev = onUpdateLogRef.current?.docChars;
-        if (prev !== undefined && prev !== docChars) {
-          void debugSessionLog({
-            location: "TipTapEditor.tsx:onUpdate",
-            message: "docChanged",
-            hypothesisId: "H6",
-            runId: "post-fix-v5",
-            data: {
-              path: contentCacheKeyRef.current,
-              docChars,
-              delta: docChars - prev,
-            },
-          });
-        }
-        onUpdateLogRef.current = { docChars };
-      }
-      // #endregion
 
       scheduleBodyStats(updatedEditor);
 

@@ -27,17 +27,27 @@ export function useTabManager(options: UseTabManagerOptions = {}) {
 
   const [tabs, setTabs] = useState<TabItem[]>([]);
   const [activePath, setActivePath] = useState<string | null>(null);
-  const [markdown, setMarkdown] = useState("");
+  const [markdown, setMarkdownState] = useState("");
   /** Incremented when disk content is loaded into tab state (not on editor save). */
   const [editorContentTick, setEditorContentTick] = useState(0);
   const activePathRef = useRef<string | null>(null);
   const markdownRef = useRef("");
   const frontmatterYamlRef = useRef<string | null>(null);
   const tabsRef = useRef(tabs);
+  const openFileSeqRef = useRef(0);
+  const tabMarkdownCacheRef = useRef(new Map<string, string>());
 
   activePathRef.current = activePath;
-  markdownRef.current = markdown;
   tabsRef.current = tabs;
+
+  const setMarkdown = useCallback((md: string) => {
+    markdownRef.current = md;
+    const path = activePathRef.current;
+    if (path) {
+      tabMarkdownCacheRef.current.set(path, md);
+    }
+    setMarkdownState(md);
+  }, []);
 
   const getEditorMarkdown = useCallback(() => markdownRef.current, []);
 
@@ -47,7 +57,7 @@ export function useTabManager(options: UseTabManagerOptions = {}) {
     frontmatterYamlRef.current = null;
     setActivePath(null);
     setMarkdown("");
-  }, []);
+  }, [setMarkdown]);
 
   const cacheTabMarkdown = useCallback((path: string, md: string) => {
     tabMarkdownCacheRef.current.set(path, md);
@@ -87,9 +97,6 @@ export function useTabManager(options: UseTabManagerOptions = {}) {
     [onVaultIndexBump],
   );
 
-  const openFileSeqRef = useRef(0);
-  const tabMarkdownCacheRef = useRef(new Map<string, string>());
-
   const openFile = useCallback(
     async (
       path: string,
@@ -111,30 +118,6 @@ export function useTabManager(options: UseTabManagerOptions = {}) {
       }
       try {
         const content = await fileRead(path);
-        // #region agent log
-        fetch(
-          "http://127.0.0.1:7413/ingest/3336dc9b-75d7-44cd-8238-25a3e4a38bb9",
-          {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              "X-Debug-Session-Id": "8589f0",
-            },
-            body: JSON.stringify({
-              sessionId: "8589f0",
-              location: "useTabManager.ts:openFile",
-              message: "fileRead from disk",
-              data: {
-                path,
-                contentLen: content.length,
-                preview: content.slice(0, 80),
-              },
-              timestamp: Date.now(),
-              hypothesisId: "H5",
-            }),
-          },
-        ).catch(() => {});
-        // #endregion
         if (openFileSeqRef.current !== seq) return;
         frontmatterYamlRef.current = extractFrontmatterYaml(content);
         const fromMarkdown = displayTitleFromMarkdown(content, "");
@@ -147,11 +130,10 @@ export function useTabManager(options: UseTabManagerOptions = {}) {
         });
         clearCachedEditorHtml(path);
         tabMarkdownCacheRef.current.set(path, content);
-        setMarkdown(content);
-        markdownRef.current = content;
-        setEditorContentTick((t) => t + 1);
         activePathRef.current = path;
         setActivePath(path);
+        setMarkdown(content);
+        setEditorContentTick((t) => t + 1);
         setTabs((prev) => {
           if (prev.some((t) => t.path === path)) {
             return prev.map((t) =>
@@ -167,7 +149,13 @@ export function useTabManager(options: UseTabManagerOptions = {}) {
         onVaultIndexBump?.();
       }
     },
-    [maybeDiscardOnLeave, onStatusChange, onVaultIndexBump, persistAndCacheTab],
+    [
+      maybeDiscardOnLeave,
+      onStatusChange,
+      onVaultIndexBump,
+      persistAndCacheTab,
+      setMarkdown,
+    ],
   );
 
   /** Switch to an already-open tab without re-reading disk when session cache exists. */
@@ -187,18 +175,17 @@ export function useTabManager(options: UseTabManagerOptions = {}) {
       const cached = tabMarkdownCacheRef.current.get(path);
       if (cached) {
         clearCachedEditorHtml(path);
-        markdownRef.current = cached;
+        activePathRef.current = path;
+        setActivePath(path);
         frontmatterYamlRef.current = extractFrontmatterYaml(cached);
         setMarkdown(cached);
         setEditorContentTick((t) => t + 1);
-        activePathRef.current = path;
-        setActivePath(path);
         return;
       }
 
       await openFile(path, undefined, { skipDiscardPrevious: true });
     },
-    [openFile, persistAndCacheTab],
+    [openFile, persistAndCacheTab, setMarkdown],
   );
 
   /** Open a note from the vault UI: reuse tab session when already open. */
@@ -313,12 +300,12 @@ export function useTabManager(options: UseTabManagerOptions = {}) {
       );
       if (activePathRef.current === oldPath) {
         // 路径变更会 remount 编辑器（key=path），须先同步内存正文避免从陈旧 state 恢复
-        setMarkdown(markdownRef.current);
         activePathRef.current = newPath;
         setActivePath(newPath);
+        setMarkdown(markdownRef.current);
       }
     },
-    [],
+    [setMarkdown],
   );
 
   const syncTabMarkdownCache = useCallback((path: string, markdown: string) => {

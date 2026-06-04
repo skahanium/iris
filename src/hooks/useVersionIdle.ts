@@ -16,19 +16,19 @@ function runWhenIdle(fn: () => void): void {
 
 /**
  * After `VERSION_IDLE_MS` without `onActivity`, enqueues an `auto_idle` snapshot
- * using the last layer-1 persisted markdown (no editor re-serialization).
+ * after flushing layer-1 persistence and reusing the exact markdown that was written.
  *
  * Only schedules after the first `onActivity()` call — opening a note without
  * editing will never trigger an idle snapshot.
  */
 export function useVersionIdle(
   path: string | null,
-  getPersistedContent: () => string,
+  flushSave: () => Promise<string | null>,
 ) {
   const pathRef = useRef(path);
-  const getPersistedContentRef = useRef(getPersistedContent);
+  const flushSaveRef = useRef(flushSave);
   pathRef.current = path;
-  getPersistedContentRef.current = getPersistedContent;
+  flushSaveRef.current = flushSave;
 
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -51,9 +51,15 @@ export function useVersionIdle(
       const target = pathRef.current;
       if (!target) return;
       runWhenIdle(() => {
-        const content = getPersistedContentRef.current();
-        if (isNoteSubstantivelyEmpty(content)) return;
-        void versionSaveIdle(target, content);
+        void flushSaveRef
+          .current()
+          .then((content) => {
+            if (!content || isNoteSubstantivelyEmpty(content)) return;
+            void versionSaveIdle(target, content);
+          })
+          .catch((err: unknown) => {
+            console.warn("idle version save skipped after flush failure", err);
+          });
       });
     }, VERSION_IDLE_MS);
   }, [clearTimer]);

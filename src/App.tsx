@@ -46,6 +46,7 @@ import { useEditorContextMenu } from "@/hooks/useEditorContextMenu";
 import { useAutoVaultIndex } from "@/hooks/useAutoVaultIndex";
 import { useEditorSave } from "@/hooks/useEditorSave";
 import { useOpenNote } from "@/hooks/useOpenNote";
+import { useTauriCloseSave } from "@/hooks/useTauriCloseSave";
 import { useEditorZoom } from "@/hooks/useEditorZoom";
 import { useInlineAi } from "@/hooks/useInlineAi";
 import { useConnectivityStatus } from "@/hooks/useConnectivityStatus";
@@ -272,16 +273,13 @@ function App() {
     onTitleBlur,
     schedulePathSync,
     loadBodyIntoEditor,
-    captureBaselineDocChars,
   } = useOpenNote({
     activePath,
-    markdown,
     editorContentTick,
     activePathRef,
     markdownRef,
     frontmatterYamlRef,
     editorRef,
-    dirtyRef,
     updateTabTitle,
     replaceOpenTabPath,
   });
@@ -293,7 +291,6 @@ function App() {
     () => getLiveMarkdownRef.current(),
     (md) => {
       applySavedMarkdown(md);
-      captureBaselineDocChars();
       dirtyRef.current = false;
       const path = activePathRef.current;
       if (path) {
@@ -309,62 +306,9 @@ function App() {
 
   persistBeforeLeaveRef.current = async (path: string) => {
     const tab = tabsRef.current.find((t) => t.path === path);
-    const isActive = path === activePathRef.current;
-    const dirty = dirtyRef.current;
-    // #region agent log
-    fetch("http://127.0.0.1:7413/ingest/3336dc9b-75d7-44cd-8238-25a3e4a38bb9", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-Debug-Session-Id": "8589f0",
-      },
-      body: JSON.stringify({
-        sessionId: "8589f0",
-        location: "App.tsx:persistBeforeLeave",
-        message: "persistBeforeLeave entry",
-        data: {
-          path,
-          isActive,
-          dirty,
-          tabDirty: tab?.dirty ?? null,
-        },
-        timestamp: Date.now(),
-        hypothesisId: "H1",
-      }),
-    }).catch(() => {});
-    // #endregion
     if (path === activePathRef.current) {
       await waitForEditorRef(editorRef);
       const snapshot = getLiveMarkdownRef.current();
-      const refMd = markdownRef.current;
-      const staleRef = snapshot !== refMd;
-      // #region agent log
-      fetch(
-        "http://127.0.0.1:7413/ingest/3336dc9b-75d7-44cd-8238-25a3e4a38bb9",
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "X-Debug-Session-Id": "8589f0",
-          },
-          body: JSON.stringify({
-            sessionId: "8589f0",
-            location: "App.tsx:persistBeforeLeave",
-            message: "active tab flushSave",
-            data: {
-              path,
-              dirty: dirtyRef.current,
-              staleRef,
-              snapshotLen: snapshot.length,
-              refLen: refMd.length,
-            },
-            timestamp: Date.now(),
-            hypothesisId: "H1",
-            runId: "post-fix-v2",
-          }),
-        },
-      ).catch(() => {});
-      // #endregion
       const md = await flushSaveForPath(path, () => snapshot);
       if (md) {
         dirtyRef.current = false;
@@ -390,9 +334,23 @@ function App() {
     return cached;
   };
 
-  const { onActivity: resetVersionIdle } = useVersionIdle(
-    activePath,
-    () => markdownRef.current,
+  const flushAllOpenTabs = useCallback(async () => {
+    const paths = tabsRef.current.map((tab) => tab.path);
+    for (const path of paths) {
+      await persistBeforeLeaveRef.current(path);
+    }
+  }, []);
+
+  useTauriCloseSave({
+    enabled: Boolean(vaultPath),
+    flushBeforeClose: flushAllOpenTabs,
+    onError: (message) => {
+      setAiStatus(`关闭前保存失败：${message}`);
+    },
+  });
+
+  const { onActivity: resetVersionIdle } = useVersionIdle(activePath, () =>
+    flushSave(),
   );
 
   useEffect(() => {
@@ -479,30 +437,10 @@ function App() {
     if (!dirtyRef.current) {
       dirtyRef.current = true;
       markDirty();
-      // #region agent log
-      fetch(
-        "http://127.0.0.1:7413/ingest/3336dc9b-75d7-44cd-8238-25a3e4a38bb9",
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "X-Debug-Session-Id": "8589f0",
-          },
-          body: JSON.stringify({
-            sessionId: "8589f0",
-            location: "App.tsx:handleDirty",
-            message: "marked dirty",
-            data: { path: activePathRef.current },
-            timestamp: Date.now(),
-            hypothesisId: "H1",
-          }),
-        },
-      ).catch(() => {});
-      // #endregion
     }
     notifyDirty();
     resetVersionIdle();
-  }, [notifyDirty, resetVersionIdle, markDirty, activePathRef]);
+  }, [notifyDirty, resetVersionIdle, markDirty]);
 
   const handleTitleChange = useCallback(
     (raw: string) => {
@@ -611,7 +549,6 @@ function App() {
 
       setEditorInstance(ed);
       updateUndoRedoState(ed);
-      captureBaselineDocChars();
 
       const handleTransaction = ({
         editor: currentEditor,
@@ -629,7 +566,7 @@ function App() {
         ed.off("transaction", handleTransaction);
       };
     },
-    [captureBaselineDocChars, clearEditorTransactionListener, updateUndoRedoState],
+    [clearEditorTransactionListener, updateUndoRedoState],
   );
 
   const editorTitleSlot = useMemo(
