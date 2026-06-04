@@ -4,7 +4,8 @@ use std::path::{Component, Path, PathBuf};
 
 use crate::credentials::MINIMAX_CREDENTIAL_SERVICE;
 use crate::error::{AppError, AppResult};
-use crate::llm::config::SETTINGS_KEY;
+
+const LLM_ROUTING_SETTINGS_KEY: &str = "llm_routing";
 
 /// Cross-platform user home directory.
 /// On Unix: uses `HOME`, on Windows: falls back to `USERPROFILE`.
@@ -22,7 +23,7 @@ fn user_home_dir() -> Option<PathBuf> {
 /// Settings keys writable via generic `settings_set` IPC.
 const ALLOWED_SETTINGS_KEYS: &[&str] = &[
     "vault_path",
-    SETTINGS_KEY,
+    LLM_ROUTING_SETTINGS_KEY,
     "llm_custom_base_url",
     "llm_base_url",
     "llm_usage_last",

@@ -4,7 +4,7 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
-use crate::ai_runtime::AiScene;
+use crate::ai_types::AiScene;
 use crate::error::{AppError, AppResult};
 
 /// Relative path inside the vault for corpus configuration.

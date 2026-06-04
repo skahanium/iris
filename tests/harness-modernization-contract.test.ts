@@ -24,7 +24,7 @@ describe("harness modernization remaining contracts", () => {
   });
 
   it("tool confirmation pauses at a single pending tool call before dispatching later calls", () => {
-    const run = read("src-tauri/src/ai_runtime/harness/run.rs");
+    const run = read("src-tauri/src/ai_harness/harness/run.rs");
     expect(run).toContain("first_pending_confirmation_call");
     expect(run).toContain("pause_for_tool_confirmation");
     expect(run.indexOf("pause_for_tool_confirmation")).toBeLessThan(

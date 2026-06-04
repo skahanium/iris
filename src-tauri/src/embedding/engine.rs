@@ -3,6 +3,7 @@ use std::sync::Mutex;
 use fastembed::{EmbeddingModel, InitOptions, TextEmbedding};
 use rusqlite::Connection;
 
+use crate::ai_types::EmbedBackend;
 use crate::error::{AppError, AppResult};
 use crate::storage::db;
 
@@ -50,6 +51,19 @@ pub fn embed_texts_batch(texts: &[&str]) -> AppResult<Vec<Vec<f32>>> {
     model
         .embed(texts.to_vec(), None)
         .map_err(|e| AppError::Embed(e.to_string()))
+}
+
+/// Concrete [`EmbedBackend`] using the fastembed `AllMiniLML6V2` model.
+pub struct FastEmbedBackend;
+
+impl EmbedBackend for FastEmbedBackend {
+    fn embed(&self, text: &str) -> Result<Vec<f32>, String> {
+        embed_text(text).map_err(|e| e.to_string())
+    }
+
+    fn embed_batch(&self, texts: &[&str]) -> Result<Vec<Vec<f32>>, String> {
+        embed_texts_batch(texts).map_err(|e| e.to_string())
+    }
 }
 
 /// Cosine similarity between two vectors.

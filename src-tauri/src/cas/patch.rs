@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::ai_runtime::PatchProposal;
+use crate::ai_types::PatchProposal;
 use crate::error::AppResult;
 
 /// 补丁应用结果
@@ -105,7 +105,7 @@ fn validate_patch_content(patch: &PatchProposal, current_content: &str) -> AppRe
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ai_runtime::{PatchProposal, RiskLevel, SourceSpan};
+    use crate::ai_types::{PatchProposal, RiskLevel, SourceSpan};
     use crate::cas::hash::content_hash_str;
     use crate::cas::store::CasObjectStore;
     use crate::cas::write_guard::WriteGuard;

@@ -2,9 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::ai_runtime::model_gateway::{ModelGateway, ProviderConfig};
-use crate::ai_runtime::scene_router::resolve_scene;
-use crate::ai_runtime::AiScene;
+use crate::ai_types::{resolve_scene, slot_for_scene, AiScene, ProviderConfig};
 use crate::credentials;
 use crate::error::{AppError, AppResult};
 use crate::llm::model_catalog::{fallback_model, find_model};
@@ -58,12 +56,7 @@ pub struct SceneRoute {
     pub thinking: bool,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ContextStrategy {
-    Hybrid,
-    LongContext,
-}
+pub use crate::ai_types::ContextStrategy;
 
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -423,7 +416,7 @@ impl ResolvedLlmConfig {
             base_url: self.base_url.clone(),
             api_key: self.api_key.clone(),
             model: self.model.clone(),
-            slot: ModelGateway::slot_for_scene(scene),
+            slot: slot_for_scene(scene),
         }
     }
 }

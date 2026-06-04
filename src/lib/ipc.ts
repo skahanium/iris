@@ -2,22 +2,37 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 
 import type {
+  AiScene,
+  AiSendMessageResult,
+  AssembledContext,
   AssistantExecuteRequest,
   AssistantExecuteResponse,
+  ChapterInfo,
+  ChapterWritingExecuteResult,
+  CitationCheckResult,
+  ContextPacket,
+  ContextScope,
+  DocumentCheckResult,
+  OrganizeExecuteResult,
+  ResearchExecuteResult,
+  ResearchProgressEvent,
+  WritingExecuteResult,
 } from "@/types/ai";
 import type {
+  AiCacheClearResult,
   BacklinkEntry,
   FileChangedEvent,
   FileEntry,
   FileListItem,
-  RecycleBinItem,
   GraphData,
+  InboxItem,
   KeywordHit,
   LlmGenerateParams,
   LlmProviderInfo,
   LlmTokenEvent,
+  ProfileEntry,
+  RecycleBinItem,
   SemanticHit,
-  AiCacheClearResult,
   SessionMessageRecord,
   SessionSummary,
   TagGroup,
@@ -366,12 +381,6 @@ export async function listenAiRequestStarted(
 
 // ─── AI Runtime IPC ───
 
-import type {
-  AiScene,
-  AssembledContext,
-  ContextPacket,
-  ContextScope,
-} from "@/types/ai";
 import type { CorpusListItem } from "@/types/ipc";
 
 export async function corpusList(): Promise<CorpusListItem[]> {
@@ -569,29 +578,8 @@ export async function aiSendMessage(params: {
   context_scope?: ContextScope | null;
   /** 为 true 时在发送前注入 MiniMax / DuckDuckGo 网页检索摘要 */
   web_search?: boolean;
-}): Promise<{
-  request_id: string;
-  session_id: number;
-  status: string;
-  content?: string;
-  tool_calls?: Array<{
-    id: string;
-    function: { name: string; arguments: string };
-  }>;
-  tool_results?: Array<{
-    tool_call_id: string;
-    status: string;
-    result?: unknown;
-  }>;
-  usage?: {
-    prompt_tokens: number;
-    completion_tokens: number;
-    total_tokens: number;
-  };
-  citation_valid?: boolean;
-  harness_rounds?: number;
-}> {
-  return invoke("ai_send_message", {
+}): Promise<AiSendMessageResult> {
+  return invoke<AiSendMessageResult>("ai_send_message", {
     scene: params.scene,
     sessionId: params.session_id,
     message: params.message,
@@ -655,40 +643,8 @@ export async function searchHybrid(params: {
 export async function researchExecute(params: {
   topic: string;
   web_authorized?: boolean;
-}): Promise<{
-  request_id: string;
-  topic: string;
-  rounds: number;
-  evidence_matrix: {
-    topic: string;
-    propositions: Array<{
-      id: string;
-      statement: string;
-      evidence: ContextPacket[];
-      gaps: string[];
-    }>;
-    global_gaps: string[];
-    total_evidence_count: number;
-    coverage_score: number;
-  };
-  argument_chain: {
-    links: Array<{
-      from_proposition_id: string;
-      to_proposition_id: string;
-      link_type: string;
-      strength: number;
-    }>;
-    has_contradictions: boolean;
-    chain_strength: number;
-  };
-  summary: string;
-  total_tokens: {
-    prompt_tokens: number;
-    completion_tokens: number;
-    total_tokens: number;
-  };
-}> {
-  return invoke("research_execute", {
+}): Promise<ResearchExecuteResult> {
+  return invoke<ResearchExecuteResult>("research_execute", {
     topic: params.topic,
     webAuthorized: params.web_authorized ?? false,
   });
@@ -736,35 +692,12 @@ export async function researchGenerateNote(params: {
 }
 
 export async function listenResearchProgress(
-  handler: (payload: {
-    request_id: string;
-    topic: string;
-    state: string;
-    current_round: number;
-    max_rounds: number;
-    queries_executed: string[];
-    new_evidence_count: number;
-    total_evidence_count: number;
-    tokens_used: number;
-    token_budget: number;
-    progress_pct: number;
-    round_terminated_early: boolean;
-  }) => void,
+  handler: (payload: ResearchProgressEvent) => void,
 ): Promise<() => void> {
-  return listen<{
-    request_id: string;
-    topic: string;
-    state: string;
-    current_round: number;
-    max_rounds: number;
-    queries_executed: string[];
-    new_evidence_count: number;
-    total_evidence_count: number;
-    tokens_used: number;
-    token_budget: number;
-    progress_pct: number;
-    round_terminated_early: boolean;
-  }>("ai:research_progress", (e) => handler(e.payload));
+  return listen<ResearchProgressEvent>(
+    "ai:research_progress",
+    (e) => handler(e.payload),
+  );
 }
 
 // ─── Writing Workflow IPC (Phase 1) ───
@@ -776,34 +709,8 @@ export async function writingExecute(params: {
   cursor_context: string;
   writing_goal: string;
   web_authorized?: boolean;
-}): Promise<{
-  request_id: string;
-  suggestions: Array<{
-    id: string;
-    intent: string;
-    explanation: string;
-    confidence: number;
-  }>;
-  patches: Array<{
-    id: string;
-    target_path: string;
-    base_content_hash: string;
-    range: { start: number; end: number };
-    original_text: string;
-    replacement_text: string;
-    evidence_packet_ids: string[];
-    risk_level: string;
-    warnings: string[];
-    created_at: string;
-  }>;
-  evidence_used: ContextPacket[];
-  total_tokens: {
-    prompt_tokens: number;
-    completion_tokens: number;
-    total_tokens: number;
-  };
-}> {
-  return invoke("writing_execute", {
+}): Promise<WritingExecuteResult> {
+  return invoke<WritingExecuteResult>("writing_execute", {
     input: {
       target_path: params.target_path,
       base_content_hash: params.base_content_hash,
@@ -846,30 +753,8 @@ export async function citationCheck(params: {
     corpusIds?: string[];
   };
   web_authorized?: boolean;
-}): Promise<{
-  request_id: string;
-  claims: Array<{
-    id: string;
-    statement: string;
-    has_support: boolean;
-    supporting_evidence: string[];
-    conflicting_evidence: string[];
-  }>;
-  coverage: string;
-  suggestions: Array<{
-    claim_id: string;
-    action: string;
-    suggested_citation?: string;
-    explanation: string;
-  }>;
-  evidence_used: ContextPacket[];
-  total_tokens: {
-    prompt_tokens: number;
-    completion_tokens: number;
-    total_tokens: number;
-  };
-}> {
-  return invoke("citation_check", {
+}): Promise<CitationCheckResult> {
+  return invoke<CitationCheckResult>("citation_check", {
     input: {
       paragraph_text: params.paragraph_text,
       document_path: params.document_path,
@@ -888,32 +773,8 @@ export async function organizeExecute(params: {
     corpus_ids?: string[];
   };
   task_type: string;
-}): Promise<{
-  request_id: string;
-  batch: {
-    id: string;
-    title: string;
-    description: string;
-    suggestions: Array<{
-      id: string;
-      suggestion_type: string;
-      target_path: string;
-      current_value?: string;
-      suggested_value: string;
-      reason: string;
-      source: string;
-      confidence: number;
-      evidence_packet_ids: string[];
-    }>;
-    created_at: string;
-  };
-  total_tokens: {
-    prompt_tokens: number;
-    completion_tokens: number;
-    total_tokens: number;
-  };
-}> {
-  return invoke("organize_execute", {
+}): Promise<OrganizeExecuteResult> {
+  return invoke<OrganizeExecuteResult>("organize_execute", {
     input: {
       scope: params.scope ?? null,
       task_type: params.task_type,
@@ -946,44 +807,11 @@ export async function organizeApply(
 export async function chapterWritingExecute(params: {
   target_path: string;
   base_content_hash: string;
-  chapter: {
-    heading_level: number;
-    heading_text: string;
-    content_start: number;
-    content_end: number;
-    content: string;
-    heading_path: string;
-  };
+  chapter: ChapterInfo;
   writing_goal: string;
   web_authorized?: boolean;
-}): Promise<{
-  request_id: string;
-  suggestions: Array<{
-    id: string;
-    intent: string;
-    explanation: string;
-    confidence: number;
-  }>;
-  patches: Array<{
-    id: string;
-    target_path: string;
-    base_content_hash: string;
-    range: { start: number; end: number };
-    original_text: string;
-    replacement_text: string;
-    evidence_packet_ids: string[];
-    risk_level: string;
-    warnings: string[];
-    created_at: string;
-  }>;
-  evidence_used: ContextPacket[];
-  total_tokens: {
-    prompt_tokens: number;
-    completion_tokens: number;
-    total_tokens: number;
-  };
-}> {
-  return invoke("chapter_writing_execute", {
+}): Promise<ChapterWritingExecuteResult> {
+  return invoke<ChapterWritingExecuteResult>("chapter_writing_execute", {
     input: {
       target_path: params.target_path,
       base_content_hash: params.base_content_hash,
@@ -1000,85 +828,8 @@ export async function documentCheckExecute(params: {
   base_content_hash?: string;
   check_type: string;
   web_authorized?: boolean;
-}): Promise<{
-  request_id: string;
-  check_type: string;
-  outline_result?: {
-    issues: Array<{
-      issue_type: string;
-      heading_path: string;
-      description: string;
-      severity: string;
-      position: number;
-    }>;
-    suggestions: Array<{
-      suggestion: string;
-      position: number;
-      requires_patch: boolean;
-    }>;
-    outline_entries: Array<{
-      level: number;
-      text: string;
-      position: number;
-      word_count: number;
-    }>;
-  };
-  citation_gap_result?: {
-    uncited_claims: Array<{
-      id: string;
-      statement: string;
-      has_support: boolean;
-      supporting_evidence: string[];
-      conflicting_evidence: string[];
-    }>;
-    weak_citations: Array<{
-      claim: string;
-      current_citation: string;
-      reason: string;
-      suggested_citation?: string;
-    }>;
-    suggestions: Array<{
-      claim_id: string;
-      action: string;
-      suggested_citation?: string;
-      explanation: string;
-    }>;
-  };
-  style_result?: {
-    inconsistencies: Array<{
-      inconsistency_type: string;
-      location: string;
-      description: string;
-      examples: string[];
-    }>;
-    suggestions: Array<{
-      suggestion: string;
-      locations: string[];
-      requires_patch: boolean;
-    }>;
-    consistency_score: number;
-  };
-  patches: Array<{
-    id: string;
-    target_path: string;
-    base_content_hash: string;
-    range: { start: number; end: number };
-    original_text: string;
-    replacement_text: string;
-    evidence_packet_ids: string[];
-    risk_level: string;
-    warnings: string[];
-    created_at: string;
-  }>;
-  evidence_used: ContextPacket[];
-  total_tokens: {
-    prompt_tokens: number;
-    completion_tokens: number;
-    total_tokens: number;
-  };
-  analysis_summary?: string | null;
-}> {
-  return invoke("document_check_execute", {
+}): Promise<DocumentCheckResult> {
+  return invoke<DocumentCheckResult>("document_check_execute", {
     input: {
       target_path: params.target_path,
       content: params.content,
@@ -1089,47 +840,26 @@ export async function documentCheckExecute(params: {
   });
 }
 
-export async function parseDocumentChapters(content: string): Promise<
-  Array<{
-    heading_level: number;
-    heading_text: string;
-    content_start: number;
-    content_end: number;
-    content: string;
-    heading_path: string;
-  }>
-> {
-  return invoke("parse_document_chapters", { content });
+export async function parseDocumentChapters(
+  content: string,
+): Promise<ChapterInfo[]> {
+  return invoke<ChapterInfo[]>("parse_document_chapters", { content });
 }
 
 // ─── Personalization IPC (E) ───
 
 export async function profileList(params: {
   include_inactive?: boolean;
-}): Promise<
-  Array<{
-    key: string;
-    value: unknown;
-    source: string;
-    confidence: number;
-    is_active: boolean;
-    updated_at: string;
-  }>
-> {
-  return invoke("profile_list", {
+}): Promise<ProfileEntry[]> {
+  return invoke<ProfileEntry[]>("profile_list", {
     includeInactive: params.include_inactive ?? false,
   });
 }
 
-export async function profileGet(params: { key: string }): Promise<{
-  key: string;
-  value: unknown;
-  source: string;
-  confidence: number;
-  is_active: boolean;
-  updated_at: string;
-} | null> {
-  return invoke("profile_get", { key: params.key });
+export async function profileGet(
+  params: { key: string },
+): Promise<ProfileEntry | null> {
+  return invoke<ProfileEntry | null>("profile_get", { key: params.key });
 }
 
 export async function profileSet(params: {
@@ -1169,20 +899,10 @@ export async function profileDelete(params: { key: string }): Promise<void> {
   return invoke("profile_delete", { key: params.key });
 }
 
-export async function inboxList(params: { status?: string }): Promise<
-  Array<{
-    id: number;
-    session_id: number | null;
-    source_note: string | null;
-    deposit_type: string;
-    content: string;
-    status: string;
-    target_path: string | null;
-    created_at: string;
-    updated_at: string;
-  }>
-> {
-  return invoke("inbox_list", { status: params.status ?? "inbox" });
+export async function inboxList(
+  params: { status?: string },
+): Promise<InboxItem[]> {
+  return invoke<InboxItem[]>("inbox_list", { status: params.status ?? "inbox" });
 }
 
 export async function inboxAdd(params: {

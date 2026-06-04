@@ -1,4 +1,7 @@
+pub mod ai_harness;
 pub mod ai_runtime;
+pub mod ai_types;
+pub mod ai_workflows;
 pub mod app;
 pub mod cas;
 mod chrome_metrics;

@@ -14,8 +14,7 @@ use crate::error::{AppError, AppResult};
 use crate::storage::db::Database;
 use crate::watcher::FileWatcher;
 
-/// A tool call awaiting user confirmation.
-use crate::ai_runtime::AiScene;
+use crate::ai_types::AiScene;
 
 #[derive(Debug, Clone)]
 pub struct PendingToolCall {
@@ -28,21 +27,96 @@ pub struct PendingToolCall {
     pub web_search_enabled: bool,
 }
 
-pub struct AppState {
+// ─── Sub-state: Storage ──────────────────────────────────
+
+/// Storage infrastructure: database, CAS object store, reference counting,
+/// and write guard. Changes to storage internals no longer force recompilation
+/// of AI command handlers.
+pub struct StorageState {
     pub db: Arc<Database>,
-    vault: Mutex<Option<PathBuf>>,
-    data_dir: PathBuf,
-    pub watcher: Mutex<Option<FileWatcher>>,
-    /// Active research tasks — keyed by request_id, value is cancel flag
-    pub active_research: Mutex<HashMap<String, Arc<AtomicBool>>>,
-    /// Tool calls pending user confirmation — keyed by tool_call_id
-    pub pending_tool_calls: Mutex<HashMap<String, PendingToolCall>>,
-    /// sqlite-vec vec0 tables available (set at DB open).
-    pub vector_index_ready: std::sync::atomic::AtomicBool,
-    embed_queue: OnceLock<EmbedQueue>,
     pub write_guard: WriteGuard,
     cas_store: OnceLock<CasObjectStore>,
     ref_counter: OnceLock<RefCounter>,
+}
+
+impl StorageState {
+    fn new(db: Arc<Database>) -> Self {
+        Self {
+            db,
+            write_guard: WriteGuard::default(),
+            cas_store: OnceLock::new(),
+            ref_counter: OnceLock::new(),
+        }
+    }
+
+    /// Get or initialize the CAS object store (lazy, needs vault path).
+    pub fn cas_store(&self, vault: &std::path::Path) -> &CasObjectStore {
+        self.cas_store.get_or_init(|| {
+            let cas_path = vault.join(".iris").join("cas");
+            let store = CasObjectStore::new(cas_path).expect("Failed to create CAS store");
+            match crate::cas::encryption::get_or_create_cas_key() {
+                Ok(key) => store.enable_encryption(key),
+                Err(e) => tracing::warn!("CAS encryption unavailable: {e}"),
+            }
+            store
+        })
+    }
+
+    pub fn ref_counter(&self) -> &RefCounter {
+        self.ref_counter
+            .get_or_init(|| RefCounter::new(Arc::clone(&self.db)))
+    }
+}
+
+// ─── Sub-state: AI Runtime ───────────────────────────────
+
+/// AI runtime state: pending tool confirmations, active research tasks,
+/// embedding queue, and vector index readiness. Changes here don't affect
+/// storage-only command handlers.
+pub struct AiRuntimeState {
+    pub pending_tool_calls: Mutex<HashMap<String, PendingToolCall>>,
+    pub active_research: Mutex<HashMap<String, Arc<AtomicBool>>>,
+    pub vector_index_ready: AtomicBool,
+    embed_queue: OnceLock<EmbedQueue>,
+}
+
+impl AiRuntimeState {
+    fn new(vector_ready: bool) -> Self {
+        Self {
+            pending_tool_calls: Mutex::new(HashMap::new()),
+            active_research: Mutex::new(HashMap::new()),
+            vector_index_ready: AtomicBool::new(vector_ready),
+            embed_queue: OnceLock::new(),
+        }
+    }
+
+    /// Clear in-memory AI state when switching vaults.
+    pub fn clear(&self) {
+        if let Ok(mut pending) = self.pending_tool_calls.lock() {
+            pending.clear();
+        }
+        if let Ok(mut research) = self.active_research.lock() {
+            research.clear();
+        }
+        tracing::info!("vault switch: cleared pending tool calls and active research");
+    }
+}
+
+// ─── AppState (top-level coordinator) ────────────────────
+
+pub struct AppState {
+    pub storage: StorageState,
+    pub ai: AiRuntimeState,
+    vault: Mutex<Option<PathBuf>>,
+    data_dir: PathBuf,
+    pub watcher: Mutex<Option<FileWatcher>>,
+
+    // Backward-compatible direct access (same Arc as storage.db).
+    pub db: Arc<Database>,
+    pub write_guard: WriteGuard,
+    pub active_research: Mutex<HashMap<String, Arc<AtomicBool>>>,
+    pub pending_tool_calls: Mutex<HashMap<String, PendingToolCall>>,
+    pub vector_index_ready: AtomicBool,
 }
 
 impl AppState {
@@ -51,21 +125,22 @@ impl AppState {
         let db = Arc::new(Database::open(&db_path)?);
         let vector_ready = db.vector_index_ready();
 
+        let storage = StorageState::new(Arc::clone(&db));
+        let ai = AiRuntimeState::new(vector_ready);
+
         let state = Arc::new(Self {
-            db,
+            db: Arc::clone(&storage.db),
+            write_guard: WriteGuard::default(),
+            active_research: Mutex::new(HashMap::new()),
+            pending_tool_calls: Mutex::new(HashMap::new()),
+            vector_index_ready: AtomicBool::new(vector_ready),
+            storage,
+            ai,
             vault: Mutex::new(None),
             data_dir,
             watcher: Mutex::new(None),
-            active_research: Mutex::new(HashMap::new()),
-            pending_tool_calls: Mutex::new(HashMap::new()),
-            vector_index_ready: std::sync::atomic::AtomicBool::new(vector_ready),
-            embed_queue: OnceLock::new(),
-            write_guard: WriteGuard::default(),
-            cas_store: OnceLock::new(),
-            ref_counter: OnceLock::new(),
         });
 
-        // 启动时清理过期缓存
         if let Err(e) = crate::llm::search_web::cleanup_expired_search_cache(&state.db) {
             tracing::warn!("failed to cleanup expired search cache: {e}");
         }
@@ -89,33 +164,23 @@ impl AppState {
     }
 
     fn ensure_embed_queue(self: &Arc<Self>) -> &EmbedQueue {
-        self.embed_queue
+        self.ai
+            .embed_queue
             .get_or_init(|| EmbedQueue::spawn(Arc::clone(self)))
     }
 
-    /// Queue background embedding for a file after index metadata is written.
     pub fn enqueue_embedding(self: &Arc<Self>, file_id: i64) {
         self.ensure_embed_queue().enqueue(file_id);
     }
 
-    /// 获取 CAS 存储实例
+    /// Get CAS store via the storage sub-state.
     pub fn cas_store(&self) -> &CasObjectStore {
-        self.cas_store.get_or_init(|| {
-            let vault = self.vault_path().expect("Vault not configured");
-            let cas_path = vault.join(".iris").join("cas");
-            let store = CasObjectStore::new(cas_path).expect("Failed to create CAS store");
-            match crate::cas::encryption::get_or_create_cas_key() {
-                Ok(key) => store.enable_encryption(key),
-                Err(e) => tracing::warn!("CAS encryption unavailable: {e}"),
-            }
-            store
-        })
+        let vault = self.vault_path().expect("Vault not configured");
+        self.storage.cas_store(&vault)
     }
 
-    /// 获取引用计数管理器实例
     pub fn ref_counter(&self) -> &RefCounter {
-        self.ref_counter
-            .get_or_init(|| RefCounter::new(Arc::clone(&self.db)))
+        self.storage.ref_counter()
     }
 
     fn clear_vault_setting(&self) -> AppResult<()> {
@@ -181,23 +246,15 @@ impl AppState {
             .ok_or_else(|| AppError::msg("笔记目录未配置，请先选择 vault"))
     }
 
-    /// Clear in-memory AI state when switching vaults to prevent data leakage
-    /// between unrelated note collections.
+    /// Backward-compatible delegator.
     pub fn clear_ai_state(&self) {
-        if let Ok(mut pending) = self.pending_tool_calls.lock() {
-            pending.clear();
-        }
-        if let Ok(mut research) = self.active_research.lock() {
-            research.clear();
-        }
-        tracing::info!("vault switch: cleared pending tool calls and active research");
+        self.ai.clear();
     }
 
     pub fn data_dir(&self) -> &PathBuf {
         &self.data_dir
     }
 
-    /// 停止旧监听并在当前 vault 上启动新的 `FileWatcher`（`vault_set` 后调用）。
     pub fn restart_file_watcher(self: &Arc<Self>, app: AppHandle) -> AppResult<()> {
         {
             let mut guard = self

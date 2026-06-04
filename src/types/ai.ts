@@ -182,18 +182,14 @@ export interface ChapterWritingResult {
 
 export interface DocumentCheckResult {
   request_id: string;
-  check_type: DocumentCheckType;
-  analysis_summary?: string | null;
-  outline_result?: { issues: Array<{ description: string }> } | null;
-  citation_gap_result?: {
-    uncited_claims: Array<{ statement: string }>;
-  } | null;
-  style_result?: {
-    inconsistencies: Array<{ description: string }>;
-  } | null;
+  check_type: string;
+  outline_result?: OutlineCheckResult;
+  citation_gap_result?: CitationGapCheckResult;
+  style_result?: StyleCheckResult;
   patches: PatchProposal[];
   evidence_used: ContextPacket[];
   total_tokens: TokenUsage;
+  analysis_summary?: string | null;
 }
 
 /** Wire artifact from harness task layer (camelCase via IPC). */
@@ -717,3 +713,173 @@ export interface OrganizeTaskResult {
   /** Token 消耗 */
   total_tokens: TokenUsage;
 }
+
+// ─── Research Execute Result ─────────────────────────────
+
+/** 研究命题 — EvidenceMatrix 的子元素 */
+export interface ResearchProposition {
+  id: string;
+  statement: string;
+  evidence: ContextPacket[];
+  gaps: string[];
+}
+
+/** 证据矩阵 — research_execute 的核心结构 */
+export interface EvidenceMatrix {
+  topic: string;
+  propositions: ResearchProposition[];
+  global_gaps: string[];
+  total_evidence_count: number;
+  coverage_score: number;
+}
+
+/** 论证链中的单条链接 */
+export interface ArgumentLink {
+  from_proposition_id: string;
+  to_proposition_id: string;
+  link_type: string;
+  strength: number;
+}
+
+/** 论证链 — 描述命题之间的推理关系 */
+export interface ArgumentChain {
+  links: ArgumentLink[];
+  has_contradictions: boolean;
+  chain_strength: number;
+}
+
+/** `research_execute` IPC 返回值 */
+export interface ResearchExecuteResult {
+  request_id: string;
+  topic: string;
+  rounds: number;
+  evidence_matrix: EvidenceMatrix;
+  argument_chain: ArgumentChain;
+  summary: string;
+  total_tokens: TokenUsage;
+}
+
+/** 研究进度事件（`ai:research_progress`） */
+export interface ResearchProgressEvent {
+  request_id: string;
+  topic: string;
+  state: string;
+  current_round: number;
+  max_rounds: number;
+  queries_executed: string[];
+  new_evidence_count: number;
+  total_evidence_count: number;
+  tokens_used: number;
+  token_budget: number;
+  progress_pct: number;
+  round_terminated_early: boolean;
+}
+
+// ─── AI Send Message Result ──────────────────────────────
+
+/** AI 工具调用 */
+export interface AiToolCall {
+  id: string;
+  function: { name: string; arguments: string };
+}
+
+/** AI 工具执行结果 */
+export interface AiToolResult {
+  tool_call_id: string;
+  status: string;
+  result?: unknown;
+}
+
+/** `ai_send_message` IPC 返回值 */
+export interface AiSendMessageResult {
+  request_id: string;
+  session_id: number;
+  status: string;
+  content?: string;
+  tool_calls?: AiToolCall[];
+  tool_results?: AiToolResult[];
+  usage?: TokenUsage;
+  citation_valid?: boolean;
+  harness_rounds?: number;
+}
+
+// ─── Document Check Sub-types ────────────────────────────
+
+/** 大纲检查 — 单条问题 */
+export interface OutlineIssue {
+  issue_type: string;
+  heading_path: string;
+  description: string;
+  severity: string;
+  position: number;
+}
+
+/** 大纲检查 — 单条建议 */
+export interface OutlineSuggestionItem {
+  suggestion: string;
+  position: number;
+  requires_patch: boolean;
+}
+
+/** 大纲条目 */
+export interface OutlineEntry {
+  level: number;
+  text: string;
+  position: number;
+  word_count: number;
+}
+
+/** 大纲检查结果（DocumentCheckResult 子结构） */
+export interface OutlineCheckResult {
+  issues: OutlineIssue[];
+  suggestions: OutlineSuggestionItem[];
+  outline_entries: OutlineEntry[];
+}
+
+/** 弱引用记录 */
+export interface WeakCitation {
+  claim: string;
+  current_citation: string;
+  reason: string;
+  suggested_citation?: string;
+}
+
+/** 引用缺口检查结果（DocumentCheckResult 子结构） */
+export interface CitationGapCheckResult {
+  uncited_claims: FactClaim[];
+  weak_citations: WeakCitation[];
+  suggestions: CitationSuggestion[];
+}
+
+/** 风格不一致记录 */
+export interface StyleInconsistency {
+  inconsistency_type: string;
+  location: string;
+  description: string;
+  examples: string[];
+}
+
+/** 风格检查 — 单条建议 */
+export interface StyleSuggestionItem {
+  suggestion: string;
+  locations: string[];
+  requires_patch: boolean;
+}
+
+/** 风格一致性检查结果（DocumentCheckResult 子结构） */
+export interface StyleCheckResult {
+  inconsistencies: StyleInconsistency[];
+  suggestions: StyleSuggestionItem[];
+  consistency_score: number;
+}
+
+// ─── IPC Result Aliases ──────────────────────────────────
+
+/** `writing_execute` IPC 返回值（结构同 WritingTaskResult） */
+export type WritingExecuteResult = WritingTaskResult;
+
+/** `chapter_writing_execute` IPC 返回值（结构同 ChapterWritingResult） */
+export type ChapterWritingExecuteResult = ChapterWritingResult;
+
+/** `organize_execute` IPC 返回值（结构同 OrganizeTaskResult） */
+export type OrganizeExecuteResult = OrganizeTaskResult;

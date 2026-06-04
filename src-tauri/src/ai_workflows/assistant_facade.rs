@@ -2,8 +2,8 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::document_workflow::DocumentCheckType;
-use super::{AiScene, OrganizeTaskType};
+use crate::ai_types::{AiScene, OrganizeTaskType};
+use crate::ai_workflows::document_workflow::DocumentCheckType;
 
 /// Mirrors frontend `AssistantIntent`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

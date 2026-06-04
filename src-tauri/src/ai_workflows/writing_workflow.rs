@@ -27,7 +27,7 @@ pub struct WritingTaskOutput {
     pub suggestions: Vec<WritingSuggestion>,
     pub patches: Vec<PatchProposal>,
     pub evidence_used: Vec<ContextPacket>,
-    pub total_tokens: super::TokenUsage,
+    pub total_tokens: crate::ai_types::TokenUsage,
 }
 
 /// Generate a unique patch ID.
@@ -210,7 +210,7 @@ pub async fn generate_replacement_with_llm(
     cursor_context: &str,
     goal: &str,
     evidence: &[ContextPacket],
-) -> AppResult<(String, super::TokenUsage)> {
+) -> AppResult<(String, crate::ai_types::TokenUsage)> {
     let rules = ModelGateway::load_active_rules_for_scene(db, AiScene::DraftingAssist)?;
     let system =
         ModelGateway::build_system_prompt(AiScene::DraftingAssist, evidence, &rules, false);
@@ -276,7 +276,7 @@ pub async fn generate_replacement_with_llm(
     }
     Ok((
         text,
-        super::TokenUsage {
+        crate::ai_types::TokenUsage {
             prompt_tokens: usage.prompt_tokens,
             completion_tokens: usage.completion_tokens,
             total_tokens: usage.total_tokens,

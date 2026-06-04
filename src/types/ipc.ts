@@ -173,6 +173,29 @@ export interface AiCacheClearResult {
   deposits_deleted: number;
 }
 
+/** 用户画像条目（`profile_list` / `profile_get` 返回） */
+export interface ProfileEntry {
+  key: string;
+  value: unknown;
+  source: string;
+  confidence: number;
+  is_active: boolean;
+  updated_at: string;
+}
+
+/** 收件箱条目（`inbox_list` 返回） */
+export interface InboxItem {
+  id: number;
+  session_id: number | null;
+  source_note: string | null;
+  deposit_type: string;
+  content: string;
+  status: string;
+  target_path: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
 export type {
   AiScene,
   AssembledContext,

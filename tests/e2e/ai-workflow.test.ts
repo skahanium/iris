@@ -72,7 +72,7 @@ describe("统一助手工作流验收", () => {
     expect(read("src-tauri/src/ai_runtime/tool_dispatch.rs")).toContain(
       "DISPATCHABLE_TOOL_NAMES",
     );
-    expect(read("src-tauri/src/ai_runtime/harness_task.rs")).toContain(
+    expect(read("src-tauri/src/ai_harness/harness_task.rs")).toContain(
       "run_harness_task",
     );
     expect(read("src/hooks/useAssistantRun.ts")).toContain("AssistantRunState");

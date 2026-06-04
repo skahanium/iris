@@ -6,7 +6,10 @@
 //! 3. Streaming responses via Tauri events
 //! 4. Processing tool calls from LLM and routing to ToolExecutor
 
-use crate::ai_runtime::{AiScene, ContextPacket, ToolSpec};
+pub use crate::ai_types::{
+    AiScene, CapabilitySlot, ContextPacket, FunctionCall, LlmMessage, MessageRole, ProviderConfig,
+    TokenUsage, ToolCall, ToolSpec,
+};
 use crate::error::{AppError, AppResult};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
@@ -42,94 +45,8 @@ pub fn clear_abort(request_id: &str) {
     }
 }
 
-// ─── Provider Types ──────────────────────────────────────
-
-/// LLM provider configuration (from settings or registry).
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ProviderConfig {
-    pub name: String,
-    pub base_url: String,
-    pub api_key: Option<String>,
-    pub model: String,
-    pub slot: CapabilitySlot,
-}
-
-/// 能力槽位，用于 provider/model 选择。
-///
-/// 每个场景映射到一个槽位，每个槽位可配置不同的 provider。
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum CapabilitySlot {
-    /// 快速响应（知识查阅等简单任务）
-    Fast,
-    /// 文稿写作（范文学习、写作辅助）
-    Writer,
-    /// 深度推理（学术研究、多材料论证）
-    Reasoner,
-    /// 长上下文（大文档处理）
-    LongContext,
-    /// 文本嵌入（向量检索）
-    Embedding,
-    /// 重排序（检索结果重排）
-    Reranker,
-    /// 本地私有模型（离线场景）
-    LocalPrivate,
-}
-
-/// LLM 对话消息角色。
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum MessageRole {
-    /// 系统提示（persona / rules / evidence）
-    System,
-    /// 用户消息
-    User,
-    /// 助手回复
-    Assistant,
-    /// 工具调用结果
-    Tool,
-}
-
-/// A single message in the conversation.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct LlmMessage {
-    pub role: MessageRole,
-    pub content: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub tool_call_id: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub tool_calls: Option<Vec<ToolCall>>,
-}
-
-/// Tool call from LLM (OpenAI / DeepSeek chat completions format).
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ToolCall {
-    pub id: String,
-    #[serde(rename = "type", default = "default_tool_call_type")]
-    pub call_type: String,
-    pub function: FunctionCall,
-}
-
-fn default_tool_call_type() -> String {
-    "function".into()
-}
-
-impl ToolCall {
-    pub fn new(
-        id: impl Into<String>,
-        name: impl Into<String>,
-        arguments: impl Into<String>,
-    ) -> Self {
-        Self {
-            id: id.into(),
-            call_type: default_tool_call_type(),
-            function: FunctionCall {
-                name: name.into(),
-                arguments: arguments.into(),
-            },
-        }
-    }
-}
+// Provider types (ProviderConfig, CapabilitySlot, MessageRole, LlmMessage,
+// ToolCall, FunctionCall, TokenUsage) live in `crate::ai_types`.
 
 /// Serialize messages for provider APIs (tool_calls need `type`, tool role needs `tool_call_id`).
 pub fn messages_for_api(messages: &[LlmMessage]) -> Vec<serde_json::Value> {
@@ -171,13 +88,6 @@ pub fn messages_for_api(messages: &[LlmMessage]) -> Vec<serde_json::Value> {
         .collect()
 }
 
-/// Function call details.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct FunctionCall {
-    pub name: String,
-    pub arguments: String,
-}
-
 /// Tool definition for LLM function-calling format.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LlmToolDef {
@@ -212,18 +122,6 @@ pub struct GatewayResponse {
     pub tool_calls: Vec<ToolCall>,
     pub usage: TokenUsage,
     pub finish_reason: String,
-}
-
-/// Token usage statistics.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct TokenUsage {
-    pub prompt_tokens: u32,
-    pub completion_tokens: u32,
-    pub total_tokens: u32,
-    #[serde(default)]
-    pub prompt_cache_hit_tokens: u32,
-    #[serde(default)]
-    pub prompt_cache_miss_tokens: u32,
 }
 
 fn parse_usage(json: &serde_json::Value) -> TokenUsage {
@@ -301,12 +199,7 @@ impl ModelGateway {
 
     /// Select appropriate capability slot for scene.
     pub fn slot_for_scene(scene: AiScene) -> CapabilitySlot {
-        match scene {
-            AiScene::KnowledgeLookup => CapabilitySlot::Fast,
-            AiScene::ExemplarLearning => CapabilitySlot::Writer,
-            AiScene::DraftingAssist => CapabilitySlot::Writer,
-            AiScene::ResearchSynthesis => CapabilitySlot::Reasoner,
-        }
+        crate::ai_types::slot_for_scene(scene)
     }
 
     /// Load active user rules from the DB, filtered by scene relevance.
@@ -989,6 +882,105 @@ fn is_rule_applicable_for_scene(key: &str, scene: AiScene) -> bool {
 }
 
 // ─── Tests ───────────────────────────────────────────────
+
+/// Concrete [`LlmBackend`] implementation that calls an OpenAI-compatible
+/// HTTP endpoint via `reqwest`. Used in production; tests can substitute a mock.
+pub struct HttpLlmBackend {
+    client: Client,
+}
+
+impl HttpLlmBackend {
+    pub fn new(client: Client) -> Self {
+        Self { client }
+    }
+}
+
+impl crate::ai_types::LlmBackend for HttpLlmBackend {
+    async fn chat(
+        &self,
+        provider: &ProviderConfig,
+        messages: &[LlmMessage],
+        tools: &[serde_json::Value],
+        max_tokens: Option<u32>,
+        temperature: Option<f64>,
+    ) -> Result<crate::ai_types::LlmBackendResponse, String> {
+        let url = crate::llm::providers::chat_completions_url(&provider.base_url);
+        let mut body = serde_json::json!({
+            "model": provider.model,
+            "messages": messages_for_api(messages),
+        });
+        if !tools.is_empty() {
+            body["tools"] = serde_json::Value::Array(tools.to_vec());
+        }
+        if let Some(mt) = max_tokens {
+            body["max_tokens"] = serde_json::json!(mt);
+        }
+        if let Some(temp) = temperature {
+            body["temperature"] = serde_json::json!(temp);
+        }
+
+        let mut req = self
+            .client
+            .post(&url)
+            .header("Content-Type", "application/json");
+        if let Some(api_key) = &provider.api_key {
+            req = req.header("Authorization", format!("Bearer {api_key}"));
+        }
+
+        let response = req
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| format!("LLM request failed: {e}"))?;
+        if !response.status().is_success() {
+            let status = response.status();
+            let text = response.text().await.unwrap_or_default();
+            return Err(format_llm_http_error(status, &text));
+        }
+        let text = response
+            .text()
+            .await
+            .map_err(|e| format!("Failed to read body: {e}"))?;
+        let json: serde_json::Value =
+            serde_json::from_str(&text).map_err(|e| format!("JSON parse: {e}"))?;
+
+        let content = json["choices"][0]["message"]["content"]
+            .as_str()
+            .map(|s| s.to_string());
+        let tool_calls = json["choices"][0]["message"]["tool_calls"]
+            .as_array()
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|tc| {
+                        Some(ToolCall {
+                            id: tc["id"].as_str()?.to_string(),
+                            call_type: tc["type"].as_str().unwrap_or("function").to_string(),
+                            function: FunctionCall {
+                                name: tc["function"]["name"].as_str()?.to_string(),
+                                arguments: tc["function"]["arguments"]
+                                    .as_str()
+                                    .unwrap_or("{}")
+                                    .to_string(),
+                            },
+                        })
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        let usage = parse_usage(&json);
+        let finish_reason = json["choices"][0]["finish_reason"]
+            .as_str()
+            .unwrap_or("unknown")
+            .to_string();
+
+        Ok(crate::ai_types::LlmBackendResponse {
+            content,
+            tool_calls,
+            usage,
+            finish_reason,
+        })
+    }
+}
 
 fn format_llm_http_error(status: reqwest::StatusCode, text: &str) -> String {
     let lower = text.to_lowercase();

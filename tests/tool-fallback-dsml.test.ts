@@ -27,8 +27,8 @@ describe("fetch_web_page integration surface", () => {
   });
 
   it("harness merges fetch_web_page packets", () => {
-    const harnessRun = read("src-tauri/src/ai_runtime/harness/run.rs");
-    const harnessTools = read("src-tauri/src/ai_runtime/harness/tools.rs");
+    const harnessRun = read("src-tauri/src/ai_harness/harness/run.rs");
+    const harnessTools = read("src-tauri/src/ai_harness/harness/tools.rs");
     expect(harnessRun).toContain("fetch_web_page");
     expect(harnessRun).toContain("parse_tool_calls_from_content");
     expect(harnessRun).toContain("strip_tool_markup_from_visible");

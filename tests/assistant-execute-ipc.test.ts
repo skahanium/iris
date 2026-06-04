@@ -32,7 +32,7 @@ describe("assistant_execute IPC contract", () => {
     const facade = read("src-tauri/src/commands/assistant_commands.rs");
     expect(facade).toContain("run_harness_task");
 
-    const router = read("src-tauri/src/ai_runtime/harness_task.rs");
+    const router = read("src-tauri/src/ai_harness/harness_task.rs");
     expect(router).toContain("AssistantIntent::Writing");
     expect(router).toContain("AssistantIntent::Research");
     expect(router).toContain("AssistantIntent::Document");

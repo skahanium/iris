@@ -1,0 +1,13 @@
+[
+  {
+    "date": "2026-06-04T23:09:00+08:00",
+    "mode": "Architecture Audit",
+    "score": 58,
+    "findings": {
+      "critical": 1,
+      "warning": 5,
+      "suggestion": 2
+    },
+    "scope": "Full project scan — src-tauri/src/ (18 Rust modules, ~124 files) + src/ (React/TS, ~200 files)"
+  }
+]

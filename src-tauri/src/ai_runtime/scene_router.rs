@@ -1,67 +1,14 @@
 //! Scene router: maps scene to workflow profile and context strategy.
 //!
-//! Phase A: infrastructure only — returns profile metadata.
-//! Phase B+: wires in retrieval strategies per scene.
+//! The canonical `SceneProfile` struct and `resolve_scene` function now live
+//! in `crate::ai_types`. This module re-exports them for backward compatibility.
 
-use crate::ai_runtime::AiScene;
-
-/// Scene profile: describes what capabilities a scene activates.
-#[derive(Debug, Clone)]
-pub struct SceneProfile {
-    pub scene: AiScene,
-    pub autonomy_level: crate::ai_runtime::AutonomyLevel,
-    pub default_global_scope: bool,
-    pub max_agentic_rounds: u32,
-    pub max_tool_calls_per_round: u32,
-    pub default_token_budget: usize,
-    pub max_token_budget: usize,
-}
-
-/// Resolve a scene to its profile.
-pub fn resolve_scene(scene: AiScene) -> SceneProfile {
-    match scene {
-        AiScene::KnowledgeLookup => SceneProfile {
-            scene,
-            autonomy_level: crate::ai_runtime::AutonomyLevel::L2,
-            default_global_scope: true,
-            max_agentic_rounds: 3,
-            max_tool_calls_per_round: 4,
-            default_token_budget: 30_000,
-            max_token_budget: 80_000,
-        },
-        AiScene::ExemplarLearning => SceneProfile {
-            scene,
-            autonomy_level: crate::ai_runtime::AutonomyLevel::L2,
-            default_global_scope: false,
-            max_agentic_rounds: 2,
-            max_tool_calls_per_round: 4,
-            default_token_budget: 50_000,
-            max_token_budget: 120_000,
-        },
-        AiScene::DraftingAssist => SceneProfile {
-            scene,
-            autonomy_level: crate::ai_runtime::AutonomyLevel::L2,
-            default_global_scope: false,
-            max_agentic_rounds: 3,
-            max_tool_calls_per_round: 5,
-            default_token_budget: 60_000,
-            max_token_budget: 160_000,
-        },
-        AiScene::ResearchSynthesis => SceneProfile {
-            scene,
-            autonomy_level: crate::ai_runtime::AutonomyLevel::L3,
-            default_global_scope: true,
-            max_agentic_rounds: 4,
-            max_tool_calls_per_round: 6,
-            default_token_budget: 100_000,
-            max_token_budget: 240_000,
-        },
-    }
-}
+pub use crate::ai_types::{resolve_scene, SceneProfile};
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ai_types::AiScene;
 
     #[test]
     fn l3_scene_allows_agentic_loop() {
