@@ -83,7 +83,10 @@ export function determineDocumentCheckType(message: string): DocumentCheckType {
   return "outline_check";
 }
 
-export function buildTaskSummary(intent: AssistantIntent, count?: number): string {
+export function buildTaskSummary(
+  intent: AssistantIntent,
+  count?: number,
+): string {
   switch (intent) {
     case "writing":
       return count && count > 0

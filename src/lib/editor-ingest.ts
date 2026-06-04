@@ -13,9 +13,7 @@ import type {
   MarkdownCapabilityWarning,
   MarkdownSyntaxFragment,
 } from "@/lib/markdown-contract/types";
-import {
-  PRESERVE_ONLY_SYNTAX_KINDS,
-} from "@/lib/markdown-contract/types";
+import { PRESERVE_ONLY_SYNTAX_KINDS } from "@/lib/markdown-contract/types";
 
 // ── Internal helpers ──────────────────────────────────────────
 
@@ -230,9 +228,9 @@ export function ingestMarkdownForEditor(
     }
 
     if (kind === "footnote_ref") {
-      // Inline footnote ref — add to native buf with sup tag
+      // Inline footnote ref — add to native buf so it stays within its parent paragraph
       const label = frag.raw.match(/\[\^([^\]]+)\]/)?.[1] ?? "";
-      htmlParts.push(`<sup data-footnote-ref="${label}">[${label}]</sup>`);
+      nativeBuf.push(`<sup data-footnote-ref="${label}">[${label}]</sup>`);
       continue;
     }
 

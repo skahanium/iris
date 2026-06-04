@@ -15,11 +15,11 @@
 
 [`src/lib/editor-actions.ts`](../../src/lib/editor-actions.ts) 定义 `scopes`、`surfaces`、`kind`；执行经 [`editor-action-executor.ts`](../../src/lib/editor-action-executor.ts)。
 
-| Surface | 编辑区 | AI 消息 | Composer |
-|---------|--------|---------|----------|
-| `slash` | 是 | — | — |
-| `selection_toolbar` | 是 | 迷你条（复制/引用） | — |
-| `context_menu` | 剪贴板 + AI | 复制/引用到输入 | 复制/粘贴/全选 |
+| Surface             | 编辑区      | AI 消息             | Composer       |
+| ------------------- | ----------- | ------------------- | -------------- |
+| `slash`             | 是          | —                   | —              |
+| `selection_toolbar` | 是          | 迷你条（复制/引用） | —              |
+| `context_menu`      | 剪贴板 + AI | 复制/引用到输入     | 复制/粘贴/全选 |
 
 ## 交互要点
 

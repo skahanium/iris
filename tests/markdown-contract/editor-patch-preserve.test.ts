@@ -7,9 +7,7 @@
  */
 import { describe, expect, it } from "vitest";
 
-import {
-  ingestMarkdownForEditor,
-} from "@/lib/editor-ingest";
+import { ingestMarkdownForEditor } from "@/lib/editor-ingest";
 import { exportEditorToMarkdown } from "@/lib/editor-export";
 import { classifyMarkdownCapabilities } from "@/lib/markdown-contract/contract";
 import { serializePreservedMarkdown } from "@/lib/markdown-contract/contract";
@@ -48,8 +46,10 @@ describe("TDD: patch safety — preserve blocks survive patches", () => {
       "**old** text.\n\n<div class='x'>preserved</div>\n\nafter.";
     const patched = "**new** text.\n\n<div class='x'>preserved</div>\n\nafter.";
 
-    const { beforeFragments, afterFragments } =
-      simulatePatchAndReIngest(original, patched);
+    const { beforeFragments, afterFragments } = simulatePatchAndReIngest(
+      original,
+      patched,
+    );
 
     // preserve block original content must be unchanged
     const preserveBefore = beforeFragments.filter(

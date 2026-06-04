@@ -273,123 +273,125 @@ export function SkillsPanel({ open: overlayOpen, onClose }: SkillsPanelProps) {
             onDragLeave={() => setDragOver(false)}
             onDrop={(e) => void onDropFiles(e)}
           >
-        {editingSkill ? (
-          <div className="space-y-2 rounded-md border border-border/60 p-3">
-            <p className="text-xs font-medium">编辑 {editingSkill.name}</p>
-            <Textarea
-              className="min-h-[200px] font-mono text-xs"
-              value={editContent}
-              onChange={(e) => setEditContent(e.target.value)}
-            />
-            <div className="flex gap-2">
-              <Button
-                type="button"
-                size="sm"
-                disabled={loading}
-                onClick={() => void saveEditor()}
-              >
-                保存
-              </Button>
-              <Button
-                type="button"
-                size="sm"
-                variant="ghost"
-                onClick={() => setEditingSkill(null)}
-              >
-                取消
-              </Button>
-            </div>
-          </div>
-        ) : null}
-
-        {showInstall ? (
-          <div className="space-y-3 rounded-md border border-border/60 p-3">
-            <div className="flex items-center gap-2">
-              <span className="text-xs text-muted-foreground">安装到</span>
-              <select
-                className="h-8 rounded-md border border-border bg-background px-2 text-xs"
-                value={scope}
-                onChange={(e) =>
-                  setScope(e.target.value === "vault" ? "vault" : "global")
-                }
-              >
-                <option value="global">全局</option>
-                <option value="vault">当前库</option>
-              </select>
-            </div>
-            <div className="space-y-2">
-              <span className="text-xs text-muted-foreground">URL</span>
-              <div className="flex gap-2">
-                <Input
-                  className="h-8 text-xs"
-                  value={url}
-                  onChange={(e) => setUrl(e.target.value)}
-                  placeholder="https://…/SKILL.md"
+            {editingSkill ? (
+              <div className="space-y-2 rounded-md border border-border/60 p-3">
+                <p className="text-xs font-medium">编辑 {editingSkill.name}</p>
+                <Textarea
+                  className="min-h-[200px] font-mono text-xs"
+                  value={editContent}
+                  onChange={(e) => setEditContent(e.target.value)}
                 />
-                <Button
-                  type="button"
-                  size="sm"
-                  disabled={loading}
-                  onClick={() => void installUrl()}
-                >
-                  <Download className="h-3.5 w-3.5" />
-                </Button>
+                <div className="flex gap-2">
+                  <Button
+                    type="button"
+                    size="sm"
+                    disabled={loading}
+                    onClick={() => void saveEditor()}
+                  >
+                    保存
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => setEditingSkill(null)}
+                  >
+                    取消
+                  </Button>
+                </div>
               </div>
-            </div>
-            <div className="space-y-2">
-              <span className="text-xs text-muted-foreground">Git 仓库</span>
+            ) : null}
+
+            {showInstall ? (
+              <div className="space-y-3 rounded-md border border-border/60 p-3">
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-muted-foreground">安装到</span>
+                  <select
+                    className="h-8 rounded-md border border-border bg-background px-2 text-xs"
+                    value={scope}
+                    onChange={(e) =>
+                      setScope(e.target.value === "vault" ? "vault" : "global")
+                    }
+                  >
+                    <option value="global">全局</option>
+                    <option value="vault">当前库</option>
+                  </select>
+                </div>
+                <div className="space-y-2">
+                  <span className="text-xs text-muted-foreground">URL</span>
+                  <div className="flex gap-2">
+                    <Input
+                      className="h-8 text-xs"
+                      value={url}
+                      onChange={(e) => setUrl(e.target.value)}
+                      placeholder="https://…/SKILL.md"
+                    />
+                    <Button
+                      type="button"
+                      size="sm"
+                      disabled={loading}
+                      onClick={() => void installUrl()}
+                    >
+                      <Download className="h-3.5 w-3.5" />
+                    </Button>
+                  </div>
+                </div>
+                <div className="space-y-2">
+                  <span className="text-xs text-muted-foreground">
+                    Git 仓库
+                  </span>
+                  <Input
+                    className="h-8 text-xs"
+                    value={gitUrl}
+                    onChange={(e) => setGitUrl(e.target.value)}
+                  />
+                  <Input
+                    className="h-8 text-xs"
+                    value={gitSubpath}
+                    onChange={(e) => setGitSubpath(e.target.value)}
+                    placeholder="子路径（可选）"
+                  />
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="secondary"
+                    disabled={loading}
+                    onClick={() => void installGit()}
+                  >
+                    从 Git 安装
+                  </Button>
+                </div>
+                <div className="space-y-2">
+                  <span className="text-xs text-muted-foreground">
+                    本地 SKILL.md（或拖放到面板）
+                  </span>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    disabled={loading}
+                    onClick={() => void pickLocalFile()}
+                  >
+                    选择本地文件
+                  </Button>
+                </div>
+              </div>
+            ) : null}
+
+            <div className="relative">
+              <Search className="absolute left-2 top-2 h-3.5 w-3.5 text-muted-foreground" />
               <Input
-                className="h-8 text-xs"
-                value={gitUrl}
-                onChange={(e) => setGitUrl(e.target.value)}
+                className="h-8 pl-8 text-xs"
+                placeholder="搜索 skills…"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
               />
-              <Input
-                className="h-8 text-xs"
-                value={gitSubpath}
-                onChange={(e) => setGitSubpath(e.target.value)}
-                placeholder="子路径（可选）"
-              />
-              <Button
-                type="button"
-                size="sm"
-                variant="secondary"
-                disabled={loading}
-                onClick={() => void installGit()}
-              >
-                从 Git 安装
-              </Button>
             </div>
-            <div className="space-y-2">
-              <span className="text-xs text-muted-foreground">
-                本地 SKILL.md（或拖放到面板）
-              </span>
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                disabled={loading}
-                onClick={() => void pickLocalFile()}
-              >
-                选择本地文件
-              </Button>
-            </div>
-          </div>
-        ) : null}
 
-        <div className="relative">
-          <Search className="absolute left-2 top-2 h-3.5 w-3.5 text-muted-foreground" />
-          <Input
-            className="h-8 pl-8 text-xs"
-            placeholder="搜索 skills…"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-          />
-        </div>
+            {error ? <p className="text-xs text-destructive">{error}</p> : null}
 
-        {error ? <p className="text-xs text-destructive">{error}</p> : null}
-
-        {renderGroup("全局", global)}
-        {renderGroup("当前库", vault)}
+            {renderGroup("全局", global)}
+            {renderGroup("当前库", vault)}
           </div>
         </ScrollArea>
       </div>

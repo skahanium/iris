@@ -14,43 +14,44 @@
 
 ### 新增文件
 
-| 文件路径 | 职责 |
-|---------|------|
-| `src-tauri/src/cas/mod.rs` | CAS 模块入口 |
-| `src-tauri/src/cas/hash.rs` | 统一哈希计算接口 |
-| `src-tauri/src/cas/store.rs` | CAS 对象存储 |
-| `src-tauri/src/cas/ref_counter.rs` | 引用计数管理 |
-| `src-tauri/src/cas/garbage_collector.rs` | 垃圾回收器 |
-| `src-tauri/src/cas/write_guard.rs` | 乐观锁实现 |
-| `src-tauri/src/cas/patch.rs` | 补丁应用接口 |
-| `src-tauri/src/scheduler.rs` | 定时任务调度 |
-| `src-tauri/migrations/016_cas_tables.sql` | CAS 表迁移脚本 |
-| `src-tauri/tests/cas/hash_test.rs` | 哈希计算测试 |
-| `src-tauri/tests/cas/store_test.rs` | CAS 存储测试 |
-| `src-tauri/tests/cas/ref_counter_test.rs` | 引用计数测试 |
-| `src-tauri/tests/cas/garbage_collector_test.rs` | 垃圾回收测试 |
+| 文件路径                                        | 职责             |
+| ----------------------------------------------- | ---------------- |
+| `src-tauri/src/cas/mod.rs`                      | CAS 模块入口     |
+| `src-tauri/src/cas/hash.rs`                     | 统一哈希计算接口 |
+| `src-tauri/src/cas/store.rs`                    | CAS 对象存储     |
+| `src-tauri/src/cas/ref_counter.rs`              | 引用计数管理     |
+| `src-tauri/src/cas/garbage_collector.rs`        | 垃圾回收器       |
+| `src-tauri/src/cas/write_guard.rs`              | 乐观锁实现       |
+| `src-tauri/src/cas/patch.rs`                    | 补丁应用接口     |
+| `src-tauri/src/scheduler.rs`                    | 定时任务调度     |
+| `src-tauri/migrations/016_cas_tables.sql`       | CAS 表迁移脚本   |
+| `src-tauri/tests/cas/hash_test.rs`              | 哈希计算测试     |
+| `src-tauri/tests/cas/store_test.rs`             | CAS 存储测试     |
+| `src-tauri/tests/cas/ref_counter_test.rs`       | 引用计数测试     |
+| `src-tauri/tests/cas/garbage_collector_test.rs` | 垃圾回收测试     |
 
 ### 修改文件
 
-| 文件路径 | 修改内容 |
-|---------|---------|
-| `src-tauri/src/app.rs` | 添加 CAS 存储和调度器 |
-| `src-tauri/src/commands/file.rs` | 使用 CAS 接口 |
-| `src-tauri/src/commands/version.rs` | 使用 CAS 接口 |
-| `src-tauri/src/version/mod.rs` | 重构版本管理 |
-| `src-tauri/src/recycle/mod.rs` | 重构回收站 |
-| `src-tauri/src/watcher/mod.rs` | 使用 CAS 接口 |
-| `src-tauri/src/ai_runtime/writing_workflow.rs` | 统一哈希计算 |
-| `src-tauri/src/ai_runtime/document_workflow.rs` | 统一哈希计算 |
-| `src-tauri/src/ai_runtime/organize_workflow.rs` | 统一哈希计算 |
-| `src-tauri/src/ai_runtime/tool_dispatch.rs` | 使用 CAS 读取接口 |
-| `src-tauri/src/indexer/scan.rs` | 增加 cas_hash 字段 |
+| 文件路径                                        | 修改内容              |
+| ----------------------------------------------- | --------------------- |
+| `src-tauri/src/app.rs`                          | 添加 CAS 存储和调度器 |
+| `src-tauri/src/commands/file.rs`                | 使用 CAS 接口         |
+| `src-tauri/src/commands/version.rs`             | 使用 CAS 接口         |
+| `src-tauri/src/version/mod.rs`                  | 重构版本管理          |
+| `src-tauri/src/recycle/mod.rs`                  | 重构回收站            |
+| `src-tauri/src/watcher/mod.rs`                  | 使用 CAS 接口         |
+| `src-tauri/src/ai_runtime/writing_workflow.rs`  | 统一哈希计算          |
+| `src-tauri/src/ai_runtime/document_workflow.rs` | 统一哈希计算          |
+| `src-tauri/src/ai_runtime/organize_workflow.rs` | 统一哈希计算          |
+| `src-tauri/src/ai_runtime/tool_dispatch.rs`     | 使用 CAS 读取接口     |
+| `src-tauri/src/indexer/scan.rs`                 | 增加 cas_hash 字段    |
 
 ---
 
 ## Task 1: 创建 CAS 模块基础结构
 
 **Files:**
+
 - Create: `src-tauri/src/cas/mod.rs`
 - Create: `src-tauri/src/cas/hash.rs`
 - Test: `src-tauri/tests/cas/hash_test.rs`
@@ -140,6 +141,7 @@ git commit -m "feat(cas): 添加 CAS 模块和统一哈希计算接口"
 ## Task 2: 创建 CAS 对象存储
 
 **Files:**
+
 - Create: `src-tauri/src/cas/store.rs`
 - Test: `src-tauri/tests/cas/store_test.rs`
 
@@ -448,6 +450,7 @@ git commit -m "feat(cas): 实现 CAS 对象存储"
 ## Task 3: 创建引用计数管理器
 
 **Files:**
+
 - Create: `src-tauri/src/cas/ref_counter.rs`
 - Test: `src-tauri/tests/cas/ref_counter_test.rs`
 
@@ -477,7 +480,7 @@ impl RefCounter {
             conn.execute(
                 "INSERT INTO cas_refs (object_hash, ref_count, object_type, size, created_at, last_accessed_at)
                  VALUES (?1, 1, ?2, ?3, ?4, ?4)
-                 ON CONFLICT(object_hash) DO UPDATE SET 
+                 ON CONFLICT(object_hash) DO UPDATE SET
                      ref_count = ref_count + 1,
                      last_accessed_at = excluded.last_accessed_at",
                 rusqlite::params![
@@ -495,7 +498,7 @@ impl RefCounter {
     pub fn decrement(&self, object_hash: &str) -> AppResult<()> {
         self.db.with_conn(|conn| {
             conn.execute(
-                "UPDATE cas_refs SET 
+                "UPDATE cas_refs SET
                      ref_count = MAX(0, ref_count - 1),
                      last_accessed_at = ?1
                  WHERE object_hash = ?2",
@@ -635,6 +638,7 @@ git commit -m "feat(cas): 实现引用计数管理器"
 ## Task 4: 创建数据库迁移脚本
 
 **Files:**
+
 - Create: `src-tauri/migrations/016_cas_tables.sql`
 - Modify: `src-tauri/src/storage/migrate.rs`
 
@@ -693,6 +697,7 @@ git commit -m "feat(storage): 添加 CAS 表迁移脚本"
 ## Task 5: 集成 CAS 到 AppState
 
 **Files:**
+
 - Modify: `src-tauri/src/app.rs`
 
 - [ ] **Step 1: 添加 CAS 存储到 AppState**
@@ -778,6 +783,7 @@ git commit -m "feat(app): 集成 CAS 存储到 AppState"
 ## Task 6: 创建调度器
 
 **Files:**
+
 - Create: `src-tauri/src/scheduler.rs`
 
 - [ ] **Step 1: 实现调度器**
@@ -862,6 +868,7 @@ git commit -m "feat(scheduler): 实现定时任务调度器"
 ## Task 7: 创建垃圾回收器
 
 **Files:**
+
 - Create: `src-tauri/src/cas/garbage_collector.rs`
 - Test: `src-tauri/tests/cas/garbage_collector_test.rs`
 
@@ -1038,6 +1045,7 @@ git commit -m "feat(cas): 实现垃圾回收器"
 ## Task 8: 创建乐观锁实现
 
 **Files:**
+
 - Create: `src-tauri/src/cas/write_guard.rs`
 
 - [ ] **Step 1: 实现写入守卫**
@@ -1124,6 +1132,7 @@ git commit -m "feat(cas): 实现乐观锁写入守卫"
 ## Task 9: 创建补丁应用接口
 
 **Files:**
+
 - Create: `src-tauri/src/cas/patch.rs`
 
 - [ ] **Step 1: 实现补丁应用接口**
@@ -1235,6 +1244,7 @@ git commit -m "feat(cas): 实现补丁应用接口"
 ## Task 10: 更新 Cargo.toml 依赖
 
 **Files:**
+
 - Modify: `src-tauri/Cargo.toml`
 
 - [ ] **Step 1: 添加必要依赖**
@@ -1266,6 +1276,7 @@ git commit -m "chore(deps): 添加 CAS 相关依赖"
 ## Task 11: 更新 lib.rs 导出 CAS 模块
 
 **Files:**
+
 - Modify: `src-tauri/src/lib.rs`
 
 - [ ] **Step 1: 添加 CAS 模块导出**
@@ -1295,6 +1306,7 @@ git commit -m "feat(lib): 导出 CAS 模块"
 ## Task 12: 运行完整测试套件
 
 **Files:**
+
 - None (测试现有代码)
 
 - [ ] **Step 1: 运行所有 Rust 测试**

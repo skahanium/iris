@@ -80,7 +80,10 @@ export function ContextPacketCard({
         </div>
         <div className="flex shrink-0 items-center gap-1.5">
           {isPreview ? (
-            <Badge variant="outline" className="px-1.5 py-0 text-[10px] text-amber-700">
+            <Badge
+              variant="outline"
+              className="px-1.5 py-0 text-[10px] text-amber-700"
+            >
               预览
             </Badge>
           ) : null}

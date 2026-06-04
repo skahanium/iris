@@ -146,7 +146,10 @@ export function exportEditorToMarkdown(
   // only included native content).
   const existingPreserves = new Set(parts);
   for (const frag of classifiedFragments) {
-    if (frag.capability === "preserve_only" && !existingPreserves.has(frag.raw)) {
+    if (
+      frag.capability === "preserve_only" &&
+      !existingPreserves.has(frag.raw)
+    ) {
       parts.push(frag.raw);
       preservedCount++;
     }

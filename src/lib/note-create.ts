@@ -38,7 +38,10 @@ export async function createDefaultNote(
       return { path: entry.path, title };
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
-      if (msg.includes("already exists") || msg.includes("File already exists")) {
+      if (
+        msg.includes("already exists") ||
+        msg.includes("File already exists")
+      ) {
         // Name conflict (stale DB or disk leftover) — blacklist and retry
         extraTaken.add(title);
         continue;

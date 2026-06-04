@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 
-import { parseMarkdownToHtml, renderAiMarkdownToHtml } from "@/lib/markdown-render";
+import {
+  parseMarkdownToHtml,
+  renderAiMarkdownToHtml,
+} from "@/lib/markdown-render";
 import { renderMarkdownWithProfile } from "@/lib/markdown-contract";
 
 describe("markdown list inline bold", () => {

@@ -29,7 +29,8 @@ function fileToBase64(file: File): Promise<string> {
       const comma = result.indexOf(",");
       resolve(comma >= 0 ? result.slice(comma + 1) : result);
     };
-    reader.onerror = () => reject(reader.error ?? new Error("Failed to read image"));
+    reader.onerror = () =>
+      reject(reader.error ?? new Error("Failed to read image"));
     reader.readAsDataURL(file);
   });
 }
@@ -49,76 +50,78 @@ export interface EditorImageDropOptions {
 /**
  * Drop / paste images into the editor → vault `assets/` + TipTap image node.
  */
-export const EditorImageDropExtension = Extension.create<EditorImageDropOptions>({
-  name: "editorImageDrop",
+export const EditorImageDropExtension =
+  Extension.create<EditorImageDropOptions>({
+    name: "editorImageDrop",
 
-  addOptions() {
-    return { enabled: true };
-  },
+    addOptions() {
+      return { enabled: true };
+    },
 
-  addProseMirrorPlugins() {
-    const enabled = this.options.enabled;
+    addProseMirrorPlugins() {
+      const enabled = this.options.enabled;
 
-    return [
-      new Plugin({
-        key: pluginKey,
-        props: {
-          handleDrop: (view, event, _slice, moved) => {
-            if (!enabled || moved || !event.dataTransfer?.files?.length) {
-              return false;
-            }
-            const file = Array.from(event.dataTransfer.files).find((f) =>
-              f.type.startsWith("image/"),
-            );
-            if (!file) return false;
-            event.preventDefault();
-            const coords = view.posAtCoords({
-              left: event.clientX,
-              top: event.clientY,
-            });
-            void saveImageFile(file).then((src) => {
-              if (!src) return;
-              const pos = coords?.pos ?? view.state.selection.from;
-              view.dispatch(
-                view.state.tr.insert(
-                  pos,
-                  view.state.schema.nodes.image?.create({
-                    src,
-                    alt: file.name.replace(/\.[^.]+$/, ""),
-                  }) ?? [],
-                ),
+      return [
+        new Plugin({
+          key: pluginKey,
+          props: {
+            handleDrop: (view, event, _slice, moved) => {
+              if (!enabled || moved || !event.dataTransfer?.files?.length) {
+                return false;
+              }
+              const file = Array.from(event.dataTransfer.files).find((f) =>
+                f.type.startsWith("image/"),
               );
-            });
-            return true;
-          },
-          handlePaste: (view, event) => {
-            if (!enabled) return false;
-            const items = event.clipboardData?.items;
-            if (!items) return false;
-            const fileItem = Array.from(items).find(
-              (item) => item.kind === "file" && item.type.startsWith("image/"),
-            );
-            if (!fileItem) return false;
-            const file = fileItem.getAsFile();
-            if (!file) return false;
-            event.preventDefault();
-            const pos = view.state.selection.from;
-            void saveImageFile(file).then((src) => {
-              if (!src) return;
-              view.dispatch(
-                view.state.tr.insert(
-                  pos,
-                  view.state.schema.nodes.image?.create({
-                    src,
-                    alt: file.name.replace(/\.[^.]+$/, ""),
-                  }) ?? [],
-                ),
+              if (!file) return false;
+              event.preventDefault();
+              const coords = view.posAtCoords({
+                left: event.clientX,
+                top: event.clientY,
+              });
+              void saveImageFile(file).then((src) => {
+                if (!src) return;
+                const pos = coords?.pos ?? view.state.selection.from;
+                view.dispatch(
+                  view.state.tr.insert(
+                    pos,
+                    view.state.schema.nodes.image?.create({
+                      src,
+                      alt: file.name.replace(/\.[^.]+$/, ""),
+                    }) ?? [],
+                  ),
+                );
+              });
+              return true;
+            },
+            handlePaste: (view, event) => {
+              if (!enabled) return false;
+              const items = event.clipboardData?.items;
+              if (!items) return false;
+              const fileItem = Array.from(items).find(
+                (item) =>
+                  item.kind === "file" && item.type.startsWith("image/"),
               );
-            });
-            return true;
+              if (!fileItem) return false;
+              const file = fileItem.getAsFile();
+              if (!file) return false;
+              event.preventDefault();
+              const pos = view.state.selection.from;
+              void saveImageFile(file).then((src) => {
+                if (!src) return;
+                view.dispatch(
+                  view.state.tr.insert(
+                    pos,
+                    view.state.schema.nodes.image?.create({
+                      src,
+                      alt: file.name.replace(/\.[^.]+$/, ""),
+                    }) ?? [],
+                  ),
+                );
+              });
+              return true;
+            },
           },
-        },
-      }),
-    ];
-  },
-});
+        }),
+      ];
+    },
+  });

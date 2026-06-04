@@ -84,9 +84,7 @@ describe("editor performance regressions", () => {
     );
 
     expect(source).not.toContain('editor.on("selectionUpdate", onUpdate)');
-    expect(source).toContain(
-      'editor.on("selectionUpdate", updateActiveIndex)',
-    );
+    expect(source).toContain('editor.on("selectionUpdate", updateActiveIndex)');
   });
 
   it("skips undo/redo recomputation for selection-only transactions", () => {

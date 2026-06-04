@@ -23,7 +23,10 @@ describe("callout originalRaw preservation", () => {
     try {
       let calloutPos = -1;
       editor.state.doc.descendants((node, pos) => {
-        if (node.type.name === "blockquote" && node.attrs.calloutType === "note") {
+        if (
+          node.type.name === "blockquote" &&
+          node.attrs.calloutType === "note"
+        ) {
           calloutPos = pos;
         }
       });

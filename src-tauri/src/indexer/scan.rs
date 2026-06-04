@@ -134,10 +134,9 @@ pub fn index_file_with_embed(
         tx.last_insert_rowid()
     };
 
-    let title: String =
-        tx.query_row("SELECT title FROM files WHERE id = ?1", [file_id], |r| {
-            r.get(0)
-        })?;
+    let title: String = tx.query_row("SELECT title FROM files WHERE id = ?1", [file_id], |r| {
+        r.get(0)
+    })?;
 
     sync_file_tags(&tx, file_id, &parsed.tags)?;
 
@@ -252,10 +251,9 @@ pub fn index_file_from_content(
         tx.last_insert_rowid()
     };
 
-    let title: String =
-        tx.query_row("SELECT title FROM files WHERE id = ?1", [file_id], |r| {
-            r.get(0)
-        })?;
+    let title: String = tx.query_row("SELECT title FROM files WHERE id = ?1", [file_id], |r| {
+        r.get(0)
+    })?;
 
     sync_file_tags(&tx, file_id, &parsed.tags)?;
 
@@ -453,30 +451,20 @@ pub fn remove_file_index(conn: &Connection, path: &str) -> AppResult<()> {
 }
 
 /// Rename indexed note path without changing `files.id` (preserves versions and related rows).
-pub fn rename_file_index(
-    conn: &Connection,
-    old_path: &str,
-    new_path: &str,
-) -> AppResult<i64> {
+pub fn rename_file_index(conn: &Connection, old_path: &str, new_path: &str) -> AppResult<i64> {
     if old_path == new_path {
         return conn
-            .query_row(
-                "SELECT id FROM files WHERE path = ?1",
-                [old_path],
-                |r| r.get(0),
-            )
+            .query_row("SELECT id FROM files WHERE path = ?1", [old_path], |r| {
+                r.get(0)
+            })
             .map_err(|e| crate::error::AppError::msg(format!("File not indexed: {e}")));
     }
 
     let file_id: i64 = conn
-        .query_row(
-            "SELECT id FROM files WHERE path = ?1",
-            [old_path],
-            |r| r.get(0),
-        )
-        .map_err(|_| {
-            crate::error::AppError::msg(format!("File not indexed: {old_path}"))
-        })?;
+        .query_row("SELECT id FROM files WHERE path = ?1", [old_path], |r| {
+            r.get(0)
+        })
+        .map_err(|_| crate::error::AppError::msg(format!("File not indexed: {old_path}")))?;
 
     let conflict: Option<i64> = conn
         .query_row(

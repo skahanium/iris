@@ -222,7 +222,8 @@ export function CommandPalette({
                           else itemRefs.current.delete(item.id);
                         }}
                         onMouseEnter={() => {
-                          const pointerDriven = pointerDrivenHighlightRef.current;
+                          const pointerDriven =
+                            pointerDrivenHighlightRef.current;
                           if (!pointerDriven || item.disabled) return;
                           navDeltaRef.current = 0;
                           setHighlight(index);

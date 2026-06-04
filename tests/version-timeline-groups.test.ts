@@ -130,18 +130,15 @@ describe("formatVersionDisplayTime", () => {
         created_at: "2026-06-04T03:17:13Z",
       }),
     );
-    const expected = new Date("2026-06-04T03:17:13Z").toLocaleString(
-      "zh-CN",
-      {
-        year: "numeric",
-        month: "2-digit",
-        day: "2-digit",
-        hour: "2-digit",
-        minute: "2-digit",
-        second: "2-digit",
-        hour12: false,
-      },
-    );
+    const expected = new Date("2026-06-04T03:17:13Z").toLocaleString("zh-CN", {
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hour12: false,
+    });
     expect(formatted).toBe(expected);
   });
 });

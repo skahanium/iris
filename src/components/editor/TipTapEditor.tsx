@@ -33,6 +33,7 @@ import {
 } from "react";
 
 import {
+  clearCachedEditorHtml,
   getCachedEditorHtml,
   setCachedEditorHtml,
 } from "@/lib/editor-html-cache";
@@ -184,7 +185,12 @@ function TipTapEditorInner({
 
   onIngestCompleteRef.current = onIngestComplete;
 
+  const contentCacheKeyRef = useRef(contentCacheKey);
+  contentCacheKeyRef.current = contentCacheKey;
+
   const bodyStatsTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const htmlCacheTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const flushBodyStats = useCallback((editor: Editor) => {
     if (bodyStatsTimerRef.current) {
@@ -301,6 +307,11 @@ function TipTapEditorInner({
     [isLargeDoc],
   );
 
+  const ingestResultRef = useRef<{
+    preserveFragments: MarkdownSyntaxFragment[];
+    bodyMd: string;
+  } | null>(null);
+
   const initialContent = useMemo(() => {
     const bodyMd = initialBodyMarkdown.trim();
     if (contentCacheKey && bodyMd) {
@@ -314,7 +325,8 @@ function TipTapEditorInner({
       bodyMarkdown: bodyMd,
     });
 
-    onIngestCompleteRef.current?.(preserveFragments, bodyMd);
+    // Store for useEffect callback (avoid side effect in useMemo)
+    ingestResultRef.current = { preserveFragments, bodyMd };
 
     if (contentCacheKey && bodyMd) {
       setCachedEditorHtml(contentCacheKey, tipTapHtml);
@@ -323,6 +335,22 @@ function TipTapEditorInner({
     return tipTapHtml;
     // eslint-disable-next-line react-hooks/exhaustive-deps -- reingestKey busts HTML cache on disk reload
   }, [initialBodyMarkdown, contentCacheKey, reingestKey]);
+
+  // Fire onIngestComplete after render (not inside useMemo)
+  useEffect(() => {
+    const result = ingestResultRef.current;
+    if (result) {
+      ingestResultRef.current = null;
+      onIngestCompleteRef.current?.(result.preserveFragments, result.bodyMd);
+    }
+  });
+
+  // Clear HTML cache on disk reload so reingest uses fresh markdown
+  useEffect(() => {
+    if (reingestKey > 0 && contentCacheKey) {
+      clearCachedEditorHtml(contentCacheKey);
+    }
+  }, [reingestKey, contentCacheKey]);
 
   const editor = useEditor({
     extensions,
@@ -339,6 +367,16 @@ function TipTapEditorInner({
       onDirtyRef.current?.();
 
       scheduleBodyStats(updatedEditor);
+
+      // Throttled HTML cache update (2s) so tab-switch shows latest content
+      const key = contentCacheKeyRef.current;
+      if (key) {
+        if (htmlCacheTimerRef.current) clearTimeout(htmlCacheTimerRef.current);
+        htmlCacheTimerRef.current = setTimeout(() => {
+          htmlCacheTimerRef.current = null;
+          setCachedEditorHtml(key, updatedEditor.getHTML());
+        }, 2000);
+      }
     },
 
     editorProps: {
@@ -387,6 +425,10 @@ function TipTapEditorInner({
         clearTimeout(bodyStatsTimerRef.current);
 
         bodyStatsTimerRef.current = null;
+      }
+      if (htmlCacheTimerRef.current) {
+        clearTimeout(htmlCacheTimerRef.current);
+        htmlCacheTimerRef.current = null;
       }
     };
   }, []);

@@ -43,9 +43,7 @@ describe("assistant phase 2 cleanup", () => {
     expect(routing).toContain("resolveAiSceneForIntent");
     expect(panel).not.toContain("ContextStatusBar");
     expect(panel).toContain("onChromeChange");
-    expect(read("src/components/ai/ContextPacketDrawer.tsx")).toContain(
-      "证据",
-    );
+    expect(read("src/components/ai/ContextPacketDrawer.tsx")).toContain("证据");
     expect(panel).not.toContain("SceneSelector");
     expect(panel).toContain("ResearchFocusView");
     expect(panel).not.toContain("ExecutionPlanPreview");

@@ -167,7 +167,10 @@ describe("serializeOpenNote integration (PM + ingest)", () => {
     try {
       let found = false;
       editor.state.doc.descendants((node) => {
-        if (node.type.name === "blockquote" && node.attrs.calloutType === "note") {
+        if (
+          node.type.name === "blockquote" &&
+          node.attrs.calloutType === "note"
+        ) {
           found = true;
         }
       });

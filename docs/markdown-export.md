@@ -13,31 +13,31 @@
 
 ### 块间距（空行）
 
-| 阶段 | 行为 |
-| ---- | ---- |
-| **分类** | marked `space` token → `syntaxKind: "space"`（块间 `\n\n`） |
-| **导入** | `ingestMarkdownForEditor` → `<p data-iris-spacer="true"></p>` |
-| **Schema** | `IrisParagraphExtension` 保留 `irisSpacer` |
-| **导出** | 空段落 / spacer → `closeBlock`（段落间 `\n\n`） |
+| 阶段       | 行为                                                          |
+| ---------- | ------------------------------------------------------------- |
+| **分类**   | marked `space` token → `syntaxKind: "space"`（块间 `\n\n`）   |
+| **导入**   | `ingestMarkdownForEditor` → `<p data-iris-spacer="true"></p>` |
+| **Schema** | `IrisParagraphExtension` 保留 `irisSpacer`                    |
+| **导出**   | 空段落 / spacer → `closeBlock`（段落间 `\n\n`）               |
 
 ### 图片
 
-| 阶段 | 行为 |
-| ---- | ---- |
-| **导入** | contract `image` + `ImageExtension` |
-| **导出** | PM `image` 节点 → `![alt](src)` |
+| 阶段          | 行为                                                                     |
+| ------------- | ------------------------------------------------------------------------ |
+| **导入**      | contract `image` + `ImageExtension`                                      |
+| **导出**      | PM `image` 节点 → `![alt](src)`                                          |
 | **拖放/粘贴** | `EditorImageDropExtension` → `vault_asset_write` → `assets/<uuid>.<ext>` |
 
 ---
 
 ## Callout（`> [!type] Title`）
 
-| 阶段 | 行为 |
-| ---- | ---- |
-| **分类** | `markdown-contract` 将 Obsidian callout 标为 `render_only`（可编辑，非 `preserve_only`） |
-| **导入** | `ingestMarkdownForEditor` → blockquote + `data-callout-original-raw`（打开时的原文） |
-| **Schema** | `CalloutBlockquoteExtension` 保留 `calloutType` 与 `calloutOriginalRaw` |
-| **导出** | **未编辑**的 callout → **原样写回** `calloutOriginalRaw`；编辑后才按结构生成 `> [!type] …` |
+| 阶段       | 行为                                                                                       |
+| ---------- | ------------------------------------------------------------------------------------------ |
+| **分类**   | `markdown-contract` 将 Obsidian callout 标为 `render_only`（可编辑，非 `preserve_only`）   |
+| **导入**   | `ingestMarkdownForEditor` → blockquote + `data-callout-original-raw`（打开时的原文）       |
+| **Schema** | `CalloutBlockquoteExtension` 保留 `calloutType` 与 `calloutOriginalRaw`                    |
+| **导出**   | **未编辑**的 callout → **原样写回** `calloutOriginalRaw`；编辑后才按结构生成 `> [!type] …` |
 
 普通引用块（无 `data-callout-type`）仍导出为标准 `>` blockquote。
 

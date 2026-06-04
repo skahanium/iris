@@ -15,8 +15,8 @@ export interface SlashCommandDef {
 }
 
 /** 文档级 `/` 命令（命令面板不再注册） */
-export const SLASH_COMMANDS: SlashCommandDef[] =
-  SLASH_DOCUMENT_COMMAND_IDS.map((id) => {
+export const SLASH_COMMANDS: SlashCommandDef[] = SLASH_DOCUMENT_COMMAND_IDS.map(
+  (id) => {
     const action = EDITOR_ACTIONS.find(
       (a) => a.slashCommandId === id || a.id === id,
     )!;
@@ -27,7 +27,8 @@ export const SLASH_COMMANDS: SlashCommandDef[] =
       icon: action.icon,
       keywords: action.keywords ?? id,
     };
-  });
+  },
+);
 
 export function slashCommandById(id: string): SlashCommandDef | undefined {
   return SLASH_COMMANDS.find((c) => c.id === id);

@@ -9,7 +9,10 @@ import {
   repairOverEscapedCitationLinks,
   tagCitationLinksInHtml,
 } from "@/lib/ai/citation-markdown";
-import { parseMarkdownToHtml, renderAiMarkdownToHtml } from "@/lib/markdown-render";
+import {
+  parseMarkdownToHtml,
+  renderAiMarkdownToHtml,
+} from "@/lib/markdown-render";
 import type { ContextPacket } from "@/types/ai";
 
 describe("linkifyAiCitations", () => {

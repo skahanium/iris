@@ -73,8 +73,7 @@ const BARE_CITATION_IN_TEXT =
 
 function citationHtmlAnchor(label: string): string {
   const href = citationHrefForLabel(label);
-  const display =
-    label.startsWith("citation:") ? `[${label}]` : `[${label}]`;
+  const display = label.startsWith("citation:") ? `[${label}]` : `[${label}]`;
   return `<a href="${href}" class="ai-citation" data-cite-ref="${encodeCitationRef(label)}">${display}</a>`;
 }
 

@@ -12,15 +12,15 @@
 
 ## 为什么选择 Iris
 
-| 特性           | Iris                                    | Obsidian              | Notion             |
-| -------------- | --------------------------------------- | --------------------- | ------------------ |
-| 数据格式       | `.md` 纯文本                            | `.md` 纯文本          | 专有格式           |
-| 本地优先       | :white_check_mark:                      | :white_check_mark:    | :x:                |
-| 打包体积       | ~10MB                                   | ~200MB                | N/A                |
-| 混合搜索       | :white_check_mark: 关键词 + 语义        | 关键词为主            | :white_check_mark: |
-| 版本历史       | :white_check_mark: 快照 + 双栏对比      | 插件实现              | 有限               |
-| AI 能力扩展    | Skills 提示词包（用户显式安装）+ 配置   | 通用插件市场          | 封闭生态           |
-| 开源许可证     | AGPL-3.0                                | 专有                  | 专有               |
+| 特性        | Iris                                  | Obsidian           | Notion             |
+| ----------- | ------------------------------------- | ------------------ | ------------------ |
+| 数据格式    | `.md` 纯文本                          | `.md` 纯文本       | 专有格式           |
+| 本地优先    | :white_check_mark:                    | :white_check_mark: | :x:                |
+| 打包体积    | ~10MB                                 | ~200MB             | N/A                |
+| 混合搜索    | :white_check_mark: 关键词 + 语义      | 关键词为主         | :white_check_mark: |
+| 版本历史    | :white_check_mark: 快照 + 双栏对比    | 插件实现           | 有限               |
+| AI 能力扩展 | Skills 提示词包（用户显式安装）+ 配置 | 通用插件市场       | 封闭生态           |
+| 开源许可证  | AGPL-3.0                              | 专有               | 专有               |
 
 Iris **不做** Obsidian 式通用插件 API 或插件市场；AI 行为可通过 [Skills](src/components/ai/SkillsPanel.tsx)（Claude 兼容 `SKILL.md`，支持 URL / Git / 本地安装）与声明式配置扩展。深度定制请 fork 或向上游提 PR。
 
@@ -136,14 +136,14 @@ iris/
 
 ## 文档
 
-| 你想…                   | 阅读                                                     |
-| ----------------------- | -------------------------------------------------------- |
-| 使用指南（用户向）      | Notion 官方文档站（v1.0.0 交付，URL 待发布）             |
-| 看路线图与里程碑        | [ROADMAP.md](./ROADMAP.md)                               |
-| 改界面 / token / 组件   | [docs/design-system.md](docs/design-system.md)            |
-| 查架构、IPC、数据流     | [ARCHITECTURE.md](./ARCHITECTURE.md)                     |
-| 参与开发                | [CONTRIBUTING.md](./CONTRIBUTING.md) · [AGENTS.md](./AGENTS.md) |
-| 全部文档列表            | [docs/README.md](docs/README.md)                         |
+| 你想…                 | 阅读                                                            |
+| --------------------- | --------------------------------------------------------------- |
+| 使用指南（用户向）    | Notion 官方文档站（v1.0.0 交付，URL 待发布）                    |
+| 看路线图与里程碑      | [ROADMAP.md](./ROADMAP.md)                                      |
+| 改界面 / token / 组件 | [docs/design-system.md](docs/design-system.md)                  |
+| 查架构、IPC、数据流   | [ARCHITECTURE.md](./ARCHITECTURE.md)                            |
+| 参与开发              | [CONTRIBUTING.md](./CONTRIBUTING.md) · [AGENTS.md](./AGENTS.md) |
+| 全部文档列表          | [docs/README.md](docs/README.md)                                |
 
 ---
 

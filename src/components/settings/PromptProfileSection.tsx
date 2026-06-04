@@ -36,7 +36,9 @@ export function PromptProfileSection() {
 
   useEffect(() => {
     void load();
-    void promptProfilePresets().then(setPresets).catch(() => setPresets([]));
+    void promptProfilePresets()
+      .then(setPresets)
+      .catch(() => setPresets([]));
   }, [load]);
 
   const applyPreset = (profile: PromptProfileDto) => {

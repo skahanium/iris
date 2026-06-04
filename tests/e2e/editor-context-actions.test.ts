@@ -21,7 +21,9 @@ describe("editor slash and context menu E2E contract", () => {
     expect(palette).not.toContain("slashPaletteItems");
     expect(conversation).toContain("AiMessageSelectionUi");
     expect(panel).toContain("AiComposerContextMenu");
-    expect(read("src/lib/editor-actions.ts")).not.toContain("selection_toolbar");
+    expect(read("src/lib/editor-actions.ts")).not.toContain(
+      "selection_toolbar",
+    );
     expect(read("src/lib/editor-actions.ts")).toContain("EDITOR_ACTIONS");
     expect(read("src/components/ui/iris-surface-menu.tsx")).toContain(
       "IrisSurfaceMenuItem",
@@ -30,8 +32,8 @@ describe("editor slash and context menu E2E contract", () => {
       "CommandListOption",
     );
     expect(read("src/lib/iris-clipboard.ts")).toContain("pasteIntoEditor");
-    expect(read("src/components/editor/DocumentTitleContextMenu.tsx")).toContain(
-      "IrisContextMenu",
-    );
+    expect(
+      read("src/components/editor/DocumentTitleContextMenu.tsx"),
+    ).toContain("IrisContextMenu");
   });
 });

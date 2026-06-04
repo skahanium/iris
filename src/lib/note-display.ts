@@ -39,10 +39,7 @@ export function mapLegacyPlaceholderStemToDisplay(stem: string): string | null {
       ? UNNAMED_DOCUMENT_PREFIX
       : `${UNNAMED_DOCUMENT_PREFIX}（${n - 1}）`;
   }
-  if (
-    stem === UNNAMED_DOCUMENT_PREFIX ||
-    /^未命名文档（\d+）$/.test(stem)
-  ) {
+  if (stem === UNNAMED_DOCUMENT_PREFIX || /^未命名文档（\d+）$/.test(stem)) {
     return stem;
   }
   return null;
@@ -88,9 +85,7 @@ export function resolveNoteDisplayTitle(options: {
     return fromMarkdown;
   }
 
-  const mappedStem = mapLegacyPlaceholderStemToDisplay(
-    pathStem(options.path),
-  );
+  const mappedStem = mapLegacyPlaceholderStemToDisplay(pathStem(options.path));
   if (mappedStem) {
     return mappedStem;
   }

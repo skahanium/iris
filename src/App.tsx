@@ -68,7 +68,9 @@ import {
   resolveNoteDisplayTitle,
 } from "@/lib/note-display";
 import {
+  fileRead,
   fileWrite,
+  listenFileChanged,
   listenVersionSaveComplete,
   settingsGet,
   settingsSet,
@@ -163,12 +165,20 @@ function App() {
   const [aiStatus, setAiStatus] = useState("AI 空闲");
   const [assistantChrome, setAssistantChrome] =
     useState<AssistantChromeSnapshot>(EMPTY_ASSISTANT_CHROME);
+  const [conflictState, setConflictState] = useState<{
+    open: boolean;
+    localContent: string;
+    externalContent: string;
+    filePath: string;
+  } | null>(null);
   const [editorStats, setEditorStats] = useState({
     characterCount: 0,
     readingMinutes: 1,
   });
   const editorStatsRef = useRef({ characterCount: 0, readingMinutes: 1 });
-  const editorStatsTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const editorStatsTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null,
+  );
   const updateEditorStats = useCallback(
     (stats: { characterCount: number; readingMinutes: number }) => {
       editorStatsRef.current = stats;
@@ -273,10 +283,7 @@ function App() {
       if (path) {
         syncTabMarkdownCache(path, md);
         markdownRef.current = md;
-        markClean(
-          path,
-          resolveNoteDisplayTitle({ path, title: noteTitle }),
-        );
+        markClean(path, resolveNoteDisplayTitle({ path, title: noteTitle }));
         if (noteTitle.trim() === "") {
           schedulePathSync(path, noteTitle);
         }
@@ -296,10 +303,7 @@ function App() {
         dirtyRef.current = false;
         markdownRef.current = md;
         syncTabMarkdownCache(path, md);
-        markClean(
-          path,
-          resolveNoteDisplayTitle({ path, title: noteTitle }),
-        );
+        markClean(path, resolveNoteDisplayTitle({ path, title: noteTitle }));
       }
       return md;
     }
@@ -333,6 +337,56 @@ function App() {
       unlisten?.();
     };
   }, [activePathRef]);
+
+  // Listen for external file changes and show conflict dialog
+  useEffect(() => {
+    if (!isTauriRuntime()) return;
+    let unlisten: (() => void) | undefined;
+    void listenFileChanged((event) => {
+      const currentPath = activePathRef.current;
+      if (!currentPath || event.path !== currentPath) return;
+      if (event.event_type === "removed") return;
+      // External change detected on the currently open file
+      void fileRead(event.path)
+        .then((externalContent) => {
+          const localContent = getLiveMarkdownRef.current();
+          // Only show conflict if content actually differs
+          if (externalContent !== localContent) {
+            setConflictState({
+              open: true,
+              localContent,
+              externalContent,
+              filePath: event.path,
+            });
+          }
+        })
+        .catch((err: unknown) => {
+          console.warn("[App] failed to read external file for conflict:", err);
+        });
+    }).then((fn) => {
+      unlisten = fn;
+    });
+    return () => {
+      unlisten?.();
+    };
+  }, [activePathRef, getLiveMarkdownRef]);
+
+  const handleConflictKeepLocal = useCallback(() => {
+    setConflictState(null);
+    // Re-save local content to overwrite external changes
+    void flushSave();
+  }, [flushSave]);
+
+  const handleConflictAcceptExternal = useCallback(() => {
+    if (!conflictState) return;
+    setConflictState(null);
+    // Re-open the note from disk to load external content
+    void openNote(conflictState.filePath);
+  }, [conflictState, openNote]);
+
+  const handleConflictManualEdit = useCallback(() => {
+    setConflictState(null);
+  }, []);
 
   const handleSaveNote = useCallback(async () => {
     await flushSave();
@@ -944,13 +998,13 @@ function App() {
               </Suspense>
             </ErrorBoundary>
             <ConflictDialog
-              open={false}
-              localContent=""
-              externalContent=""
-              filePath=""
-              onKeepLocal={() => {}}
-              onAcceptExternal={() => {}}
-              onManualEdit={() => {}}
+              open={conflictState?.open ?? false}
+              localContent={conflictState?.localContent ?? ""}
+              externalContent={conflictState?.externalContent ?? ""}
+              filePath={conflictState?.filePath ?? ""}
+              onKeepLocal={handleConflictKeepLocal}
+              onAcceptExternal={handleConflictAcceptExternal}
+              onManualEdit={handleConflictManualEdit}
             />
           </>
         }

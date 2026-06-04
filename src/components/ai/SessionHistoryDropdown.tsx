@@ -32,7 +32,9 @@ function toChatLines(
   records: Awaited<ReturnType<typeof sessionLoad>>,
 ): ChatLine[] {
   return records
-    .filter((m) => m.role === "user" || m.role === "assistant" || m.role === "system")
+    .filter(
+      (m) => m.role === "user" || m.role === "assistant" || m.role === "system",
+    )
     .map((m) => ({
       role: m.role as ChatLine["role"],
       content: m.content,
@@ -152,11 +154,7 @@ export function SessionHistoryDropdown({
   );
 
   const handleClearAll = useCallback(async () => {
-    if (
-      !window.confirm(
-        "确定清空当前场景下的全部历史会话？此操作不可恢复。",
-      )
-    ) {
+    if (!window.confirm("确定清空当前场景下的全部历史会话？此操作不可恢复。")) {
       return;
     }
     try {

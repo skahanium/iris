@@ -23,11 +23,13 @@
 ### AI 系统
 
 **内联 AI 与命令**
+
 - 内联 AI：选中文本 → 改写 / 扩写 / 翻译 / 简化，接受 / 重试 / 回退
 - `/` 命令菜单（Lucide 图标 + 纸墨样式），结果流式写入 `ai-stream` 节点
 - 右键 AI 上下文菜单（`IrisContextMenu`），选区 AI 操作以右键为主
 
 **统一助手面板**（`UnifiedAssistantPanel`）
+
 - 场景自动路由：research、writing、organize、citation、chapter/document、rules、chat
 - `AiComposer` 多行输入，`@` 悬浮补全（文件夹/文档），`ContextScopeChips`
 - 证据包引用卡（`ContextPacketCard`）、引用抽屉（`ContextPacketDrawer`）
@@ -42,6 +44,7 @@
 - AI 规则面板（`AiRulesPanel`）、身份设置（`AssistantIdentitySection`）
 
 **AI Runtime（Rust）**
+
 - `ai_runtime` 模块：`scene_router`、`context_planner`、`retrieval_broker`、`packet_builder`、`model_gateway`、`tool_executor`、`guardrails`、`trace`
 - `harness` 编排调度 + `harness_support`
 - `execution_plan` 执行计划、`evidence_mixer` 证据融合
@@ -53,6 +56,7 @@
 - `packet_cache` 证据包 LRU 缓存
 
 **写作/研究/章节工作流**
+
 - `writing_workflow`：结构建议、改写润色、法规引用（证据包驱动）、一致性检查
 - `research_workflow`：有限 agentic loop，子任务分解与结果整合
 - `chapter_workflow`：章节/文档级检查与 `PatchProposal` 确认
@@ -61,6 +65,7 @@
 - `organize_workflow`：AI 整理
 
 **LLM 集成**
+
 - 多提供商：OpenAI 兼容、Anthropic Messages API、Ollama、自定义
 - 四场景路由（`llm_routing`）：各场景独立 `providerId` / `model` / `contextStrategy`
 - DeepSeek 前缀缓存纪律（分层 messages、同会话同参数）
@@ -69,12 +74,14 @@
 - 四提供商共享同一 provider 选择（内联 AI、`/` 命令、助理面板）
 
 **联网搜索**
+
 - MiniMax Token Plan `coding_plan/search`（主通道）
 - DuckDuckGo HTML 抓取降级
 - AI 输入关联网开关，发送前自动注入网页摘要
 - 搜索结果 30 分钟 LRU 缓存
 
 **知识索引**
+
 - 语义锚点（`semantic_anchors` + `vec_anchors`）
 - 法规条款索引（`regulation_index` + `vec_regulations`）
 - 文种模板提取（`genre_templates`）
@@ -82,6 +89,7 @@
 - `VaultNavigator` 树形浮层（由 FileSheet 演进）
 
 **AI 记忆与个性化**
+
 - 场景会话：`scene + note_path / __global__` 唯一定位
 - `user_profile` 用户确认的规则/偏好，可逐条禁用/删除
 - `knowledge_deposits` AI 收件箱

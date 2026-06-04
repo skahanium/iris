@@ -26,10 +26,7 @@ describe("shouldStartNewAiSession", () => {
 
   it("respects explicit new-chat flag", () => {
     expect(
-      shouldStartNewAiSession(
-        [{ role: "assistant", content: "prior" }],
-        true,
-      ),
+      shouldStartNewAiSession([{ role: "assistant", content: "prior" }], true),
     ).toBe(true);
   });
 });

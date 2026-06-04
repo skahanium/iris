@@ -13,6 +13,10 @@ async function writeNoteAtPath(
 ): Promise<string | null> {
   const md = getMd();
   if (isNoteSubstantivelyEmpty(md)) {
+    console.debug(
+      "[useEditorSave] skip save: note substantively empty",
+      targetPath,
+    );
     return null;
   }
   await fileWrite(targetPath, md);
@@ -53,7 +57,9 @@ export function useEditorSave(
   const saveNote = useCallback(async (): Promise<string | null> => {
     if (saveInFlightRef.current) {
       saveAgainRef.current = true;
-      return saveInFlightRef.current;
+      // Wait for the current loop to finish, then run once more with latest content
+      await saveInFlightRef.current;
+      return runSaveOnce();
     }
 
     const loop = async (): Promise<string | null> => {
@@ -96,7 +102,11 @@ export function useEditorSave(
       debouncedSave.cancel();
       const md = getMarkdownRef.current();
       if (!isNoteSubstantivelyEmpty(md)) {
-        void fileWrite(target, md).catch(() => {});
+        // Fire-and-forget: best effort save before window closes.
+        // The 1200ms debounced auto-save should have already persisted most changes.
+        void fileWrite(target, md).catch((err: unknown) => {
+          console.warn("[useEditorSave] beforeunload save failed:", err);
+        });
       }
     };
     window.addEventListener("beforeunload", handleBeforeUnload);

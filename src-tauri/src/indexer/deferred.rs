@@ -27,10 +27,7 @@ pub struct DeferredFileIndexer {
 
 impl DeferredFileIndexer {
     /// Flush the oldest pending entry immediately when the map exceeds capacity.
-    fn flush_oldest_if_full(
-        guard: &mut HashMap<String, PendingIndex>,
-        state: &Arc<AppState>,
-    ) {
+    fn flush_oldest_if_full(guard: &mut HashMap<String, PendingIndex>, state: &Arc<AppState>) {
         if guard.len() < MAX_PENDING_ENTRIES {
             return;
         }
@@ -131,9 +128,9 @@ impl DeferredFileIndexer {
             match result {
                 Ok(Ok(_)) => {}
                 Ok(Err(e)) => {
-                    tracing::warn!(path = %job.path, "deferred index failed: {e}");
+                    tracing::error!(path = %job.path, "deferred index failed: {e}");
                 }
-                Err(e) => tracing::warn!(path = %job.path, "deferred index join failed: {e}"),
+                Err(e) => tracing::error!(path = %job.path, "deferred index join failed: {e}"),
             }
         });
     }

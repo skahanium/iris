@@ -20,9 +20,9 @@ function taskStatusToRunState(
 
 describe("assistant run confirm state", () => {
   it("reject path stays running until completed, not error", () => {
-    expect(
-      taskStatusToRunState("running", "已拒绝，正在生成替代回答…"),
-    ).toBe("running");
+    expect(taskStatusToRunState("running", "已拒绝，正在生成替代回答…")).toBe(
+      "running",
+    );
   });
 
   it("completed after resume is not error", () => {

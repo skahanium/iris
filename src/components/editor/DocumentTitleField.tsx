@@ -50,7 +50,10 @@ export function DocumentTitleField({
       onValueChange={commit}
     >
       <div
-        className={cn("iris-document-title-field iris-doc-title-wrap", className)}
+        className={cn(
+          "iris-document-title-field iris-doc-title-wrap",
+          className,
+        )}
         data-testid="document-title-field"
       >
         <input
@@ -65,42 +68,42 @@ export function DocumentTitleField({
           onChange={(event) => commit(event.target.value)}
           onBlur={onBlur}
           onKeyDown={(event) => {
-          if (event.key === "Enter") {
-            event.preventDefault();
-            const ed = editorRef.current;
-            if (!ed) {
-              (event.target as HTMLInputElement).blur();
-              return;
+            if (event.key === "Enter") {
+              event.preventDefault();
+              const ed = editorRef.current;
+              if (!ed) {
+                (event.target as HTMLInputElement).blur();
+                return;
+              }
+              requestAnimationFrame(() => {
+                const editor = editorRef.current;
+                if (!editor || editor.isDestroyed) return;
+                editor.chain().focus("start").scrollIntoView().run();
+              });
             }
-            requestAnimationFrame(() => {
-              const editor = editorRef.current;
-              if (!editor || editor.isDestroyed) return;
-              editor.chain().focus("start").scrollIntoView().run();
-            });
-          }
-        }}
-        onPaste={(event) => {
-          event.preventDefault();
-          const pasted = event.clipboardData.getData("text/plain");
-          const merged = sanitizeDocumentTitleInput(value + pasted);
-          commit(merged);
-        }}
+          }}
+          onPaste={(event) => {
+            event.preventDefault();
+            const pasted = event.clipboardData.getData("text/plain");
+            const merged = sanitizeDocumentTitleInput(value + pasted);
+            commit(merged);
+          }}
         />
         {showCount ? (
-        <span
-          className={cn(
-            "iris-doc-title-count",
-            len > NOTE_TITLE_HARD_LIMIT && "is-warning",
-          )}
-          aria-hidden
-          title={
-            len > NOTE_TITLE_HARD_LIMIT
-              ? "标题已达上限"
-              : "标题较长可能影响 tab 显示"
-          }
-        >
-          {len}/{NOTE_TITLE_HARD_LIMIT}
-        </span>
+          <span
+            className={cn(
+              "iris-doc-title-count",
+              len > NOTE_TITLE_HARD_LIMIT && "is-warning",
+            )}
+            aria-hidden
+            title={
+              len > NOTE_TITLE_HARD_LIMIT
+                ? "标题已达上限"
+                : "标题较长可能影响 tab 显示"
+            }
+          >
+            {len}/{NOTE_TITLE_HARD_LIMIT}
+          </span>
         ) : null}
       </div>
     </DocumentTitleContextMenu>

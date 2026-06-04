@@ -3,7 +3,10 @@ import { Plus, X } from "lucide-react";
 import { memo, useMemo } from "react";
 
 import { IrisMark } from "@/components/brand/IrisMark";
-import { isMacOSDesktopChrome, showCustomWindowControls } from "@/lib/platform-chrome";
+import {
+  isMacOSDesktopChrome,
+  showCustomWindowControls,
+} from "@/lib/platform-chrome";
 import { isTauriRuntime } from "@/lib/tauri-runtime";
 import { createWindowDragMouseDown } from "@/lib/window-drag";
 import { cn } from "@/lib/utils";
@@ -64,8 +67,7 @@ export const DesktopTitleBar = memo(function DesktopTitleBar({
         "iris-desktop-titlebar flex h-[var(--titlebar-height)] shrink-0 cursor-default select-none border-b border-border/60 bg-surface-chrome",
         macCenteredChrome ? "items-center" : "items-stretch",
         isDesktop && "iris-desktop-titlebar--desktop",
-        customWindowControls &&
-          "relative pr-[var(--window-controls-width)]",
+        customWindowControls && "relative pr-[var(--window-controls-width)]",
         macEmptyToolbar && "iris-desktop-titlebar--mac-empty",
       )}
       data-tauri-drag-region={headerNativeDragRegion ? true : undefined}

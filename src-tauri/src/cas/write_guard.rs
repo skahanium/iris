@@ -14,8 +14,8 @@ pub struct WriteGuard {
 }
 
 impl WriteGuard {
-    /// watcher 跳过条目的生存时间
-    const TTL: Duration = Duration::from_secs(3);
+    /// watcher 跳过条目的生存时间（比延迟索引器的 2.5s 防抖多 2.5s 余量）
+    const TTL: Duration = Duration::from_secs(5);
 
     /// 创建新的写入守卫
     pub fn new() -> Self {

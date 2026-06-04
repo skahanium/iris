@@ -7,9 +7,7 @@
  */
 import { describe, expect, it } from "vitest";
 
-import {
-  ingestMarkdownForEditor,
-} from "@/lib/editor-ingest";
+import { ingestMarkdownForEditor } from "@/lib/editor-ingest";
 import { exportEditorToMarkdown } from "@/lib/editor-export";
 import { classifyMarkdownCapabilities } from "@/lib/markdown-contract/contract";
 import { renderMarkdownWithProfile } from "@/lib/markdown-contract/contract";

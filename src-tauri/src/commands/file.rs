@@ -9,12 +9,11 @@ use crate::error::{AppError, AppResult};
 use crate::indexer::frontmatter::resolve_display_title;
 use crate::indexer::scan::{
     collect_vault_folders, content_hash, index_file_with_embed, index_vault_incremental,
-    peek_file_entry_after_write_fast, prune_stale_file_indexes, rename_file_index,
-    FileEntry,
+    peek_file_entry_after_write, prune_stale_file_indexes, rename_file_index, FileEntry,
 };
 use crate::recycle::{discard_document, trash_document};
-use base64::Engine;
 use base64::engine::general_purpose::STANDARD;
+use base64::Engine;
 
 use crate::storage::paths::{is_user_note_path, read_file_lossy, resolve_vault_path};
 
@@ -138,7 +137,7 @@ pub async fn file_write(
 
         let entry = state
             .db
-            .with_read_conn(|conn| peek_file_entry_after_write_fast(conn, &vault, &abs))?;
+            .with_read_conn(|conn| peek_file_entry_after_write(conn, &vault, &abs, &content))?;
 
         state.schedule_deferred_index(path, content, hash, abs, vault);
 
@@ -292,9 +291,9 @@ pub async fn folder_rename(
                 if let Ok(h) = crate::indexer::scan::file_hash(&abs_src) {
                     state.write_guard.mark(src_path, &h);
                 }
-                let _ = state.db.with_conn(|conn| {
-                    index_file_with_embed(conn, &vault, &abs_src, Some(&state))
-                });
+                let _ = state
+                    .db
+                    .with_conn(|conn| index_file_with_embed(conn, &vault, &abs_src, Some(&state)));
             }
         }
 
@@ -332,8 +331,7 @@ pub struct PathSyncSuggest {
 }
 
 const UNNAMED_DOCUMENT_TITLE: &str = "未命名文档";
-const PLACEHOLDER_TITLE_MARKERS: &[&str] =
-    &["未命名文档", "新建文档", "无标题", "untitled"];
+const PLACEHOLDER_TITLE_MARKERS: &[&str] = &["未命名文档", "新建文档", "无标题", "untitled"];
 
 fn is_placeholder_title(title: &str) -> bool {
     let t = title.trim();
@@ -431,9 +429,7 @@ pub fn path_sync_suggest_inner(
 
     let (suggested_path, conflict_resolved) = state
         .db
-        .with_conn(|conn| {
-            allocate_path_for_title(&parent, &sync_title, &current_path, conn)
-        })?;
+        .with_conn(|conn| allocate_path_for_title(&parent, &sync_title, &current_path, conn))?;
 
     let needs_sync = suggested_path != current_path;
 
@@ -516,8 +512,9 @@ pub async fn file_rename(
         let old_stem = title_from_path(&path);
         let new_stem = title_from_path(&new_path);
 
-        let modified_sources =
-            cascade_rewrite_wikilinks_on_disk(&state, &vault, &path, &new_path, &old_stem, &new_stem)?;
+        let modified_sources = cascade_rewrite_wikilinks_on_disk(
+            &state, &vault, &path, &new_path, &old_stem, &new_stem,
+        )?;
 
         cascade_rename_sessions(&state, &path, &new_path)?;
 
@@ -535,9 +532,9 @@ pub async fn file_rename(
                 if let Ok(h) = crate::indexer::scan::file_hash(&abs_src) {
                     state.write_guard.mark(src_path, &h);
                 }
-                let _ = state.db.with_conn(|conn| {
-                    index_file_with_embed(conn, &vault, &abs_src, Some(&state))
-                });
+                let _ = state
+                    .db
+                    .with_conn(|conn| index_file_with_embed(conn, &vault, &abs_src, Some(&state)));
             }
         }
 

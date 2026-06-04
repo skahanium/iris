@@ -25,7 +25,11 @@ export function matchesKeyChord(e: KeyboardEvent, chord: KeyChord): boolean {
   if (chord.mod !== isModKey(e)) return false;
   if ((chord.shift ?? false) !== e.shiftKey) return false;
   const pressed = e.key;
-  if (pressed === chord.key || pressed.toLowerCase() === chord.key.toLowerCase()) return true;
+  if (
+    pressed === chord.key ||
+    pressed.toLowerCase() === chord.key.toLowerCase()
+  )
+    return true;
   // Zoom in: same physical key produces + or = depending on layout
   if (chord.key === "+" && pressed === "=") return true;
   if (chord.key === "=" && pressed === "+") return true;

@@ -1391,12 +1391,7 @@ export function UnifiedAssistantPanel({
     }
     setToolConfirmRequest(null);
     assistantRun.setFromTaskStatus("completed", actionState.intent);
-  }, [
-    actionState.intent,
-    assistantRun,
-    handleToolConfirm,
-    toolConfirmRequest,
-  ]);
+  }, [actionState.intent, assistantRun, handleToolConfirm, toolConfirmRequest]);
 
   const handleAcceptPatch = useCallback(
     async (patch: PatchProposal) => {

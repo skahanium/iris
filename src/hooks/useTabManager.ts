@@ -218,7 +218,13 @@ export function useTabManager(options: UseTabManagerOptions = {}) {
       }
       await activateTab(switchTo);
     },
-    [activateTab, clearEditorState, maybeDiscardOnLeave, onStatusChange, persistAndCacheTab],
+    [
+      activateTab,
+      clearEditorState,
+      maybeDiscardOnLeave,
+      onStatusChange,
+      persistAndCacheTab,
+    ],
   );
 
   const handleNewNote = useCallback(async () => {

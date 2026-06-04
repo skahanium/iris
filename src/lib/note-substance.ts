@@ -2,12 +2,7 @@ import { splitFrontmatter, titleFromFields } from "@/lib/frontmatter";
 import { stripLeadingBodyTitleHeading } from "@/lib/markdown";
 
 /** Placeholder titles that do not count as user-authored content. */
-const PLACEHOLDER_TITLES = new Set([
-  "",
-  "无标题",
-  "新建文档",
-  "未命名文档",
-]);
+const PLACEHOLDER_TITLES = new Set(["", "无标题", "新建文档", "未命名文档"]);
 
 function isPlaceholderTitle(title: string): boolean {
   if (PLACEHOLDER_TITLES.has(title)) {
@@ -23,10 +18,11 @@ function isPlaceholderTitle(title: string): boolean {
 }
 
 function bodyHasSubstance(body: string): boolean {
-  const stripped = body
+  // Preserve code blocks as substance (a note with only code is real content)
+  const withoutCodeBlocks = body.replace(/```[\s\S]*?```/g, "CODE_BLOCK");
+  const stripped = withoutCodeBlocks
     .replace(/<!--[\s\S]*?-->/g, "")
-    .replace(/```[\s\S]*?```/g, "")
-    .replace(/`[^`]+`/g, "")
+    .replace(/`[^`]+`/g, "CODE")
     .replace(/^#{1,6}\s*$/gm, "")
     .replace(/^[-*+]\s*$/gm, "")
     .replace(/^\d+\.\s*$/gm, "")

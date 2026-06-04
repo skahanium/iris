@@ -18,7 +18,11 @@ import {
   countWebSearchPackets,
 } from "@/lib/assistant-chrome";
 import { cn } from "@/lib/utils";
-import type { ContextPacket, ContextStatus, EvidenceRelation } from "@/types/ai";
+import type {
+  ContextPacket,
+  ContextStatus,
+  EvidenceRelation,
+} from "@/types/ai";
 
 interface ContextPacketDrawerProps {
   open: boolean;
@@ -43,8 +47,14 @@ export function ContextPacketDrawer({
   citationMiss = null,
 }: ContextPacketDrawerProps) {
   const hasEvidenceChain = relations && relations.length > 0;
-  const webSearchCount = useMemo(() => countWebSearchPackets(packets), [packets]);
-  const webPageCount = useMemo(() => countWebPageFetchPackets(packets), [packets]);
+  const webSearchCount = useMemo(
+    () => countWebSearchPackets(packets),
+    [packets],
+  );
+  const webPageCount = useMemo(
+    () => countWebPageFetchPackets(packets),
+    [packets],
+  );
   const webCount = webSearchCount + webPageCount;
   const localCount = packets.length - webCount;
   const previewCount = useMemo(

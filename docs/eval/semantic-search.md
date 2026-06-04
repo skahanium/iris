@@ -6,15 +6,15 @@
 
 Iris 语义检索采用**本地嵌入 + 混合存储 + 双路径检索**：
 
-| 环节     | 实现                                                                            |
-| -------- | ------------------------------------------------------------------------------- |
-| 嵌入模型 | [fastembed](https://github.com/Anush008/fastembed-rs) `AllMiniLML6V2`（384 维） |
-| 存储     | `chunk_embeddings.embedding` BLOB；migration `002_vec` 另建 sqlite-vec `vec0` 虚拟表 |
-| 分块     | `chunk_markdown`，约 2000 字符/块，见 `indexer/chunker.rs`                      |
+| 环节     | 实现                                                                                     |
+| -------- | ---------------------------------------------------------------------------------------- |
+| 嵌入模型 | [fastembed](https://github.com/Anush008/fastembed-rs) `AllMiniLML6V2`（384 维）          |
+| 存储     | `chunk_embeddings.embedding` BLOB；migration `002_vec` 另建 sqlite-vec `vec0` 虚拟表     |
+| 分块     | `chunk_markdown`，约 2000 字符/块，见 `indexer/chunker.rs`                               |
 | 检索     | `embedding::engine::semantic_search`：优先 `vec_chunks`（vec0），失败则 BLOB 全量 cosine |
-| IPC      | `search_semantic(query, limit?)`，默认 `limit=5`                                |
-| 重建索引 | `search_reindex` / 扫描 vault 时 `store_chunk_embeddings`                       |
-| AI 融合  | `retrieval_broker`：FTS + vec + link + exact 多路融合（助手面板上下文）          |
+| IPC      | `search_semantic(query, limit?)`，默认 `limit=5`                                         |
+| 重建索引 | `search_reindex` / 扫描 vault 时 `store_chunk_embeddings`                                |
+| AI 融合  | `retrieval_broker`：FTS + vec + link + exact 多路融合（助手面板上下文）                  |
 
 **数据流：**
 

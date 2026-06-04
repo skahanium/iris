@@ -4,12 +4,12 @@
 
 **文档分工**（勿在本文件重复维护版本排期）：
 
-| 文档                                       | 内容                     |
-| ------------------------------------------ | ------------------------ |
-| [ROADMAP.md](./ROADMAP.md)                 | 版本里程碑               |
+| 文档                                             | 内容                         |
+| ------------------------------------------------ | ---------------------------- |
+| [ROADMAP.md](./ROADMAP.md)                       | 版本里程碑                   |
 | [docs/design-system.md](./docs/design-system.md) | Notion N token、组件、C 原则 |
-| [docs/README.md](./docs/README.md)         | 全库文档索引             |
-| 本文档                                     | 分层、IPC、数据流、安全  |
+| [docs/README.md](./docs/README.md)               | 全库文档索引                 |
+| 本文档                                           | 分层、IPC、数据流、安全      |
 
 ---
 
@@ -153,22 +153,22 @@
 
 **双层保存**：
 
-| 层级 | 行为                                                              |
-| ---- | ----------------------------------------------------------------- |
-| 层 1 | 编辑防抖写 `vault/*.md`；用户感知为「自动保存」，不产生版本行     |
-| 层 2 | 稀疏检查点写入 `.iris/versions/`                                  |
+| 层级 | 行为                                                          |
+| ---- | ------------------------------------------------------------- |
+| 层 1 | 编辑防抖写 `vault/*.md`；用户感知为「自动保存」，不产生版本行 |
+| 层 2 | 稀疏检查点写入 `.iris/versions/`                              |
 
 **触发策略**：
 
-| 触发方式          | 行为                                                                 |
-| ----------------- | -------------------------------------------------------------------- |
-| `Ctrl+S`          | 立即 flush 层 1（仅写当前 `.md`，不创建版本行）                      |
-| `Ctrl+Shift+S`    | flush 层 1 + 后台 `version_save_manual`（`kind=manual`）              |
-| 命令面板「保存笔记」 | 同 `Ctrl+S`                                                          |
-| 命令面板「保存并创建版本快照」 | 同 `Ctrl+Shift+S`                                            |
-| 空闲 10 分钟      | 打开中的文档无编辑 → 后台 `version_save_idle`（`kind=auto_idle`）   |
-| 定稿         | 对当前正文新建快照，`kind=finalize`，永久保留           |
-| 恢复前       | `version_restore` 内建 `pre_restore`                    |
+| 触发方式                       | 行为                                                              |
+| ------------------------------ | ----------------------------------------------------------------- |
+| `Ctrl+S`                       | 立即 flush 层 1（仅写当前 `.md`，不创建版本行）                   |
+| `Ctrl+Shift+S`                 | flush 层 1 + 后台 `version_save_manual`（`kind=manual`）          |
+| 命令面板「保存笔记」           | 同 `Ctrl+S`                                                       |
+| 命令面板「保存并创建版本快照」 | 同 `Ctrl+Shift+S`                                                 |
+| 空闲 10 分钟                   | 打开中的文档无编辑 → 后台 `version_save_idle`（`kind=auto_idle`） |
+| 定稿                           | 对当前正文新建快照，`kind=finalize`，永久保留                     |
+| 恢复前                         | `version_restore` 内建 `pre_restore`                              |
 
 **存储结构**：
 
@@ -190,6 +190,7 @@
 - 其他 kind（`manual`、`pre_restore`）：不因 7 天规则被删
 
 **版本恢复**：
+
 1. 预览历史快照（只读）
 2. 确认恢复 → 强制创建 `pre_restore` 快照
 3. 成功 → 目标快照写回 `.md` → `index_file`
@@ -205,42 +206,42 @@ Tauri 的命令式 IPC 基于 JSON 序列化。所有 Rust 函数通过 `#[tauri
 
 ### 命令分类
 
-| 前缀          | 模块        | 示例                                       |
-| ------------- | ----------- | ------------------------------------------ |
-| `file_*`      | 文件系统    | `file_list`, `file_read`, `file_write`      |
-| `llm_*`       | AI 集成     | `llm_generate`, `llm_chat`, `llm_abort`     |
-| `search_*`    | 搜索        | `search_keyword`, `search_semantic`         |
-| `index_*`     | 索引/元数据 | `index_tags`, `index_links`, `index_stats`  |
-| `version_*`   | 版本快照    | `version_list`, `version_preview`, `version_restore` |
-| `skills_*`    | AI Skills   | `skills_list`, `skills_install`, `skills_uninstall`, `skills_toggle`, `skills_read`, `skills_write` |
-| `settings_*`  | 配置        | `settings_get`, `settings_set`              |
-| `credential_*`| 凭据        | `credential_set`, `credential_get`          |
-| `template_*`  | 模板        | `template_list`, `template_apply`           |
-| `corpus_*`    | 语料库      | `corpus_list`, `corpus_upsert`              |
-| `assistant_*` | AI 助理     | `context_assemble`, `ai_send_message`, `tool_confirm` |
-| `citation_*`  | 引用        | `citation_check`                            |
-| `research_*`  | 研究        | `research_start`, `research_poll`           |
-| `writing_*`   | 写作        | `writing_suggest`, `writing_apply`          |
-| `organize_*`  | 整理        | `organize_run`                              |
-| `profile_*`   | 个性化      | `profile_set_rule`                          |
-| `llm_config_*`| LLM 配置    | `llm_config_get`, `llm_config_set`          |
-| `minimax_config_*` | 联网检索 | `minimax_config_get`, `minimax_config_set` |
-| `recycle_*`   | 回收站      | `recycle_list`, `recycle_restore`           |
-| `graph_*`     | 知识图谱    | `graph_data`                                |
-| `export_*`    | 导出        | `export_html`, `export_markdown`            |
-| `document_*`  | 文档级      | `document_check`, `document_apply`          |
+| 前缀               | 模块        | 示例                                                                                                |
+| ------------------ | ----------- | --------------------------------------------------------------------------------------------------- |
+| `file_*`           | 文件系统    | `file_list`, `file_read`, `file_write`                                                              |
+| `llm_*`            | AI 集成     | `llm_generate`, `llm_chat`, `llm_abort`                                                             |
+| `search_*`         | 搜索        | `search_keyword`, `search_semantic`                                                                 |
+| `index_*`          | 索引/元数据 | `index_tags`, `index_links`, `index_stats`                                                          |
+| `version_*`        | 版本快照    | `version_list`, `version_preview`, `version_restore`                                                |
+| `skills_*`         | AI Skills   | `skills_list`, `skills_install`, `skills_uninstall`, `skills_toggle`, `skills_read`, `skills_write` |
+| `settings_*`       | 配置        | `settings_get`, `settings_set`                                                                      |
+| `credential_*`     | 凭据        | `credential_set`, `credential_get`                                                                  |
+| `template_*`       | 模板        | `template_list`, `template_apply`                                                                   |
+| `corpus_*`         | 语料库      | `corpus_list`, `corpus_upsert`                                                                      |
+| `assistant_*`      | AI 助理     | `context_assemble`, `ai_send_message`, `tool_confirm`                                               |
+| `citation_*`       | 引用        | `citation_check`                                                                                    |
+| `research_*`       | 研究        | `research_start`, `research_poll`                                                                   |
+| `writing_*`        | 写作        | `writing_suggest`, `writing_apply`                                                                  |
+| `organize_*`       | 整理        | `organize_run`                                                                                      |
+| `profile_*`        | 个性化      | `profile_set_rule`                                                                                  |
+| `llm_config_*`     | LLM 配置    | `llm_config_get`, `llm_config_set`                                                                  |
+| `minimax_config_*` | 联网检索    | `minimax_config_get`, `minimax_config_set`                                                          |
+| `recycle_*`        | 回收站      | `recycle_list`, `recycle_restore`                                                                   |
+| `graph_*`          | 知识图谱    | `graph_data`                                                                                        |
+| `export_*`         | 导出        | `export_html`, `export_markdown`                                                                    |
+| `document_*`       | 文档级      | `document_check`, `document_apply`                                                                  |
 
 ### 事件（Rust → WebView）
 
-| 事件名            | 触发时机             | 载荷                                |
-| ----------------- | -------------------- | ----------------------------------- |
-| `llm:token`       | LLM 流式返回 token   | `{ request_id, token, index }`      |
-| `llm:done`        | LLM 请求完成         | `{ request_id }`                    |
-| `llm:error`       | LLM 请求失败         | `{ request_id, error }`             |
-| `file:changed`    | 外部文件变更检测     | `{ path, hash, event_type }`        |
+| 事件名            | 触发时机             | 载荷                                  |
+| ----------------- | -------------------- | ------------------------------------- |
+| `llm:token`       | LLM 流式返回 token   | `{ request_id, token, index }`        |
+| `llm:done`        | LLM 请求完成         | `{ request_id }`                      |
+| `llm:error`       | LLM 请求失败         | `{ request_id, error }`               |
+| `file:changed`    | 外部文件变更检测     | `{ path, hash, event_type }`          |
 | `file:conflict`   | 文件冲突需要用户处理 | `{ path, local_hash, external_hash }` |
-| `version:created` | 新版本快照已创建     | `{ file_id, version_id, timestamp }` |
-| `version:cleanup` | 自动版本清理完成     | `{ cleaned_count, remaining_count }` |
+| `version:created` | 新版本快照已创建     | `{ file_id, version_id, timestamp }`  |
+| `version:cleanup` | 自动版本清理完成     | `{ cleaned_count, remaining_count }`  |
 
 ---
 
@@ -258,15 +259,15 @@ Tauri 的命令式 IPC 基于 JSON 序列化。所有 Rust 函数通过 `#[tauri
 
 ### 防护清单
 
-| 攻击面       | 防护措施                                                    |
-| ------------ | ----------------------------------------------------------- |
-| 路径穿越     | `canonicalize()` + 前缀比对                                 |
-| XSS          | DOMPurify + CSP Header                                      |
-| IPC 注入     | serde 强类型反序列化                                        |
-| SQL 注入     | rusqlite 参数化查询                                          |
-| 依赖劫持     | 本地 `cargo audit` / `npm audit`（CI 尚未接入，见 ROADMAP） |
-| 中间人攻击   | HTTPS 证书固定                                               |
-| 本地数据泄露 | 笔记为明文 `.md`；建议 OS 级全盘加密；临时文件 `secure_delete`   |
+| 攻击面       | 防护措施                                                       |
+| ------------ | -------------------------------------------------------------- |
+| 路径穿越     | `canonicalize()` + 前缀比对                                    |
+| XSS          | DOMPurify + CSP Header                                         |
+| IPC 注入     | serde 强类型反序列化                                           |
+| SQL 注入     | rusqlite 参数化查询                                            |
+| 依赖劫持     | 本地 `cargo audit` / `npm audit`（CI 尚未接入，见 ROADMAP）    |
+| 中间人攻击   | HTTPS 证书固定                                                 |
+| 本地数据泄露 | 笔记为明文 `.md`；建议 OS 级全盘加密；临时文件 `secure_delete` |
 
 ### Content Security Policy
 
@@ -394,32 +395,32 @@ CREATE TABLE genre_templates (…);
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-| 区域         | 形态               | 说明                       |
-| ------------ | ------------------ | -------------------------- |
-| **编辑器**   | 全宽主区域         | WYSIWYG Markdown           |
-| **AI 面板**  | 右栏，默认 360px   | 可拖拽调宽 + `Ctrl+Shift+A` 收起 |
-| **大纲**     | 编辑器左侧悬浮     | `Ctrl+Shift+O`             |
-| **标签页栏** | 顶部固定           | 多笔记切换，Ctrl+W 关闭    |
-| **状态栏**   | 底部固定           | 路径、字数、AI/联网状态    |
+| 区域         | 形态             | 说明                             |
+| ------------ | ---------------- | -------------------------------- |
+| **编辑器**   | 全宽主区域       | WYSIWYG Markdown                 |
+| **AI 面板**  | 右栏，默认 360px | 可拖拽调宽 + `Ctrl+Shift+A` 收起 |
+| **大纲**     | 编辑器左侧悬浮   | `Ctrl+Shift+O`                   |
+| **标签页栏** | 顶部固定         | 多笔记切换，Ctrl+W 关闭          |
+| **状态栏**   | 底部固定         | 路径、字数、AI/联网状态          |
 
 ### 命令浮层系统
 
 AI 侧栏为唯一常驻右侧 dock。其余功能通过居中命令浮层（`IrisOverlay`）打开：
 
-| 快捷键         | 组件            | 浮层 size | 说明           |
-| -------------- | --------------- | --------- | -------------- |
-| `Ctrl+P`       | QuickOpen       | `compact` | 文件搜索/切换  |
-| `Ctrl+Shift+E` | VaultNavigator  | `command` | 文件管理       |
-| `Ctrl+Shift+F` | SearchPanel     | `command` | 全文 + 语义搜索 |
-| `Ctrl+Shift+V` | VersionTimeline | `wide`    | 版本时间线     |
-| `Ctrl+Shift+B` | BacklinksPanel  | `command` | 反向链接       |
-| `Ctrl+Shift+T` | TagView         | `command` | 标签聚合       |
-| `Ctrl+Shift+G` | GraphView       | `graph`   | 知识图谱       |
-| `Ctrl+,`       | SettingsPanel   | `command` | 设置           |
+| 快捷键         | 组件            | 浮层 size | 说明             |
+| -------------- | --------------- | --------- | ---------------- |
+| `Ctrl+P`       | QuickOpen       | `compact` | 文件搜索/切换    |
+| `Ctrl+Shift+E` | VaultNavigator  | `command` | 文件管理         |
+| `Ctrl+Shift+F` | SearchPanel     | `command` | 全文 + 语义搜索  |
+| `Ctrl+Shift+V` | VersionTimeline | `wide`    | 版本时间线       |
+| `Ctrl+Shift+B` | BacklinksPanel  | `command` | 反向链接         |
+| `Ctrl+Shift+T` | TagView         | `command` | 标签聚合         |
+| `Ctrl+Shift+G` | GraphView       | `graph`   | 知识图谱         |
+| `Ctrl+,`       | SettingsPanel   | `command` | 设置             |
 | `Ctrl+S`       | （编辑器）      | —         | 保存笔记（层 1） |
 | `Ctrl+Shift+S` | （编辑器）      | —         | 保存 + 版本快照  |
-| `Ctrl+Shift+A` | 统一助手侧栏    | —         | 收起/展开      |
-| `/`            | SlashCommand    | Popover   | 命令菜单       |
+| `Ctrl+Shift+A` | 统一助手侧栏    | —         | 收起/展开        |
+| `/`            | SlashCommand    | Popover   | 命令菜单         |
 
 **浮层行为**：
 
@@ -515,17 +516,17 @@ Notion 式 Block 编辑器牺牲了 Markdown 的纯文本可移植性。Iris 的
 
 ## 性能标准
 
-| 指标        | v1.0.0 目标                     | 当前状态              |
-| ----------- | ------------------------------- | --------------------- |
-| 冷启动时间  | < 3 秒（10000 篇笔记）          | 待基准测试            |
-| 热启动时间  | < 400ms                         | 达标                  |
-| 打开笔记    | < 50ms                          | 达标                  |
-| 打字延迟    | < 16ms（60fps）                 | 达标                  |
-| 关键词搜索  | < 100ms（10000 篇）             | 达标                  |
-| 语义搜索    | < 500ms                         | 达标（vec0 或 cosine fallback） |
-| AI 首 token | < 1 秒（含上下文拼接）          | 达标                  |
-| 内存占用    | < 80MB 空闲 / < 200MB 10000 文件 | 待大规格实测          |
-| 打包体积    | < 10MB                          | 达标                  |
+| 指标        | v1.0.0 目标                      | 当前状态                        |
+| ----------- | -------------------------------- | ------------------------------- |
+| 冷启动时间  | < 3 秒（10000 篇笔记）           | 待基准测试                      |
+| 热启动时间  | < 400ms                          | 达标                            |
+| 打开笔记    | < 50ms                           | 达标                            |
+| 打字延迟    | < 16ms（60fps）                  | 达标                            |
+| 关键词搜索  | < 100ms（10000 篇）              | 达标                            |
+| 语义搜索    | < 500ms                          | 达标（vec0 或 cosine fallback） |
+| AI 首 token | < 1 秒（含上下文拼接）           | 达标                            |
+| 内存占用    | < 80MB 空闲 / < 200MB 10000 文件 | 待大规格实测                    |
+| 打包体积    | < 10MB                           | 达标                            |
 
 ### SQLite 优化
 
@@ -546,9 +547,9 @@ opt-level = "s"; lto = true; codegen-units = 1; strip = true; panic = "abort"
 
 ## 设计文档参考
 
-| 文档                                               | 内容                 |
-| -------------------------------------------------- | -------------------- |
-| [docs/design-system.md](./docs/design-system.md)    | 界面 token、组件规则 |
-| [docs/design-system/notion-master.md](./docs/design-system/notion-master.md) | Notion 参考摘要 |
-| [docs/llm-routing.md](./docs/llm-routing.md)       | LLM 路由与连通性     |
-| [docs/eval/semantic-search.md](./docs/eval/semantic-search.md) | 语义搜索评测 |
+| 文档                                                                         | 内容                 |
+| ---------------------------------------------------------------------------- | -------------------- |
+| [docs/design-system.md](./docs/design-system.md)                             | 界面 token、组件规则 |
+| [docs/design-system/notion-master.md](./docs/design-system/notion-master.md) | Notion 参考摘要      |
+| [docs/llm-routing.md](./docs/llm-routing.md)                                 | LLM 路由与连通性     |
+| [docs/eval/semantic-search.md](./docs/eval/semantic-search.md)               | 语义搜索评测         |

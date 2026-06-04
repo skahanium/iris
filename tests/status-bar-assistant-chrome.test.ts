@@ -22,7 +22,7 @@ describe("status bar assistant chrome", () => {
     const token = read("src/components/layout/StatusBarTokenUsage.tsx");
     expect(token).toContain("累计");
     expect(token).not.toContain("本轮");
-    expect(token).toContain("data-testid=\"status-bar-token-usage\"");
+    expect(token).toContain('data-testid="status-bar-token-usage"');
   });
 
   it("AiMessageList does not render tool call bubbles", () => {

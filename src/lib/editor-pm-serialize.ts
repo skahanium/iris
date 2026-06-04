@@ -28,7 +28,14 @@ function cellPlainText(cell: ProseMirrorNode): string {
   let text = "";
   cell.descendants((child) => {
     if (child.isText) {
-      text += child.text;
+      let t = child.text ?? "";
+      for (const mark of child.marks) {
+        if (mark.type.name === "bold") t = `**${t}**`;
+        else if (mark.type.name === "italic") t = `*${t}*`;
+        else if (mark.type.name === "strike") t = `~~${t}~~`;
+        else if (mark.type.name === "code") t = `\`${t}\``;
+      }
+      text += t;
     }
   });
   return text.trim();
@@ -64,7 +71,8 @@ const irisMarkdownSerializer = new MarkdownSerializer(
     paragraph(state, node, parent, index) {
       if (isSpacerParagraph(node)) {
         const gapCount =
-          typeof node.attrs.irisGapCount === "number" && node.attrs.irisGapCount > 0
+          typeof node.attrs.irisGapCount === "number" &&
+          node.attrs.irisGapCount > 0
             ? node.attrs.irisGapCount
             : 1;
         if (gapCount > 1) {
@@ -89,7 +97,9 @@ const irisMarkdownSerializer = new MarkdownSerializer(
     },
     preserveBlock(state, node) {
       const raw =
-        typeof node.attrs.originalRaw === "string" ? node.attrs.originalRaw : "";
+        typeof node.attrs.originalRaw === "string"
+          ? node.attrs.originalRaw
+          : "";
       state.write(raw);
       state.closeBlock(node);
     },
@@ -150,7 +160,11 @@ const irisMarkdownSerializer = new MarkdownSerializer(
 export function editorDocToMarkdown(editor: Editor): string {
   try {
     return irisMarkdownSerializer.serialize(editor.state.doc);
-  } catch {
+  } catch (e) {
+    console.error(
+      "[editor-pm-serialize] PM serializer failed, falling back to HTML turndown:",
+      e,
+    );
     return editorBodyHtmlToMarkdown(editor.getHTML());
   }
 }

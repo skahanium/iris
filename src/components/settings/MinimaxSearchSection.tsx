@@ -226,7 +226,8 @@ export function MinimaxSearchSection({ open }: MinimaxSearchSectionProps) {
           placeholder="留空使用服务端默认，例如 MiniMax-M2.5"
         />
         <p className="text-xs text-muted-foreground">
-          与 MiniMax 控制台 Coding Plan 中启用的模型名一致；保存后写入联网检索请求。
+          与 MiniMax 控制台 Coding Plan
+          中启用的模型名一致；保存后写入联网检索请求。
         </p>
       </div>
 

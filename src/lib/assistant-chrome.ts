@@ -5,7 +5,10 @@ import type { AssistantChromeSnapshot } from "@/types/assistant-chrome";
 import { toolDisplayName } from "./tool-display-names";
 
 export function cacheHitPercentFromUsage(
-  usage: { prompt_cache_hit_tokens?: number; prompt_cache_miss_tokens?: number } | null,
+  usage: {
+    prompt_cache_hit_tokens?: number;
+    prompt_cache_miss_tokens?: number;
+  } | null,
 ): number | null {
   if (!usage) return null;
   const hit = usage.prompt_cache_hit_tokens ?? 0;
@@ -21,15 +24,13 @@ export function countWebPackets(packets: ContextPacket[]): number {
 
 export function countWebSearchPackets(packets: ContextPacket[]): number {
   return packets.filter(
-    (p) =>
-      p.source_type === "web" && p.retrieval_reason !== "web_page_fetch",
+    (p) => p.source_type === "web" && p.retrieval_reason !== "web_page_fetch",
   ).length;
 }
 
 export function countWebPageFetchPackets(packets: ContextPacket[]): number {
   return packets.filter(
-    (p) =>
-      p.source_type === "web" && p.retrieval_reason === "web_page_fetch",
+    (p) => p.source_type === "web" && p.retrieval_reason === "web_page_fetch",
   ).length;
 }
 

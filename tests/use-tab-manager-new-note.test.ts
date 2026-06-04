@@ -149,8 +149,6 @@ describe("useTabManager handleNewNote", () => {
     });
 
     expect(apiRef.current!.activePath).toBe("a.md");
-    expect(apiRef.current!.tabs.map((t: TabItem) => t.path)).toEqual([
-      "a.md",
-    ]);
+    expect(apiRef.current!.tabs.map((t: TabItem) => t.path)).toEqual(["a.md"]);
   });
 });

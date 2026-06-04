@@ -34,7 +34,10 @@ export function joinVaultChildPath(parent: string, childName: string): string {
 }
 
 /** Place a note file under a folder prefix (`notes/` + `doc.md` → `notes/doc.md`). */
-export function notePathInFolder(folderPrefix: string, fileName: string): string {
+export function notePathInFolder(
+  folderPrefix: string,
+  fileName: string,
+): string {
   const base = fileName.trim().replace(/\\/g, "/");
   if (!base) return "";
   const withExt = base.endsWith(".md") ? base : `${base}.md`;

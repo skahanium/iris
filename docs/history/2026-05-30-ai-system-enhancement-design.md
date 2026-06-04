@@ -97,13 +97,13 @@ pub struct SessionSummary {
 
 #### 2.2.1 问题与根因
 
-| 症状 | 根因 |
-|------|------|
-| `**加粗**` 显示星号 | `linkifyAiCitations()` 在 markdown 源码级替换，破坏了语法边界 |
-| Citation `[C0]` 乱码 | 正则对中文书名号格式匹配不稳定 |
-| 嵌套列表缩进失败 | `breaks: true` 对列表内文本的换行处理有歧义 |
-| 流式中途格式乱 | `repairStreamingMarkdown` 只修复 fence，不修复行内标记 |
-| 表格溢出 | `.ai-table-wrap` 缺少 `overflow-x: auto` |
+| 症状                 | 根因                                                          |
+| -------------------- | ------------------------------------------------------------- |
+| `**加粗**` 显示星号  | `linkifyAiCitations()` 在 markdown 源码级替换，破坏了语法边界 |
+| Citation `[C0]` 乱码 | 正则对中文书名号格式匹配不稳定                                |
+| 嵌套列表缩进失败     | `breaks: true` 对列表内文本的换行处理有歧义                   |
+| 流式中途格式乱       | `repairStreamingMarkdown` 只修复 fence，不修复行内标记        |
+| 表格溢出             | `.ai-table-wrap` 缺少 `overflow-x: auto`                      |
 
 #### 2.2.2 管线重构
 
@@ -370,8 +370,8 @@ if (toolCall.name === "spawn_subagent") {
   return (
     <SubagentCard
       task={toolCall.args.task}
-      status={toolCall.status}   // "running" | "completed"
-      result={toolCall.result}   // 子 agent 回答内容
+      status={toolCall.status} // "running" | "completed"
+      result={toolCall.result} // 子 agent 回答内容
       expandable
     />
   );
@@ -405,6 +405,7 @@ version: "1.0.0"
 author: "iris-community"
 source_url: "https://github.com/example/skill-pack"
 ---
+
 # Writing Assistant
 
 (system prompt instructions here — injected when skill is active)
@@ -495,6 +496,7 @@ if !enabled.is_empty() {
 入口：AI 面板 header 或设置页中的 "Skills" 标签。
 
 布局：
+
 - **已安装列表**（分 Global / Vault 两组 Accordion）
   - 每个 skill 卡片：名称、描述（1行）、来源 badge、版本号
   - 操作：启用/禁用 Switch、编辑（打开 SKILL.md）、删除
@@ -530,6 +532,7 @@ impl PromptProfile {
 存储：`user_profile` 表中新增 `prompt_profile JSON` 列。
 
 **前端：** 设置页中添加 "AI 人格" 编辑区域：
+
 - Persona textarea
 - Writing style 选择（或自定义）
 - Custom rules 列表编辑器
@@ -544,11 +547,13 @@ impl PromptProfile {
 **展示内容：**
 
 折叠态（一行）：
+
 ```
 本轮 1,234 tokens | Cache 命中 78% | 累计 12.5K tokens
 ```
 
 展开态（详细卡片）：
+
 ```
 ┌─────────────────────────────────┐
 │ 本轮用量                         │
@@ -567,6 +572,7 @@ impl PromptProfile {
 ```
 
 **实现：**
+
 - 前端新增 `TokenUsageBar` 组件
 - 每次 harness 返回后更新 usage state
 - Session 级累计通过前端本地累加（不存数据库）
@@ -583,6 +589,7 @@ PR2 (Markdown 渲染) → PR1 (历史会话) → PR3 (Harness 进阶)
 ```
 
 **依赖关系：**
+
 - PR4 依赖 PR3（结构化事件 + 自适应轮次）
 - PR5 独立（可与 PR3/PR4 并行开发）
 - PR6 独立（可与任何 PR 并行）
@@ -592,11 +599,13 @@ PR2 (Markdown 渲染) → PR1 (历史会话) → PR3 (Harness 进阶)
 ## 4. 测试策略
 
 每个 PR 必须包含：
+
 - 后端：Rust unit tests（覆盖新增 API）
 - 前端：Vitest 单元测试（渲染逻辑、IPC mock）
 - 集成：至少 1 个端到端场景测试
 
 重点测试：
+
 - PR2: 各种 markdown 边界情况（流式半截、中文引用、嵌套列表）
 - PR3: harness 轮次控制、checkpoint 恢复
 - PR4: 并行 sub-agent 竞态、depth 限制

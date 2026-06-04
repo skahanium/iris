@@ -33,11 +33,11 @@
 
 ### 必需工具
 
-| 工具        | 最低版本          | 安装方式                                                          |
-| ----------- | ----------------- | ----------------------------------------------------------------- |
-| Rust        | 1.80+             | `curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \| sh`（见 `src-tauri/Cargo.toml`） |
-| Node.js     | 20+               | [nodejs.org](https://nodejs.org/) 或 `fnm` / `nvm`                |
-| npm         | 10+               | 随 Node.js 安装；仓库使用 `package-lock.json`，请 `npm ci`          |
+| 工具    | 最低版本 | 安装方式                                                                                       |
+| ------- | -------- | ---------------------------------------------------------------------------------------------- |
+| Rust    | 1.80+    | `curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \| sh`（见 `src-tauri/Cargo.toml`） |
+| Node.js | 20+      | [nodejs.org](https://nodejs.org/) 或 `fnm` / `nvm`                                             |
+| npm     | 10+      | 随 Node.js 安装；仓库使用 `package-lock.json`，请 `npm ci`                                     |
 
 ### Windows 额外要求
 

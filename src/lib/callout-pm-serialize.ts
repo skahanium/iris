@@ -40,9 +40,21 @@ export function renderCalloutBlockquote(
     return false;
   }
 
-  const originalRaw = node.attrs.calloutOriginalRaw as string | null | undefined;
+  const originalRaw = node.attrs.calloutOriginalRaw as
+    | string
+    | null
+    | undefined;
   if (originalRaw?.trim()) {
-    state.write(originalRaw);
+    // Compare current content against original; if user edited, serialize current content
+    const currentMd = calloutMarkdownFromLines(
+      calloutType.trim(),
+      calloutLinesFromBlockquote(node),
+    );
+    if (currentMd.trim() === originalRaw.trim()) {
+      state.write(originalRaw);
+    } else {
+      state.write(currentMd);
+    }
     state.closeBlock(node);
     return true;
   }

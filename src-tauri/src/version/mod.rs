@@ -818,13 +818,7 @@ mod tests {
             character_count_excluding_whitespace("一二三四五六七八九十"),
             10
         );
-        assert_eq!(
-            character_count_excluding_whitespace("a\n\nb\tc"),
-            3
-        );
-        assert_ne!(
-            character_count_excluding_whitespace(&"字".repeat(100)),
-            1
-        );
+        assert_eq!(character_count_excluding_whitespace("a\n\nb\tc"), 3);
+        assert_ne!(character_count_excluding_whitespace(&"字".repeat(100)), 1);
     }
 }

@@ -58,5 +58,12 @@ export function useVault() {
     }
   }, []);
 
-  return { vaultPath, loading, pickVault, refresh, error, clearError: () => setError(null) };
+  return {
+    vaultPath,
+    loading,
+    pickVault,
+    refresh,
+    error,
+    clearError: () => setError(null),
+  };
 }

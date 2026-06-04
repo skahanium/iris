@@ -194,15 +194,13 @@ describe("useEditorSave", () => {
 
     await act(async () => {
       root.render(
-        createElement(
-          function SwitchNotifyHarness() {
-            const [path, setPathState] = useState("a.md");
-            const { notifyDirty: notify } = useEditorSave(path, getMarkdown);
-            setPath = setPathState;
-            notifyDirty = notify;
-            return null;
-          },
-        ),
+        createElement(function SwitchNotifyHarness() {
+          const [path, setPathState] = useState("a.md");
+          const { notifyDirty: notify } = useEditorSave(path, getMarkdown);
+          setPath = setPathState;
+          notifyDirty = notify;
+          return null;
+        }),
       );
     });
 

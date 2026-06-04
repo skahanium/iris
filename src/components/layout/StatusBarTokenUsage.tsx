@@ -8,7 +8,9 @@ interface StatusBarTokenUsageProps {
   sessionUsage: TokenUsage | null;
 }
 
-export function StatusBarTokenUsage({ sessionUsage }: StatusBarTokenUsageProps) {
+export function StatusBarTokenUsage({
+  sessionUsage,
+}: StatusBarTokenUsageProps) {
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
 
