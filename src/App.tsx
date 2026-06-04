@@ -76,6 +76,8 @@ import {
   settingsSet,
   versionSaveManual,
 } from "@/lib/ipc";
+import { setCachedEditorHtml } from "@/lib/editor-html-cache";
+import { waitForEditorRef } from "@/lib/wait-for-editor";
 import { isNoteSubstantivelyEmpty } from "@/lib/note-substance";
 import { formatVersionSaveStatus } from "@/lib/version-save-status";
 import { isTauriRuntime } from "@/lib/tauri-runtime";
@@ -211,6 +213,7 @@ function App() {
   );
 
   const dirtyRef = useRef(false);
+
   const persistBeforeLeaveRef = useRef<
     (path: string) => Promise<string | null>
   >(async () => null);
@@ -243,6 +246,16 @@ function App() {
   const tabsRef = useRef(tabs);
   tabsRef.current = tabs;
 
+  /** Resync dirty flag only when switching documents (not on every tab metadata update). */
+  useEffect(() => {
+    if (!activePath) {
+      dirtyRef.current = false;
+      return;
+    }
+    const tab = tabsRef.current.find((t) => t.path === activePath);
+    dirtyRef.current = tab?.dirty ?? false;
+  }, [activePath]);
+
   const inlineAi = useInlineAi({
     provider: llmProvider,
     onStatus: setAiStatus,
@@ -259,6 +272,7 @@ function App() {
     onTitleBlur,
     schedulePathSync,
     loadBodyIntoEditor,
+    captureBaselineDocChars,
   } = useOpenNote({
     activePath,
     markdown,
@@ -267,6 +281,7 @@ function App() {
     markdownRef,
     frontmatterYamlRef,
     editorRef,
+    dirtyRef,
     updateTabTitle,
     replaceOpenTabPath,
   });
@@ -278,11 +293,12 @@ function App() {
     () => getLiveMarkdownRef.current(),
     (md) => {
       applySavedMarkdown(md);
+      captureBaselineDocChars();
       dirtyRef.current = false;
       const path = activePathRef.current;
       if (path) {
+        setMarkdown(md);
         syncTabMarkdownCache(path, md);
-        markdownRef.current = md;
         markClean(path, resolveNoteDisplayTitle({ path, title: noteTitle }));
         if (noteTitle.trim() === "") {
           schedulePathSync(path, noteTitle);
@@ -293,16 +309,71 @@ function App() {
 
   persistBeforeLeaveRef.current = async (path: string) => {
     const tab = tabsRef.current.find((t) => t.path === path);
+    const isActive = path === activePathRef.current;
+    const dirty = dirtyRef.current;
+    // #region agent log
+    fetch("http://127.0.0.1:7413/ingest/3336dc9b-75d7-44cd-8238-25a3e4a38bb9", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Debug-Session-Id": "8589f0",
+      },
+      body: JSON.stringify({
+        sessionId: "8589f0",
+        location: "App.tsx:persistBeforeLeave",
+        message: "persistBeforeLeave entry",
+        data: {
+          path,
+          isActive,
+          dirty,
+          tabDirty: tab?.dirty ?? null,
+        },
+        timestamp: Date.now(),
+        hypothesisId: "H1",
+      }),
+    }).catch(() => {});
+    // #endregion
     if (path === activePathRef.current) {
-      if (!dirtyRef.current) {
-        return getLiveMarkdownRef.current();
-      }
+      await waitForEditorRef(editorRef);
       const snapshot = getLiveMarkdownRef.current();
+      const refMd = markdownRef.current;
+      const staleRef = snapshot !== refMd;
+      // #region agent log
+      fetch(
+        "http://127.0.0.1:7413/ingest/3336dc9b-75d7-44cd-8238-25a3e4a38bb9",
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-Debug-Session-Id": "8589f0",
+          },
+          body: JSON.stringify({
+            sessionId: "8589f0",
+            location: "App.tsx:persistBeforeLeave",
+            message: "active tab flushSave",
+            data: {
+              path,
+              dirty: dirtyRef.current,
+              staleRef,
+              snapshotLen: snapshot.length,
+              refLen: refMd.length,
+            },
+            timestamp: Date.now(),
+            hypothesisId: "H1",
+            runId: "post-fix-v2",
+          }),
+        },
+      ).catch(() => {});
+      // #endregion
       const md = await flushSaveForPath(path, () => snapshot);
       if (md) {
         dirtyRef.current = false;
-        markdownRef.current = md;
+        setMarkdown(md);
         syncTabMarkdownCache(path, md);
+        const ed = editorRef.current;
+        if (ed && !ed.isDestroyed) {
+          setCachedEditorHtml(path, ed.getHTML());
+        }
         markClean(path, resolveNoteDisplayTitle({ path, title: noteTitle }));
       }
       return md;
@@ -408,10 +479,30 @@ function App() {
     if (!dirtyRef.current) {
       dirtyRef.current = true;
       markDirty();
+      // #region agent log
+      fetch(
+        "http://127.0.0.1:7413/ingest/3336dc9b-75d7-44cd-8238-25a3e4a38bb9",
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-Debug-Session-Id": "8589f0",
+          },
+          body: JSON.stringify({
+            sessionId: "8589f0",
+            location: "App.tsx:handleDirty",
+            message: "marked dirty",
+            data: { path: activePathRef.current },
+            timestamp: Date.now(),
+            hypothesisId: "H1",
+          }),
+        },
+      ).catch(() => {});
+      // #endregion
     }
     notifyDirty();
     resetVersionIdle();
-  }, [notifyDirty, resetVersionIdle, markDirty]);
+  }, [notifyDirty, resetVersionIdle, markDirty, activePathRef]);
 
   const handleTitleChange = useCallback(
     (raw: string) => {
@@ -520,6 +611,7 @@ function App() {
 
       setEditorInstance(ed);
       updateUndoRedoState(ed);
+      captureBaselineDocChars();
 
       const handleTransaction = ({
         editor: currentEditor,
@@ -537,7 +629,7 @@ function App() {
         ed.off("transaction", handleTransaction);
       };
     },
-    [clearEditorTransactionListener, updateUndoRedoState],
+    [captureBaselineDocChars, clearEditorTransactionListener, updateUndoRedoState],
   );
 
   const editorTitleSlot = useMemo(
@@ -826,7 +918,7 @@ function App() {
             {activePath ? (
               <ErrorBoundary scope="编辑器">
                 <TipTapEditor
-                  key={activePath}
+                  key={`${activePath}:${editorContentTick}`}
                   initialBodyMarkdown={editorBodyMarkdown}
                   contentCacheKey={activePath}
                   reingestKey={editorContentTick}
@@ -885,8 +977,10 @@ function App() {
               onPatchApplied={(newContent: string) => {
                 applyMarkdownToEditor(newContent);
                 markdownRef.current = newContent;
+                dirtyRef.current = false;
                 const path = activePathRef.current;
                 if (path) {
+                  syncTabMarkdownCache(path, newContent);
                   markClean(
                     path,
                     resolveNoteDisplayTitle({

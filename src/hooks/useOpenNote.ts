@@ -36,6 +36,7 @@ interface UseOpenNoteOptions {
   markdownRef: RefObject<string>;
   frontmatterYamlRef: RefObject<string | null>;
   editorRef: RefObject<Editor | null>;
+  dirtyRef: RefObject<boolean>;
   updateTabTitle: (path: string, title: string) => void;
   replaceOpenTabPath: (
     oldPath: string,
@@ -52,18 +53,20 @@ export function useOpenNote({
   markdownRef,
   frontmatterYamlRef,
   editorRef,
+  dirtyRef,
   updateTabTitle,
   replaceOpenTabPath,
 }: UseOpenNoteOptions) {
+  const baselineDocCharsRef = useRef(0);
   const [noteTitle, setNoteTitle] = useState("");
   const [bodyMarkdown, setBodyMarkdown] = useState("");
 
-  /** Parsed body for TipTap on the same render as disk/tab load (avoids empty HTML cache race). */
+  /** Parsed body for TipTap on disk/tab load only — not on layer-1 save (`setMarkdown` must not remount editor). */
   const editorBodyMarkdown = useMemo(() => {
     if (!activePath) return "";
     return parseNoteForEditor(markdownRef.current, "").bodyMd;
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- markdown + editorContentTick invalidate on disk/tab load
-  }, [activePath, editorContentTick, markdown, markdownRef]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- editorContentTick = disk load; omit `markdown` so save does not call setContent
+  }, [activePath, editorContentTick, markdownRef]);
 
   const pathSyncTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pathSyncGenRef = useRef(0);
@@ -81,11 +84,23 @@ export function useOpenNote({
     if (!activePath) {
       setNoteTitle("");
       setBodyMarkdown("");
+      baselineDocCharsRef.current = 0;
       return;
     }
     syncFromMarkdown(markdownRef.current, activePath);
+    const ed = editorRef.current;
+    if (ed && !ed.isDestroyed) {
+      baselineDocCharsRef.current = ed.state.doc.textContent.length;
+    }
     // `markdown` state intentionally omitted: layer-1 save only updates `markdownRef`.
-  }, [activePath, editorContentTick, syncFromMarkdown, markdownRef]);
+  }, [activePath, editorContentTick, syncFromMarkdown, markdownRef, editorRef]);
+
+  const captureBaselineDocChars = useCallback(() => {
+    const ed = editorRef.current;
+    if (ed && !ed.isDestroyed) {
+      baselineDocCharsRef.current = ed.state.doc.textContent.length;
+    }
+  }, [editorRef]);
 
   useEffect(() => {
     return () => {
@@ -96,13 +111,48 @@ export function useOpenNote({
   }, []);
 
   const getLiveMarkdown = useCallback(() => {
-    return serializeOpenNote({
+    const hasEditor = editorRef.current != null;
+    const md = serializeOpenNote({
       yaml: frontmatterYamlRef.current,
       title: noteTitle,
       editor: editorRef.current,
       bodyFallbackMd: bodyMarkdownFromNoteRef(markdownRef.current),
+      isDirty: dirtyRef.current,
+      baselineDocChars: baselineDocCharsRef.current,
     });
-  }, [noteTitle, frontmatterYamlRef, editorRef, markdownRef]);
+    // #region agent log
+    fetch("http://127.0.0.1:7413/ingest/3336dc9b-75d7-44cd-8238-25a3e4a38bb9", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Debug-Session-Id": "8589f0",
+      },
+      body: JSON.stringify({
+        sessionId: "8589f0",
+        location: "useOpenNote.ts:getLiveMarkdown",
+        message: "serialize open note",
+        data: {
+          path: activePathRef.current,
+          hasEditor,
+          noteTitleLen: noteTitle.length,
+          mdLen: md.length,
+          refLen: markdownRef.current.length,
+          mdPreview: md.slice(0, 80),
+        },
+        timestamp: Date.now(),
+        hypothesisId: "H3",
+      }),
+    }).catch(() => {});
+    // #endregion
+    return md;
+  }, [
+    noteTitle,
+    frontmatterYamlRef,
+    editorRef,
+    markdownRef,
+    activePathRef,
+    dirtyRef,
+  ]);
 
   const applySavedMarkdown = useCallback(
     (md: string) => {
@@ -190,6 +240,8 @@ export function useOpenNote({
           markdownBodyToEditorHtml(parsed.bodyMd),
           false,
         );
+        baselineDocCharsRef.current =
+          editorRef.current.state.doc.textContent.length;
       }
     },
     [activePathRef, editorRef, syncFromMarkdown],
@@ -206,5 +258,6 @@ export function useOpenNote({
     schedulePathSync,
     syncFromMarkdown,
     loadBodyIntoEditor,
+    captureBaselineDocChars,
   };
 }

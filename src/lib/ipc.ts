@@ -76,6 +76,19 @@ export async function fileWrite(
   return invoke<FileEntry>("file_write", { path, content });
 }
 
+/** Append NDJSON to workspace `debug-8589f0.log` (agent debug sessions). */
+export async function debugSessionLog(
+  payload: Record<string, unknown>,
+): Promise<void> {
+  return invoke("debug_session_log", {
+    payload: {
+      sessionId: "8589f0",
+      timestamp: Date.now(),
+      ...payload,
+    },
+  });
+}
+
 /** Save a vault image under `assets/` (base64 body). Returns vault-relative path. */
 export async function vaultAssetWrite(params: {
   path: string;

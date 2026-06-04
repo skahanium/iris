@@ -99,6 +99,13 @@ pub fn file_list(state: State<'_, Arc<AppState>>) -> AppResult<Vec<FileListItem>
     })
 }
 
+/// Agent debug NDJSON append (dev; workspace `debug-8589f0.log`).
+#[tauri::command]
+pub fn debug_session_log(payload: serde_json::Value) -> Result<(), String> {
+    crate::debug_session_log::append(payload);
+    Ok(())
+}
+
 #[tauri::command]
 pub async fn file_read(state: State<'_, Arc<AppState>>, path: String) -> AppResult<String> {
     if !is_user_note_path(&path) {
@@ -106,9 +113,30 @@ pub async fn file_read(state: State<'_, Arc<AppState>>, path: String) -> AppResu
     }
     let vault = state.vault_path()?;
     let abs = resolve_vault_path(&vault, &path)?;
-    tokio::task::spawn_blocking(move || read_file_lossy(&abs))
-        .await
-        .map_err(|e| AppError::msg(format!("task join: {e}")))?
+    let path_for_log = path.clone();
+    tokio::task::spawn_blocking(move || {
+        let content = read_file_lossy(&abs)?;
+        let preview: String = content.chars().take(80).collect();
+        crate::debug_session_log::append(serde_json::json!({
+            "sessionId": "8589f0",
+            "location": "file.rs:file_read",
+            "message": "file_read ok",
+            "hypothesisId": "E",
+            "runId": "post-fix-v3",
+            "data": {
+                "path": path_for_log,
+                "contentLen": content.len(),
+                "preview": preview,
+            },
+            "timestamp": std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_millis())
+                .unwrap_or(0),
+        }));
+        Ok(content)
+    })
+    .await
+    .map_err(|e| AppError::msg(format!("task join: {e}")))?
 }
 
 #[tauri::command]
@@ -134,6 +162,35 @@ pub async fn file_write(
 
         let hash = crate::indexer::scan::content_hash(&content);
         state.write_guard.mark(&path, &hash);
+
+        let preview: String = content.chars().take(80).collect();
+        let tail: String = content
+            .chars()
+            .rev()
+            .take(80)
+            .collect::<String>()
+            .chars()
+            .rev()
+            .collect();
+        let hash = crate::indexer::scan::content_hash(&content);
+        crate::debug_session_log::append(serde_json::json!({
+            "sessionId": "8589f0",
+            "location": "file.rs:file_write",
+            "message": "file_write ok",
+            "hypothesisId": "D",
+            "runId": "post-fix-v4",
+            "data": {
+                "path": path,
+                "contentLen": content.len(),
+                "contentHash": hash,
+                "preview": preview,
+                "tail": tail,
+            },
+            "timestamp": std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_millis())
+                .unwrap_or(0),
+        }));
 
         let entry = state
             .db

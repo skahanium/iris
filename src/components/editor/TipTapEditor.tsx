@@ -46,6 +46,7 @@ import {
   readingMinutes,
 } from "@/lib/reading-time";
 
+import { debugSessionLog } from "@/lib/ipc";
 import { isTauriRuntime } from "@/lib/tauri-runtime";
 import { cn } from "@/lib/utils";
 
@@ -172,6 +173,7 @@ function TipTapEditorInner({
   onBodyStatsChangeRef.current = onBodyStatsChange;
 
   const editorRef = useRef<Editor | null>(null);
+  const onUpdateLogRef = useRef<{ docChars: number } | null>(null);
 
   const onSlashCommandRef = useRef(onSlashCommand);
 
@@ -312,9 +314,13 @@ function TipTapEditorInner({
     bodyMd: string;
   } | null>(null);
 
+  const prevReingestKeyRef = useRef(reingestKey);
+  const skipHtmlCache = prevReingestKeyRef.current !== reingestKey;
+  prevReingestKeyRef.current = reingestKey;
+
   const initialContent = useMemo(() => {
     const bodyMd = initialBodyMarkdown.trim();
-    if (contentCacheKey && bodyMd) {
+    if (contentCacheKey && bodyMd && !skipHtmlCache) {
       const cached = getCachedEditorHtml(contentCacheKey);
       if (cached) {
         return cached;
@@ -334,7 +340,7 @@ function TipTapEditorInner({
 
     return tipTapHtml;
     // eslint-disable-next-line react-hooks/exhaustive-deps -- reingestKey busts HTML cache on disk reload
-  }, [initialBodyMarkdown, contentCacheKey, reingestKey]);
+  }, [initialBodyMarkdown, contentCacheKey, reingestKey, skipHtmlCache]);
 
   // Fire onIngestComplete after render (not inside useMemo)
   useEffect(() => {
@@ -365,6 +371,27 @@ function TipTapEditorInner({
 
     onUpdate: ({ editor: updatedEditor }) => {
       onDirtyRef.current?.();
+
+      // #region agent log
+      if (isTauriRuntime()) {
+        const docChars = updatedEditor.state.doc.textContent.length;
+        const prev = onUpdateLogRef.current?.docChars;
+        if (prev !== undefined && prev !== docChars) {
+          void debugSessionLog({
+            location: "TipTapEditor.tsx:onUpdate",
+            message: "docChanged",
+            hypothesisId: "H6",
+            runId: "post-fix-v5",
+            data: {
+              path: contentCacheKeyRef.current,
+              docChars,
+              delta: docChars - prev,
+            },
+          });
+        }
+        onUpdateLogRef.current = { docChars };
+      }
+      // #endregion
 
       scheduleBodyStats(updatedEditor);
 
@@ -404,20 +431,6 @@ function TipTapEditorInner({
       onEditorReady?.(null);
     };
   }, [editor, onEditorReady, flushBodyStats]);
-
-  const lastSyncedContentRef = useRef(initialContent);
-
-  useEffect(() => {
-    if (!editor) return;
-
-    if (lastSyncedContentRef.current === initialContent) return;
-
-    lastSyncedContentRef.current = initialContent;
-
-    editor.commands.setContent(initialContent, false);
-
-    flushBodyStats(editor);
-  }, [editor, initialContent, flushBodyStats]);
 
   useEffect(() => {
     return () => {

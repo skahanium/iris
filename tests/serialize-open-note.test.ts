@@ -43,6 +43,47 @@ describe("serializeOpenNote", () => {
     expect(md).toContain("tags: [x]");
   });
 
+  it("captures appended text when PM length stays near stale ref", () => {
+    const bodyHtml = markdownBodyToEditorHtml("Alpha\n\nBeta");
+    editor = bodyEditor(bodyHtml);
+    const baselineDocChars = editor.state.doc.textContent.length;
+    editor.commands.insertContentAt(editor.state.doc.content.size, {
+      type: "paragraph",
+      content: [{ type: "text", text: "SAVE_MARKER" }],
+    });
+    const md = serializeOpenNote({
+      yaml: null,
+      title: "t",
+      editor,
+      bodyFallbackMd: "Alpha\n\nBeta",
+      isDirty: true,
+      baselineDocChars,
+    });
+    expect(md).toContain("SAVE_MARKER");
+  });
+
+  it("uses PM on clean save even when body fallback is shorter", () => {
+    const bodyHtml = markdownBodyToEditorHtml("Line one.\n\nLine two.");
+    editor = bodyEditor(bodyHtml);
+    const pmOnly = serializeOpenNote({
+      yaml: null,
+      title: "t",
+      editor,
+      bodyFallbackMd: "Line one.\n\nLine two.",
+      isDirty: false,
+      baselineDocChars: editor.state.doc.textContent.length,
+    });
+    const dirtyHtml = serializeOpenNote({
+      yaml: null,
+      title: "t",
+      editor,
+      bodyFallbackMd: "Line one.\n\nLine two.",
+      isDirty: true,
+      baselineDocChars: 0,
+    });
+    expect(pmOnly).toBe(dirtyHtml);
+  });
+
   it("uses bodyFallback when editor is null", () => {
     const md = serializeOpenNote({
       yaml: null,

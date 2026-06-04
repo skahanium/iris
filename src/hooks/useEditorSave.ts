@@ -12,14 +12,96 @@ async function writeNoteAtPath(
   getMd: () => string,
 ): Promise<string | null> {
   const md = getMd();
-  if (isNoteSubstantivelyEmpty(md)) {
+  const substantivelyEmpty = isNoteSubstantivelyEmpty(md);
+  // #region agent log
+  fetch("http://127.0.0.1:7413/ingest/3336dc9b-75d7-44cd-8238-25a3e4a38bb9", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Debug-Session-Id": "8589f0",
+    },
+    body: JSON.stringify({
+      sessionId: "8589f0",
+      location: "useEditorSave.ts:writeNoteAtPath",
+      message: "writeNoteAtPath attempt",
+      data: {
+        targetPath,
+        mdLen: md.length,
+        substantivelyEmpty,
+        mdPreview: md.slice(0, 80),
+      },
+      timestamp: Date.now(),
+      hypothesisId: "H2",
+    }),
+  }).catch(() => {});
+  // #endregion
+  if (substantivelyEmpty) {
     console.debug(
       "[useEditorSave] skip save: note substantively empty",
       targetPath,
     );
+    // #region agent log
+    fetch("http://127.0.0.1:7413/ingest/3336dc9b-75d7-44cd-8238-25a3e4a38bb9", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Debug-Session-Id": "8589f0",
+      },
+      body: JSON.stringify({
+        sessionId: "8589f0",
+        location: "useEditorSave.ts:writeNoteAtPath",
+        message: "skip save: substantively empty",
+        data: { targetPath, mdLen: md.length },
+        timestamp: Date.now(),
+        hypothesisId: "H2",
+        runId: "post-fix-v3",
+      }),
+    }).catch(() => {});
+    // #endregion
     return null;
   }
-  await fileWrite(targetPath, md);
+  try {
+    await fileWrite(targetPath, md);
+    // #region agent log
+    fetch("http://127.0.0.1:7413/ingest/3336dc9b-75d7-44cd-8238-25a3e4a38bb9", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Debug-Session-Id": "8589f0",
+      },
+      body: JSON.stringify({
+        sessionId: "8589f0",
+        location: "useEditorSave.ts:writeNoteAtPath",
+        message: "fileWrite ok",
+        data: { targetPath, mdLen: md.length },
+        timestamp: Date.now(),
+        hypothesisId: "H4",
+      }),
+    }).catch(() => {});
+    // #endregion
+  } catch (err) {
+    // #region agent log
+    fetch("http://127.0.0.1:7413/ingest/3336dc9b-75d7-44cd-8238-25a3e4a38bb9", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Debug-Session-Id": "8589f0",
+      },
+      body: JSON.stringify({
+        sessionId: "8589f0",
+        location: "useEditorSave.ts:writeNoteAtPath",
+        message: "fileWrite failed",
+        data: {
+          targetPath,
+          error: err instanceof Error ? err.message : String(err),
+        },
+        timestamp: Date.now(),
+        hypothesisId: "H4",
+      }),
+    }).catch(() => {});
+    // #endregion
+    throw err;
+  }
   return md;
 }
 
@@ -81,6 +163,26 @@ export function useEditorSave(
   const debouncedSave = useMemo(
     () =>
       debounce(() => {
+        // #region agent log
+        fetch(
+          "http://127.0.0.1:7413/ingest/3336dc9b-75d7-44cd-8238-25a3e4a38bb9",
+          {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "X-Debug-Session-Id": "8589f0",
+            },
+            body: JSON.stringify({
+              sessionId: "8589f0",
+              location: "useEditorSave.ts:debouncedSave",
+              message: "debounced save fired",
+              data: { path: pathRef.current },
+              timestamp: Date.now(),
+              hypothesisId: "H5",
+            }),
+          },
+        ).catch(() => {});
+        // #endregion
         saveNote().catch((err) => {
           console.warn("[useEditorSave] save failed:", err);
         });
@@ -91,6 +193,26 @@ export function useEditorSave(
   /** Path changes are persisted via `persistBeforeLeave` in tab manager; do not flush here (pathRef race). */
   useEffect(() => {
     return () => {
+      // #region agent log
+      fetch(
+        "http://127.0.0.1:7413/ingest/3336dc9b-75d7-44cd-8238-25a3e4a38bb9",
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-Debug-Session-Id": "8589f0",
+          },
+          body: JSON.stringify({
+            sessionId: "8589f0",
+            location: "useEditorSave.ts:pathEffect",
+            message: "debounced save cancelled (path change/unmount)",
+            data: { path },
+            timestamp: Date.now(),
+            hypothesisId: "H5",
+          }),
+        },
+      ).catch(() => {});
+      // #endregion
       debouncedSave.cancel();
     };
   }, [path, debouncedSave]);

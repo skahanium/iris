@@ -111,6 +111,30 @@ export function useTabManager(options: UseTabManagerOptions = {}) {
       }
       try {
         const content = await fileRead(path);
+        // #region agent log
+        fetch(
+          "http://127.0.0.1:7413/ingest/3336dc9b-75d7-44cd-8238-25a3e4a38bb9",
+          {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "X-Debug-Session-Id": "8589f0",
+            },
+            body: JSON.stringify({
+              sessionId: "8589f0",
+              location: "useTabManager.ts:openFile",
+              message: "fileRead from disk",
+              data: {
+                path,
+                contentLen: content.length,
+                preview: content.slice(0, 80),
+              },
+              timestamp: Date.now(),
+              hypothesisId: "H5",
+            }),
+          },
+        ).catch(() => {});
+        // #endregion
         if (openFileSeqRef.current !== seq) return;
         frontmatterYamlRef.current = extractFrontmatterYaml(content);
         const fromMarkdown = displayTitleFromMarkdown(content, "");
@@ -162,6 +186,7 @@ export function useTabManager(options: UseTabManagerOptions = {}) {
 
       const cached = tabMarkdownCacheRef.current.get(path);
       if (cached) {
+        clearCachedEditorHtml(path);
         markdownRef.current = cached;
         frontmatterYamlRef.current = extractFrontmatterYaml(cached);
         setMarkdown(cached);

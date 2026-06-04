@@ -43,4 +43,25 @@ describe("document lifecycle source contracts", () => {
       "await versionSaveManual(path, getLiveMarkdown());",
     );
   });
+
+  it("layer-1 save syncs markdown state so markdownRef is not stomped on re-render", () => {
+    const app = read("src/App.tsx");
+    expect(app).toContain("setMarkdown(md)");
+    const openNote = read("src/hooks/useOpenNote.ts");
+    expect(openNote).toContain("editorContentTick");
+    expect(openNote).not.toMatch(
+      /editorBodyMarkdown[\s\S]*?\[activePath, editorContentTick, markdown,/,
+    );
+  });
+
+  it("active tab always flushes on leave (no dirty-only skip)", () => {
+    const source = read("src/App.tsx");
+    expect(source).toContain("await flushSaveForPath(path, () => snapshot)");
+    expect(source).not.toContain("skip fileWrite: not dirty");
+  });
+
+  it("activateTab clears HTML cache before restoring session markdown", () => {
+    const source = read("src/hooks/useTabManager.ts");
+    expect(source).toContain("clearCachedEditorHtml(path)");
+  });
 });
