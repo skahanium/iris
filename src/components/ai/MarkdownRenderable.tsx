@@ -46,13 +46,12 @@ export function MarkdownRenderable({
     <MarkdownErrorBoundary>
       <div
         className={cn(
-          "ai-message-body iris-prose select-text text-[13px] leading-snug",
-          streaming && "min-h-[1.5em] contain-layout",
+          "ai-message-body iris-markdown-content select-text",
+          streaming && "contain-layout",
           "[&_a.ai-citation]:font-medium [&_a.ai-citation]:text-ai-citation [&_a.ai-citation]:underline [&_a.ai-citation]:decoration-ai-citation/40 [&_a.ai-citation]:underline-offset-2 hover:[&_a.ai-citation]:text-ai-citation-hover",
-          "[&_code]:rounded [&_code]:bg-editor-code-bg [&_code]:px-1 [&_code]:font-mono [&_code]:text-editor-code-fg",
-          "[&_p]:mb-1.5 [&_ul]:mb-1.5 [&_ul]:list-disc [&_ul]:pl-5",
           className,
         )}
+        data-prose-surface="conversation"
         dangerouslySetInnerHTML={{ __html: html }}
       />
     </MarkdownErrorBoundary>

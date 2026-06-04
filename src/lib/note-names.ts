@@ -1,16 +1,21 @@
 import {
   isInternalUntitledLabel,
   isInternalUntitledPath,
+  mapLegacyPlaceholderStemToDisplay,
   pathStem,
+  UNNAMED_DOCUMENT_PREFIX,
 } from "@/lib/note-display";
 import { notePathInFolder } from "@/lib/vault-tree";
 import type { FileListItem } from "@/types/ipc";
 
-export const DEFAULT_NEW_DOCUMENT_TITLE = "新建文档";
-/** Prefix for auto-allocated names: `无标题1`, `无标题2`, … */
+export const DEFAULT_NEW_DOCUMENT_TITLE = UNNAMED_DOCUMENT_PREFIX;
+/** @deprecated Use {@link UNNAMED_DOCUMENT_PREFIX} */
 export const UNTITLED_TITLE_PREFIX = "无标题";
 
 const INVALID_FILE_CHARS = /[\\/:*?"<>|]/g;
+
+const LEGACY_PLACEHOLDER_STEM_RE =
+  /^(?:新建文档|无标题\d+|untitled-\d+)(?:（\d+）)?$/i;
 
 /** Strip characters illegal in vault file names. */
 export function sanitizeNoteFileName(title: string): string {
@@ -30,15 +35,23 @@ export function collectTakenDocumentNames(files: FileListItem[]): Set<string> {
     if (title && !isInternalUntitledLabel(title)) {
       taken.add(title);
     }
+    const stem = pathStem(f.path);
     if (!isInternalUntitledPath(f.path)) {
-      taken.add(pathStem(f.path));
+      taken.add(stem);
+      const mapped = mapLegacyPlaceholderStemToDisplay(stem);
+      if (mapped) {
+        taken.add(mapped);
+      }
+    }
+    if (LEGACY_PLACEHOLDER_STEM_RE.test(stem)) {
+      taken.add(stem);
     }
   }
   return taken;
 }
 
 /**
- * Next available display name: `新建文档`, `新建文档（1）`, `新建文档（2）`, …
+ * Next available display name: `未命名文档`, `未命名文档（1）`, `未命名文档（2）`, …
  */
 export function allocateNewDocumentName(
   files: FileListItem[],
@@ -77,27 +90,12 @@ export function allocateNewDocumentName(
   };
 }
 
-/**
- * Next auto name: `无标题1`, `无标题2`, `无标题3`, …
- * Filename matches display title (`无标题1.md`).
- * @deprecated 使用 {@link allocateNewDocumentName} 代替，新文档默认使用 `新建文档` 命名。
- */
+/** @deprecated Use {@link allocateNewDocumentName} */
 export function allocateUntitledDocumentName(
   files: FileListItem[],
   extraTaken?: Iterable<string>,
 ): { title: string; path: string } {
-  const taken = collectTakenDocumentNames(files);
-  for (const name of extraTaken ?? []) {
-    const trimmed = name.trim();
-    if (trimmed && !isInternalUntitledLabel(trimmed)) {
-      taken.add(trimmed);
-    }
-  }
-
-  let n = 1;
-  while (taken.has(`${UNTITLED_TITLE_PREFIX}${n}`)) {
-    n += 1;
-  }
-  const title = `${UNTITLED_TITLE_PREFIX}${n}`;
-  return { title, path: titleToNotePath(title) };
+  return allocateNewDocumentName(files, extraTaken);
 }
+
+export const allocateUnnamedDocumentName = allocateNewDocumentName;

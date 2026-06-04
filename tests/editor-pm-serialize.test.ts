@@ -73,6 +73,34 @@ describe("editorDocToMarkdown (prosemirror-markdown hot path)", () => {
     }
   });
 
+  it("round-trips images via PM serializer", () => {
+    const turndownSpy = vi.spyOn(markdownLib, "editorBodyHtmlToMarkdown");
+
+    const body = "![diagram](assets/example.png)";
+    const editor = createProductionEditorFromIngestedBody(body);
+    try {
+      const md = pmSerializeBody(editor);
+      expect(md).toContain("![diagram](assets/example.png)");
+      expect(turndownSpy).not.toHaveBeenCalled();
+    } finally {
+      editor.destroy();
+    }
+  });
+
+  it("round-trips hard line breaks via PM serializer", () => {
+    const turndownSpy = vi.spyOn(markdownLib, "editorBodyHtmlToMarkdown");
+
+    const body = "Line one  \nLine two";
+    const editor = createProductionEditorFromIngestedBody(body);
+    try {
+      const md = pmSerializeBody(editor);
+      expect(md).toMatch(/Line one\\\nLine two/);
+      expect(turndownSpy).not.toHaveBeenCalled();
+    } finally {
+      editor.destroy();
+    }
+  });
+
   it("round-trips preserve-only callout blocks via PM serializer", () => {
     const turndownSpy = vi.spyOn(markdownLib, "editorBodyHtmlToMarkdown");
 

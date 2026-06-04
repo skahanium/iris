@@ -8,6 +8,7 @@ use std::time::Duration;
 use crate::app::AppState;
 use crate::indexer::scan::index_file_from_content;
 const INDEX_DEBOUNCE_MS: u64 = 2500;
+const MAX_PENDING_ENTRIES: usize = 50;
 
 struct PendingIndex {
     generation: u64,
@@ -25,6 +26,40 @@ pub struct DeferredFileIndexer {
 }
 
 impl DeferredFileIndexer {
+    /// Flush the oldest pending entry immediately when the map exceeds capacity.
+    fn flush_oldest_if_full(
+        guard: &mut HashMap<String, PendingIndex>,
+        state: &Arc<AppState>,
+    ) {
+        if guard.len() < MAX_PENDING_ENTRIES {
+            return;
+        }
+        let oldest_key = guard
+            .iter()
+            .min_by_key(|(_, v)| v.generation)
+            .map(|(k, _)| k.clone());
+        if let Some(key) = oldest_key {
+            if let Some(job) = guard.remove(&key) {
+                let state = state.clone();
+                tauri::async_runtime::spawn(async move {
+                    let _ = tokio::task::spawn_blocking(move || {
+                        state.db.with_conn(|conn| {
+                            index_file_from_content(
+                                conn,
+                                &job.vault,
+                                &job.abs,
+                                &job.content,
+                                &job.hash,
+                                Some(&state),
+                            )
+                        })
+                    })
+                    .await;
+                });
+            }
+        }
+    }
+
     pub fn schedule(
         indexer: Arc<Self>,
         state: Arc<AppState>,
@@ -36,6 +71,7 @@ impl DeferredFileIndexer {
     ) {
         let generation = {
             let mut guard = indexer.pending.lock().expect("deferred index lock");
+            Self::flush_oldest_if_full(&mut guard, &state);
             let next = guard
                 .get(&path)
                 .map(|p| p.generation.saturating_add(1))

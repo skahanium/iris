@@ -63,13 +63,18 @@ import {
 } from "@/lib/command-palette";
 import { runEditorAction } from "@/lib/editor-action-executor";
 import { insertAssistantMarkdownAtCursor } from "@/lib/editor-insert";
-import { resolveNoteDisplayTitle } from "@/lib/note-display";
 import {
+  displayTitleForChrome,
+  resolveNoteDisplayTitle,
+} from "@/lib/note-display";
+import {
+  fileWrite,
   listenVersionSaveComplete,
   settingsGet,
   settingsSet,
   versionSaveManual,
 } from "@/lib/ipc";
+import { isNoteSubstantivelyEmpty } from "@/lib/note-substance";
 import { formatVersionSaveStatus } from "@/lib/version-save-status";
 import { isTauriRuntime } from "@/lib/tauri-runtime";
 import { cn } from "@/lib/utils";
@@ -195,6 +200,11 @@ function App() {
     [],
   );
 
+  const dirtyRef = useRef(false);
+  const persistBeforeLeaveRef = useRef<
+    (path: string) => Promise<string | null>
+  >(async () => null);
+
   const {
     tabs,
     activePath,
@@ -212,10 +222,12 @@ function App() {
     updateTabTitle,
     replaceOpenTabPath,
     syncTabMarkdownCache,
+    getTabMarkdownCached,
     setMarkdown,
   } = useTabManager({
     onStatusChange: setAiStatus,
     onVaultIndexBump: bumpVaultIndex,
+    persistBeforeLeave: (path) => persistBeforeLeaveRef.current(path),
   });
 
   const tabsRef = useRef(tabs);
@@ -226,17 +238,16 @@ function App() {
     onStatus: setAiStatus,
   });
 
-  const dirtyRef = useRef(false);
-
   const getLiveMarkdownRef = useRef(() => markdownRef.current);
 
   const {
     noteTitle,
-    bodyMarkdown,
+    editorBodyMarkdown,
     getLiveMarkdown,
     applySavedMarkdown,
     onTitleChange,
     onTitleBlur,
+    schedulePathSync,
     loadBodyIntoEditor,
   } = useOpenNote({
     activePath,
@@ -252,7 +263,7 @@ function App() {
 
   getLiveMarkdownRef.current = getLiveMarkdown;
 
-  const { notifyDirty, flushSave } = useEditorSave(
+  const { notifyDirty, flushSave, flushSaveForPath } = useEditorSave(
     activePath,
     () => getLiveMarkdownRef.current(),
     (md) => {
@@ -261,16 +272,48 @@ function App() {
       const path = activePathRef.current;
       if (path) {
         syncTabMarkdownCache(path, md);
+        markdownRef.current = md;
         markClean(
           path,
-          resolveNoteDisplayTitle({
-            path,
-            title: noteTitle,
-          }),
+          resolveNoteDisplayTitle({ path, title: noteTitle }),
         );
+        if (noteTitle.trim() === "") {
+          schedulePathSync(path, noteTitle);
+        }
       }
     },
   );
+
+  persistBeforeLeaveRef.current = async (path: string) => {
+    const tab = tabsRef.current.find((t) => t.path === path);
+    if (path === activePathRef.current) {
+      if (!dirtyRef.current) {
+        return getLiveMarkdownRef.current();
+      }
+      const snapshot = getLiveMarkdownRef.current();
+      const md = await flushSaveForPath(path, () => snapshot);
+      if (md) {
+        dirtyRef.current = false;
+        markdownRef.current = md;
+        syncTabMarkdownCache(path, md);
+        markClean(
+          path,
+          resolveNoteDisplayTitle({ path, title: noteTitle }),
+        );
+      }
+      return md;
+    }
+    if (!tab?.dirty) {
+      return getTabMarkdownCached(path) ?? null;
+    }
+    const cached = getTabMarkdownCached(path);
+    if (!cached || isNoteSubstantivelyEmpty(cached)) {
+      return null;
+    }
+    await fileWrite(path, cached);
+    markClean(path, tab.title);
+    return cached;
+  };
 
   const { onActivity: resetVersionIdle } = useVersionIdle(
     activePath,
@@ -628,11 +671,8 @@ function App() {
 
   const activeDocumentTitle = useMemo(() => {
     if (!activePath) return null;
-    return resolveNoteDisplayTitle({
-      path: activePath,
-      title: noteTitle || tabs.find((t) => t.path === activePath)?.title,
-    });
-  }, [activePath, noteTitle, tabs]);
+    return displayTitleForChrome(activePath, noteTitle);
+  }, [activePath, noteTitle]);
 
   if (!isTauriRuntime()) {
     return (
@@ -733,7 +773,7 @@ function App() {
               <ErrorBoundary scope="编辑器">
                 <TipTapEditor
                   key={activePath}
-                  initialBodyMarkdown={bodyMarkdown}
+                  initialBodyMarkdown={editorBodyMarkdown}
                   contentCacheKey={activePath}
                   reingestKey={editorContentTick}
                   zen={zen}

@@ -203,6 +203,7 @@ function walkTokens(tokens: Token[], acc: FragmentAccumulator): void {
     const raw = token.raw ?? "";
     const type = token.type;
 
+    /** Block separator in source (`\n\n` between blocks); ingest maps to empty spacer paragraphs. */
     if (type === "space") {
       pushFragment(acc, raw, "space");
       continue;

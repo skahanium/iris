@@ -22,8 +22,9 @@ import type { VersionEntry } from "@/types/ipc";
 
 import { buildRestoreConfirmMessage } from "./version-restore-confirm";
 import {
-  formatVersionTime,
+  formatVersionDisplayTime,
   groupVersions,
+  isFinalizedEntry,
   isGroupExpanded,
   kindLabel,
   type CollapsedVersionGroup,
@@ -180,11 +181,13 @@ export function VersionTimeline({
       >
         <div className="flex flex-wrap items-center gap-2">
           <span className="text-xs text-muted-foreground">
-            {formatVersionTime(v.version_no)}
+            {formatVersionDisplayTime(v)}
           </span>
-          <span className="rounded bg-muted px-1 py-0 text-[10px] text-muted-foreground">
-            {kindLabel(v.kind)}
-          </span>
+          {!isFinalizedEntry(v) && (
+            <span className="rounded bg-muted px-1 py-0 text-[10px] text-muted-foreground">
+              {kindLabel(v.kind)}
+            </span>
+          )}
           {v.is_finalized && (
             <span className="rounded bg-primary/20 px-1 py-0 text-[10px] text-primary">
               定稿

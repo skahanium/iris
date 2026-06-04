@@ -1,5 +1,5 @@
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::Mutex;
 
 #[cfg(feature = "sqlite-vec")]
@@ -16,6 +16,8 @@ static IN_MEMORY_DB_COUNTER: AtomicU64 = AtomicU64::new(0);
 #[cfg(feature = "sqlite-vec")]
 static SQLITE_VEC_REGISTER: Once = Once::new();
 
+const READ_POOL_SIZE: usize = 4;
+
 /// Whether sqlite-vec vec0 tables are available for this process.
 pub fn vector_index_ready() -> bool {
     VECTOR_INDEX_READY.load(Ordering::Relaxed)
@@ -23,11 +25,12 @@ pub fn vector_index_ready() -> bool {
 
 /// SQLite connection pool with WAL and performance PRAGMAs from ARCHITECTURE.md.
 ///
-/// Uses separate connections for reads and writes to allow concurrent read
-/// operations while writes are in progress (WAL mode enables this).
+/// Uses a single write connection and a pool of read connections to allow
+/// concurrent read operations while writes are in progress (WAL mode).
 pub struct Database {
     write_conn: Mutex<Connection>,
-    read_conn: Mutex<Connection>,
+    read_pool: Vec<Mutex<Connection>>,
+    read_idx: AtomicUsize,
     #[allow(dead_code)]
     path: Option<PathBuf>,
 }
@@ -46,14 +49,19 @@ impl Database {
         VECTOR_INDEX_READY.store(vec_ready, Ordering::Relaxed);
         migrate_up(&write_conn)?;
 
-        let read_conn = Connection::open(path)?;
-        Self::apply_pragmas(&read_conn)?;
-        #[cfg(feature = "sqlite-vec")]
-        let _ = Self::try_load_sqlite_vec(&read_conn, true);
+        let mut read_pool = Vec::with_capacity(READ_POOL_SIZE);
+        for _ in 0..READ_POOL_SIZE {
+            let rc = Connection::open(path)?;
+            Self::apply_pragmas(&rc)?;
+            #[cfg(feature = "sqlite-vec")]
+            let _ = Self::try_load_sqlite_vec(&rc, true);
+            read_pool.push(Mutex::new(rc));
+        }
 
         Ok(Self {
             write_conn: Mutex::new(write_conn),
-            read_conn: Mutex::new(read_conn),
+            read_pool,
+            read_idx: AtomicUsize::new(0),
             path: Some(path.to_path_buf()),
         })
     }
@@ -64,16 +72,20 @@ impl Database {
 
         let write_conn = Connection::open(&db_uri)?;
         Self::apply_pragmas(&write_conn)?;
-        // In-memory DBs skip sqlite-vec (process-global extension breaks isolated test DBs).
         VECTOR_INDEX_READY.store(false, Ordering::Relaxed);
         migrate_up(&write_conn)?;
 
-        let read_conn = Connection::open(&db_uri)?;
-        Self::apply_pragmas(&read_conn)?;
+        let mut read_pool = Vec::with_capacity(READ_POOL_SIZE);
+        for _ in 0..READ_POOL_SIZE {
+            let rc = Connection::open(&db_uri)?;
+            Self::apply_pragmas(&rc)?;
+            read_pool.push(Mutex::new(rc));
+        }
 
         Ok(Self {
             write_conn: Mutex::new(write_conn),
-            read_conn: Mutex::new(read_conn),
+            read_pool,
+            read_idx: AtomicUsize::new(0),
             path: None,
         })
     }
@@ -115,7 +127,7 @@ impl Database {
         conn.execute_batch(
             "
             PRAGMA journal_mode=WAL;
-            PRAGMA synchronous=FULL;
+            PRAGMA synchronous=NORMAL;
             PRAGMA cache_size=-8000;
             PRAGMA mmap_size=268435456;
             PRAGMA temp_store=MEMORY;
@@ -138,16 +150,16 @@ impl Database {
         f(&guard)
     }
 
-    /// Execute a closure with the read connection (for queries only).
+    /// Execute a closure with a read connection from the pool (for queries only).
     ///
-    /// This allows read operations to proceed concurrently with writes
+    /// Round-robin across `READ_POOL_SIZE` connections to allow concurrent reads
     /// when WAL mode is enabled.
     pub fn with_read_conn<F, T>(&self, f: F) -> AppResult<T>
     where
         F: FnOnce(&Connection) -> AppResult<T>,
     {
-        let guard = self
-            .read_conn
+        let idx = self.read_idx.fetch_add(1, Ordering::Relaxed) % self.read_pool.len();
+        let guard = self.read_pool[idx]
             .lock()
             .map_err(|_| AppError::msg("Database read lock poisoned"))?;
         f(&guard)

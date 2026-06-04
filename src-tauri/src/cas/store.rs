@@ -102,6 +102,32 @@ impl CasObjectStore {
         Ok(self.base_path.join("objects").join(prefix).join(suffix))
     }
 
+    /// Atomic write: write to temp file then rename to final path.
+    fn atomic_write_raw(&self, target: &std::path::Path, data: &[u8]) -> AppResult<()> {
+        if let Some(parent) = target.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        let tmp = target.with_extension("tmp");
+        fs::write(&tmp, data)?;
+        if let Err(e) = fs::rename(&tmp, target) {
+            let _ = fs::remove_file(&tmp);
+            return Err(e.into());
+        }
+        Ok(())
+    }
+
+    fn prepare_on_disk(&self, content: &[u8]) -> AppResult<Vec<u8>> {
+        if let Some(key) = self.enc_key() {
+            let encrypted = super::encryption::encrypt_blob(content, &key)?;
+            let mut buf = Vec::with_capacity(CRYPT_MAGIC.len() + encrypted.len());
+            buf.extend_from_slice(CRYPT_MAGIC);
+            buf.extend_from_slice(&encrypted);
+            Ok(buf)
+        } else {
+            Ok(content.to_vec())
+        }
+    }
+
     /// 存储 blob 对象。如果启用了加密，写入前加密内容。
     pub fn store_blob(&self, content: &[u8]) -> AppResult<String> {
         let hash = super::hash::content_hash(content);
@@ -111,21 +137,8 @@ impl CasObjectStore {
             return Ok(hash);
         }
 
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent)?;
-        }
-
-        let on_disk = if let Some(key) = self.enc_key() {
-            let encrypted = super::encryption::encrypt_blob(content, &key)?;
-            let mut buf = Vec::with_capacity(CRYPT_MAGIC.len() + encrypted.len());
-            buf.extend_from_slice(CRYPT_MAGIC);
-            buf.extend_from_slice(&encrypted);
-            buf
-        } else {
-            content.to_vec()
-        };
-
-        fs::write(&path, &on_disk)?;
+        let on_disk = self.prepare_on_disk(content)?;
+        self.atomic_write_raw(&path, &on_disk)?;
         Ok(hash)
     }
 
@@ -164,21 +177,8 @@ impl CasObjectStore {
             return Ok(hash);
         }
 
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent)?;
-        }
-
-        let on_disk = if let Some(key) = self.enc_key() {
-            let encrypted = super::encryption::encrypt_blob(&content, &key)?;
-            let mut buf = Vec::with_capacity(CRYPT_MAGIC.len() + encrypted.len());
-            buf.extend_from_slice(CRYPT_MAGIC);
-            buf.extend_from_slice(&encrypted);
-            buf
-        } else {
-            content
-        };
-
-        fs::write(&path, &on_disk)?;
+        let on_disk = self.prepare_on_disk(&content)?;
+        self.atomic_write_raw(&path, &on_disk)?;
         Ok(hash)
     }
 
@@ -199,21 +199,8 @@ impl CasObjectStore {
             return Ok(hash);
         }
 
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent)?;
-        }
-
-        let on_disk = if let Some(key) = self.enc_key() {
-            let encrypted = super::encryption::encrypt_blob(&content, &key)?;
-            let mut buf = Vec::with_capacity(CRYPT_MAGIC.len() + encrypted.len());
-            buf.extend_from_slice(CRYPT_MAGIC);
-            buf.extend_from_slice(&encrypted);
-            buf
-        } else {
-            content
-        };
-
-        fs::write(&path, &on_disk)?;
+        let on_disk = self.prepare_on_disk(&content)?;
+        self.atomic_write_raw(&path, &on_disk)?;
         Ok(hash)
     }
 
@@ -227,11 +214,7 @@ impl CasObjectStore {
     /// 更新引用
     pub fn update_ref(&self, ref_name: &str, hash: &str) -> AppResult<()> {
         let ref_path = self.base_path.join("refs").join(ref_name);
-        if let Some(parent) = ref_path.parent() {
-            fs::create_dir_all(parent)?;
-        }
-        fs::write(&ref_path, hash)?;
-        Ok(())
+        self.atomic_write_raw(&ref_path, hash.as_bytes())
     }
 
     /// 读取引用

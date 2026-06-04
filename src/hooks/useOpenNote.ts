@@ -2,13 +2,13 @@ import type { Editor } from "@tiptap/react";
 import {
   useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState,
   type RefObject,
 } from "react";
 
-import { resolveNoteDisplayTitle } from "@/lib/note-display";
-import { displayTitleFromMarkdown } from "@/lib/document-title";
+import { pathStem } from "@/lib/note-display";
 import {
   extractFrontmatterYaml,
   markdownBodyToEditorHtml,
@@ -17,15 +17,15 @@ import {
 import { isPlaceholderTitle } from "@/lib/path-sync";
 import { fileRename, pathSyncSuggest } from "@/lib/ipc";
 import {
+  sanitizeDocumentTitleInput,
+  NOTE_TITLE_HARD_LIMIT,
+} from "@/lib/note-title-limits";
+import {
   bodyMarkdownFromNoteRef,
   serializeOpenNote,
 } from "@/lib/serialize-open-note";
 
 const PATH_SYNC_DEBOUNCE_MS = 800;
-
-function pathStem(path: string): string {
-  return path.replace(/\.md$/i, "").split("/").pop() ?? path;
-}
 
 interface UseOpenNoteOptions {
   activePath: string | null;
@@ -46,7 +46,7 @@ interface UseOpenNoteOptions {
 
 export function useOpenNote({
   activePath,
-  markdown: _markdown,
+  markdown,
   editorContentTick,
   activePathRef,
   markdownRef,
@@ -58,18 +58,20 @@ export function useOpenNote({
   const [noteTitle, setNoteTitle] = useState("");
   const [bodyMarkdown, setBodyMarkdown] = useState("");
 
+  /** Parsed body for TipTap on the same render as disk/tab load (avoids empty HTML cache race). */
+  const editorBodyMarkdown = useMemo(() => {
+    if (!activePath) return "";
+    return parseNoteForEditor(markdownRef.current, "").bodyMd;
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- markdown + editorContentTick invalidate on disk/tab load
+  }, [activePath, editorContentTick, markdown, markdownRef]);
+
   const pathSyncTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pathSyncGenRef = useRef(0);
   const syncFromMarkdown = useCallback(
-    (md: string, path: string) => {
-      const parsed = parseNoteForEditor(md, pathStem(path));
+    (md: string, _path: string) => {
+      const parsed = parseNoteForEditor(md, "");
       frontmatterYamlRef.current = parsed.yaml;
-      const displayTitle = resolveNoteDisplayTitle({
-        path,
-        title: parsed.title,
-        markdown: md,
-      });
-      setNoteTitle(displayTitle);
+      setNoteTitle(parsed.title);
       setBodyMarkdown(parsed.bodyMd);
     },
     [frontmatterYamlRef],
@@ -106,12 +108,10 @@ export function useOpenNote({
     (md: string) => {
       markdownRef.current = md;
       frontmatterYamlRef.current = extractFrontmatterYaml(md);
-      // Intentionally skip onMarkdownSynced: setMarkdown would re-ingest the whole
-      // document into TipTap (ingest + setContent) and freeze the UI on large notes.
       const path = activePathRef.current;
       if (path) {
-        const savedTitle = displayTitleFromMarkdown(md, "");
-        setNoteTitle(resolveNoteDisplayTitle({ path, title: savedTitle }));
+        const parsed = parseNoteForEditor(md, "");
+        setNoteTitle(parsed.title);
       }
     },
     [activePathRef, frontmatterYamlRef, markdownRef],
@@ -122,13 +122,12 @@ export function useOpenNote({
       const path = activePathRef.current;
       if (!path) return;
 
-      const title = resolveNoteDisplayTitle({
-        path,
-        title: raw.trim(),
-      });
-
-      setNoteTitle(title);
-      updateTabTitle(path, title);
+      const next = sanitizeDocumentTitleInput(raw).slice(
+        0,
+        NOTE_TITLE_HARD_LIMIT,
+      );
+      setNoteTitle(next);
+      updateTabTitle(path, next);
     },
     [activePathRef, updateTabTitle],
   );
@@ -157,7 +156,13 @@ export function useOpenNote({
               : `是否将文件路径同步为「${suggest.suggested_path}」？`;
             if (!window.confirm(msg)) return;
             return fileRename(path, suggest.suggested_path).then((entry) => {
-              replaceOpenTabPath(path, entry.path, title);
+              const allocatedTitle = pathStem(entry.path);
+              const nextTitle =
+                title.trim() === "" ? allocatedTitle : title.trim();
+              replaceOpenTabPath(path, entry.path, nextTitle);
+              if (title.trim() === "") {
+                setNoteTitle(allocatedTitle);
+              }
             });
           })
           .catch(() => {
@@ -179,7 +184,7 @@ export function useOpenNote({
       const path = activePathRef.current;
       if (!path) return;
       syncFromMarkdown(content, path);
-      const parsed = parseNoteForEditor(content, pathStem(path));
+      const parsed = parseNoteForEditor(content, "");
       if (editorRef.current) {
         editorRef.current.commands.setContent(
           markdownBodyToEditorHtml(parsed.bodyMd),
@@ -193,11 +198,13 @@ export function useOpenNote({
   return {
     noteTitle,
     bodyMarkdown,
+    editorBodyMarkdown,
     getLiveMarkdown,
     applySavedMarkdown,
     onTitleChange,
     onTitleBlur,
-    loadBodyIntoEditor,
+    schedulePathSync,
     syncFromMarkdown,
+    loadBodyIntoEditor,
   };
 }

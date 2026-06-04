@@ -73,7 +73,8 @@ describe("design tokens", () => {
     expect(tailwindMapsToken("fast", "var(--motion-fast)")).toBe(true);
     expect(tailwindMapsToken("base", "var(--motion-base)")).toBe(true);
     expect(tailwindConfigSource).toContain('"Inter"');
-    expect(tailwindConfigSource).not.toContain("Noto Serif");
+    expect(tailwindConfigSource).toContain('"Noto Sans SC"');
+    expect(tailwindConfigSource).toContain('"Noto Serif SC"');
     expect(tailwindConfigSource).not.toContain("shadow-paper");
   });
 });

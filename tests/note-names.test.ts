@@ -12,31 +12,33 @@ function file(path: string, title: string): FileListItem {
 }
 
 describe("allocateNewDocumentName", () => {
-  it("returns 新建文档 when unused", () => {
+  it("returns 未命名文档 when unused", () => {
     const { title, path } = allocateNewDocumentName([]);
     expect(title).toBe(DEFAULT_NEW_DOCUMENT_TITLE);
-    expect(path).toBe("新建文档.md");
+    expect(path).toBe("未命名文档.md");
   });
 
-  it("returns 新建文档（1） when base title is taken", () => {
+  it("returns 未命名文档（1） when base title is taken", () => {
     const { title, path } = allocateNewDocumentName([
-      file("新建文档.md", "新建文档"),
+      file("未命名文档.md", "未命名文档"),
     ]);
-    expect(title).toBe("新建文档（1）");
-    expect(path).toBe("新建文档（1）.md");
+    expect(title).toBe("未命名文档（1）");
+    expect(path).toBe("未命名文档（1）.md");
   });
 
   it("fills the lowest free suffix", () => {
     const { title } = allocateNewDocumentName([
-      file("新建文档.md", "新建文档"),
-      file("新建文档（2）.md", "新建文档（2）"),
+      file("未命名文档.md", "未命名文档"),
+      file("未命名文档（2）.md", "未命名文档（2）"),
     ]);
-    expect(title).toBe("新建文档（1）");
+    expect(title).toBe("未命名文档（1）");
   });
 
   it("respects taken titles even when path differs", () => {
-    const { title } = allocateNewDocumentName([file("note-1.md", "新建文档")]);
-    expect(title).toBe("新建文档（1）");
+    const { title } = allocateNewDocumentName([
+      file("note-1.md", "未命名文档"),
+    ]);
+    expect(title).toBe("未命名文档（1）");
   });
 
   it("uses a custom title hint inside the selected folder", () => {

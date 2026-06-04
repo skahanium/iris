@@ -222,7 +222,7 @@ fn rename_vault_file(state: &Arc<AppState>, path: &str, new_path: &str) -> AppRe
     let hash = crate::indexer::scan::file_hash(&new_abs)?;
     state.write_guard.mark(new_path, &hash);
     state.db.with_conn(|conn| {
-        crate::indexer::scan::remove_file_index(conn, path)?;
+        crate::indexer::scan::rename_file_index(conn, path, new_path)?;
         crate::indexer::scan::index_file_with_embed(conn, &vault, &new_abs, Some(state))
     })?;
     Ok(())

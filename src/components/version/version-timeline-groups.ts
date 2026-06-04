@@ -59,13 +59,11 @@ export function parseVersionDate(v: VersionEntry): Date {
   }
   const ts = v.version_no;
   if (ts.length >= 14) {
-    const y = Number(ts.slice(0, 4));
-    const mo = Number(ts.slice(4, 6)) - 1;
-    const d = Number(ts.slice(6, 8));
-    const h = Number(ts.slice(8, 10));
-    const mi = Number(ts.slice(10, 12));
-    const s = Number(ts.slice(12, 14));
-    return new Date(y, mo, d, h, mi, s);
+    const iso = `${ts.slice(0, 4)}-${ts.slice(4, 6)}-${ts.slice(6, 8)}T${ts.slice(8, 10)}:${ts.slice(10, 12)}:${ts.slice(12, 14)}Z`;
+    const parsed = new Date(iso);
+    if (!Number.isNaN(parsed.getTime())) {
+      return parsed;
+    }
   }
   return new Date(0);
 }
@@ -82,11 +80,31 @@ export function getDayBucket(date: Date, now: Date): DayBucket {
   return "earlier";
 }
 
+/** @deprecated Prefer {@link formatVersionDisplayTime} for list rows. */
 export function formatVersionTime(versionNo: string): string {
   if (versionNo.length >= 14) {
     return `${versionNo.slice(0, 4)}-${versionNo.slice(4, 6)}-${versionNo.slice(6, 8)} ${versionNo.slice(8, 10)}:${versionNo.slice(10, 12)}:${versionNo.slice(12, 14)}`;
   }
   return versionNo;
+}
+
+const VERSION_DISPLAY_TIME: Intl.DateTimeFormatOptions = {
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
+  hour: "2-digit",
+  minute: "2-digit",
+  second: "2-digit",
+  hour12: false,
+};
+
+/** Localized snapshot time from `created_at` (falls back to UTC `version_no`). */
+export function formatVersionDisplayTime(v: VersionEntry): string {
+  const d = parseVersionDate(v);
+  if (Number.isNaN(d.getTime()) || d.getTime() === 0) {
+    return formatVersionTime(v.version_no);
+  }
+  return d.toLocaleString("zh-CN", VERSION_DISPLAY_TIME);
 }
 
 export function kindLabel(kind: VersionKind): string {

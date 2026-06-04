@@ -32,6 +32,26 @@ pub fn embed_text(text: &str) -> AppResult<Vec<f32>> {
         .ok_or_else(|| AppError::msg("Empty embedding result"))
 }
 
+/// Batch-embed multiple texts in a single model call for better throughput.
+pub fn embed_texts_batch(texts: &[&str]) -> AppResult<Vec<Vec<f32>>> {
+    if texts.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut guard = EMBEDDER
+        .lock()
+        .map_err(|_| AppError::msg("embedder lock"))?;
+    if guard.is_none() {
+        *guard = Some(
+            TextEmbedding::try_new(InitOptions::new(EmbeddingModel::AllMiniLML6V2))
+                .map_err(|e| AppError::Embed(e.to_string()))?,
+        );
+    }
+    let model = guard.as_ref().expect("embedder initialized");
+    model
+        .embed(texts.to_vec(), None)
+        .map_err(|e| AppError::Embed(e.to_string()))
+}
+
 /// Cosine similarity between two vectors.
 pub fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
     if a.len() != b.len() || a.is_empty() {

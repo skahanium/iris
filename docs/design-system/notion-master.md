@@ -1,6 +1,8 @@
 # Iris · N · Notion 编辑（设计参考）
 
-> 由 v0.4.0-ui 定稿；实现以 `src/styles/globals.css` 与 [design-system.md](../design-system.md) 为准。
+> **历史档（v0.4.0-ui）**：仅作色彩与扁平壳层参考。**当前界面验收**以 [design-system.md](../design-system.md) 与 Prose Polish v2（`markdown-prose.css`）为准；文中「校对台」等表述已过时。
+
+> 实现以 `src/styles/globals.css`、`src/styles/markdown-prose.css` 与 [design-system.md](../design-system.md) 为准。
 
 ## 气质
 

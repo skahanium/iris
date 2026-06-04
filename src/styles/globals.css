@@ -1,3 +1,5 @@
+@import "./markdown-prose.css";
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
@@ -476,9 +478,7 @@
   }
 
   .iris-editor-body .ProseMirror {
-    @apply relative min-h-[50vh] font-sans text-editor-ink outline-none;
-    font-size: 1rem;
-    line-height: 1.5;
+    @apply relative min-h-[50vh] text-editor-ink outline-none;
     caret-color: hsl(var(--primary));
   }
 
@@ -497,14 +497,16 @@
   }
 
   .iris-document-title-field.iris-doc-title-wrap {
-    @apply relative mb-1 w-full pb-2;
-    padding-left: var(--editor-fold-column);
+    @apply relative w-full;
+    margin-bottom: var(--prose-title-gap);
+    padding-left: 0;
   }
 
   .iris-document-title-field .iris-doc-title {
-    @apply m-0 w-full border-0 bg-transparent text-left text-4xl font-bold text-editor-ink outline-none;
+    @apply m-0 w-full border-0 bg-transparent text-center text-4xl font-bold text-editor-ink outline-none;
+    font-family: var(--font-title);
     line-height: 1.2;
-    letter-spacing: -0.02em;
+    letter-spacing: 0.02em;
     padding: 0;
     box-shadow: none;
   }
@@ -543,67 +545,17 @@
     margin: 0;
   }
 
-  .iris-editor-body .ProseMirror > * + * {
-    margin-top: 0.5em;
-  }
-
-  .iris-editor-body
-    .ProseMirror
-    > :is(h1:not(.iris-doc-title), h2, h3, h4, h5, h6) {
-    margin-top: 1.25em;
-  }
-
-  .iris-editor-body
-    .ProseMirror
-    > :is(h1:not(.iris-doc-title), h2, h3, h4, h5, h6):first-child {
-    margin-top: 0;
-  }
-
-  .iris-editor-body
-    .ProseMirror
-    > :is(h1:not(.iris-doc-title), h2, h3, h4, h5, h6)
-    + * {
-    margin-top: 0.25em;
+  .iris-editor-body .ProseMirror.iris-markdown-content > * + * {
+    margin-top: var(--prose-block-gap);
   }
 
   .iris-editor-body .ProseMirror > p {
-    line-height: 1.5;
     text-indent: 0;
   }
 
   .iris-editor-body .ProseMirror :where(li, blockquote, td, th) > p {
     margin: 0;
     text-indent: 0;
-  }
-
-  .iris-editor-body
-    .ProseMirror
-    > :is(h1:not(.iris-doc-title), h2, h3, h4, h5, h6) {
-    @apply relative font-semibold text-editor-ink;
-    line-height: 1.3;
-  }
-
-  .iris-editor-body .ProseMirror > h1:not(.iris-doc-title) {
-    font-size: 1.875rem;
-    letter-spacing: -0.02em;
-  }
-
-  .iris-editor-body .ProseMirror > h2 {
-    font-size: 1.5rem;
-    letter-spacing: -0.015em;
-  }
-
-  .iris-editor-body .ProseMirror > h3 {
-    font-size: 1.25rem;
-  }
-
-  .iris-editor-body .ProseMirror > h4 {
-    font-size: 1.075rem;
-  }
-
-  .iris-editor-body .ProseMirror > h5,
-  .iris-editor-body .ProseMirror > h6 {
-    font-size: 1rem;
   }
 
   .iris-editor-body
@@ -683,58 +635,8 @@
     @apply min-w-0 flex-1;
   }
 
-  .iris-editor-body .ProseMirror a {
-    @apply text-primary underline decoration-primary/40 underline-offset-2 transition-colors hover:decoration-primary/70;
-  }
-
-  .iris-editor-body .ProseMirror code {
-    @apply rounded px-1.5 py-0.5 font-mono text-[0.9em];
-    background: hsl(var(--editor-code-bg));
-    color: hsl(var(--editor-code-fg));
-  }
-
-  .iris-editor-body .ProseMirror pre {
-    @apply overflow-x-auto rounded-lg border border-border p-4 font-mono text-sm;
-    line-height: 1.5;
-    background: hsl(var(--editor-code-bg));
-    color: hsl(var(--editor-code-fg));
-  }
-
-  .iris-editor-body .ProseMirror pre code {
-    background: transparent;
-    padding: 0;
-    color: inherit;
-  }
-
-  .iris-editor-body .ProseMirror blockquote {
-    @apply border-l-[3px] border-border pl-4 text-editor-muted;
-    font-style: normal;
-  }
-
-  .iris-editor-body .ProseMirror blockquote > p {
-    margin: 0;
-  }
-
-  .iris-editor-body .ProseMirror hr {
-    @apply my-4 border-0 border-t border-border;
-    height: 0;
-    background: transparent;
-  }
-
   .iris-editor-body .ProseMirror .tableWrapper {
     @apply overflow-x-auto;
-  }
-
-  .iris-editor-body .ProseMirror table {
-    @apply w-full min-w-full border-collapse text-sm;
-  }
-
-  .iris-editor-body .ProseMirror th {
-    @apply border border-border bg-muted/45 px-2.5 py-1.5 text-left font-semibold;
-  }
-
-  .iris-editor-body .ProseMirror td {
-    @apply border border-border px-2.5 py-1.5 align-top;
   }
 
   .iris-editor-body .ProseMirror .selectedCell {
@@ -746,10 +648,6 @@
     content: "";
   }
 
-  .iris-editor-body .ProseMirror img {
-    @apply my-3 max-w-full rounded-md border border-border;
-  }
-
   .iris-editor-body .ProseMirror .is-empty::before {
     @apply text-editor-muted/75;
     font-style: normal;
@@ -759,163 +657,34 @@
     @apply my-3 rounded-lg border border-primary/25 bg-muted/40 px-3 py-2;
   }
 
-  .wiki-link {
-    @apply cursor-pointer text-primary underline decoration-primary/40 underline-offset-2;
-  }
-
-  .wiki-link-bracket {
-    @apply text-editor-muted/50;
-  }
-
-  .ai-msg,
-  .iris-prose {
-    @apply text-foreground;
-  }
-
-  .iris-prose {
-    font-size: 13px;
-    line-height: 1.375;
-  }
-
-  .iris-prose table {
-    @apply my-2.5 block w-full border-collapse overflow-x-auto text-xs;
-  }
-  .iris-prose th {
-    @apply border border-border bg-muted/50 px-2 py-1 text-left font-semibold;
-  }
-  .iris-prose td {
-    @apply border border-border px-2 py-1;
-  }
-  .iris-prose pre {
-    @apply my-2.5 overflow-x-auto rounded-lg border border-border p-3 font-mono text-xs;
-    background: hsl(var(--editor-code-bg));
-    color: hsl(var(--editor-code-fg));
-  }
-
   .ai-message-bubble {
-    @apply rounded-lg text-foreground;
+    @apply text-foreground;
     max-width: 100%;
   }
 
   .ai-message-bubble-user {
-    background: hsl(var(--ai-user-bg) / 0.85);
-    border-radius: 12px 12px 4px 12px;
+    @apply rounded-xl;
+    max-width: 88%;
+    background: hsl(var(--ai-user-bg) / 0.88);
   }
 
+  .ai-message-assistant,
   .ai-message-bubble-assistant {
-    @apply border bg-card/60;
-    border-color: hsl(var(--ai-assistant-border) / 0.65);
-    border-radius: 12px 12px 12px 4px;
+    @apply rounded-xl;
+    background: hsl(var(--surface-elevated) / 0.65);
+    border: 1px solid hsl(var(--border) / 0.55);
   }
 
-  .ai-message-bubble-streaming {
-    box-shadow: inset 3px 0 0 hsl(var(--ai-stream-pulse));
+  .ai-message-bubble-streaming[data-streaming] {
+    @apply border-border/40;
   }
 
-  /* ── AI message markdown element styles ── */
-
-  .ai-msg h1 {
-    @apply mb-3 mt-4 text-lg font-semibold;
-  }
-  .ai-msg h2 {
-    @apply mb-2.5 mt-3.5 text-base font-semibold;
-  }
-  .ai-msg h3 {
-    @apply mb-2 mt-3 text-sm font-semibold;
-  }
-  .ai-msg h4,
-  .ai-msg h5,
-  .ai-msg h6 {
-    @apply mb-1.5 mt-2.5 text-sm font-medium;
+  .ai-message-body {
+    @apply px-3 py-2.5;
   }
 
-  .ai-msg blockquote {
-    @apply my-2.5 border-l-[3px] border-border pl-3 text-muted-foreground;
-  }
-  .ai-msg blockquote > p {
-    @apply mb-1;
-  }
-
-  .ai-msg ol {
-    @apply mb-2 list-decimal pl-5;
-  }
-  .ai-msg ol li,
-  .ai-msg ul li {
-    @apply mb-0.5;
-  }
-
-  .ai-msg ul ul,
-  .ai-msg ol ol,
-  .ai-msg ul ol,
-  .ai-msg ol ul {
-    @apply mb-0 mt-0.5;
-  }
-
-  .ai-msg input[type="checkbox"] {
-    @apply mr-1.5 h-3.5 w-3.5 rounded border-border align-middle accent-primary;
-  }
-  .ai-msg li.task-list-item {
-    @apply list-none;
-  }
-
-  .ai-msg hr {
-    @apply my-3 border-0 border-t border-border;
-  }
-
-  .ai-msg table {
-    @apply my-2.5 w-full border-collapse text-xs;
-  }
-  .ai-msg th {
-    @apply border border-border bg-muted/50 px-2 py-1 text-left font-semibold;
-  }
-  .ai-msg td {
-    @apply border border-border px-2 py-1;
-  }
-  .ai-msg tr:nth-child(even) td {
-    @apply bg-muted/20;
-  }
-
-  .ai-msg pre {
-    @apply my-2.5 overflow-x-auto rounded-lg border border-border p-3 font-mono text-xs;
-    background: hsl(var(--editor-code-bg));
-    color: hsl(var(--editor-code-fg));
-    line-height: 1.5;
-  }
-  .ai-msg pre code {
-    background: transparent !important;
-    padding: 0 !important;
-    color: inherit !important;
-  }
-
-  .ai-msg :not(pre) > code {
-    @apply rounded px-1 py-0.5 font-mono text-[0.85em];
-    background: hsl(var(--editor-code-bg));
-    color: hsl(var(--editor-code-fg));
-  }
-
-  .ai-msg img {
-    @apply my-2 max-w-full rounded;
-  }
-
-  .ai-msg strong {
-    @apply font-bold;
-  }
-  .ai-msg em {
-    @apply italic;
-  }
-  .ai-msg del {
-    @apply text-muted-foreground line-through;
-  }
-  .ai-msg ins {
-    @apply text-primary underline;
-  }
-
-  .ai-msg a:not(.ai-citation):not([href^="#iris-cite-"]) {
-    @apply text-primary underline decoration-primary/40 underline-offset-2 transition-colors hover:decoration-primary/70;
-  }
-
-  .ai-msg .ai-table-wrap {
-    @apply my-2.5 max-w-full overflow-x-auto;
+  .ai-thinking-row {
+    @apply flex min-h-0 items-center gap-2 px-3 py-2 text-sm text-muted-foreground;
   }
 
   .ai-stream-pulse {

@@ -1,6 +1,6 @@
 # Iris 设计系统
 
-**方向定稿**：主攻 **N · Notion 编辑**；备选 **C · 命令优先**（键盘与可收起面板，不抢编辑区）。
+**方向定稿**：**Iris 知识工作台**——出版感编辑区 + 一等 AI 协作对话区；备选 **C · 命令优先**（键盘与可收起面板，不抢编辑区）。历史 Notion 参考见 [design-system/notion-master.md](./design-system/notion-master.md)（**不作**当前验收依据）。
 
 **排期**：阶段与路线图版本的绑定见下文「落地阶段与路线图版本对照」；**版本 checklist 以 [ROADMAP.md](../ROADMAP.md) 为准**。
 
@@ -10,19 +10,20 @@
 
 ---
 
-## N · Notion 编辑（主方向）
+## Iris 编辑与协作（主方向）
 
 ### 气质
 
-内容优先：编辑区与外壳**同色扁平**，无浮动纸页、无行线网格。AI 是校对台与侧栏助手（默认约 360px、可拖拽调宽），不是聊天 App 主屏。
+内容优先：编辑区与外壳**同色扁平**，无浮动纸页、无行线网格。**AI 侧栏**为与笔记并列的**协作对话区**（默认约 360px、可拖拽调宽），承载多轮对话、检索与长文回复，视觉精致、可读，而非弱化附庸或粗糙 IM。
 
 ### 分区
 
-| 区域              | 角色                              | 默认观感                                 |
-| ----------------- | --------------------------------- | ---------------------------------------- |
-| **Chrome**        | 标签栏、状态栏、AI 侧栏、命令浮层 | 中性灰阶，细 `1px` 分隔，小圆角（4–8px） |
-| **Editor canvas** | 居中内容栏约 `45rem`，与背景同色  | 无衬线正文、左对齐文档标题               |
-| **Accent**        | 链接、主按钮、AI 标识             | 中性蓝灰（**不用** violet 紫、赭铜）     |
+| 区域              | 角色                              | 默认观感                                    |
+| ----------------- | --------------------------------- | ------------------------------------------- |
+| **Chrome**        | 标签栏、状态栏、AI 侧栏、命令浮层 | 中性灰阶，细 `1px` 分隔，小圆角（4–8px）    |
+| **Editor canvas** | 居中内容栏约 `45rem`，与背景同色  | 扉页衬线标题 + 无衬线正文、两端对齐         |
+| **AI 协作区**     | 对话消息流、证据与工具结果        | 15px 正文、角色分明消息壳、共用 prose token |
+| **Accent**        | 链接、主按钮、AI 标识             | 中性蓝灰（**不用** violet 紫、赭铜）        |
 
 ### 色彩 token（CSS 变量）
 
@@ -40,16 +41,20 @@
 
 ### 字体
 
-| 场景                  | 栈          | 说明                  |
-| --------------------- | ----------- | --------------------- |
-| **全文（UI + 编辑）** | `font-sans` | `Inter` + 系统无衬线  |
-| **代码块**            | `font-mono` | JetBrains Mono 等等宽 |
+| 场景                 | 栈 / Token   | 说明                                       |
+| -------------------- | ------------ | ------------------------------------------ |
+| **Chrome / UI**      | `font-sans`  | `Inter` + 系统无衬线（`--font-ui`）        |
+| **编辑正文 / AI MD** | `font-prose` | `Noto Sans SC` + `Inter` + 系统中文字体    |
+| **文档标题（扉页）** | `font-title` | `Noto Serif SC`（仅 `DocumentTitleField`） |
+| **代码块**           | `font-mono`  | JetBrains Mono                             |
+
+实现见 `src/styles/markdown-prose.css` 与 `index.html` Google Fonts 链接。
 
 ### 间距与栏宽
 
-- 编辑区：`max-width: 45rem`，水平 `clamp(1.5rem, 5vw, 6rem)`，正文 `16px` / `line-height: 1.5`
+- 编辑区：`max-width: 45rem`，水平 `clamp(1.5rem, 5vw, 6rem)`，正文 `16px` / `line-height: 1.62`，段落**两端对齐**
 - AI 侧栏：默认 `360px`，左缘拖拽调整（`280px`–`560px`，偏好写入 localStorage），可 `Ctrl+Shift+A` 收起
-- AI 对话排版：`13px` / `line-height: 1.375`（`leading-snug`），与编辑区共用代码高亮 token
+- AI 对话排版：`15px` / `line-height: 1.52`，`data-prose-surface="conversation"`，与编辑区共用 `markdown-prose.css` 与代码高亮 token
 - AI 侧栏 chrome：**对话区仅消息流 + 证据包折叠条**；**Token 累计**、**工具/检索进行中**在全局底栏（`StatusBar` + `StatusBarTokenUsage`）；证据包标题行展示 **N 证据**、**M 搜索**（Token Plan 摘要）、**K 正文**（`fetch_web_page` 深读，`ContextPacketDrawer`）
 
 ### 编辑区结构
@@ -66,15 +71,17 @@
 
 ### 文档与块样式
 
-| 元素         | 规则                                                                                          |
-| ------------ | --------------------------------------------------------------------------------------------- |
-| **文档标题** | 独立字段 `DocumentTitleField`（`frontmatter.title`），左对齐、`~2.25rem` bold，Enter 进入正文 |
-| **章节标题** | H1 `1.875rem` / H2 `1.5rem` / H3 `1.25rem`；块间距用 `em` 分级                                |
-| **段落**     | 无段首缩进                                                                                    |
-| **章节折叠** | H1–H3 左侧 `▸/▾`（仅正文区章节标题）                                                          |
-| **Zen**      | `Ctrl+.` 隐藏 Tab/状态栏/AI，栏宽 `56rem`                                                     |
-| **缩放**     | canvas `zoom` 75%–150%                                                                        |
-| **悬浮目录** | `EditorOutline`，`Ctrl+Shift+O`                                                               |
+| 元素         | 规则                                                                                                                      |
+| ------------ | ------------------------------------------------------------------------------------------------------------------------- |
+| **文档标题** | 独立字段 `DocumentTitleField`；**居中**、`Noto Serif SC`、`~2.25rem` bold；与正文间距 `--prose-title-gap`；Enter 进入正文 |
+| **章节标题** | H1 `1.875rem` / H2 `1.5rem` / H3 `1.25rem`；左对齐；块间距 token 分级                                                     |
+| **段落**     | 无段首缩进；**两端对齐**（`text-justify: inter-ideograph`）；块间距 `--prose-block-gap`；空行 spacer ≈ 55% 行高           |
+| **共用排版** | `data-prose-surface="editor"` \| `conversation`；AI `--prose-size-chat`（15px），编辑 `--prose-size-editor`（16px）       |
+| **AI 消息**  | 用户右对齐气泡；助手 `surface-elevated` 全宽壳；流式空态单行「正在思考…」，无 inset 左边条                                |
+| **章节折叠** | H1–H3 左侧 `▸/▾`（仅正文区章节标题）                                                                                      |
+| **Zen**      | `Ctrl+.` 隐藏 Tab/状态栏/AI，栏宽 `56rem`                                                                                 |
+| **缩放**     | canvas `zoom` 75%–150%                                                                                                    |
+| **悬浮目录** | `EditorOutline`，`Ctrl+Shift+O`                                                                                           |
 
 ---
 
@@ -116,10 +123,10 @@
 
 桌面窗口：单行 **`DesktopTitleBar`**（`bg-surface-chrome`），禁止出现「Tauri App」或双层系统标题栏。顶栏高度按平台区分（**刻意非像素级统一**）：
 
-| 平台 | `--titlebar-height` | 装饰 / 标题 | 窗口按钮 | 顶栏左侧 |
-| ---- | ------------------- | ----------- | -------- | -------- |
-| macOS | **32px（2rem）** | `titleBarStyle: Overlay`、`hiddenTitle: true`、`decorations: true`；内部 title **Iris** | 系统交通灯；`padding-left: var(--titlebar-traffic-inset)`（默认 72px，IPC `get_desktop_chrome_metrics` 可覆盖） | 有 Tab 时不显示宽品牌列；整行 `items-center` |
-| Windows / Linux | **40px（2.5rem）** | `decorations: false`（Win 另 `shadow: true`） | 自定义 `WindowControls` | 无 Tab 时小 Mark + Iris |
+| 平台            | `--titlebar-height` | 装饰 / 标题                                                                             | 窗口按钮                                                                                                        | 顶栏左侧                                     |
+| --------------- | ------------------- | --------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- | -------------------------------------------- |
+| macOS           | **32px（2rem）**    | `titleBarStyle: Overlay`、`hiddenTitle: true`、`decorations: true`；内部 title **Iris** | 系统交通灯；`padding-left: var(--titlebar-traffic-inset)`（默认 72px，IPC `get_desktop_chrome_metrics` 可覆盖） | 有 Tab 时不显示宽品牌列；整行 `items-center` |
+| Windows / Linux | **40px（2.5rem）**  | `decorations: false`（Win 另 `shadow: true`）                                           | 自定义 `WindowControls`                                                                                         | 无 Tab 时小 Mark + Iris                      |
 
 指标单一来源：Rust [`chrome_metrics.rs`](../src-tauri/src/chrome_metrics.rs)（macOS 32 / 默认 40）；前端镜像见 [`chrome-metrics.ts`](../src/lib/chrome-metrics.ts)。
 
@@ -177,15 +184,15 @@
 
 ## C · 命令优先（备选原则）
 
-| 原则        | 现状                          |
-| ----------- | ----------------------------- |
-| 命令面板    | `Ctrl+Shift+P` 总览并执行功能 |
-| 导航        | `Ctrl+P` Quick Open           |
-| 保存笔记    | `Ctrl+S`（层 1，写当前 `.md`） |
+| 原则        | 现状                                |
+| ----------- | ----------------------------------- |
+| 命令面板    | `Ctrl+Shift+P` 总览并执行功能       |
+| 导航        | `Ctrl+P` Quick Open                 |
+| 保存笔记    | `Ctrl+S`（层 1，写当前 `.md`）      |
 | 版本快照    | `Ctrl+Shift+S`（层 1 + 手动检查点） |
-| 次级功能    | 居中命令浮层                  |
-| **AI 侧栏** | `Ctrl+Shift+A`                |
-| Zen         | `Ctrl+.`                      |
+| 次级功能    | 居中命令浮层                        |
+| **AI 侧栏** | `Ctrl+Shift+A`                      |
+| Zen         | `Ctrl+.`                            |
 
 ---
 

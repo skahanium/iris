@@ -31,8 +31,20 @@ impl Scheduler {
         let state = self.state.clone();
         let mut shutdown_rx = self.shutdown_rx.clone();
 
-        // 每天凌晨 3:00 执行垃圾回收
         tauri::async_runtime::spawn(async move {
+            // Run GC once shortly after startup (10s delay to avoid blocking init)
+            tokio::select! {
+                _ = sleep(Duration::from_secs(10)) => {
+                    if let Err(e) = Self::run_garbage_collection(&state).await {
+                        tracing::warn!("Startup GC failed: {e}");
+                    }
+                },
+                _ = shutdown_rx.changed() => {
+                    tracing::info!("Scheduler shutting down (startup)");
+                    return;
+                }
+            }
+
             loop {
                 let now = Utc::now();
                 let next_run = now.date_naive().and_hms_opt(3, 0, 0).unwrap();

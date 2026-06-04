@@ -172,7 +172,7 @@ export function VaultNavigator({ open, onClose, onOpen }: VaultNavigatorProps) {
   const [folders, setFolders] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [newName, setNewName] = useState("新建文档.md");
+  const [newName, setNewName] = useState("未命名文档.md");
   const [templates, setTemplates] = useState<{ name: string }[]>([]);
   const [showTemplates, setShowTemplates] = useState(false);
   const [renameTarget, setRenameTarget] = useState<FileListItem | null>(null);

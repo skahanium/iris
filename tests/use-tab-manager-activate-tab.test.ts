@@ -93,8 +93,8 @@ describe("useTabManager activateTab / openNote", () => {
     });
     expect(fileRead).toHaveBeenCalledTimes(2);
 
-    act(() => {
-      apiRef.current!.activateTab("a.md");
+    await act(async () => {
+      await apiRef.current!.activateTab("a.md");
     });
 
     expect(fileRead).toHaveBeenCalledTimes(2);
@@ -117,8 +117,8 @@ describe("useTabManager activateTab / openNote", () => {
     });
     expect(fileRead).toHaveBeenCalledTimes(2);
 
-    act(() => {
-      apiRef.current!.openNote("a.md");
+    await act(async () => {
+      await apiRef.current!.openNote("a.md");
     });
 
     expect(fileRead).toHaveBeenCalledTimes(2);

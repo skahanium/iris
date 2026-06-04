@@ -1,4 +1,13 @@
-import { Mark, mergeAttributes } from "@tiptap/core";
+import { Mark, mergeAttributes, type RawCommands } from "@tiptap/core";
+
+declare module "@tiptap/core" {
+  interface Commands<ReturnType> {
+    link: {
+      setLink: (attrs: { href: string; title?: string | null }) => ReturnType;
+      unsetLink: () => ReturnType;
+    };
+  }
+}
 
 function isSafeHref(href: string): boolean {
   const trimmed = href.trim();
@@ -56,5 +65,38 @@ export const LinkExtension = Mark.create({
       ),
       0,
     ];
+  },
+
+  addCommands(): Partial<RawCommands> {
+    return {
+      setLink:
+        (attrs) =>
+        ({ chain }) =>
+          chain().setMark(this.name, attrs).run(),
+      unsetLink:
+        () =>
+        ({ chain }) =>
+          chain().unsetMark(this.name).run(),
+    } as Partial<RawCommands>;
+  },
+
+  addKeyboardShortcuts() {
+    return {
+      "Mod-k": () => {
+        const previous = this.editor.getAttributes(this.name).href as
+          | string
+          | undefined;
+        const href = window.prompt("链接 URL", previous ?? "https://");
+        if (href === null) return true;
+        const trimmed = href.trim();
+        if (!trimmed) {
+          return this.editor.commands.unsetLink();
+        }
+        if (!isSafeHref(trimmed)) {
+          return true;
+        }
+        return this.editor.commands.setLink({ href: trimmed });
+      },
+    };
   },
 });

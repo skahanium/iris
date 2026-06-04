@@ -20,11 +20,8 @@ describe("unified assistant E2E contract", () => {
     expect(panel).toContain('data-testid="unified-assistant-panel"');
     expect(panel).toContain('data-testid="ai-input"');
     expect(conversation).toContain('data-testid="ai-message-list"');
-    expect(read("src/components/ai/ExecutionPlanPreview.tsx")).toContain(
-      'data-testid="execution-plan-preview"',
-    );
     expect(panel).toContain('data-testid="research-focus"');
-    expect(panel).toContain("ExecutionPlanPreview");
+    expect(panel).not.toContain("ExecutionPlanPreview");
     expect(panel).toContain("useAssistantIdentity");
     expect(read("src/components/settings/SettingsPanel.tsx")).toContain(
       "settings-section-ai-assistant",

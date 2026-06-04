@@ -30,7 +30,7 @@ export function ResearchResultMessage({
   return (
     <article
       className={cn(
-        "ai-message-bubble ai-message-bubble-assistant overflow-hidden",
+        "ai-message-assistant ai-message-bubble ai-message-bubble-assistant overflow-hidden",
         className,
       )}
       data-testid="research-result-message"

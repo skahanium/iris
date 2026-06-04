@@ -2412,6 +2412,7 @@ name = "iris"
 version = "1.0.0-alpha"
 dependencies = [
  "aes-gcm",
+ "base64 0.22.1",
  "chrono",
  "criterion",
  "fastembed",

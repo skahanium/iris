@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  formatVersionDisplayTime,
   groupVersions,
   isVisibleInDayList,
   parseVersionDate,
@@ -95,12 +96,52 @@ describe("isVisibleInDayList", () => {
 });
 
 describe("parseVersionDate", () => {
-  it("parses version_no timestamp", () => {
+  it("prefers created_at ISO timestamp", () => {
     const d = parseVersionDate(
-      entry({ id: 1, kind: "manual", version_no: "20260526143052123" }),
+      entry({
+        id: 1,
+        kind: "manual",
+        version_no: "20260526120000000",
+        created_at: "2026-06-04T03:17:13Z",
+      }),
     );
-    expect(d.getFullYear()).toBe(2026);
-    expect(d.getMonth()).toBe(4);
-    expect(d.getDate()).toBe(26);
+    expect(d.toISOString()).toBe("2026-06-04T03:17:13.000Z");
+  });
+
+  it("parses version_no as UTC when created_at is missing", () => {
+    const d = parseVersionDate(
+      entry({
+        id: 1,
+        kind: "manual",
+        version_no: "20260526143052123",
+        created_at: "",
+      }),
+    );
+    expect(d.toISOString()).toBe("2026-05-26T14:30:52.000Z");
+  });
+});
+
+describe("formatVersionDisplayTime", () => {
+  it("shows local time from created_at", () => {
+    const formatted = formatVersionDisplayTime(
+      entry({
+        id: 1,
+        kind: "manual",
+        created_at: "2026-06-04T03:17:13Z",
+      }),
+    );
+    const expected = new Date("2026-06-04T03:17:13Z").toLocaleString(
+      "zh-CN",
+      {
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+        hour12: false,
+      },
+    );
+    expect(formatted).toBe(expected);
   });
 });

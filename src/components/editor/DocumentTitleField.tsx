@@ -26,7 +26,7 @@ export function DocumentTitleField({
   onBlur,
   editorRef,
   disabled = false,
-  placeholder = "无标题",
+  placeholder = "未命名文档",
   className,
 }: DocumentTitleFieldProps) {
   const inputRef = useRef<HTMLInputElement>(null);

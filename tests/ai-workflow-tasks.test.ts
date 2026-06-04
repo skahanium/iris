@@ -10,6 +10,8 @@ import type {
 
 describe("note workflow helpers", () => {
   it("detects placeholder titles", () => {
+    expect(isPlaceholderTitle("")).toBe(false);
+    expect(isPlaceholderTitle("未命名文档")).toBe(true);
     expect(isPlaceholderTitle("新建文档")).toBe(true);
     expect(isPlaceholderTitle("untitled-1")).toBe(true);
     expect(isPlaceholderTitle("民法笔记")).toBe(false);

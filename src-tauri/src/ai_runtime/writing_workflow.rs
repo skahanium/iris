@@ -43,6 +43,15 @@ pub fn generate_patch_id() -> String {
     format!("patch-{}", &hash[..12])
 }
 
+/// Truncate excerpt for prompt context without splitting multibyte UTF-8.
+fn truncate_excerpt_chars(s: &str, max_chars: usize) -> String {
+    if s.chars().count() <= max_chars {
+        s.to_string()
+    } else {
+        format!("{}…", s.chars().take(max_chars).collect::<String>())
+    }
+}
+
 /// Generate a unique suggestion ID.
 fn generate_suggestion_id() -> String {
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -217,11 +226,7 @@ pub async fn generate_replacement_with_llm(
                     "{} {} — {}",
                     p.citation_label,
                     p.title,
-                    if p.excerpt.len() > 200 {
-                        format!("{}…", &p.excerpt[..200])
-                    } else {
-                        p.excerpt.clone()
-                    }
+                    truncate_excerpt_chars(&p.excerpt, 200)
                 )
             })
             .collect::<Vec<_>>()
@@ -356,6 +361,15 @@ mod tests {
         let id2 = generate_patch_id();
         assert_ne!(id1, id2);
         assert!(id1.starts_with("patch-"));
+    }
+
+    #[test]
+    fn truncate_excerpt_chars_respects_unicode_boundaries() {
+        let s = "第三条 各级监察委员会是行使国家监察职能的专责机关,依照本法对所有行使公权力的公职人员(以下称公职人员)进行监察,调查职务违法和职务犯罪,开展廉政建设和反腐败工作,维护宪法和法律的尊严。";
+        let truncated = truncate_excerpt_chars(s, 50);
+        assert!(truncated.chars().count() <= 51);
+        assert!(std::str::from_utf8(truncated.as_bytes()).is_ok());
+        assert!(truncated.ends_with('…'));
     }
 
     #[test]

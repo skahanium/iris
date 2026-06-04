@@ -48,7 +48,7 @@ describe("assistant phase 2 cleanup", () => {
     );
     expect(panel).not.toContain("SceneSelector");
     expect(panel).toContain("ResearchFocusView");
-    expect(panel).toContain("ExecutionPlanPreview");
+    expect(panel).not.toContain("ExecutionPlanPreview");
     expect(panel).toContain("assistantExecute(");
     expect(panel).not.toContain("chapterWritingExecute");
     expect(panel).not.toContain("documentCheckExecute");

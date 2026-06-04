@@ -1,9 +1,10 @@
 /**
  * 编辑器 export 管线 — contract 驱动的 TipTap HTML → Markdown 导出
  *
- * 由 contract 驱动：将 TipTap HTML 与 classified fragments 合并，
- * 恢复 preserve_only 原文，产出最终 Markdown。
+ * **注意**：生产保存热路径为 `editorDocToMarkdown`（`editor-pm-serialize.ts`）。
+ * 本模块仅用于 contract 测试与 HTML 片段级导出，不保证与 PM 路径字节级一致。
  *
+ * @deprecated 新功能请扩展 `editor-pm-serialize`；本模块保留给 contract 套件。
  * @module editor-export
  */
 import TurndownService from "turndown";
@@ -90,6 +91,20 @@ export function exportEditorToMarkdown(
   let preservedCount = 0;
 
   for (const child of Array.from(root.children)) {
+    if (
+      child instanceof HTMLElement &&
+      child.tagName === "P" &&
+      child.getAttribute("data-iris-spacer") === "true"
+    ) {
+      const gapRaw = child.getAttribute("data-iris-gap-count");
+      const gapCount = gapRaw ? Number.parseInt(gapRaw, 10) : 1;
+      const gaps = Number.isFinite(gapCount) && gapCount > 0 ? gapCount : 1;
+      for (let i = 0; i < gaps; i++) {
+        parts.push("");
+      }
+      continue;
+    }
+
     // Check if this is a preserve block
     if (
       child instanceof HTMLElement &&

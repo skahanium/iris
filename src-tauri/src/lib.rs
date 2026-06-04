@@ -90,6 +90,7 @@ pub fn run() {
             commands::file::file_list,
             commands::file::file_read,
             commands::file::file_write,
+            commands::file::vault_asset_write,
             commands::file::file_delete,
             commands::file::file_discard,
             commands::file::file_rename,

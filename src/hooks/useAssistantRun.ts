@@ -21,6 +21,16 @@ export interface AssistantRunSnapshot {
   harnessRequestId: string | null;
 }
 
+/** 是否阻塞模型/发送；工具确认等待不阻塞侧栏 chrome。 */
+export function isAssistantRunBusy(runState: AssistantRunState): boolean {
+  return [
+    "assembling_context",
+    "awaiting_plan_approval",
+    "running",
+    "streaming_final",
+  ].includes(runState);
+}
+
 function taskStatusToRunState(
   status: AssistantTaskStatus,
   activityHint: string | null,
@@ -60,17 +70,8 @@ export function useAssistantRun(initialIntent: AssistantIntent = "chat") {
     [runState, intent, activityHint, harnessRequestId],
   );
 
-  const isBusy = useMemo(
-    () =>
-      [
-        "assembling_context",
-        "awaiting_plan_approval",
-        "running",
-        "awaiting_tool_confirmation",
-        "streaming_final",
-      ].includes(runState),
-    [runState],
-  );
+  /** 阻塞输入/发送；工具确认由弹窗单独处理，不应锁死侧栏 chrome（历史、新对话）。 */
+  const isBusy = useMemo(() => isAssistantRunBusy(runState), [runState]);
 
   const setFromTaskStatus = useCallback(
     (next: AssistantTaskStatus, nextIntent?: AssistantIntent) => {

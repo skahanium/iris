@@ -8,11 +8,25 @@ use crate::app::AppState;
 use crate::error::{AppError, AppResult};
 use crate::indexer::frontmatter::resolve_display_title;
 use crate::indexer::scan::{
-    collect_vault_folders, index_file_with_embed, index_vault_incremental,
-    peek_file_entry_after_write_fast, prune_stale_file_indexes, remove_file_index, FileEntry,
+    collect_vault_folders, content_hash, index_file_with_embed, index_vault_incremental,
+    peek_file_entry_after_write_fast, prune_stale_file_indexes, rename_file_index,
+    FileEntry,
 };
 use crate::recycle::{discard_document, trash_document};
+use base64::Engine;
+use base64::engine::general_purpose::STANDARD;
+
 use crate::storage::paths::{is_user_note_path, read_file_lossy, resolve_vault_path};
+
+/// Vault-relative image/asset path (e.g. `assets/uuid.png`).
+pub fn is_vault_asset_path(relative: &str) -> bool {
+    let normalized = relative.replace('\\', "/");
+    if !normalized.starts_with("assets/") {
+        return false;
+    }
+    let name = normalized.strip_prefix("assets/").unwrap_or("");
+    !name.is_empty() && !name.ends_with('/') && !name.contains("..")
+}
 
 fn title_from_path(path: &str) -> String {
     path.trim_end_matches(".md")
@@ -61,11 +75,7 @@ pub struct FileListItem {
 /// `title` 为创建时确定的文档名；版本历史见 `version_list_cmd`。
 #[tauri::command]
 pub fn file_list(state: State<'_, Arc<AppState>>) -> AppResult<Vec<FileListItem>> {
-    let vault = state.vault_path()?;
-    state.db.with_conn(|conn| {
-        prune_stale_file_indexes(conn, &vault)?;
-        Ok(())
-    })?;
+    let _vault = state.vault_path()?;
     state.db.with_read_conn(|conn| {
         let mut stmt = conn.prepare(
             "SELECT path, title, updated_at, frontmatter FROM files
@@ -91,17 +101,19 @@ pub fn file_list(state: State<'_, Arc<AppState>>) -> AppResult<Vec<FileListItem>
 }
 
 #[tauri::command]
-pub fn file_read(state: State<'_, Arc<AppState>>, path: String) -> AppResult<String> {
+pub async fn file_read(state: State<'_, Arc<AppState>>, path: String) -> AppResult<String> {
     if !is_user_note_path(&path) {
         return Err(AppError::msg("只能读取用户笔记，不允许访问内部元数据路径"));
     }
     let vault = state.vault_path()?;
     let abs = resolve_vault_path(&vault, &path)?;
-    read_file_lossy(&abs)
+    tokio::task::spawn_blocking(move || read_file_lossy(&abs))
+        .await
+        .map_err(|e| AppError::msg(format!("task join: {e}")))?
 }
 
 #[tauri::command]
-pub fn file_write(
+pub async fn file_write(
     state: State<'_, Arc<AppState>>,
     path: String,
     content: String,
@@ -109,26 +121,69 @@ pub fn file_write(
     if !is_user_note_path(&path) {
         return Err(AppError::msg("只能写入用户笔记，不允许修改内部元数据路径"));
     }
+    let state = state.inner().clone();
+    tokio::task::spawn_blocking(move || {
+        let vault = state.vault_path()?;
+        let abs = resolve_vault_path(&vault, &path)?;
+
+        let tmp = abs.with_extension("md.tmp");
+        fs::write(&tmp, &content)?;
+        if let Err(e) = fs::rename(&tmp, &abs) {
+            let _ = crate::security::secure_delete::secure_delete(&tmp);
+            return Err(e.into());
+        }
+
+        let hash = crate::indexer::scan::content_hash(&content);
+        state.write_guard.mark(&path, &hash);
+
+        let entry = state
+            .db
+            .with_read_conn(|conn| peek_file_entry_after_write_fast(conn, &vault, &abs))?;
+
+        state.schedule_deferred_index(path, content, hash, abs, vault);
+
+        Ok(entry)
+    })
+    .await
+    .map_err(|e| AppError::msg(format!("task join: {e}")))?
+}
+
+/// Write a binary asset under `assets/` (editor image drop / paste).
+#[tauri::command]
+pub async fn vault_asset_write(
+    state: State<'_, Arc<AppState>>,
+    path: String,
+    data_base64: String,
+) -> AppResult<String> {
+    if !is_vault_asset_path(&path) {
+        return Err(AppError::msg("资源路径必须位于 assets/ 下"));
+    }
     let vault = state.vault_path()?;
     let abs = resolve_vault_path(&vault, &path)?;
-
-    let tmp = abs.with_extension("md.tmp");
-    fs::write(&tmp, &content)?;
-    if let Err(e) = fs::rename(&tmp, &abs) {
-        let _ = crate::security::secure_delete::secure_delete(&tmp);
-        return Err(e.into());
-    }
-
-    let hash = crate::indexer::scan::content_hash(&content);
-    state.write_guard.mark(&path, &hash);
-
-    let entry = state
-        .db
-        .with_read_conn(|conn| peek_file_entry_after_write_fast(conn, &vault, &abs))?;
-
-    state.schedule_deferred_index(path, content, hash, abs, vault);
-
-    Ok(entry)
+    tokio::task::spawn_blocking(move || {
+        const MAX_BYTES: usize = 20 * 1024 * 1024;
+        if let Some(parent) = abs.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        let bytes = STANDARD
+            .decode(data_base64.trim())
+            .map_err(|e| AppError::msg(format!("无效的图片数据: {e}")))?;
+        if bytes.is_empty() {
+            return Err(AppError::msg("图片数据为空"));
+        }
+        if bytes.len() > MAX_BYTES {
+            return Err(AppError::msg("图片超过 20MB 限制"));
+        }
+        let tmp = abs.with_extension("tmp");
+        fs::write(&tmp, &bytes)?;
+        if let Err(e) = fs::rename(&tmp, &abs) {
+            let _ = fs::remove_file(&tmp);
+            return Err(e.into());
+        }
+        Ok(path)
+    })
+    .await
+    .map_err(|e| AppError::msg(format!("task join: {e}")))?
 }
 
 /// Move note + all version snapshots into recycle bin (15-day retention).
@@ -165,84 +220,88 @@ pub fn folder_create(state: State<'_, Arc<AppState>>, path: String) -> AppResult
 
 /// Rename/move a folder. Cascades wikilink and session updates for all affected files.
 #[tauri::command]
-pub fn folder_rename(
+pub async fn folder_rename(
     state: State<'_, Arc<AppState>>,
     old_path: String,
     new_path: String,
 ) -> AppResult<()> {
     validate_folder_path(&old_path)?;
     validate_folder_path(&new_path)?;
-    let vault = state.vault_path()?;
-    let abs = resolve_vault_path(&vault, &old_path)?;
-    let new_abs = resolve_vault_path(&vault, &new_path)?;
-    if !abs.is_dir() {
-        return Err(AppError::msg("Source path is not a folder"));
-    }
-    if new_abs.exists() {
-        return Err(AppError::msg("Target path already exists"));
-    }
-
-    // Collect all .md files under the old folder
-    let affected_files: Vec<String> = state.db.with_read_conn(|conn| {
-        let mut stmt = conn.prepare("SELECT path FROM files WHERE path LIKE ?1")?;
-        let prefix = if old_path.ends_with('/') || old_path.is_empty() {
-            old_path.to_string()
-        } else {
-            format!("{}/", old_path)
-        };
-        let rows = stmt.query_map([format!("{}%", prefix)], |row| row.get::<_, String>(0))?;
-        Ok(rows.flatten().collect())
-    })?;
-
-    // Step 1: rewrite wikilinks and sessions for each affected file (disk-only for wikilinks)
-    let mut all_modified_sources: Vec<String> = Vec::new();
-    for file_path in &affected_files {
-        let rel_old = file_path.as_str();
-        let rel_new = if let Some(suffix) = rel_old.strip_prefix(&old_path) {
-            let trimmed = suffix.trim_start_matches('/');
-            if new_path.is_empty() || new_path == "/" {
-                trimmed.to_string()
-            } else {
-                format!("{}/{}", new_path.trim_end_matches('/'), trimmed)
-            }
-        } else {
-            continue;
-        };
-
-        let old_stem = title_from_path(rel_old);
-        let new_stem = title_from_path(&rel_new);
-        let mut mods = cascade_rewrite_wikilinks_on_disk(
-            &state, &vault, rel_old, &rel_new, &old_stem, &new_stem,
-        )?;
-        all_modified_sources.append(&mut mods);
-        cascade_rename_sessions(&state, rel_old, &rel_new)?;
-    }
-
-    // Step 2: rename the folder on disk
-    if let Some(parent) = new_abs.parent() {
-        fs::create_dir_all(parent)?;
-    }
-    fs::rename(&abs, &new_abs)?;
-
-    // Step 3: full reindex (target files get new paths)
-    let vault_clone = vault.clone();
-    state
-        .db
-        .with_conn(|conn| index_vault_incremental(conn, &vault_clone, Some(state.inner())))?;
-
-    // Step 4: reindex source files that were modified (wikilinks now resolve correctly)
-    for src_path in &all_modified_sources {
-        if let Ok(abs_src) = resolve_vault_path(&vault, src_path) {
-            if let Ok(h) = crate::indexer::scan::file_hash(&abs_src) {
-                state.write_guard.mark(src_path, &h);
-            }
-            let _ = state.db.with_conn(|conn| {
-                index_file_with_embed(conn, &vault, &abs_src, Some(state.inner()))
-            });
+    let state = state.inner().clone();
+    tokio::task::spawn_blocking(move || {
+        let vault = state.vault_path()?;
+        let abs = resolve_vault_path(&vault, &old_path)?;
+        let new_abs = resolve_vault_path(&vault, &new_path)?;
+        if !abs.is_dir() {
+            return Err(AppError::msg("Source path is not a folder"));
         }
-    }
+        if new_abs.exists() {
+            return Err(AppError::msg("Target path already exists"));
+        }
 
-    Ok(())
+        let affected_files: Vec<String> = state.db.with_read_conn(|conn| {
+            let mut stmt = conn.prepare("SELECT path FROM files WHERE path LIKE ?1")?;
+            let prefix = if old_path.ends_with('/') || old_path.is_empty() {
+                old_path.to_string()
+            } else {
+                format!("{}/", old_path)
+            };
+            let rows = stmt.query_map([format!("{}%", prefix)], |row| row.get::<_, String>(0))?;
+            Ok(rows.flatten().collect())
+        })?;
+
+        // Step 1: rename the folder on disk FIRST
+        if let Some(parent) = new_abs.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        fs::rename(&abs, &new_abs)?;
+
+        // Step 2: rewrite wikilinks and sessions for each affected file
+        let mut all_modified_sources: Vec<String> = Vec::new();
+        for file_path in &affected_files {
+            let rel_old = file_path.as_str();
+            let rel_new = if let Some(suffix) = rel_old.strip_prefix(&old_path) {
+                let trimmed = suffix.trim_start_matches('/');
+                if new_path.is_empty() || new_path == "/" {
+                    trimmed.to_string()
+                } else {
+                    format!("{}/{}", new_path.trim_end_matches('/'), trimmed)
+                }
+            } else {
+                continue;
+            };
+
+            let old_stem = title_from_path(rel_old);
+            let new_stem = title_from_path(&rel_new);
+            let mut mods = cascade_rewrite_wikilinks_on_disk(
+                &state, &vault, rel_old, &rel_new, &old_stem, &new_stem,
+            )?;
+            all_modified_sources.append(&mut mods);
+            cascade_rename_sessions(&state, rel_old, &rel_new)?;
+        }
+
+        // Step 3: full reindex
+        let vault_clone = vault.clone();
+        state
+            .db
+            .with_conn(|conn| index_vault_incremental(conn, &vault_clone, Some(&state)))?;
+
+        // Step 4: reindex source files that were modified
+        for src_path in &all_modified_sources {
+            if let Ok(abs_src) = resolve_vault_path(&vault, src_path) {
+                if let Ok(h) = crate::indexer::scan::file_hash(&abs_src) {
+                    state.write_guard.mark(src_path, &h);
+                }
+                let _ = state.db.with_conn(|conn| {
+                    index_file_with_embed(conn, &vault, &abs_src, Some(&state))
+                });
+            }
+        }
+
+        Ok(())
+    })
+    .await
+    .map_err(|e| AppError::msg(format!("task join: {e}")))?
 }
 
 /// Delete an empty folder. Fails if the folder is not empty.
@@ -272,12 +331,14 @@ pub struct PathSyncSuggest {
     pub conflict_resolved: bool,
 }
 
-const PLACEHOLDER_TITLE_MARKERS: &[&str] = &["新建文档", "无标题", "untitled"];
+const UNNAMED_DOCUMENT_TITLE: &str = "未命名文档";
+const PLACEHOLDER_TITLE_MARKERS: &[&str] =
+    &["未命名文档", "新建文档", "无标题", "untitled"];
 
 fn is_placeholder_title(title: &str) -> bool {
     let t = title.trim();
     if t.is_empty() {
-        return true;
+        return false;
     }
     let lower = t.to_lowercase();
     PLACEHOLDER_TITLE_MARKERS.iter().any(|p| lower.contains(p))
@@ -290,7 +351,7 @@ fn sanitize_title_for_path(title: &str) -> String {
         s = s.replace(*c, "_");
     }
     if s.is_empty() {
-        "新建文档".to_string()
+        UNNAMED_DOCUMENT_TITLE.to_string()
     } else {
         s
     }
@@ -349,28 +410,32 @@ pub fn path_sync_suggest_inner(
     current_path: String,
     title: String,
 ) -> AppResult<PathSyncSuggest> {
-    if is_placeholder_title(&title) {
-        return Ok(PathSyncSuggest {
-            current_path: current_path.clone(),
-            suggested_path: current_path,
-            needs_sync: false,
-            conflict_resolved: false,
-        });
-    }
-
     let parent = current_path
         .rsplit_once('/')
         .map(|(p, _)| p)
         .unwrap_or("")
         .to_string();
 
+    let sync_title = if title.trim().is_empty() {
+        UNNAMED_DOCUMENT_TITLE.to_string()
+    } else if is_placeholder_title(&title) {
+        return Ok(PathSyncSuggest {
+            current_path: current_path.clone(),
+            suggested_path: current_path,
+            needs_sync: false,
+            conflict_resolved: false,
+        });
+    } else {
+        title
+    };
+
     let (suggested_path, conflict_resolved) = state
         .db
-        .with_conn(|conn| allocate_path_for_title(&parent, &title, &current_path, conn))?;
+        .with_conn(|conn| {
+            allocate_path_for_title(&parent, &sync_title, &current_path, conn)
+        })?;
 
-    let current_stem = title_from_path(&current_path);
-    let target_stem = sanitize_title_for_path(&title);
-    let needs_sync = current_stem != target_stem && suggested_path != current_path;
+    let needs_sync = suggested_path != current_path;
 
     Ok(PathSyncSuggest {
         current_path,
@@ -417,10 +482,18 @@ mod path_sync_tests {
         assert!(validate_folder_path("../secret").is_err());
         assert!(validate_folder_path(".iris/trash").is_err());
     }
+
+    #[test]
+    fn vault_asset_path_must_live_under_assets() {
+        assert!(is_vault_asset_path("assets/photo.png"));
+        assert!(!is_vault_asset_path("notes/x.md"));
+        assert!(!is_vault_asset_path("assets/../secret.png"));
+        assert!(!is_vault_asset_path("assets/"));
+    }
 }
 
 #[tauri::command]
-pub fn file_rename(
+pub async fn file_rename(
     state: State<'_, Arc<AppState>>,
     path: String,
     new_path: String,
@@ -428,66 +501,65 @@ pub fn file_rename(
     if !is_user_note_path(&path) || !is_user_note_path(&new_path) {
         return Err(AppError::msg("只能重命名用户笔记路径"));
     }
-    let vault = state.vault_path()?;
-    let abs = resolve_vault_path(&vault, &path)?;
-    let new_abs = resolve_vault_path(&vault, &new_path)?;
-    if new_abs.exists() {
-        return Err(AppError::msg("Target path already exists"));
-    }
-    if let Some(parent) = new_abs.parent() {
-        fs::create_dir_all(parent)?;
-    }
-
-    let old_stem = title_from_path(&path);
-    let new_stem = title_from_path(&new_path);
-
-    // ── Step 1: rewrite wikilink text in source files (disk-only, no reindex yet) ──
-    let modified_sources =
-        cascade_rewrite_wikilinks_on_disk(&state, &vault, &path, &new_path, &old_stem, &new_stem)?;
-
-    // ── Step 2: update session note_path → session_key ──
-    cascade_rename_sessions(&state, &path, &new_path)?;
-
-    // ── Step 3: rename the target file on disk ──
-    fs::rename(&abs, &new_abs)?;
-    let hash = crate::indexer::scan::file_hash(&new_abs)?;
-    state.write_guard.mark(&new_path, &hash);
-
-    // ── Step 4: remove old index, reindex target under new path ──
-    state.db.with_conn(|conn| {
-        remove_file_index(conn, &path)?;
-        index_file_with_embed(conn, &vault, &new_abs, Some(state.inner()))
-    })?;
-
-    // ── Step 5: reindex source files so their wikilinks resolve to the new target row ──
-    for src_path in &modified_sources {
-        if let Ok(abs_src) = resolve_vault_path(&vault, src_path) {
-            if let Ok(h) = crate::indexer::scan::file_hash(&abs_src) {
-                state.write_guard.mark(src_path, &h);
-            }
-            let _ = state.db.with_conn(|conn| {
-                index_file_with_embed(conn, &vault, &abs_src, Some(state.inner()))
-            });
+    let state = state.inner().clone();
+    tokio::task::spawn_blocking(move || {
+        let vault = state.vault_path()?;
+        let abs = resolve_vault_path(&vault, &path)?;
+        let new_abs = resolve_vault_path(&vault, &new_path)?;
+        if new_abs.exists() {
+            return Err(AppError::msg("Target path already exists"));
         }
-    }
+        if let Some(parent) = new_abs.parent() {
+            fs::create_dir_all(parent)?;
+        }
 
-    // Return the new file entry
-    state.db.with_read_conn(|conn| {
-        let entry = conn.query_row(
-            "SELECT id, path, title, updated_at, word_count FROM files WHERE path = ?1",
-            [&new_path],
-            |row| {
-                Ok(FileEntry {
-                    id: row.get(0)?,
-                    path: row.get(1)?,
-                    title: row.get(2)?,
-                    updated_at: row.get(3)?,
-                    word_count: row.get(4)?,
-                })
-            },
-        )?;
-        Ok(entry)
+        let old_stem = title_from_path(&path);
+        let new_stem = title_from_path(&new_path);
+
+        let modified_sources =
+            cascade_rewrite_wikilinks_on_disk(&state, &vault, &path, &new_path, &old_stem, &new_stem)?;
+
+        cascade_rename_sessions(&state, &path, &new_path)?;
+
+        fs::rename(&abs, &new_abs)?;
+        let hash = crate::indexer::scan::file_hash(&new_abs)?;
+        state.write_guard.mark(&new_path, &hash);
+
+        state.db.with_conn(|conn| {
+            rename_file_index(conn, &path, &new_path)?;
+            index_file_with_embed(conn, &vault, &new_abs, Some(&state))
+        })?;
+
+        for src_path in &modified_sources {
+            if let Ok(abs_src) = resolve_vault_path(&vault, src_path) {
+                if let Ok(h) = crate::indexer::scan::file_hash(&abs_src) {
+                    state.write_guard.mark(src_path, &h);
+                }
+                let _ = state.db.with_conn(|conn| {
+                    index_file_with_embed(conn, &vault, &abs_src, Some(&state))
+                });
+            }
+        }
+
+        state.db.with_read_conn(|conn| {
+            let entry = conn.query_row(
+                "SELECT id, path, title, updated_at, word_count FROM files WHERE path = ?1",
+                [&new_path],
+                |row| {
+                    Ok(FileEntry {
+                        id: row.get(0)?,
+                        path: row.get(1)?,
+                        title: row.get(2)?,
+                        updated_at: row.get(3)?,
+                        word_count: row.get(4)?,
+                    })
+                },
+            )?;
+            Ok(entry)
+        })
     })
+    .await
+    .map_err(|e| AppError::msg(format!("task join: {e}")))?
 }
 
 /// Rewrite wikilink text in all files referencing `old_path` on disk.
@@ -580,7 +652,7 @@ fn cascade_rename_sessions(state: &Arc<AppState>, old_path: &str, new_path: &str
 }
 
 #[tauri::command]
-pub fn file_create(
+pub async fn file_create(
     state: State<'_, Arc<AppState>>,
     path: String,
     content: Option<String>,
@@ -588,26 +660,36 @@ pub fn file_create(
     if !is_user_note_path(&path) {
         return Err(AppError::msg("只能创建用户笔记，不允许写入内部元数据路径"));
     }
-    let vault = state.vault_path()?;
-    let abs = resolve_vault_path(&vault, &path)?;
-    if abs.exists() {
-        return Err(AppError::msg("File already exists"));
-    }
-    if let Some(parent) = abs.parent() {
-        fs::create_dir_all(parent)?;
-    }
-    let document_title = abs
-        .file_stem()
-        .and_then(|s| s.to_str())
-        .map(str::to_string)
-        .unwrap_or_else(|| title_from_path(&path));
-    let body = content.unwrap_or_else(|| default_create_content(&document_title));
-    fs::write(&abs, &body)?;
-    let hash = crate::indexer::scan::file_hash(&abs)?;
-    state.write_guard.mark(&path, &hash);
-    state
-        .db
-        .with_conn(|conn| index_file_with_embed(conn, &vault, &abs, Some(state.inner())))
+    let state = state.inner().clone();
+    tokio::task::spawn_blocking(move || {
+        let vault = state.vault_path()?;
+        let abs = resolve_vault_path(&vault, &path)?;
+        if abs.exists() {
+            return Err(AppError::msg("File already exists"));
+        }
+        if let Some(parent) = abs.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        let document_title = abs
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .map(str::to_string)
+            .unwrap_or_else(|| title_from_path(&path));
+        let body = content.unwrap_or_else(|| default_create_content(&document_title));
+        let tmp = abs.with_extension("md.tmp");
+        fs::write(&tmp, &body)?;
+        if let Err(e) = fs::rename(&tmp, &abs) {
+            let _ = fs::remove_file(&tmp);
+            return Err(e.into());
+        }
+        let hash = content_hash(&body);
+        state.write_guard.mark(&path, &hash);
+        state
+            .db
+            .with_conn(|conn| index_file_with_embed(conn, &vault, &abs, Some(&state)))
+    })
+    .await
+    .map_err(|e| AppError::msg(format!("task join: {e}")))?
 }
 
 #[tauri::command]
@@ -651,11 +733,20 @@ pub fn vault_get(state: State<'_, Arc<AppState>>) -> AppResult<Option<String>> {
 }
 
 #[tauri::command]
-pub fn index_rescan(state: State<'_, Arc<AppState>>) -> AppResult<Vec<FileEntry>> {
-    let vault = state.vault_path()?;
-    state
-        .db
-        .with_conn(|conn| index_vault_incremental(conn, &vault, Some(state.inner())))
+pub async fn index_rescan(state: State<'_, Arc<AppState>>) -> AppResult<Vec<FileEntry>> {
+    let state = state.inner().clone();
+    tokio::task::spawn_blocking(move || {
+        let vault = state.vault_path()?;
+        state.db.with_conn(|conn| {
+            prune_stale_file_indexes(conn, &vault)?;
+            Ok(())
+        })?;
+        state
+            .db
+            .with_conn(|conn| index_vault_incremental(conn, &vault, Some(&state)))
+    })
+    .await
+    .map_err(|e| AppError::msg(format!("task join: {e}")))?
 }
 
 #[derive(Debug, Clone, Serialize)]

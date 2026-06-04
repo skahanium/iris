@@ -3,7 +3,9 @@ import { describe, expect, it } from "vitest";
 import {
   displayTitleForFileListItem,
   isInternalUntitledPath,
+  mapLegacyPlaceholderStemToDisplay,
   resolveNoteDisplayTitle,
+  UNNAMED_DOCUMENT_PREFIX,
 } from "@/lib/note-display";
 import type { FileListItem } from "@/types/ipc";
 
@@ -12,7 +14,7 @@ describe("note-display", () => {
     expect(isInternalUntitledPath("untitled-1700000000.md")).toBe(true);
     expect(isInternalUntitledPath("notes/untitled-42.md")).toBe(true);
     expect(isInternalUntitledPath("无标题1.md")).toBe(false);
-    expect(isInternalUntitledPath("新建文档.md")).toBe(false);
+    expect(isInternalUntitledPath("未命名文档.md")).toBe(false);
   });
 
   it("never exposes untitled-* to users", () => {
@@ -21,14 +23,35 @@ describe("note-display", () => {
         path: "untitled-99.md",
         title: "untitled-99",
       }),
-    ).toBe("无标题1");
+    ).toBe(UNNAMED_DOCUMENT_PREFIX);
     expect(
       displayTitleForFileListItem({
         path: "untitled-99.md",
         title: "untitled-99",
         updated_at: "",
       } satisfies FileListItem),
-    ).toBe("无标题1");
+    ).toBe(UNNAMED_DOCUMENT_PREFIX);
+  });
+
+  it("maps legacy 新建文档 paths to 未命名文档", () => {
+    expect(mapLegacyPlaceholderStemToDisplay("新建文档")).toBe(
+      UNNAMED_DOCUMENT_PREFIX,
+    );
+    expect(mapLegacyPlaceholderStemToDisplay("新建文档（2）")).toBe(
+      "未命名文档（2）",
+    );
+    expect(
+      resolveNoteDisplayTitle({
+        path: "新建文档.md",
+        title: "新建文档",
+      }),
+    ).toBe(UNNAMED_DOCUMENT_PREFIX);
+    expect(
+      resolveNoteDisplayTitle({
+        path: "新建文档（1）.md",
+        title: "新建文档（1）",
+      }),
+    ).toBe("未命名文档（1）");
   });
 
   it("keeps real titles", () => {
@@ -40,18 +63,12 @@ describe("note-display", () => {
     ).toBe("早餐");
   });
 
-  it("keeps 新建文档 titles", () => {
+  it("treats explicit empty title as unnamed", () => {
     expect(
       resolveNoteDisplayTitle({
-        path: "新建文档.md",
-        title: "新建文档",
+        path: "早餐.md",
+        title: "",
       }),
-    ).toBe("新建文档");
-    expect(
-      resolveNoteDisplayTitle({
-        path: "新建文档（1）.md",
-        title: "新建文档（1）",
-      }),
-    ).toBe("新建文档（1）");
+    ).toBe(UNNAMED_DOCUMENT_PREFIX);
   });
 });

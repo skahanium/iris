@@ -2,7 +2,12 @@ import { splitFrontmatter, titleFromFields } from "@/lib/frontmatter";
 import { stripLeadingBodyTitleHeading } from "@/lib/markdown";
 
 /** Placeholder titles that do not count as user-authored content. */
-const PLACEHOLDER_TITLES = new Set(["", "无标题", "新建文档"]);
+const PLACEHOLDER_TITLES = new Set([
+  "",
+  "无标题",
+  "新建文档",
+  "未命名文档",
+]);
 
 function isPlaceholderTitle(title: string): boolean {
   if (PLACEHOLDER_TITLES.has(title)) {
@@ -11,7 +16,7 @@ function isPlaceholderTitle(title: string): boolean {
   if (/^无标题\d+$/.test(title)) {
     return true;
   }
-  if (/^新建文档（\d+）$/.test(title)) {
+  if (/^(?:新建文档|未命名文档)（\d+）$/.test(title)) {
     return true;
   }
   return false;

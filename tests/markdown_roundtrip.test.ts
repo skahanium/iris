@@ -114,11 +114,21 @@ describe("markdown round-trip (marked → turndown gfm)", () => {
 });
 
 describe("markdown round-trip limitations (documented)", () => {
-  it("image syntax may not round-trip to original markdown (no TipTap image node)", () => {
+  it("marked→turndown path may not preserve images; production editor PM path does", async () => {
     const md = "![diagram](https://example.com/x.png)";
-    const out = markdownRoundTrip(md);
-    // turndown 可能保留为 HTML img 或丢弃；不断言与输入逐字相等
-    expect(typeof out).toBe("string");
+    const turndownOut = markdownRoundTrip(md);
+    expect(typeof turndownOut).toBe("string");
+
+    const { createProductionEditorFromIngestedBody, pmSerializeBody } =
+      await import("./helpers/tiptap-serialize-harness");
+    const editor = createProductionEditorFromIngestedBody(md);
+    try {
+      expect(pmSerializeBody(editor)).toContain(
+        "![diagram](https://example.com/x.png)",
+      );
+    } finally {
+      editor.destroy();
+    }
   });
 });
 

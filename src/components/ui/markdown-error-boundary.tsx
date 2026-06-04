@@ -25,7 +25,7 @@ export class MarkdownErrorBoundary extends Component<Props, State> {
     if (this.state.error) {
       return (
         this.props.fallback ?? (
-          <div className="ai-msg text-sm italic text-muted-foreground">
+          <div className="ai-message-body px-3 py-2 text-sm italic text-muted-foreground">
             此消息包含无法渲染的内容。
           </div>
         )

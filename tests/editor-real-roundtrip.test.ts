@@ -83,6 +83,21 @@ describe("real TipTap editor markdown round-trip", () => {
     expect(out).toContain("Optional detail");
   });
 
+  it("preserves blank lines between paragraphs after save round-trip", () => {
+    const md = [
+      "---",
+      'title: "Spacing"',
+      "---",
+      "",
+      "First paragraph.",
+      "",
+      "Second paragraph.",
+    ].join("\n");
+
+    const out = normalize(realEditorRoundTrip(md));
+    expect(out).toMatch(/First paragraph\.[\s\S]*\n\n[\s\S]*Second paragraph\./);
+  });
+
   it("does not remove a later body heading just because it matches the document title", () => {
     const md = [
       "---",

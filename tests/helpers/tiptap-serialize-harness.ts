@@ -13,6 +13,7 @@ import { CalloutBlockquoteExtension } from "@/components/editor/extensions/Callo
 import { AiStreamExtension } from "@/components/editor/extensions/AiStreamExtension";
 import { HeadingFoldExtension } from "@/components/editor/extensions/HeadingFoldExtension";
 import { ImageExtension } from "@/components/editor/extensions/ImageExtension";
+import { IrisParagraphExtension } from "@/components/editor/extensions/IrisParagraphExtension";
 import { IrisDocument } from "@/components/editor/extensions/IrisDocument";
 import { LinkExtension } from "@/components/editor/extensions/LinkExtension";
 import { PreserveBlockExtension } from "@/components/editor/extensions/PreserveBlockExtension";
@@ -28,6 +29,7 @@ const productionExtensions = [
   IrisDocument,
   StarterKit.configure({
     document: false,
+    paragraph: false,
     codeBlock: false,
     blockquote: false,
     heading: {
@@ -35,6 +37,7 @@ const productionExtensions = [
       HTMLAttributes: { class: "iris-section-heading" },
     },
   }),
+  IrisParagraphExtension,
   LinkExtension,
   ImageExtension,
   TaskList,

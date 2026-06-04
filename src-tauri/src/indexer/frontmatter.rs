@@ -133,7 +133,7 @@ pub fn resolve_display_title(
         return stored.to_string();
     }
     if is_internal_untitled_stem(path_stem) {
-        return "无标题1".to_string();
+        return "未命名文档".to_string();
     }
     path_stem.to_string()
 }

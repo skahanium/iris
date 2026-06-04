@@ -66,7 +66,7 @@ export function AiComposer({
           disabled={disabled && !streaming}
           placeholder={placeholder}
           aria-label="AI 输入"
-          className="max-h-32 min-h-[2.5rem] min-w-0 flex-1 resize-none bg-transparent text-[13px] leading-snug text-foreground outline-none placeholder:text-muted-foreground disabled:opacity-50"
+          className="max-h-32 min-h-[2.5rem] min-w-0 flex-1 resize-none bg-transparent text-[15px] leading-[1.52] text-foreground outline-none placeholder:text-muted-foreground disabled:opacity-50"
           onChange={(e) => onChange(e.target.value)}
           onKeyDown={handleKeyDown}
           onSelect={onSelect}

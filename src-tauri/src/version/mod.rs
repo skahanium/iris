@@ -111,6 +111,11 @@ fn timestamp_version_no() -> String {
     Utc::now().format("%Y%m%d%H%M%S%6f").to_string()
 }
 
+/// Non-whitespace character count; aligned with frontend `characterCountExcludingWhitespace`.
+pub fn character_count_excluding_whitespace(content: &str) -> i64 {
+    content.chars().filter(|c| !c.is_whitespace()).count() as i64
+}
+
 fn map_version_row(row: &Row<'_>) -> rusqlite::Result<VersionEntry> {
     let kind_str: String = row.get(7)?;
     let kind = VersionKind::parse(&kind_str).unwrap_or(VersionKind::Manual);
@@ -176,6 +181,11 @@ fn delete_version_row(
     storage_path: &str,
 ) -> AppResult<()> {
     remove_version_file(vault, storage_path);
+    if let Some(hash) = storage_path.strip_prefix(CAS_STORAGE_PREFIX) {
+        if let Err(e) = state.ref_counter().decrement(hash) {
+            tracing::warn!("CAS ref decrement failed for {hash}: {e}");
+        }
+    }
     state.db.with_conn(|conn| {
         conn.execute("DELETE FROM versions WHERE id = ?1", [id])?;
         Ok(())
@@ -290,7 +300,13 @@ pub fn create_snapshot(
     let version_no = timestamp_version_no();
     let storage_path = write_version_blob(state, content)?;
 
-    let wc = content.split_whitespace().count() as i64;
+    if let Some(cas_hash) = storage_path.strip_prefix(CAS_STORAGE_PREFIX) {
+        if let Err(e) = state.ref_counter().increment(cas_hash) {
+            tracing::warn!("CAS ref increment failed for {cas_hash}: {e}");
+        }
+    }
+
+    let wc = character_count_excluding_whitespace(content);
     let created_at = now.to_rfc3339();
     let is_finalized = if params.is_finalized { 1 } else { 0 };
 
@@ -793,5 +809,22 @@ mod tests {
             })
             .unwrap();
         assert_eq!(auto_left, 1);
+    }
+
+    #[test]
+    fn character_count_excluding_whitespace_matches_editor_metric() {
+        assert_eq!(character_count_excluding_whitespace("a b c"), 3);
+        assert_eq!(
+            character_count_excluding_whitespace("一二三四五六七八九十"),
+            10
+        );
+        assert_eq!(
+            character_count_excluding_whitespace("a\n\nb\tc"),
+            3
+        );
+        assert_ne!(
+            character_count_excluding_whitespace(&"字".repeat(100)),
+            1
+        );
     }
 }

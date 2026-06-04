@@ -48,14 +48,15 @@ describe("统一助手工作流验收", () => {
     expect(panel).toContain("abortResearch");
   });
 
-  it("检索计划：context_assemble 返回 execution_plan 并在面板展示", () => {
+  it("检索计划：context_assemble 仍返回 execution_plan，面板自动继续不展示预览", () => {
     expect(read("src/types/ai.ts")).toContain("execution_plan");
     expect(read("src-tauri/src/commands/ai_commands.rs")).toContain(
       "execution_plan",
     );
-    expect(read("src/components/ai/UnifiedAssistantPanel.tsx")).toContain(
-      "ExecutionPlanPreview",
-    );
+    const panel = read("src/components/ai/UnifiedAssistantPanel.tsx");
+    expect(panel).not.toContain("ExecutionPlanPreview");
+    expect(panel).toContain("assembleContextForChat");
+    expect(panel).toContain("executeKnowledgeChat");
   });
 
   it("harness 现代化：tool_confirm 驱动 harness_resume 闭环", () => {

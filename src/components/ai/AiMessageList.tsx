@@ -69,7 +69,7 @@ export const AiMessageList = memo(function AiMessageList({
 
   return (
     <ScrollArea className="min-h-0 flex-1">
-      <div className="flex flex-col gap-3 px-3 py-3">
+      <div className="flex flex-col gap-4 px-3 py-3">
         {messages.length === 0 ? (
           <p className="py-8 text-center text-xs text-muted-foreground">
             输入问题开始对话。证据包在上方，工具与 Token 状态见底栏。

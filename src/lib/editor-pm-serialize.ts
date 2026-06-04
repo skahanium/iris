@@ -50,10 +50,37 @@ function renderTable(state: MarkdownSerializerState, node: ProseMirrorNode) {
 }
 
 const baseBlockquoteSerialize = defaultMarkdownSerializer.nodes.blockquote!;
+const baseParagraphSerialize = defaultMarkdownSerializer.nodes.paragraph!;
+const baseImageSerialize = defaultMarkdownSerializer.nodes.image!;
+const baseHardBreakSerialize = defaultMarkdownSerializer.nodes.hard_break!;
+
+function isSpacerParagraph(node: ProseMirrorNode): boolean {
+  return node.attrs.irisSpacer === true;
+}
 
 const irisMarkdownSerializer = new MarkdownSerializer(
   {
     ...defaultMarkdownSerializer.nodes,
+    paragraph(state, node, parent, index) {
+      if (isSpacerParagraph(node)) {
+        const gapCount =
+          typeof node.attrs.irisGapCount === "number" && node.attrs.irisGapCount > 0
+            ? node.attrs.irisGapCount
+            : 1;
+        if (gapCount > 1) {
+          state.write("\n".repeat((gapCount - 1) * 2));
+        }
+        state.closeBlock(node);
+        return;
+      }
+      baseParagraphSerialize(state, node, parent, index);
+    },
+    image(state, node, parent, index) {
+      baseImageSerialize(state, node, parent, index);
+    },
+    hardBreak(state, node, parent, index) {
+      baseHardBreakSerialize(state, node, parent, index);
+    },
     blockquote(state, node, parent, index) {
       if (renderCalloutBlockquote(state, node)) {
         return;

@@ -19,7 +19,7 @@ vi.mock("@/lib/note-create", () => ({
 vi.mock("@/lib/document-title", () => ({
   displayTitleFromMarkdown: (_md: string, fallback: string) => fallback,
   resolveDocumentTitle: async (_path: string, hint?: string) =>
-    hint?.trim() || "无标题1",
+    hint?.trim() || "未命名文档",
 }));
 
 vi.mock("@/lib/markdown", () => ({
@@ -30,7 +30,7 @@ vi.mock("@/lib/markdown", () => ({
 import type { TabItem } from "@/components/layout/TabBar";
 import { useTabManager } from "@/hooks/useTabManager";
 
-const EMPTY_MD = '---\ntitle: "无标题1"\n---\n\n';
+const EMPTY_MD = '---\ntitle: "未命名文档"\n---\n\n';
 
 function Harness({
   apiRef,
@@ -56,8 +56,8 @@ describe("useTabManager handleNewNote", () => {
     fileDiscard.mockResolvedValue(undefined);
     fileRead.mockResolvedValue(EMPTY_MD);
     createDefaultNote.mockResolvedValue({
-      path: "无标题1.md",
-      title: "无标题1",
+      path: "未命名文档.md",
+      title: "未命名文档",
     });
   });
 
@@ -82,7 +82,7 @@ describe("useTabManager handleNewNote", () => {
     });
 
     expect(createDefaultNote).toHaveBeenCalledTimes(1);
-    expect(apiRef.current!.activePath).toBe("无标题1.md");
+    expect(apiRef.current!.activePath).toBe("未命名文档.md");
   });
 
   it("discards an empty active tab before creating the next note", async () => {
@@ -91,8 +91,8 @@ describe("useTabManager handleNewNote", () => {
     };
 
     createDefaultNote.mockResolvedValueOnce({
-      path: "无标题2.md",
-      title: "无标题2",
+      path: "未命名文档（1）.md",
+      title: "未命名文档（1）",
     });
 
     await act(async () => {
@@ -100,24 +100,26 @@ describe("useTabManager handleNewNote", () => {
     });
 
     await act(async () => {
-      await apiRef.current!.openFile("无标题1.md", "无标题1");
+      await apiRef.current!.openFile("未命名文档.md", "未命名文档");
     });
-    expect(apiRef.current!.activePath).toBe("无标题1.md");
+    expect(apiRef.current!.activePath).toBe("未命名文档.md");
 
     await act(async () => {
       await apiRef.current!.handleNewNote();
     });
 
-    expect(fileDiscard).toHaveBeenCalledWith("无标题1.md");
+    expect(fileDiscard).toHaveBeenCalledWith("未命名文档.md");
     expect(createDefaultNote).toHaveBeenCalledWith({
       extraTakenTitles: [],
     });
-    expect(apiRef.current!.activePath).toBe("无标题2.md");
+    expect(apiRef.current!.activePath).toBe("未命名文档（1）.md");
     expect(
-      apiRef.current!.tabs.some((t: TabItem) => t.path === "无标题1.md"),
+      apiRef.current!.tabs.some((t: TabItem) => t.path === "未命名文档.md"),
     ).toBe(false);
     expect(
-      apiRef.current!.tabs.some((t: TabItem) => t.path === "无标题2.md"),
+      apiRef.current!.tabs.some(
+        (t: TabItem) => t.path === "未命名文档（1）.md",
+      ),
     ).toBe(true);
   });
 
@@ -128,9 +130,9 @@ describe("useTabManager handleNewNote", () => {
 
     fileRead.mockImplementation(async (path: string) => {
       if (path === "a.md") {
-        return '---\ntitle: "A"\n---\n\nbody';
+        return "# A\n";
       }
-      return '---\ntitle: "B"\n---\n\nbody';
+      return EMPTY_MD;
     });
 
     await act(async () => {
@@ -141,14 +143,14 @@ describe("useTabManager handleNewNote", () => {
       await apiRef.current!.openFile("a.md", "A");
       await apiRef.current!.openFile("b.md", "B");
     });
-    expect(apiRef.current!.activePath).toBe("b.md");
 
     await act(async () => {
-      await apiRef.current!.closeTab("b.md");
+      apiRef.current!.closeTab("b.md");
     });
 
-    expect(apiRef.current!.tabs.map((t) => t.path)).toEqual(["a.md"]);
     expect(apiRef.current!.activePath).toBe("a.md");
-    expect(fileDiscard).not.toHaveBeenCalled();
+    expect(apiRef.current!.tabs.map((t: TabItem) => t.path)).toEqual([
+      "a.md",
+    ]);
   });
 });

@@ -116,42 +116,46 @@ pub fn index_file_with_embed(
 
     let existing_id: Option<i64> = existing_row.as_ref().map(|(id, _, _, _)| *id);
 
+    let tx = conn.unchecked_transaction()?;
+
     let file_id = if let Some(id) = existing_id {
-        conn.execute(
+        tx.execute(
             "UPDATE files SET title = ?1, frontmatter = ?2, content_hash = ?3, word_count = ?4, updated_at = ?5 WHERE id = ?6",
             rusqlite::params![display_title, frontmatter, hash, wc, now, id],
         )?;
-        conn.execute("DELETE FROM chunks WHERE file_id = ?1", [id])?;
+        tx.execute("DELETE FROM chunks WHERE file_id = ?1", [id])?;
         id
     } else {
-        conn.execute(
+        tx.execute(
             "INSERT INTO files (path, title, frontmatter, content_hash, word_count, created_at, updated_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6)",
             rusqlite::params![rel, display_title, frontmatter, hash, wc, now],
         )?;
-        conn.last_insert_rowid()
+        tx.last_insert_rowid()
     };
 
     let title: String =
-        conn.query_row("SELECT title FROM files WHERE id = ?1", [file_id], |r| {
+        tx.query_row("SELECT title FROM files WHERE id = ?1", [file_id], |r| {
             r.get(0)
         })?;
 
-    sync_file_tags(conn, file_id, &parsed.tags)?;
+    sync_file_tags(&tx, file_id, &parsed.tags)?;
 
-    let _link_count = index_wiki_links(conn, file_id, &parsed.body)?;
+    let _link_count = index_wiki_links(&tx, file_id, &parsed.body)?;
 
-    let _image_count = index_image_refs(conn, file_id, &parsed.body)?;
+    let _image_count = index_image_refs(&tx, file_id, &parsed.body)?;
 
-    upsert_fts(conn, &rel, &title, &parsed.body)?;
+    upsert_fts(&tx, &rel, &title, &parsed.body)?;
 
     let chunks = chunk_markdown(&parsed.body, 2000);
     for (idx, chunk) in chunks.iter().enumerate() {
-        conn.execute(
+        tx.execute(
             "INSERT INTO chunks (file_id, chunk_index, content, char_count) VALUES (?1, ?2, ?3, ?4)",
             rusqlite::params![file_id, idx as i64, chunk, chunk.len() as i64],
         )?;
     }
+
+    tx.commit()?;
 
     #[cfg(not(test))]
     match app {
@@ -230,40 +234,44 @@ pub fn index_file_from_content(
 
     let existing_id: Option<i64> = existing_row.as_ref().map(|(id, _, _, _)| *id);
 
+    let tx = conn.unchecked_transaction()?;
+
     let file_id = if let Some(id) = existing_id {
-        conn.execute(
+        tx.execute(
             "UPDATE files SET title = ?1, frontmatter = ?2, content_hash = ?3, word_count = ?4, updated_at = ?5 WHERE id = ?6",
             rusqlite::params![display_title, frontmatter, hash, wc, now, id],
         )?;
-        conn.execute("DELETE FROM chunks WHERE file_id = ?1", [id])?;
+        tx.execute("DELETE FROM chunks WHERE file_id = ?1", [id])?;
         id
     } else {
-        conn.execute(
+        tx.execute(
             "INSERT INTO files (path, title, frontmatter, content_hash, word_count, created_at, updated_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6)",
             rusqlite::params![rel, display_title, frontmatter, hash, wc, now],
         )?;
-        conn.last_insert_rowid()
+        tx.last_insert_rowid()
     };
 
     let title: String =
-        conn.query_row("SELECT title FROM files WHERE id = ?1", [file_id], |r| {
+        tx.query_row("SELECT title FROM files WHERE id = ?1", [file_id], |r| {
             r.get(0)
         })?;
 
-    sync_file_tags(conn, file_id, &parsed.tags)?;
+    sync_file_tags(&tx, file_id, &parsed.tags)?;
 
-    let _link_count = index_wiki_links(conn, file_id, &parsed.body)?;
+    let _link_count = index_wiki_links(&tx, file_id, &parsed.body)?;
 
-    upsert_fts(conn, &rel, &title, &parsed.body)?;
+    upsert_fts(&tx, &rel, &title, &parsed.body)?;
 
     let chunks = chunk_markdown(&parsed.body, 2000);
     for (idx, chunk) in chunks.iter().enumerate() {
-        conn.execute(
+        tx.execute(
             "INSERT INTO chunks (file_id, chunk_index, content, char_count) VALUES (?1, ?2, ?3, ?4)",
             rusqlite::params![file_id, idx as i64, chunk, chunk.len() as i64],
         )?;
     }
+
+    tx.commit()?;
 
     #[cfg(not(test))]
     match app {
@@ -442,6 +450,53 @@ pub fn remove_file_index(conn: &Connection, path: &str) -> AppResult<()> {
     delete_fts(conn, path)?;
     conn.execute("DELETE FROM files WHERE path = ?1", [path])?;
     Ok(())
+}
+
+/// Rename indexed note path without changing `files.id` (preserves versions and related rows).
+pub fn rename_file_index(
+    conn: &Connection,
+    old_path: &str,
+    new_path: &str,
+) -> AppResult<i64> {
+    if old_path == new_path {
+        return conn
+            .query_row(
+                "SELECT id FROM files WHERE path = ?1",
+                [old_path],
+                |r| r.get(0),
+            )
+            .map_err(|e| crate::error::AppError::msg(format!("File not indexed: {e}")));
+    }
+
+    let file_id: i64 = conn
+        .query_row(
+            "SELECT id FROM files WHERE path = ?1",
+            [old_path],
+            |r| r.get(0),
+        )
+        .map_err(|_| {
+            crate::error::AppError::msg(format!("File not indexed: {old_path}"))
+        })?;
+
+    let conflict: Option<i64> = conn
+        .query_row(
+            "SELECT id FROM files WHERE path = ?1 AND id != ?2",
+            rusqlite::params![new_path, file_id],
+            |r| r.get(0),
+        )
+        .ok();
+    if conflict.is_some() {
+        return Err(crate::error::AppError::msg(
+            "Target path already indexed to another file",
+        ));
+    }
+
+    delete_fts(conn, old_path)?;
+    conn.execute(
+        "UPDATE files SET path = ?1 WHERE id = ?2",
+        rusqlite::params![new_path, file_id],
+    )?;
+    Ok(file_id)
 }
 
 /// Drop index rows for user notes whose `.md` files are missing on disk.
@@ -786,6 +841,48 @@ mod tests {
                 .flatten()
                 .collect();
             assert!(fts.is_empty());
+            Ok(())
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn rename_file_index_preserves_file_id_and_versions() {
+        let (_dir, vault, db) = setup_vault();
+        write_note(&vault, "old.md", "# Note");
+
+        db.with_conn(|conn| {
+            let entry = index_file(conn, &vault, &vault.join("old.md"))?;
+            let file_id = entry.id;
+            conn.execute(
+                "INSERT INTO versions (file_id, version_no, content_hash, storage_path, kind, created_at)
+                 VALUES (?1, '20260101120000000', 'hash1', 'cas:abc', 'manual', datetime('now'))",
+                [file_id],
+            )?;
+
+            let preserved_id = rename_file_index(conn, "old.md", "renamed.md")?;
+            assert_eq!(preserved_id, file_id);
+
+            let path_row: String = conn.query_row(
+                "SELECT path FROM files WHERE id = ?1",
+                [file_id],
+                |r| r.get(0),
+            )?;
+            assert_eq!(path_row, "renamed.md");
+
+            let version_count: i64 = conn.query_row(
+                "SELECT COUNT(*) FROM versions WHERE file_id = ?1",
+                [file_id],
+                |r| r.get(0),
+            )?;
+            assert_eq!(version_count, 1);
+
+            let old_id_count: i64 = conn.query_row(
+                "SELECT COUNT(*) FROM files WHERE path = 'old.md'",
+                [],
+                |r| r.get(0),
+            )?;
+            assert_eq!(old_id_count, 0);
             Ok(())
         })
         .unwrap();

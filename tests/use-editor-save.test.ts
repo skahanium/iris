@@ -1,4 +1,4 @@
-import { act, createElement } from "react";
+import { act, createElement, useRef, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -21,20 +21,48 @@ vi.mock("@/lib/ipc", () => ({
 }));
 
 function TestHarness({
+  path = "note.md",
   getMarkdown,
   onReady,
 }: {
+  path?: string;
   getMarkdown?: () => string;
   onReady: (api: {
     notifyDirty: () => void;
     flushSave: () => Promise<string | null>;
+    flushSaveForPath: (
+      targetPath: string,
+      getMarkdownOverride?: () => string,
+    ) => Promise<string | null>;
   }) => void;
 }) {
-  const { notifyDirty, flushSave } = useEditorSave(
-    "note.md",
+  const { notifyDirty, flushSave, flushSaveForPath } = useEditorSave(
+    path,
     getMarkdown ?? (() => '---\ntitle: "x"\n---\n\nSubstantive body.'),
   );
-  onReady({ notifyDirty, flushSave });
+  onReady({ notifyDirty, flushSave, flushSaveForPath });
+  return null;
+}
+
+function PathSwitchHarness({
+  onReady,
+}: {
+  onReady: (api: {
+    setPath: (path: string) => void;
+    flushSaveForPath: (
+      targetPath: string,
+      getMarkdownOverride?: () => string,
+    ) => Promise<string | null>;
+  }) => void;
+}) {
+  const [path, setPath] = useState("a.md");
+  const bodyA = '---\ntitle: "a"\n---\n\nContent for note A.';
+  const bodyB = '---\ntitle: "b"\n---\n\nContent for note B.';
+  const whichRef = useRef<"a" | "b">("a");
+  const { flushSaveForPath } = useEditorSave(path, () =>
+    whichRef.current === "a" ? bodyA : bodyB,
+  );
+  onReady({ setPath, flushSaveForPath });
   return null;
 }
 
@@ -122,5 +150,74 @@ describe("useEditorSave", () => {
       "note.md",
       '---\ntitle: "x"\n---\n\nManual checkpoint body.',
     );
+  });
+
+  it("flushSaveForPath writes the leaving path while active path is already B", async () => {
+    const bodyA = '---\ntitle: "a"\n---\n\nContent for note A.';
+    let flushSaveForPath!: (
+      targetPath: string,
+      getMarkdownOverride?: () => string,
+    ) => Promise<string | null>;
+    let setPath!: (path: string) => void;
+
+    await act(async () => {
+      root.render(
+        createElement(PathSwitchHarness, {
+          onReady: (api) => {
+            flushSaveForPath = api.flushSaveForPath;
+            setPath = api.setPath;
+          },
+        }),
+      );
+    });
+
+    await act(async () => {
+      setPath("b.md");
+    });
+
+    let saved: string | null = null;
+    await act(async () => {
+      saved = await flushSaveForPath("a.md", () => bodyA);
+    });
+
+    expect(saved).toBe(bodyA);
+    expect(fileWrite).toHaveBeenCalledTimes(1);
+    expect(fileWrite).toHaveBeenCalledWith("a.md", bodyA);
+    expect(fileWrite).not.toHaveBeenCalledWith("b.md", bodyA);
+  });
+
+  it("path change cleanup does not flush to the new path", async () => {
+    const bodyA = '---\ntitle: "a"\n---\n\nPending A edits.';
+    const getMarkdown = vi.fn(() => bodyA);
+    let notifyDirty!: () => void;
+    let setPath!: (path: string) => void;
+
+    await act(async () => {
+      root.render(
+        createElement(
+          function SwitchNotifyHarness() {
+            const [path, setPathState] = useState("a.md");
+            const { notifyDirty: notify } = useEditorSave(path, getMarkdown);
+            setPath = setPathState;
+            notifyDirty = notify;
+            return null;
+          },
+        ),
+      );
+    });
+
+    act(() => {
+      notifyDirty();
+    });
+
+    await act(async () => {
+      setPath("b.md");
+    });
+
+    await act(async () => {
+      vi.advanceTimersByTime(EDITOR_SAVE_DEBOUNCE_MS);
+    });
+
+    expect(fileWrite).not.toHaveBeenCalled();
   });
 });

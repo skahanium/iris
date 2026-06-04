@@ -1,0 +1,349 @@
+/**
+ * Shared Markdown prose — editor + AI conversation surfaces.
+ * Surfaces: [data-prose-surface="editor" | "conversation"]
+ */
+@layer components {
+  :root {
+    --font-ui:
+      Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei",
+      "PingFang SC", sans-serif;
+    --font-prose:
+      "Noto Sans SC", Inter, "PingFang SC", "Microsoft YaHei", sans-serif;
+    --font-title: "Noto Serif SC", "Noto Sans SC", Georgia, serif;
+    --font-mono: "JetBrains Mono", ui-monospace, monospace;
+
+    --prose-measure: 45rem;
+    --prose-size-editor: 1rem;
+    --prose-size-chat: 15px;
+    --prose-line-height: 1.62;
+    --prose-line-height-chat: 1.52;
+    --prose-letter-spacing: 0.01em;
+    --prose-block-gap: 0.6em;
+    --prose-heading-gap-before: 1.5em;
+    --prose-heading-gap-before-h3: 1.25em;
+    --prose-heading-gap-after: 0.35em;
+    --prose-title-gap: 2.25rem;
+    --prose-spacer-ratio: 0.55;
+  }
+
+  .iris-markdown-content {
+    font-family: var(--font-prose);
+    font-feature-settings:
+      "kern" 1,
+      "liga" 1;
+    font-variant-numeric: proportional-nums;
+  }
+
+  .iris-markdown-content > * + * {
+    margin-top: var(--prose-block-gap);
+  }
+
+  [data-prose-surface="conversation"].iris-markdown-content > * + * {
+    margin-top: calc(var(--prose-block-gap) * 0.85);
+  }
+
+  .iris-markdown-content a:not(.ai-citation) {
+    @apply text-primary underline decoration-primary/40 underline-offset-2 transition-colors hover:decoration-primary/70;
+  }
+
+  .iris-markdown-content code {
+    @apply rounded px-1.5 py-0.5 font-mono text-[0.9em];
+    background: hsl(var(--editor-code-bg));
+    color: hsl(var(--editor-code-fg));
+  }
+
+  .iris-markdown-content pre {
+    @apply overflow-x-auto rounded-lg border border-border p-4 font-mono text-sm;
+    line-height: 1.5;
+    background: hsl(var(--editor-code-bg));
+    color: hsl(var(--editor-code-fg));
+  }
+
+  .iris-markdown-content pre code {
+    background: transparent;
+    padding: 0;
+    color: inherit;
+  }
+
+  .iris-markdown-content blockquote {
+    @apply border-l-[3px] border-border pl-4 text-editor-muted;
+    font-style: normal;
+  }
+
+  .iris-markdown-content blockquote > p {
+    margin: 0;
+  }
+
+  .iris-markdown-content hr {
+    @apply my-4 border-0 border-t border-border;
+    height: 0;
+    background: transparent;
+  }
+
+  .iris-markdown-content img {
+    @apply my-3 max-w-full rounded-md border border-border;
+  }
+
+  .iris-markdown-content table {
+    @apply w-full min-w-full border-collapse text-sm;
+  }
+
+  .iris-markdown-content th {
+    @apply border border-border bg-muted/45 px-2.5 py-1.5 text-left font-semibold;
+  }
+
+  .iris-markdown-content td {
+    @apply border border-border px-2.5 py-1.5 align-top;
+  }
+
+  [data-prose-surface="conversation"].iris-markdown-content table {
+    @apply text-xs;
+  }
+
+  [data-prose-surface="conversation"].iris-markdown-content th {
+    @apply bg-muted/50 px-2 py-1;
+  }
+
+  [data-prose-surface="conversation"].iris-markdown-content td {
+    @apply px-2 py-1;
+  }
+
+  [data-prose-surface="conversation"].iris-markdown-content
+    tr:nth-child(even)
+    td {
+    @apply bg-muted/20;
+  }
+
+  .iris-markdown-content .wiki-link {
+    @apply cursor-pointer text-primary underline decoration-primary/40 underline-offset-2;
+  }
+
+  .iris-markdown-content .wiki-link-bracket {
+    @apply text-editor-muted/50;
+  }
+
+  .iris-markdown-content .ai-table-wrap {
+    @apply my-2.5 max-w-full overflow-x-auto;
+  }
+
+  /* ── Editor surface ── */
+
+  .iris-editor-body
+    .ProseMirror.iris-markdown-content[data-prose-surface="editor"] {
+    font-size: var(--prose-size-editor);
+    line-height: var(--prose-line-height);
+    letter-spacing: var(--prose-letter-spacing);
+  }
+
+  .iris-editor-body
+    .ProseMirror.iris-markdown-content[data-prose-surface="editor"]
+    > p:not([data-iris-spacer="true"]),
+  .iris-editor-body
+    .ProseMirror.iris-markdown-content[data-prose-surface="editor"]
+    > :is(ul, ol)
+    li,
+  .iris-editor-body
+    .ProseMirror.iris-markdown-content[data-prose-surface="editor"]
+    > blockquote {
+    text-align: justify;
+    text-justify: inter-ideograph;
+  }
+
+  .iris-editor-body
+    .ProseMirror.iris-markdown-content[data-prose-surface="editor"]
+    > p[data-iris-spacer="true"] {
+    line-height: 1;
+    min-height: calc(
+      var(--prose-size-editor) * var(--prose-line-height) *
+        var(--prose-spacer-ratio)
+    );
+    margin-top: calc(var(--prose-block-gap) * 0.45);
+    text-align: left;
+  }
+
+  .iris-editor-body
+    .ProseMirror.iris-markdown-content[data-prose-surface="editor"]
+    > p[data-iris-spacer="true"][data-iris-gap-count="2"] {
+    min-height: calc(
+      var(--prose-size-editor) * var(--prose-line-height) *
+        var(--prose-spacer-ratio) * 2
+    );
+  }
+
+  .iris-editor-body
+    .ProseMirror.iris-markdown-content[data-prose-surface="editor"]
+    > p[data-iris-spacer="true"][data-iris-gap-count="3"] {
+    min-height: calc(
+      var(--prose-size-editor) * var(--prose-line-height) *
+        var(--prose-spacer-ratio) * 3
+    );
+  }
+
+  .iris-editor-body
+    .ProseMirror.iris-markdown-content[data-prose-surface="editor"]
+    > p[data-iris-spacer="true"][data-iris-gap-count="4"] {
+    min-height: calc(
+      var(--prose-size-editor) * var(--prose-line-height) *
+        var(--prose-spacer-ratio) * 4
+    );
+  }
+
+  .iris-editor-body
+    .ProseMirror.iris-markdown-content[data-prose-surface="editor"]
+    > p[data-iris-spacer="true"][data-iris-gap-count="5"] {
+    min-height: calc(
+      var(--prose-size-editor) * var(--prose-line-height) *
+        var(--prose-spacer-ratio) * 5
+    );
+  }
+
+  .iris-editor-body
+    .ProseMirror.iris-markdown-content[data-prose-surface="editor"]
+    > p[data-iris-spacer="true"][data-iris-gap-count="6"] {
+    min-height: calc(
+      var(--prose-size-editor) * var(--prose-line-height) *
+        var(--prose-spacer-ratio) * 6
+    );
+  }
+
+  .iris-editor-body
+    .ProseMirror.iris-markdown-content[data-prose-surface="editor"]
+    > :is(h1:not(.iris-doc-title), h2, h3, h4, h5, h6) {
+    @apply relative font-semibold text-editor-ink;
+    line-height: 1.3;
+    text-align: left;
+  }
+
+  .iris-editor-body
+    .ProseMirror.iris-markdown-content[data-prose-surface="editor"]
+    > :is(h1:not(.iris-doc-title), h2, h3, h4, h5, h6) {
+    margin-top: var(--prose-heading-gap-before);
+  }
+
+  .iris-editor-body
+    .ProseMirror.iris-markdown-content[data-prose-surface="editor"]
+    > :is(h3, h4, h5, h6) {
+    margin-top: var(--prose-heading-gap-before-h3);
+  }
+
+  .iris-editor-body
+    .ProseMirror.iris-markdown-content[data-prose-surface="editor"]
+    > :is(h1:not(.iris-doc-title), h2, h3, h4, h5, h6):first-child {
+    margin-top: 0;
+  }
+
+  .iris-editor-body
+    .ProseMirror.iris-markdown-content[data-prose-surface="editor"]
+    > :is(h1:not(.iris-doc-title), h2, h3, h4, h5, h6)
+    + * {
+    margin-top: var(--prose-heading-gap-after);
+  }
+
+  .iris-editor-body
+    .ProseMirror.iris-markdown-content[data-prose-surface="editor"]
+    > h1:not(.iris-doc-title) {
+    font-size: 1.875rem;
+    letter-spacing: -0.02em;
+    font-weight: 600;
+  }
+
+  .iris-editor-body
+    .ProseMirror.iris-markdown-content[data-prose-surface="editor"]
+    > h2 {
+    font-size: 1.5rem;
+    letter-spacing: -0.015em;
+    font-weight: 600;
+  }
+
+  .iris-editor-body
+    .ProseMirror.iris-markdown-content[data-prose-surface="editor"]
+    > h3 {
+    font-size: 1.25rem;
+    font-weight: 600;
+  }
+
+  .iris-editor-body
+    .ProseMirror.iris-markdown-content[data-prose-surface="editor"]
+    > h4 {
+    font-size: 1.075rem;
+  }
+
+  .iris-editor-body
+    .ProseMirror.iris-markdown-content[data-prose-surface="editor"]
+    > h5,
+  .iris-editor-body
+    .ProseMirror.iris-markdown-content[data-prose-surface="editor"]
+    > h6 {
+    font-size: 1rem;
+  }
+
+  /* ── Conversation surface ── */
+
+  .ai-message-body.iris-markdown-content[data-prose-surface="conversation"] {
+    font-size: var(--prose-size-chat);
+    line-height: var(--prose-line-height-chat);
+    letter-spacing: var(--prose-letter-spacing);
+    @apply text-foreground;
+  }
+
+  [data-prose-surface="conversation"].iris-markdown-content h1 {
+    @apply mb-3 mt-4 text-lg font-semibold;
+  }
+
+  [data-prose-surface="conversation"].iris-markdown-content h2 {
+    @apply mb-2.5 mt-3.5 text-base font-semibold;
+  }
+
+  [data-prose-surface="conversation"].iris-markdown-content h3 {
+    @apply mb-2 mt-3 text-sm font-semibold;
+  }
+
+  [data-prose-surface="conversation"].iris-markdown-content h4,
+  [data-prose-surface="conversation"].iris-markdown-content h5,
+  [data-prose-surface="conversation"].iris-markdown-content h6 {
+    @apply mb-1.5 mt-2.5 text-sm font-medium;
+  }
+
+  [data-prose-surface="conversation"].iris-markdown-content ol {
+    @apply mb-2 list-decimal pl-5;
+  }
+
+  [data-prose-surface="conversation"].iris-markdown-content ol li,
+  [data-prose-surface="conversation"].iris-markdown-content ul li {
+    @apply mb-0.5;
+  }
+
+  [data-prose-surface="conversation"].iris-markdown-content ul {
+    @apply mb-2 list-disc pl-5;
+  }
+
+  [data-prose-surface="conversation"].iris-markdown-content
+    input[type="checkbox"] {
+    @apply mr-1.5 h-3.5 w-3.5 rounded border-border align-middle accent-primary;
+  }
+
+  [data-prose-surface="conversation"].iris-markdown-content li.task-list-item {
+    @apply list-none;
+  }
+
+  [data-prose-surface="conversation"].iris-markdown-content strong {
+    @apply font-bold;
+  }
+
+  [data-prose-surface="conversation"].iris-markdown-content em {
+    @apply italic;
+  }
+
+  [data-prose-surface="conversation"].iris-markdown-content del {
+    @apply text-muted-foreground line-through;
+  }
+
+  [data-prose-surface="conversation"].iris-markdown-content ins {
+    @apply text-primary underline;
+  }
+
+  [data-prose-surface="conversation"].iris-markdown-content
+    a:not(.ai-citation):not([href^="#iris-cite-"]) {
+    @apply text-primary underline decoration-primary/40 underline-offset-2 transition-colors hover:decoration-primary/70;
+  }
+}

@@ -49,7 +49,7 @@ fn generate_batch_id() -> String {
 }
 
 /// Placeholder title patterns that indicate missing user-authored titles.
-const PLACEHOLDER_TITLES: &[&str] = &["无标题", "新建文档", "untitled"];
+const PLACEHOLDER_TITLES: &[&str] = &["未命名文档", "无标题", "新建文档", "untitled"];
 
 /// Check if a title is a placeholder.
 fn is_placeholder_title(title: &str) -> bool {

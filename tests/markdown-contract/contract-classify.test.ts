@@ -46,6 +46,15 @@ function fragmentsOfLevel(
 
 // ── 原生 GFM 分类 ─────────────────────────────────────────────
 
+describe("classify: block spacing", () => {
+  it("emits space fragments between paragraphs", () => {
+    const fragments = classifyMarkdownCapabilities("A\n\nB");
+    const spaces = fragments.filter((f) => f.syntaxKind === "space");
+    expect(spaces.length).toBeGreaterThanOrEqual(1);
+    expect(spaces[0]?.capability).toBe("native");
+  });
+});
+
 describe("classify: native GFM (must be categorized correctly)", () => {
   it("[TDD-FAIL] all ATX heading levels (1-6) are classified as 'native'", () => {
     const fragments = classifyMarkdownCapabilities(

@@ -65,11 +65,11 @@ import {
 import type {
   AssistantActionState,
   AssistantIntent,
+  AssistantTaskStatus,
   ChapterInfo,
   CitationCheckResult,
   ContextPacket,
   ContextStatus,
-  ExecutionPlan,
   OrganizeSuggestion,
   PatchProposal,
   ResearchFocusPayload,
@@ -79,7 +79,6 @@ import type {
 import type { AssistantChromeSnapshot } from "@/types/assistant-chrome";
 import type { FileListItem } from "@/types/ipc";
 
-import { AssistantArtifactPanel } from "./AssistantArtifactPanel";
 import { AssistantAvatar } from "./AssistantAvatar";
 import {
   assistantIcon,
@@ -100,13 +99,9 @@ import { CitationCheckView } from "./CitationCheckView";
 import { ContextPacketDrawer } from "./ContextPacketDrawer";
 import { SessionHistoryDropdown } from "./SessionHistoryDropdown";
 import { useAiBubbleSelection } from "@/hooks/useAiBubbleSelection";
-import { useAssistantActivity } from "@/hooks/useAssistantActivity";
-import { useAssistantArtifacts } from "@/hooks/useAssistantArtifacts";
 import { useAssistantRun } from "@/hooks/useAssistantRun";
-import { mapAssistantExecuteToArtifacts } from "@/lib/map-assistant-execute-response";
 import { listenAiRequestStarted, sessionRetract, llmAbort } from "@/lib/ipc";
 import { ContextScopeChips } from "./ContextScopeChips";
-import { ExecutionPlanPreview } from "./ExecutionPlanPreview";
 import { PatchPreview } from "./PatchPreview";
 import {
   RuleConfirmDialog,
@@ -209,14 +204,6 @@ export function UnifiedAssistantPanel({
   const [contextStatusData, setContextStatusData] =
     useState<ContextStatus | null>(null);
   const [lastError, setLastError] = useState<string | null>(null);
-  const [executionPlan, setExecutionPlan] = useState<ExecutionPlan | null>(
-    null,
-  );
-  const [pendingKnowledgeChat, setPendingKnowledgeChat] = useState<{
-    rawMessage: string;
-    intent: AssistantIntent;
-    startNewSession: boolean;
-  } | null>(null);
   const [activityHint, setActivityHint] = useState<string | null>(null);
   const [sessionTokenUsage, setSessionTokenUsage] = useState<TokenUsage | null>(
     null,
@@ -225,13 +212,12 @@ export function UnifiedAssistantPanel({
   const requestIdRef = useRef<string | null>(null);
   const [harnessRequestId, setHarnessRequestId] = useState<string | null>(null);
   const assistantRun = useAssistantRun("chat");
-  const {
-    artifacts: unifiedArtifacts,
-    replaceArtifacts,
-    clearArtifacts: clearUnifiedArtifacts,
-  } = useAssistantArtifacts();
-  const harnessActivity = useAssistantActivity(harnessRequestId, streaming);
-  const inputDisabled = streaming || assistantRun.isBusy;
+  const composerDisabled =
+    streaming || assistantRun.isBusy || toolConfirmRequest !== null;
+  const chromeActionsDisabled = streaming;
+
+  const { handleCitationClick, citationMiss, clearCitationMiss } =
+    useCitationClick(packets, () => setPacketsOpen(true), setSelectedPacketIds);
 
   useEffect(() => {
     onChromeChange?.(
@@ -240,13 +226,12 @@ export function UnifiedAssistantPanel({
         activityHint,
         streaming,
         messages,
-        harnessPhaseLabel: harnessActivity.latestPhaseLabel,
+        harnessPhaseLabel: null,
         packets,
       }),
     );
   }, [
     activityHint,
-    harnessActivity.latestPhaseLabel,
     messages,
     onChromeChange,
     packets,
@@ -475,7 +460,6 @@ export function UnifiedAssistantPanel({
   });
 
   const clearTaskSurfaces = useCallback(() => {
-    clearUnifiedArtifacts();
     setWritingPatches([]);
     setCitationResult(null);
     setOrganizeSuggestions([]);
@@ -486,9 +470,7 @@ export function UnifiedAssistantPanel({
     setDocSummary(null);
     setDocIssues([]);
     setLastError(null);
-    setExecutionPlan(null);
-    setPendingKnowledgeChat(null);
-  }, [clearUnifiedArtifacts]);
+  }, []);
 
   const handleNewChat = useCallback(() => {
     clearTaskSurfaces();
@@ -506,7 +488,7 @@ export function UnifiedAssistantPanel({
     setHarnessRequestId(null);
     forceNewSessionRef.current = true;
     setActionState(buildActionState("chat", "idle"));
-  }, [clearTaskSurfaces]);
+  }, [clearCitationMiss, clearTaskSurfaces]);
 
   const handleRetract = useCallback(
     async (index: number) => {
@@ -613,11 +595,6 @@ export function UnifiedAssistantPanel({
         })),
       );
       setContextStatusData(result.context_status);
-      if (result.execution_plan?.steps?.length) {
-        setExecutionPlan(result.execution_plan);
-      } else {
-        setExecutionPlan(null);
-      }
       return result;
     },
     [contextScope, notePath, sessionId, webSearch],
@@ -662,8 +639,6 @@ export function UnifiedAssistantPanel({
       panelSendActiveRef.current = true;
       setActionState(buildActionState(intent, "running"));
       assistantRun.setFromTaskStatus("running", intent);
-      setExecutionPlan(null);
-      setPendingKnowledgeChat(null);
       ensureAssistantStreamSlot();
       setActivityHint("正在连接模型并处理工具调用…");
       assistantRun.setActivityHint("正在连接模型并处理工具调用…");
@@ -686,7 +661,6 @@ export function UnifiedAssistantPanel({
         if (response.kind !== "chat") {
           throw new Error("助手路由异常：期望对话结果");
         }
-        replaceArtifacts(mapAssistantExecuteToArtifacts(response));
         const result = response.payload;
         const refreshNotice =
           response.evidenceRefreshNotice ?? result.evidence_refresh_notice;
@@ -785,12 +759,13 @@ export function UnifiedAssistantPanel({
       }
     },
     [
+      assistantRun,
       contextScope,
       ensureAssistantStreamSlot,
       noteContent,
       notePath,
-      selectedPacketIds,
       packets,
+      selectedPacketIds,
       sessionId,
       webSearch,
     ],
@@ -866,19 +841,7 @@ export function UnifiedAssistantPanel({
       setActivityHint("正在检索知识库与本地笔记…");
 
       try {
-        const assembled = await assembleContextForChat(rawMessage, intent);
-        const plan = assembled.execution_plan;
-        if (plan && plan.steps.length > 0) {
-          setExecutionPlan(plan);
-          setPendingKnowledgeChat({
-            rawMessage,
-            intent,
-            startNewSession: options?.startNewSession ?? false,
-          });
-          setActionState(buildActionState(intent, "awaiting_confirmation"));
-          setActivityHint(null);
-          return;
-        }
+        await assembleContextForChat(rawMessage, intent);
         await executeKnowledgeChat(rawMessage, intent, options);
       } catch (error) {
         const message = invokeErrorMessage(error);
@@ -893,21 +856,6 @@ export function UnifiedAssistantPanel({
     },
     [assembleContextForChat, clearTaskSurfaces, executeKnowledgeChat],
   );
-
-  const handleExecutionPlanApprove = useCallback(() => {
-    const pending = pendingKnowledgeChat;
-    if (!pending) {
-      setExecutionPlan(null);
-      return;
-    }
-    void executeKnowledgeChat(pending.rawMessage, pending.intent, {
-      startNewSession: pending.startNewSession,
-    });
-  }, [executeKnowledgeChat, pendingKnowledgeChat]);
-
-  const handleExecutionPlanModify = useCallback(() => {
-    setPacketsOpen(true);
-  }, []);
 
   const runWriting = useCallback(
     async (rawMessage: string) => {
@@ -930,7 +878,6 @@ export function UnifiedAssistantPanel({
       if (response.kind !== "writing") {
         throw new Error("助手路由异常：期望写作结果");
       }
-      replaceArtifacts(mapAssistantExecuteToArtifacts(response));
       const result = response.payload;
       const nextPatches = result.patches;
       const nextPackets = result.evidence_used;
@@ -984,7 +931,6 @@ export function UnifiedAssistantPanel({
     if (response.kind !== "citation") {
       throw new Error("助手路由异常：期望引用检查结果");
     }
-    replaceArtifacts(mapAssistantExecuteToArtifacts(response));
     const result = response.payload;
     setCitationResult(result);
     setPackets(result.evidence_used);
@@ -1017,7 +963,6 @@ export function UnifiedAssistantPanel({
       if (response.kind !== "organize") {
         throw new Error("助手路由异常：期望整理结果");
       }
-      replaceArtifacts(mapAssistantExecuteToArtifacts(response));
       const suggestions = response.payload.batch.suggestions;
       setOrganizeSuggestions(suggestions);
       setOrganizeSelection(new Set(suggestions.map((item) => item.id)));
@@ -1065,7 +1010,6 @@ export function UnifiedAssistantPanel({
       if (response.kind !== "chapter") {
         throw new Error("助手路由异常：期望章节写作结果");
       }
-      replaceArtifacts(mapAssistantExecuteToArtifacts(response));
       const nextPatches = response.payload.patches;
       setWritingPatches(nextPatches);
       setActionState(
@@ -1110,7 +1054,6 @@ export function UnifiedAssistantPanel({
       if (response.kind !== "document") {
         throw new Error("助手路由异常：期望文档检查结果");
       }
-      replaceArtifacts(mapAssistantExecuteToArtifacts(response));
       const result = response.payload;
       setDocSummary(result.analysis_summary ?? null);
       const issues: string[] = [];
@@ -1168,7 +1111,6 @@ export function UnifiedAssistantPanel({
       if (response.kind !== "research") {
         throw new Error("助手路由异常：期望研究结果");
       }
-      replaceArtifacts(mapAssistantExecuteToArtifacts(response));
       const result = response.payload;
       researchRequestIdRef.current = result.request_id;
       setResearchResult(result);
@@ -1242,7 +1184,7 @@ export function UnifiedAssistantPanel({
   }, [researchResult]);
 
   const send = useCallback(async () => {
-    if (!input.trim() || inputDisabled) return;
+    if (!input.trim() || composerDisabled) return;
     const rawMessage = input.trim();
     const intent = resolveAssistantIntent({
       message: rawMessage,
@@ -1303,11 +1245,13 @@ export function UnifiedAssistantPanel({
   }, [
     appendUserMessage,
     assistantRun,
+    clearCitationMiss,
     contextScope.pathPrefixes.length,
     contextScope.paths.length,
-    messages,
     getWritingContext,
     input,
+    composerDisabled,
+    messages,
     notePath,
     runChapter,
     runCitation,
@@ -1317,7 +1261,6 @@ export function UnifiedAssistantPanel({
     runResearch,
     runWriting,
     selectionQuote?.text,
-    streaming,
   ]);
 
   const stopStreaming = useCallback(() => {
@@ -1336,9 +1279,6 @@ export function UnifiedAssistantPanel({
     );
   }, []);
 
-  const { handleCitationClick, citationMiss, clearCitationMiss } =
-    useCitationClick(packets, () => setPacketsOpen(true), setSelectedPacketIds);
-
   const handleToolConfirm = useCallback(
     async (
       requestId: string,
@@ -1353,6 +1293,7 @@ export function UnifiedAssistantPanel({
         decision === "reject" ? "已拒绝，正在生成替代回答…" : "继续执行中…",
       );
       ensureAssistantStreamSlot();
+      let nextTaskStatus: AssistantTaskStatus = "completed";
       try {
         const raw = await toolConfirmIpc({
           request_id: requestId,
@@ -1371,7 +1312,8 @@ export function UnifiedAssistantPanel({
           status?: string;
         };
         if (!result.resumed) {
-          setActionState(buildActionState(intent, "completed"));
+          nextTaskStatus = "completed";
+          setActionState(buildActionState(intent, nextTaskStatus));
           return;
         }
         const toolCalls = mapChatToolCallsForUi(
@@ -1418,29 +1360,43 @@ export function UnifiedAssistantPanel({
           result.pending_confirmation === true ||
           result.status === "pending_tools" ||
           (toolCalls?.some((t) => t.status === "pending") ?? false);
-        setActionState(
-          buildActionState(
-            intent,
-            stillPending ? "awaiting_confirmation" : "completed",
-          ),
-        );
+        nextTaskStatus = stillPending ? "awaiting_confirmation" : "completed";
+        setActionState(buildActionState(intent, nextTaskStatus));
         if (!stillPending) {
           setHarnessRequestId(null);
+          requestIdRef.current = null;
         }
       } catch (error) {
         const message = invokeErrorMessage(error);
+        nextTaskStatus = "error";
         setMessages((prev) => [
           ...prev,
           { role: "system", content: `工具确认失败: ${message}` },
         ]);
-        setActionState(buildActionState(intent, "error", message));
+        setActionState(buildActionState(intent, nextTaskStatus, message));
       } finally {
         setStreaming(false);
         setActivityHint(null);
+        assistantRun.setFromTaskStatus(nextTaskStatus, intent);
       }
     },
-    [actionState.intent, ensureAssistantStreamSlot],
+    [actionState.intent, assistantRun, ensureAssistantStreamSlot],
   );
+
+  const dismissToolConfirm = useCallback(() => {
+    const req = toolConfirmRequest;
+    if (req) {
+      void handleToolConfirm(req.request_id, req.tool_call_id, "reject");
+      return;
+    }
+    setToolConfirmRequest(null);
+    assistantRun.setFromTaskStatus("completed", actionState.intent);
+  }, [
+    actionState.intent,
+    assistantRun,
+    handleToolConfirm,
+    toolConfirmRequest,
+  ]);
 
   const handleAcceptPatch = useCallback(
     async (patch: PatchProposal) => {
@@ -1518,7 +1474,7 @@ export function UnifiedAssistantPanel({
       clearCitationMiss();
       setActionState(buildActionState(actionState.intent, "idle"));
     },
-    [actionState.intent, clearTaskSurfaces],
+    [actionState.intent, clearCitationMiss, clearTaskSurfaces],
   );
 
   return (
@@ -1573,7 +1529,7 @@ export function UnifiedAssistantPanel({
               scene={activeScene}
               notePath={notePath}
               currentSessionId={sessionId}
-              disabled={inputDisabled}
+              disabled={chromeActionsDisabled}
               onSelectSession={handleLoadSession}
               onDeleted={(id) => {
                 if (sessionId === id) {
@@ -1588,7 +1544,7 @@ export function UnifiedAssistantPanel({
               className="h-8 gap-1 px-2 text-xs"
               title="新对话（不加载本笔记下的历史会话）"
               onClick={handleNewChat}
-              disabled={inputDisabled}
+              disabled={chromeActionsDisabled}
             >
               <MessageSquarePlus className="h-3.5 w-3.5" />
               新对话
@@ -1619,24 +1575,12 @@ export function UnifiedAssistantPanel({
               variant="outline"
               size="sm"
               className="h-7 text-xs"
-              disabled={inputDisabled}
+              disabled={chromeActionsDisabled}
               onClick={() => void handleHarnessResume()}
             >
               从 checkpoint 恢复 Agent
             </Button>
           ) : null}
-        </div>
-      ) : null}
-
-      {executionPlan &&
-      pendingKnowledgeChat &&
-      executionPlan.steps.length > 0 ? (
-        <div className="px-3 pt-3">
-          <ExecutionPlanPreview
-            plan={executionPlan}
-            onApprove={handleExecutionPlanApprove}
-            onModify={handleExecutionPlanModify}
-          />
         </div>
       ) : null}
 
@@ -1773,25 +1717,6 @@ export function UnifiedAssistantPanel({
         </div>
       ) : null}
 
-      <AssistantArtifactPanel artifacts={unifiedArtifacts} />
-
-      {harnessActivity.timeline.length > 0 ? (
-        <div
-          className="space-y-1 px-3 pt-2"
-          data-testid="harness-activity-timeline"
-        >
-          {harnessActivity.timeline.slice(-6).map((entry) => (
-            <p
-              key={entry.id}
-              className="text-[10px] text-muted-foreground"
-              title={entry.toolName}
-            >
-              {entry.label}
-            </p>
-          ))}
-        </div>
-      ) : null}
-
       {assistantRun.evidenceRefreshNotice ? (
         <div className="px-3 pt-2 text-xs text-amber-700">
           {assistantRun.evidenceRefreshNotice}
@@ -1866,7 +1791,7 @@ export function UnifiedAssistantPanel({
           <AiComposer
             value={input}
             streaming={streaming}
-            disabled={inputDisabled}
+            disabled={composerDisabled}
             placeholder="输入问题，或直接说明你想查、想改、想检、想整理什么"
             textareaRef={textareaRef}
             onComposerKeyDown={handleComposerKeyDown}
@@ -1892,7 +1817,7 @@ export function UnifiedAssistantPanel({
       <ToolConfirmDialog
         request={toolConfirmRequest}
         onConfirm={handleToolConfirm}
-        onClose={() => setToolConfirmRequest(null)}
+        onClose={dismissToolConfirm}
       />
       <RuleConfirmDialog
         request={ruleConfirmRequest}

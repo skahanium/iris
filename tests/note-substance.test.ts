@@ -56,5 +56,7 @@ describe("isNoteSubstantivelyEmpty", () => {
   it("treats legacy default heading-only new document as empty", () => {
     expect(isNoteSubstantivelyEmpty("# 新建文档\n\n")).toBe(true);
     expect(isNoteSubstantivelyEmpty("# 新建文档（1）\n\n")).toBe(true);
+    expect(isNoteSubstantivelyEmpty("# 未命名文档\n\n")).toBe(true);
+    expect(isNoteSubstantivelyEmpty("# 未命名文档（1）\n\n")).toBe(true);
   });
 });

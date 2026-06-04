@@ -11,6 +11,23 @@
 
 详见 `src/lib/editor-pm-serialize.ts`。
 
+### 块间距（空行）
+
+| 阶段 | 行为 |
+| ---- | ---- |
+| **分类** | marked `space` token → `syntaxKind: "space"`（块间 `\n\n`） |
+| **导入** | `ingestMarkdownForEditor` → `<p data-iris-spacer="true"></p>` |
+| **Schema** | `IrisParagraphExtension` 保留 `irisSpacer` |
+| **导出** | 空段落 / spacer → `closeBlock`（段落间 `\n\n`） |
+
+### 图片
+
+| 阶段 | 行为 |
+| ---- | ---- |
+| **导入** | contract `image` + `ImageExtension` |
+| **导出** | PM `image` 节点 → `![alt](src)` |
+| **拖放/粘贴** | `EditorImageDropExtension` → `vault_asset_write` → `assets/<uuid>.<ext>` |
+
 ---
 
 ## Callout（`> [!type] Title`）
@@ -46,3 +63,5 @@
 - `tests/editor-pm-serialize.test.ts` — PM 热路径与 callout
 - `tests/callout-markdown.test.ts` — callout 字符串 helper
 - `tests/editor-real-roundtrip.test.ts` — 完整笔记往返
+- `tests/markdown-spacing.test.ts` — 空行 / spacer 段落
+- `tests/markdown-wiki-link-roundtrip.test.ts` — 双链与外链

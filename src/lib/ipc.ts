@@ -76,6 +76,14 @@ export async function fileWrite(
   return invoke<FileEntry>("file_write", { path, content });
 }
 
+/** Save a vault image under `assets/` (base64 body). Returns vault-relative path. */
+export async function vaultAssetWrite(params: {
+  path: string;
+  dataBase64: string;
+}): Promise<string> {
+  return invoke<string>("vault_asset_write", params);
+}
+
 export async function fileCreate(
   path: string,
   content: string,

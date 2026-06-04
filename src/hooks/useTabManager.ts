@@ -16,10 +16,14 @@ import { mergeTabsAfterPathRename } from "@/lib/note-tab-rename";
 interface UseTabManagerOptions {
   onStatusChange?: (status: string) => void;
   onVaultIndexBump?: () => void;
+  /** Flush layer-1 save for `path` before leaving/closing; returns written markdown if any. */
+  persistBeforeLeave?: (path: string) => Promise<string | null>;
 }
 
 export function useTabManager(options: UseTabManagerOptions = {}) {
-  const { onStatusChange, onVaultIndexBump } = options;
+  const { onStatusChange, onVaultIndexBump, persistBeforeLeave } = options;
+  const persistBeforeLeaveRef = useRef(persistBeforeLeave);
+  persistBeforeLeaveRef.current = persistBeforeLeave;
 
   const [tabs, setTabs] = useState<TabItem[]>([]);
   const [activePath, setActivePath] = useState<string | null>(null);
@@ -45,12 +49,35 @@ export function useTabManager(options: UseTabManagerOptions = {}) {
     setMarkdown("");
   }, []);
 
+  const cacheTabMarkdown = useCallback((path: string, md: string) => {
+    tabMarkdownCacheRef.current.set(path, md);
+  }, []);
+
+  const persistAndCacheTab = useCallback(
+    async (path: string): Promise<string | null> => {
+      const saved = (await persistBeforeLeaveRef.current?.(path)) ?? null;
+      const md =
+        saved ??
+        (path === activePathRef.current
+          ? markdownRef.current
+          : tabMarkdownCacheRef.current.get(path));
+      if (md) {
+        cacheTabMarkdown(path, md);
+      }
+      return saved;
+    },
+    [cacheTabMarkdown],
+  );
+
   const maybeDiscardOnLeave = useCallback(
     async (path: string): Promise<boolean> => {
+      const md =
+        tabMarkdownCacheRef.current.get(path) ??
+        (path === activePathRef.current ? markdownRef.current : "");
       const discarded = await discardEmptyNoteIfNeeded(
         path,
         activePathRef.current,
-        markdownRef.current,
+        md,
       );
       if (discarded) {
         onVaultIndexBump?.();
@@ -72,7 +99,7 @@ export function useTabManager(options: UseTabManagerOptions = {}) {
       const seq = ++openFileSeqRef.current;
       const current = activePathRef.current;
       if (current && current !== path) {
-        tabMarkdownCacheRef.current.set(current, markdownRef.current);
+        await persistAndCacheTab(current);
       }
       if (
         !options?.skipDiscardPrevious &&
@@ -116,21 +143,21 @@ export function useTabManager(options: UseTabManagerOptions = {}) {
         onVaultIndexBump?.();
       }
     },
-    [maybeDiscardOnLeave, onStatusChange, onVaultIndexBump],
+    [maybeDiscardOnLeave, onStatusChange, onVaultIndexBump, persistAndCacheTab],
   );
 
   /** Switch to an already-open tab without re-reading disk when session cache exists. */
   const activateTab = useCallback(
-    (path: string) => {
+    async (path: string) => {
       if (!tabsRef.current.some((t) => t.path === path)) {
-        void openFile(path);
+        await openFile(path);
         return;
       }
       if (activePathRef.current === path) return;
 
       const leaving = activePathRef.current;
       if (leaving) {
-        tabMarkdownCacheRef.current.set(leaving, markdownRef.current);
+        await persistAndCacheTab(leaving);
       }
 
       const cached = tabMarkdownCacheRef.current.get(path);
@@ -138,24 +165,24 @@ export function useTabManager(options: UseTabManagerOptions = {}) {
         markdownRef.current = cached;
         frontmatterYamlRef.current = extractFrontmatterYaml(cached);
         setMarkdown(cached);
+        setEditorContentTick((t) => t + 1);
         activePathRef.current = path;
         setActivePath(path);
         return;
       }
 
-      void openFile(path, undefined, { skipDiscardPrevious: true });
+      await openFile(path, undefined, { skipDiscardPrevious: true });
     },
-    [openFile],
+    [openFile, persistAndCacheTab],
   );
 
   /** Open a note from the vault UI: reuse tab session when already open. */
   const openNote = useCallback(
-    (path: string, titleHint?: string) => {
+    (path: string, titleHint?: string): Promise<void> => {
       if (tabsRef.current.some((t) => t.path === path)) {
-        activateTab(path);
-        return;
+        return activateTab(path);
       }
-      void openFile(path, titleHint);
+      return openFile(path, titleHint);
     },
     [activateTab, openFile],
   );
@@ -164,6 +191,7 @@ export function useTabManager(options: UseTabManagerOptions = {}) {
     async (path: string) => {
       const isActive = activePathRef.current === path;
       try {
+        await persistAndCacheTab(path);
         await maybeDiscardOnLeave(path);
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
@@ -188,15 +216,16 @@ export function useTabManager(options: UseTabManagerOptions = {}) {
         clearEditorState();
         return;
       }
-      activateTab(switchTo);
+      await activateTab(switchTo);
     },
-    [activateTab, clearEditorState, maybeDiscardOnLeave, onStatusChange],
+    [activateTab, clearEditorState, maybeDiscardOnLeave, onStatusChange, persistAndCacheTab],
   );
 
   const handleNewNote = useCallback(async () => {
     try {
       const current = activePathRef.current;
       if (current) {
+        await persistAndCacheTab(current);
         const discarded = await maybeDiscardOnLeave(current);
         if (discarded) {
           setTabs((prev) => prev.filter((t) => t.path !== current));
@@ -215,7 +244,13 @@ export function useTabManager(options: UseTabManagerOptions = {}) {
       const msg = e instanceof Error ? e.message : String(e);
       onStatusChange?.(`新建笔记失败：${msg}`);
     }
-  }, [maybeDiscardOnLeave, openFile, onStatusChange, onVaultIndexBump]);
+  }, [
+    maybeDiscardOnLeave,
+    openFile,
+    onStatusChange,
+    onVaultIndexBump,
+    persistAndCacheTab,
+  ]);
 
   const markDirty = useCallback(() => {
     setTabs((t) =>
@@ -259,6 +294,11 @@ export function useTabManager(options: UseTabManagerOptions = {}) {
     tabMarkdownCacheRef.current.set(path, markdown);
   }, []);
 
+  const getTabMarkdownCached = useCallback(
+    (path: string) => tabMarkdownCacheRef.current.get(path),
+    [],
+  );
+
   const markClean = useCallback((path: string, title?: string) => {
     const displayTitle = title
       ? resolveNoteDisplayTitle({ path, title })
@@ -301,5 +341,6 @@ export function useTabManager(options: UseTabManagerOptions = {}) {
     replaceOpenTabPath,
     syncTabMarkdownCache,
     getEditorMarkdown,
+    getTabMarkdownCached,
   };
 }

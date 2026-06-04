@@ -7,6 +7,18 @@ import { debounce } from "@/lib/utils";
 /** Debounce for layer-1 persistence to `.md` only (not version snapshots). */
 export const EDITOR_SAVE_DEBOUNCE_MS = 1200;
 
+async function writeNoteAtPath(
+  targetPath: string,
+  getMd: () => string,
+): Promise<string | null> {
+  const md = getMd();
+  if (isNoteSubstantivelyEmpty(md)) {
+    return null;
+  }
+  await fileWrite(targetPath, md);
+  return md;
+}
+
 /**
  * Debounced note save via a single `getMarkdown` serializer (title + body).
  * Call `notifyDirty()` on edits; serialization runs only when the debounce fires.
@@ -31,12 +43,10 @@ export function useEditorSave(
   const runSaveOnce = useCallback(async (): Promise<string | null> => {
     const target = pathRef.current;
     if (!target) return null;
-    const md = getMarkdownRef.current();
-    if (isNoteSubstantivelyEmpty(md)) {
-      return null;
+    const md = await writeNoteAtPath(target, () => getMarkdownRef.current());
+    if (md) {
+      onSavedRef.current?.(md);
     }
-    await fileWrite(target, md);
-    onSavedRef.current?.(md);
     return md;
   }, []);
 
@@ -72,11 +82,26 @@ export function useEditorSave(
     [saveNote],
   );
 
+  /** Path changes are persisted via `persistBeforeLeave` in tab manager; do not flush here (pathRef race). */
   useEffect(() => {
     return () => {
-      debouncedSave.flush();
+      debouncedSave.cancel();
     };
   }, [path, debouncedSave]);
+
+  useEffect(() => {
+    const handleBeforeUnload = () => {
+      const target = pathRef.current;
+      if (!target) return;
+      debouncedSave.cancel();
+      const md = getMarkdownRef.current();
+      if (!isNoteSubstantivelyEmpty(md)) {
+        void fileWrite(target, md).catch(() => {});
+      }
+    };
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    return () => window.removeEventListener("beforeunload", handleBeforeUnload);
+  }, [debouncedSave]);
 
   const notifyDirty = useCallback(() => {
     debouncedSave();
@@ -87,9 +112,31 @@ export function useEditorSave(
     return saveNote();
   }, [debouncedSave, saveNote]);
 
+  /** Persist a specific path (e.g. tab being left) without relying on current `pathRef`. */
+  const flushSaveForPath = useCallback(
+    async (
+      targetPath: string,
+      getMarkdownOverride?: () => string,
+    ): Promise<string | null> => {
+      debouncedSave.cancel();
+      const getMd = getMarkdownOverride ?? (() => getMarkdownRef.current());
+      const md = await writeNoteAtPath(targetPath, getMd);
+      if (md && targetPath === pathRef.current) {
+        onSavedRef.current?.(md);
+      }
+      return md;
+    },
+    [debouncedSave],
+  );
+
   const cancelPendingSave = useCallback(() => {
     debouncedSave.cancel();
   }, [debouncedSave]);
 
-  return { notifyDirty, flushSave, cancelPendingSave };
+  return {
+    notifyDirty,
+    flushSave,
+    flushSaveForPath,
+    cancelPendingSave,
+  };
 }
