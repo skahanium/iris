@@ -3,23 +3,24 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { useVersionIdle, VERSION_IDLE_MS } from "@/hooks/useVersionIdle";
-
-const versionSaveIdle = vi.fn().mockResolvedValue(undefined);
-
-vi.mock("@/lib/ipc", () => ({
-  versionSaveIdle: (...args: unknown[]) => versionSaveIdle(...args),
-}));
+import type { LastSavedSnapshot } from "@/hooks/useEditorSave";
 
 function IdleHarness({
   path,
-  flushSave,
+  getLastSavedSnapshot,
+  enqueueIdleSnapshot,
   onReady,
 }: {
   path: string | null;
-  flushSave: () => Promise<string | null>;
+  getLastSavedSnapshot: () => LastSavedSnapshot | null;
+  enqueueIdleSnapshot: (snapshot: LastSavedSnapshot) => void;
   onReady: (api: { onActivity: () => void }) => void;
 }) {
-  const { onActivity } = useVersionIdle(path, flushSave);
+  const { onActivity } = useVersionIdle(
+    path,
+    getLastSavedSnapshot,
+    enqueueIdleSnapshot,
+  );
   onReady({ onActivity });
   return null;
 }
@@ -30,7 +31,6 @@ describe("useVersionIdle", () => {
 
   beforeEach(() => {
     vi.useFakeTimers();
-    versionSaveIdle.mockClear();
     delete (window as { requestIdleCallback?: unknown }).requestIdleCallback;
     container = document.createElement("div");
     document.body.appendChild(container);
@@ -46,13 +46,19 @@ describe("useVersionIdle", () => {
   });
 
   it("does not save just because a note is open", async () => {
-    const flushSave = vi.fn(async () => "body");
+    const enqueueIdleSnapshot = vi.fn();
 
     await act(async () => {
       root.render(
         createElement(IdleHarness, {
           path: "note.md",
-          flushSave,
+          getLastSavedSnapshot: () => ({
+            path: "note.md",
+            markdown: "body",
+            savedAt: 1,
+            dirtyGeneration: 1,
+          }),
+          enqueueIdleSnapshot,
           onReady: () => {},
         }),
       );
@@ -63,19 +69,26 @@ describe("useVersionIdle", () => {
       vi.runOnlyPendingTimers();
     });
 
-    expect(flushSave).not.toHaveBeenCalled();
-    expect(versionSaveIdle).not.toHaveBeenCalled();
+    expect(enqueueIdleSnapshot).not.toHaveBeenCalled();
   });
 
-  it("fires versionSaveIdle after idle interval following activity", async () => {
+  it("enqueues the latest saved snapshot after idle without flushing", async () => {
     let onActivity!: () => void;
     const flushSave = vi.fn(async () => "body");
+    const enqueueIdleSnapshot = vi.fn();
+    const snapshot: LastSavedSnapshot = {
+      path: "note.md",
+      markdown: "body",
+      savedAt: 1,
+      dirtyGeneration: 1,
+    };
 
     await act(async () => {
       root.render(
         createElement(IdleHarness, {
           path: "note.md",
-          flushSave,
+          getLastSavedSnapshot: () => snapshot,
+          enqueueIdleSnapshot,
           onReady: (api) => {
             onActivity = api.onActivity;
           },
@@ -92,22 +105,21 @@ describe("useVersionIdle", () => {
       vi.runOnlyPendingTimers();
     });
 
-    expect(flushSave).toHaveBeenCalledTimes(1);
-    expect(versionSaveIdle).toHaveBeenCalledTimes(1);
-    expect(versionSaveIdle).toHaveBeenCalledWith("note.md", "body");
+    expect(flushSave).not.toHaveBeenCalled();
+    expect(enqueueIdleSnapshot).toHaveBeenCalledTimes(1);
+    expect(enqueueIdleSnapshot).toHaveBeenCalledWith(snapshot);
   });
 
-  it("uses the markdown returned by flushSave for idle snapshots", async () => {
+  it("skips idle snapshot when no saved markdown is available", async () => {
     let onActivity!: () => void;
-    const flushSave = vi.fn(
-      async () => '---\ntitle: "x"\n---\n\nFlushed body text.',
-    );
+    const enqueueIdleSnapshot = vi.fn();
 
     await act(async () => {
       root.render(
         createElement(IdleHarness, {
           path: "note.md",
-          flushSave,
+          getLastSavedSnapshot: () => null,
+          enqueueIdleSnapshot,
           onReady: (api) => {
             onActivity = api.onActivity;
           },
@@ -124,25 +136,59 @@ describe("useVersionIdle", () => {
       vi.runOnlyPendingTimers();
     });
 
-    expect(flushSave).toHaveBeenCalled();
-    expect(versionSaveIdle).toHaveBeenCalledTimes(1);
-    expect(versionSaveIdle).toHaveBeenCalledWith(
-      "note.md",
-      '---\ntitle: "x"\n---\n\nFlushed body text.',
-    );
+    expect(enqueueIdleSnapshot).not.toHaveBeenCalled();
+  });
+
+  it("skips stale saved markdown from another path", async () => {
+    let onActivity!: () => void;
+    const enqueueIdleSnapshot = vi.fn();
+
+    await act(async () => {
+      root.render(
+        createElement(IdleHarness, {
+          path: "note.md",
+          getLastSavedSnapshot: () => ({
+            path: "other.md",
+            markdown: "body",
+            savedAt: 1,
+            dirtyGeneration: 1,
+          }),
+          enqueueIdleSnapshot,
+          onReady: (api) => {
+            onActivity = api.onActivity;
+          },
+        }),
+      );
+    });
+
+    act(() => {
+      onActivity();
+    });
+
+    await act(async () => {
+      vi.advanceTimersByTime(VERSION_IDLE_MS);
+      vi.runOnlyPendingTimers();
+    });
+
+    expect(enqueueIdleSnapshot).not.toHaveBeenCalled();
   });
 
   it("resets idle timer on activity", async () => {
     let onActivity!: () => void;
-    const flushSave = vi.fn(
-      async () => '---\ntitle: "x"\n---\n\nPersisted body text.',
-    );
+    const enqueueIdleSnapshot = vi.fn();
+    const snapshot: LastSavedSnapshot = {
+      path: "note.md",
+      markdown: '---\ntitle: "x"\n---\n\nPersisted body text.',
+      savedAt: 1,
+      dirtyGeneration: 1,
+    };
 
     await act(async () => {
       root.render(
         createElement(IdleHarness, {
           path: "note.md",
-          flushSave,
+          getLastSavedSnapshot: () => snapshot,
+          enqueueIdleSnapshot,
           onReady: (api) => {
             onActivity = api.onActivity;
           },
@@ -157,7 +203,7 @@ describe("useVersionIdle", () => {
     await act(async () => {
       vi.advanceTimersByTime(VERSION_IDLE_MS / 2);
     });
-    expect(versionSaveIdle).not.toHaveBeenCalled();
+    expect(enqueueIdleSnapshot).not.toHaveBeenCalled();
 
     act(() => {
       onActivity();
@@ -166,20 +212,27 @@ describe("useVersionIdle", () => {
     await act(async () => {
       vi.advanceTimersByTime(VERSION_IDLE_MS - 1000);
     });
-    expect(versionSaveIdle).not.toHaveBeenCalled();
+    expect(enqueueIdleSnapshot).not.toHaveBeenCalled();
 
     await act(async () => {
       vi.advanceTimersByTime(1000);
       vi.runOnlyPendingTimers();
     });
 
-    expect(versionSaveIdle).toHaveBeenCalledTimes(1);
-    expect(flushSave).toHaveBeenCalled();
+    expect(enqueueIdleSnapshot).toHaveBeenCalledTimes(1);
+    expect(enqueueIdleSnapshot).toHaveBeenCalledWith(snapshot);
   });
 
   it("defers snapshot until the browser idle callback runs", async () => {
     let onActivity!: () => void;
     const flushSave = vi.fn(async () => "body");
+    const enqueueIdleSnapshot = vi.fn();
+    const snapshot: LastSavedSnapshot = {
+      path: "note.md",
+      markdown: "body",
+      savedAt: 1,
+      dirtyGeneration: 1,
+    };
     let idleCallback: IdleRequestCallback | null = null;
     const requestIdleCallback = vi.fn((cb: IdleRequestCallback) => {
       idleCallback = cb;
@@ -191,7 +244,8 @@ describe("useVersionIdle", () => {
       root.render(
         createElement(IdleHarness, {
           path: "note.md",
-          flushSave,
+          getLastSavedSnapshot: () => snapshot,
+          enqueueIdleSnapshot,
           onReady: (api) => {
             onActivity = api.onActivity;
           },
@@ -209,7 +263,7 @@ describe("useVersionIdle", () => {
 
     expect(requestIdleCallback).toHaveBeenCalledTimes(1);
     expect(flushSave).not.toHaveBeenCalled();
-    expect(versionSaveIdle).not.toHaveBeenCalled();
+    expect(enqueueIdleSnapshot).not.toHaveBeenCalled();
 
     await act(async () => {
       idleCallback?.({
@@ -218,8 +272,8 @@ describe("useVersionIdle", () => {
       });
     });
 
-    expect(flushSave).toHaveBeenCalledTimes(1);
-    expect(versionSaveIdle).toHaveBeenCalledWith("note.md", "body");
+    expect(flushSave).not.toHaveBeenCalled();
+    expect(enqueueIdleSnapshot).toHaveBeenCalledWith(snapshot);
   });
 
   it("changing path cancels pending idle saves without scheduling a new one", async () => {
@@ -231,7 +285,13 @@ describe("useVersionIdle", () => {
       root.render(
         createElement(IdleHarness, {
           path: "first.md",
-          flushSave: firstFlush,
+          getLastSavedSnapshot: () => ({
+            path: "first.md",
+            markdown: "first",
+            savedAt: 1,
+            dirtyGeneration: 1,
+          }),
+          enqueueIdleSnapshot: () => {},
           onReady: (api) => {
             onActivity = api.onActivity;
           },
@@ -248,7 +308,13 @@ describe("useVersionIdle", () => {
       root.render(
         createElement(IdleHarness, {
           path: "second.md",
-          flushSave: secondFlush,
+          getLastSavedSnapshot: () => ({
+            path: "second.md",
+            markdown: "second",
+            savedAt: 1,
+            dirtyGeneration: 1,
+          }),
+          enqueueIdleSnapshot: () => {},
           onReady: (api) => {
             onActivity = api.onActivity;
           },
@@ -263,17 +329,23 @@ describe("useVersionIdle", () => {
 
     expect(firstFlush).not.toHaveBeenCalled();
     expect(secondFlush).not.toHaveBeenCalled();
-    expect(versionSaveIdle).not.toHaveBeenCalled();
   });
 
   it("skips idle snapshot for substantively empty content", async () => {
     let onActivity!: () => void;
+    const enqueueIdleSnapshot = vi.fn();
 
     await act(async () => {
       root.render(
         createElement(IdleHarness, {
           path: "note.md",
-          flushSave: async () => "",
+          getLastSavedSnapshot: () => ({
+            path: "note.md",
+            markdown: "",
+            savedAt: 1,
+            dirtyGeneration: 1,
+          }),
+          enqueueIdleSnapshot,
           onReady: (api) => {
             onActivity = api.onActivity;
           },
@@ -290,6 +362,6 @@ describe("useVersionIdle", () => {
       vi.runOnlyPendingTimers();
     });
 
-    expect(versionSaveIdle).not.toHaveBeenCalled();
+    expect(enqueueIdleSnapshot).not.toHaveBeenCalled();
   });
 });

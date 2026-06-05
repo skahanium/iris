@@ -4,7 +4,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { useTauriCloseSave } from "@/hooks/useTauriCloseSave";
 
+const appExit = vi.hoisted(() => vi.fn());
+
 const tauriWindow = vi.hoisted(() => ({
+  close: vi.fn(),
   destroy: vi.fn(),
   onCloseRequested: vi.fn(),
   unlisten: vi.fn(),
@@ -15,9 +18,14 @@ const tauriWindow = vi.hoisted(() => ({
 
 vi.mock("@tauri-apps/api/window", () => ({
   getCurrentWindow: () => ({
+    close: tauriWindow.close,
     destroy: tauriWindow.destroy,
     onCloseRequested: tauriWindow.onCloseRequested,
   }),
+}));
+
+vi.mock("@/lib/ipc", () => ({
+  appExit: (...args: unknown[]) => appExit(...args),
 }));
 
 vi.mock("@/lib/tauri-runtime", () => ({
@@ -43,6 +51,10 @@ describe("useTauriCloseSave", () => {
     container = document.createElement("div");
     document.body.appendChild(container);
     root = createRoot(container);
+    appExit.mockReset();
+    appExit.mockResolvedValue(undefined);
+    tauriWindow.close.mockReset();
+    tauriWindow.close.mockResolvedValue(undefined);
     tauriWindow.destroy.mockReset();
     tauriWindow.destroy.mockResolvedValue(undefined);
     tauriWindow.unlisten.mockReset();
@@ -59,23 +71,40 @@ describe("useTauriCloseSave", () => {
       root.unmount();
     });
     container.remove();
+    vi.useRealTimers();
   });
 
-  it("prevents close, flushes open tabs, then destroys the window", async () => {
+  it("prevents the first close, flushes open tabs, then exits the app on the next tick", async () => {
+    vi.useFakeTimers();
     const flushBeforeClose = vi.fn(async () => undefined);
-    const preventDefault = vi.fn();
+    const firstPreventDefault = vi.fn();
+    const secondPreventDefault = vi.fn();
 
     await act(async () => {
       root.render(createElement(Harness, { flushBeforeClose }));
     });
 
     await act(async () => {
-      await tauriWindow.handler?.({ preventDefault });
+      await tauriWindow.handler?.({ preventDefault: firstPreventDefault });
     });
 
-    expect(preventDefault).toHaveBeenCalledTimes(1);
+    expect(appExit).not.toHaveBeenCalled();
+
+    await act(async () => {
+      vi.runOnlyPendingTimers();
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      await tauriWindow.handler?.({ preventDefault: secondPreventDefault });
+    });
+
+    expect(firstPreventDefault).toHaveBeenCalledTimes(1);
+    expect(secondPreventDefault).not.toHaveBeenCalled();
     expect(flushBeforeClose).toHaveBeenCalledTimes(1);
-    expect(tauriWindow.destroy).toHaveBeenCalledTimes(1);
+    expect(appExit).toHaveBeenCalledTimes(1);
+    expect(tauriWindow.close).not.toHaveBeenCalled();
+    expect(tauriWindow.destroy).not.toHaveBeenCalled();
   });
 
   it("keeps the window open and reports an error when flushing fails", async () => {
@@ -95,6 +124,8 @@ describe("useTauriCloseSave", () => {
 
     expect(preventDefault).toHaveBeenCalledTimes(1);
     expect(flushBeforeClose).toHaveBeenCalledTimes(1);
+    expect(appExit).not.toHaveBeenCalled();
+    expect(tauriWindow.close).not.toHaveBeenCalled();
     expect(tauriWindow.destroy).not.toHaveBeenCalled();
     expect(onError).toHaveBeenCalledWith("disk write failed");
   });

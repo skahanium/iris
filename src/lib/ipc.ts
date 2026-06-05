@@ -20,6 +20,7 @@ import type {
 } from "@/types/ai";
 import type {
   AiCacheClearResult,
+  AppExitResult,
   BacklinkEntry,
   FileChangedEvent,
   FileEntry,
@@ -950,6 +951,11 @@ export interface DesktopChromeMetrics {
   titlebarHeightLogical: number;
   trafficInsetLogical: number;
   scaleFactor: number;
+}
+
+/** Exit the desktop app after close guards have finished. */
+export async function appExit(): Promise<AppExitResult> {
+  return invoke<AppExitResult>("app_exit");
 }
 
 /** 读取当前平台顶栏指标并用于 CSS 变量同步 */

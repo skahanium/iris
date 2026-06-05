@@ -30,17 +30,24 @@ function TestHarness({
   onReady: (api: {
     notifyDirty: () => void;
     flushSave: () => Promise<string | null>;
+    getLastSavedSnapshot: () => {
+      path: string;
+      markdown: string;
+      savedAt: number;
+      dirtyGeneration: number;
+    } | null;
     flushSaveForPath: (
       targetPath: string,
       getMarkdownOverride?: () => string,
     ) => Promise<string | null>;
   }) => void;
 }) {
-  const { notifyDirty, flushSave, flushSaveForPath } = useEditorSave(
-    path,
-    getMarkdown ?? (() => '---\ntitle: "x"\n---\n\nSubstantive body.'),
-  );
-  onReady({ notifyDirty, flushSave, flushSaveForPath });
+  const { notifyDirty, flushSave, getLastSavedSnapshot, flushSaveForPath } =
+    useEditorSave(
+      path,
+      getMarkdown ?? (() => '---\ntitle: "x"\n---\n\nSubstantive body.'),
+    );
+  onReady({ notifyDirty, flushSave, getLastSavedSnapshot, flushSaveForPath });
   return null;
 }
 
@@ -131,6 +138,12 @@ describe("useEditorSave", () => {
 
   it("flushSave returns the markdown it wrote", async () => {
     let flushSave!: () => Promise<string | null>;
+    let getLastSavedSnapshot!: () => {
+      path: string;
+      markdown: string;
+      savedAt: number;
+      dirtyGeneration: number;
+    } | null;
     const getMarkdown = vi.fn(
       () => '---\ntitle: "x"\n---\n\nManual checkpoint body.',
     );
@@ -141,6 +154,7 @@ describe("useEditorSave", () => {
           getMarkdown,
           onReady: (api) => {
             flushSave = api.flushSave;
+            getLastSavedSnapshot = api.getLastSavedSnapshot;
           },
         }),
       );
@@ -157,6 +171,50 @@ describe("useEditorSave", () => {
       "note.md",
       '---\ntitle: "x"\n---\n\nManual checkpoint body.',
     );
+    expect(getLastSavedSnapshot()).toMatchObject({
+      path: "note.md",
+      markdown: '---\ntitle: "x"\n---\n\nManual checkpoint body.',
+      dirtyGeneration: 0,
+    });
+    expect(getLastSavedSnapshot()?.savedAt).toBeGreaterThan(0);
+  });
+
+  it("records the dirty generation that produced the saved snapshot", async () => {
+    let notifyDirty!: () => void;
+    let flushSave!: () => Promise<string | null>;
+    let getLastSavedSnapshot!: () => {
+      path: string;
+      markdown: string;
+      savedAt: number;
+      dirtyGeneration: number;
+    } | null;
+
+    await act(async () => {
+      root.render(
+        createElement(TestHarness, {
+          onReady: (api) => {
+            notifyDirty = api.notifyDirty;
+            flushSave = api.flushSave;
+            getLastSavedSnapshot = api.getLastSavedSnapshot;
+          },
+        }),
+      );
+    });
+
+    act(() => {
+      notifyDirty();
+      notifyDirty();
+    });
+
+    await act(async () => {
+      await flushSave();
+    });
+
+    expect(getLastSavedSnapshot()).toMatchObject({
+      path: "note.md",
+      markdown: '---\ntitle: "x"\n---\n\nSubstantive body.',
+      dirtyGeneration: 2,
+    });
   });
 
   it("flushSaveForPath writes the leaving path while active path is already B", async () => {

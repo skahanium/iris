@@ -25,18 +25,57 @@ pub struct SnapshotDecisionInput<'a> {
     pub now: DateTime<Utc>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SnapshotSkipReason {
+    DuplicateHash,
+    AutoIdleAnySnapshotCooldown,
+    AutoIdleIntervalCooldown,
+}
+
+impl SnapshotSkipReason {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::DuplicateHash => "duplicate_hash",
+            Self::AutoIdleAnySnapshotCooldown => "auto_idle_any_snapshot_cooldown",
+            Self::AutoIdleIntervalCooldown => "auto_idle_interval_cooldown",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SnapshotDecision {
+    pub create: bool,
+    pub skip_reason: Option<SnapshotSkipReason>,
+}
+
+impl SnapshotDecision {
+    fn create() -> Self {
+        Self {
+            create: true,
+            skip_reason: None,
+        }
+    }
+
+    fn skip(skip_reason: SnapshotSkipReason) -> Self {
+        Self {
+            create: false,
+            skip_reason: Some(skip_reason),
+        }
+    }
+}
+
 /// Whether a new snapshot row should be created.
-pub fn should_create_snapshot(input: &SnapshotDecisionInput<'_>) -> bool {
+pub fn decide_snapshot(input: &SnapshotDecisionInput<'_>) -> SnapshotDecision {
     if input.kind.bypasses_hash_dedup() {
-        return true;
+        return SnapshotDecision::create();
     }
 
     let Some(latest) = &input.latest else {
-        return true;
+        return SnapshotDecision::create();
     };
 
     if latest.content_hash == input.content_hash {
-        return false;
+        return SnapshotDecision::skip(SnapshotSkipReason::DuplicateHash);
     }
 
     if input.kind == VersionKind::AutoIdle {
@@ -46,19 +85,25 @@ pub fn should_create_snapshot(input: &SnapshotDecisionInput<'_>) -> bool {
             .num_seconds()
             < AUTO_IDLE_ANY_SNAPSHOT_GAP_SECS
         {
-            return false;
+            return SnapshotDecision::skip(SnapshotSkipReason::AutoIdleAnySnapshotCooldown);
         }
 
         if let Some(last_idle) = input.last_auto_idle_at {
             if input.now.signed_duration_since(last_idle).num_seconds()
                 < AUTO_IDLE_MIN_INTERVAL_SECS
             {
-                return false;
+                return SnapshotDecision::skip(SnapshotSkipReason::AutoIdleIntervalCooldown);
             }
         }
     }
 
-    true
+    SnapshotDecision::create()
+}
+
+/// Whether a new snapshot row should be created.
+#[allow(dead_code)]
+pub fn should_create_snapshot(input: &SnapshotDecisionInput<'_>) -> bool {
+    decide_snapshot(input).create
 }
 
 pub fn parse_created_at(raw: &str) -> DateTime<Utc> {
@@ -149,5 +194,56 @@ mod tests {
             now: Utc::now(),
         };
         assert!(should_create_snapshot(&input));
+    }
+
+    #[test]
+    fn policy_reports_duplicate_hash_skip_reason() {
+        let input = SnapshotDecisionInput {
+            kind: VersionKind::Manual,
+            content_hash: "abc",
+            latest: Some(latest("abc", VersionKind::Manual, 60)),
+            last_auto_idle_at: None,
+            now: Utc::now(),
+        };
+        let decision = decide_snapshot(&input);
+        assert!(!decision.create);
+        assert_eq!(
+            decision.skip_reason,
+            Some(SnapshotSkipReason::DuplicateHash)
+        );
+    }
+
+    #[test]
+    fn policy_reports_auto_idle_any_snapshot_cooldown_skip_reason() {
+        let input = SnapshotDecisionInput {
+            kind: VersionKind::AutoIdle,
+            content_hash: "new",
+            latest: Some(latest("old", VersionKind::Manual, 30)),
+            last_auto_idle_at: None,
+            now: Utc::now(),
+        };
+        let decision = decide_snapshot(&input);
+        assert!(!decision.create);
+        assert_eq!(
+            decision.skip_reason,
+            Some(SnapshotSkipReason::AutoIdleAnySnapshotCooldown)
+        );
+    }
+
+    #[test]
+    fn policy_reports_auto_idle_interval_skip_reason() {
+        let input = SnapshotDecisionInput {
+            kind: VersionKind::AutoIdle,
+            content_hash: "new",
+            latest: Some(latest("old", VersionKind::AutoIdle, 600)),
+            last_auto_idle_at: Some(Utc::now() - chrono::Duration::seconds(120)),
+            now: Utc::now(),
+        };
+        let decision = decide_snapshot(&input);
+        assert!(!decision.create);
+        assert_eq!(
+            decision.skip_reason,
+            Some(SnapshotSkipReason::AutoIdleIntervalCooldown)
+        );
     }
 }

@@ -13,9 +13,11 @@ import { CalloutBlockquoteExtension } from "@/components/editor/extensions/Callo
 import { AiStreamExtension } from "@/components/editor/extensions/AiStreamExtension";
 import { HeadingFoldExtension } from "@/components/editor/extensions/HeadingFoldExtension";
 import { ImageExtension } from "@/components/editor/extensions/ImageExtension";
+import { FindHighlightExtension } from "@/components/editor/extensions/FindHighlightExtension";
 import { IrisParagraphExtension } from "@/components/editor/extensions/IrisParagraphExtension";
 import { IrisDocument } from "@/components/editor/extensions/IrisDocument";
 import { LinkExtension } from "@/components/editor/extensions/LinkExtension";
+import { ListIndentKeymapExtension } from "@/components/editor/extensions/ListIndentKeymapExtension";
 import { PreserveBlockExtension } from "@/components/editor/extensions/PreserveBlockExtension";
 import { WikiLinkExtension } from "@/components/editor/extensions/WikiLinkExtension";
 import { editorDocToMarkdown } from "@/lib/editor-pm-serialize";
@@ -38,6 +40,8 @@ const productionExtensions = [
     },
   }),
   IrisParagraphExtension,
+  ListIndentKeymapExtension,
+  FindHighlightExtension,
   LinkExtension,
   ImageExtension,
   TaskList,

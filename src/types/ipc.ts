@@ -41,6 +41,8 @@ export interface LlmProviderInfo {
   default_model: string;
 }
 
+export type AppExitResult = void;
+
 export interface KeywordHit {
   path: string;
   title: string;
@@ -161,6 +163,11 @@ export interface VersionSaveCompleteEvent {
   kind: VersionKind | "manual" | "auto_idle";
   created: boolean;
   versionId: number | null;
+  skipReason?:
+    | "duplicate_hash"
+    | "auto_idle_any_snapshot_cooldown"
+    | "auto_idle_interval_cooldown"
+    | null;
   error: string | null;
 }
 

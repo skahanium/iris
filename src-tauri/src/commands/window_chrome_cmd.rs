@@ -1,5 +1,5 @@
 use serde::Serialize;
-use tauri::WebviewWindow;
+use tauri::{AppHandle, WebviewWindow};
 
 /// 桌面顶栏与交通灯留白指标（逻辑像素，与 `chrome_metrics` 一致）。
 #[derive(Debug, Clone, Serialize)]
@@ -39,4 +39,10 @@ pub fn get_desktop_chrome_metrics(window: WebviewWindow) -> DesktopChromeMetrics
 #[tauri::command]
 pub fn reapply_window_chrome(window: WebviewWindow) {
     crate::window_chrome::apply_main_window_chrome(&window);
+}
+
+/// Exit the Tauri application after the frontend has completed close guards.
+#[tauri::command]
+pub fn app_exit(app: AppHandle) {
+    app.exit(0);
 }

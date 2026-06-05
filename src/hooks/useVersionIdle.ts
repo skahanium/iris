@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef } from "react";
 
-import { versionSaveIdle } from "@/lib/ipc";
 import { isNoteSubstantivelyEmpty } from "@/lib/note-substance";
+import type { LastSavedSnapshot } from "@/lib/version-snapshot-scheduler";
 
 /** Matches `policy::AUTO_IDLE_MIN_INTERVAL_SECS` in the Rust backend. */
 export const VERSION_IDLE_MS = 10 * 60 * 1000;
@@ -23,12 +23,15 @@ function runWhenIdle(fn: () => void): void {
  */
 export function useVersionIdle(
   path: string | null,
-  flushSave: () => Promise<string | null>,
+  getLastSavedSnapshot: () => LastSavedSnapshot | null,
+  enqueueIdleSnapshot: (snapshot: LastSavedSnapshot) => void,
 ) {
   const pathRef = useRef(path);
-  const flushSaveRef = useRef(flushSave);
+  const getLastSavedSnapshotRef = useRef(getLastSavedSnapshot);
+  const enqueueIdleSnapshotRef = useRef(enqueueIdleSnapshot);
   pathRef.current = path;
-  flushSaveRef.current = flushSave;
+  getLastSavedSnapshotRef.current = getLastSavedSnapshot;
+  enqueueIdleSnapshotRef.current = enqueueIdleSnapshot;
 
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -51,15 +54,10 @@ export function useVersionIdle(
       const target = pathRef.current;
       if (!target) return;
       runWhenIdle(() => {
-        void flushSaveRef
-          .current()
-          .then((content) => {
-            if (!content || isNoteSubstantivelyEmpty(content)) return;
-            void versionSaveIdle(target, content);
-          })
-          .catch((err: unknown) => {
-            console.warn("idle version save skipped after flush failure", err);
-          });
+        const snapshot = getLastSavedSnapshotRef.current();
+        if (!snapshot || snapshot.path !== target) return;
+        if (isNoteSubstantivelyEmpty(snapshot.markdown)) return;
+        enqueueIdleSnapshotRef.current(snapshot);
       });
     }, VERSION_IDLE_MS);
   }, [clearTimer]);
@@ -68,5 +66,5 @@ export function useVersionIdle(
     schedule();
   }, [schedule]);
 
-  return { onActivity };
+  return { onActivity, clearTimer };
 }

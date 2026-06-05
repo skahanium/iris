@@ -2,10 +2,12 @@ import { useCallback, useEffect, useMemo, useRef } from "react";
 
 import { fileWrite } from "@/lib/ipc";
 import { isNoteSubstantivelyEmpty } from "@/lib/note-substance";
+import type { LastSavedSnapshot } from "@/lib/version-snapshot-scheduler";
 import { debounce } from "@/lib/utils";
 
 /** Debounce for layer-1 persistence to `.md` only (not version snapshots). */
 export const EDITOR_SAVE_DEBOUNCE_MS = 1200;
+export type { LastSavedSnapshot } from "@/lib/version-snapshot-scheduler";
 
 async function writeNoteAtPath(
   targetPath: string,
@@ -44,16 +46,31 @@ export function useEditorSave(
 
   const saveInFlightRef = useRef<Promise<string | null> | null>(null);
   const saveAgainRef = useRef(false);
+  const dirtyGenerationRef = useRef(0);
+  const lastSavedSnapshotRef = useRef<LastSavedSnapshot | null>(null);
+
+  const recordSavedSnapshot = useCallback(
+    (targetPath: string, markdown: string) => {
+      lastSavedSnapshotRef.current = {
+        path: targetPath,
+        markdown,
+        savedAt: Date.now(),
+        dirtyGeneration: dirtyGenerationRef.current,
+      };
+    },
+    [],
+  );
 
   const runSaveOnce = useCallback(async (): Promise<string | null> => {
     const target = pathRef.current;
     if (!target) return null;
     const md = await writeNoteAtPath(target, () => getMarkdownRef.current());
     if (md) {
+      recordSavedSnapshot(target, md);
       onSavedRef.current?.(md);
     }
     return md;
-  }, []);
+  }, [recordSavedSnapshot]);
 
   const saveNote = useCallback(async (): Promise<string | null> => {
     if (saveInFlightRef.current) {
@@ -95,6 +112,7 @@ export function useEditorSave(
   }, [path, debouncedSave]);
 
   const notifyDirty = useCallback(() => {
+    dirtyGenerationRef.current += 1;
     debouncedSave();
   }, [debouncedSave]);
 
@@ -115,22 +133,31 @@ export function useEditorSave(
       }
       const getMd = getMarkdownOverride ?? (() => getMarkdownRef.current());
       const md = await writeNoteAtPath(targetPath, getMd);
+      if (md) {
+        recordSavedSnapshot(targetPath, md);
+      }
       if (md && targetPath === pathRef.current) {
         onSavedRef.current?.(md);
       }
       return md;
     },
-    [debouncedSave],
+    [debouncedSave, recordSavedSnapshot],
   );
 
   const cancelPendingSave = useCallback(() => {
     debouncedSave.cancel();
   }, [debouncedSave]);
 
+  const getLastSavedSnapshot = useCallback(
+    () => lastSavedSnapshotRef.current,
+    [],
+  );
+
   return {
     notifyDirty,
     flushSave,
     flushSaveForPath,
     cancelPendingSave,
+    getLastSavedSnapshot,
   };
 }

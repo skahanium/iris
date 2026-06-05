@@ -22,6 +22,7 @@ import {
   type AssistantChromeSnapshot,
 } from "@/types/assistant-chrome";
 import { DocumentTitleField } from "@/components/editor/DocumentTitleField";
+import { EditorFindReplaceBar } from "@/components/editor/EditorFindReplaceBar";
 import { EditorOutline } from "@/components/editor/EditorOutline";
 import { TipTapEditor } from "@/components/editor/TipTapEditor";
 import { IrisContextMenu } from "@/components/ui/iris-context-menu";
@@ -75,6 +76,7 @@ import {
   listenVersionSaveComplete,
   settingsGet,
   settingsSet,
+  versionSaveIdle,
   versionSaveManual,
 } from "@/lib/ipc";
 import { setCachedEditorHtml } from "@/lib/editor-html-cache";
@@ -82,6 +84,16 @@ import { waitForEditorRef } from "@/lib/wait-for-editor";
 import { isNoteSubstantivelyEmpty } from "@/lib/note-substance";
 import { formatVersionSaveStatus } from "@/lib/version-save-status";
 import { isTauriRuntime } from "@/lib/tauri-runtime";
+import type { AutoSnapshotLeaveReason } from "@/lib/version-auto-snapshot-policy";
+import { createLeaveSnapshotEnqueuer } from "@/lib/version-leave-snapshot";
+import {
+  persistActiveTabBeforeLeave,
+  persistInactiveDirtyTabBeforeLeave,
+} from "@/lib/persist-before-leave";
+import {
+  createVersionSnapshotScheduler,
+  type LastSavedSnapshot,
+} from "@/lib/version-snapshot-scheduler";
 import { cn } from "@/lib/utils";
 
 const GraphView = lazy(() =>
@@ -107,6 +119,10 @@ const LazyFallback = () => (
 );
 
 const OUTLINE_OPEN_KEY = "iris-outline-open";
+
+interface PersistBeforeLeaveOptions {
+  reason?: AutoSnapshotLeaveReason;
+}
 
 function loadOutlineOpen(): boolean {
   try {
@@ -196,6 +212,10 @@ function App() {
   const [keyboardLeaderPending, setKeyboardLeaderPending] = useState(false);
   const [zen, setZen] = useState(false);
   const [outlineOpen, setOutlineOpen] = useState(loadOutlineOpen);
+  const [findReplaceOpen, setFindReplaceOpen] = useState(false);
+  const [findReplaceMode, setFindReplaceMode] = useState<"find" | "replace">(
+    "find",
+  );
   const [vaultIndexEpoch, setVaultIndexEpoch] = useState(0);
   const { zoom: editorZoom, zoomIn, zoomOut, resetZoom } = useEditorZoom();
   const editorRef = useRef<Editor | null>(null);
@@ -214,9 +234,13 @@ function App() {
   );
 
   const dirtyRef = useRef(false);
+  const autoSnapshotGenerationRef = useRef(0);
 
   const persistBeforeLeaveRef = useRef<
-    (path: string) => Promise<string | null>
+    (
+      path: string,
+      options?: PersistBeforeLeaveOptions,
+    ) => Promise<string | null>
   >(async () => null);
 
   const {
@@ -286,30 +310,75 @@ function App() {
 
   getLiveMarkdownRef.current = getLiveMarkdown;
 
-  const { notifyDirty, flushSave, flushSaveForPath } = useEditorSave(
-    activePath,
-    () => getLiveMarkdownRef.current(),
-    (md) => {
-      applySavedMarkdown(md);
-      dirtyRef.current = false;
-      const path = activePathRef.current;
-      if (path) {
-        setMarkdown(md);
-        syncTabMarkdownCache(path, md);
-        markClean(path, resolveNoteDisplayTitle({ path, title: noteTitle }));
-        if (noteTitle.trim() === "") {
-          schedulePathSync(path, noteTitle);
+  const { notifyDirty, flushSave, flushSaveForPath, getLastSavedSnapshot } =
+    useEditorSave(
+      activePath,
+      () => getLiveMarkdownRef.current(),
+      (md) => {
+        applySavedMarkdown(md);
+        dirtyRef.current = false;
+        const path = activePathRef.current;
+        if (path) {
+          setMarkdown(md);
+          syncTabMarkdownCache(path, md);
+          markClean(path, resolveNoteDisplayTitle({ path, title: noteTitle }));
+          if (noteTitle.trim() === "") {
+            schedulePathSync(path, noteTitle);
+          }
         }
-      }
-    },
+      },
+    );
+
+  const versionSnapshotScheduler = useMemo(
+    () =>
+      createVersionSnapshotScheduler({
+        versionSaveIdle,
+        onError: (err) => {
+          const msg = err instanceof Error ? err.message : String(err);
+          setAiStatus(`自动版本备份提交失败：${msg}`);
+        },
+      }),
+    [],
   );
 
-  persistBeforeLeaveRef.current = async (path: string) => {
+  const enqueueIdleSnapshot = useCallback(
+    (snapshot: LastSavedSnapshot) => {
+      const result = versionSnapshotScheduler.enqueueIdle(snapshot);
+      if (result.accepted) {
+        void result.done;
+      }
+    },
+    [versionSnapshotScheduler],
+  );
+
+  const enqueueLeaveSnapshot = useMemo(
+    () =>
+      createLeaveSnapshotEnqueuer({
+        enqueueIdleSnapshot,
+        nextDirtyGeneration: () => {
+          autoSnapshotGenerationRef.current += 1;
+          return autoSnapshotGenerationRef.current;
+        },
+      }),
+    [enqueueIdleSnapshot],
+  );
+
+  persistBeforeLeaveRef.current = async (
+    path: string,
+    options: PersistBeforeLeaveOptions = {},
+  ) => {
+    const reason = options.reason ?? "tab_leave";
     const tab = tabsRef.current.find((t) => t.path === path);
     if (path === activePathRef.current) {
       await waitForEditorRef(editorRef);
-      const snapshot = getLiveMarkdownRef.current();
-      const md = await flushSaveForPath(path, () => snapshot);
+      const md = await persistActiveTabBeforeLeave({
+        path,
+        reason,
+        getMarkdown: () => getLiveMarkdownRef.current(),
+        flushSaveForPath,
+        getLastSavedSnapshot,
+        enqueueIdleSnapshot,
+      });
       if (md) {
         dirtyRef.current = false;
         setMarkdown(md);
@@ -329,29 +398,41 @@ function App() {
     if (!cached || isNoteSubstantivelyEmpty(cached)) {
       return null;
     }
-    await fileWrite(path, cached);
+    await persistInactiveDirtyTabBeforeLeave({
+      path,
+      reason,
+      cachedMarkdown: cached,
+      writeFile: async (targetPath, content) => {
+        await fileWrite(targetPath, content);
+      },
+      enqueueLeaveSnapshot,
+    });
     markClean(path, tab.title);
     return cached;
   };
 
+  const { onActivity: resetVersionIdle, clearTimer: clearVersionIdleTimer } =
+    useVersionIdle(activePath, getLastSavedSnapshot, enqueueIdleSnapshot);
+
   const flushAllOpenTabs = useCallback(async () => {
     const paths = tabsRef.current.map((tab) => tab.path);
-    for (const path of paths) {
-      await persistBeforeLeaveRef.current(path);
+    versionSnapshotScheduler.setAppClosing(true);
+    clearVersionIdleTimer();
+    try {
+      for (const path of paths) {
+        await persistBeforeLeaveRef.current(path, { reason: "app_close" });
+      }
+    } finally {
+      versionSnapshotScheduler.setAppClosing(false);
     }
-  }, []);
+  }, [clearVersionIdleTimer, versionSnapshotScheduler]);
 
   useTauriCloseSave({
-    enabled: Boolean(vaultPath),
     flushBeforeClose: flushAllOpenTabs,
     onError: (message) => {
       setAiStatus(`关闭前保存失败：${message}`);
     },
   });
-
-  const { onActivity: resetVersionIdle } = useVersionIdle(activePath, () =>
-    flushSave(),
-  );
 
   useEffect(() => {
     if (!isTauriRuntime()) return;
@@ -427,11 +508,21 @@ function App() {
     const md = await flushSave();
     if (!md) return;
     setAiStatus("正在后台创建版本快照…");
-    void versionSaveManual(path, md).catch((err: unknown) => {
-      const msg = err instanceof Error ? err.message : String(err);
-      setAiStatus(`版本快照提交失败：${msg}`);
-    });
-  }, [flushSave, activePathRef]);
+    versionSnapshotScheduler.markHighPriorityStart(path);
+    void versionSaveManual(path, md)
+      .catch((err: unknown) => {
+        const msg = err instanceof Error ? err.message : String(err);
+        setAiStatus(`版本快照提交失败：${msg}`);
+      })
+      .finally(() => {
+        versionSnapshotScheduler.markHighPriorityEnd(path);
+      });
+  }, [flushSave, activePathRef, versionSnapshotScheduler]);
+
+  const openFindReplace = useCallback((mode: "find" | "replace") => {
+    setFindReplaceMode(mode);
+    setFindReplaceOpen(true);
+  }, []);
 
   const handleDirty = useCallback(() => {
     if (!dirtyRef.current) {
@@ -672,6 +763,9 @@ function App() {
         case "openOverlay":
           overlays.openOverlay(action.overlay);
           break;
+        case "openFindReplace":
+          openFindReplace(action.mode);
+          break;
         case "newNote":
           void handleNewNote();
           break;
@@ -741,6 +835,7 @@ function App() {
       resetZoom,
       sendSelectionToAi,
       toggleWebSearch,
+      openFindReplace,
     ],
   );
 
@@ -895,6 +990,13 @@ function App() {
               onSelect={runEditorActionById}
               onClose={editorContextMenu.close}
             />
+            <EditorFindReplaceBar
+              editor={editorInstance}
+              mode={findReplaceMode}
+              open={findReplaceOpen && Boolean(activePath)}
+              onClose={() => setFindReplaceOpen(false)}
+              onModeChange={setFindReplaceMode}
+            />
           </div>
         }
         aiPanel={
@@ -1017,6 +1119,12 @@ function App() {
                   tabs.find((t) => t.path === activePath)?.dirty ?? false
                 }
                 onRestore={applyMarkdownToEditor}
+                onHighPriorityStart={(path) =>
+                  versionSnapshotScheduler.markHighPriorityStart(path)
+                }
+                onHighPriorityEnd={(path) =>
+                  versionSnapshotScheduler.markHighPriorityEnd(path)
+                }
               />
             </Suspense>
             <ErrorBoundary scope="知识图谱">

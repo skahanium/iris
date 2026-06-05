@@ -54,8 +54,10 @@ import { AiStreamExtension } from "./extensions/AiStreamExtension";
 import { HeadingFoldExtension } from "./extensions/HeadingFoldExtension";
 
 import { EditorImageDropExtension } from "./extensions/EditorImageDropExtension";
+import { FindHighlightExtension } from "./extensions/FindHighlightExtension";
 import { ImageExtension } from "./extensions/ImageExtension";
 import { IrisParagraphExtension } from "./extensions/IrisParagraphExtension";
+import { ListIndentKeymapExtension } from "./extensions/ListIndentKeymapExtension";
 
 import { IrisDocument } from "./extensions/IrisDocument";
 
@@ -254,6 +256,10 @@ function TipTapEditorInner({
       }),
 
       IrisParagraphExtension,
+
+      ListIndentKeymapExtension,
+
+      FindHighlightExtension,
 
       LinkExtension,
 

@@ -39,6 +39,7 @@
 | LLM 路由与连通性       | [llm-routing.md](./llm-routing.md)                                 |
 | 语义搜索与 Recall@5    | [eval/semantic-search.md](./eval/semantic-search.md)               |
 | 语义评测 fixture vault | [eval/fixtures/semantic-vault/](./eval/fixtures/semantic-vault/)   |
+| 关闭回归手工验收       | [testing/app-close-manual-checklist.md](./testing/app-close-manual-checklist.md) |
 | 品牌图标               | [../scripts/assets/README.md](../scripts/assets/README.md)         |
 
 ---

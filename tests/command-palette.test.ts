@@ -137,4 +137,35 @@ describe("command palette", () => {
       type: "sendSelectionToAi",
     });
   });
+
+  it("separates document find, document replace, and global search shortcuts", () => {
+    const items = buildCommandPaletteItems({
+      hasVault: true,
+      hasActiveNote: true,
+    });
+    expect(items.find((i) => i.id === "document-find")?.chord).toEqual({
+      key: "F",
+      mod: true,
+      requireNote: true,
+    });
+    expect(items.find((i) => i.id === "document-find")?.action).toEqual({
+      type: "openFindReplace",
+      mode: "find",
+    });
+    expect(items.find((i) => i.id === "document-replace")?.chord).toEqual({
+      key: "H",
+      mod: true,
+      requireNote: true,
+    });
+    expect(items.find((i) => i.id === "document-replace")?.action).toEqual({
+      type: "openFindReplace",
+      mode: "replace",
+    });
+    expect(items.find((i) => i.id === "search")?.chord).toEqual({
+      key: "F",
+      mod: true,
+      shift: true,
+      requireVault: true,
+    });
+  });
 });

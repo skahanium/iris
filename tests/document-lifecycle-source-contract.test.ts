@@ -97,9 +97,19 @@ describe("document lifecycle source contracts", () => {
   });
 
   it("active tab always flushes on leave (no dirty-only skip)", () => {
-    const source = read("src/App.tsx");
-    expect(source).toContain("await flushSaveForPath(path, () => snapshot)");
-    expect(source).not.toContain("skip fileWrite: not dirty");
+    const app = read("src/App.tsx");
+    const persist = read("src/lib/persist-before-leave.ts");
+    expect(app).toContain("persistActiveTabBeforeLeave");
+    expect(app).toContain("flushSaveForPath");
+    expect(persist).toContain("await flushSaveForPath(path, getMarkdown)");
+    expect(app).not.toContain("skip fileWrite: not dirty");
+  });
+
+  it("app close blocks version idle enqueue via scheduler shutdown flag", () => {
+    const app = read("src/App.tsx");
+    expect(app).toContain('reason: "app_close"');
+    expect(app).toContain("setAppClosing(true)");
+    expect(app).toContain("clearVersionIdleTimer");
   });
 
   it("activateTab clears HTML cache before restoring session markdown", () => {

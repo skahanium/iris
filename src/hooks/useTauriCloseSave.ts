@@ -1,6 +1,7 @@
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useEffect, useRef } from "react";
 
+import { appExit } from "@/lib/ipc";
 import { isTauriRuntime } from "@/lib/tauri-runtime";
 
 interface UseTauriCloseSaveOptions {
@@ -39,7 +40,12 @@ export function useTauriCloseSave({
         try {
           await flushBeforeCloseRef.current();
           closingRef.current = true;
-          await win.destroy();
+          window.setTimeout(() => {
+            void appExit().catch((err: unknown) => {
+              closingRef.current = false;
+              onErrorRef.current?.(errorMessage(err));
+            });
+          }, 0);
         } catch (err) {
           closingRef.current = false;
           onErrorRef.current?.(errorMessage(err));

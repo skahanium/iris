@@ -43,7 +43,7 @@ export function SearchPanel({ open, onClose, onOpen }: SearchPanelProps) {
   };
 
   return (
-    <IrisOverlay open={open} onClose={onClose} title="搜索" size="command">
+    <IrisOverlay open={open} onClose={onClose} title="全库搜索" size="command">
       <div className="space-y-2 border-b border-border/60 bg-surface-inset/30 px-4 py-3">
         <Input
           placeholder="输入关键词或自然语言…"

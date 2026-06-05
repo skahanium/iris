@@ -259,6 +259,10 @@ npm run tauri build -- --debug
 npm run test:e2e
 ```
 
+### 手工回归（关闭路径）
+
+窗口关闭与进程退出需本地验证，清单见 [docs/testing/app-close-manual-checklist.md](./docs/testing/app-close-manual-checklist.md)。涉及 `useTauriCloseSave` / `app_close` 的 PR 应在 Test plan 中勾选该清单。
+
 ## Pull Request 流程
 
 1. 确保你的分支基于最新的 `main` 分支（先 `rebase`，不要 `merge`）

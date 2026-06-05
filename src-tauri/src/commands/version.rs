@@ -14,6 +14,7 @@ pub struct VersionSaveCompletePayload {
     pub kind: String,
     pub created: bool,
     pub version_id: Option<i64>,
+    pub skip_reason: Option<String>,
     pub error: Option<String>,
 }
 
@@ -36,10 +37,10 @@ impl VersionSaveKind {
         state: &Arc<AppState>,
         path: &str,
         content: &str,
-    ) -> AppResult<Option<VersionEntry>> {
+    ) -> AppResult<version::VersionSaveOutcome> {
         match self {
-            Self::Manual => version::version_save_manual(state, path, content),
-            Self::Idle => version::version_save_idle(state, path, content),
+            Self::Manual => version::version_save_manual_outcome(state, path, content),
+            Self::Idle => version::version_save_idle_outcome(state, path, content),
         }
     }
 }
@@ -58,18 +59,14 @@ fn spawn_version_save(
         let result = tokio::task::spawn_blocking(move || kind.run(&state, &path, &content)).await;
 
         let payload = match result {
-            Ok(Ok(Some(entry))) => VersionSaveCompletePayload {
+            Ok(Ok(outcome)) => VersionSaveCompletePayload {
                 path: path_for_payload,
                 kind: kind_str,
-                created: true,
-                version_id: Some(entry.id),
-                error: None,
-            },
-            Ok(Ok(None)) => VersionSaveCompletePayload {
-                path: path_for_payload,
-                kind: kind_str,
-                created: false,
-                version_id: None,
+                created: outcome.entry.is_some(),
+                version_id: outcome.entry.map(|entry| entry.id),
+                skip_reason: outcome
+                    .skip_reason
+                    .map(|reason| reason.as_str().to_string()),
                 error: None,
             },
             Ok(Err(e)) => VersionSaveCompletePayload {
@@ -77,6 +74,7 @@ fn spawn_version_save(
                 kind: kind_str,
                 created: false,
                 version_id: None,
+                skip_reason: None,
                 error: Some(e.to_string()),
             },
             Err(e) => VersionSaveCompletePayload {
@@ -84,6 +82,7 @@ fn spawn_version_save(
                 kind: kind_str,
                 created: false,
                 version_id: None,
+                skip_reason: None,
                 error: Some(format!("version save task failed: {e}")),
             },
         };

@@ -38,6 +38,9 @@ interface VersionTimelineProps {
   getCurrentContent?: () => string;
   hasUnsavedEdits?: boolean;
   onRestore: (content: string) => void;
+  /** Blocks low-priority `auto_idle` while finalize IPC is in flight. */
+  onHighPriorityStart?: (path: string) => void;
+  onHighPriorityEnd?: (path: string) => void;
 }
 
 const PREVIEW_MAX = 2000;
@@ -50,6 +53,8 @@ export function VersionTimeline({
   getCurrentContent,
   hasUnsavedEdits = false,
   onRestore,
+  onHighPriorityStart,
+  onHighPriorityEnd,
 }: VersionTimelineProps) {
   const [versions, setVersions] = useState<VersionEntry[]>([]);
   const [preview, setPreview] = useState<string | null>(null);
@@ -125,6 +130,7 @@ export function VersionTimeline({
   const handleFinalizeCurrent = async () => {
     if (!notePath) return;
     setFinalizing(true);
+    onHighPriorityStart?.(notePath);
     try {
       const liveContent = getCurrentContent?.() ?? currentContent ?? "";
       await versionFinalizeCurrent(
@@ -135,6 +141,7 @@ export function VersionTimeline({
       setFinalizeLabel("");
       refresh();
     } finally {
+      onHighPriorityEnd?.(notePath);
       setFinalizing(false);
     }
   };

@@ -198,6 +198,7 @@ pub fn run() {
             commands::profile_commands::inbox_update_status,
             commands::profile_commands::inbox_delete,
             commands::profile_commands::inbox_counts,
+            commands::window_chrome_cmd::app_exit,
             commands::window_chrome_cmd::get_desktop_chrome_metrics,
             commands::window_chrome_cmd::reapply_window_chrome,
         ])

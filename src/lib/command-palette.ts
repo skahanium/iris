@@ -7,6 +7,7 @@ import {
 
 export type CommandPaletteAction =
   | { type: "openOverlay"; overlay: OverlayId }
+  | { type: "openFindReplace"; mode: "find" | "replace" }
   | { type: "newNote" }
   | { type: "saveNote" }
   | { type: "saveVersion" }
@@ -113,13 +114,33 @@ export function buildCommandPaletteItems(
     },
     {
       id: "search",
-      label: "全文搜索",
+      label: "全库搜索",
       group: "导航",
-      keywords: "search find 查找",
+      keywords: "search find 查找 全库",
       icon: "FileSearch",
       disabled: vaultOnly,
       chord: { key: "F", mod: true, shift: true, requireVault: true },
       action: { type: "openOverlay", overlay: "search" },
+    },
+    {
+      id: "document-find",
+      label: "本文档查找",
+      group: "笔记",
+      keywords: "find search document 当前 文档 查找",
+      icon: "Search",
+      disabled: noteOnly,
+      chord: { key: "F", mod: true, requireNote: true },
+      action: { type: "openFindReplace", mode: "find" },
+    },
+    {
+      id: "document-replace",
+      label: "本文档替换",
+      group: "笔记",
+      keywords: "replace find document 当前 文档 替换",
+      icon: "Replace",
+      disabled: noteOnly,
+      chord: { key: "H", mod: true, requireNote: true },
+      action: { type: "openFindReplace", mode: "replace" },
     },
     {
       id: "backlinks",

@@ -14,7 +14,7 @@ use crate::app::AppState;
 use crate::error::{AppError, AppResult};
 
 pub use kind::VersionKind;
-pub use policy::{SnapshotDecisionInput, AUTO_IDLE_MAX_PER_FILE};
+pub use policy::{SnapshotDecisionInput, SnapshotSkipReason, AUTO_IDLE_MAX_PER_FILE};
 
 #[derive(Debug, Clone, Serialize)]
 pub struct VersionEntry {
@@ -35,6 +35,12 @@ pub struct SnapshotParams {
     pub kind: VersionKind,
     pub label: Option<String>,
     pub is_finalized: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct VersionSaveOutcome {
+    pub entry: Option<VersionEntry>,
+    pub skip_reason: Option<SnapshotSkipReason>,
 }
 
 impl SnapshotParams {
@@ -77,7 +83,15 @@ pub fn version_save_manual(
     path: &str,
     content: &str,
 ) -> AppResult<Option<VersionEntry>> {
-    create_snapshot(state, path, content, SnapshotParams::manual())
+    Ok(version_save_manual_outcome(state, path, content)?.entry)
+}
+
+pub fn version_save_manual_outcome(
+    state: &Arc<AppState>,
+    path: &str,
+    content: &str,
+) -> AppResult<VersionSaveOutcome> {
+    create_snapshot_outcome(state, path, content, SnapshotParams::manual())
 }
 
 /// Idle auto backup (`kind = auto_idle`); policy may skip.
@@ -86,7 +100,15 @@ pub fn version_save_idle(
     path: &str,
     content: &str,
 ) -> AppResult<Option<VersionEntry>> {
-    create_snapshot(state, path, content, SnapshotParams::auto_idle())
+    Ok(version_save_idle_outcome(state, path, content)?.entry)
+}
+
+pub fn version_save_idle_outcome(
+    state: &Arc<AppState>,
+    path: &str,
+    content: &str,
+) -> AppResult<VersionSaveOutcome> {
+    create_snapshot_outcome(state, path, content, SnapshotParams::auto_idle())
 }
 
 const VERSION_SELECT: &str = "SELECT v.id, v.file_id, v.version_no, v.label, v.content_hash,
@@ -274,6 +296,15 @@ pub fn create_snapshot(
     content: &str,
     params: SnapshotParams,
 ) -> AppResult<Option<VersionEntry>> {
+    Ok(create_snapshot_outcome(state, path, content, params)?.entry)
+}
+
+pub fn create_snapshot_outcome(
+    state: &Arc<AppState>,
+    path: &str,
+    content: &str,
+    params: SnapshotParams,
+) -> AppResult<VersionSaveOutcome> {
     let hash = crate::cas::hash::content_hash_str(content);
 
     let file_id: i64 = state.db.with_conn(|conn| {
@@ -282,9 +313,9 @@ pub fn create_snapshot(
     })?;
 
     let now = Utc::now();
-    let should = state.db.with_conn(|conn| {
+    let decision = state.db.with_conn(|conn| {
         let (latest, last_auto_idle_at) = load_snapshot_context(conn, file_id)?;
-        Ok(policy::should_create_snapshot(&SnapshotDecisionInput {
+        Ok(policy::decide_snapshot(&SnapshotDecisionInput {
             kind: params.kind,
             content_hash: &hash,
             latest,
@@ -293,8 +324,11 @@ pub fn create_snapshot(
         }))
     })?;
 
-    if !should {
-        return Ok(None);
+    if !decision.create {
+        return Ok(VersionSaveOutcome {
+            entry: None,
+            skip_reason: decision.skip_reason,
+        });
     }
 
     let version_no = timestamp_version_no();
@@ -340,17 +374,20 @@ pub fn create_snapshot(
         "Version snapshot created"
     );
 
-    Ok(Some(VersionEntry {
-        id,
-        file_id,
-        version_no,
-        label: params.label,
-        content_hash: hash,
-        word_count: wc,
-        is_finalized: params.is_finalized,
-        kind: params.kind,
-        created_at,
-    }))
+    Ok(VersionSaveOutcome {
+        entry: Some(VersionEntry {
+            id,
+            file_id,
+            version_no,
+            label: params.label,
+            content_hash: hash,
+            word_count: wc,
+            is_finalized: params.is_finalized,
+            kind: params.kind,
+            created_at,
+        }),
+        skip_reason: None,
+    })
 }
 
 pub fn version_list(state: &Arc<AppState>, path: &str) -> AppResult<Vec<VersionEntry>> {
