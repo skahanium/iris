@@ -332,6 +332,8 @@ async fn get_backlinks(state: &AppState, args: &serde_json::Value) -> AppResult<
     let path = args["path"]
         .as_str()
         .ok_or_else(|| AppError::msg("missing path"))?;
+    let vault = state.vault_path()?;
+    let _abs = crate::storage::paths::validate_user_note_relative_path(&vault, path)?;
     let entries = state.db.with_read_conn(|conn| {
         let mut stmt = conn.prepare(
             "SELECT f.path, f.title, l.context
@@ -360,7 +362,8 @@ async fn get_block_links(
     let note_path = args["note_path"]
         .as_str()
         .ok_or_else(|| AppError::msg("missing note_path"))?;
-    let _vault: &Path = &state.vault_path()?;
+    let vault: &Path = &state.vault_path()?;
+    let _abs = crate::storage::paths::validate_user_note_relative_path(vault, note_path)?;
     let links = state.db.with_read_conn(|conn| {
         let file_id: Option<i64> = conn
             .query_row("SELECT id FROM files WHERE path = ?1", [note_path], |r| {

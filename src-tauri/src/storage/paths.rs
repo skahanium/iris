@@ -77,11 +77,24 @@ pub fn relative_path(vault: &Path, absolute: &Path) -> AppResult<String> {
     Ok(rel.to_string_lossy().replace('\\', "/"))
 }
 
+/// Combined check used by AI tool handlers:
+/// 1) reject `.iris/` metadata paths
+/// 2) reject path traversal (../, absolute, etc.)
+/// 3) resolve within vault
+pub fn validate_user_note_relative_path(vault: &Path, relative: &str) -> AppResult<PathBuf> {
+    if !is_user_note_path(relative) {
+        return Err(AppError::msg("只能读取用户笔记，不允许访问内部元数据路径"));
+    }
+    resolve_vault_path(vault, relative)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::fs;
     use tempfile::tempdir;
+
+    // ── resolve_vault_path ───────────────────────────────
 
     #[test]
     fn rejects_parent_dir() {
@@ -102,6 +115,15 @@ mod tests {
     }
 
     #[test]
+    fn rejects_path_with_embedded_parent_dir() {
+        let dir = tempdir().unwrap();
+        let vault = dir.path().join("vault");
+        fs::create_dir_all(vault.join("sub")).unwrap();
+        let err = resolve_vault_path(&vault, "sub/../../etc/passwd").unwrap_err();
+        assert!(err.to_string().contains("traversal"));
+    }
+
+    #[test]
     fn resolves_valid_subdirectory_file() {
         let dir = tempdir().unwrap();
         let vault = dir.path().join("vault");
@@ -113,11 +135,80 @@ mod tests {
         assert_eq!(resolved, note.canonicalize().unwrap());
     }
 
+    // ── is_user_note_path ────────────────────────────────
+
     #[test]
     fn is_user_note_path_rejects_iris_metadata() {
         assert!(!is_user_note_path(".iris/versions/1/20260101120000.md"));
+        assert!(!is_user_note_path(".iris/skills/some-skill/SKILL.md"));
+        assert!(!is_user_note_path(".iris/skills-config.json"));
         assert!(is_user_note_path("notes/readme.md"));
     }
+
+    #[test]
+    fn is_user_note_path_rejects_bare_iris() {
+        assert!(!is_user_note_path(".iris"));
+    }
+
+    #[test]
+    fn is_user_note_path_allows_normal_paths() {
+        assert!(is_user_note_path("readme.md"));
+        assert!(is_user_note_path("docs/guide.md"));
+        assert!(is_user_note_path("2024/01/note.md"));
+        assert!(is_user_note_path("i.ris/notes.md"));
+    }
+
+    // ── validate_user_note_relative_path (combined) ──────
+
+    #[test]
+    fn validate_rejects_iris_metadata_dir() {
+        let dir = tempdir().unwrap();
+        let vault = dir.path().join("vault");
+        fs::create_dir_all(&vault).unwrap();
+        let err = validate_user_note_relative_path(&vault, ".iris/versions/1/test.md").unwrap_err();
+        assert!(err.to_string().contains("内部元数据"));
+    }
+
+    #[test]
+    fn validate_rejects_parent_dir_traversal() {
+        let dir = tempdir().unwrap();
+        let vault = dir.path().join("vault");
+        fs::create_dir_all(&vault).unwrap();
+        let err = validate_user_note_relative_path(&vault, "../secret.md").unwrap_err();
+        assert!(err.to_string().contains("traversal"));
+    }
+
+    #[test]
+    fn validate_rejects_absolute_path() {
+        let dir = tempdir().unwrap();
+        let vault = dir.path().join("vault");
+        fs::create_dir_all(&vault).unwrap();
+        let err = validate_user_note_relative_path(&vault, "/etc/passwd").unwrap_err();
+        assert!(err.to_string().contains("traversal"));
+    }
+
+    #[test]
+    fn validate_rejects_embedded_parent_in_middle() {
+        let dir = tempdir().unwrap();
+        let vault = dir.path().join("vault");
+        fs::create_dir_all(vault.join("sub")).unwrap();
+        let err = validate_user_note_relative_path(&vault, "sub/../../etc/passwd").unwrap_err();
+        assert!(err.to_string().contains("traversal"));
+    }
+
+    #[test]
+    fn validate_accepts_valid_user_note() {
+        let dir = tempdir().unwrap();
+        let vault = dir.path().join("vault");
+        fs::create_dir_all(&vault).unwrap();
+        let note = vault.join("notes/readme.md");
+        fs::create_dir_all(note.parent().unwrap()).unwrap();
+        fs::write(&note, "# Hello").unwrap();
+        let resolved = validate_user_note_relative_path(&vault, "notes/readme.md").unwrap();
+        assert_eq!(resolved, note.canonicalize().unwrap());
+    }
+
+    // ── relative_path ────────────────────────────────────
 
     #[test]
     fn relative_path_normal_case() {
