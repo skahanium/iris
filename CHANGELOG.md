@@ -6,9 +6,9 @@
 
 ---
 
-## [1.0.0-alpha] — Current
+## [1.0.0] — Current
 
-当前基线版本。代码实际建设已远超原 v0.x 规划，合并历史版本后统一切换至 v1.0.0-alpha。以下按功能域组织，非严格时间线排序。
+当前基线版本。代码实际建设已远超原 v0.x 规划，合并历史版本后统一切换至 v1.0.0。以下按功能域组织，非严格时间线排序。
 
 ### 编辑器
 
@@ -18,6 +18,8 @@
 - 章节折叠（H1–H3）、悬浮大纲（`Ctrl+Shift+O`）
 - Zen 模式（`Ctrl+.`）、画布缩放 75%–150%
 - 图片和链接扩展
+- Callout 块引用：`> [!type] Title` 语法，完整序列化往返
+- 编辑器查找替换：`Ctrl+F` 查找，`Ctrl+H` 替换，高亮匹配项
 - 代码块语法高亮、表格、任务列表
 
 ### AI 系统
@@ -161,7 +163,7 @@
 ### 存储与数据库
 
 - SQLite（WAL 模式）+ `.md` 权威数据源
-- 13 个增量 migration（含 up/down 脚本）：
+- 17 个增量 migration（含 up/down 脚本）：
   - `001_core`：files、tags、file_tags、links、chunks、chunk_embeddings、settings、FTS5
   - `002_vec`：sqlite-vec `vec0` 虚拟表
   - `003_versions` / `006_versions_kind`：版本系统
@@ -170,10 +172,14 @@
   - `009_ai_runtime`：sessions、session_messages、knowledge_deposits、user_profile、ai_traces
   - `010_knowledge_index`：semantic_anchors、regulation_index、genre_templates、block_links
   - `011_eval_results` / `012_session_title` / `013_ai_trace_checkpoint`
+  - `014_web_page_cache`：联网搜索网页缓存
+  - `015_search_cache`：搜索结果缓存
+  - `016_cas_refs`：CAS 对象引用计数
+  - `017_rename_cascade`：级联重命名支持
 
 ### 工程质量
 
-- 前端测试 64 文件（Vitest），覆盖 AI 管线、编辑器、命令面板、UI 组件、版本系统等
+- 前端测试 126 文件（Vitest），覆盖 AI 管线、编辑器、命令面板、UI 组件、版本系统等
 - E2E 测试 5 文件（Vitest）：验收、AI 工作流、编辑器上下文操作、统一助手契约
 - Rust 集成测试 4 文件：文件操作、frontmatter、语义召回、vault 监听
 - `cargo fmt` / `cargo clippy -D warnings` / `cargo test` Rust CI
@@ -186,15 +192,15 @@
 - 旧 `AiPanel` 多入口合并为 `UnifiedAssistantPanel` 单入口自动路由
 - `file_write` 仅持久化 `.md`，不再自动创建版本快照
 
-### Known limitations (v1.0.0-alpha)
+### Known limitations (v1.0.0)
 
-- 无 Playwright 全链路 E2E（Vitest 场景测试已有；v1.0.0 目标 Playwright + 覆盖率 > 80%）
-- 无国际化（仅中文界面；v1.0.0 目标简中 + 英文）
+- 无 Playwright 全链路 E2E（Vitest 场景测试已有；无限期延后目标 Playwright + 覆盖率 > 80%）
+- 无国际化（仅中文界面；无限期延后目标简中 + 英文）
 - 性能未在 10000+ 笔记规模下基准测试
-- 无 WCAG 无障碍认证（v1.0.0 目标全应用 WCAG 2.1 AA）
-- 图片：ImageExtension 节点已有；拖拽/粘贴与 Vault 内资产管理待 v1.0.0
+- 无 WCAG 无障碍认证（无限期延后目标全应用 WCAG 2.1 AA）
+- 图片：ImageExtension 节点已有；拖拽/粘贴与 Vault 内资产管理无限期延后
 - 无自动更新
-- Notion 官方文档站待 v1.0.0 发布
+- Notion 官方文档站无限期延后
 
 ---
 
@@ -209,4 +215,4 @@
 
 ## 历史版本
 
-v0.1.0–v0.5.2 的功能记录已合并入上方的 v1.0.0-alpha。各版本 Epic 与施工计划见 [docs/history/](docs/history/)。
+v0.1.0–v0.5.2 的功能记录已合并入上方的 v1.0.0。各版本 Epic 与施工计划见 [docs/history/](docs/history/)。

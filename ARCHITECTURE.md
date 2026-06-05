@@ -371,8 +371,8 @@ CREATE TABLE semantic_anchors (…);
 CREATE TABLE regulation_index (…);
 CREATE TABLE genre_templates (…);
 
--- 其余：knowledge_deposits、user_profile、ai_traces、eval_results
--- 完整 schema 见 src-tauri/migrations/
+-- 其余：knowledge_deposits、user_profile、ai_traces、eval_results、web_page_cache、search_cache、cas_refs
+-- 完整 schema 见 src-tauri/migrations/（共 17 个 migration：001_core 到 017_rename_cascade）
 ```
 
 ---

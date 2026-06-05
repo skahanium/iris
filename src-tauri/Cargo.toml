@@ -1,6 +1,6 @@
 [package]
 name = "iris"
-version = "1.0.0-alpha"
+version = "1.0.0"
 description = "Local-first AI-native Markdown notes"
 authors = ["Iris Contributors"]
 license = "AGPL-3.0"

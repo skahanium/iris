@@ -84,7 +84,7 @@ TipTap WYSIWYG Markdown、多标签页、章节折叠、悬浮大纲（`Ctrl+Shi
 
 - [Rust](https://rustup.rs/) 1.80+（见 `src-tauri/Cargo.toml`）
 - [Node.js](https://nodejs.org/) 20+
-- npm 9+
+- npm 10+
 - Windows 10+ / macOS 13+ / Linux (X11/Wayland)
 
 ### 开发
