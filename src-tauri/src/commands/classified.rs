@@ -272,6 +272,50 @@ fn classified_export_inner(state: &AppState, path: &str, target_folder: &str) ->
     Ok(())
 }
 
+fn classified_delete_inner(state: &AppState, path: &str) -> AppResult<()> {
+    let _vk = require_unlocked()?;
+    if !is_classified_path(path) {
+        return Err(AppError::msg("只能删除涉密文件"));
+    }
+    let vault = state.vault_path()?;
+    let abs = resolve_vault_path(&vault, path)?;
+    if abs.is_dir() {
+        fs::remove_dir_all(&abs)?;
+    } else if abs.exists() {
+        fs::remove_file(&abs)?;
+    } else {
+        return Err(AppError::msg("文件不存在"));
+    }
+    Ok(())
+}
+
+fn classified_mkdir_inner(state: &AppState, folder: &str) -> AppResult<()> {
+    let _vk = require_unlocked()?;
+    let target_rel = normalize_classified_target(folder)?;
+    let vault = state.vault_path()?;
+    let abs = resolve_vault_path(&vault, &target_rel)?;
+    fs::create_dir_all(&abs)?;
+    Ok(())
+}
+
+fn classified_rename_inner(state: &AppState, path: &str, new_path: &str) -> AppResult<()> {
+    let _vk = require_unlocked()?;
+    if !is_classified_path(path) || !is_classified_path(new_path) {
+        return Err(AppError::msg("只能重命名涉密路径"));
+    }
+    let vault = state.vault_path()?;
+    let abs = resolve_vault_path(&vault, path)?;
+    let new_abs = resolve_vault_path(&vault, new_path)?;
+    if new_abs.exists() {
+        return Err(AppError::msg("目标路径已存在"));
+    }
+    if let Some(parent) = new_abs.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    fs::rename(&abs, &new_abs)?;
+    Ok(())
+}
+
 #[tauri::command]
 pub fn classified_setup(state: State<'_, Arc<AppState>>, password: String) -> AppResult<()> {
     classified_setup_inner(state.inner(), &password)
@@ -317,6 +361,25 @@ pub fn classified_export(
     target_folder: String,
 ) -> AppResult<()> {
     classified_export_inner(state.inner(), &path, &target_folder)
+}
+
+#[tauri::command]
+pub fn classified_delete(state: State<'_, Arc<AppState>>, path: String) -> AppResult<()> {
+    classified_delete_inner(state.inner(), &path)
+}
+
+#[tauri::command]
+pub fn classified_mkdir(state: State<'_, Arc<AppState>>, folder: String) -> AppResult<()> {
+    classified_mkdir_inner(state.inner(), folder.as_str())
+}
+
+#[tauri::command]
+pub fn classified_rename(
+    state: State<'_, Arc<AppState>>,
+    path: String,
+    new_path: String,
+) -> AppResult<()> {
+    classified_rename_inner(state.inner(), &path, &new_path)
 }
 
 #[cfg(test)]

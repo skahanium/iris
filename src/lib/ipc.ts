@@ -133,6 +133,21 @@ export async function classifiedExport(
   return invoke("classified_export", { path, targetFolder });
 }
 
+export async function classifiedDelete(path: string): Promise<void> {
+  return invoke("classified_delete", { path });
+}
+
+export async function classifiedMkdir(folder: string): Promise<void> {
+  return invoke("classified_mkdir", { folder });
+}
+
+export async function classifiedRename(
+  path: string,
+  newPath: string,
+): Promise<void> {
+  return invoke("classified_rename", { path, newPath });
+}
+
 export async function fileWrite(
   path: string,
   content: string,

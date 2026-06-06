@@ -17,7 +17,10 @@ use base64::Engine;
 
 use crate::crypto::classified_io;
 use crate::crypto::vault_key::VAULT_KEY;
-use crate::storage::paths::{is_user_note_path, read_file_lossy, resolve_vault_path};
+use crate::storage::paths::{
+    is_accessible_note_path, is_classified_note_path, is_user_note_path, read_file_lossy,
+    resolve_vault_path,
+};
 
 const MAX_NOTE_FILE_BYTES: usize = 20 * 1024 * 1024;
 
@@ -155,7 +158,7 @@ pub fn file_list(state: State<'_, Arc<AppState>>) -> AppResult<Vec<FileListItem>
 
 #[tauri::command]
 pub async fn file_read(state: State<'_, Arc<AppState>>, path: String) -> AppResult<FileReadResult> {
-    if !is_user_note_path(&path) {
+    if !is_accessible_note_path(&path) {
         return Err(AppError::msg("只能读取用户笔记，不允许访问内部元数据路径"));
     }
     let vault = state.vault_path()?;
@@ -178,7 +181,7 @@ pub async fn file_write(
     path: String,
     content: String,
 ) -> AppResult<FileEntry> {
-    if !is_user_note_path(&path) {
+    if !is_accessible_note_path(&path) {
         return Err(AppError::msg("只能写入用户笔记，不允许修改内部元数据路径"));
     }
     if content.len() > MAX_NOTE_FILE_BYTES {
@@ -203,11 +206,20 @@ pub async fn file_write(
         let hash = content_hash(&content);
         state.write_guard.mark(&path, &hash);
 
-        let entry = state.db.with_conn(|conn| {
-            index_file_from_content(conn, &vault, &abs, &content, &hash, Some(&state))
-        })?;
-
-        Ok(entry)
+        if is_classified_note_path(&path) {
+            Ok(FileEntry {
+                id: 0,
+                path: path.clone(),
+                title: title_from_path(&path),
+                updated_at: chrono::Utc::now().to_rfc3339(),
+                word_count: 0,
+            })
+        } else {
+            let entry = state.db.with_conn(|conn| {
+                index_file_from_content(conn, &vault, &abs, &content, &hash, Some(&state))
+            })?;
+            Ok(entry)
+        }
     })
     .await
     .map_err(|e| AppError::msg(format!("task join: {e}")))?
@@ -701,7 +713,7 @@ pub async fn file_create(
     path: String,
     content: Option<String>,
 ) -> AppResult<FileEntry> {
-    if !is_user_note_path(&path) {
+    if !is_accessible_note_path(&path) {
         return Err(AppError::msg("只能创建用户笔记，不允许写入内部元数据路径"));
     }
     if let Some(ref body) = content {
@@ -729,16 +741,27 @@ pub async fn file_create(
             .unwrap_or_else(|| title_from_path(&path));
         let body = content.unwrap_or_else(|| default_create_content(&document_title));
         let tmp = abs.with_extension("md.tmp");
-        fs::write(&tmp, &body)?;
+        let data = encode_file_payload(&path, &body)?;
+        fs::write(&tmp, &data)?;
         if let Err(e) = fs::rename(&tmp, &abs) {
             let _ = fs::remove_file(&tmp);
             return Err(e.into());
         }
         let hash = content_hash(&body);
         state.write_guard.mark(&path, &hash);
-        state
-            .db
-            .with_conn(|conn| index_file_with_embed(conn, &vault, &abs, Some(&state)))
+        if is_classified_note_path(&path) {
+            Ok(FileEntry {
+                id: 0,
+                path: path.clone(),
+                title: document_title,
+                updated_at: chrono::Utc::now().to_rfc3339(),
+                word_count: 0,
+            })
+        } else {
+            state
+                .db
+                .with_conn(|conn| index_file_with_embed(conn, &vault, &abs, Some(&state)))
+        }
     })
     .await
     .map_err(|e| AppError::msg(format!("task join: {e}")))?

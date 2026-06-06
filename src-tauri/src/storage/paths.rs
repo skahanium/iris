@@ -55,6 +55,17 @@ pub fn is_user_note_path(relative: &str) -> bool {
         && normalized != ".classified"
 }
 
+/// Vault-relative path to a note under `.classified/` (not the directory root).
+pub fn is_classified_note_path(relative: &str) -> bool {
+    let normalized = relative.replace('\\', "/");
+    normalized.starts_with(".classified/") && normalized != ".classified"
+}
+
+/// Readable/writable note path: ordinary user notes or classified vault notes.
+pub fn is_accessible_note_path(relative: &str) -> bool {
+    is_user_note_path(relative) || is_classified_note_path(relative)
+}
+
 /// Read file content as UTF-8, replacing invalid bytes with U+FFFD.
 /// Prevents crash on non-UTF-8 encoded files. Logs a warning if replacements occurred.
 pub fn read_file_lossy(path: &std::path::Path) -> AppResult<String> {
@@ -159,6 +170,14 @@ mod tests {
         assert!(is_user_note_path("docs/guide.md"));
         assert!(is_user_note_path("2024/01/note.md"));
         assert!(is_user_note_path("i.ris/notes.md"));
+    }
+
+    #[test]
+    fn is_accessible_note_path_includes_classified_notes() {
+        assert!(is_accessible_note_path(".classified/secret.md"));
+        assert!(!is_accessible_note_path(".classified"));
+        assert!(is_accessible_note_path("notes/open.md"));
+        assert!(!is_accessible_note_path(".iris/meta.md"));
     }
 
     #[test]

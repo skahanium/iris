@@ -9,10 +9,13 @@ vi.mock("@tauri-apps/api/core", () => ({
 }));
 
 import {
+  classifiedDelete,
   classifiedExport,
   classifiedFiles,
   classifiedImport,
   classifiedLock,
+  classifiedMkdir,
+  classifiedRename,
   classifiedSetup,
   classifiedStatus,
   classifiedUnlock,
@@ -32,6 +35,9 @@ const CLASSIFIED_COMMANDS = [
   "classified_files",
   "classified_import",
   "classified_export",
+  "classified_delete",
+  "classified_mkdir",
+  "classified_rename",
 ] as const;
 
 describe("classified vault IPC contract", () => {
@@ -117,6 +123,31 @@ describe("classified vault IPC contract", () => {
     });
   });
 
+  it("classifiedDelete invokes backend with path", async () => {
+    invoke.mockResolvedValue(undefined);
+    await classifiedDelete(".classified/secret.md");
+    expect(invoke).toHaveBeenCalledWith("classified_delete", {
+      path: ".classified/secret.md",
+    });
+  });
+
+  it("classifiedMkdir invokes backend with folder", async () => {
+    invoke.mockResolvedValue(undefined);
+    await classifiedMkdir(".classified/inbox");
+    expect(invoke).toHaveBeenCalledWith("classified_mkdir", {
+      folder: ".classified/inbox",
+    });
+  });
+
+  it("classifiedRename invokes backend with path and newPath", async () => {
+    invoke.mockResolvedValue(undefined);
+    await classifiedRename(".classified/a.md", ".classified/b.md");
+    expect(invoke).toHaveBeenCalledWith("classified_rename", {
+      path: ".classified/a.md",
+      newPath: ".classified/b.md",
+    });
+  });
+
   it("fileSetLock invokes backend with path and locked flag", async () => {
     invoke.mockResolvedValue(undefined);
     await fileSetLock("notes/a.md", true);
@@ -137,9 +168,11 @@ describe("classified vault IPC contract", () => {
 });
 
 describe("fileRead call-site compatibility (Task 15)", () => {
-  it("useTabManager destructures content from fileRead", () => {
+  it("useTabManager destructures content and isLocked from fileRead", () => {
     const source = read("src/hooks/useTabManager.ts");
-    expect(source).toMatch(/\{\s*content\s*\}\s*=\s*await fileRead\(/);
+    expect(source).toMatch(
+      /\{\s*content,\s*isLocked\s*\}\s*=\s*await fileRead\(/,
+    );
   });
 
   it("note-tab-lifecycle destructures content from fileRead", () => {
