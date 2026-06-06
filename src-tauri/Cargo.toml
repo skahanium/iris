@@ -30,6 +30,8 @@ hex = "0.4"
 base64 = "0.22"
 aes-gcm = "0.10"
 rand = "0.8"
+argon2 = "0.5"
+zeroize = { version = "1", features = ["derive"] }
 chrono = { version = "0.4", features = ["serde"] }
 notify = "7"
 notify-debouncer-full = "0.4"
