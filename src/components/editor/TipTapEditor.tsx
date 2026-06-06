@@ -21,6 +21,7 @@ import { EditorContent, useEditor, type Editor } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 
 import { common, createLowlight } from "lowlight";
+import { Lock, LockOpen } from "lucide-react";
 
 import {
   memo,
@@ -133,6 +134,10 @@ interface TipTapEditorProps {
 
     originalBodyMd: string,
   ) => void;
+
+  locked?: boolean;
+
+  setLocked?: (locked: boolean) => void;
 }
 
 function TipTapEditorInner({
@@ -169,6 +174,10 @@ function TipTapEditorInner({
   titleSlot,
 
   onBodyContextMenu,
+
+  locked = false,
+
+  setLocked,
 }: TipTapEditorProps) {
   const inlineAiRetryRef = useRef(onInlineAiRetry);
   inlineAiRetryRef.current = onInlineAiRetry;
@@ -385,6 +394,8 @@ function TipTapEditorInner({
 
     immediatelyRender: true,
 
+    editable: !locked,
+
     /** Avoid re-rendering this React tree on every keystroke (major lag on large docs). */
 
     shouldRerenderOnTransaction: false,
@@ -412,6 +423,11 @@ function TipTapEditorInner({
       },
     },
   });
+
+  useEffect(() => {
+    if (!editor) return;
+    editor.setEditable(!locked);
+  }, [editor, locked]);
 
   useEffect(() => {
     if (!editor) return;
@@ -448,10 +464,31 @@ function TipTapEditorInner({
   return (
     <div
       data-testid="editor"
-      className={cn("iris-editor flex min-h-0 flex-1 flex-col", className)}
+      className={cn(
+        "iris-editor relative flex min-h-0 flex-1 flex-col",
+        className,
+      )}
       data-zen={zen ? "true" : undefined}
       data-editor-zoom={zoom}
+      data-locked={locked ? "true" : undefined}
     >
+      {setLocked ? (
+        <button
+          type="button"
+          data-testid="editor-lock-toggle"
+          className="editor-lock-btn absolute right-3 top-3 z-10 inline-flex h-8 w-8 items-center justify-center rounded-md border border-border/60 bg-surface-elevated/90 text-muted-foreground shadow-sm backdrop-blur-sm duration-fast ease-iris-out hover:bg-surface-inset hover:text-foreground focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-1"
+          onClick={() => setLocked(!locked)}
+          title={locked ? "解锁编辑" : "锁定编辑"}
+          aria-label={locked ? "解锁编辑" : "锁定编辑"}
+          aria-pressed={locked}
+        >
+          {locked ? (
+            <Lock className="h-4 w-4" aria-hidden />
+          ) : (
+            <LockOpen className="h-4 w-4" aria-hidden />
+          )}
+        </button>
+      ) : null}
       <div className="iris-editor-zoom-scroll min-h-0 flex-1 overflow-y-auto overflow-x-hidden">
         <div
           className="iris-editor-canvas"

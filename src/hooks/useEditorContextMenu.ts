@@ -24,6 +24,7 @@ export function useEditorContextMenu(
   editor: Editor | null,
   hasNote: boolean,
   onSelectionHint?: () => void,
+  locked = false,
 ) {
   const [menu, setMenu] = useState<EditorContextMenuState>(closed);
 
@@ -34,6 +35,7 @@ export function useEditorContextMenu(
       hasNote,
       hasSelection: from !== to,
       streaming: editorHasActiveAiStream(editor),
+      isLocked: locked,
     };
     const actions = filterEditorActions(
       "context_menu",
@@ -60,7 +62,7 @@ export function useEditorContextMenu(
         })),
       }),
     );
-  }, [menu.open, editor, hasNote]);
+  }, [menu.open, editor, hasNote, locked]);
 
   const openAt = useCallback((x: number, y: number) => {
     setMenu({ open: true, x, y });
@@ -72,6 +74,7 @@ export function useEditorContextMenu(
 
   const handleContextMenu = useCallback(
     (event: React.MouseEvent) => {
+      if (locked) return;
       if (!editor || !hasNote) return;
       event.preventDefault();
       event.stopPropagation();
@@ -86,7 +89,7 @@ export function useEditorContextMenu(
       }
       openAt(event.clientX, event.clientY);
     },
-    [editor, hasNote, onSelectionHint, openAt],
+    [editor, hasNote, locked, onSelectionHint, openAt],
   );
 
   return {

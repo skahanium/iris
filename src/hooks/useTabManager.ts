@@ -36,6 +36,8 @@ export function useTabManager(options: UseTabManagerOptions = {}) {
   const tabsRef = useRef(tabs);
   const openFileSeqRef = useRef(0);
   const tabMarkdownCacheRef = useRef(new Map<string, string>());
+  const tabLockCacheRef = useRef(new Map<string, boolean>());
+  const [activeFileLocked, setActiveFileLocked] = useState(false);
 
   activePathRef.current = activePath;
   tabsRef.current = tabs;
@@ -56,8 +58,16 @@ export function useTabManager(options: UseTabManagerOptions = {}) {
     markdownRef.current = "";
     frontmatterYamlRef.current = null;
     setActivePath(null);
+    setActiveFileLocked(false);
     setMarkdown("");
   }, [setMarkdown]);
+
+  const setFileLocked = useCallback((path: string, locked: boolean) => {
+    tabLockCacheRef.current.set(path, locked);
+    if (activePathRef.current === path) {
+      setActiveFileLocked(locked);
+    }
+  }, []);
 
   const cacheTabMarkdown = useCallback((path: string, md: string) => {
     tabMarkdownCacheRef.current.set(path, md);
@@ -117,8 +127,10 @@ export function useTabManager(options: UseTabManagerOptions = {}) {
         setTabs((prev) => prev.filter((t) => t.path !== current));
       }
       try {
-        const { content } = await fileRead(path);
+        const { content, isLocked } = await fileRead(path);
         if (openFileSeqRef.current !== seq) return;
+        tabLockCacheRef.current.set(path, isLocked);
+        setActiveFileLocked(isLocked);
         frontmatterYamlRef.current = extractFrontmatterYaml(content);
         const fromMarkdown = displayTitleFromMarkdown(content, "");
         const fallbackDb = await resolveDocumentTitle(path, titleHint);
@@ -179,6 +191,7 @@ export function useTabManager(options: UseTabManagerOptions = {}) {
         setActivePath(path);
         frontmatterYamlRef.current = extractFrontmatterYaml(cached);
         setMarkdown(cached);
+        setActiveFileLocked(tabLockCacheRef.current.get(path) ?? false);
         setEditorContentTick((t) => t + 1);
         return;
       }
@@ -341,6 +354,7 @@ export function useTabManager(options: UseTabManagerOptions = {}) {
   return {
     tabs,
     activePath,
+    activeFileLocked,
     markdown,
     editorContentTick,
     activePathRef,
@@ -348,6 +362,7 @@ export function useTabManager(options: UseTabManagerOptions = {}) {
     frontmatterYamlRef,
     setActivePath,
     setMarkdown,
+    setFileLocked,
     openFile,
     openNote,
     activateTab,

@@ -71,6 +71,7 @@ import {
 } from "@/lib/note-display";
 import {
   fileRead,
+  fileSetLock,
   fileWrite,
   listenFileChanged,
   listenVersionSaveComplete,
@@ -262,6 +263,8 @@ function App() {
     syncTabMarkdownCache,
     getTabMarkdownCached,
     setMarkdown,
+    activeFileLocked,
+    setFileLocked,
   } = useTabManager({
     onStatusChange: setAiStatus,
     onVaultIndexBump: bumpVaultIndex,
@@ -481,6 +484,22 @@ function App() {
     };
   }, [activePathRef, getLiveMarkdownRef]);
 
+  const handleLockToggle = useCallback(
+    async (locked: boolean) => {
+      const path = activePathRef.current;
+      if (!path) return;
+      setFileLocked(path, locked);
+      try {
+        await fileSetLock(path, locked);
+      } catch (err: unknown) {
+        setFileLocked(path, !locked);
+        const msg = err instanceof Error ? err.message : String(err);
+        setAiStatus(`锁定状态保存失败：${msg}`);
+      }
+    },
+    [activePathRef, setFileLocked],
+  );
+
   const handleConflictKeepLocal = useCallback(() => {
     setConflictState(null);
     // Re-save local content to overwrite external changes
@@ -499,8 +518,12 @@ function App() {
   }, []);
 
   const handleSaveNote = useCallback(async () => {
+    if (activeFileLocked) {
+      setAiStatus("笔记已锁定，无法保存");
+      return;
+    }
     await flushSave();
-  }, [flushSave]);
+  }, [activeFileLocked, flushSave]);
 
   const handleSaveVersion = useCallback(async () => {
     const path = activePathRef.current;
@@ -525,16 +548,18 @@ function App() {
   }, []);
 
   const handleDirty = useCallback(() => {
+    if (activeFileLocked) return;
     if (!dirtyRef.current) {
       dirtyRef.current = true;
       markDirty();
     }
     notifyDirty();
     resetVersionIdle();
-  }, [notifyDirty, resetVersionIdle, markDirty]);
+  }, [activeFileLocked, notifyDirty, resetVersionIdle, markDirty]);
 
   const handleTitleChange = useCallback(
     (raw: string) => {
+      if (activeFileLocked) return;
       onTitleChange(raw);
       if (!dirtyRef.current) {
         dirtyRef.current = true;
@@ -543,7 +568,7 @@ function App() {
       notifyDirty();
       resetVersionIdle();
     },
-    [markDirty, notifyDirty, onTitleChange, resetVersionIdle],
+    [activeFileLocked, markDirty, notifyDirty, onTitleChange, resetVersionIdle],
   );
 
   const getWritingContext = useCallback((): WritingEditorContext | null => {
@@ -667,9 +692,10 @@ function App() {
         onChange={handleTitleChange}
         onBlur={onTitleBlur}
         editorRef={editorRef}
+        readOnly={activeFileLocked}
       />
     ),
-    [noteTitle, handleTitleChange, onTitleBlur, editorRef],
+    [noteTitle, handleTitleChange, onTitleBlur, editorRef, activeFileLocked],
   );
 
   const runInlineAi = useCallback(
@@ -743,6 +769,7 @@ function App() {
     editorInstance,
     Boolean(activePath),
     () => setAiStatus("选区 AI：请使用右键菜单"),
+    activeFileLocked,
   );
 
   const commandPaletteItems = useMemo(
@@ -957,6 +984,8 @@ function App() {
                   zen={zen}
                   zoom={editorZoom}
                   titleSlot={editorTitleSlot}
+                  locked={activeFileLocked}
+                  setLocked={(locked) => void handleLockToggle(locked)}
                   onDirty={handleDirty}
                   onSlashCommand={runEditorActionById}
                   onBodyContextMenu={editorContextMenu.handleContextMenu}

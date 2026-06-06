@@ -16,6 +16,7 @@ interface DocumentTitleFieldProps {
   onBlur?: () => void;
   editorRef: RefObject<Editor | null>;
   disabled?: boolean;
+  readOnly?: boolean;
   placeholder?: string;
   className?: string;
 }
@@ -26,6 +27,7 @@ export function DocumentTitleField({
   onBlur,
   editorRef,
   disabled = false,
+  readOnly = false,
   placeholder = "未命名文档",
   className,
 }: DocumentTitleFieldProps) {
@@ -63,6 +65,7 @@ export function DocumentTitleField({
           className="iris-doc-title"
           value={value}
           disabled={disabled}
+          readOnly={readOnly}
           placeholder={placeholder}
           aria-label="文档标题"
           onChange={(event) => commit(event.target.value)}

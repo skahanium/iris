@@ -222,12 +222,19 @@ export interface EditorActionContext {
   hasNote: boolean;
   hasSelection: boolean;
   streaming: boolean;
+  isLocked?: boolean;
 }
 
 export function isEditorActionEnabled(
   action: EditorActionDef,
   ctx: EditorActionContext,
 ): boolean {
+  if (ctx.isLocked) {
+    if (action.id === "copy" || action.id === "select-all") {
+      return ctx.hasNote;
+    }
+    return false;
+  }
   if (
     ctx.streaming &&
     (action.kind === "inline_ai" || action.kind === "slash_flow")
