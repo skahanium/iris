@@ -9,11 +9,19 @@ export type AiStreamStatus = "streaming" | "ready" | "error";
 export interface AiStreamOptions {
   HTMLAttributes: Record<string, unknown>;
   onRetry?: (editor: Editor) => void;
+  onDismiss?: (editor: Editor) => void;
+  onAccept?: (editor: Editor) => void;
 }
 
 declare module "@tiptap/core" {
   interface Commands<ReturnType> {
     aiStream: {
+      insertAiStreamBelowSelection: (payload: {
+        originalText: string;
+        action: string;
+        sourceFrom: number;
+        sourceTo: number;
+      }) => ReturnType;
       insertAiStreamForSelection: (payload: {
         originalText: string;
         action: string;
@@ -27,6 +35,7 @@ declare module "@tiptap/core" {
       setAiStreamStatus: (status: AiStreamStatus) => ReturnType;
       acceptAiStream: () => ReturnType;
       rollbackAiStream: () => ReturnType;
+      dismissAiStream: () => ReturnType;
       removeAiStream: () => ReturnType;
     };
   }
@@ -71,6 +80,33 @@ export function findAiStreamNode(state: {
   return found;
 }
 
+function readSourceRange(attrs: Record<string, unknown>): {
+  sourceFrom: number;
+  sourceTo: number;
+} {
+  const sourceFrom =
+    typeof attrs.sourceFrom === "number" ? attrs.sourceFrom : 0;
+  const sourceTo = typeof attrs.sourceTo === "number" ? attrs.sourceTo : 0;
+  return { sourceFrom, sourceTo };
+}
+
+function clearHighlightForSource(
+  tr: import("@tiptap/pm/state").Transaction,
+  state: import("@tiptap/pm/state").EditorState,
+  sourceFrom: number,
+  sourceTo: number,
+) {
+  const mark = state.schema.marks.aiSourceHighlight;
+  if (mark && sourceFrom < sourceTo) {
+    tr.removeMark(sourceFrom, sourceTo, mark);
+  }
+}
+
+/** AI 候选 UI 变更不进 undo 栈，避免 Cmd+Z 恢复候选框或重新进入流式态 */
+function withoutHistory(tr: import("@tiptap/pm/state").Transaction) {
+  return tr.setMeta("addToHistory", false);
+}
+
 export const AiStreamExtension = Node.create<AiStreamOptions>({
   name: "aiStream",
   group: "block",
@@ -81,6 +117,8 @@ export const AiStreamExtension = Node.create<AiStreamOptions>({
     return {
       HTMLAttributes: {},
       onRetry: undefined,
+      onDismiss: undefined,
+      onAccept: undefined,
     };
   },
 
@@ -89,6 +127,8 @@ export const AiStreamExtension = Node.create<AiStreamOptions>({
       status: { default: "streaming" },
       originalText: { default: "" },
       action: { default: "" },
+      sourceFrom: { default: 0 },
+      sourceTo: { default: 0 },
     };
   },
 
@@ -108,19 +148,63 @@ export const AiStreamExtension = Node.create<AiStreamOptions>({
     return ReactNodeViewRenderer(AiNodeView);
   },
 
+  addKeyboardShortcuts() {
+    return {
+      Escape: () => {
+        if (!findAiStreamNode(this.editor.state)) return false;
+        return this.editor.commands.dismissAiStream();
+      },
+      "Mod-Enter": () => {
+        const found = findAiStreamNode(this.editor.state);
+        if (!found) return false;
+        if (found.attrs.status !== "ready") return false;
+        return this.editor.commands.acceptAiStream();
+      },
+    };
+  },
+
   addCommands(): Partial<RawCommands> {
     return {
-      insertAiStreamForSelection:
-        ({ originalText, action }) =>
-        ({ commands }) => {
-          return commands.insertContent({
-            type: this.name,
-            attrs: {
+      insertAiStreamBelowSelection:
+        ({ originalText, action, sourceFrom, sourceTo }) =>
+        ({ tr, state, dispatch }) => {
+          if (!dispatch) return false;
+          const $from = state.doc.resolve(sourceFrom);
+          const $to = state.doc.resolve(sourceTo);
+          const range = $from.blockRange($to);
+          if (!range) return false;
+
+          const insertPos = range.end;
+          const node = state.schema.nodes.aiStream!.create(
+            {
               status: "streaming",
               originalText,
               action,
+              sourceFrom,
+              sourceTo,
             },
-            content: [],
+            undefined,
+          );
+          tr.insert(insertPos, node);
+
+          const mark = state.schema.marks.aiSourceHighlight;
+          if (mark && sourceFrom < sourceTo) {
+            tr.addMark(sourceFrom, sourceTo, mark.create());
+          }
+
+          dispatch(withoutHistory(tr));
+          return true;
+        },
+
+      insertAiStreamForSelection:
+        ({ originalText, action }) =>
+        ({ state, commands }) => {
+          const { from, to } = state.selection;
+          return commands.insertAiStreamBelowSelection({
+            originalText,
+            action,
+            sourceFrom: from,
+            sourceTo: to,
           });
         },
 
@@ -135,8 +219,14 @@ export const AiStreamExtension = Node.create<AiStreamOptions>({
                 status: "streaming",
                 originalText,
                 action,
+                sourceFrom: 0,
+                sourceTo: 0,
               },
               content: [],
+            })
+            .command(({ tr }) => {
+              withoutHistory(tr);
+              return true;
             })
             .run();
         },
@@ -157,7 +247,7 @@ export const AiStreamExtension = Node.create<AiStreamOptions>({
           } else {
             tr.replaceWith(from, to, state.schema.text(content));
           }
-          dispatch(tr);
+          dispatch(withoutHistory(tr));
           return true;
         },
 
@@ -175,25 +265,50 @@ export const AiStreamExtension = Node.create<AiStreamOptions>({
             ...found.attrs,
             status,
           });
-          dispatch(tr);
+          dispatch(withoutHistory(tr));
           return true;
         },
 
       acceptAiStream:
         () =>
-        ({ tr, state, dispatch }) => {
+        ({ state, dispatch, editor }) => {
           const found = findAiStreamNode(state);
           if (!found || !dispatch) return false;
+
           const text = found.text;
-          tr.replaceWith(
-            found.pos,
-            found.pos + found.nodeSize,
-            state.schema.nodes.paragraph!.create(
-              {},
-              text ? state.schema.text(text) : undefined,
-            ),
-          );
-          dispatch(tr);
+          const { sourceFrom, sourceTo } = readSourceRange(found.attrs);
+          const streamPos = found.pos;
+          const streamEnd = streamPos + found.nodeSize;
+
+          // 1) 移除候选 UI（不进 undo 栈）
+          const cleanupTr = state.tr;
+          clearHighlightForSource(cleanupTr, state, sourceFrom, sourceTo);
+          cleanupTr.delete(streamPos, streamEnd);
+          dispatch(withoutHistory(cleanupTr));
+
+          // 2) 下一帧应用可撤销的文本替换，避免在 command 内重入 dispatch
+          queueMicrotask(() => {
+            if (sourceFrom > 0 && sourceTo > sourceFrom) {
+              if (text) {
+                editor.commands.insertContentAt(
+                  { from: sourceFrom, to: sourceTo },
+                  text,
+                );
+              } else {
+                editor.commands.deleteRange({
+                  from: sourceFrom,
+                  to: sourceTo,
+                });
+              }
+            } else if (text) {
+              editor.commands.insertContentAt(streamPos, {
+                type: "paragraph",
+                content: [{ type: "text", text }],
+              });
+            }
+            this.options.onAccept?.(editor);
+          });
+
           return true;
         },
 
@@ -202,24 +317,20 @@ export const AiStreamExtension = Node.create<AiStreamOptions>({
         ({ tr, state, dispatch }) => {
           const found = findAiStreamNode(state);
           if (!found || !dispatch) return false;
-          const originalText =
-            typeof found.attrs.originalText === "string"
-              ? found.attrs.originalText
-              : "";
-          if (!originalText) {
-            tr.delete(found.pos, found.pos + found.nodeSize);
-          } else {
-            tr.replaceWith(
-              found.pos,
-              found.pos + found.nodeSize,
-              state.schema.nodes.paragraph!.create(
-                {},
-                state.schema.text(originalText),
-              ),
-            );
-          }
-          dispatch(tr);
+          const { sourceFrom, sourceTo } = readSourceRange(found.attrs);
+
+          clearHighlightForSource(tr, state, sourceFrom, sourceTo);
+          tr.delete(found.pos, found.pos + found.nodeSize);
+
+          dispatch(withoutHistory(tr));
           return true;
+        },
+
+      dismissAiStream:
+        () =>
+        ({ editor, commands }) => {
+          this.options.onDismiss?.(editor);
+          return commands.rollbackAiStream();
         },
 
       removeAiStream:

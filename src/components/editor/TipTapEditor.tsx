@@ -49,6 +49,7 @@ import {
 import { isTauriRuntime } from "@/lib/tauri-runtime";
 import { cn } from "@/lib/utils";
 
+import { AiSourceHighlightExtension } from "./extensions/AiSourceHighlightExtension";
 import { AiStreamExtension } from "./extensions/AiStreamExtension";
 
 import { HeadingFoldExtension } from "./extensions/HeadingFoldExtension";
@@ -107,6 +108,10 @@ interface TipTapEditorProps {
 
   onInlineAiRetry?: (editor: Editor) => void;
 
+  onInlineAiDismiss?: (editor: Editor) => void;
+
+  onInlineAiAccept?: (editor: Editor) => void;
+
   onOpenWikiLink?: (title: string) => void;
 
   zoom?: number;
@@ -149,6 +154,10 @@ function TipTapEditorInner({
 
   onInlineAiRetry,
 
+  onInlineAiDismiss,
+
+  onInlineAiAccept,
+
   onOpenWikiLink,
 
   onIngestComplete,
@@ -162,8 +171,11 @@ function TipTapEditorInner({
   onBodyContextMenu,
 }: TipTapEditorProps) {
   const inlineAiRetryRef = useRef(onInlineAiRetry);
-
   inlineAiRetryRef.current = onInlineAiRetry;
+  const inlineAiDismissRef = useRef(onInlineAiDismiss);
+  inlineAiDismissRef.current = onInlineAiDismiss;
+  const inlineAiAcceptRef = useRef(onInlineAiAccept);
+  inlineAiAcceptRef.current = onInlineAiAccept;
 
   const onDirtyRef = useRef(onDirty);
 
@@ -297,8 +309,12 @@ function TipTapEditorInner({
 
       PreserveBlockExtension,
 
+      AiSourceHighlightExtension,
+
       AiStreamExtension.configure({
         onRetry: (ed) => inlineAiRetryRef.current?.(ed),
+        onDismiss: (ed) => inlineAiDismissRef.current?.(ed),
+        onAccept: (ed) => inlineAiAcceptRef.current?.(ed),
       }),
 
       SlashCommandExtension.configure({

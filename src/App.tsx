@@ -963,6 +963,8 @@ function App() {
                   onEditorReady={handleEditorReady}
                   onBodyStatsChange={updateEditorStats}
                   onInlineAiRetry={(ed) => void inlineAi.retry(ed)}
+                  onInlineAiDismiss={(ed) => inlineAi.dismiss(ed)}
+                  onInlineAiAccept={() => inlineAi.finish()}
                   onOpenWikiLink={(title) => void openNote(`${title}.md`)}
                 />
                 <EditorOutline

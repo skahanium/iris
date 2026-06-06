@@ -678,6 +678,13 @@
     font-style: normal;
   }
 
+  .iris-editor-body .ProseMirror .iris-ai-source-highlight {
+    border-radius: 2px;
+    background: hsl(var(--primary) / 0.12);
+    box-decoration-break: clone;
+    -webkit-box-decoration-break: clone;
+  }
+
   .iris-editor-body .ProseMirror [data-ai-stream] {
     @apply my-3 rounded-lg border border-primary/25 bg-muted/40 px-3 py-2;
   }

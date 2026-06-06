@@ -92,11 +92,34 @@ export function useInlineAi({
     unlistenRef.current = [];
   }, []);
 
+  const flushStreamToEditor = useCallback((editor: Editor) => {
+    if (rafRef.current !== undefined) {
+      cancelAnimationFrame(rafRef.current);
+      rafRef.current = undefined;
+    }
+    editor.commands.updateAiStream(streamBufRef.current);
+  }, []);
+
+  const markStreamReady = useCallback(
+    (editor: Editor) => {
+      flushStreamToEditor(editor);
+      editor.commands.setAiStreamStatus("ready");
+      onStatus?.("AI 空闲");
+    },
+    [flushStreamToEditor, onStatus],
+  );
+
   const attachListeners = useCallback(
     async (editor: Editor) => {
       detachListeners();
       const unlistenToken = await listenLlmToken((ev) => {
-        if (requestIdRef.current && ev.request_id !== requestIdRef.current) {
+        if (!requestIdRef.current && ev.request_id) {
+          requestIdRef.current = ev.request_id;
+        } else if (
+          requestIdRef.current &&
+          ev.request_id &&
+          ev.request_id !== requestIdRef.current
+        ) {
           return;
         }
         streamBufRef.current += ev.token;
@@ -108,20 +131,30 @@ export function useInlineAi({
         }
       });
       const unlistenDone = await listenLlmDone((ev) => {
-        if (requestIdRef.current && ev.request_id === requestIdRef.current) {
-          editor.commands.setAiStreamStatus("ready");
-          onStatus?.("AI 空闲");
+        if (
+          requestIdRef.current &&
+          ev.request_id &&
+          ev.request_id !== requestIdRef.current
+        ) {
+          return;
         }
+        markStreamReady(editor);
       });
       const unlistenError = await listenLlmError((ev) => {
-        if (requestIdRef.current && ev.request_id === requestIdRef.current) {
-          editor.commands.setAiStreamStatus("error");
-          onStatus?.(`AI 错误: ${ev.error ?? "未知错误"}`);
+        if (
+          requestIdRef.current &&
+          ev.request_id &&
+          ev.request_id !== requestIdRef.current
+        ) {
+          return;
         }
+        flushStreamToEditor(editor);
+        editor.commands.setAiStreamStatus("error");
+        onStatus?.(`AI 错误: ${ev.error ?? "未知错误"}`);
       });
       unlistenRef.current = [unlistenToken, unlistenDone, unlistenError];
     },
-    [detachListeners, onStatus],
+    [detachListeners, flushStreamToEditor, markStreamReady, onStatus],
   );
 
   const streamIntoAiNode = useCallback(
@@ -143,6 +176,7 @@ export function useInlineAi({
         if (requestIdRef.current) {
           await llmAbort(requestIdRef.current);
         }
+        requestIdRef.current = null;
         const rid = await llmGenerate({
           provider,
           messages: request.messages,
@@ -150,13 +184,15 @@ export function useInlineAi({
           stream: true,
         });
         requestIdRef.current = rid;
+        // llmGenerate 在流结束后才 resolve；若 llm:done 因 request_id 竞态未触发，此处兜底
+        markStreamReady(editor);
       } catch (e) {
         editor.commands.setAiStreamStatus("error");
         onStatus?.(`AI 错误: ${e instanceof Error ? e.message : String(e)}`);
         throw e;
       }
     },
-    [provider, onStatus, attachListeners],
+    [provider, onStatus, attachListeners, markStreamReady],
   );
 
   const run = useCallback(
@@ -223,5 +259,19 @@ export function useInlineAi({
     detachListeners();
   }, [detachListeners]);
 
-  return { run, runSlash, retry, abort };
+  const dismiss = useCallback(
+    (_editor: Editor) => {
+      void abort();
+    },
+    [abort],
+  );
+
+  const finish = useCallback(() => {
+    requestIdRef.current = null;
+    streamBufRef.current = "";
+    detachListeners();
+    onStatus?.("AI 空闲");
+  }, [detachListeners, onStatus]);
+
+  return { run, runSlash, retry, abort, dismiss, finish };
 }

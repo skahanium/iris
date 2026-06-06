@@ -4,6 +4,7 @@ import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { AiSourceHighlightExtension } from "@/components/editor/extensions/AiSourceHighlightExtension";
 import { AiStreamExtension } from "@/components/editor/extensions/AiStreamExtension";
 import { getActiveAiStreamAttrs, useInlineAi } from "@/hooks/useInlineAi";
 import { buildInlineAiUserMessage } from "@/lib/inline-ai-prompts";
@@ -19,20 +20,35 @@ vi.mock("@/lib/ipc", () => ({
   listenLlmError: vi.fn().mockResolvedValue(() => {}),
 }));
 
-const aiStreamDoc = (generated?: string) => ({
-  type: "doc",
-  content: [
-    {
-      type: "aiStream",
-      attrs: {
-        status: "ready",
-        originalText: "原文内容",
-        action: "rewrite",
+/** 原文段落 + 下方 aiStream（对照模式） */
+function inlineCandidateDoc(generated?: string) {
+  return {
+    type: "doc",
+    content: [
+      {
+        type: "paragraph",
+        content: [{ type: "text", text: "原文内容" }],
       },
-      content: generated ? [{ type: "text", text: generated }] : [],
-    },
-  ],
-});
+      {
+        type: "aiStream",
+        attrs: {
+          status: "ready",
+          originalText: "原文内容",
+          action: "rewrite",
+          sourceFrom: 1,
+          sourceTo: 5,
+        },
+        content: generated ? [{ type: "text", text: generated }] : [],
+      },
+    ],
+  };
+}
+
+const editorExtensions = [
+  StarterKit.configure({ codeBlock: false }),
+  AiSourceHighlightExtension,
+  AiStreamExtension,
+];
 
 describe("buildInlineAiUserMessage", () => {
   it("uses action-specific prefix", () => {
@@ -42,16 +58,21 @@ describe("buildInlineAiUserMessage", () => {
   });
 });
 
-describe("AiStreamExtension accept / rollback / retry", () => {
+describe("AiStreamExtension insert below selection", () => {
   let editor: Editor;
 
   beforeEach(() => {
     editor = new Editor({
-      extensions: [
-        StarterKit.configure({ codeBlock: false }),
-        AiStreamExtension,
-      ],
-      content: aiStreamDoc("生成结果"),
+      extensions: editorExtensions,
+      content: {
+        type: "doc",
+        content: [
+          {
+            type: "paragraph",
+            content: [{ type: "text", text: "前文 选区文字 后文" }],
+          },
+        ],
+      },
     });
   });
 
@@ -59,14 +80,93 @@ describe("AiStreamExtension accept / rollback / retry", () => {
     editor.destroy();
   });
 
-  it("accept keeps generated text as paragraph", () => {
+  it("keeps original text and inserts aiStream after block", () => {
+    editor.commands.setTextSelection({ from: 4, to: 8 });
+    expect(
+      editor.commands.insertAiStreamBelowSelection({
+        originalText: "选区文字",
+        action: "translate",
+        sourceFrom: 4,
+        sourceTo: 8,
+      }),
+    ).toBe(true);
+
+    expect(editor.getText()).toContain("选区文字");
+    expect(editor.getText()).toContain("前文");
+    expect(editor.state.doc.content.childCount).toBe(2);
+    expect(editor.state.doc.content.lastChild?.type.name).toBe("aiStream");
+
+    const mark = editor.state.schema.marks.aiSourceHighlight;
+    let highlighted = false;
+    editor.state.doc.descendants((node) => {
+      if (
+        node.isText &&
+        node.marks.some((m) => m.type === mark) &&
+        node.text === "选区文字"
+      ) {
+        highlighted = true;
+      }
+    });
+    expect(highlighted).toBe(true);
+  });
+});
+
+describe("AiStreamExtension accept / rollback / dismiss", () => {
+  let editor: Editor;
+
+  beforeEach(() => {
+    editor = new Editor({
+      extensions: editorExtensions,
+      content: inlineCandidateDoc("生成结果"),
+    });
+  });
+
+  afterEach(() => {
+    editor.destroy();
+  });
+
+  it("accept replaces source range with generated text and removes aiStream", async () => {
     expect(editor.commands.acceptAiStream()).toBe(true);
+    await Promise.resolve();
     expect(editor.getText()).toBe("生成结果");
+    expect(editor.state.doc.content.childCount).toBe(1);
     expect(editor.state.doc.content.firstChild?.type.name).toBe("paragraph");
   });
 
-  it("rollback restores originalText snapshot", () => {
+  it("undo after accept restores original text without aiStream panel", async () => {
+    expect(editor.commands.acceptAiStream()).toBe(true);
+    await Promise.resolve();
+    expect(editor.getText()).toBe("生成结果");
+
+    expect(editor.commands.undo()).toBe(true);
+    expect(editor.getText()).toBe("原文内容");
+
+    let hasAiStream = false;
+    editor.state.doc.descendants((node) => {
+      if (node.type.name === "aiStream") hasAiStream = true;
+    });
+    expect(hasAiStream).toBe(false);
+  });
+
+  it("rollback removes aiStream only and keeps original paragraph", () => {
     expect(editor.commands.rollbackAiStream()).toBe(true);
+    expect(editor.getText()).toBe("原文内容");
+    expect(editor.state.doc.content.childCount).toBe(1);
+  });
+
+  it("dismiss invokes onDismiss then rollback", () => {
+    const onDismiss = vi.fn();
+    editor.destroy();
+    editor = new Editor({
+      extensions: [
+        ...editorExtensions.slice(0, -1),
+        AiStreamExtension.configure({ onDismiss }),
+      ],
+      content: inlineCandidateDoc("生成结果"),
+    });
+
+    expect(editor.commands.dismissAiStream()).toBe(true);
+    expect(onDismiss).toHaveBeenCalledOnce();
     expect(editor.getText()).toBe("原文内容");
   });
 
@@ -75,10 +175,10 @@ describe("AiStreamExtension accept / rollback / retry", () => {
     editor.destroy();
     editor = new Editor({
       extensions: [
-        StarterKit.configure({ codeBlock: false }),
+        ...editorExtensions.slice(0, -1),
         AiStreamExtension.configure({ onRetry }),
       ],
-      content: aiStreamDoc("生成结果"),
+      content: inlineCandidateDoc("生成结果"),
     });
 
     const ext = editor.extensionManager.extensions.find(
@@ -88,7 +188,8 @@ describe("AiStreamExtension accept / rollback / retry", () => {
     retry?.(editor);
 
     expect(onRetry).toHaveBeenCalledOnce();
-    expect(editor.getText()).toBe("生成结果");
+    expect(editor.getText()).toContain("原文内容");
+    expect(editor.getText()).toContain("生成结果");
 
     expect(editor.commands.rollbackAiStream()).toBe(true);
     expect(editor.getText()).toBe("原文内容");
@@ -133,11 +234,8 @@ describe("useInlineAi with mocked IPC", () => {
 
   it("retry calls llmGenerate with snapshot from ai-stream attrs", async () => {
     const editor = new Editor({
-      extensions: [
-        StarterKit.configure({ codeBlock: false }),
-        AiStreamExtension,
-      ],
-      content: aiStreamDoc(),
+      extensions: editorExtensions,
+      content: inlineCandidateDoc(),
     });
 
     await act(async () => {
@@ -156,6 +254,48 @@ describe("useInlineAi with mocked IPC", () => {
 
     expect(llmGenerate).toHaveBeenCalledTimes(2);
     expect(llmGenerate.mock.calls[1]?.[0]?.messages[0]?.content).toBe(prompt);
+
+    editor.destroy();
+  });
+
+  it("sets aiStream status to ready when llmGenerate resolves", async () => {
+    const editor = new Editor({
+      extensions: editorExtensions,
+      content: inlineCandidateDoc(),
+    });
+
+    await act(async () => {
+      await api.retry(editor);
+    });
+
+    let status = "";
+    editor.state.doc.descendants((node) => {
+      if (node.type.name === "aiStream") {
+        status = node.attrs.status as string;
+      }
+    });
+    expect(status).toBe("ready");
+
+    editor.destroy();
+  });
+
+  it("dismiss aborts in-flight request", async () => {
+    const editor = new Editor({
+      extensions: editorExtensions,
+      content: inlineCandidateDoc(),
+    });
+
+    await act(async () => {
+      await api.retry(editor);
+    });
+
+    expect(llmGenerate).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      api.dismiss(editor);
+    });
+
+    expect(llmAbort).toHaveBeenCalledWith("req-1");
 
     editor.destroy();
   });
