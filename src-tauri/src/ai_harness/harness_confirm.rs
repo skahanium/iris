@@ -130,6 +130,25 @@ pub async fn resume_harness_after_tool_confirm(
     Ok(harness_result)
 }
 
+/// Resume harness; on failure restore trace to awaiting confirm so checkpoint stays loadable.
+pub async fn resume_harness_after_tool_confirm_or_restore(
+    state: &AppState,
+    app_handle: &AppHandle,
+    request_id: &str,
+) -> AppResult<HarnessRunResult> {
+    match resume_harness_after_tool_confirm(state, app_handle, request_id).await {
+        Ok(result) => Ok(result),
+        Err(e) => {
+            let _ = TraceRecorder::update_status(
+                &state.db,
+                request_id,
+                TraceStatus::AwaitingToolConfirmation,
+            );
+            Err(e)
+        }
+    }
+}
+
 /// Dispatch an approved tool and append its result to checkpoint (does not resume).
 pub async fn dispatch_approved_tool_to_checkpoint(
     state: &AppState,

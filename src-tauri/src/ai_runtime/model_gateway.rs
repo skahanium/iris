@@ -164,9 +164,33 @@ pub fn insert_missing_tool_result_stubs(messages: &mut Vec<LlmMessage>, skip_ids
 
 /// Normalize message history before sending to tool-capable chat APIs.
 pub fn prepare_tool_api_messages(messages: &mut Vec<LlmMessage>, skip_stub_ids: &[String]) {
-    remove_orphan_tool_messages(messages);
+    // Repair assistant tool_calls before orphan cleanup — otherwise valid tool rows
+    // can be dropped when legacy checkpoints lack tool_calls on the parent assistant.
     repair_tool_api_messages(messages);
+    remove_orphan_tool_messages(messages);
     insert_missing_tool_result_stubs(messages, skip_stub_ids);
+}
+
+/// Returns true when `messages_for_api` would satisfy OpenAI tool-turn ordering.
+pub fn tool_api_message_chain_valid(messages: &[LlmMessage]) -> bool {
+    let api = messages_for_api(messages);
+    let mut last_assistant_had_tool_calls = false;
+    for msg in api {
+        let role = msg.get("role").and_then(|v| v.as_str()).unwrap_or("");
+        if role == "assistant" {
+            last_assistant_had_tool_calls = msg
+                .get("tool_calls")
+                .and_then(|v| v.as_array())
+                .is_some_and(|a| !a.is_empty());
+        } else if role == "tool" {
+            if !last_assistant_had_tool_calls {
+                return false;
+            }
+        } else {
+            last_assistant_had_tool_calls = false;
+        }
+    }
+    true
 }
 
 /// Serialize messages for provider APIs (tool_calls need `type`, tool role needs `tool_call_id`).
@@ -260,16 +284,40 @@ fn messages_need_tool_prep(messages: &[LlmMessage], tools: &[LlmToolDef]) -> boo
     !tools.is_empty() || messages.iter().any(|m| matches!(m.role, MessageRole::Tool))
 }
 
-/// Build OpenAI-compatible chat-completions JSON body (shared by `send_request` and tests).
+/// Build OpenAI-compatible chat-completions JSON body (tests + checkpoint validation).
+/// Honors `skip_stub_ids` — use only in tests; live sends go through `build_llm_api_body`.
 pub fn build_chat_completions_body(request: &GatewayRequest) -> serde_json::Value {
     let mut messages = request.messages.clone();
     if messages_need_tool_prep(&messages, &request.tools) {
         prepare_tool_api_messages(&mut messages, &request.skip_stub_ids);
     }
+    let mut req = request.clone();
+    req.messages = messages;
+    build_chat_completions_body_inner(&req)
+}
+
+/// Build API body for a live LLM request — never leaves pending-confirm tool gaps unst stubbed.
+fn build_llm_api_body(request: &GatewayRequest) -> AppResult<serde_json::Value> {
+    let mut messages = request.messages.clone();
+    if messages_need_tool_prep(&messages, &request.tools) {
+        prepare_tool_api_messages(&mut messages, &[]);
+        if !tool_api_message_chain_valid(&messages) {
+            return Err(AppError::msg(
+                "工具续聊消息序列无效（tool 行缺少对应的 assistant tool_calls）",
+            ));
+        }
+    }
+    let mut req = request.clone();
+    req.messages = messages;
+    Ok(build_chat_completions_body_inner(&req))
+}
+
+fn build_chat_completions_body_inner(request: &GatewayRequest) -> serde_json::Value {
+    let messages = &request.messages;
 
     let mut body = serde_json::json!({
         "model": request.provider.model,
-        "messages": messages_for_api(&messages),
+        "messages": messages_for_api(messages),
     });
 
     if !request.tools.is_empty() {
@@ -598,7 +646,7 @@ impl ModelGateway {
     pub async fn send_request(&self, request: GatewayRequest) -> AppResult<GatewayResponse> {
         let url = crate::llm::providers::chat_completions_url(&request.provider.base_url);
 
-        let body = build_chat_completions_body(&request);
+        let body = build_llm_api_body(&request)?;
 
         let mut req_builder = self
             .client
@@ -697,7 +745,7 @@ impl ModelGateway {
 
         let url = crate::llm::providers::chat_completions_url(&request.provider.base_url);
 
-        let mut body = build_chat_completions_body(&request);
+        let mut body = build_llm_api_body(&request)?;
         body["stream"] = serde_json::json!(true);
 
         let mut req_builder = self
@@ -1402,6 +1450,29 @@ mod tests {
         assert!(api[0]["tool_calls"].is_array());
         assert_eq!(api[0]["tool_calls"][0]["id"], "call_1");
         assert_eq!(api[1]["role"], "tool");
+    }
+
+    #[test]
+    fn prepare_repairs_legacy_assistant_before_orphan_cleanup() {
+        let mut messages = vec![
+            LlmMessage {
+                role: MessageRole::Assistant,
+                content: "partial".into(),
+                tool_call_id: None,
+                tool_calls: None,
+                ..Default::default()
+            },
+            LlmMessage {
+                role: MessageRole::Tool,
+                content: r#"{"title":"Page"}"#.into(),
+                tool_call_id: Some("call_fetch".into()),
+                tool_calls: None,
+                ..Default::default()
+            },
+        ];
+        prepare_tool_api_messages(&mut messages, &[]);
+        assert_eq!(messages.len(), 2);
+        assert!(tool_api_message_chain_valid(&messages));
     }
 
     #[test]

@@ -476,14 +476,18 @@ pub async fn tool_confirm(
 ) -> AppResult<serde_json::Value> {
     use crate::ai_runtime::harness_confirm::{
         append_rejected_tool_to_checkpoint, dispatch_approved_tool_to_checkpoint,
-        resume_harness_after_tool_confirm,
+        resume_harness_after_tool_confirm_or_restore,
     };
 
     if decision == "reject" {
         crate::llm::safe_lock(&state.pending_tool_calls).remove(&tool_call_id);
         append_rejected_tool_to_checkpoint(state.inner(), &request_id, &tool_call_id)?;
-        let harness_result =
-            resume_harness_after_tool_confirm(state.inner(), &app_handle, &request_id).await?;
+        let harness_result = resume_harness_after_tool_confirm_or_restore(
+            state.inner(),
+            &app_handle,
+            &request_id,
+        )
+        .await?;
         if !harness_result.pending_confirmation {
             let scene: AiScene = serde_json::from_str(&format!(
                 "\"{}\"",
@@ -548,8 +552,12 @@ pub async fn tool_confirm(
         }
     }
 
-    let harness_result =
-        resume_harness_after_tool_confirm(state.inner(), &app_handle, &request_id).await?;
+    let harness_result = resume_harness_after_tool_confirm_or_restore(
+        state.inner(),
+        &app_handle,
+        &request_id,
+    )
+    .await?;
 
     if !harness_result.pending_confirmation {
         let scene = pending.scene;
@@ -927,10 +935,11 @@ pub async fn harness_resume(
     app_handle: tauri::AppHandle,
     request_id: String,
 ) -> AppResult<serde_json::Value> {
-    use crate::ai_runtime::harness_confirm::resume_harness_after_tool_confirm;
+    use crate::ai_runtime::harness_confirm::resume_harness_after_tool_confirm_or_restore;
 
     let harness_result =
-        resume_harness_after_tool_confirm(state.inner(), &app_handle, &request_id).await?;
+        resume_harness_after_tool_confirm_or_restore(state.inner(), &app_handle, &request_id)
+            .await?;
 
     if !harness_result.pending_confirmation {
         let scene_str = load_scene_from_checkpoint(state.inner(), &request_id)?;

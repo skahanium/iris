@@ -22,7 +22,7 @@ use crate::ai_runtime::harness_support::{
     extract_thinking_blocks, load_harness_checkpoint, HarnessCheckpointMeta,
 };
 use crate::ai_runtime::model_gateway::{
-    clear_abort, is_abort_requested, repair_tool_api_messages, GatewayRequest, LlmMessage,
+    clear_abort, is_abort_requested, prepare_tool_api_messages, GatewayRequest, LlmMessage,
     MessageRole, ModelGateway, ProviderConfig, TokenUsage, ToolCall,
 };
 use crate::ai_runtime::scene_router::resolve_scene;
@@ -99,7 +99,7 @@ pub async fn run_harness(
     if input.resume_from_checkpoint {
         if let Some(cp) = load_harness_checkpoint(&state.db, &input.request_id)? {
             messages = cp.messages;
-            repair_tool_api_messages(&mut messages);
+            prepare_tool_api_messages(&mut messages, &[]);
             harness_rounds = cp.round;
             all_tool_calls = cp.tool_calls;
             tool_results_json = cp.tool_results;
@@ -129,7 +129,7 @@ pub async fn run_harness(
             }
             harness_rounds += 1;
 
-            repair_tool_api_messages(&mut messages);
+            prepare_tool_api_messages(&mut messages, &[]);
             if let Some(tool_call) =
                 outstanding_confirm_tool(&registry, &messages, &policy_ctx).cloned()
             {
