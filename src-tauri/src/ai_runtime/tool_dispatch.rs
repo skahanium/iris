@@ -18,6 +18,7 @@ pub const DISPATCHABLE_TOOL_NAMES: &[&str] = &[
     "skills_install",
     "skills_uninstall",
     "skills_toggle",
+    "skills_read_resource",
 ];
 
 /// Handled inside harness loop, not via `dispatch_tool`.
@@ -140,6 +141,7 @@ async fn dispatch_tool_inner(
         "skills_install" => skills_install_tool(state, ctx, args).await,
         "skills_uninstall" => skills_uninstall_tool(state, ctx, args).await,
         "skills_toggle" => skills_toggle_tool(state, ctx, args).await,
+        "skills_read_resource" => skills_read_resource_tool(state, ctx, args).await,
         _ => Err(AppError::msg(format!("unknown tool: {tool_name}"))),
     }
 }
@@ -569,7 +571,7 @@ async fn skills_list_tool(
 ) -> AppResult<serde_json::Value> {
     let _ = ctx;
     let vault = state.vault_path()?;
-    let entries = crate::ai_runtime::skill_install_service::list_skills(&vault)?;
+    let entries = crate::ai_runtime::skill_install_service::list_skills(&state.db, &vault, None)?;
     Ok(serde_json::to_value(&entries).unwrap_or_default())
 }
 
@@ -677,6 +679,33 @@ async fn skills_toggle_tool(
         enabled,
     )?;
     Ok(serde_json::json!({ "ok": true, "name": name, "enabled": enabled }))
+}
+
+async fn skills_read_resource_tool(
+    state: &AppState,
+    ctx: &ToolDispatchContext<'_>,
+    args: &serde_json::Value,
+) -> AppResult<serde_json::Value> {
+    use crate::ai_runtime::skill_install_service::parse_scope;
+    use crate::ai_runtime::skills::read_skill_resource;
+
+    let _ = ctx;
+    let name = args
+        .get("name")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| AppError::msg("skills_read_resource 缺少 name"))?;
+    let relative_path = args
+        .get("relative_path")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| AppError::msg("skills_read_resource 缺少 relative_path"))?;
+    let scope = parse_scope(
+        args.get("scope")
+            .and_then(|v| v.as_str())
+            .unwrap_or("global"),
+    );
+    let vault = state.vault_path()?;
+    let content = read_skill_resource(&vault, name, scope, relative_path)?;
+    Ok(serde_json::json!({ "content": content }))
 }
 
 #[cfg(test)]

@@ -524,6 +524,25 @@ pub static TOOL_CATALOG: LazyLock<Vec<ToolCatalogEntry>> = LazyLock::new(|| {
             scene_affinity: &[],
             max_results: None,
         },
+        ToolCatalogEntry {
+            name: "skills_read_resource",
+            description: "读取已安装 Skill 的 references/、scripts/ 或 assets/ 下资源文件",
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string", "description": "Skill 名称"},
+                    "scope": {"type": "string", "enum": ["global", "vault"], "default": "global"},
+                    "relative_path": {"type": "string", "description": "如 references/guide.md"}
+                },
+                "required": ["name", "relative_path"]
+            }),
+            access_level: ToolAccessLevel::ReadIndex,
+            requires_confirmation: false,
+            implementation: ToolImplementationStatus::Dispatchable,
+            default_enabled_without_skill: false,
+            scene_affinity: &[],
+            max_results: None,
+        },
     ]
 });
 
@@ -696,11 +715,11 @@ mod tests {
 
     #[test]
     fn total_catalog_count() {
-        // 14 read-only + 7 write + 4 skills meta = 25 total tools
+        // 14 read-only + 7 write + 5 skills meta = 26 total tools
         assert_eq!(
             catalog_total_count(),
-            25,
-            "catalog should have exactly 25 tools"
+            26,
+            "catalog should have exactly 26 tools"
         );
     }
 

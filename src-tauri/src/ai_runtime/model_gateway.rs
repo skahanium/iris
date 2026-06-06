@@ -58,27 +58,115 @@ pub fn repair_tool_api_messages(messages: &mut [LlmMessage]) {
         let Some(tool_id) = messages[i].tool_call_id.clone().filter(|s| !s.is_empty()) else {
             continue;
         };
-        for j in (0..i).rev() {
-            if !matches!(messages[j].role, MessageRole::Assistant) {
-                continue;
-            }
-            let has = messages[j].tool_calls.as_ref().is_some_and(|calls| {
-                calls.iter().any(|tc| tc.id == tool_id)
-            });
-            if !has {
-                let placeholder = ToolCall::new(&tool_id, "tool", "{}");
-                match &mut messages[j].tool_calls {
-                    Some(calls) => {
-                        if !calls.iter().any(|tc| tc.id == tool_id) {
-                            calls.push(placeholder);
-                        }
+        // Walk back through consecutive tool messages to the parent assistant turn.
+        let mut j = i;
+        while j > 0 && matches!(messages[j - 1].role, MessageRole::Tool) {
+            j -= 1;
+        }
+        if j == 0 {
+            continue;
+        }
+        let parent = j - 1;
+        if !matches!(messages[parent].role, MessageRole::Assistant) {
+            continue;
+        }
+        let has = messages[parent]
+            .tool_calls
+            .as_ref()
+            .is_some_and(|calls| calls.iter().any(|tc| tc.id == tool_id));
+        if !has {
+            let placeholder = ToolCall::new(&tool_id, "tool", "{}");
+            match &mut messages[parent].tool_calls {
+                Some(calls) => {
+                    if !calls.iter().any(|tc| tc.id == tool_id) {
+                        calls.push(placeholder);
                     }
-                    None => messages[j].tool_calls = Some(vec![placeholder]),
                 }
+                None => messages[parent].tool_calls = Some(vec![placeholder]),
             }
-            break;
         }
     }
+}
+
+/// Drop tool-role messages that are not part of a valid assistant → tool* chain.
+pub fn remove_orphan_tool_messages(messages: &mut Vec<LlmMessage>) {
+    let mut i = 0;
+    while i < messages.len() {
+        if !matches!(messages[i].role, MessageRole::Tool) {
+            i += 1;
+            continue;
+        }
+        if !tool_message_has_valid_chain(messages, i) {
+            messages.remove(i);
+            continue;
+        }
+        i += 1;
+    }
+}
+
+fn tool_message_has_valid_chain(messages: &[LlmMessage], tool_idx: usize) -> bool {
+    let tool_id = match messages[tool_idx].tool_call_id.as_deref() {
+        Some(id) if !id.is_empty() => id,
+        _ => return false,
+    };
+    let mut j = tool_idx;
+    while j > 0 && matches!(messages[j - 1].role, MessageRole::Tool) {
+        j -= 1;
+    }
+    if j == 0 {
+        return false;
+    }
+    let parent = j - 1;
+    matches!(messages[parent].role, MessageRole::Assistant)
+        && messages[parent]
+            .tool_calls
+            .as_ref()
+            .is_some_and(|calls| calls.iter().any(|tc| tc.id == tool_id))
+}
+
+/// Insert error stubs for tool_calls on the latest assistant turn that still lack tool results.
+pub fn insert_missing_tool_result_stubs(messages: &mut Vec<LlmMessage>, skip_ids: &[String]) {
+    let skip: std::collections::HashSet<&str> = skip_ids.iter().map(String::as_str).collect();
+    let Some(assistant_idx) = messages
+        .iter()
+        .rposition(|m| m.tool_calls.as_ref().is_some_and(|c| !c.is_empty()))
+    else {
+        return;
+    };
+    let Some(calls) = messages[assistant_idx].tool_calls.clone() else {
+        return;
+    };
+    let mut insert_at = assistant_idx + 1;
+    while insert_at < messages.len() && matches!(messages[insert_at].role, MessageRole::Tool) {
+        insert_at += 1;
+    }
+    let responded: std::collections::HashSet<String> = messages[assistant_idx + 1..insert_at]
+        .iter()
+        .filter_map(|m| m.tool_call_id.clone())
+        .collect();
+    for tc in calls {
+        if responded.contains(&tc.id) || skip.contains(tc.id.as_str()) {
+            continue;
+        }
+        messages.insert(
+            insert_at,
+            LlmMessage {
+                role: MessageRole::Tool,
+                content: r#"{"error":"tool execution incomplete"}"#.into(),
+                tool_call_id: Some(tc.id.clone()),
+                tool_calls: None,
+                reasoning_content: None,
+            },
+        );
+        insert_at += 1;
+    }
+}
+
+/// Normalize message history before sending to tool-capable chat APIs.
+pub fn prepare_tool_api_messages(messages: &mut Vec<LlmMessage>, skip_stub_ids: &[String]) {
+    remove_orphan_tool_messages(messages);
+    repair_tool_api_messages(messages);
+    insert_missing_tool_result_stubs(messages, skip_stub_ids);
 }
 
 /// Serialize messages for provider APIs (tool_calls need `type`, tool role needs `tool_call_id`).
@@ -164,6 +252,40 @@ pub struct GatewayRequest {
     pub stream: bool,
     /// When true, send provider thinking-mode parameters (DeepSeek-compatible).
     pub thinking: bool,
+    /// Tool call IDs still awaiting user confirmation — must not receive error stubs.
+    pub skip_stub_ids: Vec<String>,
+}
+
+fn messages_need_tool_prep(messages: &[LlmMessage], tools: &[LlmToolDef]) -> bool {
+    !tools.is_empty() || messages.iter().any(|m| matches!(m.role, MessageRole::Tool))
+}
+
+/// Build OpenAI-compatible chat-completions JSON body (shared by `send_request` and tests).
+pub fn build_chat_completions_body(request: &GatewayRequest) -> serde_json::Value {
+    let mut messages = request.messages.clone();
+    if messages_need_tool_prep(&messages, &request.tools) {
+        prepare_tool_api_messages(&mut messages, &request.skip_stub_ids);
+    }
+
+    let mut body = serde_json::json!({
+        "model": request.provider.model,
+        "messages": messages_for_api(&messages),
+    });
+
+    if !request.tools.is_empty() {
+        body["tools"] = serde_json::to_value(&request.tools).unwrap_or_default();
+    }
+
+    if let Some(max_tokens) = request.max_tokens {
+        body["max_tokens"] = serde_json::json!(max_tokens);
+    }
+
+    if let Some(temperature) = request.temperature {
+        body["temperature"] = serde_json::json!(temperature);
+    }
+
+    apply_thinking_body(&mut body, request.thinking);
+    body
 }
 
 /// Gateway response (non-streaming).
@@ -181,29 +303,6 @@ fn apply_thinking_body(body: &mut serde_json::Value, thinking: bool) {
     if thinking {
         body["thinking"] = serde_json::json!({ "type": "enabled" });
     }
-}
-
-/// Build OpenAI-compatible chat-completions JSON body (shared by `send_request` and tests).
-pub fn build_chat_completions_body(request: &GatewayRequest) -> serde_json::Value {
-    let mut body = serde_json::json!({
-        "model": request.provider.model,
-        "messages": messages_for_api(&request.messages),
-    });
-
-    if !request.tools.is_empty() {
-        body["tools"] = serde_json::to_value(&request.tools).unwrap_or_default();
-    }
-
-    if let Some(max_tokens) = request.max_tokens {
-        body["max_tokens"] = serde_json::json!(max_tokens);
-    }
-
-    if let Some(temperature) = request.temperature {
-        body["temperature"] = serde_json::json!(temperature);
-    }
-
-    apply_thinking_body(&mut body, request.thinking);
-    body
 }
 
 fn parse_usage(json: &serde_json::Value) -> TokenUsage {
@@ -416,8 +515,8 @@ impl ModelGateway {
             content: persona,
             tool_call_id: None,
             tool_calls: None,
-        ..Default::default()
-    }];
+            ..Default::default()
+        }];
 
         if !user_rules.is_empty() {
             let mut rules = String::from("## 用户规则\n\n");
@@ -598,25 +697,8 @@ impl ModelGateway {
 
         let url = crate::llm::providers::chat_completions_url(&request.provider.base_url);
 
-        let mut body = serde_json::json!({
-            "model": request.provider.model,
-            "messages": messages_for_api(&request.messages),
-            "stream": true,
-        });
-
-        if !request.tools.is_empty() {
-            body["tools"] = serde_json::to_value(&request.tools).unwrap_or_default();
-        }
-
-        if let Some(max_tokens) = request.max_tokens {
-            body["max_tokens"] = serde_json::json!(max_tokens);
-        }
-
-        if let Some(temperature) = request.temperature {
-            body["temperature"] = serde_json::json!(temperature);
-        }
-
-        apply_thinking_body(&mut body, request.thinking);
+        let mut body = build_chat_completions_body(&request);
+        body["stream"] = serde_json::json!(true);
 
         let mut req_builder = self
             .client
@@ -1197,6 +1279,7 @@ mod tests {
             temperature: Some(0.7),
             stream: false,
             thinking: true,
+            skip_stub_ids: vec![],
         });
         assert_eq!(
             body["messages"][0]["reasoning_content"],
@@ -1240,6 +1323,60 @@ mod tests {
         assert!(api[1]["content"].is_null());
         assert_eq!(api[2]["role"], "tool");
         assert_eq!(api[2]["tool_call_id"], "call_1");
+    }
+
+    #[test]
+    fn prepare_tool_api_messages_completes_mixed_auto_and_confirm_batch() {
+        let mut messages = vec![
+            LlmMessage {
+                role: MessageRole::Assistant,
+                content: "searching".into(),
+                tool_call_id: None,
+                tool_calls: Some(vec![
+                    ToolCall::new("call_search", "web_search", r#"{"query":"x"}"#),
+                    ToolCall::new(
+                        "call_fetch",
+                        "fetch_web_page",
+                        r#"{"url":"https://example.com"}"#,
+                    ),
+                ]),
+                reasoning_content: None,
+            },
+            LlmMessage {
+                role: MessageRole::Tool,
+                content: r#"{"results":[]}"#.into(),
+                tool_call_id: Some("call_search".into()),
+                tool_calls: None,
+                reasoning_content: None,
+            },
+        ];
+        prepare_tool_api_messages(&mut messages, &["call_fetch".into()]);
+        assert_eq!(messages.len(), 2);
+        let api = messages_for_api(&messages);
+        assert_eq!(api.len(), 2);
+        assert_eq!(api[1]["role"], "tool");
+    }
+
+    #[test]
+    fn remove_orphan_tool_messages_drops_invalid_history_rows() {
+        let mut messages = vec![
+            LlmMessage {
+                role: MessageRole::User,
+                content: "hi".into(),
+                tool_call_id: None,
+                tool_calls: None,
+                reasoning_content: None,
+            },
+            LlmMessage {
+                role: MessageRole::Tool,
+                content: r#"{"x":1}"#.into(),
+                tool_call_id: Some("orphan".into()),
+                tool_calls: None,
+                reasoning_content: None,
+            },
+        ];
+        remove_orphan_tool_messages(&mut messages);
+        assert_eq!(messages.len(), 1);
     }
 
     #[test]

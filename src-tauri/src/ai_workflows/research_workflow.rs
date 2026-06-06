@@ -227,8 +227,8 @@ pub async fn execute_research(
             content: prompt,
             tool_call_id: None,
             tool_calls: None,
-        ..Default::default()
-    }];
+            ..Default::default()
+        }];
 
         let request = GatewayRequest {
             provider: provider_config.clone(),
@@ -238,6 +238,7 @@ pub async fn execute_research(
             temperature: Some(0.3),
             stream: true,
             thinking: false,
+            skip_stub_ids: vec![],
         };
 
         let gateway =
@@ -533,7 +534,7 @@ async fn decompose_topic(
         content: prompt,
         tool_call_id: None,
         tool_calls: None,
-    ..Default::default()
+        ..Default::default()
     }];
 
     let request = GatewayRequest {
@@ -544,6 +545,7 @@ async fn decompose_topic(
         temperature: Some(0.3),
         stream: true,
         thinking: false,
+        skip_stub_ids: vec![],
     };
 
     let gateway = ModelGateway::with_defaults(app_handle.clone(), vec![provider.clone()])?;
@@ -720,7 +722,7 @@ async fn detect_argument_chains(
         content: prompt,
         tool_call_id: None,
         tool_calls: None,
-    ..Default::default()
+        ..Default::default()
     }];
 
     let request = GatewayRequest {
@@ -731,6 +733,7 @@ async fn detect_argument_chains(
         temperature: Some(0.2),
         stream: true,
         thinking: false,
+        skip_stub_ids: vec![],
     };
 
     let gateway = ModelGateway::with_defaults(app_handle.clone(), vec![provider.clone()])?;
@@ -868,7 +871,7 @@ async fn synthesize_summary(
         content: prompt,
         tool_call_id: None,
         tool_calls: None,
-    ..Default::default()
+        ..Default::default()
     }];
 
     let request = GatewayRequest {
@@ -879,6 +882,7 @@ async fn synthesize_summary(
         temperature: Some(0.5),
         stream: true,
         thinking: false,
+        skip_stub_ids: vec![],
     };
 
     let gateway = ModelGateway::with_defaults(app_handle.clone(), vec![provider.clone()])?;

@@ -16,6 +16,7 @@ use super::tools::max_fetch_per_round;
 use super::trace_emit::{emit_thinking, emit_trace_phase};
 use super::types::{HarnessPhase, HarnessRunInput, HarnessRunResult};
 use super::util::accumulate_usage;
+use crate::ai_harness::tool_turn::outstanding_confirm_tool;
 use crate::ai_runtime::evidence_ledger::EvidenceLedger;
 use crate::ai_runtime::harness_support::{
     extract_thinking_blocks, load_harness_checkpoint, HarnessCheckpointMeta,
@@ -129,6 +130,34 @@ pub async fn run_harness(
             harness_rounds += 1;
 
             repair_tool_api_messages(&mut messages);
+            if let Some(tool_call) =
+                outstanding_confirm_tool(&registry, &messages, &policy_ctx).cloned()
+            {
+                let assistant_content = messages
+                    .iter()
+                    .rev()
+                    .find(|m| matches!(m.role, MessageRole::Assistant))
+                    .map(|m| m.content.clone())
+                    .unwrap_or_default();
+                return pause_for_tool_confirmation(
+                    state,
+                    app_handle,
+                    input,
+                    &checkpoint_meta,
+                    harness_rounds,
+                    bonus_round_used,
+                    &mut messages,
+                    &all_tool_calls,
+                    &mut tool_results_json,
+                    evidence_ledger.packets(),
+                    total_usage,
+                    usage_source,
+                    assistant_content,
+                    file_id,
+                    &tool_call,
+                )
+                .await;
+            }
 
             let request = GatewayRequest {
                 provider: provider_config.clone(),
@@ -138,6 +167,7 @@ pub async fn run_harness(
                 temperature: Some(0.7),
                 stream: false,
                 thinking: thinking_mode,
+                skip_stub_ids: vec![],
             };
 
             let response = gateway.send_request(request).await?;
@@ -231,12 +261,7 @@ pub async fn run_harness(
             });
 
             for (tc, reason) in &policy_denied {
-                push_tool_policy_error(
-                    &mut messages,
-                    &mut tool_results_json,
-                    tc,
-                    *reason,
-                );
+                push_tool_policy_error(&mut messages, &mut tool_results_json, tc, *reason);
                 all_tool_calls.push(tc.clone());
             }
 
@@ -250,35 +275,7 @@ pub async fn run_harness(
                 .iter()
                 .partition(|tc| tc.function.name == "spawn_subagent");
 
-            let pending_tool_call =
-                first_pending_confirmation_call(&registry, &tool_calls, &policy_ctx).cloned();
-            let model_tool_calls = pending_tool_call
-                .as_ref()
-                .map(|tc| vec![tc.clone()])
-                .unwrap_or_else(|| tool_calls.clone());
-
-            all_tool_calls.extend(model_tool_calls.clone());
-
-            if let Some(tool_call) = pending_tool_call {
-                return pause_for_tool_confirmation(
-                    state,
-                    app_handle,
-                    input,
-                    &checkpoint_meta,
-                    harness_rounds,
-                    bonus_round_used,
-                    &mut messages,
-                    &all_tool_calls,
-                    &mut tool_results_json,
-                    evidence_ledger.packets(),
-                    total_usage,
-                    usage_source,
-                    assistant_content,
-                    file_id,
-                    &tool_call,
-                )
-                .await;
-            }
+            all_tool_calls.extend(tool_calls.iter().cloned());
 
             if !subagent_calls.is_empty() && input.depth < 2 {
                 emit_trace_phase(
@@ -363,6 +360,9 @@ pub async fn run_harness(
             let fetch_limit = max_fetch_per_round(input.scene);
             for tool_call in &other_calls {
                 abort_if_requested(&input.request_id)?;
+                if registry.requires_confirmation(&tool_call.function.name) {
+                    continue;
+                }
                 if tools_this_round >= profile.max_tool_calls_per_round {
                     break;
                 }
@@ -488,6 +488,29 @@ pub async fn run_harness(
                 }));
                 tools_this_round += 1;
             }
+
+            if let Some(tool_call) =
+                outstanding_confirm_tool(&registry, &messages, &policy_ctx).cloned()
+            {
+                return pause_for_tool_confirmation(
+                    state,
+                    app_handle,
+                    input,
+                    &checkpoint_meta,
+                    harness_rounds,
+                    bonus_round_used,
+                    &mut messages,
+                    &all_tool_calls,
+                    &mut tool_results_json,
+                    evidence_ledger.packets(),
+                    total_usage,
+                    usage_source,
+                    assistant_content,
+                    file_id,
+                    &tool_call,
+                )
+                .await;
+            }
         }
 
         // depth 0: full reflection (one round)
@@ -546,6 +569,7 @@ pub async fn run_harness(
             temperature: Some(0.7),
             stream: true,
             thinking: thinking_mode,
+            skip_stub_ids: vec![],
         };
         let response = gateway
             .send_streaming_request(&input.request_id, stream_request)
@@ -595,17 +619,6 @@ fn abort_if_requested(request_id: &str) -> AppResult<()> {
         return Err(AppError::msg("request aborted"));
     }
     Ok(())
-}
-
-fn first_pending_confirmation_call<'a>(
-    registry: &ToolRegistry,
-    tool_calls: &'a [ToolCall],
-    policy_ctx: &ToolPolicyContext,
-) -> Option<&'a ToolCall> {
-    tool_calls.iter().find(|tc| {
-        registry.requires_confirmation(&tc.function.name)
-            && registry.check_tool_policy(&tc.function.name, policy_ctx).is_ok()
-    })
 }
 
 fn push_tool_policy_error(
@@ -802,12 +815,21 @@ async fn run_subagent_harness(
         token_budget: Some(sub_budget),
     };
 
-    run_harness(state, app_handle, sub_input, provider_config, max_tokens, thinking).await
+    run_harness(
+        state,
+        app_handle,
+        sub_input,
+        provider_config,
+        max_tokens,
+        thinking,
+    )
+    .await
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ai_harness::tool_turn::outstanding_confirm_tool;
     use crate::ai_runtime::model_gateway::{TokenUsage, ToolCall};
     use crate::ai_runtime::tool_executor::ToolRegistry;
 
@@ -835,16 +857,35 @@ mod tests {
         }
     }
 
+    fn assistant_with_tools(calls: Vec<ToolCall>) -> Vec<LlmMessage> {
+        vec![LlmMessage {
+            role: MessageRole::Assistant,
+            content: String::new(),
+            tool_call_id: None,
+            tool_calls: Some(calls),
+            ..Default::default()
+        }]
+    }
+
+    #[test]
+    fn test_mixed_auto_and_confirm_tools_only_fetch_pauses() {
+        let registry = ToolRegistry::new();
+        let ctx = test_policy_ctx(true);
+        let messages = assistant_with_tools(vec![
+            make_tool_call("search_hybrid"),
+            make_tool_call("fetch_web_page"),
+        ]);
+        let pending = outstanding_confirm_tool(&registry, &messages, &ctx);
+        assert_eq!(pending.unwrap().function.name, "fetch_web_page");
+        assert!(!registry.requires_confirmation("search_hybrid"));
+        assert!(registry.requires_confirmation("fetch_web_page"));
+    }
+
     #[test]
     fn test_pending_tool_call_returns_pending_result() {
         let registry = ToolRegistry::new();
-        // fetch_web_page requires_confirmation = true
-        let calls = vec![make_tool_call("fetch_web_page")];
-        let result = first_pending_confirmation_call(
-            &registry,
-            &calls,
-            &test_policy_ctx(true),
-        );
+        let messages = assistant_with_tools(vec![make_tool_call("fetch_web_page")]);
+        let result = outstanding_confirm_tool(&registry, &messages, &test_policy_ctx(true));
         assert!(result.is_some());
         assert_eq!(result.unwrap().function.name, "fetch_web_page");
     }
@@ -852,12 +893,8 @@ mod tests {
     #[test]
     fn test_fetch_web_page_skipped_when_web_search_disabled() {
         let registry = ToolRegistry::new();
-        let calls = vec![make_tool_call("fetch_web_page")];
-        let result = first_pending_confirmation_call(
-            &registry,
-            &calls,
-            &test_policy_ctx(false),
-        );
+        let messages = assistant_with_tools(vec![make_tool_call("fetch_web_page")]);
+        let result = outstanding_confirm_tool(&registry, &messages, &test_policy_ctx(false));
         assert!(
             result.is_none(),
             "fetch_web_page should not prompt when web search is disabled"
@@ -868,7 +905,6 @@ mod tests {
     fn test_read_only_tools_do_not_pause() {
         let registry = ToolRegistry::new();
         let ctx = test_policy_ctx(true);
-        // All read-only tools should NOT trigger confirmation
         let read_only = vec![
             "search_hybrid",
             "search_semantic",
@@ -880,8 +916,8 @@ mod tests {
             "get_regulation",
         ];
         for name in read_only {
-            let calls = vec![make_tool_call(name)];
-            let result = first_pending_confirmation_call(&registry, &calls, &ctx);
+            let messages = assistant_with_tools(vec![make_tool_call(name)]);
+            let result = outstanding_confirm_tool(&registry, &messages, &ctx);
             assert!(
                 result.is_none(),
                 "read-only tool '{name}' should NOT require confirmation"
@@ -893,34 +929,43 @@ mod tests {
     fn test_multiple_confirm_tools_pauses_first_and_keeps_checkpoint() {
         let registry = ToolRegistry::new();
         let ctx = test_policy_ctx(true);
-        // Mix of read-only and confirm-required tools
-        let calls = vec![
+        let messages = assistant_with_tools(vec![
             make_tool_call("search_hybrid"),
             make_tool_call("insert_text_at_cursor"),
             make_tool_call("replace_selection"),
-        ];
-        let result = first_pending_confirmation_call(&registry, &calls, &ctx);
+        ]);
+        let result = outstanding_confirm_tool(&registry, &messages, &ctx);
         assert!(result.is_some());
-        // Should return the FIRST confirm-requiring tool
         assert_eq!(result.unwrap().function.name, "insert_text_at_cursor");
     }
 
     #[test]
     fn test_pending_confirmation_is_false_after_removal() {
-        // Verify the dead variable removal: pending_confirmation should never be true
-        // except through pause_for_tool_confirmation. This is a compile-time guarantee
-        // enforced by removing the dead variable, but we verify the logic here.
         let registry = ToolRegistry::new();
-        let calls = vec![make_tool_call("search_hybrid")];
-        let result = first_pending_confirmation_call(
-            &registry,
-            &calls,
-            &test_policy_ctx(true),
-        );
+        let messages = assistant_with_tools(vec![make_tool_call("search_hybrid")]);
+        let result = outstanding_confirm_tool(&registry, &messages, &test_policy_ctx(true));
         assert!(
             result.is_none(),
             "no confirm tool → no pending confirmation"
         );
+    }
+
+    #[test]
+    fn test_outstanding_confirm_skips_responded_tools() {
+        let registry = ToolRegistry::new();
+        let ctx = test_policy_ctx(true);
+        let web = make_tool_call("web_search");
+        let fetch = make_tool_call("fetch_web_page");
+        let mut messages = assistant_with_tools(vec![web.clone(), fetch.clone()]);
+        messages.push(LlmMessage {
+            role: MessageRole::Tool,
+            content: r#"{"results":[]}"#.into(),
+            tool_call_id: Some(web.id.clone()),
+            tool_calls: None,
+            ..Default::default()
+        });
+        let pending = outstanding_confirm_tool(&registry, &messages, &ctx);
+        assert_eq!(pending.unwrap().id, fetch.id);
     }
 
     #[test]

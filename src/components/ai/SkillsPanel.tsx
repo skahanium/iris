@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { IrisOverlay } from "@/components/ui/iris-overlay";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Textarea } from "@/components/ui/textarea";
+import { getActiveAiScene } from "@/hooks/useConnectivityStatus";
 import { invokeErrorMessage } from "@/lib/credentials";
 import {
   skillsInstall,
@@ -22,13 +23,15 @@ import {
 interface SkillsPanelProps {
   open: boolean;
   onClose: () => void;
+  /** When set, list entries include scene_active / scene_score. */
+  scene?: import("@/types/ai").AiScene;
 }
 
 function scopeLabel(scope: string): "global" | "vault" {
   return scope === "vault" ? "vault" : "global";
 }
 
-export function SkillsPanel({ open: overlayOpen, onClose }: SkillsPanelProps) {
+export function SkillsPanel({ open: overlayOpen, onClose, scene }: SkillsPanelProps) {
   const [skills, setSkills] = useState<SkillListEntryDto[]>([]);
   const [query, setQuery] = useState("");
   const [url, setUrl] = useState("");
@@ -44,13 +47,15 @@ export function SkillsPanel({ open: overlayOpen, onClose }: SkillsPanelProps) {
   const [editContent, setEditContent] = useState("");
   const [dragOver, setDragOver] = useState(false);
 
+  const activeScene = scene ?? getActiveAiScene();
+
   const refresh = useCallback(async () => {
     try {
-      setSkills(await skillsList());
+      setSkills(await skillsList(activeScene));
     } catch (e) {
       setError(invokeErrorMessage(e));
     }
-  }, []);
+  }, [activeScene]);
 
   useEffect(() => {
     void refresh();
@@ -214,6 +219,19 @@ export function SkillsPanel({ open: overlayOpen, onClose }: SkillsPanelProps) {
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-2">
                   <p className="text-sm font-medium">{skill.name}</p>
+                  {!skill.enabled ? (
+                    <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">
+                      已禁用
+                    </span>
+                  ) : skill.scene_active === true ? (
+                    <span className="rounded bg-primary/10 px-1.5 py-0.5 text-[10px] text-primary">
+                      本场景注入
+                    </span>
+                  ) : skill.scene_active === false ? (
+                    <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">
+                      已启用
+                    </span>
+                  ) : null}
                   {hasLegacy ? (
                     <span className="rounded bg-amber-500/10 px-1.5 py-0.5 text-[10px] text-amber-600">
                       旧格式
@@ -238,6 +256,11 @@ export function SkillsPanel({ open: overlayOpen, onClose }: SkillsPanelProps) {
                 {hasTools ? (
                   <p className="mt-0.5 text-[10px] text-muted-foreground/80">
                     工具：{skill.allowed_tools.join(", ")}
+                  </p>
+                ) : null}
+                {skill.confirmation_required_tools.length > 0 ? (
+                  <p className="mt-0.5 text-[10px] text-amber-600">
+                    需确认工具：{skill.confirmation_required_tools.join(", ")}
                   </p>
                 ) : null}
                 {skill.unrecognized_tools.length > 0 ? (

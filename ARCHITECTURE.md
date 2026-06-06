@@ -213,7 +213,7 @@ Tauri 的命令式 IPC 基于 JSON 序列化。所有 Rust 函数通过 `#[tauri
 | `search_*`         | 搜索        | `search_keyword`, `search_semantic`                                                                 |
 | `index_*`          | 索引/元数据 | `index_tags`, `index_links`, `index_stats`                                                          |
 | `version_*`        | 版本快照    | `version_list`, `version_preview`, `version_restore`                                                |
-| `skills_*`         | AI Skills   | `skills_list`, `skills_install`, `skills_uninstall`, `skills_toggle`, `skills_read`, `skills_write` |
+| `skills_*`         | AI Skills   | `skills_list`, `skills_install`, `skills_uninstall`, `skills_toggle`, `skills_read`, `skills_write`, `skills_read_resource` |
 | `settings_*`       | 配置        | `settings_get`, `settings_set`                                                                      |
 | `credential_*`     | 凭据        | `credential_set`, `credential_get`                                                                  |
 | `template_*`       | 模板        | `template_list`, `template_apply`                                                                   |
@@ -247,7 +247,25 @@ Tauri 的命令式 IPC 基于 JSON 序列化。所有 Rust 函数通过 `#[tauri
 
 ### Agent Skills 数据流
 
-面板（`SkillsPanel`）与 Harness Agent 共用 `SkillInstallService`：IPC `skills_*` 与 Agent 工具 `skills_list` / `skills_install` / `skills_uninstall` / `skills_toggle` 调用同一 Rust 层。Registry 安装走 `skill_registry`（SkillHub → `api.skillhub.tencent.com`，`SkillRegistryAdapter` 可扩展注册表），变更操作经 `ToolConfirmDialog` 确认；成功后写入 `skill_install_sources`、emit `skills:changed` 刷新 UI，并在侧栏插入安装成功提示。
+面板（`SkillsPanel`）与 Harness Agent 共用 `SkillInstallService`：IPC `skills_*` 与 Agent 工具 `skills_list` / `skills_install` / `skills_uninstall` / `skills_toggle` / `skills_read_resource` 调用同一 Rust 层。Registry 安装走 `skill_registry`（SkillHub → `api.skillhub.tencent.com`，`SkillRegistryAdapter` 可扩展注册表），变更操作经 `ToolConfirmDialog` 确认；成功后写入 `skill_install_sources`、刷新 `skill_activation_index`（关键词 + 描述 embedding）、emit `skills:changed` 刷新 UI。
+
+#### Skills 运行时能力边界
+
+| 能力 | 行为 |
+|------|------|
+| Prompt 注入 | `rank_skills_for_scene` 匹配后，将 `SKILL.md` 正文拼入 system message |
+| 工具扩权 | `allowed-tools` 与 `ToolPolicy` 硬约束求交；**不注册新 Rust 工具** |
+| 场景匹配 | 优先读 `skill_activation_index` 关键词/描述，文件扫描 fallback；embedding cosine rerank |
+| 资源读取 | Agent 通过 `skills_read_resource` 读取 skill root 内 `references/`、`scripts/`、`assets/` |
+| UI 语义 | **已启用**（config）≠ **本场景注入**（rank>0）；`AgentStatusBadge` / `SkillsPanel` 区分展示 |
+
+| 不能做什么 | 说明 |
+|------------|------|
+| 任意插件执行 | 不会运行 skill 内任意脚本或注册 MCP |
+| 突破 ToolPolicy | `requires_confirmation` 工具仍需用户确认；联网工具受 `web_search_enabled` 约束 |
+| Catalog 外工具 | `allowed-tools` 中未在 `ToolCatalog` 实现的名称仅 UI 警告，运行时不可用 |
+
+Tool 续聊：`ModelGateway.prepare_tool_api_messages` 在每次 LLM 请求前规范化 messages（含 mixed auto+confirm 批次、`skip_stub_ids` 处理 pending confirm）。
 
 ---
 

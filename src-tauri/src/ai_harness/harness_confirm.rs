@@ -2,20 +2,26 @@
 
 use tauri::AppHandle;
 
+use crate::ai_harness::tool_turn::skip_stub_ids_for_checkpoint;
 use crate::ai_runtime::harness::{
     merge_tool_packets_into, run_harness, HarnessRunInput, HarnessRunResult,
 };
 use crate::ai_runtime::harness_support::{
     load_harness_checkpoint, save_harness_checkpoint, HarnessCheckpoint,
 };
-use crate::ai_runtime::model_gateway::{LlmMessage, MessageRole, repair_tool_api_messages};
+use crate::ai_runtime::model_gateway::{
+    prepare_tool_api_messages, repair_tool_api_messages, LlmMessage, MessageRole,
+};
 use crate::ai_runtime::tool_dispatch::{dispatch_tool, ToolDispatchContext};
+use crate::ai_runtime::tool_executor::ToolRegistry;
+use crate::ai_runtime::tool_policy::ToolPolicyContext;
 use crate::ai_runtime::trace::{TraceRecorder, TraceStatus};
 use crate::ai_runtime::AiScene;
 use crate::app::{AppState, PendingToolCall};
 use crate::error::{AppError, AppResult};
 
 /// Append a tool-role message to checkpoint and persist.
+#[allow(clippy::too_many_arguments)]
 pub fn append_tool_message_to_checkpoint(
     db: &crate::storage::db::Database,
     request_id: &str,
@@ -24,6 +30,7 @@ pub fn append_tool_message_to_checkpoint(
     tool_result_status: &str,
     result_output: Option<serde_json::Value>,
     merge_packets: Option<(&str, &serde_json::Value)>,
+    policy_ctx: Option<&ToolPolicyContext>,
 ) -> AppResult<HarnessCheckpoint> {
     let mut cp = load_harness_checkpoint(db, request_id)?
         .ok_or_else(|| AppError::msg("未找到可恢复的 checkpoint"))?;
@@ -33,10 +40,16 @@ pub fn append_tool_message_to_checkpoint(
         content: tool_content,
         tool_call_id: Some(tool_call_id.to_string()),
         tool_calls: None,
-    ..Default::default()
+        ..Default::default()
     });
 
     repair_tool_api_messages(&mut cp.messages);
+    let registry = ToolRegistry::new();
+    let ctx = policy_ctx
+        .cloned()
+        .unwrap_or_else(|| policy_ctx_from_checkpoint_meta(&cp.meta));
+    let skip = skip_stub_ids_for_checkpoint(&cp, &registry, &ctx);
+    prepare_tool_api_messages(&mut cp.messages, &skip);
 
     let mut entry = serde_json::json!({
         "tool_call_id": tool_call_id,
@@ -53,6 +66,21 @@ pub fn append_tool_message_to_checkpoint(
 
     save_harness_checkpoint(db, request_id, &cp)?;
     Ok(cp)
+}
+
+fn policy_ctx_from_checkpoint_meta(
+    meta: &crate::ai_runtime::harness_support::HarnessCheckpointMeta,
+) -> ToolPolicyContext {
+    let scene: AiScene =
+        serde_json::from_str(&format!("\"{}\"", meta.scene)).unwrap_or(AiScene::KnowledgeLookup);
+    let profile = crate::ai_runtime::resolve_scene(scene);
+    ToolPolicyContext {
+        scene,
+        autonomy_level: profile.autonomy_level,
+        web_search_enabled: meta.web_search_enabled,
+        skill_allowed_tools: vec![],
+        depth: meta.depth,
+    }
 }
 
 /// Resume harness from checkpoint after tool confirm (approve / reject / modify).
@@ -132,6 +160,7 @@ pub async fn dispatch_approved_tool_to_checkpoint(
             "error",
             Some(payload.clone()),
             None,
+            Some(&policy_ctx),
         )?;
         let _ = crate::ai_runtime::tool_audit::record_audit(
             &state.db,
@@ -201,6 +230,7 @@ pub async fn dispatch_approved_tool_to_checkpoint(
         status,
         output,
         merge,
+        Some(&policy_ctx),
     )?;
 
     let _ = crate::ai_runtime::tool_audit::record_audit(
@@ -239,6 +269,7 @@ pub fn append_rejected_tool_to_checkpoint(
         content_str,
         "rejected",
         Some(content),
+        None,
         None,
     )?;
     let _ = crate::ai_runtime::tool_audit::record_audit(

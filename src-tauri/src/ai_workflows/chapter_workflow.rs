@@ -365,7 +365,7 @@ pub async fn generate_chapter_content_with_llm(
                 content: system,
                 tool_call_id: None,
                 tool_calls: None,
-            
+
                 ..Default::default()
             },
             LlmMessage {
@@ -373,7 +373,7 @@ pub async fn generate_chapter_content_with_llm(
                 content: user,
                 tool_call_id: None,
                 tool_calls: None,
-            
+
                 ..Default::default()
             },
         ],
@@ -382,6 +382,7 @@ pub async fn generate_chapter_content_with_llm(
         temperature: Some(0.4),
         stream: false,
         thinking: false,
+        skip_stub_ids: vec![],
     };
 
     let gateway = crate::ai_runtime::model_gateway::ModelGateway::with_defaults(

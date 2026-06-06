@@ -10,15 +10,32 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { cn } from "@/lib/utils";
+import { getActiveAiScene } from "@/hooks/useConnectivityStatus";
 import { skillsList, type SkillListEntryDto } from "@/lib/ipc";
+import { cn } from "@/lib/utils";
+import type { AiScene } from "@/types/ai";
 
 interface AgentStatusBadgeProps {
   webSearchEnabled?: boolean;
   disabled?: boolean;
+  scene?: AiScene;
   onOpenSkills?: () => void;
   auditAvailable?: boolean;
   onOpenAudit?: () => void;
+}
+
+function sceneLabel(scene: AiScene): string {
+  switch (scene) {
+    case "drafting_assist":
+      return "文稿创作";
+    case "research_synthesis":
+      return "学术研究";
+    case "exemplar_learning":
+      return "文稿学习";
+    case "knowledge_lookup":
+    default:
+      return "知识查阅";
+  }
 }
 
 function PolicyRow({
@@ -55,6 +72,7 @@ function PolicyRow({
 export function AgentStatusBadge({
   webSearchEnabled = false,
   disabled,
+  scene: sceneProp,
   onOpenSkills,
   auditAvailable = false,
   onOpenAudit,
@@ -62,21 +80,26 @@ export function AgentStatusBadge({
   const [skills, setSkills] = useState<SkillListEntryDto[]>([]);
   const [open, setOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
+  const scene = sceneProp ?? getActiveAiScene();
+
+  const loadSkills = useCallback(async () => {
+    try {
+      setSkills(await skillsList(scene));
+    } catch {
+      setSkills([]);
+    }
+  }, [scene]);
 
   useEffect(() => {
     if (!open) return;
-    skillsList()
-      .then(setSkills)
-      .catch(() => setSkills([]));
-  }, [open]);
+    void loadSkills();
+  }, [open, loadSkills]);
 
   useEffect(() => {
     let unlisten: (() => void) | undefined;
     void import("@tauri-apps/api/event").then(({ listen }) => {
       listen("skills:changed", () => {
-        skillsList()
-          .then(setSkills)
-          .catch(() => setSkills([]));
+        void loadSkills();
       }).then((fn) => {
         unlisten = fn;
       });
@@ -84,7 +107,7 @@ export function AgentStatusBadge({
     return () => {
       unlisten?.();
     };
-  }, []);
+  }, [loadSkills]);
 
   useEffect(() => {
     if (!open) return;
@@ -101,7 +124,8 @@ export function AgentStatusBadge({
   }, [open]);
 
   const enabledSkills = skills.filter((s) => s.enabled);
-  const hasSkills = enabledSkills.length > 0;
+  const sceneActiveSkills = enabledSkills.filter((s) => s.scene_active === true);
+  const hasSceneActive = sceneActiveSkills.length > 0;
 
   const close = useCallback(() => setOpen(false), []);
 
@@ -129,44 +153,90 @@ export function AgentStatusBadge({
           <div className="border-b border-border/60 px-3 py-2.5">
             <p className="text-xs font-medium text-foreground">Agent 状态</p>
             <p className="mt-0.5 text-[10px] text-muted-foreground">
-              {hasSkills
-                ? `已激活 ${enabledSkills.length} 个 Skill`
-                : "使用核心默认工具集"}
+              场景：{sceneLabel(scene)}
+              {hasSceneActive
+                ? ` · 本场景注入 ${sceneActiveSkills.length} 个 Skill`
+                : enabledSkills.length > 0
+                  ? ` · ${enabledSkills.length} 个已启用但未注入`
+                  : " · 使用核心默认工具集"}
             </p>
           </div>
 
           <div className="max-h-64 overflow-y-auto p-2">
             <section>
               <p className="px-2 pb-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
-                激活 Skills
+                本场景注入
               </p>
-              {hasSkills ? (
+              {hasSceneActive ? (
                 <ul className="space-y-0.5">
-                  {enabledSkills.map((skill) => (
+                  {sceneActiveSkills.map((skill) => (
                     <li
-                      key={skill.name}
-                      className="flex items-center justify-between gap-2 rounded-md px-2 py-1.5 hover:bg-muted/50"
+                      key={`${skill.scope}-${skill.name}`}
+                      className="rounded-md px-2 py-1.5 hover:bg-muted/50"
                     >
-                      <span className="truncate text-xs font-medium text-foreground">
-                        {skill.name}
-                      </span>
-                      {skill.legacy_trigger ? (
-                        <Badge
-                          variant="outline"
-                          className="h-4 shrink-0 px-1 text-[9px] text-amber-600"
-                        >
-                          旧格式
-                        </Badge>
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="truncate text-xs font-medium text-foreground">
+                          {skill.name}
+                        </span>
+                        {skill.legacy_trigger ? (
+                          <Badge
+                            variant="outline"
+                            className="h-4 shrink-0 px-1 text-[9px] text-amber-600"
+                          >
+                            旧格式
+                          </Badge>
+                        ) : null}
+                      </div>
+                      {skill.allowed_tools.length > 0 ? (
+                        <p className="mt-0.5 text-[10px] text-muted-foreground">
+                          工具：{skill.allowed_tools.join(", ")}
+                        </p>
+                      ) : null}
+                      {skill.confirmation_required_tools.length > 0 ? (
+                        <p className="mt-0.5 text-[10px] text-amber-600">
+                          需确认：{skill.confirmation_required_tools.join(", ")}
+                        </p>
+                      ) : null}
+                      {skill.unrecognized_tools.length > 0 ? (
+                        <p className="mt-0.5 text-[10px] text-red-500">
+                          未识别：{skill.unrecognized_tools.join(", ")}
+                        </p>
                       ) : null}
                     </li>
                   ))}
                 </ul>
               ) : (
                 <p className="px-2 py-1 text-xs text-muted-foreground">
-                  暂无激活 Skill
+                  当前场景无注入 Skill
+                  {enabledSkills.length > 0
+                    ? `（${enabledSkills.length} 个已启用但未匹配本场景）`
+                    : ""}
                 </p>
               )}
             </section>
+
+            {enabledSkills.length > sceneActiveSkills.length ? (
+              <>
+                <div className="my-2 border-t border-border/40" />
+                <section>
+                  <p className="px-2 pb-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+                    已启用（未注入）
+                  </p>
+                  <ul className="space-y-0.5">
+                    {enabledSkills
+                      .filter((s) => s.scene_active !== true)
+                      .map((skill) => (
+                        <li
+                          key={`idle-${skill.scope}-${skill.name}`}
+                          className="truncate px-2 py-1 text-xs text-muted-foreground"
+                        >
+                          {skill.name}
+                        </li>
+                      ))}
+                  </ul>
+                </section>
+              </>
+            ) : null}
 
             <div className="my-2 border-t border-border/40" />
 

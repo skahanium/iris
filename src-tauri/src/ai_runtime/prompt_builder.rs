@@ -174,13 +174,15 @@ pub fn build_initial_messages(
         });
     }
 
-    // History messages
+    // History messages (skip orphan tool rows — they lack tool_calls context)
     use crate::ai_runtime::harness_support::compress_history_messages;
     let compressed = compress_history_messages(input.history);
     for (role, content) in compressed {
+        if role == "tool" {
+            continue;
+        }
         let r = match role.as_str() {
             "assistant" => MessageRole::Assistant,
-            "tool" => MessageRole::Tool,
             _ => MessageRole::User,
         };
         messages.push(LlmMessage {

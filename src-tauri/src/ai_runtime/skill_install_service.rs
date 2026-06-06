@@ -8,9 +8,11 @@ use tauri::{AppHandle, Emitter};
 
 use crate::ai_runtime::skill_registry::{InstallSpec, SkillInstallSource};
 use crate::ai_runtime::skills::{
-    install_from_git, install_from_local, install_from_url, scan_all_with_status, set_enabled,
-    uninstall, SkillEntry, SkillListEntry, SkillScope,
+    enrich_list_with_scene, install_from_git, install_from_local, install_from_url,
+    scan_all_with_status, set_enabled, uninstall, SkillEntry, SkillListEntry, SkillScope,
 };
+use crate::ai_runtime::AiScene;
+use crate::embedding::engine::embed_text;
 use crate::error::{AppError, AppResult};
 use crate::storage::db::Database;
 
@@ -72,19 +74,28 @@ fn record_install_source(
 
 fn refresh_activation_index(db: &Database, entry: &SkillEntry) -> AppResult<()> {
     let keywords = extract_keywords(entry);
+    let embedding_json = if !entry.description.is_empty() {
+        embed_text(&format!("{} {}", entry.name, entry.description))
+            .ok()
+            .and_then(|v| serde_json::to_string(&v).ok())
+    } else {
+        None
+    };
     db.with_conn(|conn| {
         conn.execute(
-            "INSERT INTO skill_activation_index (skill_name, scope, description, keywords, updated_at)
-             VALUES (?1, ?2, ?3, ?4, datetime('now'))
+            "INSERT INTO skill_activation_index (skill_name, scope, description, keywords, embedding_json, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, datetime('now'))
              ON CONFLICT(skill_name, scope) DO UPDATE SET
                description = excluded.description,
                keywords = excluded.keywords,
+               embedding_json = excluded.embedding_json,
                updated_at = datetime('now')",
             rusqlite::params![
                 entry.name,
                 scope_db(entry.scope),
                 entry.description,
-                keywords
+                keywords,
+                embedding_json
             ],
         )?;
         Ok(())
@@ -155,15 +166,9 @@ async fn install_from_spec(
                 .ok_or_else(|| AppError::msg("安装失败"))
         }
         SkillInstallSource::Git => {
-            let entries = install_from_git(
-                &spec.path_or_url,
-                spec.subpath.as_deref(),
-                scope,
-                vault,
-            )
-            .await?;
-            let list =
-                install_entries(db, vault, app_handle, entries, "git", source_url).await?;
+            let entries =
+                install_from_git(&spec.path_or_url, spec.subpath.as_deref(), scope, vault).await?;
+            let list = install_entries(db, vault, app_handle, entries, "git", source_url).await?;
             list.into_iter()
                 .next()
                 .ok_or_else(|| AppError::msg("安装失败"))
@@ -182,8 +187,17 @@ async fn install_from_spec(
 }
 
 /// List installed skills with validation metadata.
-pub fn list_skills(vault: &Path) -> AppResult<Vec<SkillListEntry>> {
-    scan_all_with_status(vault)
+pub fn list_skills(
+    db: &Database,
+    vault: &Path,
+    scene: Option<AiScene>,
+) -> AppResult<Vec<SkillListEntry>> {
+    let entries = scan_all_with_status(vault)?;
+    if let Some(scene) = scene {
+        enrich_list_with_scene(entries, scene, Some(db))
+    } else {
+        Ok(entries)
+    }
 }
 
 /// Install a skill from url / git / local / registry.

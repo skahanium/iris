@@ -153,11 +153,7 @@ pub fn normalize_skillhub_reference(reference: &str) -> AppResult<String> {
         }
         if let Some(idx) = lower.find("/skills/") {
             let rest = &trimmed[idx + "/skills/".len()..];
-            let slug = rest
-                .split(['/', '?', '#'])
-                .next()
-                .unwrap_or("")
-                .trim();
+            let slug = rest.split(['/', '?', '#']).next().unwrap_or("").trim();
             if !slug.is_empty() && slug != "install" {
                 return Ok(slug.to_string());
             }
@@ -171,10 +167,7 @@ pub fn normalize_skillhub_reference(reference: &str) -> AppResult<String> {
 }
 
 /// Build install spec from SkillHub API detail response (testable without HTTP).
-fn spec_from_skillhub_detail(
-    slug: &str,
-    detail: SkillHubDetailResponse,
-) -> AppResult<InstallSpec> {
+fn spec_from_skillhub_detail(slug: &str, detail: SkillHubDetailResponse) -> AppResult<InstallSpec> {
     let display_name = detail
         .skill
         .display_name
@@ -215,7 +208,10 @@ async fn resolve_skillhub(reference: &str) -> AppResult<InstallSpec> {
     let slug = normalize_skillhub_reference(reference)?;
 
     let client = crate::network::cert_pinning::create_pinned_client()?;
-    let detail_url = format!("{SKILLHUB_API}/api/v1/skills/{}", urlencoding::encode(&slug));
+    let detail_url = format!(
+        "{SKILLHUB_API}/api/v1/skills/{}",
+        urlencoding::encode(&slug)
+    );
     let resp = client
         .get(&detail_url)
         .send()
@@ -242,9 +238,7 @@ async fn resolve_skillhub(reference: &str) -> AppResult<InstallSpec> {
 /// Resolve a registry reference to an install spec.
 pub async fn resolve_registry(registry: RegistryId, reference: &str) -> AppResult<InstallSpec> {
     let id = registry.as_str();
-    registry_adapter(id)?
-        .resolve(reference)
-        .await
+    registry_adapter(id)?.resolve(reference).await
 }
 
 /// Resolve by registry name string (e.g. `"skillhub"`).
@@ -279,7 +273,10 @@ mod tests {
 
     #[test]
     fn normalize_slug_from_name() {
-        assert_eq!(normalize_skillhub_reference("scrapling").unwrap(), "scrapling");
+        assert_eq!(
+            normalize_skillhub_reference("scrapling").unwrap(),
+            "scrapling"
+        );
     }
 
     #[test]

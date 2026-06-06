@@ -973,7 +973,7 @@ async fn generate_llm_document_patches(
                 content: system,
                 tool_call_id: None,
                 tool_calls: None,
-            
+
                 ..Default::default()
             },
             LlmMessage {
@@ -981,7 +981,7 @@ async fn generate_llm_document_patches(
                 content: user,
                 tool_call_id: None,
                 tool_calls: None,
-            
+
                 ..Default::default()
             },
         ],
@@ -990,6 +990,7 @@ async fn generate_llm_document_patches(
         temperature: Some(0.25),
         stream: false,
         thinking: false,
+        skip_stub_ids: vec![],
     };
 
     let gateway = ModelGateway::with_defaults(app_handle.clone(), vec![provider.clone()])?;
@@ -1079,7 +1080,7 @@ pub async fn enhance_document_check_with_llm(
                 content: system,
                 tool_call_id: None,
                 tool_calls: None,
-            
+
                 ..Default::default()
             },
             LlmMessage {
@@ -1087,7 +1088,7 @@ pub async fn enhance_document_check_with_llm(
                 content: user,
                 tool_call_id: None,
                 tool_calls: None,
-            
+
                 ..Default::default()
             },
         ],
@@ -1096,6 +1097,7 @@ pub async fn enhance_document_check_with_llm(
         temperature: Some(0.3),
         stream: false,
         thinking: false,
+        skip_stub_ids: vec![],
     };
 
     let gateway = ModelGateway::with_defaults(app_handle.clone(), vec![provider.clone()])?;

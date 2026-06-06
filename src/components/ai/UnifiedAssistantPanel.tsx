@@ -1474,6 +1474,7 @@ export function UnifiedAssistantPanel({
           <div className="flex shrink-0 items-center gap-1.5">
             <AgentStatusBadge
               webSearchEnabled={webSearch}
+              scene={activeScene}
               disabled={chromeActionsDisabled}
               auditAvailable={Boolean(harnessRequestId)}
               onOpenAudit={() => setAuditDrawerOpen(true)}

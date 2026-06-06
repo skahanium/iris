@@ -11,12 +11,14 @@ use serde::{Deserialize, Serialize};
 
 use crate::ai_runtime::tool_catalog::TOOL_CATALOG;
 use crate::ai_runtime::AiScene;
+use crate::embedding::engine::{cosine_similarity, embed_text};
 use crate::error::{AppError, AppResult};
+use crate::storage::db::Database;
 
 const VALIDATION_MISSING_FRONTMATTER: &str = "_iris_missing_frontmatter";
 const VALIDATION_NAME_MISMATCH: &str = "_iris_name_mismatch";
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SkillScope {
     Global,
@@ -604,14 +606,69 @@ pub struct ScoredSkill<'a> {
     pub score: f64,
 }
 
+/// Cached activation metadata from `skill_activation_index`.
+#[derive(Debug, Clone)]
+pub struct SkillActivationIndexRow {
+    pub skill_name: String,
+    pub scope: SkillScope,
+    pub description: Option<String>,
+    pub keywords: Option<String>,
+    pub embedding_json: Option<String>,
+}
+
+type ActivationIndexMap = HashMap<(String, SkillScope), SkillActivationIndexRow>;
+
+/// Load all rows from `skill_activation_index` for fast scene matching.
+pub fn load_activation_index(db: &Database) -> AppResult<ActivationIndexMap> {
+    db.with_conn(|conn| {
+        let mut stmt = conn.prepare(
+            "SELECT skill_name, scope, description, keywords, embedding_json
+             FROM skill_activation_index",
+        )?;
+        let rows = stmt.query_map([], |row| {
+            let scope_str: String = row.get(1)?;
+            Ok(SkillActivationIndexRow {
+                skill_name: row.get(0)?,
+                scope: if scope_str == "Vault" {
+                    SkillScope::Vault
+                } else {
+                    SkillScope::Global
+                },
+                description: row.get(2)?,
+                keywords: row.get(3)?,
+                embedding_json: row.get(4)?,
+            })
+        })?;
+        let mut map = ActivationIndexMap::new();
+        for row in rows {
+            let row = row?;
+            map.insert((row.skill_name.clone(), row.scope), row);
+        }
+        Ok(map)
+    })
+}
+
+fn parse_embedding_json(raw: &str) -> Option<Vec<f32>> {
+    serde_json::from_str::<Vec<f32>>(raw).ok()
+}
+
+/// Tools declared by a skill that require user confirmation in the harness.
+pub fn confirmation_required_tools(tools: &[String]) -> Vec<String> {
+    tools
+        .iter()
+        .filter(|t| {
+            TOOL_CATALOG
+                .iter()
+                .any(|e| e.name == t.as_str() && e.requires_confirmation)
+        })
+        .cloned()
+        .collect()
+}
+
 /// Filter and rank enabled skills by scene affinity with BM25-style scoring.
 ///
-/// Priority order:
-/// 1. Skills with no trigger and no legacy_trigger (universally available, base score)
-/// 2. Skills with legacy_trigger matching the scene keyword (boosted)
-/// 3. Skills with description matching scene keywords (BM25-style term frequency)
-///
-/// Returns skills sorted by score (highest first).
+/// When `skill_activation_index` rows are supplied, keywords/description from the
+/// index take precedence over file metadata for matching.
 pub fn skills_for_scene(skills: &[SkillEntry], scene: AiScene) -> Vec<&SkillEntry> {
     rank_skills_for_scene(skills, scene)
         .into_iter()
@@ -621,6 +678,15 @@ pub fn skills_for_scene(skills: &[SkillEntry], scene: AiScene) -> Vec<&SkillEntr
 
 /// Scored version of `skills_for_scene` — returns scores for debugging/display.
 pub fn rank_skills_for_scene<'a>(skills: &'a [SkillEntry], scene: AiScene) -> Vec<ScoredSkill<'a>> {
+    rank_skills_for_scene_with_index(skills, scene, None)
+}
+
+/// Scored ranking with optional activation-index overlay.
+pub fn rank_skills_for_scene_with_index<'a>(
+    skills: &'a [SkillEntry],
+    scene: AiScene,
+    index: Option<&ActivationIndexMap>,
+) -> Vec<ScoredSkill<'a>> {
     let scene_key = scene.profile();
     let scene_synonyms: Vec<&str> = match scene_key {
         "drafting_assist" => vec![
@@ -658,7 +724,8 @@ pub fn rank_skills_for_scene<'a>(skills: &'a [SkillEntry], scene: AiScene) -> Ve
         .iter()
         .filter(|s| s.enabled)
         .filter_map(|s| {
-            let score = compute_skill_score(s, scene_key, &scene_synonyms);
+            let index_row = index.and_then(|m| m.get(&(s.name.clone(), s.scope)));
+            let score = compute_skill_score(s, scene_key, &scene_synonyms, index_row);
             if score > 0.0 {
                 Some(ScoredSkill { skill: s, score })
             } else {
@@ -677,7 +744,12 @@ pub fn rank_skills_for_scene<'a>(skills: &'a [SkillEntry], scene: AiScene) -> Ve
 }
 
 /// BM25-style scoring for a single skill against a scene.
-fn compute_skill_score(skill: &SkillEntry, scene_key: &str, synonyms: &[&str]) -> f64 {
+fn compute_skill_score(
+    skill: &SkillEntry,
+    scene_key: &str,
+    synonyms: &[&str],
+    index_row: Option<&SkillActivationIndexRow>,
+) -> f64 {
     let mut score: f64 = 0.0;
 
     // Universal skills get a base score
@@ -700,8 +772,17 @@ fn compute_skill_score(skill: &SkillEntry, scene_key: &str, synonyms: &[&str]) -
         }
     }
 
+    let description = index_row
+        .and_then(|r| r.description.as_deref())
+        .filter(|d| !d.is_empty())
+        .unwrap_or(skill.description.as_str());
+    let index_keywords = index_row
+        .and_then(|r| r.keywords.as_deref())
+        .unwrap_or("")
+        .to_lowercase();
+
     // Description BM25-style term frequency
-    let desc_lower = skill.description.to_lowercase();
+    let desc_lower = description.to_lowercase();
     let name_lower = skill.name.to_lowercase();
     let content_lower = skill.content.to_lowercase();
 
@@ -722,6 +803,10 @@ fn compute_skill_score(skill: &SkillEntry, scene_key: &str, synonyms: &[&str]) -
         if content_tf > 0.0 {
             score += (content_tf / (content_tf + 1.2)) * 0.5;
         }
+        // Activation index keywords boost
+        if index_keywords.contains(term) {
+            score += 2.5;
+        }
     }
 
     // Metadata keyword boost
@@ -739,27 +824,72 @@ fn compute_skill_score(skill: &SkillEntry, scene_key: &str, synonyms: &[&str]) -
     score
 }
 
-/// Rerank skills using vector similarity when sqlite-vec is available.
-/// Falls back to the BM25-scored list when vector index is not ready.
+/// Rerank skills using vector similarity when embeddings are available.
+/// Falls back to the BM25-scored list when embedding generation fails.
 pub fn rerank_skills_with_vectors<'a>(
     scored: Vec<ScoredSkill<'a>>,
-    _query: &str,
+    query: &str,
+    index: Option<&ActivationIndexMap>,
 ) -> Vec<ScoredSkill<'a>> {
-    // If sqlite-vec is not available, return BM25 scores as-is
-    if !crate::storage::db::vector_index_ready() {
+    let query = query.trim();
+    if query.is_empty() || index.is_none() {
         return scored;
     }
 
-    // Vector index readiness is best-effort for now. Until skill description
-    // embeddings are populated, keep the deterministic BM25/keyword ordering.
-    scored
+    let query_vec = match embed_text(query) {
+        Ok(v) => v,
+        Err(_) => return scored,
+    };
+
+    let index = index.expect("checked above");
+    let mut reranked = scored;
+    for ss in &mut reranked {
+        let key = (ss.skill.name.clone(), ss.skill.scope);
+        let Some(row) = index.get(&key) else {
+            continue;
+        };
+        let Some(ref emb_json) = row.embedding_json else {
+            continue;
+        };
+        let Some(skill_vec) = parse_embedding_json(emb_json) else {
+            continue;
+        };
+        let sim = cosine_similarity(&query_vec, &skill_vec) as f64;
+        ss.score += sim * 3.0;
+    }
+
+    reranked.sort_by(|a, b| {
+        b.score
+            .partial_cmp(&a.score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    reranked
 }
 
 /// Load enabled skills for prompt injection after metadata matching.
-pub fn active_skills_for_prompt(vault: &Path, scene: AiScene) -> AppResult<Vec<SkillEntry>> {
+pub fn active_skills_for_prompt(
+    vault: &Path,
+    scene: AiScene,
+    db: Option<&Database>,
+) -> AppResult<Vec<SkillEntry>> {
     let metadata = scan_all_metadata(vault)?;
+    let index_map = db
+        .map(load_activation_index)
+        .transpose()?
+        .unwrap_or_default();
+    let index_ref = if index_map.is_empty() {
+        None
+    } else {
+        Some(&index_map)
+    };
+    let query = scene.profile();
+    let ranked = rerank_skills_with_vectors(
+        rank_skills_for_scene_with_index(&metadata, scene, index_ref),
+        query,
+        index_ref,
+    );
     let mut out = Vec::new();
-    for scored in rank_skills_for_scene(&metadata, scene) {
+    for scored in ranked {
         let path = PathBuf::from(&scored.skill.file_path);
         if let Ok(mut skill) = load_skill(&path, scored.skill.scope) {
             skill.enabled = scored.skill.enabled;
@@ -772,9 +902,13 @@ pub fn active_skills_for_prompt(vault: &Path, scene: AiScene) -> AppResult<Vec<S
 }
 
 /// Union of allowed tools requested by active skills for a scene.
-pub fn active_skill_allowed_tools(vault: &Path, scene: AiScene) -> AppResult<Vec<String>> {
+pub fn active_skill_allowed_tools(
+    vault: &Path,
+    scene: AiScene,
+    db: Option<&Database>,
+) -> AppResult<Vec<String>> {
     let mut tools = Vec::new();
-    for skill in active_skills_for_prompt(vault, scene)? {
+    for skill in active_skills_for_prompt(vault, scene, db)? {
         for tool in skill.allowed_tools {
             if !tools.contains(&tool) {
                 tools.push(tool);
@@ -795,6 +929,14 @@ pub struct SkillListEntry {
     pub unrecognized_tools: Vec<String>,
     /// Dependencies that are not installed.
     pub missing_deps: Vec<String>,
+    /// Whether this skill would be injected for the requested scene (`None` if no scene).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub scene_active: Option<bool>,
+    /// Scene affinity score (`None` if no scene requested or skill inactive).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub scene_score: Option<f64>,
+    /// Subset of `allowed_tools` that require harness confirmation.
+    pub confirmation_required_tools: Vec<String>,
 }
 
 /// Build the skills list with computed validation/dependency info.
@@ -807,14 +949,105 @@ pub fn scan_all_with_status(vault: &Path) -> AppResult<Vec<SkillListEntry>> {
             let unrecognized_tools = skill.unrecognized_tools();
             let missing_deps = skill.missing_dependencies(&installed_names);
             let validation = skill.validation_status();
+            let confirmation_required_tools = confirmation_required_tools(&skill.allowed_tools);
             SkillListEntry {
                 skill,
                 validation,
                 unrecognized_tools,
                 missing_deps,
+                scene_active: None,
+                scene_score: None,
+                confirmation_required_tools,
             }
         })
         .collect())
+}
+
+/// Annotate list entries with scene affinity when a scene is provided.
+pub fn enrich_list_with_scene(
+    mut entries: Vec<SkillListEntry>,
+    scene: AiScene,
+    db: Option<&Database>,
+) -> AppResult<Vec<SkillListEntry>> {
+    let skills: Vec<SkillEntry> = entries.iter().map(|e| e.skill.clone()).collect();
+    let index_map = db
+        .map(load_activation_index)
+        .transpose()?
+        .unwrap_or_default();
+    let index_ref = if index_map.is_empty() {
+        None
+    } else {
+        Some(&index_map)
+    };
+    let ranked = rerank_skills_with_vectors(
+        rank_skills_for_scene_with_index(&skills, scene, index_ref),
+        scene.profile(),
+        index_ref,
+    );
+    let score_map: HashMap<(String, SkillScope), f64> = ranked
+        .iter()
+        .map(|s| ((s.skill.name.clone(), s.skill.scope), s.score))
+        .collect();
+
+    for entry in &mut entries {
+        let key = (entry.skill.name.clone(), entry.skill.scope);
+        entry.scene_active = Some(score_map.contains_key(&key));
+        entry.scene_score = score_map.get(&key).copied();
+    }
+    Ok(entries)
+}
+
+const ALLOWED_RESOURCE_DIRS: &[&str] = &["references", "scripts", "assets"];
+
+/// Read a file under a skill's `references/`, `scripts/`, or `assets/` directory.
+pub fn read_skill_resource(
+    vault: &Path,
+    name: &str,
+    scope: SkillScope,
+    relative_path: &str,
+) -> AppResult<String> {
+    if relative_path.is_empty() || relative_path.contains("..") {
+        return Err(AppError::msg("skill 资源路径无效"));
+    }
+    let rel = Path::new(relative_path.trim_start_matches('/'));
+    if rel.is_absolute() {
+        return Err(AppError::msg("skill 资源路径必须为相对路径"));
+    }
+    let top = rel
+        .components()
+        .next()
+        .and_then(|c| c.as_os_str().to_str())
+        .ok_or_else(|| AppError::msg("skill 资源路径无效"))?;
+    if !ALLOWED_RESOURCE_DIRS.contains(&top) {
+        return Err(AppError::msg(format!(
+            "仅允许读取 {ALLOWED_RESOURCE_DIRS:?} 下的资源"
+        )));
+    }
+
+    let base = match scope {
+        SkillScope::Global => global_skills_dir(),
+        SkillScope::Vault => vault_skills_dir(vault),
+    };
+    let skill_root = base.join(slugify(name));
+    if !skill_root.is_dir() {
+        return Err(AppError::msg(format!("未找到 skill: {name}")));
+    }
+
+    let target = skill_root.join(rel);
+    let root_canonical = skill_root
+        .canonicalize()
+        .map_err(|_| AppError::msg("skill 目录无效"))?;
+    let file_canonical = target
+        .canonicalize()
+        .map_err(|_| AppError::msg("skill 资源文件不存在"))?;
+    if !file_canonical.starts_with(&root_canonical) {
+        return Err(AppError::msg("skill 资源路径越界"));
+    }
+    if !file_canonical.is_file() {
+        return Err(AppError::msg("skill 资源必须是文件"));
+    }
+
+    fs::read_to_string(&file_canonical).map_err(Into::into)
 }
 
 /// Build system prompt fragment from enabled skills.
@@ -824,6 +1057,10 @@ pub fn inject_into_prompt(skills: &[SkillEntry], scene: AiScene) -> String {
         return String::new();
     }
     let mut block = String::from("## 已激活 Skills\n\n");
+    block.push_str(
+        "若 SKILL 正文引用 `references/`、`scripts/` 或 `assets/` 下的文件，\
+         请调用 `skills_read_resource` 按需读取，不要猜测内容。\n\n",
+    );
     for skill in matched {
         block.push_str(&format!("### Skill: {}\n\n", skill.name));
         if !skill.description.is_empty() {
@@ -1691,5 +1928,28 @@ description: Already new format
         let skills: Vec<SkillEntry> = vec![];
         let prompt = inject_into_prompt(&skills, AiScene::KnowledgeLookup);
         assert!(prompt.is_empty());
+    }
+
+    #[test]
+    fn read_skill_resource_allows_references_only() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = dir.path().join("vault");
+        let skill_root = vault.join(".iris/skills/my-skill");
+        let ref_dir = skill_root.join("references");
+        std::fs::create_dir_all(&ref_dir).unwrap();
+        std::fs::write(ref_dir.join("guide.md"), "guide body").unwrap();
+        std::fs::write(skill_root.join("SKILL.md"), "# Skill").unwrap();
+
+        let content =
+            read_skill_resource(&vault, "my-skill", SkillScope::Vault, "references/guide.md")
+                .expect("should read reference");
+        assert_eq!(content, "guide body");
+
+        assert!(
+            read_skill_resource(&vault, "my-skill", SkillScope::Vault, "../SKILL.md",).is_err()
+        );
+        assert!(
+            read_skill_resource(&vault, "my-skill", SkillScope::Vault, "notes/secret.md",).is_err()
+        );
     }
 }

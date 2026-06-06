@@ -465,6 +465,11 @@ export interface SkillListEntryDto {
   validation: SkillValidationStatus;
   unrecognized_tools: string[];
   missing_deps: string[];
+  /** Present when `skillsList` was called with a scene. */
+  scene_active?: boolean;
+  scene_score?: number;
+  /** Subset of allowed_tools that require harness confirmation. */
+  confirmation_required_tools: string[];
 }
 
 export interface PromptProfileDto {
@@ -476,8 +481,16 @@ export interface PromptProfileDto {
   language: string;
 }
 
-export async function skillsList(): Promise<SkillListEntryDto[]> {
-  return invoke<SkillListEntryDto[]>("skills_list");
+export async function skillsList(scene?: AiScene): Promise<SkillListEntryDto[]> {
+  return invoke<SkillListEntryDto[]>("skills_list", { scene: scene ?? null });
+}
+
+export async function skillsReadResource(request: {
+  name: string;
+  scope: string;
+  relative_path: string;
+}): Promise<string> {
+  return invoke<string>("skills_read_resource", { request });
 }
 
 export async function skillsInstall(request: {

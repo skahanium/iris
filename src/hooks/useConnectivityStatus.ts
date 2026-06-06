@@ -17,6 +17,24 @@ export function setActiveAiScene(scene: AiScene): void {
   }
 }
 
+/** Read the harness scene last synced from assistant intent. */
+export function getActiveAiScene(): AiScene {
+  try {
+    const stored = sessionStorage.getItem(ACTIVE_SCENE_KEY);
+    if (
+      stored === "knowledge_lookup" ||
+      stored === "exemplar_learning" ||
+      stored === "drafting_assist" ||
+      stored === "research_synthesis"
+    ) {
+      return stored;
+    }
+  } catch {
+    /* ignore */
+  }
+  return "knowledge_lookup";
+}
+
 export function useConnectivityStatus() {
   const [status, setStatus] = useState<ConnectivityStatus | null>(null);
 

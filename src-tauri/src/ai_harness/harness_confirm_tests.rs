@@ -170,6 +170,7 @@ mod tests {
             "completed",
             None,
             None,
+            None,
         )
         .unwrap();
 
@@ -188,6 +189,7 @@ mod tests {
             temperature: Some(0.7),
             stream: false,
             thinking: true,
+            skip_stub_ids: vec![],
         });
         assert_eq!(
             body["messages"][0]["reasoning_content"],
@@ -195,5 +197,81 @@ mod tests {
         );
         assert_eq!(body["thinking"]["type"], "enabled");
         assert_eq!(body["messages"].as_array().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn mixed_auto_and_confirm_batch_resume_body_is_valid() {
+        use crate::ai_harness::tool_turn::outstanding_confirm_ids;
+        use crate::ai_runtime::model_gateway::{
+            build_chat_completions_body, GatewayRequest, ProviderConfig,
+        };
+        use crate::ai_runtime::tool_executor::ToolRegistry;
+        use crate::ai_runtime::tool_policy::ToolPolicyContext;
+        use crate::ai_runtime::{AutonomyLevel, CapabilitySlot};
+
+        let registry = ToolRegistry::new();
+        let ctx = ToolPolicyContext {
+            scene: AiScene::KnowledgeLookup,
+            autonomy_level: AutonomyLevel::L2,
+            web_search_enabled: true,
+            skill_allowed_tools: vec![],
+            depth: 0,
+        };
+        let web = ToolCall::new("call_web", "web_search", r#"{"query":"chapter 10"}"#);
+        let fetch = ToolCall::new(
+            "call_fetch",
+            "fetch_web_page",
+            r#"{"url":"https://example.com/ch10"}"#,
+        );
+        let messages = vec![
+            LlmMessage {
+                role: MessageRole::Assistant,
+                content: "searching".into(),
+                tool_call_id: None,
+                tool_calls: Some(vec![web.clone(), fetch.clone()]),
+                reasoning_content: None,
+            },
+            LlmMessage {
+                role: MessageRole::Tool,
+                content: r#"{"results":[{"url":"https://example.com/ch10"}]}"#.into(),
+                tool_call_id: Some(web.id.clone()),
+                tool_calls: None,
+                ..Default::default()
+            },
+        ];
+        let fetch_id = fetch.id.clone();
+        let pending = outstanding_confirm_ids(&registry, &messages, &ctx);
+        assert_eq!(pending, vec![fetch_id.clone()]);
+
+        let mut after_approve = messages.clone();
+        after_approve.push(LlmMessage {
+            role: MessageRole::Tool,
+            content: r#"{"title":"Chapter 10"}"#.into(),
+            tool_call_id: Some(fetch_id),
+            tool_calls: None,
+            ..Default::default()
+        });
+
+        let body = build_chat_completions_body(&GatewayRequest {
+            provider: ProviderConfig {
+                name: "deepseek".into(),
+                base_url: "https://api.deepseek.com".into(),
+                model: "deepseek-reasoner".into(),
+                api_key: Some("test".into()),
+                slot: CapabilitySlot::Reasoner,
+            },
+            messages: after_approve,
+            tools: vec![],
+            max_tokens: Some(2048),
+            temperature: Some(0.7),
+            stream: false,
+            thinking: true,
+            skip_stub_ids: vec![],
+        });
+        let api_msgs = body["messages"].as_array().unwrap();
+        assert_eq!(api_msgs.len(), 3);
+        assert!(api_msgs[0]["tool_calls"].is_array());
+        assert_eq!(api_msgs[1]["role"], "tool");
+        assert_eq!(api_msgs[2]["role"], "tool");
     }
 }

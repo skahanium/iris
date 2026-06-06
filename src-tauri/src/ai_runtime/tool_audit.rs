@@ -106,8 +106,14 @@ fn sanitize_arguments(tool_name: &str, args: &serde_json::Value) -> Option<Strin
         }
         "skills_install" => {
             let source = obj.get("source").and_then(|v| v.as_str()).unwrap_or("");
-            let path = obj.get("path_or_url").and_then(|v| v.as_str()).unwrap_or("");
-            let scope = obj.get("scope").and_then(|v| v.as_str()).unwrap_or("global");
+            let path = obj
+                .get("path_or_url")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let scope = obj
+                .get("scope")
+                .and_then(|v| v.as_str())
+                .unwrap_or("global");
             let registry = obj.get("registry").and_then(|v| v.as_str()).unwrap_or("");
             Some(format!(
                 "source={source}, path_or_url={path}, scope={scope}, registry={registry}"
@@ -115,7 +121,10 @@ fn sanitize_arguments(tool_name: &str, args: &serde_json::Value) -> Option<Strin
         }
         "skills_uninstall" | "skills_toggle" => {
             let name = obj.get("name").and_then(|v| v.as_str()).unwrap_or("");
-            let scope = obj.get("scope").and_then(|v| v.as_str()).unwrap_or("global");
+            let scope = obj
+                .get("scope")
+                .and_then(|v| v.as_str())
+                .unwrap_or("global");
             if tool_name == "skills_toggle" {
                 let enabled = obj
                     .get("enabled")

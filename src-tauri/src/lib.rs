@@ -178,6 +178,7 @@ pub fn run() {
             commands::ai_commands::skills_read,
             commands::ai_commands::skills_write,
             commands::ai_commands::skills_migrate_legacy,
+            commands::ai_commands::skills_read_resource,
             commands::ai_commands::tool_audit_query,
             commands::ai_commands::prompt_profile_get,
             commands::ai_commands::prompt_profile_set,

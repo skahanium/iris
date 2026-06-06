@@ -74,6 +74,7 @@ pub(crate) async fn run_reflection_round(
         temperature: Some(0.5),
         stream: false,
         thinking,
+        skip_stub_ids: vec![],
     };
     if let Ok(reflect_resp) = gateway.send_request(reflect_request).await {
         if usage_is_empty(&reflect_resp.usage) {

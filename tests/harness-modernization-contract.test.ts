@@ -24,12 +24,18 @@ describe("harness modernization remaining contracts", () => {
     expect(panel).toContain("web_search: webSearch");
   });
 
-  it("tool confirmation pauses at a single pending tool call before dispatching later calls", () => {
+  it("tool confirmation executes auto tools before pausing on confirm", () => {
+    const toolTurn = read("src-tauri/src/ai_harness/tool_turn.rs");
+    expect(toolTurn).toContain("outstanding_confirm_tool");
+
     const run = read("src-tauri/src/ai_harness/harness/run.rs");
-    expect(run).toContain("first_pending_confirmation_call");
+    expect(run).toContain("outstanding_confirm_tool");
     expect(run).toContain("pause_for_tool_confirmation");
-    expect(run.indexOf("pause_for_tool_confirmation")).toBeLessThan(
-      run.indexOf("for tool_call in &other_calls"),
+    expect(run).toContain(
+      "if registry.requires_confirmation(&tool_call.function.name)",
+    );
+    expect(run.indexOf("requires_confirmation(&tool_call.function.name)")).toBeLessThan(
+      run.lastIndexOf("outstanding_confirm_tool(&registry, &messages, &policy_ctx)"),
     );
   });
 

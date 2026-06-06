@@ -44,7 +44,10 @@ pub async fn context_assemble(
     let skill_allowed_tools = state
         .vault_path()
         .ok()
-        .and_then(|vault| crate::ai_runtime::skills::active_skill_allowed_tools(&vault, scene).ok())
+        .and_then(|vault| {
+            crate::ai_runtime::skills::active_skill_allowed_tools(&vault, scene, Some(&state.db))
+                .ok()
+        })
         .unwrap_or_default();
     let policy_ctx = crate::ai_runtime::tool_policy::ToolPolicyContext {
         scene,
@@ -520,7 +523,14 @@ pub async fn tool_confirm(
         serde_json::from_str(&pending.arguments).unwrap_or_default()
     };
 
-    dispatch_approved_tool_to_checkpoint(state.inner(), &app_handle, &pending, &tool_call_id, &args).await?;
+    dispatch_approved_tool_to_checkpoint(
+        state.inner(),
+        &app_handle,
+        &pending,
+        &tool_call_id,
+        &args,
+    )
+    .await?;
 
     let mut installed_skill: Option<String> = None;
     if pending.tool_name == "skills_install" {
@@ -532,10 +542,7 @@ pub async fn tool_confirm(
                     && m.tool_call_id.as_deref() == Some(tool_call_id.as_str())
             }) {
                 if let Ok(json) = serde_json::from_str::<serde_json::Value>(&msg.content) {
-                    installed_skill = json
-                        .get("name")
-                        .and_then(|n| n.as_str())
-                        .map(String::from);
+                    installed_skill = json.get("name").and_then(|n| n.as_str()).map(String::from);
                 }
             }
         }
@@ -601,7 +608,10 @@ pub fn ai_list_tools(
     let skill_allowed_tools = state
         .vault_path()
         .ok()
-        .and_then(|vault| crate::ai_runtime::skills::active_skill_allowed_tools(&vault, scene).ok())
+        .and_then(|vault| {
+            crate::ai_runtime::skills::active_skill_allowed_tools(&vault, scene, Some(&state.db))
+                .ok()
+        })
         .unwrap_or_default();
     let ctx = crate::ai_runtime::tool_policy::ToolPolicyContext {
         scene,
@@ -768,9 +778,15 @@ pub async fn session_load(
 #[tauri::command]
 pub async fn skills_list(
     state: State<'_, Arc<AppState>>,
+    scene: Option<String>,
 ) -> AppResult<Vec<crate::ai_runtime::skills::SkillListEntry>> {
     let vault = state.vault_path()?;
-    crate::ai_runtime::skill_install_service::list_skills(&vault)
+    let scene = scene
+        .as_deref()
+        .map(|s| serde_json::from_str::<AiScene>(&format!("\"{s}\"")))
+        .transpose()
+        .map_err(|e| AppError::msg(format!("invalid scene: {e}")))?;
+    crate::ai_runtime::skill_install_service::list_skills(&state.db, &vault, scene)
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -789,7 +805,9 @@ pub async fn skills_install(
     app_handle: tauri::AppHandle,
     request: SkillsInstallRequest,
 ) -> AppResult<serde_json::Value> {
-    use crate::ai_runtime::skill_install_service::{install_skill, parse_scope, SkillInstallRequest};
+    use crate::ai_runtime::skill_install_service::{
+        install_skill, parse_scope, SkillInstallRequest,
+    };
     use crate::ai_runtime::skill_registry::SkillInstallSource;
 
     let source = SkillInstallSource::parse(&request.source)
@@ -939,6 +957,30 @@ pub async fn harness_abort(state: State<'_, Arc<AppState>>, request_id: String) 
     crate::ai_runtime::model_gateway::request_abort(&request_id);
     let _ = TraceRecorder::update_status(&state.db, &request_id, TraceStatus::Aborted);
     Ok(())
+}
+
+#[derive(Debug, serde::Deserialize)]
+pub struct SkillsReadResourceRequest {
+    pub name: String,
+    pub scope: String,
+    pub relative_path: String,
+}
+
+/// Read a file under a skill's references/scripts/assets directory.
+#[tauri::command]
+pub async fn skills_read_resource(
+    state: State<'_, Arc<AppState>>,
+    request: SkillsReadResourceRequest,
+) -> AppResult<String> {
+    use crate::ai_runtime::skill_install_service::parse_scope;
+    use crate::ai_runtime::skills::read_skill_resource;
+    let vault = state.vault_path()?;
+    read_skill_resource(
+        &vault,
+        &request.name,
+        parse_scope(&request.scope),
+        &request.relative_path,
+    )
 }
 
 #[derive(Debug, serde::Deserialize)]

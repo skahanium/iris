@@ -75,7 +75,7 @@ pub(crate) fn prepare_environment_and_skills(
             tools: scene_tools,
         },
     )?;
-    let enabled_skills = active_skills_for_prompt(&vault, scene)?;
+    let enabled_skills = active_skills_for_prompt(&vault, scene, Some(&state.db))?;
     let skills_prompt = inject_into_prompt(&enabled_skills, scene);
     Ok((env_text, skills_prompt))
 }
@@ -85,5 +85,5 @@ pub(crate) fn resolve_active_skill_allowed_tools(
     scene: AiScene,
 ) -> AppResult<Vec<String>> {
     let vault = state.vault_path()?;
-    active_skill_allowed_tools(&vault, scene)
+    active_skill_allowed_tools(&vault, scene, Some(&state.db))
 }

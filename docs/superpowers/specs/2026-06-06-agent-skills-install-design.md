@@ -49,12 +49,25 @@
 
 | 工具 | 确认 | access_level |
 |------|------|--------------|
-| skills_list | 否 | ManageSkills |
+| skills_list | 否 | ReadIndex |
 | skills_install | 是 | ManageSkills |
 | skills_uninstall | 是 | ManageSkills |
 | skills_toggle | 是 | ManageSkills |
+| skills_read_resource | 否 | ReadIndex |
 
 Meta 工具不受 skill allowlist 限制；registry 安装不受 `web_search_enabled` 限制。
+
+## Skills 运行时语义
+
+| 用户可见 | Harness 实际行为 |
+|----------|------------------|
+| SkillsPanel「已启用」 | `skills-config.json` 未 disable |
+| 「本场景注入」 | `rank_skills_for_scene` score>0 且 enabled → prompt 注入 + tool 扩权 |
+| `skill_activation_index` | 安装时写入 keywords/embedding；运行时优先用于匹配 |
+| `allowed-tools` | 与 ToolCatalog 求交；未识别工具 UI 警告 |
+| `references/` 等资源 | 通过 `skills_read_resource` 按需读取，不预加载 |
+
+**能力边界**：Skills 通过 Markdown 指令引导模型使用 **ToolCatalog 已有**工具；不动态注册 Rust 工具、不执行任意脚本。依赖 catalog 外工具名的 skill 安装后会在 UI 显示 warning。
 
 ## 手工验收
 
