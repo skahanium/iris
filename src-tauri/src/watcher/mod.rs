@@ -11,6 +11,11 @@ use crate::error::AppResult;
 use crate::indexer::scan::{file_hash, index_file_with_embed, remove_file_index};
 use crate::storage::paths::{is_user_note_path, relative_path};
 
+/// Returns whether the file watcher should re-index or emit for a vault-relative path.
+pub(crate) fn watcher_should_index_path(relative: &str) -> bool {
+    is_user_note_path(relative)
+}
+
 /// 持有 debouncer；Drop 时自动取消目录监听。切换 vault 时需 drop 后重建。
 pub struct FileWatcher {
     _debouncer: Debouncer<notify::RecommendedWatcher, FileIdMap>,
@@ -55,7 +60,11 @@ impl FileWatcher {
                             let Ok(rel) = relative_path(&vault, path) else {
                                 continue;
                             };
-                            if !is_user_note_path(&rel) {
+                            if !watcher_should_index_path(&rel) {
+                                tracing::debug!(
+                                    path = %rel,
+                                    "skipping classified/internal path in watcher"
+                                );
                                 continue;
                             }
                             match handle_file_event(&app_clone, &state_clone, path, kind) {
@@ -127,4 +136,18 @@ fn handle_file_event(
         }),
     );
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn watcher_skips_classified_and_iris_paths() {
+        assert!(!watcher_should_index_path(".classified"));
+        assert!(!watcher_should_index_path(".classified/secret.md"));
+        assert!(!watcher_should_index_path(".iris/versions/1/snap.md"));
+        assert!(watcher_should_index_path("notes/readme.md"));
+        assert!(watcher_should_index_path("readme.md"));
+    }
 }
