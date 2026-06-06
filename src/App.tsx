@@ -508,7 +508,8 @@ function App() {
   }, [closeTab, bumpVaultIndex]);
 
   const openClassifiedPaths = useMemo(
-    () => tabs.filter((tab) => isClassifiedVaultPath(tab.path)).map((t) => t.path),
+    () =>
+      tabs.filter((tab) => isClassifiedVaultPath(tab.path)).map((t) => t.path),
     [tabs],
   );
 

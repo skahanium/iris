@@ -3,7 +3,10 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 import { buildCommandPaletteItems } from "@/lib/command-palette";
-import { isClassifiedVaultPath, vaultRelativePath } from "@/lib/classified-path";
+import {
+  isClassifiedVaultPath,
+  vaultRelativePath,
+} from "@/lib/classified-path";
 import {
   filterEditorActions,
   isEditorActionEnabled,
@@ -47,9 +50,7 @@ describe("classified vault phase 7", () => {
   });
 
   it("converts absolute paths under vault to relative form", () => {
-    expect(
-      vaultRelativePath("/vault", "/vault/notes/a.md"),
-    ).toBe("notes/a.md");
+    expect(vaultRelativePath("/vault", "/vault/notes/a.md")).toBe("notes/a.md");
     expect(vaultRelativePath("/vault", "/other/a.md")).toBeNull();
   });
 

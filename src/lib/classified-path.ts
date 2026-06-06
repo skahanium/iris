@@ -1,9 +1,7 @@
 /** Vault-relative path under `.classified/` (not the directory root itself). */
 export function isClassifiedVaultPath(path: string): boolean {
   const normalized = path.replace(/\\/g, "/");
-  return (
-    normalized.startsWith(".classified/") && normalized !== ".classified"
-  );
+  return normalized.startsWith(".classified/") && normalized !== ".classified";
 }
 
 /** Convert an absolute filesystem path to a vault-relative path, if under `vaultPath`. */

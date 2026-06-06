@@ -61,7 +61,10 @@ function IdleCountdown({ deadline }: { deadline: number | null }) {
 
   if (!label) return null;
   return (
-    <span className="text-xs text-muted-foreground" data-testid="classified-idle-countdown">
+    <span
+      className="text-xs text-muted-foreground"
+      data-testid="classified-idle-countdown"
+    >
       自动锁定 {label}
     </span>
   );
@@ -73,7 +76,10 @@ function displayName(path: string): string {
 }
 
 function folderKey(folder: string): string | undefined {
-  const trimmed = folder.replace(/\\/g, "/").trim().replace(/^\.classified\/?/, "");
+  const trimmed = folder
+    .replace(/\\/g, "/")
+    .trim()
+    .replace(/^\.classified\/?/, "");
   return trimmed.length > 0 ? trimmed : undefined;
 }
 

@@ -40,7 +40,10 @@ export function ClassifiedPasswordSetup({
   };
 
   return (
-    <div className="flex flex-col gap-4 p-4" data-testid="classified-password-setup">
+    <div
+      className="flex flex-col gap-4 p-4"
+      data-testid="classified-password-setup"
+    >
       <h3 className="text-lg font-semibold">设置涉密保险库密码</h3>
       <p className="text-sm text-muted-foreground">
         设置密码后，`.classified/` 中的文件将被加密保护。
@@ -66,7 +69,11 @@ export function ClassifiedPasswordSetup({
         }}
       />
       {error ? <p className="text-sm text-destructive">{error}</p> : null}
-      <Button type="button" onClick={() => void handleSubmit()} disabled={loading}>
+      <Button
+        type="button"
+        onClick={() => void handleSubmit()}
+        disabled={loading}
+      >
         {loading ? "设置中…" : "确认设置"}
       </Button>
     </div>

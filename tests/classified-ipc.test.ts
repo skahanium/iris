@@ -58,7 +58,7 @@ describe("classified vault IPC contract", () => {
     expect(types).toContain("isLocked: boolean");
     expect(types).toContain("export interface ClassifiedFileEntry");
     expect(types).toContain("isDir: boolean");
-    expect(types).toContain('export type ClassifiedStatus =');
+    expect(types).toContain("export type ClassifiedStatus =");
     expect(types).toContain('"needs_setup"');
     expect(types).toContain('"waiting"');
   });
@@ -187,8 +187,6 @@ describe("fileRead call-site compatibility (Task 15)", () => {
 
   it("App.tsx destructures externalContent from fileRead", () => {
     const source = read("src/App.tsx");
-    expect(source).toMatch(
-      /\.then\(\(\{\s*content:\s*externalContent\s*\}\)/,
-    );
+    expect(source).toMatch(/\.then\(\(\{\s*content:\s*externalContent\s*\}\)/);
   });
 });

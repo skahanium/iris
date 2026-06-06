@@ -35,7 +35,10 @@ export function ClassifiedPasswordPrompt({
   };
 
   return (
-    <div className="flex flex-col gap-4 p-4" data-testid="classified-password-prompt">
+    <div
+      className="flex flex-col gap-4 p-4"
+      data-testid="classified-password-prompt"
+    >
       <h3 className="text-lg font-semibold">解锁涉密保险库</h3>
       <Input
         type="password"
@@ -49,7 +52,11 @@ export function ClassifiedPasswordPrompt({
         autoComplete="current-password"
       />
       {error ? <p className="text-sm text-destructive">{error}</p> : null}
-      <Button type="button" onClick={() => void handleSubmit()} disabled={loading}>
+      <Button
+        type="button"
+        onClick={() => void handleSubmit()}
+        disabled={loading}
+      >
         {loading ? "验证中…" : "确认"}
       </Button>
     </div>

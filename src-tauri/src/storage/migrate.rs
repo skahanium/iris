@@ -128,7 +128,12 @@ pub fn migrate_up(conn: &Connection) -> AppResult<()> {
     apply_migration(conn, "018_skill_install_sources", MIGRATION_018_UP, false)?;
     apply_migration(conn, "019_skill_activation_index", MIGRATION_019_UP, false)?;
     apply_migration(conn, "020_tool_audit", MIGRATION_020_UP, false)?;
-    apply_migration(conn, "021_skill_lifecycle_metadata", MIGRATION_021_UP, false)?;
+    apply_migration(
+        conn,
+        "021_skill_lifecycle_metadata",
+        MIGRATION_021_UP,
+        false,
+    )?;
     apply_migration(conn, "022_session_expiry", MIGRATION_022_UP, false)?;
     apply_migration(conn, "023_file_lock", MIGRATION_023_UP, false)?;
 
