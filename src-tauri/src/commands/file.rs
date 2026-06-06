@@ -15,7 +15,60 @@ use crate::recycle::{discard_document, trash_document};
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
 
+use crate::crypto::classified_io;
+use crate::crypto::vault_key::VAULT_KEY;
 use crate::storage::paths::{is_user_note_path, read_file_lossy, resolve_vault_path};
+
+const MAX_NOTE_FILE_BYTES: usize = 20 * 1024 * 1024;
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FileReadResult {
+    pub content: String,
+    pub is_locked: bool,
+}
+
+fn query_is_locked(db: &crate::storage::db::Database, path: &str) -> AppResult<bool> {
+    db.with_read_conn(|conn| {
+        let mut stmt = conn.prepare("SELECT is_locked FROM files WHERE path = ?1")?;
+        match stmt.query_row([path], |row| row.get::<_, i64>(0)) {
+            Ok(v) => Ok(v != 0),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(false),
+            Err(e) => Err(e.into()),
+        }
+    })
+}
+
+fn decode_file_content(raw_bytes: &[u8]) -> AppResult<String> {
+    if classified_io::has_csef_magic(raw_bytes) {
+        let vk_guard = VAULT_KEY
+            .get()
+            .ok_or_else(|| AppError::msg("保险库未初始化"))?;
+        let vk = vk_guard
+            .read()
+            .map_err(|e| AppError::msg(format!("lock error: {e}")))?;
+        let key = vk.key()?;
+        let decrypted = classified_io::decrypt_cef(raw_bytes, key)?;
+        Ok(String::from_utf8_lossy(&decrypted).into_owned())
+    } else {
+        Ok(String::from_utf8_lossy(raw_bytes).into_owned())
+    }
+}
+
+fn encode_file_payload(path: &str, content: &str) -> AppResult<Vec<u8>> {
+    if path.starts_with(".classified/") {
+        let vk_guard = VAULT_KEY
+            .get()
+            .ok_or_else(|| AppError::msg("保险库未初始化"))?;
+        let vk = vk_guard
+            .read()
+            .map_err(|e| AppError::msg(format!("lock error: {e}")))?;
+        let key = vk.key()?;
+        classified_io::encrypt_cef(content.as_bytes(), key)
+    } else {
+        Ok(content.as_bytes().to_vec())
+    }
+}
 
 /// Vault-relative image/asset path (e.g. `assets/uuid.png`).
 pub fn is_vault_asset_path(relative: &str) -> bool {
@@ -80,6 +133,7 @@ pub fn file_list(state: State<'_, Arc<AppState>>) -> AppResult<Vec<FileListItem>
             "SELECT path, title, updated_at, frontmatter FROM files
              WHERE id IN (SELECT MAX(id) FROM files GROUP BY path)
                AND path NOT LIKE '.iris/%'
+               AND path NOT LIKE '.classified/%'
              ORDER BY updated_at DESC",
         )?;
         let rows = stmt.query_map([], |row| {
@@ -100,15 +154,19 @@ pub fn file_list(state: State<'_, Arc<AppState>>) -> AppResult<Vec<FileListItem>
 }
 
 #[tauri::command]
-pub async fn file_read(state: State<'_, Arc<AppState>>, path: String) -> AppResult<String> {
+pub async fn file_read(state: State<'_, Arc<AppState>>, path: String) -> AppResult<FileReadResult> {
     if !is_user_note_path(&path) {
         return Err(AppError::msg("只能读取用户笔记，不允许访问内部元数据路径"));
     }
     let vault = state.vault_path()?;
     let abs = resolve_vault_path(&vault, &path)?;
+    let db = state.inner().db.clone();
+    let path_for_db = path.clone();
     tokio::task::spawn_blocking(move || {
-        let content = read_file_lossy(&abs)?;
-        Ok(content)
+        let raw_bytes = std::fs::read(&abs)?;
+        let content = decode_file_content(&raw_bytes)?;
+        let is_locked = query_is_locked(&db, &path_for_db)?;
+        Ok(FileReadResult { content, is_locked })
     })
     .await
     .map_err(|e| AppError::msg(format!("task join: {e}")))?
@@ -123,13 +181,20 @@ pub async fn file_write(
     if !is_user_note_path(&path) {
         return Err(AppError::msg("只能写入用户笔记，不允许修改内部元数据路径"));
     }
+    if content.len() > MAX_NOTE_FILE_BYTES {
+        return Err(AppError::msg(format!(
+            "笔记内容超过 20MB 限制（{} 字节）",
+            content.len()
+        )));
+    }
     let state = state.inner().clone();
     tokio::task::spawn_blocking(move || {
         let vault = state.vault_path()?;
         let abs = resolve_vault_path(&vault, &path)?;
 
         let tmp = abs.with_extension("md.tmp");
-        fs::write(&tmp, &content)?;
+        let data = encode_file_payload(&path, &content)?;
+        fs::write(&tmp, &data)?;
         if let Err(e) = fs::rename(&tmp, &abs) {
             let _ = crate::security::secure_delete::secure_delete(&tmp);
             return Err(e.into());
@@ -451,42 +516,23 @@ pub fn path_sync_suggest(
     path_sync_suggest_inner(&state, current_path, title)
 }
 
-#[cfg(test)]
-mod path_sync_tests {
-    use super::*;
-
-    #[test]
-    fn placeholder_skips_sync() {
-        assert!(is_placeholder_title("新建文档"));
-        assert!(!is_placeholder_title("民法总则笔记"));
+/// 更新笔记锁定状态（仅用户笔记路径）。
+pub fn set_file_lock(state: &AppState, path: &str, locked: bool) -> AppResult<()> {
+    if !is_user_note_path(path) {
+        return Err(AppError::msg("只能操作用户笔记"));
     }
+    state.db.with_conn(|conn| {
+        conn.execute(
+            "UPDATE files SET is_locked = ?1 WHERE path = ?2",
+            rusqlite::params![locked as i64, path],
+        )?;
+        Ok(())
+    })
+}
 
-    #[test]
-    fn sanitize_strips_invalid_chars() {
-        assert_eq!(sanitize_title_for_path("a/b"), "a_b");
-    }
-
-    #[test]
-    fn default_create_content_is_frontmatter_free_blank() {
-        assert_eq!(default_create_content("新建文档"), "");
-    }
-
-    #[test]
-    fn folder_paths_accept_nested_relative_paths_only() {
-        assert!(validate_folder_path("inbox").is_ok());
-        assert!(validate_folder_path("notes/inbox").is_ok());
-        assert!(validate_folder_path("notes\\inbox").is_err());
-        assert!(validate_folder_path("../secret").is_err());
-        assert!(validate_folder_path(".iris/trash").is_err());
-    }
-
-    #[test]
-    fn vault_asset_path_must_live_under_assets() {
-        assert!(is_vault_asset_path("assets/photo.png"));
-        assert!(!is_vault_asset_path("notes/x.md"));
-        assert!(!is_vault_asset_path("assets/../secret.png"));
-        assert!(!is_vault_asset_path("assets/"));
-    }
+#[tauri::command]
+pub fn file_set_lock(state: State<'_, Arc<AppState>>, path: String, locked: bool) -> AppResult<()> {
+    set_file_lock(state.inner(), &path, locked)
 }
 
 #[tauri::command]
@@ -658,6 +704,14 @@ pub async fn file_create(
     if !is_user_note_path(&path) {
         return Err(AppError::msg("只能创建用户笔记，不允许写入内部元数据路径"));
     }
+    if let Some(ref body) = content {
+        if body.len() > MAX_NOTE_FILE_BYTES {
+            return Err(AppError::msg(format!(
+                "笔记内容超过 20MB 限制（{} 字节）",
+                body.len()
+            )));
+        }
+    }
     let state = state.inner().clone();
     tokio::task::spawn_blocking(move || {
         let vault = state.vault_path()?;
@@ -777,4 +831,160 @@ pub fn file_backlinks(
         })?;
         Ok(rows.flatten().collect())
     })
+}
+
+#[cfg(test)]
+mod file_io_pipeline_tests {
+    use super::*;
+    use crate::crypto::classified_io;
+    use crate::crypto::vault_key::{VaultKey, VAULT_KEY};
+    use crate::storage::db::Database;
+    use crate::storage::migrate::migrate_up;
+    use std::fs;
+    use std::sync::{Mutex, OnceLock};
+    use tempfile::tempdir;
+
+    static INIT_KEY: OnceLock<()> = OnceLock::new();
+    /// Serializes tests that mutate the process-wide `VAULT_KEY`.
+    static VAULT_KEY_TEST_LOCK: Mutex<()> = Mutex::new(());
+
+    fn ensure_vault_key() {
+        INIT_KEY.get_or_init(|| {
+            let _ = VAULT_KEY.get_or_init(|| std::sync::RwLock::new(VaultKey::new()));
+        });
+    }
+
+    fn unlock_test_vault(vault: &std::path::Path) {
+        ensure_vault_key();
+        VaultKey::setup("test-pass", vault).unwrap();
+        VAULT_KEY
+            .get()
+            .unwrap()
+            .write()
+            .unwrap()
+            .unlock("test-pass", vault)
+            .unwrap();
+    }
+
+    #[test]
+    fn file_list_sql_excludes_classified_paths() {
+        let db = Database::open_in_memory().unwrap();
+        db.with_conn(|conn| {
+            migrate_up(conn)?;
+            conn.execute(
+                "INSERT INTO files (path, title, content_hash, created_at, updated_at)
+                 VALUES ('notes/a.md', 'A', 'h1', '2020-01-01', '2020-01-01'),
+                        ('.classified/secret.md', 'S', 'h2', '2020-01-01', '2020-01-01')",
+                [],
+            )?;
+            let mut stmt = conn.prepare(
+                "SELECT path FROM files
+                 WHERE id IN (SELECT MAX(id) FROM files GROUP BY path)
+                   AND path NOT LIKE '.iris/%'
+                   AND path NOT LIKE '.classified/%'
+                 ORDER BY path",
+            )?;
+            let paths: Vec<String> = stmt.query_map([], |row| row.get(0))?.flatten().collect();
+            assert_eq!(paths, vec!["notes/a.md".to_string()]);
+            Ok(())
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn set_file_lock_persists_flag() {
+        let dir = tempdir().unwrap();
+        let state = AppState::new(dir.path().join("data")).unwrap();
+        state
+            .db
+            .with_conn(|conn| {
+                conn.execute(
+                    "INSERT INTO files (path, title, content_hash, created_at, updated_at, is_locked)
+                     VALUES ('notes/a.md', 'A', 'h1', '2020-01-01', '2020-01-01', 0)",
+                    [],
+                )?;
+                Ok(())
+            })
+            .unwrap();
+
+        set_file_lock(&state, "notes/a.md", true).unwrap();
+        assert!(query_is_locked(&state.db, "notes/a.md").unwrap());
+
+        let err = set_file_lock(&state, ".classified/secret.md", true).unwrap_err();
+        assert!(err.to_string().contains("只能操作用户笔记"));
+    }
+
+    #[test]
+    fn query_is_locked_defaults_false_when_missing() {
+        let db = Database::open_in_memory().unwrap();
+        assert!(!query_is_locked(&db, "missing.md").unwrap());
+    }
+
+    #[test]
+    fn decode_file_content_decrypts_csef_when_unlocked() {
+        let _guard = VAULT_KEY_TEST_LOCK.lock().unwrap();
+        let dir = tempdir().unwrap();
+        let vault = dir.path().join("vault");
+        fs::create_dir_all(&vault).unwrap();
+        unlock_test_vault(&vault);
+
+        let key = *VAULT_KEY.get().unwrap().read().unwrap().key().unwrap();
+        let enc = classified_io::encrypt_cef(b"# Secret", &key).unwrap();
+        let content = decode_file_content(&enc).unwrap();
+        assert_eq!(content, "# Secret");
+    }
+
+    #[test]
+    fn encode_file_payload_encrypts_classified_path() {
+        let _guard = VAULT_KEY_TEST_LOCK.lock().unwrap();
+        let dir = tempdir().unwrap();
+        let vault = dir.path().join("vault");
+        fs::create_dir_all(&vault).unwrap();
+        unlock_test_vault(&vault);
+
+        let data = encode_file_payload(".classified/secret.md", "# Hi").unwrap();
+        assert!(classified_io::has_csef_magic(&data));
+
+        let plain = encode_file_payload("notes/open.md", "# Hi").unwrap();
+        assert!(!classified_io::has_csef_magic(&plain));
+        assert_eq!(plain, b"# Hi");
+    }
+}
+
+#[cfg(test)]
+mod path_sync_tests {
+    use super::*;
+
+    #[test]
+    fn placeholder_skips_sync() {
+        assert!(is_placeholder_title("新建文档"));
+        assert!(!is_placeholder_title("民法总则笔记"));
+    }
+
+    #[test]
+    fn sanitize_strips_invalid_chars() {
+        assert_eq!(sanitize_title_for_path("a/b"), "a_b");
+    }
+
+    #[test]
+    fn default_create_content_is_frontmatter_free_blank() {
+        assert_eq!(default_create_content("新建文档"), "");
+    }
+
+    #[test]
+    fn folder_paths_accept_nested_relative_paths_only() {
+        assert!(validate_folder_path("inbox").is_ok());
+        assert!(validate_folder_path("notes/inbox").is_ok());
+        assert!(validate_folder_path("notes\\inbox").is_err());
+        assert!(validate_folder_path("../secret").is_err());
+        assert!(validate_folder_path(".iris/trash").is_err());
+    }
+
+    #[test]
+    fn vault_asset_path_must_live_under_assets() {
+        assert!(is_vault_asset_path("assets/photo.png"));
+        assert!(!is_vault_asset_path("notes/x.md"));
+        assert!(!is_vault_asset_path("assets/../secret.png"));
+        assert!(!is_vault_asset_path("assets/"));
+    }
 }
