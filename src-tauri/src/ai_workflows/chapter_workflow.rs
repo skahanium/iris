@@ -365,18 +365,23 @@ pub async fn generate_chapter_content_with_llm(
                 content: system,
                 tool_call_id: None,
                 tool_calls: None,
+            
+                ..Default::default()
             },
             LlmMessage {
                 role: MessageRole::User,
                 content: user,
                 tool_call_id: None,
                 tool_calls: None,
+            
+                ..Default::default()
             },
         ],
         tools: vec![],
         max_tokens: Some(4096),
         temperature: Some(0.4),
         stream: false,
+        thinking: false,
     };
 
     let gateway = crate::ai_runtime::model_gateway::ModelGateway::with_defaults(

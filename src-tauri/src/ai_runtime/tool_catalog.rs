@@ -448,6 +448,82 @@ pub static TOOL_CATALOG: LazyLock<Vec<ToolCatalogEntry>> = LazyLock::new(|| {
             scene_affinity: &[],
             max_results: None,
         },
+        // ─── Skill management (meta tools) ─────────────────────
+        ToolCatalogEntry {
+            name: "skills_list",
+            description: "列出已安装的 Agent Skills（全局 + 当前库）",
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {}
+            }),
+            access_level: ToolAccessLevel::ReadIndex,
+            requires_confirmation: false,
+            implementation: ToolImplementationStatus::Dispatchable,
+            default_enabled_without_skill: true,
+            scene_affinity: &[],
+            max_results: None,
+        },
+        ToolCatalogEntry {
+            name: "skills_install",
+            description: "安装 Agent Skill（url / git / local / registry）。SkillHub: source=registry, registry=skillhub, path_or_url=<skill名或页面URL>",
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "source": {"type": "string", "enum": ["url", "git", "local", "registry"]},
+                    "path_or_url": {"type": "string"},
+                    "scope": {"type": "string", "enum": ["global", "vault"], "default": "global"},
+                    "subpath": {"type": "string"},
+                    "registry": {"type": "string", "description": "registry 时必填，默认 skillhub"},
+                    "reason": {"type": "string", "description": "展示于确认框"}
+                },
+                "required": ["source", "path_or_url"]
+            }),
+            access_level: ToolAccessLevel::ManageSkills,
+            requires_confirmation: true,
+            implementation: ToolImplementationStatus::Dispatchable,
+            default_enabled_without_skill: true,
+            scene_affinity: &[],
+            max_results: None,
+        },
+        ToolCatalogEntry {
+            name: "skills_uninstall",
+            description: "卸载已安装的 Agent Skill",
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string"},
+                    "scope": {"type": "string", "enum": ["global", "vault"], "default": "global"},
+                    "reason": {"type": "string"}
+                },
+                "required": ["name"]
+            }),
+            access_level: ToolAccessLevel::ManageSkills,
+            requires_confirmation: true,
+            implementation: ToolImplementationStatus::Dispatchable,
+            default_enabled_without_skill: true,
+            scene_affinity: &[],
+            max_results: None,
+        },
+        ToolCatalogEntry {
+            name: "skills_toggle",
+            description: "启用或禁用已安装的 Agent Skill",
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string"},
+                    "scope": {"type": "string", "enum": ["global", "vault"], "default": "global"},
+                    "enabled": {"type": "boolean"},
+                    "reason": {"type": "string"}
+                },
+                "required": ["name", "enabled"]
+            }),
+            access_level: ToolAccessLevel::ManageSkills,
+            requires_confirmation: true,
+            implementation: ToolImplementationStatus::Dispatchable,
+            default_enabled_without_skill: true,
+            scene_affinity: &[],
+            max_results: None,
+        },
     ]
 });
 
@@ -620,11 +696,11 @@ mod tests {
 
     #[test]
     fn total_catalog_count() {
-        // 14 read-only + 7 write = 21 total tools
+        // 14 read-only + 7 write + 4 skills meta = 25 total tools
         assert_eq!(
             catalog_total_count(),
-            21,
-            "catalog should have exactly 21 tools"
+            25,
+            "catalog should have exactly 25 tools"
         );
     }
 

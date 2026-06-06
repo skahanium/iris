@@ -46,7 +46,7 @@ pub enum ToolPolicyVerdict {
 }
 
 /// Why a tool was denied.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DenialReason {
     /// Not in the catalog or marked as Planned.
     NotImplemented,
@@ -62,12 +62,42 @@ pub enum DenialReason {
     NotInSkillAllowlist,
 }
 
+/// User-facing hint when a tool is denied (also written into tool-role messages).
+pub fn denial_user_message(reason: DenialReason, tool_name: &str) -> String {
+    match reason {
+        DenialReason::WebSearchDisabled => format!(
+            "联网搜索已关闭，无法使用 {tool_name}。安装 Skill 请调用 skills_install(source=registry, registry=skillhub, path_or_url=<skill名>)，不要用 fetch_web_page。"
+        ),
+        DenialReason::NotImplemented => format!("工具 {tool_name} 尚未实现"),
+        DenialReason::SceneMismatch => format!("工具 {tool_name} 在当前场景不可用"),
+        DenialReason::InsufficientAutonomy => {
+            format!("当前自治等级不足以使用 {tool_name}")
+        }
+        DenialReason::DepthLimit => format!("工具 {tool_name} 在子任务深度限制下不可用"),
+        DenialReason::NotInSkillAllowlist => {
+            format!("活动 Skill 未授权工具 {tool_name}")
+        }
+    }
+}
+
+/// Core meta tools for skill management — always available, not blocked by skill allowlist.
+const META_SKILL_TOOLS: &[&str] = &[
+    "skills_list",
+    "skills_install",
+    "skills_uninstall",
+    "skills_toggle",
+];
+
 /// Evaluate the policy verdict for a single tool.
 pub fn evaluate_tool(tool_name: &str, ctx: &ToolPolicyContext) -> ToolPolicyVerdict {
     let Some(entry) = catalog_find(tool_name) else {
         return ToolPolicyVerdict::Denied(DenialReason::NotImplemented);
     };
     evaluate_entry(entry, ctx)
+}
+
+fn is_meta_skill_tool(name: &str) -> bool {
+    META_SKILL_TOOLS.contains(&name)
 }
 
 /// Evaluate the policy verdict for a catalog entry.
@@ -99,6 +129,15 @@ fn evaluate_entry(entry: &ToolCatalogEntry, ctx: &ToolPolicyContext) -> ToolPoli
         }
     }
 
+    // 5b. Meta skill tools bypass skill allowlist
+    if is_meta_skill_tool(entry.name) {
+        return if entry.requires_confirmation {
+            ToolPolicyVerdict::RequiresConfirmation
+        } else {
+            ToolPolicyVerdict::AutoAllowed
+        };
+    }
+
     // 6. Skill allowlist check: if skills are active, non-default tools must be in allowlist
     if !ctx.skill_allowed_tools.is_empty()
         && !entry.default_enabled_without_skill
@@ -127,6 +166,7 @@ fn required_autonomy(entry: &ToolCatalogEntry) -> Option<AutonomyLevel> {
         ToolAccessLevel::WriteCache => Some(AutonomyLevel::L2),
         ToolAccessLevel::WriteMarkdown => Some(AutonomyLevel::L2),
         ToolAccessLevel::WriteSettings => Some(AutonomyLevel::L2),
+        ToolAccessLevel::ManageSkills => None,
     }
 }
 
@@ -188,6 +228,41 @@ mod tests {
     }
 
     // ── Hard gate ──────────────────────────────────────────
+
+    #[test]
+    fn meta_skill_tools_always_available_with_active_skill_allowlist() {
+        let ctx = ToolPolicyContext {
+            scene: AiScene::KnowledgeLookup,
+            autonomy_level: AutonomyLevel::L2,
+            web_search_enabled: true,
+            skill_allowed_tools: vec!["search_hybrid".into()],
+            depth: 0,
+        };
+        assert_eq!(
+            evaluate_tool("skills_list", &ctx),
+            ToolPolicyVerdict::AutoAllowed
+        );
+        assert_eq!(
+            evaluate_tool("skills_install", &ctx),
+            ToolPolicyVerdict::RequiresConfirmation
+        );
+    }
+
+    #[test]
+    fn meta_skill_tools_available_when_web_search_disabled() {
+        let ctx = ToolPolicyContext {
+            web_search_enabled: false,
+            ..default_ctx()
+        };
+        assert_eq!(
+            evaluate_tool("skills_list", &ctx),
+            ToolPolicyVerdict::AutoAllowed
+        );
+        assert_eq!(
+            evaluate_tool("skills_install", &ctx),
+            ToolPolicyVerdict::RequiresConfirmation
+        );
+    }
 
     #[test]
     fn nonexistent_tool_denied() {

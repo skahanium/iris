@@ -48,6 +48,39 @@ pub fn clear_abort(request_id: &str) {
 // Provider types (ProviderConfig, CapabilitySlot, MessageRole, LlmMessage,
 // ToolCall, FunctionCall, TokenUsage) live in `crate::ai_types`.
 
+/// Ensure every `tool` message follows an assistant message listing its `tool_call_id`.
+/// Repairs checkpoints produced before tool_calls were persisted on assistant turns.
+pub fn repair_tool_api_messages(messages: &mut [LlmMessage]) {
+    for i in 0..messages.len() {
+        if !matches!(messages[i].role, MessageRole::Tool) {
+            continue;
+        }
+        let Some(tool_id) = messages[i].tool_call_id.clone().filter(|s| !s.is_empty()) else {
+            continue;
+        };
+        for j in (0..i).rev() {
+            if !matches!(messages[j].role, MessageRole::Assistant) {
+                continue;
+            }
+            let has = messages[j].tool_calls.as_ref().is_some_and(|calls| {
+                calls.iter().any(|tc| tc.id == tool_id)
+            });
+            if !has {
+                let placeholder = ToolCall::new(&tool_id, "tool", "{}");
+                match &mut messages[j].tool_calls {
+                    Some(calls) => {
+                        if !calls.iter().any(|tc| tc.id == tool_id) {
+                            calls.push(placeholder);
+                        }
+                    }
+                    None => messages[j].tool_calls = Some(vec![placeholder]),
+                }
+            }
+            break;
+        }
+    }
+}
+
 /// Serialize messages for provider APIs (tool_calls need `type`, tool role needs `tool_call_id`).
 pub fn messages_for_api(messages: &[LlmMessage]) -> Vec<serde_json::Value> {
     messages
@@ -74,11 +107,27 @@ pub fn messages_for_api(messages: &[LlmMessage]) -> Vec<serde_json::Value> {
                 } else {
                     serde_json::Value::String(m.content.clone())
                 };
-                return serde_json::json!({
+                let tool_calls = serde_json::to_value(m.tool_calls.as_ref().unwrap())
+                    .unwrap_or_else(|_| serde_json::json!([]));
+                let mut msg = serde_json::json!({
                     "role": "assistant",
                     "content": content,
-                    "tool_calls": m.tool_calls,
+                    "tool_calls": tool_calls,
                 });
+                if let Some(reasoning) = &m.reasoning_content {
+                    msg["reasoning_content"] = serde_json::Value::String(reasoning.clone());
+                }
+                return msg;
+            }
+            if matches!(m.role, MessageRole::Assistant) {
+                let mut msg = serde_json::json!({
+                    "role": "assistant",
+                    "content": m.content,
+                });
+                if let Some(reasoning) = &m.reasoning_content {
+                    msg["reasoning_content"] = serde_json::Value::String(reasoning.clone());
+                }
+                return msg;
             }
             serde_json::json!({
                 "role": role,
@@ -113,6 +162,8 @@ pub struct GatewayRequest {
     pub max_tokens: Option<u32>,
     pub temperature: Option<f64>,
     pub stream: bool,
+    /// When true, send provider thinking-mode parameters (DeepSeek-compatible).
+    pub thinking: bool,
 }
 
 /// Gateway response (non-streaming).
@@ -122,6 +173,37 @@ pub struct GatewayResponse {
     pub tool_calls: Vec<ToolCall>,
     pub usage: TokenUsage,
     pub finish_reason: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning_content: Option<String>,
+}
+
+fn apply_thinking_body(body: &mut serde_json::Value, thinking: bool) {
+    if thinking {
+        body["thinking"] = serde_json::json!({ "type": "enabled" });
+    }
+}
+
+/// Build OpenAI-compatible chat-completions JSON body (shared by `send_request` and tests).
+pub fn build_chat_completions_body(request: &GatewayRequest) -> serde_json::Value {
+    let mut body = serde_json::json!({
+        "model": request.provider.model,
+        "messages": messages_for_api(&request.messages),
+    });
+
+    if !request.tools.is_empty() {
+        body["tools"] = serde_json::to_value(&request.tools).unwrap_or_default();
+    }
+
+    if let Some(max_tokens) = request.max_tokens {
+        body["max_tokens"] = serde_json::json!(max_tokens);
+    }
+
+    if let Some(temperature) = request.temperature {
+        body["temperature"] = serde_json::json!(temperature);
+    }
+
+    apply_thinking_body(&mut body, request.thinking);
+    body
 }
 
 fn parse_usage(json: &serde_json::Value) -> TokenUsage {
@@ -334,7 +416,8 @@ impl ModelGateway {
             content: persona,
             tool_call_id: None,
             tool_calls: None,
-        }];
+        ..Default::default()
+    }];
 
         if !user_rules.is_empty() {
             let mut rules = String::from("## 用户规则\n\n");
@@ -346,6 +429,7 @@ impl ModelGateway {
                 content: rules,
                 tool_call_id: None,
                 tool_calls: None,
+                ..Default::default()
             });
         }
 
@@ -355,6 +439,7 @@ impl ModelGateway {
                 content: Self::format_evidence_packets(packets),
                 tool_call_id: None,
                 tool_calls: None,
+                ..Default::default()
             });
         }
 
@@ -414,22 +499,7 @@ impl ModelGateway {
     pub async fn send_request(&self, request: GatewayRequest) -> AppResult<GatewayResponse> {
         let url = crate::llm::providers::chat_completions_url(&request.provider.base_url);
 
-        let mut body = serde_json::json!({
-            "model": request.provider.model,
-            "messages": messages_for_api(&request.messages),
-        });
-
-        if !request.tools.is_empty() {
-            body["tools"] = serde_json::to_value(&request.tools).unwrap_or_default();
-        }
-
-        if let Some(max_tokens) = request.max_tokens {
-            body["max_tokens"] = serde_json::json!(max_tokens);
-        }
-
-        if let Some(temperature) = request.temperature {
-            body["temperature"] = serde_json::json!(temperature);
-        }
+        let body = build_chat_completions_body(&request);
 
         let mut req_builder = self
             .client
@@ -474,6 +544,10 @@ impl ModelGateway {
             .as_str()
             .map(|s| s.to_string());
 
+        let reasoning_content = json["choices"][0]["message"]["reasoning_content"]
+            .as_str()
+            .map(|s| s.to_string());
+
         let tool_calls = json["choices"][0]["message"]["tool_calls"]
             .as_array()
             .map(|arr| {
@@ -507,6 +581,7 @@ impl ModelGateway {
             tool_calls,
             usage,
             finish_reason,
+            reasoning_content,
         })
     }
 
@@ -541,6 +616,8 @@ impl ModelGateway {
             body["temperature"] = serde_json::json!(temperature);
         }
 
+        apply_thinking_body(&mut body, request.thinking);
+
         let mut req_builder = self
             .client
             .post(&url)
@@ -563,6 +640,7 @@ impl ModelGateway {
         }
 
         let mut full_content = String::new();
+        let mut full_reasoning = String::new();
         let mut usage = TokenUsage::default();
         let mut token_index: u32 = 0;
 
@@ -624,6 +702,12 @@ impl ModelGateway {
                         };
                         self.emit_stream_event(&event, token_index)?;
                         token_index += 1;
+                    }
+
+                    if let Some(reasoning) =
+                        json["choices"][0]["delta"]["reasoning_content"].as_str()
+                    {
+                        full_reasoning.push_str(reasoning);
                     }
 
                     // Accumulate tool call deltas by index
@@ -733,6 +817,11 @@ impl ModelGateway {
             tool_calls,
             usage,
             finish_reason: "stop".to_string(),
+            reasoning_content: if full_reasoning.is_empty() {
+                None
+            } else {
+                Some(full_reasoning)
+            },
         })
     }
 
@@ -1052,6 +1141,72 @@ mod tests {
     }
 
     #[test]
+    fn messages_for_api_includes_reasoning_content_with_tool_calls() {
+        let messages = vec![LlmMessage {
+            role: MessageRole::Assistant,
+            content: String::new(),
+            tool_call_id: None,
+            tool_calls: Some(vec![ToolCall::new(
+                "call_1",
+                "fetch_web_page",
+                r#"{"url":"https://example.com"}"#,
+            )]),
+            reasoning_content: Some("internal chain of thought".into()),
+        }];
+        let api = messages_for_api(&messages);
+        assert_eq!(api[0]["reasoning_content"], "internal chain of thought");
+        assert_eq!(api[0]["tool_calls"][0]["type"], "function");
+    }
+
+    #[test]
+    fn resume_after_tool_confirm_body_preserves_reasoning_and_thinking() {
+        use crate::ai_types::CapabilitySlot;
+
+        let provider = ProviderConfig {
+            name: "deepseek".into(),
+            base_url: "https://api.deepseek.com".into(),
+            model: "deepseek-reasoner".into(),
+            api_key: Some("test".into()),
+            slot: CapabilitySlot::Reasoner,
+        };
+        let messages = vec![
+            LlmMessage {
+                role: MessageRole::Assistant,
+                content: String::new(),
+                tool_call_id: None,
+                tool_calls: Some(vec![ToolCall::new(
+                    "call_1",
+                    "fetch_web_page",
+                    r#"{"url":"https://example.com"}"#,
+                )]),
+                reasoning_content: Some("internal chain of thought".into()),
+            },
+            LlmMessage {
+                role: MessageRole::Tool,
+                content: r#"{"title":"Example"}"#.into(),
+                tool_call_id: Some("call_1".into()),
+                tool_calls: None,
+                ..Default::default()
+            },
+        ];
+        let body = build_chat_completions_body(&GatewayRequest {
+            provider,
+            messages,
+            tools: vec![],
+            max_tokens: Some(1024),
+            temperature: Some(0.7),
+            stream: false,
+            thinking: true,
+        });
+        assert_eq!(
+            body["messages"][0]["reasoning_content"],
+            "internal chain of thought"
+        );
+        assert_eq!(body["thinking"]["type"], "enabled");
+        assert_eq!(body["messages"][1]["role"], "tool");
+    }
+
+    #[test]
     fn messages_for_api_includes_tool_call_type() {
         let messages = vec![
             LlmMessage {
@@ -1059,6 +1214,7 @@ mod tests {
                 content: "查一下".into(),
                 tool_call_id: None,
                 tool_calls: None,
+                ..Default::default()
             },
             LlmMessage {
                 role: MessageRole::Assistant,
@@ -1069,12 +1225,14 @@ mod tests {
                     "search_hybrid",
                     r#"{"query":"x"}"#,
                 )]),
+                ..Default::default()
             },
             LlmMessage {
                 role: MessageRole::Tool,
                 content: r#"{"ok":true}"#.into(),
                 tool_call_id: Some("call_1".into()),
                 tool_calls: None,
+                ..Default::default()
             },
         ];
         let api = messages_for_api(&messages);
@@ -1082,6 +1240,31 @@ mod tests {
         assert!(api[1]["content"].is_null());
         assert_eq!(api[2]["role"], "tool");
         assert_eq!(api[2]["tool_call_id"], "call_1");
+    }
+
+    #[test]
+    fn repair_tool_api_messages_restores_missing_tool_calls() {
+        let mut messages = vec![
+            LlmMessage {
+                role: MessageRole::Assistant,
+                content: "partial".into(),
+                tool_call_id: None,
+                tool_calls: None,
+                ..Default::default()
+            },
+            LlmMessage {
+                role: MessageRole::Tool,
+                content: r#"{"ok":true}"#.into(),
+                tool_call_id: Some("call_1".into()),
+                tool_calls: None,
+                ..Default::default()
+            },
+        ];
+        repair_tool_api_messages(&mut messages);
+        let api = messages_for_api(&messages);
+        assert!(api[0]["tool_calls"].is_array());
+        assert_eq!(api[0]["tool_calls"][0]["id"], "call_1");
+        assert_eq!(api[1]["role"], "tool");
     }
 
     #[test]

@@ -59,6 +59,7 @@ pub fn build_prompt_messages(
         content: persona_text,
         tool_call_id: None,
         tool_calls: None,
+        ..Default::default()
     });
 
     // Layer 4: Environment (capabilities, document, vault, backlinks)
@@ -79,6 +80,7 @@ pub fn build_prompt_messages(
             content: env_text,
             tool_call_id: None,
             tool_calls: None,
+            ..Default::default()
         });
     }
 
@@ -90,6 +92,7 @@ pub fn build_prompt_messages(
                 content: skills.to_string(),
                 tool_call_id: None,
                 tool_calls: None,
+                ..Default::default()
             });
         }
     }
@@ -106,6 +109,7 @@ pub fn build_prompt_messages(
             ),
             tool_call_id: None,
             tool_calls: None,
+            ..Default::default()
         });
     }
 
@@ -151,6 +155,7 @@ pub fn build_initial_messages(
         content: system_content,
         tool_call_id: None,
         tool_calls: None,
+        ..Default::default()
     });
 
     // Evidence packets
@@ -165,6 +170,7 @@ pub fn build_initial_messages(
             ),
             tool_call_id: None,
             tool_calls: None,
+            ..Default::default()
         });
     }
 
@@ -182,6 +188,7 @@ pub fn build_initial_messages(
             content,
             tool_call_id: None,
             tool_calls: None,
+            ..Default::default()
         });
     }
 

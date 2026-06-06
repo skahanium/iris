@@ -8,7 +8,7 @@ use crate::ai_runtime::harness::{
 use crate::ai_runtime::harness_support::{
     load_harness_checkpoint, save_harness_checkpoint, HarnessCheckpoint,
 };
-use crate::ai_runtime::model_gateway::{LlmMessage, MessageRole};
+use crate::ai_runtime::model_gateway::{LlmMessage, MessageRole, repair_tool_api_messages};
 use crate::ai_runtime::tool_dispatch::{dispatch_tool, ToolDispatchContext};
 use crate::ai_runtime::trace::{TraceRecorder, TraceStatus};
 use crate::ai_runtime::AiScene;
@@ -33,7 +33,10 @@ pub fn append_tool_message_to_checkpoint(
         content: tool_content,
         tool_call_id: Some(tool_call_id.to_string()),
         tool_calls: None,
+    ..Default::default()
     });
+
+    repair_tool_api_messages(&mut cp.messages);
 
     let mut entry = serde_json::json!({
         "tool_call_id": tool_call_id,
@@ -88,6 +91,7 @@ pub async fn resume_harness_after_tool_confirm(
         },
         provider_config,
         Some(resolved.output_budget),
+        resolved.thinking,
     )
     .await?;
 
@@ -101,6 +105,7 @@ pub async fn resume_harness_after_tool_confirm(
 /// Dispatch an approved tool and append its result to checkpoint (does not resume).
 pub async fn dispatch_approved_tool_to_checkpoint(
     state: &AppState,
+    app_handle: &AppHandle,
     pending: &PendingToolCall,
     tool_call_id: &str,
     args: &serde_json::Value,
@@ -113,9 +118,37 @@ pub async fn dispatch_approved_tool_to_checkpoint(
         skill_allowed_tools: pending.skill_allowed_tools.clone(),
         depth: 0,
     };
-    registry
-        .check_tool_policy(&pending.tool_name, &policy_ctx)
-        .map_err(|e| AppError::msg(e.to_string()))?;
+
+    if let Err(denied) = registry.check_tool_policy(&pending.tool_name, &policy_ctx) {
+        let hint =
+            crate::ai_runtime::tool_policy::denial_user_message(denied.reason, &pending.tool_name);
+        let payload = serde_json::json!({ "error": hint, "policy_denied": true });
+        let content = serde_json::to_string(&payload).unwrap_or_default();
+        append_tool_message_to_checkpoint(
+            &state.db,
+            &pending.request_id,
+            tool_call_id,
+            content,
+            "error",
+            Some(payload.clone()),
+            None,
+        )?;
+        let _ = crate::ai_runtime::tool_audit::record_audit(
+            &state.db,
+            &crate::ai_runtime::tool_audit::ToolAuditInput {
+                request_id: &pending.request_id,
+                harness_round: 0,
+                tool_name: &pending.tool_name,
+                arguments: args,
+                result: &payload,
+                success: false,
+                duration_ms: 0,
+                scene: Some(pending.scene.profile()),
+                subagent_depth: 0,
+            },
+        );
+        return Ok(());
+    }
 
     let file_id = pending.file_id;
     let result = dispatch_tool(
@@ -126,6 +159,7 @@ pub async fn dispatch_approved_tool_to_checkpoint(
             file_id,
             web_search_enabled: pending.web_search_enabled,
             cold_start_packets: &[],
+            app_handle: Some(app_handle.clone()),
         },
         &pending.tool_name,
         args,
@@ -137,20 +171,6 @@ pub async fn dispatch_approved_tool_to_checkpoint(
     } else {
         serde_json::json!({ "error": result.error.as_deref().unwrap_or("unknown") })
     };
-    let _ = crate::ai_runtime::tool_audit::record_audit(
-        &state.db,
-        &crate::ai_runtime::tool_audit::ToolAuditInput {
-            request_id: &pending.request_id,
-            harness_round: 0,
-            tool_name: &pending.tool_name,
-            arguments: args,
-            result: &audit_result,
-            success: result.success,
-            duration_ms: result.duration_ms,
-            scene: Some(pending.scene.profile()),
-            subagent_depth: 0,
-        },
-    );
 
     let (tool_content, status, output, merge) = if result.success {
         let output_str = serde_json::to_string(&result.output).unwrap_or_else(|_| "{}".into());
@@ -182,6 +202,22 @@ pub async fn dispatch_approved_tool_to_checkpoint(
         output,
         merge,
     )?;
+
+    let _ = crate::ai_runtime::tool_audit::record_audit(
+        &state.db,
+        &crate::ai_runtime::tool_audit::ToolAuditInput {
+            request_id: &pending.request_id,
+            harness_round: 0,
+            tool_name: &pending.tool_name,
+            arguments: args,
+            result: &audit_result,
+            success: result.success,
+            duration_ms: result.duration_ms,
+            scene: Some(pending.scene.profile()),
+            subagent_depth: 0,
+        },
+    );
+
     Ok(())
 }
 

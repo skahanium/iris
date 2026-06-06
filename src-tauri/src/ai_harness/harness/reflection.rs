@@ -35,6 +35,7 @@ pub(crate) async fn run_reflection_round(
     gateway: &ModelGateway,
     provider_config: &crate::ai_runtime::model_gateway::ProviderConfig,
     max_tokens: Option<u32>,
+    thinking: bool,
     messages: &mut Vec<LlmMessage>,
     evidence_ledger: &EvidenceLedger,
     all_tool_calls: &[ToolCall],
@@ -63,6 +64,7 @@ pub(crate) async fn run_reflection_round(
             .into(),
         tool_call_id: None,
         tool_calls: None,
+        ..Default::default()
     });
     let reflect_request = GatewayRequest {
         provider: provider_config.clone(),
@@ -71,6 +73,7 @@ pub(crate) async fn run_reflection_round(
         max_tokens,
         temperature: Some(0.5),
         stream: false,
+        thinking,
     };
     if let Ok(reflect_resp) = gateway.send_request(reflect_request).await {
         if usage_is_empty(&reflect_resp.usage) {
@@ -92,12 +95,14 @@ pub(crate) async fn run_reflection_round(
                     content: text,
                     tool_call_id: None,
                     tool_calls: None,
+                    ..Default::default()
                 });
                 messages.push(LlmMessage {
                     role: MessageRole::User,
                     content: "证据仍不足，请继续使用检索类工具补充证据后再作答。".into(),
                     tool_call_id: None,
                     tool_calls: None,
+                    ..Default::default()
                 });
                 *max_rounds = (harness_rounds + 1).min(profile.max_agentic_rounds);
                 return Ok(ReflectionOutcome::BonusRound);

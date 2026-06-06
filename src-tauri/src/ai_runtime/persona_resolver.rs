@@ -176,6 +176,14 @@ pub fn render_persona(resolved: &ResolvedPersona) -> String {
         parts.push(rules);
     }
 
+    parts.push(
+        "Skills 管理：安装 skill 请调用 skills_install（registry/url/git/local），不要用 fetch_web_page 代替安装。\n\
+         SkillHub：skills_install(source=registry, registry=skillhub, path_or_url=<skill名或页面URL>)。\n\
+         查看已安装：skills_list。卸载/启停：skills_uninstall / skills_toggle，均需用户确认。\n\
+         fetch_web_page 仅用于阅读文档，不写入 skills 目录。"
+            .into(),
+    );
+
     parts.join("\n")
 }
 

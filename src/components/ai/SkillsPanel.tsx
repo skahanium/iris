@@ -56,6 +56,20 @@ export function SkillsPanel({ open: overlayOpen, onClose }: SkillsPanelProps) {
     void refresh();
   }, [refresh]);
 
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    void import("@tauri-apps/api/event").then(({ listen }) => {
+      listen("skills:changed", () => {
+        void refresh();
+      }).then((fn) => {
+        unlisten = fn;
+      });
+    });
+    return () => {
+      unlisten?.();
+    };
+  }, [refresh]);
+
   const filtered = skills.filter(
     (s) =>
       !query.trim() ||

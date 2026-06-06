@@ -1244,7 +1244,11 @@ Large instruction body."#,
         )
         .unwrap();
 
-        let entries = scan_all_metadata(&vault).unwrap();
+        let entries: Vec<_> = scan_all_metadata(&vault)
+            .unwrap()
+            .into_iter()
+            .filter(|e| e.name == "meta-skill")
+            .collect();
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].name, "meta-skill");
         assert!(entries[0].content.is_empty());

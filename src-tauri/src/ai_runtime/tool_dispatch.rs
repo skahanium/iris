@@ -14,6 +14,10 @@ pub const DISPATCHABLE_TOOL_NAMES: &[&str] = &[
     "get_outline",
     "get_backlinks",
     "get_block_links",
+    "skills_list",
+    "skills_install",
+    "skills_uninstall",
+    "skills_toggle",
 ];
 
 /// Handled inside harness loop, not via `dispatch_tool`.
@@ -47,6 +51,7 @@ pub struct ToolDispatchContext<'a> {
     pub file_id: Option<i64>,
     pub web_search_enabled: bool,
     pub cold_start_packets: &'a [ContextPacket],
+    pub app_handle: Option<tauri::AppHandle>,
 }
 
 fn is_retryable_tool_error(tool_name: &str, result: &ToolCallResult) -> bool {
@@ -131,6 +136,10 @@ async fn dispatch_tool_inner(
         "insert_text_at_cursor" | "replace_selection" => {
             markdown_write_patch_apply(state, ctx, tool_name, args)
         }
+        "skills_list" => skills_list_tool(state, ctx).await,
+        "skills_install" => skills_install_tool(state, ctx, args).await,
+        "skills_uninstall" => skills_uninstall_tool(state, ctx, args).await,
+        "skills_toggle" => skills_toggle_tool(state, ctx, args).await,
         _ => Err(AppError::msg(format!("unknown tool: {tool_name}"))),
     }
 }
@@ -554,6 +563,122 @@ async fn get_block_links(
     Ok(serde_json::json!({ "links": links }))
 }
 
+async fn skills_list_tool(
+    state: &AppState,
+    ctx: &ToolDispatchContext<'_>,
+) -> AppResult<serde_json::Value> {
+    let _ = ctx;
+    let vault = state.vault_path()?;
+    let entries = crate::ai_runtime::skill_install_service::list_skills(&vault)?;
+    Ok(serde_json::to_value(&entries).unwrap_or_default())
+}
+
+async fn skills_install_tool(
+    state: &AppState,
+    ctx: &ToolDispatchContext<'_>,
+    args: &serde_json::Value,
+) -> AppResult<serde_json::Value> {
+    use crate::ai_runtime::skill_install_service::{parse_scope, SkillInstallRequest};
+    use crate::ai_runtime::skill_registry::SkillInstallSource;
+
+    let source_str = args
+        .get("source")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| AppError::msg("skills_install 缺少 source"))?;
+    let source = SkillInstallSource::parse(source_str)
+        .ok_or_else(|| AppError::msg(format!("未知 source: {source_str}")))?;
+    let path_or_url = args
+        .get("path_or_url")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| AppError::msg("skills_install 缺少 path_or_url"))?
+        .to_string();
+    let scope = parse_scope(
+        args.get("scope")
+            .and_then(|v| v.as_str())
+            .unwrap_or("global"),
+    );
+    let req = SkillInstallRequest {
+        source,
+        path_or_url,
+        scope,
+        subpath: args
+            .get("subpath")
+            .and_then(|v| v.as_str())
+            .map(String::from),
+        registry: args
+            .get("registry")
+            .and_then(|v| v.as_str())
+            .map(String::from),
+    };
+    let vault = state.vault_path()?;
+    let entry = crate::ai_runtime::skill_install_service::install_skill(
+        &state.db,
+        &vault,
+        ctx.app_handle.as_ref(),
+        req,
+    )
+    .await?;
+    Ok(serde_json::to_value(&entry).unwrap_or_default())
+}
+
+async fn skills_uninstall_tool(
+    state: &AppState,
+    ctx: &ToolDispatchContext<'_>,
+    args: &serde_json::Value,
+) -> AppResult<serde_json::Value> {
+    use crate::ai_runtime::skill_install_service::parse_scope;
+
+    let name = args
+        .get("name")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| AppError::msg("skills_uninstall 缺少 name"))?;
+    let scope = parse_scope(
+        args.get("scope")
+            .and_then(|v| v.as_str())
+            .unwrap_or("global"),
+    );
+    let vault = state.vault_path()?;
+    crate::ai_runtime::skill_install_service::uninstall_skill(
+        &state.db,
+        &vault,
+        ctx.app_handle.as_ref(),
+        name,
+        scope,
+    )?;
+    Ok(serde_json::json!({ "ok": true, "name": name }))
+}
+
+async fn skills_toggle_tool(
+    state: &AppState,
+    ctx: &ToolDispatchContext<'_>,
+    args: &serde_json::Value,
+) -> AppResult<serde_json::Value> {
+    use crate::ai_runtime::skill_install_service::parse_scope;
+
+    let name = args
+        .get("name")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| AppError::msg("skills_toggle 缺少 name"))?;
+    let enabled = args
+        .get("enabled")
+        .and_then(|v| v.as_bool())
+        .ok_or_else(|| AppError::msg("skills_toggle 缺少 enabled"))?;
+    let scope = parse_scope(
+        args.get("scope")
+            .and_then(|v| v.as_str())
+            .unwrap_or("global"),
+    );
+    let vault = state.vault_path()?;
+    crate::ai_runtime::skill_install_service::toggle_skill(
+        &vault,
+        ctx.app_handle.as_ref(),
+        name,
+        scope,
+        enabled,
+    )?;
+    Ok(serde_json::json!({ "ok": true, "name": name, "enabled": enabled }))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -669,6 +794,7 @@ mod tests {
             file_id: None,
             web_search_enabled: false,
             cold_start_packets: &[],
+            app_handle: None,
         };
         let result = markdown_write_patch_apply(
             &state,
@@ -700,6 +826,7 @@ mod tests {
             file_id: None,
             web_search_enabled: false,
             cold_start_packets: &[],
+            app_handle: None,
         };
         let result = markdown_write_patch_apply(
             &state,

@@ -28,6 +28,7 @@ export interface ToolConfirmRequest {
   tool_call_id: string;
   tool_name: string;
   arguments: Record<string, string | number | boolean | null | undefined>;
+  preview?: Record<string, unknown>;
 }
 
 // ─── Tool Display Names ──────────────────────────────────
@@ -42,6 +43,9 @@ const TOOL_DISPLAY_NAMES: Record<string, string> = {
   create_note_from_deposit: "从收件箱创建笔记",
   web_search: "联网搜索",
   fetch_web_page: "打开网页正文",
+  skills_install: "安装 Skill",
+  skills_uninstall: "卸载 Skill",
+  skills_toggle: "启停 Skill",
 };
 
 const TOOL_DESCRIPTIONS: Record<string, string> = {
@@ -55,6 +59,10 @@ const TOOL_DESCRIPTIONS: Record<string, string> = {
   web_search: "将进行联网搜索。注意：外部网页内容可信度较低。",
   fetch_web_page:
     "将从指定 HTTPS 地址下载并提取正文片段（受体积与频率限制）。请确认 URL 正确且您有权访问该页面。",
+  skills_install:
+    "将从指定来源安装 Agent Skill 到本地 skills 目录。新 skill 默认启用；可在设置 → Skills 查看与管理。",
+  skills_uninstall: "将从 skills 目录删除该 skill 及其本地文件。",
+  skills_toggle: "将启用或禁用该 skill；禁用后其指令与工具扩权不再生效。",
 };
 
 // ─── Component ───────────────────────────────────────────
@@ -185,6 +193,50 @@ export function ToolConfirmDialog({
               </p>
             </div>
           ) : null}
+
+          {request.tool_name === "skills_install" && request.preview ? (
+            <div className="space-y-1 rounded-md border border-primary/20 bg-primary/5 p-3 text-xs">
+              <p className="font-medium text-foreground">安装预览</p>
+              {typeof request.preview.display_name === "string" ? (
+                <p>名称：{request.preview.display_name}</p>
+              ) : null}
+              {typeof request.preview.resolved_source === "string" ? (
+                <p>来源类型：{request.preview.resolved_source}</p>
+              ) : null}
+              {typeof request.preview.resolved_url === "string" ? (
+                <p className="break-all font-mono">
+                  解析 URL：{request.preview.resolved_url}
+                </p>
+              ) : null}
+              {typeof request.preview.path_or_url === "string" &&
+              !request.preview.resolved_url ? (
+                <p className="break-all font-mono">
+                  路径/URL：{request.preview.path_or_url}
+                </p>
+              ) : null}
+              <p className="text-muted-foreground">
+                写入 ~
+                {String(request.arguments.scope ?? "global") === "vault"
+                  ? "笔记库/.iris/skills"
+                  : "/.iris/skills"}
+              </p>
+            </div>
+          ) : null}
+
+          {(request.tool_name === "skills_uninstall" ||
+            request.tool_name === "skills_toggle") && (
+            <div className="rounded-md border border-border/80 bg-surface-inset p-3 text-xs">
+              <p className="font-medium">Skill：{String(request.arguments.name ?? "")}</p>
+              <p className="text-muted-foreground">
+                范围：{String(request.arguments.scope ?? "global")}
+              </p>
+              {request.tool_name === "skills_toggle" ? (
+                <p className="text-muted-foreground">
+                  操作：{request.arguments.enabled ? "启用" : "禁用"}
+                </p>
+              ) : null}
+            </div>
+          )}
 
           {/* Arguments display */}
           <div className="rounded-md bg-muted p-3">

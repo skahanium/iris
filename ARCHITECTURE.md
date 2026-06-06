@@ -242,6 +242,12 @@ Tauri 的命令式 IPC 基于 JSON 序列化。所有 Rust 函数通过 `#[tauri
 | `file:conflict`   | 文件冲突需要用户处理 | `{ path, local_hash, external_hash }` |
 | `version:created` | 新版本快照已创建     | `{ file_id, version_id, timestamp }`  |
 | `version:cleanup` | 自动版本清理完成     | `{ cleaned_count, remaining_count }`  |
+| `skills:changed`  | Skill 安装/卸载/启停 | （无载荷）                            |
+| `ai:tool_confirm_request` | Agent 工具需用户确认 | `{ request_id, tool_call_id, tool_name, arguments, preview? }` |
+
+### Agent Skills 数据流
+
+面板（`SkillsPanel`）与 Harness Agent 共用 `SkillInstallService`：IPC `skills_*` 与 Agent 工具 `skills_list` / `skills_install` / `skills_uninstall` / `skills_toggle` 调用同一 Rust 层。Registry 安装走 `skill_registry`（SkillHub → `api.skillhub.tencent.com`，`SkillRegistryAdapter` 可扩展注册表），变更操作经 `ToolConfirmDialog` 确认；成功后写入 `skill_install_sources`、emit `skills:changed` 刷新 UI，并在侧栏插入安装成功提示。
 
 ---
 

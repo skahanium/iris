@@ -104,6 +104,29 @@ fn sanitize_arguments(tool_name: &str, args: &serde_json::Value) -> Option<Strin
             let url = obj.get("url").and_then(|v| v.as_str()).unwrap_or("");
             Some(format!("url={url}"))
         }
+        "skills_install" => {
+            let source = obj.get("source").and_then(|v| v.as_str()).unwrap_or("");
+            let path = obj.get("path_or_url").and_then(|v| v.as_str()).unwrap_or("");
+            let scope = obj.get("scope").and_then(|v| v.as_str()).unwrap_or("global");
+            let registry = obj.get("registry").and_then(|v| v.as_str()).unwrap_or("");
+            Some(format!(
+                "source={source}, path_or_url={path}, scope={scope}, registry={registry}"
+            ))
+        }
+        "skills_uninstall" | "skills_toggle" => {
+            let name = obj.get("name").and_then(|v| v.as_str()).unwrap_or("");
+            let scope = obj.get("scope").and_then(|v| v.as_str()).unwrap_or("global");
+            if tool_name == "skills_toggle" {
+                let enabled = obj
+                    .get("enabled")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+                Some(format!("name={name}, scope={scope}, enabled={enabled}"))
+            } else {
+                Some(format!("name={name}, scope={scope}"))
+            }
+        }
+        "skills_list" => Some("list".into()),
         _ => {
             // Generic: truncate to 500 chars
             let s = serde_json::to_string(args).unwrap_or_default();
@@ -146,13 +169,14 @@ fn sanitize_result(tool_name: &str, result: &serde_json::Value, success: bool) -
     }
 }
 
-/// Truncate a string to max_len chars, adding "…" if truncated.
+/// Truncate a string to max_len **characters**, adding "…" if truncated (UTF-8 safe).
 fn truncate_summary(s: &str, max_len: usize) -> String {
-    if s.len() <= max_len {
-        s.to_string()
-    } else {
-        format!("{}…", &s[..max_len])
+    let char_count = s.chars().count();
+    if char_count <= max_len {
+        return s.to_string();
     }
+    let truncated: String = s.chars().take(max_len).collect();
+    format!("{truncated}…")
 }
 
 /// Simple content hash for audit (SHA-256 hex, first 16 chars).
@@ -299,6 +323,14 @@ mod tests {
         let s = "a".repeat(600);
         let result = truncate_summary(&s, 500);
         assert!(result.chars().count() <= 501); // 500 + "…"
+        assert!(result.ends_with('…'));
+    }
+
+    #[test]
+    fn truncate_summary_multibyte_chars() {
+        let s = "知".repeat(600);
+        let result = truncate_summary(&s, 500);
+        assert!(result.chars().count() <= 501);
         assert!(result.ends_with('…'));
     }
 

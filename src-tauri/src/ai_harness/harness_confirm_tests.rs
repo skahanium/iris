@@ -7,7 +7,7 @@ mod tests {
     use crate::ai_runtime::harness_support::{
         load_harness_checkpoint, save_harness_checkpoint, HarnessCheckpoint, HarnessCheckpointMeta,
     };
-    use crate::ai_runtime::model_gateway::{LlmMessage, MessageRole, TokenUsage};
+    use crate::ai_runtime::model_gateway::{LlmMessage, MessageRole, TokenUsage, ToolCall};
     use crate::ai_runtime::trace::{TraceRecorder, TraceStatus};
     use crate::ai_runtime::AiScene;
     use crate::app::AppState;
@@ -37,6 +37,7 @@ mod tests {
                 content: "partial".into(),
                 tool_call_id: None,
                 tool_calls: None,
+                ..Default::default()
             }],
             tool_calls: vec![],
             tool_results: vec![serde_json::json!({
@@ -73,6 +74,9 @@ mod tests {
         append_rejected_tool_to_checkpoint(state.as_ref(), rid, "tc1").unwrap();
 
         let cp = load_harness_checkpoint(&state.db, rid).unwrap().unwrap();
+        let api = crate::ai_runtime::model_gateway::messages_for_api(&cp.messages);
+        assert!(api[0]["tool_calls"].is_array());
+        assert_eq!(api[0]["tool_calls"][0]["id"], "tc1");
         assert_eq!(cp.messages.len(), 2);
         assert!(matches!(cp.messages[1].role, MessageRole::Tool));
         assert!(cp.messages[1].content.contains("rejected"));
@@ -102,5 +106,94 @@ mod tests {
             .as_deref()
             .unwrap_or("")
             .contains("rejected"));
+    }
+
+    #[test]
+    fn checkpoint_round_trip_preserves_reasoning_content() {
+        let db = Database::open_in_memory().unwrap();
+        let rid = "reasoning-cp-1";
+        TraceRecorder::start(&db, rid, AiScene::KnowledgeLookup).unwrap();
+        TraceRecorder::update_status(&db, rid, TraceStatus::AwaitingToolConfirmation).unwrap();
+        let mut cp = sample_checkpoint(rid);
+        cp.messages = vec![LlmMessage {
+            role: MessageRole::Assistant,
+            content: String::new(),
+            tool_call_id: None,
+            tool_calls: Some(vec![ToolCall::new(
+                "call_1",
+                "fetch_web_page",
+                r#"{"url":"https://example.com"}"#,
+            )]),
+            reasoning_content: Some("internal chain of thought".into()),
+        }];
+        save_harness_checkpoint(&db, rid, &cp).unwrap();
+        let loaded = load_harness_checkpoint(&db, rid).unwrap().unwrap();
+        assert_eq!(
+            loaded.messages[0].reasoning_content.as_deref(),
+            Some("internal chain of thought")
+        );
+        let api = crate::ai_runtime::model_gateway::messages_for_api(&loaded.messages);
+        assert_eq!(api[0]["reasoning_content"], "internal chain of thought");
+    }
+
+    #[test]
+    fn tool_confirm_resume_api_body_includes_reasoning_after_tool_result() {
+        use crate::ai_runtime::harness_confirm::append_tool_message_to_checkpoint;
+        use crate::ai_runtime::model_gateway::{
+            build_chat_completions_body, GatewayRequest, ProviderConfig,
+        };
+        use crate::ai_types::CapabilitySlot;
+
+        let db = Database::open_in_memory().unwrap();
+        let rid = "reasoning-resume-1";
+        TraceRecorder::start(&db, rid, AiScene::KnowledgeLookup).unwrap();
+        TraceRecorder::update_status(&db, rid, TraceStatus::AwaitingToolConfirmation).unwrap();
+        let mut cp = sample_checkpoint(rid);
+        cp.messages = vec![LlmMessage {
+            role: MessageRole::Assistant,
+            content: String::new(),
+            tool_call_id: None,
+            tool_calls: Some(vec![ToolCall::new(
+                "call_1",
+                "fetch_web_page",
+                r#"{"url":"https://example.com"}"#,
+            )]),
+            reasoning_content: Some("internal chain of thought".into()),
+        }];
+        save_harness_checkpoint(&db, rid, &cp).unwrap();
+
+        append_tool_message_to_checkpoint(
+            &db,
+            rid,
+            "call_1",
+            r#"{"title":"Example"}"#.into(),
+            "completed",
+            None,
+            None,
+        )
+        .unwrap();
+
+        let loaded = load_harness_checkpoint(&db, rid).unwrap().unwrap();
+        let body = build_chat_completions_body(&GatewayRequest {
+            provider: ProviderConfig {
+                name: "deepseek".into(),
+                base_url: "https://api.deepseek.com".into(),
+                model: "deepseek-reasoner".into(),
+                api_key: Some("test".into()),
+                slot: CapabilitySlot::Reasoner,
+            },
+            messages: loaded.messages,
+            tools: vec![],
+            max_tokens: Some(2048),
+            temperature: Some(0.7),
+            stream: false,
+            thinking: true,
+        });
+        assert_eq!(
+            body["messages"][0]["reasoning_content"],
+            "internal chain of thought"
+        );
+        assert_eq!(body["thinking"]["type"], "enabled");
+        assert_eq!(body["messages"].as_array().unwrap().len(), 2);
     }
 }

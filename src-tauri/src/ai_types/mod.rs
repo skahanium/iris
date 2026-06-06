@@ -256,6 +256,8 @@ pub enum ToolAccessLevel {
     WriteCache,
     WriteMarkdown,
     WriteSettings,
+    /// Install / uninstall / toggle agent skills.
+    ManageSkills,
 }
 
 // ─── Tool Spec ───────────────────────────────────────────
@@ -774,6 +776,21 @@ pub struct LlmMessage {
     pub tool_call_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_calls: Option<Vec<ToolCall>>,
+    /// DeepSeek / thinking-mode chain-of-thought; must be echoed on tool-call turns.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning_content: Option<String>,
+}
+
+impl Default for LlmMessage {
+    fn default() -> Self {
+        Self {
+            role: MessageRole::User,
+            content: String::new(),
+            tool_call_id: None,
+            tool_calls: None,
+            reasoning_content: None,
+        }
+    }
 }
 
 /// Tool call from LLM (OpenAI / DeepSeek chat completions format).

@@ -21,8 +21,8 @@ use crate::ai_runtime::harness_support::{
     extract_thinking_blocks, load_harness_checkpoint, HarnessCheckpointMeta,
 };
 use crate::ai_runtime::model_gateway::{
-    clear_abort, is_abort_requested, GatewayRequest, LlmMessage, MessageRole, ModelGateway,
-    ProviderConfig, TokenUsage, ToolCall,
+    clear_abort, is_abort_requested, repair_tool_api_messages, GatewayRequest, LlmMessage,
+    MessageRole, ModelGateway, ProviderConfig, TokenUsage, ToolCall,
 };
 use crate::ai_runtime::scene_router::resolve_scene;
 use crate::ai_runtime::tool_audit;
@@ -31,7 +31,7 @@ use crate::ai_runtime::tool_executor::ToolRegistry;
 use crate::ai_runtime::tool_fallback::{
     parse_tool_calls_from_content, should_retry_tool_parse, strip_tool_markup_from_visible,
 };
-use crate::ai_runtime::tool_policy::ToolPolicyContext;
+use crate::ai_runtime::tool_policy::{self, DenialReason, ToolPolicyContext};
 use crate::app::AppState;
 use crate::error::{AppError, AppResult};
 
@@ -42,6 +42,7 @@ pub async fn run_harness(
     input: HarnessRunInput,
     provider_config: crate::ai_runtime::model_gateway::ProviderConfig,
     max_tokens: Option<u32>,
+    thinking_mode: bool,
 ) -> AppResult<HarnessRunResult> {
     let profile = resolve_scene(input.scene);
     let registry = ToolRegistry::new();
@@ -97,6 +98,7 @@ pub async fn run_harness(
     if input.resume_from_checkpoint {
         if let Some(cp) = load_harness_checkpoint(&state.db, &input.request_id)? {
             messages = cp.messages;
+            repair_tool_api_messages(&mut messages);
             harness_rounds = cp.round;
             all_tool_calls = cp.tool_calls;
             tool_results_json = cp.tool_results;
@@ -126,6 +128,8 @@ pub async fn run_harness(
             }
             harness_rounds += 1;
 
+            repair_tool_api_messages(&mut messages);
+
             let request = GatewayRequest {
                 provider: provider_config.clone(),
                 messages: messages.clone(),
@@ -133,6 +137,7 @@ pub async fn run_harness(
                 max_tokens,
                 temperature: Some(0.7),
                 stream: false,
+                thinking: thinking_mode,
             };
 
             let response = gateway.send_request(request).await?;
@@ -157,6 +162,7 @@ pub async fn run_harness(
                     content: "工具参数 JSON 不完整，请重新输出合法的 tool_calls。".into(),
                     tool_call_id: None,
                     tool_calls: None,
+                    ..Default::default()
                 });
                 continue;
             }
@@ -193,18 +199,15 @@ pub async fn run_harness(
                 break 'agent;
             }
 
-            let (subagent_calls, other_calls): (Vec<_>, Vec<_>) = tool_calls
-                .iter()
-                .partition(|tc| tc.function.name == "spawn_subagent");
+            let mut policy_denied: Vec<(ToolCall, DenialReason)> = Vec::new();
+            let mut policy_allowed: Vec<ToolCall> = Vec::new();
+            for tc in tool_calls {
+                match registry.check_tool_policy(&tc.function.name, &policy_ctx) {
+                    Ok(()) => policy_allowed.push(tc),
+                    Err(denied) => policy_denied.push((tc, denied.reason)),
+                }
+            }
 
-            let pending_tool_call =
-                first_pending_confirmation_call(&registry, &tool_calls).cloned();
-            let model_tool_calls = pending_tool_call
-                .as_ref()
-                .map(|tc| vec![tc.clone()])
-                .unwrap_or_else(|| tool_calls.clone());
-
-            all_tool_calls.extend(model_tool_calls.clone());
             let stripped_assistant =
                 strip_tool_markup_from_visible(&response.content.clone().unwrap_or_default());
             let (visible_content, thinking) = extract_thinking_blocks(&stripped_assistant);
@@ -212,12 +215,49 @@ pub async fn run_harness(
                 emit_thinking(app_handle, &input.request_id, harness_rounds, &t)?;
             }
             let assistant_content = visible_content;
+
+            let all_model_tool_calls: Vec<ToolCall> = policy_denied
+                .iter()
+                .map(|(tc, _)| tc.clone())
+                .chain(policy_allowed.iter().cloned())
+                .collect();
+
             messages.push(LlmMessage {
                 role: MessageRole::Assistant,
                 content: assistant_content.clone(),
                 tool_call_id: None,
-                tool_calls: Some(model_tool_calls),
+                tool_calls: Some(all_model_tool_calls),
+                reasoning_content: response.reasoning_content.clone(),
             });
+
+            for (tc, reason) in &policy_denied {
+                push_tool_policy_error(
+                    &mut messages,
+                    &mut tool_results_json,
+                    tc,
+                    *reason,
+                );
+                all_tool_calls.push(tc.clone());
+            }
+
+            if policy_allowed.is_empty() {
+                continue;
+            }
+
+            let tool_calls = policy_allowed;
+
+            let (subagent_calls, other_calls): (Vec<_>, Vec<_>) = tool_calls
+                .iter()
+                .partition(|tc| tc.function.name == "spawn_subagent");
+
+            let pending_tool_call =
+                first_pending_confirmation_call(&registry, &tool_calls, &policy_ctx).cloned();
+            let model_tool_calls = pending_tool_call
+                .as_ref()
+                .map(|tc| vec![tc.clone()])
+                .unwrap_or_else(|| tool_calls.clone());
+
+            all_tool_calls.extend(model_tool_calls.clone());
 
             if let Some(tool_call) = pending_tool_call {
                 return pause_for_tool_confirmation(
@@ -260,6 +300,7 @@ pub async fn run_harness(
                             &input,
                             provider_config.clone(),
                             max_tokens,
+                            thinking_mode,
                             tc,
                         )
                     })
@@ -281,6 +322,7 @@ pub async fn run_harness(
                         content: output_str.clone(),
                         tool_call_id: Some(tc.id.clone()),
                         tool_calls: None,
+                        ..Default::default()
                     });
                     tool_results_json.push(serde_json::json!({
                         "tool_call_id": tc.id,
@@ -345,6 +387,7 @@ pub async fn run_harness(
                         ),
                         tool_call_id: Some(tool_call.id.clone()),
                         tool_calls: None,
+                        ..Default::default()
                     });
                     tool_results_json.push(serde_json::json!({
                         "tool_call_id": tool_call.id,
@@ -354,7 +397,14 @@ pub async fn run_harness(
                     tools_this_round += 1;
                     continue;
                 }
-                if registry.check_tool_policy(tool_name, &policy_ctx).is_err() {
+                if let Err(denied) = registry.check_tool_policy(tool_name, &policy_ctx) {
+                    push_tool_policy_error(
+                        &mut messages,
+                        &mut tool_results_json,
+                        tool_call,
+                        denied.reason,
+                    );
+                    tools_this_round += 1;
                     continue;
                 }
 
@@ -377,6 +427,7 @@ pub async fn run_harness(
                     file_id,
                     web_search_enabled: input.web_search_enabled,
                     cold_start_packets: evidence_ledger.packets(),
+                    app_handle: Some(app_handle.clone()),
                 };
                 let result = dispatch_tool_with_retry(state, &dispatch_ctx, tool_name, &args).await;
                 if result.success {
@@ -427,6 +478,7 @@ pub async fn run_harness(
                     },
                     tool_call_id: Some(tool_call.id.clone()),
                     tool_calls: None,
+                    ..Default::default()
                 });
 
                 tool_results_json.push(serde_json::json!({
@@ -452,6 +504,7 @@ pub async fn run_harness(
             &gateway,
             &provider_config,
             max_tokens,
+            thinking_mode,
             &mut messages,
             &evidence_ledger,
             &all_tool_calls,
@@ -492,6 +545,7 @@ pub async fn run_harness(
             max_tokens,
             temperature: Some(0.7),
             stream: true,
+            thinking: thinking_mode,
         };
         let response = gateway
             .send_streaming_request(&input.request_id, stream_request)
@@ -546,10 +600,36 @@ fn abort_if_requested(request_id: &str) -> AppResult<()> {
 fn first_pending_confirmation_call<'a>(
     registry: &ToolRegistry,
     tool_calls: &'a [ToolCall],
+    policy_ctx: &ToolPolicyContext,
 ) -> Option<&'a ToolCall> {
-    tool_calls
-        .iter()
-        .find(|tc| registry.requires_confirmation(&tc.function.name))
+    tool_calls.iter().find(|tc| {
+        registry.requires_confirmation(&tc.function.name)
+            && registry.check_tool_policy(&tc.function.name, policy_ctx).is_ok()
+    })
+}
+
+fn push_tool_policy_error(
+    messages: &mut Vec<LlmMessage>,
+    tool_results_json: &mut Vec<serde_json::Value>,
+    tool_call: &ToolCall,
+    reason: DenialReason,
+) {
+    let hint = tool_policy::denial_user_message(reason, &tool_call.function.name);
+    let payload = serde_json::json!({ "error": hint, "policy_denied": true });
+    let content = serde_json::to_string(&payload).unwrap_or_default();
+    messages.push(LlmMessage {
+        role: MessageRole::Tool,
+        content,
+        tool_call_id: Some(tool_call.id.clone()),
+        tool_calls: None,
+        ..Default::default()
+    });
+    tool_results_json.push(serde_json::json!({
+        "tool_call_id": tool_call.id,
+        "status": "error",
+        "error": hint,
+        "policy_denied": true,
+    }));
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -586,12 +666,46 @@ async fn pause_for_tool_confirmation(
                 .unwrap_or_default(),
         },
     );
-    let confirm_request = serde_json::json!({
+    let mut confirm_request = serde_json::json!({
         "request_id": input.request_id,
         "tool_call_id": tool_call.id,
         "tool_name": tool_name,
         "arguments": serde_json::from_str::<serde_json::Value>(&tool_call.function.arguments).unwrap_or_default(),
     });
+    if tool_name == "skills_install" {
+        if let Ok(args) = serde_json::from_str::<serde_json::Value>(&tool_call.function.arguments) {
+            use crate::ai_runtime::skill_install_service::{preview_install, SkillInstallRequest};
+            use crate::ai_runtime::skill_registry::SkillInstallSource;
+            if let Some(source_str) = args.get("source").and_then(|v| v.as_str()) {
+                if let Some(source) = SkillInstallSource::parse(source_str) {
+                    let req = SkillInstallRequest {
+                        source,
+                        path_or_url: args
+                            .get("path_or_url")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string(),
+                        scope: crate::ai_runtime::skill_install_service::parse_scope(
+                            args.get("scope")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("global"),
+                        ),
+                        subpath: args
+                            .get("subpath")
+                            .and_then(|v| v.as_str())
+                            .map(String::from),
+                        registry: args
+                            .get("registry")
+                            .and_then(|v| v.as_str())
+                            .map(String::from),
+                    };
+                    if let Ok(preview) = preview_install(&req).await {
+                        confirm_request["preview"] = preview;
+                    }
+                }
+            }
+        }
+    }
     app_handle
         .emit("ai:tool_confirm_request", &confirm_request)
         .map_err(|e| AppError::msg(format!("emit tool confirm: {e}")))?;
@@ -645,6 +759,7 @@ async fn run_subagent_harness(
     parent: &HarnessRunInput,
     provider_config: ProviderConfig,
     max_tokens: Option<u32>,
+    thinking: bool,
     tool_call: &ToolCall,
 ) -> AppResult<HarnessRunResult> {
     let args: serde_json::Value =
@@ -687,7 +802,7 @@ async fn run_subagent_harness(
         token_budget: Some(sub_budget),
     };
 
-    run_harness(state, app_handle, sub_input, provider_config, max_tokens).await
+    run_harness(state, app_handle, sub_input, provider_config, max_tokens, thinking).await
 }
 
 #[cfg(test)]
@@ -707,19 +822,52 @@ mod tests {
         }
     }
 
+    use crate::ai_runtime::tool_policy::ToolPolicyContext;
+    use crate::ai_runtime::{AiScene, AutonomyLevel};
+
+    fn test_policy_ctx(web_search_enabled: bool) -> ToolPolicyContext {
+        ToolPolicyContext {
+            scene: AiScene::DraftingAssist,
+            autonomy_level: AutonomyLevel::L2,
+            web_search_enabled,
+            skill_allowed_tools: vec![],
+            depth: 0,
+        }
+    }
+
     #[test]
     fn test_pending_tool_call_returns_pending_result() {
         let registry = ToolRegistry::new();
         // fetch_web_page requires_confirmation = true
         let calls = vec![make_tool_call("fetch_web_page")];
-        let result = first_pending_confirmation_call(&registry, &calls);
+        let result = first_pending_confirmation_call(
+            &registry,
+            &calls,
+            &test_policy_ctx(true),
+        );
         assert!(result.is_some());
         assert_eq!(result.unwrap().function.name, "fetch_web_page");
     }
 
     #[test]
+    fn test_fetch_web_page_skipped_when_web_search_disabled() {
+        let registry = ToolRegistry::new();
+        let calls = vec![make_tool_call("fetch_web_page")];
+        let result = first_pending_confirmation_call(
+            &registry,
+            &calls,
+            &test_policy_ctx(false),
+        );
+        assert!(
+            result.is_none(),
+            "fetch_web_page should not prompt when web search is disabled"
+        );
+    }
+
+    #[test]
     fn test_read_only_tools_do_not_pause() {
         let registry = ToolRegistry::new();
+        let ctx = test_policy_ctx(true);
         // All read-only tools should NOT trigger confirmation
         let read_only = vec![
             "search_hybrid",
@@ -733,7 +881,7 @@ mod tests {
         ];
         for name in read_only {
             let calls = vec![make_tool_call(name)];
-            let result = first_pending_confirmation_call(&registry, &calls);
+            let result = first_pending_confirmation_call(&registry, &calls, &ctx);
             assert!(
                 result.is_none(),
                 "read-only tool '{name}' should NOT require confirmation"
@@ -744,13 +892,14 @@ mod tests {
     #[test]
     fn test_multiple_confirm_tools_pauses_first_and_keeps_checkpoint() {
         let registry = ToolRegistry::new();
+        let ctx = test_policy_ctx(true);
         // Mix of read-only and confirm-required tools
         let calls = vec![
             make_tool_call("search_hybrid"),
             make_tool_call("insert_text_at_cursor"),
             make_tool_call("replace_selection"),
         ];
-        let result = first_pending_confirmation_call(&registry, &calls);
+        let result = first_pending_confirmation_call(&registry, &calls, &ctx);
         assert!(result.is_some());
         // Should return the FIRST confirm-requiring tool
         assert_eq!(result.unwrap().function.name, "insert_text_at_cursor");
@@ -763,7 +912,11 @@ mod tests {
         // enforced by removing the dead variable, but we verify the logic here.
         let registry = ToolRegistry::new();
         let calls = vec![make_tool_call("search_hybrid")];
-        let result = first_pending_confirmation_call(&registry, &calls);
+        let result = first_pending_confirmation_call(
+            &registry,
+            &calls,
+            &test_policy_ctx(true),
+        );
         assert!(
             result.is_none(),
             "no confirm tool → no pending confirmation"

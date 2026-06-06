@@ -973,18 +973,23 @@ async fn generate_llm_document_patches(
                 content: system,
                 tool_call_id: None,
                 tool_calls: None,
+            
+                ..Default::default()
             },
             LlmMessage {
                 role: MessageRole::User,
                 content: user,
                 tool_call_id: None,
                 tool_calls: None,
+            
+                ..Default::default()
             },
         ],
         tools: vec![],
         max_tokens: Some(3072),
         temperature: Some(0.25),
         stream: false,
+        thinking: false,
     };
 
     let gateway = ModelGateway::with_defaults(app_handle.clone(), vec![provider.clone()])?;
@@ -1074,18 +1079,23 @@ pub async fn enhance_document_check_with_llm(
                 content: system,
                 tool_call_id: None,
                 tool_calls: None,
+            
+                ..Default::default()
             },
             LlmMessage {
                 role: MessageRole::User,
                 content: user,
                 tool_call_id: None,
                 tool_calls: None,
+            
+                ..Default::default()
             },
         ],
         tools: vec![],
         max_tokens: Some(2048),
         temperature: Some(0.3),
         stream: false,
+        thinking: false,
     };
 
     let gateway = ModelGateway::with_defaults(app_handle.clone(), vec![provider.clone()])?;

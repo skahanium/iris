@@ -155,6 +155,7 @@ mod tests {
             content: "hello world".into(),
             tool_call_id: None,
             tool_calls: None,
+            ..Default::default()
         };
         let (p, c) = estimate_and_accumulate(&mut total, &[msg], "ok response");
         assert!(total.total_tokens > 0);
@@ -188,6 +189,7 @@ mod tests {
             content: "一段较长的中文内容用于测试 token 预算溢出场景".into(),
             tool_call_id: None,
             tool_calls: None,
+            ..Default::default()
         };
         let _ = estimate_and_accumulate(&mut total, &[msg], "这是回复内容");
         let small_budget = 5u32;

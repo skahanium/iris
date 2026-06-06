@@ -71,6 +71,22 @@ export function AgentStatusBadge({
   }, [open]);
 
   useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    void import("@tauri-apps/api/event").then(({ listen }) => {
+      listen("skills:changed", () => {
+        skillsList()
+          .then(setSkills)
+          .catch(() => setSkills([]));
+      }).then((fn) => {
+        unlisten = fn;
+      });
+    });
+    return () => {
+      unlisten?.();
+    };
+  }, []);
+
+  useEffect(() => {
     if (!open) return;
     const onDocClick = (e: MouseEvent) => {
       if (

@@ -1043,11 +1043,13 @@ pub async fn skills_list(
 ```rust
 pub async fn skills_install(
     state: State<'_, Arc<AppState>>,
+    app_handle: tauri::AppHandle,
     request: SkillsInstallRequest,
 ) -> AppResult<serde_json::Value>
 ```
 
-- **描述**：安装 Skill。支持三种来源：`"url"`（从 URL 下载）、`"git"`（从 Git 仓库克隆）、`"local"`（从本地路径复制）。
+- **描述**：安装 Skill。支持四种来源：`"url"`（从 URL 下载）、`"git"`（从 Git 仓库克隆）、`"local"`（从本地路径复制）、`"registry"`（注册表解析，如 SkillHub：`registry=skillhub`，`path_or_url` 为 skill 名或页面 URL）。
+- **副作用**：写入 `skill_install_sources`、刷新 `skill_activation_index`、默认启用，并 emit `skills:changed`。
 
 ### skills_uninstall
 

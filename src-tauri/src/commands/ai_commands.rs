@@ -308,6 +308,7 @@ pub(crate) async fn execute_ai_send_message(
         },
         provider_config,
         Some(resolved.output_budget),
+        resolved.thinking,
     )
     .await?;
 
@@ -519,7 +520,26 @@ pub async fn tool_confirm(
         serde_json::from_str(&pending.arguments).unwrap_or_default()
     };
 
-    dispatch_approved_tool_to_checkpoint(state.inner(), &pending, &tool_call_id, &args).await?;
+    dispatch_approved_tool_to_checkpoint(state.inner(), &app_handle, &pending, &tool_call_id, &args).await?;
+
+    let mut installed_skill: Option<String> = None;
+    if pending.tool_name == "skills_install" {
+        if let Ok(Some(cp)) =
+            crate::ai_runtime::harness_support::load_harness_checkpoint(&state.db, &request_id)
+        {
+            if let Some(msg) = cp.messages.iter().rev().find(|m| {
+                matches!(m.role, crate::ai_runtime::model_gateway::MessageRole::Tool)
+                    && m.tool_call_id.as_deref() == Some(tool_call_id.as_str())
+            }) {
+                if let Ok(json) = serde_json::from_str::<serde_json::Value>(&msg.content) {
+                    installed_skill = json
+                        .get("name")
+                        .and_then(|n| n.as_str())
+                        .map(String::from);
+                }
+            }
+        }
+    }
 
     let harness_result =
         resume_harness_after_tool_confirm(state.inner(), &app_handle, &request_id).await?;
@@ -550,6 +570,9 @@ pub async fn tool_confirm(
             }),
         );
         obj.insert("resumed".into(), serde_json::json!(true));
+        if let Some(name) = installed_skill {
+            obj.insert("installed_skill".into(), serde_json::json!(name));
+        }
     }
 
     // Migration-period event; frontend should use resumed harness payload.
@@ -747,7 +770,7 @@ pub async fn skills_list(
     state: State<'_, Arc<AppState>>,
 ) -> AppResult<Vec<crate::ai_runtime::skills::SkillListEntry>> {
     let vault = state.vault_path()?;
-    crate::ai_runtime::skills::scan_all_with_status(&vault)
+    crate::ai_runtime::skill_install_service::list_skills(&vault)
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -756,75 +779,68 @@ pub struct SkillsInstallRequest {
     pub path_or_url: String,
     pub scope: String,
     pub subpath: Option<String>,
+    pub registry: Option<String>,
 }
 
-/// Install skill from url, git, or local path.
+/// Install skill from url, git, local, or registry.
 #[tauri::command]
 pub async fn skills_install(
     state: State<'_, Arc<AppState>>,
+    app_handle: tauri::AppHandle,
     request: SkillsInstallRequest,
 ) -> AppResult<serde_json::Value> {
-    use crate::ai_runtime::skills::{install_from_git, install_from_url, SkillScope};
+    use crate::ai_runtime::skill_install_service::{install_skill, parse_scope, SkillInstallRequest};
+    use crate::ai_runtime::skill_registry::SkillInstallSource;
+
+    let source = SkillInstallSource::parse(&request.source)
+        .ok_or_else(|| AppError::msg(format!("unknown install source: {}", request.source)))?;
     let vault = state.vault_path()?;
-    let scope = match request.scope.as_str() {
-        "vault" => SkillScope::Vault,
-        _ => SkillScope::Global,
+    let req = SkillInstallRequest {
+        source,
+        path_or_url: request.path_or_url,
+        scope: parse_scope(&request.scope),
+        subpath: request.subpath,
+        registry: request.registry,
     };
-    match request.source.as_str() {
-        "url" => {
-            let entry = install_from_url(&request.path_or_url, scope, &vault).await?;
-            Ok(serde_json::to_value(entry).unwrap_or_default())
-        }
-        "git" => {
-            let entries = install_from_git(
-                &request.path_or_url,
-                request.subpath.as_deref(),
-                scope,
-                &vault,
-            )
-            .await?;
-            Ok(serde_json::to_value(entries).unwrap_or_default())
-        }
-        "local" => {
-            let path = std::path::PathBuf::from(&request.path_or_url);
-            let entry = crate::ai_runtime::skills::install_from_local(&path, scope, &vault)?;
-            Ok(serde_json::to_value(entry).unwrap_or_default())
-        }
-        other => Err(AppError::msg(format!("unknown install source: {other}"))),
-    }
+    let entry = install_skill(&state.db, &vault, Some(&app_handle), req).await?;
+    Ok(serde_json::to_value(entry).unwrap_or_default())
 }
 
 #[tauri::command]
 pub async fn skills_uninstall(
     state: State<'_, Arc<AppState>>,
+    app_handle: tauri::AppHandle,
     name: String,
     scope: String,
 ) -> AppResult<()> {
-    use crate::ai_runtime::skills::{uninstall, SkillScope};
+    use crate::ai_runtime::skill_install_service::{parse_scope, uninstall_skill};
     let vault = state.vault_path()?;
-    let sc = if scope == "vault" {
-        SkillScope::Vault
-    } else {
-        SkillScope::Global
-    };
-    uninstall(&name, sc, &vault)
+    uninstall_skill(
+        &state.db,
+        &vault,
+        Some(&app_handle),
+        &name,
+        parse_scope(&scope),
+    )
 }
 
 #[tauri::command]
 pub async fn skills_toggle(
     state: State<'_, Arc<AppState>>,
+    app_handle: tauri::AppHandle,
     name: String,
     scope: String,
     enabled: bool,
 ) -> AppResult<()> {
-    use crate::ai_runtime::skills::{set_enabled, SkillScope};
+    use crate::ai_runtime::skill_install_service::{parse_scope, toggle_skill};
     let vault = state.vault_path()?;
-    let sc = if scope == "vault" {
-        SkillScope::Vault
-    } else {
-        SkillScope::Global
-    };
-    set_enabled(&name, sc, &vault, enabled)
+    toggle_skill(
+        &vault,
+        Some(&app_handle),
+        &name,
+        parse_scope(&scope),
+        enabled,
+    )
 }
 
 #[tauri::command]

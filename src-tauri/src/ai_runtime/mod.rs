@@ -22,6 +22,8 @@ pub mod retrieval_scope;
 pub mod scene_router;
 pub mod session;
 pub mod skills;
+pub mod skill_install_service;
+pub mod skill_registry;
 pub mod tool_audit;
 pub mod tool_catalog;
 pub mod tool_dispatch;

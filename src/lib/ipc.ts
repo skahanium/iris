@@ -485,6 +485,7 @@ export async function skillsInstall(request: {
   path_or_url: string;
   scope: string;
   subpath?: string;
+  registry?: string;
 }): Promise<unknown> {
   return invoke("skills_install", { request });
 }

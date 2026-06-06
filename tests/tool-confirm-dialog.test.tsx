@@ -52,4 +52,36 @@ describe("ToolConfirmDialog", () => {
     expect(document.body.textContent).toContain("abc123");
     expect(document.body.textContent).toContain("medium");
   });
+
+  it("shows skills_install preview when registry preview is present", async () => {
+    await act(async () => {
+      root.render(
+        <ToolConfirmDialog
+          request={{
+            request_id: "req-2",
+            tool_call_id: "tc-2",
+            tool_name: "skills_install",
+            arguments: {
+              source: "registry",
+              registry: "skillhub",
+              path_or_url: "scrapling",
+              scope: "global",
+            },
+            preview: {
+              display_name: "Scrapling",
+              resolved_source: "url",
+              resolved_url:
+                "https://api.skillhub.tencent.com/api/v1/skills/scrapling/file?path=SKILL.md",
+            },
+          }}
+          onConfirm={() => {}}
+          onClose={() => {}}
+        />,
+      );
+    });
+
+    expect(document.body.textContent).toContain("安装预览");
+    expect(document.body.textContent).toContain("Scrapling");
+    expect(document.body.textContent).toContain("skillhub.tencent.com");
+  });
 });

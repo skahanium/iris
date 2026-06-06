@@ -45,6 +45,7 @@ import { resolveAssistantDisplayContent } from "@/lib/assistant-message-content"
 import { OPEN_AUDIT_TRAIL_EVENT } from "@/lib/audit-trail-events";
 import { buildAssistantChromeSnapshot } from "@/lib/assistant-chrome";
 import { mapChatToolCallsForUi } from "@/lib/map-chat-tool-calls";
+import { skillInstallSuccessNotice } from "@/lib/skill-install-notice";
 import { invokeErrorMessage } from "@/lib/credentials";
 import {
   assistantExecute,
@@ -1287,6 +1288,7 @@ export function UnifiedAssistantPanel({
       modifiedArgs?: unknown,
     ) => {
       const intent = actionState.intent;
+      const pendingConfirm = toolConfirmRequest;
       setToolConfirmRequest(null);
       setStreaming(true);
       setActivityHint(
@@ -1310,6 +1312,7 @@ export function UnifiedAssistantPanel({
           usage?: TokenUsage;
           pending_confirmation?: boolean;
           status?: string;
+          installed_skill?: string;
         };
         if (!result.resumed) {
           nextTaskStatus = "completed";
@@ -1354,6 +1357,19 @@ export function UnifiedAssistantPanel({
           } else {
             next.push({ role: "assistant", content, toolCalls });
           }
+          if (
+            (decision === "approve" || decision === "modify") &&
+            pendingConfirm?.tool_name === "skills_install"
+          ) {
+            const notice = skillInstallSuccessNotice({
+              installedSkill: result.installed_skill,
+              preview: pendingConfirm.preview,
+              arguments: pendingConfirm.arguments,
+            });
+            if (notice) {
+              next.push({ role: "system", content: notice });
+            }
+          }
           return next;
         });
         const stillPending =
@@ -1380,7 +1396,7 @@ export function UnifiedAssistantPanel({
         assistantRun.setFromTaskStatus(nextTaskStatus, intent);
       }
     },
-    [actionState.intent, assistantRun, ensureAssistantStreamSlot],
+    [actionState.intent, assistantRun, ensureAssistantStreamSlot, toolConfirmRequest],
   );
 
   const dismissToolConfirm = useCallback(() => {
