@@ -1,5 +1,5 @@
 import { open as openFileDialog } from "@tauri-apps/plugin-dialog";
-import { Download, Pencil, Search, Trash2 } from "lucide-react";
+import { Download, Pencil, Search, Trash2, ArrowUpCircle } from "lucide-react";
 import { useCallback, useEffect, useState, type DragEvent } from "react";
 
 import { Button } from "@/components/ui/button";
@@ -11,11 +11,12 @@ import { invokeErrorMessage } from "@/lib/credentials";
 import {
   skillsInstall,
   skillsList,
+  skillsMigrateLegacy,
   skillsRead,
   skillsToggle,
   skillsUninstall,
   skillsWrite,
-  type SkillEntryDto,
+  type SkillListEntryDto,
 } from "@/lib/ipc";
 
 interface SkillsPanelProps {
@@ -28,7 +29,7 @@ function scopeLabel(scope: string): "global" | "vault" {
 }
 
 export function SkillsPanel({ open: overlayOpen, onClose }: SkillsPanelProps) {
-  const [skills, setSkills] = useState<SkillEntryDto[]>([]);
+  const [skills, setSkills] = useState<SkillListEntryDto[]>([]);
   const [query, setQuery] = useState("");
   const [url, setUrl] = useState("");
   const [gitUrl, setGitUrl] = useState("");
@@ -37,7 +38,9 @@ export function SkillsPanel({ open: overlayOpen, onClose }: SkillsPanelProps) {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [showInstall, setShowInstall] = useState(false);
-  const [editingSkill, setEditingSkill] = useState<SkillEntryDto | null>(null);
+  const [editingSkill, setEditingSkill] = useState<SkillListEntryDto | null>(
+    null,
+  );
   const [editContent, setEditContent] = useState("");
   const [dragOver, setDragOver] = useState(false);
 
@@ -125,7 +128,7 @@ export function SkillsPanel({ open: overlayOpen, onClose }: SkillsPanelProps) {
     }
   };
 
-  const openEditor = async (skill: SkillEntryDto) => {
+  const openEditor = async (skill: SkillListEntryDto) => {
     setError(null);
     try {
       const content = await skillsRead(skill.file_path);
@@ -176,7 +179,7 @@ export function SkillsPanel({ open: overlayOpen, onClose }: SkillsPanelProps) {
     }
   };
 
-  const renderGroup = (title: string, items: SkillEntryDto[]) => (
+  const renderGroup = (title: string, items: SkillListEntryDto[]) => (
     <div className="space-y-2">
       <p className="text-xs font-medium text-muted-foreground">{title}</p>
       {items.length === 0 ? (
@@ -184,21 +187,58 @@ export function SkillsPanel({ open: overlayOpen, onClose }: SkillsPanelProps) {
       ) : (
         items.map((skill) => {
           const sc = scopeLabel(skill.scope);
+          const hasLegacy = !!skill.legacy_trigger;
+          const hasTools = skill.allowed_tools.length > 0;
+          const isInvalid =
+            typeof skill.validation === "object" &&
+            "invalid" in skill.validation;
           return (
             <div
               key={`${sc}-${skill.name}`}
               className="flex items-start gap-2 rounded-md border border-border/60 px-3 py-2"
             >
               <div className="min-w-0 flex-1">
-                <p className="text-sm font-medium">{skill.name}</p>
+                <div className="flex items-center gap-2">
+                  <p className="text-sm font-medium">{skill.name}</p>
+                  {hasLegacy ? (
+                    <span className="rounded bg-amber-500/10 px-1.5 py-0.5 text-[10px] text-amber-600">
+                      旧格式
+                    </span>
+                  ) : null}
+                  {isInvalid ? (
+                    <span className="rounded bg-red-500/10 px-1.5 py-0.5 text-[10px] text-red-600">
+                      无效
+                    </span>
+                  ) : null}
+                </div>
                 {skill.description ? (
                   <p className="mt-0.5 line-clamp-2 text-xs text-muted-foreground">
                     {skill.description}
                   </p>
                 ) : null}
-                {skill.trigger ? (
+                {skill.legacy_trigger ? (
                   <p className="mt-0.5 text-[10px] text-muted-foreground/80">
-                    触发：{skill.trigger}
+                    触发：{skill.legacy_trigger}
+                  </p>
+                ) : null}
+                {hasTools ? (
+                  <p className="mt-0.5 text-[10px] text-muted-foreground/80">
+                    工具：{skill.allowed_tools.join(", ")}
+                  </p>
+                ) : null}
+                {skill.unrecognized_tools.length > 0 ? (
+                  <p className="mt-0.5 text-[10px] text-red-500">
+                    未识别工具：{skill.unrecognized_tools.join(", ")}
+                  </p>
+                ) : null}
+                {skill.missing_deps.length > 0 ? (
+                  <p className="mt-0.5 text-[10px] text-amber-500">
+                    缺失依赖：{skill.missing_deps.join(", ")}
+                  </p>
+                ) : null}
+                {skill.license ? (
+                  <p className="mt-0.5 text-[10px] text-muted-foreground/60">
+                    许可：{skill.license}
                   </p>
                 ) : null}
               </div>
@@ -212,6 +252,28 @@ export function SkillsPanel({ open: overlayOpen, onClose }: SkillsPanelProps) {
               >
                 <Pencil className="h-3.5 w-3.5" />
               </Button>
+              {hasLegacy ? (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="h-7 w-7 text-amber-600"
+                  title="迁移到新格式（会创建 .bak 备份）"
+                  onClick={() => {
+                    if (
+                      confirm(
+                        `将 "${skill.name}" 迁移到新格式？\n\n原文件会备份为 SKILL.md.bak`,
+                      )
+                    ) {
+                      void skillsMigrateLegacy(skill.file_path, sc).then(
+                        refresh,
+                      );
+                    }
+                  }}
+                >
+                  <ArrowUpCircle className="h-3.5 w-3.5" />
+                </Button>
+              ) : null}
               <input
                 type="checkbox"
                 className="mt-1 h-3.5 w-3.5"

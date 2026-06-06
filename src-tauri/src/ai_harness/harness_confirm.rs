@@ -105,6 +105,18 @@ pub async fn dispatch_approved_tool_to_checkpoint(
     tool_call_id: &str,
     args: &serde_json::Value,
 ) -> AppResult<()> {
+    let registry = crate::ai_runtime::tool_executor::ToolRegistry::new();
+    let policy_ctx = crate::ai_runtime::tool_policy::ToolPolicyContext {
+        scene: pending.scene,
+        autonomy_level: pending.autonomy_level,
+        web_search_enabled: pending.web_search_enabled,
+        skill_allowed_tools: pending.skill_allowed_tools.clone(),
+        depth: 0,
+    };
+    registry
+        .check_tool_policy(&pending.tool_name, &policy_ctx)
+        .map_err(|e| AppError::msg(e.to_string()))?;
+
     let file_id = pending.file_id;
     let result = dispatch_tool(
         state,
@@ -119,6 +131,26 @@ pub async fn dispatch_approved_tool_to_checkpoint(
         args,
     )
     .await;
+
+    let audit_result = if result.success {
+        result.output.clone()
+    } else {
+        serde_json::json!({ "error": result.error.as_deref().unwrap_or("unknown") })
+    };
+    let _ = crate::ai_runtime::tool_audit::record_audit(
+        &state.db,
+        &crate::ai_runtime::tool_audit::ToolAuditInput {
+            request_id: &pending.request_id,
+            harness_round: 0,
+            tool_name: &pending.tool_name,
+            arguments: args,
+            result: &audit_result,
+            success: result.success,
+            duration_ms: result.duration_ms,
+            scene: Some(pending.scene.profile()),
+            subagent_depth: 0,
+        },
+    );
 
     let (tool_content, status, output, merge) = if result.success {
         let output_str = serde_json::to_string(&result.output).unwrap_or_else(|_| "{}".into());
@@ -173,5 +205,19 @@ pub fn append_rejected_tool_to_checkpoint(
         Some(content),
         None,
     )?;
+    let _ = crate::ai_runtime::tool_audit::record_audit(
+        &state.db,
+        &crate::ai_runtime::tool_audit::ToolAuditInput {
+            request_id,
+            harness_round: 0,
+            tool_name: "tool_confirmation",
+            arguments: &serde_json::json!({ "tool_call_id": tool_call_id }),
+            result: &serde_json::json!({ "error": "rejected" }),
+            success: false,
+            duration_ms: 0,
+            scene: None,
+            subagent_depth: 0,
+        },
+    );
     Ok(())
 }

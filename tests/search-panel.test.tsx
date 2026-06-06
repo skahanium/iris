@@ -46,9 +46,7 @@ describe("SearchPanel", () => {
     const onOpen = props.onOpen ?? vi.fn();
     const onClose = props.onClose ?? vi.fn();
     act(() => {
-      root.render(
-        <SearchPanel open onClose={onClose} onOpen={onOpen} />,
-      );
+      root.render(<SearchPanel open onClose={onClose} onOpen={onOpen} />);
     });
     return { onOpen, onClose };
   }
@@ -71,9 +69,7 @@ describe("SearchPanel", () => {
   it("runs keyword vault search and opens a hit", async () => {
     const { onOpen, onClose } = renderPanel();
 
-    expect(
-      document.querySelector('[aria-label="全库搜索"]'),
-    ).not.toBeNull();
+    expect(document.querySelector('[aria-label="全库搜索"]')).not.toBeNull();
 
     setQuery("hello");
     const searchBtn = Array.from(document.querySelectorAll("button")).find(

@@ -262,9 +262,33 @@ impl ModelGateway {
         user_rules: &[String],
         web_search_enabled: bool,
     ) -> String {
+        Self::build_system_prompt_with_profile(
+            scene,
+            packets,
+            user_rules,
+            web_search_enabled,
+            &crate::ai_runtime::prompt_profile::PromptProfile::default(),
+        )
+    }
+
+    /// Build system prompt with an explicit user prompt profile.
+    pub fn build_system_prompt_with_profile(
+        scene: AiScene,
+        packets: &[ContextPacket],
+        user_rules: &[String],
+        web_search_enabled: bool,
+        profile: &crate::ai_runtime::prompt_profile::PromptProfile,
+    ) -> String {
         let mut prompt = String::new();
 
-        prompt.push_str(&Self::unified_persona(scene, web_search_enabled));
+        let resolved = crate::ai_runtime::persona_resolver::resolve_persona(
+            profile,
+            scene,
+            web_search_enabled,
+        );
+        prompt.push_str(&crate::ai_runtime::persona_resolver::render_persona(
+            &resolved,
+        ));
 
         // Inject context packets as evidence
         if !packets.is_empty() {
@@ -337,41 +361,17 @@ impl ModelGateway {
         messages
     }
 
-    /// Unified assistant persona「砚」with scene-specific capability focus.
+    /// Unified assistant persona with scene-specific capability focus.
+    ///
+    /// Delegates to `PersonaResolver` for persona resolution.
+    /// When a user PromptProfile is available, prefer `persona_resolver::resolve_persona`
+    /// directly. This method uses the default profile for backward compatibility.
     pub fn unified_persona(scene: AiScene, web_search_enabled: bool) -> String {
-        let focus = match scene {
-            AiScene::KnowledgeLookup => {
-                if web_search_enabled {
-                    "知识查阅：先 search_hybrid 检索本地笔记，再 web_search（Token Plan 搜索）补充摘要；\
-                     若摘要不足可对 1～2 个 HTTPS 链接调用 fetch_web_page 读取正文（需用户确认）；\
-                     本地与网络证据结合、交叉引用，不可偏废"
-                } else {
-                    "知识查阅：通过 search_hybrid 检索本地笔记；仅依据本地知识库回答"
-                }
-            }
-            AiScene::ExemplarLearning => "范文学习：分析结构、句式与表达；模板保存需用户确认",
-            AiScene::DraftingAssist => "文稿创作：低干扰辅助；写入笔记须用户确认；避免大段照搬范文",
-            AiScene::ResearchSynthesis => "研究综合：多材料交叉论证、证据缺口与引用核查",
-        };
-        let web_instruction = if web_search_enabled {
-            "联网已开启：web_search 使用 MiniMax Token Plan 搜索 API（返回标题/链接/摘要），\
-             无需询问是否允许搜索。\n\
-             需要页面正文时对明确 URL 调用 fetch_web_page（会弹出用户确认，每轮最多 1～2 次）。\n\
-             禁止在正文中输出 DSML 或伪工具标记；必须通过工具 API 调用。\n\
-             本地检索与网络搜索应结合、相互印证，不可只做其一。\n"
-        } else {
-            "联网未开启——仅使用本地知识库，不要调用 web_search 或 fetch_web_page。\n"
-        };
-        format!(
-            "你是「砚」，Iris 本地 Markdown 笔记本的 AI 助手。对用户你始终是同一个身份：\
-             语气克制、清晰、可追溯。\n\
-             Iris 以用户的 .md 为唯一数据源；通过工具检索知识库、读取笔记。\
-             在用户确认后修改文稿。\n\
-             {web_instruction}\
-             当前侧重：{focus}。\n\
-             回答须基于工具结果与证据；引用时请使用证据包中提供的标签（如 [C1]、[W0]），\
-             也可直接指明来源文件名或 URL；证据不足时直接说明，不编造。\n"
-        )
+        use crate::ai_runtime::persona_resolver::{render_persona, resolve_persona};
+        use crate::ai_runtime::prompt_profile::PromptProfile;
+        let profile = PromptProfile::default();
+        let resolved = resolve_persona(&profile, scene, web_search_enabled);
+        render_persona(&resolved)
     }
 
     /// Format context packets as markdown evidence block.
@@ -1123,6 +1123,7 @@ mod tests {
             scene_allowlist: vec![],
             requires_confirmation: false,
             max_results: Some(20),
+            scene_affinity: vec![],
         }];
 
         let llm_tools = ModelGateway::tools_to_llm_format(&tools);

@@ -433,25 +433,51 @@ export async function sessionRetract(
 export interface SkillEntryDto {
   name: string;
   description: string;
-  trigger?: string | null;
+  license?: string | null;
+  compatibility?: string | null;
+  metadata: Record<string, unknown>;
+  allowed_tools: string[];
   content: string;
   scope: string;
   source_url?: string | null;
-  version?: string | null;
-  author?: string | null;
   enabled: boolean;
   file_path: string;
+  legacy_trigger?: string | null;
+}
+
+export type SkillValidationStatus = "valid" | "legacy" | { invalid: string };
+
+export interface SkillListEntryDto {
+  /** Embedded skill fields (flattened via serde). */
+  name: string;
+  description: string;
+  license?: string | null;
+  compatibility?: string | null;
+  metadata: Record<string, unknown>;
+  allowed_tools: string[];
+  content: string;
+  scope: string;
+  source_url?: string | null;
+  enabled: boolean;
+  file_path: string;
+  legacy_trigger?: string | null;
+  /** Computed fields. */
+  validation: SkillValidationStatus;
+  unrecognized_tools: string[];
+  missing_deps: string[];
 }
 
 export interface PromptProfileDto {
+  display_name: string;
+  avatar_emoji: string | null;
   persona: string;
   writing_style: string;
   custom_rules: string[];
   language: string;
 }
 
-export async function skillsList(): Promise<SkillEntryDto[]> {
-  return invoke<SkillEntryDto[]>("skills_list");
+export async function skillsList(): Promise<SkillListEntryDto[]> {
+  return invoke<SkillListEntryDto[]>("skills_list");
 }
 
 export async function skillsInstall(request: {
@@ -531,6 +557,38 @@ export async function skillsWrite(
   return invoke<SkillEntryDto>("skills_write", {
     request: { file_path: filePath, scope, content },
   });
+}
+
+export async function skillsMigrateLegacy(
+  filePath: string,
+  scope: string,
+): Promise<SkillEntryDto> {
+  return invoke<SkillEntryDto>("skills_migrate_legacy", {
+    filePath,
+    scope,
+  });
+}
+
+// ─── Tool Audit ────────────────────────────────────────
+
+export interface ToolAuditEntry {
+  id: number;
+  request_id: string;
+  harness_round: number;
+  tool_name: string;
+  arguments_summary: string | null;
+  result_summary: string | null;
+  success: boolean;
+  duration_ms: number | null;
+  scene: string | null;
+  subagent_depth: number;
+  created_at: string;
+}
+
+export async function toolAuditQuery(
+  requestId: string,
+): Promise<ToolAuditEntry[]> {
+  return invoke<ToolAuditEntry[]>("tool_audit_query", { requestId });
 }
 
 export async function sessionLoad(
@@ -695,9 +753,8 @@ export async function researchGenerateNote(params: {
 export async function listenResearchProgress(
   handler: (payload: ResearchProgressEvent) => void,
 ): Promise<() => void> {
-  return listen<ResearchProgressEvent>(
-    "ai:research_progress",
-    (e) => handler(e.payload),
+  return listen<ResearchProgressEvent>("ai:research_progress", (e) =>
+    handler(e.payload),
   );
 }
 
@@ -857,9 +914,9 @@ export async function profileList(params: {
   });
 }
 
-export async function profileGet(
-  params: { key: string },
-): Promise<ProfileEntry | null> {
+export async function profileGet(params: {
+  key: string;
+}): Promise<ProfileEntry | null> {
   return invoke<ProfileEntry | null>("profile_get", { key: params.key });
 }
 
@@ -900,10 +957,12 @@ export async function profileDelete(params: { key: string }): Promise<void> {
   return invoke("profile_delete", { key: params.key });
 }
 
-export async function inboxList(
-  params: { status?: string },
-): Promise<InboxItem[]> {
-  return invoke<InboxItem[]>("inbox_list", { status: params.status ?? "inbox" });
+export async function inboxList(params: {
+  status?: string;
+}): Promise<InboxItem[]> {
+  return invoke<InboxItem[]>("inbox_list", {
+    status: params.status ?? "inbox",
+  });
 }
 
 export async function inboxAdd(params: {

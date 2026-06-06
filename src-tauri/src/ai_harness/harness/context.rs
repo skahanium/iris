@@ -1,9 +1,15 @@
 //! Harness cold-start context: environment, skills, initial messages.
+//!
+//! Delegates persona resolution to `persona_resolver` and prompt assembly
+//! to `prompt_builder`, replacing the old hardcoded「砚」persona.
 
 use crate::ai_runtime::environment::{build_environment_map, EnvironmentInput};
-use crate::ai_runtime::harness_support::compress_history_messages;
-use crate::ai_runtime::model_gateway::{LlmMessage, MessageRole, ModelGateway};
-use crate::ai_runtime::skills::{inject_into_prompt, scan_all};
+use crate::ai_runtime::model_gateway::LlmMessage;
+use crate::ai_runtime::prompt_builder::HarnessMessageInput;
+use crate::ai_runtime::prompt_profile::PromptProfile;
+use crate::ai_runtime::skills::{
+    active_skill_allowed_tools, active_skills_for_prompt, inject_into_prompt,
+};
 use crate::ai_runtime::ToolSpec;
 use crate::ai_runtime::{AiScene, ContextPacket};
 use crate::app::AppState;
@@ -22,7 +28,12 @@ pub(crate) fn resolve_file_id(state: &AppState, note_path: Option<&str>) -> AppR
     })
 }
 
+/// Build the initial message array for the harness.
+///
+/// Loads `PromptProfile` from DB and uses `PersonaResolver` for persona.
+/// This ensures custom user profiles are respected in the harness.
 pub(crate) fn build_initial_messages(
+    state: &AppState,
     scene: AiScene,
     environment: &str,
     cold_start_packets: &[ContextPacket],
@@ -30,51 +41,18 @@ pub(crate) fn build_initial_messages(
     web_search_enabled: bool,
     skills_fragment: Option<&str>,
 ) -> Vec<LlmMessage> {
-    let persona = ModelGateway::unified_persona(scene, web_search_enabled);
-    let mut system_content = format!("{persona}\n\n{environment}");
-    if let Some(skills) = skills_fragment {
-        if !skills.is_empty() {
-            system_content.push_str("\n\n");
-            system_content.push_str(skills);
-        }
-    }
-    let mut messages = vec![LlmMessage {
-        role: MessageRole::System,
-        content: system_content,
-        tool_call_id: None,
-        tool_calls: None,
-    }];
-
-    if !cold_start_packets.is_empty() {
-        let hint = ModelGateway::format_evidence_packets(cold_start_packets);
-        messages.push(LlmMessage {
-            role: MessageRole::System,
-            content: format!(
-                "## 本地知识库检索材料\n\n\
-                 以下是从你的笔记中预检索到的相关材料，请认真参考并在回答中引用；\
-                 同时结合工具检索与网络搜索交叉验证。\n\n{hint}"
-            ),
-            tool_call_id: None,
-            tool_calls: None,
-        });
-    }
-
-    let compressed = compress_history_messages(history);
-    for (role, content) in compressed {
-        let r = match role.as_str() {
-            "assistant" => MessageRole::Assistant,
-            "tool" => MessageRole::Tool,
-            _ => MessageRole::User,
-        };
-        messages.push(LlmMessage {
-            role: r,
-            content,
-            tool_call_id: None,
-            tool_calls: None,
-        });
-    }
-
-    messages
+    let profile = PromptProfile::load(&state.db).unwrap_or_default();
+    crate::ai_runtime::prompt_builder::build_initial_messages(
+        &HarnessMessageInput {
+            scene,
+            environment,
+            cold_start_packets,
+            history,
+            web_search_enabled,
+            skills_fragment,
+        },
+        &profile,
+    )
 }
 
 pub(crate) fn prepare_environment_and_skills(
@@ -97,8 +75,15 @@ pub(crate) fn prepare_environment_and_skills(
             tools: scene_tools,
         },
     )?;
-    let all_skills = scan_all(&vault)?;
-    let enabled_skills: Vec<_> = all_skills.into_iter().filter(|s| s.enabled).collect();
+    let enabled_skills = active_skills_for_prompt(&vault, scene)?;
     let skills_prompt = inject_into_prompt(&enabled_skills, scene);
     Ok((env_text, skills_prompt))
+}
+
+pub(crate) fn resolve_active_skill_allowed_tools(
+    state: &AppState,
+    scene: AiScene,
+) -> AppResult<Vec<String>> {
+    let vault = state.vault_path()?;
+    active_skill_allowed_tools(&vault, scene)
 }

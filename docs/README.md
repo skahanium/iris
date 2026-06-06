@@ -29,19 +29,19 @@
 
 ## 专题
 
-| 主题                   | 文档                                                               |
-| ---------------------- | ------------------------------------------------------------------ |
-| 使用指南（用户向）     | Notion 官方文档站（无限期延后，URL 待发布）                        |
-| IPC API 参考           | [ipc-api-reference.md](./ipc-api-reference.md)                     |
-| 设计系统 · Notion N    | [design-system.md](./design-system.md)                             |
-| Notion 参考摘要        | [design-system/notion-master.md](./design-system/notion-master.md) |
-| 品牌图标               | [design-system/brand.md](./design-system/brand.md)                 |
-| 编辑器 Markdown 导出   | [markdown-export.md](./markdown-export.md)                         |
-| LLM 路由与连通性       | [llm-routing.md](./llm-routing.md)                                 |
-| 语义搜索与 Recall@5    | [eval/semantic-search.md](./eval/semantic-search.md)               |
-| 语义评测 fixture vault | [eval/fixtures/semantic-vault/](./eval/fixtures/semantic-vault/)   |
+| 主题                   | 文档                                                                             |
+| ---------------------- | -------------------------------------------------------------------------------- |
+| 使用指南（用户向）     | Notion 官方文档站（无限期延后，URL 待发布）                                      |
+| IPC API 参考           | [ipc-api-reference.md](./ipc-api-reference.md)                                   |
+| 设计系统 · Notion N    | [design-system.md](./design-system.md)                                           |
+| Notion 参考摘要        | [design-system/notion-master.md](./design-system/notion-master.md)               |
+| 品牌图标               | [design-system/brand.md](./design-system/brand.md)                               |
+| 编辑器 Markdown 导出   | [markdown-export.md](./markdown-export.md)                                       |
+| LLM 路由与连通性       | [llm-routing.md](./llm-routing.md)                                               |
+| 语义搜索与 Recall@5    | [eval/semantic-search.md](./eval/semantic-search.md)                             |
+| 语义评测 fixture vault | [eval/fixtures/semantic-vault/](./eval/fixtures/semantic-vault/)                 |
 | 关闭回归手工验收       | [testing/app-close-manual-checklist.md](./testing/app-close-manual-checklist.md) |
-| 品牌图标               | [../scripts/assets/README.md](../scripts/assets/README.md)         |
+| 品牌图标               | [../scripts/assets/README.md](../scripts/assets/README.md)                       |
 
 ---
 

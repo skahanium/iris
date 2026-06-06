@@ -14,7 +14,10 @@ describe("fetch_web_page integration surface", () => {
   it("registers fetch_web_page tool and UI labels", () => {
     const executor = read("src-tauri/src/ai_runtime/tool_executor.rs");
     expect(executor).toContain("fetch_web_page");
-    expect(executor).toContain("requires_confirmation: true");
+
+    const catalog = read("src-tauri/src/ai_runtime/tool_catalog.rs");
+    expect(catalog).toContain('name: "fetch_web_page"');
+    expect(catalog).toContain("requires_confirmation: true");
 
     const dispatch = read("src-tauri/src/ai_runtime/tool_dispatch.rs");
     expect(dispatch).toContain("fetch_web_page_tool");

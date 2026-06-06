@@ -2,6 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::ai_runtime::harness::UsageSource;
 use crate::ai_runtime::model_gateway::{LlmMessage, TokenUsage, ToolCall};
 use crate::ai_runtime::ContextPacket;
 use crate::error::AppResult;
@@ -127,6 +128,8 @@ pub struct HarnessCheckpoint {
     pub tool_results: Vec<serde_json::Value>,
     pub evidence_packets: Vec<ContextPacket>,
     pub usage: TokenUsage,
+    #[serde(default)]
+    pub usage_source: UsageSource,
     pub bonus_round_used: bool,
 }
 
@@ -224,6 +227,7 @@ mod tests {
             tool_results: vec![],
             evidence_packets: vec![],
             usage: crate::ai_runtime::model_gateway::TokenUsage::default(),
+            usage_source: UsageSource::Provider,
             bonus_round_used: false,
         };
         save_harness_checkpoint(&db, rid, &cp).unwrap();

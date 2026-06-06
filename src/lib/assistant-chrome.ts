@@ -65,6 +65,7 @@ export function buildAssistantChromeSnapshot(options: {
   messages: ChatLine[];
   harnessPhaseLabel: string | null;
   packets: ContextPacket[];
+  harnessRequestId?: string | null;
 }): AssistantChromeSnapshot {
   const webPacketCount = countWebPackets(options.packets);
   return {
@@ -77,5 +78,6 @@ export function buildAssistantChromeSnapshot(options: {
     }),
     evidenceCount: options.packets.length,
     webPacketCount,
+    harnessRequestId: options.harnessRequestId ?? null,
   };
 }

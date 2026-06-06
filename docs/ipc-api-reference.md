@@ -1357,22 +1357,22 @@ pub fn app_exit(
 
 ## 附录：关键外部类型定义
 
-| 类型 | 定义位置 | 字段 |
-|------|----------|------|
-| `FileEntry` | `src-tauri/src/indexer/scan.rs:23` | `id: i64, path: String, title: String, updated_at: String, word_count: i64` |
-| `RecycleBinItem` | `src-tauri/src/recycle/mod.rs:46` | `id: String, original_path: String, title: String, deleted_at: String, expires_at: String, version_count: usize` |
-| `SemanticHit` | `src-tauri/src/embedding/engine.rs:201` | `chunk_id: i64, path: String, title: String, snippet: String, score: f32` |
-| `LlmGenerateParams` | `src-tauri/src/llm/mod.rs:44` | `provider: String, model: Option<String>, messages: Vec<ChatMessage>, system: Option<String>, stream: Option<bool>, custom_base_url: Option<String>, web_search: Option<bool>` |
-| `VersionEntry` | `src-tauri/src/version/mod.rs:20` | `id: i64, file_id: i64, version_no: String, label: Option<String>, content_hash: String, word_count: i64, is_finalized: bool, kind: VersionKind, created_at: String` |
-| `PatchProposal` | `src-tauri/src/ai_types/mod.rs:325` | `id, target_path, base_content_hash, range: SourceSpan, original_text, replacement_text, evidence_packet_ids, risk_level, warnings, created_at` |
-| `PatchApplyResult` | `src-tauri/src/ai_types/mod.rs:385` | `success: bool, new_content_hash: Option<String>, error: Option<String>, warnings: Vec<String>` |
-| `CitationCheckInput` | `src-tauri/src/ai_types/mod.rs:527` | `paragraph_text, document_path, scope: Option<CitationCheckScope>, web_authorized` |
-| `CitationCheckResult` | `src-tauri/src/ai_types/mod.rs:544` | `request_id, claims: Vec<FactClaim>, coverage: CitationCoverage, suggestions, evidence_used, total_tokens` |
-| `OrganizeTaskInput` | `src-tauri/src/ai_types/mod.rs:633` | `scope: Option<OrganizeTaskScope>, task_type: OrganizeTaskType` |
-| `OrganizeTaskResult` | `src-tauri/src/ai_types/mod.rs:659` | `request_id, batch: OrganizeBatch, total_tokens` |
-| `ResearchNoteRequest` | `src-tauri/src/ai_types/mod.rs:700` | `topic, summary, evidence_count, coverage_score, target_path` |
-| `ResearchNoteResult` | `src-tauri/src/ai_types/mod.rs:710` | `content, suggested_path, section_count` |
-| `TokenUsage` | `src-tauri/src/ai_types/mod.rs:720` | `prompt_tokens, completion_tokens, total_tokens, prompt_cache_hit_tokens, prompt_cache_miss_tokens` |
+| 类型                  | 定义位置                                | 字段                                                                                                                                                                           |
+| --------------------- | --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `FileEntry`           | `src-tauri/src/indexer/scan.rs:23`      | `id: i64, path: String, title: String, updated_at: String, word_count: i64`                                                                                                    |
+| `RecycleBinItem`      | `src-tauri/src/recycle/mod.rs:46`       | `id: String, original_path: String, title: String, deleted_at: String, expires_at: String, version_count: usize`                                                               |
+| `SemanticHit`         | `src-tauri/src/embedding/engine.rs:201` | `chunk_id: i64, path: String, title: String, snippet: String, score: f32`                                                                                                      |
+| `LlmGenerateParams`   | `src-tauri/src/llm/mod.rs:44`           | `provider: String, model: Option<String>, messages: Vec<ChatMessage>, system: Option<String>, stream: Option<bool>, custom_base_url: Option<String>, web_search: Option<bool>` |
+| `VersionEntry`        | `src-tauri/src/version/mod.rs:20`       | `id: i64, file_id: i64, version_no: String, label: Option<String>, content_hash: String, word_count: i64, is_finalized: bool, kind: VersionKind, created_at: String`           |
+| `PatchProposal`       | `src-tauri/src/ai_types/mod.rs:325`     | `id, target_path, base_content_hash, range: SourceSpan, original_text, replacement_text, evidence_packet_ids, risk_level, warnings, created_at`                                |
+| `PatchApplyResult`    | `src-tauri/src/ai_types/mod.rs:385`     | `success: bool, new_content_hash: Option<String>, error: Option<String>, warnings: Vec<String>`                                                                                |
+| `CitationCheckInput`  | `src-tauri/src/ai_types/mod.rs:527`     | `paragraph_text, document_path, scope: Option<CitationCheckScope>, web_authorized`                                                                                             |
+| `CitationCheckResult` | `src-tauri/src/ai_types/mod.rs:544`     | `request_id, claims: Vec<FactClaim>, coverage: CitationCoverage, suggestions, evidence_used, total_tokens`                                                                     |
+| `OrganizeTaskInput`   | `src-tauri/src/ai_types/mod.rs:633`     | `scope: Option<OrganizeTaskScope>, task_type: OrganizeTaskType`                                                                                                                |
+| `OrganizeTaskResult`  | `src-tauri/src/ai_types/mod.rs:659`     | `request_id, batch: OrganizeBatch, total_tokens`                                                                                                                               |
+| `ResearchNoteRequest` | `src-tauri/src/ai_types/mod.rs:700`     | `topic, summary, evidence_count, coverage_score, target_path`                                                                                                                  |
+| `ResearchNoteResult`  | `src-tauri/src/ai_types/mod.rs:710`     | `content, suggested_path, section_count`                                                                                                                                       |
+| `TokenUsage`          | `src-tauri/src/ai_types/mod.rs:720`     | `prompt_tokens, completion_tokens, total_tokens, prompt_cache_hit_tokens, prompt_cache_miss_tokens`                                                                            |
 
 ---
 

@@ -12,7 +12,7 @@ use crate::ai_runtime::{
     retrieval_scope::ContextScopeDto,
     scene_router::resolve_scene,
     session::{SessionManager, SessionMessage, SessionSummary},
-    tool_executor::{ToolRegistry, ToolSurfaceFilter},
+    tool_executor::ToolRegistry,
     trace::{TraceRecorder, TraceStatus},
     AiScene, AssembledContext,
 };
@@ -39,16 +39,21 @@ pub async fn context_assemble(
     let scene: AiScene = serde_json::from_str(&format!("\"{scene}\""))
         .map_err(|e| AppError::msg(format!("invalid scene: {e}")))?;
 
-    let _profile = resolve_scene(scene);
+    let profile = resolve_scene(scene);
     let registry = ToolRegistry::new();
-    let tools: Vec<_> = registry.tools_for_surface(
+    let skill_allowed_tools = state
+        .vault_path()
+        .ok()
+        .and_then(|vault| crate::ai_runtime::skills::active_skill_allowed_tools(&vault, scene).ok())
+        .unwrap_or_default();
+    let policy_ctx = crate::ai_runtime::tool_policy::ToolPolicyContext {
         scene,
-        ToolSurfaceFilter {
-            web_search_enabled: web_search.unwrap_or(false),
-            depth: 0,
-            only_auto: false,
-        },
-    );
+        autonomy_level: profile.autonomy_level,
+        web_search_enabled: web_search.unwrap_or(false),
+        skill_allowed_tools,
+        depth: 0,
+    };
+    let tools: Vec<_> = registry.tools_for_policy_surface(&policy_ctx, false);
 
     // Run intent detection and context planning
     let plan = plan_context(&query, scene, note_path.as_deref())?;
@@ -338,6 +343,7 @@ pub(crate) async fn execute_ai_send_message(
         "tool_calls": harness_result.tool_calls,
         "tool_results": harness_result.tool_results,
         "usage": harness_result.usage,
+        "usage_source": harness_result.usage_source,
         "citation_valid": harness_result.citation_valid,
         "harness_rounds": harness_result.harness_rounds,
         "evidence_packets": harness_result.evidence_packets,
@@ -561,19 +567,28 @@ fn load_scene_from_checkpoint(state: &AppState, request_id: &str) -> AppResult<S
 
 /// Get available tools for a scene (for frontend display).
 #[tauri::command]
-pub fn ai_list_tools(scene: String) -> AppResult<Vec<serde_json::Value>> {
+pub fn ai_list_tools(
+    state: State<'_, Arc<AppState>>,
+    scene: String,
+) -> AppResult<Vec<serde_json::Value>> {
     let scene: AiScene = serde_json::from_str(&format!("\"{scene}\""))
         .map_err(|e| AppError::msg(format!("invalid scene: {e}")))?;
     let registry = ToolRegistry::new();
+    let profile = crate::ai_runtime::resolve_scene(scene);
+    let skill_allowed_tools = state
+        .vault_path()
+        .ok()
+        .and_then(|vault| crate::ai_runtime::skills::active_skill_allowed_tools(&vault, scene).ok())
+        .unwrap_or_default();
+    let ctx = crate::ai_runtime::tool_policy::ToolPolicyContext {
+        scene,
+        autonomy_level: profile.autonomy_level,
+        web_search_enabled: true,
+        skill_allowed_tools,
+        depth: 0,
+    };
     let tools: Vec<_> = registry
-        .tools_for_surface(
-            scene,
-            ToolSurfaceFilter {
-                web_search_enabled: true,
-                depth: 0,
-                only_auto: false,
-            },
-        )
+        .tools_for_policy_surface(&ctx, false)
         .iter()
         .map(|t| {
             serde_json::json!({
@@ -726,13 +741,13 @@ pub async fn session_load(
     SessionManager::recent_messages(&state.db, session_id, limit.unwrap_or(50))
 }
 
-/// List installed skills (global + vault).
+/// List installed skills (global + vault) with validation status.
 #[tauri::command]
 pub async fn skills_list(
     state: State<'_, Arc<AppState>>,
-) -> AppResult<Vec<crate::ai_runtime::skills::SkillEntry>> {
+) -> AppResult<Vec<crate::ai_runtime::skills::SkillListEntry>> {
     let vault = state.vault_path()?;
-    crate::ai_runtime::skills::scan_all(&vault)
+    crate::ai_runtime::skills::scan_all_with_status(&vault)
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -951,4 +966,34 @@ pub async fn skills_write(
     };
     let entry = write_skill_content(&path, scope, &request.content)?;
     Ok(serde_json::to_value(entry).unwrap_or_default())
+}
+
+/// Migrate a legacy trigger-based skill to new format.
+/// Creates a .bak backup before overwriting.
+#[tauri::command]
+pub async fn skills_migrate_legacy(
+    state: State<'_, Arc<AppState>>,
+    file_path: String,
+    scope: String,
+) -> AppResult<serde_json::Value> {
+    use crate::ai_runtime::skills::{migrate_legacy_skill, SkillScope};
+    let path = std::path::PathBuf::from(&file_path);
+    let vault = state.vault_path()?;
+    crate::ai_runtime::skills::validate_skill_path(&path, &vault)?;
+    let sc = if scope == "vault" {
+        SkillScope::Vault
+    } else {
+        SkillScope::Global
+    };
+    let entry = migrate_legacy_skill(&path, sc)?;
+    Ok(serde_json::to_value(entry).unwrap_or_default())
+}
+
+/// Query tool audit entries by request_id.
+#[tauri::command]
+pub async fn tool_audit_query(
+    state: State<'_, Arc<AppState>>,
+    request_id: String,
+) -> AppResult<Vec<crate::ai_runtime::tool_audit::ToolAuditEntry>> {
+    crate::ai_runtime::tool_audit::query_by_request(&state.db, &request_id)
 }

@@ -40,6 +40,14 @@ const MIGRATION_016_UP: &str = include_str!("../../migrations/016_cas_refs.sql")
 const MIGRATION_016_DOWN: &str = include_str!("../../migrations/016_cas_refs.down.sql");
 const MIGRATION_017_UP: &str = include_str!("../../migrations/017_rename_cascade.sql");
 const MIGRATION_017_DOWN: &str = include_str!("../../migrations/017_rename_cascade.down.sql");
+const MIGRATION_018_UP: &str = include_str!("../../migrations/018_skill_install_sources.sql");
+const MIGRATION_018_DOWN: &str =
+    include_str!("../../migrations/018_skill_install_sources.down.sql");
+const MIGRATION_019_UP: &str = include_str!("../../migrations/019_skill_activation_index.sql");
+const MIGRATION_019_DOWN: &str =
+    include_str!("../../migrations/019_skill_activation_index.down.sql");
+const MIGRATION_020_UP: &str = include_str!("../../migrations/020_tool_audit.sql");
+const MIGRATION_020_DOWN: &str = include_str!("../../migrations/020_tool_audit.down.sql");
 
 fn is_applied(conn: &Connection, name: &str) -> bool {
     conn.query_row(
@@ -110,6 +118,9 @@ pub fn migrate_up(conn: &Connection) -> AppResult<()> {
     apply_migration(conn, "015_search_cache", MIGRATION_015_UP, true)?;
     apply_migration(conn, "016_cas_refs", MIGRATION_016_UP, false)?;
     apply_migration(conn, "017_rename_cascade", MIGRATION_017_UP, false)?;
+    apply_migration(conn, "018_skill_install_sources", MIGRATION_018_UP, false)?;
+    apply_migration(conn, "019_skill_activation_index", MIGRATION_019_UP, false)?;
+    apply_migration(conn, "020_tool_audit", MIGRATION_020_UP, false)?;
 
     Ok(())
 }
@@ -121,6 +132,9 @@ fn rollback_migration(conn: &Connection, name: &str, sql: &str) {
 
 /// Roll back all migrations in strict reverse order (for tests).
 pub fn migrate_down(conn: &Connection) -> AppResult<()> {
+    rollback_migration(conn, "020_tool_audit", MIGRATION_020_DOWN);
+    rollback_migration(conn, "019_skill_activation_index", MIGRATION_019_DOWN);
+    rollback_migration(conn, "018_skill_install_sources", MIGRATION_018_DOWN);
     rollback_migration(conn, "017_rename_cascade", MIGRATION_017_DOWN);
     rollback_migration(conn, "016_cas_refs", MIGRATION_016_DOWN);
     rollback_migration(conn, "015_search_cache", MIGRATION_015_DOWN);
@@ -536,5 +550,214 @@ mod tests {
                 .unwrap();
             assert!(!gone);
         }
+    }
+
+    #[test]
+    fn migration_018_creates_skill_install_sources() {
+        let conn = Connection::open_in_memory().unwrap();
+        migrate_up(&conn).unwrap();
+
+        let has: bool = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='skill_install_sources'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .map(|c| c > 0)
+            .unwrap();
+        assert!(has, "missing skill_install_sources table");
+
+        // Verify can insert
+        conn.execute(
+            "INSERT INTO skill_install_sources (skill_name, scope, source_type, source_url)
+             VALUES ('test-skill', 'Vault', 'url', 'https://example.com/SKILL.md')",
+            [],
+        )
+        .unwrap();
+
+        let count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM skill_install_sources WHERE skill_name = 'test-skill'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(count, 1);
+    }
+
+    #[test]
+    fn migration_018_roundtrip() {
+        let conn = Connection::open_in_memory().unwrap();
+        migrate_up(&conn).unwrap();
+
+        let has: bool = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='skill_install_sources'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .map(|c| c > 0)
+            .unwrap();
+        assert!(has);
+
+        let _ = conn.execute_batch(MIGRATION_018_DOWN);
+        let _ = conn.execute(
+            "DELETE FROM _migrations WHERE name = '018_skill_install_sources'",
+            [],
+        );
+
+        let gone: bool = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='skill_install_sources'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .map(|c| c > 0)
+            .unwrap();
+        assert!(!gone);
+    }
+
+    #[test]
+    fn migration_019_creates_skill_activation_index() {
+        let conn = Connection::open_in_memory().unwrap();
+        migrate_up(&conn).unwrap();
+
+        let has: bool = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='skill_activation_index'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .map(|c| c > 0)
+            .unwrap();
+        assert!(has, "missing skill_activation_index table");
+
+        // Verify can insert
+        conn.execute(
+            "INSERT INTO skill_activation_index (skill_name, scope, description, keywords)
+             VALUES ('test-skill', 'Vault', 'A test skill', 'test skill')",
+            [],
+        )
+        .unwrap();
+
+        let count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM skill_activation_index WHERE skill_name = 'test-skill'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(count, 1);
+    }
+
+    #[test]
+    fn migration_019_roundtrip() {
+        let conn = Connection::open_in_memory().unwrap();
+        migrate_up(&conn).unwrap();
+
+        let has: bool = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='skill_activation_index'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .map(|c| c > 0)
+            .unwrap();
+        assert!(has);
+
+        let _ = conn.execute_batch(MIGRATION_019_DOWN);
+        let _ = conn.execute(
+            "DELETE FROM _migrations WHERE name = '019_skill_activation_index'",
+            [],
+        );
+
+        let gone: bool = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='skill_activation_index'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .map(|c| c > 0)
+            .unwrap();
+        assert!(!gone);
+    }
+
+    #[test]
+    fn migration_020_creates_tool_audit() {
+        let conn = Connection::open_in_memory().unwrap();
+        migrate_up(&conn).unwrap();
+
+        let has: bool = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='tool_audit'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .map(|c| c > 0)
+            .unwrap();
+        assert!(has, "missing tool_audit table");
+
+        // Verify can insert
+        conn.execute(
+            "INSERT INTO ai_traces (request_id, scene, status, created_at)
+             VALUES ('req-1', 'knowledge_lookup', 'running', datetime('now'))",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO tool_audit (request_id, harness_round, tool_name, arguments_summary, success)
+             VALUES ('req-1', 1, 'read_note', 'path=test.md', 1)",
+            [],
+        )
+        .unwrap();
+
+        let count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM tool_audit WHERE request_id = 'req-1'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(count, 1);
+    }
+
+    #[test]
+    fn migration_020_tool_audit_references_ai_traces() {
+        let conn = Connection::open_in_memory().unwrap();
+        migrate_up(&conn).unwrap();
+
+        let target_table: String = conn
+            .query_row("PRAGMA foreign_key_list(tool_audit)", [], |row| row.get(2))
+            .unwrap();
+        assert_eq!(target_table, "ai_traces");
+    }
+
+    #[test]
+    fn migration_020_roundtrip() {
+        let conn = Connection::open_in_memory().unwrap();
+        migrate_up(&conn).unwrap();
+
+        let has: bool = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='tool_audit'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .map(|c| c > 0)
+            .unwrap();
+        assert!(has);
+
+        let _ = conn.execute_batch(MIGRATION_020_DOWN);
+        let _ = conn.execute("DELETE FROM _migrations WHERE name = '020_tool_audit'", []);
+
+        let gone: bool = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='tool_audit'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .map(|c| c > 0)
+            .unwrap();
+        assert!(!gone);
     }
 }

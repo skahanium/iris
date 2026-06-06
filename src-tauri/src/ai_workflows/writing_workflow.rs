@@ -212,8 +212,14 @@ pub async fn generate_replacement_with_llm(
     evidence: &[ContextPacket],
 ) -> AppResult<(String, crate::ai_types::TokenUsage)> {
     let rules = ModelGateway::load_active_rules_for_scene(db, AiScene::DraftingAssist)?;
-    let system =
-        ModelGateway::build_system_prompt(AiScene::DraftingAssist, evidence, &rules, false);
+    let profile = crate::ai_runtime::prompt_profile::PromptProfile::load(db).unwrap_or_default();
+    let system = ModelGateway::build_system_prompt_with_profile(
+        AiScene::DraftingAssist,
+        evidence,
+        &rules,
+        false,
+        &profile,
+    );
 
     let evidence_block = if evidence.is_empty() {
         "（无额外证据包）".to_string()

@@ -7,9 +7,15 @@ use crate::storage::db::Database;
 
 const PROFILE_KEY: &str = "ai_prompt_profile";
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PromptProfile {
+    #[serde(default = "default_display_name")]
+    pub display_name: String,
+    #[serde(default)]
+    pub avatar_emoji: Option<String>,
+    #[serde(default)]
     pub persona: String,
+    #[serde(default)]
     pub writing_style: String,
     #[serde(default)]
     pub custom_rules: Vec<String>,
@@ -17,8 +23,25 @@ pub struct PromptProfile {
     pub language: String,
 }
 
+fn default_display_name() -> String {
+    "砚".to_string()
+}
+
 fn default_language() -> String {
     "zh-CN".to_string()
+}
+
+impl Default for PromptProfile {
+    fn default() -> Self {
+        Self {
+            display_name: default_display_name(),
+            avatar_emoji: None,
+            persona: String::new(),
+            writing_style: String::new(),
+            custom_rules: Vec::new(),
+            language: default_language(),
+        }
+    }
 }
 
 /// Built-in prompt profile presets for quick selection.
@@ -27,6 +50,8 @@ pub fn preset_templates() -> Vec<(&'static str, PromptProfile)> {
         (
             "学术严谨",
             PromptProfile {
+                display_name: "砚".into(),
+                avatar_emoji: Some("📚".into()),
                 persona: "严谨、客观的学术助手，重视证据与引用。".into(),
                 writing_style: "结构清晰、术语准确、避免口语化。".into(),
                 custom_rules: vec![
@@ -39,6 +64,8 @@ pub fn preset_templates() -> Vec<(&'static str, PromptProfile)> {
         (
             "创意写作",
             PromptProfile {
+                display_name: "砚".into(),
+                avatar_emoji: Some("🖋️".into()),
                 persona: "富有想象力的写作伙伴，善于拓展情节与人物。".into(),
                 writing_style: "生动、有画面感，适度修辞。".into(),
                 custom_rules: vec!["保持与既有设定一致。".into()],
@@ -48,6 +75,8 @@ pub fn preset_templates() -> Vec<(&'static str, PromptProfile)> {
         (
             "简洁高效",
             PromptProfile {
+                display_name: "砚".into(),
+                avatar_emoji: Some("⚡".into()),
                 persona: "高效执行型助手，直达要点。".into(),
                 writing_style: "短句、列表、少废话。".into(),
                 custom_rules: vec!["默认不超过三段。".into()],
@@ -109,5 +138,26 @@ impl PromptProfile {
             }
         }
         s
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_includes_display_name() {
+        let profile = PromptProfile::default();
+        assert_eq!(profile.display_name, "砚");
+        assert!(profile.avatar_emoji.is_none());
+    }
+
+    #[test]
+    fn deserializes_legacy_profile_without_display_fields() {
+        let json = r#"{"persona":"test","writing_style":"","custom_rules":[],"language":"zh-CN"}"#;
+        let profile: PromptProfile = serde_json::from_str(json).unwrap();
+        assert_eq!(profile.display_name, "砚");
+        assert!(profile.avatar_emoji.is_none());
+        assert_eq!(profile.persona, "test");
     }
 }

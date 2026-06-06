@@ -75,33 +75,30 @@ describe("app close version guard", () => {
 
     const clearVersionIdleTimer = vi.fn();
 
-    await flushTabsOnAppClose(
-      ["notes/active.md", "notes/background.md"],
-      {
-        setAppClosing: (closing) => scheduler.setAppClosing(closing),
-        clearVersionIdleTimer,
-        isActive: (path) => path === "notes/active.md",
-        getCached: (path) =>
-          path === "notes/background.md" ? "background cached" : null,
-        persistActive: (path) =>
-          persistActiveTabBeforeLeave({
-            path,
-            reason: "app_close",
-            getMarkdown: () => "active live",
-            flushSaveForPath: async () => "active saved",
-            getLastSavedSnapshot: () => snapshots.get(path) ?? null,
-            enqueueIdleSnapshot,
-          }),
-        persistInactive: (path, cached) =>
-          persistInactiveDirtyTabBeforeLeave({
-            path,
-            reason: "app_close",
-            cachedMarkdown: cached,
-            writeFile: async () => undefined,
-            enqueueLeaveSnapshot,
-          }),
-      },
-    );
+    await flushTabsOnAppClose(["notes/active.md", "notes/background.md"], {
+      setAppClosing: (closing) => scheduler.setAppClosing(closing),
+      clearVersionIdleTimer,
+      isActive: (path) => path === "notes/active.md",
+      getCached: (path) =>
+        path === "notes/background.md" ? "background cached" : null,
+      persistActive: (path) =>
+        persistActiveTabBeforeLeave({
+          path,
+          reason: "app_close",
+          getMarkdown: () => "active live",
+          flushSaveForPath: async () => "active saved",
+          getLastSavedSnapshot: () => snapshots.get(path) ?? null,
+          enqueueIdleSnapshot,
+        }),
+      persistInactive: (path, cached) =>
+        persistInactiveDirtyTabBeforeLeave({
+          path,
+          reason: "app_close",
+          cachedMarkdown: cached,
+          writeFile: async () => undefined,
+          enqueueLeaveSnapshot,
+        }),
+    });
 
     expect(clearVersionIdleTimer).toHaveBeenCalledTimes(1);
     expect(versionSaveIdle).not.toHaveBeenCalled();

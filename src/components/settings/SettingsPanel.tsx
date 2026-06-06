@@ -1,10 +1,11 @@
-import { Moon, Sun } from "lucide-react";
+import { Moon, Sun, Puzzle, Sparkles } from "lucide-react";
+import { useState } from "react";
 
 import { LlmRoutingSection } from "@/components/settings/LlmRoutingSection";
 import { MinimaxSearchSection } from "@/components/settings/MinimaxSearchSection";
+import { PersonaSettingsPanel } from "@/components/settings/PersonaSettingsPanel";
 import { AiRulesPanel } from "@/components/ai/AiRulesPanel";
-import { AssistantIdentitySection } from "@/components/settings/AssistantIdentitySection";
-import { PromptProfileSection } from "@/components/settings/PromptProfileSection";
+import { SkillsPanel } from "@/components/ai/SkillsPanel";
 import { Button } from "@/components/ui/button";
 import { IrisOverlay } from "@/components/ui/iris-overlay";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -22,69 +23,108 @@ export function SettingsPanel({
   theme,
   onThemeChange,
 }: SettingsPanelProps) {
+  const [skillsOpen, setSkillsOpen] = useState(false);
+  const [personaOpen, setPersonaOpen] = useState(false);
+
   return (
-    <IrisOverlay open={open} onClose={onClose} title="设置" size="command">
-      <ScrollArea className="flex-1">
-        <div className="space-y-6 px-4 py-4">
-          <section>
-            <h3 className="mb-2 text-xs font-medium text-foreground">外观</h3>
-            <div className="flex gap-2">
+    <>
+      <IrisOverlay open={open} onClose={onClose} title="设置" size="command">
+        <ScrollArea className="flex-1">
+          <div className="space-y-6 px-4 py-4">
+            <section>
+              <h3 className="mb-2 text-xs font-medium text-foreground">外观</h3>
+              <div className="flex gap-2">
+                <Button
+                  type="button"
+                  size="sm"
+                  variant={theme === "dark" ? "default" : "outline"}
+                  className="gap-1.5"
+                  onClick={() => onThemeChange("dark")}
+                >
+                  <Moon className="h-3.5 w-3.5" />
+                  暗色
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant={theme === "light" ? "default" : "outline"}
+                  className="gap-1.5"
+                  onClick={() => onThemeChange("light")}
+                >
+                  <Sun className="h-3.5 w-3.5" />
+                  亮色
+                </Button>
+              </div>
+            </section>
+
+            <section data-testid="settings-section-ai-assistant">
+              <h3 className="mb-2 text-xs font-medium text-foreground">
+                AI 助手
+              </h3>
+              <p className="mb-2 text-xs text-muted-foreground">
+                配置侧栏称呼、头像，以及注入模型的人格与写作风格。
+              </p>
               <Button
                 type="button"
                 size="sm"
-                variant={theme === "dark" ? "default" : "outline"}
+                variant="outline"
                 className="gap-1.5"
-                onClick={() => onThemeChange("dark")}
+                data-testid="open-persona-settings"
+                onClick={() => setPersonaOpen(true)}
               >
-                <Moon className="h-3.5 w-3.5" />
-                暗色
+                <Sparkles className="h-3.5 w-3.5" />
+                打开人格配置
               </Button>
+            </section>
+
+            <section data-testid="settings-section-skills">
+              <h3 className="mb-2 text-xs font-medium text-foreground">
+                Skills 扩展
+              </h3>
+              <p className="mb-2 text-xs text-muted-foreground">
+                安装和管理 Agent Skills，扩展 AI 助手的能力。
+              </p>
               <Button
                 type="button"
                 size="sm"
-                variant={theme === "light" ? "default" : "outline"}
+                variant="outline"
                 className="gap-1.5"
-                onClick={() => onThemeChange("light")}
+                onClick={() => setSkillsOpen(true)}
               >
-                <Sun className="h-3.5 w-3.5" />
-                亮色
+                <Puzzle className="h-3.5 w-3.5" />
+                管理 Skills
               </Button>
-            </div>
-          </section>
+            </section>
 
-          <section data-testid="settings-section-ai-assistant">
-            <h3 className="mb-2 text-xs font-medium text-foreground">
-              AI 助手
-            </h3>
-            <AssistantIdentitySection />
-            <div className="mt-4 border-t border-border/60 pt-4">
-              <PromptProfileSection />
-            </div>
-          </section>
+            <section>
+              <h3 className="mb-2 text-xs font-medium text-foreground">
+                模型与联网
+              </h3>
+              <div className="space-y-5">
+                <LlmRoutingSection open={open} />
+                <MinimaxSearchSection open={open} />
+              </div>
+            </section>
 
-          <section>
-            <h3 className="mb-2 text-xs font-medium text-foreground">
-              模型与联网
-            </h3>
-            <div className="space-y-5">
-              <LlmRoutingSection open={open} />
-              <MinimaxSearchSection open={open} />
-            </div>
-          </section>
-
-          <section>
-            <h3 className="mb-2 text-xs font-medium text-foreground">
-              AI 记忆与规则
-            </h3>
-            <p className="mb-2 text-xs text-muted-foreground">
-              对话中确认的规则会写入此处，并影响后续助手行为。
-            </p>
-            <div className="max-h-[360px] overflow-hidden rounded-md border border-border">
-              <AiRulesPanel compact />
-            </div>
-          </section>
-        </div>
-      </ScrollArea>
-    </IrisOverlay>
+            <section>
+              <h3 className="mb-2 text-xs font-medium text-foreground">
+                AI 记忆与规则
+              </h3>
+              <p className="mb-2 text-xs text-muted-foreground">
+                对话中确认的规则会写入此处，并影响后续助手行为。
+              </p>
+              <div className="max-h-[360px] overflow-hidden rounded-md border border-border">
+                <AiRulesPanel compact />
+              </div>
+            </section>
+          </div>
+        </ScrollArea>
+      </IrisOverlay>
+      <PersonaSettingsPanel
+        open={personaOpen}
+        onClose={() => setPersonaOpen(false)}
+      />
+      <SkillsPanel open={skillsOpen} onClose={() => setSkillsOpen(false)} />
+    </>
   );
 }

@@ -7,6 +7,7 @@ use crate::ai_runtime::ContextPacket;
 use crate::app::AppState;
 use crate::error::AppResult;
 
+use super::token_estimator::UsageSource;
 use super::tools::merge_tool_packets_into;
 use super::types::{HarnessRunInput, HarnessRunResult};
 
@@ -18,6 +19,7 @@ pub(crate) struct FinishRunParams {
     pub harness_rounds: u32,
     pub pending_confirmation: bool,
     pub evidence_packets: Vec<ContextPacket>,
+    pub usage_source: UsageSource,
 }
 
 pub(crate) async fn finish_run(
@@ -33,6 +35,7 @@ pub(crate) async fn finish_run(
         harness_rounds,
         pending_confirmation,
         evidence_packets,
+        usage_source,
     } = params;
     let citation_result =
         crate::ai_runtime::guardrails::verify_citations(&content, &evidence_packets);
@@ -57,6 +60,7 @@ pub(crate) async fn finish_run(
         harness_rounds,
         pending_confirmation,
         evidence_packets,
+        usage_source,
     })
 }
 

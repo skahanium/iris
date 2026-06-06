@@ -3,6 +3,7 @@
 use tauri::AppHandle;
 
 use super::finalize::{finish_run, ledger_to_packets, FinishRunParams};
+use super::token_estimator::{estimate_and_accumulate, usage_is_empty, UsageSource};
 use super::trace_emit::{emit_thinking, emit_trace_phase};
 use super::types::{HarnessPhase, HarnessRunInput, HarnessRunResult};
 use super::util::accumulate_usage;
@@ -44,6 +45,7 @@ pub(crate) async fn run_reflection_round(
     bonus_round_used: &mut bool,
     max_rounds: &mut u32,
     token_budget: u32,
+    usage_source: &mut UsageSource,
 ) -> AppResult<ReflectionOutcome> {
     emit_trace_phase(
         app_handle,
@@ -71,7 +73,13 @@ pub(crate) async fn run_reflection_round(
         stream: false,
     };
     if let Ok(reflect_resp) = gateway.send_request(reflect_request).await {
-        accumulate_usage(total_usage, &reflect_resp.usage);
+        if usage_is_empty(&reflect_resp.usage) {
+            let content = reflect_resp.content.as_deref().unwrap_or("");
+            estimate_and_accumulate(total_usage, messages, content);
+            *usage_source = UsageSource::Estimated;
+        } else {
+            accumulate_usage(total_usage, &reflect_resp.usage);
+        }
         if let Some(text) = reflect_resp.content {
             let profile = resolve_scene(input.scene);
             if text.contains("NEED_MORE_EVIDENCE")
@@ -112,6 +120,7 @@ pub(crate) async fn run_reflection_round(
                             harness_rounds,
                             pending_confirmation,
                             evidence_packets: ledger_to_packets(evidence_ledger, token_budget),
+                            usage_source: *usage_source,
                         },
                     )
                     .await?,

@@ -88,6 +88,20 @@ describe("assistant chrome helpers", () => {
     });
     expect(snap.evidenceCount).toBe(2);
     expect(snap.webPacketCount).toBe(1);
+    expect(snap.harnessRequestId).toBeNull();
+  });
+
+  it("buildAssistantChromeSnapshot forwards harness request id", () => {
+    const snap = buildAssistantChromeSnapshot({
+      sessionTokenUsage: null,
+      activityHint: null,
+      streaming: true,
+      messages: [],
+      harnessPhaseLabel: null,
+      packets: [],
+      harnessRequestId: "req-1",
+    });
+    expect(snap.harnessRequestId).toBe("req-1");
   });
 
   it("splits web search vs page fetch packets", () => {

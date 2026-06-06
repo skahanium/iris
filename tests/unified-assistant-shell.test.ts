@@ -28,8 +28,10 @@ describe("unified assistant shell", () => {
 
     expect(source).toContain("AssistantActionState");
     expect(source).toContain("AssistantIntent");
-    expect(source).toContain("useAssistantIdentity");
-    expect(source).toContain("AssistantAvatar");
+    expect(source).toContain("usePromptProfile");
+    expect(source).toContain("AssistantPersonaDisplay");
+    expect(source).toContain("AgentStatusBadge");
+    expect(source).not.toContain("AgentStatusStrip");
     expect(source).not.toContain("WORKFLOW_TASK_DEFINITIONS");
     expect(source).not.toContain("未绑定文档");
     expect(source).not.toContain("AiRulesPanel");
@@ -56,11 +58,12 @@ describe("unified assistant shell", () => {
     );
   });
 
-  it("settings panel hosts identity, rules, and model config", () => {
+  it("settings panel hosts persona config, rules, and model config", () => {
     const source = read("src/components/settings/SettingsPanel.tsx");
 
     expect(source).toContain("settings-section-ai-assistant");
-    expect(source).toContain("AssistantIdentitySection");
+    expect(source).toContain("PersonaSettingsPanel");
+    expect(source).toContain("open-persona-settings");
     expect(source).toContain("AiRulesPanel");
     expect(source).toContain("MinimaxSearchSection");
     expect(source).not.toContain("UnifiedAssistantPanel");

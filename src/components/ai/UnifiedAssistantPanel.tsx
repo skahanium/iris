@@ -1,4 +1,8 @@
-import { AlertTriangle, MessageSquarePlus, StopCircle } from "lucide-react";
+import {
+  AlertTriangle,
+  MessageSquarePlus,
+  StopCircle,
+} from "lucide-react";
 import {
   useCallback,
   useEffect,
@@ -8,22 +12,18 @@ import {
   type KeyboardEvent,
 } from "react";
 
+import { AgentStatusBadge } from "@/components/ai/AgentStatusBadge";
+import { AssistantPersonaDisplay } from "@/components/ai/AssistantPersonaDisplay";
+import { AuditTrailDrawer } from "@/components/ai/AuditTrailDrawer";
 import { AiComposer } from "@/components/ui/ai-composer";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { usePromptProfile } from "@/hooks/usePromptProfile";
 import { useAssistantLlmStream } from "@/hooks/useAssistantLlmStream";
 import { useListboxKeyboard } from "@/hooks/useListboxKeyboard";
 import { patchSpansPreferSidebar } from "@/lib/assistant-patch";
-import {
-  describeAssistantContext,
-  describeAssistantSubtitle,
-} from "@/lib/assistant-context-label";
-import {
-  assistantStatusText,
-  resolveAssistantIntent,
-} from "@/lib/assistant-routing";
-import { useAssistantIdentity } from "@/hooks/useAssistantIdentity";
+import { resolveAssistantIntent } from "@/lib/assistant-routing";
 import {
   resolveAiSceneForIntent,
   syncActiveAiScene,
@@ -41,15 +41,14 @@ import {
 } from "@/lib/ai-context-scope";
 import { mergeContextPackets } from "@/lib/ai/merge-context-packets";
 import { shouldStartNewAiSession } from "@/lib/ai/session-thread";
-import { DEFAULT_ASSISTANT_IDENTITY } from "@/lib/assistant-identity";
 import { resolveAssistantDisplayContent } from "@/lib/assistant-message-content";
+import { OPEN_AUDIT_TRAIL_EVENT } from "@/lib/audit-trail-events";
 import { buildAssistantChromeSnapshot } from "@/lib/assistant-chrome";
 import { mapChatToolCallsForUi } from "@/lib/map-chat-tool-calls";
 import { invokeErrorMessage } from "@/lib/credentials";
 import {
   assistantExecute,
   contextAssemble,
-  corpusList,
   fileList,
   harnessAbort,
   organizeApply,
@@ -79,9 +78,7 @@ import type {
 import type { AssistantChromeSnapshot } from "@/types/assistant-chrome";
 import type { FileListItem } from "@/types/ipc";
 
-import { AssistantAvatar } from "./AssistantAvatar";
 import {
-  assistantIcon,
   buildActionState,
   buildTaskSummary,
   determineDocumentCheckType,
@@ -149,7 +146,6 @@ interface UnifiedAssistantPanelProps {
 
 export function UnifiedAssistantPanel({
   notePath,
-  noteDisplayTitle,
   noteContent,
   webSearch = false,
   getWritingContext,
@@ -211,6 +207,7 @@ export function UnifiedAssistantPanel({
   const streamBuf = useRef("");
   const requestIdRef = useRef<string | null>(null);
   const [harnessRequestId, setHarnessRequestId] = useState<string | null>(null);
+  const [auditDrawerOpen, setAuditDrawerOpen] = useState(false);
   const assistantRun = useAssistantRun("chat");
   const composerDisabled =
     streaming || assistantRun.isBusy || toolConfirmRequest !== null;
@@ -228,16 +225,24 @@ export function UnifiedAssistantPanel({
         messages,
         harnessPhaseLabel: null,
         packets,
+        harnessRequestId,
       }),
     );
   }, [
     activityHint,
+    harnessRequestId,
     messages,
     onChromeChange,
     packets,
     sessionTokenUsage,
     streaming,
   ]);
+
+  useEffect(() => {
+    const openAudit = () => setAuditDrawerOpen(true);
+    window.addEventListener(OPEN_AUDIT_TRAIL_EVENT, openAudit);
+    return () => window.removeEventListener(OPEN_AUDIT_TRAIL_EVENT, openAudit);
+  }, []);
 
   useEffect(() => {
     if (!streaming) return;
@@ -265,9 +270,7 @@ export function UnifiedAssistantPanel({
   const [mentionOpen, setMentionOpen] = useState(false);
   const [mentionStart, setMentionStart] = useState(0);
   const [mentionQuery, setMentionQuery] = useState("");
-  const [corpusNames, setCorpusNames] = useState<string[]>([]);
-  const { identity: assistantIdentity } = useAssistantIdentity();
-
+  const { profile: promptProfile } = usePromptProfile();
   const mentionTokens = useMemo(() => parseMentionTokens(input), [input]);
   const contextScope = useMemo(
     () => tokensToContextScope(mentionTokens),
@@ -306,9 +309,6 @@ export function UnifiedAssistantPanel({
     void fileList()
       .then(setVaultFiles)
       .catch(() => setVaultFiles([]));
-    void corpusList()
-      .then((items) => setCorpusNames(items.map((c) => c.name)))
-      .catch(() => setCorpusNames([]));
   }, []);
 
   useEffect(() => {
@@ -1431,34 +1431,7 @@ export function UnifiedAssistantPanel({
     }
   }, [onVaultRefresh, organizeSelection, organizeSuggestions]);
 
-  const contextLabel = useMemo(
-    () =>
-      describeAssistantContext({
-        selectionText: selectionQuote?.text,
-        noteDisplayTitle,
-      }),
-    [noteDisplayTitle, selectionQuote?.text],
-  );
-
-  const showTaskHint =
-    actionState.status !== "idle" && actionState.intent !== "chat";
-
-  const headerSubtitle = useMemo(
-    () =>
-      describeAssistantSubtitle({
-        status: actionState.status,
-        contextLabel,
-        intentLabel: actionState.label,
-        statusLabel: assistantStatusText(actionState.status),
-        showTaskHint,
-      }),
-    [actionState.label, actionState.status, contextLabel, showTaskHint],
-  );
-
-  const ActionIcon = assistantIcon(actionState.intent);
   const activeScene: AiScene = resolveAiSceneForIntent(actionState.intent);
-  const isDefaultAssistantName =
-    assistantIdentity.displayName === DEFAULT_ASSISTANT_IDENTITY.displayName;
 
   const handleLoadSession = useCallback(
     (id: number, loaded: ChatLine[]) => {
@@ -1477,73 +1450,42 @@ export function UnifiedAssistantPanel({
       className="flex h-full flex-col bg-panel"
       data-testid="unified-assistant-panel"
     >
-      <header className="shrink-0 border-b border-border/60 px-3 py-2">
-        <div className="flex items-start justify-between gap-3">
-          <div className="min-w-0">
-            <div className="flex items-center gap-2">
-              <AssistantAvatar identity={assistantIdentity} />
-              <div className="min-w-0">
-                {isDefaultAssistantName ? (
-                  <p className="truncate text-sm font-medium text-foreground">
-                    {headerSubtitle}
-                  </p>
-                ) : (
-                  <>
-                    <p className="truncate text-sm font-medium text-foreground">
-                      {assistantIdentity.displayName}
-                    </p>
-                    <p className="truncate text-xs text-muted-foreground">
-                      {headerSubtitle}
-                    </p>
-                  </>
-                )}
-              </div>
-            </div>
-            {showTaskHint || corpusNames.length > 0 ? (
-              <div className="mt-2 flex flex-wrap items-center gap-1.5">
-                {showTaskHint ? (
-                  <Badge variant="secondary" className="gap-1 text-[10px]">
-                    <ActionIcon className="h-3 w-3" />
-                    {actionState.label}
-                  </Badge>
-                ) : null}
-                {corpusNames.slice(0, 2).map((name) => (
-                  <Badge
-                    key={name}
-                    variant="outline"
-                    className="max-w-[120px] truncate text-[10px]"
-                  >
-                    {name}
-                  </Badge>
-                ))}
-              </div>
-            ) : null}
+      <header className="shrink-0 border-b border-border/60 px-3 py-1.5">
+        <div className="flex items-center justify-between gap-3">
+          <div className="flex min-w-0 flex-1 items-center">
+            <AssistantPersonaDisplay profile={promptProfile} />
           </div>
-          <div className="flex shrink-0 items-center gap-1">
-            <SessionHistoryDropdown
-              scene={activeScene}
-              notePath={notePath}
-              currentSessionId={sessionId}
+          <div className="flex shrink-0 items-center gap-1.5">
+            <AgentStatusBadge
+              webSearchEnabled={webSearch}
               disabled={chromeActionsDisabled}
-              onSelectSession={handleLoadSession}
-              onDeleted={(id) => {
-                if (sessionId === id) {
-                  handleNewChat();
-                }
-              }}
+              auditAvailable={Boolean(harnessRequestId)}
+              onOpenAudit={() => setAuditDrawerOpen(true)}
             />
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              className="h-8 gap-1 px-2 text-xs"
-              title="新对话（不加载本笔记下的历史会话）"
-              onClick={handleNewChat}
-              disabled={chromeActionsDisabled}
-            >
-              <MessageSquarePlus className="h-3.5 w-3.5" />
-              新对话
-            </Button>
+            <SessionHistoryDropdown
+            scene={activeScene}
+            notePath={notePath}
+            currentSessionId={sessionId}
+            disabled={chromeActionsDisabled}
+            onSelectSession={handleLoadSession}
+            onDeleted={(id) => {
+              if (sessionId === id) {
+                handleNewChat();
+              }
+            }}
+          />
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="h-8 gap-1 px-2 text-xs"
+            title="新对话（不加载本笔记下的历史会话）"
+            onClick={handleNewChat}
+            disabled={chromeActionsDisabled}
+          >
+            <MessageSquarePlus className="h-3.5 w-3.5" />
+            新对话
+          </Button>
           </div>
         </div>
       </header>
@@ -1830,6 +1772,11 @@ export function UnifiedAssistantPanel({
         }}
         onReject={() => setRuleConfirmRequest(null)}
         onClose={() => setRuleConfirmRequest(null)}
+      />
+      <AuditTrailDrawer
+        open={auditDrawerOpen}
+        onOpenChange={setAuditDrawerOpen}
+        requestId={harnessRequestId}
       />
     </div>
   );

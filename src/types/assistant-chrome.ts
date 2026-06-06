@@ -6,6 +6,8 @@ export interface AssistantChromeSnapshot {
   toolActivityLabel: string | null;
   evidenceCount: number;
   webPacketCount: number;
+  /** 活跃 harness 请求 ID，供底栏打开工具审计 */
+  harnessRequestId: string | null;
 }
 
 export const EMPTY_ASSISTANT_CHROME: AssistantChromeSnapshot = {
@@ -13,4 +15,5 @@ export const EMPTY_ASSISTANT_CHROME: AssistantChromeSnapshot = {
   toolActivityLabel: null,
   evidenceCount: 0,
   webPacketCount: 0,
+  harnessRequestId: null,
 };

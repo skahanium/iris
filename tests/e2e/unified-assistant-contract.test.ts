@@ -22,11 +22,17 @@ describe("unified assistant E2E contract", () => {
     expect(conversation).toContain('data-testid="ai-message-list"');
     expect(panel).toContain('data-testid="research-focus"');
     expect(panel).not.toContain("ExecutionPlanPreview");
-    expect(panel).toContain("useAssistantIdentity");
+    expect(panel).toContain("usePromptProfile");
+    expect(panel).toContain("AssistantPersonaDisplay");
+    expect(panel).toContain("AgentStatusBadge");
+    expect(read("src/components/ai/AgentStatusBadge.tsx")).toContain(
+      'data-testid="agent-status-trigger"',
+    );
     expect(read("src/components/settings/SettingsPanel.tsx")).toContain(
       "settings-section-ai-assistant",
     );
     expect(panel).not.toContain("AssistantIdentitySection");
+    expect(panel).not.toContain("AgentStatusStrip");
   });
 
   it("maps acceptance flows to assistant intents without SceneSelector", () => {

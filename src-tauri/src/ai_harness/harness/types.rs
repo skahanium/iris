@@ -5,6 +5,8 @@ use serde::Serialize;
 use crate::ai_runtime::model_gateway::{TokenUsage, ToolCall};
 use crate::ai_runtime::{AiScene, ContextPacket};
 
+use super::token_estimator::UsageSource;
+
 /// Harness progress phase for structured UI.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -43,6 +45,7 @@ pub struct HarnessRunResult {
     pub harness_rounds: u32,
     pub pending_confirmation: bool,
     pub evidence_packets: Vec<ContextPacket>,
+    pub usage_source: UsageSource,
 }
 
 /// Inputs for a harness run.

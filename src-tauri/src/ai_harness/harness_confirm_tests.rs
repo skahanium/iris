@@ -2,6 +2,7 @@
 
 #[cfg(test)]
 mod tests {
+    use crate::ai_runtime::harness::UsageSource;
     use crate::ai_runtime::harness_confirm::append_rejected_tool_to_checkpoint;
     use crate::ai_runtime::harness_support::{
         load_harness_checkpoint, save_harness_checkpoint, HarnessCheckpoint, HarnessCheckpointMeta,
@@ -44,6 +45,7 @@ mod tests {
             })],
             evidence_packets: vec![],
             usage: TokenUsage::default(),
+            usage_source: UsageSource::Provider,
             bonus_round_used: false,
         }
     }
@@ -78,5 +80,27 @@ mod tests {
             .tool_results
             .iter()
             .any(|r| r.get("status").and_then(|s| s.as_str()) == Some("rejected")));
+    }
+
+    #[test]
+    fn reject_records_sanitized_tool_audit() {
+        let state = test_state();
+        let rid = "reject-audit-1";
+        TraceRecorder::start(&state.db, rid, AiScene::KnowledgeLookup).unwrap();
+        TraceRecorder::update_status(&state.db, rid, TraceStatus::AwaitingToolConfirmation)
+            .unwrap();
+        save_harness_checkpoint(&state.db, rid, &sample_checkpoint(rid)).unwrap();
+
+        append_rejected_tool_to_checkpoint(state.as_ref(), rid, "tc1").unwrap();
+
+        let entries = crate::ai_runtime::tool_audit::query_by_request(&state.db, rid).unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].tool_name, "tool_confirmation");
+        assert!(!entries[0].success);
+        assert!(entries[0]
+            .result_summary
+            .as_deref()
+            .unwrap_or("")
+            .contains("rejected"));
     }
 }

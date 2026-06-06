@@ -10,7 +10,8 @@ describe("harness modernization remaining contracts", () => {
   it("context preview uses the same executable tool surface as harness runs", () => {
     const backend = read("src-tauri/src/commands/ai_commands.rs");
     expect(backend).toContain("web_search: Option<bool>");
-    expect(backend).toContain("tools_for_surface(");
+    expect(backend).toContain("ToolPolicyContext");
+    expect(backend).toContain("tools_for_policy_surface(");
     expect(backend).not.toContain(
       "registry.for_scene(scene).into_iter().cloned().collect()",
     );

@@ -196,6 +196,7 @@ mod tests {
             scene_allowlist: vec![],
             requires_confirmation: false,
             max_results: None,
+            scene_affinity: vec![],
         }];
         let text = capabilities_section(&tools);
         assert!(text.contains("search_hybrid"));

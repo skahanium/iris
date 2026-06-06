@@ -14,15 +14,20 @@ pub mod model_gateway;
 pub mod model_registry;
 pub mod packet_builder;
 pub mod packet_cache;
+pub mod persona_resolver;
+pub mod prompt_builder;
 pub mod prompt_profile;
 pub mod retrieval_broker;
 pub mod retrieval_scope;
 pub mod scene_router;
 pub mod session;
 pub mod skills;
+pub mod tool_audit;
+pub mod tool_catalog;
 pub mod tool_dispatch;
 pub mod tool_executor;
 pub mod tool_fallback;
+pub mod tool_policy;
 pub mod trace;
 
 // ─── Re-exports from ai_workflows (backward compatibility) ─

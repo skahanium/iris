@@ -158,6 +158,7 @@ export interface AiChatExecutePayload {
   }>;
   harness_rounds?: number;
   usage?: TokenUsage;
+  usage_source?: "provider" | "estimated";
   citation_valid?: boolean;
   /** 冷启动 + 工具检索合并后的证据包 */
   evidence_packets?: ContextPacket[];
@@ -799,6 +800,7 @@ export interface AiSendMessageResult {
   tool_calls?: AiToolCall[];
   tool_results?: AiToolResult[];
   usage?: TokenUsage;
+  usage_source?: "provider" | "estimated";
   citation_valid?: boolean;
   harness_rounds?: number;
 }

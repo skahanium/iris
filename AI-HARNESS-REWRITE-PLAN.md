@@ -26,18 +26,18 @@
 
 ## 1. 当前事实校正
 
-| 编号 | 原计划判断 | 修订判断 | 影响 |
-| --- | --- | --- | --- |
-| F-01 | `read_note` 可任意读取系统文件 | 不准确。`read_note` 和 `get_outline` 已使用 `is_user_note_path` + `resolve_vault_path`；真实缺口在路径校验未统一，`get_backlinks`、`get_block_links` 等 DB 路径参数未走同一入口 | Phase 1 改为补齐统一校验，不重复造一套不兼容路径逻辑 |
-| F-02 | `install_from_git` 是 shell 命令注入风险 | 不准确。当前使用 Rust `Command::args`，不是 shell 拼接；真实风险是缺少 `--` 参数分隔、`subpath` 未 canonicalize、复制源边界未限制在临时 clone 目录内 | Phase 1 改为参数与路径边界加固 |
-| F-03 | 迁移编号从 `014` 开始 | 错误。仓库已有 `014_web_page_cache` 到 `017_rename_cascade` | 新迁移从 `018` 起，并同步 `storage/migrate.rs` |
-| F-04 | 新增 `src-tauri/src/ipc.rs` | 错误。当前 Tauri 命令在 `src-tauri/src/commands/ai_commands.rs` 等 commands 模块 | 所有 IPC 后端变更写入 commands 模块 |
-| F-05 | 新增 `src/components/settings/SkillsPanel.tsx` | 不贴合现状。仓库已有 `src/components/ai/SkillsPanel.tsx` 和 `src/lib/ipc.ts` 的 skills 封装 | 先复用并升级现有面板，再决定是否搬到 settings |
-| F-06 | 内置工具清单“19 个” | 不一致。计划表实际列出 21 个；代码中还区分 dispatchable tool 与 harness-only tool | 新增 ToolCatalog 明确工具注册、暴露、执行、确认四层状态 |
-| F-07 | 用 Skills 完全替代 `scene_allowlist` | 风险过高。`scene_allowlist` 当前承担硬场景边界 | 改为 ToolPolicy 硬约束优先，Skills 只能在硬约束交集内请求启用工具 |
-| F-08 | sqlite-vec 直接作为 skill embedding 唯一路径 | 不完整。`sqlite-vec` 当前是 optional feature，迁移也有 best-effort 先例 | Skill 匹配需要 sqlite-vec 路径和 Rust fallback 路径 |
-| F-09 | `allowed-tools` 自动授权 | 表述过强。Agent Skills 规范中 `allowed-tools` 是 experimental，且不同客户端支持不同 | Iris 解释为“skill 请求的工具集合”，最终权限由 ToolPolicy 裁决 |
-| F-10 | PromptProfile 可覆盖人格 | 当前不成立。`PromptProfile` 只是环境片段，`ModelGateway::unified_persona` 仍硬编码「砚」 | Phase 3 建 PersonaResolver/PromptBuilder |
+| 编号 | 原计划判断                                     | 修订判断                                                                                                                                                                        | 影响                                                              |
+| ---- | ---------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------- |
+| F-01 | `read_note` 可任意读取系统文件                 | 不准确。`read_note` 和 `get_outline` 已使用 `is_user_note_path` + `resolve_vault_path`；真实缺口在路径校验未统一，`get_backlinks`、`get_block_links` 等 DB 路径参数未走同一入口 | Phase 1 改为补齐统一校验，不重复造一套不兼容路径逻辑              |
+| F-02 | `install_from_git` 是 shell 命令注入风险       | 不准确。当前使用 Rust `Command::args`，不是 shell 拼接；真实风险是缺少 `--` 参数分隔、`subpath` 未 canonicalize、复制源边界未限制在临时 clone 目录内                            | Phase 1 改为参数与路径边界加固                                    |
+| F-03 | 迁移编号从 `014` 开始                          | 错误。仓库已有 `014_web_page_cache` 到 `017_rename_cascade`                                                                                                                     | 新迁移从 `018` 起，并同步 `storage/migrate.rs`                    |
+| F-04 | 新增 `src-tauri/src/ipc.rs`                    | 错误。当前 Tauri 命令在 `src-tauri/src/commands/ai_commands.rs` 等 commands 模块                                                                                                | 所有 IPC 后端变更写入 commands 模块                               |
+| F-05 | 新增 `src/components/settings/SkillsPanel.tsx` | 不贴合现状。仓库已有 `src/components/ai/SkillsPanel.tsx` 和 `src/lib/ipc.ts` 的 skills 封装                                                                                     | 先复用并升级现有面板，再决定是否搬到 settings                     |
+| F-06 | 内置工具清单“19 个”                            | 不一致。计划表实际列出 21 个；代码中还区分 dispatchable tool 与 harness-only tool                                                                                               | 新增 ToolCatalog 明确工具注册、暴露、执行、确认四层状态           |
+| F-07 | 用 Skills 完全替代 `scene_allowlist`           | 风险过高。`scene_allowlist` 当前承担硬场景边界                                                                                                                                  | 改为 ToolPolicy 硬约束优先，Skills 只能在硬约束交集内请求启用工具 |
+| F-08 | sqlite-vec 直接作为 skill embedding 唯一路径   | 不完整。`sqlite-vec` 当前是 optional feature，迁移也有 best-effort 先例                                                                                                         | Skill 匹配需要 sqlite-vec 路径和 Rust fallback 路径               |
+| F-09 | `allowed-tools` 自动授权                       | 表述过强。Agent Skills 规范中 `allowed-tools` 是 experimental，且不同客户端支持不同                                                                                             | Iris 解释为“skill 请求的工具集合”，最终权限由 ToolPolicy 裁决     |
+| F-10 | PromptProfile 可覆盖人格                       | 当前不成立。`PromptProfile` 只是环境片段，`ModelGateway::unified_persona` 仍硬编码「砚」                                                                                        | Phase 3 建 PersonaResolver/PromptBuilder                          |
 
 ---
 
@@ -60,16 +60,16 @@ User Request
 
 ### 2.2 核心模块
 
-| 模块 | 职责 | 现有基础 | 目标 |
-| --- | --- | --- | --- |
-| ToolCatalog | 定义所有内置工具、访问级别、是否已实现、是否 harness-only、是否需确认 | `ToolRegistry`、`ToolSpec`、`DISPATCHABLE_TOOL_NAMES` | 统一工具事实来源，消除工具清单不一致 |
-| ToolPolicy | 计算当前请求可暴露/可自动执行/需确认的工具集合 | `scene_allowlist`、`requires_confirmation`、`AutonomyLevel` | 硬约束优先，Skills 只能做交集内扩展 |
-| SkillRuntime | 扫描、校验、安装、启停、匹配、渐进式加载 skills | `ai_runtime/skills.rs`、现有 SkillsPanel | 兼容 Agent Skills 规范，同时保留 Iris 元数据 |
-| SkillActivator | 根据用户请求、scene、history、description 匹配激活 skills | `trigger` 简单匹配 | 支持 description 关键词 + 向量匹配 + 显式用户启用 |
-| PersonaResolver | 解析默认人格、用户 PromptProfile、场景侧重 | `PromptProfile`、`ModelGateway::unified_persona` | PromptProfile 可完全覆盖默认身份 |
-| PromptBuilder | 统一 harness 与 workflow 的 prompt 构建 | `harness/context.rs`、`model_gateway.rs` | Base Persona、Scene Focus、Skills、Evidence、User Rules 分层 |
-| HarnessControl | 管理轮次、确认、反思、token budget、checkpoint | `harness/run.rs` | 修复死代码，补 usage fallback，子 agent 受控反思 |
-| ToolAudit | 持久化工具调用审计，带敏感信息脱敏 | `ai_traces` | 可查询、可调试、不可泄露隐私 |
+| 模块            | 职责                                                                  | 现有基础                                                    | 目标                                                         |
+| --------------- | --------------------------------------------------------------------- | ----------------------------------------------------------- | ------------------------------------------------------------ |
+| ToolCatalog     | 定义所有内置工具、访问级别、是否已实现、是否 harness-only、是否需确认 | `ToolRegistry`、`ToolSpec`、`DISPATCHABLE_TOOL_NAMES`       | 统一工具事实来源，消除工具清单不一致                         |
+| ToolPolicy      | 计算当前请求可暴露/可自动执行/需确认的工具集合                        | `scene_allowlist`、`requires_confirmation`、`AutonomyLevel` | 硬约束优先，Skills 只能做交集内扩展                          |
+| SkillRuntime    | 扫描、校验、安装、启停、匹配、渐进式加载 skills                       | `ai_runtime/skills.rs`、现有 SkillsPanel                    | 兼容 Agent Skills 规范，同时保留 Iris 元数据                 |
+| SkillActivator  | 根据用户请求、scene、history、description 匹配激活 skills             | `trigger` 简单匹配                                          | 支持 description 关键词 + 向量匹配 + 显式用户启用            |
+| PersonaResolver | 解析默认人格、用户 PromptProfile、场景侧重                            | `PromptProfile`、`ModelGateway::unified_persona`            | PromptProfile 可完全覆盖默认身份                             |
+| PromptBuilder   | 统一 harness 与 workflow 的 prompt 构建                               | `harness/context.rs`、`model_gateway.rs`                    | Base Persona、Scene Focus、Skills、Evidence、User Rules 分层 |
+| HarnessControl  | 管理轮次、确认、反思、token budget、checkpoint                        | `harness/run.rs`                                            | 修复死代码，补 usage fallback，子 agent 受控反思             |
+| ToolAudit       | 持久化工具调用审计，带敏感信息脱敏                                    | `ai_traces`                                                 | 可查询、可调试、不可泄露隐私                                 |
 
 ---
 
@@ -599,15 +599,15 @@ npm run test:e2e
 
 ## 6. 风险与缓解
 
-| 风险 | 影响 | 缓解 |
-| --- | --- | --- |
-| Skills 扩权导致安全退化 | 高 | ToolPolicy 硬约束优先，allowed-tools 只取交集 |
-| PromptBuilder 改动面大 | 高 | 先写 snapshot，再替换路径 |
-| sqlite-vec optional 导致 skill 匹配不可用 | 中 | 默认关键词匹配，sqlite-vec 仅作为增强 |
-| 旧 skill 自动迁移损坏用户文件 | 中 | 不后台静默改写，迁移需用户确认并生成备份 |
-| tool_audit 泄露敏感信息 | 高 | 只记录 summary/hash/长度，不记录正文和密钥 |
-| 前端重复造面板 | 中 | 复用现有 SkillsPanel，只新增入口和状态展示 |
-| 子 agent 反思增加成本 | 低 | 独立 budget，depth 限制，禁止递归派生 |
+| 风险                                      | 影响 | 缓解                                          |
+| ----------------------------------------- | ---- | --------------------------------------------- |
+| Skills 扩权导致安全退化                   | 高   | ToolPolicy 硬约束优先，allowed-tools 只取交集 |
+| PromptBuilder 改动面大                    | 高   | 先写 snapshot，再替换路径                     |
+| sqlite-vec optional 导致 skill 匹配不可用 | 中   | 默认关键词匹配，sqlite-vec 仅作为增强         |
+| 旧 skill 自动迁移损坏用户文件             | 中   | 不后台静默改写，迁移需用户确认并生成备份      |
+| tool_audit 泄露敏感信息                   | 高   | 只记录 summary/hash/长度，不记录正文和密钥    |
+| 前端重复造面板                            | 中   | 复用现有 SkillsPanel，只新增入口和状态展示    |
+| 子 agent 反思增加成本                     | 低   | 独立 budget，depth 限制，禁止递归派生         |
 
 ---
 

@@ -1,5 +1,12 @@
-import { AlertTriangle, Check, Edit3, X } from "lucide-react";
-import { useCallback, useState } from "react";
+import {
+  AlertTriangle,
+  Check,
+  ChevronDown,
+  ChevronUp,
+  Edit3,
+  X,
+} from "lucide-react";
+import { useCallback, useEffect, useState } from "react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -12,6 +19,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/textarea";
+import { toolAuditQuery, type ToolAuditEntry } from "@/lib/ipc";
 
 // ─── Tool Confirm Request Type ───────────────────────────
 
@@ -69,6 +77,18 @@ export function ToolConfirmDialog({
 }: ToolConfirmDialogProps) {
   const [editing, setEditing] = useState(false);
   const [modifiedArgs, setModifiedArgs] = useState("");
+  const [auditEntries, setAuditEntries] = useState<ToolAuditEntry[]>([]);
+  const [showAudit, setShowAudit] = useState(false);
+
+  useEffect(() => {
+    if (request?.request_id) {
+      toolAuditQuery(request.request_id)
+        .then(setAuditEntries)
+        .catch(() => setAuditEntries([]));
+    } else {
+      setAuditEntries([]);
+    }
+  }, [request?.request_id]);
 
   const handleApprove = useCallback(() => {
     if (!request) return;
@@ -120,6 +140,16 @@ export function ToolConfirmDialog({
     "update_user_rule",
     "create_note_from_deposit",
   ].includes(request.tool_name);
+  const baseContentHash = String(
+    request.arguments.base_content_hash ??
+      request.arguments.baseContentHash ??
+      "",
+  );
+  const riskLevel = String(request.arguments.risk_level ?? "medium");
+  const showPatchReview =
+    isWriteOperation &&
+    (request.tool_name === "insert_text_at_cursor" ||
+      request.tool_name === "replace_selection");
 
   return (
     <Dialog open={!!request} onOpenChange={() => onClose()}>
@@ -179,6 +209,24 @@ export function ToolConfirmDialog({
           </div>
 
           {/* Diff preview for text operations */}
+          {showPatchReview && (
+            <div className="rounded-md border border-border/80 bg-surface-inset p-3 text-xs">
+              <p className="mb-2 font-medium text-foreground">Patch 审阅</p>
+              <div className="space-y-1 text-muted-foreground">
+                <p>
+                  base_content_hash：
+                  <span className="font-mono text-foreground">
+                    {baseContentHash || "待执行前校验"}
+                  </span>
+                </p>
+                <p>
+                  risk_level：
+                  <span className="font-mono text-foreground">{riskLevel}</span>
+                </p>
+              </div>
+            </div>
+          )}
+
           {request.tool_name === "insert_text_at_cursor" &&
             request.arguments.text && (
               <div className="rounded-lg border border-border/80 bg-surface-inset p-3">
@@ -210,6 +258,48 @@ export function ToolConfirmDialog({
               <p className="text-xs text-amber-700">
                 此操作将修改您的笔记内容。请仔细确认后再执行。
               </p>
+            </div>
+          )}
+
+          {/* Audit history for this request */}
+          {auditEntries.length > 0 && (
+            <div className="rounded-md border border-border/60">
+              <button
+                type="button"
+                className="flex w-full items-center justify-between px-3 py-2 text-xs font-medium text-muted-foreground hover:bg-muted/50"
+                onClick={() => setShowAudit((v) => !v)}
+              >
+                <span>本次会话已执行 {auditEntries.length} 个工具调用</span>
+                {showAudit ? (
+                  <ChevronUp className="h-3.5 w-3.5" />
+                ) : (
+                  <ChevronDown className="h-3.5 w-3.5" />
+                )}
+              </button>
+              {showAudit && (
+                <div className="max-h-40 space-y-1 overflow-y-auto border-t border-border/60 px-3 py-2">
+                  {auditEntries.map((entry) => (
+                    <div
+                      key={entry.id}
+                      className="flex items-center gap-2 text-xs"
+                    >
+                      <span
+                        className={
+                          entry.success ? "text-green-600" : "text-red-500"
+                        }
+                      >
+                        {entry.success ? "✓" : "✗"}
+                      </span>
+                      <span className="font-mono">{entry.tool_name}</span>
+                      {entry.arguments_summary && (
+                        <span className="truncate text-muted-foreground">
+                          {entry.arguments_summary}
+                        </span>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           )}
         </div>

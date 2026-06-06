@@ -10,10 +10,7 @@ import {
   type LastSavedSnapshot,
 } from "@/lib/version-snapshot-scheduler";
 
-function savedSnapshot(
-  path: string,
-  markdown: string,
-): LastSavedSnapshot {
+function savedSnapshot(path: string, markdown: string): LastSavedSnapshot {
   return {
     path,
     markdown,
@@ -88,7 +85,10 @@ describe("persistInactiveDirtyTabBeforeLeave", () => {
     });
 
     expect(md).toBe("cached body");
-    expect(writeFile).toHaveBeenCalledWith("notes/background.md", "cached body");
+    expect(writeFile).toHaveBeenCalledWith(
+      "notes/background.md",
+      "cached body",
+    );
     expect(versionSaveIdle).not.toHaveBeenCalled();
   });
 

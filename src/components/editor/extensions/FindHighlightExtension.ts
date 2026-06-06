@@ -3,10 +3,7 @@ import type { Node as ProseMirrorNode } from "@tiptap/pm/model";
 import { Plugin, PluginKey } from "@tiptap/pm/state";
 import { Decoration, DecorationSet } from "@tiptap/pm/view";
 
-import {
-  findTextRangesInDoc,
-  type TextRange,
-} from "@/lib/editor-find-replace";
+import { findTextRangesInDoc, type TextRange } from "@/lib/editor-find-replace";
 
 export interface FindHighlightInput {
   query: string;

@@ -4,10 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import {
-  findTextRangesInDoc,
-  type TextRange,
-} from "@/lib/editor-find-replace";
+import { findTextRangesInDoc, type TextRange } from "@/lib/editor-find-replace";
 
 import { setFindHighlightState } from "./extensions/FindHighlightExtension";
 
@@ -19,7 +16,10 @@ export interface EditorFindReplaceBarProps {
   onModeChange?: (mode: "find" | "replace") => void;
 }
 
-function currentRange(ranges: TextRange[], currentIndex: number): TextRange | null {
+function currentRange(
+  ranges: TextRange[],
+  currentIndex: number,
+): TextRange | null {
   if (ranges.length === 0) return null;
   return ranges[Math.min(Math.max(currentIndex, 0), ranges.length - 1)] ?? null;
 }
@@ -78,7 +78,9 @@ export function EditorFindReplaceBar({
   const go = useCallback(
     (direction: 1 | -1) => {
       if (ranges.length === 0) return;
-      setCurrentIndex((index) => (index + direction + ranges.length) % ranges.length);
+      setCurrentIndex(
+        (index) => (index + direction + ranges.length) % ranges.length,
+      );
     },
     [ranges.length],
   );
@@ -162,7 +164,12 @@ export function EditorFindReplaceBar({
             placeholder="替换为"
             className="h-8 w-48"
           />
-          <Button type="button" size="sm" variant="outline" onClick={replaceCurrent}>
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            onClick={replaceCurrent}
+          >
             替换
           </Button>
           <Button

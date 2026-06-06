@@ -9,6 +9,7 @@ use crate::app::AppState;
 use crate::error::AppResult;
 
 use super::types::HarnessRunInput;
+use super::UsageSource;
 
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn save_round_checkpoint(
@@ -22,6 +23,7 @@ pub(crate) fn save_round_checkpoint(
     tool_results: &[serde_json::Value],
     evidence_packets: &[ContextPacket],
     usage: &TokenUsage,
+    usage_source: UsageSource,
 ) -> AppResult<()> {
     let checkpoint = HarnessCheckpoint {
         meta: meta.clone(),
@@ -31,6 +33,7 @@ pub(crate) fn save_round_checkpoint(
         tool_results: tool_results.to_vec(),
         evidence_packets: evidence_packets.to_vec(),
         usage: usage.clone(),
+        usage_source,
         bonus_round_used,
     };
     save_harness_checkpoint(&state.db, &input.request_id, &checkpoint)

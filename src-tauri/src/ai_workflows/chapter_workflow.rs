@@ -329,11 +329,13 @@ pub async fn generate_chapter_content_with_llm(
         db,
         crate::ai_runtime::AiScene::DraftingAssist,
     )?;
-    let system = crate::ai_runtime::model_gateway::ModelGateway::build_system_prompt(
+    let profile = crate::ai_runtime::prompt_profile::PromptProfile::load(db).unwrap_or_default();
+    let system = crate::ai_runtime::model_gateway::ModelGateway::build_system_prompt_with_profile(
         crate::ai_runtime::AiScene::DraftingAssist,
         evidence,
         &rules,
         false,
+        &profile,
     );
 
     let evidence_block = evidence

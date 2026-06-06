@@ -14,7 +14,7 @@ use crate::error::{AppError, AppResult};
 use crate::storage::db::Database;
 use crate::watcher::FileWatcher;
 
-use crate::ai_types::AiScene;
+use crate::ai_types::{AiScene, AutonomyLevel};
 
 #[derive(Debug, Clone)]
 pub struct PendingToolCall {
@@ -25,6 +25,8 @@ pub struct PendingToolCall {
     pub note_path: Option<String>,
     pub file_id: Option<i64>,
     pub web_search_enabled: bool,
+    pub autonomy_level: AutonomyLevel,
+    pub skill_allowed_tools: Vec<String>,
 }
 
 // ─── Sub-state: Storage ──────────────────────────────────

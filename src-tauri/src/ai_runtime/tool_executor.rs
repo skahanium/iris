@@ -7,7 +7,9 @@
 
 use std::time::Instant;
 
+use crate::ai_runtime::tool_catalog::{ToolImplementationStatus, TOOL_CATALOG};
 use crate::ai_runtime::tool_dispatch::is_exposable_tool;
+use crate::ai_runtime::tool_policy::{self, DenialReason, ToolPolicyContext, ToolPolicyVerdict};
 use crate::ai_runtime::{AiScene, AutonomyLevel, ToolAccessLevel, ToolCallResult, ToolSpec};
 use crate::error::AppResult;
 
@@ -45,24 +47,33 @@ impl ToolRegistry {
 
     /// Tools exposed to the model: scene allowlist + dispatch/harness handler + runtime filters.
     pub fn tools_for_surface(&self, scene: AiScene, filter: ToolSurfaceFilter) -> Vec<ToolSpec> {
-        self.for_scene(scene)
-            .into_iter()
+        let ctx = ToolPolicyContext {
+            scene,
+            autonomy_level: crate::ai_runtime::resolve_scene(scene).autonomy_level,
+            web_search_enabled: filter.web_search_enabled,
+            skill_allowed_tools: vec![],
+            depth: filter.depth,
+        };
+        self.tools_for_policy_surface(&ctx, filter.only_auto)
+    }
+
+    /// Tools exposed to the model after evaluating the full ToolPolicy.
+    pub fn tools_for_policy_surface(
+        &self,
+        ctx: &ToolPolicyContext,
+        only_auto: bool,
+    ) -> Vec<ToolSpec> {
+        self.tools
+            .iter()
             .filter(|t| is_exposable_tool(&t.name))
             .filter(|t| {
-                if filter.web_search_enabled {
-                    true
-                } else {
-                    t.name != "web_search" && t.name != "fetch_web_page"
+                let verdict = tool_policy::evaluate_tool(&t.name, ctx);
+                match verdict {
+                    ToolPolicyVerdict::AutoAllowed => true,
+                    ToolPolicyVerdict::RequiresConfirmation => !only_auto,
+                    ToolPolicyVerdict::Denied(_) => false,
                 }
             })
-            .filter(|t| {
-                if filter.depth >= 2 {
-                    t.name != "spawn_subagent"
-                } else {
-                    true
-                }
-            })
-            .filter(|t| !filter.only_auto || !t.requires_confirmation)
             .cloned()
             .collect()
     }
@@ -124,371 +135,42 @@ impl ToolRegistry {
         })
     }
 
+    /// Check tool permission using the new policy engine (Phase 2).
+    ///
+    /// Returns `Ok(())` if the tool is allowed (auto or confirmation-required),
+    /// and `Err(...)` if it's denied by the policy.
+    pub fn check_tool_policy(
+        &self,
+        tool_name: &str,
+        ctx: &ToolPolicyContext,
+    ) -> Result<(), ToolPolicyDeniedError> {
+        match tool_policy::evaluate_tool(tool_name, ctx) {
+            ToolPolicyVerdict::AutoAllowed | ToolPolicyVerdict::RequiresConfirmation => Ok(()),
+            ToolPolicyVerdict::Denied(reason) => Err(ToolPolicyDeniedError {
+                tool: tool_name.to_string(),
+                reason,
+            }),
+        }
+    }
+
     // ─── private ─────────────────────────────────────
 
+    /// Build tool list from the global `TOOL_CATALOG` (single source of truth).
     fn builtin_tools() -> Vec<ToolSpec> {
-        vec![
-            // ─── 只读查询 ───
-            ToolSpec {
-                name: "search_hybrid".into(),
-                description: "混合搜索：FTS + 向量 + 分数融合，搜索知识库中与查询相关的内容".into(),
-                input_schema: serde_json::json!({
-                    "type": "object",
-                    "properties": {
-                        "query": {"type": "string", "description": "搜索查询"}
-                    },
-                    "required": ["query"]
-                }),
-                access_level: ToolAccessLevel::ReadIndex,
-                scene_allowlist: vec![
-                    AiScene::KnowledgeLookup,
-                    AiScene::ExemplarLearning,
-                    AiScene::DraftingAssist,
-                    AiScene::ResearchSynthesis,
-                ],
-                requires_confirmation: false,
-                max_results: Some(20),
-            },
-            ToolSpec {
-                name: "search_semantic".into(),
-                description: "语义搜索知识库，查找与查询语义相似的笔记片段".into(),
-                input_schema: serde_json::json!({
-                    "type": "object",
-                    "properties": {
-                        "query": {"type": "string"},
-                        "limit": {"type": "integer", "default": 10}
-                    },
-                    "required": ["query"]
-                }),
-                access_level: ToolAccessLevel::ReadIndex,
-                scene_allowlist: vec![],
-                requires_confirmation: false,
-                max_results: Some(20),
-            },
-            ToolSpec {
-                name: "search_keyword".into(),
-                description: "关键词全文搜索，精确匹配特定术语或短语".into(),
-                input_schema: serde_json::json!({
-                    "type": "object",
-                    "properties": {
-                        "query": {"type": "string"},
-                        "limit": {"type": "integer", "default": 10}
-                    },
-                    "required": ["query"]
-                }),
-                access_level: ToolAccessLevel::ReadIndex,
-                scene_allowlist: vec![],
-                requires_confirmation: false,
-                max_results: Some(20),
-            },
-            ToolSpec {
-                name: "get_regulation".into(),
-                description: "根据法规名称和条款号获取精确条款原文".into(),
-                input_schema: serde_json::json!({
-                    "type": "object",
-                    "properties": {
-                        "regulation_name": {"type": "string", "description": "法规名称"},
-                        "article": {"type": "string", "description": "条号，如'第六条'"},
-                        "paragraph": {"type": "string", "description": "款号，如'第一款'"}
-                    },
-                    "required": ["regulation_name", "article"]
-                }),
-                access_level: ToolAccessLevel::ReadNoteSpan,
-                scene_allowlist: vec![
-                    AiScene::KnowledgeLookup,
-                    AiScene::DraftingAssist,
-                    AiScene::ResearchSynthesis,
-                ],
-                requires_confirmation: false,
-                max_results: Some(1),
-            },
-            ToolSpec {
-                name: "get_context_packets".into(),
-                description: "返回当前会话已组装的证据包列表".into(),
-                input_schema: serde_json::json!({
-                    "type": "object",
-                    "properties": {}
-                }),
-                access_level: ToolAccessLevel::ReadIndex,
-                scene_allowlist: vec![],
-                requires_confirmation: false,
-                max_results: None,
-            },
-            ToolSpec {
-                name: "get_block_links".into(),
-                description: "获取笔记的显式或已确认块级链接".into(),
-                input_schema: serde_json::json!({
-                    "type": "object",
-                    "properties": {
-                        "note_path": {"type": "string"}
-                    },
-                    "required": ["note_path"]
-                }),
-                access_level: ToolAccessLevel::ReadIndex,
-                scene_allowlist: vec![AiScene::KnowledgeLookup, AiScene::ResearchSynthesis],
-                requires_confirmation: false,
-                max_results: Some(50),
-            },
-            ToolSpec {
-                name: "web_search".into(),
-                description:
-                    "联网搜索实时信息；无需确认，直接调用。结果应与本地检索证据交叉引用、相互印证。"
-                        .into(),
-                input_schema: serde_json::json!({
-                    "type": "object",
-                    "properties": {
-                        "query": {"type": "string", "description": "搜索查询"}
-                    },
-                    "required": ["query"]
-                }),
-                access_level: ToolAccessLevel::Network,
-                scene_allowlist: vec![
-                    AiScene::KnowledgeLookup,
-                    AiScene::DraftingAssist,
-                    AiScene::ResearchSynthesis,
-                ],
-                requires_confirmation: false,
-                max_results: Some(8),
-            },
-            ToolSpec {
-                name: "fetch_web_page".into(),
-                description: "打开单个 HTTPS 网页并提取正文片段（需用户确认）。\
-                    仅在 web_search 或本地检索已给出 URL 且摘要不足时使用；\
-                    每轮最多 1～2 次，禁止批量爬取。"
-                    .into(),
-                input_schema: serde_json::json!({
-                    "type": "object",
-                    "properties": {
-                        "url": {"type": "string", "description": "HTTPS 页面 URL"},
-                        "max_chars": {"type": "integer", "description": "最大正文字符数，默认 24000"},
-                        "reason": {"type": "string", "description": "抓取原因（供用户确认）"}
-                    },
-                    "required": ["url"]
-                }),
-                access_level: ToolAccessLevel::Network,
-                scene_allowlist: vec![
-                    AiScene::KnowledgeLookup,
-                    AiScene::DraftingAssist,
-                    AiScene::ResearchSynthesis,
-                ],
-                requires_confirmation: true,
-                max_results: Some(2),
-            },
-            ToolSpec {
-                name: "read_note".into(),
-                description: "读取指定笔记的 Markdown 全文（可截断）".into(),
-                input_schema: serde_json::json!({
-                    "type": "object",
-                    "properties": {
-                        "path": {"type": "string"},
-                        "max_chars": {"type": "integer", "default": 12000}
-                    },
-                    "required": ["path"]
-                }),
-                access_level: ToolAccessLevel::ReadNoteSpan,
-                scene_allowlist: vec![],
-                requires_confirmation: false,
-                max_results: None,
-            },
-            ToolSpec {
-                name: "list_vault".into(),
-                description: "列出知识库中的笔记路径与标题".into(),
-                input_schema: serde_json::json!({
-                    "type": "object",
-                    "properties": {
-                        "prefix": {"type": "string", "description": "路径前缀过滤"},
-                        "limit": {"type": "integer", "default": 50}
-                    }
-                }),
-                access_level: ToolAccessLevel::ReadIndex,
-                scene_allowlist: vec![],
-                requires_confirmation: false,
-                max_results: Some(100),
-            },
-            ToolSpec {
-                name: "get_outline".into(),
-                description: "提取笔记的标题大纲（Markdown 标题层级）".into(),
-                input_schema: serde_json::json!({
-                    "type": "object",
-                    "properties": {
-                        "path": {"type": "string"}
-                    },
-                    "required": ["path"]
-                }),
-                access_level: ToolAccessLevel::ReadNoteSpan,
-                scene_allowlist: vec![],
-                requires_confirmation: false,
-                max_results: None,
-            },
-            ToolSpec {
-                name: "get_backlinks".into(),
-                description: "获取链接到指定笔记的反向链接".into(),
-                input_schema: serde_json::json!({
-                    "type": "object",
-                    "properties": {
-                        "path": {"type": "string"}
-                    },
-                    "required": ["path"]
-                }),
-                access_level: ToolAccessLevel::ReadIndex,
-                scene_allowlist: vec![],
-                requires_confirmation: false,
-                max_results: Some(50),
-            },
-            // ─── 写入操作 (均需确认) ───
-            ToolSpec {
-                name: "insert_text_at_cursor".into(),
-                description: "在编辑器光标位置插入文本".into(),
-                input_schema: serde_json::json!({
-                    "type": "object",
-                    "properties": {
-                        "text": {"type": "string", "description": "要插入的文本"}
-                    },
-                    "required": ["text"]
-                }),
-                access_level: ToolAccessLevel::WriteMarkdown,
-                scene_allowlist: vec![AiScene::DraftingAssist],
-                requires_confirmation: true,
-                max_results: None,
-            },
-            ToolSpec {
-                name: "replace_selection".into(),
-                description: "替换编辑器当前选中文本".into(),
-                input_schema: serde_json::json!({
-                    "type": "object",
-                    "properties": {
-                        "replacement": {"type": "string", "description": "替换文本"}
-                    },
-                    "required": ["replacement"]
-                }),
-                access_level: ToolAccessLevel::WriteMarkdown,
-                scene_allowlist: vec![AiScene::DraftingAssist],
-                requires_confirmation: true,
-                max_results: None,
-            },
-            ToolSpec {
-                name: "add_tags".into(),
-                description: "为笔记添加标签（修改 frontmatter 或正文标签）".into(),
-                input_schema: serde_json::json!({
-                    "type": "object",
-                    "properties": {
-                        "note_path": {"type": "string"},
-                        "tags": {"type": "array", "items": {"type": "string"}}
-                    },
-                    "required": ["note_path", "tags"]
-                }),
-                access_level: ToolAccessLevel::WriteMarkdown,
-                scene_allowlist: vec![AiScene::ExemplarLearning],
-                requires_confirmation: true,
-                max_results: None,
-            },
-            ToolSpec {
-                name: "confirm_block_link".into(),
-                description: "确认一条 AI 建议的隐含块级链接".into(),
-                input_schema: serde_json::json!({
-                    "type": "object",
-                    "properties": {
-                        "link_id": {"type": "integer"}
-                    },
-                    "required": ["link_id"]
-                }),
-                access_level: ToolAccessLevel::WriteCache,
-                scene_allowlist: vec![AiScene::ExemplarLearning],
-                requires_confirmation: true,
-                max_results: None,
-            },
-            ToolSpec {
-                name: "save_genre_template".into(),
-                description: "保存或更新文种模板".into(),
-                input_schema: serde_json::json!({
-                    "type": "object",
-                    "properties": {
-                        "genre": {"type": "string"},
-                        "structure": {"type": "object"}
-                    },
-                    "required": ["genre", "structure"]
-                }),
-                access_level: ToolAccessLevel::WriteCache,
-                scene_allowlist: vec![AiScene::ExemplarLearning],
-                requires_confirmation: true,
-                max_results: None,
-            },
-            ToolSpec {
-                name: "update_user_rule".into(),
-                description: "添加或更新用户长期规则".into(),
-                input_schema: serde_json::json!({
-                    "type": "object",
-                    "properties": {
-                        "rule": {"type": "string", "description": "规则内容"},
-                        "rule_type": {"type": "string", "enum": ["output_format", "citation_style", "tone", "tool_preference", "agent_behavior"]}
-                    },
-                    "required": ["rule", "rule_type"]
-                }),
-                access_level: ToolAccessLevel::WriteSettings,
-                scene_allowlist: vec![],
-                requires_confirmation: true,
-                max_results: None,
-            },
-            ToolSpec {
-                name: "conclude_reasoning".into(),
-                description:
-                    "当你认为已收集到足够信息、可以回答用户问题时调用，结束工具循环并生成最终回答。"
-                        .into(),
-                input_schema: serde_json::json!({
-                    "type": "object",
-                    "properties": {
-                        "summary": {"type": "string", "description": "简要说明为何可以结束"}
-                    }
-                }),
-                access_level: ToolAccessLevel::ReadIndex,
-                scene_allowlist: vec![
-                    AiScene::KnowledgeLookup,
-                    AiScene::ExemplarLearning,
-                    AiScene::DraftingAssist,
-                    AiScene::ResearchSynthesis,
-                ],
-                requires_confirmation: false,
-                max_results: None,
-            },
-            ToolSpec {
-                name: "spawn_subagent".into(),
-                description: "将子任务委派给独立 agent 并行执行。适用于多角度检索、子问题分解。"
-                    .into(),
-                input_schema: serde_json::json!({
-                    "type": "object",
-                    "properties": {
-                        "task": {"type": "string", "description": "子任务完整描述"},
-                        "context_hint": {"type": "string", "description": "可选额外上下文"},
-                        "max_rounds": {"type": "integer", "description": "子任务最大轮次", "default": 2}
-                    },
-                    "required": ["task"]
-                }),
-                access_level: ToolAccessLevel::ReadIndex,
-                scene_allowlist: vec![
-                    AiScene::KnowledgeLookup,
-                    AiScene::DraftingAssist,
-                    AiScene::ResearchSynthesis,
-                ],
-                requires_confirmation: false,
-                max_results: None,
-            },
-            ToolSpec {
-                name: "create_note_from_deposit".into(),
-                description: "从 AI 收件箱创建新 .md 笔记".into(),
-                input_schema: serde_json::json!({
-                    "type": "object",
-                    "properties": {
-                        "deposit_id": {"type": "integer"},
-                        "target_path": {"type": "string"}
-                    },
-                    "required": ["deposit_id", "target_path"]
-                }),
-                access_level: ToolAccessLevel::WriteMarkdown,
-                scene_allowlist: vec![],
-                requires_confirmation: true,
-                max_results: None,
-            },
-        ]
+        TOOL_CATALOG
+            .iter()
+            .filter(|e| e.implementation != ToolImplementationStatus::Planned)
+            .map(|entry| ToolSpec {
+                name: entry.name.to_string(),
+                description: entry.description.to_string(),
+                input_schema: entry.input_schema.clone(),
+                access_level: entry.access_level,
+                scene_allowlist: entry.scene_affinity.to_vec(),
+                requires_confirmation: entry.requires_confirmation,
+                max_results: entry.max_results,
+                scene_affinity: entry.scene_affinity.to_vec(),
+            })
+            .collect()
     }
 }
 
@@ -549,6 +231,14 @@ pub enum ToolPermissionError {
         required: AutonomyLevel,
         current: AutonomyLevel,
     },
+}
+
+/// Error from the new policy engine (Phase 2).
+#[derive(Debug, Clone, thiserror::Error)]
+#[error("tool '{tool}' denied by policy: {reason:?}")]
+pub struct ToolPolicyDeniedError {
+    pub tool: String,
+    pub reason: DenialReason,
 }
 
 // ─── Tests ───────────────────────────────────────────────
@@ -630,12 +320,13 @@ mod tests {
     }
 
     #[test]
-    fn tools_for_surface_excludes_unimplemented_write_tools() {
+    fn tools_for_surface_includes_confirmation_gated_write_tools() {
         let reg = ToolRegistry::new();
         let tools = reg.tools_for_surface(AiScene::DraftingAssist, ToolSurfaceFilter::default());
         let names: Vec<&str> = tools.iter().map(|t| t.name.as_str()).collect();
-        assert!(!names.contains(&"insert_text_at_cursor"));
-        assert!(!names.contains(&"replace_selection"));
+        // Write tools are exposed in drafting mode, but the harness pauses for confirmation.
+        assert!(names.contains(&"insert_text_at_cursor"));
+        assert!(names.contains(&"replace_selection"));
         assert!(names.contains(&"search_hybrid"));
     }
 
@@ -652,6 +343,41 @@ mod tests {
         let names: Vec<&str> = tools.iter().map(|t| t.name.as_str()).collect();
         assert!(!names.contains(&"web_search"));
         assert!(!names.contains(&"fetch_web_page"));
+    }
+
+    #[test]
+    fn policy_surface_uses_tool_policy_context() {
+        let reg = ToolRegistry::new();
+        let ctx = ToolPolicyContext {
+            scene: AiScene::KnowledgeLookup,
+            autonomy_level: AutonomyLevel::L1,
+            web_search_enabled: true,
+            skill_allowed_tools: vec![],
+            depth: 0,
+        };
+        let tools = reg.tools_for_policy_surface(&ctx, false);
+        let names: Vec<&str> = tools.iter().map(|t| t.name.as_str()).collect();
+
+        assert!(names.contains(&"search_hybrid"));
+        assert!(!names.contains(&"web_search"));
+        assert!(!names.contains(&"fetch_web_page"));
+    }
+
+    #[test]
+    fn policy_surface_intersects_skill_allowed_tools() {
+        let reg = ToolRegistry::new();
+        let ctx = ToolPolicyContext {
+            scene: AiScene::DraftingAssist,
+            autonomy_level: AutonomyLevel::L2,
+            web_search_enabled: true,
+            skill_allowed_tools: vec!["insert_text_at_cursor".to_string()],
+            depth: 0,
+        };
+        let tools = reg.tools_for_policy_surface(&ctx, false);
+        let names: Vec<&str> = tools.iter().map(|t| t.name.as_str()).collect();
+
+        assert!(names.contains(&"insert_text_at_cursor"));
+        assert!(!names.contains(&"replace_selection"));
     }
 
     #[test]
@@ -681,6 +407,99 @@ mod tests {
                     );
                 }
             }
+        }
+    }
+
+    // ── Policy integration tests ──────────────────────────
+
+    #[test]
+    fn policy_allows_read_tool_in_knowledge() {
+        let reg = ToolRegistry::new();
+        let ctx = ToolPolicyContext {
+            scene: AiScene::KnowledgeLookup,
+            autonomy_level: AutonomyLevel::L2,
+            web_search_enabled: true,
+            skill_allowed_tools: vec![],
+            depth: 0,
+        };
+        assert!(reg.check_tool_policy("search_hybrid", &ctx).is_ok());
+        assert!(reg.check_tool_policy("read_note", &ctx).is_ok());
+    }
+
+    #[test]
+    fn policy_denies_write_tool_in_knowledge() {
+        let reg = ToolRegistry::new();
+        let ctx = ToolPolicyContext {
+            scene: AiScene::KnowledgeLookup,
+            autonomy_level: AutonomyLevel::L2,
+            web_search_enabled: true,
+            skill_allowed_tools: vec![],
+            depth: 0,
+        };
+        assert!(reg
+            .check_tool_policy("insert_text_at_cursor", &ctx)
+            .is_err());
+    }
+
+    #[test]
+    fn policy_allows_write_tool_in_drafting() {
+        let reg = ToolRegistry::new();
+        let ctx = ToolPolicyContext {
+            scene: AiScene::DraftingAssist,
+            autonomy_level: AutonomyLevel::L2,
+            web_search_enabled: true,
+            skill_allowed_tools: vec![],
+            depth: 0,
+        };
+        assert!(reg.check_tool_policy("insert_text_at_cursor", &ctx).is_ok());
+    }
+
+    #[test]
+    fn policy_denies_write_at_l1() {
+        let reg = ToolRegistry::new();
+        let ctx = ToolPolicyContext {
+            scene: AiScene::DraftingAssist,
+            autonomy_level: AutonomyLevel::L1,
+            web_search_enabled: true,
+            skill_allowed_tools: vec![],
+            depth: 0,
+        };
+        assert!(reg
+            .check_tool_policy("insert_text_at_cursor", &ctx)
+            .is_err());
+    }
+
+    #[test]
+    fn policy_registry_count_matches_catalog() {
+        let reg = ToolRegistry::new();
+        // Registry should have all non-planned tools from catalog
+        let catalog_count = TOOL_CATALOG
+            .iter()
+            .filter(|e| e.implementation != ToolImplementationStatus::Planned)
+            .count();
+        assert_eq!(
+            reg.tools.len(),
+            catalog_count,
+            "registry count should match catalog non-planned count"
+        );
+    }
+
+    #[test]
+    fn catalog_and_registry_agree_on_tools() {
+        let reg = ToolRegistry::new();
+        for entry in TOOL_CATALOG.iter() {
+            if entry.implementation == ToolImplementationStatus::Planned {
+                continue;
+            }
+            let spec = reg.find(entry.name);
+            assert!(
+                spec.is_some(),
+                "catalog tool '{}' not found in registry",
+                entry.name
+            );
+            let spec = spec.unwrap();
+            assert_eq!(spec.requires_confirmation, entry.requires_confirmation);
+            assert_eq!(spec.access_level, entry.access_level);
         }
     }
 }

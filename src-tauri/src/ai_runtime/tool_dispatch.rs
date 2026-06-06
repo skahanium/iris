@@ -21,7 +21,9 @@ pub const HARNESS_ONLY_TOOL_NAMES: &[&str] = &["spawn_subagent", "conclude_reaso
 
 /// Whether the tool may be exposed to the model (has handler or harness branch).
 pub fn is_exposable_tool(name: &str) -> bool {
-    DISPATCHABLE_TOOL_NAMES.contains(&name) || HARNESS_ONLY_TOOL_NAMES.contains(&name)
+    crate::ai_runtime::tool_catalog::catalog_find(name).is_some_and(|entry| {
+        entry.implementation != crate::ai_runtime::tool_catalog::ToolImplementationStatus::Planned
+    })
 }
 
 use std::path::Path;
@@ -29,10 +31,14 @@ use std::time::Instant;
 
 use crate::ai_runtime::retrieval_broker::{RetrievalLayers, RetrievalRequest};
 use crate::ai_runtime::retrieval_scope::RetrievalScope;
-use crate::ai_runtime::{AiScene, ContextPacket, ToolCallResult};
+use crate::ai_runtime::{
+    AiScene, ContextPacket, PatchApplyResult, PatchProposal, RiskLevel, SourceSpan, ToolCallResult,
+};
 use crate::app::AppState;
 use crate::error::{AppError, AppResult};
-use crate::storage::paths::{is_user_note_path, resolve_vault_path};
+use crate::storage::paths::{
+    is_user_note_path, resolve_vault_path, validate_user_note_relative_path,
+};
 
 /// Context passed into tool dispatch.
 pub struct ToolDispatchContext<'a> {
@@ -122,7 +128,168 @@ async fn dispatch_tool_inner(
         "get_outline" => get_outline(state, args).await,
         "get_backlinks" => get_backlinks(state, args).await,
         "get_block_links" => get_block_links(state, args).await,
+        "insert_text_at_cursor" | "replace_selection" => {
+            markdown_write_patch_apply(state, ctx, tool_name, args)
+        }
         _ => Err(AppError::msg(format!("unknown tool: {tool_name}"))),
+    }
+}
+
+fn markdown_write_patch_apply(
+    state: &AppState,
+    ctx: &ToolDispatchContext<'_>,
+    tool_name: &str,
+    args: &serde_json::Value,
+) -> AppResult<serde_json::Value> {
+    let Some(target_path) = args
+        .get("target_path")
+        .and_then(|v| v.as_str())
+        .or(ctx.note_path)
+        .map(str::to_string)
+    else {
+        return Ok(markdown_write_not_applied(
+            tool_name,
+            "missing target_path",
+            args,
+        ));
+    };
+    if !is_user_note_path(&target_path) {
+        return Ok(markdown_write_not_applied(
+            tool_name,
+            "只能修改用户笔记",
+            args,
+        ));
+    }
+    let Some(base_content_hash) = args
+        .get("base_content_hash")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.trim().is_empty())
+    else {
+        return Ok(markdown_write_not_applied(
+            tool_name,
+            "missing base_content_hash",
+            args,
+        ));
+    };
+    let Some(range) = parse_source_span(args.get("range")) else {
+        return Ok(markdown_write_not_applied(tool_name, "missing range", args));
+    };
+    let replacement_key = if tool_name == "insert_text_at_cursor" {
+        "text"
+    } else {
+        "replacement"
+    };
+    let replacement = args[replacement_key]
+        .as_str()
+        .ok_or_else(|| AppError::msg(format!("missing {replacement_key}")))?;
+    let original_text = args
+        .get("original_text")
+        .and_then(|v| v.as_str())
+        .or_else(|| args.get("selection").and_then(|v| v.as_str()))
+        .unwrap_or("");
+    let patch = PatchProposal {
+        id: uuid::Uuid::new_v4().to_string(),
+        target_path: target_path.clone(),
+        base_content_hash: base_content_hash.to_string(),
+        range,
+        original_text: original_text.to_string(),
+        replacement_text: replacement.to_string(),
+        evidence_packet_ids: vec![],
+        risk_level: parse_risk_level(args.get("risk_level")),
+        warnings: vec![],
+        created_at: chrono::Utc::now().format("%Y-%m-%dT%H:%M:%S").to_string(),
+    };
+    let vault = state.vault_path()?;
+    let abs = resolve_vault_path(&vault, &target_path)?;
+    let current = std::fs::read_to_string(&abs)?;
+    let applied = match crate::ai_runtime::writing_workflow::apply_patch(&patch, &current) {
+        Ok(content) => content,
+        Err(e) => {
+            let result = PatchApplyResult {
+                success: false,
+                new_content_hash: None,
+                error: Some(e.to_string()),
+                warnings: vec![],
+            };
+            return Ok(serde_json::json!({
+                "type": "patch_apply",
+                "tool_name": tool_name,
+                "target_path": target_path,
+                "patch_id": patch.id,
+                "result": result,
+            }));
+        }
+    };
+    let tmp = abs.with_extension("md.tmp");
+    std::fs::write(&tmp, &applied)?;
+    if let Err(e) = std::fs::rename(&tmp, &abs) {
+        let _ = crate::security::secure_delete::secure_delete(&tmp);
+        return Err(e.into());
+    }
+    let hash = crate::ai_runtime::writing_workflow::compute_content_hash(&applied);
+    state.write_guard.mark(&target_path, &hash);
+    let entry = state.db.with_conn(|conn| {
+        crate::indexer::scan::index_file_from_content(conn, &vault, &abs, &applied, &hash, None)
+    })?;
+    let result = PatchApplyResult {
+        success: true,
+        new_content_hash: Some(hash),
+        error: None,
+        warnings: vec![format!(
+            "已写入「{}」，共 {} 字",
+            entry.title, entry.word_count
+        )],
+    };
+    Ok(serde_json::json!({
+        "type": "patch_apply",
+        "tool_name": tool_name,
+        "target_path": target_path,
+        "patch_id": patch.id,
+        "result": result,
+    }))
+}
+
+fn markdown_write_not_applied(
+    tool_name: &str,
+    reason: &str,
+    args: &serde_json::Value,
+) -> serde_json::Value {
+    let replacement_key = if tool_name == "insert_text_at_cursor" {
+        "text"
+    } else {
+        "replacement"
+    };
+    let replacement_len = args
+        .get(replacement_key)
+        .and_then(|v| v.as_str())
+        .map(|s| s.chars().count())
+        .unwrap_or(0);
+    serde_json::json!({
+        "type": "patch_apply",
+        "tool_name": tool_name,
+        "replacement_len": replacement_len,
+        "result": PatchApplyResult {
+            success: false,
+            new_content_hash: None,
+            error: Some(reason.to_string()),
+            warnings: vec![],
+        },
+    })
+}
+
+fn parse_source_span(value: Option<&serde_json::Value>) -> Option<SourceSpan> {
+    let value = value?;
+    Some(SourceSpan {
+        start: value.get("start")?.as_u64()? as usize,
+        end: value.get("end")?.as_u64()? as usize,
+    })
+}
+
+fn parse_risk_level(value: Option<&serde_json::Value>) -> RiskLevel {
+    match value.and_then(|v| v.as_str()) {
+        Some("high") => RiskLevel::High,
+        Some("medium") => RiskLevel::Medium,
+        _ => RiskLevel::Low,
     }
 }
 
@@ -260,11 +427,8 @@ async fn read_note(state: &AppState, args: &serde_json::Value) -> AppResult<serd
     let path = args["path"]
         .as_str()
         .ok_or_else(|| AppError::msg("missing path"))?;
-    if !is_user_note_path(path) {
-        return Err(AppError::msg("只能读取用户笔记，不允许访问内部元数据路径"));
-    }
     let vault = state.vault_path()?;
-    let abs = resolve_vault_path(&vault, path)?;
+    let abs = validate_user_note_relative_path(&vault, path)?;
     let content = std::fs::read_to_string(abs)?;
     let max_chars = args["max_chars"].as_u64().unwrap_or(12_000) as usize;
     let truncated = content.chars().count() > max_chars;
@@ -304,11 +468,8 @@ async fn get_outline(state: &AppState, args: &serde_json::Value) -> AppResult<se
     let path = args["path"]
         .as_str()
         .ok_or_else(|| AppError::msg("missing path"))?;
-    if !is_user_note_path(path) {
-        return Err(AppError::msg("只能读取用户笔记，不允许访问内部元数据路径"));
-    }
     let vault = state.vault_path()?;
-    let abs = resolve_vault_path(&vault, path)?;
+    let abs = validate_user_note_relative_path(&vault, path)?;
     let content = std::fs::read_to_string(abs)?;
     let headings: Vec<serde_json::Value> = content
         .lines()
@@ -391,4 +552,177 @@ async fn get_block_links(
         Ok(rows.flatten().collect::<Vec<_>>())
     })?;
     Ok(serde_json::json!({ "links": links }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::app::AppState;
+    use std::sync::Arc;
+
+    fn test_state() -> (Arc<AppState>, tempfile::TempDir) {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = dir.path().join("vault");
+        std::fs::create_dir_all(&vault).unwrap();
+        let notes = vault.join("notes");
+        std::fs::create_dir_all(&notes).unwrap();
+        std::fs::write(notes.join("test.md"), "# Test\nHello world").unwrap();
+        let state = AppState::new(dir.path().to_path_buf()).unwrap();
+        state.set_vault(vault).unwrap();
+        (state, dir)
+    }
+
+    #[tokio::test]
+    async fn read_note_rejects_parent_dir_traversal() {
+        let (state, _dir) = test_state();
+        let args = serde_json::json!({ "path": "../../etc/passwd" });
+        let result = read_note(&state, &args).await;
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("traversal") || err.contains("元数据"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn read_note_rejects_iris_metadata() {
+        let (state, _dir) = test_state();
+        let args = serde_json::json!({ "path": ".iris/versions/1/test.md" });
+        let result = read_note(&state, &args).await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("元数据"));
+    }
+
+    #[tokio::test]
+    async fn read_note_accepts_valid_path() {
+        let (state, _dir) = test_state();
+        let args = serde_json::json!({ "path": "notes/test.md" });
+        let result = read_note(&state, &args).await;
+        assert!(result.is_ok());
+        let val = result.unwrap();
+        assert_eq!(val["path"], "notes/test.md");
+        assert_eq!(val["content"], "# Test\nHello world");
+    }
+
+    #[tokio::test]
+    async fn get_outline_rejects_iris_metadata() {
+        let (state, _dir) = test_state();
+        let args = serde_json::json!({ "path": ".iris/skills/my-skill/SKILL.md" });
+        let result = get_outline(&state, &args).await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("元数据"));
+    }
+
+    #[tokio::test]
+    async fn get_backlinks_rejects_iris_metadata() {
+        let (state, _dir) = test_state();
+        let args = serde_json::json!({ "path": ".iris/versions/x.md" });
+        let result = get_backlinks(&state, &args).await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("元数据"));
+    }
+
+    #[tokio::test]
+    async fn get_backlinks_rejects_parent_dir() {
+        let (state, _dir) = test_state();
+        let args = serde_json::json!({ "path": "../secret.md" });
+        let result = get_backlinks(&state, &args).await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("traversal"));
+    }
+
+    #[tokio::test]
+    async fn get_block_links_rejects_parent_dir() {
+        let (state, _dir) = test_state();
+        let args = serde_json::json!({ "note_path": "../note.md" });
+        let result = get_block_links(&state, &args).await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("traversal"));
+    }
+
+    #[tokio::test]
+    async fn get_block_links_rejects_iris_metadata() {
+        let (state, _dir) = test_state();
+        let args = serde_json::json!({ "note_path": ".iris/versions/x.md" });
+        let result = get_block_links(&state, &args).await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("元数据"));
+    }
+
+    #[tokio::test]
+    async fn read_note_rejects_absolute_path() {
+        let (state, _dir) = test_state();
+        let args = serde_json::json!({ "path": "/etc/passwd" });
+        let result = read_note(&state, &args).await;
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn write_tool_approval_applies_patch_with_cas() {
+        let (state, _dir) = test_state();
+        let base = "# Test\nHello world";
+        let base_hash = crate::ai_runtime::writing_workflow::compute_content_hash(base);
+        let ctx = ToolDispatchContext {
+            scene: AiScene::DraftingAssist,
+            note_path: Some("notes/test.md"),
+            file_id: None,
+            web_search_enabled: false,
+            cold_start_packets: &[],
+        };
+        let result = markdown_write_patch_apply(
+            &state,
+            &ctx,
+            "replace_selection",
+            &serde_json::json!({
+                "replacement": "Hi",
+                "base_content_hash": base_hash,
+                "range": {"start": 7, "end": 12},
+                "original_text": "Hello",
+                "risk_level": "low"
+            }),
+        )
+        .unwrap();
+
+        assert_eq!(result["type"], "patch_apply");
+        assert_eq!(result["result"]["success"], true);
+        let content =
+            std::fs::read_to_string(state.vault_path().unwrap().join("notes/test.md")).unwrap();
+        assert_eq!(content, "# Test\nHi world");
+    }
+
+    #[test]
+    fn write_tool_approval_reports_hash_conflict_without_writing() {
+        let (state, _dir) = test_state();
+        let ctx = ToolDispatchContext {
+            scene: AiScene::DraftingAssist,
+            note_path: Some("notes/test.md"),
+            file_id: None,
+            web_search_enabled: false,
+            cold_start_packets: &[],
+        };
+        let result = markdown_write_patch_apply(
+            &state,
+            &ctx,
+            "replace_selection",
+            &serde_json::json!({
+                "replacement": "Hi",
+                "base_content_hash": "stale",
+                "range": {"start": 7, "end": 12},
+                "original_text": "Hello",
+            }),
+        )
+        .unwrap();
+
+        assert_eq!(result["type"], "patch_apply");
+        assert_eq!(result["result"]["success"], false);
+        let error = result["result"]["error"].as_str().unwrap_or("");
+        assert!(
+            error.contains("hash") || error.contains("哈希"),
+            "unexpected error: {error}"
+        );
+        let content =
+            std::fs::read_to_string(state.vault_path().unwrap().join("notes/test.md")).unwrap();
+        assert_eq!(content, "# Test\nHello world");
+    }
 }

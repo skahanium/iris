@@ -270,6 +270,11 @@ pub struct ToolSpec {
     pub scene_allowlist: Vec<AiScene>,
     pub requires_confirmation: bool,
     pub max_results: Option<u32>,
+    /// Scenes where this tool is naturally relevant.
+    /// Empty means universally available. New field parallel to scene_allowlist;
+    /// Phase 4 will remove scene_allowlist once policy engine is complete.
+    #[serde(default)]
+    pub scene_affinity: Vec<AiScene>,
 }
 
 // ─── Request / Response types ────────────────────────────

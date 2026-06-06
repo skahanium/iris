@@ -32,9 +32,7 @@ describe("editor find/replace helpers", () => {
   it("replaces all ranges from back to front", () => {
     const text = "one two one";
     const ranges = findTextRanges(text, "one");
-    expect(replaceAllTextRanges(text, ranges, "three")).toBe(
-      "three two three",
-    );
+    expect(replaceAllTextRanges(text, ranges, "three")).toBe("three two three");
   });
 
   it("maps text matches to ProseMirror document positions", () => {
