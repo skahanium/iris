@@ -332,6 +332,36 @@ impl SessionManager {
             Ok(deleted as u32)
         })
     }
+
+    /// 清理 `updated_at` 早于 `retention_days` 天的所有闲置会话（级联删除消息）。
+    /// 返回被删除的会话数。
+    pub fn purge_expired(db: &Database, retention_days: u32) -> AppResult<usize> {
+        db.with_conn(|conn| {
+            let deleted = conn.execute(
+                "DELETE FROM sessions WHERE updated_at < datetime('now', ?1)",
+                [format!("-{retention_days} days")],
+            )?;
+            if deleted > 0 {
+                tracing::info!(deleted, retention_days, "purged expired sessions");
+            }
+            Ok(deleted)
+        })
+    }
+
+    /// 清理 `created_at` 早于 `retention_days` 天的 AI 追踪记录。
+    /// 返回被删除的记录数。
+    pub fn purge_expired_traces(db: &Database, retention_days: u32) -> AppResult<usize> {
+        db.with_conn(|conn| {
+            let deleted = conn.execute(
+                "DELETE FROM ai_traces WHERE created_at < datetime('now', ?1)",
+                [format!("-{retention_days} days")],
+            )?;
+            if deleted > 0 {
+                tracing::info!(deleted, retention_days, "purged expired ai_traces");
+            }
+            Ok(deleted)
+        })
+    }
 }
 
 fn derive_session_title(first_user_message: &str) -> String {
@@ -445,5 +475,75 @@ mod tests {
         // New ensure should create fresh sessions
         let new_id = SessionManager::ensure(&db, AiScene::KnowledgeLookup, None).unwrap();
         assert!(new_id > 0);
+    }
+
+    #[test]
+    fn purge_expired_removes_old_sessions() {
+        let db = setup_db();
+        let sid = SessionManager::ensure(&db, AiScene::KnowledgeLookup, None).unwrap();
+        SessionManager::append_message(&db, sid, "user", "hello", None).unwrap();
+
+        db.with_conn(|conn| {
+            conn.execute(
+                "UPDATE sessions SET updated_at = datetime('now', '-100 days') WHERE id = ?1",
+                [sid],
+            )?;
+            Ok(())
+        })
+        .unwrap();
+
+        let deleted = SessionManager::purge_expired(&db, 90).unwrap();
+        assert_eq!(deleted, 1);
+
+        let list = SessionManager::list_sessions(&db, None, None, 10, 0).unwrap();
+        assert!(list.is_empty());
+    }
+
+    #[test]
+    fn purge_expired_retains_recent_sessions() {
+        let db = setup_db();
+        let sid = SessionManager::ensure(&db, AiScene::KnowledgeLookup, None).unwrap();
+        SessionManager::append_message(&db, sid, "user", "hello", None).unwrap();
+
+        // Session is recent, should not be purged
+        let deleted = SessionManager::purge_expired(&db, 90).unwrap();
+        assert_eq!(deleted, 0);
+
+        let list = SessionManager::list_sessions(&db, None, None, 10, 0).unwrap();
+        assert_eq!(list.len(), 1);
+    }
+
+    #[test]
+    fn purge_expired_traces_removes_old_records() {
+        let db = setup_db();
+        db.with_conn(|conn| {
+            conn.execute(
+                "INSERT INTO ai_traces (request_id, scene, status, created_at)
+                 VALUES ('old-req', 'knowledge_lookup', 'completed', datetime('now', '-40 days'))",
+                [],
+            )?;
+            Ok(())
+        })
+        .unwrap();
+
+        let deleted = SessionManager::purge_expired_traces(&db, 30).unwrap();
+        assert_eq!(deleted, 1);
+    }
+
+    #[test]
+    fn purge_expired_traces_retains_recent_records() {
+        let db = setup_db();
+        db.with_conn(|conn| {
+            conn.execute(
+                "INSERT INTO ai_traces (request_id, scene, status, created_at)
+                 VALUES ('recent-req', 'knowledge_lookup', 'completed', datetime('now', '-5 days'))",
+                [],
+            )?;
+            Ok(())
+        })
+        .unwrap();
+
+        let deleted = SessionManager::purge_expired_traces(&db, 30).unwrap();
+        assert_eq!(deleted, 0);
     }
 }

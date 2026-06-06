@@ -4,6 +4,7 @@ use chrono::Utc;
 use tokio::sync::watch;
 use tokio::time::{sleep, Duration};
 
+use crate::ai_runtime::session::SessionManager;
 use crate::app::AppState;
 use crate::cas::garbage_collector::GarbageCollector;
 use crate::error::AppResult;
@@ -89,6 +90,16 @@ impl Scheduler {
             result.recycle_purged_count,
             result.space_freed
         );
+
+        let purged_sessions = SessionManager::purge_expired(&state.db, 90).unwrap_or(0);
+        let purged_traces = SessionManager::purge_expired_traces(&state.db, 30).unwrap_or(0);
+        if purged_sessions > 0 || purged_traces > 0 {
+            tracing::info!(
+                "Session/trace expiry: {} sessions, {} traces cleaned",
+                purged_sessions,
+                purged_traces
+            );
+        }
 
         Ok(())
     }
