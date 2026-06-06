@@ -34,8 +34,12 @@ describe("harness modernization remaining contracts", () => {
     expect(run).toContain(
       "if registry.requires_confirmation(&tool_call.function.name)",
     );
-    expect(run.indexOf("requires_confirmation(&tool_call.function.name)")).toBeLessThan(
-      run.lastIndexOf("outstanding_confirm_tool(&registry, &messages, &policy_ctx)"),
+    expect(
+      run.indexOf("requires_confirmation(&tool_call.function.name)"),
+    ).toBeLessThan(
+      run.lastIndexOf(
+        "outstanding_confirm_tool(&registry, &messages, &policy_ctx)",
+      ),
     );
   });
 

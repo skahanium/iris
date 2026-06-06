@@ -274,4 +274,126 @@ mod tests {
         assert_eq!(api_msgs[1]["role"], "tool");
         assert_eq!(api_msgs[2]["role"], "tool");
     }
+
+    #[test]
+    fn dual_confirm_serial_keeps_second_pending_in_skip_stub_ids() {
+        use crate::ai_harness::tool_turn::outstanding_confirm_ids;
+        use crate::ai_runtime::model_gateway::{
+            build_chat_completions_body, prepare_tool_api_messages, GatewayRequest,
+            ProviderConfig,
+        };
+        use crate::ai_runtime::tool_executor::ToolRegistry;
+        use crate::ai_runtime::tool_policy::ToolPolicyContext;
+        use crate::ai_runtime::{AutonomyLevel, CapabilitySlot};
+
+        let registry = ToolRegistry::new();
+        let ctx = ToolPolicyContext {
+            scene: AiScene::KnowledgeLookup,
+            autonomy_level: AutonomyLevel::L2,
+            web_search_enabled: true,
+            skill_allowed_tools: vec![],
+            depth: 0,
+        };
+        let fetch_a = ToolCall::new(
+            "call_fetch_a",
+            "fetch_web_page",
+            r#"{"url":"https://example.com/a"}"#,
+        );
+        let fetch_b = ToolCall::new(
+            "call_fetch_b",
+            "fetch_web_page",
+            r#"{"url":"https://example.com/b"}"#,
+        );
+        let mut messages = vec![LlmMessage {
+            role: MessageRole::Assistant,
+            content: "fetch both".into(),
+            tool_call_id: None,
+            tool_calls: Some(vec![fetch_a.clone(), fetch_b.clone()]),
+            reasoning_content: None,
+        }];
+        let pending = outstanding_confirm_ids(&registry, &messages, &ctx);
+        assert_eq!(pending.len(), 2);
+
+        messages.push(LlmMessage {
+            role: MessageRole::Tool,
+            content: r#"{"title":"A"}"#.into(),
+            tool_call_id: Some(fetch_a.id.clone()),
+            tool_calls: None,
+            ..Default::default()
+        });
+        let still_pending = outstanding_confirm_ids(&registry, &messages, &ctx);
+        assert_eq!(still_pending, vec![fetch_b.id.clone()]);
+
+        prepare_tool_api_messages(&mut messages, &still_pending);
+        assert_eq!(messages.len(), 2);
+        let api = crate::ai_runtime::model_gateway::messages_for_api(&messages);
+        assert_eq!(api.len(), 2);
+        assert_eq!(api[1]["tool_call_id"], fetch_a.id);
+
+        let body = build_chat_completions_body(&GatewayRequest {
+            provider: ProviderConfig {
+                name: "deepseek".into(),
+                base_url: "https://api.deepseek.com".into(),
+                model: "deepseek-reasoner".into(),
+                api_key: Some("test".into()),
+                slot: CapabilitySlot::Reasoner,
+            },
+            messages,
+            tools: vec![],
+            max_tokens: Some(2048),
+            temperature: Some(0.7),
+            stream: false,
+            thinking: true,
+            skip_stub_ids: still_pending,
+        });
+        assert_eq!(body["messages"].as_array().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn legacy_checkpoint_without_tool_calls_repairs_for_resume() {
+        use crate::ai_runtime::model_gateway::{
+            build_chat_completions_body, repair_tool_api_messages, GatewayRequest, ProviderConfig,
+        };
+        use crate::ai_types::CapabilitySlot;
+
+        let mut messages = vec![
+            LlmMessage {
+                role: MessageRole::Assistant,
+                content: "partial".into(),
+                tool_call_id: None,
+                tool_calls: None,
+                reasoning_content: None,
+            },
+            LlmMessage {
+                role: MessageRole::Tool,
+                content: r#"{"title":"Legacy"}"#.into(),
+                tool_call_id: Some("call_legacy".into()),
+                tool_calls: None,
+                ..Default::default()
+            },
+        ];
+        repair_tool_api_messages(&mut messages);
+        assert!(messages[0].tool_calls.as_ref().is_some_and(|c| !c.is_empty()));
+
+        let body = build_chat_completions_body(&GatewayRequest {
+            provider: ProviderConfig {
+                name: "deepseek".into(),
+                base_url: "https://api.deepseek.com".into(),
+                model: "deepseek-reasoner".into(),
+                api_key: Some("test".into()),
+                slot: CapabilitySlot::Reasoner,
+            },
+            messages,
+            tools: vec![],
+            max_tokens: Some(2048),
+            temperature: Some(0.7),
+            stream: false,
+            thinking: false,
+            skip_stub_ids: vec![],
+        });
+        let api_msgs = body["messages"].as_array().unwrap();
+        assert_eq!(api_msgs.len(), 2);
+        assert!(api_msgs[0]["tool_calls"].is_array());
+        assert_eq!(api_msgs[1]["role"], "tool");
+    }
 }
