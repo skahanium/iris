@@ -1,6 +1,7 @@
 pub mod ai_commands;
 pub mod assistant_commands;
 pub mod citation_commands;
+pub mod classified;
 pub mod corpus_commands;
 pub mod document_commands;
 pub mod export;

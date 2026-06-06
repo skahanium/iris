@@ -1,0 +1,500 @@
+use std::fs;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+
+use tauri::{AppHandle, Emitter, State};
+
+use crate::app::AppState;
+use crate::crypto::classified_io;
+use crate::crypto::vault_key::{VaultKey, VAULT_KEY};
+use crate::error::{AppError, AppResult};
+use crate::indexer::scan::{index_file, remove_file_index};
+use crate::storage::paths::{
+    is_user_note_path, read_file_lossy, relative_path, resolve_vault_path,
+};
+
+/// Vault-relative path under `.classified/` (or the directory itself).
+pub(crate) fn is_classified_path(relative: &str) -> bool {
+    let normalized = relative.replace('\\', "/");
+    normalized.starts_with(".classified/") || normalized == ".classified"
+}
+
+fn vault_key_read() -> AppResult<std::sync::RwLockReadGuard<'static, VaultKey>> {
+    VAULT_KEY
+        .get()
+        .ok_or_else(|| AppError::msg("保险库未初始化"))?
+        .read()
+        .map_err(|e| AppError::msg(format!("VAULT_KEY lock error: {e}")))
+}
+
+fn vault_key_write() -> AppResult<std::sync::RwLockWriteGuard<'static, VaultKey>> {
+    VAULT_KEY
+        .get()
+        .ok_or_else(|| AppError::msg("保险库未初始化"))?
+        .write()
+        .map_err(|e| AppError::msg(format!("VAULT_KEY lock error: {e}")))
+}
+
+fn require_unlocked() -> AppResult<std::sync::RwLockReadGuard<'static, VaultKey>> {
+    let vk = vault_key_read()?;
+    if !vk.is_unlocked() {
+        return Err(AppError::msg("保险库未解锁"));
+    }
+    Ok(vk)
+}
+
+/// Normalize import target to a vault-relative `.classified/...` directory path.
+fn normalize_classified_target(target_folder: &str) -> AppResult<String> {
+    let trimmed = target_folder
+        .replace('\\', "/")
+        .trim()
+        .trim_matches('/')
+        .to_string();
+    let rel = if trimmed.is_empty() || trimmed == ".classified" {
+        ".classified".to_string()
+    } else if trimmed.starts_with(".classified/") {
+        trimmed
+    } else {
+        format!(".classified/{trimmed}")
+    };
+    if !is_classified_path(&rel) {
+        return Err(AppError::msg("导入目标必须在 .classified/ 目录内"));
+    }
+    Ok(rel)
+}
+
+/// Resolve a folder under `.classified/` for listing; rejects traversal.
+fn classified_list_root(vault: &Path, folder: Option<&str>) -> AppResult<PathBuf> {
+    let classified_dir = vault.join(".classified");
+    let scan_root = match folder {
+        None | Some("") => classified_dir.clone(),
+        Some(f) => {
+            let normalized = f.replace('\\', "/").trim_matches('/').to_string();
+            if normalized.contains("..") {
+                return Err(AppError::msg("Invalid folder path"));
+            }
+            let rel = if normalized.starts_with(".classified/") {
+                normalized
+            } else {
+                format!(".classified/{normalized}")
+            };
+            if !is_classified_path(&rel) {
+                return Err(AppError::msg("只能浏览 .classified/ 目录"));
+            }
+            resolve_vault_path(vault, &rel)?
+        }
+    };
+    let classified_canon = classified_dir
+        .canonicalize()
+        .unwrap_or_else(|_| classified_dir.clone());
+    let scan_canon = scan_root
+        .canonicalize()
+        .unwrap_or_else(|_| scan_root.clone());
+    if !scan_canon.starts_with(&classified_canon) {
+        return Err(AppError::msg("Path outside classified vault"));
+    }
+    Ok(scan_root)
+}
+
+fn classified_setup_inner(state: &AppState, password: &str) -> AppResult<()> {
+    let vault = state.vault_path()?;
+    if VaultKey::is_initialized(&vault) {
+        return Err(AppError::msg("保险库已设置密码"));
+    }
+    VaultKey::setup(password, &vault)?;
+    let mut vk = vault_key_write()?;
+    vk.unlock(password, &vault)?;
+    Ok(())
+}
+
+fn classified_unlock_inner(state: &AppState, password: &str) -> AppResult<()> {
+    let vault = state.vault_path()?;
+    if !VaultKey::is_initialized(&vault) {
+        return Err(AppError::msg("保险库尚未设置密码"));
+    }
+    let mut vk = vault_key_write()?;
+    vk.unlock(password, &vault)
+}
+
+fn classified_lock_inner() -> AppResult<()> {
+    let mut vk = vault_key_write()?;
+    vk.lock();
+    Ok(())
+}
+
+fn classified_status_inner(state: &AppState) -> AppResult<String> {
+    let vault = state.vault_path()?;
+    if !VaultKey::is_initialized(&vault) {
+        return Ok("needs_setup".to_string());
+    }
+    let vk = vault_key_read()?;
+    if vk.is_unlocked() {
+        Ok("unlocked".to_string())
+    } else {
+        Ok("locked".to_string())
+    }
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ClassifiedFileEntry {
+    pub path: String,
+    pub is_dir: bool,
+}
+
+fn classified_files_inner(
+    state: &AppState,
+    folder: Option<String>,
+) -> AppResult<Vec<ClassifiedFileEntry>> {
+    let _vk = require_unlocked()?;
+    let vault = state.vault_path()?;
+    let scan_root = classified_list_root(&vault, folder.as_deref())?;
+
+    let mut entries = Vec::new();
+    if scan_root.is_dir() {
+        for entry in fs::read_dir(&scan_root)? {
+            let entry = entry?;
+            let path = entry.path();
+            let rel = relative_path(&vault, &path)?;
+            entries.push(ClassifiedFileEntry {
+                is_dir: path.is_dir(),
+                path: rel,
+            });
+        }
+        entries.sort_by(|a, b| a.path.cmp(&b.path));
+    }
+    Ok(entries)
+}
+
+fn classified_import_inner(
+    state: &AppState,
+    app: Option<&AppHandle>,
+    path: &str,
+    target_folder: &str,
+) -> AppResult<()> {
+    let vk = require_unlocked()?;
+    if !is_user_note_path(path) || is_classified_path(path) {
+        return Err(AppError::msg("只能导入用户笔记"));
+    }
+
+    let vault = state.vault_path()?;
+    let src = resolve_vault_path(&vault, path)?;
+    let target_rel = normalize_classified_target(target_folder)?;
+    let file_name = src
+        .file_name()
+        .ok_or_else(|| AppError::msg("invalid source path"))?;
+
+    let dest_rel = if target_rel == ".classified" {
+        format!(".classified/{}", file_name.to_string_lossy())
+    } else {
+        format!("{}/{}", target_rel, file_name.to_string_lossy())
+    };
+    let dest = resolve_vault_path(&vault, &dest_rel)?;
+
+    if dest.exists() {
+        return Err(AppError::msg(format!(
+            "目标位置已存在同名文件: {}",
+            file_name.to_string_lossy()
+        )));
+    }
+
+    if let Some(parent) = dest.parent() {
+        fs::create_dir_all(parent)?;
+    }
+
+    let content = read_file_lossy(&src)?;
+    let key = vk.key()?;
+    let encrypted = classified_io::encrypt_cef(content.as_bytes(), key)?;
+    fs::write(&dest, &encrypted)?;
+    fs::remove_file(&src)?;
+
+    state.db.with_conn(|conn| remove_file_index(conn, path))?;
+
+    if let Some(app) = app {
+        let _ = app.emit("classified:file_taken", serde_json::json!({ "path": path }));
+    }
+
+    Ok(())
+}
+
+fn classified_export_inner(state: &AppState, path: &str, target_folder: &str) -> AppResult<()> {
+    let vk = require_unlocked()?;
+    if !is_classified_path(path) {
+        return Err(AppError::msg("只能导出涉密文件"));
+    }
+
+    let vault = state.vault_path()?;
+    let src = resolve_vault_path(&vault, path)?;
+
+    let target_rel = target_folder
+        .replace('\\', "/")
+        .trim()
+        .trim_matches('/')
+        .to_string();
+    if target_rel.is_empty() {
+        return Err(AppError::msg("目标文件夹不能为空"));
+    }
+    if !is_user_note_path(&target_rel) || is_classified_path(&target_rel) {
+        return Err(AppError::msg("只能导出到普通笔记目录"));
+    }
+
+    let file_name = src
+        .file_name()
+        .ok_or_else(|| AppError::msg("invalid source path"))?;
+    let dest_rel = format!("{}/{}", target_rel, file_name.to_string_lossy());
+    if !is_user_note_path(&dest_rel) {
+        return Err(AppError::msg("导出目标路径无效"));
+    }
+
+    fs::create_dir_all(vault.join(&target_rel))?;
+    let dest = resolve_vault_path(&vault, &dest_rel)?;
+
+    if dest.exists() {
+        return Err(AppError::msg(format!(
+            "目标位置已存在同名文件: {}",
+            file_name.to_string_lossy()
+        )));
+    }
+
+    let raw = fs::read(&src)?;
+    let content = if classified_io::has_csef_magic(&raw) {
+        let key = vk.key()?;
+        String::from_utf8_lossy(&classified_io::decrypt_cef(&raw, key)?).into_owned()
+    } else {
+        String::from_utf8_lossy(&raw).into_owned()
+    };
+
+    fs::write(&dest, &content)?;
+    fs::remove_file(&src)?;
+
+    state.db.with_conn(|conn| index_file(conn, &vault, &dest))?;
+
+    Ok(())
+}
+
+#[tauri::command]
+pub fn classified_setup(state: State<'_, Arc<AppState>>, password: String) -> AppResult<()> {
+    classified_setup_inner(state.inner(), &password)
+}
+
+#[tauri::command]
+pub fn classified_unlock(state: State<'_, Arc<AppState>>, password: String) -> AppResult<()> {
+    classified_unlock_inner(state.inner(), &password)
+}
+
+#[tauri::command]
+pub fn classified_lock() -> AppResult<()> {
+    classified_lock_inner()
+}
+
+#[tauri::command]
+pub fn classified_status(state: State<'_, Arc<AppState>>) -> AppResult<String> {
+    classified_status_inner(state.inner())
+}
+
+#[tauri::command]
+pub fn classified_files(
+    state: State<'_, Arc<AppState>>,
+    folder: Option<String>,
+) -> AppResult<Vec<ClassifiedFileEntry>> {
+    classified_files_inner(state.inner(), folder)
+}
+
+#[tauri::command]
+pub fn classified_import(
+    app_handle: AppHandle,
+    state: State<'_, Arc<AppState>>,
+    path: String,
+    target_folder: String,
+) -> AppResult<()> {
+    classified_import_inner(state.inner(), Some(&app_handle), &path, &target_folder)
+}
+
+#[tauri::command]
+pub fn classified_export(
+    state: State<'_, Arc<AppState>>,
+    path: String,
+    target_folder: String,
+) -> AppResult<()> {
+    classified_export_inner(state.inner(), &path, &target_folder)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::crypto::vault_key::init_vault_key;
+    use std::sync::OnceLock;
+    use tempfile::tempdir;
+
+    static INIT_KEY: OnceLock<()> = OnceLock::new();
+    static KEY_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    fn key_test_lock() -> std::sync::MutexGuard<'static, ()> {
+        KEY_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    fn ensure_vault_key() {
+        INIT_KEY.get_or_init(|| {
+            init_vault_key();
+        });
+    }
+
+    fn test_state() -> (tempfile::TempDir, Arc<AppState>) {
+        ensure_vault_key();
+        let dir = tempdir().unwrap();
+        let vault = dir.path().join("vault");
+        fs::create_dir_all(&vault).unwrap();
+        let state = AppState::new(dir.path().join("data")).unwrap();
+        state.set_vault(vault).unwrap();
+        (dir, state)
+    }
+
+    fn write_note(vault: &Path, rel: &str, content: &str) {
+        let abs = vault.join(rel);
+        if let Some(parent) = abs.parent() {
+            fs::create_dir_all(parent).unwrap();
+        }
+        fs::write(&abs, content).unwrap();
+    }
+
+    #[test]
+    fn is_classified_path_detects_classified_roots() {
+        assert!(is_classified_path(".classified"));
+        assert!(is_classified_path(".classified/secret.md"));
+        assert!(!is_classified_path("notes/open.md"));
+    }
+
+    #[test]
+    fn classified_status_needs_setup_before_password() {
+        let (_dir, state) = test_state();
+        assert_eq!(classified_status_inner(&state).unwrap(), "needs_setup");
+    }
+
+    #[test]
+    fn classified_setup_unlock_and_lock_lifecycle() {
+        let _guard = key_test_lock();
+        let (_dir, state) = test_state();
+
+        classified_setup_inner(&state, "test-pass").unwrap();
+        assert_eq!(classified_status_inner(&state).unwrap(), "unlocked");
+
+        let err = classified_setup_inner(&state, "other").unwrap_err();
+        assert!(err.to_string().contains("已设置"));
+
+        classified_lock_inner().unwrap();
+        assert_eq!(classified_status_inner(&state).unwrap(), "locked");
+
+        classified_unlock_inner(&state, "test-pass").unwrap();
+        assert_eq!(classified_status_inner(&state).unwrap(), "unlocked");
+
+        let err = classified_unlock_inner(&state, "wrong").unwrap_err();
+        assert!(err.to_string().contains("密码不正确"));
+    }
+
+    #[test]
+    fn classified_files_requires_unlock() {
+        let _guard = key_test_lock();
+        let (_dir, state) = test_state();
+        classified_setup_inner(&state, "test-pass").unwrap();
+        classified_lock_inner().unwrap();
+
+        let err = classified_files_inner(&state, None).unwrap_err();
+        assert!(err.to_string().contains("未解锁"));
+    }
+
+    #[test]
+    fn classified_files_lists_classified_entries() {
+        let _guard = key_test_lock();
+        let (_dir, state) = test_state();
+        let vault = state.vault_path().unwrap();
+        classified_setup_inner(&state, "test-pass").unwrap();
+
+        fs::create_dir_all(vault.join(".classified/inbox")).unwrap();
+        write_note(&vault, ".classified/secret.md", "# Secret");
+        write_note(&vault, ".classified/inbox/note.md", "# Inbox");
+
+        let entries = classified_files_inner(&state, None).unwrap();
+        let paths: Vec<_> = entries.iter().map(|e| e.path.as_str()).collect();
+        assert!(paths.contains(&".classified/inbox"));
+        assert!(paths.contains(&".classified/secret.md"));
+
+        let inbox = classified_files_inner(&state, Some("inbox".to_string())).unwrap();
+        assert_eq!(inbox.len(), 1);
+        assert_eq!(inbox[0].path, ".classified/inbox/note.md");
+    }
+
+    #[test]
+    fn classified_import_encrypts_and_removes_index() {
+        let _guard = key_test_lock();
+        let (_dir, state) = test_state();
+        let vault = state.vault_path().unwrap();
+        classified_setup_inner(&state, "test-pass").unwrap();
+
+        write_note(&vault, "notes/open.md", "# Open\n\nBody.");
+        state
+            .db
+            .with_conn(|conn| index_file(conn, &vault, &vault.join("notes/open.md")))
+            .unwrap();
+
+        classified_import_inner(&state, None, "notes/open.md", ".classified").unwrap();
+
+        assert!(!vault.join("notes/open.md").exists());
+        let dest = vault.join(".classified/open.md");
+        assert!(dest.exists());
+        let raw = fs::read(&dest).unwrap();
+        assert!(classified_io::has_csef_magic(&raw));
+
+        let count: i64 = state
+            .db
+            .with_conn(|conn| {
+                Ok(conn.query_row(
+                    "SELECT COUNT(*) FROM files WHERE path = 'notes/open.md'",
+                    [],
+                    |r| r.get(0),
+                )?)
+            })
+            .unwrap();
+        assert_eq!(count, 0);
+    }
+
+    #[test]
+    fn classified_export_roundtrip_to_plaintext() {
+        let _guard = key_test_lock();
+        let (_dir, state) = test_state();
+        let vault = state.vault_path().unwrap();
+        classified_setup_inner(&state, "test-pass").unwrap();
+
+        write_note(&vault, "notes/source.md", "# Source\n\nContent.");
+        classified_import_inner(&state, None, "notes/source.md", ".classified").unwrap();
+
+        classified_export_inner(&state, ".classified/source.md", "exported").unwrap();
+
+        let plain = fs::read_to_string(vault.join("exported/source.md")).unwrap();
+        assert_eq!(plain, "# Source\n\nContent.");
+        assert!(!vault.join(".classified/source.md").exists());
+
+        let indexed: i64 = state
+            .db
+            .with_conn(|conn| {
+                Ok(conn.query_row(
+                    "SELECT COUNT(*) FROM files WHERE path = 'exported/source.md'",
+                    [],
+                    |r| r.get(0),
+                )?)
+            })
+            .unwrap();
+        assert_eq!(indexed, 1);
+    }
+
+    #[test]
+    fn classified_import_rejects_non_user_paths() {
+        let _guard = key_test_lock();
+        let (_dir, state) = test_state();
+        classified_setup_inner(&state, "test-pass").unwrap();
+
+        let err = classified_import_inner(&state, None, ".iris/x.md", ".classified").unwrap_err();
+        assert!(err.to_string().contains("只能导入用户笔记"));
+    }
+}
