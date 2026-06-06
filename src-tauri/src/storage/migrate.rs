@@ -48,6 +48,8 @@ const MIGRATION_019_DOWN: &str =
     include_str!("../../migrations/019_skill_activation_index.down.sql");
 const MIGRATION_020_UP: &str = include_str!("../../migrations/020_tool_audit.sql");
 const MIGRATION_020_DOWN: &str = include_str!("../../migrations/020_tool_audit.down.sql");
+const MIGRATION_023_UP: &str = include_str!("../../migrations/023_file_lock.sql");
+const MIGRATION_023_DOWN: &str = include_str!("../../migrations/023_file_lock.down.sql");
 
 fn is_applied(conn: &Connection, name: &str) -> bool {
     conn.query_row(
@@ -121,6 +123,7 @@ pub fn migrate_up(conn: &Connection) -> AppResult<()> {
     apply_migration(conn, "018_skill_install_sources", MIGRATION_018_UP, false)?;
     apply_migration(conn, "019_skill_activation_index", MIGRATION_019_UP, false)?;
     apply_migration(conn, "020_tool_audit", MIGRATION_020_UP, false)?;
+    apply_migration(conn, "023_file_lock", MIGRATION_023_UP, false)?;
 
     Ok(())
 }
@@ -132,6 +135,7 @@ fn rollback_migration(conn: &Connection, name: &str, sql: &str) {
 
 /// Roll back all migrations in strict reverse order (for tests).
 pub fn migrate_down(conn: &Connection) -> AppResult<()> {
+    rollback_migration(conn, "023_file_lock", MIGRATION_023_DOWN);
     rollback_migration(conn, "020_tool_audit", MIGRATION_020_DOWN);
     rollback_migration(conn, "019_skill_activation_index", MIGRATION_019_DOWN);
     rollback_migration(conn, "018_skill_install_sources", MIGRATION_018_DOWN);
@@ -753,6 +757,55 @@ mod tests {
         let gone: bool = conn
             .query_row(
                 "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='tool_audit'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .map(|c| c > 0)
+            .unwrap();
+        assert!(!gone);
+    }
+
+    #[test]
+    fn migration_023_adds_is_locked_column_with_default() {
+        let conn = Connection::open_in_memory().unwrap();
+        migrate_up(&conn).unwrap();
+
+        conn.execute(
+            "INSERT INTO files (path, title, content_hash, created_at, updated_at) VALUES ('test.md', 'Test', 'h', '2020-01-01', '2020-01-01')",
+            [],
+        )
+        .unwrap();
+
+        let is_locked: i64 = conn
+            .query_row(
+                "SELECT is_locked FROM files WHERE path = 'test.md'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(is_locked, 0);
+    }
+
+    #[test]
+    fn migration_023_roundtrip() {
+        let conn = Connection::open_in_memory().unwrap();
+        migrate_up(&conn).unwrap();
+
+        let has_column: bool = conn
+            .query_row(
+                "SELECT COUNT(*) FROM pragma_table_info('files') WHERE name = 'is_locked'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .map(|c| c > 0)
+            .unwrap();
+        assert!(has_column);
+
+        rollback_migration(&conn, "023_file_lock", MIGRATION_023_DOWN);
+
+        let gone: bool = conn
+            .query_row(
+                "SELECT COUNT(*) FROM pragma_table_info('files') WHERE name = 'is_locked'",
                 [],
                 |row| row.get::<_, i64>(0),
             )
