@@ -46,6 +46,7 @@ pub fn run() {
             std::fs::create_dir_all(&data_dir)?;
             // `AppState::new` 已返回 `Arc<AppState>`；勿再包一层 Arc，否则 Tauri 无法注入 State。
             let state = AppState::new(data_dir)?;
+            crate::crypto::vault_key::init_vault_key();
             app.manage(state.clone());
 
             // Start the scheduler for periodic tasks (GC at 3:00 AM daily)
@@ -95,6 +96,7 @@ pub fn run() {
             commands::file::file_list,
             commands::file::file_read,
             commands::file::file_write,
+            commands::file::file_set_lock,
             commands::file::vault_asset_write,
             commands::file::file_delete,
             commands::file::file_discard,
@@ -176,6 +178,7 @@ pub fn run() {
             commands::ai_commands::skills_list,
             commands::ai_commands::skills_install,
             commands::ai_commands::skills_uninstall,
+            commands::ai_commands::skills_update,
             commands::ai_commands::skills_toggle,
             commands::ai_commands::skills_read,
             commands::ai_commands::skills_write,
