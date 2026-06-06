@@ -117,7 +117,7 @@ export function useTabManager(options: UseTabManagerOptions = {}) {
         setTabs((prev) => prev.filter((t) => t.path !== current));
       }
       try {
-        const content = await fileRead(path);
+        const { content } = await fileRead(path);
         if (openFileSeqRef.current !== seq) return;
         frontmatterYamlRef.current = extractFrontmatterYaml(content);
         const fromMarkdown = displayTitleFromMarkdown(content, "");

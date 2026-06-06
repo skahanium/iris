@@ -32,6 +32,10 @@ import { useTabManager } from "@/hooks/useTabManager";
 
 const EMPTY_MD = '---\ntitle: "未命名文档"\n---\n\n';
 
+function fileReadResult(content: string, isLocked = false) {
+  return { content, isLocked };
+}
+
 function Harness({
   apiRef,
 }: {
@@ -54,7 +58,7 @@ describe("useTabManager handleNewNote", () => {
     fileRead.mockReset();
     createDefaultNote.mockReset();
     fileDiscard.mockResolvedValue(undefined);
-    fileRead.mockResolvedValue(EMPTY_MD);
+    fileRead.mockResolvedValue(fileReadResult(EMPTY_MD));
     createDefaultNote.mockResolvedValue({
       path: "未命名文档.md",
       title: "未命名文档",
@@ -130,9 +134,9 @@ describe("useTabManager handleNewNote", () => {
 
     fileRead.mockImplementation(async (path: string) => {
       if (path === "a.md") {
-        return "# A\n";
+        return fileReadResult("# A\n");
       }
-      return EMPTY_MD;
+      return fileReadResult(EMPTY_MD);
     });
 
     await act(async () => {

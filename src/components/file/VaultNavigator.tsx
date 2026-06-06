@@ -301,7 +301,7 @@ export function VaultNavigator({ open, onClose, onOpen }: VaultNavigatorProps) {
   };
 
   const handleExportHtml = useCallback(async (path: string) => {
-    const md = await fileRead(path);
+    const { content: md } = await fileRead(path);
     const title = path.replace(/\.md$/, "").split("/").pop() ?? "note";
     const html = renderMarkdownWithProfile(md, "vault_preview", {
       context: title,

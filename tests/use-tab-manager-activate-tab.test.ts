@@ -55,12 +55,12 @@ describe("useTabManager activateTab / openNote", () => {
     fileDiscard.mockResolvedValue(undefined);
     fileRead.mockImplementation(async (path: string) => {
       if (path === "a.md") {
-        return '---\ntitle: "A"\n---\n\nbody-a';
+        return { content: '---\ntitle: "A"\n---\n\nbody-a', isLocked: false };
       }
       if (path === "b.md") {
-        return '---\ntitle: "B"\n---\n\nbody-b';
+        return { content: '---\ntitle: "B"\n---\n\nbody-b', isLocked: false };
       }
-      return '---\ntitle: "X"\n---\n\nbody';
+      return { content: '---\ntitle: "X"\n---\n\nbody', isLocked: false };
     });
   });
 

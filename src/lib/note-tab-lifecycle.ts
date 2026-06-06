@@ -13,7 +13,7 @@ export async function isPathSubstantivelyEmpty(
   if (path === activePath) {
     return isNoteSubstantivelyEmpty(activeMarkdown);
   }
-  const content = await fileRead(path);
+  const { content } = await fileRead(path);
   return isNoteSubstantivelyEmpty(content);
 }
 

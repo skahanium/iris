@@ -4,6 +4,11 @@ export interface FileListItem {
   updated_at: string;
 }
 
+export interface FileReadResult {
+  content: string;
+  isLocked: boolean;
+}
+
 export interface CorpusListItem {
   id: string;
   name: string;
@@ -173,11 +178,14 @@ export interface VersionSaveCompleteEvent {
 
 // ─── AI Runtime IPC types ───
 
-/** `ai_cache_clear` 返回值：清空会话、checkpoint 与知识沉淀缓存。 */
+/** `ai_cache_clear` 返回值：清空会话、checkpoint、追踪记录与知识沉淀缓存。 */
 export interface AiCacheClearResult {
   sessions_deleted: number;
   checkpoints_cleared: number;
   deposits_deleted: number;
+  traces_deleted: number;
+  web_pages_cleared: number;
+  searches_cleared: number;
 }
 
 /** 用户画像条目（`profile_list` / `profile_get` 返回） */

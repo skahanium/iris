@@ -458,7 +458,7 @@ function App() {
       if (event.event_type === "removed") return;
       // External change detected on the currently open file
       void fileRead(event.path)
-        .then((externalContent) => {
+        .then(({ content: externalContent }) => {
           const localContent = getLiveMarkdownRef.current();
           // Only show conflict if content actually differs
           if (externalContent !== localContent) {

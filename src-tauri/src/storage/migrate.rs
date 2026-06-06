@@ -48,6 +48,11 @@ const MIGRATION_019_DOWN: &str =
     include_str!("../../migrations/019_skill_activation_index.down.sql");
 const MIGRATION_020_UP: &str = include_str!("../../migrations/020_tool_audit.sql");
 const MIGRATION_020_DOWN: &str = include_str!("../../migrations/020_tool_audit.down.sql");
+const MIGRATION_021_UP: &str = include_str!("../../migrations/021_skill_lifecycle_metadata.sql");
+const MIGRATION_021_DOWN: &str =
+    include_str!("../../migrations/021_skill_lifecycle_metadata.down.sql");
+const MIGRATION_022_UP: &str = include_str!("../../migrations/022_session_expiry.sql");
+const MIGRATION_022_DOWN: &str = include_str!("../../migrations/022_session_expiry.down.sql");
 const MIGRATION_023_UP: &str = include_str!("../../migrations/023_file_lock.sql");
 const MIGRATION_023_DOWN: &str = include_str!("../../migrations/023_file_lock.down.sql");
 
@@ -123,6 +128,8 @@ pub fn migrate_up(conn: &Connection) -> AppResult<()> {
     apply_migration(conn, "018_skill_install_sources", MIGRATION_018_UP, false)?;
     apply_migration(conn, "019_skill_activation_index", MIGRATION_019_UP, false)?;
     apply_migration(conn, "020_tool_audit", MIGRATION_020_UP, false)?;
+    apply_migration(conn, "021_skill_lifecycle_metadata", MIGRATION_021_UP, false)?;
+    apply_migration(conn, "022_session_expiry", MIGRATION_022_UP, false)?;
     apply_migration(conn, "023_file_lock", MIGRATION_023_UP, false)?;
 
     Ok(())
@@ -136,6 +143,8 @@ fn rollback_migration(conn: &Connection, name: &str, sql: &str) {
 /// Roll back all migrations in strict reverse order (for tests).
 pub fn migrate_down(conn: &Connection) -> AppResult<()> {
     rollback_migration(conn, "023_file_lock", MIGRATION_023_DOWN);
+    rollback_migration(conn, "022_session_expiry", MIGRATION_022_DOWN);
+    rollback_migration(conn, "021_skill_lifecycle_metadata", MIGRATION_021_DOWN);
     rollback_migration(conn, "020_tool_audit", MIGRATION_020_DOWN);
     rollback_migration(conn, "019_skill_activation_index", MIGRATION_019_DOWN);
     rollback_migration(conn, "018_skill_install_sources", MIGRATION_018_DOWN);
@@ -256,7 +265,8 @@ mod tests {
                 word_count INTEGER DEFAULT 0,
                 genre TEXT,
                 created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL
+                updated_at TEXT NOT NULL,
+                is_locked INTEGER NOT NULL DEFAULT 0
              );
              INSERT INTO files SELECT * FROM files_dup;
              INSERT INTO files (path, title, content_hash, created_at, updated_at)
