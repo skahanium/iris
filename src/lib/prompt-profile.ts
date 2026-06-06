@@ -93,9 +93,10 @@ function clearLegacyAssistantIdentity(): void {
 }
 
 /** 若存在旧 localStorage 身份且 profile 仍为默认展示名，则合并并清除 legacy。 */
-export function mergeLegacyAssistantIdentity(
-  profile: PromptProfileDto,
-): { profile: PromptProfileDto; migrated: boolean } {
+export function mergeLegacyAssistantIdentity(profile: PromptProfileDto): {
+  profile: PromptProfileDto;
+  migrated: boolean;
+} {
   const legacy = loadLegacyAssistantIdentity();
   if (!legacy) {
     return { profile, migrated: false };
@@ -113,7 +114,8 @@ export function mergeLegacyAssistantIdentity(
 
   const next = normalizePromptProfile({
     ...profile,
-    display_name: isDefaultDisplay && legacyName ? legacyName : profile.display_name,
+    display_name:
+      isDefaultDisplay && legacyName ? legacyName : profile.display_name,
     avatar_emoji:
       profile.avatar_emoji == null && legacyEmoji
         ? legacyEmoji

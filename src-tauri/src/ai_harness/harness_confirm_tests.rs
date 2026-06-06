@@ -279,8 +279,7 @@ mod tests {
     fn dual_confirm_serial_keeps_second_pending_in_skip_stub_ids() {
         use crate::ai_harness::tool_turn::outstanding_confirm_ids;
         use crate::ai_runtime::model_gateway::{
-            build_chat_completions_body, prepare_tool_api_messages, GatewayRequest,
-            ProviderConfig,
+            build_chat_completions_body, prepare_tool_api_messages, GatewayRequest, ProviderConfig,
         };
         use crate::ai_runtime::tool_executor::ToolRegistry;
         use crate::ai_runtime::tool_policy::ToolPolicyContext;
@@ -373,7 +372,10 @@ mod tests {
             },
         ];
         repair_tool_api_messages(&mut messages);
-        assert!(messages[0].tool_calls.as_ref().is_some_and(|c| !c.is_empty()));
+        assert!(messages[0]
+            .tool_calls
+            .as_ref()
+            .is_some_and(|c| !c.is_empty()));
 
         let body = build_chat_completions_body(&GatewayRequest {
             provider: ProviderConfig {
@@ -395,5 +397,25 @@ mod tests {
         assert_eq!(api_msgs.len(), 2);
         assert!(api_msgs[0]["tool_calls"].is_array());
         assert_eq!(api_msgs[1]["role"], "tool");
+    }
+
+    #[test]
+    fn resume_errors_are_classified_for_frontend_recovery() {
+        use crate::ai_runtime::harness_confirm::classify_resume_error;
+
+        assert_eq!(
+            classify_resume_error("未找到可恢复的 checkpoint"),
+            "checkpoint_missing"
+        );
+        assert_eq!(
+            classify_resume_error(
+                "Messages with role 'tool' must be a response to a preceding message with 'tool_calls'"
+            ),
+            "invalid_tool_chain"
+        );
+        assert_eq!(
+            classify_resume_error("模型请求失败 (400 Bad Request)"),
+            "provider_bad_request"
+        );
     }
 }

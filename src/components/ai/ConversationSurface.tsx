@@ -1,4 +1,4 @@
-import type { RefObject } from "react";
+import { memo, type RefObject } from "react";
 
 import { AiMessageList, type ChatLine } from "./AiMessageList";
 import { AiMessageSelectionUi } from "./AiMessageSelectionUi";
@@ -25,7 +25,7 @@ interface ConversationSurfaceProps {
  * 接收拉平的 messages[] 和 streaming 状态，委托 AiMessageList 渲染。
  * 独立于工件流（ArtifactSurface），可单独测试和替换。
  */
-export function ConversationSurface({
+export const ConversationSurface = memo(function ConversationSurface({
   messages,
   streaming,
   selectedIndices,
@@ -58,4 +58,4 @@ export function ConversationSurface({
       />
     </div>
   );
-}
+});

@@ -1,9 +1,6 @@
 import { Sparkles } from "lucide-react";
 
-import {
-  assistantInitial,
-  type AvatarIdentity,
-} from "@/lib/prompt-profile";
+import { assistantInitial, type AvatarIdentity } from "@/lib/prompt-profile";
 import { cn } from "@/lib/utils";
 
 interface AssistantAvatarProps {

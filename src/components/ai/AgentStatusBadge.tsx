@@ -1,11 +1,4 @@
-import {
-  Activity,
-  Globe,
-  Lock,
-  Puzzle,
-  Shield,
-  Wrench,
-} from "lucide-react";
+import { Activity, Globe, Lock, Puzzle, Shield, Wrench } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { Badge } from "@/components/ui/badge";
@@ -124,7 +117,9 @@ export function AgentStatusBadge({
   }, [open]);
 
   const enabledSkills = skills.filter((s) => s.enabled);
-  const sceneActiveSkills = enabledSkills.filter((s) => s.scene_active === true);
+  const sceneActiveSkills = enabledSkills.filter(
+    (s) => s.scene_active === true,
+  );
   const hasSceneActive = sceneActiveSkills.length > 0;
 
   const close = useCallback(() => setOpen(false), []);

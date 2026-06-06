@@ -20,6 +20,23 @@ use crate::ai_runtime::AiScene;
 use crate::app::{AppState, PendingToolCall};
 use crate::error::{AppError, AppResult};
 
+/// Classify resume failures for frontend recovery and telemetry.
+pub fn classify_resume_error(message: &str) -> &'static str {
+    let lower = message.to_lowercase();
+    if lower.contains("checkpoint") || message.contains("未找到可恢复") {
+        "checkpoint_missing"
+    } else if lower.contains("messages with role 'tool'")
+        || lower.contains("tool_calls")
+        || message.contains("工具续聊消息序列无效")
+    {
+        "invalid_tool_chain"
+    } else if lower.contains("400") || lower.contains("bad request") {
+        "provider_bad_request"
+    } else {
+        "resume_failed"
+    }
+}
+
 /// Append a tool-role message to checkpoint and persist.
 #[allow(clippy::too_many_arguments)]
 pub fn append_tool_message_to_checkpoint(
@@ -144,7 +161,8 @@ pub async fn resume_harness_after_tool_confirm_or_restore(
                 request_id,
                 TraceStatus::AwaitingToolConfirmation,
             );
-            Err(e)
+            let code = classify_resume_error(&e.to_string());
+            Err(AppError::msg(format!("{code}: {e}")))
         }
     }
 }

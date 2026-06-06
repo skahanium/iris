@@ -226,7 +226,9 @@ export function ToolConfirmDialog({
           {(request.tool_name === "skills_uninstall" ||
             request.tool_name === "skills_toggle") && (
             <div className="rounded-md border border-border/80 bg-surface-inset p-3 text-xs">
-              <p className="font-medium">Skill：{String(request.arguments.name ?? "")}</p>
+              <p className="font-medium">
+                Skill：{String(request.arguments.name ?? "")}
+              </p>
               <p className="text-muted-foreground">
                 范围：{String(request.arguments.scope ?? "global")}
               </p>

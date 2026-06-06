@@ -711,6 +711,10 @@ async fn pause_for_tool_confirmation(
                             .get("registry")
                             .and_then(|v| v.as_str())
                             .map(String::from),
+                        expected_sha256: args
+                            .get("expected_sha256")
+                            .and_then(|v| v.as_str())
+                            .map(String::from),
                     };
                     if let Ok(preview) = preview_install(&req).await {
                         confirm_request["preview"] = preview;

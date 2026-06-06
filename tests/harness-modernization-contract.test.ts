@@ -78,4 +78,38 @@ describe("harness modernization remaining contracts", () => {
       'assistantRun.setFromTaskStatus("running", "document")',
     );
   });
+
+  it("skills lifecycle exposes update and capability diagnostics to the UI", () => {
+    const ipc = read("src/lib/ipc.ts");
+    expect(ipc).toContain("export async function skillsUpdate");
+    expect(ipc).toContain("content_hash?: string");
+    expect(ipc).toContain("capability_preview?:");
+    expect(ipc).toContain("availability:");
+
+    const panel = read("src/components/ai/SkillsPanel.tsx");
+    expect(panel).toContain("skillsUpdate");
+    expect(panel).toContain("能力状态");
+    expect(panel).toContain("更新");
+  });
+
+  it("tool confirmation suppresses duplicate resume calls for the same tool call", () => {
+    const panel = read("src/components/ai/UnifiedAssistantPanel.tsx");
+    expect(panel).toContain("toolConfirmInFlightRef");
+    expect(panel).toContain("toolConfirmSettledRef");
+    expect(panel).toContain("toolConfirmInFlightRef.current.has(confirmKey)");
+    expect(panel).toContain("toolConfirmSettledRef.current.has(confirmKey)");
+    expect(panel).toContain("toolConfirmSettledRef.current.add(confirmKey)");
+  });
+
+  it("composer typing avoids eager conversation and vault-wide mention work", () => {
+    const surface = read("src/components/ai/ConversationSurface.tsx");
+    expect(surface).toContain("memo(function ConversationSurface");
+
+    const panel = read("src/components/ai/UnifiedAssistantPanel.tsx");
+    expect(panel).toContain(
+      "mentionOpen ? buildMentionCandidates(vaultFiles, mentionQuery) : []",
+    );
+    expect(panel).toContain("const handleQuoteToInput = useCallback");
+    expect(panel).toContain("onQuoteToInput={handleQuoteToInput}");
+  });
 });

@@ -1,8 +1,4 @@
-import {
-  AlertTriangle,
-  MessageSquarePlus,
-  StopCircle,
-} from "lucide-react";
+import { AlertTriangle, MessageSquarePlus, StopCircle } from "lucide-react";
 import {
   useCallback,
   useEffect,
@@ -207,6 +203,8 @@ export function UnifiedAssistantPanel({
   );
   const streamBuf = useRef("");
   const requestIdRef = useRef<string | null>(null);
+  const toolConfirmInFlightRef = useRef<Set<string>>(new Set());
+  const toolConfirmSettledRef = useRef<Set<string>>(new Set());
   const [harnessRequestId, setHarnessRequestId] = useState<string | null>(null);
   const [auditDrawerOpen, setAuditDrawerOpen] = useState(false);
   const assistantRun = useAssistantRun("chat");
@@ -278,8 +276,8 @@ export function UnifiedAssistantPanel({
     [mentionTokens],
   );
   const mentionCandidates = useMemo(
-    () => buildMentionCandidates(vaultFiles, mentionQuery),
-    [vaultFiles, mentionQuery],
+    () => (mentionOpen ? buildMentionCandidates(vaultFiles, mentionQuery) : []),
+    [mentionOpen, vaultFiles, mentionQuery],
   );
 
   useEffect(() => {
@@ -1280,6 +1278,17 @@ export function UnifiedAssistantPanel({
     );
   }, []);
 
+  const handleQuoteToInput = useCallback((text: string) => {
+    const quoted = text
+      .split("\n")
+      .map((line) => `> ${line}`)
+      .join("\n");
+    setInput((prev) =>
+      prev.trim() ? `${prev.trim()}\n\n${quoted}\n\n` : `${quoted}\n\n`,
+    );
+    textareaRef.current?.focus();
+  }, []);
+
   const handleToolConfirm = useCallback(
     async (
       requestId: string,
@@ -1287,6 +1296,14 @@ export function UnifiedAssistantPanel({
       decision: "approve" | "reject" | "modify",
       modifiedArgs?: unknown,
     ) => {
+      const confirmKey = `${requestId}:${toolCallId}`;
+      if (
+        toolConfirmInFlightRef.current.has(confirmKey) ||
+        toolConfirmSettledRef.current.has(confirmKey)
+      ) {
+        return;
+      }
+      toolConfirmInFlightRef.current.add(confirmKey);
       const intent = actionState.intent;
       const pendingConfirm = toolConfirmRequest;
       setToolConfirmRequest(null);
@@ -1391,12 +1408,19 @@ export function UnifiedAssistantPanel({
         ]);
         setActionState(buildActionState(intent, nextTaskStatus, message));
       } finally {
+        toolConfirmInFlightRef.current.delete(confirmKey);
+        toolConfirmSettledRef.current.add(confirmKey);
         setStreaming(false);
         setActivityHint(null);
         assistantRun.setFromTaskStatus(nextTaskStatus, intent);
       }
     },
-    [actionState.intent, assistantRun, ensureAssistantStreamSlot, toolConfirmRequest],
+    [
+      actionState.intent,
+      assistantRun,
+      ensureAssistantStreamSlot,
+      toolConfirmRequest,
+    ],
   );
 
   const dismissToolConfirm = useCallback(() => {
@@ -1480,29 +1504,29 @@ export function UnifiedAssistantPanel({
               onOpenAudit={() => setAuditDrawerOpen(true)}
             />
             <SessionHistoryDropdown
-            scene={activeScene}
-            notePath={notePath}
-            currentSessionId={sessionId}
-            disabled={chromeActionsDisabled}
-            onSelectSession={handleLoadSession}
-            onDeleted={(id) => {
-              if (sessionId === id) {
-                handleNewChat();
-              }
-            }}
-          />
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            className="h-8 gap-1 px-2 text-xs"
-            title="新对话（不加载本笔记下的历史会话）"
-            onClick={handleNewChat}
-            disabled={chromeActionsDisabled}
-          >
-            <MessageSquarePlus className="h-3.5 w-3.5" />
-            新对话
-          </Button>
+              scene={activeScene}
+              notePath={notePath}
+              currentSessionId={sessionId}
+              disabled={chromeActionsDisabled}
+              onSelectSession={handleLoadSession}
+              onDeleted={(id) => {
+                if (sessionId === id) {
+                  handleNewChat();
+                }
+              }}
+            />
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="h-8 gap-1 px-2 text-xs"
+              title="新对话（不加载本笔记下的历史会话）"
+              onClick={handleNewChat}
+              disabled={chromeActionsDisabled}
+            >
+              <MessageSquarePlus className="h-3.5 w-3.5" />
+              新对话
+            </Button>
           </div>
         </div>
       </header>
@@ -1710,16 +1734,7 @@ export function UnifiedAssistantPanel({
         onExpandResearch={handleExpandResearchDetail}
         onRetract={handleRetract}
         onSelect={bubbleSelection.handleClick}
-        onQuoteToInput={(text) => {
-          const quoted = text
-            .split("\n")
-            .map((line) => `> ${line}`)
-            .join("\n");
-          setInput((prev) =>
-            prev.trim() ? `${prev.trim()}\n\n${quoted}\n\n` : `${quoted}\n\n`,
-          );
-          textareaRef.current?.focus();
-        }}
+        onQuoteToInput={handleQuoteToInput}
       />
 
       {bubbleSelection.selected.size > 0 ? (
