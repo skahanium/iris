@@ -21,6 +21,7 @@ import {
   EMPTY_ASSISTANT_CHROME,
   type AssistantChromeSnapshot,
 } from "@/types/assistant-chrome";
+import { ClassifiedPanel } from "@/components/classified/ClassifiedPanel";
 import { DocumentTitleField } from "@/components/editor/DocumentTitleField";
 import { EditorFindReplaceBar } from "@/components/editor/EditorFindReplaceBar";
 import { EditorOutline } from "@/components/editor/EditorOutline";
@@ -43,6 +44,7 @@ import { WelcomeEmpty } from "@/components/layout/WelcomeEmpty";
 import { TagView } from "@/components/tag/TagView";
 import { Button } from "@/components/ui/button";
 import { useAppKeyboard } from "@/hooks/useAppKeyboard";
+import { useClassifiedVaultSession } from "@/hooks/useClassifiedVaultSession";
 import { useEditorContextMenu } from "@/hooks/useEditorContextMenu";
 import { useAutoVaultIndex } from "@/hooks/useAutoVaultIndex";
 import { useEditorSave } from "@/hooks/useEditorSave";
@@ -69,6 +71,7 @@ import {
   displayTitleForChrome,
   resolveNoteDisplayTitle,
 } from "@/lib/note-display";
+import { isClassifiedVaultPath } from "@/lib/classified-path";
 import {
   fileRead,
   fileSetLock,
@@ -217,6 +220,7 @@ function App() {
   const [findReplaceMode, setFindReplaceMode] = useState<"find" | "replace">(
     "find",
   );
+  const [classifiedOpen, setClassifiedOpen] = useState(false);
   const [vaultIndexEpoch, setVaultIndexEpoch] = useState(0);
   const { zoom: editorZoom, zoomIn, zoomOut, resetZoom } = useEditorZoom();
   const editorRef = useRef<Editor | null>(null);
@@ -484,10 +488,59 @@ function App() {
     };
   }, [activePathRef, getLiveMarkdownRef]);
 
+  useEffect(() => {
+    if (!isTauriRuntime()) return;
+    let unlisten: (() => void) | undefined;
+    void import("@tauri-apps/api/event").then(({ listen }) =>
+      listen<{ path: string }>("classified:file_taken", (event) => {
+        const path = event.payload.path;
+        if (tabsRef.current.some((tab) => tab.path === path)) {
+          void closeTab(path);
+        }
+        bumpVaultIndex();
+      }).then((fn) => {
+        unlisten = fn;
+      }),
+    );
+    return () => {
+      unlisten?.();
+    };
+  }, [closeTab, bumpVaultIndex]);
+
+  const openClassifiedPaths = useMemo(
+    () => tabs.filter((tab) => isClassifiedVaultPath(tab.path)).map((t) => t.path),
+    [tabs],
+  );
+
+  const {
+    status: classifiedVaultStatus,
+    waiting: classifiedWaiting,
+    idleDeadline: classifiedIdleDeadline,
+    refreshStatus: refreshClassifiedStatus,
+    touchActivity: touchClassifiedActivity,
+    requestLock: requestClassifiedLock,
+    onUnlocked: onClassifiedUnlocked,
+    setWaiting: setClassifiedWaiting,
+  } = useClassifiedVaultSession({
+    enabled: Boolean(vaultPath) && isTauriRuntime(),
+    openClassifiedPaths,
+    onLocked: () => setAiStatus("涉密保险库已锁定"),
+  });
+
+  useEffect(() => {
+    if (classifiedOpen) {
+      void refreshClassifiedStatus();
+    }
+  }, [classifiedOpen, refreshClassifiedStatus]);
+
+  const activeNoteIsClassified = Boolean(
+    activePath && isClassifiedVaultPath(activePath),
+  );
+
   const handleLockToggle = useCallback(
     async (locked: boolean) => {
       const path = activePathRef.current;
-      if (!path) return;
+      if (!path || isClassifiedVaultPath(path)) return;
       setFileLocked(path, locked);
       try {
         await fileSetLock(path, locked);
@@ -790,6 +843,9 @@ function App() {
         case "openOverlay":
           overlays.openOverlay(action.overlay);
           break;
+        case "openClassifiedPanel":
+          setClassifiedOpen(true);
+          break;
         case "openFindReplace":
           openFindReplace(action.mode);
           break;
@@ -985,7 +1041,11 @@ function App() {
                   zoom={editorZoom}
                   titleSlot={editorTitleSlot}
                   locked={activeFileLocked}
-                  setLocked={(locked) => void handleLockToggle(locked)}
+                  setLocked={
+                    activeNoteIsClassified
+                      ? undefined
+                      : (locked) => void handleLockToggle(locked)
+                  }
                   onDirty={handleDirty}
                   onSlashCommand={runEditorActionById}
                   onBodyContextMenu={editorContextMenu.handleContextMenu}
@@ -1175,6 +1235,20 @@ function App() {
               onKeepLocal={handleConflictKeepLocal}
               onAcceptExternal={handleConflictAcceptExternal}
               onManualEdit={handleConflictManualEdit}
+            />
+            <ClassifiedPanel
+              open={classifiedOpen}
+              onClose={() => setClassifiedOpen(false)}
+              status={classifiedVaultStatus}
+              waiting={classifiedWaiting}
+              idleDeadline={classifiedIdleDeadline}
+              openClassifiedPaths={openClassifiedPaths}
+              onOpenFile={(path) => void openNote(path)}
+              onUnlockSuccess={() => void onClassifiedUnlocked()}
+              onRequestLock={() => requestClassifiedLock()}
+              onActivity={touchClassifiedActivity}
+              onRefreshStatus={refreshClassifiedStatus}
+              onEnterWaiting={() => setClassifiedWaiting(true)}
             />
           </>
         }

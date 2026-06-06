@@ -7,6 +7,7 @@ import {
 
 export type CommandPaletteAction =
   | { type: "openOverlay"; overlay: OverlayId }
+  | { type: "openClassifiedPanel" }
   | { type: "openFindReplace"; mode: "find" | "replace" }
   | { type: "newNote" }
   | { type: "saveNote" }
@@ -111,6 +112,17 @@ export function buildCommandPaletteItems(
       disabled: vaultOnly,
       chord: { key: "U", mod: true, shift: true, requireVault: true },
       action: { type: "openOverlay", overlay: "recycleBin" },
+    },
+    {
+      id: "classified-panel",
+      label: "涉密面板",
+      group: "保险库",
+      keywords: "classified vault 涉密 保险库 加密 锁定",
+      icon: "Lock",
+      hiddenInPalette: true,
+      disabled: vaultOnly,
+      chord: { key: "L", mod: true, shift: true, requireVault: true },
+      action: { type: "openClassifiedPanel" },
     },
     {
       id: "search",
