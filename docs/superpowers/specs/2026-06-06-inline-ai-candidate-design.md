@@ -25,19 +25,19 @@
 …后文…
 ```
 
-| 操作 | 行为 |
-|------|------|
+| 操作     | 行为                                                                          |
+| -------- | ----------------------------------------------------------------------------- |
 | **接受** | 用候选文本替换 `sourceFrom–sourceTo` 原文范围；删除 `aiStream` 节点；清除高亮 |
-| **放弃** | `llmAbort` + 仅删除 `aiStream`；原文与高亮清除（rollback） |
-| **重试** | 清空候选、状态回到 `streaming`；重新 `llmGenerate`；原文不变 |
+| **放弃** | `llmAbort` + 仅删除 `aiStream`；原文与高亮清除（rollback）                    |
+| **重试** | 清空候选、状态回到 `streaming`；重新 `llmGenerate`；原文不变                  |
 
 ### 按钮可用性
 
-| 状态 | 放弃 | 重试 | 接受 |
-|------|------|------|------|
-| streaming | ✓ | ✗ | ✗ |
-| ready | ✓ | ✓ | ✓（有内容） |
-| error | ✓ | ✓ | ✗ |
+| 状态      | 放弃 | 重试 | 接受        |
+| --------- | ---- | ---- | ----------- |
+| streaming | ✓    | ✗    | ✗           |
+| ready     | ✓    | ✓    | ✓（有内容） |
+| error     | ✓    | ✓    | ✗           |
 
 ### 快捷键
 
@@ -48,13 +48,13 @@
 
 `aiStream` 节点 attrs：
 
-| 字段 | 说明 |
-|------|------|
-| `status` | `streaming` \| `ready` \| `error` |
-| `originalText` | 启动时快照，供 retry prompt |
-| `action` | 内联动作 id（如 `translate`、`rewrite`） |
-| `sourceFrom` | 原文选区起始 doc position |
-| `sourceTo` | 原文选区结束 doc position |
+| 字段           | 说明                                     |
+| -------------- | ---------------------------------------- |
+| `status`       | `streaming` \| `ready` \| `error`        |
+| `originalText` | 启动时快照，供 retry prompt              |
+| `action`       | 内联动作 id（如 `translate`、`rewrite`） |
+| `sourceFrom`   | 原文选区起始 doc position                |
+| `sourceTo`     | 原文选区结束 doc position                |
 
 Slash 命令插入（`insertAiStreamAtCursor`）无原文对照，`sourceFrom/To` 为 0。
 

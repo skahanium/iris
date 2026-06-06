@@ -24,7 +24,7 @@ AI 助手相关配置原先分散在三处：
 
 ```typescript
 interface PromptProfileDto {
-  display_name: string;      // 默认「砚」
+  display_name: string; // 默认「砚」
   avatar_emoji: string | null;
   persona: string;
   writing_style: string;
@@ -44,12 +44,12 @@ interface PromptProfileDto {
 
 ## 组件
 
-| 组件 | 职责 |
-|------|------|
-| `AssistantPersonaDisplay` | 侧栏只读头像 + 称呼 |
-| `AgentStatusStrip` | 侧栏只读 Skills 数 + 联网状态 |
-| `PersonaSettingsPanel` | 统一人格配置浮层 |
-| `usePromptProfile` | 读写 PromptProfile + 事件同步 |
+| 组件                      | 职责                          |
+| ------------------------- | ----------------------------- |
+| `AssistantPersonaDisplay` | 侧栏只读头像 + 称呼           |
+| `AgentStatusStrip`        | 侧栏只读 Skills 数 + 联网状态 |
+| `PersonaSettingsPanel`    | 统一人格配置浮层              |
+| `usePromptProfile`        | 读写 PromptProfile + 事件同步 |
 
 ## 废弃
 
