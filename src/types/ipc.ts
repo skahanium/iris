@@ -9,6 +9,17 @@ export interface FileReadResult {
   isLocked: boolean;
 }
 
+export interface ClassifiedFileEntry {
+  path: string;
+  isDir: boolean;
+}
+
+export type ClassifiedStatus =
+  | "needs_setup"
+  | "locked"
+  | "unlocked"
+  | "waiting";
+
 export interface CorpusListItem {
   id: string;
   name: string;

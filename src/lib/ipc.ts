@@ -25,6 +25,8 @@ import type {
   FileChangedEvent,
   FileEntry,
   FileListItem,
+  ClassifiedFileEntry,
+  ClassifiedStatus,
   FileReadResult,
   GraphData,
   InboxItem,
@@ -91,6 +93,44 @@ export async function fileSetLock(
   locked: boolean,
 ): Promise<void> {
   return invoke("file_set_lock", { path, locked });
+}
+
+export async function classifiedSetup(password: string): Promise<void> {
+  return invoke("classified_setup", { password });
+}
+
+export async function classifiedUnlock(password: string): Promise<void> {
+  return invoke("classified_unlock", { password });
+}
+
+export async function classifiedLock(): Promise<void> {
+  return invoke("classified_lock");
+}
+
+export async function classifiedStatus(): Promise<ClassifiedStatus> {
+  return invoke<ClassifiedStatus>("classified_status");
+}
+
+export async function classifiedFiles(
+  folder?: string,
+): Promise<ClassifiedFileEntry[]> {
+  return invoke<ClassifiedFileEntry[]>("classified_files", {
+    folder: folder ?? null,
+  });
+}
+
+export async function classifiedImport(
+  path: string,
+  targetFolder: string,
+): Promise<void> {
+  return invoke("classified_import", { path, targetFolder });
+}
+
+export async function classifiedExport(
+  path: string,
+  targetFolder: string,
+): Promise<void> {
+  return invoke("classified_export", { path, targetFolder });
 }
 
 export async function fileWrite(
