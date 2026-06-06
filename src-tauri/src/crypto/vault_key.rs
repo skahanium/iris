@@ -6,7 +6,7 @@ use argon2::{Argon2, PasswordHasher, PasswordVerifier};
 use rand::Rng;
 use std::fs;
 use std::path::Path;
-use std::sync::RwLock;
+use std::sync::{OnceLock, RwLock};
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
 const VAULT_CONFIG_FILENAME: &str = "vault.json";
@@ -22,6 +22,7 @@ struct VaultConfig {
 #[derive(Debug, Clone, Zeroize, ZeroizeOnDrop)]
 struct KeyBytes([u8; 32]);
 
+#[derive(Debug)]
 pub struct VaultKey {
     key: Option<KeyBytes>,
 }
@@ -161,6 +162,15 @@ impl VaultKey {
             .map(|k| &k.0)
             .ok_or_else(|| AppError::msg("保险库未解锁"))
     }
+}
+
+pub static VAULT_KEY: OnceLock<RwLock<VaultKey>> = OnceLock::new();
+
+/// Initialize the process-wide vault key holder (call once at app startup).
+pub fn init_vault_key() {
+    VAULT_KEY
+        .set(RwLock::new(VaultKey::new()))
+        .expect("VAULT_KEY should only be initialized once");
 }
 
 #[cfg(test)]
