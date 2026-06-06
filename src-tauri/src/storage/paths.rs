@@ -166,6 +166,9 @@ mod tests {
         assert!(!is_user_note_path(".classified"));
         assert!(!is_user_note_path(".classified/secret.md"));
         assert!(!is_user_note_path(".classified/sub/dir/file.md"));
+        // Windows 反斜杠路径应经 normalize 后同样拒绝
+        assert!(!is_user_note_path(".classified\\secret.md"));
+        assert!(!is_user_note_path(".classified\\sub\\dir\\file.md"));
     }
 
     #[test]
@@ -173,6 +176,8 @@ mod tests {
         assert!(is_user_note_path("notes/readme.md"));
         assert!(is_user_note_path("projects/plan.md"));
         assert!(is_user_note_path("   leading spaces.md"));
+        assert!(is_user_note_path("notes\\readme.md"));
+        assert!(is_user_note_path("projects\\plan.md"));
     }
 
     // ── validate_user_note_relative_path (combined) ──────
