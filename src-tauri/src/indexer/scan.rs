@@ -19,6 +19,16 @@ use crate::storage::paths::{
 };
 use std::sync::Arc;
 
+/// WalkDir `filter_entry` predicate: skip entire `.iris/` and `.classified/` subtrees.
+fn should_walk_vault_entry(vault: &Path, entry_path: &Path) -> bool {
+    entry_path.strip_prefix(vault).is_ok_and(|rel| {
+        !rel.components().any(|c| {
+            let name = c.as_os_str();
+            name == ".iris" || name == ".classified"
+        })
+    })
+}
+
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct FileEntry {
     pub id: i64,
@@ -512,7 +522,7 @@ pub fn prune_stale_file_indexes(conn: &Connection, vault: &Path) -> AppResult<us
     Ok(pruned)
 }
 
-/// Collect vault subfolders (forward-slash paths with trailing `/`), excluding `.iris`.
+/// Collect vault subfolders (forward-slash paths with trailing `/`), excluding `.iris` and `.classified`.
 pub fn collect_vault_folders(vault: &Path) -> Vec<String> {
     if !vault.exists() {
         return Vec::new();
@@ -521,11 +531,7 @@ pub fn collect_vault_folders(vault: &Path) -> Vec<String> {
     for entry in WalkDir::new(vault)
         .follow_links(false)
         .into_iter()
-        .filter_entry(|e| {
-            e.path()
-                .strip_prefix(vault)
-                .is_ok_and(|rel| !rel.components().any(|c| c.as_os_str() == ".iris"))
-        })
+        .filter_entry(|e| should_walk_vault_entry(vault, e.path()))
         .filter_map(|e| e.ok())
     {
         if !entry.file_type().is_dir() {
@@ -557,11 +563,7 @@ pub fn collect_vault_files(vault: &Path) -> Vec<std::path::PathBuf> {
     WalkDir::new(vault)
         .follow_links(false)
         .into_iter()
-        .filter_entry(|e| {
-            e.path()
-                .strip_prefix(vault)
-                .is_ok_and(|rel| !rel.components().any(|c| c.as_os_str() == ".iris"))
-        })
+        .filter_entry(|e| should_walk_vault_entry(vault, e.path()))
         .filter_map(|e| e.ok())
         .filter(|e| e.path().extension().is_some_and(|ext| ext == "md"))
         .filter(|e| e.path().is_file())
@@ -588,6 +590,48 @@ mod tests {
         fs::create_dir_all(&vault).unwrap();
         let db = Database::open_in_memory().unwrap();
         (dir, vault, db)
+    }
+
+    #[test]
+    fn scan_vault_skips_classified_dir() {
+        let (_dir, vault, db) = setup_vault();
+        fs::create_dir_all(vault.join(".classified")).unwrap();
+        write_note(&vault, ".classified/secret.md", "# Secret\n\nContent.");
+        write_note(&vault, "normal.md", "# Normal\n\nContent.");
+
+        db.with_conn(|conn| {
+            let entries = index_vault_incremental(conn, &vault, None::<&Arc<AppState>>)?;
+            assert_eq!(entries.len(), 1);
+            assert_eq!(entries[0].path, "normal.md");
+            let count: i64 = conn.query_row("SELECT COUNT(*) FROM files", [], |r| r.get(0))?;
+            assert_eq!(count, 1);
+            Ok(())
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn collect_vault_files_excludes_classified_paths() {
+        let (_dir, vault, _db) = setup_vault();
+        fs::create_dir_all(vault.join(".classified")).unwrap();
+        write_note(&vault, ".classified/secret.md", "# Secret");
+        write_note(&vault, "open.md", "# Open");
+
+        let files = collect_vault_files(&vault);
+        assert_eq!(files.len(), 1);
+        assert!(files[0].ends_with("open.md"));
+    }
+
+    #[test]
+    fn collect_vault_folders_excludes_classified_dir() {
+        let (_dir, vault, _db) = setup_vault();
+        fs::create_dir_all(vault.join(".classified/nested")).unwrap();
+        fs::create_dir_all(vault.join("notes/inbox")).unwrap();
+
+        let folders = collect_vault_folders(&vault);
+        assert!(!folders.iter().any(|f| f.starts_with(".classified")));
+        assert!(folders.contains(&"notes/".to_string()));
+        assert!(folders.contains(&"notes/inbox/".to_string()));
     }
 
     #[test]
