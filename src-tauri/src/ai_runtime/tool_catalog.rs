@@ -448,6 +448,153 @@ pub static TOOL_CATALOG: LazyLock<Vec<ToolCatalogEntry>> = LazyLock::new(|| {
             scene_affinity: &[],
             max_results: None,
         },
+        // ─── Root capabilities for advanced skills ─────────────
+        ToolCatalogEntry {
+            name: "memory_read",
+            description: "读取用户确认保存的长期 AI 经验/记忆条目",
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "key": {"type": "string", "description": "可选，精确读取某条记忆"},
+                    "query": {"type": "string", "description": "可选，按关键词过滤"},
+                    "limit": {"type": "integer", "default": 20}
+                }
+            }),
+            access_level: ToolAccessLevel::ReadProfile,
+            requires_confirmation: false,
+            implementation: ToolImplementationStatus::Dispatchable,
+            default_enabled_without_skill: false,
+            scene_affinity: &[],
+            max_results: Some(50),
+        },
+        ToolCatalogEntry {
+            name: "memory_write",
+            description: "写入或更新用户确认的长期 AI 经验/记忆条目",
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "key": {"type": "string"},
+                    "content": {"type": "string"},
+                    "scope": {"type": "string", "enum": ["global", "vault"], "default": "global"}
+                },
+                "required": ["key", "content"]
+            }),
+            access_level: ToolAccessLevel::WriteSettings,
+            requires_confirmation: true,
+            implementation: ToolImplementationStatus::Dispatchable,
+            default_enabled_without_skill: false,
+            scene_affinity: &[],
+            max_results: None,
+        },
+        ToolCatalogEntry {
+            name: "scheduled_task_create",
+            description: "创建用户确认的主动 Agent 计划任务（仅登记，不后台自动执行）",
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "title": {"type": "string"},
+                    "prompt": {"type": "string"},
+                    "schedule": {"type": "string", "description": "自然语言或 cron 风格描述"}
+                },
+                "required": ["title", "prompt", "schedule"]
+            }),
+            access_level: ToolAccessLevel::WriteSettings,
+            requires_confirmation: true,
+            implementation: ToolImplementationStatus::Dispatchable,
+            default_enabled_without_skill: false,
+            scene_affinity: &[],
+            max_results: None,
+        },
+        ToolCatalogEntry {
+            name: "scheduled_task_list",
+            description: "列出已登记的主动 Agent 计划任务",
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "include_disabled": {"type": "boolean", "default": false}
+                }
+            }),
+            access_level: ToolAccessLevel::ReadProfile,
+            requires_confirmation: false,
+            implementation: ToolImplementationStatus::Dispatchable,
+            default_enabled_without_skill: false,
+            scene_affinity: &[],
+            max_results: Some(50),
+        },
+        ToolCatalogEntry {
+            name: "scheduled_task_delete",
+            description: "删除用户确认的主动 Agent 计划任务",
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "id": {"type": "integer"}
+                },
+                "required": ["id"]
+            }),
+            access_level: ToolAccessLevel::WriteSettings,
+            requires_confirmation: true,
+            implementation: ToolImplementationStatus::Dispatchable,
+            default_enabled_without_skill: false,
+            scene_affinity: &[],
+            max_results: None,
+        },
+        ToolCatalogEntry {
+            name: "web_fetch_batch",
+            description: "批量抓取少量 HTTPS 页面并返回正文证据包（需确认，限量）",
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "urls": {"type": "array", "items": {"type": "string"}, "maxItems": 5},
+                    "max_chars": {"type": "integer", "default": 12000},
+                    "reason": {"type": "string"}
+                },
+                "required": ["urls"]
+            }),
+            access_level: ToolAccessLevel::Network,
+            requires_confirmation: true,
+            implementation: ToolImplementationStatus::Dispatchable,
+            default_enabled_without_skill: false,
+            scene_affinity: &[AiScene::KnowledgeLookup, AiScene::ResearchSynthesis],
+            max_results: Some(5),
+        },
+        ToolCatalogEntry {
+            name: "readability_fetch",
+            description: "抓取 HTTPS 页面并提取适合阅读的正文（需确认）",
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "url": {"type": "string"},
+                    "max_chars": {"type": "integer", "default": 24000},
+                    "reason": {"type": "string"}
+                },
+                "required": ["url"]
+            }),
+            access_level: ToolAccessLevel::Network,
+            requires_confirmation: true,
+            implementation: ToolImplementationStatus::Dispatchable,
+            default_enabled_without_skill: false,
+            scene_affinity: &[AiScene::KnowledgeLookup, AiScene::ResearchSynthesis],
+            max_results: Some(1),
+        },
+        ToolCatalogEntry {
+            name: "rendered_fetch",
+            description: "登记对 JS 渲染抓取的需求；当前安全实现回退到普通 HTTPS 正文抓取并标记未渲染",
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "url": {"type": "string"},
+                    "max_chars": {"type": "integer", "default": 24000},
+                    "reason": {"type": "string"}
+                },
+                "required": ["url"]
+            }),
+            access_level: ToolAccessLevel::Network,
+            requires_confirmation: true,
+            implementation: ToolImplementationStatus::Dispatchable,
+            default_enabled_without_skill: false,
+            scene_affinity: &[AiScene::KnowledgeLookup, AiScene::ResearchSynthesis],
+            max_results: Some(1),
+        },
         // ─── Skill management (meta tools) ─────────────────────
         ToolCatalogEntry {
             name: "skills_list",
@@ -465,7 +612,7 @@ pub static TOOL_CATALOG: LazyLock<Vec<ToolCatalogEntry>> = LazyLock::new(|| {
         },
         ToolCatalogEntry {
             name: "skills_install",
-            description: "安装 Agent Skill（url / git / local / registry）。SkillHub: source=registry, registry=skillhub, path_or_url=<skill名或页面URL>",
+            description: "安装 Agent Skill（url / git / local / registry）。SkillHub: source=registry, registry=skillhub, path_or_url=<skill名或页面URL>。建议对 URL 安装提供 expected_sha256 校验内容完整性。",
             input_schema: serde_json::json!({
                 "type": "object",
                 "properties": {
@@ -474,7 +621,8 @@ pub static TOOL_CATALOG: LazyLock<Vec<ToolCatalogEntry>> = LazyLock::new(|| {
                     "scope": {"type": "string", "enum": ["global", "vault"], "default": "global"},
                     "subpath": {"type": "string"},
                     "registry": {"type": "string", "description": "registry 时必填，默认 skillhub"},
-                    "reason": {"type": "string", "description": "展示于确认框"}
+                    "reason": {"type": "string", "description": "展示于确认框"},
+                    "expected_sha256": {"type": "string", "description": "URL 安装时可选的 SHA-256 预期值，用于校验下载内容完整性"}
                 },
                 "required": ["source", "path_or_url"]
             }),
@@ -488,6 +636,25 @@ pub static TOOL_CATALOG: LazyLock<Vec<ToolCatalogEntry>> = LazyLock::new(|| {
         ToolCatalogEntry {
             name: "skills_uninstall",
             description: "卸载已安装的 Agent Skill",
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string"},
+                    "scope": {"type": "string", "enum": ["global", "vault"], "default": "global"},
+                    "reason": {"type": "string"}
+                },
+                "required": ["name"]
+            }),
+            access_level: ToolAccessLevel::ManageSkills,
+            requires_confirmation: true,
+            implementation: ToolImplementationStatus::Dispatchable,
+            default_enabled_without_skill: true,
+            scene_affinity: &[],
+            max_results: None,
+        },
+        ToolCatalogEntry {
+            name: "skills_update",
+            description: "根据记录的安装来源更新已安装的 Agent Skill",
             input_schema: serde_json::json!({
                 "type": "object",
                 "properties": {
@@ -715,11 +882,11 @@ mod tests {
 
     #[test]
     fn total_catalog_count() {
-        // 14 read-only + 7 write + 5 skills meta = 26 total tools
+        // 14 read-only + 7 write + 8 root capability + 6 skills meta = 35 total tools
         assert_eq!(
             catalog_total_count(),
-            26,
-            "catalog should have exactly 26 tools"
+            35,
+            "catalog should have exactly 35 tools"
         );
     }
 
@@ -727,5 +894,31 @@ mod tests {
     fn catalog_find_works() {
         assert!(catalog_find("read_note").is_some());
         assert!(catalog_find("nonexistent_tool").is_none());
+    }
+
+    #[test]
+    fn catalog_exposes_skill_root_capability_tools() {
+        for name in [
+            "memory_read",
+            "memory_write",
+            "scheduled_task_create",
+            "scheduled_task_list",
+            "scheduled_task_delete",
+            "web_fetch_batch",
+            "readability_fetch",
+            "rendered_fetch",
+        ] {
+            assert!(
+                catalog_find(name).is_some(),
+                "{name} missing from ToolCatalog"
+            );
+        }
+        assert!(!catalog_find("memory_read").unwrap().requires_confirmation);
+        assert!(catalog_find("memory_write").unwrap().requires_confirmation);
+        assert!(
+            catalog_find("web_fetch_batch")
+                .unwrap()
+                .requires_confirmation
+        );
     }
 }

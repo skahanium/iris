@@ -85,6 +85,7 @@ const META_SKILL_TOOLS: &[&str] = &[
     "skills_list",
     "skills_install",
     "skills_uninstall",
+    "skills_update",
     "skills_toggle",
 ];
 

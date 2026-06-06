@@ -8,8 +8,9 @@ use tauri::{AppHandle, Emitter};
 
 use crate::ai_runtime::skill_registry::{InstallSpec, SkillInstallSource};
 use crate::ai_runtime::skills::{
-    enrich_list_with_scene, install_from_git, install_from_local, install_from_url,
-    scan_all_with_status, set_enabled, uninstall, SkillEntry, SkillListEntry, SkillScope,
+    capability_preview_for_entry, enrich_list_with_scene, install_from_git, install_from_local,
+    install_from_url, scan_all_with_status, set_enabled, skill_content_hash_for_path, uninstall,
+    validate_skill_license, SkillEntry, SkillListEntry, SkillScope,
 };
 use crate::ai_runtime::AiScene;
 use crate::embedding::engine::embed_text;
@@ -24,6 +25,7 @@ pub struct SkillInstallRequest {
     pub scope: SkillScope,
     pub subpath: Option<String>,
     pub registry: Option<String>,
+    pub expected_sha256: Option<String>,
 }
 
 fn scope_db(scope: SkillScope) -> &'static str {
@@ -57,16 +59,18 @@ fn record_install_source(
     scope: SkillScope,
     source_type: &str,
     source_url: Option<&str>,
+    content_hash: Option<&str>,
 ) -> AppResult<()> {
     db.with_conn(|conn| {
         conn.execute(
-            "INSERT INTO skill_install_sources (skill_name, scope, source_type, source_url, installed_at)
-             VALUES (?1, ?2, ?3, ?4, datetime('now'))
+            "INSERT INTO skill_install_sources (skill_name, scope, source_type, source_url, installed_at, updated_at, content_hash)
+             VALUES (?1, ?2, ?3, ?4, datetime('now'), datetime('now'), ?5)
              ON CONFLICT(skill_name, scope) DO UPDATE SET
                source_type = excluded.source_type,
                source_url = excluded.source_url,
-               installed_at = datetime('now')",
-            rusqlite::params![name, scope_db(scope), source_type, source_url],
+               updated_at = datetime('now'),
+               content_hash = excluded.content_hash",
+            rusqlite::params![name, scope_db(scope), source_type, source_url, content_hash],
         )?;
         Ok(())
     })
@@ -132,8 +136,18 @@ async fn install_entries(
 ) -> AppResult<Vec<SkillListEntry>> {
     let mut out = Vec::new();
     for entry in entries {
+        validate_skill_license(&entry)?;
         set_enabled(&entry.name, entry.scope, vault, true)?;
-        record_install_source(db, &entry.name, entry.scope, source_type, source_url)?;
+        let content_hash =
+            skill_content_hash_for_path(&std::path::PathBuf::from(&entry.file_path)).ok();
+        record_install_source(
+            db,
+            &entry.name,
+            entry.scope,
+            source_type,
+            source_url,
+            content_hash.as_deref(),
+        )?;
         refresh_activation_index(db, &entry)?;
         out.push(entry_to_list_entry(&entry, vault)?);
     }
@@ -154,11 +168,12 @@ async fn install_from_spec(
     app_handle: Option<&AppHandle>,
     spec: InstallSpec,
     scope: SkillScope,
+    expected_sha256: Option<&str>,
 ) -> AppResult<SkillListEntry> {
     let source_url = Some(spec.path_or_url.as_str());
     match spec.source {
         SkillInstallSource::Url => {
-            let entry = install_from_url(&spec.path_or_url, scope, vault).await?;
+            let entry = install_from_url(&spec.path_or_url, scope, vault, expected_sha256).await?;
             let list =
                 install_entries(db, vault, app_handle, vec![entry], "url", source_url).await?;
             list.into_iter()
@@ -212,7 +227,15 @@ pub async fn install_skill(
         let spec =
             crate::ai_runtime::skill_registry::resolve_registry_named(registry, &req.path_or_url)
                 .await?;
-        return install_from_spec(db, vault, app_handle, spec, req.scope).await;
+        return install_from_spec(
+            db,
+            vault,
+            app_handle,
+            spec,
+            req.scope,
+            req.expected_sha256.as_deref(),
+        )
+        .await;
     }
 
     let spec = InstallSpec {
@@ -221,7 +244,54 @@ pub async fn install_skill(
         subpath: req.subpath,
         display_name: None,
     };
-    install_from_spec(db, vault, app_handle, spec, req.scope).await
+    install_from_spec(
+        db,
+        vault,
+        app_handle,
+        spec,
+        req.scope,
+        req.expected_sha256.as_deref(),
+    )
+    .await
+}
+
+/// Update an installed skill by reinstalling from its recorded source.
+pub async fn update_skill(
+    db: &Database,
+    vault: &Path,
+    app_handle: Option<&AppHandle>,
+    name: &str,
+    scope: SkillScope,
+) -> AppResult<SkillListEntry> {
+    let (source_type, source_url): (String, Option<String>) = db.with_conn(|conn| {
+        conn.query_row(
+            "SELECT source_type, source_url FROM skill_install_sources WHERE skill_name = ?1 AND scope = ?2",
+            rusqlite::params![name, scope_db(scope)],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .map_err(Into::into)
+    })?;
+    let Some(path_or_url) = source_url else {
+        return Err(AppError::msg(format!(
+            "skill_update_source_missing: {name} has no recorded source"
+        )));
+    };
+    let source = SkillInstallSource::parse(&source_type)
+        .ok_or_else(|| AppError::msg(format!("skill_update_source_invalid: {source_type}")))?;
+    install_skill(
+        db,
+        vault,
+        app_handle,
+        SkillInstallRequest {
+            source,
+            path_or_url,
+            scope,
+            subpath: None,
+            registry: None,
+            expected_sha256: None,
+        },
+    )
+    .await
 }
 
 /// Preview install resolution (read-only, for confirm dialog).
@@ -234,7 +304,7 @@ pub async fn preview_install(req: &SkillInstallRequest) -> AppResult<serde_json:
         )
         .await;
     }
-    Ok(serde_json::json!({
+    let mut preview = serde_json::json!({
         "source": match req.source {
             SkillInstallSource::Url => "url",
             SkillInstallSource::Git => "git",
@@ -247,7 +317,16 @@ pub async fn preview_install(req: &SkillInstallRequest) -> AppResult<serde_json:
             SkillScope::Global => "global",
             SkillScope::Vault => "vault",
         },
-    }))
+    });
+    if req.source == SkillInstallSource::Local {
+        let path = std::path::PathBuf::from(&req.path_or_url);
+        if path.is_file() {
+            let entry = crate::ai_runtime::skills::load_skill(&path, req.scope)?;
+            validate_skill_license(&entry)?;
+            preview["capability_diff"] = capability_preview_for_entry(&entry, &[]);
+        }
+    }
+    Ok(preview)
 }
 
 /// Uninstall a skill by name and scope.
@@ -334,6 +413,7 @@ mod tests {
             scope: SkillScope::Vault,
             subpath: None,
             registry: None,
+            expected_sha256: None,
         };
         let entry = install_skill(&state.db, &vault, None, req)
             .await
@@ -355,5 +435,115 @@ mod tests {
             assert_eq!(index_count, 1);
             Ok(())
         }).unwrap();
+    }
+
+    #[tokio::test]
+    async fn local_install_rejects_incompatible_license() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = dir.path().join("vault");
+        std::fs::create_dir_all(&vault).unwrap();
+        let source_dir = vault.join("incoming-bad");
+        std::fs::create_dir_all(&source_dir).unwrap();
+        let source = source_dir.join("SKILL.md");
+        std::fs::write(
+            &source,
+            r#"---
+name: bad-license
+description: Not compatible
+license: Proprietary
+---
+
+Body
+"#,
+        )
+        .unwrap();
+        let state = AppState::new(dir.path().to_path_buf()).unwrap();
+        state.set_vault(vault.clone()).unwrap();
+
+        let err = install_skill(
+            &state.db,
+            &vault,
+            None,
+            SkillInstallRequest {
+                source: SkillInstallSource::Local,
+                path_or_url: source.to_string_lossy().into_owned(),
+                scope: SkillScope::Vault,
+                subpath: None,
+                registry: None,
+                expected_sha256: None,
+            },
+        )
+        .await
+        .unwrap_err();
+
+        assert!(err.to_string().contains("license_incompatible"));
+    }
+
+    #[tokio::test]
+    async fn update_reinstalls_from_recorded_local_source_and_refreshes_hash() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = dir.path().join("vault");
+        std::fs::create_dir_all(&vault).unwrap();
+        let source_dir = vault.join("incoming-update");
+        std::fs::create_dir_all(&source_dir).unwrap();
+        let source = source_dir.join("SKILL.md");
+        std::fs::write(
+            &source,
+            r#"---
+name: updatable
+description: First version
+license: AGPL-3.0
+---
+
+First
+"#,
+        )
+        .unwrap();
+        let state = AppState::new(dir.path().to_path_buf()).unwrap();
+        state.set_vault(vault.clone()).unwrap();
+
+        let first = install_skill(
+            &state.db,
+            &vault,
+            None,
+            SkillInstallRequest {
+                source: SkillInstallSource::Local,
+                path_or_url: source.to_string_lossy().into_owned(),
+                scope: SkillScope::Vault,
+                subpath: None,
+                registry: None,
+                expected_sha256: None,
+            },
+        )
+        .await
+        .unwrap();
+        let first_hash = first.content_hash.clone().expect("content hash");
+
+        std::fs::write(
+            &source,
+            r#"---
+name: updatable
+description: Second version
+license: AGPL-3.0
+allowed-tools:
+  - memory_read
+---
+
+Second
+"#,
+        )
+        .unwrap();
+
+        let updated = update_skill(&state.db, &vault, None, "updatable", SkillScope::Vault)
+            .await
+            .unwrap();
+
+        assert_eq!(updated.skill.description, "Second version");
+        assert_ne!(updated.content_hash.as_deref(), Some(first_hash.as_str()));
+        assert!(updated.capability_preview["requested_tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|v| v == "memory_read"));
     }
 }

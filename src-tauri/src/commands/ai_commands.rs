@@ -482,12 +482,9 @@ pub async fn tool_confirm(
     if decision == "reject" {
         crate::llm::safe_lock(&state.pending_tool_calls).remove(&tool_call_id);
         append_rejected_tool_to_checkpoint(state.inner(), &request_id, &tool_call_id)?;
-        let harness_result = resume_harness_after_tool_confirm_or_restore(
-            state.inner(),
-            &app_handle,
-            &request_id,
-        )
-        .await?;
+        let harness_result =
+            resume_harness_after_tool_confirm_or_restore(state.inner(), &app_handle, &request_id)
+                .await?;
         if !harness_result.pending_confirmation {
             let scene: AiScene = serde_json::from_str(&format!(
                 "\"{}\"",
@@ -552,12 +549,9 @@ pub async fn tool_confirm(
         }
     }
 
-    let harness_result = resume_harness_after_tool_confirm_or_restore(
-        state.inner(),
-        &app_handle,
-        &request_id,
-    )
-    .await?;
+    let harness_result =
+        resume_harness_after_tool_confirm_or_restore(state.inner(), &app_handle, &request_id)
+            .await?;
 
     if !harness_result.pending_confirmation {
         let scene = pending.scene;
@@ -804,6 +798,7 @@ pub struct SkillsInstallRequest {
     pub scope: String,
     pub subpath: Option<String>,
     pub registry: Option<String>,
+    pub expected_sha256: Option<String>,
 }
 
 /// Install skill from url, git, local, or registry.
@@ -827,6 +822,7 @@ pub async fn skills_install(
         scope: parse_scope(&request.scope),
         subpath: request.subpath,
         registry: request.registry,
+        expected_sha256: request.expected_sha256,
     };
     let entry = install_skill(&state.db, &vault, Some(&app_handle), req).await?;
     Ok(serde_json::to_value(entry).unwrap_or_default())
@@ -848,6 +844,26 @@ pub async fn skills_uninstall(
         &name,
         parse_scope(&scope),
     )
+}
+
+#[tauri::command]
+pub async fn skills_update(
+    state: State<'_, Arc<AppState>>,
+    app_handle: tauri::AppHandle,
+    name: String,
+    scope: String,
+) -> AppResult<serde_json::Value> {
+    use crate::ai_runtime::skill_install_service::{parse_scope, update_skill};
+    let vault = state.vault_path()?;
+    let entry = update_skill(
+        &state.db,
+        &vault,
+        Some(&app_handle),
+        &name,
+        parse_scope(&scope),
+    )
+    .await?;
+    Ok(serde_json::to_value(entry).unwrap_or_default())
 }
 
 #[tauri::command]
@@ -907,7 +923,7 @@ pub async fn session_clear_all(
 #[tauri::command]
 pub async fn ai_cache_clear(state: State<'_, Arc<AppState>>) -> AppResult<serde_json::Value> {
     let sessions = SessionManager::delete_all_filtered(&state.db, None, None)?;
-    let (checkpoints, deposits) = state.db.with_conn(|conn| {
+    let (checkpoints, deposits, traces) = state.db.with_conn(|conn| {
         let checkpoints = conn.execute(
             "UPDATE ai_traces SET checkpoint = NULL WHERE checkpoint IS NOT NULL",
             [],
@@ -915,7 +931,8 @@ pub async fn ai_cache_clear(state: State<'_, Arc<AppState>>) -> AppResult<serde_
         let deposits = conn
             .execute("DELETE FROM knowledge_deposits", [])
             .unwrap_or(0);
-        Ok::<_, crate::error::AppError>((checkpoints, deposits))
+        let traces = conn.execute("DELETE FROM ai_traces", []).unwrap_or(0);
+        Ok::<_, crate::error::AppError>((checkpoints, deposits, traces))
     })?;
     let web_pages = crate::llm::fetch_web_page::clear_web_cache(&state.db).unwrap_or(0);
     let searches = crate::llm::search_web::cleanup_expired_search_cache(&state.db).unwrap_or(0);
@@ -923,6 +940,7 @@ pub async fn ai_cache_clear(state: State<'_, Arc<AppState>>) -> AppResult<serde_
         "sessions_deleted": sessions,
         "checkpoints_cleared": checkpoints,
         "deposits_deleted": deposits,
+        "traces_deleted": traces,
         "web_pages_cleared": web_pages,
         "searches_cleared": searches,
     }))

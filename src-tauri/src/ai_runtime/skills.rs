@@ -7,7 +7,9 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use hex;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 
 use crate::ai_runtime::tool_catalog::TOOL_CATALOG;
 use crate::ai_runtime::AiScene;
@@ -372,6 +374,29 @@ pub fn load_skill(path: &Path, scope: SkillScope) -> AppResult<SkillEntry> {
     Ok(entry)
 }
 
+/// Compute a stable content hash for an installed SKILL.md file.
+pub fn skill_content_hash_for_path(path: &Path) -> AppResult<String> {
+    let raw = fs::read(path)?;
+    let mut hasher = Sha256::new();
+    hasher.update(raw);
+    Ok(hex::encode(hasher.finalize()))
+}
+
+fn yaml_value_to_string(value: &serde_yaml::Value) -> Option<String> {
+    match value {
+        serde_yaml::Value::Null => None,
+        serde_yaml::Value::Bool(v) => Some(v.to_string()),
+        serde_yaml::Value::Number(v) => Some(v.to_string()),
+        serde_yaml::Value::String(v) => Some(v.clone()),
+        serde_yaml::Value::Sequence(values) => {
+            let items: Vec<String> = values.iter().filter_map(yaml_value_to_string).collect();
+            Some(items.join(" "))
+        }
+        serde_yaml::Value::Mapping(_) => serde_json::to_string(value).ok(),
+        _ => None,
+    }
+}
+
 /// Parse YAML-like frontmatter from SKILL.md.
 ///
 /// Returns (key-value map, body content after the closing `---`).
@@ -388,6 +413,19 @@ fn parse_frontmatter(raw: &str) -> (HashMap<String, String>, String) {
     };
     let front = &rest[..end];
     let body = rest[end + 4..].trim_start();
+    if let Ok(serde_yaml::Value::Mapping(mapping)) =
+        serde_yaml::from_str::<serde_yaml::Value>(front)
+    {
+        for (key, value) in mapping {
+            let Some(key) = key.as_str() else {
+                continue;
+            };
+            if let Some(value) = yaml_value_to_string(&value) {
+                map.insert(key.to_string(), value);
+            }
+        }
+        return (map, body.to_string());
+    }
     for line in front.lines() {
         let line = line.trim();
         if line.is_empty() || line.starts_with('#') {
@@ -401,8 +439,57 @@ fn parse_frontmatter(raw: &str) -> (HashMap<String, String>, String) {
     (map, body.to_string())
 }
 
+/// Return true when a declared skill license is acceptable for Iris.
+pub fn license_is_agpl_compatible(license: Option<&str>) -> bool {
+    let Some(raw) = license.map(str::trim).filter(|s| !s.is_empty()) else {
+        return true;
+    };
+    let normalized = raw.to_lowercase();
+    let rejected = [
+        "proprietary",
+        "commercial",
+        "all rights reserved",
+        "gpl-2.0-only",
+        "lgpl-2.1-only",
+    ];
+    if rejected.iter().any(|needle| normalized.contains(needle)) {
+        return false;
+    }
+    let accepted = [
+        "agpl-3.0",
+        "gpl-3.0",
+        "lgpl-3.0",
+        "apache-2.0",
+        "mit",
+        "bsd-2-clause",
+        "bsd-3-clause",
+        "mpl-2.0",
+        "cc0",
+        "unlicense",
+    ];
+    accepted.iter().any(|needle| normalized.contains(needle))
+}
+
+/// Validate a skill license and return a stable error code for UI recovery.
+pub fn validate_skill_license(entry: &SkillEntry) -> AppResult<()> {
+    if license_is_agpl_compatible(entry.license.as_deref()) {
+        Ok(())
+    } else {
+        Err(AppError::msg(format!(
+            "license_incompatible: skill '{}' declares incompatible license '{}'",
+            entry.name,
+            entry.license.as_deref().unwrap_or("unknown")
+        )))
+    }
+}
+
 /// Install skill from HTTP(S) URL (raw SKILL.md or GitHub raw link).
-pub async fn install_from_url(url: &str, scope: SkillScope, vault: &Path) -> AppResult<SkillEntry> {
+pub async fn install_from_url(
+    url: &str,
+    scope: SkillScope,
+    vault: &Path,
+    expected_sha256: Option<&str>,
+) -> AppResult<SkillEntry> {
     crate::security::ipc_policy::validate_skill_remote_url(url)?;
     let client = crate::network::cert_pinning::create_pinned_client()?;
     let resp = client
@@ -417,6 +504,20 @@ pub async fn install_from_url(url: &str, scope: SkillScope, vault: &Path) -> App
         .text()
         .await
         .map_err(|e| AppError::msg(format!("read body: {e}")))?;
+
+    if let Some(expected) = expected_sha256 {
+        let actual = hex::encode(Sha256::digest(body.as_bytes()));
+        if !actual.eq_ignore_ascii_case(expected.trim()) {
+            return Err(AppError::msg(
+                "Skill 内容 SHA-256 校验失败（可能被篡改或不完整）",
+            ));
+        }
+        tracing::info!(
+            url = %url,
+            sha256 = %actual,
+            "skill content hash verified"
+        );
+    }
 
     let (meta, _) = parse_frontmatter(&body);
     let dir_name = meta
@@ -580,6 +681,21 @@ pub fn uninstall(name: &str, scope: SkillScope, vault: &Path) -> AppResult<()> {
         SkillScope::Global => global_skills_dir(),
         SkillScope::Vault => vault_skills_dir(vault),
     };
+    if base.is_dir() {
+        for entry in fs::read_dir(&base)? {
+            let entry = entry?;
+            let path = entry.path();
+            let skill_file = path.join("SKILL.md");
+            if skill_file.is_file() {
+                if let Ok(skill) = load_skill(&skill_file, scope) {
+                    if skill.name == name {
+                        fs::remove_dir_all(path)?;
+                        return Ok(());
+                    }
+                }
+            }
+        }
+    }
     let slug = slugify(name);
     let target = base.join(slug);
     if target.is_dir() {
@@ -663,6 +779,23 @@ pub fn confirmation_required_tools(tools: &[String]) -> Vec<String> {
         })
         .cloned()
         .collect()
+}
+
+/// Build a read-only capability preview for install confirmation and Skills UI.
+pub fn capability_preview_for_entry(
+    entry: &SkillEntry,
+    installed_names: &[String],
+) -> serde_json::Value {
+    serde_json::json!({
+        "name": entry.name,
+        "license": entry.license,
+        "requested_tools": entry.allowed_tools,
+        "confirmation_required_tools": confirmation_required_tools(&entry.allowed_tools),
+        "unrecognized_tools": entry.unrecognized_tools(),
+        "missing_deps": entry.missing_dependencies(installed_names),
+        "allows_script_execution": false,
+        "script_policy": "scripts/resources may be read as text only; Iris does not execute skill scripts",
+    })
 }
 
 /// Filter and rank enabled skills by scene affinity with BM25-style scoring.
@@ -937,6 +1070,13 @@ pub struct SkillListEntry {
     pub scene_score: Option<f64>,
     /// Subset of `allowed_tools` that require harness confirmation.
     pub confirmation_required_tools: Vec<String>,
+    /// SHA-256 of the installed SKILL.md file.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub content_hash: Option<String>,
+    /// Capability summary shown before/after install.
+    pub capability_preview: serde_json::Value,
+    /// Human-readable capability status: available / partial / unavailable.
+    pub availability: String,
 }
 
 /// Build the skills list with computed validation/dependency info.
@@ -950,6 +1090,18 @@ pub fn scan_all_with_status(vault: &Path) -> AppResult<Vec<SkillListEntry>> {
             let missing_deps = skill.missing_dependencies(&installed_names);
             let validation = skill.validation_status();
             let confirmation_required_tools = confirmation_required_tools(&skill.allowed_tools);
+            let content_hash = skill_content_hash_for_path(&PathBuf::from(&skill.file_path)).ok();
+            let capability_preview = capability_preview_for_entry(&skill, &installed_names);
+            let availability = if !skill.enabled {
+                "disabled"
+            } else if matches!(validation, SkillValidationStatus::Invalid(_)) {
+                "unavailable"
+            } else if !unrecognized_tools.is_empty() || !missing_deps.is_empty() {
+                "partial"
+            } else {
+                "available"
+            }
+            .to_string();
             SkillListEntry {
                 skill,
                 validation,
@@ -958,6 +1110,9 @@ pub fn scan_all_with_status(vault: &Path) -> AppResult<Vec<SkillListEntry>> {
                 scene_active: None,
                 scene_score: None,
                 confirmation_required_tools,
+                content_hash,
+                capability_preview,
+                availability,
             }
         })
         .collect())
@@ -1292,6 +1447,111 @@ mod tests {
         assert_eq!(slugify("My Skill"), "my-skill");
         assert_eq!(slugify("hello_world"), "hello_world");
         assert_eq!(slugify("a/b\\c"), "a-b-c");
+    }
+
+    #[test]
+    fn yaml_frontmatter_supports_arrays_and_objects() {
+        let dir = tempfile::tempdir().unwrap();
+        let skill_dir = dir.path().join("yaml-skill");
+        fs::create_dir_all(&skill_dir).unwrap();
+        let path = skill_dir.join("SKILL.md");
+        fs::write(
+            &path,
+            r#"---
+name: yaml-skill
+description: Parses modern Agent Skills frontmatter
+allowed-tools:
+  - memory_read
+  - skills_read_resource
+metadata:
+  depends:
+    - helper-skill
+  keywords:
+    - research
+    - memory
+license: AGPL-3.0
+---
+
+# Body
+"#,
+        )
+        .unwrap();
+
+        let skill = load_skill(&path, SkillScope::Global).unwrap();
+        assert_eq!(
+            skill.allowed_tools,
+            vec![
+                "memory_read".to_string(),
+                "skills_read_resource".to_string()
+            ]
+        );
+        assert_eq!(skill.depends(), vec!["helper-skill".to_string()]);
+        assert_eq!(skill.license.as_deref(), Some("AGPL-3.0"));
+    }
+
+    #[test]
+    fn uninstall_removes_actual_skill_dir_when_name_mismatches_dir() {
+        let vault_dir = tempfile::tempdir().unwrap();
+        let vault = vault_dir.path();
+        let skill_root = vault.join(".iris").join("skills").join("custom-dir");
+        fs::create_dir_all(&skill_root).unwrap();
+        fs::write(
+            skill_root.join("SKILL.md"),
+            r#"---
+name: displayed-name
+description: Directory and name intentionally differ
+---
+
+Body
+"#,
+        )
+        .unwrap();
+
+        uninstall("displayed-name", SkillScope::Vault, vault).unwrap();
+        assert!(
+            !skill_root.exists(),
+            "uninstall should remove the directory containing the matching SKILL.md"
+        );
+    }
+
+    #[test]
+    fn capability_preview_reports_requested_and_missing_tools() {
+        let entry = SkillEntry {
+            name: "preview".into(),
+            description: "Preview".into(),
+            license: Some("AGPL-3.0".into()),
+            compatibility: None,
+            metadata: Default::default(),
+            allowed_tools: vec![
+                "memory_write".into(),
+                "fetch_web_page".into(),
+                "totally_unknown".into(),
+            ],
+            content: String::new(),
+            scope: SkillScope::Global,
+            source_url: None,
+            enabled: true,
+            file_path: String::new(),
+            legacy_trigger: None,
+        };
+
+        let preview = capability_preview_for_entry(&entry, &[]);
+        assert_eq!(preview["license"], "AGPL-3.0");
+        assert!(preview["requested_tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|v| v == "memory_write"));
+        assert!(preview["confirmation_required_tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|v| v == "fetch_web_page"));
+        assert!(preview["unrecognized_tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|v| v == "totally_unknown"));
     }
 
     // ── install_from_git symlink escape check ─────────────

@@ -14,9 +14,18 @@ pub const DISPATCHABLE_TOOL_NAMES: &[&str] = &[
     "get_outline",
     "get_backlinks",
     "get_block_links",
+    "memory_read",
+    "memory_write",
+    "scheduled_task_create",
+    "scheduled_task_list",
+    "scheduled_task_delete",
+    "web_fetch_batch",
+    "readability_fetch",
+    "rendered_fetch",
     "skills_list",
     "skills_install",
     "skills_uninstall",
+    "skills_update",
     "skills_toggle",
     "skills_read_resource",
 ];
@@ -44,6 +53,8 @@ use crate::error::{AppError, AppResult};
 use crate::storage::paths::{
     is_user_note_path, resolve_vault_path, validate_user_note_relative_path,
 };
+
+const MAX_NOTE_FILE_BYTES: usize = 20 * 1024 * 1024;
 
 /// Context passed into tool dispatch.
 pub struct ToolDispatchContext<'a> {
@@ -134,12 +145,21 @@ async fn dispatch_tool_inner(
         "get_outline" => get_outline(state, args).await,
         "get_backlinks" => get_backlinks(state, args).await,
         "get_block_links" => get_block_links(state, args).await,
+        "memory_read" => memory_read_tool(state, args).await,
+        "memory_write" => memory_write_tool(state, args).await,
+        "scheduled_task_create" => scheduled_task_create_tool(state, args).await,
+        "scheduled_task_list" => scheduled_task_list_tool(state, args).await,
+        "scheduled_task_delete" => scheduled_task_delete_tool(state, args).await,
+        "web_fetch_batch" => web_fetch_batch_tool(state, args, ctx).await,
+        "readability_fetch" => readability_fetch_tool(state, args, ctx, false).await,
+        "rendered_fetch" => readability_fetch_tool(state, args, ctx, true).await,
         "insert_text_at_cursor" | "replace_selection" => {
             markdown_write_patch_apply(state, ctx, tool_name, args)
         }
         "skills_list" => skills_list_tool(state, ctx).await,
         "skills_install" => skills_install_tool(state, ctx, args).await,
         "skills_uninstall" => skills_uninstall_tool(state, ctx, args).await,
+        "skills_update" => skills_update_tool(state, ctx, args).await,
         "skills_toggle" => skills_toggle_tool(state, ctx, args).await,
         "skills_read_resource" => skills_read_resource_tool(state, ctx, args).await,
         _ => Err(AppError::msg(format!("unknown tool: {tool_name}"))),
@@ -231,6 +251,12 @@ fn markdown_write_patch_apply(
             }));
         }
     };
+    if applied.len() > MAX_NOTE_FILE_BYTES {
+        return Err(AppError::msg(format!(
+            "补丁应用后内容超过 20MB 限制（{} 字节）",
+            applied.len()
+        )));
+    }
     let tmp = abs.with_extension("md.tmp");
     std::fs::write(&tmp, &applied)?;
     if let Err(e) = std::fs::rename(&tmp, &abs) {
@@ -565,6 +591,219 @@ async fn get_block_links(
     Ok(serde_json::json!({ "links": links }))
 }
 
+async fn memory_read_tool(
+    state: &AppState,
+    args: &serde_json::Value,
+) -> AppResult<serde_json::Value> {
+    let key = args.get("key").and_then(|v| v.as_str()).unwrap_or("");
+    let query = args.get("query").and_then(|v| v.as_str()).unwrap_or("");
+    let limit = args.get("limit").and_then(|v| v.as_u64()).unwrap_or(20) as i64;
+    let items = state.db.with_read_conn(|conn| {
+        if !key.is_empty() {
+            let mut stmt = conn.prepare(
+                "SELECT key, content, scope, source, updated_at FROM ai_memories WHERE key = ?1 LIMIT 1",
+            )?;
+            let rows = stmt.query_map([key], |row| {
+                Ok(serde_json::json!({
+                    "key": row.get::<_, String>(0)?,
+                    "content": row.get::<_, String>(1)?,
+                    "scope": row.get::<_, String>(2)?,
+                    "source": row.get::<_, String>(3)?,
+                    "updated_at": row.get::<_, String>(4)?,
+                }))
+            })?;
+            return Ok(rows.flatten().collect::<Vec<_>>());
+        }
+        let like = format!("%{query}%");
+        let mut stmt = conn.prepare(
+            "SELECT key, content, scope, source, updated_at
+             FROM ai_memories
+             WHERE ?1 = '' OR key LIKE ?2 OR content LIKE ?2
+             ORDER BY updated_at DESC
+             LIMIT ?3",
+        )?;
+        let rows = stmt.query_map(rusqlite::params![query, like, limit], |row| {
+            Ok(serde_json::json!({
+                "key": row.get::<_, String>(0)?,
+                "content": row.get::<_, String>(1)?,
+                "scope": row.get::<_, String>(2)?,
+                "source": row.get::<_, String>(3)?,
+                "updated_at": row.get::<_, String>(4)?,
+            }))
+        })?;
+        Ok(rows.flatten().collect::<Vec<_>>())
+    })?;
+    Ok(serde_json::json!({ "items": items, "count": items.len() }))
+}
+
+async fn memory_write_tool(
+    state: &AppState,
+    args: &serde_json::Value,
+) -> AppResult<serde_json::Value> {
+    let key = args["key"]
+        .as_str()
+        .ok_or_else(|| AppError::msg("missing key"))?
+        .trim();
+    let content = args["content"]
+        .as_str()
+        .ok_or_else(|| AppError::msg("missing content"))?
+        .trim();
+    if key.is_empty() || content.is_empty() {
+        return Err(AppError::msg("memory_write requires non-empty key/content"));
+    }
+    let scope = args
+        .get("scope")
+        .and_then(|v| v.as_str())
+        .unwrap_or("global");
+    state.db.with_conn(|conn| {
+        conn.execute(
+            "INSERT INTO ai_memories (key, content, scope, source, created_at, updated_at)
+             VALUES (?1, ?2, ?3, 'user_confirmed', datetime('now'), datetime('now'))
+             ON CONFLICT(key) DO UPDATE SET
+               content = excluded.content,
+               scope = excluded.scope,
+               updated_at = datetime('now')",
+            rusqlite::params![key, content, scope],
+        )?;
+        Ok(())
+    })?;
+    Ok(serde_json::json!({ "ok": true, "key": key }))
+}
+
+async fn scheduled_task_create_tool(
+    state: &AppState,
+    args: &serde_json::Value,
+) -> AppResult<serde_json::Value> {
+    let title = args["title"]
+        .as_str()
+        .ok_or_else(|| AppError::msg("missing title"))?
+        .trim();
+    let prompt = args["prompt"]
+        .as_str()
+        .ok_or_else(|| AppError::msg("missing prompt"))?
+        .trim();
+    let schedule = args["schedule"]
+        .as_str()
+        .ok_or_else(|| AppError::msg("missing schedule"))?
+        .trim();
+    if title.is_empty() || prompt.is_empty() || schedule.is_empty() {
+        return Err(AppError::msg(
+            "scheduled_task_create requires non-empty fields",
+        ));
+    }
+    let id = state.db.with_conn(|conn| {
+        conn.execute(
+            "INSERT INTO scheduled_tasks (title, prompt, schedule, enabled, created_at, updated_at)
+             VALUES (?1, ?2, ?3, 1, datetime('now'), datetime('now'))",
+            rusqlite::params![title, prompt, schedule],
+        )?;
+        Ok(conn.last_insert_rowid())
+    })?;
+    Ok(serde_json::json!({
+        "ok": true,
+        "id": id,
+        "note": "Task registered only; Iris does not run proactive tasks without a scheduler/automation approval path.",
+    }))
+}
+
+async fn scheduled_task_list_tool(
+    state: &AppState,
+    args: &serde_json::Value,
+) -> AppResult<serde_json::Value> {
+    let include_disabled = args
+        .get("include_disabled")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    let tasks = state.db.with_read_conn(|conn| {
+        let mut stmt = conn.prepare(
+            "SELECT id, title, prompt, schedule, enabled, updated_at
+             FROM scheduled_tasks
+             WHERE ?1 OR enabled = 1
+             ORDER BY updated_at DESC
+             LIMIT 50",
+        )?;
+        let rows = stmt.query_map([include_disabled], |row| {
+            Ok(serde_json::json!({
+                "id": row.get::<_, i64>(0)?,
+                "title": row.get::<_, String>(1)?,
+                "prompt": row.get::<_, String>(2)?,
+                "schedule": row.get::<_, String>(3)?,
+                "enabled": row.get::<_, i64>(4)? != 0,
+                "updated_at": row.get::<_, String>(5)?,
+            }))
+        })?;
+        Ok(rows.flatten().collect::<Vec<_>>())
+    })?;
+    Ok(serde_json::json!({ "tasks": tasks, "count": tasks.len() }))
+}
+
+async fn scheduled_task_delete_tool(
+    state: &AppState,
+    args: &serde_json::Value,
+) -> AppResult<serde_json::Value> {
+    let id = args["id"]
+        .as_i64()
+        .ok_or_else(|| AppError::msg("missing id"))?;
+    let deleted = state
+        .db
+        .with_conn(|conn| Ok(conn.execute("DELETE FROM scheduled_tasks WHERE id = ?1", [id])?))?;
+    Ok(serde_json::json!({ "ok": deleted > 0, "id": id }))
+}
+
+async fn readability_fetch_tool(
+    state: &AppState,
+    args: &serde_json::Value,
+    ctx: &ToolDispatchContext<'_>,
+    rendered: bool,
+) -> AppResult<serde_json::Value> {
+    let mut out = fetch_web_page_tool(state, args, ctx).await?;
+    if let Some(obj) = out.as_object_mut() {
+        obj.insert("rendered".into(), serde_json::json!(false));
+        if rendered {
+            obj.insert(
+                "warning".into(),
+                serde_json::json!(
+                    "rendered_fetch currently uses the safe HTTPS text extraction path; JavaScript rendering is not enabled"
+                ),
+            );
+        }
+    }
+    Ok(out)
+}
+
+async fn web_fetch_batch_tool(
+    state: &AppState,
+    args: &serde_json::Value,
+    ctx: &ToolDispatchContext<'_>,
+) -> AppResult<serde_json::Value> {
+    if !ctx.web_search_enabled {
+        return Err(AppError::msg("web fetch not enabled for this request"));
+    }
+    let urls = args["urls"]
+        .as_array()
+        .ok_or_else(|| AppError::msg("missing urls"))?;
+    let max_chars = args["max_chars"].as_u64().unwrap_or(12_000) as usize;
+    let mut pages = Vec::new();
+    let mut all_packets = Vec::new();
+    for url in urls.iter().filter_map(|v| v.as_str()).take(5) {
+        let page = crate::llm::fetch_web_page::fetch_web_page(&state.db, url, max_chars).await?;
+        let packets = crate::ai_runtime::evidence_mixer::web_packets_from_page_fetch(&page);
+        all_packets.extend(packets);
+        pages.push(serde_json::json!({
+            "url": page.url,
+            "title": page.title,
+            "truncated": page.truncated,
+            "from_cache": page.from_cache,
+            "char_count": page.text.chars().count(),
+        }));
+    }
+    Ok(serde_json::json!({
+        "pages": pages,
+        "results": all_packets,
+        "count": all_packets.len(),
+    }))
+}
+
 async fn skills_list_tool(
     state: &AppState,
     ctx: &ToolDispatchContext<'_>,
@@ -611,6 +850,10 @@ async fn skills_install_tool(
             .get("registry")
             .and_then(|v| v.as_str())
             .map(String::from),
+        expected_sha256: args
+            .get("expected_sha256")
+            .and_then(|v| v.as_str())
+            .map(String::from),
     };
     let vault = state.vault_path()?;
     let entry = crate::ai_runtime::skill_install_service::install_skill(
@@ -648,6 +891,27 @@ async fn skills_uninstall_tool(
         scope,
     )?;
     Ok(serde_json::json!({ "ok": true, "name": name }))
+}
+
+async fn skills_update_tool(
+    state: &AppState,
+    ctx: &ToolDispatchContext<'_>,
+    args: &serde_json::Value,
+) -> AppResult<serde_json::Value> {
+    use crate::ai_runtime::skill_install_service::{parse_scope, update_skill};
+
+    let name = args
+        .get("name")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| AppError::msg("skills_update 缺少 name"))?;
+    let scope = parse_scope(
+        args.get("scope")
+            .and_then(|v| v.as_str())
+            .unwrap_or("global"),
+    );
+    let vault = state.vault_path()?;
+    let entry = update_skill(&state.db, &vault, ctx.app_handle.as_ref(), name, scope).await?;
+    Ok(serde_json::to_value(&entry).unwrap_or_default())
 }
 
 async fn skills_toggle_tool(

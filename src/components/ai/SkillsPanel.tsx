@@ -1,5 +1,12 @@
 import { open as openFileDialog } from "@tauri-apps/plugin-dialog";
-import { Download, Pencil, Search, Trash2, ArrowUpCircle } from "lucide-react";
+import {
+  Download,
+  Pencil,
+  Search,
+  Trash2,
+  ArrowUpCircle,
+  RefreshCw,
+} from "lucide-react";
 import { useCallback, useEffect, useState, type DragEvent } from "react";
 
 import { Button } from "@/components/ui/button";
@@ -16,6 +23,7 @@ import {
   skillsRead,
   skillsToggle,
   skillsUninstall,
+  skillsUpdate,
   skillsWrite,
   type SkillListEntryDto,
 } from "@/lib/ipc";
@@ -31,7 +39,11 @@ function scopeLabel(scope: string): "global" | "vault" {
   return scope === "vault" ? "vault" : "global";
 }
 
-export function SkillsPanel({ open: overlayOpen, onClose, scene }: SkillsPanelProps) {
+export function SkillsPanel({
+  open: overlayOpen,
+  onClose,
+  scene,
+}: SkillsPanelProps) {
   const [skills, setSkills] = useState<SkillListEntryDto[]>([]);
   const [query, setQuery] = useState("");
   const [url, setUrl] = useState("");
@@ -278,7 +290,28 @@ export function SkillsPanel({ open: overlayOpen, onClose, scene }: SkillsPanelPr
                     许可：{skill.license}
                   </p>
                 ) : null}
+                <p className="mt-0.5 text-[10px] text-muted-foreground/60">
+                  能力状态：{skill.availability}
+                  {skill.content_hash
+                    ? ` · ${skill.content_hash.slice(0, 8)}`
+                    : ""}
+                </p>
+                {skill.capability_preview?.script_policy ? (
+                  <p className="mt-0.5 text-[10px] text-muted-foreground/60">
+                    {String(skill.capability_preview.script_policy)}
+                  </p>
+                ) : null}
               </div>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="h-7 w-7"
+                title="更新"
+                onClick={() => void skillsUpdate(skill.name, sc).then(refresh)}
+              >
+                <RefreshCw className="h-3.5 w-3.5" />
+              </Button>
               <Button
                 type="button"
                 variant="ghost"

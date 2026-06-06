@@ -25,6 +25,7 @@ import type {
   FileChangedEvent,
   FileEntry,
   FileListItem,
+  FileReadResult,
   GraphData,
   InboxItem,
   KeywordHit,
@@ -81,8 +82,15 @@ export async function folderList(): Promise<string[]> {
   return invoke<string[]>("folder_list");
 }
 
-export async function fileRead(path: string): Promise<string> {
-  return invoke<string>("file_read", { path });
+export async function fileRead(path: string): Promise<FileReadResult> {
+  return invoke<FileReadResult>("file_read", { path });
+}
+
+export async function fileSetLock(
+  path: string,
+  locked: boolean,
+): Promise<void> {
+  return invoke("file_set_lock", { path, locked });
 }
 
 export async function fileWrite(
@@ -443,6 +451,7 @@ export interface SkillEntryDto {
   enabled: boolean;
   file_path: string;
   legacy_trigger?: string | null;
+  content_hash?: string;
 }
 
 export type SkillValidationStatus = "valid" | "legacy" | { invalid: string };
@@ -470,6 +479,17 @@ export interface SkillListEntryDto {
   scene_score?: number;
   /** Subset of allowed_tools that require harness confirmation. */
   confirmation_required_tools: string[];
+  content_hash?: string;
+  capability_preview?: {
+    requested_tools?: string[];
+    confirmation_required_tools?: string[];
+    unrecognized_tools?: string[];
+    missing_deps?: string[];
+    allows_script_execution?: boolean;
+    script_policy?: string;
+    [key: string]: unknown;
+  };
+  availability: "available" | "partial" | "unavailable" | "disabled" | string;
 }
 
 export interface PromptProfileDto {
@@ -481,7 +501,9 @@ export interface PromptProfileDto {
   language: string;
 }
 
-export async function skillsList(scene?: AiScene): Promise<SkillListEntryDto[]> {
+export async function skillsList(
+  scene?: AiScene,
+): Promise<SkillListEntryDto[]> {
   return invoke<SkillListEntryDto[]>("skills_list", { scene: scene ?? null });
 }
 
@@ -499,6 +521,7 @@ export async function skillsInstall(request: {
   scope: string;
   subpath?: string;
   registry?: string;
+  expected_sha256?: string;
 }): Promise<unknown> {
   return invoke("skills_install", { request });
 }
@@ -508,6 +531,13 @@ export async function skillsUninstall(
   scope: string,
 ): Promise<void> {
   return invoke("skills_uninstall", { name, scope });
+}
+
+export async function skillsUpdate(
+  name: string,
+  scope: string,
+): Promise<unknown> {
+  return invoke("skills_update", { name, scope });
 }
 
 export async function skillsToggle(
