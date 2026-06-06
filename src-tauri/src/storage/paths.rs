@@ -49,7 +49,10 @@ pub fn resolve_vault_path(vault: &Path, relative: &str) -> AppResult<PathBuf> {
 /// 用户笔记（非 `.iris` 元数据目录下的版本快照、模板等）。
 pub fn is_user_note_path(relative: &str) -> bool {
     let normalized = relative.replace('\\', "/");
-    !normalized.starts_with(".iris/") && normalized != ".iris"
+    !normalized.starts_with(".iris/")
+        && !normalized.starts_with(".classified/")
+        && normalized != ".iris"
+        && normalized != ".classified"
 }
 
 /// Read file content as UTF-8, replacing invalid bytes with U+FFFD.
@@ -156,6 +159,20 @@ mod tests {
         assert!(is_user_note_path("docs/guide.md"));
         assert!(is_user_note_path("2024/01/note.md"));
         assert!(is_user_note_path("i.ris/notes.md"));
+    }
+
+    #[test]
+    fn rejects_classified_dir_and_children() {
+        assert!(!is_user_note_path(".classified"));
+        assert!(!is_user_note_path(".classified/secret.md"));
+        assert!(!is_user_note_path(".classified/sub/dir/file.md"));
+    }
+
+    #[test]
+    fn still_accepts_normal_paths() {
+        assert!(is_user_note_path("notes/readme.md"));
+        assert!(is_user_note_path("projects/plan.md"));
+        assert!(is_user_note_path("   leading spaces.md"));
     }
 
     // ── validate_user_note_relative_path (combined) ──────
