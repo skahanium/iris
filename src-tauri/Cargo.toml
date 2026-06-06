@@ -62,6 +62,10 @@ name = "ai_benchmarks"
 harness = false
 
 [[test]]
+name = "classified_vault"
+path = "tests/classified_vault.rs"
+
+[[test]]
 name = "file_ops"
 path = "tests/file_ops.rs"
 
