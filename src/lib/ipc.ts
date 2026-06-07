@@ -84,8 +84,14 @@ export async function folderList(): Promise<string[]> {
   return invoke<string[]>("folder_list");
 }
 
-export async function fileRead(path: string): Promise<FileReadResult> {
-  return invoke<FileReadResult>("file_read", { path });
+export async function fileRead(
+  path: string,
+  options?: { allowClassified?: boolean },
+): Promise<FileReadResult> {
+  return invoke<FileReadResult>("file_read", {
+    path,
+    allowClassified: options?.allowClassified === true,
+  });
 }
 
 export async function fileSetLock(
@@ -129,8 +135,9 @@ export async function classifiedImport(
 export async function classifiedExport(
   path: string,
   targetFolder: string,
+  overwrite = false,
 ): Promise<void> {
-  return invoke("classified_export", { path, targetFolder });
+  return invoke("classified_export", { path, targetFolder, overwrite });
 }
 
 export async function classifiedDelete(path: string): Promise<void> {

@@ -200,6 +200,7 @@ fn search_vector_chunks(
          JOIN chunks c ON c.id = vc.rowid
          JOIN files f ON f.id = c.file_id
          WHERE vc.embedding MATCH ?1
+           AND f.path NOT LIKE '.classified/%'
          ORDER BY vc.distance
          LIMIT ?2",
     ) {
@@ -389,6 +390,7 @@ fn search_fts(conn: &Connection, query: &str, limit: usize) -> AppResult<Vec<Con
          FROM files_fts
          JOIN files f ON f.path = files_fts.path
          WHERE files_fts MATCH ?1
+           AND f.path NOT LIKE '.classified/%'
          LIMIT ?2",
     )?;
 

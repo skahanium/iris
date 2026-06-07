@@ -145,8 +145,8 @@ async fn dispatch_tool_inner(
         "get_outline" => get_outline(state, args).await,
         "get_backlinks" => get_backlinks(state, args).await,
         "get_block_links" => get_block_links(state, args).await,
-        "memory_read" => memory_read_tool(state, args).await,
-        "memory_write" => memory_write_tool(state, args).await,
+        "memory_read" => memory_read_tool(state, args, ctx).await,
+        "memory_write" => memory_write_tool(state, args, ctx).await,
         "scheduled_task_create" => scheduled_task_create_tool(state, args).await,
         "scheduled_task_list" => scheduled_task_list_tool(state, args).await,
         "scheduled_task_delete" => scheduled_task_delete_tool(state, args).await,
@@ -485,6 +485,7 @@ async fn list_vault(state: &AppState, args: &serde_json::Value) -> AppResult<ser
             "SELECT path, title FROM files
              WHERE id IN (SELECT MAX(id) FROM files GROUP BY path)
                AND path NOT LIKE '.iris/%'
+               AND path NOT LIKE '.classified/%'
                AND (?1 = '' OR path LIKE ?2)
              ORDER BY path
              LIMIT ?3",
@@ -539,6 +540,7 @@ async fn get_backlinks(state: &AppState, args: &serde_json::Value) -> AppResult<
              JOIN files f ON f.id = l.source_id
              JOIN files t ON t.id = l.target_id
              WHERE t.path = ?1
+               AND f.path NOT LIKE '.classified/%'
              ORDER BY f.title",
         )?;
         let rows = stmt.query_map([path], |row| {
@@ -591,19 +593,32 @@ async fn get_block_links(
     Ok(serde_json::json!({ "links": links }))
 }
 
+/// Derive a session-level scope key from the dispatch context for memory isolation.
+fn memory_session_scope(ctx: &ToolDispatchContext<'_>) -> String {
+    let scene = ctx.scene.profile();
+    match ctx.note_path {
+        Some(path) if !path.is_empty() => format!("{scene}:{path}"),
+        _ => format!("{scene}:__global__"),
+    }
+}
+
 async fn memory_read_tool(
     state: &AppState,
     args: &serde_json::Value,
+    ctx: &ToolDispatchContext<'_>,
 ) -> AppResult<serde_json::Value> {
     let key = args.get("key").and_then(|v| v.as_str()).unwrap_or("");
     let query = args.get("query").and_then(|v| v.as_str()).unwrap_or("");
     let limit = args.get("limit").and_then(|v| v.as_u64()).unwrap_or(20) as i64;
+    let session_scope = memory_session_scope(ctx);
     let items = state.db.with_read_conn(|conn| {
         if !key.is_empty() {
             let mut stmt = conn.prepare(
-                "SELECT key, content, scope, source, updated_at FROM ai_memories WHERE key = ?1 LIMIT 1",
+                "SELECT key, content, scope, source, updated_at FROM ai_memories
+                 WHERE key = ?1 AND (scope = 'global' OR scope = ?2)
+                 LIMIT 1",
             )?;
-            let rows = stmt.query_map([key], |row| {
+            let rows = stmt.query_map(rusqlite::params![key, session_scope], |row| {
                 Ok(serde_json::json!({
                     "key": row.get::<_, String>(0)?,
                     "content": row.get::<_, String>(1)?,
@@ -618,11 +633,12 @@ async fn memory_read_tool(
         let mut stmt = conn.prepare(
             "SELECT key, content, scope, source, updated_at
              FROM ai_memories
-             WHERE ?1 = '' OR key LIKE ?2 OR content LIKE ?2
+             WHERE (scope = 'global' OR scope = ?4)
+               AND (?1 = '' OR key LIKE ?2 OR content LIKE ?2)
              ORDER BY updated_at DESC
              LIMIT ?3",
         )?;
-        let rows = stmt.query_map(rusqlite::params![query, like, limit], |row| {
+        let rows = stmt.query_map(rusqlite::params![query, like, limit, session_scope], |row| {
             Ok(serde_json::json!({
                 "key": row.get::<_, String>(0)?,
                 "content": row.get::<_, String>(1)?,
@@ -639,6 +655,7 @@ async fn memory_read_tool(
 async fn memory_write_tool(
     state: &AppState,
     args: &serde_json::Value,
+    ctx: &ToolDispatchContext<'_>,
 ) -> AppResult<serde_json::Value> {
     let key = args["key"]
         .as_str()
@@ -651,10 +668,15 @@ async fn memory_write_tool(
     if key.is_empty() || content.is_empty() {
         return Err(AppError::msg("memory_write requires non-empty key/content"));
     }
-    let scope = args
+    let explicit_scope = args
         .get("scope")
         .and_then(|v| v.as_str())
-        .unwrap_or("global");
+        .unwrap_or("");
+    let scope = if explicit_scope == "global" {
+        "global".to_string()
+    } else {
+        memory_session_scope(ctx)
+    };
     state.db.with_conn(|conn| {
         conn.execute(
             "INSERT INTO ai_memories (key, content, scope, source, created_at, updated_at)

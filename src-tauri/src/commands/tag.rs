@@ -18,10 +18,11 @@ pub struct TagGroup {
 pub fn tag_list(state: State<'_, Arc<AppState>>) -> AppResult<Vec<TagGroup>> {
     state.db.with_conn(|conn| {
         let mut stmt = conn.prepare(
-            "SELECT t.name, f.path, f.title, f.updated_at
+            "SELECT t.name, f.path, f.title, f.updated_at, f.is_locked
              FROM tags t
              JOIN file_tags ft ON ft.tag_id = t.id
              JOIN files f ON f.id = ft.file_id
+             WHERE f.path NOT LIKE '.classified/%'
              ORDER BY t.name, f.title",
         )?;
         let rows = stmt.query_map([], |row| {
@@ -31,6 +32,7 @@ pub fn tag_list(state: State<'_, Arc<AppState>>) -> AppResult<Vec<TagGroup>> {
                     path: row.get(1)?,
                     title: row.get(2)?,
                     updated_at: row.get(3)?,
+                    is_locked: row.get::<_, i64>(4).unwrap_or(0) != 0,
                 },
             ))
         })?;

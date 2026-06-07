@@ -6,12 +6,15 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use chrono::Utc;
+use rusqlite::OptionalExtension;
 use rusqlite::Row;
 use serde::Serialize;
 use tracing::info;
 
 use crate::app::AppState;
+use crate::crypto::{classified_io, vault_key::VAULT_KEY};
 use crate::error::{AppError, AppResult};
+use crate::storage::paths::is_classified_note_path;
 
 pub use kind::VersionKind;
 pub use policy::{SnapshotDecisionInput, SnapshotSkipReason, AUTO_IDLE_MAX_PER_FILE};
@@ -136,6 +139,89 @@ fn timestamp_version_no() -> String {
 /// Non-whitespace character count; aligned with frontend `characterCountExcludingWhitespace`.
 pub fn character_count_excluding_whitespace(content: &str) -> i64 {
     content.chars().filter(|c| !c.is_whitespace()).count() as i64
+}
+
+fn title_from_path(path: &str) -> String {
+    PathBuf::from(path)
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .filter(|s| !s.is_empty())
+        .unwrap_or(path)
+        .to_string()
+}
+
+fn purge_classified_derived_rows(
+    conn: &rusqlite::Connection,
+    file_id: i64,
+    path: &str,
+) -> rusqlite::Result<()> {
+    conn.execute("DELETE FROM files_fts WHERE path = ?1", [path])?;
+    conn.execute(
+        "DELETE FROM chunk_embeddings
+         WHERE chunk_id IN (SELECT id FROM chunks WHERE file_id = ?1)",
+        [file_id],
+    )?;
+    conn.execute("DELETE FROM chunks WHERE file_id = ?1", [file_id])?;
+    conn.execute(
+        "DELETE FROM links WHERE source_id = ?1 OR target_id = ?1",
+        [file_id],
+    )?;
+    conn.execute("DELETE FROM file_tags WHERE file_id = ?1", [file_id])?;
+    Ok(())
+}
+
+fn ensure_snapshot_file_id(
+    state: &Arc<AppState>,
+    path: &str,
+    content_hash: &str,
+    content: &str,
+) -> AppResult<i64> {
+    if !is_classified_note_path(path) {
+        return state.db.with_conn(|conn| {
+            conn.query_row("SELECT id FROM files WHERE path = ?1", [path], |r| r.get(0))
+                .map_err(|e| AppError::msg(format!("File not indexed: {e}")))
+        });
+    }
+
+    let title = title_from_path(path);
+    let wc = character_count_excluding_whitespace(content);
+    state.db.with_conn(|conn| {
+        let existing: Option<i64> = conn
+            .query_row("SELECT id FROM files WHERE path = ?1", [path], |r| r.get(0))
+            .optional()?;
+        let file_id = if let Some(id) = existing {
+            conn.execute(
+                "UPDATE files
+                 SET title = ?1, frontmatter = NULL, content_hash = ?2, word_count = ?3, updated_at = datetime('now')
+                 WHERE id = ?4",
+                rusqlite::params![title, content_hash, wc, id],
+            )?;
+            id
+        } else {
+            conn.execute(
+                "INSERT INTO files (path, title, frontmatter, content_hash, word_count, created_at, updated_at)
+                 VALUES (?1, ?2, NULL, ?3, ?4, datetime('now'), datetime('now'))",
+                rusqlite::params![path, title, content_hash, wc],
+            )?;
+            conn.last_insert_rowid()
+        };
+        purge_classified_derived_rows(conn, file_id, path)?;
+        Ok(file_id)
+    })
+}
+
+fn encode_restore_payload(path: &str, content: &str) -> AppResult<Vec<u8>> {
+    if !is_classified_note_path(path) {
+        return Ok(content.as_bytes().to_vec());
+    }
+    let key = VAULT_KEY
+        .get()
+        .ok_or_else(|| AppError::msg("保险库未初始化"))?
+        .read()
+        .map_err(|e| AppError::msg(format!("VAULT_KEY lock error: {e}")))?
+        .key()
+        .copied()?;
+    classified_io::encrypt_cef(content.as_bytes(), &key)
 }
 
 fn map_version_row(row: &Row<'_>) -> rusqlite::Result<VersionEntry> {
@@ -306,11 +392,7 @@ pub fn create_snapshot_outcome(
     params: SnapshotParams,
 ) -> AppResult<VersionSaveOutcome> {
     let hash = crate::cas::hash::content_hash_str(content);
-
-    let file_id: i64 = state.db.with_conn(|conn| {
-        conn.query_row("SELECT id FROM files WHERE path = ?1", [path], |r| r.get(0))
-            .map_err(|e| AppError::msg(format!("File not indexed: {e}")))
-    })?;
+    let file_id = ensure_snapshot_file_id(state, path, &hash, content)?;
 
     let now = Utc::now();
     let decision = state.db.with_conn(|conn| {
@@ -445,12 +527,18 @@ pub fn version_restore(
     let abs_note = crate::storage::paths::resolve_vault_path(&vault, &path)?;
 
     let tmp = abs_note.with_extension("md.tmp");
-    fs::write(&tmp, &content)?;
+    let payload = encode_restore_payload(&path, &content)?;
+    fs::write(&tmp, payload)?;
     fs::rename(&tmp, &abs_note)?;
 
-    state
-        .db
-        .with_conn(|conn| crate::indexer::scan::index_file(conn, &vault, &abs_note))?;
+    if is_classified_note_path(&path) {
+        let hash = crate::cas::hash::content_hash_str(&content);
+        let _ = ensure_snapshot_file_id(state, &path, &hash, &content)?;
+    } else {
+        state
+            .db
+            .with_conn(|conn| crate::indexer::scan::index_file(conn, &vault, &abs_note))?;
+    }
 
     Ok(content)
 }
@@ -509,11 +597,29 @@ pub fn version_cleanup(state: &Arc<AppState>) -> AppResult<usize> {
 mod tests {
     use super::*;
     use crate::app::AppState;
+    use crate::crypto::classified_io;
+    use crate::crypto::vault_key::{init_vault_key, VAULT_KEY, VAULT_KEY_TEST_LOCK};
     use crate::storage::db::Database;
     use rusqlite::Connection;
     use std::fs;
-    use std::sync::Arc;
+    use std::sync::{Arc, OnceLock};
     use tempfile::tempdir;
+
+    static INIT_KEY: OnceLock<()> = OnceLock::new();
+
+    fn ensure_vault_key() {
+        INIT_KEY.get_or_init(|| {
+            init_vault_key();
+        });
+    }
+
+    fn unlock_classified_vault_for_test() -> [u8; 32] {
+        ensure_vault_key();
+        let key = [42_u8; 32];
+        let mut guard = VAULT_KEY.get().unwrap().write().unwrap();
+        guard.set_test_key(key);
+        key
+    }
 
     fn test_state() -> (tempfile::TempDir, Arc<AppState>) {
         let dir = tempdir().unwrap();
@@ -586,6 +692,58 @@ mod tests {
             .expect("manual snapshot");
 
         assert_eq!(entry.kind, VersionKind::Manual);
+    }
+
+    #[test]
+    fn classified_version_restore_keeps_disk_encrypted_and_unindexed() {
+        let _guard = VAULT_KEY_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let (_dir, state) = test_state();
+        let vault = state.vault_path().unwrap();
+        let key = unlock_classified_vault_for_test();
+        fs::create_dir_all(vault.join(".classified")).unwrap();
+
+        let encrypted_current = classified_io::encrypt_cef(b"# Current", &key).unwrap();
+        fs::write(vault.join(".classified/secret.md"), encrypted_current).unwrap();
+
+        let entry = version_save_manual(&state, ".classified/secret.md", "# Historical")
+            .unwrap()
+            .expect("classified snapshot");
+        let listed = version_list(&state, ".classified/secret.md").unwrap();
+        assert_eq!(listed.len(), 1);
+
+        let restored = version_restore(&state, entry.id, "# Current").unwrap();
+        assert_eq!(restored, "# Historical");
+
+        let raw = fs::read(vault.join(".classified/secret.md")).unwrap();
+        assert!(classified_io::has_csef_magic(&raw));
+        let decrypted = classified_io::decrypt_cef(&raw, &key).unwrap();
+        assert_eq!(String::from_utf8(decrypted).unwrap(), "# Historical");
+
+        let (chunks, fts): (i64, i64) = state
+            .db
+            .with_conn(|conn| {
+                let file_id: i64 = conn.query_row(
+                    "SELECT id FROM files WHERE path = '.classified/secret.md'",
+                    [],
+                    |r| r.get(0),
+                )?;
+                let chunks = conn.query_row(
+                    "SELECT COUNT(*) FROM chunks WHERE file_id = ?1",
+                    [file_id],
+                    |r| r.get(0),
+                )?;
+                let fts = conn.query_row(
+                    "SELECT COUNT(*) FROM files_fts WHERE path = '.classified/secret.md'",
+                    [],
+                    |r| r.get(0),
+                )?;
+                Ok((chunks, fts))
+            })
+            .unwrap();
+        assert_eq!(chunks, 0);
+        assert_eq!(fts, 0);
     }
 
     #[test]

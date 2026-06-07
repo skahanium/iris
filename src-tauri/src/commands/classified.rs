@@ -217,7 +217,12 @@ fn classified_import_inner(
     Ok(())
 }
 
-fn classified_export_inner(state: &AppState, path: &str, target_folder: &str) -> AppResult<()> {
+fn classified_export_inner(
+    state: &AppState,
+    path: &str,
+    target_folder: &str,
+    overwrite: bool,
+) -> AppResult<()> {
     let vk = require_unlocked()?;
     if !is_classified_path(path) {
         return Err(AppError::msg("只能导出涉密文件"));
@@ -249,11 +254,14 @@ fn classified_export_inner(state: &AppState, path: &str, target_folder: &str) ->
     fs::create_dir_all(vault.join(&target_rel))?;
     let dest = resolve_vault_path(&vault, &dest_rel)?;
 
-    if dest.exists() {
+    if dest.exists() && !overwrite {
         return Err(AppError::msg(format!(
             "目标位置已存在同名文件: {}",
             file_name.to_string_lossy()
         )));
+    }
+    if dest.is_dir() {
+        return Err(AppError::msg("导出目标不能是文件夹"));
     }
 
     let raw = fs::read(&src)?;
@@ -267,9 +275,80 @@ fn classified_export_inner(state: &AppState, path: &str, target_folder: &str) ->
     fs::write(&dest, &content)?;
     fs::remove_file(&src)?;
 
-    state.db.with_conn(|conn| index_file(conn, &vault, &dest))?;
+    state.db.with_conn(|conn| {
+        remove_file_index(conn, path)?;
+        remove_file_index(conn, &dest_rel)?;
+        index_file(conn, &vault, &dest)
+    })?;
 
     Ok(())
+}
+
+fn remove_classified_metadata(state: &AppState, path: &str) -> AppResult<()> {
+    let normalized = path.replace('\\', "/").trim_end_matches('/').to_string();
+    let like = format!("{normalized}/%");
+    state.db.with_conn(|conn| {
+        let paths: Vec<String> = {
+            let mut stmt =
+                conn.prepare("SELECT path FROM files WHERE path = ?1 OR path LIKE ?2")?;
+            let rows = stmt
+                .query_map(rusqlite::params![normalized, like], |row| row.get(0))?
+                .collect::<Result<Vec<_>, _>>()?;
+            rows
+        };
+        for path in paths {
+            remove_file_index(conn, &path)?;
+        }
+        Ok(())
+    })
+}
+
+fn rename_classified_metadata(state: &AppState, old_path: &str, new_path: &str) -> AppResult<()> {
+    let old = old_path
+        .replace('\\', "/")
+        .trim_end_matches('/')
+        .to_string();
+    let new = new_path
+        .replace('\\', "/")
+        .trim_end_matches('/')
+        .to_string();
+    let old_like = format!("{old}/%");
+    state.db.with_conn(|conn| {
+        let paths: Vec<String> = {
+            let mut stmt =
+                conn.prepare("SELECT path FROM files WHERE path = ?1 OR path LIKE ?2")?;
+            let rows = stmt
+                .query_map(rusqlite::params![old, old_like], |row| row.get(0))?
+                .collect::<Result<Vec<_>, _>>()?;
+            rows
+        };
+        for path in paths {
+            let next = if path == old {
+                new.clone()
+            } else {
+                format!("{new}{}", &path[old.len()..])
+            };
+            let title = display_title(&next);
+            conn.execute("DELETE FROM files_fts WHERE path = ?1", [&path])?;
+            conn.execute("DELETE FROM files_fts WHERE path = ?1", [&next])?;
+            conn.execute(
+                "UPDATE files
+                 SET path = ?1, title = ?2, updated_at = datetime('now')
+                 WHERE path = ?3",
+                rusqlite::params![next, title, path],
+            )?;
+        }
+        Ok(())
+    })
+}
+
+fn display_title(path: &str) -> String {
+    Path::new(path)
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .filter(|s| !s.is_empty())
+        .unwrap_or(path)
+        .to_string()
 }
 
 fn classified_delete_inner(state: &AppState, path: &str) -> AppResult<()> {
@@ -286,6 +365,7 @@ fn classified_delete_inner(state: &AppState, path: &str) -> AppResult<()> {
     } else {
         return Err(AppError::msg("文件不存在"));
     }
+    remove_classified_metadata(state, path)?;
     Ok(())
 }
 
@@ -313,6 +393,7 @@ fn classified_rename_inner(state: &AppState, path: &str, new_path: &str) -> AppR
         fs::create_dir_all(parent)?;
     }
     fs::rename(&abs, &new_abs)?;
+    rename_classified_metadata(state, path, new_path)?;
     Ok(())
 }
 
@@ -359,8 +440,14 @@ pub fn classified_export(
     state: State<'_, Arc<AppState>>,
     path: String,
     target_folder: String,
+    overwrite: Option<bool>,
 ) -> AppResult<()> {
-    classified_export_inner(state.inner(), &path, &target_folder)
+    classified_export_inner(
+        state.inner(),
+        &path,
+        &target_folder,
+        overwrite.unwrap_or(false),
+    )
 }
 
 #[tauri::command]
@@ -385,15 +472,14 @@ pub fn classified_rename(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::crypto::vault_key::init_vault_key;
+    use crate::crypto::vault_key::{init_vault_key, VAULT_KEY_TEST_LOCK};
     use std::sync::OnceLock;
     use tempfile::tempdir;
 
     static INIT_KEY: OnceLock<()> = OnceLock::new();
-    static KEY_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
     fn key_test_lock() -> std::sync::MutexGuard<'static, ()> {
-        KEY_TEST_LOCK
+        VAULT_KEY_TEST_LOCK
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
@@ -532,7 +618,45 @@ mod tests {
         write_note(&vault, "notes/source.md", "# Source\n\nContent.");
         classified_import_inner(&state, None, "notes/source.md", ".classified").unwrap();
 
-        classified_export_inner(&state, ".classified/source.md", "exported").unwrap();
+        classified_export_inner(&state, ".classified/source.md", "exported", false).unwrap();
+
+        let plain = fs::read_to_string(vault.join("exported/source.md")).unwrap();
+        assert_eq!(plain, "# Source\n\nContent.");
+        assert!(!vault.join(".classified/source.md").exists());
+
+        let indexed: i64 = state
+            .db
+            .with_conn(|conn| {
+                Ok(conn.query_row(
+                    "SELECT COUNT(*) FROM files WHERE path = 'exported/source.md'",
+                    [],
+                    |r| r.get(0),
+                )?)
+            })
+            .unwrap();
+        assert_eq!(indexed, 1);
+    }
+
+    #[test]
+    fn classified_export_can_overwrite_after_explicit_confirmation() {
+        let _guard = key_test_lock();
+        let (_dir, state) = test_state();
+        let vault = state.vault_path().unwrap();
+        classified_setup_inner(&state, "test-pass").unwrap();
+
+        write_note(&vault, "notes/source.md", "# Source\n\nContent.");
+        classified_import_inner(&state, None, "notes/source.md", ".classified").unwrap();
+        write_note(&vault, "exported/source.md", "# Old");
+        state
+            .db
+            .with_conn(|conn| index_file(conn, &vault, &vault.join("exported/source.md")))
+            .unwrap();
+
+        let blocked = classified_export_inner(&state, ".classified/source.md", "exported", false)
+            .unwrap_err();
+        assert!(blocked.to_string().contains("目标位置已存在同名文件"));
+
+        classified_export_inner(&state, ".classified/source.md", "exported", true).unwrap();
 
         let plain = fs::read_to_string(vault.join("exported/source.md")).unwrap();
         assert_eq!(plain, "# Source\n\nContent.");

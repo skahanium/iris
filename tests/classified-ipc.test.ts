@@ -60,7 +60,7 @@ describe("classified vault IPC contract", () => {
     expect(types).toContain("isDir: boolean");
     expect(types).toContain("export type ClassifiedStatus =");
     expect(types).toContain('"needs_setup"');
-    expect(types).toContain('"waiting"');
+    expect(types).not.toContain('"waiting"');
   });
 
   it("classifiedSetup invokes backend with password", async () => {
@@ -114,12 +114,13 @@ describe("classified vault IPC contract", () => {
     });
   });
 
-  it("classifiedExport maps camelCase targetFolder to IPC", async () => {
+  it("classifiedExport maps camelCase targetFolder and overwrite to IPC", async () => {
     invoke.mockResolvedValue(undefined);
-    await classifiedExport(".classified/secret.md", "notes");
+    await classifiedExport(".classified/secret.md", "notes", true);
     expect(invoke).toHaveBeenCalledWith("classified_export", {
       path: ".classified/secret.md",
       targetFolder: "notes",
+      overwrite: true,
     });
   });
 
@@ -163,7 +164,19 @@ describe("classified vault IPC contract", () => {
       content: "# Hi",
       isLocked: false,
     });
-    expect(invoke).toHaveBeenCalledWith("file_read", { path: "notes/a.md" });
+    expect(invoke).toHaveBeenCalledWith("file_read", {
+      path: "notes/a.md",
+      allowClassified: false,
+    });
+  });
+
+  it("fileRead must opt in before opening classified notes", async () => {
+    invoke.mockResolvedValue({ content: "# Secret", isLocked: false });
+    await fileRead(".classified/secret.md", { allowClassified: true });
+    expect(invoke).toHaveBeenCalledWith("file_read", {
+      path: ".classified/secret.md",
+      allowClassified: true,
+    });
   });
 });
 

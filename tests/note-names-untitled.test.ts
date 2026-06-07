@@ -8,7 +8,7 @@ import { UNNAMED_DOCUMENT_PREFIX as DISPLAY_PREFIX } from "@/lib/note-display";
 import type { FileListItem } from "@/types/ipc";
 
 function file(path: string, title: string): FileListItem {
-  return { path, title, updated_at: "" };
+  return { path, title, updated_at: "", isLocked: false };
 }
 
 describe("allocateNewDocumentName", () => {

@@ -20,8 +20,19 @@ use std::sync::Arc;
 
 use crate::app::AppState;
 use crate::error::{AppError, AppResult};
+use crate::storage::paths::is_user_note_path;
 use tauri::{Emitter, State};
 use tracing::info;
+
+/// AI runtime only accepts ordinary user notes as note-scoped context.
+pub(crate) fn validate_ai_note_path(note_path: Option<&str>) -> AppResult<()> {
+    if let Some(path) = note_path {
+        if !is_user_note_path(path) {
+            return Err(AppError::msg("涉密笔记不能进入 AI 管道"));
+        }
+    }
+    Ok(())
+}
 
 /// Assemble context with intent detection and retrieval planning.
 #[allow(clippy::too_many_arguments)]
@@ -36,6 +47,8 @@ pub async fn context_assemble(
     context_scope: Option<ContextScopeDto>,
     web_search: Option<bool>,
 ) -> AppResult<AssembledContext> {
+    validate_ai_note_path(note_path.as_deref())?;
+
     let scene: AiScene = serde_json::from_str(&format!("\"{scene}\""))
         .map_err(|e| AppError::msg(format!("invalid scene: {e}")))?;
 
@@ -147,6 +160,8 @@ pub(crate) async fn execute_ai_send_message(
     web_search: Option<bool>,
     new_session: Option<bool>,
 ) -> AppResult<serde_json::Value> {
+    validate_ai_note_path(note_path.as_deref())?;
+
     let web_search = web_search.unwrap_or(false);
     let new_session = new_session.unwrap_or(false);
     let request_id = uuid::Uuid::new_v4().to_string();
@@ -669,6 +684,8 @@ pub async fn search_hybrid(
     note_path: Option<String>,
     limit: Option<usize>,
 ) -> AppResult<Vec<serde_json::Value>> {
+    validate_ai_note_path(note_path.as_deref())?;
+
     let _scene: AiScene = scene
         .as_deref()
         .map(|s| serde_json::from_str(&format!("\"{s}\"")))
@@ -1081,4 +1098,21 @@ pub async fn tool_audit_query(
     request_id: String,
 ) -> AppResult<Vec<crate::ai_runtime::tool_audit::ToolAuditEntry>> {
     crate::ai_runtime::tool_audit::query_by_request(&state.db, &request_id)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::validate_ai_note_path;
+
+    #[test]
+    fn ai_note_path_rejects_classified_notes() {
+        let err = validate_ai_note_path(Some(".classified/secret.md")).unwrap_err();
+        assert!(err.to_string().contains("涉密笔记不能进入 AI"));
+    }
+
+    #[test]
+    fn ai_note_path_allows_user_notes_and_empty_context() {
+        assert!(validate_ai_note_path(Some("notes/open.md")).is_ok());
+        assert!(validate_ai_note_path(None).is_ok());
+    }
 }

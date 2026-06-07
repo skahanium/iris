@@ -120,20 +120,30 @@ fn validate_folder_path(path: &str) -> AppResult<()> {
 }
 
 #[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct FileListItem {
     pub path: String,
     pub title: String,
     pub updated_at: String,
+    pub is_locked: bool,
 }
 
 /// 列出受追踪的用户笔记（每篇文档一条，不含版本快照）。
 /// `title` 为创建时确定的文档名；版本历史见 `version_list_cmd`。
 #[tauri::command]
 pub fn file_list(state: State<'_, Arc<AppState>>) -> AppResult<Vec<FileListItem>> {
-    let _vault = state.vault_path()?;
+    file_list_inner(state.inner())
+}
+
+fn file_list_inner(state: &AppState) -> AppResult<Vec<FileListItem>> {
+    let vault = state.vault_path()?;
+    state
+        .db
+        .with_conn(|conn| prune_stale_file_indexes(conn, &vault).map(|_| ()))?;
+
     state.db.with_read_conn(|conn| {
         let mut stmt = conn.prepare(
-            "SELECT path, title, updated_at, frontmatter FROM files
+            "SELECT path, title, updated_at, frontmatter, is_locked FROM files
              WHERE id IN (SELECT MAX(id) FROM files GROUP BY path)
                AND path NOT LIKE '.iris/%'
                AND path NOT LIKE '.classified/%'
@@ -144,23 +154,34 @@ pub fn file_list(state: State<'_, Arc<AppState>>) -> AppResult<Vec<FileListItem>
             let stored_title: String = row.get(1)?;
             let updated_at: String = row.get(2)?;
             let frontmatter: Option<String> = row.get(3)?;
+            let is_locked: bool = row.get::<_, i64>(4).unwrap_or(0) != 0;
             let stem = title_from_path(&path);
             let title = resolve_display_title(None, &stored_title, frontmatter.as_deref(), &stem);
             Ok(FileListItem {
                 path,
                 title,
                 updated_at,
+                is_locked,
             })
         })?;
-        Ok(rows.flatten().collect())
+        let mut files = Vec::new();
+        for row in rows {
+            let item = row?;
+            if is_user_note_path(&item.path) {
+                files.push(item);
+            }
+        }
+        Ok(files)
     })
 }
 
 #[tauri::command]
-pub async fn file_read(state: State<'_, Arc<AppState>>, path: String) -> AppResult<FileReadResult> {
-    if !is_accessible_note_path(&path) {
-        return Err(AppError::msg("只能读取用户笔记，不允许访问内部元数据路径"));
-    }
+pub async fn file_read(
+    state: State<'_, Arc<AppState>>,
+    path: String,
+    allow_classified: Option<bool>,
+) -> AppResult<FileReadResult> {
+    validate_file_read_path(&path, allow_classified.unwrap_or(false))?;
     let vault = state.vault_path()?;
     let abs = resolve_vault_path(&vault, &path)?;
     let db = state.inner().db.clone();
@@ -173,6 +194,19 @@ pub async fn file_read(state: State<'_, Arc<AppState>>, path: String) -> AppResu
     })
     .await
     .map_err(|e| AppError::msg(format!("task join: {e}")))?
+}
+
+fn validate_file_read_path(path: &str, allow_classified: bool) -> AppResult<()> {
+    if is_user_note_path(path) {
+        return Ok(());
+    }
+    if is_classified_note_path(path) {
+        if allow_classified {
+            return Ok(());
+        }
+        return Err(AppError::msg("涉密笔记只能从涉密保险库打开"));
+    }
+    Err(AppError::msg("只能读取用户笔记，不允许访问内部元数据路径"))
 }
 
 #[tauri::command]
@@ -266,12 +300,18 @@ pub async fn vault_asset_write(
 /// Move note + all version snapshots into recycle bin (15-day retention).
 #[tauri::command]
 pub fn file_delete(state: State<'_, Arc<AppState>>, path: String) -> AppResult<()> {
+    if is_classified_note_path(&path) {
+        return Err(AppError::msg("涉密文件不能通过此接口删除"));
+    }
     trash_document(state.inner(), &path)
 }
 
 /// Permanently remove a blank note (no recycle bin).
 #[tauri::command]
 pub fn file_discard(state: State<'_, Arc<AppState>>, path: String) -> AppResult<()> {
+    if is_classified_note_path(&path) {
+        return Err(AppError::msg("涉密文件不能通过此接口删除"));
+    }
     discard_document(state.inner(), &path)
 }
 
@@ -783,6 +823,17 @@ pub fn vault_set(app: AppHandle, state: State<'_, Arc<AppState>>, path: String) 
     // Clear in-memory AI state to prevent data leakage between vaults
     state.clear_ai_state();
 
+    // Clear previous vault's AI sessions and scoped memories to prevent cross-vault access
+    if let Err(e) = state.db.with_conn(|conn| {
+        conn.execute_batch(
+            "DELETE FROM sessions;
+             DELETE FROM ai_memories WHERE scope != 'global';",
+        )?;
+        Ok(())
+    }) {
+        tracing::warn!("vault_set: session cleanup failed: {e}");
+    }
+
     if let Err(e) = state.restart_file_watcher(app) {
         tracing::warn!("vault_set: file watcher did not start: {e}");
     }
@@ -843,6 +894,7 @@ pub fn file_backlinks(
              JOIN files f ON f.id = l.source_id
              JOIN files t ON t.id = l.target_id
              WHERE t.path = ?1
+               AND f.path NOT LIKE '.classified/%'
              ORDER BY f.title",
         )?;
         let rows = stmt.query_map([&path], |row| {
@@ -860,17 +912,14 @@ pub fn file_backlinks(
 mod file_io_pipeline_tests {
     use super::*;
     use crate::crypto::classified_io;
-    use crate::crypto::vault_key::{VaultKey, VAULT_KEY};
+    use crate::crypto::vault_key::{VaultKey, VAULT_KEY, VAULT_KEY_TEST_LOCK};
     use crate::storage::db::Database;
     use crate::storage::migrate::migrate_up;
     use std::fs;
-    use std::sync::{Mutex, OnceLock};
+    use std::sync::OnceLock;
     use tempfile::tempdir;
 
     static INIT_KEY: OnceLock<()> = OnceLock::new();
-    /// Serializes tests that mutate the process-wide `VAULT_KEY`.
-    static VAULT_KEY_TEST_LOCK: Mutex<()> = Mutex::new(());
-
     fn ensure_vault_key() {
         INIT_KEY.get_or_init(|| {
             let _ = VAULT_KEY.get_or_init(|| std::sync::RwLock::new(VaultKey::new()));
@@ -912,6 +961,41 @@ mod file_io_pipeline_tests {
             Ok(())
         })
         .unwrap();
+    }
+
+    #[test]
+    fn file_list_inner_prunes_missing_plain_note_after_classified_move() {
+        let dir = tempdir().unwrap();
+        let vault = dir.path().join("vault");
+        fs::create_dir_all(vault.join(".classified")).unwrap();
+        fs::write(vault.join(".classified/moved.md"), "# Secret").unwrap();
+        let state = AppState::new(dir.path().join("data")).unwrap();
+        state.set_vault(vault).unwrap();
+        state
+            .db
+            .with_conn(|conn| {
+                conn.execute(
+                    "INSERT INTO files (path, title, content_hash, created_at, updated_at)
+                     VALUES ('notes/moved.md', 'Moved', 'h1', '2020-01-01', '2020-01-01'),
+                            ('.classified/moved.md', 'Moved', 'h2', '2020-01-02', '2020-01-02')",
+                    [],
+                )?;
+                Ok(())
+            })
+            .unwrap();
+
+        let files = file_list_inner(&state).unwrap();
+        assert!(files.is_empty());
+    }
+
+    #[test]
+    fn file_read_validation_requires_classified_opt_in() {
+        assert!(validate_file_read_path("notes/a.md", false).is_ok());
+
+        let err = validate_file_read_path(".classified/secret.md", false).unwrap_err();
+        assert!(err.to_string().contains("涉密笔记只能从涉密保险库打开"));
+
+        assert!(validate_file_read_path(".classified/secret.md", true).is_ok());
     }
 
     #[test]

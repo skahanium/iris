@@ -25,7 +25,10 @@ pub fn search_keyword(
     state.db.with_read_conn(|conn| {
         let mut stmt = conn.prepare(
             "SELECT path, title, snippet(files_fts, 2, '<b>', '</b>', '…', 32) as snip
-             FROM files_fts WHERE files_fts MATCH ?1 LIMIT ?2",
+             FROM files_fts
+             WHERE files_fts MATCH ?1
+               AND path NOT LIKE '.classified/%'
+             LIMIT ?2",
         )?;
         let rows = stmt.query_map(rusqlite::params![query, limit as i64], |row| {
             Ok(KeywordHit {

@@ -27,6 +27,7 @@ import {
   classifiedMkdir,
   classifiedRename,
   fileCreate,
+  fileRead,
   folderList,
   vaultGet,
 } from "@/lib/ipc";
@@ -226,11 +227,18 @@ export function ClassifiedFileList({
       ) {
         throw new Error("只能导出到普通笔记目录");
       }
-      const overwrite = window.confirm(
-        `将导出到「${target}」。若目标已有同名文件，操作将失败。是否继续？`,
-      );
-      if (!overwrite) return;
-      await classifiedExport(path, target);
+      const destPath = `${target}/${displayName(path)}`;
+      let overwrite = false;
+      try {
+        await fileRead(destPath);
+        overwrite = window.confirm(
+          `目标位置已存在「${displayName(path)}」。是否覆盖？`,
+        );
+        if (!overwrite) return;
+      } catch {
+        overwrite = false;
+      }
+      await classifiedExport(path, target, overwrite);
       if (selected === path) {
         setSelected(null);
       }
@@ -285,7 +293,7 @@ export function ClassifiedFileList({
           disabled={busy}
         >
           <Lock className="h-3.5 w-3.5" />
-          锁定
+          锁定保险库
         </Button>
       </div>
 

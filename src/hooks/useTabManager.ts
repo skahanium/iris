@@ -1,6 +1,7 @@
 import { useCallback, useRef, useState } from "react";
 
 import type { TabItem } from "@/components/layout/TabBar";
+import { isClassifiedVaultPath } from "@/lib/classified-path";
 import {
   displayTitleFromMarkdown,
   resolveDocumentTitle,
@@ -18,6 +19,10 @@ interface UseTabManagerOptions {
   onVaultIndexBump?: () => void;
   /** Flush layer-1 save for `path` before leaving/closing; returns written markdown if any. */
   persistBeforeLeave?: (path: string) => Promise<string | null>;
+}
+
+interface OpenNoteOptions {
+  allowClassified?: boolean;
 }
 
 export function useTabManager(options: UseTabManagerOptions = {}) {
@@ -67,6 +72,9 @@ export function useTabManager(options: UseTabManagerOptions = {}) {
     if (activePathRef.current === path) {
       setActiveFileLocked(locked);
     }
+    setTabs((prev) =>
+      prev.map((tab) => (tab.path === path ? { ...tab, locked } : tab)),
+    );
   }, []);
 
   const cacheTabMarkdown = useCallback((path: string, md: string) => {
@@ -111,8 +119,12 @@ export function useTabManager(options: UseTabManagerOptions = {}) {
     async (
       path: string,
       titleHint?: string,
-      options?: { skipDiscardPrevious?: boolean },
+      options?: OpenNoteOptions & { skipDiscardPrevious?: boolean },
     ) => {
+      if (isClassifiedVaultPath(path) && options?.allowClassified !== true) {
+        onStatusChange?.("涉密笔记只能从涉密保险库打开");
+        return;
+      }
       const seq = ++openFileSeqRef.current;
       const current = activePathRef.current;
       if (current && current !== path) {
@@ -127,7 +139,9 @@ export function useTabManager(options: UseTabManagerOptions = {}) {
         setTabs((prev) => prev.filter((t) => t.path !== current));
       }
       try {
-        const { content, isLocked } = await fileRead(path);
+        const { content, isLocked } = await fileRead(path, {
+          allowClassified: options?.allowClassified === true,
+        });
         if (openFileSeqRef.current !== seq) return;
         tabLockCacheRef.current.set(path, isLocked);
         setActiveFileLocked(isLocked);
@@ -149,10 +163,10 @@ export function useTabManager(options: UseTabManagerOptions = {}) {
         setTabs((prev) => {
           if (prev.some((t) => t.path === path)) {
             return prev.map((t) =>
-              t.path === path ? { ...t, title, dirty: false } : t,
+              t.path === path ? { ...t, title, dirty: false, locked: isLocked } : t,
             );
           }
-          return [...prev, { path, title, dirty: false }];
+          return [...prev, { path, title, dirty: false, locked: isLocked }];
         });
       } catch (e) {
         if (openFileSeqRef.current !== seq) return;
@@ -203,11 +217,15 @@ export function useTabManager(options: UseTabManagerOptions = {}) {
 
   /** Open a note from the vault UI: reuse tab session when already open. */
   const openNote = useCallback(
-    (path: string, titleHint?: string): Promise<void> => {
+    (
+      path: string,
+      titleHint?: string,
+      options?: OpenNoteOptions,
+    ): Promise<void> => {
       if (tabsRef.current.some((t) => t.path === path)) {
         return activateTab(path);
       }
-      return openFile(path, titleHint);
+      return openFile(path, titleHint, options);
     },
     [activateTab, openFile],
   );
@@ -223,6 +241,9 @@ export function useTabManager(options: UseTabManagerOptions = {}) {
         onStatusChange?.(`关闭标签失败：${msg}`);
         return;
       }
+
+      tabMarkdownCacheRef.current.delete(path);
+      tabLockCacheRef.current.delete(path);
 
       const prevTabs = tabsRef.current;
       const idx = prevTabs.findIndex((t) => t.path === path);

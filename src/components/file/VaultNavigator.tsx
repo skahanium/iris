@@ -6,6 +6,8 @@ import {
   FileText,
   Folder,
   FolderPlus,
+  Lock,
+  LockOpen,
   Pencil,
   Trash2,
 } from "lucide-react";
@@ -24,6 +26,7 @@ import {
   fileList,
   fileRead,
   fileRename,
+  fileSetLock,
   folderCreate,
   folderDelete,
   folderList,
@@ -501,6 +504,23 @@ export function VaultNavigator({ open, onClose, onOpen }: VaultNavigatorProps) {
                       >
                         {displayTitleForFileListItem(f)}
                       </button>
+                      <Button
+                        type="button"
+                        size="icon"
+                        variant="ghost"
+                        title={f.isLocked ? "解锁编辑" : "锁定编辑"}
+                        onClick={async () => {
+                          const next = !f.isLocked;
+                          await fileSetLock(f.path, next);
+                          refresh();
+                        }}
+                      >
+                        {f.isLocked ? (
+                          <Lock className="h-3 w-3" />
+                        ) : (
+                          <LockOpen className="h-3 w-3" />
+                        )}
+                      </Button>
                       <Button
                         type="button"
                         size="icon"

@@ -629,6 +629,7 @@ function App() {
     const ed = editorRef.current;
     const path = activePathRef.current;
     if (!ed || !path) return null;
+    if (isClassifiedVaultPath(path)) return null;
     const { from, to } = ed.state.selection;
     const selection =
       from !== to ? ed.state.doc.textBetween(from, to, "\n") : "";
@@ -640,7 +641,9 @@ function App() {
 
   const getParagraphText = useCallback((): string | null => {
     const ed = editorRef.current;
-    if (!ed) return null;
+    const path = activePathRef.current;
+    if (!ed || !path) return null;
+    if (isClassifiedVaultPath(path)) return null;
     const { from, to } = ed.state.selection;
     if (from !== to) {
       return ed.state.doc.textBetween(from, to, "\n");
@@ -649,7 +652,7 @@ function App() {
     const start = $from.start($from.depth);
     const end = $from.end($from.depth);
     return ed.state.doc.textBetween(start, end, "\n");
-  }, []);
+  }, [activePathRef]);
 
   const { rescanVault } = useAutoVaultIndex(vaultPath, loading, {
     onStatus: setAiStatus,
@@ -754,19 +757,27 @@ function App() {
 
   const runInlineAi = useCallback(
     (action: string) => {
+      if (activeNoteIsClassified) {
+        setAiStatus("涉密笔记不能发送到 AI");
+        return;
+      }
       const ed = editorRef.current;
       if (!ed) return;
       void inlineAi.run(ed, action);
     },
-    [inlineAi],
+    [activeNoteIsClassified, inlineAi],
   );
 
   const handleSlashCommand = useCallback(
     (command: string) => {
+      if (activeNoteIsClassified) {
+        setAiStatus("涉密笔记不能发送到 AI");
+        return;
+      }
       if (!editorRef.current) return;
       void inlineAi.runSlash(editorRef.current, command, getLiveMarkdown());
     },
-    [getLiveMarkdown, inlineAi],
+    [activeNoteIsClassified, getLiveMarkdown, inlineAi],
   );
 
   const sendSelectionToAi = useCallback(
@@ -774,6 +785,10 @@ function App() {
       const ed = editorRef.current;
       const path = activePathRef.current;
       if (!ed || !path) return;
+      if (isClassifiedVaultPath(path)) {
+        setAiStatus("涉密笔记不能发送到 AI");
+        return;
+      }
       const { from, to } = ed.state.selection;
       const text = ed.state.doc.textBetween(from, to, "\n");
       if (!text) {
@@ -805,11 +820,19 @@ function App() {
     [editorActionHandlers],
   );
 
-  const handleInsertToEditor = useCallback((content: string) => {
-    const ed = editorRef.current;
-    if (!ed) return;
-    insertAssistantMarkdownAtCursor(ed, content);
-  }, []);
+  const handleInsertToEditor = useCallback(
+    (content: string) => {
+      const ed = editorRef.current;
+      const path = activePathRef.current;
+      if (!ed || !path) return;
+      if (isClassifiedVaultPath(path)) {
+        setAiStatus("涉密笔记不能接收 AI 插入");
+        return;
+      }
+      insertAssistantMarkdownAtCursor(ed, content);
+    },
+    [activePathRef],
+  );
 
   const handleUndo = useCallback(() => {
     editorRef.current?.commands.undo();
@@ -935,6 +958,11 @@ function App() {
     if (!activePath) return null;
     return displayTitleForChrome(activePath, noteTitle);
   }, [activePath, noteTitle]);
+  const assistantNotePath = activeNoteIsClassified ? null : activePath;
+  const assistantDocumentTitle = activeNoteIsClassified
+    ? null
+    : activeDocumentTitle;
+  const assistantNoteContent = activeNoteIsClassified ? "" : markdown;
 
   if (!isTauriRuntime()) {
     return (
@@ -1094,18 +1122,22 @@ function App() {
         aiPanel={
           <ErrorBoundary scope="AI面板">
             <UnifiedAssistantPanel
-              notePath={activePath}
-              noteDisplayTitle={activeDocumentTitle}
-              noteContent={markdown}
+              notePath={assistantNotePath}
+              noteDisplayTitle={assistantDocumentTitle}
+              noteContent={assistantNoteContent}
               webSearch={webSearch}
               getWritingContext={getWritingContext}
               getParagraphText={getParagraphText}
-              selectionQuote={selectionQuote}
+              selectionQuote={activeNoteIsClassified ? null : selectionQuote}
               prefillMessage={assistantPrefill}
               onChromeChange={setAssistantChrome}
               onVaultRefresh={bumpVaultIndex}
               onInsertToEditor={handleInsertToEditor}
               onPatchApplied={(newContent: string) => {
+                if (activeNoteIsClassified) {
+                  setAiStatus("涉密笔记不能接收 AI 改写");
+                  return;
+                }
                 applyMarkdownToEditor(newContent);
                 markdownRef.current = newContent;
                 dirtyRef.current = false;
@@ -1244,7 +1276,9 @@ function App() {
               waiting={classifiedWaiting}
               idleDeadline={classifiedIdleDeadline}
               openClassifiedPaths={openClassifiedPaths}
-              onOpenFile={(path) => void openNote(path)}
+              onOpenFile={(path) =>
+                void openNote(path, undefined, { allowClassified: true })
+              }
               onUnlockSuccess={() => void onClassifiedUnlocked()}
               onRequestLock={() => requestClassifiedLock()}
               onActivity={touchClassifiedActivity}

@@ -97,6 +97,7 @@ pub(crate) async fn route_assistant_execute(
     app_handle: &AppHandle,
     request: AssistantExecuteRequest,
 ) -> AppResult<AssistantExecuteResponse> {
+    crate::commands::ai_commands::validate_ai_note_path(request.note_path.as_deref())?;
     let task_result = crate::ai_runtime::harness_task::run_harness_task(
         state,
         app_handle,

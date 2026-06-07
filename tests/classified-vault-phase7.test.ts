@@ -131,4 +131,35 @@ describe("classified vault phase 7", () => {
     expect(app).toContain("activeNoteIsClassified");
     expect(app).toContain("笔记已锁定，无法保存");
   });
+
+  it("App never forwards classified note material into AI surfaces", () => {
+    const app = read("src/App.tsx");
+    expect(app).toContain(
+      "const assistantNotePath = activeNoteIsClassified ? null : activePath;",
+    );
+    expect(app).toContain(
+      'const assistantNoteContent = activeNoteIsClassified ? "" : markdown;',
+    );
+    expect(app).toContain("notePath={assistantNotePath}");
+    expect(app).toContain("noteContent={assistantNoteContent}");
+    expect(app).toContain("if (isClassifiedVaultPath(path)) return null;");
+    expect(app).toContain("if (activeNoteIsClassified) {");
+    expect(app).toContain("涉密笔记不能发送到 AI");
+  });
+
+  it("main note open paths cannot open classified notes", () => {
+    const tabs = read("src/hooks/useTabManager.ts");
+    expect(tabs).toContain("allowClassified?: boolean");
+    expect(tabs).toContain("涉密笔记只能从涉密保险库打开");
+    expect(tabs).toContain("fileRead(path, {");
+    expect(tabs).toContain(
+      "allowClassified: options?.allowClassified === true",
+    );
+
+    const app = read("src/App.tsx");
+    expect(app).toContain("onOpenFile={(path) =>");
+    expect(app).toContain(
+      "void openNote(path, undefined, { allowClassified: true })",
+    );
+  });
 });

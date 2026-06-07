@@ -1,5 +1,5 @@
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { Plus, X } from "lucide-react";
+import { Lock, Plus, X } from "lucide-react";
 import { memo, useMemo } from "react";
 
 import { IrisMark } from "@/components/brand/IrisMark";
@@ -18,6 +18,7 @@ export interface TabItem {
   path: string;
   title: string;
   dirty?: boolean;
+  locked?: boolean;
 }
 
 export type DesktopTitleBarVariant = "document" | "splash";
@@ -144,6 +145,9 @@ export const DesktopTitleBar = memo(function DesktopTitleBar({
                   }}
                   onClick={() => onSelect(tab.path)}
                 >
+                  {tab.locked ? (
+                    <Lock className="mr-1 inline h-3 w-3 text-muted-foreground/70" />
+                  ) : null}
                   {tab.title}
                   {tab.dirty ? (
                     <span className="text-muted-foreground"> •</span>

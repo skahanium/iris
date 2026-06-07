@@ -120,6 +120,7 @@ fn semantic_search_vec(
          JOIN chunks c ON c.id = vc.rowid
          JOIN files f ON f.id = c.file_id
          WHERE vc.embedding MATCH ?1
+           AND f.path NOT LIKE '.classified/%'
          ORDER BY vc.distance
          LIMIT ?2",
     )?;
@@ -161,7 +162,8 @@ fn semantic_search_cosine(
         "SELECT c.id, c.content, f.path, f.title, ce.embedding
          FROM chunks c
          JOIN files f ON f.id = c.file_id
-         JOIN chunk_embeddings ce ON ce.chunk_id = c.id",
+         JOIN chunk_embeddings ce ON ce.chunk_id = c.id
+         WHERE f.path NOT LIKE '.classified/%'",
     )?;
 
     let rows = stmt.query_map([], |row| {

@@ -162,15 +162,21 @@ impl VaultKey {
             .map(|k| &k.0)
             .ok_or_else(|| AppError::msg("保险库未解锁"))
     }
+
+    #[cfg(test)]
+    pub fn set_test_key(&mut self, key: [u8; 32]) {
+        self.key = Some(KeyBytes(key));
+    }
 }
 
 pub static VAULT_KEY: OnceLock<RwLock<VaultKey>> = OnceLock::new();
 
+#[cfg(test)]
+pub static VAULT_KEY_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 /// Initialize the process-wide vault key holder (call once at app startup).
 pub fn init_vault_key() {
-    VAULT_KEY
-        .set(RwLock::new(VaultKey::new()))
-        .expect("VAULT_KEY should only be initialized once");
+    let _ = VAULT_KEY.get_or_init(|| RwLock::new(VaultKey::new()));
 }
 
 #[cfg(test)]

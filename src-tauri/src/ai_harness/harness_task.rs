@@ -149,6 +149,7 @@ pub async fn run_harness_task(
     task: HarnessTaskRequest,
 ) -> AppResult<HarnessTaskResult> {
     let request = task.assistant;
+    crate::commands::ai_commands::validate_ai_note_path(request.note_path.as_deref())?;
     match request.intent {
         AssistantIntent::Writing => {
             let note_path = request

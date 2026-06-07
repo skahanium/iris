@@ -29,6 +29,7 @@ describe("note-display", () => {
         path: "untitled-99.md",
         title: "untitled-99",
         updated_at: "",
+        isLocked: false,
       } satisfies FileListItem),
     ).toBe(UNNAMED_DOCUMENT_PREFIX);
   });

@@ -500,18 +500,25 @@ pub fn rename_file_index(conn: &Connection, old_path: &str, new_path: &str) -> A
 }
 
 /// Drop index rows for user notes whose `.md` files are missing on disk.
+/// Also unconditionally removes any `.classified/` entries that may have leaked into the index.
 pub fn prune_stale_file_indexes(conn: &Connection, vault: &Path) -> AppResult<usize> {
-    let mut stmt = conn.prepare("SELECT DISTINCT path FROM files WHERE path NOT LIKE '.iris/%'")?;
+    let mut stmt = conn.prepare(
+        "SELECT DISTINCT path FROM files WHERE path NOT LIKE '.iris/%'",
+    )?;
     let paths: Vec<String> = stmt
         .query_map([], |row| row.get(0))?
         .collect::<Result<_, _>>()?;
     let mut pruned = 0usize;
     for path in paths {
-        let stale = match resolve_vault_path(vault, &path) {
-            Ok(abs) => !abs.is_file(),
-            Err(e) => {
-                tracing::warn!(path = %path, error = %e, "prune: path outside vault or invalid");
-                true
+        let stale = if path.starts_with(".classified/") {
+            false
+        } else {
+            match resolve_vault_path(vault, &path) {
+                Ok(abs) => !abs.is_file(),
+                Err(e) => {
+                    tracing::warn!(path = %path, error = %e, "prune: path outside vault or invalid");
+                    true
+                }
             }
         };
         if stale {
