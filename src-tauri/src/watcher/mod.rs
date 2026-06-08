@@ -113,7 +113,7 @@ fn handle_file_event(
 
     let hash = file_hash(path)?;
     let rel = relative_path(&vault, path)?;
-    if state.write_guard.should_skip_watcher(&rel, &hash) {
+    if state.storage.write_guard.should_skip_watcher(&rel, &hash) {
         tracing::debug!(path = %rel, "watcher skipped: recent app write");
         return Ok(());
     }

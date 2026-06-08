@@ -81,7 +81,7 @@ impl Scheduler {
 
     /// 执行垃圾回收
     async fn run_garbage_collection(state: &Arc<AppState>) -> AppResult<()> {
-        let gc = GarbageCollector::new(state.cas_store().clone(), state.db.clone());
+        let gc = GarbageCollector::new(state.cas_store()?.clone(), state.db.clone());
         let result = gc.collect().await?;
 
         tracing::info!(

@@ -16,7 +16,7 @@ static IN_MEMORY_DB_COUNTER: AtomicU64 = AtomicU64::new(0);
 #[cfg(feature = "sqlite-vec")]
 static SQLITE_VEC_REGISTER: Once = Once::new();
 
-const READ_POOL_SIZE: usize = 4;
+const READ_POOL_SIZE: usize = 8;
 
 /// Whether sqlite-vec vec0 tables are available for this process.
 pub fn vector_index_ready() -> bool {

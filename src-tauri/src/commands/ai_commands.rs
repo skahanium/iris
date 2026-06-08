@@ -495,7 +495,7 @@ pub async fn tool_confirm(
     };
 
     if decision == "reject" {
-        crate::llm::safe_lock(&state.pending_tool_calls).remove(&tool_call_id);
+        crate::llm::safe_lock(&state.ai.pending_tool_calls).remove(&tool_call_id);
         append_rejected_tool_to_checkpoint(state.inner(), &request_id, &tool_call_id)?;
         let harness_result =
             resume_harness_after_tool_confirm_or_restore(state.inner(), &app_handle, &request_id)
@@ -526,7 +526,7 @@ pub async fn tool_confirm(
         return Ok(out);
     }
 
-    let pending = crate::llm::safe_lock(&state.pending_tool_calls).remove(&tool_call_id);
+    let pending = crate::llm::safe_lock(&state.ai.pending_tool_calls).remove(&tool_call_id);
     let Some(pending) = pending else {
         return Err(AppError::msg(format!(
             "no pending tool call for id: {tool_call_id}"

@@ -264,7 +264,7 @@ fn markdown_write_patch_apply(
         return Err(e.into());
     }
     let hash = crate::ai_runtime::writing_workflow::compute_content_hash(&applied);
-    state.write_guard.mark(&target_path, &hash);
+    state.storage.write_guard.mark(&target_path, &hash);
     let entry = state.db.with_conn(|conn| {
         crate::indexer::scan::index_file_from_content(conn, &vault, &abs, &applied, &hash, None)
     })?;

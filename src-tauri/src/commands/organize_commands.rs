@@ -196,7 +196,7 @@ fn write_vault_file(state: &Arc<AppState>, path: &str, content: &str) -> AppResu
         return Err(e.into());
     }
     let hash = crate::indexer::scan::file_hash(&abs)?;
-    state.write_guard.mark(path, &hash);
+    state.storage.write_guard.mark(path, &hash);
     state.db.with_conn(|conn| {
         crate::indexer::scan::index_file_with_embed(conn, &vault, &abs, Some(state))
     })?;
@@ -220,7 +220,7 @@ fn rename_vault_file(state: &Arc<AppState>, path: &str, new_path: &str) -> AppRe
     }
     std::fs::rename(&abs, &new_abs)?;
     let hash = crate::indexer::scan::file_hash(&new_abs)?;
-    state.write_guard.mark(new_path, &hash);
+    state.storage.write_guard.mark(new_path, &hash);
     state.db.with_conn(|conn| {
         crate::indexer::scan::rename_file_index(conn, path, new_path)?;
         crate::indexer::scan::index_file_with_embed(conn, &vault, &new_abs, Some(state))

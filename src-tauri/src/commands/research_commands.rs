@@ -32,7 +32,7 @@ pub(crate) async fn execute_research_task(
     let cancel_token = Arc::new(AtomicBool::new(false));
     {
         let mut guard = state
-            .active_research
+            .ai.active_research
             .lock()
             .map_err(|_| crate::error::AppError::msg("Lock error"))?;
         guard.insert(request_id.clone(), cancel_token.clone());
@@ -81,7 +81,7 @@ pub(crate) async fn execute_research_task(
     // Clean up cancel token
     {
         let mut guard = state
-            .active_research
+            .ai.active_research
             .lock()
             .map_err(|_| crate::error::AppError::msg("Lock error"))?;
         guard.remove(&request_id);
@@ -166,7 +166,7 @@ pub fn research_abort(
     request_id: String,
 ) -> AppResult<()> {
     let mut guard = state
-        .active_research
+        .ai.active_research
         .lock()
         .map_err(|_| crate::error::AppError::msg("Lock error"))?;
 
@@ -206,7 +206,7 @@ pub fn research_abort(
 #[tauri::command]
 pub fn research_active_tasks(state: State<'_, Arc<AppState>>) -> AppResult<Vec<String>> {
     let guard = state
-        .active_research
+        .ai.active_research
         .lock()
         .map_err(|_| crate::error::AppError::msg("Lock error"))?;
     Ok(guard.keys().cloned().collect())

@@ -15,6 +15,7 @@ use crate::storage::db::Database;
 use crate::watcher::FileWatcher;
 
 use crate::ai_types::{AiScene, AutonomyLevel};
+use crate::security::brute_force::BruteForceProtection;
 
 #[derive(Debug, Clone)]
 pub struct PendingToolCall {
@@ -103,7 +104,9 @@ impl AiRuntimeState {
         if let Ok(mut research) = self.active_research.lock() {
             research.clear();
         }
-        tracing::info!("vault switch: cleared pending tool calls and active research");
+        self.vector_index_ready
+            .store(false, std::sync::atomic::Ordering::Relaxed);
+        tracing::info!("vault switch: cleared pending tool calls, active research, and vector index");
     }
 }
 
@@ -116,12 +119,8 @@ pub struct AppState {
     data_dir: PathBuf,
     pub watcher: Mutex<Option<FileWatcher>>,
 
-    // Backward-compatible direct access (same Arc as storage.db).
     pub db: Arc<Database>,
-    pub write_guard: WriteGuard,
-    pub active_research: Mutex<HashMap<String, Arc<AtomicBool>>>,
-    pub pending_tool_calls: Mutex<HashMap<String, PendingToolCall>>,
-    pub vector_index_ready: AtomicBool,
+    pub brute_force: BruteForceProtection,
 }
 
 impl AppState {
@@ -135,15 +134,12 @@ impl AppState {
 
         let state = Arc::new(Self {
             db: Arc::clone(&storage.db),
-            write_guard: WriteGuard::default(),
-            active_research: Mutex::new(HashMap::new()),
-            pending_tool_calls: Mutex::new(HashMap::new()),
-            vector_index_ready: AtomicBool::new(vector_ready),
             storage,
             ai,
             vault: Mutex::new(None),
             data_dir,
             watcher: Mutex::new(None),
+            brute_force: BruteForceProtection::new(),
         });
 
         if let Err(e) = crate::llm::search_web::cleanup_expired_search_cache(&state.db) {
@@ -164,7 +160,8 @@ impl AppState {
     }
 
     pub fn is_vector_index_ready(&self) -> bool {
-        self.vector_index_ready
+        self.ai
+            .vector_index_ready
             .load(std::sync::atomic::Ordering::Relaxed)
     }
 
@@ -179,9 +176,9 @@ impl AppState {
     }
 
     /// Get CAS store via the storage sub-state.
-    pub fn cas_store(&self) -> &CasObjectStore {
-        let vault = self.vault_path().expect("Vault not configured");
-        self.storage.cas_store(&vault)
+    pub fn cas_store(&self) -> AppResult<&CasObjectStore> {
+        let vault = self.vault_path()?;
+        Ok(self.storage.cas_store(&vault))
     }
 
     pub fn ref_counter(&self) -> &RefCounter {
@@ -254,12 +251,6 @@ impl AppState {
     /// Clear all in-memory AI state when switching vaults.
     pub fn clear_ai_state(&self) {
         self.ai.clear();
-        if let Ok(mut pending) = self.pending_tool_calls.lock() {
-            pending.clear();
-        }
-        if let Ok(mut research) = self.active_research.lock() {
-            research.clear();
-        }
     }
 
     pub fn data_dir(&self) -> &PathBuf {

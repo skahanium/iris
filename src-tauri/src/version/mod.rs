@@ -262,7 +262,7 @@ pub(crate) fn read_version_content(
     storage_path: &str,
 ) -> AppResult<String> {
     if let Some(hash) = storage_path.strip_prefix(CAS_STORAGE_PREFIX) {
-        return state.cas_store().read_blob_content(hash);
+        return state.cas_store()?.read_blob_content(hash);
     }
     let abs = vault.join(".iris").join("versions").join(storage_path);
     Ok(fs::read_to_string(abs)?)
@@ -270,7 +270,7 @@ pub(crate) fn read_version_content(
 
 /// Store snapshot body in CAS; returns `storage_path` for the versions table.
 fn write_version_blob(state: &Arc<AppState>, content: &str) -> AppResult<String> {
-    let hash = state.cas_store().store_blob(content.as_bytes())?;
+    let hash = state.cas_store()?.store_blob(content.as_bytes())?;
     Ok(cas_storage_path(&hash))
 }
 

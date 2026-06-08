@@ -3,13 +3,34 @@ use rusqlite::Connection;
 use crate::error::AppResult;
 
 /// Extract wiki-link titles from note body: `[[Page Title]]` or `[[page-title]]`.
+/// Skips matches inside fenced code blocks, inline code, and HTML comments.
 pub fn extract_wiki_links(content: &str) -> Vec<String> {
     let re = regex::Regex::new(r"\[\[([^\]]+)\]\]").unwrap();
-    re.captures_iter(content)
-        .filter_map(|cap| cap.get(1))
-        .map(|m| m.as_str().trim().to_string())
-        .filter(|s| !s.is_empty())
-        .collect()
+    let mut fence = crate::indexer::code_fence::FenceState::new();
+    let mut links = Vec::new();
+
+    for line in content.lines() {
+        let in_fence = fence.feed(line);
+        if in_fence {
+            continue;
+        }
+        for cap in re.captures_iter(line) {
+            if let Some(m) = cap.get(0) {
+                if crate::indexer::code_fence::FenceState::is_inside_inline_code_or_comment(
+                    line, m.start(),
+                ) {
+                    continue;
+                }
+            }
+            if let Some(title) = cap.get(1) {
+                let t = title.as_str().trim().to_string();
+                if !t.is_empty() {
+                    links.push(t);
+                }
+            }
+        }
+    }
+    links
 }
 
 /// Update links for a file: clear existing outbound links, insert new ones.

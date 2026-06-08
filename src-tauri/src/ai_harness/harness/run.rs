@@ -664,7 +664,7 @@ async fn pause_for_tool_confirmation(
     tool_call: &ToolCall,
 ) -> AppResult<HarnessRunResult> {
     let tool_name = &tool_call.function.name;
-    crate::llm::safe_lock(&state.pending_tool_calls).insert(
+    crate::llm::safe_lock(&state.ai.pending_tool_calls).insert(
         tool_call.id.clone(),
         crate::app::PendingToolCall {
             tool_name: tool_name.clone(),

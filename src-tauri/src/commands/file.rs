@@ -9,7 +9,7 @@ use crate::error::{AppError, AppResult};
 use crate::indexer::frontmatter::resolve_display_title;
 use crate::indexer::scan::{
     collect_vault_folders, content_hash, index_file_from_content, index_file_with_embed,
-    index_vault_incremental, prune_stale_file_indexes, rename_file_index, FileEntry,
+    index_vault_incremental, rename_file_index, FileEntry,
 };
 use crate::recycle::{discard_document, trash_document};
 use base64::engine::general_purpose::STANDARD;
@@ -99,8 +99,7 @@ fn validate_folder_path(path: &str) -> AppResult<()> {
     if path.contains('\\') {
         return Err(AppError::msg("Backslashes are not allowed in folder paths"));
     }
-    let normalized = path.replace('\\', "/");
-    let trimmed = normalized.trim_matches('/');
+    let trimmed = path.trim_matches('/');
     if trimmed.trim().is_empty() {
         return Err(AppError::msg("Folder path cannot be empty"));
     }
@@ -136,10 +135,7 @@ pub fn file_list(state: State<'_, Arc<AppState>>) -> AppResult<Vec<FileListItem>
 }
 
 fn file_list_inner(state: &AppState) -> AppResult<Vec<FileListItem>> {
-    let vault = state.vault_path()?;
-    state
-        .db
-        .with_conn(|conn| prune_stale_file_indexes(conn, &vault).map(|_| ()))?;
+    let _vault = state.vault_path()?;
 
     state.db.with_read_conn(|conn| {
         let mut stmt = conn.prepare(
@@ -238,7 +234,7 @@ pub async fn file_write(
         }
 
         let hash = content_hash(&content);
-        state.write_guard.mark(&path, &hash);
+        state.storage.write_guard.mark(&path, &hash);
 
         if is_classified_note_path(&path) {
             Ok(FileEntry {
@@ -407,7 +403,7 @@ pub async fn folder_rename(
         for src_path in &all_modified_sources {
             if let Ok(abs_src) = resolve_vault_path(&vault, src_path) {
                 if let Ok(h) = crate::indexer::scan::file_hash(&abs_src) {
-                    state.write_guard.mark(src_path, &h);
+                    state.storage.write_guard.mark(src_path, &h);
                 }
                 let _ = state
                     .db
@@ -619,7 +615,7 @@ pub async fn file_rename(
 
         fs::rename(&abs, &new_abs)?;
         let hash = crate::indexer::scan::file_hash(&new_abs)?;
-        state.write_guard.mark(&new_path, &hash);
+        state.storage.write_guard.mark(&new_path, &hash);
 
         state.db.with_conn(|conn| {
             rename_file_index(conn, &path, &new_path)?;
@@ -629,7 +625,7 @@ pub async fn file_rename(
         for src_path in &modified_sources {
             if let Ok(abs_src) = resolve_vault_path(&vault, src_path) {
                 if let Ok(h) = crate::indexer::scan::file_hash(&abs_src) {
-                    state.write_guard.mark(src_path, &h);
+                    state.storage.write_guard.mark(src_path, &h);
                 }
                 let _ = state
                     .db
@@ -686,24 +682,49 @@ fn cascade_rewrite_wikilinks_on_disk(
     for src_path in &source_paths {
         let abs = resolve_vault_path(vault, src_path)?;
         let content = read_file_lossy(&abs)?;
-        let mut updated = content.clone();
 
-        let pattern_stem = format!("[[{}]]", old_stem);
-        let replacement_stem = format!("[[{}]]", new_stem);
-        updated = updated.replace(&pattern_stem, &replacement_stem);
+        // Rewrite line-by-line, skipping code blocks
+        let mut fence = crate::indexer::code_fence::FenceState::new();
+        let mut lines: Vec<String> = Vec::new();
+        let mut changed = false;
 
-        let pattern_path = format!("[[{}]]", old_path);
-        let replacement_path = format!("[[{}]]", new_path);
-        updated = updated.replace(&pattern_path, &replacement_path);
+        for line in content.lines() {
+            let in_fence = fence.feed(line);
+            if in_fence {
+                lines.push(line.to_string());
+                continue;
+            }
 
-        if let Some(old_no_ext) = old_path.strip_suffix(".md") {
-            let pattern_noext = format!("[[{}]]", old_no_ext);
-            let new_no_ext = new_path.strip_suffix(".md").unwrap_or(new_path);
-            let replacement_noext = format!("[[{}]]", new_no_ext);
-            updated = updated.replace(&pattern_noext, &replacement_noext);
+            let mut updated_line = line.to_string();
+            let pattern_stem = format!("[[{}]]", old_stem);
+            let replacement_stem = format!("[[{}]]", new_stem);
+            if updated_line.contains(&pattern_stem) {
+                updated_line = updated_line.replace(&pattern_stem, &replacement_stem);
+            }
+
+            let pattern_path = format!("[[{}]]", old_path);
+            let replacement_path = format!("[[{}]]", new_path);
+            if updated_line.contains(&pattern_path) {
+                updated_line = updated_line.replace(&pattern_path, &replacement_path);
+            }
+
+            if let Some(old_no_ext) = old_path.strip_suffix(".md") {
+                let pattern_noext = format!("[[{}]]", old_no_ext);
+                let new_no_ext = new_path.strip_suffix(".md").unwrap_or(new_path);
+                let replacement_noext = format!("[[{}]]", new_no_ext);
+                if updated_line.contains(&pattern_noext) {
+                    updated_line = updated_line.replace(&pattern_noext, &replacement_noext);
+                }
+            }
+
+            if updated_line != line {
+                changed = true;
+            }
+            lines.push(updated_line);
         }
 
-        if updated != content {
+        if changed {
+            let updated = lines.join("\n");
             let tmp = abs.with_extension("md.tmp");
             fs::write(&tmp, &updated)?;
             if let Err(e) = fs::rename(&tmp, &abs) {
@@ -788,7 +809,7 @@ pub async fn file_create(
             return Err(e.into());
         }
         let hash = content_hash(&body);
-        state.write_guard.mark(&path, &hash);
+        state.storage.write_guard.mark(&path, &hash);
         if is_classified_note_path(&path) {
             Ok(FileEntry {
                 id: 0,
@@ -863,10 +884,6 @@ pub async fn index_rescan(state: State<'_, Arc<AppState>>) -> AppResult<Vec<File
     let state = state.inner().clone();
     tokio::task::spawn_blocking(move || {
         let vault = state.vault_path()?;
-        state.db.with_conn(|conn| {
-            prune_stale_file_indexes(conn, &vault)?;
-            Ok(())
-        })?;
         state
             .db
             .with_conn(|conn| index_vault_incremental(conn, &vault, Some(&state)))
@@ -964,7 +981,7 @@ mod file_io_pipeline_tests {
     }
 
     #[test]
-    fn file_list_inner_prunes_missing_plain_note_after_classified_move() {
+    fn file_list_inner_hides_missing_plain_note_after_classified_move() {
         let dir = tempdir().unwrap();
         let vault = dir.path().join("vault");
         fs::create_dir_all(vault.join(".classified")).unwrap();
@@ -982,6 +999,12 @@ mod file_io_pipeline_tests {
                 )?;
                 Ok(())
             })
+            .unwrap();
+
+        // prune has moved off the file_list hot path — explicitly prune
+        state
+            .db
+            .with_conn(|conn| crate::indexer::scan::prune_stale_file_indexes(conn, &state.vault_path().unwrap()))
             .unwrap();
 
         let files = file_list_inner(&state).unwrap();

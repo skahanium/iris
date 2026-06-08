@@ -99,7 +99,7 @@ fn file_write_inner(
     }
 
     let hash = crate::indexer::scan::file_hash(&abs)?;
-    state.write_guard.mark(path, &hash);
+    state.storage.write_guard.mark(path, &hash);
 
     state.db.with_conn(|conn| {
         crate::indexer::scan::index_file_with_embed(conn, &vault, &abs, Some(state))

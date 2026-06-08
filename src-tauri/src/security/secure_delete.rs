@@ -11,6 +11,10 @@ use crate::error::AppResult;
 /// 用于处理包含敏感信息的临时文件（如 API 响应缓存）。
 /// 覆写 + `sync_all` 确保操作系统将覆写操作刷入存储介质，
 /// 随后 `remove_file` 释放目录条目。
+///
+/// 注意：单次零覆写在 SSD 上因 wear leveling 可能不会覆盖到相同的物理单元，
+/// 因此在 SSD 上无法保证物理擦除。但能够防止文件系统级别的数据恢复。
+/// 对于涉密保险库场景，数据本身的 AES-256-GCM 加密才是主要防护层。
 pub fn secure_delete(path: &Path) -> AppResult<()> {
     if !path.exists() {
         return Ok(());

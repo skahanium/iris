@@ -113,7 +113,33 @@ fn classified_unlock_inner(state: &AppState, password: &str) -> AppResult<()> {
         return Err(AppError::msg("保险库尚未设置密码"));
     }
     let mut vk = vault_key_write()?;
+    // VaultKey::unlock does Argon2 derivation + decryption; if this fails,
+    // the caller records the failure via brute_force.record_failure.
     vk.unlock(password, &vault)
+}
+
+async fn classified_unlock_async_inner(
+    state: &Arc<AppState>,
+    password: &str,
+    vault_path: &std::path::Path,
+) -> AppResult<()> {
+    state.brute_force.check(vault_path)?;
+
+    match classified_unlock_inner(state, password) {
+        Ok(()) => {
+            state.brute_force.record_success(vault_path);
+            Ok(())
+        }
+        Err(e) => {
+            state.brute_force.record_failure(vault_path)?;
+            // Re-check for backoff delay after record_failure
+            let err = state.brute_force.check(vault_path);
+            match err {
+                Ok(()) => Err(e),
+                Err(backoff) => Err(backoff),
+            }
+        }
+    }
 }
 
 fn classified_lock_inner() -> AppResult<()> {
@@ -263,6 +289,9 @@ fn classified_export_inner(
     if dest.is_dir() {
         return Err(AppError::msg("导出目标不能是文件夹"));
     }
+    if src.is_dir() {
+        return Err(AppError::msg("请选择文件而非文件夹进行导出"));
+    }
 
     let raw = fs::read(&src)?;
     let content = if classified_io::has_csef_magic(&raw) {
@@ -403,8 +432,12 @@ pub fn classified_setup(state: State<'_, Arc<AppState>>, password: String) -> Ap
 }
 
 #[tauri::command]
-pub fn classified_unlock(state: State<'_, Arc<AppState>>, password: String) -> AppResult<()> {
-    classified_unlock_inner(state.inner(), &password)
+pub async fn classified_unlock(
+    state: State<'_, Arc<AppState>>,
+    password: String,
+) -> AppResult<()> {
+    let vault = state.vault_path()?;
+    classified_unlock_async_inner(state.inner(), &password, &vault).await
 }
 
 #[tauri::command]

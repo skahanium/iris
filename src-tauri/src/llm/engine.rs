@@ -22,17 +22,26 @@ static IN_FLIGHT: Mutex<Option<HashMap<String, AbortFlag>>> = Mutex::new(None);
 /// 截断错误响应文本，防止大段 HTML/JSON 错误体泄露到前端
 pub(crate) fn truncate_error_text(text: &str) -> String {
     const MAX_CHARS: usize = 500;
-    let char_count = text.chars().count();
+    let sanitized = sanitize_error_text(text);
+    let char_count = sanitized.chars().count();
     if char_count <= MAX_CHARS {
-        text.to_string()
+        sanitized
     } else {
-        let end = text
+        let end = sanitized
             .char_indices()
             .nth(MAX_CHARS)
             .map(|(i, _)| i)
-            .unwrap_or(text.len());
-        format!("{}…(已截断，共 {} 字符)", &text[..end], char_count)
+            .unwrap_or(sanitized.len());
+        format!("{}…(已截断，共 {} 字符)", &sanitized[..end], char_count)
     }
+}
+
+fn sanitize_error_text(text: &str) -> String {
+    let re = regex::Regex::new(
+        r"(?i)(bearer\s+[a-zA-Z0-9\-._~+/]+=*|sk-[a-zA-Z0-9]{20,}|api[_-]?key[=:]\s*[a-zA-Z0-9\-._~+/]+)",
+    )
+    .unwrap();
+    re.replace_all(text, "[REDACTED]").to_string()
 }
 
 fn in_flight() -> std::sync::MutexGuard<'static, Option<HashMap<String, AbortFlag>>> {

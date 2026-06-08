@@ -30,7 +30,9 @@ fn query_hash_key(query: &str, backend: WebSearchEffectiveBackend, minimax_model
     hex::encode(hasher.finalize())
 }
 
-static LAST_REQUEST: LazyLock<Mutex<Option<Instant>>> = LazyLock::new(|| Mutex::new(None));
+/// Per-backend throttle (MiniMax / DuckDuckGo) to avoid cross-contention.
+static LAST_MINIMAX: LazyLock<Mutex<Option<Instant>>> = LazyLock::new(|| Mutex::new(None));
+static LAST_DDG: LazyLock<Mutex<Option<Instant>>> = LazyLock::new(|| Mutex::new(None));
 
 /// 检索结果与所用后端。
 #[derive(Debug, Clone)]
@@ -111,7 +113,7 @@ async fn fetch_minimax_cached(
             backend,
         });
     }
-    throttle().await?;
+    throttle_minimax().await?;
     let body = minimax_search::search(query, host, model).await?;
     cache_set_db(
         db,
@@ -132,7 +134,7 @@ async fn fetch_duckduckgo_only(db: &Database, query: &str) -> AppResult<WebSearc
             backend,
         });
     }
-    throttle().await?;
+    throttle_duckduckgo().await?;
     let body = duckduckgo_search(query).await?;
     cache_set_db(
         db,
@@ -308,12 +310,20 @@ pub fn expected_search_backend_for_connectivity(
     }
 }
 
-async fn throttle() -> AppResult<()> {
+async fn throttle_minimax() -> AppResult<()> {
+    throttle_backend(&LAST_MINIMAX).await
+}
+
+async fn throttle_duckduckgo() -> AppResult<()> {
+    throttle_backend(&LAST_DDG).await
+}
+
+async fn throttle_backend(last: &'static LazyLock<Mutex<Option<Instant>>>) -> AppResult<()> {
     let need_wait = {
-        let last = LAST_REQUEST
+        let last_guard = last
             .lock()
             .map_err(|_| AppError::msg("Lock error"))?;
-        if let Some(t) = *last {
+        if let Some(t) = *last_guard {
             let elapsed = t.elapsed();
             if elapsed < Duration::from_secs(2) {
                 Some(Duration::from_secs(2) - elapsed)
@@ -323,13 +333,13 @@ async fn throttle() -> AppResult<()> {
         } else {
             None
         }
-    }; // lock dropped here
+    };
 
     if let Some(wait) = need_wait {
         tokio::time::sleep(tokio::time::Duration::from_millis(wait.as_millis() as u64)).await;
     }
 
-    LAST_REQUEST
+    last
         .lock()
         .map_err(|_| AppError::msg("Lock error"))?
         .replace(Instant::now());
