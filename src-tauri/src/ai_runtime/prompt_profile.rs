@@ -1,4 +1,4 @@
-//! User-configurable AI persona / writing style for environment injection.
+﻿//! User-configurable AI persona / writing style for environment injection.
 
 use serde::{Deserialize, Serialize};
 
@@ -24,7 +24,7 @@ pub struct PromptProfile {
 }
 
 fn default_display_name() -> String {
-    "砚".to_string()
+    "鐮?.to_string()
 }
 
 fn default_language() -> String {
@@ -48,38 +48,38 @@ impl Default for PromptProfile {
 pub fn preset_templates() -> Vec<(&'static str, PromptProfile)> {
     vec![
         (
-            "学术严谨",
+            "瀛︽湳涓ヨ皑",
             PromptProfile {
-                display_name: "砚".into(),
-                avatar_emoji: Some("📚".into()),
-                persona: "严谨、客观的学术助手，重视证据与引用。".into(),
-                writing_style: "结构清晰、术语准确、避免口语化。".into(),
+                display_name: "鐮?.into(),
+                avatar_emoji: Some("馃摎".into()),
+                persona: "涓ヨ皑銆佸瑙傜殑瀛︽湳鍔╂墜锛岄噸瑙嗚瘉鎹笌寮曠敤銆?.into(),
+                writing_style: "缁撴瀯娓呮櫚銆佹湳璇噯纭€侀伩鍏嶅彛璇寲銆?.into(),
                 custom_rules: vec![
-                    "优先引用上下文证据。".into(),
-                    "不确定时明确说明局限。".into(),
+                    "浼樺厛寮曠敤涓婁笅鏂囪瘉鎹€?.into(),
+                    "涓嶇‘瀹氭椂鏄庣‘璇存槑灞€闄愩€?.into(),
                 ],
                 language: "zh-CN".into(),
             },
         ),
         (
-            "创意写作",
+            "鍒涙剰鍐欎綔",
             PromptProfile {
-                display_name: "砚".into(),
-                avatar_emoji: Some("🖋️".into()),
-                persona: "富有想象力的写作伙伴，善于拓展情节与人物。".into(),
-                writing_style: "生动、有画面感，适度修辞。".into(),
-                custom_rules: vec!["保持与既有设定一致。".into()],
+                display_name: "鐮?.into(),
+                avatar_emoji: Some("馃枊锔?.into()),
+                persona: "瀵屾湁鎯宠薄鍔涚殑鍐欎綔浼欎即锛屽杽浜庢嫇灞曟儏鑺備笌浜虹墿銆?.into(),
+                writing_style: "鐢熷姩銆佹湁鐢婚潰鎰燂紝閫傚害淇緸銆?.into(),
+                custom_rules: vec!["淇濇寔涓庢棦鏈夎瀹氫竴鑷淬€?.into()],
                 language: "zh-CN".into(),
             },
         ),
         (
-            "简洁高效",
+            "绠€娲侀珮鏁?,
             PromptProfile {
-                display_name: "砚".into(),
-                avatar_emoji: Some("⚡".into()),
-                persona: "高效执行型助手，直达要点。".into(),
-                writing_style: "短句、列表、少废话。".into(),
-                custom_rules: vec!["默认不超过三段。".into()],
+                display_name: "鐮?.into(),
+                avatar_emoji: Some("鈿?.into()),
+                persona: "楂樻晥鎵ц鍨嬪姪鎵嬶紝鐩磋揪瑕佺偣銆?.into(),
+                writing_style: "鐭彞銆佸垪琛ㄣ€佸皯搴熻瘽銆?.into(),
+                custom_rules: vec!["榛樿涓嶈秴杩囦笁娈点€?.into()],
                 language: "zh-CN".into(),
             },
         ),
@@ -121,18 +121,18 @@ impl PromptProfile {
         {
             return String::new();
         }
-        let mut s = String::from("## 用户 AI 人格配置\n\n");
+        let mut s = String::from("## 鐢ㄦ埛 AI 浜烘牸閰嶇疆\n\n");
         if !self.persona.is_empty() {
-            s.push_str(&format!("**人格**：{}\n\n", self.persona));
+            s.push_str(&format!("**浜烘牸**锛歿}\n\n", self.persona));
         }
         if !self.writing_style.is_empty() {
-            s.push_str(&format!("**写作风格**：{}\n\n", self.writing_style));
+            s.push_str(&format!("**鍐欎綔椋庢牸**锛歿}\n\n", self.writing_style));
         }
         if !self.language.is_empty() {
-            s.push_str(&format!("**回答语言**：{}\n\n", self.language));
+            s.push_str(&format!("**鍥炵瓟璇█**锛歿}\n\n", self.language));
         }
         if !self.custom_rules.is_empty() {
-            s.push_str("**自定义规则**：\n");
+            s.push_str("**鑷畾涔夎鍒?*锛歕n");
             for rule in &self.custom_rules {
                 s.push_str(&format!("- {rule}\n"));
             }
@@ -148,7 +148,7 @@ mod tests {
     #[test]
     fn default_includes_display_name() {
         let profile = PromptProfile::default();
-        assert_eq!(profile.display_name, "砚");
+        assert_eq!(profile.display_name, "鐮?);
         assert!(profile.avatar_emoji.is_none());
     }
 
@@ -156,7 +156,7 @@ mod tests {
     fn deserializes_legacy_profile_without_display_fields() {
         let json = r#"{"persona":"test","writing_style":"","custom_rules":[],"language":"zh-CN"}"#;
         let profile: PromptProfile = serde_json::from_str(json).unwrap();
-        assert_eq!(profile.display_name, "砚");
+        assert_eq!(profile.display_name, "鐮?);
         assert!(profile.avatar_emoji.is_none());
         assert_eq!(profile.persona, "test");
     }

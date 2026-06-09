@@ -10,6 +10,7 @@ import { useCallback, useEffect, useState } from "react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { DiffView } from "@/components/ai/PatchPreview";
 import {
   Dialog,
   DialogContent,

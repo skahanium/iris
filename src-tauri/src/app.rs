@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+﻿use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex, OnceLock};
@@ -30,7 +30,7 @@ pub struct PendingToolCall {
     pub skill_allowed_tools: Vec<String>,
 }
 
-// ─── Sub-state: Storage ──────────────────────────────────
+// 鈹€鈹€鈹€ Sub-state: Storage 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 /// Storage infrastructure: database, CAS object store, reference counting,
 /// and write guard. Changes to storage internals no longer force recompilation
@@ -74,7 +74,7 @@ impl StorageState {
     }
 }
 
-// ─── Sub-state: AI Runtime ───────────────────────────────
+// 鈹€鈹€鈹€ Sub-state: AI Runtime 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 /// AI runtime state: pending tool confirmations, active research tasks,
 /// embedding queue, and vector index readiness. Changes here don't affect
@@ -112,7 +112,7 @@ impl AiRuntimeState {
     }
 }
 
-// ─── AppState (top-level coordinator) ────────────────────
+// 鈹€鈹€鈹€ AppState (top-level coordinator) 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 pub struct AppState {
     pub storage: StorageState,
@@ -180,6 +180,7 @@ impl AppState {
     /// Get CAS store via the storage sub-state.
     pub fn cas_store(&self) -> AppResult<&CasObjectStore> {
         let vault = self.vault_path()?;
+        tokio::spawn(async { let _ = crate::embedding::engine::embed_text("warmup"); });
         Ok(self.storage.cas_store(&vault))
     }
 
@@ -247,7 +248,7 @@ impl AppState {
         let guard = self.vault.lock().map_err(|_| AppError::msg("Lock error"))?;
         guard
             .clone()
-            .ok_or_else(|| AppError::msg("笔记目录未配置，请先选择 vault"))
+            .ok_or_else(|| AppError::msg("绗旇鐩綍鏈厤缃紝璇峰厛閫夋嫨 vault"))
     }
 
     /// Clear all in-memory AI state when switching vaults.

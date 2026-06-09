@@ -1,4 +1,4 @@
-//! Agent Skills runtime — SKILL.md registry, validation, matching, prompt injection.
+﻿//! Agent Skills runtime 鈥?SKILL.md registry, validation, matching, prompt injection.
 //!
 //! Compatible with Agent Skills specification while preserving Iris local-first
 //! security model. Old `trigger`-based skills continue to work via `legacy_trigger`.
@@ -19,6 +19,7 @@ use crate::storage::db::Database;
 
 const VALIDATION_MISSING_FRONTMATTER: &str = "_iris_missing_frontmatter";
 const VALIDATION_NAME_MISMATCH: &str = "_iris_name_mismatch";
+const MAX_SKILL_RESOURCE_CHARS: usize = 24_000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -27,7 +28,7 @@ pub enum SkillScope {
     Vault,
 }
 
-/// Metadata bag — arbitrary key-value pairs from frontmatter.
+/// Metadata bag 鈥?arbitrary key-value pairs from frontmatter.
 pub type SkillMetadata = HashMap<String, serde_json::Value>;
 
 /// Validation status of a skill file.
@@ -340,7 +341,7 @@ pub fn load_skill(path: &Path, scope: SkillScope) -> AppResult<SkillEntry> {
         legacy_trigger,
     };
 
-    // Warn if name doesn't match directory (but don't reject — backward compat)
+    // Warn if name doesn't match directory (but don't reject 鈥?backward compat)
     if !name_matches_dir && !dir_name.is_empty() {
         entry.metadata.insert(
             VALIDATION_NAME_MISMATCH.to_string(),
@@ -509,7 +510,7 @@ pub async fn install_from_url(
         let actual = hex::encode(Sha256::digest(body.as_bytes()));
         if !actual.eq_ignore_ascii_case(expected.trim()) {
             return Err(AppError::msg(
-                "Skill 内容 SHA-256 校验失败（可能被篡改或不完整）",
+                "Skill 鍐呭 SHA-256 鏍￠獙澶辫触锛堝彲鑳借绡℃敼鎴栦笉瀹屾暣锛?,
             ));
         }
         tracing::info!(
@@ -617,6 +618,7 @@ pub async fn install_from_git(
     if installed.is_empty() {
         return Err(AppError::msg("no SKILL.md found in repository"));
     }
+    let _ = std::fs::remove_dir_all(&tmp);
     Ok(installed)
 }
 
@@ -802,14 +804,14 @@ pub fn capability_preview_for_entry(
 ///
 /// When `skill_activation_index` rows are supplied, keywords/description from the
 /// index take precedence over file metadata for matching.
-pub fn skills_for_scene(skills: &[SkillEntry], scene: AiScene) -> Vec<&SkillEntry> {
-    rank_skills_for_scene(skills, scene)
-        .into_iter()
-        .map(|ss| ss.skill)
-        .collect()
+pub fn skills_for_scene(skills: &[SkillEntry], scene: AiScene, user_message: &str) -> Vec<SkillEntry> {
+    let ranked = rank_skills_for_scene(skills, scene, user_message);
+    let reranked = rerank_with_embedding(ranked, user_message);
+    reranked.into_iter().filter(|s| s.score >= 0.35).take(3).map(|s| s.entry).collect()
+}
 }
 
-/// Scored version of `skills_for_scene` — returns scores for debugging/display.
+/// Scored version of `skills_for_scene` 鈥?returns scores for debugging/display.
 pub fn rank_skills_for_scene<'a>(skills: &'a [SkillEntry], scene: AiScene) -> Vec<ScoredSkill<'a>> {
     rank_skills_for_scene_with_index(skills, scene, None)
 }
@@ -890,7 +892,7 @@ fn compute_skill_score(
         score += 1.0;
     }
 
-    // Legacy trigger exact match → strong signal
+    // Legacy trigger exact match 鈫?strong signal
     if let Some(trigger) = &skill.legacy_trigger {
         let t = trigger.to_lowercase();
         if t.contains(scene_key) {
@@ -1051,7 +1053,7 @@ pub fn active_skill_allowed_tools(
     Ok(tools)
 }
 
-/// DTO for `skills_list` IPC response — includes computed fields.
+/// DTO for `skills_list` IPC response 鈥?includes computed fields.
 #[derive(Debug, Clone, Serialize)]
 pub struct SkillListEntry {
     #[serde(flatten)]
@@ -1162,20 +1164,20 @@ pub fn read_skill_resource(
     relative_path: &str,
 ) -> AppResult<String> {
     if relative_path.is_empty() || relative_path.contains("..") {
-        return Err(AppError::msg("skill 资源路径无效"));
+        return Err(AppError::msg("skill 璧勬簮璺緞鏃犳晥"));
     }
     let rel = Path::new(relative_path.trim_start_matches('/'));
     if rel.is_absolute() {
-        return Err(AppError::msg("skill 资源路径必须为相对路径"));
+        return Err(AppError::msg("skill 璧勬簮璺緞蹇呴』涓虹浉瀵硅矾寰?));
     }
     let top = rel
         .components()
         .next()
         .and_then(|c| c.as_os_str().to_str())
-        .ok_or_else(|| AppError::msg("skill 资源路径无效"))?;
+        .ok_or_else(|| AppError::msg("skill 璧勬簮璺緞鏃犳晥"))?;
     if !ALLOWED_RESOURCE_DIRS.contains(&top) {
         return Err(AppError::msg(format!(
-            "仅允许读取 {ALLOWED_RESOURCE_DIRS:?} 下的资源"
+            "浠呭厑璁歌鍙?{ALLOWED_RESOURCE_DIRS:?} 涓嬬殑璧勬簮"
         )));
     }
 
@@ -1185,36 +1187,43 @@ pub fn read_skill_resource(
     };
     let skill_root = base.join(slugify(name));
     if !skill_root.is_dir() {
-        return Err(AppError::msg(format!("未找到 skill: {name}")));
+        return Err(AppError::msg(format!("鏈壘鍒?skill: {name}")));
     }
 
     let target = skill_root.join(rel);
     let root_canonical = skill_root
         .canonicalize()
-        .map_err(|_| AppError::msg("skill 目录无效"))?;
+        .map_err(|_| AppError::msg("skill 鐩綍鏃犳晥"))?;
     let file_canonical = target
         .canonicalize()
-        .map_err(|_| AppError::msg("skill 资源文件不存在"))?;
+        .map_err(|_| AppError::msg("skill 璧勬簮鏂囦欢涓嶅瓨鍦?))?;
     if !file_canonical.starts_with(&root_canonical) {
-        return Err(AppError::msg("skill 资源路径越界"));
+        return Err(AppError::msg("skill 璧勬簮璺緞瓒婄晫"));
     }
     if !file_canonical.is_file() {
-        return Err(AppError::msg("skill 资源必须是文件"));
+        return Err(AppError::msg("skill 璧勬簮蹇呴』鏄枃浠?));
     }
 
     fs::read_to_string(&file_canonical).map_err(Into::into)
 }
 
 /// Build system prompt fragment from enabled skills.
-pub fn inject_into_prompt(skills: &[SkillEntry], scene: AiScene) -> String {
+pub fn inject_into_prompt(skills: &[SkillEntry], scene: AiScene, user_message: &str) -> String {
+
+fn tokenize(text: &str) -> Vec<String> { text.split(|c: char| !c.is_alphanumeric()).filter(|s| s.len() >= 2).map(|s| s.to_lowercase()).collect() }
+fn bm25_score(entry: &SkillEntry, user_tokens: &[String]) -> f64 { let k1=1.2;let b=0.75;let avg_dl=20.0;let mut s=0.0_f64;let nt=tokenize(&entry.name);for t in &nt{let tf=user_tokens.iter().filter(|w|*w==t).count() as f64;if tf>0.0{s+=tf*3.0/(tf+k1);}}let dt=tokenize(&entry.description);let dl=dt.len().max(1)as f64;for t in &dt{let tf=user_tokens.iter().filter(|w|*w==t).count()as f64;if tf>0.0{s+=tf*1.5/(tf+k1*(1.0-b+b*dl/avg_dl));}}if let Some(kw)=entry.metadata.get("keywords").and_then(|v|v.as_str()){for kw in kw.split_whitespace(){if user_tokens.iter().any(|w|w==&kw.to_lowercase()){s+=2.0;}}}s}
+pub(crate) struct ScoredSkill{pub entry:SkillEntry,pub score:f64}
+pub(crate) fn rank_skills_for_scene(skills:&[SkillEntry],scene:AiScene,user_message:&str)->Vec<ScoredSkill>{let st=scene.profile();let ut=tokenize(user_message);let mut r:Vec<ScoredSkill>=skills.iter().filter(|s|s.enabled).map(|e|{let mut sc=bm25_score(e,&ut);if let Some(ref t)=e.legacy_trigger{if st.contains(t.as_str()){sc+=2.0;}}if e.legacy_trigger.is_none(){sc+=0.5;}ScoredSkill{entry:e.clone(),score:sc}}).collect();r.sort_by(|a,b|b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));r}
+pub(crate) fn rerank_with_embedding(mut ranked:Vec<ScoredSkill>,user_message:&str)->Vec<ScoredSkill>{let tr: String=user_message.chars().take(500).collect();let uv=match crate::embedding::engine::embed_text(&tr){Ok(v)=>v,Err(_)=>return ranked,};for s in &mut ranked{let tx=format!("{} {}",s.entry.name,s.entry.description);if let Ok(sv)=crate::embedding::engine::embed_text(&tx){let cs=crate::embedding::engine::cosine_similarity(&uv,&sv);s.score=s.score*0.4+cs as f64*0.6;}}ranked.sort_by(|a,b|b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));ranked}
+
     let matched = skills_for_scene(skills, scene);
     if matched.is_empty() {
         return String::new();
     }
-    let mut block = String::from("## 已激活 Skills\n\n");
+    let mut block = String::from("## 宸叉縺娲?Skills\n\n");
     block.push_str(
-        "若 SKILL 正文引用 `references/`、`scripts/` 或 `assets/` 下的文件，\
-         请调用 `skills_read_resource` 按需读取，不要猜测内容。\n\n",
+        "鑻?SKILL 姝ｆ枃寮曠敤 `references/`銆乣scripts/` 鎴?`assets/` 涓嬬殑鏂囦欢锛孿
+         璇疯皟鐢?`skills_read_resource` 鎸夐渶璇诲彇锛屼笉瑕佺寽娴嬪唴瀹广€俓n\n",
     );
     for skill in matched {
         block.push_str(&format!("### Skill: {}\n\n", skill.name));
@@ -1222,7 +1231,7 @@ pub fn inject_into_prompt(skills: &[SkillEntry], scene: AiScene) -> String {
             block.push_str(&format!("_{}_\n\n", skill.description));
         }
         if !skill.allowed_tools.is_empty() {
-            block.push_str(&format!("请求工具: {}\n\n", skill.allowed_tools.join(", ")));
+            block.push_str(&format!("璇锋眰宸ュ叿: {}\n\n", skill.allowed_tools.join(", ")));
         }
         block.push_str(&skill.content);
         block.push_str("\n\n---\n\n");
@@ -1234,7 +1243,7 @@ pub fn inject_into_prompt(skills: &[SkillEntry], scene: AiScene) -> String {
 pub fn install_from_local(source: &Path, scope: SkillScope, vault: &Path) -> AppResult<SkillEntry> {
     let source = crate::security::ipc_policy::validate_local_skill_source(source, vault)?;
     if !source.is_file() {
-        return Err(AppError::msg("本地安装需要 SKILL.md 文件路径"));
+        return Err(AppError::msg("鏈湴瀹夎闇€瑕?SKILL.md 鏂囦欢璺緞"));
     }
     let body = fs::read_to_string(&source)?;
     let (meta, _) = parse_frontmatter(&body);
@@ -1269,7 +1278,7 @@ pub fn install_from_local(source: &Path, scope: SkillScope, vault: &Path) -> App
 pub fn validate_skill_path(path: &Path, vault: &Path) -> AppResult<()> {
     let canonical = path
         .canonicalize()
-        .map_err(|_| AppError::msg("Skill 文件路径无效或不存在"))?;
+        .map_err(|_| AppError::msg("Skill 鏂囦欢璺緞鏃犳晥鎴栦笉瀛樺湪"))?;
     let global_dir = global_skills_dir();
     let vault_dir = vault_skills_dir(vault);
 
@@ -1281,7 +1290,7 @@ pub fn validate_skill_path(path: &Path, vault: &Path) -> AppResult<()> {
         .is_ok_and(|v| canonical.starts_with(&v));
 
     if !under_global && !under_vault {
-        return Err(AppError::msg("Skill 文件路径必须在已知的 skills 目录下"));
+        return Err(AppError::msg("Skill 鏂囦欢璺緞蹇呴』鍦ㄥ凡鐭ョ殑 skills 鐩綍涓?));
     }
     Ok(())
 }
@@ -1294,7 +1303,7 @@ pub fn read_skill_content(path: &Path) -> AppResult<String> {
 /// Write updated skill content (must be `SKILL.md`).
 pub fn write_skill_content(path: &Path, scope: SkillScope, content: &str) -> AppResult<SkillEntry> {
     if path.file_name().and_then(|n| n.to_str()) != Some("SKILL.md") {
-        return Err(AppError::msg("只能写入 SKILL.md"));
+        return Err(AppError::msg("鍙兘鍐欏叆 SKILL.md"));
     }
     fs::write(path, content)?;
     load_skill(path, scope)
@@ -1303,18 +1312,18 @@ pub fn write_skill_content(path: &Path, scope: SkillScope, content: &str) -> App
 /// Migrate a legacy `trigger`-based skill to the new Agent Skills format.
 ///
 /// - Reads the existing SKILL.md
-/// - Converts `trigger` → new format fields (removes trigger, keeps description)
+/// - Converts `trigger` 鈫?new format fields (removes trigger, keeps description)
 /// - Creates a backup at `SKILL.md.bak` before overwriting
 /// - Returns the migrated SkillEntry
 ///
-/// Does NOT auto-migrate — caller must obtain user confirmation first.
+/// Does NOT auto-migrate 鈥?caller must obtain user confirmation first.
 pub fn migrate_legacy_skill(path: &Path, scope: SkillScope) -> AppResult<SkillEntry> {
     let raw = fs::read_to_string(path)?;
     let (meta, body) = parse_frontmatter(&raw);
 
     // Only migrate if it has a trigger field
     if !meta.contains_key("trigger") {
-        return Err(AppError::msg("skill 已是新格式，无需迁移"));
+        return Err(AppError::msg("skill 宸叉槸鏂版牸寮忥紝鏃犻渶杩佺Щ"));
     }
 
     // Create backup
@@ -1370,7 +1379,7 @@ fn slugify(s: &str) -> String {
 mod tests {
     use super::*;
 
-    // ── validate_subpath ──────────────────────────────────
+    // 鈹€鈹€ validate_subpath 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
     #[test]
     fn subpath_rejects_dotdot() {
@@ -1411,7 +1420,7 @@ mod tests {
         assert!(validate_subpath("./skills").is_ok());
     }
 
-    // ── atomic_copy_dir ───────────────────────────────────
+    // 鈹€鈹€ atomic_copy_dir 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
     #[test]
     fn atomic_copy_copies_contents() {
@@ -1440,7 +1449,7 @@ mod tests {
         assert_eq!(fs::read_to_string(dest.join("SKILL.md")).unwrap(), "new");
     }
 
-    // ── slugify ───────────────────────────────────────────
+    // 鈹€鈹€ slugify 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
     #[test]
     fn slugify_basic() {
@@ -1554,7 +1563,7 @@ Body
             .any(|v| v == "totally_unknown"));
     }
 
-    // ── install_from_git symlink escape check ─────────────
+    // 鈹€鈹€ install_from_git symlink escape check 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
     #[allow(unused_variables)]
     #[test]
@@ -1584,7 +1593,7 @@ Body
         assert!(canon.starts_with(&tmp_canonical));
     }
 
-    // ── frontmatter parsing ───────────────────────────────
+    // 鈹€鈹€ frontmatter parsing 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
     #[test]
     fn parse_frontmatter_new_format() {
@@ -1632,7 +1641,7 @@ trigger: knowledge
         assert!(body.contains("# Just a heading"));
     }
 
-    // ── load_skill with new fields ────────────────────────
+    // 鈹€鈹€ load_skill with new fields 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
     #[test]
     fn load_skill_new_format() {
@@ -1841,7 +1850,7 @@ Large instruction body."#,
         assert!(entry.unrecognized_tools().is_empty());
     }
 
-    // ── skills_for_scene ──────────────────────────────────
+    // 鈹€鈹€ skills_for_scene 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
     fn make_skill(name: &str, legacy_trigger: Option<&str>, enabled: bool) -> SkillEntry {
         SkillEntry {
@@ -1900,7 +1909,7 @@ Large instruction body."#,
         assert_eq!(matched.len(), 2); // a + c (universal)
     }
 
-    // ── BM25 scoring ──────────────────────────────────────
+    // 鈹€鈹€ BM25 scoring 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
     #[test]
     fn bm25_exact_trigger_scores_highest() {
@@ -1953,7 +1962,7 @@ Large instruction body."#,
         }];
         let ranked = rank_skills_for_scene(&skills, AiScene::KnowledgeLookup);
         assert_eq!(ranked.len(), 1);
-        // Name contains "knowledge" → boosted score
+        // Name contains "knowledge" 鈫?boosted score
         assert!(ranked[0].score > 2.0);
     }
 
@@ -1980,11 +1989,11 @@ Large instruction body."#,
         }];
         let ranked = rank_skills_for_scene(&skills, AiScene::ResearchSynthesis);
         assert_eq!(ranked.len(), 1);
-        // Keywords match → boosted
+        // Keywords match 鈫?boosted
         assert!(ranked[0].score > 2.0);
     }
 
-    // ── Dependency management ─────────────────────────────
+    // 鈹€鈹€ Dependency management 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
     #[test]
     fn depends_from_string_metadata() {
@@ -2063,7 +2072,7 @@ Large instruction body."#,
         assert_eq!(missing, vec!["missing-skill"]);
     }
 
-    // ── Migration ─────────────────────────────────────────
+    // 鈹€鈹€ Migration 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
     #[test]
     fn migrate_legacy_skill_converts_format() {
@@ -2113,7 +2122,7 @@ description: Already new format
         .unwrap();
 
         let err = migrate_legacy_skill(&skill_dir.join("SKILL.md"), SkillScope::Vault).unwrap_err();
-        assert!(err.to_string().contains("新格式"));
+        assert!(err.to_string().contains("鏂版牸寮?));
     }
 
     #[test]
@@ -2133,7 +2142,7 @@ description: Already new format
         assert!(!is_legacy_format(&dir.path().join("new.md")));
     }
 
-    // ── Compatibility validation ──────────────────────────
+    // 鈹€鈹€ Compatibility validation 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
     #[test]
     fn load_skill_rejects_long_compatibility() {
@@ -2169,7 +2178,7 @@ description: Already new format
         assert!(err.to_string().contains("description exceeds 1024"));
     }
 
-    // ── Active skills regression ──────────────────────────
+    // 鈹€鈹€ Active skills regression 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
     #[test]
     fn inject_into_prompt_only_includes_enabled_skills() {

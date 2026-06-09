@@ -1,37 +1,6 @@
-//! Central tool execution for the harness agent loop.
+﻿//! Central tool execution for the harness agent loop.
 
 /// Tools with real `dispatch_tool_inner` handlers (single source of truth with LLM exposure).
-pub const DISPATCHABLE_TOOL_NAMES: &[&str] = &[
-    "search_hybrid",
-    "search_semantic",
-    "search_keyword",
-    "get_regulation",
-    "get_context_packets",
-    "web_search",
-    "fetch_web_page",
-    "read_note",
-    "list_vault",
-    "get_outline",
-    "get_backlinks",
-    "get_block_links",
-    "memory_read",
-    "memory_write",
-    "scheduled_task_create",
-    "scheduled_task_list",
-    "scheduled_task_delete",
-    "web_fetch_batch",
-    "readability_fetch",
-    "rendered_fetch",
-    "skills_list",
-    "skills_install",
-    "skills_uninstall",
-    "skills_update",
-    "skills_toggle",
-    "skills_read_resource",
-];
-
-/// Handled inside harness loop, not via `dispatch_tool`.
-pub const HARNESS_ONLY_TOOL_NAMES: &[&str] = &["spawn_subagent", "conclude_reasoning"];
 
 /// Whether the tool may be exposed to the model (has handler or harness branch).
 pub fn is_exposable_tool(name: &str) -> bool {
@@ -72,7 +41,7 @@ fn is_retryable_tool_error(tool_name: &str, result: &ToolCallResult) -> bool {
     }
     let err = result.error.as_deref().unwrap_or("");
     (tool_name == "web_search" || tool_name == "fetch_web_page")
-        && (err.contains("timeout") || err.contains("network") || err.contains("连接"))
+        && (err.contains("timeout") || err.contains("network") || err.contains("杩炴帴"))
 }
 
 /// Execute with one retry for transient failures; hybrid search falls back to keyword.
@@ -187,7 +156,7 @@ fn markdown_write_patch_apply(
     if !is_user_note_path(&target_path) {
         return Ok(markdown_write_not_applied(
             tool_name,
-            "只能修改用户笔记",
+            "鍙兘淇敼鐢ㄦ埛绗旇",
             args,
         ));
     }
@@ -253,7 +222,7 @@ fn markdown_write_patch_apply(
     };
     if applied.len() > MAX_NOTE_FILE_BYTES {
         return Err(AppError::msg(format!(
-            "补丁应用后内容超过 20MB 限制（{} 字节）",
+            "琛ヤ竵搴旂敤鍚庡唴瀹硅秴杩?20MB 闄愬埗锛坽} 瀛楄妭锛?,
             applied.len()
         )));
     }
@@ -273,7 +242,7 @@ fn markdown_write_patch_apply(
         new_content_hash: Some(hash),
         error: None,
         warnings: vec![format!(
-            "已写入「{}」，共 {} 字",
+            "宸插啓鍏ャ€寋}銆嶏紝鍏?{} 瀛?,
             entry.title, entry.word_count
         )],
     };
@@ -387,7 +356,7 @@ async fn regulation_lookup(
     let article = args["article"]
         .as_str()
         .ok_or_else(|| AppError::msg("missing article"))?;
-    let query = format!("《{regulation_name}》{article}");
+    let query = format!("銆妠regulation_name}銆媨article}");
     let packets = state.db.with_read_conn(|conn| {
         let request = RetrievalRequest {
             query,
@@ -847,13 +816,13 @@ async fn skills_install_tool(
     let source_str = args
         .get("source")
         .and_then(|v| v.as_str())
-        .ok_or_else(|| AppError::msg("skills_install 缺少 source"))?;
+        .ok_or_else(|| AppError::msg("skills_install 缂哄皯 source"))?;
     let source = SkillInstallSource::parse(source_str)
-        .ok_or_else(|| AppError::msg(format!("未知 source: {source_str}")))?;
+        .ok_or_else(|| AppError::msg(format!("鏈煡 source: {source_str}")))?;
     let path_or_url = args
         .get("path_or_url")
         .and_then(|v| v.as_str())
-        .ok_or_else(|| AppError::msg("skills_install 缺少 path_or_url"))?
+        .ok_or_else(|| AppError::msg("skills_install 缂哄皯 path_or_url"))?
         .to_string();
     let scope = parse_scope(
         args.get("scope")
@@ -898,7 +867,7 @@ async fn skills_uninstall_tool(
     let name = args
         .get("name")
         .and_then(|v| v.as_str())
-        .ok_or_else(|| AppError::msg("skills_uninstall 缺少 name"))?;
+        .ok_or_else(|| AppError::msg("skills_uninstall 缂哄皯 name"))?;
     let scope = parse_scope(
         args.get("scope")
             .and_then(|v| v.as_str())
@@ -925,7 +894,7 @@ async fn skills_update_tool(
     let name = args
         .get("name")
         .and_then(|v| v.as_str())
-        .ok_or_else(|| AppError::msg("skills_update 缺少 name"))?;
+        .ok_or_else(|| AppError::msg("skills_update 缂哄皯 name"))?;
     let scope = parse_scope(
         args.get("scope")
             .and_then(|v| v.as_str())
@@ -946,11 +915,11 @@ async fn skills_toggle_tool(
     let name = args
         .get("name")
         .and_then(|v| v.as_str())
-        .ok_or_else(|| AppError::msg("skills_toggle 缺少 name"))?;
+        .ok_or_else(|| AppError::msg("skills_toggle 缂哄皯 name"))?;
     let enabled = args
         .get("enabled")
         .and_then(|v| v.as_bool())
-        .ok_or_else(|| AppError::msg("skills_toggle 缺少 enabled"))?;
+        .ok_or_else(|| AppError::msg("skills_toggle 缂哄皯 enabled"))?;
     let scope = parse_scope(
         args.get("scope")
             .and_then(|v| v.as_str())
@@ -979,11 +948,11 @@ async fn skills_read_resource_tool(
     let name = args
         .get("name")
         .and_then(|v| v.as_str())
-        .ok_or_else(|| AppError::msg("skills_read_resource 缺少 name"))?;
+        .ok_or_else(|| AppError::msg("skills_read_resource 缂哄皯 name"))?;
     let relative_path = args
         .get("relative_path")
         .and_then(|v| v.as_str())
-        .ok_or_else(|| AppError::msg("skills_read_resource 缺少 relative_path"))?;
+        .ok_or_else(|| AppError::msg("skills_read_resource 缂哄皯 relative_path"))?;
     let scope = parse_scope(
         args.get("scope")
             .and_then(|v| v.as_str())
@@ -1020,7 +989,7 @@ mod tests {
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
         assert!(
-            err.contains("traversal") || err.contains("元数据"),
+            err.contains("traversal") || err.contains("鍏冩暟鎹?),
             "unexpected error: {err}"
         );
     }
@@ -1031,7 +1000,7 @@ mod tests {
         let args = serde_json::json!({ "path": ".iris/versions/1/test.md" });
         let result = read_note(&state, &args).await;
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("元数据"));
+        assert!(result.unwrap_err().to_string().contains("鍏冩暟鎹?));
     }
 
     #[tokio::test]
@@ -1051,7 +1020,7 @@ mod tests {
         let args = serde_json::json!({ "path": ".iris/skills/my-skill/SKILL.md" });
         let result = get_outline(&state, &args).await;
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("元数据"));
+        assert!(result.unwrap_err().to_string().contains("鍏冩暟鎹?));
     }
 
     #[tokio::test]
@@ -1060,7 +1029,7 @@ mod tests {
         let args = serde_json::json!({ "path": ".iris/versions/x.md" });
         let result = get_backlinks(&state, &args).await;
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("元数据"));
+        assert!(result.unwrap_err().to_string().contains("鍏冩暟鎹?));
     }
 
     #[tokio::test]
@@ -1087,7 +1056,7 @@ mod tests {
         let args = serde_json::json!({ "note_path": ".iris/versions/x.md" });
         let result = get_block_links(&state, &args).await;
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("元数据"));
+        assert!(result.unwrap_err().to_string().contains("鍏冩暟鎹?));
     }
 
     #[tokio::test]
@@ -1160,7 +1129,7 @@ mod tests {
         assert_eq!(result["result"]["success"], false);
         let error = result["result"]["error"].as_str().unwrap_or("");
         assert!(
-            error.contains("hash") || error.contains("哈希"),
+            error.contains("hash") || error.contains("鍝堝笇"),
             "unexpected error: {error}"
         );
         let content =
