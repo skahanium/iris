@@ -117,6 +117,26 @@ export function SettingsPanel({
                 <AiRulesPanel compact />
               </div>
             </section>
+
+            <section data-testid="settings-section-about">
+              <h3 className="mb-2 text-xs font-medium text-foreground">
+                关于 Iris
+              </h3>
+              <div className="rounded-md border border-border/70 bg-surface-inset/40 px-3 py-2 text-xs leading-5 text-muted-foreground">
+                <div className="font-medium text-foreground">Iris</div>
+                <div>版本 1.0.0</div>
+                <div>Copyright (C) 2026 Iris Contributors</div>
+                <div>Licensed under GNU Affero General Public License v3.0</div>
+                <div>
+                  License: <span className="font-mono">LICENSE</span>
+                  <span className="px-1 text-muted-foreground/60">·</span>
+                  Source:{" "}
+                  <span className="font-mono">
+                    https://github.com/skahanium/iris
+                  </span>
+                </div>
+              </div>
+            </section>
           </div>
         </ScrollArea>
       </IrisOverlay>

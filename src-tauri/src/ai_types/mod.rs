@@ -10,20 +10,25 @@
 
 use serde::{Deserialize, Serialize};
 
-// 鈹€鈹€鈹€ Scene 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+// ─── Scene ──────────────────────────────────────────────
 
-/// AI 浣跨敤鍦烘櫙锛屽搴斿墠绔満鏅€夋嫨鍣ㄣ€?#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+/// AI 使用场景，对应前端场景选择器。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AiScene {
-    /// 鐭ヨ瘑鏌ラ槄 鈥?娉曡鏉℃銆佺瑪璁板叧鑱?    KnowledgeLookup,
-    /// 鏂囩瀛︿範 鈥?鑼冩枃缁撴瀯銆佽〃杈剧壒寰?    ExemplarLearning,
-    /// 鏂囩鍒涗綔 鈥?鍐欎綔杈呭姪
+    /// 知识查阅 — 法规条款、笔记关联
+    KnowledgeLookup,
+    /// 文稿学习 — 范文结构、表达特征
+    ExemplarLearning,
+    /// 文稿创作 — 写作辅助
     DraftingAssist,
-    /// 瀛︽湳鐮旂┒ 鈥?澶氭潗鏂欎氦鍙夎璇?    ResearchSynthesis,
+    /// 学术研究 — 多材料交叉论证
+    ResearchSynthesis,
 }
 
 impl AiScene {
-    /// 鍦烘櫙瀵瑰簲鐨勯粯璁よ嚜娌荤瓑绾с€?    pub fn autonomy_level(&self) -> AutonomyLevel {
+    /// 场景对应的默认自治等级。
+    pub fn autonomy_level(&self) -> AutonomyLevel {
         match self {
             AiScene::KnowledgeLookup => AutonomyLevel::L1,
             AiScene::ExemplarLearning => AutonomyLevel::L1,
@@ -32,7 +37,8 @@ impl AiScene {
         }
     }
 
-    /// 鍦烘櫙鐨?runtime profile 鏍囪瘑銆?    pub fn profile(&self) -> &'static str {
+    /// 场景的 runtime profile 标识。
+    pub fn profile(&self) -> &'static str {
         match self {
             AiScene::KnowledgeLookup => "knowledge_lookup",
             AiScene::ExemplarLearning => "exemplar_learning",
@@ -41,26 +47,29 @@ impl AiScene {
         }
     }
 
-    /// 鍦烘櫙榛樿鐨勪細璇濊寖鍥存槸鍚︿负搴撶骇锛堜笉缁戝畾绗旇锛夈€?    pub fn default_global_scope(&self) -> bool {
+    /// 场景默认的会话范围是否为库级（不绑定笔记）。
+    pub fn default_global_scope(&self) -> bool {
         matches!(self, AiScene::KnowledgeLookup | AiScene::ResearchSynthesis)
     }
 }
 
-// 鈹€鈹€鈹€ Autonomy Level 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+// ─── Autonomy Level ──────────────────────────────────────
 
-/// 宸ュ叿鑷不绛夌骇銆傜瓑绾ц秺楂橈紝Agent 鑷富鍐崇瓥绌洪棿瓒婂ぇ銆?#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+/// 工具自治等级。等级越高，Agent 自主决策空间越大。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AutonomyLevel {
-    /// L0: 绾鍒?鏈湴妫€绱紝鏃?LLM 鍐崇瓥
+    /// L0: 纯规则/本地检索，无 LLM 决策
     L0 = 0,
-    /// L1: 鍗曡疆 LLM + 鍙楁帶涓婁笅鏂囷紝鏃犲伐鍏峰惊鐜?    L1 = 1,
-    /// L2: 宸ヤ綔娴佷腑鍏佽灏戦噺宸ュ叿璋冪敤
+    /// L1: 单轮 LLM + 受控上下文，无工具循环
+    L1 = 1,
+    /// L2: 工作流中允许少量工具调用
     L2 = 2,
-    /// L3: 鏈夐檺 agentic loop锛岄檺鍒舵渶澶ц疆鏁板拰宸ュ叿娆℃暟
+    /// L3: 有限 agentic loop，限制最大轮数和工具次数
     L3 = 3,
 }
 
-// 鈹€鈹€鈹€ Scene Profile 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+// ─── Scene Profile ───────────────────────────────────────
 
 /// Scene profile: describes what capabilities a scene activates.
 #[derive(Debug, Clone)]
@@ -92,8 +101,8 @@ pub fn resolve_scene(scene: AiScene) -> SceneProfile {
             default_global_scope: false,
             max_agentic_rounds: 2,
             max_tool_calls_per_round: 4,
-            default_token_budget: 100_000,
-            max_token_budget: 240_000,
+            default_token_budget: 50_000,
+            max_token_budget: 120_000,
         },
         AiScene::DraftingAssist => SceneProfile {
             scene,
@@ -102,8 +111,8 @@ pub fn resolve_scene(scene: AiScene) -> SceneProfile {
             max_agentic_rounds: 3,
             max_tool_calls_per_round: 5,
             default_token_budget: 60_000,
-            default_token_budget: 120_000,
-            max_token_budget: 320_000,
+            max_token_budget: 160_000,
+        },
         AiScene::ResearchSynthesis => SceneProfile {
             scene,
             autonomy_level: AutonomyLevel::L3,
@@ -111,8 +120,8 @@ pub fn resolve_scene(scene: AiScene) -> SceneProfile {
             max_agentic_rounds: 4,
             max_tool_calls_per_round: 6,
             default_token_budget: 100_000,
-            default_token_budget: 160_000,
-            max_token_budget: 320_000,
+            max_token_budget: 240_000,
+        },
     }
 }
 
@@ -121,21 +130,23 @@ pub fn slot_for_scene(scene: AiScene) -> CapabilitySlot {
     match scene {
         AiScene::KnowledgeLookup => CapabilitySlot::Fast,
         AiScene::ExemplarLearning => CapabilitySlot::Writer,
-            default_token_budget: 200_000,
-            max_token_budget: 480_000,
+        AiScene::DraftingAssist => CapabilitySlot::Writer,
+        AiScene::ResearchSynthesis => CapabilitySlot::Reasoner,
     }
 }
 
-// 鈹€鈹€鈹€ Web evidence metadata (spec 搂4.1) 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+// ─── Web evidence metadata (spec §4.1) ───────────────────
 
-/// 缃戦〉妫€绱㈠悗绔爣璇嗐€?#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+/// 网页检索后端标识。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum WebSearchBackend {
     Minimax,
     Duckduckgo,
 }
 
-/// 缃戦〉鏉ユ簮鍙俊绛夌骇銆?#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+/// 网页来源可信等级。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum WebSourceRank {
     Official,
@@ -145,7 +156,8 @@ pub enum WebSourceRank {
     Unknown,
 }
 
-/// 缃戦〉璇佹嵁鎵╁睍鍏冩暟鎹紙浠?`source_type = web` 鏃跺～鍏咃級銆?#[derive(Debug, Clone, Serialize, Deserialize)]
+/// 网页证据扩展元数据（仅 `source_type = web` 时填充）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WebEvidenceMeta {
     pub url: Option<String>,
     pub domain: Option<String>,
@@ -159,14 +171,19 @@ pub struct WebEvidenceMeta {
     pub fallback_from: Option<WebSearchBackend>,
 }
 
-// 鈹€鈹€鈹€ ContextPacket 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+// ─── ContextPacket ───────────────────────────────────────
 
-/// 璇佹嵁鍖?鈥?缁撴瀯鍖栫殑妫€绱㈢粨鏋滐紝鏄?AI 浣撶郴鐨勬牳蹇冩暟鎹粨鏋勩€?///
-/// `ContextPacket` 鐢ㄤ簬锛?/// - 涓?LLM 鎻愪緵鍙拷婧殑璇佹嵁鏉ユ簮
-/// - 鏀寔寮曠敤楠岃瘉鍜屼簨瀹炴牳鏌?/// - 瀹炵幇璇佹嵁閾惧彲瑙嗗寲
+/// 证据包 — 结构化的检索结果，是 AI 体系的核心数据结构。
 ///
-/// 妫€绱㈢粨鏋滃繀椤诲厛鍙樻垚 `ContextPacket`锛屽啀杩涘叆 prompt銆?/// 鍚勬绱㈠眰锛團TS / Vector / Graph / Exact / Template锛夊潎杈撳嚭姝ょ被鍨嬶紝
-/// 鐢?`retrieval_broker::fuse_and_rank` 缁熶竴璇勫垎铻嶅悎銆?#[derive(Debug, Clone, Serialize, Deserialize)]
+/// `ContextPacket` 用于：
+/// - 为 LLM 提供可追溯的证据来源
+/// - 支持引用验证和事实核查
+/// - 实现证据链可视化
+///
+/// 检索结果必须先变成 `ContextPacket`，再进入 prompt。
+/// 各检索层（FTS / Vector / Graph / Exact / Template）均输出此类型，
+/// 由 `retrieval_broker::fuse_and_rank` 统一评分融合。
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ContextPacket {
     pub id: String,
     pub source_type: SourceType,
@@ -185,7 +202,8 @@ pub struct ContextPacket {
     pub web: Option<WebEvidenceMeta>,
 }
 
-/// 璇佹嵁鍖呯殑鏁版嵁鏉ユ簮绫诲瀷銆?#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+/// 证据包的数据来源类型。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SourceType {
     Note,
@@ -196,13 +214,15 @@ pub enum SourceType {
     Web,
 }
 
-/// 婧愭枃浠朵腑鐨勫瓧绗﹀亸绉昏寖鍥淬€?#[derive(Debug, Clone, Serialize, Deserialize)]
+/// 源文件中的字符偏移范围。
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SourceSpan {
     pub start: usize,
     pub end: usize,
 }
 
-/// 璇佹嵁淇′换绛夌骇锛屾寜鍙俊搴︿粠楂樺埌浣庢帓鍒椼€?#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+/// 证据信任等级，按可信度从高到低排列。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TrustLevel {
     UserNote,
@@ -211,9 +231,10 @@ pub enum TrustLevel {
     ModelGenerated,
 }
 
-// 鈹€鈹€鈹€ Context Status 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+// ─── Context Status ──────────────────────────────────────
 
-/// 涓婁笅鏂囩姸鎬佹憳瑕侊紝鐢ㄤ簬鍓嶇鏄剧ず鍜岃皟璇曘€?#[derive(Debug, Clone, Serialize, Deserialize)]
+/// 上下文状态摘要，用于前端显示和调试。
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ContextStatus {
     pub regulations_loaded: usize,
     pub model_essays_loaded: usize,
@@ -222,9 +243,10 @@ pub struct ContextStatus {
     pub total_tokens_estimate: usize,
 }
 
-// 鈹€鈹€鈹€ Tool Access Level 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+// ─── Tool Access Level ───────────────────────────────────
 
-/// 宸ュ叿璁块棶鏉冮檺绛夌骇锛屽喅瀹氬伐鍏峰彲鎵ц鐨勬搷浣滆寖鍥淬€?#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+/// 工具访问权限等级，决定工具可执行的操作范围。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ToolAccessLevel {
     ReadIndex,
@@ -238,9 +260,10 @@ pub enum ToolAccessLevel {
     ManageSkills,
 }
 
-// 鈹€鈹€鈹€ Tool Spec 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+// ─── Tool Spec ───────────────────────────────────────────
 
-/// 宸ュ叿瑙勬牸瀹氫箟锛屾弿杩颁竴涓彲渚?LLM 璋冪敤鐨勫伐鍏枫€?#[derive(Debug, Clone, Serialize, Deserialize)]
+/// 工具规格定义，描述一个可供 LLM 调用的工具。
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolSpec {
     pub name: String,
     pub description: String,
@@ -256,9 +279,10 @@ pub struct ToolSpec {
     pub scene_affinity: Vec<AiScene>,
 }
 
-// 鈹€鈹€鈹€ Request / Response types 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+// ─── Request / Response types ────────────────────────────
 
-/// AI 璇锋眰锛屼粠鍓嶇鍙戣捣銆?#[derive(Debug, Clone, Serialize, Deserialize)]
+/// AI 请求，从前端发起。
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AiRequest {
     pub scene: AiScene,
     pub note_path: Option<String>,
@@ -268,9 +292,10 @@ pub struct AiRequest {
     pub selected_packet_ids: Option<Vec<String>>,
 }
 
-// 鈹€鈹€鈹€ Tool Confirmation 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+// ─── Tool Confirmation ───────────────────────────────────
 
-/// 宸ュ叿璋冪敤纭璇锋眰銆?#[derive(Debug, Clone, Serialize, Deserialize)]
+/// 工具调用确认请求。
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolConfirmRequest {
     pub request_id: String,
     pub tool_call_id: String,
@@ -278,7 +303,8 @@ pub struct ToolConfirmRequest {
     pub modified_args: Option<serde_json::Value>,
 }
 
-/// 鐢ㄦ埛瀵瑰伐鍏疯皟鐢ㄧ殑纭鍐崇瓥銆?#[derive(Debug, Clone, Serialize, Deserialize)]
+/// 用户对工具调用的确认决策。
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ToolConfirmDecision {
     Approve,
@@ -286,9 +312,10 @@ pub enum ToolConfirmDecision {
     Modify,
 }
 
-// 鈹€鈹€鈹€ Tool Call Result 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+// ─── Tool Call Result ─────────────────────────────────────
 
-/// 宸ュ叿璋冪敤缁撴灉锛堝惈鍙娴嬫€у厓鏁版嵁锛夈€?#[derive(Debug, Clone, Serialize, Deserialize)]
+/// 工具调用结果（含可观测性元数据）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolCallResult {
     pub tool_name: String,
     pub success: bool,
@@ -298,9 +325,10 @@ pub struct ToolCallResult {
     pub error: Option<String>,
 }
 
-// 鈹€鈹€鈹€ PatchProposal 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+// ─── PatchProposal ────────────────────────────────────────
 
-/// 鍙楁帶缂栬緫琛ヤ竵 鈥?AI 瀵?Markdown 鐨勬墍鏈夋鏂囧啓鍏ラ兘蹇呴』璧版缁撴瀯銆?#[derive(Debug, Clone, Serialize, Deserialize)]
+/// 受控编辑补丁 — AI 对 Markdown 的所有正文写入都必须走此结构。
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PatchProposal {
     pub id: String,
     pub target_path: String,
@@ -314,7 +342,8 @@ pub struct PatchProposal {
     pub created_at: String,
 }
 
-/// 琛ヤ竵椋庨櫓绛夌骇銆?#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+/// 补丁风险等级。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RiskLevel {
     Low,
@@ -322,9 +351,10 @@ pub enum RiskLevel {
     High,
 }
 
-// 鈹€鈹€鈹€ Chunked Patch Types 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+// ─── Chunked Patch Types ─────────────────────────────────
 
-/// 鍒嗗潡琛ヤ竵 鈥?澶氫釜鐩稿叧琛ヤ竵鐨勯泦鍚堛€?#[derive(Debug, Clone, Serialize, Deserialize)]
+/// 分块补丁 — 多个相关补丁的集合。
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChunkedPatchProposal {
     pub id: String,
     pub target_path: String,
@@ -336,7 +366,8 @@ pub struct ChunkedPatchProposal {
     pub created_at: String,
 }
 
-/// 琛ヤ竵鍧椼€?#[derive(Debug, Clone, Serialize, Deserialize)]
+/// 补丁块。
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PatchChunk {
     pub id: String,
     pub range: SourceSpan,
@@ -346,7 +377,8 @@ pub struct PatchChunk {
     pub order: usize,
 }
 
-/// 鍧楃被鍨嬨€?#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+/// 块类型。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ChunkType {
     Rewrite,
@@ -355,7 +387,8 @@ pub enum ChunkType {
     Move,
 }
 
-/// 琛ヤ竵搴旂敤缁撴灉銆?#[derive(Debug, Clone, Serialize, Deserialize)]
+/// 补丁应用结果。
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PatchApplyResult {
     pub success: bool,
     pub new_content_hash: Option<String>,
@@ -363,7 +396,8 @@ pub struct PatchApplyResult {
     pub warnings: Vec<String>,
 }
 
-/// 琛ヤ竵楠岃瘉閿欒銆?#[derive(Debug, Clone, Serialize, Deserialize)]
+/// 补丁验证错误。
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum PatchValidationError {
     HashMismatch {
         expected: String,
@@ -387,7 +421,7 @@ impl std::fmt::Display for PatchValidationError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             PatchValidationError::HashMismatch { expected, actual } => {
-                write!(f, "鍐呭鍝堝笇涓嶅尮閰嶏細鏈熸湜 {expected}锛屽疄闄?{actual}")
+                write!(f, "内容哈希不匹配：期望 {expected}，实际 {actual}")
             }
             PatchValidationError::RangeOutOfBounds {
                 range_start,
@@ -396,27 +430,28 @@ impl std::fmt::Display for PatchValidationError {
             } => {
                 write!(
                     f,
-                    "鑼冨洿瓒婄晫锛歔{range_start}, {range_end}) 瓒呭嚭鍐呭闀垮害 {content_length}"
+                    "范围越界：[{range_start}, {range_end}) 超出内容长度 {content_length}"
                 )
             }
             PatchValidationError::TextMismatch { expected, actual } => {
                 write!(
                     f,
-                    "鍘熸枃涓嶄竴鑷达細鏈熸湜 {:?}锛屽疄闄?{:?}",
+                    "原文不一致：期望 {:?}，实际 {:?}",
                     &expected[..expected.len().min(50)],
                     &actual[..actual.len().min(50)]
                 )
             }
             PatchValidationError::FileNotFound { path } => {
-                write!(f, "鏂囦欢涓嶅瓨鍦細{path}")
+                write!(f, "文件不存在：{path}")
             }
         }
     }
 }
 
-// 鈹€鈹€鈹€ Writing Workflow Types 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+// ─── Writing Workflow Types ──────────────────────────────
 
-/// 鍐欎綔鎰忓浘銆?#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+/// 写作意图。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum WritingIntent {
     Continue,
@@ -433,7 +468,8 @@ pub enum WritingIntent {
     CrossDocReference,
 }
 
-/// 鍐欎綔鎰忓浘绾у埆銆?#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+/// 写作意图级别。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum WritingIntentLevel {
     Selection,
@@ -442,7 +478,8 @@ pub enum WritingIntentLevel {
 }
 
 impl WritingIntent {
-    /// 鑾峰彇鎰忓浘绾у埆銆?    pub fn level(&self) -> WritingIntentLevel {
+    /// 获取意图级别。
+    pub fn level(&self) -> WritingIntentLevel {
         match self {
             WritingIntent::Continue
             | WritingIntent::Rewrite
@@ -460,7 +497,8 @@ impl WritingIntent {
     }
 }
 
-/// 鍐欎綔寤鸿銆?#[derive(Debug, Clone, Serialize, Deserialize)]
+/// 写作建议。
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WritingSuggestion {
     pub id: String,
     pub intent: WritingIntent,
@@ -468,7 +506,8 @@ pub struct WritingSuggestion {
     pub confidence: f64,
 }
 
-/// 鍐欎綔浠诲姟杈撳叆銆?#[derive(Debug, Clone, Serialize, Deserialize)]
+/// 写作任务输入。
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WritingTaskInput {
     pub target_path: String,
     pub base_content_hash: String,
@@ -478,7 +517,8 @@ pub struct WritingTaskInput {
     pub web_authorized: bool,
 }
 
-/// 鍐欎綔浠诲姟缁撴灉銆?#[derive(Debug, Clone, Serialize, Deserialize)]
+/// 写作任务结果。
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WritingTaskResult {
     pub request_id: String,
     pub suggestions: Vec<WritingSuggestion>,
@@ -487,9 +527,10 @@ pub struct WritingTaskResult {
     pub total_tokens: TokenUsage,
 }
 
-// 鈹€鈹€鈹€ Citation Check Types 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+// ─── Citation Check Types ────────────────────────────────
 
-/// 寮曠敤妫€鏌ヨ緭鍏ャ€?#[derive(Debug, Clone, Serialize, Deserialize)]
+/// 引用检查输入。
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CitationCheckInput {
     pub paragraph_text: String,
     pub document_path: String,
@@ -497,14 +538,16 @@ pub struct CitationCheckInput {
     pub web_authorized: bool,
 }
 
-/// 寮曠敤妫€鏌ヨ寖鍥淬€?#[derive(Debug, Clone, Serialize, Deserialize)]
+/// 引用检查范围。
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CitationCheckScope {
     pub paths: Vec<String>,
     pub path_prefixes: Vec<String>,
     pub corpus_ids: Option<Vec<String>>,
 }
 
-/// 寮曠敤妫€鏌ョ粨鏋溿€?#[derive(Debug, Clone, Serialize, Deserialize)]
+/// 引用检查结果。
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CitationCheckResult {
     pub request_id: String,
     pub claims: Vec<FactClaim>,
@@ -514,7 +557,8 @@ pub struct CitationCheckResult {
     pub total_tokens: TokenUsage,
 }
 
-/// 浜嬪疄澹版槑銆?#[derive(Debug, Clone, Serialize, Deserialize)]
+/// 事实声明。
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FactClaim {
     pub id: String,
     pub statement: String,
@@ -523,7 +567,8 @@ pub struct FactClaim {
     pub conflicting_evidence: Vec<String>,
 }
 
-/// 寮曠敤瑕嗙洊搴︺€?#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+/// 引用覆盖度。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CitationCoverage {
     WellSupported,
@@ -533,7 +578,8 @@ pub enum CitationCoverage {
     Contradicted,
 }
 
-/// 寮曠敤寤鸿鍔ㄤ綔銆?#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+/// 引用建议动作。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CitationAction {
     AddCitation,
@@ -542,7 +588,8 @@ pub enum CitationAction {
     AddQualifier,
 }
 
-/// 寮曠敤寤鸿銆?#[derive(Debug, Clone, Serialize, Deserialize)]
+/// 引用建议。
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CitationSuggestion {
     pub claim_id: String,
     pub action: CitationAction,
@@ -550,9 +597,10 @@ pub struct CitationSuggestion {
     pub explanation: String,
 }
 
-// 鈹€鈹€鈹€ Organize Workflow Types 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+// ─── Organize Workflow Types ─────────────────────────────
 
-/// 鏁寸悊寤鸿绫诲瀷銆?#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+/// 整理建议类型。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum OrganizeSuggestionType {
     RenameTitle,
@@ -563,7 +611,8 @@ pub enum OrganizeSuggestionType {
     ExtractTemplate,
 }
 
-/// 鏁寸悊寤鸿銆?#[derive(Debug, Clone, Serialize, Deserialize)]
+/// 整理建议。
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OrganizeSuggestion {
     pub id: String,
     pub suggestion_type: OrganizeSuggestionType,
@@ -576,7 +625,8 @@ pub struct OrganizeSuggestion {
     pub evidence_packet_ids: Vec<String>,
 }
 
-/// 鎵归噺鍙樻洿璁″垝銆?#[derive(Debug, Clone, Serialize, Deserialize)]
+/// 批量变更计划。
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OrganizeBatch {
     pub id: String,
     pub title: String,
@@ -585,20 +635,23 @@ pub struct OrganizeBatch {
     pub created_at: String,
 }
 
-/// 鏁寸悊浠诲姟杈撳叆銆?#[derive(Debug, Clone, Serialize, Deserialize)]
+/// 整理任务输入。
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OrganizeTaskInput {
     pub scope: Option<OrganizeTaskScope>,
     pub task_type: OrganizeTaskType,
 }
 
-/// 鏁寸悊浠诲姟鑼冨洿銆?#[derive(Debug, Clone, Serialize, Deserialize)]
+/// 整理任务范围。
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OrganizeTaskScope {
     pub paths: Vec<String>,
     pub path_prefixes: Vec<String>,
     pub corpus_ids: Option<Vec<String>>,
 }
 
-/// 鏁寸悊浠诲姟绫诲瀷銆?#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+/// 整理任务类型。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum OrganizeTaskType {
     FullAudit,
@@ -608,16 +661,18 @@ pub enum OrganizeTaskType {
     LinkSuggestions,
 }
 
-/// 鏁寸悊浠诲姟缁撴灉銆?#[derive(Debug, Clone, Serialize, Deserialize)]
+/// 整理任务结果。
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OrganizeTaskResult {
     pub request_id: String,
     pub batch: OrganizeBatch,
     pub total_tokens: TokenUsage,
 }
 
-// 鈹€鈹€鈹€ Research Workflow State 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+// ─── Research Workflow State ─────────────────────────────
 
-/// 鐮旂┒浠诲姟鐘舵€併€?#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+/// 研究任务状态。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ResearchTaskState {
     Idle,
@@ -630,7 +685,8 @@ pub enum ResearchTaskState {
     Aborted,
 }
 
-/// 鐮旂┒浠诲姟閫愯疆杩涘害銆?#[derive(Debug, Clone, Serialize, Deserialize)]
+/// 研究任务逐轮进度。
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ResearchProgress {
     pub request_id: String,
     pub topic: String,
@@ -646,7 +702,8 @@ pub struct ResearchProgress {
     pub round_terminated_early: bool,
 }
 
-/// 鐮旂┒绗旇鐢熸垚璇锋眰銆?#[derive(Debug, Clone, Serialize, Deserialize)]
+/// 研究笔记生成请求。
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ResearchNoteRequest {
     pub topic: String,
     pub summary: String,
@@ -655,14 +712,15 @@ pub struct ResearchNoteRequest {
     pub target_path: Option<String>,
 }
 
-/// 鐮旂┒绗旇鐢熸垚缁撴灉銆?#[derive(Debug, Clone, Serialize, Deserialize)]
+/// 研究笔记生成结果。
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ResearchNoteResult {
     pub content: String,
     pub suggested_path: String,
     pub section_count: usize,
 }
 
-// 鈹€鈹€鈹€ Gateway Types 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+// ─── Gateway Types ───────────────────────────────────────
 
 /// Token usage statistics.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -676,7 +734,8 @@ pub struct TokenUsage {
     pub prompt_cache_miss_tokens: u32,
 }
 
-/// 鑳藉姏妲戒綅锛岀敤浜?provider/model 閫夋嫨銆?#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+/// 能力槽位，用于 provider/model 选择。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CapabilitySlot {
     Fast,
@@ -698,7 +757,8 @@ pub struct ProviderConfig {
     pub slot: CapabilitySlot,
 }
 
-/// LLM 瀵硅瘽娑堟伅瑙掕壊銆?#[derive(Debug, Clone, Serialize, Deserialize)]
+/// LLM 对话消息角色。
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum MessageRole {
     System,
@@ -770,16 +830,17 @@ pub struct FunctionCall {
     pub arguments: String,
 }
 
-// 鈹€鈹€鈹€ LLM Config Types 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+// ─── LLM Config Types ────────────────────────────────────
 
-/// 涓婁笅鏂囩粍瑁呯瓥鐣ャ€?#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+/// 上下文组装策略。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ContextStrategy {
     Hybrid,
     LongContext,
 }
 
-// 鈹€鈹€鈹€ Testability Seams (trait abstractions) 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+// ─── Testability Seams (trait abstractions) ───────────────
 
 /// Abstraction over an LLM provider for testability.
 ///

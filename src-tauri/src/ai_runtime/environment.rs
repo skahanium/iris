@@ -1,4 +1,4 @@
-﻿//! Environment map builder 鈥?project awareness for the harness system prompt.
+//! Environment map builder — project awareness for the harness system prompt.
 
 use std::path::Path;
 
@@ -49,7 +49,7 @@ pub fn build_environment_map(
 
     if let Ok(rules) = ModelGateway::load_active_rules_for_scene(db, input.scene) {
         if !rules.is_empty() {
-            let mut block = String::from("## 鐢ㄦ埛瑙勫垯\n\n");
+            let mut block = String::from("## 用户规则\n\n");
             for rule in rules {
                 block.push_str(&format!("- {rule}\n"));
             }
@@ -58,6 +58,7 @@ pub fn build_environment_map(
     }
 
     if let Ok(profile) = PromptProfile::load(db) {
+        let fragment = profile.to_system_prompt_fragment();
         if !fragment.is_empty() {
             sections.push(fragment);
         }
@@ -68,20 +69,20 @@ pub fn build_environment_map(
 
 fn capabilities_section(tools: &[ToolSpec]) -> String {
     let mut s = String::from(
-        "## 鐜锛欼ris 涓庝綘鐨勮兘鍔沑n\n\
-         Iris 鏄湰鍦?Markdown 绗旇鏈簲鐢紱`.md` 鏂囦欢鏄暟鎹潈濞佹潵婧愶紝SQLite 浠呬綔绱㈠紩缂撳瓨銆俓n\
-         浣犲簲閫氳繃宸ュ叿涓诲姩鑾峰彇淇℃伅锛岃€岄潪鍋囪鏈绱㈠埌鐨勫唴瀹瑰瓨鍦ㄣ€俓n\n\
-         ### 鍙敤宸ュ叿\n",
+        "## 环境：Iris 与你的能力\n\n\
+         Iris 是本地 Markdown 笔记本应用；`.md` 文件是数据权威来源，SQLite 仅作索引缓存。\n\
+         你应通过工具主动获取信息，而非假设未检索到的内容存在。\n\n\
+         ### 可用工具\n",
     );
     for tool in tools {
         s.push_str(&format!(
-            "- **{}**锛歿}锛坽}锛塡n",
+            "- **{}**：{}（{}）\n",
             tool.name,
             tool.description,
             if tool.requires_confirmation {
-                "鍐欏叆闇€鐢ㄦ埛纭"
+                "写入需用户确认"
             } else {
-                "鍙锛屽彲鑷姩鎵ц"
+                "只读，可自动执行"
             }
         ));
     }
@@ -90,24 +91,24 @@ fn capabilities_section(tools: &[ToolSpec]) -> String {
 
 fn scene_focus_section(scene: AiScene) -> String {
     let focus = match scene {
-        AiScene::KnowledgeLookup => "鐭ヨ瘑鏌ラ槄锛氭绱€佽В閲娿€佸紩鐢ㄦ湰鍦版潗鏂?,
-        AiScene::ExemplarLearning => "鑼冩枃瀛︿範锛氱粨鏋勩€佸彞寮忎笌鍙鐢ㄦā鏉?,
-        AiScene::DraftingAssist => "鏂囩鍒涗綔锛氫綆骞叉壈鍐欎綔杈呭姪涓庤ˉ涓佸缓璁?,
-        AiScene::ResearchSynthesis => "鐮旂┒缁煎悎锛氬鏉愭枡璁鸿瘉涓庤瘉鎹己鍙?,
+        AiScene::KnowledgeLookup => "知识查阅：检索、解释、引用本地材料",
+        AiScene::ExemplarLearning => "范文学习：结构、句式与可复用模板",
+        AiScene::DraftingAssist => "文稿创作：低干扰写作辅助与补丁建议",
+        AiScene::ResearchSynthesis => "研究综合：多材料论证与证据缺口",
     };
-    format!("## 褰撳墠浠诲姟渚ч噸\n\n{focus}\n")
+    format!("## 当前任务侧重\n\n{focus}\n")
 }
 
 fn current_document_section(input: &EnvironmentInput<'_>) -> Option<String> {
     let path = input.note_path?;
     let title = input.note_title.filter(|t| !t.is_empty()).unwrap_or(path);
-    let mut block = format!("## 褰撳墠鏂囨。\n\n- 璺緞: `{path}`\n- 鏍囬: {title}\n");
+    let mut block = format!("## 当前文档\n\n- 路径: `{path}`\n- 标题: {title}\n");
     if let Some(sel) = input.selection_excerpt.filter(|s| !s.is_empty()) {
         let excerpt: String = sel.chars().take(400).collect();
-        let suffix = if sel.chars().count() > 400 { "鈥? } else { "" };
-        block.push_str(&format!("\n### 鐢ㄦ埛閫夊尯\n\n{excerpt}{suffix}\n"));
+        let suffix = if sel.chars().count() > 400 { "…" } else { "" };
+        block.push_str(&format!("\n### 用户选区\n\n{excerpt}{suffix}\n"));
     }
-    block.push_str("\n鍏ㄦ枃鍙€氳繃 `read_note` 宸ュ叿璇诲彇銆俓n");
+    block.push_str("\n全文可通过 `read_note` 工具读取。\n");
     Some(block)
 }
 
@@ -125,7 +126,7 @@ fn backlinks_section(db: &Database, path: &str) -> AppResult<String> {
         let rows = stmt.query_map([path], |row| {
             Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
         })?;
-        let mut block = String::from("## 鍙嶅悜閾炬帴锛堟憳瑕侊級\n\n");
+        let mut block = String::from("## 反向链接（摘要）\n\n");
         let mut count = 0;
         for row in rows {
             let (p, title) = row?;
@@ -135,7 +136,7 @@ fn backlinks_section(db: &Database, path: &str) -> AppResult<String> {
         if count == 0 {
             return Ok(String::new());
         }
-        block.push_str("\n鏇村閾炬帴鍙敤 `get_backlinks` 宸ュ叿鏌ヨ銆俓n");
+        block.push_str("\n更多链接可用 `get_backlinks` 工具查询。\n");
         Ok(block)
     })
 }
@@ -160,22 +161,22 @@ fn vault_structure_section(db: &Database, _vault: &Path) -> AppResult<String> {
             let top = path.split('/').next().unwrap_or("").to_string();
             *by_top.entry(top).or_insert(0) += 1;
             if lines.len() < 25 {
-                lines.push(format!("- `{path}` 鈥?{title}"));
+                lines.push(format!("- `{path}` — {title}"));
             }
         }
-        let mut block = String::from("## 鐭ヨ瘑搴撶粨鏋勶紙鎽樿锛塡n\n");
-        block.push_str("椤跺眰鐩綍鍒嗗竷锛歕n");
+        let mut block = String::from("## 知识库结构（摘要）\n\n");
+        block.push_str("顶层目录分布：\n");
         for (dir, count) in by_top {
-            let label = if dir.is_empty() { "(鏍圭洰褰?" } else { &dir };
-            block.push_str(&format!("- {label}: {count} 绡嘰n"));
+            let label = if dir.is_empty() { "(根目录)" } else { &dir };
+            block.push_str(&format!("- {label}: {count} 篇\n"));
         }
         if !lines.is_empty() {
-            block.push_str("\n閮ㄥ垎绗旇锛歕n");
+            block.push_str("\n部分笔记：\n");
             for line in lines {
                 block.push_str(&format!("{line}\n"));
             }
         }
-        block.push_str("\n瀹屾暣鍒楄〃璇风敤 `list_vault` 宸ュ叿銆俓n");
+        block.push_str("\n完整列表请用 `list_vault` 工具。\n");
         Ok(block)
     })
 }
@@ -189,7 +190,7 @@ mod tests {
     fn capabilities_lists_tool_names() {
         let tools = vec![ToolSpec {
             name: "search_hybrid".into(),
-            description: "娣峰悎鎼滅储".into(),
+            description: "混合搜索".into(),
             input_schema: serde_json::json!({}),
             access_level: ToolAccessLevel::ReadIndex,
             scene_allowlist: vec![],

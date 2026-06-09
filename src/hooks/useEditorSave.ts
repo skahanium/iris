@@ -11,9 +11,8 @@ export type { LastSavedSnapshot } from "@/lib/version-snapshot-scheduler";
 
 async function writeNoteAtPath(
   targetPath: string,
-  getMd: () => string,
+  md: string,
 ): Promise<string | null> {
-  const md = getMd();
   const substantivelyEmpty = isNoteSubstantivelyEmpty(md);
   if (substantivelyEmpty) {
     console.debug(
@@ -71,7 +70,7 @@ export function useEditorSave(
     if (last && last.path === target && last.markdown === md) {
       return last.markdown;
     }
-    const saved = await writeNoteAtPath(target, () => getMarkdownRef.current());
+    const saved = await writeNoteAtPath(target, md);
     if (saved) {
       recordSavedSnapshot(target, saved);
       onSavedRef.current?.(saved);
@@ -139,7 +138,7 @@ export function useEditorSave(
         await saveInFlightRef.current;
       }
       const getMd = getMarkdownOverride ?? (() => getMarkdownRef.current());
-      const md = await writeNoteAtPath(targetPath, getMd);
+      const md = await writeNoteAtPath(targetPath, getMd());
       if (md) {
         recordSavedSnapshot(targetPath, md);
       }

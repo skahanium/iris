@@ -58,8 +58,13 @@ pub async fn context_assemble(
         .vault_path()
         .ok()
         .and_then(|vault| {
-            crate::ai_runtime::skills::active_skill_allowed_tools(&vault, scene, Some(&state.db))
-                .ok()
+            crate::ai_runtime::skills::active_skill_allowed_tools(
+                &vault,
+                scene,
+                Some(&state.db),
+                &query,
+            )
+            .ok()
         })
         .unwrap_or_default();
     let policy_ctx = crate::ai_runtime::tool_policy::ToolPolicyContext {
@@ -318,6 +323,7 @@ pub(crate) async fn execute_ai_send_message(
             selection_excerpt: None,
             cold_start_packets: filtered_packets.clone(),
             web_search_enabled: web_search,
+            user_message: message.clone(),
             history_messages,
             depth: 0,
             resume_from_checkpoint: false,
@@ -626,8 +632,13 @@ pub fn ai_list_tools(
         .vault_path()
         .ok()
         .and_then(|vault| {
-            crate::ai_runtime::skills::active_skill_allowed_tools(&vault, scene, Some(&state.db))
-                .ok()
+            crate::ai_runtime::skills::active_skill_allowed_tools(
+                &vault,
+                scene,
+                Some(&state.db),
+                scene.profile(),
+            )
+            .ok()
         })
         .unwrap_or_default();
     let ctx = crate::ai_runtime::tool_policy::ToolPolicyContext {

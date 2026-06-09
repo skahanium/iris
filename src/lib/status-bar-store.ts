@@ -67,7 +67,10 @@ export function setAiStatus(value: string) {
 
 export function setEditorStats(value: EditorStats) {
   const prev = store.editorStats;
-  if (prev.characterCount !== value.characterCount || prev.readingMinutes !== value.readingMinutes) {
+  if (
+    prev.characterCount !== value.characterCount ||
+    prev.readingMinutes !== value.readingMinutes
+  ) {
     store = { ...store, editorStats: value };
     notify();
   }

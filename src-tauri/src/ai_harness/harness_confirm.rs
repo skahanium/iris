@@ -115,6 +115,7 @@ pub async fn resume_harness_after_tool_confirm(
 
     let resolved = crate::llm::config::resolve_for_scene(&state.db, scene)?;
     let provider_config = resolved.to_provider_config(scene);
+    let user_message = latest_user_message(&cp.messages);
 
     let harness_result = run_harness(
         state,
@@ -128,6 +129,7 @@ pub async fn resume_harness_after_tool_confirm(
             selection_excerpt: cp.meta.selection_excerpt.clone(),
             cold_start_packets: cp.meta.cold_start_packets.clone(),
             web_search_enabled: cp.meta.web_search_enabled,
+            user_message,
             history_messages: vec![],
             depth: cp.meta.depth,
             resume_from_checkpoint: true,
@@ -145,6 +147,15 @@ pub async fn resume_harness_after_tool_confirm(
     }
 
     Ok(harness_result)
+}
+
+fn latest_user_message(messages: &[LlmMessage]) -> String {
+    messages
+        .iter()
+        .rev()
+        .find(|message| matches!(message.role, MessageRole::User))
+        .map(|message| message.content.clone())
+        .unwrap_or_default()
 }
 
 /// Resume harness; on failure restore trace to awaiting confirm so checkpoint stays loadable.

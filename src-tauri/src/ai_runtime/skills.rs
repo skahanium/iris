@@ -510,7 +510,7 @@ pub async fn install_from_url(
         let actual = hex::encode(Sha256::digest(body.as_bytes()));
         if !actual.eq_ignore_ascii_case(expected.trim()) {
             return Err(AppError::msg(
-                "Skill 鍐呭 SHA-256 鏍￠獙澶辫触锛堝彲鑳借绡℃敼鎴栦笉瀹屾暣锛?,
+                "Skill 内容 SHA-256 校验失败（可能被篡改或不完整）",
             ));
         }
         tracing::info!(
@@ -734,7 +734,7 @@ pub struct SkillActivationIndexRow {
     pub embedding_json: Option<String>,
 }
 
-type ActivationIndexMap = HashMap<(String, SkillScope), SkillActivationIndexRow>;
+pub type ActivationIndexMap = HashMap<(String, SkillScope), SkillActivationIndexRow>;
 
 /// Load all rows from `skill_activation_index` for fast scene matching.
 pub fn load_activation_index(db: &Database) -> AppResult<ActivationIndexMap> {
@@ -804,11 +804,22 @@ pub fn capability_preview_for_entry(
 ///
 /// When `skill_activation_index` rows are supplied, keywords/description from the
 /// index take precedence over file metadata for matching.
-pub fn skills_for_scene(skills: &[SkillEntry], scene: AiScene, user_message: &str) -> Vec<SkillEntry> {
-    let ranked = rank_skills_for_scene(skills, scene, user_message);
-    let reranked = rerank_with_embedding(ranked, user_message);
-    reranked.into_iter().filter(|s| s.score >= 0.35).take(3).map(|s| s.entry).collect()
-}
+pub fn skills_for_scene(
+    skills: &[SkillEntry],
+    scene: AiScene,
+    user_message: &str,
+) -> Vec<SkillEntry> {
+    let query = if user_message.trim().is_empty() {
+        scene.profile()
+    } else {
+        user_message
+    };
+    rerank_skills_with_vectors(rank_skills_for_scene(skills, scene), query, None)
+        .into_iter()
+        .filter(|s| s.score >= 0.35)
+        .take(3)
+        .map(|s| s.skill.clone())
+        .collect()
 }
 
 /// Scored version of `skills_for_scene` 鈥?returns scores for debugging/display.
@@ -1006,6 +1017,7 @@ pub fn active_skills_for_prompt(
     vault: &Path,
     scene: AiScene,
     db: Option<&Database>,
+    user_message: &str,
 ) -> AppResult<Vec<SkillEntry>> {
     let metadata = scan_all_metadata(vault)?;
     let index_map = db
@@ -1017,7 +1029,11 @@ pub fn active_skills_for_prompt(
     } else {
         Some(&index_map)
     };
-    let query = scene.profile();
+    let query = if user_message.trim().is_empty() {
+        scene.profile()
+    } else {
+        user_message
+    };
     let ranked = rerank_skills_with_vectors(
         rank_skills_for_scene_with_index(&metadata, scene, index_ref),
         query,
@@ -1041,9 +1057,10 @@ pub fn active_skill_allowed_tools(
     vault: &Path,
     scene: AiScene,
     db: Option<&Database>,
+    user_message: &str,
 ) -> AppResult<Vec<String>> {
     let mut tools = Vec::new();
-    for skill in active_skills_for_prompt(vault, scene, db)? {
+    for skill in active_skills_for_prompt(vault, scene, db, user_message)? {
         for tool in skill.allowed_tools {
             if !tools.contains(&tool) {
                 tools.push(tool);
@@ -1164,20 +1181,20 @@ pub fn read_skill_resource(
     relative_path: &str,
 ) -> AppResult<String> {
     if relative_path.is_empty() || relative_path.contains("..") {
-        return Err(AppError::msg("skill 璧勬簮璺緞鏃犳晥"));
+        return Err(AppError::msg("skill 资源路径无效"));
     }
     let rel = Path::new(relative_path.trim_start_matches('/'));
     if rel.is_absolute() {
-        return Err(AppError::msg("skill 璧勬簮璺緞蹇呴』涓虹浉瀵硅矾寰?));
+        return Err(AppError::msg("skill 资源路径必须为相对路径"));
     }
     let top = rel
         .components()
         .next()
         .and_then(|c| c.as_os_str().to_str())
-        .ok_or_else(|| AppError::msg("skill 璧勬簮璺緞鏃犳晥"))?;
+        .ok_or_else(|| AppError::msg("skill 资源路径无效"))?;
     if !ALLOWED_RESOURCE_DIRS.contains(&top) {
         return Err(AppError::msg(format!(
-            "浠呭厑璁歌鍙?{ALLOWED_RESOURCE_DIRS:?} 涓嬬殑璧勬簮"
+            "仅允许读取 {ALLOWED_RESOURCE_DIRS:?} 下的资源"
         )));
     }
 
@@ -1187,43 +1204,37 @@ pub fn read_skill_resource(
     };
     let skill_root = base.join(slugify(name));
     if !skill_root.is_dir() {
-        return Err(AppError::msg(format!("鏈壘鍒?skill: {name}")));
+        return Err(AppError::msg(format!("未找到 skill: {name}")));
     }
 
     let target = skill_root.join(rel);
     let root_canonical = skill_root
         .canonicalize()
-        .map_err(|_| AppError::msg("skill 鐩綍鏃犳晥"))?;
+        .map_err(|_| AppError::msg("skill 目录无效"))?;
     let file_canonical = target
         .canonicalize()
-        .map_err(|_| AppError::msg("skill 璧勬簮鏂囦欢涓嶅瓨鍦?))?;
+        .map_err(|_| AppError::msg("skill 资源文件不存在"))?;
     if !file_canonical.starts_with(&root_canonical) {
-        return Err(AppError::msg("skill 璧勬簮璺緞瓒婄晫"));
+        return Err(AppError::msg("skill 资源路径越界"));
     }
     if !file_canonical.is_file() {
-        return Err(AppError::msg("skill 璧勬簮蹇呴』鏄枃浠?));
+        return Err(AppError::msg("skill 资源必须是文件"));
     }
 
-    fs::read_to_string(&file_canonical).map_err(Into::into)
+    let content = fs::read_to_string(&file_canonical)?;
+    Ok(content.chars().take(MAX_SKILL_RESOURCE_CHARS).collect())
 }
 
 /// Build system prompt fragment from enabled skills.
 pub fn inject_into_prompt(skills: &[SkillEntry], scene: AiScene, user_message: &str) -> String {
-
-fn tokenize(text: &str) -> Vec<String> { text.split(|c: char| !c.is_alphanumeric()).filter(|s| s.len() >= 2).map(|s| s.to_lowercase()).collect() }
-fn bm25_score(entry: &SkillEntry, user_tokens: &[String]) -> f64 { let k1=1.2;let b=0.75;let avg_dl=20.0;let mut s=0.0_f64;let nt=tokenize(&entry.name);for t in &nt{let tf=user_tokens.iter().filter(|w|*w==t).count() as f64;if tf>0.0{s+=tf*3.0/(tf+k1);}}let dt=tokenize(&entry.description);let dl=dt.len().max(1)as f64;for t in &dt{let tf=user_tokens.iter().filter(|w|*w==t).count()as f64;if tf>0.0{s+=tf*1.5/(tf+k1*(1.0-b+b*dl/avg_dl));}}if let Some(kw)=entry.metadata.get("keywords").and_then(|v|v.as_str()){for kw in kw.split_whitespace(){if user_tokens.iter().any(|w|w==&kw.to_lowercase()){s+=2.0;}}}s}
-pub(crate) struct ScoredSkill{pub entry:SkillEntry,pub score:f64}
-pub(crate) fn rank_skills_for_scene(skills:&[SkillEntry],scene:AiScene,user_message:&str)->Vec<ScoredSkill>{let st=scene.profile();let ut=tokenize(user_message);let mut r:Vec<ScoredSkill>=skills.iter().filter(|s|s.enabled).map(|e|{let mut sc=bm25_score(e,&ut);if let Some(ref t)=e.legacy_trigger{if st.contains(t.as_str()){sc+=2.0;}}if e.legacy_trigger.is_none(){sc+=0.5;}ScoredSkill{entry:e.clone(),score:sc}}).collect();r.sort_by(|a,b|b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));r}
-pub(crate) fn rerank_with_embedding(mut ranked:Vec<ScoredSkill>,user_message:&str)->Vec<ScoredSkill>{let tr: String=user_message.chars().take(500).collect();let uv=match crate::embedding::engine::embed_text(&tr){Ok(v)=>v,Err(_)=>return ranked,};for s in &mut ranked{let tx=format!("{} {}",s.entry.name,s.entry.description);if let Ok(sv)=crate::embedding::engine::embed_text(&tx){let cs=crate::embedding::engine::cosine_similarity(&uv,&sv);s.score=s.score*0.4+cs as f64*0.6;}}ranked.sort_by(|a,b|b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));ranked}
-
-    let matched = skills_for_scene(skills, scene);
+    let matched = skills_for_scene(skills, scene, user_message);
     if matched.is_empty() {
         return String::new();
     }
-    let mut block = String::from("## 宸叉縺娲?Skills\n\n");
+    let mut block = String::from("## 已激活 Skills\n\n");
     block.push_str(
-        "鑻?SKILL 姝ｆ枃寮曠敤 `references/`銆乣scripts/` 鎴?`assets/` 涓嬬殑鏂囦欢锛孿
-         璇疯皟鐢?`skills_read_resource` 鎸夐渶璇诲彇锛屼笉瑕佺寽娴嬪唴瀹广€俓n\n",
+        "若 SKILL 正文引用 `references/`、`scripts/` 或 `assets/` 下的文件，\
+         请调用 `skills_read_resource` 按需读取，不要猜测内容。\n\n",
     );
     for skill in matched {
         block.push_str(&format!("### Skill: {}\n\n", skill.name));
@@ -1231,7 +1242,7 @@ pub(crate) fn rerank_with_embedding(mut ranked:Vec<ScoredSkill>,user_message:&st
             block.push_str(&format!("_{}_\n\n", skill.description));
         }
         if !skill.allowed_tools.is_empty() {
-            block.push_str(&format!("璇锋眰宸ュ叿: {}\n\n", skill.allowed_tools.join(", ")));
+            block.push_str(&format!("请求工具: {}\n\n", skill.allowed_tools.join(", ")));
         }
         block.push_str(&skill.content);
         block.push_str("\n\n---\n\n");
@@ -1243,7 +1254,7 @@ pub(crate) fn rerank_with_embedding(mut ranked:Vec<ScoredSkill>,user_message:&st
 pub fn install_from_local(source: &Path, scope: SkillScope, vault: &Path) -> AppResult<SkillEntry> {
     let source = crate::security::ipc_policy::validate_local_skill_source(source, vault)?;
     if !source.is_file() {
-        return Err(AppError::msg("鏈湴瀹夎闇€瑕?SKILL.md 鏂囦欢璺緞"));
+        return Err(AppError::msg("本地安装需要 SKILL.md 文件路径"));
     }
     let body = fs::read_to_string(&source)?;
     let (meta, _) = parse_frontmatter(&body);
@@ -1278,7 +1289,7 @@ pub fn install_from_local(source: &Path, scope: SkillScope, vault: &Path) -> App
 pub fn validate_skill_path(path: &Path, vault: &Path) -> AppResult<()> {
     let canonical = path
         .canonicalize()
-        .map_err(|_| AppError::msg("Skill 鏂囦欢璺緞鏃犳晥鎴栦笉瀛樺湪"))?;
+        .map_err(|_| AppError::msg("Skill 文件路径无效或不存在"))?;
     let global_dir = global_skills_dir();
     let vault_dir = vault_skills_dir(vault);
 
@@ -1290,7 +1301,7 @@ pub fn validate_skill_path(path: &Path, vault: &Path) -> AppResult<()> {
         .is_ok_and(|v| canonical.starts_with(&v));
 
     if !under_global && !under_vault {
-        return Err(AppError::msg("Skill 鏂囦欢璺緞蹇呴』鍦ㄥ凡鐭ョ殑 skills 鐩綍涓?));
+        return Err(AppError::msg("Skill 文件路径必须在已知的 skills 目录下"));
     }
     Ok(())
 }
@@ -1303,7 +1314,7 @@ pub fn read_skill_content(path: &Path) -> AppResult<String> {
 /// Write updated skill content (must be `SKILL.md`).
 pub fn write_skill_content(path: &Path, scope: SkillScope, content: &str) -> AppResult<SkillEntry> {
     if path.file_name().and_then(|n| n.to_str()) != Some("SKILL.md") {
-        return Err(AppError::msg("鍙兘鍐欏叆 SKILL.md"));
+        return Err(AppError::msg("只能写入 SKILL.md"));
     }
     fs::write(path, content)?;
     load_skill(path, scope)
@@ -1323,7 +1334,7 @@ pub fn migrate_legacy_skill(path: &Path, scope: SkillScope) -> AppResult<SkillEn
 
     // Only migrate if it has a trigger field
     if !meta.contains_key("trigger") {
-        return Err(AppError::msg("skill 宸叉槸鏂版牸寮忥紝鏃犻渶杩佺Щ"));
+        return Err(AppError::msg("skill 已是新格式，无需迁移"));
     }
 
     // Create backup
@@ -1872,7 +1883,7 @@ Large instruction body."#,
     #[test]
     fn no_trigger_matches_all_scenes() {
         let skills = vec![make_skill("universal", None, true)];
-        let matched = skills_for_scene(&skills, AiScene::KnowledgeLookup);
+        let matched = skills_for_scene(&skills, AiScene::KnowledgeLookup, "");
         assert_eq!(matched.len(), 1);
         assert_eq!(matched[0].name, "universal");
     }
@@ -1880,21 +1891,21 @@ Large instruction body."#,
     #[test]
     fn legacy_trigger_matches_scene() {
         let skills = vec![make_skill("knowledge-skill", Some("knowledge"), true)];
-        let matched = skills_for_scene(&skills, AiScene::KnowledgeLookup);
+        let matched = skills_for_scene(&skills, AiScene::KnowledgeLookup, "");
         assert_eq!(matched.len(), 1);
     }
 
     #[test]
     fn legacy_trigger_wrong_scene_no_match() {
         let skills = vec![make_skill("writing-skill", Some("writing"), true)];
-        let matched = skills_for_scene(&skills, AiScene::KnowledgeLookup);
+        let matched = skills_for_scene(&skills, AiScene::KnowledgeLookup, "");
         assert!(matched.is_empty());
     }
 
     #[test]
     fn disabled_skill_excluded() {
         let skills = vec![make_skill("disabled", None, false)];
-        let matched = skills_for_scene(&skills, AiScene::KnowledgeLookup);
+        let matched = skills_for_scene(&skills, AiScene::KnowledgeLookup, "");
         assert!(matched.is_empty());
     }
 
@@ -1905,7 +1916,7 @@ Large instruction body."#,
             make_skill("b", Some("writing"), true),
             make_skill("c", None, true),
         ];
-        let matched = skills_for_scene(&skills, AiScene::KnowledgeLookup);
+        let matched = skills_for_scene(&skills, AiScene::KnowledgeLookup, "");
         assert_eq!(matched.len(), 2); // a + c (universal)
     }
 
@@ -2122,7 +2133,7 @@ description: Already new format
         .unwrap();
 
         let err = migrate_legacy_skill(&skill_dir.join("SKILL.md"), SkillScope::Vault).unwrap_err();
-        assert!(err.to_string().contains("鏂版牸寮?));
+        assert!(err.to_string().contains("新格式"));
     }
 
     #[test]
@@ -2187,7 +2198,7 @@ description: Already new format
             make_skill("disabled-one", None, false),
             make_skill("enabled-two", None, true),
         ];
-        let prompt = inject_into_prompt(&skills, AiScene::KnowledgeLookup);
+        let prompt = inject_into_prompt(&skills, AiScene::KnowledgeLookup, "");
         assert!(prompt.contains("enabled-one"));
         assert!(prompt.contains("enabled-two"));
         assert!(!prompt.contains("disabled-one"));
@@ -2196,7 +2207,7 @@ description: Already new format
     #[test]
     fn inject_into_prompt_empty_when_no_skills() {
         let skills: Vec<SkillEntry> = vec![];
-        let prompt = inject_into_prompt(&skills, AiScene::KnowledgeLookup);
+        let prompt = inject_into_prompt(&skills, AiScene::KnowledgeLookup, "");
         assert!(prompt.is_empty());
     }
 

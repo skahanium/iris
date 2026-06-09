@@ -10,7 +10,6 @@ import { useCallback, useEffect, useState } from "react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { DiffView } from "@/components/ai/PatchPreview";
 import {
   Dialog,
   DialogContent,
@@ -21,16 +20,11 @@ import {
 } from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/textarea";
 import { toolAuditQuery, type ToolAuditEntry } from "@/lib/ipc";
+import type { ToolConfirmRequestEvent } from "@/types/ipc";
 
 // ─── Tool Confirm Request Type ───────────────────────────
 
-export interface ToolConfirmRequest {
-  request_id: string;
-  tool_call_id: string;
-  tool_name: string;
-  arguments: Record<string, string | number | boolean | null | undefined>;
-  preview?: Record<string, unknown>;
-}
+export type ToolConfirmRequest = ToolConfirmRequestEvent;
 
 // ─── Tool Display Names ──────────────────────────────────
 

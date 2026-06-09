@@ -59,6 +59,7 @@ pub struct HarnessRunInput {
     pub selection_excerpt: Option<String>,
     pub cold_start_packets: Vec<ContextPacket>,
     pub web_search_enabled: bool,
+    pub user_message: String,
     pub history_messages: Vec<(String, String)>,
     pub depth: u32,
     pub resume_from_checkpoint: bool,

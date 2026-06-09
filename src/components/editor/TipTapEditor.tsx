@@ -453,11 +453,17 @@ function TipTapEditorInner({
   // Reload content imperatively when reloadContentTick bumps (avoids full editor recreation).
   const reloadTickRef = useRef(reloadContentTick);
   useEffect(() => {
-    if (reloadContentTick > 0 && reloadTickRef.current !== reloadContentTick && editor) {
+    if (
+      reloadContentTick > 0 &&
+      reloadTickRef.current !== reloadContentTick &&
+      editor
+    ) {
       reloadTickRef.current = reloadContentTick;
       const bodyMd = initialBodyMarkdown.trim();
       if (bodyMd) {
-        const { tipTapHtml } = ingestMarkdownForEditor({ bodyMarkdown: bodyMd });
+        const { tipTapHtml } = ingestMarkdownForEditor({
+          bodyMarkdown: bodyMd,
+        });
         editor.commands.setContent(tipTapHtml);
         if (contentCacheKey) {
           setCachedEditorHtml(contentCacheKey, tipTapHtml);

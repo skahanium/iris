@@ -163,7 +163,9 @@ export function useTabManager(options: UseTabManagerOptions = {}) {
         setTabs((prev) => {
           if (prev.some((t) => t.path === path)) {
             return prev.map((t) =>
-              t.path === path ? { ...t, title, dirty: false, locked: isLocked } : t,
+              t.path === path
+                ? { ...t, title, dirty: false, locked: isLocked }
+                : t,
             );
           }
           return [...prev, { path, title, dirty: false, locked: isLocked }];

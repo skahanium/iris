@@ -1,4 +1,4 @@
-﻿//! Tool definitions, permission checks, and execution dispatch.
+//! Tool definitions, permission checks, and execution dispatch.
 //!
 //! All tool definitions live here. The ToolExecutor handles:
 //! 1. Filtering available tools by scene and access level
@@ -23,9 +23,10 @@ pub struct ToolSurfaceFilter {
     pub only_auto: bool,
 }
 
-// 鈹€鈹€鈹€ Tool Registry 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+// Tool Registry
 
-/// 鍐呯疆宸ュ叿娉ㄥ唽琛ㄣ€傛墍鏈夊伐鍏峰湪姝ゅ０鏄庛€?pub struct ToolRegistry {
+/// 内置工具注册表。所有工具在此声明。
+pub struct ToolRegistry {
     tools: Vec<ToolSpec>,
 }
 
@@ -36,7 +37,8 @@ impl ToolRegistry {
         }
     }
 
-    /// 杩斿洖鎸囧畾鍦烘櫙鍙敤鐨勫伐鍏峰垪琛ㄣ€?    pub fn for_scene(&self, scene: AiScene) -> Vec<&ToolSpec> {
+    /// 返回指定场景可用的工具列表。
+    pub fn for_scene(&self, scene: AiScene) -> Vec<&ToolSpec> {
         self.tools
             .iter()
             .filter(|t| t.scene_allowlist.is_empty() || t.scene_allowlist.contains(&scene))
@@ -76,23 +78,47 @@ impl ToolRegistry {
             .collect()
     }
 
-    /// 杩斿洖鎸囧畾鍦烘櫙涓笉闇€瑕佺敤鎴风‘璁ょ殑宸ュ叿锛堝彧璇昏嚜鍔ㄦ墽琛岋級銆?    pub fn auto_tools_for_scene(&self, scene: AiScene) -> Vec<&ToolSpec> {
+    /// 返回指定场景中不需要用户确认的工具（只读自动执行）。
+    pub fn auto_tools_for_scene(&self, scene: AiScene) -> Vec<&ToolSpec> {
         self.for_scene(scene)
             .into_iter()
             .filter(|t| !t.requires_confirmation)
             .collect()
     }
 
-    /// 鎸夊悕绉版煡鎵惧伐鍏枫€?    pub fn find(&self, name: &str) -> Option<&ToolSpec> {
+    /// 按名称查找工具。
+    pub fn find(&self, name: &str) -> Option<&ToolSpec> {
         self.tools.iter().find(|t| t.name == name)
     }
 
-    /// 鍒ゆ柇鎸囧畾宸ュ叿鐨勫啓鍏ユ槸鍚﹂渶瑕佺‘璁ゃ€?    pub fn requires_confirmation(&self, tool_name: &str) -> bool {
+    /// 判断指定工具的写入是否需要确认。
+    pub fn requires_confirmation(&self, tool_name: &str) -> bool {
         self.find(tool_name)
             .map(|t| t.requires_confirmation)
-            .unwrap_or(true) // 鏈煡宸ュ叿榛樿闇€瑕佺‘璁?    }
+            .unwrap_or(true)
+    }
 
-    /// 鎵ц鎸囧畾宸ュ叿骞惰褰曡€楁椂銆?    ///
+    /// 执行指定工具并记录耗时。
+    ///
+    /// 调用方负责填充 `tokens_used`（如果可用）。
+    pub async fn execute_tool(
+        &self,
+        tool_name: &str,
+        args: serde_json::Value,
+    ) -> AppResult<ToolCallResult> {
+        let start = Instant::now();
+
+        let spec = self.find(tool_name);
+        if spec.is_none() {
+            let duration_ms = start.elapsed().as_millis() as u64;
+            return Ok(ToolCallResult {
+                tool_name: tool_name.to_string(),
+                success: false,
+                output: serde_json::Value::Null,
+                duration_ms,
+                tokens_used: None,
+                error: Some(format!("unknown tool: {tool_name}")),
+            });
         }
 
         // Actual dispatch is handled by the caller (model_gateway / agent loop).
@@ -127,7 +153,7 @@ impl ToolRegistry {
         }
     }
 
-    // 鈹€鈹€鈹€ private 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+    // private
 
     /// Build tool list from the global `TOOL_CATALOG` (single source of truth).
     fn builtin_tools() -> Vec<ToolSpec> {
@@ -154,22 +180,28 @@ impl Default for ToolRegistry {
     }
 }
 
-// 鈹€鈹€鈹€ Permission Check 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+// Permission Check
 
-#[deprecated(since = "0.1.0", note = "use ToolRegistry::check_tool_policy with ToolPolicyContext")]
-/// 妫€鏌ュ伐鍏峰湪褰撳墠鍦烘櫙鍜岃嚜娌荤瓑绾т笅鏄惁鍏佽鎵ц銆?pub fn check_tool_permission(
+#[deprecated(
+    since = "0.1.0",
+    note = "use ToolRegistry::check_tool_policy with ToolPolicyContext"
+)]
+/// 检查工具在当前场景和自治等级下是否允许执行。
+pub fn check_tool_permission(
     tool: &ToolSpec,
     scene: AiScene,
     allowed_level: AutonomyLevel,
 ) -> Result<(), ToolPermissionError> {
-    // 1. 鍦烘櫙鐧藉悕鍗曟鏌?    if !tool.scene_allowlist.is_empty() && !tool.scene_allowlist.contains(&scene) {
+    // 1. 场景白名单检查
+    if !tool.scene_allowlist.is_empty() && !tool.scene_allowlist.contains(&scene) {
         return Err(ToolPermissionError::SceneNotAllowed {
             tool: tool.name.clone(),
             scene,
         });
     }
 
-    // 2. 鑱旂綉鍙宸ュ叿锛坵eb_search锛夊湪 L2 鍙婁互涓婂彲鐢?    if tool.access_level == ToolAccessLevel::Network && allowed_level < AutonomyLevel::L2 {
+    // 2. 联网只读工具（web_search）在 L2 及以上可用
+    if tool.access_level == ToolAccessLevel::Network && allowed_level < AutonomyLevel::L2 {
         return Err(ToolPermissionError::InsufficientAutonomy {
             tool: tool.name.clone(),
             required: AutonomyLevel::L2,
@@ -177,7 +209,8 @@ impl Default for ToolRegistry {
         });
     }
 
-    // 3. WriteMarkdown + WriteSettings 鍦?L1 涓嬬姝?    if matches!(
+    // 3. WriteMarkdown + WriteSettings 在 L1 下禁止
+    if matches!(
         tool.access_level,
         ToolAccessLevel::WriteMarkdown | ToolAccessLevel::WriteSettings
     ) && allowed_level < AutonomyLevel::L2
@@ -266,19 +299,39 @@ mod tests {
     #[test]
     fn write_markdown_forbidden_at_l1() {
         let reg = ToolRegistry::new();
-        let insert = reg.find("insert_text_at_cursor").unwrap();
-        assert!(check_tool_permission(insert, AiScene::DraftingAssist, AutonomyLevel::L2).is_ok());
-        assert!(check_tool_permission(insert, AiScene::DraftingAssist, AutonomyLevel::L1).is_err());
+        let l2_ctx = ToolPolicyContext {
+            scene: AiScene::DraftingAssist,
+            autonomy_level: AutonomyLevel::L2,
+            web_search_enabled: true,
+            skill_allowed_tools: vec![],
+            depth: 0,
+        };
+        let l1_ctx = ToolPolicyContext {
+            autonomy_level: AutonomyLevel::L1,
+            ..l2_ctx.clone()
+        };
+        assert!(reg
+            .check_tool_policy("insert_text_at_cursor", &l2_ctx)
+            .is_ok());
+        assert!(reg
+            .check_tool_policy("insert_text_at_cursor", &l1_ctx)
+            .is_err());
     }
 
     #[test]
     fn tool_not_in_scene_allowlist_blocked() {
         let reg = ToolRegistry::new();
-        let insert = reg.find("insert_text_at_cursor").unwrap();
+        let ctx = ToolPolicyContext {
+            scene: AiScene::KnowledgeLookup,
+            autonomy_level: AutonomyLevel::L2,
+            web_search_enabled: true,
+            skill_allowed_tools: vec![],
+            depth: 0,
+        };
         // insert_text_at_cursor only for DraftingAssist
-        assert!(
-            check_tool_permission(insert, AiScene::KnowledgeLookup, AutonomyLevel::L2).is_err()
-        );
+        assert!(reg
+            .check_tool_policy("insert_text_at_cursor", &ctx)
+            .is_err());
     }
 
     #[test]

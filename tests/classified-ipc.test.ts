@@ -193,9 +193,11 @@ describe("fileRead call-site compatibility (Task 15)", () => {
     expect(source).toMatch(/\{\s*content\s*\}\s*=\s*await fileRead\(/);
   });
 
-  it("VaultNavigator destructures content from fileRead", () => {
+  it("VaultNavigator no longer reads files for HTML export", () => {
     const source = read("src/components/file/VaultNavigator.tsx");
-    expect(source).toMatch(/\{\s*content:\s*md\s*\}\s*=\s*await fileRead\(/);
+    expect(source).not.toContain("fileRead");
+    expect(source).not.toContain("exportFile");
+    expect(source).not.toContain("导出 HTML");
   });
 
   it("App.tsx destructures externalContent from fileRead", () => {

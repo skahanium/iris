@@ -2,6 +2,61 @@ import path from "node:path";
 import react from "@vitejs/plugin-react";
 import { defineConfig } from "vite";
 
+function manualVendorChunk(id: string): string | undefined {
+  const normalized = id.replace(/\\/g, "/");
+  if (!normalized.includes("/node_modules/")) return undefined;
+
+  if (
+    normalized.includes("/node_modules/react/") ||
+    normalized.includes("/node_modules/react-dom/") ||
+    normalized.includes("/node_modules/scheduler/")
+  ) {
+    return "react-vendor";
+  }
+
+  if (normalized.includes("/node_modules/@tauri-apps/")) {
+    return "tauri-vendor";
+  }
+
+  if (
+    normalized.includes("/node_modules/@tiptap/pm/") ||
+    normalized.includes("/node_modules/prosemirror-")
+  ) {
+    return "prosemirror";
+  }
+
+  if (normalized.includes("/node_modules/@tiptap/")) {
+    return "tiptap";
+  }
+
+  if (
+    normalized.includes("/node_modules/marked/") ||
+    normalized.includes("/node_modules/turndown") ||
+    normalized.includes("/node_modules/dompurify/") ||
+    normalized.includes("/node_modules/lowlight/") ||
+    normalized.includes("/node_modules/highlight.js/")
+  ) {
+    return "markdown-vendor";
+  }
+
+  if (normalized.includes("/node_modules/lucide-react/")) {
+    return "icons-vendor";
+  }
+
+  if (
+    normalized.includes("/node_modules/@radix-ui/") ||
+    normalized.includes("/node_modules/@floating-ui/") ||
+    normalized.includes("/node_modules/@tanstack/react-virtual/") ||
+    normalized.includes("/node_modules/class-variance-authority/") ||
+    normalized.includes("/node_modules/clsx/") ||
+    normalized.includes("/node_modules/tailwind-merge/")
+  ) {
+    return "ui-vendor";
+  }
+
+  return "vendor";
+}
+
 export default defineConfig({
   plugins: [react()],
   resolve: {
@@ -36,8 +91,7 @@ export default defineConfig({
     rollupOptions: {
       output: {
         manualChunks(id) {
-          if (id.includes("node_modules/@tiptap/pm/")) return "prosemirror";
-          if (id.includes("node_modules/@tiptap/")) return "tiptap";
+          return manualVendorChunk(id);
         },
       },
     },

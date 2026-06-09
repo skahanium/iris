@@ -1,5 +1,5 @@
-pub mod encryption;
 pub mod diff;
+pub mod encryption;
 pub mod garbage_collector;
 pub mod hash;
 pub mod patch;

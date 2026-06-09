@@ -22,6 +22,7 @@ import type {
   AiCacheClearResult,
   AppExitResult,
   BacklinkEntry,
+  ClassifiedFileTakenEvent,
   FileChangedEvent,
   FileEntry,
   FileListItem,
@@ -40,6 +41,7 @@ import type {
   SessionMessageRecord,
   SessionSummary,
   TagGroup,
+  ToolConfirmRequestEvent,
   VersionEntry,
   VersionSaveCompleteEvent,
 } from "@/types/ipc";
@@ -405,6 +407,28 @@ export async function listenFileChanged(
   handler: (payload: FileChangedEvent) => void,
 ): Promise<() => void> {
   return listen<FileChangedEvent>("file:changed", (e) => handler(e.payload));
+}
+
+export async function listenClassifiedFileTaken(
+  handler: (payload: ClassifiedFileTakenEvent) => void,
+): Promise<() => void> {
+  return listen<ClassifiedFileTakenEvent>("classified:file_taken", (e) =>
+    handler(e.payload),
+  );
+}
+
+export async function listenSkillsChanged(
+  handler: () => void,
+): Promise<() => void> {
+  return listen("skills:changed", () => handler());
+}
+
+export async function listenToolConfirmRequest(
+  handler: (payload: ToolConfirmRequestEvent) => void,
+): Promise<() => void> {
+  return listen<ToolConfirmRequestEvent>("ai:tool_confirm_request", (e) =>
+    handler(e.payload),
+  );
 }
 
 export async function listenLlmToken(

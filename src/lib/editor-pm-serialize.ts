@@ -60,9 +60,16 @@ const baseBlockquoteSerialize = defaultMarkdownSerializer.nodes.blockquote!;
 const baseParagraphSerialize = defaultMarkdownSerializer.nodes.paragraph!;
 const baseImageSerialize = defaultMarkdownSerializer.nodes.image!;
 const baseHardBreakSerialize = defaultMarkdownSerializer.nodes.hard_break!;
+const baseCodeBlockSerialize = defaultMarkdownSerializer.nodes.code_block!;
+const baseHorizontalRuleSerialize =
+  defaultMarkdownSerializer.nodes.horizontal_rule!;
 
 function isSpacerParagraph(node: ProseMirrorNode): boolean {
   return node.attrs.irisSpacer === true;
+}
+
+function shouldLogSerializerFallback(): boolean {
+  return import.meta.env.MODE !== "test";
 }
 
 const irisMarkdownSerializer = new MarkdownSerializer(
@@ -79,6 +86,12 @@ const irisMarkdownSerializer = new MarkdownSerializer(
     },
     hardBreak(state, node, parent, index) {
       baseHardBreakSerialize(state, node, parent, index);
+    },
+    codeBlock(state, node, parent, index) {
+      baseCodeBlockSerialize(state, node, parent, index);
+    },
+    horizontalRule(state, node, parent, index) {
+      baseHorizontalRuleSerialize(state, node, parent, index);
     },
     blockquote(state, node, parent, index) {
       if (renderCalloutBlockquote(state, node)) {
@@ -112,6 +125,25 @@ const irisMarkdownSerializer = new MarkdownSerializer(
           state.renderInline(child);
         }
       });
+    },
+    bulletList(state, node) {
+      state.renderList(node, "  ", () => "- ");
+    },
+    orderedList(state, node) {
+      const start = typeof node.attrs.start === "number" ? node.attrs.start : 1;
+      const maxWidth = String(start + node.childCount - 1).length;
+      const space = state.repeat(" ", maxWidth + 2);
+      state.renderList(node, space, (index) => {
+        const number = String(start + index);
+        return `${state.repeat(" ", maxWidth - number.length)}${number}. `;
+      });
+    },
+    listItem(state, node) {
+      state.renderContent(node);
+    },
+    aiStream() {
+      // Inline AI suggestions are transient UI state. Persist the surrounding
+      // document only; generated suggestion text is accepted explicitly.
     },
   },
   {
@@ -152,10 +184,12 @@ export function editorDocToMarkdown(editor: Editor): string {
   try {
     return irisMarkdownSerializer.serialize(editor.state.doc);
   } catch (e) {
-    console.error(
-      "[editor-pm-serialize] PM serializer failed, falling back to HTML turndown:",
-      e,
-    );
+    if (shouldLogSerializerFallback()) {
+      console.error(
+        "[editor-pm-serialize] PM serializer failed, falling back to HTML turndown:",
+        e,
+      );
+    }
     return editorBodyHtmlToMarkdown(editor.getHTML());
   }
 }

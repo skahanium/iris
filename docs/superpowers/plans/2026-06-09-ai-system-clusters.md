@@ -15,6 +15,7 @@
 ## Task A1: install_from_git Git Hook 禁用
 
 **Files:**
+
 - Modify: `src-tauri/src/ai_runtime/skills.rs`（`install_from_git` 函数）
 
 - [ ] **Step 1: 写失败测试 `install_from_git_rejects_invalid_skill`**
@@ -91,6 +92,7 @@ cargo test install_from_git
 ## Task A2: 工具执行超时
 
 **Files:**
+
 - Modify: `src-tauri/src/ai_runtime/tool_dispatch.rs`
 
 - [ ] **Step 1: 添加超时常量**
@@ -176,6 +178,7 @@ cargo test tool_dispatch::tests::test_timeout
 ## Task A3: Parse Retry 上限
 
 **Files:**
+
 - Modify: `src-tauri/src/ai_harness/harness/run.rs`
 
 - [ ] **Step 1: 添加计数器**
@@ -246,6 +249,7 @@ cargo test parse_retry
 ## Task B1: 双轨权限收敛
 
 **Files:**
+
 - Modify: `src-tauri/src/ai_workflows/research_workflow.rs`
 - Modify: `src-tauri/src/ai_runtime/tool_executor.rs`
 
@@ -299,6 +303,7 @@ cargo test research_workflow tool_executor
 ## Task B2: execute_tool 删除
 
 **Files:**
+
 - Modify: `src-tauri/src/ai_runtime/tool_executor.rs`
 
 - [ ] **Step 1: 删除方法**
@@ -320,6 +325,7 @@ cargo check
 ## Task B3: DISPATCHABLE_TOOL_NAMES 消重
 
 **Files:**
+
 - Modify: `src-tauri/src/ai_runtime/tool_dispatch.rs`
 - Modify: `src-tauri/src/ai_runtime/tool_catalog.rs`
 
@@ -367,6 +373,7 @@ cargo test tool_catalog tool_dispatch
 ## Task C1: 技能匹配引擎 — BM25 + embedding 重排
 
 **Files:**
+
 - Modify: `src-tauri/src/ai_runtime/skills.rs`
 
 - [ ] **Step 1: 抽离已有 BM25 逻辑到生产函数**
@@ -508,6 +515,7 @@ fn skill_matching_tops_at_3() { /* 超过 3 个 skill 时截断 */ }
 ## Task C2: 匹配触发模式
 
 **Files:**
+
 - Modify: `src-tauri/src/ai_harness/harness/context.rs`（`prepare_environment_and_skills` 调用侧）
 - Modify: `src-tauri/src/ai_harness/harness/run.rs`（传入 user_message）
 
@@ -529,6 +537,7 @@ let user_message = input.history_messages.last()
 ## Task C3: skills_read_resource 长度限制
 
 **Files:**
+
 - Modify: `src-tauri/src/ai_runtime/skills.rs`
 
 - [ ] **Step 1: 加常量和截断逻辑**
@@ -575,6 +584,7 @@ fn read_skill_resource_truncates_over_limit() {
 ## Task D1: 写入确认接入 Diff 预览
 
 **Files:**
+
 - Modify: `src-tauri/src/ai_harness/harness/run.rs`（`pause_for_tool_confirmation`）
 - Modify: `src/components/ai/PatchPreview.tsx`（抽取 DiffView）
 - Modify: `src/components/ai/ToolConfirmDialog.tsx`（接入 DiffView）
@@ -714,6 +724,7 @@ npm run lint
 ## Task E1: Persona 预设 display_name
 
 **Files:**
+
 - Modify: `src-tauri/src/ai_runtime/prompt_profile.rs`
 
 - [ ] **Step 1: 修改三行常量**
@@ -747,6 +758,7 @@ cargo test persona_resolver::tests::default_persona_uses_custom_display_name
 ## Task E2: 重复人设注入
 
 **Files:**
+
 - Modify: `src-tauri/src/ai_runtime/environment.rs`
 
 - [ ] **Step 1: 删除 `to_system_prompt_fragment` 调用**
@@ -771,6 +783,7 @@ cargo check
 ## Task E3: ToolPolicy 逐轮缓存
 
 **Files:**
+
 - Modify: `src-tauri/src/ai_harness/harness/run.rs`
 
 - [ ] **Step 1: 在 harness 循环开始处缓存**
@@ -817,6 +830,7 @@ fn policy_cache_consistent_with_individual_eval() {
 ## Task E4: SQLite spawn_blocking
 
 **Files:**
+
 - Modify: `src-tauri/src/ai_runtime/tool_dispatch.rs`
 
 - [ ] **Step 1: 包裹 DB 调用**
@@ -866,6 +880,7 @@ cargo test tool_dispatch
 ## Task E5: 并行工具执行
 
 **Files:**
+
 - Modify: `src-tauri/src/ai_harness/harness/run.rs`
 
 - [ ] **Step 1: 分流只读工具**
@@ -919,6 +934,7 @@ cargo test run_harness
 ## Task E6: Fastembed 预热
 
 **Files:**
+
 - Modify: `src-tauri/src/app.rs`（`AppState::new` 或 setup 逻辑中）
 
 - [ ] **Step 1: 添加快捷预热调用**
@@ -942,6 +958,7 @@ cargo check
 ## Task E7: 场景预算翻倍
 
 **Files:**
+
 - Modify: `src-tauri/src/ai_types/mod.rs`（`resolve_scene`）
 
 - [ ] **Step 1: 修改四组数值**

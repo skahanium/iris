@@ -4,7 +4,11 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { getActiveAiScene } from "@/hooks/useConnectivityStatus";
-import { skillsList, type SkillListEntryDto } from "@/lib/ipc";
+import {
+  listenSkillsChanged,
+  skillsList,
+  type SkillListEntryDto,
+} from "@/lib/ipc";
 import { cn } from "@/lib/utils";
 import type { AiScene } from "@/types/ai";
 
@@ -90,12 +94,10 @@ export function AgentStatusBadge({
 
   useEffect(() => {
     let unlisten: (() => void) | undefined;
-    void import("@tauri-apps/api/event").then(({ listen }) => {
-      listen("skills:changed", () => {
-        void loadSkills();
-      }).then((fn) => {
-        unlisten = fn;
-      });
+    void listenSkillsChanged(() => {
+      void loadSkills();
+    }).then((fn) => {
+      unlisten = fn;
     });
     return () => {
       unlisten?.();

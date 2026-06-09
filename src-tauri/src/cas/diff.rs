@@ -1,25 +1,24 @@
 /// Simple line-based LCS diff for version delta storage.
-/// Format: `<hunk count>\n<old_start> <old_len> <new_start> <new_len>\n-old_line\n+new_line\n context\n`
+/// Format: `@<old_start> <old_len> <new_len>\n<inserted_line>\n...`
 use crate::error::{AppError, AppResult};
 
-/// Compute a unified-style diff between two texts.
+/// Compute a compact line-based diff between two texts.
 /// Returns None if the diff is not smaller than storing the full text.
 pub fn compute_diff(old: &str, new: &str) -> Option<String> {
+    if old == new {
+        return None;
+    }
+
     let old_lines: Vec<&str> = old.lines().collect();
     let new_lines: Vec<&str> = new.lines().collect();
-
-    // Simple Myers-like diff using LCS
     let lcs = longest_common_subsequence(&old_lines, &new_lines);
     if lcs.is_empty() && !old.is_empty() && !new.is_empty() {
-        // No common lines — just store full content
         return None;
     }
 
     let hunks = build_hunks(&old_lines, &new_lines, &lcs);
     let diff = format_diff(&hunks);
-
-    // Only use diff if it saves space (at least 30% smaller)
-    if diff.len() < new.len() * 7 / 10 {
+    if diff.len() < new.len() || new.is_empty() {
         Some(diff)
     } else {
         None
@@ -29,30 +28,49 @@ pub fn compute_diff(old: &str, new: &str) -> Option<String> {
 /// Apply a diff to reconstruct the new text from the old text.
 pub fn apply_diff(old: &str, diff: &str) -> AppResult<String> {
     let old_lines: Vec<&str> = old.lines().collect();
-    let mut result: Vec<&str> = Vec::new();
+    let mut result: Vec<String> = Vec::new();
     let mut old_idx: usize = 0;
-    let lines = diff.lines().peekable();
+    let mut lines = diff.lines();
 
-    for line in lines {
-        if line.starts_with(' ') {
-            // Context line — must match old
-            if old_idx < old_lines.len() && &line[1..] == old_lines[old_idx] {
-                result.push(old_lines[old_idx]);
-                old_idx += 1;
-            }
-        } else if line.starts_with('-') {
-            // Deleted line — advance old pointer
+    while let Some(line) = lines.next() {
+        let header = line
+            .strip_prefix('@')
+            .ok_or_else(|| AppError::msg(format!("invalid diff line: {}", line)))?;
+        let mut parts = header.split_whitespace();
+        let old_start = parse_hunk_usize(parts.next(), "old_start")?;
+        let old_len = parse_hunk_usize(parts.next(), "old_len")?;
+        let new_len = parse_hunk_usize(parts.next(), "new_len")?;
+        if parts.next().is_some() {
+            return Err(AppError::msg(format!("invalid diff header: {}", line)));
+        }
+
+        if old_start < old_idx || old_start > old_lines.len() {
+            return Err(AppError::msg(format!(
+                "invalid diff old_start: {}",
+                old_start
+            )));
+        }
+
+        while old_idx < old_start {
+            result.push(old_lines[old_idx].to_string());
             old_idx += 1;
-        } else if line.starts_with('+') {
-            result.push(line.strip_prefix('+').unwrap_or(line));
-        } else if !line.is_empty() {
-            return Err(AppError::msg(format!("invalid diff line: {}", line)));
+        }
+
+        if old_idx + old_len > old_lines.len() {
+            return Err(AppError::msg(format!("invalid diff old_len: {}", old_len)));
+        }
+        old_idx += old_len;
+
+        for _ in 0..new_len {
+            let inserted = lines
+                .next()
+                .ok_or_else(|| AppError::msg("diff ended before inserted lines"))?;
+            result.push(inserted.to_string());
         }
     }
 
-    // Append remaining old lines
     while old_idx < old_lines.len() {
-        result.push(old_lines[old_idx]);
+        result.push(old_lines[old_idx].to_string());
         old_idx += 1;
     }
 
@@ -61,18 +79,9 @@ pub fn apply_diff(old: &str, diff: &str) -> AppResult<String> {
 
 #[derive(Debug, Clone)]
 struct Hunk {
-    _old_start: usize,
-    _old_len: usize,
-    _new_start: usize,
-    _new_len: usize,
-    edits: Vec<Edit>,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-enum Edit {
-    Context(String),
-    Delete(String),
-    Insert(String),
+    old_start: usize,
+    old_len: usize,
+    inserted: Vec<String>,
 }
 
 fn longest_common_subsequence<'a>(a: &[&'a str], b: &[&'a str]) -> Vec<(usize, usize)> {
@@ -81,8 +90,8 @@ fn longest_common_subsequence<'a>(a: &[&'a str], b: &[&'a str]) -> Vec<(usize, u
     if m == 0 || n == 0 {
         return vec![];
     }
-    // Use simple dynamic programming for small diffs
-    let max_size = m.min(n).min(500); // Cap to avoid O(n²) explosion
+
+    let max_size = m.min(n).min(500);
     let mut dp = vec![vec![0u16; n + 1]; m + 1];
     for i in 1..=m {
         for j in 1..=n {
@@ -93,7 +102,7 @@ fn longest_common_subsequence<'a>(a: &[&'a str], b: &[&'a str]) -> Vec<(usize, u
             }
         }
     }
-    // Backtrack
+
     let mut result = Vec::new();
     let (mut i, mut j) = (m, n);
     while i > 0 && j > 0 {
@@ -116,105 +125,55 @@ fn longest_common_subsequence<'a>(a: &[&'a str], b: &[&'a str]) -> Vec<(usize, u
 
 fn build_hunks(old: &[&str], new: &[&str], lcs: &[(usize, usize)]) -> Vec<Hunk> {
     let mut hunks: Vec<Hunk> = Vec::new();
-    let mut li = 0usize; // lcs index
-    let mut oi = 0usize; // old index
-    let mut ni = 0usize; // new index
+    let mut oi = 0usize;
+    let mut ni = 0usize;
 
-    while oi < old.len() || ni < new.len() {
-        // Find next match
-        let next_match = if li < lcs.len() { Some(lcs[li]) } else { None };
-
-        let (om, nm) = next_match.unwrap_or((old.len(), new.len()));
-
+    for &(om, nm) in lcs {
         if oi < om || ni < nm {
-            let mut edits = Vec::new();
-            // Context before the change
-            let ctx_start = oi.min(ni);
-            let ctx_end = ctx_start + (om - oi).min(nm - ni);
-            for k in ctx_start..ctx_end {
-                if k < old.len() && k < new.len() && old[k] == new[k] {
-                    edits.push(Edit::Context(old[k].to_string()));
-                    oi = k + 1;
-                    ni = k + 1;
-                }
-            }
-            // Deletions
-            while oi < om {
-                edits.push(Edit::Delete(old[oi].to_string()));
-                oi += 1;
-            }
-            // Insertions
-            while ni < nm {
-                edits.push(Edit::Insert(new[ni].to_string()));
-                ni += 1;
-            }
-            if !edits.is_empty() {
-                let (old_len, new_len) = count_edit_lines(&edits);
-                hunks.push(Hunk {
-                    _old_start: oi.saturating_sub(count_deletes(&edits)),
-                    _old_len: old_len,
-                    _new_start: ni.saturating_sub(count_inserts(&edits)),
-                    _new_len: new_len,
-                    edits,
-                });
-            }
+            hunks.push(Hunk {
+                old_start: oi,
+                old_len: om - oi,
+                inserted: new[ni..nm].iter().map(|line| (*line).to_string()).collect(),
+            });
         }
 
-        // Add the matching line
-        if next_match.is_some() {
-            if oi < old.len() {
-                if let Some(h) = hunks.last_mut() { h.edits.push(Edit::Context(old[oi].to_string())); }
-            }
-            oi = om + 1;
-            ni = nm + 1;
-            li += 1;
-        } else {
-            break;
-        }
+        oi = om + 1;
+        ni = nm + 1;
+    }
+
+    if oi < old.len() || ni < new.len() {
+        hunks.push(Hunk {
+            old_start: oi,
+            old_len: old.len() - oi,
+            inserted: new[ni..].iter().map(|line| (*line).to_string()).collect(),
+        });
     }
 
     hunks
 }
 
-fn count_deletes(edits: &[Edit]) -> usize {
-    edits.iter().filter(|e| matches!(e, Edit::Delete(_))).count()
-}
-
-fn count_inserts(edits: &[Edit]) -> usize {
-    edits.iter().filter(|e| matches!(e, Edit::Insert(_))).count()
-}
-
-fn count_edit_lines(edits: &[Edit]) -> (usize, usize) {
-    let dels = edits.iter().filter(|e| matches!(e, Edit::Delete(_))).count();
-    let ins = edits.iter().filter(|e| matches!(e, Edit::Insert(_))).count();
-    let ctx = edits.iter().filter(|e| matches!(e, Edit::Context(_))).count();
-    (dels + ctx, ins + ctx)
-}
-
 fn format_diff(hunks: &[Hunk]) -> String {
     let mut out = String::new();
     for h in hunks {
-        for edit in &h.edits {
-            match edit {
-                Edit::Context(s) => {
-                    out.push(' ');
-                    out.push_str(s);
-                    out.push('\n');
-                }
-                Edit::Delete(s) => {
-                    out.push('-');
-                    out.push_str(s);
-                    out.push('\n');
-                }
-                Edit::Insert(s) => {
-                    out.push('+');
-                    out.push_str(s);
-                    out.push('\n');
-                }
-            }
+        out.push_str(&format!(
+            "@{} {} {}\n",
+            h.old_start,
+            h.old_len,
+            h.inserted.len()
+        ));
+        for line in &h.inserted {
+            out.push_str(line);
+            out.push('\n');
         }
     }
     out
+}
+
+fn parse_hunk_usize(value: Option<&str>, name: &str) -> AppResult<usize> {
+    value
+        .ok_or_else(|| AppError::msg(format!("missing diff header field: {}", name)))?
+        .parse::<usize>()
+        .map_err(|_| AppError::msg(format!("invalid diff header field: {}", name)))
 }
 
 #[cfg(test)]

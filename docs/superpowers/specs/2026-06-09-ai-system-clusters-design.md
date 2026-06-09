@@ -133,11 +133,11 @@ harness 循环开始处调用 `compute_available_tools` 一次，同轮后续 O(
 
 **改动文件**：`src-tauri/src/ai_types/mod.rs`（`resolve_scene`）
 
-| 场景 | 默认 | 上限 |
-|---|---|---|
-| KnowledgeLookup | 100,000 | 240,000 |
-| ExemplarLearning | 120,000 | 320,000 |
-| DraftingAssist | 160,000 | 320,000 |
+| 场景              | 默认    | 上限    |
+| ----------------- | ------- | ------- |
+| KnowledgeLookup   | 100,000 | 240,000 |
+| ExemplarLearning  | 120,000 | 320,000 |
+| DraftingAssist    | 160,000 | 320,000 |
 | ResearchSynthesis | 200,000 | 480,000 |
 
 ---

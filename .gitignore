@@ -16,6 +16,10 @@ src-tauri/WixTools/
 src-tauri/icons-staging/
 src-tauri/icons-fresh/
 
+# Exported/vault HTML can contain user document content; never commit it.
+src-tauri/*.html
+src-tauri/**/*.html
+
 # ONNX / embedding model cache (fastembed; any cwd)
 .fastembed_cache/
 **/.fastembed_cache/

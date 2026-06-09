@@ -73,6 +73,50 @@ describe("editorDocToMarkdown (prosemirror-markdown hot path)", () => {
     }
   });
 
+  it("serializes ordinary nested lists without Turndown fallback or stderr", () => {
+    const turndownSpy = vi.spyOn(markdownLib, "editorBodyHtmlToMarkdown");
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    const editor = createProductionEditorFromIngestedBody(
+      ["- one", "  - two", "- three", "", "1. first", "   1. second"].join(
+        "\n",
+      ),
+    );
+    try {
+      const md = pmSerializeBody(editor);
+      expect(md).toContain("- one");
+      expect(md).toContain("two");
+      expect(md).toContain("1. first");
+      expect(md).toContain("second");
+      expect(turndownSpy).not.toHaveBeenCalled();
+      expect(errorSpy).not.toHaveBeenCalled();
+    } finally {
+      editor.destroy();
+    }
+  });
+
+  it("serializes unresolved AI stream nodes without persisting suggestions or stderr", () => {
+    const turndownSpy = vi.spyOn(markdownLib, "editorBodyHtmlToMarkdown");
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    const editor = createProductionEditorFromBody("Original paragraph.");
+    try {
+      editor.commands.insertAiStreamAtCursor({
+        originalText: "Original paragraph.",
+        action: "rewrite",
+      });
+      editor.commands.updateAiStream("Temporary rewrite");
+
+      const md = pmSerializeBody(editor);
+      expect(md).toContain("Original paragraph.");
+      expect(md).not.toContain("Temporary rewrite");
+      expect(turndownSpy).not.toHaveBeenCalled();
+      expect(errorSpy).not.toHaveBeenCalled();
+    } finally {
+      editor.destroy();
+    }
+  });
+
   it("round-trips images via PM serializer", () => {
     const turndownSpy = vi.spyOn(markdownLib, "editorBodyHtmlToMarkdown");
 
@@ -161,11 +205,13 @@ describe("editorDocToMarkdown (prosemirror-markdown hot path)", () => {
     const turndown = vi
       .spyOn(markdownLib, "editorBodyHtmlToMarkdown")
       .mockReturnValue("turndown-body");
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 
     const editor = createProductionEditorFromBody("Fallback path.");
     try {
       expect(pmSerializeBody(editor)).toBe("turndown-body");
       expect(turndown).toHaveBeenCalled();
+      expect(errorSpy).not.toHaveBeenCalled();
     } finally {
       serializeSpy.mockRestore();
       editor.destroy();

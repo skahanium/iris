@@ -1,11 +1,11 @@
-﻿//! Research Workflow 鈥?L3 limited agentic loop engine.
+﻿//! Research Workflow — L3 limited agentic loop engine.
 //!
 //! The only scene that allows multi-round tool-calling loops.
 //! Follows the pipeline:
-//!   topic 鈫?sub-proposition decomposition 鈫?per-proposition retrieval 鈫?
-//!   evidence matrix 鈫?gap identification 鈫?summary output
+//!   topic → sub-proposition decomposition → per-proposition retrieval →
+//!   evidence matrix → gap identification → summary output
 //!
-//! Constraints (搂11.4):
+//! Constraints (§11.4):
 //! - max_agentic_rounds = 4 (default)
 //! - max_tool_calls_per_round = 6
 //! - web research uses the global bottom-bar toggle (injected context, not a tool)
@@ -23,6 +23,7 @@ use crate::ai_runtime::{
     scene_router::resolve_scene,
     session::SessionManager,
     tool_executor::{ToolRegistry, ToolSurfaceFilter},
+    tool_policy::ToolPolicyContext,
     AiScene, AutonomyLevel, ContextPacket, ResearchProgress, ResearchTaskState, TrustLevel,
 };
 use crate::error::{AppError, AppResult};
@@ -30,7 +31,7 @@ use crate::storage::db::Database;
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter};
 
-// 鈹€鈹€鈹€ Research Types 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+// ─── Research Types ──────────────────────────────────────
 
 /// A sub-proposition extracted from the research topic.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -41,7 +42,7 @@ pub struct SubProposition {
     pub gaps: Vec<String>,
 }
 
-/// Evidence matrix: propositions 脳 evidence sources.
+/// Evidence matrix: propositions × evidence sources.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EvidenceMatrix {
     pub topic: String,
@@ -127,7 +128,7 @@ impl Default for ResearchConfig {
     }
 }
 
-// 鈹€鈹€鈹€ Research Workflow Engine 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+// ─── Research Workflow Engine ────────────────────────────
 
 /// Execute the research workflow as an L3 agentic loop.
 ///
@@ -159,7 +160,7 @@ pub async fn execute_research(
     let mut rounds: Vec<ResearchRound> = Vec::new();
     let mut total_usage = TokenUsage::default();
 
-    // 鈹€鈹€ Phase 1: Sub-proposition decomposition 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+    // ── Phase 1: Sub-proposition decomposition ──────────
     let sub_propositions = decompose_topic(
         app_handle,
         request_id,
@@ -169,7 +170,7 @@ pub async fn execute_research(
     )
     .await?;
 
-    // 鈹€鈹€ Phase 2: Agentic retrieval loop (LLM-driven tool calling) 鈹€鈹€
+    // ── Phase 2: Agentic retrieval loop (LLM-driven tool calling) ──
     let mut accumulated_evidence: Vec<ContextPacket> = Vec::new();
     if config.web_research_authorized {
         push_topic_web_evidence(db, topic, &mut accumulated_evidence).await;
@@ -207,27 +208,27 @@ pub async fn execute_research(
             .join("\n");
 
         let prompt = format!(
-            r#"浣犳槸鐮旂┒鍔╃悊锛屾鍦ㄨ繘琛岀 {round_num} 杞绱紙鍏?{} 杞級銆?
+            r#"你是研究助理，正在进行第 {round_num} 轮检索（共 {} 轮）。
 
-鐮旂┒涓婚: {topic}
+研究主题: {topic}
 
-瀛愬懡棰?
+子命题:
 {propositions_desc}
 
-宸叉敹闆嗚瘉鎹憳瑕?
+已收集证据摘要:
 {evidence_summary}
 
-璇蜂娇鐢ㄥ彲鐢ㄥ伐鍏风户缁绱㈣瘉鎹€傚鏋滆瘉鎹凡鍏呭垎锛岀洿鎺ヨ緭鍑?"EVIDENCE_SUFFICIENT"銆?
-姣忚疆鏈€澶氳皟鐢?{} 涓伐鍏枫€?#,
+请使用可用工具继续检索证据。如果证据已充分，直接输出 "EVIDENCE_SUFFICIENT"。
+每轮最多调用 {} 个工具。"#,
             config.max_rounds, config.max_tools_per_round
         );
 
         let messages = vec![LlmMessage {
             role: MessageRole::User,
             content: prompt,
+            reasoning_content: None,
             tool_call_id: None,
             tool_calls: None,
-            ..Default::default()
         }];
 
         let request = GatewayRequest {
@@ -290,10 +291,20 @@ pub async fn execute_research(
                 break;
             }
 
-            // Check tool permission
             let policy_ctx = ToolPolicyContext {
-                scene: AiScene::ResearchSynthesis, autonomy_level: AutonomyLevel::L3, web_search_enabled: true, skill_allowed_tools: vec![], depth: 0, };
-            if registry.check_tool_policy(&tool_call.function.name, &policy_ctx).is_err() { continue; }
+                scene: AiScene::ResearchSynthesis,
+                autonomy_level: AutonomyLevel::L3,
+                web_search_enabled: config.web_research_authorized,
+                skill_allowed_tools: vec![],
+                depth: 0,
+            };
+            if registry
+                .check_tool_policy(&tool_call.function.name, &policy_ctx)
+                .is_err()
+            {
+                continue;
+            }
+
             let new_packets =
                 execute_tool_call(db, app_handle, &provider_config, tool_call, &config)
                     .await
@@ -340,10 +351,10 @@ pub async fn execute_research(
         }
     }
 
-    // 鈹€鈹€ Phase 3: Build evidence matrix 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+    // ── Phase 3: Build evidence matrix ──────────────────
     let evidence_matrix = build_evidence_matrix(topic, &sub_propositions, &accumulated_evidence);
 
-    // 鈹€鈹€ Phase 4: Argument chain detection 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+    // ── Phase 4: Argument chain detection ───────────────
     let argument_chain = detect_argument_chains(
         app_handle,
         request_id,
@@ -353,7 +364,7 @@ pub async fn execute_research(
     )
     .await?;
 
-    // 鈹€鈹€ Phase 5: Synthesize final summary 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+    // ── Phase 5: Synthesize final summary ───────────────
     let summary = synthesize_summary(
         app_handle,
         request_id,
@@ -379,7 +390,7 @@ pub async fn execute_research(
     })
 }
 
-// 鈹€鈹€鈹€ Agentic Loop Helpers 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+// ─── Agentic Loop Helpers ────────────────────────────────
 
 /// Build LLM tool definitions for the research agentic loop (read-only auto tools only).
 fn build_research_tool_defs(registry: &ToolRegistry, web_search_enabled: bool) -> Vec<LlmToolDef> {
@@ -411,13 +422,13 @@ async fn push_topic_web_evidence(db: &Database, topic: &str, accumulated: &mut V
 /// Format accumulated evidence into a concise summary for the LLM.
 fn format_evidence_summary(packets: &[ContextPacket]) -> String {
     if packets.is_empty() {
-        return "鏆傛棤宸叉敹闆嗚瘉鎹€?.to_string();
+        return "暂无已收集证据。".to_string();
     }
 
     let mut summary = String::new();
     for (i, p) in packets.iter().take(20).enumerate() {
         summary.push_str(&format!(
-            "{}. [{}] {} 鈥?{}\n",
+            "{}. [{}] {} — {}\n",
             i + 1,
             p.citation_label,
             p.title,
@@ -425,7 +436,7 @@ fn format_evidence_summary(packets: &[ContextPacket]) -> String {
         ));
     }
     if packets.len() > 20 {
-        summary.push_str(&format!("... 鍏?{} 鏉¤瘉鎹甛n", packets.len()));
+        summary.push_str(&format!("... 共 {} 条证据\n", packets.len()));
     }
     summary
 }
@@ -435,7 +446,7 @@ fn truncate_str(s: &str, max_chars: usize) -> String {
     if s.chars().count() <= max_chars {
         s.to_string()
     } else {
-        format!("{}鈥?, s.chars().take(max_chars).collect::<String>())
+        format!("{}…", s.chars().take(max_chars).collect::<String>())
     }
 }
 
@@ -476,7 +487,7 @@ async fn execute_tool_call(
         "get_regulation" => {
             let reg_name = args["regulation_name"].as_str().unwrap_or("");
             let article = args["article"].as_str().unwrap_or("");
-            let query = format!("銆妠reg_name}銆媨article}");
+            let query = format!("《{reg_name}》{article}");
             db.with_conn(|conn| {
                 let request = crate::ai_runtime::retrieval_broker::RetrievalRequest {
                     scope: crate::ai_runtime::retrieval_scope::RetrievalScope::default(),
@@ -503,7 +514,7 @@ async fn execute_tool_call(
     }
 }
 
-// 鈹€鈹€鈹€ Sub-proposition Decomposition 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+// ─── Sub-proposition Decomposition ───────────────────────
 
 async fn decompose_topic(
     app_handle: &AppHandle,
@@ -513,23 +524,23 @@ async fn decompose_topic(
     usage: &mut TokenUsage,
 ) -> AppResult<Vec<SubProposition>> {
     let prompt = format!(
-        r#"浣犳槸涓€涓鏈爺绌跺姪鐞嗐€傝灏嗕互涓嬬爺绌朵富棰樺垎瑙ｄ负 3-7 涓瓙鍛介锛屾瘡涓瓙鍛介搴斿綋锛?
-1. 鍙互鐙珛妫€绱㈣瘉鎹?
-2. 涓庝富棰樻湁鏄庣‘鐨勯€昏緫鍏崇郴
-3. 浜掔浉涔嬮棿鏈夊尯鍒嗗害
+        r#"你是一个学术研究助理。请将以下研究主题分解为 3-7 个子命题，每个子命题应当：
+1. 可以独立检索证据
+2. 与主题有明确的逻辑关系
+3. 互相之间有区分度
 
-鐮旂┒涓婚: {topic}
+研究主题: {topic}
 
-璇蜂互 JSON 鏁扮粍鏍煎紡杩斿洖瀛愬懡棰橈紝姣忎釜鍏冪礌鍖呭惈 "id"(濡?"P1") 鍜?"statement"(瀛愬懡棰橀檲杩?銆?
-鍙繑鍥?JSON锛屼笉瑕佸叾浠栨枃瀛椼€?#
+请以 JSON 数组格式返回子命题，每个元素包含 "id"(如 "P1") 和 "statement"(子命题陈述)。
+只返回 JSON，不要其他文字。"#
     );
 
     let messages = vec![LlmMessage {
         role: MessageRole::User,
         content: prompt,
+        reasoning_content: None,
         tool_call_id: None,
         tool_calls: None,
-        ..Default::default()
     }];
 
     let request = GatewayRequest {
@@ -582,7 +593,7 @@ fn parse_sub_propositions(json_str: &str) -> AppResult<Vec<SubProposition>> {
         .collect())
 }
 
-// 鈹€鈹€鈹€ Evidence Matrix 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+// ─── Evidence Matrix ─────────────────────────────────────
 
 fn build_evidence_matrix(
     topic: &str,
@@ -601,7 +612,7 @@ fn build_evidence_matrix(
                 // Simple relevance: check if any key terms appear in the excerpt
                 let prop_terms: Vec<&str> = prop
                     .statement
-                    .split(|c: char| c.is_whitespace() || c == '锛? || c == '銆?)
+                    .split(|c: char| c.is_whitespace() || c == '，' || c == '。')
                     .filter(|s| s.len() >= 2)
                     .collect();
                 prop_terms
@@ -612,7 +623,7 @@ fn build_evidence_matrix(
             .collect();
 
         let gaps = if evidence.is_empty() {
-            vec![format!("瀛愬懡棰樸€寋}銆嶇己灏戠洿鎺ヨ瘉鎹?, prop.statement)]
+            vec![format!("子命题「{}」缺少直接证据", prop.statement)]
         } else {
             // Check for trust level gaps
             let has_user_note = evidence
@@ -624,10 +635,10 @@ fn build_evidence_matrix(
 
             let mut gaps = Vec::new();
             if !has_user_note {
-                gaps.push("缂哄皯鐢ㄦ埛绗旇鏀拺".to_string());
+                gaps.push("缺少用户笔记支撑".to_string());
             }
             if !has_regulation {
-                gaps.push("缂哄皯娉曡鏉℃寮曠敤".to_string());
+                gaps.push("缺少法规条款引用".to_string());
             }
             gaps
         };
@@ -664,7 +675,7 @@ fn build_evidence_matrix(
     }
 }
 
-// 鈹€鈹€鈹€ Argument Chain Detection 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+// ─── Argument Chain Detection ────────────────────────────
 
 async fn detect_argument_chains(
     app_handle: &AppHandle,
@@ -688,7 +699,7 @@ async fn detect_argument_chains(
             let evidence_summary: Vec<String> =
                 p.evidence.iter().take(3).map(|e| e.title.clone()).collect();
             format!(
-                "- {}: {} (璇佹嵁: {})",
+                "- {}: {} (证据: {})",
                 p.id,
                 p.statement,
                 evidence_summary.join(", ")
@@ -698,26 +709,26 @@ async fn detect_argument_chains(
         .join("\n");
 
     let prompt = format!(
-        r#"鍒嗘瀽浠ヤ笅瀛愬懡棰樹箣闂寸殑璁鸿瘉鍏崇郴銆傚姣忓鐩稿叧鍛介锛屽垽鏂叧绯荤被鍨嬪苟璇勪及寮哄害銆?
+        r#"分析以下子命题之间的论证关系。对每对相关命题，判断关系类型并评估强度。
 
-瀛愬懡棰?
+子命题:
 {propositions_desc}
 
-璇蜂互 JSON 鏁扮粍鏍煎紡杩斿洖璁鸿瘉閾炬帴锛屾瘡涓厓绱犲寘鍚?
-- "from": 婧愬懡棰?ID
-- "to": 鐩爣鍛介 ID
+请以 JSON 数组格式返回论证链接，每个元素包含:
+- "from": 源命题 ID
+- "to": 目标命题 ID
 - "link_type": "supports" | "contradicts" | "prerequisite" | "consequence" | "parallel"
-- "strength": 0.0-1.0 鐨勬诞鐐规暟
+- "strength": 0.0-1.0 的浮点数
 
-鍙繑鍥炵浉鍏崇殑閾炬帴锛坰trength > 0.3锛夛紝鍙繑鍥?JSON锛屼笉瑕佸叾浠栨枃瀛椼€?#
+只返回相关的链接（strength > 0.3），只返回 JSON，不要其他文字。"#
     );
 
     let messages = vec![LlmMessage {
         role: MessageRole::User,
         content: prompt,
+        reasoning_content: None,
         tool_call_id: None,
         tool_calls: None,
-        ..Default::default()
     }];
 
     let request = GatewayRequest {
@@ -793,7 +804,7 @@ fn parse_argument_chain(json_str: &str) -> AppResult<ArgumentChain> {
     })
 }
 
-// 鈹€鈹€鈹€ Summary Synthesis 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+// ─── Summary Synthesis ───────────────────────────────────
 
 async fn synthesize_summary(
     app_handle: &AppHandle,
@@ -814,16 +825,16 @@ async fn synthesize_summary(
                 .map(|e| format!("[{}] {}", e.citation_label, e.title))
                 .collect();
             format!(
-                "## {} {}\n璇佹嵁: {}\n缂哄彛: {}",
+                "## {} {}\n证据: {}\n缺口: {}",
                 p.id,
                 p.statement,
                 if evidence_citations.is_empty() {
-                    "鏃?.to_string()
+                    "无".to_string()
                 } else {
                     evidence_citations.join("; ")
                 },
                 if p.gaps.is_empty() {
-                    "鏃?.to_string()
+                    "无".to_string()
                 } else {
                     p.gaps.join("; ")
                 }
@@ -837,36 +848,36 @@ async fn synthesize_summary(
             .links
             .iter()
             .filter(|l| matches!(l.link_type, ArgumentLinkType::Contradicts))
-            .map(|l| format!("{} 涓?{} 鐭涚浘", l.from_proposition_id, l.to_proposition_id))
+            .map(|l| format!("{} 与 {} 矛盾", l.from_proposition_id, l.to_proposition_id))
             .collect();
-        format!("\n\n## 娉ㄦ剰锛氬瓨鍦ㄧ煕鐩綷n{}", contradictions.join("\n"))
+        format!("\n\n## 注意：存在矛盾\n{}", contradictions.join("\n"))
     } else {
         String::new()
     };
 
     let prompt = format!(
-        r#"鍩轰簬浠ヤ笅鐮旂┒鍒嗘瀽锛屾挵鍐欎竴浠界粨鏋勫寲鐨勭爺绌剁患杩般€?
+        r#"基于以下研究分析，撰写一份结构化的研究综述。
 
-# 鐮旂┒涓婚
+# 研究主题
 {topic}
 
-# 瀛愬懡棰樹笌璇佹嵁
+# 子命题与证据
 {propositions_text}
 {contradictions_text}
 
-璇锋挵鍐欑患杩帮紝瑕佹眰锛?
-1. 寮曠敤璇佹嵁鏃朵娇鐢?[citation_label] 鏍煎紡
-2. 鎸囧嚭璇佹嵁缂哄彛
-3. 濡傛灉瀛樺湪鐭涚浘锛屾槑纭寚鍑?
-4. 鎬荤粨涓昏鍙戠幇鍜屽缓璁殑鍚庣画鐮旂┒鏂瑰悜"#
+请撰写综述，要求：
+1. 引用证据时使用 [citation_label] 格式
+2. 指出证据缺口
+3. 如果存在矛盾，明确指出
+4. 总结主要发现和建议的后续研究方向"#
     );
 
     let messages = vec![LlmMessage {
         role: MessageRole::User,
         content: prompt,
+        reasoning_content: None,
         tool_call_id: None,
         tool_calls: None,
-        ..Default::default()
     }];
 
     let request = GatewayRequest {
@@ -887,10 +898,10 @@ async fn synthesize_summary(
 
     Ok(response
         .content
-        .unwrap_or_else(|| "鏃犳硶鐢熸垚缁艰堪".to_string()))
+        .unwrap_or_else(|| "无法生成综述".to_string()))
 }
 
-// 鈹€鈹€鈹€ Helpers 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+// ─── Helpers ─────────────────────────────────────────────
 
 fn accumulate_usage(total: &mut TokenUsage, addition: &TokenUsage) {
     total.prompt_tokens += addition.prompt_tokens;
@@ -898,7 +909,7 @@ fn accumulate_usage(total: &mut TokenUsage, addition: &TokenUsage) {
     total.total_tokens += addition.total_tokens;
 }
 
-// 鈹€鈹€鈹€ Tests 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+// ─── Tests ───────────────────────────────────────────────
 
 #[cfg(test)]
 mod tests {
@@ -907,8 +918,8 @@ mod tests {
     #[test]
     fn parse_sub_propositions_valid_json() {
         let json = r#"[
-            {"id": "P1", "statement": "缁勭粐绾緥鐨勬牳蹇冭姹?},
-            {"id": "P2", "statement": "杩濆弽缁勭粐绾緥鐨勫父瑙佹儏褰?}
+            {"id": "P1", "statement": "组织纪律的核心要求"},
+            {"id": "P2", "statement": "违反组织纪律的常见情形"}
         ]"#;
         let props = parse_sub_propositions(json).unwrap();
         assert_eq!(props.len(), 2);
@@ -918,7 +929,7 @@ mod tests {
     #[test]
     fn parse_sub_propositions_with_code_block() {
         let json = r#"```json
-[{"id": "P1", "statement": "娴嬭瘯鍛介"}]
+[{"id": "P1", "statement": "测试命题"}]
 ```"#;
         let props = parse_sub_propositions(json).unwrap();
         assert_eq!(props.len(), 1);
@@ -936,13 +947,13 @@ mod tests {
         let props = vec![
             SubProposition {
                 id: "P1".into(),
-                statement: "缁勭粐绾緥".into(),
+                statement: "组织纪律".into(),
                 evidence: vec![],
                 gaps: vec![],
             },
             SubProposition {
                 id: "P2".into(),
-                statement: "寤夋磥绾緥".into(),
+                statement: "廉洁纪律".into(),
                 evidence: vec![],
                 gaps: vec![],
             },
@@ -951,11 +962,11 @@ mod tests {
             id: "pkt-1".into(),
             source_type: crate::ai_runtime::SourceType::Note,
             source_path: Some("test.md".into()),
-            title: "缁勭粐绾緥姒傝堪".into(),
+            title: "组织纪律概述".into(),
             heading_path: None,
             source_span: None,
             content_hash: "h1".into(),
-            excerpt: "缁勭粐绾緥鏄厷鐨勭邯寰嬬殑閲嶈缁勬垚閮ㄥ垎".into(),
+            excerpt: "组织纪律是党的纪律的重要组成部分".into(),
             retrieval_reason: "fts".into(),
             score: 0.9,
             trust_level: TrustLevel::UserNote,
@@ -966,7 +977,7 @@ mod tests {
 
         let matrix = build_evidence_matrix("test topic", &props, &packets);
         assert_eq!(matrix.propositions.len(), 2);
-        // P1 should match because "缁勭粐绾緥" appears in the packet
+        // P1 should match because "组织纪律" appears in the packet
         assert!(!matrix.propositions[0].evidence.is_empty());
     }
 

@@ -76,6 +76,18 @@ export interface FileChangedEvent {
   event_type: string;
 }
 
+export interface ClassifiedFileTakenEvent {
+  path: string;
+}
+
+export interface ToolConfirmRequestEvent {
+  request_id: string;
+  tool_call_id: string;
+  tool_name: string;
+  arguments: Record<string, string | number | boolean | null | undefined>;
+  preview?: Record<string, unknown>;
+}
+
 export interface LlmTokenEvent {
   request_id: string;
   token: string;

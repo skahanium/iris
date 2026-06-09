@@ -103,10 +103,12 @@ describe("classified vault phase 7", () => {
 
   it("App wires file lock state and classified panel", () => {
     const src = read("src/App.tsx");
+    const ipc = read("src/lib/ipc.ts");
     expect(src).toContain("fileSetLock");
     expect(src).toContain("ClassifiedPanel");
     expect(src).toContain("classifiedOpen");
-    expect(src).toContain("classified:file_taken");
+    expect(src).toContain("listenClassifiedFileTaken");
+    expect(ipc).toContain("classified:file_taken");
     expect(src).toContain("locked={");
     expect(src).toContain("setLocked={");
   });

@@ -213,7 +213,10 @@ fn bytes_to_f32(blob: &[u8]) -> Vec<f32> {
     // Quantized format: magic [0x51, 0x55] + scale (4 bytes) + i8 data
     if blob.len() >= 6 && blob[0] == 0x51 && blob[1] == 0x55 {
         let scale = f32::from_le_bytes([blob[2], blob[3], blob[4], blob[5]]);
-        blob[6..].iter().map(|&b| (b as i8) as f32 / scale).collect()
+        blob[6..]
+            .iter()
+            .map(|&b| (b as i8) as f32 / scale)
+            .collect()
     } else {
         blob.chunks_exact(4)
             .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))

@@ -269,7 +269,9 @@ pub(crate) fn read_version_content(
             let diff = state.cas_store()?.read_blob_content(diff_hash)?;
             return crate::cas::diff::apply_diff(&parent, &diff);
         }
-        return Err(AppError::msg(format!("invalid diff storage path: {storage_path}")));
+        return Err(AppError::msg(format!(
+            "invalid diff storage path: {storage_path}"
+        )));
     }
     // Full-content CAS: "cas:{hash}"
     if let Some(hash) = storage_path.strip_prefix(CAS_STORAGE_PREFIX) {
@@ -453,9 +455,9 @@ pub fn create_snapshot_outcome(
         );
         Ok(result.ok().map(|(p,)| p))
     })?;
-    let prev = prev_content.as_ref().and_then(|p| {
-        read_version_content(state, &state.vault_path().ok()?, p).ok()
-    });
+    let prev = prev_content
+        .as_ref()
+        .and_then(|p| read_version_content(state, &state.vault_path().ok()?, p).ok());
     let storage_path = write_version_blob(state, content, prev.as_deref())?;
 
     if let Some(cas_hash) = storage_path.strip_prefix(CAS_STORAGE_PREFIX) {

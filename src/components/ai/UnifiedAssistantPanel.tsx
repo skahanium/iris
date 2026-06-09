@@ -55,6 +55,7 @@ import {
   harnessResume,
   researchAbort,
   researchGenerateNote,
+  listenToolConfirmRequest,
   listenResearchProgress,
   toolConfirm as toolConfirmIpc,
 } from "@/lib/ipc";
@@ -313,29 +314,26 @@ export function UnifiedAssistantPanel({
   useEffect(() => {
     let unlisten: (() => void) | undefined;
 
-    import("@tauri-apps/api/event").then(({ listen }) => {
-      listen<ToolConfirmRequest>("ai:tool_confirm_request", (event) => {
-        const req = event.payload;
-        if (req.tool_name === "update_user_rule") {
-          const ruleType =
-            typeof req.arguments.rule_type === "string"
-              ? req.arguments.rule_type
-              : "custom_rules";
-          const ruleText =
-            typeof req.arguments.rule === "string"
-              ? req.arguments.rule
-              : JSON.stringify(req.arguments);
-          setRuleConfirmRequest({
-            rule: ruleText,
-            rule_type: ruleType,
-            source: "ai_detected",
-          });
-        } else {
-          setToolConfirmRequest(req);
-        }
-      }).then((fn) => {
-        unlisten = fn;
-      });
+    void listenToolConfirmRequest((req) => {
+      if (req.tool_name === "update_user_rule") {
+        const ruleType =
+          typeof req.arguments.rule_type === "string"
+            ? req.arguments.rule_type
+            : "custom_rules";
+        const ruleText =
+          typeof req.arguments.rule === "string"
+            ? req.arguments.rule
+            : JSON.stringify(req.arguments);
+        setRuleConfirmRequest({
+          rule: ruleText,
+          rule_type: ruleType,
+          source: "ai_detected",
+        });
+      } else {
+        setToolConfirmRequest(req);
+      }
+    }).then((fn) => {
+      unlisten = fn;
     });
 
     return () => {

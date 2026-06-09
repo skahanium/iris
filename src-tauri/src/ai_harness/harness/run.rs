@@ -47,7 +47,8 @@ pub async fn run_harness(
 ) -> AppResult<HarnessRunResult> {
     let profile = resolve_scene(input.scene);
     let registry = ToolRegistry::new();
-    let skill_allowed_tools = resolve_active_skill_allowed_tools(state, input.scene)?;
+    let skill_allowed_tools =
+        resolve_active_skill_allowed_tools(state, input.scene, &input.user_message)?;
     let policy_ctx = ToolPolicyContext {
         scene: input.scene,
         autonomy_level: profile.autonomy_level,
@@ -64,6 +65,7 @@ pub async fn run_harness(
         input.note_path.as_deref(),
         input.note_title.as_deref(),
         input.selection_excerpt.as_deref(),
+        &input.user_message,
         &scene_tools,
     )?;
 
@@ -675,8 +677,12 @@ async fn pause_for_tool_confirmation(
             file_id,
             web_search_enabled: input.web_search_enabled,
             autonomy_level: crate::ai_runtime::resolve_scene(input.scene).autonomy_level,
-            skill_allowed_tools: resolve_active_skill_allowed_tools(state, input.scene)
-                .unwrap_or_default(),
+            skill_allowed_tools: resolve_active_skill_allowed_tools(
+                state,
+                input.scene,
+                &input.user_message,
+            )
+            .unwrap_or_default(),
         },
     );
     let mut confirm_request = serde_json::json!({
@@ -812,6 +818,7 @@ async fn run_subagent_harness(
         selection_excerpt: context_hint.or_else(|| parent.selection_excerpt.clone()),
         cold_start_packets: parent.cold_start_packets.clone(),
         web_search_enabled: parent.web_search_enabled,
+        user_message: task.clone(),
         history_messages: vec![("user".to_string(), task)],
         depth: parent.depth + 1,
         resume_from_checkpoint: false,

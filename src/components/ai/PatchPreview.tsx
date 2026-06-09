@@ -27,13 +27,20 @@ interface PatchPreviewProps {
 }
 
 export interface DiffViewProps {
-  beforeText: string; afterText: string;
+  beforeText: string;
+  afterText: string;
   patchType: "insert" | "replace";
   riskLevel: "low" | "medium" | "high";
   targetPath: string;
 }
 
-export function DiffView({ beforeText, afterText, patchType, riskLevel, targetPath }: DiffViewProps) {
+export function DiffView({
+  beforeText,
+  afterText,
+  patchType,
+  riskLevel,
+  targetPath,
+}: DiffViewProps) {
   const [showFullDiff, setShowFullDiff] = useState(false);
   const riskStyle = RISK_STYLES[riskLevel] ?? RISK_STYLES.low!;
   const beforeLines = beforeText.split("\n");
@@ -43,23 +50,55 @@ export function DiffView({ beforeText, afterText, patchType, riskLevel, targetPa
   return (
     <div className="space-y-2">
       <div className="flex items-center justify-between text-xs text-muted-foreground">
-        <span>{targetPath} {patchType === "insert" ? "(插入)" : "(替换)"}</span>
-        <Badge variant="outline" className={cn("text-xs", riskStyle.className)}>{riskStyle.label}</Badge>
+        <span>
+          {targetPath} {patchType === "insert" ? "(插入)" : "(替换)"}
+        </span>
+        <Badge variant="outline" className={cn("text-xs", riskStyle.className)}>
+          {riskStyle.label}
+        </Badge>
       </div>
       <div className="overflow-hidden rounded-md border border-border/60">
         <div className="max-h-[200px] overflow-auto font-mono text-xs">
           <div className="border-b border-border/40">
             <div className="bg-red-500/5 px-3 py-1 text-red-600">- 原文</div>
-            {beforeLines.slice(0, displayLines).map((line, i) => (<div key={i} className="px-3 py-0.5 text-red-600/80"><span className="mr-2 select-none text-red-400">-</span>{line || " "}</div>))}
-            {!showFullDiff && beforeLines.length > displayLines && (<div className="px-3 py-0.5 text-muted-foreground">... 还有 {beforeLines.length - displayLines} 行</div>)}
+            {beforeLines.slice(0, displayLines).map((line, i) => (
+              <div key={i} className="px-3 py-0.5 text-red-600/80">
+                <span className="mr-2 select-none text-red-400">-</span>
+                {line || " "}
+              </div>
+            ))}
+            {!showFullDiff && beforeLines.length > displayLines && (
+              <div className="px-3 py-0.5 text-muted-foreground">
+                ... 还有 {beforeLines.length - displayLines} 行
+              </div>
+            )}
           </div>
           <div>
-            <div className="bg-green-500/5 px-3 py-1 text-green-600">+ 改后</div>
-            {afterLines.slice(0, displayLines).map((line, i) => (<div key={i} className="px-3 py-0.5 text-green-600/80"><span className="mr-2 select-none text-green-400">+</span>{line || " "}</div>))}
-            {!showFullDiff && afterLines.length > displayLines && (<div className="px-3 py-0.5 text-muted-foreground">... 还有 {afterLines.length - displayLines} 行</div>)}
+            <div className="bg-green-500/5 px-3 py-1 text-green-600">
+              + 改后
+            </div>
+            {afterLines.slice(0, displayLines).map((line, i) => (
+              <div key={i} className="px-3 py-0.5 text-green-600/80">
+                <span className="mr-2 select-none text-green-400">+</span>
+                {line || " "}
+              </div>
+            ))}
+            {!showFullDiff && afterLines.length > displayLines && (
+              <div className="px-3 py-0.5 text-muted-foreground">
+                ... 还有 {afterLines.length - displayLines} 行
+              </div>
+            )}
           </div>
         </div>
-        {maxLines > 5 && (<button type="button" className="w-full border-t border-border/40 bg-muted/30 px-3 py-1 text-xs" onClick={() => setShowFullDiff(!showFullDiff)}>{showFullDiff ? "收起" : "展开全部 " + maxLines + " 行"}</button>)}
+        {maxLines > 5 && (
+          <button
+            type="button"
+            className="w-full border-t border-border/40 bg-muted/30 px-3 py-1 text-xs"
+            onClick={() => setShowFullDiff(!showFullDiff)}
+          >
+            {showFullDiff ? "收起" : "展开全部 " + maxLines + " 行"}
+          </button>
+        )}
       </div>
     </div>
   );

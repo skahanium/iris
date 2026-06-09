@@ -180,7 +180,14 @@ impl AppState {
     /// Get CAS store via the storage sub-state.
     pub fn cas_store(&self) -> AppResult<&CasObjectStore> {
         let vault = self.vault_path()?;
-        tokio::spawn(async { let _ = crate::embedding::engine::embed_text("warmup"); });
+        static EMBEDDING_WARMUP_STARTED: OnceLock<()> = OnceLock::new();
+        if let Ok(handle) = tokio::runtime::Handle::try_current() {
+            if EMBEDDING_WARMUP_STARTED.set(()).is_ok() {
+                handle.spawn(async {
+                    let _ = crate::embedding::engine::embed_text("warmup");
+                });
+            }
+        }
         Ok(self.storage.cas_store(&vault))
     }
 

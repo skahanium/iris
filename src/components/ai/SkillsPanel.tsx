@@ -19,6 +19,7 @@ import { invokeErrorMessage } from "@/lib/credentials";
 import {
   skillsInstall,
   skillsList,
+  listenSkillsChanged,
   skillsMigrateLegacy,
   skillsRead,
   skillsToggle,
@@ -75,12 +76,10 @@ export function SkillsPanel({
 
   useEffect(() => {
     let unlisten: (() => void) | undefined;
-    void import("@tauri-apps/api/event").then(({ listen }) => {
-      listen("skills:changed", () => {
-        void refresh();
-      }).then((fn) => {
-        unlisten = fn;
-      });
+    void listenSkillsChanged(() => {
+      void refresh();
+    }).then((fn) => {
+      unlisten = fn;
     });
     return () => {
       unlisten?.();

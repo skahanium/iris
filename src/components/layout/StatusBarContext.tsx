@@ -21,7 +21,9 @@ export function StatusBarProvider({ children }: { children: ReactNode }) {
   // Debounce editor stats so rapid keystrokes don't trigger a context update.
   const editorStatsRef = useRef(editorStats);
   editorStatsRef.current = editorStats;
-  const editorStatsTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const editorStatsTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null,
+  );
 
   const updateEditorStats = useMemo(
     () => (stats: { characterCount: number; readingMinutes: number }) => {
@@ -56,8 +58,15 @@ export function StatusBarProvider({ children }: { children: ReactNode }) {
       setUndoRedo,
     }),
     [
-      aiStatus, assistantChrome, editorStats, updateEditorStats,
-      canUndo, canRedo, setUndoRedo, setAiStatus, setAssistantChrome,
+      aiStatus,
+      assistantChrome,
+      editorStats,
+      updateEditorStats,
+      canUndo,
+      canRedo,
+      setUndoRedo,
+      setAiStatus,
+      setAssistantChrome,
     ],
   );
 

@@ -8,9 +8,8 @@ use crate::app::AppState;
 use crate::error::{AppError, AppResult};
 use crate::indexer::frontmatter::resolve_display_title;
 use crate::indexer::scan::{
-    collect_vault_folders, content_hash, index_file_from_content,
-    index_file_with_embed, index_vault_incremental,
-    rename_file_index, FileEntry,
+    collect_vault_folders, content_hash, index_file_from_content, index_file_with_embed,
+    index_vault_incremental, rename_file_index, FileEntry,
 };
 use crate::recycle::{discard_document, trash_document};
 use base64::engine::general_purpose::STANDARD;
@@ -412,9 +411,9 @@ pub async fn folder_rename(
         for abs in &vault_files {
             if let Ok(rel) = crate::storage::paths::relative_path(&vault, abs) {
                 if crate::storage::paths::is_user_note_path(&rel) {
-                    let _ = state
-                        .db
-                        .with_conn(|conn| crate::indexer::scan::index_file_with_embed(conn, &vault, abs, Some(&state)));
+                    let _ = state.db.with_conn(|conn| {
+                        crate::indexer::scan::index_file_with_embed(conn, &vault, abs, Some(&state))
+                    });
                 }
             }
         }
@@ -889,14 +888,20 @@ pub fn vault_set(app: AppHandle, state: State<'_, Arc<AppState>>, path: String) 
             if let Ok(rel) = crate::storage::paths::relative_path(&vault, abs) {
                 if crate::storage::paths::is_user_note_path(&rel) {
                     let _ = state.db.with_conn(|conn| {
-                        crate::indexer::scan::index_file_with_embed(conn, &vault, abs, Some(state.inner()))
+                        crate::indexer::scan::index_file_with_embed(
+                            conn,
+                            &vault,
+                            abs,
+                            Some(state.inner()),
+                        )
                     });
                 }
             }
         }
-        if let Err(e) = state.db.with_conn(|conn| {
-            crate::indexer::scan::prune_stale_file_indexes(conn, &vault)
-        }) {
+        if let Err(e) = state
+            .db
+            .with_conn(|conn| crate::indexer::scan::prune_stale_file_indexes(conn, &vault))
+        {
             tracing::warn!("vault_set: initial index skipped: {e}");
         }
     }

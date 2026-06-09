@@ -76,6 +76,7 @@ import {
   fileRead,
   fileSetLock,
   fileWrite,
+  listenClassifiedFileTaken,
   listenFileChanged,
   listenVersionSaveComplete,
   settingsGet,
@@ -491,17 +492,15 @@ function App() {
   useEffect(() => {
     if (!isTauriRuntime()) return;
     let unlisten: (() => void) | undefined;
-    void import("@tauri-apps/api/event").then(({ listen }) =>
-      listen<{ path: string }>("classified:file_taken", (event) => {
-        const path = event.payload.path;
-        if (tabsRef.current.some((tab) => tab.path === path)) {
-          void closeTab(path);
-        }
-        bumpVaultIndex();
-      }).then((fn) => {
-        unlisten = fn;
-      }),
-    );
+    void listenClassifiedFileTaken((event) => {
+      const path = event.path;
+      if (tabsRef.current.some((tab) => tab.path === path)) {
+        void closeTab(path);
+      }
+      bumpVaultIndex();
+    }).then((fn) => {
+      unlisten = fn;
+    });
     return () => {
       unlisten?.();
     };
@@ -1065,7 +1064,7 @@ function App() {
                   key={activePath}
                   initialBodyMarkdown={editorBodyMarkdown}
                   contentCacheKey={activePath}
-                                  reingestKey={editorContentTick}
+                  reingestKey={editorContentTick}
                   reloadContentTick={editorContentTick}
                   zen={zen}
                   zoom={editorZoom}
