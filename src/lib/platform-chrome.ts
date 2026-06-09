@@ -1,6 +1,6 @@
 import { isTauriRuntime } from "@/lib/tauri-runtime";
 
-/** macOS 桌面 Tauri（Overlay 标题栏 + 系统交通灯） */
+/** macOS 桌面 Tauri（Overlay 标题栏 + Iris Rail 自定义窗口控件） */
 export function isMacOSDesktopChrome(): boolean {
   return isTauriRuntime() && /Mac/i.test(navigator.userAgent);
 }

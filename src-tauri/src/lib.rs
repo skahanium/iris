@@ -14,8 +14,6 @@ pub mod error;
 pub mod indexer;
 pub mod knowledge;
 mod llm;
-#[cfg(target_os = "macos")]
-mod macos_traffic_lights;
 mod network;
 pub mod recycle;
 mod scheduler;
@@ -70,12 +68,10 @@ pub fn run() {
                     let _ = window.set_theme(Some(Theme::Dark));
                 }
                 window_chrome::apply_main_window_chrome(&window);
-                #[cfg(target_os = "macos")]
-                window_chrome::attach_macos_traffic_light_listeners(&window);
                 window
                     .show()
                     .map_err(|e| crate::error::AppError::msg(format!("无法显示主窗口: {e}")))?;
-                // macOS：show / 全屏还原后系统可能重置交通灯，再应用一次
+                // macOS：show 后再应用一次圆角/标题，确保无边框壳层稳定。
                 #[cfg(target_os = "macos")]
                 window_chrome::apply_main_window_chrome(&window);
                 let _ = window.set_focus();

@@ -2,7 +2,11 @@ import { useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { IrisOverlay } from "@/components/ui/iris-overlay";
-import { Input } from "@/components/ui/input";
+import { Kbd, OverlayFooterHints } from "@/components/ui/kbd";
+import {
+  OverlayChrome,
+  OverlaySearchHeader,
+} from "@/components/ui/overlay-chrome";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { searchKeyword, searchSemantic } from "@/lib/ipc";
 import type { KeywordHit, SemanticHit } from "@/types/ipc";
@@ -43,80 +47,106 @@ export function SearchPanel({ open, onClose, onOpen }: SearchPanelProps) {
   };
 
   return (
-    <IrisOverlay open={open} onClose={onClose} title="全库搜索" size="command">
-      <div className="task-overlay-filter space-y-2 border-b border-border/60 bg-surface-inset/30 px-4 py-3">
-        <Input
-          placeholder="输入关键词或自然语言…"
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && void runSearch()}
-        />
-        <div className="flex gap-2">
-          <Button
-            type="button"
-            size="sm"
-            variant={mode === "keyword" ? "default" : "outline"}
-            onClick={() => setMode("keyword")}
-          >
-            关键词
-          </Button>
-          <Button
-            type="button"
-            size="sm"
-            variant={mode === "semantic" ? "default" : "outline"}
-            onClick={() => setMode("semantic")}
-          >
-            语义
-          </Button>
-          <Button
-            type="button"
-            size="sm"
-            disabled={loading}
-            onClick={() => void runSearch()}
-          >
-            {loading ? "搜索中…" : "搜索"}
-          </Button>
-        </div>
-        {error && <p className="text-xs text-destructive">{error}</p>}
-      </div>
-      <ScrollArea className="task-overlay-results min-h-0 flex-1 px-2">
-        {keywordHits.map((h) => (
-          <button
-            key={h.path}
-            type="button"
-            className="mb-2 w-full rounded border border-border/50 p-2 text-left text-sm hover:bg-muted"
-            onClick={() => {
-              onOpen(h.path);
-              onClose();
-            }}
-          >
-            <div className="font-medium">{h.title}</div>
-            <div className="text-xs text-muted-foreground">{h.path}</div>
-            <div className="mt-1 line-clamp-3 text-xs text-muted-foreground">
-              {h.snippet.replace(/<[^>]+>/g, "")}
+    <IrisOverlay
+      open={open}
+      onClose={onClose}
+      title="全库搜索"
+      size="command"
+      showTitleBar={false}
+      bodyClassName="overflow-hidden"
+    >
+      <OverlayChrome
+        header={
+          <>
+            <OverlaySearchHeader
+              placeholder="输入关键词或自然语言…"
+              value={query}
+              inputAriaLabel="全库搜索"
+              onChange={setQuery}
+              onKeyDown={(e) => e.key === "Enter" && void runSearch()}
+              onClose={onClose}
+            />
+            <div className="task-overlay-filter flex flex-wrap items-center gap-2 px-3 py-2">
+              <Button
+                type="button"
+                size="sm"
+                variant={mode === "keyword" ? "default" : "outline"}
+                onClick={() => setMode("keyword")}
+              >
+                关键词
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant={mode === "semantic" ? "default" : "outline"}
+                onClick={() => setMode("semantic")}
+              >
+                语义
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                disabled={loading}
+                onClick={() => void runSearch()}
+              >
+                {loading ? "搜索中…" : "搜索"}
+              </Button>
+              {error ? (
+                <p className="text-xs text-destructive">{error}</p>
+              ) : null}
             </div>
-          </button>
-        ))}
-        {semanticHits.map((h) => (
-          <button
-            key={`${h.path}-${h.chunk_id}`}
-            type="button"
-            className="mb-2 w-full rounded border border-border/50 p-2 text-left text-sm hover:bg-muted"
-            onClick={() => {
-              onOpen(h.path);
-              onClose();
-            }}
-          >
-            <div className="font-medium">
-              {h.title}{" "}
-              <span className="text-primary">
-                {(h.score * 100).toFixed(0)}%
-              </span>
-            </div>
-            <div className="text-xs text-muted-foreground">{h.snippet}</div>
-          </button>
-        ))}
-      </ScrollArea>
+          </>
+        }
+        footer={
+          <OverlayFooterHints
+            left={
+              <>
+                <Kbd active>Enter</Kbd> 搜索
+              </>
+            }
+            right={<Kbd>Esc</Kbd>}
+          />
+        }
+      >
+        <ScrollArea className="task-overlay-results min-h-0 flex-1 px-2 py-2">
+          {keywordHits.map((h) => (
+            <button
+              key={h.path}
+              type="button"
+              className="mb-2 w-full rounded-md border border-border/50 p-2 text-left text-sm transition-colors duration-base ease-iris-out hover:bg-surface-inset/80"
+              onClick={() => {
+                onOpen(h.path);
+                onClose();
+              }}
+            >
+              <div className="font-medium">{h.title}</div>
+              <div className="text-xs text-muted-foreground">{h.path}</div>
+              <div className="mt-1 line-clamp-3 text-xs text-muted-foreground">
+                {h.snippet.replace(/<[^>]+>/g, "")}
+              </div>
+            </button>
+          ))}
+          {semanticHits.map((h) => (
+            <button
+              key={`${h.path}-${h.chunk_id}`}
+              type="button"
+              className="mb-2 w-full rounded-md border border-border/50 p-2 text-left text-sm transition-colors duration-base ease-iris-out hover:bg-surface-inset/80"
+              onClick={() => {
+                onOpen(h.path);
+                onClose();
+              }}
+            >
+              <div className="font-medium">
+                {h.title}{" "}
+                <span className="text-knowledge-foreground">
+                  {(h.score * 100).toFixed(0)}%
+                </span>
+              </div>
+              <div className="text-xs text-muted-foreground">{h.snippet}</div>
+            </button>
+          ))}
+        </ScrollArea>
+      </OverlayChrome>
     </IrisOverlay>
   );
 }

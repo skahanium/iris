@@ -3,7 +3,6 @@
 use serde::{Deserialize, Serialize};
 
 use crate::ai_types::{resolve_scene, slot_for_scene, AiScene, ProviderConfig};
-use crate::credentials;
 use crate::error::{AppError, AppResult};
 use crate::llm::model_catalog::{fallback_model, find_model};
 use crate::llm::providers::{api_base, credential_service};
@@ -341,7 +340,7 @@ pub fn resolve_for_scene(db: &Database, scene: AiScene) -> AppResult<ResolvedLlm
     let custom_base = provider_override.and_then(|p| p.base_url.as_deref());
     let base_url = api_base(&route.provider_id, custom_base);
 
-    let api_key = credentials::get_secret(&credential_service(&route.provider_id)).ok();
+    let api_key = optional_secret(&credential_service(&route.provider_id));
 
     let model_spec = find_model(&route.model).unwrap_or_else(|| fallback_model(&route.provider_id));
     let thinking =
@@ -394,7 +393,7 @@ pub fn resolve_for_provider(
     let provider_override = routing.providers.get(provider_id);
     let custom_base = provider_override.and_then(|p| p.base_url.as_deref());
     let base_url = api_base(provider_id, custom_base);
-    let api_key = credentials::get_secret(&credential_service(provider_id)).ok();
+    let api_key = optional_secret(&credential_service(provider_id));
     let model_spec = find_model(&model_id).unwrap_or_else(|| fallback_model(provider_id));
 
     Ok(ResolvedLlmConfig {
@@ -428,6 +427,26 @@ fn default_strategy_for_scene(scene: AiScene) -> ContextStrategy {
     }
 }
 
+#[cfg(not(test))]
+fn optional_secret(service: &str) -> Option<String> {
+    crate::credentials::get_secret(service).ok()
+}
+
+#[cfg(test)]
+fn optional_secret(_service: &str) -> Option<String> {
+    None
+}
+
+#[cfg(not(test))]
+fn optional_secret_exists(service: &str) -> bool {
+    crate::credentials::has_secret(service)
+}
+
+#[cfg(test)]
+fn optional_secret_exists(_service: &str) -> bool {
+    false
+}
+
 pub fn connectivity_status(
     db: &Database,
     active_scene: AiScene,
@@ -449,8 +468,7 @@ pub fn connectivity_status(
         _ => format!("{} / {}", resolved.provider_id, resolved.model),
     };
 
-    let minimax_configured =
-        credentials::has_secret(crate::credentials::MINIMAX_CREDENTIAL_SERVICE);
+    let minimax_configured = optional_secret_exists(crate::credentials::MINIMAX_CREDENTIAL_SERVICE);
     let prefs = crate::llm::web_search_config::load(db)?;
     let effective_backend =
         crate::llm::search_web::expected_search_backend_for_connectivity(&prefs)

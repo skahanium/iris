@@ -203,7 +203,7 @@ git commit -m "feat(ui): 添加 Iris Rail 语义 token"
 Append to `tests/iris-rail-refresh-contract.test.ts`:
 
 ```ts
-it("defines persistent brand rail, Home view, and Rail Segments tabs", () => {
+it("defines persistent brand rail as the only Home entry plus Rail Segments tabs", () => {
   const titleBar = read("src/components/layout/DesktopTitleBar.tsx");
   const app = read("src/App.tsx");
   const welcome = read("src/components/layout/WelcomeEmpty.tsx");
@@ -212,9 +212,11 @@ it("defines persistent brand rail, Home view, and Rail Segments tabs", () => {
 
   expect(titleBar).toContain('data-testid="iris-brand-rail"');
   expect(titleBar).toContain('data-testid="rail-segment-tab"');
-  expect(titleBar).toContain('data-testid="home-segment"');
+  expect(titleBar).not.toContain('data-testid="home-segment"');
+  expect(titleBar).not.toContain("iris-home-segment");
   expect(titleBar).toContain("onHome");
   expect(titleBar).toContain("isHomeActive");
+  expect(titleBar).toContain("iris-brand-rail--active");
   expect(app).toContain("homeActive");
   expect(welcome).toContain('data-testid="home-workbench"');
   expect(platform).toContain("showCustomWindowControls");
@@ -317,19 +319,9 @@ Render brand rail as a button:
 </button>
 ```
 
-Render Home segment when active:
-
-```tsx
-{
-  isHomeActive ? (
-    <div data-testid="home-segment" className="iris-home-segment">
-      Home
-    </div>
-  ) : null;
-}
-```
-
-Add `data-testid="rail-segment-tab"` to each tab button.
+Do not render a separate Home segment. `iris-brand-rail` is the only Home
+entry and carries `iris-brand-rail--active` / `aria-current` when Home is
+active. Add `data-testid="rail-segment-tab"` to each document tab button.
 
 - [ ] **Step 7: Add Rail Segment CSS**
 
@@ -353,11 +345,6 @@ In `src/styles/globals.css`, add component classes:
 .iris-rail-tab--active {
   background: hsl(var(--surface-inset) / 0.72);
   box-shadow: inset 0 -1.5px 0 0 hsl(var(--iris-rail-active));
-}
-
-.iris-home-segment {
-  border-radius: var(--radius-md);
-  color: hsl(var(--knowledge-accent-foreground));
 }
 ```
 

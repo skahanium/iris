@@ -1141,7 +1141,7 @@ export async function inboxCounts(): Promise<{
   return invoke("inbox_counts");
 }
 
-/** 桌面顶栏与交通灯留白（逻辑像素），与 Rust `chrome_metrics` 一致 */
+/** 桌面顶栏指标（逻辑像素），与 Rust `chrome_metrics` 一致 */
 export interface DesktopChromeMetrics {
   titlebarHeightLogical: number;
   trafficInsetLogical: number;
@@ -1158,7 +1158,7 @@ export async function getDesktopChromeMetrics(): Promise<DesktopChromeMetrics> {
   return invoke<DesktopChromeMetrics>("get_desktop_chrome_metrics");
 }
 
-/** macOS：全屏/缩放后重新应用交通灯位置与窗口标题 */
+/** 重新应用无边框窗口标题与平台圆角 */
 export async function reapplyWindowChrome(): Promise<void> {
   return invoke("reapply_window_chrome");
 }

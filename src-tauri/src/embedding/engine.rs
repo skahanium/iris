@@ -17,21 +17,24 @@ const MAX_COSINE_FALLBACK_CHUNKS: i64 = 8_000;
 ///
 /// OnceLock ensures only the first caller pays the model-load cost;
 /// all subsequent calls get a shared reference with zero contention.
-static EMBEDDER: OnceLock<TextEmbedding> = OnceLock::new();
+static EMBEDDER: OnceLock<Result<TextEmbedding, String>> = OnceLock::new();
 
 /// Return a shared reference to the global embedding model.
 /// On first call, loads the model (blocks calling thread briefly).
 /// Subsequent calls return immediately with zero contention.
-fn get_embedder() -> &'static TextEmbedding {
-    EMBEDDER.get_or_init(|| {
-        TextEmbedding::try_new(InitOptions::new(EmbeddingModel::AllMiniLML6V2))
-            .expect("Failed to load embedding model")
-    })
+fn get_embedder() -> AppResult<&'static TextEmbedding> {
+    EMBEDDER
+        .get_or_init(|| {
+            TextEmbedding::try_new(InitOptions::new(EmbeddingModel::AllMiniLML6V2))
+                .map_err(|e| e.to_string())
+        })
+        .as_ref()
+        .map_err(|e| AppError::Embed(format!("Failed to load embedding model: {e}")))
 }
 
 /// Generate embedding vector for text.
 pub fn embed_text(text: &str) -> AppResult<Vec<f32>> {
-    let model = get_embedder();
+    let model = get_embedder()?;
     model
         .embed(vec![text], None)
         .map_err(|e| AppError::Embed(e.to_string()))?
@@ -45,7 +48,7 @@ pub fn embed_texts_batch(texts: &[&str]) -> AppResult<Vec<Vec<f32>>> {
     if texts.is_empty() {
         return Ok(Vec::new());
     }
-    let model = get_embedder();
+    let model = get_embedder()?;
     model
         .embed(texts.to_vec(), None)
         .map_err(|e| AppError::Embed(e.to_string()))

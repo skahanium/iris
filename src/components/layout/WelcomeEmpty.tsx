@@ -1,9 +1,20 @@
-import { Trash2 } from "lucide-react";
+import {
+  Bot,
+  Database,
+  FilePlus2,
+  FolderSearch,
+  HardDrive,
+  Search,
+  Sparkles,
+  Trash2,
+  Wifi,
+} from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 
 import { IrisMark } from "@/components/brand/IrisMark";
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/common/ConfirmDialog";
+import { useConnectivityStatus } from "@/hooks/useConnectivityStatus";
 import { displayTitleForFileListItem } from "@/lib/note-display";
 import { fileDelete, fileList } from "@/lib/ipc";
 import type { FileListItem } from "@/types/ipc";
@@ -28,6 +39,19 @@ function dedupeByPath(files: FileListItem[]): FileListItem[] {
   return [...byPath.values()];
 }
 
+function formatUpdatedAt(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return "最近更新";
+  }
+  return new Intl.DateTimeFormat("zh-CN", {
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(date);
+}
+
 export function WelcomeEmpty({
   vaultKey,
   onOpen,
@@ -37,10 +61,16 @@ export function WelcomeEmpty({
   onAiSystemCenter,
 }: WelcomeEmptyProps) {
   const [recent, setRecent] = useState<FileListItem[]>([]);
+  const [indexedCount, setIndexedCount] = useState(0);
   const [deleteTarget, setDeleteTarget] = useState<FileListItem | null>(null);
+  const { status } = useConnectivityStatus();
 
   const loadRecent = useCallback(() => {
-    void fileList().then((files) => setRecent(dedupeByPath(files).slice(0, 5)));
+    void fileList().then((files) => {
+      const deduped = dedupeByPath(files);
+      setIndexedCount(deduped.length);
+      setRecent(deduped.slice(0, 5));
+    });
   }, []);
 
   useEffect(() => {
@@ -50,72 +80,152 @@ export function WelcomeEmpty({
   return (
     <div
       data-testid="home-workbench"
-      className="flex flex-1 flex-col items-center justify-center gap-8 bg-background px-6 py-12"
+      className="flex flex-1 items-center justify-center bg-background px-6 py-10"
     >
-      <div className="w-full max-w-md rounded-xl border border-border/80 bg-surface-elevated px-8 py-10 text-center shadow-floating">
-        <div className="mb-6 flex justify-center">
-          <IrisMark size={56} title="Iris" />
-        </div>
-        <div className="flex flex-wrap items-center justify-center gap-2">
-          <Button
-            type="button"
-            className="min-w-[6.5rem]"
-            onClick={() => {
-              void (async () => {
-                await onNew();
-                loadRecent();
-              })();
-            }}
-          >
-            新建笔记
-          </Button>
-          {onQuickOpen ? (
-            <Button type="button" variant="outline" onClick={onQuickOpen}>
-              快速打开
+      <div className="home-workbench-grid grid w-full max-w-5xl grid-cols-1 gap-10 lg:grid-cols-[minmax(18rem,0.88fr)_minmax(25rem,1.42fr)]">
+        <section className="flex min-w-0 flex-col justify-between border-r-0 border-border/70 pr-0 lg:border-r lg:pr-8">
+          <div>
+            <IrisMark size={56} title="Iris" />
+            <h1 className="mt-5 text-2xl font-semibold tracking-normal text-foreground">
+              Iris
+            </h1>
+            <p className="mt-2 max-w-sm text-sm leading-6 text-muted-foreground">
+              本地优先的知识工作台，把写作、检索与 AI 协作收束到一个安静起点。
+            </p>
+          </div>
+          <div className="mt-8 grid gap-2">
+            <Button
+              type="button"
+              className="h-11 justify-start gap-2"
+              onClick={() => {
+                void (async () => {
+                  await onNew();
+                  loadRecent();
+                })();
+              }}
+            >
+              <FilePlus2 className="h-4 w-4" />
+              新建笔记
             </Button>
-          ) : null}
-          {onSearch ? (
-            <Button type="button" variant="outline" onClick={onSearch}>
-              全库搜索
-            </Button>
-          ) : null}
-          {onAiSystemCenter ? (
-            <Button type="button" variant="outline" onClick={onAiSystemCenter}>
-              AI 系统中心
-            </Button>
-          ) : null}
-        </div>
-      </div>
-      {recent.length > 0 && (
-        <div className="w-full max-w-md rounded-lg border border-border/80 bg-surface-elevated p-3 shadow-sm">
-          <ul className="space-y-0.5">
-            {recent.map((f) => (
-              <li
-                key={f.path}
-                className="group flex items-center rounded-md transition-colors duration-base ease-iris-out hover:bg-surface-inset/80"
-              >
-                <button
-                  type="button"
-                  className="min-w-0 flex-1 truncate px-2 py-2 text-left text-sm text-foreground"
-                  onClick={() => onOpen(f.path)}
-                >
-                  {displayTitleForFileListItem(f)}
-                </button>
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-3 lg:grid-cols-1">
+              {onQuickOpen ? (
                 <Button
                   type="button"
-                  size="icon"
-                  variant="ghost"
-                  className="mr-0.5 h-8 w-8 shrink-0 text-muted-foreground opacity-0 transition-opacity hover:text-destructive focus-visible:opacity-100 group-hover:opacity-100"
-                  aria-label={`删除 ${displayTitleForFileListItem(f)}`}
-                  onClick={() => setDeleteTarget(f)}
+                  variant="outline"
+                  className="justify-start gap-2 border-border/70 bg-transparent"
+                  onClick={onQuickOpen}
                 >
-                  <Trash2 className="h-3.5 w-3.5" />
+                  <FolderSearch className="h-4 w-4" />
+                  快速打开
                 </Button>
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
+              ) : null}
+              {onSearch ? (
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="justify-start gap-2 border-border/70 bg-transparent"
+                  onClick={onSearch}
+                >
+                  <Search className="h-4 w-4" />
+                  全库搜索
+                </Button>
+              ) : null}
+              {onAiSystemCenter ? (
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="justify-start gap-2 border-border/70 bg-transparent"
+                  onClick={onAiSystemCenter}
+                >
+                  <Bot className="h-4 w-4" />
+                  AI 系统中心
+                </Button>
+              ) : null}
+            </div>
+          </div>
+        </section>
+
+        <section className="min-w-0">
+          <div className="mb-3 flex items-center justify-between border-b border-border/60 pb-2">
+            <div>
+              <h2 className="text-sm font-medium text-foreground">最近笔记</h2>
+              <p className="mt-1 text-xs text-muted-foreground">
+                从上一次中断的地方继续
+              </p>
+            </div>
+            <span className="text-xs tabular-nums text-muted-foreground">
+              {recent.length}
+            </span>
+          </div>
+          {recent.length > 0 ? (
+            <ul className="divide-y divide-border/50">
+              {recent.map((f) => (
+                <li
+                  key={f.path}
+                  className="group flex items-center transition-colors duration-base ease-iris-out hover:bg-surface-inset/60"
+                >
+                  <button
+                    type="button"
+                    className="min-w-0 flex-1 px-2 py-3 text-left"
+                    onClick={() => onOpen(f.path)}
+                  >
+                    <span className="block truncate text-sm text-foreground">
+                      {displayTitleForFileListItem(f)}
+                    </span>
+                    <span className="mt-1 block truncate text-xs text-muted-foreground">
+                      {formatUpdatedAt(f.updated_at)} · {f.path}
+                    </span>
+                  </button>
+                  <Button
+                    type="button"
+                    size="icon"
+                    variant="ghost"
+                    className="mr-1 h-8 w-8 shrink-0 text-muted-foreground opacity-0 transition-opacity hover:text-destructive focus-visible:opacity-100 group-hover:opacity-100"
+                    aria-label={`删除 ${displayTitleForFileListItem(f)}`}
+                    onClick={() => setDeleteTarget(f)}
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </Button>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <div className="border border-dashed border-border/70 px-4 py-8 text-sm text-muted-foreground">
+              暂无最近笔记。新建第一篇后，这里会成为你的继续工作入口。
+            </div>
+          )}
+
+          <div
+            data-testid="home-status-summary"
+            className="mt-6 grid grid-cols-2 gap-2 text-xs text-muted-foreground sm:grid-cols-4"
+          >
+            <div className="flex min-w-0 items-center gap-2 border-t border-border/50 pt-3">
+              <HardDrive className="h-3.5 w-3.5 shrink-0 text-knowledge-foreground" />
+              <span className="truncate">
+                {vaultKey ? "Vault 已连接" : "Vault 未选择"}
+              </span>
+            </div>
+            <div className="flex min-w-0 items-center gap-2 border-t border-border/50 pt-3">
+              <Database className="h-3.5 w-3.5 shrink-0 text-knowledge-foreground" />
+              <span className="truncate">{indexedCount} 篇已索引</span>
+            </div>
+            <div className="flex min-w-0 items-center gap-2 border-t border-border/50 pt-3">
+              <Sparkles className="h-3.5 w-3.5 shrink-0 text-knowledge-foreground" />
+              <span className="truncate">
+                {status?.llm.state === "ready" ? "LLM 可用" : "LLM 待配置"}
+              </span>
+            </div>
+            <div className="flex min-w-0 items-center gap-2 border-t border-border/50 pt-3">
+              <Wifi className="h-3.5 w-3.5 shrink-0 text-knowledge-foreground" />
+              <span className="truncate">
+                {status?.searchApi.effectiveBackend === "minimax"
+                  ? "MiniMax 检索"
+                  : "本地/备用检索"}
+              </span>
+            </div>
+          </div>
+        </section>
+      </div>
 
       <ConfirmDialog
         open={deleteTarget !== null}

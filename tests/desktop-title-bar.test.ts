@@ -26,12 +26,21 @@ describe("desktop title bar", () => {
     expect(chrome).toContain('MAIN_WINDOW_TITLE: &str = "Iris"');
     expect(chrome).toContain("set_title");
     expect(chrome).toContain("MAIN_WINDOW_TITLE");
-    expect(read("src-tauri/src/macos_traffic_lights.rs")).toContain(
-      "apply_traffic_light_position",
-    );
+    expect(chrome).toContain("set_decorations(false)");
     expect(read("src/hooks/useMacOSWindowChromeSync.ts")).toContain(
-      "reapplyWindowChrome",
+      "getDesktopChromeMetrics",
     );
+  });
+
+  it("macOS runtime does not re-enable native traffic lights when custom right controls are used", () => {
+    const chrome = read("src-tauri/src/window_chrome.rs");
+    const lib = read("src-tauri/src/lib.rs");
+    const syncHook = read("src/hooks/useMacOSWindowChromeSync.ts");
+
+    expect(chrome).not.toContain("set_decorations(true)");
+    expect(chrome).not.toContain("apply_traffic_light_position(window)");
+    expect(lib).not.toContain("attach_macos_traffic_light_listeners");
+    expect(syncHook).not.toContain("reapplyWindowChrome");
   });
 
   it("DesktopTitleBar is the single chrome component with platform-aware controls", () => {
@@ -50,6 +59,10 @@ describe("desktop title bar", () => {
 
     const controls = read("src/components/layout/WindowControls.tsx");
     expect(controls).toContain("iris-window-controls");
+    expect(controls).toContain("iris-traffic-light");
+    expect(controls).toContain("iris-traffic-light--close");
+    expect(controls).toContain("iris-traffic-light--minimize");
+    expect(controls).toContain("iris-traffic-light--maximize");
     expect(controls).toContain("stopPropagation");
     expect(bar).toContain("--window-controls-width");
     expect(bar).toContain("absolute inset-y-0 right-0");
@@ -61,13 +74,16 @@ describe("desktop title bar", () => {
     );
   });
 
-  it("defines titlebar CSS tokens and macOS traffic inset", () => {
+  it("defines titlebar CSS tokens without a macOS left traffic inset", () => {
     const css = read("src/styles/globals.css");
     expect(css).toContain("--titlebar-height");
     expect(css).toContain("--titlebar-traffic-inset");
     expect(css).toContain("data-iris-platform-macos");
     expect(css).toMatch(
-      /html\[data-iris-platform-macos\][\s\S]*--titlebar-height:\s*2rem/,
+      /html\[data-iris-platform-macos\][\s\S]*--titlebar-height:\s*2\.75rem/,
+    );
+    expect(css).toMatch(
+      /html\[data-iris-platform-macos\][\s\S]*--titlebar-traffic-inset:\s*0px/,
     );
   });
 
@@ -85,13 +101,16 @@ describe("desktop title bar", () => {
     expect(hook).toContain("irisWindowFullscreen");
     expect(hook).toContain("getDesktopChromeMetrics");
     expect(read("src/lib/ipc.ts")).toContain("get_desktop_chrome_metrics");
+    expect(hook).not.toContain("reapplyWindowChrome");
   });
 
   it("DesktopTitleBar exposes Iris Rail brand rail and segment tab hooks", () => {
     const bar = read("src/components/layout/DesktopTitleBar.tsx");
     expect(bar).toContain('data-testid="iris-brand-rail"');
     expect(bar).toContain('data-testid="rail-segment-tab"');
-    expect(bar).toContain('data-testid="home-segment"');
+    expect(bar).not.toContain('data-testid="home-segment"');
+    expect(bar).not.toContain("iris-home-segment");
+    expect(bar).toContain("iris-brand-rail--active");
     expect(bar).toContain("iris-rail-tab--active");
   });
 });

@@ -290,10 +290,14 @@ function App() {
     persistBeforeLeave: (path) => persistBeforeLeaveRef.current(path),
   });
 
-  const handleOpenNoteFromHome = useCallback(
-    (path: string) => {
+  const openNoteLeavingHome = useCallback(
+    (
+      path: string,
+      titleHint?: string,
+      options?: Parameters<typeof openNote>[2],
+    ) => {
       leaveHome();
-      void openNote(path);
+      void openNote(path, titleHint, options);
     },
     [leaveHome, openNote],
   );
@@ -598,8 +602,8 @@ function App() {
     if (!conflictState) return;
     setConflictState(null);
     // Re-open the note from disk to load external content
-    void openNote(conflictState.filePath);
-  }, [conflictState, openNote]);
+    openNoteLeavingHome(conflictState.filePath);
+  }, [conflictState, openNoteLeavingHome]);
 
   const handleConflictManualEdit = useCallback(() => {
     setConflictState(null);
@@ -1120,7 +1124,7 @@ function App() {
                   onInlineAiRetry={(ed) => void inlineAi.retry(ed)}
                   onInlineAiDismiss={(ed) => inlineAi.dismiss(ed)}
                   onInlineAiAccept={() => inlineAi.finish()}
-                  onOpenWikiLink={(title) => void openNote(`${title}.md`)}
+                  onOpenWikiLink={(title) => openNoteLeavingHome(`${title}.md`)}
                 />
                 <EditorOutline
                   editor={editorInstance}
@@ -1135,7 +1139,7 @@ function App() {
             ) : (
               <WelcomeEmpty
                 vaultKey={`${vaultPath ?? ""}:${vaultIndexEpoch}`}
-                onOpen={handleOpenNoteFromHome}
+                onOpen={openNoteLeavingHome}
                 onNew={handleNewNoteLeavingHome}
                 onQuickOpen={() => overlays.openOverlay("quickOpen")}
                 onSearch={() => overlays.openOverlay("search")}
@@ -1231,23 +1235,23 @@ function App() {
             <QuickOpen
               open={overlays.quickOpen}
               onClose={() => overlays.closeOverlay("quickOpen")}
-              onSelect={(p) => void openNote(p)}
+              onSelect={openNoteLeavingHome}
             />
             <VaultNavigator
               open={overlays.fileSheet}
               onClose={() => overlays.closeOverlay("fileSheet")}
-              onOpen={(p) => void openNote(p)}
+              onOpen={openNoteLeavingHome}
             />
             <RecycleBinSheet
               open={overlays.recycleBinOpen}
               onClose={() => overlays.closeOverlay("recycleBin")}
-              onRestored={(p) => void openNote(p)}
+              onRestored={openNoteLeavingHome}
               onIndexChange={bumpVaultIndex}
             />
             <SearchPanel
               open={overlays.searchOpen}
               onClose={() => overlays.closeOverlay("search")}
-              onOpen={(p) => void openNote(p)}
+              onOpen={openNoteLeavingHome}
             />
             <Suspense fallback={<LazyFallback />}>
               <SettingsPanel
@@ -1271,12 +1275,12 @@ function App() {
               open={overlays.backlinksOpen}
               onClose={() => overlays.closeOverlay("backlinks")}
               notePath={activePath}
-              onOpen={(p) => void openNote(p)}
+              onOpen={openNoteLeavingHome}
             />
             <TagView
               open={overlays.tagViewOpen}
               onClose={() => overlays.closeOverlay("tags")}
-              onOpen={(p) => void openNote(p)}
+              onOpen={openNoteLeavingHome}
             />
             <Suspense fallback={<LazyFallback />}>
               <VersionTimeline
@@ -1302,7 +1306,7 @@ function App() {
                 <GraphView
                   open={overlays.graphOpen}
                   onClose={() => overlays.closeOverlay("graph")}
-                  onOpenNote={(p) => void openNote(p)}
+                  onOpenNote={openNoteLeavingHome}
                 />
               </Suspense>
             </ErrorBoundary>
@@ -1323,7 +1327,7 @@ function App() {
               idleDeadline={classifiedIdleDeadline}
               openClassifiedPaths={openClassifiedPaths}
               onOpenFile={(path) =>
-                void openNote(path, undefined, { allowClassified: true })
+                openNoteLeavingHome(path, undefined, { allowClassified: true })
               }
               onUnlockSuccess={() => void onClassifiedUnlocked()}
               onRequestLock={() => requestClassifiedLock()}

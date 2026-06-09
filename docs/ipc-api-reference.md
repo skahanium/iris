@@ -1333,7 +1333,7 @@ pub fn get_desktop_chrome_metrics(
 ) -> DesktopChromeMetrics
 ```
 
-- **描述**：返回当前平台的顶栏高度与 macOS 交通灯区宽度，供前端写入 CSS 变量。`DesktopChromeMetrics { titlebar_height_logical, traffic_inset_logical, scale_factor }`。
+- **描述**：返回当前平台的顶栏高度与窗口控件预留指标，供前端写入 CSS 变量。Iris Rail 使用右侧自绘红黄绿窗口控件，因此 macOS `traffic_inset_logical` 为 `0`。`DesktopChromeMetrics { titlebar_height_logical, traffic_inset_logical, scale_factor }`。
 
 ### reapply_window_chrome
 
@@ -1343,7 +1343,7 @@ pub fn reapply_window_chrome(
 )
 ```
 
-- **描述**：前端在 resize / 全屏切换后调用，重新应用 macOS 交通灯位置与窗口标题。
+- **描述**：重新应用无边框窗口标题与平台圆角；当前前端不再为 macOS 交通灯重定位调用该接口。
 
 ### app_exit
 

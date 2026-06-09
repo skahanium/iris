@@ -1,13 +1,10 @@
 //! 无边框 / Overlay 主窗口在各平台的圆角与标题壳层。
 //!
 //! - **Windows 11**：`transparent: false` + `shadow: true` → DWM 原生圆角（勿与 transparent 同开）。
-//! - **macOS**：`titleBarStyle: Overlay` + `decorations: true`（交通灯）+ `hiddenTitle`；内部 title 设为 Iris。
+//! - **macOS**：`titleBarStyle: Overlay` + `decorations: false` + 前端右侧自定义窗口控件；内部 title 设为 Iris。
 //! - **Linux**：透明 WebView + 前端 CSS 裁切（尽力而为）。
 
 use tauri::WebviewWindow;
-
-#[cfg(target_os = "macos")]
-use tauri::WindowEvent;
 
 /// 主窗口对外显示名（任务切换器 / 内部 title）；禁止保留 Tauri 模板默认「Tauri App」。
 pub const MAIN_WINDOW_TITLE: &str = "Iris";
@@ -18,11 +15,8 @@ const WINDOW_CORNER_RADIUS: f64 = 12.0;
 
 /// 为主窗口应用平台圆角与标题；失败时仅记录日志，不阻断启动。
 pub fn apply_main_window_chrome(window: &WebviewWindow) {
-    #[cfg(target_os = "macos")]
-    {
-        if let Err(error) = window.set_decorations(true) {
-            tracing::warn!("macOS 窗口装饰未启用: {error}");
-        }
+    if let Err(error) = window.set_decorations(false) {
+        tracing::warn!("窗口装饰未关闭: {error}");
     }
 
     if let Err(error) = window.set_title(MAIN_WINDOW_TITLE) {
@@ -31,15 +25,7 @@ pub fn apply_main_window_chrome(window: &WebviewWindow) {
 
     #[cfg(target_os = "macos")]
     {
-        crate::macos_traffic_lights::apply_traffic_light_position(window);
         apply_macos_rounded_window(window);
-    }
-
-    #[cfg(not(target_os = "macos"))]
-    {
-        if let Err(error) = window.set_decorations(false) {
-            tracing::warn!("窗口装饰未关闭: {error}");
-        }
     }
 
     #[cfg(windows)]
@@ -48,25 +34,6 @@ pub fn apply_main_window_chrome(window: &WebviewWindow) {
             tracing::warn!("Windows 窗口阴影/圆角未生效: {error}");
         }
     }
-}
-
-/// 监听缩放/全屏还原等会重置交通灯的事件。
-#[cfg(target_os = "macos")]
-pub fn attach_macos_traffic_light_listeners(window: &WebviewWindow) {
-    let window_for_handler = window.clone();
-    window.on_window_event(move |event| {
-        let reapply = matches!(
-            event,
-            WindowEvent::Resized(_)
-                | WindowEvent::ScaleFactorChanged { .. }
-                | WindowEvent::ThemeChanged(_)
-                | WindowEvent::Focused(true)
-                | WindowEvent::Moved(_)
-        );
-        if reapply {
-            crate::macos_traffic_lights::apply_traffic_light_position(&window_for_handler);
-        }
-    });
 }
 
 #[cfg(target_os = "macos")]
@@ -99,26 +66,12 @@ mod tests {
 
     #[test]
     fn default_titlebar_height_matches_chrome_metrics() {
-        assert_eq!(crate::chrome_metrics::DEFAULT_TITLEBAR_HEIGHT, 40.0);
+        assert_eq!(crate::chrome_metrics::DEFAULT_TITLEBAR_HEIGHT, 44.0);
     }
 
     #[cfg(target_os = "macos")]
     #[test]
     fn macos_titlebar_height_matches_chrome_metrics() {
-        assert_eq!(crate::chrome_metrics::MACOS_TITLEBAR_HEIGHT, 32.0);
-    }
-
-    #[cfg(target_os = "macos")]
-    #[test]
-    fn traffic_light_constants_match_macos_config() {
-        assert_eq!(crate::macos_traffic_lights::TRAFFIC_LIGHT_X, 12.0);
-        assert_eq!(crate::macos_traffic_lights::TRAFFIC_LIGHT_Y, 10.0);
-        assert_eq!(
-            crate::macos_traffic_lights::TRAFFIC_LIGHT_Y,
-            crate::chrome_metrics::button_center_y_offset(
-                crate::chrome_metrics::MACOS_TRAFFIC_BUTTON_HEIGHT,
-                crate::chrome_metrics::MACOS_TITLEBAR_HEIGHT,
-            )
-        );
+        assert_eq!(crate::chrome_metrics::MACOS_TITLEBAR_HEIGHT, 44.0);
     }
 }

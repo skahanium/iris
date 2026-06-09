@@ -48,7 +48,7 @@ export const DesktopTitleBar = memo(function DesktopTitleBar({
   const isMacDesktop = isMacOSDesktopChrome();
   const isSplash = variant === "splash";
   const showTabStrip = !isSplash;
-  /** macOS 窗口模式：整行 items-center，与 32px 顶栏中线对齐 */
+  /** macOS 窗口模式：整行 items-center，与 44px 顶栏中线对齐 */
   const macCenteredChrome = isMacDesktop && !isSplash;
 
   const customWindowControls = isDesktop && showCustomWindowControls();
@@ -86,7 +86,8 @@ export const DesktopTitleBar = memo(function DesktopTitleBar({
                 "iris-brand-rail flex h-full shrink-0 items-center gap-2 border-r border-border/70 px-3 text-foreground",
                 isHomeActive && "iris-brand-rail--active",
               )}
-              aria-label="回到 Home"
+              aria-label={isHomeActive ? "Home" : "回到 Home"}
+              aria-current={isHomeActive ? "page" : undefined}
               onMouseDown={(event) => event.stopPropagation()}
               onClick={onHome}
             >
@@ -95,18 +96,9 @@ export const DesktopTitleBar = memo(function DesktopTitleBar({
             </button>
           ) : null}
 
-          {isHomeActive ? (
-            <div
-              data-testid="home-segment"
-              className="iris-home-segment flex shrink-0 items-center px-2.5 py-1.5 text-xs font-medium"
-            >
-              Home
-            </div>
-          ) : null}
-
           {showTabStrip ? (
             <div
-              className="flex min-w-0 flex-1 items-center gap-0.5 overflow-x-auto px-1"
+              className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto px-2"
               data-tauri-drag-region={customWindowControls ? true : undefined}
             >
               {tabs.map((tab) => {
@@ -121,7 +113,7 @@ export const DesktopTitleBar = memo(function DesktopTitleBar({
                       data-testid="rail-segment-tab"
                       data-tauri-drag-region-exclude
                       className={cn(
-                        "iris-rail-tab min-w-0 flex-1 truncate px-2.5 py-1.5 text-left text-xs transition-colors duration-fast focus:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-1 focus-visible:ring-offset-panel",
+                        "iris-rail-tab min-w-0 flex-1 truncate px-3 py-2 text-left text-xs transition-colors duration-fast focus:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-1 focus-visible:ring-offset-panel",
                         active
                           ? "iris-rail-tab--active font-medium text-foreground"
                           : "text-muted-foreground hover:bg-rail-hover hover:text-foreground",
@@ -165,10 +157,7 @@ export const DesktopTitleBar = memo(function DesktopTitleBar({
                 <button
                   type="button"
                   data-tauri-drag-region-exclude
-                  className={cn(
-                    "inline-flex items-center justify-center rounded-md text-muted-foreground transition-colors duration-fast hover:bg-muted/60 hover:text-foreground focus:outline-none focus-visible:ring-2 focus-visible:ring-primary",
-                    macCenteredChrome ? "h-7 w-7" : "h-8 w-8",
-                  )}
+                  className="inline-flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground transition-colors duration-fast hover:bg-muted/60 hover:text-foreground focus:outline-none focus-visible:ring-2 focus-visible:ring-primary"
                   aria-label="新建笔记"
                   onMouseDown={(event) => {
                     event.stopPropagation();

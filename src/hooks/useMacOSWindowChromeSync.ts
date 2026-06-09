@@ -5,7 +5,7 @@ import {
   applyDesktopChromeMetricsToDocument,
   type DesktopChromeMetrics,
 } from "@/lib/chrome-metrics";
-import { getDesktopChromeMetrics, reapplyWindowChrome } from "@/lib/ipc";
+import { getDesktopChromeMetrics } from "@/lib/ipc";
 import { isMacOSDesktopChrome } from "@/lib/platform-chrome";
 
 const DEBOUNCE_MS = 48;
@@ -26,8 +26,8 @@ async function syncChromeMetrics(): Promise<DesktopChromeMetrics> {
 }
 
 /**
- * macOS：全屏/缩放/聚焦后系统会重置 Overlay 交通灯位置，需在 Web 侧防抖重应用。
- * 全屏时交通灯在系统菜单栏，不与应用顶栏对齐；退出全屏后恢复 32px 契约。
+ * macOS：全屏/缩放/聚焦后同步标题栏指标。
+ * Iris Rail 使用右侧自定义窗口控件，左侧品牌轨不再为系统交通灯预留空间。
  */
 export function useMacOSWindowChromeSync(): void {
   useEffect(() => {
@@ -43,7 +43,6 @@ export function useMacOSWindowChromeSync(): void {
           const fullscreen = await win.isFullscreen();
           setFullscreenDataset(fullscreen);
           if (!fullscreen) {
-            await reapplyWindowChrome();
             await syncChromeMetrics();
           }
         })();
@@ -54,15 +53,6 @@ export function useMacOSWindowChromeSync(): void {
       await syncChromeMetrics();
       const fullscreen = await win.isFullscreen();
       setFullscreenDataset(fullscreen);
-      if (!fullscreen) {
-        await reapplyWindowChrome();
-        await new Promise<void>((resolve) => {
-          requestAnimationFrame(() => {
-            requestAnimationFrame(() => resolve());
-          });
-        });
-        await reapplyWindowChrome();
-      }
     })();
 
     const unlistenPromise = Promise.all([

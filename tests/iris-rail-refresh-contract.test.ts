@@ -28,7 +28,7 @@ describe("Iris Rail complete interface contracts", () => {
     expect(design).toContain("Overlay Family");
   });
 
-  it("defines persistent brand rail, Home view, and Rail Segments tabs", () => {
+  it("defines persistent brand rail as the only Home entry plus Rail Segments tabs", () => {
     const titleBar = read("src/components/layout/DesktopTitleBar.tsx");
     const app = read("src/App.tsx");
     const welcome = read("src/components/layout/WelcomeEmpty.tsx");
@@ -37,14 +37,31 @@ describe("Iris Rail complete interface contracts", () => {
 
     expect(titleBar).toContain('data-testid="iris-brand-rail"');
     expect(titleBar).toContain('data-testid="rail-segment-tab"');
-    expect(titleBar).toContain('data-testid="home-segment"');
+    expect(titleBar).not.toContain('data-testid="home-segment"');
+    expect(titleBar).not.toContain("iris-home-segment");
     expect(titleBar).toContain("onHome");
     expect(titleBar).toContain("isHomeActive");
+    expect(titleBar).toContain("iris-brand-rail--active");
     expect(app).toContain("homeActive");
     expect(welcome).toContain('data-testid="home-workbench"');
+    expect(welcome).toContain("home-workbench-grid");
+    expect(welcome).toContain('data-testid="home-status-summary"');
+    expect(welcome).toContain("useConnectivityStatus");
+    expect(welcome).not.toContain("shadow-floating");
+    expect(welcome).not.toContain("max-w-md");
     expect(platform).toContain("showCustomWindowControls");
     expect(platform).toContain("return isTauriRuntime()");
     expect(macos).toContain('"decorations": false');
+  });
+
+  it("all document-opening overlay routes leave Home before opening a note", () => {
+    const app = read("src/App.tsx");
+
+    expect(app).toContain("openNoteLeavingHome");
+    expect(app).not.toMatch(
+      /on(?:Select|Open|Restored|OpenNote)=\{\(p\) => void openNote\(p\)\}/,
+    );
+    expect(app).not.toMatch(/onOpenWikiLink=\{\(title\) => void openNote/);
   });
 
   it("uses Outline Rail instead of a floating outline card", () => {
@@ -69,6 +86,9 @@ describe("Iris Rail complete interface contracts", () => {
     const app = read("src/App.tsx");
 
     expect(aiCenter).toContain('data-testid="ai-system-center"');
+    expect(aiCenter).toContain('data-testid="ai-system-center-nav"');
+    expect(aiCenter).toContain("aria-current");
+    expect(aiCenter).toContain("activeSection");
     expect(aiCenter).toContain("LlmRoutingSection");
     expect(aiCenter).toContain("MinimaxSearchSection");
     expect(aiCenter).toContain("PersonaSettingsPanel");

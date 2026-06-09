@@ -161,7 +161,7 @@ describe("classified vault phase 7", () => {
     const app = read("src/App.tsx");
     expect(app).toContain("onOpenFile={(path) =>");
     expect(app).toContain(
-      "void openNote(path, undefined, { allowClassified: true })",
+      "openNoteLeavingHome(path, undefined, { allowClassified: true })",
     );
   });
 });

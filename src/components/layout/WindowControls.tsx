@@ -1,12 +1,10 @@
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { Minus, Square, X } from "lucide-react";
 import {
   useCallback,
   useEffect,
   useMemo,
   useState,
   type MouseEvent as ReactMouseEvent,
-  type ReactNode,
 } from "react";
 
 import { cn } from "@/lib/utils";
@@ -19,12 +17,10 @@ function WindowControlButton({
   label,
   onClick,
   className,
-  children,
 }: {
   label: string;
   onClick: () => void;
   className?: string;
-  children: ReactNode;
 }) {
   return (
     <button
@@ -32,15 +28,13 @@ function WindowControlButton({
       aria-label={label}
       data-tauri-drag-region-exclude
       className={cn(
-        "iris-window-control inline-flex h-[var(--titlebar-height)] w-11 items-center justify-center text-muted-foreground transition-colors duration-fast focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary",
+        "iris-window-control iris-traffic-light inline-flex size-3 items-center justify-center rounded-full transition-[box-shadow,transform,filter] duration-fast focus:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-panel active:scale-95",
         className,
       )}
       onMouseDown={stopTitlebarDrag}
       onPointerDown={stopTitlebarDrag}
       onClick={onClick}
-    >
-      {children}
-    </button>
+    />
   );
 }
 
@@ -79,27 +73,26 @@ export function WindowControls() {
 
   return (
     <div
-      className="iris-window-controls relative z-20 flex shrink-0 items-stretch"
+      className="iris-window-controls relative z-20 flex h-[var(--titlebar-height)] shrink-0 items-center justify-center gap-2 px-4"
       data-tauri-drag-region-exclude
       onMouseDown={stopTitlebarDrag}
       onPointerDown={stopTitlebarDrag}
     >
-      <WindowControlButton label="最小化" onClick={minimize}>
-        <Minus className="h-3.5 w-3.5" strokeWidth={1.75} />
-      </WindowControlButton>
-      <WindowControlButton
-        label={maximized ? "还原" : "最大化"}
-        onClick={toggleMaximize}
-      >
-        <Square className="h-3 w-3" strokeWidth={1.75} />
-      </WindowControlButton>
       <WindowControlButton
         label="关闭"
         onClick={close}
-        className="iris-window-control--close"
-      >
-        <X className="h-3.5 w-3.5" strokeWidth={1.75} />
-      </WindowControlButton>
+        className="iris-traffic-light--close"
+      />
+      <WindowControlButton
+        label="最小化"
+        onClick={minimize}
+        className="iris-traffic-light--minimize"
+      />
+      <WindowControlButton
+        label={maximized ? "还原" : "最大化"}
+        onClick={toggleMaximize}
+        className="iris-traffic-light--maximize"
+      />
     </div>
   );
 }
