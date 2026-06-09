@@ -73,28 +73,28 @@ export const EditorOutline = memo(function EditorOutline({
 
   if (!open) {
     return (
-      <Button
+      <button
         type="button"
-        size="sm"
-        variant="outline"
-        className="pointer-events-auto absolute top-4 z-editor-chrome h-8 gap-1.5 rounded-md border border-border bg-panel px-2.5 text-xs shadow-floating"
+        data-testid="outline-rail-handle"
+        className="outline-rail-handle pointer-events-auto absolute z-editor-chrome"
         style={{ left: "var(--editor-outline-inset)" }}
         aria-label="显示目录"
         onClick={() => onOpenChange(true)}
       >
         <ListTree className="h-3.5 w-3.5" />
-        目录
-      </Button>
+        <span className="sr-only">目录</span>
+      </button>
     );
   }
 
   return (
     <nav
-      className="pointer-events-none absolute top-4 z-editor-chrome flex max-h-[min(70dvh,28rem)] w-[min(var(--editor-outline-width),32vw)] max-w-[10rem] flex-col"
+      data-testid="outline-rail"
+      className="outline-rail pointer-events-none absolute z-editor-chrome flex max-h-[min(70dvh,28rem)] w-[var(--editor-outline-width)] flex-col"
       style={{ left: "var(--editor-outline-inset)" }}
       aria-label="文档目录"
     >
-      <div className="pointer-events-auto flex min-h-0 flex-col overflow-hidden rounded-lg border border-border bg-panel/95 shadow-floating backdrop-blur-sm">
+      <div className="pointer-events-auto flex min-h-0 flex-col overflow-hidden">
         <div className="flex shrink-0 items-center justify-between gap-1.5 border-b border-border/60 px-2 py-1.5">
           <span className="font-sans text-xs font-medium text-foreground">
             目录
@@ -119,12 +119,9 @@ export const EditorOutline = memo(function EditorOutline({
                 <button
                   type="button"
                   className={cn(
-                    "w-full rounded-md px-1.5 py-1 text-left leading-snug transition-colors duration-150",
-                    "hover:bg-muted/80",
-                    entry.level === 2 && "pl-3",
-                    entry.level === 3 && "pl-4",
-                    index === activeIndex &&
-                      "bg-primary/12 font-medium text-primary",
+                    "outline-rail-item",
+                    `outline-rail-item--level-${entry.level}`,
+                    index === activeIndex && "outline-rail-item--active",
                   )}
                   onClick={() => jumpTo(entry.pos)}
                 >

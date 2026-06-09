@@ -467,6 +467,64 @@
     color: hsl(var(--knowledge-accent-foreground));
   }
 
+  .outline-rail {
+    top: 1rem;
+  }
+
+  .outline-rail > div {
+    background: hsl(var(--outline-rail-bg));
+    border: 1px solid hsl(var(--border) / 0.55);
+    border-radius: var(--radius-lg);
+    box-shadow: none;
+    backdrop-filter: blur(12px);
+  }
+
+  .outline-rail-handle {
+    top: 1rem;
+    display: inline-flex;
+    height: 2rem;
+    width: 2rem;
+    align-items: center;
+    justify-content: center;
+    border-radius: var(--radius-md);
+    border: 1px solid hsl(var(--border) / 0.55);
+    background: hsl(var(--outline-rail-bg));
+    color: hsl(var(--muted-foreground));
+  }
+
+  .outline-rail-item {
+    position: relative;
+    width: 100%;
+    border-radius: var(--radius-sm);
+    padding: 0.25rem 0.375rem;
+    text-align: left;
+    color: hsl(var(--muted-foreground));
+  }
+
+  .outline-rail-item--level-2 {
+    padding-left: 0.875rem;
+  }
+
+  .outline-rail-item--level-3 {
+    padding-left: 1.25rem;
+  }
+
+  .outline-rail-item--active {
+    color: hsl(var(--foreground));
+    background: hsl(var(--overlay-task-selected));
+  }
+
+  .outline-rail-item--active::before {
+    position: absolute;
+    left: 0.125rem;
+    top: 0.375rem;
+    bottom: 0.375rem;
+    width: 2px;
+    border-radius: 999px;
+    background: hsl(var(--outline-rail-active));
+    content: "";
+  }
+
   .iris-select {
     @apply rounded-md border border-border bg-card px-2 py-1 text-xs text-foreground shadow-sm;
   }

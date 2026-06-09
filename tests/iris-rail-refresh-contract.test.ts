@@ -46,4 +46,18 @@ describe("Iris Rail complete interface contracts", () => {
     expect(platform).toContain("return isTauriRuntime()");
     expect(macos).toContain('"decorations": false');
   });
+
+  it("uses Outline Rail instead of a floating outline card", () => {
+    const outline = read("src/components/editor/EditorOutline.tsx");
+    const editor = read("src/components/editor/TipTapEditor.tsx");
+    const css = read("src/styles/globals.css");
+
+    expect(outline).toContain('data-testid="outline-rail"');
+    expect(outline).toContain('data-testid="outline-rail-handle"');
+    expect(outline).toContain("outline-rail-item--active");
+    expect(outline).not.toContain("shadow-floating");
+    expect(editor).toContain("editor-edge-control");
+    expect(css).toContain(".outline-rail");
+    expect(css).toContain(".outline-rail-handle");
+  });
 });

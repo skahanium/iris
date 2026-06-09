@@ -113,7 +113,7 @@ export function EditorFindReplaceBar({
 
   return (
     <div
-      className="iris-find-replace-bar"
+      className="iris-find-replace-bar editor-edge-control"
       role="search"
       onKeyDown={(event) => {
         if (event.key === "Escape") {

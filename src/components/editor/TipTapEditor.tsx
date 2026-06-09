@@ -501,7 +501,7 @@ function TipTapEditorInner({
         <button
           type="button"
           data-testid="editor-lock-toggle"
-          className="editor-lock-btn absolute right-3 top-3 z-10 inline-flex h-8 w-8 items-center justify-center rounded-md border border-border/60 bg-surface-elevated/90 text-muted-foreground shadow-sm backdrop-blur-sm duration-fast ease-iris-out hover:bg-surface-inset hover:text-foreground focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-1"
+          className="editor-edge-control editor-lock-btn absolute right-3 top-3 z-10 inline-flex h-8 w-8 items-center justify-center rounded-md border border-border/60 bg-surface-elevated/90 text-muted-foreground shadow-sm backdrop-blur-sm duration-fast ease-iris-out hover:bg-surface-inset hover:text-foreground focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-1"
           onClick={() => setLocked(!locked)}
           title={locked ? "解锁编辑" : "锁定编辑"}
           aria-label={locked ? "解锁编辑" : "锁定编辑"}
