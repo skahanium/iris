@@ -1562,10 +1562,7 @@ export function UnifiedAssistantPanel({
 
       {researchProgress &&
       (researchRunning || researchProgress.state === "running") ? (
-        <div
-          className="ai-task-surface px-3 pt-3"
-          data-testid="research-focus"
-        >
+        <div className="ai-task-surface px-3 pt-3" data-testid="research-focus">
           <Card className="border-border/60">
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
               <CardTitle className="text-sm font-medium">研究专注态</CardTitle>

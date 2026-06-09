@@ -38,14 +38,12 @@ describe("chrome metrics SSOT", () => {
     );
   });
 
-  it("macOS traffic light config initial y matches center formula", () => {
+  it("macOS uses undecorated overlay shell with custom window controls", () => {
     const macos = read("src-tauri/tauri.macos.conf.json");
-    expect(macos).toContain('"y": 10');
-    expect(read("src-tauri/src/macos_traffic_lights.rs")).toContain(
-      "target_height",
-    );
-    expect(read("src-tauri/src/macos_traffic_lights.rs")).toContain(
-      "vertical_offset",
+    expect(macos).toContain('"decorations": false');
+    expect(macos).not.toContain("trafficLightPosition");
+    expect(read("src/lib/platform-chrome.ts")).toContain(
+      "return isTauriRuntime()",
     );
   });
 });

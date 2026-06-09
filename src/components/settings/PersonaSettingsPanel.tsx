@@ -119,7 +119,6 @@ export function PersonaSettingsPanel({
           className="space-y-6 px-4 py-4"
           data-testid="persona-settings-panel"
         >
-
           {loading ? (
             <p className="text-xs text-muted-foreground">加载中…</p>
           ) : null}
