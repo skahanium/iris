@@ -27,4 +27,23 @@ describe("Iris Rail complete interface contracts", () => {
     expect(design).toContain("AI Conversation Workspace");
     expect(design).toContain("Overlay Family");
   });
+
+  it("defines persistent brand rail, Home view, and Rail Segments tabs", () => {
+    const titleBar = read("src/components/layout/DesktopTitleBar.tsx");
+    const app = read("src/App.tsx");
+    const welcome = read("src/components/layout/WelcomeEmpty.tsx");
+    const platform = read("src/lib/platform-chrome.ts");
+    const macos = read("src-tauri/tauri.macos.conf.json");
+
+    expect(titleBar).toContain('data-testid="iris-brand-rail"');
+    expect(titleBar).toContain('data-testid="rail-segment-tab"');
+    expect(titleBar).toContain('data-testid="home-segment"');
+    expect(titleBar).toContain("onHome");
+    expect(titleBar).toContain("isHomeActive");
+    expect(app).toContain("homeActive");
+    expect(welcome).toContain('data-testid="home-workbench"');
+    expect(platform).toContain("showCustomWindowControls");
+    expect(platform).toContain("return isTauriRuntime()");
+    expect(macos).toContain('"decorations": false');
+  });
 });

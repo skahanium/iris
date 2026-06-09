@@ -27,6 +27,8 @@ interface DesktopTitleBarProps {
   variant?: DesktopTitleBarVariant;
   tabs: TabItem[];
   activePath: string | null;
+  isHomeActive?: boolean;
+  onHome?: () => void;
   onSelect: (path: string) => void;
   onClose: (path: string) => void;
   onNew: () => void;
@@ -36,6 +38,8 @@ export const DesktopTitleBar = memo(function DesktopTitleBar({
   variant = "document",
   tabs,
   activePath,
+  isHomeActive = false,
+  onHome,
   onSelect,
   onClose,
   onNew,
@@ -43,12 +47,8 @@ export const DesktopTitleBar = memo(function DesktopTitleBar({
   const isDesktop = isTauriRuntime();
   const isMacDesktop = isMacOSDesktopChrome();
   const isSplash = variant === "splash";
-  const hasTabs = tabs.length > 0;
-  const showBrandColumn = isDesktop && (isSplash || !hasTabs);
   const showTabStrip = !isSplash;
-  /** macOS 无 Tab：品牌与「+」同一行垂直居中，与系统交通灯对齐 */
-  const macEmptyToolbar = isMacDesktop && !isSplash && !hasTabs;
-  /** macOS 窗口模式：整行 items-center，与 32px 交通灯中线对齐 */
+  /** macOS 窗口模式：整行 items-center，与 32px 顶栏中线对齐 */
   const macCenteredChrome = isMacDesktop && !isSplash;
 
   const customWindowControls = isDesktop && showCustomWindowControls();
@@ -69,135 +69,124 @@ export const DesktopTitleBar = memo(function DesktopTitleBar({
         macCenteredChrome ? "items-center" : "items-stretch",
         isDesktop && "iris-desktop-titlebar--desktop",
         customWindowControls && "relative pr-[var(--window-controls-width)]",
-        macEmptyToolbar && "iris-desktop-titlebar--mac-empty",
       )}
       data-tauri-drag-region={headerNativeDragRegion ? true : undefined}
       onMouseDown={onDragMouseDown}
     >
-      {macEmptyToolbar ? (
+      {isSplash ? (
+        <AppBrandZone className="min-w-0 flex-1 justify-start px-5" />
+      ) : (
         <>
-          <div
-            className="flex shrink-0 items-center gap-2 pl-1 pr-2"
-            aria-label="拖动窗口"
-          >
-            <IrisMark size={18} />
-            <span className="text-sm font-semibold tracking-tight text-foreground/90">
-              Iris
-            </span>
-          </div>
-          <div
-            className="min-w-0 flex-1 self-stretch"
-            data-tauri-drag-region={customWindowControls ? true : undefined}
-          />
-          <button
-            type="button"
-            data-tauri-drag-region-exclude
-            className="mr-1 inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors duration-fast hover:bg-muted/60 hover:text-foreground focus:outline-none focus-visible:ring-2 focus-visible:ring-primary"
-            aria-label="新建笔记"
-            onMouseDown={(event) => {
-              event.stopPropagation();
-            }}
-            onClick={onNew}
-          >
-            <Plus className="h-4 w-4" />
-          </button>
-        </>
-      ) : null}
-
-      {!macEmptyToolbar && showBrandColumn ? (
-        isSplash ? (
-          <AppBrandZone className="min-w-0 flex-1 justify-start px-5" />
-        ) : (
-          <div
-            className="flex h-full shrink-0 items-center gap-2 px-3"
-            aria-label="拖动窗口"
-            data-tauri-drag-region={customWindowControls ? true : undefined}
-          >
-            <IrisMark size={18} />
-            <span className="text-sm font-semibold tracking-tight text-foreground/90">
-              Iris
-            </span>
-          </div>
-        )
-      ) : null}
-
-      {!macEmptyToolbar && showTabStrip ? (
-        <div className="flex min-w-0 flex-1 items-center gap-0.5 overflow-x-auto px-1">
-          {tabs.map((tab) => {
-            const active = activePath === tab.path;
-            return (
-              <div
-                key={tab.path}
-                className="group flex max-w-[220px] shrink-0 items-center"
-              >
-                <button
-                  type="button"
-                  data-tauri-drag-region-exclude
-                  className={cn(
-                    "min-w-0 flex-1 truncate px-2.5 py-1.5 text-left text-xs transition-colors duration-fast focus:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-1 focus-visible:ring-offset-panel",
-                    active
-                      ? "font-medium text-foreground shadow-[inset_0_-2px_0_0_hsl(var(--primary))]"
-                      : "text-muted-foreground hover:bg-muted/60 hover:text-foreground",
-                  )}
-                  title={tab.path !== tab.title ? tab.path : undefined}
-                  onMouseDown={(event) => {
-                    event.stopPropagation();
-                  }}
-                  onClick={() => onSelect(tab.path)}
-                >
-                  {tab.locked ? (
-                    <Lock className="mr-1 inline h-3 w-3 text-muted-foreground/70" />
-                  ) : null}
-                  {tab.title}
-                  {tab.dirty ? (
-                    <span className="text-muted-foreground"> •</span>
-                  ) : null}
-                </button>
-                <button
-                  type="button"
-                  data-tauri-drag-region-exclude
-                  className={cn(
-                    "flex w-8 shrink-0 items-center justify-center text-muted-foreground opacity-0 transition-opacity duration-fast hover:text-foreground focus:outline-none focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-primary group-hover:opacity-100",
-                    active && "opacity-70",
-                  )}
-                  aria-label={`关闭 ${tab.title}`}
-                  onMouseDown={(event) => {
-                    event.stopPropagation();
-                  }}
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    onClose(tab.path);
-                  }}
-                >
-                  <X className="h-3.5 w-3.5" />
-                </button>
-              </div>
-            );
-          })}
-          <div className="shrink-0" data-tauri-drag-region-exclude>
+          {isDesktop ? (
             <button
               type="button"
+              data-testid="iris-brand-rail"
               data-tauri-drag-region-exclude
               className={cn(
-                "inline-flex items-center justify-center rounded-md text-muted-foreground transition-colors duration-fast hover:bg-muted/60 hover:text-foreground focus:outline-none focus-visible:ring-2 focus-visible:ring-primary",
-                macCenteredChrome ? "h-7 w-7" : "h-8 w-8",
+                "iris-brand-rail flex h-full shrink-0 items-center gap-2 border-r border-border/70 px-3 text-foreground",
+                isHomeActive && "iris-brand-rail--active",
               )}
-              aria-label="新建笔记"
-              onMouseDown={(event) => {
-                event.stopPropagation();
-              }}
-              onClick={onNew}
+              aria-label="回到 Home"
+              onMouseDown={(event) => event.stopPropagation()}
+              onClick={onHome}
             >
-              <Plus className="h-4 w-4" />
+              <IrisMark size={18} />
+              <span className="text-sm font-semibold">Iris</span>
             </button>
-          </div>
-        </div>
-      ) : !macEmptyToolbar ? (
-        <div
-          className="min-w-0 flex-1"
-          data-tauri-drag-region={customWindowControls ? true : undefined}
-        />
-      ) : null}
+          ) : null}
+
+          {isHomeActive ? (
+            <div
+              data-testid="home-segment"
+              className="iris-home-segment flex shrink-0 items-center px-2.5 py-1.5 text-xs font-medium"
+            >
+              Home
+            </div>
+          ) : null}
+
+          {showTabStrip ? (
+            <div
+              className="flex min-w-0 flex-1 items-center gap-0.5 overflow-x-auto px-1"
+              data-tauri-drag-region={customWindowControls ? true : undefined}
+            >
+              {tabs.map((tab) => {
+                const active = activePath === tab.path;
+                return (
+                  <div
+                    key={tab.path}
+                    className="group flex min-w-[7rem] max-w-[14rem] shrink-0 items-center"
+                  >
+                    <button
+                      type="button"
+                      data-testid="rail-segment-tab"
+                      data-tauri-drag-region-exclude
+                      className={cn(
+                        "iris-rail-tab min-w-0 flex-1 truncate px-2.5 py-1.5 text-left text-xs transition-colors duration-fast focus:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-1 focus-visible:ring-offset-panel",
+                        active
+                          ? "iris-rail-tab--active font-medium text-foreground"
+                          : "text-muted-foreground hover:bg-rail-hover hover:text-foreground",
+                      )}
+                      title={tab.path !== tab.title ? tab.path : undefined}
+                      onMouseDown={(event) => {
+                        event.stopPropagation();
+                      }}
+                      onClick={() => onSelect(tab.path)}
+                    >
+                      {tab.locked ? (
+                        <Lock className="mr-1 inline h-3 w-3 text-muted-foreground/70" />
+                      ) : null}
+                      {tab.title}
+                      {tab.dirty ? (
+                        <span className="text-muted-foreground"> •</span>
+                      ) : null}
+                    </button>
+                    <button
+                      type="button"
+                      data-tauri-drag-region-exclude
+                      className={cn(
+                        "flex w-8 shrink-0 items-center justify-center text-muted-foreground opacity-0 transition-opacity duration-fast hover:text-foreground focus:outline-none focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-primary group-hover:opacity-100",
+                        active && "opacity-70",
+                      )}
+                      aria-label={`关闭 ${tab.title}`}
+                      onMouseDown={(event) => {
+                        event.stopPropagation();
+                      }}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        onClose(tab.path);
+                      }}
+                    >
+                      <X className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                );
+              })}
+              <div className="shrink-0" data-tauri-drag-region-exclude>
+                <button
+                  type="button"
+                  data-tauri-drag-region-exclude
+                  className={cn(
+                    "inline-flex items-center justify-center rounded-md text-muted-foreground transition-colors duration-fast hover:bg-muted/60 hover:text-foreground focus:outline-none focus-visible:ring-2 focus-visible:ring-primary",
+                    macCenteredChrome ? "h-7 w-7" : "h-8 w-8",
+                  )}
+                  aria-label="新建笔记"
+                  onMouseDown={(event) => {
+                    event.stopPropagation();
+                  }}
+                  onClick={onNew}
+                >
+                  <Plus className="h-4 w-4" />
+                </button>
+              </div>
+            </div>
+          ) : (
+            <div
+              className="min-w-0 flex-1"
+              data-tauri-drag-region={customWindowControls ? true : undefined}
+            />
+          )}
+        </>
+      )}
 
       {customWindowControls ? (
         <div className="absolute inset-y-0 right-0 z-30 flex">

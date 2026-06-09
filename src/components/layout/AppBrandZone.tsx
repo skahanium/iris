@@ -6,7 +6,7 @@ export function AppBrandZone({ className }: { className?: string }) {
   return (
     <div
       className={cn(
-        "flex h-full min-w-[5.5rem] shrink-0 items-center justify-center gap-2.5 border-r border-border/80 px-4",
+        "iris-brand-rail flex h-full min-w-[5.5rem] shrink-0 items-center justify-center gap-2.5 border-r border-border/80 px-4",
         className,
       )}
       aria-label="拖动窗口"

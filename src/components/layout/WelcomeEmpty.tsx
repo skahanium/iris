@@ -13,6 +13,9 @@ interface WelcomeEmptyProps {
   vaultKey?: string | null;
   onOpen: (path: string) => void;
   onNew: () => void | Promise<void>;
+  onQuickOpen?: () => void;
+  onSearch?: () => void;
+  onAiSystemCenter?: () => void;
 }
 
 function dedupeByPath(files: FileListItem[]): FileListItem[] {
@@ -25,7 +28,14 @@ function dedupeByPath(files: FileListItem[]): FileListItem[] {
   return [...byPath.values()];
 }
 
-export function WelcomeEmpty({ vaultKey, onOpen, onNew }: WelcomeEmptyProps) {
+export function WelcomeEmpty({
+  vaultKey,
+  onOpen,
+  onNew,
+  onQuickOpen,
+  onSearch,
+  onAiSystemCenter,
+}: WelcomeEmptyProps) {
   const [recent, setRecent] = useState<FileListItem[]>([]);
   const [deleteTarget, setDeleteTarget] = useState<FileListItem | null>(null);
 
@@ -38,23 +48,43 @@ export function WelcomeEmpty({ vaultKey, onOpen, onNew }: WelcomeEmptyProps) {
   }, [loadRecent, vaultKey]);
 
   return (
-    <div className="flex flex-1 flex-col items-center justify-center gap-8 bg-background px-6 py-12">
+    <div
+      data-testid="home-workbench"
+      className="flex flex-1 flex-col items-center justify-center gap-8 bg-background px-6 py-12"
+    >
       <div className="w-full max-w-md rounded-xl border border-border/80 bg-surface-elevated px-8 py-10 text-center shadow-floating">
-        <div className="mb-8 flex justify-center">
+        <div className="mb-6 flex justify-center">
           <IrisMark size={56} title="Iris" />
         </div>
-        <Button
-          type="button"
-          className="min-w-[8rem]"
-          onClick={() => {
-            void (async () => {
-              await onNew();
-              loadRecent();
-            })();
-          }}
-        >
-          新建笔记
-        </Button>
+        <div className="flex flex-wrap items-center justify-center gap-2">
+          <Button
+            type="button"
+            className="min-w-[6.5rem]"
+            onClick={() => {
+              void (async () => {
+                await onNew();
+                loadRecent();
+              })();
+            }}
+          >
+            新建笔记
+          </Button>
+          {onQuickOpen ? (
+            <Button type="button" variant="outline" onClick={onQuickOpen}>
+              快速打开
+            </Button>
+          ) : null}
+          {onSearch ? (
+            <Button type="button" variant="outline" onClick={onSearch}>
+              全库搜索
+            </Button>
+          ) : null}
+          {onAiSystemCenter ? (
+            <Button type="button" variant="outline" onClick={onAiSystemCenter}>
+              AI 系统中心
+            </Button>
+          ) : null}
+        </div>
       </div>
       {recent.length > 0 && (
         <div className="w-full max-w-md rounded-lg border border-border/80 bg-surface-elevated p-3 shadow-sm">

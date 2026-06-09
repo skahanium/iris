@@ -215,6 +215,7 @@ function App() {
     [],
   );
   const [keyboardLeaderPending, setKeyboardLeaderPending] = useState(false);
+  const [homeActive, setHomeActive] = useState(false);
   const [zen, setZen] = useState(false);
   const [outlineOpen, setOutlineOpen] = useState(loadOutlineOpen);
   const [findReplaceOpen, setFindReplaceOpen] = useState(false);
@@ -238,6 +239,14 @@ function App() {
     () => setVaultIndexEpoch((n) => n + 1),
     [],
   );
+
+  const showHome = useCallback(() => {
+    setHomeActive(true);
+  }, []);
+
+  const leaveHome = useCallback(() => {
+    setHomeActive(false);
+  }, []);
 
   const dirtyRef = useRef(false);
   const autoSnapshotGenerationRef = useRef(0);
@@ -275,6 +284,27 @@ function App() {
     onVaultIndexBump: bumpVaultIndex,
     persistBeforeLeave: (path) => persistBeforeLeaveRef.current(path),
   });
+
+  const handleOpenNoteFromHome = useCallback(
+    (path: string) => {
+      leaveHome();
+      void openNote(path);
+    },
+    [leaveHome, openNote],
+  );
+
+  const handleActivateTab = useCallback(
+    (path: string) => {
+      leaveHome();
+      activateTab(path);
+    },
+    [leaveHome, activateTab],
+  );
+
+  const handleNewNoteLeavingHome = useCallback(() => {
+    leaveHome();
+    void handleNewNote();
+  }, [leaveHome, handleNewNote]);
 
   const tabsRef = useRef(tabs);
   tabsRef.current = tabs;
@@ -1045,9 +1075,11 @@ function App() {
           <TabBar
             tabs={tabs}
             activePath={activePath}
-            onSelect={(p) => activateTab(p)}
+            isHomeActive={homeActive}
+            onHome={showHome}
+            onSelect={handleActivateTab}
             onClose={closeTab}
-            onNew={() => void handleNewNote()}
+            onNew={handleNewNoteLeavingHome}
           />
         }
         editor={
@@ -1058,7 +1090,7 @@ function App() {
               outlineOpen && activePath && "iris-editor-outline-open",
             )}
           >
-            {activePath ? (
+            {activePath && !homeActive ? (
               <ErrorBoundary scope="编辑器">
                 <TipTapEditor
                   key={activePath}
@@ -1098,8 +1130,11 @@ function App() {
             ) : (
               <WelcomeEmpty
                 vaultKey={`${vaultPath ?? ""}:${vaultIndexEpoch}`}
-                onOpen={(p) => void openNote(p)}
-                onNew={() => void handleNewNote()}
+                onOpen={handleOpenNoteFromHome}
+                onNew={handleNewNoteLeavingHome}
+                onQuickOpen={() => overlays.openOverlay("quickOpen")}
+                onSearch={() => overlays.openOverlay("search")}
+                onAiSystemCenter={() => overlays.openOverlay("settings")}
               />
             )}
             <IrisContextMenu

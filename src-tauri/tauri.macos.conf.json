@@ -4,13 +4,9 @@
     "windows": [
       {
         "transparent": true,
-        "decorations": true,
+        "decorations": false,
         "titleBarStyle": "Overlay",
-        "hiddenTitle": true,
-        "trafficLightPosition": {
-          "x": 12,
-          "y": 10
-        }
+        "hiddenTitle": true
       }
     ]
   }

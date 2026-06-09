@@ -5,7 +5,7 @@ export function isMacOSDesktopChrome(): boolean {
   return isTauriRuntime() && /Mac/i.test(navigator.userAgent);
 }
 
-/** Windows / Linux：无边框 + 自定义最小化/最大化/关闭 */
+/** Iris Rail: all desktop platforms use right-side custom controls. */
 export function showCustomWindowControls(): boolean {
-  return isTauriRuntime() && !isMacOSDesktopChrome();
+  return isTauriRuntime();
 }

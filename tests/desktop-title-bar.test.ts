@@ -11,11 +11,12 @@ function read(path: string): string {
 }
 
 describe("desktop title bar", () => {
-  it("macOS config uses overlay title bar without visible default title", () => {
+  it("macOS config uses undecorated overlay shell with custom window controls", () => {
     const macos = read("src-tauri/tauri.macos.conf.json");
     expect(macos).toContain('"titleBarStyle": "Overlay"');
     expect(macos).toContain('"hiddenTitle": true');
-    expect(macos).toContain("trafficLightPosition");
+    expect(macos).toContain('"decorations": false');
+    expect(macos).not.toContain("trafficLightPosition");
     expect(macos).not.toContain("Tauri App");
   });
 
@@ -39,12 +40,13 @@ describe("desktop title bar", () => {
     expect(bar).toContain("showCustomWindowControls");
     expect(bar).toContain("customWindowControls");
     expect(bar).toContain("headerNativeDragRegion");
-    expect(bar).toContain("macEmptyToolbar");
+    expect(bar).toContain("iris-brand-rail");
     expect(bar).toContain('role="banner"');
 
     const platform = read("src/lib/platform-chrome.ts");
     expect(platform).toContain("isMacOSDesktopChrome");
     expect(platform).toContain("showCustomWindowControls");
+    expect(platform).toContain("return isTauriRuntime()");
 
     const controls = read("src/components/layout/WindowControls.tsx");
     expect(controls).toContain("iris-window-controls");
@@ -85,7 +87,11 @@ describe("desktop title bar", () => {
     expect(read("src/lib/ipc.ts")).toContain("get_desktop_chrome_metrics");
   });
 
-  it("macOS config traffic light y is 10 for 32px bar", () => {
-    expect(read("src-tauri/tauri.macos.conf.json")).toContain('"y": 10');
+  it("DesktopTitleBar exposes Iris Rail brand rail and segment tab hooks", () => {
+    const bar = read("src/components/layout/DesktopTitleBar.tsx");
+    expect(bar).toContain('data-testid="iris-brand-rail"');
+    expect(bar).toContain('data-testid="rail-segment-tab"');
+    expect(bar).toContain('data-testid="home-segment"');
+    expect(bar).toContain("iris-rail-tab--active");
   });
 });
