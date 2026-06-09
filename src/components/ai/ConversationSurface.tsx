@@ -40,7 +40,7 @@ export const ConversationSurface = memo(function ConversationSurface({
     <div
       ref={messageListRef}
       data-testid="ai-message-list"
-      className="relative flex min-h-0 flex-1 flex-col"
+      className="ai-sidecar-body relative flex min-h-0 flex-1 flex-col"
     >
       <AiMessageList
         messages={messages}

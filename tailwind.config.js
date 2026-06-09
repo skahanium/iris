@@ -71,6 +71,10 @@ export default {
           citation: "hsl(var(--ai-citation))",
           "citation-hover": "hsl(var(--ai-citation-hover))",
         },
+        "ai-workspace": {
+          DEFAULT: "hsl(var(--ai-workspace-bg))",
+          border: "hsl(var(--ai-workspace-border))",
+        },
         ring: "hsl(var(--ring))",
         editor: {
           paper: "hsl(var(--editor-paper))",

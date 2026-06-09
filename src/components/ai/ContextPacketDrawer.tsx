@@ -171,7 +171,7 @@ export function ContextPacketDrawer({
         )}
       >
         <div className="overflow-hidden">
-          <div className="max-h-[220px] overflow-auto px-3 pb-3 pt-0">
+          <div className="ai-task-surface mx-3 mb-3 max-h-[220px] overflow-auto px-3 pb-3 pt-3">
             <ContextPacketList
               packets={packets}
               selectedIds={selectedIds}

@@ -525,6 +525,33 @@
     content: "";
   }
 
+  .ai-sidecar {
+    background: hsl(var(--ai-workspace-bg));
+  }
+
+  .ai-sidecar-header {
+    background: hsl(var(--surface-chrome) / 0.72);
+  }
+
+  .ai-task-surface {
+    border: 1px solid hsl(var(--ai-workspace-border) / 0.72);
+    border-radius: var(--radius-lg);
+    background: hsl(var(--surface-elevated) / 0.62);
+  }
+
+  .ai-message-surface-assistant {
+    border-color: hsl(var(--ai-workspace-border) / 0.78);
+  }
+
+  .ai-message-surface-user {
+    background: hsl(var(--surface-inset) / 0.82);
+  }
+
+  .ai-composer-workbench {
+    border-color: hsl(var(--ai-workspace-border) / 0.9);
+    background: hsl(var(--surface-elevated));
+  }
+
   .iris-select {
     @apply rounded-md border border-border bg-card px-2 py-1 text-xs text-foreground shadow-sm;
   }

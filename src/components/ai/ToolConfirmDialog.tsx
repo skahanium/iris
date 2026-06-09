@@ -156,7 +156,7 @@ export function ToolConfirmDialog({
 
   return (
     <Dialog open={!!request} onOpenChange={() => onClose()}>
-      <DialogContent className="max-w-lg">
+      <DialogContent className="ai-task-surface max-w-lg">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             {isWriteOperation && (

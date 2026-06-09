@@ -205,7 +205,7 @@ export const AiMessageBubble = memo(function AiMessageBubble({
     return (
       <div
         className={cn(
-          "ai-message-bubble ai-message-bubble-user self-end",
+          "ai-message-bubble ai-message-bubble-user ai-message-surface-user self-end",
 
           className,
         )}
@@ -224,7 +224,7 @@ export const AiMessageBubble = memo(function AiMessageBubble({
   return (
     <div
       className={cn(
-        "ai-message-assistant ai-message-bubble ai-message-bubble-assistant group relative w-full max-w-full overflow-hidden",
+        "ai-message-assistant ai-message-bubble ai-message-bubble-assistant ai-message-surface-assistant group relative w-full max-w-full overflow-hidden",
 
         streaming && "ai-message-bubble-streaming",
 

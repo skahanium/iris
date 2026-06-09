@@ -138,7 +138,7 @@ export function PatchPreview({
   const displayLines = showFullDiff ? maxLines : Math.min(5, maxLines);
 
   return (
-    <Card className="border-border/60">
+    <Card className="ai-task-surface border-border/60">
       <CardHeader className="pb-2">
         <div className="flex items-center justify-between">
           <CardTitle className="text-sm font-medium">补丁建议</CardTitle>

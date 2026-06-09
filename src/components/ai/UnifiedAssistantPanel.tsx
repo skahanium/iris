@@ -1485,10 +1485,10 @@ export function UnifiedAssistantPanel({
 
   return (
     <div
-      className="flex h-full flex-col bg-panel"
+      className="ai-sidecar flex h-full flex-col bg-ai-workspace"
       data-testid="unified-assistant-panel"
     >
-      <header className="shrink-0 border-b border-border/60 px-3 py-1.5">
+      <header className="ai-sidecar-header shrink-0 border-b border-border/60 px-3 py-1.5">
         <div className="flex items-center justify-between gap-3">
           <div className="flex min-w-0 flex-1 items-center">
             <AssistantPersonaDisplay profile={promptProfile} />
@@ -1562,7 +1562,10 @@ export function UnifiedAssistantPanel({
 
       {researchProgress &&
       (researchRunning || researchProgress.state === "running") ? (
-        <div className="px-3 pt-3" data-testid="research-focus">
+        <div
+          className="ai-task-surface px-3 pt-3"
+          data-testid="research-focus"
+        >
           <Card className="border-border/60">
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
               <CardTitle className="text-sm font-medium">研究专注态</CardTitle>
@@ -1615,19 +1618,19 @@ export function UnifiedAssistantPanel({
       ) : null}
 
       {docSummary || docIssues.length > 0 ? (
-        <div className="px-3 pt-3">
+        <div className="ai-task-surface px-3 pt-3">
           <DocumentCheckArtifacts summary={docSummary} issues={docIssues} />
         </div>
       ) : null}
 
       {citationResult ? (
-        <div className="px-3 pt-3">
+        <div className="ai-task-surface px-3 pt-3">
           <CitationCheckView result={citationResult} />
         </div>
       ) : null}
 
       {organizeSuggestions.length > 0 ? (
-        <div className="px-3 pt-3">
+        <div className="ai-task-surface px-3 pt-3">
           <Card className="border-border/60">
             <CardHeader className="pb-2">
               <div className="flex items-center justify-between gap-3">
@@ -1700,7 +1703,10 @@ export function UnifiedAssistantPanel({
       ) : null}
 
       {writingPatches.length > 0 ? (
-        <div className="space-y-2 px-3 pt-3" data-testid="patch-preview">
+        <div
+          className="ai-task-surface space-y-2 px-3 pt-3"
+          data-testid="patch-preview"
+        >
           {writingPatches.map((patch) => (
             <PatchPreview
               key={patch.id}

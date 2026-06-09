@@ -66,7 +66,7 @@ export function RuleConfirmDialog({
 
   return (
     <Dialog open={!!request} onOpenChange={() => onClose()}>
-      <DialogContent className="max-w-md">
+      <DialogContent className="ai-task-surface max-w-md">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Ruler className="h-5 w-5 text-primary" />
