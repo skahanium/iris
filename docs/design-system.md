@@ -4,6 +4,8 @@
 
 **Iris Rail 完整刷新设计**：见 [docs/superpowers/specs/2026-06-09-iris-rail-refresh-design.md](./superpowers/specs/2026-06-09-iris-rail-refresh-design.md)。该 spec 是当前界面系统刷新目标态，覆盖 Home、顶栏、Rail Segments Tab、Editor Workspace、Outline Rail、AI Conversation Workspace、Overlay Family 与 AI 系统中心。
 
+手工验收清单：见 [Iris Rail Refresh Manual Checklist](./testing/iris-rail-refresh-manual-checklist.md)。
+
 **排期**：阶段与路线图版本的绑定见下文「落地阶段与路线图版本对照」；**版本 checklist 以 [ROADMAP.md](../ROADMAP.md) 为准**。
 
 本文档是 **界面** 的单一参考；交互线框见 [ARCHITECTURE.md](../ARCHITECTURE.md)；全库文档索引见 [docs/README.md](./README.md)。

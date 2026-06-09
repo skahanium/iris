@@ -112,4 +112,15 @@ describe("Iris Rail complete interface contracts", () => {
     expect(quickOpen).toContain("task-overlay-results");
     expect(command).toContain("task-overlay-results");
   });
+
+  it("ships a manual checklist for the complete Iris Rail refresh", () => {
+    const checklist = read(
+      "docs/testing/iris-rail-refresh-manual-checklist.md",
+    );
+    expect(checklist).toContain("macOS 顶栏与右侧窗口控制");
+    expect(checklist).toContain("Rail Segments Tab");
+    expect(checklist).toContain("Outline Rail 长文");
+    expect(checklist).toContain("AI 协作侧车长对话");
+    expect(checklist).toContain("任务舱 Overlay");
+  });
 });
