@@ -638,15 +638,18 @@ async fn memory_read_tool(
              ORDER BY updated_at DESC
              LIMIT ?3",
         )?;
-        let rows = stmt.query_map(rusqlite::params![query, like, limit, session_scope], |row| {
-            Ok(serde_json::json!({
-                "key": row.get::<_, String>(0)?,
-                "content": row.get::<_, String>(1)?,
-                "scope": row.get::<_, String>(2)?,
-                "source": row.get::<_, String>(3)?,
-                "updated_at": row.get::<_, String>(4)?,
-            }))
-        })?;
+        let rows = stmt.query_map(
+            rusqlite::params![query, like, limit, session_scope],
+            |row| {
+                Ok(serde_json::json!({
+                    "key": row.get::<_, String>(0)?,
+                    "content": row.get::<_, String>(1)?,
+                    "scope": row.get::<_, String>(2)?,
+                    "source": row.get::<_, String>(3)?,
+                    "updated_at": row.get::<_, String>(4)?,
+                }))
+            },
+        )?;
         Ok(rows.flatten().collect::<Vec<_>>())
     })?;
     Ok(serde_json::json!({ "items": items, "count": items.len() }))
@@ -668,10 +671,7 @@ async fn memory_write_tool(
     if key.is_empty() || content.is_empty() {
         return Err(AppError::msg("memory_write requires non-empty key/content"));
     }
-    let explicit_scope = args
-        .get("scope")
-        .and_then(|v| v.as_str())
-        .unwrap_or("");
+    let explicit_scope = args.get("scope").and_then(|v| v.as_str()).unwrap_or("");
     let scope = if explicit_scope == "global" {
         "global".to_string()
     } else {

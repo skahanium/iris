@@ -129,6 +129,8 @@ interface TipTapEditorProps {
 
   /** 编辑器 ingest 完成时回调，传递 preserve 片段信息供 export 使用 */
 
+  reloadContentTick?: number;
+
   onIngestComplete?: (
     preserveFragments: MarkdownSyntaxFragment[],
 
@@ -166,6 +168,7 @@ function TipTapEditorInner({
   onOpenWikiLink,
 
   onIngestComplete,
+  reloadContentTick = 0,
 
   zoom = 1,
 
@@ -446,6 +449,22 @@ function TipTapEditorInner({
       onEditorReady?.(null);
     };
   }, [editor, onEditorReady, flushBodyStats]);
+
+  // Reload content imperatively when reloadContentTick bumps (avoids full editor recreation).
+  const reloadTickRef = useRef(reloadContentTick);
+  useEffect(() => {
+    if (reloadContentTick > 0 && reloadTickRef.current !== reloadContentTick && editor) {
+      reloadTickRef.current = reloadContentTick;
+      const bodyMd = initialBodyMarkdown.trim();
+      if (bodyMd) {
+        const { tipTapHtml } = ingestMarkdownForEditor({ bodyMarkdown: bodyMd });
+        editor.commands.setContent(tipTapHtml);
+        if (contentCacheKey) {
+          setCachedEditorHtml(contentCacheKey, tipTapHtml);
+        }
+      }
+    }
+  }, [reloadContentTick, editor, initialBodyMarkdown, contentCacheKey]);
 
   useEffect(() => {
     return () => {

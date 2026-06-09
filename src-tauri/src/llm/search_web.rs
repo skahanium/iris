@@ -320,9 +320,7 @@ async fn throttle_duckduckgo() -> AppResult<()> {
 
 async fn throttle_backend(last: &'static LazyLock<Mutex<Option<Instant>>>) -> AppResult<()> {
     let need_wait = {
-        let last_guard = last
-            .lock()
-            .map_err(|_| AppError::msg("Lock error"))?;
+        let last_guard = last.lock().map_err(|_| AppError::msg("Lock error"))?;
         if let Some(t) = *last_guard {
             let elapsed = t.elapsed();
             if elapsed < Duration::from_secs(2) {
@@ -339,8 +337,7 @@ async fn throttle_backend(last: &'static LazyLock<Mutex<Option<Instant>>>) -> Ap
         tokio::time::sleep(tokio::time::Duration::from_millis(wait.as_millis() as u64)).await;
     }
 
-    last
-        .lock()
+    last.lock()
         .map_err(|_| AppError::msg("Lock error"))?
         .replace(Instant::now());
     Ok(())

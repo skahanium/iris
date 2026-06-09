@@ -8,8 +8,9 @@ use crate::app::AppState;
 use crate::error::{AppError, AppResult};
 use crate::indexer::frontmatter::resolve_display_title;
 use crate::indexer::scan::{
-    collect_vault_folders, content_hash, index_file_from_content, index_file_with_embed,
-    index_vault_incremental, rename_file_index, FileEntry,
+    collect_vault_folders, content_hash, index_file_from_content,
+    index_file_with_embed, index_vault_incremental,
+    rename_file_index, FileEntry,
 };
 use crate::recycle::{discard_document, trash_document};
 use base64::engine::general_purpose::STANDARD;
@@ -130,12 +131,23 @@ pub struct FileListItem {
 /// 列出受追踪的用户笔记（每篇文档一条，不含版本快照）。
 /// `title` 为创建时确定的文档名；版本历史见 `version_list_cmd`。
 #[tauri::command]
-pub fn file_list(state: State<'_, Arc<AppState>>) -> AppResult<Vec<FileListItem>> {
-    file_list_inner(state.inner())
+pub fn file_list(
+    state: State<'_, Arc<AppState>>,
+    limit: Option<u32>,
+    offset: Option<u32>,
+) -> AppResult<Vec<FileListItem>> {
+    file_list_inner(state.inner(), limit, offset)
 }
 
-fn file_list_inner(state: &AppState) -> AppResult<Vec<FileListItem>> {
+fn file_list_inner(
+    state: &AppState,
+    limit: Option<u32>,
+    offset: Option<u32>,
+) -> AppResult<Vec<FileListItem>> {
     let _vault = state.vault_path()?;
+
+    let lim = limit.unwrap_or(u32::MAX) as i64;
+    let off = offset.unwrap_or(0) as i64;
 
     state.db.with_read_conn(|conn| {
         let mut stmt = conn.prepare(
@@ -143,9 +155,10 @@ fn file_list_inner(state: &AppState) -> AppResult<Vec<FileListItem>> {
              WHERE id IN (SELECT MAX(id) FROM files GROUP BY path)
                AND path NOT LIKE '.iris/%'
                AND path NOT LIKE '.classified/%'
-             ORDER BY updated_at DESC",
+             ORDER BY updated_at DESC
+              LIMIT ?1 OFFSET ?2",
         )?;
-        let rows = stmt.query_map([], |row| {
+        let rows = stmt.query_map(rusqlite::params![lim, off], |row| {
             let path: String = row.get(0)?;
             let stored_title: String = row.get(1)?;
             let updated_at: String = row.get(2)?;
@@ -393,11 +406,21 @@ pub async fn folder_rename(
             cascade_rename_sessions(&state, rel_old, &rel_new)?;
         }
 
-        // Step 3: full reindex
-        let vault_clone = vault.clone();
-        state
+        // Step 3: reindex one file at a time so the write lock is released
+        // between files — other save operations can interleave.
+        let vault_files = crate::indexer::scan::collect_vault_files(&vault);
+        for abs in &vault_files {
+            if let Ok(rel) = crate::storage::paths::relative_path(&vault, abs) {
+                if crate::storage::paths::is_user_note_path(&rel) {
+                    let _ = state
+                        .db
+                        .with_conn(|conn| crate::indexer::scan::index_file_with_embed(conn, &vault, abs, Some(&state)));
+                }
+            }
+        }
+        let _ = state
             .db
-            .with_conn(|conn| index_vault_incremental(conn, &vault_clone, Some(&state)))?;
+            .with_conn(|conn| crate::indexer::scan::prune_stale_file_indexes(conn, &vault));
 
         // Step 4: reindex source files that were modified
         for src_path in &all_modified_sources {
@@ -860,10 +883,20 @@ pub fn vault_set(app: AppHandle, state: State<'_, Arc<AppState>>, path: String) 
     }
 
     if let Ok(vault) = state.vault_path() {
-        if let Err(e) = state
-            .db
-            .with_conn(|conn| index_vault_incremental(conn, &vault, Some(state.inner())))
-        {
+        // Index one file at a time so other operations (auto-save) can interleave.
+        let files = crate::indexer::scan::collect_vault_files(&vault);
+        for abs in &files {
+            if let Ok(rel) = crate::storage::paths::relative_path(&vault, abs) {
+                if crate::storage::paths::is_user_note_path(&rel) {
+                    let _ = state.db.with_conn(|conn| {
+                        crate::indexer::scan::index_file_with_embed(conn, &vault, abs, Some(state.inner()))
+                    });
+                }
+            }
+        }
+        if let Err(e) = state.db.with_conn(|conn| {
+            crate::indexer::scan::prune_stale_file_indexes(conn, &vault)
+        }) {
             tracing::warn!("vault_set: initial index skipped: {e}");
         }
     }
@@ -1004,10 +1037,12 @@ mod file_io_pipeline_tests {
         // prune has moved off the file_list hot path — explicitly prune
         state
             .db
-            .with_conn(|conn| crate::indexer::scan::prune_stale_file_indexes(conn, &state.vault_path().unwrap()))
+            .with_conn(|conn| {
+                crate::indexer::scan::prune_stale_file_indexes(conn, &state.vault_path().unwrap())
+            })
             .unwrap();
 
-        let files = file_list_inner(&state).unwrap();
+        let files = file_list_inner(&state, None, None).unwrap();
         assert!(files.is_empty());
     }
 

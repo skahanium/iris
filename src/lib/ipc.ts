@@ -76,8 +76,14 @@ export async function vaultGet(): Promise<string | null> {
   return invoke<string | null>("vault_get");
 }
 
-export async function fileList(): Promise<FileListItem[]> {
-  return invoke<FileListItem[]>("file_list");
+export async function fileList(opts?: {
+  limit?: number;
+  offset?: number;
+}): Promise<FileListItem[]> {
+  return invoke<FileListItem[]>("file_list", {
+    limit: opts?.limit ?? null,
+    offset: opts?.offset ?? null,
+  });
 }
 
 export async function folderList(): Promise<string[]> {

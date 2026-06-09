@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use std::sync::LazyLock;
 use std::time::Duration;
 
 use reqwest::ClientBuilder;
@@ -21,12 +22,18 @@ pub fn pinned_client_builder() -> ClientBuilder {
         .timeout(Duration::from_secs(DEFAULT_TIMEOUT_SECS))
 }
 
-/// 创建带有安全 TLS 配置的 HTTP client（无证书固定）。
+/// 返回全局单例 Client 的克隆，共享 HTTP 连接池 (keep-alive)。
 pub fn create_pinned_client() -> AppResult<reqwest::Client> {
+    Ok(GLOBAL_CLIENT.clone())
+}
+
+/// 全局 HTTP Client 单例，首次访问时创建。
+/// reqwest::Client 内部使用 Arc 连接池。
+static GLOBAL_CLIENT: LazyLock<reqwest::Client> = LazyLock::new(|| {
     pinned_client_builder()
         .build()
-        .map_err(|e| AppError::msg(format!("Failed to build HTTP client: {e}")))
-}
+        .expect("Failed to build global HTTP client")
+});
 
 /// 创建带有可选证书固定的 HTTP client。
 ///

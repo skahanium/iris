@@ -1556,6 +1556,7 @@ Body
 
     // ── install_from_git symlink escape check ─────────────
 
+    #[allow(unused_variables)]
     #[test]
     fn subpath_symlink_escape_rejected_by_canonicalize() {
         let tmp = tempfile::tempdir().unwrap();

@@ -106,7 +106,9 @@ impl AiRuntimeState {
         }
         self.vector_index_ready
             .store(false, std::sync::atomic::Ordering::Relaxed);
-        tracing::info!("vault switch: cleared pending tool calls, active research, and vector index");
+        tracing::info!(
+            "vault switch: cleared pending tool calls, active research, and vector index"
+        );
     }
 }
 

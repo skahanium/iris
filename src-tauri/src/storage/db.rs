@@ -17,6 +17,7 @@ static IN_MEMORY_DB_COUNTER: AtomicU64 = AtomicU64::new(0);
 static SQLITE_VEC_REGISTER: Once = Once::new();
 
 const READ_POOL_SIZE: usize = 8;
+const WRITE_POOL_SIZE: usize = 2;
 
 /// Whether sqlite-vec vec0 tables are available for this process.
 pub fn vector_index_ready() -> bool {
@@ -25,10 +26,16 @@ pub fn vector_index_ready() -> bool {
 
 /// SQLite connection pool with WAL and performance PRAGMAs from ARCHITECTURE.md.
 ///
-/// Uses a single write connection and a pool of read connections to allow
-/// concurrent read operations while writes are in progress (WAL mode).
+/// Uses a pool of write connections and a pool of read connections to allow
+/// concurrent read and write operations while writes are in progress (WAL mode).
+///
+/// Multiple write connections reduce lock contention at the Rust level: a short
+/// IPC write (editor auto-save) won't be blocked behind a long-running write
+/// (re-index, batch embedding). SQLite's WAL + `busy_timeout` handles the
+/// file-level serialization transparently.
 pub struct Database {
-    write_conn: Mutex<Connection>,
+    write_pool: Vec<Mutex<Connection>>,
+    write_idx: AtomicUsize,
     read_pool: Vec<Mutex<Connection>>,
     read_idx: AtomicUsize,
     #[allow(dead_code)]
@@ -40,14 +47,24 @@ impl Database {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        let write_conn = Connection::open(path)?;
-        Self::apply_pragmas(&write_conn)?;
+        let primary = Connection::open(path)?;
+        Self::apply_pragmas(&primary)?;
         #[cfg(feature = "sqlite-vec")]
-        let vec_ready = Self::try_load_sqlite_vec(&write_conn, true);
+        let vec_ready = Self::try_load_sqlite_vec(&primary, true);
         #[cfg(not(feature = "sqlite-vec"))]
         let vec_ready = false;
         VECTOR_INDEX_READY.store(vec_ready, Ordering::Relaxed);
-        migrate_up(&write_conn)?;
+        migrate_up(&primary)?;
+
+        let mut write_pool = Vec::with_capacity(WRITE_POOL_SIZE);
+        write_pool.push(Mutex::new(primary));
+        for _ in 1..WRITE_POOL_SIZE {
+            let wc = Connection::open(path)?;
+            Self::apply_pragmas(&wc)?;
+            #[cfg(feature = "sqlite-vec")]
+            let _ = Self::try_load_sqlite_vec(&wc, true);
+            write_pool.push(Mutex::new(wc));
+        }
 
         let mut read_pool = Vec::with_capacity(READ_POOL_SIZE);
         for _ in 0..READ_POOL_SIZE {
@@ -59,7 +76,8 @@ impl Database {
         }
 
         Ok(Self {
-            write_conn: Mutex::new(write_conn),
+            write_pool,
+            write_idx: AtomicUsize::new(0),
             read_pool,
             read_idx: AtomicUsize::new(0),
             path: Some(path.to_path_buf()),
@@ -70,10 +88,18 @@ impl Database {
         let db_id = IN_MEMORY_DB_COUNTER.fetch_add(1, Ordering::Relaxed);
         let db_uri = format!("file:memdb_{db_id}?mode=memory&cache=shared");
 
-        let write_conn = Connection::open(&db_uri)?;
-        Self::apply_pragmas(&write_conn)?;
+        let primary = Connection::open(&db_uri)?;
+        Self::apply_pragmas(&primary)?;
         VECTOR_INDEX_READY.store(false, Ordering::Relaxed);
-        migrate_up(&write_conn)?;
+        migrate_up(&primary)?;
+
+        let mut write_pool = Vec::with_capacity(WRITE_POOL_SIZE);
+        write_pool.push(Mutex::new(primary));
+        for _ in 1..WRITE_POOL_SIZE {
+            let wc = Connection::open(&db_uri)?;
+            Self::apply_pragmas(&wc)?;
+            write_pool.push(Mutex::new(wc));
+        }
 
         let mut read_pool = Vec::with_capacity(READ_POOL_SIZE);
         for _ in 0..READ_POOL_SIZE {
@@ -83,7 +109,8 @@ impl Database {
         }
 
         Ok(Self {
-            write_conn: Mutex::new(write_conn),
+            write_pool,
+            write_idx: AtomicUsize::new(0),
             read_pool,
             read_idx: AtomicUsize::new(0),
             path: None,
@@ -96,7 +123,7 @@ impl Database {
         if !persistent_db || cfg!(test) {
             return false;
         }
-        // Register once per process — `sqlite3_auto_extension` is global state.
+        // Register once per process; `sqlite3_auto_extension` is global state.
         SQLITE_VEC_REGISTER.call_once(|| {
             // SAFETY: sqlite-vec documents registration via `sqlite3_auto_extension` (see sqlite-vec
             // crate tests). No safe alternative exists for static extension init with rusqlite bundled.
@@ -128,7 +155,7 @@ impl Database {
             "
             PRAGMA journal_mode=WAL;
             PRAGMA synchronous=NORMAL;
-            PRAGMA cache_size=-8000;
+            PRAGMA cache_size=-32000;
             PRAGMA mmap_size=268435456;
             PRAGMA temp_store=MEMORY;
             PRAGMA busy_timeout=5000;
@@ -138,13 +165,50 @@ impl Database {
         Ok(())
     }
 
-    /// Execute a closure with the write connection (for mutations).
+    /// Perform a WAL checkpoint to prevent unbounded WAL growth.
+    ///
+    /// Calls `PRAGMA wal_checkpoint(TRUNCATE)` which moves all WAL frames
+    /// into the main database file and truncates the WAL to zero bytes.
+    pub fn wal_checkpoint(&self) -> AppResult<()> {
+        self.with_conn(|conn| {
+            let (busy, log, checkpointed): (i64, i64, i64) =
+                conn.query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |row| {
+                    Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+                })?;
+            if log > 0 || checkpointed > 0 {
+                tracing::info!(busy, log, checkpointed, "WAL checkpoint complete");
+            }
+            Ok(())
+        })
+    }
+
+    /// Passive WAL checkpoint - safe to call after large writes.
+    pub fn wal_checkpoint_passive(&self) -> AppResult<()> {
+        self.with_conn(|conn| {
+            let _ = conn.query_row("PRAGMA wal_checkpoint(PASSIVE)", [], |_| Ok(()));
+            Ok(())
+        })
+    }
+
+    /// Run `PRAGMA optimize` to update query planner statistics.
+    pub fn optimize(&self) -> AppResult<()> {
+        self.with_conn(|conn| {
+            conn.execute_batch("PRAGMA optimize; PRAGMA analysis_limit=1000;")?;
+            Ok(())
+        })
+    }
+
+    /// Execute a closure with a write connection from the pool (for mutations).
+    ///
+    /// Round-robins across `WRITE_POOL_SIZE` connections so that a short write
+    /// (editor auto-save, version snapshot) is not forced to wait behind a long
+    /// write (full re-index, batch embedding store).
     pub fn with_conn<F, T>(&self, f: F) -> AppResult<T>
     where
         F: FnOnce(&Connection) -> AppResult<T>,
     {
-        let guard = self
-            .write_conn
+        let idx = self.write_idx.fetch_add(1, Ordering::Relaxed) % self.write_pool.len();
+        let guard = self.write_pool[idx]
             .lock()
             .map_err(|_| AppError::msg("Database write lock poisoned"))?;
         f(&guard)

@@ -1,4 +1,4 @@
-use std::sync::Mutex;
+use std::sync::OnceLock;
 
 use fastembed::{EmbeddingModel, InitOptions, TextEmbedding};
 use rusqlite::Connection;
@@ -8,26 +8,33 @@ use crate::error::{AppError, AppResult};
 use crate::storage::db;
 
 /// Maximum chunks for Rust cosine fallback (avoids loading entire vault into memory).
-const MAX_COSINE_FALLBACK_CHUNKS: i64 = 2_000;
+const MAX_COSINE_FALLBACK_CHUNKS: i64 = 8_000;
 
-static EMBEDDER: Mutex<Option<TextEmbedding>> = Mutex::new(None);
+/// Global embedding model, lazy-initialized via OnceLock.
+///
+/// `TextEmbedding::embed()` takes `&Self` and fastembed documents the type as
+/// `Send + Sync`, so multiple threads can safely call `embed()` concurrently.
+///
+/// OnceLock ensures only the first caller pays the model-load cost;
+/// all subsequent calls get a shared reference with zero contention.
+static EMBEDDER: OnceLock<TextEmbedding> = OnceLock::new();
+
+/// Return a shared reference to the global embedding model.
+/// On first call, loads the model (blocks calling thread briefly).
+/// Subsequent calls return immediately with zero contention.
+fn get_embedder() -> &'static TextEmbedding {
+    EMBEDDER.get_or_init(|| {
+        TextEmbedding::try_new(InitOptions::new(EmbeddingModel::AllMiniLML6V2))
+            .expect("Failed to load embedding model")
+    })
+}
 
 /// Generate embedding vector for text.
 pub fn embed_text(text: &str) -> AppResult<Vec<f32>> {
-    let mut guard = EMBEDDER
-        .lock()
-        .map_err(|_| AppError::msg("embedder lock"))?;
-    if guard.is_none() {
-        *guard = Some(
-            TextEmbedding::try_new(InitOptions::new(EmbeddingModel::AllMiniLML6V2))
-                .map_err(|e| AppError::Embed(e.to_string()))?,
-        );
-    }
-    let model = guard.as_ref().expect("embedder initialized");
-    let embeddings = model
+    let model = get_embedder();
+    model
         .embed(vec![text], None)
-        .map_err(|e| AppError::Embed(e.to_string()))?;
-    embeddings
+        .map_err(|e| AppError::Embed(e.to_string()))?
         .into_iter()
         .next()
         .ok_or_else(|| AppError::msg("Empty embedding result"))
@@ -38,22 +45,11 @@ pub fn embed_texts_batch(texts: &[&str]) -> AppResult<Vec<Vec<f32>>> {
     if texts.is_empty() {
         return Ok(Vec::new());
     }
-    let mut guard = EMBEDDER
-        .lock()
-        .map_err(|_| AppError::msg("embedder lock"))?;
-    if guard.is_none() {
-        *guard = Some(
-            TextEmbedding::try_new(InitOptions::new(EmbeddingModel::AllMiniLML6V2))
-                .map_err(|e| AppError::Embed(e.to_string()))?,
-        );
-    }
-    let model = guard.as_ref().expect("embedder initialized");
+    let model = get_embedder();
     model
         .embed(texts.to_vec(), None)
         .map_err(|e| AppError::Embed(e.to_string()))
 }
-
-/// Concrete [`EmbedBackend`] using the fastembed `AllMiniLML6V2` model.
 pub struct FastEmbedBackend;
 
 impl EmbedBackend for FastEmbedBackend {
@@ -120,7 +116,7 @@ fn semantic_search_vec(
          JOIN chunks c ON c.id = vc.rowid
          JOIN files f ON f.id = c.file_id
          WHERE vc.embedding MATCH ?1
-           AND f.path NOT LIKE '.classified/%'
+           AND f.path NOT LIKE ''.classified/%''
          ORDER BY vc.distance
          LIMIT ?2",
     )?;
@@ -163,7 +159,7 @@ fn semantic_search_cosine(
          FROM chunks c
          JOIN files f ON f.id = c.file_id
          JOIN chunk_embeddings ce ON ce.chunk_id = c.id
-         WHERE f.path NOT LIKE '.classified/%'",
+         WHERE f.path NOT LIKE ''.classified/%''",
     )?;
 
     let rows = stmt.query_map([], |row| {
@@ -208,14 +204,38 @@ pub struct SemanticHit {
     pub score: f32,
 }
 
+/// Read embedding blob (auto-detects format).
+/// Magic [0x51,0x55] → quantized; otherwise → raw f32 LE.
 fn bytes_to_f32(blob: &[u8]) -> Vec<f32> {
-    blob.chunks_exact(4)
-        .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
-        .collect()
+    if blob.is_empty() {
+        return vec![];
+    }
+    // Quantized format: magic [0x51, 0x55] + scale (4 bytes) + i8 data
+    if blob.len() >= 6 && blob[0] == 0x51 && blob[1] == 0x55 {
+        let scale = f32::from_le_bytes([blob[2], blob[3], blob[4], blob[5]]);
+        blob[6..].iter().map(|&b| (b as i8) as f32 / scale).collect()
+    } else {
+        blob.chunks_exact(4)
+            .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
+            .collect()
+    }
 }
 
+/// Scalar quantization: scale f32[-2..2] to u8[0..255], ~4× smaller than raw f32.
+/// Format: magic [0x51,0x55] + scale f32 LE (4 bytes) + quantized u8 (N bytes).
+/// Auto-detect on read: if first 2 bytes are magic → quantized, else raw f32.
 pub fn f32_to_bytes(vec: &[f32]) -> Vec<u8> {
-    vec.iter().flat_map(|f| f.to_le_bytes()).collect()
+    // Find max absolute value for scaling
+    let max_abs = vec.iter().fold(0.0f32, |m, &v| m.max(v.abs())).max(1e-8);
+    let scale = 127.0f32 / max_abs;
+    let mut bytes = Vec::with_capacity(6 + vec.len());
+    bytes.extend_from_slice(&[0x51, 0x55]); // magic marker
+    bytes.extend_from_slice(&scale.to_le_bytes());
+    for &v in vec {
+        let q = (v * scale).clamp(-128.0, 127.0) as i8;
+        bytes.push(q as u8);
+    }
+    bytes
 }
 
 fn truncate_snippet(s: &str, max: usize) -> String {

@@ -241,6 +241,7 @@ fn map_version_row(row: &Row<'_>) -> rusqlite::Result<VersionEntry> {
 }
 
 const CAS_STORAGE_PREFIX: &str = "cas:";
+const CAS_DIFF_PREFIX: &str = "dif:";
 
 #[allow(dead_code)]
 fn storage_path_for(file_id: i64, version_no: &str) -> String {
@@ -261,6 +262,16 @@ pub(crate) fn read_version_content(
     vault: &std::path::Path,
     storage_path: &str,
 ) -> AppResult<String> {
+    // Diff delta: "dif:{parent_hash}:{diff_hash}"
+    if let Some(rest) = storage_path.strip_prefix(CAS_DIFF_PREFIX) {
+        if let Some((parent_hash, diff_hash)) = rest.split_once(':') {
+            let parent = state.cas_store()?.read_blob_content(parent_hash)?;
+            let diff = state.cas_store()?.read_blob_content(diff_hash)?;
+            return crate::cas::diff::apply_diff(&parent, &diff);
+        }
+        return Err(AppError::msg(format!("invalid diff storage path: {storage_path}")));
+    }
+    // Full-content CAS: "cas:{hash}"
     if let Some(hash) = storage_path.strip_prefix(CAS_STORAGE_PREFIX) {
         return state.cas_store()?.read_blob_content(hash);
     }
@@ -269,7 +280,23 @@ pub(crate) fn read_version_content(
 }
 
 /// Store snapshot body in CAS; returns `storage_path` for the versions table.
-fn write_version_blob(state: &Arc<AppState>, content: &str) -> AppResult<String> {
+/// Store version content, preferring a compressed line diff against `prev_content`
+/// when it saves >30% space (diff delta storage).
+fn write_version_blob(
+    state: &Arc<AppState>,
+    content: &str,
+    prev_content: Option<&str>,
+) -> AppResult<String> {
+    // Try diff-based delta first
+    if let Some(prev) = prev_content {
+        if let Some(diff) = crate::cas::diff::compute_diff(prev, content) {
+            let diff_hash = state.cas_store()?.store_blob(diff.as_bytes())?;
+            let parent_hash = crate::cas::hash::content_hash_str(prev);
+            let path = format!("{CAS_DIFF_PREFIX}{parent_hash}:{diff_hash}");
+            return Ok(path);
+        }
+    }
+    // Fall back to full-content CAS storage
     let hash = state.cas_store()?.store_blob(content.as_bytes())?;
     Ok(cas_storage_path(&hash))
 }
@@ -414,7 +441,22 @@ pub fn create_snapshot_outcome(
     }
 
     let version_no = timestamp_version_no();
-    let storage_path = write_version_blob(state, content)?;
+    // Look up previous snapshot content for diff-based delta storage.
+    let prev_content: Option<String> = state.db.with_read_conn(|conn| {
+        let result: Result<(String,), _> = conn.query_row(
+            "SELECT storage_path FROM versions
+             WHERE file_id = ?1
+             ORDER BY created_at DESC, id DESC
+             LIMIT 1",
+            [file_id],
+            |row| Ok((row.get::<_, String>(0)?,)),
+        );
+        Ok(result.ok().map(|(p,)| p))
+    })?;
+    let prev = prev_content.as_ref().and_then(|p| {
+        read_version_content(state, &state.vault_path().ok()?, p).ok()
+    });
+    let storage_path = write_version_blob(state, content, prev.as_deref())?;
 
     if let Some(cas_hash) = storage_path.strip_prefix(CAS_STORAGE_PREFIX) {
         if let Err(e) = state.ref_counter().increment(cas_hash) {

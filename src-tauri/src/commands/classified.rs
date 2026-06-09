@@ -432,10 +432,7 @@ pub fn classified_setup(state: State<'_, Arc<AppState>>, password: String) -> Ap
 }
 
 #[tauri::command]
-pub async fn classified_unlock(
-    state: State<'_, Arc<AppState>>,
-    password: String,
-) -> AppResult<()> {
+pub async fn classified_unlock(state: State<'_, Arc<AppState>>, password: String) -> AppResult<()> {
     let vault = state.vault_path()?;
     classified_unlock_async_inner(state.inner(), &password, &vault).await
 }

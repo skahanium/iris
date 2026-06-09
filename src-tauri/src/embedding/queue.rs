@@ -52,13 +52,33 @@ impl EmbedQueue {
 }
 
 fn embed_worker_loop(state: Arc<AppState>, rx: Receiver<i64>, pending: Arc<Mutex<HashSet<i64>>>) {
-    while let Ok(file_id) = rx.recv() {
+    while let Ok(first_id) = rx.recv() {
+        let mut batch = vec![first_id];
         {
             let mut guard = pending.lock().expect("embed pending lock");
-            guard.remove(&file_id);
+            guard.remove(&first_id);
         }
-        if let Err(e) = embed_file_chunked(&state, file_id) {
-            tracing::warn!("background embedding failed for file {file_id}: {e}");
+        // Drain up to 15 more file_ids within 80ms for batch embedding
+        let deadline = std::time::Instant::now() + Duration::from_millis(80);
+        while batch.len() < 16 {
+            match rx.try_recv() {
+                Ok(id) => {
+                    {
+                        let mut guard = pending.lock().expect("embed pending lock");
+                        guard.remove(&id);
+                    }
+                    batch.push(id);
+                    if std::time::Instant::now() >= deadline {
+                        break;
+                    }
+                }
+                Err(_) => break,
+            }
+        }
+        for &file_id in &batch {
+            if let Err(e) = embed_file_chunked(&state, file_id) {
+                tracing::warn!("background embedding failed for file {file_id}: {e}");
+            }
         }
         thread::sleep(Duration::from_millis(5));
     }

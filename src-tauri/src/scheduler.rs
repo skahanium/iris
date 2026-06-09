@@ -20,6 +20,30 @@ impl Scheduler {
     /// 创建新的调度器
     pub fn new(state: Arc<AppState>) -> Self {
         let (shutdown_tx, shutdown_rx) = watch::channel(false);
+        let db = state.db.clone();
+
+        // Spawn periodic WAL checkpoint + optimize every 60 minutes
+        let db_checkpoint = db.clone();
+        let mut shutdown_rx_checkpoint = shutdown_rx.clone();
+        tauri::async_runtime::spawn(async move {
+            loop {
+                tokio::select! {
+                    _ = sleep(Duration::from_secs(3600)) => {
+                        if let Err(e) = db_checkpoint.wal_checkpoint() {
+                            tracing::warn!("Periodic WAL checkpoint failed: {e}");
+                        }
+                        if let Err(e) = db_checkpoint.optimize() {
+                            tracing::warn!("Periodic PRAGMA optimize failed: {e}");
+                        }
+                    },
+                    _ = shutdown_rx_checkpoint.changed() => {
+                        let _ = db_checkpoint.wal_checkpoint();
+                        return;
+                    }
+                }
+            }
+        });
+
         Self {
             state,
             shutdown_tx,

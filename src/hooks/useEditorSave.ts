@@ -64,12 +64,19 @@ export function useEditorSave(
   const runSaveOnce = useCallback(async (): Promise<string | null> => {
     const target = pathRef.current;
     if (!target) return null;
-    const md = await writeNoteAtPath(target, () => getMarkdownRef.current());
-    if (md) {
-      recordSavedSnapshot(target, md);
-      onSavedRef.current?.(md);
+    // Skip save if content unchanged from last persisted snapshot.
+    // This avoids sending full content over IPC for no-op auto-saves.
+    const md = getMarkdownRef.current();
+    const last = lastSavedSnapshotRef.current;
+    if (last && last.path === target && last.markdown === md) {
+      return last.markdown;
     }
-    return md;
+    const saved = await writeNoteAtPath(target, () => getMarkdownRef.current());
+    if (saved) {
+      recordSavedSnapshot(target, saved);
+      onSavedRef.current?.(saved);
+    }
+    return saved;
   }, [recordSavedSnapshot]);
 
   const saveNote = useCallback(async (): Promise<string | null> => {

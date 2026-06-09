@@ -502,9 +502,7 @@ pub fn rename_file_index(conn: &Connection, old_path: &str, new_path: &str) -> A
 /// Drop index rows for user notes whose `.md` files are missing on disk.
 /// Also unconditionally removes any `.classified/` entries that may have leaked into the index.
 pub fn prune_stale_file_indexes(conn: &Connection, vault: &Path) -> AppResult<usize> {
-    let mut stmt = conn.prepare(
-        "SELECT DISTINCT path FROM files WHERE path NOT LIKE '.iris/%'",
-    )?;
+    let mut stmt = conn.prepare("SELECT DISTINCT path FROM files WHERE path NOT LIKE '.iris/%'")?;
     let paths: Vec<String> = stmt
         .query_map([], |row| row.get(0))?
         .collect::<Result<_, _>>()?;

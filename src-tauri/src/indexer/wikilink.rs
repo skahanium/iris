@@ -17,7 +17,8 @@ pub fn extract_wiki_links(content: &str) -> Vec<String> {
         for cap in re.captures_iter(line) {
             if let Some(m) = cap.get(0) {
                 if crate::indexer::code_fence::FenceState::is_inside_inline_code_or_comment(
-                    line, m.start(),
+                    line,
+                    m.start(),
                 ) {
                     continue;
                 }

@@ -24,7 +24,9 @@ impl FenceState {
 
         if self.in_fence {
             // Check for closing fence: same char, at least same length, only whitespace after
-            if let Some(stripped) = trimmed.strip_prefix(&self.fence_char.to_string().repeat(self.fence_len)) {
+            if let Some(stripped) =
+                trimmed.strip_prefix(&self.fence_char.to_string().repeat(self.fence_len))
+            {
                 if stripped.is_empty() || stripped.chars().all(|c| c.is_whitespace()) {
                     self.in_fence = false;
                     return false;

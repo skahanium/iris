@@ -1062,10 +1062,11 @@ function App() {
             {activePath ? (
               <ErrorBoundary scope="编辑器">
                 <TipTapEditor
-                  key={`${activePath}:${editorContentTick}`}
+                  key={activePath}
                   initialBodyMarkdown={editorBodyMarkdown}
                   contentCacheKey={activePath}
-                  reingestKey={editorContentTick}
+                                  reingestKey={editorContentTick}
+                  reloadContentTick={editorContentTick}
                   zen={zen}
                   zoom={editorZoom}
                   titleSlot={editorTitleSlot}

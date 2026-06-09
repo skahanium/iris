@@ -76,8 +76,7 @@ impl BruteForceProtection {
         state.failures = state.failures.saturating_add(1);
 
         if state.failures >= 10 {
-            state.locked_until =
-                Some(Instant::now() + std::time::Duration::from_secs(1800)); // 30 min
+            state.locked_until = Some(Instant::now() + std::time::Duration::from_secs(1800)); // 30 min
             tracing::warn!(
                 failures = state.failures,
                 "涉密保险库因连续密码错误已锁定 30 分钟"
@@ -86,8 +85,7 @@ impl BruteForceProtection {
             let delay = 5u64
                 .saturating_mul(2u64.saturating_pow(state.failures.saturating_sub(5)))
                 .min(300);
-            state.locked_until =
-                Some(Instant::now() + std::time::Duration::from_secs(delay));
+            state.locked_until = Some(Instant::now() + std::time::Duration::from_secs(delay));
             tracing::warn!(
                 failures = state.failures,
                 delay_secs = delay,
