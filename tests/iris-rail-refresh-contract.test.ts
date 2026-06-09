@@ -60,4 +60,25 @@ describe("Iris Rail complete interface contracts", () => {
     expect(css).toContain(".outline-rail");
     expect(css).toContain(".outline-rail-handle");
   });
+
+  it("moves AI configuration into AI System Center", () => {
+    const settings = read("src/components/settings/SettingsPanel.tsx");
+    const aiCenter = read("src/components/settings/AiSystemCenterPanel.tsx");
+    const overlays = read("src/hooks/useOverlayManager.ts");
+    const palette = read("src/lib/command-palette.ts");
+    const app = read("src/App.tsx");
+
+    expect(aiCenter).toContain('data-testid="ai-system-center"');
+    expect(aiCenter).toContain("LlmRoutingSection");
+    expect(aiCenter).toContain("MinimaxSearchSection");
+    expect(aiCenter).toContain("PersonaSettingsPanel");
+    expect(aiCenter).toContain("SkillsPanel");
+    expect(aiCenter).toContain("AiRulesPanel");
+    expect(settings).not.toContain("LlmRoutingSection");
+    expect(settings).not.toContain("MinimaxSearchSection");
+    expect(settings).not.toContain("AiRulesPanel");
+    expect(overlays).toContain('"aiSystemCenter"');
+    expect(palette).toContain("ai-system-center");
+    expect(app).toContain("AiSystemCenterPanel");
+  });
 });

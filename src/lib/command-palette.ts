@@ -343,6 +343,15 @@ export function buildCommandPaletteItems(
       action: { type: "toggleWebSearch" },
     },
     {
+      id: "ai-system-center",
+      label: "AI 系统中心",
+      group: "AI",
+      keywords:
+        "ai system center model search skills memory rules 系统 中心 模型 联网 人格 规则",
+      icon: "SlidersHorizontal",
+      action: { type: "openOverlay", overlay: "aiSystemCenter" },
+    },
+    {
       id: "skills",
       label: "管理 AI Skills",
       group: "AI",

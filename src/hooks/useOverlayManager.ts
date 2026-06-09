@@ -11,13 +11,15 @@ export type OverlayId =
   | "graph"
   | "version"
   | "recycleBin"
-  | "skills";
+  | "skills"
+  | "aiSystemCenter";
 
 const SIDE_PANELS: OverlayId[] = [
   "commandPalette",
   "fileSheet",
   "search",
   "settings",
+  "aiSystemCenter",
   "skills",
   "backlinks",
   "tags",
@@ -109,6 +111,7 @@ export function useOverlayManager() {
   const versionOpen = activeOverlay === "version";
   const recycleBinOpen = activeOverlay === "recycleBin";
   const skillsOpen = activeOverlay === "skills";
+  const aiSystemCenterOpen = activeOverlay === "aiSystemCenter";
 
   return {
     activeOverlay,
@@ -139,6 +142,9 @@ export function useOverlayManager() {
     setRecycleBinOpen: (open: boolean) => setOverlayOpen("recycleBin", open),
     skillsOpen,
     setSkillsOpen: (open: boolean) => setOverlayOpen("skills", open),
+    aiSystemCenterOpen,
+    setAiSystemCenterOpen: (open: boolean) =>
+      setOverlayOpen("aiSystemCenter", open),
     openSidePanel,
     toggleSidePanel,
     closeSidePanels,

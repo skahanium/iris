@@ -28,8 +28,8 @@ describe("unified assistant E2E contract", () => {
     expect(read("src/components/ai/AgentStatusBadge.tsx")).toContain(
       'data-testid="agent-status-trigger"',
     );
-    expect(read("src/components/settings/SettingsPanel.tsx")).toContain(
-      "settings-section-ai-assistant",
+    expect(read("src/components/settings/AiSystemCenterPanel.tsx")).toContain(
+      'data-testid="ai-system-center"',
     );
     expect(panel).not.toContain("AssistantIdentitySection");
     expect(panel).not.toContain("AgentStatusStrip");

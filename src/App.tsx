@@ -111,6 +111,11 @@ const SettingsPanel = lazy(() =>
     default: m.SettingsPanel,
   })),
 );
+const AiSystemCenterPanel = lazy(() =>
+  import("@/components/settings/AiSystemCenterPanel").then((m) => ({
+    default: m.AiSystemCenterPanel,
+  })),
+);
 const VersionTimeline = lazy(() =>
   import("@/components/version/VersionTimeline").then((m) => ({
     default: m.VersionTimeline,
@@ -1134,7 +1139,7 @@ function App() {
                 onNew={handleNewNoteLeavingHome}
                 onQuickOpen={() => overlays.openOverlay("quickOpen")}
                 onSearch={() => overlays.openOverlay("search")}
-                onAiSystemCenter={() => overlays.openOverlay("settings")}
+                onAiSystemCenter={() => overlays.openOverlay("aiSystemCenter")}
               />
             )}
             <IrisContextMenu
@@ -1250,6 +1255,12 @@ function App() {
                 onClose={() => overlays.closeOverlay("settings")}
                 theme={theme}
                 onThemeChange={(t) => void setTheme(t)}
+              />
+            </Suspense>
+            <Suspense fallback={<LazyFallback />}>
+              <AiSystemCenterPanel
+                open={overlays.aiSystemCenterOpen}
+                onClose={() => overlays.closeOverlay("aiSystemCenter")}
               />
             </Suspense>
             <SkillsPanel
