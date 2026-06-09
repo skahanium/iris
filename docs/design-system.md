@@ -45,6 +45,8 @@ Iris Rail Refresh 的 accent 演进为低饱和鼠尾草绿系，仅用于知识
 | `--panel` / `--card` | 略区别于 background                     | 略区别于 background | 标签选中、浮层、输入       |
 | `--editor-*`         | 与 `--background` / `--foreground` 对齐 | 同上                | 兼容旧 `editor-paper` 类名 |
 
+Iris Rail Refresh adds semantic surface tokens for the complete interface system: `--iris-rail-*` for brand rail and Rail Segments tabs, `--outline-rail-*` for the editor outline rail, `--ai-workspace-*` for the collaboration sidecar, and `--overlay-task-*` for task-capsule overlays. These tokens are semantic and should not be reused as generic decoration colors.
+
 ### 字体
 
 | 场景                 | 栈 / Token   | 说明                                       |
@@ -148,14 +150,19 @@ Iris Rail Refresh 的 accent 演进为低饱和鼠尾草绿系，仅用于知识
 
 ### Chrome 表面与命令/AI token
 
-| Token                                                         | 用途                                                |
-| ------------------------------------------------------------- | --------------------------------------------------- |
-| `--surface-chrome`                                            | TabBar、StatusBar、侧栏壳                           |
-| `--surface-elevated`                                          | 浮层、popover                                       |
-| `--surface-inset`                                             | 输入底、列表 hover 底                               |
-| `--command-highlight-bg` / `--command-highlight-ring`         | 命令列表选中（浅底 + inset ring，非大面积 primary） |
-| `--ai-user-bg` / `--ai-assistant-border` / `--ai-composer-bg` | AI 对话与输入区                                     |
-| `--ai-stream-pulse`                                           | 流式等待指示                                        |
+| Token                                                         | 用途                                                 |
+| ------------------------------------------------------------- | ---------------------------------------------------- |
+| `--surface-chrome`                                            | TabBar、StatusBar、侧栏壳                            |
+| `--surface-elevated`                                          | 浮层、popover                                        |
+| `--surface-inset`                                             | 输入底、列表 hover 底                                |
+| `--command-highlight-bg` / `--command-highlight-ring`         | 命令列表选中（浅底 + inset ring，非大面积 primary）  |
+| `--ai-user-bg` / `--ai-assistant-border` / `--ai-composer-bg` | AI 对话与输入区                                      |
+| `--ai-stream-pulse`                                           | 流式等待指示                                         |
+| `--knowledge-accent` / `--knowledge-accent-foreground`        | 鼠尾草绿知识连接色；品牌轨道选中线、Outline 当前章节 |
+| `--iris-rail-*`                                               | 品牌轨道与 Rail Segments Tab 背景、激活、hover       |
+| `--outline-rail-*`                                            | 边缘目录轨背景与当前章节 marker                      |
+| `--ai-workspace-*`                                            | AI 协作侧车背景与边框                                |
+| `--overlay-task-*`                                            | 任务舱 Overlay 标题区与列表选中态                    |
 
 ---
 

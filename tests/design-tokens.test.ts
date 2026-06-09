@@ -61,6 +61,25 @@ describe("design tokens", () => {
     expect(tailwindConfigSource).toContain('user: "hsl(var(--ai-user-bg))"');
   });
 
+  it("defines Iris Rail semantic surface tokens and Tailwind mappings", () => {
+    expect(cssVariable("--knowledge-accent")).toBe("150 12% 54%");
+    expect(cssVariable("--iris-rail-bg")).toBe("var(--surface-chrome)");
+    expect(cssVariable("--iris-rail-active")).toBe("150 12% 54%");
+    expect(cssVariable("--outline-rail-bg")).toBe("0 0% 12% / 0.88");
+    expect(cssVariable("--ai-workspace-bg")).toBe("var(--panel)");
+    expect(cssVariable("--overlay-task-header")).toBe(
+      "var(--surface-elevated)",
+    );
+    expect(tailwindConfigSource).toContain(
+      'accent: "hsl(var(--knowledge-accent))"',
+    );
+    expect(tailwindConfigSource).toContain('bg: "hsl(var(--iris-rail-bg))"');
+    expect(tailwindConfigSource).toContain('bg: "hsl(var(--outline-rail-bg))"');
+    expect(tailwindConfigSource).toContain(
+      'header: "hsl(var(--overlay-task-header))"',
+    );
+  });
+
   it("exposes design tokens through Tailwind theme extensions", () => {
     expect(tailwindConfigSource).toContain(
       'scrim: "hsl(var(--overlay-scrim))"',

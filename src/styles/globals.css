@@ -91,6 +91,19 @@
     --surface-chrome: 0 0% 12%;
     --surface-elevated: 0 0% 14%;
     --surface-inset: 0 0% 16%;
+
+    --knowledge-accent: 150 12% 54%;
+    --knowledge-accent-foreground: 150 16% 78%;
+    --iris-rail-bg: var(--surface-chrome);
+    --iris-rail-active: 150 12% 54%;
+    --iris-rail-hover: 0 0% 18%;
+    --outline-rail-bg: 0 0% 12% / 0.88;
+    --outline-rail-active: 150 12% 54%;
+    --ai-workspace-bg: var(--panel);
+    --ai-workspace-border: 0 0% 22%;
+    --overlay-task-header: var(--surface-elevated);
+    --overlay-task-selected: 150 12% 54% / 0.14;
+
     --command-highlight-bg: 210 22% 52% / 0.14;
     --command-highlight-ring: 210 22% 58% / 0.32;
     --command-group-label: 0 0% 55%;
@@ -148,6 +161,19 @@
     --surface-chrome: 0 0% 97%;
     --surface-elevated: 0 0% 100%;
     --surface-inset: 0 0% 96%;
+
+    --knowledge-accent: 150 10% 42%;
+    --knowledge-accent-foreground: 150 16% 24%;
+    --iris-rail-bg: var(--surface-chrome);
+    --iris-rail-active: 150 10% 42%;
+    --iris-rail-hover: 0 0% 94%;
+    --outline-rail-bg: 0 0% 100% / 0.9;
+    --outline-rail-active: 150 10% 42%;
+    --ai-workspace-bg: var(--panel);
+    --ai-workspace-border: 0 0% 88%;
+    --overlay-task-header: var(--surface-elevated);
+    --overlay-task-selected: 150 10% 42% / 0.1;
+
     --command-highlight-bg: 210 14% 42% / 0.1;
     --command-highlight-ring: 210 14% 42% / 0.22;
     --command-group-label: 0 0% 45%;

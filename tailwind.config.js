@@ -43,6 +43,23 @@ export default {
           elevated: "hsl(var(--surface-elevated))",
           inset: "hsl(var(--surface-inset))",
         },
+        knowledge: {
+          accent: "hsl(var(--knowledge-accent))",
+          foreground: "hsl(var(--knowledge-accent-foreground))",
+        },
+        rail: {
+          bg: "hsl(var(--iris-rail-bg))",
+          active: "hsl(var(--iris-rail-active))",
+          hover: "hsl(var(--iris-rail-hover))",
+        },
+        outline: {
+          bg: "hsl(var(--outline-rail-bg))",
+          active: "hsl(var(--outline-rail-active))",
+        },
+        task: {
+          header: "hsl(var(--overlay-task-header))",
+          selected: "hsl(var(--overlay-task-selected))",
+        },
         command: {
           highlight: "hsl(var(--command-highlight-bg))",
           ring: "hsl(var(--command-highlight-ring))",
