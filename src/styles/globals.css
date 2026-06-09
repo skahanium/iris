@@ -552,6 +552,29 @@
     background: hsl(var(--surface-elevated));
   }
 
+  .task-overlay {
+    background: hsl(var(--panel));
+  }
+
+  .task-overlay-header {
+    background: hsl(var(--overlay-task-header));
+  }
+
+  .task-overlay-filter {
+    border-bottom: 1px solid hsl(var(--border) / 0.6);
+    background: hsl(var(--surface-inset) / 0.28);
+  }
+
+  .task-overlay-results [aria-selected="true"],
+  .task-overlay-results [data-active="true"] {
+    background: hsl(var(--overlay-task-selected));
+  }
+
+  .task-overlay-footer {
+    border-top: 1px solid hsl(var(--border) / 0.6);
+    background: hsl(var(--surface-inset) / 0.34);
+  }
+
   .iris-select {
     @apply rounded-md border border-border bg-card px-2 py-1 text-xs text-foreground shadow-sm;
   }

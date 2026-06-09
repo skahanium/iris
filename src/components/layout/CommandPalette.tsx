@@ -167,7 +167,7 @@ export function CommandPalette({
         }
       >
         <ScrollArea
-          className="h-[min(28rem,58vh)]"
+          className="task-overlay-results h-[min(28rem,58vh)]"
           viewportRef={listViewportRef}
           scrollbarVisibility="always"
           onPointerMove={handleListPointerMove}

@@ -44,7 +44,7 @@ export function SearchPanel({ open, onClose, onOpen }: SearchPanelProps) {
 
   return (
     <IrisOverlay open={open} onClose={onClose} title="全库搜索" size="command">
-      <div className="space-y-2 border-b border-border/60 bg-surface-inset/30 px-4 py-3">
+      <div className="task-overlay-filter space-y-2 border-b border-border/60 bg-surface-inset/30 px-4 py-3">
         <Input
           placeholder="输入关键词或自然语言…"
           value={query}
@@ -79,7 +79,7 @@ export function SearchPanel({ open, onClose, onOpen }: SearchPanelProps) {
         </div>
         {error && <p className="text-xs text-destructive">{error}</p>}
       </div>
-      <ScrollArea className="min-h-0 flex-1 px-2">
+      <ScrollArea className="task-overlay-results min-h-0 flex-1 px-2">
         {keywordHits.map((h) => (
           <button
             key={h.path}

@@ -242,7 +242,7 @@ export function VersionTimeline({
   return (
     <IrisOverlay open={open} onClose={onClose} title="版本历史" size="wide">
       {notePath && (
-        <div className="shrink-0 border-b border-border/60 bg-surface-inset/30 px-4 py-3">
+        <div className="task-overlay-filter shrink-0 border-b border-border/60 bg-surface-inset/30 px-4 py-3">
           <p className="mb-2 text-xs text-muted-foreground">
             将当前正文保存为定稿版本（永久保留）
           </p>
@@ -269,7 +269,7 @@ export function VersionTimeline({
       )}
 
       {preview !== null && previewId !== null && (
-        <div className="shrink-0 border-b border-border/60 bg-surface-inset/30 px-4 py-3">
+        <div className="task-overlay-filter shrink-0 border-b border-border/60 bg-surface-inset/30 px-4 py-3">
           <p className="mb-2 text-xs font-medium text-foreground">对比</p>
           <div className="grid grid-cols-2 gap-2">
             <div className="min-w-0">
@@ -290,7 +290,7 @@ export function VersionTimeline({
         </div>
       )}
 
-      <ScrollArea className="min-h-0 flex-1">
+      <ScrollArea className="task-overlay-results min-h-0 flex-1">
         {layout.isEmpty ? (
           <p className="p-3 text-xs text-muted-foreground">暂无版本快照</p>
         ) : (

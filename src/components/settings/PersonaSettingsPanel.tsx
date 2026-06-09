@@ -109,14 +109,16 @@ export function PersonaSettingsPanel({
 
   return (
     <IrisOverlay open={open} onClose={onClose} title="人格配置" size="command">
-      <ScrollArea className="flex-1">
+      <div className="task-overlay-filter shrink-0 border-b border-border/60 px-4 py-3">
+        <p className="text-xs text-muted-foreground">
+          称呼与头像显示在 AI 侧栏；人格描述与规则将注入模型 system prompt。
+        </p>
+      </div>
+      <ScrollArea className="task-overlay-results flex-1">
         <div
           className="space-y-6 px-4 py-4"
           data-testid="persona-settings-panel"
         >
-          <p className="text-xs text-muted-foreground">
-            称呼与头像显示在 AI 侧栏；人格描述与规则将注入模型 system prompt。
-          </p>
 
           {loading ? (
             <p className="text-xs text-muted-foreground">加载中…</p>

@@ -32,7 +32,7 @@ export function OverlaySearchHeader({
   return (
     <div
       className={cn(
-        "flex h-12 shrink-0 items-center gap-2 border-b border-border/60 bg-surface-elevated px-3",
+        "task-overlay-header flex h-12 shrink-0 items-center gap-2 border-b border-border/60 bg-surface-elevated px-3",
         className,
       )}
     >
@@ -82,8 +82,10 @@ export function OverlayChrome({
       className={cn("flex min-h-0 flex-1 flex-col overflow-hidden", className)}
     >
       {header}
-      <div className="min-h-0 flex-1 overflow-hidden">{children}</div>
-      {footer}
+      <div className="task-overlay-body min-h-0 flex-1 overflow-hidden">
+        {children}
+      </div>
+      {footer ? <div className="task-overlay-footer">{footer}</div> : null}
     </div>
   );
 }

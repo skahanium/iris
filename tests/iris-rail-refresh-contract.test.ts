@@ -97,4 +97,19 @@ describe("Iris Rail complete interface contracts", () => {
     expect(css).toContain(".ai-sidecar");
     expect(css).toContain(".ai-composer-workbench");
   });
+
+  it("uses task-capsule overlay family hooks across command surfaces", () => {
+    const overlay = read("src/components/ui/iris-overlay.tsx");
+    const chrome = read("src/components/ui/overlay-chrome.tsx");
+    const search = read("src/components/file/SearchPanel.tsx");
+    const quickOpen = read("src/components/file/QuickOpen.tsx");
+    const command = read("src/components/layout/CommandPalette.tsx");
+
+    expect(overlay).toContain("task-overlay");
+    expect(chrome).toContain("task-overlay-header");
+    expect(chrome).toContain("task-overlay-footer");
+    expect(search).toContain("task-overlay-filter");
+    expect(quickOpen).toContain("task-overlay-results");
+    expect(command).toContain("task-overlay-results");
+  });
 });

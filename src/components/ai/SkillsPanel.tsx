@@ -380,7 +380,7 @@ export function SkillsPanel({
       size="command"
     >
       <div className="flex min-h-0 flex-1 flex-col" data-testid="skills-panel">
-        <div className="flex shrink-0 items-center justify-end border-b border-border/60 px-3 py-2">
+        <div className="task-overlay-filter flex shrink-0 items-center justify-end border-b border-border/60 px-3 py-2">
           <Button
             type="button"
             variant="outline"
@@ -392,7 +392,7 @@ export function SkillsPanel({
           </Button>
         </div>
 
-        <ScrollArea className="flex-1">
+        <ScrollArea className="task-overlay-results flex-1">
           <div
             className={`space-y-3 p-3 ${
               dragOver ? "ring-2 ring-inset ring-primary/40" : ""

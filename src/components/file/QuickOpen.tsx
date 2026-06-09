@@ -122,7 +122,10 @@ export function QuickOpen({ open, onClose, onSelect }: QuickOpenProps) {
           />
         }
       >
-        <div ref={parentRef} className="max-h-[min(24rem,52vh)] overflow-auto">
+        <div
+          ref={parentRef}
+          className="task-overlay-results max-h-[min(24rem,52vh)] overflow-auto"
+        >
           {filtered.length === 0 ? (
             <div className="flex flex-col items-center gap-2 px-6 py-12 text-center">
               <FileText className="h-8 w-8 text-muted-foreground/60" />

@@ -328,7 +328,7 @@ export function GraphView({ open, onClose, onOpenNote }: GraphViewProps) {
       bodyClassName="relative"
     >
       {error && (
-        <p className="border-b border-border px-3 py-2 text-xs text-destructive">
+        <p className="task-overlay-filter border-b border-border px-3 py-2 text-xs text-destructive">
           {error}
         </p>
       )}
@@ -337,7 +337,10 @@ export function GraphView({ open, onClose, onOpenNote }: GraphViewProps) {
           加载中…
         </p>
       )}
-      <div ref={containerRef} className="relative min-h-0 flex-1">
+      <div
+        ref={containerRef}
+        className="task-overlay-results relative min-h-0 flex-1"
+      >
         <canvas
           ref={canvasRef}
           className="h-full w-full cursor-pointer"

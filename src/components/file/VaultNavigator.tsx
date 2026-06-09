@@ -877,7 +877,7 @@ export function VaultNavigator({ open, onClose, onOpen }: VaultNavigatorProps) {
         title="浏览笔记库"
         size="command"
       >
-        <div className="flex gap-2 border-b border-border/60 bg-surface-inset/30 px-4 py-2">
+        <div className="task-overlay-filter flex gap-2 border-b border-border/60 bg-surface-inset/30 px-4 py-2">
           <Input
             className="text-xs"
             value={newName}
@@ -953,7 +953,7 @@ export function VaultNavigator({ open, onClose, onOpen }: VaultNavigatorProps) {
           </div>
         )}
         {error && <p className="px-3 py-2 text-xs text-destructive">{error}</p>}
-        <div className="flex min-h-0 flex-1">
+        <div className="task-overlay-results flex min-h-0 flex-1">
           <div className="w-44 shrink-0 overflow-y-auto border-r border-border/60 p-2">
             <button
               type="button"
