@@ -1,14 +1,14 @@
 ---
 title: Iris Rail 视觉系统化刷新设计
 created: 2026-06-09
-scope: design-system, app-shell, homepage, desktop-chrome, settings, ai-center
+scope: design-system, app-shell, homepage, desktop-chrome, tab-bar, settings, ai-center
 ---
 
 # Iris Rail 视觉系统化刷新设计
 
 ## 摘要
 
-Iris 下一阶段的视觉目标是从“参考对象混合”收束为高识别度的**知识工作台**。识别度主要来自结构，而不是装饰：常驻 Iris 品牌轨道、清晰分隔、稳定导航语义、中密度 Home 工作台，以及独立的 AI 系统中心。
+Iris 下一阶段的视觉目标是从“参考对象混合”收束为高识别度的**知识工作台**。识别度主要来自结构，而不是装饰：常驻 Iris 品牌轨道、现代化 Rail Segments Tab 栏、清晰分隔、稳定导航语义、中密度 Home 工作台，以及独立的 AI 系统中心。
 
 本设计选择 **Iris Rail Refresh**：先系统化改造壳层、首页、设置拆分和设计 token，再逐步扩展到组件细节。第一阶段不改 Markdown 数据模型、不改 TipTap schema、不新增依赖、不做数据库迁移。
 
@@ -27,6 +27,15 @@ Iris 下一阶段的视觉目标是从“参考对象混合”收束为高识别
 - macOS 采用右侧自定义窗口控制，以便左侧让给 Iris 标识；Windows/Linux 继续使用同构右侧窗口控制。Zen 模式可隐藏 Rail，普通模式品牌始终可见。
 - 更新桌面顶栏验收文档：窗口模式下品牌轨道、标签、右侧窗口控制不重叠；Home 往返不丢失标签或未保存内容。
 
+## 现代化 Tab 栏语言
+
+- Tab 栏采用 **Rail Segments** 方向，作为 Iris Rail 的核心视觉对象重做。标签应像嵌入顶栏的一组工作片段，而不是传统浏览器标签、网页页签或单纯下划线列表。
+- 激活态使用低对比 surface、精细边界和鼠尾草绿细线/侧缘标记；未激活态默认透明，hover/focus 时出现轻底和清晰可点击反馈。
+- 关闭按钮默认隐藏，仅 hover/focus/当前标签时显示；脏状态用小圆点或轻量尾标，避免当前的突兀符号感。
+- 新建按钮贴在 tab 串尾部，作为 Rail 的工具按钮处理；尺寸、圆角、hover 态和 tab 共享同一语言，不能像松散漂浮的加号。
+- 长标题必须稳定截断；tab 最小/最大宽度、间距和 overflow 行为要保证品牌轨道、文档标签和右侧窗口控制不会互相挤压。
+- Home 激活时不伪装成普通文档 tab，而是通过品牌轨道选中态或轻量 Home segment 表达当前位置。
+
 ## 设置拆分与 AI 系统中心
 
 - `SettingsPanel` 回归通用设置：外观、关于、基础偏好。
@@ -38,8 +47,8 @@ Iris 下一阶段的视觉目标是从“参考对象混合”收束为高识别
 ## 工程边界与测试
 
 - 同步更新 `docs/design-system.md` 和 ROADMAP 的体验方向描述，再改 `src/styles/globals.css` token 与相关组件。
-- 第一阶段聚焦前端壳层、首页、AI 系统中心、命令入口和契约测试；不引入新依赖，因此无需许可审查。
-- 补充契约测试：Home 视图语义、常驻品牌轨道、AI 系统中心命令入口、设置页不再承载 AI 大块配置、窗口控制位置约束。
+- 第一阶段聚焦前端壳层、现代化 Tab 栏、首页、AI 系统中心、命令入口和契约测试；不引入新依赖，因此无需许可审查。
+- 补充契约测试：Home 视图语义、常驻品牌轨道、Rail Segments Tab 栏视觉契约、AI 系统中心命令入口、设置页不再承载 AI 大块配置、窗口控制位置约束。
 - 回归验证：`npm run lint`、`npm run format:check`、`npm run typecheck`、`npm run test`。
 - 涉及 macOS 右侧自定义窗口控制时，增加人工验收：窗口/全屏切换、拖拽区域、最小化/最大化/关闭按钮、标签栏点击均正常。
 
