@@ -1,6 +1,8 @@
 # Iris 设计系统
 
-**方向定稿**：**Iris 知识工作台**——出版感编辑区 + 一等 AI 协作对话区；备选 **C · 命令优先**（键盘与可收起面板，不抢编辑区）。历史 Notion 参考见 [design-system/notion-master.md](./design-system/notion-master.md)（**不作**当前验收依据）。
+**方向定稿**：**Iris 知识工作台**——Iris Rail 壳层 + 沉静编辑画布 + AI 协作侧车 + 任务舱 Overlay；备选 **C · 命令优先**（键盘与可收起面板，不抢编辑区）。历史 Notion 参考见 [design-system/notion-master.md](./design-system/notion-master.md)（**不作**当前验收依据）。
+
+**Iris Rail 完整刷新设计**：见 [docs/superpowers/specs/2026-06-09-iris-rail-refresh-design.md](./superpowers/specs/2026-06-09-iris-rail-refresh-design.md)。该 spec 是当前界面系统刷新目标态，覆盖 Home、顶栏、Rail Segments Tab、Editor Workspace、Outline Rail、AI Conversation Workspace、Overlay Family 与 AI 系统中心。
 
 **排期**：阶段与路线图版本的绑定见下文「落地阶段与路线图版本对照」；**版本 checklist 以 [ROADMAP.md](../ROADMAP.md) 为准**。
 
@@ -16,6 +18,8 @@
 
 内容优先：编辑区与外壳**同色扁平**，无浮动纸页、无行线网格。**AI 侧栏**为与笔记并列的**协作对话区**（默认约 360px、可拖拽调宽），承载多轮对话、检索与长文回复，视觉精致、可读，而非弱化附庸或粗糙 IM。
 
+Iris Rail 刷新后，识别度来自结构签名而非装饰：常驻品牌轨道、现代化 Rail Segments Tab、边缘目录轨、沉静编辑画布、AI 协作侧车和统一任务舱 Overlay。落地可以按风险分批，但设计目标一次性覆盖完整界面系统。
+
 ### 分区
 
 | 区域              | 角色                              | 默认观感                                    |
@@ -24,6 +28,8 @@
 | **Editor canvas** | 居中内容栏约 `45rem`，与背景同色  | 扉页衬线标题 + 无衬线正文、两端对齐         |
 | **AI 协作区**     | 对话消息流、证据与工具结果        | 15px 正文、角色分明消息壳、共用 prose token |
 | **Accent**        | 链接、主按钮、AI 标识             | 中性蓝灰（**不用** violet 紫、赭铜）        |
+
+Iris Rail Refresh 的 accent 演进为低饱和鼠尾草绿系，仅用于知识连接、AI/检索状态、Home/品牌轨道选中线、Outline Rail 当前章节和少量焦点态；灰阶仍承担编辑与壳层底色。
 
 ### 色彩 token（CSS 变量）
 
