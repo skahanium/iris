@@ -47,18 +47,32 @@ pub fn resolve_vault_path(vault: &Path, relative: &str) -> AppResult<PathBuf> {
 }
 
 /// 用户笔记（非 `.iris` 元数据目录下的版本快照、模板等）。
+fn normalized_relative(relative: &str) -> String {
+    relative.replace('\\', "/")
+}
+
+fn first_path_segment(relative: &str) -> &str {
+    relative.split('/').next().unwrap_or(relative)
+}
+
+/// True when the first vault-relative path segment is an Iris reserved root.
+pub(crate) fn has_reserved_path_root(relative: &str) -> bool {
+    let normalized = normalized_relative(relative);
+    let first = first_path_segment(&normalized);
+    first.eq_ignore_ascii_case(".iris") || first.eq_ignore_ascii_case(".classified")
+}
+
 pub fn is_user_note_path(relative: &str) -> bool {
-    let normalized = relative.replace('\\', "/");
-    !normalized.starts_with(".iris/")
-        && !normalized.starts_with(".classified/")
-        && normalized != ".iris"
-        && normalized != ".classified"
+    !has_reserved_path_root(relative)
 }
 
 /// Vault-relative path to a note under `.classified/` (not the directory root).
 pub fn is_classified_note_path(relative: &str) -> bool {
-    let normalized = relative.replace('\\', "/");
-    normalized.starts_with(".classified/") && normalized != ".classified"
+    let normalized = normalized_relative(relative);
+    let Some(rest) = normalized.strip_prefix(".classified/") else {
+        return false;
+    };
+    !rest.is_empty()
 }
 
 /// Readable/writable note path: ordinary user notes or classified vault notes.
@@ -70,15 +84,7 @@ pub fn is_accessible_note_path(relative: &str) -> bool {
 /// Prevents crash on non-UTF-8 encoded files. Logs a warning if replacements occurred.
 pub fn read_file_lossy(path: &std::path::Path) -> AppResult<String> {
     let bytes = std::fs::read(path)?;
-    let content = String::from_utf8_lossy(&bytes);
-    let has_replacements = content.contains('\u{FFFD}');
-    if has_replacements {
-        tracing::warn!(
-            path = %path.display(),
-            "file contains non-UTF-8 bytes; replaced with U+FFFD"
-        );
-    }
-    Ok(content.into_owned())
+    String::from_utf8(bytes).map_err(|_| AppError::msg("File is not valid UTF-8"))
 }
 
 /// Relative path from vault root (forward slashes).
@@ -188,6 +194,35 @@ mod tests {
         // Windows 反斜杠路径应经 normalize 后同样拒绝
         assert!(!is_user_note_path(".classified\\secret.md"));
         assert!(!is_user_note_path(".classified\\sub\\dir\\file.md"));
+    }
+
+    #[test]
+    fn rejects_reserved_paths_case_insensitively() {
+        for path in [
+            ".IRIS",
+            ".IRIS/versions/1.md",
+            ".Iris\\skills\\demo\\SKILL.md",
+            ".CLASSIFIED",
+            ".CLASSIFIED/secret.md",
+            ".Classified\\secret.md",
+        ] {
+            assert!(!is_user_note_path(path), "{path} must not be a user note");
+            assert!(
+                !is_accessible_note_path(path),
+                "{path} must not be accessible through note APIs"
+            );
+        }
+        assert!(!is_classified_note_path(".CLASSIFIED/secret.md"));
+    }
+
+    #[test]
+    fn strict_utf8_reader_rejects_invalid_note_bytes() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("bad.md");
+        fs::write(&path, [0xff, b'#', b' ', b'B']).unwrap();
+
+        let err = read_file_lossy(&path).unwrap_err();
+        assert!(err.to_string().contains("UTF-8"));
     }
 
     #[test]

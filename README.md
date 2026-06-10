@@ -71,8 +71,8 @@ TipTap WYSIWYG Markdown、多标签页、章节折叠、悬浮大纲（`Ctrl+Shi
 
 - **桌面框架**: Tauri 2.x — 约 5–10MB 打包体积，50–100MB 内存占用
 - **编辑器**: TipTap (Prosemirror) — 结构化文档节点树
-- **搜索**: FTS5 + 向量检索（sqlite-vec vec0，不可用时 cosine fallback）+ fastembed (384-dim)
-- **AI**: 兼容 OpenAI API 格式，支持远程 API 与本地 Ollama
+- **搜索**: FTS5 + 向量检索（默认 Rust cosine fallback 可用；sqlite-vec vec0 为 optional/experimental，当前 Windows 构建有阻塞）+ fastembed (384-dim)
+- **AI**: 兼容 OpenAI API 格式，支持远程 HTTPS API 与自定义 OpenAI-compatible HTTPS 端点
 
 架构细节见 [ARCHITECTURE.md](./ARCHITECTURE.md)。
 
@@ -101,7 +101,7 @@ npm run tauri build # 构建生产版本
 ### 配置 AI
 
 1. 启动应用并选择笔记目录（Vault）
-2. 右栏 AI 面板选择提供商（OpenAI / Claude / Ollama / 自定义）
+2. 右栏 AI 面板选择提供商（DeepSeek / OpenAI-compatible 自定义端点）
 3. 填入 API Key（存入操作系统凭据管理器，不落盘）
 4. 可选：设置页配置 LLM 路由、联网搜索、提示词偏好
 
@@ -126,7 +126,7 @@ iris/
 ## 设计哲学
 
 - **文件即数据，数据库即缓存** — 笔记永远是 `.md` 纯文本，SQLite 只做索引加速。
-- **本地优先** — 完全离线可用（AI 可选接入远程或 Ollama 本地模型）。
+- **本地优先** — 笔记、索引与基础编辑完全离线可用；AI 可选接入远程或用户自配的 OpenAI-compatible HTTPS 端点。
 - **AI 在编辑器里，不在聊天窗** — 内联、`/` 命令与助手面板均围绕当前文档，写入需确认。
 - **速度是功能** — Tauri + Rust 后端，轻量内存占用。
 - **开源就是安全** — AGPL-3.0，代码可审计，数据在你自己手里。

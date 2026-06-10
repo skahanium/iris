@@ -15,13 +15,15 @@ import {
   invokeErrorMessage,
   MINIMAX_CREDENTIAL_SERVICE,
 } from "@/lib/credentials";
-import { credentialDelete, credentialHas, credentialSet } from "@/lib/ipc";
 import {
+  credentialDelete,
+  credentialHas,
+  credentialSet,
   minimaxConfigGet,
   minimaxConfigSet,
   minimaxConfigTest,
-  notifyLlmConfigChanged,
-} from "@/lib/llm-ipc";
+} from "@/lib/ipc";
+import { notifyLlmConfigChanged } from "@/lib/llm-events";
 
 type WebSearchBackendOption = "auto" | "minimax" | "duckduckgo";
 

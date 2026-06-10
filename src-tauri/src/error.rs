@@ -43,8 +43,20 @@ impl Serialize for AppError {
     }
 }
 
-/// Logs the full error detail (with internal context) for server-side tracing,
-/// while [`AppError::serialize`] only sends sanitized labels to the frontend.
+fn redacted_log_detail(detail: &str) -> String {
+    use sha2::{Digest, Sha256};
+    use std::fmt::Write;
+
+    let digest = Sha256::digest(detail.as_bytes());
+    let mut short_hash = String::with_capacity(16);
+    for byte in digest.iter().take(8) {
+        let _ = write!(short_hash, "{byte:02x}");
+    }
+    format!("len={} sha256={short_hash}", detail.len())
+}
+
+/// Logs sanitized error detail for server-side tracing, while
+/// [`AppError::serialize`] controls what is sent to the frontend.
 pub fn log_error(error: &AppError) {
     match error {
         AppError::Io(e) => tracing::error!(kind = "io", detail = %e, "IO error"),
@@ -54,8 +66,12 @@ pub fn log_error(error: &AppError) {
         AppError::Keyring(e) => {
             tracing::error!(kind = "keyring", detail = %e, "Keyring error")
         }
-        AppError::Embed(s) => tracing::error!(kind = "embed", detail = %s, "Embedding error"),
-        AppError::Message(s) => tracing::error!(kind = "message", detail = %s, "App error"),
+        AppError::Embed(s) => {
+            tracing::error!(kind = "embed", detail = %redacted_log_detail(s), "Embedding error")
+        }
+        AppError::Message(s) => {
+            tracing::error!(kind = "message", detail = %redacted_log_detail(s), "App error")
+        }
     }
 }
 
@@ -105,5 +121,16 @@ mod tests {
         let json = serde_json::to_string(&err).unwrap();
         assert!(json.contains("Embedding error"));
         assert!(!json.contains("/secret/path.md"));
+    }
+
+    #[test]
+    fn log_detail_redacts_message_contents() {
+        let secret = "api_key=sk-test-123 note body /vault/secret.md";
+        let summary = redacted_log_detail(secret);
+        assert!(summary.contains("len="));
+        assert!(summary.contains("sha256="));
+        assert!(!summary.contains("sk-test-123"));
+        assert!(!summary.contains("/vault/secret.md"));
+        assert!(!summary.contains("note body"));
     }
 }

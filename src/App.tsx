@@ -1220,6 +1220,8 @@ function App() {
             canRedo={canRedo}
             webSearch={webSearch}
             onWebSearchChange={setWebSearch}
+            theme={theme}
+            onThemeChange={(nextTheme) => void setTheme(nextTheme)}
             connectivity={connectivityStatus}
             onOpenConnectivitySettings={handleOpenConnectivitySettings}
           />
@@ -1259,6 +1261,8 @@ function App() {
                 onClose={() => overlays.closeOverlay("settings")}
                 theme={theme}
                 onThemeChange={(t) => void setTheme(t)}
+                webSearch={webSearch}
+                onWebSearchChange={setWebSearch}
               />
             </Suspense>
             <Suspense fallback={<LazyFallback />}>

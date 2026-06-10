@@ -33,8 +33,8 @@ rand = "0.8"
 argon2 = "0.5"
 zeroize = { version = "1", features = ["derive"] }
 chrono = { version = "0.4", features = ["serde"] }
-notify = "7"
-notify-debouncer-full = "0.4"
+notify = "8"
+notify-debouncer-full = "0.6"
 keyring = { version = "3", features = ["apple-native", "windows-native", "linux-native"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
 rustls = { version = "0.23", default-features = false, features = ["std", "ring"] }
@@ -43,8 +43,8 @@ futures-util = "0.3"
 uuid = { version = "1", features = ["v4"] }
 regex = "1"
 walkdir = "2"
-fastembed = "4"
-scraper = "0.22"
+fastembed = { version = "5", default-features = false, features = ["ort-download-binaries-rustls-tls", "hf-hub-rustls-tls"] }
+scraper = "0.27"
 urlencoding = "2"
 toml = "0.8"
 sqlite-vec = { version = "0.1.10-alpha.4", default-features = false, optional = true }

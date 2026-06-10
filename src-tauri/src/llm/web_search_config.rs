@@ -79,9 +79,8 @@ impl Default for WebSearchPreferences {
 pub fn load(db: &Database) -> AppResult<WebSearchPreferences> {
     let mut prefs = WebSearchPreferences::default();
     if let Ok(Some(host)) = read_setting(db, MINIMAX_API_HOST_KEY) {
-        let trimmed = host.trim();
-        if !trimmed.is_empty() {
-            prefs.minimax_api_host = trimmed.to_string();
+        if let Ok(normalized) = normalize_minimax_api_host(&host) {
+            prefs.minimax_api_host = normalized;
         }
     }
     if let Ok(Some(mode)) = read_setting(db, WEB_SEARCH_BACKEND_KEY) {
@@ -108,11 +107,49 @@ fn read_setting(db: &Database, key: &str) -> AppResult<Option<String>> {
 
 /// 保存 MiniMax API Host。
 pub fn save_minimax_api_host(db: &Database, host: &str) -> AppResult<()> {
+    let normalized = normalize_minimax_api_host(host)?;
+    write_setting(db, MINIMAX_API_HOST_KEY, &normalized)
+}
+
+fn normalize_minimax_api_host(host: &str) -> AppResult<String> {
     let trimmed = host.trim();
     if trimmed.is_empty() {
-        return Err(crate::error::AppError::msg("MiniMax API Host 不能为空"));
+        return Err(crate::error::AppError::msg(
+            "MiniMax API Host cannot be empty",
+        ));
     }
-    write_setting(db, MINIMAX_API_HOST_KEY, trimmed)
+    if trimmed.contains('\0') {
+        return Err(crate::error::AppError::msg("Invalid MiniMax API Host"));
+    }
+    let mut url = reqwest::Url::parse(trimmed)
+        .map_err(|_| crate::error::AppError::msg("Invalid MiniMax API Host"))?;
+    if url.scheme() != "https" {
+        return Err(crate::error::AppError::msg(
+            "MiniMax API Host must use HTTPS",
+        ));
+    }
+    if url.host_str().is_none() {
+        return Err(crate::error::AppError::msg(
+            "MiniMax API Host must include a host",
+        ));
+    }
+    if !url.username().is_empty() || url.password().is_some() {
+        return Err(crate::error::AppError::msg(
+            "MiniMax API Host must not include credentials",
+        ));
+    }
+    if url.query().is_some() || url.fragment().is_some() {
+        return Err(crate::error::AppError::msg(
+            "MiniMax API Host must not include query or fragment",
+        ));
+    }
+    if url.path() != "/" {
+        return Err(crate::error::AppError::msg(
+            "MiniMax API Host must not include a path",
+        ));
+    }
+    url.set_path("");
+    Ok(url.as_str().trim_end_matches('/').to_string())
 }
 
 /// 保存检索后端模式。
@@ -146,6 +183,20 @@ mod tests {
         save_minimax_search_model(&db, "MiniMax-M2.5").unwrap();
         let prefs = load(&db).unwrap();
         assert_eq!(prefs.minimax_search_model, "MiniMax-M2.5");
+    }
+
+    #[test]
+    fn save_minimax_api_host_requires_clean_https_origin() {
+        let db = crate::storage::db::Database::open_in_memory().unwrap();
+
+        assert!(save_minimax_api_host(&db, "http://api.minimaxi.com").is_err());
+        assert!(save_minimax_api_host(&db, "https://user@api.minimaxi.com").is_err());
+        assert!(save_minimax_api_host(&db, "https://api.minimaxi.com?x=1").is_err());
+        assert!(save_minimax_api_host(&db, "https://api.minimaxi.com#frag").is_err());
+
+        save_minimax_api_host(&db, " https://api.minimaxi.com/ ").unwrap();
+        let prefs = load(&db).unwrap();
+        assert_eq!(prefs.minimax_api_host, "https://api.minimaxi.com");
     }
 
     #[test]

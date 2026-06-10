@@ -21,7 +21,7 @@ import {
   llmConfigSet,
   llmConfigTest,
 } from "@/lib/ipc";
-import { notifyLlmConfigChanged } from "@/lib/llm-ipc";
+import { notifyLlmConfigChanged } from "@/lib/llm-events";
 import { SCENE_META } from "@/lib/ai/scene-types";
 import type { AiScene } from "@/types/ai";
 import {

@@ -53,6 +53,7 @@ blob-report/
 playwright/.cache/
 
 # --- Tool caches ---
+.npm-cache/
 .eslintcache
 .prettiercache
 

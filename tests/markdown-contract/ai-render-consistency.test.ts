@@ -75,6 +75,20 @@ describe("user/assistant message rendering parity", () => {
     }
   });
 
+  it("chat_assistant code blocks include a sanitized copy button", () => {
+    const result = renderMarkdownWithProfile(
+      "```bash\ncurl -fsSL https://example.test/install.sh\n```",
+      "chat_assistant",
+    );
+
+    expect(result.output).toContain('class="ai-code-block"');
+    expect(result.output).toContain("data-ai-code-copy");
+    expect(result.output).toContain('aria-label="复制代码"');
+    expect(result.output).toContain(
+      "curl -fsSL https://example.test/install.sh",
+    );
+  });
+
   it("[BASELINE] both profiles render tables", () => {
     const md = "| A | B |\n| --- | --- |\n| 1 | 2 |";
     for (const p of profiles) {

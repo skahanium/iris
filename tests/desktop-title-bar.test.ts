@@ -54,15 +54,22 @@ describe("desktop title bar", () => {
 
     const platform = read("src/lib/platform-chrome.ts");
     expect(platform).toContain("isMacOSDesktopChrome");
+    expect(platform).toContain("isWindowsDesktopChrome");
     expect(platform).toContain("showCustomWindowControls");
-    expect(platform).toContain("return isTauriRuntime()");
 
     const controls = read("src/components/layout/WindowControls.tsx");
     expect(controls).toContain("iris-window-controls");
-    expect(controls).toContain("iris-traffic-light");
+    expect(controls).toContain("MacTrafficLightButton");
+    expect(controls).toContain("WindowsControlButton");
+    expect(controls).toContain("isWindowsDesktopChrome");
     expect(controls).toContain("iris-traffic-light--close");
     expect(controls).toContain("iris-traffic-light--minimize");
     expect(controls).toContain("iris-traffic-light--maximize");
+    expect(controls).toContain("iris-window-control--windows");
+    expect(controls).toContain("iris-window-control--close");
+    expect(controls).toContain("Minus");
+    expect(controls).toContain("Square");
+    expect(controls).toContain("Copy");
     expect(controls).toContain("stopPropagation");
     expect(bar).toContain("--window-controls-width");
     expect(bar).toContain("absolute inset-y-0 right-0");

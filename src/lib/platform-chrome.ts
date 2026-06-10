@@ -5,6 +5,11 @@ export function isMacOSDesktopChrome(): boolean {
   return isTauriRuntime() && /Mac/i.test(navigator.userAgent);
 }
 
+/** Windows 桌面 Tauri（无边框壳层 + Windows 风格自绘窗口控件） */
+export function isWindowsDesktopChrome(): boolean {
+  return isTauriRuntime() && /Windows/i.test(navigator.userAgent);
+}
+
 /** Iris Rail: all desktop platforms use right-side custom controls. */
 export function showCustomWindowControls(): boolean {
   return isTauriRuntime();

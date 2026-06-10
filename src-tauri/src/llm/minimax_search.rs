@@ -4,7 +4,7 @@ use serde::Deserialize;
 
 use crate::credentials::{self, MINIMAX_CREDENTIAL_SERVICE};
 use crate::error::{AppError, AppResult};
-use crate::network::cert_pinning::create_pinned_client;
+use crate::network::cert_pinning::create_https_client;
 
 const SEARCH_PATH: &str = "/v1/coding_plan/search";
 const MAX_RESULTS: usize = 5;
@@ -59,7 +59,7 @@ pub async fn search(query: &str, api_host: &str, model: &str) -> AppResult<Strin
     let api_key = credentials::get_secret(MINIMAX_CREDENTIAL_SERVICE)?;
     let host = normalize_api_host(api_host);
 
-    let client = create_pinned_client()?;
+    let client = create_https_client()?;
     let url = format!("{host}{SEARCH_PATH}");
 
     let response = client

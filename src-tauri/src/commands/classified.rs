@@ -19,6 +19,12 @@ pub(crate) fn is_classified_path(relative: &str) -> bool {
     normalized.starts_with(".classified/") || normalized == ".classified"
 }
 
+fn is_noncanonical_classified_root(relative: &str) -> bool {
+    let normalized = relative.replace('\\', "/");
+    let first = normalized.split('/').next().unwrap_or("");
+    first.eq_ignore_ascii_case(".classified") && first != ".classified"
+}
+
 fn vault_key_read() -> AppResult<std::sync::RwLockReadGuard<'static, VaultKey>> {
     VAULT_KEY
         .get()
@@ -50,6 +56,9 @@ fn normalize_classified_target(target_folder: &str) -> AppResult<String> {
         .trim()
         .trim_matches('/')
         .to_string();
+    if is_noncanonical_classified_root(&trimmed) {
+        return Err(AppError::msg("Invalid classified path casing"));
+    }
     let rel = if trimmed.is_empty() || trimmed == ".classified" {
         ".classified".to_string()
     } else if trimmed.starts_with(".classified/") {
@@ -72,6 +81,9 @@ fn classified_list_root(vault: &Path, folder: Option<&str>) -> AppResult<PathBuf
             let normalized = f.replace('\\', "/").trim_matches('/').to_string();
             if normalized.contains("..") {
                 return Err(AppError::msg("Invalid folder path"));
+            }
+            if is_noncanonical_classified_root(&normalized) {
+                return Err(AppError::msg("Invalid classified path casing"));
             }
             let rel = if normalized.starts_with(".classified/") {
                 normalized
@@ -296,9 +308,12 @@ fn classified_export_inner(
     let raw = fs::read(&src)?;
     let content = if classified_io::has_csef_magic(&raw) {
         let key = vk.key()?;
-        String::from_utf8_lossy(&classified_io::decrypt_cef(&raw, key)?).into_owned()
+        String::from_utf8(classified_io::decrypt_cef(&raw, key)?)
+            .map_err(|_| AppError::msg("File is not valid UTF-8"))?
     } else {
-        String::from_utf8_lossy(&raw).into_owned()
+        std::str::from_utf8(&raw)
+            .map(str::to_owned)
+            .map_err(|_| AppError::msg("File is not valid UTF-8"))?
     };
 
     fs::write(&dest, &content)?;

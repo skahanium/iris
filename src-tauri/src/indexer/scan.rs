@@ -23,8 +23,9 @@ use std::sync::Arc;
 fn should_walk_vault_entry(vault: &Path, entry_path: &Path) -> bool {
     entry_path.strip_prefix(vault).is_ok_and(|rel| {
         !rel.components().any(|c| {
-            let name = c.as_os_str();
-            name == ".iris" || name == ".classified"
+            c.as_os_str().to_str().is_some_and(|name| {
+                name.eq_ignore_ascii_case(".iris") || name.eq_ignore_ascii_case(".classified")
+            })
         })
     })
 }
@@ -499,17 +500,16 @@ pub fn rename_file_index(conn: &Connection, old_path: &str, new_path: &str) -> A
     Ok(file_id)
 }
 
-/// Drop index rows for user notes whose `.md` files are missing on disk.
-/// Also unconditionally removes any `.classified/` entries that may have leaked into the index.
+/// Drop leaked metadata rows and user-note index rows whose `.md` files are missing on disk.
 pub fn prune_stale_file_indexes(conn: &Connection, vault: &Path) -> AppResult<usize> {
-    let mut stmt = conn.prepare("SELECT DISTINCT path FROM files WHERE path NOT LIKE '.iris/%'")?;
+    let mut stmt = conn.prepare("SELECT DISTINCT path FROM files")?;
     let paths: Vec<String> = stmt
         .query_map([], |row| row.get(0))?
         .collect::<Result<_, _>>()?;
     let mut pruned = 0usize;
     for path in paths {
-        let stale = if path.starts_with(".classified/") {
-            false
+        let stale = if !is_user_note_path(&path) {
+            true
         } else {
             match resolve_vault_path(vault, &path) {
                 Ok(abs) => !abs.is_file(),
@@ -620,6 +620,20 @@ mod tests {
         let (_dir, vault, _db) = setup_vault();
         fs::create_dir_all(vault.join(".classified")).unwrap();
         write_note(&vault, ".classified/secret.md", "# Secret");
+        write_note(&vault, "open.md", "# Open");
+
+        let files = collect_vault_files(&vault);
+        assert_eq!(files.len(), 1);
+        assert!(files[0].ends_with("open.md"));
+    }
+
+    #[test]
+    fn collect_vault_files_excludes_reserved_dirs_case_insensitively() {
+        let (_dir, vault, _db) = setup_vault();
+        fs::create_dir_all(vault.join(".IRIS/versions")).unwrap();
+        fs::create_dir_all(vault.join(".CLASSIFIED")).unwrap();
+        write_note(&vault, ".IRIS/versions/snapshot.md", "# Snapshot");
+        write_note(&vault, ".CLASSIFIED/secret.md", "# Secret");
         write_note(&vault, "open.md", "# Open");
 
         let files = collect_vault_files(&vault);
@@ -846,6 +860,40 @@ mod tests {
             )?;
             let pruned = prune_stale_file_indexes(conn, &vault)?;
             assert_eq!(pruned, 1);
+            let paths: Vec<String> = conn
+                .prepare("SELECT path FROM files")?
+                .query_map([], |r| r.get(0))?
+                .collect::<Result<_, _>>()?;
+            assert_eq!(paths, vec!["live.md".to_string()]);
+            Ok(())
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn prune_stale_file_indexes_drops_reserved_paths_case_insensitively() {
+        let (_dir, vault, db) = setup_vault();
+        write_note(&vault, "live.md", "# Live");
+        write_note(&vault, ".CLASSIFIED/secret.md", "# Secret");
+        write_note(&vault, ".IRIS/versions/snapshot.md", "# Snapshot");
+
+        db.with_conn(|conn| {
+            index_file(conn, &vault, &vault.join("live.md"))?;
+            for path in [
+                ".classified/secret.md",
+                ".CLASSIFIED/secret.md",
+                ".iris/versions/snapshot.md",
+                ".IRIS/versions/snapshot.md",
+            ] {
+                conn.execute(
+                    "INSERT INTO files (path, title, content_hash, word_count, created_at, updated_at)
+                     VALUES (?1, 'x', 'h', 0, 'now', 'now')",
+                    [path],
+                )?;
+            }
+
+            let pruned = prune_stale_file_indexes(conn, &vault)?;
+            assert_eq!(pruned, 4);
             let paths: Vec<String> = conn
                 .prepare("SELECT path FROM files")?
                 .query_map([], |r| r.get(0))?

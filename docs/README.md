@@ -40,6 +40,7 @@
 | LLM 路由与连通性       | [llm-routing.md](./llm-routing.md)                                               |
 | 语义搜索与 Recall@5    | [eval/semantic-search.md](./eval/semantic-search.md)                             |
 | 语义评测 fixture vault | [eval/fixtures/semantic-vault/](./eval/fixtures/semantic-vault/)                 |
+| 审计与清理记录         | [audits/2026-06-10-project-review.md](./audits/2026-06-10-project-review.md)     |
 | 关闭回归手工验收       | [testing/app-close-manual-checklist.md](./testing/app-close-manual-checklist.md) |
 | 品牌图标               | [../scripts/assets/README.md](../scripts/assets/README.md)                       |
 
@@ -47,7 +48,9 @@
 
 ## 历史文档
 
-v0.1.0–v0.5.2 期间的 Epic、施工计划、设计 spec、品牌规划已归档至 [docs/history/](./history/)。界面以 [design-system.md](./design-system.md) 为准。
+v0.1.0–v0.5.2 期间的 Epic、施工计划、设计 spec、品牌规划已归档至 [docs/history/](./history/)。这些文件保留决策背景，可能与当前实现不一致，不作为当前事实来源；界面以 [design-system.md](./design-system.md) 为准。
+
+`docs/superpowers/plans/` 与 `docs/superpowers/specs/` 是施工过程资料。引用其中内容前必须先核对 README、ROADMAP、ARCHITECTURE 与当前代码。
 
 ---
 

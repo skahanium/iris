@@ -23,6 +23,8 @@ fn user_home_dir() -> Option<PathBuf> {
 /// Settings keys writable via generic `settings_set` IPC.
 const ALLOWED_SETTINGS_KEYS: &[&str] = &[
     "vault_path",
+    "theme",
+    "web_search_enabled",
     LLM_ROUTING_SETTINGS_KEY,
     "llm_custom_base_url",
     "llm_base_url",
@@ -140,5 +142,11 @@ mod tests {
     fn https_url_rejects_http() {
         assert!(validate_https_url("http://example.com").is_err());
         validate_https_url("https://api.example.com/v1").unwrap();
+    }
+
+    #[test]
+    fn settings_key_allows_theme_and_web_search_toggle() {
+        validate_settings_key("theme").unwrap();
+        validate_settings_key("web_search_enabled").unwrap();
     }
 }

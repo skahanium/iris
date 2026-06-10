@@ -4,6 +4,11 @@ import { common, createLowlight } from "lowlight";
 
 const lowlight = createLowlight(common);
 
+interface AiMarkdownRenderOptions {
+  streaming?: boolean;
+  codeCopy?: boolean;
+}
+
 function escapeText(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
@@ -88,6 +93,12 @@ function countSingleAsterisk(text: string): number {
     }
   }
   return count;
+}
+
+function addCodeCopyButtons(html: string): string {
+  return html.replace(/<pre><code\b[\s\S]*?<\/code><\/pre>/g, (block) => {
+    return `<div class="ai-code-block"><button type="button" class="ai-code-copy-button" data-ai-code-copy aria-label="复制代码" title="复制代码">复制</button>${block}</div>`;
+  });
 }
 
 /**
@@ -235,18 +246,19 @@ export const proseMarked = new Marked({
 /** Parse Markdown to HTML for AI message bubbles. */
 export function parseMarkdownToHtml(
   markdown: string,
-  options?: { streaming?: boolean },
+  options?: AiMarkdownRenderOptions,
 ): string {
   const source = options?.streaming
     ? repairStreamingMarkdown(markdown)
     : markdown;
-  return proseMarked.parse(source, { async: false }) as string;
+  const html = proseMarked.parse(source, { async: false }) as string;
+  return options?.codeCopy ? addCodeCopyButtons(html) : html;
 }
 
 /** Markdown → HTML with post-render citation linkification. */
 export function renderAiMarkdownToHtml(
   markdown: string,
-  options?: { streaming?: boolean },
+  options?: AiMarkdownRenderOptions,
 ): string {
   return postProcessCitations(parseMarkdownToHtml(markdown, options));
 }

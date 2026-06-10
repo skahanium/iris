@@ -234,7 +234,7 @@ cargo fmt --all                          # 自动格式化
 cargo clippy --all-targets -- -D warnings # Lint 检查
 cargo clippy --all-targets --fix         # 自动修复
 cargo test                               # 运行所有 Rust 测试
-cargo audit                              # 依赖安全审计
+npm run audit:rust                       # Rust 依赖安全审计（读取 .cargo/audit.toml 例外清单）
 ```
 
 ### 前端质量检查
@@ -255,7 +255,7 @@ npm run test:coverage   # 覆盖率报告
 ```bash
 npm audit                           # 前端依赖安全审计
 # 数据库迁移在应用启动时自动执行（storage::migrate::migrate_up）
-# 重建索引：应用内 search_reindex 或 npm run index:rebuild 说明
+# 重建索引：应用内 search_reindex（当前不提供 npm index:rebuild 脚本）
 npm run test:e2e                    # 运行端到端测试
 ```
 

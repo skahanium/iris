@@ -6,7 +6,7 @@ use tauri::Emitter;
 use super::providers::{ANTHROPIC_API_VERSION, ANTHROPIC_DEFAULT_MAX_TOKENS};
 use super::{ChatMessage, LlmStreamContext};
 use crate::error::{AppError, AppResult};
-use crate::network::cert_pinning::create_pinned_client;
+use crate::network::cert_pinning::create_https_client;
 
 /// 将聊天消息拆为 Anthropic `system` + `messages`（仅 user/assistant）。
 pub fn split_anthropic_messages(
@@ -113,7 +113,7 @@ pub async fn stream_anthropic_messages(ctx: &LlmStreamContext<'_>) -> AppResult<
         HeaderValue::from_static(ANTHROPIC_API_VERSION),
     );
 
-    let client = create_pinned_client()?;
+    let client = create_https_client()?;
     let response = client
         .post(&url)
         .headers(headers)

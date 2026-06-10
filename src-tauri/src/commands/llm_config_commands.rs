@@ -82,7 +82,7 @@ pub async fn llm_config_test(
         }
     };
 
-    let client = crate::network::cert_pinning::pinned_client_builder()
+    let client = crate::network::cert_pinning::https_client_builder()
         .timeout(std::time::Duration::from_secs(20))
         .build()
         .map_err(|e| AppError::msg(format!("HTTP client: {e}")))?;

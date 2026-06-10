@@ -207,7 +207,7 @@ fn skillhub_skill_file_url(slug: &str) -> String {
 async fn resolve_skillhub(reference: &str) -> AppResult<InstallSpec> {
     let slug = normalize_skillhub_reference(reference)?;
 
-    let client = crate::network::cert_pinning::create_pinned_client()?;
+    let client = crate::network::cert_pinning::create_https_client()?;
     let detail_url = format!(
         "{SKILLHUB_API}/api/v1/skills/{}",
         urlencoding::encode(&slug)

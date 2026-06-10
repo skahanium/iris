@@ -18,8 +18,8 @@ use base64::Engine;
 use crate::crypto::classified_io;
 use crate::crypto::vault_key::VAULT_KEY;
 use crate::storage::paths::{
-    is_accessible_note_path, is_classified_note_path, is_user_note_path, read_file_lossy,
-    resolve_vault_path,
+    has_reserved_path_root, is_accessible_note_path, is_classified_note_path, is_user_note_path,
+    read_file_lossy, resolve_vault_path,
 };
 
 const MAX_NOTE_FILE_BYTES: usize = 20 * 1024 * 1024;
@@ -52,14 +52,16 @@ fn decode_file_content(raw_bytes: &[u8]) -> AppResult<String> {
             .map_err(|e| AppError::msg(format!("lock error: {e}")))?;
         let key = vk.key()?;
         let decrypted = classified_io::decrypt_cef(raw_bytes, key)?;
-        Ok(String::from_utf8_lossy(&decrypted).into_owned())
+        String::from_utf8(decrypted).map_err(|_| AppError::msg("File is not valid UTF-8"))
     } else {
-        Ok(String::from_utf8_lossy(raw_bytes).into_owned())
+        std::str::from_utf8(raw_bytes)
+            .map(str::to_owned)
+            .map_err(|_| AppError::msg("File is not valid UTF-8"))
     }
 }
 
 fn encode_file_payload(path: &str, content: &str) -> AppResult<Vec<u8>> {
-    if path.starts_with(".classified/") {
+    if is_classified_note_path(path) {
         let vk_guard = VAULT_KEY
             .get()
             .ok_or_else(|| AppError::msg("保险库未初始化"))?;
@@ -68,6 +70,8 @@ fn encode_file_payload(path: &str, content: &str) -> AppResult<Vec<u8>> {
             .map_err(|e| AppError::msg(format!("lock error: {e}")))?;
         let key = vk.key()?;
         classified_io::encrypt_cef(content.as_bytes(), key)
+    } else if has_reserved_path_root(path) {
+        Err(AppError::msg("Invalid classified path casing"))
     } else {
         Ok(content.as_bytes().to_vec())
     }
@@ -1059,6 +1063,8 @@ mod file_io_pipeline_tests {
         assert!(err.to_string().contains("涉密笔记只能从涉密保险库打开"));
 
         assert!(validate_file_read_path(".classified/secret.md", true).is_ok());
+        assert!(validate_file_read_path(".CLASSIFIED/secret.md", true).is_err());
+        assert!(validate_file_read_path(".IRIS/versions/1.md", false).is_err());
     }
 
     #[test]
@@ -1105,6 +1111,12 @@ mod file_io_pipeline_tests {
     }
 
     #[test]
+    fn decode_file_content_rejects_invalid_utf8() {
+        let err = decode_file_content(&[0xff, b'#', b' ', b'B']).unwrap_err();
+        assert!(err.to_string().contains("UTF-8"));
+    }
+
+    #[test]
     fn encode_file_payload_encrypts_classified_path() {
         let _guard = VAULT_KEY_TEST_LOCK.lock().unwrap();
         let dir = tempdir().unwrap();
@@ -1118,6 +1130,9 @@ mod file_io_pipeline_tests {
         let plain = encode_file_payload("notes/open.md", "# Hi").unwrap();
         assert!(!classified_io::has_csef_magic(&plain));
         assert_eq!(plain, b"# Hi");
+
+        let err = encode_file_payload(".CLASSIFIED/secret.md", "# Hi").unwrap_err();
+        assert!(err.to_string().contains("classified"));
     }
 }
 

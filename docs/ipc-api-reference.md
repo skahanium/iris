@@ -332,7 +332,7 @@ pub fn search_semantic(
 ) -> AppResult<Vec<SemanticHit>>
 ```
 
-- **描述**：基于 sqlite-vec 向量的语义搜索。返回 `SemanticHit { chunk_id, path, title, snippet, score }`。默认 limit=5。
+- **描述**：基于本地 embedding 的语义搜索；默认使用 `chunk_embeddings` BLOB + Rust cosine fallback，sqlite-vec vec0 为 optional/experimental 加速路径。返回 `SemanticHit { chunk_id, path, title, snippet, score }`。默认 limit=5。
 
 ### search_reindex
 

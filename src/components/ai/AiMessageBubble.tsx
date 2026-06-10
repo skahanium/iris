@@ -43,6 +43,10 @@ interface AiMessageBubbleProps {
 const proseConversation =
   "iris-markdown-content select-text [&_a.ai-citation]:font-medium [&_a.ai-citation]:text-ai-citation [&_a.ai-citation]:underline [&_a.ai-citation]:decoration-ai-citation/40 [&_a.ai-citation]:underline-offset-2 hover:[&_a.ai-citation]:text-ai-citation-hover";
 
+const codeCopyDefaultLabel = "复制";
+const codeCopyDoneLabel = "已复制";
+const codeCopyFailedLabel = "复制失败";
+
 const AssistantBody = memo(function AssistantBody({
   content,
 
@@ -92,11 +96,44 @@ const AssistantBody = memo(function AssistantBody({
     }
   }, [renderContent, streaming]);
 
+  const handleCodeCopy = useCallback(async (button: HTMLButtonElement) => {
+    const code = button.closest(".ai-code-block")?.querySelector("pre code");
+    const text = code?.textContent ?? "";
+
+    if (!text) return;
+
+    const originalLabel = button.textContent || codeCopyDefaultLabel;
+
+    try {
+      if (!navigator.clipboard?.writeText) {
+        throw new Error("Clipboard API is unavailable");
+      }
+
+      await navigator.clipboard.writeText(text);
+      button.textContent = codeCopyDoneLabel;
+    } catch {
+      button.textContent = codeCopyFailedLabel;
+    }
+
+    window.setTimeout(() => {
+      button.textContent = originalLabel;
+    }, 1200);
+  }, []);
+
   const handleClick = useCallback(
     (e: MouseEvent<HTMLDivElement>) => {
-      if (!onCitationClick) return;
-
       const target = e.target as HTMLElement;
+
+      const copyButton = target.closest("button[data-ai-code-copy]");
+
+      if (copyButton instanceof HTMLButtonElement) {
+        e.preventDefault();
+        e.stopPropagation();
+        void handleCodeCopy(copyButton);
+        return;
+      }
+
+      if (!onCitationClick) return;
 
       const anchor = target.closest("a.ai-citation, a[href^='#iris-cite-']");
 
@@ -123,7 +160,7 @@ const AssistantBody = memo(function AssistantBody({
       }
     },
 
-    [onCitationClick],
+    [handleCodeCopy, onCitationClick],
   );
 
   return (
@@ -137,7 +174,7 @@ const AssistantBody = memo(function AssistantBody({
       )}
       data-prose-surface="conversation"
       dangerouslySetInnerHTML={{ __html: html }}
-      onClick={onCitationClick ? handleClick : undefined}
+      onClick={handleClick}
     />
   );
 });

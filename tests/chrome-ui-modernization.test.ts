@@ -48,6 +48,21 @@ describe("v0.4.1-ui chrome modernization", () => {
     expect(source).not.toContain('aria-label="缩小"');
   });
 
+  it("StatusBar exposes a compact theme switch", () => {
+    const source = read("src/components/layout/StatusBar.tsx");
+    const app = read("src/App.tsx");
+
+    expect(source).toContain("onThemeChange");
+    expect(source).toContain('role="switch"');
+    expect(source).toContain(
+      'aria-label={theme === "dark" ? "切换到亮色模式" : "切换到暗色模式"}',
+    );
+    expect(source).toContain('data-testid="status-bar-theme-switch"');
+    expect(app).toContain(
+      "onThemeChange={(nextTheme) => void setTheme(nextTheme)}",
+    );
+  });
+
   it("ConnectivityIndicators groups unified status balls", () => {
     const source = read("src/components/layout/ConnectivityIndicators.tsx");
     const statusBar = read("src/components/layout/StatusBar.tsx");

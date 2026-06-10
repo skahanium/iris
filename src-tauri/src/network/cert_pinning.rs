@@ -15,7 +15,7 @@ const DEFAULT_TIMEOUT_SECS: u64 = 60;
 /// - 强制 HTTPS（拒绝明文 HTTP）
 /// - 使用 rustls TLS 后端（不依赖系统 OpenSSL）
 /// - 默认 60 秒超时
-pub fn pinned_client_builder() -> ClientBuilder {
+pub fn https_client_builder() -> ClientBuilder {
     reqwest::Client::builder()
         .use_rustls_tls()
         .https_only(true)
@@ -23,14 +23,14 @@ pub fn pinned_client_builder() -> ClientBuilder {
 }
 
 /// 返回全局单例 Client 的克隆，共享 HTTP 连接池 (keep-alive)。
-pub fn create_pinned_client() -> AppResult<reqwest::Client> {
-    Ok(GLOBAL_CLIENT.clone())
+pub fn create_https_client() -> AppResult<reqwest::Client> {
+    Ok(GLOBAL_HTTPS_CLIENT.clone())
 }
 
 /// 全局 HTTP Client 单例，首次访问时创建。
 /// reqwest::Client 内部使用 Arc 连接池。
-static GLOBAL_CLIENT: LazyLock<reqwest::Client> = LazyLock::new(|| {
-    pinned_client_builder()
+static GLOBAL_HTTPS_CLIENT: LazyLock<reqwest::Client> = LazyLock::new(|| {
+    https_client_builder()
         .build()
         .expect("Failed to build global HTTP client")
 });
@@ -39,11 +39,13 @@ static GLOBAL_CLIENT: LazyLock<reqwest::Client> = LazyLock::new(|| {
 ///
 /// 当 `pins` 非空时，TLS 连接仅在接受端证书 SHA-256 指纹
 /// 匹配配置列表中的某一项后才被信任。同时仍执行标准 WebPKI 根信任验证。
+// Reserved for future per-host pin configuration; default clients use HTTPS-only rustls.
+#[allow(dead_code)]
 pub fn create_pinned_client_with_pins(pins: &[String]) -> AppResult<reqwest::Client> {
     if pins.is_empty() {
-        return pinned_client_builder()
-            .build()
-            .map_err(|e| AppError::msg(format!("Failed to build HTTP client: {e}")));
+        return Err(AppError::msg(
+            "certificate pins are required for a pinned HTTP client",
+        ));
     }
 
     let verifier = Arc::new(CertPinVerifier::new(pins.to_vec())?);
@@ -56,7 +58,7 @@ pub fn create_pinned_client_with_pins(pins: &[String]) -> AppResult<reqwest::Cli
         .with_custom_certificate_verifier(verifier)
         .with_no_client_auth();
 
-    pinned_client_builder()
+    https_client_builder()
         .use_preconfigured_tls(config)
         .build()
         .map_err(|e| AppError::msg(format!("Failed to build pinned HTTP client: {e}")))
@@ -65,10 +67,12 @@ pub fn create_pinned_client_with_pins(pins: &[String]) -> AppResult<reqwest::Cli
 // ── Internal cert pin verifier ──────────────────────────────────────────
 
 #[derive(Debug)]
+#[allow(dead_code)]
 struct CertPinVerifier {
     fingerprints: Vec<String>,
 }
 
+#[allow(dead_code)]
 impl CertPinVerifier {
     fn new(fingerprints: Vec<String>) -> AppResult<Self> {
         let valid: Vec<String> = fingerprints
@@ -175,8 +179,18 @@ mod tests {
     use super::*;
 
     #[test]
-    fn empty_pins_uses_default_client() {
-        assert!(create_pinned_client_with_pins(&[]).is_ok());
+    fn https_client_uses_default_tls_stack() {
+        assert!(create_https_client().is_ok());
+    }
+
+    #[test]
+    fn pinned_client_requires_non_empty_pins() {
+        let result = create_pinned_client_with_pins(&[]);
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("pins are required"));
     }
 
     #[test]

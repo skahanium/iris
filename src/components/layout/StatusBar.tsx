@@ -1,5 +1,5 @@
 import { memo } from "react";
-import { Undo2, Redo2 } from "lucide-react";
+import { Moon, Redo2, Sun, Undo2 } from "lucide-react";
 
 import { ConnectivityIndicators } from "@/components/layout/ConnectivityIndicators";
 import { EditorZoomControl } from "@/components/layout/EditorZoomControl";
@@ -29,6 +29,8 @@ interface StatusBarProps {
   canRedo?: boolean;
   webSearch?: boolean;
   onWebSearchChange?: (enabled: boolean) => void;
+  theme: "dark" | "light";
+  onThemeChange: (theme: "dark" | "light") => void;
   connectivity?: ConnectivityStatus | null;
   onOpenConnectivitySettings?: () => void;
   /** ⌘K 和弦等待第二键 */
@@ -54,6 +56,8 @@ export const StatusBar = memo(function StatusBar({
   canRedo = false,
   webSearch = false,
   onWebSearchChange,
+  theme,
+  onThemeChange,
   connectivity = null,
   onOpenConnectivitySettings,
   keyboardLeaderPending = false,
@@ -157,6 +161,22 @@ export const StatusBar = memo(function StatusBar({
           webSearch={webSearch}
           onWebSearchChange={onWebSearchChange}
         />
+        <button
+          type="button"
+          role="switch"
+          aria-checked={theme === "dark"}
+          aria-label={theme === "dark" ? "切换到亮色模式" : "切换到暗色模式"}
+          title={theme === "dark" ? "切换到亮色模式" : "切换到暗色模式"}
+          data-testid="status-bar-theme-switch"
+          className="inline-flex h-6 shrink-0 items-center gap-1 rounded-sm border border-border/40 bg-surface-inset/30 px-1.5 text-muted-foreground transition-[background-color,color,transform] duration-base ease-iris-out hover:bg-muted/50 hover:text-foreground focus:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-1 focus-visible:ring-offset-panel active:scale-[0.98]"
+          onClick={() => onThemeChange(theme === "dark" ? "light" : "dark")}
+        >
+          {theme === "dark" ? (
+            <Moon className="h-3.5 w-3.5" />
+          ) : (
+            <Sun className="h-3.5 w-3.5" />
+          )}
+        </button>
         {assistantChrome?.sessionTokenUsage ? (
           <>
             <span className="text-muted-foreground/60" aria-hidden>

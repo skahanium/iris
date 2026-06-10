@@ -417,7 +417,7 @@ impl ModelGateway {
 
     /// Create a gateway with default pinned HTTP client.
     pub fn with_defaults(app_handle: AppHandle, providers: Vec<ProviderConfig>) -> AppResult<Self> {
-        let client = crate::network::cert_pinning::create_pinned_client_with_pins(&[])?;
+        let client = crate::network::cert_pinning::create_https_client()?;
         Ok(Self::new(app_handle, client, providers))
     }
 

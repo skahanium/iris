@@ -45,6 +45,12 @@ import type {
   VersionEntry,
   VersionSaveCompleteEvent,
 } from "@/types/ipc";
+import type {
+  ConnectivityStatus,
+  LlmConfigGetResponse,
+  LlmConfigTestResult,
+  LlmRoutingConfig,
+} from "@/types/llm";
 
 export interface SettingsMap {
   theme: "dark" | "light";
@@ -378,15 +384,56 @@ export async function llmAbort(requestId: string): Promise<void> {
   return invoke("llm_abort_cmd", { requestId });
 }
 
-export {
-  connectivityStatus,
-  llmConfigApplyDeepseekDefaults,
-  llmConfigGet,
-  llmConfigSet,
-  llmConfigTest,
-  LLM_CONFIG_CHANGED_EVENT,
-  notifyLlmConfigChanged,
-} from "@/lib/llm-ipc";
+export async function llmConfigGet(): Promise<LlmConfigGetResponse> {
+  return invoke<LlmConfigGetResponse>("llm_config_get");
+}
+
+export async function llmConfigSet(routing: LlmRoutingConfig): Promise<void> {
+  return invoke("llm_config_set", { routing });
+}
+
+export async function llmConfigApplyDeepseekDefaults(): Promise<LlmRoutingConfig> {
+  return invoke<LlmRoutingConfig>("llm_config_apply_deepseek_defaults");
+}
+
+export async function connectivityStatus(
+  scene?: string,
+): Promise<ConnectivityStatus> {
+  return invoke<ConnectivityStatus>("connectivity_status", { scene });
+}
+
+export async function llmConfigTest(
+  providerId: string,
+): Promise<LlmConfigTestResult> {
+  return invoke<LlmConfigTestResult>("llm_config_test", { providerId });
+}
+
+export interface MinimaxConfigGetResponse {
+  minimaxConfigured: boolean;
+  minimaxApiHost: string;
+  minimaxSearchModel: string;
+  webSearchBackend: string;
+}
+
+export interface MinimaxConfigSetRequest {
+  minimaxApiHost?: string;
+  minimaxSearchModel?: string;
+  webSearchBackend?: string;
+}
+
+export async function minimaxConfigGet(): Promise<MinimaxConfigGetResponse> {
+  return invoke<MinimaxConfigGetResponse>("minimax_config_get");
+}
+
+export async function minimaxConfigSet(
+  request: MinimaxConfigSetRequest,
+): Promise<MinimaxConfigGetResponse> {
+  return invoke<MinimaxConfigGetResponse>("minimax_config_set", { request });
+}
+
+export async function minimaxConfigTest(): Promise<LlmConfigTestResult> {
+  return invoke<LlmConfigTestResult>("minimax_config_test");
+}
 
 export async function credentialSet(
   service: string,

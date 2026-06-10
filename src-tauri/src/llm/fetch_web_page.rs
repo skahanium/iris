@@ -9,7 +9,7 @@ use sha2::{Digest, Sha256};
 
 use crate::error::{AppError, AppResult};
 use crate::llm::http_politeness::throttle_host;
-use crate::network::cert_pinning::pinned_client_builder;
+use crate::network::cert_pinning::https_client_builder;
 use crate::security::ipc_policy::validate_https_url;
 use crate::storage::db::Database;
 
@@ -369,7 +369,7 @@ pub async fn fetch_web_page(
     let host = extract_host(url).unwrap_or_default();
     throttle_host(&host).await?;
 
-    let client = pinned_client_builder()
+    let client = https_client_builder()
         .timeout(Duration::from_secs(FETCH_TIMEOUT_SECS))
         .user_agent(random_user_agent())
         .build()

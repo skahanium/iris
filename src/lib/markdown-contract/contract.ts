@@ -692,7 +692,9 @@ function renderByProfile(
 
   switch (profile) {
     case "chat_assistant":
-      return sanitizeHtml(renderAiMarkdownToHtml(md, { streaming: false }));
+      return sanitizeHtml(
+        renderAiMarkdownToHtml(md, { streaming: false, codeCopy: true }),
+      );
     case "chat_user":
       // User messages: render Markdown with sanitization, no citation linkification
       return sanitizeHtml(marked.parse(md, { async: false }) as string);

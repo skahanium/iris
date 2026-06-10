@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 
-import { connectivityStatus, LLM_CONFIG_CHANGED_EVENT } from "@/lib/llm-ipc";
+import { connectivityStatus } from "@/lib/ipc";
+import { LLM_CONFIG_CHANGED_EVENT } from "@/lib/llm-events";
 import type { AiScene } from "@/types/ai";
 import type { ConnectivityStatus } from "@/types/llm";
 

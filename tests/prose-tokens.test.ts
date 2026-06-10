@@ -36,4 +36,25 @@ describe("prose polish v2 tokens", () => {
     expect(globalsCss).toContain(".ai-thinking-row");
     expect(globalsCss).not.toMatch(/\.ai-msg h1\s*\{/);
   });
+
+  it("wraps long commands and urls inside AI conversation markdown", () => {
+    expect(markdownProse).toContain("overflow-wrap: anywhere");
+    expect(markdownProse).toContain("word-break: break-word");
+    expect(markdownProse).toMatch(
+      /\[data-prose-surface="conversation"\]\.iris-markdown-content\s+:where\(p, li, blockquote, td, th\)\s*\{[\s\S]*overflow-wrap: anywhere;/,
+    );
+    expect(markdownProse).toMatch(
+      /\[data-prose-surface="conversation"\]\.iris-markdown-content\s+code\s*\{[\s\S]*overflow-wrap: anywhere;/,
+    );
+    expect(markdownProse).toMatch(
+      /\[data-prose-surface="conversation"\]\.iris-markdown-content\s+pre code\s*\{[\s\S]*white-space: pre-wrap;/,
+    );
+  });
+
+  it("styles assistant code block copy controls", () => {
+    expect(markdownProse).toContain(".ai-code-block");
+    expect(markdownProse).toContain(".ai-code-copy-button");
+    expect(markdownProse).toContain("position: absolute");
+    expect(markdownProse).toContain("padding-top: 2.75rem");
+  });
 });

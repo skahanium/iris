@@ -11,7 +11,7 @@ use sha2::{Digest, Sha256};
 
 use crate::credentials::{self, MINIMAX_CREDENTIAL_SERVICE};
 use crate::error::{AppError, AppResult};
-use crate::network::cert_pinning::pinned_client_builder;
+use crate::network::cert_pinning::https_client_builder;
 use crate::storage::db::Database;
 
 use super::minimax_search;
@@ -410,7 +410,7 @@ async fn duckduckgo_instant_answer(query: &str) -> AppResult<String> {
         "https://api.duckduckgo.com/?q={}&format=json&no_html=1&skip_disambig=1",
         urlencoding::encode(query)
     );
-    let client = pinned_client_builder()
+    let client = https_client_builder()
         .user_agent("Iris/1.0")
         .build()
         .map_err(|e| AppError::msg(format!("HTTP client build failed: {e}")))?;
@@ -463,7 +463,7 @@ async fn duckduckgo_html_search(query: &str) -> AppResult<String> {
         "https://html.duckduckgo.com/html/?q={}",
         urlencoding::encode(query)
     );
-    let client = pinned_client_builder()
+    let client = https_client_builder()
         .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
         .build()
         .map_err(|e| AppError::msg(format!("Failed to build HTTP client: {e}")))?;

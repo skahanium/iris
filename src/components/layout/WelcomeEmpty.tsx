@@ -1,20 +1,8 @@
-import {
-  Bot,
-  Database,
-  FilePlus2,
-  FolderSearch,
-  HardDrive,
-  Search,
-  Sparkles,
-  Trash2,
-  Wifi,
-} from "lucide-react";
+import { Bot, FilePlus2, FolderSearch, Search, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 
-import { IrisMark } from "@/components/brand/IrisMark";
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/common/ConfirmDialog";
-import { useConnectivityStatus } from "@/hooks/useConnectivityStatus";
 import { displayTitleForFileListItem } from "@/lib/note-display";
 import { fileDelete, fileList } from "@/lib/ipc";
 import type { FileListItem } from "@/types/ipc";
@@ -61,14 +49,11 @@ export function WelcomeEmpty({
   onAiSystemCenter,
 }: WelcomeEmptyProps) {
   const [recent, setRecent] = useState<FileListItem[]>([]);
-  const [indexedCount, setIndexedCount] = useState(0);
   const [deleteTarget, setDeleteTarget] = useState<FileListItem | null>(null);
-  const { status } = useConnectivityStatus();
 
   const loadRecent = useCallback(() => {
     void fileList().then((files) => {
       const deduped = dedupeByPath(files);
-      setIndexedCount(deduped.length);
       setRecent(deduped.slice(0, 5));
     });
   }, []);
@@ -83,17 +68,8 @@ export function WelcomeEmpty({
       className="flex flex-1 items-center justify-center bg-background px-6 py-10"
     >
       <div className="home-workbench-grid grid w-full max-w-5xl grid-cols-1 gap-10 lg:grid-cols-[minmax(18rem,0.88fr)_minmax(25rem,1.42fr)]">
-        <section className="flex min-w-0 flex-col justify-between border-r-0 border-border/70 pr-0 lg:border-r lg:pr-8">
-          <div>
-            <IrisMark size={56} title="Iris" />
-            <h1 className="mt-5 text-2xl font-semibold tracking-normal text-foreground">
-              Iris
-            </h1>
-            <p className="mt-2 max-w-sm text-sm leading-6 text-muted-foreground">
-              本地优先的知识工作台，把写作、检索与 AI 协作收束到一个安静起点。
-            </p>
-          </div>
-          <div className="mt-8 grid gap-2">
+        <section className="min-w-0 border-r-0 border-border/70 pr-0 lg:border-r lg:pr-8">
+          <div data-testid="home-quick-actions" className="grid gap-5">
             <Button
               type="button"
               className="h-11 justify-start gap-2"
@@ -107,7 +83,7 @@ export function WelcomeEmpty({
               <FilePlus2 className="h-4 w-4" />
               新建笔记
             </Button>
-            <div className="grid grid-cols-1 gap-2 sm:grid-cols-3 lg:grid-cols-1">
+            <div className="grid grid-cols-1 gap-5 sm:grid-cols-3 lg:grid-cols-1">
               {onQuickOpen ? (
                 <Button
                   type="button"
@@ -194,36 +170,6 @@ export function WelcomeEmpty({
               暂无最近笔记。新建第一篇后，这里会成为你的继续工作入口。
             </div>
           )}
-
-          <div
-            data-testid="home-status-summary"
-            className="mt-6 grid grid-cols-2 gap-2 text-xs text-muted-foreground sm:grid-cols-4"
-          >
-            <div className="flex min-w-0 items-center gap-2 border-t border-border/50 pt-3">
-              <HardDrive className="h-3.5 w-3.5 shrink-0 text-knowledge-foreground" />
-              <span className="truncate">
-                {vaultKey ? "Vault 已连接" : "Vault 未选择"}
-              </span>
-            </div>
-            <div className="flex min-w-0 items-center gap-2 border-t border-border/50 pt-3">
-              <Database className="h-3.5 w-3.5 shrink-0 text-knowledge-foreground" />
-              <span className="truncate">{indexedCount} 篇已索引</span>
-            </div>
-            <div className="flex min-w-0 items-center gap-2 border-t border-border/50 pt-3">
-              <Sparkles className="h-3.5 w-3.5 shrink-0 text-knowledge-foreground" />
-              <span className="truncate">
-                {status?.llm.state === "ready" ? "LLM 可用" : "LLM 待配置"}
-              </span>
-            </div>
-            <div className="flex min-w-0 items-center gap-2 border-t border-border/50 pt-3">
-              <Wifi className="h-3.5 w-3.5 shrink-0 text-knowledge-foreground" />
-              <span className="truncate">
-                {status?.searchApi.effectiveBackend === "minimax"
-                  ? "MiniMax 检索"
-                  : "本地/备用检索"}
-              </span>
-            </div>
-          </div>
         </section>
       </div>
 

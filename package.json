@@ -19,7 +19,7 @@
     "test:coverage": "vitest run --coverage",
     "test:watch": "vitest",
     "test:e2e": "vitest run --config vitest.e2e.config.ts",
-    "index:rebuild": "echo \"Use in-app search reindex or Tauri command search_reindex\"",
+    "audit:rust": "node scripts/cargo-audit.mjs",
     "icon:gen": "node scripts/gen-icon.mjs",
     "icon:tauri": "npm run icon:gen && tauri icon scripts/assets/app-icon.png -o src-tauri/icons-staging && node scripts/sync-tauri-icons.mjs"
   },
@@ -65,7 +65,6 @@
     "@eslint/js": "^9.28.0",
     "@resvg/resvg-js": "^2.6.2",
     "@tauri-apps/cli": "^2.5.0",
-    "@types/dompurify": "^3.0.5",
     "@types/react": "^19.1.6",
     "@types/react-dom": "^19.1.5",
     "@types/turndown": "^5.0.5",

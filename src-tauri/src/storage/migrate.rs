@@ -55,6 +55,11 @@ const MIGRATION_022_UP: &str = include_str!("../../migrations/022_session_expiry
 const MIGRATION_022_DOWN: &str = include_str!("../../migrations/022_session_expiry.down.sql");
 const MIGRATION_023_UP: &str = include_str!("../../migrations/023_file_lock.sql");
 const MIGRATION_023_DOWN: &str = include_str!("../../migrations/023_file_lock.down.sql");
+const MIGRATION_024_UP: &str = include_str!("../../migrations/024_perf_indexes.sql");
+const MIGRATION_024_DOWN: &str = include_str!("../../migrations/024_perf_indexes.down.sql");
+const MIGRATION_025_UP: &str = include_str!("../../migrations/025_knowledge_scalar_backfill.sql");
+const MIGRATION_025_DOWN: &str =
+    include_str!("../../migrations/025_knowledge_scalar_backfill.down.sql");
 
 fn is_applied(conn: &Connection, name: &str) -> bool {
     conn.query_row(
@@ -136,6 +141,13 @@ pub fn migrate_up(conn: &Connection) -> AppResult<()> {
     )?;
     apply_migration(conn, "022_session_expiry", MIGRATION_022_UP, false)?;
     apply_migration(conn, "023_file_lock", MIGRATION_023_UP, false)?;
+    apply_migration(conn, "024_perf_indexes", MIGRATION_024_UP, false)?;
+    apply_migration(
+        conn,
+        "025_knowledge_scalar_backfill",
+        MIGRATION_025_UP,
+        false,
+    )?;
 
     Ok(())
 }
@@ -147,6 +159,8 @@ fn rollback_migration(conn: &Connection, name: &str, sql: &str) {
 
 /// Roll back all migrations in strict reverse order (for tests).
 pub fn migrate_down(conn: &Connection) -> AppResult<()> {
+    rollback_migration(conn, "025_knowledge_scalar_backfill", MIGRATION_025_DOWN);
+    rollback_migration(conn, "024_perf_indexes", MIGRATION_024_DOWN);
     rollback_migration(conn, "023_file_lock", MIGRATION_023_DOWN);
     rollback_migration(conn, "022_session_expiry", MIGRATION_022_DOWN);
     rollback_migration(conn, "021_skill_lifecycle_metadata", MIGRATION_021_DOWN);
@@ -569,6 +583,98 @@ mod tests {
                 .unwrap();
             assert!(!gone);
         }
+    }
+
+    #[test]
+    fn migration_024_creates_perf_indexes() {
+        let conn = Connection::open_in_memory().unwrap();
+        migrate_up(&conn).unwrap();
+
+        for index in [
+            "idx_versions_file_kind_created",
+            "idx_chunks_file_index",
+            "idx_files_path_not_classified",
+        ] {
+            let has: bool = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name = ?1",
+                    [index],
+                    |row| row.get::<_, i64>(0),
+                )
+                .map(|c| c > 0)
+                .unwrap();
+            assert!(has, "missing {index}");
+        }
+    }
+
+    #[test]
+    fn migration_025_creates_scalar_knowledge_tables_without_vec() {
+        let conn = Connection::open_in_memory().unwrap();
+        migrate_up(&conn).unwrap();
+
+        for table in [
+            "semantic_anchors",
+            "regulation_index",
+            "genre_templates",
+            "block_links",
+        ] {
+            let has: bool = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name = ?1",
+                    [table],
+                    |row| row.get::<_, i64>(0),
+                )
+                .map(|c| c > 0)
+                .unwrap();
+            assert!(has, "missing {table}");
+        }
+    }
+
+    #[test]
+    fn migration_registry_covers_all_sql_files() {
+        use std::collections::BTreeSet;
+
+        let migrations_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("migrations");
+        let disk: BTreeSet<String> = fs::read_dir(&migrations_dir)
+            .unwrap()
+            .filter_map(Result::ok)
+            .filter_map(|entry| entry.file_name().into_string().ok())
+            .filter(|name| name.ends_with(".sql") && !name.ends_with(".down.sql"))
+            .filter_map(|name| name.strip_suffix(".sql").map(str::to_string))
+            .collect();
+
+        let conn = Connection::open_in_memory().unwrap();
+        migrate_up(&conn).unwrap();
+        let applied: BTreeSet<String> = conn
+            .prepare("SELECT name FROM _migrations")
+            .unwrap()
+            .query_map([], |row| row.get::<_, String>(0))
+            .unwrap()
+            .flatten()
+            .collect();
+        let optional: BTreeSet<String> = ["002_vec", "010_knowledge_index"]
+            .into_iter()
+            .map(str::to_string)
+            .collect();
+
+        let missing: Vec<_> = disk.difference(&applied).collect();
+        let missing_required: Vec<_> = missing
+            .into_iter()
+            .filter(|name| !optional.contains(name.as_str()))
+            .collect();
+        assert!(
+            missing_required.is_empty(),
+            "unregistered required migrations: {missing_required:?}"
+        );
+
+        let missing_down: Vec<_> = disk
+            .iter()
+            .filter(|name| !migrations_dir.join(format!("{name}.down.sql")).exists())
+            .collect();
+        assert!(
+            missing_down.is_empty(),
+            "migrations without down scripts: {missing_down:?}"
+        );
     }
 
     #[test]

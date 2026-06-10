@@ -492,7 +492,7 @@ pub async fn install_from_url(
     expected_sha256: Option<&str>,
 ) -> AppResult<SkillEntry> {
     crate::security::ipc_policy::validate_skill_remote_url(url)?;
-    let client = crate::network::cert_pinning::create_pinned_client()?;
+    let client = crate::network::cert_pinning::create_https_client()?;
     let resp = client
         .get(url)
         .send()

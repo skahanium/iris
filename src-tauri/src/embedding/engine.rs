@@ -1,4 +1,4 @@
-use std::sync::OnceLock;
+use std::sync::{Mutex, MutexGuard, OnceLock};
 
 use fastembed::{EmbeddingModel, InitOptions, TextEmbedding};
 use rusqlite::Connection;
@@ -12,29 +12,30 @@ const MAX_COSINE_FALLBACK_CHUNKS: i64 = 8_000;
 
 /// Global embedding model, lazy-initialized via OnceLock.
 ///
-/// `TextEmbedding::embed()` takes `&Self` and fastembed documents the type as
-/// `Send + Sync`, so multiple threads can safely call `embed()` concurrently.
-///
-/// OnceLock ensures only the first caller pays the model-load cost;
-/// all subsequent calls get a shared reference with zero contention.
-static EMBEDDER: OnceLock<Result<TextEmbedding, String>> = OnceLock::new();
+/// fastembed v5 mutates internal state during `embed()`, so calls share one
+/// lazily loaded model behind a Mutex instead of loading one model per request.
+static EMBEDDER: OnceLock<Result<Mutex<TextEmbedding>, String>> = OnceLock::new();
 
-/// Return a shared reference to the global embedding model.
+/// Return exclusive access to the global embedding model.
 /// On first call, loads the model (blocks calling thread briefly).
-/// Subsequent calls return immediately with zero contention.
-fn get_embedder() -> AppResult<&'static TextEmbedding> {
-    EMBEDDER
+/// Subsequent calls reuse the same model.
+fn get_embedder() -> AppResult<MutexGuard<'static, TextEmbedding>> {
+    let model = EMBEDDER
         .get_or_init(|| {
             TextEmbedding::try_new(InitOptions::new(EmbeddingModel::AllMiniLML6V2))
+                .map(Mutex::new)
                 .map_err(|e| e.to_string())
         })
         .as_ref()
-        .map_err(|e| AppError::Embed(format!("Failed to load embedding model: {e}")))
+        .map_err(|e| AppError::Embed(format!("Failed to load embedding model: {e}")))?;
+    model
+        .lock()
+        .map_err(|_| AppError::Embed("Embedding model lock poisoned".into()))
 }
 
 /// Generate embedding vector for text.
 pub fn embed_text(text: &str) -> AppResult<Vec<f32>> {
-    let model = get_embedder()?;
+    let mut model = get_embedder()?;
     model
         .embed(vec![text], None)
         .map_err(|e| AppError::Embed(e.to_string()))?
@@ -48,9 +49,9 @@ pub fn embed_texts_batch(texts: &[&str]) -> AppResult<Vec<Vec<f32>>> {
     if texts.is_empty() {
         return Ok(Vec::new());
     }
-    let model = get_embedder()?;
+    let mut model = get_embedder()?;
     model
-        .embed(texts.to_vec(), None)
+        .embed(texts, None)
         .map_err(|e| AppError::Embed(e.to_string()))
 }
 pub struct FastEmbedBackend;
@@ -208,7 +209,7 @@ pub struct SemanticHit {
 }
 
 /// Read embedding blob (auto-detects format).
-/// Magic [0x51,0x55] → quantized; otherwise → raw f32 LE.
+/// Magic [0x51,0x55] => quantized; otherwise => raw f32 LE.
 fn bytes_to_f32(blob: &[u8]) -> Vec<f32> {
     if blob.is_empty() {
         return vec![];
@@ -227,9 +228,9 @@ fn bytes_to_f32(blob: &[u8]) -> Vec<f32> {
     }
 }
 
-/// Scalar quantization: scale f32[-2..2] to u8[0..255], ~4× smaller than raw f32.
+/// Scalar quantization: scale f32[-2..2] to u8[0..255], about 4x smaller than raw f32.
 /// Format: magic [0x51,0x55] + scale f32 LE (4 bytes) + quantized u8 (N bytes).
-/// Auto-detect on read: if first 2 bytes are magic → quantized, else raw f32.
+/// Auto-detect on read: if first 2 bytes are magic => quantized, else raw f32.
 pub fn f32_to_bytes(vec: &[f32]) -> Vec<u8> {
     // Find max absolute value for scaling
     let max_abs = vec.iter().fold(0.0f32, |m, &v| m.max(v.abs())).max(1e-8);
@@ -248,6 +249,6 @@ fn truncate_snippet(s: &str, max: usize) -> String {
     if s.chars().count() <= max {
         s.to_string()
     } else {
-        format!("{}…", s.chars().take(max).collect::<String>())
+        format!("{}...", s.chars().take(max).collect::<String>())
     }
 }

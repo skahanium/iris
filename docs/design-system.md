@@ -91,7 +91,7 @@ Iris Rail Refresh adds semantic surface tokens for the complete interface system
 | **章节折叠** | H1–H3 左侧 `▸/▾`（仅正文区章节标题）                                                                                      |
 | **Zen**      | `Ctrl+.` 隐藏 Tab/状态栏/AI，栏宽 `56rem`                                                                                 |
 | **缩放**     | canvas `zoom` 75%–150%                                                                                                    |
-| **悬浮目录** | `EditorOutline`，`Ctrl+Shift+O`                                                                                           |
+| **文档目录（Luminous Rail）** | `EditorOutline`：窄光轨 + 层级刻度；悬停/擦洗显示单条浮动标题；无滚动条；`Ctrl+Shift+O` |
 
 ---
 

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 
 import { llmConfigGet } from "@/lib/ipc";
-import { LLM_CONFIG_CHANGED_EVENT } from "@/lib/llm-ipc";
+import { LLM_CONFIG_CHANGED_EVENT } from "@/lib/llm-events";
 
 const DEFAULT_PROVIDER = "deepseek";
 

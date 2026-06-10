@@ -26,6 +26,7 @@ const ALLOWED_TAGS = [
   "strong",
   "em",
   "code",
+  "button",
   "a",
   "span",
   "img",
@@ -55,7 +56,9 @@ const ALLOWED_ATTR = [
   "value",
   "target",
   "rel",
+  "aria-label",
   "data-cite-ref",
+  "data-ai-code-copy",
 ];
 
 /** 明确禁止的标签（即使出现在白名单中也被移除） */

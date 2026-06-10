@@ -45,12 +45,21 @@ describe("Iris Rail complete interface contracts", () => {
     expect(app).toContain("homeActive");
     expect(welcome).toContain('data-testid="home-workbench"');
     expect(welcome).toContain("home-workbench-grid");
-    expect(welcome).toContain('data-testid="home-status-summary"');
-    expect(welcome).toContain("useConnectivityStatus");
+    expect(welcome).toContain('data-testid="home-quick-actions"');
+    expect(welcome).toContain('className="grid gap-5"');
+    expect(welcome).toContain("grid grid-cols-1 gap-5");
+    expect(welcome).not.toContain('data-testid="home-status-summary"');
+    expect(welcome).not.toContain("useConnectivityStatus");
+    expect(welcome).not.toContain("Vault 已连接");
+    expect(welcome).not.toContain("篇已索引");
+    expect(welcome).not.toContain("LLM 可用");
+    expect(welcome).not.toContain("MiniMax 检索");
     expect(welcome).not.toContain("shadow-floating");
     expect(welcome).not.toContain("max-w-md");
+    expect(welcome).not.toContain("本地优先的知识工作台");
+    expect(welcome).not.toContain("<IrisMark");
     expect(platform).toContain("showCustomWindowControls");
-    expect(platform).toContain("return isTauriRuntime()");
+    expect(platform).toContain("isWindowsDesktopChrome");
     expect(macos).toContain('"decorations": false');
   });
 
@@ -64,18 +73,37 @@ describe("Iris Rail complete interface contracts", () => {
     expect(app).not.toMatch(/onOpenWikiLink=\{\(title\) => void openNote/);
   });
 
-  it("uses Outline Rail instead of a floating outline card", () => {
+  it("uses Luminous Rail outline instead of a floating outline card", () => {
     const outline = read("src/components/editor/EditorOutline.tsx");
+    const luminous = read("src/lib/outline-luminous.ts");
     const editor = read("src/components/editor/TipTapEditor.tsx");
     const css = read("src/styles/globals.css");
 
     expect(outline).toContain('data-testid="outline-rail"');
     expect(outline).toContain('data-testid="outline-rail-handle"');
-    expect(outline).toContain("outline-rail-item--active");
+    expect(outline).toContain("outline-luminous--active");
+    expect(outline).toContain("outline-luminous-tick");
+    expect(outline).toContain("OutlineLuminousCaption");
+    expect(outline).toContain("ArrowDown");
+    expect(outline).toContain("Escape");
+    expect(outline).toContain("onPointerMove");
+    expect(outline).toContain("wheelScrubIndex");
+    expect(luminous).toContain("nearestIndexFromPointer");
+    expect(outline).not.toContain("OutlineSpineList");
+    expect(outline).not.toContain("outline-label-cloud");
+    expect(outline).not.toContain("postDebugLog");
+    expect(outline).not.toContain("outline-axis-label line-clamp-2");
     expect(outline).not.toContain("shadow-floating");
+    expect(outline).not.toContain("backdrop-filter");
     expect(editor).toContain("editor-edge-control");
-    expect(css).toContain(".outline-rail");
-    expect(css).toContain(".outline-rail-handle");
+    expect(css).toContain("--editor-outline-rail-width: 1.75rem");
+    expect(css).toContain(".outline-luminous");
+    expect(css).toContain(".outline-luminous-tick--level-1");
+    expect(css).toContain(".outline-luminous-tick--level-2");
+    expect(css).toContain(".outline-luminous-tick--level-3");
+    expect(css).not.toContain(".outline-spine-list");
+    expect(css).not.toContain(".outline-minimap-tick");
+    expect(css).not.toContain("backdrop-filter: blur(12px)");
   });
 
   it("moves AI configuration into AI System Center", () => {
@@ -94,9 +122,17 @@ describe("Iris Rail complete interface contracts", () => {
     expect(aiCenter).toContain("PersonaSettingsPanel");
     expect(aiCenter).toContain("SkillsPanel");
     expect(aiCenter).toContain("AiRulesPanel");
+    expect(aiCenter).toContain('data-testid="ai-system-persona-dashboard"');
+    expect(aiCenter).toContain('data-testid="ai-system-summary-grid"');
+    expect(aiCenter).toContain('data-testid="ai-system-action-card"');
+    const rules = read("src/components/ai/AiRulesPanel.tsx");
+    expect(rules).toContain('data-testid="ai-rules-workbench"');
+    expect(rules).toContain('data-testid="ai-rules-summary-grid"');
+    expect(rules).toContain("formatProfileEntry");
     expect(settings).not.toContain("LlmRoutingSection");
     expect(settings).not.toContain("MinimaxSearchSection");
     expect(settings).not.toContain("AiRulesPanel");
+    expect(settings).not.toContain("AI 系统中心");
     expect(overlays).toContain('"aiSystemCenter"');
     expect(palette).toContain("ai-system-center");
     expect(app).toContain("AiSystemCenterPanel");
@@ -139,7 +175,7 @@ describe("Iris Rail complete interface contracts", () => {
     );
     expect(checklist).toContain("macOS 顶栏与右侧窗口控制");
     expect(checklist).toContain("Rail Segments Tab");
-    expect(checklist).toContain("Outline Rail 长文");
+    expect(checklist).toContain("Outline Luminous Rail 长文");
     expect(checklist).toContain("AI 协作侧车长对话");
     expect(checklist).toContain("任务舱 Overlay");
   });

@@ -12,7 +12,7 @@ use super::{ChatMessage, LlmGenerateParams, LlmStreamContext};
 use crate::credentials;
 use crate::error::{AppError, AppResult};
 use crate::llm::search_web;
-use crate::network::cert_pinning::create_pinned_client;
+use crate::network::cert_pinning::create_https_client;
 use crate::storage::db::Database;
 
 struct AbortFlag(Arc<Mutex<bool>>);
@@ -92,7 +92,7 @@ async fn stream_openai_compatible(ctx: LlmStreamContext<'_>) -> AppResult<()> {
     }
 
     let url = format!("{}/chat/completions", ctx.base);
-    let client = create_pinned_client()?;
+    let client = create_https_client()?;
     let response = client
         .post(&url)
         .header(CONTENT_TYPE, "application/json")
