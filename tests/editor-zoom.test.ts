@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -8,6 +9,10 @@ import {
   formatEditorZoomPercent,
   stepEditorZoom,
 } from "@/lib/editor-zoom";
+
+function read(path: string): string {
+  return readFileSync(path, "utf8");
+}
 
 describe("editor-zoom", () => {
   it("clamps zoom to allowed range", () => {
@@ -24,5 +29,19 @@ describe("editor-zoom", () => {
   it("formats percent label", () => {
     expect(formatEditorZoomPercent(EDITOR_ZOOM_DEFAULT)).toBe("100%");
     expect(formatEditorZoomPercent(1.25)).toBe("125%");
+  });
+
+  it("drives editor typography through a CSS zoom variable", () => {
+    const editor = read("src/components/editor/TipTapEditor.tsx");
+    const css = read("src/styles/globals.css");
+    const prose = read("src/styles/markdown-prose.css");
+
+    expect(editor).toContain("--editor-zoom");
+    expect(editor).not.toContain("fontSize:");
+    expect(css).toContain("font-size: calc(2.25rem * var(--editor-zoom))");
+    expect(prose).toContain(
+      "font-size: calc(var(--prose-size-editor) * var(--editor-zoom))",
+    );
+    expect(prose).toContain("font-size: calc(1.875rem * var(--editor-zoom))");
   });
 });

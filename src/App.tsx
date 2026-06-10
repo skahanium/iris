@@ -229,13 +229,20 @@ function App() {
   );
   const [classifiedOpen, setClassifiedOpen] = useState(false);
   const [vaultIndexEpoch, setVaultIndexEpoch] = useState(0);
-  const { zoom: editorZoom, zoomIn, zoomOut, resetZoom } = useEditorZoom();
+  const {
+    zoom: editorZoom,
+    setZoom,
+    zoomIn,
+    zoomOut,
+    resetZoom,
+  } = useEditorZoom();
   const editorRef = useRef<Editor | null>(null);
   const [editorInstance, setEditorInstance] = useState<Editor | null>(null);
   const [canUndo, setCanUndo] = useState(false);
   const [canRedo, setCanRedo] = useState(false);
   const undoRedoStateRef = useRef({ canUndo: false, canRedo: false });
   const editorTransactionCleanupRef = useRef<(() => void) | null>(null);
+  const undoRedoRafRef = useRef<number | null>(null);
   const overlays = useOverlayManager();
   const { provider: llmProvider } = useLlmProvider();
   const { status: connectivityStatus } = useConnectivityStatus();
@@ -728,6 +735,28 @@ function App() {
     if (prev.canRedo !== next.canRedo) setCanRedo(next.canRedo);
   }, []);
 
+  const cancelUndoRedoStateRefresh = useCallback(() => {
+    if (undoRedoRafRef.current === null) return;
+    cancelAnimationFrame(undoRedoRafRef.current);
+    undoRedoRafRef.current = null;
+  }, []);
+
+  const scheduleUndoRedoStateRefresh = useCallback(
+    (ed: Editor | null = editorRef.current) => {
+      if (undoRedoRafRef.current !== null) {
+        cancelAnimationFrame(undoRedoRafRef.current);
+      }
+      undoRedoRafRef.current = requestAnimationFrame(() => {
+        undoRedoRafRef.current = null;
+        const currentEditor = ed && !ed.isDestroyed ? ed : editorRef.current;
+        updateUndoRedoState(
+          currentEditor && !currentEditor.isDestroyed ? currentEditor : null,
+        );
+      });
+    },
+    [updateUndoRedoState],
+  );
+
   const clearEditorTransactionListener = useCallback(() => {
     editorTransactionCleanupRef.current?.();
     editorTransactionCleanupRef.current = null;
@@ -736,10 +765,22 @@ function App() {
   useEffect(() => {
     if (!activePath) {
       clearEditorTransactionListener();
+      cancelUndoRedoStateRefresh();
       setEditorInstance(null);
       updateUndoRedoState(null);
     }
-  }, [activePath, clearEditorTransactionListener, updateUndoRedoState]);
+  }, [
+    activePath,
+    cancelUndoRedoStateRefresh,
+    clearEditorTransactionListener,
+    updateUndoRedoState,
+  ]);
+
+  useEffect(() => {
+    return () => {
+      cancelUndoRedoStateRefresh();
+    };
+  }, [cancelUndoRedoStateRefresh]);
 
   useEffect(() => {
     if (!activePath) {
@@ -753,6 +794,7 @@ function App() {
       clearEditorTransactionListener();
       editorRef.current = ed;
       if (!ed) {
+        cancelUndoRedoStateRefresh();
         setEditorInstance(null);
         updateUndoRedoState(null);
         return;
@@ -763,13 +805,10 @@ function App() {
 
       const handleTransaction = ({
         editor: currentEditor,
-        transaction,
       }: {
         editor: Editor;
-        transaction: { docChanged: boolean };
       }) => {
-        if (!transaction.docChanged) return;
-        updateUndoRedoState(currentEditor);
+        scheduleUndoRedoStateRefresh(currentEditor);
       };
 
       ed.on("transaction", handleTransaction);
@@ -777,7 +816,12 @@ function App() {
         ed.off("transaction", handleTransaction);
       };
     },
-    [clearEditorTransactionListener, updateUndoRedoState],
+    [
+      cancelUndoRedoStateRefresh,
+      clearEditorTransactionListener,
+      scheduleUndoRedoStateRefresh,
+      updateUndoRedoState,
+    ],
   );
 
   const editorTitleSlot = useMemo(
@@ -873,12 +917,18 @@ function App() {
   );
 
   const handleUndo = useCallback(() => {
-    editorRef.current?.commands.undo();
-  }, []);
+    const ed = editorRef.current;
+    if (!ed) return;
+    ed.commands.undo();
+    scheduleUndoRedoStateRefresh(ed);
+  }, [scheduleUndoRedoStateRefresh]);
 
   const handleRedo = useCallback(() => {
-    editorRef.current?.commands.redo();
-  }, []);
+    const ed = editorRef.current;
+    if (!ed) return;
+    ed.commands.redo();
+    scheduleUndoRedoStateRefresh(ed);
+  }, [scheduleUndoRedoStateRefresh]);
 
   const editorContextMenu = useEditorContextMenu(
     editorInstance,
@@ -1214,6 +1264,7 @@ function App() {
             onEditorZoomIn={zoomIn}
             onEditorZoomOut={zoomOut}
             onEditorZoomReset={resetZoom}
+            onEditorZoomChange={setZoom}
             onUndo={handleUndo}
             onRedo={handleRedo}
             canUndo={canUndo}

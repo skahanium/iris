@@ -81,17 +81,17 @@ Iris Rail Refresh adds semantic surface tokens for the complete interface system
 
 ### 文档与块样式
 
-| 元素         | 规则                                                                                                                      |
-| ------------ | ------------------------------------------------------------------------------------------------------------------------- |
-| **文档标题** | 独立字段 `DocumentTitleField`；**居中**、`Noto Serif SC`、`~2.25rem` bold；与正文间距 `--prose-title-gap`；Enter 进入正文 |
-| **章节标题** | H1 `1.875rem` / H2 `1.5rem` / H3 `1.25rem`；左对齐；块间距 token 分级                                                     |
-| **段落**     | 无段首缩进；**两端对齐**（`text-justify: inter-ideograph`）；块间距 `--prose-block-gap`；空行 spacer ≈ 55% 行高           |
-| **共用排版** | `data-prose-surface="editor"` \| `conversation`；AI `--prose-size-chat`（15px），编辑 `--prose-size-editor`（16px）       |
-| **AI 消息**  | 用户右对齐气泡；助手 `surface-elevated` 全宽壳；流式空态单行「正在思考…」，无 inset 左边条                                |
-| **章节折叠** | H1–H3 左侧 `▸/▾`（仅正文区章节标题）                                                                                      |
-| **Zen**      | `Ctrl+.` 隐藏 Tab/状态栏/AI，栏宽 `56rem`                                                                                 |
-| **缩放**     | canvas `zoom` 75%–150%                                                                                                    |
-| **文档目录（Luminous Rail）** | `EditorOutline`：窄光轨 + 层级刻度；悬停/擦洗显示单条浮动标题；无滚动条；`Ctrl+Shift+O` |
+| 元素                        | 规则                                                                                                                      |
+| --------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| **文档标题**                | 独立字段 `DocumentTitleField`；**居中**、`Noto Serif SC`、`~2.25rem` bold；与正文间距 `--prose-title-gap`；Enter 进入正文 |
+| **章节标题**                | H1 `1.875rem` / H2 `1.5rem` / H3 `1.25rem`；左对齐；块间距 token 分级                                                     |
+| **段落**                    | 无段首缩进；**两端对齐**（`text-justify: inter-ideograph`）；块间距 `--prose-block-gap`；空行 spacer ≈ 55% 行高           |
+| **共用排版**                | `data-prose-surface="editor"` \| `conversation`；AI `--prose-size-chat`（15px），编辑 `--prose-size-editor`（16px）       |
+| **AI 消息**                 | 用户右对齐气泡；助手 `surface-elevated` 全宽壳；流式空态单行「正在思考…」，无 inset 左边条                                |
+| **章节折叠**                | H1–H3 左侧 `▸/▾`（仅正文区章节标题）                                                                                      |
+| **Zen**                     | `Ctrl+.` 隐藏 Tab/状态栏/AI，栏宽 `56rem`                                                                                 |
+| **缩放**                    | canvas `zoom` 75%–150%                                                                                                    |
+| **文档目录（Ghost Spine）** | `EditorOutline`：左缘细线把手 + 透明文字索引列；H1/H2/H3 缩进；当前章节 2px marker；50+ 条目虚拟化；`Ctrl+Shift+O`        |
 
 ---
 

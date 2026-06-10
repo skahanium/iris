@@ -54,6 +54,7 @@ import { AiSourceHighlightExtension } from "./extensions/AiSourceHighlightExtens
 import { AiStreamExtension } from "./extensions/AiStreamExtension";
 
 import { HeadingFoldExtension } from "./extensions/HeadingFoldExtension";
+import { HeadingFoldOverlay } from "./HeadingFoldOverlay";
 
 import { EditorImageDropExtension } from "./extensions/EditorImageDropExtension";
 import { FindHighlightExtension } from "./extensions/FindHighlightExtension";
@@ -496,6 +497,7 @@ function TipTapEditorInner({
       data-zen={zen ? "true" : undefined}
       data-editor-zoom={zoom}
       data-locked={locked ? "true" : undefined}
+      style={{ "--editor-zoom": String(zoom) } as React.CSSProperties}
     >
       {setLocked ? (
         <button
@@ -515,20 +517,14 @@ function TipTapEditorInner({
         </button>
       ) : null}
       <div className="iris-editor-zoom-scroll min-h-0 flex-1 overflow-y-auto overflow-x-hidden">
-        <div
-          className="iris-editor-canvas"
-          style={
-            zoom !== 1
-              ? ({ fontSize: `${zoom}rem` } as React.CSSProperties)
-              : undefined
-          }
-        >
+        <div className="iris-editor-canvas">
           {titleSlot ? (
             <div className="iris-editor-title-slot">{titleSlot}</div>
           ) : null}
 
           <div className="iris-editor-body" onContextMenu={onBodyContextMenu}>
             <EditorContent editor={editor} />
+            <HeadingFoldOverlay editor={editor} />
           </div>
         </div>
       </div>

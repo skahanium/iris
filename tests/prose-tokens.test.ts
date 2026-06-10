@@ -26,7 +26,10 @@ describe("prose polish v2 tokens", () => {
   });
 
   it("centers document title with serif font", () => {
-    expect(globalsCss).toContain("text-center text-4xl");
+    expect(globalsCss).toContain("text-center font-bold");
+    expect(globalsCss).toContain(
+      "font-size: calc(2.25rem * var(--editor-zoom))",
+    );
     expect(globalsCss).toContain("font-family: var(--font-title)");
     expect(globalsCss).toContain("margin-bottom: var(--prose-title-gap)");
   });

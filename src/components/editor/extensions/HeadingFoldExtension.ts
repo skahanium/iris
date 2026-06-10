@@ -1,11 +1,31 @@
-import { Extension } from "@tiptap/core";
+import { Extension, type RawCommands } from "@tiptap/core";
 import type { Node as ProseMirrorNode } from "@tiptap/pm/model";
-import { Plugin, PluginKey, TextSelection } from "@tiptap/pm/state";
+import {
+  Plugin,
+  PluginKey,
+  TextSelection,
+  type EditorState,
+} from "@tiptap/pm/state";
 import { Decoration, DecorationSet } from "@tiptap/pm/view";
 
-interface HeadingFoldState {
+export interface HeadingFoldState {
   collapsed: Set<number>;
   decorations: DecorationSet;
+}
+
+export interface FoldableHeadingBlock {
+  pos: number;
+  level: 1 | 2 | 3;
+  text: string;
+  collapsed: boolean;
+}
+
+declare module "@tiptap/core" {
+  interface Commands<ReturnType> {
+    headingFold: {
+      toggleHeadingFold: (headingPos: number) => ReturnType;
+    };
+  }
 }
 
 export const headingFoldPluginKey = new PluginKey<HeadingFoldState>(
@@ -37,6 +57,26 @@ function topLevelBlocks(
   return blocks;
 }
 
+export function collectFoldableHeadingBlocks(
+  doc: ProseMirrorNode,
+  collapsed: Set<number> = new Set(),
+): FoldableHeadingBlock[] {
+  return topLevelBlocks(doc)
+    .filter(({ node }) => isFoldableHeading(node))
+    .map(({ pos, node }) => ({
+      pos,
+      level: node.attrs.level as 1 | 2 | 3,
+      text: node.textContent.trim(),
+      collapsed: collapsed.has(pos),
+    }));
+}
+
+export function getHeadingFoldState(
+  state: EditorState,
+): HeadingFoldState | null {
+  return headingFoldPluginKey.getState(state) ?? null;
+}
+
 /**
  * O(n) 单次遍历构建折叠装饰。
  *
@@ -46,7 +86,6 @@ function topLevelBlocks(
 function buildFoldDecorations(
   doc: ProseMirrorNode,
   collapsed: Set<number>,
-  onToggle: (headingPos: number) => void,
 ): DecorationSet {
   if (
     collapsed.size === 0 &&
@@ -71,42 +110,7 @@ function buildFoldDecorations(
         foldStartIdx = -1;
       }
 
-      const isCollapsed = collapsed.has(pos);
-
-      // 折叠按钮装饰
-      decorations.push(
-        Decoration.widget(
-          pos + 1,
-          () => {
-            const wrap = document.createElement("span");
-            wrap.className = "iris-heading-fold-gutter";
-            wrap.setAttribute("contenteditable", "false");
-
-            const btn = document.createElement("button");
-            btn.type = "button";
-            btn.className = "iris-heading-fold-btn";
-            btn.setAttribute(
-              "aria-label",
-              isCollapsed ? "展开章节" : "折叠章节",
-            );
-            btn.textContent = isCollapsed ? "▸" : "▾";
-            btn.addEventListener("mousedown", (event) => {
-              event.preventDefault();
-              event.stopPropagation();
-              onToggle(pos);
-            });
-            wrap.appendChild(btn);
-            return wrap;
-          },
-          {
-            side: -1,
-            key: `fold-${pos}-${isCollapsed ? "c" : "e"}`,
-            ignoreSelection: true,
-          },
-        ),
-      );
-
-      if (isCollapsed) {
+      if (collapsed.has(pos)) {
         foldStartIdx = i;
         foldLevel = level;
       }
@@ -169,18 +173,24 @@ function nextVisiblePos(
 export const HeadingFoldExtension = Extension.create({
   name: "headingFold",
 
+  addCommands(): Partial<RawCommands> {
+    return {
+      toggleHeadingFold:
+        (headingPos: number) =>
+        ({ state, dispatch }) => {
+          if (dispatch) {
+            dispatch(
+              state.tr
+                .setMeta(headingFoldPluginKey, { toggle: headingPos })
+                .setMeta("addToHistory", false),
+            );
+          }
+          return true;
+        },
+    } as Partial<RawCommands>;
+  },
+
   addProseMirrorPlugins() {
-    const editor = this.editor;
-
-    const onToggle = (headingPos: number) => {
-      const { state, view } = editor;
-      view.dispatch(
-        state.tr
-          .setMeta(headingFoldPluginKey, { toggle: headingPos })
-          .setMeta("addToHistory", false),
-      );
-    };
-
     return [
       new Plugin<HeadingFoldState>({
         key: headingFoldPluginKey,
@@ -189,7 +199,7 @@ export const HeadingFoldExtension = Extension.create({
             const collapsed = new Set<number>();
             return {
               collapsed,
-              decorations: buildFoldDecorations(state.doc, collapsed, onToggle),
+              decorations: buildFoldDecorations(state.doc, collapsed),
             };
           },
           apply(tr, value, _oldState, newState) {
@@ -230,11 +240,7 @@ export const HeadingFoldExtension = Extension.create({
             }
 
             if (rebuild) {
-              decorations = buildFoldDecorations(
-                newState.doc,
-                collapsed,
-                onToggle,
-              );
+              decorations = buildFoldDecorations(newState.doc, collapsed);
             }
 
             return { collapsed, decorations };

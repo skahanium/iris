@@ -1,5 +1,6 @@
 import { Editor } from "@tiptap/core";
 import StarterKit from "@tiptap/starter-kit";
+import { readFileSync } from "node:fs";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { HeadingFoldExtension } from "@/components/editor/extensions/HeadingFoldExtension";
@@ -29,6 +30,10 @@ function blockPos(editor: Editor, index: number): number {
     pos += editor.state.doc.child(i).nodeSize;
   }
   return pos + 1;
+}
+
+function read(path: string): string {
+  return readFileSync(path, "utf8");
 }
 
 describe("editor heading Enter behavior", () => {
@@ -79,5 +84,33 @@ describe("editor heading Enter behavior", () => {
     editor.commands.setTextSelection(endInside);
     expect(editor.commands.splitBlock()).toBe(true);
     expect(editor.state.doc.childCount).toBeGreaterThanOrEqual(2);
+  });
+
+  it("keeps heading fold controls outside editable heading DOM for IME composition", () => {
+    editor = createIrisEditor({
+      type: "doc",
+      content: [
+        {
+          type: "heading",
+          attrs: { level: 1 },
+          content: [{ type: "text", text: "拼音输入标题" }],
+        },
+        { type: "paragraph" },
+      ],
+    });
+
+    const heading = editor.view.dom.querySelector("h1");
+    expect(heading).not.toBeNull();
+    expect(heading?.querySelector(".iris-heading-fold-gutter")).toBeNull();
+    expect(heading?.querySelector(".ProseMirror-widget")).toBeNull();
+  });
+
+  it("renders heading fold controls through a React overlay gutter", () => {
+    const editorSource = read("src/components/editor/TipTapEditor.tsx");
+    const css = read("src/styles/globals.css");
+
+    expect(editorSource).toContain("HeadingFoldOverlay");
+    expect(css).toContain(".iris-heading-fold-overlay");
+    expect(css).toContain(".iris-heading-fold-row");
   });
 });

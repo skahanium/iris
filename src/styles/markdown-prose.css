@@ -11,6 +11,7 @@
       "Noto Sans SC", Inter, "PingFang SC", "Microsoft YaHei", sans-serif;
     --font-title: "Noto Serif SC", "Noto Sans SC", Georgia, serif;
     --font-mono: "JetBrains Mono", ui-monospace, monospace;
+    --editor-zoom: 1;
 
     --prose-measure: 45rem;
     --prose-size-editor: 1rem;
@@ -130,7 +131,7 @@
 
   .iris-editor-body
     .ProseMirror.iris-markdown-content[data-prose-surface="editor"] {
-    font-size: var(--prose-size-editor);
+    font-size: calc(var(--prose-size-editor) * var(--editor-zoom));
     line-height: var(--prose-line-height);
     letter-spacing: var(--prose-letter-spacing);
   }
@@ -154,7 +155,7 @@
     > p[data-iris-spacer="true"] {
     line-height: 1;
     min-height: calc(
-      var(--prose-size-editor) * var(--prose-line-height) *
+      var(--prose-size-editor) * var(--editor-zoom) * var(--prose-line-height) *
         var(--prose-spacer-ratio)
     );
     margin-top: calc(var(--prose-block-gap) * 0.45);
@@ -165,7 +166,7 @@
     .ProseMirror.iris-markdown-content[data-prose-surface="editor"]
     > p[data-iris-spacer="true"][data-iris-gap-count="2"] {
     min-height: calc(
-      var(--prose-size-editor) * var(--prose-line-height) *
+      var(--prose-size-editor) * var(--editor-zoom) * var(--prose-line-height) *
         var(--prose-spacer-ratio) * 2
     );
   }
@@ -174,7 +175,7 @@
     .ProseMirror.iris-markdown-content[data-prose-surface="editor"]
     > p[data-iris-spacer="true"][data-iris-gap-count="3"] {
     min-height: calc(
-      var(--prose-size-editor) * var(--prose-line-height) *
+      var(--prose-size-editor) * var(--editor-zoom) * var(--prose-line-height) *
         var(--prose-spacer-ratio) * 3
     );
   }
@@ -183,7 +184,7 @@
     .ProseMirror.iris-markdown-content[data-prose-surface="editor"]
     > p[data-iris-spacer="true"][data-iris-gap-count="4"] {
     min-height: calc(
-      var(--prose-size-editor) * var(--prose-line-height) *
+      var(--prose-size-editor) * var(--editor-zoom) * var(--prose-line-height) *
         var(--prose-spacer-ratio) * 4
     );
   }
@@ -192,7 +193,7 @@
     .ProseMirror.iris-markdown-content[data-prose-surface="editor"]
     > p[data-iris-spacer="true"][data-iris-gap-count="5"] {
     min-height: calc(
-      var(--prose-size-editor) * var(--prose-line-height) *
+      var(--prose-size-editor) * var(--editor-zoom) * var(--prose-line-height) *
         var(--prose-spacer-ratio) * 5
     );
   }
@@ -201,7 +202,7 @@
     .ProseMirror.iris-markdown-content[data-prose-surface="editor"]
     > p[data-iris-spacer="true"][data-iris-gap-count="6"] {
     min-height: calc(
-      var(--prose-size-editor) * var(--prose-line-height) *
+      var(--prose-size-editor) * var(--editor-zoom) * var(--prose-line-height) *
         var(--prose-spacer-ratio) * 6
     );
   }
@@ -242,7 +243,7 @@
   .iris-editor-body
     .ProseMirror.iris-markdown-content[data-prose-surface="editor"]
     > h1:not(.iris-doc-title) {
-    font-size: 1.875rem;
+    font-size: calc(1.875rem * var(--editor-zoom));
     letter-spacing: -0.02em;
     font-weight: 600;
   }
@@ -250,7 +251,7 @@
   .iris-editor-body
     .ProseMirror.iris-markdown-content[data-prose-surface="editor"]
     > h2 {
-    font-size: 1.5rem;
+    font-size: calc(1.5rem * var(--editor-zoom));
     letter-spacing: -0.015em;
     font-weight: 600;
   }
@@ -258,14 +259,14 @@
   .iris-editor-body
     .ProseMirror.iris-markdown-content[data-prose-surface="editor"]
     > h3 {
-    font-size: 1.25rem;
+    font-size: calc(1.25rem * var(--editor-zoom));
     font-weight: 600;
   }
 
   .iris-editor-body
     .ProseMirror.iris-markdown-content[data-prose-surface="editor"]
     > h4 {
-    font-size: 1.075rem;
+    font-size: calc(1.075rem * var(--editor-zoom));
   }
 
   .iris-editor-body
@@ -274,7 +275,13 @@
   .iris-editor-body
     .ProseMirror.iris-markdown-content[data-prose-surface="editor"]
     > h6 {
-    font-size: 1rem;
+    font-size: calc(1rem * var(--editor-zoom));
+  }
+
+  .iris-editor-body
+    .ProseMirror.iris-markdown-content[data-prose-surface="editor"]
+    > pre {
+    font-size: calc(0.875rem * var(--editor-zoom));
   }
 
   /* ── Conversation surface ── */

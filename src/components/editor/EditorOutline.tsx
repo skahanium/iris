@@ -1,4 +1,5 @@
 import type { Editor } from "@tiptap/react";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import { ListTree } from "lucide-react";
 import {
   memo,
@@ -7,8 +8,6 @@ import {
   useRef,
   useState,
   type CSSProperties,
-  type PointerEvent as ReactPointerEvent,
-  type WheelEvent as ReactWheelEvent,
 } from "react";
 
 import {
@@ -16,16 +15,28 @@ import {
   outlineFromDoc,
   type OutlineEntry,
 } from "@/lib/document-outline";
-import {
-  clampPointerY,
-  getTickTop,
-  nearestIndexFromPointer,
-  stepScrubIndex,
-  wheelScrubIndex,
-} from "@/lib/outline-luminous";
 import { cn } from "@/lib/utils";
 
-import { OutlineLuminousCaption } from "./OutlineLuminousCaption";
+const LEVEL_STYLES: Record<
+  number,
+  { fontSize: string; indent: string; color: string }
+> = {
+  1: {
+    fontSize: "0.95rem",
+    indent: "0rem",
+    color: "hsl(var(--foreground) / 0.82)",
+  },
+  2: {
+    fontSize: "0.82rem",
+    indent: "1.35rem",
+    color: "hsl(var(--foreground) / 0.68)",
+  },
+  3: {
+    fontSize: "0.72rem",
+    indent: "2.5rem",
+    color: "hsl(var(--muted-foreground) / 0.82)",
+  },
+};
 
 interface EditorOutlineProps {
   editor: Editor | null;
@@ -33,6 +44,10 @@ interface EditorOutlineProps {
   onOpenChange: (open: boolean) => void;
   zen?: boolean;
 }
+
+const OUTLINE_REFRESH_DEBOUNCE_MS = 300;
+const VIRTUAL_OUTLINE_THRESHOLD = 50;
+const OUTLINE_ROW_HEIGHT = 52;
 
 export const EditorOutline = memo(function EditorOutline({
   editor,
@@ -46,7 +61,17 @@ export const EditorOutline = memo(function EditorOutline({
   const [focusIndex, setFocusIndex] = useState<number | null>(null);
   const entriesRef = useRef<OutlineEntry[]>([]);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const trackRef = useRef<HTMLDivElement | null>(null);
+  const listRef = useRef<HTMLDivElement | null>(null);
+  const itemRefs = useRef<Array<HTMLButtonElement | null>>([]);
+  const shouldVirtualize = entries.length >= VIRTUAL_OUTLINE_THRESHOLD;
+
+  const rowVirtualizer = useVirtualizer({
+    count: entries.length,
+    getScrollElement: () => listRef.current,
+    estimateSize: () => OUTLINE_ROW_HEIGHT,
+    overscan: 8,
+    enabled: shouldVirtualize,
+  });
 
   useEffect(() => {
     if (!editor || !open) return;
@@ -54,6 +79,7 @@ export const EditorOutline = memo(function EditorOutline({
     const updateOutline = () => {
       const next = outlineFromDoc(editor.state.doc);
       entriesRef.current = next;
+      itemRefs.current = itemRefs.current.slice(0, next.length);
       setEntries(next);
       setActiveIndex(activeOutlineIndex(next, editor.state.selection.head));
     };
@@ -69,7 +95,7 @@ export const EditorOutline = memo(function EditorOutline({
       timerRef.current = setTimeout(() => {
         timerRef.current = null;
         updateOutline();
-      }, 300);
+      }, OUTLINE_REFRESH_DEBOUNCE_MS);
     };
 
     updateOutline();
@@ -90,6 +116,15 @@ export const EditorOutline = memo(function EditorOutline({
     }
   }, [open]);
 
+  useEffect(() => {
+    if (!open || activeIndex < 0) return;
+    if (shouldVirtualize) {
+      rowVirtualizer.scrollToIndex(activeIndex, { align: "auto" });
+      return;
+    }
+    itemRefs.current[activeIndex]?.scrollIntoView({ block: "nearest" });
+  }, [activeIndex, open, rowVirtualizer, shouldVirtualize]);
+
   const jumpTo = useCallback(
     (pos: number) => {
       if (!editor) return;
@@ -98,97 +133,123 @@ export const EditorOutline = memo(function EditorOutline({
     [editor],
   );
 
-  const scrubFromClientY = useCallback(
-    (clientY: number) => {
-      const track = trackRef.current;
-      if (!track || entries.length === 0) return;
-      const rect = track.getBoundingClientRect();
-      if (rect.height <= 0) return;
-      const pointerY = clampPointerY(clientY - rect.top, rect.height);
-      const index = nearestIndexFromPointer(
-        pointerY,
-        rect.height,
-        entries.length,
+  const moveFocus = useCallback(
+    (direction: -1 | 1) => {
+      if (entries.length === 0) return;
+      const current =
+        focusIndex ?? hoverIndex ?? (activeIndex >= 0 ? activeIndex : 0);
+      const next = Math.max(
+        0,
+        Math.min(entries.length - 1, current + direction),
       );
-      setHoverIndex(index);
-      setFocusIndex(null);
+      setFocusIndex(next);
+      setHoverIndex(null);
+      if (shouldVirtualize) {
+        rowVirtualizer.scrollToIndex(next, { align: "auto" });
+      } else {
+        itemRefs.current[next]?.scrollIntoView({ block: "nearest" });
+      }
     },
-    [entries.length],
+    [
+      activeIndex,
+      entries.length,
+      focusIndex,
+      hoverIndex,
+      rowVirtualizer,
+      shouldVirtualize,
+    ],
   );
-
-  const handleTrackPointerMove = (event: ReactPointerEvent<HTMLDivElement>) => {
-    if (entries.length === 0) return;
-    scrubFromClientY(event.clientY);
-  };
-
-  const handleTrackPointerLeave = () => {
-    setHoverIndex(null);
-  };
-
-  const handleWheel = (event: ReactWheelEvent<HTMLDivElement>) => {
-    if (entries.length === 0) return;
-    event.preventDefault();
-    const current =
-      focusIndex ?? hoverIndex ?? (activeIndex >= 0 ? activeIndex : 0);
-    const next = wheelScrubIndex(event.deltaY, current, entries.length);
-    setFocusIndex(next);
-    setHoverIndex(next);
-  };
 
   const handleKeyDown = useCallback(
     (event: React.KeyboardEvent) => {
-      if (entries.length === 0) return;
-
       if (event.key === "Escape") {
         event.preventDefault();
         onOpenChange(false);
         return;
       }
 
+      if (entries.length === 0) return;
+
       if (event.key === "ArrowDown") {
         event.preventDefault();
-        const current =
-          focusIndex ?? hoverIndex ?? (activeIndex >= 0 ? activeIndex : 0);
-        const next = stepScrubIndex(current, entries.length, 1);
-        setFocusIndex(next);
-        setHoverIndex(next);
+        moveFocus(1);
         return;
       }
 
       if (event.key === "ArrowUp") {
         event.preventDefault();
-        const current =
-          focusIndex ?? hoverIndex ?? (activeIndex >= 0 ? activeIndex : 0);
-        const next = stepScrubIndex(current, entries.length, -1);
-        setFocusIndex(next);
-        setHoverIndex(next);
+        moveFocus(-1);
         return;
       }
 
       if (event.key === "Enter") {
         event.preventDefault();
-        const index =
-          focusIndex ?? hoverIndex ?? (activeIndex >= 0 ? activeIndex : -1);
+        const index = focusIndex ?? (activeIndex >= 0 ? activeIndex : -1);
         const entry = index >= 0 ? entries[index] : undefined;
         if (entry) jumpTo(entry.pos);
       }
     },
-    [entries, focusIndex, hoverIndex, activeIndex, jumpTo, onOpenChange],
+    [activeIndex, entries, focusIndex, jumpTo, moveFocus, onOpenChange],
   );
 
-  const showScrubCaption = hoverIndex !== null || focusIndex !== null;
-  const captionIndex = showScrubCaption
-    ? (hoverIndex ?? focusIndex)
-    : activeIndex >= 0
-      ? activeIndex
-      : null;
-  const captionVariant =
-    hoverIndex !== null
-      ? "hover"
-      : focusIndex !== null
-        ? "focus"
-        : "active";
-  const total = entries.length;
+  const renderItem = (entry: OutlineEntry, index: number) => {
+    const active = index === activeIndex;
+    const focused = index === focusIndex;
+    const hovered = index === hoverIndex;
+    const activeDistance = activeIndex >= 0 ? Math.abs(index - activeIndex) : 0;
+    const lvl = LEVEL_STYLES[entry.level]!;
+    const itemStyle: CSSProperties = {
+      "--outline-level-size": lvl.fontSize,
+      "--outline-text-indent": lvl.indent,
+      paddingLeft: `calc(${lvl.indent})`,
+      color: active ? undefined : lvl.color,
+    } as CSSProperties;
+    return (
+      <button
+        key={`${entry.pos}-${entry.text}`}
+        ref={(node) => {
+          itemRefs.current[index] = node;
+        }}
+        type="button"
+        data-testid="outline-ghost-item"
+        className={cn(
+          "outline-ghost-item flex w-full items-center text-left",
+          `outline-ghost-item--level-${entry.level}`,
+          active && "outline-ghost-item--active",
+          !active && activeDistance === 1 && "outline-ghost-item--near-1",
+          !active && activeDistance === 2 && "outline-ghost-item--near-2",
+          focused && "outline-ghost-item--focused",
+          hovered && "outline-ghost-item--hovered",
+        )}
+        style={itemStyle}
+        aria-current={active ? "location" : undefined}
+        aria-label={entry.text}
+        onClick={() => jumpTo(entry.pos)}
+        onFocus={() => {
+          setFocusIndex(index);
+          setHoverIndex(null);
+        }}
+        onPointerEnter={() => {
+          setHoverIndex(index);
+          setFocusIndex(null);
+        }}
+        onPointerLeave={() => {
+          setHoverIndex(null);
+        }}
+      >
+        <span className="outline-ghost-marker" aria-hidden />
+        <span className="outline-ghost-level" aria-hidden>
+          H{entry.level}
+        </span>
+        <span
+          className="outline-ghost-text block min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap text-left"
+          title={entry.text}
+        >
+          {entry.text}
+        </span>
+      </button>
+    );
+  };
 
   if (zen) return null;
 
@@ -197,7 +258,7 @@ export const EditorOutline = memo(function EditorOutline({
       <button
         type="button"
         data-testid="outline-rail-handle"
-        className="outline-luminous outline-luminous-handle pointer-events-auto absolute z-editor-chrome"
+        className="outline-ghost outline-ghost-handle pointer-events-auto absolute z-editor-chrome"
         style={{ left: "var(--editor-outline-inset)" }}
         aria-label="显示目录"
         onClick={() => onOpenChange(true)}
@@ -208,84 +269,58 @@ export const EditorOutline = memo(function EditorOutline({
     );
   }
 
+  const virtualItems = shouldVirtualize ? rowVirtualizer.getVirtualItems() : [];
+
   return (
     <nav
       data-testid="outline-rail"
-      className="outline-luminous outline-luminous--active pointer-events-auto absolute z-editor-chrome"
+      className="outline-ghost outline-ghost--active pointer-events-auto absolute z-editor-chrome flex w-[var(--editor-outline-rail-width)] min-w-[var(--editor-outline-rail-width)] flex-col"
       style={{ left: "var(--editor-outline-inset)" }}
-      aria-label="文档目录光轨"
+      aria-label="文档目录"
       tabIndex={0}
       onKeyDown={handleKeyDown}
     >
       <button
         type="button"
-        className="outline-luminous-handle outline-luminous-handle--embedded"
+        className="outline-ghost-handle outline-ghost-handle--embedded"
         aria-label="隐藏目录"
         onClick={() => onOpenChange(false)}
       >
         <ListTree className="h-3.5 w-3.5" />
       </button>
       <div
-        ref={trackRef}
-        className="outline-luminous-track"
-        onPointerMove={handleTrackPointerMove}
-        onPointerLeave={handleTrackPointerLeave}
-        onWheel={handleWheel}
+        ref={listRef}
+        className="outline-ghost-list flex flex-col"
+        role="list"
       >
-        {activeIndex >= 0 && total > 0 && (
+        {entries.length === 0 ? (
+          <span className="outline-ghost-empty">暂无章节</span>
+        ) : shouldVirtualize ? (
           <div
-            className="outline-luminous-active-beacon"
-            aria-hidden
-            style={
-              {
-                "--outline-tick-top": `${getTickTop(activeIndex, total)}%`,
-              } as CSSProperties
-            }
-          />
-        )}
-        {total === 0 ? (
-          <span className="outline-luminous-empty">暂无章节</span>
+            className="outline-ghost-virtual"
+            style={{ height: `${rowVirtualizer.getTotalSize()}px` }}
+          >
+            {virtualItems.map((virtualItem) => {
+              const entry = entries[virtualItem.index];
+              if (!entry) return null;
+              return (
+                <div
+                  key={virtualItem.key}
+                  className="outline-ghost-virtual-row"
+                  style={
+                    {
+                      height: `${virtualItem.size}px`,
+                      transform: `translateY(${virtualItem.start}px)`,
+                    } as CSSProperties
+                  }
+                >
+                  {renderItem(entry, virtualItem.index)}
+                </div>
+              );
+            })}
+          </div>
         ) : (
-          entries.map((entry, index) => {
-            const showCaption = captionIndex === index;
-            return (
-              <button
-                key={`${entry.pos}-${entry.text}`}
-                type="button"
-                data-tick-index={index}
-                className={cn(
-                  "outline-luminous-tick",
-                  `outline-luminous-tick--level-${entry.level}`,
-                  index === activeIndex && "outline-luminous-tick--active",
-                  index === hoverIndex && "outline-luminous-tick--hovered",
-                  index === focusIndex && "outline-luminous-tick--focused",
-                )}
-                style={
-                  {
-                    "--outline-tick-top": `${getTickTop(index, total)}%`,
-                  } as CSSProperties
-                }
-                aria-label={entry.text}
-                aria-current={index === activeIndex ? "location" : undefined}
-                onClick={() => jumpTo(entry.pos)}
-                onPointerEnter={() => {
-                  setFocusIndex(null);
-                  setHoverIndex(index);
-                }}
-                onFocus={() => {
-                  setFocusIndex(index);
-                  setHoverIndex(index);
-                }}
-              >
-                {showCaption ? (
-                  <OutlineLuminousCaption
-                    entry={entry}
-                    variant={captionVariant}
-                  />
-                ) : null}
-              </button>
-            );
-          })
+          entries.map((entry, index) => renderItem(entry, index))
         )}
       </div>
     </nav>

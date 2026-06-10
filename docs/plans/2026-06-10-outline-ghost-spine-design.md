@@ -32,13 +32,13 @@
 
 ## 交互契约
 
-| 项 | 行为 |
-|----|------|
-| `Ctrl/Cmd+Shift+O` | 切换目录（命令面板 chord） |
-| `toggle-outline` 命令 | 同上 |
-| `iris-outline-open` | localStorage 持久化 |
-| Zen | 隐藏目录轨 |
-| 列表键盘 | ↑/↓ 移动焦点，Enter 跳转，Esc 收起 |
+| 项                    | 行为                               |
+| --------------------- | ---------------------------------- |
+| `Ctrl/Cmd+Shift+O`    | 切换目录（命令面板 chord）         |
+| `toggle-outline` 命令 | 同上                               |
+| `iris-outline-open`   | localStorage 持久化                |
+| Zen                   | 隐藏目录轨                         |
+| 列表键盘              | ↑/↓ 移动焦点，Enter 跳转，Esc 收起 |
 
 ## 数据层
 

@@ -23,6 +23,7 @@ interface StatusBarProps {
   onEditorZoomIn?: () => void;
   onEditorZoomOut?: () => void;
   onEditorZoomReset?: () => void;
+  onEditorZoomChange?: (zoom: number) => void;
   onUndo?: () => void;
   onRedo?: () => void;
   canUndo?: boolean;
@@ -50,6 +51,7 @@ export const StatusBar = memo(function StatusBar({
   onEditorZoomIn,
   onEditorZoomOut,
   onEditorZoomReset,
+  onEditorZoomChange,
   onUndo,
   onRedo,
   canUndo = false,
@@ -93,7 +95,10 @@ export const StatusBar = memo(function StatusBar({
         ·
       </span>
       <span className="shrink-0 tabular-nums">约 {readingMinutes} 分钟</span>
-      {onEditorZoomIn && onEditorZoomOut && onEditorZoomReset ? (
+      {onEditorZoomIn &&
+      onEditorZoomOut &&
+      onEditorZoomReset &&
+      onEditorZoomChange ? (
         <>
           <span className="shrink-0 text-muted-foreground/60" aria-hidden>
             ·
@@ -103,6 +108,7 @@ export const StatusBar = memo(function StatusBar({
             onZoomIn={onEditorZoomIn}
             onZoomOut={onEditorZoomOut}
             onZoomReset={onEditorZoomReset}
+            onZoomChange={onEditorZoomChange}
           />
         </>
       ) : null}

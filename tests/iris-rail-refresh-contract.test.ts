@@ -73,35 +73,34 @@ describe("Iris Rail complete interface contracts", () => {
     expect(app).not.toMatch(/onOpenWikiLink=\{\(title\) => void openNote/);
   });
 
-  it("uses Luminous Rail outline instead of a floating outline card", () => {
+  it("uses Ghost Spine outline instead of a minimap or floating outline card", () => {
     const outline = read("src/components/editor/EditorOutline.tsx");
-    const luminous = read("src/lib/outline-luminous.ts");
     const editor = read("src/components/editor/TipTapEditor.tsx");
     const css = read("src/styles/globals.css");
 
     expect(outline).toContain('data-testid="outline-rail"');
     expect(outline).toContain('data-testid="outline-rail-handle"');
-    expect(outline).toContain("outline-luminous--active");
-    expect(outline).toContain("outline-luminous-tick");
-    expect(outline).toContain("OutlineLuminousCaption");
+    expect(outline).toContain("outline-ghost--active");
+    expect(outline).toContain("outline-ghost-item");
+    expect(outline).toContain("useVirtualizer");
     expect(outline).toContain("ArrowDown");
     expect(outline).toContain("Escape");
-    expect(outline).toContain("onPointerMove");
-    expect(outline).toContain("wheelScrubIndex");
-    expect(luminous).toContain("nearestIndexFromPointer");
-    expect(outline).not.toContain("OutlineSpineList");
+    expect(outline).not.toContain("onPointerMove");
+    expect(outline).not.toContain("wheelScrubIndex");
+    expect(outline).not.toContain("outline-luminous-tick");
+    expect(outline).not.toContain("OutlineLuminousCaption");
     expect(outline).not.toContain("outline-label-cloud");
     expect(outline).not.toContain("postDebugLog");
     expect(outline).not.toContain("outline-axis-label line-clamp-2");
     expect(outline).not.toContain("shadow-floating");
     expect(outline).not.toContain("backdrop-filter");
     expect(editor).toContain("editor-edge-control");
-    expect(css).toContain("--editor-outline-rail-width: 1.75rem");
-    expect(css).toContain(".outline-luminous");
-    expect(css).toContain(".outline-luminous-tick--level-1");
-    expect(css).toContain(".outline-luminous-tick--level-2");
-    expect(css).toContain(".outline-luminous-tick--level-3");
-    expect(css).not.toContain(".outline-spine-list");
+    expect(css).toContain("--editor-outline-rail-width: 12rem");
+    expect(css).toContain(".outline-ghost");
+    expect(css).toContain(".outline-ghost-item--level-1");
+    expect(css).toContain(".outline-ghost-item--level-2");
+    expect(css).toContain(".outline-ghost-item--level-3");
+    expect(css).not.toContain(".outline-luminous-tick");
     expect(css).not.toContain(".outline-minimap-tick");
     expect(css).not.toContain("backdrop-filter: blur(12px)");
   });
@@ -175,7 +174,7 @@ describe("Iris Rail complete interface contracts", () => {
     );
     expect(checklist).toContain("macOS 顶栏与右侧窗口控制");
     expect(checklist).toContain("Rail Segments Tab");
-    expect(checklist).toContain("Outline Luminous Rail 长文");
+    expect(checklist).toContain("Outline Ghost Spine 长文");
     expect(checklist).toContain("AI 协作侧车长对话");
     expect(checklist).toContain("任务舱 Overlay");
   });

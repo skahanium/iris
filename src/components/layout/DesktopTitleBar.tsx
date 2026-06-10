@@ -136,8 +136,8 @@ export const DesktopTitleBar = memo(function DesktopTitleBar({
                       type="button"
                       data-tauri-drag-region-exclude
                       className={cn(
-                        "flex w-8 shrink-0 items-center justify-center text-muted-foreground opacity-0 transition-opacity duration-fast hover:text-foreground focus:outline-none focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-primary group-hover:opacity-100",
-                        active && "opacity-70",
+                        "flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-muted-foreground opacity-0 transition-all duration-fast hover:bg-muted/60 hover:text-foreground focus:outline-none focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-primary group-hover:opacity-100",
+                        active && "opacity-60",
                       )}
                       aria-label={`关闭 ${tab.title}`}
                       onMouseDown={(event) => {
@@ -157,7 +157,7 @@ export const DesktopTitleBar = memo(function DesktopTitleBar({
                 <button
                   type="button"
                   data-tauri-drag-region-exclude
-                  className="inline-flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground transition-colors duration-fast hover:bg-muted/60 hover:text-foreground focus:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                  className="inline-flex h-8 w-8 items-center justify-center rounded-[10px] text-muted-foreground transition-all duration-fast hover:bg-muted/60 hover:text-foreground focus:outline-none focus-visible:ring-2 focus-visible:ring-primary"
                   aria-label="新建笔记"
                   onMouseDown={(event) => {
                     event.stopPropagation();

@@ -87,10 +87,13 @@ describe("editor performance regressions", () => {
     expect(source).toContain('editor.on("selectionUpdate", updateActiveIndex)');
   });
 
-  it("skips undo/redo recomputation for selection-only transactions", () => {
+  it("schedules undo/redo refresh for every transaction and command click", () => {
     const source = readFileSync("src/App.tsx", "utf8");
 
-    expect(source).toContain("transaction.docChanged");
-    expect(source).toContain("updateUndoRedoState");
+    expect(source).toContain("scheduleUndoRedoStateRefresh");
+    expect(source).toContain("requestAnimationFrame");
+    expect(source).not.toContain("if (!transaction.docChanged) return");
+    expect(source).toMatch(/handleUndo[\s\S]*scheduleUndoRedoStateRefresh/);
+    expect(source).toMatch(/handleRedo[\s\S]*scheduleUndoRedoStateRefresh/);
   });
 });
