@@ -6,9 +6,9 @@
 
 ---
 
-## [1.0.0] — Current
+## [1.1.0] — Current
 
-当前基线版本。代码实际建设已远超原 v0.x 规划，合并历史版本后统一切换至 v1.0.0。以下按功能域组织，非严格时间线排序。
+当前基线版本。代码实际建设已远超原 v0.x 规划，合并历史版本后统一切换至 v1.1.0。以下按功能域组织，非严格时间线排序。
 
 ### 编辑器
 
@@ -192,7 +192,7 @@
 - 旧 `AiPanel` 多入口合并为 `UnifiedAssistantPanel` 单入口自动路由
 - `file_write` 仅持久化 `.md`，不再自动创建版本快照
 
-### Known limitations (v1.0.0)
+### Known limitations (v1.1.0)
 
 - 无 Playwright 全链路 E2E（Vitest 场景测试已有；无限期延后目标 Playwright + 覆盖率 > 80%）
 - 无国际化（仅中文界面；无限期延后目标简中 + 英文）
@@ -215,4 +215,4 @@
 
 ## 历史版本
 
-v0.1.0–v0.5.2 的功能记录已合并入上方的 v1.0.0。各版本 Epic 与施工计划见 [docs/history/](docs/history/)。
+v0.1.0–v0.5.2 的功能记录已合并入上方的 v1.1.0。各版本 Epic 与施工计划见 [docs/history/](docs/history/)。

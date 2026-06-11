@@ -254,7 +254,7 @@ export function SettingsPanel({
             </h3>
             <div className="rounded-lg border border-border/70 bg-surface-inset/35 px-3 py-2 text-xs leading-5 text-muted-foreground">
               <div className="font-medium text-foreground">Iris</div>
-              <div>版本 1.0.0</div>
+              <div>版本 1.1.0</div>
               <div>Copyright (C) 2026 Iris Contributors</div>
               <div>Licensed under GNU Affero General Public License v3.0</div>
               <div>

@@ -17,7 +17,7 @@ describe("SettingsPanel about and legal notice", () => {
     expect(source).toContain("数据与隐私");
     expect(source).toContain("关于 Iris");
     expect(source).toContain("Iris");
-    expect(source).toContain("版本 1.0.0");
+    expect(source).toContain("版本 1.1.0");
     expect(source).toContain("Copyright (C) 2026 Iris Contributors");
     expect(source).toContain("GNU Affero General Public License v3.0");
     expect(source).not.toContain("AI 系统中心");

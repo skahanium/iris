@@ -57,7 +57,7 @@
 
     --editor-fold-column: 1.75rem;
     /** Ghost Spine outline (see EditorOutline). */
-    --editor-outline-rail-width: 8rem;
+    --editor-outline-rail-width: 12rem;
     --editor-outline-handle-width: 1.5rem;
     --editor-outline-inset: 0.75rem;
     --editor-outline-gutter: 0.5rem;
