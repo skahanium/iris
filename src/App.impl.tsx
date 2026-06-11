@@ -1,8 +1,6 @@
 import type { Editor } from "@tiptap/react";
 import { Moon, Sun } from "lucide-react";
 import {
-  lazy,
-  Suspense,
   useCallback,
   useEffect,
   useMemo,
@@ -11,45 +9,28 @@ import {
   type ReactNode,
 } from "react";
 
-import {
-  UnifiedAssistantPanel,
-  type AssistantSelectionQuote,
-} from "@/components/ai/UnifiedAssistantPanel";
-import { SkillsPanel } from "@/components/ai/SkillsPanel";
-import type { WritingEditorContext } from "@/types/ai";
-import {
-  EMPTY_ASSISTANT_CHROME,
-  type AssistantChromeSnapshot,
-} from "@/types/assistant-chrome";
-import { ClassifiedPanel } from "@/components/classified/ClassifiedPanel";
 import { DocumentTitleField } from "@/components/editor/DocumentTitleField";
-import { EditorFindReplaceBar } from "@/components/editor/EditorFindReplaceBar";
-import { EditorOutline } from "@/components/editor/EditorOutline";
-import { TipTapEditor } from "@/components/editor/TipTapEditor";
-import { IrisContextMenu } from "@/components/ui/iris-context-menu";
-import { BacklinksPanel } from "@/components/file/BacklinksPanel";
-import { ConflictDialog } from "@/components/file/ConflictDialog";
-import { ErrorBoundary } from "@/components/ErrorBoundary";
-import { VaultNavigator } from "@/components/file/VaultNavigator";
-import { QuickOpen } from "@/components/file/QuickOpen";
-import { RecycleBinSheet } from "@/components/file/RecycleBinSheet";
-import { SearchPanel } from "@/components/file/SearchPanel";
-import { CommandPalette } from "@/components/layout/CommandPalette";
+import { AppAiPanelSlot } from "@/components/layout/AppAiPanelSlot";
+import { AppEditorWorkspace } from "@/components/layout/AppEditorWorkspace";
+import { AppOverlays } from "@/components/layout/AppOverlays";
 import { AppShell } from "@/components/layout/AppShell";
+import { AppStatusBarSlot } from "@/components/layout/AppStatusBarSlot";
 import { DesktopFrame } from "@/components/layout/DesktopFrame";
 import { MinimalWindowChrome } from "@/components/layout/MinimalWindowChrome";
-import { StatusBar } from "@/components/layout/StatusBar";
 import { TabBar } from "@/components/layout/TabBar";
-import { WelcomeEmpty } from "@/components/layout/WelcomeEmpty";
-import { TagView } from "@/components/tag/TagView";
 import { Button } from "@/components/ui/button";
 import { useAppKeyboard } from "@/hooks/useAppKeyboard";
+import { useAiSidecarBridge } from "@/hooks/useAiSidecarBridge";
+import { useAppCommandPalette } from "@/hooks/useAppCommandPalette";
+import { useAppEditorActions } from "@/hooks/useAppEditorActions";
+import {
+  useAppPersistenceLifecycle,
+  type PersistBeforeLeave,
+} from "@/hooks/useAppPersistenceLifecycle";
 import { useClassifiedVaultSession } from "@/hooks/useClassifiedVaultSession";
 import { useEditorContextMenu } from "@/hooks/useEditorContextMenu";
 import { useAutoVaultIndex } from "@/hooks/useAutoVaultIndex";
-import { useEditorSave } from "@/hooks/useEditorSave";
 import { useOpenNote } from "@/hooks/useOpenNote";
-import { useTauriCloseSave } from "@/hooks/useTauriCloseSave";
 import { useEditorZoom } from "@/hooks/useEditorZoom";
 import { useEditorStats } from "@/hooks/useEditorStats";
 import { useInlineAi } from "@/hooks/useInlineAi";
@@ -57,83 +38,22 @@ import { useConnectivityStatus } from "@/hooks/useConnectivityStatus";
 import { useLlmProvider } from "@/hooks/useLlmProvider";
 import { useOverlayManager } from "@/hooks/useOverlayManager";
 import { useTabManager } from "@/hooks/useTabManager";
-import { useVersionIdle } from "@/hooks/useVersionIdle";
 import { useTheme } from "@/hooks/useTheme";
 import { useMacOSWindowChromeSync } from "@/hooks/useMacOSWindowChromeSync";
 import { useVault } from "@/hooks/useVault";
-import {
-  buildCommandPaletteItems,
-  recordCommandUsage,
-  type CommandPaletteItem,
-} from "@/lib/command-palette";
-import { runEditorAction } from "@/lib/editor-action-executor";
-import { insertAssistantMarkdownAtCursor } from "@/lib/editor-insert";
-import {
-  displayTitleForChrome,
-  resolveNoteDisplayTitle,
-} from "@/lib/note-display";
+import { displayTitleForChrome } from "@/lib/note-display";
 import { isClassifiedVaultPath } from "@/lib/classified-path";
 import {
   fileRead,
   fileSetLock,
-  fileWrite,
   listenClassifiedFileTaken,
   listenFileChanged,
   listenVersionSaveComplete,
-  settingsGet,
-  settingsSet,
-  versionSaveIdle,
-  versionSaveManual,
 } from "@/lib/ipc";
-import { setCachedEditorHtml } from "@/lib/editor-html-cache";
-import { waitForEditorRef } from "@/lib/wait-for-editor";
-import { isNoteSubstantivelyEmpty } from "@/lib/note-substance";
 import { formatVersionSaveStatus } from "@/lib/version-save-status";
 import { isTauriRuntime } from "@/lib/tauri-runtime";
-import type { AutoSnapshotLeaveReason } from "@/lib/version-auto-snapshot-policy";
-import { createLeaveSnapshotEnqueuer } from "@/lib/version-leave-snapshot";
-import {
-  persistActiveTabBeforeLeave,
-  persistInactiveDirtyTabBeforeLeave,
-} from "@/lib/persist-before-leave";
-import {
-  createVersionSnapshotScheduler,
-  type LastSavedSnapshot,
-} from "@/lib/version-snapshot-scheduler";
-import { cn } from "@/lib/utils";
-
-const GraphView = lazy(() =>
-  import("@/components/graph/GraphView").then((m) => ({
-    default: m.GraphView,
-  })),
-);
-const SettingsPanel = lazy(() =>
-  import("@/components/settings/SettingsPanel").then((m) => ({
-    default: m.SettingsPanel,
-  })),
-);
-const AiSystemCenterPanel = lazy(() =>
-  import("@/components/settings/AiSystemCenterPanel").then((m) => ({
-    default: m.AiSystemCenterPanel,
-  })),
-);
-const VersionTimeline = lazy(() =>
-  import("@/components/version/VersionTimeline").then((m) => ({
-    default: m.VersionTimeline,
-  })),
-);
-
-const LazyFallback = () => (
-  <div className="flex items-center justify-center p-8 text-sm text-muted-foreground">
-    加载中…
-  </div>
-);
 
 const OUTLINE_OPEN_KEY = "iris-outline-open";
-
-interface PersistBeforeLeaveOptions {
-  reason?: AutoSnapshotLeaveReason;
-}
 
 function loadOutlineOpen(): boolean {
   try {
@@ -166,35 +86,7 @@ function App() {
 
   const { vaultPath, loading, pickVault, error: vaultError } = useVault();
   const { theme, setTheme } = useTheme();
-  const [aiPanelOpen, setAiPanelOpen] = useState(true);
-  const [webSearch, setWebSearchState] = useState(false);
-
-  useEffect(() => {
-    void settingsGet<boolean>("web_search_enabled").then((enabled) => {
-      if (enabled === true) {
-        setWebSearchState(true);
-      }
-    });
-  }, []);
-
-  const setWebSearch = useCallback((enabled: boolean) => {
-    setWebSearchState(enabled);
-    void settingsSet("web_search_enabled", enabled);
-  }, []);
-
-  const toggleWebSearch = useCallback(() => {
-    setWebSearchState((prev) => {
-      const next = !prev;
-      void settingsSet("web_search_enabled", next);
-      return next;
-    });
-  }, []);
-  const [selectionQuote, setSelectionQuote] =
-    useState<AssistantSelectionQuote | null>(null);
-  const [assistantPrefill, setAssistantPrefill] = useState<string | null>(null);
   const [aiStatus, setAiStatus] = useState("AI 空闲");
-  const [assistantChrome, setAssistantChrome] =
-    useState<AssistantChromeSnapshot>(EMPTY_ASSISTANT_CHROME);
   const [conflictState, setConflictState] = useState<{
     open: boolean;
     localContent: string;
@@ -246,12 +138,7 @@ function App() {
   const dirtyRef = useRef(false);
   const autoSnapshotGenerationRef = useRef(0);
 
-  const persistBeforeLeaveRef = useRef<
-    (
-      path: string,
-      options?: PersistBeforeLeaveOptions,
-    ) => Promise<string | null>
-  >(async () => null);
+  const persistBeforeLeaveRef = useRef<PersistBeforeLeave>(async () => null);
 
   const {
     tabs,
@@ -278,6 +165,23 @@ function App() {
     onStatusChange: setAiStatus,
     onVaultIndexBump: bumpVaultIndex,
     persistBeforeLeave: (path) => persistBeforeLeaveRef.current(path),
+  });
+
+  const {
+    aiPanelOpen,
+    assistantChrome,
+    prefillMessage: assistantPrefill,
+    selectionQuote,
+    setAiPanelOpen,
+    setAssistantChrome,
+    setWebSearch,
+    sendSelectionToAi,
+    toggleWebSearch,
+    webSearchEnabled: webSearch,
+  } = useAiSidecarBridge({
+    activePathRef,
+    editorRef,
+    setAiStatus,
   });
 
   const openNoteLeavingHome = useCallback(
@@ -347,128 +251,31 @@ function App() {
 
   getLiveMarkdownRef.current = getLiveMarkdown;
 
-  const { notifyDirty, flushSave, flushSaveForPath, getLastSavedSnapshot } =
-    useEditorSave(
-      activePath,
-      () => getLiveMarkdownRef.current(),
-      (md) => {
-        applySavedMarkdown(md);
-        dirtyRef.current = false;
-        const path = activePathRef.current;
-        if (path) {
-          setMarkdown(md);
-          syncTabMarkdownCache(path, md);
-          markClean(path, resolveNoteDisplayTitle({ path, title: noteTitle }));
-          if (noteTitle.trim() === "") {
-            schedulePathSync(path, noteTitle);
-          }
-        }
-      },
-    );
-
-  const versionSnapshotScheduler = useMemo(
-    () =>
-      createVersionSnapshotScheduler({
-        versionSaveIdle,
-        onError: (err) => {
-          const msg = err instanceof Error ? err.message : String(err);
-          setAiStatus(`自动版本备份提交失败：${msg}`);
-        },
-      }),
-    [],
-  );
-
-  const enqueueIdleSnapshot = useCallback(
-    (snapshot: LastSavedSnapshot) => {
-      const result = versionSnapshotScheduler.enqueueIdle(snapshot);
-      if (result.accepted) {
-        void result.done;
-      }
-    },
-    [versionSnapshotScheduler],
-  );
-
-  const enqueueLeaveSnapshot = useMemo(
-    () =>
-      createLeaveSnapshotEnqueuer({
-        enqueueIdleSnapshot,
-        nextDirtyGeneration: () => {
-          autoSnapshotGenerationRef.current += 1;
-          return autoSnapshotGenerationRef.current;
-        },
-      }),
-    [enqueueIdleSnapshot],
-  );
-
-  persistBeforeLeaveRef.current = async (
-    path: string,
-    options: PersistBeforeLeaveOptions = {},
-  ) => {
-    const reason = options.reason ?? "tab_leave";
-    const tab = tabsRef.current.find((t) => t.path === path);
-    if (path === activePathRef.current) {
-      await waitForEditorRef(editorRef);
-      const md = await persistActiveTabBeforeLeave({
-        path,
-        reason,
-        getMarkdown: () => getLiveMarkdownRef.current(),
-        flushSaveForPath,
-        getLastSavedSnapshot,
-        enqueueIdleSnapshot,
-      });
-      if (md) {
-        dirtyRef.current = false;
-        setMarkdown(md);
-        syncTabMarkdownCache(path, md);
-        const ed = editorRef.current;
-        if (ed && !ed.isDestroyed) {
-          setCachedEditorHtml(path, ed.getHTML());
-        }
-        markClean(path, resolveNoteDisplayTitle({ path, title: noteTitle }));
-      }
-      return md;
-    }
-    if (!tab?.dirty) {
-      return getTabMarkdownCached(path) ?? null;
-    }
-    const cached = getTabMarkdownCached(path);
-    if (!cached || isNoteSubstantivelyEmpty(cached)) {
-      return null;
-    }
-    await persistInactiveDirtyTabBeforeLeave({
-      path,
-      reason,
-      cachedMarkdown: cached,
-      writeFile: async (targetPath, content) => {
-        await fileWrite(targetPath, content);
-      },
-      enqueueLeaveSnapshot,
-    });
-    markClean(path, tab.title);
-    return cached;
-  };
-
-  const { onActivity: resetVersionIdle, clearTimer: clearVersionIdleTimer } =
-    useVersionIdle(activePath, getLastSavedSnapshot, enqueueIdleSnapshot);
-
-  const flushAllOpenTabs = useCallback(async () => {
-    const paths = tabsRef.current.map((tab) => tab.path);
-    versionSnapshotScheduler.setAppClosing(true);
-    clearVersionIdleTimer();
-    try {
-      for (const path of paths) {
-        await persistBeforeLeaveRef.current(path, { reason: "app_close" });
-      }
-    } finally {
-      versionSnapshotScheduler.setAppClosing(false);
-    }
-  }, [clearVersionIdleTimer, versionSnapshotScheduler]);
-
-  useTauriCloseSave({
-    flushBeforeClose: flushAllOpenTabs,
-    onError: (message) => {
-      setAiStatus(`关闭前保存失败：${message}`);
-    },
+  const {
+    notifyDirty,
+    flushSave,
+    resetVersionIdle,
+    handleSaveNote,
+    handleSaveVersion,
+    versionSnapshotScheduler,
+  } = useAppPersistenceLifecycle({
+    activeFileLocked,
+    activePath,
+    activePathRef,
+    applySavedMarkdown,
+    autoSnapshotGenerationRef,
+    dirtyRef,
+    editorRef,
+    getLiveMarkdownRef,
+    getTabMarkdownCached,
+    markClean,
+    noteTitle,
+    persistBeforeLeaveRef,
+    schedulePathSync,
+    setAiStatus,
+    setMarkdown,
+    syncTabMarkdownCache,
+    tabsRef,
   });
 
   useEffect(() => {
@@ -599,31 +406,6 @@ function App() {
     setConflictState(null);
   }, []);
 
-  const handleSaveNote = useCallback(async () => {
-    if (activeFileLocked) {
-      setAiStatus("笔记已锁定，无法保存");
-      return;
-    }
-    await flushSave();
-  }, [activeFileLocked, flushSave]);
-
-  const handleSaveVersion = useCallback(async () => {
-    const path = activePathRef.current;
-    if (!path) return;
-    const md = await flushSave();
-    if (!md) return;
-    setAiStatus("正在后台创建版本快照…");
-    versionSnapshotScheduler.markHighPriorityStart(path);
-    void versionSaveManual(path, md)
-      .catch((err: unknown) => {
-        const msg = err instanceof Error ? err.message : String(err);
-        setAiStatus(`版本快照提交失败：${msg}`);
-      })
-      .finally(() => {
-        versionSnapshotScheduler.markHighPriorityEnd(path);
-      });
-  }, [flushSave, activePathRef, versionSnapshotScheduler]);
-
   const openFindReplace = useCallback((mode: "find" | "replace") => {
     setFindReplaceMode(mode);
     setFindReplaceOpen(true);
@@ -652,35 +434,6 @@ function App() {
     },
     [activeFileLocked, markDirty, notifyDirty, onTitleChange, resetVersionIdle],
   );
-
-  const getWritingContext = useCallback((): WritingEditorContext | null => {
-    const ed = editorRef.current;
-    const path = activePathRef.current;
-    if (!ed || !path) return null;
-    if (isClassifiedVaultPath(path)) return null;
-    const { from, to } = ed.state.selection;
-    const selection =
-      from !== to ? ed.state.doc.textBetween(from, to, "\n") : "";
-    return {
-      selection,
-      cursorContext: getLiveMarkdown(),
-    };
-  }, [activePathRef, getLiveMarkdown]);
-
-  const getParagraphText = useCallback((): string | null => {
-    const ed = editorRef.current;
-    const path = activePathRef.current;
-    if (!ed || !path) return null;
-    if (isClassifiedVaultPath(path)) return null;
-    const { from, to } = ed.state.selection;
-    if (from !== to) {
-      return ed.state.doc.textBetween(from, to, "\n");
-    }
-    const $from = ed.state.doc.resolve(from);
-    const start = $from.start($from.depth);
-    const end = $from.end($from.depth);
-    return ed.state.doc.textBetween(start, end, "\n");
-  }, [activePathRef]);
 
   const { rescanVault } = useAutoVaultIndex(vaultPath, loading, {
     onStatus: setAiStatus,
@@ -819,98 +572,23 @@ function App() {
     [noteTitle, handleTitleChange, onTitleBlur, editorRef, activeFileLocked],
   );
 
-  const runInlineAi = useCallback(
-    (action: string) => {
-      if (activeNoteIsClassified) {
-        setAiStatus("涉密笔记不能发送到 AI");
-        return;
-      }
-      const ed = editorRef.current;
-      if (!ed) return;
-      void inlineAi.run(ed, action);
-    },
-    [activeNoteIsClassified, inlineAi],
-  );
-
-  const handleSlashCommand = useCallback(
-    (command: string) => {
-      if (activeNoteIsClassified) {
-        setAiStatus("涉密笔记不能发送到 AI");
-        return;
-      }
-      if (!editorRef.current) return;
-      void inlineAi.runSlash(editorRef.current, command, getLiveMarkdown());
-    },
-    [activeNoteIsClassified, getLiveMarkdown, inlineAi],
-  );
-
-  const sendSelectionToAi = useCallback(
-    (options?: { prefill?: string }) => {
-      const ed = editorRef.current;
-      const path = activePathRef.current;
-      if (!ed || !path) return;
-      if (isClassifiedVaultPath(path)) {
-        setAiStatus("涉密笔记不能发送到 AI");
-        return;
-      }
-      const { from, to } = ed.state.selection;
-      const text = ed.state.doc.textBetween(from, to, "\n");
-      if (!text) {
-        setAiStatus("请先在编辑器中选中文本");
-        return;
-      }
-      setSelectionQuote({ filePath: path, text });
-      setAssistantPrefill(options?.prefill ?? null);
-      setAiPanelOpen(true);
-    },
-    [activePathRef],
-  );
-
-  const editorActionHandlers = useMemo(
-    () => ({
-      onInlineAi: (action: string) => runInlineAi(action),
-      onSlashCommand: (command: string) => handleSlashCommand(command),
-      onSendToAi: (options?: { prefill?: string }) =>
-        sendSelectionToAi(options),
-      onStatus: (message: string) => setAiStatus(message),
-    }),
-    [handleSlashCommand, runInlineAi, sendSelectionToAi],
-  );
-
-  const runEditorActionById = useCallback(
-    (actionId: string) => {
-      void runEditorAction(actionId, editorRef.current, editorActionHandlers);
-    },
-    [editorActionHandlers],
-  );
-
-  const handleInsertToEditor = useCallback(
-    (content: string) => {
-      const ed = editorRef.current;
-      const path = activePathRef.current;
-      if (!ed || !path) return;
-      if (isClassifiedVaultPath(path)) {
-        setAiStatus("涉密笔记不能接收 AI 插入");
-        return;
-      }
-      insertAssistantMarkdownAtCursor(ed, content);
-    },
-    [activePathRef],
-  );
-
-  const handleUndo = useCallback(() => {
-    const ed = editorRef.current;
-    if (!ed) return;
-    ed.commands.undo();
-    scheduleUndoRedoStateRefresh(ed);
-  }, [scheduleUndoRedoStateRefresh]);
-
-  const handleRedo = useCallback(() => {
-    const ed = editorRef.current;
-    if (!ed) return;
-    ed.commands.redo();
-    scheduleUndoRedoStateRefresh(ed);
-  }, [scheduleUndoRedoStateRefresh]);
+  const {
+    getParagraphText,
+    getWritingContext,
+    handleInsertToEditor,
+    handleRedo,
+    handleUndo,
+    runEditorActionById,
+  } = useAppEditorActions({
+    activeNoteIsClassified,
+    activePathRef,
+    editorRef,
+    getLiveMarkdown,
+    inlineAi,
+    scheduleUndoRedoStateRefresh,
+    sendSelectionToAi,
+    setAiStatus,
+  });
 
   const editorContextMenu = useEditorContextMenu(
     editorInstance,
@@ -919,102 +597,31 @@ function App() {
     activeFileLocked,
   );
 
-  const commandPaletteItems = useMemo(
-    () =>
-      buildCommandPaletteItems({
-        hasVault: Boolean(vaultPath),
-        hasActiveNote: Boolean(activePath),
-      }),
-    [vaultPath, activePath],
-  );
-
-  const handleCommandPaletteSelect = useCallback(
-    (item: CommandPaletteItem) => {
-      const action = item.action;
-      recordCommandUsage(item.id);
-      overlays.closeOverlay("commandPalette");
-      switch (action.type) {
-        case "openOverlay":
-          overlays.openOverlay(action.overlay);
-          break;
-        case "openClassifiedPanel":
-          setClassifiedOpen(true);
-          break;
-        case "openFindReplace":
-          openFindReplace(action.mode);
-          break;
-        case "newNote":
-          void handleNewNote();
-          break;
-        case "saveNote":
-          void handleSaveNote();
-          break;
-        case "saveVersion":
-          void handleSaveVersion();
-          break;
-        case "closeTab":
-          if (activePathRef.current) closeTab(activePathRef.current);
-          break;
-        case "toggleAiPanel":
-          setAiPanelOpen((open) => !open);
-          break;
-        case "toggleZen":
-          setZen((z) => !z);
-          break;
-        case "toggleOutline":
-          setOutlineOpen((open) => {
-            const next = !open;
-            saveOutlineOpen(next);
-            return next;
-          });
-          break;
-        case "toggleTheme":
-          void setTheme(theme === "dark" ? "light" : "dark");
-          break;
-        case "toggleWebSearch":
-          toggleWebSearch();
-          break;
-        case "rescanVault":
-          void handleVaultRescan();
-          break;
-        case "zoomIn":
-          zoomIn();
-          break;
-        case "zoomOut":
-          zoomOut();
-          break;
-        case "zoomReset":
-          resetZoom();
-          break;
-        case "sendSelectionToAi":
-          sendSelectionToAi();
-          break;
-        case "noop":
-          break;
-        default: {
-          const _exhaustive: never = action;
-          return _exhaustive;
-        }
-      }
-    },
-    [
-      overlays,
+  const { commandPaletteItems, handleCommandPaletteSelect } =
+    useAppCommandPalette({
+      activePath,
+      activePathRef,
+      closeTab,
       handleNewNote,
       handleSaveNote,
       handleSaveVersion,
-      closeTab,
-      activePathRef,
-      theme,
-      setTheme,
       handleVaultRescan,
+      openFindReplace,
+      overlays,
+      resetZoom,
+      saveOutlineOpen,
+      sendSelectionToAi,
+      setAiPanelOpen,
+      setClassifiedOpen,
+      setOutlineOpen,
+      setTheme,
+      setZen,
+      theme,
+      toggleWebSearch,
+      vaultPath,
       zoomIn,
       zoomOut,
-      resetZoom,
-      sendSelectionToAi,
-      toggleWebSearch,
-      openFindReplace,
-    ],
-  );
+    });
 
   useAppKeyboard({
     items: commandPaletteItems,
@@ -1123,118 +730,70 @@ function App() {
           />
         }
         editor={
-          <div
-            data-testid="editor-shell"
-            className={cn(
-              "relative flex min-h-0 flex-1 flex-col",
-              outlineOpen && activePath && "iris-editor-outline-open",
-            )}
-          >
-            {activePath && !homeActive ? (
-              <ErrorBoundary scope="编辑器">
-                <TipTapEditor
-                  key={activePath}
-                  initialBodyMarkdown={editorBodyMarkdown}
-                  contentCacheKey={activePath}
-                  reingestKey={editorContentTick}
-                  reloadContentTick={editorContentTick}
-                  zen={zen}
-                  zoom={editorZoom}
-                  titleSlot={editorTitleSlot}
-                  locked={activeFileLocked}
-                  setLocked={
-                    activeNoteIsClassified
-                      ? undefined
-                      : (locked) => void handleLockToggle(locked)
-                  }
-                  onDirty={handleDirty}
-                  onSlashCommand={runEditorActionById}
-                  onBodyContextMenu={editorContextMenu.handleContextMenu}
-                  onEditorReady={handleEditorReady}
-                  onBodyStatsChange={updateEditorStats}
-                  onInlineAiRetry={(ed) => void inlineAi.retry(ed)}
-                  onInlineAiDismiss={(ed) => inlineAi.dismiss(ed)}
-                  onInlineAiAccept={() => inlineAi.finish()}
-                  onOpenWikiLink={(title) => openNoteLeavingHome(`${title}.md`)}
-                />
-                <EditorOutline
-                  editor={editorInstance}
-                  open={outlineOpen}
-                  zen={zen}
-                  onOpenChange={(open) => {
-                    setOutlineOpen(open);
-                    saveOutlineOpen(open);
-                  }}
-                />
-              </ErrorBoundary>
-            ) : (
-              <WelcomeEmpty
-                vaultKey={`${vaultPath ?? ""}:${vaultIndexEpoch}`}
-                onOpen={openNoteLeavingHome}
-                onNew={handleNewNoteLeavingHome}
-                onQuickOpen={() => overlays.openOverlay("quickOpen")}
-                onSearch={() => overlays.openOverlay("search")}
-                onAiSystemCenter={() => overlays.openOverlay("aiSystemCenter")}
-              />
-            )}
-            <IrisContextMenu
-              open={editorContextMenu.menu.open}
-              x={editorContextMenu.menu.x}
-              y={editorContextMenu.menu.y}
-              groups={editorContextMenu.groups}
-              onSelect={runEditorActionById}
-              onClose={editorContextMenu.close}
-            />
-            <EditorFindReplaceBar
-              editor={editorInstance}
-              mode={findReplaceMode}
-              open={findReplaceOpen && Boolean(activePath)}
-              onClose={() => setFindReplaceOpen(false)}
-              onModeChange={setFindReplaceMode}
-            />
-          </div>
+          <AppEditorWorkspace
+            activeFileLocked={activeFileLocked}
+            activeNoteIsClassified={activeNoteIsClassified}
+            activePath={activePath}
+            editorBodyMarkdown={editorBodyMarkdown}
+            editorContentTick={editorContentTick}
+            editorContextMenu={editorContextMenu}
+            editorInstance={editorInstance}
+            editorTitleSlot={editorTitleSlot}
+            editorZoom={editorZoom}
+            findReplaceMode={findReplaceMode}
+            findReplaceOpen={findReplaceOpen}
+            handleDirty={handleDirty}
+            handleEditorReady={handleEditorReady}
+            handleLockToggle={handleLockToggle}
+            handleNewNoteLeavingHome={handleNewNoteLeavingHome}
+            homeActive={homeActive}
+            inlineAi={inlineAi}
+            onOutlineOpenChange={(open) => {
+              setOutlineOpen(open);
+              saveOutlineOpen(open);
+            }}
+            onOpenAiSystemCenter={() => overlays.openOverlay("aiSystemCenter")}
+            onOpenQuickOpen={() => overlays.openOverlay("quickOpen")}
+            onOpenSearch={() => overlays.openOverlay("search")}
+            openNoteLeavingHome={openNoteLeavingHome}
+            outlineOpen={outlineOpen}
+            runEditorActionById={runEditorActionById}
+            setFindReplaceMode={setFindReplaceMode}
+            setFindReplaceOpen={setFindReplaceOpen}
+            updateEditorStats={updateEditorStats}
+            vaultIndexEpoch={vaultIndexEpoch}
+            vaultPath={vaultPath}
+            zen={zen}
+          />
         }
         aiPanel={
-          <ErrorBoundary scope="AI面板">
-            <UnifiedAssistantPanel
-              notePath={assistantNotePath}
-              noteDisplayTitle={assistantDocumentTitle}
-              getNoteContent={getLiveMarkdown}
-              webSearch={webSearch}
-              getWritingContext={getWritingContext}
-              getParagraphText={getParagraphText}
-              selectionQuote={activeNoteIsClassified ? null : selectionQuote}
-              prefillMessage={assistantPrefill}
-              onChromeChange={setAssistantChrome}
-              onVaultRefresh={bumpVaultIndex}
-              onInsertToEditor={handleInsertToEditor}
-              onPatchApplied={(newContent: string) => {
-                if (activeNoteIsClassified) {
-                  setAiStatus("涉密笔记不能接收 AI 改写");
-                  return;
-                }
-                applyMarkdownToEditor(newContent);
-                markdownRef.current = newContent;
-                dirtyRef.current = false;
-                const path = activePathRef.current;
-                if (path) {
-                  syncTabMarkdownCache(path, newContent);
-                  markClean(
-                    path,
-                    resolveNoteDisplayTitle({
-                      path,
-                      title: activeDocumentTitle ?? undefined,
-                    }),
-                  );
-                }
-              }}
-            />
-          </ErrorBoundary>
+          <AppAiPanelSlot
+            activeDocumentTitle={activeDocumentTitle}
+            activeNoteIsClassified={activeNoteIsClassified}
+            activePathRef={activePathRef}
+            assistantDocumentTitle={assistantDocumentTitle}
+            assistantNotePath={assistantNotePath}
+            assistantPrefill={assistantPrefill}
+            bumpVaultIndex={bumpVaultIndex}
+            dirtyRef={dirtyRef}
+            getLiveMarkdown={getLiveMarkdown}
+            getParagraphText={getParagraphText}
+            getWritingContext={getWritingContext}
+            handleInsertToEditor={handleInsertToEditor}
+            markClean={markClean}
+            markdownRef={markdownRef}
+            selectionQuote={selectionQuote}
+            setAiStatus={setAiStatus}
+            setAssistantChrome={setAssistantChrome}
+            syncTabMarkdownCache={syncTabMarkdownCache}
+            webSearch={webSearch}
+            applyMarkdownToEditor={applyMarkdownToEditor}
+          />
         }
         statusBar={
-          <StatusBar
-            path={activePath}
-            documentTitle={activeDocumentTitle}
+          <AppStatusBarSlot
+            activePath={activePath}
+            activeDocumentTitle={activeDocumentTitle}
             unsaved={tabs.find((t) => t.path === activePath)?.dirty ?? false}
             characterCount={editorStats.characterCount}
             readingMinutes={editorStats.readingMinutes}
@@ -1259,119 +818,38 @@ function App() {
           />
         }
         overlays={
-          <>
-            <CommandPalette
-              open={overlays.commandPaletteOpen}
-              items={commandPaletteItems}
-              onClose={() => overlays.closeOverlay("commandPalette")}
-              onSelect={handleCommandPaletteSelect}
-            />
-            <QuickOpen
-              open={overlays.quickOpen}
-              onClose={() => overlays.closeOverlay("quickOpen")}
-              onSelect={openNoteLeavingHome}
-            />
-            <VaultNavigator
-              open={overlays.fileSheet}
-              onClose={() => overlays.closeOverlay("fileSheet")}
-              onOpen={openNoteLeavingHome}
-            />
-            <RecycleBinSheet
-              open={overlays.recycleBinOpen}
-              onClose={() => overlays.closeOverlay("recycleBin")}
-              onRestored={openNoteLeavingHome}
-              onIndexChange={bumpVaultIndex}
-            />
-            <SearchPanel
-              open={overlays.searchOpen}
-              onClose={() => overlays.closeOverlay("search")}
-              onOpen={openNoteLeavingHome}
-            />
-            <Suspense fallback={<LazyFallback />}>
-              <SettingsPanel
-                open={overlays.settingsOpen}
-                onClose={() => overlays.closeOverlay("settings")}
-                theme={theme}
-                onThemeChange={(t) => void setTheme(t)}
-                webSearch={webSearch}
-                onWebSearchChange={setWebSearch}
-              />
-            </Suspense>
-            <Suspense fallback={<LazyFallback />}>
-              <AiSystemCenterPanel
-                open={overlays.aiSystemCenterOpen}
-                onClose={() => overlays.closeOverlay("aiSystemCenter")}
-              />
-            </Suspense>
-            <SkillsPanel
-              open={overlays.skillsOpen}
-              onClose={() => overlays.closeOverlay("skills")}
-            />
-            <BacklinksPanel
-              open={overlays.backlinksOpen}
-              onClose={() => overlays.closeOverlay("backlinks")}
-              notePath={activePath}
-              onOpen={openNoteLeavingHome}
-            />
-            <TagView
-              open={overlays.tagViewOpen}
-              onClose={() => overlays.closeOverlay("tags")}
-              onOpen={openNoteLeavingHome}
-            />
-            <Suspense fallback={<LazyFallback />}>
-              <VersionTimeline
-                open={overlays.versionOpen}
-                onClose={() => overlays.closeOverlay("version")}
-                notePath={activePath}
-                currentContent={markdown}
-                getCurrentContent={() => getLiveMarkdownRef.current()}
-                hasUnsavedEdits={
-                  tabs.find((t) => t.path === activePath)?.dirty ?? false
-                }
-                onRestore={applyMarkdownToEditor}
-                onHighPriorityStart={(path) =>
-                  versionSnapshotScheduler.markHighPriorityStart(path)
-                }
-                onHighPriorityEnd={(path) =>
-                  versionSnapshotScheduler.markHighPriorityEnd(path)
-                }
-              />
-            </Suspense>
-            <ErrorBoundary scope="知识图谱">
-              <Suspense fallback={<LazyFallback />}>
-                <GraphView
-                  open={overlays.graphOpen}
-                  onClose={() => overlays.closeOverlay("graph")}
-                  onOpenNote={openNoteLeavingHome}
-                />
-              </Suspense>
-            </ErrorBoundary>
-            <ConflictDialog
-              open={conflictState?.open ?? false}
-              localContent={conflictState?.localContent ?? ""}
-              externalContent={conflictState?.externalContent ?? ""}
-              filePath={conflictState?.filePath ?? ""}
-              onKeepLocal={handleConflictKeepLocal}
-              onAcceptExternal={handleConflictAcceptExternal}
-              onManualEdit={handleConflictManualEdit}
-            />
-            <ClassifiedPanel
-              open={classifiedOpen}
-              onClose={() => setClassifiedOpen(false)}
-              status={classifiedVaultStatus}
-              waiting={classifiedWaiting}
-              idleDeadline={classifiedIdleDeadline}
-              openClassifiedPaths={openClassifiedPaths}
-              onOpenFile={(path) =>
-                openNoteLeavingHome(path, undefined, { allowClassified: true })
-              }
-              onUnlockSuccess={() => void onClassifiedUnlocked()}
-              onRequestLock={() => requestClassifiedLock()}
-              onActivity={touchClassifiedActivity}
-              onRefreshStatus={refreshClassifiedStatus}
-              onEnterWaiting={() => setClassifiedWaiting(true)}
-            />
-          </>
+          <AppOverlays
+            activePath={activePath}
+            applyMarkdownToEditor={applyMarkdownToEditor}
+            bumpVaultIndex={bumpVaultIndex}
+            classifiedIdleDeadline={classifiedIdleDeadline}
+            classifiedOpen={classifiedOpen}
+            classifiedVaultStatus={classifiedVaultStatus}
+            classifiedWaiting={classifiedWaiting}
+            commandPaletteItems={commandPaletteItems}
+            conflictState={conflictState}
+            getCurrentContent={() => getLiveMarkdownRef.current()}
+            handleCommandPaletteSelect={handleCommandPaletteSelect}
+            handleConflictAcceptExternal={handleConflictAcceptExternal}
+            handleConflictKeepLocal={handleConflictKeepLocal}
+            handleConflictManualEdit={handleConflictManualEdit}
+            markdown={markdown}
+            onClassifiedUnlocked={onClassifiedUnlocked}
+            openClassifiedPaths={openClassifiedPaths}
+            openNoteLeavingHome={openNoteLeavingHome}
+            overlays={overlays}
+            refreshClassifiedStatus={refreshClassifiedStatus}
+            requestClassifiedLock={requestClassifiedLock}
+            setClassifiedOpen={setClassifiedOpen}
+            setClassifiedWaiting={setClassifiedWaiting}
+            setTheme={setTheme}
+            setWebSearch={setWebSearch}
+            tabs={tabs}
+            theme={theme}
+            touchClassifiedActivity={touchClassifiedActivity}
+            versionSnapshotScheduler={versionSnapshotScheduler}
+            webSearch={webSearch}
+          />
         }
       />
     </DesktopFrame>

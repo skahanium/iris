@@ -72,7 +72,7 @@ describe("useAssistantConfirmations", () => {
   let container: HTMLDivElement;
   let root: Root;
   let api!: HookApi;
-  let confirmTool: ReturnType<typeof vi.fn>;
+  let confirmTool: ConfirmTool;
   let runStatuses: Array<[AssistantTaskStatus, AssistantIntent]>;
 
   function render() {

@@ -1,4 +1,5 @@
-import { memo, useCallback, type MouseEvent } from "react";
+import { useVirtualizer } from "@tanstack/react-virtual";
+import { memo, useCallback, useMemo, useRef, type MouseEvent } from "react";
 
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { AiMessage } from "@/components/ui/ai-message";
@@ -31,6 +32,11 @@ interface AiMessageListProps {
   ) => void;
 }
 
+type MessageRow =
+  | { type: "empty" }
+  | { type: "thinking" }
+  | { type: "message"; message: ChatLine; messageIndex: number };
+
 export const AiMessageList = memo(function AiMessageList({
   messages,
   streaming,
@@ -47,6 +53,24 @@ export const AiMessageList = memo(function AiMessageList({
       last?.role === "user" ||
       (last?.role === "system" &&
         !messages.some((m) => m.role === "assistant")));
+  const viewportRef = useRef<HTMLDivElement | null>(null);
+  const rows = useMemo<MessageRow[]>(() => {
+    if (messages.length === 0) return [{ type: "empty" }];
+    return [
+      ...(showStandaloneThinking ? [{ type: "thinking" } as const] : []),
+      ...messages.map((message, messageIndex) => ({
+        type: "message" as const,
+        message,
+        messageIndex,
+      })),
+    ];
+  }, [messages, showStandaloneThinking]);
+  const rowVirtualizer = useVirtualizer({
+    count: rows.length,
+    getScrollElement: () => viewportRef.current,
+    estimateSize: () => 112,
+    overscan: 8,
+  });
 
   const handleBubbleClick = (index: number, e: MouseEvent) => {
     if (!onSelect) return;
@@ -67,89 +91,105 @@ export const AiMessageList = memo(function AiMessageList({
     }
   }, []);
 
-  return (
-    <ScrollArea className="min-h-0 flex-1">
-      <div className="flex flex-col gap-4 px-3 py-3">
-        {messages.length === 0 ? (
-          <p className="py-8 text-center text-xs text-muted-foreground">
-            输入问题开始对话。证据包在上方，工具与 Token 状态见底栏。
-          </p>
-        ) : null}
-        {showStandaloneThinking ? (
-          <AiMessageBubble role="assistant" streaming />
-        ) : null}
-        {messages.map((m, i) => {
-          const isLast = i === messages.length - 1;
-          const assistantStreaming =
-            streaming &&
-            m.role === "assistant" &&
-            m.kind !== "research" &&
-            isLast &&
-            !m.content;
-          const isSelected = selectedIndices?.has(i) ?? false;
+  const renderRow = (row: MessageRow) => {
+    if (row.type === "empty") {
+      return (
+        <p className="py-8 text-center text-xs text-muted-foreground">
+          输入问题开始对话。证据包在上方，工具与 Token 状态见底栏。
+        </p>
+      );
+    }
 
-          if (m.role === "assistant" && m.kind === "research" && m.research) {
-            return (
-              <div key={`${i}-research`} className="flex w-full justify-start">
-                <ResearchResultMessage
-                  result={m.research}
-                  onExpandDetail={() => onExpandResearch?.(m.research!)}
-                  className="w-full max-w-full"
-                />
-              </div>
-            );
-          }
+    if (row.type === "thinking") {
+      return <AiMessageBubble role="assistant" streaming />;
+    }
 
-          if (m.role === "assistant") {
-            const msgContent = m.content || "";
-            return (
-              <div
-                key={`${i}-${m.role}`}
-                className="flex w-full justify-start"
-                onClick={(e) => handleBubbleClick(i, e)}
-              >
-                <div className="min-w-0 max-w-full flex-1">
-                  <AiMessageBubble
-                    role="assistant"
-                    content={msgContent || undefined}
-                    streaming={assistantStreaming}
-                    selected={isSelected}
-                    createdAt={m.created_at}
-                    onCitationClick={onCitationClick}
-                    onRetract={onRetract ? () => onRetract(i) : undefined}
-                    onCopy={
-                      msgContent
-                        ? () => handleCopyMessage(msgContent)
-                        : undefined
-                    }
-                  />
-                </div>
-              </div>
-            );
-          }
+    const m = row.message;
+    const i = row.messageIndex;
+    const isLast = i === messages.length - 1;
+    const assistantStreaming =
+      streaming &&
+      m.role === "assistant" &&
+      m.kind !== "research" &&
+      isLast &&
+      !m.content;
+    const isSelected = selectedIndices?.has(i) ?? false;
 
-          if (m.role === "user") {
-            return (
-              <div
-                key={`${i}-${m.role}`}
-                className="flex w-full justify-end"
-                onClick={(e) => handleBubbleClick(i, e)}
-              >
-                <AiMessageBubble
-                  role="user"
-                  content={m.content}
-                  selected={isSelected}
-                />
-              </div>
-            );
-          }
+    if (m.role === "assistant" && m.kind === "research" && m.research) {
+      const result = m.research;
+      return (
+        <div className="flex w-full justify-start">
+          <ResearchResultMessage
+            result={result}
+            onExpandDetail={() => onExpandResearch?.(result)}
+            className="w-full max-w-full"
+          />
+        </div>
+      );
+    }
 
-          return (
-            <AiMessage
-              key={`${i}-${m.role}`}
-              role={m.role}
-              content={m.content}
+    if (m.role === "assistant") {
+      const msgContent = m.content || "";
+      return (
+        <div
+          className="flex w-full justify-start"
+          onClick={(e) => handleBubbleClick(i, e)}
+        >
+          <div className="min-w-0 max-w-full flex-1">
+            <AiMessageBubble
+              role="assistant"
+              content={msgContent || undefined}
+              streaming={assistantStreaming}
+              selected={isSelected}
+              createdAt={m.created_at}
+              onCitationClick={onCitationClick}
+              onRetract={onRetract ? () => onRetract(i) : undefined}
+              onCopy={
+                msgContent ? () => handleCopyMessage(msgContent) : undefined
+              }
             />
+          </div>
+        </div>
+      );
+    }
+
+    if (m.role === "user") {
+      return (
+        <div
+          className="flex w-full justify-end"
+          onClick={(e) => handleBubbleClick(i, e)}
+        >
+          <AiMessageBubble
+            role="user"
+            content={m.content}
+            selected={isSelected}
+          />
+        </div>
+      );
+    }
+
+    return <AiMessage role={m.role} content={m.content} />;
+  };
+
+  return (
+    <ScrollArea className="min-h-0 flex-1" viewportRef={viewportRef}>
+      <div
+        className="relative py-3"
+        style={{ height: `${rowVirtualizer.getTotalSize()}px` }}
+      >
+        {rowVirtualizer.getVirtualItems().map((virtualRow) => {
+          const row = rows[virtualRow.index];
+          if (!row) return null;
+          return (
+            <div
+              key={virtualRow.key}
+              ref={rowVirtualizer.measureElement}
+              data-index={virtualRow.index}
+              className="absolute left-0 top-0 w-full px-3"
+              style={{ transform: `translateY(${virtualRow.start}px)` }}
+            >
+              <div className="pb-4">{renderRow(row)}</div>
+            </div>
           );
         })}
       </div>

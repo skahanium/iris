@@ -5,6 +5,10 @@ function read(path: string): string {
   return readFileSync(path, "utf8");
 }
 
+function lineCount(path: string): number {
+  return read(path).split("\n").length;
+}
+
 describe("assistant panel performance contract", () => {
   it("does not receive whole-note markdown as a render-time prop", () => {
     const panel =
@@ -20,11 +24,12 @@ describe("assistant panel performance contract", () => {
 
   it("parses document chapters only inside explicit document/chapter tasks", () => {
     const panel = read("src/components/ai/UnifiedAssistantPanel.impl.tsx");
+    const taskHook = read("src/components/ai/hooks/useAssistantTasks.ts");
 
     expect(panel).not.toMatch(
       /useEffect\(\(\) => \{[\s\S]*parseDocumentChapters[\s\S]*\}, \[noteContent\]\)/,
     );
-    expect(panel).toContain("await parseDocumentChapters(getNoteContent())");
+    expect(taskHook).toContain("await parseDocumentChapters(getNoteContent())");
   });
 
   it("keeps streamed token updates throttled and isolated from artifact surfaces", () => {
@@ -40,5 +45,55 @@ describe("assistant panel performance contract", () => {
     expect(impl).not.toContain('from "./PatchPreview"');
     expect(impl).not.toContain('from "./CitationCheckView"');
     expect(impl).not.toContain('from "./assistant/DocumentCheckArtifacts"');
+  });
+
+  it("moves assistant task orchestration behind a dedicated hook", () => {
+    const taskHook = read("src/components/ai/hooks/useAssistantTasks.ts");
+    const impl = read("src/components/ai/UnifiedAssistantPanel.impl.tsx");
+
+    expect(taskHook).toContain("executeKnowledgeChat");
+    expect(taskHook).toContain("runKnowledgeChat");
+    expect(taskHook).toContain("runWriting");
+    expect(taskHook).toContain("runCitation");
+    expect(taskHook).toContain("runOrganize");
+    expect(taskHook).toContain("runChapter");
+    expect(taskHook).toContain("runDocumentCheck");
+    expect(taskHook).toContain("runResearch");
+    expect(taskHook).toContain("send");
+    expect(impl).not.toContain("const executeKnowledgeChat");
+    expect(impl).not.toContain("const runKnowledgeChat");
+    expect(impl).not.toContain("const runWriting");
+    expect(impl).not.toContain("const runCitation");
+    expect(impl).not.toContain("const runOrganize");
+    expect(impl).not.toContain("const runChapter");
+    expect(impl).not.toContain("const runDocumentCheck");
+    expect(impl).not.toContain("const runResearch");
+  });
+
+  it("keeps the assistant panel below the current refactor checkpoint", () => {
+    expect(
+      lineCount("src/components/ai/UnifiedAssistantPanel.impl.tsx"),
+    ).toBeLessThanOrEqual(500);
+  });
+
+  it("moves research control behind a dedicated hook", () => {
+    const researchHook = read("src/components/ai/hooks/useResearchControl.ts");
+    const impl = read("src/components/ai/UnifiedAssistantPanel.impl.tsx");
+
+    expect(researchHook).toContain("listenResearchProgress");
+    expect(researchHook).toContain("abortResearch");
+    expect(researchHook).toContain("handleGenerateResearchNote");
+    expect(researchHook).toContain("handleExpandResearchDetail");
+    expect(impl).not.toContain("listenResearchProgress");
+    expect(impl).not.toContain("const abortResearch");
+    expect(impl).not.toContain("const handleGenerateResearchNote");
+    expect(impl).not.toContain("const handleExpandResearchDetail");
+  });
+
+  it("virtualizes long assistant conversations with the existing virtualizer", () => {
+    const list = read("src/components/ai/AiMessageList.tsx");
+
+    expect(list).toContain("@tanstack/react-virtual");
+    expect(list).toContain("useVirtualizer");
   });
 });
