@@ -1,6 +1,6 @@
 # 历史文档
 
-本目录保存 v0.1.0–v0.5.2 期间的版本 Epic、施工计划、设计 spec 和审计记录。这些文档已归档，不再用于当前开发排期。
+本目录保存 v0.1.0–v0.5.2 期间的版本 Epic、施工计划、设计 spec、品牌规划、旧参考资料和审计记录。这些文档已归档，不再用于当前开发排期。
 
 当前版本里程碑见 [../ROADMAP.md](../ROADMAP.md)。
 
@@ -27,6 +27,17 @@
 | `2026-05-28-ai-system-optimization.md`          | AI 体系优化           |
 | `2026-05-29-audit-fix-and-cleanup.md`           | 审计修复与全面清理    |
 | `2026-06-02-file-management-refactor.md`        | 文件管理重构实施计划  |
+
+### 施工计划（阶段性，已归档）
+
+| 文件                                                           | 内容                 |
+| -------------------------------------------------------------- | -------------------- |
+| `plans/2026-05-27-brand-mark-redesign.md`                      | 品牌图标重设计       |
+| `plans/2026-05-27-brand-signature-design.md`                   | 品牌签名设计         |
+| `plans/2026-06-03-content-typography-polish-design.md`         | 正文排版抛光设计     |
+| `plans/2026-06-03-content-typography-polish-implementation.md` | 正文排版抛光施工记录 |
+| `plans/2026-06-10-outline-ghost-spine-design.md`               | Outline Ghost Spine  |
+| `2026-06-11-notion-reference-summary.md`                       | Notion 参考摘要      |
 
 ### 设计 Spec（已实施）
 

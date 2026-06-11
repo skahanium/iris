@@ -4,6 +4,7 @@
 //! through typed Tauri IPC. Phase C: full LLM pipeline with streaming.
 
 use crate::ai_runtime::{
+    context_cache::ContextAssemblyCacheKey,
     context_planner::plan_context,
     guardrails::{self, GuardResult},
     harness::{run_harness, HarnessRunInput},
@@ -16,6 +17,7 @@ use crate::ai_runtime::{
     trace::{TraceRecorder, TraceStatus},
     AiScene, AssembledContext,
 };
+use std::path::Path;
 use std::sync::Arc;
 
 use crate::app::AppState;
@@ -32,6 +34,47 @@ pub(crate) fn validate_ai_note_path(note_path: Option<&str>) -> AppResult<()> {
         }
     }
     Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn build_context_packets_cached(
+    state: &AppState,
+    vault: &Path,
+    scene: AiScene,
+    note_path: Option<&str>,
+    file_id: Option<i64>,
+    query: &str,
+    user_scope: &ContextScopeDto,
+    build_opts: ContextBuildOptions,
+) -> AppResult<(
+    Vec<crate::ai_runtime::ContextPacket>,
+    crate::ai_runtime::ContextStatus,
+)> {
+    let scope_json = serde_json::to_string(user_scope).unwrap_or_default();
+    let cache_key = ContextAssemblyCacheKey::new(
+        scene,
+        note_path,
+        query,
+        &scope_json,
+        &format!("{:?}", build_opts.strategy),
+        build_opts.input_budget as u32,
+    );
+    if let Ok(mut cache) = state.ai.context_cache.lock() {
+        if let Some(cached) = cache.get(&cache_key) {
+            return Ok(cached);
+        }
+    }
+
+    let built = state.db.with_conn(|conn| {
+        build_context_packets(
+            conn, vault, scene, note_path, file_id, query, user_scope, build_opts,
+        )
+    })?;
+
+    if let Ok(mut cache) = state.ai.context_cache.lock() {
+        cache.insert(cache_key, built.0.clone(), built.1.clone());
+    }
+    Ok(built)
 }
 
 /// Assemble context with intent detection and retrieval planning.
@@ -124,18 +167,16 @@ pub async fn context_assemble(
         strategy: resolved.context_strategy,
         input_budget: resolved.input_budget,
     };
-    let (packets, context_status) = state.db.with_conn(|conn| {
-        build_context_packets(
-            conn,
-            &vault,
-            scene,
-            note_path.as_deref(),
-            file_id,
-            primary_query,
-            &user_scope,
-            build_opts,
-        )
-    })?;
+    let (packets, context_status) = build_context_packets_cached(
+        state.inner().as_ref(),
+        &vault,
+        scene,
+        note_path.as_deref(),
+        file_id,
+        primary_query,
+        &user_scope,
+        build_opts,
+    )?;
 
     // Session is created explicitly in execute_ai_send_message via create_fresh().
     // Do NOT call SessionManager::ensure() here — it would recreate a deleted
@@ -255,18 +296,16 @@ pub(crate) async fn execute_ai_send_message(
         strategy: resolved.context_strategy,
         input_budget: resolved.input_budget,
     };
-    let (packets, _context_status) = state.db.with_conn(|conn| {
-        build_context_packets(
-            conn,
-            &vault,
-            scene,
-            note_path.as_deref(),
-            file_id,
-            &message,
-            &user_scope,
-            build_opts,
-        )
-    })?;
+    let (packets, _context_status) = build_context_packets_cached(
+        state,
+        &vault,
+        scene,
+        note_path.as_deref(),
+        file_id,
+        &message,
+        &user_scope,
+        build_opts,
+    )?;
 
     let ledger = crate::ai_runtime::evidence_ledger::EvidenceLedger::new(packets);
     let (resolved_ids, evidence_refresh_notice) = if let Some(ids) = &selected_packet_ids {
@@ -682,6 +721,9 @@ pub async fn knowledge_reindex(state: State<'_, Arc<AppState>>) -> AppResult<ser
         }
         Ok::<_, crate::error::AppError>(())
     })?;
+    if let Ok(mut cache) = state.ai.context_cache.lock() {
+        cache.clear();
+    }
 
     Ok(stats)
 }
@@ -964,6 +1006,9 @@ pub async fn ai_cache_clear(state: State<'_, Arc<AppState>>) -> AppResult<serde_
     })?;
     let web_pages = crate::llm::fetch_web_page::clear_web_cache(&state.db).unwrap_or(0);
     let searches = crate::llm::search_web::cleanup_expired_search_cache(&state.db).unwrap_or(0);
+    if let Ok(mut cache) = state.ai.context_cache.lock() {
+        cache.clear();
+    }
     Ok(serde_json::json!({
         "sessions_deleted": sessions,
         "checkpoints_cleared": checkpoints,

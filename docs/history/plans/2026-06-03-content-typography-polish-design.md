@@ -44,4 +44,4 @@
 ## 文档同步
 
 - [design-system.md](../design-system.md) 已更新协作区定位与字体表。
-- [notion-master.md](../design-system/notion-master.md) 保留为历史参考。
+- [2026-06-11-notion-reference-summary.md](../2026-06-11-notion-reference-summary.md) 保留为历史参考。

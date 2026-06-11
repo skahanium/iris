@@ -1,5 +1,6 @@
-import { useContext, useMemo, useRef, useState, type ReactNode } from "react";
+import { useContext, useMemo, useState, type ReactNode } from "react";
 
+import { useEditorStats } from "@/hooks/useEditorStats";
 import type { AssistantChromeSnapshot } from "@/types/assistant-chrome";
 import { EMPTY_ASSISTANT_CHROME } from "@/types/assistant-chrome";
 
@@ -11,31 +12,9 @@ export function StatusBarProvider({ children }: { children: ReactNode }) {
   const [aiStatus, setAiStatus] = useState("AI 空闲");
   const [assistantChrome, setAssistantChrome] =
     useState<AssistantChromeSnapshot>(EMPTY_ASSISTANT_CHROME);
-  const [editorStats, setEditorStats] = useState({
-    characterCount: 0,
-    readingMinutes: 1,
-  });
+  const { editorStats, updateEditorStats } = useEditorStats();
   const [canUndo, setCanUndo] = useState(false);
   const [canRedo, setCanRedo] = useState(false);
-
-  // Debounce editor stats so rapid keystrokes don't trigger a context update.
-  const editorStatsRef = useRef(editorStats);
-  editorStatsRef.current = editorStats;
-  const editorStatsTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
-    null,
-  );
-
-  const updateEditorStats = useMemo(
-    () => (stats: { characterCount: number; readingMinutes: number }) => {
-      editorStatsRef.current = stats;
-      if (editorStatsTimerRef.current) return;
-      editorStatsTimerRef.current = setTimeout(() => {
-        editorStatsTimerRef.current = null;
-        setEditorStats({ ...editorStatsRef.current });
-      }, 2000);
-    },
-    [],
-  );
 
   const setUndoRedo = useMemo(
     () => (undo: boolean, redo: boolean) => {

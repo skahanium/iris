@@ -34,6 +34,8 @@ export function ClassifiedPasswordSetup({
       onSuccess();
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : "设置失败");
+      setPassword("");
+      setConfirm("");
     } finally {
       setLoading(false);
     }

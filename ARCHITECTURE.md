@@ -249,6 +249,26 @@ Tauri 的命令式 IPC 基于 JSON 序列化。所有 Rust 函数通过 `#[tauri
 
 面板（`SkillsPanel`）与 Harness Agent 共用 `SkillInstallService`：IPC `skills_*` 与 Agent 工具 `skills_list` / `skills_install` / `skills_uninstall` / `skills_toggle` / `skills_read_resource` 调用同一 Rust 层。Registry 安装走 `skill_registry`（SkillHub → `api.skillhub.tencent.com`，`SkillRegistryAdapter` 可扩展注册表），变更操作经 `ToolConfirmDialog` 确认；成功后写入 `skill_install_sources`、刷新 `skill_activation_index`（关键词 + 描述 embedding）、emit `skills:changed` 刷新 UI。
 
+### AI Runtime v1.1.0 模块边界
+
+`src-tauri/src/ai_runtime/` 通过 facade 模块保持旧 public import path 可用，同时把大实现迁到 `*_impl.rs`。当前兼容入口：
+
+- `model_gateway.rs` -> `model_gateway_impl.rs`
+- `skills.rs` -> `skills_impl.rs`
+- `tool_dispatch.rs` -> `tool_dispatch_impl.rs`
+- `tool_catalog.rs` -> `tool_catalog_impl.rs`
+- `retrieval_broker.rs` -> `retrieval_broker_impl.rs`
+
+调用方继续从原模块名导入。后续新增 runtime 能力应优先落到更小的专责子模块，facade 文件保持薄入口，由模块边界测试保护公开路径。
+
+上下文组装新增短 TTL 内存缓存：`ai_runtime::context_cache`。`context_assemble` 与 `ai_send_message` 复用同一构建路径，缓存 key 包含 scene、note path、query、scope、context strategy、input budget 与 prompt profile。`ai_cache_clear`、runtime clear 与 knowledge reindex 会清空该缓存。
+
+性能基准位于 `src-tauri/benches/ai_benchmarks.rs`，覆盖 skill prompt 注入、长 tool history API body 构造、retrieval query hash 与大文本 guardrail 扫描：
+
+```bash
+cargo bench --manifest-path src-tauri/Cargo.toml --bench ai_benchmarks
+```
+
 #### Skills 运行时能力边界
 
 | 能力        | 行为                                                                                        |

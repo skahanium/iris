@@ -47,6 +47,8 @@ fastembed = { version = "5", default-features = false, features = ["ort-download
 scraper = "0.27"
 urlencoding = "2"
 toml = "0.8"
+# Experimental: sqlite-vec registration uses unsafe; keep optional and require
+# focused maintainer review before enabling in release builds.
 sqlite-vec = { version = "0.1.10-alpha.4", default-features = false, optional = true }
 
 [features]

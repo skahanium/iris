@@ -1,6 +1,6 @@
 # Iris 设计系统
 
-**方向定稿**：**Iris 知识工作台**——Iris Rail 壳层 + 沉静编辑画布 + AI 协作侧车 + 任务舱 Overlay；备选 **C · 命令优先**（键盘与可收起面板，不抢编辑区）。历史 Notion 参考见 [design-system/notion-master.md](./design-system/notion-master.md)（**不作**当前验收依据）。
+**方向定稿**：**Iris 知识工作台**——Iris Rail 壳层 + 沉静编辑画布 + AI 协作侧车 + 任务舱 Overlay；备选 **C · 命令优先**（键盘与可收起面板，不抢编辑区）。历史 Notion 参考见 [history/2026-06-11-notion-reference-summary.md](./history/2026-06-11-notion-reference-summary.md)（**不作**当前验收依据）。
 
 **Iris Rail 完整刷新设计**：见 [docs/superpowers/specs/2026-06-09-iris-rail-refresh-design.md](./superpowers/specs/2026-06-09-iris-rail-refresh-design.md)。该 spec 是当前界面系统刷新目标态，覆盖 Home、顶栏、Rail Segments Tab、Editor Workspace、Outline Rail、AI Conversation Workspace、Overlay Family 与 AI 系统中心。
 
@@ -35,7 +35,7 @@ Iris Rail Refresh 的 accent 演进为低饱和鼠尾草绿系，仅用于知识
 
 ### 色彩 token（CSS 变量）
 
-实现见 `src/styles/globals.css`。详细参考 [design-system/notion-master.md](./design-system/notion-master.md)。
+实现见 `src/styles/globals.css`。历史参考见 [history/2026-06-11-notion-reference-summary.md](./history/2026-06-11-notion-reference-summary.md)。
 
 **品牌 monogram**（几何「I」v3；桌面图标、顶栏、托盘、欢迎页）：见 [design-system/brand.md](./design-system/brand.md)。
 
@@ -247,5 +247,5 @@ v0.4.0-ui 起不再作为验收标准。历史实现含：`.iris-paper`、赭铜
 ## 参考
 
 - **路线图**：[ROADMAP.md](../ROADMAP.md)
-- **Notion 参考摘要**：[design-system/notion-master.md](./design-system/notion-master.md)
+- **Notion 参考摘要（历史）**：[history/2026-06-11-notion-reference-summary.md](./history/2026-06-11-notion-reference-summary.md)
 - **交互线框**：[ARCHITECTURE.md](../ARCHITECTURE.md)

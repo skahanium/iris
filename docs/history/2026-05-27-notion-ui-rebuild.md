@@ -1,7 +1,7 @@
 # Notion UI 重建 — 实现计划
 
 **版本**：v0.4.0-ui  
-**设计宪章**：[design-system.md](../design-system.md) · [notion-master.md](../design-system/notion-master.md)
+**设计宪章**：[design-system.md](../design-system.md) · [notion-reference-summary.md](./2026-06-11-notion-reference-summary.md)
 
 ## 目标
 

@@ -1,4 +1,4 @@
-﻿use std::collections::HashMap;
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex, OnceLock};
@@ -14,6 +14,7 @@ use crate::error::{AppError, AppResult};
 use crate::storage::db::Database;
 use crate::watcher::FileWatcher;
 
+use crate::ai_runtime::context_cache::ContextAssemblyCache;
 use crate::ai_types::{AiScene, AutonomyLevel};
 use crate::security::brute_force::BruteForceProtection;
 
@@ -82,6 +83,7 @@ impl StorageState {
 pub struct AiRuntimeState {
     pub pending_tool_calls: Mutex<HashMap<String, PendingToolCall>>,
     pub active_research: Mutex<HashMap<String, Arc<AtomicBool>>>,
+    pub context_cache: Mutex<ContextAssemblyCache>,
     pub vector_index_ready: AtomicBool,
     embed_queue: OnceLock<EmbedQueue>,
 }
@@ -91,6 +93,7 @@ impl AiRuntimeState {
         Self {
             pending_tool_calls: Mutex::new(HashMap::new()),
             active_research: Mutex::new(HashMap::new()),
+            context_cache: Mutex::new(ContextAssemblyCache::new(64, 30)),
             vector_index_ready: AtomicBool::new(vector_ready),
             embed_queue: OnceLock::new(),
         }
@@ -103,6 +106,9 @@ impl AiRuntimeState {
         }
         if let Ok(mut research) = self.active_research.lock() {
             research.clear();
+        }
+        if let Ok(mut cache) = self.context_cache.lock() {
+            cache.clear();
         }
         self.vector_index_ready
             .store(false, std::sync::atomic::Ordering::Relaxed);

@@ -139,11 +139,8 @@ describe("classified vault phase 7", () => {
     expect(app).toContain(
       "const assistantNotePath = activeNoteIsClassified ? null : activePath;",
     );
-    expect(app).toContain(
-      'const assistantNoteContent = activeNoteIsClassified ? "" : markdown;',
-    );
     expect(app).toContain("notePath={assistantNotePath}");
-    expect(app).toContain("noteContent={assistantNoteContent}");
+    expect(app).toContain("getNoteContent={getLiveMarkdown}");
     expect(app).toContain("if (isClassifiedVaultPath(path)) return null;");
     expect(app).toContain("if (activeNoteIsClassified) {");
     expect(app).toContain("涉密笔记不能发送到 AI");
