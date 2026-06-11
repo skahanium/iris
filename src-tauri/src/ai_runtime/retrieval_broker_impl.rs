@@ -4,7 +4,6 @@
 //! Results are fused by weighted score and returned as ContextPackets.
 
 use std::collections::HashSet;
-use std::hash::{Hash, Hasher};
 use std::sync::LazyLock;
 
 use rusqlite::Connection;
@@ -19,6 +18,10 @@ use crate::ai_runtime::retrieval_scope::{filter_packets_by_scope, RetrievalScope
 use crate::ai_runtime::{ContextPacket, SourceType, TrustLevel};
 use crate::embedding::engine;
 use crate::error::AppResult;
+
+#[path = "retrieval_broker/query_hash.rs"]
+mod query_hash_impl;
+pub use query_hash_impl::query_hash;
 
 // ─── Retrieval Request ───────────────────────────────────
 
@@ -152,23 +155,7 @@ pub fn hybrid_retrieve(
 /// 计算检索请求的稳定哈希值，用于缓存键。
 ///
 /// 基于 `query`、`layers` 开关和 `max_results` 生成，
-/// 不包含 `note_context` 和 `file_id_context`（相同查询在不同笔记上下文中应共享缓存）。
-pub fn query_hash(request: &RetrievalRequest) -> String {
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    request.query.hash(&mut hasher);
-    request.max_results.hash(&mut hasher);
-    request.layers.fts.hash(&mut hasher);
-    request.layers.vector.hash(&mut hasher);
-    request.layers.graph.hash(&mut hasher);
-    request.layers.exact.hash(&mut hasher);
-    request.layers.template.hash(&mut hasher);
-    format!("{:016x}", hasher.finish())
-}
-
-/// [`hybrid_retrieve`] 的缓存包装。
-///
-/// 命中缓存时直接返回；未命中时执行检索并缓存结果。
-/// 缓存键由 [`query_hash`] 生成。
+/// Run hybrid retrieval with an in-memory packet cache keyed by [`query_hash`].
 pub fn hybrid_retrieve_cached(
     conn: &Connection,
     request: &RetrievalRequest,

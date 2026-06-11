@@ -15,14 +15,12 @@ import {
   syncActiveAiScene,
 } from "@/lib/assistant-scene";
 import type { AiScene } from "@/types/ai";
-import { stripMentionTokensForDisplay } from "@/lib/ai-context-scope";
 import { mergeContextPackets } from "@/lib/ai/merge-context-packets";
 import { shouldStartNewAiSession } from "@/lib/ai/session-thread";
 import { resolveAssistantDisplayContent } from "@/lib/assistant-message-content";
 import { OPEN_AUDIT_TRAIL_EVENT } from "@/lib/audit-trail-events";
 import { buildAssistantChromeSnapshot } from "@/lib/assistant-chrome";
 import { mapChatToolCallsForUi } from "@/lib/map-chat-tool-calls";
-import { skillInstallSuccessNotice } from "@/lib/skill-install-notice";
 import { accumulateTokenUsage } from "@/lib/token-usage";
 import { invokeErrorMessage } from "@/lib/credentials";
 import {
@@ -32,18 +30,14 @@ import {
   organizeApply,
   parseDocumentChapters,
   patchApply,
-  profileSetRule,
   harnessResume,
   researchAbort,
   researchGenerateNote,
-  listenToolConfirmRequest,
   listenResearchProgress,
-  toolConfirm as toolConfirmIpc,
 } from "@/lib/ipc";
 import type {
   AssistantActionState,
   AssistantIntent,
-  AssistantTaskStatus,
   CitationCheckResult,
   ContextPacket,
   ContextStatus,
@@ -57,13 +51,11 @@ import type { AssistantChromeSnapshot } from "@/types/assistant-chrome";
 
 import {
   buildActionState,
-  buildTaskSummary,
   determineDocumentCheckType,
   determineOrganizeTaskType,
 } from "./unified-assistant-panel-utils";
 import { AiMentionPopover } from "./AiMentionPopover";
 import { AiComposerContextMenu } from "./AiComposerContextMenu";
-import { type ChatLine } from "./AiMessageList";
 import { ConversationSurface } from "./ConversationSurface";
 import { AiSelectionActionBar } from "./AiSelectionActionBar";
 import { useCitationClick } from "./hooks/useCitationClick";
@@ -71,21 +63,17 @@ import { ContextPacketDrawer } from "./ContextPacketDrawer";
 import { SessionHistoryDropdown } from "./SessionHistoryDropdown";
 import { useAiBubbleSelection } from "@/hooks/useAiBubbleSelection";
 import { useAssistantRun } from "@/hooks/useAssistantRun";
-import { listenAiRequestStarted, sessionRetract, llmAbort } from "@/lib/ipc";
+import { listenAiRequestStarted } from "@/lib/ipc";
+import { useAssistantConversation } from "./hooks/useAssistantConversation";
 import { useAssistantContextScope } from "./hooks/useAssistantContextScope";
+import { useAssistantConfirmations } from "./hooks/useAssistantConfirmations";
 import { ContextScopeChips } from "./ContextScopeChips";
 import {
   AssistantTaskSurfaces,
   type ResearchProgressData,
 } from "./AssistantTaskSurfaces";
-import {
-  RuleConfirmDialog,
-  type RuleConfirmRequest,
-} from "./RuleConfirmDialog";
-import {
-  ToolConfirmDialog,
-  type ToolConfirmRequest,
-} from "./ToolConfirmDialog";
+import { RuleConfirmDialog } from "./RuleConfirmDialog";
+import { ToolConfirmDialog } from "./ToolConfirmDialog";
 
 export interface AssistantSelectionQuote {
   filePath: string;
@@ -123,22 +111,12 @@ export function UnifiedAssistantPanel({
   const [actionState, setActionState] = useState<AssistantActionState>(
     buildActionState("chat", "idle"),
   );
-  const [messages, setMessages] = useState<ChatLine[]>([]);
   const [input, setInput] = useState("");
   const [streaming, setStreaming] = useState(false);
-  const [sessionId, setSessionId] = useState<number | null>(null);
   const bubbleSelection = useAiBubbleSelection();
-  const messagesRef = useRef(messages);
-  messagesRef.current = messages;
-  const sessionIdRef = useRef(sessionId);
-  sessionIdRef.current = sessionId;
   const [packets, setPackets] = useState<ContextPacket[]>([]);
   const [selectedPacketIds, setSelectedPacketIds] = useState<string[]>([]);
   const [packetsOpen, setPacketsOpen] = useState(false);
-  const [toolConfirmRequest, setToolConfirmRequest] =
-    useState<ToolConfirmRequest | null>(null);
-  const [ruleConfirmRequest, setRuleConfirmRequest] =
-    useState<RuleConfirmRequest | null>(null);
 
   const [writingPatches, setWritingPatches] = useState<PatchProposal[]>([]);
   const [citationResult, setCitationResult] =
@@ -163,22 +141,90 @@ export function UnifiedAssistantPanel({
     useState<ContextStatus | null>(null);
   const [lastError, setLastError] = useState<string | null>(null);
   const [activityHint, setActivityHint] = useState<string | null>(null);
-  const [sessionTokenUsage, setSessionTokenUsage] = useState<TokenUsage | null>(
-    null,
-  );
   const streamBuf = useRef("");
   const requestIdRef = useRef<string | null>(null);
-  const toolConfirmInFlightRef = useRef<Set<string>>(new Set());
-  const toolConfirmSettledRef = useRef<Set<string>>(new Set());
   const [harnessRequestId, setHarnessRequestId] = useState<string | null>(null);
   const [auditDrawerOpen, setAuditDrawerOpen] = useState(false);
   const assistantRun = useAssistantRun("chat");
-  const composerDisabled =
-    streaming || assistantRun.isBusy || toolConfirmRequest !== null;
   const chromeActionsDisabled = streaming;
+  const researchRequestIdRef = useRef<string | null>(null);
+  const panelSendActiveRef = useRef(false);
+  const forceNewSessionRef = useRef(false);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const messageListRef = useRef<HTMLDivElement>(null);
+  const { profile: promptProfile } = usePromptProfile();
 
   const { handleCitationClick, citationMiss, clearCitationMiss } =
     useCitationClick(packets, () => setPacketsOpen(true), setSelectedPacketIds);
+
+  const clearTaskSurfaces = useCallback(() => {
+    setWritingPatches([]);
+    setCitationResult(null);
+    setOrganizeSuggestions([]);
+    setOrganizeSelection(new Set());
+    setResearchResult(null);
+    setResearchProgress(null);
+    setResearchRunning(false);
+    setDocSummary(null);
+    setDocIssues([]);
+    setLastError(null);
+  }, []);
+
+  const {
+    appendAssistantSummary,
+    appendUserMessage,
+    ensureAssistantStreamSlot,
+    handleCopySelected,
+    handleExportSelected,
+    handleInsertToEditor,
+    handleLoadSession,
+    handleNewChat,
+    handleQuoteToInput,
+    handleRetract,
+    messages,
+    sessionId,
+    sessionTokenUsage,
+    setMessages,
+    setSessionId,
+    setSessionTokenUsage,
+  } = useAssistantConversation({
+    actionIntent: actionState.intent,
+    bubbleSelection,
+    clearCitationMiss,
+    clearTaskSurfaces,
+    forceNewSessionRef,
+    onInsertToEditor,
+    requestIdRef,
+    setActionState,
+    setActivityHint,
+    setHarnessRequestId,
+    setInput,
+    setPackets,
+    setSelectedPacketIds,
+    setStreaming,
+    streamBufRef: streamBuf,
+    textareaRef,
+    streaming,
+  });
+
+  const {
+    contextScope,
+    handleComposerKeyDown,
+    mentionCandidates,
+    mentionHighlight,
+    mentionNavDeltaRef,
+    mentionOpen,
+    mentionQuery,
+    mentionTokens,
+    removeMentionToken,
+    selectMention,
+    setMentionHighlight,
+    syncMentionFromInput,
+  } = useAssistantContextScope({
+    input,
+    setInput,
+    textareaRef,
+  });
 
   useEffect(() => {
     onChromeChange?.(
@@ -225,30 +271,6 @@ export function UnifiedAssistantPanel({
       unlisten?.();
     };
   }, [streaming]);
-  const researchRequestIdRef = useRef<string | null>(null);
-  const panelSendActiveRef = useRef(false);
-  const forceNewSessionRef = useRef(false);
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const messageListRef = useRef<HTMLDivElement>(null);
-  const { profile: promptProfile } = usePromptProfile();
-  const {
-    contextScope,
-    handleComposerKeyDown,
-    mentionCandidates,
-    mentionHighlight,
-    mentionNavDeltaRef,
-    mentionOpen,
-    mentionQuery,
-    mentionTokens,
-    removeMentionToken,
-    selectMention,
-    setMentionHighlight,
-    syncMentionFromInput,
-  } = useAssistantContextScope({
-    input,
-    setInput,
-    textareaRef,
-  });
 
   useEffect(() => {
     if (!selectionQuote?.text) return;
@@ -263,36 +285,6 @@ export function UnifiedAssistantPanel({
   useEffect(() => {
     syncActiveAiScene(actionState.intent);
   }, [actionState.intent]);
-
-  useEffect(() => {
-    let unlisten: (() => void) | undefined;
-
-    void listenToolConfirmRequest((req) => {
-      if (req.tool_name === "update_user_rule") {
-        const ruleType =
-          typeof req.arguments.rule_type === "string"
-            ? req.arguments.rule_type
-            : "custom_rules";
-        const ruleText =
-          typeof req.arguments.rule === "string"
-            ? req.arguments.rule
-            : JSON.stringify(req.arguments);
-        setRuleConfirmRequest({
-          rule: ruleText,
-          rule_type: ruleType,
-          source: "ai_detected",
-        });
-      } else {
-        setToolConfirmRequest(req);
-      }
-    }).then((fn) => {
-      unlisten = fn;
-    });
-
-    return () => {
-      unlisten?.();
-    };
-  }, []);
 
   useEffect(() => {
     const setupResearchListener = async () => {
@@ -338,122 +330,6 @@ export function UnifiedAssistantPanel({
     setStreaming,
   });
 
-  const clearTaskSurfaces = useCallback(() => {
-    setWritingPatches([]);
-    setCitationResult(null);
-    setOrganizeSuggestions([]);
-    setOrganizeSelection(new Set());
-    setResearchResult(null);
-    setResearchProgress(null);
-    setResearchRunning(false);
-    setDocSummary(null);
-    setDocIssues([]);
-    setLastError(null);
-  }, []);
-
-  const handleNewChat = useCallback(() => {
-    clearTaskSurfaces();
-    clearCitationMiss();
-    setPackets([]);
-    setSelectedPacketIds([]);
-    setMessages([]);
-    setSessionId(null);
-    setSessionTokenUsage(null);
-    setInput("");
-    setActivityHint(null);
-    setStreaming(false);
-    streamBuf.current = "";
-    requestIdRef.current = null;
-    setHarnessRequestId(null);
-    forceNewSessionRef.current = true;
-    setActionState(buildActionState("chat", "idle"));
-  }, [clearCitationMiss, clearTaskSurfaces]);
-
-  const handleRetract = useCallback(
-    async (index: number) => {
-      const target = messagesRef.current[index];
-      if (!target) return;
-      // Abort any active stream first
-      if (streaming && requestIdRef.current) {
-        try {
-          await llmAbort(requestIdRef.current);
-        } catch {
-          /* ignore */
-        }
-        setStreaming(false);
-      }
-      // Backend retract by seq
-      const sid = sessionIdRef.current;
-      const seq = target.seq;
-      if (sid && seq) {
-        try {
-          await sessionRetract(sid, seq);
-        } catch (err) {
-          console.warn("[retract] backend failed:", err);
-        }
-      }
-      // Truncate frontend messages
-      setMessages((prev) => prev.slice(0, index));
-    },
-    [streaming],
-  );
-
-  const handleInsertToEditor = useCallback(() => {
-    if (!onInsertToEditor) return;
-    const indices = Array.from(bubbleSelection.selected).sort((a, b) => a - b);
-    const content = indices
-      .map((i) => messagesRef.current[i])
-      .filter((m): m is ChatLine => m != null)
-      .map((m) => {
-        if (m.role === "user") return `> ${m.content}`;
-        return m.content;
-      })
-      .join("\n\n");
-    if (content) {
-      onInsertToEditor(content);
-      bubbleSelection.clear();
-    }
-  }, [onInsertToEditor, bubbleSelection]);
-
-  const handleCopySelected = useCallback(async () => {
-    const indices = Array.from(bubbleSelection.selected).sort((a, b) => a - b);
-    const content = indices
-      .map((i) => messagesRef.current[i])
-      .filter((m): m is ChatLine => m != null)
-      .map((m) => m.content)
-      .join("\n\n");
-    if (content) {
-      try {
-        await navigator.clipboard.writeText(content);
-      } catch {
-        /* ignore */
-      }
-      bubbleSelection.clear();
-    }
-  }, [bubbleSelection]);
-
-  const handleExportSelected = useCallback(() => {
-    const indices = Array.from(bubbleSelection.selected).sort((a, b) => a - b);
-    const lines = indices
-      .map((i) => messagesRef.current[i])
-      .filter((m): m is ChatLine => m != null)
-      .map((m) => {
-        if (m.role === "user") return `## 用户\n\n${m.content}`;
-        if (m.role === "assistant") return `## 助手\n\n${m.content}`;
-        return `## ${m.role}\n\n${m.content}`;
-      });
-    if (lines.length === 0) return;
-    const md = lines.join("\n\n---\n\n");
-    const blob = new Blob([md], { type: "text/markdown;charset=utf-8" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `iris-export-${new Date().toISOString().slice(0, 10)}.md`;
-    a.click();
-    URL.revokeObjectURL(url);
-    bubbleSelection.clear();
-  }, [bubbleSelection]);
-
   const assembleContextForChat = useCallback(
     async (query: string, intent: AssistantIntent) => {
       const scene = resolveAiSceneForIntent(intent);
@@ -479,31 +355,29 @@ export function UnifiedAssistantPanel({
     [contextScope, notePath, sessionId, webSearch],
   );
 
-  const appendUserMessage = useCallback((rawMessage: string) => {
-    const display = stripMentionTokensForDisplay(rawMessage);
-    setMessages((prev) => [...prev, { role: "user", content: display }]);
-  }, []);
-
-  const ensureAssistantStreamSlot = useCallback(() => {
-    setMessages((prev) => {
-      const last = prev[prev.length - 1];
-      if (last?.role === "assistant") return prev;
-      return [...prev, { role: "assistant", content: "" }];
-    });
-  }, []);
-
-  const appendAssistantSummary = useCallback(
-    (intent: AssistantIntent, count?: number) => {
-      setMessages((prev) => [
-        ...prev,
-        {
-          role: "assistant",
-          content: buildTaskSummary(intent, count),
-        },
-      ]);
-    },
-    [],
-  );
+  const {
+    closeRuleConfirm,
+    dismissToolConfirm,
+    handleRuleConfirm,
+    handleToolConfirm,
+    ruleConfirmRequest,
+    toolConfirmRequest,
+  } = useAssistantConfirmations({
+    actionIntent: actionState.intent,
+    assistantRun,
+    buildActionState,
+    ensureAssistantStreamSlot,
+    requestIdRef,
+    setActionState,
+    setActivityHint,
+    setHarnessRequestId,
+    setMessages,
+    setPackets,
+    setSessionTokenUsage,
+    setStreaming,
+  });
+  const composerDisabled =
+    streaming || assistantRun.isBusy || toolConfirmRequest !== null;
 
   const executeKnowledgeChat = useCallback(
     async (
@@ -634,6 +508,9 @@ export function UnifiedAssistantPanel({
       notePath,
       packets,
       selectedPacketIds,
+      setMessages,
+      setSessionId,
+      setSessionTokenUsage,
       sessionId,
       webSearch,
     ],
@@ -685,7 +562,13 @@ export function UnifiedAssistantPanel({
       setStreaming(false);
       setActivityHint(null);
     }
-  }, [harnessRequestId, ensureAssistantStreamSlot]);
+  }, [
+    ensureAssistantStreamSlot,
+    harnessRequestId,
+    setMessages,
+    setPackets,
+    setSessionTokenUsage,
+  ]);
 
   const runKnowledgeChat = useCallback(
     async (
@@ -712,7 +595,12 @@ export function UnifiedAssistantPanel({
         setActivityHint(null);
       }
     },
-    [assembleContextForChat, clearTaskSurfaces, executeKnowledgeChat],
+    [
+      assembleContextForChat,
+      clearTaskSurfaces,
+      executeKnowledgeChat,
+      setMessages,
+    ],
   );
 
   const runWriting = useCallback(
@@ -986,7 +874,7 @@ export function UnifiedAssistantPanel({
         },
       ]);
     },
-    [assistantRun, clearTaskSurfaces, webSearch],
+    [assistantRun, clearTaskSurfaces, setMessages, webSearch],
   );
 
   const handleExpandResearchDetail = useCallback(
@@ -1039,7 +927,7 @@ export function UnifiedAssistantPanel({
     } finally {
       setGeneratingResearchNote(false);
     }
-  }, [researchResult]);
+  }, [researchResult, setMessages]);
 
   const send = useCallback(async () => {
     if (!input.trim() || composerDisabled) return;
@@ -1119,6 +1007,7 @@ export function UnifiedAssistantPanel({
     runResearch,
     runWriting,
     selectionQuote?.text,
+    setMessages,
   ]);
 
   const stopStreaming = useCallback(() => {
@@ -1136,150 +1025,6 @@ export function UnifiedAssistantPanel({
       prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id],
     );
   }, []);
-
-  const handleQuoteToInput = useCallback((text: string) => {
-    const quoted = text
-      .split("\n")
-      .map((line) => `> ${line}`)
-      .join("\n");
-    setInput((prev) =>
-      prev.trim() ? `${prev.trim()}\n\n${quoted}\n\n` : `${quoted}\n\n`,
-    );
-    textareaRef.current?.focus();
-  }, []);
-
-  const handleToolConfirm = useCallback(
-    async (
-      requestId: string,
-      toolCallId: string,
-      decision: "approve" | "reject" | "modify",
-      modifiedArgs?: unknown,
-    ) => {
-      const confirmKey = `${requestId}:${toolCallId}`;
-      if (
-        toolConfirmInFlightRef.current.has(confirmKey) ||
-        toolConfirmSettledRef.current.has(confirmKey)
-      ) {
-        return;
-      }
-      toolConfirmInFlightRef.current.add(confirmKey);
-      const intent = actionState.intent;
-      const pendingConfirm = toolConfirmRequest;
-      setToolConfirmRequest(null);
-      setStreaming(true);
-      setActivityHint(
-        decision === "reject" ? "已拒绝，正在生成替代回答…" : "继续执行中…",
-      );
-      ensureAssistantStreamSlot();
-      let nextTaskStatus: AssistantTaskStatus = "completed";
-      try {
-        const raw = await toolConfirmIpc({
-          request_id: requestId,
-          tool_call_id: toolCallId,
-          decision,
-          modified_args: modifiedArgs,
-        });
-        const result = raw as {
-          resumed?: boolean;
-          content?: string;
-          tool_calls?: Parameters<typeof mapChatToolCallsForUi>[0];
-          tool_results?: Parameters<typeof mapChatToolCallsForUi>[1];
-          evidence_packets?: ContextPacket[];
-          usage?: TokenUsage;
-          pending_confirmation?: boolean;
-          status?: string;
-          installed_skill?: string;
-        };
-        if (!result.resumed) {
-          nextTaskStatus = "completed";
-          setActionState(buildActionState(intent, nextTaskStatus));
-          return;
-        }
-        const toolCalls = mapChatToolCallsForUi(
-          result.tool_calls,
-          result.tool_results,
-        );
-        const content = result.content?.trim() ?? "";
-        if (result.evidence_packets?.length) {
-          setPackets((prev) =>
-            mergeContextPackets(prev, result.evidence_packets ?? []),
-          );
-        }
-        if (result.usage) {
-          setSessionTokenUsage((prev) =>
-            accumulateTokenUsage(prev, result.usage!),
-          );
-        }
-        setMessages((prev) => {
-          const next = [...prev];
-          const last = next[next.length - 1];
-          if (last?.role === "assistant") {
-            next[next.length - 1] = {
-              ...last,
-              content,
-              toolCalls,
-            };
-          } else {
-            next.push({ role: "assistant", content, toolCalls });
-          }
-          if (
-            (decision === "approve" || decision === "modify") &&
-            pendingConfirm?.tool_name === "skills_install"
-          ) {
-            const notice = skillInstallSuccessNotice({
-              installedSkill: result.installed_skill,
-              preview: pendingConfirm.preview,
-              arguments: pendingConfirm.arguments,
-            });
-            if (notice) {
-              next.push({ role: "system", content: notice });
-            }
-          }
-          return next;
-        });
-        const stillPending =
-          result.pending_confirmation === true ||
-          result.status === "pending_tools" ||
-          (toolCalls?.some((t) => t.status === "pending") ?? false);
-        nextTaskStatus = stillPending ? "awaiting_confirmation" : "completed";
-        setActionState(buildActionState(intent, nextTaskStatus));
-        if (!stillPending) {
-          setHarnessRequestId(null);
-          requestIdRef.current = null;
-        }
-      } catch (error) {
-        const message = invokeErrorMessage(error);
-        nextTaskStatus = "error";
-        setMessages((prev) => [
-          ...prev,
-          { role: "system", content: `工具确认失败: ${message}` },
-        ]);
-        setActionState(buildActionState(intent, nextTaskStatus, message));
-      } finally {
-        toolConfirmInFlightRef.current.delete(confirmKey);
-        toolConfirmSettledRef.current.add(confirmKey);
-        setStreaming(false);
-        setActivityHint(null);
-        assistantRun.setFromTaskStatus(nextTaskStatus, intent);
-      }
-    },
-    [
-      actionState.intent,
-      assistantRun,
-      ensureAssistantStreamSlot,
-      toolConfirmRequest,
-    ],
-  );
-
-  const dismissToolConfirm = useCallback(() => {
-    const req = toolConfirmRequest;
-    if (req) {
-      void handleToolConfirm(req.request_id, req.tool_call_id, "reject");
-      return;
-    }
-    setToolConfirmRequest(null);
-    assistantRun.setFromTaskStatus("completed", actionState.intent);
-  }, [actionState.intent, assistantRun, handleToolConfirm, toolConfirmRequest]);
 
   const handleAcceptPatch = useCallback(
     async (patch: PatchProposal) => {
@@ -1321,18 +1066,6 @@ export function UnifiedAssistantPanel({
   }, [onVaultRefresh, organizeSelection, organizeSuggestions]);
 
   const activeScene: AiScene = resolveAiSceneForIntent(actionState.intent);
-
-  const handleLoadSession = useCallback(
-    (id: number, loaded: ChatLine[]) => {
-      setSessionId(id);
-      setMessages(loaded);
-      forceNewSessionRef.current = false;
-      clearTaskSurfaces();
-      clearCitationMiss();
-      setActionState(buildActionState(actionState.intent, "idle"));
-    },
-    [actionState.intent, clearCitationMiss, clearTaskSurfaces],
-  );
 
   return (
     <div
@@ -1517,20 +1250,9 @@ export function UnifiedAssistantPanel({
       />
       <RuleConfirmDialog
         request={ruleConfirmRequest}
-        onConfirm={async (request) => {
-          const key =
-            request.rule_type && request.rule_type !== "custom_rules"
-              ? request.rule_type
-              : "custom_rules";
-          await profileSetRule({
-            key,
-            description: request.rule,
-            source: request.source,
-          });
-          setRuleConfirmRequest(null);
-        }}
-        onReject={() => setRuleConfirmRequest(null)}
-        onClose={() => setRuleConfirmRequest(null)}
+        onConfirm={handleRuleConfirm}
+        onReject={closeRuleConfirm}
+        onClose={closeRuleConfirm}
       />
       <AuditTrailDrawer
         open={auditDrawerOpen}
