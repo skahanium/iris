@@ -1,23 +1,13 @@
-import { AlertTriangle, MessageSquarePlus, StopCircle } from "lucide-react";
-import {
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  type KeyboardEvent,
-} from "react";
+import { AlertTriangle, MessageSquarePlus } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { AgentStatusBadge } from "@/components/ai/AgentStatusBadge";
 import { AssistantPersonaDisplay } from "@/components/ai/AssistantPersonaDisplay";
 import { AuditTrailDrawer } from "@/components/ai/AuditTrailDrawer";
 import { AiComposer } from "@/components/ui/ai-composer";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { usePromptProfile } from "@/hooks/usePromptProfile";
 import { useAssistantLlmStream } from "@/hooks/useAssistantLlmStream";
-import { useListboxKeyboard } from "@/hooks/useListboxKeyboard";
 import { patchSpansPreferSidebar } from "@/lib/assistant-patch";
 import { resolveAssistantIntent } from "@/lib/assistant-routing";
 import {
@@ -25,16 +15,7 @@ import {
   syncActiveAiScene,
 } from "@/lib/assistant-scene";
 import type { AiScene } from "@/types/ai";
-import {
-  buildMentionCandidates,
-  findActiveMentionQuery,
-  insertMentionToken,
-  parseMentionTokens,
-  stripMentionTokensForDisplay,
-  tokensToContextScope,
-  type MentionCandidate,
-  type MentionToken,
-} from "@/lib/ai-context-scope";
+import { stripMentionTokensForDisplay } from "@/lib/ai-context-scope";
 import { mergeContextPackets } from "@/lib/ai/merge-context-packets";
 import { shouldStartNewAiSession } from "@/lib/ai/session-thread";
 import { resolveAssistantDisplayContent } from "@/lib/assistant-message-content";
@@ -47,7 +28,6 @@ import { invokeErrorMessage } from "@/lib/credentials";
 import {
   assistantExecute,
   contextAssemble,
-  fileList,
   harnessAbort,
   organizeApply,
   parseDocumentChapters,
@@ -74,7 +54,6 @@ import type {
   WritingEditorContext,
 } from "@/types/ai";
 import type { AssistantChromeSnapshot } from "@/types/assistant-chrome";
-import type { FileListItem } from "@/types/ipc";
 
 import {
   buildActionState,
@@ -82,22 +61,23 @@ import {
   determineDocumentCheckType,
   determineOrganizeTaskType,
 } from "./unified-assistant-panel-utils";
-import { DocumentCheckArtifacts } from "./assistant/DocumentCheckArtifacts";
-import { ResearchFocusView } from "./assistant/ResearchFocusView";
 import { AiMentionPopover } from "./AiMentionPopover";
 import { AiComposerContextMenu } from "./AiComposerContextMenu";
 import { type ChatLine } from "./AiMessageList";
 import { ConversationSurface } from "./ConversationSurface";
 import { AiSelectionActionBar } from "./AiSelectionActionBar";
 import { useCitationClick } from "./hooks/useCitationClick";
-import { CitationCheckView } from "./CitationCheckView";
 import { ContextPacketDrawer } from "./ContextPacketDrawer";
 import { SessionHistoryDropdown } from "./SessionHistoryDropdown";
 import { useAiBubbleSelection } from "@/hooks/useAiBubbleSelection";
 import { useAssistantRun } from "@/hooks/useAssistantRun";
 import { listenAiRequestStarted, sessionRetract, llmAbort } from "@/lib/ipc";
+import { useAssistantContextScope } from "./hooks/useAssistantContextScope";
 import { ContextScopeChips } from "./ContextScopeChips";
-import { PatchPreview } from "./PatchPreview";
+import {
+  AssistantTaskSurfaces,
+  type ResearchProgressData,
+} from "./AssistantTaskSurfaces";
 import {
   RuleConfirmDialog,
   type RuleConfirmRequest,
@@ -110,21 +90,6 @@ import {
 export interface AssistantSelectionQuote {
   filePath: string;
   text: string;
-}
-
-interface ResearchProgressData {
-  request_id: string;
-  topic: string;
-  state: string;
-  current_round: number;
-  max_rounds: number;
-  queries_executed: string[];
-  new_evidence_count: number;
-  total_evidence_count: number;
-  tokens_used: number;
-  token_budget: number;
-  progress_pct: number;
-  round_terminated_early: boolean;
 }
 
 export interface UnifiedAssistantPanelProps {
@@ -265,20 +230,25 @@ export function UnifiedAssistantPanel({
   const forceNewSessionRef = useRef(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const messageListRef = useRef<HTMLDivElement>(null);
-  const [vaultFiles, setVaultFiles] = useState<FileListItem[]>([]);
-  const [mentionOpen, setMentionOpen] = useState(false);
-  const [mentionStart, setMentionStart] = useState(0);
-  const [mentionQuery, setMentionQuery] = useState("");
   const { profile: promptProfile } = usePromptProfile();
-  const mentionTokens = useMemo(() => parseMentionTokens(input), [input]);
-  const contextScope = useMemo(
-    () => tokensToContextScope(mentionTokens),
-    [mentionTokens],
-  );
-  const mentionCandidates = useMemo(
-    () => (mentionOpen ? buildMentionCandidates(vaultFiles, mentionQuery) : []),
-    [mentionOpen, vaultFiles, mentionQuery],
-  );
+  const {
+    contextScope,
+    handleComposerKeyDown,
+    mentionCandidates,
+    mentionHighlight,
+    mentionNavDeltaRef,
+    mentionOpen,
+    mentionQuery,
+    mentionTokens,
+    removeMentionToken,
+    selectMention,
+    setMentionHighlight,
+    syncMentionFromInput,
+  } = useAssistantContextScope({
+    input,
+    setInput,
+    textareaRef,
+  });
 
   useEffect(() => {
     if (!selectionQuote?.text) return;
@@ -293,12 +263,6 @@ export function UnifiedAssistantPanel({
   useEffect(() => {
     syncActiveAiScene(actionState.intent);
   }, [actionState.intent]);
-
-  useEffect(() => {
-    void fileList()
-      .then(setVaultFiles)
-      .catch(() => setVaultFiles([]));
-  }, []);
 
   useEffect(() => {
     let unlisten: (() => void) | undefined;
@@ -365,77 +329,6 @@ export function UnifiedAssistantPanel({
       unlisten?.();
     };
   }, []);
-
-  const syncMentionFromInput = useCallback(() => {
-    const ta = textareaRef.current;
-    if (!ta) {
-      setMentionOpen(false);
-      return;
-    }
-    const active = findActiveMentionQuery(input, ta.selectionStart);
-    if (active) {
-      setMentionOpen(true);
-      setMentionStart(active.start);
-      setMentionQuery(active.query);
-    } else {
-      setMentionOpen(false);
-    }
-  }, [input]);
-
-  useEffect(() => {
-    syncMentionFromInput();
-  }, [input, syncMentionFromInput]);
-
-  const selectMention = useCallback(
-    (candidate: MentionCandidate) => {
-      const ta = textareaRef.current;
-      const cursor = ta?.selectionStart ?? input.length;
-      const next = insertMentionToken(input, cursor, mentionStart, candidate);
-      setInput(next.text);
-      setMentionOpen(false);
-      requestAnimationFrame(() => {
-        const el = textareaRef.current;
-        if (!el) return;
-        el.focus();
-        el.setSelectionRange(next.cursor, next.cursor);
-      });
-    },
-    [input, mentionStart],
-  );
-
-  const removeMentionToken = useCallback((token: MentionToken) => {
-    setInput((prev) => prev.replace(token.raw, "").replace(/\s{2,}/g, " "));
-  }, []);
-
-  const {
-    highlight: mentionHighlight,
-    handleKeyDown: handleMentionKeyDown,
-    setHighlight: setMentionHighlight,
-    navDeltaRef: mentionNavDeltaRef,
-  } = useListboxKeyboard({
-    length: mentionCandidates.length,
-    enabled: mentionOpen && mentionCandidates.length > 0,
-    wrap: false,
-    resetKey: `${mentionQuery}:${mentionCandidates.length}`,
-    onActivate: (index) => {
-      const item = mentionCandidates[index];
-      if (item) selectMention(item);
-    },
-  });
-
-  const handleComposerKeyDown = useCallback(
-    (event: KeyboardEvent<HTMLTextAreaElement>) => {
-      if (mentionOpen) {
-        if (event.key === "Escape") {
-          event.preventDefault();
-          setMentionOpen(false);
-          return;
-        }
-        if (handleMentionKeyDown(event)) return;
-      }
-    },
-    [handleMentionKeyDown, mentionOpen],
-  );
 
   useAssistantLlmStream({
     panelSendActiveRef,
@@ -1518,171 +1411,46 @@ export function UnifiedAssistantPanel({
         </div>
       ) : null}
 
-      {researchProgress &&
-      (researchRunning || researchProgress.state === "running") ? (
-        <div className="ai-task-surface px-3 pt-3" data-testid="research-focus">
-          <Card className="border-border/60">
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">研究专注态</CardTitle>
-              {researchRunning ? (
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="destructive"
-                  className="h-7 gap-1 text-xs"
-                  onClick={() => void abortResearch()}
-                >
-                  <StopCircle className="h-3.5 w-3.5" />
-                  中止
-                </Button>
-              ) : null}
-            </CardHeader>
-            <CardContent className="space-y-2">
-              <div className="flex items-center justify-between text-xs text-muted-foreground">
-                <span>
-                  第 {researchProgress.current_round}/
-                  {researchProgress.max_rounds} 轮
-                </span>
-                <span>{Math.round(researchProgress.progress_pct * 100)}%</span>
-              </div>
-              <div className="h-1.5 overflow-hidden rounded-full bg-muted">
-                <div
-                  className="h-full rounded-full bg-primary transition-all"
-                  style={{
-                    width: `${Math.round(researchProgress.progress_pct * 100)}%`,
-                  }}
-                />
-              </div>
-            </CardContent>
-          </Card>
-        </div>
-      ) : null}
-
-      {researchResult && researchPanelExpanded ? (
-        <div
-          ref={researchDetailRef}
-          className="min-h-0 flex-1 overflow-y-auto px-3 pt-3"
-          data-testid="research-detail-panel"
-        >
-          <ResearchFocusView
-            result={researchResult}
-            generatingNote={generatingResearchNote}
-            onGenerateNote={() => void handleGenerateResearchNote()}
-          />
-        </div>
-      ) : null}
-
-      {docSummary || docIssues.length > 0 ? (
-        <div className="ai-task-surface px-3 pt-3">
-          <DocumentCheckArtifacts summary={docSummary} issues={docIssues} />
-        </div>
-      ) : null}
-
-      {citationResult ? (
-        <div className="ai-task-surface px-3 pt-3">
-          <CitationCheckView result={citationResult} />
-        </div>
-      ) : null}
-
-      {organizeSuggestions.length > 0 ? (
-        <div className="ai-task-surface px-3 pt-3">
-          <Card className="border-border/60">
-            <CardHeader className="pb-2">
-              <div className="flex items-center justify-between gap-3">
-                <CardTitle className="text-sm font-medium">整理建议</CardTitle>
-                <div className="flex items-center gap-1.5">
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="outline"
-                    onClick={() => setOrganizeSelection(new Set())}
-                  >
-                    清空选择
-                  </Button>
-                  <Button
-                    type="button"
-                    size="sm"
-                    onClick={() => void handleAcceptOrganize()}
-                  >
-                    应用已选
-                  </Button>
-                </div>
-              </div>
-            </CardHeader>
-            <CardContent className="space-y-2">
-              {organizeSuggestions.map((suggestion) => (
-                <label
-                  key={suggestion.id}
-                  className="flex items-start gap-2 rounded-md border border-border/60 px-3 py-2 text-xs"
-                >
-                  <input
-                    type="checkbox"
-                    checked={organizeSelection.has(suggestion.id)}
-                    onChange={() =>
-                      setOrganizeSelection((prev) => {
-                        const next = new Set(prev);
-                        if (next.has(suggestion.id)) next.delete(suggestion.id);
-                        else next.add(suggestion.id);
-                        return next;
-                      })
-                    }
-                    className="mt-0.5 h-3.5 w-3.5"
-                  />
-                  <div className="min-w-0 flex-1">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <Badge variant="outline" className="text-[10px]">
-                        {suggestion.suggestion_type}
-                      </Badge>
-                      <span className="truncate font-medium">
-                        {suggestion.target_path}
-                      </span>
-                    </div>
-                    <p className="mt-1 text-muted-foreground">
-                      {suggestion.reason}
-                    </p>
-                    <p className="mt-1 text-foreground/80">
-                      建议值：{suggestion.suggested_value}
-                    </p>
-                  </div>
-                </label>
-              ))}
-            </CardContent>
-          </Card>
-        </div>
-      ) : null}
-
-      {assistantRun.evidenceRefreshNotice ? (
-        <div className="px-3 pt-2 text-xs text-amber-700">
-          {assistantRun.evidenceRefreshNotice}
-        </div>
-      ) : null}
-
-      {writingPatches.length > 0 ? (
-        <div
-          className="ai-task-surface space-y-2 px-3 pt-3"
-          data-testid="patch-preview"
-        >
-          {writingPatches.map((patch) => (
-            <PatchPreview
-              key={patch.id}
-              patch={patch}
-              onAccept={(item) => void handleAcceptPatch(item)}
-              onReject={(item) =>
-                setWritingPatches((prev) =>
-                  prev.filter((patchItem) => patchItem.id !== item.id),
-                )
-              }
-              onCopy={(item) =>
-                void navigator.clipboard.writeText(item.replacement_text)
-              }
-              onRegenerate={() => {
-                if (!input.trim()) return;
-                void runWriting(input.trim());
-              }}
-            />
-          ))}
-        </div>
-      ) : null}
+      <AssistantTaskSurfaces
+        researchProgress={researchProgress}
+        researchRunning={researchRunning}
+        onAbortResearch={() => void abortResearch()}
+        researchResult={researchResult}
+        researchPanelExpanded={researchPanelExpanded}
+        researchDetailRef={researchDetailRef}
+        generatingResearchNote={generatingResearchNote}
+        onGenerateResearchNote={() => void handleGenerateResearchNote()}
+        docSummary={docSummary}
+        docIssues={docIssues}
+        citationResult={citationResult}
+        organizeSuggestions={organizeSuggestions}
+        organizeSelection={organizeSelection}
+        onClearOrganizeSelection={() => setOrganizeSelection(new Set())}
+        onToggleOrganizeSuggestion={(id) =>
+          setOrganizeSelection((prev) => {
+            const next = new Set(prev);
+            if (next.has(id)) next.delete(id);
+            else next.add(id);
+            return next;
+          })
+        }
+        onAcceptOrganize={() => void handleAcceptOrganize()}
+        evidenceRefreshNotice={assistantRun.evidenceRefreshNotice}
+        writingPatches={writingPatches}
+        onAcceptPatch={(item) => void handleAcceptPatch(item)}
+        onRejectPatch={(item) =>
+          setWritingPatches((prev) =>
+            prev.filter((patchItem) => patchItem.id !== item.id),
+          )
+        }
+        onCopyPatch={(item) =>
+          void navigator.clipboard.writeText(item.replacement_text)
+        }
+        onRegenerateWriting={() => {
+          if (!input.trim()) return;
+          void runWriting(input.trim());
+        }}
+      />
 
       <ConversationSurface
         messages={messages}

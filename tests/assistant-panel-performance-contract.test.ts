@@ -30,10 +30,15 @@ describe("assistant panel performance contract", () => {
   it("keeps streamed token updates throttled and isolated from artifact surfaces", () => {
     const streamHook = read("src/hooks/useAssistantLlmStream.ts");
     const panel = read("src/components/ai/UnifiedAssistantPanel.tsx");
+    const impl = read("src/components/ai/UnifiedAssistantPanel.impl.tsx");
 
     expect(streamHook).toContain(
       "const delay = elapsed < 50 ? 50 - elapsed : 0",
     );
     expect(panel).toContain("AssistantTaskSurfaces");
+    expect(impl).toContain("<AssistantTaskSurfaces");
+    expect(impl).not.toContain('from "./PatchPreview"');
+    expect(impl).not.toContain('from "./CitationCheckView"');
+    expect(impl).not.toContain('from "./assistant/DocumentCheckArtifacts"');
   });
 });
