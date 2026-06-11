@@ -59,6 +59,7 @@ import { HeadingFoldOverlay } from "./HeadingFoldOverlay";
 import { EditorImageDropExtension } from "./extensions/EditorImageDropExtension";
 import { FindHighlightExtension } from "./extensions/FindHighlightExtension";
 import { ImageExtension } from "./extensions/ImageExtension";
+import { ImeCompositionGuardExtension } from "./extensions/ImeCompositionGuardExtension";
 import { IrisParagraphExtension } from "./extensions/IrisParagraphExtension";
 import { ListIndentKeymapExtension } from "./extensions/ListIndentKeymapExtension";
 
@@ -279,6 +280,8 @@ function TipTapEditorInner({
           HTMLAttributes: { class: "iris-section-heading" },
         },
       }),
+
+      ImeCompositionGuardExtension,
 
       IrisParagraphExtension,
 

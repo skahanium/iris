@@ -250,7 +250,7 @@ describe("outline ghost spine", () => {
     expect(css).toContain("--outline-text-indent: 0rem");
     expect(css).toContain("--outline-text-indent: 1.35rem");
     expect(css).toContain("--outline-text-indent: 2.5rem");
-    expect(css).toContain("margin-left: var(--outline-text-indent)");
+    expect(outline).toContain("paddingLeft");
     expect(css).not.toContain(".outline-ghost-indent");
     expect(css).toContain(
       "font-size: calc(var(--outline-level-size) + var(--outline-focus-bump))",
