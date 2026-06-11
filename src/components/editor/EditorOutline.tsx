@@ -19,22 +19,22 @@ import { cn } from "@/lib/utils";
 
 const LEVEL_STYLES: Record<
   number,
-  { fontSize: string; indent: string; color: string }
+  { fontSize: string; indent: string; markerSize: string }
 > = {
   1: {
     fontSize: "0.95rem",
     indent: "0rem",
-    color: "hsl(var(--foreground) / 0.82)",
+    markerSize: "5px",
   },
   2: {
     fontSize: "0.82rem",
     indent: "1.35rem",
-    color: "hsl(var(--foreground) / 0.68)",
+    markerSize: "4px",
   },
   3: {
     fontSize: "0.72rem",
     indent: "2.5rem",
-    color: "hsl(var(--muted-foreground) / 0.82)",
+    markerSize: "3px",
   },
 };
 
@@ -47,7 +47,7 @@ interface EditorOutlineProps {
 
 const OUTLINE_REFRESH_DEBOUNCE_MS = 300;
 const VIRTUAL_OUTLINE_THRESHOLD = 50;
-const OUTLINE_ROW_HEIGHT = 52;
+const OUTLINE_ROW_HEIGHT = 56;
 
 export const EditorOutline = memo(function EditorOutline({
   editor,
@@ -63,6 +63,7 @@ export const EditorOutline = memo(function EditorOutline({
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const listRef = useRef<HTMLDivElement | null>(null);
   const itemRefs = useRef<Array<HTMLButtonElement | null>>([]);
+  const barRef = useRef<HTMLDivElement | null>(null);
   const shouldVirtualize = entries.length >= VIRTUAL_OUTLINE_THRESHOLD;
 
   const rowVirtualizer = useVirtualizer({
@@ -124,6 +125,50 @@ export const EditorOutline = memo(function EditorOutline({
     }
     itemRefs.current[activeIndex]?.scrollIntoView({ block: "nearest" });
   }, [activeIndex, open, rowVirtualizer, shouldVirtualize]);
+
+  // Sliding indicator bar position
+  useEffect(() => {
+    const bar = barRef.current;
+    if (!bar) return;
+
+    if (activeIndex < 0 || entries.length === 0) {
+      bar.style.opacity = "0";
+      return;
+    }
+
+    const target = itemRefs.current[activeIndex];
+    if (!target) {
+      bar.style.opacity = "0";
+      return;
+    }
+
+    const listEl = listRef.current;
+    if (!listEl) return;
+
+    // For virtualized lists, use the virtualizer's offset
+    if (shouldVirtualize) {
+      const virtualItem = rowVirtualizer
+        .getVirtualItems()
+        .find((vi) => vi.index === activeIndex);
+      if (virtualItem) {
+        bar.style.opacity = "1";
+        bar.style.transform = `translateY(${virtualItem.start}px)`;
+        bar.style.height = `${virtualItem.size}px`;
+      } else {
+        bar.style.opacity = "0";
+      }
+      return;
+    }
+
+    const listRect = listEl.getBoundingClientRect();
+    const targetRect = target.getBoundingClientRect();
+    const top = targetRect.top - listRect.top + listEl.scrollTop;
+    const height = targetRect.height;
+
+    bar.style.opacity = "1";
+    bar.style.transform = `translateY(${top}px)`;
+    bar.style.height = `${height}px`;
+  }, [activeIndex, entries.length, rowVirtualizer, shouldVirtualize]);
 
   const jumpTo = useCallback(
     (pos: number) => {
@@ -201,8 +246,8 @@ export const EditorOutline = memo(function EditorOutline({
     const itemStyle: CSSProperties = {
       "--outline-level-size": lvl.fontSize,
       "--outline-text-indent": lvl.indent,
-      paddingLeft: `calc(${lvl.indent})`,
-      color: active ? undefined : lvl.color,
+      "--outline-marker-size": lvl.markerSize,
+      paddingLeft: `calc(${lvl.indent} + 0.5rem)`,
     } as CSSProperties;
     return (
       <button
@@ -238,9 +283,6 @@ export const EditorOutline = memo(function EditorOutline({
         }}
       >
         <span className="outline-ghost-marker" aria-hidden />
-        <span className="outline-ghost-level" aria-hidden>
-          H{entry.level}
-        </span>
         <span
           className="outline-ghost-text block min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap text-left"
           title={entry.text}
@@ -293,6 +335,7 @@ export const EditorOutline = memo(function EditorOutline({
         className="outline-ghost-list flex flex-col"
         role="list"
       >
+        <div ref={barRef} className="outline-ghost-bar" aria-hidden />
         {entries.length === 0 ? (
           <span className="outline-ghost-empty">暂无章节</span>
         ) : shouldVirtualize ? (

@@ -147,9 +147,9 @@ describe("outline ghost spine", () => {
     expect(list?.className).toContain("flex-col");
     expect(items).toHaveLength(3);
     expect(items.map((item) => item.textContent)).toEqual([
-      "H1chidafan",
-      "H1Shui大叫",
-      "H1sha d j k na s j k d",
+      "chidafan",
+      "Shui大叫",
+      "sha d j k na s j k d",
     ]);
     for (const item of items) {
       expect(item.className).toContain("outline-ghost-item");
@@ -170,10 +170,11 @@ describe("outline ghost spine", () => {
         '[data-testid="outline-ghost-item"]',
       ),
     );
-    const firstLevel = items[0]?.querySelector(".outline-ghost-level");
+    const firstMarker = items[0]?.querySelector(".outline-ghost-marker");
     const firstText = items[0]?.querySelector(".outline-ghost-text");
 
-    expect(firstLevel?.nextElementSibling).toBe(firstText);
+    expect(firstMarker).not.toBeNull();
+    expect(firstText).not.toBeNull();
     expect(items[0]?.className).toContain("flex");
     expect(items[0]?.className).not.toContain("grid-cols-[");
     expect(firstText?.className).toContain("block");
@@ -186,7 +187,6 @@ describe("outline ghost spine", () => {
 
     const css = read("src/styles/globals.css");
     expect(css).toContain("text-align: left");
-    expect(css).toContain(".outline-ghost-level");
     expect(css).toContain(".outline-ghost-text");
     expect(css).not.toContain("grid-template-areas");
     expect(css).not.toContain("grid-area: text");
@@ -238,9 +238,9 @@ describe("outline ghost spine", () => {
     const outline = read("src/components/editor/EditorOutline.tsx");
     const css = read("src/styles/globals.css");
 
-    expect(outline).toContain("const OUTLINE_ROW_HEIGHT = 52");
-    expect(css).toContain("row-gap: 0.45rem");
-    expect(css).toContain("min-height: 2.75rem");
+    expect(outline).toContain("const OUTLINE_ROW_HEIGHT = 56");
+    expect(css).toContain("row-gap: 0.65rem");
+    expect(css).toContain("min-height: 3rem");
     expect(css).toContain(".outline-ghost-item--level-1");
     expect(css).toContain(".outline-ghost-item--level-2");
     expect(css).toContain(".outline-ghost-item--level-3");
@@ -252,19 +252,12 @@ describe("outline ghost spine", () => {
     expect(css).toContain("--outline-text-indent: 2.5rem");
     expect(outline).toContain("paddingLeft");
     expect(css).not.toContain(".outline-ghost-indent");
-    expect(css).toContain(
-      "font-size: calc(var(--outline-level-size) + var(--outline-focus-bump))",
-    );
+    expect(css).toContain("font-size: calc(var(--outline-level-size))");
     expect(css).toContain(".outline-ghost-item--near-1");
     expect(css).toContain(".outline-ghost-item--near-2");
-    expect(css).toContain("--outline-focus-bump: 0.0625rem");
-    expect(css).toContain("--outline-focus-bump: 0.03125rem");
-    expect(css).toContain("--outline-focus-bump: 0.125rem");
-    expect(css).toContain("transform: translateX(2px)");
-    expect(css).toContain("transform: translateX(1px)");
-    expect(css).toContain("transform: translateX(3px)");
-    expect(css).toContain("font-size 180ms var(--motion-ease)");
+    expect(css).toContain("opacity: 0.85");
+    expect(css).toContain("opacity: 0.78");
+    expect(css).toContain("font-weight: 400");
     expect(css).toContain("@media (prefers-reduced-motion: reduce)");
-    expect(css).toContain("transform: none");
   });
 });

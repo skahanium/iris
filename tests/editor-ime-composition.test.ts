@@ -34,6 +34,30 @@ function createEditor() {
   });
 }
 
+function fireCompositionStart(dom: HTMLElement) {
+  dom.dispatchEvent(new CompositionEvent("compositionstart", { data: "" }));
+}
+
+function fireCompositionEnd(dom: HTMLElement, data: string) {
+  dom.dispatchEvent(new CompositionEvent("compositionend", { data }));
+}
+
+/**
+ * Dispatch a keydown Enter event in the bubbling phase (matching how
+ * ProseMirror's own listeners are registered) and return the doc
+ * child count delta.
+ */
+function pressEnter(dom: HTMLElement) {
+  dom.dispatchEvent(
+    new KeyboardEvent("keydown", {
+      key: "Enter",
+      keyCode: 13,
+      bubbles: true,
+      cancelable: true,
+    }),
+  );
+}
+
 describe("ImeCompositionGuardExtension", () => {
   let editor: Editor | undefined;
 
@@ -42,6 +66,8 @@ describe("ImeCompositionGuardExtension", () => {
     editor = undefined;
   });
 
+  // ── Registration ──────────────────────────────────────────────────────────
+
   it("registers the plugin without errors", () => {
     editor = createEditor();
     expect(editor.isDestroyed).toBe(false);
@@ -49,7 +75,6 @@ describe("ImeCompositionGuardExtension", () => {
 
   it("exposes the imeCompositionGuard plugin", () => {
     editor = createEditor();
-    // The plugin should be registered (verified indirectly: editor works with the extension)
     expect(editor.state.plugins.length).toBeGreaterThan(0);
   });
 
@@ -63,5 +88,125 @@ describe("ImeCompositionGuardExtension", () => {
   it("extension source is referenced in TipTapEditor", () => {
     const src = readFileSync("src/components/editor/TipTapEditor.tsx", "utf8");
     expect(src).toContain("ImeCompositionGuardExtension");
+  });
+
+  // ── Enter key suppression during composition ──────────────────────────────
+
+  describe("Enter key during IME composition", () => {
+    it("Enter splits the document when no composition is active", () => {
+      editor = createEditor();
+      // Focus the editor so ProseMirror will handle the keydown
+      editor.commands.focus();
+
+      const before = editor.state.doc.childCount;
+      pressEnter(editor.view.dom);
+
+      // Enter should have created a new block
+      expect(editor.state.doc.childCount).toBeGreaterThan(before);
+    });
+
+    it("suppresses Enter while composition is in progress", () => {
+      editor = createEditor();
+      editor.commands.focus();
+
+      fireCompositionStart(editor.view.dom);
+
+      const before = editor.state.doc.childCount;
+      pressEnter(editor.view.dom);
+
+      // Document must be unchanged — Enter was swallowed by capture-phase guard
+      expect(editor.state.doc.childCount).toBe(before);
+    });
+
+    it("suppresses Enter during compositionend grace period", () => {
+      editor = createEditor();
+      editor.commands.focus();
+
+      fireCompositionStart(editor.view.dom);
+      fireCompositionEnd(editor.view.dom, "你好");
+
+      // Grace period hasn't expired — Enter must still be swallowed
+      const before = editor.state.doc.childCount;
+      pressEnter(editor.view.dom);
+
+      expect(editor.state.doc.childCount).toBe(before);
+    });
+
+    it("allows Enter after the grace period expires", async () => {
+      editor = createEditor();
+      editor.commands.focus();
+
+      fireCompositionStart(editor.view.dom);
+      fireCompositionEnd(editor.view.dom, "你好");
+
+      // Wait for rAF + RESTORE_DELAY_MS (50) + RAF_FALLBACK_MS (170) + margin
+      await new Promise((r) => setTimeout(r, 400));
+
+      // Verify the guard is no longer blocking Enter by checking
+      // that the capture-phase listener doesn't stop propagation.
+      // We track this via a bubbling-phase sentinel listener.
+      let sentinelReached = false;
+      const sentinel = () => {
+        sentinelReached = true;
+      };
+      editor.view.dom.addEventListener("keydown", sentinel, false);
+      pressEnter(editor.view.dom);
+      editor.view.dom.removeEventListener("keydown", sentinel, false);
+
+      expect(sentinelReached).toBe(true);
+    });
+
+    it("handles rapid recomposition correctly", () => {
+      editor = createEditor();
+      editor.commands.focus();
+
+      // First composition
+      fireCompositionStart(editor.view.dom);
+      const before = editor.state.doc.childCount;
+      pressEnter(editor.view.dom);
+      expect(editor.state.doc.childCount).toBe(before);
+
+      // Second compositionstart before the first ended
+      fireCompositionStart(editor.view.dom);
+      pressEnter(editor.view.dom);
+      expect(editor.state.doc.childCount).toBe(before);
+
+      fireCompositionEnd(editor.view.dom, "你好");
+      pressEnter(editor.view.dom);
+      expect(editor.state.doc.childCount).toBe(before);
+    });
+
+    it("does not suppress Enter when compositionend fires without start", () => {
+      editor = createEditor();
+      editor.commands.focus();
+
+      // Fire end without start — should be a no-op
+      fireCompositionEnd(editor.view.dom, "你好");
+
+      const before = editor.state.doc.childCount;
+      pressEnter(editor.view.dom);
+
+      // No composition was started, so Enter should work
+      expect(editor.state.doc.childCount).toBeGreaterThan(before);
+    });
+  });
+
+  // ── Cleanup ───────────────────────────────────────────────────────────────
+
+  describe("lifecycle", () => {
+    it("cleans up on destroy during active composition", () => {
+      editor = createEditor();
+      fireCompositionStart(editor.view.dom);
+      expect(() => editor!.destroy()).not.toThrow();
+      editor = undefined;
+    });
+
+    it("cleans up on destroy during grace period", () => {
+      editor = createEditor();
+      fireCompositionStart(editor.view.dom);
+      fireCompositionEnd(editor.view.dom, "你好");
+      expect(() => editor!.destroy()).not.toThrow();
+      editor = undefined;
+    });
   });
 });
