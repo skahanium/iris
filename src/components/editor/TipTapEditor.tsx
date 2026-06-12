@@ -35,6 +35,7 @@ import {
 
 import {
   clearCachedEditorHtml,
+  editorHtmlDigest,
   getCachedEditorHtml,
   setCachedEditorHtml,
 } from "@/lib/editor-html-cache";
@@ -58,6 +59,10 @@ import { HeadingFoldOverlay } from "./HeadingFoldOverlay";
 
 import { EditorImageDropExtension } from "./extensions/EditorImageDropExtension";
 import { FindHighlightExtension } from "./extensions/FindHighlightExtension";
+import {
+  FootnoteDefExtension,
+  FootnoteRefExtension,
+} from "./extensions/FootnoteExtension";
 import { ImageExtension } from "./extensions/ImageExtension";
 import { ImeCompositionGuardExtension } from "./extensions/ImeCompositionGuardExtension";
 import { IrisParagraphExtension } from "./extensions/IrisParagraphExtension";
@@ -69,6 +74,7 @@ import { LinkExtension } from "./extensions/LinkExtension";
 
 import { CalloutBlockquoteExtension } from "./extensions/CalloutBlockquoteExtension";
 import { PreserveBlockExtension } from "./extensions/PreserveBlockExtension";
+import { PreserveInlineExtension } from "./extensions/PreserveInlineExtension";
 
 import { SlashCommandExtension } from "./extensions/SlashCommandExtension";
 
@@ -325,6 +331,12 @@ function TipTapEditorInner({
 
       PreserveBlockExtension,
 
+      PreserveInlineExtension,
+
+      FootnoteRefExtension,
+
+      FootnoteDefExtension,
+
       AiSourceHighlightExtension,
 
       AiStreamExtension.configure({
@@ -356,8 +368,9 @@ function TipTapEditorInner({
 
   const initialContent = useMemo(() => {
     const bodyMd = initialBodyMarkdown.trim();
+    const htmlDigest = editorHtmlDigest(initialBodyMarkdown);
     if (contentCacheKey && bodyMd && !skipHtmlCache) {
-      const cached = getCachedEditorHtml(contentCacheKey);
+      const cached = getCachedEditorHtml(contentCacheKey, htmlDigest);
       if (cached) {
         return cached;
       }
@@ -371,7 +384,7 @@ function TipTapEditorInner({
     ingestResultRef.current = { preserveFragments, bodyMd };
 
     if (contentCacheKey && bodyMd) {
-      setCachedEditorHtml(contentCacheKey, tipTapHtml);
+      setCachedEditorHtml(contentCacheKey, tipTapHtml, htmlDigest);
     }
 
     return tipTapHtml;
@@ -415,10 +428,11 @@ function TipTapEditorInner({
       // Throttled HTML cache update (2s) so tab-switch shows latest content
       const key = contentCacheKeyRef.current;
       if (key) {
+        const htmlDigest = editorHtmlDigest(initialBodyMarkdown);
         if (htmlCacheTimerRef.current) clearTimeout(htmlCacheTimerRef.current);
         htmlCacheTimerRef.current = setTimeout(() => {
           htmlCacheTimerRef.current = null;
-          setCachedEditorHtml(key, updatedEditor.getHTML());
+          setCachedEditorHtml(key, updatedEditor.getHTML(), htmlDigest);
         }, 2000);
       }
     },
@@ -465,12 +479,13 @@ function TipTapEditorInner({
       reloadTickRef.current = reloadContentTick;
       const bodyMd = initialBodyMarkdown.trim();
       if (bodyMd) {
+        const htmlDigest = editorHtmlDigest(initialBodyMarkdown);
         const { tipTapHtml } = ingestMarkdownForEditor({
           bodyMarkdown: bodyMd,
         });
         editor.commands.setContent(tipTapHtml);
         if (contentCacheKey) {
-          setCachedEditorHtml(contentCacheKey, tipTapHtml);
+          setCachedEditorHtml(contentCacheKey, tipTapHtml, htmlDigest);
         }
       }
     }

@@ -144,6 +144,8 @@ export interface MarkdownSyntaxFragment {
   endOffset: number;
   /** 能力等级 */
   capability: MarkdownCapabilityLevel;
+  /** 是否来自段落内部的行内原文片段，仅用于 raw_html / html_comment 的保留策略 */
+  inline?: boolean;
   /** 可选的渲染产物（仅在 native 或 render_only 时有值） */
   rendered?: string;
 }

@@ -1,4 +1,4 @@
-import { marked } from "marked";
+import { Marked, type MarkedExtension } from "marked";
 import TurndownService from "turndown";
 import * as turndownPluginGfm from "turndown-plugin-gfm";
 
@@ -93,6 +93,47 @@ turndown.addRule("wikiLink", {
   },
 });
 
+turndown.addRule("preserveInline", {
+  filter: (node) =>
+    node instanceof HTMLElement &&
+    node.getAttribute("data-type") === "preserve-inline",
+  replacement: (_content, node) => {
+    const el = node as HTMLElement;
+    return el.getAttribute("data-original-raw") ?? "";
+  },
+});
+
+turndown.addRule("preserveBlock", {
+  filter: (node) =>
+    node instanceof HTMLElement &&
+    node.getAttribute("data-type") === "preserve-block",
+  replacement: (_content, node) => {
+    const el = node as HTMLElement;
+    const raw = el.getAttribute("data-original-raw") ?? "";
+    return raw ? `\n\n${raw}\n\n` : "";
+  },
+});
+
+turndown.addRule("footnoteRef", {
+  filter: (node) =>
+    node instanceof HTMLElement && node.hasAttribute("data-footnote-ref"),
+  replacement: (_content, node) => {
+    const el = node as HTMLElement;
+    const label = el.getAttribute("data-footnote-ref") ?? "";
+    return label ? `[^${label}]` : "";
+  },
+});
+
+turndown.addRule("footnoteDef", {
+  filter: (node) =>
+    node instanceof HTMLElement && node.hasAttribute("data-footnote-def"),
+  replacement: (_content, node) => {
+    const el = node as HTMLElement;
+    const raw = el.getAttribute("data-original-raw") ?? "";
+    return raw ? `\n\n${raw}\n\n` : "";
+  },
+});
+
 // Iris doc title is stored in frontmatter, not body markdown
 turndown.addRule("irisDocTitle", {
   filter: (node) =>
@@ -102,7 +143,16 @@ turndown.addRule("irisDocTitle", {
   replacement: () => "",
 });
 
-marked.setOptions({ gfm: true, breaks: true });
+/** Create an isolated Marked instance so project behavior never mutates the package singleton. */
+export function createMarkedInstance(options?: MarkedExtension): Marked {
+  const instance = new Marked();
+  if (options) {
+    instance.use(options);
+  }
+  return instance;
+}
+
+export const editorMarked = createMarkedInstance({ gfm: true, breaks: true });
 
 function replaceWikiLinksInTextNode(textNode: Text): void {
   const value = textNode.nodeValue ?? "";
@@ -216,6 +266,48 @@ function removeTransientAiNodes(root: Element): void {
     });
 }
 
+function protectRawRoundTripNodes(root: Element): Map<string, string> {
+  const replacements = new Map<string, string>();
+  let index = 0;
+
+  function nextToken(raw: string): string {
+    const token = `IRISPRESERVE${index++}TOKEN`;
+    replacements.set(token, raw);
+    return token;
+  }
+
+  root
+    .querySelectorAll(
+      '[data-type="preserve-inline"], [data-type="preserve-block"], [data-footnote-ref], [data-footnote-def]',
+    )
+    .forEach((node) => {
+      if (!(node instanceof HTMLElement)) return;
+
+      let raw = "";
+      let block = false;
+      if (
+        node.getAttribute("data-type") === "preserve-inline" ||
+        node.getAttribute("data-type") === "preserve-block"
+      ) {
+        raw = node.getAttribute("data-original-raw") ?? "";
+        block = node.getAttribute("data-type") === "preserve-block";
+      } else if (node.hasAttribute("data-footnote-ref")) {
+        const label = node.getAttribute("data-footnote-ref") ?? "";
+        raw = label ? `[^${label}]` : "";
+      } else if (node.hasAttribute("data-footnote-def")) {
+        raw = node.getAttribute("data-original-raw") ?? "";
+        block = true;
+      }
+
+      const token = raw ? nextToken(raw) : "";
+      node.replaceWith(
+        node.ownerDocument.createTextNode(block ? `\n\n${token}\n\n` : token),
+      );
+    });
+
+  return replacements;
+}
+
 /**
  * 正文开头的 ATX `# 标题` 若与 frontmatter 主标题相同则去掉，避免编辑器出现两个标题。
  */
@@ -241,7 +333,7 @@ function escapeHtml(text: string): string {
 
 /** Parse Markdown string to HTML for TipTap initial content (body only, legacy). */
 export function markdownToHtml(md: string): string {
-  return marked.parse(md, { async: false }) as string;
+  return editorMarked.parse(md, { async: false }) as string;
 }
 
 export interface ParsedNoteForEditor {
@@ -296,8 +388,14 @@ export function editorBodyHtmlToMarkdown(html: string): string {
   const root = doc.body.firstElementChild;
   if (!root) return "";
   removeTransientAiNodes(root);
+  const rawRoundTripNodes = protectRawRoundTripNodes(root);
   const bodyHtml = root.innerHTML.trim();
-  return bodyHtml ? turndown.turndown(bodyHtml) : "";
+  if (!bodyHtml) return "";
+  let markdown = normalizeTurndownEscapes(turndown.turndown(bodyHtml));
+  for (const [token, raw] of rawRoundTripNodes) {
+    markdown = markdown.replaceAll(token, raw);
+  }
+  return markdown;
 }
 
 /** Assemble full note markdown from title + body + preserved YAML. */
@@ -369,7 +467,11 @@ export function editorHtmlToMarkdown(
 
 /** Serialize editor HTML to Markdown (body only, legacy). */
 export function htmlToMarkdown(html: string): string {
-  return turndown.turndown(html);
+  return normalizeTurndownEscapes(turndown.turndown(html));
+}
+
+export function normalizeTurndownEscapes(markdown: string): string {
+  return markdown.replace(/\\\[/g, "[").replace(/\\\]/g, "]");
 }
 
 /** Wrap HTML content in a self-contained page with paper-ink styles. */
@@ -406,9 +508,7 @@ export function markdownToHtmlPage(md: string, title?: string): string {
 
 /** Round-trip for tests: md → html → md (body-only legacy). */
 export function markdownRoundTrip(md: string): string {
-  return htmlToMarkdown(markdownToHtml(md))
-    .replace(/\\\[/g, "[")
-    .replace(/\\\]/g, "]");
+  return normalizeTurndownEscapes(htmlToMarkdown(markdownToHtml(md)));
 }
 
 /** Round-trip for Iris notes with frontmatter title (split title + body pipeline). */

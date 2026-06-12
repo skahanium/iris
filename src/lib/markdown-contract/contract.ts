@@ -9,7 +9,6 @@
  *
  * @module markdown-contract/contract
  */
-import { marked } from "marked";
 import type { Token, Tokens } from "marked";
 
 import {
@@ -20,6 +19,7 @@ import {
   markdownBodyToEditorHtml,
   editorBodyHtmlToMarkdown,
   markdownToHtmlPage,
+  createMarkedInstance,
 } from "@/lib/markdown";
 import { sanitizeHtml } from "@/lib/sanitize";
 
@@ -42,6 +42,10 @@ import {
   RENDER_ONLY_SYNTAX_KINDS,
   PRESERVE_ONLY_SYNTAX_KINDS,
 } from "./types";
+import { reconcileFragmentsWithSource } from "./fragment-reconcile";
+import { isDangerousHtml } from "./html-safety";
+
+const contractMarked = createMarkedInstance({ gfm: true, breaks: false });
 
 // ═══════════════════════════════════════════════════════════════════
 // Token Walker & Fragment Builder
@@ -85,11 +89,6 @@ function isCalloutBlockquote(raw: string): boolean {
 /** Determine if an HTML token is a comment */
 function isHtmlComment(raw: string): boolean {
   return /^\s*<!--/.test(raw);
-}
-
-/** Determine if an HTML token is dangerous (script, object, etc.) */
-function isDangerousHtml(raw: string): boolean {
-  return /<\s*(script|object|embed|iframe|form|applet)\b/i.test(raw);
 }
 
 /**
@@ -167,6 +166,7 @@ function pushFragment(
   acc: FragmentAccumulator,
   raw: string,
   syntaxKind: MarkdownSyntaxKind,
+  options: { inline?: boolean } = {},
 ): void {
   acc.fragments.push({
     raw,
@@ -174,6 +174,7 @@ function pushFragment(
     offset: acc.offset,
     endOffset: acc.offset + raw.length,
     capability: determineCapability(syntaxKind, raw),
+    inline: options.inline,
   });
   acc.offset += raw.length;
 }
@@ -359,9 +360,9 @@ function walkInlineTokensBlock(
 
     if (type === "html") {
       if (isHtmlComment(raw)) {
-        pushFragment(acc, raw, "html_comment");
+        pushFragment(acc, raw, "html_comment", { inline: true });
       } else {
-        pushFragment(acc, raw, "raw_html");
+        pushFragment(acc, raw, "raw_html", { inline: true });
       }
       continue;
     }
@@ -381,183 +382,15 @@ function walkInlineTokensBlock(
 function buildFragments(source: string): MarkdownSyntaxFragment[] {
   if (!source) return [];
 
-  const tokens = marked.lexer(source);
+  const tokens = contractMarked.lexer(source);
   const acc: FragmentAccumulator = { fragments: [], offset: 0 };
 
   walkTokens(tokens, acc);
 
-  // Fill gaps: marked may consume [^label]: definitions as link references,
-  // removing them from the token tree. Scan gaps for leftover footnote defs.
-  fillFragmentGaps(source, acc);
-
-  // Handle trailing gap (source after last fragment)
-  const sorted = [...acc.fragments].sort((a, b) => a.offset - b.offset);
-  if (sorted.length > 0) {
-    const lastFrag = sorted[sorted.length - 1]!;
-    if (lastFrag.endOffset < source.length) {
-      const trailing = source.slice(lastFrag.endOffset);
-      scanTrailingGapForFootnoteDefs(trailing, lastFrag.endOffset, source, acc);
-    }
-  }
-
-  // Re-sort final fragments
-  acc.fragments.sort((a, b) => a.offset - b.offset);
-
-  // Update offset to match source end
+  acc.fragments = reconcileFragmentsWithSource(source, acc.fragments);
   acc.offset = source.length;
 
   return acc.fragments;
-}
-
-/**
- * Scan trailing source text for footnote definitions that were consumed
- * by marked as link reference definitions.
- */
-function scanTrailingGapForFootnoteDefs(
-  gapText: string,
-  gapOffset: number,
-  _fullSource: string,
-  acc: FragmentAccumulator,
-): void {
-  // Footnote definition pattern: [^label]: content
-  const defRegex = /\[\^[^\]]+\]:\s*.*(?:\n(?![ \t]*\n|\[\^[^\]]+\]:))*/g;
-  let match: RegExpExecArray | null;
-
-  while ((match = defRegex.exec(gapText)) !== null) {
-    const defRaw = match[0];
-    const absOffset = gapOffset + match.index;
-
-    // Add whitespace before the definition if present
-    const before = gapText.slice(0, match.index);
-    if (before) {
-      acc.fragments.push({
-        raw: before,
-        syntaxKind: "space",
-        offset: gapOffset,
-        endOffset: absOffset,
-        capability: "native",
-      });
-    }
-
-    acc.fragments.push({
-      raw: defRaw,
-      syntaxKind: "footnote_def",
-      offset: absOffset,
-      endOffset: absOffset + defRaw.length,
-      capability: "render_only",
-    });
-  }
-
-  // Add any remaining text after the last match
-  if (match === null && gapText.trim()) {
-    acc.fragments.push({
-      raw: gapText,
-      syntaxKind: "text",
-      offset: gapOffset,
-      endOffset: gapOffset + gapText.length,
-      capability: "native",
-    });
-  }
-}
-
-/**
- * Scan the source for gaps between fragments and fill them.
- * This handles footnote definitions [^label]: content that were consumed
- * by marked as link reference definitions.
- */
-function fillFragmentGaps(source: string, acc: FragmentAccumulator): void {
-  // Sort fragments by offset (they should already be sorted)
-  const sorted = [...acc.fragments].sort((a, b) => a.offset - b.offset);
-
-  for (let i = 0; i < sorted.length - 1; i++) {
-    const current = sorted[i]!;
-    const next = sorted[i + 1]!;
-    const gapStart = current.endOffset;
-    const gapEnd = next.offset;
-
-    if (gapStart < gapEnd) {
-      const gapText = source.slice(gapStart, gapEnd);
-
-      // Check if the gap only contains whitespace/newlines
-      if (/^\s+$/.test(gapText)) {
-        // Insert a space fragment
-        const gapFrag: MarkdownSyntaxFragment = {
-          raw: gapText,
-          syntaxKind: "space",
-          offset: gapStart,
-          endOffset: gapEnd,
-          capability: "native",
-        };
-        // Insert into sorted position by rebuilding the array
-        const insertIdx = acc.fragments.findIndex((f) => f.offset > gapStart);
-        if (insertIdx === -1) {
-          acc.fragments.push(gapFrag);
-        } else {
-          acc.fragments.splice(insertIdx, 0, gapFrag);
-        }
-      } else {
-        // Non-whitespace gap — likely a consumed footnote definition
-        // Check for [^label]: pattern
-        const match = /^\s*\[\^[^\]]+\]:\s*.*$/m.exec(gapText);
-        if (match) {
-          const defRaw = match[0];
-          const defFrag: MarkdownSyntaxFragment = {
-            raw: defRaw,
-            syntaxKind: "footnote_def",
-            offset: gapStart + gapText.indexOf(defRaw),
-            endOffset: gapStart + gapText.indexOf(defRaw) + defRaw.length,
-            capability: "render_only",
-          };
-          const insertIdx = acc.fragments.findIndex(
-            (f) => f.offset > defFrag.offset,
-          );
-          if (insertIdx === -1) {
-            acc.fragments.push(defFrag);
-          } else {
-            acc.fragments.splice(insertIdx, 0, defFrag);
-          }
-          // Also handle any surrounding whitespace
-          const beforeDef = gapText.slice(0, gapText.indexOf(defRaw));
-          const afterDef = gapText.slice(
-            gapText.indexOf(defRaw) + defRaw.length,
-          );
-          if (beforeDef.trim()) {
-            const beforeFrag: MarkdownSyntaxFragment = {
-              raw: beforeDef,
-              syntaxKind: "text",
-              offset: gapStart,
-              endOffset: gapStart + beforeDef.length,
-              capability: "native",
-            };
-            const idx = acc.fragments.findIndex(
-              (f) => f.offset > beforeFrag.offset,
-            );
-            if (idx === -1) acc.fragments.push(beforeFrag);
-            else acc.fragments.splice(idx, 0, beforeFrag);
-          }
-          if (afterDef.trim()) {
-            const afterFrag: MarkdownSyntaxFragment = {
-              raw: afterDef,
-              syntaxKind: "space",
-              offset: defFrag.endOffset,
-              endOffset: defFrag.endOffset + afterDef.length,
-              capability: "native",
-            };
-            const idx = acc.fragments.findIndex(
-              (f) => f.offset > afterFrag.offset,
-            );
-            if (idx === -1) acc.fragments.push(afterFrag);
-            else acc.fragments.splice(idx, 0, afterFrag);
-          }
-        }
-      }
-    }
-  }
-
-  // Update offset
-  acc.offset = source.length;
-  // Re-sort
-  acc.fragments.sort((a, b) => a.offset - b.offset);
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -697,7 +530,7 @@ function renderByProfile(
       );
     case "chat_user":
       // User messages: render Markdown with sanitization, no citation linkification
-      return sanitizeHtml(marked.parse(md, { async: false }) as string);
+      return sanitizeHtml(contractMarked.parse(md, { async: false }) as string);
     case "editor_ingest":
       return markdownBodyToEditorHtml(md);
     case "editor_export":

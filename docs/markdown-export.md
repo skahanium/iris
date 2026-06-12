@@ -47,7 +47,9 @@
 
 ## preserve_only（原样保留）
 
-脚注定义、原始 HTML、contract 标记为 `preserve_only` 的片段 → `preserveBlock` 节点 → 导出时写入 `originalRaw`，**不参与** callout 或 Turndown 改写。
+脚注定义、块级原始 HTML、contract 标记为块级 `preserve_only` 的片段 → `preserveBlock` 节点 → 导出时写入 `originalRaw`，**不参与** callout 或 Turndown 改写。
+
+安全的行内原始 HTML（如 `<kbd>Ctrl</kbd>`）在段落内使用 `preserveInline` inline atom 节点保留。它不可编辑，导出时直接写回 `originalRaw`，避免把段落拆成多个 preserve block。
 
 ---
 

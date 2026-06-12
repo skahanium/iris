@@ -1,4 +1,4 @@
-/**
+﻿/**
  * ai-streaming-experience.test.ts — AI 展示重构 阶段 0 基线+TDD 测试
  *
  * 测试部分 Markdown 在流式模式下的渲染稳定性和布局安全。
@@ -167,7 +167,7 @@ describe("streaming vs non-streaming convergence", () => {
 // ═══════════════════════════════════════════════════════════════
 
 describe("streaming layout stability (TDD RED)", () => {
-  it("[TDD-FAIL] streaming message produces stable meta regardless of partial content", () => {
+  it("streaming message produces stable meta regardless of partial content", () => {
     // When MarkdownRenderable is implemented, progressive streaming
     // should not cause layout shifts in the rendered output
     const r1 = renderMarkdownWithProfile("**p", "chat_assistant", {
@@ -185,7 +185,7 @@ describe("streaming layout stability (TDD RED)", () => {
     expect(r3.output.length).toBeGreaterThan(0);
   });
 
-  it("[TDD-FAIL] streaming repairs are tracked in streamRepairs metadata", () => {
+  it("streaming repairs are tracked in streamRepairs metadata", () => {
     const r = renderMarkdownWithProfile("**bold", "chat_assistant", {
       streaming: true,
     });
@@ -198,7 +198,7 @@ describe("streaming layout stability (TDD RED)", () => {
     }
   });
 
-  it("[TDD-FAIL] chat_user streaming also produces valid HTML", () => {
+  it("chat_user streaming also produces valid HTML", () => {
     const r = renderMarkdownWithProfile("**partial user", "chat_user", {
       streaming: true,
     });

@@ -1,4 +1,4 @@
-/**
+﻿/**
  * contract-classify.test.ts — TDD 红灯测试
  *
  * 直接测试 classifyMarkdownCapabilities() 的行为规范。
@@ -56,7 +56,7 @@ describe("classify: block spacing", () => {
 });
 
 describe("classify: native GFM (must be categorized correctly)", () => {
-  it("[TDD-FAIL] all ATX heading levels (1-6) are classified as 'native'", () => {
+  it("all ATX heading levels (1-6) are classified as 'native'", () => {
     const fragments = classifyMarkdownCapabilities(
       "# H1\n## H2\n### H3\n#### H4\n##### H5\n###### H6",
     );
@@ -67,7 +67,7 @@ describe("classify: native GFM (must be categorized correctly)", () => {
     }
   });
 
-  it("[TDD-FAIL] bold syntax is classified as 'native'", () => {
+  it("bold syntax is classified as 'native'", () => {
     const fragments = classifyMarkdownCapabilities("**bold**");
     const bold = fragmentsOfLevel(fragments, "native").filter(
       (f) => f.syntaxKind === "bold",
@@ -76,7 +76,7 @@ describe("classify: native GFM (must be categorized correctly)", () => {
     expect(bold[0]?.raw).toContain("**bold**");
   });
 
-  it("[TDD-FAIL] italic syntax is classified as 'native'", () => {
+  it("italic syntax is classified as 'native'", () => {
     const fragments = classifyMarkdownCapabilities("*italic*");
     const italic = fragments.filter(
       (f) => f.syntaxKind === "italic" && f.capability === "native",
@@ -84,7 +84,7 @@ describe("classify: native GFM (must be categorized correctly)", () => {
     expect(italic.length).toBeGreaterThanOrEqual(1);
   });
 
-  it("[TDD-FAIL] strikethrough is classified as 'native'", () => {
+  it("strikethrough is classified as 'native'", () => {
     const fragments = classifyMarkdownCapabilities("~~strike~~");
     const strike = fragments.filter(
       (f) => f.syntaxKind === "strikethrough" && f.capability === "native",
@@ -92,7 +92,7 @@ describe("classify: native GFM (must be categorized correctly)", () => {
     expect(strike.length).toBeGreaterThanOrEqual(1);
   });
 
-  it("[TDD-FAIL] inline code is classified as 'native'", () => {
+  it("inline code is classified as 'native'", () => {
     const fragments = classifyMarkdownCapabilities("`code`");
     const code = fragments.filter(
       (f) => f.syntaxKind === "inline_code" && f.capability === "native",
@@ -100,7 +100,7 @@ describe("classify: native GFM (must be categorized correctly)", () => {
     expect(code.length).toBeGreaterThanOrEqual(1);
   });
 
-  it("[TDD-FAIL] unordered list is classified as 'native'", () => {
+  it("unordered list is classified as 'native'", () => {
     const fragments = classifyMarkdownCapabilities("- item 1\n- item 2");
     const list = fragmentsOfLevel(fragments, "native").filter(
       (f) => f.syntaxKind === "list",
@@ -108,7 +108,7 @@ describe("classify: native GFM (must be categorized correctly)", () => {
     expect(list.length).toBeGreaterThanOrEqual(1);
   });
 
-  it("[TDD-FAIL] ordered list is classified as 'native'", () => {
+  it("ordered list is classified as 'native'", () => {
     const fragments = classifyMarkdownCapabilities("1. first\n2. second");
     const list = fragmentsOfLevel(fragments, "native").filter(
       (f) => f.syntaxKind === "list",
@@ -116,7 +116,7 @@ describe("classify: native GFM (must be categorized correctly)", () => {
     expect(list.length).toBeGreaterThanOrEqual(1);
   });
 
-  it("[TDD-FAIL] task list is classified as 'native'", () => {
+  it("task list is classified as 'native'", () => {
     const fragments = classifyMarkdownCapabilities("- [x] Done\n- [ ] Todo");
     const tasks = fragments.filter(
       (f) => f.syntaxKind === "task_list" && f.capability === "native",
@@ -124,7 +124,7 @@ describe("classify: native GFM (must be categorized correctly)", () => {
     expect(tasks.length).toBeGreaterThanOrEqual(1);
   });
 
-  it("[TDD-FAIL] GFM table is classified as 'native'", () => {
+  it("GFM table is classified as 'native'", () => {
     const fragments = classifyMarkdownCapabilities(
       "| A | B |\n| --- | --- |\n| 1 | 2 |",
     );
@@ -134,7 +134,7 @@ describe("classify: native GFM (must be categorized correctly)", () => {
     expect(tables.length).toBeGreaterThanOrEqual(1);
   });
 
-  it("[TDD-FAIL] fenced code block is classified as 'native'", () => {
+  it("fenced code block is classified as 'native'", () => {
     const fragments = classifyMarkdownCapabilities("```ts\ncode\n```");
     const code = fragments.filter(
       (f) => f.syntaxKind === "code_block" && f.capability === "native",
@@ -142,7 +142,7 @@ describe("classify: native GFM (must be categorized correctly)", () => {
     expect(code.length).toBeGreaterThanOrEqual(1);
   });
 
-  it("[TDD-FAIL] blockquote is classified as 'native'", () => {
+  it("blockquote is classified as 'native'", () => {
     const fragments = classifyMarkdownCapabilities("> quoted text");
     const bq = fragments.filter(
       (f) => f.syntaxKind === "blockquote" && f.capability === "native",
@@ -150,7 +150,7 @@ describe("classify: native GFM (must be categorized correctly)", () => {
     expect(bq.length).toBeGreaterThanOrEqual(1);
   });
 
-  it("[TDD-FAIL] link is classified as 'native'", () => {
+  it("link is classified as 'native'", () => {
     const fragments = classifyMarkdownCapabilities(
       "[text](https://example.com)",
     );
@@ -160,7 +160,7 @@ describe("classify: native GFM (must be categorized correctly)", () => {
     expect(links.length).toBeGreaterThanOrEqual(1);
   });
 
-  it("[TDD-FAIL] image is classified as 'native'", () => {
+  it("image is classified as 'native'", () => {
     const fragments = classifyMarkdownCapabilities("![alt](src.png)");
     const imgs = fragments.filter(
       (f) => f.syntaxKind === "image" && f.capability === "native",
@@ -168,7 +168,7 @@ describe("classify: native GFM (must be categorized correctly)", () => {
     expect(imgs.length).toBeGreaterThanOrEqual(1);
   });
 
-  it("[TDD-FAIL] horizontal rule is classified as 'native'", () => {
+  it("horizontal rule is classified as 'native'", () => {
     const fragments = classifyMarkdownCapabilities("---");
     const hrs = fragments.filter(
       (f) => f.syntaxKind === "horizontal_rule" && f.capability === "native",
@@ -176,7 +176,7 @@ describe("classify: native GFM (must be categorized correctly)", () => {
     expect(hrs.length).toBeGreaterThanOrEqual(1);
   });
 
-  it("[TDD-FAIL] wiki-link is classified as 'native'", () => {
+  it("wiki-link is classified as 'native'", () => {
     const fragments = classifyMarkdownCapabilities("See [[Note Title]].");
     const wikis = fragments.filter(
       (f) => f.syntaxKind === "wiki_link" && f.capability === "native",
@@ -188,7 +188,7 @@ describe("classify: native GFM (must be categorized correctly)", () => {
 // ── Callout 分类 ──────────────────────────────────────────────
 
 describe("classify: callouts (render_only)", () => {
-  it("[TDD-FAIL] Obsidian callout > [!note] is classified as 'render_only'", () => {
+  it("Obsidian callout > [!note] is classified as 'render_only'", () => {
     const fragments = classifyMarkdownCapabilities(
       "> [!note] Info\n> Content.",
     );
@@ -198,7 +198,7 @@ describe("classify: callouts (render_only)", () => {
     expect(callouts.length).toBeGreaterThanOrEqual(1);
   });
 
-  it("[TDD-FAIL] multiple callout types are all render_only", () => {
+  it("multiple callout types are all render_only", () => {
     const types = ["note", "warning", "tip", "danger", "info", "example"];
     for (const t of types) {
       const fragments = classifyMarkdownCapabilities(
@@ -215,7 +215,7 @@ describe("classify: callouts (render_only)", () => {
 // ── 脚注分类 ──────────────────────────────────────────────────
 
 describe("classify: footnotes (render_only)", () => {
-  it("[TDD-FAIL] footnote reference [^1] is classified as 'render_only'", () => {
+  it("footnote reference [^1] is classified as 'render_only'", () => {
     const fragments = classifyMarkdownCapabilities("Text[^1]\n\n[^1]: Body.");
     const refs = fragments.filter(
       (f) => f.syntaxKind === "footnote_ref" && f.capability === "render_only",
@@ -223,7 +223,7 @@ describe("classify: footnotes (render_only)", () => {
     expect(refs.length).toBeGreaterThanOrEqual(1);
   });
 
-  it("[TDD-FAIL] footnote definition [^1]: is classified as 'render_only'", () => {
+  it("footnote definition [^1]: is classified as 'render_only'", () => {
     const fragments = classifyMarkdownCapabilities(
       "Text[^label]\n\n[^label]: Definition.",
     );
@@ -233,7 +233,7 @@ describe("classify: footnotes (render_only)", () => {
     expect(defs.length).toBeGreaterThanOrEqual(1);
   });
 
-  it("[TDD-FAIL] multiple named footnotes are classified correctly", () => {
+  it("multiple named footnotes are classified correctly", () => {
     const fragments = classifyMarkdownCapabilities(
       "A[^a] B[^b]\n\n[^a]: A.\n[^b]: B.",
     );
@@ -247,7 +247,7 @@ describe("classify: footnotes (render_only)", () => {
 // ── Raw HTML 分类（preserve_only）─────────────────────────────
 
 describe("classify: raw HTML (preserve_only)", () => {
-  it("[TDD-FAIL] <div> blocks are classified as 'preserve_only'", () => {
+  it("<div> blocks are classified as 'preserve_only'", () => {
     const fragments = classifyMarkdownCapabilities(
       '<div class="box">content</div>',
     );
@@ -257,7 +257,7 @@ describe("classify: raw HTML (preserve_only)", () => {
     expect(html.length).toBeGreaterThanOrEqual(1);
   });
 
-  it("[TDD-FAIL] HTML comments are classified as 'preserve_only'", () => {
+  it("HTML comments are classified as 'preserve_only'", () => {
     const fragments = classifyMarkdownCapabilities("<!-- comment -->");
     const comments = fragments.filter(
       (f) =>
@@ -266,32 +266,99 @@ describe("classify: raw HTML (preserve_only)", () => {
     expect(comments.length).toBeGreaterThanOrEqual(1);
   });
 
-  it("[TDD-FAIL] <script> tags are classified as 'unsupported'", () => {
+  it("<script> tags are classified as 'unsupported'", () => {
     const fragments = classifyMarkdownCapabilities("<script>alert(1)</script>");
     const scripts = fragments.filter((f) => f.capability === "unsupported");
     expect(scripts.length).toBeGreaterThanOrEqual(1);
   });
 
-  it("[TDD-FAIL] raw HTML inline elements are classified as 'preserve_only'", () => {
+  it("raw HTML inline elements are classified as 'preserve_only'", () => {
     const fragments = classifyMarkdownCapabilities(
       "Press <kbd>Ctrl</kbd> + <kbd>C</kbd>.",
     );
     const preserves = fragmentsOfLevel(fragments, "preserve_only");
     expect(preserves.length).toBeGreaterThanOrEqual(1);
   });
+
+  it("classifies svg with an event handler as unsupported", () => {
+    const fragments = classifyMarkdownCapabilities('<svg onload="alert(1)">');
+    expect(fragments.some((f) => f.capability === "unsupported")).toBe(true);
+  });
+
+  it("classifies inline event handler HTML as unsupported", () => {
+    const fragments = classifyMarkdownCapabilities(
+      "<img src=x onerror=alert(1)>",
+    );
+    expect(fragments.some((f) => f.capability === "unsupported")).toBe(true);
+  });
+
+  it("classifies style tags as unsupported", () => {
+    const fragments = classifyMarkdownCapabilities("<style>body{}</style>");
+    expect(fragments.some((f) => f.capability === "unsupported")).toBe(true);
+  });
+
+  it("keeps safe kbd inline HTML out of unsupported classification", () => {
+    const fragments = classifyMarkdownCapabilities("<kbd>Ctrl</kbd>");
+    expect(fragments.some((f) => f.capability === "unsupported")).toBe(false);
+    expect(
+      fragments.some(
+        (f) => f.syntaxKind === "raw_html" && f.capability === "preserve_only",
+      ),
+    ).toBe(true);
+  });
+
+  it("classifies javascript URL attributes as unsupported", () => {
+    const fragments = classifyMarkdownCapabilities(
+      '<a href="javascript:alert(1)">x</a>',
+    );
+    expect(fragments.some((f) => f.capability === "unsupported")).toBe(true);
+  });
+
+  it("classifies data:text/html URL attributes as unsupported", () => {
+    const fragments = classifyMarkdownCapabilities(
+      '<iframe src="data:text/html,<script>alert(1)</script>"></iframe>',
+    );
+    expect(fragments.some((f) => f.capability === "unsupported")).toBe(true);
+  });
+});
+
+describe("classify: fragment gap correctness", () => {
+  function expectFragmentsRebuildSource(source: string) {
+    const fragments = classifyMarkdownCapabilities(source);
+    let offset = 0;
+    for (const fragment of fragments) {
+      expect(fragment.offset).toBe(offset);
+      expect(fragment.endOffset).toBe(fragment.offset + fragment.raw.length);
+      offset = fragment.endOffset;
+    }
+    expect(offset).toBe(source.length);
+    expect(fragments.map((fragment) => fragment.raw).join("")).toBe(source);
+  }
+
+  it("covers trailing footnote definition without gaps or duplicates", () => {
+    expectFragmentsRebuildSource("Text[^1]\n\n[^1]: Body");
+  });
+
+  it("covers consecutive footnote definitions without gaps or duplicates", () => {
+    expectFragmentsRebuildSource("[^a]: A\n[^b]: B");
+  });
+
+  it("covers footnote definitions with surrounding blank space and text gaps", () => {
+    expectFragmentsRebuildSource("Intro\n\n[^a]: A\n\nTail");
+  });
 });
 
 // ── 混合内容分类 ──────────────────────────────────────────────
 
 describe("classify: mixed content classification", () => {
-  it("[TDD-FAIL] basic-gfm gold corpus produces 100% native fragments", () => {
+  it("basic-gfm gold corpus produces 100% native fragments", () => {
     const fragments = classifyMarkdownCapabilities(BASIC_GFM);
     const nonNative = fragments.filter((f) => f.capability !== "native");
     expect(nonNative.length).toBe(0);
     expect(fragments.length).toBeGreaterThan(0);
   });
 
-  it("[TDD-FAIL] advanced-syntax produces render_only + preserve_only fragments", () => {
+  it("advanced-syntax produces render_only + preserve_only fragments", () => {
     const fragments = classifyMarkdownCapabilities(ADVANCED_SYNTAX);
     const renderOnly = fragmentsOfLevel(fragments, "render_only");
     const preserveOnly = fragmentsOfLevel(fragments, "preserve_only");
@@ -299,7 +366,7 @@ describe("classify: mixed content classification", () => {
     expect(preserveOnly.length).toBeGreaterThan(0);
   });
 
-  it("[TDD-FAIL] mixed-preserve produces all four capability levels", () => {
+  it("mixed-preserve produces all four capability levels", () => {
     const fragments = classifyMarkdownCapabilities(MIXED_PRESERVE);
     const natives = fragmentsOfLevel(fragments, "native");
     const renderOnly = fragmentsOfLevel(fragments, "render_only");
@@ -310,7 +377,7 @@ describe("classify: mixed content classification", () => {
     expect(preserveOnly.length).toBeGreaterThan(0);
   });
 
-  it("[TDD-FAIL] every fragment has valid offset/endOffset, capability, syntaxKind, and raw text", () => {
+  it("every fragment has valid offset/endOffset, capability, syntaxKind, and raw text", () => {
     const fragments = classifyMarkdownCapabilities(
       "# Heading\n\n**Bold** and > [!note] Callout\n\n<div>raw</div>",
     );
@@ -325,7 +392,7 @@ describe("classify: mixed content classification", () => {
     }
   });
 
-  it("[TDD-FAIL] fragments are ordered by their position in source (offset ascending)", () => {
+  it("fragments are ordered by their position in source (offset ascending)", () => {
     const fragments = classifyMarkdownCapabilities(
       "# Title\n\n**Bold**\n\n- list\n\n> quote\n\n`code`",
     );
@@ -336,7 +403,7 @@ describe("classify: mixed content classification", () => {
     }
   });
 
-  it("[TDD-FAIL] fragments cover the entire source without gaps", () => {
+  it("fragments cover the entire source without gaps", () => {
     const source = "# Title\n\nParagraph **bold**.\n\n- list item";
     const fragments = classifyMarkdownCapabilities(source);
     let covered = 0;
@@ -351,7 +418,7 @@ describe("classify: mixed content classification", () => {
 // ── 分类确定性（幂等） ────────────────────────────────────────
 
 describe("classify: idempotency and determinism", () => {
-  it("[TDD-FAIL] same input produces identical classification twice", () => {
+  it("same input produces identical classification twice", () => {
     const source = "# Title\n\n**Bold** `code` > [!note] Callout";
     const result1 = classifyMarkdownCapabilities(source);
     const result2 = classifyMarkdownCapabilities(source);

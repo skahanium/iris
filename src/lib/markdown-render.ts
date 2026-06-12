@@ -101,6 +101,17 @@ function addCodeCopyButtons(html: string): string {
   });
 }
 
+function repairInlineDestinationAtLineEnd(markdown: string): string {
+  return markdown.replace(
+    /(!?\[[^\]\n]+\]\([^)\n\s]+)$/u,
+    (match) => `${match})`,
+  );
+}
+
+function repairObviousTableRowAtLineEnd(markdown: string): string {
+  return markdown.replace(/(^|\n)([ \t]*\|[^\n|]+(?:\|[^\n|]+)+)$/u, "$1$2 |");
+}
+
 /**
  * Close unbalanced Markdown fences and inline marks so streaming partial
  * content parses cleanly. Also handles incomplete lists, blockquotes,
@@ -128,6 +139,9 @@ export function repairStreamingMarkdown(md: string): string {
 
   // Incomplete blockquote lines (`> `, `>   `)
   repaired = repaired.replace(/\n[ \t]*>\s*$/m, "\n");
+
+  repaired = repairInlineDestinationAtLineEnd(repaired);
+  repaired = repairObviousTableRowAtLineEnd(repaired);
 
   // ── close unbalanced delimiters ────────────────────────────
 

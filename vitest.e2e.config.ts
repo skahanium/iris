@@ -9,7 +9,9 @@ export default defineConfig({
     },
   },
   test: {
+    environment: "jsdom",
     include: ["tests/e2e/**/*.test.ts"],
+    setupFiles: ["tests/vitest-setup.ts"],
     testTimeout: 30_000,
   },
 });

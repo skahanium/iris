@@ -14,11 +14,16 @@ import { AiStreamExtension } from "@/components/editor/extensions/AiStreamExtens
 import { HeadingFoldExtension } from "@/components/editor/extensions/HeadingFoldExtension";
 import { ImageExtension } from "@/components/editor/extensions/ImageExtension";
 import { FindHighlightExtension } from "@/components/editor/extensions/FindHighlightExtension";
+import {
+  FootnoteDefExtension,
+  FootnoteRefExtension,
+} from "@/components/editor/extensions/FootnoteExtension";
 import { IrisParagraphExtension } from "@/components/editor/extensions/IrisParagraphExtension";
 import { IrisDocument } from "@/components/editor/extensions/IrisDocument";
 import { LinkExtension } from "@/components/editor/extensions/LinkExtension";
 import { ListIndentKeymapExtension } from "@/components/editor/extensions/ListIndentKeymapExtension";
 import { PreserveBlockExtension } from "@/components/editor/extensions/PreserveBlockExtension";
+import { PreserveInlineExtension } from "@/components/editor/extensions/PreserveInlineExtension";
 import { WikiLinkExtension } from "@/components/editor/extensions/WikiLinkExtension";
 import { editorDocToMarkdown } from "@/lib/editor-pm-serialize";
 import { ingestMarkdownForEditor } from "@/lib/editor-ingest";
@@ -54,6 +59,9 @@ const productionExtensions = [
   CalloutBlockquoteExtension,
   HeadingFoldExtension,
   PreserveBlockExtension,
+  PreserveInlineExtension,
+  FootnoteRefExtension,
+  FootnoteDefExtension,
   AiStreamExtension,
   WikiLinkExtension,
 ] as const;

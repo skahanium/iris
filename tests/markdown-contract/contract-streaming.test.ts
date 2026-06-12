@@ -551,6 +551,47 @@ describe("Phase 4: unterminated footnote reference", () => {
   });
 });
 
+describe("Phase C4: predictable inline streaming repairs", () => {
+  it("closes an unterminated image destination at end of line", () => {
+    expect(repairStreamingMarkdown("![alt](image.png")).toBe(
+      "![alt](image.png)",
+    );
+  });
+
+  it("does not alter a completed image destination", () => {
+    const input = "![alt](image.png)";
+    expect(repairStreamingMarkdown(input)).toBe(input);
+  });
+
+  it("closes an unterminated link destination at end of line", () => {
+    expect(repairStreamingMarkdown("[docs](https://example.com")).toBe(
+      "[docs](https://example.com)",
+    );
+  });
+
+  it("does not close a link when later text on the same line makes it ambiguous", () => {
+    const input = "[docs](https://example.com and more";
+    expect(repairStreamingMarkdown(input)).toBe(input);
+  });
+
+  it("adds a trailing pipe to obvious table rows", () => {
+    expect(repairStreamingMarkdown("| A | B")).toBe("| A | B |");
+  });
+
+  it("renders repaired links, images, and table rows without raw source noise", () => {
+    for (const input of [
+      "![alt](image.png",
+      "[docs](https://example.com",
+      "| A | B",
+    ]) {
+      const html = renderStreaming(input);
+      expect(html).not.toContain("RENDER_ERROR");
+      expect(html).not.toContain("![alt](image.png");
+      expect(html).not.toContain("[docs](https://example.com");
+    }
+  });
+});
+
 describe("Phase 4: combined streaming repairs", () => {
   it("repairs bold + italic + list simultaneously", () => {
     // List removal happens first, then delimiter closers are appended

@@ -291,3 +291,19 @@ cargo test
 ```
 
 如本次修复只改 TypeScript/CSS/文档，Rust 命令仍应在最终声称完成前运行或明确说明无法运行的原因。
+
+## 六、已完成与后续债务
+
+### 已完成
+
+- 已隔离 `marked` 使用路径，生产编辑器、contract、AI 渲染不再共享全局 singleton。
+- 已补强 dangerous HTML 分类、callout 样式、footnote 结构、inline raw HTML preserveInline、cache digest、序列化路径契约与 streaming repair 覆盖。
+- 已新增仓库文本卫生约束，固定 LF 行尾并清理已转绿测试名中的历史 `[TDD-FAIL]` 标签。
+- 已把 deprecated contract export 标注为 contract-only，生产保存/重新打开路径继续走 PM serializer。
+
+### 后续债务
+
+- 持续把 `src/lib/markdown-contract/contract.ts` 中的分类与 token walk 逻辑拆成更小模块，每次只移动代码并保持 contract 测试绿。
+- 补充真实浏览器/Playwright 验收，覆盖 callout 视觉、footnote anchor、preserveInline 段落保持和 editor 保存重新打开。
+- 为 preserveInline 与 footnote atom 扩展复制、删除、撤销、键盘选中测试，防止 `originalRaw` 被半编辑破坏。
+- 继续扩充 `repairStreamingMarkdown` golden corpus，只纳入有真实失败样例支撑的修复，不为表格头分隔行预造状态机。

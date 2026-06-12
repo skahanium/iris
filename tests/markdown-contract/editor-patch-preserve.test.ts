@@ -1,4 +1,4 @@
-/**
+﻿/**
  * editor-patch-preserve.test.ts — TDD 红灯测试
  *
  * 测试 AI 补丁回灌时 preserve 块的完整性和安全性。
@@ -41,7 +41,7 @@ function simulatePatchAndReIngest(
 // ═══════════════════════════════════════════════════════════════
 
 describe("TDD: patch safety — preserve blocks survive patches", () => {
-  it("[TDD-FAIL] native content patch does not affect adjacent preserve block", () => {
+  it("native content patch does not affect adjacent preserve block", () => {
     const original =
       "**old** text.\n\n<div class='x'>preserved</div>\n\nafter.";
     const patched = "**new** text.\n\n<div class='x'>preserved</div>\n\nafter.";
@@ -64,7 +64,7 @@ describe("TDD: patch safety — preserve blocks survive patches", () => {
     expect(preserveAfter[0]?.raw).toBe(preserveBefore[0]?.raw);
   });
 
-  it("[TDD-FAIL] preserve block raw content is byte-for-byte unchanged after native edit", () => {
+  it("preserve block raw content is byte-for-byte unchanged after native edit", () => {
     const md = '<div class="note">HTML note</div>\n\nEdit me.';
     const patched = '<div class="note">HTML note</div>\n\nEdited!';
 
@@ -81,7 +81,7 @@ describe("TDD: patch safety — preserve blocks survive patches", () => {
     expect(beforePreserve[0]?.raw).toBe(afterPreserve[0]?.raw);
   });
 
-  it("[TDD-FAIL] re-ingest after patch does not lose preserve fragments", () => {
+  it("re-ingest after patch does not lose preserve fragments", () => {
     const original = "## Title\n\nNative body.\n\n<kbd>Ctrl</kbd> shortcut.";
     const patched = "## Title\n\nChanged body.\n\n<kbd>Ctrl</kbd> shortcut.";
 
@@ -98,7 +98,7 @@ describe("TDD: patch safety — preserve blocks survive patches", () => {
     expect(patchPreserveCount).toBe(origPreserveCount);
   });
 
-  it("[TDD-FAIL] export after patch includes all preserve fragments", () => {
+  it("export after patch includes all preserve fragments", () => {
     const patched =
       "# Doc\n\nUpdated text.\n\n<!-- comment -->\n\n<div>raw</div>";
 
@@ -113,7 +113,7 @@ describe("TDD: patch safety — preserve blocks survive patches", () => {
     expect(exported.bodyMarkdown).toContain("<div>raw</div>");
   });
 
-  it("[TDD-FAIL] preserve-only content is identical after round-trip through contract", () => {
+  it("preserve-only content is identical after round-trip through contract", () => {
     const source = '**bold** and <div class="box">preserved</div> and `code`.';
     const fragments = classifyMarkdownCapabilities(source);
     const preserved = serializePreservedMarkdown(source, fragments);
@@ -131,7 +131,7 @@ describe("TDD: patch safety — preserve blocks survive patches", () => {
 // ═══════════════════════════════════════════════════════════════
 
 describe("TDD: patch boundary safety", () => {
-  it("[TDD-FAIL] patch on native content does not shift preserve block offsets", () => {
+  it("patch on native content does not shift preserve block offsets", () => {
     const original = [
       "Text before.",
       "",
@@ -154,7 +154,7 @@ describe("TDD: patch boundary safety", () => {
     }
   });
 
-  it("[TDD-FAIL] ingest after patch produces consistent fragment mapping", () => {
+  it("ingest after patch produces consistent fragment mapping", () => {
     const md = "# Title\n\nPara.\n\n<div class='a'>raw A</div>\n\nPara 2.";
     const result1 = ingestMarkdownForEditor({ bodyMarkdown: md });
     const result2 = ingestMarkdownForEditor({ bodyMarkdown: md });
@@ -166,7 +166,7 @@ describe("TDD: patch boundary safety", () => {
     );
   });
 
-  it("[TDD-FAIL] exported markdown after patch is valid (parses cleanly)", () => {
+  it("exported markdown after patch is valid (parses cleanly)", () => {
     const source = "# Doc\n\n**Content**.\n\n<!-- comment -->";
     const fragments = classifyMarkdownCapabilities(source);
     const preserved = serializePreservedMarkdown(source, fragments);

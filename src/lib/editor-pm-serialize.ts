@@ -107,6 +107,26 @@ const irisMarkdownSerializer = new MarkdownSerializer(
       state.write(raw);
       state.closeBlock(node);
     },
+    preserveInline(state, node) {
+      const raw =
+        typeof node.attrs.originalRaw === "string"
+          ? node.attrs.originalRaw
+          : "";
+      state.write(raw);
+    },
+    footnoteRef(state, node) {
+      const label =
+        typeof node.attrs.label === "string" ? node.attrs.label : "";
+      state.write(`[^${label}]`);
+    },
+    footnoteDef(state, node) {
+      const raw =
+        typeof node.attrs.originalRaw === "string"
+          ? node.attrs.originalRaw
+          : "";
+      state.write(raw);
+      state.closeBlock(node);
+    },
     table: renderTable,
     taskList(state, node) {
       node.forEach((item, _, index) => {

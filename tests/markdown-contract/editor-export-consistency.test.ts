@@ -1,4 +1,4 @@
-/**
+﻿/**
  * editor-export-consistency.test.ts — TDD 红灯测试
  *
  * 测试编辑器导出与其他表面（Vault 预览、AI 回灌、版本系统）之间的语义一致性。
@@ -20,7 +20,7 @@ import type { MarkdownSyntaxFragment } from "@/lib/markdown-contract/types";
 describe("TDD: editor export = contract semantic", () => {
   const classifiedFragments: MarkdownSyntaxFragment[] = [];
 
-  it("[TDD-FAIL] editor export produces same body content as contract editor_export", () => {
+  it("editor export produces same body content as contract editor_export", () => {
     const md = "# Title\n\n**Bold** paragraph with `code`.\n\n- item";
     const contractExport = renderMarkdownWithProfile(md, "editor_export");
     const editorExport = exportEditorToMarkdown({
@@ -39,7 +39,7 @@ describe("TDD: editor export = contract semantic", () => {
     expect(contractExport.output).toContain("item");
   });
 
-  it("[TDD-FAIL] same markdown → ingest → export → stable", () => {
+  it("same markdown → ingest → export → stable", () => {
     const md = "**Bold** and *italic* and `code`.";
     const result1 = exportEditorToMarkdown({
       editorHtml:
@@ -58,7 +58,7 @@ describe("TDD: editor export = contract semantic", () => {
     expect(result1.bodyMarkdown).toBe(result2.bodyMarkdown);
   });
 
-  it("[TDD-FAIL] editor ingest preserves callout type information", () => {
+  it("editor ingest preserves callout type information", () => {
     const md = "> [!note] Info\n> Content.";
     const result = ingestMarkdownForEditor({ bodyMarkdown: md });
     // Callout should be recognizable in the output
@@ -66,7 +66,7 @@ describe("TDD: editor export = contract semantic", () => {
     expect(result.tipTapHtml).toContain("Content");
   });
 
-  it("[TDD-FAIL] editor export after callout edit retains callout structure", () => {
+  it("editor export after callout edit retains callout structure", () => {
     const md = "> [!note] Original\n> Body.";
     const fragments = classifyMarkdownCapabilities(md);
     const result = exportEditorToMarkdown({
@@ -85,7 +85,7 @@ describe("TDD: editor export = contract semantic", () => {
 // ═══════════════════════════════════════════════════════════════
 
 describe("TDD: repeated ingest-export stability", () => {
-  it("[TDD-FAIL] pure native GFM: ingest → export → same", () => {
+  it("pure native GFM: ingest → export → same", () => {
     const md = "# Title\n\n**Bold** `code` - list item";
     const ingest1 = ingestMarkdownForEditor({ bodyMarkdown: md });
 
@@ -102,7 +102,7 @@ describe("TDD: repeated ingest-export stability", () => {
     expect(export1.bodyMarkdown).toContain("code");
   });
 
-  it("[TDD-FAIL] mixed content: ingest → export → ingest → export stable", () => {
+  it("mixed content: ingest → export → ingest → export stable", () => {
     const md =
       "# Doc\n\n**Bold**\n\n> [!note] Callout\n> Body\n\n<div class='x'>raw</div>";
     const ingest1 = ingestMarkdownForEditor({ bodyMarkdown: md });
@@ -128,7 +128,7 @@ describe("TDD: repeated ingest-export stability", () => {
     expect(export2.bodyMarkdown).toContain("Bold");
   });
 
-  it("[TDD-FAIL] ingest warnings are consistent across repeated calls", () => {
+  it("ingest warnings are consistent across repeated calls", () => {
     const md = "<script>alert(1)</script>";
     const r1 = ingestMarkdownForEditor({ bodyMarkdown: md });
     const r2 = ingestMarkdownForEditor({ bodyMarkdown: md });
@@ -141,7 +141,7 @@ describe("TDD: repeated ingest-export stability", () => {
 // ═══════════════════════════════════════════════════════════════
 
 describe("TDD: vault preview = editor export semantics", () => {
-  it("[TDD-FAIL] vault_preview and editor_export produce semantically equivalent output", () => {
+  it("vault_preview and editor_export produce semantically equivalent output", () => {
     const md = "# Title\n\n**Bold** paragraph.\n\n- item 1\n- item 2";
 
     const vaultResult = renderMarkdownWithProfile(md, "vault_preview", {
@@ -164,7 +164,7 @@ describe("TDD: vault preview = editor export semantics", () => {
     expect(editorResult.bodyMarkdown).toContain("Bold");
   });
 
-  it("[TDD-FAIL] advanced syntax is preserved in both vault and editor export", () => {
+  it("advanced syntax is preserved in both vault and editor export", () => {
     const md = "# Doc\n\n> [!info] Note\n> Body\n\n<div>raw</div>";
     const vaultResult = renderMarkdownWithProfile(md, "vault_preview");
     const classified = classifyMarkdownCapabilities(md);
@@ -187,7 +187,7 @@ describe("TDD: vault preview = editor export semantics", () => {
 // ═══════════════════════════════════════════════════════════════
 
 describe("TDD: export completeness — no element loss", () => {
-  it("[TDD-FAIL] export includes all heading levels", () => {
+  it("export includes all heading levels", () => {
     const md = "# H1\n\n## H2\n\n### H3";
     const result = exportEditorToMarkdown({
       editorHtml: "<h1>H1</h1><h2>H2</h2><h3>H3</h3>",
@@ -199,7 +199,7 @@ describe("TDD: export completeness — no element loss", () => {
     expect(result.bodyMarkdown).toContain("H3");
   });
 
-  it("[TDD-FAIL] export includes task lists", () => {
+  it("export includes task lists", () => {
     const md = "- [x] Done\n- [ ] Pending";
     const result = exportEditorToMarkdown({
       editorHtml:
@@ -211,7 +211,7 @@ describe("TDD: export completeness — no element loss", () => {
     expect(result.bodyMarkdown).toContain("Pending");
   });
 
-  it("[TDD-FAIL] export includes GFM tables", () => {
+  it("export includes GFM tables", () => {
     const md = "| A | B |\n| --- | --- |\n| 1 | 2 |";
     const result = exportEditorToMarkdown({
       editorHtml:
@@ -223,7 +223,7 @@ describe("TDD: export completeness — no element loss", () => {
     expect(result.bodyMarkdown).toContain("2");
   });
 
-  it("[TDD-FAIL] export includes code blocks", () => {
+  it("export includes code blocks", () => {
     const md = "```ts\nconst x = 1;\n```";
     const result = exportEditorToMarkdown({
       editorHtml: '<pre><code class="language-ts">const x = 1;</code></pre>',

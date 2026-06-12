@@ -1,4 +1,4 @@
-/**
+﻿/**
  * contract-render-profile.test.ts — TDD 红灯测试
  *
  * 直接测试 renderMarkdownWithProfile() 的行为规范。
@@ -32,47 +32,47 @@ function render(p: MarkdownProfile, md: string): MarkdownContractResult {
 // ── 公共契约 ─────────────────────────────────────────────────
 
 describe("contract: result structure", () => {
-  it("[TDD-FAIL] result.output is a non-empty string", () => {
+  it("result.output is a non-empty string", () => {
     const result = render("chat_assistant", "**Hello**");
     expect(typeof result.output).toBe("string");
     expect(result.output.length).toBeGreaterThan(0);
   });
 
-  it("[TDD-FAIL] result.meta.profile matches the requested profile", () => {
+  it("result.meta.profile matches the requested profile", () => {
     const result = render("chat_user", "**text**");
     expect(result.meta.profile).toBe("chat_user");
   });
 
-  it("[TDD-FAIL] result.meta.streaming is false for non-streaming render", () => {
+  it("result.meta.streaming is false for non-streaming render", () => {
     const result = renderMarkdownWithProfile("text", "chat_assistant", {
       streaming: false,
     });
     expect(result.meta.streaming).toBe(false);
   });
 
-  it("[TDD-FAIL] result.meta.streaming is true for streaming render", () => {
+  it("result.meta.streaming is true for streaming render", () => {
     const result = renderMarkdownWithProfile("**partial", "chat_assistant", {
       streaming: true,
     });
     expect(result.meta.streaming).toBe(true);
   });
 
-  it("[TDD-FAIL] result.warnings is an array", () => {
+  it("result.warnings is an array", () => {
     const result = render("chat_assistant", "**text**");
     expect(Array.isArray(result.warnings)).toBe(true);
   });
 
-  it("[TDD-FAIL] result.preserveFragments is an array", () => {
+  it("result.preserveFragments is an array", () => {
     const result = render("chat_assistant", "**text**");
     expect(Array.isArray(result.preserveFragments)).toBe(true);
   });
 
-  it("[TDD-FAIL] result.streamRepairs is an array", () => {
+  it("result.streamRepairs is an array", () => {
     const result = render("chat_assistant", "**text**");
     expect(Array.isArray(result.streamRepairs)).toBe(true);
   });
 
-  it("[TDD-FAIL] result.meta.stats has counts for all 4 capability levels", () => {
+  it("result.meta.stats has counts for all 4 capability levels", () => {
     const result = render("chat_assistant", BASIC_GFM);
     expect(result.meta.stats.native).toBeGreaterThan(0);
     expect(typeof result.meta.stats.render_only).toBe("number");
@@ -90,32 +90,32 @@ describe("contract: result structure", () => {
 // ── chat_assistant profile ────────────────────────────────────
 
 describe("profile: chat_assistant", () => {
-  it("[TDD-FAIL] renders bold as <strong>", () => {
+  it("renders bold as <strong>", () => {
     const result = render("chat_assistant", "**bold**");
     expect(result.output).toContain("<strong>");
     expect(result.output).not.toContain("**bold**");
   });
 
-  it("[TDD-FAIL] renders code block with syntax highlighting", () => {
+  it("renders code block with syntax highlighting", () => {
     const result = render("chat_assistant", "```js\nconst x = 1;\n```");
     expect(result.output).toContain("<pre>");
     expect(result.output).toContain("<code");
     expect(result.output).toContain("language-js");
   });
 
-  it("[TDD-FAIL] citation [citation:1] is linkified", () => {
+  it("citation [citation:1] is linkified", () => {
     const result = render("chat_assistant", "See [citation:1].");
     expect(result.output).toContain("ai-citation");
     expect(result.output).toContain("iris-cite-");
   });
 
-  it("[TDD-FAIL] external links have target=_blank", () => {
+  it("external links have target=_blank", () => {
     const result = render("chat_assistant", "[link](https://a.test)");
     expect(result.output).toContain('target="_blank"');
     expect(result.output).toContain('rel="noopener noreferrer"');
   });
 
-  it("[TDD-FAIL] preserve_only raw HTML is rendered as escaped raw text", () => {
+  it("preserve_only raw HTML is rendered as escaped raw text", () => {
     const result = render(
       "chat_assistant",
       "<div class='x'>raw</div>\n\n**safe**",
@@ -125,14 +125,14 @@ describe("profile: chat_assistant", () => {
     expect(result.output).toContain("raw");
   });
 
-  it("[TDD-FAIL] streaming mode adds streamRepairs to result", () => {
+  it("streaming mode adds streamRepairs to result", () => {
     const result = renderMarkdownWithProfile("**unclosed", "chat_assistant", {
       streaming: true,
     });
     expect(result.streamRepairs.length).toBeGreaterThan(0);
   });
 
-  it("[TDD-FAIL] streaming mode produces streamRepairs with required fields", () => {
+  it("streaming mode produces streamRepairs with required fields", () => {
     const result = renderMarkdownWithProfile(
       "*unclosed italic",
       "chat_assistant",
@@ -146,7 +146,7 @@ describe("profile: chat_assistant", () => {
     }
   });
 
-  it("[TDD-FAIL] warnings have required sub-fields when unsupported syntax present", () => {
+  it("warnings have required sub-fields when unsupported syntax present", () => {
     const result = renderMarkdownWithProfile(
       "# Title\n\n<object data='x'></object>",
       "chat_assistant",
@@ -163,18 +163,18 @@ describe("profile: chat_assistant", () => {
 // ── chat_user profile ─────────────────────────────────────────
 
 describe("profile: chat_user", () => {
-  it("[TDD-FAIL] renders bold as <strong>", () => {
+  it("renders bold as <strong>", () => {
     const result = render("chat_user", "Hello **world**");
     expect(result.output).toContain("<strong>world</strong>");
   });
 
-  it("[TDD-FAIL] renders lists", () => {
+  it("renders lists", () => {
     const result = render("chat_user", "- item 1\n- item 2");
     expect(result.output).toContain("<ul>");
     expect(result.output).toContain("<li>");
   });
 
-  it("[TDD-FAIL] does NOT linkify citations", () => {
+  it("does NOT linkify citations", () => {
     const result = render("chat_user", "[citation:1]");
     // user messages typically don't have citation linkification
     expect(result.output).not.toContain("ai-citation");
@@ -184,26 +184,26 @@ describe("profile: chat_user", () => {
 // ── editor_ingest profile ─────────────────────────────────────
 
 describe("profile: editor_ingest", () => {
-  it("[TDD-FAIL] produces TipTap-compatible HTML with data attributes", () => {
+  it("produces TipTap-compatible HTML with data attributes", () => {
     const result = render("editor_ingest", "- [x] Done");
     expect(result.output).toContain("taskList");
     expect(result.output).toContain("taskItem");
   });
 
-  it("[TDD-FAIL] wiki-links are converted to TipTap spans", () => {
+  it("wiki-links are converted to TipTap spans", () => {
     const result = render("editor_ingest", "[[My Note]]");
     expect(result.output).toContain("data-wiki-link");
     expect(result.output).toContain('data-wiki-title="My Note"');
   });
 
-  it("[TDD-FAIL] callout is wrapped in placeholder for read-only display", () => {
+  it("callout is wrapped in placeholder for read-only display", () => {
     const result = render("editor_ingest", "> [!note] Info\n> Body");
     // callouts are render_only for editor → should be in placeholder
     expect(result.output).toContain("[!note]");
     expect(result.output).toContain("Body");
   });
 
-  it("[TDD-FAIL] preserve_only raw HTML is wrapped in iris-preserve-readonly", () => {
+  it("preserve_only raw HTML is wrapped in iris-preserve-readonly", () => {
     const result = render("editor_ingest", "<div>block</div>");
     expect(result.preserveFragments.length).toBeGreaterThan(0);
     const hasPreserve = result.preserveFragments.some((f) =>
@@ -216,12 +216,12 @@ describe("profile: editor_ingest", () => {
 // ── editor_export profile ─────────────────────────────────────
 
 describe("profile: editor_export", () => {
-  it("[TDD-FAIL] produces markdown string as output", () => {
+  it("produces markdown string as output", () => {
     const result = render("editor_export", "**bold**");
     expect(result.output).toContain("bold");
   });
 
-  it("[TDD-FAIL] preserve_only fragments are included in preserveFragments with original raw", () => {
+  it("preserve_only fragments are included in preserveFragments with original raw", () => {
     const result = render("editor_export", "<div class='x'>raw</div>");
     const hasDiv = result.preserveFragments.some(
       (f) => f.raw === "<div class='x'>raw</div>",
@@ -229,7 +229,7 @@ describe("profile: editor_export", () => {
     expect(hasDiv).toBe(true);
   });
 
-  it("[TDD-FAIL] callout text is present in exported markdown", () => {
+  it("callout text is present in exported markdown", () => {
     const result = render("editor_export", "> [!note] Info\n> Content");
     expect(result.output).toContain("Info");
     expect(result.output).toContain("Content");
@@ -239,19 +239,19 @@ describe("profile: editor_export", () => {
 // ── vault_preview profile ─────────────────────────────────────
 
 describe("profile: vault_preview", () => {
-  it("[TDD-FAIL] produces self-contained HTML with <!DOCTYPE html>", () => {
+  it("produces self-contained HTML with <!DOCTYPE html>", () => {
     const result = render("vault_preview", "# Title");
     expect(result.output).toContain("<!DOCTYPE html>");
     expect(result.output).toContain("<html");
     expect(result.output).toContain("<title>");
   });
 
-  it("[TDD-FAIL] includes styling (Paper Ink)", () => {
+  it("includes styling (Paper Ink)", () => {
     const result = render("vault_preview", "# Title");
     expect(result.output).toContain("<style>");
   });
 
-  it("[TDD-FAIL] sanitizes dangerous HTML", () => {
+  it("sanitizes dangerous HTML", () => {
     const result = render("vault_preview", "<script>alert(1)</script>\nSafe.");
     expect(result.output).not.toContain("<script");
     expect(result.output).toContain("Safe");
@@ -261,7 +261,7 @@ describe("profile: vault_preview", () => {
 // ── 跨 Profile 一致性 ────────────────────────────────────────
 
 describe("cross-profile: semantic consistency", () => {
-  it("[TDD-FAIL] all display profiles produce output containing text content", () => {
+  it("all display profiles produce output containing text content", () => {
     const profiles: MarkdownProfile[] = [
       "chat_assistant",
       "chat_user",
@@ -273,7 +273,7 @@ describe("cross-profile: semantic consistency", () => {
     }
   });
 
-  it("[TDD-FAIL] same markdown across display profiles has same meta stats", () => {
+  it("same markdown across display profiles has same meta stats", () => {
     const md = "# Title\n\n**Bold** `code` - list";
     const assistant = render("chat_assistant", md);
     const user = render("chat_user", md);
@@ -284,7 +284,7 @@ describe("cross-profile: semantic consistency", () => {
     expect(user.meta.stats).toEqual(vault.meta.stats);
   });
 
-  it("[TDD-FAIL] warnings are generated for unsupported syntax", () => {
+  it("warnings are generated for unsupported syntax", () => {
     const result = render("chat_assistant", "<object data='x'></object>");
     expect(result.warnings.length).toBeGreaterThan(0);
   });

@@ -1,4 +1,4 @@
-/**
+﻿/**
  * contract-ingest.test.ts — TDD 红灯测试
  *
  * 直接测试 ingestMarkdown() 的行为规范。
@@ -25,7 +25,7 @@ const BASIC_GFM = readFileSync(resolve(GOLD_ROOT, "basic-gfm.md"), "utf8");
 // ── 基本摄取 ─────────────────────────────────────────────────
 
 describe("ingest: basic ingestion", () => {
-  it("[TDD-FAIL] raw markdown is preserved unchanged", () => {
+  it("raw markdown is preserved unchanged", () => {
     const source = "# Title\n\n**Bold** content with `code`.";
     const ingested = ingestMarkdown(source, {
       profile: "chat_assistant",
@@ -33,36 +33,36 @@ describe("ingest: basic ingestion", () => {
     expect(ingested.raw).toBe(source);
   });
 
-  it("[TDD-FAIL] source.profile reflects the profile option", () => {
+  it("source.profile reflects the profile option", () => {
     const ingested = ingestMarkdown("# Hello", {
       profile: "chat_assistant",
     });
     expect(ingested.source.profile).toBe("chat_assistant");
   });
 
-  it("[TDD-FAIL] source.streaming defaults to false", () => {
+  it("source.streaming defaults to false", () => {
     const ingested = ingestMarkdown("# Hello");
     expect(ingested.source.streaming).toBe(false);
   });
 
-  it("[TDD-FAIL] source.streaming is true when explicitly set", () => {
+  it("source.streaming is true when explicitly set", () => {
     const ingested = ingestMarkdown("**partial", { streaming: true });
     expect(ingested.source.streaming).toBe(true);
   });
 
-  it("[TDD-FAIL] source.context captures optional context string", () => {
+  it("source.context captures optional context string", () => {
     const ingested = ingestMarkdown("text", {
       context: "file://notes/test.md",
     });
     expect(ingested.source.context).toBe("file://notes/test.md");
   });
 
-  it("[TDD-FAIL] fragments array is not empty for non-empty input", () => {
+  it("fragments array is not empty for non-empty input", () => {
     const ingested = ingestMarkdown("# Title\n\nParagraph.");
     expect(ingested.fragments.length).toBeGreaterThan(0);
   });
 
-  it("[TDD-FAIL] fragments array is empty for empty input", () => {
+  it("fragments array is empty for empty input", () => {
     const ingested = ingestMarkdown("");
     expect(ingested.fragments.length).toBe(0);
   });
@@ -71,13 +71,13 @@ describe("ingest: basic ingestion", () => {
 // ── 大文档摄取 ────────────────────────────────────────────────
 
 describe("ingest: large document", () => {
-  it("[TDD-FAIL] full basic-gfm gold corpus is ingested with correct raw", () => {
+  it("full basic-gfm gold corpus is ingested with correct raw", () => {
     const ingested = ingestMarkdown(BASIC_GFM);
     expect(ingested.raw).toBe(BASIC_GFM);
     expect(ingested.fragments.length).toBeGreaterThan(10);
   });
 
-  it("[TDD-FAIL] all profile types can be used for ingestion", () => {
+  it("all profile types can be used for ingestion", () => {
     const profiles: MarkdownProfile[] = [
       "chat_assistant",
       "chat_user",
@@ -98,7 +98,7 @@ describe("ingest: large document", () => {
 // ── 片段结构验证 ──────────────────────────────────────────────
 
 describe("ingest: fragment structure", () => {
-  it("[TDD-FAIL] each fragment has required fields", () => {
+  it("each fragment has required fields", () => {
     const ingested = ingestMarkdown(
       "# Title\n\nParagraph **bold**.\n\n- list item",
     );
@@ -115,7 +115,7 @@ describe("ingest: fragment structure", () => {
     }
   });
 
-  it("[TDD-FAIL] fragments are ordered by offset (no overlap, no gaps)", () => {
+  it("fragments are ordered by offset (no overlap, no gaps)", () => {
     const source = "# H1\n\n**Bold**.\n\n- item 1\n- item 2";
     const ingested = ingestMarkdown(source);
 
@@ -127,12 +127,12 @@ describe("ingest: fragment structure", () => {
     expect(expectedOffset).toBe(source.length);
   });
 
-  it("[TDD-FAIL] first fragment starts at offset 0", () => {
+  it("first fragment starts at offset 0", () => {
     const ingested = ingestMarkdown("# Title");
     expect(ingested.fragments[0]?.offset).toBe(0);
   });
 
-  it("[TDD-FAIL] last fragment ends at source length", () => {
+  it("last fragment ends at source length", () => {
     const source = "# Title\n\nContent.";
     const ingested = ingestMarkdown(source);
     const last = ingested.fragments[ingested.fragments.length - 1];
@@ -143,7 +143,7 @@ describe("ingest: fragment structure", () => {
 // ── 幂等性 ────────────────────────────────────────────────────
 
 describe("ingest: idempotency", () => {
-  it("[TDD-FAIL] same input produces identical fragments across calls", () => {
+  it("same input produces identical fragments across calls", () => {
     const source = "# Title\n\n**Bold** `code` - list";
     const r1 = ingestMarkdown(source);
     const r2 = ingestMarkdown(source);

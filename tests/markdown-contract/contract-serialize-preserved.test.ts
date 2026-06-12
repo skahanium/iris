@@ -1,4 +1,4 @@
-/**
+﻿/**
  * contract-serialize-preserved.test.ts — TDD 红灯测试
  *
  * 直接测试 serializePreservedMarkdown() 的行为规范。
@@ -28,31 +28,31 @@ function roundTripPreserve(md: string): string {
 // ── 单个 preserve_only 片段回吐 ──────────────────────────────
 
 describe("serialize: single preserve_only fragments", () => {
-  it("[TDD-FAIL] raw <div> is restored unchanged", () => {
+  it("raw <div> is restored unchanged", () => {
     const original = '<div class="box">content</div>';
     const restored = roundTripPreserve(original);
     expect(restored).toBe(original);
   });
 
-  it("[TDD-FAIL] <kbd> elements are preserved unchanged", () => {
+  it("<kbd> elements are preserved unchanged", () => {
     const original = "Press <kbd>Ctrl</kbd> + <kbd>C</kbd>";
     const restored = roundTripPreserve(original);
     expect(restored).toBe(original);
   });
 
-  it("[TDD-FAIL] HTML comments are preserved unchanged", () => {
+  it("HTML comments are preserved unchanged", () => {
     const original = "<!-- important note -->";
     const restored = roundTripPreserve(original);
     expect(restored).toBe(original);
   });
 
-  it("[TDD-FAIL] <details> element is preserved unchanged", () => {
+  it("<details> element is preserved unchanged", () => {
     const original = "<details><summary>Toggle</summary>Content</details>";
     const restored = roundTripPreserve(original);
     expect(restored).toBe(original);
   });
 
-  it("[TDD-FAIL] <span> with custom attributes is preserved unchanged", () => {
+  it("<span> with custom attributes is preserved unchanged", () => {
     const original = '<span class="custom" data-id="42">text</span>';
     const restored = roundTripPreserve(original);
     expect(restored).toContain('data-id="42"');
@@ -63,7 +63,7 @@ describe("serialize: single preserve_only fragments", () => {
 // ── preserve_only + native 混合回吐 ──────────────────────────
 
 describe("serialize: mixed preserve_only + native", () => {
-  it("[TDD-FAIL] raw HTML beside native GFM preserves both", () => {
+  it("raw HTML beside native GFM preserves both", () => {
     const original =
       "# Title\n\n<div class='note'>HTML content</div>\n\n**Bold** paragraph.";
     const restored = roundTripPreserve(original);
@@ -72,14 +72,14 @@ describe("serialize: mixed preserve_only + native", () => {
     expect(restored).toContain("**Bold**");
   });
 
-  it("[TDD-FAIL] inline raw HTML in native GFM paragraph preserves both", () => {
+  it("inline raw HTML in native GFM paragraph preserves both", () => {
     const original = "Normal text <mark>highlighted</mark> and **bold**.";
     const restored = roundTripPreserve(original);
     expect(restored).toContain("<mark>highlighted</mark>");
     expect(restored).toContain("**bold**");
   });
 
-  it("[TDD-FAIL] multiple preserve_only blocks interleaved with native", () => {
+  it("multiple preserve_only blocks interleaved with native", () => {
     const original = [
       "## Section 1",
       "",
@@ -111,7 +111,7 @@ describe("serialize: mixed preserve_only + native", () => {
 // ── render_only callout 回吐 ─────────────────────────────────
 
 describe("serialize: render_only callout preservation", () => {
-  it("[TDD-FAIL] [!note] callout is preserved exactly", () => {
+  it("[!note] callout is preserved exactly", () => {
     const original = "> [!note] Important\n> Body text.";
     const restored = roundTripPreserve(original);
     expect(restored).toContain("[!note]");
@@ -119,7 +119,7 @@ describe("serialize: render_only callout preservation", () => {
     expect(restored).toContain("Body text");
   });
 
-  it("[TDD-FAIL] callout with GFM inside is preserved", () => {
+  it("callout with GFM inside is preserved", () => {
     const original = "> [!warning] Alert\n> - item 1\n> - item 2\n> `code`";
     const restored = roundTripPreserve(original);
     expect(restored).toContain("[!warning]");
@@ -127,7 +127,7 @@ describe("serialize: render_only callout preservation", () => {
     expect(restored).toContain("`code`");
   });
 
-  it("[TDD-FAIL] callout with nested code block preserves structure", () => {
+  it("callout with nested code block preserves structure", () => {
     const original = "> [!example] Code\n> ```js\n> const x = 1;\n> ```";
     const restored = roundTripPreserve(original);
     expect(restored).toContain("[!example]");
@@ -135,7 +135,7 @@ describe("serialize: render_only callout preservation", () => {
     expect(restored).toContain("const x");
   });
 
-  it("[TDD-FAIL] multiple callouts preserve order and content", () => {
+  it("multiple callouts preserve order and content", () => {
     const original = [
       "> [!note] First",
       "> First body.",
@@ -161,7 +161,7 @@ describe("serialize: render_only callout preservation", () => {
 // ── render_only footnote 回吐 ────────────────────────────────
 
 describe("serialize: render_only footnote preservation", () => {
-  it("[TDD-FAIL] single footnote preserves ref + definition", () => {
+  it("single footnote preserves ref + definition", () => {
     const original = "Text[^1]\n\n[^1]: The footnote.";
     const restored = roundTripPreserve(original);
     expect(restored).toContain("[^1]");
@@ -169,7 +169,7 @@ describe("serialize: render_only footnote preservation", () => {
     expect(restored).toContain("The footnote");
   });
 
-  it("[TDD-FAIL] multiple named footnotes preserve all", () => {
+  it("multiple named footnotes preserve all", () => {
     const original = [
       "See [^alpha] and [^beta].",
       "",
@@ -185,7 +185,7 @@ describe("serialize: render_only footnote preservation", () => {
     expect(restored).toContain("Second note");
   });
 
-  it("[TDD-FAIL] footnote inside callout is preserved", () => {
+  it("footnote inside callout is preserved", () => {
     const original = "> [!info] Note\n> Content[^fn]\n\n[^fn]: The footnote.";
     const restored = roundTripPreserve(original);
     expect(restored).toContain("Content[^fn]");
@@ -196,7 +196,7 @@ describe("serialize: render_only footnote preservation", () => {
 // ── 全 Mix：Callout + Footnote + Raw HTML + GFM ──────────────
 
 describe("serialize: full mixed content round-trip", () => {
-  it("[TDD-FAIL] all syntax types survive round-trip without loss", () => {
+  it("all syntax types survive round-trip without loss", () => {
     const original = [
       "# Document Title",
       "",
@@ -248,30 +248,30 @@ describe("serialize: full mixed content round-trip", () => {
 // ── 边界条件 ──────────────────────────────────────────────────
 
 describe("serialize: edge cases", () => {
-  it("[TDD-FAIL] empty source produces empty output", () => {
+  it("empty source produces empty output", () => {
     const restored = roundTripPreserve("");
     expect(restored).toBe("");
   });
 
-  it("[TDD-FAIL] whitespace-only source is preserved", () => {
+  it("whitespace-only source is preserved", () => {
     const original = "\n  \n";
     const restored = roundTripPreserve(original);
     expect(restored).toBe(original);
   });
 
-  it("[TDD-FAIL] only native content without preserves produces identical output", () => {
+  it("only native content without preserves produces identical output", () => {
     const original = "# Title\n\n**Bold** only.";
     const restored = roundTripPreserve(original);
     expect(restored).toBe(original);
   });
 
-  it("[TDD-FAIL] only preserve_only content produces identical output", () => {
+  it("only preserve_only content produces identical output", () => {
     const original = "<div class='x'>only raw</div>";
     const restored = roundTripPreserve(original);
     expect(restored).toBe(original);
   });
 
-  it("[TDD-FAIL] consecutive preserve_only blocks are separated correctly", () => {
+  it("consecutive preserve_only blocks are separated correctly", () => {
     const original = "<div class='a'>A</div>\n\n<div class='b'>B</div>";
     const restored = roundTripPreserve(original);
     expect(restored).toBe(original);

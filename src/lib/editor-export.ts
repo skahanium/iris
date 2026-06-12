@@ -14,13 +14,19 @@ import {
   calloutMarkdownFromLines,
   detectCalloutTypeFromElement,
 } from "@/lib/callout-markdown";
-import { editorBodyHtmlToMarkdown } from "@/lib/markdown";
+import {
+  editorBodyHtmlToMarkdown,
+  normalizeTurndownEscapes,
+} from "@/lib/markdown";
 import type {
   MarkdownCapabilityWarning,
   MarkdownSyntaxFragment,
 } from "@/lib/markdown-contract/types";
 
 // ── Internal turndown setup (used only for callout content) ─────
+
+// Guard for contract tests: production save/reopen must use editor-pm-serialize instead.
+export const EDITOR_EXPORT_CONTRACT_ONLY = true;
 
 const turndown = new TurndownService({
   headingStyle: "atx",
@@ -31,15 +37,13 @@ const turndown = new TurndownService({
 turndown.use(turndownPluginGfm.gfm);
 
 function mdFromHtml(html: string): string {
-  return editorBodyHtmlToMarkdown(html)
-    .replace(/\\\[/g, "[")
-    .replace(/\\\]/g, "]");
+  return normalizeTurndownEscapes(editorBodyHtmlToMarkdown(html));
 }
 
 /** Lightweight inline markdown conversion for callout inner content. */
 function inlineToMd(html: string): string {
   if (!html.trim()) return "";
-  return turndown.turndown(html).replace(/\\\[/g, "[").replace(/\\\]/g, "]");
+  return normalizeTurndownEscapes(turndown.turndown(html));
 }
 
 // ── Public API ─────────────────────────────────────────────────

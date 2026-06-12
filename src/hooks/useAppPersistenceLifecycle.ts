@@ -11,7 +11,8 @@ import { useEditorSave } from "@/hooks/useEditorSave";
 import { useTauriCloseSave } from "@/hooks/useTauriCloseSave";
 import { useVersionIdle } from "@/hooks/useVersionIdle";
 import { fileWrite, versionSaveIdle, versionSaveManual } from "@/lib/ipc";
-import { setCachedEditorHtml } from "@/lib/editor-html-cache";
+import { editorHtmlDigest, setCachedEditorHtml } from "@/lib/editor-html-cache";
+import { splitFrontmatter } from "@/lib/frontmatter";
 import { isNoteSubstantivelyEmpty } from "@/lib/note-substance";
 import { resolveNoteDisplayTitle } from "@/lib/note-display";
 import type { AutoSnapshotLeaveReason } from "@/lib/version-auto-snapshot-policy";
@@ -149,7 +150,11 @@ export function useAppPersistenceLifecycle({
         syncTabMarkdownCache(path, md);
         const ed = editorRef.current;
         if (ed && !ed.isDestroyed) {
-          setCachedEditorHtml(path, ed.getHTML());
+          setCachedEditorHtml(
+            path,
+            ed.getHTML(),
+            editorHtmlDigest(splitFrontmatter(md).body),
+          );
         }
         markClean(path, resolveNoteDisplayTitle({ path, title: noteTitle }));
       }

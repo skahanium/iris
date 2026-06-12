@@ -6,16 +6,18 @@
  *
  * @module editor-ingest
  */
-import { marked } from "marked";
-
+import { createMarkedInstance } from "@/lib/markdown";
 import { classifyMarkdownCapabilities } from "@/lib/markdown-contract/contract";
 import type {
   MarkdownCapabilityWarning,
   MarkdownSyntaxFragment,
+  MarkdownSyntaxKind,
 } from "@/lib/markdown-contract/types";
 import { PRESERVE_ONLY_SYNTAX_KINDS } from "@/lib/markdown-contract/types";
 
 // ── Internal helpers ──────────────────────────────────────────
+
+const ingestMarked = createMarkedInstance({ gfm: true, breaks: true });
 
 function escapeHtml(text: string): string {
   return text
@@ -60,6 +62,15 @@ function preserveBlockDiv(frag: MarkdownSyntaxFragment): string {
   return `<div data-type="preserve-block" data-original-raw="${escapedRaw}" data-syntax-kind="${frag.syntaxKind}"></div>`;
 }
 
+function preserveInlineSpan(
+  raw: string,
+  syntaxKind: MarkdownSyntaxKind,
+): string {
+  const escapedRaw = escapeHtml(raw);
+  const label = escapeHtml(raw.length > 48 ? `${raw.slice(0, 45)}...` : raw);
+  return `<span data-type="preserve-inline" data-original-raw="${escapedRaw}" data-syntax-kind="${syntaxKind}" contenteditable="false">${label}</span>`;
+}
+
 /**
  * Adapt wiki-links [[...]] in HTML to TipTap data attributes.
  */
@@ -76,7 +87,7 @@ function adaptWikiLinks(html: string): string {
  */
 function markdownToTipTapHtml(md: string): string {
   if (!md.trim()) return "";
-  let html = marked.parse(md, { async: false }) as string;
+  let html = ingestMarked.parse(md, { async: false }) as string;
   html = adaptWikiLinks(html);
   html = adaptTaskLists(html);
   return html;
@@ -114,6 +125,111 @@ function adaptTaskLists(html: string): string {
   });
 
   return root.innerHTML;
+}
+
+function footnoteLabel(raw: string): string {
+  return raw.match(/\[\^([^\]]+)\]/)?.[1] ?? "";
+}
+
+function footnoteIdSuffix(label: string): string {
+  const encoded = encodeURIComponent(label.trim()).replace(
+    /[!'()*]/g,
+    (ch) => `%${ch.charCodeAt(0).toString(16).toUpperCase()}`,
+  );
+  return encoded || "note";
+}
+
+function footnoteRefHtml(raw: string): string {
+  const label = footnoteLabel(raw);
+  const escapedLabel = escapeHtml(label);
+  const suffix = footnoteIdSuffix(label);
+  const refId = `footnote-ref-${suffix}`;
+  const defId = `footnote-${suffix}`;
+  return `<sup data-footnote-ref="${escapedLabel}" id="${refId}"><a href="#${defId}">[${escapedLabel}]</a></sup>`;
+}
+
+function footnoteDefHtml(frag: MarkdownSyntaxFragment): string {
+  const label = footnoteLabel(frag.raw);
+  const escapedLabel = escapeHtml(label);
+  const suffix = footnoteIdSuffix(label);
+  const refId = `footnote-ref-${suffix}`;
+  const defId = `footnote-${suffix}`;
+  const mdContent = frag.raw.replace(/^\s*\[\^[^\]]+\]:\s*/, "");
+  const contentHtml = mdContent
+    ? (ingestMarked.parse(mdContent, { async: false }) as string)
+    : "";
+  const escapedRaw = escapeHtml(frag.raw);
+  return `<section data-footnote-def="${escapedLabel}" id="${defId}" data-footnote-return="${refId}" data-original-raw="${escapedRaw}">${contentHtml}</section>`;
+}
+
+const SAFE_INLINE_HTML_TAGS = new Set([
+  "kbd",
+  "sub",
+  "sup",
+  "mark",
+  "small",
+  "abbr",
+]);
+
+const BLOCK_KINDS = new Set<MarkdownSyntaxKind>([
+  "heading",
+  "code_block",
+  "blockquote",
+  "table",
+  "horizontal_rule",
+  "list",
+  "task_list",
+  "image",
+]);
+
+function openingSafeInlineTag(raw: string): string | null {
+  const match = /^<\s*([a-z][\w-]*)\b[^>]*>$/i.exec(raw.trim());
+  if (!match) return null;
+  const tag = match[1]!.toLowerCase();
+  return SAFE_INLINE_HTML_TAGS.has(tag) ? tag : null;
+}
+
+function isClosingTag(raw: string, tag: string): boolean {
+  return new RegExp(`^<\\s*/\\s*${tag}\\s*>$`, "i").test(raw.trim());
+}
+
+function consumeInlinePreserve(
+  fragments: MarkdownSyntaxFragment[],
+  index: number,
+): { raw: string; nextIndex: number } | null {
+  const first = fragments[index];
+  if (
+    !first ||
+    first.syntaxKind !== "raw_html" ||
+    first.capability !== "preserve_only" ||
+    first.inline !== true
+  ) {
+    return null;
+  }
+
+  const tag = openingSafeInlineTag(first.raw);
+  if (!tag) return null;
+
+  let raw = first.raw;
+  for (let cursor = index + 1; cursor < fragments.length; cursor++) {
+    const current = fragments[cursor]!;
+    raw += current.raw;
+    if (
+      current.syntaxKind === "raw_html" &&
+      current.inline === true &&
+      isClosingTag(current.raw, tag)
+    ) {
+      return { raw, nextIndex: cursor + 1 };
+    }
+    if (
+      current.syntaxKind === "space" ||
+      (!current.inline && PRESERVE_ONLY_SYNTAX_KINDS.has(current.syntaxKind))
+    ) {
+      return null;
+    }
+  }
+
+  return null;
 }
 
 // ── Public API ────────────────────────────────────────────────
@@ -182,11 +298,13 @@ export function ingestMarkdownForEditor(
     nativeBuf = [];
   }
 
-  for (const frag of fragments) {
+  for (let i = 0; i < fragments.length; ) {
+    const frag = fragments[i]!;
     const kind = frag.syntaxKind;
 
     if (kind === "space") {
       flushNative();
+      i++;
       continue;
     }
 
@@ -196,7 +314,7 @@ export function ingestMarkdownForEditor(
       const title = calloutTitle(frag.raw);
       const body = calloutBody(frag.raw);
       const bodyHtml = body
-        ? (marked.parse(body, { async: false }) as string)
+        ? (ingestMarked.parse(body, { async: false }) as string)
         : "";
       const escapedRaw = escapeHtml(frag.raw);
       htmlParts.push(
@@ -204,47 +322,38 @@ export function ingestMarkdownForEditor(
           title ? escapeHtml(title) : type
         }</strong></p>${bodyHtml}</blockquote>`,
       );
+      i++;
       continue;
     }
 
     if (kind === "footnote_def") {
       flushNative();
-      const mdContent = frag.raw.replace(/^\[\^[^\]]+\]:\s*/, "");
-      const contentHtml = mdContent
-        ? (marked.parse(mdContent, { async: false }) as string)
-        : "";
-      htmlParts.push(
-        `<p data-footnote-def="${frag.raw.match(/\[\^([^\]]+)\]/)?.[1] ?? ""}">${contentHtml}</p>`,
-      );
+      htmlParts.push(footnoteDefHtml(frag));
+      i++;
       continue;
     }
 
     if (kind === "footnote_ref") {
       // Inline footnote ref — add to native buf so it stays within its parent paragraph
-      const label = frag.raw.match(/\[\^([^\]]+)\]/)?.[1] ?? "";
-      nativeBuf.push(`<sup data-footnote-ref="${label}">[${label}]</sup>`);
+      nativeBuf.push(footnoteRefHtml(frag.raw));
+      i++;
       continue;
     }
 
     if (PRESERVE_ONLY_SYNTAX_KINDS.has(kind)) {
+      const inlinePreserve = consumeInlinePreserve(fragments, i);
+      if (inlinePreserve) {
+        nativeBuf.push(preserveInlineSpan(inlinePreserve.raw, kind));
+        i = inlinePreserve.nextIndex;
+        continue;
+      }
       flushNative();
       htmlParts.push(preserveBlockDiv(frag));
+      i++;
       continue;
     }
 
-    // Native: check if block-level
-    const blockKinds = new Set([
-      "heading",
-      "code_block",
-      "blockquote",
-      "table",
-      "horizontal_rule",
-      "list",
-      "task_list",
-      "image",
-    ]);
-
-    if (blockKinds.has(kind)) {
+    if (BLOCK_KINDS.has(kind)) {
       flushNative();
       const html = markdownToTipTapHtml(frag.raw);
       if (html) htmlParts.push(html);
@@ -252,6 +361,7 @@ export function ingestMarkdownForEditor(
       // Inline native: accumulate
       nativeBuf.push(frag.raw);
     }
+    i++;
   }
 
   // Flush any remaining inline content

@@ -66,13 +66,57 @@
     color: inherit;
   }
 
-  .iris-markdown-content blockquote {
+  .iris-markdown-content blockquote:not([data-callout-type]) {
     @apply border-l-[3px] border-border pl-4 text-editor-muted;
     font-style: normal;
   }
 
+  .iris-markdown-content blockquote[data-callout-type] {
+    @apply rounded-md border border-border bg-muted/25 px-4 py-3 text-editor-ink;
+    border-left-width: 4px;
+  }
+
+  .iris-markdown-content blockquote[data-callout-type] > p:first-child {
+    @apply text-sm font-semibold;
+  }
+
+  .iris-markdown-content blockquote[data-callout-type="note"],
+  .iris-markdown-content blockquote[data-callout-type="info"] {
+    @apply border-l-primary bg-primary/5;
+  }
+
+  .iris-markdown-content blockquote[data-callout-type="tip"] {
+    border-left-color: hsl(var(--primary) / 0.75);
+    background: hsl(var(--primary) / 0.08);
+  }
+
+  .iris-markdown-content blockquote[data-callout-type="warning"] {
+    @apply bg-muted/35;
+    border-left-color: hsl(var(--destructive) / 0.55);
+  }
+
+  .iris-markdown-content blockquote[data-callout-type="danger"] {
+    @apply border-l-destructive bg-destructive/5;
+  }
+
+  .iris-markdown-content blockquote[data-callout-type="example"] {
+    @apply border-l-muted-foreground bg-muted/30;
+  }
+
   .iris-markdown-content blockquote > p {
     margin: 0;
+  }
+
+  .iris-markdown-content [data-footnote-ref] {
+    @apply cursor-pointer text-primary;
+  }
+
+  .iris-markdown-content [data-footnote-ref] a {
+    @apply rounded px-0.5 no-underline hover:bg-primary/10;
+  }
+
+  .iris-markdown-content [data-footnote-def] {
+    @apply mt-3 rounded-md border border-border bg-muted/20 px-3 py-2 text-sm text-editor-muted;
   }
 
   .iris-markdown-content hr {
