@@ -83,17 +83,20 @@ pub struct HarnessArtifactWire {
 
 /// Unified harness task request (maps from `AssistantExecuteRequest`).
 #[derive(Debug, Clone)]
-pub struct HarnessTaskRequest {
-    pub assistant: AssistantExecuteRequest,
+pub(crate) struct HarnessTaskRequest {
+    pub(crate) assistant: AssistantExecuteRequest,
+    pub(crate) routing_override: Option<ai_commands::AiSendRoutingOverride>,
 }
 
 impl HarnessTaskRequest {
-    pub fn from_assistant(assistant: AssistantExecuteRequest) -> Self {
-        Self { assistant }
-    }
-
-    pub fn intent(&self) -> AssistantIntent {
-        self.assistant.intent
+    pub(crate) fn from_assistant_with_routing(
+        assistant: AssistantExecuteRequest,
+        routing_override: ai_commands::AiSendRoutingOverride,
+    ) -> Self {
+        Self {
+            assistant,
+            routing_override: Some(routing_override),
+        }
     }
 }
 
@@ -142,15 +145,73 @@ fn emit_workflow_trace(app_handle: &AppHandle, request_id: &str, task_name: &str
     );
 }
 
+fn skill_scope_wire(scope: crate::ai_runtime::skills::SkillScope) -> &'static str {
+    match scope {
+        crate::ai_runtime::skills::SkillScope::Global => "Global",
+        crate::ai_runtime::skills::SkillScope::Vault => "Vault",
+    }
+}
+
+fn legacy_skill_overlay_from_plan(
+    state: &AppState,
+    scene: crate::ai_runtime::AiScene,
+    user_message: &str,
+    plan: Option<&crate::ai_types::SkillActivationPlanSummary>,
+) -> String {
+    let Some(plan) = plan.filter(|plan| !plan.activated_skills.is_empty()) else {
+        return String::new();
+    };
+    let Ok(vault) = state.vault_path() else {
+        return String::new();
+    };
+    let Ok(skills) = crate::ai_runtime::skills::scan_all(&vault) else {
+        return String::new();
+    };
+    let selected: Vec<_> = skills
+        .into_iter()
+        .filter(|skill| {
+            plan.activated_skills.iter().any(|active| {
+                active.blocked_capabilities.is_empty()
+                    && active.name == skill.name
+                    && active.scope == skill_scope_wire(skill.scope)
+            })
+        })
+        .collect();
+    if selected.is_empty() {
+        return String::new();
+    }
+    crate::ai_runtime::skills::inject_into_prompt(&selected, scene, user_message)
+}
+
+fn apply_skill_overlay_to_goal(goal: &str, overlay: &str) -> String {
+    let overlay = overlay.trim();
+    if overlay.is_empty() {
+        goal.to_string()
+    } else {
+        format!("{goal}\n\n## Active Skill Guidance\n{overlay}")
+    }
+}
+
 /// Execute unified assistant task and collect artifacts.
-pub async fn run_harness_task(
+pub(crate) async fn run_harness_task(
     state: &AppState,
     app_handle: &AppHandle,
     task: HarnessTaskRequest,
 ) -> AppResult<HarnessTaskResult> {
     let request = task.assistant;
+    let routing_override = task.routing_override;
     crate::commands::ai_commands::validate_ai_note_path(request.note_path.as_deref())?;
-    match request.intent {
+    let legacy_intent = request.effective_legacy_intent();
+    let skill_activation_plan = routing_override
+        .as_ref()
+        .and_then(|route| route.skill_activation_plan.as_ref());
+    let skill_overlay = legacy_skill_overlay_from_plan(
+        state,
+        legacy_intent.scene(),
+        &request.message,
+        skill_activation_plan,
+    );
+    match legacy_intent {
         AssistantIntent::Writing => {
             let note_path = request
                 .note_path
@@ -175,7 +236,7 @@ pub async fn run_harness_task(
                 ),
                 selection: Some(selection),
                 cursor_context,
-                writing_goal: request.message.clone(),
+                writing_goal: apply_skill_overlay_to_goal(&request.message, &skill_overlay),
                 web_authorized: request.web_authorized,
             };
             let trace_id = uuid::Uuid::new_v4().to_string();
@@ -226,7 +287,7 @@ pub async fn run_harness_task(
             let payload = research_commands::execute_research_task(
                 state,
                 app_handle,
-                request.message.clone(),
+                apply_skill_overlay_to_goal(&request.message, &skill_overlay),
                 Some(request.web_authorized),
             )
             .await?;
@@ -253,7 +314,7 @@ pub async fn run_harness_task(
                     request.base_content_hash.as_deref(),
                 ),
                 chapter,
-                writing_goal: request.message.clone(),
+                writing_goal: apply_skill_overlay_to_goal(&request.message, &skill_overlay),
                 web_authorized: request.web_authorized,
             };
             let payload =
@@ -290,8 +351,8 @@ pub async fn run_harness_task(
         AssistantIntent::Chat | AssistantIntent::Knowledge => {
             let trace_id = uuid::Uuid::new_v4().to_string();
             emit_workflow_trace(app_handle, &trace_id, "chat", "running");
-            let scene = request.intent.scene().profile().to_string();
-            let payload = ai_commands::execute_ai_send_message(
+            let scene = legacy_intent.scene().profile().to_string();
+            let payload = ai_commands::execute_ai_send_message_with_routing(
                 state,
                 app_handle,
                 scene,
@@ -302,6 +363,7 @@ pub async fn run_harness_task(
                 request.context_scope.clone(),
                 Some(request.web_authorized),
                 Some(request.new_session),
+                routing_override,
             )
             .await?;
             let rid = payload
@@ -658,6 +720,9 @@ pub fn map_task_result_to_response(
         run_status: run_status_wire(result.run_status).to_string(),
         evidence_refresh_notice: result.evidence_refresh_notice,
         artifacts: result.artifact_wires,
+        intent_detection: None,
+        run_plan_summary: None,
+        permission_preflight_summary: None,
     }
 }
 

@@ -39,6 +39,11 @@ describe("assistant phase 2 cleanup", () => {
   it("routes scenes internally instead of exposing SceneSelector", () => {
     const routing = read("src/lib/assistant-scene.ts");
     const panel = read("src/components/ai/UnifiedAssistantPanel.tsx");
+    const statusBadge = read("src/components/ai/AgentStatusBadge.tsx");
+    const historyDropdown = read(
+      "src/components/ai/SessionHistoryDropdown.tsx",
+    );
+    const skillsPanel = read("src/components/ai/SkillsPanel.tsx");
 
     expect(routing).toContain("resolveAiSceneForIntent");
     expect(panel).not.toContain("ContextStatusBar");
@@ -50,6 +55,9 @@ describe("assistant phase 2 cleanup", () => {
     expect(panel).toContain("assistantExecute(");
     expect(panel).not.toContain("chapterWritingExecute");
     expect(panel).not.toContain("documentCheckExecute");
+    expect(statusBadge).not.toContain("场景");
+    expect(historyDropdown).not.toContain("场景");
+    expect(skillsPanel).not.toContain("场景");
   });
 
   it("uses a single ai-stream suggestion node in the editor", () => {

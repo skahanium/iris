@@ -7,8 +7,8 @@
 //! 4. Processing tool calls from LLM and routing to ToolExecutor
 
 pub use crate::ai_types::{
-    AiScene, CapabilitySlot, ContextPacket, FunctionCall, LlmMessage, MessageRole, ProviderConfig,
-    TokenUsage, ToolCall, ToolSpec,
+    AiScene, CapabilitySlot, ContextPacket, EndpointFamily, FunctionCall, LlmMessage, MessageRole,
+    ProviderConfig, TokenUsage, ToolCall, ToolSpec,
 };
 use crate::error::{AppError, AppResult};
 use reqwest::Client;
@@ -311,7 +311,7 @@ impl ModelGateway {
 
     /// Send a request to the LLM provider (non-streaming).
     pub async fn send_request(&self, request: GatewayRequest) -> AppResult<GatewayResponse> {
-        let url = crate::llm::providers::chat_completions_url(&request.provider.base_url);
+        let url = llm_endpoint_url(&request.provider);
 
         let body = build_llm_api_body(&request)?;
 
@@ -321,7 +321,8 @@ impl ModelGateway {
             .header("Content-Type", "application/json");
 
         if let Some(api_key) = &request.provider.api_key {
-            req_builder = req_builder.header("Authorization", format!("Bearer {}", api_key));
+            req_builder =
+                apply_auth_headers(req_builder, request.provider.endpoint_family, api_key);
         }
 
         let response = req_builder
@@ -354,49 +355,10 @@ impl ModelGateway {
             ))
         })?;
 
-        let content = json["choices"][0]["message"]["content"]
-            .as_str()
-            .map(|s| s.to_string());
-
-        let reasoning_content = json["choices"][0]["message"]["reasoning_content"]
-            .as_str()
-            .map(|s| s.to_string());
-
-        let tool_calls = json["choices"][0]["message"]["tool_calls"]
-            .as_array()
-            .map(|arr| {
-                arr.iter()
-                    .filter_map(|tc| {
-                        Some(ToolCall {
-                            id: tc["id"].as_str()?.to_string(),
-                            call_type: tc["type"].as_str().unwrap_or("function").to_string(),
-                            function: FunctionCall {
-                                name: tc["function"]["name"].as_str()?.to_string(),
-                                arguments: tc["function"]["arguments"]
-                                    .as_str()
-                                    .unwrap_or("{}")
-                                    .to_string(),
-                            },
-                        })
-                    })
-                    .collect()
-            })
-            .unwrap_or_default();
-
-        let usage = parse_usage(&json);
-
-        let finish_reason = json["choices"][0]["finish_reason"]
-            .as_str()
-            .unwrap_or("unknown")
-            .to_string();
-
-        Ok(GatewayResponse {
-            content,
-            tool_calls,
-            usage,
-            finish_reason,
-            reasoning_content,
-        })
+        Ok(parse_gateway_response(
+            request.provider.endpoint_family,
+            &json,
+        ))
     }
 
     /// Send a streaming request and emit events to frontend.
@@ -407,6 +369,139 @@ impl ModelGateway {
     ) -> AppResult<GatewayResponse> {
         streaming_impl::send_streaming_request(&self.app_handle, &self.client, request_id, request)
             .await
+    }
+}
+
+fn llm_endpoint_url(provider: &ProviderConfig) -> String {
+    let base = provider.base_url.trim_end_matches('/');
+    match provider.endpoint_family {
+        EndpointFamily::OpenAiCompatibleChatCompletions | EndpointFamily::ResponsesReserved => {
+            crate::llm::providers::chat_completions_url(&provider.base_url)
+        }
+        EndpointFamily::AnthropicMessages => {
+            if base.ends_with("/v1") {
+                format!("{base}/messages")
+            } else {
+                format!("{base}/v1/messages")
+            }
+        }
+        EndpointFamily::OllamaChat => format!("{base}/api/chat"),
+    }
+}
+
+fn apply_auth_headers(
+    builder: reqwest::RequestBuilder,
+    endpoint_family: EndpointFamily,
+    api_key: &str,
+) -> reqwest::RequestBuilder {
+    match endpoint_family {
+        EndpointFamily::AnthropicMessages => builder.header("x-api-key", api_key).header(
+            "anthropic-version",
+            crate::llm::providers::ANTHROPIC_API_VERSION,
+        ),
+        EndpointFamily::OllamaChat => builder.header("Authorization", format!("Bearer {api_key}")),
+        EndpointFamily::OpenAiCompatibleChatCompletions | EndpointFamily::ResponsesReserved => {
+            builder.header("Authorization", format!("Bearer {api_key}"))
+        }
+    }
+}
+
+fn parse_gateway_response(
+    endpoint_family: EndpointFamily,
+    json: &serde_json::Value,
+) -> GatewayResponse {
+    match endpoint_family {
+        EndpointFamily::AnthropicMessages => parse_anthropic_response(json),
+        EndpointFamily::OllamaChat => parse_ollama_response(json),
+        EndpointFamily::OpenAiCompatibleChatCompletions | EndpointFamily::ResponsesReserved => {
+            parse_openai_compatible_response(json)
+        }
+    }
+}
+
+fn parse_openai_compatible_response(json: &serde_json::Value) -> GatewayResponse {
+    let content = json["choices"][0]["message"]["content"]
+        .as_str()
+        .map(|s| s.to_string());
+
+    let reasoning_content = json["choices"][0]["message"]["reasoning_content"]
+        .as_str()
+        .map(|s| s.to_string());
+
+    let tool_calls = json["choices"][0]["message"]["tool_calls"]
+        .as_array()
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|tc| {
+                    Some(ToolCall {
+                        id: tc["id"].as_str()?.to_string(),
+                        call_type: tc["type"].as_str().unwrap_or("function").to_string(),
+                        function: FunctionCall {
+                            name: tc["function"]["name"].as_str()?.to_string(),
+                            arguments: tc["function"]["arguments"]
+                                .as_str()
+                                .unwrap_or("{}")
+                                .to_string(),
+                        },
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+
+    GatewayResponse {
+        content,
+        tool_calls,
+        usage: parse_usage(json),
+        finish_reason: json["choices"][0]["finish_reason"]
+            .as_str()
+            .unwrap_or("unknown")
+            .to_string(),
+        reasoning_content,
+    }
+}
+
+fn parse_anthropic_response(json: &serde_json::Value) -> GatewayResponse {
+    let content = json["content"]
+        .as_array()
+        .map(|parts| {
+            parts
+                .iter()
+                .filter_map(|part| part["text"].as_str())
+                .collect::<Vec<_>>()
+                .join("")
+        })
+        .filter(|s| !s.is_empty());
+    let usage = TokenUsage {
+        prompt_tokens: json["usage"]["input_tokens"].as_u64().unwrap_or(0) as u32,
+        completion_tokens: json["usage"]["output_tokens"].as_u64().unwrap_or(0) as u32,
+        total_tokens: json["usage"]["input_tokens"].as_u64().unwrap_or(0) as u32
+            + json["usage"]["output_tokens"].as_u64().unwrap_or(0) as u32,
+        ..Default::default()
+    };
+    GatewayResponse {
+        content,
+        tool_calls: Vec::new(),
+        usage,
+        finish_reason: json["stop_reason"]
+            .as_str()
+            .unwrap_or("unknown")
+            .to_string(),
+        reasoning_content: None,
+    }
+}
+
+fn parse_ollama_response(json: &serde_json::Value) -> GatewayResponse {
+    GatewayResponse {
+        content: json["message"]["content"].as_str().map(|s| s.to_string()),
+        tool_calls: Vec::new(),
+        usage: TokenUsage::default(),
+        finish_reason: if json["done"].as_bool().unwrap_or(false) {
+            "stop".into()
+        } else {
+            "unknown".into()
+        },
+        reasoning_content: None,
     }
 }
 
@@ -485,6 +580,7 @@ mod tests {
             model: "deepseek-reasoner".into(),
             api_key: Some("test".into()),
             slot: CapabilitySlot::Reasoner,
+            endpoint_family: EndpointFamily::OpenAiCompatibleChatCompletions,
         };
         let messages = vec![
             LlmMessage {

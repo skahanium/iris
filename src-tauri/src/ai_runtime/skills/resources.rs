@@ -6,10 +6,10 @@ use crate::error::{AppError, AppResult};
 use super::path_impl::{global_skills_dir, slugify, vault_skills_dir};
 use super::SkillScope;
 
-const ALLOWED_RESOURCE_DIRS: &[&str] = &["references", "scripts", "assets"];
-const MAX_SKILL_RESOURCE_CHARS: usize = 24_000;
+pub(crate) const ALLOWED_RESOURCE_DIRS: &[&str] = &["references", "resources", "assets"];
+pub(crate) const MAX_SKILL_RESOURCE_CHARS: usize = 24_000;
 
-/// Read a file under a skill's `references/`, `scripts/`, or `assets/` directory.
+/// Read a file under a skill's `references/`, `resources/`, or `assets/` directory.
 pub fn read_skill_resource(
     vault: &Path,
     name: &str,

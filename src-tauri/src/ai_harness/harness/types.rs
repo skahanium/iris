@@ -3,7 +3,7 @@
 use serde::Serialize;
 
 use crate::ai_runtime::model_gateway::{TokenUsage, ToolCall};
-use crate::ai_runtime::{AiScene, ContextPacket};
+use crate::ai_runtime::{AiScene, ContextPacket, SkillActivationPlanSummary};
 
 use super::token_estimator::UsageSource;
 
@@ -65,4 +65,5 @@ pub struct HarnessRunInput {
     pub resume_from_checkpoint: bool,
     pub max_rounds_override: Option<u32>,
     pub token_budget: Option<u32>,
+    pub skill_activation_plan: Option<SkillActivationPlanSummary>,
 }

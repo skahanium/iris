@@ -1,6 +1,18 @@
 import type { AiScene } from "@/types/ai";
+import type { CapabilitySlot } from "@/types/ai";
 
 export type ContextStrategy = "hybrid" | "long_context";
+export type EndpointFamily =
+  | "open_ai_compatible_chat_completions"
+  | "anthropic_messages"
+  | "ollama_chat"
+  | "responses_reserved";
+
+export type ProbeStrategy =
+  | "open_ai_models_then_chat"
+  | "anthropic_messages_ping"
+  | "ollama_tags_then_chat"
+  | "static_only";
 
 export interface ProviderOverride {
   baseUrl: string | null;
@@ -19,9 +31,13 @@ export interface SceneRoute {
   thinking?: boolean;
 }
 
+export type SlotRoute = SceneRoute;
+
 export interface LlmRoutingConfig {
   version: number;
+  schemaVersion?: number;
   providers: Record<string, ProviderOverride>;
+  slots: Record<CapabilitySlot, SlotRoute>;
   scenes: Record<string, SceneRoute>;
   contextStrategy: Record<string, ContextStrategy>;
 }
@@ -34,7 +50,11 @@ export interface ModelCatalogEntry {
   maxOutput: number;
   supportsTools: boolean;
   supportsThinking: boolean;
+  supportsVision: boolean;
+  supportsStreaming: boolean;
   cacheFriendly: boolean;
+  endpointFamily: EndpointFamily;
+  probeStrategy: ProbeStrategy;
 }
 
 export interface LlmConfigGetResponse {
@@ -80,10 +100,70 @@ export const AI_SCENES: AiScene[] = [
   "research_synthesis",
 ];
 
+export const CAPABILITY_SLOTS: CapabilitySlot[] = [
+  "fast",
+  "writer",
+  "reasoner",
+  "long_context",
+  "vision",
+  "agent_tools",
+  "embedding",
+  "reranker",
+  "local_private",
+];
+
 /** 客户端回退默认（IPC 不可用或解析失败时） */
 export const DEFAULT_LLM_ROUTING: LlmRoutingConfig = {
   version: 1,
+  schemaVersion: 2,
   providers: {},
+  slots: {
+    fast: {
+      providerId: "deepseek",
+      model: "deepseek-v4-flash",
+      thinking: false,
+    },
+    writer: {
+      providerId: "deepseek",
+      model: "deepseek-v4-pro",
+      thinking: false,
+    },
+    reasoner: {
+      providerId: "deepseek",
+      model: "deepseek-v4-pro",
+      thinking: true,
+    },
+    long_context: {
+      providerId: "deepseek",
+      model: "deepseek-v4-pro",
+      thinking: false,
+    },
+    vision: {
+      providerId: "openai",
+      model: "gpt-4o",
+      thinking: false,
+    },
+    agent_tools: {
+      providerId: "deepseek",
+      model: "deepseek-v4-pro",
+      thinking: true,
+    },
+    embedding: {
+      providerId: "ollama",
+      model: "llama3.2",
+      thinking: false,
+    },
+    reranker: {
+      providerId: "ollama",
+      model: "llama3.2",
+      thinking: false,
+    },
+    local_private: {
+      providerId: "ollama",
+      model: "llama3.2",
+      thinking: false,
+    },
+  },
   scenes: {
     knowledge_lookup: {
       providerId: "deepseek",

@@ -154,7 +154,9 @@ export function SessionHistoryDropdown({
   );
 
   const handleClearAll = useCallback(async () => {
-    if (!window.confirm("确定清空当前场景下的全部历史会话？此操作不可恢复。")) {
+    if (
+      !window.confirm("确定清空当前任务上下文的全部历史会话？此操作不可恢复。")
+    ) {
       return;
     }
     try {
@@ -190,7 +192,7 @@ export function SessionHistoryDropdown({
             <div>
               <p className="text-xs font-medium text-foreground">历史会话</p>
               <p className="text-[10px] text-muted-foreground">
-                仅显示当前场景下的对话
+                仅显示当前任务上下文的对话
               </p>
             </div>
             {sessions.length > 0 ? (

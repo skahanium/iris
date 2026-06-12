@@ -1,10 +1,18 @@
-import type { AssistantIntent, AssistantTaskStatus } from "@/types/ai";
+import type {
+  AgentIntent,
+  AssistantIntent,
+  AssistantTaskStatus,
+  IntentDetectionResult,
+} from "@/types/ai";
 
 export interface AssistantRouteInput {
   message: string;
   hasSelection: boolean;
   notePath: string | null;
   explicitScope: boolean;
+  uiAction?: string;
+  hasImage?: boolean;
+  skillMention?: boolean;
 }
 
 const WRITING_KEYWORDS = [
@@ -76,51 +84,240 @@ function includesAny(haystack: string, needles: string[]): boolean {
   return needles.some((needle) => haystack.includes(needle));
 }
 
-export function resolveAssistantIntent(
-  input: AssistantRouteInput,
+function detection(
+  detectedIntent: AgentIntent,
+  confidence: number,
+  reason: string,
+  alternatives: AgentIntent[],
+  fallbackBehavior: string,
+  sourceHints: string[],
+): IntentDetectionResult {
+  return {
+    detectedIntent,
+    confidence,
+    reason,
+    alternatives,
+    fallbackBehavior,
+    sourceHints,
+  };
+}
+
+export function legacyIntentForAgentIntent(
+  intent: AgentIntent,
 ): AssistantIntent {
+  switch (intent) {
+    case "ask_notes":
+      return "knowledge";
+    case "rewrite_selection":
+    case "write":
+      return "writing";
+    case "citation_check":
+      return "citation";
+    case "document_check":
+      return "document";
+    case "vision_chat":
+    case "skill_management":
+      return "chat";
+    case "research":
+    case "organize":
+    case "chapter":
+    case "chat":
+      return intent;
+  }
+}
+
+export function detectAgentIntent(
+  input: AssistantRouteInput,
+): IntentDetectionResult {
   const message = input.message.trim().toLowerCase();
+  const hints: string[] = [];
+
+  if (input.uiAction) hints.push(`ui_action:${input.uiAction}`);
+  if (input.hasSelection) hints.push("context:selection");
+  if (input.notePath) hints.push("context:note");
+  if (input.explicitScope) hints.push("context:scope");
+  if (input.hasImage) hints.push("context:image");
+  if (input.skillMention) hints.push("skill:mention");
 
   if (!message) {
-    return input.hasSelection ? "writing" : "chat";
+    return detection(
+      input.hasSelection ? "rewrite_selection" : "chat",
+      input.hasSelection ? 0.72 : 0.45,
+      input.hasSelection
+        ? "Selection context suggests a rewrite task."
+        : "Empty input defaults to chat.",
+      input.hasSelection ? ["chat"] : [],
+      "Use chat and suggest likely actions if the intent remains unclear.",
+      hints,
+    );
+  }
+
+  if (input.uiAction) {
+    const action = input.uiAction.toLowerCase();
+    if (["rewrite", "summarize", "translate", "simplify"].includes(action)) {
+      return detection(
+        "rewrite_selection",
+        0.95,
+        `UI action ${input.uiAction} explicitly requested a selection rewrite.`,
+        ["write", "chat"],
+        "Run the selected action; fall back to chat if the selection is missing.",
+        hints,
+      );
+    }
+    if (["citation", "citation_check"].includes(action)) {
+      return detection(
+        "citation_check",
+        0.95,
+        `UI action ${input.uiAction} explicitly requested citation checking.`,
+        ["ask_notes"],
+        "Run citation checking; fall back to note lookup if no paragraph is available.",
+        hints,
+      );
+    }
+  }
+
+  if (input.hasImage) {
+    return detection(
+      "vision_chat",
+      0.9,
+      "Attached image context requires a vision-capable assistant path.",
+      ["chat"],
+      "Use vision when available; fall back to chat if no image-capable model is configured.",
+      hints,
+    );
+  }
+
+  if (
+    input.skillMention ||
+    message.includes("skill") ||
+    message.includes("技能")
+  ) {
+    return detection(
+      "skill_management",
+      input.skillMention ? 0.9 : 0.78,
+      "The request mentions skill management.",
+      ["chat"],
+      "Open the skill-management path; fall back to chat with guidance if unsupported.",
+      hints,
+    );
   }
 
   if (
     includesAny(message, RESEARCH_KEYWORDS) &&
     (input.explicitScope || !input.notePath || message.length > 12)
   ) {
-    return "research";
+    return detection(
+      "research",
+      0.84,
+      "Research keywords and scope suggest a multi-evidence research task.",
+      ["ask_notes", "chat"],
+      "Run research; fall back to ask_notes if the task can be answered from local notes.",
+      hints,
+    );
   }
 
   if (input.notePath && includesAny(message, DOCUMENT_KEYWORDS)) {
-    return "document";
+    return detection(
+      "document_check",
+      0.86,
+      "Document-level check keywords were found in an open note.",
+      ["chapter", "rewrite_selection"],
+      "Run document checking; fall back to chat with suggested document actions.",
+      hints,
+    );
   }
 
   if (input.notePath && includesAny(message, CHAPTER_KEYWORDS)) {
-    return "chapter";
+    return detection(
+      "chapter",
+      0.84,
+      "Chapter-level keywords were found in an open note.",
+      ["write", "document_check"],
+      "Run chapter writing; fall back to write if no chapter can be parsed.",
+      hints,
+    );
   }
 
   if (includesAny(message, ORGANIZE_KEYWORDS)) {
-    return "organize";
+    return detection(
+      "organize",
+      0.82,
+      "Organization keywords suggest metadata or vault cleanup.",
+      ["ask_notes", "chat"],
+      "Run organize suggestions; fall back to chat if no actionable scope exists.",
+      hints,
+    );
   }
 
   if (input.hasSelection && includesAny(message, CITATION_KEYWORDS)) {
-    return "citation";
+    return detection(
+      "citation_check",
+      0.88,
+      "Selection plus citation keywords suggest citation checking.",
+      ["ask_notes", "rewrite_selection"],
+      "Run citation checking; fall back to ask_notes if no claim can be extracted.",
+      hints,
+    );
   }
 
   if (input.hasSelection && includesAny(message, WRITING_KEYWORDS)) {
-    return "writing";
+    return detection(
+      "rewrite_selection",
+      0.88,
+      "Selection plus writing keywords suggest rewriting selected text.",
+      ["write", "chat"],
+      "Run selection rewrite; fall back to chat if the selection is unavailable.",
+      hints,
+    );
+  }
+
+  if (input.notePath && includesAny(message, WRITING_KEYWORDS)) {
+    return detection(
+      "write",
+      0.76,
+      "Writing keywords in an open note suggest a note-level writing task.",
+      ["rewrite_selection", "chat"],
+      "Run writing assistance; fall back to chat if no safe patch target is available.",
+      hints,
+    );
   }
 
   if (includesAny(message, KNOWLEDGE_KEYWORDS) || input.explicitScope) {
-    return "knowledge";
+    return detection(
+      "ask_notes",
+      0.78,
+      "Lookup keywords or explicit scope suggest asking over local notes.",
+      ["chat", "research"],
+      "Use ask_notes; fall back to chat and suggest research if evidence is broad.",
+      hints,
+    );
   }
 
   if (input.hasSelection && input.notePath) {
-    return "writing";
+    return detection(
+      "rewrite_selection",
+      0.7,
+      "Selection in an open note suggests a writing action.",
+      ["chat"],
+      "Use selection rewrite; fall back to chat if the request is conversational.",
+      hints,
+    );
   }
 
-  return "chat";
+  return detection(
+    "chat",
+    0.45,
+    "No stronger Phase2 intent matched.",
+    ["ask_notes", "write"],
+    "Use chat and suggest actions when helpful.",
+    hints,
+  );
+}
+
+export function resolveAssistantIntent(
+  input: AssistantRouteInput,
+): AssistantIntent {
+  return legacyIntentForAgentIntent(detectAgentIntent(input).detectedIntent);
 }
 
 export function assistantIntentLabel(intent: AssistantIntent): string {

@@ -2,10 +2,17 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use crate::ai_runtime::AiScene;
+use crate::ai_types::{
+    AgentIntent, SkillActivationItemSummary, SkillActivationPlanSummary,
+    SkillResourceStatusSummary, SkillRuntimeCapability,
+};
 use crate::embedding::engine::{cosine_similarity, embed_text};
 use crate::error::AppResult;
 use crate::storage::db::Database;
 
+use super::compatibility_impl::blocked_capabilities_for_skill;
+use super::resources_impl::{ALLOWED_RESOURCE_DIRS, MAX_SKILL_RESOURCE_CHARS};
+use super::validation_impl::confirmation_required_tools;
 use super::{
     load_skill, scan_all_metadata, ActivationIndexMap, ScoredSkill, SkillActivationIndexRow,
     SkillEntry, SkillListEntry, SkillScope,
@@ -246,6 +253,243 @@ pub fn rerank_skills_with_vectors<'a>(
     reranked
 }
 
+fn intent_terms(intent: AgentIntent) -> &'static [&'static str] {
+    match intent {
+        AgentIntent::Chat => &["chat", "assistant"],
+        AgentIntent::AskNotes => &["ask_notes", "knowledge", "lookup", "notes"],
+        AgentIntent::RewriteSelection | AgentIntent::Write => &["write", "rewrite", "draft"],
+        AgentIntent::Research => &["research", "evidence", "synthesis"],
+        AgentIntent::Organize => &["organize", "tags", "folders", "links"],
+        AgentIntent::CitationCheck => &["citation", "fact", "claim"],
+        AgentIntent::Chapter => &["chapter", "outline", "structure"],
+        AgentIntent::DocumentCheck => &["document", "style", "outline"],
+        AgentIntent::VisionChat => &["vision", "image"],
+        AgentIntent::SkillManagement => &["skill", "install", "update", "toggle"],
+    }
+}
+
+fn scope_wire(scope: SkillScope) -> String {
+    match scope {
+        SkillScope::Global => "Global".into(),
+        SkillScope::Vault => "Vault".into(),
+    }
+}
+
+fn build_resource_summary(
+    skill_root: Option<&Path>,
+    relative_path: String,
+    kind: &str,
+) -> SkillResourceStatusSummary {
+    let invalid = |reason: &str| SkillResourceStatusSummary {
+        relative_path: relative_path.clone(),
+        kind: kind.into(),
+        available: false,
+        size_bytes: None,
+        truncated: false,
+        reason: Some(reason.into()),
+    };
+    let rel = Path::new(relative_path.trim_start_matches('/'));
+    if relative_path.trim().is_empty() || rel.is_absolute() || relative_path.contains("..") {
+        return invalid("invalid resource path");
+    }
+    let Some(top) = rel.components().next().and_then(|c| c.as_os_str().to_str()) else {
+        return invalid("invalid resource path");
+    };
+    if !ALLOWED_RESOURCE_DIRS.contains(&top) {
+        return invalid("outside allowed resource directories");
+    }
+    let Some(skill_root) = skill_root else {
+        return invalid("skill root unavailable");
+    };
+    let root_canonical = match skill_root.canonicalize() {
+        Ok(path) => path,
+        Err(_) => return invalid("skill root unavailable"),
+    };
+    let target = skill_root.join(rel);
+    let canonical = match target.canonicalize() {
+        Ok(path) => path,
+        Err(_) => return invalid("not found"),
+    };
+    if !canonical.starts_with(&root_canonical) {
+        return invalid("resource path escapes skill root");
+    }
+    let metadata = match std::fs::metadata(&canonical) {
+        Ok(metadata) if metadata.is_file() => metadata,
+        Ok(_) => return invalid("resource is not a file"),
+        Err(_) => return invalid("not found"),
+    };
+    let size_bytes = metadata.len();
+    SkillResourceStatusSummary {
+        relative_path,
+        kind: kind.into(),
+        available: true,
+        size_bytes: Some(size_bytes),
+        truncated: size_bytes as usize > MAX_SKILL_RESOURCE_CHARS,
+        reason: Some("available".into()),
+    }
+}
+
+fn build_resource_summaries(skill: &SkillEntry) -> Vec<SkillResourceStatusSummary> {
+    let skill_root = Path::new(&skill.file_path).parent();
+    skill
+        .required_resources()
+        .into_iter()
+        .map(|relative_path| build_resource_summary(skill_root, relative_path, "required"))
+        .chain(
+            skill
+                .optional_resources()
+                .into_iter()
+                .map(|relative_path| build_resource_summary(skill_root, relative_path, "optional")),
+        )
+        .collect()
+}
+
+fn activation_reason(
+    skill: &SkillEntry,
+    intent: AgentIntent,
+    user_message: &str,
+    source_hints: &[String],
+) -> Option<(f64, String)> {
+    let msg = user_message.to_lowercase();
+    let name = skill.name.to_lowercase();
+    if msg.contains(&name) {
+        return Some((100.0, "explicit_skill_mention".into()));
+    }
+    if matches!(intent, AgentIntent::SkillManagement)
+        && (name.contains("skill") || skill.trigger_hints().iter().any(|h| h.contains("skill")))
+    {
+        return Some((80.0, "skill_management_intent".into()));
+    }
+    let trigger_hints = skill.trigger_hints();
+    if trigger_hints
+        .iter()
+        .any(|hint| !hint.is_empty() && msg.contains(&hint.to_lowercase()))
+    {
+        return Some((70.0, "trigger_hint".into()));
+    }
+    if trigger_hints.iter().any(|hint| {
+        source_hints
+            .iter()
+            .any(|source| source.to_lowercase().contains(&hint.to_lowercase()))
+    }) {
+        return Some((65.0, "source_hint".into()));
+    }
+    let terms = intent_terms(intent);
+    let haystack = format!(
+        "{} {} {}",
+        skill.name.to_lowercase(),
+        skill.description.to_lowercase(),
+        skill.trigger_hints().join(" ").to_lowercase()
+    );
+    if terms.iter().any(|term| haystack.contains(term)) {
+        return Some((55.0, "intent_term_match".into()));
+    }
+    None
+}
+
+/// Build a safe, per-run skill activation plan.
+pub fn build_skill_activation_plan(
+    skills: &[SkillEntry],
+    scene: AiScene,
+    agent_intent: AgentIntent,
+    user_message: &str,
+    source_hints: &[String],
+    index: Option<&ActivationIndexMap>,
+) -> SkillActivationPlanSummary {
+    let mut candidates: Vec<ScoredSkill<'_>> = Vec::new();
+    for skill in skills.iter().filter(|skill| skill.enabled) {
+        if let Some((score, _reason)) =
+            activation_reason(skill, agent_intent, user_message, source_hints)
+        {
+            candidates.push(ScoredSkill { skill, score });
+        }
+    }
+
+    let query = if user_message.trim().is_empty() {
+        scene.profile()
+    } else {
+        user_message
+    };
+    let ranked = rerank_skills_with_vectors(
+        rank_skills_for_scene_with_index(skills, scene, index),
+        query,
+        index,
+    );
+    for scored in ranked {
+        if scored.score >= 0.35
+            && !candidates
+                .iter()
+                .any(|existing| existing.skill.name == scored.skill.name)
+        {
+            candidates.push(scored);
+        }
+    }
+
+    candidates.sort_by(|a, b| {
+        b.score
+            .partial_cmp(&a.score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    candidates.truncate(5);
+
+    let mut activated = Vec::new();
+    let mut requested_tools = Vec::new();
+    let mut requested_capabilities: Vec<SkillRuntimeCapability> = Vec::new();
+    let mut confirmation_required = Vec::new();
+    let mut blocked = Vec::new();
+
+    for scored in candidates.into_iter().take(3) {
+        let skill = scored.skill;
+        let reason = activation_reason(skill, agent_intent, user_message, source_hints)
+            .map(|(_, reason)| reason)
+            .unwrap_or_else(|| "legacy_scene_or_vector_match".into());
+        for tool in &skill.allowed_tools {
+            if !requested_tools.contains(tool) {
+                requested_tools.push(tool.clone());
+            }
+        }
+        for capability in skill.requested_capabilities() {
+            if !requested_capabilities.contains(&capability) {
+                requested_capabilities.push(capability);
+            }
+        }
+        for tool in confirmation_required_tools(&skill.allowed_tools) {
+            if !confirmation_required.contains(&tool) {
+                confirmation_required.push(tool);
+            }
+        }
+        let blocked_caps = blocked_capabilities_for_skill(skill);
+        blocked.extend(blocked_caps.clone());
+        activated.push(SkillActivationItemSummary {
+            name: skill.name.clone(),
+            scope: scope_wire(skill.scope),
+            score: scored.score,
+            match_reason: reason,
+            injected_sections: vec!["skill_overlay".into()],
+            requested_tools: skill.allowed_tools.clone(),
+            requested_capabilities: skill.requested_capabilities(),
+            confirmation_required_tools: confirmation_required_tools(&skill.allowed_tools),
+            resources: build_resource_summaries(skill),
+            blocked_capabilities: blocked_caps,
+            compatibility_source: skill.compatibility_source(),
+        });
+    }
+
+    SkillActivationPlanSummary {
+        skill_overlay_summary: if activated.is_empty() {
+            "No skills activated for this run.".into()
+        } else {
+            format!("{} skill(s) activated for skill_overlay.", activated.len())
+        },
+        activated_skills: activated,
+        requested_tools,
+        requested_capabilities,
+        confirmation_required_tools: confirmation_required,
+        degraded: !blocked.is_empty(),
+        blocked_capabilities: blocked,
+    }
+}
+
 /// Load enabled skills for prompt injection after metadata matching.
 pub fn active_skills_for_prompt(
     vault: &Path,
@@ -336,4 +580,125 @@ pub fn enrich_list_with_scene(
         entry.scene_score = score_map.get(&key).copied();
     }
     Ok(entries)
+}
+
+#[cfg(test)]
+mod phase4_tests {
+    use std::collections::HashMap;
+
+    use super::*;
+    use crate::ai_types::SkillCapabilitySupportStatus;
+
+    fn skill(name: &str) -> SkillEntry {
+        SkillEntry {
+            name: name.into(),
+            description: format!("{name} research helper"),
+            license: Some("AGPL-3.0".into()),
+            compatibility: Some("hermes".into()),
+            metadata: HashMap::new(),
+            allowed_tools: vec![],
+            content: "Use this skill carefully.".into(),
+            scope: SkillScope::Vault,
+            source_url: None,
+            enabled: true,
+            file_path: format!("/tmp/{name}/SKILL.md"),
+            legacy_trigger: None,
+        }
+    }
+
+    #[test]
+    fn build_skill_activation_plan_prioritizes_explicit_skill_mention() {
+        let skills = vec![skill("citation-helper"), skill("generic-helper")];
+
+        let plan = build_skill_activation_plan(
+            &skills,
+            AiScene::KnowledgeLookup,
+            AgentIntent::AskNotes,
+            "Use citation-helper on this note",
+            &[],
+            None,
+        );
+
+        assert_eq!(plan.activated_skills[0].name, "citation-helper");
+        assert_eq!(
+            plan.activated_skills[0].match_reason,
+            "explicit_skill_mention"
+        );
+    }
+
+    #[test]
+    fn build_skill_activation_plan_blocks_high_risk_runtime_capabilities() {
+        let mut metadata = HashMap::new();
+        metadata.insert(
+            "requested-capabilities".into(),
+            serde_json::Value::String("skill.execute_script_sandboxed".into()),
+        );
+        let mut scripted = skill("scripted-helper");
+        scripted.metadata = metadata;
+
+        let plan = build_skill_activation_plan(
+            &[scripted],
+            AiScene::KnowledgeLookup,
+            AgentIntent::AskNotes,
+            "Use scripted-helper",
+            &[],
+            None,
+        );
+
+        assert!(plan.degraded);
+        assert_eq!(
+            plan.blocked_capabilities[0].status,
+            SkillCapabilitySupportStatus::BlockedByPolicy
+        );
+        assert!(serde_json::to_string(&plan)
+            .unwrap()
+            .contains("skill.execute_script_sandboxed"));
+        assert!(!serde_json::to_string(&plan).unwrap().contains("api_key"));
+    }
+
+    #[test]
+    fn build_skill_activation_plan_reports_resource_availability_and_truncation() {
+        let dir = tempfile::tempdir().unwrap();
+        let skill_root = dir.path().join(".iris/skills/resource-helper");
+        std::fs::create_dir_all(skill_root.join("resources")).unwrap();
+        std::fs::write(skill_root.join("resources/guide.md"), "a".repeat(25_000)).unwrap();
+
+        let mut metadata = HashMap::new();
+        metadata.insert(
+            "required-resources".into(),
+            serde_json::Value::String("resources/guide.md resources/missing.md".into()),
+        );
+        let mut entry = skill("resource-helper");
+        entry.file_path = skill_root.join("SKILL.md").to_string_lossy().into_owned();
+        entry.metadata = metadata;
+
+        let plan = build_skill_activation_plan(
+            &[entry],
+            AiScene::KnowledgeLookup,
+            AgentIntent::AskNotes,
+            "Use resource-helper",
+            &[],
+            None,
+        );
+
+        let resources = &plan.activated_skills[0].resources;
+        let guide = resources
+            .iter()
+            .find(|resource| resource.relative_path == "resources/guide.md")
+            .expect("guide resource summary");
+        assert!(guide.available);
+        assert!(guide.truncated);
+        assert!(guide.size_bytes.unwrap() > 24_000);
+
+        let missing = resources
+            .iter()
+            .find(|resource| resource.relative_path == "resources/missing.md")
+            .expect("missing resource summary");
+        assert!(!missing.available);
+        assert!(missing
+            .reason
+            .as_deref()
+            .unwrap_or("")
+            .contains("not found"));
+    }
 }

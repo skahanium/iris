@@ -2,7 +2,10 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::ai_types::{resolve_scene, slot_for_scene, AiScene, ProviderConfig};
+use crate::ai_types::{
+    slot_for_scene, AgentIntent, AiScene, CapabilityRouteSummary, CapabilitySlot, EndpointFamily,
+    ProviderConfig,
+};
 use crate::error::{AppError, AppResult};
 use crate::llm::model_catalog::{fallback_model, find_model};
 use crate::llm::providers::{api_base, credential_service};
@@ -25,6 +28,9 @@ pub struct LlmRoutingConfig {
     pub updated_at: Option<String>,
     #[serde(default)]
     pub providers: std::collections::HashMap<String, ProviderOverride>,
+    #[serde(default)]
+    pub slots: std::collections::HashMap<String, SlotRoute>,
+    #[serde(default)]
     pub scenes: std::collections::HashMap<String, SceneRoute>,
     #[serde(default)]
     pub context_strategy: std::collections::HashMap<String, ContextStrategy>,
@@ -55,6 +61,8 @@ pub struct SceneRoute {
     pub thinking: bool,
 }
 
+pub type SlotRoute = SceneRoute;
+
 pub use crate::ai_types::ContextStrategy;
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -69,6 +77,7 @@ pub struct ResolvedLlmConfig {
     pub input_budget: usize,
     pub output_budget: u32,
     pub context_strategy: ContextStrategy,
+    pub endpoint_family: EndpointFamily,
 }
 
 impl std::fmt::Debug for ResolvedLlmConfig {
@@ -82,8 +91,31 @@ impl std::fmt::Debug for ResolvedLlmConfig {
             .field("input_budget", &self.input_budget)
             .field("output_budget", &self.output_budget)
             .field("context_strategy", &self.context_strategy)
+            .field("endpoint_family", &self.endpoint_family)
             .finish()
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PrivacyPreference {
+    ExternalAllowed,
+    LocalOnly,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct CapabilityRouteInput {
+    pub intent: AgentIntent,
+    pub context_tokens: usize,
+    pub has_images: bool,
+    pub needs_tools: bool,
+    pub needs_reasoning: bool,
+    pub privacy_preference: PrivacyPreference,
+}
+
+#[derive(Debug, Clone)]
+pub struct ResolvedCapabilityRoute {
+    pub resolved: ResolvedLlmConfig,
+    pub summary: CapabilityRouteSummary,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -128,7 +160,7 @@ impl Default for LlmRoutingConfig {
 
 impl LlmRoutingConfig {
     /// 当前 schema 版本
-    const CURRENT_SCHEMA_VERSION: u32 = 1;
+    const CURRENT_SCHEMA_VERSION: u32 = 2;
 
     /// 迁移旧版本配置（就地修改传入的 JSON Value）
     pub fn migrate(config: &mut serde_json::Value) -> AppResult<()> {
@@ -142,8 +174,39 @@ impl LlmRoutingConfig {
             }
         }
 
+        if schema_version < 2 {
+            let slots = slots_from_legacy_scenes(config);
+            config["slots"] = serde_json::json!(slots);
+            config["schemaVersion"] = serde_json::json!(2);
+        }
+
         Ok(())
     }
+}
+
+fn slots_from_legacy_scenes(
+    config: &serde_json::Value,
+) -> std::collections::HashMap<String, serde_json::Value> {
+    let defaults = deepseek_defaults();
+    let mut slots: std::collections::HashMap<String, serde_json::Value> = defaults
+        .slots
+        .into_iter()
+        .map(|(slot, route)| (slot, serde_json::to_value(route).unwrap_or_default()))
+        .collect();
+    let scenes = &config["scenes"];
+    let mappings = [
+        ("fast", "knowledge_lookup"),
+        ("writer", "drafting_assist"),
+        ("reasoner", "research_synthesis"),
+        ("long_context", "exemplar_learning"),
+        ("agent_tools", "knowledge_lookup"),
+    ];
+    for (slot, scene) in mappings {
+        if scenes[scene].is_object() {
+            slots.insert(slot.to_string(), scenes[scene].clone());
+        }
+    }
+    slots
 }
 
 /// Factory defaults aligned with user preference (DeepSeek V4 Flash / Pro).
@@ -188,12 +251,55 @@ pub fn deepseek_defaults() -> LlmRoutingConfig {
     context_strategy.insert("drafting_assist".into(), ContextStrategy::LongContext);
     context_strategy.insert("research_synthesis".into(), ContextStrategy::Hybrid);
 
+    let mut slots = std::collections::HashMap::new();
+    slots.insert(
+        "fast".into(),
+        SlotRoute {
+            provider_id: "deepseek".into(),
+            model: "deepseek-v4-flash".into(),
+            thinking: false,
+        },
+    );
+    slots.insert(
+        "writer".into(),
+        SlotRoute {
+            provider_id: "deepseek".into(),
+            model: "deepseek-v4-pro".into(),
+            thinking: false,
+        },
+    );
+    slots.insert(
+        "reasoner".into(),
+        SlotRoute {
+            provider_id: "deepseek".into(),
+            model: "deepseek-v4-pro".into(),
+            thinking: true,
+        },
+    );
+    slots.insert(
+        "long_context".into(),
+        SlotRoute {
+            provider_id: "deepseek".into(),
+            model: "deepseek-v4-pro".into(),
+            thinking: false,
+        },
+    );
+    slots.insert(
+        "agent_tools".into(),
+        SlotRoute {
+            provider_id: "deepseek".into(),
+            model: "deepseek-v4-pro".into(),
+            thinking: true,
+        },
+    );
+
     LlmRoutingConfig {
         version: 1,
         schema_version: LlmRoutingConfig::CURRENT_SCHEMA_VERSION,
         created_at: Some(chrono::Utc::now().to_rfc3339()),
         updated_at: None,
         providers: std::collections::HashMap::new(),
+        slots,
         scenes,
         context_strategy,
     }
@@ -236,24 +342,30 @@ pub fn load(db: &Database) -> AppResult<LlmRoutingConfig> {
 
     sanitize_routing(&mut config);
     ensure_scene_keys(&mut config);
+    ensure_slot_keys(&mut config);
     Ok(config)
 }
 
-/// 移除已下线厂商，并将场景路由迁到 DeepSeek / 自定义端点。
+/// Remove unknown providers while preserving Phase3 built-ins and custom endpoints.
 fn sanitize_routing(config: &mut LlmRoutingConfig) {
-    const LEGACY: &[&str] = &["openai", "anthropic", "ollama"];
     for route in config.scenes.values_mut() {
-        if LEGACY.contains(&route.provider_id.as_str())
-            || !crate::llm::providers::is_allowed_provider(&route.provider_id)
-        {
+        if !crate::llm::providers::is_allowed_provider(&route.provider_id) {
             route.provider_id = "deepseek".into();
             route.model = "deepseek-v4-flash".into();
             route.thinking = false;
         }
     }
-    config
-        .providers
-        .retain(|id, _| *id == "deepseek" || crate::llm::providers::is_custom_provider(id));
+    for route in config.slots.values_mut() {
+        if !crate::llm::providers::is_allowed_provider(&route.provider_id) {
+            route.provider_id = "deepseek".into();
+            route.model = "deepseek-v4-flash".into();
+            route.thinking = false;
+        }
+    }
+    config.providers.retain(|id, _| {
+        crate::llm::providers::is_allowed_provider(id)
+            || crate::llm::providers::is_custom_provider(id)
+    });
 }
 
 pub fn save(db: &Database, config: &LlmRoutingConfig) -> AppResult<()> {
@@ -327,28 +439,105 @@ fn ensure_scene_keys(config: &mut LlmRoutingConfig) {
     }
 }
 
-pub fn resolve_for_scene(db: &Database, scene: AiScene) -> AppResult<ResolvedLlmConfig> {
-    let routing = load(db)?;
-    let scene_key = scene.profile();
-    let route = routing
-        .scenes
-        .get(scene_key)
-        .cloned()
-        .ok_or_else(|| AppError::msg(format!("no route for scene {scene_key}")))?;
+fn ensure_slot_keys(config: &mut LlmRoutingConfig) {
+    let defaults = deepseek_defaults();
+    for (key, route) in defaults.slots {
+        config.slots.entry(key).or_insert(route);
+    }
+}
 
+pub fn resolve_for_scene(db: &Database, scene: AiScene) -> AppResult<ResolvedLlmConfig> {
+    let intent = match scene {
+        AiScene::KnowledgeLookup => AgentIntent::AskNotes,
+        AiScene::ExemplarLearning | AiScene::DraftingAssist => AgentIntent::Write,
+        AiScene::ResearchSynthesis => AgentIntent::Research,
+    };
+    let route = resolve_capability_route(
+        db,
+        CapabilityRouteInput {
+            intent,
+            context_tokens: 0,
+            has_images: false,
+            needs_tools: false,
+            needs_reasoning: matches!(scene, AiScene::ResearchSynthesis),
+            privacy_preference: PrivacyPreference::ExternalAllowed,
+        },
+    )?;
+    Ok(route.resolved)
+}
+
+pub fn resolve_capability_route(
+    db: &Database,
+    input: CapabilityRouteInput,
+) -> AppResult<ResolvedCapabilityRoute> {
+    let routing = load(db)?;
+    let route = resolve_capability_route_from_config(&routing, input)?;
+    Ok(route)
+}
+
+pub fn resolve_capability_route_from_config(
+    routing: &LlmRoutingConfig,
+    input: CapabilityRouteInput,
+) -> AppResult<ResolvedCapabilityRoute> {
+    let requested_slot = requested_slot(input);
+    let fallback_chain = fallback_chain_for(requested_slot);
+    let mut selected_slot = None;
+    let mut selected_route = None;
+
+    for slot in &fallback_chain {
+        let key = slot_key(*slot);
+        if let Some(route) = routing.slots.get(key) {
+            if route_satisfies_slot(route, *slot, input.privacy_preference) {
+                selected_slot = Some(*slot);
+                selected_route = Some(route.clone());
+                break;
+            }
+        }
+    }
+
+    let selected_slot = selected_slot.unwrap_or(CapabilitySlot::Fast);
+    let selected_route = selected_route
+        .or_else(|| routing.slots.get("fast").cloned())
+        .ok_or_else(|| AppError::msg("no capability route for fast slot"))?;
+
+    let resolved = resolve_route(routing, selected_slot, selected_route.clone())?;
+    let degraded = selected_slot != requested_slot;
+    let reason = if degraded {
+        format!(
+            "Requested {:?} but selected {:?} via fallback because the requested slot is unavailable or lacks required capabilities.",
+            requested_slot, selected_slot
+        )
+    } else {
+        format!("Selected {:?} for {:?}.", selected_slot, input.intent)
+    };
+
+    Ok(ResolvedCapabilityRoute {
+        summary: CapabilityRouteSummary {
+            slot: selected_slot,
+            provider_id: selected_route.provider_id,
+            model: selected_route.model,
+            fallback_chain,
+            reason,
+            probe_status: "unknown".into(),
+            degraded,
+        },
+        resolved,
+    })
+}
+
+fn resolve_route(
+    routing: &LlmRoutingConfig,
+    slot: CapabilitySlot,
+    route: SlotRoute,
+) -> AppResult<ResolvedLlmConfig> {
     let provider_override = routing.providers.get(&route.provider_id);
     let custom_base = provider_override.and_then(|p| p.base_url.as_deref());
     let base_url = api_base(&route.provider_id, custom_base);
-
     let api_key = optional_secret(&credential_service(&route.provider_id));
-
     let model_spec = find_model(&route.model).unwrap_or_else(|| fallback_model(&route.provider_id));
     let thinking =
         route.thinking || model_spec.supports_thinking && route.model.contains("reasoner");
-
-    let profile = resolve_scene(scene);
-    let output_budget = model_spec.max_output.min(profile.max_token_budget as u32);
-
+    let output_budget = model_spec.max_output;
     let input_ratio = if model_spec.context_window >= 256_000 {
         0.85_f32
     } else {
@@ -356,12 +545,11 @@ pub fn resolve_for_scene(db: &Database, scene: AiScene) -> AppResult<ResolvedLlm
     };
     let input_budget = ((model_spec.context_window as f32) * input_ratio) as usize;
     let input_budget = input_budget.saturating_sub(output_budget as usize);
-
-    let context_strategy = routing
-        .context_strategy
-        .get(scene_key)
-        .copied()
-        .unwrap_or_else(|| default_strategy_for_scene(scene));
+    let context_strategy = if slot == CapabilitySlot::LongContext {
+        ContextStrategy::LongContext
+    } else {
+        ContextStrategy::Hybrid
+    };
 
     Ok(ResolvedLlmConfig {
         provider_id: route.provider_id,
@@ -372,7 +560,83 @@ pub fn resolve_for_scene(db: &Database, scene: AiScene) -> AppResult<ResolvedLlm
         input_budget,
         output_budget,
         context_strategy,
+        endpoint_family: model_spec.endpoint_family,
     })
+}
+
+fn requested_slot(input: CapabilityRouteInput) -> CapabilitySlot {
+    if input.has_images || input.intent == AgentIntent::VisionChat {
+        return CapabilitySlot::Vision;
+    }
+    if input.needs_tools || input.intent == AgentIntent::SkillManagement {
+        return CapabilitySlot::AgentTools;
+    }
+    if input.context_tokens > 200_000 {
+        return CapabilitySlot::LongContext;
+    }
+    match input.intent {
+        AgentIntent::RewriteSelection
+        | AgentIntent::Write
+        | AgentIntent::Chapter
+        | AgentIntent::DocumentCheck => CapabilitySlot::Writer,
+        AgentIntent::Research | AgentIntent::CitationCheck if input.needs_reasoning => {
+            CapabilitySlot::Reasoner
+        }
+        AgentIntent::Research | AgentIntent::CitationCheck => CapabilitySlot::Reasoner,
+        AgentIntent::Chat | AgentIntent::AskNotes | AgentIntent::Organize => CapabilitySlot::Fast,
+        AgentIntent::VisionChat | AgentIntent::SkillManagement => unreachable!(),
+    }
+}
+
+fn fallback_chain_for(slot: CapabilitySlot) -> Vec<CapabilitySlot> {
+    match slot {
+        CapabilitySlot::Vision => vec![CapabilitySlot::Vision, CapabilitySlot::Fast],
+        CapabilitySlot::AgentTools => vec![
+            CapabilitySlot::AgentTools,
+            CapabilitySlot::Reasoner,
+            CapabilitySlot::Fast,
+        ],
+        CapabilitySlot::LongContext => vec![
+            CapabilitySlot::LongContext,
+            CapabilitySlot::Reasoner,
+            CapabilitySlot::Fast,
+        ],
+        CapabilitySlot::Writer => vec![CapabilitySlot::Writer, CapabilitySlot::Fast],
+        CapabilitySlot::Reasoner => vec![CapabilitySlot::Reasoner, CapabilitySlot::Fast],
+        other => vec![other],
+    }
+}
+
+fn slot_key(slot: CapabilitySlot) -> &'static str {
+    match slot {
+        CapabilitySlot::Fast => "fast",
+        CapabilitySlot::Writer => "writer",
+        CapabilitySlot::Reasoner => "reasoner",
+        CapabilitySlot::LongContext => "long_context",
+        CapabilitySlot::Vision => "vision",
+        CapabilitySlot::AgentTools => "agent_tools",
+        CapabilitySlot::Embedding => "embedding",
+        CapabilitySlot::Reranker => "reranker",
+        CapabilitySlot::LocalPrivate => "local_private",
+    }
+}
+
+fn route_satisfies_slot(
+    route: &SlotRoute,
+    slot: CapabilitySlot,
+    privacy_preference: PrivacyPreference,
+) -> bool {
+    if privacy_preference == PrivacyPreference::LocalOnly && route.provider_id != "ollama" {
+        return false;
+    }
+    let model = find_model(&route.model).unwrap_or_else(|| fallback_model(&route.provider_id));
+    match slot {
+        CapabilitySlot::Vision => model.supports_vision,
+        CapabilitySlot::AgentTools => model.supports_tools,
+        CapabilitySlot::Reasoner => model.supports_thinking || model.supports_tools,
+        CapabilitySlot::LongContext => model.context_window >= 128_000,
+        _ => true,
+    }
 }
 
 pub fn resolve_for_provider(
@@ -405,25 +669,24 @@ pub fn resolve_for_provider(
         input_budget: (model_spec.context_window as f32 * 0.85) as usize,
         output_budget: model_spec.max_output,
         context_strategy: ContextStrategy::Hybrid,
+        endpoint_family: model_spec.endpoint_family,
     })
 }
 
 impl ResolvedLlmConfig {
     pub fn to_provider_config(&self, scene: AiScene) -> ProviderConfig {
+        self.to_provider_config_for_slot(slot_for_scene(scene))
+    }
+
+    pub fn to_provider_config_for_slot(&self, slot: CapabilitySlot) -> ProviderConfig {
         ProviderConfig {
             name: self.provider_id.clone(),
             base_url: self.base_url.clone(),
             api_key: self.api_key.clone(),
             model: self.model.clone(),
-            slot: slot_for_scene(scene),
+            slot,
+            endpoint_family: self.endpoint_family,
         }
-    }
-}
-
-fn default_strategy_for_scene(scene: AiScene) -> ContextStrategy {
-    match scene {
-        AiScene::ExemplarLearning | AiScene::DraftingAssist => ContextStrategy::LongContext,
-        AiScene::KnowledgeLookup | AiScene::ResearchSynthesis => ContextStrategy::Hybrid,
     }
 }
 
@@ -569,8 +832,9 @@ mod tests {
             "contextStrategy": {}
         });
         LlmRoutingConfig::migrate(&mut v).expect("migrate");
-        assert_eq!(v["schemaVersion"], serde_json::json!(1));
+        assert_eq!(v["schemaVersion"], serde_json::json!(2));
         assert!(v["createdAt"].is_string());
+        assert!(v["slots"].is_object());
     }
 
     #[test]
@@ -585,7 +849,7 @@ mod tests {
             "contextStrategy": {}
         });
         LlmRoutingConfig::migrate(&mut v).expect("migrate");
-        assert_eq!(v["schemaVersion"], serde_json::json!(1));
+        assert_eq!(v["schemaVersion"], serde_json::json!(2));
         assert_eq!(v["createdAt"], serde_json::json!(existing));
     }
 
@@ -593,20 +857,128 @@ mod tests {
     fn migrate_noop_when_already_current() {
         let mut v = serde_json::json!({
             "version": 1,
-            "schemaVersion": 1,
+            "schemaVersion": 2,
             "createdAt": "2024-01-01T00:00:00Z",
             "providers": {},
+            "slots": {},
             "scenes": {},
             "contextStrategy": {}
         });
         LlmRoutingConfig::migrate(&mut v).expect("migrate");
-        assert_eq!(v["schemaVersion"], serde_json::json!(1));
+        assert_eq!(v["schemaVersion"], serde_json::json!(2));
     }
 
     #[test]
     fn default_config_has_schema_version() {
         let c = deepseek_defaults();
-        assert_eq!(c.schema_version, 1);
+        assert_eq!(c.schema_version, 2);
         assert!(c.created_at.is_some());
+    }
+
+    #[test]
+    fn phase3_defaults_route_by_capability_slots() {
+        let c = deepseek_defaults();
+        assert_eq!(c.schema_version, 2);
+        assert_eq!(
+            c.slots.get("fast").map(|r| r.model.as_str()),
+            Some("deepseek-v4-flash")
+        );
+        assert_eq!(
+            c.slots.get("writer").map(|r| r.model.as_str()),
+            Some("deepseek-v4-pro")
+        );
+        assert_eq!(
+            c.slots.get("agent_tools").map(|r| r.provider_id.as_str()),
+            Some("deepseek")
+        );
+    }
+
+    #[test]
+    fn migrate_legacy_scenes_to_phase3_slots() {
+        let mut v = serde_json::json!({
+            "version": 1,
+            "schemaVersion": 1,
+            "createdAt": "2024-01-01T00:00:00Z",
+            "providers": {
+                "openai": { "baseUrl": "https://api.openai.com/v1" }
+            },
+            "scenes": {
+                "knowledge_lookup": {
+                    "providerId": "openai",
+                    "model": "gpt-4o-mini",
+                    "thinking": false
+                },
+                "drafting_assist": {
+                    "providerId": "anthropic",
+                    "model": "claude-3-5-haiku-20241022",
+                    "thinking": false
+                }
+            },
+            "contextStrategy": {}
+        });
+
+        LlmRoutingConfig::migrate(&mut v).expect("migrate");
+
+        assert_eq!(v["schemaVersion"], serde_json::json!(2));
+        assert_eq!(v["slots"]["fast"]["providerId"], "openai");
+        assert_eq!(v["slots"]["fast"]["model"], "gpt-4o-mini");
+        assert_eq!(v["slots"]["writer"]["providerId"], "anthropic");
+        assert_eq!(v["slots"]["agent_tools"]["providerId"], "openai");
+    }
+
+    #[test]
+    fn sanitize_preserves_phase3_builtin_providers() {
+        let mut c = deepseek_defaults();
+        c.slots.insert(
+            "vision".into(),
+            SlotRoute {
+                provider_id: "openai".into(),
+                model: "gpt-4o".into(),
+                thinking: false,
+            },
+        );
+        c.providers.insert(
+            "anthropic".into(),
+            ProviderOverride {
+                base_url: Some("https://api.anthropic.com".into()),
+                label: None,
+                default_model: Some("claude-3-5-haiku-20241022".into()),
+            },
+        );
+
+        sanitize_routing(&mut c);
+
+        assert_eq!(
+            c.slots.get("vision").map(|r| r.provider_id.as_str()),
+            Some("openai")
+        );
+        assert!(c.providers.contains_key("anthropic"));
+    }
+
+    #[test]
+    fn route_input_selects_vision_and_falls_back_when_unconfigured() {
+        let routing = deepseek_defaults();
+        let route = resolve_capability_route_from_config(
+            &routing,
+            CapabilityRouteInput {
+                intent: crate::ai_types::AgentIntent::VisionChat,
+                context_tokens: 1_000,
+                has_images: true,
+                needs_tools: false,
+                needs_reasoning: false,
+                privacy_preference: PrivacyPreference::ExternalAllowed,
+            },
+        )
+        .expect("route");
+
+        assert_eq!(route.summary.slot, crate::ai_types::CapabilitySlot::Fast);
+        assert!(route.summary.degraded);
+        assert_eq!(
+            route.summary.fallback_chain,
+            vec![
+                crate::ai_types::CapabilitySlot::Vision,
+                crate::ai_types::CapabilitySlot::Fast
+            ]
+        );
     }
 }

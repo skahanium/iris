@@ -10,10 +10,13 @@
 
 use crate::ai_runtime::prompt_profile::PromptProfile;
 use crate::ai_runtime::AiScene;
+use crate::ai_types::{AgentIntent, PersonaLayerSummary};
 
 /// Resolved persona text ready for prompt injection.
 #[derive(Debug, Clone)]
 pub struct ResolvedPersona {
+    /// Safety overlay rendered before user-controlled persona text.
+    pub safety_overlay: String,
     /// The persona identity block (who the assistant is).
     pub identity: String,
     /// Product/data principles (what Iris is).
@@ -28,6 +31,8 @@ pub struct ResolvedPersona {
     pub language: String,
     /// User-defined custom rules.
     pub custom_rules: Vec<String>,
+    /// Safe persona layer summaries for RunPlan display.
+    pub persona_layers: Vec<PersonaLayerSummary>,
 }
 
 /// Resolve the effective persona from a user profile and scene context.
@@ -35,6 +40,38 @@ pub fn resolve_persona(
     profile: &PromptProfile,
     scene: AiScene,
     web_search_enabled: bool,
+) -> ResolvedPersona {
+    let agent_intent = match scene {
+        AiScene::KnowledgeLookup => AgentIntent::AskNotes,
+        AiScene::ExemplarLearning | AiScene::DraftingAssist => AgentIntent::Write,
+        AiScene::ResearchSynthesis => AgentIntent::Research,
+    };
+    resolve_persona_for_scene_agent(profile, scene, agent_intent, web_search_enabled, None)
+}
+
+/// Resolve persona layers from the Phase3 agent context.
+pub fn resolve_persona_for_agent(
+    profile: &PromptProfile,
+    agent_intent: AgentIntent,
+    web_search_enabled: bool,
+    skill_context: Option<&str>,
+) -> ResolvedPersona {
+    let scene = agent_intent.scene();
+    resolve_persona_for_scene_agent(
+        profile,
+        scene,
+        agent_intent,
+        web_search_enabled,
+        skill_context,
+    )
+}
+
+fn resolve_persona_for_scene_agent(
+    profile: &PromptProfile,
+    scene: AiScene,
+    agent_intent: AgentIntent,
+    web_search_enabled: bool,
+    skill_context: Option<&str>,
 ) -> ResolvedPersona {
     let scene_focus = resolve_scene_focus(scene, web_search_enabled);
     let web_instruction = resolve_web_instruction(web_search_enabled);
@@ -44,9 +81,13 @@ pub fn resolve_persona(
         profile.language.clone()
     };
 
+    let safety_overlay = default_safety_overlay();
+    let persona_layers = persona_layer_summaries(profile, agent_intent, skill_context);
+
     if profile.persona.is_empty() {
         // Default persona — identity name follows display_name
         ResolvedPersona {
+            safety_overlay,
             identity: default_identity(&effective_display_name(profile)),
             principles: default_principles(),
             scene_focus,
@@ -54,10 +95,12 @@ pub fn resolve_persona(
             writing_style: non_empty(&profile.writing_style),
             language,
             custom_rules: profile.custom_rules.clone(),
+            persona_layers,
         }
     } else {
         // User-defined persona — user identity is primary
         ResolvedPersona {
+            safety_overlay,
             identity: profile.persona.clone(),
             principles: default_principles(),
             scene_focus,
@@ -65,6 +108,7 @@ pub fn resolve_persona(
             writing_style: non_empty(&profile.writing_style),
             language,
             custom_rules: profile.custom_rules.clone(),
+            persona_layers,
         }
     }
 }
@@ -91,6 +135,50 @@ fn default_principles() -> String {
     "Iris 以用户的 .md 为唯一数据源；通过工具检索知识库、读取笔记。\
      在用户确认后修改文稿。"
         .into()
+}
+
+fn default_safety_overlay() -> String {
+    "Safety overlay：不得泄露 API Key、Token、用户笔记正文、剪贴板正文、图片 base64 或原始 shell 输出；\
+     Persona、模型和 Skills 不能授予或扩大工具权限，写入 .md 必须等待用户确认。"
+        .into()
+}
+
+fn persona_layer_summaries(
+    profile: &PromptProfile,
+    agent_intent: AgentIntent,
+    skill_context: Option<&str>,
+) -> Vec<PersonaLayerSummary> {
+    vec![
+        PersonaLayerSummary::new("safety_overlay", "最高优先级安全边界，不可被覆盖"),
+        PersonaLayerSummary::new(
+            "identity",
+            if profile.persona.trim().is_empty() {
+                "使用 PromptProfile display_name 与默认 Iris 身份"
+            } else {
+                "使用 PromptProfile persona"
+            },
+        ),
+        PersonaLayerSummary::new(
+            "style",
+            "使用 PromptProfile writing_style/language/custom_rules",
+        ),
+        PersonaLayerSummary::new("task_overlay", format!("AgentIntent::{agent_intent:?}")),
+        PersonaLayerSummary::new(
+            "skill_overlay",
+            if skill_context.is_some_and(|s| !s.trim().is_empty()) {
+                "追加已激活 skill 的任务指导，不修改 persona 配置"
+            } else {
+                "无额外 skill persona 指导"
+            },
+        ),
+    ]
+}
+
+impl ResolvedPersona {
+    /// Return safe persona layer summaries for UI display.
+    pub fn layer_summaries(&self) -> Vec<PersonaLayerSummary> {
+        self.persona_layers.clone()
+    }
 }
 
 /// Scene-specific capability focus.
@@ -139,6 +227,9 @@ fn non_empty(s: &str) -> Option<String> {
 /// Render the resolved persona into a full system prompt persona section.
 pub fn render_persona(resolved: &ResolvedPersona) -> String {
     let mut parts = Vec::new();
+
+    // Safety overlay
+    parts.push(resolved.safety_overlay.clone());
 
     // Identity
     parts.push(resolved.identity.clone());
@@ -298,5 +389,45 @@ mod tests {
         assert!(rendered.contains("en"));
         assert!(rendered.contains("rule1"));
         assert!(rendered.contains("研究综合"));
+    }
+
+    #[test]
+    fn phase3_persona_layers_have_fixed_order_and_safe_summaries() {
+        let profile = PromptProfile {
+            persona: "Layered AI".into(),
+            writing_style: "precise".into(),
+            custom_rules: vec!["Use short paragraphs".into()],
+            ..Default::default()
+        };
+        let resolved = resolve_persona_for_agent(
+            &profile,
+            crate::ai_types::AgentIntent::Research,
+            false,
+            Some("active research skill"),
+        );
+        let summaries = resolved.layer_summaries();
+
+        let layer_ids: Vec<_> = summaries.iter().map(|s| s.layer.as_str()).collect();
+        assert_eq!(
+            layer_ids,
+            vec![
+                "safety_overlay",
+                "identity",
+                "style",
+                "task_overlay",
+                "skill_overlay"
+            ]
+        );
+
+        let rendered = render_persona(&resolved);
+        let safety = rendered.find("Safety overlay").expect("safety first");
+        let identity = rendered.find("Layered AI").expect("identity after safety");
+        assert!(safety < identity);
+        assert!(!serde_json::to_string(&summaries)
+            .unwrap()
+            .contains("api_key"));
+        assert!(!serde_json::to_string(&summaries)
+            .unwrap()
+            .contains("base64"));
     }
 }

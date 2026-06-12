@@ -16,6 +16,9 @@ import type {
   OrganizeExecuteResult,
   ResearchExecuteResult,
   ResearchProgressEvent,
+  BlockedCapabilitySummary,
+  SkillCompatibilitySource,
+  SkillRuntimeCapability,
   WritingExecuteResult,
 } from "@/types/ai";
 import type {
@@ -621,13 +624,33 @@ export interface SkillListEntryDto {
   content_hash?: string;
   capability_preview?: {
     requested_tools?: string[];
+    requested_capabilities?: SkillRuntimeCapability[];
     confirmation_required_tools?: string[];
     unrecognized_tools?: string[];
     missing_deps?: string[];
+    blocked_capabilities?: BlockedCapabilitySummary[];
+    compatibility_source?: SkillCompatibilitySource;
+    compatibility_warnings?: string[];
+    resource_status?: Array<{
+      relative_path: string;
+      kind: string;
+      available: boolean;
+      size_bytes?: number | null;
+      truncated: boolean;
+      reason?: string | null;
+    }>;
     allows_script_execution?: boolean;
     script_policy?: string;
     [key: string]: unknown;
   };
+  lastMatchedAt?: string | null;
+  lastUsedAt?: string | null;
+  lastActivationScore?: number | null;
+  lastBlockedReason?: string | null;
+  lastResourceStatus?: string | null;
+  requestedCapabilities?: SkillRuntimeCapability[];
+  blockedCapabilities?: BlockedCapabilitySummary[];
+  compatibilityWarnings?: string[];
   availability: "available" | "partial" | "unavailable" | "disabled" | string;
 }
 

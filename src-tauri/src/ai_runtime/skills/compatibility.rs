@@ -1,0 +1,136 @@
+use crate::ai_runtime::tool_catalog::catalog_find;
+use crate::ai_types::{
+    BlockedCapabilitySummary, SkillCapabilitySupportStatus, SkillRuntimeCapability,
+};
+
+use super::SkillEntry;
+
+/// Normalize external tool/capability names used by Iris, Claude, and Hermes skills.
+pub fn normalize_external_capability(raw: &str) -> String {
+    raw.trim()
+        .trim_matches('`')
+        .replace([' ', '-'], "_")
+        .to_lowercase()
+}
+
+/// Map a requested tool/capability to an Iris support status.
+pub fn support_status_for_capability(raw: &str) -> SkillCapabilitySupportStatus {
+    let normalized = normalize_external_capability(raw);
+    if catalog_find(&normalized).is_some() {
+        return if catalog_find(&normalized)
+            .map(|entry| entry.requires_confirmation)
+            .unwrap_or(false)
+        {
+            SkillCapabilitySupportStatus::SupportedWithConfirmation
+        } else {
+            SkillCapabilitySupportStatus::Supported
+        };
+    }
+
+    match normalized.as_str() {
+        "read" | "grep" | "glob" | "ls" | "notebookread" => SkillCapabilitySupportStatus::Supported,
+        "write" | "edit" | "notebookedit" | "multiedit" => {
+            SkillCapabilitySupportStatus::SupportedWithConfirmation
+        }
+        "webfetch" | "web_search" | "websearch" => {
+            SkillCapabilitySupportStatus::SupportedWithConfirmation
+        }
+        "bash" | "shell" | "computer" | "computer_control" => {
+            SkillCapabilitySupportStatus::BlockedByPolicy
+        }
+        "skill.execute_script_sandboxed" | "execute_script_sandboxed" => {
+            SkillCapabilitySupportStatus::BlockedByPolicy
+        }
+        "skill.install_dependency" | "install_dependency" | "dependency_install" => {
+            SkillCapabilitySupportStatus::BlockedByPolicy
+        }
+        "skill.mcp_bridge" | "mcp_bridge" => SkillCapabilitySupportStatus::Planned,
+        _ => SkillCapabilitySupportStatus::UnsupportedByProductScope,
+    }
+}
+
+/// Human-readable fallback guidance for a support status.
+pub fn fallback_guidance(raw: &str, status: SkillCapabilitySupportStatus) -> String {
+    match status {
+        SkillCapabilitySupportStatus::Supported => {
+            "This capability maps to an Iris tool and can be considered by ToolPolicy.".into()
+        }
+        SkillCapabilitySupportStatus::SupportedWithConfirmation => {
+            "This capability maps to an Iris tool, but execution requires user confirmation.".into()
+        }
+        SkillCapabilitySupportStatus::Planned => {
+            "This capability is a future extension point and is not executed in Phase4.".into()
+        }
+        SkillCapabilitySupportStatus::UnsupportedByProductScope => format!(
+            "{raw} has no supported Iris workspace capability; use Markdown-safe Iris alternatives."
+        ),
+        SkillCapabilitySupportStatus::BlockedByPolicy => {
+            "This high-risk capability is blocked by Iris policy in Phase4.".into()
+        }
+        SkillCapabilitySupportStatus::MissingUserGrant => {
+            "This capability needs a user grant before Iris can expose it.".into()
+        }
+    }
+}
+
+fn risk_level(status: SkillCapabilitySupportStatus) -> &'static str {
+    match status {
+        SkillCapabilitySupportStatus::Supported => "low",
+        SkillCapabilitySupportStatus::SupportedWithConfirmation
+        | SkillCapabilitySupportStatus::MissingUserGrant => "medium",
+        SkillCapabilitySupportStatus::Planned
+        | SkillCapabilitySupportStatus::UnsupportedByProductScope
+        | SkillCapabilitySupportStatus::BlockedByPolicy => "high",
+    }
+}
+
+/// Build blocked/degraded capability summaries for a skill.
+pub fn blocked_capabilities_for_skill(entry: &SkillEntry) -> Vec<BlockedCapabilitySummary> {
+    let mut blocked = Vec::new();
+    for tool in &entry.allowed_tools {
+        let status = support_status_for_capability(tool);
+        if matches!(
+            status,
+            SkillCapabilitySupportStatus::Planned
+                | SkillCapabilitySupportStatus::UnsupportedByProductScope
+                | SkillCapabilitySupportStatus::BlockedByPolicy
+                | SkillCapabilitySupportStatus::MissingUserGrant
+        ) {
+            blocked.push(BlockedCapabilitySummary {
+                skill_name: entry.name.clone(),
+                capability: tool.clone(),
+                status,
+                risk_level: risk_level(status).into(),
+                permission: catalog_find(&normalize_external_capability(tool))
+                    .map(|tool| tool.access_level),
+                fallback_guidance: fallback_guidance(tool, status),
+            });
+        }
+    }
+    for capability in entry.requested_capabilities() {
+        let raw = capability.as_str();
+        let status = match capability {
+            SkillRuntimeCapability::ReadResource
+            | SkillRuntimeCapability::WriteStorage
+            | SkillRuntimeCapability::RequestCapabilities => {
+                SkillCapabilitySupportStatus::Supported
+            }
+            SkillRuntimeCapability::ExecuteScriptSandboxed
+            | SkillRuntimeCapability::InstallDependency => {
+                SkillCapabilitySupportStatus::BlockedByPolicy
+            }
+            SkillRuntimeCapability::McpBridge => SkillCapabilitySupportStatus::Planned,
+        };
+        if !matches!(status, SkillCapabilitySupportStatus::Supported) {
+            blocked.push(BlockedCapabilitySummary {
+                skill_name: entry.name.clone(),
+                capability: raw.into(),
+                status,
+                risk_level: risk_level(status).into(),
+                permission: None,
+                fallback_guidance: fallback_guidance(raw, status),
+            });
+        }
+    }
+    blocked
+}

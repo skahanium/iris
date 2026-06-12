@@ -22,6 +22,11 @@ AssistantTaskSurfaces
 getNoteContent: () => string
 parseMentionTokens
 assistantExecute(
+agentIntent
+RunPlanSummary
+RunPlanDrawer
+runPlanSummary
+intentDetection
 CitationCheckView
 data-testid="research-focus"
 ResearchFocusView

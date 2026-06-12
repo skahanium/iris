@@ -1,14 +1,11 @@
-import { AlertTriangle } from "lucide-react";
 import { useCallback, useRef, useState } from "react";
 
 import { AssistantPanelHeader } from "@/components/ai/AssistantPanelHeader";
 import { AuditTrailDrawer } from "@/components/ai/AuditTrailDrawer";
 import { AiComposer } from "@/components/ui/ai-composer";
-import { Button } from "@/components/ui/button";
 import { usePromptProfile } from "@/hooks/usePromptProfile";
 import { useAssistantLlmStream } from "@/hooks/useAssistantLlmStream";
 import { resolveAiSceneForIntent } from "@/lib/assistant-scene";
-import type { AiScene } from "@/types/ai";
 import { harnessAbort } from "@/lib/ipc";
 import type {
   AssistantActionState,
@@ -39,6 +36,8 @@ import { ContextScopeChips } from "./ContextScopeChips";
 import { AssistantTaskSurfaces } from "./AssistantTaskSurfaces";
 import { RuleConfirmDialog } from "./RuleConfirmDialog";
 import { ToolConfirmDialog } from "./ToolConfirmDialog";
+import { useAssistantRunPlan } from "./hooks/useAssistantRunPlan";
+import { AssistantErrorRecovery } from "./AssistantErrorRecovery";
 
 export interface AssistantSelectionQuote {
   filePath: string;
@@ -90,8 +89,8 @@ export function UnifiedAssistantPanel({
   const requestIdRef = useRef<string | null>(null);
   const [harnessRequestId, setHarnessRequestId] = useState<string | null>(null);
   const [auditDrawerOpen, setAuditDrawerOpen] = useState(false);
+  const runPlan = useAssistantRunPlan();
   const assistantRun = useAssistantRun("chat");
-  const chromeActionsDisabled = streaming;
   const clearResearchProgressRef = useRef<(() => void) | null>(null);
   const panelSendActiveRef = useRef(false);
   const forceNewSessionRef = useRef(false);
@@ -315,6 +314,7 @@ export function UnifiedAssistantPanel({
     setResearchPanelExpanded,
     setResearchResult,
     setResearchRunning,
+    runPlanControls: runPlan,
     setSessionId,
     setSessionTokenUsage,
     setStreaming,
@@ -339,16 +339,14 @@ export function UnifiedAssistantPanel({
     );
   }, []);
 
-  const activeScene: AiScene = resolveAiSceneForIntent(actionState.intent);
-
   return (
     <div
       className="ai-sidecar flex h-full flex-col bg-ai-workspace"
       data-testid="unified-assistant-panel"
     >
       <AssistantPanelHeader
-        activeScene={activeScene}
-        chromeActionsDisabled={chromeActionsDisabled}
+        activeScene={resolveAiSceneForIntent(actionState.intent)}
+        chromeActionsDisabled={streaming}
         currentSessionId={sessionId}
         harnessRequestId={harnessRequestId}
         notePath={notePath}
@@ -360,6 +358,8 @@ export function UnifiedAssistantPanel({
         webSearch={webSearch}
       />
 
+      {runPlan.layer}
+
       <ContextPacketDrawer
         open={packetsOpen}
         onOpenChange={setPacketsOpen}
@@ -370,26 +370,12 @@ export function UnifiedAssistantPanel({
         citationMiss={citationMiss}
       />
 
-      {lastError ? (
-        <div className="space-y-2 px-3 pt-3">
-          <div className="flex items-start gap-2 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-destructive">
-            <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-            <span>{lastError}</span>
-          </div>
-          {harnessRequestId ? (
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              className="h-7 text-xs"
-              disabled={chromeActionsDisabled}
-              onClick={() => void handleHarnessResume()}
-            >
-              从 checkpoint 恢复 Agent
-            </Button>
-          ) : null}
-        </div>
-      ) : null}
+      <AssistantErrorRecovery
+        disabled={streaming}
+        harnessRequestId={harnessRequestId}
+        lastError={lastError}
+        onResume={() => void handleHarnessResume()}
+      />
 
       <AssistantTaskSurfaces
         researchProgress={researchProgress}

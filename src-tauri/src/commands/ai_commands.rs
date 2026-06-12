@@ -22,6 +22,7 @@ use std::sync::Arc;
 
 use crate::app::AppState;
 use crate::error::{AppError, AppResult};
+use crate::llm::config::ResolvedLlmConfig;
 use crate::storage::paths::is_user_note_path;
 use tauri::{Emitter, State};
 use tracing::info;
@@ -193,6 +194,14 @@ pub async fn context_assemble(
 }
 
 /// Send an AI message with full LLM pipeline (shared by IPC and assistant facade).
+#[derive(Debug, Clone)]
+pub(crate) struct AiSendRoutingOverride {
+    pub resolved: ResolvedLlmConfig,
+    pub slot: crate::ai_types::CapabilitySlot,
+    pub skill_activation_plan: Option<crate::ai_types::SkillActivationPlanSummary>,
+}
+
+/// Send an AI message with full LLM pipeline (shared by IPC and assistant facade).
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn execute_ai_send_message(
     state: &AppState,
@@ -205,6 +214,37 @@ pub(crate) async fn execute_ai_send_message(
     context_scope: Option<ContextScopeDto>,
     web_search: Option<bool>,
     new_session: Option<bool>,
+) -> AppResult<serde_json::Value> {
+    execute_ai_send_message_with_routing(
+        state,
+        app_handle,
+        scene,
+        session_id,
+        message,
+        selected_packet_ids,
+        note_path,
+        context_scope,
+        web_search,
+        new_session,
+        None,
+    )
+    .await
+}
+
+/// Send an AI message using an already resolved capability route.
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn execute_ai_send_message_with_routing(
+    state: &AppState,
+    app_handle: &tauri::AppHandle,
+    scene: String,
+    session_id: Option<i64>,
+    message: String,
+    selected_packet_ids: Option<Vec<String>>,
+    note_path: Option<String>,
+    context_scope: Option<ContextScopeDto>,
+    web_search: Option<bool>,
+    new_session: Option<bool>,
+    routing_override: Option<AiSendRoutingOverride>,
 ) -> AppResult<serde_json::Value> {
     validate_ai_note_path(note_path.as_deref())?;
 
@@ -286,7 +326,15 @@ pub(crate) async fn execute_ai_send_message(
             .unwrap_or(None),
         None => None,
     };
-    let resolved = crate::llm::config::resolve_for_scene(&state.db, scene)?;
+    let route_slot = routing_override.as_ref().map(|route| route.slot);
+    let skill_activation_plan = routing_override
+        .as_ref()
+        .and_then(|route| route.skill_activation_plan.clone());
+    let resolved = if let Some(route) = routing_override {
+        route.resolved
+    } else {
+        crate::llm::config::resolve_for_scene(&state.db, scene)?
+    };
     let build_opts = ContextBuildOptions {
         max_results: max_results_from_budget(
             resolved.input_budget,
@@ -345,7 +393,11 @@ pub(crate) async fn execute_ai_send_message(
         .map(|m| (m.role.clone(), m.content.clone()))
         .collect();
 
-    let provider_config = resolved.to_provider_config(scene);
+    let provider_config = if let Some(slot) = route_slot {
+        resolved.to_provider_config_for_slot(slot)
+    } else {
+        resolved.to_provider_config(scene)
+    };
     let provider_name = provider_config.name.clone();
 
     TraceRecorder::update_status(&state.db, &request_id, TraceStatus::ContextAssembled)?;
@@ -368,6 +420,7 @@ pub(crate) async fn execute_ai_send_message(
             resume_from_checkpoint: false,
             token_budget: None,
             max_rounds_override: None,
+            skill_activation_plan,
         },
         provider_config,
         Some(resolved.output_budget),
@@ -382,7 +435,7 @@ pub(crate) async fn execute_ai_send_message(
             state,
             &request_id,
             sid,
-            scene,
+            route_slot.unwrap_or_else(|| ModelGateway::slot_for_scene(scene)),
             &provider_name,
             &harness_result,
             &filtered_packets,
@@ -451,7 +504,7 @@ fn finalize_chat_harness_run(
     state: &AppState,
     request_id: &str,
     session_id: i64,
-    scene: AiScene,
+    capability_slot: crate::ai_types::CapabilitySlot,
     provider_name: &str,
     harness_result: &crate::ai_runtime::harness::HarnessRunResult,
     filtered_packets: &[crate::ai_runtime::ContextPacket],
@@ -483,7 +536,7 @@ fn finalize_chat_harness_run(
         &state.db,
         request_id,
         TraceStatus::Completed,
-        Some(&format!("{:?}", ModelGateway::slot_for_scene(scene))),
+        Some(&format!("{capability_slot:?}")),
         Some(provider_name),
         Some(
             &harness_result
@@ -556,7 +609,7 @@ pub async fn tool_confirm(
                 state.inner(),
                 &request_id,
                 harness_result.session_id,
-                scene,
+                ModelGateway::slot_for_scene(scene),
                 &resolved.to_provider_config(scene).name,
                 &harness_result,
                 &harness_result.evidence_packets,
@@ -620,7 +673,7 @@ pub async fn tool_confirm(
             state.inner(),
             &request_id,
             harness_result.session_id,
-            scene,
+            ModelGateway::slot_for_scene(scene),
             &resolved.to_provider_config(scene).name,
             &harness_result,
             &harness_result.evidence_packets,
@@ -1041,7 +1094,7 @@ pub async fn harness_resume(
             state.inner(),
             &request_id,
             harness_result.session_id,
-            scene,
+            ModelGateway::slot_for_scene(scene),
             &resolved.to_provider_config(scene).name,
             &harness_result,
             &harness_result.evidence_packets,

@@ -53,6 +53,378 @@ impl AiScene {
     }
 }
 
+// ─── Phase 2 Agent Intent ────────────────────────────────
+
+/// User-facing Phase 2 assistant intent.
+///
+/// This replaces visible scene selection while keeping [`AiScene`] as an
+/// internal compatibility layer for existing workflows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentIntent {
+    /// General conversation with no stronger task signal.
+    Chat,
+    /// Ask questions over local notes or scoped vault context.
+    AskNotes,
+    /// Rewrite, summarize, translate, or otherwise transform selected text.
+    RewriteSelection,
+    /// Write or continue content in the current note without a fixed selection.
+    Write,
+    /// Multi-evidence research and synthesis.
+    Research,
+    /// Organize titles, tags, folders, links, or corpus membership.
+    Organize,
+    /// Check claims and citation coverage.
+    CitationCheck,
+    /// Chapter-level writing or restructuring.
+    Chapter,
+    /// Whole-document checks such as outline, citation gaps, or style.
+    DocumentCheck,
+    /// Image-aware chat path, with safe fallback to chat.
+    VisionChat,
+    /// Natural-language skill install, update, toggle, or diagnostic request.
+    SkillManagement,
+}
+
+impl AgentIntent {
+    /// Map legacy frontend assistant intent strings to Phase 2 intents.
+    pub fn from_legacy_assistant_intent(value: &str) -> Self {
+        match value {
+            "knowledge" => AgentIntent::AskNotes,
+            "writing" => AgentIntent::RewriteSelection,
+            "citation" => AgentIntent::CitationCheck,
+            "organize" => AgentIntent::Organize,
+            "research" => AgentIntent::Research,
+            "chapter" => AgentIntent::Chapter,
+            "document" => AgentIntent::DocumentCheck,
+            "chat" => AgentIntent::Chat,
+            _ => AgentIntent::Chat,
+        }
+    }
+}
+
+/// Explainable intent detection metadata passed from the UI to the harness.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct IntentDetectionSummary {
+    pub detected_intent: AgentIntent,
+    pub confidence: f64,
+    pub reason: String,
+    pub alternatives: Vec<AgentIntent>,
+    pub fallback_behavior: String,
+    pub source_hints: Vec<String>,
+}
+
+/// Skill manifest compatibility source.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SkillCompatibilitySource {
+    Iris,
+    Claude,
+    Hermes,
+    #[default]
+    Unknown,
+}
+
+/// Runtime capability a skill may declare for preflight.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum SkillRuntimeCapability {
+    #[serde(rename = "skill.read_resource")]
+    ReadResource,
+    #[serde(rename = "skill.write_storage")]
+    WriteStorage,
+    #[serde(rename = "skill.request_capabilities")]
+    RequestCapabilities,
+    #[serde(rename = "skill.execute_script_sandboxed")]
+    ExecuteScriptSandboxed,
+    #[serde(rename = "skill.install_dependency")]
+    InstallDependency,
+    #[serde(rename = "skill.mcp_bridge")]
+    McpBridge,
+}
+
+impl SkillRuntimeCapability {
+    /// Parse a manifest capability string.
+    pub fn parse(value: &str) -> Option<Self> {
+        match value.trim() {
+            "skill.read_resource" | "read_resource" => Some(Self::ReadResource),
+            "skill.write_storage" | "write_storage" => Some(Self::WriteStorage),
+            "skill.request_capabilities" | "request_capabilities" => {
+                Some(Self::RequestCapabilities)
+            }
+            "skill.execute_script_sandboxed" | "execute_script_sandboxed" => {
+                Some(Self::ExecuteScriptSandboxed)
+            }
+            "skill.install_dependency" | "install_dependency" => Some(Self::InstallDependency),
+            "skill.mcp_bridge" | "mcp_bridge" => Some(Self::McpBridge),
+            _ => None,
+        }
+    }
+
+    /// Stable manifest string.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::ReadResource => "skill.read_resource",
+            Self::WriteStorage => "skill.write_storage",
+            Self::RequestCapabilities => "skill.request_capabilities",
+            Self::ExecuteScriptSandboxed => "skill.execute_script_sandboxed",
+            Self::InstallDependency => "skill.install_dependency",
+            Self::McpBridge => "skill.mcp_bridge",
+        }
+    }
+}
+
+/// Support status for a requested skill capability.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SkillCapabilitySupportStatus {
+    Supported,
+    SupportedWithConfirmation,
+    Planned,
+    UnsupportedByProductScope,
+    BlockedByPolicy,
+    MissingUserGrant,
+}
+
+/// Resource metadata safe for UI and audit summaries.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillResourceStatusSummary {
+    pub relative_path: String,
+    pub kind: String,
+    pub available: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub size_bytes: Option<u64>,
+    pub truncated: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+}
+
+/// Safe summary for a blocked or degraded skill capability.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BlockedCapabilitySummary {
+    pub skill_name: String,
+    pub capability: String,
+    pub status: SkillCapabilitySupportStatus,
+    pub risk_level: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub permission: Option<ToolAccessLevel>,
+    pub fallback_guidance: String,
+}
+
+/// Per-skill activation metadata safe for Run Plan display.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillActivationItemSummary {
+    pub name: String,
+    pub scope: String,
+    pub score: f64,
+    pub match_reason: String,
+    pub injected_sections: Vec<String>,
+    pub requested_tools: Vec<String>,
+    pub requested_capabilities: Vec<SkillRuntimeCapability>,
+    pub confirmation_required_tools: Vec<String>,
+    pub resources: Vec<SkillResourceStatusSummary>,
+    pub blocked_capabilities: Vec<BlockedCapabilitySummary>,
+    pub compatibility_source: SkillCompatibilitySource,
+}
+
+/// Per-run skill activation plan safe for UI display.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillActivationPlanSummary {
+    pub activated_skills: Vec<SkillActivationItemSummary>,
+    pub requested_tools: Vec<String>,
+    pub requested_capabilities: Vec<SkillRuntimeCapability>,
+    pub confirmation_required_tools: Vec<String>,
+    pub blocked_capabilities: Vec<BlockedCapabilitySummary>,
+    pub skill_overlay_summary: String,
+    pub degraded: bool,
+}
+
+impl SkillActivationPlanSummary {
+    /// Tool allowlist produced by activated skills.
+    pub fn allowed_tools(&self) -> Vec<String> {
+        self.requested_tools.clone()
+    }
+}
+
+/// Safe audit summary for Run Plan display.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentAuditSummary {
+    pub tool_events: u32,
+    pub confirmed_tools: u32,
+    pub denied_tools: u32,
+    pub sanitized: bool,
+}
+
+/// Safe permission preflight metadata for the assistant response.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PermissionPreflightSummary {
+    pub summary: String,
+    pub required_confirmations: Vec<String>,
+    pub blocked_capabilities: Vec<BlockedCapabilitySummary>,
+    pub missing_user_grants: Vec<String>,
+    pub exposed_tools: Vec<String>,
+    pub degraded: bool,
+}
+
+/// Minimal run-plan summary that is safe for UI display.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentRunPlanSummary {
+    pub request_id: String,
+    pub detected_intent: AgentIntent,
+    pub legacy_scene: AiScene,
+    pub context_summary: Vec<String>,
+    pub tool_summary: String,
+    pub permission_summary: String,
+    pub progress_state: String,
+    pub blocked_reasons: Vec<String>,
+    pub degraded: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_route: Option<CapabilityRouteSummary>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub persona_layers: Vec<PersonaLayerSummary>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub skill_activation_plan: Option<SkillActivationPlanSummary>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub blocked_capabilities: Vec<BlockedCapabilitySummary>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub audit_summary: Option<AgentAuditSummary>,
+}
+
+impl AgentRunPlanSummary {
+    /// Build a summary from metadata only; never include note bodies or secrets.
+    pub fn for_intent(
+        request_id: String,
+        detected_intent: AgentIntent,
+        legacy_scene: AiScene,
+        context_summary: Vec<String>,
+        tool_summary: String,
+    ) -> Self {
+        Self {
+            request_id,
+            detected_intent,
+            legacy_scene,
+            context_summary,
+            tool_summary,
+            permission_summary: "按当前 ToolPolicy 预检；需要确认的工具会暂停等待用户决定".into(),
+            progress_state: "completed".into(),
+            blocked_reasons: Vec::new(),
+            degraded: false,
+            model_route: None,
+            persona_layers: Vec::new(),
+            skill_activation_plan: None,
+            blocked_capabilities: Vec::new(),
+            audit_summary: None,
+        }
+    }
+
+    /// Attach execution state derived from the harness result.
+    pub fn with_execution_state(
+        mut self,
+        progress_state: impl Into<String>,
+        permission_summary: String,
+        blocked_reasons: Vec<String>,
+        degraded: bool,
+    ) -> Self {
+        self.progress_state = progress_state.into();
+        self.permission_summary = permission_summary;
+        self.blocked_reasons = blocked_reasons;
+        self.degraded = degraded;
+        self
+    }
+
+    /// Attach the selected model route summary without exposing credentials.
+    pub fn with_model_route(mut self, model_route: CapabilityRouteSummary) -> Self {
+        self.model_route = Some(model_route);
+        self
+    }
+
+    /// Attach prompt persona layer summaries without rendering sensitive prompt bodies.
+    pub fn with_persona_layers(mut self, persona_layers: Vec<PersonaLayerSummary>) -> Self {
+        self.persona_layers = persona_layers;
+        self
+    }
+
+    /// Attach the per-run skill activation plan.
+    pub fn with_skill_activation_plan(mut self, plan: SkillActivationPlanSummary) -> Self {
+        self.degraded = self.degraded || plan.degraded;
+        self.blocked_capabilities
+            .extend(plan.blocked_capabilities.clone());
+        self.skill_activation_plan = Some(plan);
+        self
+    }
+
+    /// Attach blocked capability summaries not owned by one plan.
+    pub fn with_blocked_capabilities(mut self, blocked: Vec<BlockedCapabilitySummary>) -> Self {
+        self.degraded = self.degraded || !blocked.is_empty();
+        self.blocked_capabilities.extend(blocked);
+        self
+    }
+
+    /// Attach safe audit summary metadata.
+    pub fn with_audit_summary(mut self, audit_summary: AgentAuditSummary) -> Self {
+        self.audit_summary = Some(audit_summary);
+        self
+    }
+}
+
+/// Provider API family used by the model gateway adapter layer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EndpointFamily {
+    OpenAiCompatibleChatCompletions,
+    AnthropicMessages,
+    OllamaChat,
+    ResponsesReserved,
+}
+
+/// Capability probe strategy used by settings and run-plan summaries.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ProbeStrategy {
+    OpenAiModelsThenChat,
+    AnthropicMessagesPing,
+    OllamaTagsThenChat,
+    StaticOnly,
+}
+
+/// Safe, explainable model routing metadata for the Run Plan UI.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CapabilityRouteSummary {
+    pub slot: CapabilitySlot,
+    pub provider_id: String,
+    pub model: String,
+    pub fallback_chain: Vec<CapabilitySlot>,
+    pub reason: String,
+    pub probe_status: String,
+    pub degraded: bool,
+}
+
+/// Safe prompt-persona layer metadata for the Run Plan UI.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PersonaLayerSummary {
+    pub layer: String,
+    pub summary: String,
+}
+
+impl PersonaLayerSummary {
+    /// Construct a safe persona layer summary.
+    pub fn new(layer: impl Into<String>, summary: impl Into<String>) -> Self {
+        Self {
+            layer: layer.into(),
+            summary: summary.into(),
+        }
+    }
+}
+
 // ─── Autonomy Level ──────────────────────────────────────
 
 /// 工具自治等级。等级越高，Agent 自主决策空间越大。
@@ -257,6 +629,7 @@ pub enum ToolAccessLevel {
     WriteMarkdown,
     WriteSettings,
     /// Install / uninstall / toggle agent skills.
+    #[serde(rename = "manage_skills")]
     ManageSkills,
 }
 
@@ -742,6 +1115,8 @@ pub enum CapabilitySlot {
     Writer,
     Reasoner,
     LongContext,
+    Vision,
+    AgentTools,
     Embedding,
     Reranker,
     LocalPrivate,
@@ -755,6 +1130,12 @@ pub struct ProviderConfig {
     pub api_key: Option<String>,
     pub model: String,
     pub slot: CapabilitySlot,
+    #[serde(default = "default_endpoint_family")]
+    pub endpoint_family: EndpointFamily,
+}
+
+fn default_endpoint_family() -> EndpointFamily {
+    EndpointFamily::OpenAiCompatibleChatCompletions
 }
 
 /// LLM 对话消息角色。
@@ -879,5 +1260,142 @@ pub trait EmbedBackend: Send + Sync {
     /// Batch-embed multiple texts (default: sequential calls to [`embed`]).
     fn embed_batch(&self, texts: &[&str]) -> Result<Vec<Vec<f32>>, String> {
         texts.iter().map(|t| self.embed(t)).collect()
+    }
+}
+
+#[cfg(test)]
+mod phase2_agent_intent_tests {
+    use super::*;
+
+    #[test]
+    fn agent_intent_legacy_mapping_keeps_old_assistant_values_compatible() {
+        assert_eq!(
+            AgentIntent::from_legacy_assistant_intent("knowledge"),
+            AgentIntent::AskNotes
+        );
+        assert_eq!(
+            AgentIntent::from_legacy_assistant_intent("writing"),
+            AgentIntent::RewriteSelection
+        );
+        assert_eq!(
+            AgentIntent::from_legacy_assistant_intent("citation"),
+            AgentIntent::CitationCheck
+        );
+        assert_eq!(
+            AgentIntent::from_legacy_assistant_intent("document"),
+            AgentIntent::DocumentCheck
+        );
+        assert_eq!(
+            AgentIntent::from_legacy_assistant_intent("unknown"),
+            AgentIntent::Chat
+        );
+    }
+
+    #[test]
+    fn run_plan_summary_does_not_store_sensitive_content_fields() {
+        let summary = AgentRunPlanSummary::for_intent(
+            "req-1".to_string(),
+            AgentIntent::AskNotes,
+            AiScene::KnowledgeLookup,
+            vec!["当前笔记".to_string()],
+            "读取当前笔记摘要，必要时检索知识库".to_string(),
+        );
+
+        let json = serde_json::to_string(&summary).unwrap();
+        assert!(json.contains("ask_notes"));
+        assert!(!json.contains("note_content"));
+        assert!(!json.contains("api_key"));
+        assert!(!json.contains("base64"));
+        assert!(!json.contains("clipboard"));
+    }
+
+    #[test]
+    fn run_plan_summary_uses_harness_status_and_permission_state() {
+        let summary = AgentRunPlanSummary::for_intent(
+            "req-2".to_string(),
+            AgentIntent::Chat,
+            AiScene::KnowledgeLookup,
+            vec!["无额外上下文".to_string()],
+            "chat tools".to_string(),
+        )
+        .with_execution_state(
+            "pending_confirmation",
+            "等待工具确认".to_string(),
+            vec!["shell tool needs approval".to_string()],
+            true,
+        );
+
+        assert_eq!(summary.progress_state, "pending_confirmation");
+        assert_eq!(summary.permission_summary, "等待工具确认");
+        assert_eq!(
+            summary.blocked_reasons,
+            vec!["shell tool needs approval".to_string()]
+        );
+        assert!(summary.degraded);
+    }
+}
+
+#[cfg(test)]
+mod phase3_model_persona_route_tests {
+    use super::*;
+
+    #[test]
+    fn capability_slot_serializes_all_phase3_slots() {
+        let slots = [
+            (CapabilitySlot::Fast, "fast"),
+            (CapabilitySlot::Writer, "writer"),
+            (CapabilitySlot::Reasoner, "reasoner"),
+            (CapabilitySlot::LongContext, "long_context"),
+            (CapabilitySlot::Vision, "vision"),
+            (CapabilitySlot::AgentTools, "agent_tools"),
+            (CapabilitySlot::Embedding, "embedding"),
+            (CapabilitySlot::Reranker, "reranker"),
+            (CapabilitySlot::LocalPrivate, "local_private"),
+        ];
+
+        for (slot, wire) in slots {
+            assert_eq!(serde_json::to_value(slot).unwrap(), serde_json::json!(wire));
+            assert_eq!(
+                serde_json::from_value::<CapabilitySlot>(serde_json::json!(wire)).unwrap(),
+                slot
+            );
+        }
+    }
+
+    #[test]
+    fn run_plan_summary_includes_safe_model_and_persona_metadata() {
+        let summary = AgentRunPlanSummary::for_intent(
+            "req-phase3".to_string(),
+            AgentIntent::VisionChat,
+            AiScene::KnowledgeLookup,
+            vec!["包含图片附件摘要".to_string()],
+            "工具策略不变".to_string(),
+        )
+        .with_model_route(CapabilityRouteSummary {
+            slot: CapabilitySlot::Vision,
+            provider_id: "openai".to_string(),
+            model: "gpt-4o".to_string(),
+            fallback_chain: vec![CapabilitySlot::Vision, CapabilitySlot::Fast],
+            reason: "vision_chat requires image-aware model".to_string(),
+            probe_status: "unknown".to_string(),
+            degraded: false,
+        })
+        .with_persona_layers(vec![
+            PersonaLayerSummary::new("safety_overlay", "最高优先级安全边界"),
+            PersonaLayerSummary::new("identity", "PromptProfile identity"),
+            PersonaLayerSummary::new("style", "PromptProfile style"),
+            PersonaLayerSummary::new("task_overlay", "vision_chat task guidance"),
+            PersonaLayerSummary::new("skill_overlay", "active skill guidance"),
+        ]);
+
+        let json = serde_json::to_string(&summary).unwrap();
+        assert!(json.contains("modelRoute"));
+        assert!(json.contains("personaLayers"));
+        assert!(json.contains("vision"));
+        assert!(json.contains("safety_overlay"));
+        assert!(!json.contains("api_key"));
+        assert!(!json.contains("base64"));
+        assert!(!json.contains("clipboard"));
+        assert!(!json.contains("note_content"));
     }
 }

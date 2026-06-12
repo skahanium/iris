@@ -5,6 +5,9 @@ type AssistantRouteInput = {
   hasSelection: boolean;
   notePath: string | null;
   explicitScope: boolean;
+  uiAction?: string;
+  hasImage?: boolean;
+  skillMention?: boolean;
 };
 
 async function loadRouter() {
@@ -21,6 +24,19 @@ async function route(input: Partial<AssistantRouteInput>) {
 
   expect(mod?.resolveAssistantIntent).toBeTypeOf("function");
   return mod!.resolveAssistantIntent({
+    message: "",
+    hasSelection: false,
+    notePath: null,
+    explicitScope: false,
+    ...input,
+  });
+}
+
+async function detect(input: Partial<AssistantRouteInput>) {
+  const mod = await loadRouter();
+
+  expect(mod?.detectAgentIntent).toBeTypeOf("function");
+  return mod!.detectAgentIntent({
     message: "",
     hasSelection: false,
     notePath: null,
@@ -100,5 +116,63 @@ describe("resolveAssistantIntent", () => {
         notePath: "notes/demo.md",
       }),
     ).resolves.toBe("document");
+  });
+});
+
+describe("detectAgentIntent", () => {
+  it("explains UI action priority for selection rewrite", async () => {
+    const result = await detect({
+      message: "处理一下",
+      hasSelection: true,
+      notePath: "notes/demo.md",
+      uiAction: "rewrite",
+    });
+
+    expect(result.detectedIntent).toBe("rewrite_selection");
+    expect(result.confidence).toBeGreaterThanOrEqual(0.9);
+    expect(result.sourceHints).toContain("ui_action:rewrite");
+    expect(result.reason).toContain("UI action");
+  });
+
+  it("detects note lookup as ask_notes with explanatory alternatives", async () => {
+    const result = await detect({
+      message: "帮我查一下当前库里关于向量检索的内容",
+      notePath: "notes/demo.md",
+    });
+
+    expect(result.detectedIntent).toBe("ask_notes");
+    expect(result.alternatives).toContain("chat");
+    expect(result.fallbackBehavior).toContain("chat");
+  });
+
+  it("detects the Phase2 agent intents from natural input", async () => {
+    await expect(
+      detect({ message: "研究一下 sqlite-vec 和 FTS5 的取舍" }),
+    ).resolves.toMatchObject({ detectedIntent: "research" });
+    await expect(
+      detect({ message: "帮我整理资料库的标签和标题" }),
+    ).resolves.toMatchObject({ detectedIntent: "organize" });
+    await expect(
+      detect({
+        message: "检查这一段的引用是否充分",
+        hasSelection: true,
+        notePath: "notes/demo.md",
+      }),
+    ).resolves.toMatchObject({ detectedIntent: "citation_check" });
+    await expect(
+      detect({ message: "这张图里有哪些信息？", hasImage: true }),
+    ).resolves.toMatchObject({ detectedIntent: "vision_chat" });
+    await expect(
+      detect({ message: "安装这个 skill", skillMention: true }),
+    ).resolves.toMatchObject({ detectedIntent: "skill_management" });
+  });
+
+  it("uses low-confidence chat fallback without exposing a scene selector", async () => {
+    const result = await detect({ message: "随便聊聊" });
+
+    expect(result.detectedIntent).toBe("chat");
+    expect(result.confidence).toBeLessThan(0.7);
+    expect(result.fallbackBehavior).toContain("suggest");
+    expect(result.reason).not.toContain("scene selector");
   });
 });

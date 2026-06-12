@@ -13,6 +13,8 @@ use crate::error::{AppError, AppResult};
 
 #[path = "skills/activation.rs"]
 mod activation_impl;
+#[path = "skills/compatibility.rs"]
+mod compatibility_impl;
 #[path = "skills/frontmatter.rs"]
 mod frontmatter_impl;
 #[path = "skills/legacy.rs"]
@@ -31,9 +33,13 @@ mod scan_impl;
 mod validation_impl;
 
 pub use activation_impl::{
-    active_skill_allowed_tools, active_skills_for_prompt, enrich_list_with_scene,
-    load_activation_index, rank_skills_for_scene, rank_skills_for_scene_with_index,
-    rerank_skills_with_vectors, skills_for_scene,
+    active_skill_allowed_tools, active_skills_for_prompt, build_skill_activation_plan,
+    enrich_list_with_scene, load_activation_index, rank_skills_for_scene,
+    rank_skills_for_scene_with_index, rerank_skills_with_vectors, skills_for_scene,
+};
+pub use compatibility_impl::{
+    blocked_capabilities_for_skill, fallback_guidance, normalize_external_capability,
+    support_status_for_capability,
 };
 use frontmatter_impl::parse_frontmatter;
 pub use legacy_impl::{is_legacy_format, migrate_legacy_skill};
@@ -717,7 +723,7 @@ Large instruction body."#,
     }
 
     #[test]
-    fn unrecognized_tool_is_invalid() {
+    fn unrecognized_tool_is_partial_diagnostic_not_invalid() {
         let entry = SkillEntry {
             name: "test".into(),
             description: "Valid desc".into(),
@@ -732,12 +738,10 @@ Large instruction body."#,
             file_path: "/test".into(),
             legacy_trigger: None,
         };
-        assert!(matches!(
-            entry.validation_status(),
-            SkillValidationStatus::Invalid(_)
-        ));
+        assert_eq!(entry.validation_status(), SkillValidationStatus::Valid);
         assert!(!entry.all_allowed_tools_recognized());
         assert_eq!(entry.unrecognized_tools(), vec!["nonexistent_tool"]);
+        assert_eq!(entry.blocked_capabilities().len(), 1);
     }
 
     #[test]
@@ -1126,25 +1130,23 @@ description: Already new format
     }
 
     #[test]
-    fn read_skill_resource_allows_references_only() {
+    fn read_skill_resource_allows_declared_resource_dirs_only() {
         let dir = tempfile::tempdir().unwrap();
         let vault = dir.path().join("vault");
         let skill_root = vault.join(".iris/skills/my-skill");
-        let ref_dir = skill_root.join("references");
-        std::fs::create_dir_all(&ref_dir).unwrap();
-        std::fs::write(ref_dir.join("guide.md"), "guide body").unwrap();
+        for dir in ["references", "resources", "scripts"] {
+            std::fs::create_dir_all(skill_root.join(dir)).unwrap();
+        }
+        std::fs::write(skill_root.join("references/guide.md"), "guide body").unwrap();
+        std::fs::write(skill_root.join("resources/data.md"), "resource body").unwrap();
+        std::fs::write(skill_root.join("scripts/tool.sh"), "script body").unwrap();
         std::fs::write(skill_root.join("SKILL.md"), "# Skill").unwrap();
+        let read = |path| read_skill_resource(&vault, "my-skill", SkillScope::Vault, path);
 
-        let content =
-            read_skill_resource(&vault, "my-skill", SkillScope::Vault, "references/guide.md")
-                .expect("should read reference");
-        assert_eq!(content, "guide body");
-
-        assert!(
-            read_skill_resource(&vault, "my-skill", SkillScope::Vault, "../SKILL.md",).is_err()
-        );
-        assert!(
-            read_skill_resource(&vault, "my-skill", SkillScope::Vault, "notes/secret.md",).is_err()
-        );
+        assert_eq!(read("references/guide.md").unwrap(), "guide body");
+        assert_eq!(read("resources/data.md").unwrap(), "resource body");
+        assert!(read("../SKILL.md").is_err());
+        assert!(read("scripts/tool.sh").is_err());
+        assert!(read("notes/secret.md").is_err());
     }
 }

@@ -29,7 +29,8 @@ export type ToolAccessLevel =
   | "network"
   | "write_cache"
   | "write_markdown"
-  | "write_settings";
+  | "write_settings"
+  | "manage_skills";
 
 export interface SourceSpan {
   start: number;
@@ -85,6 +86,147 @@ export type AssistantIntent =
   | "chapter"
   | "document";
 
+export type AgentIntent =
+  | "chat"
+  | "ask_notes"
+  | "rewrite_selection"
+  | "write"
+  | "research"
+  | "organize"
+  | "citation_check"
+  | "chapter"
+  | "document_check"
+  | "vision_chat"
+  | "skill_management";
+
+export type CapabilitySlot =
+  | "fast"
+  | "writer"
+  | "reasoner"
+  | "long_context"
+  | "vision"
+  | "agent_tools"
+  | "embedding"
+  | "reranker"
+  | "local_private";
+
+export interface CapabilityRouteSummary {
+  slot: CapabilitySlot;
+  providerId: string;
+  model: string;
+  fallbackChain: CapabilitySlot[];
+  reason: string;
+  probeStatus: string;
+  degraded: boolean;
+}
+
+export interface PersonaLayerSummary {
+  layer: string;
+  summary: string;
+}
+
+export type SkillCompatibilitySource = "iris" | "claude" | "hermes" | "unknown";
+
+export type SkillRuntimeCapability =
+  | "skill.read_resource"
+  | "skill.write_storage"
+  | "skill.request_capabilities"
+  | "skill.execute_script_sandboxed"
+  | "skill.install_dependency"
+  | "skill.mcp_bridge";
+
+export type SkillCapabilitySupportStatus =
+  | "supported"
+  | "supported_with_confirmation"
+  | "planned"
+  | "unsupported_by_product_scope"
+  | "blocked_by_policy"
+  | "missing_user_grant";
+
+export interface SkillResourceStatusSummary {
+  relativePath: string;
+  kind: string;
+  available: boolean;
+  sizeBytes?: number | null;
+  truncated: boolean;
+  reason?: string | null;
+}
+
+export interface BlockedCapabilitySummary {
+  skillName: string;
+  capability: string;
+  status: SkillCapabilitySupportStatus;
+  riskLevel: string;
+  permission?: ToolAccessLevel | null;
+  fallbackGuidance: string;
+}
+
+export interface SkillActivationItemSummary {
+  name: string;
+  scope: string;
+  score: number;
+  matchReason: string;
+  injectedSections: string[];
+  requestedTools: string[];
+  requestedCapabilities: SkillRuntimeCapability[];
+  confirmationRequiredTools: string[];
+  resources: SkillResourceStatusSummary[];
+  blockedCapabilities: BlockedCapabilitySummary[];
+  compatibilitySource: SkillCompatibilitySource;
+}
+
+export interface SkillActivationPlanSummary {
+  activatedSkills: SkillActivationItemSummary[];
+  requestedTools: string[];
+  requestedCapabilities: SkillRuntimeCapability[];
+  confirmationRequiredTools: string[];
+  blockedCapabilities: BlockedCapabilitySummary[];
+  skillOverlaySummary: string;
+  degraded: boolean;
+}
+
+export interface AgentAuditSummary {
+  toolEvents: number;
+  confirmedTools: number;
+  deniedTools: number;
+  sanitized: boolean;
+}
+
+export interface PermissionPreflightSummary {
+  summary: string;
+  requiredConfirmations: string[];
+  blockedCapabilities: BlockedCapabilitySummary[];
+  missingUserGrants: string[];
+  exposedTools: string[];
+  degraded: boolean;
+}
+
+export interface IntentDetectionResult {
+  detectedIntent: AgentIntent;
+  confidence: number;
+  reason: string;
+  alternatives: AgentIntent[];
+  fallbackBehavior: string;
+  sourceHints: string[];
+}
+
+export interface AgentRunPlanSummary {
+  requestId: string;
+  detectedIntent: AgentIntent;
+  legacyScene: AiScene;
+  contextSummary: string[];
+  toolSummary: string;
+  permissionSummary: string;
+  progressState: string;
+  blockedReasons: string[];
+  degraded: boolean;
+  modelRoute?: CapabilityRouteSummary | null;
+  personaLayers?: PersonaLayerSummary[];
+  skillActivationPlan?: SkillActivationPlanSummary | null;
+  blockedCapabilities?: BlockedCapabilitySummary[];
+  auditSummary?: AgentAuditSummary | null;
+}
+
 export type AssistantSurfaceState =
   | "conversation"
   | "inline_suggestion"
@@ -121,7 +263,9 @@ export interface WritingEditorContext {
 
 /** 统一助手 IPC 请求（`assistant_execute`） */
 export interface AssistantExecuteRequest {
-  intent: AssistantIntent;
+  agentIntent?: AgentIntent;
+  intent?: AssistantIntent;
+  intentDetection?: IntentDetectionResult | null;
   message: string;
   notePath?: string | null;
   noteContent?: string | null;
@@ -218,6 +362,9 @@ export type AssistantExecuteResponse = AssistantExecuteBody & {
   runStatus: string;
   artifacts: HarnessArtifactWire[];
   evidenceRefreshNotice?: string | null;
+  intentDetection?: IntentDetectionResult | null;
+  runPlanSummary?: AgentRunPlanSummary | null;
+  permissionPreflightSummary?: PermissionPreflightSummary | null;
 };
 
 /** 研究任务结果（与 `ResearchFocusView` 对齐） */

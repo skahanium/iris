@@ -6,10 +6,10 @@ use crate::ai_runtime::model_gateway::LlmMessage;
 use crate::ai_runtime::prompt_builder::HarnessMessageInput;
 use crate::ai_runtime::prompt_profile::PromptProfile;
 use crate::ai_runtime::skills::{
-    active_skill_allowed_tools, active_skills_for_prompt, inject_into_prompt,
+    active_skill_allowed_tools, active_skills_for_prompt, inject_into_prompt, scan_all,
 };
 use crate::ai_runtime::ToolSpec;
-use crate::ai_runtime::{AiScene, ContextPacket};
+use crate::ai_runtime::{AiScene, ContextPacket, SkillActivationPlanSummary};
 use crate::app::AppState;
 use crate::error::AppResult;
 
@@ -49,29 +49,63 @@ pub(crate) fn build_initial_messages(
     )
 }
 
-pub(crate) fn prepare_environment_and_skills(
+pub(crate) struct EnvironmentAndSkillsInput<'a> {
+    pub(crate) scene: AiScene,
+    pub(crate) note_path: Option<&'a str>,
+    pub(crate) note_title: Option<&'a str>,
+    pub(crate) selection_excerpt: Option<&'a str>,
+    pub(crate) user_message: &'a str,
+    pub(crate) scene_tools: &'a [ToolSpec],
+}
+
+pub(crate) fn prepare_environment_and_skills_with_plan(
     state: &AppState,
-    scene: AiScene,
-    note_path: Option<&str>,
-    note_title: Option<&str>,
-    selection_excerpt: Option<&str>,
-    user_message: &str,
-    scene_tools: &[ToolSpec],
+    input: EnvironmentAndSkillsInput<'_>,
+    plan: Option<&SkillActivationPlanSummary>,
 ) -> AppResult<(String, String)> {
+    if plan.is_none() {
+        let vault = state.vault_path()?;
+        let env_text = build_environment_map(
+            &state.db,
+            &vault,
+            &EnvironmentInput {
+                scene: input.scene,
+                note_path: input.note_path,
+                note_title: input.note_title,
+                selection_excerpt: input.selection_excerpt,
+                tools: input.scene_tools,
+            },
+        )?;
+        let enabled_skills =
+            active_skills_for_prompt(&vault, input.scene, Some(&state.db), input.user_message)?;
+        let skills_prompt = inject_into_prompt(&enabled_skills, input.scene, input.user_message);
+        return Ok((env_text, skills_prompt));
+    }
     let vault = state.vault_path()?;
     let env_text = build_environment_map(
         &state.db,
         &vault,
         &EnvironmentInput {
-            scene,
-            note_path,
-            note_title,
-            selection_excerpt,
-            tools: scene_tools,
+            scene: input.scene,
+            note_path: input.note_path,
+            note_title: input.note_title,
+            selection_excerpt: input.selection_excerpt,
+            tools: input.scene_tools,
         },
     )?;
-    let enabled_skills = active_skills_for_prompt(&vault, scene, Some(&state.db), user_message)?;
-    let skills_prompt = inject_into_prompt(&enabled_skills, scene, user_message);
+    let plan = plan.expect("checked above");
+    let selected: Vec<_> = scan_all(&vault)?
+        .into_iter()
+        .filter(|skill| {
+            plan.activated_skills.iter().any(|active| {
+                active.name == skill.name
+                    && active
+                        .scope
+                        .eq_ignore_ascii_case(&format!("{:?}", skill.scope))
+            })
+        })
+        .collect();
+    let skills_prompt = inject_into_prompt(&selected, input.scene, input.user_message);
     Ok((env_text, skills_prompt))
 }
 
@@ -82,4 +116,16 @@ pub(crate) fn resolve_active_skill_allowed_tools(
 ) -> AppResult<Vec<String>> {
     let vault = state.vault_path()?;
     active_skill_allowed_tools(&vault, scene, Some(&state.db), user_message)
+}
+
+pub(crate) fn resolve_active_skill_allowed_tools_with_plan(
+    state: &AppState,
+    scene: AiScene,
+    user_message: &str,
+    plan: Option<&SkillActivationPlanSummary>,
+) -> AppResult<Vec<String>> {
+    if let Some(plan) = plan {
+        return Ok(plan.allowed_tools());
+    }
+    resolve_active_skill_allowed_tools(state, scene, user_message)
 }

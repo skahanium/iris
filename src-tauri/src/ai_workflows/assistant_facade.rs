@@ -2,7 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::ai_types::{AiScene, OrganizeTaskType};
+use crate::ai_types::{AgentIntent, AiScene, OrganizeTaskType};
 use crate::ai_workflows::document_workflow::DocumentCheckType;
 
 /// Mirrors frontend `AssistantIntent`.
@@ -34,6 +34,63 @@ impl AssistantIntent {
     }
 }
 
+impl AgentIntent {
+    /// Return the internal compatibility scene used for profiles and summaries.
+    pub fn scene(self) -> AiScene {
+        match self {
+            AgentIntent::RewriteSelection
+            | AgentIntent::Write
+            | AgentIntent::Chapter
+            | AgentIntent::DocumentCheck => AiScene::DraftingAssist,
+            AgentIntent::Research | AgentIntent::CitationCheck => AiScene::ResearchSynthesis,
+            AgentIntent::Chat
+            | AgentIntent::AskNotes
+            | AgentIntent::Organize
+            | AgentIntent::VisionChat
+            | AgentIntent::SkillManagement => AiScene::KnowledgeLookup,
+        }
+    }
+}
+
+/// Map a legacy assistant intent into the Phase 2 agent intent contract.
+pub fn agent_intent_from_legacy(
+    legacy: AssistantIntent,
+    has_selection: Option<bool>,
+) -> AgentIntent {
+    match legacy {
+        AssistantIntent::Chat => AgentIntent::Chat,
+        AssistantIntent::Knowledge => AgentIntent::AskNotes,
+        AssistantIntent::Writing => {
+            if has_selection.unwrap_or(true) {
+                AgentIntent::RewriteSelection
+            } else {
+                AgentIntent::Write
+            }
+        }
+        AssistantIntent::Citation => AgentIntent::CitationCheck,
+        AssistantIntent::Organize => AgentIntent::Organize,
+        AssistantIntent::Research => AgentIntent::Research,
+        AssistantIntent::Chapter => AgentIntent::Chapter,
+        AssistantIntent::Document => AgentIntent::DocumentCheck,
+    }
+}
+
+/// Map a Phase 2 agent intent back to the existing workflow intent.
+pub fn legacy_intent_for_agent(agent: AgentIntent) -> AssistantIntent {
+    match agent {
+        AgentIntent::AskNotes => AssistantIntent::Knowledge,
+        AgentIntent::RewriteSelection | AgentIntent::Write => AssistantIntent::Writing,
+        AgentIntent::CitationCheck => AssistantIntent::Citation,
+        AgentIntent::Research => AssistantIntent::Research,
+        AgentIntent::Organize => AssistantIntent::Organize,
+        AgentIntent::Chapter => AssistantIntent::Chapter,
+        AgentIntent::DocumentCheck => AssistantIntent::Document,
+        AgentIntent::VisionChat | AgentIntent::SkillManagement | AgentIntent::Chat => {
+            AssistantIntent::Chat
+        }
+    }
+}
+
 /// Parse organize task type string from the assistant request.
 pub fn parse_organize_task_type(raw: Option<&str>) -> OrganizeTaskType {
     let s = raw.unwrap_or("full_audit");
@@ -58,6 +115,49 @@ mod tests {
         );
         assert_eq!(AssistantIntent::Writing.scene(), AiScene::DraftingAssist);
         assert_eq!(AssistantIntent::Knowledge.scene(), AiScene::KnowledgeLookup);
+    }
+
+    #[test]
+    fn agent_intent_scene_mapping() {
+        assert_eq!(AgentIntent::Research.scene(), AiScene::ResearchSynthesis);
+        assert_eq!(
+            AgentIntent::RewriteSelection.scene(),
+            AiScene::DraftingAssist
+        );
+        assert_eq!(AgentIntent::Write.scene(), AiScene::DraftingAssist);
+        assert_eq!(
+            AgentIntent::CitationCheck.scene(),
+            AiScene::ResearchSynthesis
+        );
+        assert_eq!(AgentIntent::AskNotes.scene(), AiScene::KnowledgeLookup);
+        assert_eq!(
+            AgentIntent::SkillManagement.scene(),
+            AiScene::KnowledgeLookup
+        );
+    }
+
+    #[test]
+    fn legacy_intent_maps_to_phase2_agent_intent() {
+        assert_eq!(
+            agent_intent_from_legacy(AssistantIntent::Knowledge, None),
+            AgentIntent::AskNotes
+        );
+        assert_eq!(
+            agent_intent_from_legacy(AssistantIntent::Writing, Some(true)),
+            AgentIntent::RewriteSelection
+        );
+        assert_eq!(
+            agent_intent_from_legacy(AssistantIntent::Writing, Some(false)),
+            AgentIntent::Write
+        );
+        assert_eq!(
+            agent_intent_from_legacy(AssistantIntent::Citation, None),
+            AgentIntent::CitationCheck
+        );
+        assert_eq!(
+            agent_intent_from_legacy(AssistantIntent::Document, None),
+            AgentIntent::DocumentCheck
+        );
     }
 
     #[test]

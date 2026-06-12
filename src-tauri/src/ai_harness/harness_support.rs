@@ -4,7 +4,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::ai_runtime::harness::UsageSource;
 use crate::ai_runtime::model_gateway::{LlmMessage, TokenUsage, ToolCall};
-use crate::ai_runtime::ContextPacket;
+use crate::ai_runtime::{
+    CapabilitySlot, ContextPacket, EndpointFamily, SkillActivationPlanSummary,
+};
 use crate::error::AppResult;
 use crate::storage::db::Database;
 
@@ -116,6 +118,20 @@ pub struct HarnessCheckpointMeta {
     pub cold_start_packets: Vec<ContextPacket>,
     pub web_search_enabled: bool,
     pub depth: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub capability_slot: Option<CapabilitySlot>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub endpoint_family: Option<EndpointFamily>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thinking: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output_budget: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub skill_activation_plan: Option<SkillActivationPlanSummary>,
 }
 
 /// Full harness state for checkpoint save/restore.
@@ -220,6 +236,13 @@ mod tests {
                 cold_start_packets: vec![],
                 web_search_enabled: false,
                 depth: 0,
+                capability_slot: None,
+                provider_id: None,
+                model: None,
+                endpoint_family: None,
+                thinking: None,
+                output_budget: None,
+                skill_activation_plan: None,
             },
             round: 1,
             messages: vec![],

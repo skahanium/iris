@@ -12,7 +12,7 @@ pub fn inject_into_prompt(skills: &[SkillEntry], scene: AiScene, user_message: &
     }
     let mut block = String::from("## 已激活 Skills\n\n");
     block.push_str(
-        "若 SKILL 正文引用 `references/`、`scripts/` 或 `assets/` 下的文件，\
+        "若 SKILL 正文引用 `references/`、`resources/` 或 `assets/` 下的文件，\
          请调用 `skills_read_resource` 按需读取，不要猜测内容。\n\n",
     );
     for skill in matched {

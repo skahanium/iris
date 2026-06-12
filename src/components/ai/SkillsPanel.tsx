@@ -222,6 +222,20 @@ export function SkillsPanel({
           const isInvalid =
             typeof skill.validation === "object" &&
             "invalid" in skill.validation;
+          const requestedCapabilities =
+            skill.requestedCapabilities ??
+            skill.capability_preview?.requested_capabilities ??
+            [];
+          const blockedCapabilities =
+            skill.blockedCapabilities ??
+            skill.capability_preview?.blocked_capabilities ??
+            [];
+          const compatibilityWarnings =
+            skill.compatibilityWarnings ??
+            skill.capability_preview?.compatibility_warnings ??
+            [];
+          const lastMatchedAt = skill.lastMatchedAt;
+          const lastUsedAt = skill.lastUsedAt;
           return (
             <div
               key={`${sc}-${skill.name}`}
@@ -236,7 +250,7 @@ export function SkillsPanel({
                     </span>
                   ) : skill.scene_active === true ? (
                     <span className="rounded bg-primary/10 px-1.5 py-0.5 text-[10px] text-primary">
-                      本场景注入
+                      当前可用
                     </span>
                   ) : skill.scene_active === false ? (
                     <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">
@@ -300,6 +314,43 @@ export function SkillsPanel({
                     {String(skill.capability_preview.script_policy)}
                   </p>
                 ) : null}
+                <div className="mt-1 space-y-0.5 text-[10px] text-muted-foreground/70">
+                  <p>
+                    Phase4: last matched {lastMatchedAt ?? "never"} / last used{" "}
+                    {lastUsedAt ?? "never"}
+                    {skill.lastActivationScore !== undefined &&
+                    skill.lastActivationScore !== null
+                      ? ` / score ${skill.lastActivationScore.toFixed(2)}`
+                      : ""}
+                  </p>
+                  {requestedCapabilities.length > 0 ? (
+                    <p>
+                      Requested capabilities: {requestedCapabilities.join(", ")}
+                    </p>
+                  ) : null}
+                  {blockedCapabilities.length > 0 ? (
+                    <p className="text-amber-600">
+                      Blocked capabilities:{" "}
+                      {blockedCapabilities
+                        .map((item) => `${item.capability}:${item.status}`)
+                        .join(", ")}
+                    </p>
+                  ) : null}
+                  {compatibilityWarnings.length > 0 ? (
+                    <p className="text-amber-600">
+                      Compatibility warnings:{" "}
+                      {compatibilityWarnings.join(" | ")}
+                    </p>
+                  ) : null}
+                  {skill.lastResourceStatus ? (
+                    <p>Resource status: {skill.lastResourceStatus}</p>
+                  ) : null}
+                  {skill.lastBlockedReason ? (
+                    <p className="text-amber-600">
+                      Last block: {skill.lastBlockedReason}
+                    </p>
+                  ) : null}
+                </div>
               </div>
               <Button
                 type="button"

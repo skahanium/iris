@@ -95,7 +95,11 @@ fn policy_ctx_from_checkpoint_meta(
         scene,
         autonomy_level: profile.autonomy_level,
         web_search_enabled: meta.web_search_enabled,
-        skill_allowed_tools: vec![],
+        skill_allowed_tools: meta
+            .skill_activation_plan
+            .as_ref()
+            .map(crate::ai_runtime::SkillActivationPlanSummary::allowed_tools)
+            .unwrap_or_default(),
         depth: meta.depth,
     }
 }
@@ -113,8 +117,32 @@ pub async fn resume_harness_after_tool_confirm(
 
     TraceRecorder::update_status(&state.db, request_id, TraceStatus::ModelCalled)?;
 
-    let resolved = crate::llm::config::resolve_for_scene(&state.db, scene)?;
-    let provider_config = resolved.to_provider_config(scene);
+    let (resolved, provider_config, thinking) =
+        if let (Some(provider_id), Some(model), Some(slot)) = (
+            cp.meta.provider_id.as_deref(),
+            cp.meta.model.as_deref(),
+            cp.meta.capability_slot,
+        ) {
+            let mut resolved =
+                crate::llm::config::resolve_for_provider(&state.db, provider_id, Some(model))?;
+            if let Some(thinking) = cp.meta.thinking {
+                resolved.thinking = thinking;
+            }
+            if let Some(output_budget) = cp.meta.output_budget {
+                resolved.output_budget = output_budget;
+            }
+            if let Some(endpoint_family) = cp.meta.endpoint_family {
+                resolved.endpoint_family = endpoint_family;
+            }
+            let thinking = cp.meta.thinking.unwrap_or(resolved.thinking);
+            let provider_config = resolved.to_provider_config_for_slot(slot);
+            (resolved, provider_config, thinking)
+        } else {
+            let resolved = crate::llm::config::resolve_for_scene(&state.db, scene)?;
+            let provider_config = resolved.to_provider_config(scene);
+            let thinking = resolved.thinking;
+            (resolved, provider_config, thinking)
+        };
     let user_message = latest_user_message(&cp.messages);
 
     let harness_result = run_harness(
@@ -135,10 +163,11 @@ pub async fn resume_harness_after_tool_confirm(
             resume_from_checkpoint: true,
             token_budget: None,
             max_rounds_override: None,
+            skill_activation_plan: cp.meta.skill_activation_plan.clone(),
         },
         provider_config,
         Some(resolved.output_budget),
-        resolved.thinking,
+        thinking,
     )
     .await?;
 

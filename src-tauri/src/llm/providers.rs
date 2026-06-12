@@ -9,26 +9,46 @@ pub struct LlmProviderInfo {
     pub default_model: String,
 }
 
-/// 设置页允许的厂商：DeepSeek + 任意自定义 OpenAI 兼容端点。
+const BUILTIN_PROVIDERS: &[(&str, &str, &str)] = &[
+    ("deepseek", "DeepSeek", "deepseek-v4-flash"),
+    ("openai", "OpenAI", "gpt-4o-mini"),
+    ("anthropic", "Anthropic", "claude-3-5-haiku-20241022"),
+    ("zhipu", "GLM / Zhipu", "glm-4-flash"),
+    ("kimi", "Kimi", "moonshot-v1-128k"),
+    ("doubao", "Doubao / Volcengine", "doubao-1-5-pro-256k"),
+    ("ollama", "Ollama", "llama3.2"),
+    ("mimo", "MiMo Experimental", "mimo-vl-7b-experimental"),
+];
+
+/// 设置页允许的厂商：Phase3 内置厂商 + 任意自定义 OpenAI 兼容端点。
 pub fn is_custom_provider(provider_id: &str) -> bool {
     provider_id == "custom" || provider_id.starts_with("custom_")
 }
 
 pub fn is_allowed_provider(provider_id: &str) -> bool {
-    provider_id == "deepseek" || is_custom_provider(provider_id)
+    BUILTIN_PROVIDERS
+        .iter()
+        .any(|(id, _, _)| *id == provider_id)
+        || is_custom_provider(provider_id)
 }
 
 pub fn requires_api_key(provider_id: &str) -> bool {
-    is_allowed_provider(provider_id)
+    is_allowed_provider(provider_id) && provider_id != "ollama"
 }
 
-/// 仅 DeepSeek（兼容旧调用；设置页请用 [`list_providers_from_routing`]）。
 pub fn list_providers() -> Vec<LlmProviderInfo> {
-    vec![deepseek_info()]
+    BUILTIN_PROVIDERS
+        .iter()
+        .map(|(id, name, default_model)| LlmProviderInfo {
+            id: (*id).into(),
+            name: (*name).into(),
+            default_model: (*default_model).into(),
+        })
+        .collect()
 }
 
 pub fn list_providers_from_routing(routing: &LlmRoutingConfig) -> Vec<LlmProviderInfo> {
-    let mut out = vec![deepseek_info()];
+    let mut out = list_providers();
     let mut custom_ids: Vec<String> = routing
         .providers
         .keys()
@@ -41,14 +61,6 @@ pub fn list_providers_from_routing(routing: &LlmRoutingConfig) -> Vec<LlmProvide
         out.push(provider_info_from_override(&id, &row));
     }
     out
-}
-
-fn deepseek_info() -> LlmProviderInfo {
-    LlmProviderInfo {
-        id: "deepseek".into(),
-        name: "DeepSeek".into(),
-        default_model: "deepseek-v4-flash".into(),
-    }
 }
 
 fn provider_info_from_override(id: &str, row: &ProviderOverride) -> LlmProviderInfo {
@@ -83,6 +95,25 @@ pub fn api_base(provider: &str, custom_base: Option<&str>) -> String {
     match provider {
         "deepseek" => custom_base
             .unwrap_or("https://api.deepseek.com")
+            .to_string(),
+        "openai" => custom_base
+            .unwrap_or("https://api.openai.com/v1")
+            .to_string(),
+        "anthropic" => custom_base
+            .unwrap_or("https://api.anthropic.com")
+            .to_string(),
+        "zhipu" => custom_base
+            .unwrap_or("https://open.bigmodel.cn/api/paas/v4")
+            .to_string(),
+        "kimi" => custom_base
+            .unwrap_or("https://api.moonshot.cn/v1")
+            .to_string(),
+        "doubao" => custom_base
+            .unwrap_or("https://ark.cn-beijing.volces.com/api/v3")
+            .to_string(),
+        "ollama" => custom_base.unwrap_or("http://127.0.0.1:11434").to_string(),
+        "mimo" => custom_base
+            .unwrap_or("https://api.openai.com/v1")
             .to_string(),
         id if is_custom_provider(id) => custom_base
             .unwrap_or("https://api.openai.com/v1")
@@ -120,6 +151,8 @@ pub fn models_probe_url(provider: &str, base_url: &str) -> String {
             let root = base.strip_suffix("/v1").unwrap_or(base);
             format!("{root}/models")
         }
+        "ollama" => format!("{base}/api/tags"),
+        "anthropic" => format!("{base}/v1/messages"),
         _ => format!("{base}/models"),
     }
 }
@@ -170,6 +203,11 @@ mod tests {
             .into_iter()
             .map(|p| p.id)
             .collect();
-        assert_eq!(ids, vec!["deepseek", "custom_groq"]);
+        assert!(ids.starts_with(&[
+            "deepseek".to_string(),
+            "openai".to_string(),
+            "anthropic".to_string(),
+        ]));
+        assert!(ids.contains(&"custom_groq".to_string()));
     }
 }

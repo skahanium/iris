@@ -5,8 +5,8 @@ use tauri::{AppHandle, Emitter};
 
 use super::archive::save_round_checkpoint;
 use super::context::{
-    build_initial_messages, prepare_environment_and_skills, resolve_active_skill_allowed_tools,
-    resolve_file_id,
+    build_initial_messages, prepare_environment_and_skills_with_plan,
+    resolve_active_skill_allowed_tools_with_plan, resolve_file_id, EnvironmentAndSkillsInput,
 };
 use super::finalize::{finish_run, ingest_tool_packets, ledger_to_packets, FinishRunParams};
 use super::planning::{resolve_max_rounds, resolve_token_budget};
@@ -47,8 +47,12 @@ pub async fn run_harness(
 ) -> AppResult<HarnessRunResult> {
     let profile = resolve_scene(input.scene);
     let registry = ToolRegistry::new();
-    let skill_allowed_tools =
-        resolve_active_skill_allowed_tools(state, input.scene, &input.user_message)?;
+    let skill_allowed_tools = resolve_active_skill_allowed_tools_with_plan(
+        state,
+        input.scene,
+        &input.user_message,
+        input.skill_activation_plan.as_ref(),
+    )?;
     let policy_ctx = ToolPolicyContext {
         scene: input.scene,
         autonomy_level: profile.autonomy_level,
@@ -59,14 +63,17 @@ pub async fn run_harness(
     let scene_tools = registry.tools_for_policy_surface(&policy_ctx, false);
     let llm_tools = ModelGateway::tools_to_llm_format(&scene_tools);
 
-    let (env_text, skills_prompt) = prepare_environment_and_skills(
+    let (env_text, skills_prompt) = prepare_environment_and_skills_with_plan(
         state,
-        input.scene,
-        input.note_path.as_deref(),
-        input.note_title.as_deref(),
-        input.selection_excerpt.as_deref(),
-        &input.user_message,
-        &scene_tools,
+        EnvironmentAndSkillsInput {
+            scene: input.scene,
+            note_path: input.note_path.as_deref(),
+            note_title: input.note_title.as_deref(),
+            selection_excerpt: input.selection_excerpt.as_deref(),
+            user_message: &input.user_message,
+            scene_tools: &scene_tools,
+        },
+        input.skill_activation_plan.as_ref(),
     )?;
 
     let file_id = resolve_file_id(state, input.note_path.as_deref())?;
@@ -121,6 +128,13 @@ pub async fn run_harness(
         cold_start_packets: input.cold_start_packets.clone(),
         web_search_enabled: input.web_search_enabled,
         depth: input.depth,
+        capability_slot: Some(provider_config.slot),
+        provider_id: Some(provider_config.name.clone()),
+        model: Some(provider_config.model.clone()),
+        endpoint_family: Some(provider_config.endpoint_family),
+        thinking: Some(thinking_mode),
+        output_budget: max_tokens,
+        skill_activation_plan: input.skill_activation_plan.clone(),
     };
 
     'agent: loop {
@@ -677,10 +691,11 @@ async fn pause_for_tool_confirmation(
             file_id,
             web_search_enabled: input.web_search_enabled,
             autonomy_level: crate::ai_runtime::resolve_scene(input.scene).autonomy_level,
-            skill_allowed_tools: resolve_active_skill_allowed_tools(
+            skill_allowed_tools: resolve_active_skill_allowed_tools_with_plan(
                 state,
                 input.scene,
                 &input.user_message,
+                input.skill_activation_plan.as_ref(),
             )
             .unwrap_or_default(),
         },
@@ -824,6 +839,7 @@ async fn run_subagent_harness(
         resume_from_checkpoint: false,
         max_rounds_override: Some(sub_rounds.min(profile.max_agentic_rounds)),
         token_budget: Some(sub_budget),
+        skill_activation_plan: parent.skill_activation_plan.clone(),
     };
 
     run_harness(

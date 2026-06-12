@@ -9,7 +9,10 @@ import { mergeContextPackets } from "@/lib/ai/merge-context-packets";
 import { shouldStartNewAiSession } from "@/lib/ai/session-thread";
 import { resolveAssistantDisplayContent } from "@/lib/assistant-message-content";
 import { patchSpansPreferSidebar } from "@/lib/assistant-patch";
-import { resolveAssistantIntent } from "@/lib/assistant-routing";
+import {
+  detectAgentIntent,
+  legacyIntentForAgentIntent,
+} from "@/lib/assistant-routing";
 import { resolveAiSceneForIntent } from "@/lib/assistant-scene";
 import { invokeErrorMessage } from "@/lib/credentials";
 import {
@@ -21,6 +24,9 @@ import { mapChatToolCallsForUi } from "@/lib/map-chat-tool-calls";
 import { accumulateTokenUsage } from "@/lib/token-usage";
 import type {
   AssistantActionState,
+  AgentIntent,
+  AgentRunPlanSummary,
+  AssistantExecuteResponse,
   AssistantIntent,
   ContextPacket,
   ContextScope,
@@ -30,6 +36,8 @@ import type {
   ResearchFocusPayload,
   TokenUsage,
   WritingEditorContext,
+  IntentDetectionResult,
+  PermissionPreflightSummary,
 } from "@/types/ai";
 
 import type { ChatLine } from "../AiMessageList";
@@ -90,6 +98,13 @@ interface UseAssistantTasksParams {
   setResearchPanelExpanded: Dispatch<SetStateAction<boolean>>;
   setResearchResult: Dispatch<SetStateAction<ResearchFocusPayload | null>>;
   setResearchRunning: Dispatch<SetStateAction<boolean>>;
+  runPlanControls: {
+    setIntentDetection: Dispatch<SetStateAction<IntentDetectionResult | null>>;
+    setPermissionPreflightSummary: Dispatch<
+      SetStateAction<PermissionPreflightSummary | null>
+    >;
+    setRunPlanSummary: Dispatch<SetStateAction<AgentRunPlanSummary | null>>;
+  };
   setSessionId: Dispatch<SetStateAction<number | null>>;
   setSessionTokenUsage: Dispatch<SetStateAction<TokenUsage | null>>;
   setStreaming: Dispatch<SetStateAction<boolean>>;
@@ -143,6 +158,7 @@ export function useAssistantTasks({
   setResearchPanelExpanded,
   setResearchResult,
   setResearchRunning,
+  runPlanControls,
   setSessionId,
   setSessionTokenUsage,
   setStreaming,
@@ -150,6 +166,52 @@ export function useAssistantTasks({
   streamBufRef,
   webSearch,
 }: UseAssistantTasksParams): UseAssistantTasksResult {
+  const recordRunPlan = useCallback(
+    (response: AssistantExecuteResponse) => {
+      runPlanControls.setIntentDetection(response.intentDetection ?? null);
+      runPlanControls.setRunPlanSummary(response.runPlanSummary ?? null);
+      runPlanControls.setPermissionPreflightSummary(
+        response.permissionPreflightSummary ?? null,
+      );
+    },
+    [runPlanControls],
+  );
+
+  const explicitIntentDetection = useCallback(
+    (
+      detectedIntent: AgentIntent,
+      reason: string,
+      extraHints: string[] = [],
+      alternatives: AgentIntent[] = ["chat"],
+      confidence = 0.95,
+    ): IntentDetectionResult => {
+      const sourceHints = [...extraHints];
+      if (notePath) sourceHints.push("context:note");
+      if (
+        contextScope.paths.length > 0 ||
+        contextScope.pathPrefixes.length > 0
+      ) {
+        sourceHints.push("context:scope");
+      }
+      if (webSearch) sourceHints.push("context:web");
+      return {
+        detectedIntent,
+        confidence,
+        reason,
+        alternatives,
+        fallbackBehavior:
+          "Use the compatible chat path and suggest safe next actions if this explicit task cannot run.",
+        sourceHints,
+      };
+    },
+    [
+      contextScope.pathPrefixes.length,
+      contextScope.paths.length,
+      notePath,
+      webSearch,
+    ],
+  );
+
   const assembleContextForChat = useCallback(
     async (query: string, intent: AssistantIntent) => {
       const scene = resolveAiSceneForIntent(intent);
@@ -186,7 +248,11 @@ export function useAssistantTasks({
     async (
       rawMessage: string,
       intent: AssistantIntent,
-      options?: { startNewSession?: boolean },
+      options?: {
+        startNewSession?: boolean;
+        agentIntent?: AgentIntent;
+        intentDetection?: IntentDetectionResult;
+      },
     ) => {
       setStreaming(true);
       streamBufRef.current = "";
@@ -201,8 +267,25 @@ export function useAssistantTasks({
 
       let completedOk = false;
       try {
+        const agentIntent =
+          options?.agentIntent ??
+          (intent === "knowledge" ? "ask_notes" : "chat");
         const response = await assistantExecute({
+          agentIntent,
           intent,
+          intentDetection:
+            options?.intentDetection ??
+            explicitIntentDetection(
+              agentIntent,
+              "Conversation entry resolved to the compatible assistant chat route.",
+              intent === "knowledge"
+                ? ["ui_action:ask_notes"]
+                : ["ui_action:chat"],
+              intent === "knowledge"
+                ? ["chat", "research"]
+                : ["ask_notes", "write"],
+              intent === "knowledge" ? 0.78 : 0.72,
+            ),
           message: rawMessage,
           notePath,
           noteContent: getNoteContent(),
@@ -213,6 +296,7 @@ export function useAssistantTasks({
           selectedPacketIds:
             selectedPacketIds.length > 0 ? selectedPacketIds : undefined,
         });
+        recordRunPlan(response);
         forceNewSessionRef.current = false;
         if (response.kind !== "chat") {
           throw new Error("助手路由异常：期望对话结果");
@@ -310,10 +394,12 @@ export function useAssistantTasks({
       contextScope,
       ensureAssistantStreamSlot,
       forceNewSessionRef,
+      explicitIntentDetection,
       getNoteContent,
       notePath,
       packets,
       panelSendActiveRef,
+      recordRunPlan,
       requestIdRef,
       selectedPacketIds,
       sessionId,
@@ -335,7 +421,11 @@ export function useAssistantTasks({
     async (
       rawMessage: string,
       intent: AssistantIntent,
-      options?: { startNewSession?: boolean },
+      options?: {
+        startNewSession?: boolean;
+        agentIntent?: AgentIntent;
+        intentDetection?: IntentDetectionResult;
+      },
     ) => {
       clearTaskSurfaces();
       setLastError(null);
@@ -377,7 +467,14 @@ export function useAssistantTasks({
       assistantRun.setFromTaskStatus("running", "writing");
       clearTaskSurfaces();
       const response = await assistantExecute({
+        agentIntent: "rewrite_selection",
         intent: "writing",
+        intentDetection: explicitIntentDetection(
+          "rewrite_selection",
+          "Inline writing action explicitly requested a selected-text rewrite.",
+          ["ui_action:rewrite", "context:selection"],
+          ["write", "chat"],
+        ),
         message: rawMessage,
         notePath,
         noteContent: getNoteContent(),
@@ -385,6 +482,7 @@ export function useAssistantTasks({
         selection: ctx.selection,
         cursorContext: ctx.cursorContext,
       });
+      recordRunPlan(response);
       if (response.kind !== "writing") {
         throw new Error("助手路由异常：期望写作结果");
       }
@@ -415,6 +513,8 @@ export function useAssistantTasks({
       getNoteContent,
       getWritingContext,
       notePath,
+      explicitIntentDetection,
+      recordRunPlan,
       setActionState,
       setPackets,
       setPacketsOpen,
@@ -435,13 +535,21 @@ export function useAssistantTasks({
     assistantRun.setFromTaskStatus("running", "citation");
     clearTaskSurfaces();
     const response = await assistantExecute({
+      agentIntent: "citation_check",
       intent: "citation",
+      intentDetection: explicitIntentDetection(
+        "citation_check",
+        "Citation command explicitly requested claim and evidence checking.",
+        ["ui_action:citation_check", "context:selection"],
+        ["ask_notes", "research"],
+      ),
       message: "检查引用",
       notePath,
       webAuthorized: webSearch,
       paragraphText: text,
       contextScope,
     });
+    recordRunPlan(response);
     if (response.kind !== "citation") {
       throw new Error("助手路由异常：期望引用检查结果");
     }
@@ -457,8 +565,10 @@ export function useAssistantTasks({
     assistantRun,
     clearTaskSurfaces,
     contextScope,
+    explicitIntentDetection,
     getParagraphText,
     notePath,
+    recordRunPlan,
     setActionState,
     setCitationResult,
     setPackets,
@@ -472,12 +582,20 @@ export function useAssistantTasks({
       assistantRun.setFromTaskStatus("running", "organize");
       clearTaskSurfaces();
       const response = await assistantExecute({
+        agentIntent: "organize",
         intent: "organize",
+        intentDetection: explicitIntentDetection(
+          "organize",
+          "Organize action explicitly requested note or vault organization.",
+          ["ui_action:organize"],
+          ["ask_notes", "chat"],
+        ),
         message: rawMessage,
         webAuthorized: webSearch,
         contextScope,
         organizeTaskType: determineOrganizeTaskType(rawMessage),
       });
+      recordRunPlan(response);
       if (response.kind !== "organize") {
         throw new Error("助手路由异常：期望整理结果");
       }
@@ -501,6 +619,8 @@ export function useAssistantTasks({
       assistantRun,
       clearTaskSurfaces,
       contextScope,
+      explicitIntentDetection,
+      recordRunPlan,
       setActionState,
       setOrganizeSelection,
       setOrganizeSuggestions,
@@ -522,13 +642,21 @@ export function useAssistantTasks({
       assistantRun.setFromTaskStatus("running", "chapter");
       clearTaskSurfaces();
       const response = await assistantExecute({
+        agentIntent: "chapter",
         intent: "chapter",
+        intentDetection: explicitIntentDetection(
+          "chapter",
+          "Chapter action explicitly requested chapter-level writing.",
+          ["ui_action:chapter", "context:note"],
+          ["write", "document_check"],
+        ),
         message: rawMessage,
         notePath,
         noteContent: getNoteContent(),
         webAuthorized: webSearch,
         chapter,
       });
+      recordRunPlan(response);
       if (response.kind !== "chapter") {
         throw new Error("助手路由异常：期望章节写作结果");
       }
@@ -550,8 +678,10 @@ export function useAssistantTasks({
       appendAssistantSummary,
       assistantRun,
       clearTaskSurfaces,
+      explicitIntentDetection,
       getNoteContent,
       notePath,
+      recordRunPlan,
       setActionState,
       setWritingPatches,
       webSearch,
@@ -567,13 +697,21 @@ export function useAssistantTasks({
       assistantRun.setFromTaskStatus("running", "document");
       clearTaskSurfaces();
       const response = await assistantExecute({
+        agentIntent: "document_check",
         intent: "document",
+        intentDetection: explicitIntentDetection(
+          "document_check",
+          "Document action explicitly requested whole-note checking.",
+          ["ui_action:document_check", "context:note"],
+          ["chapter", "write"],
+        ),
         message: rawMessage,
         notePath,
         noteContent: getNoteContent(),
         webAuthorized: webSearch,
         documentCheckType: determineDocumentCheckType(rawMessage),
       });
+      recordRunPlan(response);
       if (response.kind !== "document") {
         throw new Error("助手路由异常：期望文档检查结果");
       }
@@ -614,8 +752,10 @@ export function useAssistantTasks({
       appendAssistantSummary,
       assistantRun,
       clearTaskSurfaces,
+      explicitIntentDetection,
       getNoteContent,
       notePath,
+      recordRunPlan,
       setActionState,
       setDocIssues,
       setDocSummary,
@@ -631,10 +771,18 @@ export function useAssistantTasks({
       setResearchRunning(true);
       clearTaskSurfaces();
       const response = await assistantExecute({
+        agentIntent: "research",
         intent: "research",
+        intentDetection: explicitIntentDetection(
+          "research",
+          "Research action explicitly requested multi-evidence synthesis.",
+          ["ui_action:research"],
+          ["ask_notes", "chat"],
+        ),
         message: rawMessage,
         webAuthorized: webSearch,
       });
+      recordRunPlan(response);
       if (response.kind !== "research") {
         throw new Error("助手路由异常：期望研究结果");
       }
@@ -658,7 +806,9 @@ export function useAssistantTasks({
     [
       assistantRun,
       clearTaskSurfaces,
+      explicitIntentDetection,
       researchRequestIdRef,
+      recordRunPlan,
       setActionState,
       setMessages,
       setResearchPanelExpanded,
@@ -671,7 +821,7 @@ export function useAssistantTasks({
   const send = useCallback(async () => {
     if (!input.trim() || composerDisabled) return;
     const rawMessage = input.trim();
-    const intent = resolveAssistantIntent({
+    const intentDetection = detectAgentIntent({
       message: rawMessage,
       hasSelection: Boolean(
         getWritingContext()?.selection || selectionQuoteText,
@@ -680,6 +830,8 @@ export function useAssistantTasks({
       explicitScope:
         contextScope.paths.length > 0 || contextScope.pathPrefixes.length > 0,
     });
+    const agentIntent = intentDetection.detectedIntent;
+    const intent = legacyIntentForAgentIntent(agentIntent);
 
     setInput("");
     setLastError(null);
@@ -713,7 +865,11 @@ export function useAssistantTasks({
           break;
         case "knowledge":
         case "chat":
-          await runKnowledgeChat(rawMessage, intent, { startNewSession });
+          await runKnowledgeChat(rawMessage, intent, {
+            startNewSession,
+            agentIntent,
+            intentDetection,
+          });
           break;
       }
     } catch (error) {

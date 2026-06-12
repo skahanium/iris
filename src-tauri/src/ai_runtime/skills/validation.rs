@@ -1,6 +1,7 @@
 use crate::ai_runtime::tool_catalog::TOOL_CATALOG;
 use crate::error::{AppError, AppResult};
 
+use super::compatibility_impl::blocked_capabilities_for_skill;
 use super::SkillEntry;
 
 /// Return true when a declared skill license is acceptable for Iris.
@@ -65,14 +66,24 @@ pub fn capability_preview_for_entry(
     entry: &SkillEntry,
     installed_names: &[String],
 ) -> serde_json::Value {
+    let blocked_capabilities = blocked_capabilities_for_skill(entry);
+    let compatibility_warnings: Vec<String> = blocked_capabilities
+        .iter()
+        .map(|cap| format!("{}: {}", cap.capability, cap.fallback_guidance))
+        .collect();
     serde_json::json!({
         "name": entry.name,
         "license": entry.license,
         "requested_tools": entry.allowed_tools,
+        "requested_capabilities": entry.requested_capabilities(),
         "confirmation_required_tools": confirmation_required_tools(&entry.allowed_tools),
         "unrecognized_tools": entry.unrecognized_tools(),
         "missing_deps": entry.missing_dependencies(installed_names),
+        "blocked_capabilities": blocked_capabilities,
+        "compatibility_source": entry.compatibility_source(),
+        "compatibility_warnings": compatibility_warnings,
+        "resource_status": [],
         "allows_script_execution": false,
-        "script_policy": "scripts/resources may be read as text only; Iris does not execute skill scripts",
+        "script_policy": "Skill scripts, dependency installs, and MCP bridges are preflighted only in Phase4; Iris does not execute them.",
     })
 }

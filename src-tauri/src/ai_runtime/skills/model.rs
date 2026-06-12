@@ -3,6 +3,10 @@ use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 
 use crate::ai_runtime::tool_catalog::TOOL_CATALOG;
+use crate::ai_types::{
+    BlockedCapabilitySummary, SkillCapabilitySupportStatus, SkillCompatibilitySource,
+    SkillRuntimeCapability,
+};
 
 pub(super) const VALIDATION_MISSING_FRONTMATTER: &str = "_iris_missing_frontmatter";
 pub(super) const VALIDATION_NAME_MISMATCH: &str = "_iris_name_mismatch";
@@ -47,6 +51,79 @@ pub struct SkillEntry {
 }
 
 impl SkillEntry {
+    fn metadata_string_list(&self, keys: &[&str]) -> Vec<String> {
+        for key in keys {
+            if let Some(value) = self.metadata.get(*key) {
+                match value {
+                    serde_json::Value::String(raw) => {
+                        return raw
+                            .split_whitespace()
+                            .filter(|s| !s.trim().is_empty())
+                            .map(String::from)
+                            .collect();
+                    }
+                    serde_json::Value::Array(values) => {
+                        return values
+                            .iter()
+                            .filter_map(|v| v.as_str().map(String::from))
+                            .collect();
+                    }
+                    _ => {}
+                }
+            }
+        }
+        Vec::new()
+    }
+
+    /// Trigger hints declared by modern skill manifests.
+    pub fn trigger_hints(&self) -> Vec<String> {
+        self.metadata_string_list(&["trigger-hints", "trigger_hints", "triggers"])
+    }
+
+    /// Runtime capabilities requested by this skill manifest.
+    pub fn requested_capabilities(&self) -> Vec<SkillRuntimeCapability> {
+        self.metadata_string_list(&["requested-capabilities", "requested_capabilities"])
+            .into_iter()
+            .filter_map(|raw| SkillRuntimeCapability::parse(&raw))
+            .collect()
+    }
+
+    /// Required skill-local resources.
+    pub fn required_resources(&self) -> Vec<String> {
+        self.metadata_string_list(&["required-resources", "required_resources"])
+    }
+
+    /// Optional skill-local resources.
+    pub fn optional_resources(&self) -> Vec<String> {
+        self.metadata_string_list(&["optional-resources", "optional_resources"])
+    }
+
+    /// External dependencies declared by this skill.
+    pub fn external_dependencies(&self) -> Vec<String> {
+        self.metadata_string_list(&["external-dependencies", "external_dependencies"])
+    }
+
+    /// Compatibility source parsed from frontmatter.
+    pub fn compatibility_source(&self) -> SkillCompatibilitySource {
+        let raw = self
+            .metadata
+            .get("compatibility-source")
+            .or_else(|| self.metadata.get("compatibility_source"))
+            .and_then(|v| v.as_str())
+            .or(self.compatibility.as_deref())
+            .unwrap_or("unknown")
+            .to_lowercase();
+        if raw.contains("hermes") {
+            SkillCompatibilitySource::Hermes
+        } else if raw.contains("claude") {
+            SkillCompatibilitySource::Claude
+        } else if raw.contains("iris") {
+            SkillCompatibilitySource::Iris
+        } else {
+            SkillCompatibilitySource::Unknown
+        }
+    }
+
     /// Validation status: Valid / Legacy / Invalid.
     pub fn validation_status(&self) -> SkillValidationStatus {
         if self.name.is_empty() {
@@ -81,13 +158,6 @@ impl SkillEntry {
         {
             return SkillValidationStatus::Invalid("name must match parent directory".into());
         }
-        for tool in &self.allowed_tools {
-            if TOOL_CATALOG.iter().all(|e| e.name != tool.as_str()) {
-                return SkillValidationStatus::Invalid(format!(
-                    "allowed-tool '{tool}' not found in ToolCatalog"
-                ));
-            }
-        }
         if self.legacy_trigger.is_some() {
             return SkillValidationStatus::Legacy;
         }
@@ -109,6 +179,21 @@ impl SkillEntry {
             .iter()
             .filter(|t| TOOL_CATALOG.iter().all(|e| e.name != t.as_str()))
             .cloned()
+            .collect()
+    }
+
+    /// Blocked capability summaries for tools that Iris cannot expose.
+    pub fn blocked_capabilities(&self) -> Vec<BlockedCapabilitySummary> {
+        self.unrecognized_tools()
+            .into_iter()
+            .map(|tool| BlockedCapabilitySummary {
+                skill_name: self.name.clone(),
+                capability: tool,
+                status: SkillCapabilitySupportStatus::UnsupportedByProductScope,
+                risk_level: "unknown".into(),
+                permission: None,
+                fallback_guidance: "No matching Iris ToolCatalog entry is available.".into(),
+            })
             .collect()
     }
 
@@ -184,4 +269,25 @@ pub struct SkillListEntry {
     pub capability_preview: serde_json::Value,
     /// Human-readable capability status: available / partial / unavailable.
     pub availability: String,
+    /// Last match timestamp from Phase4 diagnostics.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_matched_at: Option<String>,
+    /// Last use timestamp from Phase4 diagnostics.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_used_at: Option<String>,
+    /// Last activation score from Phase4 diagnostics.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_activation_score: Option<f64>,
+    /// Last blocked reason from Phase4 diagnostics.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_blocked_reason: Option<String>,
+    /// Last resource status from Phase4 diagnostics.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_resource_status: Option<String>,
+    /// Requested capabilities computed from manifest fields.
+    pub requested_capabilities: Vec<SkillRuntimeCapability>,
+    /// Blocked capabilities computed from manifest/tool compatibility.
+    pub blocked_capabilities: Vec<BlockedCapabilitySummary>,
+    /// Compatibility warnings shown in Skills UI.
+    pub compatibility_warnings: Vec<String>,
 }

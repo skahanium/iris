@@ -13,6 +13,7 @@ use crate::ai_runtime::skills::{
     validate_skill_license, SkillEntry, SkillListEntry, SkillScope,
 };
 use crate::ai_runtime::AiScene;
+use crate::ai_types::SkillActivationPlanSummary;
 use crate::embedding::engine::embed_text;
 use crate::error::{AppError, AppResult};
 use crate::storage::db::Database;
@@ -126,6 +127,113 @@ fn emit_skills_changed(app_handle: Option<&AppHandle>) {
     }
 }
 
+fn enrich_with_diagnostics(db: &Database, entries: &mut [SkillListEntry]) -> AppResult<()> {
+    db.with_conn(|conn| {
+        let mut stmt = conn.prepare(
+            "SELECT skill_name, scope, last_matched_at, last_used_at,
+                    last_activation_score, last_blocked_reason, last_resource_status
+             FROM skill_diagnostics",
+        )?;
+        let rows = stmt.query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, Option<String>>(2)?,
+                row.get::<_, Option<String>>(3)?,
+                row.get::<_, Option<f64>>(4)?,
+                row.get::<_, Option<String>>(5)?,
+                row.get::<_, Option<String>>(6)?,
+            ))
+        })?;
+        let rows: Vec<_> = rows.collect::<Result<_, _>>()?;
+        for entry in entries {
+            let scope = scope_db(entry.skill.scope);
+            if let Some(row) = rows
+                .iter()
+                .find(|row| row.0 == entry.skill.name && row.1 == scope)
+            {
+                entry.last_matched_at = row.2.clone();
+                entry.last_used_at = row.3.clone();
+                entry.last_activation_score = row.4;
+                entry.last_blocked_reason = row.5.clone();
+                entry.last_resource_status = row.6.clone();
+            }
+        }
+        Ok(())
+    })
+}
+
+/// Record safe per-run skill activation diagnostics.
+pub fn record_skill_activation_matched(
+    db: &Database,
+    plan: &SkillActivationPlanSummary,
+) -> AppResult<()> {
+    db.with_conn(|conn| {
+        for skill in &plan.activated_skills {
+            let blocked_reason = skill
+                .blocked_capabilities
+                .first()
+                .map(|blocked| blocked.fallback_guidance.clone());
+            let resource_status = if skill.resources.is_empty() {
+                None
+            } else {
+                Some(format!("{} resource(s) declared", skill.resources.len()))
+            };
+            conn.execute(
+                "INSERT INTO skill_diagnostics
+                 (skill_name, scope, last_matched_at, last_activation_score,
+                  last_blocked_reason, last_resource_status, updated_at)
+                 VALUES (?1, ?2, datetime('now'), ?3, ?4, ?5, datetime('now'))
+                 ON CONFLICT(skill_name, scope) DO UPDATE SET
+                   last_matched_at = excluded.last_matched_at,
+                   last_activation_score = excluded.last_activation_score,
+                   last_blocked_reason = excluded.last_blocked_reason,
+                   last_resource_status = excluded.last_resource_status,
+                   updated_at = datetime('now')",
+                rusqlite::params![
+                    skill.name,
+                    skill.scope,
+                    skill.score,
+                    blocked_reason,
+                    resource_status
+                ],
+            )?;
+        }
+        Ok(())
+    })
+}
+
+/// Record that the harness consumed a skill activation plan in execution.
+pub fn record_skill_activation_used(
+    db: &Database,
+    plan: &SkillActivationPlanSummary,
+) -> AppResult<()> {
+    db.with_conn(|conn| {
+        for skill in &plan.activated_skills {
+            conn.execute(
+                "INSERT INTO skill_diagnostics
+                 (skill_name, scope, last_used_at, last_activation_score, updated_at)
+                 VALUES (?1, ?2, datetime('now'), ?3, datetime('now'))
+                 ON CONFLICT(skill_name, scope) DO UPDATE SET
+                   last_used_at = excluded.last_used_at,
+                   last_activation_score = excluded.last_activation_score,
+                   updated_at = datetime('now')",
+                rusqlite::params![skill.name, skill.scope, skill.score],
+            )?;
+        }
+        Ok(())
+    })
+}
+
+/// Backward-compatible helper for older call sites.
+pub fn record_skill_activation_diagnostics(
+    db: &Database,
+    plan: &SkillActivationPlanSummary,
+) -> AppResult<()> {
+    record_skill_activation_matched(db, plan)?;
+    record_skill_activation_used(db, plan)
+}
+
 async fn install_entries(
     db: &Database,
     vault: &Path,
@@ -207,7 +315,8 @@ pub fn list_skills(
     vault: &Path,
     scene: Option<AiScene>,
 ) -> AppResult<Vec<SkillListEntry>> {
-    let entries = scan_all_with_status(vault)?;
+    let mut entries = scan_all_with_status(vault)?;
+    enrich_with_diagnostics(db, &mut entries)?;
     if let Some(scene) = scene {
         enrich_list_with_scene(entries, scene, Some(db))
     } else {

@@ -21,17 +21,17 @@ interface AgentStatusBadgeProps {
   onOpenAudit?: () => void;
 }
 
-function sceneLabel(scene: AiScene): string {
+function compatibilityContextLabel(scene: AiScene): string {
   switch (scene) {
     case "drafting_assist":
-      return "文稿创作";
+      return "写作任务";
     case "research_synthesis":
-      return "学术研究";
+      return "研究任务";
     case "exemplar_learning":
-      return "文稿学习";
+      return "范文任务";
     case "knowledge_lookup":
     default:
-      return "知识查阅";
+      return "问答任务";
   }
 }
 
@@ -119,10 +119,8 @@ export function AgentStatusBadge({
   }, [open]);
 
   const enabledSkills = skills.filter((s) => s.enabled);
-  const sceneActiveSkills = enabledSkills.filter(
-    (s) => s.scene_active === true,
-  );
-  const hasSceneActive = sceneActiveSkills.length > 0;
+  const activeSkills = enabledSkills.filter((s) => s.scene_active === true);
+  const hasActiveSkills = activeSkills.length > 0;
 
   const close = useCallback(() => setOpen(false), []);
 
@@ -150,9 +148,9 @@ export function AgentStatusBadge({
           <div className="border-b border-border/60 px-3 py-2.5">
             <p className="text-xs font-medium text-foreground">Agent 状态</p>
             <p className="mt-0.5 text-[10px] text-muted-foreground">
-              场景：{sceneLabel(scene)}
-              {hasSceneActive
-                ? ` · 本场景注入 ${sceneActiveSkills.length} 个 Skill`
+              任务：{compatibilityContextLabel(scene)}
+              {hasActiveSkills
+                ? ` · 当前可用 ${activeSkills.length} 个 Skill`
                 : enabledSkills.length > 0
                   ? ` · ${enabledSkills.length} 个已启用但未注入`
                   : " · 使用核心默认工具集"}
@@ -162,11 +160,11 @@ export function AgentStatusBadge({
           <div className="max-h-64 overflow-y-auto p-2">
             <section>
               <p className="px-2 pb-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
-                本场景注入
+                当前可用
               </p>
-              {hasSceneActive ? (
+              {hasActiveSkills ? (
                 <ul className="space-y-0.5">
-                  {sceneActiveSkills.map((skill) => (
+                  {activeSkills.map((skill) => (
                     <li
                       key={`${skill.scope}-${skill.name}`}
                       className="rounded-md px-2 py-1.5 hover:bg-muted/50"
@@ -204,15 +202,15 @@ export function AgentStatusBadge({
                 </ul>
               ) : (
                 <p className="px-2 py-1 text-xs text-muted-foreground">
-                  当前场景无注入 Skill
+                  当前无可用 Skill
                   {enabledSkills.length > 0
-                    ? `（${enabledSkills.length} 个已启用但未匹配本场景）`
+                    ? `（${enabledSkills.length} 个已启用但未匹配当前任务）`
                     : ""}
                 </p>
               )}
             </section>
 
-            {enabledSkills.length > sceneActiveSkills.length ? (
+            {enabledSkills.length > activeSkills.length ? (
               <>
                 <div className="my-2 border-t border-border/40" />
                 <section>

@@ -221,7 +221,7 @@ mod tests {
         let resolved = resolve_persona(&profile, AiScene::KnowledgeLookup, false);
         let rendered = render_persona(&resolved);
         assert!(rendered.contains("Custom AI"));
-        assert!(rendered.starts_with("Custom AI"));
+        assert!(rendered.starts_with("Safety overlay"));
         // Should NOT start with「砚」
         assert!(!rendered.starts_with("你是「砚」"));
     }
@@ -243,7 +243,8 @@ mod tests {
             &profile,
         );
 
-        assert!(prompt.starts_with("Workflow Custom Persona"));
+        assert!(prompt.starts_with("Safety overlay"));
+        assert!(prompt.contains("Workflow Custom Persona"));
         assert!(!prompt.starts_with("你是「砚」"));
         assert!(prompt.contains("terse"));
         assert!(prompt.contains("Never claim unsupported facts"));

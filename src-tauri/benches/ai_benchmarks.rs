@@ -6,7 +6,7 @@ use iris_lib::ai_runtime::model_gateway::{
 };
 use iris_lib::ai_runtime::retrieval_broker::{query_hash, RetrievalLayers, RetrievalRequest};
 use iris_lib::ai_runtime::skills::{inject_into_prompt, SkillEntry, SkillScope};
-use iris_lib::ai_runtime::{AiScene, CapabilitySlot};
+use iris_lib::ai_runtime::{AiScene, CapabilitySlot, EndpointFamily};
 use iris_lib::indexer::chunker::chunk_markdown;
 use std::collections::HashMap;
 
@@ -47,6 +47,7 @@ fn sample_provider() -> ProviderConfig {
         api_key: Some("bench-key".to_string()),
         model: "deepseek-chat".to_string(),
         slot: CapabilitySlot::Reasoner,
+        endpoint_family: EndpointFamily::OpenAiCompatibleChatCompletions,
     }
 }
 

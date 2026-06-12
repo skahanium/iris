@@ -6,6 +6,7 @@ use sha2::{Digest, Sha256};
 
 use crate::error::{AppError, AppResult};
 
+use super::compatibility_impl::blocked_capabilities_for_skill;
 use super::frontmatter_impl::parse_frontmatter;
 use super::model_impl::{VALIDATION_MISSING_FRONTMATTER, VALIDATION_NAME_MISMATCH};
 use super::path_impl::{global_skills_dir, load_config, skill_key, slugify, vault_skills_dir};
@@ -104,6 +105,25 @@ pub fn load_skill(path: &Path, scope: SkillScope) -> AppResult<SkillEntry> {
         .get("metadata")
         .and_then(|s| serde_json::from_str(s).ok())
         .unwrap_or_default();
+    for key in [
+        "trigger-hints",
+        "trigger_hints",
+        "requested-capabilities",
+        "requested_capabilities",
+        "required-resources",
+        "required_resources",
+        "optional-resources",
+        "optional_resources",
+        "sandbox",
+        "external-dependencies",
+        "external_dependencies",
+        "compatibility-source",
+        "compatibility_source",
+    ] {
+        if let Some(value) = meta.get(key) {
+            metadata.insert(key.to_string(), serde_json::Value::String(value.clone()));
+        }
+    }
     if !has_frontmatter {
         metadata.insert(
             VALIDATION_MISSING_FRONTMATTER.to_string(),
@@ -197,6 +217,8 @@ pub fn scan_all_with_status(vault: &Path) -> AppResult<Vec<SkillListEntry>> {
             let confirmation_required_tools = confirmation_required_tools(&skill.allowed_tools);
             let content_hash = skill_content_hash_for_path(&PathBuf::from(&skill.file_path)).ok();
             let capability_preview = capability_preview_for_entry(&skill, &installed_names);
+            let requested_capabilities = skill.requested_capabilities();
+            let blocked_capabilities = blocked_capabilities_for_skill(&skill);
             let availability = if !skill.enabled {
                 "disabled"
             } else if matches!(validation, SkillValidationStatus::Invalid(_)) {
@@ -218,6 +240,14 @@ pub fn scan_all_with_status(vault: &Path) -> AppResult<Vec<SkillListEntry>> {
                 content_hash,
                 capability_preview,
                 availability,
+                last_matched_at: None,
+                last_used_at: None,
+                last_activation_score: None,
+                last_blocked_reason: None,
+                last_resource_status: None,
+                requested_capabilities,
+                blocked_capabilities,
+                compatibility_warnings: Vec::new(),
             }
         })
         .collect())

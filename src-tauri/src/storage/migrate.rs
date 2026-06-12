@@ -60,6 +60,10 @@ const MIGRATION_024_DOWN: &str = include_str!("../../migrations/024_perf_indexes
 const MIGRATION_025_UP: &str = include_str!("../../migrations/025_knowledge_scalar_backfill.sql");
 const MIGRATION_025_DOWN: &str =
     include_str!("../../migrations/025_knowledge_scalar_backfill.down.sql");
+const MIGRATION_026_UP: &str =
+    include_str!("../../migrations/026_skill_closed_loop_diagnostics.sql");
+const MIGRATION_026_DOWN: &str =
+    include_str!("../../migrations/026_skill_closed_loop_diagnostics.down.sql");
 
 fn is_applied(conn: &Connection, name: &str) -> bool {
     conn.query_row(
@@ -148,6 +152,12 @@ pub fn migrate_up(conn: &Connection) -> AppResult<()> {
         MIGRATION_025_UP,
         false,
     )?;
+    apply_migration(
+        conn,
+        "026_skill_closed_loop_diagnostics",
+        MIGRATION_026_UP,
+        false,
+    )?;
 
     Ok(())
 }
@@ -159,6 +169,11 @@ fn rollback_migration(conn: &Connection, name: &str, sql: &str) {
 
 /// Roll back all migrations in strict reverse order (for tests).
 pub fn migrate_down(conn: &Connection) -> AppResult<()> {
+    rollback_migration(
+        conn,
+        "026_skill_closed_loop_diagnostics",
+        MIGRATION_026_DOWN,
+    );
     rollback_migration(conn, "025_knowledge_scalar_backfill", MIGRATION_025_DOWN);
     rollback_migration(conn, "024_perf_indexes", MIGRATION_024_DOWN);
     rollback_migration(conn, "023_file_lock", MIGRATION_023_DOWN);
@@ -628,6 +643,69 @@ mod tests {
                 .unwrap();
             assert!(has, "missing {table}");
         }
+    }
+
+    #[test]
+    fn migration_026_creates_skill_closed_loop_tables() {
+        let conn = Connection::open_in_memory().unwrap();
+        migrate_up(&conn).unwrap();
+
+        for table in ["skill_diagnostics", "skill_storage"] {
+            let has: bool = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name = ?1",
+                    [table],
+                    |row| row.get::<_, i64>(0),
+                )
+                .map(|c| c > 0)
+                .unwrap();
+            assert!(has, "missing {table}");
+        }
+
+        conn.execute(
+            "INSERT INTO skill_diagnostics
+             (skill_name, scope, last_matched_at, last_activation_score, last_blocked_reason)
+             VALUES ('research-skill', 'Vault', datetime('now'), 0.91, 'none')",
+            [],
+        )
+        .unwrap();
+        let score: f64 = conn
+            .query_row(
+                "SELECT last_activation_score FROM skill_diagnostics WHERE skill_name = 'research-skill'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(score > 0.9);
+    }
+
+    #[test]
+    fn migration_026_roundtrip() {
+        let conn = Connection::open_in_memory().unwrap();
+        migrate_up(&conn).unwrap();
+        assert!(conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='skill_diagnostics'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .map(|c| c > 0)
+            .unwrap());
+
+        rollback_migration(
+            &conn,
+            "026_skill_closed_loop_diagnostics",
+            MIGRATION_026_DOWN,
+        );
+        let gone: bool = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='skill_diagnostics'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .map(|c| c > 0)
+            .unwrap();
+        assert!(!gone);
     }
 
     #[test]

@@ -5,27 +5,7 @@
 
 use serde::{Deserialize, Serialize};
 
-// ─── Capability Slot ─────────────────────────────────────
-
-/// 能力槽位：描述"需要什么类型的模型"，而非"用哪个模型"。
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum CapabilitySlot {
-    /// 快速任务：续写、短改写、分类
-    Fast,
-    /// 写作质量：段落生成、风格模仿
-    Writer,
-    /// 深度推理：论证链、复杂研究
-    Reasoner,
-    /// 长上下文：长范文分析
-    LongContext,
-    /// 本地嵌入向量
-    Embedding,
-    /// 检索重排
-    Reranker,
-    /// 本地私有模型
-    LocalPrivate,
-}
+pub use crate::ai_types::CapabilitySlot;
 
 // ─── Model Capability Profile ────────────────────────────
 
@@ -40,6 +20,16 @@ pub struct ModelCapabilityProfile {
     pub supports_tools: bool,
     #[serde(default)]
     pub supports_streaming: bool,
+    #[serde(default)]
+    pub supports_vision: bool,
+    #[serde(default)]
+    pub supports_reasoning: bool,
+    #[serde(default)]
+    pub endpoint_family: Option<crate::ai_types::EndpointFamily>,
+    #[serde(default)]
+    pub credential_service: Option<String>,
+    #[serde(default)]
+    pub probe_strategy: Option<crate::ai_types::ProbeStrategy>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub supports_json_schema: Option<bool>,
     #[serde(default)]
@@ -133,6 +123,11 @@ impl ModelRegistry {
                 context_window: Some(128_000),
                 supports_tools: ext.supports_tools,
                 supports_streaming: ext.supports_streaming,
+                supports_vision: false,
+                supports_reasoning: false,
+                endpoint_family: None,
+                credential_service: None,
+                probe_strategy: None,
                 supports_json_schema: None,
                 privacy_level: PrivacyLevel::External,
             });
@@ -143,6 +138,11 @@ impl ModelRegistry {
                 context_window: Some(128_000),
                 supports_tools: ext.supports_tools,
                 supports_streaming: ext.supports_streaming,
+                supports_vision: false,
+                supports_reasoning: false,
+                endpoint_family: None,
+                credential_service: None,
+                probe_strategy: None,
                 supports_json_schema: None,
                 privacy_level: PrivacyLevel::External,
             });
@@ -153,6 +153,11 @@ impl ModelRegistry {
                 context_window: Some(128_000),
                 supports_tools: ext.supports_tools,
                 supports_streaming: ext.supports_streaming,
+                supports_vision: false,
+                supports_reasoning: true,
+                endpoint_family: None,
+                credential_service: None,
+                probe_strategy: None,
                 supports_json_schema: None,
                 privacy_level: PrivacyLevel::External,
             });
@@ -163,6 +168,11 @@ impl ModelRegistry {
                 context_window: Some(1_000_000),
                 supports_tools: ext.supports_tools,
                 supports_streaming: ext.supports_streaming,
+                supports_vision: false,
+                supports_reasoning: false,
+                endpoint_family: None,
+                credential_service: None,
+                probe_strategy: None,
                 supports_json_schema: None,
                 privacy_level: PrivacyLevel::External,
             });
@@ -176,6 +186,11 @@ impl ModelRegistry {
                 context_window: Some(128_000),
                 supports_tools: loc.supports_tools,
                 supports_streaming: loc.supports_streaming,
+                supports_vision: false,
+                supports_reasoning: false,
+                endpoint_family: None,
+                credential_service: None,
+                probe_strategy: None,
                 supports_json_schema: None,
                 privacy_level: PrivacyLevel::Local,
             });
@@ -189,6 +204,11 @@ impl ModelRegistry {
             context_window: None,
             supports_tools: false,
             supports_streaming: false,
+            supports_vision: false,
+            supports_reasoning: false,
+            endpoint_family: None,
+            credential_service: None,
+            probe_strategy: None,
             supports_json_schema: None,
             privacy_level: PrivacyLevel::Local,
         });
@@ -199,6 +219,11 @@ impl ModelRegistry {
             context_window: None,
             supports_tools: false,
             supports_streaming: false,
+            supports_vision: false,
+            supports_reasoning: false,
+            endpoint_family: None,
+            credential_service: None,
+            probe_strategy: None,
             supports_json_schema: None,
             privacy_level: PrivacyLevel::Local,
         });

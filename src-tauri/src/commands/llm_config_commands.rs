@@ -177,21 +177,11 @@ fn parse_scene(scene: Option<String>) -> AppResult<AiScene> {
 }
 
 fn validate_routing(routing: &LlmRoutingConfig) -> AppResult<()> {
+    for route in routing.slots.values() {
+        validate_route(&route.provider_id, &route.model, routing)?;
+    }
     for route in routing.scenes.values() {
-        if !is_allowed_provider(&route.provider_id) {
-            return Err(AppError::msg(format!("未知厂商: {}", route.provider_id)));
-        }
-        if route.model.trim().is_empty() {
-            return Err(AppError::msg("模型 ID 不能为空"));
-        }
-        if crate::llm::providers::is_custom_provider(&route.provider_id)
-            && !routing.providers.contains_key(&route.provider_id)
-        {
-            return Err(AppError::msg(format!(
-                "场景引用了未配置的自定义端点: {}",
-                route.provider_id
-            )));
-        }
+        validate_route(&route.provider_id, &route.model, routing)?;
     }
     for id in routing.providers.keys() {
         if !is_allowed_provider(id) {
@@ -201,9 +191,37 @@ fn validate_routing(routing: &LlmRoutingConfig) -> AppResult<()> {
     for row in routing.providers.values() {
         if let Some(url) = row.base_url.as_deref() {
             if !url.trim().is_empty() {
-                crate::security::ipc_policy::validate_https_url(url)?;
+                validate_provider_base_url(url)?;
             }
         }
     }
     Ok(())
+}
+
+fn validate_route(provider_id: &str, model: &str, routing: &LlmRoutingConfig) -> AppResult<()> {
+    if !is_allowed_provider(provider_id) {
+        return Err(AppError::msg(format!("未知厂商: {provider_id}")));
+    }
+    if model.trim().is_empty() {
+        return Err(AppError::msg("模型 ID 不能为空"));
+    }
+    if crate::llm::providers::is_custom_provider(provider_id)
+        && !routing.providers.contains_key(provider_id)
+    {
+        return Err(AppError::msg(format!(
+            "路由引用了未配置的自定义端点: {provider_id}"
+        )));
+    }
+    Ok(())
+}
+
+fn validate_provider_base_url(url: &str) -> AppResult<()> {
+    let trimmed = url.trim();
+    if trimmed.starts_with("http://127.0.0.1")
+        || trimmed.starts_with("http://localhost")
+        || trimmed.starts_with("http://[::1]")
+    {
+        return Ok(());
+    }
+    crate::security::ipc_policy::validate_https_url(trimmed)
 }

@@ -33,7 +33,7 @@ const AI_SYSTEM_SECTIONS: {
 }[] = [
   { id: "models", label: "模型路由", detail: "对话、写作、研究、Embedding" },
   { id: "search", label: "联网搜索", detail: "搜索后端、模型与可用性" },
-  { id: "persona", label: "人格与 Skills", detail: "协作人格、工具能力与注入" },
+  { id: "persona", label: "Persona", detail: "PromptProfile、表达风格与边界" },
   { id: "memory", label: "记忆与规则", detail: "用户规则、AI 记忆与确认" },
 ];
 
@@ -201,8 +201,8 @@ export function AiSystemCenterPanel({
                     <SummaryTile
                       icon={ShieldCheck}
                       label="边界"
-                      value="写入与高风险工具需确认"
-                      detail="配置能力不等于自动执行，敏感操作仍走确认链路。"
+                      value="不授予权限"
+                      detail="Persona 影响表达与写作偏好，不改变工具权限。"
                     />
                   </div>
 
@@ -211,14 +211,14 @@ export function AiSystemCenterPanel({
                       <ActionCard
                         icon={Sparkles}
                         title="人格配置"
-                        detail="调整 Alice 的称呼、头像、协作风格、回答语言和常驻规则。"
+                        detail="调整 PromptProfile 的称呼、头像、协作风格、回答语言和常驻规则。"
                         action="打开人格配置"
                         onClick={() => setPersonaOpen(true)}
                       />
                       <ActionCard
                         icon={Wrench}
                         title="Skills 管理"
-                        detail="安装、启停、编辑和迁移 SKILL.md，让助手按任务获得工具能力。"
+                        detail="安装、启停、编辑和迁移 SKILL.md；它们不能修改 Persona 配置。"
                         action="管理 Skills"
                         onClick={() => setSkillsOpen(true)}
                       />
@@ -233,13 +233,21 @@ export function AiSystemCenterPanel({
                       </div>
                       <div className="mt-3 space-y-2.5">
                         {[
-                          ["1", "人格规则", "形成 system prompt 的协作基线"],
+                          [
+                            "1",
+                            "Safety overlay",
+                            "最高优先级边界，不被配置覆盖",
+                          ],
                           [
                             "2",
-                            "场景匹配",
-                            "按写作、研究、检索等任务筛选 Skills",
+                            "PromptProfile",
+                            "身份、风格、语言与用户自定义规则",
                           ],
-                          ["3", "工具确认", "写入、删除、迁移类操作进入确认流"],
+                          [
+                            "3",
+                            "Task / Skill overlay",
+                            "仅追加任务指导，不授予权限",
+                          ],
                         ].map(([step, title, detail]) => (
                           <div key={step} className="flex gap-2.5">
                             <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded bg-background text-[10px] font-semibold text-muted-foreground">

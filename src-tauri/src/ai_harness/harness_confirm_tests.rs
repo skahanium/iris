@@ -30,6 +30,13 @@ mod tests {
                 cold_start_packets: vec![],
                 web_search_enabled: false,
                 depth: 0,
+                capability_slot: None,
+                provider_id: None,
+                model: None,
+                endpoint_family: None,
+                thinking: None,
+                output_budget: None,
+                skill_activation_plan: None,
             },
             round: 1,
             messages: vec![LlmMessage {
@@ -137,6 +144,28 @@ mod tests {
     }
 
     #[test]
+    fn phase3_checkpoint_persists_route_metadata_without_secrets() {
+        let mut cp = sample_checkpoint("phase3-route-cp");
+        cp.meta.capability_slot = Some(crate::ai_types::CapabilitySlot::Vision);
+        cp.meta.provider_id = Some("openai".into());
+        cp.meta.model = Some("gpt-4o".into());
+        cp.meta.endpoint_family =
+            Some(crate::ai_types::EndpointFamily::OpenAiCompatibleChatCompletions);
+        cp.meta.thinking = Some(false);
+        cp.meta.output_budget = Some(16_384);
+
+        let json = serde_json::to_string(&cp).unwrap();
+
+        assert!(json.contains("capability_slot"));
+        assert!(json.contains("openai"));
+        assert!(json.contains("gpt-4o"));
+        assert!(!json.contains("api_key"));
+        assert!(!json.contains("sk-"));
+        assert!(!json.contains("clipboard"));
+        assert!(!json.contains("base64"));
+    }
+
+    #[test]
     fn tool_confirm_resume_api_body_includes_reasoning_after_tool_result() {
         use crate::ai_runtime::harness_confirm::append_tool_message_to_checkpoint;
         use crate::ai_runtime::model_gateway::{
@@ -182,6 +211,7 @@ mod tests {
                 model: "deepseek-reasoner".into(),
                 api_key: Some("test".into()),
                 slot: CapabilitySlot::Reasoner,
+                endpoint_family: crate::ai_types::EndpointFamily::OpenAiCompatibleChatCompletions,
             },
             messages: loaded.messages,
             tools: vec![],
@@ -259,6 +289,7 @@ mod tests {
                 model: "deepseek-reasoner".into(),
                 api_key: Some("test".into()),
                 slot: CapabilitySlot::Reasoner,
+                endpoint_family: crate::ai_types::EndpointFamily::OpenAiCompatibleChatCompletions,
             },
             messages: after_approve,
             tools: vec![],
@@ -336,6 +367,7 @@ mod tests {
                 model: "deepseek-reasoner".into(),
                 api_key: Some("test".into()),
                 slot: CapabilitySlot::Reasoner,
+                endpoint_family: crate::ai_types::EndpointFamily::OpenAiCompatibleChatCompletions,
             },
             messages,
             tools: vec![],
@@ -384,6 +416,7 @@ mod tests {
                 model: "deepseek-reasoner".into(),
                 api_key: Some("test".into()),
                 slot: CapabilitySlot::Reasoner,
+                endpoint_family: crate::ai_types::EndpointFamily::OpenAiCompatibleChatCompletions,
             },
             messages,
             tools: vec![],
