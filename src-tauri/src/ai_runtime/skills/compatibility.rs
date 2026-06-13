@@ -1,4 +1,4 @@
-use crate::ai_runtime::tool_catalog::catalog_find;
+use crate::ai_runtime::tool_catalog::{catalog_find, ToolImplementationStatus};
 use crate::ai_types::{
     BlockedCapabilitySummary, SkillCapabilitySupportStatus, SkillRuntimeCapability,
 };
@@ -16,11 +16,10 @@ pub fn normalize_external_capability(raw: &str) -> String {
 /// Map a requested tool/capability to an Iris support status.
 pub fn support_status_for_capability(raw: &str) -> SkillCapabilitySupportStatus {
     let normalized = normalize_external_capability(raw);
-    if catalog_find(&normalized).is_some() {
-        return if catalog_find(&normalized)
-            .map(|entry| entry.requires_confirmation)
-            .unwrap_or(false)
-        {
+    if let Some(entry) = catalog_find(&normalized) {
+        return if entry.implementation == ToolImplementationStatus::Planned {
+            SkillCapabilitySupportStatus::Planned
+        } else if entry.requires_confirmation {
             SkillCapabilitySupportStatus::SupportedWithConfirmation
         } else {
             SkillCapabilitySupportStatus::Supported

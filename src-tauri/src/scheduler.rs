@@ -16,6 +16,12 @@ pub struct Scheduler {
     shutdown_rx: watch::Receiver<bool>,
 }
 
+/// Handle held by `lib.rs` for scheduler lifetime; Drop sends the shutdown signal.
+pub struct ShutdownHandle {
+    #[allow(dead_code)]
+    tx: watch::Sender<bool>,
+}
+
 impl Scheduler {
     /// 创建新的调度器
     pub fn new(state: Arc<AppState>) -> Self {
@@ -126,22 +132,5 @@ impl Scheduler {
         }
 
         Ok(())
-    }
-}
-
-/// 用于请求调度器关闭的 handle
-///
-/// 当前由 `lib.rs` 持有，应用退出时自动 drop。
-/// 若需主动取消（如测试场景），可调用 [`ShutdownHandle::shutdown`]。
-#[allow(dead_code)]
-pub struct ShutdownHandle {
-    tx: watch::Sender<bool>,
-}
-
-#[allow(dead_code)]
-impl ShutdownHandle {
-    /// 请求调度器停止
-    pub fn shutdown(&self) {
-        let _ = self.tx.send(true);
     }
 }

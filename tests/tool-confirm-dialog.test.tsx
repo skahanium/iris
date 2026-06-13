@@ -84,4 +84,39 @@ describe("ToolConfirmDialog", () => {
     expect(document.body.textContent).toContain("Scrapling");
     expect(document.body.textContent).toContain("skillhub.tencent.com");
   });
+
+  it("shows permission effects with risk, scope, and reversible path", async () => {
+    await act(async () => {
+      root.render(
+        <ToolConfirmDialog
+          request={{
+            request_id: "req-3",
+            tool_call_id: "tc-3",
+            tool_name: "fetch_web_page",
+            arguments: {
+              url: "https://example.com/docs/phase5",
+            },
+            permissionEffects: [
+              {
+                permissionName: "web.fetch",
+                riskLevel: "medium",
+                scopeKind: "request",
+                scopeSummary: "domain: example.com",
+                reversibleBy: "删除本轮网页缓存和引用草稿",
+              },
+            ],
+          }}
+          onConfirm={() => {}}
+          onClose={() => {}}
+        />,
+      );
+    });
+
+    expect(document.body.textContent).toContain("权限影响");
+    expect(document.body.textContent).toContain("web.fetch");
+    expect(document.body.textContent).toContain("medium");
+    expect(document.body.textContent).toContain("request");
+    expect(document.body.textContent).toContain("domain: example.com");
+    expect(document.body.textContent).toContain("删除本轮网页缓存和引用草稿");
+  });
 });

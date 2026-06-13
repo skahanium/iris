@@ -1,11 +1,9 @@
-//! Central tool execution for the harness agent loop.
-
-use std::time::Instant;
-
 use crate::ai_runtime::{AiScene, ContextPacket, ToolCallResult};
 use crate::app::AppState;
 use crate::error::{AppError, AppResult};
-
+use std::time::Instant;
+#[path = "tool_dispatch/boundary.rs"]
+mod boundary_impl;
 #[path = "tool_dispatch/markdown.rs"]
 mod markdown_impl;
 #[path = "tool_dispatch/memory.rs"]
@@ -18,52 +16,31 @@ mod schedule_impl;
 mod search_impl;
 #[path = "tool_dispatch/skills.rs"]
 mod skills_impl;
+#[path = "tool_dispatch/vault.rs"]
+mod vault_impl;
 #[path = "tool_dispatch/web.rs"]
 mod web_impl;
 
-/// Tools with real `dispatch_tool_inner` handlers (single source of truth with LLM exposure).
+#[rustfmt::skip]
 pub const DISPATCHABLE_TOOL_NAMES: &[&str] = &[
-    "search_hybrid",
-    "search_semantic",
-    "search_keyword",
-    "get_regulation",
-    "get_context_packets",
-    "web_search",
-    "fetch_web_page",
-    "read_note",
-    "list_vault",
-    "get_outline",
-    "get_backlinks",
-    "get_block_links",
-    "memory_read",
-    "memory_write",
-    "scheduled_task_create",
-    "scheduled_task_list",
-    "scheduled_task_delete",
-    "web_fetch_batch",
-    "readability_fetch",
-    "rendered_fetch",
-    "insert_text_at_cursor",
-    "replace_selection",
-    "skills_list",
-    "skills_install",
-    "skills_uninstall",
-    "skills_update",
-    "skills_toggle",
-    "skills_read_resource",
+    "search_hybrid", "search_semantic", "search_keyword", "get_regulation", "get_context_packets",
+    "web_search", "fetch_web_page", "read_note", "list_vault", "get_outline", "get_backlinks",
+    "get_block_links", "memory_read", "memory_write", "scheduled_task_create", "scheduled_task_list",
+    "scheduled_task_delete", "web_fetch_batch", "readability_fetch", "rendered_fetch",
+    "vault_create_note", "vault_rename_move", "vault_delete_to_trash", "vault_asset_write",
+    "vault_version_list", "insert_text_at_cursor", "replace_selection", "skills_list", "skills_install",
+    "skills_uninstall", "skills_update", "skills_toggle", "skills_read_resource", "git_read_status",
+    "git_read_diff", "git_read_log", "secret_exists", "fs_import_to_vault", "fs_export",
+    "fs_read_authorized_folder", "fs_write_authorized_export", "doc_normalize_markdown",
+    "doc_extract_citations", "web_to_markdown", "web_download_to_assets", "web_citation_extract",
+    "skill_request_capabilities", "process_run_readonly", "git_write_commit",
 ];
-
-/// Handled inside harness loop, not via `dispatch_tool`.
 pub const HARNESS_ONLY_TOOL_NAMES: &[&str] = &["spawn_subagent", "conclude_reasoning"];
-
-/// Whether the tool may be exposed to the model (has handler or harness branch).
 pub fn is_exposable_tool(name: &str) -> bool {
     crate::ai_runtime::tool_catalog::catalog_find(name).is_some_and(|entry| {
         entry.implementation != crate::ai_runtime::tool_catalog::ToolImplementationStatus::Planned
     })
 }
-
-/// Context passed into tool dispatch.
 pub struct ToolDispatchContext<'a> {
     pub scene: AiScene,
     pub note_path: Option<&'a str>,
@@ -72,7 +49,6 @@ pub struct ToolDispatchContext<'a> {
     pub cold_start_packets: &'a [ContextPacket],
     pub app_handle: Option<tauri::AppHandle>,
 }
-
 fn is_retryable_tool_error(tool_name: &str, result: &ToolCallResult) -> bool {
     if result.success {
         return false;
@@ -81,8 +57,6 @@ fn is_retryable_tool_error(tool_name: &str, result: &ToolCallResult) -> bool {
     (tool_name == "web_search" || tool_name == "fetch_web_page")
         && (err.contains("timeout") || err.contains("network") || err.contains("连接"))
 }
-
-/// Execute with one retry for transient failures; hybrid search falls back to keyword.
 pub async fn dispatch_tool_with_retry(
     state: &AppState,
     ctx: &ToolDispatchContext<'_>,
@@ -99,8 +73,6 @@ pub async fn dispatch_tool_with_retry(
     }
     result
 }
-
-/// Execute a tool by name and return JSON output for the LLM tool message.
 pub async fn dispatch_tool(
     state: &AppState,
     ctx: &ToolDispatchContext<'_>,
@@ -160,6 +132,11 @@ async fn dispatch_tool_inner(
         "web_fetch_batch" => web_impl::web_fetch_batch_tool(state, args, ctx).await,
         "readability_fetch" => web_impl::readability_fetch_tool(state, args, ctx, false).await,
         "rendered_fetch" => web_impl::readability_fetch_tool(state, args, ctx, true).await,
+        "vault_create_note" => vault_impl::vault_create_note_tool(state, args),
+        "vault_rename_move" => vault_impl::vault_rename_move_tool(state, args),
+        "vault_delete_to_trash" => vault_impl::vault_delete_to_trash_tool(state, args),
+        "vault_asset_write" => vault_impl::vault_asset_write_tool(state, args),
+        "vault_version_list" => vault_impl::vault_version_list_tool(state, args),
         "insert_text_at_cursor" | "replace_selection" => {
             markdown_impl::markdown_write_patch_apply(state, ctx, tool_name, args)
         }
@@ -169,6 +146,24 @@ async fn dispatch_tool_inner(
         "skills_update" => skills_impl::skills_update_tool(state, ctx, args).await,
         "skills_toggle" => skills_impl::skills_toggle_tool(state, ctx, args).await,
         "skills_read_resource" => skills_impl::skills_read_resource_tool(state, ctx, args).await,
+        "git_read_status" => boundary_impl::git_read_status_tool(state, args),
+        "git_read_diff" => boundary_impl::git_read_diff_tool(state, args),
+        "git_read_log" => boundary_impl::git_read_log_tool(state, args),
+        "secret_exists" => boundary_impl::secret_exists_tool(args),
+        "fs_import_to_vault" => boundary_impl::fs_import_to_vault_tool(state, args),
+        "fs_export" => boundary_impl::fs_export_tool(args),
+        "fs_read_authorized_folder" => boundary_impl::fs_read_authorized_folder_tool(args),
+        "fs_write_authorized_export" => boundary_impl::fs_write_authorized_export_tool(args),
+        "doc_normalize_markdown" => boundary_impl::doc_normalize_markdown_tool(args),
+        "doc_extract_citations" => boundary_impl::doc_extract_citations_tool(args),
+        "web_to_markdown" => boundary_impl::web_to_markdown_tool(state, args, ctx).await,
+        "web_download_to_assets" => {
+            boundary_impl::web_download_to_assets_tool(state, args, ctx).await
+        }
+        "web_citation_extract" => boundary_impl::web_citation_extract_tool(state, args, ctx).await,
+        "skill_request_capabilities" => boundary_impl::skill_request_capabilities_tool(args),
+        "process_run_readonly" => boundary_impl::process_run_readonly_tool(state, args),
+        "git_write_commit" => boundary_impl::git_write_commit_tool(state, args),
         _ => Err(AppError::msg(format!("unknown tool: {tool_name}"))),
     }
 }

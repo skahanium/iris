@@ -34,7 +34,6 @@ export function AppAiPanelSlot({
   activeDocumentTitle,
   activeNoteIsClassified,
   activePathRef,
-  assistantDocumentTitle,
   assistantNotePath,
   assistantPrefill,
   bumpVaultIndex,
@@ -56,7 +55,6 @@ export function AppAiPanelSlot({
     <ErrorBoundary scope="AI面板">
       <UnifiedAssistantPanel
         notePath={assistantNotePath}
-        noteDisplayTitle={assistantDocumentTitle}
         getNoteContent={getLiveMarkdown}
         webSearch={webSearch}
         getWritingContext={getWritingContext}

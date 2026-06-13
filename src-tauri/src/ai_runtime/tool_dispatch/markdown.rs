@@ -98,6 +98,23 @@ pub(super) fn markdown_write_patch_apply(
             applied.len()
         )));
     }
+    let current_hash = crate::indexer::scan::content_hash(&current);
+    state.db.with_conn(|conn| {
+        crate::indexer::scan::index_file_from_content(
+            conn,
+            &vault,
+            &abs,
+            &current,
+            &current_hash,
+            None,
+        )
+    })?;
+    crate::version::create_snapshot(
+        state,
+        &target_path,
+        &current,
+        crate::version::SnapshotParams::manual(),
+    )?;
     let tmp = abs.with_extension("md.tmp");
     std::fs::write(&tmp, &applied)?;
     if let Err(e) = std::fs::rename(&tmp, &abs) {

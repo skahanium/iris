@@ -1,13 +1,9 @@
-//! ToolCatalog — single source of truth for all built-in tool definitions.
-//!
-//! Every tool exposed to the LLM or harness must be registered here.
-//! `ToolRegistry` is built from this catalog; `ToolPolicy` evaluates
-//! availability from it. No tool definition should live outside this module.
-
 use std::sync::LazyLock;
 
 use crate::ai_runtime::{AiScene, ToolAccessLevel};
 
+#[path = "tool_catalog/boundary.rs"]
+mod boundary_impl;
 #[path = "tool_catalog/groups.rs"]
 mod groups_impl;
 #[path = "tool_catalog/read.rs"]
@@ -16,6 +12,8 @@ mod read_impl;
 mod root_impl;
 #[path = "tool_catalog/skills.rs"]
 mod skills_impl;
+#[path = "tool_catalog/vault.rs"]
+mod vault_impl;
 #[path = "tool_catalog/web.rs"]
 mod web_impl;
 #[path = "tool_catalog/write.rs"]
@@ -202,6 +200,10 @@ mod tests {
             "save_genre_template",
             "update_user_rule",
             "create_note_from_deposit",
+            "vault_create_note",
+            "vault_rename_move",
+            "vault_delete_to_trash",
+            "vault_asset_write",
         ];
         for name in write_tools {
             assert!(
@@ -215,8 +217,8 @@ mod tests {
     fn total_catalog_count() {
         assert_eq!(
             catalog_total_count(),
-            35,
-            "catalog should have exactly 35 tools"
+            80,
+            "catalog should have exactly 80 tools"
         );
     }
 

@@ -1,3 +1,5 @@
+import type { PermissionEffectSummary } from "./ai";
+
 export interface FileListItem {
   path: string;
   title: string;
@@ -85,6 +87,7 @@ export interface ToolConfirmRequestEvent {
   tool_call_id: string;
   tool_name: string;
   arguments: Record<string, string | number | boolean | null | undefined>;
+  permissionEffects?: PermissionEffectSummary[];
   preview?: Record<string, unknown>;
 }
 

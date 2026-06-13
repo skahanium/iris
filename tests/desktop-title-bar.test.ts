@@ -1,6 +1,10 @@
 import { readFileSync } from "node:fs";
 
-import { describe, expect, it } from "vitest";
+import { act, createElement } from "react";
+import { createRoot, type Root } from "react-dom/client";
+import { afterEach, describe, expect, it } from "vitest";
+
+import { DesktopTitleBar } from "@/components/layout/DesktopTitleBar";
 
 function read(path: string): string {
   try {
@@ -9,6 +13,42 @@ function read(path: string): string {
     return "";
   }
 }
+
+let root: Root | null = null;
+let host: HTMLDivElement | null = null;
+
+function renderTitleBar() {
+  host = document.createElement("div");
+  document.body.append(host);
+  root = createRoot(host);
+
+  act(() => {
+    root?.render(
+      createElement(DesktopTitleBar, {
+        tabs: [
+          {
+            path: "/vault/女友的闺蜜.md",
+            title: "女友的闺蜜",
+            dirty: true,
+          },
+        ],
+        activePath: "/vault/女友的闺蜜.md",
+        onSelect: () => undefined,
+        onClose: () => undefined,
+        onNew: () => undefined,
+      }),
+    );
+  });
+}
+
+afterEach(() => {
+  if (root) {
+    act(() => root?.unmount());
+  }
+  host?.remove();
+  root = null;
+  host = null;
+});
 
 describe("desktop title bar", () => {
   it("macOS config uses undecorated overlay shell with custom window controls", () => {
@@ -119,5 +159,18 @@ describe("desktop title bar", () => {
     expect(bar).not.toContain("iris-home-segment");
     expect(bar).toContain("iris-brand-rail--active");
     expect(bar).toContain("iris-rail-tab--active");
+  });
+
+  it("keeps the close button inside the visible tab segment", () => {
+    renderTitleBar();
+
+    const closeButton = document.querySelector<HTMLButtonElement>(
+      '[aria-label="关闭 女友的闺蜜"]',
+    );
+    const tabSegment = closeButton?.closest('[data-testid="rail-segment-tab"]');
+
+    expect(closeButton).not.toBeNull();
+    expect(tabSegment).not.toBeNull();
+    expect(tabSegment?.textContent).toContain("女友的闺蜜");
   });
 });

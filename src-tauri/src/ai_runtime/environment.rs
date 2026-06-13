@@ -193,7 +193,6 @@ mod tests {
             description: "混合搜索".into(),
             input_schema: serde_json::json!({}),
             access_level: ToolAccessLevel::ReadIndex,
-            scene_allowlist: vec![],
             requires_confirmation: false,
             max_results: None,
             scene_affinity: vec![],

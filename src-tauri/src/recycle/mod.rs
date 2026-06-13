@@ -2,7 +2,6 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 
 use chrono::{Duration, Utc};
 use rusqlite::OptionalExtension;
@@ -123,7 +122,7 @@ fn title_from_path(path: &str) -> String {
 }
 
 /// Permanently remove a note, all version blobs, and index rows (no recycle).
-pub fn discard_document(state: &Arc<AppState>, path: &str) -> AppResult<()> {
+pub fn discard_document(state: &AppState, path: &str) -> AppResult<()> {
     let vault = state.vault_path()?;
     let abs = resolve_vault_path(&vault, path)?;
 
@@ -149,7 +148,7 @@ pub fn discard_document(state: &Arc<AppState>, path: &str) -> AppResult<()> {
 }
 
 /// Move current note + all versions/finalized snapshots into recycle bin.
-pub fn trash_document(state: &Arc<AppState>, path: &str) -> AppResult<()> {
+pub fn trash_document(state: &AppState, path: &str) -> AppResult<()> {
     let vault = state.vault_path()?;
     let abs = resolve_vault_path(&vault, path)?;
     let trash_id = Uuid::new_v4().to_string();
@@ -298,13 +297,13 @@ pub fn purge_expired_items(
 }
 
 /// Remove recycle entries whose retention period has ended.
-pub fn purge_expired(state: &Arc<AppState>) -> AppResult<usize> {
+pub fn purge_expired(state: &AppState) -> AppResult<usize> {
     let vault = state.vault_path()?;
     let (count, _) = purge_expired_items(&state.db, &vault)?;
     Ok(count)
 }
 
-pub fn list_recycle(state: &Arc<AppState>) -> AppResult<Vec<RecycleBinItem>> {
+pub fn list_recycle(state: &AppState) -> AppResult<Vec<RecycleBinItem>> {
     let vault = state.vault_path()?;
     let rows: Vec<(String, String, String, String, String, String)> =
         state.db.with_conn(|conn| {
@@ -346,7 +345,7 @@ pub fn list_recycle(state: &Arc<AppState>) -> AppResult<Vec<RecycleBinItem>> {
 }
 
 /// Restore a trashed note (body + all version snapshots) to its original path.
-pub fn restore_document(state: &Arc<AppState>, id: &str) -> AppResult<String> {
+pub fn restore_document(state: &AppState, id: &str) -> AppResult<String> {
     let vault = state.vault_path()?;
     let (trash_rel, original_path): (String, String) = state.db.with_conn(|conn| {
         conn.query_row(
@@ -426,7 +425,7 @@ pub fn restore_document(state: &Arc<AppState>, id: &str) -> AppResult<String> {
 }
 
 /// Permanently delete a recycle entry before its expiry.
-pub fn purge_recycle_item(state: &Arc<AppState>, id: &str) -> AppResult<()> {
+pub fn purge_recycle_item(state: &AppState, id: &str) -> AppResult<()> {
     let vault = state.vault_path()?;
     let trash_rel: String = state.db.with_conn(|conn| {
         conn.query_row(
@@ -449,6 +448,7 @@ mod tests {
     use crate::indexer::scan::{index_file, scan_vault};
     use crate::version::version_save_manual;
     use std::fs;
+    use std::sync::Arc;
     use tempfile::tempdir;
 
     fn setup() -> (tempfile::TempDir, Arc<AppState>) {

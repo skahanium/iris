@@ -32,6 +32,97 @@ export type ToolAccessLevel =
   | "write_settings"
   | "manage_skills";
 
+export type AgentPermissionAtom =
+  | "vault.read"
+  | "vault.search"
+  | "vault.write.patch"
+  | "vault.create_note"
+  | "vault.rename_move"
+  | "vault.delete_to_trash"
+  | "vault.assets.read"
+  | "vault.assets.write"
+  | "vault.versioning"
+  | "fs.pick_file"
+  | "fs.pick_folder"
+  | "fs.import_to_vault"
+  | "fs.export"
+  | "fs.read_authorized_folder"
+  | "fs.write_authorized_export"
+  | "doc.convert"
+  | "doc.ocr"
+  | "doc.extract_pdf"
+  | "doc.extract_table"
+  | "doc.normalize_markdown"
+  | "doc.fix_links"
+  | "doc.extract_citations"
+  | "web.search"
+  | "web.fetch"
+  | "web.to_markdown"
+  | "web.download_to_assets"
+  | "web.citation_extract"
+  | "net.localhost"
+  | "skill.read_resource"
+  | "skill.write_storage"
+  | "skill.request_capabilities"
+  | "skill.execute_script_sandboxed"
+  | "skill.install_dependency"
+  | "skill.mcp_bridge"
+  | "process.run_markdown_tool"
+  | "process.run_readonly"
+  | "process.run_mutating"
+  | "process.run_network"
+  | "process.long_running"
+  | "process.kill_owned"
+  | "git.read_status"
+  | "git.read_diff"
+  | "git.read_log"
+  | "git.write_commit"
+  | "clipboard.write"
+  | "clipboard.read"
+  | "browser.read_page"
+  | "browser.screenshot"
+  | "browser.control_page"
+  | "secret.exists"
+  | "secret.use_named"
+  | "secret.create_update"
+  | "secret.read_plaintext"
+  | "app_state.read"
+  | "app_state.write";
+
+export type PermissionRiskLevel = "low" | "medium" | "high" | "critical";
+
+export type PermissionScopeKind =
+  | "request"
+  | "session"
+  | "vault"
+  | "folder"
+  | "skill"
+  | "global";
+
+export type PermissionDecision =
+  | "allow"
+  | "allow_once"
+  | "allow_for_session"
+  | "deny_once"
+  | "deny_always_for_this_skill"
+  | "open_settings";
+
+export interface PermissionEffectSummary {
+  permissionName: AgentPermissionAtom;
+  scopeKind: PermissionScopeKind;
+  scopeSummary: string;
+  riskLevel: PermissionRiskLevel;
+  reversibleBy: string;
+  blockedReason?: string | null;
+}
+
+export interface ToolPermissionPreflight {
+  toolName: string;
+  decision: PermissionDecision;
+  effects: PermissionEffectSummary[];
+  blocked: boolean;
+}
+
 export interface SourceSpan {
   start: number;
   end: number;
@@ -377,17 +468,7 @@ export interface ResearchFocusPayload {
     total_evidence_count: number;
     coverage_score: number;
     global_gaps: string[];
-    propositions: Array<{
-      id: string;
-      statement: string;
-      evidence: Array<{
-        id: string;
-        title: string;
-        citation_label: string;
-        score: number;
-      }>;
-      gaps: string[];
-    }>;
+    propositions: ResearchProposition[];
   };
   argument_chain: {
     has_contradictions: boolean;
@@ -864,11 +945,18 @@ export interface OrganizeTaskResult {
 
 // ─── Research Execute Result ─────────────────────────────
 
+export interface EvidenceBrief {
+  id: string;
+  title: string;
+  citation_label: string;
+  score: number;
+}
+
 /** 研究命题 — EvidenceMatrix 的子元素 */
 export interface ResearchProposition {
   id: string;
   statement: string;
-  evidence: ContextPacket[];
+  evidence: EvidenceBrief[];
   gaps: string[];
 }
 

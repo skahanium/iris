@@ -112,6 +112,14 @@ export const CAPABILITY_SLOTS: CapabilitySlot[] = [
   "local_private",
 ];
 
+export const USER_CONFIGURABLE_CAPABILITY_SLOTS = [
+  "fast",
+  "writer",
+  "reasoner",
+  "long_context",
+  "vision",
+] satisfies CapabilitySlot[];
+
 /** 客户端回退默认（IPC 不可用或解析失败时） */
 export const DEFAULT_LLM_ROUTING: LlmRoutingConfig = {
   version: 1,

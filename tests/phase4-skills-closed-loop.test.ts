@@ -52,10 +52,9 @@ describe("Phase4 skills closed-loop contract", () => {
     expect(harnessTask).toContain("apply_skill_overlay_to_goal");
   });
 
-  it("shows Phase4 skill diagnostics in Skills panel and Run Plan UI", () => {
+  it("keeps Phase4 skill diagnostics in Skills panel and internal run plan data", () => {
     const skillsPanel = read("src/components/ai/SkillsPanel.tsx");
-    const summary = read("src/components/ai/RunPlanSummary.tsx");
-    const drawer = read("src/components/ai/RunPlanDrawer.tsx");
+    const aiTypes = read("src/types/ai.ts");
 
     expect(skillsPanel).toContain("lastMatchedAt");
     expect(skillsPanel).toContain("lastUsedAt");
@@ -63,18 +62,13 @@ describe("Phase4 skills closed-loop contract", () => {
     expect(skillsPanel).toContain("blockedCapabilities");
     expect(skillsPanel).toContain("compatibilityWarnings");
 
-    expect(summary).toContain("skillActivationPlan");
-    expect(summary).toContain("blockedCapabilities");
-    expect(drawer).toContain("Skills");
-    expect(drawer).toContain("fallbackGuidance");
+    expect(aiTypes).toContain("skillActivationPlan");
+    expect(aiTypes).toContain("blockedCapabilities");
+    expect(aiTypes).toContain("fallbackGuidance");
   });
 
-  it("keeps sensitive skill/runtime content out of Run Plan UI", () => {
-    const combined = [
-      read("src/components/ai/RunPlanSummary.tsx"),
-      read("src/components/ai/RunPlanDrawer.tsx"),
-      read("src/components/ai/SkillsPanel.tsx"),
-    ].join("\n");
+  it("keeps sensitive skill/runtime content out of user-facing skill UI", () => {
+    const combined = [read("src/components/ai/SkillsPanel.tsx")].join("\n");
 
     expect(combined).not.toContain("resourceContent");
     expect(combined).not.toContain("noteContent");

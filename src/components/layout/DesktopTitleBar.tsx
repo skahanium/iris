@@ -106,30 +106,34 @@ export const DesktopTitleBar = memo(function DesktopTitleBar({
                 return (
                   <div
                     key={tab.path}
-                    className="group flex min-w-[7rem] max-w-[14rem] shrink-0 items-center"
+                    data-testid="rail-segment-tab"
+                    data-tauri-drag-region-exclude
+                    className={cn(
+                      "iris-rail-tab group flex min-w-0 shrink-0 items-center gap-1 px-2 py-1 text-xs transition-colors duration-fast focus-within:ring-2 focus-within:ring-primary focus-within:ring-offset-1 focus-within:ring-offset-panel",
+                      active
+                        ? "iris-rail-tab--active text-[hsl(var(--outline-rail-active))]"
+                        : "text-muted-foreground hover:bg-[hsl(var(--outline-rail-active)/0.06)]",
+                    )}
+                    title={tab.path !== tab.title ? tab.path : undefined}
                   >
                     <button
                       type="button"
-                      data-testid="rail-segment-tab"
                       data-tauri-drag-region-exclude
-                      className={cn(
-                        "iris-rail-tab min-w-0 flex-1 truncate px-3 py-2 text-left text-xs transition-colors duration-fast focus:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-1 focus-visible:ring-offset-panel",
-                        active
-                          ? "iris-rail-tab--active text-[hsl(var(--outline-rail-active))]"
-                          : "text-muted-foreground hover:bg-[hsl(var(--outline-rail-active)/0.06)]",
-                      )}
-                      title={tab.path !== tab.title ? tab.path : undefined}
+                      className="flex min-w-0 flex-1 items-center overflow-hidden rounded-md px-1 py-1 text-left focus:outline-none"
                       onMouseDown={(event) => {
                         event.stopPropagation();
                       }}
                       onClick={() => onSelect(tab.path)}
                     >
                       {tab.locked ? (
-                        <Lock className="mr-1 inline h-3 w-3 text-muted-foreground/70" />
+                        <Lock className="mr-1 h-3 w-3 shrink-0 text-muted-foreground/70" />
                       ) : null}
-                      {tab.title}
+                      <span className="min-w-0 truncate">{tab.title}</span>
                       {tab.dirty ? (
-                        <span className="text-muted-foreground"> •</span>
+                        <span className="shrink-0 text-muted-foreground">
+                          {" "}
+                          •
+                        </span>
                       ) : null}
                     </button>
                     <button

@@ -17,16 +17,18 @@ use super::trace_emit::{emit_thinking, emit_trace_phase};
 use super::types::{HarnessPhase, HarnessRunInput, HarnessRunResult};
 use super::util::accumulate_usage;
 use crate::ai_harness::tool_turn::outstanding_confirm_tool;
+use crate::ai_runtime::agent_permissions::preflight_tool_permission;
 use crate::ai_runtime::evidence_ledger::EvidenceLedger;
 use crate::ai_runtime::harness_support::{
     extract_thinking_blocks, load_harness_checkpoint, HarnessCheckpointMeta,
 };
 use crate::ai_runtime::model_gateway::{
-    clear_abort, is_abort_requested, prepare_tool_api_messages, GatewayRequest, LlmMessage,
-    MessageRole, ModelGateway, ProviderConfig, TokenUsage, ToolCall,
+    clear_abort, is_abort_requested, prepare_tool_api_messages, GatewayRequest, GatewayResponse,
+    LlmMessage, MessageRole, ModelGateway, ProviderConfig, TokenUsage, ToolCall,
 };
 use crate::ai_runtime::scene_router::resolve_scene;
 use crate::ai_runtime::tool_audit;
+use crate::ai_runtime::tool_catalog::catalog_find;
 use crate::ai_runtime::tool_dispatch::{dispatch_tool_with_retry, ToolDispatchContext};
 use crate::ai_runtime::tool_executor::ToolRegistry;
 use crate::ai_runtime::tool_fallback::{
@@ -35,6 +37,41 @@ use crate::ai_runtime::tool_fallback::{
 use crate::ai_runtime::tool_policy::{self, DenialReason, ToolPolicyContext};
 use crate::app::AppState;
 use crate::error::{AppError, AppResult};
+
+const LLM_MAX_RETRIES: u32 = 3;
+const LLM_RETRY_BASE_DELAY_MS: u64 = 1000;
+
+async fn send_llm_request_with_retry(
+    gateway: &ModelGateway,
+    request: &GatewayRequest,
+    request_id: &str,
+) -> AppResult<GatewayResponse> {
+    let mut last_err: Option<String> = None;
+    for attempt in 0..=LLM_MAX_RETRIES {
+        match gateway.send_request(request.clone()).await {
+            Ok(response) => return Ok(response),
+            Err(e) => {
+                let msg = e.to_string();
+                if attempt < LLM_MAX_RETRIES {
+                    let delay_ms = LLM_RETRY_BASE_DELAY_MS * 2u64.pow(attempt);
+                    tracing::warn!(
+                        request_id = %request_id,
+                        attempt = attempt + 1,
+                        delay_ms,
+                        error = %msg,
+                        "LLM 请求失败，{}ms后重试",
+                        delay_ms
+                    );
+                    tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
+                }
+                last_err = Some(msg);
+            }
+        }
+    }
+    Err(AppError::msg(last_err.unwrap_or_else(|| {
+        "LLM request failed after all retries".into()
+    })))
+}
 
 /// Run the unified agent harness loop.
 pub async fn run_harness(
@@ -102,6 +139,7 @@ pub async fn run_harness(
     let mut harness_rounds: u32 = 0;
     let mut reflection_done = false;
     let mut bonus_round_used = false;
+    let mut consecutive_parse_failures: u32 = 0;
     let token_budget = resolve_token_budget(input.scene, input.token_budget);
     let mut max_rounds = resolve_max_rounds(input.scene, input.max_rounds_override);
 
@@ -186,7 +224,8 @@ pub async fn run_harness(
                 skip_stub_ids: vec![],
             };
 
-            let response = gateway.send_request(request).await?;
+            let response =
+                send_llm_request_with_retry(&gateway, &request, &input.request_id).await?;
             if usage_is_empty(&response.usage) {
                 let content = response.content.as_deref().unwrap_or("");
                 estimate_and_accumulate(&mut total_usage, &messages, content);
@@ -203,15 +242,28 @@ pub async fn run_harness(
             }
 
             if should_retry_tool_parse(&tool_calls) {
+                consecutive_parse_failures += 1;
+                if consecutive_parse_failures >= 3 {
+                    tracing::warn!(
+                        request_id = %input.request_id,
+                        consecutive_failures = consecutive_parse_failures,
+                        "连续 3 次工具调用解析失败，放弃重试，转入最终回答模式"
+                    );
+                    break 'agent;
+                }
                 messages.push(LlmMessage {
                     role: MessageRole::User,
-                    content: "工具参数 JSON 不完整，请重新输出合法的 tool_calls。".into(),
+                    content: format!(
+                        "工具参数 JSON 不完整，请重新输出合法的 tool_calls。尝试 {}/3，超过将直接回答。",
+                        consecutive_parse_failures
+                    ),
                     tool_call_id: None,
                     tool_calls: None,
                     ..Default::default()
                 });
                 continue;
             }
+            consecutive_parse_failures = 0;
 
             if tool_calls.is_empty() {
                 let raw = response.content.clone().unwrap_or_default();
@@ -700,11 +752,17 @@ async fn pause_for_tool_confirmation(
             .unwrap_or_default(),
         },
     );
+    let args = serde_json::from_str::<serde_json::Value>(&tool_call.function.arguments)
+        .unwrap_or_default();
+    let permission_effects = catalog_find(tool_name)
+        .map(|entry| preflight_tool_permission(entry, &args, None).effects)
+        .unwrap_or_default();
     let mut confirm_request = serde_json::json!({
         "request_id": input.request_id,
         "tool_call_id": tool_call.id,
         "tool_name": tool_name,
-        "arguments": serde_json::from_str::<serde_json::Value>(&tool_call.function.arguments).unwrap_or_default(),
+        "arguments": args,
+        "permissionEffects": permission_effects,
     });
     if tool_name == "skills_install" {
         if let Ok(args) = serde_json::from_str::<serde_json::Value>(&tool_call.function.arguments) {

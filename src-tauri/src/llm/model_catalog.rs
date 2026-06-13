@@ -195,17 +195,101 @@ pub fn catalog() -> &'static [ModelCatalogEntry] {
             probe_strategy: ProbeStrategy::OpenAiModelsThenChat,
         },
         ModelCatalogEntry {
-            id: "mimo-vl-7b-experimental",
+            id: "MiMo-V2.5-Pro",
             provider_id: "mimo",
-            display_name: "MiMo VL 7B Experimental",
-            context_window: 64_000,
+            display_name: "MiMo-V2.5-Pro",
+            context_window: 128_000,
             max_output: 8_192,
             supports_tools: false,
-            supports_thinking: false,
+            supports_thinking: true,
+            supports_vision: false,
+            supports_streaming: true,
+            cache_friendly: false,
+            endpoint_family: EndpointFamily::OpenAiCompatibleChatCompletions,
+            probe_strategy: ProbeStrategy::StaticOnly,
+        },
+        ModelCatalogEntry {
+            id: "MiMo-V2.5-Pro-UltraSpeed",
+            provider_id: "mimo",
+            display_name: "MiMo-V2.5-Pro-UltraSpeed",
+            context_window: 128_000,
+            max_output: 8_192,
+            supports_tools: false,
+            supports_thinking: true,
+            supports_vision: false,
+            supports_streaming: true,
+            cache_friendly: false,
+            endpoint_family: EndpointFamily::OpenAiCompatibleChatCompletions,
+            probe_strategy: ProbeStrategy::StaticOnly,
+        },
+        ModelCatalogEntry {
+            id: "MiMo-V2.5",
+            provider_id: "mimo",
+            display_name: "MiMo-V2.5",
+            context_window: 128_000,
+            max_output: 8_192,
+            supports_tools: false,
+            supports_thinking: true,
             supports_vision: true,
             supports_streaming: true,
             cache_friendly: false,
             endpoint_family: EndpointFamily::OpenAiCompatibleChatCompletions,
+            probe_strategy: ProbeStrategy::StaticOnly,
+        },
+        ModelCatalogEntry {
+            id: "MiMo-V2.5-ASR",
+            provider_id: "mimo",
+            display_name: "MiMo-V2.5-ASR",
+            context_window: 32_000,
+            max_output: 8_192,
+            supports_tools: false,
+            supports_thinking: false,
+            supports_vision: false,
+            supports_streaming: false,
+            cache_friendly: false,
+            endpoint_family: EndpointFamily::ResponsesReserved,
+            probe_strategy: ProbeStrategy::StaticOnly,
+        },
+        ModelCatalogEntry {
+            id: "MiMo-V2.5-TTS",
+            provider_id: "mimo",
+            display_name: "MiMo-V2.5-TTS",
+            context_window: 32_000,
+            max_output: 8_192,
+            supports_tools: false,
+            supports_thinking: false,
+            supports_vision: false,
+            supports_streaming: false,
+            cache_friendly: false,
+            endpoint_family: EndpointFamily::ResponsesReserved,
+            probe_strategy: ProbeStrategy::StaticOnly,
+        },
+        ModelCatalogEntry {
+            id: "MiMo-V2.5-TTS-VoiceClone",
+            provider_id: "mimo",
+            display_name: "MiMo-V2.5-TTS-VoiceClone",
+            context_window: 32_000,
+            max_output: 8_192,
+            supports_tools: false,
+            supports_thinking: false,
+            supports_vision: false,
+            supports_streaming: false,
+            cache_friendly: false,
+            endpoint_family: EndpointFamily::ResponsesReserved,
+            probe_strategy: ProbeStrategy::StaticOnly,
+        },
+        ModelCatalogEntry {
+            id: "MiMo-V2.5-TTS-VoiceDesign",
+            provider_id: "mimo",
+            display_name: "MiMo-V2.5-TTS-VoiceDesign",
+            context_window: 32_000,
+            max_output: 8_192,
+            supports_tools: false,
+            supports_thinking: false,
+            supports_vision: false,
+            supports_streaming: false,
+            cache_friendly: false,
+            endpoint_family: EndpointFamily::ResponsesReserved,
             probe_strategy: ProbeStrategy::StaticOnly,
         },
     ]
@@ -286,5 +370,24 @@ mod tests {
             fallback.probe_strategy,
             crate::ai_types::ProbeStrategy::OpenAiModelsThenChat
         );
+    }
+
+    #[test]
+    fn mimo_catalog_uses_v2_5_models_not_legacy_experimental() {
+        let mimo_models: Vec<_> = catalog_for_settings()
+            .into_iter()
+            .filter(|model| model.provider_id == "mimo")
+            .collect();
+        let ids: Vec<_> = mimo_models.iter().map(|model| model.id).collect();
+
+        assert!(ids.contains(&"MiMo-V2.5-Pro"));
+        assert!(ids.contains(&"MiMo-V2.5-Pro-UltraSpeed"));
+        assert!(ids.contains(&"MiMo-V2.5"));
+        assert!(ids.contains(&"MiMo-V2.5-ASR"));
+        assert!(ids.contains(&"MiMo-V2.5-TTS"));
+        assert!(ids.contains(&"MiMo-V2.5-TTS-VoiceClone"));
+        assert!(ids.contains(&"MiMo-V2.5-TTS-VoiceDesign"));
+        assert!(!ids.contains(&"mimo-vl-7b-experimental"));
+        assert_eq!(fallback_model("mimo").id, "MiMo-V2.5-Pro");
     }
 }

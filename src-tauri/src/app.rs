@@ -269,6 +269,13 @@ impl AppState {
         self.ai.clear();
     }
 
+    /// Clear context assembly cache (called on .md file changes to prevent stale results).
+    pub fn clear_context_cache(&self) {
+        if let Ok(mut cache) = self.ai.context_cache.lock() {
+            cache.clear();
+        }
+    }
+
     pub fn data_dir(&self) -> &PathBuf {
         &self.data_dir
     }

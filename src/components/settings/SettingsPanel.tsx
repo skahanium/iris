@@ -227,6 +227,34 @@ export function SettingsPanel({
           </SettingCard>
 
           <SettingCard
+            title="Markdown Agent 权限"
+            description="Iris 的 Agent 面向本地 Markdown 工作台授权，不提供通用电脑控制能力。"
+          >
+            <div className="grid gap-2 text-xs text-muted-foreground sm:grid-cols-2">
+              <div className="rounded-md border border-border/45 bg-background/35 px-3 py-2">
+                <div className="mb-1 flex items-center gap-1.5 font-medium text-foreground">
+                  <ShieldCheck className="h-3.5 w-3.5" />
+                  写入与联网
+                </div>
+                <span className="font-mono text-foreground">
+                  vault.write.patch
+                </span>{" "}
+                和网页抓取会在执行前展示权限、作用域、风险与可撤销方式。
+              </div>
+              <div className="rounded-md border border-border/45 bg-background/35 px-3 py-2">
+                <div className="mb-1 flex items-center gap-1.5 font-medium text-foreground">
+                  <ShieldCheck className="h-3.5 w-3.5" />
+                  凭据边界
+                </div>
+                <span className="font-mono text-foreground">
+                  secret.read_plaintext
+                </span>{" "}
+                不支持；API Key 只能由后端通过系统凭据管理器代用。
+              </div>
+            </div>
+          </SettingCard>
+
+          <SettingCard
             title="数据与隐私"
             description="笔记正文以 Markdown 文件为准；运行状态与缓存保存在本机。"
           >

@@ -64,6 +64,8 @@ const MIGRATION_026_UP: &str =
     include_str!("../../migrations/026_skill_closed_loop_diagnostics.sql");
 const MIGRATION_026_DOWN: &str =
     include_str!("../../migrations/026_skill_closed_loop_diagnostics.down.sql");
+const MIGRATION_027_UP: &str = include_str!("../../migrations/027_agent_permissions.sql");
+const MIGRATION_027_DOWN: &str = include_str!("../../migrations/027_agent_permissions.down.sql");
 
 fn is_applied(conn: &Connection, name: &str) -> bool {
     conn.query_row(
@@ -158,6 +160,7 @@ pub fn migrate_up(conn: &Connection) -> AppResult<()> {
         MIGRATION_026_UP,
         false,
     )?;
+    apply_migration(conn, "027_agent_permissions", MIGRATION_027_UP, false)?;
 
     Ok(())
 }
@@ -169,6 +172,7 @@ fn rollback_migration(conn: &Connection, name: &str, sql: &str) {
 
 /// Roll back all migrations in strict reverse order (for tests).
 pub fn migrate_down(conn: &Connection) -> AppResult<()> {
+    rollback_migration(conn, "027_agent_permissions", MIGRATION_027_DOWN);
     rollback_migration(
         conn,
         "026_skill_closed_loop_diagnostics",
@@ -700,6 +704,81 @@ mod tests {
         let gone: bool = conn
             .query_row(
                 "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='skill_diagnostics'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .map(|c| c > 0)
+            .unwrap();
+        assert!(!gone);
+    }
+
+    #[test]
+    fn migration_027_creates_agent_permission_tables() {
+        let conn = Connection::open_in_memory().unwrap();
+        migrate_up(&conn).unwrap();
+
+        for table in ["agent_permission_grants", "agent_permission_audit"] {
+            let has: bool = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name = ?1",
+                    [table],
+                    |row| row.get::<_, i64>(0),
+                )
+                .map(|c| c > 0)
+                .unwrap();
+            assert!(has, "missing {table}");
+        }
+
+        conn.execute(
+            "INSERT INTO ai_traces (request_id, scene, status, created_at)
+             VALUES ('req-perm-1', 'drafting_assist', 'running', datetime('now'))",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO agent_permission_grants
+             (permission_name, decision, scope_kind, scope_value, risk_level, skill_id)
+             VALUES ('vault.write.patch', 'allow_session', 'vault', 'current', 'medium', NULL)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO agent_permission_audit
+             (request_id, skill_id, tool_name, permission_name, decision, scope_summary, risk_level, result_status)
+             VALUES ('req-perm-1', NULL, 'replace_selection', 'vault.write.patch', 'allow_once', 'path=notes/a.md', 'medium', 'pending')",
+            [],
+        )
+        .unwrap();
+
+        let summary: String = conn
+            .query_row(
+                "SELECT scope_summary FROM agent_permission_audit WHERE request_id = 'req-perm-1'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(summary, "path=notes/a.md");
+    }
+
+    #[test]
+    fn migration_027_roundtrip() {
+        let conn = Connection::open_in_memory().unwrap();
+        migrate_up(&conn).unwrap();
+
+        assert!(conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='agent_permission_audit'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .map(|c| c > 0)
+            .unwrap());
+
+        rollback_migration(&conn, "027_agent_permissions", MIGRATION_027_DOWN);
+
+        let gone: bool = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='agent_permission_audit'",
                 [],
                 |row| row.get::<_, i64>(0),
             )

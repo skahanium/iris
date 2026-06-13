@@ -100,12 +100,6 @@ pub fn decide_snapshot(input: &SnapshotDecisionInput<'_>) -> SnapshotDecision {
     SnapshotDecision::create()
 }
 
-/// Whether a new snapshot row should be created.
-#[allow(dead_code)]
-pub fn should_create_snapshot(input: &SnapshotDecisionInput<'_>) -> bool {
-    decide_snapshot(input).create
-}
-
 pub fn parse_created_at(raw: &str) -> DateTime<Utc> {
     DateTime::parse_from_rfc3339(raw)
         .map(|dt| dt.with_timezone(&Utc))
@@ -133,7 +127,7 @@ mod tests {
             last_auto_idle_at: None,
             now: Utc::now(),
         };
-        assert!(!should_create_snapshot(&input));
+        assert!(!decide_snapshot(&input).create);
     }
 
     #[test]
@@ -145,7 +139,7 @@ mod tests {
             last_auto_idle_at: None,
             now: Utc::now(),
         };
-        assert!(should_create_snapshot(&input));
+        assert!(decide_snapshot(&input).create);
     }
 
     #[test]
@@ -157,7 +151,7 @@ mod tests {
             last_auto_idle_at: None,
             now: Utc::now(),
         };
-        assert!(should_create_snapshot(&input));
+        assert!(decide_snapshot(&input).create);
     }
 
     #[test]
@@ -169,7 +163,7 @@ mod tests {
             last_auto_idle_at: None,
             now: Utc::now(),
         };
-        assert!(!should_create_snapshot(&input));
+        assert!(!decide_snapshot(&input).create);
     }
 
     #[test]
@@ -181,7 +175,7 @@ mod tests {
             last_auto_idle_at: Some(Utc::now() - chrono::Duration::seconds(120)),
             now: Utc::now(),
         };
-        assert!(!should_create_snapshot(&input));
+        assert!(!decide_snapshot(&input).create);
     }
 
     #[test]
@@ -193,7 +187,7 @@ mod tests {
             last_auto_idle_at: Some(Utc::now() - chrono::Duration::seconds(700)),
             now: Utc::now(),
         };
-        assert!(should_create_snapshot(&input));
+        assert!(decide_snapshot(&input).create);
     }
 
     #[test]

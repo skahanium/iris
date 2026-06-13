@@ -38,7 +38,6 @@ impl EvidenceLedger {
             packet.citation_label = format!("[{}]", self.label_seq);
         }
         self.packets.push(packet);
-        self.sort_and_cap();
     }
 
     pub fn packets(&self) -> &[ContextPacket] {
@@ -46,6 +45,7 @@ impl EvidenceLedger {
     }
 
     pub fn into_packets(mut self, token_budget: usize) -> Vec<ContextPacket> {
+        self.sort_and_cap();
         compact_evidence(&mut self.packets, token_budget);
         self.packets
     }

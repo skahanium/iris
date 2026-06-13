@@ -93,6 +93,8 @@ pub async fn send_streaming_request(
     let mut stream = response.bytes_stream();
     use futures_util::StreamExt;
     let mut carry = String::new();
+    let mut carry_truncated = false;
+    const MAX_CARRY_BYTES: usize = 1_048_576;
 
     while let Some(chunk_result) = stream.next().await {
         if is_abort_requested(request_id) {
@@ -102,7 +104,19 @@ pub async fn send_streaming_request(
 
         let chunk = chunk_result.map_err(|e| AppError::msg(format!("Stream read error: {}", e)))?;
 
-        carry.push_str(&String::from_utf8_lossy(&chunk));
+        let chunk_text = String::from_utf8_lossy(&chunk);
+        if carry.len() + chunk_text.len() > MAX_CARRY_BYTES {
+            if !carry_truncated {
+                tracing::warn!(
+                    request_id = %request_id,
+                    carry_len = carry.len(),
+                    "SSE 缓冲区超过 1 MiB 上限，截断缓冲数据"
+                );
+                carry_truncated = true;
+            }
+        } else {
+            carry.push_str(&chunk_text);
+        }
 
         while let Some(pos) = carry.find('\n') {
             let line: String = carry.drain(..=pos).collect();

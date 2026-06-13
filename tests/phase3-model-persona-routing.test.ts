@@ -36,30 +36,57 @@ describe("Phase3 model and persona routing contract", () => {
 
   it("updates model settings from scene routes to capability slots", () => {
     const section = read("src/components/settings/LlmRoutingSection.tsx");
+    const llmTypes = read("src/types/llm.ts");
 
     expect(section).toContain("能力槽模型路由");
-    expect(section).toContain("CAPABILITY_SLOTS");
+    expect(section).toContain("USER_CONFIGURABLE_CAPABILITY_SLOTS");
+    expect(section).toContain("USER_CONFIGURABLE_CAPABILITY_SLOTS.map");
+    expect(section).not.toContain("{CAPABILITY_SLOTS.map");
+    expect(llmTypes).toContain("USER_CONFIGURABLE_CAPABILITY_SLOTS");
+    expect(llmTypes).toMatch(
+      /USER_CONFIGURABLE_CAPABILITY_SLOTS[\s\S]*"fast"[\s\S]*"writer"[\s\S]*"reasoner"[\s\S]*"long_context"[\s\S]*"vision"/,
+    );
     expect(section).toContain("connection");
     expect(section).toContain("vision");
     expect(section).toContain("tools");
+    expect(section).not.toContain('label: "Agent tools"');
+    expect(section).not.toContain('label: "Embedding"');
+    expect(section).not.toContain('label: "Reranker"');
+    expect(section).not.toContain('label: "Local private"');
     expect(section).not.toContain("场景模型路由");
     expect(section).not.toContain("AI_SCENES.map");
   });
 
-  it("shows model route and persona layers in run plan UI without sensitive fields", () => {
-    const summary = read("src/components/ai/RunPlanSummary.tsx");
-    const drawer = read("src/components/ai/RunPlanDrawer.tsx");
-    const combined = `${summary}\n${drawer}`;
+  it("uses current MiMo v2.5 catalog labels instead of the old experimental placeholder", () => {
+    const providers = read("src-tauri/src/llm/providers.rs");
+    const catalog = read("src-tauri/src/llm/model_catalog.rs");
+    const section = read("src/components/settings/LlmRoutingSection.tsx");
 
-    expect(drawer).toContain("Model");
-    expect(drawer).toContain("Persona");
-    expect(drawer).toContain("modelRoute");
-    expect(drawer).toContain("personaLayers");
-    expect(summary).toContain("modelRoute");
-    expect(combined).not.toContain("noteContent");
-    expect(combined).not.toContain("base64");
-    expect(combined).not.toContain("clipboard");
-    expect(combined).not.toContain("apiKey");
+    expect(providers).toContain('"mimo", "MiMo", "MiMo-V2.5-Pro"');
+    expect(catalog).toContain("MiMo-V2.5-Pro");
+    expect(catalog).toContain("MiMo-V2.5-Pro-UltraSpeed");
+    expect(catalog).toContain("MiMo-V2.5");
+    expect(catalog).toContain("MiMo-V2.5-ASR");
+    expect(catalog).toContain("MiMo-V2.5-TTS");
+    expect(catalog).not.toContain('id: "mimo-vl-7b-experimental"');
+    expect(catalog).not.toContain('display_name: "MiMo VL 7B Experimental"');
+    expect(providers).not.toContain("MiMo Experimental");
+    expect(section).toContain("需配置 Base URL");
+  });
+
+  it("keeps model route and persona layers internal without exposing a run-plan panel", () => {
+    const aiTypes = read("src/types/ai.ts");
+    const hook = read("src/components/ai/hooks/useAssistantRunPlan.tsx");
+
+    expect(aiTypes).toContain("modelRoute");
+    expect(aiTypes).toContain("personaLayers");
+    expect(hook).toContain("layer: null");
+    expect(hook).not.toContain("components/ai/RunPlanSummary");
+    expect(hook).not.toContain("components/ai/RunPlanDrawer");
+    expect(hook).not.toContain("noteContent");
+    expect(hook).not.toContain("base64");
+    expect(hook).not.toContain("clipboard");
+    expect(hook).not.toContain("apiKey");
   });
 
   it("uses the resolved capability route for unified assistant execution, not just display", () => {

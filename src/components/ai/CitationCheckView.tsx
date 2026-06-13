@@ -13,32 +13,7 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { MarkdownRenderable } from "@/components/ai/MarkdownRenderable";
 import { cn } from "@/lib/utils";
-import type { ContextPacket } from "@/types/ai";
-
-// ─── Types ──────────────────────────────────────────────
-
-interface FactClaim {
-  id: string;
-  statement: string;
-  has_support: boolean;
-  supporting_evidence: string[];
-  conflicting_evidence: string[];
-}
-
-interface CitationSuggestion {
-  claim_id: string;
-  action: string;
-  suggested_citation?: string;
-  explanation: string;
-}
-
-interface CitationCheckResultData {
-  request_id: string;
-  claims: FactClaim[];
-  coverage: string;
-  suggestions: CitationSuggestion[];
-  evidence_used: ContextPacket[];
-}
+import type { CitationSuggestion, CitationCheckResult } from "@/types/ai";
 
 // ─── Coverage Styling ───────────────────────────────────
 
@@ -83,7 +58,7 @@ const ACTION_LABELS: Record<string, string> = {
 // ─── Component ──────────────────────────────────────────
 
 interface CitationCheckViewProps {
-  result: CitationCheckResultData;
+  result: CitationCheckResult;
   onApplySuggestion?: (suggestion: CitationSuggestion) => void;
 }
 

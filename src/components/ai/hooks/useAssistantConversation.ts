@@ -191,9 +191,9 @@ export function useAssistantConversation({
       messagesRef.current,
       bubbleSelection.selected,
     ).map((message) => {
-      if (message.role === "user") return `## 鐢ㄦ埛\n\n${message.content}`;
+      if (message.role === "user") return `## 用户\n\n${message.content}`;
       if (message.role === "assistant") {
-        return `## 鍔╂墜\n\n${message.content}`;
+        return `## 助手\n\n${message.content}`;
       }
       return `## ${message.role}\n\n${message.content}`;
     });

@@ -54,6 +54,7 @@ impl FileWatcher {
                     let kind = event_kind_label(&event.kind);
                     for path in &event.paths {
                         if path.extension().is_some_and(|e| e == "md") {
+                            state_clone.clear_context_cache();
                             let Ok(vault) = state_clone.vault_path() else {
                                 continue;
                             };

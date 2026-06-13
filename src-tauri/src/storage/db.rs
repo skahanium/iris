@@ -1,4 +1,4 @@
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::Mutex;
 
@@ -38,8 +38,6 @@ pub struct Database {
     write_idx: AtomicUsize,
     read_pool: Vec<Mutex<Connection>>,
     read_idx: AtomicUsize,
-    #[allow(dead_code)]
-    path: Option<PathBuf>,
 }
 
 impl Database {
@@ -80,7 +78,6 @@ impl Database {
             write_idx: AtomicUsize::new(0),
             read_pool,
             read_idx: AtomicUsize::new(0),
-            path: Some(path.to_path_buf()),
         })
     }
 
@@ -113,7 +110,6 @@ impl Database {
             write_idx: AtomicUsize::new(0),
             read_pool,
             read_idx: AtomicUsize::new(0),
-            path: None,
         })
     }
 

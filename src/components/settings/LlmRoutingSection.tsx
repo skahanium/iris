@@ -26,6 +26,7 @@ import type { CapabilitySlot } from "@/types/ai";
 import {
   CAPABILITY_SLOTS,
   DEFAULT_LLM_ROUTING,
+  USER_CONFIGURABLE_CAPABILITY_SLOTS,
   isCustomProviderId,
   type LlmConfigGetResponse,
   type LlmRoutingConfig,
@@ -43,18 +44,18 @@ const FALLBACK_PROVIDERS: LlmConfigGetResponse["providers"] = [
     default_model: "claude-3-5-haiku-20241022",
   },
   { id: "ollama", name: "Ollama", default_model: "llama3.2" },
+  { id: "mimo", name: "MiMo", default_model: "MiMo-V2.5-Pro" },
 ];
 
-const SLOT_META: Record<CapabilitySlot, { label: string; detail: string }> = {
+const SLOT_META: Record<
+  (typeof USER_CONFIGURABLE_CAPABILITY_SLOTS)[number],
+  { label: string; detail: string }
+> = {
   fast: { label: "Fast", detail: "短问答、轻量检索、默认对话" },
   writer: { label: "Writer", detail: "改写、续写、章节与文档写作" },
   reasoner: { label: "Reasoner", detail: "研究、引用核查、复杂论证" },
   long_context: { label: "Long context", detail: "长文档与大上下文分析" },
   vision: { label: "Vision", detail: "图片输入与视觉问答" },
-  agent_tools: { label: "Agent tools", detail: "工具循环、Skills 管理与检索" },
-  embedding: { label: "Embedding", detail: "本地向量与索引能力预留" },
-  reranker: { label: "Reranker", detail: "检索重排能力预留" },
-  local_private: { label: "Local private", detail: "本地私有模型优先" },
 };
 
 type ProbeKind = "connection" | "vision" | "tools";
@@ -280,12 +281,21 @@ export function LlmRoutingSection({ open }: LlmRoutingSectionProps) {
   ) => {
     if (!routing) return;
     const current = routing.slots[slot] ?? DEFAULT_LLM_ROUTING.slots[slot];
+    const nextRoute = { ...current, ...patch };
+    const nextSlots: LlmRoutingConfig["slots"] = {
+      ...routing.slots,
+      [slot]: nextRoute,
+    };
+    const agentTools = routing.slots.agent_tools;
+    const reasoner =
+      routing.slots.reasoner ?? DEFAULT_LLM_ROUTING.slots.reasoner;
+    if (!agentTools || sameRoute(agentTools, reasoner)) {
+      nextSlots.agent_tools =
+        slot === "reasoner" ? nextRoute : (nextSlots.agent_tools ?? reasoner);
+    }
     setRouting({
       ...routing,
-      slots: {
-        ...routing.slots,
-        [slot]: { ...current, ...patch },
-      },
+      slots: nextSlots,
     });
   };
 
@@ -317,6 +327,16 @@ export function LlmRoutingSection({ open }: LlmRoutingSectionProps) {
 
   const testProvider = async (providerId: string, probe: ProbeKind) => {
     const key = `${providerId}:${probe}`;
+    if (providerId === "mimo" && !routing?.providers.mimo?.baseUrl?.trim()) {
+      setTestResults((prev) => ({
+        ...prev,
+        [key]: {
+          ok: false,
+          message: "MiMo 需配置 Base URL 后才能测试连接。",
+        },
+      }));
+      return;
+    }
     setTesting(key);
     setTestResults((prev) => {
       const next = { ...prev };
@@ -450,7 +470,7 @@ export function LlmRoutingSection({ open }: LlmRoutingSectionProps) {
         </div>
 
         <div className="space-y-2">
-          {CAPABILITY_SLOTS.map((slot) => {
+          {USER_CONFIGURABLE_CAPABILITY_SLOTS.map((slot) => {
             const route =
               routing.slots[slot] ?? DEFAULT_LLM_ROUTING.slots[slot];
             const providerId = route.providerId;
@@ -586,12 +606,16 @@ function ProviderCredentialCard({
     ? override?.label?.trim() || provider.name
     : provider.name;
   const keyless = provider.id === "ollama";
+  const requiresBaseUrl = provider.id === "mimo";
+  const missingRequiredBaseUrl = requiresBaseUrl && !override?.baseUrl?.trim();
 
   return (
     <div className="rounded-md border border-border/60 bg-surface-inset/25 p-3">
       <div className="mb-2 flex items-center justify-between gap-2">
         <span className="text-xs font-medium">{displayName}</span>
-        {keyConfigured[provider.id] || keyless ? (
+        {missingRequiredBaseUrl ? (
+          <span className="text-[10px] text-amber-600">需配置 Base URL</span>
+        ) : keyConfigured[provider.id] || keyless ? (
           <span className="text-[10px] text-emerald-600">
             {keyless ? "本地端点" : "Key 已配置"}
           </span>
@@ -643,11 +667,18 @@ function ProviderCredentialCard({
         placeholder={
           provider.id === "ollama"
             ? "http://127.0.0.1:11434"
-            : "Base URL（留空使用官方默认）"
+            : requiresBaseUrl
+              ? "Base URL（需填写小米 MiMo API 地址）"
+              : "Base URL（留空使用官方默认）"
         }
         value={override?.baseUrl ?? ""}
         onChange={(event) => onBaseUrl(provider.id, event.target.value)}
       />
+      {missingRequiredBaseUrl ? (
+        <p className="mt-1 text-[10px] text-amber-600">
+          MiMo 暂不内置默认 API 地址，需配置 Base URL 后才能测试或调用。
+        </p>
+      ) : null}
       {custom ? (
         <Input
           className="mt-2 h-8 text-xs"
@@ -667,7 +698,7 @@ function ProviderCredentialCard({
               size="sm"
               variant="outline"
               className="h-7 text-xs"
-              disabled={testing === key}
+              disabled={testing === key || missingRequiredBaseUrl}
               onClick={() => onTest(provider.id, probe)}
             >
               {testing === key ? "测试中…" : probe}
@@ -757,7 +788,9 @@ function normalizeRouting(raw: LlmRoutingConfig | undefined): LlmRoutingConfig {
     const row = route as SlotRoute & { provider_id?: string };
     slots[slot] = {
       providerId: row.providerId ?? row.provider_id ?? "deepseek",
-      model: row.model ?? DEFAULT_LLM_ROUTING.slots[slot].model,
+      model: normalizeModelId(
+        row.model ?? DEFAULT_LLM_ROUTING.slots[slot].model,
+      ),
       thinking: row.thinking ?? false,
     };
   }
@@ -773,4 +806,16 @@ function normalizeRouting(raw: LlmRoutingConfig | undefined): LlmRoutingConfig {
       ...raw.contextStrategy,
     },
   };
+}
+
+function sameRoute(a: SlotRoute, b: SlotRoute): boolean {
+  return (
+    a.providerId === b.providerId &&
+    a.model === b.model &&
+    Boolean(a.thinking) === Boolean(b.thinking)
+  );
+}
+
+function normalizeModelId(model: string): string {
+  return model === "mimo-vl-7b-experimental" ? "MiMo-V2.5-Pro" : model;
 }

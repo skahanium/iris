@@ -200,10 +200,3 @@ export function ContextPacketList({
     </div>
   );
 }
-
-/** @deprecated Use ContextPacket instead */
-export interface ContextQuote {
-  filePath: string;
-  heading?: string;
-  text: string;
-}

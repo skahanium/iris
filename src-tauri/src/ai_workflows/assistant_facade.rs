@@ -22,11 +22,10 @@ pub enum AssistantIntent {
 impl AssistantIntent {
     pub fn scene(self) -> AiScene {
         match self {
-            AssistantIntent::Writing
-            | AssistantIntent::Citation
-            | AssistantIntent::Chapter
-            | AssistantIntent::Document => AiScene::DraftingAssist,
-            AssistantIntent::Research => AiScene::ResearchSynthesis,
+            AssistantIntent::Writing | AssistantIntent::Chapter | AssistantIntent::Document => {
+                AiScene::DraftingAssist
+            }
+            AssistantIntent::Citation | AssistantIntent::Research => AiScene::ResearchSynthesis,
             AssistantIntent::Chat | AssistantIntent::Knowledge | AssistantIntent::Organize => {
                 AiScene::KnowledgeLookup
             }

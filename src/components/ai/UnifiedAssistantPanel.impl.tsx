@@ -46,7 +46,6 @@ export interface AssistantSelectionQuote {
 
 export interface UnifiedAssistantPanelProps {
   notePath: string | null;
-  noteDisplayTitle: string | null;
   getNoteContent: () => string;
   webSearch?: boolean;
   getWritingContext: () => WritingEditorContext | null;
@@ -357,8 +356,6 @@ export function UnifiedAssistantPanel({
         profile={promptProfile}
         webSearch={webSearch}
       />
-
-      {runPlan.layer}
 
       <ContextPacketDrawer
         open={packetsOpen}

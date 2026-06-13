@@ -642,12 +642,10 @@ pub struct ToolSpec {
     pub description: String,
     pub input_schema: serde_json::Value,
     pub access_level: ToolAccessLevel,
-    pub scene_allowlist: Vec<AiScene>,
     pub requires_confirmation: bool,
     pub max_results: Option<u32>,
     /// Scenes where this tool is naturally relevant.
-    /// Empty means universally available. New field parallel to scene_allowlist;
-    /// Phase 4 will remove scene_allowlist once policy engine is complete.
+    /// Empty means universally available.
     #[serde(default)]
     pub scene_affinity: Vec<AiScene>,
 }

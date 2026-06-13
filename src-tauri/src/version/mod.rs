@@ -3,7 +3,6 @@ mod policy;
 
 use std::fs;
 use std::path::PathBuf;
-use std::sync::Arc;
 
 use chrono::Utc;
 use rusqlite::OptionalExtension;
@@ -82,7 +81,7 @@ impl SnapshotParams {
 
 /// Explicit user checkpoint (`kind = manual`).
 pub fn version_save_manual(
-    state: &Arc<AppState>,
+    state: &AppState,
     path: &str,
     content: &str,
 ) -> AppResult<Option<VersionEntry>> {
@@ -90,7 +89,7 @@ pub fn version_save_manual(
 }
 
 pub fn version_save_manual_outcome(
-    state: &Arc<AppState>,
+    state: &AppState,
     path: &str,
     content: &str,
 ) -> AppResult<VersionSaveOutcome> {
@@ -99,7 +98,7 @@ pub fn version_save_manual_outcome(
 
 /// Idle auto backup (`kind = auto_idle`); policy may skip.
 pub fn version_save_idle(
-    state: &Arc<AppState>,
+    state: &AppState,
     path: &str,
     content: &str,
 ) -> AppResult<Option<VersionEntry>> {
@@ -107,7 +106,7 @@ pub fn version_save_idle(
 }
 
 pub fn version_save_idle_outcome(
-    state: &Arc<AppState>,
+    state: &AppState,
     path: &str,
     content: &str,
 ) -> AppResult<VersionSaveOutcome> {
@@ -116,21 +115,6 @@ pub fn version_save_idle_outcome(
 
 const VERSION_SELECT: &str = "SELECT v.id, v.file_id, v.version_no, v.label, v.content_hash,
        v.word_count, v.is_finalized, v.kind, v.created_at";
-
-#[allow(dead_code)]
-fn versions_dir(vault: &std::path::Path, file_id: i64) -> PathBuf {
-    vault
-        .join(".iris")
-        .join("versions")
-        .join(file_id.to_string())
-}
-
-#[allow(dead_code)]
-fn ensure_versions_dir(vault: &std::path::Path, file_id: i64) -> AppResult<PathBuf> {
-    let dir = versions_dir(vault, file_id);
-    fs::create_dir_all(&dir)?;
-    Ok(dir)
-}
 
 fn timestamp_version_no() -> String {
     Utc::now().format("%Y%m%d%H%M%S%6f").to_string()
@@ -171,7 +155,7 @@ fn purge_classified_derived_rows(
 }
 
 fn ensure_snapshot_file_id(
-    state: &Arc<AppState>,
+    state: &AppState,
     path: &str,
     content_hash: &str,
     content: &str,
@@ -243,11 +227,6 @@ fn map_version_row(row: &Row<'_>) -> rusqlite::Result<VersionEntry> {
 const CAS_STORAGE_PREFIX: &str = "cas:";
 const CAS_DIFF_PREFIX: &str = "dif:";
 
-#[allow(dead_code)]
-fn storage_path_for(file_id: i64, version_no: &str) -> String {
-    format!("{file_id}/{version_no}.md")
-}
-
 fn cas_storage_path(content_hash: &str) -> String {
     format!("{CAS_STORAGE_PREFIX}{content_hash}")
 }
@@ -258,7 +237,7 @@ pub(crate) fn is_cas_storage_path(storage_path: &str) -> bool {
 
 /// Read snapshot body from CAS blob or legacy `.iris/versions/...` file.
 pub(crate) fn read_version_content(
-    state: &Arc<AppState>,
+    state: &AppState,
     vault: &std::path::Path,
     storage_path: &str,
 ) -> AppResult<String> {
@@ -285,7 +264,7 @@ pub(crate) fn read_version_content(
 /// Store version content, preferring a compressed line diff against `prev_content`
 /// when it saves >30% space (diff delta storage).
 fn write_version_blob(
-    state: &Arc<AppState>,
+    state: &AppState,
     content: &str,
     prev_content: Option<&str>,
 ) -> AppResult<String> {
@@ -312,7 +291,7 @@ fn remove_version_file(vault: &std::path::Path, storage_path: &str) {
 }
 
 fn delete_version_row(
-    state: &Arc<AppState>,
+    state: &AppState,
     vault: &std::path::Path,
     id: i64,
     storage_path: &str,
@@ -330,7 +309,7 @@ fn delete_version_row(
 }
 
 /// Drop oldest `auto_idle` rows when a file exceeds `max` non-finalized idle snapshots.
-pub fn enforce_auto_idle_cap(state: &Arc<AppState>, file_id: i64, max: usize) -> AppResult<usize> {
+pub fn enforce_auto_idle_cap(state: &AppState, file_id: i64, max: usize) -> AppResult<usize> {
     let vault = state.vault_path()?;
     let to_remove: Vec<(i64, String)> = state.db.with_conn(|conn| {
         let count: i64 = conn.query_row(
@@ -406,7 +385,7 @@ fn load_snapshot_context(
 
 /// Create a version snapshot when policy allows it.
 pub fn create_snapshot(
-    state: &Arc<AppState>,
+    state: &AppState,
     path: &str,
     content: &str,
     params: SnapshotParams,
@@ -415,7 +394,7 @@ pub fn create_snapshot(
 }
 
 pub fn create_snapshot_outcome(
-    state: &Arc<AppState>,
+    state: &AppState,
     path: &str,
     content: &str,
     params: SnapshotParams,
@@ -516,7 +495,7 @@ pub fn create_snapshot_outcome(
     })
 }
 
-pub fn version_list(state: &Arc<AppState>, path: &str) -> AppResult<Vec<VersionEntry>> {
+pub fn version_list(state: &AppState, path: &str) -> AppResult<Vec<VersionEntry>> {
     state.db.with_conn(|conn| {
         let sql = format!(
             "{VERSION_SELECT}
@@ -530,7 +509,7 @@ pub fn version_list(state: &Arc<AppState>, path: &str) -> AppResult<Vec<VersionE
     })
 }
 
-pub fn version_preview(state: &Arc<AppState>, version_id: i64) -> AppResult<String> {
+pub fn version_preview(state: &AppState, version_id: i64) -> AppResult<String> {
     let storage_path: String = state.db.with_conn(|conn| {
         Ok(conn.query_row(
             "SELECT storage_path FROM versions WHERE id = ?1",
@@ -544,7 +523,7 @@ pub fn version_preview(state: &Arc<AppState>, version_id: i64) -> AppResult<Stri
 }
 
 pub fn version_restore(
-    state: &Arc<AppState>,
+    state: &AppState,
     version_id: i64,
     current_content: &str,
 ) -> AppResult<String> {
@@ -587,7 +566,7 @@ pub fn version_restore(
     Ok(content)
 }
 
-pub fn version_delete(state: &Arc<AppState>, version_id: i64) -> AppResult<()> {
+pub fn version_delete(state: &AppState, version_id: i64) -> AppResult<()> {
     let (storage_path,): (String,) = state.db.with_conn(|conn| {
         Ok(conn.query_row(
             "SELECT storage_path FROM versions WHERE id = ?1",
@@ -602,7 +581,7 @@ pub fn version_delete(state: &Arc<AppState>, version_id: i64) -> AppResult<()> {
 
 /// Finalize the **current** note body: insert a new snapshot with `kind = finalize`.
 pub fn version_finalize_current(
-    state: &Arc<AppState>,
+    state: &AppState,
     path: &str,
     content: &str,
     label: Option<String>,
@@ -610,7 +589,7 @@ pub fn version_finalize_current(
     create_snapshot(state, path, content, SnapshotParams::finalize(label))
 }
 
-pub fn version_cleanup(state: &Arc<AppState>) -> AppResult<usize> {
+pub fn version_cleanup(state: &AppState) -> AppResult<usize> {
     let vault = state.vault_path()?;
     let cutoff = Utc::now()
         .checked_sub_signed(chrono::Duration::days(7))

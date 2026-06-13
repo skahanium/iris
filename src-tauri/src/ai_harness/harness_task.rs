@@ -702,6 +702,7 @@ fn artifacts_to_wires(
                 title: title.into(),
                 status: "ready".into(),
                 source_task: source_task.into(),
+                // TODO: populate from actual evidence packets when HarnessArtifact carries this data
                 evidence_count: 0,
                 payload,
             }

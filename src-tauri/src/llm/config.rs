@@ -8,7 +8,7 @@ use crate::ai_types::{
 };
 use crate::error::{AppError, AppResult};
 use crate::llm::model_catalog::{fallback_model, find_model};
-use crate::llm::providers::{api_base, credential_service};
+use crate::llm::providers::{api_base, credential_service, requires_base_url};
 use crate::storage::db::Database;
 
 pub const SETTINGS_KEY: &str = "llm_routing";
@@ -292,6 +292,38 @@ pub fn deepseek_defaults() -> LlmRoutingConfig {
             thinking: true,
         },
     );
+    slots.insert(
+        "vision".into(),
+        SlotRoute {
+            provider_id: "openai".into(),
+            model: "gpt-4o".into(),
+            thinking: false,
+        },
+    );
+    slots.insert(
+        "embedding".into(),
+        SlotRoute {
+            provider_id: "ollama".into(),
+            model: "llama3.2".into(),
+            thinking: false,
+        },
+    );
+    slots.insert(
+        "reranker".into(),
+        SlotRoute {
+            provider_id: "ollama".into(),
+            model: "llama3.2".into(),
+            thinking: false,
+        },
+    );
+    slots.insert(
+        "local_private".into(),
+        SlotRoute {
+            provider_id: "ollama".into(),
+            model: "llama3.2".into(),
+            thinking: false,
+        },
+    );
 
     LlmRoutingConfig {
         version: 1,
@@ -353,6 +385,8 @@ fn sanitize_routing(config: &mut LlmRoutingConfig) {
             route.provider_id = "deepseek".into();
             route.model = "deepseek-v4-flash".into();
             route.thinking = false;
+        } else {
+            route.model = normalize_legacy_model_id(&route.model).into();
         }
     }
     for route in config.slots.values_mut() {
@@ -360,6 +394,13 @@ fn sanitize_routing(config: &mut LlmRoutingConfig) {
             route.provider_id = "deepseek".into();
             route.model = "deepseek-v4-flash".into();
             route.thinking = false;
+        } else {
+            route.model = normalize_legacy_model_id(&route.model).into();
+        }
+    }
+    for provider in config.providers.values_mut() {
+        if let Some(model) = provider.default_model.as_deref() {
+            provider.default_model = Some(normalize_legacy_model_id(model).into());
         }
     }
     config.providers.retain(|id, _| {
@@ -531,7 +572,13 @@ fn resolve_route(
     route: SlotRoute,
 ) -> AppResult<ResolvedLlmConfig> {
     let provider_override = routing.providers.get(&route.provider_id);
-    let custom_base = provider_override.and_then(|p| p.base_url.as_deref());
+    let custom_base = provider_override.and_then(configured_base_url);
+    if requires_base_url(&route.provider_id) && custom_base.is_none() {
+        return Err(AppError::msg(format!(
+            "{} 需配置 Base URL 后才能调用",
+            provider_label(&route.provider_id)
+        )));
+    }
     let base_url = api_base(&route.provider_id, custom_base);
     let api_key = optional_secret(&credential_service(&route.provider_id));
     let model_spec = find_model(&route.model).unwrap_or_else(|| fallback_model(&route.provider_id));
@@ -584,7 +631,11 @@ fn requested_slot(input: CapabilityRouteInput) -> CapabilitySlot {
         }
         AgentIntent::Research | AgentIntent::CitationCheck => CapabilitySlot::Reasoner,
         AgentIntent::Chat | AgentIntent::AskNotes | AgentIntent::Organize => CapabilitySlot::Fast,
-        AgentIntent::VisionChat | AgentIntent::SkillManagement => unreachable!(),
+        AgentIntent::VisionChat | AgentIntent::SkillManagement => {
+            unreachable!(
+                "VisionChat and SkillManagement are handled by early returns in requested_slot()"
+            )
+        }
     }
 }
 
@@ -639,6 +690,28 @@ fn route_satisfies_slot(
     }
 }
 
+fn normalize_legacy_model_id(model: &str) -> &str {
+    match model {
+        "mimo-vl-7b-experimental" => "MiMo-V2.5-Pro",
+        other => other,
+    }
+}
+
+fn configured_base_url(provider: &ProviderOverride) -> Option<&str> {
+    provider
+        .base_url
+        .as_deref()
+        .map(str::trim)
+        .filter(|base| !base.is_empty())
+}
+
+fn provider_label(provider_id: &str) -> &str {
+    match provider_id {
+        "mimo" => "MiMo",
+        other => other,
+    }
+}
+
 pub fn resolve_for_provider(
     db: &Database,
     provider_id: &str,
@@ -655,7 +728,13 @@ pub fn resolve_for_provider(
     });
 
     let provider_override = routing.providers.get(provider_id);
-    let custom_base = provider_override.and_then(|p| p.base_url.as_deref());
+    let custom_base = provider_override.and_then(configured_base_url);
+    if requires_base_url(provider_id) && custom_base.is_none() {
+        return Err(AppError::msg(format!(
+            "{} 需配置 Base URL 后才能调用",
+            provider_label(provider_id)
+        )));
+    }
     let base_url = api_base(provider_id, custom_base);
     let api_key = optional_secret(&credential_service(provider_id));
     let model_spec = find_model(&model_id).unwrap_or_else(|| fallback_model(provider_id));
@@ -956,7 +1035,7 @@ mod tests {
     }
 
     #[test]
-    fn route_input_selects_vision_and_falls_back_when_unconfigured() {
+    fn route_input_selects_default_vision_slot() {
         let routing = deepseek_defaults();
         let route = resolve_capability_route_from_config(
             &routing,
@@ -971,14 +1050,46 @@ mod tests {
         )
         .expect("route");
 
-        assert_eq!(route.summary.slot, crate::ai_types::CapabilitySlot::Fast);
-        assert!(route.summary.degraded);
+        assert_eq!(route.summary.slot, crate::ai_types::CapabilitySlot::Vision);
+        assert!(!route.summary.degraded);
         assert_eq!(
             route.summary.fallback_chain,
             vec![
                 crate::ai_types::CapabilitySlot::Vision,
                 crate::ai_types::CapabilitySlot::Fast
             ]
+        );
+    }
+
+    #[test]
+    fn mimo_without_base_url_is_not_resolved_to_openai() {
+        let db = Database::open_in_memory().expect("mem db");
+        let err = resolve_for_provider(&db, "mimo", None).expect_err("missing MiMo base URL");
+
+        assert!(err.to_string().contains("MiMo"));
+        assert!(err.to_string().contains("Base URL"));
+    }
+
+    #[test]
+    fn sanitize_migrates_legacy_mimo_experimental_model() {
+        let mut routing = deepseek_defaults();
+        routing.slots.insert(
+            "vision".into(),
+            SlotRoute {
+                provider_id: "mimo".into(),
+                model: "mimo-vl-7b-experimental".into(),
+                thinking: false,
+            },
+        );
+
+        sanitize_routing(&mut routing);
+
+        assert_eq!(
+            routing
+                .slots
+                .get("vision")
+                .map(|route| route.model.as_str()),
+            Some("MiMo-V2.5-Pro")
         );
     }
 }

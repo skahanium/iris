@@ -17,7 +17,7 @@ const BUILTIN_PROVIDERS: &[(&str, &str, &str)] = &[
     ("kimi", "Kimi", "moonshot-v1-128k"),
     ("doubao", "Doubao / Volcengine", "doubao-1-5-pro-256k"),
     ("ollama", "Ollama", "llama3.2"),
-    ("mimo", "MiMo Experimental", "mimo-vl-7b-experimental"),
+    ("mimo", "MiMo", "MiMo-V2.5-Pro"),
 ];
 
 /// 设置页允许的厂商：Phase3 内置厂商 + 任意自定义 OpenAI 兼容端点。
@@ -34,6 +34,10 @@ pub fn is_allowed_provider(provider_id: &str) -> bool {
 
 pub fn requires_api_key(provider_id: &str) -> bool {
     is_allowed_provider(provider_id) && provider_id != "ollama"
+}
+
+pub fn requires_base_url(provider_id: &str) -> bool {
+    provider_id == "mimo"
 }
 
 pub fn list_providers() -> Vec<LlmProviderInfo> {
@@ -112,9 +116,7 @@ pub fn api_base(provider: &str, custom_base: Option<&str>) -> String {
             .unwrap_or("https://ark.cn-beijing.volces.com/api/v3")
             .to_string(),
         "ollama" => custom_base.unwrap_or("http://127.0.0.1:11434").to_string(),
-        "mimo" => custom_base
-            .unwrap_or("https://api.openai.com/v1")
-            .to_string(),
+        "mimo" => custom_base.unwrap_or("").to_string(),
         id if is_custom_provider(id) => custom_base
             .unwrap_or("https://api.openai.com/v1")
             .to_string(),
@@ -209,5 +211,21 @@ mod tests {
             "anthropic".to_string(),
         ]));
         assert!(ids.contains(&"custom_groq".to_string()));
+    }
+
+    #[test]
+    fn mimo_provider_is_current_and_has_no_fake_default_base_url() {
+        let mimo = list_providers()
+            .into_iter()
+            .find(|provider| provider.id == "mimo")
+            .expect("mimo provider");
+
+        assert_eq!(mimo.name, "MiMo");
+        assert_eq!(mimo.default_model, "MiMo-V2.5-Pro");
+        assert_eq!(api_base("mimo", None), "");
+        assert_eq!(
+            api_base("mimo", Some("https://example.test/v1")),
+            "https://example.test/v1"
+        );
     }
 }

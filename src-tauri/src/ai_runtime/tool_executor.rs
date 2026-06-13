@@ -10,7 +10,7 @@ use std::time::Instant;
 use crate::ai_runtime::tool_catalog::{ToolImplementationStatus, TOOL_CATALOG};
 use crate::ai_runtime::tool_dispatch::is_exposable_tool;
 use crate::ai_runtime::tool_policy::{self, DenialReason, ToolPolicyContext, ToolPolicyVerdict};
-use crate::ai_runtime::{AiScene, AutonomyLevel, ToolAccessLevel, ToolCallResult, ToolSpec};
+use crate::ai_runtime::{AiScene, ToolCallResult, ToolSpec};
 use crate::error::AppResult;
 
 /// Filters applied when building the tool surface for LLM / IPC listing.
@@ -41,7 +41,7 @@ impl ToolRegistry {
     pub fn for_scene(&self, scene: AiScene) -> Vec<&ToolSpec> {
         self.tools
             .iter()
-            .filter(|t| t.scene_allowlist.is_empty() || t.scene_allowlist.contains(&scene))
+            .filter(|t| t.scene_affinity.is_empty() || t.scene_affinity.contains(&scene))
             .collect()
     }
 
@@ -165,7 +165,6 @@ impl ToolRegistry {
                 description: entry.description.to_string(),
                 input_schema: entry.input_schema.clone(),
                 access_level: entry.access_level,
-                scene_allowlist: entry.scene_affinity.to_vec(),
                 requires_confirmation: entry.requires_confirmation,
                 max_results: entry.max_results,
                 scene_affinity: entry.scene_affinity.to_vec(),
@@ -178,63 +177,6 @@ impl Default for ToolRegistry {
     fn default() -> Self {
         Self::new()
     }
-}
-
-// Permission Check
-
-#[deprecated(
-    since = "0.1.0",
-    note = "use ToolRegistry::check_tool_policy with ToolPolicyContext"
-)]
-/// 检查工具在当前场景和自治等级下是否允许执行。
-pub fn check_tool_permission(
-    tool: &ToolSpec,
-    scene: AiScene,
-    allowed_level: AutonomyLevel,
-) -> Result<(), ToolPermissionError> {
-    // 1. 场景白名单检查
-    if !tool.scene_allowlist.is_empty() && !tool.scene_allowlist.contains(&scene) {
-        return Err(ToolPermissionError::SceneNotAllowed {
-            tool: tool.name.clone(),
-            scene,
-        });
-    }
-
-    // 2. 联网只读工具（web_search）在 L2 及以上可用
-    if tool.access_level == ToolAccessLevel::Network && allowed_level < AutonomyLevel::L2 {
-        return Err(ToolPermissionError::InsufficientAutonomy {
-            tool: tool.name.clone(),
-            required: AutonomyLevel::L2,
-            current: allowed_level,
-        });
-    }
-
-    // 3. WriteMarkdown + WriteSettings 在 L1 下禁止
-    if matches!(
-        tool.access_level,
-        ToolAccessLevel::WriteMarkdown | ToolAccessLevel::WriteSettings
-    ) && allowed_level < AutonomyLevel::L2
-    {
-        return Err(ToolPermissionError::InsufficientAutonomy {
-            tool: tool.name.clone(),
-            required: AutonomyLevel::L2,
-            current: allowed_level,
-        });
-    }
-
-    Ok(())
-}
-
-#[derive(Debug, Clone, thiserror::Error)]
-pub enum ToolPermissionError {
-    #[error("tool '{tool}' not allowed in scene {scene:?}")]
-    SceneNotAllowed { tool: String, scene: AiScene },
-    #[error("tool '{tool}' requires autonomy {required:?}, current is {current:?}")]
-    InsufficientAutonomy {
-        tool: String,
-        required: AutonomyLevel,
-        current: AutonomyLevel,
-    },
 }
 
 /// Error from the new policy engine (Phase 2).
@@ -250,6 +192,7 @@ pub struct ToolPolicyDeniedError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ai_types::AutonomyLevel;
 
     #[test]
     fn registry_filters_by_scene() {
@@ -319,7 +262,7 @@ mod tests {
     }
 
     #[test]
-    fn tool_not_in_scene_allowlist_blocked() {
+    fn policy_blocks_tool_outside_scene_affinity() {
         let reg = ToolRegistry::new();
         let ctx = ToolPolicyContext {
             scene: AiScene::KnowledgeLookup,

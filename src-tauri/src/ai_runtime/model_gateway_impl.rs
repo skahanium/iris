@@ -794,7 +794,6 @@ mod tests {
                 }
             }),
             access_level: crate::ai_runtime::ToolAccessLevel::ReadIndex,
-            scene_allowlist: vec![],
             requires_confirmation: false,
             max_results: Some(20),
             scene_affinity: vec![],

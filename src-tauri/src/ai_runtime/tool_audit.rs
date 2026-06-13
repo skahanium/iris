@@ -104,6 +104,22 @@ fn sanitize_arguments(tool_name: &str, args: &serde_json::Value) -> Option<Strin
             let url = obj.get("url").and_then(|v| v.as_str()).unwrap_or("");
             Some(format!("url={url}"))
         }
+        "git_read_status" => Some("scope=vault".into()),
+        "git_read_diff" => {
+            let include_patch = obj
+                .get("include_patch")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            Some(format!("scope=vault, include_patch={include_patch}"))
+        }
+        "git_read_log" => {
+            let limit = obj.get("limit").and_then(|v| v.as_u64()).unwrap_or(20);
+            Some(format!("scope=vault, limit={limit}"))
+        }
+        "secret_exists" => {
+            let service = obj.get("service").and_then(|v| v.as_str()).unwrap_or("");
+            Some(format!("service={service}"))
+        }
         "skills_install" => {
             let source = obj.get("source").and_then(|v| v.as_str()).unwrap_or("");
             let path = obj
@@ -171,6 +187,16 @@ fn sanitize_result(tool_name: &str, result: &serde_json::Value, success: bool) -
             let count = result.get("count").and_then(|v| v.as_u64()).unwrap_or(0);
             Some(format!("results={count}"))
         }
+        "git_read_status" => Some("status_summary=available".into()),
+        "git_read_diff" => Some("diff_summary=available".into()),
+        "git_read_log" => Some("log_summary=available".into()),
+        "secret_exists" => {
+            let exists = result
+                .get("exists")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            Some(format!("exists={exists}"))
+        }
         _ => {
             let s = serde_json::to_string(result).unwrap_or_default();
             Some(truncate_summary(&s, 500))
@@ -188,7 +214,7 @@ fn truncate_summary(s: &str, max_len: usize) -> String {
     format!("{truncated}…")
 }
 
-/// Simple content hash for audit (SHA-256 hex, first 16 chars).
+/// Simple content hash for audit deduplication (SipHash-1-3 via DefaultHasher, first 16 hex chars).
 fn content_hash(text: &str) -> String {
     use std::collections::hash_map::DefaultHasher;
     use std::hash::{Hash, Hasher};

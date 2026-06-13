@@ -20,6 +20,7 @@ import {
 } from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/textarea";
 import { toolAuditQuery, type ToolAuditEntry } from "@/lib/ipc";
+import { cn } from "@/lib/utils";
 import type { ToolConfirmRequestEvent } from "@/types/ipc";
 
 // ─── Tool Confirm Request Type ───────────────────────────
@@ -41,6 +42,27 @@ const TOOL_DISPLAY_NAMES: Record<string, string> = {
   skills_install: "安装 Skill",
   skills_uninstall: "卸载 Skill",
   skills_toggle: "启停 Skill",
+  vault_create_note: "创建 Markdown 笔记",
+  vault_rename_move: "重命名或移动笔记",
+  vault_delete_to_trash: "移入回收站",
+  vault_asset_write: "写入 Vault 资源",
+  vault_version_list: "查看版本快照",
+  git_read_status: "读取 Git 状态",
+  git_read_diff: "读取 Git 差异",
+  git_read_log: "读取 Git 历史",
+  git_write_commit: "创建 Git 提交",
+  fs_import_to_vault: "导入外部 Markdown",
+  fs_export: "导出外部文件",
+  fs_read_authorized_folder: "读取授权目录摘要",
+  fs_write_authorized_export: "写入授权导出目录",
+  doc_normalize_markdown: "规范化 Markdown",
+  doc_extract_citations: "提取引用信息",
+  web_to_markdown: "网页转 Markdown",
+  web_download_to_assets: "下载到 Vault 资源",
+  web_citation_extract: "提取网页引用",
+  skill_request_capabilities: "预检 Skill 能力",
+  process_run_readonly: "运行只读命令",
+  secret_exists: "检查凭据是否存在",
 };
 
 const TOOL_DESCRIPTIONS: Record<string, string> = {
@@ -58,7 +80,82 @@ const TOOL_DESCRIPTIONS: Record<string, string> = {
     "将从指定来源安装 Agent Skill 到本地 skills 目录。新 skill 默认启用；可在设置 → Skills 查看与管理。",
   skills_uninstall: "将从 skills 目录删除该 skill 及其本地文件。",
   skills_toggle: "将启用或禁用该 skill；禁用后其指令与工具扩权不再生效。",
+  vault_create_note:
+    "将在当前 Markdown vault 中创建新的 .md 笔记。请确认目标路径和初始内容摘要。",
+  vault_rename_move:
+    "将重命名或移动笔记，并同步常见 wikilink 引用。请确认 link impact 摘要。",
+  vault_delete_to_trash:
+    "将把笔记移入 Iris 回收站，可在保留期内恢复，不会直接永久删除。",
+  vault_asset_write:
+    "将把资源写入 vault 的 assets/ 目录。请确认目标路径和资源大小。",
+  vault_version_list: "将读取指定笔记的版本快照列表，不修改 Markdown 内容。",
+  git_read_status: "将读取当前 vault 的 Git 状态摘要，不返回文件正文。",
+  git_read_diff: "将读取当前 vault 的 Git 差异摘要；默认只返回统计信息。",
+  git_read_log: "将读取当前 vault 的 Git 提交历史摘要。",
+  git_write_commit:
+    "将在当前 vault 内仅对指定路径执行 git add 并创建提交。请确认路径和提交信息。",
+  fs_import_to_vault:
+    "将从用户授权目录读取外部 UTF-8 Markdown，并导入当前 vault 的目标 .md 路径。",
+  fs_export: "将把内容写入用户授权的外部导出目录，不允许越过授权根目录。",
+  fs_read_authorized_folder:
+    "将列出用户授权目录的文件名、类型和大小摘要，不读取文件正文。",
+  fs_write_authorized_export: "将内容写入用户授权导出目录中的指定相对路径。",
+  doc_normalize_markdown:
+    "将规范化 Markdown 文本的换行与多余空行，不直接写入文件。",
+  doc_extract_citations:
+    "将从给定文本中提取 URL 引用元数据，不修改 Markdown 文件。",
+  web_to_markdown:
+    "将抓取 HTTPS 页面正文并生成 Markdown 草稿；需要本轮已授权 Web 访问。",
+  web_download_to_assets:
+    "将从 HTTPS 下载资源并写入当前 vault 的 assets/ 目录。",
+  web_citation_extract:
+    "将抓取 HTTPS 页面并提取标题、URL、访问时间等引用元数据。",
+  skill_request_capabilities:
+    "将检查 Skill 请求的能力在 Iris 中是否支持、需要确认或被阻断。",
+  process_run_readonly:
+    "将在 vault 内运行受控只读命令 allowlist，并限制环境、时间和输出大小。",
+  secret_exists:
+    "将检查指定 named credential 是否存在；不会读取、显示或传给模型任何明文凭据。",
 };
+
+type RiskMeta = {
+  label: string;
+  className: string;
+  badgeClassName: string;
+};
+
+const DEFAULT_RISK_META: RiskMeta = {
+  label: "中风险",
+  className: "border-amber-200 bg-amber-50/80 text-amber-900",
+  badgeClassName: "border-amber-300 bg-white/70 text-amber-800",
+};
+
+const RISK_META: Record<string, RiskMeta> = {
+  low: {
+    label: "低风险",
+    className: "border-emerald-200 bg-emerald-50/80 text-emerald-900",
+    badgeClassName: "border-emerald-300 bg-white/70 text-emerald-800",
+  },
+  medium: {
+    label: "中风险",
+    className: "border-amber-200 bg-amber-50/80 text-amber-900",
+    badgeClassName: "border-amber-300 bg-white/70 text-amber-800",
+  },
+  high: {
+    label: "高风险",
+    className: "border-orange-300 bg-orange-50/85 text-orange-950",
+    badgeClassName: "border-orange-300 bg-white/75 text-orange-900",
+  },
+  critical: {
+    label: "关键风险",
+    className: "border-destructive/35 bg-destructive/10 text-destructive",
+    badgeClassName: "border-destructive/35 bg-background text-destructive",
+  },
+};
+
+function riskMeta(riskLevel: string): RiskMeta {
+  return RISK_META[riskLevel] ?? DEFAULT_RISK_META;
+}
 
 // ─── Component ───────────────────────────────────────────
 
@@ -142,6 +239,15 @@ export function ToolConfirmDialog({
     "add_tags",
     "update_user_rule",
     "create_note_from_deposit",
+    "vault_create_note",
+    "vault_rename_move",
+    "vault_delete_to_trash",
+    "vault_asset_write",
+    "fs_import_to_vault",
+    "fs_export",
+    "fs_write_authorized_export",
+    "web_download_to_assets",
+    "git_write_commit",
   ].includes(request.tool_name);
   const baseContentHash = String(
     request.arguments.base_content_hash ??
@@ -153,6 +259,7 @@ export function ToolConfirmDialog({
     isWriteOperation &&
     (request.tool_name === "insert_text_at_cursor" ||
       request.tool_name === "replace_selection");
+  const permissionEffects = request.permissionEffects ?? [];
 
   return (
     <Dialog open={!!request} onOpenChange={() => onClose()}>
@@ -175,6 +282,70 @@ export function ToolConfirmDialog({
               {request.tool_name}
             </span>
           </div>
+
+          {permissionEffects.length > 0 ? (
+            <section className="space-y-2">
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-xs font-medium text-foreground">权限影响</p>
+                <span className="text-[11px] text-muted-foreground">
+                  本次批准仅用于当前工具调用
+                </span>
+              </div>
+              <div className="space-y-2">
+                {permissionEffects.map((effect) => {
+                  const meta = riskMeta(effect.riskLevel);
+                  return (
+                    <div
+                      key={`${effect.permissionName}:${effect.scopeSummary}`}
+                      className={cn(
+                        "rounded-md border px-3 py-2 text-xs",
+                        meta.className,
+                      )}
+                    >
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <span className="font-mono font-semibold">
+                          {effect.permissionName}
+                        </span>
+                        <Badge
+                          variant="outline"
+                          className={cn(
+                            "rounded-md px-1.5 py-0 text-[10px]",
+                            meta.badgeClassName,
+                          )}
+                        >
+                          {effect.riskLevel} · {meta.label}
+                        </Badge>
+                        <Badge
+                          variant="outline"
+                          className="rounded-md bg-background/60 px-1.5 py-0 text-[10px]"
+                        >
+                          {effect.scopeKind}
+                        </Badge>
+                      </div>
+                      <div className="mt-1.5 space-y-1 leading-relaxed">
+                        <p>
+                          <span className="font-medium">作用域：</span>
+                          <span className="break-all">
+                            {effect.scopeSummary}
+                          </span>
+                        </p>
+                        <p>
+                          <span className="font-medium">可撤销方式：</span>
+                          {effect.reversibleBy}
+                        </p>
+                        {effect.blockedReason ? (
+                          <p>
+                            <span className="font-medium">阻断原因：</span>
+                            {effect.blockedReason}
+                          </p>
+                        ) : null}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </section>
+          ) : null}
 
           {request.tool_name === "fetch_web_page" && fetchUrl ? (
             <div className="space-y-1 rounded-md border border-amber-200 bg-amber-50/80 p-3 text-xs">

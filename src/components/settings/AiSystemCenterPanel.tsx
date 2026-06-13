@@ -4,9 +4,17 @@ import {
   ArrowRight,
   Bot,
   ClipboardCheck,
+  ClipboardList,
+  FileCog,
+  FileText,
+  FolderOpen,
+  Globe2,
+  KeyRound,
+  LockKeyhole,
   Puzzle,
   ShieldCheck,
   Sparkles,
+  TerminalSquare,
   Wrench,
 } from "lucide-react";
 
@@ -24,7 +32,12 @@ interface AiSystemCenterPanelProps {
   onClose: () => void;
 }
 
-type AiSystemSection = "models" | "search" | "persona" | "memory";
+type AiSystemSection =
+  | "models"
+  | "search"
+  | "persona"
+  | "permissions"
+  | "memory";
 
 const AI_SYSTEM_SECTIONS: {
   id: AiSystemSection;
@@ -34,7 +47,147 @@ const AI_SYSTEM_SECTIONS: {
   { id: "models", label: "模型路由", detail: "对话、写作、研究、Embedding" },
   { id: "search", label: "联网搜索", detail: "搜索后端、模型与可用性" },
   { id: "persona", label: "Persona", detail: "PromptProfile、表达风格与边界" },
+  {
+    id: "permissions",
+    label: "Markdown Agent 权限",
+    detail: "读写、联网、Shell 与凭据边界",
+  },
   { id: "memory", label: "记忆与规则", detail: "用户规则、AI 记忆与确认" },
+];
+
+const PERMISSION_GROUPS: {
+  title: string;
+  detail: string;
+  icon: typeof Sparkles;
+  atoms: string[];
+  policy: string;
+  risk: "低" | "中" | "高" | "关键";
+}[] = [
+  {
+    title: "Vault",
+    detail: "面向当前 Markdown 库的读取、检索、补丁写入和版本快照。",
+    icon: FolderOpen,
+    atoms: [
+      "vault.read",
+      "vault.search",
+      "vault.write.patch",
+      "vault.create_note",
+      "vault.rename_move",
+      "vault.delete_to_trash",
+      "vault.assets.read",
+      "vault.assets.write",
+      "vault.versioning",
+    ],
+    policy: "AI 写入必须走 patch，并在写入前生成可回滚快照。",
+    risk: "中",
+  },
+  {
+    title: "外部文件",
+    detail: "只处理用户选择的文件、授权目录或明确导出的目标位置。",
+    icon: FileText,
+    atoms: [
+      "fs.pick_file",
+      "fs.pick_folder",
+      "fs.import_to_vault",
+      "fs.export",
+      "fs.read_authorized_folder",
+      "fs.write_authorized_export",
+    ],
+    policy: "不默认开放任意 external delete/move。",
+    risk: "高",
+  },
+  {
+    title: "文档处理",
+    detail: "PDF 提取、OCR、表格抽取、Markdown 规范化和链接修复。",
+    icon: FileCog,
+    atoms: [
+      "doc.convert",
+      "doc.ocr",
+      "doc.extract_pdf",
+      "doc.extract_table",
+      "doc.normalize_markdown",
+      "doc.fix_links",
+      "doc.extract_citations",
+    ],
+    policy: "转换结果进入临时区、assets 或用户确认的目标路径。",
+    risk: "中",
+  },
+  {
+    title: "Web",
+    detail: "联网搜索、HTTPS 抓取、网页转 Markdown 和引用抽取。",
+    icon: Globe2,
+    atoms: [
+      "web.search",
+      "web.fetch",
+      "web.to_markdown",
+      "web.download_to_assets",
+      "web.citation_extract",
+      "net.localhost",
+    ],
+    policy: "登录态网页读取需要明确提示，下载只能到临时区或 assets。",
+    risk: "中",
+  },
+  {
+    title: "Skills",
+    detail: "Skill 资源读取、本地存储、能力请求和受限脚本执行。",
+    icon: Puzzle,
+    atoms: [
+      "skill.read_resource",
+      "skill.write_storage",
+      "skill.request_capabilities",
+      "skill.execute_script_sandboxed",
+      "skill.install_dependency",
+      "skill.mcp_bridge",
+    ],
+    policy: "脚本执行默认关闭，依赖安装单独高风险确认。",
+    risk: "高",
+  },
+  {
+    title: "Shell/Git",
+    detail: "受控命令、只读状态、diff/log 查看和 git commit。",
+    icon: TerminalSquare,
+    atoms: [
+      "process.run_markdown_tool",
+      "process.run_readonly",
+      "process.run_mutating",
+      "process.run_network",
+      "process.long_running",
+      "process.kill_owned",
+      "git.read_status",
+      "git.read_diff",
+      "git.read_log",
+      "git.write_commit",
+    ],
+    policy: "cwd 限制在 vault 或授权 workspace，env 最小化并脱敏。",
+    risk: "关键",
+  },
+  {
+    title: "Clipboard/Browser",
+    detail: "剪贴板读写、本地预览网页读取、截图和受控页面操作。",
+    icon: ClipboardList,
+    atoms: [
+      "clipboard.write",
+      "clipboard.read",
+      "browser.read_page",
+      "browser.screenshot",
+      "browser.control_page",
+    ],
+    policy: "clipboard read 每次确认或显式会话授权。",
+    risk: "高",
+  },
+  {
+    title: "Secrets",
+    detail: "仅允许检查、代用或更新 named credential。",
+    icon: KeyRound,
+    atoms: [
+      "secret.exists",
+      "secret.use_named",
+      "secret.create_update",
+      "secret.read_plaintext",
+    ],
+    policy: "secret.read_plaintext 不支持；模型不能拿到明文 API Key。",
+    risk: "关键",
+  },
 ];
 
 function SummaryTile({
@@ -100,6 +253,49 @@ function ActionCard({
         <ArrowRight className="h-3.5 w-3.5 transition-transform group-hover:translate-x-0.5" />
       </span>
     </button>
+  );
+}
+
+function PermissionGroupCard({
+  title,
+  detail,
+  icon: Icon,
+  atoms,
+  policy,
+  risk,
+}: (typeof PERMISSION_GROUPS)[number]) {
+  return (
+    <div className="rounded-md border border-border/60 bg-background/70 px-3 py-3">
+      <div className="flex items-start gap-2.5">
+        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-border/60 bg-surface-inset text-muted-foreground">
+          <Icon className="h-4 w-4" />
+        </span>
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <h4 className="text-xs font-semibold text-foreground">{title}</h4>
+            <span className="rounded border border-border/60 bg-surface-inset px-1.5 py-0.5 text-[10px] text-muted-foreground">
+              {risk}风险
+            </span>
+          </div>
+          <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">
+            {detail}
+          </p>
+        </div>
+      </div>
+      <div className="mt-3 flex flex-wrap gap-1.5">
+        {atoms.map((atom) => (
+          <span
+            key={atom}
+            className="rounded border border-border/60 bg-surface-inset px-1.5 py-0.5 font-mono text-[10px] text-foreground"
+          >
+            {atom}
+          </span>
+        ))}
+      </div>
+      <p className="mt-2 text-[11px] leading-relaxed text-muted-foreground">
+        {policy}
+      </p>
+    </div>
   );
 }
 
@@ -284,6 +480,40 @@ export function AiSystemCenterPanel({
                           {detail}
                         </p>
                       </div>
+                    ))}
+                  </div>
+                </section>
+              ) : null}
+
+              {activeSection === "permissions" ? (
+                <section
+                  className="max-w-6xl space-y-4"
+                  data-testid="agent-permission-settings"
+                >
+                  <div className="grid gap-3 lg:grid-cols-3">
+                    <SummaryTile
+                      icon={ShieldCheck}
+                      label="授权模型"
+                      value="本轮确认优先"
+                      detail="工具执行前展示权限、作用域、风险和可撤销方式。"
+                    />
+                    <SummaryTile
+                      icon={LockKeyhole}
+                      label="凭据边界"
+                      value="不读明文密钥"
+                      detail="secret.read_plaintext 被阻断，模型只能请求 named credential 代用。"
+                    />
+                    <SummaryTile
+                      icon={ClipboardCheck}
+                      label="审计摘要"
+                      value="只记安全摘要"
+                      detail="审计记录 request、工具、权限和作用域，不保存正文与敏感输出。"
+                    />
+                  </div>
+
+                  <div className="grid gap-3 md:grid-cols-2">
+                    {PERMISSION_GROUPS.map((group) => (
+                      <PermissionGroupCard key={group.title} {...group} />
                     ))}
                   </div>
                 </section>
