@@ -9,9 +9,9 @@ import {
 } from "react";
 
 import { pathStem } from "@/lib/note-display";
+import { ingestMarkdownForEditor } from "@/lib/editor-ingest";
 import {
   extractFrontmatterYaml,
-  markdownBodyToEditorHtml,
   parseNoteForEditor,
 } from "@/lib/markdown";
 import { isPlaceholderTitle } from "@/lib/path-sync";
@@ -184,10 +184,10 @@ export function useOpenNote({
       syncFromMarkdown(content, path);
       const parsed = parseNoteForEditor(content, "");
       if (editorRef.current) {
-        editorRef.current.commands.setContent(
-          markdownBodyToEditorHtml(parsed.bodyMd),
-          false,
-        );
+        const { tipTapHtml } = ingestMarkdownForEditor({
+          bodyMarkdown: parsed.bodyMd,
+        });
+        editorRef.current.commands.setContent(tipTapHtml, false);
       }
     },
     [activePathRef, editorRef, syncFromMarkdown],

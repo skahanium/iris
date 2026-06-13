@@ -6,7 +6,10 @@
  *
  * @module editor-ingest
  */
-import { createMarkedInstance } from "@/lib/markdown";
+import {
+  createMarkedInstance,
+  repairTightStrongPunctuationBoundaries,
+} from "@/lib/markdown";
 import { classifyMarkdownCapabilities } from "@/lib/markdown-contract/contract";
 import type {
   MarkdownCapabilityWarning,
@@ -87,7 +90,10 @@ function adaptWikiLinks(html: string): string {
  */
 function markdownToTipTapHtml(md: string): string {
   if (!md.trim()) return "";
-  let html = ingestMarked.parse(md, { async: false }) as string;
+  const repaired = repairTightStrongPunctuationBoundaries(md);
+  let html = ingestMarked.parse(repaired, {
+    async: false,
+  }) as string;
   html = adaptWikiLinks(html);
   html = adaptTaskLists(html);
   return html;
@@ -156,7 +162,10 @@ function footnoteDefHtml(frag: MarkdownSyntaxFragment): string {
   const defId = `footnote-${suffix}`;
   const mdContent = frag.raw.replace(/^\s*\[\^[^\]]+\]:\s*/, "");
   const contentHtml = mdContent
-    ? (ingestMarked.parse(mdContent, { async: false }) as string)
+    ? (ingestMarked.parse(
+        repairTightStrongPunctuationBoundaries(mdContent),
+        { async: false },
+      ) as string)
     : "";
   const escapedRaw = escapeHtml(frag.raw);
   return `<section data-footnote-def="${escapedLabel}" id="${defId}" data-footnote-return="${refId}" data-original-raw="${escapedRaw}">${contentHtml}</section>`;
@@ -314,7 +323,10 @@ export function ingestMarkdownForEditor(
       const title = calloutTitle(frag.raw);
       const body = calloutBody(frag.raw);
       const bodyHtml = body
-        ? (ingestMarked.parse(body, { async: false }) as string)
+        ? (ingestMarked.parse(
+            repairTightStrongPunctuationBoundaries(body),
+            { async: false },
+          ) as string)
         : "";
       const escapedRaw = escapeHtml(frag.raw);
       htmlParts.push(

@@ -152,6 +152,142 @@ export function createMarkedInstance(options?: MarkedExtension): Marked {
   return instance;
 }
 
+function isUnicodeWhitespace(ch: string): boolean {
+  return ch !== "" && /\p{White_Space}/u.test(ch);
+}
+
+function isUnicodePunctuation(ch: string): boolean {
+  return ch !== "" && /\p{P}/u.test(ch);
+}
+
+/**
+ * CommonMark closing `**` is not left-flanking when it is preceded by
+ * punctuation and followed by a non-whitespace, non-punctuation character.
+ * That covers `**标题：**正文`, `**句末。**下一句`, and cross-line spans.
+ */
+function needsStrongCloseBoundary(before: string, after: string): boolean {
+  if (!isUnicodePunctuation(before)) return false;
+  if (after === "" || isUnicodeWhitespace(after)) return false;
+  if (isUnicodePunctuation(after)) return false;
+  return true;
+}
+
+function nextContentChar(lines: string[], lineIndex: number, col: number): string {
+  const rest = lines[lineIndex]!.slice(col);
+  for (const ch of rest) {
+    if (!isUnicodeWhitespace(ch)) return ch;
+  }
+  for (let li = lineIndex + 1; li < lines.length; li++) {
+    const line = lines[li]!;
+    for (const ch of line) {
+      if (!isUnicodeWhitespace(ch)) return ch;
+    }
+  }
+  return "";
+}
+
+function repairStrongDelimitersInDocument(markdown: string): string {
+  const lines = markdown.split("\n");
+  let inFence = false;
+  let repaired = "";
+  let inlineCodeFence = "";
+  let strongOpen = false;
+
+  for (let lineIndex = 0; lineIndex < lines.length; lineIndex++) {
+    if (lineIndex > 0) repaired += "\n";
+    const line = lines[lineIndex]!;
+
+    if (/^[ \t]{0,3}(```|~~~)/.test(line)) {
+      inFence = !inFence;
+      repaired += line;
+      continue;
+    }
+
+    if (inFence) {
+      repaired += line;
+      continue;
+    }
+
+    for (let i = 0; i < line.length; ) {
+      if (line[i] === "`") {
+        const match = /^`+/.exec(line.slice(i));
+        const ticks = match?.[0] ?? "`";
+        if (!inlineCodeFence) {
+          inlineCodeFence = ticks;
+        } else if (ticks === inlineCodeFence) {
+          inlineCodeFence = "";
+        }
+        repaired += ticks;
+        i += ticks.length;
+        continue;
+      }
+
+      if (!inlineCodeFence && line[i] === "*" && line[i + 1] === "*") {
+        if (strongOpen) {
+          const trailingWhitespace = repaired.match(/[ \t]+$/)?.[0] ?? "";
+          const before =
+            repaired[repaired.length - trailingWhitespace.length - 1] ?? "";
+          const after = nextContentChar(lines, lineIndex, i + 2);
+          const insertBoundary = needsStrongCloseBoundary(before, after);
+
+          if (trailingWhitespace && insertBoundary) {
+            repaired = repaired.slice(0, -trailingWhitespace.length);
+          }
+          repaired += insertBoundary ? "**<!-- -->" : "**";
+          strongOpen = false;
+        } else {
+          repaired += "**";
+          strongOpen = true;
+        }
+        i += 2;
+        continue;
+      }
+
+      repaired += line[i];
+      i++;
+    }
+  }
+
+  return repaired;
+}
+
+function repairEscapedStrongDelimiters(markdown: string): string {
+  if (!markdown.includes("\\*\\*")) return markdown;
+
+  const lines = markdown.split("\n");
+  let inFence = false;
+  const repairedLines = lines.map((line) => {
+    if (/^[ \t]{0,3}(```|~~~)/.test(line)) {
+      inFence = !inFence;
+      return line;
+    }
+    if (inFence) return line;
+
+    return line.replace(
+      /\\\*\\\*([^\\\n]+?)\\\*\\\*/g,
+      (_match, inner: string) => `**${inner}**`,
+    );
+  });
+
+  return repairedLines.join("\n");
+}
+
+/**
+ * Marked follows CommonMark delimiter rules, so emphasis like `**Label:**value`,
+ * `**句末。**下一句`, or cross-line `**opening…\nclosing**` may stay literal
+ * unless a boundary separates the close marker. Iris repairs these for ingest.
+ */
+export function repairTightStrongPunctuationBoundaries(
+  markdown: string,
+): string {
+  if (!markdown.includes("**") && !markdown.includes("\\*\\*")) return markdown;
+
+  const unescaped = repairEscapedStrongDelimiters(markdown);
+  const repaired = repairStrongDelimitersInDocument(unescaped);
+
+  return repaired;
+}
+
 export const editorMarked = createMarkedInstance({ gfm: true, breaks: true });
 
 function replaceWikiLinksInTextNode(textNode: Text): void {
@@ -333,7 +469,9 @@ function escapeHtml(text: string): string {
 
 /** Parse Markdown string to HTML for TipTap initial content (body only, legacy). */
 export function markdownToHtml(md: string): string {
-  return editorMarked.parse(md, { async: false }) as string;
+  return editorMarked.parse(repairTightStrongPunctuationBoundaries(md), {
+    async: false,
+  }) as string;
 }
 
 export interface ParsedNoteForEditor {

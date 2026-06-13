@@ -1,5 +1,7 @@
 import type { Editor } from "@tiptap/react";
 
+import { ingestMarkdownForEditor } from "@/lib/editor-ingest";
+
 export class IrisClipboardError extends Error {
   constructor(message: string) {
     super(message);
@@ -49,10 +51,33 @@ export async function cutEditorSelection(editor: Editor): Promise<boolean> {
   return true;
 }
 
+function shouldPasteAsEditorMarkdown(text: string): boolean {
+  const trimmed = text.trim();
+  if (!trimmed) return false;
+
+  return (
+    /(^|\n)[ \t]{0,3}(#{1,6}\s|[-*+]\s+|\d+[.)]\s+|>\s+)/u.test(trimmed) ||
+    /(^|\n)[ \t]{0,3}(```|~~~)/u.test(trimmed) ||
+    /(^|[^\\])(\*\*|__)\S/u.test(trimmed) ||
+    /!\[[^\]]*\]\([^)]+\)|\[[^\]]+\]\([^)]+\)|\[\[[^\]]+\]\]/u.test(trimmed) ||
+    /(^|\n)[ \t]*\|.+\|[ \t]*(\n|$)/u.test(trimmed)
+  );
+}
+
 /** 粘贴到 TipTap 光标/选区 */
 export async function pasteIntoEditor(editor: Editor): Promise<boolean> {
   const text = await readClipboardText();
   if (!text) return false;
+
+  if (shouldPasteAsEditorMarkdown(text)) {
+    const { tipTapHtml } = ingestMarkdownForEditor({
+      bodyMarkdown: text.trim(),
+    });
+    if (!tipTapHtml.trim()) return false;
+    editor.chain().focus().insertContent(tipTapHtml).run();
+    return true;
+  }
+
   editor.chain().focus().insertContent(text).run();
   return true;
 }

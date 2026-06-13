@@ -1,4 +1,6 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
+import { Editor } from "@tiptap/core";
+import StarterKit from "@tiptap/starter-kit";
 
 import {
   IrisClipboardError,
@@ -6,12 +8,14 @@ import {
   writeClipboardText,
   copyTextFieldSelection,
   cutTextFieldSelection,
+  pasteIntoEditor,
   pasteIntoTextField,
 } from "@/lib/iris-clipboard";
 
 describe("iris-clipboard", () => {
   beforeEach(() => {
     vi.stubGlobal("navigator", {
+      userAgent: "vitest",
       clipboard: {
         readText: vi.fn(async () => "pasted"),
         writeText: vi.fn(async () => undefined),
@@ -46,5 +50,45 @@ describe("iris-clipboard", () => {
   it("pasteIntoTextField inserts clipboard at selection", async () => {
     const result = await pasteIntoTextField("hi", { start: 2, end: 2 });
     expect(result).toEqual({ value: "hipasted", caret: 8 });
+  });
+
+  it("pasteIntoEditor ingests markdown with tight bold labels", async () => {
+    vi.mocked(navigator.clipboard.readText).mockResolvedValueOnce(
+      "1. **DP-Attention 同步：**多 DP 段的计算拖慢。",
+    );
+
+    const editor = new Editor({
+      extensions: [StarterKit],
+      content: "<p></p>",
+    });
+
+    try {
+      await pasteIntoEditor(editor);
+
+      expect(editor.getHTML()).toContain(
+        "<strong>DP-Attention 同步：</strong>",
+      );
+      expect(editor.getHTML()).not.toContain("**DP-Attention 同步：**");
+    } finally {
+      editor.destroy();
+    }
+  });
+
+  it("pasteIntoEditor keeps ordinary text paste inline", async () => {
+    vi.mocked(navigator.clipboard.readText).mockResolvedValueOnce("插入");
+
+    const editor = new Editor({
+      extensions: [StarterKit],
+      content: "<p>前后</p>",
+    });
+    editor.commands.setTextSelection(2);
+
+    try {
+      await pasteIntoEditor(editor);
+
+      expect(editor.getHTML()).toBe("<p>前插入后</p>");
+    } finally {
+      editor.destroy();
+    }
   });
 });

@@ -8,6 +8,7 @@ import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { WelcomeEmpty } from "@/components/layout/WelcomeEmpty";
 import { IrisContextMenu } from "@/components/ui/iris-context-menu";
 import type { IrisContextMenuGroup } from "@/components/ui/iris-context-menu";
+import { EDITOR_HTML_CACHE_FORMAT_VERSION } from "@/lib/editor-html-cache";
 import { cn } from "@/lib/utils";
 
 interface EditorMenuPort {
@@ -104,7 +105,7 @@ export function AppEditorWorkspace({
       {activePath && !homeActive ? (
         <ErrorBoundary scope="编辑器">
           <TipTapEditor
-            key={activePath}
+            key={`${activePath}:${EDITOR_HTML_CACHE_FORMAT_VERSION}`}
             initialBodyMarkdown={editorBodyMarkdown}
             contentCacheKey={activePath}
             reingestKey={editorContentTick}

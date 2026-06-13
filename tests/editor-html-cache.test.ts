@@ -3,9 +3,19 @@ import { describe, expect, it } from "vitest";
 
 import {
   clearCachedEditorHtml,
+  editorHtmlDigest,
   getCachedEditorHtml,
   setCachedEditorHtml,
 } from "@/lib/editor-html-cache";
+
+function legacyEditorHtmlDigest(markdown: string): string {
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < markdown.length; i++) {
+    hash ^= markdown.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return (hash >>> 0).toString(16);
+}
 
 describe("editor-html-cache", () => {
   it("stores and retrieves html per path", () => {
@@ -32,6 +42,45 @@ describe("editor-html-cache", () => {
     expect(getCachedEditorHtml("30.md", "digest-30")).toBe("<p>30</p>");
   });
 
+  it("rejects cached html with visible failed colon-bold markdown", () => {
+    const markdown = "1. **DP-Attention 同步：**多 DP 段的计算拖慢。";
+    const digest = editorHtmlDigest(markdown);
+
+    setCachedEditorHtml(
+      "bad.md",
+      "<ol><li>**DP-Attention 同步：**多 DP 段的计算拖慢。</li></ol>",
+      digest,
+    );
+
+    expect(getCachedEditorHtml("bad.md", digest)).toBeUndefined();
+  });
+
+  it("stores healthy cached html with strong tags", () => {
+    const markdown = "1. **DP-Attention 同步：**多 DP 段的计算拖慢。";
+    const digest = editorHtmlDigest(markdown);
+    const html =
+      "<ol><li><strong>DP-Attention 同步：</strong>多 DP 段的计算拖慢。</li></ol>";
+
+    setCachedEditorHtml("good.md", html, digest);
+    expect(getCachedEditorHtml("good.md", digest)).toBe(html);
+  });
+
+  it("busts stale cached HTML when editor ingest semantics change", () => {
+    const markdown = "1. **DP-Attention 同步：**多 DP 段的计算拖慢。";
+    const staleDigest = legacyEditorHtmlDigest(markdown);
+    const currentDigest = editorHtmlDigest(markdown);
+
+    expect(currentDigest).not.toBe(staleDigest);
+
+    setCachedEditorHtml(
+      "bold-label.md",
+      "<ol><li>**DP-Attention 同步：**多 DP 段的计算拖慢。</li></ol>",
+      staleDigest,
+    );
+
+    expect(getCachedEditorHtml("bold-label.md", currentDigest)).toBeUndefined();
+  });
+
   it("TipTapEditor passes digest to all editor HTML cache reads and writes", () => {
     const source = readSource("src/components/editor/TipTapEditor.tsx");
 
@@ -39,6 +88,15 @@ describe("editor-html-cache", () => {
     expect(source).toMatch(/getCachedEditorHtml\([^,\n]+,\s*htmlDigest\)/);
     expect(source).toMatch(
       /setCachedEditorHtml\([^,\n]+,[^,\n]+,\s*htmlDigest\)/,
+    );
+  });
+
+  it("AppEditorWorkspace remounts TipTapEditor when ingest cache format changes", () => {
+    const source = readSource("src/components/layout/AppEditorWorkspace.tsx");
+
+    expect(source).toContain("EDITOR_HTML_CACHE_FORMAT_VERSION");
+    expect(source).toContain(
+      "key={`${activePath}:${EDITOR_HTML_CACHE_FORMAT_VERSION}`}",
     );
   });
 });

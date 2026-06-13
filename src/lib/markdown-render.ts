@@ -1,6 +1,7 @@
 import { postProcessCitations } from "@/lib/ai/citation-markdown";
 import { Marked, type Renderer, type Tokens } from "marked";
 import { common, createLowlight } from "lowlight";
+import { repairTightStrongPunctuationBoundaries } from "@/lib/markdown";
 
 const lowlight = createLowlight(common);
 
@@ -265,7 +266,12 @@ export function parseMarkdownToHtml(
   const source = options?.streaming
     ? repairStreamingMarkdown(markdown)
     : markdown;
-  const html = proseMarked.parse(source, { async: false }) as string;
+  const html = proseMarked.parse(
+    repairTightStrongPunctuationBoundaries(source),
+    {
+      async: false,
+    },
+  ) as string;
   return options?.codeCopy ? addCodeCopyButtons(html) : html;
 }
 
