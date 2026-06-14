@@ -69,8 +69,9 @@ pub struct LlmConfigTestResult {
 pub async fn llm_config_test(
     state: State<'_, Arc<AppState>>,
     provider_id: String,
+    model: Option<String>,
 ) -> AppResult<LlmConfigTestResult> {
-    let resolved = config::resolve_for_provider(&state.db, &provider_id, None)?;
+    let resolved = config::resolve_for_provider(&state.db, &provider_id, model.as_deref())?;
     let api_key = match resolved.api_key {
         Some(k) if !k.trim().is_empty() => k.trim().to_string(),
         _ if !requires_api_key(&provider_id) => String::new(),

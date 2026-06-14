@@ -8,17 +8,15 @@ import { LinkExtension } from "@/components/editor/extensions/LinkExtension";
 
 describe("LinkExtension keyboard shortcut", () => {
   let editor: Editor | undefined;
-  const promptSpy = vi.spyOn(window, "prompt");
 
   afterEach(() => {
     editor?.destroy();
     editor = undefined;
-    promptSpy.mockReset();
+    vi.restoreAllMocks();
   });
 
-  it("Mod-k applies link mark when user enters a safe URL", () => {
-    promptSpy.mockReturnValue("https://example.com/docs");
-
+  it("Mod-k delegates to the Iris link editor instead of using window.prompt", () => {
+    const promptSpy = vi.spyOn(window, "prompt");
     editor = new Editor({
       extensions: [
         IrisDocument,
@@ -28,12 +26,14 @@ describe("LinkExtension keyboard shortcut", () => {
       ],
       content: "<p>Visit docs here.</p>",
     });
+    const openSpy = vi.fn((event: Event) => event.preventDefault());
+    editor.view.dom.addEventListener("iris-open-link-editor", openSpy);
 
     editor.commands.selectAll();
     const handled = editor.commands.keyboardShortcut("Mod-k");
+
     expect(handled).toBe(true);
-    expect(editor.isActive("link", { href: "https://example.com/docs" })).toBe(
-      true,
-    );
+    expect(openSpy).toHaveBeenCalledTimes(1);
+    expect(promptSpy).not.toHaveBeenCalled();
   });
 });

@@ -326,11 +326,27 @@ export function useTabManager(options: UseTabManagerOptions = {}) {
 
   /** 重命名已打开笔记的路径（不重新读盘，保留内存中的编辑内容） */
   const replaceOpenTabPath = useCallback(
-    (oldPath: string, newPath: string, title?: string) => {
+    (
+      oldPath: string,
+      newPath: string,
+      title?: string,
+      markdownOverride?: string,
+    ) => {
       if (oldPath === newPath) return;
       const displayTitle = title
         ? resolveNoteDisplayTitle({ path: newPath, title })
         : undefined;
+      const cachedMarkdown =
+        markdownOverride ?? tabMarkdownCacheRef.current.get(oldPath);
+      if (cachedMarkdown) {
+        tabMarkdownCacheRef.current.set(newPath, cachedMarkdown);
+      }
+      tabMarkdownCacheRef.current.delete(oldPath);
+      const cachedLock = tabLockCacheRef.current.get(oldPath);
+      if (cachedLock !== undefined) {
+        tabLockCacheRef.current.set(newPath, cachedLock);
+        tabLockCacheRef.current.delete(oldPath);
+      }
       setTabs((prev) =>
         mergeTabsAfterPathRename(prev, oldPath, newPath, displayTitle),
       );
@@ -338,7 +354,7 @@ export function useTabManager(options: UseTabManagerOptions = {}) {
         // 路径变更会 remount 编辑器（key=path），须先同步内存正文避免从陈旧 state 恢复
         activePathRef.current = newPath;
         setActivePath(newPath);
-        setMarkdown(markdownRef.current);
+        setMarkdown(markdownOverride ?? markdownRef.current);
       }
     },
     [setMarkdown],

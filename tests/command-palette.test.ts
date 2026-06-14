@@ -16,7 +16,7 @@ describe("command palette", () => {
     });
     const recycle = items.find((i) => i.id === "recycle-bin");
     expect(recycle?.disabled).toBe(false);
-    expect(formatCommandPaletteItemShortcut(recycle!)).toContain("U");
+    expect(formatCommandPaletteItemShortcut(recycle!)).toBeUndefined();
   });
 
   it("disables recycle bin without vault", () => {
@@ -58,13 +58,15 @@ describe("command palette", () => {
     expect(filtered.map((i) => i.id)).toEqual(visibleIds);
   });
 
-  it("hides command-palette self-entry from the list", () => {
+  it("does not include the retired command-palette self-entry", () => {
     const items = buildCommandPaletteItems({
       hasVault: true,
       hasActiveNote: false,
     });
-    const filtered = filterCommandPaletteItems(items, "命令面板");
-    expect(filtered.some((i) => i.id === "command-palette")).toBe(false);
+    expect(items.some((i) => i.id === "command-palette")).toBe(false);
+    expect(JSON.stringify(items)).not.toContain(
+      '"key":"P","mod":true,"shift":true',
+    );
   });
 
   it("keeps list order when filtering including disabled items", () => {
@@ -89,12 +91,12 @@ describe("command palette", () => {
     });
     const visible = items.filter((i) => !i.hiddenInPalette);
     const groups = groupCommandPaletteItems(visible);
-    expect(groups[0]?.group).toBe("导航");
+    expect(groups[0]?.group).toBe("知识库");
     expect(groups.some((g) => g.group === "AI")).toBe(true);
-    expect(groups.some((g) => g.group === "视图")).toBe(true);
-    expect(groups.some((g) => g.group === "通用")).toBe(false);
-    expect(groups.some((g) => g.group === "编辑器")).toBe(false);
-    expect(groups.some((g) => g.group === "库")).toBe(false);
+    expect(groups.some((g) => g.group === "笔记")).toBe(true);
+    expect(groups.some((g) => g.group === "系统")).toBe(true);
+    expect(groups.some((g) => g.group === "导航")).toBe(false);
+    expect(groups.some((g) => g.group === "视图")).toBe(false);
   });
 
   it("sorts by usage within groups without reordering groups", () => {
@@ -105,17 +107,79 @@ describe("command palette", () => {
     const visible = items.filter((i) => !i.hiddenInPalette);
     const sorted = sortCommandPaletteItems(visible);
     const groups = groupCommandPaletteItems(sorted);
-    expect(groups.map((g) => g.group)).toEqual(["导航", "笔记", "视图", "AI"]);
+    expect(groups.map((g) => g.group)).toEqual([
+      "知识库",
+      "笔记",
+      "系统",
+      "AI",
+    ]);
   });
 
-  it("includes skills management in AI group", () => {
+  it("routes management commands into the management center", () => {
     const items = buildCommandPaletteItems({
       hasVault: true,
       hasActiveNote: false,
     });
+    const management = items.find((i) => i.id === "management-center");
+    expect(management?.label).toBe("管理中心");
+    expect(management?.chord).toEqual({ key: ",", mod: true });
+    expect(management?.action).toEqual({
+      type: "openManagementCenter",
+      section: "overview",
+    });
+
+    const aiCenter = items.find((i) => i.id === "ai-system-center");
+    expect(aiCenter?.action).toEqual({
+      type: "openManagementCenter",
+      section: "ai",
+    });
+
     const skills = items.find((i) => i.id === "skills");
     expect(skills?.group).toBe("AI");
-    expect(skills?.action).toEqual({ type: "openOverlay", overlay: "skills" });
+    expect(skills?.action).toEqual({
+      type: "openManagementCenter",
+      section: "ai",
+    });
+  });
+
+  it("keeps only core global shortcuts and removes the app-level leader key", () => {
+    const items = buildCommandPaletteItems({
+      hasVault: true,
+      hasActiveNote: true,
+    });
+    const byId = new Map(items.map((item) => [item.id, item]));
+
+    expect(byId.has("leader-cmd-k")).toBe(false);
+    expect(JSON.stringify(items)).not.toContain("leader");
+    expect(JSON.stringify(items)).not.toContain("afterLeader");
+
+    for (const id of [
+      "file-sheet",
+      "recycle-bin",
+      "knowledge-relations",
+      "graph",
+      "toggle-outline",
+      "skills",
+      "toggle-web-search",
+      "rescan-vault",
+    ]) {
+      expect(byId.get(id)?.chord, id).toBeUndefined();
+    }
+
+    expect(byId.has("save-version")).toBe(false);
+
+    expect(byId.get("version")?.chord).toEqual({
+      key: "V",
+      mod: true,
+      shift: true,
+      requireNote: true,
+    });
+    expect(byId.get("classified-panel")?.chord).toEqual({
+      key: "L",
+      mod: true,
+      shift: true,
+      requireVault: true,
+    });
   });
 
   it("does not register slash writing commands in the palette", () => {

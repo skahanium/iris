@@ -22,7 +22,10 @@ function shouldSkipFailedBoldScan(node: Node): boolean {
 }
 
 function cachedHtmlHasVisibleFailedBold(html: string): boolean {
-  const doc = new DOMParser().parseFromString(`<div>${html}</div>`, "text/html");
+  const doc = new DOMParser().parseFromString(
+    `<div>${html}</div>`,
+    "text/html",
+  );
   const root = doc.body.firstElementChild;
   if (!root) return false;
 

@@ -358,6 +358,7 @@ pub(crate) async fn run_harness_task(
                 scene,
                 request.session_id,
                 request.message.clone(),
+                request.images.clone(),
                 request.selected_packet_ids.clone(),
                 request.note_path.clone(),
                 request.context_scope.clone(),

@@ -116,4 +116,12 @@ describe("document lifecycle source contracts", () => {
     const source = read("src/hooks/useTabManager.ts");
     expect(source).toContain("clearCachedEditorHtml(path)");
   });
+
+  it("path sync forwards freshly serialized editor markdown before remounting by path", () => {
+    const source = read("src/hooks/useOpenNote.ts");
+    expect(source).toContain("const liveMarkdown = serializeOpenNote({");
+    expect(source).toContain(
+      "replaceOpenTabPath(path, entry.path, nextTitle, liveMarkdown)",
+    );
+  });
 });

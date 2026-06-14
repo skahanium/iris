@@ -4,6 +4,7 @@ export type IrisOverlaySize =
   | "compact"
   | "palette"
   | "command"
+  | "management"
   | "wide"
   | "near-full"
   | "graph";
@@ -12,6 +13,8 @@ export const IRIS_OVERLAY_SIZE_CLASS: Record<IrisOverlaySize, string> = {
   compact: "w-[calc(100vw-2rem)] max-w-xl",
   palette: "w-[min(640px,calc(100vw-2rem))] max-w-2xl",
   command: "h-[78vh] w-[80vw] max-w-3xl",
+  management:
+    "h-[min(760px,calc(100dvh-96px))] w-[min(1180px,calc(100vw-96px))] max-w-none",
   wide: "h-[88vh] w-[92vw] max-w-7xl",
   "near-full": "h-[88vh] w-[92vw] max-w-7xl",
   graph: "h-[92vh] w-[96vw] max-w-none",

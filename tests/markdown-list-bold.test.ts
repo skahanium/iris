@@ -92,8 +92,7 @@ describe("markdown list inline bold", () => {
   });
 
   it("ingests tight colon-bold labels with curly quotes and no space after closing **", () => {
-    const md =
-      "1. **匹配规则升级为\u201c窗口安全长度\u201d：**在 SWA 模式下";
+    const md = "1. **匹配规则升级为\u201c窗口安全长度\u201d：**在 SWA 模式下";
     const editor = createProductionEditorFromIngestedBody(md);
 
     try {

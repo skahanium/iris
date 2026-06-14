@@ -38,6 +38,9 @@ interface AiMessageBubbleProps {
   onRetract?: () => void;
 
   onCopy?: () => void;
+
+  /** 用户附加的图片列表 */
+  images?: import("./AiMessageList").ImageAttachment[];
 }
 
 const proseConversation =
@@ -201,6 +204,8 @@ export const AiMessageBubble = memo(function AiMessageBubble({
   onRetract,
 
   onCopy,
+
+  images,
 }: AiMessageBubbleProps) {
   const isUser = role === "user";
 
@@ -247,6 +252,18 @@ export const AiMessageBubble = memo(function AiMessageBubble({
           className,
         )}
       >
+        {images && images.length > 0 && (
+          <div className="mb-1.5 flex flex-wrap gap-1.5">
+            {images.map((img) => (
+              <img
+                key={img.id}
+                src={`data:${img.mimeType};base64,${img.dataBase64}`}
+                className="max-h-40 max-w-[15rem] rounded-lg border border-border/40 object-contain"
+                alt={img.fileName || "attached image"}
+              />
+            ))}
+          </div>
+        )}
         <div
           className={cn("ai-message-body", proseConversation)}
           data-prose-surface="conversation"

@@ -33,14 +33,19 @@ function makeEditor(
   });
 }
 
-function renderOutline(ed: Editor, open = true) {
+function renderOutline(ed: Editor, open = true, locked = false) {
   host = document.createElement("div");
   host.style.height = "640px";
   document.body.append(host);
   root = createRoot(host);
   act(() => {
     root?.render(
-      <EditorOutline editor={ed} open={open} onOpenChange={() => {}} />,
+      <EditorOutline
+        editor={ed}
+        open={open}
+        locked={locked}
+        onOpenChange={() => {}}
+      />,
     );
   });
 }
@@ -121,6 +126,39 @@ describe("outline ghost spine", () => {
     expect(scrollSpy).toHaveBeenCalled();
   });
 
+  it("jumps to outline entries while the editor is locked without focusing the editor", () => {
+    editor = makeEditor(["第一章", "第二节", "第三段"]);
+    const entries = outlineFromDoc(editor.state.doc);
+    editor.commands.setTextSelection(entries[0]!.pos);
+    editor.setEditable(false);
+    const focusSpy = vi.spyOn(editor.view, "focus");
+    vi.spyOn(window, "requestAnimationFrame").mockImplementation((callback) => {
+      callback(0);
+      return 0;
+    });
+    const scrollSpy = vi.fn();
+    Object.defineProperty(Element.prototype, "scrollIntoView", {
+      configurable: true,
+      value: scrollSpy,
+    });
+
+    renderOutline(editor, true, true);
+
+    const items = Array.from(
+      document.querySelectorAll<HTMLButtonElement>(
+        '[data-testid="outline-ghost-item"]',
+      ),
+    );
+
+    act(() => {
+      items[1]?.click();
+    });
+
+    expect(editor.state.selection.head).toBe(entries[1]!.pos);
+    expect(scrollSpy).toHaveBeenCalled();
+    expect(focusSpy).not.toHaveBeenCalled();
+  });
+
   it("keeps adjacent top-level headings as full-width stacked rows", () => {
     editor = makeEditor(
       ["chidafan", "Shui大叫", "sha d j k na s j k d"],
@@ -170,10 +208,9 @@ describe("outline ghost spine", () => {
         '[data-testid="outline-ghost-item"]',
       ),
     );
-    const firstMarker = items[0]?.querySelector(".outline-ghost-marker");
     const firstText = items[0]?.querySelector(".outline-ghost-text");
 
-    expect(firstMarker).not.toBeNull();
+    expect(items[0]?.querySelector(".outline-ghost-marker")).toBeNull();
     expect(firstText).not.toBeNull();
     expect(items[0]?.className).toContain("flex");
     expect(items[0]?.className).not.toContain("grid-cols-[");
@@ -188,6 +225,7 @@ describe("outline ghost spine", () => {
     const css = read("src/styles/globals.css");
     expect(css).toContain("text-align: left");
     expect(css).toContain(".outline-ghost-text");
+    expect(css).not.toContain(".outline-ghost-marker");
     expect(css).not.toContain("grid-template-areas");
     expect(css).not.toContain("grid-area: text");
     expect(css).toContain("text-overflow: ellipsis");

@@ -49,6 +49,8 @@ pub struct ProviderOverride {
     pub label: Option<String>,
     #[serde(default, alias = "default_model")]
     pub default_model: Option<String>,
+    #[serde(default, alias = "enabled_models")]
+    pub enabled_models: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -295,8 +297,8 @@ pub fn deepseek_defaults() -> LlmRoutingConfig {
     slots.insert(
         "vision".into(),
         SlotRoute {
-            provider_id: "openai".into(),
-            model: "gpt-4o".into(),
+            provider_id: "mimo".into(),
+            model: "mimo-v2.5".into(),
             thinking: false,
         },
     );
@@ -401,6 +403,13 @@ fn sanitize_routing(config: &mut LlmRoutingConfig) {
     for provider in config.providers.values_mut() {
         if let Some(model) = provider.default_model.as_deref() {
             provider.default_model = Some(normalize_legacy_model_id(model).into());
+        }
+        if let Some(models) = provider.enabled_models.as_mut() {
+            for model in models.iter_mut() {
+                *model = normalize_legacy_model_id(model).into();
+            }
+            models.sort();
+            models.dedup();
         }
     }
     config.providers.retain(|id, _| {
@@ -522,48 +531,50 @@ pub fn resolve_capability_route_from_config(
 ) -> AppResult<ResolvedCapabilityRoute> {
     let requested_slot = requested_slot(input);
     let fallback_chain = fallback_chain_for(requested_slot);
-    let mut selected_slot = None;
-    let mut selected_route = None;
+    let mut last_error = None;
 
     for slot in &fallback_chain {
         let key = slot_key(*slot);
-        if let Some(route) = routing.slots.get(key) {
-            if route_satisfies_slot(route, *slot, input.privacy_preference) {
-                selected_slot = Some(*slot);
-                selected_route = Some(route.clone());
-                break;
+        let Some(route) = routing.slots.get(key) else {
+            continue;
+        };
+        if !route_satisfies_slot(route, *slot, input.privacy_preference) {
+            continue;
+        }
+
+        // Try to resolve this slot (checks base URL, API key, model spec).
+        match resolve_route(routing, *slot, route.clone()) {
+            Ok(resolved) => {
+                let degraded = *slot != requested_slot;
+                let reason = if degraded {
+                    format!(
+                        "Requested {:?} but selected {:?} via fallback (provider unavailable).",
+                        requested_slot, slot
+                    )
+                } else {
+                    format!("Selected {:?} for {:?}.", slot, input.intent)
+                };
+                return Ok(ResolvedCapabilityRoute {
+                    summary: CapabilityRouteSummary {
+                        slot: *slot,
+                        provider_id: route.provider_id.clone(),
+                        model: route.model.clone(),
+                        fallback_chain,
+                        reason,
+                        probe_status: "unknown".into(),
+                        degraded,
+                    },
+                    resolved,
+                });
+            }
+            Err(e) => {
+                last_error = Some(e);
+                continue;
             }
         }
     }
 
-    let selected_slot = selected_slot.unwrap_or(CapabilitySlot::Fast);
-    let selected_route = selected_route
-        .or_else(|| routing.slots.get("fast").cloned())
-        .ok_or_else(|| AppError::msg("no capability route for fast slot"))?;
-
-    let resolved = resolve_route(routing, selected_slot, selected_route.clone())?;
-    let degraded = selected_slot != requested_slot;
-    let reason = if degraded {
-        format!(
-            "Requested {:?} but selected {:?} via fallback because the requested slot is unavailable or lacks required capabilities.",
-            requested_slot, selected_slot
-        )
-    } else {
-        format!("Selected {:?} for {:?}.", selected_slot, input.intent)
-    };
-
-    Ok(ResolvedCapabilityRoute {
-        summary: CapabilityRouteSummary {
-            slot: selected_slot,
-            provider_id: selected_route.provider_id,
-            model: selected_route.model,
-            fallback_chain,
-            reason,
-            probe_status: "unknown".into(),
-            degraded,
-        },
-        resolved,
-    })
+    Err(last_error.unwrap_or_else(|| AppError::msg("no capability route available")))
 }
 
 fn resolve_route(
@@ -1022,6 +1033,7 @@ mod tests {
                 base_url: Some("https://api.anthropic.com".into()),
                 label: None,
                 default_model: Some("claude-3-5-haiku-20241022".into()),
+                enabled_models: Some(vec!["claude-3-5-haiku-20241022".into()]),
             },
         );
 
@@ -1050,8 +1062,10 @@ mod tests {
         )
         .expect("route");
 
-        assert_eq!(route.summary.slot, crate::ai_types::CapabilitySlot::Vision);
-        assert!(!route.summary.degraded);
+        // MiMo requires base URL — without it, falls back to Fast (DeepSeek).
+        assert_eq!(route.summary.slot, crate::ai_types::CapabilitySlot::Fast);
+        assert!(route.summary.degraded);
+        assert!(route.summary.reason.contains("fallback"));
         assert_eq!(
             route.summary.fallback_chain,
             vec![

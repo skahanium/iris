@@ -10,10 +10,7 @@ import {
 
 import { pathStem } from "@/lib/note-display";
 import { ingestMarkdownForEditor } from "@/lib/editor-ingest";
-import {
-  extractFrontmatterYaml,
-  parseNoteForEditor,
-} from "@/lib/markdown";
+import { extractFrontmatterYaml, parseNoteForEditor } from "@/lib/markdown";
 import { isPlaceholderTitle } from "@/lib/path-sync";
 import { fileRename, pathSyncSuggest } from "@/lib/ipc";
 import {
@@ -40,6 +37,7 @@ interface UseOpenNoteOptions {
     oldPath: string,
     newPath: string,
     title?: string,
+    markdownOverride?: string,
   ) => void;
 }
 
@@ -157,7 +155,13 @@ export function useOpenNote({
               const allocatedTitle = pathStem(entry.path);
               const nextTitle =
                 title.trim() === "" ? allocatedTitle : title.trim();
-              replaceOpenTabPath(path, entry.path, nextTitle);
+              const liveMarkdown = serializeOpenNote({
+                yaml: frontmatterYamlRef.current,
+                title: nextTitle,
+                editor: editorRef.current,
+                bodyFallbackMd: bodyMarkdownFromNoteRef(markdownRef.current),
+              });
+              replaceOpenTabPath(path, entry.path, nextTitle, liveMarkdown);
               if (title.trim() === "") {
                 setNoteTitle(allocatedTitle);
               }
@@ -168,7 +172,13 @@ export function useOpenNote({
           });
       }, PATH_SYNC_DEBOUNCE_MS);
     },
-    [activePathRef, replaceOpenTabPath],
+    [
+      activePathRef,
+      editorRef,
+      frontmatterYamlRef,
+      markdownRef,
+      replaceOpenTabPath,
+    ],
   );
 
   const onTitleBlur = useCallback(() => {

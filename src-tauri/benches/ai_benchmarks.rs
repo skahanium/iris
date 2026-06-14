@@ -71,14 +71,14 @@ fn sample_tool_def() -> LlmToolDef {
 fn long_tool_history() -> Vec<LlmMessage> {
     let mut messages = vec![LlmMessage {
         role: MessageRole::System,
-        content: "You are Iris.".to_string(),
+        content: "You are Iris.".into(),
         ..Default::default()
     }];
     for i in 0..60 {
         let tool_call_id = format!("call_{i}");
         messages.push(LlmMessage {
             role: MessageRole::Assistant,
-            content: String::new(),
+            content: String::new().into(),
             tool_calls: Some(vec![ToolCall::new(
                 tool_call_id.clone(),
                 "read_note",
@@ -88,7 +88,7 @@ fn long_tool_history() -> Vec<LlmMessage> {
         });
         messages.push(LlmMessage {
             role: MessageRole::Tool,
-            content: "Result ".repeat(40),
+            content: "Result ".repeat(40).into(),
             tool_call_id: Some(tool_call_id),
             ..Default::default()
         });

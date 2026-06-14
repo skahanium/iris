@@ -1,6 +1,8 @@
 use serde::{Deserialize, Serialize};
 
-use crate::ai_types::{EndpointFamily, LlmMessage, MessageRole, ProviderConfig};
+use crate::ai_types::{
+    ContentPart, EndpointFamily, LlmMessage, MessageContent, MessageRole, ProviderConfig,
+};
 use crate::error::{AppError, AppResult};
 
 use super::{messages_for_api, prepare_tool_api_messages, tool_api_message_chain_valid};
@@ -107,19 +109,61 @@ fn apply_thinking_body(body: &mut serde_json::Value, thinking: bool) {
     }
 }
 
+/// Convert `MessageContent` to Anthropic-compatible JSON.
+///
+/// - `Text` → plain string (Anthropic accepts string content)
+/// - `Parts` → array of content blocks with `ImageUrl` converted to Anthropic image format
+fn content_to_anthropic_json(content: &MessageContent) -> serde_json::Value {
+    match content {
+        MessageContent::Text(s) => serde_json::Value::String(s.clone()),
+        MessageContent::Parts(parts) => {
+            let blocks: Vec<serde_json::Value> = parts
+                .iter()
+                .map(|part| match part {
+                    ContentPart::Text { text } => {
+                        serde_json::json!({ "type": "text", "text": text })
+                    }
+                    ContentPart::ImageUrl { image_url } => {
+                        let (media_type, data) = parse_data_url(&image_url.url);
+                        serde_json::json!({
+                            "type": "image",
+                            "source": {
+                                "type": "base64",
+                                "media_type": media_type,
+                                "data": data,
+                            }
+                        })
+                    }
+                })
+                .collect();
+            serde_json::Value::Array(blocks)
+        }
+    }
+}
+
+/// Parse `data:image/png;base64,xxxxx` into `(media_type, base64_data)`.
+fn parse_data_url(url: &str) -> (&str, &str) {
+    let after_data = url.strip_prefix("data:").unwrap_or(url);
+    let comma_pos = after_data.find(',').unwrap_or(after_data.len());
+    let media_type_end = after_data[..comma_pos]
+        .rfind(";base64")
+        .unwrap_or(comma_pos);
+    (&after_data[..media_type_end], &after_data[comma_pos + 1..])
+}
+
 fn build_anthropic_messages_body_inner(request: &GatewayRequest) -> serde_json::Value {
     let mut system_parts = Vec::new();
     let mut messages = Vec::new();
     for message in &request.messages {
         match message.role {
-            MessageRole::System => system_parts.push(message.content.clone()),
+            MessageRole::System => system_parts.push(message.content.as_str().to_string()),
             MessageRole::Assistant => messages.push(serde_json::json!({
                 "role": "assistant",
-                "content": message.content,
+                "content": content_to_anthropic_json(&message.content),
             })),
             MessageRole::User | MessageRole::Tool => messages.push(serde_json::json!({
                 "role": "user",
-                "content": message.content,
+                "content": content_to_anthropic_json(&message.content),
             })),
         }
     }
@@ -228,5 +272,76 @@ mod phase3_adapter_contract_tests {
         assert_eq!(body["messages"][0]["role"], "user");
         assert_eq!(body["stream"], false);
         assert_eq!(body["tools"][0]["function"]["name"], "search_hybrid");
+    }
+
+    #[test]
+    fn parse_data_url_extracts_media_type_and_data() {
+        let (mt, data) = super::parse_data_url("data:image/png;base64,iVBORw0KGgo=");
+        assert_eq!(mt, "image/png");
+        assert_eq!(data, "iVBORw0KGgo=");
+    }
+
+    #[test]
+    fn parse_data_url_handles_jpeg() {
+        let (mt, data) = super::parse_data_url("data:image/jpeg;base64,/9j/4AAQ");
+        assert_eq!(mt, "image/jpeg");
+        assert_eq!(data, "/9j/4AAQ");
+    }
+
+    #[test]
+    fn anthropic_body_converts_image_url_to_image_source_block() {
+        use crate::ai_types::{ContentPart, ImageUrlPayload, MessageContent};
+
+        let request = GatewayRequest {
+            provider: ProviderConfig {
+                name: "anthropic".into(),
+                base_url: "https://api.anthropic.com".into(),
+                api_key: Some("key".into()),
+                model: "claude-3-5-haiku".into(),
+                slot: CapabilitySlot::Vision,
+                endpoint_family: EndpointFamily::AnthropicMessages,
+            },
+            messages: vec![LlmMessage {
+                role: MessageRole::User,
+                content: MessageContent::Parts(vec![
+                    ContentPart::Text {
+                        text: "describe this".into(),
+                    },
+                    ContentPart::ImageUrl {
+                        image_url: ImageUrlPayload {
+                            url: "data:image/png;base64,abc123".into(),
+                            detail: None,
+                        },
+                    },
+                ]),
+                tool_call_id: None,
+                tool_calls: None,
+                ..Default::default()
+            }],
+            tools: vec![],
+            max_tokens: Some(100),
+            temperature: None,
+            stream: false,
+            thinking: false,
+            skip_stub_ids: vec![],
+        };
+
+        let body = build_llm_api_body(&request).unwrap();
+        let content = &body["messages"][0]["content"];
+
+        // Should be an array of content blocks
+        assert!(content.is_array());
+        let arr = content.as_array().unwrap();
+        assert_eq!(arr.len(), 2);
+
+        // First block: text
+        assert_eq!(arr[0]["type"], "text");
+        assert_eq!(arr[0]["text"], "describe this");
+
+        // Second block: image (Anthropic format)
+        assert_eq!(arr[1]["type"], "image");
+        assert_eq!(arr[1]["source"]["type"], "base64");
+        assert_eq!(arr[1]["source"]["media_type"], "image/png");
+        assert_eq!(arr[1]["source"]["data"], "abc123");
     }
 }

@@ -33,6 +33,7 @@ import type {
   ClassifiedStatus,
   FileReadResult,
   GraphData,
+  ImageAttachmentDto,
   InboxItem,
   KeywordHit,
   LlmGenerateParams,
@@ -60,6 +61,10 @@ export interface SettingsMap {
   llm_custom_base_url: string | null;
   /** 底栏「联网」开关，跨会话保持 */
   web_search_enabled: boolean;
+  /** 自动版本追踪总开关，默认开启。 */
+  auto_version_enabled: boolean;
+  /** 自动版本追踪空闲间隔，单位分钟。 */
+  auto_version_idle_minutes: number;
 }
 
 export async function settingsGet<K extends keyof SettingsMap>(
@@ -407,8 +412,9 @@ export async function connectivityStatus(
 
 export async function llmConfigTest(
   providerId: string,
+  model?: string,
 ): Promise<LlmConfigTestResult> {
-  return invoke<LlmConfigTestResult>("llm_config_test", { providerId });
+  return invoke<LlmConfigTestResult>("llm_config_test", { providerId, model });
 }
 
 export interface MinimaxConfigGetResponse {
@@ -838,6 +844,7 @@ export async function aiSendMessage(params: {
   scene: AiScene;
   session_id: number | null;
   message: string;
+  images?: ImageAttachmentDto[];
   note_path?: string | null;
   selected_packet_ids?: string[];
   context_scope?: ContextScope | null;
@@ -848,6 +855,7 @@ export async function aiSendMessage(params: {
     scene: params.scene,
     sessionId: params.session_id,
     message: params.message,
+    images: params.images ?? null,
     notePath: params.note_path ?? null,
     selectedPacketIds: params.selected_packet_ids ?? null,
     contextScope: params.context_scope ?? null,

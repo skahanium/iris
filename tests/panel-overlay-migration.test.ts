@@ -12,15 +12,11 @@ const PANEL_SPECS = [
     size: "command",
   },
   {
-    path: "src/components/settings/SettingsPanel.tsx",
-    size: "command",
+    path: "src/components/settings/ManagementCenterPanel.tsx",
+    size: "management",
   },
   {
-    path: "src/components/file/BacklinksPanel.tsx",
-    size: "command",
-  },
-  {
-    path: "src/components/tag/TagView.tsx",
+    path: "src/components/knowledge/KnowledgeRelationsPanel.tsx",
     size: "command",
   },
   {
@@ -78,9 +74,8 @@ describe("panel overlay migration", () => {
     for (const componentName of [
       "VaultNavigator",
       "SearchPanel",
-      "SettingsPanel",
-      "BacklinksPanel",
-      "TagView",
+      "ManagementCenterPanel",
+      "KnowledgeRelationsPanel",
       "VersionTimeline",
     ]) {
       const match = appSource.match(

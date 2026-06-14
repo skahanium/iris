@@ -45,7 +45,7 @@ scheduleUndoRedoStateRefresh
 handleRedo
 scheduleUndoRedoStateRefresh
 homeActive
-AiSystemCenterPanel
+ManagementCenterPanel
 data-testid="editor-shell"
 runEditorAction
 IrisContextMenu

@@ -66,6 +66,8 @@ const MIGRATION_026_DOWN: &str =
     include_str!("../../migrations/026_skill_closed_loop_diagnostics.down.sql");
 const MIGRATION_027_UP: &str = include_str!("../../migrations/027_agent_permissions.sql");
 const MIGRATION_027_DOWN: &str = include_str!("../../migrations/027_agent_permissions.down.sql");
+const MIGRATION_028_UP: &str = include_str!("../../migrations/028_multimodal_messages.sql");
+const MIGRATION_028_DOWN: &str = include_str!("../../migrations/028_multimodal_messages.down.sql");
 
 fn is_applied(conn: &Connection, name: &str) -> bool {
     conn.query_row(
@@ -161,6 +163,7 @@ pub fn migrate_up(conn: &Connection) -> AppResult<()> {
         false,
     )?;
     apply_migration(conn, "027_agent_permissions", MIGRATION_027_UP, false)?;
+    apply_migration(conn, "028_multimodal_messages", MIGRATION_028_UP, false)?;
 
     Ok(())
 }
@@ -172,6 +175,7 @@ fn rollback_migration(conn: &Connection, name: &str, sql: &str) {
 
 /// Roll back all migrations in strict reverse order (for tests).
 pub fn migrate_down(conn: &Connection) -> AppResult<()> {
+    rollback_migration(conn, "028_multimodal_messages", MIGRATION_028_DOWN);
     rollback_migration(conn, "027_agent_permissions", MIGRATION_027_DOWN);
     rollback_migration(
         conn,

@@ -10,7 +10,6 @@ interface AppStatusBarSlotProps {
   readingMinutes: number;
   aiStatus: string;
   assistantChrome: AssistantChromeSnapshot;
-  keyboardLeaderPending: boolean;
   editorZoom: number;
   onEditorZoomIn: () => void;
   onEditorZoomOut: () => void;
@@ -26,6 +25,8 @@ interface AppStatusBarSlotProps {
   onThemeChange: (theme: "dark" | "light") => void;
   connectivity: ConnectivityStatus | null;
   onOpenConnectivitySettings: () => void;
+  onOpenManagementCenter: () => void;
+  onOpenGraph: () => void;
 }
 
 export function AppStatusBarSlot({
@@ -36,7 +37,6 @@ export function AppStatusBarSlot({
   readingMinutes,
   aiStatus,
   assistantChrome,
-  keyboardLeaderPending,
   editorZoom,
   onEditorZoomIn,
   onEditorZoomOut,
@@ -52,6 +52,8 @@ export function AppStatusBarSlot({
   onThemeChange,
   connectivity,
   onOpenConnectivitySettings,
+  onOpenManagementCenter,
+  onOpenGraph,
 }: AppStatusBarSlotProps) {
   return (
     <StatusBar
@@ -62,7 +64,6 @@ export function AppStatusBarSlot({
       readingMinutes={readingMinutes}
       aiStatus={aiStatus}
       assistantChrome={assistantChrome}
-      keyboardLeaderPending={keyboardLeaderPending}
       editorZoom={editorZoom}
       onEditorZoomIn={onEditorZoomIn}
       onEditorZoomOut={onEditorZoomOut}
@@ -78,6 +79,8 @@ export function AppStatusBarSlot({
       onThemeChange={onThemeChange}
       connectivity={connectivity}
       onOpenConnectivitySettings={onOpenConnectivitySettings}
+      onOpenManagementCenter={onOpenManagementCenter}
+      onOpenGraph={onOpenGraph}
     />
   );
 }

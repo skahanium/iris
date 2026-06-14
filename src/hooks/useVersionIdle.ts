@@ -25,13 +25,20 @@ export function useVersionIdle(
   path: string | null,
   getLastSavedSnapshot: () => LastSavedSnapshot | null,
   enqueueIdleSnapshot: (snapshot: LastSavedSnapshot) => void,
+  options: { enabled?: boolean; idleMs?: number } = {},
 ) {
+  const enabled = options.enabled ?? true;
+  const idleMs = options.idleMs ?? VERSION_IDLE_MS;
   const pathRef = useRef(path);
   const getLastSavedSnapshotRef = useRef(getLastSavedSnapshot);
   const enqueueIdleSnapshotRef = useRef(enqueueIdleSnapshot);
+  const enabledRef = useRef(enabled);
+  const idleMsRef = useRef(idleMs);
   pathRef.current = path;
   getLastSavedSnapshotRef.current = getLastSavedSnapshot;
   enqueueIdleSnapshotRef.current = enqueueIdleSnapshot;
+  enabledRef.current = enabled;
+  idleMsRef.current = idleMs;
 
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -45,21 +52,24 @@ export function useVersionIdle(
   useEffect(() => {
     clearTimer();
     return clearTimer;
-  }, [path, clearTimer]);
+  }, [path, enabled, idleMs, clearTimer]);
 
   const schedule = useCallback(() => {
     clearTimer();
+    if (!enabledRef.current) return;
     timerRef.current = setTimeout(() => {
       timerRef.current = null;
+      if (!enabledRef.current) return;
       const target = pathRef.current;
       if (!target) return;
       runWhenIdle(() => {
+        if (!enabledRef.current) return;
         const snapshot = getLastSavedSnapshotRef.current();
         if (!snapshot || snapshot.path !== target) return;
         if (isNoteSubstantivelyEmpty(snapshot.markdown)) return;
         enqueueIdleSnapshotRef.current(snapshot);
       });
-    }, VERSION_IDLE_MS);
+    }, idleMsRef.current);
   }, [clearTimer]);
 
   const onActivity = useCallback(() => {

@@ -2,7 +2,7 @@
 
 **方向定稿**：**Iris 知识工作台**——Iris Rail 壳层 + 沉静编辑画布 + AI 协作侧车 + 任务舱 Overlay；备选 **C · 命令优先**（键盘与可收起面板，不抢编辑区）。历史 Notion 参考见 [history/2026-06-11-notion-reference-summary.md](./history/2026-06-11-notion-reference-summary.md)（**不作**当前验收依据）。
 
-**Iris Rail 完整刷新设计**：见 [docs/superpowers/specs/2026-06-09-iris-rail-refresh-design.md](./superpowers/specs/2026-06-09-iris-rail-refresh-design.md)。该 spec 是当前界面系统刷新目标态，覆盖 Home、顶栏、Rail Segments Tab、Editor Workspace、Outline Rail、AI Conversation Workspace、Overlay Family 与 AI 系统中心。
+**Iris Rail 完整刷新设计**：见 [docs/superpowers/specs/2026-06-09-iris-rail-refresh-design.md](./superpowers/specs/2026-06-09-iris-rail-refresh-design.md)。该 spec 是当前界面系统刷新目标态，覆盖 Home、顶栏、Rail Segments Tab、Editor Workspace、Outline Rail、AI Conversation Workspace、Overlay Family 与管理中心。
 
 手工验收清单：见 [Iris Rail Refresh Manual Checklist](./testing/iris-rail-refresh-manual-checklist.md)。
 
@@ -81,17 +81,17 @@ Iris Rail Refresh adds semantic surface tokens for the complete interface system
 
 ### 文档与块样式
 
-| 元素                        | 规则                                                                                                                      |
-| --------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
-| **文档标题**                | 独立字段 `DocumentTitleField`；**居中**、`Noto Serif SC`、`~2.25rem` bold；与正文间距 `--prose-title-gap`；Enter 进入正文 |
-| **章节标题**                | H1 `1.875rem` / H2 `1.5rem` / H3 `1.25rem`；左对齐；块间距 token 分级                                                     |
-| **段落**                    | 无段首缩进；**两端对齐**（`text-justify: inter-ideograph`）；块间距 `--prose-block-gap`；空行 spacer ≈ 55% 行高           |
-| **共用排版**                | `data-prose-surface="editor"` \| `conversation`；AI `--prose-size-chat`（15px），编辑 `--prose-size-editor`（16px）       |
-| **AI 消息**                 | 用户右对齐气泡；助手 `surface-elevated` 全宽壳；流式空态单行「正在思考…」，无 inset 左边条                                |
-| **章节折叠**                | H1–H3 左侧 `▸/▾`（仅正文区章节标题）                                                                                      |
-| **Zen**                     | `Ctrl+.` 隐藏 Tab/状态栏/AI，栏宽 `56rem`                                                                                 |
-| **缩放**                    | canvas `zoom` 75%–150%                                                                                                    |
-| **文档目录（Ghost Spine）** | `EditorOutline`：左缘细线把手 + 透明文字索引列；H1/H2/H3 缩进；当前章节 2px marker；50+ 条目虚拟化；`Ctrl+Shift+O`        |
+| 元素                        | 规则                                                                                                                                    |
+| --------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| **文档标题**                | 独立字段 `DocumentTitleField`；**居中**、`Noto Serif SC`、`~2.25rem` bold；与正文间距 `--prose-title-gap`；Enter 进入正文               |
+| **章节标题**                | H1 `1.875rem` / H2 `1.5rem` / H3 `1.25rem`；左对齐；块间距 token 分级                                                                   |
+| **段落**                    | 无段首缩进；**两端对齐**（`text-justify: inter-ideograph`）；块间距 `--prose-block-gap`；空行 spacer ≈ 55% 行高                         |
+| **共用排版**                | `data-prose-surface="editor"` \| `conversation`；AI `--prose-size-chat`（15px），编辑 `--prose-size-editor`（16px）                     |
+| **AI 消息**                 | 用户右对齐气泡；助手 `surface-elevated` 全宽壳；流式空态单行「正在思考…」，无 inset 左边条                                              |
+| **章节折叠**                | H1–H3 左侧 `▸/▾`（仅正文区章节标题）                                                                                                    |
+| **Zen**                     | `Ctrl+.` 隐藏 Tab/状态栏/AI，栏宽 `56rem`                                                                                               |
+| **缩放**                    | canvas `zoom` 75%–150%                                                                                                                  |
+| **文档目录（Ghost Spine）** | `EditorOutline`：左缘细线把手 + 透明文字索引列；H1/H2/H3 缩进；当前章节文字 / 背景 / 左侧滑动条高亮；50+ 条目虚拟化；锁定态仍可点击跳转 |
 
 ---
 
@@ -110,14 +110,21 @@ Iris Rail Refresh adds semantic surface tokens for the complete interface system
 
 ### 尺寸变体（`IrisOverlay`）
 
-| size      | 用途               | 约略尺寸               |
-| --------- | ------------------ | ---------------------- |
-| `compact` | Quick Open         | `max-w-xl`             |
-| `command` | 搜索、文件、设置等 | `max-w-3xl`，高 `78vh` |
-| `wide`    | 版本时间线         | `max-w-7xl`，高 `88vh` |
-| `graph`   | 知识图谱           | 宽 `96vw`，高 `92vh`   |
+| size         | 用途                   | 约略尺寸                      |
+| ------------ | ---------------------- | ----------------------------- |
+| `compact`    | Quick Open             | `max-w-xl`                    |
+| `command`    | 搜索、文件、知识关联等 | `max-w-3xl`，高 `78vh`        |
+| `management` | 管理中心               | `1180px × 760px` 上限，中面板 |
+| `wide`       | 版本时间线等           | `max-w-7xl`，高 `88vh`        |
+| `graph`      | 知识图谱               | 宽 `96vw`，高 `92vh`          |
 
 浮层：`rounded-xl`（12px），`--shadow-overlay`，`border-border/60`。
+
+### 管理中心
+
+`ManagementCenterPanel` 是唯一管理型入口，使用横向全宽顶部标签导航，一级分区固定为 `总览 / 笔记 / 知识库 / AI`。取消左侧设置栏、工作台页、系统安全页和关于页；系统边界、许可和源码信息并入总览。总览、笔记、知识库默认不设置子页面，内容多时在同页纵向滚动；AI 允许使用同窗子页承载模型、联网、人格、Skills 和记忆等复杂配置，子页必须保留返回 AI 顶层的入口。模型配置以供应商为单位展示，供应商配置位于能力槽模型路由上方；未配置厂商只出现在添加模型向导中。
+
+任务型浮层保持快速列表体验：Quick Open、全库搜索、知识关联、版本追踪与知识图谱仍按各自工作流选择尺寸。文件树、版本追踪和图谱属于特殊工作流，不强制套用管理中心；知识图谱由底栏直达。涉密能力不出现在管理中心或普通主界面，只保留隐藏特殊直达。
 
 ---
 
@@ -162,7 +169,7 @@ Iris Rail Refresh adds semantic surface tokens for the complete interface system
 | `--ai-stream-pulse`                                           | 流式等待指示                                         |
 | `--knowledge-accent` / `--knowledge-accent-foreground`        | 鼠尾草绿知识连接色；品牌轨道选中线、Outline 当前章节 |
 | `--iris-rail-*`                                               | 品牌轨道与 Rail Segments Tab 背景、激活、hover       |
-| `--outline-rail-*`                                            | 边缘目录轨背景与当前章节 marker                      |
+| `--outline-rail-*`                                            | 边缘目录轨背景与当前章节高亮                         |
 | `--ai-workspace-*`                                            | AI 协作侧车背景与边框                                |
 | `--overlay-task-*`                                            | 任务舱 Overlay 标题区与列表选中态                    |
 
@@ -177,14 +184,14 @@ Iris Rail Refresh adds semantic surface tokens for the complete interface system
 | 证据包      | 可折叠 Section 标题 + badge                                         |
 | 状态栏缩放  | Popover 滑块/步进（非三个并排按钮）                                 |
 | 连通性      | 两枚 8px 圆点成组（LLM · 联网）；灰 / emerald / sky（`--status-*`） |
-| 命令列表    | `CommandListOption` + `Kbd`；Lucide 图标                            |
-| `/` 菜单    | `IrisSurfaceMenu`；仅文档级命令；有选区时提示用右键（非命令面板）   |
+| 命令列表    | 仅保留给 Quick Open / 搜索等任务型列表；Lucide 图标                 |
+| `/` 菜单    | `IrisSurfaceMenu`；仅文档级命令；有选区时提示用右键                 |
 | 选区 AI     | **右键为主**；`editor-actions` 注册表；无自动浮动条                 |
 | 右键菜单    | `iris_only`：`IrisContextMenu` + `IrisSurfaceMenu` 分组             |
 | AI 消息选区 | 仅右键：复制、引用到输入；选区高亮限制在 `.ai-message-body` 内      |
 | AI 输入框   | 右键仅剪贴板（复制/粘贴/全选），不含润色类动作                      |
 
-主路径保留可见控件或快捷键；StatusBar 避免超过 3 个并排 icon-only 按钮。写作型 AI **不**进入 ⌘⇧P 命令面板。
+主路径保留可见控件或快捷键；StatusBar 避免超过 3 个并排 icon-only 按钮。底栏右侧齿轮打开管理中心总览，图谱按钮打开知识图谱；写作型 AI 只走右键、`/` 菜单或 AI 侧栏。
 
 ---
 
@@ -199,15 +206,18 @@ Iris Rail Refresh adds semantic surface tokens for the complete interface system
 
 ## C · 命令优先（备选原则）
 
-| 原则        | 现状                                |
-| ----------- | ----------------------------------- |
-| 命令面板    | `Ctrl+Shift+P` 总览并执行功能       |
-| 导航        | `Ctrl+P` Quick Open                 |
-| 保存笔记    | `Ctrl+S`（层 1，写当前 `.md`）      |
-| 版本快照    | `Ctrl+Shift+S`（层 1 + 手动检查点） |
-| 次级功能    | 居中命令浮层                        |
-| **AI 侧栏** | `Ctrl+Shift+A`                      |
-| Zen         | `Ctrl+.`                            |
+| 原则        | 现状                                                         |
+| ----------- | ------------------------------------------------------------ |
+| 导航        | `Ctrl+P` Quick Open                                          |
+| 查找 / 搜索 | `Ctrl+F`、`Ctrl+H`、`Ctrl+Shift+F`                           |
+| 保存笔记    | `Ctrl+S`（层 1，写当前 `.md`）                               |
+| 链接        | `Ctrl+K` 打开编辑器链接弹窗，不做 leader key                 |
+| 版本追踪    | `Ctrl+Shift+V`；手动检查点 / 定稿在版本面板内操作            |
+| 管理中心    | `Ctrl+,` 或底栏齿轮，四个顶层标签：总览 / 笔记 / 知识库 / AI |
+| 知识图谱    | 底栏图谱按钮；不新增默认快捷键                               |
+| **AI 侧栏** | `Ctrl+Shift+A`                                               |
+| Zen         | `Ctrl+.`                                                     |
+| 涉密面板    | `Ctrl+Shift+L`，隐藏特殊直达；不在管理中心展示               |
 
 ---
 

@@ -104,7 +104,7 @@ mod tests {
     fn assistant_with(calls: Vec<ToolCall>) -> Vec<LlmMessage> {
         vec![LlmMessage {
             role: MessageRole::Assistant,
-            content: String::new(),
+            content: String::new().into(),
             tool_call_id: None,
             tool_calls: Some(calls),
             ..Default::default()

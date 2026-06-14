@@ -45,7 +45,7 @@ interface AppEditorWorkspaceProps {
     finish: () => void;
   };
   onOutlineOpenChange: (open: boolean) => void;
-  onOpenAiSystemCenter: () => void;
+  onOpenAiManagement: () => void;
   onOpenQuickOpen: () => void;
   onOpenSearch: () => void;
   openNoteLeavingHome: (path: string) => void;
@@ -81,7 +81,7 @@ export function AppEditorWorkspace({
   homeActive,
   inlineAi,
   onOutlineOpenChange,
-  onOpenAiSystemCenter,
+  onOpenAiManagement,
   onOpenQuickOpen,
   onOpenSearch,
   openNoteLeavingHome,
@@ -132,6 +132,7 @@ export function AppEditorWorkspace({
           <EditorOutline
             editor={editorInstance}
             open={outlineOpen}
+            locked={activeFileLocked}
             zen={zen}
             onOpenChange={onOutlineOpenChange}
           />
@@ -143,7 +144,7 @@ export function AppEditorWorkspace({
           onNew={handleNewNoteLeavingHome}
           onQuickOpen={onOpenQuickOpen}
           onSearch={onOpenSearch}
-          onAiSystemCenter={onOpenAiSystemCenter}
+          onOpenAiManagement={onOpenAiManagement}
         />
       )}
       <IrisContextMenu

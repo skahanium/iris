@@ -3,27 +3,28 @@
   globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }
 ).IS_REACT_ACT_ENVIRONMENT = true;
 
-/** Node 部分版本下 jsdom 的 localStorage 可能未注入 */
-if (typeof globalThis.localStorage === "undefined") {
-  const store = new Map<string, string>();
-  globalThis.localStorage = {
+/** Node 部分版本下读取 globalThis.localStorage 会触发实验性 getter 警告。 */
+const localStorageStore = new Map<string, string>();
+Object.defineProperty(globalThis, "localStorage", {
+  configurable: true,
+  value: {
     get length() {
-      return store.size;
+      return localStorageStore.size;
     },
     clear() {
-      store.clear();
+      localStorageStore.clear();
     },
     getItem(key: string) {
-      return store.get(key) ?? null;
+      return localStorageStore.get(key) ?? null;
     },
     setItem(key: string, value: string) {
-      store.set(key, String(value));
+      localStorageStore.set(key, String(value));
     },
     removeItem(key: string) {
-      store.delete(key);
+      localStorageStore.delete(key);
     },
     key(index: number) {
-      return [...store.keys()][index] ?? null;
+      return [...localStorageStore.keys()][index] ?? null;
     },
-  } as Storage;
-}
+  } satisfies Storage,
+});

@@ -636,23 +636,6 @@
     border-radius: var(--radius-md);
   }
 
-  .outline-ghost-marker {
-    --outline-marker-size: 4px;
-    flex: 0 0 var(--outline-marker-size);
-    width: var(--outline-marker-size);
-    height: var(--outline-marker-size);
-    border-radius: 50%;
-    background: hsl(var(--muted-foreground) / 0.3);
-    transition:
-      background 160ms var(--motion-ease),
-      box-shadow 160ms var(--motion-ease);
-  }
-
-  .outline-ghost-item--active .outline-ghost-marker {
-    background: hsl(var(--outline-rail-active));
-    box-shadow: 0 0 4px hsl(var(--outline-rail-active) / 0.4);
-  }
-
   .outline-ghost-bar {
     position: absolute;
     left: 0;
@@ -852,6 +835,17 @@
   .iris-editor-body .ProseMirror {
     @apply relative min-h-[50vh] text-editor-ink outline-none;
     caret-color: hsl(var(--primary));
+  }
+
+  .iris-editor-body .ProseMirror .iris-editor-media-image {
+    display: block;
+    max-width: 100%;
+    height: auto;
+    object-fit: contain;
+    background: hsl(var(--background));
+    contain: paint;
+    backface-visibility: hidden;
+    transform: translateZ(0);
   }
 
   .iris-editor-body .ProseMirror ::selection,

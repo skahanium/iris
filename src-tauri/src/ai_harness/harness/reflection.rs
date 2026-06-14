@@ -93,7 +93,7 @@ pub(crate) async fn run_reflection_round(
                 *bonus_round_used = true;
                 messages.push(LlmMessage {
                     role: MessageRole::Assistant,
-                    content: text,
+                    content: text.into(),
                     tool_call_id: None,
                     tool_calls: None,
                     ..Default::default()

@@ -28,10 +28,7 @@ interface PersonaSettingsPanelProps {
   onClose: () => void;
 }
 
-export function PersonaSettingsPanel({
-  open,
-  onClose,
-}: PersonaSettingsPanelProps) {
+export function PersonaSettingsBody({ open }: { open: boolean }) {
   const { saveProfile } = usePromptProfile();
   const [draft, setDraft] = useState<PromptProfileDto>(DEFAULT_PROMPT_PROFILE);
   const [rulesText, setRulesText] = useState("");
@@ -108,7 +105,7 @@ export function PersonaSettingsPanel({
   const avatarIdentity = profileToAvatarIdentity(draft);
 
   return (
-    <IrisOverlay open={open} onClose={onClose} title="人格配置" size="command">
+    <>
       <div className="task-overlay-filter shrink-0 border-b border-border/60 px-4 py-3">
         <p className="text-xs text-muted-foreground">
           称呼与头像显示在 AI 侧栏；人格描述与规则将注入模型 system prompt。
@@ -294,6 +291,17 @@ export function PersonaSettingsPanel({
           </div>
         </div>
       </ScrollArea>
+    </>
+  );
+}
+
+export function PersonaSettingsPanel({
+  open,
+  onClose,
+}: PersonaSettingsPanelProps) {
+  return (
+    <IrisOverlay open={open} onClose={onClose} title="人格配置" size="command">
+      <PersonaSettingsBody open={open} />
     </IrisOverlay>
   );
 }

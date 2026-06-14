@@ -42,6 +42,8 @@ interface UseAppPersistenceLifecycleParams {
   activePathRef: MutableRefObject<string | null>;
   applySavedMarkdown: (markdown: string) => void;
   autoSnapshotGenerationRef: MutableRefObject<number>;
+  autoVersionEnabled: boolean;
+  autoVersionIdleMinutes: number;
   dirtyRef: MutableRefObject<boolean>;
   editorRef: RefObject<Editor | null>;
   getLiveMarkdownRef: MutableRefObject<() => string>;
@@ -62,6 +64,8 @@ export function useAppPersistenceLifecycle({
   activePathRef,
   applySavedMarkdown,
   autoSnapshotGenerationRef,
+  autoVersionEnabled,
+  autoVersionIdleMinutes,
   dirtyRef,
   editorRef,
   getLiveMarkdownRef,
@@ -108,12 +112,13 @@ export function useAppPersistenceLifecycle({
 
   const enqueueIdleSnapshot = useCallback(
     (snapshot: LastSavedSnapshot) => {
+      if (!autoVersionEnabled) return;
       const result = versionSnapshotScheduler.enqueueIdle(snapshot);
       if (result.accepted) {
         void result.done;
       }
     },
-    [versionSnapshotScheduler],
+    [autoVersionEnabled, versionSnapshotScheduler],
   );
 
   const enqueueLeaveSnapshot = useMemo(
@@ -181,7 +186,10 @@ export function useAppPersistenceLifecycle({
   };
 
   const { onActivity: resetVersionIdle, clearTimer: clearVersionIdleTimer } =
-    useVersionIdle(activePath, getLastSavedSnapshot, enqueueIdleSnapshot);
+    useVersionIdle(activePath, getLastSavedSnapshot, enqueueIdleSnapshot, {
+      enabled: autoVersionEnabled,
+      idleMs: autoVersionIdleMinutes * 60 * 1000,
+    });
 
   const flushAllOpenTabs = useCallback(async () => {
     const paths = tabsRef.current.map((tab) => tab.path);

@@ -1,22 +1,22 @@
 import { describe, expect, it } from "vitest";
 
-/** Side panels must be mutually exclusive (same rule as useOverlayManager). */
-const SIDE_PANELS = [
+/** Managed overlays must be mutually exclusive (same rule as useOverlayManager). */
+const OVERLAYS = [
   "fileSheet",
   "search",
-  "settings",
-  "backlinks",
-  "tags",
+  "managementCenter",
+  "knowledgeRelations",
   "version",
 ] as const;
 
 function openPanel(
   current: Record<string, boolean>,
-  id: (typeof SIDE_PANELS)[number],
+  id: (typeof OVERLAYS)[number],
 ): Record<string, boolean> {
-  const next = Object.fromEntries(
-    SIDE_PANELS.map((k) => [k, k === id]),
-  ) as Record<string, boolean>;
+  const next = Object.fromEntries(OVERLAYS.map((k) => [k, k === id])) as Record<
+    string,
+    boolean
+  >;
   return { ...current, ...next, graph: false };
 }
 

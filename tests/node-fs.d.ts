@@ -27,4 +27,7 @@ declare module "node:child_process" {
 declare const __dirname: string;
 declare const process: {
   cwd(): string;
+  env: {
+    HOME?: string;
+  };
 };

@@ -57,6 +57,46 @@ describe("Phase3 model and persona routing contract", () => {
     expect(section).not.toContain("AI_SCENES.map");
   });
 
+  it("uses provider-level credentials with user-entered activated model ids", () => {
+    const section = read("src/components/settings/LlmRoutingSection.tsx");
+    const llmTypes = read("src/types/llm.ts");
+    const rustConfig = read("src-tauri/src/llm/config.rs");
+    const ipc = read("src/lib/ipc.ts");
+    const rust = read("src-tauri/src/commands/llm_config_commands.rs");
+
+    expect(section).toContain("visibleProviders");
+    expect(section).toContain('data-testid="llm-provider-card"');
+    expect(section).toContain("添加供应商");
+    expect(section).toContain("AddModelWizard");
+    expect(section).toContain("enabledModelsForProvider");
+    expect(section).toContain("addProviderModel");
+    expect(section).toContain("removeProviderModel");
+    expect(section).toContain("newModelInputs");
+    expect(section.indexOf("供应商配置")).toBeLessThan(
+      section.indexOf("能力槽模型路由"),
+    );
+    expect(section).toContain("llmConfigTest(provider.id, model.id)");
+    expect(section).not.toContain("llmConfigTest(provider.id, defaultModel)");
+    expect(section).not.toContain("catalogModelsForProvider");
+    expect(section).not.toContain("toggleProviderModel");
+    expect(section).not.toContain("catalog.length > 0");
+    expect(section).not.toContain("currentModel: string");
+    expect(section).not.toContain("provider?.default_model ||");
+    expect(section).not.toContain("llmConfigApplyDeepseekDefaults");
+    expect(section).not.toContain("DeepSeek 推荐");
+    expect(section).toContain("未添加模型时不会激活或展示任何模型");
+    expect(section).toContain("先在供应商配置中添加模型");
+    expect(section).toContain("模型 ID，如 deepseek-v4-flash");
+    expect(llmTypes).toContain("enabledModels?: string[] | null");
+    expect(rustConfig).toContain("pub enabled_models: Option<Vec<String>>");
+    expect(ipc).toContain("model?: string");
+    expect(ipc).toContain("llm_config_test");
+    expect(rust).toContain("model: Option<String>");
+    expect(rust).toContain(
+      "resolve_for_provider(&state.db, &provider_id, model.as_deref())",
+    );
+  });
+
   it("uses current MiMo v2.5 catalog labels instead of the old experimental placeholder", () => {
     const providers = read("src-tauri/src/llm/providers.rs");
     const catalog = read("src-tauri/src/llm/model_catalog.rs");

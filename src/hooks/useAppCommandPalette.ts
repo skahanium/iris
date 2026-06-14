@@ -5,10 +5,18 @@ import {
   recordCommandUsage,
   type CommandPaletteItem,
 } from "@/lib/command-palette";
-import type { OverlayId } from "@/hooks/useOverlayManager";
+import type {
+  ManagementCenterDetail,
+  ManagementCenterSection,
+  OverlayId,
+} from "@/hooks/useOverlayManager";
 
 interface OverlayPort {
   closeOverlay: (overlay?: OverlayId) => void;
+  openManagementCenter: (
+    section?: ManagementCenterSection,
+    detail?: ManagementCenterDetail,
+  ) => void;
   openOverlay: (overlay: OverlayId) => void;
 }
 
@@ -18,7 +26,6 @@ interface UseAppCommandPaletteParams {
   closeTab: (path: string) => void;
   handleNewNote: () => Promise<unknown>;
   handleSaveNote: () => Promise<void>;
-  handleSaveVersion: () => Promise<void>;
   handleVaultRescan: () => void;
   openFindReplace: (mode: "find" | "replace") => void;
   overlays: OverlayPort;
@@ -43,7 +50,6 @@ export function useAppCommandPalette({
   closeTab,
   handleNewNote,
   handleSaveNote,
-  handleSaveVersion,
   handleVaultRescan,
   openFindReplace,
   overlays,
@@ -74,10 +80,12 @@ export function useAppCommandPalette({
     (item: CommandPaletteItem) => {
       const action = item.action;
       recordCommandUsage(item.id);
-      overlays.closeOverlay("commandPalette");
       switch (action.type) {
         case "openOverlay":
           overlays.openOverlay(action.overlay);
+          break;
+        case "openManagementCenter":
+          overlays.openManagementCenter(action.section, action.detail ?? null);
           break;
         case "openClassifiedPanel":
           setClassifiedOpen(true);
@@ -90,9 +98,6 @@ export function useAppCommandPalette({
           break;
         case "saveNote":
           void handleSaveNote();
-          break;
-        case "saveVersion":
-          void handleSaveVersion();
           break;
         case "closeTab":
           if (activePathRef.current) closeTab(activePathRef.current);
@@ -144,7 +149,6 @@ export function useAppCommandPalette({
       closeTab,
       handleNewNote,
       handleSaveNote,
-      handleSaveVersion,
       handleVaultRescan,
       openFindReplace,
       overlays,

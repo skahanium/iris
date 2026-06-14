@@ -234,6 +234,15 @@ export interface InboxItem {
   updated_at: string;
 }
 
+/** 前端传入的图片附件 DTO */
+export interface ImageAttachmentDto {
+  id: string;
+  dataBase64: string;
+  mimeType: string;
+  fileName?: string;
+  sizeBytes: number;
+}
+
 export type {
   AiScene,
   AssembledContext,

@@ -18,6 +18,7 @@ export interface ProviderOverride {
   baseUrl: string | null;
   label?: string | null;
   defaultModel?: string | null;
+  enabledModels?: string[] | null;
 }
 
 /** 设置页允许的自定义 OpenAI 兼容端点 ID（`custom` 或 `custom_*`）。 */

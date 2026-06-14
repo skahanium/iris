@@ -1,17 +1,21 @@
-import type { OverlayId } from "@/hooks/useOverlayManager";
-import {
-  formatLeaderChordShortcut,
-  formatShortcut,
-  type KeyChord,
-} from "@/lib/utils";
+import type {
+  ManagementCenterDetail,
+  ManagementCenterSection,
+  OverlayId,
+} from "@/hooks/useOverlayManager";
+import { formatShortcut, type KeyChord } from "@/lib/utils";
 
 export type CommandPaletteAction =
   | { type: "openOverlay"; overlay: OverlayId }
+  | {
+      type: "openManagementCenter";
+      section: ManagementCenterSection;
+      detail?: ManagementCenterDetail;
+    }
   | { type: "openClassifiedPanel" }
   | { type: "openFindReplace"; mode: "find" | "replace" }
   | { type: "newNote" }
   | { type: "saveNote" }
-  | { type: "saveVersion" }
   | { type: "closeTab" }
   | { type: "toggleAiPanel" }
   | { type: "toggleZen" }
@@ -51,9 +55,6 @@ export function formatCommandPaletteItemShortcut(
 ): string | undefined {
   const chord = item.chord;
   if (!chord) return undefined;
-  if (chord.afterLeader === "cmd_k") {
-    return formatLeaderChordShortcut("K", chord.key);
-  }
   return formatShortcut(chord);
 }
 
@@ -65,28 +66,9 @@ export function buildCommandPaletteItems(
 
   return [
     {
-      id: "command-palette",
-      label: "命令面板",
-      group: "视图",
-      keywords: "command palette 命令 面板",
-      icon: "Command",
-      hiddenInPalette: true,
-      chord: { key: "P", mod: true, shift: true },
-      action: { type: "openOverlay", overlay: "commandPalette" },
-    },
-    {
-      id: "leader-cmd-k",
-      label: "和弦前缀",
-      group: "视图",
-      keywords: "leader key prefix",
-      hiddenInPalette: true,
-      chord: { key: "K", mod: true, leader: "cmd_k" },
-      action: { type: "noop" },
-    },
-    {
       id: "quick-open",
       label: "快速打开笔记",
-      group: "导航",
+      group: "知识库",
       keywords: "quick open file 文件 搜索 切换",
       icon: "Search",
       disabled: vaultOnly,
@@ -96,21 +78,19 @@ export function buildCommandPaletteItems(
     {
       id: "file-sheet",
       label: "浏览笔记库",
-      group: "导航",
+      group: "知识库",
       keywords: "file tree vault 文件树 浏览 笔记库 管理",
       icon: "FolderTree",
       disabled: vaultOnly,
-      chord: { key: "E", mod: true, shift: true, requireVault: true },
       action: { type: "openOverlay", overlay: "fileSheet" },
     },
     {
       id: "recycle-bin",
       label: "回收站",
-      group: "导航",
+      group: "知识库",
       keywords: "recycle trash bin 回收站 删除 恢复 撤销",
       icon: "Trash2",
       disabled: vaultOnly,
-      chord: { key: "U", mod: true, shift: true, requireVault: true },
       action: { type: "openOverlay", overlay: "recycleBin" },
     },
     {
@@ -127,7 +107,7 @@ export function buildCommandPaletteItems(
     {
       id: "search",
       label: "全库搜索",
-      group: "导航",
+      group: "知识库",
       keywords: "search find 查找 全库",
       icon: "FileSearch",
       disabled: vaultOnly,
@@ -155,49 +135,30 @@ export function buildCommandPaletteItems(
       action: { type: "openFindReplace", mode: "replace" },
     },
     {
-      id: "backlinks",
-      label: "反向链接",
-      group: "导航",
-      keywords: "backlink 反链 链接",
+      id: "knowledge-relations",
+      label: "知识关联",
+      group: "知识库",
+      keywords: "backlink 反链 链接 tag 标签 relation 关联",
       icon: "Link2",
-      disabled: vaultOnly || noteOnly,
-      chord: {
-        key: "B",
-        mod: true,
-        shift: true,
-        requireVault: true,
-        requireNote: true,
-      },
-      action: { type: "openOverlay", overlay: "backlinks" },
-    },
-    {
-      id: "tags",
-      label: "标签",
-      group: "导航",
-      keywords: "tag 标签",
-      icon: "Tag",
       disabled: vaultOnly,
-      chord: { key: "T", mod: true, shift: true, requireVault: true },
-      action: { type: "openOverlay", overlay: "tags" },
+      action: { type: "openOverlay", overlay: "knowledgeRelations" },
     },
     {
       id: "graph",
       label: "知识图谱",
-      group: "导航",
+      group: "知识库",
       keywords: "graph 图谱 关系",
       icon: "Network",
       disabled: vaultOnly,
-      chord: { key: "G", mod: true, shift: true, requireVault: true },
       action: { type: "openOverlay", overlay: "graph" },
     },
     {
       id: "rescan-vault",
       label: "重建库索引",
-      group: "导航",
+      group: "知识库",
       keywords: "index reindex 索引 同步",
       icon: "RotateCcw",
       disabled: vaultOnly,
-      chord: { key: "I", mod: false, afterLeader: "cmd_k", requireVault: true },
       action: { type: "rescanVault" },
     },
     {
@@ -218,16 +179,6 @@ export function buildCommandPaletteItems(
       disabled: vaultOnly || noteOnly,
       chord: { key: "S", mod: true, requireNote: true },
       action: { type: "saveNote" },
-    },
-    {
-      id: "save-version",
-      label: "保存并创建版本快照",
-      group: "笔记",
-      keywords: "save version 保存 定稿 快照",
-      icon: "GitBranch",
-      disabled: vaultOnly || noteOnly,
-      chord: { key: "S", mod: true, shift: true, requireNote: true },
-      action: { type: "saveVersion" },
     },
     {
       id: "close-tab",
@@ -252,17 +203,16 @@ export function buildCommandPaletteItems(
     {
       id: "toggle-outline",
       label: "显示 / 隐藏文档目录",
-      group: "视图",
+      group: "笔记",
       keywords: "outline 目录 大纲",
       icon: "BookOpen",
       disabled: noteOnly,
-      chord: { key: "O", mod: true, shift: true, requireNote: true },
       action: { type: "toggleOutline" },
     },
     {
       id: "toggle-zen",
       label: "Zen 专注模式",
-      group: "视图",
+      group: "系统",
       keywords: "zen focus 专注 沉浸",
       icon: "Minimize2",
       chord: { key: ".", mod: true },
@@ -271,24 +221,24 @@ export function buildCommandPaletteItems(
     {
       id: "toggle-theme",
       label: "切换浅色 / 深色主题",
-      group: "视图",
+      group: "系统",
       keywords: "theme dark light 主题 外观",
       icon: "Sun",
       action: { type: "toggleTheme" },
     },
     {
-      id: "settings",
-      label: "设置",
-      group: "视图",
-      keywords: "settings preferences 偏好",
+      id: "management-center",
+      label: "管理中心",
+      group: "系统",
+      keywords: "settings preferences 偏好 设置 管理 中心",
       icon: "Settings",
       chord: { key: ",", mod: true },
-      action: { type: "openOverlay", overlay: "settings" },
+      action: { type: "openManagementCenter", section: "overview" },
     },
     {
       id: "zoom-in",
       label: "放大编辑器",
-      group: "视图",
+      group: "系统",
       keywords: "zoom in 放大 字号",
       icon: "ZoomIn",
       disabled: noteOnly,
@@ -298,7 +248,7 @@ export function buildCommandPaletteItems(
     {
       id: "zoom-out",
       label: "缩小编辑器",
-      group: "视图",
+      group: "系统",
       keywords: "zoom out 缩小 字号",
       icon: "ZoomOut",
       disabled: noteOnly,
@@ -308,7 +258,7 @@ export function buildCommandPaletteItems(
     {
       id: "zoom-reset",
       label: "重置编辑器缩放",
-      group: "视图",
+      group: "系统",
       keywords: "zoom reset 缩放 100",
       icon: "Maximize2",
       disabled: noteOnly,
@@ -339,17 +289,16 @@ export function buildCommandPaletteItems(
       group: "AI",
       keywords: "web search 联网 搜索",
       icon: "Globe",
-      chord: { key: "W", mod: false, afterLeader: "cmd_k" },
       action: { type: "toggleWebSearch" },
     },
     {
       id: "ai-system-center",
-      label: "AI 系统中心",
+      label: "AI 管理",
       group: "AI",
       keywords:
-        "ai system center model search skills memory rules 系统 中心 模型 联网 人格 规则",
+        "ai system center management model search skills memory rules 系统 中心 管理 模型 联网 人格 规则",
       icon: "SlidersHorizontal",
-      action: { type: "openOverlay", overlay: "aiSystemCenter" },
+      action: { type: "openManagementCenter", section: "ai" },
     },
     {
       id: "skills",
@@ -357,7 +306,7 @@ export function buildCommandPaletteItems(
       group: "AI",
       keywords: "skills skill 技能 安装 注入 prompt",
       icon: "Wrench",
-      action: { type: "openOverlay", overlay: "skills" },
+      action: { type: "openManagementCenter", section: "ai" },
     },
   ];
 }

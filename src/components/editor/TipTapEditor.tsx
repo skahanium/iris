@@ -29,6 +29,7 @@ import {
   useEffect,
   useMemo,
   useRef,
+  useState,
   type MouseEvent,
   type ReactNode,
 } from "react";
@@ -70,7 +71,7 @@ import { ListIndentKeymapExtension } from "./extensions/ListIndentKeymapExtensio
 
 import { IrisDocument } from "./extensions/IrisDocument";
 
-import { LinkExtension } from "./extensions/LinkExtension";
+import { isSafeHref, LinkExtension } from "./extensions/LinkExtension";
 
 import { CalloutBlockquoteExtension } from "./extensions/CalloutBlockquoteExtension";
 import { PreserveBlockExtension } from "./extensions/PreserveBlockExtension";
@@ -206,6 +207,12 @@ function TipTapEditorInner({
   onBodyStatsChangeRef.current = onBodyStatsChange;
 
   const editorRef = useRef<Editor | null>(null);
+  const [linkEditor, setLinkEditor] = useState<{
+    href: string;
+    error: string | null;
+    from: number;
+    to: number;
+  } | null>(null);
 
   const onSlashCommandRef = useRef(onSlashCommand);
 
@@ -450,6 +457,80 @@ function TipTapEditorInner({
     editor.setEditable(!locked);
   }, [editor, locked]);
 
+  const openLinkEditor = useCallback(
+    (targetEditor: Editor) => {
+      if (locked || !targetEditor.isEditable) return;
+      const href = targetEditor.getAttributes("link").href;
+      const { from, to } = targetEditor.state.selection;
+      setLinkEditor({
+        href: typeof href === "string" ? href : "",
+        error: null,
+        from,
+        to,
+      });
+    },
+    [locked],
+  );
+
+  useEffect(() => {
+    if (!editor) return;
+    const dom = editor.view.dom;
+    const handleOpenLinkEditor = (event: Event) => {
+      event.preventDefault();
+      openLinkEditor(editor);
+    };
+    dom.addEventListener("iris-open-link-editor", handleOpenLinkEditor);
+    return () => {
+      dom.removeEventListener("iris-open-link-editor", handleOpenLinkEditor);
+    };
+  }, [editor, openLinkEditor]);
+
+  const closeLinkEditor = useCallback(() => {
+    setLinkEditor(null);
+  }, []);
+
+  const applyLinkEditor = useCallback(() => {
+    if (!editor || !linkEditor) return;
+    const href = linkEditor.href.trim();
+    if (!href) {
+      editor
+        .chain()
+        .focus()
+        .setTextSelection({ from: linkEditor.from, to: linkEditor.to })
+        .extendMarkRange("link")
+        .unsetLink()
+        .run();
+      setLinkEditor(null);
+      return;
+    }
+    if (!isSafeHref(href)) {
+      setLinkEditor((state) =>
+        state ? { ...state, error: "链接协议不安全" } : state,
+      );
+      return;
+    }
+    editor
+      .chain()
+      .focus()
+      .setTextSelection({ from: linkEditor.from, to: linkEditor.to })
+      .extendMarkRange("link")
+      .setLink({ href })
+      .run();
+    setLinkEditor(null);
+  }, [editor, linkEditor]);
+
+  const removeLinkEditor = useCallback(() => {
+    if (!editor || !linkEditor) return;
+    editor
+      .chain()
+      .focus()
+      .setTextSelection({ from: linkEditor.from, to: linkEditor.to })
+      .extendMarkRange("link")
+      .unsetLink()
+      .run();
+    setLinkEditor(null);
+  }, [editor, linkEditor]);
+
   useEffect(() => {
     if (!editor) return;
 
@@ -543,6 +624,68 @@ function TipTapEditorInner({
           <div className="iris-editor-body" onContextMenu={onBodyContextMenu}>
             <EditorContent editor={editor} />
             <HeadingFoldOverlay editor={editor} />
+            {linkEditor ? (
+              <div
+                data-testid="editor-link-popover"
+                className="absolute left-1/2 top-24 z-20 w-[min(24rem,calc(100%-2rem))] -translate-x-1/2 rounded-md border border-border/70 bg-popover p-3 text-popover-foreground shadow-floating"
+                role="dialog"
+                aria-label="编辑链接"
+                onKeyDown={(event) => {
+                  if (event.key === "Escape") closeLinkEditor();
+                  if (event.key === "Enter") applyLinkEditor();
+                }}
+              >
+                <label className="block text-xs font-medium text-foreground">
+                  链接 URL
+                  <input
+                    data-testid="editor-link-url-input"
+                    className="mt-2 h-8 w-full rounded-sm border border-border/70 bg-background px-2 text-xs text-foreground outline-none transition-colors focus:border-primary"
+                    value={linkEditor.href}
+                    autoFocus
+                    placeholder="https://example.com"
+                    onChange={(event) => {
+                      const nextHref = event.currentTarget.value;
+                      setLinkEditor((state) => ({
+                        href: nextHref,
+                        error: null,
+                        from: state?.from ?? 1,
+                        to: state?.to ?? 1,
+                      }));
+                    }}
+                  />
+                </label>
+                {linkEditor.error ? (
+                  <p className="mt-2 text-xs text-destructive">
+                    {linkEditor.error}
+                  </p>
+                ) : null}
+                <div className="mt-3 flex items-center justify-end gap-2">
+                  <button
+                    type="button"
+                    data-testid="editor-link-remove"
+                    className="rounded-sm px-2 py-1 text-xs text-muted-foreground hover:bg-muted hover:text-foreground"
+                    onClick={removeLinkEditor}
+                  >
+                    清除链接
+                  </button>
+                  <button
+                    type="button"
+                    className="rounded-sm px-2 py-1 text-xs text-muted-foreground hover:bg-muted hover:text-foreground"
+                    onClick={closeLinkEditor}
+                  >
+                    取消
+                  </button>
+                  <button
+                    type="button"
+                    data-testid="editor-link-apply"
+                    className="rounded-sm bg-primary px-2 py-1 text-xs font-medium text-primary-foreground hover:bg-primary/90"
+                    onClick={applyLinkEditor}
+                  >
+                    应用
+                  </button>
+                </div>
+              </div>
+            ) : null}
           </div>
         </div>
       </div>

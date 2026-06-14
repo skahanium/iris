@@ -56,7 +56,7 @@ pub fn build_prompt_messages(
     let persona_text = render_persona(&resolved);
     messages.push(LlmMessage {
         role: MessageRole::System,
-        content: persona_text,
+        content: persona_text.into(),
         tool_call_id: None,
         tool_calls: None,
         ..Default::default()
@@ -77,7 +77,7 @@ pub fn build_prompt_messages(
     if !env_text.is_empty() {
         messages.push(LlmMessage {
             role: MessageRole::System,
-            content: env_text,
+            content: env_text.into(),
             tool_call_id: None,
             tool_calls: None,
             ..Default::default()
@@ -89,7 +89,7 @@ pub fn build_prompt_messages(
         if !skills.is_empty() {
             messages.push(LlmMessage {
                 role: MessageRole::System,
-                content: skills.to_string(),
+                content: skills.into(),
                 tool_call_id: None,
                 tool_calls: None,
                 ..Default::default()
@@ -106,7 +106,8 @@ pub fn build_prompt_messages(
                 "## 本地知识库检索材料\n\n\
                  以下是从你的笔记中预检索到的相关材料，请认真参考并在回答中引用；\
                  同时结合工具检索与网络搜索交叉验证。\n\n{hint}"
-            ),
+            )
+            .into(),
             tool_call_id: None,
             tool_calls: None,
             ..Default::default()
@@ -152,7 +153,7 @@ pub fn build_initial_messages(
     }
     messages.push(LlmMessage {
         role: MessageRole::System,
-        content: system_content,
+        content: system_content.into(),
         tool_call_id: None,
         tool_calls: None,
         ..Default::default()
@@ -167,7 +168,8 @@ pub fn build_initial_messages(
                 "## 本地知识库检索材料\n\n\
                  以下是从你的笔记中预检索到的相关材料，请认真参考并在回答中引用；\
                  同时结合工具检索与网络搜索交叉验证。\n\n{hint}"
-            ),
+            )
+            .into(),
             tool_call_id: None,
             tool_calls: None,
             ..Default::default()
@@ -187,7 +189,7 @@ pub fn build_initial_messages(
         };
         messages.push(LlmMessage {
             role: r,
-            content,
+            content: content.into(),
             tool_call_id: None,
             tool_calls: None,
             ..Default::default()

@@ -273,7 +273,7 @@ export function UnifiedAssistantPanel({
   const composerDisabled =
     streaming || assistantRun.isBusy || toolConfirmRequest !== null;
 
-  const { runWriting, send } = useAssistantTasks({
+  const { runWriting, send, images, setImages } = useAssistantTasks({
     appendAssistantSummary,
     appendUserMessage,
     assistantRun,
@@ -445,6 +445,8 @@ export function UnifiedAssistantPanel({
             onChange={setInput}
             onSubmit={() => void send()}
             onStop={stopStreaming}
+            images={images}
+            onImagesChange={setImages}
             mentionPopover={
               <AiMentionPopover
                 open={mentionOpen}

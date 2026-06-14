@@ -36,12 +36,13 @@ describe("Iris 核心功能验收", () => {
     expect(chromeMatches).toHaveLength(1);
   });
 
-  it("AI 系统中心保留规则管理，设置页与主助手不含 AiRulesPanel", () => {
-    const aiCenter = read("src/components/settings/AiSystemCenterPanel.tsx");
-    const settings = read("src/components/settings/SettingsPanel.tsx");
+  it("管理中心保留规则管理，主助手不含 AiRulesPanel", () => {
+    const managementCenter = read(
+      "src/components/settings/ManagementCenterPanel.tsx",
+    );
     const panel = read("src/components/ai/UnifiedAssistantPanel.tsx");
-    expect(aiCenter).toContain("AiRulesPanel");
-    expect(settings).not.toContain("AiRulesPanel");
+    expect(managementCenter).toContain("AiRulesPanel");
+    expect(managementCenter).toContain("memory:");
     expect(panel).not.toContain("AiRulesPanel");
   });
 });

@@ -129,6 +129,25 @@ pub async fn run_harness(
         },
     );
 
+    // If images present, replace the last user message content with multimodal Parts.
+    if let Some(images) = &input.images {
+        if !images.is_empty() {
+            if let Some(last_user) = messages
+                .iter_mut()
+                .rev()
+                .find(|m| matches!(m.role, crate::ai_types::MessageRole::User))
+            {
+                let mut parts = vec![crate::ai_types::ContentPart::Text {
+                    text: last_user.content.as_str().to_string(),
+                }];
+                for img in images {
+                    parts.push(img.to_content_part());
+                }
+                last_user.content = crate::ai_types::MessageContent::Parts(parts);
+            }
+        }
+    }
+
     let gateway = ModelGateway::with_defaults(app_handle.clone(), vec![provider_config.clone()])?;
 
     let mut total_usage = TokenUsage::default();
@@ -191,7 +210,7 @@ pub async fn run_harness(
                     .iter()
                     .rev()
                     .find(|m| matches!(m.role, MessageRole::Assistant))
-                    .map(|m| m.content.clone())
+                    .map(|m| m.content.as_str().to_string())
                     .unwrap_or_default();
                 return pause_for_tool_confirmation(
                     state,
@@ -256,7 +275,7 @@ pub async fn run_harness(
                     content: format!(
                         "工具参数 JSON 不完整，请重新输出合法的 tool_calls。尝试 {}/3，超过将直接回答。",
                         consecutive_parse_failures
-                    ),
+                    ).into(),
                     tool_call_id: None,
                     tool_calls: None,
                     ..Default::default()
@@ -322,7 +341,7 @@ pub async fn run_harness(
 
             messages.push(LlmMessage {
                 role: MessageRole::Assistant,
-                content: assistant_content.clone(),
+                content: assistant_content.clone().into(),
                 tool_call_id: None,
                 tool_calls: Some(all_model_tool_calls),
                 reasoning_content: response.reasoning_content.clone(),
@@ -384,7 +403,7 @@ pub async fn run_harness(
                     let output_str = serde_json::to_string(&output).unwrap_or_else(|_| "{}".into());
                     messages.push(LlmMessage {
                         role: MessageRole::Tool,
-                        content: output_str.clone(),
+                        content: output_str.clone().into(),
                         tool_call_id: Some(tc.id.clone()),
                         tool_calls: None,
                         ..Default::default()
@@ -452,7 +471,8 @@ pub async fn run_harness(
                         content: format!(
                             "{{\"error\": {}}}",
                             serde_json::to_string(&err_msg).unwrap_or_default()
-                        ),
+                        )
+                        .into(),
                         tool_call_id: Some(tool_call.id.clone()),
                         tool_calls: None,
                         ..Default::default()
@@ -543,7 +563,8 @@ pub async fn run_harness(
                             serde_json::to_string(result.error.as_deref().unwrap_or("unknown"))
                                 .unwrap_or_default()
                         )
-                    },
+                    }
+                    .into(),
                     tool_call_id: Some(tool_call.id.clone()),
                     tool_calls: None,
                     ..Default::default()
@@ -700,7 +721,7 @@ fn push_tool_policy_error(
     let content = serde_json::to_string(&payload).unwrap_or_default();
     messages.push(LlmMessage {
         role: MessageRole::Tool,
-        content,
+        content: content.into(),
         tool_call_id: Some(tool_call.id.clone()),
         tool_calls: None,
         ..Default::default()
@@ -892,6 +913,7 @@ async fn run_subagent_harness(
         cold_start_packets: parent.cold_start_packets.clone(),
         web_search_enabled: parent.web_search_enabled,
         user_message: task.clone(),
+        images: None,
         history_messages: vec![("user".to_string(), task)],
         depth: parent.depth + 1,
         resume_from_checkpoint: false,
@@ -945,7 +967,7 @@ mod tests {
     fn assistant_with_tools(calls: Vec<ToolCall>) -> Vec<LlmMessage> {
         vec![LlmMessage {
             role: MessageRole::Assistant,
-            content: String::new(),
+            content: String::new().into(),
             tool_call_id: None,
             tool_calls: Some(calls),
             ..Default::default()

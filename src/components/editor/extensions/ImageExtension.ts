@@ -54,6 +54,9 @@ export const ImageExtension = Node.create({
   },
 
   renderHTML({ HTMLAttributes }) {
-    return ["img", mergeAttributes(HTMLAttributes)];
+    return [
+      "img",
+      mergeAttributes({ class: "iris-editor-media-image" }, HTMLAttributes),
+    ];
   },
 });

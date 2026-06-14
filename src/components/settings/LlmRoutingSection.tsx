@@ -16,7 +16,6 @@ import {
   credentialDelete,
   credentialHas,
   credentialSet,
-  llmConfigApplyDeepseekDefaults,
   llmConfigGet,
   llmConfigSet,
   llmConfigTest,
@@ -58,7 +57,25 @@ const SLOT_META: Record<
   vision: { label: "Vision", detail: "图片输入与视觉问答" },
 };
 
-type ProbeKind = "connection" | "vision" | "tools";
+interface LlmRoutingSectionProps {
+  open: boolean;
+}
+
+interface VisibleProvider {
+  id: string;
+  name: string;
+  enabledModels: string[];
+  usedSlots: string[];
+  configured: boolean;
+  keyless: boolean;
+  custom: boolean;
+  baseUrl: string | null;
+}
+
+interface EnabledProviderModel {
+  id: string;
+  catalog: ModelCatalogEntry | undefined;
+}
 
 function nextCustomProviderId(existing: Iterable<string>): string {
   const set = new Set(existing);
@@ -68,8 +85,17 @@ function nextCustomProviderId(existing: Iterable<string>): string {
   return `custom_${n}`;
 }
 
-interface LlmRoutingSectionProps {
-  open: boolean;
+function uniqueModelIds(models: Iterable<string>): string[] {
+  const out: string[] = [];
+  for (const model of models) {
+    const trimmed = model.trim();
+    if (trimmed && !out.includes(trimmed)) out.push(trimmed);
+  }
+  return out;
+}
+
+function parseModelIds(input: string): string[] {
+  return uniqueModelIds(input.split(/[\n,，]/));
 }
 
 export function LlmRoutingSection({ open }: LlmRoutingSectionProps) {
@@ -89,6 +115,10 @@ export function LlmRoutingSection({ open }: LlmRoutingSectionProps) {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [keysLoading, setKeysLoading] = useState(false);
   const [keySaving, setKeySaving] = useState<string | null>(null);
+  const [wizardOpen, setWizardOpen] = useState(false);
+  const [newModelInputs, setNewModelInputs] = useState<Record<string, string>>(
+    {},
+  );
   const keyStatusEpochRef = useRef(0);
 
   const refreshKeyStatus = useCallback(async (providerIds: string[]) => {
@@ -152,6 +182,18 @@ export function LlmRoutingSection({ open }: LlmRoutingSectionProps) {
     if (open) void load();
   }, [open, load]);
 
+  const providerName = useCallback(
+    (providerId: string) => {
+      const provider = data?.providers.find((p) => p.id === providerId);
+      const override = routing?.providers[providerId];
+      return override?.label?.trim() || provider?.name || providerId;
+    },
+    [data?.providers, routing?.providers],
+  );
+
+  const modelById = (modelId: string): ModelCatalogEntry | undefined =>
+    data?.catalog.find((m) => m.id === modelId);
+
   const updateProviderOverride = (
     providerId: string,
     patch: Partial<ProviderOverride>,
@@ -161,14 +203,17 @@ export function LlmRoutingSection({ open }: LlmRoutingSectionProps) {
       baseUrl: null,
       label: null,
       defaultModel: null,
+      enabledModels: null,
     };
     const next: ProviderOverride = { ...prev, ...patch };
-    setRouting({
+    const nextRouting = {
       ...routing,
       providers: { ...routing.providers, [providerId]: next },
-    });
+    };
+    setRouting(nextRouting);
     setData({
       ...data,
+      routing: nextRouting,
       providers: data.providers.map((p) =>
         p.id === providerId
           ? {
@@ -185,12 +230,40 @@ export function LlmRoutingSection({ open }: LlmRoutingSectionProps) {
     });
   };
 
+  const ensureCustomProvider = () => {
+    if (!routing || !data) return null;
+    const id = nextCustomProviderId([
+      ...Object.keys(routing.providers),
+      ...data.providers.map((p) => p.id),
+    ]);
+    const label = `自定义端点 ${
+      data.providers.filter((p) => isCustomProviderId(p.id)).length + 1
+    }`;
+    const entry: ProviderOverride = {
+      baseUrl: null,
+      label,
+      defaultModel: null,
+      enabledModels: [],
+    };
+    const nextRouting = {
+      ...routing,
+      providers: { ...routing.providers, [id]: entry },
+    };
+    setRouting(nextRouting);
+    setData({
+      ...data,
+      routing: nextRouting,
+      providers: [...data.providers, { id, name: label, default_model: "" }],
+    });
+    void refreshKeyStatus([id]);
+    return id;
+  };
+
   const saveKey = async (providerId: string) => {
     const value = keyInputsRef.current[providerId]?.trim();
     if (!value) return;
     const service = llmCredentialService(providerId);
-    const label =
-      data?.providers.find((p) => p.id === providerId)?.name ?? providerId;
+    const label = providerName(providerId);
 
     keyStatusEpochRef.current += 1;
     setKeySaving(providerId);
@@ -215,8 +288,7 @@ export function LlmRoutingSection({ open }: LlmRoutingSectionProps) {
   };
 
   const clearKey = async (providerId: string) => {
-    const label =
-      data?.providers.find((p) => p.id === providerId)?.name ?? providerId;
+    const label = providerName(providerId);
     keyStatusEpochRef.current += 1;
     try {
       await credentialDelete(llmCredentialService(providerId));
@@ -226,53 +298,6 @@ export function LlmRoutingSection({ open }: LlmRoutingSectionProps) {
     } catch (err) {
       setMessage(`清除 ${label} Key 失败：${invokeErrorMessage(err)}`);
     }
-  };
-
-  const addCustomProvider = () => {
-    if (!routing || !data) return;
-    const id = nextCustomProviderId([
-      ...Object.keys(routing.providers),
-      ...data.providers.map((p) => p.id),
-    ]);
-    const label = `自定义端点 ${
-      data.providers.filter((p) => isCustomProviderId(p.id)).length + 1
-    }`;
-    const entry: ProviderOverride = {
-      baseUrl: null,
-      label,
-      defaultModel: "default",
-    };
-    setRouting({
-      ...routing,
-      providers: { ...routing.providers, [id]: entry },
-    });
-    setData({
-      ...data,
-      providers: [
-        ...data.providers,
-        { id, name: label, default_model: "default" },
-      ],
-    });
-    void refreshKeyStatus([id]);
-  };
-
-  const removeCustomProvider = (providerId: string) => {
-    if (!routing || !data || !isCustomProviderId(providerId)) return;
-    const used = CAPABILITY_SLOTS.some(
-      (slot) => routing.slots[slot]?.providerId === providerId,
-    );
-    if (used) {
-      setMessage(`无法删除：仍有能力槽使用 ${providerId}，请先改厂商。`);
-      return;
-    }
-    const { [providerId]: _removed, ...rest } = routing.providers;
-    void _removed;
-    setRouting({ ...routing, providers: rest });
-    setData({
-      ...data,
-      providers: data.providers.filter((p) => p.id !== providerId),
-    });
-    setMessage(null);
   };
 
   const updateSlot = (
@@ -299,12 +324,6 @@ export function LlmRoutingSection({ open }: LlmRoutingSectionProps) {
     });
   };
 
-  const modelsFor = (providerId: string) =>
-    data?.catalog.filter((m) => m.providerId === providerId) ?? [];
-
-  const modelById = (modelId: string): ModelCatalogEntry | undefined =>
-    data?.catalog.find((m) => m.id === modelId);
-
   const saveRouting = async () => {
     if (!routing) return;
     setSaving(true);
@@ -318,16 +337,120 @@ export function LlmRoutingSection({ open }: LlmRoutingSectionProps) {
     }
   };
 
-  const applyDeepseek = async () => {
-    const defaults = await llmConfigApplyDeepseekDefaults();
-    setRouting(normalizeRouting(defaults));
-    setMessage("已应用 DeepSeek 推荐能力槽路由");
-    notifyLlmConfigChanged();
+  const enabledModelIdsForProvider = (providerId: string): string[] => {
+    if (!routing) return [];
+    const override = routing.providers[providerId];
+    return uniqueModelIds(override?.enabledModels ?? []);
   };
 
-  const testProvider = async (providerId: string, probe: ProbeKind) => {
-    const key = `${providerId}:${probe}`;
-    if (providerId === "mimo" && !routing?.providers.mimo?.baseUrl?.trim()) {
+  const enabledModelsForProvider = (
+    providerId: string,
+  ): EnabledProviderModel[] => {
+    const enabled = enabledModelIdsForProvider(providerId);
+    return enabled.map((modelId) => ({
+      id: modelId,
+      catalog: modelById(modelId),
+    }));
+  };
+
+  const routeModelsForProvider = (providerId: string): EnabledProviderModel[] =>
+    enabledModelsForProvider(providerId);
+
+  const modelUsageLabels = (providerId: string, modelId: string) =>
+    USER_CONFIGURABLE_CAPABILITY_SLOTS.filter((slot) => {
+      const route = routing?.slots[slot] ?? DEFAULT_LLM_ROUTING.slots[slot];
+      return route.providerId === providerId && route.model === modelId;
+    }).map((slot) => SLOT_META[slot].label);
+
+  const addProviderModel = (providerId: string) => {
+    if (!routing) return;
+    const additions = parseModelIds(newModelInputs[providerId] ?? "");
+    if (additions.length === 0) return;
+    const enabled = enabledModelIdsForProvider(providerId);
+    const nextEnabled = uniqueModelIds([...enabled, ...additions]);
+    updateProviderOverride(providerId, {
+      enabledModels: nextEnabled,
+      defaultModel:
+        routing.providers[providerId]?.defaultModel ?? nextEnabled[0],
+    });
+    setNewModelInputs((prev) => ({ ...prev, [providerId]: "" }));
+  };
+
+  const removeProviderModel = (providerId: string, modelId: string) => {
+    if (!routing) return;
+    const usage = modelUsageLabels(providerId, modelId);
+    if (usage.length > 0) {
+      setMessage(
+        `模型 ${modelId} 正在用于 ${usage.join(" / ")}，请先调整路由。`,
+      );
+      return;
+    }
+    const enabled = enabledModelIdsForProvider(providerId);
+    const nextEnabled = enabled.filter((id) => id !== modelId);
+    updateProviderOverride(providerId, {
+      enabledModels: nextEnabled,
+      defaultModel:
+        routing.providers[providerId]?.defaultModel === modelId
+          ? (nextEnabled[0] ?? null)
+          : routing.providers[providerId]?.defaultModel,
+    });
+  };
+
+  const visibleProviders = (() => {
+    if (!routing || !data) return [];
+    const providers = new Map<string, VisibleProvider>();
+    const addProvider = (
+      providerId: string,
+      usage: string | null,
+      configuredOverride = false,
+    ) => {
+      const override = routing.providers[providerId];
+      const row = providers.get(providerId) ?? {
+        id: providerId,
+        name: providerName(providerId),
+        enabledModels: enabledModelIdsForProvider(providerId),
+        usedSlots: [],
+        configured:
+          configuredOverride ||
+          Boolean(keyConfigured[providerId]) ||
+          Boolean(override) ||
+          providerId === "ollama",
+        keyless: providerId === "ollama",
+        custom: isCustomProviderId(providerId),
+        baseUrl: override?.baseUrl ?? null,
+      };
+      if (usage && !row.usedSlots.includes(usage)) row.usedSlots.push(usage);
+      providers.set(providerId, row);
+    };
+
+    for (const slot of USER_CONFIGURABLE_CAPABILITY_SLOTS) {
+      const route = routing.slots[slot] ?? DEFAULT_LLM_ROUTING.slots[slot];
+      addProvider(route.providerId, SLOT_META[slot].label);
+    }
+
+    for (const provider of data.providers) {
+      const override = routing.providers[provider.id];
+      const configured =
+        Boolean(keyConfigured[provider.id]) ||
+        provider.id === "ollama" ||
+        Boolean(override);
+      if (!configured) continue;
+      addProvider(provider.id, null, configured);
+    }
+
+    return Array.from(providers.values()).sort((a, b) => {
+      const score = (provider: VisibleProvider) =>
+        provider.usedSlots.length > 0 ? 0 : provider.configured ? 1 : 2;
+      return score(a) - score(b) || a.name.localeCompare(b.name);
+    });
+  })();
+
+  const testProviderModel = async (
+    provider: VisibleProvider,
+    model: EnabledProviderModel,
+  ) => {
+    const key = `${provider.id}:${model.id}`;
+    if (provider.id === "mimo" && !provider.baseUrl?.trim()) {
       setTestResults((prev) => ({
         ...prev,
         [key]: {
@@ -344,17 +467,8 @@ export function LlmRoutingSection({ open }: LlmRoutingSectionProps) {
       return next;
     });
     try {
-      const result = await llmConfigTest(providerId);
-      setTestResults((prev) => ({
-        ...prev,
-        [key]: {
-          ok: result.ok,
-          message:
-            probe === "connection"
-              ? result.message
-              : `${probe} probe: ${result.message}`,
-        },
-      }));
+      const result = await llmConfigTest(provider.id, model.id);
+      setTestResults((prev) => ({ ...prev, [key]: result }));
     } catch (err) {
       setTestResults((prev) => ({
         ...prev,
@@ -385,9 +499,10 @@ export function LlmRoutingSection({ open }: LlmRoutingSectionProps) {
   return (
     <div className="space-y-5" data-section="ai-connection">
       <div>
-        <h3 className="text-sm font-medium">AI 连接</h3>
+        <h3 className="text-sm font-medium">模型与供应商</h3>
         <p className="mt-0.5 text-xs text-muted-foreground">
-          静态模型目录 + 手动模型 ID；API Key 仅存系统凭据管理器。
+          供应商只保存 API
+          与端点；模型由你手动填写，未添加模型时不会激活或展示任何模型。
         </p>
         {loadError ? (
           <p className="mt-2 text-xs text-amber-600">
@@ -396,61 +511,268 @@ export function LlmRoutingSection({ open }: LlmRoutingSectionProps) {
         ) : null}
         {keysLoading ? (
           <p className="mt-1 text-[10px] text-muted-foreground">
-            正在检查各厂商凭据…
+            正在检查已配置凭据…
           </p>
         ) : null}
       </div>
 
-      <div className="space-y-3">
+      <div className="space-y-2">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <p className="text-xs font-medium text-muted-foreground">
-            厂商、凭据与探测
+            供应商配置
           </p>
           <Button
             type="button"
             size="sm"
             variant="outline"
             className="h-7 text-xs"
-            onClick={addCustomProvider}
+            onClick={() => setWizardOpen((value) => !value)}
           >
-            添加自定义端点
+            添加供应商
           </Button>
         </div>
 
-        <div className="grid gap-3 lg:grid-cols-2">
-          {data.providers.map((provider) => (
-            <ProviderCredentialCard
-              key={provider.id}
-              provider={provider}
-              routing={routing}
-              keyConfigured={keyConfigured}
-              keyInputsRef={keyInputsRef}
-              keySaving={keySaving}
-              testing={testing}
-              testResults={testResults}
-              custom={isCustomProviderId(provider.id)}
-              onKeyInput={(id, value) => {
-                keyInputsRef.current[id] = value;
-                setKeyInputTouch((n) => n + 1);
-              }}
-              onSaveKey={(id) => void saveKey(id)}
-              onClearKey={(id) => void clearKey(id)}
-              onTest={(id, probe) => void testProvider(id, probe)}
-              onBaseUrl={(id, url) =>
-                updateProviderOverride(id, { baseUrl: url.trim() || null })
-              }
-              onLabel={(id, label) =>
-                updateProviderOverride(id, { label: label.trim() || null })
-              }
-              onDefaultModel={(id, model) =>
-                updateProviderOverride(id, {
-                  defaultModel: model.trim() || null,
-                })
-              }
-              onRemove={(id) => removeCustomProvider(id)}
-            />
-          ))}
-        </div>
+        {wizardOpen ? (
+          <AddModelWizard
+            providers={data.providers}
+            keyConfigured={keyConfigured}
+            keyInputsRef={keyInputsRef}
+            keySaving={keySaving}
+            onKeyInput={(id, value) => {
+              keyInputsRef.current[id] = value;
+              setKeyInputTouch((n) => n + 1);
+            }}
+            onSaveKey={(id) => void saveKey(id)}
+            onCreateCustom={ensureCustomProvider}
+            onBaseUrl={(id, url) =>
+              updateProviderOverride(id, { baseUrl: url.trim() || null })
+            }
+            onLabel={(id, label) =>
+              updateProviderOverride(id, { label: label.trim() || null })
+            }
+            onClose={() => setWizardOpen(false)}
+          />
+        ) : null}
+
+        {visibleProviders.length === 0 ? (
+          <p className="rounded-md border border-border/50 bg-background/60 px-3 py-3 text-xs text-muted-foreground">
+            暂无已配置供应商。点击“添加供应商”保存 Key 或配置本地端点。
+          </p>
+        ) : (
+          <div className="space-y-2">
+            {visibleProviders.map((provider) => {
+              const missingRequiredBaseUrl =
+                provider.id === "mimo" && !provider.baseUrl?.trim();
+              const override = routing.providers[provider.id];
+              const providerModels = enabledModelsForProvider(provider.id);
+              return (
+                <div
+                  key={provider.id}
+                  data-testid="llm-provider-card"
+                  className="grid gap-3 rounded-md border border-border/55 bg-background/60 p-3 xl:grid-cols-[minmax(14rem,0.85fr)_minmax(18rem,1.4fr)]"
+                >
+                  <div className="min-w-0 space-y-2">
+                    <p className="truncate text-xs font-medium text-foreground">
+                      {provider.name}
+                    </p>
+                    <p className="text-[11px] text-muted-foreground">
+                      {provider.usedSlots.length > 0
+                        ? `用于 ${provider.usedSlots.join(" / ")}`
+                        : `${provider.enabledModels.length} 个模型已启用`}
+                    </p>
+                    {provider.custom ? (
+                      <Input
+                        className="h-8 text-xs"
+                        placeholder="显示名称"
+                        defaultValue={override?.label ?? provider.name}
+                        onBlur={(event) =>
+                          updateProviderOverride(provider.id, {
+                            label: event.target.value.trim() || null,
+                          })
+                        }
+                      />
+                    ) : null}
+                    <Input
+                      className="h-8 text-xs"
+                      placeholder={
+                        provider.keyless
+                          ? "本地端点 Base URL（可选）"
+                          : "Base URL（可选）"
+                      }
+                      defaultValue={provider.baseUrl ?? ""}
+                      onBlur={(event) =>
+                        updateProviderOverride(provider.id, {
+                          baseUrl: event.target.value.trim() || null,
+                        })
+                      }
+                    />
+                    <div className="flex flex-wrap items-center gap-2">
+                      {!provider.keyless ? (
+                        <>
+                          <Input
+                            type="password"
+                            className="h-8 w-44 text-xs"
+                            placeholder="API Key…"
+                            value={keyInputsRef.current?.[provider.id] ?? ""}
+                            onChange={(event) => {
+                              keyInputsRef.current[provider.id] =
+                                event.target.value;
+                              setKeyInputTouch((n) => n + 1);
+                            }}
+                          />
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            className="h-8"
+                            disabled={keySaving === provider.id}
+                            onClick={() => void saveKey(provider.id)}
+                          >
+                            保存 Key
+                          </Button>
+                          {keyConfigured[provider.id] ? (
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="ghost"
+                              className="h-8"
+                              onClick={() => void clearKey(provider.id)}
+                            >
+                              清除
+                            </Button>
+                          ) : null}
+                        </>
+                      ) : null}
+                    </div>
+                    <p className="text-[11px] text-muted-foreground">
+                      {missingRequiredBaseUrl
+                        ? "需配置 Base URL"
+                        : provider.keyless
+                          ? "本地端点"
+                          : provider.configured
+                            ? "Key 已配置"
+                            : "需要配置 Key"}
+                    </p>
+                  </div>
+
+                  <div
+                    className="space-y-2"
+                    data-testid="llm-provider-enabled-models"
+                  >
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Input
+                        className="h-8 min-w-48 flex-1 text-xs"
+                        placeholder="模型 ID，如 deepseek-v4-flash"
+                        value={newModelInputs[provider.id] ?? ""}
+                        onChange={(event) =>
+                          setNewModelInputs((prev) => ({
+                            ...prev,
+                            [provider.id]: event.target.value,
+                          }))
+                        }
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter") {
+                            event.preventDefault();
+                            addProviderModel(provider.id);
+                          }
+                        }}
+                      />
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="secondary"
+                        className="h-8 text-xs"
+                        onClick={() => addProviderModel(provider.id)}
+                      >
+                        添加模型
+                      </Button>
+                    </div>
+                    <p className="text-[11px] text-muted-foreground">
+                      可一次粘贴多个模型 ID，用逗号或换行分隔；同一个 Key
+                      会被这些模型共享。
+                    </p>
+                    {providerModels.length === 0 ? (
+                      <p className="rounded-md border border-dashed border-border/50 px-3 py-2 text-[11px] text-muted-foreground">
+                        未添加模型时不会激活或展示任何模型。
+                      </p>
+                    ) : (
+                      providerModels.map((model) => {
+                        const key = `${provider.id}:${model.id}`;
+                        const result = testResults[key];
+                        const usage = modelUsageLabels(provider.id, model.id);
+                        return (
+                          <div
+                            key={model.id}
+                            className="rounded-md border border-border/45 bg-background/50 p-2"
+                          >
+                            <div className="flex flex-wrap items-start justify-between gap-2">
+                              <div className="flex min-w-0 flex-1 items-start gap-2">
+                                <span className="min-w-0">
+                                  <span className="block truncate text-xs font-medium text-foreground">
+                                    {model.catalog?.displayName ?? model.id}
+                                  </span>
+                                  <span className="block truncate font-mono text-[11px] text-muted-foreground">
+                                    {model.id}
+                                  </span>
+                                  {usage.length > 0 ? (
+                                    <span className="block text-[11px] text-muted-foreground">
+                                      用于 {usage.join(" / ")}
+                                    </span>
+                                  ) : null}
+                                </span>
+                              </div>
+                              <div className="flex items-center gap-2">
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  variant="secondary"
+                                  className="h-7 text-xs"
+                                  disabled={
+                                    testing === key || missingRequiredBaseUrl
+                                  }
+                                  onClick={() =>
+                                    void testProviderModel(provider, model)
+                                  }
+                                >
+                                  {testing === key ? "诊断中…" : "诊断"}
+                                </Button>
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  variant="ghost"
+                                  className="h-7 text-xs"
+                                  onClick={() =>
+                                    removeProviderModel(provider.id, model.id)
+                                  }
+                                >
+                                  移除
+                                </Button>
+                              </div>
+                            </div>
+                            <div className="mt-2">
+                              <CapabilityTags model={model.catalog} />
+                            </div>
+                            {result ? (
+                              <p
+                                className={
+                                  result.ok
+                                    ? "mt-2 text-[11px] text-emerald-600"
+                                    : "mt-2 text-[11px] text-destructive"
+                                }
+                              >
+                                {result.message}
+                              </p>
+                            ) : null}
+                          </div>
+                        );
+                      })
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
       </div>
 
       <div className="space-y-2">
@@ -458,15 +780,6 @@ export function LlmRoutingSection({ open }: LlmRoutingSectionProps) {
           <p className="text-xs font-medium text-muted-foreground">
             能力槽模型路由
           </p>
-          <Button
-            type="button"
-            size="sm"
-            variant="secondary"
-            className="h-7 text-xs"
-            onClick={() => void applyDeepseek()}
-          >
-            DeepSeek 推荐
-          </Button>
         </div>
 
         <div className="space-y-2">
@@ -474,12 +787,12 @@ export function LlmRoutingSection({ open }: LlmRoutingSectionProps) {
             const route =
               routing.slots[slot] ?? DEFAULT_LLM_ROUTING.slots[slot];
             const providerId = route.providerId;
-            const models = modelsFor(providerId);
+            const models = routeModelsForProvider(providerId);
             const catalogModel = modelById(route.model);
             return (
               <div
                 key={slot}
-                className="grid gap-2 rounded-md border border-border/50 bg-background/60 p-2 xl:grid-cols-[minmax(8rem,0.9fr)_1fr_1.2fr_1.5fr]"
+                className="grid gap-2 rounded-md border border-border/50 bg-background/60 p-2 xl:grid-cols-[minmax(8rem,0.85fr)_1fr_1.2fr_1.5fr]"
               >
                 <div className="min-w-0 self-center">
                   <p className="text-xs font-medium text-foreground">
@@ -494,10 +807,7 @@ export function LlmRoutingSection({ open }: LlmRoutingSectionProps) {
                   onValueChange={(value) =>
                     updateSlot(slot, {
                       providerId: value,
-                      model:
-                        modelsFor(value)[0]?.id ??
-                        routing.providers[value]?.defaultModel ??
-                        "default",
+                      model: enabledModelsForProvider(value)[0]?.id ?? "",
                     })
                   }
                 >
@@ -512,14 +822,12 @@ export function LlmRoutingSection({ open }: LlmRoutingSectionProps) {
                     ))}
                   </SelectContent>
                 </Select>
-                {isCustomProviderId(providerId) || models.length === 0 ? (
+                {models.length === 0 ? (
                   <Input
                     className="h-8 text-xs"
-                    placeholder="模型 ID，如 gpt-4o-mini"
-                    value={route.model}
-                    onChange={(event) =>
-                      updateSlot(slot, { model: event.target.value })
-                    }
+                    placeholder="先在供应商配置中添加模型"
+                    value=""
+                    disabled
                   />
                 ) : (
                   <Select
@@ -534,7 +842,7 @@ export function LlmRoutingSection({ open }: LlmRoutingSectionProps) {
                     <SelectContent>
                       {models.map((model) => (
                         <SelectItem key={model.id} value={model.id}>
-                          {model.displayName}
+                          {model.catalog?.displayName ?? model.id}
                         </SelectItem>
                       ))}
                     </SelectContent>
@@ -564,170 +872,111 @@ export function LlmRoutingSection({ open }: LlmRoutingSectionProps) {
   );
 }
 
-interface ProviderCredentialCardProps {
-  provider: { id: string; name: string };
-  routing: LlmRoutingConfig;
-  keyConfigured: Record<string, boolean>;
-  keyInputsRef: React.RefObject<Record<string, string>>;
-  keySaving: string | null;
-  testing: string | null;
-  testResults: Record<string, { ok: boolean; message: string }>;
-  custom?: boolean;
-  onKeyInput: (id: string, value: string) => void;
-  onSaveKey: (id: string) => void;
-  onClearKey: (id: string) => void;
-  onTest: (id: string, probe: ProbeKind) => void;
-  onBaseUrl: (id: string, url: string) => void;
-  onLabel: (id: string, label: string) => void;
-  onDefaultModel: (id: string, model: string) => void;
-  onRemove: (id: string) => void;
-}
-
-function ProviderCredentialCard({
-  provider,
-  routing,
+function AddModelWizard({
+  providers,
   keyConfigured,
   keyInputsRef,
   keySaving,
-  testing,
-  testResults,
-  custom = false,
   onKeyInput,
   onSaveKey,
-  onClearKey,
-  onTest,
+  onCreateCustom,
   onBaseUrl,
   onLabel,
-  onDefaultModel,
-  onRemove,
-}: ProviderCredentialCardProps) {
-  const override = routing.providers[provider.id];
-  const displayName = custom
-    ? override?.label?.trim() || provider.name
-    : provider.name;
-  const keyless = provider.id === "ollama";
-  const requiresBaseUrl = provider.id === "mimo";
-  const missingRequiredBaseUrl = requiresBaseUrl && !override?.baseUrl?.trim();
+  onClose,
+}: {
+  providers: LlmConfigGetResponse["providers"];
+  keyConfigured: Record<string, boolean>;
+  keyInputsRef: React.RefObject<Record<string, string>>;
+  keySaving: string | null;
+  onKeyInput: (id: string, value: string) => void;
+  onSaveKey: (id: string) => void;
+  onCreateCustom: () => string | null;
+  onBaseUrl: (id: string, url: string) => void;
+  onLabel: (id: string, label: string) => void;
+  onClose: () => void;
+}) {
+  const [providerId, setProviderId] = useState(providers[0]?.id ?? "deepseek");
+  const custom = isCustomProviderId(providerId);
+  const keyless = providerId === "ollama";
+
+  const createCustom = () => {
+    const id = onCreateCustom();
+    if (id) setProviderId(id);
+  };
 
   return (
-    <div className="rounded-md border border-border/60 bg-surface-inset/25 p-3">
-      <div className="mb-2 flex items-center justify-between gap-2">
-        <span className="text-xs font-medium">{displayName}</span>
-        {missingRequiredBaseUrl ? (
-          <span className="text-[10px] text-amber-600">需配置 Base URL</span>
-        ) : keyConfigured[provider.id] || keyless ? (
-          <span className="text-[10px] text-emerald-600">
-            {keyless ? "本地端点" : "Key 已配置"}
-          </span>
-        ) : (
-          <span className="text-[10px] text-amber-600">未配置 Key</span>
-        )}
+    <div className="rounded-md border border-border/60 bg-surface-inset/30 p-3">
+      <div className="flex items-center justify-between gap-2">
+        <div>
+          <p className="text-xs font-semibold text-foreground">添加供应商</p>
+          <p className="mt-1 text-[11px] text-muted-foreground">
+            未配置厂商只在这里选择；保存后才进入主列表。
+          </p>
+        </div>
+        <Button type="button" size="sm" variant="ghost" onClick={onClose}>
+          收起
+        </Button>
+      </div>
+      <div className="mt-3 grid gap-2 lg:grid-cols-[1fr_auto]">
+        <Select value={providerId} onValueChange={setProviderId}>
+          <SelectTrigger className="h-8 text-xs">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {providers.map((p) => (
+              <SelectItem key={p.id} value={p.id}>
+                {p.name}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          className="h-8"
+          onClick={createCustom}
+        >
+          自定义端点
+        </Button>
       </div>
       {custom ? (
-        <Input
-          className="mb-2 h-8 text-xs"
-          placeholder="显示名称"
-          value={override?.label ?? ""}
-          onChange={(event) => onLabel(provider.id, event.target.value)}
-        />
+        <div className="mt-2 grid gap-2 lg:grid-cols-2">
+          <Input
+            className="h-8 text-xs"
+            placeholder="显示名称"
+            onBlur={(event) => onLabel(providerId, event.target.value)}
+          />
+          <Input
+            className="h-8 text-xs"
+            placeholder="Base URL"
+            onBlur={(event) => onBaseUrl(providerId, event.target.value)}
+          />
+        </div>
       ) : null}
       {!keyless ? (
-        <div className="flex gap-2">
+        <div className="mt-2 flex flex-wrap items-center gap-2">
           <Input
             type="password"
-            className="h-8 text-xs"
+            className="h-8 max-w-sm text-xs"
             placeholder="API Key…"
-            value={keyInputsRef.current?.[provider.id] ?? ""}
-            onChange={(event) => onKeyInput(provider.id, event.target.value)}
+            value={keyInputsRef.current?.[providerId] ?? ""}
+            onChange={(event) => onKeyInput(providerId, event.target.value)}
           />
           <Button
             type="button"
             size="sm"
-            className="h-8 shrink-0"
-            disabled={keySaving === provider.id}
-            onClick={() => onSaveKey(provider.id)}
+            className="h-8"
+            disabled={keySaving === providerId}
+            onClick={() => onSaveKey(providerId)}
           >
-            {keySaving === provider.id ? "保存中…" : "保存"}
+            {keySaving === providerId ? "保存中…" : "保存 Key"}
           </Button>
-          {keyConfigured[provider.id] ? (
-            <Button
-              type="button"
-              size="sm"
-              variant="ghost"
-              className="h-8 shrink-0"
-              onClick={() => onClearKey(provider.id)}
-            >
-              清除
-            </Button>
-          ) : null}
+          <span className="text-[11px] text-muted-foreground">
+            {keyConfigured[providerId] ? "Key 已配置" : "保存后显示在主列表"}
+          </span>
         </div>
       ) : null}
-      <Input
-        className="mt-2 h-8 text-xs"
-        placeholder={
-          provider.id === "ollama"
-            ? "http://127.0.0.1:11434"
-            : requiresBaseUrl
-              ? "Base URL（需填写小米 MiMo API 地址）"
-              : "Base URL（留空使用官方默认）"
-        }
-        value={override?.baseUrl ?? ""}
-        onChange={(event) => onBaseUrl(provider.id, event.target.value)}
-      />
-      {missingRequiredBaseUrl ? (
-        <p className="mt-1 text-[10px] text-amber-600">
-          MiMo 暂不内置默认 API 地址，需配置 Base URL 后才能测试或调用。
-        </p>
-      ) : null}
-      {custom ? (
-        <Input
-          className="mt-2 h-8 text-xs"
-          placeholder="默认模型 ID"
-          value={override?.defaultModel ?? ""}
-          onChange={(event) => onDefaultModel(provider.id, event.target.value)}
-        />
-      ) : null}
-      <div className="mt-2 flex flex-wrap items-center gap-2">
-        {(["connection", "vision", "tools"] as ProbeKind[]).map((probe) => {
-          const key = `${provider.id}:${probe}`;
-          const result = testResults[key];
-          return (
-            <Button
-              key={probe}
-              type="button"
-              size="sm"
-              variant="outline"
-              className="h-7 text-xs"
-              disabled={testing === key || missingRequiredBaseUrl}
-              onClick={() => onTest(provider.id, probe)}
-            >
-              {testing === key ? "测试中…" : probe}
-              {result ? (
-                <span
-                  className={
-                    result.ok
-                      ? "ml-1 text-emerald-600"
-                      : "ml-1 text-destructive"
-                  }
-                >
-                  {result.ok ? "ok" : "fail"}
-                </span>
-              ) : null}
-            </Button>
-          );
-        })}
-        {custom ? (
-          <Button
-            type="button"
-            size="sm"
-            variant="ghost"
-            className="h-7 text-xs text-destructive"
-            onClick={() => onRemove(provider.id)}
-          >
-            移除
-          </Button>
-        ) : null}
-      </div>
     </div>
   );
 }
@@ -772,11 +1021,13 @@ function normalizeRouting(raw: LlmRoutingConfig | undefined): LlmRoutingConfig {
     const row = provider as ProviderOverride & {
       base_url?: string | null;
       default_model?: string | null;
+      enabled_models?: string[] | null;
     };
     providers[id] = {
       baseUrl: row.baseUrl ?? row.base_url ?? null,
       label: row.label ?? null,
       defaultModel: row.defaultModel ?? row.default_model ?? null,
+      enabledModels: row.enabledModels ?? row.enabled_models ?? null,
     };
   }
 

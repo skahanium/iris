@@ -86,7 +86,7 @@ mod tests {
         assert_eq!(api[0]["tool_calls"][0]["id"], "tc1");
         assert_eq!(cp.messages.len(), 2);
         assert!(matches!(cp.messages[1].role, MessageRole::Tool));
-        assert!(cp.messages[1].content.contains("rejected"));
+        assert!(cp.messages[1].content.as_str().contains("rejected"));
         assert!(cp
             .tool_results
             .iter()
@@ -124,7 +124,7 @@ mod tests {
         let mut cp = sample_checkpoint(rid);
         cp.messages = vec![LlmMessage {
             role: MessageRole::Assistant,
-            content: String::new(),
+            content: String::new().into(),
             tool_call_id: None,
             tool_calls: Some(vec![ToolCall::new(
                 "call_1",
@@ -180,7 +180,7 @@ mod tests {
         let mut cp = sample_checkpoint(rid);
         cp.messages = vec![LlmMessage {
             role: MessageRole::Assistant,
-            content: String::new(),
+            content: String::new().into(),
             tool_call_id: None,
             tool_calls: Some(vec![ToolCall::new(
                 "call_1",

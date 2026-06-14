@@ -105,36 +105,39 @@ describe("Iris Rail complete interface contracts", () => {
     expect(css).not.toContain("backdrop-filter: blur(12px)");
   });
 
-  it("moves AI configuration into AI System Center", () => {
-    const settings = read("src/components/settings/SettingsPanel.tsx");
-    const aiCenter = read("src/components/settings/AiSystemCenterPanel.tsx");
+  it("moves AI configuration into Management Center", () => {
+    const managementCenter = read(
+      "src/components/settings/ManagementCenterPanel.tsx",
+    );
     const overlays = read("src/hooks/useOverlayManager.ts");
     const palette = read("src/lib/command-palette.ts");
     const app = read("src/App.tsx");
 
-    expect(aiCenter).toContain('data-testid="ai-system-center"');
-    expect(aiCenter).toContain('data-testid="ai-system-center-nav"');
-    expect(aiCenter).toContain("aria-current");
-    expect(aiCenter).toContain("activeSection");
-    expect(aiCenter).toContain("LlmRoutingSection");
-    expect(aiCenter).toContain("MinimaxSearchSection");
-    expect(aiCenter).toContain("PersonaSettingsPanel");
-    expect(aiCenter).toContain("SkillsPanel");
-    expect(aiCenter).toContain("AiRulesPanel");
-    expect(aiCenter).toContain('data-testid="ai-system-persona-dashboard"');
-    expect(aiCenter).toContain('data-testid="ai-system-summary-grid"');
-    expect(aiCenter).toContain('data-testid="ai-system-action-card"');
+    expect(managementCenter).toContain('data-testid="management-center"');
+    expect(managementCenter).toContain('data-testid="management-center-tabs"');
+    expect(managementCenter).toContain('role="tablist"');
+    expect(managementCenter).toContain("activeSection");
+    expect(managementCenter).toContain('id: "ai"');
+    expect(managementCenter).toContain("LlmRoutingSection");
+    expect(managementCenter).toContain("MinimaxSearchSection");
+    expect(managementCenter).toContain("PersonaSettingsBody");
+    expect(managementCenter).toContain("SkillsPanelBody");
+    expect(managementCenter).toContain("AiRulesPanel");
+    expect(managementCenter).toContain("凭据边界");
+    expect(managementCenter).toContain("自动版本追踪");
+    expect(managementCenter).not.toContain(
+      'data-testid="ai-system-center-nav"',
+    );
     const rules = read("src/components/ai/AiRulesPanel.tsx");
     expect(rules).toContain('data-testid="ai-rules-workbench"');
     expect(rules).toContain('data-testid="ai-rules-summary-grid"');
     expect(rules).toContain("formatProfileEntry");
-    expect(settings).not.toContain("LlmRoutingSection");
-    expect(settings).not.toContain("MinimaxSearchSection");
-    expect(settings).not.toContain("AiRulesPanel");
-    expect(settings).not.toContain("AI 系统中心");
-    expect(overlays).toContain('"aiSystemCenter"');
+    expect(overlays).toContain('"managementCenter"');
+    expect(overlays).not.toContain('"aiSystemCenter"');
     expect(palette).toContain("ai-system-center");
-    expect(app).toContain("AiSystemCenterPanel");
+    expect(palette).toContain("openManagementCenter");
+    expect(app).toContain("ManagementCenterPanel");
+    expect(app).not.toContain("AiSystemCenterPanel");
   });
 
   it("defines AI collaboration sidecar surfaces", () => {

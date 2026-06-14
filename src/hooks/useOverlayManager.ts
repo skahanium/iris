@@ -1,41 +1,63 @@
 import { useCallback, useState } from "react";
 
 export type OverlayId =
-  | "commandPalette"
   | "quickOpen"
   | "fileSheet"
   | "search"
-  | "settings"
-  | "backlinks"
-  | "tags"
+  | "managementCenter"
+  | "knowledgeRelations"
   | "graph"
   | "version"
-  | "recycleBin"
-  | "skills"
-  | "aiSystemCenter";
+  | "recycleBin";
 
-const SIDE_PANELS: OverlayId[] = [
-  "commandPalette",
-  "fileSheet",
-  "search",
-  "settings",
-  "aiSystemCenter",
-  "skills",
-  "backlinks",
-  "tags",
-  "version",
-  "recycleBin",
-];
+export type ManagementCenterSection = "overview" | "notes" | "knowledge" | "ai";
+
+export type ManagementCenterDetail =
+  | "quick-open"
+  | "global-search"
+  | "knowledge-relations"
+  | "graph"
+  | "file-sheet"
+  | "recycle-bin"
+  | "reindex"
+  | "version"
+  | "outline"
+  | "zoom"
+  | "models"
+  | "web-search"
+  | "persona"
+  | "skills"
+  | "permissions"
+  | "memory"
+  | null;
 
 export interface OverlayState {
   activeOverlay: OverlayId | null;
+  managementCenterSection?: ManagementCenterSection;
+  managementCenterDetail?: ManagementCenterDetail;
 }
 
 export function openOverlayState(
   _state: OverlayState,
   id: OverlayId,
 ): OverlayState {
-  return { activeOverlay: id };
+  return {
+    activeOverlay: id,
+    managementCenterSection: "overview",
+    managementCenterDetail: null,
+  };
+}
+
+export function openManagementCenterState(
+  _state: OverlayState,
+  section: ManagementCenterSection = "overview",
+  detail: ManagementCenterDetail = null,
+): OverlayState {
+  return {
+    activeOverlay: "managementCenter",
+    managementCenterSection: section,
+    managementCenterDetail: detail,
+  };
 }
 
 export function closeOverlayState(
@@ -43,26 +65,36 @@ export function closeOverlayState(
   id?: OverlayId,
 ): OverlayState {
   if (id && state.activeOverlay !== id) return state;
-  return { activeOverlay: null };
+  return {
+    activeOverlay: null,
+    managementCenterSection: "overview",
+    managementCenterDetail: null,
+  };
 }
 
 export function toggleOverlayState(
   state: OverlayState,
   id: OverlayId,
 ): OverlayState {
-  if (state.activeOverlay === id) return { activeOverlay: null };
-  return { activeOverlay: id };
+  if (state.activeOverlay === id) return closeOverlayState(state);
+  return openOverlayState(state, id);
 }
 
 export function useOverlayManager() {
-  const [activeOverlay, setActiveOverlay] =
-    useState<OverlayState["activeOverlay"]>(null);
+  const [overlayState, setOverlayState] = useState<OverlayState>({
+    activeOverlay: null,
+    managementCenterSection: "overview",
+    managementCenterDetail: null,
+  });
+  const {
+    activeOverlay,
+    managementCenterSection = "overview",
+    managementCenterDetail = null,
+  } = overlayState;
 
   const updateOverlay = useCallback(
     (recipe: (state: OverlayState) => OverlayState) => {
-      setActiveOverlay(
-        (current) => recipe({ activeOverlay: current }).activeOverlay,
-      );
+      setOverlayState((current) => recipe(current));
     },
     [],
   );
@@ -74,6 +106,17 @@ export function useOverlayManager() {
 
   const closeOverlay = useCallback(
     (id?: OverlayId) => updateOverlay((state) => closeOverlayState(state, id)),
+    [updateOverlay],
+  );
+
+  const openManagementCenter = useCallback(
+    (
+      section: ManagementCenterSection = "overview",
+      detail: ManagementCenterDetail = null,
+    ) =>
+      updateOverlay((state) =>
+        openManagementCenterState(state, section, detail),
+      ),
     [updateOverlay],
   );
 
@@ -90,63 +133,41 @@ export function useOverlayManager() {
     [closeOverlay, openOverlay],
   );
 
-  const closeSidePanels = useCallback(() => {
-    setActiveOverlay((current) =>
-      current && SIDE_PANELS.includes(current) ? null : current,
-    );
-  }, []);
-
-  const openSidePanel = openOverlay;
-
-  const toggleSidePanel = toggleOverlay;
-
-  const commandPaletteOpen = activeOverlay === "commandPalette";
   const quickOpen = activeOverlay === "quickOpen";
   const fileSheet = activeOverlay === "fileSheet";
   const searchOpen = activeOverlay === "search";
-  const settingsOpen = activeOverlay === "settings";
-  const backlinksOpen = activeOverlay === "backlinks";
-  const tagViewOpen = activeOverlay === "tags";
+  const managementCenterOpen = activeOverlay === "managementCenter";
+  const knowledgeRelationsOpen = activeOverlay === "knowledgeRelations";
   const graphOpen = activeOverlay === "graph";
   const versionOpen = activeOverlay === "version";
   const recycleBinOpen = activeOverlay === "recycleBin";
-  const skillsOpen = activeOverlay === "skills";
-  const aiSystemCenterOpen = activeOverlay === "aiSystemCenter";
 
   return {
     activeOverlay,
     openOverlay,
+    openManagementCenter,
     closeOverlay,
     toggleOverlay,
     isOverlayOpen: (id: OverlayId) => activeOverlay === id,
-    commandPaletteOpen,
-    setCommandPaletteOpen: (open: boolean) =>
-      setOverlayOpen("commandPalette", open),
+    managementCenterSection,
+    managementCenterDetail,
     quickOpen,
     setQuickOpen: (open: boolean) => setOverlayOpen("quickOpen", open),
     fileSheet,
     setFileSheet: (open: boolean) => setOverlayOpen("fileSheet", open),
     searchOpen,
     setSearchOpen: (open: boolean) => setOverlayOpen("search", open),
-    settingsOpen,
-    setSettingsOpen: (open: boolean) => setOverlayOpen("settings", open),
-    backlinksOpen,
-    setBacklinksOpen: (open: boolean) => setOverlayOpen("backlinks", open),
-    tagViewOpen,
-    setTagViewOpen: (open: boolean) => setOverlayOpen("tags", open),
+    managementCenterOpen,
+    setManagementCenterOpen: (open: boolean) =>
+      setOverlayOpen("managementCenter", open),
+    knowledgeRelationsOpen,
+    setKnowledgeRelationsOpen: (open: boolean) =>
+      setOverlayOpen("knowledgeRelations", open),
     graphOpen,
     setGraphOpen: (open: boolean) => setOverlayOpen("graph", open),
     versionOpen,
     setVersionOpen: (open: boolean) => setOverlayOpen("version", open),
     recycleBinOpen,
     setRecycleBinOpen: (open: boolean) => setOverlayOpen("recycleBin", open),
-    skillsOpen,
-    setSkillsOpen: (open: boolean) => setOverlayOpen("skills", open),
-    aiSystemCenterOpen,
-    setAiSystemCenterOpen: (open: boolean) =>
-      setOverlayOpen("aiSystemCenter", open),
-    openSidePanel,
-    toggleSidePanel,
-    closeSidePanels,
   };
 }

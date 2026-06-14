@@ -155,7 +155,7 @@ pub async fn execute_research(
     let sid = SessionManager::ensure(db, AiScene::ResearchSynthesis, None)?;
 
     // Save user topic
-    SessionManager::append_message(db, sid, "user", topic, None)?;
+    SessionManager::append_message(db, sid, "user", topic, None, None)?;
 
     let mut rounds: Vec<ResearchRound> = Vec::new();
     let mut total_usage = TokenUsage::default();
@@ -225,7 +225,7 @@ pub async fn execute_research(
 
         let messages = vec![LlmMessage {
             role: MessageRole::User,
-            content: prompt,
+            content: prompt.into(),
             reasoning_content: None,
             tool_call_id: None,
             tool_calls: None,
@@ -377,7 +377,7 @@ pub async fn execute_research(
     .await?;
 
     // Save assistant summary
-    SessionManager::append_message(db, sid, "assistant", &summary, None)?;
+    SessionManager::append_message(db, sid, "assistant", &summary, None, None)?;
 
     Ok(ResearchResult {
         request_id: request_id.to_string(),
@@ -537,7 +537,7 @@ async fn decompose_topic(
 
     let messages = vec![LlmMessage {
         role: MessageRole::User,
-        content: prompt,
+        content: prompt.into(),
         reasoning_content: None,
         tool_call_id: None,
         tool_calls: None,
@@ -725,7 +725,7 @@ async fn detect_argument_chains(
 
     let messages = vec![LlmMessage {
         role: MessageRole::User,
-        content: prompt,
+        content: prompt.into(),
         reasoning_content: None,
         tool_call_id: None,
         tool_calls: None,
@@ -874,7 +874,7 @@ async fn synthesize_summary(
 
     let messages = vec![LlmMessage {
         role: MessageRole::User,
-        content: prompt,
+        content: prompt.into(),
         reasoning_content: None,
         tool_call_id: None,
         tool_calls: None,

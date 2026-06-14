@@ -21,7 +21,8 @@ import { TabBar } from "@/components/layout/TabBar";
 import { Button } from "@/components/ui/button";
 import { useAppKeyboard } from "@/hooks/useAppKeyboard";
 import { useAiSidecarBridge } from "@/hooks/useAiSidecarBridge";
-import { useAppCommandPalette } from "@/hooks/useAppCommandPalette";
+import { useAutoVersionSettings } from "@/hooks/useAutoVersionSettings";
+import { useAppShortcuts } from "@/hooks/useAppShortcuts";
 import { useAppEditorActions } from "@/hooks/useAppEditorActions";
 import {
   useAppPersistenceLifecycle,
@@ -94,7 +95,6 @@ function App() {
     filePath: string;
   } | null>(null);
   const { editorStats, updateEditorStats, resetEditorStats } = useEditorStats();
-  const [keyboardLeaderPending, setKeyboardLeaderPending] = useState(false);
   const [homeActive, setHomeActive] = useState(false);
   const [zen, setZen] = useState(false);
   const [outlineOpen, setOutlineOpen] = useState(loadOutlineOpen);
@@ -251,12 +251,13 @@ function App() {
 
   getLiveMarkdownRef.current = getLiveMarkdown;
 
+  const autoVersionSettings = useAutoVersionSettings();
+
   const {
     notifyDirty,
     flushSave,
     resetVersionIdle,
     handleSaveNote,
-    handleSaveVersion,
     versionSnapshotScheduler,
   } = useAppPersistenceLifecycle({
     activeFileLocked,
@@ -264,6 +265,8 @@ function App() {
     activePathRef,
     applySavedMarkdown,
     autoSnapshotGenerationRef,
+    autoVersionEnabled: autoVersionSettings.autoVersionEnabled,
+    autoVersionIdleMinutes: autoVersionSettings.autoVersionIdleMinutes,
     dirtyRef,
     editorRef,
     getLiveMarkdownRef,
@@ -360,7 +363,6 @@ function App() {
   } = useClassifiedVaultSession({
     enabled: Boolean(vaultPath) && isTauriRuntime(),
     openClassifiedPaths,
-    onLocked: () => setAiStatus("涉密保险库已锁定"),
   });
 
   useEffect(() => {
@@ -445,7 +447,7 @@ function App() {
   }, [rescanVault]);
 
   const handleOpenConnectivitySettings = useCallback(
-    () => overlays.openOverlay("settings"),
+    () => overlays.openManagementCenter("ai"),
     [overlays],
   );
 
@@ -597,38 +599,35 @@ function App() {
     activeFileLocked,
   );
 
-  const { commandPaletteItems, handleCommandPaletteSelect } =
-    useAppCommandPalette({
-      activePath,
-      activePathRef,
-      closeTab,
-      handleNewNote,
-      handleSaveNote,
-      handleSaveVersion,
-      handleVaultRescan,
-      openFindReplace,
-      overlays,
-      resetZoom,
-      saveOutlineOpen,
-      sendSelectionToAi,
-      setAiPanelOpen,
-      setClassifiedOpen,
-      setOutlineOpen,
-      setTheme,
-      setZen,
-      theme,
-      toggleWebSearch,
-      vaultPath,
-      zoomIn,
-      zoomOut,
-    });
+  const { appShortcutItems, handleAppShortcut } = useAppShortcuts({
+    activePath,
+    activePathRef,
+    closeTab,
+    handleNewNote,
+    handleSaveNote,
+    handleVaultRescan,
+    openFindReplace,
+    overlays,
+    resetZoom,
+    saveOutlineOpen,
+    sendSelectionToAi,
+    setAiPanelOpen,
+    setClassifiedOpen,
+    setOutlineOpen,
+    setTheme,
+    setZen,
+    theme,
+    toggleWebSearch,
+    vaultPath,
+    zoomIn,
+    zoomOut,
+  });
 
   useAppKeyboard({
-    items: commandPaletteItems,
+    items: appShortcutItems,
     vaultPath,
     activePathRef,
-    onAction: handleCommandPaletteSelect,
-    onLeaderPendingChange: setKeyboardLeaderPending,
+    onAction: handleAppShortcut,
   });
 
   const activeDocumentTitle = useMemo(() => {
@@ -752,7 +751,7 @@ function App() {
               setOutlineOpen(open);
               saveOutlineOpen(open);
             }}
-            onOpenAiSystemCenter={() => overlays.openOverlay("aiSystemCenter")}
+            onOpenAiManagement={() => overlays.openManagementCenter("ai")}
             onOpenQuickOpen={() => overlays.openOverlay("quickOpen")}
             onOpenSearch={() => overlays.openOverlay("search")}
             openNoteLeavingHome={openNoteLeavingHome}
@@ -799,7 +798,6 @@ function App() {
             readingMinutes={editorStats.readingMinutes}
             aiStatus={aiStatus}
             assistantChrome={assistantChrome}
-            keyboardLeaderPending={keyboardLeaderPending}
             editorZoom={editorZoom}
             onEditorZoomIn={zoomIn}
             onEditorZoomOut={zoomOut}
@@ -815,6 +813,10 @@ function App() {
             onThemeChange={(nextTheme) => void setTheme(nextTheme)}
             connectivity={connectivityStatus}
             onOpenConnectivitySettings={handleOpenConnectivitySettings}
+            onOpenManagementCenter={() =>
+              overlays.openManagementCenter("overview")
+            }
+            onOpenGraph={() => overlays.openOverlay("graph")}
           />
         }
         overlays={
@@ -826,10 +828,8 @@ function App() {
             classifiedOpen={classifiedOpen}
             classifiedVaultStatus={classifiedVaultStatus}
             classifiedWaiting={classifiedWaiting}
-            commandPaletteItems={commandPaletteItems}
             conflictState={conflictState}
             getCurrentContent={() => getLiveMarkdownRef.current()}
-            handleCommandPaletteSelect={handleCommandPaletteSelect}
             handleConflictAcceptExternal={handleConflictAcceptExternal}
             handleConflictKeepLocal={handleConflictKeepLocal}
             handleConflictManualEdit={handleConflictManualEdit}
@@ -842,10 +842,14 @@ function App() {
             requestClassifiedLock={requestClassifiedLock}
             setClassifiedOpen={setClassifiedOpen}
             setClassifiedWaiting={setClassifiedWaiting}
-            setTheme={setTheme}
             setWebSearch={setWebSearch}
+            openKnowledgeRelations={() =>
+              overlays.openOverlay("knowledgeRelations")
+            }
+            openVersion={() => overlays.openOverlay("version")}
+            rescanVault={handleVaultRescan}
+            autoVersionSettings={autoVersionSettings}
             tabs={tabs}
-            theme={theme}
             touchClassifiedActivity={touchClassifiedActivity}
             versionSnapshotScheduler={versionSnapshotScheduler}
             webSearch={webSearch}

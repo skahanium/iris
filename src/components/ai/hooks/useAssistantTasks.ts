@@ -1,5 +1,6 @@
 import {
   useCallback,
+  useState,
   type Dispatch,
   type MutableRefObject,
   type SetStateAction,
@@ -40,7 +41,7 @@ import type {
   PermissionPreflightSummary,
 } from "@/types/ai";
 
-import type { ChatLine } from "../AiMessageList";
+import type { ChatLine, ImageAttachment } from "../AiMessageList";
 import {
   buildActionState,
   determineDocumentCheckType,
@@ -58,7 +59,7 @@ interface AssistantRunPort {
 
 interface UseAssistantTasksParams {
   appendAssistantSummary: (intent: AssistantIntent, count?: number) => void;
-  appendUserMessage: (rawMessage: string) => void;
+  appendUserMessage: (rawMessage: string, imgs?: ImageAttachment[]) => void;
   assistantRun: AssistantRunPort;
   clearCitationMiss: () => void;
   clearTaskSurfaces: () => void;
@@ -116,6 +117,8 @@ interface UseAssistantTasksParams {
 interface UseAssistantTasksResult {
   runWriting: (rawMessage: string) => Promise<void>;
   send: () => Promise<void>;
+  images: ImageAttachment[];
+  setImages: Dispatch<SetStateAction<ImageAttachment[]>>;
 }
 
 export function useAssistantTasks({
@@ -166,6 +169,8 @@ export function useAssistantTasks({
   streamBufRef,
   webSearch,
 }: UseAssistantTasksParams): UseAssistantTasksResult {
+  const [images, setImages] = useState<ImageAttachment[]>([]);
+
   const recordRunPlan = useCallback(
     (response: AssistantExecuteResponse) => {
       runPlanControls.setIntentDetection(response.intentDetection ?? null);
@@ -252,6 +257,7 @@ export function useAssistantTasks({
         startNewSession?: boolean;
         agentIntent?: AgentIntent;
         intentDetection?: IntentDetectionResult;
+        images?: ImageAttachment[];
       },
     ) => {
       setStreaming(true);
@@ -287,6 +293,7 @@ export function useAssistantTasks({
               intent === "knowledge" ? 0.78 : 0.72,
             ),
           message: rawMessage,
+          images: options?.images,
           notePath,
           noteContent: getNoteContent(),
           webAuthorized: webSearch,
@@ -425,6 +432,7 @@ export function useAssistantTasks({
         startNewSession?: boolean;
         agentIntent?: AgentIntent;
         intentDetection?: IntentDetectionResult;
+        images?: ImageAttachment[];
       },
     ) => {
       clearTaskSurfaces();
@@ -819,10 +827,11 @@ export function useAssistantTasks({
   );
 
   const send = useCallback(async () => {
-    if (!input.trim() || composerDisabled) return;
+    if ((!input.trim() && images.length === 0) || composerDisabled) return;
     const rawMessage = input.trim();
     const intentDetection = detectAgentIntent({
       message: rawMessage,
+      hasImage: images.length > 0,
       hasSelection: Boolean(
         getWritingContext()?.selection || selectionQuoteText,
       ),
@@ -833,14 +842,16 @@ export function useAssistantTasks({
     const agentIntent = intentDetection.detectedIntent;
     const intent = legacyIntentForAgentIntent(agentIntent);
 
+    const currentImages = images;
     setInput("");
+    setImages([]);
     setLastError(null);
     const startNewSession = shouldStartNewAiSession(
       messages,
       forceNewSessionRef.current,
     );
     clearCitationMiss();
-    appendUserMessage(rawMessage);
+    appendUserMessage(rawMessage, currentImages);
     setActivityHint("正在理解你的问题…");
 
     try {
@@ -869,6 +880,7 @@ export function useAssistantTasks({
             startNewSession,
             agentIntent,
             intentDetection,
+            images: currentImages.length > 0 ? currentImages : undefined,
           });
           break;
       }
@@ -892,6 +904,7 @@ export function useAssistantTasks({
     contextScope.paths.length,
     forceNewSessionRef,
     getWritingContext,
+    images,
     input,
     messages,
     notePath,
@@ -905,10 +918,11 @@ export function useAssistantTasks({
     selectionQuoteText,
     setActionState,
     setActivityHint,
+    setImages,
     setInput,
     setLastError,
     setMessages,
   ]);
 
-  return { runWriting, send };
+  return { runWriting, send, images, setImages };
 }

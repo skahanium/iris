@@ -60,6 +60,9 @@ pub struct AssistantExecuteRequest {
     /// 为 true 时创建新的 session 线程，不续接同 scene+笔记 的历史消息。
     #[serde(default)]
     pub new_session: bool,
+    /// 图片附件（多模态消息）。
+    #[serde(default)]
+    pub images: Option<Vec<crate::commands::ai_commands::ImageAttachmentDto>>,
 }
 
 impl AssistantExecuteRequest {

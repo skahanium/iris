@@ -63,6 +63,37 @@ describe("v0.4.1-ui chrome modernization", () => {
     );
   });
 
+  it("StatusBar exposes management gear instead of command palette shortcut", () => {
+    const source = read("src/components/layout/StatusBar.tsx");
+    const appSlot = read("src/components/layout/AppStatusBarSlot.tsx");
+
+    expect(source).toContain('data-testid="status-bar-management-button"');
+    expect(source).toContain("onOpenManagementCenter");
+    expect(source).not.toContain("formatCommandPaletteShortcut");
+    expect(source).not.toContain("打开命令面板");
+    expect(appSlot).toContain("onOpenManagementCenter");
+  });
+
+  it("StatusBar exposes graph as a direct bottom-bar entry", () => {
+    const source = read("src/components/layout/StatusBar.tsx");
+    const appSlot = read("src/components/layout/AppStatusBarSlot.tsx");
+    const app = read("src/App.impl.tsx");
+
+    expect(source).toContain('data-testid="status-bar-graph-button"');
+    expect(source).toContain("onOpenGraph");
+    expect(appSlot).toContain("onOpenGraph");
+    expect(app).toContain('onOpenGraph={() => overlays.openOverlay("graph")}');
+  });
+
+  it("StatusBar filters classified vault status from global chrome", () => {
+    const source = read("src/components/layout/StatusBar.tsx");
+    const app = read("src/App.impl.tsx");
+
+    expect(source).toContain("safeStatusLine");
+    expect(source).toContain("isClassifiedStatusLine");
+    expect(app).not.toContain('setAiStatus("涉密保险库已锁定")');
+  });
+
   it("ConnectivityIndicators groups unified status balls", () => {
     const source = read("src/components/layout/ConnectivityIndicators.tsx");
     const statusBar = read("src/components/layout/StatusBar.tsx");
@@ -73,9 +104,9 @@ describe("v0.4.1-ui chrome modernization", () => {
     expect(source).toContain('label="LLM"');
     expect(source).toContain('label="联网"');
     expect(source).not.toContain('label="搜索"');
-    expect(read("src/components/settings/SettingsPanel.tsx")).not.toContain(
-      "Bing",
-    );
+    expect(
+      read("src/components/settings/ManagementCenterPanel.tsx"),
+    ).not.toContain("Bing");
     expect(statusBar).toContain("onWebSearchChange={onWebSearchChange}");
     expect(statusBar).not.toContain("联网搜索");
   });

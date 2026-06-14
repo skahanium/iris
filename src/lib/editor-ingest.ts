@@ -162,10 +162,9 @@ function footnoteDefHtml(frag: MarkdownSyntaxFragment): string {
   const defId = `footnote-${suffix}`;
   const mdContent = frag.raw.replace(/^\s*\[\^[^\]]+\]:\s*/, "");
   const contentHtml = mdContent
-    ? (ingestMarked.parse(
-        repairTightStrongPunctuationBoundaries(mdContent),
-        { async: false },
-      ) as string)
+    ? (ingestMarked.parse(repairTightStrongPunctuationBoundaries(mdContent), {
+        async: false,
+      }) as string)
     : "";
   const escapedRaw = escapeHtml(frag.raw);
   return `<section data-footnote-def="${escapedLabel}" id="${defId}" data-footnote-return="${refId}" data-original-raw="${escapedRaw}">${contentHtml}</section>`;
@@ -323,10 +322,9 @@ export function ingestMarkdownForEditor(
       const title = calloutTitle(frag.raw);
       const body = calloutBody(frag.raw);
       const bodyHtml = body
-        ? (ingestMarked.parse(
-            repairTightStrongPunctuationBoundaries(body),
-            { async: false },
-          ) as string)
+        ? (ingestMarked.parse(repairTightStrongPunctuationBoundaries(body), {
+            async: false,
+          }) as string)
         : "";
       const escapedRaw = escapeHtml(frag.raw);
       htmlParts.push(

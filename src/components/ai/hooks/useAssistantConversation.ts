@@ -209,10 +209,20 @@ export function useAssistantConversation({
     bubbleSelection.clear();
   }, [bubbleSelection]);
 
-  const appendUserMessage = useCallback((rawMessage: string) => {
-    const display = stripMentionTokensForDisplay(rawMessage);
-    setMessages((prev) => [...prev, { role: "user", content: display }]);
-  }, []);
+  const appendUserMessage = useCallback(
+    (rawMessage: string, imgs?: import("../AiMessageList").ImageAttachment[]) => {
+      const display = stripMentionTokensForDisplay(rawMessage);
+      setMessages((prev) => [
+        ...prev,
+        {
+          role: "user",
+          content: imgs?.length ? `[图片] ${display}` : display,
+          images: imgs?.length ? imgs : undefined,
+        },
+      ]);
+    },
+    [],
+  );
 
   const ensureAssistantStreamSlot = useCallback(() => {
     setMessages((prev) => {

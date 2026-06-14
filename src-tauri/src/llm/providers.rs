@@ -199,6 +199,7 @@ mod tests {
                 base_url: Some("https://api.groq.com/openai/v1".into()),
                 label: Some("Groq".into()),
                 default_model: Some("llama-3.1-8b-instant".into()),
+                enabled_models: Some(vec!["llama-3.1-8b-instant".into()]),
             },
         );
         let ids: Vec<_> = list_providers_from_routing(&routing)

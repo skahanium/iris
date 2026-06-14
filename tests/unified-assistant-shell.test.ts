@@ -58,13 +58,11 @@ describe("unified assistant shell", () => {
     );
   });
 
-  it("AI System Center hosts persona, rules, and model config", () => {
-    const source = read("src/components/settings/AiSystemCenterPanel.tsx");
-    expect(source).toContain("PersonaSettingsPanel");
+  it("Management Center hosts persona, rules, and model config", () => {
+    const source = read("src/components/settings/ManagementCenterPanel.tsx");
+    expect(source).toContain("PersonaSettingsBody");
     expect(source).toContain("AiRulesPanel");
     expect(source).toContain("MinimaxSearchSection");
-    expect(read("src/components/settings/SettingsPanel.tsx")).not.toContain(
-      "MinimaxSearchSection",
-    );
+    expect(source).toContain('id: "ai"');
   });
 });

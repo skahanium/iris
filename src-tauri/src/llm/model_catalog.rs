@@ -223,7 +223,7 @@ pub fn catalog() -> &'static [ModelCatalogEntry] {
             probe_strategy: ProbeStrategy::StaticOnly,
         },
         ModelCatalogEntry {
-            id: "MiMo-V2.5",
+            id: "mimo-v2.5",
             provider_id: "mimo",
             display_name: "MiMo-V2.5",
             context_window: 128_000,
@@ -382,7 +382,7 @@ mod tests {
 
         assert!(ids.contains(&"MiMo-V2.5-Pro"));
         assert!(ids.contains(&"MiMo-V2.5-Pro-UltraSpeed"));
-        assert!(ids.contains(&"MiMo-V2.5"));
+        assert!(ids.contains(&"mimo-v2.5"));
         assert!(ids.contains(&"MiMo-V2.5-ASR"));
         assert!(ids.contains(&"MiMo-V2.5-TTS"));
         assert!(ids.contains(&"MiMo-V2.5-TTS-VoiceClone"));

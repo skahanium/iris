@@ -88,7 +88,7 @@ pub(crate) fn estimate_and_accumulate(
 ) -> (u32, u32) {
     let mut prompt_chars = 0_usize;
     for msg in messages {
-        prompt_chars += msg.content.chars().count();
+        prompt_chars += msg.content.as_str().chars().count();
     }
     let prompt_est = estimate_tokens(&" ".repeat(prompt_chars.min(1)));
     let completion_est = estimate_tokens(response_content);

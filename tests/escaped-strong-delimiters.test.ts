@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { ingestMarkdownForEditor } from "@/lib/editor-ingest";
 import { editorHtmlHasVisibleFailedBold } from "@/lib/editor-html-cache";
-import { editorBodyHtmlToMarkdown, markdownBodyToEditorHtml, markdownToHtml } from "@/lib/markdown";
+import {
+  editorBodyHtmlToMarkdown,
+  markdownBodyToEditorHtml,
+  markdownToHtml,
+} from "@/lib/markdown";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 

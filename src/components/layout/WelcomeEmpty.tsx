@@ -14,7 +14,7 @@ interface WelcomeEmptyProps {
   onNew: () => void | Promise<void>;
   onQuickOpen?: () => void;
   onSearch?: () => void;
-  onAiSystemCenter?: () => void;
+  onOpenAiManagement?: () => void;
 }
 
 function dedupeByPath(files: FileListItem[]): FileListItem[] {
@@ -46,7 +46,7 @@ export function WelcomeEmpty({
   onNew,
   onQuickOpen,
   onSearch,
-  onAiSystemCenter,
+  onOpenAiManagement,
 }: WelcomeEmptyProps) {
   const [recent, setRecent] = useState<FileListItem[]>([]);
   const [deleteTarget, setDeleteTarget] = useState<FileListItem | null>(null);
@@ -106,15 +106,15 @@ export function WelcomeEmpty({
                   全库搜索
                 </Button>
               ) : null}
-              {onAiSystemCenter ? (
+              {onOpenAiManagement ? (
                 <Button
                   type="button"
                   variant="outline"
                   className="justify-start gap-2 border-border/70 bg-transparent"
-                  onClick={onAiSystemCenter}
+                  onClick={onOpenAiManagement}
                 >
                   <Bot className="h-4 w-4" />
-                  AI 系统中心
+                  AI 管理
                 </Button>
               ) : null}
             </div>

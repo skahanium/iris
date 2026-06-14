@@ -1,18 +1,18 @@
 import { lazy, Suspense } from "react";
 
-import { SkillsPanel } from "@/components/ai/SkillsPanel";
 import { ClassifiedPanel } from "@/components/classified/ClassifiedPanel";
-import { BacklinksPanel } from "@/components/file/BacklinksPanel";
 import { ConflictDialog } from "@/components/file/ConflictDialog";
 import { VaultNavigator } from "@/components/file/VaultNavigator";
 import { QuickOpen } from "@/components/file/QuickOpen";
 import { RecycleBinSheet } from "@/components/file/RecycleBinSheet";
 import { SearchPanel } from "@/components/file/SearchPanel";
-import { TagView } from "@/components/tag/TagView";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
-import { CommandPalette } from "@/components/layout/CommandPalette";
-import type { CommandPaletteItem } from "@/lib/command-palette";
-import type { OverlayId } from "@/hooks/useOverlayManager";
+import { KnowledgeRelationsPanel } from "@/components/knowledge/KnowledgeRelationsPanel";
+import type {
+  ManagementCenterDetail,
+  ManagementCenterSection,
+  OverlayId,
+} from "@/hooks/useOverlayManager";
 import type { TabItem } from "@/components/layout/TabBar";
 import type { ClassifiedStatus } from "@/types/ipc";
 
@@ -21,14 +21,9 @@ const GraphView = lazy(() =>
     default: m.GraphView,
   })),
 );
-const SettingsPanel = lazy(() =>
-  import("@/components/settings/SettingsPanel").then((m) => ({
-    default: m.SettingsPanel,
-  })),
-);
-const AiSystemCenterPanel = lazy(() =>
-  import("@/components/settings/AiSystemCenterPanel").then((m) => ({
-    default: m.AiSystemCenterPanel,
+const ManagementCenterPanel = lazy(() =>
+  import("@/components/settings/ManagementCenterPanel").then((m) => ({
+    default: m.ManagementCenterPanel,
   })),
 );
 const VersionTimeline = lazy(() =>
@@ -44,16 +39,14 @@ const LazyFallback = () => (
 );
 
 interface OverlayPort {
-  commandPaletteOpen: boolean;
   quickOpen: boolean;
   fileSheet: boolean;
   recycleBinOpen: boolean;
   searchOpen: boolean;
-  settingsOpen: boolean;
-  aiSystemCenterOpen: boolean;
-  skillsOpen: boolean;
-  backlinksOpen: boolean;
-  tagViewOpen: boolean;
+  managementCenterOpen: boolean;
+  managementCenterSection: ManagementCenterSection;
+  managementCenterDetail: ManagementCenterDetail;
+  knowledgeRelationsOpen: boolean;
   versionOpen: boolean;
   graphOpen: boolean;
   closeOverlay: (overlay?: OverlayId) => void;
@@ -74,15 +67,19 @@ interface VersionSchedulerPort {
 interface AppOverlaysProps {
   activePath: string | null;
   applyMarkdownToEditor: (content: string) => void;
+  autoVersionSettings: {
+    autoVersionEnabled: boolean;
+    autoVersionIdleMinutes: number;
+    setAutoVersionEnabled: (enabled: boolean) => void;
+    setAutoVersionIdleMinutes: (minutes: number) => void;
+  };
   bumpVaultIndex: () => void;
   classifiedIdleDeadline: number | null;
   classifiedOpen: boolean;
   classifiedVaultStatus: ClassifiedStatus;
   classifiedWaiting: boolean;
-  commandPaletteItems: CommandPaletteItem[];
   conflictState: ConflictState | null;
   getCurrentContent: () => string;
-  handleCommandPaletteSelect: (item: CommandPaletteItem) => void;
   handleConflictAcceptExternal: () => void;
   handleConflictKeepLocal: () => void;
   handleConflictManualEdit: () => void;
@@ -99,10 +96,11 @@ interface AppOverlaysProps {
   requestClassifiedLock: () => Promise<boolean>;
   setClassifiedOpen: (open: boolean) => void;
   setClassifiedWaiting: (waiting: boolean) => void;
-  setTheme: (theme: "dark" | "light") => Promise<void>;
   setWebSearch: (enabled: boolean) => void;
+  openKnowledgeRelations: () => void;
+  openVersion: () => void;
+  rescanVault: () => void;
   tabs: TabItem[];
-  theme: "dark" | "light";
   touchClassifiedActivity: () => void;
   versionSnapshotScheduler: VersionSchedulerPort;
   webSearch: boolean;
@@ -111,15 +109,14 @@ interface AppOverlaysProps {
 export function AppOverlays({
   activePath,
   applyMarkdownToEditor,
+  autoVersionSettings,
   bumpVaultIndex,
   classifiedIdleDeadline,
   classifiedOpen,
   classifiedVaultStatus,
   classifiedWaiting,
-  commandPaletteItems,
   conflictState,
   getCurrentContent,
-  handleCommandPaletteSelect,
   handleConflictAcceptExternal,
   handleConflictKeepLocal,
   handleConflictManualEdit,
@@ -132,22 +129,17 @@ export function AppOverlays({
   requestClassifiedLock,
   setClassifiedOpen,
   setClassifiedWaiting,
-  setTheme,
   setWebSearch,
+  openKnowledgeRelations,
+  openVersion,
+  rescanVault,
   tabs,
-  theme,
   touchClassifiedActivity,
   versionSnapshotScheduler,
   webSearch,
 }: AppOverlaysProps) {
   return (
     <>
-      <CommandPalette
-        open={overlays.commandPaletteOpen}
-        items={commandPaletteItems}
-        onClose={() => overlays.closeOverlay("commandPalette")}
-        onSelect={handleCommandPaletteSelect}
-      />
       <QuickOpen
         open={overlays.quickOpen}
         onClose={() => overlays.closeOverlay("quickOpen")}
@@ -170,34 +162,27 @@ export function AppOverlays({
         onOpen={openNoteLeavingHome}
       />
       <Suspense fallback={<LazyFallback />}>
-        <SettingsPanel
-          open={overlays.settingsOpen}
-          onClose={() => overlays.closeOverlay("settings")}
-          theme={theme}
-          onThemeChange={(t) => void setTheme(t)}
+        <ManagementCenterPanel
+          open={overlays.managementCenterOpen}
+          onClose={() => overlays.closeOverlay("managementCenter")}
+          section={overlays.managementCenterSection}
           webSearch={webSearch}
           onWebSearchChange={setWebSearch}
+          onOpenKnowledgeRelations={openKnowledgeRelations}
+          onOpenVersion={openVersion}
+          onRescanVault={rescanVault}
+          autoVersionEnabled={autoVersionSettings.autoVersionEnabled}
+          autoVersionIdleMinutes={autoVersionSettings.autoVersionIdleMinutes}
+          onAutoVersionEnabledChange={autoVersionSettings.setAutoVersionEnabled}
+          onAutoVersionIdleMinutesChange={
+            autoVersionSettings.setAutoVersionIdleMinutes
+          }
         />
       </Suspense>
-      <Suspense fallback={<LazyFallback />}>
-        <AiSystemCenterPanel
-          open={overlays.aiSystemCenterOpen}
-          onClose={() => overlays.closeOverlay("aiSystemCenter")}
-        />
-      </Suspense>
-      <SkillsPanel
-        open={overlays.skillsOpen}
-        onClose={() => overlays.closeOverlay("skills")}
-      />
-      <BacklinksPanel
-        open={overlays.backlinksOpen}
-        onClose={() => overlays.closeOverlay("backlinks")}
+      <KnowledgeRelationsPanel
+        open={overlays.knowledgeRelationsOpen}
+        onClose={() => overlays.closeOverlay("knowledgeRelations")}
         notePath={activePath}
-        onOpen={openNoteLeavingHome}
-      />
-      <TagView
-        open={overlays.tagViewOpen}
-        onClose={() => overlays.closeOverlay("tags")}
         onOpen={openNoteLeavingHome}
       />
       <Suspense fallback={<LazyFallback />}>

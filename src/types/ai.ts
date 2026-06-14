@@ -373,6 +373,8 @@ export interface AssistantExecuteRequest {
   baseContentHash?: string | null;
   /** 为 true 时后端创建新 session，不加载同场景+笔记路径下的旧对话 */
   newSession?: boolean;
+  /** 图片附件（多模态消息） */
+  images?: import("./ipc").ImageAttachmentDto[];
 }
 
 export interface AiChatExecutePayload {
@@ -1117,6 +1119,17 @@ export type WritingExecuteResult = WritingTaskResult;
 
 /** `chapter_writing_execute` IPC 返回值（结构同 ChapterWritingResult） */
 export type ChapterWritingExecuteResult = ChapterWritingResult;
+
+/** 消息内容：纯文本字符串或多模态片段数组 */
+export type MessageContent = string | ContentPart[];
+
+/** 内容片段（遵循 OpenAI multimodal 格式） */
+export type ContentPart =
+  | { type: "text"; text: string }
+  | {
+      type: "image_url";
+      image_url: { url: string; detail?: "auto" | "low" | "high" };
+    };
 
 /** `organize_execute` IPC 返回值（结构同 OrganizeTaskResult） */
 export type OrganizeExecuteResult = OrganizeTaskResult;

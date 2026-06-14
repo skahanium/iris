@@ -1,4 +1,4 @@
-﻿//! Shared types for the Iris AI subsystem.
+//! Shared types for the Iris AI subsystem.
 //!
 //! This module owns all cross-cutting data types that are referenced by both
 //! `ai_runtime` (business logic) and `llm` (infrastructure). Extracting them
@@ -1146,11 +1146,93 @@ pub enum MessageRole {
     Tool,
 }
 
+/// 消息内容：纯文本或混合多模态。
+///
+/// 使用 `#[serde(untagged)]` 保证：
+/// - `Text(String)` 序列化为 JSON 字符串（向后兼容）
+/// - `Parts(Vec<ContentPart>)` 序列化为 JSON 数组（OpenAI multimodal 格式）
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum MessageContent {
+    /// 纯文本消息
+    Text(String),
+    /// 多模态内容数组（文本 + 图片混合）
+    Parts(Vec<ContentPart>),
+}
+
+impl Default for MessageContent {
+    fn default() -> Self {
+        MessageContent::Text(String::new())
+    }
+}
+
+impl From<String> for MessageContent {
+    fn from(s: String) -> Self {
+        MessageContent::Text(s)
+    }
+}
+
+impl From<&str> for MessageContent {
+    fn from(s: &str) -> Self {
+        MessageContent::Text(s.to_string())
+    }
+}
+
+impl MessageContent {
+    /// Extract the text content, panics if this is a Parts variant (for migration safety).
+    pub fn as_str(&self) -> &str {
+        match self {
+            MessageContent::Text(s) => s.as_str(),
+            MessageContent::Parts(_) => {
+                panic!("called as_str() on multimodal Parts content")
+            }
+        }
+    }
+
+    /// Mutable access to text content.
+    pub fn as_mut_str(&mut self) -> &mut String {
+        match self {
+            MessageContent::Text(s) => s,
+            MessageContent::Parts(_) => {
+                panic!("called as_mut_str() on multimodal Parts content")
+            }
+        }
+    }
+
+    /// Check if content is empty (for Text variant).
+    pub fn is_empty(&self) -> bool {
+        match self {
+            MessageContent::Text(s) => s.is_empty(),
+            MessageContent::Parts(parts) => parts.is_empty(),
+        }
+    }
+}
+
+/// 内容片段（遵循 OpenAI multimodal 格式，可转换为 Anthropic 格式）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum ContentPart {
+    /// 文本片段
+    Text { text: String },
+    /// 图片片段（base64 data URL 或 HTTP URL）
+    ImageUrl { image_url: ImageUrlPayload },
+}
+
+/// 图片 URL 负载。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ImageUrlPayload {
+    /// "data:image/png;base64,xxxxx" 或 HTTP URL
+    pub url: String,
+    /// "auto" | "low" | "high"
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
+}
+
 /// A single message in the conversation.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LlmMessage {
     pub role: MessageRole,
-    pub content: String,
+    pub content: MessageContent,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_call_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -1164,7 +1246,7 @@ impl Default for LlmMessage {
     fn default() -> Self {
         Self {
             role: MessageRole::User,
-            content: String::new(),
+            content: MessageContent::Text(String::new()),
             tool_call_id: None,
             tool_calls: None,
             reasoning_content: None,
@@ -1395,5 +1477,258 @@ mod phase3_model_persona_route_tests {
         assert!(!json.contains("base64"));
         assert!(!json.contains("clipboard"));
         assert!(!json.contains("note_content"));
+    }
+}
+
+#[cfg(test)]
+mod multimodal_message_content_tests {
+    use super::*;
+
+    // ── MessageContent serialization ──
+
+    #[test]
+    fn text_content_serializes_as_plain_string() {
+        let content = MessageContent::Text("hello".to_string());
+        let json = serde_json::to_value(&content).unwrap();
+        assert_eq!(json, serde_json::json!("hello"));
+    }
+
+    #[test]
+    fn text_content_deserializes_from_plain_string() {
+        let json = serde_json::json!("hello world");
+        let content: MessageContent = serde_json::from_value(json).unwrap();
+        match content {
+            MessageContent::Text(s) => assert_eq!(s, "hello world"),
+            _ => panic!("expected Text variant"),
+        }
+    }
+
+    #[test]
+    fn parts_content_serializes_as_array() {
+        let parts = vec![
+            ContentPart::Text {
+                text: "describe this".to_string(),
+            },
+            ContentPart::ImageUrl {
+                image_url: ImageUrlPayload {
+                    url: "data:image/png;base64,abc123".to_string(),
+                    detail: Some("auto".to_string()),
+                },
+            },
+        ];
+        let content = MessageContent::Parts(parts);
+        let json = serde_json::to_value(&content).unwrap();
+        assert!(json.is_array());
+        assert_eq!(json.as_array().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn parts_content_deserializes_from_array() {
+        let json = serde_json::json!([
+            { "type": "text", "text": "what is this?" },
+            { "type": "image_url", "image_url": { "url": "data:image/jpeg;base64,xyz", "detail": "auto" } }
+        ]);
+        let content: MessageContent = serde_json::from_value(json).unwrap();
+        match content {
+            MessageContent::Parts(parts) => {
+                assert_eq!(parts.len(), 2);
+                match &parts[0] {
+                    ContentPart::Text { text } => assert_eq!(text, "what is this?"),
+                    _ => panic!("expected Text content part"),
+                }
+            }
+            _ => panic!("expected Parts variant"),
+        }
+    }
+
+    // ── ContentPart serialization ──
+
+    #[test]
+    fn text_part_serializes_correctly() {
+        let part = ContentPart::Text {
+            text: "hello".to_string(),
+        };
+        let json = serde_json::to_value(&part).unwrap();
+        assert_eq!(json["type"], "text");
+        assert_eq!(json["text"], "hello");
+    }
+
+    #[test]
+    fn image_url_part_serializes_correctly() {
+        let part = ContentPart::ImageUrl {
+            image_url: ImageUrlPayload {
+                url: "data:image/png;base64,abc".to_string(),
+                detail: Some("high".to_string()),
+            },
+        };
+        let json = serde_json::to_value(&part).unwrap();
+        assert_eq!(json["type"], "image_url");
+        assert_eq!(json["image_url"]["url"], "data:image/png;base64,abc");
+        assert_eq!(json["image_url"]["detail"], "high");
+    }
+
+    #[test]
+    fn image_url_part_detail_is_optional() {
+        let part = ContentPart::ImageUrl {
+            image_url: ImageUrlPayload {
+                url: "data:image/png;base64,abc".to_string(),
+                detail: None,
+            },
+        };
+        let json = serde_json::to_value(&part).unwrap();
+        assert!(json["image_url"].get("detail").is_none());
+    }
+
+    // ── LlmMessage backwards compatibility ──
+
+    #[test]
+    fn llm_message_text_content_serializes_as_string() {
+        let msg = LlmMessage {
+            role: MessageRole::User,
+            content: MessageContent::Text("hello".to_string()),
+            tool_call_id: None,
+            tool_calls: None,
+            reasoning_content: None,
+        };
+        let json = serde_json::to_value(&msg).unwrap();
+        // content field should be a plain string (backwards compatible)
+        assert!(json["content"].is_string());
+        assert_eq!(json["content"], "hello");
+    }
+
+    #[test]
+    fn llm_message_parts_content_serializes_as_array() {
+        let msg = LlmMessage {
+            role: MessageRole::User,
+            content: MessageContent::Parts(vec![
+                ContentPart::Text {
+                    text: "describe".to_string(),
+                },
+                ContentPart::ImageUrl {
+                    image_url: ImageUrlPayload {
+                        url: "data:image/png;base64,abc".to_string(),
+                        detail: None,
+                    },
+                },
+            ]),
+            tool_call_id: None,
+            tool_calls: None,
+            reasoning_content: None,
+        };
+        let json = serde_json::to_value(&msg).unwrap();
+        assert!(json["content"].is_array());
+    }
+
+    #[test]
+    fn llm_message_deserializes_plain_string_as_text() {
+        let json = serde_json::json!({
+            "role": "user",
+            "content": "plain text message"
+        });
+        let msg: LlmMessage = serde_json::from_value(json).unwrap();
+        match msg.content {
+            MessageContent::Text(s) => assert_eq!(s, "plain text message"),
+            _ => panic!("should deserialize as text"),
+        }
+    }
+
+    // ── From<String> / From<&str> helpers ──
+
+    #[test]
+    fn from_string_creates_text_variant() {
+        let content = MessageContent::from("hello".to_string());
+        match content {
+            MessageContent::Text(s) => assert_eq!(s, "hello"),
+            _ => panic!("expected Text"),
+        }
+    }
+
+    #[test]
+    fn from_str_creates_text_variant() {
+        let content = MessageContent::from("world");
+        match content {
+            MessageContent::Text(s) => assert_eq!(s, "world"),
+            _ => panic!("expected Text"),
+        }
+    }
+
+    #[test]
+    fn into_message_content_works_with_string() {
+        let content: MessageContent = "test message".into();
+        match content {
+            MessageContent::Text(s) => assert_eq!(s, "test message"),
+            _ => panic!("expected Text"),
+        }
+    }
+
+    // ── LlmMessage default ──
+
+    #[test]
+    fn llm_message_default_has_empty_text_content() {
+        let msg = LlmMessage::default();
+        match msg.content {
+            MessageContent::Text(s) => assert!(s.is_empty()),
+            _ => panic!("default should be Text"),
+        }
+    }
+
+    // ── Round-trip: message with text ──
+
+    #[test]
+    fn round_trip_text_message() {
+        let original = LlmMessage {
+            role: MessageRole::User,
+            content: MessageContent::Text("hello world".to_string()),
+            tool_call_id: None,
+            tool_calls: None,
+            reasoning_content: None,
+        };
+        let json = serde_json::to_string(&original).unwrap();
+        let restored: LlmMessage = serde_json::from_str(&json).unwrap();
+        match restored.content {
+            MessageContent::Text(s) => assert_eq!(s, "hello world"),
+            _ => panic!("round-trip should preserve Text"),
+        }
+    }
+
+    // ── Round-trip: message with multimodal parts ──
+
+    #[test]
+    fn round_trip_multimodal_message() {
+        let original = LlmMessage {
+            role: MessageRole::User,
+            content: MessageContent::Parts(vec![
+                ContentPart::Text {
+                    text: "describe this image".to_string(),
+                },
+                ContentPart::ImageUrl {
+                    image_url: ImageUrlPayload {
+                        url: "data:image/png;base64,iVBORw0KGgo=".to_string(),
+                        detail: Some("auto".to_string()),
+                    },
+                },
+            ]),
+            tool_call_id: None,
+            tool_calls: None,
+            reasoning_content: None,
+        };
+        let json = serde_json::to_string(&original).unwrap();
+        let restored: LlmMessage = serde_json::from_str(&json).unwrap();
+        match restored.content {
+            MessageContent::Parts(parts) => {
+                assert_eq!(parts.len(), 2);
+                match &parts[0] {
+                    ContentPart::Text { text } => assert_eq!(text, "describe this image"),
+                    _ => panic!("first part should be Text"),
+                }
+                match &parts[1] {
+                    ContentPart::ImageUrl { image_url } => {
+                        assert!(image_url.url.starts_with("data:image/png;base64,"));
+                    }
+                    _ => panic!("second part should be ImageUrl"),
+                }
+            }
+            _ => panic!("round-trip should preserve Parts"),
+        }
     }
 }

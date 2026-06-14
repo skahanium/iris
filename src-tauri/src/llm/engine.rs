@@ -9,6 +9,7 @@ use uuid::Uuid;
 use super::anthropic;
 use super::providers::{api_base, credential_service, uses_anthropic_messages_api};
 use super::{ChatMessage, LlmGenerateParams, LlmStreamContext};
+
 use crate::credentials;
 use crate::error::{AppError, AppResult};
 use crate::llm::search_web;

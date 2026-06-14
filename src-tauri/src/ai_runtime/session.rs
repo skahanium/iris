@@ -40,6 +40,9 @@ pub struct SessionMessage {
     pub seq: i64,
     pub role: String,
     pub content: String,
+    /// 多模态内容 JSON（`Vec<ContentPart>` 序列化），纯文本时为 `None`。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub content_parts: Option<String>,
     pub tool_calls: Option<serde_json::Value>,
     pub content_hash: Option<String>,
     pub created_at: String,
@@ -96,16 +99,19 @@ impl SessionManager {
     }
 
     /// 向 session 追加一条消息。
+    ///
+    /// `content_parts` 为多模态消息的 JSON 字符串（`Vec<ContentPart>` 序列化），
+    /// 纯文本消息时传 `None`。
     pub fn append_message(
         db: &Database,
         session_id: i64,
         role: &str,
         content: &str,
+        content_parts: Option<&str>,
         tool_calls: Option<&serde_json::Value>,
     ) -> AppResult<i64> {
         let now = chrono::Utc::now().to_rfc3339();
         db.with_conn(|conn| {
-            // Get next seq
             let seq: i64 = conn
                 .query_row(
                     "SELECT COALESCE(MAX(seq), 0) + 1 FROM session_messages WHERE session_id = ?1",
@@ -116,12 +122,11 @@ impl SessionManager {
 
             let tool_json = tool_calls.map(|t| t.to_string());
             conn.execute(
-                "INSERT INTO session_messages (session_id, seq, role, content, tool_calls, created_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-                rusqlite::params![session_id, seq, role, content, tool_json, now],
+                "INSERT INTO session_messages (session_id, seq, role, content, content_parts, tool_calls, created_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                rusqlite::params![session_id, seq, role, content, content_parts, tool_json, now],
             )?;
 
-            // Update session updated_at
             conn.execute(
                 "UPDATE sessions SET updated_at = ?1 WHERE id = ?2",
                 rusqlite::params![now, session_id],
@@ -139,7 +144,7 @@ impl SessionManager {
     ) -> AppResult<Vec<SessionMessage>> {
         db.with_conn(|conn| {
             let mut stmt = conn.prepare(
-                "SELECT id, session_id, seq, role, content, tool_calls, content_hash, created_at
+                "SELECT id, session_id, seq, role, content, content_parts, tool_calls, content_hash, created_at
                  FROM session_messages
                  WHERE session_id = ?1
                  ORDER BY seq DESC
@@ -152,18 +157,19 @@ impl SessionManager {
                     seq: row.get(2)?,
                     role: row.get(3)?,
                     content: row.get(4)?,
+                    content_parts: row.get(5)?,
                     tool_calls: row
-                        .get::<_, Option<String>>(5)?
+                        .get::<_, Option<String>>(6)?
                         .and_then(|s| serde_json::from_str(&s).ok()),
-                    content_hash: row.get(6)?,
-                    created_at: row.get(7)?,
+                    content_hash: row.get(7)?,
+                    created_at: row.get(8)?,
                 })
             })?;
             let mut msgs = Vec::new();
             for row in rows {
                 msgs.push(row?);
             }
-            msgs.reverse(); // chronological order
+            msgs.reverse();
             Ok(msgs)
         })
     }
@@ -418,8 +424,8 @@ mod tests {
         let db = setup_db();
         let sid = SessionManager::ensure(&db, AiScene::KnowledgeLookup, None).unwrap();
 
-        SessionManager::append_message(&db, sid, "user", "hello", None).unwrap();
-        SessionManager::append_message(&db, sid, "assistant", "hi there", None).unwrap();
+        SessionManager::append_message(&db, sid, "user", "hello", None, None).unwrap();
+        SessionManager::append_message(&db, sid, "assistant", "hi there", None, None).unwrap();
 
         let msgs = SessionManager::recent_messages(&db, sid, 10).unwrap();
         assert_eq!(msgs.len(), 2);
@@ -434,7 +440,7 @@ mod tests {
         let db = setup_db();
         let sid = SessionManager::ensure(&db, AiScene::ExemplarLearning, Some("/notes/fanwen.md"))
             .unwrap();
-        SessionManager::append_message(&db, sid, "user", "test", None).unwrap();
+        SessionManager::append_message(&db, sid, "user", "test", None, None).unwrap();
 
         let key = session_key(AiScene::ExemplarLearning, Some("/notes/fanwen.md"));
         let deleted = SessionManager::delete_by_key(&db, &key).unwrap();
@@ -448,7 +454,8 @@ mod tests {
     fn list_rename_and_delete_session() {
         let db = setup_db();
         let sid = SessionManager::create_fresh(&db, AiScene::KnowledgeLookup, None).unwrap();
-        SessionManager::append_message(&db, sid, "user", "第一条用户消息用于标题", None).unwrap();
+        SessionManager::append_message(&db, sid, "user", "第一条用户消息用于标题", None, None)
+            .unwrap();
         let list =
             SessionManager::list_sessions(&db, Some("knowledge_lookup"), None, 10, 0).unwrap();
         assert!(!list.is_empty());
@@ -481,7 +488,7 @@ mod tests {
     fn purge_expired_removes_old_sessions() {
         let db = setup_db();
         let sid = SessionManager::ensure(&db, AiScene::KnowledgeLookup, None).unwrap();
-        SessionManager::append_message(&db, sid, "user", "hello", None).unwrap();
+        SessionManager::append_message(&db, sid, "user", "hello", None, None).unwrap();
 
         db.with_conn(|conn| {
             conn.execute(
@@ -503,7 +510,7 @@ mod tests {
     fn purge_expired_retains_recent_sessions() {
         let db = setup_db();
         let sid = SessionManager::ensure(&db, AiScene::KnowledgeLookup, None).unwrap();
-        SessionManager::append_message(&db, sid, "user", "hello", None).unwrap();
+        SessionManager::append_message(&db, sid, "user", "hello", None, None).unwrap();
 
         // Session is recent, should not be purged
         let deleted = SessionManager::purge_expired(&db, 90).unwrap();
@@ -545,5 +552,60 @@ mod tests {
 
         let deleted = SessionManager::purge_expired_traces(&db, 30).unwrap();
         assert_eq!(deleted, 0);
+    }
+
+    #[test]
+    fn append_message_with_content_parts_stores_json() {
+        let db = setup_db();
+        let sid = SessionManager::ensure(&db, AiScene::KnowledgeLookup, None).unwrap();
+
+        let parts_json = r#"[{"type":"text","text":"describe this"},{"type":"image_url","image_url":{"url":"data:image/png;base64,abc","detail":"auto"}}]"#;
+        SessionManager::append_message(
+            &db,
+            sid,
+            "user",
+            "[图片] describe this",
+            Some(parts_json),
+            None,
+        )
+        .unwrap();
+
+        let msgs = SessionManager::recent_messages(&db, sid, 10).unwrap();
+        assert_eq!(msgs.len(), 1);
+        assert_eq!(msgs[0].content_parts.as_deref(), Some(parts_json));
+        assert_eq!(msgs[0].content, "[图片] describe this");
+    }
+
+    #[test]
+    fn append_message_without_content_parts_is_none() {
+        let db = setup_db();
+        let sid = SessionManager::ensure(&db, AiScene::KnowledgeLookup, None).unwrap();
+
+        SessionManager::append_message(&db, sid, "user", "plain text", None, None).unwrap();
+
+        let msgs = SessionManager::recent_messages(&db, sid, 10).unwrap();
+        assert_eq!(msgs.len(), 1);
+        assert!(msgs[0].content_parts.is_none());
+        assert_eq!(msgs[0].content, "plain text");
+    }
+
+    #[test]
+    fn mixed_messages_some_with_content_parts() {
+        let db = setup_db();
+        let sid = SessionManager::ensure(&db, AiScene::KnowledgeLookup, None).unwrap();
+
+        // Plain text message
+        SessionManager::append_message(&db, sid, "user", "hello", None, None).unwrap();
+        // Multimodal message
+        let parts = r#"[{"type":"text","text":"what"},{"type":"image_url","image_url":{"url":"data:image/png;base64,xyz"}}]"#;
+        SessionManager::append_message(&db, sid, "user", "[图片] what", Some(parts), None).unwrap();
+        // Another plain text
+        SessionManager::append_message(&db, sid, "assistant", "I see", None, None).unwrap();
+
+        let msgs = SessionManager::recent_messages(&db, sid, 10).unwrap();
+        assert_eq!(msgs.len(), 3);
+        assert!(msgs[0].content_parts.is_none());
+        assert_eq!(msgs[1].content_parts.as_deref(), Some(parts));
+        assert!(msgs[2].content_parts.is_none());
     }
 }

@@ -54,7 +54,7 @@ pub fn append_tool_message_to_checkpoint(
 
     cp.messages.push(LlmMessage {
         role: MessageRole::Tool,
-        content: tool_content,
+        content: tool_content.into(),
         tool_call_id: Some(tool_call_id.to_string()),
         tool_calls: None,
         ..Default::default()
@@ -158,6 +158,7 @@ pub async fn resume_harness_after_tool_confirm(
             cold_start_packets: cp.meta.cold_start_packets.clone(),
             web_search_enabled: cp.meta.web_search_enabled,
             user_message,
+            images: None,
             history_messages: vec![],
             depth: cp.meta.depth,
             resume_from_checkpoint: true,
@@ -183,7 +184,7 @@ fn latest_user_message(messages: &[LlmMessage]) -> String {
         .iter()
         .rev()
         .find(|message| matches!(message.role, MessageRole::User))
-        .map(|message| message.content.clone())
+        .map(|message| message.content.as_str().to_string())
         .unwrap_or_default()
 }
 

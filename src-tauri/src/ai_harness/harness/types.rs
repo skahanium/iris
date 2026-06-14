@@ -60,6 +60,8 @@ pub struct HarnessRunInput {
     pub cold_start_packets: Vec<ContextPacket>,
     pub web_search_enabled: bool,
     pub user_message: String,
+    /// 图片附件（传给 LLM API 的多模态内容）。
+    pub images: Option<Vec<crate::commands::ai_commands::ImageAttachmentDto>>,
     pub history_messages: Vec<(String, String)>,
     pub depth: u32,
     pub resume_from_checkpoint: bool,

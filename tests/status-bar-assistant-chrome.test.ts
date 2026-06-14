@@ -18,6 +18,15 @@ describe("status bar assistant chrome", () => {
     expect(bar).toContain("toolActivityLabel");
   });
 
+  it("StatusBar never renders classified vault lock state in the global status line", () => {
+    const bar = read("src/components/layout/StatusBar.tsx");
+    const app = read("src/App.impl.tsx");
+
+    expect(bar).toContain("isClassifiedStatusLine");
+    expect(bar).not.toContain("{statusLine}");
+    expect(app).not.toContain("涉密保险库已锁定");
+  });
+
   it("StatusBarTokenUsage shows cumulative summary only", () => {
     const token = read("src/components/layout/StatusBarTokenUsage.tsx");
     expect(token).toContain("累计");

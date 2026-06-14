@@ -1,0 +1,3 @@
+-- 回滚：删除 content_parts 列
+-- SQLite < 3.35 不支持 DROP COLUMN，此 down migration 为无操作
+-- 旧数据不受影响，content_parts 列保留但不再被应用读取

@@ -6,24 +6,24 @@ function read(path: string): string {
   return readFileSync(path, "utf8");
 }
 
-describe("SettingsPanel about and legal notice", () => {
-  it("shows control-center sections, copyright, and AGPL license information", () => {
-    const source = read("src/components/settings/SettingsPanel.tsx");
+describe("ManagementCenterPanel system and legal notice", () => {
+  it("merges system and about information into one management section", () => {
+    const source = read("src/components/settings/ManagementCenterPanel.tsx");
 
-    expect(source).toContain('data-testid="settings-control-center"');
-    expect(source).toContain("工作台偏好");
-    expect(source).toContain("联网搜索");
-    expect(source).toContain("系统状态");
-    expect(source).toContain("数据与隐私");
+    expect(source).toContain('data-testid="management-center"');
+    expect(source).toContain('className="grid w-full shrink-0 grid-cols-4');
+    expect(source).toContain("总览");
+    expect(source).toContain("笔记");
+    expect(source).toContain("知识库");
+    expect(source).toContain("AI");
+    expect(source).not.toContain('{ id: "workspace"');
+    expect(source).not.toContain('{ id: "security"');
+    expect(source).not.toContain('{ id: "about"');
+    expect(source).toContain("系统边界");
     expect(source).toContain("关于 Iris");
     expect(source).toContain("Iris");
     expect(source).toContain("版本 1.1.0");
-    expect(source).toContain("Copyright (C) 2026 Iris Contributors");
     expect(source).toContain("GNU Affero General Public License v3.0");
-    expect(source).not.toContain("AI 系统中心");
-    expect(source).not.toContain("LlmRoutingSection");
-    expect(source).not.toContain("MinimaxSearchSection");
-    expect(source).not.toContain("AiRulesPanel");
     expect(source).not.toContain("开发者水印");
   });
 });

@@ -155,4 +155,36 @@ describe("useTabManager handleNewNote", () => {
     expect(apiRef.current!.activePath).toBe("a.md");
     expect(apiRef.current!.tabs.map((t: TabItem) => t.path)).toEqual(["a.md"]);
   });
+
+  it("keeps unsaved live markdown when a placeholder note path is renamed", async () => {
+    const apiRef: { current: ReturnType<typeof useTabManager> | null } = {
+      current: null,
+    };
+    const liveMarkdown =
+      '---\ntitle: "调度优化"\n---\n\n# 调度优化\n\n从网页粘贴进来的正文';
+
+    await act(async () => {
+      root.render(createElement(Harness, { apiRef }));
+    });
+
+    await act(async () => {
+      await apiRef.current!.openFile("未命名文档.md", "未命名文档");
+    });
+
+    await act(async () => {
+      apiRef.current!.replaceOpenTabPath(
+        "未命名文档.md",
+        "调度优化.md",
+        "调度优化",
+        liveMarkdown,
+      );
+    });
+
+    expect(apiRef.current!.activePath).toBe("调度优化.md");
+    expect(apiRef.current!.markdown).toBe(liveMarkdown);
+    expect(apiRef.current!.getEditorMarkdown()).toBe(liveMarkdown);
+    expect(apiRef.current!.getTabMarkdownCached("调度优化.md")).toBe(
+      liveMarkdown,
+    );
+  });
 });

@@ -172,7 +172,11 @@ function needsStrongCloseBoundary(before: string, after: string): boolean {
   return true;
 }
 
-function nextContentChar(lines: string[], lineIndex: number, col: number): string {
+function nextContentChar(
+  lines: string[],
+  lineIndex: number,
+  col: number,
+): string {
   const rest = lines[lineIndex]!.slice(col);
   for (const ch of rest) {
     if (!isUnicodeWhitespace(ch)) return ch;

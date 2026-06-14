@@ -24,6 +24,7 @@ use crate::app::AppState;
 use crate::error::{AppError, AppResult};
 use crate::llm::config::ResolvedLlmConfig;
 use crate::storage::paths::is_user_note_path;
+use serde::{Deserialize, Serialize};
 use tauri::{Emitter, State};
 use tracing::info;
 
@@ -201,6 +202,42 @@ pub(crate) struct AiSendRoutingOverride {
     pub skill_activation_plan: Option<crate::ai_types::SkillActivationPlanSummary>,
 }
 
+/// 前端传入的图片附件 DTO。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[allow(dead_code)] // Cluster C/D 将在后续使用此结构体
+pub struct ImageAttachmentDto {
+    /// UUID 标识
+    pub id: String,
+    /// 纯 base64 数据（不含 `data:` 前缀）
+    pub data_base64: String,
+    /// MIME 类型："image/png" | "image/jpeg" | "image/webp" | "image/gif"
+    pub mime_type: String,
+    /// 原始文件名
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub file_name: Option<String>,
+    /// 文件字节数
+    pub size_bytes: u64,
+}
+
+#[allow(dead_code)] // Cluster C/D 将在后续使用这些方法
+impl ImageAttachmentDto {
+    /// 构造用于 LLM API 的 data URL。
+    pub fn data_url(&self) -> String {
+        format!("data:{};base64,{}", self.mime_type, self.data_base64)
+    }
+
+    /// 转换为多模态 ContentPart。
+    pub fn to_content_part(&self) -> crate::ai_types::ContentPart {
+        crate::ai_types::ContentPart::ImageUrl {
+            image_url: crate::ai_types::ImageUrlPayload {
+                url: self.data_url(),
+                detail: Some("auto".into()),
+            },
+        }
+    }
+}
+
 /// Send an AI message with full LLM pipeline (shared by IPC and assistant facade).
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn execute_ai_send_message(
@@ -209,6 +246,7 @@ pub(crate) async fn execute_ai_send_message(
     scene: String,
     session_id: Option<i64>,
     message: String,
+    images: Option<Vec<ImageAttachmentDto>>,
     selected_packet_ids: Option<Vec<String>>,
     note_path: Option<String>,
     context_scope: Option<ContextScopeDto>,
@@ -221,6 +259,7 @@ pub(crate) async fn execute_ai_send_message(
         scene,
         session_id,
         message,
+        images,
         selected_packet_ids,
         note_path,
         context_scope,
@@ -239,6 +278,7 @@ pub(crate) async fn execute_ai_send_message_with_routing(
     scene: String,
     session_id: Option<i64>,
     message: String,
+    images: Option<Vec<ImageAttachmentDto>>,
     selected_packet_ids: Option<Vec<String>>,
     note_path: Option<String>,
     context_scope: Option<ContextScopeDto>,
@@ -302,8 +342,20 @@ pub(crate) async fn execute_ai_send_message_with_routing(
         SessionManager::ensure(&state.db, scene, note_path.as_deref())?
     };
 
-    // Save user message
-    SessionManager::append_message(&state.db, sid, "user", &message, None)?;
+    // Save user message (with content_parts if images present)
+    let content_parts_json: Option<String> = images.as_ref().map(|imgs| {
+        let parts: Vec<crate::ai_types::ContentPart> =
+            imgs.iter().map(|img| img.to_content_part()).collect();
+        serde_json::to_string(&parts).unwrap_or_default()
+    });
+    SessionManager::append_message(
+        &state.db,
+        sid,
+        "user",
+        &message,
+        content_parts_json.as_deref(),
+        None,
+    )?;
 
     // Get session history for context
     let history = SessionManager::recent_messages(&state.db, sid, 20)?;
@@ -415,6 +467,7 @@ pub(crate) async fn execute_ai_send_message_with_routing(
             cold_start_packets: filtered_packets.clone(),
             web_search_enabled: web_search,
             user_message: message.clone(),
+            images,
             history_messages,
             depth: 0,
             resume_from_checkpoint: false,
@@ -478,6 +531,7 @@ pub async fn ai_send_message(
     scene: String,
     session_id: Option<i64>,
     message: String,
+    images: Option<Vec<ImageAttachmentDto>>,
     selected_packet_ids: Option<Vec<String>>,
     note_path: Option<String>,
     context_scope: Option<ContextScopeDto>,
@@ -490,6 +544,7 @@ pub async fn ai_send_message(
         scene,
         session_id,
         message,
+        images,
         selected_packet_ids,
         note_path,
         context_scope,
@@ -519,6 +574,7 @@ fn finalize_chat_harness_run(
         session_id,
         "assistant",
         &harness_result.content,
+        None,
         tool_calls_value.as_ref(),
     )?;
 
@@ -655,7 +711,7 @@ pub async fn tool_confirm(
                 matches!(m.role, crate::ai_runtime::model_gateway::MessageRole::Tool)
                     && m.tool_call_id.as_deref() == Some(tool_call_id.as_str())
             }) {
-                if let Ok(json) = serde_json::from_str::<serde_json::Value>(&msg.content) {
+                if let Ok(json) = serde_json::from_str::<serde_json::Value>(msg.content.as_str()) {
                     installed_skill = json.get("name").and_then(|n| n.as_str()).map(String::from);
                 }
             }
@@ -1223,5 +1279,67 @@ mod tests {
     fn ai_note_path_allows_user_notes_and_empty_context() {
         assert!(validate_ai_note_path(Some("notes/open.md")).is_ok());
         assert!(validate_ai_note_path(None).is_ok());
+    }
+
+    mod image_attachment_dto {
+        use crate::ai_types::ContentPart;
+        use crate::commands::ai_commands::ImageAttachmentDto;
+
+        fn test_image() -> ImageAttachmentDto {
+            ImageAttachmentDto {
+                id: "img-001".into(),
+                data_base64: "iVBORw0KGgo=".into(),
+                mime_type: "image/png".into(),
+                file_name: Some("screenshot.png".into()),
+                size_bytes: 42_000,
+            }
+        }
+
+        #[test]
+        fn data_url_includes_mime_and_base64() {
+            let img = test_image();
+            let url = img.data_url();
+            assert_eq!(url, "data:image/png;base64,iVBORw0KGgo=");
+        }
+
+        #[test]
+        fn to_content_part_produces_image_url() {
+            let img = test_image();
+            let part = img.to_content_part();
+            match part {
+                ContentPart::ImageUrl { image_url } => {
+                    assert_eq!(image_url.url, "data:image/png;base64,iVBORw0KGgo=");
+                    assert_eq!(image_url.detail.as_deref(), Some("auto"));
+                }
+                _ => panic!("expected ImageUrl"),
+            }
+        }
+
+        #[test]
+        fn serialization_round_trip() {
+            let img = test_image();
+            let json = serde_json::to_string(&img).unwrap();
+            assert!(json.contains("img-001"));
+            assert!(json.contains("screenshot.png"));
+            assert!(json.contains("dataBase64")); // camelCase
+
+            let restored: ImageAttachmentDto = serde_json::from_str(&json).unwrap();
+            assert_eq!(restored.id, "img-001");
+            assert_eq!(restored.data_base64, "iVBORw0KGgo=");
+            assert_eq!(restored.mime_type, "image/png");
+            assert_eq!(restored.size_bytes, 42_000);
+        }
+
+        #[test]
+        fn serialized_json_has_snake_case_fields_for_rust_side() {
+            // Verify camelCase for frontend IPC, but internal Rust can use snake_case
+            let img = test_image();
+            let json_str = serde_json::to_string(&img).unwrap();
+            // The #[serde(rename_all = "camelCase")] should produce camelCase keys
+            assert!(json_str.contains("\"dataBase64\""));
+            assert!(json_str.contains("\"mimeType\""));
+            assert!(json_str.contains("\"fileName\""));
+            assert!(json_str.contains("\"sizeBytes\""));
+        }
     }
 }

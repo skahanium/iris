@@ -970,7 +970,7 @@ async fn generate_llm_document_patches(
         messages: vec![
             LlmMessage {
                 role: MessageRole::System,
-                content: system,
+                content: system.into(),
                 tool_call_id: None,
                 tool_calls: None,
 
@@ -978,7 +978,7 @@ async fn generate_llm_document_patches(
             },
             LlmMessage {
                 role: MessageRole::User,
-                content: user,
+                content: user.into(),
                 tool_call_id: None,
                 tool_calls: None,
 
@@ -1077,7 +1077,7 @@ pub async fn enhance_document_check_with_llm(
         messages: vec![
             LlmMessage {
                 role: MessageRole::System,
-                content: system,
+                content: system.into(),
                 tool_call_id: None,
                 tool_calls: None,
 
@@ -1085,7 +1085,7 @@ pub async fn enhance_document_check_with_llm(
             },
             LlmMessage {
                 role: MessageRole::User,
-                content: user,
+                content: user.into(),
                 tool_call_id: None,
                 tool_calls: None,
 

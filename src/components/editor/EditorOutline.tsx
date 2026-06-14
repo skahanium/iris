@@ -1,4 +1,5 @@
 import type { Editor } from "@tiptap/react";
+import { TextSelection } from "@tiptap/pm/state";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { ListTree } from "lucide-react";
 import {
@@ -17,24 +18,18 @@ import {
 } from "@/lib/document-outline";
 import { cn } from "@/lib/utils";
 
-const LEVEL_STYLES: Record<
-  number,
-  { fontSize: string; indent: string; markerSize: string }
-> = {
+const LEVEL_STYLES: Record<number, { fontSize: string; indent: string }> = {
   1: {
     fontSize: "0.95rem",
     indent: "0rem",
-    markerSize: "5px",
   },
   2: {
     fontSize: "0.82rem",
     indent: "1.35rem",
-    markerSize: "4px",
   },
   3: {
     fontSize: "0.72rem",
     indent: "2.5rem",
-    markerSize: "3px",
   },
 };
 
@@ -42,6 +37,7 @@ interface EditorOutlineProps {
   editor: Editor | null;
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  locked?: boolean;
   zen?: boolean;
 }
 
@@ -53,6 +49,7 @@ export const EditorOutline = memo(function EditorOutline({
   editor,
   open,
   onOpenChange,
+  locked = false,
   zen = false,
 }: EditorOutlineProps) {
   const [entries, setEntries] = useState<OutlineEntry[]>([]);
@@ -173,9 +170,24 @@ export const EditorOutline = memo(function EditorOutline({
   const jumpTo = useCallback(
     (pos: number) => {
       if (!editor) return;
+      if (locked) {
+        const { doc } = editor.state;
+        const resolvedPos = Math.max(0, Math.min(pos, doc.content.size));
+        const selection = TextSelection.create(doc, resolvedPos);
+        editor.view.dispatch(
+          editor.state.tr.setSelection(selection).scrollIntoView(),
+        );
+        const targetNode = editor.view.nodeDOM(resolvedPos);
+        const targetElement =
+          targetNode instanceof Element
+            ? targetNode
+            : targetNode?.parentElement;
+        targetElement?.scrollIntoView({ block: "start" });
+        return;
+      }
       editor.chain().focus().setTextSelection(pos).scrollIntoView().run();
     },
-    [editor],
+    [editor, locked],
   );
 
   const moveFocus = useCallback(
@@ -246,7 +258,6 @@ export const EditorOutline = memo(function EditorOutline({
     const itemStyle: CSSProperties = {
       "--outline-level-size": lvl.fontSize,
       "--outline-text-indent": lvl.indent,
-      "--outline-marker-size": lvl.markerSize,
       paddingLeft: `calc(${lvl.indent} + 0.5rem)`,
     } as CSSProperties;
     return (
@@ -282,7 +293,6 @@ export const EditorOutline = memo(function EditorOutline({
           setHoverIndex(null);
         }}
       >
-        <span className="outline-ghost-marker" aria-hidden />
         <span
           className="outline-ghost-text block min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap text-left"
           title={entry.text}

@@ -227,7 +227,7 @@ impl ModelGateway {
         let persona = Self::unified_persona(scene, web_search);
         let mut messages = vec![LlmMessage {
             role: MessageRole::System,
-            content: persona,
+            content: persona.into(),
             tool_call_id: None,
             tool_calls: None,
             ..Default::default()
@@ -240,7 +240,7 @@ impl ModelGateway {
             }
             messages.push(LlmMessage {
                 role: MessageRole::System,
-                content: rules,
+                content: rules.into(),
                 tool_call_id: None,
                 tool_calls: None,
                 ..Default::default()
@@ -250,7 +250,7 @@ impl ModelGateway {
         if !packets.is_empty() {
             messages.push(LlmMessage {
                 role: MessageRole::System,
-                content: Self::format_evidence_packets(packets),
+                content: Self::format_evidence_packets(packets).into(),
                 tool_call_id: None,
                 tool_calls: None,
                 ..Default::default()
@@ -556,7 +556,7 @@ mod tests {
     fn messages_for_api_includes_reasoning_content_with_tool_calls() {
         let messages = vec![LlmMessage {
             role: MessageRole::Assistant,
-            content: String::new(),
+            content: String::new().into(),
             tool_call_id: None,
             tool_calls: Some(vec![ToolCall::new(
                 "call_1",
@@ -585,7 +585,7 @@ mod tests {
         let messages = vec![
             LlmMessage {
                 role: MessageRole::Assistant,
-                content: String::new(),
+                content: String::new().into(),
                 tool_call_id: None,
                 tool_calls: Some(vec![ToolCall::new(
                     "call_1",
@@ -632,7 +632,7 @@ mod tests {
             },
             LlmMessage {
                 role: MessageRole::Assistant,
-                content: String::new(),
+                content: String::new().into(),
                 tool_call_id: None,
                 tool_calls: Some(vec![ToolCall::new(
                     "call_1",

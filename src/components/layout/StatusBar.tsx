@@ -1,12 +1,10 @@
 import { memo } from "react";
-import { Moon, Redo2, Sun, Undo2 } from "lucide-react";
+import { Moon, Network, Redo2, Settings, Sun, Undo2 } from "lucide-react";
 
 import { ConnectivityIndicators } from "@/components/layout/ConnectivityIndicators";
 import { EditorZoomControl } from "@/components/layout/EditorZoomControl";
 import { StatusBarTokenUsage } from "@/components/layout/StatusBarTokenUsage";
-import { Kbd } from "@/components/ui/kbd";
 import { dispatchOpenAuditTrail } from "@/lib/audit-trail-events";
-import { formatCommandPaletteShortcut } from "@/lib/utils";
 import type { AssistantChromeSnapshot } from "@/types/assistant-chrome";
 import type { ConnectivityStatus } from "@/types/llm";
 
@@ -34,10 +32,15 @@ interface StatusBarProps {
   onThemeChange: (theme: "dark" | "light") => void;
   connectivity?: ConnectivityStatus | null;
   onOpenConnectivitySettings?: () => void;
-  /** ⌘K 和弦等待第二键 */
-  keyboardLeaderPending?: boolean;
+  onOpenManagementCenter?: () => void;
+  onOpenGraph?: () => void;
   /** AI 侧栏上报的 Token / 工具活动（见 UnifiedAssistantPanel） */
   assistantChrome?: AssistantChromeSnapshot | null;
+}
+
+function isClassifiedStatusLine(value: string | null | undefined) {
+  if (!value) return false;
+  return /涉密|保险库|classified/i.test(value);
 }
 
 export const StatusBar = memo(function StatusBar({
@@ -62,20 +65,19 @@ export const StatusBar = memo(function StatusBar({
   onThemeChange,
   connectivity = null,
   onOpenConnectivitySettings,
-  keyboardLeaderPending = false,
+  onOpenManagementCenter,
+  onOpenGraph,
   assistantChrome = null,
 }: StatusBarProps) {
   const trimmedTitle = documentTitle?.trim();
   const label = trimmedTitle || (path ? "无标题" : "未打开文件");
 
   const toolLabel = assistantChrome?.toolActivityLabel?.trim() ?? null;
-  const statusLine = keyboardLeaderPending
-    ? "⌘K 等待第二键…"
-    : toolLabel || aiStatus;
-  const statusTitle = keyboardLeaderPending
-    ? "⌘K 等待第二键，Esc 取消"
-    : [toolLabel, !toolLabel ? aiStatus : null].filter(Boolean).join(" · ") ||
-      aiStatus;
+  const rawStatusLine = toolLabel || aiStatus;
+  const safeStatusLine = isClassifiedStatusLine(rawStatusLine)
+    ? ""
+    : rawStatusLine;
+  const statusTitle = [safeStatusLine].filter(Boolean).join(" · ") || undefined;
 
   return (
     <footer
@@ -148,19 +150,46 @@ export const StatusBar = memo(function StatusBar({
         </>
       ) : null}
       <div className="ml-auto flex min-w-0 shrink-0 items-center gap-3">
-        <span
-          className="hidden shrink-0 items-center gap-1.5 text-muted-foreground sm:inline-flex"
-          title="打开命令面板"
-        >
-          <span>命令</span>
-          <Kbd>{formatCommandPaletteShortcut()}</Kbd>
-        </span>
-        <span
-          className="hidden shrink-0 text-muted-foreground/60 sm:inline"
-          aria-hidden
-        >
-          ·
-        </span>
+        {onOpenManagementCenter ? (
+          <>
+            <button
+              type="button"
+              title="打开管理中心"
+              aria-label="打开管理中心"
+              data-testid="status-bar-management-button"
+              className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-sm border border-border/40 bg-surface-inset/30 text-muted-foreground transition-[background-color,color,transform] duration-base ease-iris-out hover:bg-muted/50 hover:text-foreground focus:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-1 focus-visible:ring-offset-panel active:scale-[0.98]"
+              onClick={onOpenManagementCenter}
+            >
+              <Settings className="h-3.5 w-3.5" />
+            </button>
+            <span
+              className="hidden shrink-0 text-muted-foreground/60 sm:inline"
+              aria-hidden
+            >
+              ·
+            </span>
+          </>
+        ) : null}
+        {onOpenGraph ? (
+          <>
+            <button
+              type="button"
+              title="打开知识图谱"
+              aria-label="打开知识图谱"
+              data-testid="status-bar-graph-button"
+              className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-sm border border-border/40 bg-surface-inset/30 text-muted-foreground transition-[background-color,color,transform] duration-base ease-iris-out hover:bg-muted/50 hover:text-foreground focus:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-1 focus-visible:ring-offset-panel active:scale-[0.98]"
+              onClick={onOpenGraph}
+            >
+              <Network className="h-3.5 w-3.5" />
+            </button>
+            <span
+              className="hidden shrink-0 text-muted-foreground/60 sm:inline"
+              aria-hidden
+            >
+              ·
+            </span>
+          </>
+        ) : null}
         <ConnectivityIndicators
           status={connectivity}
           onOpenSettings={onOpenConnectivitySettings}
@@ -208,17 +237,21 @@ export const StatusBar = memo(function StatusBar({
             </button>
           </>
         ) : null}
-        <span className="text-muted-foreground/60" aria-hidden>
-          ·
-        </span>
-        <span
-          className="max-w-[14rem] truncate"
-          title={statusTitle}
-          role="status"
-          aria-live="polite"
-        >
-          {statusLine}
-        </span>
+        {safeStatusLine ? (
+          <>
+            <span className="text-muted-foreground/60" aria-hidden>
+              ·
+            </span>
+            <span
+              className="max-w-[14rem] truncate"
+              title={statusTitle}
+              role="status"
+              aria-live="polite"
+            >
+              {safeStatusLine}
+            </span>
+          </>
+        ) : null}
       </div>
     </footer>
   );

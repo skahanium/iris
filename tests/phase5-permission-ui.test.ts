@@ -7,32 +7,25 @@ function read(path: string): string {
 }
 
 describe("Phase5 permission UI", () => {
-  it("adds a Markdown Agent permissions section to AI System Center", () => {
-    const source = read("src/components/settings/AiSystemCenterPanel.tsx");
+  it("keeps Management Center as a plain-language boundary summary", () => {
+    const source = read("src/components/settings/ManagementCenterPanel.tsx");
 
-    expect(source).toContain("Markdown Agent 权限");
-    expect(source).toContain('id: "permissions"');
-    expect(source).toContain('data-testid="agent-permission-settings"');
-    for (const label of [
-      "Vault",
-      "外部文件",
-      "文档处理",
-      "Web",
-      "Skills",
-      "Shell/Git",
-      "Clipboard/Browser",
-      "Secrets",
-    ]) {
-      expect(source).toContain(label);
-    }
+    expect(source).toContain("系统边界");
+    expect(source).toContain("权限边界");
+    expect(source).toContain("凭据边界");
+    expect(source).toContain("API Key 保存在系统凭据管理器");
+    expect(source).not.toContain("Markdown Agent 权限");
+    expect(source).not.toContain("permissions:");
+    expect(source).not.toContain('data-testid="agent-permission-settings"');
   });
 
-  it("keeps the main settings panel as a concise permission entry point", () => {
-    const source = read("src/components/settings/SettingsPanel.tsx");
+  it("does not expose raw permission codes or secret capabilities in Management Center", () => {
+    const source = read("src/components/settings/ManagementCenterPanel.tsx");
 
-    expect(source).toContain("Markdown Agent 权限");
-    expect(source).toContain("vault.write.patch");
-    expect(source).toContain("secret.read_plaintext");
+    expect(source).toContain("凭据边界");
+    expect(source).not.toContain("vault.write.patch");
+    expect(source).not.toContain("secret.read_plaintext");
+    expect(source).not.toContain("涉密面板");
   });
 
   it("renders permission effects in tool confirmation before raw arguments", () => {

@@ -5,13 +5,25 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { AiMessage } from "@/components/ui/ai-message";
 import { AiMessageBubble } from "@/components/ai/AiMessageBubble";
 import { ResearchResultMessage } from "@/components/ai/ResearchResultMessage";
-import type { ResearchFocusPayload } from "@/types/ai";
+import type { ContentPart, ResearchFocusPayload } from "@/types/ai";
 
 import type { ToolCallInfo } from "@/types/ai";
+
+export interface ImageAttachment {
+  id: string;
+  dataBase64: string;
+  mimeType: string;
+  fileName?: string;
+  sizeBytes: number;
+}
 
 export interface ChatLine {
   role: "user" | "assistant" | "system";
   content: string;
+  /** 多模态原始数据（传给后端）；纯文本时为 undefined */
+  contentParts?: ContentPart[];
+  /** 前端渲染用图片列表 */
+  images?: ImageAttachment[];
   seq?: number;
   created_at?: string;
   toolCalls?: ToolCallInfo[];
@@ -163,6 +175,7 @@ export const AiMessageList = memo(function AiMessageList({
             role="user"
             content={m.content}
             selected={isSelected}
+            images={m.images}
           />
         </div>
       );

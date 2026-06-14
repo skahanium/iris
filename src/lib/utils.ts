@@ -15,10 +15,6 @@ export interface KeyChord {
   shift?: boolean;
   requireNote?: boolean;
   requireVault?: boolean;
-  /** 引导键标识符（如 ⌘K）：按下后进入等待态，不直接分发 */
-  leader?: string;
-  /** 仅在指定引导键后被激活 */
-  afterLeader?: string;
 }
 
 export function matchesKeyChord(e: KeyboardEvent, chord: KeyChord): boolean {
@@ -50,16 +46,6 @@ export function formatShortcut(chord: KeyChord): string {
   if (chord.shift) parts.push(isMac ? "⇧" : "Shift");
   parts.push(chord.key);
   return parts.join(isMac ? "" : "+");
-}
-
-/** Leader 第二键展示，如 ⌘K W */
-export function formatLeaderChordShortcut(
-  leaderKey: string,
-  secondKey: string,
-): string {
-  const isMac = isMacPlatform();
-  const leader = isMac ? `⌘${leaderKey}` : `Ctrl+${leaderKey}`;
-  return `${leader} ${secondKey.toUpperCase()}`;
 }
 
 /** 状态栏等处的命令面板快捷键展示 */
