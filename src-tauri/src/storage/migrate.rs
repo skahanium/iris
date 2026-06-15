@@ -68,6 +68,8 @@ const MIGRATION_027_UP: &str = include_str!("../../migrations/027_agent_permissi
 const MIGRATION_027_DOWN: &str = include_str!("../../migrations/027_agent_permissions.down.sql");
 const MIGRATION_028_UP: &str = include_str!("../../migrations/028_multimodal_messages.sql");
 const MIGRATION_028_DOWN: &str = include_str!("../../migrations/028_multimodal_messages.down.sql");
+const MIGRATION_029_UP: &str = include_str!("../../migrations/029_model_registry.sql");
+const MIGRATION_029_DOWN: &str = include_str!("../../migrations/029_model_registry.down.sql");
 
 fn is_applied(conn: &Connection, name: &str) -> bool {
     conn.query_row(
@@ -164,6 +166,7 @@ pub fn migrate_up(conn: &Connection) -> AppResult<()> {
     )?;
     apply_migration(conn, "027_agent_permissions", MIGRATION_027_UP, false)?;
     apply_migration(conn, "028_multimodal_messages", MIGRATION_028_UP, false)?;
+    apply_migration(conn, "029_model_registry", MIGRATION_029_UP, false)?;
 
     Ok(())
 }
@@ -175,6 +178,7 @@ fn rollback_migration(conn: &Connection, name: &str, sql: &str) {
 
 /// Roll back all migrations in strict reverse order (for tests).
 pub fn migrate_down(conn: &Connection) -> AppResult<()> {
+    rollback_migration(conn, "029_model_registry", MIGRATION_029_DOWN);
     rollback_migration(conn, "028_multimodal_messages", MIGRATION_028_DOWN);
     rollback_migration(conn, "027_agent_permissions", MIGRATION_027_DOWN);
     rollback_migration(
@@ -789,6 +793,51 @@ mod tests {
             .map(|c| c > 0)
             .unwrap();
         assert!(!gone);
+    }
+
+    #[test]
+    fn migration_029_creates_model_registry() {
+        let conn = Connection::open_in_memory().unwrap();
+        migrate_up(&conn).unwrap();
+
+        let has_table: bool = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='llm_model_registry'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .map(|c| c > 0)
+            .unwrap();
+        assert!(has_table, "missing llm_model_registry table");
+
+        let has_provider_index: bool = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='idx_llm_model_registry_provider'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .map(|c| c > 0)
+            .unwrap();
+        assert!(has_provider_index, "missing provider index");
+
+        conn.execute(
+            "INSERT INTO llm_model_registry
+             (provider_id, model_id, display_name, source, stale, first_seen_at, last_seen_at,
+              last_refreshed_at, user_confirmed_capabilities)
+             VALUES ('custom', 'model-a', 'Model A', 'provider_discovered', 0,
+                     datetime('now'), datetime('now'), datetime('now'), '[]')",
+            [],
+        )
+        .unwrap();
+
+        let source: String = conn
+            .query_row(
+                "SELECT source FROM llm_model_registry WHERE provider_id = 'custom' AND model_id = 'model-a'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(source, "provider_discovered");
     }
 
     #[test]
