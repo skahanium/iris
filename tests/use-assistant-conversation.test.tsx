@@ -3,7 +3,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { useAssistantConversation } from "@/components/ai/hooks/useAssistantConversation";
-import type { ChatLine } from "@/components/ai/AiMessageList";
+import type { ChatLine, ImageAttachment } from "@/components/ai/AiMessageList";
 
 type HookApi = ReturnType<typeof useAssistantConversation>;
 
@@ -85,6 +85,28 @@ describe("useAssistantConversation", () => {
 
     expect(api.messages).toEqual<ChatLine[]>([
       { role: "user", content: "summarize 「Research/Notes.md」 please" },
+    ]);
+  });
+
+  it("does not prefix image attachment messages with a redundant image marker", async () => {
+    const image: ImageAttachment = {
+      id: "img-1",
+      dataBase64: "abc123",
+      mimeType: "image/png",
+      fileName: "sand.png",
+      sizeBytes: 123,
+    };
+
+    await act(async () => {
+      api.appendUserMessage("这是一张什么样的图片？", [image]);
+    });
+
+    expect(api.messages).toEqual<ChatLine[]>([
+      {
+        role: "user",
+        content: "这是一张什么样的图片？",
+        images: [image],
+      },
     ]);
   });
 

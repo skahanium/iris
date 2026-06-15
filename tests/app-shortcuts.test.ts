@@ -62,6 +62,12 @@ describe("app shortcuts", () => {
       shift: true,
       requireVault: true,
     });
+    expect(byId.get("file-sheet")?.chord).toEqual({
+      key: "E",
+      mod: true,
+      shift: true,
+      requireVault: true,
+    });
   });
 
   it("keeps former command palette entries reachable only as management actions", () => {
@@ -72,7 +78,6 @@ describe("app shortcuts", () => {
     const byId = new Map(shortcuts.map((item) => [item.id, item]));
 
     for (const id of [
-      "file-sheet",
       "recycle-bin",
       "knowledge-relations",
       "graph",

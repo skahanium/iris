@@ -56,12 +56,21 @@ export function buildAppShortcutItems(
     {
       id: "file-sheet",
       disabled: vaultOnly,
-      action: { type: "openOverlay", overlay: "fileSheet" },
+      chord: { key: "E", mod: true, shift: true, requireVault: true },
+      action: {
+        type: "openManagementCenter",
+        section: "notes",
+        detail: "file-sheet",
+      },
     },
     {
       id: "recycle-bin",
       disabled: vaultOnly,
-      action: { type: "openOverlay", overlay: "recycleBin" },
+      action: {
+        type: "openManagementCenter",
+        section: "notes",
+        detail: "recycle-bin",
+      },
     },
     {
       id: "classified-panel",

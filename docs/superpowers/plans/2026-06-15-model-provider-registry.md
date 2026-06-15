@@ -32,6 +32,7 @@
 ## Task 1: Contract Tests For Registry Page And IPC
 
 **Files:**
+
 - Create: `tests/model-provider-registry.test.ts`
 - Modify: `tests/phase3-model-persona-routing.test.ts`
 
@@ -52,9 +53,9 @@ describe("model provider registry contract", () => {
   it("splits provider health, model catalog, and capability routing", () => {
     const section = read("src/components/settings/LlmRoutingSection.tsx");
 
-    expect(section).toContain("data-section=\"llm-providers\"");
-    expect(section).toContain("data-section=\"llm-model-catalog\"");
-    expect(section).toContain("data-section=\"llm-capability-routing\"");
+    expect(section).toContain('data-section="llm-providers"');
+    expect(section).toContain('data-section="llm-model-catalog"');
+    expect(section).toContain('data-section="llm-capability-routing"');
     expect(section).toContain("测试供应商");
     expect(section).toContain("刷新模型列表");
     expect(section).toContain("验证模型");
@@ -136,6 +137,7 @@ git commit -m "test(ai): 补充模型供应商注册中心契约"
 ## Task 2: Model Registry Migration And Storage API
 
 **Files:**
+
 - Create: `src-tauri/migrations/029_model_registry.sql`
 - Create: `src-tauri/migrations/029_model_registry.down.sql`
 - Create: `src-tauri/src/llm/model_registry.rs`
@@ -459,6 +461,7 @@ git commit -m "feat(ai): 添加模型注册表缓存"
 ## Task 3: Backend Provider Refresh And Validation IPC
 
 **Files:**
+
 - Modify: `src-tauri/src/commands/llm_config_commands.rs`
 - Modify: `src-tauri/src/lib.rs`
 - Modify: `src-tauri/src/llm/providers.rs`
@@ -846,6 +849,7 @@ git commit -m "feat(ai): 拆分供应商与模型验证命令"
 ## Task 4: TypeScript Types And IPC Wrappers
 
 **Files:**
+
 - Modify: `src/types/llm.ts`
 - Modify: `src/lib/ipc.ts`
 
@@ -854,10 +858,7 @@ git commit -m "feat(ai): 拆分供应商与模型验证命令"
 In `src/types/llm.ts`, add:
 
 ```ts
-export type ModelRegistrySource =
-  | "built_in"
-  | "provider_discovered"
-  | "manual";
+export type ModelRegistrySource = "built_in" | "provider_discovered" | "manual";
 
 export type ModelValidationKind = "text" | "vision";
 
@@ -970,6 +971,7 @@ git commit -m "feat(ai): 添加模型注册中心前端契约"
 ## Task 5: Backend Config Response Includes Registry And Legacy Models
 
 **Files:**
+
 - Modify: `src-tauri/src/commands/llm_config_commands.rs`
 - Modify: `src-tauri/src/llm/model_registry.rs`
 
@@ -1125,6 +1127,7 @@ git commit -m "feat(ai): 合并内置与手动模型目录"
 ## Task 6: React Registry UI Refactor
 
 **Files:**
+
 - Modify: `src/components/settings/LlmRoutingSection.tsx`
 
 - [ ] **Step 1: Add helper functions in the component**
@@ -1142,7 +1145,11 @@ function supportsModelForSlot(
   catalog: ModelCatalogEntry | undefined,
 ): boolean {
   if (slot === "fast" || slot === "writer") {
-    return Boolean(catalog) || Boolean(model.textVerifiedAt) || model.source === "manual";
+    return (
+      Boolean(catalog) ||
+      Boolean(model.textVerifiedAt) ||
+      model.source === "manual"
+    );
   }
   if (slot === "vision") {
     return (
@@ -1200,7 +1207,9 @@ Add state:
 const [providerResults, setProviderResults] = useState<
   Record<string, { ok: boolean; message: string }>
 >({});
-const [refreshingProvider, setRefreshingProvider] = useState<string | null>(null);
+const [refreshingProvider, setRefreshingProvider] = useState<string | null>(
+  null,
+);
 ```
 
 Add handlers:
@@ -1351,11 +1360,13 @@ const models = modelsForSlot(slot, providerId);
 Replace model select item IDs:
 
 ```tsx
-{models.map((model) => (
-  <SelectItem key={model.modelId} value={model.modelId}>
-    {model.displayName}
-  </SelectItem>
-))}
+{
+  models.map((model) => (
+    <SelectItem key={model.modelId} value={model.modelId}>
+      {model.displayName}
+    </SelectItem>
+  ));
+}
 ```
 
 - [ ] **Step 7: Run frontend tests**
@@ -1379,6 +1390,7 @@ git commit -m "feat(ui): 重构模型供应商注册中心"
 ## Task 7: Background Refresh Scheduler
 
 **Files:**
+
 - Modify: `src/components/settings/LlmRoutingSection.tsx`
 - Modify: `src/lib/ipc.ts`
 - Modify: `src/types/llm.ts`
@@ -1460,6 +1472,7 @@ git commit -m "feat(ai): 自动刷新已配置供应商模型"
 ## Task 8: Documentation And Full Verification
 
 **Files:**
+
 - Modify: `docs/llm-routing.md`
 - Modify: `docs/design-system.md`
 - Modify: `ROADMAP.md`

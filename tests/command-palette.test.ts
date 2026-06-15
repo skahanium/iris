@@ -128,6 +128,20 @@ describe("command palette", () => {
       section: "overview",
     });
 
+    const fileSheet = items.find((i) => i.id === "file-sheet");
+    expect(fileSheet?.action).toEqual({
+      type: "openManagementCenter",
+      section: "notes",
+      detail: "file-sheet",
+    });
+
+    const recycleBin = items.find((i) => i.id === "recycle-bin");
+    expect(recycleBin?.action).toEqual({
+      type: "openManagementCenter",
+      section: "notes",
+      detail: "recycle-bin",
+    });
+
     const aiCenter = items.find((i) => i.id === "ai-system-center");
     expect(aiCenter?.action).toEqual({
       type: "openManagementCenter",
@@ -153,8 +167,14 @@ describe("command palette", () => {
     expect(JSON.stringify(items)).not.toContain("leader");
     expect(JSON.stringify(items)).not.toContain("afterLeader");
 
+    expect(byId.get("file-sheet")?.chord).toEqual({
+      key: "E",
+      mod: true,
+      shift: true,
+      requireVault: true,
+    });
+
     for (const id of [
-      "file-sheet",
       "recycle-bin",
       "knowledge-relations",
       "graph",

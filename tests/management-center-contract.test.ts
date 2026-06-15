@@ -54,7 +54,12 @@ describe("management center contract", () => {
     for (const label of ["知识关联", "重建库索引", "版本追踪"]) {
       expect(center).toContain(label);
     }
-    for (const removed of ["快速打开", "知识图谱", "浏览笔记库", "回收站"]) {
+    for (const label of ["浏览笔记库", "回收站"]) {
+      expect(center).toContain(label);
+    }
+    expect(center).toContain("VaultNavigatorBody");
+    expect(center).toContain("RecycleBinBody");
+    for (const removed of ["快速打开", "知识图谱"]) {
       expect(center).not.toContain(removed);
     }
     expect(center).not.toContain("renderTaskDetail");
@@ -97,6 +102,15 @@ describe("management center contract", () => {
     expect(center).toContain("AiRulesPanel");
     expect(center).toContain("renderAiDetail");
     expect(center).toContain("openAiDetail");
+  });
+
+  it("anchors management switches so the thumb stays inside the track", () => {
+    const center = read("src/components/settings/ManagementCenterPanel.tsx");
+
+    expect(center).toContain('role="switch"');
+    expect(center).toContain("left-1 top-1");
+    expect(center).toContain("translate-x-5");
+    expect(center).not.toContain("translate-x-6");
   });
 
   it("presents system and about information in overview without classified or fake button affordances", () => {

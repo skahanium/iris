@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+
 import { ingestMarkdownForEditor } from "@/lib/editor-ingest";
 import { editorHtmlHasVisibleFailedBold } from "@/lib/editor-html-cache";
 import {
@@ -6,46 +7,52 @@ import {
   markdownBodyToEditorHtml,
   markdownToHtml,
 } from "@/lib/markdown";
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
 
-const mimoPath = resolve(
-  process.env.HOME ?? "",
-  "Iris-test/MiMo-V2.5 系列推理全链路优化：将 Hybrid SWA 效率推向极致.md",
-);
+const escapedStrongListItem =
+  "- \\*\\*Physical layer:\\*\\* keeps the shared KV pool stable.";
 
 describe("escaped strong delimiters in MiMo note", () => {
   it("documents exporter mistake pattern", () => {
-    const escaped = "- \\*\\*物理层面：\\*\\*分别维护";
-    expect(escaped).toContain("\\*\\*物理层面");
+    expect(escapedStrongListItem).toContain("\\*\\*Physical layer:");
   });
 
   it("markdownToHtml repairs backslash-escaped strong delimiters", () => {
-    const md = "- \\*\\*物理层面：\\*\\*分别维护 Full KV pool";
-    const html = markdownToHtml(md);
-    expect(html).toContain("<strong>物理层面：</strong>");
-    expect(html).not.toContain("**物理层面：**");
+    const html = markdownToHtml(escapedStrongListItem);
+
+    expect(html).toContain("<strong>Physical layer:</strong>");
+    expect(html).not.toContain("**Physical layer:**");
   });
 
   it("turndown does not re-escape list item bold", () => {
-    const md = "- **物理层面：**分别维护 Full KV pool";
+    const md = "- **Physical layer:** keeps the shared KV pool stable.";
     const html = markdownBodyToEditorHtml(md);
     const back = editorBodyHtmlToMarkdown(html);
+
     expect(back).not.toMatch(/\\\*\\\*/);
-    expect(back).toContain("**物理层面：**");
+    expect(back).toContain("**Physical layer:**");
   });
 
   it("repairs backslash-escaped strong delimiters on ingest", () => {
-    const md = "- \\*\\*物理层面：\\*\\*分别维护 Full KV pool";
-    const { tipTapHtml } = ingestMarkdownForEditor({ bodyMarkdown: md });
-    expect(tipTapHtml).toContain("<strong>物理层面：</strong>");
+    const { tipTapHtml } = ingestMarkdownForEditor({
+      bodyMarkdown: escapedStrongListItem,
+    });
+
+    expect(tipTapHtml).toContain("<strong>Physical layer:</strong>");
     expect(editorHtmlHasVisibleFailedBold(tipTapHtml)).toBe(false);
   });
 
   it("ingests MiMo note without visible failed bold", () => {
-    const body = readFileSync(mimoPath, "utf8");
+    const body = [
+      "---",
+      "title: MiMo escaped strong fixture",
+      "---",
+      "",
+      escapedStrongListItem,
+      "- \\*\\*Routing layer:\\*\\* keeps the visible title clean.",
+    ].join("\n");
     const bodyMd = body.replace(/^---[\s\S]*?---\n?/, "").trim();
     const { tipTapHtml } = ingestMarkdownForEditor({ bodyMarkdown: bodyMd });
+
     expect(editorHtmlHasVisibleFailedBold(tipTapHtml)).toBe(false);
   });
 });

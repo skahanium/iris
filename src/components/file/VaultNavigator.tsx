@@ -184,7 +184,11 @@ function TreeFolder({
   );
 }
 
-export function VaultNavigator({ open, onClose, onOpen }: VaultNavigatorProps) {
+export function VaultNavigatorBody({
+  open,
+  onClose,
+  onOpen,
+}: VaultNavigatorProps) {
   const [files, setFiles] = useState<FileListItem[]>([]);
   const [folders, setFolders] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
@@ -485,433 +489,424 @@ export function VaultNavigator({ open, onClose, onOpen }: VaultNavigatorProps) {
 
   return (
     <>
-      <IrisOverlay
-        open={open}
-        onClose={onClose}
-        title="浏览笔记库"
-        size="command"
-      >
-        <div className="task-overlay-filter flex gap-2 border-b border-border/60 bg-surface-inset/30 px-4 py-2">
-          <Input
-            className="text-xs"
-            value={newName}
-            onChange={(e) => setNewName(e.target.value)}
-          />
-          <Button
+      <div className="task-overlay-filter flex gap-2 border-b border-border/60 bg-surface-inset/30 px-4 py-2">
+        <Input
+          className="text-xs"
+          value={newName}
+          onChange={(e) => setNewName(e.target.value)}
+        />
+        <Button
+          type="button"
+          size="icon"
+          variant="outline"
+          title="新建笔记"
+          onClick={async () => {
+            if (showTemplates && templates.length > 0) return;
+            const trimmed = newName.trim();
+            const created = await createDefaultNote({
+              folderPrefix: selectedFolder,
+              titleHint: trimmed,
+            });
+            refresh();
+            onOpen(created.path);
+          }}
+        >
+          <FolderPlus className="h-4 w-4" />
+        </Button>
+        <Button
+          type="button"
+          size="icon"
+          variant="outline"
+          title="新建文件夹"
+          onClick={() => {
+            setFolderCreateParent(selectedFolder);
+            setFolderCreateOpen(true);
+          }}
+        >
+          <Folder className="h-4 w-4" />
+        </Button>
+      </div>
+      {templates.length > 0 && (
+        <div className="border-b border-border px-4 pb-2">
+          <button
             type="button"
-            size="icon"
-            variant="outline"
-            title="新建笔记"
-            onClick={async () => {
-              if (showTemplates && templates.length > 0) return;
-              const trimmed = newName.trim();
-              const created = await createDefaultNote({
-                folderPrefix: selectedFolder,
-                titleHint: trimmed,
-              });
-              refresh();
-              onOpen(created.path);
-            }}
+            className="text-xs text-muted-foreground hover:text-primary"
+            onClick={() => setShowTemplates(!showTemplates)}
           >
-            <FolderPlus className="h-4 w-4" />
-          </Button>
-          <Button
-            type="button"
-            size="icon"
-            variant="outline"
-            title="新建文件夹"
-            onClick={() => {
-              setFolderCreateParent(selectedFolder);
-              setFolderCreateOpen(true);
-            }}
-          >
-            <Folder className="h-4 w-4" />
-          </Button>
+            {showTemplates ? "收起模板" : "从模板新建…"}
+          </button>
+          {showTemplates && (
+            <div className="mt-1 flex flex-wrap gap-1">
+              {templates.map((t) => (
+                <div key={t.name} className="flex items-center gap-0.5">
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    className="text-xs"
+                    onClick={() => void createFromTemplate(t.name)}
+                  >
+                    {t.name}
+                  </Button>
+                  <Button
+                    type="button"
+                    size="icon"
+                    variant="ghost"
+                    className="h-6 w-6"
+                    title="编辑模板"
+                    onClick={() => setEditingTemplate(t.name)}
+                  >
+                    <Pencil className="h-3 w-3" />
+                  </Button>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
-        {templates.length > 0 && (
-          <div className="border-b border-border px-4 pb-2">
-            <button
-              type="button"
-              className="text-xs text-muted-foreground hover:text-primary"
-              onClick={() => setShowTemplates(!showTemplates)}
+      )}
+      {error && <p className="px-3 py-2 text-xs text-destructive">{error}</p>}
+      <div className="task-overlay-results flex min-h-0 flex-1">
+        <div className="w-44 shrink-0 overflow-y-auto border-r border-border/60 p-2">
+          <button
+            type="button"
+            className={cn(
+              "mb-1 flex w-full items-center gap-1 rounded-md px-2 py-1 text-left text-xs hover:bg-accent",
+              !selectedFolder && "bg-accent font-medium",
+            )}
+            onClick={() => setSelectedFolder("")}
+          >
+            <Folder className="h-3.5 w-3.5" />
+            全部笔记
+          </button>
+          {tree.map((node) =>
+            node.kind === "folder" ? (
+              <TreeFolder
+                key={node.path}
+                node={node}
+                depth={0}
+                selected={selectedFolder}
+                expanded={expanded}
+                onSelect={setSelectedFolder}
+                onToggle={toggleExpanded}
+              />
+            ) : null,
+          )}
+        </div>
+        <div ref={parentRef} className="min-h-0 flex-1 overflow-auto">
+          {selectedFolder ? (
+            <div
+              data-testid="folder-details"
+              data-density="compact"
+              className="border-b border-border/60 bg-surface-inset/20 px-3 py-2"
             >
-              {showTemplates ? "收起模板" : "从模板新建…"}
-            </button>
-            {showTemplates && (
-              <div className="mt-1 flex flex-wrap gap-1">
-                {templates.map((t) => (
-                  <div key={t.name} className="flex items-center gap-0.5">
+              <div className="grid gap-2 xl:grid-cols-[minmax(12rem,1fr)_auto] xl:items-start">
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+                    <div className="text-xs font-semibold text-foreground">
+                      文件夹详情
+                    </div>
+                    <div className="min-w-0 break-all font-mono text-[11px] text-muted-foreground">
+                      {selectedFolder}
+                    </div>
+                  </div>
+                </div>
+                {!deleteDialogOpen ? (
+                  <div className="flex flex-wrap gap-1.5">
                     <Button
                       type="button"
                       size="sm"
                       variant="outline"
-                      className="text-xs"
-                      onClick={() => void createFromTemplate(t.name)}
+                      className="h-8 px-2 text-xs"
+                      title="重命名文件夹"
+                      onClick={() =>
+                        setRenameTarget({
+                          kind: "folder",
+                          path: selectedFolder,
+                        })
+                      }
                     >
-                      {t.name}
+                      <Pencil className="h-3.5 w-3.5" />
+                      重命名文件夹
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      className="h-8 px-2 text-xs"
+                      title="移动文件夹"
+                      onClick={() =>
+                        setMoveTarget({
+                          kind: "folder",
+                          path: selectedFolder,
+                        })
+                      }
+                    >
+                      <FolderInput className="h-3.5 w-3.5" />
+                      移动文件夹
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      className="h-8 px-2 text-xs hover:border-destructive/50 hover:text-destructive"
+                      title="删除文件夹"
+                      onClick={() =>
+                        setFolderDeleteTarget({
+                          path: selectedFolder,
+                          name: selectedFolderName,
+                        })
+                      }
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                      删除文件夹
+                    </Button>
+                  </div>
+                ) : null}
+              </div>
+              <div
+                data-testid="corpus-kind-select"
+                data-layout="dropdown"
+                className="mt-2 rounded-md border border-border/60 bg-panel/70 px-2.5 py-1.5"
+              >
+                <div className="grid gap-2 sm:grid-cols-[auto_minmax(10rem,16rem)_auto] sm:items-center">
+                  <span className="text-xs font-semibold text-foreground">
+                    语料库类型
+                  </span>
+                  <Select
+                    value={corpusKind}
+                    onValueChange={(value) =>
+                      setCorpusKind(value as CorpusKind)
+                    }
+                  >
+                    <SelectTrigger
+                      className="h-8 text-xs"
+                      aria-label="语料库类型"
+                      title={selectedCorpusOption.effect}
+                    >
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {CORPUS_KIND_OPTIONS.map((option) => (
+                        <SelectItem
+                          key={option.kind}
+                          value={option.kind}
+                          title={option.effect}
+                        >
+                          {option.title}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <Button
+                    type="button"
+                    size="sm"
+                    className="h-8 px-2.5 text-xs"
+                    onClick={() => void handleSetCorpus(corpusKind)}
+                    disabled={corpusSaving}
+                  >
+                    <BookMarked className="h-3.5 w-3.5" />
+                    {corpusSaving ? "设置中" : "确认设置"}
+                  </Button>
+                </div>
+              </div>
+            </div>
+          ) : null}
+          {folderFiles.length > 0 && !deleteDialogOpen ? (
+            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border/60 bg-panel px-3 py-2">
+              <div className="text-xs text-muted-foreground">
+                {batchMode ? `已选 ${selectedFiles.length} 个文档` : null}
+              </div>
+              <div className="flex flex-wrap items-center gap-1.5">
+                {batchMode ? (
+                  <>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="ghost"
+                      onClick={() =>
+                        setSelectedFilePaths(
+                          allFolderFilesSelected
+                            ? new Set()
+                            : new Set(folderFiles.map((file) => file.path)),
+                        )
+                      }
+                    >
+                      {allFolderFilesSelected ? "清空" : "全选"}
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      disabled={selectedFiles.length === 0}
+                      onClick={() =>
+                        setMoveTarget({
+                          kind: "files",
+                          files: selectedFiles,
+                        })
+                      }
+                    >
+                      <MoveRight className="h-3.5 w-3.5" />
+                      批量移动
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      disabled={selectedFiles.length === 0}
+                      onClick={() => void handleBatchSetLock(true)}
+                    >
+                      <Lock className="h-3.5 w-3.5" />
+                      批量锁定
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      disabled={selectedFiles.length === 0}
+                      onClick={() => void handleBatchSetLock(false)}
+                    >
+                      <LockOpen className="h-3.5 w-3.5" />
+                      批量解锁
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      className="hover:border-destructive/50 hover:text-destructive"
+                      disabled={selectedFiles.length === 0}
+                      onClick={() => setBatchDeleteTarget(selectedFiles)}
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                      批量删除
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => {
+                        setSelectedFilePaths(new Set());
+                        setBatchMode(false);
+                      }}
+                    >
+                      退出
+                    </Button>
+                  </>
+                ) : (
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    onClick={() => setBatchMode(true)}
+                  >
+                    批量操作
+                  </Button>
+                )}
+              </div>
+            </div>
+          ) : null}
+          {loading ? (
+            <p className="p-3 text-xs text-muted-foreground">加载中…</p>
+          ) : folderFiles.length === 0 ? (
+            <p className="p-3 text-xs text-muted-foreground">
+              {selectedFolder ? "此文件夹暂无笔记" : "暂无笔记"}
+            </p>
+          ) : (
+            <div
+              style={{
+                height: `${fileListHeight}px`,
+                position: "relative",
+              }}
+            >
+              {renderedFileItems.map((virtualItem) => {
+                const f = folderFiles[virtualItem.index]!;
+                return (
+                  <div
+                    key={f.path}
+                    style={{
+                      position: "absolute",
+                      top: 0,
+                      left: 0,
+                      width: "100%",
+                      height: `${virtualItem.size}px`,
+                      transform: `translateY(${virtualItem.start}px)`,
+                    }}
+                    className="flex items-center gap-1 border-b border-border/50 px-2 py-1.5 text-sm"
+                  >
+                    {batchMode ? (
+                      <input
+                        type="checkbox"
+                        aria-label={`选择文档 ${displayTitleForFileListItem(f)}`}
+                        checked={selectedFilePaths.has(f.path)}
+                        className="h-3.5 w-3.5 shrink-0 rounded border-border"
+                        onChange={() => toggleFileSelected(f.path)}
+                        onClick={(event) => event.stopPropagation()}
+                      />
+                    ) : null}
+                    <FileText className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                    <button
+                      type="button"
+                      className="min-w-0 flex-1 truncate text-left hover:text-primary"
+                      onClick={() => {
+                        onOpen(f.path);
+                        onClose();
+                      }}
+                    >
+                      {displayTitleForFileListItem(f)}
+                    </button>
+                    <Button
+                      type="button"
+                      size="icon"
+                      variant="ghost"
+                      title="重命名文档"
+                      aria-label="重命名文档"
+                      onClick={() => setRenameTarget({ kind: "file", file: f })}
+                    >
+                      <Pencil className="h-3 w-3" />
                     </Button>
                     <Button
                       type="button"
                       size="icon"
                       variant="ghost"
-                      className="h-6 w-6"
-                      title="编辑模板"
-                      onClick={() => setEditingTemplate(t.name)}
+                      title="移动文档"
+                      aria-label="移动文档"
+                      onClick={() => setMoveTarget({ kind: "file", file: f })}
                     >
-                      <Pencil className="h-3 w-3" />
+                      <MoveRight className="h-3 w-3" />
                     </Button>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        )}
-        {error && <p className="px-3 py-2 text-xs text-destructive">{error}</p>}
-        <div className="task-overlay-results flex min-h-0 flex-1">
-          <div className="w-44 shrink-0 overflow-y-auto border-r border-border/60 p-2">
-            <button
-              type="button"
-              className={cn(
-                "mb-1 flex w-full items-center gap-1 rounded-md px-2 py-1 text-left text-xs hover:bg-accent",
-                !selectedFolder && "bg-accent font-medium",
-              )}
-              onClick={() => setSelectedFolder("")}
-            >
-              <Folder className="h-3.5 w-3.5" />
-              全部笔记
-            </button>
-            {tree.map((node) =>
-              node.kind === "folder" ? (
-                <TreeFolder
-                  key={node.path}
-                  node={node}
-                  depth={0}
-                  selected={selectedFolder}
-                  expanded={expanded}
-                  onSelect={setSelectedFolder}
-                  onToggle={toggleExpanded}
-                />
-              ) : null,
-            )}
-          </div>
-          <div ref={parentRef} className="min-h-0 flex-1 overflow-auto">
-            {selectedFolder ? (
-              <div
-                data-testid="folder-details"
-                data-density="compact"
-                className="border-b border-border/60 bg-surface-inset/20 px-3 py-2"
-              >
-                <div className="grid gap-2 xl:grid-cols-[minmax(12rem,1fr)_auto] xl:items-start">
-                  <div className="min-w-0">
-                    <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
-                      <div className="text-xs font-semibold text-foreground">
-                        文件夹详情
-                      </div>
-                      <div className="min-w-0 break-all font-mono text-[11px] text-muted-foreground">
-                        {selectedFolder}
-                      </div>
-                    </div>
-                  </div>
-                  {!deleteDialogOpen ? (
-                    <div className="flex flex-wrap gap-1.5">
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant="outline"
-                        className="h-8 px-2 text-xs"
-                        title="重命名文件夹"
-                        onClick={() =>
-                          setRenameTarget({
-                            kind: "folder",
-                            path: selectedFolder,
-                          })
-                        }
-                      >
-                        <Pencil className="h-3.5 w-3.5" />
-                        重命名文件夹
-                      </Button>
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant="outline"
-                        className="h-8 px-2 text-xs"
-                        title="移动文件夹"
-                        onClick={() =>
-                          setMoveTarget({
-                            kind: "folder",
-                            path: selectedFolder,
-                          })
-                        }
-                      >
-                        <FolderInput className="h-3.5 w-3.5" />
-                        移动文件夹
-                      </Button>
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant="outline"
-                        className="h-8 px-2 text-xs hover:border-destructive/50 hover:text-destructive"
-                        title="删除文件夹"
-                        onClick={() =>
-                          setFolderDeleteTarget({
-                            path: selectedFolder,
-                            name: selectedFolderName,
-                          })
-                        }
-                      >
-                        <Trash2 className="h-3.5 w-3.5" />
-                        删除文件夹
-                      </Button>
-                    </div>
-                  ) : null}
-                </div>
-                <div
-                  data-testid="corpus-kind-select"
-                  data-layout="dropdown"
-                  className="mt-2 rounded-md border border-border/60 bg-panel/70 px-2.5 py-1.5"
-                >
-                  <div className="grid gap-2 sm:grid-cols-[auto_minmax(10rem,16rem)_auto] sm:items-center">
-                    <span className="text-xs font-semibold text-foreground">
-                      语料库类型
-                    </span>
-                    <Select
-                      value={corpusKind}
-                      onValueChange={(value) =>
-                        setCorpusKind(value as CorpusKind)
-                      }
-                    >
-                      <SelectTrigger
-                        className="h-8 text-xs"
-                        aria-label="语料库类型"
-                        title={selectedCorpusOption.effect}
-                      >
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {CORPUS_KIND_OPTIONS.map((option) => (
-                          <SelectItem
-                            key={option.kind}
-                            value={option.kind}
-                            title={option.effect}
-                          >
-                            {option.title}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
                     <Button
                       type="button"
-                      size="sm"
-                      className="h-8 px-2.5 text-xs"
-                      onClick={() => void handleSetCorpus(corpusKind)}
-                      disabled={corpusSaving}
-                    >
-                      <BookMarked className="h-3.5 w-3.5" />
-                      {corpusSaving ? "设置中" : "确认设置"}
-                    </Button>
-                  </div>
-                </div>
-              </div>
-            ) : null}
-            {folderFiles.length > 0 && !deleteDialogOpen ? (
-              <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border/60 bg-panel px-3 py-2">
-                <div className="text-xs text-muted-foreground">
-                  {batchMode ? `已选 ${selectedFiles.length} 个文档` : null}
-                </div>
-                <div className="flex flex-wrap items-center gap-1.5">
-                  {batchMode ? (
-                    <>
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant="ghost"
-                        onClick={() =>
-                          setSelectedFilePaths(
-                            allFolderFilesSelected
-                              ? new Set()
-                              : new Set(folderFiles.map((file) => file.path)),
-                          )
-                        }
-                      >
-                        {allFolderFilesSelected ? "清空" : "全选"}
-                      </Button>
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant="outline"
-                        disabled={selectedFiles.length === 0}
-                        onClick={() =>
-                          setMoveTarget({
-                            kind: "files",
-                            files: selectedFiles,
-                          })
-                        }
-                      >
-                        <MoveRight className="h-3.5 w-3.5" />
-                        批量移动
-                      </Button>
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant="outline"
-                        disabled={selectedFiles.length === 0}
-                        onClick={() => void handleBatchSetLock(true)}
-                      >
-                        <Lock className="h-3.5 w-3.5" />
-                        批量锁定
-                      </Button>
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant="outline"
-                        disabled={selectedFiles.length === 0}
-                        onClick={() => void handleBatchSetLock(false)}
-                      >
-                        <LockOpen className="h-3.5 w-3.5" />
-                        批量解锁
-                      </Button>
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant="outline"
-                        className="hover:border-destructive/50 hover:text-destructive"
-                        disabled={selectedFiles.length === 0}
-                        onClick={() => setBatchDeleteTarget(selectedFiles)}
-                      >
-                        <Trash2 className="h-3.5 w-3.5" />
-                        批量删除
-                      </Button>
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant="ghost"
-                        onClick={() => {
-                          setSelectedFilePaths(new Set());
-                          setBatchMode(false);
-                        }}
-                      >
-                        退出
-                      </Button>
-                    </>
-                  ) : (
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="outline"
-                      onClick={() => setBatchMode(true)}
-                    >
-                      批量操作
-                    </Button>
-                  )}
-                </div>
-              </div>
-            ) : null}
-            {loading ? (
-              <p className="p-3 text-xs text-muted-foreground">加载中…</p>
-            ) : folderFiles.length === 0 ? (
-              <p className="p-3 text-xs text-muted-foreground">
-                {selectedFolder ? "此文件夹暂无笔记" : "暂无笔记"}
-              </p>
-            ) : (
-              <div
-                style={{
-                  height: `${fileListHeight}px`,
-                  position: "relative",
-                }}
-              >
-                {renderedFileItems.map((virtualItem) => {
-                  const f = folderFiles[virtualItem.index]!;
-                  return (
-                    <div
-                      key={f.path}
-                      style={{
-                        position: "absolute",
-                        top: 0,
-                        left: 0,
-                        width: "100%",
-                        height: `${virtualItem.size}px`,
-                        transform: `translateY(${virtualItem.start}px)`,
+                      size="icon"
+                      variant="ghost"
+                      title={f.isLocked ? "解锁编辑" : "锁定编辑"}
+                      onClick={async () => {
+                        const next = !f.isLocked;
+                        await fileSetLock(f.path, next);
+                        refresh();
                       }}
-                      className="flex items-center gap-1 border-b border-border/50 px-2 py-1.5 text-sm"
                     >
-                      {batchMode ? (
-                        <input
-                          type="checkbox"
-                          aria-label={`选择文档 ${displayTitleForFileListItem(f)}`}
-                          checked={selectedFilePaths.has(f.path)}
-                          className="h-3.5 w-3.5 shrink-0 rounded border-border"
-                          onChange={() => toggleFileSelected(f.path)}
-                          onClick={(event) => event.stopPropagation()}
-                        />
-                      ) : null}
-                      <FileText className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-                      <button
-                        type="button"
-                        className="min-w-0 flex-1 truncate text-left hover:text-primary"
-                        onClick={() => {
-                          onOpen(f.path);
-                          onClose();
-                        }}
-                      >
-                        {displayTitleForFileListItem(f)}
-                      </button>
-                      <Button
-                        type="button"
-                        size="icon"
-                        variant="ghost"
-                        title="重命名文档"
-                        aria-label="重命名文档"
-                        onClick={() =>
-                          setRenameTarget({ kind: "file", file: f })
-                        }
-                      >
-                        <Pencil className="h-3 w-3" />
-                      </Button>
-                      <Button
-                        type="button"
-                        size="icon"
-                        variant="ghost"
-                        title="移动文档"
-                        aria-label="移动文档"
-                        onClick={() => setMoveTarget({ kind: "file", file: f })}
-                      >
-                        <MoveRight className="h-3 w-3" />
-                      </Button>
-                      <Button
-                        type="button"
-                        size="icon"
-                        variant="ghost"
-                        title={f.isLocked ? "解锁编辑" : "锁定编辑"}
-                        onClick={async () => {
-                          const next = !f.isLocked;
-                          await fileSetLock(f.path, next);
-                          refresh();
-                        }}
-                      >
-                        {f.isLocked ? (
-                          <Lock className="h-3 w-3" />
-                        ) : (
-                          <LockOpen className="h-3 w-3" />
-                        )}
-                      </Button>
-                      <Button
-                        type="button"
-                        size="icon"
-                        variant="ghost"
-                        title="移入回收站"
-                        aria-label="移入回收站"
-                        onClick={() => setDeleteTarget(f)}
-                      >
-                        <Trash2 className="h-3 w-3" />
-                      </Button>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </div>
+                      {f.isLocked ? (
+                        <Lock className="h-3 w-3" />
+                      ) : (
+                        <LockOpen className="h-3 w-3" />
+                      )}
+                    </Button>
+                    <Button
+                      type="button"
+                      size="icon"
+                      variant="ghost"
+                      title="移入回收站"
+                      aria-label="移入回收站"
+                      onClick={() => setDeleteTarget(f)}
+                    >
+                      <Trash2 className="h-3 w-3" />
+                    </Button>
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </div>
-      </IrisOverlay>
+      </div>
 
       <FolderCreateDialog
         open={folderCreateOpen}
@@ -983,5 +978,18 @@ export function VaultNavigator({ open, onClose, onOpen }: VaultNavigatorProps) {
         }}
       />
     </>
+  );
+}
+
+export function VaultNavigator(props: VaultNavigatorProps) {
+  return (
+    <IrisOverlay
+      open={props.open}
+      onClose={props.onClose}
+      title="浏览笔记库"
+      size="command"
+    >
+      <VaultNavigatorBody {...props} />
+    </IrisOverlay>
   );
 }

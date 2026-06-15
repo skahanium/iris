@@ -21,7 +21,7 @@ interface RecycleBinSheetProps {
   onIndexChange?: () => void;
 }
 
-export function RecycleBinSheet({
+export function RecycleBinBody({
   open,
   onClose,
   onRestored,
@@ -65,120 +65,118 @@ export function RecycleBinSheet({
 
   return (
     <>
-      <IrisOverlay open={open} onClose={onClose} title="回收站" size="command">
-        <div className="border-b border-border/60 bg-surface-inset/30 px-4 py-3">
-          <p className="text-xs leading-relaxed text-muted-foreground">
-            已删除的笔记、时间线快照与定稿版本将一并保留{" "}
-            <span className="font-medium text-foreground">15 天</span>
-            ，到期后自动彻底清除。恢复后将回到原来的路径。
-          </p>
-          {summary && (
-            <p className="mt-2 text-xs text-muted-foreground">
-              共 {summary.total} 篇
-              {summary.expiringSoon > 0 && (
-                <span className="text-muted-foreground">
-                  {" "}
-                  · {summary.expiringSoon} 篇即将过期
-                </span>
-              )}
-            </p>
-          )}
-        </div>
-
-        {error && (
-          <p className="px-4 py-2 text-xs text-destructive" role="alert">
-            {error}
+      <div className="border-b border-border/60 bg-surface-inset/30 px-4 py-3">
+        <p className="text-xs leading-relaxed text-muted-foreground">
+          已删除的笔记、时间线快照与定稿版本将一并保留{" "}
+          <span className="font-medium text-foreground">15 天</span>
+          ，到期后自动彻底清除。恢复后将回到原来的路径。
+        </p>
+        {summary && (
+          <p className="mt-2 text-xs text-muted-foreground">
+            共 {summary.total} 篇
+            {summary.expiringSoon > 0 && (
+              <span className="text-muted-foreground">
+                {" "}
+                · {summary.expiringSoon} 篇即将过期
+              </span>
+            )}
           </p>
         )}
+      </div>
 
-        <ScrollArea className="min-h-0 flex-1">
-          {loading ? (
-            <p className="p-4 text-xs text-muted-foreground">加载中…</p>
-          ) : empty ? (
-            <div className="flex flex-col items-center justify-center gap-3 px-6 py-16 text-center">
-              <div className="flex h-12 w-12 items-center justify-center rounded-full bg-muted">
-                <ArchiveRestore className="h-5 w-5 text-muted-foreground" />
-              </div>
-              <p className="text-sm font-medium text-foreground">回收站为空</p>
-              <p className="max-w-xs text-xs leading-relaxed text-muted-foreground">
-                删除笔记后会出现在这里。空白未保存的笔记不会进入回收站。
-              </p>
+      {error && (
+        <p className="px-4 py-2 text-xs text-destructive" role="alert">
+          {error}
+        </p>
+      )}
+
+      <ScrollArea className="min-h-0 flex-1">
+        {loading ? (
+          <p className="p-4 text-xs text-muted-foreground">加载中…</p>
+        ) : empty ? (
+          <div className="flex flex-col items-center justify-center gap-3 px-6 py-16 text-center">
+            <div className="flex h-12 w-12 items-center justify-center rounded-full bg-muted">
+              <ArchiveRestore className="h-5 w-5 text-muted-foreground" />
             </div>
-          ) : (
-            <ul className="py-1">
-              {items.map((item) => {
-                const daysLeft = recycleDaysRemaining(item.expires_at);
-                const urgent = daysLeft <= 3;
-                const busy = busyId === item.id;
+            <p className="text-sm font-medium text-foreground">回收站为空</p>
+            <p className="max-w-xs text-xs leading-relaxed text-muted-foreground">
+              删除笔记后会出现在这里。空白未保存的笔记不会进入回收站。
+            </p>
+          </div>
+        ) : (
+          <ul className="py-1">
+            {items.map((item) => {
+              const daysLeft = recycleDaysRemaining(item.expires_at);
+              const urgent = daysLeft <= 3;
+              const busy = busyId === item.id;
 
-                return (
-                  <li
-                    key={item.id}
-                    className="group border-b border-border/50 last:border-b-0"
-                  >
-                    <div className="flex items-start gap-2 px-3 py-2.5">
-                      <div className="min-w-0 flex-1">
-                        <p className="truncate text-sm font-medium text-foreground">
-                          {item.title}
-                        </p>
-                        <p className="mt-0.5 truncate text-xs text-muted-foreground">
-                          {item.original_path}
-                        </p>
-                        <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] text-muted-foreground">
-                          <span>
-                            删除于 {formatRecycleTimestamp(item.deleted_at)}
-                          </span>
-                          <span aria-hidden>·</span>
-                          <span
-                            className={cn(
-                              urgent &&
-                                "font-medium text-amber-600 dark:text-amber-500",
-                            )}
-                          >
-                            {recycleRetentionLabel(daysLeft)}
-                          </span>
-                          {item.version_count > 0 && (
-                            <>
-                              <span aria-hidden>·</span>
-                              <span>{item.version_count} 个历史版本</span>
-                            </>
+              return (
+                <li
+                  key={item.id}
+                  className="group border-b border-border/50 last:border-b-0"
+                >
+                  <div className="flex items-start gap-2 px-3 py-2.5">
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-sm font-medium text-foreground">
+                        {item.title}
+                      </p>
+                      <p className="mt-0.5 truncate text-xs text-muted-foreground">
+                        {item.original_path}
+                      </p>
+                      <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] text-muted-foreground">
+                        <span>
+                          删除于 {formatRecycleTimestamp(item.deleted_at)}
+                        </span>
+                        <span aria-hidden>·</span>
+                        <span
+                          className={cn(
+                            urgent &&
+                              "font-medium text-amber-600 dark:text-amber-500",
                           )}
-                        </div>
-                      </div>
-                      <div className="flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity group-focus-within:opacity-100 group-hover:opacity-100">
-                        <Button
-                          type="button"
-                          size="icon"
-                          variant="ghost"
-                          className="h-8 w-8 text-muted-foreground hover:text-primary"
-                          disabled={busy}
-                          aria-label={`恢复 ${item.title}`}
-                          title="恢复"
-                          onClick={() => setRestoreTarget(item)}
                         >
-                          <RotateCcw className="h-3.5 w-3.5" />
-                        </Button>
-                        <Button
-                          type="button"
-                          size="icon"
-                          variant="ghost"
-                          className="h-8 w-8 text-muted-foreground hover:text-destructive"
-                          disabled={busy}
-                          aria-label={`永久删除 ${item.title}`}
-                          title="永久删除"
-                          onClick={() => setPurgeTarget(item)}
-                        >
-                          <Trash2 className="h-3.5 w-3.5" />
-                        </Button>
+                          {recycleRetentionLabel(daysLeft)}
+                        </span>
+                        {item.version_count > 0 && (
+                          <>
+                            <span aria-hidden>·</span>
+                            <span>{item.version_count} 个历史版本</span>
+                          </>
+                        )}
                       </div>
                     </div>
-                  </li>
-                );
-              })}
-            </ul>
-          )}
-        </ScrollArea>
-      </IrisOverlay>
+                    <div className="flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity group-focus-within:opacity-100 group-hover:opacity-100">
+                      <Button
+                        type="button"
+                        size="icon"
+                        variant="ghost"
+                        className="h-8 w-8 text-muted-foreground hover:text-primary"
+                        disabled={busy}
+                        aria-label={`恢复 ${item.title}`}
+                        title="恢复"
+                        onClick={() => setRestoreTarget(item)}
+                      >
+                        <RotateCcw className="h-3.5 w-3.5" />
+                      </Button>
+                      <Button
+                        type="button"
+                        size="icon"
+                        variant="ghost"
+                        className="h-8 w-8 text-muted-foreground hover:text-destructive"
+                        disabled={busy}
+                        aria-label={`永久删除 ${item.title}`}
+                        title="永久删除"
+                        onClick={() => setPurgeTarget(item)}
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </Button>
+                    </div>
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </ScrollArea>
 
       <ConfirmDialog
         open={restoreTarget !== null}
@@ -240,5 +238,18 @@ export function RecycleBinSheet({
         }}
       />
     </>
+  );
+}
+
+export function RecycleBinSheet(props: RecycleBinSheetProps) {
+  return (
+    <IrisOverlay
+      open={props.open}
+      onClose={props.onClose}
+      title="回收站"
+      size="command"
+    >
+      <RecycleBinBody {...props} />
+    </IrisOverlay>
   );
 }

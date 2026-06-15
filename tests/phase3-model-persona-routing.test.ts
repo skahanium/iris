@@ -114,6 +114,40 @@ describe("Phase3 model and persona routing contract", () => {
     expect(section).toContain("需配置 Base URL");
   });
 
+  it("keeps provider base url input controlled before running MiMo diagnostics", () => {
+    const section = read("src/components/settings/LlmRoutingSection.tsx");
+
+    expect(section).toContain("providerBaseUrlInputs");
+    expect(section).toContain("baseUrlForProvider(provider.id)");
+    expect(section).toContain("setProviderBaseUrlInputs");
+    expect(section).not.toContain('defaultValue={provider.baseUrl ?? ""}');
+    expect(section).not.toContain("!provider.baseUrl?.trim()");
+  });
+
+  it("hides Ollama from external model provider settings while preserving internal routing compatibility", () => {
+    const section = read("src/components/settings/LlmRoutingSection.tsx");
+    const providers = read("src-tauri/src/llm/providers.rs");
+    const commands = read("src-tauri/src/commands/llm_config_commands.rs");
+    const llmTypes = read("src/types/llm.ts");
+
+    expect(section).not.toContain('name: "Ollama"');
+    expect(section).not.toContain('provider.id === "ollama"');
+    expect(section).not.toContain('providerId === "ollama"');
+    expect(providers).toContain("list_external_providers_from_routing");
+    expect(commands).toContain(
+      "list_external_providers_from_routing(&routing)",
+    );
+    expect(llmTypes).toContain('providerId: "ollama"');
+  });
+
+  it("matches lower-case MiMo manual model ids to catalog display labels", () => {
+    const section = read("src/components/settings/LlmRoutingSection.tsx");
+
+    expect(section).toContain("normalizeModelId(modelId)");
+    expect(section).toContain('"mimo-v2.5-pro": "MiMo-V2.5-Pro"');
+    expect(section).toContain("modelId.toLowerCase()");
+  });
+
   it("keeps model route and persona layers internal without exposing a run-plan panel", () => {
     const aiTypes = read("src/types/ai.ts");
     const hook = read("src/components/ai/hooks/useAssistantRunPlan.tsx");

@@ -12,7 +12,9 @@ use crate::llm::engine::truncate_error_text;
 use crate::llm::model_catalog;
 use crate::llm::providers::chat_completions_url;
 use crate::llm::providers::models_probe_url;
-use crate::llm::providers::{is_allowed_provider, list_providers_from_routing, requires_api_key};
+use crate::llm::providers::{
+    is_allowed_provider, list_external_providers_from_routing, requires_api_key,
+};
 use serde::Serialize;
 use tauri::State;
 
@@ -28,7 +30,7 @@ pub struct LlmConfigGetResponse {
 pub fn llm_config_get(state: State<'_, Arc<AppState>>) -> AppResult<LlmConfigGetResponse> {
     let routing = load(&state.db)?;
     Ok(LlmConfigGetResponse {
-        providers: list_providers_from_routing(&routing),
+        providers: list_external_providers_from_routing(&routing),
         catalog: model_catalog::catalog_for_settings(),
         routing,
     })

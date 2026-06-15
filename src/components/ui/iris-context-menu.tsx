@@ -65,7 +65,12 @@ export function IrisContextMenu({
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose();
     };
-    const onScroll = () => onClose();
+    const onScroll = (e: Event) => {
+      const el = menuRef.current;
+      const target = e.target;
+      if (target instanceof Node && el?.contains(target)) return;
+      onClose();
+    };
     window.addEventListener("mousedown", onPointerDown, true);
     window.addEventListener("keydown", onKeyDown);
     window.addEventListener("scroll", onScroll, true);
@@ -94,9 +99,10 @@ export function IrisContextMenu({
         maxHeight: MENU_MAX_H,
       }}
       onContextMenu={(e) => e.preventDefault()}
+      onWheel={(e) => e.stopPropagation()}
     >
       <IrisSurfaceMenuPanel
-        className="max-h-[inherit] min-w-[12.5rem] max-w-[16rem] overflow-auto"
+        className="max-h-[inherit] min-w-[12.5rem] max-w-[16rem] overflow-auto overscroll-contain"
         aria-label="上下文菜单"
       >
         {groups.map(({ group, items }) => (

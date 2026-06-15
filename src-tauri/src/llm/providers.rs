@@ -67,6 +67,13 @@ pub fn list_providers_from_routing(routing: &LlmRoutingConfig) -> Vec<LlmProvide
     out
 }
 
+pub fn list_external_providers_from_routing(routing: &LlmRoutingConfig) -> Vec<LlmProviderInfo> {
+    list_providers_from_routing(routing)
+        .into_iter()
+        .filter(|provider| provider.id != "ollama")
+        .collect()
+}
+
 fn provider_info_from_override(id: &str, row: &ProviderOverride) -> LlmProviderInfo {
     LlmProviderInfo {
         id: id.to_string(),
@@ -212,6 +219,29 @@ mod tests {
             "anthropic".to_string(),
         ]));
         assert!(ids.contains(&"custom_groq".to_string()));
+    }
+
+    #[test]
+    fn external_settings_provider_list_hides_ollama_but_keeps_custom_entries() {
+        let mut routing = crate::llm::config::deepseek_defaults();
+        routing.providers.insert(
+            "custom_groq".into(),
+            ProviderOverride {
+                base_url: Some("https://api.groq.com/openai/v1".into()),
+                label: Some("Groq".into()),
+                default_model: Some("llama-3.1-8b-instant".into()),
+                enabled_models: Some(vec!["llama-3.1-8b-instant".into()]),
+            },
+        );
+
+        let ids: Vec<_> = list_external_providers_from_routing(&routing)
+            .into_iter()
+            .map(|provider| provider.id)
+            .collect();
+
+        assert!(!ids.contains(&"ollama".to_string()));
+        assert!(ids.contains(&"custom_groq".to_string()));
+        assert!(ids.contains(&"mimo".to_string()));
     }
 
     #[test]

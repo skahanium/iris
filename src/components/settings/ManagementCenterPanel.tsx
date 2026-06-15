@@ -1,10 +1,12 @@
 import {
+  ArchiveRestore,
   Bot,
   ChevronLeft,
   CheckCircle2,
   Clock3,
   Database,
   FileClock,
+  FolderTree,
   Globe2,
   HardDrive,
   Info,
@@ -19,10 +21,15 @@ import { useEffect, useMemo, useState, type ReactNode } from "react";
 
 import { AiRulesPanel } from "@/components/ai/AiRulesPanel";
 import { SkillsPanelBody } from "@/components/ai/SkillsPanel";
+import { RecycleBinBody } from "@/components/file/RecycleBinSheet";
+import { VaultNavigatorBody } from "@/components/file/VaultNavigator";
 import { Button } from "@/components/ui/button";
 import { IrisOverlay } from "@/components/ui/iris-overlay";
 import { useConnectivityStatus } from "@/hooks/useConnectivityStatus";
-import type { ManagementCenterSection } from "@/hooks/useOverlayManager";
+import type {
+  ManagementCenterDetail,
+  ManagementCenterSection,
+} from "@/hooks/useOverlayManager";
 import { cn } from "@/lib/utils";
 
 import { LlmRoutingSection } from "./LlmRoutingSection";
@@ -33,11 +40,14 @@ interface ManagementCenterPanelProps {
   open: boolean;
   onClose: () => void;
   section: ManagementCenterSection;
+  detail: ManagementCenterDetail;
   webSearch: boolean;
   onWebSearchChange: (enabled: boolean) => void;
+  onOpenNote: (path: string) => void;
   onOpenKnowledgeRelations: () => void;
   onOpenVersion: () => void;
   onRescanVault: () => void;
+  onRecycleIndexChange: () => void;
   autoVersionEnabled: boolean;
   autoVersionIdleMinutes: number;
   onAutoVersionEnabledChange: (enabled: boolean) => void;
@@ -63,6 +73,8 @@ type AiManagementDetail =
   | "persona"
   | "skills"
   | "memory";
+
+type NotesManagementDetail = "file-sheet" | "recycle-bin";
 
 const AI_DETAIL_META: Record<
   AiManagementDetail,
@@ -208,30 +220,53 @@ function SwitchControl({
       aria-checked={checked}
       aria-label={label}
       className={cn(
-        "relative h-6 w-11 rounded-full transition-colors",
-        checked ? "bg-[hsl(var(--status-llm-ready))]" : "bg-muted",
+        "relative inline-flex h-7 w-12 shrink-0 overflow-hidden rounded-full border p-0 transition-colors duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/45 focus-visible:ring-offset-2 focus-visible:ring-offset-background",
+        checked
+          ? "border-[hsl(var(--status-llm-ready)/0.72)] bg-[hsl(var(--status-llm-ready))] shadow-[inset_0_1px_0_hsl(0_0%_100%/0.20),0_0_0_1px_hsl(var(--status-llm-ready)/0.12)]"
+          : "border-border/70 bg-surface-inset shadow-inner",
       )}
       onClick={() => onCheckedChange(!checked)}
     >
       <span
         className={cn(
-          "absolute top-1 size-4 rounded-full bg-white shadow-sm transition-transform",
-          checked ? "translate-x-6" : "translate-x-1",
+          "pointer-events-none absolute left-1 top-1 size-5 rounded-full bg-white shadow-[0_1px_2px_hsl(0_0%_0%/0.24),0_0_0_1px_hsl(0_0%_0%/0.06)] ring-1 ring-black/5 transition-transform duration-200 ease-out",
+          checked ? "translate-x-5" : "translate-x-0",
         )}
       />
     </button>
   );
 }
 
+function isAiManagementDetail(
+  detail: ManagementCenterDetail,
+): detail is AiManagementDetail {
+  return (
+    detail === "models" ||
+    detail === "web-search" ||
+    detail === "persona" ||
+    detail === "skills" ||
+    detail === "memory"
+  );
+}
+
+function isNotesManagementDetail(
+  detail: ManagementCenterDetail,
+): detail is NotesManagementDetail {
+  return detail === "file-sheet" || detail === "recycle-bin";
+}
+
 export function ManagementCenterPanel({
   open,
   onClose,
   section,
+  detail,
   webSearch,
   onWebSearchChange,
+  onOpenNote,
   onOpenKnowledgeRelations,
   onOpenVersion,
   onRescanVault,
+  onRecycleIndexChange,
   autoVersionEnabled,
   autoVersionIdleMinutes,
   onAutoVersionEnabledChange,
@@ -241,13 +276,20 @@ export function ManagementCenterPanel({
     useState<ManagementCenterSection>(section);
   const [activeAiDetail, setActiveAiDetail] =
     useState<AiManagementDetail | null>(null);
+  const [activeNotesDetail, setActiveNotesDetail] =
+    useState<NotesManagementDetail | null>(null);
   const { status } = useConnectivityStatus();
 
   useEffect(() => {
     if (!open) return;
     setActiveSection(section);
-    setActiveAiDetail(null);
-  }, [open, section]);
+    setActiveAiDetail(
+      section === "ai" && isAiManagementDetail(detail) ? detail : null,
+    );
+    setActiveNotesDetail(
+      section === "notes" && isNotesManagementDetail(detail) ? detail : null,
+    );
+  }, [detail, open, section]);
 
   const activeMeta = useMemo(
     () =>
@@ -265,6 +307,13 @@ export function ManagementCenterPanel({
   const openAiDetail = (detail: AiManagementDetail) => {
     setActiveSection("ai");
     setActiveAiDetail(detail);
+    setActiveNotesDetail(null);
+  };
+
+  const openNotesDetail = (nextDetail: NotesManagementDetail) => {
+    setActiveSection("notes");
+    setActiveNotesDetail(nextDetail);
+    setActiveAiDetail(null);
   };
 
   const renderOverview = () => (
@@ -340,8 +389,38 @@ export function ManagementCenterPanel({
     </SectionShell>
   );
 
-  const renderNotes = () => (
+  const renderNotesOverview = () => (
     <SectionShell title="笔记" detail="保存策略、版本安全网和手动恢复入口。">
+      <PanelSection title="笔记库管理">
+        <SettingRow
+          icon={FolderTree}
+          title="浏览笔记库"
+          detail="以文件树方式浏览、创建、移动、重命名、锁定和删除 Markdown 笔记。"
+        >
+          <StatusValue>Ctrl/Cmd+Shift+E</StatusValue>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => openNotesDetail("file-sheet")}
+          >
+            打开
+          </Button>
+        </SettingRow>
+        <SettingRow
+          icon={ArchiveRestore}
+          title="回收站"
+          detail="恢复最近删除的笔记、时间线快照与定稿版本，或执行永久删除。"
+        >
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => openNotesDetail("recycle-bin")}
+          >
+            打开
+          </Button>
+        </SettingRow>
+      </PanelSection>
+
       <PanelSection title="版本追踪">
         <SettingRow
           icon={FileClock}
@@ -390,6 +469,59 @@ export function ManagementCenterPanel({
       </PanelSection>
     </SectionShell>
   );
+
+  const renderNotesDetail = (notesDetail: NotesManagementDetail) => {
+    const isFileTree = notesDetail === "file-sheet";
+    return (
+      <section className="flex min-h-[34rem] flex-col">
+        <header className="flex items-start gap-3 border-b border-border/60 pb-3">
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            data-testid="management-detail-back"
+            className="h-8 gap-1.5"
+            onClick={() => setActiveNotesDetail(null)}
+          >
+            <ChevronLeft className="h-4 w-4" />
+            笔记
+          </Button>
+          <div className="min-w-0">
+            <h3 className="text-sm font-semibold text-foreground">
+              {isFileTree ? "浏览笔记库" : "回收站"}
+            </h3>
+            <p className="mt-1 text-xs text-muted-foreground">
+              {isFileTree
+                ? "文件树、文档列表和文件操作在同一个管理中心面板内完成。"
+                : "已删除笔记保留 15 天，恢复后会回到原路径。"}
+            </p>
+          </div>
+        </header>
+
+        <div className="mt-4 flex h-[min(58vh,34rem)] min-h-[28rem] flex-col overflow-hidden rounded-lg border border-border/65 bg-background/55">
+          {isFileTree ? (
+            <VaultNavigatorBody
+              open={open && activeSection === "notes" && isFileTree}
+              onClose={onClose}
+              onOpen={onOpenNote}
+            />
+          ) : (
+            <RecycleBinBody
+              open={open && activeSection === "notes" && !isFileTree}
+              onClose={onClose}
+              onRestored={onOpenNote}
+              onIndexChange={onRecycleIndexChange}
+            />
+          )}
+        </div>
+      </section>
+    );
+  };
+
+  const renderNotes = () =>
+    activeNotesDetail
+      ? renderNotesDetail(activeNotesDetail)
+      : renderNotesOverview();
 
   const renderKnowledge = () => (
     <SectionShell title="知识库" detail="只管理索引维护和当前笔记知识关联。">
@@ -555,6 +687,7 @@ export function ManagementCenterPanel({
                 onClick={() => {
                   setActiveSection(item.id);
                   setActiveAiDetail(null);
+                  setActiveNotesDetail(null);
                 }}
               >
                 <span className="block text-sm font-semibold">

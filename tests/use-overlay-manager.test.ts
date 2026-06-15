@@ -55,6 +55,14 @@ describe("useOverlayManager state transitions", () => {
       managementCenterDetail: "skills",
     });
 
+    state = openManagementCenterState(state, "notes", "file-sheet");
+
+    expect(state).toEqual({
+      activeOverlay: "managementCenter",
+      managementCenterSection: "notes",
+      managementCenterDetail: "file-sheet",
+    });
+
     state = openOverlayState(state, "quickOpen");
 
     expect(state).toEqual({

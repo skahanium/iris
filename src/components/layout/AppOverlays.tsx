@@ -166,11 +166,14 @@ export function AppOverlays({
           open={overlays.managementCenterOpen}
           onClose={() => overlays.closeOverlay("managementCenter")}
           section={overlays.managementCenterSection}
+          detail={overlays.managementCenterDetail}
           webSearch={webSearch}
           onWebSearchChange={setWebSearch}
+          onOpenNote={openNoteLeavingHome}
           onOpenKnowledgeRelations={openKnowledgeRelations}
           onOpenVersion={openVersion}
           onRescanVault={rescanVault}
+          onRecycleIndexChange={bumpVaultIndex}
           autoVersionEnabled={autoVersionSettings.autoVersionEnabled}
           autoVersionIdleMinutes={autoVersionSettings.autoVersionIdleMinutes}
           onAutoVersionEnabledChange={autoVersionSettings.setAutoVersionEnabled}

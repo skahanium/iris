@@ -82,7 +82,12 @@ export function buildCommandPaletteItems(
       keywords: "file tree vault 文件树 浏览 笔记库 管理",
       icon: "FolderTree",
       disabled: vaultOnly,
-      action: { type: "openOverlay", overlay: "fileSheet" },
+      chord: { key: "E", mod: true, shift: true, requireVault: true },
+      action: {
+        type: "openManagementCenter",
+        section: "notes",
+        detail: "file-sheet",
+      },
     },
     {
       id: "recycle-bin",
@@ -91,7 +96,11 @@ export function buildCommandPaletteItems(
       keywords: "recycle trash bin 回收站 删除 恢复 撤销",
       icon: "Trash2",
       disabled: vaultOnly,
-      action: { type: "openOverlay", overlay: "recycleBin" },
+      action: {
+        type: "openManagementCenter",
+        section: "notes",
+        detail: "recycle-bin",
+      },
     },
     {
       id: "classified-panel",

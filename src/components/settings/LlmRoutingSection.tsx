@@ -42,7 +42,6 @@ const FALLBACK_PROVIDERS: LlmConfigGetResponse["providers"] = [
     name: "Anthropic",
     default_model: "claude-3-5-haiku-20241022",
   },
-  { id: "ollama", name: "Ollama", default_model: "llama3.2" },
   { id: "mimo", name: "MiMo", default_model: "MiMo-V2.5-Pro" },
 ];
 
@@ -119,6 +118,9 @@ export function LlmRoutingSection({ open }: LlmRoutingSectionProps) {
   const [newModelInputs, setNewModelInputs] = useState<Record<string, string>>(
     {},
   );
+  const [providerBaseUrlInputs, setProviderBaseUrlInputs] = useState<
+    Record<string, string>
+  >({});
   const keyStatusEpochRef = useRef(0);
 
   const refreshKeyStatus = useCallback(async (providerIds: string[]) => {
@@ -129,9 +131,7 @@ export function LlmRoutingSection({ open }: LlmRoutingSectionProps) {
       await Promise.all(
         providerIds.map(async (id) => {
           try {
-            configured[id] =
-              id === "ollama" ||
-              (await credentialHas(llmCredentialService(id)));
+            configured[id] = await credentialHas(llmCredentialService(id));
           } catch (e) {
             console.warn(`[LlmRouting] credential check failed for ${id}:`, e);
             configured[id] = false;
@@ -191,8 +191,19 @@ export function LlmRoutingSection({ open }: LlmRoutingSectionProps) {
     [data?.providers, routing?.providers],
   );
 
-  const modelById = (modelId: string): ModelCatalogEntry | undefined =>
-    data?.catalog.find((m) => m.id === modelId);
+  const modelById = (modelId: string): ModelCatalogEntry | undefined => {
+    const normalized = normalizeModelId(modelId);
+    const lowerModelId = modelId.toLowerCase();
+    return (
+      data?.catalog.find((m) => m.id === normalized) ??
+      data?.catalog.find((m) => m.id.toLowerCase() === lowerModelId)
+    );
+  };
+
+  const baseUrlForProvider = (providerId: string): string =>
+    providerBaseUrlInputs[providerId] ??
+    routing?.providers[providerId]?.baseUrl ??
+    "";
 
   const updateProviderOverride = (
     providerId: string,
@@ -228,6 +239,11 @@ export function LlmRoutingSection({ open }: LlmRoutingSectionProps) {
           : p,
       ),
     });
+  };
+
+  const updateProviderBaseUrl = (providerId: string, value: string) => {
+    setProviderBaseUrlInputs((prev) => ({ ...prev, [providerId]: value }));
+    updateProviderOverride(providerId, { baseUrl: value.trim() || null });
   };
 
   const ensureCustomProvider = () => {
@@ -413,11 +429,10 @@ export function LlmRoutingSection({ open }: LlmRoutingSectionProps) {
         configured:
           configuredOverride ||
           Boolean(keyConfigured[providerId]) ||
-          Boolean(override) ||
-          providerId === "ollama",
-        keyless: providerId === "ollama",
+          Boolean(override),
+        keyless: false,
         custom: isCustomProviderId(providerId),
-        baseUrl: override?.baseUrl ?? null,
+        baseUrl: baseUrlForProvider(providerId) || null,
       };
       if (usage && !row.usedSlots.includes(usage)) row.usedSlots.push(usage);
       providers.set(providerId, row);
@@ -431,9 +446,7 @@ export function LlmRoutingSection({ open }: LlmRoutingSectionProps) {
     for (const provider of data.providers) {
       const override = routing.providers[provider.id];
       const configured =
-        Boolean(keyConfigured[provider.id]) ||
-        provider.id === "ollama" ||
-        Boolean(override);
+        Boolean(keyConfigured[provider.id]) || Boolean(override);
       if (!configured) continue;
       addProvider(provider.id, null, configured);
     }
@@ -450,7 +463,7 @@ export function LlmRoutingSection({ open }: LlmRoutingSectionProps) {
     model: EnabledProviderModel,
   ) => {
     const key = `${provider.id}:${model.id}`;
-    if (provider.id === "mimo" && !provider.baseUrl?.trim()) {
+    if (provider.id === "mimo" && !baseUrlForProvider(provider.id).trim()) {
       setTestResults((prev) => ({
         ...prev,
         [key]: {
@@ -561,8 +574,9 @@ export function LlmRoutingSection({ open }: LlmRoutingSectionProps) {
         ) : (
           <div className="space-y-2">
             {visibleProviders.map((provider) => {
+              const providerBaseUrl = baseUrlForProvider(provider.id);
               const missingRequiredBaseUrl =
-                provider.id === "mimo" && !provider.baseUrl?.trim();
+                provider.id === "mimo" && !providerBaseUrl.trim();
               const override = routing.providers[provider.id];
               const providerModels = enabledModelsForProvider(provider.id);
               return (
@@ -599,11 +613,9 @@ export function LlmRoutingSection({ open }: LlmRoutingSectionProps) {
                           ? "本地端点 Base URL（可选）"
                           : "Base URL（可选）"
                       }
-                      defaultValue={provider.baseUrl ?? ""}
-                      onBlur={(event) =>
-                        updateProviderOverride(provider.id, {
-                          baseUrl: event.target.value.trim() || null,
-                        })
+                      value={baseUrlForProvider(provider.id)}
+                      onChange={(event) =>
+                        updateProviderBaseUrl(provider.id, event.target.value)
                       }
                     />
                     <div className="flex flex-wrap items-center gap-2">
@@ -897,7 +909,6 @@ function AddModelWizard({
 }) {
   const [providerId, setProviderId] = useState(providers[0]?.id ?? "deepseek");
   const custom = isCustomProviderId(providerId);
-  const keyless = providerId === "ollama";
 
   const createCustom = () => {
     const id = onCreateCustom();
@@ -954,29 +965,27 @@ function AddModelWizard({
           />
         </div>
       ) : null}
-      {!keyless ? (
-        <div className="mt-2 flex flex-wrap items-center gap-2">
-          <Input
-            type="password"
-            className="h-8 max-w-sm text-xs"
-            placeholder="API Key…"
-            value={keyInputsRef.current?.[providerId] ?? ""}
-            onChange={(event) => onKeyInput(providerId, event.target.value)}
-          />
-          <Button
-            type="button"
-            size="sm"
-            className="h-8"
-            disabled={keySaving === providerId}
-            onClick={() => onSaveKey(providerId)}
-          >
-            {keySaving === providerId ? "保存中…" : "保存 Key"}
-          </Button>
-          <span className="text-[11px] text-muted-foreground">
-            {keyConfigured[providerId] ? "Key 已配置" : "保存后显示在主列表"}
-          </span>
-        </div>
-      ) : null}
+      <div className="mt-2 flex flex-wrap items-center gap-2">
+        <Input
+          type="password"
+          className="h-8 max-w-sm text-xs"
+          placeholder="API Key…"
+          value={keyInputsRef.current?.[providerId] ?? ""}
+          onChange={(event) => onKeyInput(providerId, event.target.value)}
+        />
+        <Button
+          type="button"
+          size="sm"
+          className="h-8"
+          disabled={keySaving === providerId}
+          onClick={() => onSaveKey(providerId)}
+        >
+          {keySaving === providerId ? "保存中…" : "保存 Key"}
+        </Button>
+        <span className="text-[11px] text-muted-foreground">
+          {keyConfigured[providerId] ? "Key 已配置" : "保存后显示在主列表"}
+        </span>
+      </div>
     </div>
   );
 }
@@ -1039,7 +1048,7 @@ function normalizeRouting(raw: LlmRoutingConfig | undefined): LlmRoutingConfig {
     const row = route as SlotRoute & { provider_id?: string };
     slots[slot] = {
       providerId: row.providerId ?? row.provider_id ?? "deepseek",
-      model: normalizeModelId(
+      model: normalizePersistedModelId(
         row.model ?? DEFAULT_LLM_ROUTING.slots[slot].model,
       ),
       thinking: row.thinking ?? false,
@@ -1068,5 +1077,18 @@ function sameRoute(a: SlotRoute, b: SlotRoute): boolean {
 }
 
 function normalizeModelId(model: string): string {
+  const aliases: Record<string, string> = {
+    "mimo-vl-7b-experimental": "MiMo-V2.5-Pro",
+    "mimo-v2.5-pro": "MiMo-V2.5-Pro",
+    "mimo-v2.5-pro-ultraspeed": "MiMo-V2.5-Pro-UltraSpeed",
+    "mimo-v2.5-asr": "MiMo-V2.5-ASR",
+    "mimo-v2.5-tts": "MiMo-V2.5-TTS",
+    "mimo-v2.5-tts-voiceclone": "MiMo-V2.5-TTS-VoiceClone",
+    "mimo-v2.5-tts-voicedesign": "MiMo-V2.5-TTS-VoiceDesign",
+  };
+  return aliases[model.trim().toLowerCase()] ?? model;
+}
+
+function normalizePersistedModelId(model: string): string {
   return model === "mimo-vl-7b-experimental" ? "MiMo-V2.5-Pro" : model;
 }
