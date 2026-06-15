@@ -174,7 +174,7 @@ pub async fn llm_generate_stream(
     if let Some(url) = params.custom_base_url.as_deref() {
         crate::security::ipc_policy::validate_llm_base_url(url)?;
     }
-    let api_key = credentials::get_secret(&credential_service(&params.provider))?;
+    let api_key = credentials::get_api_key(db, &credential_service(&params.provider))?;
     let base = api_base(&params.provider, params.custom_base_url.as_deref());
     let model = resolve_model(&params.provider, params.model.clone());
 

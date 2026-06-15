@@ -29,6 +29,7 @@ fn ctx() -> ToolDispatchContext<'static> {
         web_search_enabled: false,
         cold_start_packets: &[],
         app_handle: None,
+        attachment_count: 0,
     }
 }
 

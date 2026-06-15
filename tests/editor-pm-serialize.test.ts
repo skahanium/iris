@@ -131,6 +131,33 @@ describe("editorDocToMarkdown (prosemirror-markdown hot path)", () => {
     }
   });
 
+  it("renders vault-relative editor images through Tauri asset URLs without changing markdown src", () => {
+    Object.defineProperty(window, "__TAURI_INTERNALS__", {
+      configurable: true,
+      value: {
+        convertFileSrc: (filePath: string, protocol = "asset") =>
+          `${protocol}://localhost/${filePath}`,
+      },
+    });
+
+    const editor = createProductionEditorFromIngestedBody(
+      "![diagram](assets/example.png)",
+      "/Users/example/Vault",
+    );
+    try {
+      expect(editor.view.dom.innerHTML).toContain(
+        'src="asset://localhost//Users/example/Vault/assets/example.png"',
+      );
+      expect(editor.getHTML()).toContain('src="assets/example.png"');
+      expect(pmSerializeBody(editor)).toContain(
+        "![diagram](assets/example.png)",
+      );
+    } finally {
+      Reflect.deleteProperty(window, "__TAURI_INTERNALS__");
+      editor.destroy();
+    }
+  });
+
   it("round-trips hard line breaks via PM serializer", () => {
     const turndownSpy = vi.spyOn(markdownLib, "editorBodyHtmlToMarkdown");
 

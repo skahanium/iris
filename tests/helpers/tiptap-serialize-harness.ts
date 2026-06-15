@@ -32,59 +32,70 @@ import { serializeOpenNote } from "@/lib/serialize-open-note";
 
 const lowlight = createLowlight(common);
 
-const productionExtensions = [
-  IrisDocument,
-  StarterKit.configure({
-    document: false,
-    paragraph: false,
-    codeBlock: false,
-    blockquote: false,
-    heading: {
-      levels: [1, 2, 3, 4, 5, 6],
-      HTMLAttributes: { class: "iris-section-heading" },
-    },
-  }),
-  IrisParagraphExtension,
-  ListIndentKeymapExtension,
-  FindHighlightExtension,
-  LinkExtension,
-  ImageExtension,
-  TaskList,
-  TaskItem.configure({ nested: true }),
-  Table.configure({ resizable: true }),
-  TableRow,
-  TableHeader,
-  TableCell,
-  CodeBlockLowlight.configure({ lowlight }),
-  CalloutBlockquoteExtension,
-  HeadingFoldExtension,
-  PreserveBlockExtension,
-  PreserveInlineExtension,
-  FootnoteRefExtension,
-  FootnoteDefExtension,
-  AiStreamExtension,
-  WikiLinkExtension,
-] as const;
+function productionExtensions(vaultPath: string | null = null) {
+  return [
+    IrisDocument,
+    StarterKit.configure({
+      document: false,
+      paragraph: false,
+      codeBlock: false,
+      blockquote: false,
+      heading: {
+        levels: [1, 2, 3, 4, 5, 6],
+        HTMLAttributes: { class: "iris-section-heading" },
+      },
+    }),
+    IrisParagraphExtension,
+    ListIndentKeymapExtension,
+    FindHighlightExtension,
+    LinkExtension,
+    ImageExtension.configure({ vaultPath }),
+    TaskList,
+    TaskItem.configure({ nested: true }),
+    Table.configure({ resizable: true }),
+    TableRow,
+    TableHeader,
+    TableCell,
+    CodeBlockLowlight.configure({ lowlight }),
+    CalloutBlockquoteExtension,
+    HeadingFoldExtension,
+    PreserveBlockExtension,
+    PreserveInlineExtension,
+    FootnoteRefExtension,
+    FootnoteDefExtension,
+    AiStreamExtension,
+    WikiLinkExtension,
+  ];
+}
 
 /** Ingest via contract pipeline (preserve blocks, callouts, etc.). */
-export function createProductionEditorFromIngestedBody(bodyMd: string): Editor {
+export function createProductionEditorFromIngestedBody(
+  bodyMd: string,
+  vaultPath: string | null = null,
+): Editor {
   const { tipTapHtml } = ingestMarkdownForEditor({ bodyMarkdown: bodyMd });
   return new Editor({
-    extensions: [...productionExtensions],
+    extensions: productionExtensions(vaultPath),
     content: tipTapHtml,
   });
 }
 
-export function createProductionEditorFromBody(bodyMd: string): Editor {
+export function createProductionEditorFromBody(
+  bodyMd: string,
+  vaultPath: string | null = null,
+): Editor {
   return new Editor({
-    extensions: [...productionExtensions],
+    extensions: productionExtensions(vaultPath),
     content: markdownBodyToEditorHtml(bodyMd),
   });
 }
 
-export function createProductionEditorFromNote(md: string): Editor {
+export function createProductionEditorFromNote(
+  md: string,
+  vaultPath: string | null = null,
+): Editor {
   const { bodyMd } = parseNoteForEditor(md, "Fallback");
-  return createProductionEditorFromIngestedBody(bodyMd);
+  return createProductionEditorFromIngestedBody(bodyMd, vaultPath);
 }
 
 export function pmSerializeBody(editor: Editor): string {

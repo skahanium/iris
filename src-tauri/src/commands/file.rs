@@ -2,7 +2,7 @@ use std::fs;
 use std::sync::Arc;
 
 use serde::Serialize;
-use tauri::{AppHandle, State};
+use tauri::{AppHandle, Manager, State};
 
 use crate::app::AppState;
 use crate::error::{AppError, AppResult};
@@ -85,6 +85,19 @@ pub fn is_vault_asset_path(relative: &str) -> bool {
     }
     let name = normalized.strip_prefix("assets/").unwrap_or("");
     !name.is_empty() && !name.ends_with('/') && !name.contains("..")
+}
+
+pub(crate) fn allow_vault_assets_in_asset_protocol(app: &AppHandle, vault: &std::path::Path) {
+    let Some(scopes) = app.try_state::<tauri::scope::Scopes>() else {
+        return;
+    };
+    let assets_dir = vault.join("assets");
+    if let Err(e) = scopes.allow_directory(&assets_dir, true) {
+        tracing::warn!(
+            "failed to allow vault assets for asset protocol ({}): {e}",
+            assets_dir.display()
+        );
+    }
 }
 
 fn title_from_path(path: &str) -> String {
@@ -881,11 +894,12 @@ pub fn vault_set(app: AppHandle, state: State<'_, Arc<AppState>>, path: String) 
         tracing::warn!("vault_set: session cleanup failed: {e}");
     }
 
-    if let Err(e) = state.restart_file_watcher(app) {
+    if let Err(e) = state.restart_file_watcher(app.clone()) {
         tracing::warn!("vault_set: file watcher did not start: {e}");
     }
 
     if let Ok(vault) = state.vault_path() {
+        allow_vault_assets_in_asset_protocol(&app, &vault);
         // Index one file at a time so other operations (auto-save) can interleave.
         let files = crate::indexer::scan::collect_vault_files(&vault);
         for abs in &files {

@@ -99,6 +99,9 @@ interface TipTapEditorProps {
   /** When set, reuse cached TipTap HTML for this path (tab switch). */
   contentCacheKey?: string | null;
 
+  /** Absolute vault path used only to render vault-relative asset URLs. */
+  vaultPath?: string | null;
+
   /** Bumped when note content is loaded from disk (invalidates HTML cache). */
   reingestKey?: number;
 
@@ -155,6 +158,8 @@ function TipTapEditorInner({
   initialBodyMarkdown,
 
   contentCacheKey = null,
+
+  vaultPath = null,
 
   reingestKey = 0,
 
@@ -304,7 +309,9 @@ function TipTapEditorInner({
 
       LinkExtension,
 
-      ImageExtension,
+      ImageExtension.configure({
+        vaultPath,
+      }),
 
       EditorImageDropExtension.configure({
         enabled: isTauriRuntime(),
@@ -361,7 +368,7 @@ function TipTapEditorInner({
       }),
     ],
 
-    [isLargeDoc],
+    [isLargeDoc, vaultPath],
   );
 
   const ingestResultRef = useRef<{

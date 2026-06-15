@@ -73,6 +73,29 @@ pub struct LlmConfigTestResult {
     pub message: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum ModelListValidationCheck {
+    Matched,
+    Empty,
+    AdvisoryMissing { message: String },
+}
+
+impl ModelListValidationCheck {
+    fn allows_chat_probe(&self) -> bool {
+        matches!(
+            self,
+            Self::Matched | Self::Empty | Self::AdvisoryMissing { .. }
+        )
+    }
+
+    fn advisory_message(&self) -> Option<&str> {
+        match self {
+            Self::AdvisoryMissing { message } => Some(message.as_str()),
+            Self::Matched | Self::Empty => None,
+        }
+    }
+}
+
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LlmModelRegistryRefreshResult {
@@ -230,19 +253,16 @@ async fn llm_model_validate_inner(
     let resolved = config::resolve_for_provider(&state.db, &provider_id, Some(&model_id))?;
     let api_key = api_key_for_probe(&provider_id, resolved.api_key)?;
     let client = probe_client()?;
+    let mut model_list_advisory: Option<String> = None;
 
     if matches!(kind, ModelValidationKind::Text) {
-        match fetch_provider_model_ids(&client, &provider_id, &resolved.base_url, &api_key).await {
-            Ok(ids) if !ids.is_empty() && !ids.iter().any(|id| id == &model_id) => {
-                return Ok(LlmConfigTestResult {
-                    ok: false,
-                    message: "供应商模型列表中没有这个模型 ID".into(),
-                });
-            }
-            Ok(ids) => {
-                model_registry::upsert_provider_discovered_models(&state.db, &provider_id, &ids)?;
-            }
-            Err(_) => {}
+        if let Ok(ids) =
+            fetch_provider_model_ids(&client, &provider_id, &resolved.base_url, &api_key).await
+        {
+            let check = check_model_list_for_validation(&model_id, &ids);
+            debug_assert!(check.allows_chat_probe());
+            model_list_advisory = check.advisory_message().map(ToOwned::to_owned);
+            model_registry::upsert_provider_discovered_models(&state.db, &provider_id, &ids)?;
         }
     }
 
@@ -270,6 +290,8 @@ async fn llm_model_validate_inner(
                 ok: true,
                 message: if vision {
                     "视觉模型验证通过".into()
+                } else if let Some(advisory) = model_list_advisory {
+                    format!("模型验证通过（{advisory}）")
                 } else {
                     "模型验证通过".into()
                 },
@@ -279,6 +301,16 @@ async fn llm_model_validate_inner(
             ok: false,
             message: format!("模型验证失败：{e}"),
         }),
+    }
+}
+
+fn check_model_list_for_validation(model_id: &str, ids: &[String]) -> ModelListValidationCheck {
+    match ids {
+        [] => ModelListValidationCheck::Empty,
+        ids if ids.iter().any(|id| id == model_id) => ModelListValidationCheck::Matched,
+        _ => ModelListValidationCheck::AdvisoryMissing {
+            message: "供应商模型列表中没有这个模型 ID；将继续用对话接口验证".into(),
+        },
     }
 }
 
@@ -523,4 +555,23 @@ fn validate_provider_base_url(url: &str) -> AppResult<()> {
         return Ok(());
     }
     crate::security::ipc_policy::validate_https_url(trimmed)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn model_list_missing_id_is_advisory_and_still_allows_chat_probe() {
+        let check =
+            check_model_list_for_validation("custom-model-a", &["custom-model-b".to_string()]);
+
+        assert_eq!(
+            check,
+            ModelListValidationCheck::AdvisoryMissing {
+                message: "供应商模型列表中没有这个模型 ID；将继续用对话接口验证".into(),
+            }
+        );
+        assert!(check.allows_chat_probe());
+    }
 }

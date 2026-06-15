@@ -22,6 +22,7 @@ pub mod prompt_builder;
 pub mod prompt_profile;
 pub mod retrieval_broker;
 pub mod retrieval_scope;
+pub mod runtime_context;
 pub mod scene_router;
 pub mod session;
 pub mod skill_install_service;

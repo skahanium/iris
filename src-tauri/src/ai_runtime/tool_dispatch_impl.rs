@@ -10,6 +10,8 @@ mod markdown_impl;
 mod memory_impl;
 #[path = "tool_dispatch/note.rs"]
 mod note_impl;
+#[path = "tool_dispatch/runtime.rs"]
+mod runtime_impl;
 #[path = "tool_dispatch/schedule.rs"]
 mod schedule_impl;
 #[path = "tool_dispatch/search.rs"]
@@ -24,6 +26,7 @@ mod web_impl;
 #[rustfmt::skip]
 pub const DISPATCHABLE_TOOL_NAMES: &[&str] = &[
     "search_hybrid", "search_semantic", "search_keyword", "get_regulation", "get_context_packets",
+    "system_time_now", "app_context_read", "capabilities_read",
     "web_search", "fetch_web_page", "read_note", "list_vault", "get_outline", "get_backlinks",
     "get_block_links", "memory_read", "memory_write", "scheduled_task_create", "scheduled_task_list",
     "scheduled_task_delete", "web_fetch_batch", "readability_fetch", "rendered_fetch",
@@ -48,6 +51,7 @@ pub struct ToolDispatchContext<'a> {
     pub web_search_enabled: bool,
     pub cold_start_packets: &'a [ContextPacket],
     pub app_handle: Option<tauri::AppHandle>,
+    pub attachment_count: usize,
 }
 fn is_retryable_tool_error(tool_name: &str, result: &ToolCallResult) -> bool {
     if result.success {
@@ -117,6 +121,9 @@ async fn dispatch_tool_inner(
             "packets": ctx.cold_start_packets,
             "count": ctx.cold_start_packets.len(),
         })),
+        "system_time_now" => runtime_impl::system_time_now_tool(),
+        "app_context_read" => runtime_impl::app_context_read_tool(state, ctx),
+        "capabilities_read" => runtime_impl::capabilities_read_tool(state, ctx),
         "web_search" => web_impl::web_search_tool(state, args, ctx).await,
         "fetch_web_page" => web_impl::fetch_web_page_tool(state, args, ctx).await,
         "read_note" => note_impl::read_note(state, args).await,
@@ -149,7 +156,7 @@ async fn dispatch_tool_inner(
         "git_read_status" => boundary_impl::git_read_status_tool(state, args),
         "git_read_diff" => boundary_impl::git_read_diff_tool(state, args),
         "git_read_log" => boundary_impl::git_read_log_tool(state, args),
-        "secret_exists" => boundary_impl::secret_exists_tool(args),
+        "secret_exists" => boundary_impl::secret_exists_tool(state, args),
         "fs_import_to_vault" => boundary_impl::fs_import_to_vault_tool(state, args),
         "fs_export" => boundary_impl::fs_export_tool(args),
         "fs_read_authorized_folder" => boundary_impl::fs_read_authorized_folder_tool(args),
@@ -284,6 +291,7 @@ mod tests {
             web_search_enabled: false,
             cold_start_packets: &[],
             app_handle: None,
+            attachment_count: 0,
         };
         let result = markdown_impl::markdown_write_patch_apply(
             &state,
@@ -316,6 +324,7 @@ mod tests {
             web_search_enabled: false,
             cold_start_packets: &[],
             app_handle: None,
+            attachment_count: 0,
         };
         let result = markdown_impl::markdown_write_patch_apply(
             &state,

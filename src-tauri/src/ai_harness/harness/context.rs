@@ -56,6 +56,8 @@ pub(crate) struct EnvironmentAndSkillsInput<'a> {
     pub(crate) selection_excerpt: Option<&'a str>,
     pub(crate) user_message: &'a str,
     pub(crate) scene_tools: &'a [ToolSpec],
+    pub(crate) web_search_enabled: bool,
+    pub(crate) attachment_count: usize,
 }
 
 pub(crate) fn prepare_environment_and_skills_with_plan(
@@ -74,6 +76,8 @@ pub(crate) fn prepare_environment_and_skills_with_plan(
                 note_title: input.note_title,
                 selection_excerpt: input.selection_excerpt,
                 tools: input.scene_tools,
+                web_search_enabled: input.web_search_enabled,
+                attachment_count: input.attachment_count,
             },
         )?;
         let enabled_skills =
@@ -91,6 +95,8 @@ pub(crate) fn prepare_environment_and_skills_with_plan(
             note_title: input.note_title,
             selection_excerpt: input.selection_excerpt,
             tools: input.scene_tools,
+            web_search_enabled: input.web_search_enabled,
+            attachment_count: input.attachment_count,
         },
     )?;
     let plan = plan.expect("checked above");

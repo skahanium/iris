@@ -57,7 +57,8 @@ pub fn run() {
             let _ = crate::version::version_cleanup(&state);
             let _ = crate::recycle::purge_expired(&state);
 
-            if state.vault_path().is_ok() {
+            if let Ok(vault) = state.vault_path() {
+                commands::file::allow_vault_assets_in_asset_protocol(app.handle(), &vault);
                 let _ = state.restart_file_watcher(app.handle().clone());
             }
 

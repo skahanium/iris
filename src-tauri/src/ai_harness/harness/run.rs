@@ -10,7 +10,7 @@ use super::context::{
 };
 use super::finalize::{finish_run, ingest_tool_packets, ledger_to_packets, FinishRunParams};
 use super::planning::{resolve_max_rounds, resolve_token_budget};
-use super::reflection::{run_reflection_round, ReflectionOutcome};
+use super::reflection::{run_reflection_round, sanitize_reflection_visible, ReflectionOutcome};
 use super::token_estimator::{estimate_and_accumulate, usage_is_empty, UsageSource};
 use super::tools::max_fetch_per_round;
 use super::trace_emit::{emit_thinking, emit_trace_phase};
@@ -120,6 +120,8 @@ pub async fn run_harness(
             selection_excerpt: input.selection_excerpt.as_deref(),
             user_message: &input.user_message,
             scene_tools: &scene_tools,
+            web_search_enabled: input.web_search_enabled,
+            attachment_count: input.images.as_ref().map_or(0, Vec::len),
         },
         input.skill_activation_plan.as_ref(),
     )?;
@@ -556,6 +558,7 @@ pub async fn run_harness(
                     web_search_enabled: input.web_search_enabled,
                     cold_start_packets: evidence_ledger.packets(),
                     app_handle: Some(app_handle.clone()),
+                    attachment_count: input.images.as_ref().map_or(0, Vec::len),
                 };
                 let result = dispatch_tool_with_retry(state, &dispatch_ctx, tool_name, &args).await;
                 if result.success {
@@ -725,11 +728,8 @@ pub async fn run_harness(
         state,
         input,
         FinishRunParams {
-            content: if final_visible.is_empty() {
-                "抱歉，未能在限定轮次内完成回答。请缩小问题或重试。".into()
-            } else {
-                final_visible
-            },
+            content: sanitize_reflection_visible(&final_visible)
+                .unwrap_or_else(|| "抱歉，未能在限定轮次内完成回答。请缩小问题或重试。".into()),
             tool_calls: all_tool_calls,
             tool_results: tool_results_json,
             usage: total_usage,

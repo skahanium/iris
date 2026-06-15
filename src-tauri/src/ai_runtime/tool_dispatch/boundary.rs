@@ -685,7 +685,10 @@ pub(super) fn git_read_log_tool(
     }))
 }
 
-pub(super) fn secret_exists_tool(args: &serde_json::Value) -> AppResult<serde_json::Value> {
+pub(super) fn secret_exists_tool(
+    state: &AppState,
+    args: &serde_json::Value,
+) -> AppResult<serde_json::Value> {
     let service = args
         .get("service")
         .and_then(|v| v.as_str())
@@ -694,6 +697,6 @@ pub(super) fn secret_exists_tool(args: &serde_json::Value) -> AppResult<serde_js
     Ok(serde_json::json!({
         "type": "secret_exists",
         "service": service,
-        "exists": crate::credentials::has_secret(service),
+        "exists": crate::credentials::api_key_configured(&state.db, service)?,
     }))
 }

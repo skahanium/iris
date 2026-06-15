@@ -179,8 +179,8 @@ export const DEFAULT_LLM_ROUTING: LlmRoutingConfig = {
       thinking: false,
     },
     vision: {
-      providerId: "openai",
-      model: "gpt-4o",
+      providerId: "mimo",
+      model: "mimo-v2.5",
       thinking: false,
     },
     agent_tools: {

@@ -4,6 +4,7 @@ use std::path::Path;
 
 use crate::ai_runtime::model_gateway::ModelGateway;
 use crate::ai_runtime::prompt_profile::PromptProfile;
+use crate::ai_runtime::runtime_context::{build_runtime_context_prompt, RuntimeContextInput};
 use crate::ai_runtime::{AiScene, ToolSpec};
 use crate::error::AppResult;
 use crate::storage::db::Database;
@@ -16,6 +17,8 @@ pub struct EnvironmentInput<'a> {
     pub note_title: Option<&'a str>,
     pub selection_excerpt: Option<&'a str>,
     pub tools: &'a [ToolSpec],
+    pub web_search_enabled: bool,
+    pub attachment_count: usize,
 }
 
 /// Build layered environment text for system prompt injection.
@@ -26,6 +29,18 @@ pub fn build_environment_map(
 ) -> AppResult<String> {
     let mut sections = Vec::new();
 
+    sections.push(build_runtime_context_prompt(
+        db,
+        vault,
+        &RuntimeContextInput {
+            web_search_enabled: input.web_search_enabled,
+            note_path: input.note_path,
+            note_title: input.note_title,
+            selection_excerpt: input.selection_excerpt,
+            attachment_count: input.attachment_count,
+            tools: input.tools,
+        },
+    ));
     sections.push(capabilities_section(input.tools));
     sections.push(scene_focus_section(input.scene));
 
@@ -185,6 +200,7 @@ fn vault_structure_section(db: &Database, _vault: &Path) -> AppResult<String> {
 mod tests {
     use super::*;
     use crate::ai_runtime::ToolAccessLevel;
+    use crate::storage::db::Database;
 
     #[test]
     fn capabilities_lists_tool_names() {
@@ -200,5 +216,55 @@ mod tests {
         let text = capabilities_section(&tools);
         assert!(text.contains("search_hybrid"));
         assert!(text.contains("Iris"));
+    }
+
+    #[test]
+    fn environment_includes_runtime_context() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = dir.path().join("vault");
+        std::fs::create_dir_all(&vault).unwrap();
+        let db = Database::open(&dir.path().join("iris.db")).unwrap();
+        let tools = vec![
+            ToolSpec {
+                name: "system_time_now".into(),
+                description: "读取当前本机时间".into(),
+                input_schema: serde_json::json!({}),
+                access_level: ToolAccessLevel::ReadProfile,
+                requires_confirmation: false,
+                max_results: None,
+                scene_affinity: vec![],
+            },
+            ToolSpec {
+                name: "web_search".into(),
+                description: "联网搜索".into(),
+                input_schema: serde_json::json!({}),
+                access_level: ToolAccessLevel::Network,
+                requires_confirmation: false,
+                max_results: Some(8),
+                scene_affinity: vec![AiScene::KnowledgeLookup],
+            },
+        ];
+
+        let text = build_environment_map(
+            &db,
+            &vault,
+            &EnvironmentInput {
+                scene: AiScene::KnowledgeLookup,
+                note_path: Some("today.md"),
+                note_title: Some("Today"),
+                selection_excerpt: Some("selected text"),
+                tools: &tools,
+                web_search_enabled: true,
+                attachment_count: 1,
+            },
+        )
+        .unwrap();
+
+        assert!(text.contains("## 当前运行环境"));
+        assert!(text.contains("本机日期"));
+        assert!(text.contains("星期"));
+        assert!(text.contains("时区"));
+        assert!(text.contains("联网工具: 已启用"));
+        assert!(text.contains("附件: 1 个"));
     }
 }

@@ -55,4 +55,12 @@ describe("model provider registry contract", () => {
     expect(section).toContain("visionVerifiedAt");
     expect(section).not.toContain("routeModelsForProvider(providerId)");
   });
+
+  it("treats provider model lists as advisory during validation", () => {
+    const rust = read("src-tauri/src/commands/llm_config_commands.rs");
+
+    expect(rust).toContain("check_model_list_for_validation");
+    expect(rust).toContain("AdvisoryMissing");
+    expect(rust).not.toContain('供应商模型列表中没有这个模型 ID".into()');
+  });
 });

@@ -142,12 +142,37 @@ describe("Phase3 model and persona routing contract", () => {
     expect(llmTypes).toContain('providerId: "ollama"');
   });
 
-  it("matches lower-case MiMo manual model ids to catalog display labels", () => {
+  it("preserves lower-case manual model ids instead of mapping them to catalog labels", () => {
     const section = read("src/components/settings/LlmRoutingSection.tsx");
 
-    expect(section).toContain("normalizeModelId(modelId)");
-    expect(section).toContain('"mimo-v2.5-pro": "MiMo-V2.5-Pro"');
-    expect(section).toContain("modelId.toLowerCase()");
+    expect(section).not.toContain("normalizeModelId(modelId)");
+    expect(section).not.toContain('"mimo-v2.5-pro": "MiMo-V2.5-Pro"');
+    expect(section).not.toContain("modelId.toLowerCase()");
+    expect(section).toContain("{model.id}");
+    expect(section).toContain("model.catalog?.displayName");
+  });
+
+  it("does not allow fallback routing state to overwrite saved provider settings", () => {
+    const section = read("src/components/settings/LlmRoutingSection.tsx");
+
+    expect(section).toContain("disabled={saving || Boolean(loadError)}");
+    expect(section).not.toContain("setRouting(DEFAULT_LLM_ROUTING);");
+  });
+
+  it("preserves unsaved provider model edits when diagnostics refresh registry data", () => {
+    const section = read("src/components/settings/LlmRoutingSection.tsx");
+
+    expect(section).toContain("preserveRouting");
+    expect(section).toContain("await load({ preserveRouting: true })");
+    expect(section).not.toContain("if (result.ok) await load();");
+  });
+
+  it("disables model id autocapitalization and spelling correction", () => {
+    const section = read("src/components/settings/LlmRoutingSection.tsx");
+
+    expect(section).toContain('autoCapitalize="none"');
+    expect(section).toContain('autoCorrect="off"');
+    expect(section).toContain("spellCheck={false}");
   });
 
   it("keeps model route and persona layers internal without exposing a run-plan panel", () => {

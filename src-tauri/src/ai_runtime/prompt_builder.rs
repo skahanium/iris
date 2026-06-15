@@ -72,6 +72,8 @@ pub fn build_prompt_messages(
             note_title: input.note_title,
             selection_excerpt: input.selection_excerpt,
             tools: input.tools,
+            web_search_enabled: input.web_search_enabled,
+            attachment_count: 0,
         },
     )?;
     if !env_text.is_empty() {

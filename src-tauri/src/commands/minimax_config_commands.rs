@@ -40,7 +40,7 @@ pub struct MinimaxConfigTestResult {
 #[tauri::command]
 pub fn minimax_config_get(state: State<'_, Arc<AppState>>) -> AppResult<MinimaxConfigGetResponse> {
     let prefs = load_web_search_preferences(&state.db)?;
-    Ok(prefs_to_response(&prefs))
+    prefs_to_response(&state.db, &prefs)
 }
 
 #[tauri::command]
@@ -58,14 +58,14 @@ pub fn minimax_config_set(
         web_search_config::save_web_search_backend(&state.db, WebSearchBackendMode::parse(&mode))?;
     }
     let prefs = load_web_search_preferences(&state.db)?;
-    Ok(prefs_to_response(&prefs))
+    prefs_to_response(&state.db, &prefs)
 }
 
 #[tauri::command]
 pub async fn minimax_config_test(
     state: State<'_, Arc<AppState>>,
 ) -> AppResult<MinimaxConfigTestResult> {
-    if !credentials::has_secret(MINIMAX_CREDENTIAL_SERVICE) {
+    if !credentials::api_key_configured(&state.db, MINIMAX_CREDENTIAL_SERVICE)? {
         return Ok(MinimaxConfigTestResult {
             ok: false,
             message: "请先在上方保存 MiniMax Token Plan API Key".into(),
@@ -73,6 +73,7 @@ pub async fn minimax_config_test(
     }
     let prefs = load_web_search_preferences(&state.db)?;
     match minimax_search::probe(
+        &state.db,
         prefs.minimax_api_host.as_str(),
         prefs.minimax_search_model.as_str(),
     )
@@ -89,11 +90,15 @@ pub async fn minimax_config_test(
     }
 }
 
-fn prefs_to_response(prefs: &WebSearchPreferences) -> MinimaxConfigGetResponse {
-    MinimaxConfigGetResponse {
-        minimax_configured: credentials::has_secret(MINIMAX_CREDENTIAL_SERVICE),
+fn prefs_to_response(
+    db: &crate::storage::db::Database,
+    prefs: &WebSearchPreferences,
+) -> AppResult<MinimaxConfigGetResponse> {
+    let minimax_configured = credentials::api_key_configured(db, MINIMAX_CREDENTIAL_SERVICE)?;
+    Ok(MinimaxConfigGetResponse {
+        minimax_configured,
         minimax_api_host: prefs.minimax_api_host.clone(),
         minimax_search_model: prefs.minimax_search_model.clone(),
         web_search_backend: prefs.backend_mode.as_str().to_string(),
-    }
+    })
 }

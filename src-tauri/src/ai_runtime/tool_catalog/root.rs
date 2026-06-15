@@ -5,6 +5,48 @@ use super::{ToolCatalogEntry, ToolImplementationStatus};
 pub(super) fn tools() -> Vec<ToolCatalogEntry> {
     vec![
         ToolCatalogEntry {
+            name: "system_time_now",
+            description: "读取可信的本机当前日期、时间、星期与时区；回答“今天/现在/星期几”类问题时优先使用。",
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {}
+            }),
+            access_level: ToolAccessLevel::ReadProfile,
+            requires_confirmation: false,
+            implementation: ToolImplementationStatus::Dispatchable,
+            default_enabled_without_skill: true,
+            scene_affinity: &[],
+            max_results: Some(1),
+        },
+        ToolCatalogEntry {
+            name: "app_context_read",
+            description: "读取当前 Iris 应用上下文摘要，包括 vault、当前笔记、文件 ID 与附件数量；不读取 API Key 明文。",
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {}
+            }),
+            access_level: ToolAccessLevel::ReadProfile,
+            requires_confirmation: false,
+            implementation: ToolImplementationStatus::Dispatchable,
+            default_enabled_without_skill: true,
+            scene_affinity: &[],
+            max_results: Some(1),
+        },
+        ToolCatalogEntry {
+            name: "capabilities_read",
+            description: "读取当前 AI 能力摘要，包括联网开关、模型槽位配置状态、Vision 状态与可用工具；不读取凭据明文。",
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {}
+            }),
+            access_level: ToolAccessLevel::ReadProfile,
+            requires_confirmation: false,
+            implementation: ToolImplementationStatus::Dispatchable,
+            default_enabled_without_skill: true,
+            scene_affinity: &[],
+            max_results: Some(1),
+        },
+        ToolCatalogEntry {
             name: "memory_read",
             description: "读取用户确认保存的长期 AI 经验/记忆条目",
             input_schema: serde_json::json!({

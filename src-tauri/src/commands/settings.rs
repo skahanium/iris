@@ -48,19 +48,23 @@ pub fn settings_reset(state: State<'_, Arc<AppState>>, key: String) -> AppResult
 }
 
 #[tauri::command]
-pub fn credential_set(service: String, value: String) -> AppResult<()> {
+pub fn credential_set(
+    state: State<'_, Arc<AppState>>,
+    service: String,
+    value: String,
+) -> AppResult<()> {
     validate_credential_service(&service)?;
-    credentials::set_secret(&service, &value)
+    credentials::set_api_key(&state.db, &service, &value)
 }
 
 #[tauri::command]
-pub fn credential_has(service: String) -> AppResult<bool> {
+pub fn credential_has(state: State<'_, Arc<AppState>>, service: String) -> AppResult<bool> {
     validate_credential_service(&service)?;
-    Ok(credentials::has_secret(&service))
+    credentials::api_key_configured(&state.db, &service)
 }
 
 #[tauri::command]
-pub fn credential_delete(service: String) -> AppResult<()> {
+pub fn credential_delete(state: State<'_, Arc<AppState>>, service: String) -> AppResult<()> {
     validate_credential_service(&service)?;
-    credentials::delete_secret(&service)
+    credentials::delete_api_key(&state.db, &service)
 }

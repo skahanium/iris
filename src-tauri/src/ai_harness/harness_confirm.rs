@@ -267,6 +267,7 @@ pub async fn dispatch_approved_tool_to_checkpoint(
             web_search_enabled: pending.web_search_enabled,
             cold_start_packets: &[],
             app_handle: Some(app_handle.clone()),
+            attachment_count: 0,
         },
         &pending.tool_name,
         args,

@@ -1,7 +1,7 @@
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
-use chrono::{Datelike, Duration as ChronoDuration, Local, Utc};
+use chrono::{Duration as ChronoDuration, Utc};
 use regex::Regex;
 use scraper::{Html, Selector};
 use serde::Serialize;
@@ -66,7 +66,7 @@ pub async fn fetch_search_context(
     }
 
     // auto: MiniMax → DuckDuckGo
-    if credentials::has_secret(MINIMAX_CREDENTIAL_SERVICE) {
+    if credentials::api_key_configured(db, MINIMAX_CREDENTIAL_SERVICE)? {
         match fetch_minimax_cached(db, query, host, model).await {
             Ok(r) => return Ok(r),
             Err(e) => {
@@ -93,7 +93,7 @@ async fn fetch_minimax_only(
     host: &str,
     model: &str,
 ) -> AppResult<WebSearchFetchResult> {
-    if !credentials::has_secret(MINIMAX_CREDENTIAL_SERVICE) {
+    if !credentials::api_key_configured(db, MINIMAX_CREDENTIAL_SERVICE)? {
         return Err(AppError::msg("未配置 MiniMax API Key"));
     }
     fetch_minimax_cached(db, query, host, model).await
@@ -114,7 +114,7 @@ async fn fetch_minimax_cached(
         });
     }
     throttle_minimax().await?;
-    let body = minimax_search::search(query, host, model).await?;
+    let body = minimax_search::search(db, query, host, model).await?;
     cache_set_db(
         db,
         &key,
@@ -172,7 +172,7 @@ async fn prepend_web_search_context_with_prefs(
 ) -> AppResult<(String, WebSearchInjectMeta)> {
     let mut prefix = String::new();
     let used_local_date = if asks_for_today_date(user_content) {
-        prefix.push_str(&local_date_line_zh());
+        prefix.push_str(&crate::ai_runtime::runtime_context::local_date_line_zh());
         prefix.push('\n');
         prefix.push('\n');
         true
@@ -258,26 +258,6 @@ pub fn asks_for_today_date(text: &str) -> bool {
     has_today && asks_date
 }
 
-fn local_date_line_zh() -> String {
-    let now = Local::now();
-    let weekday = match now.weekday() {
-        chrono::Weekday::Mon => "一",
-        chrono::Weekday::Tue => "二",
-        chrono::Weekday::Wed => "三",
-        chrono::Weekday::Thu => "四",
-        chrono::Weekday::Fri => "五",
-        chrono::Weekday::Sat => "六",
-        chrono::Weekday::Sun => "日",
-    };
-    format!(
-        "【本机日期】{}年{}月{}日（星期{}）。回答「今天几号」类问题时请优先采用此日期，网页摘要仅作补充。",
-        now.year(),
-        now.month(),
-        now.day(),
-        weekday
-    )
-}
-
 pub fn count_search_results(body: &str) -> usize {
     body.lines()
         .filter(|line| {
@@ -289,11 +269,12 @@ pub fn count_search_results(body: &str) -> usize {
 
 /// 推断连通性展示用的「预期主后端」（未实际发请求）。
 pub fn expected_search_backend_for_connectivity(
+    db: &Database,
     prefs: &WebSearchPreferences,
 ) -> WebSearchEffectiveBackend {
     match prefs.backend_mode {
         WebSearchBackendMode::Minimax => {
-            if credentials::has_secret(MINIMAX_CREDENTIAL_SERVICE) {
+            if credentials::api_key_configured(db, MINIMAX_CREDENTIAL_SERVICE).unwrap_or(false) {
                 WebSearchEffectiveBackend::Minimax
             } else {
                 WebSearchEffectiveBackend::Duckduckgo
@@ -301,7 +282,7 @@ pub fn expected_search_backend_for_connectivity(
         }
         WebSearchBackendMode::Duckduckgo => WebSearchEffectiveBackend::Duckduckgo,
         WebSearchBackendMode::Auto => {
-            if credentials::has_secret(MINIMAX_CREDENTIAL_SERVICE) {
+            if credentials::api_key_configured(db, MINIMAX_CREDENTIAL_SERVICE).unwrap_or(false) {
                 WebSearchEffectiveBackend::Minimax
             } else {
                 WebSearchEffectiveBackend::Duckduckgo
@@ -626,13 +607,36 @@ mod tests {
     fn expected_backend_respects_mode() {
         use crate::llm::web_search_config::WebSearchBackendMode;
 
+        let db = Database::open_in_memory().expect("mem db");
         let prefs = WebSearchPreferences {
             backend_mode: WebSearchBackendMode::Duckduckgo,
             ..Default::default()
         };
         assert_eq!(
-            expected_search_backend_for_connectivity(&prefs),
+            expected_search_backend_for_connectivity(&db, &prefs),
             WebSearchEffectiveBackend::Duckduckgo
+        );
+    }
+
+    #[test]
+    fn expected_backend_uses_minimax_configured_marker() {
+        let db = Database::open_in_memory().expect("mem db");
+        let prefs = WebSearchPreferences {
+            backend_mode: WebSearchBackendMode::Auto,
+            ..Default::default()
+        };
+
+        assert_eq!(
+            expected_search_backend_for_connectivity(&db, &prefs),
+            WebSearchEffectiveBackend::Duckduckgo
+        );
+
+        crate::credentials::mark_api_key_configured(&db, MINIMAX_CREDENTIAL_SERVICE)
+            .expect("mark minimax");
+
+        assert_eq!(
+            expected_search_backend_for_connectivity(&db, &prefs),
+            WebSearchEffectiveBackend::Minimax
         );
     }
 }

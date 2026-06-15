@@ -108,6 +108,7 @@ export function AppEditorWorkspace({
             key={`${activePath}:${EDITOR_HTML_CACHE_FORMAT_VERSION}`}
             initialBodyMarkdown={editorBodyMarkdown}
             contentCacheKey={activePath}
+            vaultPath={vaultPath}
             reingestKey={editorContentTick}
             reloadContentTick={editorContentTick}
             zen={zen}

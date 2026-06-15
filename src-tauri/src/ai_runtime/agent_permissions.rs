@@ -31,6 +31,8 @@ pub enum AgentPermissionAtom {
     VaultAssetsWrite,
     #[serde(rename = "vault.versioning")]
     VaultVersioning,
+    #[serde(rename = "runtime.context.read")]
+    RuntimeContextRead,
     #[serde(rename = "fs.pick_file")]
     FsPickFile,
     #[serde(rename = "fs.pick_folder")]
@@ -140,6 +142,7 @@ impl AgentPermissionAtom {
             Self::VaultAssetsRead => "vault.assets.read",
             Self::VaultAssetsWrite => "vault.assets.write",
             Self::VaultVersioning => "vault.versioning",
+            Self::RuntimeContextRead => "runtime.context.read",
             Self::FsPickFile => "fs.pick_file",
             Self::FsPickFolder => "fs.pick_folder",
             Self::FsImportToVault => "fs.import_to_vault",
@@ -340,6 +343,9 @@ pub fn permission_profile_for_tool(tool_name: &str) -> Option<ToolPermissionProf
         }
         "read_note" | "get_outline" | "get_regulation" | "get_context_packets" => {
             (vec![Atom::VaultRead], Risk::Low, true)
+        }
+        "system_time_now" | "app_context_read" | "capabilities_read" => {
+            (vec![Atom::RuntimeContextRead], Risk::Low, true)
         }
         "web_search" => (vec![Atom::WebSearch], Risk::Low, true),
         "fetch_web_page" | "web_fetch_batch" | "readability_fetch" | "rendered_fetch" => {

@@ -1,11 +1,58 @@
+use std::collections::BTreeMap;
+use std::sync::{LazyLock, Mutex};
+
 use keyring::Entry;
+use serde::{Deserialize, Serialize};
 
 use crate::error::{AppError, AppResult};
+use crate::storage::db::Database;
 
 /// MiniMax Token Plan 凭据 ID（与前端 `MINIMAX_CREDENTIAL_SERVICE` 一致）。
 pub const MINIMAX_CREDENTIAL_SERVICE: &str = "iris.minimax";
 
 const KEYRING_ACCOUNT: &str = "api_key";
+const API_KEY_BUNDLE_SERVICE: &str = "iris.api_keys";
+const API_KEY_MARKER_PREFIX: &str = "credential_configured.";
+
+static API_KEY_BUNDLE_CACHE: LazyLock<Mutex<Option<ApiKeyBundle>>> =
+    LazyLock::new(|| Mutex::new(None));
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(transparent)]
+struct ApiKeyBundle {
+    keys: BTreeMap<String, String>,
+}
+
+impl ApiKeyBundle {
+    fn from_json(json: &str) -> AppResult<Self> {
+        serde_json::from_str(json)
+            .map_err(|e| AppError::msg(format!("API Key bundle corrupted: {e}")))
+    }
+
+    fn to_json(&self) -> AppResult<String> {
+        serde_json::to_string(self).map_err(Into::into)
+    }
+
+    fn get(&self, service: &str) -> Option<&str> {
+        self.keys
+            .get(&canonical_service_id(service))
+            .map(String::as_str)
+            .filter(|value| !value.trim().is_empty())
+    }
+
+    fn upsert(&mut self, service: &str, value: &str) {
+        self.keys
+            .insert(canonical_service_id(service), value.to_string());
+    }
+
+    fn remove(&mut self, service: &str) {
+        self.keys.remove(&canonical_service_id(service));
+    }
+
+    fn is_empty(&self) -> bool {
+        self.keys.is_empty()
+    }
+}
 
 /// LLM 厂商凭据 ID（与前端 `llmCredentialService` 一致）。
 pub fn llm_credential_service(provider: &str) -> String {
@@ -27,6 +74,14 @@ fn entry_canonical(canonical: &str) -> AppResult<Entry> {
 
 fn entry_legacy(service: &str) -> AppResult<Entry> {
     Entry::new("iris", service).map_err(Into::into)
+}
+
+fn get_canonical_password_optional(canonical: &str) -> AppResult<Option<String>> {
+    match entry_canonical(canonical)?.get_password() {
+        Ok(password) => Ok(Some(password)),
+        Err(keyring::Error::NoEntry) => Ok(None),
+        Err(e) => Err(e.into()),
+    }
 }
 
 /// Store a secret in the OS credential manager.
@@ -70,9 +125,123 @@ pub fn has_secret(service: &str) -> bool {
     get_secret(service).is_ok()
 }
 
+fn cache_lock() -> AppResult<std::sync::MutexGuard<'static, Option<ApiKeyBundle>>> {
+    API_KEY_BUNDLE_CACHE
+        .lock()
+        .map_err(|_| AppError::msg("Credential cache lock error"))
+}
+
+fn read_api_key_bundle_uncached() -> AppResult<ApiKeyBundle> {
+    match get_canonical_password_optional(API_KEY_BUNDLE_SERVICE)? {
+        Some(json) => ApiKeyBundle::from_json(&json),
+        None => Ok(ApiKeyBundle::default()),
+    }
+}
+
+fn read_api_key_bundle_cached() -> AppResult<ApiKeyBundle> {
+    let mut guard = cache_lock()?;
+    if let Some(bundle) = guard.as_ref() {
+        return Ok(bundle.clone());
+    }
+    let bundle = read_api_key_bundle_uncached()?;
+    *guard = Some(bundle.clone());
+    Ok(bundle)
+}
+
+fn store_api_key_bundle(bundle: &ApiKeyBundle) -> AppResult<()> {
+    if bundle.is_empty() {
+        delete_secret(API_KEY_BUNDLE_SERVICE)?;
+    } else {
+        set_secret(API_KEY_BUNDLE_SERVICE, &bundle.to_json()?)?;
+    }
+    *cache_lock()? = Some(bundle.clone());
+    Ok(())
+}
+
+fn api_key_marker_key(service: &str) -> String {
+    format!("{API_KEY_MARKER_PREFIX}{}", canonical_service_id(service))
+}
+
+pub fn mark_api_key_configured(db: &Database, service: &str) -> AppResult<()> {
+    let key = api_key_marker_key(service);
+    db.with_conn(|conn| {
+        conn.execute(
+            "INSERT INTO settings (key, value) VALUES (?1, ?2)
+             ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            rusqlite::params![key, "true"],
+        )?;
+        Ok(())
+    })
+}
+
+pub fn clear_api_key_configured(db: &Database, service: &str) -> AppResult<()> {
+    let key = api_key_marker_key(service);
+    db.with_conn(|conn| {
+        conn.execute("DELETE FROM settings WHERE key = ?1", [key])?;
+        Ok(())
+    })
+}
+
+pub fn api_key_configured(db: &Database, service: &str) -> AppResult<bool> {
+    let key = api_key_marker_key(service);
+    db.with_read_conn(|conn| {
+        let count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM settings WHERE key = ?1",
+            [key],
+            |row| row.get(0),
+        )?;
+        Ok(count > 0)
+    })
+}
+
+pub fn set_api_key(db: &Database, service: &str, value: &str) -> AppResult<()> {
+    let canonical = canonical_service_id(service);
+    let mut bundle = read_api_key_bundle_cached()?;
+    bundle.upsert(&canonical, value);
+    store_api_key_bundle(&bundle)?;
+    let stored = read_api_key_bundle_cached()?;
+    if stored.get(&canonical).is_none() {
+        return Err(AppError::msg(format!(
+            "API Key 写入后校验失败: {canonical}"
+        )));
+    }
+    mark_api_key_configured(db, &canonical)
+}
+
+pub fn get_api_key(db: &Database, service: &str) -> AppResult<String> {
+    let canonical = canonical_service_id(service);
+    let mut bundle = read_api_key_bundle_cached()?;
+    if let Some(value) = bundle.get(&canonical) {
+        mark_api_key_configured(db, &canonical)?;
+        return Ok(value.to_string());
+    }
+
+    let legacy = match get_secret(&canonical) {
+        Ok(value) => value,
+        Err(e) => {
+            clear_api_key_configured(db, &canonical)?;
+            return Err(e);
+        }
+    };
+    bundle.upsert(&canonical, &legacy);
+    store_api_key_bundle(&bundle)?;
+    mark_api_key_configured(db, &canonical)?;
+    Ok(legacy)
+}
+
+pub fn delete_api_key(db: &Database, service: &str) -> AppResult<()> {
+    let canonical = canonical_service_id(service);
+    let mut bundle = read_api_key_bundle_cached()?;
+    bundle.remove(&canonical);
+    store_api_key_bundle(&bundle)?;
+    let _ = delete_secret(&canonical);
+    clear_api_key_configured(db, &canonical)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::storage::db::Database;
 
     #[test]
     fn canonical_id_replaces_slashes() {
@@ -80,6 +249,56 @@ mod tests {
             canonical_service_id("iris/llm/deepseek"),
             "iris.llm.deepseek"
         );
+    }
+
+    #[test]
+    fn api_key_bundle_serializes_multiple_services() {
+        let mut bundle = ApiKeyBundle::default();
+        bundle.upsert("iris.llm.deepseek", "deepseek-key");
+        bundle.upsert(MINIMAX_CREDENTIAL_SERVICE, "minimax-key");
+
+        let json = bundle.to_json().expect("serialize");
+        let decoded = ApiKeyBundle::from_json(&json).expect("deserialize");
+
+        assert_eq!(decoded.get("iris.llm.deepseek"), Some("deepseek-key"));
+        assert_eq!(decoded.get(MINIMAX_CREDENTIAL_SERVICE), Some("minimax-key"));
+        assert_eq!(decoded.get("iris.llm.mimo"), None);
+    }
+
+    #[test]
+    fn api_key_configured_marker_roundtrips_without_secret_value() {
+        let db = Database::open_in_memory().expect("mem db");
+
+        mark_api_key_configured(&db, "iris.llm.deepseek").expect("mark");
+        assert!(api_key_configured(&db, "iris.llm.deepseek").expect("configured"));
+
+        let stored = db
+            .with_conn(|conn| {
+                conn.query_row(
+                    "SELECT value FROM settings WHERE key = ?1",
+                    [api_key_marker_key("iris.llm.deepseek")],
+                    |row| row.get::<_, String>(0),
+                )
+                .map_err(Into::into)
+            })
+            .expect("stored marker");
+        assert!(!stored.contains("deepseek-key"));
+
+        clear_api_key_configured(&db, "iris.llm.deepseek").expect("clear");
+        assert!(!api_key_configured(&db, "iris.llm.deepseek").expect("configured"));
+    }
+
+    #[test]
+    fn get_api_key_clears_stale_marker_when_bundle_and_legacy_secret_are_missing() {
+        let db = Database::open_in_memory().expect("mem db");
+        let service = format!("iris.llm.missing_{}", uuid::Uuid::new_v4());
+        *cache_lock().expect("cache") = Some(ApiKeyBundle::default());
+
+        mark_api_key_configured(&db, &service).expect("mark");
+        let err = get_api_key(&db, &service).expect_err("missing secret");
+
+        assert!(err.to_string().contains("凭据不存在"));
+        assert!(!api_key_configured(&db, &service).expect("marker cleared"));
     }
 
     #[test]

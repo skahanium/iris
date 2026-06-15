@@ -355,17 +355,12 @@ pub fn load(db: &Database) -> AppResult<LlmRoutingConfig> {
 
     let mut config = match raw {
         Some(json) => {
-            let mut value: serde_json::Value = serde_json::from_str(&json)?;
-            LlmRoutingConfig::migrate(&mut value)?;
-            match serde_json::from_value(value) {
-                Ok(c) => c,
-                Err(e) => {
-                    tracing::warn!("invalid {SETTINGS_KEY}, resetting to defaults: {e}");
-                    let defaults = migrate_legacy(db);
-                    save(db, &defaults)?;
-                    defaults
-                }
-            }
+            let mut value: serde_json::Value = serde_json::from_str(&json)
+                .map_err(|e| AppError::msg(format!("invalid {SETTINGS_KEY} JSON: {e}")))?;
+            LlmRoutingConfig::migrate(&mut value)
+                .map_err(|e| AppError::msg(format!("invalid {SETTINGS_KEY} migration: {e}")))?;
+            serde_json::from_value(value)
+                .map_err(|e| AppError::msg(format!("invalid {SETTINGS_KEY}: {e}")))?
         }
         None => {
             let migrated = migrate_legacy(db);
@@ -497,23 +492,24 @@ fn ensure_slot_keys(config: &mut LlmRoutingConfig) {
 }
 
 pub fn resolve_for_scene(db: &Database, scene: AiScene) -> AppResult<ResolvedLlmConfig> {
+    let route = resolve_capability_route(db, route_input_for_scene(scene))?;
+    Ok(route.resolved)
+}
+
+fn route_input_for_scene(scene: AiScene) -> CapabilityRouteInput {
     let intent = match scene {
         AiScene::KnowledgeLookup => AgentIntent::AskNotes,
         AiScene::ExemplarLearning | AiScene::DraftingAssist => AgentIntent::Write,
         AiScene::ResearchSynthesis => AgentIntent::Research,
     };
-    let route = resolve_capability_route(
-        db,
-        CapabilityRouteInput {
-            intent,
-            context_tokens: 0,
-            has_images: false,
-            needs_tools: false,
-            needs_reasoning: matches!(scene, AiScene::ResearchSynthesis),
-            privacy_preference: PrivacyPreference::ExternalAllowed,
-        },
-    )?;
-    Ok(route.resolved)
+    CapabilityRouteInput {
+        intent,
+        context_tokens: 0,
+        has_images: false,
+        needs_tools: false,
+        needs_reasoning: matches!(scene, AiScene::ResearchSynthesis),
+        privacy_preference: PrivacyPreference::ExternalAllowed,
+    }
 }
 
 pub fn resolve_capability_route(
@@ -521,7 +517,8 @@ pub fn resolve_capability_route(
     input: CapabilityRouteInput,
 ) -> AppResult<ResolvedCapabilityRoute> {
     let routing = load(db)?;
-    let route = resolve_capability_route_from_config(&routing, input)?;
+    let mut route = resolve_capability_route_from_config(&routing, input)?;
+    hydrate_resolved_api_key(db, &mut route.resolved)?;
     Ok(route)
 }
 
@@ -591,7 +588,6 @@ fn resolve_route(
         )));
     }
     let base_url = api_base(&route.provider_id, custom_base);
-    let api_key = optional_secret(&credential_service(&route.provider_id));
     let model_spec = find_model(&route.model).unwrap_or_else(|| fallback_model(&route.provider_id));
     let thinking =
         route.thinking || model_spec.supports_thinking && route.model.contains("reasoner");
@@ -613,7 +609,7 @@ fn resolve_route(
         provider_id: route.provider_id,
         model: route.model,
         base_url,
-        api_key,
+        api_key: None,
         thinking,
         input_budget,
         output_budget,
@@ -747,20 +743,21 @@ pub fn resolve_for_provider(
         )));
     }
     let base_url = api_base(provider_id, custom_base);
-    let api_key = optional_secret(&credential_service(provider_id));
     let model_spec = find_model(&model_id).unwrap_or_else(|| fallback_model(provider_id));
 
-    Ok(ResolvedLlmConfig {
+    let mut resolved = ResolvedLlmConfig {
         provider_id: provider_id.to_string(),
         model: model_id,
         base_url,
-        api_key,
+        api_key: None,
         thinking: false,
         input_budget: (model_spec.context_window as f32 * 0.85) as usize,
         output_budget: model_spec.max_output,
         context_strategy: ContextStrategy::Hybrid,
         endpoint_family: model_spec.endpoint_family,
-    })
+    };
+    hydrate_resolved_api_key(db, &mut resolved)?;
+    Ok(resolved)
 }
 
 impl ResolvedLlmConfig {
@@ -781,39 +778,39 @@ impl ResolvedLlmConfig {
 }
 
 #[cfg(not(test))]
-fn optional_secret(service: &str) -> Option<String> {
-    crate::credentials::get_secret(service).ok()
+fn hydrate_resolved_api_key(db: &Database, resolved: &mut ResolvedLlmConfig) -> AppResult<()> {
+    if crate::llm::providers::requires_api_key(&resolved.provider_id) {
+        resolved.api_key = Some(crate::credentials::get_api_key(
+            db,
+            &credential_service(&resolved.provider_id),
+        )?);
+    }
+    Ok(())
 }
 
 #[cfg(test)]
-fn optional_secret(_service: &str) -> Option<String> {
-    None
-}
-
-#[cfg(not(test))]
-fn optional_secret_exists(service: &str) -> bool {
-    crate::credentials::has_secret(service)
-}
-
-#[cfg(test)]
-fn optional_secret_exists(_service: &str) -> bool {
-    false
+fn hydrate_resolved_api_key(_db: &Database, _resolved: &mut ResolvedLlmConfig) -> AppResult<()> {
+    Ok(())
 }
 
 pub fn connectivity_status(
     db: &Database,
     active_scene: AiScene,
 ) -> AppResult<ConnectivityStatusDto> {
-    let resolved = resolve_for_scene(db, active_scene)?;
-    let llm_state = if crate::llm::providers::requires_api_key(&resolved.provider_id)
-        && resolved.api_key.is_none()
-    {
-        "missing_key"
-    } else if resolved.model.is_empty() {
-        "misconfigured"
-    } else {
-        "ready"
-    };
+    let routing = load(db)?;
+    let resolved =
+        resolve_capability_route_from_config(&routing, route_input_for_scene(active_scene))?
+            .resolved;
+    let llm_configured =
+        crate::credentials::api_key_configured(db, &credential_service(&resolved.provider_id))?;
+    let llm_state =
+        if crate::llm::providers::requires_api_key(&resolved.provider_id) && !llm_configured {
+            "missing_key"
+        } else if resolved.model.is_empty() {
+            "misconfigured"
+        } else {
+            "ready"
+        };
 
     let message = match llm_state {
         "missing_key" => format!("请配置 {} 的 API Key", resolved.provider_id),
@@ -821,10 +818,11 @@ pub fn connectivity_status(
         _ => format!("{} / {}", resolved.provider_id, resolved.model),
     };
 
-    let minimax_configured = optional_secret_exists(crate::credentials::MINIMAX_CREDENTIAL_SERVICE);
+    let minimax_configured =
+        crate::credentials::api_key_configured(db, crate::credentials::MINIMAX_CREDENTIAL_SERVICE)?;
     let prefs = crate::llm::web_search_config::load(db)?;
     let effective_backend =
-        crate::llm::search_web::expected_search_backend_for_connectivity(&prefs)
+        crate::llm::search_web::expected_search_backend_for_connectivity(db, &prefs)
             .as_str()
             .to_string();
     let search_api = SearchApiConnectivityDto {
@@ -893,6 +891,23 @@ mod tests {
     }
 
     #[test]
+    fn connectivity_status_uses_configured_markers_without_secret_reads() {
+        let db = Database::open_in_memory().expect("mem db");
+        crate::credentials::mark_api_key_configured(&db, "iris.llm.deepseek").expect("mark llm");
+        crate::credentials::mark_api_key_configured(
+            &db,
+            crate::credentials::MINIMAX_CREDENTIAL_SERVICE,
+        )
+        .expect("mark minimax");
+
+        let status = connectivity_status(&db, AiScene::KnowledgeLookup).expect("status");
+
+        assert_eq!(status.llm.state, "ready");
+        assert!(status.search_api.minimax_configured);
+        assert_eq!(status.search_api.effective_backend, "minimax");
+    }
+
+    #[test]
     fn load_tolerates_legacy_plain_text_custom_base_url() {
         let db = Database::open_in_memory().expect("mem db");
         db.with_conn(|conn| {
@@ -911,6 +926,49 @@ mod tests {
                 .and_then(|p| p.base_url.as_deref()),
             Some("https://example.com/v1")
         );
+    }
+
+    #[test]
+    fn load_invalid_routing_does_not_overwrite_stored_value_with_defaults() {
+        let db = Database::open_in_memory().expect("mem db");
+        let invalid = serde_json::json!({
+            "version": "bad",
+            "schemaVersion": 2,
+            "providers": {
+                "mimo": {
+                    "baseUrl": "https://api.xiaomimimo.com/v1",
+                    "enabledModels": ["mimo-v2.5"]
+                }
+            },
+            "slots": {},
+            "scenes": {},
+            "contextStrategy": {}
+        })
+        .to_string();
+        db.with_conn(|conn| {
+            conn.execute(
+                "INSERT INTO settings (key, value) VALUES (?1, ?2)",
+                rusqlite::params![SETTINGS_KEY, invalid],
+            )?;
+            Ok(())
+        })
+        .expect("seed invalid routing");
+
+        let err = load(&db).expect_err("invalid routing should surface");
+        assert!(err.to_string().contains("llm_routing"));
+
+        let stored = db
+            .with_conn(|conn| {
+                conn.query_row(
+                    "SELECT value FROM settings WHERE key = ?1",
+                    [SETTINGS_KEY],
+                    |row| row.get::<_, String>(0),
+                )
+                .map_err(Into::into)
+            })
+            .expect("stored routing");
+        assert!(stored.contains("https://api.xiaomimimo.com/v1"));
+        assert!(stored.contains("mimo-v2.5"));
     }
 
     #[test]

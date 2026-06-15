@@ -172,6 +172,9 @@ mod tests {
     fn default_readonly_tools_present() {
         let defaults = catalog_default_readonly_names();
         let required = [
+            "system_time_now",
+            "app_context_read",
+            "capabilities_read",
             "search_hybrid",
             "search_semantic",
             "search_keyword",
@@ -217,8 +220,8 @@ mod tests {
     fn total_catalog_count() {
         assert_eq!(
             catalog_total_count(),
-            80,
-            "catalog should have exactly 80 tools"
+            83,
+            "catalog should have exactly 83 tools"
         );
     }
 

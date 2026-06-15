@@ -166,7 +166,13 @@ export function LlmRoutingSection({ open }: LlmRoutingSectionProps) {
   const [providerBaseUrlInputs, setProviderBaseUrlInputs] = useState<
     Record<string, string>
   >({});
+  const routingRef = useRef<LlmRoutingConfig | null>(null);
   const keyStatusEpochRef = useRef(0);
+
+  const applyRouting = useCallback((next: LlmRoutingConfig) => {
+    routingRef.current = next;
+    setRouting(next);
+  }, []);
 
   const refreshKeyStatus = useCallback(async (providerIds: string[]) => {
     const epoch = ++keyStatusEpochRef.current;
@@ -192,38 +198,50 @@ export function LlmRoutingSection({ open }: LlmRoutingSectionProps) {
     }
   }, []);
 
-  const load = useCallback(async () => {
-    setLoadError(null);
-    if (!isTauri()) {
-      setLoadError(
-        "当前浏览器标签页无法调用 Tauri 后端，请在 Iris 桌面窗口中配置。",
-      );
-      setRouting(DEFAULT_LLM_ROUTING);
-      setData({
-        routing: DEFAULT_LLM_ROUTING,
-        providers: FALLBACK_PROVIDERS,
-        catalog: [],
-        registry: [],
-      });
-      return;
-    }
-    try {
-      const res = await llmConfigGet();
-      const normalized = normalizeRouting(res.routing);
-      setData({ ...res, routing: normalized });
-      setRouting(normalized);
-      void refreshKeyStatus(res.providers.map((p) => p.id));
-    } catch (err) {
-      setLoadError(invokeErrorMessage(err));
-      setRouting(DEFAULT_LLM_ROUTING);
-      setData({
-        routing: DEFAULT_LLM_ROUTING,
-        providers: FALLBACK_PROVIDERS,
-        catalog: [],
-        registry: [],
-      });
-    }
-  }, [refreshKeyStatus]);
+  const load = useCallback(
+    async (options?: { preserveRouting?: boolean }) => {
+      setLoadError(null);
+      if (!isTauri()) {
+        setLoadError(
+          "当前浏览器标签页无法调用 Tauri 后端，请在 Iris 桌面窗口中配置。",
+        );
+        const fallbackRouting = DEFAULT_LLM_ROUTING;
+        applyRouting(fallbackRouting);
+        setData({
+          routing: fallbackRouting,
+          providers: FALLBACK_PROVIDERS,
+          catalog: [],
+          registry: [],
+        });
+        return;
+      }
+      try {
+        const res = await llmConfigGet();
+        const normalized = normalizeRouting(res.routing);
+        const nextRouting =
+          options?.preserveRouting && routingRef.current
+            ? routingRef.current
+            : normalized;
+        applyRouting(nextRouting);
+        setData({ ...res, routing: nextRouting });
+        void refreshKeyStatus(res.providers.map((p) => p.id));
+      } catch (err) {
+        setLoadError(invokeErrorMessage(err));
+        const fallbackRouting =
+          options?.preserveRouting && routingRef.current
+            ? routingRef.current
+            : DEFAULT_LLM_ROUTING;
+        applyRouting(fallbackRouting);
+        setData({
+          routing: fallbackRouting,
+          providers: FALLBACK_PROVIDERS,
+          catalog: [],
+          registry: [],
+        });
+      }
+    },
+    [applyRouting, refreshKeyStatus],
+  );
 
   useEffect(() => {
     if (open) void load();
@@ -238,14 +256,8 @@ export function LlmRoutingSection({ open }: LlmRoutingSectionProps) {
     [data?.providers, routing?.providers],
   );
 
-  const modelById = (modelId: string): ModelCatalogEntry | undefined => {
-    const normalized = normalizeModelId(modelId);
-    const lowerModelId = modelId.toLowerCase();
-    return (
-      data?.catalog.find((m) => m.id === normalized) ??
-      data?.catalog.find((m) => m.id.toLowerCase() === lowerModelId)
-    );
-  };
+  const modelById = (modelId: string): ModelCatalogEntry | undefined =>
+    data?.catalog.find((m) => m.id === modelId);
 
   const baseUrlForProvider = (providerId: string): string =>
     providerBaseUrlInputs[providerId] ??
@@ -279,7 +291,7 @@ export function LlmRoutingSection({ open }: LlmRoutingSectionProps) {
       ...routing,
       providers: { ...routing.providers, [providerId]: next },
     };
-    setRouting(nextRouting);
+    applyRouting(nextRouting);
     setData({
       ...data,
       routing: nextRouting,
@@ -323,7 +335,7 @@ export function LlmRoutingSection({ open }: LlmRoutingSectionProps) {
       ...routing,
       providers: { ...routing.providers, [id]: entry },
     };
-    setRouting(nextRouting);
+    applyRouting(nextRouting);
     setData({
       ...data,
       routing: nextRouting,
@@ -344,11 +356,6 @@ export function LlmRoutingSection({ open }: LlmRoutingSectionProps) {
     setMessage(null);
     try {
       await credentialSet(service, value);
-      const verified = await credentialHas(service);
-      if (!verified) {
-        setMessage(`${label} Key 写入后校验失败，请重试。`);
-        return;
-      }
       keyInputsRef.current[providerId] = "";
       setKeyInputTouch((n) => n + 1);
       setKeyConfigured((prev) => ({ ...prev, [providerId]: true }));
@@ -392,7 +399,7 @@ export function LlmRoutingSection({ open }: LlmRoutingSectionProps) {
       nextSlots.agent_tools =
         slot === "reasoner" ? nextRoute : (nextSlots.agent_tools ?? reasoner);
     }
-    setRouting({
+    applyRouting({
       ...routing,
       slots: nextSlots,
     });
@@ -547,7 +554,7 @@ export function LlmRoutingSection({ open }: LlmRoutingSectionProps) {
     try {
       const result = await llmModelRegistryRefresh(provider.id);
       setMessage(result.message);
-      await load();
+      await load({ preserveRouting: true });
     } catch (err) {
       setMessage(invokeErrorMessage(err));
     } finally {
@@ -580,7 +587,7 @@ export function LlmRoutingSection({ open }: LlmRoutingSectionProps) {
     try {
       const result = await llmModelValidate(provider.id, model.id, kind);
       setTestResults((prev) => ({ ...prev, [key]: result }));
-      if (result.ok) await load();
+      if (result.ok) await load({ preserveRouting: true });
     } catch (err) {
       setTestResults((prev) => ({
         ...prev,
@@ -602,7 +609,7 @@ export function LlmRoutingSection({ open }: LlmRoutingSectionProps) {
         modelId: model.id,
         slot,
       });
-      await load();
+      await load({ preserveRouting: true });
     } catch (err) {
       setMessage(invokeErrorMessage(err));
     }
@@ -827,6 +834,9 @@ export function LlmRoutingSection({ open }: LlmRoutingSectionProps) {
                       <Input
                         className="h-8 min-w-48 flex-1 text-xs"
                         placeholder="模型 ID，如 deepseek-v4-flash"
+                        autoCapitalize="none"
+                        autoCorrect="off"
+                        spellCheck={false}
                         value={newModelInputs[provider.id] ?? ""}
                         onChange={(event) =>
                           setNewModelInputs((prev) => ({
@@ -872,12 +882,14 @@ export function LlmRoutingSection({ open }: LlmRoutingSectionProps) {
                             <div className="flex flex-wrap items-start justify-between gap-2">
                               <div className="flex min-w-0 flex-1 items-start gap-2">
                                 <span className="min-w-0">
-                                  <span className="block truncate text-xs font-medium text-foreground">
-                                    {model.catalog?.displayName ?? model.id}
-                                  </span>
-                                  <span className="block truncate font-mono text-[11px] text-muted-foreground">
+                                  <span className="block truncate font-mono text-xs font-medium text-foreground">
                                     {model.id}
                                   </span>
+                                  {model.catalog?.displayName ? (
+                                    <span className="block truncate text-[11px] text-muted-foreground">
+                                      {model.catalog.displayName}
+                                    </span>
+                                  ) : null}
                                   {usage.length > 0 ? (
                                     <span className="block text-[11px] text-muted-foreground">
                                       用于 {usage.join(" / ")}
@@ -989,14 +1001,16 @@ export function LlmRoutingSection({ open }: LlmRoutingSectionProps) {
                         >
                           <div className="flex flex-wrap items-start justify-between gap-2">
                             <div className="min-w-0">
-                              <p className="truncate text-xs font-medium text-foreground">
-                                {model.catalog?.displayName ??
-                                  model.registry?.displayName ??
-                                  model.id}
-                              </p>
-                              <p className="truncate font-mono text-[11px] text-muted-foreground">
+                              <p className="truncate font-mono text-xs font-medium text-foreground">
                                 {model.id}
                               </p>
+                              {model.catalog?.displayName ||
+                              model.registry?.displayName ? (
+                                <p className="truncate text-[11px] text-muted-foreground">
+                                  {model.catalog?.displayName ??
+                                    model.registry?.displayName}
+                                </p>
+                              ) : null}
                             </div>
                             <div className="flex flex-wrap items-center gap-1.5">
                               <Button
@@ -1149,7 +1163,7 @@ export function LlmRoutingSection({ open }: LlmRoutingSectionProps) {
                     <SelectContent>
                       {models.map((model) => (
                         <SelectItem key={model.id} value={model.id}>
-                          {model.catalog?.displayName ?? model.id}
+                          {model.id}
                         </SelectItem>
                       ))}
                     </SelectContent>
@@ -1166,7 +1180,7 @@ export function LlmRoutingSection({ open }: LlmRoutingSectionProps) {
         <Button
           type="button"
           size="sm"
-          disabled={saving}
+          disabled={saving || Boolean(loadError)}
           onClick={() => void saveRouting()}
         >
           {saving ? "保存中…" : "保存路由"}
@@ -1369,19 +1383,6 @@ function sameRoute(a: SlotRoute, b: SlotRoute): boolean {
     a.model === b.model &&
     Boolean(a.thinking) === Boolean(b.thinking)
   );
-}
-
-function normalizeModelId(model: string): string {
-  const aliases: Record<string, string> = {
-    "mimo-vl-7b-experimental": "MiMo-V2.5-Pro",
-    "mimo-v2.5-pro": "MiMo-V2.5-Pro",
-    "mimo-v2.5-pro-ultraspeed": "MiMo-V2.5-Pro-UltraSpeed",
-    "mimo-v2.5-asr": "MiMo-V2.5-ASR",
-    "mimo-v2.5-tts": "MiMo-V2.5-TTS",
-    "mimo-v2.5-tts-voiceclone": "MiMo-V2.5-TTS-VoiceClone",
-    "mimo-v2.5-tts-voicedesign": "MiMo-V2.5-TTS-VoiceDesign",
-  };
-  return aliases[model.trim().toLowerCase()] ?? model;
 }
 
 function normalizePersistedModelId(model: string): string {

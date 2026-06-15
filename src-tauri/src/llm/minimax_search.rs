@@ -5,6 +5,7 @@ use serde::Deserialize;
 use crate::credentials::{self, MINIMAX_CREDENTIAL_SERVICE};
 use crate::error::{AppError, AppResult};
 use crate::network::cert_pinning::create_https_client;
+use crate::storage::db::Database;
 
 const SEARCH_PATH: &str = "/v1/coding_plan/search";
 const MAX_RESULTS: usize = 5;
@@ -55,8 +56,8 @@ pub(crate) fn search_request_body(query: &str, model: &str) -> serde_json::Value
 }
 
 /// 调用 MiniMax Coding Plan 搜索 API，返回与 [`crate::llm::search_web`] 统一的摘要文本块。
-pub async fn search(query: &str, api_host: &str, model: &str) -> AppResult<String> {
-    let api_key = credentials::get_secret(MINIMAX_CREDENTIAL_SERVICE)?;
+pub async fn search(db: &Database, query: &str, api_host: &str, model: &str) -> AppResult<String> {
+    let api_key = credentials::get_api_key(db, MINIMAX_CREDENTIAL_SERVICE)?;
     let host = normalize_api_host(api_host);
 
     let client = create_https_client()?;
@@ -101,8 +102,8 @@ pub async fn search(query: &str, api_host: &str, model: &str) -> AppResult<Strin
 }
 
 /// 探测 Key、Host 与模型配置是否可用（极简查询）。
-pub async fn probe(api_host: &str, model: &str) -> AppResult<()> {
-    let body = search("test", api_host, model).await?;
+pub async fn probe(db: &Database, api_host: &str, model: &str) -> AppResult<()> {
+    let body = search(db, "test", api_host, model).await?;
     if body.contains("(未找到搜索结果)") {
         // API 可达但无结果仍视为连通成功
         return Ok(());

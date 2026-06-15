@@ -113,13 +113,13 @@ pub(crate) async fn run_reflection_round(
             if let Some(t) = thinking {
                 emit_thinking(app_handle, &input.request_id, harness_rounds, &t)?;
             }
-            if !visible.trim().is_empty() {
+            if let Some(content) = sanitize_reflection_visible(&visible) {
                 return Ok(ReflectionOutcome::Done(
                     finish_run(
                         state,
                         input.clone(),
                         FinishRunParams {
-                            content: visible,
+                            content,
                             tool_calls: all_tool_calls.to_vec(),
                             tool_results: tool_results_json.to_vec(),
                             usage: total_usage.clone(),
@@ -135,4 +135,33 @@ pub(crate) async fn run_reflection_round(
         }
     }
     Ok(ReflectionOutcome::NoAnswer)
+}
+
+pub(crate) fn sanitize_reflection_visible(text: &str) -> Option<String> {
+    let cleaned = text.replace("NEED_MORE_EVIDENCE", "");
+    let trimmed = cleaned.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_string())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn bare_need_more_evidence_is_not_visible_answer() {
+        assert!(sanitize_reflection_visible("NEED_MORE_EVIDENCE").is_none());
+        assert!(sanitize_reflection_visible("  NEED_MORE_EVIDENCE\n").is_none());
+    }
+
+    #[test]
+    fn normal_reflection_answer_is_preserved() {
+        assert_eq!(
+            sanitize_reflection_visible("今天是星期二。").as_deref(),
+            Some("今天是星期二。")
+        );
+    }
 }
