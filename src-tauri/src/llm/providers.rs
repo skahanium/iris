@@ -67,6 +67,13 @@ pub fn list_providers_from_routing(routing: &LlmRoutingConfig) -> Vec<LlmProvide
     out
 }
 
+pub fn list_external_providers_from_routing(routing: &LlmRoutingConfig) -> Vec<LlmProviderInfo> {
+    list_providers_from_routing(routing)
+        .into_iter()
+        .filter(|provider| provider.id != "ollama")
+        .collect()
+}
+
 fn provider_info_from_override(id: &str, row: &ProviderOverride) -> LlmProviderInfo {
     LlmProviderInfo {
         id: id.to_string(),
@@ -212,6 +219,20 @@ mod tests {
             "anthropic".to_string(),
         ]));
         assert!(ids.contains(&"custom_groq".to_string()));
+    }
+
+    #[test]
+    fn settings_external_providers_hide_ollama() {
+        let routing = crate::llm::config::deepseek_defaults();
+        let ids: Vec<_> = list_external_providers_from_routing(&routing)
+            .into_iter()
+            .map(|provider| provider.id)
+            .collect();
+
+        assert!(!ids.contains(&"ollama".to_string()));
+        assert!(ids.contains(&"deepseek".to_string()));
+        assert!(ids.contains(&"mimo".to_string()));
+        assert!(is_allowed_provider("ollama"));
     }
 
     #[test]

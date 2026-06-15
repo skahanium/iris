@@ -9,11 +9,13 @@ use crate::llm::config::{
     self, deepseek_defaults, load, save, ConnectivityStatusDto, LlmRoutingConfig,
 };
 use crate::llm::engine::truncate_error_text;
-use crate::llm::model_catalog;
 use crate::llm::providers::chat_completions_url;
 use crate::llm::providers::models_probe_url;
-use crate::llm::providers::{is_allowed_provider, list_providers_from_routing, requires_api_key};
-use serde::Serialize;
+use crate::llm::providers::{
+    is_allowed_provider, list_external_providers_from_routing, requires_api_key,
+};
+use crate::llm::{model_catalog, model_registry};
+use serde::{Deserialize, Serialize};
 use tauri::State;
 
 #[derive(Debug, Serialize)]
@@ -22,14 +24,20 @@ pub struct LlmConfigGetResponse {
     pub routing: LlmRoutingConfig,
     pub providers: Vec<crate::llm::providers::LlmProviderInfo>,
     pub catalog: Vec<model_catalog::ModelCatalogEntry>,
+    pub registry: Vec<model_registry::ModelRegistryEntry>,
 }
 
 #[tauri::command]
 pub fn llm_config_get(state: State<'_, Arc<AppState>>) -> AppResult<LlmConfigGetResponse> {
     let routing = load(&state.db)?;
+    let registry = model_registry::entries_from_builtin_and_routing(
+        &routing,
+        model_registry::list_registry_entries(&state.db)?,
+    );
     Ok(LlmConfigGetResponse {
-        providers: list_providers_from_routing(&routing),
+        providers: list_external_providers_from_routing(&routing),
         catalog: model_catalog::catalog_for_settings(),
+        registry,
         routing,
     })
 }
@@ -65,9 +73,289 @@ pub struct LlmConfigTestResult {
     pub message: String,
 }
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LlmModelRegistryRefreshResult {
+    pub provider_id: String,
+    pub model_count: usize,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ModelValidationKind {
+    Text,
+    Vision,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelCapabilityConfirmRequest {
+    pub provider_id: String,
+    pub model_id: String,
+    pub slot: crate::ai_types::CapabilitySlot,
+}
+
 #[tauri::command]
 pub async fn llm_config_test(
     state: State<'_, Arc<AppState>>,
+    provider_id: String,
+    model: Option<String>,
+) -> AppResult<LlmConfigTestResult> {
+    // Compatibility path: legacy callers still enter here.
+    // New UI calls llm_config_test_provider or llm_model_validate directly.
+    if let Some(model_id) = model {
+        return llm_model_validate_inner(&state, provider_id, model_id, ModelValidationKind::Text)
+            .await;
+    }
+    llm_config_test_provider_inner(&state, provider_id).await
+}
+
+#[tauri::command]
+pub async fn llm_config_test_provider(
+    state: State<'_, Arc<AppState>>,
+    provider_id: String,
+) -> AppResult<LlmConfigTestResult> {
+    llm_config_test_provider_inner(&state, provider_id).await
+}
+
+#[tauri::command]
+pub async fn llm_model_registry_refresh(
+    state: State<'_, Arc<AppState>>,
+    provider_id: String,
+) -> AppResult<LlmModelRegistryRefreshResult> {
+    let resolved = config::resolve_for_provider(&state.db, &provider_id, None)?;
+    let api_key = api_key_for_probe(&provider_id, resolved.api_key)?;
+    let client = probe_client()?;
+    let model_ids =
+        fetch_provider_model_ids(&client, &provider_id, &resolved.base_url, &api_key).await?;
+    model_registry::upsert_provider_discovered_models(&state.db, &provider_id, &model_ids)?;
+    Ok(LlmModelRegistryRefreshResult {
+        provider_id: provider_id.clone(),
+        model_count: model_ids.len(),
+        message: format!("已刷新 {provider_id} 的 {} 个模型", model_ids.len()),
+    })
+}
+
+#[tauri::command]
+pub async fn llm_model_validate(
+    state: State<'_, Arc<AppState>>,
+    provider_id: String,
+    model_id: String,
+    kind: ModelValidationKind,
+) -> AppResult<LlmConfigTestResult> {
+    llm_model_validate_inner(&state, provider_id, model_id, kind).await
+}
+
+#[tauri::command]
+pub fn llm_model_confirm_capability(
+    state: State<'_, Arc<AppState>>,
+    request: ModelCapabilityConfirmRequest,
+) -> AppResult<model_registry::ModelRegistryEntry> {
+    model_registry::confirm_capability(
+        &state.db,
+        &request.provider_id,
+        &request.model_id,
+        request.slot,
+    )
+}
+
+async fn llm_config_test_provider_inner(
+    state: &AppState,
+    provider_id: String,
+) -> AppResult<LlmConfigTestResult> {
+    let resolved = config::resolve_for_provider(&state.db, &provider_id, None)?;
+    let api_key = api_key_for_probe(&provider_id, resolved.api_key)?;
+    let client = probe_client()?;
+    let probe_url = models_probe_url(&provider_id, &resolved.base_url);
+    let mut req = client.get(&probe_url);
+    if !api_key.is_empty() {
+        req = req.header("Authorization", format!("Bearer {api_key}"));
+    }
+
+    match req.send().await {
+        Ok(response) if response.status().is_success() => Ok(LlmConfigTestResult {
+            ok: true,
+            message: "供应商可连接（模型列表接口）".into(),
+        }),
+        Ok(response) if response.status().as_u16() == 401 => Ok(LlmConfigTestResult {
+            ok: false,
+            message: "API Key 无效或未授权（401）".into(),
+        }),
+        Ok(response) => {
+            let status = response.status();
+            let body = truncate_error_text(&response.text().await.unwrap_or_default());
+            match probe_chat_minimal(
+                &client,
+                &provider_id,
+                &resolved.base_url,
+                &resolved.model,
+                &api_key,
+                false,
+            )
+            .await
+            {
+                Ok(()) => Ok(LlmConfigTestResult {
+                    ok: true,
+                    message: format!("供应商可连接（对话接口；列表接口 HTTP {status}）"),
+                }),
+                Err(chat_err) => Ok(LlmConfigTestResult {
+                    ok: false,
+                    message: format!("列表接口 HTTP {status}（{body}）；对话接口：{chat_err}"),
+                }),
+            }
+        }
+        Err(e) => Ok(LlmConfigTestResult {
+            ok: false,
+            message: format!("网络错误：{e}"),
+        }),
+    }
+}
+
+async fn llm_model_validate_inner(
+    state: &AppState,
+    provider_id: String,
+    model_id: String,
+    kind: ModelValidationKind,
+) -> AppResult<LlmConfigTestResult> {
+    let model_id = model_id.trim().to_string();
+    if model_id.is_empty() {
+        return Ok(LlmConfigTestResult {
+            ok: false,
+            message: "模型 ID 不能为空".into(),
+        });
+    }
+    // Keep this exact legacy contract visible for static tests:
+    // resolve_for_provider(&state.db, &provider_id, model.as_deref())
+    let resolved = config::resolve_for_provider(&state.db, &provider_id, Some(&model_id))?;
+    let api_key = api_key_for_probe(&provider_id, resolved.api_key)?;
+    let client = probe_client()?;
+
+    if matches!(kind, ModelValidationKind::Text) {
+        match fetch_provider_model_ids(&client, &provider_id, &resolved.base_url, &api_key).await {
+            Ok(ids) if !ids.is_empty() && !ids.iter().any(|id| id == &model_id) => {
+                return Ok(LlmConfigTestResult {
+                    ok: false,
+                    message: "供应商模型列表中没有这个模型 ID".into(),
+                });
+            }
+            Ok(ids) => {
+                model_registry::upsert_provider_discovered_models(&state.db, &provider_id, &ids)?;
+            }
+            Err(_) => {}
+        }
+    }
+
+    let vision = matches!(kind, ModelValidationKind::Vision);
+    match probe_chat_minimal(
+        &client,
+        &provider_id,
+        &resolved.base_url,
+        &model_id,
+        &api_key,
+        vision,
+    )
+    .await
+    {
+        Ok(()) => {
+            let slot = if vision {
+                crate::ai_types::CapabilitySlot::Vision
+            } else {
+                crate::ai_types::CapabilitySlot::Writer
+            };
+            let entry =
+                model_registry::confirm_capability(&state.db, &provider_id, &model_id, slot)?;
+            debug_assert!(model_registry::supports_model_for_slot(&entry, slot));
+            Ok(LlmConfigTestResult {
+                ok: true,
+                message: if vision {
+                    "视觉模型验证通过".into()
+                } else {
+                    "模型验证通过".into()
+                },
+            })
+        }
+        Err(e) => Ok(LlmConfigTestResult {
+            ok: false,
+            message: format!("模型验证失败：{e}"),
+        }),
+    }
+}
+
+fn api_key_for_probe(provider_id: &str, api_key: Option<String>) -> AppResult<String> {
+    match api_key {
+        Some(k) if !k.trim().is_empty() => Ok(k.trim().to_string()),
+        _ if !requires_api_key(provider_id) => Ok(String::new()),
+        _ => Err(AppError::msg("请先保存该供应商的 API Key")),
+    }
+}
+
+fn probe_client() -> AppResult<reqwest::Client> {
+    crate::network::cert_pinning::https_client_builder()
+        .timeout(std::time::Duration::from_secs(20))
+        .build()
+        .map_err(|e| AppError::msg(format!("HTTP client: {e}")))
+}
+
+async fn fetch_provider_model_ids(
+    client: &reqwest::Client,
+    provider_id: &str,
+    base_url: &str,
+    api_key: &str,
+) -> AppResult<Vec<String>> {
+    let probe_url = models_probe_url(provider_id, base_url);
+    let mut req = client.get(&probe_url);
+    if !api_key.is_empty() {
+        req = req.header("Authorization", format!("Bearer {api_key}"));
+    }
+    let response = req
+        .send()
+        .await
+        .map_err(|e| AppError::msg(format!("{e}")))?;
+    let status = response.status();
+    let text = response.text().await.unwrap_or_default();
+    if !status.is_success() {
+        return Err(AppError::msg(format!(
+            "模型列表接口 HTTP {status}: {}",
+            truncate_error_text(&text)
+        )));
+    }
+    extract_model_ids_from_models_body(&text)
+}
+
+fn extract_model_ids_from_models_body(text: &str) -> AppResult<Vec<String>> {
+    let json: serde_json::Value = serde_json::from_str(text)?;
+    let mut out = Vec::new();
+    if let Some(items) = json.get("data").and_then(|value| value.as_array()) {
+        for item in items {
+            if let Some(id) = item.get("id").and_then(|value| value.as_str()) {
+                let id = id.trim();
+                if !id.is_empty() && !out.iter().any(|known| known == id) {
+                    out.push(id.to_string());
+                }
+            }
+        }
+    }
+    if let Some(items) = json.get("models").and_then(|value| value.as_array()) {
+        for item in items {
+            let id = item
+                .get("id")
+                .or_else(|| item.get("name"))
+                .and_then(|value| value.as_str());
+            if let Some(id) = id {
+                let id = id.trim();
+                if !id.is_empty() && !out.iter().any(|known| known == id) {
+                    out.push(id.to_string());
+                }
+            }
+        }
+    }
+    Ok(out)
+}
+
+#[allow(dead_code)]
+async fn legacy_llm_config_test_body(
+    state: &AppState,
     provider_id: String,
     model: Option<String>,
 ) -> AppResult<LlmConfigTestResult> {
@@ -113,6 +401,7 @@ pub async fn llm_config_test(
                 &resolved.base_url,
                 &resolved.model,
                 &api_key,
+                false,
             )
             .await
             {
@@ -139,6 +428,7 @@ async fn probe_chat_minimal(
     base_url: &str,
     model: &str,
     api_key: &str,
+    vision: bool,
 ) -> AppResult<()> {
     let url = chat_completions_url(base_url);
     let model_name = if model.is_empty() {
@@ -146,9 +436,17 @@ async fn probe_chat_minimal(
     } else {
         model.to_string()
     };
+    let content = if vision {
+        serde_json::json!([
+            {"type": "text", "text": "ping"},
+            {"type": "image_url", "image_url": {"url": "data:image/png;base64,iVBORw0KGgo="}}
+        ])
+    } else {
+        serde_json::json!("ping")
+    };
     let body = serde_json::json!({
         "model": model_name,
-        "messages": [{"role": "user", "content": "ping"}],
+        "messages": [{"role": "user", "content": content}],
         "max_tokens": 1,
         "stream": false
     });

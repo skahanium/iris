@@ -236,6 +236,69 @@ pub fn supports_model_for_slot(entry: &ModelRegistryEntry, slot: CapabilitySlot)
     }
 }
 
+pub fn entries_from_builtin_and_routing(
+    routing: &crate::llm::config::LlmRoutingConfig,
+    mut registry: Vec<ModelRegistryEntry>,
+) -> Vec<ModelRegistryEntry> {
+    let mut seen: std::collections::HashSet<(String, String)> = registry
+        .iter()
+        .map(|entry| (entry.provider_id.clone(), entry.model_id.clone()))
+        .collect();
+
+    for model in crate::llm::model_catalog::catalog_for_settings() {
+        let key = (model.provider_id.to_string(), model.id.to_string());
+        if seen.insert(key.clone()) {
+            registry.push(ModelRegistryEntry {
+                provider_id: key.0,
+                model_id: key.1,
+                display_name: model.display_name.to_string(),
+                source: ModelRegistrySource::BuiltIn,
+                stale: false,
+                first_seen_at: None,
+                last_seen_at: None,
+                last_refreshed_at: None,
+                text_verified_at: Some("built_in".into()),
+                vision_verified_at: model.supports_vision.then(|| "built_in".into()),
+                user_confirmed_capabilities: Vec::new(),
+            });
+        }
+    }
+
+    for (provider_id, row) in &routing.providers {
+        if let Some(models) = &row.enabled_models {
+            for model_id in models {
+                let trimmed = model_id.trim();
+                if trimmed.is_empty() {
+                    continue;
+                }
+                let key = (provider_id.clone(), trimmed.to_string());
+                if seen.insert(key.clone()) {
+                    registry.push(ModelRegistryEntry {
+                        provider_id: key.0,
+                        model_id: key.1.clone(),
+                        display_name: key.1,
+                        source: ModelRegistrySource::Manual,
+                        stale: false,
+                        first_seen_at: None,
+                        last_seen_at: None,
+                        last_refreshed_at: None,
+                        text_verified_at: None,
+                        vision_verified_at: None,
+                        user_confirmed_capabilities: Vec::new(),
+                    });
+                }
+            }
+        }
+    }
+
+    registry.sort_by(|a, b| {
+        a.provider_id
+            .cmp(&b.provider_id)
+            .then_with(|| a.display_name.cmp(&b.display_name))
+    });
+    registry
+}
+
 fn registry_entry(
     db: &Database,
     provider_id: &str,
@@ -375,5 +438,27 @@ mod tests {
 
         let all_entries = list_registry_entries(&db).unwrap();
         assert_eq!(all_entries.len(), 4);
+    }
+
+    #[test]
+    fn legacy_enabled_models_are_exposed_as_manual_entries() {
+        let mut routing = crate::llm::config::deepseek_defaults();
+        routing.providers.insert(
+            "deepseek".into(),
+            crate::llm::config::ProviderOverride {
+                base_url: None,
+                label: None,
+                default_model: None,
+                enabled_models: Some(vec!["custom-deepseek-model".into()]),
+            },
+        );
+
+        let entries = entries_from_builtin_and_routing(&routing, vec![]);
+
+        assert!(entries.iter().any(|entry| {
+            entry.provider_id == "deepseek"
+                && entry.model_id == "custom-deepseek-model"
+                && entry.source == ModelRegistrySource::Manual
+        }));
     }
 }

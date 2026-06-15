@@ -2,7 +2,8 @@
 
 ## 配置存储
 
-- **路由表**：`settings.llm_routing`（JSON），含四场景 `providerId` / `model`、`contextStrategy`（`hybrid` | `long_context`）、各厂商 `baseUrl` 覆盖。
+- **路由表**：`settings.llm_routing`（JSON），含能力槽 `providerId` / `model`、`contextStrategy`（`hybrid` | `long_context`）、各厂商 `baseUrl` 覆盖与手动启用模型。
+- **模型注册表**：`llm_model_registry` 合并内置目录、供应商 `/models` 发现结果和用户手动模型；未知模型默认只进入文本候选，Vision / Long context / Reasoner 需要内置目录、专项验证或用户确认。
 - **API Key**：系统凭据 `iris.llm.{provider_id}`（勿含 `/`，兼容 Windows），禁止写入设置文件或日志。
 
 ## 出厂默认
@@ -12,9 +13,9 @@
 | 知识查阅、文稿学习 | `deepseek-v4-flash` |
 | 文稿创作、学术研究 | `deepseek-v4-pro`   |
 
-设置页可一键 **DeepSeek 推荐** 恢复上表。
+设置页按 **供应商连接 / 模型目录 / 能力路由** 分层：供应商级测试只检查凭据和端点；模型级验证会对指定模型发起文本或视觉探测；能力路由只展示已启用且满足该能力的模型。
 
-**DeepSeek Base URL** 推荐 `https://api.deepseek.com`（无 `/v1` 后缀）。Iris 会自动请求 `/v1/chat/completions` 与 `/models`；若在设置里填写带 `/v1` 的地址也能兼容。
+**DeepSeek Base URL** 推荐 `https://api.deepseek.com`（无 `/v1` 后缀）。Iris 会自动请求 `/v1/chat/completions` 与 `/models`；若在设置里填写带 `/v1` 的地址也能兼容。Ollama 保留后端兼容，但不进入外部供应商设置面板。
 
 ## 长上下文
 
@@ -32,8 +33,11 @@
 ## IPC
 
 - `llm_config_get` / `llm_config_set`
-- `llm_config_apply_deepseek_defaults`
-- `llm_config_test`（`GET /models`，不记录 Key）
+- `llm_config_test`（兼容旧入口，不记录 Key）
+- `llm_config_test_provider`（供应商端点连通性）
+- `llm_model_registry_refresh`（刷新供应商模型目录）
+- `llm_model_validate`（按模型做文本 / 视觉验证）
+- `llm_model_confirm_capability`（用户显式确认模型能力）
 - `connectivity_status`（可选 `scene`）
 
 ## 底栏指示
