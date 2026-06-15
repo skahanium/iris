@@ -5,6 +5,7 @@ pub mod fetch_web_page;
 pub mod http_politeness;
 pub mod minimax_search;
 pub mod model_catalog;
+pub mod model_registry;
 pub mod providers;
 pub mod search_web;
 pub mod web_search_config;

@@ -75,7 +75,9 @@ describe("Phase3 model and persona routing contract", () => {
     expect(section.indexOf("供应商配置")).toBeLessThan(
       section.indexOf("能力槽模型路由"),
     );
-    expect(section).toContain("llmConfigTest(provider.id, model.id)");
+    expect(section).toContain("llmConfigTestProvider(provider.id)");
+    expect(section).toContain("llmModelValidate(provider.id, model.id");
+    expect(section).not.toContain("llmConfigTest(provider.id, model.id)");
     expect(section).not.toContain("llmConfigTest(provider.id, defaultModel)");
     expect(section).not.toContain("catalogModelsForProvider");
     expect(section).not.toContain("toggleProviderModel");

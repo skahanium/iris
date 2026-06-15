@@ -53,7 +53,11 @@ import type {
   ConnectivityStatus,
   LlmConfigGetResponse,
   LlmConfigTestResult,
+  LlmModelRegistryRefreshResult,
   LlmRoutingConfig,
+  ModelCapabilityConfirmRequest,
+  ModelRegistryEntry,
+  ModelValidationKind,
 } from "@/types/llm";
 
 export interface SettingsMap {
@@ -415,6 +419,42 @@ export async function llmConfigTest(
   model?: string,
 ): Promise<LlmConfigTestResult> {
   return invoke<LlmConfigTestResult>("llm_config_test", { providerId, model });
+}
+
+export async function llmConfigTestProvider(
+  providerId: string,
+): Promise<LlmConfigTestResult> {
+  return invoke<LlmConfigTestResult>("llm_config_test_provider", {
+    providerId,
+  });
+}
+
+export async function llmModelRegistryRefresh(
+  providerId: string,
+): Promise<LlmModelRegistryRefreshResult> {
+  return invoke<LlmModelRegistryRefreshResult>("llm_model_registry_refresh", {
+    providerId,
+  });
+}
+
+export async function llmModelValidate(
+  providerId: string,
+  modelId: string,
+  kind: ModelValidationKind = "text",
+): Promise<LlmConfigTestResult> {
+  return invoke<LlmConfigTestResult>("llm_model_validate", {
+    providerId,
+    modelId,
+    kind,
+  });
+}
+
+export async function llmModelConfirmCapability(
+  request: ModelCapabilityConfirmRequest,
+): Promise<ModelRegistryEntry> {
+  return invoke<ModelRegistryEntry>("llm_model_confirm_capability", {
+    request,
+  });
 }
 
 export interface MinimaxConfigGetResponse {

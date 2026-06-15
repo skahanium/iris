@@ -393,6 +393,11 @@ async fn process_run_readonly_is_allowlisted_and_vault_scoped() {
     let (state, _dir) = test_state();
     let vault = state.vault_path().unwrap();
     std::fs::write(vault.join("note.md"), "one\ntwo\n").unwrap();
+    let _ = std::process::Command::new("git")
+        .arg("init")
+        .current_dir(&vault)
+        .output()
+        .unwrap();
 
     let _ = std::process::Command::new("git")
         .arg("init")

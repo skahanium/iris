@@ -242,6 +242,7 @@ mod tests {
         assert!(!ids.contains(&"ollama".to_string()));
         assert!(ids.contains(&"custom_groq".to_string()));
         assert!(ids.contains(&"mimo".to_string()));
+        assert!(is_allowed_provider("ollama"));
     }
 
     #[test]

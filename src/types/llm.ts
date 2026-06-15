@@ -58,10 +58,41 @@ export interface ModelCatalogEntry {
   probeStrategy: ProbeStrategy;
 }
 
+export type ModelRegistrySource = "built_in" | "provider_discovered" | "manual";
+
+export type ModelValidationKind = "text" | "vision";
+
+export interface ModelRegistryEntry {
+  providerId: string;
+  modelId: string;
+  displayName: string;
+  source: ModelRegistrySource;
+  stale: boolean;
+  firstSeenAt: string | null;
+  lastSeenAt: string | null;
+  lastRefreshedAt: string | null;
+  textVerifiedAt: string | null;
+  visionVerifiedAt: string | null;
+  userConfirmedCapabilities: CapabilitySlot[];
+}
+
+export interface LlmModelRegistryRefreshResult {
+  providerId: string;
+  modelCount: number;
+  message: string;
+}
+
+export interface ModelCapabilityConfirmRequest {
+  providerId: string;
+  modelId: string;
+  slot: CapabilitySlot;
+}
+
 export interface LlmConfigGetResponse {
   routing: LlmRoutingConfig;
   providers: { id: string; name: string; default_model: string }[];
   catalog: ModelCatalogEntry[];
+  registry: ModelRegistryEntry[];
 }
 
 export type LlmConnectivityState =

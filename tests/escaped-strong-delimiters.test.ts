@@ -1,3 +1,6 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+
 import { describe, expect, it } from "vitest";
 
 import { ingestMarkdownForEditor } from "@/lib/editor-ingest";
@@ -10,6 +13,7 @@ import {
 
 const escapedStrongListItem =
   "- \\*\\*Physical layer:\\*\\* keeps the shared KV pool stable.";
+const mimoPath = resolve("tests/fixtures/mimo-escaped-strong.md");
 
 describe("escaped strong delimiters in MiMo note", () => {
   it("documents exporter mistake pattern", () => {
@@ -42,14 +46,7 @@ describe("escaped strong delimiters in MiMo note", () => {
   });
 
   it("ingests MiMo note without visible failed bold", () => {
-    const body = [
-      "---",
-      "title: MiMo escaped strong fixture",
-      "---",
-      "",
-      escapedStrongListItem,
-      "- \\*\\*Routing layer:\\*\\* keeps the visible title clean.",
-    ].join("\n");
+    const body = readFileSync(mimoPath, "utf8");
     const bodyMd = body.replace(/^---[\s\S]*?---\n?/, "").trim();
     const { tipTapHtml } = ingestMarkdownForEditor({ bodyMarkdown: bodyMd });
 
