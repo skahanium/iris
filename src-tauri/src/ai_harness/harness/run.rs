@@ -18,6 +18,7 @@ use super::types::{HarnessPhase, HarnessRunInput, HarnessRunResult};
 use super::util::accumulate_usage;
 use crate::ai_harness::tool_turn::outstanding_confirm_tool;
 use crate::ai_runtime::agent_permissions::preflight_tool_permission;
+use crate::ai_runtime::circuit_breaker;
 use crate::ai_runtime::evidence_ledger::EvidenceLedger;
 use crate::ai_runtime::harness_support::{
     extract_thinking_blocks, load_harness_checkpoint, HarnessCheckpointMeta,
@@ -45,11 +46,20 @@ async fn send_llm_request_with_retry(
     gateway: &ModelGateway,
     request: &GatewayRequest,
     request_id: &str,
+    provider_id: &str,
 ) -> AppResult<GatewayResponse> {
+    if !circuit_breaker::is_request_allowed(provider_id) {
+        return Err(AppError::msg(format!(
+            "Provider {provider_id} 已被熔断，请稍后重试"
+        )));
+    }
     let mut last_err: Option<String> = None;
     for attempt in 0..=LLM_MAX_RETRIES {
         match gateway.send_request(request.clone()).await {
-            Ok(response) => return Ok(response),
+            Ok(response) => {
+                circuit_breaker::record_success(provider_id);
+                return Ok(response);
+            }
             Err(e) => {
                 let msg = e.to_string();
                 if attempt < LLM_MAX_RETRIES {
@@ -68,6 +78,7 @@ async fn send_llm_request_with_retry(
             }
         }
     }
+    circuit_breaker::record_failure(provider_id);
     Err(AppError::msg(last_err.unwrap_or_else(|| {
         "LLM request failed after all retries".into()
     })))
@@ -164,11 +175,35 @@ pub async fn run_harness(
 
     if input.resume_from_checkpoint {
         if let Some(cp) = load_harness_checkpoint(&state.db, &input.request_id)? {
-            messages = cp.messages;
+            let mut restored_messages = cp.messages;
+            let mut restored_tool_calls = cp.tool_calls;
+            let mut restored_tool_results = cp.tool_results;
+
+            let provider_changed = cp
+                .meta
+                .provider_id
+                .as_ref()
+                .is_some_and(|saved| *saved != provider_config.name);
+            if provider_changed {
+                tracing::warn!(
+                    request_id = %input.request_id,
+                    saved_provider = ?cp.meta.provider_id,
+                    current_provider = %provider_config.name,
+                    "Checkpoint provider 与当前 provider 不一致，清除 tool 相关状态以避免兼容性问题"
+                );
+                for msg in &mut restored_messages {
+                    msg.tool_calls = None;
+                    msg.tool_call_id = None;
+                }
+                restored_tool_calls.clear();
+                restored_tool_results.clear();
+            }
+
+            messages = restored_messages;
             prepare_tool_api_messages(&mut messages, &[]);
             harness_rounds = cp.round;
-            all_tool_calls = cp.tool_calls;
-            tool_results_json = cp.tool_results;
+            all_tool_calls = restored_tool_calls;
+            tool_results_json = restored_tool_results;
             evidence_ledger = EvidenceLedger::new(cp.evidence_packets);
             total_usage = cp.usage;
             usage_source = cp.usage_source;
@@ -243,8 +278,13 @@ pub async fn run_harness(
                 skip_stub_ids: vec![],
             };
 
-            let response =
-                send_llm_request_with_retry(&gateway, &request, &input.request_id).await?;
+            let response = send_llm_request_with_retry(
+                &gateway,
+                &request,
+                &input.request_id,
+                &provider_config.name,
+            )
+            .await?;
             if usage_is_empty(&response.usage) {
                 let content = response.content.as_deref().unwrap_or("");
                 estimate_and_accumulate(&mut total_usage, &messages, content);

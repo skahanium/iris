@@ -133,7 +133,12 @@ pub async fn install_from_git(
         validate_subpath(sp)?;
     }
 
-    let tmp = std::env::temp_dir().join(format!("iris-skill-{}", uuid::Uuid::new_v4()));
+    let tmp = crate::security::secure_delete::user_temp_dir()
+        .join(format!("iris-skill-{}", uuid::Uuid::new_v4()));
+    if let Some(parent) = tmp.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| AppError::msg(format!("无法创建临时目录: {e}")))?;
+    }
     let status = std::process::Command::new("git")
         .args(["clone", "--depth", "1", "--"])
         .arg(repo_url)
@@ -192,11 +197,10 @@ pub async fn install_from_git(
         }
     }
 
-    let _ = fs::remove_dir_all(&tmp);
+    let _ = crate::security::secure_delete::secure_remove_dir_all(&tmp);
     if installed.is_empty() {
         return Err(AppError::msg("no SKILL.md found in repository"));
     }
-    let _ = std::fs::remove_dir_all(&tmp);
     Ok(installed)
 }
 

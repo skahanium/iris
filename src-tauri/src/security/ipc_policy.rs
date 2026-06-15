@@ -73,6 +73,37 @@ pub fn validate_https_url(url: &str) -> AppResult<()> {
     Ok(())
 }
 
+fn is_localhost_url(url: &str) -> bool {
+    let trimmed = url.trim();
+    trimmed.starts_with("http://127.0.0.1")
+        || trimmed.starts_with("http://localhost")
+        || trimmed.starts_with("http://[::1]")
+}
+
+/// Validate LLM base URL: localhost HTTP is allowed with a warning; all other URLs must be HTTPS.
+pub fn validate_llm_base_url(url: &str) -> AppResult<()> {
+    let trimmed = url.trim();
+    if trimmed.is_empty() {
+        return Err(AppError::msg("URL 不能为空"));
+    }
+    if trimmed.contains('\0') {
+        return Err(AppError::msg("非法 URL"));
+    }
+    if is_localhost_url(trimmed) {
+        tracing::warn!(
+            url = %trimmed,
+            "本地 LLM 端点使用 HTTP，数据在本地传输，未加密。建议配置 TLS 代理"
+        );
+        return Ok(());
+    }
+    if !trimmed.starts_with("https://") {
+        return Err(AppError::msg(
+            "仅允许 HTTPS URL（本地 Ollama 等 localhost HTTP 除外）",
+        ));
+    }
+    Ok(())
+}
+
 /// Validate remote skill install URL (HTTPS only).
 pub fn validate_skill_remote_url(url: &str) -> AppResult<()> {
     validate_https_url(url)?;
@@ -142,6 +173,28 @@ mod tests {
     fn https_url_rejects_http() {
         assert!(validate_https_url("http://example.com").is_err());
         validate_https_url("https://api.example.com/v1").unwrap();
+    }
+
+    #[test]
+    fn llm_base_url_allows_localhost_http() {
+        validate_llm_base_url("http://127.0.0.1:11434").unwrap();
+        validate_llm_base_url("http://localhost:11434").unwrap();
+        validate_llm_base_url("http://[::1]:11434").unwrap();
+    }
+
+    #[test]
+    fn llm_base_url_rejects_remote_http() {
+        assert!(validate_llm_base_url("http://api.example.com").is_err());
+    }
+
+    #[test]
+    fn llm_base_url_allows_remote_https() {
+        validate_llm_base_url("https://api.example.com/v1").unwrap();
+    }
+
+    #[test]
+    fn llm_base_url_rejects_null_byte() {
+        assert!(validate_llm_base_url("https://evil.com\0hidden").is_err());
     }
 
     #[test]

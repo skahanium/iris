@@ -2,9 +2,20 @@
 
 use std::fs::OpenOptions;
 use std::io::{Seek, SeekFrom, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
-use crate::error::AppResult;
+use crate::error::{AppError, AppResult};
+
+/// 获取用户专属的临时目录，优先使用 `HOME/.iris/tmp`，回退到系统 temp dir。
+pub fn user_temp_dir() -> PathBuf {
+    let home = std::env::var("HOME")
+        .or_else(|_| std::env::var("USERPROFILE"))
+        .map(PathBuf::from);
+    match home {
+        Ok(h) => h.join(".iris").join("tmp"),
+        Err(_) => std::env::temp_dir().join("iris-tmp"),
+    }
+}
 
 /// 安全删除文件：先用零覆写整个文件内容，再删除
 ///
@@ -41,6 +52,25 @@ pub fn secure_delete(path: &Path) -> AppResult<()> {
     Ok(())
 }
 
+/// 安全删除目录：递归覆写所有文件后删除整个目录树。
+pub fn secure_remove_dir_all(path: &Path) -> AppResult<()> {
+    if !path.exists() {
+        return Ok(());
+    }
+    if path.is_dir() {
+        for entry in std::fs::read_dir(path)? {
+            let entry = entry?;
+            let entry_path = entry.path();
+            if entry_path.is_dir() {
+                secure_remove_dir_all(&entry_path)?;
+            } else {
+                let _ = secure_delete(&entry_path);
+            }
+        }
+    }
+    std::fs::remove_dir_all(path).map_err(|e| AppError::msg(format!("无法删除临时目录: {e}")))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -61,5 +91,31 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let ghost = dir.path().join("does_not_exist.txt");
         assert!(secure_delete(&ghost).is_ok());
+    }
+
+    #[test]
+    fn secure_remove_dir_all_handles_nested_dirs() {
+        let tmp = tempfile::tempdir().unwrap();
+        let sub = tmp.path().join("sub");
+        std::fs::create_dir(&sub).unwrap();
+        std::fs::write(sub.join("a.txt"), "hello").unwrap();
+        std::fs::create_dir(sub.join("nested")).unwrap();
+        std::fs::write(sub.join("nested").join("b.txt"), "world").unwrap();
+
+        assert!(sub.exists());
+        secure_remove_dir_all(&sub).unwrap();
+        assert!(!sub.exists());
+    }
+
+    #[test]
+    fn secure_remove_dir_all_nonexistent_is_noop() {
+        let ghost = std::path::Path::new("/nonexistent/iris/test/dir");
+        assert!(secure_remove_dir_all(ghost).is_ok());
+    }
+
+    #[test]
+    fn user_temp_dir_returns_a_path() {
+        let p = user_temp_dir();
+        assert!(!p.as_os_str().is_empty());
     }
 }

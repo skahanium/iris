@@ -17,7 +17,11 @@ use tauri::AppHandle;
 /// 安全获取 mutex 锁，处理中毒情况
 pub fn safe_lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(|poisoned| {
-        tracing::warn!("Mutex poisoned, recovering inner data");
+        let backtrace = std::backtrace::Backtrace::capture();
+        tracing::warn!(
+            backtrace = %backtrace,
+            "Mutex poisoned, recovering inner data"
+        );
         poisoned.into_inner()
     })
 }
