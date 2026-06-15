@@ -1,0 +1,2 @@
+[env]
+ORT_CACHE_DIR = { value = ".ort-cache", relative = true }

@@ -42,9 +42,7 @@ function fileToBase64(file: File): Promise<string> {
   });
 }
 
-async function processImageFiles(
-  files: File[],
-): Promise<ImageAttachment[]> {
+async function processImageFiles(files: File[]): Promise<ImageAttachment[]> {
   const out: ImageAttachment[] = [];
   for (const file of files) {
     if (file.size > MAX_IMAGE_SIZE) continue;
@@ -250,7 +248,9 @@ export function AiComposer({
               type="button"
               size="icon"
               className="h-9 w-9"
-              disabled={disabled || (!value.trim() && !(images && images.length > 0))}
+              disabled={
+                disabled || (!value.trim() && !(images && images.length > 0))
+              }
               aria-label="发送"
               onClick={onSubmit}
             >

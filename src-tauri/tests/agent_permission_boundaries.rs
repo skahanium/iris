@@ -393,14 +393,19 @@ async fn process_run_readonly_is_allowlisted_and_vault_scoped() {
     let (state, _dir) = test_state();
     let vault = state.vault_path().unwrap();
     std::fs::write(vault.join("note.md"), "one\ntwo\n").unwrap();
+    let _ = std::process::Command::new("git")
+        .arg("init")
+        .current_dir(&vault)
+        .output()
+        .unwrap();
 
     let result = dispatch_tool(
         &state,
         &ctx(),
         "process_run_readonly",
         &serde_json::json!({
-            "program": "wc",
-            "args": ["-l", "note.md"],
+            "program": "git",
+            "args": ["status", "--short", "note.md"],
             "max_chars": 2000
         }),
     )

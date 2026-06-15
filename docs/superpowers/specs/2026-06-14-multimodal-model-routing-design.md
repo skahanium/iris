@@ -130,7 +130,10 @@ export type MessageContent = string | ContentPart[];
 
 export type ContentPart =
   | { type: "text"; text: string }
-  | { type: "image_url"; image_url: { url: string; detail?: "auto" | "low" | "high" } };
+  | {
+      type: "image_url";
+      image_url: { url: string; detail?: "auto" | "low" | "high" };
+    };
 ```
 
 **文件**：`src/components/ai/AiMessageList.tsx` — `ChatLine` 接口扩展：
@@ -190,6 +193,7 @@ ALTER TABLE session_messages ADD COLUMN content_parts TEXT;
 ```
 
 对应 down migration：`028_multimodal_messages.down.sql`
+
 ```sql
 -- 回滚：删除 content_parts 列（SQLite 不支持 DROP COLUMN，仅做无操作）
 -- 旧数据不受影响，content_parts 为 NULL 即为纯文本
@@ -212,6 +216,7 @@ pub struct SessionMessage {
 ```
 
 存储逻辑（`append_message`）：
+
 ```rust
 // 生成 content 摘要
 let text_summary = if let Some(ref parts) = content_parts_json {
@@ -229,6 +234,7 @@ conn.execute(
 ```
 
 读取逻辑：
+
 ```rust
 // 读取历史消息时，优先使用 content_parts 重建 LlmMessage
 let content: MessageContent = if let Some(ref parts_json) = row.content_parts {
@@ -296,7 +302,7 @@ export async function aiSendMessage(params: {
   scene: AiScene;
   session_id: number | null;
   message: string;
-  images?: ImageAttachmentDto[];   // 新增
+  images?: ImageAttachmentDto[]; // 新增
   note_path?: string | null;
   selected_packet_ids?: string[];
   context_scope?: ContextScope | null;
@@ -344,12 +350,16 @@ fn llm_message_to_api_json(msg: &LlmMessage) -> serde_json::Value {
 ```
 
 对于 OpenAI 兼容端点（DeepSeek、MiMo、OpenAI），输出格式：
+
 ```json
 {
   "role": "user",
   "content": [
     { "type": "text", "text": "这张图片里有什么？" },
-    { "type": "image_url", "image_url": { "url": "data:image/png;base64,iVBOR...", "detail": "auto" } }
+    {
+      "type": "image_url",
+      "image_url": { "url": "data:image/png;base64,iVBOR...", "detail": "auto" }
+    }
   ]
 }
 ```
@@ -393,12 +403,20 @@ fn parse_data_url(url: &str) -> (&str, &str) {
 ```
 
 Anthropic 输出格式：
+
 ```json
 {
   "role": "user",
   "content": [
     { "type": "text", "text": "..." },
-    { "type": "image", "source": { "type": "base64", "media_type": "image/png", "data": "iVBOR..." } }
+    {
+      "type": "image",
+      "source": {
+        "type": "base64",
+        "media_type": "image/png",
+        "data": "iVBOR..."
+      }
+    }
   ]
 }
 ```
@@ -453,6 +471,7 @@ pub struct HarnessRunInput {
 **文件**：`src/components/ui/ai-composer.tsx`
 
 新增 Props：
+
 ```typescript
 interface AiComposerProps {
   // ... 现有 props ...
@@ -464,6 +483,7 @@ interface AiComposerProps {
 新增功能：
 
 **1. 粘贴图片** — 在 `<textarea>` 上添加 `onPaste` 处理：
+
 ```typescript
 const handlePaste = (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
   const items = Array.from(e.clipboardData.items);
@@ -480,6 +500,7 @@ const handlePaste = (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
 ```
 
 **2. 拖拽图片** — 在 composer 容器上添加 `onDrop`：
+
 ```typescript
 const handleDrop = (e: React.DragEvent) => {
   const files = Array.from(e.dataTransfer.files).filter((f) =>
@@ -499,6 +520,7 @@ const handleDragOver = (e: React.DragEvent) => {
 ```
 
 **3. 文件选择按钮** — 在发送按钮旁添加附件按钮：
+
 ```typescript
 const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -528,6 +550,7 @@ const fileInputRef = useRef<HTMLInputElement>(null);
 ```
 
 **4. 图片处理函数**（组件内部）：
+
 ```typescript
 async function processImageFiles(files: File[]) {
   const newImages: ImageAttachment[] = [];
@@ -535,7 +558,12 @@ async function processImageFiles(files: File[]) {
     // 大小限制：单张最大 20MB（OpenAI 限制）
     if (file.size > 20 * 1024 * 1024) continue;
     // MIME 类型白名单
-    if (!["image/png", "image/jpeg", "image/webp", "image/gif"].includes(file.type)) continue;
+    if (
+      !["image/png", "image/jpeg", "image/webp", "image/gif"].includes(
+        file.type,
+      )
+    )
+      continue;
 
     const dataBase64 = await fileToBase64(file);
     newImages.push({
@@ -564,6 +592,7 @@ function fileToBase64(file: File): Promise<string> {
 ```
 
 **5. 图片 Pills** — 在 textarea 上方展示已附加图片的缩略图：
+
 ```typescript
 {images && images.length > 0 && (
   <div className="flex flex-wrap gap-1.5 mb-2">
@@ -596,22 +625,22 @@ function fileToBase64(file: File): Promise<string> {
 **文件**：`src/components/ai/hooks/useAssistantTasks.ts`
 
 新增状态：
+
 ```typescript
 const [images, setImages] = useState<ImageAttachment[]>([]);
 ```
 
 `send()` 函数改动（约 L821-832）：
+
 ```typescript
 const send = useCallback(async () => {
-  if (!input.trim() && images.length === 0 || composerDisabled) return;
+  if ((!input.trim() && images.length === 0) || composerDisabled) return;
 
   const rawMessage = input.trim();
   const intentDetection = detectAgentIntent({
     message: rawMessage,
-    hasImage: images.length > 0,  // 新增
-    hasSelection: Boolean(
-      getWritingContext()?.selection || selectionQuoteText,
-    ),
+    hasImage: images.length > 0, // 新增
+    hasSelection: Boolean(getWritingContext()?.selection || selectionQuoteText),
     notePath,
     explicitScope:
       contextScope.paths.length > 0 || contextScope.pathPrefixes.length > 0,
@@ -619,21 +648,22 @@ const send = useCallback(async () => {
 
   // ...
   setInput("");
-  setImages([]);  // 发送后清空图片
-  appendUserMessage(rawMessage, images);  // 新增 images 参数
+  setImages([]); // 发送后清空图片
+  appendUserMessage(rawMessage, images); // 新增 images 参数
 
   // IPC 调用传递 images
   await runKnowledgeChat(rawMessage, intent, {
     startNewSession,
     agentIntent,
     intentDetection,
-    images,  // 新增
+    images, // 新增
   });
   // ...
 });
 ```
 
 `appendUserMessage` 签名变更：
+
 ```typescript
 const appendUserMessage = (content: string, imgs?: ImageAttachment[]) => {
   setMessages((prev) => [
@@ -641,7 +671,7 @@ const appendUserMessage = (content: string, imgs?: ImageAttachment[]) => {
     {
       role: "user",
       content: imgs?.length ? `[图片] ${content}` : content,
-      images: imgs,  // 新增
+      images: imgs, // 新增
     } as ChatLine,
   ]);
 };
@@ -748,6 +778,7 @@ assert_eq!(
 用户期望的场景通过以下路径实现：
 
 **场景 A：纯文本对话**
+
 ```
 用户输入 "帮我总结这篇文章"
 → detectAgentIntent(hasImage=false) → "chat"
@@ -756,6 +787,7 @@ assert_eq!(
 ```
 
 **场景 B：上传图片后对话**
+
 ```
 用户粘贴图片 + 输入 "这张图里有什么数据"
 → AiComposer 粘贴处理 → images: [{dataBase64, mimeType}]
@@ -769,6 +801,7 @@ assert_eq!(
 ```
 
 **场景 C：图片对话后继续纯文本**
+
 ```
 下一轮：用户输入 "那这个趋势说明什么"（无新图片）
 → detectAgentIntent(hasImage=false) → "chat"
@@ -782,21 +815,21 @@ assert_eq!(
 
 ### Rust 测试
 
-| 测试项 | 文件 | 要点 |
-|--------|------|------|
-| `MessageContent` 序列化往返 | `ai_types/mod.rs` | Text ↔ JSON string; Parts ↔ JSON array |
-| `ContentPart` 转 Anthropic 格式 | `body.rs` | ImageUrl → `{type: "image", source: {}}` |
-| Vision 路由降级链 | `config.rs` | MiMo-V2.5 不可用 → Fallback to Fast |
-| `messages_for_api()` 多模态输出 | `messages.rs` | Parts 输入 → `content: [...]` 数组 |
-| 纯文本消息不受影响 | 整体 | 无图片时行为与改变前一致 |
+| 测试项                          | 文件              | 要点                                     |
+| ------------------------------- | ----------------- | ---------------------------------------- |
+| `MessageContent` 序列化往返     | `ai_types/mod.rs` | Text ↔ JSON string; Parts ↔ JSON array   |
+| `ContentPart` 转 Anthropic 格式 | `body.rs`         | ImageUrl → `{type: "image", source: {}}` |
+| Vision 路由降级链               | `config.rs`       | MiMo-V2.5 不可用 → Fallback to Fast      |
+| `messages_for_api()` 多模态输出 | `messages.rs`     | Parts 输入 → `content: [...]` 数组       |
+| 纯文本消息不受影响              | 整体              | 无图片时行为与改变前一致                 |
 
 ### TypeScript 测试
 
-| 测试项 | 文件 | 要点 |
-|--------|------|------|
-| `detectAgentIntent` hasImage=true | `unified-assistant-routing.test.ts` | 已有测试（L163），确认通过 |
-| AiComposer 粘贴图片 → `onImagesChange` | 新增组件测试 | FileReader mock |
-| 图片 Pill 渲染与删除 | 新增组件测试 | 渲染验证 |
+| 测试项                                 | 文件                                | 要点                       |
+| -------------------------------------- | ----------------------------------- | -------------------------- |
+| `detectAgentIntent` hasImage=true      | `unified-assistant-routing.test.ts` | 已有测试（L163），确认通过 |
+| AiComposer 粘贴图片 → `onImagesChange` | 新增组件测试                        | FileReader mock            |
+| 图片 Pill 渲染与删除                   | 新增组件测试                        | 渲染验证                   |
 
 ---
 

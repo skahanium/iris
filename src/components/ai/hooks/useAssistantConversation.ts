@@ -210,7 +210,10 @@ export function useAssistantConversation({
   }, [bubbleSelection]);
 
   const appendUserMessage = useCallback(
-    (rawMessage: string, imgs?: import("../AiMessageList").ImageAttachment[]) => {
+    (
+      rawMessage: string,
+      imgs?: import("../AiMessageList").ImageAttachment[],
+    ) => {
       const display = stripMentionTokensForDisplay(rawMessage);
       setMessages((prev) => [
         ...prev,

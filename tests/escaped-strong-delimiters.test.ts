@@ -9,10 +9,7 @@ import {
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
-const mimoPath = resolve(
-  process.env.HOME ?? "",
-  "Iris-test/MiMo-V2.5 系列推理全链路优化：将 Hybrid SWA 效率推向极致.md",
-);
+const mimoPath = resolve("tests/fixtures/mimo-escaped-strong.md");
 
 describe("escaped strong delimiters in MiMo note", () => {
   it("documents exporter mistake pattern", () => {
