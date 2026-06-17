@@ -45,9 +45,24 @@ describe("ai-context-scope", () => {
   });
 
   it("strips tokens for display", () => {
-    const display = stripMentionTokensForDisplay("参考 @[党纪法规/某某.md]");
-    expect(display).toContain("党纪法规/某某.md");
+    const display = stripMentionTokensForDisplay(
+      "@[问题线索工作思路（WY）.md] 根据问题线索情况，请给出核查思路",
+    );
+    expect(display).toBe("根据问题线索情况，请给出核查思路");
+    expect(display).not.toContain("问题线索工作思路");
     expect(display).not.toContain("@[");
+  });
+
+  it("keeps readable mention metadata for Chinese document names", () => {
+    const [token] = parseMentionTokens(
+      "@[问题线索工作思路（WY）.md] 根据问题线索情况",
+    );
+
+    expect(token).toMatchObject({
+      kind: "file",
+      value: "问题线索工作思路（WY）.md",
+      label: "问题线索工作思路（WY）.md",
+    });
   });
 
   it("detects active @ query", () => {

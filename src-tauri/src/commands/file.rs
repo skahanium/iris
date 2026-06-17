@@ -24,6 +24,14 @@ use crate::storage::paths::{
 
 const MAX_NOTE_FILE_BYTES: usize = 20 * 1024 * 1024;
 
+fn vault_runtime_cleanup_sql() -> &'static str {
+    "DELETE FROM sessions;
+     DELETE FROM knowledge_deposits;
+     DELETE FROM web_page_cache;
+     DELETE FROM search_cache;
+     DELETE FROM ai_memories WHERE scope != 'global';"
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FileReadResult {
@@ -883,12 +891,9 @@ pub fn vault_set(app: AppHandle, state: State<'_, Arc<AppState>>, path: String) 
     // Clear in-memory AI state to prevent data leakage between vaults
     state.clear_ai_state();
 
-    // Clear previous vault's AI sessions and scoped memories to prevent cross-vault access
+    // Clear previous vault's runtime data to prevent cross-vault access
     if let Err(e) = state.db.with_conn(|conn| {
-        conn.execute_batch(
-            "DELETE FROM sessions;
-             DELETE FROM ai_memories WHERE scope != 'global';",
-        )?;
+        conn.execute_batch(vault_runtime_cleanup_sql())?;
         Ok(())
     }) {
         tracing::warn!("vault_set: session cleanup failed: {e}");
@@ -1354,5 +1359,20 @@ mod path_sync_tests {
         assert!(!is_vault_asset_path("notes/x.md"));
         assert!(!is_vault_asset_path("assets/../secret.png"));
         assert!(!is_vault_asset_path("assets/"));
+    }
+
+    #[test]
+    fn vault_runtime_cleanup_covers_cross_vault_runtime_tables() {
+        let sql = vault_runtime_cleanup_sql();
+        for table in [
+            "sessions",
+            "knowledge_deposits",
+            "web_page_cache",
+            "search_cache",
+            "ai_memories",
+        ] {
+            assert!(sql.contains(table), "missing cleanup for {table}");
+        }
+        assert!(sql.contains("scope != 'global'"));
     }
 }

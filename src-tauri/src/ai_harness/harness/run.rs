@@ -43,6 +43,7 @@ const LLM_MAX_RETRIES: u32 = 3;
 const LLM_RETRY_BASE_DELAY_MS: u64 = 1000;
 
 async fn send_llm_request_with_retry(
+    app_handle: &AppHandle,
     gateway: &ModelGateway,
     request: &GatewayRequest,
     request_id: &str,
@@ -64,6 +65,15 @@ async fn send_llm_request_with_retry(
                 let msg = e.to_string();
                 if attempt < LLM_MAX_RETRIES {
                     let delay_ms = LLM_RETRY_BASE_DELAY_MS * 2u64.pow(attempt);
+                    let _ = app_handle.emit(
+                        "ai:retry_status",
+                        &serde_json::json!({
+                            "request_id": request_id,
+                            "attempt": attempt + 1,
+                            "max_attempts": LLM_MAX_RETRIES,
+                            "delay_ms": delay_ms,
+                        }),
+                    );
                     tracing::warn!(
                         request_id = %request_id,
                         attempt = attempt + 1,
@@ -281,6 +291,7 @@ pub async fn run_harness(
             };
 
             let response = send_llm_request_with_retry(
+                app_handle,
                 &gateway,
                 &request,
                 &input.request_id,

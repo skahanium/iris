@@ -75,15 +75,16 @@ describe("user/assistant message rendering parity", () => {
     }
   });
 
-  it("chat_assistant code blocks include a sanitized copy button", () => {
+  it("chat_assistant code blocks do not include interactive copy controls", () => {
     const result = renderMarkdownWithProfile(
       "```bash\ncurl -fsSL https://example.test/install.sh\n```",
       "chat_assistant",
     );
 
-    expect(result.output).toContain('class="ai-code-block"');
-    expect(result.output).toContain("data-ai-code-copy");
-    expect(result.output).toContain('aria-label="复制代码"');
+    expect(result.output).toContain("<pre");
+    expect(result.output).toContain("<code");
+    expect(result.output).not.toContain("data-ai-code-copy");
+    expect(result.output).not.toContain("<button");
     expect(result.output).toContain(
       "curl -fsSL https://example.test/install.sh",
     );
@@ -97,11 +98,13 @@ describe("user/assistant message rendering parity", () => {
     }
   });
 
-  it("[BASELINE] both profiles render task lists", () => {
+  it("[BASELINE] both profiles render task list text without checkbox inputs", () => {
     const md = "- [x] Done\n- [ ] Pending";
     for (const p of profiles) {
       const r = renderMarkdownWithProfile(md, p);
-      expect(r.output).toContain("checkbox");
+      expect(r.output).not.toContain("<input");
+      expect(r.output).toContain("Done");
+      expect(r.output).toContain("Pending");
     }
   });
 

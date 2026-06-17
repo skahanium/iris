@@ -83,6 +83,34 @@ function preserveInlineSpan(
   return `<span data-type="preserve-inline" data-original-raw="${escapedRaw}" data-syntax-kind="${syntaxKind}" contenteditable="false">${label}</span>`;
 }
 
+function spacerParagraphHtml(raw: string): string {
+  const newlineCount = raw.match(/\n/g)?.length ?? 0;
+  const gapCount = Math.min(6, Math.max(1, Math.floor(newlineCount / 2)));
+  const gapAttr = gapCount > 1 ? ` data-iris-gap-count="${gapCount}"` : "";
+  return `<p data-iris-spacer="true"${gapAttr}><br></p>`;
+}
+
+function splitTrailingBlockSpacer(raw: string): {
+  contentRaw: string;
+  spacerRaw: string | null;
+} {
+  const match = /(\n[ \t]*\n[ \t\n]*)$/u.exec(raw);
+  if (!match?.[1]) return { contentRaw: raw, spacerRaw: null };
+
+  const contentRaw = raw.slice(0, raw.length - match[1].length);
+  if (!contentRaw.trim()) return { contentRaw: raw, spacerRaw: null };
+  return { contentRaw, spacerRaw: match[1] };
+}
+
+function hasNextContentFragment(
+  fragments: MarkdownSyntaxFragment[],
+  index: number,
+): boolean {
+  return fragments
+    .slice(index + 1)
+    .some((candidate) => candidate.syntaxKind !== "space");
+}
+
 /**
  * Adapt wiki-links [[...]] in HTML to TipTap data attributes.
  */
@@ -321,6 +349,11 @@ export function ingestMarkdownForEditor(
 
     if (kind === "space") {
       flushNative();
+      if (htmlParts.length > 0) {
+        if (hasNextContentFragment(fragments, i)) {
+          htmlParts.push(spacerParagraphHtml(frag.raw));
+        }
+      }
       i++;
       continue;
     }
@@ -374,8 +407,12 @@ export function ingestMarkdownForEditor(
 
     if (BLOCK_KINDS.has(kind)) {
       flushNative();
-      const html = markdownToTipTapHtml(frag.raw);
+      const { contentRaw, spacerRaw } = splitTrailingBlockSpacer(frag.raw);
+      const html = markdownToTipTapHtml(contentRaw);
       if (html) htmlParts.push(html);
+      if (spacerRaw && hasNextContentFragment(fragments, i)) {
+        htmlParts.push(spacerParagraphHtml(spacerRaw));
+      }
     } else {
       // Inline native: accumulate
       nativeBuf.push(frag.raw);

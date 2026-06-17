@@ -55,19 +55,28 @@ impl StorageState {
     }
 
     /// Get or initialize the CAS object store (lazy, needs vault path).
-    pub fn cas_store(&self, vault: &std::path::Path) -> &CasObjectStore {
-        self.cas_store.get_or_init(|| {
-            let cas_path = vault.join(".iris").join("cas");
-            let store = CasObjectStore::new(cas_path).expect("Failed to create CAS store");
-            #[cfg(test)]
-            store.enable_encryption([0xC5; 32]);
-            #[cfg(not(test))]
-            match crate::cas::encryption::get_or_create_cas_key() {
-                Ok(key) => store.enable_encryption(key),
-                Err(e) => tracing::warn!("CAS encryption unavailable: {e}"),
-            }
-            store
-        })
+    pub fn cas_store(&self, vault: &std::path::Path) -> AppResult<&CasObjectStore> {
+        if let Some(store) = self.cas_store.get() {
+            return Ok(store);
+        }
+
+        let cas_path = vault.join(".iris").join("cas");
+        let store = CasObjectStore::new(cas_path)?;
+        #[cfg(test)]
+        store.enable_encryption([0xC5; 32]);
+        #[cfg(not(test))]
+        {
+            let key = crate::cas::encryption::get_or_create_cas_key().map_err(|e| {
+                AppError::msg(format!(
+                    "CAS encryption unavailable; refusing plaintext writes: {e}"
+                ))
+            })?;
+            store.enable_encryption(key);
+        }
+        let _ = self.cas_store.set(store);
+        self.cas_store
+            .get()
+            .ok_or_else(|| AppError::msg("Failed to initialize CAS store"))
     }
 
     pub fn ref_counter(&self) -> &RefCounter {
@@ -195,7 +204,7 @@ impl AppState {
                 });
             }
         }
-        Ok(self.storage.cas_store(&vault))
+        self.storage.cas_store(&vault)
     }
 
     pub fn ref_counter(&self) -> &RefCounter {

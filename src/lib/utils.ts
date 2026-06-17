@@ -29,9 +29,24 @@ export function matchesKeyChord(e: KeyboardEvent, chord: KeyChord): boolean {
   // Zoom in: same physical key produces + or = depending on layout
   if (chord.key === "+" && pressed === "=") return true;
   if (chord.key === "=" && pressed === "+") return true;
-  if (chord.key === "." && (e.code === "Period" || e.code === "NumpadDecimal"))
-    return true;
+  if (matchesPhysicalKeyCode(e.code, chord.key)) return true;
   return false;
+}
+
+function matchesPhysicalKeyCode(code: string, key: string): boolean {
+  switch (key) {
+    case ".":
+      return code === "Period" || code === "NumpadDecimal";
+    case ",":
+      return code === "Comma";
+    case "-":
+      return code === "Minus" || code === "NumpadSubtract";
+    case "+":
+    case "=":
+      return code === "Equal" || code === "NumpadAdd";
+    default:
+      return false;
+  }
 }
 
 export function isMacPlatform(): boolean {

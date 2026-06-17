@@ -552,6 +552,15 @@ export async function listenLlmError(
   );
 }
 
+export async function listenAiRetryStatus(
+  handler: (payload: import("@/types/ipc").AiRetryStatusEvent) => void,
+): Promise<() => void> {
+  return listen<import("@/types/ipc").AiRetryStatusEvent>(
+    "ai:retry_status",
+    (e) => handler(e.payload),
+  );
+}
+
 export async function listenHarnessTrace(
   handler: (payload: import("@/types/ipc").HarnessTraceEvent) => void,
 ): Promise<() => void> {

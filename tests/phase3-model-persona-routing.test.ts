@@ -126,7 +126,7 @@ describe("Phase3 model and persona routing contract", () => {
     expect(section).not.toContain("!provider.baseUrl?.trim()");
   });
 
-  it("hides Ollama from external model provider settings while preserving internal routing compatibility", () => {
+  it("removes Ollama from public model provider settings and types", () => {
     const section = read("src/components/settings/LlmRoutingSection.tsx");
     const providers = read("src-tauri/src/llm/providers.rs");
     const commands = read("src-tauri/src/commands/llm_config_commands.rs");
@@ -139,7 +139,9 @@ describe("Phase3 model and persona routing contract", () => {
     expect(commands).toContain(
       "list_external_providers_from_routing(&routing)",
     );
-    expect(llmTypes).toContain('providerId: "ollama"');
+    expect(llmTypes).not.toContain('providerId: "ollama"');
+    expect(llmTypes).not.toContain('"ollama_chat"');
+    expect(llmTypes).not.toContain('"ollama_tags_then_chat"');
   });
 
   it("preserves lower-case manual model ids instead of mapping them to catalog labels", () => {

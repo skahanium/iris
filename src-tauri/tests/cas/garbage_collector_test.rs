@@ -11,6 +11,7 @@ fn setup() -> (CasObjectStore, Arc<Database>, GarbageCollector) {
     let dir = tempdir().unwrap();
     let db = Arc::new(Database::open_in_memory().unwrap());
     let store = CasObjectStore::new(dir.path().to_path_buf()).unwrap();
+    store.enable_encryption([3u8; 32]);
     let gc = GarbageCollector::new(store.clone(), db.clone());
     (store, db, gc)
 }

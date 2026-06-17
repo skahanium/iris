@@ -5,9 +5,11 @@ const htmlByPath = new Map<string, { html: string; digest: string }>();
 const MAX_CACHE_SIZE = 30;
 
 export const EDITOR_HTML_CACHE_FORMAT_VERSION =
-  "editor-html-v7-escaped-strong-repair";
+  "editor-html-v8-unparsed-markdown-cache-guard";
 
 const FAILED_BOLD_IN_TEXT = /\*\*[^*\n]+\*\*/u;
+const UNPARSED_MARKDOWN_BLOCK_MARKER_IN_TEXT =
+  /^(?:#{1,6}\s+\S|(?:\d+[.)]|[+-])\s+\S|>\s+\S)/u;
 
 export function editorHtmlHasVisibleFailedBold(html: string): boolean {
   return cachedHtmlHasVisibleFailedBold(html);
@@ -48,6 +50,34 @@ function cachedHtmlHasVisibleFailedBold(html: string): boolean {
   }
 }
 
+function cachedHtmlHasVisibleUnparsedMarkdownBlock(html: string): boolean {
+  const doc = new DOMParser().parseFromString(
+    `<div>${html}</div>`,
+    "text/html",
+  );
+  const root = doc.body.firstElementChild;
+  if (!root) return false;
+
+  const walk = (node: Node) => {
+    if (node instanceof Element && shouldSkipFailedBoldScan(node)) return;
+    if (node.nodeType === Node.TEXT_NODE) {
+      const text = (node.textContent ?? "").trimStart();
+      if (UNPARSED_MARKDOWN_BLOCK_MARKER_IN_TEXT.test(text)) {
+        throw new Error("visible unparsed markdown block marker");
+      }
+      return;
+    }
+    node.childNodes.forEach(walk);
+  };
+
+  try {
+    walk(root);
+    return false;
+  } catch {
+    return true;
+  }
+}
+
 export function editorHtmlDigest(markdown: string): string {
   let hash = 0x811c9dc5;
   const source = `${EDITOR_HTML_CACHE_FORMAT_VERSION}\0${markdown}`;
@@ -68,7 +98,10 @@ export function getCachedEditorHtml(
     htmlByPath.delete(path);
     return undefined;
   }
-  if (cachedHtmlHasVisibleFailedBold(entry.html)) {
+  if (
+    cachedHtmlHasVisibleFailedBold(entry.html) ||
+    cachedHtmlHasVisibleUnparsedMarkdownBlock(entry.html)
+  ) {
     htmlByPath.delete(path);
     return undefined;
   }
@@ -80,7 +113,10 @@ export function setCachedEditorHtml(
   html: string,
   digest: string,
 ): void {
-  if (cachedHtmlHasVisibleFailedBold(html)) {
+  if (
+    cachedHtmlHasVisibleFailedBold(html) ||
+    cachedHtmlHasVisibleUnparsedMarkdownBlock(html)
+  ) {
     htmlByPath.delete(path);
     return;
   }

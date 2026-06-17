@@ -5,13 +5,11 @@ export type ContextStrategy = "hybrid" | "long_context";
 export type EndpointFamily =
   | "open_ai_compatible_chat_completions"
   | "anthropic_messages"
-  | "ollama_chat"
   | "responses_reserved";
 
 export type ProbeStrategy =
   | "open_ai_models_then_chat"
   | "anthropic_messages_ping"
-  | "ollama_tags_then_chat"
   | "static_only";
 
 export interface ProviderOverride {
@@ -189,18 +187,18 @@ export const DEFAULT_LLM_ROUTING: LlmRoutingConfig = {
       thinking: true,
     },
     embedding: {
-      providerId: "ollama",
-      model: "llama3.2",
+      providerId: "deepseek",
+      model: "deepseek-v4-flash",
       thinking: false,
     },
     reranker: {
-      providerId: "ollama",
-      model: "llama3.2",
+      providerId: "deepseek",
+      model: "deepseek-v4-flash",
       thinking: false,
     },
     local_private: {
-      providerId: "ollama",
-      model: "llama3.2",
+      providerId: "deepseek",
+      model: "deepseek-v4-flash",
       thinking: false,
     },
   },

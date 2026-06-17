@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { AiMessageBubble } from "@/components/ai/AiMessageBubble";
 
-describe("AiMessageBubble code copy", () => {
+describe("AiMessageBubble rendered HTML safety", () => {
   let host: HTMLDivElement;
   let root: Root;
   let writeText: ReturnType<typeof vi.fn>;
@@ -29,7 +29,7 @@ describe("AiMessageBubble code copy", () => {
     vi.useRealTimers();
   });
 
-  it("copies the code block text from assistant messages", async () => {
+  it("renders code text without interactive controls inside assistant HTML", async () => {
     await act(async () => {
       root.render(
         createElement(AiMessageBubble, {
@@ -39,18 +39,10 @@ describe("AiMessageBubble code copy", () => {
       );
     });
 
-    const button = host.querySelector(
-      "button[data-ai-code-copy]",
-    ) as HTMLButtonElement | null;
-
-    expect(button).not.toBeNull();
-
-    await act(async () => {
-      button!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-    });
-
-    expect(writeText).toHaveBeenCalledWith(
+    expect(host.querySelector("button[data-ai-code-copy]")).toBeNull();
+    expect(host.textContent).toContain(
       "curl -fsSL https://example.test/install.sh",
     );
+    expect(writeText).not.toHaveBeenCalled();
   });
 });

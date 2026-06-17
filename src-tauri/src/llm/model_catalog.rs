@@ -167,20 +167,6 @@ pub fn catalog() -> &'static [ModelCatalogEntry] {
             probe_strategy: ProbeStrategy::OpenAiModelsThenChat,
         },
         ModelCatalogEntry {
-            id: "llama3.2",
-            provider_id: "ollama",
-            display_name: "Llama 3.2",
-            context_window: 128_000,
-            max_output: 8_192,
-            supports_tools: false,
-            supports_thinking: false,
-            supports_vision: false,
-            supports_streaming: true,
-            cache_friendly: false,
-            endpoint_family: EndpointFamily::OllamaChat,
-            probe_strategy: ProbeStrategy::OllamaTagsThenChat,
-        },
-        ModelCatalogEntry {
             id: "default",
             provider_id: "custom",
             display_name: "Custom default",
@@ -340,7 +326,6 @@ mod tests {
             "zhipu",
             "kimi",
             "doubao",
-            "ollama",
             "custom",
             "mimo",
         ] {
@@ -351,6 +336,9 @@ mod tests {
                 "missing provider {provider}"
             );
         }
+        assert!(catalog_for_settings()
+            .iter()
+            .all(|model| model.provider_id != "ollama"));
 
         let gpt_4o = find_model("gpt-4o").expect("gpt-4o in catalog");
         assert!(gpt_4o.supports_vision);

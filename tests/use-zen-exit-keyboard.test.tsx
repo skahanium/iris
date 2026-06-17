@@ -38,16 +38,35 @@ describe("useZenExitKeyboard", () => {
     act(() => {
       root.render(createElement(Harness, { zen: true, onZenChange: setZen }));
     });
-    window.dispatchEvent(
-      new KeyboardEvent("keydown", {
-        key: "Escape",
-        bubbles: true,
-        cancelable: true,
-      }),
-    );
+
+    const event = new KeyboardEvent("keydown", {
+      key: "Escape",
+      bubbles: true,
+      cancelable: true,
+    });
+    window.dispatchEvent(event);
 
     expect(setZen).toHaveBeenCalledOnce();
     expect(setZen.mock.calls[0]?.[0](true)).toBe(false);
+    expect(event.defaultPrevented).toBe(true);
+  });
+
+  it("does not handle Escape when zen mode is inactive", () => {
+    const setZen = vi.fn();
+
+    act(() => {
+      root.render(createElement(Harness, { zen: false, onZenChange: setZen }));
+    });
+
+    const event = new KeyboardEvent("keydown", {
+      key: "Escape",
+      bubbles: true,
+      cancelable: true,
+    });
+    window.dispatchEvent(event);
+
+    expect(setZen).not.toHaveBeenCalled();
+    expect(event.defaultPrevented).toBe(false);
   });
 
   it("toggles zen mode on Ctrl+Period keydown", () => {

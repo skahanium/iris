@@ -1214,7 +1214,6 @@
   }
 }
 
-/* 标题后空段落不占位 */
 /* Tippy suggestion popups intentionally stay outside Tailwind layers.
    Tippy's bundled CSS is unlayered, so layered overrides lose in the cascade. */
 .tippy-box[data-theme~="iris-suggestion"] {
@@ -1251,15 +1250,4 @@
   border-radius: 999px;
   background: hsl(var(--muted-foreground) / 0.34);
   background-clip: padding-box;
-}
-
-.iris-editor
-  .iris-editor-body
-  .ProseMirror
-  > :is(h1:not(.iris-doc-title), h2, h3)
-  + p.is-empty:has(+ *) {
-  display: none !important;
-  margin: 0 !important;
-  min-height: 0 !important;
-  height: 0 !important;
 }

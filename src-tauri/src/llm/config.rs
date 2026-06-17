@@ -305,24 +305,24 @@ pub fn deepseek_defaults() -> LlmRoutingConfig {
     slots.insert(
         "embedding".into(),
         SlotRoute {
-            provider_id: "ollama".into(),
-            model: "llama3.2".into(),
+            provider_id: "deepseek".into(),
+            model: "deepseek-v4-flash".into(),
             thinking: false,
         },
     );
     slots.insert(
         "reranker".into(),
         SlotRoute {
-            provider_id: "ollama".into(),
-            model: "llama3.2".into(),
+            provider_id: "deepseek".into(),
+            model: "deepseek-v4-flash".into(),
             thinking: false,
         },
     );
     slots.insert(
         "local_private".into(),
         SlotRoute {
-            provider_id: "ollama".into(),
-            model: "llama3.2".into(),
+            provider_id: "deepseek".into(),
+            model: "deepseek-v4-flash".into(),
             thinking: false,
         },
     );
@@ -684,7 +684,7 @@ fn route_satisfies_slot(
     slot: CapabilitySlot,
     privacy_preference: PrivacyPreference,
 ) -> bool {
-    if privacy_preference == PrivacyPreference::LocalOnly && route.provider_id != "ollama" {
+    if privacy_preference == PrivacyPreference::LocalOnly {
         return false;
     }
     let model = find_model(&route.model).unwrap_or_else(|| fallback_model(&route.provider_id));
@@ -1039,6 +1039,39 @@ mod tests {
             c.slots.get("agent_tools").map(|r| r.provider_id.as_str()),
             Some("deepseek")
         );
+        assert!(c
+            .slots
+            .values()
+            .all(|route| route.provider_id.as_str() != "ollama"));
+    }
+
+    #[test]
+    fn sanitize_rewrites_legacy_ollama_routes_to_deepseek() {
+        let mut routing = deepseek_defaults();
+        routing.slots.insert(
+            "fast".into(),
+            SlotRoute {
+                provider_id: "ollama".into(),
+                model: "llama3.2".into(),
+                thinking: false,
+            },
+        );
+        routing.providers.insert(
+            "ollama".into(),
+            ProviderOverride {
+                base_url: Some("http://127.0.0.1:11434".into()),
+                label: Some("Ollama".into()),
+                default_model: Some("llama3.2".into()),
+                enabled_models: Some(vec!["llama3.2".into()]),
+            },
+        );
+
+        sanitize_routing(&mut routing);
+
+        let fast = routing.slots.get("fast").expect("fast slot");
+        assert_eq!(fast.provider_id, "deepseek");
+        assert_eq!(fast.model, "deepseek-v4-flash");
+        assert!(!routing.providers.contains_key("ollama"));
     }
 
     #[test]

@@ -195,7 +195,7 @@ describe("user message vs assistant message rendering parity", () => {
   it("user message with list renders list structure", () => {
     const md = "- [x] Task 1\n- [ ] Task 2";
     const rendered = renderAssistant(md);
-    expect(rendered).toContain("checkbox");
+    expect(rendered).not.toContain("<input");
     expect(rendered).toContain("Task 1");
     expect(rendered).toContain("Task 2");
   });

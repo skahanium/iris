@@ -247,6 +247,7 @@ function App() {
     markdownRef,
     frontmatterYamlRef,
     editorRef,
+    dirtyRef,
     updateTabTitle,
     replaceOpenTabPath,
   });

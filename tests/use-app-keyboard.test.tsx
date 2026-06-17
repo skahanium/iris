@@ -43,7 +43,7 @@ describe("useAppKeyboard", () => {
     container.remove();
   });
 
-  it("handles Ctrl+Period before editor key handlers can stop propagation", () => {
+  it("handles app shortcuts during capture before editor bubbling handlers can swallow them", () => {
     const toggleZen: AppShortcutItem = {
       id: "toggle-zen",
       chord: { key: ".", mod: true },
@@ -59,6 +59,30 @@ describe("useAppKeyboard", () => {
       '[data-testid="editor-dom"]',
     );
     editorDom?.dispatchEvent(
+      new KeyboardEvent("keydown", {
+        key: ".",
+        ctrlKey: true,
+        bubbles: true,
+        cancelable: true,
+      }),
+    );
+
+    expect(onAction).toHaveBeenCalledWith(toggleZen);
+  });
+
+  it("handles Ctrl+Period when WebView reports the key through physical code", () => {
+    const toggleZen: AppShortcutItem = {
+      id: "toggle-zen",
+      chord: { key: ".", mod: true },
+      action: { type: "toggleZen" },
+    };
+    const onAction = vi.fn();
+
+    act(() => {
+      root.render(createElement(Harness, { items: [toggleZen], onAction }));
+    });
+
+    window.dispatchEvent(
       new KeyboardEvent("keydown", {
         key: "Process",
         code: "Period",

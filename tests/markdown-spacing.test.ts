@@ -9,20 +9,22 @@ import {
 } from "./helpers/tiptap-serialize-harness";
 
 describe("markdown block spacing", () => {
-  it("ingest treats blank lines as block boundaries without spacer paragraphs", () => {
+  it("ingest keeps blank lines as editable spacer paragraphs", () => {
     const { tipTapHtml } = ingestMarkdownForEditor({
-      bodyMarkdown: "段落 A\n\n段落 B",
+      bodyMarkdown: "Paragraph A\n\nParagraph B",
     });
-    expect(tipTapHtml).not.toContain("data-iris-spacer");
-    expect(tipTapHtml).toContain("段落 A");
-    expect(tipTapHtml).toContain("段落 B");
+    expect(tipTapHtml).toContain('data-iris-spacer="true"');
+    expect(tipTapHtml).toContain("Paragraph A");
+    expect(tipTapHtml).toContain("Paragraph B");
   });
 
   it("serializes paragraphs with one standard markdown blank line", () => {
-    const editor = createProductionEditorFromIngestedBody("段落 A\n\n段落 B");
+    const editor = createProductionEditorFromIngestedBody(
+      "Paragraph A\n\nParagraph B",
+    );
     try {
       const md = normalizeMd(pmSerializeBody(editor));
-      expect(md).toBe("段落 A\n\n段落 B");
+      expect(md).toBe("Paragraph A\n\nParagraph B");
       expect(md).not.toMatch(/\n{4,}/);
     } finally {
       editor.destroy();
@@ -33,7 +35,7 @@ describe("markdown block spacing", () => {
     const { tipTapHtml } = ingestMarkdownForEditor({
       bodyMarkdown: "A\n\n\n\nB",
     });
-    expect(tipTapHtml).not.toContain("data-iris-gap-count");
+    expect(tipTapHtml).toContain('data-iris-gap-count="2"');
 
     const editor = createProductionEditorFromIngestedBody("A\n\n\n\nB");
     try {
@@ -46,7 +48,9 @@ describe("markdown block spacing", () => {
   });
 
   it("does not treat user-entered empty paragraphs as contract spacers", () => {
-    const editor = createProductionEditorFromIngestedBody("段落 A\n\n段落 B");
+    const editor = createProductionEditorFromIngestedBody(
+      "Paragraph A\n\nParagraph B",
+    );
     try {
       editor.commands.insertContentAt(
         editor.state.doc.content.size - 1,
@@ -55,26 +59,29 @@ describe("markdown block spacing", () => {
       );
       const md = normalizeMd(pmSerializeBody(editor));
       expect(md).not.toMatch(/\n{4,}/);
-      expect(md).toMatch(/段落 A[\s\S]*\n\n[\s\S]*段落 B/);
+      expect(md).toMatch(/Paragraph A[\s\S]*\n\n[\s\S]*Paragraph B/);
     } finally {
       editor.destroy();
     }
   });
 
   it("serializes editor doc with plain empty paragraph without extra blank lines", () => {
-    const editor = createProductionEditorFromIngestedBody("段落 A");
+    const editor = createProductionEditorFromIngestedBody("Paragraph A");
     try {
       editor.commands.insertContentAt(editor.state.doc.content.size, {
         type: "doc",
         content: [
           { type: "paragraph" },
-          { type: "paragraph", content: [{ type: "text", text: "段落 B" }] },
+          {
+            type: "paragraph",
+            content: [{ type: "text", text: "Paragraph B" }],
+          },
         ],
       });
       const md = normalizeMd(pmSerializeBody(editor));
       expect(md).not.toMatch(/\n{4,}/);
-      expect(md).toContain("段落 A");
-      expect(md).toContain("段落 B");
+      expect(md).toContain("Paragraph A");
+      expect(md).toContain("Paragraph B");
     } finally {
       editor.destroy();
     }

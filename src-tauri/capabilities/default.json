@@ -6,7 +6,6 @@
   "permissions": [
     "core:default",
     "core:event:default",
-    "core:event:allow-emit",
     "core:event:allow-listen",
     "dialog:default",
     "core:window:allow-start-dragging",

@@ -5,6 +5,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { AiMessage } from "@/components/ui/ai-message";
 import { AiMessageBubble } from "@/components/ai/AiMessageBubble";
 import { ResearchResultMessage } from "@/components/ai/ResearchResultMessage";
+import type { MentionToken } from "@/lib/ai-context-scope";
 import type { ContentPart, ResearchFocusPayload } from "@/types/ai";
 
 import type { ToolCallInfo } from "@/types/ai";
@@ -24,6 +25,8 @@ export interface ChatLine {
   contentParts?: ContentPart[];
   /** 前端渲染用图片列表 */
   images?: ImageAttachment[];
+  /** 前端展示用 @ 文档/文件夹引用元信息，不参与后端 prompt。 */
+  mentions?: MentionToken[];
   seq?: number;
   created_at?: string;
   toolCalls?: ToolCallInfo[];
@@ -176,6 +179,7 @@ export const AiMessageList = memo(function AiMessageList({
             content={m.content}
             selected={isSelected}
             images={m.images}
+            mentions={m.mentions}
           />
         </div>
       );

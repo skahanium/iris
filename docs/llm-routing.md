@@ -15,7 +15,14 @@
 
 设置页按 **供应商连接 / 模型目录 / 能力路由** 分层：供应商级测试只检查凭据和端点；模型级验证会对指定模型发起文本或视觉探测；能力路由只展示已启用且满足该能力的模型。
 
-**DeepSeek Base URL** 推荐 `https://api.deepseek.com`（无 `/v1` 后缀）。Iris 会自动请求 `/v1/chat/completions` 与 `/models`；若在设置里填写带 `/v1` 的地址也能兼容。Ollama 保留后端兼容，但不进入外部供应商设置面板。
+**DeepSeek Base URL** 推荐 `https://api.deepseek.com`（无 `/v1` 后缀）。Iris 会自动请求 `/v1/chat/completions` 与 `/models`；若在设置里填写带 `/v1` 的地址也能兼容。LLM provider 仅支持 HTTPS 端点；Ollama / localhost HTTP 通道已移除，旧 `ollama` 路由会在读取时回退到 DeepSeek 默认模型。
+
+## 安全约束
+
+- `llm_config_get` 返回的 provider 列表不包含 `ollama`。
+- `llm_config_set` 会拒绝任何 `http://` base URL，包括 localhost、127.0.0.1 和 IPv6 loopback。
+- 通用 `settings_set` 不允许写入 `llm_routing`；LLM 路由必须通过 `llm_config_set` 保存，以保证 provider 与 HTTPS 校验始终生效。
+- 自定义 provider 必须使用 HTTPS OpenAI-compatible endpoint，API Key 仅保存在系统凭据管理器 `iris.llm.{provider_id}`。
 
 ## 长上下文
 

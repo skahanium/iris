@@ -68,7 +68,7 @@ describe("shared LLM provider for inline and slash", () => {
     );
     expect(llmGenerate.mock.calls[0]?.[0]?.system).toContain("Note");
 
-    provider = "ollama";
+    provider = "deepseek";
     act(() => {
       root.render(createElement(Host));
     });
@@ -79,7 +79,7 @@ describe("shared LLM provider for inline and slash", () => {
     });
 
     expect(llmGenerate).toHaveBeenLastCalledWith(
-      expect.objectContaining({ provider: "ollama" }),
+      expect.objectContaining({ provider: "deepseek" }),
     );
 
     editor.destroy();

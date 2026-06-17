@@ -6,7 +6,7 @@ import {
   type ReactNode,
 } from "react";
 
-import { Check, Copy, RotateCcw } from "lucide-react";
+import { Check, Copy, FileText, Folder, RotateCcw } from "lucide-react";
 
 import { MarkdownErrorBoundary } from "@/components/ui/markdown-error-boundary";
 
@@ -17,6 +17,7 @@ import { renderMarkdownWithProfile } from "@/lib/markdown-contract";
 import { cn } from "@/lib/utils";
 
 import { useStreamingContent } from "@/hooks/useStreamingContent";
+import type { MentionToken } from "@/lib/ai-context-scope";
 
 interface AiMessageBubbleProps {
   role: "user" | "assistant";
@@ -41,6 +42,9 @@ interface AiMessageBubbleProps {
 
   /** 用户附加的图片列表 */
   images?: import("./AiMessageList").ImageAttachment[];
+
+  /** User-visible @ document/folder references, rendered outside message text. */
+  mentions?: MentionToken[];
 }
 
 const proseConversation =
@@ -49,6 +53,65 @@ const proseConversation =
 const codeCopyDefaultLabel = "复制";
 const codeCopyDoneLabel = "已复制";
 const codeCopyFailedLabel = "复制失败";
+
+function summarizeLogContent(value: string) {
+  let hash = 0x811c9dc5;
+
+  for (let i = 0; i < value.length; i += 1) {
+    hash ^= value.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193);
+  }
+
+  return {
+    length: value.length,
+    hash: (hash >>> 0).toString(16).padStart(8, "0"),
+  };
+}
+
+function MentionMetadataRow({ mentions }: { mentions?: MentionToken[] }) {
+  if (!mentions || mentions.length === 0) return null;
+
+  const visible = mentions.slice(0, 2);
+  const hiddenCount = mentions.length - visible.length;
+  const title = mentions
+    .map(
+      (mention) =>
+        `${mention.kind === "folder" ? "文件夹" : "文档"}：${mention.value}`,
+    )
+    .join("\n");
+
+  return (
+    <div
+      className="flex min-w-0 items-center gap-1.5 px-3 pt-2 text-[11px] leading-4 text-muted-foreground/75"
+      data-ai-message-mentions=""
+      title={title}
+    >
+      <span className="shrink-0 text-muted-foreground/60">引用：</span>
+      <span className="flex min-w-0 items-center gap-1">
+        {visible.map((mention, index) => {
+          const Icon = mention.kind === "folder" ? Folder : FileText;
+          return (
+            <span
+              key={`${mention.kind}:${mention.value}:${index}`}
+              className="inline-flex min-w-0 max-w-[9rem] items-center gap-1 text-muted-foreground/80"
+            >
+              <Icon className="h-3 w-3 shrink-0 text-muted-foreground/55" />
+              <span className="truncate">{mention.label}</span>
+              {index < visible.length - 1 ? (
+                <span className="shrink-0 text-muted-foreground/45">、</span>
+              ) : null}
+            </span>
+          );
+        })}
+        {hiddenCount > 0 ? (
+          <span className="shrink-0 text-muted-foreground/60">
+            +{hiddenCount}
+          </span>
+        ) : null}
+      </span>
+    </div>
+  );
+}
 
 const AssistantBody = memo(function AssistantBody({
   content,
@@ -80,9 +143,12 @@ const AssistantBody = memo(function AssistantBody({
       return result.output;
     } catch (err) {
       console.warn("[ai-message] Markdown render failed", {
-        content: (renderContent || "").slice(0, 200),
+        contentSummary: summarizeLogContent(renderContent || ""),
 
-        error: String(err),
+        error:
+          err instanceof Error
+            ? { name: err.name, messageLength: err.message.length }
+            : { name: typeof err, messageLength: String(err).length },
       });
 
       const escaped = (renderContent || "")
@@ -206,6 +272,8 @@ export const AiMessageBubble = memo(function AiMessageBubble({
   onCopy,
 
   images,
+
+  mentions,
 }: AiMessageBubbleProps) {
   const isUser = role === "user";
 
@@ -264,8 +332,13 @@ export const AiMessageBubble = memo(function AiMessageBubble({
             ))}
           </div>
         )}
+        <MentionMetadataRow mentions={mentions} />
         <div
-          className={cn("ai-message-body", proseConversation)}
+          className={cn(
+            "ai-message-body",
+            proseConversation,
+            mentions && mentions.length > 0 && "pt-1.5",
+          )}
           data-prose-surface="conversation"
           dangerouslySetInnerHTML={{ __html: userHtml }}
         />

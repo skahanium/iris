@@ -55,6 +55,19 @@ describe("editor-html-cache", () => {
     expect(getCachedEditorHtml("bad.md", digest)).toBeUndefined();
   });
 
+  it("rejects cached html that contains visible unparsed markdown block markers", () => {
+    const markdown = "# 反映的问题\n\n1. 大师的\n\n+ 打算打";
+    const digest = editorHtmlDigest(markdown);
+
+    setCachedEditorHtml(
+      "raw-markdown.md",
+      "<p># 反映的问题</p><p>1. 大师的</p><p>+ 打算打</p>",
+      digest,
+    );
+
+    expect(getCachedEditorHtml("raw-markdown.md", digest)).toBeUndefined();
+  });
+
   it("stores healthy cached html with strong tags", () => {
     const markdown = "1. **DP-Attention 同步：**多 DP 段的计算拖慢。";
     const digest = editorHtmlDigest(markdown);

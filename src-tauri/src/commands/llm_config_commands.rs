@@ -548,12 +548,6 @@ fn validate_route(provider_id: &str, model: &str, routing: &LlmRoutingConfig) ->
 
 fn validate_provider_base_url(url: &str) -> AppResult<()> {
     let trimmed = url.trim();
-    if trimmed.starts_with("http://127.0.0.1")
-        || trimmed.starts_with("http://localhost")
-        || trimmed.starts_with("http://[::1]")
-    {
-        return Ok(());
-    }
     crate::security::ipc_policy::validate_https_url(trimmed)
 }
 

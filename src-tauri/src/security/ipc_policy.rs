@@ -5,8 +5,6 @@ use std::path::{Component, Path, PathBuf};
 use crate::credentials::MINIMAX_CREDENTIAL_SERVICE;
 use crate::error::{AppError, AppResult};
 
-const LLM_ROUTING_SETTINGS_KEY: &str = "llm_routing";
-
 /// Cross-platform user home directory.
 /// On Unix: uses `HOME`, on Windows: falls back to `USERPROFILE`.
 fn user_home_dir() -> Option<PathBuf> {
@@ -25,7 +23,6 @@ const ALLOWED_SETTINGS_KEYS: &[&str] = &[
     "vault_path",
     "theme",
     "web_search_enabled",
-    LLM_ROUTING_SETTINGS_KEY,
     "llm_custom_base_url",
     "llm_base_url",
     "llm_usage_last",
@@ -73,35 +70,9 @@ pub fn validate_https_url(url: &str) -> AppResult<()> {
     Ok(())
 }
 
-fn is_localhost_url(url: &str) -> bool {
-    let trimmed = url.trim();
-    trimmed.starts_with("http://127.0.0.1")
-        || trimmed.starts_with("http://localhost")
-        || trimmed.starts_with("http://[::1]")
-}
-
-/// Validate LLM base URL: localhost HTTP is allowed with a warning; all other URLs must be HTTPS.
+/// Validate LLM base URL: all LLM provider endpoints must use HTTPS.
 pub fn validate_llm_base_url(url: &str) -> AppResult<()> {
-    let trimmed = url.trim();
-    if trimmed.is_empty() {
-        return Err(AppError::msg("URL 不能为空"));
-    }
-    if trimmed.contains('\0') {
-        return Err(AppError::msg("非法 URL"));
-    }
-    if is_localhost_url(trimmed) {
-        tracing::warn!(
-            url = %trimmed,
-            "本地 LLM 端点使用 HTTP，数据在本地传输，未加密。建议配置 TLS 代理"
-        );
-        return Ok(());
-    }
-    if !trimmed.starts_with("https://") {
-        return Err(AppError::msg(
-            "仅允许 HTTPS URL（本地 Ollama 等 localhost HTTP 除外）",
-        ));
-    }
-    Ok(())
+    validate_https_url(url)
 }
 
 /// Validate remote skill install URL (HTTPS only).
@@ -176,14 +147,10 @@ mod tests {
     }
 
     #[test]
-    fn llm_base_url_allows_localhost_http() {
-        validate_llm_base_url("http://127.0.0.1:11434").unwrap();
-        validate_llm_base_url("http://localhost:11434").unwrap();
-        validate_llm_base_url("http://[::1]:11434").unwrap();
-    }
-
-    #[test]
-    fn llm_base_url_rejects_remote_http() {
+    fn llm_base_url_rejects_all_http() {
+        assert!(validate_llm_base_url("http://127.0.0.1:11434").is_err());
+        assert!(validate_llm_base_url("http://localhost:11434").is_err());
+        assert!(validate_llm_base_url("http://[::1]:11434").is_err());
         assert!(validate_llm_base_url("http://api.example.com").is_err());
     }
 
@@ -201,5 +168,10 @@ mod tests {
     fn settings_key_allows_theme_and_web_search_toggle() {
         validate_settings_key("theme").unwrap();
         validate_settings_key("web_search_enabled").unwrap();
+    }
+
+    #[test]
+    fn settings_key_rejects_llm_routing_generic_write() {
+        assert!(validate_settings_key("llm_routing").is_err());
     }
 }

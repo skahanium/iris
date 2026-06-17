@@ -249,9 +249,9 @@ mod tests {
                 privacy_level: PrivacyLevel::External,
             },
             ProviderInfo {
-                id: "ollama".into(),
-                name: "Ollama".into(),
-                default_model: "llama3".into(),
+                id: "local".into(),
+                name: "Local".into(),
+                default_model: "fastembed/AllMiniLML6V2".into(),
                 supports_tools: true,
                 supports_streaming: true,
                 privacy_level: PrivacyLevel::Local,
@@ -275,7 +275,7 @@ mod tests {
         let profile = reg.resolve(CapabilitySlot::LocalPrivate);
         assert!(profile.is_some());
         let p = profile.unwrap();
-        assert_eq!(p.provider, "ollama");
+        assert_eq!(p.provider, "local");
         assert_eq!(p.privacy_level, PrivacyLevel::Local);
     }
 

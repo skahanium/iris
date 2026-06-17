@@ -16,7 +16,6 @@ const BUILTIN_PROVIDERS: &[(&str, &str, &str)] = &[
     ("zhipu", "GLM / Zhipu", "glm-4-flash"),
     ("kimi", "Kimi", "moonshot-v1-128k"),
     ("doubao", "Doubao / Volcengine", "doubao-1-5-pro-256k"),
-    ("ollama", "Ollama", "llama3.2"),
     ("mimo", "MiMo", "MiMo-V2.5-Pro"),
 ];
 
@@ -33,7 +32,7 @@ pub fn is_allowed_provider(provider_id: &str) -> bool {
 }
 
 pub fn requires_api_key(provider_id: &str) -> bool {
-    is_allowed_provider(provider_id) && provider_id != "ollama"
+    is_allowed_provider(provider_id)
 }
 
 pub fn requires_base_url(provider_id: &str) -> bool {
@@ -69,9 +68,6 @@ pub fn list_providers_from_routing(routing: &LlmRoutingConfig) -> Vec<LlmProvide
 
 pub fn list_external_providers_from_routing(routing: &LlmRoutingConfig) -> Vec<LlmProviderInfo> {
     list_providers_from_routing(routing)
-        .into_iter()
-        .filter(|provider| provider.id != "ollama")
-        .collect()
 }
 
 fn provider_info_from_override(id: &str, row: &ProviderOverride) -> LlmProviderInfo {
@@ -122,7 +118,6 @@ pub fn api_base(provider: &str, custom_base: Option<&str>) -> String {
         "doubao" => custom_base
             .unwrap_or("https://ark.cn-beijing.volces.com/api/v3")
             .to_string(),
-        "ollama" => custom_base.unwrap_or("http://127.0.0.1:11434").to_string(),
         "mimo" => custom_base.unwrap_or("").to_string(),
         id if is_custom_provider(id) => custom_base
             .unwrap_or("https://api.openai.com/v1")
@@ -160,7 +155,6 @@ pub fn models_probe_url(provider: &str, base_url: &str) -> String {
             let root = base.strip_suffix("/v1").unwrap_or(base);
             format!("{root}/models")
         }
-        "ollama" => format!("{base}/api/tags"),
         "anthropic" => format!("{base}/v1/messages"),
         _ => format!("{base}/models"),
     }
@@ -222,7 +216,7 @@ mod tests {
     }
 
     #[test]
-    fn external_settings_provider_list_hides_ollama_but_keeps_custom_entries() {
+    fn provider_lists_do_not_include_ollama_and_keep_custom_entries() {
         let mut routing = crate::llm::config::deepseek_defaults();
         routing.providers.insert(
             "custom_groq".into(),
@@ -234,7 +228,7 @@ mod tests {
             },
         );
 
-        let ids: Vec<_> = list_external_providers_from_routing(&routing)
+        let ids: Vec<_> = list_providers_from_routing(&routing)
             .into_iter()
             .map(|provider| provider.id)
             .collect();
@@ -242,7 +236,7 @@ mod tests {
         assert!(!ids.contains(&"ollama".to_string()));
         assert!(ids.contains(&"custom_groq".to_string()));
         assert!(ids.contains(&"mimo".to_string()));
-        assert!(is_allowed_provider("ollama"));
+        assert!(!is_allowed_provider("ollama"));
     }
 
     #[test]

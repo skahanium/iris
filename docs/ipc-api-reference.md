@@ -32,7 +32,7 @@ pub fn settings_set(
 ) -> AppResult<()>
 ```
 
-- **描述**：写入/更新一条设置项（upsert 模式）。key 冲突时覆盖旧值。
+- **描述**：写入/更新一条设置项（upsert 模式）。key 冲突时覆盖旧值。`llm_routing` 不允许通过通用 settings 写入，必须使用 `llm_config_set`。
 
 ### settings_reset
 
@@ -402,7 +402,7 @@ pub fn llm_config_get(
 ) -> AppResult<LlmConfigGetResponse>
 ```
 
-- **描述**：获取当前 LLM 路由配置、可用提供商列表和模型目录。返回 `LlmConfigGetResponse { routing, providers, catalog }`。
+- **描述**：获取当前 LLM 路由配置、可用提供商列表和模型目录。返回 `LlmConfigGetResponse { routing, providers, catalog }`。providers 不包含 `ollama`；旧 `ollama` 路由读取时会 sanitize 为 DeepSeek 默认模型。
 
 ### llm_config_set
 
@@ -413,7 +413,7 @@ pub fn llm_config_set(
 ) -> AppResult<()>
 ```
 
-- **描述**：保存 LLM 路由配置（各场景的 provider/model 映射、自定义端点等）。校验 provider 合法性和 HTTPS URL。
+- **描述**：保存 LLM 路由配置（各场景的 provider/model 映射、自定义端点等）。校验 provider 合法性和 HTTPS URL；任何 `http://` base URL（包括 localhost）都会被拒绝。
 
 ### llm_config_apply_deepseek_defaults
 
@@ -871,7 +871,7 @@ pub async fn ai_send_message(
 ) -> AppResult<serde_json::Value>
 ```
 
-- **描述**：发送 AI 消息（完整 LLM pipeline）。包含：guardrails 注入检测、session 管理、上下文组装、harness 多轮执行、工具调用、trace 记录。返回包含 `request_id`, `session_id`, `status`, `content`, `tool_calls`, `usage` 等的 JSON。
+- **描述**：发送 AI 消息（完整 LLM pipeline）。包含：guardrails 注入检测、session 管理、上下文组装、harness 多轮执行、工具调用、trace 记录。返回包含 `request_id`, `session_id`, `status`, `content`, `tool_calls`, `usage` 等的 JSON。harness LLM 重试前会发出 `ai:retry_status` 事件，字段为 `request_id`, `attempt`, `max_attempts`, `delay_ms`，不包含 prompt、上下文包或文档正文。
 
 ### tool_confirm
 

@@ -70,6 +70,8 @@ const MIGRATION_028_UP: &str = include_str!("../../migrations/028_multimodal_mes
 const MIGRATION_028_DOWN: &str = include_str!("../../migrations/028_multimodal_messages.down.sql");
 const MIGRATION_029_UP: &str = include_str!("../../migrations/029_model_registry.sql");
 const MIGRATION_029_DOWN: &str = include_str!("../../migrations/029_model_registry.down.sql");
+const MIGRATION_030_UP: &str = include_str!("../../migrations/030_runtime_vault_scope.sql");
+const MIGRATION_030_DOWN: &str = include_str!("../../migrations/030_runtime_vault_scope.down.sql");
 
 fn is_applied(conn: &Connection, name: &str) -> bool {
     conn.query_row(
@@ -167,6 +169,7 @@ pub fn migrate_up(conn: &Connection) -> AppResult<()> {
     apply_migration(conn, "027_agent_permissions", MIGRATION_027_UP, false)?;
     apply_migration(conn, "028_multimodal_messages", MIGRATION_028_UP, false)?;
     apply_migration(conn, "029_model_registry", MIGRATION_029_UP, false)?;
+    apply_migration(conn, "030_runtime_vault_scope", MIGRATION_030_UP, false)?;
 
     Ok(())
 }
@@ -178,6 +181,7 @@ fn rollback_migration(conn: &Connection, name: &str, sql: &str) {
 
 /// Roll back all migrations in strict reverse order (for tests).
 pub fn migrate_down(conn: &Connection) -> AppResult<()> {
+    rollback_migration(conn, "030_runtime_vault_scope", MIGRATION_030_DOWN);
     rollback_migration(conn, "029_model_registry", MIGRATION_029_DOWN);
     rollback_migration(conn, "028_multimodal_messages", MIGRATION_028_DOWN);
     rollback_migration(conn, "027_agent_permissions", MIGRATION_027_DOWN);
@@ -838,6 +842,34 @@ mod tests {
             )
             .unwrap();
         assert_eq!(source, "provider_discovered");
+    }
+
+    #[test]
+    fn migration_030_adds_vault_scope_columns_to_runtime_tables() {
+        let conn = Connection::open_in_memory().unwrap();
+        migrate_up(&conn).unwrap();
+
+        for table in [
+            "sessions",
+            "session_messages",
+            "ai_memories",
+            "knowledge_deposits",
+            "user_profile",
+            "web_page_cache",
+            "search_cache",
+        ] {
+            let has_column: bool = conn
+                .query_row(
+                    &format!(
+                        "SELECT COUNT(*) FROM pragma_table_info('{table}') WHERE name = 'vault_id'"
+                    ),
+                    [],
+                    |row| row.get::<_, i64>(0),
+                )
+                .map(|count| count > 0)
+                .unwrap();
+            assert!(has_column, "missing vault_id on {table}");
+        }
     }
 
     #[test]

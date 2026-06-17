@@ -6,7 +6,12 @@ import {
   type SetStateAction,
 } from "react";
 
-import { listenLlmDone, listenLlmError, listenLlmToken } from "@/lib/ipc";
+import {
+  listenAiRetryStatus,
+  listenLlmDone,
+  listenLlmError,
+  listenLlmToken,
+} from "@/lib/ipc";
 import type { LlmTokenEvent } from "@/types/ipc";
 
 import type { ChatLine } from "@/components/ai/AiMessageList";
@@ -37,6 +42,7 @@ export function useAssistantLlmStream(options: {
     let unlistenToken: (() => void) | undefined;
     let unlistenDone: (() => void) | undefined;
     let unlistenError: (() => void) | undefined;
+    let unlistenRetryStatus: (() => void) | undefined;
 
     function flushSnapshot() {
       const snapshot = streamBufRef.current;
@@ -125,6 +131,29 @@ export function useAssistantLlmStream(options: {
       else unlistenError = fn;
     });
 
+    void listenAiRetryStatus((ev) => {
+      if (disposed || !panelSendActiveRef.current) return;
+      if (
+        requestIdRef.current &&
+        ev.request_id &&
+        ev.request_id !== requestIdRef.current
+      ) {
+        return;
+      }
+      setMessages((prev) => [
+        ...prev,
+        {
+          role: "system",
+          content: `重试中（${ev.attempt}/${ev.max_attempts}），约 ${Math.ceil(
+            ev.delay_ms / 1000,
+          )} 秒后继续。`,
+        },
+      ]);
+    }).then((fn) => {
+      if (disposed) fn();
+      else unlistenRetryStatus = fn;
+    });
+
     return () => {
       disposed = true;
       if (rafRef.current !== undefined) {
@@ -134,6 +163,7 @@ export function useAssistantLlmStream(options: {
       unlistenToken?.();
       unlistenDone?.();
       unlistenError?.();
+      unlistenRetryStatus?.();
     };
   }, [
     panelSendActiveRef,

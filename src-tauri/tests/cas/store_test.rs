@@ -3,10 +3,16 @@ use iris_lib::cas::store::{
 };
 use tempfile::tempdir;
 
-#[test]
-fn test_store_and_retrieve_blob() {
+fn encrypted_store() -> (tempfile::TempDir, CasObjectStore) {
     let dir = tempdir().unwrap();
     let store = CasObjectStore::new(dir.path().to_path_buf()).unwrap();
+    store.enable_encryption([0xA5; 32]);
+    (dir, store)
+}
+
+#[test]
+fn test_store_and_retrieve_blob() {
+    let (_dir, store) = encrypted_store();
 
     let content = "Hello, World!";
     let hash = store.store_blob(content.as_bytes()).unwrap();
@@ -17,8 +23,7 @@ fn test_store_and_retrieve_blob() {
 
 #[test]
 fn test_store_and_retrieve_blob_as_string() {
-    let dir = tempdir().unwrap();
-    let store = CasObjectStore::new(dir.path().to_path_buf()).unwrap();
+    let (_dir, store) = encrypted_store();
 
     let content = "Hello, World!";
     let hash = store.store_blob(content.as_bytes()).unwrap();
@@ -29,8 +34,7 @@ fn test_store_and_retrieve_blob_as_string() {
 
 #[test]
 fn test_store_and_retrieve_tree() {
-    let dir = tempdir().unwrap();
-    let store = CasObjectStore::new(dir.path().to_path_buf()).unwrap();
+    let (_dir, store) = encrypted_store();
 
     let tree = TreeObject {
         hash: String::new(),
@@ -54,8 +58,7 @@ fn test_store_and_retrieve_tree() {
 
 #[test]
 fn test_store_and_retrieve_commit() {
-    let dir = tempdir().unwrap();
-    let store = CasObjectStore::new(dir.path().to_path_buf()).unwrap();
+    let (_dir, store) = encrypted_store();
 
     let commit = CommitObject {
         hash: String::new(),
@@ -84,8 +87,7 @@ fn test_store_and_retrieve_commit() {
 
 #[test]
 fn test_content_deduplication() {
-    let dir = tempdir().unwrap();
-    let store = CasObjectStore::new(dir.path().to_path_buf()).unwrap();
+    let (_dir, store) = encrypted_store();
 
     let content = "Same content";
     let hash1 = store.store_blob(content.as_bytes()).unwrap();
@@ -126,8 +128,7 @@ fn test_read_nonexistent_blob() {
 
 #[test]
 fn test_write_content() {
-    let dir = tempdir().unwrap();
-    let store = CasObjectStore::new(dir.path().to_path_buf()).unwrap();
+    let (_dir, store) = encrypted_store();
 
     let content = "Test content";
     let hash = store.write_content(content).unwrap();
@@ -154,4 +155,14 @@ fn test_object_path_rejects_short_hash() {
     assert!(store.object_path("").is_err());
     assert!(store.object_path("a").is_err());
     assert!(store.object_path("ab").is_ok());
+}
+
+#[test]
+fn test_store_blob_requires_encryption_key() {
+    let dir = tempdir().unwrap();
+    let store = CasObjectStore::new(dir.path().to_path_buf()).unwrap();
+
+    let result = store.store_blob(b"must not be plaintext");
+
+    assert!(result.is_err());
 }

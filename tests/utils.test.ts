@@ -24,16 +24,44 @@ describe("isModKey", () => {
 
 describe("matchesKeyChord", () => {
   it("matches Ctrl+Period by physical code when WebView reports a non-literal key", () => {
+    const event = new KeyboardEvent("keydown", {
+      key: "Process",
+      code: "Period",
+      ctrlKey: true,
+    });
+
+    expect(matchesKeyChord(event, { key: ".", mod: true })).toBe(true);
+  });
+
+  it("matches punctuation shortcuts by physical code", () => {
     expect(
       matchesKeyChord(
-        {
+        new KeyboardEvent("keydown", {
           key: "Process",
-          code: "Period",
+          code: "Comma",
           ctrlKey: true,
-          metaKey: false,
-          shiftKey: false,
-        } as KeyboardEvent,
-        { key: ".", mod: true },
+        }),
+        { key: ",", mod: true },
+      ),
+    ).toBe(true);
+    expect(
+      matchesKeyChord(
+        new KeyboardEvent("keydown", {
+          key: "Process",
+          code: "Minus",
+          ctrlKey: true,
+        }),
+        { key: "-", mod: true },
+      ),
+    ).toBe(true);
+    expect(
+      matchesKeyChord(
+        new KeyboardEvent("keydown", {
+          key: "Process",
+          code: "Equal",
+          ctrlKey: true,
+        }),
+        { key: "+", mod: true },
       ),
     ).toBe(true);
   });

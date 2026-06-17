@@ -61,10 +61,12 @@ export function tokensToContextScope(tokens: MentionToken[]): ContextScope {
 
 /** User-visible message without `@[...]` tokens. */
 export function stripMentionTokensForDisplay(text: string): string {
-  return text.replace(MENTION_TOKEN_RE, (_, inner: string) => {
-    const label = inner.trim().replace(/\\/g, "/").replace(/\/$/, "") || inner;
-    return `「${label}」`;
-  });
+  return text
+    .replace(MENTION_TOKEN_RE, "")
+    .replace(/[ \t]{2,}/g, " ")
+    .replace(/[ \t]+\n/g, "\n")
+    .replace(/\n[ \t]+/g, "\n")
+    .trim();
 }
 
 export interface MentionCandidate {

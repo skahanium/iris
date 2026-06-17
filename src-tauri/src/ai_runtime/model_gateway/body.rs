@@ -75,7 +75,6 @@ pub(super) fn build_llm_api_body(request: &GatewayRequest) -> AppResult<serde_js
             build_chat_completions_body_inner(&req)
         }
         EndpointFamily::AnthropicMessages => build_anthropic_messages_body_inner(&req),
-        EndpointFamily::OllamaChat => build_ollama_chat_body_inner(&req),
     })
 }
 
@@ -199,21 +198,6 @@ fn build_anthropic_messages_body_inner(request: &GatewayRequest) -> serde_json::
     body
 }
 
-fn build_ollama_chat_body_inner(request: &GatewayRequest) -> serde_json::Value {
-    let mut body = serde_json::json!({
-        "model": request.provider.model,
-        "messages": messages_for_api(&request.messages),
-        "stream": request.stream,
-    });
-    if !request.tools.is_empty() {
-        body["tools"] = serde_json::to_value(&request.tools).unwrap_or_default();
-    }
-    if let Some(temperature) = request.temperature {
-        body["options"] = serde_json::json!({ "temperature": temperature });
-    }
-    body
-}
-
 #[cfg(test)]
 mod phase3_adapter_contract_tests {
     use super::*;
@@ -262,16 +246,6 @@ mod phase3_adapter_contract_tests {
         assert_eq!(body["tools"][0]["name"], "search_hybrid");
         assert!(body.get("system").is_some());
         assert!(body.get("stream").is_none());
-    }
-
-    #[test]
-    fn builds_ollama_chat_body_from_unified_request() {
-        let body = build_llm_api_body(&request_for(EndpointFamily::OllamaChat)).unwrap();
-
-        assert_eq!(body["model"], "model-a");
-        assert_eq!(body["messages"][0]["role"], "user");
-        assert_eq!(body["stream"], false);
-        assert_eq!(body["tools"][0]["function"]["name"], "search_hybrid");
     }
 
     #[test]

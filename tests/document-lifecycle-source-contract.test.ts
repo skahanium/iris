@@ -124,4 +124,26 @@ describe("document lifecycle source contracts", () => {
       "replaceOpenTabPath(path, entry.path, nextTitle, liveMarkdown)",
     );
   });
+
+  it("large editor ingest is worker-backed and guarded against stale results", () => {
+    const source = read("src/hooks/useOpenNote.ts");
+    expect(source).toContain("ingestMarkdownForEditorAsync");
+    expect(source).toContain("editorIngestGenerationRef");
+    expect(source).toContain(
+      "generation !== editorIngestGenerationRef.current",
+    );
+    expect(source).toContain("activePathRef.current !== path");
+  });
+
+  it("assistant stream listens for retry status without prompt content", () => {
+    const ipc = read("src/lib/ipc.ts");
+    const hook = read("src/hooks/useAssistantLlmStream.ts");
+    const backend = read("src-tauri/src/ai_harness/harness/run.rs");
+    expect(ipc).toContain("listenAiRetryStatus");
+    expect(hook).toContain("listenAiRetryStatus");
+    expect(backend).toContain('"ai:retry_status"');
+    expect(backend).toContain('"delay_ms": delay_ms');
+    expect(backend).not.toContain('"message": request');
+    expect(backend).not.toContain('"prompt"');
+  });
 });

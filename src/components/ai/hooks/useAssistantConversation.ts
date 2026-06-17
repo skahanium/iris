@@ -8,7 +8,10 @@ import {
   type SetStateAction,
 } from "react";
 
-import { stripMentionTokensForDisplay } from "@/lib/ai-context-scope";
+import {
+  parseMentionTokens,
+  stripMentionTokensForDisplay,
+} from "@/lib/ai-context-scope";
 import { llmAbort, sessionRetract } from "@/lib/ipc";
 import type {
   AssistantActionState,
@@ -215,14 +218,21 @@ export function useAssistantConversation({
       imgs?: import("../AiMessageList").ImageAttachment[],
     ) => {
       const display = stripMentionTokensForDisplay(rawMessage);
-      setMessages((prev) => [
-        ...prev,
-        {
-          role: "user",
-          content: display,
-          images: imgs?.length ? imgs : undefined,
-        },
-      ]);
+      const mentions = parseMentionTokens(rawMessage);
+      const nextMessage: ChatLine = {
+        role: "user",
+        content: display,
+      };
+
+      if (mentions.length > 0) {
+        nextMessage.mentions = mentions;
+      }
+
+      if (imgs?.length) {
+        nextMessage.images = imgs;
+      }
+
+      setMessages((prev) => [...prev, nextMessage]);
     },
     [],
   );

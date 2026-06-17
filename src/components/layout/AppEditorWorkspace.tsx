@@ -110,7 +110,6 @@ export function AppEditorWorkspace({
             contentCacheKey={activePath}
             vaultPath={vaultPath}
             reingestKey={editorContentTick}
-            reloadContentTick={editorContentTick}
             zen={zen}
             zoom={editorZoom}
             titleSlot={editorTitleSlot}

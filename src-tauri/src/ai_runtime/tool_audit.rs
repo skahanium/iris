@@ -6,7 +6,7 @@
 //! - Never records full note content
 //! - `read_note`: only records path, max_chars, truncated
 //! - `replace_selection` / `insert_text_at_cursor`: only records length, hash, risk level
-//! - Other tools: summarizes arguments and results to max 500 chars
+//! - Unknown tools: records only JSON shape metadata
 
 use crate::error::AppResult;
 use crate::storage::db::Database;
@@ -99,6 +99,11 @@ fn sanitize_arguments(tool_name: &str, args: &serde_json::Value) -> Option<Strin
             let query = obj.get("query").and_then(|v| v.as_str()).unwrap_or("");
             Some(format!("query={query}"))
         }
+        "search_hybrid" | "search_semantic" | "search_keyword" => {
+            let query = obj.get("query").and_then(|v| v.as_str()).unwrap_or("");
+            let limit = obj.get("limit").and_then(|v| v.as_u64());
+            Some(format!("query={query}, limit={limit:?}"))
+        }
         "fetch_web_page" => {
             // Record URL only
             let url = obj.get("url").and_then(|v| v.as_str()).unwrap_or("");
@@ -154,11 +159,7 @@ fn sanitize_arguments(tool_name: &str, args: &serde_json::Value) -> Option<Strin
             }
         }
         "skills_list" => Some("list".into()),
-        _ => {
-            // Generic: truncate to 500 chars
-            let s = serde_json::to_string(args).unwrap_or_default();
-            Some(truncate_summary(&s, 500))
-        }
+        _ => Some(json_shape_summary(args)),
     }
 }
 
@@ -199,10 +200,18 @@ fn sanitize_result(tool_name: &str, result: &serde_json::Value, success: bool) -
                 .unwrap_or(false);
             Some(format!("exists={exists}"))
         }
-        _ => {
-            let s = serde_json::to_string(result).unwrap_or_default();
-            Some(truncate_summary(&s, 500))
-        }
+        _ => Some(json_shape_summary(result)),
+    }
+}
+
+fn json_shape_summary(value: &serde_json::Value) -> String {
+    match value {
+        serde_json::Value::Object(obj) => format!("shape=object, keys={}", obj.len()),
+        serde_json::Value::Array(arr) => format!("shape=array, len={}", arr.len()),
+        serde_json::Value::String(_) => "shape=string".into(),
+        serde_json::Value::Number(_) => "shape=number".into(),
+        serde_json::Value::Bool(_) => "shape=bool".into(),
+        serde_json::Value::Null => "shape=null".into(),
     }
 }
 
@@ -348,6 +357,23 @@ mod tests {
         let result = serde_json::json!({"results": [], "count": 5});
         let summary = sanitize_result("search_hybrid", &result, true).unwrap();
         assert!(summary.contains("results=5"));
+    }
+
+    #[test]
+    fn unknown_tool_audit_does_not_store_arguments_or_result_body() {
+        let args = serde_json::json!({
+            "content": "sensitive note text",
+            "token": "sk-secret"
+        });
+        let result = serde_json::json!({
+            "content": "private result body"
+        });
+
+        let args_summary = sanitize_arguments("new_unreviewed_tool", &args);
+        let result_summary = sanitize_result("new_unreviewed_tool", &result, true);
+
+        assert_eq!(args_summary.as_deref(), Some("shape=object, keys=2"));
+        assert_eq!(result_summary.as_deref(), Some("shape=object, keys=1"));
     }
 
     #[test]

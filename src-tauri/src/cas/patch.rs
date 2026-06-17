@@ -170,6 +170,7 @@ mod tests {
     fn test_apply_patch_to_file_success() {
         let tmp = tempfile::tempdir().unwrap();
         let store = CasObjectStore::new(tmp.path().to_path_buf()).unwrap();
+        store.enable_encryption([9u8; 32]);
         let guard = WriteGuard::new();
 
         let content = "Hello, World!";

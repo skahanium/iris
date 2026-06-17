@@ -97,6 +97,13 @@ export interface LlmTokenEvent {
   index: number;
 }
 
+export interface AiRetryStatusEvent {
+  request_id: string;
+  attempt: number;
+  max_attempts: number;
+  delay_ms: number;
+}
+
 /** Harness agent loop tool execution trace (backend `ai:harness_trace`). */
 export interface HarnessTraceEvent {
   request_id: string;

@@ -10,8 +10,44 @@ import {
   type Editor as ReactEditor,
 } from "@/components/editor/TipTapEditor";
 import { insertAssistantMarkdownAtCursor } from "@/lib/editor-insert";
+import { createProductionEditorFromIngestedBody } from "./helpers/tiptap-serialize-harness";
+
+function typeTextThroughInputRules(editor: Editor, text: string) {
+  for (const ch of text) {
+    const { from, to } = editor.state.selection;
+    let handled = false;
+    editor.view.someProp("handleTextInput", (handler) => {
+      if (handler(editor.view, from, to, ch, () => editor.state.tr)) {
+        handled = true;
+        return true;
+      }
+      return false;
+    });
+    if (!handled) {
+      editor.commands.insertContent(ch);
+    }
+  }
+}
 
 describe("editor performance regressions", () => {
+  it("keeps markdown shortcut input rules active for headings and lists", () => {
+    const editor = createProductionEditorFromIngestedBody("");
+
+    typeTextThroughInputRules(editor, "# ");
+    expect(editor.state.doc.child(0).type.name).toBe("heading");
+    expect(editor.state.doc.child(0).attrs.level).toBe(1);
+
+    editor.commands.clearContent();
+    typeTextThroughInputRules(editor, "1. ");
+    expect(editor.state.doc.child(0).type.name).toBe("orderedList");
+
+    editor.commands.clearContent();
+    typeTextThroughInputRules(editor, "+ ");
+    expect(editor.state.doc.child(0).type.name).toBe("bulletList");
+
+    editor.destroy();
+  });
+
   it("inserts assistant markdown as block nodes instead of one huge text paragraph", () => {
     const editor = new Editor({
       extensions: [StarterKit],

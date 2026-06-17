@@ -84,7 +84,18 @@ describe("useAssistantConversation", () => {
     });
 
     expect(api.messages).toEqual<ChatLine[]>([
-      { role: "user", content: "summarize 「Research/Notes.md」 please" },
+      {
+        role: "user",
+        content: "summarize please",
+        mentions: [
+          {
+            raw: "@[Research/Notes.md]",
+            value: "Research/Notes.md",
+            kind: "file",
+            label: "Research/Notes.md",
+          },
+        ],
+      },
     ]);
   });
 

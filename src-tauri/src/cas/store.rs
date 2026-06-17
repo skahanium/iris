@@ -124,7 +124,9 @@ impl CasObjectStore {
             buf.extend_from_slice(&encrypted);
             Ok(buf)
         } else {
-            Ok(content.to_vec())
+            Err(AppError::msg(
+                "CAS encryption key is unavailable; refusing to write plaintext object",
+            ))
         }
     }
 

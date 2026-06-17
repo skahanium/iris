@@ -26,7 +26,6 @@ const ALLOWED_TAGS = [
   "strong",
   "em",
   "code",
-  "button",
   "a",
   "span",
   "img",
@@ -35,7 +34,6 @@ const ALLOWED_TAGS = [
   "del",
   "ins",
   "mark",
-  "input",
 ];
 
 /** 白名单属性 */
@@ -49,16 +47,11 @@ const ALLOWED_ATTR = [
   "colspan",
   "rowspan",
   "align",
-  "type",
-  "checked",
-  "disabled",
   "start",
-  "value",
   "target",
   "rel",
   "aria-label",
   "data-cite-ref",
-  "data-ai-code-copy",
 ];
 
 /** 明确禁止的标签（即使出现在白名单中也被移除） */

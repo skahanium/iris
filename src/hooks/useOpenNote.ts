@@ -9,7 +9,7 @@ import {
 } from "react";
 
 import { pathStem } from "@/lib/note-display";
-import { ingestMarkdownForEditor } from "@/lib/editor-ingest";
+import { ingestMarkdownForEditorAsync } from "@/lib/editor-ingest-async";
 import { extractFrontmatterYaml, parseNoteForEditor } from "@/lib/markdown";
 import { isPlaceholderTitle } from "@/lib/path-sync";
 import { fileRename, pathSyncSuggest } from "@/lib/ipc";
@@ -32,6 +32,7 @@ interface UseOpenNoteOptions {
   markdownRef: RefObject<string>;
   frontmatterYamlRef: RefObject<string | null>;
   editorRef: RefObject<Editor | null>;
+  dirtyRef?: RefObject<boolean>;
   updateTabTitle: (path: string, title: string) => void;
   replaceOpenTabPath: (
     oldPath: string,
@@ -48,6 +49,7 @@ export function useOpenNote({
   markdownRef,
   frontmatterYamlRef,
   editorRef,
+  dirtyRef,
   updateTabTitle,
   replaceOpenTabPath,
 }: UseOpenNoteOptions) {
@@ -63,6 +65,7 @@ export function useOpenNote({
 
   const pathSyncTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pathSyncGenRef = useRef(0);
+  const editorIngestGenerationRef = useRef(0);
   const syncFromMarkdown = useCallback(
     (md: string, _path: string) => {
       const parsed = parseNoteForEditor(md, pathStem(_path));
@@ -194,13 +197,23 @@ export function useOpenNote({
       syncFromMarkdown(content, path);
       const parsed = parseNoteForEditor(content, pathStem(path));
       if (editorRef.current) {
-        const { tipTapHtml } = ingestMarkdownForEditor({
-          bodyMarkdown: parsed.bodyMd,
-        });
-        editorRef.current.commands.setContent(tipTapHtml, false);
+        const generation = ++editorIngestGenerationRef.current;
+        void ingestMarkdownForEditorAsync({ bodyMarkdown: parsed.bodyMd })
+          .then(({ tipTapHtml }) => {
+            if (generation !== editorIngestGenerationRef.current) return;
+            if (activePathRef.current !== path) return;
+            if (dirtyRef?.current) return;
+            editorRef.current?.commands.setContent(tipTapHtml, false);
+          })
+          .catch(() => {
+            if (generation !== editorIngestGenerationRef.current) return;
+            if (activePathRef.current !== path) return;
+            if (dirtyRef?.current) return;
+            editorRef.current?.commands.setContent("<p></p>", false);
+          });
       }
     },
-    [activePathRef, editorRef, syncFromMarkdown],
+    [activePathRef, dirtyRef, editorRef, syncFromMarkdown],
   );
 
   return {

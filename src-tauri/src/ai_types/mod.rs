@@ -383,7 +383,6 @@ impl AgentRunPlanSummary {
 pub enum EndpointFamily {
     OpenAiCompatibleChatCompletions,
     AnthropicMessages,
-    OllamaChat,
     ResponsesReserved,
 }
 
@@ -393,7 +392,6 @@ pub enum EndpointFamily {
 pub enum ProbeStrategy {
     OpenAiModelsThenChat,
     AnthropicMessagesPing,
-    OllamaTagsThenChat,
     StaticOnly,
 }
 

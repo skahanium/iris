@@ -1,11 +1,3 @@
-//! Model Gateway — LLM provider abstraction with streaming and tool-calling.
-//!
-//! Handles:
-//! 1. Selecting provider/model by capability slot
-//! 2. Building messages with system prompt + context packets
-//! 3. Streaming responses via Tauri events
-//! 4. Processing tool calls from LLM and routing to ToolExecutor
-
 pub use crate::ai_types::{
     AiScene, CapabilitySlot, ContextPacket, EndpointFamily, FunctionCall, LlmMessage, MessageRole,
     ProviderConfig, TokenUsage, ToolCall, ToolSpec,
@@ -45,9 +37,6 @@ pub use prompts_impl::{build_citation_prompt, build_drafting_prompt};
 pub use streaming_impl::{StreamEvent, StreamEventData, StreamEventType};
 use usage_impl::parse_usage;
 
-// Provider types (ProviderConfig, CapabilitySlot, MessageRole, LlmMessage,
-// ToolCall, FunctionCall, TokenUsage) live in `crate::ai_types`.
-
 /// Gateway response (non-streaming).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GatewayResponse {
@@ -58,8 +47,6 @@ pub struct GatewayResponse {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reasoning_content: Option<String>,
 }
-
-// ─── Model Gateway ───────────────────────────────────────
 
 /// Model Gateway: handles LLM provider communication.
 pub struct ModelGateway {
@@ -99,11 +86,6 @@ impl ModelGateway {
     }
 
     /// Load active user rules from the DB, filtered by scene relevance.
-    ///
-    /// Rules are only injected for the scenes where they apply:
-    /// - `writing_style`, `citation_habits` → DraftingAssist, ExemplarLearning
-    /// - `citation_habits` (also) → KnowledgeLookup, ResearchSynthesis
-    /// - `tool_preferences`, `model_preferences`, `custom_rules`, `agent_behavior` → All scenes
     pub fn load_active_rules_for_scene(
         db: &crate::storage::db::Database,
         scene: AiScene,
@@ -267,10 +249,6 @@ impl ModelGateway {
     }
 
     /// Unified assistant persona with scene-specific capability focus.
-    ///
-    /// Delegates to `PersonaResolver` for persona resolution.
-    /// When a user PromptProfile is available, prefer `persona_resolver::resolve_persona`
-    /// directly. This method uses the default profile for backward compatibility.
     pub fn unified_persona(scene: AiScene, web_search_enabled: bool) -> String {
         use crate::ai_runtime::persona_resolver::{render_persona, resolve_persona};
         use crate::ai_runtime::prompt_profile::PromptProfile;
@@ -397,7 +375,6 @@ fn llm_endpoint_url(provider: &ProviderConfig) -> String {
                 format!("{base}/v1/messages")
             }
         }
-        EndpointFamily::OllamaChat => format!("{base}/api/chat"),
     }
 }
 
@@ -411,7 +388,6 @@ fn apply_auth_headers(
             "anthropic-version",
             crate::llm::providers::ANTHROPIC_API_VERSION,
         ),
-        EndpointFamily::OllamaChat => builder.header("Authorization", format!("Bearer {api_key}")),
         EndpointFamily::OpenAiCompatibleChatCompletions | EndpointFamily::ResponsesReserved => {
             builder.header("Authorization", format!("Bearer {api_key}"))
         }
@@ -424,7 +400,6 @@ fn parse_gateway_response(
 ) -> GatewayResponse {
     match endpoint_family {
         EndpointFamily::AnthropicMessages => parse_anthropic_response(json),
-        EndpointFamily::OllamaChat => parse_ollama_response(json),
         EndpointFamily::OpenAiCompatibleChatCompletions | EndpointFamily::ResponsesReserved => {
             parse_openai_compatible_response(json)
         }
@@ -499,20 +474,6 @@ fn parse_anthropic_response(json: &serde_json::Value) -> GatewayResponse {
             .as_str()
             .unwrap_or("unknown")
             .to_string(),
-        reasoning_content: None,
-    }
-}
-
-fn parse_ollama_response(json: &serde_json::Value) -> GatewayResponse {
-    GatewayResponse {
-        content: json["message"]["content"].as_str().map(|s| s.to_string()),
-        tool_calls: Vec::new(),
-        usage: TokenUsage::default(),
-        finish_reason: if json["done"].as_bool().unwrap_or(false) {
-            "stop".into()
-        } else {
-            "unknown".into()
-        },
         reasoning_content: None,
     }
 }

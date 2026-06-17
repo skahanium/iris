@@ -91,23 +91,17 @@ pub fn validate_fetch_url(url: &str) -> AppResult<()> {
 }
 
 fn extract_host(url: &str) -> Option<String> {
-    let rest = url
-        .strip_prefix("https://")
-        .or_else(|| url.strip_prefix("http://"))?;
-    let host = rest
-        .split('/')
-        .next()?
-        .split('?')
-        .next()?
-        .split('#')
-        .next()?;
-    if host.is_empty() {
-        return None;
+    let parsed = reqwest::Url::parse(url).ok()?;
+    if !parsed.username().is_empty() || parsed.password().is_some() {
+        return Some("@".into());
     }
-    // Strip IPv6 brackets
-    let host = host.strip_prefix('[').unwrap_or(host);
-    let host = host.strip_suffix(']').unwrap_or(host);
-    Some(host.to_string())
+    let host = parsed.host_str()?;
+    Some(
+        host.strip_prefix('[')
+            .and_then(|value| value.strip_suffix(']'))
+            .unwrap_or(host)
+            .to_owned(),
+    )
 }
 
 fn is_blocked_ip(ip: IpAddr) -> bool {
@@ -468,6 +462,16 @@ mod tests {
     #[test]
     fn validate_rejects_ipv6_link_local() {
         assert!(validate_fetch_url("https://[fe80::1]/").is_err());
+    }
+
+    #[test]
+    fn validate_rejects_ipv6_loopback_with_port() {
+        assert!(validate_fetch_url("https://[::1]:443/").is_err());
+    }
+
+    #[test]
+    fn validate_rejects_userinfo() {
+        assert!(validate_fetch_url("https://user:pass@example.com/").is_err());
     }
 
     #[test]
