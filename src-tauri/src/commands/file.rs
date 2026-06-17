@@ -955,6 +955,23 @@ pub struct BacklinkEntry {
     pub context: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FileLinkPreview {
+    pub path: String,
+    pub title: String,
+    pub context: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FileLinkSummary {
+    pub inbound_count: usize,
+    pub outbound_count: usize,
+    pub inbound: Vec<FileLinkPreview>,
+    pub outbound: Vec<FileLinkPreview>,
+}
+
 #[tauri::command]
 pub fn file_backlinks(
     state: State<'_, Arc<AppState>>,
@@ -979,6 +996,88 @@ pub fn file_backlinks(
         })?;
         Ok(rows.flatten().collect())
     })
+}
+
+pub fn file_link_summary_inner(state: &AppState, path: &str) -> AppResult<FileLinkSummary> {
+    state.db.with_read_conn(|conn| {
+        let inbound_count: usize = conn.query_row(
+            "SELECT COUNT(*)
+             FROM links l
+             JOIN files f ON f.id = l.source_id
+             JOIN files t ON t.id = l.target_id
+             WHERE t.path = ?1
+               AND f.path NOT LIKE '.classified/%'",
+            [path],
+            |row| row.get(0),
+        )?;
+        let outbound_count: usize = conn.query_row(
+            "SELECT COUNT(*)
+             FROM links l
+             JOIN files f ON f.id = l.source_id
+             JOIN files t ON t.id = l.target_id
+             WHERE f.path = ?1
+               AND t.path NOT LIKE '.classified/%'",
+            [path],
+            |row| row.get(0),
+        )?;
+
+        let mut inbound_stmt = conn.prepare(
+            "SELECT f.path, f.title, l.context
+             FROM links l
+             JOIN files f ON f.id = l.source_id
+             JOIN files t ON t.id = l.target_id
+             WHERE t.path = ?1
+               AND f.path NOT LIKE '.classified/%'
+             ORDER BY f.updated_at DESC, f.title
+             LIMIT 3",
+        )?;
+        let inbound = inbound_stmt
+            .query_map([path], |row| {
+                Ok(FileLinkPreview {
+                    path: row.get(0)?,
+                    title: row.get(1)?,
+                    context: row.get(2)?,
+                })
+            })?
+            .flatten()
+            .collect();
+
+        let mut outbound_stmt = conn.prepare(
+            "SELECT t.path, t.title, l.context
+             FROM links l
+             JOIN files f ON f.id = l.source_id
+             JOIN files t ON t.id = l.target_id
+             WHERE f.path = ?1
+               AND t.path NOT LIKE '.classified/%'
+             ORDER BY t.updated_at DESC, t.title
+             LIMIT 3",
+        )?;
+        let outbound = outbound_stmt
+            .query_map([path], |row| {
+                Ok(FileLinkPreview {
+                    path: row.get(0)?,
+                    title: row.get(1)?,
+                    context: row.get(2)?,
+                })
+            })?
+            .flatten()
+            .collect();
+
+        Ok(FileLinkSummary {
+            inbound_count,
+            outbound_count,
+            inbound,
+            outbound,
+        })
+    })
+}
+
+#[tauri::command]
+pub fn file_link_summary(
+    state: State<'_, Arc<AppState>>,
+    path: String,
+) -> AppResult<FileLinkSummary> {
+    file_link_summary_inner(state.inner(), &path)
 }
 
 #[cfg(test)]
@@ -1147,6 +1246,76 @@ mod file_io_pipeline_tests {
 
         let err = encode_file_payload(".CLASSIFIED/secret.md", "# Hi").unwrap_err();
         assert!(err.to_string().contains("classified"));
+    }
+
+    #[test]
+    fn file_link_summary_counts_inbound_and_outbound_links() {
+        let dir = tempdir().unwrap();
+        let state = AppState::new(dir.path().join("data")).unwrap();
+        state
+            .db
+            .with_conn(|conn| {
+                migrate_up(conn)?;
+                conn.execute_batch(
+                    "INSERT INTO files (id, path, title, content_hash, created_at, updated_at)
+                     VALUES (1, 'target.md', 'Target', 'h1', '2020-01-01', '2020-01-01'),
+                            (2, 'source-a.md', 'Source A', 'h2', '2020-01-02', '2020-01-02'),
+                            (3, 'source-b.md', 'Source B', 'h3', '2020-01-03', '2020-01-03'),
+                            (4, 'out.md', 'Outbound', 'h4', '2020-01-04', '2020-01-04'),
+                            (5, '.classified/secret.md', 'Secret', 'h5', '2020-01-05', '2020-01-05');
+                     INSERT INTO links (source_id, target_id, context)
+                     VALUES (2, 1, 'A links [[Target]]'),
+                            (3, 1, 'B links [[Target]]'),
+                            (5, 1, 'Secret links [[Target]]'),
+                            (1, 4, 'Target links [[Outbound]]'),
+                            (1, 5, 'Target links [[Secret]]');",
+                )?;
+                Ok(())
+            })
+            .unwrap();
+
+        let summary = file_link_summary_inner(&state, "target.md").unwrap();
+
+        assert_eq!(summary.inbound_count, 2);
+        assert_eq!(summary.outbound_count, 1);
+        assert_eq!(
+            summary
+                .inbound
+                .iter()
+                .map(|entry| entry.title.as_str())
+                .collect::<Vec<_>>(),
+            vec!["Source B", "Source A"]
+        );
+        assert_eq!(summary.outbound[0].path, "out.md");
+        assert_eq!(
+            summary.outbound[0].context.as_deref(),
+            Some("Target links [[Outbound]]")
+        );
+    }
+
+    #[test]
+    fn file_link_summary_returns_empty_for_unlinked_note() {
+        let dir = tempdir().unwrap();
+        let state = AppState::new(dir.path().join("data")).unwrap();
+        state
+            .db
+            .with_conn(|conn| {
+                migrate_up(conn)?;
+                conn.execute(
+                    "INSERT INTO files (id, path, title, content_hash, created_at, updated_at)
+                     VALUES (1, 'lonely.md', 'Lonely', 'h1', '2020-01-01', '2020-01-01')",
+                    [],
+                )?;
+                Ok(())
+            })
+            .unwrap();
+
+        let summary = file_link_summary_inner(&state, "lonely.md").unwrap();
+
+        assert_eq!(summary.inbound_count, 0);
+        assert_eq!(summary.outbound_count, 0);
+        assert!(summary.inbound.is_empty());
+        assert!(summary.outbound.is_empty());
     }
 }
 

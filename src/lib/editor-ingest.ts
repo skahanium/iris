@@ -34,7 +34,7 @@ function escapeHtml(text: string): string {
  * Extract callout type from raw markdown like `> [!note] Title\n> Body`.
  */
 function calloutType(raw: string): string {
-  const m = />\s*\[!([a-zA-Z]+)\]/.exec(raw);
+  const m = />\s*\[!([a-zA-Z][a-zA-Z0-9-]*)\]/.exec(raw);
   return m?.[1] ?? "info";
 }
 
@@ -43,17 +43,26 @@ function calloutType(raw: string): string {
  */
 function calloutBody(raw: string): string {
   const lines = raw.split("\n");
-  return lines
-    .map((l) => l.replace(/^>\s*/, ""))
-    .filter((content) => content && !/^\[![a-zA-Z]+\]/.test(content.trim()))
-    .join("\n");
+  const bodyLines: string[] = [];
+  let headerSkipped = false;
+  for (const line of lines) {
+    const content = line.replace(/^>\s*/, "");
+    if (!headerSkipped && /^\[![a-zA-Z][a-zA-Z0-9-]*\]/.test(content.trim())) {
+      headerSkipped = true;
+      continue;
+    }
+    if (headerSkipped) {
+      bodyLines.push(content);
+    }
+  }
+  return bodyLines.join("\n");
 }
 
 /**
  * Extract callout title text.
  */
 function calloutTitle(raw: string): string {
-  const m = />\s*\[![a-zA-Z]+\]\s*(.*)/.exec(raw);
+  const m = />\s*\[![a-zA-Z][a-zA-Z0-9-]*\]\s*(.*)/.exec(raw);
   return m?.[1]?.trim() ?? "";
 }
 

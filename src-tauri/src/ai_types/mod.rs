@@ -228,6 +228,9 @@ pub struct SkillActivationItemSummary {
     pub resources: Vec<SkillResourceStatusSummary>,
     pub blocked_capabilities: Vec<BlockedCapabilitySummary>,
     pub compatibility_source: SkillCompatibilitySource,
+    pub workspace_root: String,
+    pub workspace_ready: bool,
+    pub workspace_missing_items: Vec<String>,
 }
 
 /// Per-run skill activation plan safe for UI display.
@@ -572,6 +575,20 @@ pub struct ContextPacket {
     pub stale: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub web: Option<WebEvidenceMeta>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub corpus: Option<CorpusPacketMeta>,
+}
+
+/// Corpus role metadata attached to local evidence packets.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CorpusPacketMeta {
+    pub id: String,
+    pub name: String,
+    pub kind: String,
+    pub label: String,
+    pub instruction: String,
+    pub can_be_authority: bool,
 }
 
 /// 证据包的数据来源类型。

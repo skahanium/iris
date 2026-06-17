@@ -1,3 +1,6 @@
+use std::collections::HashMap;
+use std::path::Path;
+
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use iris_lib::ai_runtime::guardrails::sanitize_query;
 use iris_lib::ai_runtime::model_gateway::{
@@ -8,7 +11,6 @@ use iris_lib::ai_runtime::retrieval_broker::{query_hash, RetrievalLayers, Retrie
 use iris_lib::ai_runtime::skills::{inject_into_prompt, SkillEntry, SkillScope};
 use iris_lib::ai_runtime::{AiScene, CapabilitySlot, EndpointFamily};
 use iris_lib::indexer::chunker::chunk_markdown;
-use std::collections::HashMap;
 
 fn bench_sanitize_query(c: &mut Criterion) {
     let queries = vec![
@@ -144,10 +146,12 @@ fn sample_skill(i: usize) -> SkillEntry {
 fn bench_skill_prompt_injection(c: &mut Criterion) {
     let skills: Vec<_> = (0..40).map(sample_skill).collect();
     let user_message = "分析这个知识库的结构并找出风险";
+    let vault = Path::new(".");
 
     c.bench_function("inject_into_prompt_large_skill_set", |b| {
         b.iter(|| {
             black_box(inject_into_prompt(
+                black_box(vault),
                 black_box(&skills),
                 AiScene::KnowledgeLookup,
                 black_box(user_message),
@@ -158,7 +162,7 @@ fn bench_skill_prompt_injection(c: &mut Criterion) {
 
 fn bench_retrieval_request_hash(c: &mut Criterion) {
     let request = RetrievalRequest {
-        query: "本地优先知识库 语义检索 性能".repeat(20),
+        query: "本地优先知识库语义检索性能".repeat(20),
         max_results: 30,
         layers: RetrievalLayers::default(),
         note_context: Some("notes/architecture.md".to_string()),

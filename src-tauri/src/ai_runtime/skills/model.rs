@@ -21,6 +21,18 @@ pub enum SkillScope {
 /// Metadata bag - arbitrary key-value pairs from frontmatter.
 pub type SkillMetadata = HashMap<String, serde_json::Value>;
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SkillWorkspaceDocument {
+    pub source: String,
+    pub target: String,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SkillWorkspaceManifest {
+    pub folders: Vec<String>,
+    pub documents: Vec<SkillWorkspaceDocument>,
+}
+
 /// Validation status of a skill file.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -51,6 +63,21 @@ pub struct SkillEntry {
 }
 
 impl SkillEntry {
+    fn metadata_json_value(&self, keys: &[&str]) -> Option<serde_json::Value> {
+        for key in keys {
+            let Some(value) = self.metadata.get(*key) else {
+                continue;
+            };
+            return match value {
+                serde_json::Value::String(raw) => serde_json::from_str(raw)
+                    .ok()
+                    .or_else(|| Some(serde_json::Value::String(raw.clone()))),
+                other => Some(other.clone()),
+            };
+        }
+        None
+    }
+
     fn metadata_string_list(&self, keys: &[&str]) -> Vec<String> {
         for key in keys {
             if let Some(value) = self.metadata.get(*key) {
@@ -96,6 +123,40 @@ impl SkillEntry {
     /// Optional skill-local resources.
     pub fn optional_resources(&self) -> Vec<String> {
         self.metadata_string_list(&["optional-resources", "optional_resources"])
+    }
+
+    /// Declared public workspace layout for this skill.
+    pub fn workspace_manifest(&self) -> Option<SkillWorkspaceManifest> {
+        let value = self.metadata_json_value(&["iris-workspace", "iris_workspace"])?;
+        let obj = value.as_object()?;
+
+        let folders = obj
+            .get("folders")
+            .and_then(|value| value.as_array())
+            .map(|items| {
+                items
+                    .iter()
+                    .filter_map(|item| item.as_str().map(str::to_string))
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        let documents = obj
+            .get("documents")
+            .and_then(|value| value.as_array())
+            .map(|items| {
+                items
+                    .iter()
+                    .filter_map(|item| {
+                        let source = item.get("source")?.as_str()?.to_string();
+                        let target = item.get("target")?.as_str()?.to_string();
+                        Some(SkillWorkspaceDocument { source, target })
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        Some(SkillWorkspaceManifest { folders, documents })
     }
 
     /// External dependencies declared by this skill.
@@ -290,4 +351,10 @@ pub struct SkillListEntry {
     pub blocked_capabilities: Vec<BlockedCapabilitySummary>,
     /// Compatibility warnings shown in Skills UI.
     pub compatibility_warnings: Vec<String>,
+    /// Public workspace root for skill-generated documents in the current vault.
+    pub workspace_root: String,
+    /// Whether all declared workspace items already exist.
+    pub workspace_ready: bool,
+    /// Missing workspace folders/documents that can be prepared on demand.
+    pub workspace_missing_items: Vec<String>,
 }

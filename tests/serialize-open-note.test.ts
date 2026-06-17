@@ -126,10 +126,13 @@ describe("parseNoteForEditor", () => {
     expect(parsed.bodyMd).not.toMatch(/^#\s+吃早饭/);
   });
 
-  it("migrates legacy leading h1 into title", () => {
-    const parsed = parseNoteForEditor("# Legacy\n\nBody", "fallback");
-    expect(parsed.title).toBe("Legacy");
+  it("keeps no-frontmatter leading h1 as an editable body heading", () => {
+    const parsed = parseNoteForEditor(
+      "# Classified Section\n\nBody",
+      "fallback",
+    );
+    expect(parsed.title).toBe("fallback");
+    expect(parsed.bodyMd).toContain("# Classified Section");
     expect(parsed.bodyMd).toContain("Body");
-    expect(parsed.bodyMd).not.toMatch(/^#\s+Legacy/);
   });
 });

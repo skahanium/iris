@@ -264,6 +264,9 @@ export interface SkillActivationItemSummary {
   resources: SkillResourceStatusSummary[];
   blockedCapabilities: BlockedCapabilitySummary[];
   compatibilitySource: SkillCompatibilitySource;
+  workspaceRoot: string;
+  workspaceReady: boolean;
+  workspaceMissingItems: string[];
 }
 
 export interface SkillActivationPlanSummary {

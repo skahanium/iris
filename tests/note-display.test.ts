@@ -28,7 +28,7 @@ describe("note-display", () => {
       displayTitleForFileListItem({
         path: "untitled-99.md",
         title: "untitled-99",
-        updated_at: "",
+        updatedAt: "",
         isLocked: false,
       } satisfies FileListItem),
     ).toBe(UNNAMED_DOCUMENT_PREFIX);

@@ -3,25 +3,51 @@ import type { MarkdownSerializerState } from "prosemirror-markdown";
 
 import { calloutMarkdownFromLines } from "@/lib/callout-markdown";
 
-function paragraphPlainText(paragraph: ProseMirrorNode): string {
+function paragraphInlineMarkdown(paragraph: ProseMirrorNode): string {
   let text = "";
   paragraph.descendants((child) => {
     if (child.isText) {
-      text += child.text;
+      let t = child.text ?? "";
+      for (const mark of child.marks) {
+        const name = mark.type.name;
+        if (name === "bold") t = `**${t}**`;
+        else if (name === "italic") t = `*${t}*`;
+        else if (name === "strike") t = `~~${t}~~`;
+        else if (name === "code") t = `\`${t}\``;
+        else if (name === "link") t = `[${t}](${mark.attrs.href ?? ""})`;
+        else if (name === "wikiLink") t = `[[${t}]]`;
+      }
+      text += t;
     }
   });
   return text.trim();
 }
 
-/** Collect display lines from a callout blockquote (title + body paragraphs). */
+/** Extract plain text from a paragraph (ignoring all marks). */
+function paragraphPlainText(paragraph: ProseMirrorNode): string {
+  let text = "";
+  paragraph.descendants((child) => {
+    if (child.isText) {
+      text += child.text ?? "";
+    }
+  });
+  return text.trim();
+}
+
+/** Collect display lines from a callout blockquote (title + body paragraphs).
+ *  The title paragraph is always plain text — its <strong> wrapping is an
+ *  ingest presentation convention, not part of the original markdown.
+ *  Body paragraphs preserve inline marks (bold, italic, code, links, etc.). */
 export function calloutLinesFromBlockquote(node: ProseMirrorNode): string[] {
   const lines: string[] = [];
-  node.descendants((child) => {
+  let isTitle = true;
+  node.forEach((child) => {
     if (child.type.name === "paragraph") {
-      const line = paragraphPlainText(child);
-      if (line) {
-        lines.push(line);
-      }
+      const line = isTitle
+        ? paragraphPlainText(child)
+        : paragraphInlineMarkdown(child);
+      lines.push(line);
+      isTitle = false;
     }
   });
   return lines;

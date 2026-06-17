@@ -59,7 +59,7 @@ export const SlashCommandList = forwardRef<
 
   return (
     <IrisSurfaceMenuPanel
-      className="z-slash-command max-h-[min(16rem,40vh)] min-w-[12.5rem]"
+      className="iris-suggestion-menu z-slash-command max-h-[min(16rem,40vh)] min-w-[12.5rem] max-w-[min(24rem,calc(100vw-2rem))] rounded-[8px] border-border/70 bg-popover py-1 shadow-floating"
       aria-label="斜杠命令"
     >
       {items.map((item, i) => {

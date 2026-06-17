@@ -30,6 +30,7 @@ fn ctx() -> ToolDispatchContext<'static> {
         cold_start_packets: &[],
         app_handle: None,
         attachment_count: 0,
+        skill_activation_plan: None,
     }
 }
 

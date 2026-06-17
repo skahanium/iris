@@ -220,8 +220,8 @@ mod tests {
     fn total_catalog_count() {
         assert_eq!(
             catalog_total_count(),
-            83,
-            "catalog should have exactly 83 tools"
+            84,
+            "catalog should have exactly 84 tools"
         );
     }
 

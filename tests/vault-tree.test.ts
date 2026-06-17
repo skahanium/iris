@@ -30,8 +30,8 @@ describe("vault-tree", () => {
 
   it("listFilesInFolder respects selected prefix", () => {
     const files: FileListItem[] = [
-      { path: "notes/a.md", title: "a", updated_at: "", isLocked: false },
-      { path: "b.md", title: "b", updated_at: "", isLocked: false },
+      { path: "notes/a.md", title: "a", updatedAt: "", isLocked: false },
+      { path: "b.md", title: "b", updatedAt: "", isLocked: false },
     ];
     expect(listFilesInFolder(files, "notes/")).toHaveLength(1);
   });

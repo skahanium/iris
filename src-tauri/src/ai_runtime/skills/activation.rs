@@ -13,6 +13,7 @@ use crate::storage::db::Database;
 use super::compatibility_impl::blocked_capabilities_for_skill;
 use super::resources_impl::{ALLOWED_RESOURCE_DIRS, MAX_SKILL_RESOURCE_CHARS};
 use super::validation_impl::confirmation_required_tools;
+use super::workspace_impl::{workspace_root_relative, workspace_status_for_skill};
 use super::{
     load_skill, scan_all_metadata, ActivationIndexMap, ScoredSkill, SkillActivationIndexRow,
     SkillEntry, SkillListEntry, SkillScope,
@@ -396,6 +397,10 @@ pub fn build_skill_activation_plan(
     source_hints: &[String],
     index: Option<&ActivationIndexMap>,
 ) -> SkillActivationPlanSummary {
+    let vault_root = skills
+        .iter()
+        .find_map(|skill| Path::new(&skill.file_path).ancestors().nth(3))
+        .map(Path::to_path_buf);
     let mut candidates: Vec<ScoredSkill<'_>> = Vec::new();
     for skill in skills.iter().filter(|skill| skill.enabled) {
         if let Some((score, _reason)) =
@@ -460,6 +465,9 @@ pub fn build_skill_activation_plan(
         }
         let blocked_caps = blocked_capabilities_for_skill(skill);
         blocked.extend(blocked_caps.clone());
+        let workspace_status = vault_root
+            .as_deref()
+            .map(|vault| workspace_status_for_skill(vault, skill));
         activated.push(SkillActivationItemSummary {
             name: skill.name.clone(),
             scope: scope_wire(skill.scope),
@@ -472,6 +480,17 @@ pub fn build_skill_activation_plan(
             resources: build_resource_summaries(skill),
             blocked_capabilities: blocked_caps,
             compatibility_source: skill.compatibility_source(),
+            workspace_root: workspace_status
+                .as_ref()
+                .map(|status| status.workspace_root.clone())
+                .unwrap_or_else(|| workspace_root_relative(&skill.name)),
+            workspace_ready: workspace_status
+                .as_ref()
+                .map(|status| status.workspace_ready)
+                .unwrap_or(true),
+            workspace_missing_items: workspace_status
+                .map(|status| status.workspace_missing_items)
+                .unwrap_or_default(),
         });
     }
 
@@ -700,5 +719,51 @@ mod phase4_tests {
             .as_deref()
             .unwrap_or("")
             .contains("not found"));
+    }
+
+    #[test]
+    fn build_skill_activation_plan_reports_workspace_status() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = dir.path().join("vault");
+        let skill_root = vault.join(".iris/skills/workspace-helper");
+        std::fs::create_dir_all(skill_root.join("resources")).unwrap();
+        std::fs::create_dir_all(vault.join("Skills/workspace-helper/inputs")).unwrap();
+        std::fs::write(skill_root.join("resources/default-note.md"), "# Template").unwrap();
+
+        let mut metadata = HashMap::new();
+        metadata.insert(
+            "iris-workspace".into(),
+            serde_json::json!({
+                "folders": ["inputs", "outputs"],
+                "documents": [
+                    {
+                        "source": "resources/default-note.md",
+                        "target": "README.md"
+                    }
+                ]
+            }),
+        );
+        let mut entry = skill("workspace-helper");
+        entry.file_path = skill_root.join("SKILL.md").to_string_lossy().into_owned();
+        entry.metadata = metadata;
+
+        let plan = build_skill_activation_plan(
+            &[entry],
+            AiScene::KnowledgeLookup,
+            AgentIntent::AskNotes,
+            "Use workspace-helper",
+            &[],
+            None,
+        );
+
+        let activated = &plan.activated_skills[0];
+        assert_eq!(activated.workspace_root, "Skills/workspace-helper");
+        assert!(!activated.workspace_ready);
+        assert!(activated
+            .workspace_missing_items
+            .contains(&"outputs/".to_string()));
+        assert!(activated
+            .workspace_missing_items
+            .contains(&"README.md".to_string()));
     }
 }

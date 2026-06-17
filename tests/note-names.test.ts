@@ -8,7 +8,7 @@ import {
 import type { FileListItem } from "@/types/ipc";
 
 function file(path: string, title: string): FileListItem {
-  return { path, title, updated_at: "", isLocked: false };
+  return { path, title, updatedAt: "", isLocked: false };
 }
 
 describe("allocateNewDocumentName", () => {

@@ -22,6 +22,17 @@ describe("Phase4 skills closed-loop contract", () => {
       expect(aiTypes).toContain(token);
       expect(rustTypes).toContain(token);
     }
+
+    for (const token of [
+      "workspaceRoot",
+      "workspaceReady",
+      "workspaceMissingItems",
+    ]) {
+      expect(aiTypes).toContain(token);
+    }
+    expect(rustTypes).toContain("workspace_root");
+    expect(rustTypes).toContain("workspace_ready");
+    expect(rustTypes).toContain("workspace_missing_items");
     expect(aiTypes).toContain("skillActivationPlan");
     expect(aiTypes).toContain("blockedCapabilities");
     expect(aiTypes).toContain("auditSummary");
@@ -52,19 +63,24 @@ describe("Phase4 skills closed-loop contract", () => {
     expect(harnessTask).toContain("apply_skill_overlay_to_goal");
   });
 
-  it("keeps Phase4 skill diagnostics in Skills panel and internal run plan data", () => {
-    const skillsPanel = read("src/components/ai/SkillsPanel.tsx");
+  it("keeps Phase4 skill diagnostics in typed IPC and internal run plan data", () => {
+    const ipc = read("src/lib/ipc.ts");
     const aiTypes = read("src/types/ai.ts");
 
-    expect(skillsPanel).toContain("lastMatchedAt");
-    expect(skillsPanel).toContain("lastUsedAt");
-    expect(skillsPanel).toContain("requestedCapabilities");
-    expect(skillsPanel).toContain("blockedCapabilities");
-    expect(skillsPanel).toContain("compatibilityWarnings");
+    expect(ipc).toContain("lastMatchedAt");
+    expect(ipc).toContain("lastUsedAt");
+    expect(ipc).toContain("requestedCapabilities");
+    expect(ipc).toContain("blockedCapabilities");
+    expect(ipc).toContain("compatibilityWarnings");
+    expect(ipc).toContain("workspaceRoot");
+    expect(ipc).toContain("workspaceReady");
+    expect(ipc).toContain("workspaceMissingItems");
 
     expect(aiTypes).toContain("skillActivationPlan");
     expect(aiTypes).toContain("blockedCapabilities");
     expect(aiTypes).toContain("fallbackGuidance");
+    expect(aiTypes).toContain("workspaceRoot");
+    expect(aiTypes).toContain("workspaceMissingItems");
   });
 
   it("keeps sensitive skill/runtime content out of user-facing skill UI", () => {

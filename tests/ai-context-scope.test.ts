@@ -16,13 +16,13 @@ const files: FileListItem[] = [
   {
     path: "党纪法规/条例.md",
     title: "条例",
-    updated_at: "2026-01-01",
+    updatedAt: "2026-01-01",
     isLocked: false,
   },
   {
     path: "范文/报告/样例.md",
     title: "样例",
-    updated_at: "2026-01-01",
+    updatedAt: "2026-01-01",
     isLocked: false,
   },
 ];

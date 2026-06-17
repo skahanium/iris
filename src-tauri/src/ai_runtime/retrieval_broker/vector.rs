@@ -68,6 +68,7 @@ pub(super) fn search_vector_chunks(
                     citation_label: format!("[C{i}]"),
                     stale: false,
                     web: None,
+                    corpus: None,
                 }
             },
         )
@@ -138,6 +139,7 @@ pub(super) fn search_vector_anchors(
                     citation_label: format!("[A{i}]"),
                     stale: false,
                     web: None,
+                    corpus: None,
                 }
             },
         )
@@ -211,6 +213,7 @@ pub(super) fn search_vector_regulations(
                     citation_label: citation,
                     stale: false,
                     web: None,
+                    corpus: None,
                 }
             },
         )

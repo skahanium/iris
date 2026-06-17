@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { debounce, isModKey } from "@/lib/utils";
+import { debounce, isModKey, matchesKeyChord } from "@/lib/utils";
 
 describe("isModKey", () => {
   it("returns true for ctrlKey", () => {
@@ -19,6 +19,23 @@ describe("isModKey", () => {
     expect(isModKey({ ctrlKey: false, metaKey: false } as KeyboardEvent)).toBe(
       false,
     );
+  });
+});
+
+describe("matchesKeyChord", () => {
+  it("matches Ctrl+Period by physical code when WebView reports a non-literal key", () => {
+    expect(
+      matchesKeyChord(
+        {
+          key: "Process",
+          code: "Period",
+          ctrlKey: true,
+          metaKey: false,
+          shiftKey: false,
+        } as KeyboardEvent,
+        { key: ".", mod: true },
+      ),
+    ).toBe(true);
   });
 });
 

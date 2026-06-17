@@ -40,6 +40,7 @@ import { useLlmProvider } from "@/hooks/useLlmProvider";
 import { useOverlayManager } from "@/hooks/useOverlayManager";
 import { useTabManager } from "@/hooks/useTabManager";
 import { useTheme } from "@/hooks/useTheme";
+import { useZenExitKeyboard } from "@/hooks/useZenExitKeyboard";
 import { useMacOSWindowChromeSync } from "@/hooks/useMacOSWindowChromeSync";
 import { useVault } from "@/hooks/useVault";
 import { displayTitleForChrome } from "@/lib/note-display";
@@ -97,6 +98,7 @@ function App() {
   const { editorStats, updateEditorStats, resetEditorStats } = useEditorStats();
   const [homeActive, setHomeActive] = useState(false);
   const [zen, setZen] = useState(false);
+  useZenExitKeyboard({ zen, setZen });
   const [outlineOpen, setOutlineOpen] = useState(loadOutlineOpen);
   const [findReplaceOpen, setFindReplaceOpen] = useState(false);
   const [findReplaceMode, setFindReplaceMode] = useState<"find" | "replace">(

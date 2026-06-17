@@ -70,6 +70,7 @@ pub(super) fn search_template(
                     citation_label: format!("[T{i}]"),
                     stale: false,
                     web: None,
+                    corpus: None,
                 }
             },
         )

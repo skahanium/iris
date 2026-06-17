@@ -9,12 +9,16 @@ export function calloutMarkdownFromLines(
   lines: string[],
 ): string {
   const trimmedType = calloutType.trim() || "note";
-  const nonEmpty = lines.map((l) => l.trim()).filter((l) => l.length > 0);
-  const first = nonEmpty[0] ?? "";
-  const rest = nonEmpty.slice(1);
-  const out: string[] = [`> [!${trimmedType}] ${first}`];
-  for (const line of rest) {
-    out.push(`> ${line}`);
+  const out: string[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    const content = lines[i]!.trim();
+    if (i === 0) {
+      out.push(`> [!${trimmedType}] ${content}`);
+    } else if (content) {
+      out.push(`> ${content}`);
+    } else {
+      out.push(">");
+    }
   }
   return out.join("\n");
 }
@@ -25,6 +29,6 @@ export function detectCalloutTypeFromElement(element: Element): string | null {
   if (attr?.trim()) {
     return attr.trim();
   }
-  const match = />\s*\[!([a-zA-Z]+)\]/.exec(element.outerHTML);
+  const match = />\s*\[!([a-zA-Z][a-zA-Z0-9-]*)\]/.exec(element.outerHTML);
   return match?.[1] ?? null;
 }

@@ -26,13 +26,32 @@ pub(super) fn tools() -> Vec<ToolCatalogEntry> {
                 "properties": {
                     "source": {"type": "string", "enum": ["url", "git", "local", "registry"]},
                     "path_or_url": {"type": "string"},
-                    "scope": {"type": "string", "enum": ["global", "vault"], "default": "global"},
+                    "scope": {"type": "string", "enum": ["global", "vault"], "default": "vault"},
                     "subpath": {"type": "string"},
                     "registry": {"type": "string", "description": "registry 时必填，默认 skillhub"},
                     "reason": {"type": "string", "description": "展示于确认框"},
                     "expected_sha256": {"type": "string", "description": "URL 安装时可选的 SHA-256 预期值，用于校验下载内容完整性"}
                 },
-                "required": ["source", "path_or_url"]
+                "required": ["source", "path_or_url", "scope"]
+            }),
+            access_level: ToolAccessLevel::ManageSkills,
+            requires_confirmation: true,
+            implementation: ToolImplementationStatus::Dispatchable,
+            default_enabled_without_skill: true,
+            scene_affinity: &[],
+            max_results: None,
+        },
+        ToolCatalogEntry {
+            name: "skills_prepare_workspace",
+            description: "Prepare a Skill workspace under the current vault's Skills/<skill>/ archive",
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string"},
+                    "scope": {"type": "string", "enum": ["global", "vault"], "default": "vault"},
+                    "reason": {"type": "string", "description": "shown in confirmation"}
+                },
+                "required": ["name"]
             }),
             access_level: ToolAccessLevel::ManageSkills,
             requires_confirmation: true,
@@ -48,10 +67,10 @@ pub(super) fn tools() -> Vec<ToolCatalogEntry> {
                 "type": "object",
                 "properties": {
                     "name": {"type": "string"},
-                    "scope": {"type": "string", "enum": ["global", "vault"], "default": "global"},
+                    "scope": {"type": "string", "enum": ["global", "vault"], "default": "vault"},
                     "reason": {"type": "string"}
                 },
-                "required": ["name"]
+                "required": ["name", "scope"]
             }),
             access_level: ToolAccessLevel::ManageSkills,
             requires_confirmation: true,
@@ -67,10 +86,10 @@ pub(super) fn tools() -> Vec<ToolCatalogEntry> {
                 "type": "object",
                 "properties": {
                     "name": {"type": "string"},
-                    "scope": {"type": "string", "enum": ["global", "vault"], "default": "global"},
+                    "scope": {"type": "string", "enum": ["global", "vault"], "default": "vault"},
                     "reason": {"type": "string"}
                 },
-                "required": ["name"]
+                "required": ["name", "scope"]
             }),
             access_level: ToolAccessLevel::ManageSkills,
             requires_confirmation: true,
@@ -86,11 +105,11 @@ pub(super) fn tools() -> Vec<ToolCatalogEntry> {
                 "type": "object",
                 "properties": {
                     "name": {"type": "string"},
-                    "scope": {"type": "string", "enum": ["global", "vault"], "default": "global"},
+                    "scope": {"type": "string", "enum": ["global", "vault"], "default": "vault"},
                     "enabled": {"type": "boolean"},
                     "reason": {"type": "string"}
                 },
-                "required": ["name", "enabled"]
+                "required": ["name", "scope", "enabled"]
             }),
             access_level: ToolAccessLevel::ManageSkills,
             requires_confirmation: true,
@@ -106,7 +125,7 @@ pub(super) fn tools() -> Vec<ToolCatalogEntry> {
                 "type": "object",
                 "properties": {
                     "name": {"type": "string", "description": "Skill 名称"},
-                    "scope": {"type": "string", "enum": ["global", "vault"], "default": "global"},
+                    "scope": {"type": "string", "enum": ["global", "vault"], "default": "vault"},
                     "relative_path": {"type": "string", "description": "如 references/guide.md"}
                 },
                 "required": ["name", "relative_path"]

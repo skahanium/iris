@@ -7,6 +7,13 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { EditorOutline } from "@/components/editor/EditorOutline";
 import { outlineFromDoc } from "@/lib/document-outline";
+import { fileLinkSummary } from "@/lib/ipc";
+
+vi.mock("@/lib/ipc", () => ({
+  fileLinkSummary: vi.fn(),
+}));
+
+const mockFileLinkSummary = vi.mocked(fileLinkSummary);
 
 function read(path: string): string {
   return readFileSync(path, "utf8");
@@ -48,6 +55,25 @@ function renderOutline(ed: Editor, open = true, locked = false) {
       />,
     );
   });
+}
+
+function renderOutlineWithLinks(ed: Editor, onOpenNote = vi.fn(), open = true) {
+  host = document.createElement("div");
+  host.style.height = "640px";
+  document.body.append(host);
+  root = createRoot(host);
+  act(() => {
+    root?.render(
+      <EditorOutline
+        editor={ed}
+        open={open}
+        notePath="target.md"
+        onOpenNote={onOpenNote}
+        onOpenChange={() => {}}
+      />,
+    );
+  });
+  return onOpenNote;
 }
 
 function press(key: string) {
@@ -297,5 +323,72 @@ describe("outline ghost spine", () => {
     expect(css).toContain("opacity: 0.78");
     expect(css).toContain("font-weight: 400");
     expect(css).toContain("@media (prefers-reduced-motion: reduce)");
+  });
+
+  it("shows backlink summary below the open outline and opens linked notes", async () => {
+    mockFileLinkSummary.mockResolvedValue({
+      inboundCount: 2,
+      outboundCount: 1,
+      inbound: [
+        {
+          path: "source.md",
+          title: "Source",
+          context: "Source links [[Target]]",
+        },
+      ],
+      outbound: [
+        {
+          path: "out.md",
+          title: "Outbound",
+          context: "Target links [[Outbound]]",
+        },
+      ],
+    });
+    editor = makeEditor(["Overview"]);
+    const onOpenNote = renderOutlineWithLinks(editor);
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(mockFileLinkSummary).toHaveBeenCalledWith("target.md");
+    expect(
+      document.querySelector('[data-testid="outline-link-summary"]')
+        ?.textContent,
+    ).toContain("2 入链");
+    expect(
+      document.querySelector('[data-testid="outline-link-summary"]')
+        ?.textContent,
+    ).toContain("1 出链");
+
+    act(() => {
+      document
+        .querySelector<HTMLButtonElement>(
+          '[data-testid="outline-link-summary-item"]',
+        )
+        ?.click();
+    });
+
+    expect(onOpenNote).toHaveBeenCalledWith("source.md");
+  });
+
+  it("does not render backlink summary while the outline is collapsed", () => {
+    mockFileLinkSummary.mockResolvedValue({
+      inboundCount: 0,
+      outboundCount: 0,
+      inbound: [],
+      outbound: [],
+    });
+    editor = makeEditor(["Overview"]);
+
+    renderOutlineWithLinks(editor, vi.fn(), false);
+
+    expect(
+      document.querySelector('[data-testid="outline-rail-handle"]'),
+    ).not.toBeNull();
+    expect(
+      document.querySelector('[data-testid="outline-link-summary"]'),
+    ).toBeNull();
+    expect(mockFileLinkSummary).not.toHaveBeenCalled();
   });
 });

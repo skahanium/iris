@@ -76,6 +76,7 @@ pub(super) fn search_fts(
                 citation_label: format!("[F{i}]"),
                 stale: false,
                 web: None,
+                corpus: None,
             }
         })
         .collect();

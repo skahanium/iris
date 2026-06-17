@@ -198,6 +198,12 @@ impl ModelGateway {
                 if let Some(path) = &packet.source_path {
                     prompt.push_str(&format!("来源: {}\n", path));
                 }
+                if let Some(corpus) = &packet.corpus {
+                    prompt.push_str(&format!(
+                        "语料角色: {}（{}）\n使用边界: {}\n",
+                        corpus.label, corpus.name, corpus.instruction
+                    ));
+                }
                 if let Some(heading) = &packet.heading_path {
                     prompt.push_str(&format!("章节: {}\n", heading));
                 }
@@ -284,6 +290,12 @@ impl ModelGateway {
             ));
             if let Some(path) = &packet.source_path {
                 evidence.push_str(&format!("来源: {path}\n"));
+            }
+            if let Some(corpus) = &packet.corpus {
+                evidence.push_str(&format!(
+                    "语料角色: {}（{}）\n使用边界: {}\n",
+                    corpus.label, corpus.name, corpus.instruction
+                ));
             }
             if let Some(heading) = &packet.heading_path {
                 evidence.push_str(&format!("章节: {heading}\n"));
@@ -508,7 +520,7 @@ fn parse_ollama_response(json: &serde_json::Value) -> GatewayResponse {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ai_runtime::{SourceType, TrustLevel};
+    use crate::ai_runtime::{CorpusPacketMeta, SourceType, TrustLevel};
 
     #[test]
     fn build_system_prompt_includes_packets() {
@@ -527,6 +539,7 @@ mod tests {
             citation_label: "[1]".into(),
             stale: false,
             web: None,
+            corpus: None,
         }];
 
         let prompt =
@@ -550,6 +563,39 @@ mod tests {
         assert!(prompt.contains("砚"));
         assert!(prompt.contains("文稿创作"));
         assert!(prompt.contains("引用法规时使用条/款格式"));
+    }
+
+    #[test]
+    fn format_evidence_packets_labels_lookup_role_as_non_authoritative() {
+        let packets = vec![ContextPacket {
+            id: "pkt-lookup".into(),
+            source_type: SourceType::Note,
+            source_path: Some("materials/temporary.md".into()),
+            title: "临时资料".into(),
+            heading_path: None,
+            source_span: None,
+            content_hash: "hash".into(),
+            excerpt: "这是一段低权威查阅材料。".into(),
+            retrieval_reason: "fts_keyword_match".into(),
+            score: 0.8,
+            trust_level: TrustLevel::UserNote,
+            citation_label: "[1]".into(),
+            stale: false,
+            web: None,
+            corpus: Some(CorpusPacketMeta {
+                id: "lookup".into(),
+                name: "查阅资料库".into(),
+                kind: "lookup".into(),
+                label: "查阅资料".into(),
+                instruction: "可摘要其内容，但不能作为依据。".into(),
+                can_be_authority: false,
+            }),
+        }];
+
+        let evidence = ModelGateway::format_evidence_packets(&packets);
+
+        assert!(evidence.contains("查阅资料"));
+        assert!(evidence.contains("不能作为依据"));
     }
 
     #[test]

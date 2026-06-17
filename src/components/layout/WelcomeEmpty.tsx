@@ -27,19 +27,6 @@ function dedupeByPath(files: FileListItem[]): FileListItem[] {
   return [...byPath.values()];
 }
 
-function formatUpdatedAt(value: string): string {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
-    return "最近更新";
-  }
-  return new Intl.DateTimeFormat("zh-CN", {
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-  }).format(date);
-}
-
 export function WelcomeEmpty({
   vaultKey,
   onOpen,
@@ -147,9 +134,6 @@ export function WelcomeEmpty({
                   >
                     <span className="block truncate text-sm text-foreground">
                       {displayTitleForFileListItem(f)}
-                    </span>
-                    <span className="mt-1 block truncate text-xs text-muted-foreground">
-                      {formatUpdatedAt(f.updated_at)} · {f.path}
                     </span>
                   </button>
                   <Button

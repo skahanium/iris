@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { VaultNavigator } from "@/components/file/VaultNavigator";
 
+const corpusList = vi.fn();
 const corpusUpsert = vi.fn();
 const fileDelete = vi.fn();
 const fileList = vi.fn();
@@ -16,6 +17,7 @@ const knowledgeReindex = vi.fn();
 const templateList = vi.fn();
 
 vi.mock("@/lib/ipc", () => ({
+  corpusList: (...args: unknown[]) => corpusList(...args),
   corpusUpsert: (...args: unknown[]) => corpusUpsert(...args),
   exportFile: vi.fn(),
   fileDelete: (...args: unknown[]) => fileDelete(...args),
@@ -41,6 +43,7 @@ describe("VaultNavigator corpus assignment", () => {
   let root: Root;
 
   beforeEach(() => {
+    corpusList.mockReset();
     corpusUpsert.mockReset();
     fileDelete.mockReset();
     fileList.mockReset();
@@ -55,17 +58,18 @@ describe("VaultNavigator corpus assignment", () => {
       {
         path: "policy/a.md",
         title: "A",
-        updated_at: "",
+        updatedAt: "",
         isLocked: false,
       },
       {
         path: "policy/b.md",
         title: "B",
-        updated_at: "",
+        updatedAt: "",
         isLocked: false,
       },
     ]);
     folderList.mockResolvedValue(["policy/", "archive/"]);
+    corpusList.mockResolvedValue([]);
     templateList.mockResolvedValue([]);
     corpusUpsert.mockResolvedValue(undefined);
     fileDelete.mockResolvedValue(undefined);
@@ -124,6 +128,14 @@ describe("VaultNavigator corpus assignment", () => {
     return button;
   }
 
+  function corpusConfirmButton(): HTMLButtonElement {
+    const button = document.querySelector<HTMLButtonElement>(
+      '[data-testid="corpus-confirm-button"]',
+    );
+    if (!button) throw new Error("corpus confirm button missing");
+    return button;
+  }
+
   it("creates folders from a dedicated dialog with parent and path preview", async () => {
     await renderNavigator();
     await selectPolicyFolder();
@@ -167,36 +179,59 @@ describe("VaultNavigator corpus assignment", () => {
     ).toBeNull();
     expect(document.body.textContent).toContain("文件夹详情");
     expect(document.body.textContent).toContain("语料库类型");
-    expect(document.body.textContent).toContain("法规库");
+    expect(document.body.textContent).toContain("规范依据");
     expect(document.body.textContent).not.toContain(
       "选择这个文件夹在 AI 检索中的用途。",
     );
-    expect(document.body.textContent).not.toContain(
-      "法规结构索引会从这里抽取条款，知识查询会优先使用。",
-    );
+    expect(document.body.textContent).not.toContain("AI 必须优先遵循");
     const corpusTrigger = document.querySelector<HTMLButtonElement>(
       'button[aria-label="语料库类型"]',
     );
-    expect(corpusTrigger?.getAttribute("title")).toContain(
-      "法规结构索引会从这里抽取条款",
-    );
+    expect(corpusTrigger?.getAttribute("title")).toContain("AI 必须优先遵循");
     expect(document.body.textContent).toContain("policy/");
     expect(document.body.textContent).not.toContain(
       "regulation / exemplar / general",
     );
 
     await act(async () => {
-      findButton("确认设置").click();
+      corpusConfirmButton().click();
     });
 
     expect(corpusUpsert).toHaveBeenCalledWith({
       id: "policy",
       name: "policy",
       pathPrefix: "policy/",
-      kind: "regulation",
-      scenes: ["knowledge_lookup"],
+      kind: "authority",
+      scenes: ["knowledge_lookup", "research_synthesis", "drafting_assist"],
     });
     expect(knowledgeReindex).toHaveBeenCalledOnce();
+  });
+
+  it("hydrates saved corpus role by folder path before confirming", async () => {
+    corpusList.mockResolvedValue([
+      {
+        id: "policy",
+        name: "policy",
+        pathPrefix: "policy/",
+        kind: "exemplar",
+        scenes: ["exemplar_learning", "drafting_assist"],
+      },
+    ]);
+
+    await renderNavigator();
+    await selectPolicyFolder();
+
+    await act(async () => {
+      corpusConfirmButton().click();
+    });
+
+    expect(corpusUpsert).toHaveBeenCalledWith({
+      id: "policy",
+      name: "policy",
+      pathPrefix: "policy/",
+      kind: "exemplar",
+      scenes: ["exemplar_learning", "drafting_assist"],
+    });
   });
 
   it("renames a document by name within its current folder", async () => {

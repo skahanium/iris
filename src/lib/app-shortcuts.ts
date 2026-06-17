@@ -141,7 +141,6 @@ export function buildAppShortcutItems(
     },
     {
       id: "toggle-zen",
-      chord: { key: ".", mod: true },
       action: { type: "toggleZen" },
     },
     {

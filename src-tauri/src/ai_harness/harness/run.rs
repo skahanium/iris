@@ -559,6 +559,7 @@ pub async fn run_harness(
                     cold_start_packets: evidence_ledger.packets(),
                     app_handle: Some(app_handle.clone()),
                     attachment_count: input.images.as_ref().map_or(0, Vec::len),
+                    skill_activation_plan: input.skill_activation_plan.as_ref(),
                 };
                 let result = dispatch_tool_with_retry(state, &dispatch_ctx, tool_name, &args).await;
                 if result.success {
@@ -811,6 +812,7 @@ async fn pause_for_tool_confirmation(
                 input.skill_activation_plan.as_ref(),
             )
             .unwrap_or_default(),
+            skill_activation_plan: input.skill_activation_plan.clone(),
         },
     );
     let args = serde_json::from_str::<serde_json::Value>(&tool_call.function.arguments)
@@ -825,9 +827,12 @@ async fn pause_for_tool_confirmation(
         "arguments": args,
         "permissionEffects": permission_effects,
     });
-    if tool_name == "skills_install" {
-        if let Ok(args) = serde_json::from_str::<serde_json::Value>(&tool_call.function.arguments) {
-            use crate::ai_runtime::skill_install_service::{preview_install, SkillInstallRequest};
+    if let Ok(args) = serde_json::from_str::<serde_json::Value>(&tool_call.function.arguments) {
+        let vault = state.vault_path()?;
+        if tool_name == "skills_install" {
+            use crate::ai_runtime::skill_install_service::{
+                normalize_skill_scope_arg, preview_install, SkillInstallRequest,
+            };
             use crate::ai_runtime::skill_registry::SkillInstallSource;
             if let Some(source_str) = args.get("source").and_then(|v| v.as_str()) {
                 if let Some(source) = SkillInstallSource::parse(source_str) {
@@ -838,10 +843,8 @@ async fn pause_for_tool_confirmation(
                             .and_then(|v| v.as_str())
                             .unwrap_or("")
                             .to_string(),
-                        scope: crate::ai_runtime::skill_install_service::parse_scope(
-                            args.get("scope")
-                                .and_then(|v| v.as_str())
-                                .unwrap_or("global"),
+                        scope: normalize_skill_scope_arg(
+                            args.get("scope").and_then(|v| v.as_str()),
                         ),
                         subpath: args
                             .get("subpath")
@@ -856,9 +859,22 @@ async fn pause_for_tool_confirmation(
                             .and_then(|v| v.as_str())
                             .map(String::from),
                     };
-                    if let Ok(preview) = preview_install(&req).await {
+                    if let Ok(preview) = preview_install(&vault, &req).await {
                         confirm_request["preview"] = preview;
                     }
+                }
+            }
+        } else if tool_name == "skills_prepare_workspace" {
+            use crate::ai_runtime::skill_install_service::{
+                normalize_skill_scope_arg, preview_skill_workspace,
+            };
+            if let Some(name) = args.get("name").and_then(|v| v.as_str()) {
+                if let Ok(preview) = preview_skill_workspace(
+                    &vault,
+                    name,
+                    normalize_skill_scope_arg(args.get("scope").and_then(|v| v.as_str())),
+                ) {
+                    confirm_request["preview"] = preview;
                 }
             }
         }

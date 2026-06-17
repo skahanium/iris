@@ -268,6 +268,7 @@ pub async fn dispatch_approved_tool_to_checkpoint(
             cold_start_packets: &[],
             app_handle: Some(app_handle.clone()),
             attachment_count: 0,
+            skill_activation_plan: pending.skill_activation_plan.as_ref(),
         },
         &pending.tool_name,
         args,

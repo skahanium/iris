@@ -29,6 +29,8 @@ export function matchesKeyChord(e: KeyboardEvent, chord: KeyChord): boolean {
   // Zoom in: same physical key produces + or = depending on layout
   if (chord.key === "+" && pressed === "=") return true;
   if (chord.key === "=" && pressed === "+") return true;
+  if (chord.key === "." && (e.code === "Period" || e.code === "NumpadDecimal"))
+    return true;
   return false;
 }
 

@@ -14,7 +14,6 @@ describe("Phase5 permission UI", () => {
     expect(source).toContain("权限边界");
     expect(source).toContain("凭据边界");
     expect(source).toContain("API Key 保存在系统凭据管理器");
-    expect(source).not.toContain("Markdown Agent 权限");
     expect(source).not.toContain("permissions:");
     expect(source).not.toContain('data-testid="agent-permission-settings"');
   });
@@ -22,19 +21,22 @@ describe("Phase5 permission UI", () => {
   it("does not expose raw permission codes or secret capabilities in Management Center", () => {
     const source = read("src/components/settings/ManagementCenterPanel.tsx");
 
-    expect(source).toContain("凭据边界");
+    expect(source).toContain("权限边界");
     expect(source).not.toContain("vault.write.patch");
     expect(source).not.toContain("secret.read_plaintext");
-    expect(source).not.toContain("涉密面板");
+    expect(source).not.toContain("Markdown Agent");
   });
 
-  it("renders permission effects in tool confirmation before raw arguments", () => {
+  it("keeps tool confirmations compact and user-facing", () => {
     const source = read("src/components/ai/ToolConfirmDialog.tsx");
 
-    expect(source).toContain("权限影响");
+    expect(source).toContain("buildPermissionCard");
     expect(source).toContain("permissionEffects");
-    expect(source.indexOf("权限影响")).toBeLessThan(source.indexOf("调用参数"));
-    expect(source).toContain("reversibleBy");
-    expect(source).toContain("blockedReason");
+    expect(source).toContain("skills_prepare_workspace");
+    expect(source).toContain("准备 Skill 工作区");
+    expect(source).toContain("将创建");
+    expect(source).not.toContain("调用参数");
+    expect(source).not.toContain("参数 JSON");
+    expect(source).not.toContain("reversibleBy");
   });
 });

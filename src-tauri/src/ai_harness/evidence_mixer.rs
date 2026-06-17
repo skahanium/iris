@@ -210,6 +210,7 @@ pub fn web_packets_from_fetch(
                 failure_reason: None,
                 fallback_from,
             }),
+            corpus: None,
         });
     }
 
@@ -258,6 +259,7 @@ pub fn web_packets_from_page_fetch(fetch: &PageFetchResult) -> Vec<ContextPacket
             failure_reason: None,
             fallback_from: None,
         }),
+        corpus: None,
     }]
 }
 
@@ -381,6 +383,7 @@ mod tests {
             citation_label: "[L0]".into(),
             stale: false,
             web: None,
+            corpus: None,
         }];
         let web = vec![ContextPacket {
             id: "web-1".into(),
@@ -397,6 +400,7 @@ mod tests {
             citation_label: "[W0]".into(),
             stale: false,
             web: None,
+            corpus: None,
         }];
         let mixed = mix_and_rank(local, web, 10);
         assert_eq!(mixed.first().map(|p| p.source_type), Some(SourceType::Note));

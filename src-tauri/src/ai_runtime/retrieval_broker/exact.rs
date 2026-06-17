@@ -72,6 +72,7 @@ pub(super) fn search_exact_regulation(
                 citation_label: citation,
                 stale: false,
                 web: None,
+                corpus: None,
             }
         })
         .collect();

@@ -5,14 +5,24 @@ use crate::error::{AppError, AppResult};
 
 use super::model_impl::{SkillScope, SkillsConfig};
 
-pub(super) fn global_skills_dir() -> PathBuf {
-    if let Ok(home) = std::env::var("HOME") {
+pub(crate) fn global_skills_dir() -> PathBuf {
+    global_skills_dir_from_env(
+        std::env::var("HOME").ok().as_deref(),
+        std::env::var("USERPROFILE").ok().as_deref(),
+    )
+}
+
+fn global_skills_dir_from_env(home: Option<&str>, user_profile: Option<&str>) -> PathBuf {
+    if let Some(home) = home.filter(|value| !value.trim().is_empty()) {
         return PathBuf::from(home).join(".iris").join("skills");
+    }
+    if let Some(user_profile) = user_profile.filter(|value| !value.trim().is_empty()) {
+        return PathBuf::from(user_profile).join(".iris").join("skills");
     }
     PathBuf::from(".iris").join("skills")
 }
 
-pub(super) fn vault_skills_dir(vault: &Path) -> PathBuf {
+pub(crate) fn vault_skills_dir(vault: &Path) -> PathBuf {
     vault.join(".iris").join("skills")
 }
 
@@ -137,4 +147,23 @@ pub(super) fn slugify(s: &str) -> String {
         .collect::<String>()
         .trim_matches('-')
         .to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn global_skills_dir_uses_userprofile_when_home_is_empty() {
+        let path = global_skills_dir_from_env(Some(""), Some(r"C:\Users\Iris"));
+
+        assert_eq!(path, PathBuf::from(r"C:\Users\Iris\.iris\skills"));
+    }
+
+    #[test]
+    fn global_skills_dir_prefers_home_when_available() {
+        let path = global_skills_dir_from_env(Some("/home/iris"), Some(r"C:\Users\Iris"));
+
+        assert_eq!(path, PathBuf::from("/home/iris/.iris/skills"));
+    }
 }

@@ -4,7 +4,7 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
-use crate::ai_types::AiScene;
+use crate::ai_types::{AiScene, CorpusPacketMeta};
 use crate::error::{AppError, AppResult};
 
 /// Relative path inside the vault for corpus configuration.
@@ -94,17 +94,89 @@ pub fn prefixes_for_corpus_ids(config: &CorpusConfig, ids: &[String]) -> Vec<Str
         .collect()
 }
 
-/// Whether a file path falls under any regulation-kind corpus prefix.
+/// Canonical corpus role, keeping legacy values readable.
+pub fn canonical_kind(kind: &str) -> &'static str {
+    match kind.trim() {
+        "authority" | "regulation" => "authority",
+        "exemplar" => "exemplar",
+        "reference" => "reference",
+        "lookup" | "general" => "lookup",
+        _ => "authority",
+    }
+}
+
+/// User-facing corpus role label.
+pub fn corpus_role_label(kind: &str) -> &'static str {
+    match canonical_kind(kind) {
+        "authority" => "规范依据",
+        "exemplar" => "范文样本",
+        "reference" => "参考资料",
+        "lookup" => "查阅资料",
+        _ => "规范依据",
+    }
+}
+
+/// Prompt instruction for how the assistant may use this corpus role.
+pub fn corpus_role_instruction(kind: &str) -> &'static str {
+    match canonical_kind(kind) {
+        "authority" => "必须优先遵循，可作为结论依据。",
+        "exemplar" => "只学习结构、语气和表达方式，不采纳其中事实或结论作为依据。",
+        "reference" => "可作为背景参考，但不能当作规范遵循。",
+        "lookup" => "可摘要其内容，但必须标注仅供查阅，不能作为依据。",
+        _ => "必须优先遵循，可作为结论依据。",
+    }
+}
+
+/// Whether this corpus role may support normative conclusions.
+pub fn corpus_role_can_be_authority(kind: &str) -> bool {
+    canonical_kind(kind) == "authority"
+}
+
+/// Find the most specific corpus entry for a vault-relative path.
+pub fn corpus_for_path<'a>(config: &'a CorpusConfig, path: &str) -> Option<&'a CorpusEntry> {
+    let norm = path.replace('\\', "/");
+    config
+        .corpus
+        .iter()
+        .filter_map(|entry| {
+            let prefix = normalize_prefix(&entry.path_prefix);
+            if prefix.is_empty() || !norm.starts_with(prefix.as_str()) {
+                return None;
+            }
+            Some((prefix.len(), entry))
+        })
+        .max_by_key(|(len, _)| *len)
+        .map(|(_, entry)| entry)
+}
+
+/// Build safe prompt metadata for a corpus entry.
+pub fn packet_meta_for_entry(entry: &CorpusEntry) -> CorpusPacketMeta {
+    let kind = canonical_kind(&entry.kind).to_string();
+    CorpusPacketMeta {
+        id: entry.id.clone(),
+        name: entry.name.clone(),
+        label: corpus_role_label(&kind).to_string(),
+        instruction: corpus_role_instruction(&kind).to_string(),
+        can_be_authority: corpus_role_can_be_authority(&kind),
+        kind,
+    }
+}
+
+/// Whether a file path falls under any authority corpus prefix.
 pub fn is_regulation_corpus_path(config: &CorpusConfig, path: &str) -> bool {
     let norm = path.replace('\\', "/");
     config.corpus.iter().any(|c| {
-        c.kind == "regulation" && norm.starts_with(normalize_prefix(&c.path_prefix).as_str())
+        canonical_kind(&c.kind) == "authority"
+            && norm.starts_with(normalize_prefix(&c.path_prefix).as_str())
     })
 }
 
-/// If no regulation corpus is configured, index regulation structure for all notes (legacy).
+/// If no authority corpus is configured, index regulation structure for all notes (legacy).
 pub fn should_index_regulation_for_path(config: &CorpusConfig, path: &str) -> bool {
-    let has_regulation_corpus = config.corpus.iter().any(|c| c.kind == "regulation");
+    let has_regulation_corpus = config
+        .corpus
+        .iter()
+        .any(|c| canonical_kind(&c.kind) == "authority");
     if !has_regulation_corpus {
         return true;
     }
@@ -144,5 +216,41 @@ scenes = ["knowledge_lookup"]
         let prefixes = prefixes_for_scene(&config, AiScene::KnowledgeLookup);
         assert_eq!(prefixes, vec!["党纪法规/"]);
         assert!(prefixes_for_scene(&config, AiScene::DraftingAssist).is_empty());
+    }
+
+    #[test]
+    fn canonical_kind_maps_legacy_roles() {
+        assert_eq!(canonical_kind("regulation"), "authority");
+        assert_eq!(canonical_kind("general"), "lookup");
+        assert_eq!(canonical_kind("exemplar"), "exemplar");
+        assert_eq!(canonical_kind("reference"), "reference");
+        assert_eq!(canonical_kind("lookup"), "lookup");
+        assert_eq!(canonical_kind("unknown"), "authority");
+    }
+
+    #[test]
+    fn corpus_for_path_prefers_longest_matching_prefix() {
+        let config = CorpusConfig {
+            corpus: vec![
+                CorpusEntry {
+                    id: "root".into(),
+                    name: "Root".into(),
+                    path_prefix: "materials/".into(),
+                    kind: "lookup".into(),
+                    scenes: vec!["knowledge_lookup".into()],
+                },
+                CorpusEntry {
+                    id: "nested".into(),
+                    name: "Nested".into(),
+                    path_prefix: "materials/rules/".into(),
+                    kind: "authority".into(),
+                    scenes: vec!["knowledge_lookup".into()],
+                },
+            ],
+        };
+
+        let entry = corpus_for_path(&config, "materials/rules/a.md").unwrap();
+        assert_eq!(entry.id, "nested");
+        assert_eq!(corpus_role_label(&entry.kind), "规范依据");
     }
 }

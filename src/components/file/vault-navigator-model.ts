@@ -1,7 +1,8 @@
 import { joinVaultChildPath } from "@/lib/vault-tree";
 import type { FileListItem } from "@/types/ipc";
 
-export type CorpusKind = "regulation" | "exemplar" | "general";
+export type CorpusKind = "authority" | "exemplar" | "reference" | "lookup";
+export type StoredCorpusKind = CorpusKind | "regulation" | "general";
 
 export type RenameTarget =
   | { kind: "file"; file: FileListItem }
@@ -23,12 +24,32 @@ export function slugFromPath(prefix: string): string {
     .toLowerCase();
 }
 
-export function defaultScenesForKind(kind: CorpusKind): string[] {
+export function canonicalCorpusKind(kind: string): CorpusKind {
   switch (kind) {
+    case "authority":
     case "regulation":
-      return ["knowledge_lookup"];
+      return "authority";
+    case "exemplar":
+      return "exemplar";
+    case "reference":
+      return "reference";
+    case "lookup":
+    case "general":
+      return "lookup";
+    default:
+      return "authority";
+  }
+}
+
+export function defaultScenesForKind(kind: StoredCorpusKind): string[] {
+  switch (canonicalCorpusKind(kind)) {
+    case "authority":
+      return ["knowledge_lookup", "research_synthesis", "drafting_assist"];
     case "exemplar":
       return ["exemplar_learning", "drafting_assist"];
+    case "reference":
+    case "lookup":
+      return ["knowledge_lookup", "research_synthesis"];
     default:
       return [];
   }

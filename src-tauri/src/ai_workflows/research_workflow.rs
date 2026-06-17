@@ -973,6 +973,7 @@ mod tests {
             citation_label: "[1]".into(),
             stale: false,
             web: None,
+            corpus: None,
         }];
 
         let matrix = build_evidence_matrix("test topic", &props, &packets);

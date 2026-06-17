@@ -738,6 +738,7 @@ mod tests {
                 citation_label: "[1]".into(),
                 stale: false,
                 web: None,
+                corpus: None,
             },
             ContextPacket {
                 id: "2".into(),
@@ -754,6 +755,7 @@ mod tests {
                 citation_label: "[2]".into(),
                 stale: false,
                 web: None,
+                corpus: None,
             },
         ];
 

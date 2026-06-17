@@ -84,6 +84,10 @@ export const SlashCommandExtension = Extension.create<SlashCommandOptions>({
                 showOnCreate: true,
                 interactive: true,
                 trigger: "manual",
+                theme: "iris-suggestion",
+                arrow: false,
+                maxWidth: "none",
+                offset: [0, 6],
                 placement: "bottom-start",
               });
             },

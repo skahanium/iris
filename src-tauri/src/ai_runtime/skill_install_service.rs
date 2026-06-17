@@ -8,9 +8,10 @@ use tauri::{AppHandle, Emitter};
 
 use crate::ai_runtime::skill_registry::{InstallSpec, SkillInstallSource};
 use crate::ai_runtime::skills::{
-    capability_preview_for_entry, enrich_list_with_scene, install_from_git, install_from_local,
-    install_from_url, scan_all_with_status, set_enabled, skill_content_hash_for_path, uninstall,
-    validate_skill_license, SkillEntry, SkillListEntry, SkillScope,
+    blocked_capabilities_for_skill, capability_preview_for_entry, enrich_list_with_scene,
+    install_from_git, install_from_local, install_from_url, prepare_workspace_for_skill,
+    preview_prepare_workspace, scan_all_with_status, set_enabled, skill_content_hash_for_path,
+    uninstall, validate_skill_license, SkillEntry, SkillListEntry, SkillScope,
 };
 use crate::ai_runtime::AiScene;
 use crate::ai_types::SkillActivationPlanSummary;
@@ -27,6 +28,17 @@ pub struct SkillInstallRequest {
     pub subpath: Option<String>,
     pub registry: Option<String>,
     pub expected_sha256: Option<String>,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct SkillPrepareWorkspacePreview {
+    pub name: String,
+    pub scope: String,
+    pub workspace_root: String,
+    pub workspace_ready: bool,
+    pub workspace_missing_items: Vec<String>,
+    pub create_folders: Vec<String>,
+    pub create_documents: Vec<String>,
 }
 
 fn scope_db(scope: SkillScope) -> &'static str {
@@ -125,6 +137,26 @@ fn emit_skills_changed(app_handle: Option<&AppHandle>) {
     if let Some(app) = app_handle {
         let _ = app.emit("skills:changed", ());
     }
+}
+
+fn has_blocked_critical_capability(entry: &SkillEntry) -> bool {
+    blocked_capabilities_for_skill(entry)
+        .iter()
+        .any(|capability| {
+            matches!(
+                capability.capability.as_str(),
+                "skill.execute_script_sandboxed"
+                    | "skill.install_dependency"
+                    | "skill.mcp_bridge"
+                    | "execute_script_sandboxed"
+                    | "install_dependency"
+                    | "mcp_bridge"
+                    | "bash"
+                    | "shell"
+                    | "computer"
+                    | "computer_control"
+            ) || capability.status == crate::ai_types::SkillCapabilitySupportStatus::BlockedByPolicy
+        })
 }
 
 fn enrich_with_diagnostics(db: &Database, entries: &mut [SkillListEntry]) -> AppResult<()> {
@@ -245,7 +277,8 @@ async fn install_entries(
     let mut out = Vec::new();
     for entry in entries {
         validate_skill_license(&entry)?;
-        set_enabled(&entry.name, entry.scope, vault, true)?;
+        let enabled = !has_blocked_critical_capability(&entry);
+        set_enabled(&entry.name, entry.scope, vault, enabled)?;
         let content_hash =
             skill_content_hash_for_path(&std::path::PathBuf::from(&entry.file_path)).ok();
         record_install_source(
@@ -403,15 +436,37 @@ pub async fn update_skill(
     .await
 }
 
+pub fn normalize_skill_scope_arg(scope: Option<&str>) -> SkillScope {
+    parse_scope(scope.unwrap_or("vault"))
+}
+
+fn find_skill_entry(vault: &Path, name: &str, scope: SkillScope) -> AppResult<SkillEntry> {
+    scan_all_with_status(vault)?
+        .into_iter()
+        .find(|entry| entry.skill.name == name && entry.skill.scope == scope)
+        .map(|entry| entry.skill)
+        .ok_or_else(|| AppError::msg(format!("skill_not_found: {name}")))
+}
+
 /// Preview install resolution (read-only, for confirm dialog).
-pub async fn preview_install(req: &SkillInstallRequest) -> AppResult<serde_json::Value> {
+pub async fn preview_install(
+    vault: &Path,
+    req: &SkillInstallRequest,
+) -> AppResult<serde_json::Value> {
     if req.source == SkillInstallSource::Registry {
         let registry = req.registry.as_deref().unwrap_or("skillhub");
-        return crate::ai_runtime::skill_registry::preview_registry_install(
-            registry,
-            &req.path_or_url,
-        )
-        .await;
+        let mut preview =
+            crate::ai_runtime::skill_registry::preview_registry_install(registry, &req.path_or_url)
+                .await?;
+        preview["target_install_dir"] = serde_json::json!(match req.scope {
+            SkillScope::Global => crate::ai_runtime::skills::global_skills_dir()
+                .to_string_lossy()
+                .into_owned(),
+            SkillScope::Vault => crate::ai_runtime::skills::vault_skills_dir(vault)
+                .to_string_lossy()
+                .into_owned(),
+        });
+        return Ok(preview);
     }
     let mut preview = serde_json::json!({
         "source": match req.source {
@@ -426,6 +481,14 @@ pub async fn preview_install(req: &SkillInstallRequest) -> AppResult<serde_json:
             SkillScope::Global => "global",
             SkillScope::Vault => "vault",
         },
+        "target_install_dir": match req.scope {
+            SkillScope::Global => crate::ai_runtime::skills::global_skills_dir()
+                .to_string_lossy()
+                .into_owned(),
+            SkillScope::Vault => crate::ai_runtime::skills::vault_skills_dir(vault)
+                .to_string_lossy()
+                .into_owned(),
+        },
     });
     if req.source == SkillInstallSource::Local {
         let path = std::path::PathBuf::from(&req.path_or_url);
@@ -436,6 +499,28 @@ pub async fn preview_install(req: &SkillInstallRequest) -> AppResult<serde_json:
         }
     }
     Ok(preview)
+}
+
+pub fn preview_skill_workspace(
+    vault: &Path,
+    name: &str,
+    scope: SkillScope,
+) -> AppResult<serde_json::Value> {
+    let skill = find_skill_entry(vault, name, scope)?;
+    preview_prepare_workspace(vault, &skill)
+}
+
+pub fn prepare_skill_workspace(
+    vault: &Path,
+    _db: Option<&Database>,
+    app_handle: Option<&AppHandle>,
+    name: &str,
+    scope: SkillScope,
+) -> AppResult<crate::ai_runtime::skills::SkillWorkspacePrepareResult> {
+    let skill = find_skill_entry(vault, name, scope)?;
+    let prepared = prepare_workspace_for_skill(vault, &skill)?;
+    emit_skills_changed(app_handle);
+    Ok(prepared)
 }
 
 /// Uninstall a skill by name and scope.
@@ -466,10 +551,10 @@ pub fn toggle_skill(
 }
 
 pub fn parse_scope(scope: &str) -> SkillScope {
-    if scope == "vault" {
-        SkillScope::Vault
-    } else {
+    if scope == "global" {
         SkillScope::Global
+    } else {
+        SkillScope::Vault
     }
 }
 
@@ -497,6 +582,16 @@ mod tests {
         let kw = extract_keywords(&entry);
         assert!(kw.contains("web-scraper"));
         assert!(kw.contains("scrape"));
+    }
+
+    #[test]
+    fn normalize_skill_scope_defaults_to_vault() {
+        assert_eq!(normalize_skill_scope_arg(None), SkillScope::Vault);
+        assert_eq!(normalize_skill_scope_arg(Some("vault")), SkillScope::Vault);
+        assert_eq!(
+            normalize_skill_scope_arg(Some("global")),
+            SkillScope::Global
+        );
     }
 
     #[tokio::test]
@@ -586,6 +681,131 @@ Body
         .unwrap_err();
 
         assert!(err.to_string().contains("license_incompatible"));
+    }
+
+    #[tokio::test]
+    async fn local_install_with_blocked_critical_capability_defaults_disabled() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = dir.path().join("vault");
+        std::fs::create_dir_all(&vault).unwrap();
+        let source_dir = vault.join("incoming-critical");
+        std::fs::create_dir_all(&source_dir).unwrap();
+        let source = source_dir.join("SKILL.md");
+        std::fs::write(
+            &source,
+            r#"---
+name: critical-skill
+description: Requests unsupported execution capability
+license: AGPL-3.0
+requested-capabilities:
+  - skill.execute_script_sandboxed
+---
+
+Body
+"#,
+        )
+        .unwrap();
+        let state = AppState::new(dir.path().to_path_buf()).unwrap();
+        state.set_vault(vault.clone()).unwrap();
+
+        let entry = install_skill(
+            &state.db,
+            &vault,
+            None,
+            SkillInstallRequest {
+                source: SkillInstallSource::Local,
+                path_or_url: source.to_string_lossy().into_owned(),
+                scope: SkillScope::Vault,
+                subpath: None,
+                registry: None,
+                expected_sha256: None,
+            },
+        )
+        .await
+        .expect("critical skill should install for inspection");
+
+        assert_eq!(entry.skill.name, "critical-skill");
+        assert!(!entry.skill.enabled);
+        assert!(entry
+            .blocked_capabilities
+            .iter()
+            .any(|capability| capability.capability == "skill.execute_script_sandboxed"));
+        assert_eq!(entry.availability, "disabled");
+    }
+
+    #[tokio::test]
+    async fn prepare_workspace_creates_declared_items_without_overwriting_existing_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = dir.path().join("vault");
+        std::fs::create_dir_all(&vault).unwrap();
+        let source_dir = vault.join("incoming-workspace");
+        std::fs::create_dir_all(source_dir.join("resources")).unwrap();
+        let source = source_dir.join("SKILL.md");
+        std::fs::write(
+            source_dir.join("resources/default-note.md"),
+            "# Default note\n",
+        )
+        .unwrap();
+        std::fs::write(
+            &source,
+            r#"---
+name: workspace-skill
+description: Declares a workspace
+license: AGPL-3.0
+iris-workspace:
+  folders:
+    - inputs
+    - outputs
+  documents:
+    - source: resources/default-note.md
+      target: README.md
+---
+
+Body
+"#,
+        )
+        .unwrap();
+        let state = AppState::new(dir.path().to_path_buf()).unwrap();
+        state.set_vault(vault.clone()).unwrap();
+
+        install_skill(
+            &state.db,
+            &vault,
+            None,
+            SkillInstallRequest {
+                source: SkillInstallSource::Local,
+                path_or_url: source.to_string_lossy().into_owned(),
+                scope: SkillScope::Vault,
+                subpath: None,
+                registry: None,
+                expected_sha256: None,
+            },
+        )
+        .await
+        .unwrap();
+
+        let workspace_root = vault.join("Skills/workspace-skill");
+        std::fs::create_dir_all(&workspace_root).unwrap();
+        std::fs::write(workspace_root.join("README.md"), "# Existing\n").unwrap();
+
+        let prepared = prepare_skill_workspace(
+            &vault,
+            Some(&state.db),
+            None,
+            "workspace-skill",
+            SkillScope::Vault,
+        )
+        .unwrap();
+
+        assert_eq!(prepared.workspace_root, "Skills/workspace-skill");
+        assert!(workspace_root.join("inputs").is_dir());
+        assert!(workspace_root.join("outputs").is_dir());
+        assert_eq!(
+            std::fs::read_to_string(workspace_root.join("README.md")).unwrap(),
+            "# Existing\n"
+        );
+        assert_eq!(prepared.created_folders, vec!["inputs", "outputs"]);
+        assert_eq!(prepared.skipped_existing, vec!["README.md"]);
     }
 
     #[tokio::test]

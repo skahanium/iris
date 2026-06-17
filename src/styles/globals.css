@@ -567,6 +567,82 @@
     scrollbar-width: none;
   }
 
+  .outline-link-summary {
+    display: flex;
+    flex-shrink: 0;
+    flex-direction: column;
+    gap: 0.45rem;
+    margin-left: 0.7rem;
+    padding: 0.55rem 0 0.15rem 0.15rem;
+    border-top: 1px solid hsl(var(--outline-rail-active) / 0.14);
+    color: hsl(var(--muted-foreground));
+    text-shadow: 0 1px 2px hsl(var(--background) / 0.92);
+  }
+
+  .outline-link-summary-heading {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    font-size: 0.6875rem;
+    font-weight: 500;
+    color: hsl(var(--outline-rail-active) / 0.9);
+  }
+
+  .outline-link-summary-counts {
+    display: flex;
+    gap: 0.6rem;
+    font-size: 0.6875rem;
+    line-height: 1;
+    color: hsl(var(--muted-foreground) / 0.8);
+  }
+
+  .outline-link-summary-groups {
+    display: grid;
+    gap: 0.4rem;
+  }
+
+  .outline-link-summary-group {
+    display: grid;
+    gap: 0.25rem;
+  }
+
+  .outline-link-summary-label,
+  .outline-link-summary-empty {
+    font-size: 0.625rem;
+    line-height: 1.25;
+    color: hsl(var(--muted-foreground) / 0.64);
+  }
+
+  .outline-link-summary-items {
+    display: grid;
+    gap: 0.15rem;
+  }
+
+  .outline-link-summary-item {
+    display: block;
+    min-width: 0;
+    max-width: 10rem;
+    overflow: hidden;
+    border-radius: var(--radius-sm);
+    padding: 0.15rem 0.35rem;
+    text-align: left;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 0.6875rem;
+    line-height: 1.35;
+    color: hsl(var(--foreground) / 0.74);
+    transition:
+      background-color var(--motion-fast) var(--motion-ease),
+      color var(--motion-fast) var(--motion-ease);
+  }
+
+  .outline-link-summary-item:hover,
+  .outline-link-summary-item:focus-visible {
+    background: hsl(var(--outline-rail-active) / 0.08);
+    color: hsl(var(--outline-rail-active));
+    outline: none;
+  }
+
   .outline-ghost-list::-webkit-scrollbar {
     display: none;
   }
@@ -1139,6 +1215,44 @@
 }
 
 /* 标题后空段落不占位 */
+/* Tippy suggestion popups intentionally stay outside Tailwind layers.
+   Tippy's bundled CSS is unlayered, so layered overrides lose in the cascade. */
+.tippy-box[data-theme~="iris-suggestion"] {
+  border-radius: 0;
+  background: transparent;
+  color: inherit;
+  box-shadow: none;
+}
+
+.tippy-box[data-theme~="iris-suggestion"] > .tippy-content {
+  padding: 0;
+}
+
+.tippy-box[data-theme~="iris-suggestion"] > .tippy-arrow {
+  display: none;
+}
+
+.iris-suggestion-menu {
+  overflow: auto;
+  scrollbar-width: thin;
+  scrollbar-color: hsl(var(--muted-foreground) / 0.34) transparent;
+}
+
+.iris-suggestion-menu::-webkit-scrollbar {
+  width: 0.5rem;
+}
+
+.iris-suggestion-menu::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.iris-suggestion-menu::-webkit-scrollbar-thumb {
+  border: 2px solid transparent;
+  border-radius: 999px;
+  background: hsl(var(--muted-foreground) / 0.34);
+  background-clip: padding-box;
+}
+
 .iris-editor
   .iris-editor-body
   .ProseMirror

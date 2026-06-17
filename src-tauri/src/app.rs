@@ -15,7 +15,7 @@ use crate::storage::db::Database;
 use crate::watcher::FileWatcher;
 
 use crate::ai_runtime::context_cache::ContextAssemblyCache;
-use crate::ai_types::{AiScene, AutonomyLevel};
+use crate::ai_types::{AiScene, AutonomyLevel, SkillActivationPlanSummary};
 use crate::security::brute_force::BruteForceProtection;
 
 #[derive(Debug, Clone)]
@@ -29,6 +29,7 @@ pub struct PendingToolCall {
     pub web_search_enabled: bool,
     pub autonomy_level: AutonomyLevel,
     pub skill_allowed_tools: Vec<String>,
+    pub skill_activation_plan: Option<SkillActivationPlanSummary>,
 }
 
 // 鈹€鈹€鈹€ Sub-state: Storage 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€

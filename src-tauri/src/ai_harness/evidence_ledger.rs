@@ -128,6 +128,7 @@ mod tests {
             citation_label: String::new(),
             stale: false,
             web: None,
+            corpus: None,
         }
     }
 

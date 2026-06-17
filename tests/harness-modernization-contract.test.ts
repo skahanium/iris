@@ -82,14 +82,16 @@ describe("harness modernization remaining contracts", () => {
   it("skills lifecycle exposes update and capability diagnostics to the UI", () => {
     const ipc = read("src/lib/ipc.ts");
     expect(ipc).toContain("export async function skillsUpdate");
+    expect(ipc).toContain("export async function skillsPrepareWorkspace");
     expect(ipc).toContain("content_hash?: string");
     expect(ipc).toContain("capability_preview?:");
     expect(ipc).toContain("availability:");
 
     const panel = read("src/components/ai/SkillsPanel.tsx");
     expect(panel).toContain("skillsUpdate");
-    expect(panel).toContain("能力状态");
-    expect(panel).toContain("更新");
+    expect(panel).toContain("权限摘要");
+    expect(panel).toContain("已准备");
+    expect(panel).toContain("工作区");
   });
 
   it("tool confirmation suppresses duplicate resume calls for the same tool call", () => {

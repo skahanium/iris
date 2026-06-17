@@ -11,7 +11,10 @@ use super::frontmatter_impl::parse_frontmatter;
 use super::model_impl::{VALIDATION_MISSING_FRONTMATTER, VALIDATION_NAME_MISMATCH};
 use super::path_impl::{global_skills_dir, load_config, skill_key, slugify, vault_skills_dir};
 use super::validation_impl::{capability_preview_for_entry, confirmation_required_tools};
-use super::{SkillEntry, SkillListEntry, SkillMetadata, SkillScope, SkillValidationStatus};
+use super::{
+    workspace_status_for_skill, SkillEntry, SkillListEntry, SkillMetadata, SkillScope,
+    SkillValidationStatus,
+};
 
 /// Scan global + vault skill directories.
 pub fn scan_all(vault: &Path) -> AppResult<Vec<SkillEntry>> {
@@ -119,9 +122,15 @@ pub fn load_skill(path: &Path, scope: SkillScope) -> AppResult<SkillEntry> {
         "external_dependencies",
         "compatibility-source",
         "compatibility_source",
+        "iris-workspace",
+        "iris_workspace",
     ] {
         if let Some(value) = meta.get(key) {
-            metadata.insert(key.to_string(), serde_json::Value::String(value.clone()));
+            metadata.insert(
+                key.to_string(),
+                serde_json::from_str(value)
+                    .unwrap_or_else(|_| serde_json::Value::String(value.clone())),
+            );
         }
     }
     if !has_frontmatter {
@@ -219,6 +228,17 @@ pub fn scan_all_with_status(vault: &Path) -> AppResult<Vec<SkillListEntry>> {
             let capability_preview = capability_preview_for_entry(&skill, &installed_names);
             let requested_capabilities = skill.requested_capabilities();
             let blocked_capabilities = blocked_capabilities_for_skill(&skill);
+            let compatibility_warnings = capability_preview
+                .get("compatibility_warnings")
+                .and_then(|value| value.as_array())
+                .map(|items| {
+                    items
+                        .iter()
+                        .filter_map(|item| item.as_str().map(str::to_string))
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+            let workspace_status = workspace_status_for_skill(vault, &skill);
             let availability = if !skill.enabled {
                 "disabled"
             } else if matches!(validation, SkillValidationStatus::Invalid(_)) {
@@ -247,7 +267,10 @@ pub fn scan_all_with_status(vault: &Path) -> AppResult<Vec<SkillListEntry>> {
                 last_resource_status: None,
                 requested_capabilities,
                 blocked_capabilities,
-                compatibility_warnings: Vec::new(),
+                compatibility_warnings,
+                workspace_root: workspace_status.workspace_root,
+                workspace_ready: workspace_status.workspace_ready,
+                workspace_missing_items: workspace_status.workspace_missing_items,
             }
         })
         .collect())

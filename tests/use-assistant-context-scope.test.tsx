@@ -9,13 +9,13 @@ const files: FileListItem[] = [
   {
     path: "Policies/Guide.md",
     title: "Guide",
-    updated_at: "2026-01-01",
+    updatedAt: "2026-01-01",
     isLocked: false,
   },
   {
     path: "Research/Notes/Alpha.md",
     title: "Alpha",
-    updated_at: "2026-01-01",
+    updatedAt: "2026-01-01",
     isLocked: false,
   },
 ];

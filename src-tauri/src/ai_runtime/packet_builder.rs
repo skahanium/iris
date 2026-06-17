@@ -10,7 +10,9 @@ use crate::ai_runtime::retrieval_scope::{
 };
 use crate::ai_runtime::{AiScene, ContextPacket, ContextStatus, SourceType, TrustLevel};
 use crate::error::AppResult;
-use crate::knowledge::corpora::{load_corpora, CorpusConfig};
+use crate::knowledge::corpora::{
+    corpus_for_path, load_corpora, packet_meta_for_entry, CorpusConfig,
+};
 use crate::llm::config::ContextStrategy;
 
 /// Options for context packet assembly (budget-aware).
@@ -68,6 +70,7 @@ pub fn build_context_packets(
             }
         }
     }
+    annotate_packets_with_corpus(&corpora, &mut packets);
 
     let status = ContextStatus {
         regulations_loaded: packets
@@ -94,6 +97,17 @@ pub fn build_context_packets(
     };
 
     Ok((packets, status))
+}
+
+fn annotate_packets_with_corpus(corpora: &CorpusConfig, packets: &mut [ContextPacket]) {
+    for packet in packets {
+        let Some(path) = packet.source_path.as_deref() else {
+            continue;
+        };
+        if let Some(entry) = corpus_for_path(corpora, path) {
+            packet.corpus = Some(packet_meta_for_entry(entry));
+        }
+    }
 }
 
 /// When exemplar corpora exist, template search is limited to those prefixes (via post-filter).
@@ -208,6 +222,7 @@ fn note_fulltext_packet(
         citation_label: "note_full".into(),
         stale: false,
         web: None,
+        corpus: None,
     })
 }
 

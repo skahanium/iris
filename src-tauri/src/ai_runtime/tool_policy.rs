@@ -84,6 +84,7 @@ pub fn denial_user_message(reason: DenialReason, tool_name: &str) -> String {
 const META_SKILL_TOOLS: &[&str] = &[
     "skills_list",
     "skills_install",
+    "skills_prepare_workspace",
     "skills_uninstall",
     "skills_update",
     "skills_toggle",

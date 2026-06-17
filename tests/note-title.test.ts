@@ -21,6 +21,15 @@ describe("displayTitleFromMarkdown", () => {
 });
 
 describe("parseNoteForEditor + markdownBodyToEditorHtml", () => {
+  it("keeps no-frontmatter body h1 as a normal section heading", () => {
+    const md = "# Classified Section\n\nBody";
+    const { title, bodyMd } = parseNoteForEditor(md, "secret");
+    const html = markdownBodyToEditorHtml(bodyMd);
+    expect(title).toBe("secret");
+    expect(html).toContain("<h1>Classified Section</h1>");
+    expect(html).not.toContain("iris-doc-title");
+  });
+
   it("keeps body h1 as section heading when frontmatter title is empty", () => {
     const md = '---\ntitle: ""\n---\n\n# 一级标题\n\n正文';
     const { bodyMd } = parseNoteForEditor(md);

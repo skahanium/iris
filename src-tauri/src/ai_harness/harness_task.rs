@@ -180,7 +180,7 @@ fn legacy_skill_overlay_from_plan(
     if selected.is_empty() {
         return String::new();
     }
-    crate::ai_runtime::skills::inject_into_prompt(&selected, scene, user_message)
+    crate::ai_runtime::skills::inject_into_prompt(&vault, &selected, scene, user_message)
 }
 
 fn apply_skill_overlay_to_goal(goal: &str, overlay: &str) -> String {

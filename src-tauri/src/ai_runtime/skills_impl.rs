@@ -31,6 +31,8 @@ mod resources_impl;
 mod scan_impl;
 #[path = "skills/validation.rs"]
 mod validation_impl;
+#[path = "skills/workspace.rs"]
+mod workspace_impl;
 
 pub use activation_impl::{
     active_skill_allowed_tools, active_skills_for_prompt, build_skill_activation_plan,
@@ -45,13 +47,12 @@ use frontmatter_impl::parse_frontmatter;
 pub use legacy_impl::{is_legacy_format, migrate_legacy_skill};
 pub use model_impl::{
     ActivationIndexMap, ScoredSkill, SkillActivationIndexRow, SkillEntry, SkillListEntry,
-    SkillMetadata, SkillScope, SkillValidationStatus,
+    SkillMetadata, SkillScope, SkillValidationStatus, SkillWorkspaceDocument,
+    SkillWorkspaceManifest,
 };
 pub use path_impl::validate_skill_path;
-use path_impl::{
-    atomic_copy_dir, global_skills_dir, load_config, save_config, skill_key, slugify,
-    validate_subpath, vault_skills_dir,
-};
+use path_impl::{atomic_copy_dir, load_config, save_config, skill_key, slugify, validate_subpath};
+pub(crate) use path_impl::{global_skills_dir, vault_skills_dir};
 pub use prompt_impl::inject_into_prompt;
 pub use resources_impl::read_skill_resource;
 pub use scan_impl::{
@@ -60,6 +61,12 @@ pub use scan_impl::{
 pub use validation_impl::{
     capability_preview_for_entry, confirmation_required_tools, license_is_agpl_compatible,
     validate_skill_license,
+};
+pub use workspace_impl::{
+    prepare_workspace_for_skill, preview_prepare_workspace, validate_workspace_folder_path,
+    validate_workspace_source_path, validate_workspace_target_path, workspace_manifest_items,
+    workspace_root_path, workspace_root_relative, workspace_status_for_skill,
+    SkillWorkspacePrepareResult, SkillWorkspaceStatus,
 };
 
 /// Install skill from HTTP(S) URL (raw SKILL.md or GitHub raw link).
@@ -417,6 +424,69 @@ license: AGPL-3.0
         );
         assert_eq!(skill.depends(), vec!["helper-skill".to_string()]);
         assert_eq!(skill.license.as_deref(), Some("AGPL-3.0"));
+    }
+
+    #[test]
+    fn load_skill_reads_workspace_manifest_from_top_level_and_metadata() {
+        let dir = tempfile::tempdir().unwrap();
+        let top_level_dir = dir.path().join("top-level-workspace");
+        fs::create_dir_all(&top_level_dir).unwrap();
+        let top_level_path = top_level_dir.join("SKILL.md");
+        fs::write(
+            &top_level_path,
+            r#"---
+name: top-level-workspace
+description: Reads top-level workspace declaration
+iris-workspace:
+  folders:
+    - inputs
+    - outputs
+  documents:
+    - source: resources/default-note.md
+      target: README.md
+---
+
+# Body
+"#,
+        )
+        .unwrap();
+
+        let metadata_dir = dir.path().join("metadata-workspace");
+        fs::create_dir_all(&metadata_dir).unwrap();
+        let metadata_path = metadata_dir.join("SKILL.md");
+        fs::write(
+            &metadata_path,
+            r#"---
+name: metadata-workspace
+description: Reads metadata workspace declaration
+metadata:
+  iris_workspace:
+    folders:
+      - cache
+    documents:
+      - source: references/guide.md
+        target: docs/guide.md
+---
+
+# Body
+"#,
+        )
+        .unwrap();
+
+        let top_level = load_skill(&top_level_path, SkillScope::Vault).unwrap();
+        let metadata = load_skill(&metadata_path, SkillScope::Vault).unwrap();
+
+        let top_level_workspace = top_level.workspace_manifest().unwrap();
+        assert_eq!(top_level_workspace.folders, vec!["inputs", "outputs"]);
+        assert_eq!(top_level_workspace.documents[0].target, "README.md");
+
+        let metadata_workspace = metadata.workspace_manifest().unwrap();
+        assert_eq!(metadata_workspace.folders, vec!["cache"]);
+        assert_eq!(
+            metadata_workspace.documents[0].source,
+            "references/guide.md"
+        );
+        assert_eq!(metadata_workspace.documents[0].target, "docs/guide.md");
     }
 
     #[test]
@@ -1101,12 +1171,13 @@ description: Already new format
 
     #[test]
     fn inject_into_prompt_only_includes_enabled_skills() {
+        let vault = tempfile::tempdir().unwrap();
         let skills = vec![
             make_skill("enabled-one", None, true),
             make_skill("disabled-one", None, false),
             make_skill("enabled-two", None, true),
         ];
-        let prompt = inject_into_prompt(&skills, AiScene::KnowledgeLookup, "");
+        let prompt = inject_into_prompt(vault.path(), &skills, AiScene::KnowledgeLookup, "");
         assert!(prompt.contains("enabled-one"));
         assert!(prompt.contains("enabled-two"));
         assert!(!prompt.contains("disabled-one"));
@@ -1114,17 +1185,19 @@ description: Already new format
 
     #[test]
     fn inject_into_prompt_empty_when_no_skills() {
+        let vault = tempfile::tempdir().unwrap();
         let skills: Vec<SkillEntry> = vec![];
-        let prompt = inject_into_prompt(&skills, AiScene::KnowledgeLookup, "");
+        let prompt = inject_into_prompt(vault.path(), &skills, AiScene::KnowledgeLookup, "");
         assert!(prompt.is_empty());
     }
 
     #[test]
     fn inject_into_prompt_truncates_large_skill_body() {
+        let vault = tempfile::tempdir().unwrap();
         let mut skill = make_skill("large-skill", None, true);
         skill.content = format!("start\n{}\nend", "x".repeat(80_000));
 
-        let prompt = inject_into_prompt(&[skill], AiScene::KnowledgeLookup, "");
+        let prompt = inject_into_prompt(vault.path(), &[skill], AiScene::KnowledgeLookup, "");
 
         assert!(prompt.contains("large-skill"));
         assert!(prompt.contains("start"));

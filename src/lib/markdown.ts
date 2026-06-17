@@ -237,7 +237,7 @@ function repairStrongDelimitersInDocument(markdown: string): string {
           if (trailingWhitespace && insertBoundary) {
             repaired = repaired.slice(0, -trailingWhitespace.length);
           }
-          repaired += insertBoundary ? "**<!-- -->" : "**";
+          repaired += insertBoundary ? "** " : "**";
           strongOpen = false;
         } else {
           repaired += "**";
@@ -497,15 +497,7 @@ export function parseNoteForEditor(
   let body = rawBody;
 
   if (!title) {
-    if (yaml === null) {
-      const legacy = /^#\s+(.+?)\s*(?:\n|$)/.exec(body.trimStart());
-      if (legacy) {
-        title = legacy[1]!.trim();
-        body = body.slice(legacy[0].length).trimStart();
-      } else {
-        title = titleFallback.trim();
-      }
-    }
+    title = titleFallback.trim();
   } else {
     body = stripLeadingBodyTitleHeading(body, title);
   }

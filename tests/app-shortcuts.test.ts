@@ -82,6 +82,7 @@ describe("app shortcuts", () => {
       "knowledge-relations",
       "graph",
       "toggle-outline",
+      "toggle-zen",
       "skills",
       "toggle-web-search",
       "rescan-vault",

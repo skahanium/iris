@@ -135,12 +135,14 @@ fn sanitize_arguments(tool_name: &str, args: &serde_json::Value) -> Option<Strin
                 "source={source}, path_or_url={path}, scope={scope}, registry={registry}"
             ))
         }
+        "skills_prepare_workspace" => {
+            let name = obj.get("name").and_then(|v| v.as_str()).unwrap_or("");
+            let scope = obj.get("scope").and_then(|v| v.as_str()).unwrap_or("vault");
+            Some(format!("name={name}, scope={scope}"))
+        }
         "skills_uninstall" | "skills_toggle" => {
             let name = obj.get("name").and_then(|v| v.as_str()).unwrap_or("");
-            let scope = obj
-                .get("scope")
-                .and_then(|v| v.as_str())
-                .unwrap_or("global");
+            let scope = obj.get("scope").and_then(|v| v.as_str()).unwrap_or("vault");
             if tool_name == "skills_toggle" {
                 let enabled = obj
                     .get("enabled")

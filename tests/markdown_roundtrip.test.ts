@@ -170,13 +170,14 @@ describe("iris note title round-trip (frontmatter)", () => {
     expect(out).not.toMatch(/^#\s+我的笔记/m);
   });
 
-  it("migrates legacy leading h1 into frontmatter title on save", () => {
+  it("keeps no-frontmatter leading h1 as a body heading on save", () => {
     const md = "# Legacy Title\n\nBody here.";
     const html = markdownToEditorHtml(md, "fallback");
     expect(html).toContain('class="iris-doc-title"');
     expect(html).toContain("Legacy Title");
     const out = editorHtmlToMarkdown(html, null);
-    expect(out).toContain('title: "Legacy Title"');
+    expect(out).toContain('title: "fallback"');
+    expect(out).toContain("# Legacy Title");
     expect(out).toContain("Body here");
   });
 

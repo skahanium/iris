@@ -45,7 +45,7 @@ import {
 import { reconcileFragmentsWithSource } from "./fragment-reconcile";
 import { isDangerousHtml } from "./html-safety";
 
-const contractMarked = createMarkedInstance({ gfm: true, breaks: false });
+const contractMarked = createMarkedInstance({ gfm: true, breaks: true });
 
 // ═══════════════════════════════════════════════════════════════════
 // Token Walker & Fragment Builder
@@ -83,7 +83,7 @@ function syntaxKindFromToken(token: Token): MarkdownSyntaxKind | null {
 
 /** Determine if a blockquote is a callout */
 function isCalloutBlockquote(raw: string): boolean {
-  return />\s*\[![a-zA-Z]+\]/.test(raw);
+  return />\s*\[![a-zA-Z][a-zA-Z0-9-]*\]/.test(raw);
 }
 
 /** Determine if an HTML token is a comment */
@@ -440,9 +440,19 @@ export function serializePreservedMarkdown(
   if (!source) return "";
   if (preserveFragments.length === 0) return source;
 
+  const sorted = [...preserveFragments].sort((a, b) => a.offset - b.offset);
+
   const parts: string[] = [];
-  for (const frag of preserveFragments) {
+  let cursor = 0;
+  for (const frag of sorted) {
+    if (frag.offset > cursor) {
+      parts.push(source.slice(cursor, frag.offset));
+    }
     parts.push(frag.raw);
+    cursor = frag.endOffset;
+  }
+  if (cursor < source.length) {
+    parts.push(source.slice(cursor));
   }
   return parts.join("");
 }

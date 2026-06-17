@@ -120,6 +120,16 @@ describe("real TipTap editor markdown round-trip", () => {
     expect(out).toContain("This is a legitimate section heading.");
   });
 
+  it("keeps no-frontmatter leading h1 visible as a body heading", () => {
+    const md = "# Classified Section\n\nBody.";
+
+    const out = normalize(realEditorRoundTrip(md));
+
+    expect(out).toContain('title: "Fallback"');
+    expect(out).toContain("# Classified Section");
+    expect(out).toContain("Body.");
+  });
+
   it("omits transient AI stream nodes from persisted markdown", () => {
     editor = createEditorFromMarkdown('---\ntitle: "AI"\n---\n\nStart.');
     editor.commands.insertAiStreamAtCursor({

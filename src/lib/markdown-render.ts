@@ -45,6 +45,11 @@ function hastToHtml(node: unknown): string {
   return "";
 }
 
+/** Strip inline code spans to avoid counting delimiters inside backtick-wrapped text. */
+function stripInlineCodeSpans(text: string): string {
+  return text.replace(/`{1,2}[^`\n]+`{1,2}/g, "");
+}
+
 /** Count occurrences of a literal delimiter (non-regex). */
 function countDelimiter(text: string, delimiter: string): number {
   let count = 0;
@@ -83,9 +88,20 @@ function countSingleAsterisk(text: string): number {
     if (!trimmed) continue;
     for (let i = 0; i < line.length; i++) {
       if (line[i] === "*" && line[i + 1] !== "*" && line[i - 1] !== "*") {
+        // Mid-word asterisk (e.g. foo*bar) is a literal, not an italic delimiter
+        const prevChar = line[i - 1];
+        const nextChar = line[i + 1];
+        if (
+          prevChar &&
+          nextChar &&
+          /\w/.test(prevChar) &&
+          /\w/.test(nextChar)
+        ) {
+          continue;
+        }
         // Check if this is a list marker: at line start (after optional indent) and followed by space
         const prefix = line.slice(0, i);
-        if (/^\s*$/.test(prefix) && line[i + 1] === " ") {
+        if (/^\s*$/.test(prefix) && nextChar === " ") {
           // This is likely a list marker, skip
           continue;
         }
@@ -145,30 +161,34 @@ export function repairStreamingMarkdown(md: string): string {
   repaired = repairObviousTableRowAtLineEnd(repaired);
 
   // ── close unbalanced delimiters ────────────────────────────
+  // Strip inline code spans before counting so delimiters
+  // inside `code` or ``code`` never trigger false repairs.
+
+  const stripped = stripInlineCodeSpans(repaired);
 
   // Fences
-  const fenceMatches = repaired.match(/```/g);
+  const fenceMatches = stripped.match(/```/g);
   if (fenceMatches && fenceMatches.length % 2 !== 0) {
     repaired += "\n```";
   }
 
   // Bold
-  if (countDelimiter(repaired, "**") % 2 !== 0) {
+  if (countDelimiter(stripped, "**") % 2 !== 0) {
     repaired += "**";
   }
 
   // Strikethrough
-  if (countDelimiter(repaired, "~~") % 2 !== 0) {
+  if (countDelimiter(stripped, "~~") % 2 !== 0) {
     repaired += "~~";
   }
 
   // Italic (_)
-  if (countSingleUnderscore(repaired) % 2 !== 0) {
+  if (countSingleUnderscore(stripped) % 2 !== 0) {
     repaired += "_";
   }
 
   // Italic (*)
-  if (countSingleAsterisk(repaired) % 2 !== 0) {
+  if (countSingleAsterisk(stripped) % 2 !== 0) {
     repaired += "*";
   }
 

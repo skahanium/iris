@@ -3,7 +3,7 @@ import type { PermissionEffectSummary } from "./ai";
 export interface FileListItem {
   path: string;
   title: string;
-  updated_at: string;
+  updatedAt: string;
   isLocked: boolean;
 }
 
@@ -133,6 +133,19 @@ export interface BacklinkEntry {
   source_path: string;
   source_title: string;
   context: string | null;
+}
+
+export interface FileLinkPreview {
+  path: string;
+  title: string;
+  context: string | null;
+}
+
+export interface FileLinkSummary {
+  inboundCount: number;
+  outboundCount: number;
+  inbound: FileLinkPreview[];
+  outbound: FileLinkPreview[];
 }
 
 export interface GraphNode {

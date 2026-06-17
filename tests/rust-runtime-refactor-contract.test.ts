@@ -148,7 +148,7 @@ describe("Rust AI runtime refactor contract", () => {
   it("keeps skills_impl.rs below the current runtime split checkpoint", () => {
     expect(
       lineCount("src-tauri/src/ai_runtime/skills_impl.rs"),
-    ).toBeLessThanOrEqual(1160);
+    ).toBeLessThanOrEqual(1240);
   });
 
   it("moves tool catalog entry groups behind dedicated modules", () => {

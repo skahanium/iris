@@ -32,7 +32,7 @@ pub const DISPATCHABLE_TOOL_NAMES: &[&str] = &[
     "scheduled_task_delete", "web_fetch_batch", "readability_fetch", "rendered_fetch",
     "vault_create_note", "vault_rename_move", "vault_delete_to_trash", "vault_asset_write",
     "vault_version_list", "insert_text_at_cursor", "replace_selection", "skills_list", "skills_install",
-    "skills_uninstall", "skills_update", "skills_toggle", "skills_read_resource", "git_read_status",
+    "skills_prepare_workspace", "skills_uninstall", "skills_update", "skills_toggle", "skills_read_resource", "git_read_status",
     "git_read_diff", "git_read_log", "secret_exists", "fs_import_to_vault", "fs_export",
     "fs_read_authorized_folder", "fs_write_authorized_export", "doc_normalize_markdown",
     "doc_extract_citations", "web_to_markdown", "web_download_to_assets", "web_citation_extract",
@@ -52,6 +52,7 @@ pub struct ToolDispatchContext<'a> {
     pub cold_start_packets: &'a [ContextPacket],
     pub app_handle: Option<tauri::AppHandle>,
     pub attachment_count: usize,
+    pub skill_activation_plan: Option<&'a crate::ai_types::SkillActivationPlanSummary>,
 }
 fn is_retryable_tool_error(tool_name: &str, result: &ToolCallResult) -> bool {
     if result.success {
@@ -149,6 +150,9 @@ async fn dispatch_tool_inner(
         }
         "skills_list" => skills_impl::skills_list_tool(state, ctx).await,
         "skills_install" => skills_impl::skills_install_tool(state, ctx, args).await,
+        "skills_prepare_workspace" => {
+            skills_impl::skills_prepare_workspace_tool(state, ctx, args).await
+        }
         "skills_uninstall" => skills_impl::skills_uninstall_tool(state, ctx, args).await,
         "skills_update" => skills_impl::skills_update_tool(state, ctx, args).await,
         "skills_toggle" => skills_impl::skills_toggle_tool(state, ctx, args).await,
@@ -292,6 +296,7 @@ mod tests {
             cold_start_packets: &[],
             app_handle: None,
             attachment_count: 0,
+            skill_activation_plan: None,
         };
         let result = markdown_impl::markdown_write_patch_apply(
             &state,
@@ -325,6 +330,7 @@ mod tests {
             cold_start_packets: &[],
             app_handle: None,
             attachment_count: 0,
+            skill_activation_plan: None,
         };
         let result = markdown_impl::markdown_write_patch_apply(
             &state,

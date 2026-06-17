@@ -31,6 +31,7 @@ import {
 } from "@/components/ui/select";
 import { TemplateEditor } from "@/components/file/TemplateEditor";
 import {
+  corpusList,
   corpusUpsert,
   fileDelete,
   fileList,
@@ -55,7 +56,7 @@ import {
   type VaultTreeNode,
 } from "@/lib/vault-tree";
 import { cn } from "@/lib/utils";
-import type { FileListItem } from "@/types/ipc";
+import type { CorpusListItem, FileListItem } from "@/types/ipc";
 
 import {
   FolderCreateDialog,
@@ -64,6 +65,7 @@ import {
 } from "./VaultNavigatorDialogs";
 import {
   buildFolderPath,
+  canonicalCorpusKind,
   defaultScenesForKind,
   fileNameFromPath,
   fileParentPath,
@@ -94,7 +96,7 @@ interface CorpusKindOption {
 
 const CORPUS_KIND_OPTIONS: CorpusKindOption[] = [
   {
-    kind: "regulation",
+    kind: "authority",
     title: "法规库",
     description: "制度、条例、办法、条款说明等规范性资料。",
     effect: "法规结构索引会从这里抽取条款，知识查询会优先使用。",
@@ -110,14 +112,60 @@ const CORPUS_KIND_OPTIONS: CorpusKindOption[] = [
     icon: FileStack,
   },
   {
-    kind: "general",
+    kind: "reference",
     title: "通用资料",
     description: "普通知识材料，只登记范围，不绑定专门场景。",
     effect: "可被手动选择为上下文范围，不改变专门索引策略。",
     scenesLabel: "手动选择",
     icon: LibraryBig,
   },
+  {
+    kind: "lookup",
+    title: "查阅资料",
+    description: "低权威或临时资料，可了解其内容，但不应作为依据。",
+    effect:
+      "AI 可摘要其内容，但必须标注仅供查阅，不能据此形成结论或规范性判断。",
+    scenesLabel: "查阅 / 研究",
+    icon: FileText,
+  },
 ];
+CORPUS_KIND_OPTIONS.splice(
+  0,
+  CORPUS_KIND_OPTIONS.length,
+  {
+    kind: "authority",
+    title: "规范依据",
+    description: "法规、制度、政策、纪律条文等必须优先遵循的材料。",
+    effect: "AI 必须优先遵循，可作为结论依据，并在查阅、研究和写作时优先检索。",
+    scenesLabel: "查阅 / 研究 / 写作",
+    icon: Scale,
+  },
+  {
+    kind: "exemplar",
+    title: "范文样本",
+    description: "优秀公文、报告、请示、通知等用于学习写法的材料。",
+    effect: "AI 只学习结构、语气和表达方式，不把其中事实或结论当依据。",
+    scenesLabel: "范文学习 / 写作",
+    icon: FileStack,
+  },
+  {
+    kind: "reference",
+    title: "参考资料",
+    description: "背景材料、调研材料、说明资料等可作为背景参考的材料。",
+    effect: "AI 可查询、摘要和引用为背景参考，但不能当作规范遵循。",
+    scenesLabel: "查阅 / 研究",
+    icon: LibraryBig,
+  },
+  {
+    kind: "lookup",
+    title: "查阅资料",
+    description: "低权威或临时资料，可了解其内容，但不应作为依据。",
+    effect:
+      "AI 可摘要其内容，但必须标注仅供查阅，不能据此形成结论或规范性判断。",
+    scenesLabel: "查阅 / 研究",
+    icon: FileText,
+  },
+);
 const DEFAULT_CORPUS_KIND_OPTION = CORPUS_KIND_OPTIONS[0]!;
 
 function TreeFolder({
@@ -191,6 +239,7 @@ export function VaultNavigatorBody({
 }: VaultNavigatorProps) {
   const [files, setFiles] = useState<FileListItem[]>([]);
   const [folders, setFolders] = useState<string[]>([]);
+  const [corpora, setCorpora] = useState<CorpusListItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [newName, setNewName] = useState("未命名文档.md");
@@ -208,7 +257,7 @@ export function VaultNavigatorBody({
   );
   const [selectedFolder, setSelectedFolder] = useState("");
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
-  const [corpusKind, setCorpusKind] = useState<CorpusKind>("regulation");
+  const [corpusKind, setCorpusKind] = useState<CorpusKind>("authority");
   const [corpusSaving, setCorpusSaving] = useState(false);
   const [folderCreateOpen, setFolderCreateOpen] = useState(false);
   const [folderCreateParent, setFolderCreateParent] = useState("");
@@ -255,10 +304,11 @@ export function VaultNavigatorBody({
   const refresh = useCallback(() => {
     setLoading(true);
     setError(null);
-    void Promise.all([fileList(), folderList()])
-      .then(([nextFiles, nextFolders]) => {
+    void Promise.all([fileList(), folderList(), corpusList()])
+      .then(([nextFiles, nextFolders, nextCorpora]) => {
         setFiles(nextFiles);
         setFolders(nextFolders);
+        setCorpora(nextCorpora);
       })
       .catch((e) =>
         setError(e instanceof Error ? e.message : "加载文件列表失败"),
@@ -278,6 +328,18 @@ export function VaultNavigatorBody({
     setSelectedFilePaths(new Set());
     setBatchMode(false);
   }, [selectedFolder]);
+
+  useEffect(() => {
+    if (!selectedFolder) {
+      setCorpusKind("authority");
+      return;
+    }
+    const prefix = normalizeFolderPrefix(selectedFolder);
+    const saved = corpora.find(
+      (entry) => normalizeFolderPrefix(entry.pathPrefix) === prefix,
+    );
+    setCorpusKind(canonicalCorpusKind(saved?.kind ?? "authority"));
+  }, [corpora, selectedFolder]);
 
   useEffect(() => {
     setSelectedFilePaths((prev) => {
@@ -469,6 +531,7 @@ export function VaultNavigatorBody({
         scenes: defaultScenesForKind(kind),
       });
       await knowledgeReindex();
+      setCorpora(await corpusList());
     } catch (e) {
       setError(e instanceof Error ? e.message : "设置语料库失败");
     } finally {
@@ -700,6 +763,7 @@ export function VaultNavigatorBody({
                   <Button
                     type="button"
                     size="sm"
+                    data-testid="corpus-confirm-button"
                     className="h-8 px-2.5 text-xs"
                     onClick={() => void handleSetCorpus(corpusKind)}
                     disabled={corpusSaving}

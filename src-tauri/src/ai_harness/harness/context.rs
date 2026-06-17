@@ -82,7 +82,8 @@ pub(crate) fn prepare_environment_and_skills_with_plan(
         )?;
         let enabled_skills =
             active_skills_for_prompt(&vault, input.scene, Some(&state.db), input.user_message)?;
-        let skills_prompt = inject_into_prompt(&enabled_skills, input.scene, input.user_message);
+        let skills_prompt =
+            inject_into_prompt(&vault, &enabled_skills, input.scene, input.user_message);
         return Ok((env_text, skills_prompt));
     }
     let vault = state.vault_path()?;
@@ -111,7 +112,7 @@ pub(crate) fn prepare_environment_and_skills_with_plan(
             })
         })
         .collect();
-    let skills_prompt = inject_into_prompt(&selected, input.scene, input.user_message);
+    let skills_prompt = inject_into_prompt(&vault, &selected, input.scene, input.user_message);
     Ok((env_text, skills_prompt))
 }
 

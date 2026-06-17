@@ -27,7 +27,7 @@ describe("ToolConfirmDialog", () => {
     host.remove();
   });
 
-  it("shows patch review metadata for markdown write tools", async () => {
+  it("renders markdown writes as a compact permission card", async () => {
     await act(async () => {
       root.render(
         <ToolConfirmDialog
@@ -47,13 +47,15 @@ describe("ToolConfirmDialog", () => {
       );
     });
 
-    expect(document.body.textContent).toContain("Patch 审阅");
-    expect(document.body.textContent).toContain("base_content_hash");
-    expect(document.body.textContent).toContain("abc123");
-    expect(document.body.textContent).toContain("medium");
+    expect(document.body.textContent).toContain("修改笔记");
+    expect(document.body.textContent).toContain("当前选区");
+    expect(document.body.textContent).toContain("会直接修改当前笔记内容。");
+    expect(document.body.textContent).not.toContain("Patch 审阅");
+    expect(document.body.textContent).not.toContain("base_content_hash");
+    expect(document.body.textContent).not.toContain("调用参数");
   });
 
-  it("shows skills_install preview when registry preview is present", async () => {
+  it("renders skill installs without raw tool details", async () => {
     await act(async () => {
       root.render(
         <ToolConfirmDialog
@@ -69,6 +71,7 @@ describe("ToolConfirmDialog", () => {
             },
             preview: {
               display_name: "Scrapling",
+              target_install_dir: "D:/vault/.iris/skills",
               resolved_source: "url",
               resolved_url:
                 "https://api.skillhub.tencent.com/api/v1/skills/scrapling/file?path=SKILL.md",
@@ -80,12 +83,18 @@ describe("ToolConfirmDialog", () => {
       );
     });
 
-    expect(document.body.textContent).toContain("安装预览");
+    expect(document.body.textContent).toContain("安装 Skill");
     expect(document.body.textContent).toContain("Scrapling");
-    expect(document.body.textContent).toContain("skillhub.tencent.com");
+    expect(document.body.textContent).toContain("D:/vault/.iris/skills");
+    expect(document.body.textContent).toContain(
+      "会把 Skill 安装到指定目录，并在当前会话中可用。",
+    );
+    expect(document.body.textContent).not.toContain("skills_install");
+    expect(document.body.textContent).not.toContain("resolved_url");
+    expect(document.body.textContent).not.toContain("调用参数");
   });
 
-  it("shows permission effects with risk, scope, and reversible path", async () => {
+  it("renders web fetches as a short user-facing approval", async () => {
     await act(async () => {
       root.render(
         <ToolConfirmDialog
@@ -112,11 +121,19 @@ describe("ToolConfirmDialog", () => {
       );
     });
 
-    expect(document.body.textContent).toContain("权限影响");
-    expect(document.body.textContent).toContain("web.fetch");
-    expect(document.body.textContent).toContain("medium");
-    expect(document.body.textContent).toContain("request");
-    expect(document.body.textContent).toContain("domain: example.com");
-    expect(document.body.textContent).toContain("删除本轮网页缓存和引用草稿");
+    expect(document.body.textContent).toContain("读取网页内容");
+    expect(document.body.textContent).toContain("example.com");
+    expect(document.body.textContent).toContain("/docs/phase5");
+    expect(document.body.textContent).toContain(
+      "会向该网站发送一次请求，网页内容会进入当前对话。",
+    );
+    expect(document.body.textContent).toContain("拒绝");
+    expect(document.body.textContent).toContain("允许");
+    expect(document.body.textContent).not.toContain("权限影响");
+    expect(document.body.textContent).not.toContain("web.fetch");
+    expect(document.body.textContent).not.toContain("medium");
+    expect(document.body.textContent).not.toContain("request");
+    expect(document.body.textContent).not.toContain("修改参数");
+    expect(document.body.textContent).not.toContain("调用参数");
   });
 });

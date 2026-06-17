@@ -1,9 +1,30 @@
 import { Mark, mergeAttributes, type RawCommands } from "@tiptap/core";
+import { ReactRenderer } from "@tiptap/react";
+import Suggestion, {
+  type SuggestionMatch,
+  type SuggestionProps,
+  type Trigger,
+} from "@tiptap/suggestion";
 import { Plugin, PluginKey } from "@tiptap/pm/state";
+import tippy, { type Instance as TippyInstance } from "tippy.js";
+
+import { fileList } from "@/lib/ipc";
+import {
+  buildWikiLinkSuggestionItems,
+  filterWikiLinkSuggestionItems,
+  findWikiLinkSuggestionMatch,
+  type WikiLinkSuggestionItem,
+} from "@/lib/wiki-link-suggestions";
+
+import {
+  WikiLinkSuggestionList,
+  type WikiLinkSuggestionListRef,
+} from "../WikiLinkSuggestionList";
 
 export interface WikiLinkOptions {
   HTMLAttributes: Record<string, unknown>;
   onOpenNote?: (title: string) => void;
+  getSuggestions?: () => Promise<WikiLinkSuggestionItem[]>;
 }
 
 declare module "@tiptap/core" {
@@ -27,6 +48,8 @@ export const WikiLinkExtension = Mark.create<WikiLinkOptions>({
     return {
       HTMLAttributes: {},
       onOpenNote: undefined,
+      getSuggestions: async () =>
+        buildWikiLinkSuggestionItems(await fileList()),
     };
   },
 
@@ -80,6 +103,20 @@ export const WikiLinkExtension = Mark.create<WikiLinkOptions>({
 
   addProseMirrorPlugins() {
     const onOpenNote = this.options.onOpenNote;
+    const getSuggestions =
+      this.options.getSuggestions ??
+      (async () => buildWikiLinkSuggestionItems(await fileList()));
+    let cachedSuggestions: WikiLinkSuggestionItem[] | null = null;
+
+    const loadSuggestions = async () => {
+      if (cachedSuggestions) return cachedSuggestions;
+      try {
+        cachedSuggestions = await getSuggestions();
+      } catch {
+        cachedSuggestions = [];
+      }
+      return cachedSuggestions;
+    };
 
     return [
       new Plugin({
@@ -98,6 +135,135 @@ export const WikiLinkExtension = Mark.create<WikiLinkOptions>({
             }
             return false;
           },
+        },
+      }),
+      new Plugin({
+        key: new PluginKey("wikiLinkFullWidthTrigger"),
+        appendTransaction: (transactions, _oldState, newState) => {
+          if (!transactions.some((transaction) => transaction.docChanged)) {
+            return null;
+          }
+
+          const { selection } = newState;
+          if (!selection.empty) return null;
+
+          const $from = selection.$from;
+          if ($from.parent.type.name === "codeBlock") return null;
+
+          const textBeforeCursor = $from.parent.textBetween(
+            0,
+            $from.parentOffset,
+            undefined,
+            "\ufffc",
+          );
+          if (!textBeforeCursor.endsWith("【【")) return null;
+
+          return newState.tr.insertText(
+            "[[",
+            selection.from - 2,
+            selection.from,
+          );
+        },
+      }),
+      Suggestion<WikiLinkSuggestionItem, WikiLinkSuggestionItem>({
+        editor: this.editor,
+        pluginKey: new PluginKey("wikiLinkSuggestion"),
+        char: "[[",
+        allowSpaces: true,
+        allow: ({ editor, state, range }) => {
+          if (!editor.isEditable) return false;
+          const $from = state.doc.resolve(range.from);
+          return $from.parent.type.name !== "codeBlock";
+        },
+        findSuggestionMatch: ({ $position }: Trigger): SuggestionMatch => {
+          const textBeforeCursor = $position.parent.textBetween(
+            0,
+            $position.parentOffset,
+            undefined,
+            "\ufffc",
+          );
+          const match = findWikiLinkSuggestionMatch(textBeforeCursor);
+          if (!match) return null;
+
+          return {
+            range: {
+              from: $position.pos - match.text.length,
+              to: $position.pos,
+            },
+            query: match.query,
+            text: match.text,
+          };
+        },
+        items: async ({ query }) =>
+          filterWikiLinkSuggestionItems(await loadSuggestions(), query),
+        command: ({ editor, range, props }) => {
+          editor
+            .chain()
+            .focus()
+            .deleteRange(range)
+            .insertContentAt(range.from, {
+              type: "text",
+              marks: [{ type: this.name, attrs: { title: props.title } }],
+              text: props.title,
+            })
+            .run();
+        },
+        render: () => {
+          let component: ReactRenderer<WikiLinkSuggestionListRef> | null = null;
+          let popup: TippyInstance[] | null = null;
+
+          return {
+            onStart: (props: SuggestionProps<WikiLinkSuggestionItem>) => {
+              component = new ReactRenderer(WikiLinkSuggestionList, {
+                props: {
+                  items: props.items,
+                  command: props.command,
+                },
+                editor: props.editor,
+              });
+
+              if (!props.clientRect) return;
+
+              popup = tippy("body", {
+                getReferenceClientRect: props.clientRect as () => DOMRect,
+                appendTo: () => document.body,
+                content: component.element,
+                showOnCreate: true,
+                interactive: true,
+                trigger: "manual",
+                theme: "iris-suggestion",
+                arrow: false,
+                maxWidth: "none",
+                offset: [0, 6],
+                placement: "bottom-start",
+              });
+            },
+            onUpdate(props: SuggestionProps<WikiLinkSuggestionItem>) {
+              component?.updateProps({
+                items: props.items,
+                command: props.command,
+              });
+              if (props.clientRect && popup?.[0]) {
+                popup[0].setProps({
+                  getReferenceClientRect: props.clientRect as () => DOMRect,
+                });
+              }
+            },
+            onKeyDown(props: { event: KeyboardEvent }) {
+              if (props.event.key === "Escape") {
+                popup?.[0]?.hide();
+                return true;
+              }
+              return component?.ref?.onKeyDown(props) ?? false;
+            },
+            onExit() {
+              cachedSuggestions = null;
+              popup?.[0]?.destroy();
+              component?.destroy();
+              popup = null;
+              component = null;
+            },
+          };
         },
       }),
     ];

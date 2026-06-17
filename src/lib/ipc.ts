@@ -28,6 +28,7 @@ import type {
   ClassifiedFileTakenEvent,
   FileChangedEvent,
   FileEntry,
+  FileLinkSummary,
   FileListItem,
   ClassifiedFileEntry,
   ClassifiedStatus,
@@ -233,6 +234,10 @@ export async function pathSyncSuggest(
 
 export async function fileBacklinks(path: string): Promise<BacklinkEntry[]> {
   return invoke<BacklinkEntry[]>("file_backlinks", { path });
+}
+
+export async function fileLinkSummary(path: string): Promise<FileLinkSummary> {
+  return invoke<FileLinkSummary>("file_link_summary", { path });
 }
 
 export async function folderCreate(path: string): Promise<void> {
@@ -697,6 +702,9 @@ export interface SkillListEntryDto {
   requestedCapabilities?: SkillRuntimeCapability[];
   blockedCapabilities?: BlockedCapabilitySummary[];
   compatibilityWarnings?: string[];
+  workspaceRoot?: string;
+  workspaceReady?: boolean;
+  workspaceMissingItems?: string[];
   availability: "available" | "partial" | "unavailable" | "disabled" | string;
 }
 
@@ -709,15 +717,24 @@ export interface PromptProfileDto {
   language: string;
 }
 
+export interface SkillsPathsDto {
+  global: string;
+  vault: string;
+}
+
 export async function skillsList(
   scene?: AiScene,
 ): Promise<SkillListEntryDto[]> {
   return invoke<SkillListEntryDto[]>("skills_list", { scene: scene ?? null });
 }
 
+export async function skillsPaths(): Promise<SkillsPathsDto> {
+  return invoke<SkillsPathsDto>("skills_paths");
+}
+
 export async function skillsReadResource(request: {
   name: string;
-  scope: string;
+  scope?: string;
   relative_path: string;
 }): Promise<string> {
   return invoke<string>("skills_read_resource", { request });
@@ -726,12 +743,21 @@ export async function skillsReadResource(request: {
 export async function skillsInstall(request: {
   source: string;
   path_or_url: string;
-  scope: string;
+  scope?: string;
   subpath?: string;
   registry?: string;
   expected_sha256?: string;
 }): Promise<unknown> {
   return invoke("skills_install", { request });
+}
+
+export async function skillsPrepareWorkspace(
+  name: string,
+  scope?: string,
+): Promise<unknown> {
+  return invoke("skills_prepare_workspace", {
+    request: { name, scope: scope ?? null },
+  });
 }
 
 export async function skillsUninstall(

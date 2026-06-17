@@ -57,7 +57,7 @@ export function useOpenNote({
   /** Parsed body for TipTap on disk/tab load only — not on layer-1 save (`setMarkdown` must not remount editor). */
   const editorBodyMarkdown = useMemo(() => {
     if (!activePath) return "";
-    return parseNoteForEditor(markdownRef.current, "").bodyMd;
+    return parseNoteForEditor(markdownRef.current, pathStem(activePath)).bodyMd;
     // eslint-disable-next-line react-hooks/exhaustive-deps -- editorContentTick = disk load; omit `markdown` so save does not call setContent
   }, [activePath, editorContentTick, markdownRef]);
 
@@ -65,7 +65,7 @@ export function useOpenNote({
   const pathSyncGenRef = useRef(0);
   const syncFromMarkdown = useCallback(
     (md: string, _path: string) => {
-      const parsed = parseNoteForEditor(md, "");
+      const parsed = parseNoteForEditor(md, pathStem(_path));
       frontmatterYamlRef.current = parsed.yaml;
       setNoteTitle(parsed.title);
       setBodyMarkdown(parsed.bodyMd);
@@ -106,7 +106,7 @@ export function useOpenNote({
       frontmatterYamlRef.current = extractFrontmatterYaml(md);
       const path = activePathRef.current;
       if (path) {
-        const parsed = parseNoteForEditor(md, "");
+        const parsed = parseNoteForEditor(md, pathStem(path));
         setNoteTitle(parsed.title);
       }
     },
@@ -192,7 +192,7 @@ export function useOpenNote({
       const path = activePathRef.current;
       if (!path) return;
       syncFromMarkdown(content, path);
-      const parsed = parseNoteForEditor(content, "");
+      const parsed = parseNoteForEditor(content, pathStem(path));
       if (editorRef.current) {
         const { tipTapHtml } = ingestMarkdownForEditor({
           bodyMarkdown: parsed.bodyMd,

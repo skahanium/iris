@@ -55,6 +55,7 @@ pub(super) fn search_graph_neighbors(
                 citation_label: format!("[L{i}]"),
                 stale: false,
                 web: None,
+                corpus: None,
             },
         )
         .collect();

@@ -99,7 +99,7 @@ export function AppEditorWorkspace({
       data-testid="editor-shell"
       className={cn(
         "relative flex min-h-0 flex-1 flex-col",
-        outlineOpen && activePath && "iris-editor-outline-open",
+        outlineOpen && !zen && activePath && "iris-editor-outline-open",
       )}
     >
       {activePath && !homeActive ? (
@@ -133,6 +133,8 @@ export function AppEditorWorkspace({
           <EditorOutline
             editor={editorInstance}
             open={outlineOpen}
+            notePath={activePath}
+            onOpenNote={openNoteLeavingHome}
             locked={activeFileLocked}
             zen={zen}
             onOpenChange={onOutlineOpenChange}

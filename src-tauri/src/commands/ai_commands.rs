@@ -970,11 +970,29 @@ pub async fn skills_list(
     crate::ai_runtime::skill_install_service::list_skills(&state.db, &vault, scene)
 }
 
+#[derive(Debug, Serialize)]
+pub struct SkillsPathsResponse {
+    pub global: String,
+    pub vault: String,
+}
+
+/// Return resolved global and vault skill installation directories.
+#[tauri::command]
+pub async fn skills_paths(state: State<'_, Arc<AppState>>) -> AppResult<SkillsPathsResponse> {
+    use crate::ai_runtime::skills::{global_skills_dir, vault_skills_dir};
+
+    let vault = state.vault_path()?;
+    Ok(SkillsPathsResponse {
+        global: global_skills_dir().to_string_lossy().into_owned(),
+        vault: vault_skills_dir(&vault).to_string_lossy().into_owned(),
+    })
+}
+
 #[derive(Debug, serde::Deserialize)]
 pub struct SkillsInstallRequest {
     pub source: String,
     pub path_or_url: String,
-    pub scope: String,
+    pub scope: Option<String>,
     pub subpath: Option<String>,
     pub registry: Option<String>,
     pub expected_sha256: Option<String>,
@@ -988,7 +1006,7 @@ pub async fn skills_install(
     request: SkillsInstallRequest,
 ) -> AppResult<serde_json::Value> {
     use crate::ai_runtime::skill_install_service::{
-        install_skill, parse_scope, SkillInstallRequest,
+        install_skill, normalize_skill_scope_arg, SkillInstallRequest,
     };
     use crate::ai_runtime::skill_registry::SkillInstallSource;
 
@@ -998,13 +1016,40 @@ pub async fn skills_install(
     let req = SkillInstallRequest {
         source,
         path_or_url: request.path_or_url,
-        scope: parse_scope(&request.scope),
+        scope: normalize_skill_scope_arg(request.scope.as_deref()),
         subpath: request.subpath,
         registry: request.registry,
         expected_sha256: request.expected_sha256,
     };
     let entry = install_skill(&state.db, &vault, Some(&app_handle), req).await?;
     Ok(serde_json::to_value(entry).unwrap_or_default())
+}
+
+#[derive(Debug, serde::Deserialize)]
+pub struct SkillsPrepareWorkspaceRequest {
+    pub name: String,
+    pub scope: Option<String>,
+}
+
+#[tauri::command]
+pub async fn skills_prepare_workspace(
+    state: State<'_, Arc<AppState>>,
+    app_handle: tauri::AppHandle,
+    request: SkillsPrepareWorkspaceRequest,
+) -> AppResult<serde_json::Value> {
+    use crate::ai_runtime::skill_install_service::{
+        normalize_skill_scope_arg, prepare_skill_workspace,
+    };
+
+    let vault = state.vault_path()?;
+    let result = prepare_skill_workspace(
+        &vault,
+        Some(&state.db),
+        Some(&app_handle),
+        &request.name,
+        normalize_skill_scope_arg(request.scope.as_deref()),
+    )?;
+    Ok(serde_json::to_value(result).unwrap_or_default())
 }
 
 #[tauri::command]
@@ -1171,7 +1216,7 @@ pub async fn harness_abort(state: State<'_, Arc<AppState>>, request_id: String) 
 #[derive(Debug, serde::Deserialize)]
 pub struct SkillsReadResourceRequest {
     pub name: String,
-    pub scope: String,
+    pub scope: Option<String>,
     pub relative_path: String,
 }
 
@@ -1181,13 +1226,13 @@ pub async fn skills_read_resource(
     state: State<'_, Arc<AppState>>,
     request: SkillsReadResourceRequest,
 ) -> AppResult<String> {
-    use crate::ai_runtime::skill_install_service::parse_scope;
+    use crate::ai_runtime::skill_install_service::normalize_skill_scope_arg;
     use crate::ai_runtime::skills::read_skill_resource;
     let vault = state.vault_path()?;
     read_skill_resource(
         &vault,
         &request.name,
-        parse_scope(&request.scope),
+        normalize_skill_scope_arg(request.scope.as_deref()),
         &request.relative_path,
     )
 }
