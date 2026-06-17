@@ -10,6 +10,7 @@ import {
   organizeApply as defaultOrganizeApply,
   patchApply as defaultPatchApply,
 } from "@/lib/ipc";
+import { utf8ByteRangeToStringRange } from "@/lib/utf8-range";
 import type {
   CitationCheckResult,
   OrganizeSuggestion,
@@ -99,8 +100,15 @@ export function useAssistantArtifacts({
           throw new Error(result.error ?? "补丁应用失败");
         }
         const noteContent = getNoteContent();
-        const before = noteContent.slice(0, patch.range.start);
-        const after = noteContent.slice(patch.range.end);
+        const stringRange = utf8ByteRangeToStringRange(
+          noteContent,
+          patch.range,
+        );
+        if (!stringRange) {
+          throw new Error("补丁范围不是有效的 UTF-8 字节边界");
+        }
+        const before = noteContent.slice(0, stringRange.start);
+        const after = noteContent.slice(stringRange.end);
         onPatchApplied?.(before + patch.replacement_text + after);
         setWritingPatches((prev) =>
           prev.filter((item) => item.id !== patch.id),

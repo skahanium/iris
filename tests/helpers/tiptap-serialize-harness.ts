@@ -18,6 +18,7 @@ import {
   FootnoteDefExtension,
   FootnoteRefExtension,
 } from "@/components/editor/extensions/FootnoteExtension";
+import { ImeCompositionGuardExtension } from "@/components/editor/extensions/ImeCompositionGuardExtension";
 import { IrisParagraphExtension } from "@/components/editor/extensions/IrisParagraphExtension";
 import { IrisDocument } from "@/components/editor/extensions/IrisDocument";
 import { LinkExtension } from "@/components/editor/extensions/LinkExtension";
@@ -45,6 +46,7 @@ function productionExtensions(vaultPath: string | null = null) {
         HTMLAttributes: { class: "iris-section-heading" },
       },
     }),
+    ImeCompositionGuardExtension,
     IrisParagraphExtension,
     ListIndentKeymapExtension,
     FindHighlightExtension,

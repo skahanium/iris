@@ -141,4 +141,36 @@ describe("useTabManager activateTab / openNote", () => {
     expect(fileRead).toHaveBeenCalledTimes(1);
     expect(apiRef.current!.activePath).toBe("a.md");
   });
+
+  it("discards an externally deleted open tab without persisting the deleted path", async () => {
+    const persistBeforeLeave = vi.fn().mockResolvedValue("saved");
+    const apiRef: { current: ReturnType<typeof useTabManager> | null } = {
+      current: null,
+    };
+
+    function PersistHarness() {
+      const api = useTabManager({ persistBeforeLeave });
+      apiRef.current = api;
+      return null;
+    }
+
+    await act(async () => {
+      root.render(createElement(PersistHarness));
+    });
+
+    await act(async () => {
+      await apiRef.current!.openFile("a.md", "A");
+      await apiRef.current!.openFile("b.md", "B");
+      await apiRef.current!.activateTab("a.md");
+    });
+    persistBeforeLeave.mockClear();
+
+    await act(async () => {
+      await apiRef.current!.discardOpenTab("a.md");
+    });
+
+    expect(persistBeforeLeave).not.toHaveBeenCalledWith("a.md");
+    expect(apiRef.current!.tabs.map((tab) => tab.path)).toEqual(["b.md"]);
+    expect(apiRef.current!.activePath).toBe("b.md");
+  });
 });

@@ -215,6 +215,53 @@ describe("useAssistantArtifacts", () => {
     expect(api.writingPatches).toEqual([]);
   });
 
+  it("applies backend UTF-8 byte ranges without corrupting Chinese content", async () => {
+    const chinesePatch: PatchProposal = {
+      ...patchOne,
+      id: "patch-chinese",
+      range: {
+        start: new TextEncoder().encode("甲").length,
+        end: new TextEncoder().encode("甲乙").length,
+      },
+      original_text: "乙",
+      replacement_text: "B",
+    };
+
+    function ChineseHarness({ onReady }: { onReady: (api: HookApi) => void }) {
+      const api = useAssistantArtifacts({
+        getNoteContent: () => "甲乙丙",
+        onPatchApplied,
+        deps: {
+          patchApply,
+          organizeApply,
+        },
+      });
+      onReady(api);
+      return null;
+    }
+
+    await act(async () => {
+      root.render(
+        createElement(ChineseHarness, {
+          onReady: (value) => {
+            api = value;
+          },
+        }),
+      );
+    });
+
+    await act(async () => {
+      api.setWritingPatches([chinesePatch]);
+    });
+
+    await act(async () => {
+      await api.handleAcceptPatch(chinesePatch);
+    });
+
+    expect(onPatchApplied).toHaveBeenCalledWith("甲B丙");
+    expect(api.writingPatches).toEqual([]);
+  });
+
   it("applies only selected organize suggestions and refreshes the vault", async () => {
     await act(async () => {
       api.setOrganizeSuggestions([suggestionOne, suggestionTwo]);

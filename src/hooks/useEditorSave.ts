@@ -154,6 +154,10 @@ export function useEditorSave(
     debouncedSave.cancel();
   }, [debouncedSave]);
 
+  const awaitSaveInFlight = useCallback(async (): Promise<void> => {
+    await saveInFlightRef.current;
+  }, []);
+
   const getLastSavedSnapshot = useCallback(
     () => lastSavedSnapshotRef.current,
     [],
@@ -164,6 +168,7 @@ export function useEditorSave(
     flushSave,
     flushSaveForPath,
     cancelPendingSave,
+    awaitSaveInFlight,
     getLastSavedSnapshot,
   };
 }

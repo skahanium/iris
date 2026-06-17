@@ -22,6 +22,10 @@ import { Button } from "@/components/ui/button";
 import { useAppKeyboard } from "@/hooks/useAppKeyboard";
 import { useAiSidecarBridge } from "@/hooks/useAiSidecarBridge";
 import { useAutoVersionSettings } from "@/hooks/useAutoVersionSettings";
+import {
+  useCurrentFileChangeListener,
+  type ConflictState,
+} from "@/hooks/useCurrentFileChangeListener";
 import { useAppShortcuts } from "@/hooks/useAppShortcuts";
 import { useAppEditorActions } from "@/hooks/useAppEditorActions";
 import {
@@ -32,6 +36,7 @@ import { useClassifiedVaultSession } from "@/hooks/useClassifiedVaultSession";
 import { useEditorContextMenu } from "@/hooks/useEditorContextMenu";
 import { useAutoVaultIndex } from "@/hooks/useAutoVaultIndex";
 import { useOpenNote } from "@/hooks/useOpenNote";
+import { useNavigatorFileLifecycle } from "@/hooks/useNavigatorFileLifecycle";
 import { useEditorZoom } from "@/hooks/useEditorZoom";
 import { useEditorStats } from "@/hooks/useEditorStats";
 import { useInlineAi } from "@/hooks/useInlineAi";
@@ -46,10 +51,8 @@ import { useVault } from "@/hooks/useVault";
 import { displayTitleForChrome } from "@/lib/note-display";
 import { isClassifiedVaultPath } from "@/lib/classified-path";
 import {
-  fileRead,
   fileSetLock,
   listenClassifiedFileTaken,
-  listenFileChanged,
   listenVersionSaveComplete,
 } from "@/lib/ipc";
 import { formatVersionSaveStatus } from "@/lib/version-save-status";
@@ -89,12 +92,9 @@ function App() {
   const { vaultPath, loading, pickVault, error: vaultError } = useVault();
   const { theme, setTheme } = useTheme();
   const [aiStatus, setAiStatus] = useState("AI 空闲");
-  const [conflictState, setConflictState] = useState<{
-    open: boolean;
-    localContent: string;
-    externalContent: string;
-    filePath: string;
-  } | null>(null);
+  const [conflictState, setConflictState] = useState<ConflictState | null>(
+    null,
+  );
   const { editorStats, updateEditorStats, resetEditorStats } = useEditorStats();
   const [homeActive, setHomeActive] = useState(false);
   const [zen, setZen] = useState(false);
@@ -153,6 +153,7 @@ function App() {
     openNote,
     activateTab,
     closeTab,
+    discardOpenTab,
     handleNewNote,
     markDirty,
     markClean,
@@ -259,6 +260,8 @@ function App() {
   const {
     notifyDirty,
     flushSave,
+    cancelPendingSave,
+    awaitSaveInFlight,
     resetVersionIdle,
     handleSaveNote,
     versionSnapshotScheduler,
@@ -284,6 +287,25 @@ function App() {
     tabsRef,
   });
 
+  const {
+    handleBeforeFilePathChange,
+    handleFilePathChanged,
+    handleBeforeFileDelete,
+    handleFileDeleted,
+  } = useNavigatorFileLifecycle({
+    activePathRef,
+    awaitSaveInFlight,
+    bumpVaultIndex,
+    cancelPendingSave,
+    discardOpenTab,
+    getTabMarkdownCached,
+    markClean,
+    markdownRef,
+    persistBeforeLeaveRef,
+    replaceOpenTabPath,
+    tabsRef,
+  });
+
   useEffect(() => {
     if (!isTauriRuntime()) return;
     let unlisten: (() => void) | undefined;
@@ -298,38 +320,15 @@ function App() {
     };
   }, [activePathRef]);
 
-  // Listen for external file changes and show conflict dialog
-  useEffect(() => {
-    if (!isTauriRuntime()) return;
-    let unlisten: (() => void) | undefined;
-    void listenFileChanged((event) => {
-      const currentPath = activePathRef.current;
-      if (!currentPath || event.path !== currentPath) return;
-      if (event.event_type === "removed") return;
-      // External change detected on the currently open file
-      void fileRead(event.path)
-        .then(({ content: externalContent }) => {
-          const localContent = getLiveMarkdownRef.current();
-          // Only show conflict if content actually differs
-          if (externalContent !== localContent) {
-            setConflictState({
-              open: true,
-              localContent,
-              externalContent,
-              filePath: event.path,
-            });
-          }
-        })
-        .catch((err: unknown) => {
-          console.warn("[App] failed to read external file for conflict:", err);
-        });
-    }).then((fn) => {
-      unlisten = fn;
-    });
-    return () => {
-      unlisten?.();
-    };
-  }, [activePathRef, getLiveMarkdownRef]);
+  useCurrentFileChangeListener({
+    activePathRef,
+    awaitSaveInFlight,
+    bumpVaultIndex,
+    cancelPendingSave,
+    discardOpenTab,
+    getLiveMarkdownRef,
+    setConflictState,
+  });
 
   useEffect(() => {
     if (!isTauriRuntime()) return;
@@ -382,8 +381,11 @@ function App() {
     async (locked: boolean) => {
       const path = activePathRef.current;
       if (!path || isClassifiedVaultPath(path)) return;
-      setFileLocked(path, locked);
       try {
+        if (locked) {
+          await flushSave();
+        }
+        setFileLocked(path, locked);
         await fileSetLock(path, locked);
       } catch (err: unknown) {
         setFileLocked(path, !locked);
@@ -391,7 +393,7 @@ function App() {
         setAiStatus(`锁定状态保存失败：${msg}`);
       }
     },
-    [activePathRef, setFileLocked],
+    [activePathRef, flushSave, setFileLocked],
   );
 
   const handleConflictKeepLocal = useCallback(() => {
@@ -837,6 +839,10 @@ function App() {
             handleConflictKeepLocal={handleConflictKeepLocal}
             handleConflictManualEdit={handleConflictManualEdit}
             markdown={markdown}
+            onBeforeFilePathChange={handleBeforeFilePathChange}
+            onFilePathChanged={handleFilePathChanged}
+            onBeforeFileDelete={handleBeforeFileDelete}
+            onFileDeleted={handleFileDeleted}
             onClassifiedUnlocked={onClassifiedUnlocked}
             openClassifiedPaths={openClassifiedPaths}
             openNoteLeavingHome={openNoteLeavingHome}

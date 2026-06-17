@@ -11,6 +11,41 @@ import {
   pmSerializeBody,
 } from "./helpers/tiptap-serialize-harness";
 
+function typeTextThroughInputRules(
+  editor: ReturnType<typeof createProductionEditorFromIngestedBody>,
+  text: string,
+): void {
+  for (const ch of text) {
+    const { from, to } = editor.state.selection;
+    let handled = false;
+    editor.view.someProp("handleTextInput", (handler) => {
+      if (handler(editor.view, from, to, ch, () => editor.state.tr)) {
+        handled = true;
+        return true;
+      }
+      return false;
+    });
+    if (!handled) {
+      editor.commands.insertContent(ch);
+    }
+  }
+}
+
+function pressEnter(
+  editor: ReturnType<typeof createProductionEditorFromIngestedBody>,
+): void {
+  editor.view.focus();
+  editor.view.dom.dispatchEvent(
+    new KeyboardEvent("keydown", {
+      key: "Enter",
+      code: "Enter",
+      keyCode: 13,
+      bubbles: true,
+      cancelable: true,
+    }),
+  );
+}
+
 describe("editorDocToMarkdown (prosemirror-markdown hot path)", () => {
   afterEach(() => {
     vi.restoreAllMocks();
@@ -186,6 +221,103 @@ describe("editorDocToMarkdown (prosemirror-markdown hot path)", () => {
     }
   });
 
+  it("does not amplify blank lines across headings, tasks, tables, and callouts", () => {
+    const body = [
+      "# Heading",
+      "",
+      "Paragraph A.",
+      "",
+      "- [x] Done",
+      "- [ ] Todo",
+      "",
+      "| A | B |",
+      "| --- | --- |",
+      "| 1 | 2 |",
+      "",
+      "> [!note] Info",
+      "> Body.",
+      "",
+      "Paragraph B.",
+    ].join("\n");
+    const editor = createProductionEditorFromIngestedBody(body);
+    try {
+      const md = pmSerializeBody(editor).replace(/\r\n/g, "\n");
+      expect(md).toContain("# Heading");
+      expect(md).toContain("- [x] Done");
+      expect(md).toContain("| A | B |");
+      expect(md).toContain("> [!note] Info");
+      expect(md).not.toMatch(/\n{3,}/);
+    } finally {
+      editor.destroy();
+    }
+  });
+
+  it("round-trips Iris indented paragraph HTML as an editable block", () => {
+    const editor = createProductionEditorFromIngestedBody(
+      '<p data-iris-indent="2"><strong>Bold</strong> text</p>',
+    );
+    try {
+      let paragraphAttrs: Record<string, unknown> | null = null;
+      editor.state.doc.descendants((node) => {
+        if (node.type.name === "paragraph") {
+          paragraphAttrs = node.attrs as Record<string, unknown>;
+          return false;
+        }
+      });
+
+      expect(paragraphAttrs).toMatchObject({ irisIndent: 2 });
+      expect(editor.getText()).toBe("Bold text");
+      expect(pmSerializeBody(editor)).toContain(
+        '<p data-iris-indent="2"><strong>Bold</strong> text</p>',
+      );
+    } finally {
+      editor.destroy();
+    }
+  });
+
+  it("round-trips Iris indented heading HTML as an editable block", () => {
+    const editor = createProductionEditorFromIngestedBody(
+      '<h2 data-iris-indent="1">Heading</h2>',
+    );
+    try {
+      let headingAttrs: Record<string, unknown> | null = null;
+      editor.state.doc.descendants((node) => {
+        if (node.type.name === "heading") {
+          headingAttrs = node.attrs as Record<string, unknown>;
+          return false;
+        }
+      });
+
+      expect(headingAttrs).toMatchObject({ irisIndent: 1, level: 2 });
+      expect(pmSerializeBody(editor)).toContain(
+        '<h2 data-iris-indent="1">Heading</h2>',
+      );
+    } finally {
+      editor.destroy();
+    }
+  });
+
+  it("keeps ordinary raw HTML preserve-only instead of treating it as Iris block indent", () => {
+    const editor = createProductionEditorFromIngestedBody(
+      '<div class="raw">Raw HTML</div>',
+    );
+    try {
+      let preserveBlockCount = 0;
+      editor.state.doc.descendants((node) => {
+        if (node.type.name === "preserveBlock") {
+          preserveBlockCount += 1;
+        }
+      });
+
+      expect(preserveBlockCount).toBe(1);
+      expect(pmSerializeBody(editor)).toContain(
+        '<div class="raw">Raw HTML</div>',
+      );
+    } finally {
+      editor.destroy();
+    }
+  });
+
   it("serializes newly appended paragraphs without amplifying blank lines", () => {
     const editor = createProductionEditorFromIngestedBody("Alpha\n\nBeta");
     try {
@@ -218,6 +350,62 @@ describe("editorDocToMarkdown (prosemirror-markdown hot path)", () => {
       const md = normalizeMd(pmSerializeBody(editor));
       expect(md).toBe("Alpha\n\nBeta");
       expect(md).not.toMatch(/\n{4,}/);
+    } finally {
+      editor.destroy();
+    }
+  });
+
+  it("does not lose a list item after typing the first unordered item and pressing Enter", () => {
+    const editor = createProductionEditorFromIngestedBody("");
+    try {
+      typeTextThroughInputRules(editor, "- one");
+      pressEnter(editor);
+
+      const md = pmSerializeBody(editor).replace(/\r\n/g, "\n");
+      expect(md).toContain("- one");
+      expect(md).not.toMatch(/^\s*-\s*$/m);
+
+      const reopened = createProductionEditorFromIngestedBody(md);
+      try {
+        expect(reopened.getText()).toContain("one");
+      } finally {
+        reopened.destroy();
+      }
+    } finally {
+      editor.destroy();
+    }
+  });
+
+  it("does not lose a list item after typing the first ordered item and pressing Enter", () => {
+    const editor = createProductionEditorFromIngestedBody("");
+    try {
+      typeTextThroughInputRules(editor, "1. one");
+      pressEnter(editor);
+
+      const md = pmSerializeBody(editor).replace(/\r\n/g, "\n");
+      expect(md).toContain("1. one");
+      expect(md).not.toMatch(/^\s*\d+\.\s*$/m);
+
+      const reopened = createProductionEditorFromIngestedBody(md);
+      try {
+        expect(reopened.getText()).toContain("one");
+      } finally {
+        reopened.destroy();
+      }
+    } finally {
+      editor.destroy();
+    }
+  });
+
+  it("does not persist a trailing empty task list item created by Enter", () => {
+    const editor = createProductionEditorFromIngestedBody("- [ ] one");
+    try {
+      editor.commands.setTextSelection(editor.state.doc.content.size - 3);
+      pressEnter(editor);
+
+      const md = pmSerializeBody(editor).replace(/\r\n/g, "\n");
+      expect(md).toContain("- [ ] one");
+      expect(md).not.toMatch(/^\s*-\s\[[ xX]\]\s*$/m);
     } finally {
       editor.destroy();
     }

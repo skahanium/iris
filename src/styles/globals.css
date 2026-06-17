@@ -996,6 +996,36 @@
     text-indent: 0;
   }
 
+  .iris-editor-body
+    .ProseMirror
+    > :where(p, h1, h2, h3, h4, h5, h6)[data-iris-indent] {
+    margin-left: calc(var(--iris-block-indent-level, 0) * 2rem);
+  }
+
+  .iris-editor-body .ProseMirror > [data-iris-indent="1"] {
+    --iris-block-indent-level: 1;
+  }
+
+  .iris-editor-body .ProseMirror > [data-iris-indent="2"] {
+    --iris-block-indent-level: 2;
+  }
+
+  .iris-editor-body .ProseMirror > [data-iris-indent="3"] {
+    --iris-block-indent-level: 3;
+  }
+
+  .iris-editor-body .ProseMirror > [data-iris-indent="4"] {
+    --iris-block-indent-level: 4;
+  }
+
+  .iris-editor-body .ProseMirror > [data-iris-indent="5"] {
+    --iris-block-indent-level: 5;
+  }
+
+  .iris-editor-body .ProseMirror > [data-iris-indent="6"] {
+    --iris-block-indent-level: 6;
+  }
+
   .iris-editor-body .ProseMirror :where(li, blockquote, td, th) > p {
     margin: 0;
     text-indent: 0;

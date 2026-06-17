@@ -16,15 +16,13 @@ describe("editor selection stability around headings", () => {
     expect(css).not.toMatch(hiddenEmptyParagraphRule);
   });
 
-  it("keeps a real editable spacer paragraph between adjacent headings", () => {
+  it("does not create contract spacer paragraphs between adjacent headings", () => {
     const editor = createProductionEditorFromIngestedBody("# One\n\n# Two");
 
     try {
-      expect(editor.state.doc.childCount).toBe(3);
+      expect(editor.state.doc.childCount).toBe(2);
       expect(editor.state.doc.child(0).type.name).toBe("heading");
-      expect(editor.state.doc.child(1).type.name).toBe("paragraph");
-      expect(editor.state.doc.child(1).attrs.irisSpacer).toBe(true);
-      expect(editor.state.doc.child(2).type.name).toBe("heading");
+      expect(editor.state.doc.child(1).type.name).toBe("heading");
     } finally {
       editor.destroy();
     }

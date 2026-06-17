@@ -20,6 +20,25 @@ use crate::ai_runtime::{
 use crate::error::AppResult;
 use crate::storage::db::Database;
 
+fn validate_source_span_range(
+    content: &str,
+    range: &SourceSpan,
+) -> Result<std::ops::Range<usize>, crate::ai_runtime::PatchValidationError> {
+    let content_len = content.len();
+    if range.start > range.end
+        || range.end > content_len
+        || !content.is_char_boundary(range.start)
+        || !content.is_char_boundary(range.end)
+    {
+        return Err(crate::ai_runtime::PatchValidationError::RangeOutOfBounds {
+            range_start: range.start,
+            range_end: range.end,
+            content_length: content_len,
+        });
+    }
+    Ok(range.start..range.end)
+}
+
 /// Writing task result with token usage.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct WritingTaskOutput {
@@ -325,18 +344,10 @@ pub fn validate_patch(
         });
     }
 
-    // Check range bounds
-    let content_len = current_content.len();
-    if patch.range.start > content_len || patch.range.end > content_len {
-        return Err(crate::ai_runtime::PatchValidationError::RangeOutOfBounds {
-            range_start: patch.range.start,
-            range_end: patch.range.end,
-            content_length: content_len,
-        });
-    }
+    let range = validate_source_span_range(current_content, &patch.range)?;
 
     // Check original text matches
-    let actual_original = &current_content[patch.range.start..patch.range.end];
+    let actual_original = &current_content[range];
     if actual_original != patch.original_text {
         return Err(crate::ai_runtime::PatchValidationError::TextMismatch {
             expected: patch.original_text.clone(),
@@ -356,9 +367,11 @@ pub fn apply_patch(patch: &PatchProposal, current_content: &str) -> AppResult<St
     // Apply the patch
     let mut new_content =
         String::with_capacity(current_content.len() + patch.replacement_text.len());
-    new_content.push_str(&current_content[..patch.range.start]);
+    let range = validate_source_span_range(current_content, &patch.range)
+        .map_err(|e| crate::error::AppError::msg(format!("琛ヤ竵楠岃瘉澶辫触: {e}")))?;
+    new_content.push_str(&current_content[..range.start]);
     new_content.push_str(&patch.replacement_text);
-    new_content.push_str(&current_content[patch.range.end..]);
+    new_content.push_str(&current_content[range.end..]);
 
     Ok(new_content)
 }
@@ -446,6 +459,52 @@ mod tests {
             created_at: "".to_string(),
         };
         assert!(validate_patch(&patch, content).is_ok());
+    }
+
+    #[test]
+    fn validate_patch_rejects_non_utf8_boundary_range() {
+        let content = "甲乙丙";
+        let hash = compute_content_hash(content);
+        let patch = PatchProposal {
+            id: "test".to_string(),
+            target_path: "test.md".to_string(),
+            base_content_hash: hash,
+            range: SourceSpan { start: 1, end: 2 },
+            original_text: "乙".to_string(),
+            replacement_text: "B".to_string(),
+            evidence_packet_ids: vec![],
+            risk_level: RiskLevel::Low,
+            warnings: vec![],
+            created_at: "".to_string(),
+        };
+
+        assert!(matches!(
+            validate_patch(&patch, content),
+            Err(crate::ai_runtime::PatchValidationError::RangeOutOfBounds { .. })
+        ));
+    }
+
+    #[test]
+    fn apply_patch_uses_utf8_byte_ranges_for_chinese_content() {
+        let content = "甲乙丙";
+        let hash = compute_content_hash(content);
+        let patch = PatchProposal {
+            id: "test".to_string(),
+            target_path: "test.md".to_string(),
+            base_content_hash: hash,
+            range: SourceSpan {
+                start: "甲".len(),
+                end: "甲乙".len(),
+            },
+            original_text: "乙".to_string(),
+            replacement_text: "B".to_string(),
+            evidence_packet_ids: vec![],
+            risk_level: RiskLevel::Low,
+            warnings: vec![],
+            created_at: "".to_string(),
+        };
+
+        assert_eq!(apply_patch(&patch, content).unwrap(), "甲B丙");
     }
 
     #[test]

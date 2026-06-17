@@ -83,6 +83,14 @@ interface VaultNavigatorProps {
   open: boolean;
   onClose: () => void;
   onOpen: (path: string) => void;
+  onBeforeFilePathChange?: (path: string) => Promise<void>;
+  onFilePathChanged?: (
+    oldPath: string,
+    newPath: string,
+    title?: string,
+  ) => void;
+  onBeforeFileDelete?: (path: string) => Promise<void>;
+  onFileDeleted?: (path: string) => void;
 }
 
 interface CorpusKindOption {
@@ -236,6 +244,10 @@ export function VaultNavigatorBody({
   open,
   onClose,
   onOpen,
+  onBeforeFilePathChange,
+  onFilePathChanged,
+  onBeforeFileDelete,
+  onFileDeleted,
 }: VaultNavigatorProps) {
   const [files, setFiles] = useState<FileListItem[]>([]);
   const [folders, setFolders] = useState<string[]>([]);
@@ -405,13 +417,30 @@ export function VaultNavigatorBody({
             normalizeDocumentName(name),
           );
           if (nextPath !== renameTarget.file.path) {
+            await onBeforeFilePathChange?.(renameTarget.file.path);
             await fileRename(renameTarget.file.path, nextPath);
+            onFilePathChanged?.(renameTarget.file.path, nextPath, name);
           }
         } else {
           const parent = folderParentPath(renameTarget.path);
           const nextPath = buildFolderPath(parent, name);
           if (nextPath !== renameTarget.path.replace(/\/$/, "")) {
+            const oldPrefix = normalizeFolderPrefix(renameTarget.path);
+            const newPrefix = normalizeFolderPrefix(nextPath);
+            const renamedFiles = files.filter((file) =>
+              file.path.startsWith(oldPrefix),
+            );
+            for (const file of renamedFiles) {
+              await onBeforeFilePathChange?.(file.path);
+            }
             await folderRename(renameTarget.path, nextPath);
+            for (const file of renamedFiles) {
+              const remappedPath = joinVaultChildPath(
+                newPrefix,
+                file.path.slice(oldPrefix.length),
+              );
+              onFilePathChanged?.(file.path, remappedPath);
+            }
             setSelectedFolder(normalizeFolderPrefix(nextPath));
           }
         }
@@ -421,7 +450,7 @@ export function VaultNavigatorBody({
         setError(e instanceof Error ? e.message : "重命名失败");
       }
     },
-    [refresh, renameTarget],
+    [onBeforeFilePathChange, onFilePathChanged, files, refresh, renameTarget],
   );
 
   const handleMove = useCallback(
@@ -434,27 +463,43 @@ export function VaultNavigatorBody({
             fileNameFromPath(moveTarget.file.path),
           );
           if (nextPath !== moveTarget.file.path) {
+            await onBeforeFilePathChange?.(moveTarget.file.path);
             await fileRename(moveTarget.file.path, nextPath);
+            onFilePathChanged?.(moveTarget.file.path, nextPath);
           }
         } else if (moveTarget.kind === "files") {
-          await Promise.all(
-            moveTarget.files.map((file) => {
-              const nextPath = joinVaultChildPath(
-                targetFolder,
-                fileNameFromPath(file.path),
-              );
-              return nextPath === file.path
-                ? Promise.resolve()
-                : fileRename(file.path, nextPath);
-            }),
-          );
+          for (const file of moveTarget.files) {
+            const nextPath = joinVaultChildPath(
+              targetFolder,
+              fileNameFromPath(file.path),
+            );
+            if (nextPath === file.path) continue;
+            await onBeforeFilePathChange?.(file.path);
+            await fileRename(file.path, nextPath);
+            onFilePathChanged?.(file.path, nextPath);
+          }
         } else {
           const nextPath = buildFolderPath(
             targetFolder,
             folderNameFromPath(moveTarget.path),
           );
           if (nextPath !== moveTarget.path.replace(/\/$/, "")) {
+            const oldPrefix = normalizeFolderPrefix(moveTarget.path);
+            const newPrefix = normalizeFolderPrefix(nextPath);
+            const movedFiles = files.filter((file) =>
+              file.path.startsWith(oldPrefix),
+            );
+            for (const file of movedFiles) {
+              await onBeforeFilePathChange?.(file.path);
+            }
             await folderRename(moveTarget.path, nextPath);
+            for (const file of movedFiles) {
+              const remappedPath = joinVaultChildPath(
+                newPrefix,
+                file.path.slice(oldPrefix.length),
+              );
+              onFilePathChanged?.(file.path, remappedPath);
+            }
             setSelectedFolder(normalizeFolderPrefix(nextPath));
           }
         }
@@ -464,7 +509,7 @@ export function VaultNavigatorBody({
         setError(e instanceof Error ? e.message : "移动失败");
       }
     },
-    [moveTarget, refresh],
+    [files, moveTarget, onBeforeFilePathChange, onFilePathChanged, refresh],
   );
 
   const handleBatchSetLock = useCallback(
@@ -485,7 +530,11 @@ export function VaultNavigatorBody({
   const handleBatchDelete = useCallback(async () => {
     if (batchDeleteTarget.length === 0) return;
     try {
-      await Promise.all(batchDeleteTarget.map((file) => fileDelete(file.path)));
+      for (const file of batchDeleteTarget) {
+        await onBeforeFileDelete?.(file.path);
+        await fileDelete(file.path);
+        onFileDeleted?.(file.path);
+      }
       setBatchDeleteTarget([]);
       setSelectedFilePaths(new Set());
       setBatchMode(false);
@@ -493,7 +542,7 @@ export function VaultNavigatorBody({
     } catch (e) {
       setError(e instanceof Error ? e.message : "批量删除失败");
     }
-  }, [batchDeleteTarget, refresh]);
+  }, [batchDeleteTarget, onBeforeFileDelete, onFileDeleted, refresh]);
 
   const handleFolderDelete = useCallback(async () => {
     if (!folderDeleteTarget) return;
@@ -1005,7 +1054,9 @@ export function VaultNavigatorBody({
         onCancel={() => setDeleteTarget(null)}
         onConfirm={async () => {
           if (!deleteTarget) return;
+          await onBeforeFileDelete?.(deleteTarget.path);
           await fileDelete(deleteTarget.path);
+          onFileDeleted?.(deleteTarget.path);
           setDeleteTarget(null);
           refresh();
         }}

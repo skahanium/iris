@@ -368,7 +368,20 @@ fn normalize_markdown(content: &str) -> String {
     let normalized = content.replace("\r\n", "\n").replace('\r', "\n");
     let mut out = String::new();
     let mut blank_count = 0usize;
+    let mut fence: Option<(char, usize)> = None;
     for line in normalized.lines() {
+        if let Some((marker, marker_len)) = fence {
+            out.push_str(line);
+            out.push('\n');
+            if let Some((close_marker, close_len)) = markdown_fence_marker(line) {
+                if close_marker == marker && close_len >= marker_len {
+                    fence = None;
+                    blank_count = 0;
+                }
+            }
+            continue;
+        }
+
         let trimmed = line.trim_end();
         if trimmed.is_empty() {
             blank_count += 1;
@@ -380,6 +393,9 @@ fn normalize_markdown(content: &str) -> String {
         blank_count = 0;
         out.push_str(trimmed);
         out.push('\n');
+        if let Some(marker) = markdown_fence_marker(trimmed) {
+            fence = Some(marker);
+        }
     }
     while out.starts_with('\n') {
         out.remove(0);
@@ -388,6 +404,20 @@ fn normalize_markdown(content: &str) -> String {
         out.push('\n');
     }
     out
+}
+
+fn markdown_fence_marker(line: &str) -> Option<(char, usize)> {
+    let leading_spaces = line.chars().take_while(|c| *c == ' ').count();
+    if leading_spaces > 3 {
+        return None;
+    }
+    let rest = &line[leading_spaces..];
+    let marker = rest.chars().next()?;
+    if marker != '`' && marker != '~' {
+        return None;
+    }
+    let len = rest.chars().take_while(|c| *c == marker).count();
+    (len >= 3).then_some((marker, len))
 }
 
 fn extract_urls(content: &str) -> Vec<String> {
@@ -699,4 +729,29 @@ pub(super) fn secret_exists_tool(
         "service": service,
         "exists": crate::credentials::api_key_configured(&state.db, service)?,
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::normalize_markdown;
+
+    #[test]
+    fn normalize_markdown_preserves_blank_lines_inside_fenced_code() {
+        let input = "前文\r\n\r\n```ts\r\nconst a = 1;\r\n\r\n\r\nconst b = 2;\r\n```\r\n\r\n后文";
+
+        let normalized = normalize_markdown(input);
+
+        assert!(normalized.contains("const a = 1;\n\n\nconst b = 2;"));
+        assert_eq!(
+            normalized,
+            "前文\n\n```ts\nconst a = 1;\n\n\nconst b = 2;\n```\n\n后文\n",
+        );
+    }
+
+    #[test]
+    fn normalize_markdown_collapses_excess_blank_lines_outside_fences() {
+        let input = "\n\nAlpha\n\n\n\nBeta\n";
+
+        assert_eq!(normalize_markdown(input), "Alpha\n\nBeta\n");
+    }
 }

@@ -30,6 +30,8 @@ function TestHarness({
   onReady: (api: {
     notifyDirty: () => void;
     flushSave: () => Promise<string | null>;
+    cancelPendingSave: () => void;
+    awaitSaveInFlight: () => Promise<void>;
     getLastSavedSnapshot: () => {
       path: string;
       markdown: string;
@@ -42,12 +44,25 @@ function TestHarness({
     ) => Promise<string | null>;
   }) => void;
 }) {
-  const { notifyDirty, flushSave, getLastSavedSnapshot, flushSaveForPath } =
-    useEditorSave(
-      path,
-      getMarkdown ?? (() => '---\ntitle: "x"\n---\n\nSubstantive body.'),
-    );
-  onReady({ notifyDirty, flushSave, getLastSavedSnapshot, flushSaveForPath });
+  const {
+    notifyDirty,
+    flushSave,
+    cancelPendingSave,
+    awaitSaveInFlight,
+    getLastSavedSnapshot,
+    flushSaveForPath,
+  } = useEditorSave(
+    path,
+    getMarkdown ?? (() => '---\ntitle: "x"\n---\n\nSubstantive body.'),
+  );
+  onReady({
+    notifyDirty,
+    flushSave,
+    cancelPendingSave,
+    awaitSaveInFlight,
+    getLastSavedSnapshot,
+    flushSaveForPath,
+  });
   return null;
 }
 
@@ -408,5 +423,82 @@ describe("useEditorSave", () => {
     });
 
     expect(fileWrite).toHaveBeenCalledTimes(2);
+  });
+
+  it("cancels a debounced save before it writes a deleted path", async () => {
+    let notifyDirty!: () => void;
+    let cancelPendingSave!: () => void;
+
+    await act(async () => {
+      root.render(
+        createElement(TestHarness, {
+          onReady: (api) => {
+            notifyDirty = api.notifyDirty;
+            cancelPendingSave = api.cancelPendingSave;
+          },
+        }),
+      );
+    });
+
+    act(() => {
+      notifyDirty();
+      cancelPendingSave();
+    });
+
+    await act(async () => {
+      vi.advanceTimersByTime(EDITOR_SAVE_DEBOUNCE_MS);
+    });
+
+    expect(fileWrite).not.toHaveBeenCalled();
+  });
+
+  it("awaits an in-flight save before path deletion proceeds", async () => {
+    const writes: Array<() => void> = [];
+    fileWrite.mockImplementation(
+      async () =>
+        new Promise((resolve) => {
+          writes.push(() =>
+            resolve({
+              id: 0,
+              path: "note.md",
+              title: "note",
+              updated_at: "",
+              word_count: 1,
+            }),
+          );
+        }),
+    );
+    let flushSave!: () => Promise<string | null>;
+    let awaitSaveInFlight!: () => Promise<void>;
+
+    await act(async () => {
+      root.render(
+        createElement(TestHarness, {
+          onReady: (api) => {
+            flushSave = api.flushSave;
+            awaitSaveInFlight = api.awaitSaveInFlight;
+          },
+        }),
+      );
+    });
+
+    const active = flushSave();
+    let settled = false;
+    const waiting = awaitSaveInFlight().then(() => {
+      settled = true;
+    });
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(settled).toBe(false);
+
+    await act(async () => {
+      writes.shift()?.();
+      await active;
+      await waiting;
+    });
+
+    expect(settled).toBe(true);
   });
 });

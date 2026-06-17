@@ -85,6 +85,10 @@ interface AppOverlaysProps {
   handleConflictManualEdit: () => void;
   markdown: string;
   onClassifiedUnlocked: () => void;
+  onBeforeFilePathChange: (path: string) => Promise<void>;
+  onFilePathChanged: (oldPath: string, newPath: string, title?: string) => void;
+  onBeforeFileDelete: (path: string) => Promise<void>;
+  onFileDeleted: (path: string) => void;
   openClassifiedPaths: string[];
   openNoteLeavingHome: (
     path: string,
@@ -122,6 +126,10 @@ export function AppOverlays({
   handleConflictManualEdit,
   markdown,
   onClassifiedUnlocked,
+  onBeforeFilePathChange,
+  onFilePathChanged,
+  onBeforeFileDelete,
+  onFileDeleted,
   openClassifiedPaths,
   openNoteLeavingHome,
   overlays,
@@ -149,6 +157,10 @@ export function AppOverlays({
         open={overlays.fileSheet}
         onClose={() => overlays.closeOverlay("fileSheet")}
         onOpen={openNoteLeavingHome}
+        onBeforeFilePathChange={onBeforeFilePathChange}
+        onFilePathChanged={onFilePathChanged}
+        onBeforeFileDelete={onBeforeFileDelete}
+        onFileDeleted={onFileDeleted}
       />
       <RecycleBinSheet
         open={overlays.recycleBinOpen}

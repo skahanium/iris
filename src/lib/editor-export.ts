@@ -95,20 +95,6 @@ export function exportEditorToMarkdown(
   let preservedCount = 0;
 
   for (const child of Array.from(root.children)) {
-    if (
-      child instanceof HTMLElement &&
-      child.tagName === "P" &&
-      child.getAttribute("data-iris-spacer") === "true"
-    ) {
-      const gapRaw = child.getAttribute("data-iris-gap-count");
-      const gapCount = gapRaw ? Number.parseInt(gapRaw, 10) : 1;
-      const gaps = Number.isFinite(gapCount) && gapCount > 0 ? gapCount : 1;
-      for (let i = 0; i < gaps; i++) {
-        parts.push("");
-      }
-      continue;
-    }
-
     // Check if this is a preserve block
     if (
       child instanceof HTMLElement &&

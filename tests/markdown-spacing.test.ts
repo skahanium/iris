@@ -9,23 +9,23 @@ import {
 } from "./helpers/tiptap-serialize-harness";
 
 describe("markdown block spacing", () => {
-  it("ingest keeps blank lines as editable spacer paragraphs", () => {
+  it("ingest treats ordinary markdown block separators as source formatting, not spacer paragraphs", () => {
     const { tipTapHtml } = ingestMarkdownForEditor({
       bodyMarkdown: "Paragraph A\n\nParagraph B",
     });
-    expect(tipTapHtml).toContain('data-iris-spacer="true"');
+    expect(tipTapHtml).not.toContain('data-iris-spacer="true"');
     expect(tipTapHtml).toContain("Paragraph A");
     expect(tipTapHtml).toContain("Paragraph B");
   });
 
-  it("serializes paragraphs with one standard markdown blank line", () => {
+  it("serializes paragraphs with exactly one standard markdown blank line", () => {
     const editor = createProductionEditorFromIngestedBody(
       "Paragraph A\n\nParagraph B",
     );
     try {
-      const md = normalizeMd(pmSerializeBody(editor));
+      const md = pmSerializeBody(editor).replace(/\r\n/g, "\n");
       expect(md).toBe("Paragraph A\n\nParagraph B");
-      expect(md).not.toMatch(/\n{4,}/);
+      expect(md).not.toMatch(/\n{3,}/);
     } finally {
       editor.destroy();
     }
@@ -35,13 +35,14 @@ describe("markdown block spacing", () => {
     const { tipTapHtml } = ingestMarkdownForEditor({
       bodyMarkdown: "A\n\n\n\nB",
     });
-    expect(tipTapHtml).toContain('data-iris-gap-count="2"');
+    expect(tipTapHtml).not.toContain('data-iris-spacer="true"');
+    expect(tipTapHtml).not.toContain("data-iris-gap-count");
 
     const editor = createProductionEditorFromIngestedBody("A\n\n\n\nB");
     try {
-      const md = normalizeMd(pmSerializeBody(editor));
+      const md = pmSerializeBody(editor).replace(/\r\n/g, "\n");
       expect(md).toBe("A\n\nB");
-      expect(md).not.toMatch(/\n{4,}/);
+      expect(md).not.toMatch(/\n{3,}/);
     } finally {
       editor.destroy();
     }

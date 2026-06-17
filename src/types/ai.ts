@@ -123,6 +123,7 @@ export interface ToolPermissionPreflight {
   blocked: boolean;
 }
 
+/** UTF-8 byte offsets into a Markdown source string. */
 export interface SourceSpan {
   start: number;
   end: number;

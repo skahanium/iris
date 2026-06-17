@@ -7,7 +7,7 @@ describe("space fragment raw from marked", () => {
     const fragments = classifyMarkdownCapabilities("A\n\n\n\nB");
     const spaces = fragments.filter((f) => f.syntaxKind === "space");
     expect(spaces.length).toBeGreaterThanOrEqual(1);
-    // Used by ingest to emit one spacer per \n\n in the space raw
+    // Kept as source metadata; editor ingest must not emit spacer paragraphs.
     expect(spaces.map((s) => JSON.stringify(s.raw))).toMatchInlineSnapshot(`
       [
         ""\\n\\n\\n\\n"",

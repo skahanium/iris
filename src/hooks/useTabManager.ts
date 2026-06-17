@@ -275,6 +275,49 @@ export function useTabManager(options: UseTabManagerOptions = {}) {
     ],
   );
 
+  const discardOpenTab = useCallback(
+    async (path: string) => {
+      const prevTabs = tabsRef.current;
+      const isActive = activePathRef.current === path;
+      const idx = prevTabs.findIndex((t) => t.path === path);
+      const nextTabs = prevTabs.filter((t) => t.path !== path);
+      const switchTo: string | null = isActive
+        ? nextTabs.length === 0
+          ? null
+          : nextTabs[Math.min(Math.max(0, idx), nextTabs.length - 1)]!.path
+        : null;
+
+      tabMarkdownCacheRef.current.delete(path);
+      tabLockCacheRef.current.delete(path);
+      setTabs(nextTabs);
+
+      if (!isActive) {
+        return;
+      }
+      if (switchTo === null) {
+        clearEditorState();
+        return;
+      }
+
+      const cached = tabMarkdownCacheRef.current.get(switchTo);
+      if (cached !== undefined) {
+        clearCachedEditorHtml(switchTo);
+        activePathRef.current = switchTo;
+        setActivePath(switchTo);
+        frontmatterYamlRef.current = extractFrontmatterYaml(cached);
+        setMarkdown(cached);
+        setActiveFileLocked(tabLockCacheRef.current.get(switchTo) ?? false);
+        setEditorContentTick((t) => t + 1);
+        return;
+      }
+
+      activePathRef.current = null;
+      setActivePath(null);
+      await openFile(switchTo, undefined, { skipDiscardPrevious: true });
+    },
+    [clearEditorState, openFile, setMarkdown],
+  );
+
   const handleNewNote = useCallback(async () => {
     try {
       const current = activePathRef.current;
@@ -406,6 +449,7 @@ export function useTabManager(options: UseTabManagerOptions = {}) {
     openNote,
     activateTab,
     closeTab,
+    discardOpenTab,
     handleNewNote,
     markDirty,
     markClean,

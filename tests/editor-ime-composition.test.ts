@@ -1,7 +1,7 @@
 import { Editor } from "@tiptap/core";
 import StarterKit from "@tiptap/starter-kit";
 import { readFileSync } from "node:fs";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { ImeCompositionGuardExtension } from "@/components/editor/extensions/ImeCompositionGuardExtension";
 import { IrisDocument } from "@/components/editor/extensions/IrisDocument";
@@ -35,11 +35,23 @@ function createEditor() {
 }
 
 function fireCompositionStart(dom: HTMLElement) {
-  dom.dispatchEvent(new CompositionEvent("compositionstart", { data: "" }));
+  dom.dispatchEvent(
+    new CompositionEvent("compositionstart", {
+      data: "",
+      bubbles: true,
+      cancelable: true,
+    }),
+  );
 }
 
 function fireCompositionEnd(dom: HTMLElement, data: string) {
-  dom.dispatchEvent(new CompositionEvent("compositionend", { data }));
+  dom.dispatchEvent(
+    new CompositionEvent("compositionend", {
+      data,
+      bubbles: true,
+      cancelable: true,
+    }),
+  );
 }
 
 /**
@@ -118,18 +130,37 @@ describe("ImeCompositionGuardExtension", () => {
       expect(editor.state.doc.childCount).toBe(before);
     });
 
-    it("suppresses Enter during compositionend grace period", () => {
+    it("flushes finalized composition and allows Enter during compositionend grace period", () => {
       editor = createEditor();
       editor.commands.focus();
+      const domObserver = (
+        editor.view as unknown as {
+          domObserver: {
+            flush: () => void;
+            forceFlush: () => void;
+          };
+        }
+      ).domObserver;
+      const flushSpy = vi.fn();
+      const forceFlushSpy = vi.fn();
+      domObserver.flush = flushSpy;
+      domObserver.forceFlush = forceFlushSpy;
 
       fireCompositionStart(editor.view.dom);
       fireCompositionEnd(editor.view.dom, "你好");
 
-      // Grace period hasn't expired — Enter must still be swallowed
-      const before = editor.state.doc.childCount;
+      // The grace-period Enter should flush finalized DOM and continue.
+      let sentinelReached = false;
+      const sentinel = () => {
+        sentinelReached = true;
+      };
+      editor.view.dom.addEventListener("keydown", sentinel, false);
       pressEnter(editor.view.dom);
+      editor.view.dom.removeEventListener("keydown", sentinel, false);
 
-      expect(editor.state.doc.childCount).toBe(before);
+      expect(sentinelReached).toBe(true);
+      expect(forceFlushSpy).toHaveBeenCalled();
+      expect(flushSpy).toHaveBeenCalled();
     });
 
     it("allows Enter after the grace period expires", async () => {
@@ -174,6 +205,34 @@ describe("ImeCompositionGuardExtension", () => {
       fireCompositionEnd(editor.view.dom, "你好");
       pressEnter(editor.view.dom);
       expect(editor.state.doc.childCount).toBe(before);
+    });
+
+    it("restores the real DOM observer after rapid recomposition", async () => {
+      editor = createEditor();
+      const domObserver = (
+        editor.view as unknown as {
+          domObserver: {
+            flush: () => void;
+            forceFlush: () => void;
+          };
+        }
+      ).domObserver;
+      const flushSpy = vi.fn();
+      const forceFlushSpy = vi.fn();
+      domObserver.flush = flushSpy;
+      domObserver.forceFlush = forceFlushSpy;
+
+      fireCompositionStart(editor.view.dom);
+      fireCompositionEnd(editor.view.dom, "一");
+      fireCompositionStart(editor.view.dom);
+      fireCompositionEnd(editor.view.dom, "二");
+
+      await new Promise((r) => setTimeout(r, 400));
+
+      domObserver.flush();
+      domObserver.forceFlush();
+      expect(flushSpy).toHaveBeenCalled();
+      expect(forceFlushSpy).toHaveBeenCalled();
     });
 
     it("does not suppress Enter when compositionend fires without start", () => {

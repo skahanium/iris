@@ -83,32 +83,30 @@ function preserveInlineSpan(
   return `<span data-type="preserve-inline" data-original-raw="${escapedRaw}" data-syntax-kind="${syntaxKind}" contenteditable="false">${label}</span>`;
 }
 
-function spacerParagraphHtml(raw: string): string {
-  const newlineCount = raw.match(/\n/g)?.length ?? 0;
-  const gapCount = Math.min(6, Math.max(1, Math.floor(newlineCount / 2)));
-  const gapAttr = gapCount > 1 ? ` data-iris-gap-count="${gapCount}"` : "";
-  return `<p data-iris-spacer="true"${gapAttr}><br></p>`;
+function normalizeIrisIndent(value: string | null): number {
+  const raw = value === null ? 0 : Number(value);
+  if (!Number.isFinite(raw)) return 0;
+  return Math.min(6, Math.max(0, Math.trunc(raw)));
 }
 
-function splitTrailingBlockSpacer(raw: string): {
-  contentRaw: string;
-  spacerRaw: string | null;
-} {
-  const match = /(\n[ \t]*\n[ \t\n]*)$/u.exec(raw);
-  if (!match?.[1]) return { contentRaw: raw, spacerRaw: null };
+function editableIrisIndentHtml(raw: string): string | null {
+  const doc = new DOMParser().parseFromString(raw, "text/html");
+  const root = doc.body.firstElementChild;
+  if (!root || doc.body.children.length !== 1) return null;
 
-  const contentRaw = raw.slice(0, raw.length - match[1].length);
-  if (!contentRaw.trim()) return { contentRaw: raw, spacerRaw: null };
-  return { contentRaw, spacerRaw: match[1] };
-}
+  const tag = root.tagName.toLowerCase();
+  if (!/^p$|^h[1-6]$/.test(tag)) return null;
+  if (!root.hasAttribute("data-iris-indent")) return null;
+  if (
+    Array.from(root.attributes).some((attr) => attr.name !== "data-iris-indent")
+  ) {
+    return null;
+  }
+  if (root.querySelector("script,style,iframe,object,embed")) return null;
 
-function hasNextContentFragment(
-  fragments: MarkdownSyntaxFragment[],
-  index: number,
-): boolean {
-  return fragments
-    .slice(index + 1)
-    .some((candidate) => candidate.syntaxKind !== "space");
+  const indent = normalizeIrisIndent(root.getAttribute("data-iris-indent"));
+  if (indent <= 0) return null;
+  return `<${tag} data-iris-indent="${indent}">${root.innerHTML}</${tag}>`;
 }
 
 /**
@@ -227,6 +225,10 @@ const BLOCK_KINDS = new Set<MarkdownSyntaxKind>([
   "image",
 ]);
 
+function isListKind(kind: MarkdownSyntaxKind): kind is "list" | "task_list" {
+  return kind === "list" || kind === "task_list";
+}
+
 function openingSafeInlineTag(raw: string): string | null {
   const match = /^<\s*([a-z][\w-]*)\b[^>]*>$/i.exec(raw.trim());
   if (!match) return null;
@@ -314,8 +316,10 @@ export function ingestMarkdownForEditor(
 
   const fragments = classifyMarkdownCapabilities(bodyMarkdown);
 
-  const preserveFragments = fragments.filter((f) =>
-    PRESERVE_ONLY_SYNTAX_KINDS.has(f.syntaxKind),
+  const preserveFragments = fragments.filter(
+    (f) =>
+      PRESERVE_ONLY_SYNTAX_KINDS.has(f.syntaxKind) &&
+      !(f.syntaxKind === "raw_html" && editableIrisIndentHtml(f.raw)),
   );
 
   const warnings: MarkdownCapabilityWarning[] = [];
@@ -335,6 +339,28 @@ export function ingestMarkdownForEditor(
   const htmlParts: string[] = [];
   let nativeBuf: string[] = [];
 
+  function collectContiguousListMarkdown(startIndex: number): {
+    raw: string;
+    nextIndex: number;
+  } {
+    const first = fragments[startIndex]!;
+    let cursor = startIndex + 1;
+    let endOffset = first.endOffset;
+
+    while (cursor < fragments.length) {
+      const current = fragments[cursor]!;
+      if (current.syntaxKind !== first.syntaxKind) break;
+      if (current.offset !== endOffset) break;
+      endOffset = current.endOffset;
+      cursor++;
+    }
+
+    return {
+      raw: bodyMarkdown.slice(first.offset, endOffset),
+      nextIndex: cursor,
+    };
+  }
+
   function flushNative() {
     if (nativeBuf.length === 0) return;
     const joined = nativeBuf.join("");
@@ -349,11 +375,6 @@ export function ingestMarkdownForEditor(
 
     if (kind === "space") {
       flushNative();
-      if (htmlParts.length > 0) {
-        if (hasNextContentFragment(fragments, i)) {
-          htmlParts.push(spacerParagraphHtml(frag.raw));
-        }
-      }
       i++;
       continue;
     }
@@ -393,6 +414,15 @@ export function ingestMarkdownForEditor(
     }
 
     if (PRESERVE_ONLY_SYNTAX_KINDS.has(kind)) {
+      if (kind === "raw_html") {
+        const irisHtml = editableIrisIndentHtml(frag.raw);
+        if (irisHtml) {
+          flushNative();
+          htmlParts.push(irisHtml);
+          i++;
+          continue;
+        }
+      }
       const inlinePreserve = consumeInlinePreserve(fragments, i);
       if (inlinePreserve) {
         nativeBuf.push(preserveInlineSpan(inlinePreserve.raw, kind));
@@ -407,12 +437,15 @@ export function ingestMarkdownForEditor(
 
     if (BLOCK_KINDS.has(kind)) {
       flushNative();
-      const { contentRaw, spacerRaw } = splitTrailingBlockSpacer(frag.raw);
-      const html = markdownToTipTapHtml(contentRaw);
-      if (html) htmlParts.push(html);
-      if (spacerRaw && hasNextContentFragment(fragments, i)) {
-        htmlParts.push(spacerParagraphHtml(spacerRaw));
+      if (isListKind(kind)) {
+        const listBlock = collectContiguousListMarkdown(i);
+        const html = markdownToTipTapHtml(listBlock.raw);
+        if (html) htmlParts.push(html);
+        i = listBlock.nextIndex;
+        continue;
       }
+      const html = markdownToTipTapHtml(frag.raw);
+      if (html) htmlParts.push(html);
     } else {
       // Inline native: accumulate
       nativeBuf.push(frag.raw);

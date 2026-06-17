@@ -1,11 +1,12 @@
 import { Extension } from "@tiptap/core";
+import { splitListItem } from "@tiptap/pm/schema-list";
 import { Plugin, PluginKey } from "@tiptap/pm/state";
 
 /**
  * Prevents ProseMirror's DOMObserver from reading intermediate IME composition
- * mutations (raw pinyin) and committing them to the document. Also blocks
- * Enter key handling during the composition grace period so ProseMirror
- * doesn't split blocks while the IME is finalizing confirmed text.
+ * mutations (raw pinyin) and committing them to the document. During the
+ * post-composition Enter window, it restores and flushes the final DOM text
+ * before list handling runs, so Enter never acts on a stale empty list item.
  *
  * This addresses two upstream gaps in prosemirror-view:
  *
@@ -23,14 +24,13 @@ import { Plugin, PluginKey } from "@tiptap/pm/state";
  * Strategy:
  *   - Override BOTH `flush()` and `forceFlush()` to no-ops while
  *     composing so queued mutations are never read mid-composition.
- *   - Track a `composing` flag that stays true through the grace
- *     period after `compositionend`.
- *   - Add a capture-phase DOM `keydown` listener that intercepts
- *     Enter when `composing` is true, preventing ProseMirror's
- *     bubbling-phase handler from ever seeing the event.
- *   - On `compositionend`, wait for the next animation frame + a
- *     small delay, then restore both methods and call the real
- *     `forceFlush()` to sync the final DOM state.
+ *   - Track separate active-composition and post-composition grace flags.
+ *   - Swallow Enter only while composition is still active.
+ *   - On the first Enter after `compositionend`, restore both methods and
+ *     call the real `forceFlush()` plus `flush()`; `forceFlush()` alone can
+ *     be a no-op when ProseMirror has queued mutations but no flush timer.
+ *   - If that Enter is inside a list item, split the list item immediately
+ *     after flushing so ProseMirror cannot treat stale state as an empty item.
  */
 const RESTORE_DELAY_MS = 50;
 const RAF_FALLBACK_MS = RESTORE_DELAY_MS + 120;
@@ -40,6 +40,7 @@ export const ImeCompositionGuardExtension = Extension.create({
 
   addProseMirrorPlugins() {
     let composing = false;
+    let compositionActive = false;
 
     return [
       new Plugin({
@@ -65,14 +66,52 @@ export const ImeCompositionGuardExtension = Extension.create({
             /* swallow */
           };
 
-          const onStart = () => {
-            composing = true;
-            clearTimeout(restoreTimer!);
-            restoreTimer = null;
+          const cancelScheduledRestore = () => {
+            if (restoreTimer != null) {
+              clearTimeout(restoreTimer);
+              restoreTimer = null;
+            }
             if (rafId != null) {
               cancelAnimationFrame(rafId);
               rafId = null;
             }
+          };
+
+          const restoreNow = () => {
+            cancelScheduledRestore();
+            composing = false;
+            if (!originalFlush) return;
+
+            const savedFlush = originalFlush;
+            const savedForceFlush = originalForceFlush!;
+            domObserver.flush = savedFlush;
+            domObserver.forceFlush = savedForceFlush;
+            originalFlush = null;
+            originalForceFlush = null;
+            savedForceFlush();
+            savedFlush();
+          };
+
+          const splitCurrentListItem = () => {
+            const { state } = editorView;
+            const { $from } = state.selection;
+            for (let depth = $from.depth; depth > 0; depth--) {
+              const nodeName = $from.node(depth).type.name;
+              if (nodeName !== "listItem" && nodeName !== "taskItem") {
+                continue;
+              }
+
+              const itemType = state.schema.nodes[nodeName];
+              if (!itemType) return false;
+              return splitListItem(itemType)(state, editorView.dispatch);
+            }
+            return false;
+          };
+
+          const onStart = () => {
+            compositionActive = true;
+            composing = true;
+            cancelScheduledRestore();
 
             if (originalFlush) return;
 
@@ -83,30 +122,16 @@ export const ImeCompositionGuardExtension = Extension.create({
           };
 
           const onEnd = () => {
+            compositionActive = false;
             if (!originalFlush) return;
 
-            const savedFlush = originalFlush!;
-            const savedForceFlush = originalForceFlush!;
-            originalFlush = null;
-            originalForceFlush = null;
-
-            let restored = false;
-
-            const doRestore = () => {
-              if (restored) return;
-              restored = true;
-              composing = false;
-              domObserver.flush = savedFlush;
-              domObserver.forceFlush = savedForceFlush;
-              savedForceFlush();
-            };
+            cancelScheduledRestore();
 
             rafId = requestAnimationFrame(() => {
               rafId = null;
-              if (restored) return;
               restoreTimer = setTimeout(() => {
                 restoreTimer = null;
-                doRestore();
+                restoreNow();
               }, RESTORE_DELAY_MS);
             });
 
@@ -120,7 +145,7 @@ export const ImeCompositionGuardExtension = Extension.create({
                 clearTimeout(restoreTimer);
                 restoreTimer = null;
               }
-              doRestore();
+              restoreNow();
             }, RAF_FALLBACK_MS);
           };
 
@@ -130,14 +155,28 @@ export const ImeCompositionGuardExtension = Extension.create({
            * ProseMirror registers its keydown handler in the bubbling phase
            * (`initInput` → addEventListener without `capture`). A capture-
            * phase listener on the same element fires first, giving us the
-           * chance to swallow Enter before ProseMirror's `splitBlock` keymap
-           * sees it. `stopPropagation()` prevents the event from reaching
-           * the bubbling phase on this element.
+           * chance to flush finalized IME DOM before ProseMirror's list
+           * keymap sees stale state. We only stop propagation when the key is
+           * still part of active composition or when we handle list splitting
+           * ourselves after the flush.
            */
           const onKeyDown = (event: KeyboardEvent) => {
-            if (composing && (event.key === "Enter" || event.keyCode === 13)) {
+            if (event.key !== "Enter" && event.keyCode !== 13) {
+              return;
+            }
+
+            if (compositionActive || event.isComposing) {
               event.stopPropagation();
               event.preventDefault();
+              return;
+            }
+
+            if (composing) {
+              restoreNow();
+              if (splitCurrentListItem()) {
+                event.stopPropagation();
+                event.preventDefault();
+              }
             }
           };
 
@@ -148,14 +187,11 @@ export const ImeCompositionGuardExtension = Extension.create({
           return {
             destroy() {
               composing = false;
+              compositionActive = false;
               dom.removeEventListener("compositionstart", onStart, true);
               dom.removeEventListener("compositionend", onEnd, true);
               dom.removeEventListener("keydown", onKeyDown, true);
-              clearTimeout(restoreTimer!);
-              if (rafId != null) {
-                cancelAnimationFrame(rafId);
-                rafId = null;
-              }
+              cancelScheduledRestore();
               if (originalFlush) {
                 domObserver.flush = originalFlush;
                 domObserver.forceFlush = originalForceFlush!;

@@ -38,6 +38,7 @@ import type {
   StreamRepairRecord,
 } from "./types";
 import {
+  DEFAULT_PROFILE_RULES,
   NATIVE_SYNTAX_KINDS,
   RENDER_ONLY_SYNTAX_KINDS,
   PRESERVE_ONLY_SYNTAX_KINDS,
@@ -204,7 +205,7 @@ function walkTokens(tokens: Token[], acc: FragmentAccumulator): void {
     const raw = token.raw ?? "";
     const type = token.type;
 
-    /** Block separator in source (`\n\n` between blocks); ingest maps to empty spacer paragraphs. */
+    /** Block separator in source (`\n\n` between blocks); editor ingest ignores it as editable content. */
     if (type === "space") {
       pushFragment(acc, raw, "space");
       continue;
@@ -492,13 +493,17 @@ function computeStats(
 
 function buildWarnings(
   fragments: MarkdownSyntaxFragment[],
+  profile: MarkdownProfile,
 ): MarkdownCapabilityWarning[] {
   const warnings: MarkdownCapabilityWarning[] = [];
   for (const f of fragments) {
     if (f.capability === "unsupported") {
+      const rule = DEFAULT_PROFILE_RULES[f.capability][profile];
       warnings.push({
         fragment: f,
-        message: `Unsupported syntax: ${f.syntaxKind}`,
+        message:
+          rule.capabilityHint ??
+          `Unsupported syntax: ${f.syntaxKind} (${rule.strategy})`,
         severity: "warn",
       });
     }
@@ -564,7 +569,7 @@ export function renderMarkdownWithProfile(
   const streaming = options?.streaming ?? false;
   const fragments = buildFragments(source);
   const output = renderByProfile(source, profile, streaming, options);
-  const warnings = buildWarnings(fragments);
+  const warnings = buildWarnings(fragments, profile);
   const streamRepairs = buildStreamRepairs(source, streaming);
   const preserveFragments = fragments.filter(
     (f) => f.capability === "preserve_only" || f.capability === "unsupported",

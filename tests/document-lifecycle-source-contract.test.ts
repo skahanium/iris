@@ -112,6 +112,13 @@ describe("document lifecycle source contracts", () => {
     expect(app).toContain("clearVersionIdleTimer");
   });
 
+  it("locking a note flushes pending editor content before changing the lock state", () => {
+    const app = read("src/App.impl.tsx");
+    expect(app).toMatch(
+      /if \(locked\) \{[\s\S]*?await flushSave\(\);[\s\S]*?\}[\s\S]*?setFileLocked\(path, locked\);/,
+    );
+  });
+
   it("activateTab clears HTML cache before restoring session markdown", () => {
     const source = read("src/hooks/useTabManager.ts");
     expect(source).toContain("clearCachedEditorHtml(path)");

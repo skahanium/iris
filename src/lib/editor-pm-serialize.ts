@@ -14,7 +14,11 @@
  * 详见 [docs/markdown-export.md](../../docs/markdown-export.md)。
  */
 import type { Editor } from "@tiptap/react";
-import type { Node as ProseMirrorNode } from "@tiptap/pm/model";
+import {
+  DOMSerializer,
+  Fragment,
+  type Node as ProseMirrorNode,
+} from "@tiptap/pm/model";
 import {
   defaultMarkdownSerializer,
   MarkdownSerializer,
@@ -58,14 +62,91 @@ function renderTable(state: MarkdownSerializerState, node: ProseMirrorNode) {
 
 const baseBlockquoteSerialize = defaultMarkdownSerializer.nodes.blockquote!;
 const baseParagraphSerialize = defaultMarkdownSerializer.nodes.paragraph!;
+const baseHeadingSerialize = defaultMarkdownSerializer.nodes.heading!;
 const baseImageSerialize = defaultMarkdownSerializer.nodes.image!;
 const baseHardBreakSerialize = defaultMarkdownSerializer.nodes.hard_break!;
 const baseCodeBlockSerialize = defaultMarkdownSerializer.nodes.code_block!;
 const baseHorizontalRuleSerialize =
   defaultMarkdownSerializer.nodes.horizontal_rule!;
 
-function isSpacerParagraph(node: ProseMirrorNode): boolean {
-  return node.attrs.irisSpacer === true;
+function irisIndent(node: ProseMirrorNode): number {
+  const value = node.attrs.irisIndent;
+  const raw =
+    typeof value === "number"
+      ? value
+      : typeof value === "string"
+        ? Number(value)
+        : 0;
+  if (!Number.isFinite(raw)) return 0;
+  return Math.max(0, Math.trunc(raw));
+}
+
+function escapeHtml(text: string): string {
+  return text
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+function inlineHtml(node: ProseMirrorNode): string {
+  if (globalThis.document === undefined) {
+    return escapeHtml(node.textContent);
+  }
+
+  const serializer = DOMSerializer.fromSchema(node.type.schema);
+  const fragment = serializer.serializeFragment(node.content, {
+    document: globalThis.document,
+  });
+  const container = globalThis.document.createElement("div");
+  container.appendChild(fragment);
+  return container.innerHTML;
+}
+
+function renderIrisIndentedHtmlBlock(
+  state: MarkdownSerializerState,
+  node: ProseMirrorNode,
+  tag: string,
+): boolean {
+  const indent = irisIndent(node);
+  if (indent <= 0) return false;
+
+  state.write(
+    `<${tag} data-iris-indent="${indent}">${inlineHtml(node)}</${tag}>`,
+  );
+  state.closeBlock(node);
+  return true;
+}
+
+function isTransientEmptyListLikeItem(node: ProseMirrorNode): boolean {
+  if (node.type.name !== "listItem" && node.type.name !== "taskItem") {
+    return false;
+  }
+  if (node.textContent.trim() !== "") return false;
+
+  let hasStructuralContent = false;
+  node.forEach((child) => {
+    if (child.type.name !== "paragraph" || child.childCount > 0) {
+      hasStructuralContent = true;
+    }
+  });
+  return !hasStructuralContent;
+}
+
+function withoutTrailingEmptyListItems(
+  node: ProseMirrorNode,
+): ProseMirrorNode | null {
+  const children: ProseMirrorNode[] = [];
+  node.forEach((child) => children.push(child));
+
+  while (
+    children.length > 0 &&
+    isTransientEmptyListLikeItem(children[children.length - 1]!)
+  ) {
+    children.pop();
+  }
+
+  return children.length > 0 ? node.copy(Fragment.fromArray(children)) : null;
 }
 
 function shouldLogSerializerFallback(): boolean {
@@ -76,10 +157,24 @@ const irisMarkdownSerializer = new MarkdownSerializer(
   {
     ...defaultMarkdownSerializer.nodes,
     paragraph(state, node, parent, index) {
-      if (isSpacerParagraph(node) || node.childCount === 0) {
+      if (node.childCount === 0) {
+        return;
+      }
+      if (renderIrisIndentedHtmlBlock(state, node, "p")) {
         return;
       }
       baseParagraphSerialize(state, node, parent, index);
+    },
+    heading(state, node, parent, index) {
+      const rawLevel = node.attrs.level;
+      const level =
+        typeof rawLevel === "number"
+          ? Math.min(6, Math.max(1, Math.trunc(rawLevel)))
+          : 1;
+      if (renderIrisIndentedHtmlBlock(state, node, `h${level}`)) {
+        return;
+      }
+      baseHeadingSerialize(state, node, parent, index);
     },
     image(state, node, parent, index) {
       baseImageSerialize(state, node, parent, index);
@@ -129,13 +224,15 @@ const irisMarkdownSerializer = new MarkdownSerializer(
     },
     table: renderTable,
     taskList(state, node) {
-      node.forEach((item, _, index) => {
+      const persistedNode = withoutTrailingEmptyListItems(node);
+      if (!persistedNode) return;
+      persistedNode.forEach((item, _, index) => {
         if (index > 0) {
           state.write("\n");
         }
-        state.render(item, node, index);
+        state.render(item, persistedNode, index);
       });
-      state.closeBlock(node);
+      state.closeBlock(persistedNode);
     },
     taskItem(state, node) {
       const checked = node.attrs.checked === true;
@@ -147,13 +244,17 @@ const irisMarkdownSerializer = new MarkdownSerializer(
       });
     },
     bulletList(state, node) {
-      state.renderList(node, "  ", () => "- ");
+      const persistedNode = withoutTrailingEmptyListItems(node);
+      if (!persistedNode) return;
+      state.renderList(persistedNode, "  ", () => "- ");
     },
     orderedList(state, node) {
+      const persistedNode = withoutTrailingEmptyListItems(node);
+      if (!persistedNode) return;
       const start = typeof node.attrs.start === "number" ? node.attrs.start : 1;
-      const maxWidth = String(start + node.childCount - 1).length;
+      const maxWidth = String(start + persistedNode.childCount - 1).length;
       const space = state.repeat(" ", maxWidth + 2);
-      state.renderList(node, space, (index) => {
+      state.renderList(persistedNode, space, (index) => {
         const number = String(start + index);
         return `${state.repeat(" ", maxWidth - number.length)}${number}. `;
       });

@@ -18,13 +18,12 @@
     --prose-size-chat: 15px;
     --prose-line-height: 1.62;
     --prose-line-height-chat: 1.52;
-    --prose-letter-spacing: 0.01em;
+    --prose-letter-spacing: 0;
     --prose-block-gap: 0.6em;
     --prose-heading-gap-before: 1.5em;
     --prose-heading-gap-before-h3: 1.25em;
     --prose-heading-gap-after: 0.35em;
     --prose-title-gap: 2.25rem;
-    --prose-spacer-ratio: 0.55;
   }
 
   .iris-markdown-content {
@@ -182,7 +181,7 @@
 
   .iris-editor-body
     .ProseMirror.iris-markdown-content[data-prose-surface="editor"]
-    > p:not([data-iris-spacer="true"]),
+    > p,
   .iris-editor-body
     .ProseMirror.iris-markdown-content[data-prose-surface="editor"]
     > :is(ul, ol)
@@ -190,65 +189,7 @@
   .iris-editor-body
     .ProseMirror.iris-markdown-content[data-prose-surface="editor"]
     > blockquote {
-    text-align: justify;
-    text-justify: inter-ideograph;
-  }
-
-  .iris-editor-body
-    .ProseMirror.iris-markdown-content[data-prose-surface="editor"]
-    > p[data-iris-spacer="true"] {
-    line-height: 1;
-    min-height: calc(
-      var(--prose-size-editor) * var(--editor-zoom) * var(--prose-line-height) *
-        var(--prose-spacer-ratio)
-    );
-    margin-top: calc(var(--prose-block-gap) * 0.45);
     text-align: left;
-  }
-
-  .iris-editor-body
-    .ProseMirror.iris-markdown-content[data-prose-surface="editor"]
-    > p[data-iris-spacer="true"][data-iris-gap-count="2"] {
-    min-height: calc(
-      var(--prose-size-editor) * var(--editor-zoom) * var(--prose-line-height) *
-        var(--prose-spacer-ratio) * 2
-    );
-  }
-
-  .iris-editor-body
-    .ProseMirror.iris-markdown-content[data-prose-surface="editor"]
-    > p[data-iris-spacer="true"][data-iris-gap-count="3"] {
-    min-height: calc(
-      var(--prose-size-editor) * var(--editor-zoom) * var(--prose-line-height) *
-        var(--prose-spacer-ratio) * 3
-    );
-  }
-
-  .iris-editor-body
-    .ProseMirror.iris-markdown-content[data-prose-surface="editor"]
-    > p[data-iris-spacer="true"][data-iris-gap-count="4"] {
-    min-height: calc(
-      var(--prose-size-editor) * var(--editor-zoom) * var(--prose-line-height) *
-        var(--prose-spacer-ratio) * 4
-    );
-  }
-
-  .iris-editor-body
-    .ProseMirror.iris-markdown-content[data-prose-surface="editor"]
-    > p[data-iris-spacer="true"][data-iris-gap-count="5"] {
-    min-height: calc(
-      var(--prose-size-editor) * var(--editor-zoom) * var(--prose-line-height) *
-        var(--prose-spacer-ratio) * 5
-    );
-  }
-
-  .iris-editor-body
-    .ProseMirror.iris-markdown-content[data-prose-surface="editor"]
-    > p[data-iris-spacer="true"][data-iris-gap-count="6"] {
-    min-height: calc(
-      var(--prose-size-editor) * var(--editor-zoom) * var(--prose-line-height) *
-        var(--prose-spacer-ratio) * 6
-    );
   }
 
   .iris-editor-body
@@ -288,7 +229,7 @@
     .ProseMirror.iris-markdown-content[data-prose-surface="editor"]
     > h1:not(.iris-doc-title) {
     font-size: calc(1.875rem * var(--editor-zoom));
-    letter-spacing: -0.02em;
+    letter-spacing: 0;
     font-weight: 600;
   }
 
@@ -296,7 +237,7 @@
     .ProseMirror.iris-markdown-content[data-prose-surface="editor"]
     > h2 {
     font-size: calc(1.5rem * var(--editor-zoom));
-    letter-spacing: -0.015em;
+    letter-spacing: 0;
     font-weight: 600;
   }
 

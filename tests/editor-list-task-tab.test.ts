@@ -62,8 +62,11 @@ describe("ListIndentKeymapExtension task list", () => {
       "src/components/editor/extensions/ListIndentKeymapExtension.ts",
       "utf8",
     );
-    expect(source).toContain('isActive("taskList")');
-    expect(source).toContain('sinkListItem("listItem")');
+    expect(source).toContain('"taskItem"');
+    expect(source).toContain('"listItem"');
+    expect(source).toContain("sinkListItem");
+    expect(source).toContain("liftListItem");
+    expect(source).not.toContain("return false");
   });
 
   it("does not introduce ordinary listItem nodes when Tab is pressed in a task list", () => {

@@ -16,13 +16,16 @@ describe("prose polish v2 tokens", () => {
     expect(markdownProse).toContain('data-prose-surface="editor"');
     expect(markdownProse).toContain('data-prose-surface="conversation"');
     expect(markdownProse).toContain("--prose-size-chat: 15px");
-    expect(markdownProse).toContain("--prose-spacer-ratio: 0.55");
-    expect(markdownProse).toContain("text-justify: inter-ideograph");
+    expect(markdownProse).toContain("--prose-letter-spacing: 0");
+    expect(markdownProse).not.toContain("--prose-spacer-ratio");
+    expect(markdownProse).not.toContain("letter-spacing: -");
+    expect(markdownProse).not.toContain("text-align: justify");
+    expect(markdownProse).not.toContain("text-justify: inter-ideograph");
   });
 
-  it("styles compact spacer paragraphs in editor", () => {
-    expect(markdownProse).toContain('p[data-iris-spacer="true"]');
-    expect(markdownProse).toContain('data-iris-gap-count="2"');
+  it("does not style editable spacer paragraphs in editor", () => {
+    expect(markdownProse).not.toContain('data-iris-spacer="true"');
+    expect(markdownProse).not.toContain("data-iris-gap-count");
   });
 
   it("centers document title with serif font", () => {

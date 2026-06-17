@@ -601,7 +601,7 @@ pub enum SourceType {
     Web,
 }
 
-/// 源文件中的字符偏移范围。
+/// UTF-8 byte offsets into a Markdown source string.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SourceSpan {
     pub start: usize,

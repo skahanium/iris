@@ -83,7 +83,11 @@ pub fn apply_patch_to_file(
 /// 与 `writing_workflow::validate_patch` 中的范围/原文校验逻辑一致。
 fn validate_patch_content(patch: &PatchProposal, current_content: &str) -> AppResult<()> {
     let content_len = current_content.len();
-    if patch.range.start > content_len || patch.range.end > content_len {
+    if patch.range.start > patch.range.end
+        || patch.range.end > content_len
+        || !current_content.is_char_boundary(patch.range.start)
+        || !current_content.is_char_boundary(patch.range.end)
+    {
         return Err(crate::error::AppError::msg(format!(
             "补丁范围越界: [{}, {}) 超出内容长度 {}",
             patch.range.start, patch.range.end, content_len

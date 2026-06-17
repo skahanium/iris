@@ -79,24 +79,30 @@ export function useAppPersistenceLifecycle({
   syncTabMarkdownCache,
   tabsRef,
 }: UseAppPersistenceLifecycleParams) {
-  const { notifyDirty, flushSave, flushSaveForPath, getLastSavedSnapshot } =
-    useEditorSave(
-      activePath,
-      () => getLiveMarkdownRef.current(),
-      (md) => {
-        applySavedMarkdown(md);
-        dirtyRef.current = false;
-        const path = activePathRef.current;
-        if (path) {
-          setMarkdown(md);
-          syncTabMarkdownCache(path, md);
-          markClean(path, resolveNoteDisplayTitle({ path, title: noteTitle }));
-          if (noteTitle.trim() === "") {
-            schedulePathSync(path, noteTitle);
-          }
+  const {
+    notifyDirty,
+    flushSave,
+    flushSaveForPath,
+    cancelPendingSave,
+    awaitSaveInFlight,
+    getLastSavedSnapshot,
+  } = useEditorSave(
+    activePath,
+    () => getLiveMarkdownRef.current(),
+    (md) => {
+      applySavedMarkdown(md);
+      dirtyRef.current = false;
+      const path = activePathRef.current;
+      if (path) {
+        setMarkdown(md);
+        syncTabMarkdownCache(path, md);
+        markClean(path, resolveNoteDisplayTitle({ path, title: noteTitle }));
+        if (noteTitle.trim() === "") {
+          schedulePathSync(path, noteTitle);
         }
-      },
-    );
+      }
+    },
+  );
 
   const versionSnapshotScheduler = useMemo(
     () =>
@@ -244,6 +250,8 @@ export function useAppPersistenceLifecycle({
   return {
     notifyDirty,
     flushSave,
+    cancelPendingSave,
+    awaitSaveInFlight,
     resetVersionIdle,
     handleSaveNote,
     handleSaveVersion,
