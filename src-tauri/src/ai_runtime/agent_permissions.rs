@@ -408,12 +408,16 @@ pub fn permission_profile_for_tool(tool_name: &str) -> Option<ToolPermissionProf
         | "scheduled_task_create"
         | "scheduled_task_delete" => (vec![Atom::AppStateWrite], Risk::Medium, true),
         "memory_read" | "scheduled_task_list" => (vec![Atom::AppStateRead], Risk::Low, true),
-        "skills_list" | "skills_read_resource" => (vec![Atom::SkillReadResource], Risk::Low, true),
+        "skills_list"
+        | "skills_read_resource"
+        | "skills_workspace_list"
+        | "skills_workspace_read" => (vec![Atom::SkillReadResource], Risk::Low, true),
         "skills_install"
         | "skills_prepare_workspace"
         | "skills_uninstall"
         | "skills_update"
-        | "skills_toggle" => (vec![Atom::SkillWriteStorage], Risk::High, true),
+        | "skills_toggle"
+        | "skills_workspace_write" => (vec![Atom::SkillWriteStorage], Risk::High, true),
         "secret.exists" | "secret_exists" => (vec![Atom::SecretExists], Risk::Low, true),
         "secret.use_named" | "secret_use_named" => (vec![Atom::SecretUseNamed], Risk::High, false),
         "secret.create_update" | "secret_create_update" => {

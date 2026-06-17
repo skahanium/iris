@@ -25,3 +25,32 @@ export function isImportableUserNotePath(path: string): boolean {
   }
   return normalized.length > 0 && !normalized.includes("..");
 }
+
+function classifiedParts(path: string): string[] {
+  return path
+    .replace(/\\/g, "/")
+    .replace(/^\.classified\/?/, "")
+    .split("/")
+    .filter(Boolean);
+}
+
+/** User-facing name for classified vault paths. Never expose `.classified`. */
+export function classifiedDisplayName(path: string): string {
+  const parts = classifiedParts(path);
+  return parts.at(-1) ?? "保险库";
+}
+
+/** User-facing breadcrumbs for classified paths. Root is always "保险库". */
+export function classifiedBreadcrumbs(
+  path: string,
+): Array<{ label: string; path: string }> {
+  const crumbs: Array<{ label: string; path: string }> = [
+    { label: "保险库", path: ".classified" },
+  ];
+  let acc = ".classified";
+  for (const part of classifiedParts(path)) {
+    acc = `${acc}/${part}`;
+    crumbs.push({ label: part, path: acc });
+  }
+  return crumbs;
+}

@@ -784,9 +784,10 @@ Body
         .await
         .unwrap();
 
-        let workspace_root = vault.join("Skills/workspace-skill");
-        std::fs::create_dir_all(&workspace_root).unwrap();
-        std::fs::write(workspace_root.join("README.md"), "# Existing\n").unwrap();
+        let legacy_workspace_root = vault.join("Skills/workspace-skill");
+        std::fs::create_dir_all(&legacy_workspace_root).unwrap();
+        std::fs::write(legacy_workspace_root.join("README.md"), "# Existing\n").unwrap();
+        std::fs::write(legacy_workspace_root.join("legacy.md"), "# Legacy\n").unwrap();
 
         let prepared = prepare_skill_workspace(
             &vault,
@@ -797,15 +798,33 @@ Body
         )
         .unwrap();
 
-        assert_eq!(prepared.workspace_root, "Skills/workspace-skill");
+        let workspace_root = vault.join(".iris/skills-workspaces/workspace-skill");
+        assert_eq!(
+            prepared.workspace_root,
+            ".iris/skills-workspaces/workspace-skill"
+        );
         assert!(workspace_root.join("inputs").is_dir());
         assert!(workspace_root.join("outputs").is_dir());
         assert_eq!(
             std::fs::read_to_string(workspace_root.join("README.md")).unwrap(),
             "# Existing\n"
         );
+        assert_eq!(
+            std::fs::read_to_string(workspace_root.join("legacy.md")).unwrap(),
+            "# Legacy\n"
+        );
+        assert!(!legacy_workspace_root.exists());
         assert_eq!(prepared.created_folders, vec!["inputs", "outputs"]);
         assert_eq!(prepared.skipped_existing, vec!["README.md"]);
+        assert!(prepared.migrated_legacy_items.contains(&"legacy.md".into()));
+    }
+
+    #[test]
+    fn workspace_root_is_internal_reserved_path() {
+        assert_eq!(
+            crate::ai_runtime::skills::workspace_root_relative("Workspace Skill"),
+            ".iris/skills-workspaces/workspace-skill"
+        );
     }
 
     #[tokio::test]

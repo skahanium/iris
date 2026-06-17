@@ -53,7 +53,7 @@ describe("ClassifiedPasswordSetup", () => {
     setInput(inputs[1]!, "very-secret");
 
     const submit = Array.from(document.querySelectorAll("button")).find((b) =>
-      b.textContent?.includes("确认设置"),
+      b.textContent?.includes("设置密码"),
     );
     await act(async () => {
       submit?.click();

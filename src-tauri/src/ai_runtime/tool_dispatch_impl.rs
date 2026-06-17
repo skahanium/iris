@@ -32,7 +32,8 @@ pub const DISPATCHABLE_TOOL_NAMES: &[&str] = &[
     "scheduled_task_delete", "web_fetch_batch", "readability_fetch", "rendered_fetch",
     "vault_create_note", "vault_rename_move", "vault_delete_to_trash", "vault_asset_write",
     "vault_version_list", "insert_text_at_cursor", "replace_selection", "skills_list", "skills_install",
-    "skills_prepare_workspace", "skills_uninstall", "skills_update", "skills_toggle", "skills_read_resource", "git_read_status",
+    "skills_prepare_workspace", "skills_uninstall", "skills_update", "skills_toggle", "skills_read_resource",
+    "skills_workspace_list", "skills_workspace_read", "skills_workspace_write", "git_read_status",
     "git_read_diff", "git_read_log", "secret_exists", "fs_import_to_vault", "fs_export",
     "fs_read_authorized_folder", "fs_write_authorized_export", "doc_normalize_markdown",
     "doc_extract_citations", "web_to_markdown", "web_download_to_assets", "web_citation_extract",
@@ -148,15 +149,9 @@ async fn dispatch_tool_inner(
         "insert_text_at_cursor" | "replace_selection" => {
             markdown_impl::markdown_write_patch_apply(state, ctx, tool_name, args)
         }
-        "skills_list" => skills_impl::skills_list_tool(state, ctx).await,
-        "skills_install" => skills_impl::skills_install_tool(state, ctx, args).await,
-        "skills_prepare_workspace" => {
-            skills_impl::skills_prepare_workspace_tool(state, ctx, args).await
+        name if skills_impl::is_skill_tool(name) => {
+            skills_impl::dispatch_skill_tool(state, ctx, tool_name, args).await
         }
-        "skills_uninstall" => skills_impl::skills_uninstall_tool(state, ctx, args).await,
-        "skills_update" => skills_impl::skills_update_tool(state, ctx, args).await,
-        "skills_toggle" => skills_impl::skills_toggle_tool(state, ctx, args).await,
-        "skills_read_resource" => skills_impl::skills_read_resource_tool(state, ctx, args).await,
         "git_read_status" => boundary_impl::git_read_status_tool(state, args),
         "git_read_diff" => boundary_impl::git_read_diff_tool(state, args),
         "git_read_log" => boundary_impl::git_read_log_tool(state, args),

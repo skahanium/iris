@@ -88,6 +88,9 @@ const META_SKILL_TOOLS: &[&str] = &[
     "skills_uninstall",
     "skills_update",
     "skills_toggle",
+    "skills_workspace_list",
+    "skills_workspace_read",
+    "skills_workspace_write",
 ];
 
 /// Evaluate the policy verdict for a single tool.

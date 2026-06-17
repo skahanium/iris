@@ -1,6 +1,7 @@
 import { useCallback, useEffect } from "react";
 
 import { IrisOverlay } from "@/components/ui/iris-overlay";
+import { classifiedDisplayName } from "@/lib/classified-path";
 import type { ClassifiedStatus } from "@/types/ipc";
 
 import { ClassifiedFileList } from "./ClassifiedFileList";
@@ -79,24 +80,38 @@ export function ClassifiedPanel({
       bodyClassName="p-0"
     >
       <div
-        className="flex min-h-0 w-full max-w-md flex-col"
+        className="flex min-h-0 w-full flex-col"
         data-testid="classified-panel"
         onMouseMove={onActivity}
         onKeyDown={onActivity}
       >
         {waiting ? (
-          <div className="flex flex-col gap-3 p-4 text-sm">
-            <h3 className="text-lg font-semibold">等待涉密文件关闭</h3>
-            <p className="text-muted-foreground">
-              涉密保险库将在所有涉密笔记标签关闭后自动锁定。请先关闭编辑器中的涉密文件。
-            </p>
-            <ul className="list-disc pl-5 text-muted-foreground">
-              {openClassifiedPaths.map((path) => (
-                <li key={path} className="truncate">
-                  {path}
+          <div className="flex min-h-[22rem] flex-col justify-center gap-4 p-6 text-sm">
+            <div className="space-y-1">
+              <h3 className="text-lg font-semibold">等待关闭涉密标签页</h3>
+              <p className="text-muted-foreground">
+                还有 {openClassifiedPaths.length}{" "}
+                个涉密标签页未关闭。关闭后保险库会自动锁定。
+              </p>
+            </div>
+            <ul className="grid gap-1.5 text-muted-foreground">
+              {openClassifiedPaths.slice(0, 4).map((path) => (
+                <li
+                  key={path}
+                  className="truncate rounded-md border border-border/60 bg-surface-inset/40 px-2 py-1.5"
+                >
+                  {classifiedDisplayName(path)}
                 </li>
               ))}
+              {openClassifiedPaths.length > 4 ? (
+                <li className="px-2 py-1 text-xs">
+                  另有 {openClassifiedPaths.length - 4} 个标签页
+                </li>
+              ) : null}
             </ul>
+            <p className="text-xs text-muted-foreground">
+              为避免误关正在编辑的涉密内容，当前不会强制锁定。
+            </p>
           </div>
         ) : null}
         {!waiting && status === "needs_setup" ? (

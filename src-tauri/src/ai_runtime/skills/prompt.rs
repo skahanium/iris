@@ -19,7 +19,7 @@ pub fn inject_into_prompt(
     }
     let mut block = String::from("## Activated Skills\n\n");
     block.push_str(
-        "If a skill references files under `references/`, `resources/`, or `assets/`, call `skills_read_resource` when needed instead of guessing their contents.\n\n",
+        "If a skill references files under `references/`, `resources/`, or `assets/`, call `skills_read_resource` when needed instead of guessing their contents. For derived documents, use `skills_workspace_list`, `skills_workspace_read`, and `skills_workspace_write`; do not use ordinary note tools such as `list_vault`, `read_note`, or `vault_create_note` for Skill runtime artifacts.\n\n",
     );
     for skill in matched {
         block.push_str(&format!("### Skill: {}\n\n", skill.name));
@@ -33,7 +33,7 @@ pub fn inject_into_prompt(
                 "Workspace is not fully prepared yet. Call `skills_prepare_workspace` before creating declared folders or template documents.\n\n",
             );
         } else {
-            block.push_str("Any derived documents should be written into that workspace.\n\n");
+            block.push_str("Any derived documents should be written into that hidden workspace through the skills_workspace_* tools.\n\n");
         }
         if !skill.allowed_tools.is_empty() {
             block.push_str(&format!(

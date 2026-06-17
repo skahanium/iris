@@ -63,9 +63,10 @@ pub use validation_impl::{
     validate_skill_license,
 };
 pub use workspace_impl::{
-    prepare_workspace_for_skill, preview_prepare_workspace, validate_workspace_folder_path,
-    validate_workspace_source_path, validate_workspace_target_path, workspace_manifest_items,
-    workspace_root_path, workspace_root_relative, workspace_status_for_skill,
+    list_workspace_files, prepare_workspace_for_skill, preview_prepare_workspace,
+    read_workspace_file, validate_workspace_folder_path, validate_workspace_source_path,
+    validate_workspace_target_path, workspace_manifest_items, workspace_root_path,
+    workspace_root_relative, workspace_status_for_skill, write_workspace_file,
     SkillWorkspacePrepareResult, SkillWorkspaceStatus,
 };
 

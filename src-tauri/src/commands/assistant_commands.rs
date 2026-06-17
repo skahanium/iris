@@ -3,13 +3,18 @@
 use std::sync::Arc;
 
 use serde::Serialize;
-use tauri::{AppHandle, State};
+use tauri::{AppHandle, Emitter, State};
 
 use crate::ai_runtime::assistant_facade::{
     agent_intent_from_legacy, legacy_intent_for_agent, AssistantIntent,
 };
 use crate::ai_runtime::chapter_workflow::ChapterInfo;
 use crate::ai_runtime::document_workflow::DocumentCheckResult;
+use crate::ai_runtime::harness::UsageSource;
+use crate::ai_runtime::harness_support::{
+    save_harness_checkpoint, HarnessCheckpoint, HarnessCheckpointMeta,
+};
+use crate::ai_runtime::model_gateway::{LlmMessage, MessageRole, TokenUsage, ToolCall};
 use crate::ai_runtime::retrieval_scope::ContextScopeDto;
 use crate::ai_runtime::writing_workflow::WritingTaskOutput;
 use crate::ai_runtime::{
@@ -223,6 +228,221 @@ fn blocked_reasons_for_response(response: &AssistantExecuteResponse) -> Vec<Stri
     }
 }
 
+fn detect_skillhub_direct_install(message: &str) -> Option<String> {
+    let lower = message.to_lowercase();
+    let has_skillhub_source = lower.contains("skillhub")
+        || lower.contains("skillhub.cn/install/skillhub.md")
+        || lower.contains("skillhub 商店")
+        || lower.contains("skillhub商店");
+    if !has_skillhub_source {
+        return None;
+    }
+
+    for marker in ["安装", "install"] {
+        let Some(idx) = lower.rfind(marker) else {
+            continue;
+        };
+        let rest = &message[idx + marker.len()..];
+        let candidate: String = rest
+            .trim_start()
+            .chars()
+            .take_while(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_')
+            .collect();
+        if candidate.len() >= 2 && candidate.to_lowercase() != "skillhub" {
+            return Some(candidate.to_lowercase());
+        }
+    }
+    None
+}
+
+fn skill_installed(plan: &[crate::ai_runtime::skills::SkillListEntry], name: &str) -> bool {
+    plan.iter()
+        .any(|entry| entry.skill.name.eq_ignore_ascii_case(name))
+}
+
+async fn maybe_handle_skillhub_direct_install(
+    state: &AppState,
+    app_handle: &AppHandle,
+    request: &AssistantExecuteRequest,
+    agent_intent: AgentIntent,
+    skill_activation_plan: &SkillActivationPlanSummary,
+    intent_detection: &IntentDetectionSummary,
+) -> AppResult<Option<AssistantExecuteResponse>> {
+    if !matches!(agent_intent, AgentIntent::SkillManagement) {
+        return Ok(None);
+    }
+    let source_hint_skill = intent_detection.source_hints.iter().find_map(|hint| {
+        hint.strip_prefix("skillhub:direct_install:")
+            .map(str::to_string)
+    });
+    let Some(skill_name) =
+        source_hint_skill.or_else(|| detect_skillhub_direct_install(&request.message))
+    else {
+        return Ok(None);
+    };
+
+    let vault = state.vault_path()?;
+    let installed = crate::ai_runtime::skill_install_service::list_skills(&state.db, &vault, None)?;
+    if skill_installed(&installed, &skill_name) {
+        return Ok(Some(AssistantExecuteResponse {
+            body: AssistantExecuteBody::Chat {
+                payload: serde_json::json!({
+                    "content": format!("Skill `{skill_name}` 已安装。"),
+                    "status": "completed",
+                    "pending_confirmation": false,
+                }),
+            },
+            request_id: uuid::Uuid::new_v4().to_string(),
+            run_status: "completed".into(),
+            evidence_refresh_notice: None,
+            artifacts: Vec::new(),
+            intent_detection: Some(intent_detection.clone()),
+            run_plan_summary: None,
+            permission_preflight_summary: None,
+        }));
+    }
+
+    let request_id = uuid::Uuid::new_v4().to_string();
+    let scene = agent_intent.scene();
+    let session_id = crate::ai_runtime::session::SessionManager::ensure(
+        &state.db,
+        scene,
+        request.note_path.as_deref(),
+    )?;
+    let args = serde_json::json!({
+        "source": "registry",
+        "registry": "skillhub",
+        "path_or_url": skill_name,
+        "scope": "vault",
+        "reason": "用户在 AI 对话中明确要求从 SkillHub 安装该技能"
+    });
+    let arguments = serde_json::to_string(&args).unwrap_or_default();
+    let tool_call = ToolCall::new(
+        format!("direct-skillhub-{}", uuid::Uuid::new_v4()),
+        "skills_install",
+        arguments.clone(),
+    );
+
+    crate::llm::safe_lock(&state.ai.pending_tool_calls).insert(
+        tool_call.id.clone(),
+        crate::app::PendingToolCall {
+            tool_name: "skills_install".into(),
+            arguments: arguments.clone(),
+            request_id: request_id.clone(),
+            scene,
+            note_path: request.note_path.clone(),
+            file_id: None,
+            web_search_enabled: request.web_authorized,
+            autonomy_level: crate::ai_runtime::resolve_scene(scene).autonomy_level,
+            skill_allowed_tools: skill_activation_plan.allowed_tools(),
+            skill_activation_plan: Some(skill_activation_plan.clone()),
+        },
+    );
+
+    let checkpoint = HarnessCheckpoint {
+        meta: HarnessCheckpointMeta {
+            scene: scene.profile().into(),
+            session_id,
+            note_path: request.note_path.clone(),
+            note_title: None,
+            selection_excerpt: request.selection.clone(),
+            cold_start_packets: Vec::new(),
+            web_search_enabled: request.web_authorized,
+            depth: 0,
+            capability_slot: None,
+            provider_id: None,
+            model: None,
+            endpoint_family: None,
+            thinking: None,
+            output_budget: None,
+            skill_activation_plan: Some(skill_activation_plan.clone()),
+        },
+        round: 1,
+        messages: vec![
+            LlmMessage {
+                role: MessageRole::User,
+                content: request.message.clone().into(),
+                ..Default::default()
+            },
+            LlmMessage {
+                role: MessageRole::Assistant,
+                content: format!(
+                    "将通过 SkillHub registry 安装 `{}`，等待用户确认。",
+                    skill_name
+                )
+                .into(),
+                tool_calls: Some(vec![tool_call.clone()]),
+                ..Default::default()
+            },
+        ],
+        tool_calls: vec![tool_call.clone()],
+        tool_results: vec![serde_json::json!({
+            "tool_call_id": tool_call.id,
+            "status": "pending_confirmation",
+        })],
+        evidence_packets: Vec::new(),
+        usage: TokenUsage::default(),
+        usage_source: UsageSource::Estimated,
+        bonus_round_used: false,
+    };
+    crate::ai_runtime::trace::TraceRecorder::start(&state.db, &request_id, scene)?;
+    crate::ai_runtime::trace::TraceRecorder::update_status(
+        &state.db,
+        &request_id,
+        crate::ai_runtime::trace::TraceStatus::AwaitingToolConfirmation,
+    )?;
+    save_harness_checkpoint(&state.db, &request_id, &checkpoint)?;
+
+    let mut confirm_request = serde_json::json!({
+        "request_id": request_id,
+        "tool_call_id": tool_call.id,
+        "tool_name": "skills_install",
+        "arguments": args,
+        "permissionEffects": [],
+    });
+    let req = crate::ai_runtime::skill_install_service::SkillInstallRequest {
+        source: crate::ai_runtime::skill_registry::SkillInstallSource::Registry,
+        path_or_url: skill_name.clone(),
+        scope: crate::ai_runtime::skills::SkillScope::Vault,
+        subpath: None,
+        registry: Some("skillhub".into()),
+        expected_sha256: None,
+    };
+    if let Ok(preview) =
+        crate::ai_runtime::skill_install_service::preview_install(&vault, &req).await
+    {
+        confirm_request["preview"] = preview;
+    }
+    let _ = app_handle.emit("ai:tool_confirm_request", &confirm_request);
+
+    Ok(Some(AssistantExecuteResponse {
+        body: AssistantExecuteBody::Chat {
+            payload: serde_json::json!({
+                "content": format!("准备从 SkillHub 安装 `{skill_name}`，等待确认。"),
+                "status": "pending_tools",
+                "pending_confirmation": true,
+            }),
+        },
+        request_id,
+        run_status: "pending_confirmation".into(),
+        evidence_refresh_notice: None,
+        artifacts: vec![crate::ai_runtime::harness_task::HarnessArtifactWire {
+            kind: "tool_confirmation".into(),
+            title: "工具确认".into(),
+            status: "pending".into(),
+            source_task: "skill_management".into(),
+            evidence_count: 0,
+            payload: serde_json::Value::Null,
+        }],
+        intent_detection: Some(intent_detection.clone()),
+        run_plan_summary: None,
+        permission_preflight_summary: Some(build_permission_preflight_summary(
+            skill_activation_plan,
+            "pending_confirmation",
+        )),
+    }))
+}
+
 /// Task body returned to the frontend (tagged union, wire-compatible).
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "kind", rename_all = "camelCase")]
@@ -308,6 +528,18 @@ pub(crate) async fn route_assistant_execute(
         &state.db,
         &skill_activation_plan,
     );
+    if let Some(response) = maybe_handle_skillhub_direct_install(
+        state,
+        app_handle,
+        &request,
+        agent_intent,
+        &skill_activation_plan,
+        &intent_detection,
+    )
+    .await?
+    {
+        return Ok(response);
+    }
     let route = crate::llm::config::resolve_capability_route(
         &state.db,
         crate::llm::config::CapabilityRouteInput {
@@ -398,4 +630,20 @@ pub async fn assistant_execute(
     request: AssistantExecuteRequest,
 ) -> AppResult<AssistantExecuteResponse> {
     route_assistant_execute(state.inner().as_ref(), &app_handle, request).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn detects_skillhub_direct_install_target() {
+        assert_eq!(
+            detect_skillhub_direct_install(
+                "请根据 https://skillhub.cn/install/skillhub.md 安装self-improving技能"
+            )
+            .as_deref(),
+            Some("self-improving")
+        );
+    }
 }

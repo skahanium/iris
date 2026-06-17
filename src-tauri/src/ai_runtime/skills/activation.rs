@@ -727,7 +727,8 @@ mod phase4_tests {
         let vault = dir.path().join("vault");
         let skill_root = vault.join(".iris/skills/workspace-helper");
         std::fs::create_dir_all(skill_root.join("resources")).unwrap();
-        std::fs::create_dir_all(vault.join("Skills/workspace-helper/inputs")).unwrap();
+        std::fs::create_dir_all(vault.join(".iris/skills-workspaces/workspace-helper/inputs"))
+            .unwrap();
         std::fs::write(skill_root.join("resources/default-note.md"), "# Template").unwrap();
 
         let mut metadata = HashMap::new();
@@ -757,7 +758,10 @@ mod phase4_tests {
         );
 
         let activated = &plan.activated_skills[0];
-        assert_eq!(activated.workspace_root, "Skills/workspace-helper");
+        assert_eq!(
+            activated.workspace_root,
+            ".iris/skills-workspaces/workspace-helper"
+        );
         assert!(!activated.workspace_ready);
         assert!(activated
             .workspace_missing_items

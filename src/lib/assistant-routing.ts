@@ -80,8 +80,39 @@ const DOCUMENT_KEYWORDS = [
   "outline",
 ];
 
+export interface SkillHubDirectInstall {
+  registry: "skillhub";
+  skill: string;
+  scope: "vault";
+}
+
 function includesAny(haystack: string, needles: string[]): boolean {
   return needles.some((needle) => haystack.includes(needle));
+}
+
+export function detectSkillHubDirectInstall(
+  message: string,
+): SkillHubDirectInstall | null {
+  const raw = message.trim();
+  const lower = raw.toLowerCase();
+  const hasSkillHubSource =
+    lower.includes("skillhub") ||
+    lower.includes("skillhub.cn/install/skillhub.md") ||
+    lower.includes("skillhub 商店") ||
+    lower.includes("skillhub商店");
+  if (!hasSkillHubSource) return null;
+
+  const installSkillPattern =
+    /(?:安装|install)\s*([a-z0-9][a-z0-9_-]{1,80})\s*(?:技能|skill)/i;
+  const match = raw.match(installSkillPattern);
+  const skill = match?.[1]?.toLowerCase();
+  if (!skill || skill === "skillhub") return null;
+
+  return {
+    registry: "skillhub",
+    skill,
+    scope: "vault",
+  };
 }
 
 function detection(
@@ -138,6 +169,10 @@ export function detectAgentIntent(
   if (input.explicitScope) hints.push("context:scope");
   if (input.hasImage) hints.push("context:image");
   if (input.skillMention) hints.push("skill:mention");
+  const skillHubDirectInstall = detectSkillHubDirectInstall(input.message);
+  if (skillHubDirectInstall) {
+    hints.push(`skillhub:direct_install:${skillHubDirectInstall.skill}`);
+  }
 
   if (!message) {
     return detection(
@@ -189,6 +224,7 @@ export function detectAgentIntent(
 
   if (
     input.skillMention ||
+    skillHubDirectInstall ||
     message.includes("skill") ||
     message.includes("技能")
   ) {

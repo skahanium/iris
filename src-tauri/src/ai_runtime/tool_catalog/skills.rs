@@ -43,7 +43,7 @@ pub(super) fn tools() -> Vec<ToolCatalogEntry> {
         },
         ToolCatalogEntry {
             name: "skills_prepare_workspace",
-            description: "Prepare a Skill workspace under the current vault's Skills/<skill>/ archive",
+            description: "Prepare a Skill workspace under the current vault's hidden .iris/skills-workspaces/<skill>/ archive",
             input_schema: serde_json::json!({
                 "type": "object",
                 "properties": {
@@ -120,7 +120,7 @@ pub(super) fn tools() -> Vec<ToolCatalogEntry> {
         },
         ToolCatalogEntry {
             name: "skills_read_resource",
-            description: "读取已安装 Skill 的 references/、scripts/ 或 assets/ 下资源文件",
+            description: "读取已安装 Skill 的 references/、resources/ 或 assets/ 下资源文件",
             input_schema: serde_json::json!({
                 "type": "object",
                 "properties": {
@@ -132,6 +132,66 @@ pub(super) fn tools() -> Vec<ToolCatalogEntry> {
             }),
             access_level: ToolAccessLevel::ReadIndex,
             requires_confirmation: false,
+            implementation: ToolImplementationStatus::Dispatchable,
+            default_enabled_without_skill: false,
+            scene_affinity: &[],
+            max_results: None,
+        },
+        ToolCatalogEntry {
+            name: "skills_workspace_list",
+            description: "List files in a Skill's hidden derived-document workspace. Use this for Skill runtime artifacts instead of list_vault.",
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string"},
+                    "scope": {"type": "string", "enum": ["global", "vault"], "default": "vault"},
+                    "path": {"type": "string", "description": "optional workspace-relative folder"}
+                },
+                "required": ["name"]
+            }),
+            access_level: ToolAccessLevel::ReadIndex,
+            requires_confirmation: false,
+            implementation: ToolImplementationStatus::Dispatchable,
+            default_enabled_without_skill: false,
+            scene_affinity: &[],
+            max_results: None,
+        },
+        ToolCatalogEntry {
+            name: "skills_workspace_read",
+            description: "Read a file from a Skill's hidden derived-document workspace. Use this for Skill runtime artifacts instead of read_note.",
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string"},
+                    "scope": {"type": "string", "enum": ["global", "vault"], "default": "vault"},
+                    "relative_path": {"type": "string"}
+                },
+                "required": ["name", "relative_path"]
+            }),
+            access_level: ToolAccessLevel::ReadIndex,
+            requires_confirmation: false,
+            implementation: ToolImplementationStatus::Dispatchable,
+            default_enabled_without_skill: false,
+            scene_affinity: &[],
+            max_results: None,
+        },
+        ToolCatalogEntry {
+            name: "skills_workspace_write",
+            description: "Write a file into a Skill's hidden derived-document workspace. Use this for Skill runtime artifacts instead of vault_create_note.",
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string"},
+                    "scope": {"type": "string", "enum": ["global", "vault"], "default": "vault"},
+                    "relative_path": {"type": "string"},
+                    "content": {"type": "string"},
+                    "mode": {"type": "string", "enum": ["create", "overwrite"], "default": "overwrite"},
+                    "reason": {"type": "string"}
+                },
+                "required": ["name", "relative_path", "content"]
+            }),
+            access_level: ToolAccessLevel::ManageSkills,
+            requires_confirmation: true,
             implementation: ToolImplementationStatus::Dispatchable,
             default_enabled_without_skill: false,
             scene_affinity: &[],

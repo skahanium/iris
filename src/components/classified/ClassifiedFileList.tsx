@@ -1,18 +1,27 @@
 import { open as openFileDialog } from "@tauri-apps/plugin-dialog";
 import {
+  AlertTriangle,
   ChevronLeft,
   Download,
   FilePlus,
+  FileText,
+  Folder,
   FolderPlus,
   Lock,
+  Pencil,
+  Trash2,
   Upload,
+  X,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { IrisContextMenu } from "@/components/ui/iris-context-menu";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
+  classifiedBreadcrumbs,
+  classifiedDisplayName,
   isImportableUserNotePath,
   vaultRelativePath,
 } from "@/lib/classified-path";
@@ -41,6 +50,12 @@ interface ClassifiedFileListProps {
   onActivity: () => void;
 }
 
+type ActionDialog =
+  | { type: "createFolder"; name: string }
+  | { type: "rename"; path: string; name: string }
+  | { type: "delete"; path: string }
+  | { type: "export"; path: string; target: string; overwrite: boolean };
+
 function IdleCountdown({ deadline }: { deadline: number | null }) {
   const [label, setLabel] = useState<string | null>(null);
 
@@ -60,20 +75,12 @@ function IdleCountdown({ deadline }: { deadline: number | null }) {
     return () => window.clearInterval(id);
   }, [deadline]);
 
-  if (!label) return null;
+  if (!label) return <span>闲置后自动锁定</span>;
   return (
-    <span
-      className="text-xs text-muted-foreground"
-      data-testid="classified-idle-countdown"
-    >
-      自动锁定 {label}
+    <span data-testid="classified-idle-countdown">
+      闲置后自动锁定 · {label}
     </span>
   );
-}
-
-function displayName(path: string): string {
-  const parts = path.replace(/\\/g, "/").split("/");
-  return parts[parts.length - 1] ?? path;
 }
 
 function folderKey(folder: string): string | undefined {
@@ -90,7 +97,7 @@ function nextUntitledPath(
 ): string {
   const prefix = folder === ".classified" ? ".classified" : folder;
   const taken = new Set(
-    entries.filter((e) => !e.isDir).map((e) => displayName(e.path)),
+    entries.filter((e) => !e.isDir).map((e) => classifiedDisplayName(e.path)),
   );
   for (let i = 1; i < 100; i += 1) {
     const name = i === 1 ? "未命名.md" : `未命名 ${i}.md`;
@@ -99,6 +106,183 @@ function nextUntitledPath(
     }
   }
   return `${prefix}/未命名.md`;
+}
+
+function sanitizeFolderName(name: string): string {
+  return name.trim().replace(/[/\\]/g, "-");
+}
+
+function sanitizeExportTarget(target: string): string {
+  return target.trim().replace(/\\/g, "/").replace(/\/$/, "");
+}
+
+function ActionDialogPanel({
+  dialog,
+  error,
+  busy,
+  exportFolders,
+  onChange,
+  onCancel,
+  onConfirm,
+}: {
+  dialog: ActionDialog;
+  error: string | null;
+  busy: boolean;
+  exportFolders: string[];
+  onChange: (dialog: ActionDialog) => void;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  const isDanger = dialog.type === "delete";
+  const title =
+    dialog.type === "createFolder"
+      ? "新建文件夹"
+      : dialog.type === "rename"
+        ? "重命名"
+        : dialog.type === "delete"
+          ? "删除涉密文件"
+          : dialog.overwrite
+            ? "确认覆盖导出"
+            : "导出涉密文件";
+
+  return (
+    <div className="absolute inset-0 z-10 flex items-center justify-center bg-background/70 p-4 backdrop-blur-sm">
+      <div
+        role="dialog"
+        aria-label={title}
+        className="w-full max-w-sm rounded-xl border border-border bg-panel p-4 shadow-overlay"
+      >
+        <div className="mb-3 flex items-center justify-between gap-3">
+          <div className="flex min-w-0 items-center gap-2">
+            {isDanger ? (
+              <AlertTriangle className="h-4 w-4 shrink-0 text-destructive" />
+            ) : null}
+            <h3 className="truncate text-sm font-semibold">{title}</h3>
+          </div>
+          <button
+            type="button"
+            className="inline-flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:bg-surface-inset hover:text-foreground"
+            onClick={onCancel}
+            aria-label="关闭"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+
+        {dialog.type === "createFolder" ? (
+          <label className="grid gap-2 text-sm">
+            <span className="text-muted-foreground">文件夹名称</span>
+            <Input
+              value={dialog.name}
+              onChange={(event) =>
+                onChange({ ...dialog, name: event.target.value })
+              }
+              onKeyDown={(event) => {
+                if (event.key === "Enter") onConfirm();
+              }}
+              autoFocus
+            />
+          </label>
+        ) : null}
+
+        {dialog.type === "rename" ? (
+          <label className="grid gap-2 text-sm">
+            <span className="text-muted-foreground">新名称</span>
+            <Input
+              value={dialog.name}
+              onChange={(event) =>
+                onChange({ ...dialog, name: event.target.value })
+              }
+              onKeyDown={(event) => {
+                if (event.key === "Enter") onConfirm();
+              }}
+              autoFocus
+            />
+          </label>
+        ) : null}
+
+        {dialog.type === "delete" ? (
+          <p className="text-sm text-muted-foreground">
+            将删除「{classifiedDisplayName(dialog.path)}」。此操作不可撤销。
+          </p>
+        ) : null}
+
+        {dialog.type === "export" ? (
+          dialog.overwrite ? (
+            <p className="text-sm text-muted-foreground">
+              普通笔记目录中已存在「{classifiedDisplayName(dialog.path)}」。
+              确认覆盖后会导出为明文笔记。
+            </p>
+          ) : (
+            <div className="grid gap-2 text-sm">
+              <label className="grid gap-2">
+                <span className="text-muted-foreground">
+                  导出到普通笔记目录
+                </span>
+                <Input
+                  value={dialog.target}
+                  placeholder="例如 notes"
+                  onChange={(event) =>
+                    onChange({ ...dialog, target: event.target.value })
+                  }
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") onConfirm();
+                  }}
+                  autoFocus
+                />
+              </label>
+              {exportFolders.length > 0 ? (
+                <div className="flex flex-wrap gap-1">
+                  {exportFolders.slice(0, 6).map((folder) => (
+                    <button
+                      key={folder || "root"}
+                      type="button"
+                      className="rounded-md border border-border/60 px-2 py-1 text-xs text-muted-foreground hover:bg-surface-inset hover:text-foreground"
+                      onClick={() =>
+                        onChange({
+                          ...dialog,
+                          target: folder.replace(/\/$/, ""),
+                        })
+                      }
+                    >
+                      {folder || "根目录"}
+                    </button>
+                  ))}
+                </div>
+              ) : null}
+            </div>
+          )
+        ) : null}
+
+        {error ? (
+          <p className="mt-3 text-sm text-destructive" role="alert">
+            {error}
+          </p>
+        ) : null}
+
+        <div className="mt-4 flex justify-end gap-2">
+          <Button type="button" variant="ghost" size="sm" onClick={onCancel}>
+            取消
+          </Button>
+          <Button
+            type="button"
+            variant={isDanger ? "destructive" : "default"}
+            size="sm"
+            onClick={onConfirm}
+            disabled={busy}
+          >
+            {dialog.type === "delete"
+              ? "删除"
+              : dialog.type === "export"
+                ? dialog.overwrite
+                  ? "覆盖并导出"
+                  : "导出"
+                : "确认"}
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 export function ClassifiedFileList({
@@ -111,7 +295,10 @@ export function ClassifiedFileList({
   const [files, setFiles] = useState<ClassifiedFileEntry[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [dialogError, setDialogError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [dialog, setDialog] = useState<ActionDialog | null>(null);
+  const [exportFolders, setExportFolders] = useState<string[]>([]);
   const [menu, setMenu] = useState<{ open: boolean; x: number; y: number }>({
     open: false,
     x: 0,
@@ -132,58 +319,74 @@ export function ClassifiedFileList({
     void refresh();
   }, [refresh]);
 
-  const breadcrumbs = useMemo(() => {
-    const rel = currentFolder.replace(/^\.classified\/?/, "");
-    const parts = rel ? rel.split("/").filter(Boolean) : [];
-    const crumbs: { label: string; path: string }[] = [
-      { label: ".classified", path: ".classified" },
-    ];
-    let acc = ".classified";
-    for (const part of parts) {
-      acc = `${acc}/${part}`;
-      crumbs.push({ label: part, path: acc });
-    }
-    return crumbs;
-  }, [currentFolder]);
+  const breadcrumbs = useMemo(
+    () => classifiedBreadcrumbs(currentFolder),
+    [currentFolder],
+  );
+
+  const selectedEntry = files.find((entry) => entry.path === selected);
+  const menuTarget = menu.open ? selected : null;
 
   const runAction = useCallback(
     async (action: () => Promise<void>) => {
       setBusy(true);
       setError(null);
+      setDialogError(null);
       try {
         await action();
         onActivity();
         await refresh();
       } catch (e) {
-        setError(invokeErrorMessage(e));
+        const message = invokeErrorMessage(e);
+        if (dialog) {
+          setDialogError(message);
+        } else {
+          setError(message);
+        }
       } finally {
         setBusy(false);
       }
     },
-    [onActivity, refresh],
+    [dialog, onActivity, refresh],
   );
 
   const handleCreateNote = () => {
     void runAction(async () => {
       const path = nextUntitledPath(files, currentFolder);
-      const title = displayName(path).replace(/\.md$/i, "");
+      const title = classifiedDisplayName(path).replace(/\.md$/i, "");
       const content = `---\ntitle: ${quoteYamlString(title)}\n---\n\n`;
       await fileCreate(path, content);
       setSelected(path);
     });
   };
 
-  const handleCreateFolder = () => {
-    const name = window.prompt("新建子文件夹名称");
-    if (!name?.trim()) return;
-    const safe = name.trim().replace(/[/\\]/g, "-");
-    const folder =
-      currentFolder === ".classified"
-        ? `.classified/${safe}`
-        : `${currentFolder}/${safe}`;
-    void runAction(async () => {
-      await classifiedMkdir(folder);
+  const openCreateFolderDialog = () => {
+    setDialogError(null);
+    setDialog({ type: "createFolder", name: "" });
+  };
+
+  const openRenameDialog = (path: string) => {
+    setDialogError(null);
+    setDialog({
+      type: "rename",
+      path,
+      name: classifiedDisplayName(path),
     });
+  };
+
+  const openDeleteDialog = (path: string) => {
+    setDialogError(null);
+    setDialog({ type: "delete", path });
+  };
+
+  const openExportDialog = (path: string) => {
+    setDialogError(null);
+    setDialog({ type: "export", path, target: "", overwrite: false });
+    void folderList()
+      .then((folders) =>
+        setExportFolders(folders.map((f) => f.replace(/\/$/, ""))),
+      )
+      .catch(() => setExportFolders([]));
   };
 
   const handleImport = () => {
@@ -204,22 +407,54 @@ export function ClassifiedFileList({
       if (!relative || !isImportableUserNotePath(relative)) {
         throw new Error("只能导入普通用户笔记");
       }
-      const targetFolder =
-        currentFolder === ".classified" ? ".classified" : currentFolder;
-      await classifiedImport(relative, targetFolder);
+      await classifiedImport(relative, currentFolder);
     });
   };
 
-  const handleExport = (path: string) => {
+  const submitDialog = () => {
+    if (!dialog) return;
     void runAction(async () => {
-      const folders = await folderList();
-      const defaultFolder = folders[0] ?? "";
-      const choice = window.prompt(
-        `导出到笔记库内的文件夹（例如 notes）\n可用：${folders.slice(0, 8).join(", ") || "根目录"}`,
-        defaultFolder.replace(/\/$/, ""),
-      );
-      if (!choice?.trim()) return;
-      const target = choice.trim().replace(/\\/g, "/").replace(/\/$/, "");
+      if (dialog.type === "createFolder") {
+        const safe = sanitizeFolderName(dialog.name);
+        if (!safe) throw new Error("请输入文件夹名称");
+        const folder =
+          currentFolder === ".classified"
+            ? `.classified/${safe}`
+            : `${currentFolder}/${safe}`;
+        await classifiedMkdir(folder);
+        setDialog(null);
+        return;
+      }
+
+      if (dialog.type === "rename") {
+        const nextName = dialog.name.trim();
+        if (!nextName) throw new Error("请输入新名称");
+        const current = classifiedDisplayName(dialog.path);
+        if (nextName === current) {
+          setDialog(null);
+          return;
+        }
+        const parent = dialog.path.replace(/\\/g, "/").replace(/\/[^/]+$/, "");
+        const newPath = `${parent}/${nextName}`;
+        await classifiedRename(dialog.path, newPath);
+        if (selected === dialog.path) {
+          setSelected(newPath);
+        }
+        setDialog(null);
+        return;
+      }
+
+      if (dialog.type === "delete") {
+        await classifiedDelete(dialog.path);
+        if (selected === dialog.path) {
+          setSelected(null);
+        }
+        setDialog(null);
+        return;
+      }
+
+      const target = sanitizeExportTarget(dialog.target);
+      if (!target) throw new Error("请输入普通笔记目录");
       if (
         target.startsWith(".iris") ||
         target.startsWith(".classified") ||
@@ -227,73 +462,51 @@ export function ClassifiedFileList({
       ) {
         throw new Error("只能导出到普通笔记目录");
       }
-      const destPath = `${target}/${displayName(path)}`;
-      let overwrite = false;
-      try {
-        await fileRead(destPath);
-        overwrite = window.confirm(
-          `目标位置已存在「${displayName(path)}」。是否覆盖？`,
-        );
-        if (!overwrite) return;
-      } catch {
-        overwrite = false;
+      const destPath = `${target}/${classifiedDisplayName(dialog.path)}`;
+      if (!dialog.overwrite) {
+        try {
+          await fileRead(destPath);
+          setDialog({ ...dialog, target, overwrite: true });
+          return;
+        } catch {
+          // Missing target is expected; export can continue.
+        }
       }
-      await classifiedExport(path, target, overwrite);
-      if (selected === path) {
+      await classifiedExport(dialog.path, target, dialog.overwrite);
+      if (selected === dialog.path) {
         setSelected(null);
       }
+      setDialog(null);
     });
   };
-
-  const handleDelete = (path: string) => {
-    const label = displayName(path);
-    if (!window.confirm(`确定删除「${label}」？此操作不可撤销。`)) return;
-    void runAction(async () => {
-      await classifiedDelete(path);
-      if (selected === path) {
-        setSelected(null);
-      }
-    });
-  };
-
-  const handleRename = (path: string) => {
-    const current = displayName(path);
-    const nextName = window.prompt("重命名为", current);
-    if (!nextName?.trim() || nextName.trim() === current) return;
-    const parent = path.replace(/\\/g, "/").replace(/\/[^/]+$/, "");
-    const newPath = `${parent}/${nextName.trim()}`;
-    void runAction(async () => {
-      await classifiedRename(path, newPath);
-      if (selected === path) {
-        setSelected(newPath);
-      }
-    });
-  };
-
-  const menuTarget = menu.open ? selected : null;
 
   return (
     <div
-      className="flex min-h-0 flex-1 flex-col gap-2 p-4"
+      className="relative flex min-h-0 flex-1 flex-col gap-3 p-4"
       data-testid="classified-file-list"
       onMouseMove={onActivity}
       onKeyDown={onActivity}
     >
-      <div className="flex items-center justify-between gap-2">
-        <div className="flex min-w-0 flex-col gap-0.5">
-          <h3 className="text-lg font-semibold">涉密文件</h3>
-          <IdleCountdown deadline={idleDeadline} />
+      <div className="flex items-center justify-between gap-3 rounded-lg border border-border/60 bg-surface-inset/40 px-3 py-2">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2 text-sm font-medium">
+            <span className="inline-flex h-2 w-2 rounded-full bg-emerald-500" />
+            已解锁
+          </div>
+          <p className="mt-0.5 text-xs text-muted-foreground">
+            <IdleCountdown deadline={idleDeadline} />
+          </p>
         </div>
         <Button
           type="button"
           size="sm"
           variant="outline"
-          className="gap-1.5"
+          className="shrink-0 gap-1.5"
           onClick={onLock}
           disabled={busy}
         >
           <Lock className="h-3.5 w-3.5" />
-          锁定保险库
+          锁定
         </Button>
       </div>
 
@@ -301,7 +514,7 @@ export function ClassifiedFileList({
         {currentFolder !== ".classified" ? (
           <button
             type="button"
-            className="inline-flex items-center gap-0.5 rounded px-1 py-0.5 hover:bg-muted"
+            className="inline-flex items-center gap-0.5 rounded-md px-1.5 py-1 hover:bg-surface-inset hover:text-foreground"
             onClick={() => {
               const parent = currentFolder.replace(/\/[^/]+$/, "");
               setCurrentFolder(parent || ".classified");
@@ -318,7 +531,7 @@ export function ClassifiedFileList({
             key={crumb.path}
             type="button"
             className={cn(
-              "rounded px-1 py-0.5 hover:bg-muted",
+              "rounded-md px-1.5 py-1 hover:bg-surface-inset hover:text-foreground",
               crumb.path === currentFolder && "font-medium text-foreground",
             )}
             onClick={() => {
@@ -338,94 +551,150 @@ export function ClassifiedFileList({
         </p>
       ) : null}
 
-      <ScrollArea className="min-h-[200px] flex-1 rounded-md border border-border/60">
-        <div className="p-1">
-          {files.map((entry) => (
-            <button
-              key={entry.path}
-              type="button"
-              className={cn(
-                "flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm hover:bg-muted",
-                selected === entry.path && "bg-muted",
-              )}
-              onClick={() => {
-                onActivity();
-                if (entry.isDir) {
-                  setCurrentFolder(entry.path);
-                  setSelected(null);
-                  return;
-                }
-                setSelected(entry.path);
-                onOpenFile(entry.path);
-              }}
-              onContextMenu={(event) => {
-                if (entry.isDir) return;
-                event.preventDefault();
-                setSelected(entry.path);
-                setMenu({ open: true, x: event.clientX, y: event.clientY });
-                onActivity();
-              }}
-            >
-              <span aria-hidden>{entry.isDir ? "📁" : "📄"}</span>
-              <span className="truncate">{displayName(entry.path)}</span>
-            </button>
-          ))}
+      <ScrollArea className="min-h-[240px] flex-1 rounded-lg border border-border/60 bg-background/40">
+        <div className="p-1.5">
+          {files.map((entry) => {
+            const Icon = entry.isDir ? Folder : FileText;
+            return (
+              <button
+                key={entry.path}
+                type="button"
+                className={cn(
+                  "flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-left text-sm hover:bg-surface-inset",
+                  selected === entry.path && "bg-surface-inset text-foreground",
+                )}
+                onClick={() => {
+                  onActivity();
+                  if (entry.isDir) {
+                    setCurrentFolder(entry.path);
+                    setSelected(null);
+                    return;
+                  }
+                  setSelected(entry.path);
+                  onOpenFile(entry.path);
+                }}
+                onContextMenu={(event) => {
+                  if (entry.isDir) return;
+                  event.preventDefault();
+                  setSelected(entry.path);
+                  setMenu({ open: true, x: event.clientX, y: event.clientY });
+                  onActivity();
+                }}
+              >
+                <Icon className="h-4 w-4 shrink-0 text-muted-foreground" />
+                <span className="truncate">
+                  {classifiedDisplayName(entry.path)}
+                </span>
+              </button>
+            );
+          })}
           {files.length === 0 ? (
-            <p className="px-2 py-4 text-sm text-muted-foreground">
-              涉密文件夹为空
-            </p>
+            <div className="flex min-h-[220px] flex-col items-center justify-center gap-3 px-4 text-center">
+              <div className="flex h-10 w-10 items-center justify-center rounded-full border border-border/60 bg-surface-inset text-muted-foreground">
+                <Folder className="h-5 w-5" />
+              </div>
+              <div>
+                <p className="text-sm font-medium">还没有涉密文件</p>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  新建笔记或导入普通笔记到保险库。
+                </p>
+              </div>
+            </div>
           ) : null}
         </div>
       </ScrollArea>
 
-      <div className="flex flex-wrap gap-2 border-t border-border/60 pt-2">
-        <Button
-          type="button"
-          size="sm"
-          variant="outline"
-          className="gap-1.5"
-          onClick={handleCreateNote}
-          disabled={busy}
-        >
-          <FilePlus className="h-3.5 w-3.5" />
-          新建
-        </Button>
-        <Button
-          type="button"
-          size="sm"
-          variant="outline"
-          className="gap-1.5"
-          onClick={handleImport}
-          disabled={busy}
-        >
-          <Upload className="h-3.5 w-3.5" />
-          导入
-        </Button>
-        <Button
-          type="button"
-          size="sm"
-          variant="outline"
-          className="gap-1.5"
-          onClick={handleCreateFolder}
-          disabled={busy}
-        >
-          <FolderPlus className="h-3.5 w-3.5" />
-          新建文件夹
-        </Button>
-        {selected && !files.find((f) => f.path === selected)?.isDir ? (
+      <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border/60 pt-3">
+        <div className="flex flex-wrap gap-2">
+          <Button
+            type="button"
+            size="sm"
+            className="gap-1.5"
+            onClick={handleCreateNote}
+            disabled={busy}
+          >
+            <FilePlus className="h-3.5 w-3.5" />
+            新建
+          </Button>
           <Button
             type="button"
             size="sm"
             variant="outline"
             className="gap-1.5"
-            onClick={() => handleExport(selected)}
+            onClick={handleImport}
             disabled={busy}
           >
-            <Download className="h-3.5 w-3.5" />
-            导出
+            <Upload className="h-3.5 w-3.5" />
+            导入
           </Button>
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            className="gap-1.5"
+            onClick={openCreateFolderDialog}
+            disabled={busy}
+          >
+            <FolderPlus className="h-3.5 w-3.5" />
+            新建文件夹
+          </Button>
+        </div>
+        {selected && !selectedEntry?.isDir ? (
+          <div className="flex gap-1">
+            <Button
+              type="button"
+              size="icon"
+              variant="ghost"
+              className="h-8 w-8"
+              aria-label="导出"
+              onClick={() => openExportDialog(selected)}
+              disabled={busy}
+            >
+              <Download className="h-4 w-4" />
+            </Button>
+            <Button
+              type="button"
+              size="icon"
+              variant="ghost"
+              className="h-8 w-8"
+              aria-label="重命名"
+              onClick={() => openRenameDialog(selected)}
+              disabled={busy}
+            >
+              <Pencil className="h-4 w-4" />
+            </Button>
+            <Button
+              type="button"
+              size="icon"
+              variant="ghost"
+              className="h-8 w-8 text-destructive hover:text-destructive"
+              aria-label="删除"
+              onClick={() => openDeleteDialog(selected)}
+              disabled={busy}
+            >
+              <Trash2 className="h-4 w-4" />
+            </Button>
+          </div>
         ) : null}
       </div>
+
+      {dialog ? (
+        <ActionDialogPanel
+          dialog={dialog}
+          error={dialogError}
+          busy={busy}
+          exportFolders={exportFolders}
+          onChange={(next) => {
+            setDialog(next);
+            setDialogError(null);
+          }}
+          onCancel={() => {
+            setDialog(null);
+            setDialogError(null);
+          }}
+          onConfirm={submitDialog}
+        />
+      ) : null}
 
       <IrisContextMenu
         open={menu.open}
@@ -468,11 +737,11 @@ export function ClassifiedFileList({
           if (id === "open") {
             onOpenFile(menuTarget);
           } else if (id === "export") {
-            handleExport(menuTarget);
+            openExportDialog(menuTarget);
           } else if (id === "rename") {
-            handleRename(menuTarget);
+            openRenameDialog(menuTarget);
           } else if (id === "delete") {
-            handleDelete(menuTarget);
+            openDeleteDialog(menuTarget);
           }
         }}
         onClose={() => setMenu({ open: false, x: 0, y: 0 })}
