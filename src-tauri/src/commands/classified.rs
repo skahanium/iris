@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use tauri::{AppHandle, Emitter, State};
+use zeroize::Zeroizing;
 
 use crate::app::AppState;
 use crate::crypto::classified_io;
@@ -443,11 +444,13 @@ fn classified_rename_inner(state: &AppState, path: &str, new_path: &str) -> AppR
 
 #[tauri::command]
 pub fn classified_setup(state: State<'_, Arc<AppState>>, password: String) -> AppResult<()> {
+    let password = Zeroizing::new(password);
     classified_setup_inner(state.inner(), &password)
 }
 
 #[tauri::command]
 pub async fn classified_unlock(state: State<'_, Arc<AppState>>, password: String) -> AppResult<()> {
+    let password = Zeroizing::new(password);
     let vault = state.vault_path()?;
     classified_unlock_async_inner(state.inner(), &password, &vault).await
 }

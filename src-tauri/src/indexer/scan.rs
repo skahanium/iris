@@ -2,7 +2,7 @@ use std::fs;
 use std::path::Path;
 
 use chrono::Utc;
-use rusqlite::Connection;
+use rusqlite::{params_from_iter, Connection};
 use walkdir::WalkDir;
 
 use super::chunker::chunk_markdown;
@@ -50,15 +50,28 @@ fn word_count(content: &str) -> i64 {
 /// 同步 `tags` / `file_tags`（先清空该文件的关联，再写入）。
 pub fn sync_file_tags(conn: &Connection, file_id: i64, tags: &[String]) -> AppResult<()> {
     conn.execute("DELETE FROM file_tags WHERE file_id = ?1", [file_id])?;
-    for tag in tags {
-        let name = tag.trim();
-        if name.is_empty() {
-            continue;
-        }
+    let mut names: Vec<String> = tags
+        .iter()
+        .map(|tag| tag.trim().to_string())
+        .filter(|tag| !tag.is_empty())
+        .collect();
+    names.sort();
+    names.dedup();
+    if names.is_empty() {
+        return Ok(());
+    }
+
+    for name in &names {
         conn.execute("INSERT OR IGNORE INTO tags (name) VALUES (?1)", [name])?;
-        let tag_id: i64 = conn.query_row("SELECT id FROM tags WHERE name = ?1", [name], |row| {
-            row.get(0)
-        })?;
+    }
+
+    let placeholders = vec!["?"; names.len()].join(",");
+    let sql = format!("SELECT id FROM tags WHERE name IN ({placeholders}) ORDER BY name");
+    let mut stmt = conn.prepare(&sql)?;
+    let tag_ids = stmt
+        .query_map(params_from_iter(names.iter()), |row| row.get::<_, i64>(0))?
+        .collect::<Result<Vec<_>, _>>()?;
+    for tag_id in tag_ids {
         conn.execute(
             "INSERT OR IGNORE INTO file_tags (file_id, tag_id) VALUES (?1, ?2)",
             rusqlite::params![file_id, tag_id],

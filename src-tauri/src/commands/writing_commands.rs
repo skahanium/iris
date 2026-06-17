@@ -98,11 +98,18 @@ fn file_write_inner(
         return Err(e.into());
     }
 
-    let hash = crate::indexer::scan::file_hash(&abs)?;
+    let hash = crate::indexer::scan::content_hash(content);
     state.storage.write_guard.mark(path, &hash);
 
     state.db.with_conn(|conn| {
-        crate::indexer::scan::index_file_with_embed(conn, &vault, &abs, Some(state))
+        crate::indexer::scan::index_file_from_content(
+            conn,
+            &vault,
+            &abs,
+            content,
+            &hash,
+            Some(state),
+        )
     })
 }
 

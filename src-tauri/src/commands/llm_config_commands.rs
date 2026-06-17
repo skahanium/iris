@@ -501,8 +501,9 @@ async fn probe_chat_minimal(
 
 fn parse_scene(scene: Option<String>) -> AppResult<AiScene> {
     match scene {
-        Some(s) => serde_json::from_str(&format!("\"{s}\""))
-            .map_err(|e| AppError::msg(format!("invalid scene: {e}"))),
+        Some(s) => {
+            AiScene::parse_wire(&s).ok_or_else(|| AppError::msg(format!("invalid scene: {s}")))
+        }
         None => Ok(AiScene::KnowledgeLookup),
     }
 }

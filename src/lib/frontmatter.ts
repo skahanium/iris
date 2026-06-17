@@ -1,4 +1,10 @@
-/** Obsidian-style `---` YAML frontmatter (subset parser for Iris notes). */
+/**
+ * Obsidian-style `---` YAML frontmatter for Iris notes.
+ *
+ * The UI parser intentionally supports only scalar fields and inline arrays.
+ * Unsupported YAML is preserved as raw text during serialization; UI metadata
+ * controls must not reinterpret or rewrite fields outside this subset.
+ */
 
 export interface SplitFrontmatterResult {
   /** Raw YAML between fences, without `---` lines; null if absent. */
@@ -27,7 +33,7 @@ function parseYamlArray(raw: string): string[] {
   return inner.split(",").map((s) => unquoteYamlScalar(s.trim()));
 }
 
-/** Parse `key: value` lines from a frontmatter block. */
+/** Parse supported `key: value` lines from a frontmatter block. */
 export function parseYamlFields(
   yaml: string,
 ): Record<string, string | string[]> {
@@ -70,7 +76,7 @@ export function quoteYamlString(value: string): string {
 }
 
 /**
- * Build full note markdown: frontmatter (preserving non-title fields) + body.
+ * Build full note markdown: frontmatter (preserving all non-title raw lines) + body.
  */
 export function serializeNoteMarkdown(
   existingYaml: string | null,

@@ -19,6 +19,7 @@ import type {
   BlockedCapabilitySummary,
   SkillCompatibilitySource,
   SkillRuntimeCapability,
+  ToolAccessLevel,
   WritingExecuteResult,
 } from "@/types/ai";
 import type {
@@ -957,7 +958,7 @@ export async function aiListTools(scene: AiScene): Promise<
     name: string;
     description: string;
     requires_confirmation: boolean;
-    access_level: string;
+    access_level: ToolAccessLevel;
   }[]
 > {
   return invoke("ai_list_tools", { scene });

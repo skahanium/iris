@@ -1,11 +1,15 @@
 use rusqlite::Connection;
+use std::collections::BTreeSet;
+use std::sync::LazyLock;
 
 use crate::error::AppResult;
+
+static WIKI_LINK_RE: LazyLock<regex::Regex> =
+    LazyLock::new(|| regex::Regex::new(r"\[\[([^\]]+)\]\]").expect("wiki-link regex"));
 
 /// Extract wiki-link titles from note body: `[[Page Title]]` or `[[page-title]]`.
 /// Skips matches inside fenced code blocks, inline code, and HTML comments.
 pub fn extract_wiki_links(content: &str) -> Vec<String> {
-    let re = regex::Regex::new(r"\[\[([^\]]+)\]\]").unwrap();
     let mut fence = crate::indexer::code_fence::FenceState::new();
     let mut links = Vec::new();
 
@@ -14,7 +18,7 @@ pub fn extract_wiki_links(content: &str) -> Vec<String> {
         if in_fence {
             continue;
         }
-        for cap in re.captures_iter(line) {
+        for cap in WIKI_LINK_RE.captures_iter(line) {
             if let Some(m) = cap.get(0) {
                 if crate::indexer::code_fence::FenceState::is_inside_inline_code_or_comment(
                     line,
@@ -60,23 +64,19 @@ pub fn insert_wiki_link(
 pub fn index_wiki_links(conn: &Connection, source_id: i64, content: &str) -> AppResult<usize> {
     conn.execute("DELETE FROM links WHERE source_id = ?1", [source_id])?;
 
-    let titles = extract_wiki_links(content);
+    let titles: BTreeSet<String> = extract_wiki_links(content).into_iter().collect();
     let mut count = 0;
+    if titles.is_empty() {
+        return Ok(0);
+    }
+
+    let files = load_link_targets(conn)?;
 
     for title in &titles {
-        // Match by exact title or by filename stem
-        let target: Option<(i64, String)> = conn
-            .query_row(
-                "SELECT id, title FROM files WHERE title = ?1 OR path LIKE ?2 LIMIT 1",
-                rusqlite::params![title, format!("%{}.md", title)],
-                |row| Ok((row.get(0)?, row.get(1)?)),
-            )
-            .ok();
-
-        if let Some((target_id, _target_title)) = target {
-            if target_id != source_id {
+        if let Some((target_id, _target_title, _target_path)) = resolve_wiki_target(&files, title) {
+            if *target_id != source_id {
                 let ctx = extract_link_context(content, title);
-                insert_wiki_link(conn, source_id, target_id, &ctx)?;
+                insert_wiki_link(conn, source_id, *target_id, &ctx)?;
                 count += 1;
             }
         }
@@ -85,13 +85,46 @@ pub fn index_wiki_links(conn: &Connection, source_id: i64, content: &str) -> App
     Ok(count)
 }
 
+fn load_link_targets(conn: &Connection) -> AppResult<Vec<(i64, String, String)>> {
+    let mut stmt = conn.prepare("SELECT id, title, path FROM files ORDER BY id")?;
+    let rows = stmt.query_map([], |row| {
+        Ok((
+            row.get::<_, i64>(0)?,
+            row.get::<_, String>(1)?,
+            row.get::<_, String>(2)?,
+        ))
+    })?;
+    Ok(rows.flatten().collect())
+}
+
+fn resolve_wiki_target<'a>(
+    files: &'a [(i64, String, String)],
+    title: &str,
+) -> Option<&'a (i64, String, String)> {
+    files.iter().find(|(_, target_title, path)| {
+        target_title == title || path_stem_matches_wiki_title(path, title)
+    })
+}
+
+fn path_stem_matches_wiki_title(path: &str, title: &str) -> bool {
+    let file_name = path
+        .rsplit(['/', '\\'])
+        .next()
+        .filter(|name| !name.is_empty())
+        .unwrap_or(path);
+    if file_name.len() <= 3 || !file_name[file_name.len() - 3..].eq_ignore_ascii_case(".md") {
+        return false;
+    }
+    file_name[..file_name.len() - 3].eq_ignore_ascii_case(title)
+}
+
 /// Extract surrounding context for a wiki-link (up to 60 chars around the match).
 fn extract_link_context(content: &str, title: &str) -> String {
-    let pattern = format!("[[{}]]", regex::escape(title));
-    let re = regex::Regex::new(&pattern).unwrap();
-    if let Some(m) = re.find(content) {
-        let start = m.start().saturating_sub(30);
-        let end = (m.end() + 30).min(content.len());
+    let pattern = format!("[[{title}]]");
+    if let Some(start_match) = content.find(&pattern) {
+        let end_match = start_match + pattern.len();
+        let start = start_match.saturating_sub(30);
+        let end = (end_match + 30).min(content.len());
         content[start..end].to_string()
     } else {
         String::new()
@@ -160,6 +193,31 @@ mod tests {
             assert_eq!(count, 1);
 
             // Verify link record
+            let link_count: i64 = conn.query_row(
+                "SELECT COUNT(*) FROM links WHERE source_id = 1 AND target_id = 2",
+                [],
+                |r| r.get(0),
+            )?;
+            assert_eq!(link_count, 1);
+            Ok(())
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn index_wiki_links_matches_path_stem_case_insensitively() {
+        let db = Database::open_in_memory().unwrap();
+        db.with_conn(|conn| {
+            conn.execute(
+                "INSERT INTO files (id, path, title, content_hash, created_at, updated_at)
+                 VALUES (1, 'source.md', 'Source', 'abc', '', ''),
+                        (2, 'notes/a.md', 'a', 'def', '', '')",
+                [],
+            )?;
+
+            let count = index_wiki_links(conn, 1, "See [[A]] for more.")?;
+            assert_eq!(count, 1);
+
             let link_count: i64 = conn.query_row(
                 "SELECT COUNT(*) FROM links WHERE source_id = 1 AND target_id = 2",
                 [],

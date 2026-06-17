@@ -6,14 +6,42 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
-use crate::ai_runtime::research_workflow::{execute_research, ResearchConfig};
+use crate::ai_runtime::research_workflow::{
+    execute_research, ArgumentChain, EvidenceMatrix, ResearchConfig,
+};
 use crate::ai_runtime::trace::{TraceRecorder, TraceStatus};
 use crate::ai_runtime::{
     AiScene, ResearchNoteRequest, ResearchNoteResult, ResearchProgress, ResearchTaskState,
+    TokenUsage,
 };
 use crate::app::AppState;
 use crate::error::AppResult;
+use serde::Serialize;
 use tauri::{Emitter, State};
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ResearchTraceSummary {
+    pub request_id: String,
+    pub status: String,
+    pub latency_ms: Option<u64>,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ResearchStatusResponse {
+    pub recent_research: Vec<ResearchTraceSummary>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ResearchExecuteResponse {
+    pub request_id: String,
+    pub topic: String,
+    pub rounds: usize,
+    pub evidence_matrix: EvidenceMatrix,
+    pub argument_chain: ArgumentChain,
+    pub summary: String,
+    pub total_tokens: TokenUsage,
+}
 
 /// Execute a full research workflow (shared by IPC and assistant facade).
 pub(crate) async fn execute_research_task(
@@ -21,7 +49,7 @@ pub(crate) async fn execute_research_task(
     app_handle: &tauri::AppHandle,
     topic: String,
     web_authorized: Option<bool>,
-) -> AppResult<serde_json::Value> {
+) -> AppResult<ResearchExecuteResponse> {
     let request_id = uuid::Uuid::new_v4().to_string();
     let scene = AiScene::ResearchSynthesis;
 
@@ -138,15 +166,15 @@ pub(crate) async fn execute_research_task(
         )
         .ok();
 
-    Ok(serde_json::json!({
-        "request_id": result.request_id,
-        "topic": result.topic,
-        "rounds": result.rounds.len(),
-        "evidence_matrix": result.evidence_matrix,
-        "argument_chain": result.argument_chain,
-        "summary": result.summary,
-        "total_tokens": result.total_tokens,
-    }))
+    Ok(ResearchExecuteResponse {
+        request_id: result.request_id,
+        topic: result.topic,
+        rounds: result.rounds.len(),
+        evidence_matrix: result.evidence_matrix,
+        argument_chain: result.argument_chain,
+        summary: result.summary,
+        total_tokens: result.total_tokens,
+    })
 }
 
 /// Execute a full research workflow on a topic with per-round progress events.
@@ -156,7 +184,7 @@ pub async fn research_execute(
     app_handle: tauri::AppHandle,
     topic: String,
     web_authorized: Option<bool>,
-) -> AppResult<serde_json::Value> {
+) -> AppResult<ResearchExecuteResponse> {
     execute_research_task(&state, &app_handle, topic, web_authorized).await
 }
 
@@ -305,23 +333,21 @@ coverage_score: {coverage_score:.2}
 
 /// Get research workflow status for a session.
 #[tauri::command]
-pub fn research_status(state: State<'_, Arc<AppState>>) -> AppResult<serde_json::Value> {
+pub fn research_status(state: State<'_, Arc<AppState>>) -> AppResult<ResearchStatusResponse> {
     let traces = crate::ai_runtime::trace::TraceRecorder::recent(&state.db, 10)?;
 
     let research_traces: Vec<_> = traces
         .iter()
         .filter(|t| matches!(t.scene, AiScene::ResearchSynthesis))
-        .map(|t| {
-            serde_json::json!({
-                "request_id": t.request_id,
-                "status": format!("{:?}", t.status),
-                "latency_ms": t.latency_ms,
-                "created_at": t.created_at,
-            })
+        .map(|t| ResearchTraceSummary {
+            request_id: t.request_id.clone(),
+            status: format!("{:?}", t.status),
+            latency_ms: t.latency_ms,
+            created_at: t.created_at.clone(),
         })
         .collect();
 
-    Ok(serde_json::json!({
-        "recent_research": research_traces,
-    }))
+    Ok(ResearchStatusResponse {
+        recent_research: research_traces,
+    })
 }

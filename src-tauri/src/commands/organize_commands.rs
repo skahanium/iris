@@ -195,10 +195,17 @@ fn write_vault_file(state: &Arc<AppState>, path: &str, content: &str) -> AppResu
         let _ = crate::security::secure_delete::secure_delete(&tmp);
         return Err(e.into());
     }
-    let hash = crate::indexer::scan::file_hash(&abs)?;
+    let hash = crate::indexer::scan::content_hash(content);
     state.storage.write_guard.mark(path, &hash);
     state.db.with_conn(|conn| {
-        crate::indexer::scan::index_file_with_embed(conn, &vault, &abs, Some(state))
+        crate::indexer::scan::index_file_from_content(
+            conn,
+            &vault,
+            &abs,
+            content,
+            &hash,
+            Some(state),
+        )
     })?;
     Ok(())
 }
@@ -219,11 +226,19 @@ fn rename_vault_file(state: &Arc<AppState>, path: &str, new_path: &str) -> AppRe
         std::fs::create_dir_all(parent)?;
     }
     std::fs::rename(&abs, &new_abs)?;
-    let hash = crate::indexer::scan::file_hash(&new_abs)?;
+    let content = std::fs::read_to_string(&new_abs)?;
+    let hash = crate::indexer::scan::content_hash(&content);
     state.storage.write_guard.mark(new_path, &hash);
     state.db.with_conn(|conn| {
         crate::indexer::scan::rename_file_index(conn, path, new_path)?;
-        crate::indexer::scan::index_file_with_embed(conn, &vault, &new_abs, Some(state))
+        crate::indexer::scan::index_file_from_content(
+            conn,
+            &vault,
+            &new_abs,
+            &content,
+            &hash,
+            Some(state),
+        )
     })?;
     Ok(())
 }

@@ -1,7 +1,11 @@
 use serde::Deserialize;
 use serde_json::Value;
+use std::sync::LazyLock;
 
 use crate::error::{AppError, AppResult};
+
+static BODY_TAG_RE: LazyLock<regex::Regex> =
+    LazyLock::new(|| regex::Regex::new(r"#[\w\u{4e00}-\u{9fff}\-]+").expect("body tag regex"));
 
 /// v0.1 仅索引 YAML 中的 `tags`（数组或标量）；`title` 可选覆盖展示标题。
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -153,8 +157,7 @@ fn extract_fields(yaml: &str) -> (Option<String>, Vec<String>) {
 /// Extract `#tag` from body text (e.g. `#rust`, `#机器学习`, `#hello-world`).
 /// Returns deduplicated tags.
 pub fn extract_body_tags(body: &str) -> Vec<String> {
-    let re = regex::Regex::new(r"#[\w\u{4e00}-\u{9fff}\-]+").unwrap();
-    let mut tags: Vec<String> = re
+    let mut tags: Vec<String> = BODY_TAG_RE
         .find_iter(body)
         .map(|m| m.as_str().trim_start_matches('#').to_string())
         .filter(|s| !s.is_empty() && s.len() <= 64)

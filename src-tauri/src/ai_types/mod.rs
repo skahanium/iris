@@ -27,6 +27,17 @@ pub enum AiScene {
 }
 
 impl AiScene {
+    /// Parse the stable IPC wire value without constructing ad-hoc JSON.
+    pub fn parse_wire(value: &str) -> Option<Self> {
+        match value.trim() {
+            "knowledge_lookup" => Some(AiScene::KnowledgeLookup),
+            "exemplar_learning" => Some(AiScene::ExemplarLearning),
+            "drafting_assist" => Some(AiScene::DraftingAssist),
+            "research_synthesis" => Some(AiScene::ResearchSynthesis),
+            _ => None,
+        }
+    }
+
     /// 场景对应的默认自治等级。
     pub fn autonomy_level(&self) -> AutonomyLevel {
         match self {
@@ -1455,6 +1466,20 @@ mod phase3_model_persona_route_tests {
                 slot
             );
         }
+    }
+
+    #[test]
+    fn ai_scene_parse_wire_accepts_only_stable_scene_values() {
+        assert_eq!(
+            AiScene::parse_wire("knowledge_lookup"),
+            Some(AiScene::KnowledgeLookup)
+        );
+        assert_eq!(
+            AiScene::parse_wire(" drafting_assist "),
+            Some(AiScene::DraftingAssist)
+        );
+        assert_eq!(AiScene::parse_wire("\"knowledge_lookup\""), None);
+        assert_eq!(AiScene::parse_wire("unknown"), None);
     }
 
     #[test]

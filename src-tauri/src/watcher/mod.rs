@@ -8,7 +8,7 @@ use tracing::info;
 
 use crate::app::AppState;
 use crate::error::AppResult;
-use crate::indexer::scan::{file_hash, index_file_with_embed, remove_file_index};
+use crate::indexer::scan::{content_hash, index_file_from_content, remove_file_index};
 use crate::storage::paths::{is_user_note_path, relative_path};
 
 /// Returns whether the file watcher should re-index or emit for a vault-relative path.
@@ -112,15 +112,16 @@ fn handle_file_event(
         return Ok(());
     }
 
-    let hash = file_hash(path)?;
+    let content = std::fs::read_to_string(path)?;
+    let hash = content_hash(&content);
     let rel = relative_path(&vault, path)?;
     if state.storage.write_guard.should_skip_watcher(&rel, &hash) {
         tracing::debug!(path = %rel, "watcher skipped: recent app write");
         return Ok(());
     }
-    state
-        .db
-        .with_conn(|conn| index_file_with_embed(conn, &vault, path, Some(state)))?;
+    state.db.with_conn(|conn| {
+        index_file_from_content(conn, &vault, path, &content, &hash, Some(state))
+    })?;
 
     info!(
         path = %path.display(),

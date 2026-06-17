@@ -291,10 +291,11 @@ pub(crate) async fn run_harness_task(
                 Some(request.web_authorized),
             )
             .await?;
-            let rid = payload
-                .get("request_id")
-                .and_then(|v| v.as_str())
-                .unwrap_or(&trace_id);
+            let rid = if payload.request_id.is_empty() {
+                trace_id.as_str()
+            } else {
+                payload.request_id.as_str()
+            };
             emit_workflow_trace(app_handle, rid, "research", "ok");
             Ok(task_result_from_research(payload))
         }
@@ -367,13 +368,12 @@ pub(crate) async fn run_harness_task(
                 routing_override,
             )
             .await?;
-            let rid = payload
-                .get("request_id")
-                .and_then(|v| v.as_str())
-                .unwrap_or(&trace_id);
-            let status = if payload["pending_confirmation"].as_bool() == Some(true)
-                || payload["status"].as_str() == Some("pending_tools")
-            {
+            let rid = if payload.request_id.is_empty() {
+                trace_id.as_str()
+            } else {
+                payload.request_id.as_str()
+            };
+            let status = if payload.pending_confirmation || payload.status == "pending_tools" {
                 "pending"
             } else {
                 "ok"
@@ -435,40 +435,35 @@ fn resolve_chapter(
         .ok_or_else(|| AppError::msg("当前文档没有可识别的章节结构"))
 }
 
-fn task_result_from_chat(payload: serde_json::Value) -> HarnessTaskResult {
-    let request_id = payload["request_id"].as_str().unwrap_or("").to_string();
-    let pending = payload["pending_confirmation"].as_bool().unwrap_or(false)
-        || payload["status"].as_str() == Some("pending_tools");
+fn task_result_from_chat(
+    payload: crate::commands::ai_commands::AiChatResponse,
+) -> HarnessTaskResult {
+    let payload_json = serde_json::to_value(&payload).unwrap_or_default();
+    let request_id = payload.request_id.clone();
+    let pending = payload.pending_confirmation || payload.status == "pending_tools";
     let run_status = if pending {
         HarnessRunStatus::PendingConfirmation
     } else {
         HarnessRunStatus::Completed
     };
-    let content = payload["content"].as_str().unwrap_or("").to_string();
-    let citation_valid = payload["citation_valid"].as_bool().unwrap_or(true);
-    let packet_ids: Vec<String> = payload["evidence_packets"]
-        .as_array()
-        .map(|arr| {
-            arr.iter()
-                .filter_map(|v| v.get("id").and_then(|id| id.as_str()))
-                .map(String::from)
-                .collect()
-        })
-        .unwrap_or_default();
-    let usage: Option<TokenUsage> = serde_json::from_value(payload["usage"].clone()).ok();
+    let content = payload.content.clone();
+    let citation_valid = payload.citation_valid;
+    let packet_ids: Vec<String> = payload
+        .evidence_packets
+        .iter()
+        .map(|packet| packet.id.clone())
+        .collect();
+    let usage: Option<TokenUsage> = Some(payload.usage.clone());
     let mut artifacts = vec![HarnessArtifact::Message {
         content: content.clone(),
         citation_valid,
     }];
     if pending {
-        if let Some(tc) = payload["tool_calls"].as_array().and_then(|a| a.first()) {
-            if let (Some(rid), Some(tid)) = (
-                payload["request_id"].as_str(),
-                tc.get("id").and_then(|v| v.as_str()),
-            ) {
+        if let Some(tc) = payload.tool_calls.first() {
+            if !payload.request_id.is_empty() {
                 artifacts.push(HarnessArtifact::ToolConfirmation {
-                    request_id: rid.to_string(),
-                    tool_call_id: tid.to_string(),
+                    request_id: payload.request_id.clone(),
+                    tool_call_id: tc.id.clone(),
                 });
             }
         }
@@ -482,7 +477,7 @@ fn task_result_from_chat(payload: serde_json::Value) -> HarnessTaskResult {
         evidence_packet_ids: packet_ids,
         usage,
         evidence_refresh_notice: None,
-        chat_payload: Some(payload),
+        chat_payload: Some(payload_json),
         writing: None,
         citation: None,
         organize: None,
@@ -567,19 +562,18 @@ fn task_result_from_organize(payload: OrganizeTaskResult) -> HarnessTaskResult {
     }
 }
 
-fn task_result_from_research(payload: serde_json::Value) -> HarnessTaskResult {
-    let request_id = payload
-        .get("request_id")
-        .and_then(|v| v.as_str())
-        .unwrap_or("research")
-        .to_string();
+fn task_result_from_research(
+    payload: crate::commands::research_commands::ResearchExecuteResponse,
+) -> HarnessTaskResult {
+    let request_id = payload.request_id.clone();
+    let payload_json = serde_json::to_value(&payload).unwrap_or_default();
     let artifacts = vec![
         HarnessArtifact::ResearchReport {
-            payload: payload.clone(),
+            payload: payload_json.clone(),
         },
         HarnessArtifact::LegacyPayload {
             intent: "research".into(),
-            json: payload.clone(),
+            json: payload_json.clone(),
         },
     ];
     let artifact_wires = artifacts_to_wires(&artifacts, "research");
@@ -595,7 +589,7 @@ fn task_result_from_research(payload: serde_json::Value) -> HarnessTaskResult {
         writing: None,
         citation: None,
         organize: None,
-        research: Some(payload),
+        research: Some(payload_json),
         chapter: None,
         document: None,
     }
@@ -790,14 +784,29 @@ mod tests {
 
     #[test]
     fn chat_pending_task_status() {
-        let payload = serde_json::json!({
-            "request_id": "r1",
-            "status": "pending_tools",
-            "content": "partial",
-            "pending_confirmation": true,
-            "tool_calls": [{"id": "tc1"}],
-            "evidence_packets": [],
-        });
+        let payload = crate::commands::ai_commands::AiChatResponse {
+            request_id: "r1".to_string(),
+            session_id: 1,
+            status: "pending_tools".to_string(),
+            content: "partial".to_string(),
+            tool_calls: vec![crate::ai_runtime::model_gateway::ToolCall::new(
+                "tc1",
+                "search_hybrid",
+                "{}",
+            )],
+            tool_results: vec![],
+            usage: TokenUsage::default(),
+            usage_source: crate::ai_runtime::harness::UsageSource::Provider,
+            citation_valid: true,
+            harness_rounds: 1,
+            evidence_packets: vec![],
+            pending_confirmation: true,
+            evidence_refresh_notice: None,
+            tool_call_id: None,
+            decision: None,
+            resumed: None,
+            installed_skill: None,
+        };
         let r = task_result_from_chat(payload);
         assert_eq!(r.run_status, HarnessRunStatus::PendingConfirmation);
     }

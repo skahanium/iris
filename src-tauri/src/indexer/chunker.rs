@@ -2,41 +2,63 @@
 pub fn chunk_markdown(content: &str, max_chars: usize) -> Vec<String> {
     let mut chunks = Vec::new();
     let mut current = String::new();
+    let mut current_chars = 0usize;
+    let max_chars = max_chars.max(1);
     const MIN_CHARS: usize = 100;
 
     for line in content.lines() {
         let is_boundary = line.starts_with('#') || line.trim().is_empty();
-        if is_boundary && !current.is_empty() && current.chars().count() >= MIN_CHARS {
-            chunks.push(current.trim().to_string());
+        if is_boundary && !current.is_empty() && current_chars >= MIN_CHARS {
+            push_non_empty_trimmed(&mut chunks, &current);
             current.clear();
+            current_chars = 0;
         }
         if !line.is_empty() || !current.is_empty() {
             if !current.is_empty() {
                 current.push('\n');
+                current_chars += 1;
             }
             current.push_str(line);
+            current_chars += line.chars().count();
         }
-        while current.chars().count() > max_chars {
-            let split_at = current
-                .char_indices()
-                .nth(max_chars)
-                .map(|(i, _)| i)
-                .unwrap_or(current.len());
+        while current_chars > max_chars {
+            let trimmed = current.trim_start();
+            if trimmed.len() != current.len() {
+                current = trimmed.to_string();
+                current_chars = current.chars().count();
+                if current_chars <= max_chars {
+                    break;
+                }
+            }
+            let split_at = byte_index_after_chars(&current, max_chars);
             let (head, tail) = current.split_at(split_at);
-            chunks.push(head.trim().to_string());
+            push_non_empty_trimmed(&mut chunks, head);
             current = tail.to_string();
+            current_chars = current_chars.saturating_sub(max_chars);
         }
     }
 
-    if !current.trim().is_empty() {
-        chunks.push(current.trim().to_string());
-    }
+    push_non_empty_trimmed(&mut chunks, &current);
 
     if chunks.is_empty() && !content.trim().is_empty() {
         chunks.push(content.trim().to_string());
     }
 
     chunks
+}
+
+fn byte_index_after_chars(text: &str, char_count: usize) -> usize {
+    text.char_indices()
+        .nth(char_count)
+        .map(|(idx, _)| idx)
+        .unwrap_or(text.len())
+}
+
+fn push_non_empty_trimmed(chunks: &mut Vec<String>, text: &str) {
+    let trimmed = text.trim();
+    if !trimmed.is_empty() {
+        chunks.push(trimmed.to_string());
+    }
 }
 
 #[cfg(test)]
@@ -76,6 +98,17 @@ mod tests {
         let long = "word ".repeat(200);
         let chunks = chunk_markdown(&long, 100);
         assert!(chunks.len() > 1, "long paragraph should be split");
+    }
+
+    #[test]
+    fn max_chars_split_does_not_emit_empty_chunks_for_leading_whitespace() {
+        let chunks = chunk_markdown("   abcdef", 2);
+        assert!(!chunks.is_empty());
+        assert!(
+            chunks.iter().all(|chunk| !chunk.trim().is_empty()),
+            "chunks should not contain empty trimmed entries: {chunks:?}"
+        );
+        assert_eq!(chunks.concat(), "abcdef");
     }
 
     #[test]

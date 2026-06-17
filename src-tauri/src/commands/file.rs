@@ -1,8 +1,9 @@
+use std::collections::BTreeSet;
 use std::fs;
 use std::sync::Arc;
 
 use serde::Serialize;
-use tauri::{AppHandle, Manager, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::app::AppState;
 use crate::error::{AppError, AppResult};
@@ -24,12 +25,19 @@ use crate::storage::paths::{
 
 const MAX_NOTE_FILE_BYTES: usize = 20 * 1024 * 1024;
 
+#[cfg(test)]
 fn vault_runtime_cleanup_sql() -> &'static str {
-    "DELETE FROM sessions;
-     DELETE FROM knowledge_deposits;
-     DELETE FROM web_page_cache;
-     DELETE FROM search_cache;
-     DELETE FROM ai_memories WHERE scope != 'global';"
+    ""
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct VaultIndexProgress {
+    status: &'static str,
+    processed: usize,
+    total: usize,
+    path: Option<String>,
+    error: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -141,6 +149,134 @@ fn validate_folder_path(path: &str) -> AppResult<()> {
         }
     }
     Ok(())
+}
+
+fn remap_folder_child_path(old_path: &str, new_path: &str, file_path: &str) -> Option<String> {
+    if file_path == old_path {
+        return Some(new_path.trim_matches('/').to_string());
+    }
+    let prefix = if old_path.ends_with('/') || old_path.is_empty() {
+        old_path.to_string()
+    } else {
+        format!("{old_path}/")
+    };
+    let suffix = file_path.strip_prefix(&prefix)?;
+    let new_prefix = new_path.trim_matches('/');
+    if new_prefix.is_empty() {
+        Some(suffix.trim_start_matches('/').to_string())
+    } else {
+        Some(format!("{new_prefix}/{}", suffix.trim_start_matches('/')))
+    }
+}
+
+fn folder_rename_reindex_paths(
+    old_path: &str,
+    new_path: &str,
+    affected_files: &[String],
+    modified_sources: &[String],
+) -> Vec<String> {
+    let mut paths = BTreeSet::new();
+    for path in affected_files {
+        if let Some(mapped) = remap_folder_child_path(old_path, new_path, path) {
+            if is_user_note_path(&mapped) {
+                paths.insert(mapped);
+            }
+        }
+    }
+    for path in modified_sources {
+        let mapped = remap_folder_child_path(old_path, new_path, path)
+            .unwrap_or_else(|| path.trim_matches('/').to_string());
+        if is_user_note_path(&mapped) {
+            paths.insert(mapped);
+        }
+    }
+    paths.into_iter().collect()
+}
+
+fn start_vault_index_task(app: AppHandle, state: Arc<AppState>) {
+    tauri::async_runtime::spawn_blocking(move || {
+        let vault = match state.vault_path() {
+            Ok(vault) => vault,
+            Err(e) => {
+                let _ = app.emit(
+                    "vault:index_progress",
+                    &VaultIndexProgress {
+                        status: "failed",
+                        processed: 0,
+                        total: 0,
+                        path: None,
+                        error: Some(e.to_string()),
+                    },
+                );
+                return;
+            }
+        };
+        let files = crate::indexer::scan::collect_vault_files(&vault);
+        let total = files.len();
+        let _ = app.emit(
+            "vault:index_progress",
+            &VaultIndexProgress {
+                status: "started",
+                processed: 0,
+                total,
+                path: None,
+                error: None,
+            },
+        );
+
+        let mut processed = 0usize;
+        for abs in &files {
+            let rel = match crate::storage::paths::relative_path(&vault, abs) {
+                Ok(rel) if crate::storage::paths::is_user_note_path(&rel) => rel,
+                _ => continue,
+            };
+            if let Err(e) = state.db.with_conn(|conn| {
+                crate::indexer::scan::index_file_with_embed(conn, &vault, abs, Some(&state))
+            }) {
+                tracing::warn!(path = %rel, "vault_set background index skipped: {e}");
+            }
+            processed += 1;
+            let _ = app.emit(
+                "vault:index_progress",
+                &VaultIndexProgress {
+                    status: "progress",
+                    processed,
+                    total,
+                    path: Some(rel),
+                    error: None,
+                },
+            );
+        }
+
+        if let Err(e) = state
+            .db
+            .with_conn(|conn| crate::indexer::scan::prune_stale_file_indexes(conn, &vault))
+        {
+            tracing::warn!("vault_set: background prune skipped: {e}");
+            let _ = app.emit(
+                "vault:index_progress",
+                &VaultIndexProgress {
+                    status: "failed",
+                    processed,
+                    total,
+                    path: None,
+                    error: Some(e.to_string()),
+                },
+            );
+            return;
+        }
+
+        let _ = app.emit(
+            "vault:index_progress",
+            &VaultIndexProgress {
+                status: "completed",
+                processed,
+                total,
+                path: None,
+                error: None,
+            },
+        );
+    });
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -400,13 +536,7 @@ pub async fn folder_rename(
             Ok(rows.flatten().collect())
         })?;
 
-        // Step 1: rename the folder on disk FIRST
-        if let Some(parent) = new_abs.parent() {
-            fs::create_dir_all(parent)?;
-        }
-        fs::rename(&abs, &new_abs)?;
-
-        // Step 2: rewrite wikilinks and sessions for each affected file
+        // Step 1: rewrite wikilinks and sessions while old paths still exist on disk.
         let mut all_modified_sources: Vec<String> = Vec::new();
         for file_path in &affected_files {
             let rel_old = file_path.as_str();
@@ -430,33 +560,34 @@ pub async fn folder_rename(
             cascade_rename_sessions(&state, rel_old, &rel_new)?;
         }
 
-        // Step 3: reindex one file at a time so the write lock is released
-        // between files — other save operations can interleave.
-        let vault_files = crate::indexer::scan::collect_vault_files(&vault);
-        for abs in &vault_files {
-            if let Ok(rel) = crate::storage::paths::relative_path(&vault, abs) {
-                if crate::storage::paths::is_user_note_path(&rel) {
-                    let _ = state.db.with_conn(|conn| {
-                        crate::indexer::scan::index_file_with_embed(conn, &vault, abs, Some(&state))
-                    });
-                }
-            }
+        // Step 2: rename the folder on disk.
+        if let Some(parent) = new_abs.parent() {
+            fs::create_dir_all(parent)?;
         }
+        fs::rename(&abs, &new_abs)?;
+
+        // Step 3: reindex only moved files and sources whose wikilinks changed.
+        let reindex_paths = folder_rename_reindex_paths(
+            &old_path,
+            &new_path,
+            &affected_files,
+            &all_modified_sources,
+        );
+        for rel in &reindex_paths {
+            let Ok(abs_path) = resolve_vault_path(&vault, rel) else {
+                continue;
+            };
+            if let Ok(h) = crate::indexer::scan::file_hash(&abs_path) {
+                state.storage.write_guard.mark(rel, &h);
+            }
+            let _ = state
+                .db
+                .with_conn(|conn| index_file_with_embed(conn, &vault, &abs_path, Some(&state)));
+        }
+
         let _ = state
             .db
             .with_conn(|conn| crate::indexer::scan::prune_stale_file_indexes(conn, &vault));
-
-        // Step 4: reindex source files that were modified
-        for src_path in &all_modified_sources {
-            if let Ok(abs_src) = resolve_vault_path(&vault, src_path) {
-                if let Ok(h) = crate::indexer::scan::file_hash(&abs_src) {
-                    state.storage.write_guard.mark(src_path, &h);
-                }
-                let _ = state
-                    .db
-                    .with_conn(|conn| index_file_with_embed(conn, &vault, &abs_src, Some(&state)));
-            }
-        }
 
         Ok(())
     })
@@ -886,18 +1017,11 @@ pub fn vault_set(app: AppHandle, state: State<'_, Arc<AppState>>, path: String) 
     if !p.is_dir() {
         return Err(AppError::msg("请选择已存在的文件夹作为笔记目录"));
     }
+    let state = state.inner().clone();
     state.set_vault(p)?;
 
     // Clear in-memory AI state to prevent data leakage between vaults
     state.clear_ai_state();
-
-    // Clear previous vault's runtime data to prevent cross-vault access
-    if let Err(e) = state.db.with_conn(|conn| {
-        conn.execute_batch(vault_runtime_cleanup_sql())?;
-        Ok(())
-    }) {
-        tracing::warn!("vault_set: session cleanup failed: {e}");
-    }
 
     if let Err(e) = state.restart_file_watcher(app.clone()) {
         tracing::warn!("vault_set: file watcher did not start: {e}");
@@ -905,29 +1029,8 @@ pub fn vault_set(app: AppHandle, state: State<'_, Arc<AppState>>, path: String) 
 
     if let Ok(vault) = state.vault_path() {
         allow_vault_assets_in_asset_protocol(&app, &vault);
-        // Index one file at a time so other operations (auto-save) can interleave.
-        let files = crate::indexer::scan::collect_vault_files(&vault);
-        for abs in &files {
-            if let Ok(rel) = crate::storage::paths::relative_path(&vault, abs) {
-                if crate::storage::paths::is_user_note_path(&rel) {
-                    let _ = state.db.with_conn(|conn| {
-                        crate::indexer::scan::index_file_with_embed(
-                            conn,
-                            &vault,
-                            abs,
-                            Some(state.inner()),
-                        )
-                    });
-                }
-            }
-        }
-        if let Err(e) = state
-            .db
-            .with_conn(|conn| crate::indexer::scan::prune_stale_file_indexes(conn, &vault))
-        {
-            tracing::warn!("vault_set: initial index skipped: {e}");
-        }
     }
+    start_vault_index_task(app, state);
 
     Ok(())
 }
@@ -1362,17 +1465,39 @@ mod path_sync_tests {
     }
 
     #[test]
-    fn vault_runtime_cleanup_covers_cross_vault_runtime_tables() {
+    fn vault_runtime_cleanup_is_disabled_for_vault_switch_retention() {
         let sql = vault_runtime_cleanup_sql();
-        for table in [
-            "sessions",
-            "knowledge_deposits",
-            "web_page_cache",
-            "search_cache",
-            "ai_memories",
-        ] {
-            assert!(sql.contains(table), "missing cleanup for {table}");
-        }
-        assert!(sql.contains("scope != 'global'"));
+        assert!(
+            sql.trim().is_empty(),
+            "vault switching must not delete persisted runtime rows automatically"
+        );
+    }
+
+    #[test]
+    fn folder_rename_reindex_paths_are_limited_to_moved_and_modified_files() {
+        let paths = folder_rename_reindex_paths(
+            "old",
+            "new",
+            &[
+                "old/a.md".to_string(),
+                "old/deep/b.md".to_string(),
+                "other/ignore.md".to_string(),
+            ],
+            &[
+                "refs/source.md".to_string(),
+                "new/a.md".to_string(),
+                "refs/source.md".to_string(),
+                "old/ref.md".to_string(),
+            ],
+        );
+        assert_eq!(
+            paths,
+            vec![
+                "new/a.md".to_string(),
+                "new/deep/b.md".to_string(),
+                "new/ref.md".to_string(),
+                "refs/source.md".to_string()
+            ]
+        );
     }
 }

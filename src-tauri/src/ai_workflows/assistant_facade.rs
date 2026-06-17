@@ -92,14 +92,23 @@ pub fn legacy_intent_for_agent(agent: AgentIntent) -> AssistantIntent {
 
 /// Parse organize task type string from the assistant request.
 pub fn parse_organize_task_type(raw: Option<&str>) -> OrganizeTaskType {
-    let s = raw.unwrap_or("full_audit");
-    serde_json::from_str(&format!("\"{s}\"")).unwrap_or(OrganizeTaskType::FullAudit)
+    match raw.unwrap_or("full_audit").trim() {
+        "title_suggestions" => OrganizeTaskType::TitleSuggestions,
+        "tag_suggestions" => OrganizeTaskType::TagSuggestions,
+        "folder_suggestions" => OrganizeTaskType::FolderSuggestions,
+        "link_suggestions" => OrganizeTaskType::LinkSuggestions,
+        _ => OrganizeTaskType::FullAudit,
+    }
 }
 
 /// Parse document check type string from the assistant request.
 pub fn parse_document_check_type(raw: Option<&str>) -> DocumentCheckType {
-    let s = raw.unwrap_or("outline_check");
-    serde_json::from_str(&format!("\"{s}\"")).unwrap_or(DocumentCheckType::OutlineCheck)
+    match raw.unwrap_or("outline_check").trim() {
+        "citation_gap_check" => DocumentCheckType::CitationGapCheck,
+        "style_consistency" => DocumentCheckType::StyleConsistency,
+        "cross_doc_reference" => DocumentCheckType::CrossDocReference,
+        _ => DocumentCheckType::OutlineCheck,
+    }
 }
 
 #[cfg(test)]
@@ -164,6 +173,22 @@ mod tests {
         assert_eq!(
             parse_organize_task_type(Some("tag_suggestions")),
             OrganizeTaskType::TagSuggestions
+        );
+        assert_eq!(
+            parse_organize_task_type(Some("\"tag_suggestions\"")),
+            OrganizeTaskType::FullAudit
+        );
+    }
+
+    #[test]
+    fn parses_document_check_type() {
+        assert_eq!(
+            parse_document_check_type(Some("style_consistency")),
+            DocumentCheckType::StyleConsistency
+        );
+        assert_eq!(
+            parse_document_check_type(Some("\"style_consistency\"")),
+            DocumentCheckType::OutlineCheck
         );
     }
 }

@@ -156,8 +156,9 @@ mod tests {
     #[test]
     fn global_skills_dir_uses_userprofile_when_home_is_empty() {
         let path = global_skills_dir_from_env(Some(""), Some(r"C:\Users\Iris"));
+        let normalized = path.to_string_lossy().replace('/', "\\");
 
-        assert_eq!(path, PathBuf::from(r"C:\Users\Iris\.iris\skills"));
+        assert_eq!(normalized, r"C:\Users\Iris\.iris\skills");
     }
 
     #[test]

@@ -3,6 +3,7 @@ use std::sync::{LazyLock, Mutex};
 
 use keyring::Entry;
 use serde::{Deserialize, Serialize};
+use zeroize::{Zeroize, Zeroizing};
 
 use crate::error::{AppError, AppResult};
 use crate::storage::db::Database;
@@ -41,16 +42,30 @@ impl ApiKeyBundle {
     }
 
     fn upsert(&mut self, service: &str, value: &str) {
-        self.keys
-            .insert(canonical_service_id(service), value.to_string());
+        if let Some(mut old) = self
+            .keys
+            .insert(canonical_service_id(service), value.to_string())
+        {
+            old.zeroize();
+        }
     }
 
     fn remove(&mut self, service: &str) {
-        self.keys.remove(&canonical_service_id(service));
+        if let Some(mut value) = self.keys.remove(&canonical_service_id(service)) {
+            value.zeroize();
+        }
     }
 
     fn is_empty(&self) -> bool {
         self.keys.is_empty()
+    }
+}
+
+impl Drop for ApiKeyBundle {
+    fn drop(&mut self) {
+        for value in self.keys.values_mut() {
+            value.zeroize();
+        }
     }
 }
 
@@ -133,7 +148,10 @@ fn cache_lock() -> AppResult<std::sync::MutexGuard<'static, Option<ApiKeyBundle>
 
 fn read_api_key_bundle_uncached() -> AppResult<ApiKeyBundle> {
     match get_canonical_password_optional(API_KEY_BUNDLE_SERVICE)? {
-        Some(json) => ApiKeyBundle::from_json(&json),
+        Some(json) => {
+            let json = Zeroizing::new(json);
+            ApiKeyBundle::from_json(&json)
+        }
         None => Ok(ApiKeyBundle::default()),
     }
 }
@@ -152,7 +170,8 @@ fn store_api_key_bundle(bundle: &ApiKeyBundle) -> AppResult<()> {
     if bundle.is_empty() {
         delete_secret(API_KEY_BUNDLE_SERVICE)?;
     } else {
-        set_secret(API_KEY_BUNDLE_SERVICE, &bundle.to_json()?)?;
+        let json = Zeroizing::new(bundle.to_json()?);
+        set_secret(API_KEY_BUNDLE_SERVICE, &json)?;
     }
     *cache_lock()? = Some(bundle.clone());
     Ok(())

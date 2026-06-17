@@ -72,6 +72,9 @@ const MIGRATION_029_UP: &str = include_str!("../../migrations/029_model_registry
 const MIGRATION_029_DOWN: &str = include_str!("../../migrations/029_model_registry.down.sql");
 const MIGRATION_030_UP: &str = include_str!("../../migrations/030_runtime_vault_scope.sql");
 const MIGRATION_030_DOWN: &str = include_str!("../../migrations/030_runtime_vault_scope.down.sql");
+const MIGRATION_031_UP: &str = include_str!("../../migrations/031_links_single_column_indexes.sql");
+const MIGRATION_031_DOWN: &str =
+    include_str!("../../migrations/031_links_single_column_indexes.down.sql");
 
 fn is_applied(conn: &Connection, name: &str) -> bool {
     conn.query_row(
@@ -170,6 +173,12 @@ pub fn migrate_up(conn: &Connection) -> AppResult<()> {
     apply_migration(conn, "028_multimodal_messages", MIGRATION_028_UP, false)?;
     apply_migration(conn, "029_model_registry", MIGRATION_029_UP, false)?;
     apply_migration(conn, "030_runtime_vault_scope", MIGRATION_030_UP, false)?;
+    apply_migration(
+        conn,
+        "031_links_single_column_indexes",
+        MIGRATION_031_UP,
+        false,
+    )?;
 
     Ok(())
 }
@@ -181,6 +190,7 @@ fn rollback_migration(conn: &Connection, name: &str, sql: &str) {
 
 /// Roll back all migrations in strict reverse order (for tests).
 pub fn migrate_down(conn: &Connection) -> AppResult<()> {
+    rollback_migration(conn, "031_links_single_column_indexes", MIGRATION_031_DOWN);
     rollback_migration(conn, "030_runtime_vault_scope", MIGRATION_030_DOWN);
     rollback_migration(conn, "029_model_registry", MIGRATION_029_DOWN);
     rollback_migration(conn, "028_multimodal_messages", MIGRATION_028_DOWN);

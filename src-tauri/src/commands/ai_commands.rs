@@ -15,7 +15,7 @@ use crate::ai_runtime::{
     session::{SessionManager, SessionMessage, SessionSummary},
     tool_executor::ToolRegistry,
     trace::{TraceRecorder, TraceStatus},
-    AiScene, AssembledContext,
+    AiScene, AssembledContext, ContextPacket, TokenUsage, ToolAccessLevel,
 };
 use std::path::Path;
 use std::sync::Arc;
@@ -27,6 +27,10 @@ use crate::storage::paths::is_user_note_path;
 use serde::{Deserialize, Serialize};
 use tauri::{Emitter, State};
 use tracing::info;
+
+fn parse_ai_scene(scene: &str) -> AppResult<AiScene> {
+    AiScene::parse_wire(scene).ok_or_else(|| AppError::msg(format!("invalid scene: {scene}")))
+}
 
 /// AI runtime only accepts ordinary user notes as note-scoped context.
 pub(crate) fn validate_ai_note_path(note_path: Option<&str>) -> AppResult<()> {
@@ -94,8 +98,7 @@ pub async fn context_assemble(
 ) -> AppResult<AssembledContext> {
     validate_ai_note_path(note_path.as_deref())?;
 
-    let scene: AiScene = serde_json::from_str(&format!("\"{scene}\""))
-        .map_err(|e| AppError::msg(format!("invalid scene: {e}")))?;
+    let scene = parse_ai_scene(&scene)?;
 
     let profile = resolve_scene(scene);
     let registry = ToolRegistry::new();
@@ -220,6 +223,90 @@ pub struct ImageAttachmentDto {
     pub size_bytes: u64,
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct AiToolInfo {
+    pub name: String,
+    pub description: String,
+    pub requires_confirmation: bool,
+    pub access_level: ToolAccessLevel,
+}
+
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct KnowledgeReindexResponse {
+    pub anchors: usize,
+    pub regulations: usize,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct AiChatResponse {
+    pub request_id: String,
+    pub session_id: i64,
+    pub status: String,
+    pub content: String,
+    pub tool_calls: Vec<crate::ai_runtime::model_gateway::ToolCall>,
+    pub tool_results: Vec<serde_json::Value>,
+    pub usage: TokenUsage,
+    pub usage_source: crate::ai_runtime::harness::UsageSource,
+    pub citation_valid: bool,
+    pub harness_rounds: u32,
+    pub evidence_packets: Vec<ContextPacket>,
+    pub pending_confirmation: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub evidence_refresh_notice: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_call_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub decision: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub resumed: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub installed_skill: Option<String>,
+}
+
+impl AiChatResponse {
+    fn from_harness_result(
+        harness_result: &crate::ai_runtime::harness::HarnessRunResult,
+        evidence_refresh_notice: Option<String>,
+    ) -> Self {
+        Self {
+            request_id: harness_result.request_id.clone(),
+            session_id: harness_result.session_id,
+            status: if harness_result.pending_confirmation {
+                "pending_tools".to_string()
+            } else {
+                "completed".to_string()
+            },
+            content: harness_result.content.clone(),
+            tool_calls: harness_result.tool_calls.clone(),
+            tool_results: harness_result.tool_results.clone(),
+            usage: harness_result.usage.clone(),
+            usage_source: harness_result.usage_source,
+            citation_valid: harness_result.citation_valid,
+            harness_rounds: harness_result.harness_rounds,
+            evidence_packets: harness_result.evidence_packets.clone(),
+            pending_confirmation: harness_result.pending_confirmation,
+            evidence_refresh_notice,
+            tool_call_id: None,
+            decision: None,
+            resumed: None,
+            installed_skill: None,
+        }
+    }
+
+    fn with_tool_confirmation(
+        mut self,
+        tool_call_id: String,
+        decision: impl Into<String>,
+        installed_skill: Option<String>,
+    ) -> Self {
+        self.tool_call_id = Some(tool_call_id);
+        self.decision = Some(decision.into());
+        self.resumed = Some(true);
+        self.installed_skill = installed_skill;
+        self
+    }
+}
+
 #[allow(dead_code)] // Cluster C/D 将在后续使用这些方法
 impl ImageAttachmentDto {
     /// 构造用于 LLM API 的 data URL。
@@ -252,7 +339,7 @@ pub(crate) async fn execute_ai_send_message(
     context_scope: Option<ContextScopeDto>,
     web_search: Option<bool>,
     new_session: Option<bool>,
-) -> AppResult<serde_json::Value> {
+) -> AppResult<AiChatResponse> {
     execute_ai_send_message_with_routing(
         state,
         app_handle,
@@ -285,14 +372,13 @@ pub(crate) async fn execute_ai_send_message_with_routing(
     web_search: Option<bool>,
     new_session: Option<bool>,
     routing_override: Option<AiSendRoutingOverride>,
-) -> AppResult<serde_json::Value> {
+) -> AppResult<AiChatResponse> {
     validate_ai_note_path(note_path.as_deref())?;
 
     let web_search = web_search.unwrap_or(false);
     let new_session = new_session.unwrap_or(false);
     let request_id = uuid::Uuid::new_v4().to_string();
-    let scene: AiScene = serde_json::from_str(&format!("\"{scene}\""))
-        .map_err(|e| AppError::msg(format!("invalid scene: {e}")))?;
+    let scene = parse_ai_scene(&scene)?;
 
     let _profile = resolve_scene(scene);
 
@@ -505,21 +591,11 @@ pub(crate) async fn execute_ai_send_message_with_routing(
         "AI harness request completed"
     );
 
-    Ok(serde_json::json!({
-        "request_id": request_id,
-        "session_id": sid,
-        "status": if harness_result.pending_confirmation { "pending_tools" } else { "completed" },
-        "content": harness_result.content,
-        "tool_calls": harness_result.tool_calls,
-        "tool_results": harness_result.tool_results,
-        "usage": harness_result.usage,
-        "usage_source": harness_result.usage_source,
-        "citation_valid": harness_result.citation_valid,
-        "harness_rounds": harness_result.harness_rounds,
-        "evidence_packets": harness_result.evidence_packets,
-        "pending_confirmation": harness_result.pending_confirmation,
-        "evidence_refresh_notice": evidence_refresh_notice,
-    }))
+    let mut response =
+        AiChatResponse::from_harness_result(&harness_result, evidence_refresh_notice);
+    response.request_id = request_id;
+    response.session_id = sid;
+    Ok(response)
 }
 
 /// Send an AI message with full LLM pipeline.
@@ -537,7 +613,7 @@ pub async fn ai_send_message(
     context_scope: Option<ContextScopeDto>,
     web_search: Option<bool>,
     new_session: Option<bool>,
-) -> AppResult<serde_json::Value> {
+) -> AppResult<AiChatResponse> {
     execute_ai_send_message(
         state.inner().as_ref(),
         &app_handle,
@@ -615,22 +691,10 @@ fn finalize_chat_harness_run(
     Ok(())
 }
 
-fn harness_run_to_chat_json(
+fn harness_run_to_chat_response(
     harness_result: &crate::ai_runtime::harness::HarnessRunResult,
-) -> serde_json::Value {
-    serde_json::json!({
-        "request_id": harness_result.request_id,
-        "session_id": harness_result.session_id,
-        "status": if harness_result.pending_confirmation { "pending_tools" } else { "completed" },
-        "content": harness_result.content,
-        "tool_calls": harness_result.tool_calls,
-        "tool_results": harness_result.tool_results,
-        "usage": harness_result.usage,
-        "citation_valid": harness_result.citation_valid,
-        "harness_rounds": harness_result.harness_rounds,
-        "evidence_packets": harness_result.evidence_packets,
-        "pending_confirmation": harness_result.pending_confirmation,
-    })
+) -> AiChatResponse {
+    AiChatResponse::from_harness_result(harness_result, None)
 }
 
 /// Handle tool confirmation from the user.
@@ -642,7 +706,7 @@ pub async fn tool_confirm(
     tool_call_id: String,
     decision: String,
     modified_args: Option<serde_json::Value>,
-) -> AppResult<serde_json::Value> {
+) -> AppResult<AiChatResponse> {
     use crate::ai_runtime::harness_confirm::{
         append_rejected_tool_to_checkpoint, dispatch_approved_tool_to_checkpoint,
         resume_harness_after_tool_confirm_or_restore,
@@ -655,11 +719,7 @@ pub async fn tool_confirm(
             resume_harness_after_tool_confirm_or_restore(state.inner(), &app_handle, &request_id)
                 .await?;
         if !harness_result.pending_confirmation {
-            let scene: AiScene = serde_json::from_str(&format!(
-                "\"{}\"",
-                load_scene_from_checkpoint(state.inner(), &request_id)?
-            ))
-            .map_err(|e| AppError::msg(format!("scene: {e}")))?;
+            let scene = parse_ai_scene(&load_scene_from_checkpoint(state.inner(), &request_id)?)?;
             let resolved = crate::llm::config::resolve_for_scene(&state.db, scene)?;
             finalize_chat_harness_run(
                 state.inner(),
@@ -671,13 +731,13 @@ pub async fn tool_confirm(
                 &harness_result.evidence_packets,
             )?;
         }
-        let mut out = harness_run_to_chat_json(&harness_result);
-        if let Some(obj) = out.as_object_mut() {
-            obj.insert("tool_call_id".into(), serde_json::json!(tool_call_id));
-            obj.insert("decision".into(), serde_json::json!("reject"));
-            obj.insert("resumed".into(), serde_json::json!(true));
-        }
-        return Ok(out);
+        return Ok(
+            harness_run_to_chat_response(&harness_result).with_tool_confirmation(
+                tool_call_id,
+                "reject",
+                None,
+            ),
+        );
     }
 
     let pending = crate::llm::safe_lock(&state.ai.pending_tool_calls).remove(&tool_call_id);
@@ -736,22 +796,15 @@ pub async fn tool_confirm(
         )?;
     }
 
-    let mut out = harness_run_to_chat_json(&harness_result);
-    if let Some(obj) = out.as_object_mut() {
-        obj.insert("tool_call_id".into(), serde_json::json!(tool_call_id));
-        obj.insert(
-            "decision".into(),
-            serde_json::json!(if decision == "modify" {
-                "modify"
-            } else {
-                "approve"
-            }),
-        );
-        obj.insert("resumed".into(), serde_json::json!(true));
-        if let Some(name) = installed_skill {
-            obj.insert("installed_skill".into(), serde_json::json!(name));
-        }
-    }
+    let out = harness_run_to_chat_response(&harness_result).with_tool_confirmation(
+        tool_call_id,
+        if decision == "modify" {
+            "modify"
+        } else {
+            "approve"
+        },
+        installed_skill,
+    );
 
     // Migration-period event; frontend should use resumed harness payload.
     let _ = app_handle.emit("ai:tool_result", &out);
@@ -768,12 +821,8 @@ fn load_scene_from_checkpoint(state: &AppState, request_id: &str) -> AppResult<S
 
 /// Get available tools for a scene (for frontend display).
 #[tauri::command]
-pub fn ai_list_tools(
-    state: State<'_, Arc<AppState>>,
-    scene: String,
-) -> AppResult<Vec<serde_json::Value>> {
-    let scene: AiScene = serde_json::from_str(&format!("\"{scene}\""))
-        .map_err(|e| AppError::msg(format!("invalid scene: {e}")))?;
+pub fn ai_list_tools(state: State<'_, Arc<AppState>>, scene: String) -> AppResult<Vec<AiToolInfo>> {
+    let scene = parse_ai_scene(&scene)?;
     let registry = ToolRegistry::new();
     let profile = crate::ai_runtime::resolve_scene(scene);
     let skill_allowed_tools = state
@@ -799,13 +848,11 @@ pub fn ai_list_tools(
     let tools: Vec<_> = registry
         .tools_for_policy_surface(&ctx, false)
         .iter()
-        .map(|t| {
-            serde_json::json!({
-                "name": t.name,
-                "description": t.description,
-                "requires_confirmation": t.requires_confirmation,
-                "access_level": serde_json::to_string(&t.access_level).unwrap_or_default(),
-            })
+        .map(|t| AiToolInfo {
+            name: t.name.clone(),
+            description: t.description.clone(),
+            requires_confirmation: t.requires_confirmation,
+            access_level: t.access_level,
         })
         .collect();
     Ok(tools)
@@ -813,18 +860,17 @@ pub fn ai_list_tools(
 
 /// Re-index all knowledge: anchors, regulations, block links.
 #[tauri::command]
-pub async fn knowledge_reindex(state: State<'_, Arc<AppState>>) -> AppResult<serde_json::Value> {
+pub async fn knowledge_reindex(
+    state: State<'_, Arc<AppState>>,
+) -> AppResult<KnowledgeReindexResponse> {
     let vault = state.vault_path()?;
-    let mut stats = serde_json::json!({
-        "anchors": 0,
-        "regulations": 0,
-    });
+    let mut stats = KnowledgeReindexResponse::default();
 
     state.db.with_conn(|conn| {
         // Re-index regulations
         match crate::knowledge::regulations::reindex_all_regulations(conn, &vault) {
             Ok(count) => {
-                stats["regulations"] = serde_json::json!(count);
+                stats.regulations = count;
             }
             Err(e) => tracing::warn!("regulation reindex error: {e}"),
         }
@@ -850,9 +896,8 @@ pub async fn search_hybrid(
 
     let _scene: AiScene = scene
         .as_deref()
-        .map(|s| serde_json::from_str(&format!("\"{s}\"")))
-        .transpose()
-        .map_err(|e| AppError::msg(format!("invalid scene: {e}")))?
+        .map(parse_ai_scene)
+        .transpose()?
         .unwrap_or(AiScene::KnowledgeLookup);
 
     let file_id = match &note_path {
@@ -962,11 +1007,7 @@ pub async fn skills_list(
     scene: Option<String>,
 ) -> AppResult<Vec<crate::ai_runtime::skills::SkillListEntry>> {
     let vault = state.vault_path()?;
-    let scene = scene
-        .as_deref()
-        .map(|s| serde_json::from_str::<AiScene>(&format!("\"{s}\"")))
-        .transpose()
-        .map_err(|e| AppError::msg(format!("invalid scene: {e}")))?;
+    let scene = scene.as_deref().map(parse_ai_scene).transpose()?;
     crate::ai_runtime::skill_install_service::list_skills(&state.db, &vault, scene)
 }
 
@@ -1179,7 +1220,7 @@ pub async fn harness_resume(
     state: State<'_, Arc<AppState>>,
     app_handle: tauri::AppHandle,
     request_id: String,
-) -> AppResult<serde_json::Value> {
+) -> AppResult<AiChatResponse> {
     use crate::ai_runtime::harness_confirm::resume_harness_after_tool_confirm_or_restore;
 
     let harness_result =
@@ -1188,8 +1229,7 @@ pub async fn harness_resume(
 
     if !harness_result.pending_confirmation {
         let scene_str = load_scene_from_checkpoint(state.inner(), &request_id)?;
-        let scene: AiScene = serde_json::from_str(&format!("\"{scene_str}\""))
-            .map_err(|e| AppError::msg(format!("invalid scene: {e}")))?;
+        let scene = parse_ai_scene(&scene_str)?;
         let resolved = crate::llm::config::resolve_for_scene(&state.db, scene)?;
         finalize_chat_harness_run(
             state.inner(),
@@ -1202,7 +1242,7 @@ pub async fn harness_resume(
         )?;
     }
 
-    Ok(harness_run_to_chat_json(&harness_result))
+    Ok(harness_run_to_chat_response(&harness_result))
 }
 
 /// Abort an active harness/model request.

@@ -1,11 +1,15 @@
 use rusqlite::Connection;
+use std::sync::LazyLock;
 
 use crate::error::AppResult;
 
+static IMAGE_REF_RE: LazyLock<regex::Regex> =
+    LazyLock::new(|| regex::Regex::new(r"!\[([^\]]*)\]\(([^)]+)\)").expect("image ref regex"));
+
 /// Extract image references from markdown content: `![alt](path)`.
 pub fn extract_image_refs(content: &str) -> Vec<ImageRef> {
-    let re = regex::Regex::new(r"!\[([^\]]*)\]\(([^)]+)\)").unwrap();
-    re.captures_iter(content)
+    IMAGE_REF_RE
+        .captures_iter(content)
         .map(|cap| ImageRef {
             alt: cap.get(1).map(|m| m.as_str().trim().to_string()),
             path: cap

@@ -95,6 +95,7 @@ afterEach(() => {
   root = null;
   host = null;
   editor = null;
+  mockFileLinkSummary.mockReset();
   vi.restoreAllMocks();
 });
 
