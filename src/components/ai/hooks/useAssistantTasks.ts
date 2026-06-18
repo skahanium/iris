@@ -14,7 +14,7 @@ import {
   detectAgentIntent,
   legacyIntentForAgentIntent,
 } from "@/lib/assistant-routing";
-import { resolveAiSceneForIntent } from "@/lib/assistant-scene";
+import { legacySceneHintForAssistantIntent } from "@/lib/assistant-scene";
 import { invokeErrorMessage } from "@/lib/credentials";
 import {
   assistantExecute,
@@ -219,7 +219,7 @@ export function useAssistantTasks({
 
   const assembleContextForChat = useCallback(
     async (query: string, intent: AssistantIntent) => {
-      const scene = resolveAiSceneForIntent(intent);
+      const scene = legacySceneHintForAssistantIntent(intent);
       const result = await contextAssemble({
         scene,
         note_path: notePath,

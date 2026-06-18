@@ -24,7 +24,6 @@ export function getActiveAiScene(): AiScene {
     const stored = sessionStorage.getItem(ACTIVE_SCENE_KEY);
     if (
       stored === "knowledge_lookup" ||
-      stored === "exemplar_learning" ||
       stored === "drafting_assist" ||
       stored === "research_synthesis"
     ) {
@@ -42,7 +41,7 @@ export function useConnectivityStatus() {
   const refresh = useCallback(async () => {
     let scene: string | undefined;
     try {
-      scene = sessionStorage.getItem(ACTIVE_SCENE_KEY) ?? undefined;
+      scene = getActiveAiScene();
     } catch {
       scene = undefined;
     }

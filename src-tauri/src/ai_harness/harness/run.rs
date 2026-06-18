@@ -14,7 +14,7 @@ use super::reflection::{run_reflection_round, sanitize_reflection_visible, Refle
 use super::token_estimator::{estimate_and_accumulate, usage_is_empty, UsageSource};
 use super::tools::max_fetch_per_round;
 use super::trace_emit::{emit_thinking, emit_trace_phase};
-use super::types::{HarnessPhase, HarnessRunInput, HarnessRunResult};
+use super::types::{HarnessFinishReason, HarnessPhase, HarnessRunInput, HarnessRunResult};
 use super::util::accumulate_usage;
 use crate::ai_harness::tool_turn::outstanding_confirm_tool;
 use crate::ai_runtime::agent_permissions::preflight_tool_permission;
@@ -357,6 +357,7 @@ pub async fn run_harness(
                         pending_confirmation: false,
                         evidence_packets: ledger_to_packets(&evidence_ledger, token_budget),
                         usage_source,
+                        finish_reason: HarnessFinishReason::Completed,
                     },
                 )
                 .await;
@@ -736,11 +737,20 @@ pub async fn run_harness(
         emit_thinking(app_handle, &input.request_id, harness_rounds, &t)?;
     }
 
+    let sanitized_final = sanitize_reflection_visible(&final_visible);
+    let finish_reason = if sanitized_final.is_none() && total_usage.total_tokens >= token_budget {
+        HarnessFinishReason::BudgetExhausted
+    } else if sanitized_final.is_none() && harness_rounds >= max_rounds {
+        HarnessFinishReason::RoundLimit
+    } else {
+        HarnessFinishReason::Completed
+    };
+
     finish_run(
         state,
         input,
         FinishRunParams {
-            content: sanitize_reflection_visible(&final_visible)
+            content: sanitized_final
                 .unwrap_or_else(|| "抱歉，未能在限定轮次内完成回答。请缩小问题或重试。".into()),
             tool_calls: all_tool_calls,
             tool_results: tool_results_json,
@@ -749,6 +759,7 @@ pub async fn run_harness(
             pending_confirmation: false,
             evidence_packets: ledger_to_packets(&evidence_ledger, token_budget),
             usage_source,
+            finish_reason,
         },
     )
     .await
@@ -932,6 +943,7 @@ async fn pause_for_tool_confirmation(
             pending_confirmation: true,
             evidence_packets: evidence_packets.to_vec(),
             usage_source,
+            finish_reason: HarnessFinishReason::AwaitingConfirmation,
         },
     )
     .await
@@ -1156,6 +1168,7 @@ mod tests {
             pending_confirmation: false,
             evidence_packets: vec![],
             usage_source: UsageSource::Estimated,
+            finish_reason: HarnessFinishReason::Completed,
         };
 
         assert_eq!(result.usage_source, UsageSource::Estimated);

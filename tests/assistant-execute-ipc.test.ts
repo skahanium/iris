@@ -23,11 +23,13 @@ describe("assistant_execute IPC contract", () => {
     const facade = read("src-tauri/src/commands/assistant_commands.rs");
     expect(facade).toContain("pub struct AssistantExecuteResponse");
     expect(facade).toContain("artifacts:");
+    expect(facade).toContain("task_id:");
     expect(facade).toContain("intent_detection:");
     expect(facade).toContain("run_plan_summary:");
     expect(facade).toContain("permission_preflight_summary:");
     const types = read("src/types/ai.ts");
     expect(types).toContain("HarnessArtifactWire");
+    expect(types).toContain("taskId?: string");
     expect(types).toContain("runStatus");
     expect(types).toContain("IntentDetectionResult");
     expect(types).toContain("AgentRunPlanSummary");

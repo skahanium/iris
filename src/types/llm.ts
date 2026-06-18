@@ -125,7 +125,6 @@ export interface LlmConfigTestResult {
 
 export const AI_SCENES: AiScene[] = [
   "knowledge_lookup",
-  "exemplar_learning",
   "drafting_assist",
   "research_synthesis",
 ];

@@ -6,7 +6,7 @@ import {
 } from "react";
 
 import { buildAssistantChromeSnapshot } from "@/lib/assistant-chrome";
-import { syncActiveAiScene } from "@/lib/assistant-scene";
+import { syncActiveLegacySceneHint } from "@/lib/assistant-scene";
 import { OPEN_AUDIT_TRAIL_EVENT } from "@/lib/audit-trail-events";
 import { listenAiRequestStarted } from "@/lib/ipc";
 import type {
@@ -112,6 +112,6 @@ export function useAssistantPanelEffects({
   }, [prefillMessage, setInput]);
 
   useEffect(() => {
-    syncActiveAiScene(actionState.intent);
+    syncActiveLegacySceneHint(actionState.intent);
   }, [actionState.intent]);
 }

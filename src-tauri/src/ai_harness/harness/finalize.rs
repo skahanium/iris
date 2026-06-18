@@ -9,7 +9,7 @@ use crate::error::AppResult;
 
 use super::token_estimator::UsageSource;
 use super::tools::merge_tool_packets_into;
-use super::types::{HarnessRunInput, HarnessRunResult};
+use super::types::{HarnessFinishReason, HarnessRunInput, HarnessRunResult};
 
 pub(crate) struct FinishRunParams {
     pub content: String,
@@ -20,6 +20,7 @@ pub(crate) struct FinishRunParams {
     pub pending_confirmation: bool,
     pub evidence_packets: Vec<ContextPacket>,
     pub usage_source: UsageSource,
+    pub finish_reason: HarnessFinishReason,
 }
 
 pub(crate) async fn finish_run(
@@ -36,6 +37,7 @@ pub(crate) async fn finish_run(
         pending_confirmation,
         evidence_packets,
         usage_source,
+        finish_reason,
     } = params;
     let citation_result =
         crate::ai_runtime::guardrails::verify_citations(&content, &evidence_packets);
@@ -61,6 +63,7 @@ pub(crate) async fn finish_run(
         pending_confirmation,
         evidence_packets,
         usage_source,
+        finish_reason,
     })
 }
 

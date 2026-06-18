@@ -3,6 +3,9 @@
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter};
 
+use crate::ai_runtime::agent_task::{
+    AgentTaskKind, AgentTaskRuntime, AgentTaskStatus, CreateTaskInput,
+};
 use crate::ai_runtime::assistant_facade::{
     parse_document_check_type, parse_organize_task_type, AssistantIntent,
 };
@@ -23,6 +26,7 @@ use crate::commands::{
     writing_commands,
 };
 use crate::error::{AppError, AppResult};
+use crate::storage::db::Database;
 
 /// Unified run status for all assistant intents.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -104,6 +108,7 @@ impl HarnessTaskRequest {
 #[derive(Debug, Clone, Serialize)]
 pub struct HarnessTaskResult {
     pub request_id: String,
+    pub task_id: Option<String>,
     pub run_status: HarnessRunStatus,
     pub artifacts: Vec<HarnessArtifact>,
     pub artifact_wires: Vec<HarnessArtifactWire>,
@@ -192,6 +197,92 @@ fn apply_skill_overlay_to_goal(goal: &str, overlay: &str) -> String {
     }
 }
 
+fn creates_own_runtime_task(intent: AssistantIntent) -> bool {
+    !matches!(intent, AssistantIntent::Chat | AssistantIntent::Knowledge)
+}
+
+fn create_workflow_runtime_task(
+    db: &Database,
+    request: &AssistantExecuteRequest,
+    legacy_intent: AssistantIntent,
+) -> AppResult<String> {
+    let session_id = if let Some(session_id) = request.session_id {
+        session_id
+    } else {
+        crate::ai_runtime::session::SessionManager::ensure(
+            db,
+            legacy_intent.scene(),
+            request.note_path.as_deref(),
+        )?
+    };
+    AgentTaskRuntime::create_task(
+        db,
+        CreateTaskInput {
+            request_id: uuid::Uuid::new_v4().to_string(),
+            session_id,
+            kind: AgentTaskKind::Complex,
+            user_input: request.message.clone(),
+            budget_policy: serde_json::json!({
+                "mode": "assistant_workflow",
+                "intent": legacy_intent_wire(legacy_intent),
+            }),
+        },
+    )
+}
+
+fn complete_workflow_runtime_task(
+    db: &Database,
+    task_id: &str,
+    result: &HarnessTaskResult,
+) -> AppResult<()> {
+    AgentTaskRuntime::record_step(
+        db,
+        task_id,
+        "assistant_workflow",
+        AgentTaskStatus::Completed,
+        "assistant workflow input summarized in agent_tasks",
+        "assistant workflow output summarized by artifact metadata",
+        serde_json::json!({
+            "summary": "assistant workflow completed",
+            "request_id": result.request_id,
+            "artifact_kinds": result.artifacts.iter().map(artifact_kind).collect::<Vec<_>>(),
+            "evidence_packet_ids": result.evidence_packet_ids,
+        }),
+    )?;
+    AgentTaskRuntime::complete_task(db, task_id)
+}
+
+fn fail_workflow_runtime_task(db: &Database, task_id: &str, error_code: &str) -> AppResult<()> {
+    AgentTaskRuntime::fail_safe(db, task_id, error_code)
+}
+
+fn legacy_intent_wire(intent: AssistantIntent) -> &'static str {
+    match intent {
+        AssistantIntent::Chat => "chat",
+        AssistantIntent::Knowledge => "knowledge",
+        AssistantIntent::Writing => "writing",
+        AssistantIntent::Citation => "citation",
+        AssistantIntent::Organize => "organize",
+        AssistantIntent::Research => "research",
+        AssistantIntent::Chapter => "chapter",
+        AssistantIntent::Document => "document",
+    }
+}
+
+fn artifact_kind(artifact: &HarnessArtifact) -> &'static str {
+    match artifact {
+        HarnessArtifact::Message { .. } => "message",
+        HarnessArtifact::Patches { .. } => "patches",
+        HarnessArtifact::CitationReport { .. } => "citation_report",
+        HarnessArtifact::OrganizeReport { .. } => "organize_report",
+        HarnessArtifact::ResearchReport { .. } => "research_report",
+        HarnessArtifact::DocumentCheck { .. } => "document_check",
+        HarnessArtifact::ChapterWriting { .. } => "chapter_writing",
+        HarnessArtifact::ToolConfirmation { .. } => "tool_confirmation",
+        HarnessArtifact::LegacyPayload { .. } => "legacy_payload",
+    }
+}
+
 /// Execute unified assistant task and collect artifacts.
 pub(crate) async fn run_harness_task(
     state: &AppState,
@@ -211,7 +302,16 @@ pub(crate) async fn run_harness_task(
         &request.message,
         skill_activation_plan,
     );
-    match legacy_intent {
+    let runtime_task_id = if creates_own_runtime_task(legacy_intent) {
+        Some(create_workflow_runtime_task(
+            &state.db,
+            &request,
+            legacy_intent,
+        )?)
+    } else {
+        None
+    };
+    let outcome = match legacy_intent {
         AssistantIntent::Writing => {
             let note_path = request
                 .note_path
@@ -381,6 +481,21 @@ pub(crate) async fn run_harness_task(
             emit_workflow_trace(app_handle, rid, "chat", status);
             Ok(task_result_from_chat(payload))
         }
+    };
+    match outcome {
+        Ok(mut result) => {
+            if let Some(task_id) = runtime_task_id {
+                complete_workflow_runtime_task(&state.db, &task_id, &result)?;
+                result.task_id = Some(task_id);
+            }
+            Ok(result)
+        }
+        Err(err) => {
+            if let Some(task_id) = runtime_task_id {
+                let _ = fail_workflow_runtime_task(&state.db, &task_id, "ASSISTANT_WORKFLOW_ERROR");
+            }
+            Err(err)
+        }
     }
 }
 
@@ -471,6 +586,7 @@ fn task_result_from_chat(
     let artifact_wires = artifacts_to_wires(&artifacts, "chat");
     HarnessTaskResult {
         request_id,
+        task_id: payload.task_id.clone(),
         run_status,
         artifacts,
         artifact_wires,
@@ -500,6 +616,7 @@ fn task_result_from_writing(payload: WritingTaskOutput) -> HarnessTaskResult {
     let artifact_wires = artifacts_to_wires(&artifacts, "writing");
     HarnessTaskResult {
         request_id: payload.request_id.clone(),
+        task_id: None,
         run_status: HarnessRunStatus::Completed,
         artifacts,
         artifact_wires,
@@ -523,6 +640,7 @@ fn task_result_from_citation(payload: CitationCheckResult) -> HarnessTaskResult 
     let artifact_wires = artifacts_to_wires(&artifacts, "citation");
     HarnessTaskResult {
         request_id: payload.request_id.clone(),
+        task_id: None,
         run_status: HarnessRunStatus::Completed,
         artifacts,
         artifact_wires,
@@ -546,6 +664,7 @@ fn task_result_from_organize(payload: OrganizeTaskResult) -> HarnessTaskResult {
     let artifact_wires = artifacts_to_wires(&artifacts, "organize");
     HarnessTaskResult {
         request_id: "organize".into(),
+        task_id: None,
         run_status: HarnessRunStatus::Completed,
         artifacts,
         artifact_wires,
@@ -579,6 +698,7 @@ fn task_result_from_research(
     let artifact_wires = artifacts_to_wires(&artifacts, "research");
     HarnessTaskResult {
         request_id,
+        task_id: None,
         run_status: HarnessRunStatus::Completed,
         artifacts,
         artifact_wires,
@@ -609,6 +729,7 @@ fn task_result_from_chapter(
     let artifact_wires = artifacts_to_wires(&artifacts, "chapter");
     HarnessTaskResult {
         request_id: payload.request_id.clone(),
+        task_id: None,
         run_status: HarnessRunStatus::Completed,
         artifacts,
         artifact_wires,
@@ -632,6 +753,7 @@ fn task_result_from_document(payload: DocumentCheckResult) -> HarnessTaskResult 
     let artifact_wires = artifacts_to_wires(&artifacts, "document");
     HarnessTaskResult {
         request_id: payload.request_id.clone(),
+        task_id: None,
         run_status: HarnessRunStatus::Completed,
         artifacts,
         artifact_wires,
@@ -713,6 +835,7 @@ pub fn map_task_result_to_response(
     AssistantExecuteResponse {
         body,
         request_id: result.request_id,
+        task_id: result.task_id,
         run_status: run_status_wire(result.run_status).to_string(),
         evidence_refresh_notice: result.evidence_refresh_notice,
         artifacts: result.artifact_wires,
@@ -781,11 +904,14 @@ fn task_result_to_body(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ai_runtime::agent_task::{AgentTaskRuntime, AgentTaskStatus};
+    use crate::storage::db::Database;
 
     #[test]
     fn chat_pending_task_status() {
         let payload = crate::commands::ai_commands::AiChatResponse {
             request_id: "r1".to_string(),
+            task_id: Some("r1".to_string()),
             session_id: 1,
             status: "pending_tools".to_string(),
             content: "partial".to_string(),
@@ -809,5 +935,76 @@ mod tests {
         };
         let r = task_result_from_chat(payload);
         assert_eq!(r.run_status, HarnessRunStatus::PendingConfirmation);
+    }
+
+    #[test]
+    fn workflow_runtime_task_is_created_for_non_chat_intent() {
+        let db = Database::open_in_memory().unwrap();
+        let request = AssistantExecuteRequest {
+            agent_intent: None,
+            intent: Some(AssistantIntent::Research),
+            intent_detection: None,
+            message: "研究这个问题".into(),
+            note_path: None,
+            note_content: None,
+            web_authorized: false,
+            selection: None,
+            cursor_context: None,
+            paragraph_text: None,
+            context_scope: None,
+            session_id: None,
+            selected_packet_ids: None,
+            chapter: None,
+            document_check_type: None,
+            organize_task_type: None,
+            base_content_hash: None,
+            new_session: false,
+            images: None,
+        };
+
+        let task_id =
+            create_workflow_runtime_task(&db, &request, AssistantIntent::Research).unwrap();
+        let task = AgentTaskRuntime::get_task(&db, &task_id).unwrap().unwrap();
+
+        assert_eq!(task.status, AgentTaskStatus::Running);
+        assert_eq!(
+            task.kind,
+            crate::ai_runtime::agent_task::AgentTaskKind::Complex
+        );
+        assert_eq!(task.budget_policy["intent"], "research");
+    }
+
+    #[test]
+    fn workflow_runtime_task_failure_is_safe_and_terminal() {
+        let db = Database::open_in_memory().unwrap();
+        let request = AssistantExecuteRequest {
+            agent_intent: None,
+            intent: Some(AssistantIntent::Writing),
+            intent_detection: None,
+            message: "改写这段文字".into(),
+            note_path: Some("notes/draft.md".into()),
+            note_content: None,
+            web_authorized: false,
+            selection: Some("hello".into()),
+            cursor_context: None,
+            paragraph_text: None,
+            context_scope: None,
+            session_id: None,
+            selected_packet_ids: None,
+            chapter: None,
+            document_check_type: None,
+            organize_task_type: None,
+            base_content_hash: None,
+            new_session: false,
+            images: None,
+        };
+        let task_id =
+            create_workflow_runtime_task(&db, &request, AssistantIntent::Writing).unwrap();
+
+        fail_workflow_runtime_task(&db, &task_id, "MISSING_REQUIRED_INPUT").unwrap();
+        let task = AgentTaskRuntime::get_task(&db, &task_id).unwrap().unwrap();
+
+        assert_eq!(task.status, AgentTaskStatus::FailedSafe);
+        assert_eq!(task.error_code.as_deref(), Some("MISSING_REQUIRED_INPUT"));
     }
 }

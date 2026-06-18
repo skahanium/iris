@@ -46,7 +46,7 @@ export function defaultScenesForKind(kind: StoredCorpusKind): string[] {
     case "authority":
       return ["knowledge_lookup", "research_synthesis", "drafting_assist"];
     case "exemplar":
-      return ["exemplar_learning", "drafting_assist"];
+      return ["drafting_assist"];
     case "reference":
     case "lookup":
       return ["knowledge_lookup", "research_synthesis"];

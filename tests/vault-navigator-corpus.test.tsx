@@ -230,7 +230,7 @@ describe("VaultNavigator corpus assignment", () => {
       name: "policy",
       pathPrefix: "policy/",
       kind: "exemplar",
-      scenes: ["exemplar_learning", "drafting_assist"],
+      scenes: ["drafting_assist"],
     });
   });
 

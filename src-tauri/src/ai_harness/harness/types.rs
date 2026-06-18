@@ -33,6 +33,16 @@ pub struct HarnessTraceEvent {
 }
 
 /// Result of a harness run.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HarnessFinishReason {
+    Completed,
+    AwaitingConfirmation,
+    BudgetExhausted,
+    RoundLimit,
+}
+
+/// Result of a harness run.
 #[derive(Debug, Clone, Serialize)]
 pub struct HarnessRunResult {
     pub request_id: String,
@@ -46,6 +56,7 @@ pub struct HarnessRunResult {
     pub pending_confirmation: bool,
     pub evidence_packets: Vec<ContextPacket>,
     pub usage_source: UsageSource,
+    pub finish_reason: HarnessFinishReason,
 }
 
 /// Inputs for a harness run.

@@ -10,10 +10,10 @@ import type { ChatLine } from "./AiMessageList";
 import { SessionHistoryDropdown } from "./SessionHistoryDropdown";
 
 interface AssistantPanelHeaderProps {
-  activeScene: AiScene;
   chromeActionsDisabled: boolean;
   currentSessionId: number | null;
   harnessRequestId: string | null;
+  legacySceneHint: AiScene;
   notePath: string | null;
   onDeletedCurrentSession: () => void;
   onNewChat: () => void;
@@ -24,10 +24,10 @@ interface AssistantPanelHeaderProps {
 }
 
 export function AssistantPanelHeader({
-  activeScene,
   chromeActionsDisabled,
   currentSessionId,
   harnessRequestId,
+  legacySceneHint,
   notePath,
   onDeletedCurrentSession,
   onNewChat,
@@ -45,13 +45,13 @@ export function AssistantPanelHeader({
         <div className="flex shrink-0 items-center gap-1.5">
           <AgentStatusBadge
             webSearchEnabled={webSearch}
-            scene={activeScene}
+            scene={legacySceneHint}
             disabled={chromeActionsDisabled}
             auditAvailable={Boolean(harnessRequestId)}
             onOpenAudit={onOpenAudit}
           />
           <SessionHistoryDropdown
-            scene={activeScene}
+            scene={legacySceneHint}
             notePath={notePath}
             currentSessionId={currentSessionId}
             disabled={chromeActionsDisabled}

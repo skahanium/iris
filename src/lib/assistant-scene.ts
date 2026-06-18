@@ -1,8 +1,11 @@
 import { setActiveAiScene } from "@/hooks/useConnectivityStatus";
 import type { AgentIntent, AiScene, AssistantIntent } from "@/types/ai";
 
-/** 由 Phase2 AgentIntent 推导后端旧场景策略（仅内部兼容层）。 */
-export function resolveAiSceneForAgentIntent(intent: AgentIntent): AiScene {
+type LegacySceneHint = Exclude<AiScene, "exemplar_learning">;
+
+export function legacySceneHintForAgentIntent(
+  intent: AgentIntent,
+): LegacySceneHint {
   switch (intent) {
     case "rewrite_selection":
     case "write":
@@ -22,8 +25,9 @@ export function resolveAiSceneForAgentIntent(intent: AgentIntent): AiScene {
   }
 }
 
-/** 由助手意图推导后端场景策略（用户不可手动切换） */
-export function resolveAiSceneForIntent(intent: AssistantIntent): AiScene {
+export function legacySceneHintForAssistantIntent(
+  intent: AssistantIntent,
+): LegacySceneHint {
   switch (intent) {
     case "writing":
     case "citation":
@@ -40,8 +44,10 @@ export function resolveAiSceneForIntent(intent: AssistantIntent): AiScene {
   }
 }
 
-export function syncActiveAiScene(intent: AssistantIntent): AiScene {
-  const scene = resolveAiSceneForIntent(intent);
-  setActiveAiScene(scene);
-  return scene;
+export function syncActiveLegacySceneHint(
+  intent: AssistantIntent,
+): LegacySceneHint {
+  const hint = legacySceneHintForAssistantIntent(intent);
+  setActiveAiScene(hint);
+  return hint;
 }

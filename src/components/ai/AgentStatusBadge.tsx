@@ -27,8 +27,6 @@ function compatibilityContextLabel(scene: AiScene): string {
       return "写作任务";
     case "research_synthesis":
       return "研究任务";
-    case "exemplar_learning":
-      return "范文任务";
     case "knowledge_lookup":
     default:
       return "问答任务";

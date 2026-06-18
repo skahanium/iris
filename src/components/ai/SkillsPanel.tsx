@@ -270,7 +270,7 @@ export function SkillsPanelBody({
     string | null
   >(null);
 
-  const activeScene = scene ?? getActiveAiScene();
+  const legacySceneHint = scene ?? getActiveAiScene();
   const installTargetPath =
     paths?.[scope] ??
     (scope === "vault" ? "<当前库>/.iris/skills" : "<用户目录>/.iris/skills");
@@ -278,7 +278,7 @@ export function SkillsPanelBody({
   const refresh = useCallback(async () => {
     try {
       const [nextSkills, nextPaths] = await Promise.all([
-        skillsList(activeScene),
+        skillsList(legacySceneHint),
         skillsPaths(),
       ]);
       setSkills(nextSkills);
@@ -286,7 +286,7 @@ export function SkillsPanelBody({
     } catch (nextError) {
       setError(invokeErrorMessage(nextError));
     }
-  }, [activeScene]);
+  }, [legacySceneHint]);
 
   useEffect(() => {
     if (!open) return;
