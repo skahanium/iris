@@ -1,5 +1,13 @@
 import type { AiScene, SceneMeta } from "@/types/ai";
 
+export type ActiveAiScene = Exclude<AiScene, "exemplar_learning">;
+
+const ACTIVE_AI_SCENES: ActiveAiScene[] = [
+  "knowledge_lookup",
+  "drafting_assist",
+  "research_synthesis",
+];
+
 export const SCENE_META: Record<AiScene, SceneMeta> = {
   knowledge_lookup: {
     scene: "knowledge_lookup",
@@ -31,4 +39,6 @@ export const SCENE_META: Record<AiScene, SceneMeta> = {
   },
 };
 
-export const SCENE_OPTIONS: SceneMeta[] = Object.values(SCENE_META);
+export const SCENE_OPTIONS: SceneMeta[] = ACTIVE_AI_SCENES.map(
+  (scene) => SCENE_META[scene],
+);

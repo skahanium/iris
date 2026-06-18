@@ -75,6 +75,8 @@ const MIGRATION_030_DOWN: &str = include_str!("../../migrations/030_runtime_vaul
 const MIGRATION_031_UP: &str = include_str!("../../migrations/031_links_single_column_indexes.sql");
 const MIGRATION_031_DOWN: &str =
     include_str!("../../migrations/031_links_single_column_indexes.down.sql");
+const MIGRATION_032_UP: &str = include_str!("../../migrations/032_agent_tasks.sql");
+const MIGRATION_032_DOWN: &str = include_str!("../../migrations/032_agent_tasks.down.sql");
 
 fn is_applied(conn: &Connection, name: &str) -> bool {
     conn.query_row(
@@ -179,6 +181,7 @@ pub fn migrate_up(conn: &Connection) -> AppResult<()> {
         MIGRATION_031_UP,
         false,
     )?;
+    apply_migration(conn, "032_agent_tasks", MIGRATION_032_UP, false)?;
 
     Ok(())
 }
@@ -190,6 +193,7 @@ fn rollback_migration(conn: &Connection, name: &str, sql: &str) {
 
 /// Roll back all migrations in strict reverse order (for tests).
 pub fn migrate_down(conn: &Connection) -> AppResult<()> {
+    rollback_migration(conn, "032_agent_tasks", MIGRATION_032_DOWN);
     rollback_migration(conn, "031_links_single_column_indexes", MIGRATION_031_DOWN);
     rollback_migration(conn, "030_runtime_vault_scope", MIGRATION_030_DOWN);
     rollback_migration(conn, "029_model_registry", MIGRATION_029_DOWN);
@@ -880,6 +884,89 @@ mod tests {
                 .unwrap();
             assert!(has_column, "missing vault_id on {table}");
         }
+    }
+
+    #[test]
+    fn migration_032_creates_agent_task_tables_with_session_lifecycle() {
+        let conn = Connection::open_in_memory().unwrap();
+        migrate_up(&conn).unwrap();
+
+        for table in ["agent_tasks", "agent_task_steps", "agent_task_events"] {
+            let has: bool = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name = ?1",
+                    [table],
+                    |row| row.get::<_, i64>(0),
+                )
+                .map(|c| c > 0)
+                .unwrap();
+            assert!(has, "missing {table}");
+        }
+
+        conn.execute(
+            "INSERT INTO sessions (session_key, scene, created_at, updated_at)
+             VALUES ('task-session', 'knowledge_lookup', datetime('now'), datetime('now'))",
+            [],
+        )
+        .unwrap();
+        let session_id = conn.last_insert_rowid();
+
+        conn.execute(
+            "INSERT INTO agent_tasks
+             (task_id, request_id, session_id, kind, status, user_goal_summary, budget_policy_json, created_at, updated_at)
+             VALUES ('task-1', 'req-task-1', ?1, 'lightweight', 'running', 'short summary', '{}', datetime('now'), datetime('now'))",
+            [session_id],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO agent_task_steps
+             (task_id, step_seq, kind, status, input_summary, output_summary, checkpoint_json, created_at, updated_at)
+             VALUES ('task-1', 1, 'respond', 'completed', 'input summary', 'output summary',
+                     '{\"summary\":\"safe\",\"packet_ids\":[]}', datetime('now'), datetime('now'))",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO agent_task_events
+             (task_id, event_type, message, payload_json, created_at)
+             VALUES ('task-1', 'status', 'started', '{}', datetime('now'))",
+            [],
+        )
+        .unwrap();
+
+        conn.execute("DELETE FROM sessions WHERE id = ?1", [session_id])
+            .unwrap();
+
+        for table in ["agent_tasks", "agent_task_steps", "agent_task_events"] {
+            let count: i64 = conn
+                .query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |row| {
+                    row.get(0)
+                })
+                .unwrap();
+            assert_eq!(count, 0, "{table} should cascade with its session task");
+        }
+    }
+
+    #[test]
+    fn migration_032_agent_task_checkpoint_is_summary_shaped() {
+        let conn = Connection::open_in_memory().unwrap();
+        migrate_up(&conn).unwrap();
+
+        let mut columns = conn
+            .prepare("PRAGMA table_info(agent_task_steps)")
+            .unwrap()
+            .query_map([], |row| row.get::<_, String>(1))
+            .unwrap()
+            .flatten()
+            .collect::<Vec<_>>();
+        columns.sort();
+
+        assert!(columns.contains(&"checkpoint_json".to_string()));
+        assert!(columns.contains(&"input_summary".to_string()));
+        assert!(columns.contains(&"output_summary".to_string()));
+        assert!(!columns.contains(&"full_prompt".to_string()));
+        assert!(!columns.contains(&"full_messages".to_string()));
+        assert!(!columns.contains(&"note_content".to_string()));
     }
 
     #[test]

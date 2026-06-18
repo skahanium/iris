@@ -281,18 +281,63 @@ async fn maybe_handle_skillhub_direct_install(
         return Ok(None);
     };
 
-    let vault = state.vault_path()?;
+    let request_id = uuid::Uuid::new_v4().to_string();
+    let scene = agent_intent.scene();
+    let session_id = crate::ai_runtime::session::SessionManager::ensure(
+        &state.db,
+        scene,
+        request.note_path.as_deref(),
+    )?;
+    let task_id = crate::ai_runtime::agent_task::AgentTaskRuntime::create_task(
+        &state.db,
+        crate::ai_runtime::agent_task::CreateTaskInput {
+            request_id: request_id.clone(),
+            session_id,
+            kind: crate::ai_runtime::agent_task::AgentTaskKind::Complex,
+            user_input: request.message.clone(),
+            budget_policy: serde_json::json!({
+                "mode": "assistant_workflow",
+                "intent": "skill_management",
+                "source": "skillhub",
+            }),
+        },
+    )?;
+    let vault = match state.vault_path() {
+        Ok(vault) => vault,
+        Err(err) => {
+            let _ = crate::ai_runtime::agent_task::AgentTaskRuntime::fail_safe(
+                &state.db,
+                &task_id,
+                "VAULT_SCOPE_ERROR",
+            );
+            return Err(err);
+        }
+    };
     let installed = crate::ai_runtime::skill_install_service::list_skills(&state.db, &vault, None)?;
     if skill_installed(&installed, &skill_name) {
+        crate::ai_runtime::agent_task::AgentTaskRuntime::record_step(
+            &state.db,
+            &task_id,
+            "skill_management",
+            crate::ai_runtime::agent_task::AgentTaskStatus::Completed,
+            "skillhub install request summarized in agent_tasks",
+            "requested skill was already installed",
+            serde_json::json!({
+                "summary": "requested skill already installed",
+                "skill_name": skill_name.clone(),
+            }),
+        )?;
+        crate::ai_runtime::agent_task::AgentTaskRuntime::complete_task(&state.db, &task_id)?;
         return Ok(Some(AssistantExecuteResponse {
             body: AssistantExecuteBody::Chat {
                 payload: serde_json::json!({
-                    "content": format!("Skill `{skill_name}` 已安装。"),
-                    "status": "completed",
-                    "pending_confirmation": false,
+                   "content": format!("Skill `{skill_name}` 已安装。"),
+                   "status": "completed",
+                   "pending_confirmation": false,
                 }),
             },
-            request_id: uuid::Uuid::new_v4().to_string(),
+            request_id,
+            task_id: Some(task_id),
             run_status: "completed".into(),
             evidence_refresh_notice: None,
             artifacts: Vec::new(),
@@ -302,13 +347,6 @@ async fn maybe_handle_skillhub_direct_install(
         }));
     }
 
-    let request_id = uuid::Uuid::new_v4().to_string();
-    let scene = agent_intent.scene();
-    let session_id = crate::ai_runtime::session::SessionManager::ensure(
-        &state.db,
-        scene,
-        request.note_path.as_deref(),
-    )?;
     let args = serde_json::json!({
         "source": "registry",
         "registry": "skillhub",
@@ -392,6 +430,21 @@ async fn maybe_handle_skillhub_direct_install(
         crate::ai_runtime::trace::TraceStatus::AwaitingToolConfirmation,
     )?;
     save_harness_checkpoint(&state.db, &request_id, &checkpoint)?;
+    crate::ai_runtime::agent_task::AgentTaskRuntime::record_step(
+        &state.db,
+        &task_id,
+        "skill_management",
+        crate::ai_runtime::agent_task::AgentTaskStatus::AwaitingConfirmation,
+        "skillhub install request summarized in agent_tasks",
+        "waiting for tool confirmation",
+        serde_json::json!({
+            "summary": "waiting for skill install confirmation",
+            "skill_name": skill_name.clone(),
+            "tool_name": "skills_install",
+            "next_action": "wait_for_user_confirmation"
+        }),
+    )?;
+    crate::ai_runtime::agent_task::AgentTaskRuntime::await_confirmation(&state.db, &task_id)?;
 
     let mut confirm_request = serde_json::json!({
         "request_id": request_id,
@@ -424,6 +477,7 @@ async fn maybe_handle_skillhub_direct_install(
             }),
         },
         request_id,
+        task_id: Some(task_id),
         run_status: "pending_confirmation".into(),
         evidence_refresh_notice: None,
         artifacts: vec![crate::ai_runtime::harness_task::HarnessArtifactWire {
@@ -477,6 +531,8 @@ pub struct AssistantExecuteResponse {
     #[serde(flatten)]
     pub body: AssistantExecuteBody,
     pub request_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub task_id: Option<String>,
     pub run_status: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub evidence_refresh_notice: Option<String>,

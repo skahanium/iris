@@ -5,7 +5,7 @@ import { AuditTrailDrawer } from "@/components/ai/AuditTrailDrawer";
 import { AiComposer } from "@/components/ui/ai-composer";
 import { usePromptProfile } from "@/hooks/usePromptProfile";
 import { useAssistantLlmStream } from "@/hooks/useAssistantLlmStream";
-import { resolveAiSceneForIntent } from "@/lib/assistant-scene";
+import { legacySceneHintForAssistantIntent } from "@/lib/assistant-scene";
 import { harnessAbort } from "@/lib/ipc";
 import type {
   AssistantActionState,
@@ -344,10 +344,10 @@ export function UnifiedAssistantPanel({
       data-testid="unified-assistant-panel"
     >
       <AssistantPanelHeader
-        activeScene={resolveAiSceneForIntent(actionState.intent)}
         chromeActionsDisabled={streaming}
         currentSessionId={sessionId}
         harnessRequestId={harnessRequestId}
+        legacySceneHint={legacySceneHintForAssistantIntent(actionState.intent)}
         notePath={notePath}
         onDeletedCurrentSession={handleNewChat}
         onNewChat={handleNewChat}

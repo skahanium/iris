@@ -8,7 +8,12 @@ describe("llm routing scenes", () => {
     for (const scene of AI_SCENES) {
       expect(SCENE_META[scene]?.scene).toBe(scene);
     }
-    expect(AI_SCENES).toHaveLength(4);
+    expect(AI_SCENES).toEqual([
+      "knowledge_lookup",
+      "drafting_assist",
+      "research_synthesis",
+    ]);
+    expect(AI_SCENES).not.toContain("exemplar_learning");
   });
 });
 

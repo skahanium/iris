@@ -4,6 +4,7 @@
 //! through typed Tauri IPC. Phase C: full LLM pipeline with streaming.
 
 use crate::ai_runtime::{
+    agent_task::{AgentTaskKind, AgentTaskRuntime, AgentTaskStatus, CreateTaskInput},
     context_cache::ContextAssemblyCacheKey,
     context_planner::plan_context,
     guardrails::{self, GuardResult},
@@ -240,6 +241,8 @@ pub struct KnowledgeReindexResponse {
 #[derive(Debug, Clone, Serialize)]
 pub struct AiChatResponse {
     pub request_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub task_id: Option<String>,
     pub session_id: i64,
     pub status: String,
     pub content: String,
@@ -270,6 +273,7 @@ impl AiChatResponse {
     ) -> Self {
         Self {
             request_id: harness_result.request_id.clone(),
+            task_id: None,
             session_id: harness_result.session_id,
             status: if harness_result.pending_confirmation {
                 "pending_tools".to_string()
@@ -392,9 +396,41 @@ pub(crate) async fn execute_ai_send_message_with_routing(
         )
         .map_err(|e| AppError::msg(format!("emit request_started: {e}")))?;
 
+    // Create the durable task before guardrails or model routing so early
+    // failures still have a safe lifecycle record. The user message is only
+    // appended to chat history after guardrails pass.
+    let sid = if new_session {
+        SessionManager::create_fresh(&state.db, scene, note_path.as_deref())?
+    } else if let Some(id) = session_id {
+        id
+    } else {
+        SessionManager::ensure(&state.db, scene, note_path.as_deref())?
+    };
+    let task_id = AgentTaskRuntime::create_task(
+        &state.db,
+        CreateTaskInput {
+            request_id: request_id.clone(),
+            session_id: sid,
+            kind: AgentTaskKind::Lightweight,
+            user_input: message.clone(),
+            budget_policy: serde_json::json!({
+                "mode": "lightweight",
+                "state": "pending_model_resolution",
+            }),
+        },
+    )?;
+    AgentTaskRuntime::record_event(
+        &state.db,
+        &task_id,
+        "status",
+        "started",
+        serde_json::json!({ "request_id": request_id.clone() }),
+    )?;
+
     // Sanitize query for injection attempts
     match guardrails::sanitize_query(&message) {
         GuardResult::Block { reason } => {
+            let _ = AgentTaskRuntime::fail_safe(&state.db, &task_id, "INJECTION_BLOCKED");
             TraceRecorder::complete(
                 &state.db,
                 &request_id,
@@ -420,34 +456,41 @@ pub(crate) async fn execute_ai_send_message_with_routing(
     }
 
     // Ensure session（新对话线程 vs 续接同 key 的历史）
-    let sid = if new_session {
-        SessionManager::create_fresh(&state.db, scene, note_path.as_deref())?
-    } else if let Some(id) = session_id {
-        id
-    } else {
-        SessionManager::ensure(&state.db, scene, note_path.as_deref())?
-    };
-
     // Save user message (with content_parts if images present)
     let content_parts_json: Option<String> = images.as_ref().map(|imgs| {
         let parts: Vec<crate::ai_types::ContentPart> =
             imgs.iter().map(|img| img.to_content_part()).collect();
         serde_json::to_string(&parts).unwrap_or_default()
     });
-    SessionManager::append_message(
+    if let Err(err) = SessionManager::append_message(
         &state.db,
         sid,
         "user",
         &message,
         content_parts_json.as_deref(),
         None,
-    )?;
+    ) {
+        let _ = AgentTaskRuntime::fail_safe(&state.db, &task_id, "SESSION_APPEND_ERROR");
+        return Err(err);
+    }
 
     // Get session history for context
-    let history = SessionManager::recent_messages(&state.db, sid, 20)?;
+    let history = match SessionManager::recent_messages(&state.db, sid, 20) {
+        Ok(history) => history,
+        Err(err) => {
+            let _ = AgentTaskRuntime::fail_safe(&state.db, &task_id, "SESSION_HISTORY_ERROR");
+            return Err(err);
+        }
+    };
 
     // Build context packets
-    let vault = state.vault_path()?;
+    let vault = match state.vault_path() {
+        Ok(vault) => vault,
+        Err(err) => {
+            let _ = AgentTaskRuntime::fail_safe(&state.db, &task_id, "VAULT_SCOPE_ERROR");
+            return Err(err);
+        }
+    };
     let user_scope = context_scope.unwrap_or_default();
     let file_id = match &note_path {
         Some(path) => state
@@ -471,8 +514,24 @@ pub(crate) async fn execute_ai_send_message_with_routing(
     let resolved = if let Some(route) = routing_override {
         route.resolved
     } else {
-        crate::llm::config::resolve_for_scene(&state.db, scene)?
+        match crate::llm::config::resolve_for_scene(&state.db, scene) {
+            Ok(resolved) => resolved,
+            Err(err) => {
+                let _ = AgentTaskRuntime::fail_safe(&state.db, &task_id, "MODEL_CONFIG_ERROR");
+                return Err(err);
+            }
+        }
     };
+    AgentTaskRuntime::record_event(
+        &state.db,
+        &task_id,
+        "budget",
+        "resolved",
+        serde_json::json!({
+            "input_budget": resolved.input_budget,
+            "output_budget": resolved.output_budget,
+        }),
+    )?;
     let build_opts = ContextBuildOptions {
         max_results: max_results_from_budget(
             resolved.input_budget,
@@ -482,7 +541,7 @@ pub(crate) async fn execute_ai_send_message_with_routing(
         strategy: resolved.context_strategy,
         input_budget: resolved.input_budget,
     };
-    let (packets, _context_status) = build_context_packets_cached(
+    let (packets, _context_status) = match build_context_packets_cached(
         state,
         &vault,
         scene,
@@ -491,7 +550,13 @@ pub(crate) async fn execute_ai_send_message_with_routing(
         &message,
         &user_scope,
         build_opts,
-    )?;
+    ) {
+        Ok(built) => built,
+        Err(err) => {
+            let _ = AgentTaskRuntime::fail_safe(&state.db, &task_id, "CONTEXT_BUILD_ERROR");
+            return Err(err);
+        }
+    };
 
     let ledger = crate::ai_runtime::evidence_ledger::EvidenceLedger::new(packets);
     let (resolved_ids, evidence_refresh_notice) = if let Some(ids) = &selected_packet_ids {
@@ -540,7 +605,7 @@ pub(crate) async fn execute_ai_send_message_with_routing(
 
     TraceRecorder::update_status(&state.db, &request_id, TraceStatus::ContextAssembled)?;
 
-    let harness_result = run_harness(
+    let harness_result = match run_harness(
         state,
         app_handle,
         HarnessRunInput {
@@ -565,12 +630,61 @@ pub(crate) async fn execute_ai_send_message_with_routing(
         Some(resolved.output_budget),
         resolved.thinking,
     )
-    .await?;
+    .await
+    {
+        Ok(result) => result,
+        Err(err) => {
+            let _ = AgentTaskRuntime::fail_safe(&state.db, &task_id, "HARNESS_ERROR");
+            return Err(err);
+        }
+    };
 
     TraceRecorder::update_status(&state.db, &request_id, TraceStatus::ModelCalled)?;
+    let task_status = if harness_result.pending_confirmation {
+        AgentTaskStatus::AwaitingConfirmation
+    } else if matches!(
+        harness_result.finish_reason,
+        crate::ai_runtime::harness::HarnessFinishReason::BudgetExhausted
+            | crate::ai_runtime::harness::HarnessFinishReason::RoundLimit
+    ) {
+        AgentTaskStatus::PausedBudget
+    } else {
+        AgentTaskStatus::Completed
+    };
+    AgentTaskRuntime::record_step(
+        &state.db,
+        &task_id,
+        "respond",
+        task_status,
+        "user message summarized in agent_tasks",
+        "assistant response summarized by session message",
+        serde_json::json!({
+            "summary": if harness_result.pending_confirmation {
+                "awaiting tool confirmation"
+            } else if task_status == AgentTaskStatus::PausedBudget {
+                "paused after segment budget exhaustion"
+            } else {
+                "assistant response completed"
+            },
+            "packet_ids": filtered_packets.iter().map(|p| p.id.clone()).collect::<Vec<_>>(),
+            "finish_reason": harness_result.finish_reason,
+        }),
+    )?;
 
-    if !harness_result.pending_confirmation {
-        finalize_chat_harness_run(
+    if task_status == AgentTaskStatus::PausedBudget {
+        AgentTaskRuntime::pause_budget(
+            &state.db,
+            &task_id,
+            "segment paused before producing a reliable final answer",
+            serde_json::json!({
+                "summary": "segment paused before reliable final answer",
+                "finish_reason": harness_result.finish_reason,
+                "packet_ids": filtered_packets.iter().map(|p| p.id.clone()).collect::<Vec<_>>(),
+                "next_action": "resume task with compacted context"
+            }),
+        )?;
+    } else if !harness_result.pending_confirmation {
+        if let Err(err) = finalize_chat_harness_run(
             state,
             &request_id,
             sid,
@@ -578,7 +692,13 @@ pub(crate) async fn execute_ai_send_message_with_routing(
             &provider_name,
             &harness_result,
             &filtered_packets,
-        )?;
+        ) {
+            let _ = AgentTaskRuntime::fail_safe(&state.db, &task_id, "FINALIZE_ERROR");
+            return Err(err);
+        }
+        AgentTaskRuntime::complete_task(&state.db, &task_id)?;
+    } else {
+        AgentTaskRuntime::await_confirmation(&state.db, &task_id)?;
     }
 
     info!(
@@ -594,7 +714,19 @@ pub(crate) async fn execute_ai_send_message_with_routing(
     let mut response =
         AiChatResponse::from_harness_result(&harness_result, evidence_refresh_notice);
     response.request_id = request_id;
+    response.task_id = Some(task_id);
     response.session_id = sid;
+    response.status = match task_status {
+        AgentTaskStatus::AwaitingConfirmation => "pending_tools",
+        AgentTaskStatus::PausedBudget => "paused_budget",
+        AgentTaskStatus::Completed => "completed",
+        AgentTaskStatus::PausedRecoverable => "paused_recoverable",
+        AgentTaskStatus::FailedSafe => "failed_safe",
+        AgentTaskStatus::Aborted => "aborted",
+        AgentTaskStatus::Queued => "queued",
+        AgentTaskStatus::Running => "running",
+    }
+    .to_string();
     Ok(response)
 }
 
@@ -692,9 +824,66 @@ fn finalize_chat_harness_run(
 }
 
 fn harness_run_to_chat_response(
+    state: &AppState,
     harness_result: &crate::ai_runtime::harness::HarnessRunResult,
-) -> AiChatResponse {
-    AiChatResponse::from_harness_result(harness_result, None)
+) -> AppResult<AiChatResponse> {
+    let mut response = AiChatResponse::from_harness_result(harness_result, None);
+    response.task_id =
+        AgentTaskRuntime::task_id_for_request(&state.db, &harness_result.request_id)?;
+    if matches!(
+        harness_result.finish_reason,
+        crate::ai_runtime::harness::HarnessFinishReason::BudgetExhausted
+            | crate::ai_runtime::harness::HarnessFinishReason::RoundLimit
+    ) {
+        response.status = "paused_budget".to_string();
+    }
+    Ok(response)
+}
+
+fn harness_has_reliable_final_answer(
+    harness_result: &crate::ai_runtime::harness::HarnessRunResult,
+) -> bool {
+    !harness_result.pending_confirmation
+        && matches!(
+            harness_result.finish_reason,
+            crate::ai_runtime::harness::HarnessFinishReason::Completed
+        )
+}
+
+fn sync_agent_task_after_harness(
+    state: &AppState,
+    harness_result: &crate::ai_runtime::harness::HarnessRunResult,
+) -> AppResult<()> {
+    let Some(task_id) =
+        AgentTaskRuntime::task_id_for_request(&state.db, &harness_result.request_id)?
+    else {
+        return Ok(());
+    };
+    if harness_result.pending_confirmation {
+        return AgentTaskRuntime::await_confirmation(&state.db, &task_id);
+    }
+    if matches!(
+        harness_result.finish_reason,
+        crate::ai_runtime::harness::HarnessFinishReason::BudgetExhausted
+            | crate::ai_runtime::harness::HarnessFinishReason::RoundLimit
+    ) {
+        return AgentTaskRuntime::pause_budget(
+            &state.db,
+            &task_id,
+            "resumed segment paused before producing a reliable final answer",
+            serde_json::json!({
+                "summary": "resumed segment paused before reliable final answer",
+                "finish_reason": harness_result.finish_reason,
+                "packet_ids": harness_result
+                    .evidence_packets
+                    .iter()
+                    .map(|p| p.id.clone())
+                    .collect::<Vec<_>>(),
+                "next_action": "resume task with compacted context"
+            }),
+        );
+    }
+    AgentTaskRuntime::complete_task(&state.db, &task_id)
 }
 
 /// Handle tool confirmation from the user.
@@ -718,7 +907,7 @@ pub async fn tool_confirm(
         let harness_result =
             resume_harness_after_tool_confirm_or_restore(state.inner(), &app_handle, &request_id)
                 .await?;
-        if !harness_result.pending_confirmation {
+        if harness_has_reliable_final_answer(&harness_result) {
             let scene = parse_ai_scene(&load_scene_from_checkpoint(state.inner(), &request_id)?)?;
             let resolved = crate::llm::config::resolve_for_scene(&state.db, scene)?;
             finalize_chat_harness_run(
@@ -731,8 +920,9 @@ pub async fn tool_confirm(
                 &harness_result.evidence_packets,
             )?;
         }
+        sync_agent_task_after_harness(state.inner(), &harness_result)?;
         return Ok(
-            harness_run_to_chat_response(&harness_result).with_tool_confirmation(
+            harness_run_to_chat_response(state.inner(), &harness_result)?.with_tool_confirmation(
                 tool_call_id,
                 "reject",
                 None,
@@ -782,7 +972,7 @@ pub async fn tool_confirm(
         resume_harness_after_tool_confirm_or_restore(state.inner(), &app_handle, &request_id)
             .await?;
 
-    if !harness_result.pending_confirmation {
+    if harness_has_reliable_final_answer(&harness_result) {
         let scene = pending.scene;
         let resolved = crate::llm::config::resolve_for_scene(&state.db, scene)?;
         finalize_chat_harness_run(
@@ -795,8 +985,9 @@ pub async fn tool_confirm(
             &harness_result.evidence_packets,
         )?;
     }
+    sync_agent_task_after_harness(state.inner(), &harness_result)?;
 
-    let out = harness_run_to_chat_response(&harness_result).with_tool_confirmation(
+    let out = harness_run_to_chat_response(state.inner(), &harness_result)?.with_tool_confirmation(
         tool_call_id,
         if decision == "modify" {
             "modify"
@@ -1227,7 +1418,7 @@ pub async fn harness_resume(
         resume_harness_after_tool_confirm_or_restore(state.inner(), &app_handle, &request_id)
             .await?;
 
-    if !harness_result.pending_confirmation {
+    if harness_has_reliable_final_answer(&harness_result) {
         let scene_str = load_scene_from_checkpoint(state.inner(), &request_id)?;
         let scene = parse_ai_scene(&scene_str)?;
         let resolved = crate::llm::config::resolve_for_scene(&state.db, scene)?;
@@ -1241,8 +1432,9 @@ pub async fn harness_resume(
             &harness_result.evidence_packets,
         )?;
     }
+    sync_agent_task_after_harness(state.inner(), &harness_result)?;
 
-    Ok(harness_run_to_chat_response(&harness_result))
+    harness_run_to_chat_response(state.inner(), &harness_result)
 }
 
 /// Abort an active harness/model request.
@@ -1250,6 +1442,9 @@ pub async fn harness_resume(
 pub async fn harness_abort(state: State<'_, Arc<AppState>>, request_id: String) -> AppResult<()> {
     crate::ai_runtime::model_gateway::request_abort(&request_id);
     let _ = TraceRecorder::update_status(&state.db, &request_id, TraceStatus::Aborted);
+    if let Some(task_id) = AgentTaskRuntime::task_id_for_request(&state.db, &request_id)? {
+        AgentTaskRuntime::abort_task(&state.db, &task_id)?;
+    }
     Ok(())
 }
 

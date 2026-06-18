@@ -5,7 +5,7 @@ use tauri::AppHandle;
 use super::finalize::{finish_run, ledger_to_packets, FinishRunParams};
 use super::token_estimator::{estimate_and_accumulate, usage_is_empty, UsageSource};
 use super::trace_emit::{emit_thinking, emit_trace_phase};
-use super::types::{HarnessPhase, HarnessRunInput, HarnessRunResult};
+use super::types::{HarnessFinishReason, HarnessPhase, HarnessRunInput, HarnessRunResult};
 use super::util::accumulate_usage;
 use crate::ai_runtime::evidence_ledger::EvidenceLedger;
 use crate::ai_runtime::harness_support::extract_thinking_blocks;
@@ -127,6 +127,11 @@ pub(crate) async fn run_reflection_round(
                             pending_confirmation,
                             evidence_packets: ledger_to_packets(evidence_ledger, token_budget),
                             usage_source: *usage_source,
+                            finish_reason: if pending_confirmation {
+                                HarnessFinishReason::AwaitingConfirmation
+                            } else {
+                                HarnessFinishReason::Completed
+                            },
                         },
                     )
                     .await?,

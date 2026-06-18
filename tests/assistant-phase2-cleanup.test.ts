@@ -39,13 +39,17 @@ describe("assistant phase 2 cleanup", () => {
   it("routes scenes internally instead of exposing SceneSelector", () => {
     const routing = read("src/lib/assistant-scene.ts");
     const panel = read("src/components/ai/UnifiedAssistantPanel.tsx");
+    const panelImpl = read("src/components/ai/UnifiedAssistantPanel.impl.tsx");
     const statusBadge = read("src/components/ai/AgentStatusBadge.tsx");
+    const connectivity = read("src/hooks/useConnectivityStatus.ts");
+    const header = read("src/components/ai/AssistantPanelHeader.tsx");
     const historyDropdown = read(
       "src/components/ai/SessionHistoryDropdown.tsx",
     );
     const skillsPanel = read("src/components/ai/SkillsPanel.tsx");
 
-    expect(routing).toContain("resolveAiSceneForIntent");
+    expect(routing).toContain("legacySceneHintForAssistantIntent");
+    expect(routing).not.toContain("resolveAiSceneForIntent");
     expect(panel).not.toContain("ContextStatusBar");
     expect(panel).toContain("onChromeChange");
     expect(read("src/components/ai/ContextPacketDrawer.tsx")).toContain("证据");
@@ -53,8 +57,13 @@ describe("assistant phase 2 cleanup", () => {
     expect(panel).toContain("ResearchFocusView");
     expect(panel).not.toContain("ExecutionPlanPreview");
     expect(panel).toContain("assistantExecute(");
+    expect(panelImpl).toContain("legacySceneHintForAssistantIntent");
+    expect(header).toContain("legacySceneHint");
+    expect(header).not.toContain("activeScene");
     expect(panel).not.toContain("chapterWritingExecute");
     expect(panel).not.toContain("documentCheckExecute");
+    expect(statusBadge).not.toContain('case "exemplar_learning"');
+    expect(connectivity).not.toContain('stored === "exemplar_learning"');
     expect(statusBadge).not.toContain("场景");
     expect(historyDropdown).not.toContain("场景");
     expect(skillsPanel).not.toContain("场景");

@@ -17,10 +17,7 @@ describe("vault navigator model helpers", () => {
       "research_synthesis",
       "drafting_assist",
     ]);
-    expect(defaultScenesForKind("exemplar")).toEqual([
-      "exemplar_learning",
-      "drafting_assist",
-    ]);
+    expect(defaultScenesForKind("exemplar")).toEqual(["drafting_assist"]);
     expect(defaultScenesForKind("reference")).toEqual([
       "knowledge_lookup",
       "research_synthesis",

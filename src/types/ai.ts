@@ -456,6 +456,7 @@ export type AssistantExecuteBody =
 /** Flattened harness metadata + task body (serde flatten on backend). */
 export type AssistantExecuteResponse = AssistantExecuteBody & {
   requestId: string;
+  taskId?: string;
   runStatus: string;
   artifacts: HarnessArtifactWire[];
   evidenceRefreshNotice?: string | null;
@@ -1035,6 +1036,7 @@ export interface AiToolResult {
 /** `ai_send_message` IPC 返回值 */
 export interface AiSendMessageResult {
   request_id: string;
+  task_id?: string;
   session_id: number;
   status: string;
   content?: string;
