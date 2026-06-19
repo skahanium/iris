@@ -1,5 +1,6 @@
 //! Persistent task state for the Agent Task Runtime.
 
+use crate::ai_runtime::session::SessionManager;
 use crate::error::{AppError, AppResult};
 use crate::storage::db::Database;
 use serde::{Deserialize, Serialize};
@@ -105,6 +106,21 @@ impl AgentTaskStatus {
             _ => Self::Running,
         }
     }
+
+    /// Parse a wire status, returning `None` for unknown values.
+    pub fn parse_wire(value: &str) -> Option<Self> {
+        match value {
+            "queued" => Some(Self::Queued),
+            "running" => Some(Self::Running),
+            "awaiting_confirmation" => Some(Self::AwaitingConfirmation),
+            "paused_budget" => Some(Self::PausedBudget),
+            "paused_recoverable" => Some(Self::PausedRecoverable),
+            "completed" => Some(Self::Completed),
+            "failed_safe" => Some(Self::FailedSafe),
+            "aborted" => Some(Self::Aborted),
+            _ => None,
+        }
+    }
 }
 
 /// Input required to create a task record.
@@ -149,6 +165,80 @@ pub struct AgentTask {
     pub error_code: Option<String>,
     /// Sanitized failure message.
     pub error_message: Option<String>,
+}
+
+/// Filter used by task list IPC and runtime recovery surfaces.
+#[derive(Debug, Clone, Default)]
+pub struct TaskListFilter {
+    /// Restrict results to a single AI session.
+    pub session_id: Option<i64>,
+    /// Restrict results to one lifecycle status.
+    pub status: Option<AgentTaskStatus>,
+}
+
+/// Minimal safe continuation plan reconstructed from task metadata and checkpoints.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentTaskResumePlan {
+    /// Stable task id to continue; resume never creates an unrelated task id.
+    pub task_id: String,
+    /// Original AI request id.
+    pub request_id: String,
+    /// Owning session id, revalidated immediately before continuation.
+    pub session_id: i64,
+    /// Intent summary from task budget policy, when known.
+    pub agent_intent: Option<String>,
+    /// Migration-only scene hint retained for existing harness routing.
+    pub legacy_scene_hint: Option<String>,
+    /// Hash of the vault/task scope used when the task paused.
+    pub vault_scope_hash: Option<String>,
+    /// Packet ids selected or carried into the safe continuation.
+    pub selected_packet_ids: Vec<String>,
+    /// Summary of evidence state; never raw note body or tool output.
+    pub evidence_ledger_summary: Option<String>,
+    /// Last safe step name from which continuation may proceed.
+    pub last_safe_step: Option<String>,
+    /// Budget policy copied from task metadata.
+    pub budget_policy: Value,
+    /// Permissions that must be checked again before continuation.
+    pub required_permissions: Vec<String>,
+    /// Summary-shaped goal for the next segment.
+    pub continuation_goal: Option<String>,
+    /// Reference ids carried into the next segment.
+    pub evidence_refs: Vec<String>,
+    /// Next planned action for the continuation executor.
+    pub next_action: Option<String>,
+    /// Non-authoritative budget hint; safety boundaries are recomputed at runtime.
+    pub remaining_budget_hint: Option<Value>,
+}
+
+/// Runtime facts checked immediately before a paused task is resumed.
+#[derive(Debug, Clone, Default)]
+pub struct AgentTaskResumePreflight {
+    /// Current vault/task scope hash.
+    pub current_vault_scope_hash: Option<String>,
+    /// Note paths that still resolve inside the current vault.
+    pub accessible_note_paths: Vec<String>,
+    /// Evidence packet ids available to the continuation executor.
+    pub available_packet_ids: Vec<String>,
+    /// Enabled skill names in the current vault.
+    pub enabled_skill_names: Vec<String>,
+    /// Permission atoms with active grants or low-risk in-request availability.
+    pub active_permissions: Vec<String>,
+    /// Current model capability slot.
+    pub current_model_slot: Option<String>,
+}
+
+/// Safe checkpoint input for budget/round-limit pauses.
+#[derive(Debug, Clone)]
+pub struct BudgetPauseCheckpointInput {
+    pub finish_reason: &'static str,
+    pub selected_packet_ids: Vec<String>,
+    pub evidence_packet_ids: Vec<String>,
+    pub evidence_ledger_summary: String,
+    pub continuation_goal: String,
+    pub last_safe_step: String,
+    pub next_action: String,
+    pub remaining_budget_hint: Value,
 }
 
 /// Storage-backed runtime facade for task lifecycle mutations.
@@ -223,6 +313,97 @@ impl AgentTaskRuntime {
         })
     }
 
+    /// List task metadata for a session/status filter.
+    pub fn list_tasks(db: &Database, filter: TaskListFilter) -> AppResult<Vec<AgentTask>> {
+        db.with_read_conn(|conn| {
+            let mut tasks = Vec::new();
+            match (filter.session_id, filter.status) {
+                (Some(session_id), Some(status)) => {
+                    let mut stmt = conn.prepare(
+                        "SELECT task_id, request_id, session_id, kind, status, user_goal_summary,
+                                budget_policy_json, created_at, updated_at, completed_at,
+                                error_code, error_message
+                         FROM agent_tasks
+                         WHERE session_id = ?1 AND status = ?2
+                         ORDER BY updated_at DESC",
+                    )?;
+                    let rows = stmt.query_map(
+                        rusqlite::params![session_id, status.as_str()],
+                        row_to_agent_task,
+                    )?;
+                    for row in rows {
+                        tasks.push(row?);
+                    }
+                }
+                (Some(session_id), None) => {
+                    let mut stmt = conn.prepare(
+                        "SELECT task_id, request_id, session_id, kind, status, user_goal_summary,
+                                budget_policy_json, created_at, updated_at, completed_at,
+                                error_code, error_message
+                         FROM agent_tasks
+                         WHERE session_id = ?1
+                         ORDER BY updated_at DESC",
+                    )?;
+                    let rows = stmt.query_map([session_id], row_to_agent_task)?;
+                    for row in rows {
+                        tasks.push(row?);
+                    }
+                }
+                (None, Some(status)) => {
+                    let mut stmt = conn.prepare(
+                        "SELECT task_id, request_id, session_id, kind, status, user_goal_summary,
+                                budget_policy_json, created_at, updated_at, completed_at,
+                                error_code, error_message
+                         FROM agent_tasks
+                         WHERE status = ?1
+                         ORDER BY updated_at DESC",
+                    )?;
+                    let rows = stmt.query_map([status.as_str()], row_to_agent_task)?;
+                    for row in rows {
+                        tasks.push(row?);
+                    }
+                }
+                (None, None) => {
+                    let mut stmt = conn.prepare(
+                        "SELECT task_id, request_id, session_id, kind, status, user_goal_summary,
+                                budget_policy_json, created_at, updated_at, completed_at,
+                                error_code, error_message
+                         FROM agent_tasks
+                         ORDER BY updated_at DESC",
+                    )?;
+                    let rows = stmt.query_map([], row_to_agent_task)?;
+                    for row in rows {
+                        tasks.push(row?);
+                    }
+                }
+            }
+            Ok(tasks)
+        })
+    }
+
+    /// Replace a task's safe budget policy after routing/context facts are known.
+    pub fn update_budget_policy(
+        db: &Database,
+        task_id: &str,
+        budget_policy: Value,
+    ) -> AppResult<()> {
+        validate_checkpoint(&budget_policy)?;
+        let budget_policy_json = serde_json::to_string(&budget_policy)?;
+        let now = chrono::Utc::now().to_rfc3339();
+        db.with_conn(|conn| {
+            let updated = conn.execute(
+                "UPDATE agent_tasks
+                 SET budget_policy_json = ?1, updated_at = ?2
+                 WHERE task_id = ?3",
+                rusqlite::params![budget_policy_json, now, task_id],
+            )?;
+            if updated == 0 {
+                return Err(AppError::msg("agent task not found"));
+            }
+            Ok(())
+        })
+    }
+
     /// Return the durable task id associated with a request id.
     pub fn task_id_for_request(db: &Database, request_id: &str) -> AppResult<Option<String>> {
         db.with_read_conn(|conn| {
@@ -236,6 +417,162 @@ impl AgentTaskRuntime {
                 Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
                 Err(e) => Err(e.into()),
             }
+        })
+    }
+
+    /// Revalidate a paused task and return a safe resume plan without mutating task state.
+    pub fn prepare_resume_plan(db: &Database, task_id: &str) -> AppResult<AgentTaskResumePlan> {
+        let task =
+            Self::get_task(db, task_id)?.ok_or_else(|| AppError::msg("agent task not found"))?;
+        if !matches!(
+            task.status,
+            AgentTaskStatus::PausedBudget | AgentTaskStatus::PausedRecoverable
+        ) {
+            return Err(AppError::msg("agent task not resumable"));
+        }
+        if SessionManager::get_session(db, task.session_id)?.is_none() {
+            return Err(AppError::msg("agent task session not found"));
+        }
+
+        let checkpoint = latest_checkpoint(db, task_id)?;
+        validate_checkpoint(&checkpoint)?;
+        let plan = AgentTaskResumePlan {
+            task_id: task.task_id.clone(),
+            request_id: task.request_id.clone(),
+            session_id: task.session_id,
+            agent_intent: string_field(&task.budget_policy, "agent_intent")
+                .or_else(|| string_field(&task.budget_policy, "intent")),
+            legacy_scene_hint: string_field(&task.budget_policy, "legacy_scene_hint"),
+            vault_scope_hash: string_field(&task.budget_policy, "vault_scope_hash"),
+            selected_packet_ids: string_array_field(&checkpoint, "selected_packet_ids")
+                .or_else(|| string_array_field(&checkpoint, "evidence_packet_ids"))
+                .or_else(|| string_array_field(&checkpoint, "packet_ids"))
+                .unwrap_or_default(),
+            evidence_ledger_summary: string_field(&checkpoint, "evidence_ledger_summary")
+                .or_else(|| string_field(&checkpoint, "summary")),
+            last_safe_step: string_field(&checkpoint, "last_safe_step"),
+            budget_policy: task.budget_policy.clone(),
+            required_permissions: string_array_field(&task.budget_policy, "required_permissions")
+                .unwrap_or_default(),
+            continuation_goal: string_field(&checkpoint, "continuation_goal"),
+            evidence_refs: string_array_field(&checkpoint, "evidence_refs")
+                .or_else(|| string_array_field(&checkpoint, "evidence_packet_ids"))
+                .or_else(|| string_array_field(&checkpoint, "packet_ids"))
+                .unwrap_or_default(),
+            next_action: string_field(&checkpoint, "next_action"),
+            remaining_budget_hint: checkpoint.get("remaining_budget_hint").cloned(),
+        };
+
+        Ok(plan)
+    }
+
+    /// Validate resume invariants that can drift while a task is paused.
+    pub fn validate_resume_preflight(
+        plan: &AgentTaskResumePlan,
+        preflight: &AgentTaskResumePreflight,
+    ) -> AppResult<()> {
+        let mut failures = Vec::new();
+
+        if let Some(expected) = plan.vault_scope_hash.as_deref() {
+            if preflight.current_vault_scope_hash.as_deref() != Some(expected) {
+                failures.push("vault scope changed");
+            }
+        }
+
+        if let Some(note_path) = string_field(&plan.budget_policy, "note_path") {
+            if !preflight
+                .accessible_note_paths
+                .iter()
+                .any(|path| path == &note_path)
+            {
+                failures.push("note path unavailable");
+            }
+        }
+
+        for packet_id in &plan.selected_packet_ids {
+            if !preflight
+                .available_packet_ids
+                .iter()
+                .any(|available| available == packet_id)
+            {
+                failures.push("selected packet unavailable");
+                break;
+            }
+        }
+
+        for skill in string_array_field(&plan.budget_policy, "required_skills").unwrap_or_default()
+        {
+            if !preflight
+                .enabled_skill_names
+                .iter()
+                .any(|enabled| enabled == &skill)
+            {
+                failures.push("skill unavailable");
+                break;
+            }
+        }
+
+        for permission in &plan.required_permissions {
+            if !preflight
+                .active_permissions
+                .iter()
+                .any(|active| active == permission)
+            {
+                failures.push("permission expired");
+                break;
+            }
+        }
+
+        if let Some(required) = string_field(&plan.budget_policy, "required_model_slot") {
+            if preflight.current_model_slot.as_deref() != Some(required.as_str()) {
+                failures.push("model capability changed");
+            }
+        }
+
+        if failures.is_empty() {
+            Ok(())
+        } else {
+            failures.sort_unstable();
+            failures.dedup();
+            Err(AppError::msg(format!(
+                "agent task resume preflight failed: {}",
+                failures.join("; ")
+            )))
+        }
+    }
+
+    /// Mark a preflight-validated task running and record a safe resume event.
+    pub fn begin_resume(db: &Database, task_id: &str, plan: &AgentTaskResumePlan) -> AppResult<()> {
+        Self::set_status(db, task_id, AgentTaskStatus::Running, None, None)?;
+        Self::record_event(
+            db,
+            task_id,
+            "resume",
+            "resume started",
+            serde_json::json!({
+                "request_id": plan.request_id,
+                "last_safe_step": plan.last_safe_step,
+                "next_action": plan.next_action,
+                "evidence_ref_count": plan.evidence_refs.len(),
+                "selected_packet_count": plan.selected_packet_ids.len(),
+            }),
+        )?;
+        Ok(())
+    }
+
+    /// Build the canonical safe checkpoint for budget and round-limit pauses.
+    pub fn build_budget_pause_checkpoint(input: BudgetPauseCheckpointInput) -> Value {
+        serde_json::json!({
+            "summary": "segment paused before reliable final answer",
+            "finish_reason": input.finish_reason,
+            "selected_packet_ids": input.selected_packet_ids,
+            "evidence_packet_ids": input.evidence_packet_ids.clone(),
+            "evidence_refs": input.evidence_packet_ids,
+            "evidence_ledger_summary": input.evidence_ledger_summary,
+            "continuation_goal": input.continuation_goal,
+            "last_safe_step": input.last_safe_step,
+            "next_action": input.next_action,
+            "remaining_budget_hint": input.remaining_budget_hint,
         })
     }
 
@@ -324,6 +661,17 @@ impl AgentTaskRuntime {
         )
     }
 
+    /// Mark a task as safely paused after a recoverable resume failure.
+    pub fn pause_recoverable(db: &Database, task_id: &str, error_code: &str) -> AppResult<()> {
+        Self::set_status(
+            db,
+            task_id,
+            AgentTaskStatus::PausedRecoverable,
+            Some(error_code),
+            Some("Task paused safely and can be retried"),
+        )
+    }
+
     /// Mark a task as aborted.
     pub fn abort_task(db: &Database, task_id: &str) -> AppResult<()> {
         Self::set_status(db, task_id, AgentTaskStatus::Aborted, None, None)
@@ -398,6 +746,66 @@ impl AgentTaskRuntime {
     }
 }
 
+fn row_to_agent_task(row: &rusqlite::Row<'_>) -> rusqlite::Result<AgentTask> {
+    let budget_policy_json: String = row.get(6)?;
+    let budget_policy = serde_json::from_str(&budget_policy_json).unwrap_or(Value::Null);
+    let kind: String = row.get(3)?;
+    let status: String = row.get(4)?;
+    Ok(AgentTask {
+        task_id: row.get(0)?,
+        request_id: row.get(1)?,
+        session_id: row.get(2)?,
+        kind: AgentTaskKind::parse(&kind),
+        status: AgentTaskStatus::parse(&status),
+        user_goal_summary: row.get(5)?,
+        budget_policy,
+        created_at: row.get(7)?,
+        updated_at: row.get(8)?,
+        completed_at: row.get(9)?,
+        error_code: row.get(10)?,
+        error_message: row.get(11)?,
+    })
+}
+
+fn latest_checkpoint(db: &Database, task_id: &str) -> AppResult<Value> {
+    db.with_read_conn(|conn| {
+        let result = conn.query_row(
+            "SELECT checkpoint_json
+             FROM agent_task_steps
+             WHERE task_id = ?1
+             ORDER BY step_seq DESC
+             LIMIT 1",
+            [task_id],
+            |row| row.get::<_, String>(0),
+        );
+        match result {
+            Ok(json) => Ok(serde_json::from_str(&json).unwrap_or_else(|_| serde_json::json!({}))),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(serde_json::json!({})),
+            Err(err) => Err(err.into()),
+        }
+    })
+}
+
+fn string_field(value: &Value, key: &str) -> Option<String> {
+    value
+        .get(key)
+        .and_then(Value::as_str)
+        .filter(|text| !text.trim().is_empty())
+        .map(ToString::to_string)
+}
+
+fn string_array_field(value: &Value, key: &str) -> Option<Vec<String>> {
+    let items = value.get(key)?.as_array()?;
+    Some(
+        items
+            .iter()
+            .filter_map(Value::as_str)
+            .filter(|text| !text.trim().is_empty())
+            .map(ToString::to_string)
+            .collect(),
+    )
+}
+
 fn summarize_user_goal(input: &str) -> String {
     let normalized = input.split_whitespace().collect::<Vec<_>>().join(" ");
     let digest = Sha256::digest(normalized.as_bytes());
@@ -436,6 +844,7 @@ fn validate_checkpoint_value(value: &Value, path: &str) -> AppResult<()> {
                 if UNSAFE_CHECKPOINT_KEYS
                     .iter()
                     .any(|unsafe_key| normalized.contains(unsafe_key))
+                    && !is_allowed_budget_hint_counter(path, nested)
                 {
                     return Err(AppError::msg(format!(
                         "unsafe checkpoint: key `{key}` is not allowed"
@@ -466,4 +875,8 @@ fn validate_checkpoint_value(value: &Value, path: &str) -> AppResult<()> {
         }
         Value::Null | Value::Bool(_) | Value::Number(_) => Ok(()),
     }
+}
+
+fn is_allowed_budget_hint_counter(path: &str, value: &Value) -> bool {
+    path == "$.remaining_budget_hint" && value.is_number()
 }

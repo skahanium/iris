@@ -3,7 +3,9 @@
 //! Analyzes user query to determine intent and generate appropriate
 //! retrieval sub-queries for the retrieval broker.
 
+use crate::ai_runtime::agent_task_policy::AgentTaskPolicy;
 use crate::ai_runtime::AiScene;
+use crate::ai_types::AgentIntent;
 use crate::error::AppResult;
 use serde::{Deserialize, Serialize};
 
@@ -107,7 +109,7 @@ pub fn plan_context(
     note_path: Option<&str>,
 ) -> AppResult<ContextPlan> {
     let intent = detect_intent(query, scene);
-    let sub_queries = generate_sub_queries(&intent, query, scene, note_path);
+    let sub_queries = generate_sub_queries(&intent, query, note_path);
     let estimated_tokens = estimate_tokens(&sub_queries);
     let requires_multi_turn = matches!(scene, AiScene::ResearchSynthesis);
 
@@ -117,6 +119,77 @@ pub fn plan_context(
         estimated_tokens,
         requires_multi_turn,
     })
+}
+
+/// Analyze query and generate context plan from task policy.
+pub fn plan_context_for_policy(
+    query: &str,
+    policy: &AgentTaskPolicy,
+    note_path: Option<&str>,
+) -> AppResult<ContextPlan> {
+    let intent = detect_intent_for_policy(query, policy);
+    let sub_queries = generate_sub_queries_for_policy(&intent, query, policy.scope, note_path);
+    let estimated_tokens = estimate_tokens(&sub_queries);
+    let requires_multi_turn = matches!(
+        policy.intent,
+        AgentIntent::Research | AgentIntent::CitationCheck | AgentIntent::DocumentCheck
+    );
+
+    Ok(ContextPlan {
+        intent,
+        sub_queries,
+        estimated_tokens,
+        requires_multi_turn,
+    })
+}
+
+fn detect_intent_for_policy(query: &str, policy: &AgentTaskPolicy) -> QueryIntent {
+    let lower = query.to_lowercase();
+
+    if let Some(regulation_intent) = detect_regulation_intent(&lower) {
+        return regulation_intent;
+    }
+
+    if matches!(
+        policy.intent,
+        AgentIntent::RewriteSelection
+            | AgentIntent::Write
+            | AgentIntent::Chapter
+            | AgentIntent::DocumentCheck
+    ) {
+        if let Some(writing_intent) = detect_writing_intent(&lower, query) {
+            return writing_intent;
+        }
+    }
+
+    if matches!(
+        policy.intent,
+        AgentIntent::Research | AgentIntent::CitationCheck
+    ) {
+        if let Some(research_intent) = detect_research_intent(query) {
+            return research_intent;
+        }
+    }
+
+    note_search_or_general(query, &lower)
+}
+
+fn note_search_or_general(query: &str, lower: &str) -> QueryIntent {
+    if !lower.is_empty() {
+        let keywords: Vec<String> = query
+            .split(|c: char| c.is_whitespace() || c == '，' || c == '。' || c == '？' || c == '！')
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_string())
+            .collect();
+
+        if !keywords.is_empty() {
+            QueryIntent::NoteSearch { keywords }
+        } else {
+            QueryIntent::General
+        }
+    } else {
+        QueryIntent::General
+    }
 }
 
 /// Detect intent from query text.
@@ -150,21 +223,7 @@ fn detect_intent(query: &str, scene: AiScene) -> QueryIntent {
     }
 
     // Default to general or note search
-    if !lower.is_empty() {
-        let keywords: Vec<String> = query
-            .split(|c: char| c.is_whitespace() || c == '，' || c == '。' || c == '？' || c == '！')
-            .filter(|s| !s.is_empty())
-            .map(|s| s.to_string())
-            .collect();
-
-        if !keywords.is_empty() {
-            QueryIntent::NoteSearch { keywords }
-        } else {
-            QueryIntent::General
-        }
-    } else {
-        QueryIntent::General
-    }
+    note_search_or_general(query, &lower)
 }
 
 /// Detect regulation lookup intent.
@@ -305,7 +364,6 @@ fn detect_research_intent(query: &str) -> Option<QueryIntent> {
 fn generate_sub_queries(
     intent: &QueryIntent,
     original_query: &str,
-    _scene: AiScene,
     _note_path: Option<&str>,
 ) -> Vec<SubQuery> {
     let mut queries = vec![SubQuery {
@@ -403,6 +461,29 @@ fn generate_sub_queries(
     queries
 }
 
+fn generate_sub_queries_for_policy(
+    intent: &QueryIntent,
+    original_query: &str,
+    scope: crate::ai_runtime::agent_task_policy::AgentTaskScope,
+    note_path: Option<&str>,
+) -> Vec<SubQuery> {
+    let mut queries = generate_sub_queries(intent, original_query, note_path);
+    if matches!(
+        scope,
+        crate::ai_runtime::agent_task_policy::AgentTaskScope::Note
+            | crate::ai_runtime::agent_task_policy::AgentTaskScope::Selection
+    ) {
+        if let Some(path) = note_path {
+            queries.push(SubQuery {
+                query: format!("{original_query} 当前笔记 {path}"),
+                query_type: SubQueryType::Related,
+                priority: 6,
+            });
+        }
+    }
+    queries
+}
+
 /// Estimate token count for sub-queries.
 fn estimate_tokens(sub_queries: &[SubQuery]) -> usize {
     // Rough estimate: 1 token per 2 characters for Chinese
@@ -455,12 +536,7 @@ mod tests {
             article: Some("第三条".to_string()),
         };
 
-        let queries = generate_sub_queries(
-            &intent,
-            "纪律处分条例第三条",
-            AiScene::KnowledgeLookup,
-            None,
-        );
+        let queries = generate_sub_queries(&intent, "纪律处分条例第三条", None);
 
         // Should have original + exact regulation + keyword
         assert!(queries.len() >= 2);

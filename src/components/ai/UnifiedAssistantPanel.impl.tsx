@@ -87,6 +87,7 @@ export function UnifiedAssistantPanel({
   const streamBuf = useRef("");
   const requestIdRef = useRef<string | null>(null);
   const [harnessRequestId, setHarnessRequestId] = useState<string | null>(null);
+  const [pausedTaskId, setPausedTaskId] = useState<string | null>(null);
   const [auditDrawerOpen, setAuditDrawerOpen] = useState(false);
   const runPlan = useAssistantRunPlan();
   const assistantRun = useAssistantRun("chat");
@@ -241,10 +242,12 @@ export function UnifiedAssistantPanel({
   const handleHarnessResume = useAssistantHarnessResume({
     ensureAssistantStreamSlot,
     harnessRequestId,
+    pausedTaskId,
     setActivityHint,
     setLastError,
     setMessages,
     setPackets,
+    setPausedTaskId,
     setSessionTokenUsage,
     setStreaming,
   });
@@ -310,6 +313,7 @@ export function UnifiedAssistantPanel({
     setOrganizeSuggestions,
     setPackets,
     setPacketsOpen,
+    setPausedTaskId,
     setResearchPanelExpanded,
     setResearchResult,
     setResearchRunning,
@@ -371,6 +375,7 @@ export function UnifiedAssistantPanel({
         disabled={streaming}
         harnessRequestId={harnessRequestId}
         lastError={lastError}
+        pausedTaskId={pausedTaskId}
         onResume={() => void handleHarnessResume()}
       />
 

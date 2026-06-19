@@ -7,6 +7,7 @@ use super::archive::save_round_checkpoint;
 use super::context::{
     build_initial_messages, prepare_environment_and_skills_with_plan,
     resolve_active_skill_allowed_tools_with_plan, resolve_file_id, EnvironmentAndSkillsInput,
+    InitialMessagesInput,
 };
 use super::finalize::{finish_run, ingest_tool_packets, ledger_to_packets, FinishRunParams};
 use super::planning::{resolve_max_rounds, resolve_token_budget};
@@ -27,7 +28,6 @@ use crate::ai_runtime::model_gateway::{
     clear_abort, is_abort_requested, prepare_tool_api_messages, GatewayRequest, GatewayResponse,
     LlmMessage, MessageRole, ModelGateway, ProviderConfig, TokenUsage, ToolCall,
 };
-use crate::ai_runtime::scene_router::resolve_scene;
 use crate::ai_runtime::tool_audit;
 use crate::ai_runtime::tool_catalog::catalog_find;
 use crate::ai_runtime::tool_dispatch::{dispatch_tool_with_retry, ToolDispatchContext};
@@ -103,17 +103,17 @@ pub async fn run_harness(
     max_tokens: Option<u32>,
     thinking_mode: bool,
 ) -> AppResult<HarnessRunResult> {
-    let profile = resolve_scene(input.scene);
     let registry = ToolRegistry::new();
     let skill_allowed_tools = resolve_active_skill_allowed_tools_with_plan(
         state,
-        input.scene,
+        &input.task_policy,
         &input.user_message,
         input.skill_activation_plan.as_ref(),
     )?;
     let policy_ctx = ToolPolicyContext {
+        task_policy: Some(input.task_policy.clone()),
         scene: input.scene,
-        autonomy_level: profile.autonomy_level,
+        autonomy_level: input.task_policy.autonomy_level,
         web_search_enabled: input.web_search_enabled,
         skill_allowed_tools: skill_allowed_tools.clone(),
         depth: input.depth,
@@ -125,6 +125,7 @@ pub async fn run_harness(
         state,
         EnvironmentAndSkillsInput {
             scene: input.scene,
+            task_policy: &input.task_policy,
             note_path: input.note_path.as_deref(),
             note_title: input.note_title.as_deref(),
             selection_excerpt: input.selection_excerpt.as_deref(),
@@ -140,15 +141,18 @@ pub async fn run_harness(
 
     let mut messages = build_initial_messages(
         state,
-        input.scene,
-        &env_text,
-        &input.cold_start_packets,
-        &input.history_messages,
-        input.web_search_enabled,
-        if skills_prompt.is_empty() {
-            None
-        } else {
-            Some(skills_prompt.as_str())
+        InitialMessagesInput {
+            scene: input.scene,
+            task_policy: &input.task_policy,
+            environment: &env_text,
+            cold_start_packets: &input.cold_start_packets,
+            history: &input.history_messages,
+            web_search_enabled: input.web_search_enabled,
+            skills_fragment: if skills_prompt.is_empty() {
+                None
+            } else {
+                Some(skills_prompt.as_str())
+            },
         },
     );
 
@@ -182,8 +186,8 @@ pub async fn run_harness(
     let mut reflection_done = false;
     let mut bonus_round_used = false;
     let mut consecutive_parse_failures: u32 = 0;
-    let token_budget = resolve_token_budget(input.scene, input.token_budget);
-    let mut max_rounds = resolve_max_rounds(input.scene, input.max_rounds_override);
+    let token_budget = resolve_token_budget(&input.task_policy, input.token_budget);
+    let mut max_rounds = resolve_max_rounds(&input.task_policy, input.max_rounds_override);
 
     if input.resume_from_checkpoint {
         if let Some(cp) = load_harness_checkpoint(&state.db, &input.request_id)? {
@@ -239,6 +243,7 @@ pub async fn run_harness(
         thinking: Some(thinking_mode),
         output_budget: max_tokens,
         skill_activation_plan: input.skill_activation_plan.clone(),
+        task_policy: Some(input.task_policy.clone()),
     };
 
     'agent: loop {
@@ -498,13 +503,13 @@ pub async fn run_harness(
 
             let mut tools_this_round = 0u32;
             let mut fetch_this_round = 0u32;
-            let fetch_limit = max_fetch_per_round(input.scene);
+            let fetch_limit = max_fetch_per_round(&input.task_policy);
             for tool_call in &other_calls {
                 abort_if_requested(&input.request_id)?;
                 if registry.requires_confirmation(&tool_call.function.name) {
                     continue;
                 }
-                if tools_this_round >= profile.max_tool_calls_per_round {
+                if tools_this_round >= input.task_policy.max_tool_calls_per_round {
                     break;
                 }
                 let tool_name = &tool_call.function.name;
@@ -708,7 +713,7 @@ pub async fn run_harness(
         abort_if_requested(&input.request_id)?;
         let stream_request = GatewayRequest {
             provider: provider_config,
-            messages,
+            messages: messages.clone(),
             tools: llm_tools,
             max_tokens,
             temperature: Some(0.7),
@@ -745,6 +750,26 @@ pub async fn run_harness(
     } else {
         HarnessFinishReason::Completed
     };
+    let evidence_packets = ledger_to_packets(&evidence_ledger, token_budget);
+
+    if matches!(
+        finish_reason,
+        HarnessFinishReason::BudgetExhausted | HarnessFinishReason::RoundLimit
+    ) {
+        save_round_checkpoint(
+            state,
+            &input,
+            &checkpoint_meta,
+            harness_rounds,
+            bonus_round_used,
+            &messages,
+            &all_tool_calls,
+            &tool_results_json,
+            &evidence_packets,
+            &total_usage,
+            usage_source,
+        )?;
+    }
 
     finish_run(
         state,
@@ -757,7 +782,7 @@ pub async fn run_harness(
             usage: total_usage,
             harness_rounds,
             pending_confirmation: false,
-            evidence_packets: ledger_to_packets(&evidence_ledger, token_budget),
+            evidence_packets,
             usage_source,
             finish_reason,
         },
@@ -826,10 +851,10 @@ async fn pause_for_tool_confirmation(
             note_path: input.note_path.clone(),
             file_id,
             web_search_enabled: input.web_search_enabled,
-            autonomy_level: crate::ai_runtime::resolve_scene(input.scene).autonomy_level,
+            autonomy_level: input.task_policy.autonomy_level,
             skill_allowed_tools: resolve_active_skill_allowed_tools_with_plan(
                 state,
-                input.scene,
+                &input.task_policy,
                 &input.user_message,
                 input.skill_activation_plan.as_ref(),
             )
@@ -975,10 +1000,9 @@ async fn run_subagent_harness(
         .unwrap_or(2)
         .min(3) as u32;
 
-    let profile = resolve_scene(parent.scene);
     let parent_budget = parent
         .token_budget
-        .unwrap_or(profile.max_token_budget as u32);
+        .unwrap_or(parent.task_policy.max_token_budget);
     let sub_budget = (parent_budget * 3 / 5).max(2000); // 60%
 
     let sub_id = format!("{}-sub-{}", parent.request_id, uuid::Uuid::new_v4());
@@ -996,9 +1020,10 @@ async fn run_subagent_harness(
         history_messages: vec![("user".to_string(), task)],
         depth: parent.depth + 1,
         resume_from_checkpoint: false,
-        max_rounds_override: Some(sub_rounds.min(profile.max_agentic_rounds)),
+        max_rounds_override: Some(sub_rounds.min(parent.task_policy.max_agentic_rounds)),
         token_budget: Some(sub_budget),
         skill_activation_plan: parent.skill_activation_plan.clone(),
+        task_policy: parent.task_policy.clone(),
     };
 
     run_harness(
@@ -1035,6 +1060,7 @@ mod tests {
 
     fn test_policy_ctx(web_search_enabled: bool) -> ToolPolicyContext {
         ToolPolicyContext {
+            task_policy: None,
             scene: AiScene::DraftingAssist,
             autonomy_level: AutonomyLevel::L2,
             web_search_enabled,

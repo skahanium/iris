@@ -12,7 +12,6 @@ use crate::ai_runtime::harness_support::extract_thinking_blocks;
 use crate::ai_runtime::model_gateway::{
     GatewayRequest, LlmMessage, MessageRole, ModelGateway, TokenUsage, ToolCall,
 };
-use crate::ai_runtime::scene_router::resolve_scene;
 use crate::ai_runtime::tool_fallback::strip_tool_markup_from_visible;
 use crate::app::AppState;
 use crate::error::AppResult;
@@ -85,10 +84,9 @@ pub(crate) async fn run_reflection_round(
             accumulate_usage(total_usage, &reflect_resp.usage);
         }
         if let Some(text) = reflect_resp.content {
-            let profile = resolve_scene(input.scene);
             if text.contains("NEED_MORE_EVIDENCE")
                 && !*bonus_round_used
-                && harness_rounds < profile.max_agentic_rounds
+                && harness_rounds < input.task_policy.max_agentic_rounds
             {
                 *bonus_round_used = true;
                 messages.push(LlmMessage {
@@ -105,7 +103,7 @@ pub(crate) async fn run_reflection_round(
                     tool_calls: None,
                     ..Default::default()
                 });
-                *max_rounds = (harness_rounds + 1).min(profile.max_agentic_rounds);
+                *max_rounds = (harness_rounds + 1).min(input.task_policy.max_agentic_rounds);
                 return Ok(ReflectionOutcome::BonusRound);
             }
             let stripped = strip_tool_markup_from_visible(&text);

@@ -8,6 +8,7 @@ pub use crate::ai_types::*;
 // ─── Modules that remain in ai_runtime (coordination layer) ─
 pub mod agent_permissions;
 pub mod agent_task;
+pub mod agent_task_policy;
 pub mod circuit_breaker;
 pub mod context_cache;
 pub mod context_planner;

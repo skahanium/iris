@@ -93,6 +93,7 @@ mod tests {
 
     fn ctx(web: bool) -> ToolPolicyContext {
         ToolPolicyContext {
+            task_policy: None,
             scene: AiScene::KnowledgeLookup,
             autonomy_level: AutonomyLevel::L2,
             web_search_enabled: web,

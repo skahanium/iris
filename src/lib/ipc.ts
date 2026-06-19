@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 
 import type {
+  AgentIntent,
   AiScene,
   AiSendMessageResult,
   AssembledContext,
@@ -24,6 +25,8 @@ import type {
 } from "@/types/ai";
 import type {
   AiCacheClearResult,
+  AgentTaskDto,
+  AgentTaskListParams,
   AppExitResult,
   BacklinkEntry,
   ClassifiedFileTakenEvent,
@@ -677,9 +680,9 @@ export interface SkillListEntryDto {
   validation: SkillValidationStatus;
   unrecognized_tools: string[];
   missing_deps: string[];
-  /** Present when `skillsList` was called with a scene. */
-  scene_active?: boolean;
-  scene_score?: number;
+  /** Present when `skillsList` includes task affinity scoring. */
+  task_active?: boolean;
+  task_score?: number;
   /** Subset of allowed_tools that require harness confirmation. */
   confirmation_required_tools: string[];
   content_hash?: string;
@@ -823,6 +826,31 @@ export async function aiCacheClear(): Promise<AiCacheClearResult> {
   return invoke<AiCacheClearResult>("ai_cache_clear");
 }
 
+export async function agentTaskGet(
+  taskId: string,
+): Promise<AgentTaskDto | null> {
+  return invoke<AgentTaskDto | null>("agent_task_get", { taskId });
+}
+
+export async function agentTaskList(
+  params: AgentTaskListParams = {},
+): Promise<AgentTaskDto[]> {
+  return invoke<AgentTaskDto[]>("agent_task_list", {
+    sessionId: params.sessionId ?? null,
+    status: params.status ?? null,
+  });
+}
+
+export async function agentTaskResume(
+  taskId: string,
+): Promise<AiSendMessageResult> {
+  return invoke<AiSendMessageResult>("agent_task_resume", { taskId });
+}
+
+export async function agentTaskAbort(taskId: string): Promise<void> {
+  return invoke("agent_task_abort", { taskId });
+}
+
 export async function harnessResume(requestId: string): Promise<unknown> {
   return invoke("harness_resume", { requestId });
 }
@@ -891,6 +919,7 @@ export async function sessionLoad(
 
 export async function contextAssemble(params: {
   scene: AiScene;
+  agent_intent?: AgentIntent;
   note_path: string | null;
   note_content_hash: string | null;
   query: string;
@@ -900,6 +929,7 @@ export async function contextAssemble(params: {
 }): Promise<AssembledContext> {
   return invoke<AssembledContext>("context_assemble", {
     scene: params.scene,
+    agentIntent: params.agent_intent ?? null,
     notePath: params.note_path,
     noteContentHash: params.note_content_hash,
     query: params.query,
@@ -918,6 +948,7 @@ export async function assistantExecute(
 
 export async function aiSendMessage(params: {
   scene: AiScene;
+  agent_intent?: AgentIntent;
   session_id: number | null;
   message: string;
   images?: ImageAttachmentDto[];
@@ -929,6 +960,7 @@ export async function aiSendMessage(params: {
 }): Promise<AiSendMessageResult> {
   return invoke<AiSendMessageResult>("ai_send_message", {
     scene: params.scene,
+    agentIntent: params.agent_intent ?? null,
     sessionId: params.session_id,
     message: params.message,
     images: params.images ?? null,

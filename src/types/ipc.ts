@@ -231,6 +231,38 @@ export interface AiCacheClearResult {
   searches_cleared: number;
 }
 
+export type AgentTaskKind = "lightweight" | "complex";
+
+export type AgentTaskStatus =
+  | "queued"
+  | "running"
+  | "awaiting_confirmation"
+  | "paused_budget"
+  | "paused_recoverable"
+  | "completed"
+  | "failed_safe"
+  | "aborted";
+
+export interface AgentTaskDto {
+  task_id: string;
+  request_id: string;
+  session_id: number;
+  kind: AgentTaskKind;
+  status: AgentTaskStatus;
+  user_goal_summary: string;
+  budget_policy: unknown;
+  created_at: string;
+  updated_at: string;
+  completed_at?: string | null;
+  error_code?: string | null;
+  error_message?: string | null;
+}
+
+export interface AgentTaskListParams {
+  sessionId?: number | null;
+  status?: AgentTaskStatus | null;
+}
+
 /** 用户画像条目（`profile_list` / `profile_get` 返回） */
 export interface ProfileEntry {
   key: string;

@@ -41,8 +41,22 @@ pub(crate) async fn execute_chapter_writing(
         }
     }
 
-    let resolved = crate::llm::config::resolve_for_scene(&state.db, AiScene::DraftingAssist)?;
-    let provider_config = resolved.to_provider_config(AiScene::DraftingAssist);
+    let task_policy = crate::ai_runtime::agent_task_policy::AgentTaskPolicy::from_input(
+        crate::ai_runtime::agent_task_policy::AgentTaskPolicyInput {
+            intent: crate::ai_types::AgentIntent::Chapter,
+            task_kind: crate::ai_runtime::agent_task::AgentTaskKind::Complex,
+            scope: crate::ai_runtime::agent_task_policy::AgentTaskScope::Note,
+            web_authorized: input.web_authorized,
+            has_attachments: false,
+            write_permission_required: true,
+            research_depth: 0,
+        },
+    );
+    let route =
+        crate::ai_runtime::agent_task_policy::resolve_for_task_policy(&state.db, &task_policy)?;
+    let provider_config = route
+        .resolved
+        .to_provider_config_for_slot(route.summary.slot);
 
     let full_content = read_note_content(state, &input.target_path)?;
 
@@ -133,8 +147,22 @@ pub(crate) async fn execute_document_check(
         }
     }
 
-    let resolved = crate::llm::config::resolve_for_scene(&state.db, AiScene::DraftingAssist)?;
-    let provider_config = resolved.to_provider_config(AiScene::DraftingAssist);
+    let task_policy = crate::ai_runtime::agent_task_policy::AgentTaskPolicy::from_input(
+        crate::ai_runtime::agent_task_policy::AgentTaskPolicyInput {
+            intent: crate::ai_types::AgentIntent::DocumentCheck,
+            task_kind: crate::ai_runtime::agent_task::AgentTaskKind::Complex,
+            scope: crate::ai_runtime::agent_task_policy::AgentTaskScope::Note,
+            web_authorized: input.web_authorized,
+            has_attachments: false,
+            write_permission_required: true,
+            research_depth: 0,
+        },
+    );
+    let route =
+        crate::ai_runtime::agent_task_policy::resolve_for_task_policy(&state.db, &task_policy)?;
+    let provider_config = route
+        .resolved
+        .to_provider_config_for_slot(route.summary.slot);
 
     let mut result = document_workflow::execute_document_check(&input, evidence.clone())?;
     let heuristic = result.clone();

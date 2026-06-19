@@ -4,7 +4,7 @@
 //!
 //! ```text
 //! implemented/harness-only hard gate
-//!   ∩ scene affinity
+//!   ∩ task capability affinity
 //!   ∩ autonomy level
 //!   ∩ web_search_enabled
 //!   ∩ skill allowed-tools request
@@ -20,11 +20,19 @@
 use crate::ai_runtime::tool_catalog::{
     catalog_find, ToolCatalogEntry, ToolImplementationStatus, TOOL_CATALOG,
 };
-use crate::ai_runtime::{AiScene, AutonomyLevel, ToolAccessLevel};
+use crate::ai_runtime::{
+    agent_task::AgentTaskKind,
+    agent_task_policy::{
+        intent_from_legacy_scene, AgentTaskPolicy, AgentTaskPolicyInput, AgentTaskScope,
+    },
+    AiScene, AutonomyLevel, ToolAccessLevel, ToolCapabilityAffinity,
+};
 
 /// Evaluation context for a single tool policy decision.
 #[derive(Debug, Clone)]
 pub struct ToolPolicyContext {
+    pub task_policy: Option<AgentTaskPolicy>,
+    /// Legacy scene hint for old callers that have not moved to task policy.
     pub scene: AiScene,
     pub autonomy_level: AutonomyLevel,
     pub web_search_enabled: bool,
@@ -50,8 +58,8 @@ pub enum ToolPolicyVerdict {
 pub enum DenialReason {
     /// Not in the catalog or marked as Planned.
     NotImplemented,
-    /// Not relevant to the current scene.
-    SceneMismatch,
+    /// Not relevant to the current task capability requirements.
+    CapabilityMismatch,
     /// Autonomy level too low for this access level.
     InsufficientAutonomy,
     /// Network tool but web_search is disabled.
@@ -69,7 +77,7 @@ pub fn denial_user_message(reason: DenialReason, tool_name: &str) -> String {
             "联网搜索已关闭，无法使用 {tool_name}。安装 Skill 请调用 skills_install(source=registry, registry=skillhub, path_or_url=<skill名>)，不要用 fetch_web_page。"
         ),
         DenialReason::NotImplemented => format!("工具 {tool_name} 尚未实现"),
-        DenialReason::SceneMismatch => format!("工具 {tool_name} 在当前场景不可用"),
+        DenialReason::CapabilityMismatch => format!("工具 {tool_name} 在当前任务不可用"),
         DenialReason::InsufficientAutonomy => {
             format!("当前自治等级不足以使用 {tool_name}")
         }
@@ -117,24 +125,12 @@ fn evaluate_entry(entry: &ToolCatalogEntry, ctx: &ToolPolicyContext) -> ToolPoli
         return ToolPolicyVerdict::Denied(DenialReason::DepthLimit);
     }
 
-    // 3. Scene affinity: empty means universally available
-    if !entry.scene_affinity.is_empty() && !entry.scene_affinity.contains(&ctx.scene) {
-        return ToolPolicyVerdict::Denied(DenialReason::SceneMismatch);
-    }
-
-    // 4. Web search gating
+    // 3. Web search gating
     if entry.access_level == ToolAccessLevel::Network && !ctx.web_search_enabled {
         return ToolPolicyVerdict::Denied(DenialReason::WebSearchDisabled);
     }
 
-    // 5. Autonomy level check
-    if let Some(required) = required_autonomy(entry) {
-        if ctx.autonomy_level < required {
-            return ToolPolicyVerdict::Denied(DenialReason::InsufficientAutonomy);
-        }
-    }
-
-    // 5b. Meta skill tools bypass skill allowlist
+    // 4. Meta skill tools bypass task capability and skill allowlist gates.
     if is_meta_skill_tool(entry.name) {
         return if entry.requires_confirmation {
             ToolPolicyVerdict::RequiresConfirmation
@@ -143,7 +139,23 @@ fn evaluate_entry(entry: &ToolCatalogEntry, ctx: &ToolPolicyContext) -> ToolPoli
         };
     }
 
-    // 6. Skill allowlist check: if skills are active, non-default tools must be in allowlist
+    let task_policy = effective_task_policy(ctx);
+
+    // 5. Capability affinity: task policy, permission preflight and skill
+    // allowlists decide exposure. Legacy scene affinity is metadata only.
+    let capability_affinity = entry.capability_affinity();
+    if !capability_allowed_for_task(entry, &capability_affinity, &task_policy, ctx) {
+        return ToolPolicyVerdict::Denied(DenialReason::CapabilityMismatch);
+    }
+
+    // 6. Autonomy level check
+    if let Some(required) = required_autonomy(entry) {
+        if ctx.autonomy_level < required {
+            return ToolPolicyVerdict::Denied(DenialReason::InsufficientAutonomy);
+        }
+    }
+
+    // 7. Skill allowlist check: if skills are active, non-default tools must be in allowlist
     if !ctx.skill_allowed_tools.is_empty()
         && !entry.default_enabled_without_skill
         && !ctx.skill_allowed_tools.contains(&entry.name.to_string())
@@ -151,7 +163,7 @@ fn evaluate_entry(entry: &ToolCatalogEntry, ctx: &ToolPolicyContext) -> ToolPoli
         return ToolPolicyVerdict::Denied(DenialReason::NotInSkillAllowlist);
     }
 
-    // 7. Confirmation check
+    // 8. Confirmation check
     if entry.requires_confirmation {
         ToolPolicyVerdict::RequiresConfirmation
     } else {
@@ -172,6 +184,76 @@ fn required_autonomy(entry: &ToolCatalogEntry) -> Option<AutonomyLevel> {
         ToolAccessLevel::WriteMarkdown => Some(AutonomyLevel::L2),
         ToolAccessLevel::WriteSettings => Some(AutonomyLevel::L2),
         ToolAccessLevel::ManageSkills => None,
+    }
+}
+
+fn effective_task_policy(ctx: &ToolPolicyContext) -> AgentTaskPolicy {
+    ctx.task_policy.clone().unwrap_or_else(|| {
+        let intent = intent_from_legacy_scene(ctx.scene);
+        AgentTaskPolicy::from_input(AgentTaskPolicyInput {
+            intent,
+            task_kind: match ctx.scene {
+                AiScene::ResearchSynthesis => AgentTaskKind::Complex,
+                _ => AgentTaskKind::Lightweight,
+            },
+            scope: AgentTaskScope::Vault,
+            web_authorized: ctx.web_search_enabled,
+            has_attachments: false,
+            write_permission_required: matches!(
+                ctx.scene,
+                AiScene::DraftingAssist | AiScene::ExemplarLearning
+            ),
+            research_depth: matches!(ctx.scene, AiScene::ResearchSynthesis) as u32,
+        })
+    })
+}
+
+fn capability_allowed_for_task(
+    entry: &ToolCatalogEntry,
+    capability_affinity: &[ToolCapabilityAffinity],
+    policy: &AgentTaskPolicy,
+    ctx: &ToolPolicyContext,
+) -> bool {
+    if entry.default_enabled_without_skill
+        && matches!(
+            entry.access_level,
+            ToolAccessLevel::ReadIndex
+                | ToolAccessLevel::ReadNoteSpan
+                | ToolAccessLevel::ReadProfile
+        )
+    {
+        return true;
+    }
+
+    let skill_requested = ctx.skill_allowed_tools.contains(&entry.name.to_string());
+    capability_affinity.iter().copied().any(|capability| {
+        capability_allowed(capability, policy, skill_requested, ctx.web_search_enabled)
+    })
+}
+
+fn capability_allowed(
+    capability: ToolCapabilityAffinity,
+    policy: &AgentTaskPolicy,
+    skill_requested: bool,
+    web_search_enabled: bool,
+) -> bool {
+    use crate::ai_runtime::AgentIntent;
+    use ToolCapabilityAffinity::*;
+
+    match capability {
+        ReadNotes | SearchNotes => true,
+        WebFetch => policy.web_authorized && web_search_enabled,
+        ResearchSynthesis => {
+            skill_requested
+                || policy.research_depth > 0
+                || matches!(
+                    policy.intent,
+                    AgentIntent::Research | AgentIntent::CitationCheck | AgentIntent::DocumentCheck
+                )
+        }
+        SkillManagement => skill_requested || matches!(policy.intent, AgentIntent::SkillManagement),
+        WriteNotes | PatchDocument => skill_requested || policy.write_permission_required,
+        VaultOrganize => skill_requested || matches!(policy.intent, AgentIntent::Organize),
     }
 }
 
@@ -213,12 +295,38 @@ pub fn tool_requires_confirmation(tool_name: &str, ctx: &ToolPolicyContext) -> b
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ai_runtime::AutonomyLevel;
+    use crate::ai_runtime::{
+        agent_task::AgentTaskKind,
+        agent_task_policy::{AgentTaskPolicyInput, AgentTaskScope},
+        AgentIntent, AutonomyLevel,
+    };
+
+    fn policy_for(intent: AgentIntent, write_permission_required: bool) -> AgentTaskPolicy {
+        AgentTaskPolicy::from_input(AgentTaskPolicyInput {
+            intent,
+            task_kind: if matches!(
+                intent,
+                AgentIntent::Research | AgentIntent::CitationCheck | AgentIntent::DocumentCheck
+            ) {
+                AgentTaskKind::Complex
+            } else {
+                AgentTaskKind::Lightweight
+            },
+            scope: AgentTaskScope::Vault,
+            web_authorized: true,
+            has_attachments: false,
+            write_permission_required,
+            research_depth: matches!(intent, AgentIntent::Research | AgentIntent::CitationCheck)
+                as u32,
+        })
+    }
 
     fn default_ctx() -> ToolPolicyContext {
+        let task_policy = policy_for(AgentIntent::AskNotes, false);
         ToolPolicyContext {
+            task_policy: Some(task_policy.clone()),
             scene: AiScene::KnowledgeLookup,
-            autonomy_level: AutonomyLevel::L2,
+            autonomy_level: task_policy.autonomy_level,
             web_search_enabled: true,
             skill_allowed_tools: vec![],
             depth: 0,
@@ -226,9 +334,14 @@ mod tests {
     }
 
     fn drafting_ctx() -> ToolPolicyContext {
+        let task_policy = policy_for(AgentIntent::Write, true);
         ToolPolicyContext {
+            task_policy: Some(task_policy.clone()),
             scene: AiScene::DraftingAssist,
-            ..default_ctx()
+            autonomy_level: task_policy.autonomy_level,
+            web_search_enabled: true,
+            skill_allowed_tools: vec![],
+            depth: 0,
         }
     }
 
@@ -237,6 +350,7 @@ mod tests {
     #[test]
     fn meta_skill_tools_always_available_with_active_skill_allowlist() {
         let ctx = ToolPolicyContext {
+            task_policy: None,
             scene: AiScene::KnowledgeLookup,
             autonomy_level: AutonomyLevel::L2,
             web_search_enabled: true,
@@ -278,31 +392,29 @@ mod tests {
         );
     }
 
-    // ── Scene affinity ─────────────────────────────────────
+    // ── Capability affinity ────────────────────────────────
 
     #[test]
-    fn knowledge_scene_allows_search() {
+    fn ask_notes_policy_allows_search_notes() {
         let ctx = default_ctx();
         assert!(is_tool_exposed("search_hybrid", &ctx));
     }
 
     #[test]
-    fn knowledge_scene_denies_insert_text() {
+    fn ask_notes_policy_denies_write_without_write_permission() {
         let ctx = default_ctx();
-        // insert_text_at_cursor is only for DraftingAssist
         assert!(!is_tool_exposed("insert_text_at_cursor", &ctx));
     }
 
     #[test]
-    fn drafting_scene_allows_insert_text() {
+    fn write_policy_allows_insert_text() {
         let ctx = drafting_ctx();
         assert!(is_tool_exposed("insert_text_at_cursor", &ctx));
     }
 
     #[test]
-    fn empty_scene_affinity_available_everywhere() {
+    fn search_notes_capability_available_without_legacy_scene_affinity() {
         let ctx = default_ctx();
-        // search_semantic has empty scene_affinity → available in all scenes
         assert!(is_tool_exposed("search_semantic", &ctx));
     }
 
@@ -433,14 +545,13 @@ mod tests {
     #[test]
     fn non_default_tool_denied_without_skill_allowlist() {
         let ctx = default_ctx();
-        // insert_text_at_cursor is not default_enabled_without_skill
-        // and we're in KnowledgeLookup scene → denied by scene first
         assert!(!is_tool_exposed("insert_text_at_cursor", &ctx));
     }
 
     #[test]
-    fn skill_can_enable_non_default_tool_in_matching_scene() {
+    fn skill_can_enable_non_default_tool_when_capability_allows_it() {
         let ctx = ToolPolicyContext {
+            task_policy: Some(policy_for(AgentIntent::Write, true)),
             scene: AiScene::DraftingAssist,
             skill_allowed_tools: vec!["insert_text_at_cursor".to_string()],
             ..default_ctx()
@@ -451,6 +562,7 @@ mod tests {
     #[test]
     fn skill_cannot_enable_non_default_tool_not_in_allowlist() {
         let ctx = ToolPolicyContext {
+            task_policy: Some(policy_for(AgentIntent::Write, true)),
             scene: AiScene::DraftingAssist,
             skill_allowed_tools: vec!["some_other_tool".to_string()],
             ..default_ctx()
@@ -485,7 +597,6 @@ mod tests {
     fn compute_available_excludes_denied() {
         let ctx = default_ctx();
         let (auto, confirm) = compute_available_tools(&ctx);
-        // insert_text_at_cursor is denied in KnowledgeLookup
         assert!(!auto.contains(&"insert_text_at_cursor".to_string()));
         assert!(!confirm.contains(&"insert_text_at_cursor".to_string()));
     }
@@ -520,10 +631,10 @@ mod tests {
         assert!(auto.contains(&"conclude_reasoning".to_string()));
     }
 
-    // ── Drafting scene specifics ───────────────────────────
+    // ── Writing task specifics ─────────────────────────────
 
     #[test]
-    fn drafting_scene_write_tools_need_confirmation() {
+    fn write_policy_write_tools_need_confirmation() {
         let ctx = drafting_ctx();
         let (auto, confirm) = compute_available_tools(&ctx);
         assert!(confirm.contains(&"insert_text_at_cursor".to_string()));
@@ -532,10 +643,10 @@ mod tests {
         assert!(auto.contains(&"search_hybrid".to_string()));
     }
 
-    // ── KnowledgeLookup scene specifics ────────────────────
+    // ── Ask-notes task specifics ───────────────────────────
 
     #[test]
-    fn knowledge_lookup_no_write_tools() {
+    fn ask_notes_policy_no_write_tools() {
         let ctx = default_ctx();
         let (auto, confirm) = compute_available_tools(&ctx);
         assert!(!auto.contains(&"insert_text_at_cursor".to_string()));

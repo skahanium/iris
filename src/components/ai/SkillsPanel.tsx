@@ -79,8 +79,8 @@ function scopeText(scope: string): string {
 
 function statusText(skill: SkillListEntryDto): string {
   if (!skill.enabled) return "已禁用";
-  if (skill.scene_active === true) return "当前可用";
-  if (skill.scene_active === false) return "已启用";
+  if (skill.task_active === true) return "当前可用";
+  if (skill.task_active === false) return "已启用";
   return skill.availability === "partial" ? "部分可用" : "已启用";
 }
 

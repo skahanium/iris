@@ -96,6 +96,7 @@ interface UseAssistantTasksParams {
   setOrganizeSuggestions: Dispatch<SetStateAction<OrganizeSuggestion[]>>;
   setPackets: Dispatch<SetStateAction<ContextPacket[]>>;
   setPacketsOpen: Dispatch<SetStateAction<boolean>>;
+  setPausedTaskId: Dispatch<SetStateAction<string | null>>;
   setResearchPanelExpanded: Dispatch<SetStateAction<boolean>>;
   setResearchResult: Dispatch<SetStateAction<ResearchFocusPayload | null>>;
   setResearchRunning: Dispatch<SetStateAction<boolean>>;
@@ -158,6 +159,7 @@ export function useAssistantTasks({
   setOrganizeSuggestions,
   setPackets,
   setPacketsOpen,
+  setPausedTaskId,
   setResearchPanelExpanded,
   setResearchResult,
   setResearchRunning,
@@ -222,6 +224,14 @@ export function useAssistantTasks({
       const scene = legacySceneHintForAssistantIntent(intent);
       const result = await contextAssemble({
         scene,
+        agent_intent:
+          intent === "knowledge"
+            ? "ask_notes"
+            : intent === "research"
+              ? "research"
+              : intent === "chat"
+                ? "chat"
+                : "ask_notes",
         note_path: notePath,
         note_content_hash: null,
         query,
@@ -264,6 +274,7 @@ export function useAssistantTasks({
       streamBufRef.current = "";
       requestIdRef.current = null;
       setHarnessRequestId(null);
+      setPausedTaskId(null);
       panelSendActiveRef.current = true;
       setActionState(buildActionState(intent, "running"));
       assistantRun.setFromTaskStatus("running", intent);
@@ -364,17 +375,27 @@ export function useAssistantTasks({
         const pendingTools =
           result.status === "pending_tools" ||
           toolCalls?.some((t) => t.status === "pending") === true;
+        const pausedBudget = result.status === "paused_budget";
+        setPausedTaskId(pausedBudget ? (result.task_id ?? null) : null);
         setActionState(
           buildActionState(
             intent,
-            pendingTools ? "awaiting_confirmation" : "completed",
+            pendingTools
+              ? "awaiting_confirmation"
+              : pausedBudget
+                ? "paused_budget"
+                : "completed",
           ),
         );
         assistantRun.setFromTaskStatus(
-          pendingTools ? "awaiting_confirmation" : "completed",
+          pendingTools
+            ? "awaiting_confirmation"
+            : pausedBudget
+              ? "paused_budget"
+              : "completed",
           intent,
         );
-        completedOk = !pendingTools;
+        completedOk = !pendingTools && !pausedBudget;
       } catch (error) {
         const message = invokeErrorMessage(error);
         setLastError(message);
@@ -416,6 +437,7 @@ export function useAssistantTasks({
       setLastError,
       setMessages,
       setPackets,
+      setPausedTaskId,
       setSessionId,
       setSessionTokenUsage,
       setStreaming,

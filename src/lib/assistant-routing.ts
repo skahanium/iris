@@ -385,6 +385,10 @@ export function assistantStatusText(status: AssistantTaskStatus): string {
       return "处理中";
     case "awaiting_confirmation":
       return "等待确认";
+    case "paused_budget":
+      return "可继续";
+    case "paused_recoverable":
+      return "可恢复";
     case "completed":
       return "已完成";
     case "error":

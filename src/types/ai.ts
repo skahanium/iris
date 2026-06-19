@@ -338,6 +338,8 @@ export type AssistantTaskStatus =
   | "idle"
   | "running"
   | "awaiting_confirmation"
+  | "paused_budget"
+  | "paused_recoverable"
   | "completed"
   | "error";
 
@@ -383,6 +385,7 @@ export interface AssistantExecuteRequest {
 
 export interface AiChatExecutePayload {
   request_id: string;
+  task_id?: string;
   session_id: number;
   status: string;
   content?: string;
@@ -404,6 +407,7 @@ export interface AiChatExecutePayload {
   /** 冷启动 + 工具检索合并后的证据包 */
   evidence_packets?: ContextPacket[];
   pending_confirmation?: boolean;
+  resumed?: boolean;
   /** 正式执行与预览证据不一致时的提示 */
   evidence_refresh_notice?: string | null;
   web_search_meta?: {
@@ -1046,6 +1050,10 @@ export interface AiSendMessageResult {
   usage_source?: "provider" | "estimated";
   citation_valid?: boolean;
   harness_rounds?: number;
+  evidence_packets?: ContextPacket[];
+  pending_confirmation?: boolean;
+  evidence_refresh_notice?: string | null;
+  resumed?: boolean;
 }
 
 // ─── Document Check Sub-types ────────────────────────────

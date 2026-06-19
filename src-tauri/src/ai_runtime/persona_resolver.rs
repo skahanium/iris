@@ -6,8 +6,9 @@
 //! - When `PromptProfile.persona` is non-empty → user persona becomes primary;
 //!   default「砚」only as product capability description, no longer forcing the name.
 //! - `writing_style`, `language`, `custom_rules` are layered into the prompt.
-//! - Scene focus only describes current task capability, does not override persona.
+//! - Task focus only describes current task capability, does not override persona.
 
+use crate::ai_runtime::agent_task_policy::{task_focus, AgentTaskPolicy, AgentTaskScope};
 use crate::ai_runtime::prompt_profile::PromptProfile;
 use crate::ai_runtime::AiScene;
 use crate::ai_types::{AgentIntent, PersonaLayerSummary};
@@ -21,8 +22,8 @@ pub struct ResolvedPersona {
     pub identity: String,
     /// Product/data principles (what Iris is).
     pub principles: String,
-    /// Scene-specific capability focus.
-    pub scene_focus: String,
+    /// Task-specific capability focus.
+    pub task_focus: String,
     /// Web search instructions.
     pub web_instruction: String,
     /// Writing style guidance.
@@ -46,7 +47,13 @@ pub fn resolve_persona(
         AiScene::ExemplarLearning | AiScene::DraftingAssist => AgentIntent::Write,
         AiScene::ResearchSynthesis => AgentIntent::Research,
     };
-    resolve_persona_for_scene_agent(profile, scene, agent_intent, web_search_enabled, None)
+    resolve_persona_for_task_focus(
+        profile,
+        agent_intent,
+        &legacy_task_focus_from_scene(scene, web_search_enabled),
+        web_search_enabled,
+        None,
+    )
 }
 
 /// Resolve persona layers from the Phase3 agent context.
@@ -56,24 +63,38 @@ pub fn resolve_persona_for_agent(
     web_search_enabled: bool,
     skill_context: Option<&str>,
 ) -> ResolvedPersona {
-    let scene = agent_intent.scene();
-    resolve_persona_for_scene_agent(
+    resolve_persona_for_task_focus(
         profile,
-        scene,
         agent_intent,
+        task_focus(agent_intent, AgentTaskScope::Vault, web_search_enabled),
         web_search_enabled,
         skill_context,
     )
 }
 
-fn resolve_persona_for_scene_agent(
+/// Resolve persona layers from task policy. This is the Phase B main path.
+pub fn resolve_persona_for_policy(
     profile: &PromptProfile,
-    scene: AiScene,
+    policy: &AgentTaskPolicy,
+    skill_context: Option<&str>,
+) -> ResolvedPersona {
+    resolve_persona_for_task_focus(
+        profile,
+        policy.intent,
+        policy.task_focus(),
+        policy.web_authorized,
+        skill_context,
+    )
+}
+
+fn resolve_persona_for_task_focus(
+    profile: &PromptProfile,
     agent_intent: AgentIntent,
+    task_focus: &str,
     web_search_enabled: bool,
     skill_context: Option<&str>,
 ) -> ResolvedPersona {
-    let scene_focus = resolve_scene_focus(scene, web_search_enabled);
+    let task_focus = task_focus.to_string();
     let web_instruction = resolve_web_instruction(web_search_enabled);
     let language = if profile.language.is_empty() {
         "zh-CN".to_string()
@@ -90,7 +111,7 @@ fn resolve_persona_for_scene_agent(
             safety_overlay,
             identity: default_identity(&effective_display_name(profile)),
             principles: default_principles(),
-            scene_focus,
+            task_focus,
             web_instruction,
             writing_style: non_empty(&profile.writing_style),
             language,
@@ -103,7 +124,7 @@ fn resolve_persona_for_scene_agent(
             safety_overlay,
             identity: profile.persona.clone(),
             principles: default_principles(),
-            scene_focus,
+            task_focus,
             web_instruction,
             writing_style: non_empty(&profile.writing_style),
             language,
@@ -181,8 +202,8 @@ impl ResolvedPersona {
     }
 }
 
-/// Scene-specific capability focus.
-fn resolve_scene_focus(scene: AiScene, web_search_enabled: bool) -> String {
+/// Task focus synthesized for legacy scene-only callers.
+fn legacy_task_focus_from_scene(scene: AiScene, web_search_enabled: bool) -> String {
     match scene {
         AiScene::KnowledgeLookup => {
             if web_search_enabled {
@@ -240,8 +261,8 @@ pub fn render_persona(resolved: &ResolvedPersona) -> String {
     // Web instruction
     parts.push(resolved.web_instruction.clone());
 
-    // Scene focus
-    parts.push(format!("当前侧重：{}。\n", resolved.scene_focus));
+    // Task focus
+    parts.push(format!("当前任务侧重：{}。\n", resolved.task_focus));
 
     // Evidence citation instruction
     parts.push(
@@ -354,12 +375,12 @@ mod tests {
     }
 
     #[test]
-    fn scene_focus_varies_by_scene() {
+    fn legacy_task_focus_varies_by_scene() {
         let profile = PromptProfile::default();
         let kl = resolve_persona(&profile, AiScene::KnowledgeLookup, false);
         let da = resolve_persona(&profile, AiScene::DraftingAssist, false);
-        assert!(kl.scene_focus.contains("知识查阅"));
-        assert!(da.scene_focus.contains("文稿创作"));
+        assert!(kl.task_focus.contains("知识查阅"));
+        assert!(da.task_focus.contains("文稿创作"));
     }
 
     #[test]

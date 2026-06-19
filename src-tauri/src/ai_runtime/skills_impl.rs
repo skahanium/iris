@@ -35,9 +35,11 @@ mod validation_impl;
 mod workspace_impl;
 
 pub use activation_impl::{
-    active_skill_allowed_tools, active_skills_for_prompt, build_skill_activation_plan,
-    enrich_list_with_scene, load_activation_index, rank_skills_for_scene,
-    rank_skills_for_scene_with_index, rerank_skills_with_vectors, skills_for_scene,
+    active_skill_allowed_tools, active_skill_allowed_tools_for_task, active_skills_for_prompt,
+    active_skills_for_task_prompt, build_skill_activation_plan,
+    build_skill_activation_plan_for_task, enrich_list_with_scene, enrich_list_with_task,
+    load_activation_index, rank_skills_for_scene, rank_skills_for_scene_with_index,
+    rank_skills_for_task, rerank_skills_with_vectors, skills_for_scene, skills_for_task,
 };
 pub use compatibility_impl::{
     blocked_capabilities_for_skill, fallback_guidance, normalize_external_capability,

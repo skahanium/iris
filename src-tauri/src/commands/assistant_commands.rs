@@ -148,29 +148,6 @@ impl AssistantExecuteRequest {
         }
         summary
     }
-
-    fn estimated_context_tokens(&self) -> usize {
-        let chars = self
-            .note_content
-            .as_deref()
-            .unwrap_or_default()
-            .chars()
-            .count()
-            + self
-                .selection
-                .as_deref()
-                .unwrap_or_default()
-                .chars()
-                .count()
-            + self
-                .cursor_context
-                .as_deref()
-                .unwrap_or_default()
-                .chars()
-                .count()
-            + self.message.chars().count();
-        chars / 3
-    }
 }
 
 fn permission_summary_for_status(run_status: &str) -> String {
@@ -282,10 +259,25 @@ async fn maybe_handle_skillhub_direct_install(
     };
 
     let request_id = uuid::Uuid::new_v4().to_string();
-    let scene = agent_intent.scene();
+    let task_policy = crate::ai_runtime::agent_task_policy::AgentTaskPolicy::from_input(
+        crate::ai_runtime::agent_task_policy::AgentTaskPolicyInput {
+            intent: agent_intent,
+            task_kind: crate::ai_runtime::agent_task::AgentTaskKind::Complex,
+            scope: if request.note_path.is_some() {
+                crate::ai_runtime::agent_task_policy::AgentTaskScope::Note
+            } else {
+                crate::ai_runtime::agent_task_policy::AgentTaskScope::Vault
+            },
+            web_authorized: request.web_authorized,
+            has_attachments: false,
+            write_permission_required: true,
+            research_depth: 0,
+        },
+    );
+    let legacy_scene_hint = task_policy.legacy_scene();
     let session_id = crate::ai_runtime::session::SessionManager::ensure(
         &state.db,
-        scene,
+        legacy_scene_hint,
         request.note_path.as_deref(),
     )?;
     let task_id = crate::ai_runtime::agent_task::AgentTaskRuntime::create_task(
@@ -367,11 +359,11 @@ async fn maybe_handle_skillhub_direct_install(
             tool_name: "skills_install".into(),
             arguments: arguments.clone(),
             request_id: request_id.clone(),
-            scene,
+            scene: legacy_scene_hint,
             note_path: request.note_path.clone(),
             file_id: None,
             web_search_enabled: request.web_authorized,
-            autonomy_level: crate::ai_runtime::resolve_scene(scene).autonomy_level,
+            autonomy_level: task_policy.autonomy_level,
             skill_allowed_tools: skill_activation_plan.allowed_tools(),
             skill_activation_plan: Some(skill_activation_plan.clone()),
         },
@@ -379,7 +371,7 @@ async fn maybe_handle_skillhub_direct_install(
 
     let checkpoint = HarnessCheckpoint {
         meta: HarnessCheckpointMeta {
-            scene: scene.profile().into(),
+            scene: legacy_scene_hint.profile().into(),
             session_id,
             note_path: request.note_path.clone(),
             note_title: None,
@@ -394,6 +386,7 @@ async fn maybe_handle_skillhub_direct_install(
             thinking: None,
             output_budget: None,
             skill_activation_plan: Some(skill_activation_plan.clone()),
+            task_policy: Some(task_policy),
         },
         round: 1,
         messages: vec![
@@ -423,7 +416,7 @@ async fn maybe_handle_skillhub_direct_install(
         usage_source: UsageSource::Estimated,
         bonus_round_used: false,
     };
-    crate::ai_runtime::trace::TraceRecorder::start(&state.db, &request_id, scene)?;
+    crate::ai_runtime::trace::TraceRecorder::start(&state.db, &request_id, legacy_scene_hint)?;
     crate::ai_runtime::trace::TraceRecorder::update_status(
         &state.db,
         &request_id,
@@ -553,7 +546,42 @@ pub(crate) async fn route_assistant_execute(
 ) -> AppResult<AssistantExecuteResponse> {
     crate::commands::ai_commands::validate_ai_note_path(request.note_path.as_deref())?;
     let agent_intent = request.effective_agent_intent();
-    let legacy_scene = agent_intent.scene();
+    let task_policy = crate::ai_runtime::agent_task_policy::AgentTaskPolicy::from_input(
+        crate::ai_runtime::agent_task_policy::AgentTaskPolicyInput {
+            intent: agent_intent,
+            task_kind: match agent_intent {
+                AgentIntent::Research
+                | AgentIntent::CitationCheck
+                | AgentIntent::DocumentCheck
+                | AgentIntent::Chapter => crate::ai_runtime::agent_task::AgentTaskKind::Complex,
+                _ => crate::ai_runtime::agent_task::AgentTaskKind::Lightweight,
+            },
+            scope: if request.selection.as_ref().is_some_and(|s| !s.is_empty()) {
+                crate::ai_runtime::agent_task_policy::AgentTaskScope::Selection
+            } else if request.note_path.is_some() {
+                crate::ai_runtime::agent_task_policy::AgentTaskScope::Note
+            } else {
+                crate::ai_runtime::agent_task_policy::AgentTaskScope::Vault
+            },
+            web_authorized: request.web_authorized,
+            has_attachments: request
+                .images
+                .as_ref()
+                .is_some_and(|items| !items.is_empty()),
+            write_permission_required: matches!(
+                agent_intent,
+                AgentIntent::RewriteSelection
+                    | AgentIntent::Write
+                    | AgentIntent::Chapter
+                    | AgentIntent::DocumentCheck
+            ),
+            research_depth: matches!(
+                agent_intent,
+                AgentIntent::Research | AgentIntent::CitationCheck
+            ) as u32,
+        },
+    );
+    let legacy_scene_hint = task_policy.legacy_scene();
     let intent_detection = request.detection_summary();
     let context_summary = request.context_summary();
     let skill_activation_plan = state
@@ -562,14 +590,16 @@ pub(crate) async fn route_assistant_execute(
         .and_then(|vault| {
             let skills = crate::ai_runtime::skills::scan_all_metadata(&vault).ok()?;
             let index = crate::ai_runtime::skills::load_activation_index(&state.db).ok();
-            Some(crate::ai_runtime::skills::build_skill_activation_plan(
-                &skills,
-                legacy_scene,
-                agent_intent,
-                &request.message,
-                &intent_detection.source_hints,
-                index.as_ref(),
-            ))
+            Some(
+                crate::ai_runtime::skills::build_skill_activation_plan_for_task(
+                    &skills,
+                    agent_intent,
+                    &request.message,
+                    &intent_detection.source_hints,
+                    index.as_ref(),
+                    Some(legacy_scene_hint),
+                ),
+            )
         })
         .unwrap_or_else(|| crate::ai_types::SkillActivationPlanSummary {
             activated_skills: Vec::new(),
@@ -596,23 +626,8 @@ pub(crate) async fn route_assistant_execute(
     {
         return Ok(response);
     }
-    let route = crate::llm::config::resolve_capability_route(
-        &state.db,
-        crate::llm::config::CapabilityRouteInput {
-            intent: agent_intent,
-            context_tokens: request.estimated_context_tokens(),
-            has_images: matches!(agent_intent, AgentIntent::VisionChat),
-            needs_tools: matches!(
-                agent_intent,
-                AgentIntent::Research | AgentIntent::SkillManagement
-            ),
-            needs_reasoning: matches!(
-                agent_intent,
-                AgentIntent::Research | AgentIntent::CitationCheck
-            ),
-            privacy_preference: crate::llm::config::PrivacyPreference::ExternalAllowed,
-        },
-    )?;
+    let route =
+        crate::ai_runtime::agent_task_policy::resolve_for_task_policy(&state.db, &task_policy)?;
     let profile = crate::ai_runtime::prompt_profile::PromptProfile::load(&state.db)?;
     let persona_layers = crate::ai_runtime::persona_resolver::resolve_persona_for_agent(
         &profile,
@@ -624,6 +639,7 @@ pub(crate) async fn route_assistant_execute(
     let routing_override = crate::commands::ai_commands::AiSendRoutingOverride {
         resolved: route.resolved.clone(),
         slot: route.summary.slot,
+        task_policy: task_policy.clone(),
         skill_activation_plan: Some(skill_activation_plan.clone()),
     };
     let task_result = crate::ai_runtime::harness_task::run_harness_task(
@@ -650,7 +666,7 @@ pub(crate) async fn route_assistant_execute(
         AgentRunPlanSummary::for_intent(
             response.request_id.clone(),
             agent_intent,
-            legacy_scene,
+            legacy_scene_hint,
             context_summary,
             "复用当前 Harness 工具策略；本阶段不扩大工具权限".to_string(),
         )

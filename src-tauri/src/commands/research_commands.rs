@@ -67,8 +67,22 @@ pub(crate) async fn execute_research_task(
         guard.insert(request_id.clone(), cancel_token.clone());
     }
 
-    let resolved = crate::llm::config::resolve_for_scene(&state.db, scene)?;
-    let provider_config = resolved.to_provider_config(scene);
+    let task_policy = crate::ai_runtime::agent_task_policy::AgentTaskPolicy::from_input(
+        crate::ai_runtime::agent_task_policy::AgentTaskPolicyInput {
+            intent: crate::ai_types::AgentIntent::Research,
+            task_kind: crate::ai_runtime::agent_task::AgentTaskKind::Complex,
+            scope: crate::ai_runtime::agent_task_policy::AgentTaskScope::Vault,
+            web_authorized: web_authorized.unwrap_or(false),
+            has_attachments: false,
+            write_permission_required: false,
+            research_depth: 2,
+        },
+    );
+    let route =
+        crate::ai_runtime::agent_task_policy::resolve_for_task_policy(&state.db, &task_policy)?;
+    let provider_config = route
+        .resolved
+        .to_provider_config_for_slot(route.summary.slot);
 
     let config = ResearchConfig {
         web_research_authorized: web_authorized.unwrap_or(false),

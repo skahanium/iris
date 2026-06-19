@@ -140,8 +140,34 @@ pub(crate) async fn execute_writing_task(
         }
     }
 
-    let resolved = crate::llm::config::resolve_for_scene(&state.db, AiScene::DraftingAssist)?;
-    let provider_config = resolved.to_provider_config(AiScene::DraftingAssist);
+    let task_intent = if input.selection.as_ref().is_some_and(|s| !s.is_empty()) {
+        crate::ai_types::AgentIntent::RewriteSelection
+    } else if matches!(intent, WritingIntent::AddEvidence) {
+        crate::ai_types::AgentIntent::CitationCheck
+    } else {
+        crate::ai_types::AgentIntent::Write
+    };
+    let task_policy = crate::ai_runtime::agent_task_policy::AgentTaskPolicy::from_input(
+        crate::ai_runtime::agent_task_policy::AgentTaskPolicyInput {
+            intent: task_intent,
+            task_kind: crate::ai_runtime::agent_task::AgentTaskKind::Lightweight,
+            scope: if input.selection.as_ref().is_some_and(|s| !s.is_empty()) {
+                crate::ai_runtime::agent_task_policy::AgentTaskScope::Selection
+            } else {
+                crate::ai_runtime::agent_task_policy::AgentTaskScope::Note
+            },
+            web_authorized: input.web_authorized,
+            has_attachments: false,
+            write_permission_required: true,
+            research_depth: matches!(task_intent, crate::ai_types::AgentIntent::CitationCheck)
+                as u32,
+        },
+    );
+    let route =
+        crate::ai_runtime::agent_task_policy::resolve_for_task_policy(&state.db, &task_policy)?;
+    let provider_config = route
+        .resolved
+        .to_provider_config_for_slot(route.summary.slot);
 
     let suggestion = match &intent {
         WritingIntent::Continue => {

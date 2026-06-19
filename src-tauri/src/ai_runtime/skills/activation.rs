@@ -1,10 +1,12 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use crate::ai_runtime::AiScene;
+use crate::ai_runtime::{
+    agent_task_policy::intent_from_legacy_scene, tool_catalog::catalog_find, AiScene,
+};
 use crate::ai_types::{
     AgentIntent, SkillActivationItemSummary, SkillActivationPlanSummary,
-    SkillResourceStatusSummary, SkillRuntimeCapability,
+    SkillResourceStatusSummary, SkillRuntimeCapability, ToolCapabilityAffinity,
 };
 use crate::embedding::engine::{cosine_similarity, embed_text};
 use crate::error::AppResult;
@@ -53,7 +55,7 @@ fn parse_embedding_json(raw: &str) -> Option<Vec<f32>> {
     serde_json::from_str::<Vec<f32>>(raw).ok()
 }
 
-/// Filter and rank enabled skills by scene affinity with BM25-style scoring.
+/// Filter and rank enabled skills by task intent and capability affinity.
 ///
 /// When `skill_activation_index` rows are supplied, keywords/description from the
 /// index take precedence over file metadata for matching.
@@ -62,69 +64,77 @@ pub fn skills_for_scene(
     scene: AiScene,
     user_message: &str,
 ) -> Vec<SkillEntry> {
-    let query = if user_message.trim().is_empty() {
-        scene.profile()
-    } else {
-        user_message
-    };
-    rerank_skills_with_vectors(rank_skills_for_scene(skills, scene), query, None)
-        .into_iter()
-        .filter(|s| s.score >= 0.35)
-        .take(3)
-        .map(|s| s.skill.clone())
-        .collect()
+    skills_for_task(
+        skills,
+        intent_from_legacy_scene(scene),
+        user_message,
+        &[],
+        None,
+    )
 }
 
-/// Scored version of `skills_for_scene` - returns scores for debugging/display.
+/// Filter and rank enabled skills by task intent and capability affinity.
+pub fn skills_for_task(
+    skills: &[SkillEntry],
+    intent: AgentIntent,
+    user_message: &str,
+    source_hints: &[String],
+    index: Option<&ActivationIndexMap>,
+) -> Vec<SkillEntry> {
+    rerank_skills_with_vectors(
+        rank_skills_for_task(skills, intent, user_message, source_hints, index),
+        task_query(intent, user_message),
+        index,
+    )
+    .into_iter()
+    .filter(|s| s.score >= 0.35)
+    .take(3)
+    .map(|s| s.skill.clone())
+    .collect()
+}
+
+/// Legacy scored version of `skills_for_scene`; retained for migration-only callers.
 pub fn rank_skills_for_scene<'a>(skills: &'a [SkillEntry], scene: AiScene) -> Vec<ScoredSkill<'a>> {
-    rank_skills_for_scene_with_index(skills, scene, None)
+    rank_skills_for_task(
+        skills,
+        intent_from_legacy_scene(scene),
+        scene.profile(),
+        &[],
+        None,
+    )
 }
 
-/// Scored ranking with optional activation-index overlay.
+/// Legacy scored ranking with optional activation-index overlay.
 pub fn rank_skills_for_scene_with_index<'a>(
     skills: &'a [SkillEntry],
     scene: AiScene,
     index: Option<&ActivationIndexMap>,
 ) -> Vec<ScoredSkill<'a>> {
-    let scene_key = scene.profile();
-    let scene_synonyms: Vec<&str> = match scene_key {
-        "drafting_assist" => vec![
-            "drafting",
-            "writing",
-            "compose",
-            "editor",
-            "drafting_assist",
-        ],
-        "research_synthesis" => vec![
-            "research",
-            "synthesis",
-            "analysis",
-            "evidence",
-            "research_synthesis",
-        ],
-        "knowledge_lookup" => vec![
-            "knowledge",
-            "lookup",
-            "search",
-            "retrieve",
-            "knowledge_lookup",
-        ],
-        "exemplar_learning" => vec![
-            "exemplar",
-            "learning",
-            "template",
-            "example",
-            "exemplar_learning",
-        ],
-        _ => vec![scene_key],
-    };
+    rank_skills_for_task(
+        skills,
+        intent_from_legacy_scene(scene),
+        scene.profile(),
+        &[],
+        index,
+    )
+}
+
+/// Scored ranking with optional activation-index overlay.
+pub fn rank_skills_for_task<'a>(
+    skills: &'a [SkillEntry],
+    intent: AgentIntent,
+    user_message: &str,
+    source_hints: &[String],
+    index: Option<&ActivationIndexMap>,
+) -> Vec<ScoredSkill<'a>> {
+    let task_terms = task_terms(intent, user_message, source_hints);
 
     let mut scored: Vec<ScoredSkill<'a>> = skills
         .iter()
         .filter(|s| s.enabled)
         .filter_map(|s| {
             let index_row = index.and_then(|m| m.get(&(s.name.clone(), s.scope)));
-            let score = compute_skill_score(s, scene_key, &scene_synonyms, index_row);
+            let score = compute_skill_score(s, &task_terms, index_row);
             if score > 0.0 {
                 Some(ScoredSkill { skill: s, score })
             } else {
@@ -141,11 +151,10 @@ pub fn rank_skills_for_scene_with_index<'a>(
     scored
 }
 
-/// BM25-style scoring for a single skill against a scene.
+/// BM25-style scoring for a single skill against task terms.
 fn compute_skill_score(
     skill: &SkillEntry,
-    scene_key: &str,
-    synonyms: &[&str],
+    task_terms: &[String],
     index_row: Option<&SkillActivationIndexRow>,
 ) -> f64 {
     let mut score: f64 = 0.0;
@@ -156,11 +165,8 @@ fn compute_skill_score(
 
     if let Some(trigger) = &skill.legacy_trigger {
         let t = trigger.to_lowercase();
-        if t.contains(scene_key) {
-            score += 5.0;
-        }
-        for syn in synonyms {
-            if t.contains(syn) {
+        for term in task_terms {
+            if t.contains(term) {
                 score += 3.0;
                 break;
             }
@@ -180,8 +186,7 @@ fn compute_skill_score(
     let name_lower = skill.name.to_lowercase();
     let content_lower = skill.content.to_lowercase();
 
-    for syn in synonyms {
-        let term = *syn;
+    for term in task_terms {
         let desc_tf = desc_lower.matches(term).count() as f64;
         if desc_tf > 0.0 {
             score += (desc_tf / (desc_tf + 1.2)) * 3.0;
@@ -201,15 +206,94 @@ fn compute_skill_score(
     if let Some(keywords) = skill.metadata.get("keywords") {
         if let Some(kw_str) = keywords.as_str() {
             let kw_lower = kw_str.to_lowercase();
-            for syn in synonyms {
-                if kw_lower.contains(syn) {
+            for term in task_terms {
+                if kw_lower.contains(term) {
                     score += 2.0;
                 }
             }
         }
     }
 
+    for term in capability_terms_for_skill(skill) {
+        if task_terms.contains(&term) {
+            score += 2.5;
+        }
+    }
+
     score
+}
+
+fn task_query(intent: AgentIntent, user_message: &str) -> &str {
+    if user_message.trim().is_empty() {
+        intent_terms(intent).first().copied().unwrap_or("task")
+    } else {
+        user_message
+    }
+}
+
+fn task_terms(intent: AgentIntent, user_message: &str, source_hints: &[String]) -> Vec<String> {
+    let mut terms: Vec<String> = intent_terms(intent).iter().map(|s| s.to_string()).collect();
+    for token in user_message
+        .split(|c: char| !c.is_alphanumeric() && c != '_')
+        .map(str::to_lowercase)
+        .filter(|token| token.len() >= 3)
+    {
+        push_term(&mut terms, token);
+    }
+    for hint in source_hints {
+        for token in hint
+            .split(|c: char| !c.is_alphanumeric() && c != '_')
+            .map(str::to_lowercase)
+            .filter(|token| token.len() >= 3)
+        {
+            push_term(&mut terms, token);
+        }
+    }
+    terms
+}
+
+fn push_term(terms: &mut Vec<String>, term: String) {
+    if !terms.contains(&term) {
+        terms.push(term);
+    }
+}
+
+fn capability_terms_for_skill(skill: &SkillEntry) -> Vec<String> {
+    let mut terms = Vec::new();
+    for tool in &skill.allowed_tools {
+        let Some(entry) = catalog_find(tool) else {
+            continue;
+        };
+        for capability in entry.capability_affinity() {
+            for term in capability_terms(capability) {
+                push_term(&mut terms, term.to_string());
+            }
+        }
+    }
+    for capability in skill.requested_capabilities() {
+        match capability {
+            SkillRuntimeCapability::ReadResource => push_term(&mut terms, "read".into()),
+            SkillRuntimeCapability::WriteStorage => push_term(&mut terms, "write".into()),
+            SkillRuntimeCapability::RequestCapabilities => push_term(&mut terms, "skill".into()),
+            SkillRuntimeCapability::ExecuteScriptSandboxed
+            | SkillRuntimeCapability::InstallDependency
+            | SkillRuntimeCapability::McpBridge => push_term(&mut terms, "blocked".into()),
+        }
+    }
+    terms
+}
+
+fn capability_terms(capability: ToolCapabilityAffinity) -> &'static [&'static str] {
+    match capability {
+        ToolCapabilityAffinity::ReadNotes => &["read", "notes", "knowledge"],
+        ToolCapabilityAffinity::SearchNotes => &["search", "notes", "knowledge"],
+        ToolCapabilityAffinity::WriteNotes => &["write", "draft", "rewrite"],
+        ToolCapabilityAffinity::PatchDocument => &["patch", "document", "write"],
+        ToolCapabilityAffinity::WebFetch => &["web", "fetch", "research"],
+        ToolCapabilityAffinity::ResearchSynthesis => &["research", "evidence", "synthesis"],
+        ToolCapabilityAffinity::SkillManagement => &["skill", "install", "update"],
+        ToolCapabilityAffinity::VaultOrganize => &["organize", "tags", "folders"],
+    }
 }
 
 /// Rerank skills using vector similarity when embeddings are available.
@@ -397,6 +481,25 @@ pub fn build_skill_activation_plan(
     source_hints: &[String],
     index: Option<&ActivationIndexMap>,
 ) -> SkillActivationPlanSummary {
+    build_skill_activation_plan_for_task(
+        skills,
+        agent_intent,
+        user_message,
+        source_hints,
+        index,
+        Some(scene),
+    )
+}
+
+/// Build a safe, per-run skill activation plan from task facts.
+pub fn build_skill_activation_plan_for_task(
+    skills: &[SkillEntry],
+    agent_intent: AgentIntent,
+    user_message: &str,
+    source_hints: &[String],
+    index: Option<&ActivationIndexMap>,
+    legacy_scene_hint: Option<AiScene>,
+) -> SkillActivationPlanSummary {
     let vault_root = skills
         .iter()
         .find_map(|skill| Path::new(&skill.file_path).ancestors().nth(3))
@@ -410,14 +513,9 @@ pub fn build_skill_activation_plan(
         }
     }
 
-    let query = if user_message.trim().is_empty() {
-        scene.profile()
-    } else {
-        user_message
-    };
     let ranked = rerank_skills_with_vectors(
-        rank_skills_for_scene_with_index(skills, scene, index),
-        query,
+        rank_skills_for_task(skills, agent_intent, user_message, source_hints, index),
+        task_query(agent_intent, user_message),
         index,
     );
     for scored in ranked {
@@ -447,7 +545,13 @@ pub fn build_skill_activation_plan(
         let skill = scored.skill;
         let reason = activation_reason(skill, agent_intent, user_message, source_hints)
             .map(|(_, reason)| reason)
-            .unwrap_or_else(|| "legacy_scene_or_vector_match".into());
+            .unwrap_or_else(|| {
+                if legacy_scene_hint.is_some() {
+                    "legacy_scene_or_vector_match".into()
+                } else {
+                    "task_capability_or_vector_match".into()
+                }
+            });
         for tool in &skill.allowed_tools {
             if !requested_tools.contains(tool) {
                 requested_tools.push(tool.clone());
@@ -516,6 +620,23 @@ pub fn active_skills_for_prompt(
     db: Option<&Database>,
     user_message: &str,
 ) -> AppResult<Vec<SkillEntry>> {
+    active_skills_for_task_prompt(
+        vault,
+        intent_from_legacy_scene(scene),
+        db,
+        user_message,
+        &[],
+    )
+}
+
+/// Load enabled skills for prompt injection after task/capability matching.
+pub fn active_skills_for_task_prompt(
+    vault: &Path,
+    intent: AgentIntent,
+    db: Option<&Database>,
+    user_message: &str,
+    source_hints: &[String],
+) -> AppResult<Vec<SkillEntry>> {
     let metadata = scan_all_metadata(vault)?;
     let index_map = db
         .map(load_activation_index)
@@ -526,14 +647,9 @@ pub fn active_skills_for_prompt(
     } else {
         Some(&index_map)
     };
-    let query = if user_message.trim().is_empty() {
-        scene.profile()
-    } else {
-        user_message
-    };
     let ranked = rerank_skills_with_vectors(
-        rank_skills_for_scene_with_index(&metadata, scene, index_ref),
-        query,
+        rank_skills_for_task(&metadata, intent, user_message, source_hints, index_ref),
+        task_query(intent, user_message),
         index_ref,
     );
     let mut out = Vec::new();
@@ -556,8 +672,25 @@ pub fn active_skill_allowed_tools(
     db: Option<&Database>,
     user_message: &str,
 ) -> AppResult<Vec<String>> {
+    active_skill_allowed_tools_for_task(
+        vault,
+        intent_from_legacy_scene(scene),
+        db,
+        user_message,
+        &[],
+    )
+}
+
+/// Union of allowed tools requested by active skills for a task.
+pub fn active_skill_allowed_tools_for_task(
+    vault: &Path,
+    intent: AgentIntent,
+    db: Option<&Database>,
+    user_message: &str,
+    source_hints: &[String],
+) -> AppResult<Vec<String>> {
     let mut tools = Vec::new();
-    for skill in active_skills_for_prompt(vault, scene, db, user_message)? {
+    for skill in active_skills_for_task_prompt(vault, intent, db, user_message, source_hints)? {
         for tool in skill.allowed_tools {
             if !tools.contains(&tool) {
                 tools.push(tool);
@@ -567,10 +700,27 @@ pub fn active_skill_allowed_tools(
     Ok(tools)
 }
 
-/// Annotate list entries with scene affinity when a scene is provided.
+/// Legacy wrapper for annotating list entries from a scene-shaped request.
 pub fn enrich_list_with_scene(
-    mut entries: Vec<SkillListEntry>,
+    entries: Vec<SkillListEntry>,
     scene: AiScene,
+    db: Option<&Database>,
+) -> AppResult<Vec<SkillListEntry>> {
+    enrich_list_with_task(
+        entries,
+        intent_from_legacy_scene(scene),
+        scene.profile(),
+        &[],
+        db,
+    )
+}
+
+/// Annotate list entries with task affinity when an intent is provided.
+pub fn enrich_list_with_task(
+    mut entries: Vec<SkillListEntry>,
+    intent: AgentIntent,
+    user_message: &str,
+    source_hints: &[String],
     db: Option<&Database>,
 ) -> AppResult<Vec<SkillListEntry>> {
     let skills: Vec<SkillEntry> = entries.iter().map(|e| e.skill.clone()).collect();
@@ -584,8 +734,8 @@ pub fn enrich_list_with_scene(
         Some(&index_map)
     };
     let ranked = rerank_skills_with_vectors(
-        rank_skills_for_scene_with_index(&skills, scene, index_ref),
-        scene.profile(),
+        rank_skills_for_task(&skills, intent, user_message, source_hints, index_ref),
+        task_query(intent, user_message),
         index_ref,
     );
     let score_map: HashMap<(String, SkillScope), f64> = ranked
@@ -595,8 +745,8 @@ pub fn enrich_list_with_scene(
 
     for entry in &mut entries {
         let key = (entry.skill.name.clone(), entry.skill.scope);
-        entry.scene_active = Some(score_map.contains_key(&key));
-        entry.scene_score = score_map.get(&key).copied();
+        entry.task_active = Some(score_map.contains_key(&key));
+        entry.task_score = score_map.get(&key).copied();
     }
     Ok(entries)
 }

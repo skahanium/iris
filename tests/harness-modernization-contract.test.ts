@@ -57,6 +57,60 @@ describe("harness modernization remaining contracts", () => {
     expect(panel).toContain("harnessAbort(id)");
   });
 
+  it("agent task runtime exposes task-id based resume and abort IPC", () => {
+    const backend = read("src-tauri/src/commands/ai_commands.rs");
+    expect(backend).toContain("pub async fn agent_task_resume");
+    expect(backend).toContain("pub async fn agent_task_abort");
+    expect(backend).toContain("pub async fn agent_task_get");
+    expect(backend).toContain("pub async fn agent_task_list");
+    expect(backend).toContain("AgentTaskRuntime::prepare_resume_plan");
+    expect(backend).toContain("preflight_agent_task_resume(");
+    expect(backend).toContain("AgentTaskRuntime::begin_resume");
+    const resumeCommand = backend.slice(
+      backend.indexOf("pub async fn agent_task_resume"),
+      backend.indexOf("/// Abort a durable Agent Task"),
+    );
+    expect(resumeCommand.indexOf("preflight_agent_task_resume(")).toBeLessThan(
+      resumeCommand.indexOf("resume_harness_after_tool_confirm_or_restore("),
+    );
+    expect(
+      resumeCommand.indexOf("AgentTaskRuntime::begin_resume"),
+    ).toBeLessThan(
+      resumeCommand.indexOf("resume_harness_after_tool_confirm_or_restore("),
+    );
+
+    const lib = read("src-tauri/src/lib.rs");
+    expect(lib).toContain("commands::ai_commands::agent_task_resume");
+    expect(lib).toContain("commands::ai_commands::agent_task_abort");
+    expect(lib).toContain("commands::ai_commands::agent_task_get");
+    expect(lib).toContain("commands::ai_commands::agent_task_list");
+
+    const ipc = read("src/lib/ipc.ts");
+    expect(ipc).toContain("export async function agentTaskResume");
+    expect(ipc).toContain("export async function agentTaskAbort");
+    expect(ipc).toContain("export async function agentTaskGet");
+    expect(ipc).toContain("export async function agentTaskList");
+  });
+
+  it("paused-budget chat can be resumed by durable task id", () => {
+    const tasks = read("src/components/ai/hooks/useAssistantTasks.ts");
+    const resume = read("src/components/ai/hooks/useAssistantHarnessResume.ts");
+    const panel = read("src/components/ai/UnifiedAssistantPanel.tsx");
+    const run = read("src-tauri/src/ai_harness/harness/run.rs");
+
+    expect(tasks).toContain("setPausedTaskId");
+    expect(tasks).toContain('result.status === "paused_budget"');
+    expect(resume).toContain("agentTaskResume");
+    expect(resume).toContain("pausedTaskId");
+    expect(panel).toContain("pausedTaskId");
+    expect(run).toContain(
+      "HarnessFinishReason::BudgetExhausted | HarnessFinishReason::RoundLimit",
+    );
+    expect(run.indexOf("save_round_checkpoint(")).toBeLessThan(
+      run.lastIndexOf("finish_run("),
+    );
+  });
+
   it("non-chat assistant tasks drive the unified run state while in flight", () => {
     const panel = read("src/components/ai/UnifiedAssistantPanel.tsx");
     expect(panel).toContain(

@@ -4,6 +4,8 @@ use crate::ai_runtime::{AiScene, ToolAccessLevel};
 
 #[path = "tool_catalog/boundary.rs"]
 mod boundary_impl;
+#[path = "tool_catalog/capability.rs"]
+mod capability_impl;
 #[path = "tool_catalog/groups.rs"]
 mod groups_impl;
 #[path = "tool_catalog/read.rs"]
@@ -19,14 +21,10 @@ mod web_impl;
 #[path = "tool_catalog/write.rs"]
 mod write_impl;
 
-/// Implementation status of a catalog entry.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ToolImplementationStatus {
-    /// Has a real handler in `dispatch_tool_inner`.
     Dispatchable,
-    /// Handled inside the harness loop (e.g. `spawn_subagent`, `conclude_reasoning`).
     HarnessOnly,
-    /// Registered for future implementation; not currently exposed.
     Planned,
 }
 
@@ -39,11 +37,9 @@ pub struct ToolCatalogEntry {
     pub access_level: ToolAccessLevel,
     pub requires_confirmation: bool,
     pub implementation: ToolImplementationStatus,
-    /// Whether this tool is available when no skill is active.
     pub default_enabled_without_skill: bool,
-    /// Scenes where this tool is naturally relevant (superset of old scene_allowlist).
+    /// Legacy scenes; new policy uses [`ToolCatalogEntry::capability_affinity`].
     pub scene_affinity: &'static [AiScene],
-    /// Optional cap on result count passed to the retrieval layer.
     pub max_results: Option<u32>,
 }
 

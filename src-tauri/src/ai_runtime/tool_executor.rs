@@ -1,7 +1,7 @@
 //! Tool definitions, permission checks, and execution dispatch.
 //!
 //! All tool definitions live here. The ToolExecutor handles:
-//! 1. Filtering available tools by scene and access level
+//! 1. Building the capability-policy driven tool surface
 //! 2. Formatting tool specs for LLM function-calling
 //! 3. Routing confirmed tool calls to Rust command handlers
 
@@ -37,17 +37,17 @@ impl ToolRegistry {
         }
     }
 
-    /// 返回指定场景可用的工具列表。
-    pub fn for_scene(&self, scene: AiScene) -> Vec<&ToolSpec> {
-        self.tools
-            .iter()
-            .filter(|t| t.scene_affinity.is_empty() || t.scene_affinity.contains(&scene))
-            .collect()
+    /// Catalog view before policy filtering.
+    ///
+    /// Availability is decided by ToolPolicy.
+    pub fn catalog_entries(&self) -> Vec<&ToolSpec> {
+        self.tools.iter().collect()
     }
 
-    /// Tools exposed to the model: scene allowlist + dispatch/harness handler + runtime filters.
+    /// Tools exposed to the model: task policy + dispatch/harness handler + runtime filters.
     pub fn tools_for_surface(&self, scene: AiScene, filter: ToolSurfaceFilter) -> Vec<ToolSpec> {
         let ctx = ToolPolicyContext {
+            task_policy: None,
             scene,
             autonomy_level: crate::ai_runtime::resolve_scene(scene).autonomy_level,
             web_search_enabled: filter.web_search_enabled,
@@ -78,9 +78,9 @@ impl ToolRegistry {
             .collect()
     }
 
-    /// 返回指定场景中不需要用户确认的工具（只读自动执行）。
-    pub fn auto_tools_for_scene(&self, scene: AiScene) -> Vec<&ToolSpec> {
-        self.for_scene(scene)
+    /// Catalog entries that do not need user confirmation.
+    pub fn confirmation_free_catalog_entries(&self) -> Vec<&ToolSpec> {
+        self.catalog_entries()
             .into_iter()
             .filter(|t| !t.requires_confirmation)
             .collect()
@@ -192,29 +192,23 @@ pub struct ToolPolicyDeniedError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ai_types::AutonomyLevel;
+    use crate::ai_runtime::{
+        agent_task::AgentTaskKind,
+        agent_task_policy::{AgentTaskPolicy, AgentTaskPolicyInput, AgentTaskScope},
+    };
+    use crate::ai_types::{AgentIntent, AutonomyLevel};
 
     #[test]
-    fn registry_filters_by_scene() {
+    fn registry_catalog_entries_are_policy_neutral() {
         let reg = ToolRegistry::new();
-        let tools = reg.for_scene(AiScene::KnowledgeLookup);
-        // KnowledgeLookup should have search tools + get_regulation + get_block_links
-        let names: Vec<&str> = tools.iter().map(|t| t.name.as_str()).collect();
+        let names: Vec<&str> = reg
+            .catalog_entries()
+            .iter()
+            .map(|t| t.name.as_str())
+            .collect();
+
         assert!(names.contains(&"search_hybrid"));
-        assert!(names.contains(&"get_regulation"));
-        assert!(names.contains(&"get_block_links"));
-        // 鈥?but NOT insert_text_at_cursor (DraftingAssist only)
-        assert!(!names.contains(&"insert_text_at_cursor"));
-    }
-
-    #[test]
-    fn drafting_scene_has_write_tools() {
-        let reg = ToolRegistry::new();
-        let tools = reg.for_scene(AiScene::DraftingAssist);
-        let names: Vec<&str> = tools.iter().map(|t| t.name.as_str()).collect();
         assert!(names.contains(&"insert_text_at_cursor"));
-        assert!(names.contains(&"replace_selection"));
-        assert!(names.contains(&"search_hybrid"));
     }
 
     #[test]
@@ -243,6 +237,7 @@ mod tests {
     fn write_markdown_forbidden_at_l1() {
         let reg = ToolRegistry::new();
         let l2_ctx = ToolPolicyContext {
+            task_policy: None,
             scene: AiScene::DraftingAssist,
             autonomy_level: AutonomyLevel::L2,
             web_search_enabled: true,
@@ -262,16 +257,24 @@ mod tests {
     }
 
     #[test]
-    fn policy_blocks_tool_outside_scene_affinity() {
+    fn ask_notes_task_policy_blocks_write_capability() {
         let reg = ToolRegistry::new();
         let ctx = ToolPolicyContext {
+            task_policy: Some(AgentTaskPolicy::from_input(AgentTaskPolicyInput {
+                intent: AgentIntent::AskNotes,
+                task_kind: AgentTaskKind::Lightweight,
+                scope: AgentTaskScope::Vault,
+                web_authorized: true,
+                has_attachments: false,
+                write_permission_required: false,
+                research_depth: 0,
+            })),
             scene: AiScene::KnowledgeLookup,
             autonomy_level: AutonomyLevel::L2,
             web_search_enabled: true,
             skill_allowed_tools: vec![],
             depth: 0,
         };
-        // insert_text_at_cursor only for DraftingAssist
         assert!(reg
             .check_tool_policy("insert_text_at_cursor", &ctx)
             .is_err());
@@ -280,7 +283,7 @@ mod tests {
     #[test]
     fn auto_tools_excludes_confirmation_tools() {
         let reg = ToolRegistry::new();
-        let auto = reg.auto_tools_for_scene(AiScene::DraftingAssist);
+        let auto = reg.confirmation_free_catalog_entries();
         let names: Vec<&str> = auto.iter().map(|t| t.name.as_str()).collect();
         assert!(names.contains(&"search_hybrid"));
         assert!(!names.contains(&"insert_text_at_cursor")); // requires confirmation
@@ -316,6 +319,7 @@ mod tests {
     fn policy_surface_uses_tool_policy_context() {
         let reg = ToolRegistry::new();
         let ctx = ToolPolicyContext {
+            task_policy: None,
             scene: AiScene::KnowledgeLookup,
             autonomy_level: AutonomyLevel::L1,
             web_search_enabled: true,
@@ -334,6 +338,7 @@ mod tests {
     fn policy_surface_intersects_skill_allowed_tools() {
         let reg = ToolRegistry::new();
         let ctx = ToolPolicyContext {
+            task_policy: None,
             scene: AiScene::DraftingAssist,
             autonomy_level: AutonomyLevel::L2,
             web_search_enabled: true,
@@ -383,6 +388,7 @@ mod tests {
     fn policy_allows_read_tool_in_knowledge() {
         let reg = ToolRegistry::new();
         let ctx = ToolPolicyContext {
+            task_policy: None,
             scene: AiScene::KnowledgeLookup,
             autonomy_level: AutonomyLevel::L2,
             web_search_enabled: true,
@@ -397,6 +403,7 @@ mod tests {
     fn policy_denies_write_tool_in_knowledge() {
         let reg = ToolRegistry::new();
         let ctx = ToolPolicyContext {
+            task_policy: None,
             scene: AiScene::KnowledgeLookup,
             autonomy_level: AutonomyLevel::L2,
             web_search_enabled: true,
@@ -412,6 +419,7 @@ mod tests {
     fn policy_allows_write_tool_in_drafting() {
         let reg = ToolRegistry::new();
         let ctx = ToolPolicyContext {
+            task_policy: None,
             scene: AiScene::DraftingAssist,
             autonomy_level: AutonomyLevel::L2,
             web_search_enabled: true,
@@ -425,6 +433,7 @@ mod tests {
     fn policy_denies_write_at_l1() {
         let reg = ToolRegistry::new();
         let ctx = ToolPolicyContext {
+            task_policy: None,
             scene: AiScene::DraftingAssist,
             autonomy_level: AutonomyLevel::L1,
             web_search_enabled: true,

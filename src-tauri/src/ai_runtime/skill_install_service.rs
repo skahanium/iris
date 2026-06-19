@@ -6,9 +6,10 @@ use std::path::{Path, PathBuf};
 
 use tauri::{AppHandle, Emitter};
 
+use crate::ai_runtime::agent_task_policy::intent_from_legacy_scene;
 use crate::ai_runtime::skill_registry::{InstallSpec, SkillInstallSource};
 use crate::ai_runtime::skills::{
-    blocked_capabilities_for_skill, capability_preview_for_entry, enrich_list_with_scene,
+    blocked_capabilities_for_skill, capability_preview_for_entry, enrich_list_with_task,
     install_from_git, install_from_local, install_from_url, prepare_workspace_for_skill,
     preview_prepare_workspace, scan_all_with_status, set_enabled, skill_content_hash_for_path,
     uninstall, validate_skill_license, SkillEntry, SkillListEntry, SkillScope,
@@ -351,7 +352,13 @@ pub fn list_skills(
     let mut entries = scan_all_with_status(vault)?;
     enrich_with_diagnostics(db, &mut entries)?;
     if let Some(scene) = scene {
-        enrich_list_with_scene(entries, scene, Some(db))
+        enrich_list_with_task(
+            entries,
+            intent_from_legacy_scene(scene),
+            scene.profile(),
+            &[],
+            Some(db),
+        )
     } else {
         Ok(entries)
     }

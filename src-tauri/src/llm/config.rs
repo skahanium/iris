@@ -213,46 +213,6 @@ fn slots_from_legacy_scenes(
 
 /// Factory defaults aligned with user preference (DeepSeek V4 Flash / Pro).
 pub fn deepseek_defaults() -> LlmRoutingConfig {
-    let mut scenes = std::collections::HashMap::new();
-    scenes.insert(
-        "knowledge_lookup".into(),
-        SceneRoute {
-            provider_id: "deepseek".into(),
-            model: "deepseek-v4-flash".into(),
-            thinking: false,
-        },
-    );
-    scenes.insert(
-        "exemplar_learning".into(),
-        SceneRoute {
-            provider_id: "deepseek".into(),
-            model: "deepseek-v4-flash".into(),
-            thinking: false,
-        },
-    );
-    scenes.insert(
-        "drafting_assist".into(),
-        SceneRoute {
-            provider_id: "deepseek".into(),
-            model: "deepseek-v4-pro".into(),
-            thinking: false,
-        },
-    );
-    scenes.insert(
-        "research_synthesis".into(),
-        SceneRoute {
-            provider_id: "deepseek".into(),
-            model: "deepseek-v4-pro".into(),
-            thinking: false,
-        },
-    );
-
-    let mut context_strategy = std::collections::HashMap::new();
-    context_strategy.insert("knowledge_lookup".into(), ContextStrategy::Hybrid);
-    context_strategy.insert("exemplar_learning".into(), ContextStrategy::LongContext);
-    context_strategy.insert("drafting_assist".into(), ContextStrategy::LongContext);
-    context_strategy.insert("research_synthesis".into(), ContextStrategy::Hybrid);
-
     let mut slots = std::collections::HashMap::new();
     slots.insert(
         "fast".into(),
@@ -334,8 +294,8 @@ pub fn deepseek_defaults() -> LlmRoutingConfig {
         updated_at: None,
         providers: std::collections::HashMap::new(),
         slots,
-        scenes,
-        context_strategy,
+        scenes: std::collections::HashMap::new(),
+        context_strategy: std::collections::HashMap::new(),
     }
 }
 
@@ -370,7 +330,6 @@ pub fn load(db: &Database) -> AppResult<LlmRoutingConfig> {
     };
 
     sanitize_routing(&mut config);
-    ensure_scene_keys(&mut config);
     ensure_slot_keys(&mut config);
     Ok(config)
 }
@@ -474,26 +433,11 @@ fn read_setting_string(db: &Database, key: &str) -> AppResult<Option<String>> {
     })
 }
 
-fn ensure_scene_keys(config: &mut LlmRoutingConfig) {
-    let defaults = deepseek_defaults();
-    for (key, route) in defaults.scenes {
-        config.scenes.entry(key).or_insert(route);
-    }
-    for (key, strategy) in defaults.context_strategy {
-        config.context_strategy.entry(key).or_insert(strategy);
-    }
-}
-
 fn ensure_slot_keys(config: &mut LlmRoutingConfig) {
     let defaults = deepseek_defaults();
     for (key, route) in defaults.slots {
         config.slots.entry(key).or_insert(route);
     }
-}
-
-pub fn resolve_for_scene(db: &Database, scene: AiScene) -> AppResult<ResolvedLlmConfig> {
-    let route = resolve_capability_route(db, route_input_for_scene(scene))?;
-    Ok(route.resolved)
 }
 
 fn route_input_for_scene(scene: AiScene) -> CapabilityRouteInput {
@@ -877,15 +821,28 @@ mod tests {
     use crate::storage::db::Database;
 
     #[test]
-    fn default_routing_has_four_scenes() {
+    fn default_routing_does_not_write_legacy_scene_routes() {
         let c = deepseek_defaults();
-        assert_eq!(c.scenes.len(), 4);
+        assert!(c.scenes.is_empty());
+        assert!(c.context_strategy.is_empty());
     }
 
     #[test]
     fn resolve_uses_deepseek_flash_for_knowledge() {
         let db = Database::open_in_memory().expect("mem db");
-        let resolved = resolve_for_scene(&db, AiScene::KnowledgeLookup).expect("resolve");
+        let resolved = resolve_capability_route(
+            &db,
+            CapabilityRouteInput {
+                intent: AgentIntent::AskNotes,
+                context_tokens: 0,
+                has_images: false,
+                needs_tools: false,
+                needs_reasoning: false,
+                privacy_preference: PrivacyPreference::ExternalAllowed,
+            },
+        )
+        .expect("resolve")
+        .resolved;
         assert_eq!(resolved.provider_id, "deepseek");
         assert_eq!(resolved.model, "deepseek-v4-flash");
     }

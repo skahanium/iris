@@ -1,12 +1,10 @@
 //! Tool output → evidence packet merging.
 
-use crate::ai_runtime::{AiScene, ContextPacket};
+use crate::ai_runtime::agent_task_policy::AgentTaskPolicy;
+use crate::ai_runtime::ContextPacket;
 
-pub(crate) fn max_fetch_per_round(scene: AiScene) -> u32 {
-    match scene {
-        AiScene::ResearchSynthesis => 2,
-        _ => 1,
-    }
+pub(crate) fn max_fetch_per_round(policy: &AgentTaskPolicy) -> u32 {
+    policy.max_fetch_per_round
 }
 
 pub(crate) fn merge_tool_packets_into(

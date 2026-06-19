@@ -117,7 +117,7 @@ export function AgentStatusBadge({
   }, [open]);
 
   const enabledSkills = skills.filter((s) => s.enabled);
-  const activeSkills = enabledSkills.filter((s) => s.scene_active === true);
+  const activeSkills = enabledSkills.filter((s) => s.task_active === true);
   const hasActiveSkills = activeSkills.length > 0;
 
   const close = useCallback(() => setOpen(false), []);
@@ -217,7 +217,7 @@ export function AgentStatusBadge({
                   </p>
                   <ul className="space-y-0.5">
                     {enabledSkills
-                      .filter((s) => s.scene_active !== true)
+                      .filter((s) => s.task_active !== true)
                       .map((skill) => (
                         <li
                           key={`idle-${skill.scope}-${skill.name}`}

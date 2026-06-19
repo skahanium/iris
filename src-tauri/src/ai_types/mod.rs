@@ -659,6 +659,20 @@ pub enum ToolAccessLevel {
     ManageSkills,
 }
 
+/// Tool capability affinity used by task-policy driven tool exposure.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ToolCapabilityAffinity {
+    ReadNotes,
+    SearchNotes,
+    WriteNotes,
+    PatchDocument,
+    WebFetch,
+    ResearchSynthesis,
+    SkillManagement,
+    VaultOrganize,
+}
+
 // ─── Tool Spec ───────────────────────────────────────────
 
 /// 工具规格定义，描述一个可供 LLM 调用的工具。

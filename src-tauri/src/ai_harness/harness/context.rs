@@ -1,12 +1,14 @@
 //! Harness cold-start context: environment, skills, initial messages.
 //! Delegates persona resolution to persona_resolver and prompt assembly to prompt_builder.
 
+use crate::ai_runtime::agent_task_policy::AgentTaskPolicy;
 use crate::ai_runtime::environment::{build_environment_map, EnvironmentInput};
 use crate::ai_runtime::model_gateway::LlmMessage;
 use crate::ai_runtime::prompt_builder::HarnessMessageInput;
 use crate::ai_runtime::prompt_profile::PromptProfile;
 use crate::ai_runtime::skills::{
-    active_skill_allowed_tools, active_skills_for_prompt, inject_into_prompt, scan_all,
+    active_skill_allowed_tools_for_task, active_skills_for_task_prompt, inject_into_prompt,
+    scan_all,
 };
 use crate::ai_runtime::ToolSpec;
 use crate::ai_runtime::{AiScene, ContextPacket, SkillActivationPlanSummary};
@@ -26,24 +28,30 @@ pub(crate) fn resolve_file_id(state: &AppState, note_path: Option<&str>) -> AppR
     })
 }
 
+pub(crate) struct InitialMessagesInput<'a> {
+    pub(crate) scene: AiScene,
+    pub(crate) task_policy: &'a AgentTaskPolicy,
+    pub(crate) environment: &'a str,
+    pub(crate) cold_start_packets: &'a [ContextPacket],
+    pub(crate) history: &'a [(String, String)],
+    pub(crate) web_search_enabled: bool,
+    pub(crate) skills_fragment: Option<&'a str>,
+}
+
 pub(crate) fn build_initial_messages(
     state: &AppState,
-    scene: AiScene,
-    environment: &str,
-    cold_start_packets: &[ContextPacket],
-    history: &[(String, String)],
-    web_search_enabled: bool,
-    skills_fragment: Option<&str>,
+    input: InitialMessagesInput<'_>,
 ) -> Vec<LlmMessage> {
     let profile = PromptProfile::load(&state.db).unwrap_or_default();
     crate::ai_runtime::prompt_builder::build_initial_messages(
         &HarnessMessageInput {
-            scene,
-            environment,
-            cold_start_packets,
-            history,
-            web_search_enabled,
-            skills_fragment,
+            scene: input.scene,
+            task_policy: input.task_policy,
+            environment: input.environment,
+            cold_start_packets: input.cold_start_packets,
+            history: input.history,
+            web_search_enabled: input.web_search_enabled,
+            skills_fragment: input.skills_fragment,
         },
         &profile,
     )
@@ -51,6 +59,7 @@ pub(crate) fn build_initial_messages(
 
 pub(crate) struct EnvironmentAndSkillsInput<'a> {
     pub(crate) scene: AiScene,
+    pub(crate) task_policy: &'a AgentTaskPolicy,
     pub(crate) note_path: Option<&'a str>,
     pub(crate) note_title: Option<&'a str>,
     pub(crate) selection_excerpt: Option<&'a str>,
@@ -72,6 +81,7 @@ pub(crate) fn prepare_environment_and_skills_with_plan(
             &vault,
             &EnvironmentInput {
                 scene: input.scene,
+                task_policy: input.task_policy,
                 note_path: input.note_path,
                 note_title: input.note_title,
                 selection_excerpt: input.selection_excerpt,
@@ -80,8 +90,13 @@ pub(crate) fn prepare_environment_and_skills_with_plan(
                 attachment_count: input.attachment_count,
             },
         )?;
-        let enabled_skills =
-            active_skills_for_prompt(&vault, input.scene, Some(&state.db), input.user_message)?;
+        let enabled_skills = active_skills_for_task_prompt(
+            &vault,
+            input.task_policy.intent,
+            Some(&state.db),
+            input.user_message,
+            &[],
+        )?;
         let skills_prompt =
             inject_into_prompt(&vault, &enabled_skills, input.scene, input.user_message);
         return Ok((env_text, skills_prompt));
@@ -92,6 +107,7 @@ pub(crate) fn prepare_environment_and_skills_with_plan(
         &vault,
         &EnvironmentInput {
             scene: input.scene,
+            task_policy: input.task_policy,
             note_path: input.note_path,
             note_title: input.note_title,
             selection_excerpt: input.selection_excerpt,
@@ -118,21 +134,27 @@ pub(crate) fn prepare_environment_and_skills_with_plan(
 
 pub(crate) fn resolve_active_skill_allowed_tools(
     state: &AppState,
-    scene: AiScene,
+    task_policy: &crate::ai_runtime::agent_task_policy::AgentTaskPolicy,
     user_message: &str,
 ) -> AppResult<Vec<String>> {
     let vault = state.vault_path()?;
-    active_skill_allowed_tools(&vault, scene, Some(&state.db), user_message)
+    active_skill_allowed_tools_for_task(
+        &vault,
+        task_policy.intent,
+        Some(&state.db),
+        user_message,
+        &[],
+    )
 }
 
 pub(crate) fn resolve_active_skill_allowed_tools_with_plan(
     state: &AppState,
-    scene: AiScene,
+    task_policy: &crate::ai_runtime::agent_task_policy::AgentTaskPolicy,
     user_message: &str,
     plan: Option<&SkillActivationPlanSummary>,
 ) -> AppResult<Vec<String>> {
     if let Some(plan) = plan {
         return Ok(plan.allowed_tools());
     }
-    resolve_active_skill_allowed_tools(state, scene, user_message)
+    resolve_active_skill_allowed_tools(state, task_policy, user_message)
 }

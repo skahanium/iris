@@ -2,20 +2,26 @@ import { useCallback, type Dispatch, type SetStateAction } from "react";
 
 import { mergeContextPackets } from "@/lib/ai/merge-context-packets";
 import { invokeErrorMessage } from "@/lib/credentials";
-import { harnessResume } from "@/lib/ipc";
+import { agentTaskResume, harnessResume } from "@/lib/ipc";
 import { mapChatToolCallsForUi } from "@/lib/map-chat-tool-calls";
 import { accumulateTokenUsage } from "@/lib/token-usage";
-import type { ContextPacket, TokenUsage } from "@/types/ai";
+import type {
+  AiSendMessageResult,
+  ContextPacket,
+  TokenUsage,
+} from "@/types/ai";
 
 import type { ChatLine } from "../AiMessageList";
 
 interface UseAssistantHarnessResumeParams {
   ensureAssistantStreamSlot: () => void;
   harnessRequestId: string | null;
+  pausedTaskId: string | null;
   setActivityHint: Dispatch<SetStateAction<string | null>>;
   setLastError: Dispatch<SetStateAction<string | null>>;
   setMessages: Dispatch<SetStateAction<ChatLine[]>>;
   setPackets: Dispatch<SetStateAction<ContextPacket[]>>;
+  setPausedTaskId: Dispatch<SetStateAction<string | null>>;
   setSessionTokenUsage: Dispatch<SetStateAction<TokenUsage | null>>;
   setStreaming: Dispatch<SetStateAction<boolean>>;
 }
@@ -23,28 +29,27 @@ interface UseAssistantHarnessResumeParams {
 export function useAssistantHarnessResume({
   ensureAssistantStreamSlot,
   harnessRequestId,
+  pausedTaskId,
   setActivityHint,
   setLastError,
   setMessages,
   setPackets,
+  setPausedTaskId,
   setSessionTokenUsage,
   setStreaming,
 }: UseAssistantHarnessResumeParams) {
   return useCallback(async () => {
-    if (!harnessRequestId) return;
+    if (!pausedTaskId && !harnessRequestId) return;
     setLastError(null);
     setStreaming(true);
-    setActivityHint("正在从 checkpoint 恢复 Agent…");
+    setActivityHint(
+      pausedTaskId ? "正在继续暂停任务…" : "正在从 checkpoint 恢复 Agent…",
+    );
     ensureAssistantStreamSlot();
     try {
-      const raw = await harnessResume(harnessRequestId);
-      const result = raw as {
-        content?: string;
-        tool_calls?: Parameters<typeof mapChatToolCallsForUi>[0];
-        tool_results?: Parameters<typeof mapChatToolCallsForUi>[1];
-        evidence_packets?: ContextPacket[];
-        usage?: TokenUsage;
-      };
+      const result = pausedTaskId
+        ? await agentTaskResume(pausedTaskId)
+        : ((await harnessResume(harnessRequestId!)) as AiSendMessageResult);
       const toolCalls = mapChatToolCallsForUi(
         result.tool_calls,
         result.tool_results,
@@ -70,6 +75,11 @@ export function useAssistantHarnessResume({
         }
         return next;
       });
+      setPausedTaskId(
+        result.status === "paused_budget"
+          ? (result.task_id ?? pausedTaskId)
+          : null,
+      );
     } catch (error) {
       setLastError(invokeErrorMessage(error));
     } finally {
@@ -79,10 +89,12 @@ export function useAssistantHarnessResume({
   }, [
     ensureAssistantStreamSlot,
     harnessRequestId,
+    pausedTaskId,
     setActivityHint,
     setLastError,
     setMessages,
     setPackets,
+    setPausedTaskId,
     setSessionTokenUsage,
     setStreaming,
   ]);

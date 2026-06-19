@@ -293,6 +293,7 @@ pub(crate) async fn run_harness_task(
     let routing_override = task.routing_override;
     crate::commands::ai_commands::validate_ai_note_path(request.note_path.as_deref())?;
     let legacy_intent = request.effective_legacy_intent();
+    let agent_intent = request.effective_agent_intent();
     let skill_activation_plan = routing_override
         .as_ref()
         .and_then(|route| route.skill_activation_plan.as_ref());
@@ -457,6 +458,7 @@ pub(crate) async fn run_harness_task(
                 state,
                 app_handle,
                 scene,
+                Some(agent_intent),
                 request.session_id,
                 request.message.clone(),
                 request.images.clone(),

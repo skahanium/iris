@@ -2,6 +2,7 @@
 
 use std::path::Path;
 
+use crate::ai_runtime::agent_task_policy::AgentTaskPolicy;
 use crate::ai_runtime::model_gateway::ModelGateway;
 use crate::ai_runtime::prompt_profile::PromptProfile;
 use crate::ai_runtime::runtime_context::{build_runtime_context_prompt, RuntimeContextInput};
@@ -13,6 +14,7 @@ use crate::storage::db::Database;
 #[derive(Debug, Clone)]
 pub struct EnvironmentInput<'a> {
     pub scene: AiScene,
+    pub task_policy: &'a AgentTaskPolicy,
     pub note_path: Option<&'a str>,
     pub note_title: Option<&'a str>,
     pub selection_excerpt: Option<&'a str>,
@@ -42,7 +44,7 @@ pub fn build_environment_map(
         },
     ));
     sections.push(capabilities_section(input.tools));
-    sections.push(scene_focus_section(input.scene));
+    sections.push(task_focus_section(input.task_policy));
 
     if let Some(doc) = current_document_section(input) {
         sections.push(doc);
@@ -104,14 +106,8 @@ fn capabilities_section(tools: &[ToolSpec]) -> String {
     s
 }
 
-fn scene_focus_section(scene: AiScene) -> String {
-    let focus = match scene {
-        AiScene::KnowledgeLookup => "知识查阅：检索、解释、引用本地材料",
-        AiScene::ExemplarLearning => "范文学习：结构、句式与可复用模板",
-        AiScene::DraftingAssist => "文稿创作：低干扰写作辅助与补丁建议",
-        AiScene::ResearchSynthesis => "研究综合：多材料论证与证据缺口",
-    };
-    format!("## 当前任务侧重\n\n{focus}\n")
+fn task_focus_section(policy: &AgentTaskPolicy) -> String {
+    format!("## 当前任务侧重\n\n{}\n", policy.task_focus())
 }
 
 fn current_document_section(input: &EnvironmentInput<'_>) -> Option<String> {
@@ -199,7 +195,12 @@ fn vault_structure_section(db: &Database, _vault: &Path) -> AppResult<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ai_runtime::agent_task::AgentTaskKind;
+    use crate::ai_runtime::agent_task_policy::{
+        AgentTaskPolicy, AgentTaskPolicyInput, AgentTaskScope,
+    };
     use crate::ai_runtime::ToolAccessLevel;
+    use crate::ai_types::AgentIntent;
     use crate::storage::db::Database;
 
     #[test]
@@ -244,12 +245,22 @@ mod tests {
                 scene_affinity: vec![AiScene::KnowledgeLookup],
             },
         ];
+        let task_policy = AgentTaskPolicy::from_input(AgentTaskPolicyInput {
+            intent: AgentIntent::AskNotes,
+            task_kind: AgentTaskKind::Lightweight,
+            scope: AgentTaskScope::Note,
+            web_authorized: true,
+            has_attachments: true,
+            write_permission_required: false,
+            research_depth: 0,
+        });
 
         let text = build_environment_map(
             &db,
             &vault,
             &EnvironmentInput {
                 scene: AiScene::KnowledgeLookup,
+                task_policy: &task_policy,
                 note_path: Some("today.md"),
                 note_title: Some("Today"),
                 selection_excerpt: Some("selected text"),

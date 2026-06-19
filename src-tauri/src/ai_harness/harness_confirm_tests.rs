@@ -37,6 +37,7 @@ mod tests {
                 thinking: None,
                 output_budget: None,
                 skill_activation_plan: None,
+                task_policy: None,
             },
             round: 1,
             messages: vec![LlmMessage {
@@ -241,6 +242,7 @@ mod tests {
 
         let registry = ToolRegistry::new();
         let ctx = ToolPolicyContext {
+            task_policy: None,
             scene: AiScene::KnowledgeLookup,
             autonomy_level: AutonomyLevel::L2,
             web_search_enabled: true,
@@ -318,6 +320,7 @@ mod tests {
 
         let registry = ToolRegistry::new();
         let ctx = ToolPolicyContext {
+            task_policy: None,
             scene: AiScene::KnowledgeLookup,
             autonomy_level: AutonomyLevel::L2,
             web_search_enabled: true,

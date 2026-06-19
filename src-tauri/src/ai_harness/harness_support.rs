@@ -5,7 +5,8 @@ use serde::{Deserialize, Serialize};
 use crate::ai_runtime::harness::UsageSource;
 use crate::ai_runtime::model_gateway::{LlmMessage, TokenUsage, ToolCall};
 use crate::ai_runtime::{
-    CapabilitySlot, ContextPacket, EndpointFamily, SkillActivationPlanSummary,
+    agent_task_policy::AgentTaskPolicy, CapabilitySlot, ContextPacket, EndpointFamily,
+    SkillActivationPlanSummary,
 };
 use crate::error::AppResult;
 use crate::storage::db::Database;
@@ -132,6 +133,8 @@ pub struct HarnessCheckpointMeta {
     pub output_budget: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub skill_activation_plan: Option<SkillActivationPlanSummary>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub task_policy: Option<AgentTaskPolicy>,
 }
 
 /// Full harness state for checkpoint save/restore.
@@ -243,6 +246,7 @@ mod tests {
                 thinking: None,
                 output_budget: None,
                 skill_activation_plan: None,
+                task_policy: None,
             },
             round: 1,
             messages: vec![],

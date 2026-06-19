@@ -3,9 +3,9 @@
 //! Assembles 7 layers into a cache-friendly multi-message system prompt:
 //!
 //! ```text
-//! Layer 1: Persona (identity + principles + scene focus + web instructions)
+//! Layer 1: Persona (identity + principles + task focus + web instructions)
 //! Layer 2: Product/Data Principles (already in Layer 1 for default persona)
-//! Layer 3: Scene Focus (already in Layer 1)
+//! Layer 3: Task Focus (already in Layer 1)
 //! Layer 4: Tool Policy Summary
 //! Layer 5: Active Skills
 //! Layer 6: Evidence Packets
@@ -14,9 +14,15 @@
 //!
 //! Each layer is a separate `LlmMessage` with `System` role for cache-friendly layout.
 
+use crate::ai_runtime::agent_task::AgentTaskKind;
+use crate::ai_runtime::agent_task_policy::{
+    intent_from_legacy_scene, AgentTaskPolicy, AgentTaskPolicyInput, AgentTaskScope,
+};
 use crate::ai_runtime::environment::{build_environment_map, EnvironmentInput};
 use crate::ai_runtime::model_gateway::{LlmMessage, MessageRole, ModelGateway};
-use crate::ai_runtime::persona_resolver::{render_persona, resolve_persona};
+use crate::ai_runtime::persona_resolver::{
+    render_persona, resolve_persona, resolve_persona_for_policy,
+};
 use crate::ai_runtime::prompt_profile::PromptProfile;
 use crate::ai_runtime::{AiScene, ContextPacket, ToolSpec};
 use crate::error::AppResult;
@@ -39,7 +45,7 @@ pub struct PromptBuildInput<'a> {
 /// Build the complete system prompt as a vector of messages.
 ///
 /// Returns multiple `System` messages for cache-friendly layout:
-/// 1. Persona + principles + scene focus + web instructions + writing style + language + rules
+/// 1. Persona + principles + task focus + web instructions + writing style + language + rules
 /// 2. Environment (capabilities, document context, vault structure)
 /// 3. Evidence packets (if any)
 /// 4. Skills fragment (if any)
@@ -50,6 +56,7 @@ pub fn build_prompt_messages(
     profile: &PromptProfile,
 ) -> AppResult<Vec<LlmMessage>> {
     let resolved = resolve_persona(profile, input.scene, input.web_search_enabled);
+    let fallback_policy = legacy_policy(input.scene, input.web_search_enabled);
     let mut messages = Vec::new();
 
     // Layer 1-3,7: Persona (identity + principles + scene + web + style + language + rules)
@@ -68,6 +75,7 @@ pub fn build_prompt_messages(
         vault,
         &EnvironmentInput {
             scene: input.scene,
+            task_policy: &fallback_policy,
             note_path: input.note_path,
             note_title: input.note_title,
             selection_excerpt: input.selection_excerpt,
@@ -123,6 +131,7 @@ pub fn build_prompt_messages(
 #[derive(Debug, Clone)]
 pub struct HarnessMessageInput<'a> {
     pub scene: AiScene,
+    pub task_policy: &'a AgentTaskPolicy,
     pub environment: &'a str,
     pub cold_start_packets: &'a [ContextPacket],
     pub history: &'a [(String, String)],
@@ -137,7 +146,7 @@ pub fn build_initial_messages(
     input: &HarnessMessageInput<'_>,
     profile: &PromptProfile,
 ) -> Vec<LlmMessage> {
-    let resolved = resolve_persona(profile, input.scene, input.web_search_enabled);
+    let resolved = resolve_persona_for_policy(profile, input.task_policy, input.skills_fragment);
     let mut messages = Vec::new();
 
     // System message: persona + environment + skills
@@ -199,6 +208,19 @@ pub fn build_initial_messages(
     }
 
     messages
+}
+
+fn legacy_policy(scene: AiScene, web_search_enabled: bool) -> AgentTaskPolicy {
+    let intent = intent_from_legacy_scene(scene);
+    AgentTaskPolicy::from_input(AgentTaskPolicyInput {
+        intent,
+        task_kind: AgentTaskKind::Lightweight,
+        scope: AgentTaskScope::Vault,
+        web_authorized: web_search_enabled,
+        has_attachments: false,
+        write_permission_required: false,
+        research_depth: 0,
+    })
 }
 
 #[cfg(test)]
@@ -281,7 +303,7 @@ mod tests {
     }
 
     #[test]
-    fn scene_focus_correct_per_scene() {
+    fn legacy_task_focus_correct_per_scene() {
         let profile = PromptProfile::default();
         for (scene, expected) in [
             (AiScene::KnowledgeLookup, "知识查阅"),

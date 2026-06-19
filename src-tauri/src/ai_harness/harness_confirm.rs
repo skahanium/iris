@@ -90,10 +90,24 @@ fn policy_ctx_from_checkpoint_meta(
 ) -> ToolPolicyContext {
     let scene: AiScene =
         serde_json::from_str(&format!("\"{}\"", meta.scene)).unwrap_or(AiScene::KnowledgeLookup);
-    let profile = crate::ai_runtime::resolve_scene(scene);
+    let task_policy = meta.task_policy.clone().unwrap_or_else(|| {
+        crate::ai_runtime::agent_task_policy::AgentTaskPolicy::from_input(
+            crate::ai_runtime::agent_task_policy::AgentTaskPolicyInput {
+                intent: crate::ai_runtime::agent_task_policy::intent_from_legacy_scene(scene),
+                task_kind: crate::ai_runtime::agent_task::AgentTaskKind::Lightweight,
+                scope: crate::ai_runtime::agent_task_policy::AgentTaskScope::Vault,
+                web_authorized: meta.web_search_enabled,
+                has_attachments: false,
+                write_permission_required: false,
+                research_depth: meta.depth,
+            },
+        )
+    });
+    let autonomy_level = task_policy.autonomy_level;
     ToolPolicyContext {
+        task_policy: Some(task_policy),
         scene,
-        autonomy_level: profile.autonomy_level,
+        autonomy_level,
         web_search_enabled: meta.web_search_enabled,
         skill_allowed_tools: meta
             .skill_activation_plan
@@ -138,8 +152,25 @@ pub async fn resume_harness_after_tool_confirm(
             let provider_config = resolved.to_provider_config_for_slot(slot);
             (resolved, provider_config, thinking)
         } else {
-            let resolved = crate::llm::config::resolve_for_scene(&state.db, scene)?;
-            let provider_config = resolved.to_provider_config(scene);
+            let policy = cp.meta.task_policy.clone().unwrap_or_else(|| {
+                crate::ai_runtime::agent_task_policy::AgentTaskPolicy::from_input(
+                    crate::ai_runtime::agent_task_policy::AgentTaskPolicyInput {
+                        intent: crate::ai_runtime::agent_task_policy::intent_from_legacy_scene(
+                            scene,
+                        ),
+                        task_kind: crate::ai_runtime::agent_task::AgentTaskKind::Lightweight,
+                        scope: crate::ai_runtime::agent_task_policy::AgentTaskScope::Vault,
+                        web_authorized: cp.meta.web_search_enabled,
+                        has_attachments: false,
+                        write_permission_required: false,
+                        research_depth: cp.meta.depth,
+                    },
+                )
+            });
+            let route =
+                crate::ai_runtime::agent_task_policy::resolve_for_task_policy(&state.db, &policy)?;
+            let resolved = route.resolved;
+            let provider_config = resolved.to_provider_config_for_slot(route.summary.slot);
             let thinking = resolved.thinking;
             (resolved, provider_config, thinking)
         };
@@ -165,6 +196,21 @@ pub async fn resume_harness_after_tool_confirm(
             token_budget: None,
             max_rounds_override: None,
             skill_activation_plan: cp.meta.skill_activation_plan.clone(),
+            task_policy: cp.meta.task_policy.clone().unwrap_or_else(|| {
+                crate::ai_runtime::agent_task_policy::AgentTaskPolicy::from_input(
+                    crate::ai_runtime::agent_task_policy::AgentTaskPolicyInput {
+                        intent: crate::ai_runtime::agent_task_policy::intent_from_legacy_scene(
+                            scene,
+                        ),
+                        task_kind: crate::ai_runtime::agent_task::AgentTaskKind::Lightweight,
+                        scope: crate::ai_runtime::agent_task_policy::AgentTaskScope::Vault,
+                        web_authorized: cp.meta.web_search_enabled,
+                        has_attachments: false,
+                        write_permission_required: false,
+                        research_depth: cp.meta.depth,
+                    },
+                )
+            }),
         },
         provider_config,
         Some(resolved.output_budget),
@@ -218,6 +264,7 @@ pub async fn dispatch_approved_tool_to_checkpoint(
 ) -> AppResult<()> {
     let registry = crate::ai_runtime::tool_executor::ToolRegistry::new();
     let policy_ctx = crate::ai_runtime::tool_policy::ToolPolicyContext {
+        task_policy: None,
         scene: pending.scene,
         autonomy_level: pending.autonomy_level,
         web_search_enabled: pending.web_search_enabled,

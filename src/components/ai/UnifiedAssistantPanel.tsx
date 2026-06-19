@@ -36,6 +36,7 @@ toolConfirmIpc
 webAuthorized: webSearch
 web_search: webSearch
 harnessAbort(id)
+pausedTaskId
 assistantRun.setFromTaskStatus("running"
 assistantRun.setFromTaskStatus("running", "writing")
 assistantRun.setFromTaskStatus("running", "citation")

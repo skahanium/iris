@@ -315,12 +315,12 @@ pub struct SkillListEntry {
     pub unrecognized_tools: Vec<String>,
     /// Dependencies that are not installed.
     pub missing_deps: Vec<String>,
-    /// Whether this skill would be injected for the requested scene (`None` if no scene).
+    /// Whether this skill would be injected for the requested task (`None` if not scored).
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub scene_active: Option<bool>,
-    /// Scene affinity score (`None` if no scene requested or skill inactive).
+    pub task_active: Option<bool>,
+    /// Task affinity score (`None` if not scored or skill inactive).
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub scene_score: Option<f64>,
+    pub task_score: Option<f64>,
     /// Subset of `allowed_tools` that require harness confirmation.
     pub confirmation_required_tools: Vec<String>,
     /// SHA-256 of the installed SKILL.md file.

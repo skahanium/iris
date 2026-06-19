@@ -292,6 +292,7 @@ pub async fn execute_research(
             }
 
             let policy_ctx = ToolPolicyContext {
+                task_policy: None,
                 scene: AiScene::ResearchSynthesis,
                 autonomy_level: AutonomyLevel::L3,
                 web_search_enabled: config.web_research_authorized,

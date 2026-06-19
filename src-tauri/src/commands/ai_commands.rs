@@ -4,19 +4,24 @@
 //! through typed Tauri IPC. Phase C: full LLM pipeline with streaming.
 
 use crate::ai_runtime::{
-    agent_task::{AgentTaskKind, AgentTaskRuntime, AgentTaskStatus, CreateTaskInput},
+    agent_task::{
+        AgentTask, AgentTaskKind, AgentTaskResumePlan, AgentTaskResumePreflight, AgentTaskRuntime,
+        AgentTaskStatus, BudgetPauseCheckpointInput, CreateTaskInput, TaskListFilter,
+    },
+    agent_task_policy::{
+        intent_from_legacy_scene, resolve_for_task_policy, AgentTaskPolicy, AgentTaskPolicyInput,
+        AgentTaskScope,
+    },
     context_cache::ContextAssemblyCacheKey,
-    context_planner::plan_context,
+    context_planner::plan_context_for_policy,
     guardrails::{self, GuardResult},
     harness::{run_harness, HarnessRunInput},
-    model_gateway::ModelGateway,
     packet_builder::{build_context_packets, max_results_from_budget, ContextBuildOptions},
     retrieval_scope::ContextScopeDto,
-    scene_router::resolve_scene,
     session::{SessionManager, SessionMessage, SessionSummary},
     tool_executor::ToolRegistry,
     trace::{TraceRecorder, TraceStatus},
-    AiScene, AssembledContext, ContextPacket, TokenUsage, ToolAccessLevel,
+    AgentIntent, AiScene, AssembledContext, ContextPacket, TokenUsage, ToolAccessLevel,
 };
 use std::path::Path;
 use std::sync::Arc;
@@ -24,8 +29,9 @@ use std::sync::Arc;
 use crate::app::AppState;
 use crate::error::{AppError, AppResult};
 use crate::llm::config::ResolvedLlmConfig;
-use crate::storage::paths::is_user_note_path;
+use crate::storage::paths::{is_user_note_path, resolve_vault_path};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use tauri::{Emitter, State};
 use tracing::info;
 
@@ -41,6 +47,325 @@ pub(crate) fn validate_ai_note_path(note_path: Option<&str>) -> AppResult<()> {
         }
     }
     Ok(())
+}
+
+fn capability_slot_wire(slot: crate::ai_types::CapabilitySlot) -> &'static str {
+    match slot {
+        crate::ai_types::CapabilitySlot::Fast => "fast",
+        crate::ai_types::CapabilitySlot::Writer => "writer",
+        crate::ai_types::CapabilitySlot::Reasoner => "reasoner",
+        crate::ai_types::CapabilitySlot::LongContext => "long_context",
+        crate::ai_types::CapabilitySlot::Vision => "vision",
+        crate::ai_types::CapabilitySlot::AgentTools => "agent_tools",
+        crate::ai_types::CapabilitySlot::Embedding => "embedding",
+        crate::ai_types::CapabilitySlot::Reranker => "reranker",
+        crate::ai_types::CapabilitySlot::LocalPrivate => "local_private",
+    }
+}
+
+fn vault_scope_hash(vault: &Path) -> String {
+    let normalized = vault
+        .canonicalize()
+        .unwrap_or_else(|_| vault.to_path_buf())
+        .to_string_lossy()
+        .to_string();
+    let digest = Sha256::digest(normalized.as_bytes());
+    hex::encode(&digest[..12])
+}
+
+fn skill_names_for_policy(
+    plan: Option<&crate::ai_types::SkillActivationPlanSummary>,
+) -> Vec<String> {
+    plan.map(|plan| {
+        plan.activated_skills
+            .iter()
+            .map(|skill| skill.name.clone())
+            .collect()
+    })
+    .unwrap_or_default()
+}
+
+fn required_permissions_for_policy(web_search: bool) -> Vec<String> {
+    if web_search {
+        vec![
+            crate::ai_runtime::agent_permissions::AgentPermissionAtom::WebSearch
+                .as_str()
+                .to_string(),
+        ]
+    } else {
+        Vec::new()
+    }
+}
+
+fn build_task_budget_policy(
+    policy: &AgentTaskPolicy,
+    vault: &Path,
+    note_path: Option<&str>,
+    web_search: bool,
+    skill_activation_plan: Option<&crate::ai_types::SkillActivationPlanSummary>,
+) -> serde_json::Value {
+    serde_json::json!({
+        "mode": "lightweight",
+        "agent_intent": format!("{:?}", policy.intent),
+        "legacy_scene_hint": policy.legacy_scene_hint,
+        "vault_scope_hash": vault_scope_hash(vault),
+        "note_path": note_path,
+        "required_model_slot": capability_slot_wire(policy.model_slot),
+        "required_permissions": required_permissions_for_policy(web_search),
+        "required_skills": skill_names_for_policy(skill_activation_plan),
+    })
+}
+
+fn task_scope_for_request(note_path: Option<&str>, has_selection: bool) -> AgentTaskScope {
+    if has_selection {
+        AgentTaskScope::Selection
+    } else if note_path.is_some() {
+        AgentTaskScope::Note
+    } else {
+        AgentTaskScope::Vault
+    }
+}
+
+fn task_kind_for_intent(intent: crate::ai_types::AgentIntent) -> AgentTaskKind {
+    match intent {
+        crate::ai_types::AgentIntent::Research
+        | crate::ai_types::AgentIntent::CitationCheck
+        | crate::ai_types::AgentIntent::DocumentCheck
+        | crate::ai_types::AgentIntent::Chapter => AgentTaskKind::Complex,
+        _ => AgentTaskKind::Lightweight,
+    }
+}
+
+fn legacy_task_policy_from_scene(
+    scene: AiScene,
+    note_path: Option<&str>,
+    web_search: bool,
+    has_attachments: bool,
+) -> AgentTaskPolicy {
+    let intent = intent_from_legacy_scene(scene);
+    AgentTaskPolicy::from_input(AgentTaskPolicyInput {
+        intent,
+        task_kind: task_kind_for_intent(intent),
+        scope: task_scope_for_request(note_path, false),
+        web_authorized: web_search,
+        has_attachments,
+        write_permission_required: matches!(
+            intent,
+            crate::ai_types::AgentIntent::RewriteSelection
+                | crate::ai_types::AgentIntent::Write
+                | crate::ai_types::AgentIntent::Chapter
+                | crate::ai_types::AgentIntent::DocumentCheck
+        ),
+        research_depth: matches!(
+            intent,
+            crate::ai_types::AgentIntent::Research | crate::ai_types::AgentIntent::CitationCheck
+        ) as u32,
+    })
+}
+
+fn infer_agent_intent_for_new_request(
+    message: &str,
+    note_path: Option<&str>,
+    has_attachments: bool,
+) -> AgentIntent {
+    if has_attachments {
+        return AgentIntent::VisionChat;
+    }
+
+    let text = message.to_lowercase();
+    let contains_any = |needles: &[&str]| needles.iter().any(|needle| text.contains(needle));
+    if contains_any(&["skillhub", "技能", "安装 skill", "install skill"]) {
+        AgentIntent::SkillManagement
+    } else if contains_any(&["研究", "调研", "综述", "对比", "深挖"]) {
+        AgentIntent::Research
+    } else if contains_any(&["引用", "引证", "依据", "出处", "核查", "citation"]) {
+        AgentIntent::CitationCheck
+    } else if contains_any(&["全文检查", "文档检查", "大纲检查", "风格一致"]) {
+        AgentIntent::DocumentCheck
+    } else if contains_any(&["章节", "这一章", "本章", "chapter"]) {
+        AgentIntent::Chapter
+    } else if contains_any(&["整理", "归档", "标签", "分类", "知识库"]) {
+        AgentIntent::Organize
+    } else if contains_any(&["改写", "重写", "润色", "续写", "扩写", "写一段"]) {
+        AgentIntent::Write
+    } else if note_path.is_some()
+        || contains_any(&["查一下", "查阅", "搜索", "找一下", "库里", "笔记"])
+    {
+        AgentIntent::AskNotes
+    } else {
+        AgentIntent::Chat
+    }
+}
+
+fn derive_task_policy_for_new_request(
+    intent: AgentIntent,
+    note_path: Option<&str>,
+    has_selection: bool,
+    web_search: bool,
+    has_attachments: bool,
+) -> AgentTaskPolicy {
+    AgentTaskPolicy::from_input(AgentTaskPolicyInput {
+        intent,
+        task_kind: task_kind_for_intent(intent),
+        scope: task_scope_for_request(note_path, has_selection),
+        web_authorized: web_search,
+        has_attachments,
+        write_permission_required: matches!(
+            intent,
+            AgentIntent::RewriteSelection
+                | AgentIntent::Write
+                | AgentIntent::Chapter
+                | AgentIntent::DocumentCheck
+        ),
+        research_depth: if matches!(intent, AgentIntent::Research | AgentIntent::CitationCheck) {
+            2
+        } else {
+            0
+        },
+    })
+}
+
+fn budget_pause_checkpoint(
+    finish_reason: crate::ai_runtime::harness::HarnessFinishReason,
+    selected_packet_ids: Vec<String>,
+    evidence_packet_ids: Vec<String>,
+    prompt_tokens: u32,
+    completion_tokens: u32,
+) -> serde_json::Value {
+    AgentTaskRuntime::build_budget_pause_checkpoint(BudgetPauseCheckpointInput {
+        finish_reason: match finish_reason {
+            crate::ai_runtime::harness::HarnessFinishReason::BudgetExhausted => "budget_exhausted",
+            crate::ai_runtime::harness::HarnessFinishReason::RoundLimit => "round_limit",
+            crate::ai_runtime::harness::HarnessFinishReason::AwaitingConfirmation => {
+                "awaiting_confirmation"
+            }
+            crate::ai_runtime::harness::HarnessFinishReason::Completed => "completed",
+        },
+        selected_packet_ids,
+        evidence_packet_ids: evidence_packet_ids.clone(),
+        evidence_ledger_summary: format!(
+            "{} evidence packet ids retained; raw note bodies excluded",
+            evidence_packet_ids.len()
+        ),
+        continuation_goal: "continue the paused task from compacted evidence and prior safe step"
+            .into(),
+        last_safe_step: "harness_segment_paused".into(),
+        next_action: "resume task with compacted context".into(),
+        remaining_budget_hint: serde_json::json!({
+            "prompt_tokens": prompt_tokens,
+            "completion_tokens": completion_tokens,
+        }),
+    })
+}
+
+fn accessible_note_paths_for_resume(vault: &Path, plan: &AgentTaskResumePlan) -> Vec<String> {
+    let Some(note_path) = plan
+        .budget_policy
+        .get("note_path")
+        .and_then(serde_json::Value::as_str)
+    else {
+        return Vec::new();
+    };
+    if validate_ai_note_path(Some(note_path)).is_err() {
+        return Vec::new();
+    }
+    match resolve_vault_path(vault, note_path) {
+        Ok(abs) if abs.exists() => vec![note_path.to_string()],
+        _ => Vec::new(),
+    }
+}
+
+fn enabled_skill_names_for_resume(vault: &Path) -> AppResult<Vec<String>> {
+    Ok(crate::ai_runtime::skills::scan_all(vault)?
+        .into_iter()
+        .filter(|skill| skill.enabled)
+        .map(|skill| skill.name)
+        .collect())
+}
+
+fn intrinsic_resume_permission(permission: &str) -> bool {
+    matches!(
+        permission,
+        "vault.read"
+            | "vault.search"
+            | "runtime.context.read"
+            | "web.search"
+            | "skill.read_resource"
+            | "app_state.read"
+            | "git.read_status"
+            | "git.read_diff"
+            | "git.read_log"
+    )
+}
+
+fn permission_has_active_grant(
+    state: &AppState,
+    plan: &AgentTaskResumePlan,
+    permission: &str,
+) -> AppResult<bool> {
+    use crate::ai_runtime::agent_permissions::{find_permission_grant, PermissionScopeKind};
+
+    if intrinsic_resume_permission(permission) {
+        return Ok(true);
+    }
+
+    let session_scope = plan.session_id.to_string();
+    let vault_scope = plan.vault_scope_hash.as_deref();
+    for (kind, value) in [
+        (PermissionScopeKind::Request, Some(plan.request_id.as_str())),
+        (PermissionScopeKind::Session, Some(session_scope.as_str())),
+        (PermissionScopeKind::Vault, vault_scope),
+        (PermissionScopeKind::Global, None),
+    ] {
+        if find_permission_grant(&state.db, permission, kind, value, None)?.is_some() {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+fn active_permissions_for_resume(
+    state: &AppState,
+    plan: &AgentTaskResumePlan,
+) -> AppResult<Vec<String>> {
+    let mut active = Vec::new();
+    for permission in &plan.required_permissions {
+        if permission_has_active_grant(state, plan, permission)? {
+            active.push(permission.clone());
+        }
+    }
+    Ok(active)
+}
+
+fn current_model_slot_for_resume(state: &AppState, plan: &AgentTaskResumePlan) -> Option<String> {
+    if let Ok(Some(checkpoint)) =
+        crate::ai_runtime::harness_support::load_harness_checkpoint(&state.db, &plan.request_id)
+    {
+        if let Some(policy) = checkpoint.meta.task_policy {
+            let _ = resolve_for_task_policy(&state.db, &policy).ok()?;
+            return Some(capability_slot_wire(policy.model_slot).to_string());
+        }
+    }
+    let scene = load_scene_from_checkpoint(state, &plan.request_id)
+        .ok()
+        .or_else(|| plan.legacy_scene_hint.clone())
+        .and_then(|scene| parse_ai_scene(&scene).ok())?;
+    let fallback = legacy_task_policy_from_scene(scene, None, false, false);
+    let _ = resolve_for_task_policy(&state.db, &fallback).ok()?;
+    Some(capability_slot_wire(fallback.model_slot).to_string())
+}
+
+fn preflight_agent_task_resume(state: &AppState, plan: &AgentTaskResumePlan) -> AppResult<()> {
+    let vault = state.vault_path()?;
+    let preflight = AgentTaskResumePreflight {
+        current_vault_scope_hash: Some(vault_scope_hash(&vault)),
+        accessible_note_paths: accessible_note_paths_for_resume(&vault, plan),
+        available_packet_ids: plan.evidence_refs.clone(),
+        enabled_skill_names: enabled_skill_names_for_resume(&vault)?,
+        active_permissions: active_permissions_for_resume(state, plan)?,
+        current_model_slot: current_model_slot_for_resume(state, plan),
+    };
+    AgentTaskRuntime::validate_resume_preflight(plan, &preflight)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -90,6 +415,7 @@ fn build_context_packets_cached(
 pub async fn context_assemble(
     state: State<'_, Arc<AppState>>,
     scene: String,
+    agent_intent: Option<AgentIntent>,
     note_path: Option<String>,
     _note_content_hash: Option<String>,
     query: String,
@@ -100,33 +426,44 @@ pub async fn context_assemble(
     validate_ai_note_path(note_path.as_deref())?;
 
     let scene = parse_ai_scene(&scene)?;
+    let web_search_enabled = web_search.unwrap_or(false);
+    let task_policy = derive_task_policy_for_new_request(
+        agent_intent.unwrap_or_else(|| {
+            infer_agent_intent_for_new_request(&query, note_path.as_deref(), false)
+        }),
+        note_path.as_deref(),
+        false,
+        web_search_enabled,
+        false,
+    );
 
-    let profile = resolve_scene(scene);
     let registry = ToolRegistry::new();
     let skill_allowed_tools = state
         .vault_path()
         .ok()
         .and_then(|vault| {
-            crate::ai_runtime::skills::active_skill_allowed_tools(
+            crate::ai_runtime::skills::active_skill_allowed_tools_for_task(
                 &vault,
-                scene,
+                task_policy.intent,
                 Some(&state.db),
                 &query,
+                &[],
             )
             .ok()
         })
         .unwrap_or_default();
     let policy_ctx = crate::ai_runtime::tool_policy::ToolPolicyContext {
+        task_policy: Some(task_policy.clone()),
         scene,
-        autonomy_level: profile.autonomy_level,
-        web_search_enabled: web_search.unwrap_or(false),
+        autonomy_level: task_policy.autonomy_level,
+        web_search_enabled,
         skill_allowed_tools,
         depth: 0,
     };
     let tools: Vec<_> = registry.tools_for_policy_surface(&policy_ctx, false);
 
     // Run intent detection and context planning
-    let plan = plan_context(&query, scene, note_path.as_deref())?;
+    let plan = plan_context_for_policy(&query, &task_policy, note_path.as_deref())?;
 
     // Only return an execution plan when there are multiple sub-queries,
     // so the frontend can show a preview for complex queries.
@@ -163,14 +500,15 @@ pub async fn context_assemble(
 
     let vault = state.vault_path()?;
     let user_scope = context_scope.unwrap_or_default();
-    let resolved = crate::llm::config::resolve_for_scene(&state.db, scene)?;
+    let route = resolve_for_task_policy(&state.db, &task_policy)?;
+    let resolved = route.resolved;
     let build_opts = ContextBuildOptions {
         max_results: max_results_from_budget(
             resolved.input_budget,
             scene,
-            resolved.context_strategy,
+            task_policy.context_strategy,
         ),
-        strategy: resolved.context_strategy,
+        strategy: task_policy.context_strategy,
         input_budget: resolved.input_budget,
     };
     let (packets, context_status) = build_context_packets_cached(
@@ -203,6 +541,7 @@ pub async fn context_assemble(
 pub(crate) struct AiSendRoutingOverride {
     pub resolved: ResolvedLlmConfig,
     pub slot: crate::ai_types::CapabilitySlot,
+    pub task_policy: AgentTaskPolicy,
     pub skill_activation_plan: Option<crate::ai_types::SkillActivationPlanSummary>,
 }
 
@@ -335,6 +674,7 @@ pub(crate) async fn execute_ai_send_message(
     state: &AppState,
     app_handle: &tauri::AppHandle,
     scene: String,
+    agent_intent: Option<AgentIntent>,
     session_id: Option<i64>,
     message: String,
     images: Option<Vec<ImageAttachmentDto>>,
@@ -348,6 +688,7 @@ pub(crate) async fn execute_ai_send_message(
         state,
         app_handle,
         scene,
+        agent_intent,
         session_id,
         message,
         images,
@@ -367,6 +708,7 @@ pub(crate) async fn execute_ai_send_message_with_routing(
     state: &AppState,
     app_handle: &tauri::AppHandle,
     scene: String,
+    agent_intent: Option<AgentIntent>,
     session_id: Option<i64>,
     message: String,
     images: Option<Vec<ImageAttachmentDto>>,
@@ -383,8 +725,25 @@ pub(crate) async fn execute_ai_send_message_with_routing(
     let new_session = new_session.unwrap_or(false);
     let request_id = uuid::Uuid::new_v4().to_string();
     let scene = parse_ai_scene(&scene)?;
-
-    let _profile = resolve_scene(scene);
+    let has_attachments = images.as_ref().is_some_and(|items| !items.is_empty());
+    let task_policy = routing_override
+        .as_ref()
+        .map(|route| route.task_policy.clone())
+        .unwrap_or_else(|| {
+            derive_task_policy_for_new_request(
+                agent_intent.unwrap_or_else(|| {
+                    infer_agent_intent_for_new_request(
+                        &message,
+                        note_path.as_deref(),
+                        has_attachments,
+                    )
+                }),
+                note_path.as_deref(),
+                false,
+                web_search,
+                has_attachments,
+            )
+        });
 
     // Start trace
     TraceRecorder::start(&state.db, &request_id, scene)?;
@@ -507,15 +866,14 @@ pub(crate) async fn execute_ai_send_message_with_routing(
             .unwrap_or(None),
         None => None,
     };
-    let route_slot = routing_override.as_ref().map(|route| route.slot);
     let skill_activation_plan = routing_override
         .as_ref()
         .and_then(|route| route.skill_activation_plan.clone());
-    let resolved = if let Some(route) = routing_override {
-        route.resolved
+    let (resolved, route_slot) = if let Some(route) = routing_override {
+        (route.resolved, route.slot)
     } else {
-        match crate::llm::config::resolve_for_scene(&state.db, scene) {
-            Ok(resolved) => resolved,
+        match resolve_for_task_policy(&state.db, &task_policy) {
+            Ok(route) => (route.resolved, route.summary.slot),
             Err(err) => {
                 let _ = AgentTaskRuntime::fail_safe(&state.db, &task_id, "MODEL_CONFIG_ERROR");
                 return Err(err);
@@ -536,9 +894,9 @@ pub(crate) async fn execute_ai_send_message_with_routing(
         max_results: max_results_from_budget(
             resolved.input_budget,
             scene,
-            resolved.context_strategy,
+            task_policy.context_strategy,
         ),
-        strategy: resolved.context_strategy,
+        strategy: task_policy.context_strategy,
         input_budget: resolved.input_budget,
     };
     let (packets, _context_status) = match build_context_packets_cached(
@@ -596,12 +954,22 @@ pub(crate) async fn execute_ai_send_message_with_routing(
         .map(|m| (m.role.clone(), m.content.clone()))
         .collect();
 
-    let provider_config = if let Some(slot) = route_slot {
-        resolved.to_provider_config_for_slot(slot)
-    } else {
-        resolved.to_provider_config(scene)
-    };
+    let provider_config = resolved.to_provider_config_for_slot(route_slot);
     let provider_name = provider_config.name.clone();
+    if let Err(err) = AgentTaskRuntime::update_budget_policy(
+        &state.db,
+        &task_id,
+        build_task_budget_policy(
+            &task_policy,
+            &vault,
+            note_path.as_deref(),
+            web_search,
+            skill_activation_plan.as_ref(),
+        ),
+    ) {
+        let _ = AgentTaskRuntime::fail_safe(&state.db, &task_id, "TASK_POLICY_ERROR");
+        return Err(err);
+    }
 
     TraceRecorder::update_status(&state.db, &request_id, TraceStatus::ContextAssembled)?;
 
@@ -625,6 +993,7 @@ pub(crate) async fn execute_ai_send_message_with_routing(
             token_budget: None,
             max_rounds_override: None,
             skill_activation_plan,
+            task_policy: task_policy.clone(),
         },
         provider_config,
         Some(resolved.output_budget),
@@ -651,6 +1020,22 @@ pub(crate) async fn execute_ai_send_message_with_routing(
     } else {
         AgentTaskStatus::Completed
     };
+    let evidence_packet_ids = filtered_packets
+        .iter()
+        .map(|p| p.id.clone())
+        .collect::<Vec<_>>();
+    let resume_selected_packet_ids = if resolved_ids.is_empty() {
+        evidence_packet_ids.clone()
+    } else {
+        resolved_ids.clone()
+    };
+    let pause_checkpoint = budget_pause_checkpoint(
+        harness_result.finish_reason,
+        resume_selected_packet_ids,
+        evidence_packet_ids.clone(),
+        harness_result.usage.prompt_tokens,
+        harness_result.usage.completion_tokens,
+    );
     AgentTaskRuntime::record_step(
         &state.db,
         &task_id,
@@ -658,7 +1043,10 @@ pub(crate) async fn execute_ai_send_message_with_routing(
         task_status,
         "user message summarized in agent_tasks",
         "assistant response summarized by session message",
-        serde_json::json!({
+        if task_status == AgentTaskStatus::PausedBudget {
+            pause_checkpoint.clone()
+        } else {
+            serde_json::json!({
             "summary": if harness_result.pending_confirmation {
                 "awaiting tool confirmation"
             } else if task_status == AgentTaskStatus::PausedBudget {
@@ -666,9 +1054,10 @@ pub(crate) async fn execute_ai_send_message_with_routing(
             } else {
                 "assistant response completed"
             },
-            "packet_ids": filtered_packets.iter().map(|p| p.id.clone()).collect::<Vec<_>>(),
+            "packet_ids": evidence_packet_ids,
             "finish_reason": harness_result.finish_reason,
-        }),
+            })
+        },
     )?;
 
     if task_status == AgentTaskStatus::PausedBudget {
@@ -676,19 +1065,14 @@ pub(crate) async fn execute_ai_send_message_with_routing(
             &state.db,
             &task_id,
             "segment paused before producing a reliable final answer",
-            serde_json::json!({
-                "summary": "segment paused before reliable final answer",
-                "finish_reason": harness_result.finish_reason,
-                "packet_ids": filtered_packets.iter().map(|p| p.id.clone()).collect::<Vec<_>>(),
-                "next_action": "resume task with compacted context"
-            }),
+            pause_checkpoint,
         )?;
     } else if !harness_result.pending_confirmation {
         if let Err(err) = finalize_chat_harness_run(
             state,
             &request_id,
             sid,
-            route_slot.unwrap_or_else(|| ModelGateway::slot_for_scene(scene)),
+            route_slot,
             &provider_name,
             &harness_result,
             &filtered_packets,
@@ -737,6 +1121,7 @@ pub async fn ai_send_message(
     state: State<'_, Arc<AppState>>,
     app_handle: tauri::AppHandle,
     scene: String,
+    agent_intent: Option<AgentIntent>,
     session_id: Option<i64>,
     message: String,
     images: Option<Vec<ImageAttachmentDto>>,
@@ -750,6 +1135,7 @@ pub async fn ai_send_message(
         state.inner().as_ref(),
         &app_handle,
         scene,
+        agent_intent,
         session_id,
         message,
         images,
@@ -867,20 +1253,22 @@ fn sync_agent_task_after_harness(
         crate::ai_runtime::harness::HarnessFinishReason::BudgetExhausted
             | crate::ai_runtime::harness::HarnessFinishReason::RoundLimit
     ) {
+        let packet_ids = harness_result
+            .evidence_packets
+            .iter()
+            .map(|p| p.id.clone())
+            .collect::<Vec<_>>();
         return AgentTaskRuntime::pause_budget(
             &state.db,
             &task_id,
             "resumed segment paused before producing a reliable final answer",
-            serde_json::json!({
-                "summary": "resumed segment paused before reliable final answer",
-                "finish_reason": harness_result.finish_reason,
-                "packet_ids": harness_result
-                    .evidence_packets
-                    .iter()
-                    .map(|p| p.id.clone())
-                    .collect::<Vec<_>>(),
-                "next_action": "resume task with compacted context"
-            }),
+            budget_pause_checkpoint(
+                harness_result.finish_reason,
+                packet_ids.clone(),
+                packet_ids,
+                harness_result.usage.prompt_tokens,
+                harness_result.usage.completion_tokens,
+            ),
         );
     }
     AgentTaskRuntime::complete_task(&state.db, &task_id)
@@ -908,16 +1296,10 @@ pub async fn tool_confirm(
             resume_harness_after_tool_confirm_or_restore(state.inner(), &app_handle, &request_id)
                 .await?;
         if harness_has_reliable_final_answer(&harness_result) {
-            let scene = parse_ai_scene(&load_scene_from_checkpoint(state.inner(), &request_id)?)?;
-            let resolved = crate::llm::config::resolve_for_scene(&state.db, scene)?;
-            finalize_chat_harness_run(
+            finalize_chat_harness_run_from_task_policy(
                 state.inner(),
                 &request_id,
-                harness_result.session_id,
-                ModelGateway::slot_for_scene(scene),
-                &resolved.to_provider_config(scene).name,
                 &harness_result,
-                &harness_result.evidence_packets,
             )?;
         }
         sync_agent_task_after_harness(state.inner(), &harness_result)?;
@@ -973,17 +1355,7 @@ pub async fn tool_confirm(
             .await?;
 
     if harness_has_reliable_final_answer(&harness_result) {
-        let scene = pending.scene;
-        let resolved = crate::llm::config::resolve_for_scene(&state.db, scene)?;
-        finalize_chat_harness_run(
-            state.inner(),
-            &request_id,
-            harness_result.session_id,
-            ModelGateway::slot_for_scene(scene),
-            &resolved.to_provider_config(scene).name,
-            &harness_result,
-            &harness_result.evidence_packets,
-        )?;
+        finalize_chat_harness_run_from_task_policy(state.inner(), &request_id, &harness_result)?;
     }
     sync_agent_task_after_harness(state.inner(), &harness_result)?;
 
@@ -1010,28 +1382,68 @@ fn load_scene_from_checkpoint(state: &AppState, request_id: &str) -> AppResult<S
     Ok(cp.meta.scene)
 }
 
+fn task_policy_from_checkpoint(state: &AppState, request_id: &str) -> AppResult<AgentTaskPolicy> {
+    use crate::ai_runtime::harness_support::load_harness_checkpoint;
+    let cp = load_harness_checkpoint(&state.db, request_id)?
+        .ok_or_else(|| AppError::msg("checkpoint missing"))?;
+    if let Some(policy) = cp.meta.task_policy {
+        return Ok(policy);
+    }
+
+    let scene = parse_ai_scene(&cp.meta.scene)?;
+    Ok(legacy_task_policy_from_scene(
+        scene,
+        cp.meta.note_path.as_deref(),
+        cp.meta.web_search_enabled,
+        false,
+    ))
+}
+
+fn finalize_chat_harness_run_from_task_policy(
+    state: &AppState,
+    request_id: &str,
+    harness_result: &crate::ai_runtime::harness::HarnessRunResult,
+) -> AppResult<()> {
+    let policy = task_policy_from_checkpoint(state, request_id)?;
+    let route = resolve_for_task_policy(&state.db, &policy)?;
+    let provider_config = route
+        .resolved
+        .to_provider_config_for_slot(route.summary.slot);
+    finalize_chat_harness_run(
+        state,
+        request_id,
+        harness_result.session_id,
+        route.summary.slot,
+        &provider_config.name,
+        harness_result,
+        &harness_result.evidence_packets,
+    )
+}
+
 /// Get available tools for a scene (for frontend display).
 #[tauri::command]
 pub fn ai_list_tools(state: State<'_, Arc<AppState>>, scene: String) -> AppResult<Vec<AiToolInfo>> {
     let scene = parse_ai_scene(&scene)?;
     let registry = ToolRegistry::new();
-    let profile = crate::ai_runtime::resolve_scene(scene);
+    let task_policy = legacy_task_policy_from_scene(scene, None, true, false);
     let skill_allowed_tools = state
         .vault_path()
         .ok()
         .and_then(|vault| {
-            crate::ai_runtime::skills::active_skill_allowed_tools(
+            crate::ai_runtime::skills::active_skill_allowed_tools_for_task(
                 &vault,
-                scene,
+                task_policy.intent,
                 Some(&state.db),
                 scene.profile(),
+                &[],
             )
             .ok()
         })
         .unwrap_or_default();
     let ctx = crate::ai_runtime::tool_policy::ToolPolicyContext {
+        task_policy: Some(task_policy.clone()),
         scene,
-        autonomy_level: profile.autonomy_level,
+        autonomy_level: task_policy.autonomy_level,
         web_search_enabled: true,
         skill_allowed_tools,
         depth: 0,
@@ -1419,22 +1831,105 @@ pub async fn harness_resume(
             .await?;
 
     if harness_has_reliable_final_answer(&harness_result) {
-        let scene_str = load_scene_from_checkpoint(state.inner(), &request_id)?;
-        let scene = parse_ai_scene(&scene_str)?;
-        let resolved = crate::llm::config::resolve_for_scene(&state.db, scene)?;
-        finalize_chat_harness_run(
-            state.inner(),
-            &request_id,
-            harness_result.session_id,
-            ModelGateway::slot_for_scene(scene),
-            &resolved.to_provider_config(scene).name,
-            &harness_result,
-            &harness_result.evidence_packets,
-        )?;
+        finalize_chat_harness_run_from_task_policy(state.inner(), &request_id, &harness_result)?;
     }
     sync_agent_task_after_harness(state.inner(), &harness_result)?;
 
     harness_run_to_chat_response(state.inner(), &harness_result)
+}
+
+/// Return a durable Agent Task by id.
+#[tauri::command]
+pub async fn agent_task_get(
+    state: State<'_, Arc<AppState>>,
+    task_id: String,
+) -> AppResult<Option<AgentTask>> {
+    AgentTaskRuntime::get_task(&state.db, &task_id)
+}
+
+/// List durable Agent Tasks for the current task UI.
+#[tauri::command]
+pub async fn agent_task_list(
+    state: State<'_, Arc<AppState>>,
+    session_id: Option<i64>,
+    status: Option<String>,
+) -> AppResult<Vec<AgentTask>> {
+    let status = match status {
+        Some(value) => Some(
+            AgentTaskStatus::parse_wire(&value)
+                .ok_or_else(|| AppError::msg(format!("invalid task status: {value}")))?,
+        ),
+        None => None,
+    };
+    AgentTaskRuntime::list_tasks(&state.db, TaskListFilter { session_id, status })
+}
+
+/// Resume a paused Agent Task by durable task id.
+#[tauri::command]
+pub async fn agent_task_resume(
+    state: State<'_, Arc<AppState>>,
+    app_handle: tauri::AppHandle,
+    task_id: String,
+) -> AppResult<AiChatResponse> {
+    use crate::ai_runtime::harness_confirm::resume_harness_after_tool_confirm_or_restore;
+
+    let plan = AgentTaskRuntime::prepare_resume_plan(&state.db, &task_id)?;
+    if let Err(err) = preflight_agent_task_resume(state.inner(), &plan) {
+        let _ = AgentTaskRuntime::pause_recoverable(
+            &state.db,
+            &plan.task_id,
+            "RESUME_PREFLIGHT_FAILED",
+        );
+        return Err(err);
+    }
+    AgentTaskRuntime::begin_resume(&state.db, &task_id, &plan)?;
+    let harness_result = match resume_harness_after_tool_confirm_or_restore(
+        state.inner(),
+        &app_handle,
+        &plan.request_id,
+    )
+    .await
+    {
+        Ok(result) => result,
+        Err(err) => {
+            let _ = AgentTaskRuntime::pause_recoverable(&state.db, &plan.task_id, "RESUME_FAILED");
+            return Err(err);
+        }
+    };
+
+    if harness_has_reliable_final_answer(&harness_result) {
+        let finalize_result = finalize_chat_harness_run_from_task_policy(
+            state.inner(),
+            &plan.request_id,
+            &harness_result,
+        );
+        if let Err(err) = finalize_result {
+            let _ = AgentTaskRuntime::pause_recoverable(
+                &state.db,
+                &plan.task_id,
+                "RESUME_FINALIZE_FAILED",
+            );
+            return Err(err);
+        }
+    }
+    if let Err(err) = sync_agent_task_after_harness(state.inner(), &harness_result) {
+        let _ = AgentTaskRuntime::pause_recoverable(&state.db, &plan.task_id, "RESUME_SYNC_FAILED");
+        return Err(err);
+    }
+
+    let mut response = harness_run_to_chat_response(state.inner(), &harness_result)?;
+    response.resumed = Some(true);
+    Ok(response)
+}
+
+/// Abort a durable Agent Task and any active model request associated with it.
+#[tauri::command]
+pub async fn agent_task_abort(state: State<'_, Arc<AppState>>, task_id: String) -> AppResult<()> {
+    let task = AgentTaskRuntime::get_task(&state.db, &task_id)?
+        .ok_or_else(|| AppError::msg("agent task not found"))?;
+    crate::ai_runtime::model_gateway::request_abort(&task.request_id);
+    let _ = TraceRecorder::update_status(&state.db, &task.request_id, TraceStatus::Aborted);
+    AgentTaskRuntime::abort_task(&state.db, &task_id)
 }
 
 /// Abort an active harness/model request.
