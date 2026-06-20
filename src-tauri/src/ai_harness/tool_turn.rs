@@ -5,6 +5,13 @@ use crate::ai_runtime::model_gateway::{LlmMessage, MessageRole, ToolCall};
 use crate::ai_runtime::tool_executor::ToolRegistry;
 use crate::ai_runtime::tool_policy::ToolPolicyContext;
 
+/// Position of the current confirmation within the latest assistant tool batch.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PendingConfirmationPosition {
+    pub index: usize,
+    pub count: usize,
+}
+
 /// First confirm-required tool on the latest assistant turn that lacks a tool result.
 pub fn outstanding_confirm_tool<'a>(
     registry: &ToolRegistry,
@@ -49,6 +56,34 @@ pub fn outstanding_confirm_ids(
         })
         .map(|tc| tc.id.clone())
         .collect()
+}
+
+/// Confirmation progress for a specific pending tool call on the latest assistant turn.
+pub fn pending_confirmation_position(
+    registry: &ToolRegistry,
+    messages: &[LlmMessage],
+    policy_ctx: &ToolPolicyContext,
+    tool_call_id: &str,
+) -> Option<PendingConfirmationPosition> {
+    let (_, calls) = latest_assistant_tool_calls(messages)?;
+    let confirm_ids = calls
+        .iter()
+        .filter(|tc| {
+            registry.requires_confirmation(&tc.function.name)
+                && registry
+                    .check_tool_policy(&tc.function.name, policy_ctx)
+                    .is_ok()
+        })
+        .map(|tc| tc.id.as_str())
+        .collect::<Vec<_>>();
+    let index = confirm_ids
+        .iter()
+        .position(|id| *id == tool_call_id)
+        .map(|idx| idx + 1)?;
+    Some(PendingConfirmationPosition {
+        index,
+        count: confirm_ids.len(),
+    })
 }
 
 /// Skip-stub IDs for checkpoint persistence after appending one tool result.

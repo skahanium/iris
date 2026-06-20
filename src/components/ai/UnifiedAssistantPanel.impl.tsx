@@ -33,6 +33,7 @@ import { useAgentTaskStatus } from "./hooks/useAgentTaskStatus";
 import { useResearchControl } from "./hooks/useResearchControl";
 import { ContextScopeChips } from "./ContextScopeChips";
 import { AssistantTaskSurfaces } from "./AssistantTaskSurfaces";
+import { AgentTaskStatusPanel } from "./AgentTaskStatusPanel";
 import { RuleConfirmDialog } from "./RuleConfirmDialog";
 import { ToolConfirmDialog } from "./ToolConfirmDialog";
 import { useAssistantRunPlan } from "./hooks/useAssistantRunPlan";
@@ -98,6 +99,7 @@ export function UnifiedAssistantPanel({
     organizeSelection,
     organizeSuggestions,
     researchResult,
+    researchState,
     setCitationResult,
     setDocIssues,
     setDocSummary,
@@ -105,7 +107,10 @@ export function UnifiedAssistantPanel({
     setOrganizeSelection,
     setOrganizeSuggestions,
     setResearchResult,
+    setResearchState,
     setWritingPatches,
+    setWritingState,
+    writingState,
     writingPatches,
   } = useAssistantArtifacts({
     getNoteContent,
@@ -317,11 +322,13 @@ export function UnifiedAssistantPanel({
       setPausedTaskId,
       setResearchPanelExpanded,
       setResearchResult,
+      setResearchState,
       setResearchRunning,
       setSessionId,
       setSessionTokenUsage,
       setStreaming,
       setWritingPatches,
+      setWritingState,
     },
   });
 
@@ -386,15 +393,14 @@ export function UnifiedAssistantPanel({
       />
 
       <AssistantTaskSurfaces
+        activityHint={activityHint}
         agentTask={agentTaskStatus.agentTask}
-        agentTaskEvents={agentTaskStatus.agentTaskEvents}
-        agentTaskSteps={agentTaskStatus.agentTaskSteps}
         researchProgress={researchProgress}
         researchRunning={researchRunning}
-        onAbortAgentTask={() => void agentTaskStatus.abortAgentTask()}
-        onAbortResearch={() => void abortResearch()}
-        onOpenAgentTaskAudit={() => setAuditDrawerOpen(true)}
-        onResumeAgentTask={() => void handleHarnessResume()}
+        onAbortProcess={() => {
+          if (researchRunning) void abortResearch();
+          else void agentTaskStatus.abortAgentTask();
+        }}
         researchResult={researchResult}
         researchPanelExpanded={researchPanelExpanded}
         researchDetailRef={researchDetailRef}
@@ -410,6 +416,7 @@ export function UnifiedAssistantPanel({
         onAcceptOrganize={() => void handleAcceptOrganize()}
         evidenceRefreshNotice={assistantRun.evidenceRefreshNotice}
         writingPatches={writingPatches}
+        writingState={writingState}
         onAcceptPatch={(item) => void handleAcceptPatch(item)}
         onRejectPatch={handleRejectPatch}
         onCopyPatch={(item) => void handleCopyPatch(item)}
@@ -418,8 +425,6 @@ export function UnifiedAssistantPanel({
           void runWriting(input.trim());
         }}
       />
-
-      {runPlan.layer}
 
       <ConversationSurface
         messages={messages}
@@ -431,6 +436,19 @@ export function UnifiedAssistantPanel({
         onRetract={handleRetract}
         onSelect={bubbleSelection.handleClick}
         onQuoteToInput={handleQuoteToInput}
+      />
+
+      <AgentTaskStatusPanel
+        task={agentTaskStatus.agentTask}
+        steps={agentTaskStatus.agentTaskSteps}
+        events={agentTaskStatus.agentTaskEvents}
+        intentDetection={runPlan.intentDetection}
+        onAbort={() => void agentTaskStatus.abortAgentTask()}
+        onOpenAudit={() => setAuditDrawerOpen(true)}
+        onResume={() => void handleHarnessResume()}
+        permissionPreflightSummary={runPlan.permissionPreflightSummary}
+        researchState={researchState}
+        runPlanSummary={runPlan.runPlanSummary}
       />
 
       {bubbleSelection.selected.size > 0 ? (

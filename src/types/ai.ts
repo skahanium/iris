@@ -519,6 +519,7 @@ export interface ResearchFocusPayload {
     }>;
   };
   total_tokens: TokenUsage;
+  research_state?: ResearchState;
 }
 
 /** 文档级检查类型 */

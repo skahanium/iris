@@ -100,18 +100,18 @@ describe("AgentTaskStatusPanel", () => {
       );
     });
 
-    expect(document.body.textContent).toContain("暂停");
-    expect(document.body.textContent).toContain("调研合同风险");
     expect(document.body.textContent).toContain("继续");
     expect(document.body.textContent).toContain("中止");
-    expect(document.body.textContent).toContain("查看进度摘要");
+    expect(document.body.textContent).toContain("过程详情");
+    expect(document.body.textContent).not.toContain("调研合同风险");
+    expect(document.body.textContent).not.toContain("找到两条证据");
     expect(document.body.textContent).not.toContain("checkpoint");
     expect(document.body.textContent).not.toContain("api_key");
     expect(document.body.textContent).not.toContain("raw_result");
 
     const summaryButton = Array.from(
       document.body.querySelectorAll("button"),
-    ).find((button) => button.textContent === "查看进度摘要");
+    ).find((button) => button.textContent?.includes("过程详情"));
     await act(async () => {
       summaryButton?.click();
     });

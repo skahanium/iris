@@ -35,7 +35,9 @@ import type {
   OrganizeSuggestion,
   PatchProposal,
   ResearchFocusPayload,
+  ResearchState,
   TokenUsage,
+  WritingState,
   WritingEditorContext,
   IntentDetectionResult,
   PermissionPreflightSummary,
@@ -118,11 +120,13 @@ interface AssistantTaskStatePorts {
   setPausedTaskId: Dispatch<SetStateAction<string | null>>;
   setResearchPanelExpanded: Dispatch<SetStateAction<boolean>>;
   setResearchResult: Dispatch<SetStateAction<ResearchFocusPayload | null>>;
+  setResearchState: Dispatch<SetStateAction<ResearchState | null>>;
   setResearchRunning: Dispatch<SetStateAction<boolean>>;
   setSessionId: Dispatch<SetStateAction<number | null>>;
   setSessionTokenUsage: Dispatch<SetStateAction<TokenUsage | null>>;
   setStreaming: Dispatch<SetStateAction<boolean>>;
   setWritingPatches: Dispatch<SetStateAction<PatchProposal[]>>;
+  setWritingState: Dispatch<SetStateAction<WritingState | null>>;
 }
 
 interface UseAssistantTasksParams {
@@ -195,11 +199,13 @@ export function useAssistantTasks({
     setPausedTaskId,
     setResearchPanelExpanded,
     setResearchResult,
+    setResearchState,
     setResearchRunning,
     setSessionId,
     setSessionTokenUsage,
     setStreaming,
     setWritingPatches,
+    setWritingState,
   } = state;
   const [images, setImages] = useState<ImageAttachment[]>([]);
 
@@ -556,6 +562,7 @@ export function useAssistantTasks({
       const nextPackets = result.evidence_used;
       const useSidebarDiff = patchSpansPreferSidebar(nextPatches);
       setWritingPatches(nextPatches);
+      setWritingState(result.writing_state ?? null);
       setPackets(nextPackets);
       setPacketsOpen(nextPackets.length > 0);
       setActionState({
@@ -585,6 +592,7 @@ export function useAssistantTasks({
       setPackets,
       setPacketsOpen,
       setWritingPatches,
+      setWritingState,
       webSearch,
     ],
   );
@@ -864,6 +872,7 @@ export function useAssistantTasks({
       const result = response.payload;
       researchRequestIdRef.current = result.request_id;
       setResearchResult(result);
+      setResearchState(result.research_state ?? null);
       setResearchPanelExpanded(false);
       setResearchRunning(false);
       setActionState(buildActionState("research", "completed"));
@@ -889,6 +898,7 @@ export function useAssistantTasks({
       setMessages,
       setResearchPanelExpanded,
       setResearchResult,
+      setResearchState,
       setResearchRunning,
       webSearch,
     ],

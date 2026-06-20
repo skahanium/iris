@@ -17,6 +17,8 @@ import type {
   PatchApplyResult,
   PatchProposal,
   ResearchFocusPayload,
+  ResearchState,
+  WritingState,
 } from "@/types/ai";
 
 interface UseAssistantArtifactsParams {
@@ -42,6 +44,10 @@ interface UseAssistantArtifactsResult {
   setOrganizeSelection: Dispatch<SetStateAction<Set<string>>>;
   researchResult: ResearchFocusPayload | null;
   setResearchResult: Dispatch<SetStateAction<ResearchFocusPayload | null>>;
+  researchState: ResearchState | null;
+  setResearchState: Dispatch<SetStateAction<ResearchState | null>>;
+  writingState: WritingState | null;
+  setWritingState: Dispatch<SetStateAction<WritingState | null>>;
   docSummary: string | null;
   setDocSummary: Dispatch<SetStateAction<string | null>>;
   docIssues: string[];
@@ -74,6 +80,10 @@ export function useAssistantArtifacts({
   );
   const [researchResult, setResearchResult] =
     useState<ResearchFocusPayload | null>(null);
+  const [researchState, setResearchState] = useState<ResearchState | null>(
+    null,
+  );
+  const [writingState, setWritingState] = useState<WritingState | null>(null);
   const [docSummary, setDocSummary] = useState<string | null>(null);
   const [docIssues, setDocIssues] = useState<string[]>([]);
   const [lastError, setLastError] = useState<string | null>(null);
@@ -87,6 +97,8 @@ export function useAssistantArtifacts({
     setOrganizeSuggestions([]);
     setOrganizeSelection(new Set());
     setResearchResult(null);
+    setResearchState(null);
+    setWritingState(null);
     setDocSummary(null);
     setDocIssues([]);
     setLastError(null);
@@ -173,6 +185,10 @@ export function useAssistantArtifacts({
     setOrganizeSelection,
     researchResult,
     setResearchResult,
+    researchState,
+    setResearchState,
+    writingState,
+    setWritingState,
     docSummary,
     setDocSummary,
     docIssues,

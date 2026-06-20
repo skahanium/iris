@@ -1,4 +1,8 @@
-import type { PermissionEffectSummary } from "./ai";
+import type {
+  DeliberationState,
+  PermissionEffectSummary,
+  VerificationSummary,
+} from "./ai";
 
 export interface FileListItem {
   path: string;
@@ -296,6 +300,8 @@ export interface AgentTaskDto {
   completed_at?: string | null;
   error_code?: string | null;
   error_message?: string | null;
+  deliberation_state?: DeliberationState | null;
+  verification_summary?: VerificationSummary | null;
 }
 
 export interface AgentTaskStepDto {

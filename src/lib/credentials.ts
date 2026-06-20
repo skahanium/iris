@@ -22,6 +22,9 @@ function friendlyLlmError(raw: string): string | null {
   if (lower.includes("401") || lower.includes("invalid_api_key")) {
     return "API Key 无效或未配置，请在设置中检查。";
   }
+  if (lower.includes("keyring error") || lower.includes("系统凭据管理器")) {
+    return "无法访问系统凭据管理器，请解锁系统钥匙串，或在设置中重新保存对应供应商的 API Key。";
+  }
   return null;
 }
 

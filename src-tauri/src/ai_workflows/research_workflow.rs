@@ -773,13 +773,20 @@ async fn detect_argument_chains(
 
 fn parse_argument_chain(json_str: &str) -> AppResult<ArgumentChain> {
     let json_str = json_str.trim();
+    if json_str.is_empty() {
+        return Ok(empty_argument_chain());
+    }
     let json_str = if json_str.starts_with("```") {
-        let start = json_str.find('[').unwrap_or(0);
-        let end = json_str.rfind(']').unwrap_or(json_str.len());
-        &json_str[start..=end]
+        match (json_str.find('['), json_str.rfind(']')) {
+            (Some(start), Some(end)) if start <= end => &json_str[start..=end],
+            _ => return Ok(empty_argument_chain()),
+        }
     } else {
         json_str
     };
+    if json_str.is_empty() {
+        return Ok(empty_argument_chain());
+    }
 
     let parsed: Vec<serde_json::Value> = serde_json::from_str(json_str)
         .map_err(|e| AppError::msg(format!("failed to parse argument chain: {e}")))?;
@@ -822,6 +829,14 @@ fn parse_argument_chain(json_str: &str) -> AppResult<ArgumentChain> {
         has_contradictions,
         chain_strength,
     })
+}
+
+fn empty_argument_chain() -> ArgumentChain {
+    ArgumentChain {
+        links: Vec::new(),
+        has_contradictions: false,
+        chain_strength: 0.0,
+    }
 }
 
 // ─── Summary Synthesis ───────────────────────────────────
@@ -1019,6 +1034,14 @@ mod tests {
         ]"#;
         let chain = parse_argument_chain(json).unwrap();
         assert!(chain.has_contradictions);
+    }
+
+    #[test]
+    fn parse_argument_chain_empty_response_degrades_to_empty_chain() {
+        let chain = parse_argument_chain("").unwrap();
+        assert!(chain.links.is_empty());
+        assert!(!chain.has_contradictions);
+        assert_eq!(chain.chain_strength, 0.0);
     }
 
     #[test]

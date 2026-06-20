@@ -136,4 +136,28 @@ describe("ToolConfirmDialog", () => {
     expect(document.body.textContent).not.toContain("修改参数");
     expect(document.body.textContent).not.toContain("调用参数");
   });
+
+  it("renders backend-provided confirmation progress", async () => {
+    await act(async () => {
+      root.render(
+        <ToolConfirmDialog
+          request={{
+            request_id: "req-4",
+            tool_call_id: "tc-4",
+            tool_name: "fetch_web_page",
+            arguments: {
+              url: "https://example.com/second",
+            },
+            pendingConfirmationIndex: 2,
+            pendingConfirmationCount: 3,
+          }}
+          onConfirm={() => {}}
+          onClose={() => {}}
+        />,
+      );
+    });
+
+    expect(document.body.textContent).toContain("确认进度");
+    expect(document.body.textContent).toContain("2 / 3");
+  });
 });

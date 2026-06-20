@@ -10,6 +10,11 @@ use iris_lib::ai_runtime::tool_policy::ToolPolicyContext;
 use iris_lib::ai_runtime::trace::TraceRecorder;
 use iris_lib::ai_runtime::{AiScene, AutonomyLevel};
 use iris_lib::storage::db::Database;
+use iris_lib::{
+    ai_harness::tool_turn::pending_confirmation_position,
+    ai_runtime::model_gateway::{LlmMessage, MessageRole, ToolCall},
+    ai_runtime::tool_executor::ToolRegistry,
+};
 
 fn catalog_entry(name: &str) -> &'static ToolCatalogEntry {
     TOOL_CATALOG
@@ -182,4 +187,45 @@ fn source_paths_use_tool_execution_pipeline_for_runtime_gates() {
     assert!(run_loop.contains("audit_dispatched_tool"));
     assert!(confirm.contains("evaluate_tool_execution"));
     assert!(confirm.contains("audit_dispatched_tool"));
+}
+
+#[test]
+fn pending_confirmation_position_reports_true_serial_progress() {
+    let registry = ToolRegistry::new();
+    let ctx = policy_ctx(AiScene::KnowledgeLookup, AutonomyLevel::L2);
+    let fetch_a = ToolCall::new(
+        "call_fetch_a",
+        "fetch_web_page",
+        r#"{"url":"https://example.com/a"}"#,
+    );
+    let fetch_b = ToolCall::new(
+        "call_fetch_b",
+        "fetch_web_page",
+        r#"{"url":"https://example.com/b"}"#,
+    );
+    let mut messages = vec![LlmMessage {
+        role: MessageRole::Assistant,
+        content: "fetch both".into(),
+        tool_call_id: None,
+        tool_calls: Some(vec![fetch_a.clone(), fetch_b.clone()]),
+        ..Default::default()
+    }];
+
+    let first = pending_confirmation_position(&registry, &messages, &ctx, &fetch_a.id)
+        .expect("first pending confirmation");
+    assert_eq!(first.index, 1);
+    assert_eq!(first.count, 2);
+
+    messages.push(LlmMessage {
+        role: MessageRole::Tool,
+        content: r#"{"title":"A"}"#.into(),
+        tool_call_id: Some(fetch_a.id.clone()),
+        tool_calls: None,
+        ..Default::default()
+    });
+
+    let second = pending_confirmation_position(&registry, &messages, &ctx, &fetch_b.id)
+        .expect("second pending confirmation");
+    assert_eq!(second.index, 2);
+    assert_eq!(second.count, 2);
 }

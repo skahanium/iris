@@ -40,7 +40,7 @@ describe("Agent Task Runtime Phase E UI contract", () => {
 
     expect(panel).toContain("AgentTaskStatusPanel");
     expect(panel).toContain('kind !== "complex"');
-    expect(panel).toContain("查看进度摘要");
+    expect(panel).toContain("过程详情");
     expect(panel).toContain("引用");
     expect(panel).toContain("权限等待");
     expect(panel).not.toContain("checkpoint_json");
@@ -48,7 +48,8 @@ describe("Agent Task Runtime Phase E UI contract", () => {
     expect(panel).not.toContain("noteContent");
     expect(panel).not.toContain("apiKey");
 
-    expect(surfaces).toContain("AgentTaskStatusPanel");
+    expect(surfaces).toContain("AssistantProcessStatusBar");
+    expect(unified).toContain("AgentTaskStatusPanel");
     expect(unified).toContain("agentTaskId");
     expect(unified).toContain("useAgentTaskStatus");
     expect(assistantTasks).toContain("setAgentTaskId(response.taskId");

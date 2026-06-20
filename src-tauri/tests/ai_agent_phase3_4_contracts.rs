@@ -2,7 +2,8 @@ use iris_lib::ai_runtime::conversation_memory::{
     build_memory_prompt_messages, ConversationMemory, ConversationMemoryPolicy,
 };
 use iris_lib::ai_runtime::deliberation::{
-    verify_completion, DeliberationInput, DeliberationState, VerificationStatus,
+    append_verification_notice, verification_notice, verify_completion, DeliberationInput,
+    DeliberationState, VerificationNoticeStatus, VerificationStatus,
 };
 use iris_lib::ai_runtime::harness::{HarnessFinishReason, HarnessRunResult};
 use iris_lib::ai_runtime::model_gateway::TokenUsage;
@@ -130,6 +131,34 @@ fn deliberation_state_tracks_plan_and_blocks_unverified_completion() {
         .items
         .iter()
         .all(|item| item.status == VerificationStatus::Passed));
+}
+
+#[test]
+fn failed_verification_gets_short_user_visible_notice() {
+    let state = DeliberationState::from_input(DeliberationInput {
+        request_id: "phase4-notice".into(),
+        session_id: 42,
+        user_goal: "完成阶段 4：复杂任务 Deliberation 与 Verification".into(),
+        evidence_packet_count: 0,
+        tool_result_count: 0,
+        max_rounds: 4,
+        token_budget: 16_000,
+    });
+    let failed = verify_completion(state, "已有初步回答", &[], HarnessFinishReason::Completed);
+    let notice = verification_notice(&failed, HarnessFinishReason::Completed)
+        .expect("failed verification should produce notice");
+
+    assert_eq!(notice.status, VerificationNoticeStatus::AnswerWithCaveat);
+    assert!(notice.message.contains("未验证项"));
+    assert!(notice.failed_items.iter().any(|item| item.contains("证据")));
+
+    let content = append_verification_notice("已有初步回答", Some(&notice));
+    assert!(content.contains("已有初步回答"));
+    assert!(content.contains("未验证项"));
+
+    let finalize = include_str!("../src/ai_harness/harness/finalize.rs");
+    assert!(finalize.contains("append_verification_notice"));
+    assert!(finalize.contains("verification_notice"));
 }
 
 #[test]

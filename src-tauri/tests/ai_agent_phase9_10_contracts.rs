@@ -62,3 +62,22 @@ fn subprocess_sources_apply_l1_constraints_without_claiming_l2() {
     assert!(!boundary.contains("seccomp"));
     assert!(!boundary.contains("chroot"));
 }
+
+#[test]
+fn frontend_task_surfaces_expose_deliberation_and_verification_state() {
+    let ipc_types = include_str!("../../src/types/ipc.ts");
+    let panel = include_str!("../../src/components/ai/AgentTaskStatusPanel.tsx");
+    let surfaces = include_str!("../../src/components/ai/AssistantTaskSurfaces.tsx");
+
+    assert!(ipc_types.contains("deliberation_state?: DeliberationState | null"));
+    assert!(ipc_types.contains("verification_summary?: VerificationSummary | null"));
+    assert!(panel.contains("task.deliberation_state"));
+    assert!(panel.contains("task.verification_summary"));
+    assert!(panel.contains("evidence_gaps"));
+    assert!(panel.contains("data-testid=\"agent-task-deliberation\""));
+    assert!(surfaces.contains("WritingStatePanel"));
+    assert!(surfaces.contains("ResearchStatePanel"));
+    assert!(!panel.contains("checkpoint_json"));
+    assert!(!panel.contains("noteContent"));
+    assert!(!panel.contains("apiKey"));
+}

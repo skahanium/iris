@@ -1277,6 +1277,25 @@ fn sync_agent_task_after_harness(
             ),
         );
     }
+    if let Some(summary) = &harness_result.verification_summary {
+        if !summary.passed {
+            let failed_items = summary
+                .items
+                .iter()
+                .filter(|item| {
+                    item.status == crate::ai_runtime::deliberation::VerificationStatus::Failed
+                })
+                .map(|item| item.description.clone())
+                .collect::<Vec<_>>();
+            let _ = AgentTaskRuntime::record_event(
+                &state.db,
+                &task_id,
+                "verification_attention",
+                "部分验证项未通过，已在回答中提示",
+                serde_json::json!({ "failed_items": failed_items }),
+            );
+        }
+    }
     AgentTaskRuntime::complete_task(&state.db, &task_id)
 }
 

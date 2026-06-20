@@ -35,12 +35,16 @@ impl Serialize for AppError {
             Self::Db(_) => "Database error".to_string(),
             Self::Json(_) => "JSON error".to_string(),
             Self::Http(_) => "HTTP error".to_string(),
-            Self::Keyring(_) => "Keyring error".to_string(),
+            Self::Keyring(_) => credential_access_message().to_string(),
             Self::Embed(_) => "Embedding error".to_string(),
             Self::Message(s) => s.clone(),
         };
         serializer.serialize_str(&sanitized)
     }
+}
+
+fn credential_access_message() -> &'static str {
+    "无法访问系统凭据管理器，请解锁系统钥匙串，或在设置中重新保存对应供应商的 API Key。"
 }
 
 fn redacted_log_detail(detail: &str) -> String {
@@ -113,6 +117,17 @@ mod tests {
         let serialized = serde_json::to_string(&err).unwrap();
         assert!(serialized.contains("JSON error"));
         assert!(!serialized.contains("not json"));
+    }
+
+    #[test]
+    fn keyring_error_serializes_as_actionable_credential_message() {
+        let err = AppError::Keyring(keyring::Error::NoStorageAccess(Box::new(
+            std::io::Error::new(std::io::ErrorKind::PermissionDenied, "locked"),
+        )));
+        let serialized = serde_json::to_string(&err).unwrap();
+        assert!(serialized.contains("系统凭据管理器"));
+        assert!(serialized.contains("API Key"));
+        assert!(!serialized.contains("locked"));
     }
 
     #[test]

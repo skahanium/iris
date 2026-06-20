@@ -229,7 +229,18 @@ pub fn set_api_key(db: &Database, service: &str, value: &str) -> AppResult<()> {
 
 pub fn get_api_key(db: &Database, service: &str) -> AppResult<String> {
     let canonical = canonical_service_id(service);
-    let mut bundle = read_api_key_bundle_cached()?;
+    let mut bundle = match read_api_key_bundle_cached() {
+        Ok(bundle) => bundle,
+        Err(bundle_err) => {
+            return match get_secret(&canonical) {
+                Ok(value) => {
+                    mark_api_key_configured(db, &canonical)?;
+                    Ok(value)
+                }
+                Err(_) => Err(bundle_err),
+            };
+        }
+    };
     if let Some(value) = bundle.get(&canonical) {
         mark_api_key_configured(db, &canonical)?;
         return Ok(value.to_string());

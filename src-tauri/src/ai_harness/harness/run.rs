@@ -19,7 +19,7 @@ use super::tools::max_fetch_per_round;
 use super::trace_emit::{emit_thinking, emit_trace_phase};
 use super::types::{HarnessFinishReason, HarnessPhase, HarnessRunInput, HarnessRunResult};
 use super::util::accumulate_usage;
-use crate::ai_harness::tool_turn::outstanding_confirm_tool;
+use crate::ai_harness::tool_turn::{outstanding_confirm_tool, pending_confirmation_position};
 use crate::ai_runtime::agent_permissions::preflight_tool_permission;
 use crate::ai_runtime::circuit_breaker;
 use crate::ai_runtime::evidence_ledger::EvidenceLedger;
@@ -1022,6 +1022,13 @@ async fn pause_for_tool_confirmation(
     tool_call: &ToolCall,
 ) -> AppResult<HarnessRunResult> {
     let tool_name = &tool_call.function.name;
+    let skill_allowed_tools = resolve_active_skill_allowed_tools_with_plan(
+        state,
+        &input.task_policy,
+        &input.user_message,
+        input.skill_activation_plan.as_ref(),
+    )
+    .unwrap_or_default();
     crate::llm::safe_lock(&state.ai.pending_tool_calls).insert(
         tool_call.id.clone(),
         crate::app::PendingToolCall {
@@ -1033,13 +1040,7 @@ async fn pause_for_tool_confirmation(
             file_id,
             web_search_enabled: input.web_search_enabled,
             autonomy_level: input.task_policy.autonomy_level,
-            skill_allowed_tools: resolve_active_skill_allowed_tools_with_plan(
-                state,
-                &input.task_policy,
-                &input.user_message,
-                input.skill_activation_plan.as_ref(),
-            )
-            .unwrap_or_default(),
+            skill_allowed_tools: skill_allowed_tools.clone(),
             skill_activation_plan: input.skill_activation_plan.clone(),
         },
     );
@@ -1060,13 +1061,7 @@ async fn pause_for_tool_confirmation(
                     scene: input.scene,
                     autonomy_level: input.task_policy.autonomy_level,
                     web_search_enabled: input.web_search_enabled,
-                    skill_allowed_tools: resolve_active_skill_allowed_tools_with_plan(
-                        state,
-                        &input.task_policy,
-                        &input.user_message,
-                        input.skill_activation_plan.as_ref(),
-                    )
-                    .unwrap_or_default(),
+                    skill_allowed_tools: skill_allowed_tools.clone(),
                     depth: input.depth,
                 },
                 skill_id: None,
@@ -1074,14 +1069,28 @@ async fn pause_for_tool_confirmation(
         )
         .ok()
     });
+    let registry = ToolRegistry::new();
+    let confirmation_position = pending_confirmation_position(
+        &registry,
+        messages,
+        &ToolPolicyContext {
+            task_policy: Some(input.task_policy.clone()),
+            scene: input.scene,
+            autonomy_level: input.task_policy.autonomy_level,
+            web_search_enabled: input.web_search_enabled,
+            skill_allowed_tools,
+            depth: input.depth,
+        },
+        &tool_call.id,
+    );
     let mut confirm_request = serde_json::json!({
         "request_id": input.request_id,
         "tool_call_id": tool_call.id,
         "tool_name": tool_name,
         "arguments": args,
         "permissionEffects": permission_effects,
-        "pendingConfirmationIndex": 1,
-        "pendingConfirmationCount": 1,
+        "pendingConfirmationIndex": confirmation_position.map_or(1, |position| position.index),
+        "pendingConfirmationCount": confirmation_position.map_or(1, |position| position.count),
         "sandboxProfile": crate::ai_runtime::sandbox_profile::sandbox_profile_for_tool(tool_name),
     });
     if let Some(permission_decision) = permission_decision {

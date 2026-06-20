@@ -1,5 +1,6 @@
 //! Persistent task state for the Agent Task Runtime.
 
+use crate::ai_runtime::deliberation::{DeliberationState, VerificationSummary};
 use crate::ai_runtime::session::SessionManager;
 use crate::error::{AppError, AppResult};
 use crate::storage::db::Database;
@@ -165,6 +166,10 @@ pub struct AgentTask {
     pub error_code: Option<String>,
     /// Sanitized failure message.
     pub error_message: Option<String>,
+    /// Latest deliberation state for the request, when available.
+    pub deliberation_state: Option<DeliberationState>,
+    /// Latest verification summary for the request, when available.
+    pub verification_summary: Option<VerificationSummary>,
 }
 
 /// Summary-only task step returned to the UI.
@@ -315,7 +320,7 @@ impl AgentTaskRuntime {
 
     /// Return a task by id, or `None` when it has been deleted with its session.
     pub fn get_task(db: &Database, task_id: &str) -> AppResult<Option<AgentTask>> {
-        db.with_read_conn(|conn| {
+        let mut task = db.with_read_conn(|conn| {
             let result = conn.query_row(
                 "SELECT task_id, request_id, session_id, kind, status, user_goal_summary,
                         budget_policy_json, created_at, updated_at, completed_at,
@@ -342,6 +347,8 @@ impl AgentTaskRuntime {
                         completed_at: row.get(9)?,
                         error_code: row.get(10)?,
                         error_message: row.get(11)?,
+                        deliberation_state: None,
+                        verification_summary: None,
                     })
                 },
             );
@@ -350,12 +357,16 @@ impl AgentTaskRuntime {
                 Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
                 Err(e) => Err(e.into()),
             }
-        })
+        })?;
+        if let Some(task) = &mut task {
+            hydrate_deliberation_state(db, task)?;
+        }
+        Ok(task)
     }
 
     /// List task metadata for a session/status filter.
     pub fn list_tasks(db: &Database, filter: TaskListFilter) -> AppResult<Vec<AgentTask>> {
-        db.with_read_conn(|conn| {
+        let mut tasks = db.with_read_conn(|conn| {
             let mut tasks = Vec::new();
             match (filter.session_id, filter.status) {
                 (Some(session_id), Some(status)) => {
@@ -418,7 +429,9 @@ impl AgentTaskRuntime {
                 }
             }
             Ok(tasks)
-        })
+        })?;
+        hydrate_deliberation_states(db, &mut tasks)?;
+        Ok(tasks)
     }
 
     /// List summary-shaped steps for a task without exposing checkpoints.
@@ -904,7 +917,26 @@ fn row_to_agent_task(row: &rusqlite::Row<'_>) -> rusqlite::Result<AgentTask> {
         completed_at: row.get(9)?,
         error_code: row.get(10)?,
         error_message: row.get(11)?,
+        deliberation_state: None,
+        verification_summary: None,
     })
+}
+
+fn hydrate_deliberation_state(db: &Database, task: &mut AgentTask) -> AppResult<()> {
+    if let Some((state, summary)) =
+        crate::ai_runtime::deliberation::load_deliberation_state(db, &task.request_id)?
+    {
+        task.deliberation_state = Some(state);
+        task.verification_summary = Some(summary);
+    }
+    Ok(())
+}
+
+fn hydrate_deliberation_states(db: &Database, tasks: &mut [AgentTask]) -> AppResult<()> {
+    for task in tasks {
+        hydrate_deliberation_state(db, task)?;
+    }
+    Ok(())
 }
 
 fn row_to_agent_task_step(row: &rusqlite::Row<'_>) -> rusqlite::Result<AgentTaskStep> {

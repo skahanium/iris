@@ -18,14 +18,15 @@ describe("AI Agent phase 9/10 frontend and sandbox contracts", () => {
     expect(hook).toContain("paused_recoverable");
   });
 
-  it("renders run plan state instead of keeping it invisible", () => {
+  it("feeds run plan state into folded process details", () => {
     const hook = read("src/components/ai/hooks/useAssistantRunPlan.tsx");
     const panel = read("src/components/ai/UnifiedAssistantPanel.impl.tsx");
 
-    expect(hook).toContain('data-testid="assistant-run-plan"');
     expect(hook).toContain("permissionPreflightSummary");
     expect(hook).toContain("intentDetection");
-    expect(panel).toContain("{runPlan.layer}");
+    expect(hook).toContain("runPlanSummary");
+    expect(panel).toContain("runPlanSummary={runPlan.runPlanSummary}");
+    expect(panel).not.toContain("{runPlan.layer}");
   });
 
   it("keeps assistant task wiring grouped instead of a flat parameter surface", () => {

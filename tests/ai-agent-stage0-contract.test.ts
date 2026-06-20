@@ -8,6 +8,7 @@ function read(path: string): string {
 
 const specPath = "docs/superpowers/specs/ai-agent-system-remediation.md";
 const matrixPath = "docs/audits/2026-06-20-ai-agent-issue-matrix.md";
+const readinessPath = "docs/audits/2026-06-20-ai-agent-current-readiness.md";
 
 describe("AI agent stage 0 baseline contracts", () => {
   it("documents the full audit scope and future architecture entities", () => {
@@ -113,5 +114,16 @@ describe("AI agent stage 0 baseline contracts", () => {
     for (const line of tableLines) {
       expect(line.split("|").length, line).toBe(headerCells);
     }
+  });
+
+  it("keeps the historical baseline separate from current readiness", () => {
+    const readiness = read(readinessPath);
+
+    expect(readiness).toContain("阶段 0 历史基线");
+    expect(readiness).toContain("AAR-001");
+    expect(readiness).toContain("已修复");
+    expect(readiness).toContain("最小实现");
+    expect(readiness).toContain("真实 LLM");
+    expect(readiness).toContain("前端新增字段均为可选字段");
   });
 });

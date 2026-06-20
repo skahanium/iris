@@ -63,6 +63,22 @@ pub struct VerificationSummary {
     pub items: Vec<VerificationItem>,
 }
 
+/// User-facing severity for completion verification.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum VerificationNoticeStatus {
+    AnswerWithCaveat,
+    PausedForRecovery,
+}
+
+/// Compact user-facing notice for verification gaps.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct VerificationNotice {
+    pub status: VerificationNoticeStatus,
+    pub message: String,
+    pub failed_items: Vec<String>,
+}
+
 impl DeliberationState {
     /// Create a bounded deliberation state from the current run context.
     pub fn from_input(input: DeliberationInput) -> Self {
@@ -149,6 +165,59 @@ pub fn verify_completion(
     }
 }
 
+/// Build a compact notice when verification did not fully pass.
+pub fn verification_notice(
+    summary: &VerificationSummary,
+    finish_reason: HarnessFinishReason,
+) -> Option<VerificationNotice> {
+    if summary.passed {
+        return None;
+    }
+    let failed_items = summary
+        .items
+        .iter()
+        .filter(|item| item.status == VerificationStatus::Failed)
+        .map(|item| item.description.clone())
+        .collect::<Vec<_>>();
+    if failed_items.is_empty() {
+        return None;
+    }
+    let status = match finish_reason {
+        HarnessFinishReason::BudgetExhausted | HarnessFinishReason::RoundLimit => {
+            VerificationNoticeStatus::PausedForRecovery
+        }
+        _ => VerificationNoticeStatus::AnswerWithCaveat,
+    };
+    let message = match status {
+        VerificationNoticeStatus::AnswerWithCaveat => {
+            format!("未验证项：{}", failed_items.join("；"))
+        }
+        VerificationNoticeStatus::PausedForRecovery => {
+            format!("任务已暂停，未验证项：{}", failed_items.join("；"))
+        }
+    };
+    Some(VerificationNotice {
+        status,
+        message,
+        failed_items,
+    })
+}
+
+/// Append a short verification notice to a final answer without adding UI burden.
+pub fn append_verification_notice(content: &str, notice: Option<&VerificationNotice>) -> String {
+    let Some(notice) = notice else {
+        return content.to_string();
+    };
+    if content.contains("未验证项：") {
+        return content.to_string();
+    }
+    let trimmed = content.trim_end();
+    if trimmed.is_empty() {
+        return notice.message.clone();
+    }
+    format!("{trimmed}\n\n{}", notice.message)
+}
+
 /// Persist the current deliberation state and latest verification summary.
 pub fn save_deliberation_state(
     db: &Database,
@@ -191,6 +260,55 @@ pub fn save_deliberation_state(
             ],
         )?;
         Ok(())
+    })
+}
+
+/// Load the latest deliberation and verification state for a request.
+pub fn load_deliberation_state(
+    db: &Database,
+    request_id: &str,
+) -> AppResult<Option<(DeliberationState, VerificationSummary)>> {
+    db.with_read_conn(|conn| {
+        let result = conn.query_row(
+            "SELECT request_id, session_id, current_goal, plan_outline_json,
+                    assumptions_json, open_questions_json, evidence_gaps_json,
+                    verification_json, status
+             FROM deliberation_states
+             WHERE request_id = ?1",
+            [request_id],
+            |row| {
+                let plan_json: String = row.get(3)?;
+                let assumptions_json: String = row.get(4)?;
+                let open_questions_json: String = row.get(5)?;
+                let gaps_json: String = row.get(6)?;
+                let verification_json: String = row.get(7)?;
+                let summary = serde_json::from_str::<VerificationSummary>(&verification_json)
+                    .unwrap_or(VerificationSummary {
+                        passed: false,
+                        items: Vec::new(),
+                    });
+                Ok((
+                    DeliberationState {
+                        request_id: row.get(0)?,
+                        session_id: row.get(1)?,
+                        current_goal: row.get(2)?,
+                        plan_outline: serde_json::from_str(&plan_json).unwrap_or_default(),
+                        assumptions: serde_json::from_str(&assumptions_json).unwrap_or_default(),
+                        open_questions: serde_json::from_str(&open_questions_json)
+                            .unwrap_or_default(),
+                        evidence_gaps: serde_json::from_str(&gaps_json).unwrap_or_default(),
+                        verification_items: summary.items.clone(),
+                        status: row.get(8)?,
+                    },
+                    summary,
+                ))
+            },
+        );
+        match result {
+            Ok(state) => Ok(Some(state)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(err) => Err(err.into()),
+        }
     })
 }
 

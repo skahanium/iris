@@ -1,52 +1,35 @@
-import { StopCircle } from "lucide-react";
 import type { RefObject } from "react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import type {
-  AgentTaskDto,
-  AgentTaskEventDto,
-  AgentTaskStepDto,
-} from "@/types/ipc";
+import type { AgentTaskDto } from "@/types/ipc";
 import type {
   CitationCheckResult,
   OrganizeSuggestion,
   PatchProposal,
   ResearchFocusPayload,
+  WritingState,
 } from "@/types/ai";
 
-import { AgentTaskStatusPanel } from "./AgentTaskStatusPanel";
+import {
+  AssistantProcessStatusBar,
+  type ResearchProgressData,
+} from "./AssistantProcessStatusBar";
 import { DocumentCheckArtifacts } from "./assistant/DocumentCheckArtifacts";
 import { ResearchFocusView } from "./assistant/ResearchFocusView";
+import { WritingStatePanel } from "./assistant/WritingStatePanel";
 import { CitationCheckView } from "./CitationCheckView";
 import { PatchPreview } from "./PatchPreview";
 
-export interface ResearchProgressData {
-  request_id: string;
-  topic: string;
-  state: string;
-  current_round: number;
-  max_rounds: number;
-  queries_executed: string[];
-  new_evidence_count: number;
-  total_evidence_count: number;
-  tokens_used: number;
-  token_budget: number;
-  progress_pct: number;
-  round_terminated_early: boolean;
-}
+export type { ResearchProgressData } from "./AssistantProcessStatusBar";
 
 interface AssistantTaskSurfacesProps {
+  activityHint: string | null;
   agentTask: AgentTaskDto | null;
-  agentTaskEvents: AgentTaskEventDto[];
-  agentTaskSteps: AgentTaskStepDto[];
   researchProgress: ResearchProgressData | null;
   researchRunning: boolean;
-  onAbortAgentTask: () => void;
-  onAbortResearch: () => void;
-  onOpenAgentTaskAudit: () => void;
-  onResumeAgentTask: () => void;
+  onAbortProcess: () => void;
   researchResult: ResearchFocusPayload | null;
   researchPanelExpanded: boolean;
   researchDetailRef: RefObject<HTMLDivElement | null>;
@@ -62,6 +45,7 @@ interface AssistantTaskSurfacesProps {
   onAcceptOrganize: () => void;
   evidenceRefreshNotice: string | null;
   writingPatches: PatchProposal[];
+  writingState: WritingState | null;
   onAcceptPatch: (patch: PatchProposal) => void;
   onRejectPatch: (patch: PatchProposal) => void;
   onCopyPatch: (patch: PatchProposal) => void;
@@ -69,15 +53,11 @@ interface AssistantTaskSurfacesProps {
 }
 
 export function AssistantTaskSurfaces({
+  activityHint,
   agentTask,
-  agentTaskEvents,
-  agentTaskSteps,
   researchProgress,
   researchRunning,
-  onAbortAgentTask,
-  onAbortResearch,
-  onOpenAgentTaskAudit,
-  onResumeAgentTask,
+  onAbortProcess,
   researchResult,
   researchPanelExpanded,
   researchDetailRef,
@@ -93,64 +73,21 @@ export function AssistantTaskSurfaces({
   onAcceptOrganize,
   evidenceRefreshNotice,
   writingPatches,
+  writingState,
   onAcceptPatch,
   onRejectPatch,
   onCopyPatch,
   onRegenerateWriting,
 }: AssistantTaskSurfacesProps) {
-  const showResearchProgress =
-    researchProgress &&
-    (researchRunning || researchProgress.state === "running");
-
   return (
     <>
-      <AgentTaskStatusPanel
-        task={agentTask}
-        steps={agentTaskSteps}
-        events={agentTaskEvents}
-        onAbort={onAbortAgentTask}
-        onOpenAudit={onOpenAgentTaskAudit}
-        onResume={onResumeAgentTask}
+      <AssistantProcessStatusBar
+        activityHint={activityHint}
+        agentTask={agentTask}
+        researchProgress={researchProgress}
+        researchRunning={researchRunning}
+        onAbort={onAbortProcess}
       />
-
-      {showResearchProgress ? (
-        <div className="ai-task-surface px-3 pt-3" data-testid="research-focus">
-          <Card className="border-border/60">
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">研究专注态</CardTitle>
-              {researchRunning ? (
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="destructive"
-                  className="h-7 gap-1 text-xs"
-                  onClick={onAbortResearch}
-                >
-                  <StopCircle className="h-3.5 w-3.5" />
-                  中止
-                </Button>
-              ) : null}
-            </CardHeader>
-            <CardContent className="space-y-2">
-              <div className="flex items-center justify-between text-xs text-muted-foreground">
-                <span>
-                  第 {researchProgress.current_round}/
-                  {researchProgress.max_rounds} 轮
-                </span>
-                <span>{Math.round(researchProgress.progress_pct * 100)}%</span>
-              </div>
-              <div className="h-1.5 overflow-hidden rounded-full bg-muted">
-                <div
-                  className="h-full rounded-full bg-primary transition-all"
-                  style={{
-                    width: `${Math.round(researchProgress.progress_pct * 100)}%`,
-                  }}
-                />
-              </div>
-            </CardContent>
-          </Card>
-        </div>
-      ) : null}
 
       {researchResult && researchPanelExpanded ? (
         <div
@@ -257,6 +194,8 @@ export function AssistantTaskSurfaces({
           ))}
         </div>
       ) : null}
+
+      <WritingStatePanel state={writingState} />
     </>
   );
 }
