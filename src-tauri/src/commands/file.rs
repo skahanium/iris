@@ -1020,6 +1020,14 @@ pub fn vault_set(app: AppHandle, state: State<'_, Arc<AppState>>, path: String) 
     let state = state.inner().clone();
     state.set_vault(p)?;
 
+    if let Err(e) = crate::ai_runtime::agent_task::AgentTaskRuntime::abort_recoverable_tasks(
+        &state.db,
+        "VAULT_SWITCH",
+        "Vault switch invalidated recoverable task state",
+    ) {
+        tracing::warn!("vault_set: failed to abort recoverable AI tasks: {e}");
+    }
+
     // Clear in-memory AI state to prevent data leakage between vaults
     state.clear_ai_state();
 

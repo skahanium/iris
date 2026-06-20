@@ -49,7 +49,7 @@ impl ToolRegistry {
         let ctx = ToolPolicyContext {
             task_policy: None,
             scene,
-            autonomy_level: crate::ai_runtime::resolve_scene(scene).autonomy_level,
+            autonomy_level: scene.autonomy_level(),
             web_search_enabled: filter.web_search_enabled,
             skill_allowed_tools: vec![],
             depth: filter.depth,
@@ -360,7 +360,6 @@ mod tests {
         let reg = ToolRegistry::new();
         for scene in [
             AiScene::KnowledgeLookup,
-            AiScene::ExemplarLearning,
             AiScene::DraftingAssist,
             AiScene::ResearchSynthesis,
         ] {

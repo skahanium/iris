@@ -12,10 +12,13 @@ use serde::{Deserialize, Serialize};
 
 // ─── Scene ──────────────────────────────────────────────
 
-/// AI 使用场景，对应前端场景选择器。
+/// Legacy AI scene used for compatibility metadata and persisted sessions.
+///
+/// New Agent Task Runtime policy decisions are based on [`AgentIntent`] and
+/// capability slots; this enum remains only to decode old scene-shaped state.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum AiScene {
+pub enum LegacyAiScene {
     /// 知识查阅 — 法规条款、笔记关联
     KnowledgeLookup,
     /// 文稿学习 — 范文结构、表达特征
@@ -26,14 +29,14 @@ pub enum AiScene {
     ResearchSynthesis,
 }
 
-impl AiScene {
+impl LegacyAiScene {
     /// Parse the stable IPC wire value without constructing ad-hoc JSON.
     pub fn parse_wire(value: &str) -> Option<Self> {
         match value.trim() {
-            "knowledge_lookup" => Some(AiScene::KnowledgeLookup),
-            "exemplar_learning" => Some(AiScene::ExemplarLearning),
-            "drafting_assist" => Some(AiScene::DraftingAssist),
-            "research_synthesis" => Some(AiScene::ResearchSynthesis),
+            "knowledge_lookup" => Some(LegacyAiScene::KnowledgeLookup),
+            "exemplar_learning" => Some(LegacyAiScene::ExemplarLearning),
+            "drafting_assist" => Some(LegacyAiScene::DraftingAssist),
+            "research_synthesis" => Some(LegacyAiScene::ResearchSynthesis),
             _ => None,
         }
     }
@@ -41,35 +44,40 @@ impl AiScene {
     /// 场景对应的默认自治等级。
     pub fn autonomy_level(&self) -> AutonomyLevel {
         match self {
-            AiScene::KnowledgeLookup => AutonomyLevel::L1,
-            AiScene::ExemplarLearning => AutonomyLevel::L1,
-            AiScene::DraftingAssist => AutonomyLevel::L2,
-            AiScene::ResearchSynthesis => AutonomyLevel::L3,
+            LegacyAiScene::KnowledgeLookup => AutonomyLevel::L1,
+            LegacyAiScene::ExemplarLearning => AutonomyLevel::L1,
+            LegacyAiScene::DraftingAssist => AutonomyLevel::L2,
+            LegacyAiScene::ResearchSynthesis => AutonomyLevel::L3,
         }
     }
 
     /// 场景的 runtime profile 标识。
     pub fn profile(&self) -> &'static str {
         match self {
-            AiScene::KnowledgeLookup => "knowledge_lookup",
-            AiScene::ExemplarLearning => "exemplar_learning",
-            AiScene::DraftingAssist => "drafting_assist",
-            AiScene::ResearchSynthesis => "research_synthesis",
+            LegacyAiScene::KnowledgeLookup => "knowledge_lookup",
+            LegacyAiScene::ExemplarLearning => "exemplar_learning",
+            LegacyAiScene::DraftingAssist => "drafting_assist",
+            LegacyAiScene::ResearchSynthesis => "research_synthesis",
         }
     }
 
     /// 场景默认的会话范围是否为库级（不绑定笔记）。
     pub fn default_global_scope(&self) -> bool {
-        matches!(self, AiScene::KnowledgeLookup | AiScene::ResearchSynthesis)
+        matches!(
+            self,
+            LegacyAiScene::KnowledgeLookup | LegacyAiScene::ResearchSynthesis
+        )
     }
 }
+
+pub type AiScene = LegacyAiScene;
 
 // ─── Phase 2 Agent Intent ────────────────────────────────
 
 /// User-facing Phase 2 assistant intent.
 ///
-/// This replaces visible scene selection while keeping [`AiScene`] as an
-/// internal compatibility layer for existing workflows.
+/// This replaces visible scene selection while keeping [`LegacyAiScene`] as a
+/// compatibility layer for existing workflows.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AgentIntent {
@@ -451,72 +459,6 @@ pub enum AutonomyLevel {
     L2 = 2,
     /// L3: 有限 agentic loop，限制最大轮数和工具次数
     L3 = 3,
-}
-
-// ─── Scene Profile ───────────────────────────────────────
-
-/// Scene profile: describes what capabilities a scene activates.
-#[derive(Debug, Clone)]
-pub struct SceneProfile {
-    pub scene: AiScene,
-    pub autonomy_level: AutonomyLevel,
-    pub default_global_scope: bool,
-    pub max_agentic_rounds: u32,
-    pub max_tool_calls_per_round: u32,
-    pub default_token_budget: usize,
-    pub max_token_budget: usize,
-}
-
-/// Resolve a scene to its profile.
-pub fn resolve_scene(scene: AiScene) -> SceneProfile {
-    match scene {
-        AiScene::KnowledgeLookup => SceneProfile {
-            scene,
-            autonomy_level: AutonomyLevel::L2,
-            default_global_scope: true,
-            max_agentic_rounds: 3,
-            max_tool_calls_per_round: 4,
-            default_token_budget: 30_000,
-            max_token_budget: 80_000,
-        },
-        AiScene::ExemplarLearning => SceneProfile {
-            scene,
-            autonomy_level: AutonomyLevel::L2,
-            default_global_scope: false,
-            max_agentic_rounds: 2,
-            max_tool_calls_per_round: 4,
-            default_token_budget: 50_000,
-            max_token_budget: 120_000,
-        },
-        AiScene::DraftingAssist => SceneProfile {
-            scene,
-            autonomy_level: AutonomyLevel::L2,
-            default_global_scope: false,
-            max_agentic_rounds: 3,
-            max_tool_calls_per_round: 5,
-            default_token_budget: 60_000,
-            max_token_budget: 160_000,
-        },
-        AiScene::ResearchSynthesis => SceneProfile {
-            scene,
-            autonomy_level: AutonomyLevel::L3,
-            default_global_scope: true,
-            max_agentic_rounds: 4,
-            max_tool_calls_per_round: 6,
-            default_token_budget: 100_000,
-            max_token_budget: 240_000,
-        },
-    }
-}
-
-/// Select appropriate capability slot for scene.
-pub fn slot_for_scene(scene: AiScene) -> CapabilitySlot {
-    match scene {
-        AiScene::KnowledgeLookup => CapabilitySlot::Fast,
-        AiScene::ExemplarLearning => CapabilitySlot::Writer,
-        AiScene::DraftingAssist => CapabilitySlot::Writer,
-        AiScene::ResearchSynthesis => CapabilitySlot::Reasoner,
-    }
 }
 
 // ─── Web evidence metadata (spec §4.1) ───────────────────

@@ -1,29 +1,31 @@
 import { describe, expect, it } from "vitest";
 
-import { AI_SCENES } from "@/types/llm";
-import { SCENE_META } from "@/lib/ai/scene-types";
+import { SCENE_META, SCENE_OPTIONS } from "@/lib/ai/scene-types";
+import { CAPABILITY_SLOTS } from "@/types/llm";
 
 describe("llm routing scenes", () => {
-  it("AI_SCENES align with SCENE_META keys", () => {
-    for (const scene of AI_SCENES) {
+  it("active scene metadata excludes legacy-only scenes", () => {
+    const scenes = SCENE_OPTIONS.map(
+      (scene) => scene.scene,
+    ) as (keyof typeof SCENE_META)[];
+    for (const scene of scenes) {
       expect(SCENE_META[scene]?.scene).toBe(scene);
     }
-    expect(AI_SCENES).toEqual([
+    expect(scenes).toEqual([
       "knowledge_lookup",
       "drafting_assist",
       "research_synthesis",
     ]);
-    expect(AI_SCENES).not.toContain("exemplar_learning");
   });
 });
 
 describe("llm routing serialization shape", () => {
-  it("accepts minimal routing JSON", () => {
+  it("accepts minimal capability-slot routing JSON", () => {
     const routing = {
       version: 1,
       providers: {},
-      scenes: {
-        knowledge_lookup: {
+      slots: {
+        fast: {
           providerId: "deepseek",
           model: "deepseek-v4-flash",
           thinking: false,
@@ -33,6 +35,7 @@ describe("llm routing serialization shape", () => {
         knowledge_lookup: "hybrid" as const,
       },
     };
-    expect(routing.scenes.knowledge_lookup.model).toBe("deepseek-v4-flash");
+    expect(CAPABILITY_SLOTS).toContain("fast");
+    expect(routing.slots.fast.model).toBe("deepseek-v4-flash");
   });
 });

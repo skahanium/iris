@@ -110,13 +110,13 @@ fn annotate_packets_with_corpus(corpora: &CorpusConfig, packets: &mut [ContextPa
     }
 }
 
-/// When exemplar corpora exist, template search is limited to those prefixes (via post-filter).
+/// When exemplar corpora exist, drafting template search is limited to those prefixes.
 fn apply_exemplar_template_scope(
     scene: AiScene,
     corpora: &CorpusConfig,
     scope: &mut RetrievalScope,
 ) {
-    if !matches!(scene, AiScene::ExemplarLearning | AiScene::DraftingAssist) {
+    if !matches!(scene, AiScene::DraftingAssist) {
         return;
     }
     let exemplar_prefixes: Vec<String> = corpora
@@ -145,13 +145,6 @@ fn layers_for_scene(scene: AiScene) -> RetrievalLayers {
             exact: true,
             template: false,
         },
-        AiScene::ExemplarLearning => RetrievalLayers {
-            fts: true,
-            vector: true,
-            graph: true,
-            exact: false,
-            template: true,
-        },
         AiScene::DraftingAssist => RetrievalLayers {
             fts: true,
             vector: true,
@@ -166,15 +159,22 @@ fn layers_for_scene(scene: AiScene) -> RetrievalLayers {
             exact: true,
             template: true,
         },
+        _ => RetrievalLayers {
+            fts: true,
+            vector: true,
+            graph: true,
+            exact: true,
+            template: true,
+        },
     }
 }
 
 fn max_results_for_scene(scene: AiScene) -> usize {
     match scene {
         AiScene::KnowledgeLookup => 15,
-        AiScene::ExemplarLearning => 10,
         AiScene::DraftingAssist => 15,
         AiScene::ResearchSynthesis => 30,
+        _ => 15,
     }
 }
 
@@ -234,7 +234,6 @@ mod tests {
     fn layers_per_scene_are_non_empty() {
         for scene in [
             AiScene::KnowledgeLookup,
-            AiScene::ExemplarLearning,
             AiScene::DraftingAssist,
             AiScene::ResearchSynthesis,
         ] {

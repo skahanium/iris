@@ -167,6 +167,46 @@ pub struct AgentTask {
     pub error_message: Option<String>,
 }
 
+/// Summary-only task step returned to the UI.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentTaskStep {
+    /// Step row id.
+    pub id: i64,
+    /// Owning task id.
+    pub task_id: String,
+    /// Monotonic step sequence within the task.
+    pub step_seq: i64,
+    /// Step kind, such as `research` or `budget_pause`.
+    pub kind: String,
+    /// Step lifecycle status.
+    pub status: AgentTaskStatus,
+    /// Safe input summary.
+    pub input_summary: String,
+    /// Safe output summary.
+    pub output_summary: String,
+    /// Evidence packet ids referenced by this step; never packet bodies.
+    pub evidence_packet_ids: Vec<String>,
+    /// Creation timestamp.
+    pub created_at: String,
+    /// Last update timestamp.
+    pub updated_at: String,
+}
+
+/// Summary-only task event returned to the UI.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentTaskEvent {
+    /// Event row id.
+    pub id: i64,
+    /// Owning task id.
+    pub task_id: String,
+    /// Event type.
+    pub event_type: String,
+    /// Safe event message.
+    pub message: String,
+    /// Creation timestamp.
+    pub created_at: String,
+}
+
 /// Filter used by task list IPC and runtime recovery surfaces.
 #[derive(Debug, Clone, Default)]
 pub struct TaskListFilter {
@@ -378,6 +418,51 @@ impl AgentTaskRuntime {
                 }
             }
             Ok(tasks)
+        })
+    }
+
+    /// List summary-shaped steps for a task without exposing checkpoints.
+    pub fn list_steps(db: &Database, task_id: &str) -> AppResult<Vec<AgentTaskStep>> {
+        db.with_read_conn(|conn| {
+            let mut stmt = conn.prepare(
+                "SELECT id, task_id, step_seq, kind, status, input_summary, output_summary,
+                        checkpoint_json, evidence_packet_ids, created_at, updated_at
+                 FROM agent_task_steps
+                 WHERE task_id = ?1
+                 ORDER BY step_seq ASC",
+            )?;
+            let rows = stmt.query_map([task_id], row_to_agent_task_step)?;
+            let mut steps = Vec::new();
+            for row in rows {
+                steps.push(row?);
+            }
+            Ok(steps)
+        })
+    }
+
+    /// List summary-shaped events for a task without exposing payload JSON.
+    pub fn list_events(db: &Database, task_id: &str) -> AppResult<Vec<AgentTaskEvent>> {
+        db.with_read_conn(|conn| {
+            let mut stmt = conn.prepare(
+                "SELECT id, task_id, event_type, message, created_at
+                 FROM agent_task_events
+                 WHERE task_id = ?1
+                 ORDER BY id ASC",
+            )?;
+            let rows = stmt.query_map([task_id], |row| {
+                Ok(AgentTaskEvent {
+                    id: row.get(0)?,
+                    task_id: row.get(1)?,
+                    event_type: row.get(2)?,
+                    message: row.get(3)?,
+                    created_at: row.get(4)?,
+                })
+            })?;
+            let mut events = Vec::new();
+            for row in rows {
+                events.push(row?);
+            }
+            Ok(events)
         })
     }
 
@@ -677,6 +762,61 @@ impl AgentTaskRuntime {
         Self::set_status(db, task_id, AgentTaskStatus::Aborted, None, None)
     }
 
+    /// Abort all non-terminal tasks whose recovery state is no longer valid.
+    ///
+    /// Used by lifecycle boundaries such as cache clearing and vault switching.
+    pub fn abort_recoverable_tasks(
+        db: &Database,
+        reason_code: &str,
+        message: &str,
+    ) -> AppResult<usize> {
+        let now = chrono::Utc::now().to_rfc3339();
+        let message = truncate_summary(message, 160);
+        db.with_conn(|conn| {
+            let mut stmt = conn.prepare(
+                "SELECT task_id
+                 FROM agent_tasks
+                 WHERE status IN (
+                    'queued',
+                    'running',
+                    'awaiting_confirmation',
+                    'paused_budget',
+                    'paused_recoverable'
+                 )",
+            )?;
+            let task_ids = stmt
+                .query_map([], |row| row.get::<_, String>(0))?
+                .collect::<Result<Vec<_>, _>>()?;
+            drop(stmt);
+
+            for task_id in &task_ids {
+                conn.execute(
+                    "UPDATE agent_tasks
+                     SET status = 'aborted',
+                         updated_at = ?1,
+                         completed_at = ?1,
+                         error_code = ?2,
+                         error_message = ?3
+                     WHERE task_id = ?4",
+                    rusqlite::params![now, reason_code, message, task_id],
+                )?;
+                conn.execute(
+                    "INSERT INTO agent_task_events
+                     (task_id, event_type, message, payload_json, created_at)
+                     VALUES (?1, 'lifecycle_cleanup', ?2, ?3, ?4)",
+                    rusqlite::params![
+                        task_id,
+                        message,
+                        serde_json::json!({ "reason": reason_code }).to_string(),
+                        now,
+                    ],
+                )?;
+            }
+
+            Ok(task_ids.len())
+        })
+    }
+
     /// Record a lightweight task event with JSON-shaped payload.
     pub fn record_event(
         db: &Database,
@@ -764,6 +904,38 @@ fn row_to_agent_task(row: &rusqlite::Row<'_>) -> rusqlite::Result<AgentTask> {
         completed_at: row.get(9)?,
         error_code: row.get(10)?,
         error_message: row.get(11)?,
+    })
+}
+
+fn row_to_agent_task_step(row: &rusqlite::Row<'_>) -> rusqlite::Result<AgentTaskStep> {
+    let status: String = row.get(4)?;
+    let checkpoint_json: String = row.get(7)?;
+    let evidence_ids_json: String = row.get(8)?;
+    let checkpoint = serde_json::from_str(&checkpoint_json).unwrap_or(Value::Null);
+    let stored_evidence_ids = serde_json::from_str::<Vec<String>>(&evidence_ids_json)
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|text| !text.trim().is_empty())
+        .collect::<Vec<_>>();
+    let evidence_packet_ids = if stored_evidence_ids.is_empty() {
+        string_array_field(&checkpoint, "evidence_packet_ids")
+            .or_else(|| string_array_field(&checkpoint, "packet_ids"))
+            .unwrap_or_default()
+    } else {
+        stored_evidence_ids
+    };
+
+    Ok(AgentTaskStep {
+        id: row.get(0)?,
+        task_id: row.get(1)?,
+        step_seq: row.get(2)?,
+        kind: row.get(3)?,
+        status: AgentTaskStatus::parse(&status),
+        input_summary: row.get(5)?,
+        output_summary: row.get(6)?,
+        evidence_packet_ids,
+        created_at: row.get(9)?,
+        updated_at: row.get(10)?,
     })
 }
 

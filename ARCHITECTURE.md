@@ -120,21 +120,23 @@
   → WebView: 搜索结果列表，点击跳转到对应笔记
 ```
 
-### 4. AI 完整管线（v1.1.0）
+### 4. Agent Task Runtime 完整管线（v1.1.0）
 
 ```
 用户提问 → AiComposer
   → ai_send_message IPC
-  → scene_router: 按 intent 解析场景（research / writing / organize / ...）
-  → context_planner: 确定上下文策略（hybrid / long_context）
+  → AgentTaskPolicy: 按 task intent / scope / attachments / privacy 生成执行策略
+  → context_planner: 确定上下文策略（hybrid / long_context）与检索子查询
   → retrieval_broker: FTS + vec + link + exact 多路融合检索
   → packet_builder: 组装 ContextPacket（来源、span、hash、score、trust_level）
-  → model_gateway: 按 llm_routing 配置选择模型，构建分层 messages
+  → model_gateway: 按 capability slot 选择模型，构建分层 messages
   → 流式返回 token → WebView 逐字渲染
   → tool_executor: 模型提出工具调用 → ToolConfirmDialog → 用户确认 → 执行
   → trace: 记录全链路（不含笔记正文）
   → guardrails: 系统级 prompt injection 防护 + Rust schema 校验
 ```
+
+旧 scene-shaped 输入仅用于迁移既有会话、连通性显示和兼容 IPC，不作为长期主架构承诺。
 
 ### 5. 文件外部修改同步
 

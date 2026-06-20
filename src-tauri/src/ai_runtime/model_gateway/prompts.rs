@@ -60,7 +60,7 @@ pub fn build_citation_prompt(paragraph: &str, candidates: &[ContextPacket]) -> S
 pub(super) fn is_rule_applicable_for_scene(key: &str, scene: AiScene) -> bool {
     match key {
         "writing_style" => {
-            matches!(scene, AiScene::DraftingAssist | AiScene::ExemplarLearning)
+            matches!(scene, AiScene::DraftingAssist)
         }
         "citation_habits" => {
             matches!(

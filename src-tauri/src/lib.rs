@@ -187,6 +187,8 @@ pub fn run() {
             commands::ai_commands::ai_cache_clear,
             commands::ai_commands::agent_task_get,
             commands::ai_commands::agent_task_list,
+            commands::ai_commands::agent_task_steps,
+            commands::ai_commands::agent_task_events,
             commands::ai_commands::agent_task_resume,
             commands::ai_commands::agent_task_abort,
             commands::ai_commands::harness_resume,

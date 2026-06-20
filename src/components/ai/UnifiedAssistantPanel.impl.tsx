@@ -11,9 +11,7 @@ import type {
   AssistantActionState,
   ContextPacket,
   ContextStatus,
-  WritingEditorContext,
 } from "@/types/ai";
-import type { AssistantChromeSnapshot } from "@/types/assistant-chrome";
 
 import { buildActionState } from "./unified-assistant-panel-utils";
 import { AiMentionPopover } from "./AiMentionPopover";
@@ -31,6 +29,7 @@ import { useAssistantArtifacts } from "./hooks/useAssistantArtifacts";
 import { useAssistantHarnessResume } from "./hooks/useAssistantHarnessResume";
 import { useAssistantPanelEffects } from "./hooks/useAssistantPanelEffects";
 import { useAssistantTasks } from "./hooks/useAssistantTasks";
+import { useAgentTaskStatus } from "./hooks/useAgentTaskStatus";
 import { useResearchControl } from "./hooks/useResearchControl";
 import { ContextScopeChips } from "./ContextScopeChips";
 import { AssistantTaskSurfaces } from "./AssistantTaskSurfaces";
@@ -38,25 +37,7 @@ import { RuleConfirmDialog } from "./RuleConfirmDialog";
 import { ToolConfirmDialog } from "./ToolConfirmDialog";
 import { useAssistantRunPlan } from "./hooks/useAssistantRunPlan";
 import { AssistantErrorRecovery } from "./AssistantErrorRecovery";
-
-export interface AssistantSelectionQuote {
-  filePath: string;
-  text: string;
-}
-
-export interface UnifiedAssistantPanelProps {
-  notePath: string | null;
-  getNoteContent: () => string;
-  webSearch?: boolean;
-  getWritingContext: () => WritingEditorContext | null;
-  getParagraphText: () => string | null;
-  onPatchApplied?: (newContent: string) => void;
-  onVaultRefresh?: () => void;
-  onInsertToEditor?: (content: string) => void;
-  selectionQuote?: AssistantSelectionQuote | null;
-  prefillMessage?: string | null;
-  onChromeChange?: (snapshot: AssistantChromeSnapshot) => void;
-}
+import type { UnifiedAssistantPanelProps } from "./types";
 
 export function UnifiedAssistantPanel({
   notePath,
@@ -87,6 +68,7 @@ export function UnifiedAssistantPanel({
   const streamBuf = useRef("");
   const requestIdRef = useRef<string | null>(null);
   const [harnessRequestId, setHarnessRequestId] = useState<string | null>(null);
+  const [agentTaskId, setAgentTaskId] = useState<string | null>(null);
   const [pausedTaskId, setPausedTaskId] = useState<string | null>(null);
   const [auditDrawerOpen, setAuditDrawerOpen] = useState(false);
   const runPlan = useAssistantRunPlan();
@@ -134,6 +116,7 @@ export function UnifiedAssistantPanel({
   const clearTaskSurfaces = useCallback(() => {
     clearArtifactSurfaces();
     clearResearchProgressRef.current?.();
+    setAgentTaskId(null);
   }, [clearArtifactSurfaces]);
 
   const {
@@ -247,9 +230,16 @@ export function UnifiedAssistantPanel({
     setLastError,
     setMessages,
     setPackets,
+    setAgentTaskId,
     setPausedTaskId,
     setSessionTokenUsage,
     setStreaming,
+  });
+
+  const agentTaskStatus = useAgentTaskStatus({
+    taskId: agentTaskId,
+    setLastError,
+    setPausedTaskId,
   });
 
   const {
@@ -305,6 +295,7 @@ export function UnifiedAssistantPanel({
     setContextStatusData,
     setDocIssues,
     setDocSummary,
+    setAgentTaskId,
     setHarnessRequestId,
     setInput,
     setLastError,
@@ -325,6 +316,12 @@ export function UnifiedAssistantPanel({
     streamBufRef: streamBuf,
     webSearch,
   });
+
+  const resetAssistantSessionState = useCallback(() => {
+    setAgentTaskId(null);
+    setPausedTaskId(null);
+    handleNewChat();
+  }, [handleNewChat]);
 
   const stopStreaming = useCallback(() => {
     const id = requestIdRef.current;
@@ -353,8 +350,9 @@ export function UnifiedAssistantPanel({
         harnessRequestId={harnessRequestId}
         legacySceneHint={legacySceneHintForAssistantIntent(actionState.intent)}
         notePath={notePath}
-        onDeletedCurrentSession={handleNewChat}
-        onNewChat={handleNewChat}
+        onClearedAllSessions={resetAssistantSessionState}
+        onDeletedCurrentSession={resetAssistantSessionState}
+        onNewChat={resetAssistantSessionState}
         onOpenAudit={() => setAuditDrawerOpen(true)}
         onSelectSession={handleLoadSession}
         profile={promptProfile}
@@ -380,9 +378,15 @@ export function UnifiedAssistantPanel({
       />
 
       <AssistantTaskSurfaces
+        agentTask={agentTaskStatus.agentTask}
+        agentTaskEvents={agentTaskStatus.agentTaskEvents}
+        agentTaskSteps={agentTaskStatus.agentTaskSteps}
         researchProgress={researchProgress}
         researchRunning={researchRunning}
+        onAbortAgentTask={() => void agentTaskStatus.abortAgentTask()}
         onAbortResearch={() => void abortResearch()}
+        onOpenAgentTaskAudit={() => setAuditDrawerOpen(true)}
+        onResumeAgentTask={() => void handleHarnessResume()}
         researchResult={researchResult}
         researchPanelExpanded={researchPanelExpanded}
         researchDetailRef={researchDetailRef}

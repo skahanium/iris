@@ -1350,6 +1350,29 @@ function normalizeRouting(raw: LlmRoutingConfig | undefined): LlmRoutingConfig {
   }
 
   const slots: LlmRoutingConfig["slots"] = { ...DEFAULT_LLM_ROUTING.slots };
+  const legacyScenes = (
+    raw as LlmRoutingConfig & {
+      scenes?: Record<string, SlotRoute & { provider_id?: string }>;
+    }
+  ).scenes;
+  const legacySceneToSlot: Partial<Record<CapabilitySlot, string>> = {
+    fast: "knowledge_lookup",
+    writer: "drafting_assist",
+    reasoner: "research_synthesis",
+    long_context: "exemplar_learning",
+    agent_tools: "knowledge_lookup",
+  };
+  for (const [slot, scene] of Object.entries(legacySceneToSlot)) {
+    const route = legacyScenes?.[scene];
+    if (!route) continue;
+    slots[slot as CapabilitySlot] = {
+      providerId: route.providerId ?? route.provider_id ?? "deepseek",
+      model: normalizePersistedModelId(
+        route.model ?? DEFAULT_LLM_ROUTING.slots[slot as CapabilitySlot].model,
+      ),
+      thinking: route.thinking ?? false,
+    };
+  }
   for (const slot of CAPABILITY_SLOTS) {
     const rawSlots = raw.slots as Partial<Record<CapabilitySlot, SlotRoute>>;
     const route = rawSlots?.[slot];
@@ -1369,11 +1392,7 @@ function normalizeRouting(raw: LlmRoutingConfig | undefined): LlmRoutingConfig {
     schemaVersion: raw.schemaVersion ?? 2,
     providers,
     slots,
-    scenes: raw.scenes ?? DEFAULT_LLM_ROUTING.scenes,
-    contextStrategy: {
-      ...DEFAULT_LLM_ROUTING.contextStrategy,
-      ...raw.contextStrategy,
-    },
+    contextStrategy: raw.contextStrategy ?? DEFAULT_LLM_ROUTING.contextStrategy,
   };
 }
 

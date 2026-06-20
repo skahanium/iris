@@ -5,12 +5,18 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import type {
+  AgentTaskDto,
+  AgentTaskEventDto,
+  AgentTaskStepDto,
+} from "@/types/ipc";
+import type {
   CitationCheckResult,
   OrganizeSuggestion,
   PatchProposal,
   ResearchFocusPayload,
 } from "@/types/ai";
 
+import { AgentTaskStatusPanel } from "./AgentTaskStatusPanel";
 import { DocumentCheckArtifacts } from "./assistant/DocumentCheckArtifacts";
 import { ResearchFocusView } from "./assistant/ResearchFocusView";
 import { CitationCheckView } from "./CitationCheckView";
@@ -32,9 +38,15 @@ export interface ResearchProgressData {
 }
 
 interface AssistantTaskSurfacesProps {
+  agentTask: AgentTaskDto | null;
+  agentTaskEvents: AgentTaskEventDto[];
+  agentTaskSteps: AgentTaskStepDto[];
   researchProgress: ResearchProgressData | null;
   researchRunning: boolean;
+  onAbortAgentTask: () => void;
   onAbortResearch: () => void;
+  onOpenAgentTaskAudit: () => void;
+  onResumeAgentTask: () => void;
   researchResult: ResearchFocusPayload | null;
   researchPanelExpanded: boolean;
   researchDetailRef: RefObject<HTMLDivElement | null>;
@@ -57,9 +69,15 @@ interface AssistantTaskSurfacesProps {
 }
 
 export function AssistantTaskSurfaces({
+  agentTask,
+  agentTaskEvents,
+  agentTaskSteps,
   researchProgress,
   researchRunning,
+  onAbortAgentTask,
   onAbortResearch,
+  onOpenAgentTaskAudit,
+  onResumeAgentTask,
   researchResult,
   researchPanelExpanded,
   researchDetailRef,
@@ -86,6 +104,15 @@ export function AssistantTaskSurfaces({
 
   return (
     <>
+      <AgentTaskStatusPanel
+        task={agentTask}
+        steps={agentTaskSteps}
+        events={agentTaskEvents}
+        onAbort={onAbortAgentTask}
+        onOpenAudit={onOpenAgentTaskAudit}
+        onResume={onResumeAgentTask}
+      />
+
       {showResearchProgress ? (
         <div className="ai-task-surface px-3 pt-3" data-testid="research-focus">
           <Card className="border-border/60">

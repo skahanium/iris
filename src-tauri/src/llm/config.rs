@@ -3,8 +3,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::ai_types::{
-    slot_for_scene, AgentIntent, AiScene, CapabilityRouteSummary, CapabilitySlot, EndpointFamily,
-    ProviderConfig,
+    AgentIntent, AiScene, CapabilityRouteSummary, CapabilitySlot, EndpointFamily, ProviderConfig,
 };
 use crate::error::{AppError, AppResult};
 use crate::llm::model_catalog::{fallback_model, find_model};
@@ -30,9 +29,9 @@ pub struct LlmRoutingConfig {
     pub providers: std::collections::HashMap<String, ProviderOverride>,
     #[serde(default)]
     pub slots: std::collections::HashMap<String, SlotRoute>,
-    #[serde(default)]
+    #[serde(default, skip_serializing)]
     pub scenes: std::collections::HashMap<String, SceneRoute>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "std::collections::HashMap::is_empty")]
     pub context_strategy: std::collections::HashMap<String, ContextStrategy>,
 }
 
@@ -211,6 +210,26 @@ fn slots_from_legacy_scenes(
     slots
 }
 
+fn merge_legacy_scene_routes(config: &mut LlmRoutingConfig) {
+    if config.scenes.is_empty() {
+        return;
+    }
+
+    let mappings = [
+        ("fast", "knowledge_lookup"),
+        ("writer", "drafting_assist"),
+        ("reasoner", "research_synthesis"),
+        ("long_context", "exemplar_learning"),
+        ("agent_tools", "knowledge_lookup"),
+    ];
+    for (slot, scene) in mappings {
+        if let Some(route) = config.scenes.get(scene).cloned() {
+            config.slots.insert(slot.to_string(), route);
+        }
+    }
+    config.scenes.clear();
+}
+
 /// Factory defaults aligned with user preference (DeepSeek V4 Flash / Pro).
 pub fn deepseek_defaults() -> LlmRoutingConfig {
     let mut slots = std::collections::HashMap::new();
@@ -329,6 +348,7 @@ pub fn load(db: &Database) -> AppResult<LlmRoutingConfig> {
         }
     };
 
+    merge_legacy_scene_routes(&mut config);
     sanitize_routing(&mut config);
     ensure_slot_keys(&mut config);
     Ok(config)
@@ -336,15 +356,6 @@ pub fn load(db: &Database) -> AppResult<LlmRoutingConfig> {
 
 /// Remove unknown providers while preserving Phase3 built-ins and custom endpoints.
 fn sanitize_routing(config: &mut LlmRoutingConfig) {
-    for route in config.scenes.values_mut() {
-        if !crate::llm::providers::is_allowed_provider(&route.provider_id) {
-            route.provider_id = "deepseek".into();
-            route.model = "deepseek-v4-flash".into();
-            route.thinking = false;
-        } else {
-            route.model = normalize_legacy_model_id(&route.model).into();
-        }
-    }
     for route in config.slots.values_mut() {
         if !crate::llm::providers::is_allowed_provider(&route.provider_id) {
             route.provider_id = "deepseek".into();
@@ -443,8 +454,9 @@ fn ensure_slot_keys(config: &mut LlmRoutingConfig) {
 fn route_input_for_scene(scene: AiScene) -> CapabilityRouteInput {
     let intent = match scene {
         AiScene::KnowledgeLookup => AgentIntent::AskNotes,
-        AiScene::ExemplarLearning | AiScene::DraftingAssist => AgentIntent::Write,
+        AiScene::DraftingAssist => AgentIntent::Write,
         AiScene::ResearchSynthesis => AgentIntent::Research,
+        _ => AgentIntent::Write,
     };
     CapabilityRouteInput {
         intent,
@@ -706,7 +718,7 @@ pub fn resolve_for_provider(
 
 impl ResolvedLlmConfig {
     pub fn to_provider_config(&self, scene: AiScene) -> ProviderConfig {
-        self.to_provider_config_for_slot(slot_for_scene(scene))
+        self.to_provider_config_for_slot(slot_for_legacy_scene(scene))
     }
 
     pub fn to_provider_config_for_slot(&self, slot: CapabilitySlot) -> ProviderConfig {
@@ -718,6 +730,15 @@ impl ResolvedLlmConfig {
             slot,
             endpoint_family: self.endpoint_family,
         }
+    }
+}
+
+fn slot_for_legacy_scene(scene: AiScene) -> CapabilitySlot {
+    match scene {
+        AiScene::KnowledgeLookup => CapabilitySlot::Fast,
+        AiScene::DraftingAssist => CapabilitySlot::Writer,
+        AiScene::ResearchSynthesis => CapabilitySlot::Reasoner,
+        _ => CapabilitySlot::Writer,
     }
 }
 

@@ -183,8 +183,9 @@ pub fn legacy_scene(intent: AgentIntent) -> AiScene {
 pub fn intent_from_legacy_scene(scene: AiScene) -> AgentIntent {
     match scene {
         AiScene::KnowledgeLookup => AgentIntent::AskNotes,
-        AiScene::ExemplarLearning | AiScene::DraftingAssist => AgentIntent::Write,
+        AiScene::DraftingAssist => AgentIntent::Write,
         AiScene::ResearchSynthesis => AgentIntent::Research,
+        _ => AgentIntent::Write,
     }
 }
 

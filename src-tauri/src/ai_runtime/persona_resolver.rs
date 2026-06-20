@@ -44,8 +44,9 @@ pub fn resolve_persona(
 ) -> ResolvedPersona {
     let agent_intent = match scene {
         AiScene::KnowledgeLookup => AgentIntent::AskNotes,
-        AiScene::ExemplarLearning | AiScene::DraftingAssist => AgentIntent::Write,
+        AiScene::DraftingAssist => AgentIntent::Write,
         AiScene::ResearchSynthesis => AgentIntent::Research,
+        _ => AgentIntent::Write,
     };
     resolve_persona_for_task_focus(
         profile,
@@ -215,11 +216,11 @@ fn legacy_task_focus_from_scene(scene: AiScene, web_search_enabled: bool) -> Str
                 "知识查阅：通过 search_hybrid 检索本地笔记；仅依据本地知识库回答".into()
             }
         }
-        AiScene::ExemplarLearning => "范文学习：分析结构、句式与表达；模板保存需用户确认".into(),
         AiScene::DraftingAssist => {
             "文稿创作：低干扰辅助；写入笔记须用户确认；避免大段照搬范文".into()
         }
         AiScene::ResearchSynthesis => "研究综合：多材料交叉论证、证据缺口与引用核查".into(),
+        _ => "文稿创作：低干扰辅助；写入笔记须用户确认；避免大段照搬范文".into(),
     }
 }
 

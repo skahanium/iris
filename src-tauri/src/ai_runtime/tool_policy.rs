@@ -199,10 +199,7 @@ fn effective_task_policy(ctx: &ToolPolicyContext) -> AgentTaskPolicy {
             scope: AgentTaskScope::Vault,
             web_authorized: ctx.web_search_enabled,
             has_attachments: false,
-            write_permission_required: matches!(
-                ctx.scene,
-                AiScene::DraftingAssist | AiScene::ExemplarLearning
-            ),
+            write_permission_required: matches!(ctx.scene, AiScene::DraftingAssist),
             research_depth: matches!(ctx.scene, AiScene::ResearchSynthesis) as u32,
         })
     })

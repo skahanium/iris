@@ -17,7 +17,7 @@ import type {
 import type { AssistantChromeSnapshot } from "@/types/assistant-chrome";
 
 import type { ChatLine } from "../AiMessageList";
-import type { AssistantSelectionQuote } from "../UnifiedAssistantPanel.impl";
+import type { AssistantSelectionQuote } from "../types";
 import { buildActionState } from "../unified-assistant-panel-utils";
 
 interface UseAssistantPanelEffectsParams {

@@ -6,7 +6,7 @@ import { LLM_CONFIG_CHANGED_EVENT } from "@/lib/llm-events";
 const DEFAULT_PROVIDER = "deepseek";
 
 /**
- * 全应用共享的 LLM 默认厂商（内联 AI、`/` 命令；场景路由见设置页）。
+ * 全应用共享的 LLM 默认厂商（内联 AI、`/` 命令；能力槽路由见设置页）。
  */
 export function useLlmProvider() {
   const [provider, setProvider] = useState(DEFAULT_PROVIDER);
@@ -14,9 +14,9 @@ export function useLlmProvider() {
   const refresh = useCallback(async () => {
     try {
       const config = await llmConfigGet();
-      const firstScene = config.routing.scenes.knowledge_lookup;
-      if (firstScene?.providerId) {
-        setProvider(firstScene.providerId);
+      const fastSlot = config.routing.slots.fast;
+      if (fastSlot?.providerId) {
+        setProvider(fastSlot.providerId);
       }
     } catch {
       setProvider(DEFAULT_PROVIDER);

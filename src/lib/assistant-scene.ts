@@ -1,7 +1,10 @@
 import { setActiveAiScene } from "@/hooks/useConnectivityStatus";
-import type { AgentIntent, AiScene, AssistantIntent } from "@/types/ai";
+import type { AgentIntent, AssistantIntent } from "@/types/ai";
 
-type LegacySceneHint = Exclude<AiScene, "exemplar_learning">;
+type LegacySceneHint =
+  | "knowledge_lookup"
+  | "drafting_assist"
+  | "research_synthesis";
 
 export function legacySceneHintForAgentIntent(
   intent: AgentIntent,

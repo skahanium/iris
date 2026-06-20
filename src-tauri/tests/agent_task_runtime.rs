@@ -5,6 +5,7 @@ use iris_lib::ai_runtime::agent_task::{
 use iris_lib::ai_runtime::session::SessionManager;
 use iris_lib::ai_runtime::AiScene;
 use iris_lib::storage::db::Database;
+use std::fs;
 
 #[test]
 fn lightweight_task_stores_summary_not_full_user_text() {
@@ -453,4 +454,256 @@ fn task_list_filters_by_session_and_status() {
     assert_eq!(tasks.len(), 1);
     assert_eq!(tasks[0].task_id, paused_task);
     assert_eq!(tasks[0].status, AgentTaskStatus::PausedBudget);
+}
+
+#[test]
+fn task_step_and_event_dtos_are_summary_only_for_ui() {
+    let db = Database::open_in_memory().unwrap();
+    let session_id = SessionManager::ensure(&db, AiScene::ResearchSynthesis, None).unwrap();
+    let task_id = AgentTaskRuntime::create_task(
+        &db,
+        CreateTaskInput {
+            request_id: "req-runtime-ui-dto".into(),
+            session_id,
+            kind: AgentTaskKind::Complex,
+            user_input: "summarize only for UI".into(),
+            budget_policy: serde_json::json!({ "mode": "complex" }),
+        },
+    )
+    .unwrap();
+    AgentTaskRuntime::record_step(
+        &db,
+        &task_id,
+        "research",
+        AgentTaskStatus::PausedBudget,
+        "input summary only",
+        "output summary with citations",
+        serde_json::json!({
+            "summary": "safe checkpoint",
+            "evidence_packet_ids": ["pkt-1", "pkt-2"],
+            "continuation_goal": "continue from summaries"
+        }),
+    )
+    .unwrap();
+    AgentTaskRuntime::record_event(
+        &db,
+        &task_id,
+        "permission_wait",
+        "waiting for vault write approval",
+        serde_json::json!({
+            "tool": "write_markdown",
+            "raw_result": "must not be exposed"
+        }),
+    )
+    .unwrap();
+
+    let steps = AgentTaskRuntime::list_steps(&db, &task_id).unwrap();
+    let events = AgentTaskRuntime::list_events(&db, &task_id).unwrap();
+
+    assert_eq!(steps.len(), 1);
+    assert_eq!(steps[0].kind, "research");
+    assert_eq!(steps[0].output_summary, "output summary with citations");
+    assert_eq!(steps[0].evidence_packet_ids, vec!["pkt-1", "pkt-2"]);
+    let serialized_step = serde_json::to_string(&steps[0]).unwrap();
+    assert!(!serialized_step.contains("checkpoint_json"));
+    assert!(!serialized_step.contains("continuation_goal"));
+
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0].event_type, "permission_wait");
+    assert_eq!(events[0].message, "waiting for vault write approval");
+    let serialized_event = serde_json::to_string(&events[0]).unwrap();
+    assert!(!serialized_event.contains("raw_result"));
+}
+
+#[test]
+fn lifecycle_cleanup_aborts_recoverable_tasks_without_deleting_sessions_or_notes() {
+    let db = Database::open_in_memory().unwrap();
+    let session_id = SessionManager::ensure(&db, AiScene::ResearchSynthesis, None).unwrap();
+    let running_task = AgentTaskRuntime::create_task(
+        &db,
+        CreateTaskInput {
+            request_id: "req-runtime-cleanup-running".into(),
+            session_id,
+            kind: AgentTaskKind::Complex,
+            user_input: "running task".into(),
+            budget_policy: serde_json::json!({ "mode": "complex" }),
+        },
+    )
+    .unwrap();
+    let paused_task = AgentTaskRuntime::create_task(
+        &db,
+        CreateTaskInput {
+            request_id: "req-runtime-cleanup-paused".into(),
+            session_id,
+            kind: AgentTaskKind::Complex,
+            user_input: "paused task".into(),
+            budget_policy: serde_json::json!({ "mode": "complex" }),
+        },
+    )
+    .unwrap();
+    AgentTaskRuntime::pause_budget(
+        &db,
+        &paused_task,
+        "safe pause",
+        serde_json::json!({
+            "continuation_goal": "continue later",
+            "next_action": "resume"
+        }),
+    )
+    .unwrap();
+
+    let aborted = AgentTaskRuntime::abort_recoverable_tasks(
+        &db,
+        "cache_clear",
+        "AI cache clear invalidated recoverable task state",
+    )
+    .unwrap();
+
+    assert_eq!(aborted, 2);
+    assert_eq!(
+        AgentTaskRuntime::get_task(&db, &running_task)
+            .unwrap()
+            .unwrap()
+            .status,
+        AgentTaskStatus::Aborted
+    );
+    assert_eq!(
+        AgentTaskRuntime::get_task(&db, &paused_task)
+            .unwrap()
+            .unwrap()
+            .status,
+        AgentTaskStatus::Aborted
+    );
+    assert!(SessionManager::get_session(&db, session_id)
+        .unwrap()
+        .is_some());
+
+    let event_count: i64 = db
+        .with_read_conn(|conn| {
+            conn.query_row(
+                "SELECT COUNT(*) FROM agent_task_events WHERE event_type = 'lifecycle_cleanup'",
+                [],
+                |row| row.get(0),
+            )
+            .map_err(Into::into)
+        })
+        .unwrap();
+    assert_eq!(event_count, 2);
+}
+
+#[test]
+fn cache_clear_sequence_deletes_recovery_state_without_deleting_note_file() {
+    let temp = tempfile::tempdir().unwrap();
+    let note_path = temp.path().join("notes").join("a.md");
+    fs::create_dir_all(note_path.parent().unwrap()).unwrap();
+    fs::write(&note_path, "user note body").unwrap();
+
+    let db = Database::open_in_memory().unwrap();
+    let session_id =
+        SessionManager::ensure(&db, AiScene::ResearchSynthesis, Some("notes/a.md")).unwrap();
+    let task_id = AgentTaskRuntime::create_task(
+        &db,
+        CreateTaskInput {
+            request_id: "req-cache-clear-sequence".into(),
+            session_id,
+            kind: AgentTaskKind::Complex,
+            user_input: "task tied to a note".into(),
+            budget_policy: serde_json::json!({ "mode": "complex" }),
+        },
+    )
+    .unwrap();
+    AgentTaskRuntime::pause_budget(
+        &db,
+        &task_id,
+        "safe pause",
+        serde_json::json!({
+            "continuation_goal": "continue later",
+            "next_action": "resume"
+        }),
+    )
+    .unwrap();
+    AgentTaskRuntime::record_event(
+        &db,
+        &task_id,
+        "status",
+        "paused",
+        serde_json::json!({ "safe": true }),
+    )
+    .unwrap();
+
+    let aborted = AgentTaskRuntime::abort_recoverable_tasks(
+        &db,
+        "CACHE_CLEAR",
+        "AI cache clear invalidated recoverable task state",
+    )
+    .unwrap();
+    let deleted = SessionManager::delete_all_filtered(&db, None, None).unwrap();
+
+    assert_eq!(aborted, 1);
+    assert_eq!(deleted, 1);
+    for table in ["agent_tasks", "agent_task_steps", "agent_task_events"] {
+        let count: i64 = db
+            .with_read_conn(|conn| {
+                conn.query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |row| {
+                    row.get(0)
+                })
+                .map_err(Into::into)
+            })
+            .unwrap();
+        assert_eq!(count, 0, "{table} should be cleared by cache cleanup");
+    }
+    assert_eq!(fs::read_to_string(note_path).unwrap(), "user note body");
+}
+
+#[test]
+fn session_clear_filtered_cascades_tasks_steps_and_events() {
+    let db = Database::open_in_memory().unwrap();
+    let session_id =
+        SessionManager::ensure(&db, AiScene::KnowledgeLookup, Some("notes/a.md")).unwrap();
+    let task_id = AgentTaskRuntime::create_task(
+        &db,
+        CreateTaskInput {
+            request_id: "req-runtime-clear-filtered".into(),
+            session_id,
+            kind: AgentTaskKind::Complex,
+            user_input: "task tied to a deleted session".into(),
+            budget_policy: serde_json::json!({ "mode": "complex" }),
+        },
+    )
+    .unwrap();
+    AgentTaskRuntime::record_step(
+        &db,
+        &task_id,
+        "respond",
+        AgentTaskStatus::Running,
+        "input summary",
+        "output summary",
+        serde_json::json!({ "summary": "safe checkpoint" }),
+    )
+    .unwrap();
+    AgentTaskRuntime::record_event(
+        &db,
+        &task_id,
+        "status",
+        "started",
+        serde_json::json!({ "safe": true }),
+    )
+    .unwrap();
+
+    let deleted =
+        SessionManager::delete_all_filtered(&db, Some("knowledge_lookup"), Some("notes/a.md"))
+            .unwrap();
+    assert_eq!(deleted, 1);
+
+    for table in ["agent_tasks", "agent_task_steps", "agent_task_events"] {
+        let count: i64 = db
+            .with_read_conn(|conn| {
+                conn.query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |row| {
+                    row.get(0)
+                })
+                .map_err(Into::into)
+            })
+            .unwrap();
+        assert_eq!(count, 0, "{table} should not contain orphan rows");
+    }
 }

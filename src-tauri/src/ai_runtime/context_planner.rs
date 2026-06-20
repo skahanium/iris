@@ -29,8 +29,6 @@ pub enum QueryIntent {
         assist_type: WritingAssistType,
         context: String,
     },
-    /// 范文学习请求
-    ExemplarAnalysis { analysis_type: AnalysisType },
     /// 研究分析请求
     ResearchAnalysis { sub_queries: Vec<String> },
     /// 通用查询
@@ -51,20 +49,6 @@ pub enum WritingAssistType {
     CitationSuggestion,
     /// 一致性检查
     ConsistencyCheck,
-}
-
-/// Analysis sub-types for exemplar learning.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum AnalysisType {
-    /// 结构拆解
-    StructureBreakdown,
-    /// 表达特征
-    ExpressionFeatures,
-    /// 法规引用方式
-    CitationPattern,
-    /// 综合分析
-    Comprehensive,
 }
 
 /// Sub-query for retrieval.
@@ -208,13 +192,6 @@ fn detect_intent(query: &str, scene: AiScene) -> QueryIntent {
         }
     }
 
-    // Check for exemplar analysis patterns
-    if matches!(scene, AiScene::ExemplarLearning) {
-        if let Some(analysis_intent) = detect_analysis_intent(&lower) {
-            return analysis_intent;
-        }
-    }
-
     // Check for research patterns
     if matches!(scene, AiScene::ResearchSynthesis) {
         if let Some(research_intent) = detect_research_intent(query) {
@@ -318,24 +295,6 @@ fn detect_writing_intent(lower: &str, original: &str) -> Option<QueryIntent> {
     })
 }
 
-/// Detect analysis intent for exemplar learning.
-fn detect_analysis_intent(lower: &str) -> Option<QueryIntent> {
-    let analysis_type =
-        if lower.contains("结构") || lower.contains("框架") || lower.contains("层次") {
-            Some(AnalysisType::StructureBreakdown)
-        } else if lower.contains("表达") || lower.contains("句式") || lower.contains("用词") {
-            Some(AnalysisType::ExpressionFeatures)
-        } else if lower.contains("引用") || lower.contains("依据") || lower.contains("法规") {
-            Some(AnalysisType::CitationPattern)
-        } else if lower.contains("分析") || lower.contains("学习") || lower.contains("总结") {
-            Some(AnalysisType::Comprehensive)
-        } else {
-            None
-        };
-
-    analysis_type.map(|t| QueryIntent::ExemplarAnalysis { analysis_type: t })
-}
-
 /// Detect research intent.
 fn detect_research_intent(query: &str) -> Option<QueryIntent> {
     // Research queries often contain comparative or analytical language
@@ -421,24 +380,6 @@ fn generate_sub_queries(
             }
         }
 
-        QueryIntent::ExemplarAnalysis { analysis_type } => match analysis_type {
-            AnalysisType::StructureBreakdown => {
-                queries.push(SubQuery {
-                    query: "文档结构 框架 层次".to_string(),
-                    query_type: SubQueryType::SemanticExpansion,
-                    priority: 11,
-                });
-            }
-            AnalysisType::CitationPattern => {
-                queries.push(SubQuery {
-                    query: "法规引用 引用方式".to_string(),
-                    query_type: SubQueryType::SemanticExpansion,
-                    priority: 11,
-                });
-            }
-            _ => {}
-        },
-
         QueryIntent::ResearchAnalysis { sub_queries } => {
             // Add research sub-queries
             for (i, sq) in sub_queries.iter().enumerate().skip(1) {
@@ -514,17 +455,6 @@ mod tests {
             QueryIntent::WritingAssist {
                 assist_type: WritingAssistType::CitationSuggestion,
                 ..
-            }
-        ));
-    }
-
-    #[test]
-    fn detect_analysis_intent_structure() {
-        let intent = detect_intent("分析这篇范文的结构", AiScene::ExemplarLearning);
-        assert!(matches!(
-            intent,
-            QueryIntent::ExemplarAnalysis {
-                analysis_type: AnalysisType::StructureBreakdown
             }
         ));
     }

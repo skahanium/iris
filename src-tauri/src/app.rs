@@ -212,6 +212,11 @@ impl AppState {
     }
 
     fn clear_vault_setting(&self) -> AppResult<()> {
+        crate::ai_runtime::agent_task::AgentTaskRuntime::abort_recoverable_tasks(
+            &self.db,
+            "VAULT_RESET",
+            "Vault reset invalidated recoverable task state",
+        )?;
         {
             let mut guard = self.vault.lock().map_err(|_| AppError::msg("Lock error"))?;
             *guard = None;

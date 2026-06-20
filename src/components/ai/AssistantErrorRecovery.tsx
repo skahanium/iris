@@ -1,6 +1,10 @@
 import { AlertTriangle } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
+import {
+  isUnrecoverableResumeError,
+  resumeRecoveryMessage,
+} from "@/lib/ai/resume-recovery";
 
 interface AssistantErrorRecoveryProps {
   disabled: boolean;
@@ -18,16 +22,17 @@ export function AssistantErrorRecovery({
   onResume,
 }: AssistantErrorRecoveryProps) {
   if (!lastError && !pausedTaskId) return null;
+  const unrecoverable = isUnrecoverableResumeError(lastError);
 
   return (
     <div className="space-y-2 px-3 pt-3">
       {lastError ? (
         <div className="flex items-start gap-2 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-destructive">
           <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-          <span>{lastError}</span>
+          <span>{resumeRecoveryMessage(lastError)}</span>
         </div>
       ) : null}
-      {pausedTaskId || harnessRequestId ? (
+      {!unrecoverable && (pausedTaskId || harnessRequestId) ? (
         <Button
           type="button"
           variant="outline"

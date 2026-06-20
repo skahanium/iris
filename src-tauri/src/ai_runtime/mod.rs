@@ -1,4 +1,4 @@
-//! Iris AI Runtime — scene routing, workflows, tool permission, trace.
+//! Iris Agent Task Runtime — task policy, context planning, tool permission, trace.
 //!
 //! Shared data types live in [`crate::ai_types`] and are re-exported here
 //! for backward compatibility.
@@ -25,7 +25,6 @@ pub mod prompt_profile;
 pub mod retrieval_broker;
 pub mod retrieval_scope;
 pub mod runtime_context;
-pub mod scene_router;
 pub mod session;
 pub mod skill_install_service;
 pub mod skill_registry;

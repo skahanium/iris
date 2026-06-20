@@ -1,8 +1,8 @@
-import {
-  UnifiedAssistantPanel as UnifiedAssistantPanelImpl,
-  type AssistantSelectionQuote,
-  type UnifiedAssistantPanelProps,
-} from "./UnifiedAssistantPanel.impl";
+import { UnifiedAssistantPanel as UnifiedAssistantPanelImpl } from "./UnifiedAssistantPanel.impl";
+import type {
+  AssistantSelectionQuote,
+  UnifiedAssistantPanelProps,
+} from "./types";
 
 export type { AssistantSelectionQuote, UnifiedAssistantPanelProps };
 

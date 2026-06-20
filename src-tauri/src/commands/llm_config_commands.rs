@@ -512,9 +512,6 @@ fn validate_routing(routing: &LlmRoutingConfig) -> AppResult<()> {
     for route in routing.slots.values() {
         validate_route(&route.provider_id, &route.model, routing)?;
     }
-    for route in routing.scenes.values() {
-        validate_route(&route.provider_id, &route.model, routing)?;
-    }
     for id in routing.providers.keys() {
         if !is_allowed_provider(id) {
             return Err(AppError::msg(format!("未知厂商配置项: {id}")));

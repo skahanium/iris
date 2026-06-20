@@ -82,7 +82,12 @@ impl ModelGateway {
 
     /// Select appropriate capability slot for scene.
     pub fn slot_for_scene(scene: AiScene) -> CapabilitySlot {
-        crate::ai_types::slot_for_scene(scene)
+        match scene {
+            AiScene::KnowledgeLookup => CapabilitySlot::Fast,
+            AiScene::DraftingAssist => CapabilitySlot::Writer,
+            AiScene::ResearchSynthesis => CapabilitySlot::Reasoner,
+            _ => CapabilitySlot::Writer,
+        }
     }
 
     /// Load active user rules from the DB, filtered by scene relevance.

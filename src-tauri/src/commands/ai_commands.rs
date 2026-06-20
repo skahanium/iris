@@ -1790,6 +1790,11 @@ pub async fn session_clear_all(
 /// Clear persisted AI runtime cache (sessions, harness checkpoints, knowledge deposits).
 #[tauri::command]
 pub async fn ai_cache_clear(state: State<'_, Arc<AppState>>) -> AppResult<serde_json::Value> {
+    let aborted_tasks = AgentTaskRuntime::abort_recoverable_tasks(
+        &state.db,
+        "CACHE_CLEAR",
+        "AI cache clear invalidated recoverable task state",
+    )?;
     let sessions = SessionManager::delete_all_filtered(&state.db, None, None)?;
     let (checkpoints, deposits, traces) = state.db.with_conn(|conn| {
         let checkpoints = conn.execute(
@@ -1809,6 +1814,7 @@ pub async fn ai_cache_clear(state: State<'_, Arc<AppState>>) -> AppResult<serde_
     }
     Ok(serde_json::json!({
         "sessions_deleted": sessions,
+        "aborted_tasks": aborted_tasks,
         "checkpoints_cleared": checkpoints,
         "deposits_deleted": deposits,
         "traces_deleted": traces,
@@ -1862,6 +1868,24 @@ pub async fn agent_task_list(
         None => None,
     };
     AgentTaskRuntime::list_tasks(&state.db, TaskListFilter { session_id, status })
+}
+
+/// List summary-only task steps for the task UI.
+#[tauri::command]
+pub async fn agent_task_steps(
+    state: State<'_, Arc<AppState>>,
+    task_id: String,
+) -> AppResult<Vec<crate::ai_runtime::agent_task::AgentTaskStep>> {
+    AgentTaskRuntime::list_steps(&state.db, &task_id)
+}
+
+/// List summary-only task events for the task UI.
+#[tauri::command]
+pub async fn agent_task_events(
+    state: State<'_, Arc<AppState>>,
+    task_id: String,
+) -> AppResult<Vec<crate::ai_runtime::agent_task::AgentTaskEvent>> {
+    AgentTaskRuntime::list_events(&state.db, &task_id)
 }
 
 /// Resume a paused Agent Task by durable task id.

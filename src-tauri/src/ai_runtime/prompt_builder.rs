@@ -309,7 +309,6 @@ mod tests {
             (AiScene::KnowledgeLookup, "知识查阅"),
             (AiScene::DraftingAssist, "文稿创作"),
             (AiScene::ResearchSynthesis, "研究综合"),
-            (AiScene::ExemplarLearning, "范文学习"),
         ] {
             let resolved = resolve_persona(&profile, scene, false);
             let rendered = render_persona(&resolved);

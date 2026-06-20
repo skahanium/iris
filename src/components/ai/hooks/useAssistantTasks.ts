@@ -88,6 +88,7 @@ interface UseAssistantTasksParams {
   setContextStatusData: Dispatch<SetStateAction<ContextStatus | null>>;
   setDocIssues: Dispatch<SetStateAction<string[]>>;
   setDocSummary: Dispatch<SetStateAction<string | null>>;
+  setAgentTaskId: Dispatch<SetStateAction<string | null>>;
   setHarnessRequestId: Dispatch<SetStateAction<string | null>>;
   setInput: Dispatch<SetStateAction<string>>;
   setLastError: Dispatch<SetStateAction<string | null>>;
@@ -151,6 +152,7 @@ export function useAssistantTasks({
   setContextStatusData,
   setDocIssues,
   setDocSummary,
+  setAgentTaskId,
   setHarnessRequestId,
   setInput,
   setLastError,
@@ -273,6 +275,7 @@ export function useAssistantTasks({
       setStreaming(true);
       streamBufRef.current = "";
       requestIdRef.current = null;
+      setAgentTaskId(null);
       setHarnessRequestId(null);
       setPausedTaskId(null);
       panelSendActiveRef.current = true;
@@ -320,6 +323,8 @@ export function useAssistantTasks({
           throw new Error("助手路由异常：期望对话结果");
         }
         const result = response.payload;
+        const taskId = response.taskId ?? result.task_id ?? null;
+        setAgentTaskId(taskId);
         const refreshNotice =
           response.evidenceRefreshNotice ?? result.evidence_refresh_notice;
         if (refreshNotice) {
@@ -376,7 +381,7 @@ export function useAssistantTasks({
           result.status === "pending_tools" ||
           toolCalls?.some((t) => t.status === "pending") === true;
         const pausedBudget = result.status === "paused_budget";
-        setPausedTaskId(pausedBudget ? (result.task_id ?? null) : null);
+        setPausedTaskId(pausedBudget ? taskId : null);
         setActionState(
           buildActionState(
             intent,
@@ -433,6 +438,7 @@ export function useAssistantTasks({
       sessionId,
       setActionState,
       setActivityHint,
+      setAgentTaskId,
       setHarnessRequestId,
       setLastError,
       setMessages,
@@ -513,6 +519,7 @@ export function useAssistantTasks({
         cursorContext: ctx.cursorContext,
       });
       recordRunPlan(response);
+      setAgentTaskId(response.taskId ?? null);
       if (response.kind !== "writing") {
         throw new Error("助手路由异常：期望写作结果");
       }
@@ -546,6 +553,7 @@ export function useAssistantTasks({
       explicitIntentDetection,
       recordRunPlan,
       setActionState,
+      setAgentTaskId,
       setPackets,
       setPacketsOpen,
       setWritingPatches,
@@ -580,6 +588,7 @@ export function useAssistantTasks({
       contextScope,
     });
     recordRunPlan(response);
+    setAgentTaskId(response.taskId ?? null);
     if (response.kind !== "citation") {
       throw new Error("助手路由异常：期望引用检查结果");
     }
@@ -600,6 +609,7 @@ export function useAssistantTasks({
     notePath,
     recordRunPlan,
     setActionState,
+    setAgentTaskId,
     setCitationResult,
     setPackets,
     setPacketsOpen,
@@ -626,6 +636,7 @@ export function useAssistantTasks({
         organizeTaskType: determineOrganizeTaskType(rawMessage),
       });
       recordRunPlan(response);
+      setAgentTaskId(response.taskId ?? null);
       if (response.kind !== "organize") {
         throw new Error("助手路由异常：期望整理结果");
       }
@@ -652,6 +663,7 @@ export function useAssistantTasks({
       explicitIntentDetection,
       recordRunPlan,
       setActionState,
+      setAgentTaskId,
       setOrganizeSelection,
       setOrganizeSuggestions,
       webSearch,
@@ -687,6 +699,7 @@ export function useAssistantTasks({
         chapter,
       });
       recordRunPlan(response);
+      setAgentTaskId(response.taskId ?? null);
       if (response.kind !== "chapter") {
         throw new Error("助手路由异常：期望章节写作结果");
       }
@@ -713,6 +726,7 @@ export function useAssistantTasks({
       notePath,
       recordRunPlan,
       setActionState,
+      setAgentTaskId,
       setWritingPatches,
       webSearch,
     ],
@@ -742,6 +756,7 @@ export function useAssistantTasks({
         documentCheckType: determineDocumentCheckType(rawMessage),
       });
       recordRunPlan(response);
+      setAgentTaskId(response.taskId ?? null);
       if (response.kind !== "document") {
         throw new Error("助手路由异常：期望文档检查结果");
       }
@@ -787,6 +802,7 @@ export function useAssistantTasks({
       notePath,
       recordRunPlan,
       setActionState,
+      setAgentTaskId,
       setDocIssues,
       setDocSummary,
       setWritingPatches,
@@ -813,6 +829,7 @@ export function useAssistantTasks({
         webAuthorized: webSearch,
       });
       recordRunPlan(response);
+      setAgentTaskId(response.taskId ?? null);
       if (response.kind !== "research") {
         throw new Error("助手路由异常：期望研究结果");
       }
@@ -840,6 +857,7 @@ export function useAssistantTasks({
       researchRequestIdRef,
       recordRunPlan,
       setActionState,
+      setAgentTaskId,
       setMessages,
       setResearchPanelExpanded,
       setResearchResult,

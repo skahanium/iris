@@ -20,7 +20,6 @@ pub(super) fn tools() -> Vec<ToolCatalogEntry> {
             default_enabled_without_skill: true,
             scene_affinity: &[
                 AiScene::KnowledgeLookup,
-                AiScene::ExemplarLearning,
                 AiScene::DraftingAssist,
                 AiScene::ResearchSynthesis,
             ],
@@ -201,7 +200,6 @@ pub(super) fn tools() -> Vec<ToolCatalogEntry> {
             default_enabled_without_skill: true,
             scene_affinity: &[
                 AiScene::KnowledgeLookup,
-                AiScene::ExemplarLearning,
                 AiScene::DraftingAssist,
                 AiScene::ResearchSynthesis,
             ],

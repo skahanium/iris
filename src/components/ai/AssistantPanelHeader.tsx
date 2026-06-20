@@ -16,6 +16,7 @@ interface AssistantPanelHeaderProps {
   legacySceneHint: AiScene;
   notePath: string | null;
   onDeletedCurrentSession: () => void;
+  onClearedAllSessions: () => void;
   onNewChat: () => void;
   onOpenAudit: () => void;
   onSelectSession: (id: number, messages: ChatLine[]) => void;
@@ -30,6 +31,7 @@ export function AssistantPanelHeader({
   legacySceneHint,
   notePath,
   onDeletedCurrentSession,
+  onClearedAllSessions,
   onNewChat,
   onOpenAudit,
   onSelectSession,
@@ -61,6 +63,7 @@ export function AssistantPanelHeader({
                 onDeletedCurrentSession();
               }
             }}
+            onClearedAll={onClearedAllSessions}
           />
           <Button
             type="button"

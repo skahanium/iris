@@ -224,6 +224,7 @@ export interface VersionSaveCompleteEvent {
 /** `ai_cache_clear` 返回值：清空会话、checkpoint、追踪记录与知识沉淀缓存。 */
 export interface AiCacheClearResult {
   sessions_deleted: number;
+  aborted_tasks: number;
   checkpoints_cleared: number;
   deposits_deleted: number;
   traces_deleted: number;
@@ -256,6 +257,27 @@ export interface AgentTaskDto {
   completed_at?: string | null;
   error_code?: string | null;
   error_message?: string | null;
+}
+
+export interface AgentTaskStepDto {
+  id: number;
+  task_id: string;
+  step_seq: number;
+  kind: string;
+  status: AgentTaskStatus;
+  input_summary: string;
+  output_summary: string;
+  evidence_packet_ids: string[];
+  created_at: string;
+  updated_at: string;
+}
+
+export interface AgentTaskEventDto {
+  id: number;
+  task_id: string;
+  event_type: string;
+  message: string;
+  created_at: string;
 }
 
 export interface AgentTaskListParams {

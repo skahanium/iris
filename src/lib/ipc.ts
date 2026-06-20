@@ -26,7 +26,9 @@ import type {
 import type {
   AiCacheClearResult,
   AgentTaskDto,
+  AgentTaskEventDto,
   AgentTaskListParams,
+  AgentTaskStepDto,
   AppExitResult,
   BacklinkEntry,
   ClassifiedFileTakenEvent,
@@ -839,6 +841,18 @@ export async function agentTaskList(
     sessionId: params.sessionId ?? null,
     status: params.status ?? null,
   });
+}
+
+export async function agentTaskSteps(
+  taskId: string,
+): Promise<AgentTaskStepDto[]> {
+  return invoke<AgentTaskStepDto[]>("agent_task_steps", { taskId });
+}
+
+export async function agentTaskEvents(
+  taskId: string,
+): Promise<AgentTaskEventDto[]> {
+  return invoke<AgentTaskEventDto[]>("agent_task_events", { taskId });
 }
 
 export async function agentTaskResume(

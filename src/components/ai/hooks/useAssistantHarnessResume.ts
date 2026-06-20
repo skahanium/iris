@@ -1,6 +1,7 @@
 import { useCallback, type Dispatch, type SetStateAction } from "react";
 
 import { mergeContextPackets } from "@/lib/ai/merge-context-packets";
+import { isUnrecoverableResumeError } from "@/lib/ai/resume-recovery";
 import { invokeErrorMessage } from "@/lib/credentials";
 import { agentTaskResume, harnessResume } from "@/lib/ipc";
 import { mapChatToolCallsForUi } from "@/lib/map-chat-tool-calls";
@@ -21,6 +22,7 @@ interface UseAssistantHarnessResumeParams {
   setLastError: Dispatch<SetStateAction<string | null>>;
   setMessages: Dispatch<SetStateAction<ChatLine[]>>;
   setPackets: Dispatch<SetStateAction<ContextPacket[]>>;
+  setAgentTaskId: Dispatch<SetStateAction<string | null>>;
   setPausedTaskId: Dispatch<SetStateAction<string | null>>;
   setSessionTokenUsage: Dispatch<SetStateAction<TokenUsage | null>>;
   setStreaming: Dispatch<SetStateAction<boolean>>;
@@ -34,6 +36,7 @@ export function useAssistantHarnessResume({
   setLastError,
   setMessages,
   setPackets,
+  setAgentTaskId,
   setPausedTaskId,
   setSessionTokenUsage,
   setStreaming,
@@ -65,6 +68,7 @@ export function useAssistantHarnessResume({
           accumulateTokenUsage(prev, result.usage!),
         );
       }
+      setAgentTaskId(result.task_id ?? pausedTaskId ?? null);
       setMessages((prev) => {
         const next = [...prev];
         const last = next[next.length - 1];
@@ -81,7 +85,15 @@ export function useAssistantHarnessResume({
           : null,
       );
     } catch (error) {
-      setLastError(invokeErrorMessage(error));
+      const message = invokeErrorMessage(error);
+      setLastError(message);
+      if (
+        message.includes("RESUME_PREFLIGHT_FAILED") ||
+        message.includes("vault scope changed") ||
+        isUnrecoverableResumeError(message)
+      ) {
+        setPausedTaskId(null);
+      }
     } finally {
       setStreaming(false);
       setActivityHint(null);
@@ -94,6 +106,7 @@ export function useAssistantHarnessResume({
     setLastError,
     setMessages,
     setPackets,
+    setAgentTaskId,
     setPausedTaskId,
     setSessionTokenUsage,
     setStreaming,

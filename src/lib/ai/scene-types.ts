@@ -1,6 +1,9 @@
-import type { AiScene, SceneMeta } from "@/types/ai";
+import type { SceneMeta } from "@/types/ai";
 
-export type ActiveAiScene = Exclude<AiScene, "exemplar_learning">;
+export type ActiveAiScene =
+  | "knowledge_lookup"
+  | "drafting_assist"
+  | "research_synthesis";
 
 const ACTIVE_AI_SCENES: ActiveAiScene[] = [
   "knowledge_lookup",
@@ -8,20 +11,13 @@ const ACTIVE_AI_SCENES: ActiveAiScene[] = [
   "research_synthesis",
 ];
 
-export const SCENE_META: Record<AiScene, SceneMeta> = {
+export const SCENE_META: Record<ActiveAiScene, SceneMeta> = {
   knowledge_lookup: {
     scene: "knowledge_lookup",
     label: "知识查阅",
     description: "查询法规、笔记关联",
     icon: "Search",
     defaultScope: "global",
-  },
-  exemplar_learning: {
-    scene: "exemplar_learning",
-    label: "文稿学习",
-    description: "分析范文结构与表达",
-    icon: "BookOpen",
-    defaultScope: "document",
   },
   drafting_assist: {
     scene: "drafting_assist",

@@ -20,7 +20,6 @@ use crate::ai_runtime::{
         GatewayRequest, LlmMessage, LlmToolDef, MessageRole, ModelGateway, ProviderConfig,
         TokenUsage, ToolCall,
     },
-    scene_router::resolve_scene,
     session::SessionManager,
     tool_executor::{ToolRegistry, ToolSurfaceFilter},
     tool_policy::ToolPolicyContext,
@@ -147,7 +146,6 @@ pub async fn execute_research(
     let mut config = config;
     config.web_research_authorized = web_authorized;
 
-    let _profile = resolve_scene(AiScene::ResearchSynthesis);
     let registry = ToolRegistry::new();
 
     // Ensure session

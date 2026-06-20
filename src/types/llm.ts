@@ -37,7 +37,6 @@ export interface LlmRoutingConfig {
   schemaVersion?: number;
   providers: Record<string, ProviderOverride>;
   slots: Record<CapabilitySlot, SlotRoute>;
-  scenes: Record<string, SceneRoute>;
   contextStrategy: Record<string, ContextStrategy>;
 }
 
@@ -123,12 +122,6 @@ export interface LlmConfigTestResult {
   message: string;
 }
 
-export const AI_SCENES: AiScene[] = [
-  "knowledge_lookup",
-  "drafting_assist",
-  "research_synthesis",
-];
-
 export const CAPABILITY_SLOTS: CapabilitySlot[] = [
   "fast",
   "writer",
@@ -201,32 +194,5 @@ export const DEFAULT_LLM_ROUTING: LlmRoutingConfig = {
       thinking: false,
     },
   },
-  scenes: {
-    knowledge_lookup: {
-      providerId: "deepseek",
-      model: "deepseek-v4-flash",
-      thinking: false,
-    },
-    exemplar_learning: {
-      providerId: "deepseek",
-      model: "deepseek-v4-flash",
-      thinking: false,
-    },
-    drafting_assist: {
-      providerId: "deepseek",
-      model: "deepseek-v4-pro",
-      thinking: false,
-    },
-    research_synthesis: {
-      providerId: "deepseek",
-      model: "deepseek-v4-pro",
-      thinking: false,
-    },
-  },
-  contextStrategy: {
-    knowledge_lookup: "hybrid",
-    exemplar_learning: "long_context",
-    drafting_assist: "long_context",
-    research_synthesis: "hybrid",
-  },
+  contextStrategy: {},
 };
