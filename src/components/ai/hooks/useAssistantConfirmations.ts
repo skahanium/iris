@@ -242,7 +242,7 @@ export function useAssistantConfirmations({
         nextTaskStatus = "error";
         setMessages((prev) => [
           ...prev,
-          { role: "system", content: `宸ュ叿纭澶辫触: ${message}` },
+          { role: "system", content: `工具确认失败: ${message}` },
         ]);
         setActionState(buildActionState(intent, nextTaskStatus, message));
       } finally {

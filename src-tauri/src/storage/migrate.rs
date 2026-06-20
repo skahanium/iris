@@ -77,6 +77,15 @@ const MIGRATION_031_DOWN: &str =
     include_str!("../../migrations/031_links_single_column_indexes.down.sql");
 const MIGRATION_032_UP: &str = include_str!("../../migrations/032_agent_tasks.sql");
 const MIGRATION_032_DOWN: &str = include_str!("../../migrations/032_agent_tasks.down.sql");
+const MIGRATION_033_UP: &str =
+    include_str!("../../migrations/033_conversation_memory_deliberation.sql");
+const MIGRATION_033_DOWN: &str =
+    include_str!("../../migrations/033_conversation_memory_deliberation.down.sql");
+const MIGRATION_034_UP: &str = include_str!("../../migrations/034_writing_research_state.sql");
+const MIGRATION_034_DOWN: &str =
+    include_str!("../../migrations/034_writing_research_state.down.sql");
+const MIGRATION_035_UP: &str = include_str!("../../migrations/035_skill_trust_profiles.sql");
+const MIGRATION_035_DOWN: &str = include_str!("../../migrations/035_skill_trust_profiles.down.sql");
 
 fn is_applied(conn: &Connection, name: &str) -> bool {
     conn.query_row(
@@ -182,6 +191,14 @@ pub fn migrate_up(conn: &Connection) -> AppResult<()> {
         false,
     )?;
     apply_migration(conn, "032_agent_tasks", MIGRATION_032_UP, false)?;
+    apply_migration(
+        conn,
+        "033_conversation_memory_deliberation",
+        MIGRATION_033_UP,
+        false,
+    )?;
+    apply_migration(conn, "034_writing_research_state", MIGRATION_034_UP, false)?;
+    apply_migration(conn, "035_skill_trust_profiles", MIGRATION_035_UP, false)?;
 
     Ok(())
 }
@@ -193,6 +210,13 @@ fn rollback_migration(conn: &Connection, name: &str, sql: &str) {
 
 /// Roll back all migrations in strict reverse order (for tests).
 pub fn migrate_down(conn: &Connection) -> AppResult<()> {
+    rollback_migration(conn, "035_skill_trust_profiles", MIGRATION_035_DOWN);
+    rollback_migration(conn, "034_writing_research_state", MIGRATION_034_DOWN);
+    rollback_migration(
+        conn,
+        "033_conversation_memory_deliberation",
+        MIGRATION_033_DOWN,
+    );
     rollback_migration(conn, "032_agent_tasks", MIGRATION_032_DOWN);
     rollback_migration(conn, "031_links_single_column_indexes", MIGRATION_031_DOWN);
     rollback_migration(conn, "030_runtime_vault_scope", MIGRATION_030_DOWN);
@@ -967,6 +991,134 @@ mod tests {
         assert!(!columns.contains(&"full_prompt".to_string()));
         assert!(!columns.contains(&"full_messages".to_string()));
         assert!(!columns.contains(&"note_content".to_string()));
+    }
+
+    #[test]
+    fn migration_033_creates_summary_shaped_memory_and_deliberation_tables() {
+        let conn = Connection::open_in_memory().unwrap();
+        migrate_up(&conn).unwrap();
+
+        for table in ["conversation_summaries", "deliberation_states"] {
+            let has: bool = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name = ?1",
+                    [table],
+                    |row| row.get::<_, i64>(0),
+                )
+                .map(|c| c > 0)
+                .unwrap();
+            assert!(has, "missing {table}");
+
+            let columns = conn
+                .prepare(&format!("PRAGMA table_info({table})"))
+                .unwrap()
+                .query_map([], |row| row.get::<_, String>(1))
+                .unwrap()
+                .flatten()
+                .collect::<Vec<_>>();
+            assert!(!columns.contains(&"full_prompt".to_string()));
+            assert!(!columns.contains(&"full_messages".to_string()));
+            assert!(!columns.contains(&"note_content".to_string()));
+        }
+
+        conn.execute(
+            "INSERT INTO sessions (session_key, scene, created_at, updated_at)
+             VALUES ('memory-session', 'knowledge_lookup', datetime('now'), datetime('now'))",
+            [],
+        )
+        .unwrap();
+        let session_id = conn.last_insert_rowid();
+        conn.execute(
+            "INSERT INTO ai_traces (request_id, scene, status, created_at)
+             VALUES ('req-deliberation', 'knowledge_lookup', 'running', datetime('now'))",
+            [],
+        )
+        .unwrap();
+
+        conn.execute(
+            "INSERT INTO conversation_summaries
+             (session_id, seq_start, seq_end, content_hash, goal_summary,
+              preference_summary, decision_summary, open_threads_summary, created_at, updated_at)
+             VALUES (?1, 1, 48,
+                     '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
+                     'goal', 'preference', 'decision', 'open', datetime('now'), datetime('now'))",
+            [session_id],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO deliberation_states
+             (request_id, session_id, current_goal, plan_outline_json, assumptions_json,
+              open_questions_json, evidence_gaps_json, verification_json, status, created_at, updated_at)
+             VALUES ('req-deliberation', ?1, 'goal', '[]', '[]', '[]', '[]',
+                     '{\"passed\":true,\"items\":[]}', 'verified', datetime('now'), datetime('now'))",
+            [session_id],
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn migration_034_creates_summary_shaped_writing_and_research_state_tables() {
+        let conn = Connection::open_in_memory().unwrap();
+        migrate_up(&conn).unwrap();
+
+        for table in ["writing_states", "research_states"] {
+            let has: bool = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name = ?1",
+                    [table],
+                    |row| row.get::<_, i64>(0),
+                )
+                .map(|c| c > 0)
+                .unwrap();
+            assert!(has, "missing {table}");
+
+            let columns = conn
+                .prepare(&format!("PRAGMA table_info({table})"))
+                .unwrap()
+                .query_map([], |row| row.get::<_, String>(1))
+                .unwrap()
+                .flatten()
+                .collect::<Vec<_>>();
+            assert!(!columns.contains(&"full_content".to_string()));
+            assert!(!columns.contains(&"note_content".to_string()));
+            assert!(!columns.contains(&"raw_selection".to_string()));
+            assert!(!columns.contains(&"raw_web_page".to_string()));
+        }
+
+        conn.execute(
+            "INSERT INTO ai_traces (request_id, scene, status, created_at)
+             VALUES ('req-writing-state', 'drafting_assist', 'completed', datetime('now'))",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO ai_traces (request_id, scene, status, created_at)
+             VALUES ('req-research-state', 'research_synthesis', 'completed', datetime('now'))",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO writing_states
+             (request_id, target_path, draft_version_hash, document_goal, audience, genre,
+              structure_outline_json, key_arguments_json, material_packet_ids_json,
+              citation_labels_json, style_constraints_json, revision_records_json,
+              created_at, updated_at)
+             VALUES ('req-writing-state', 'Drafts/report.md', 'hash', 'goal', 'audience', 'memo',
+                     '[]', '[]', '[\"ev-1\"]', '[\"S1\"]', '[\"style\"]', '[]',
+                     datetime('now'), datetime('now'))",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO research_states
+             (request_id, research_question, sub_questions_json, sources_json,
+              credibility_summary, freshness_summary, conflicts_json, counter_arguments_json,
+              evidence_gaps_json, preliminary_conclusions_json, created_at, updated_at)
+             VALUES ('req-research-state', 'topic', '[]', '[]', 'cred', 'fresh',
+                     '[]', '[]', '[]', '[]', datetime('now'), datetime('now'))",
+            [],
+        )
+        .unwrap();
     }
 
     #[test]

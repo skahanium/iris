@@ -13,6 +13,9 @@ use crate::ai_runtime::model_gateway::{
     prepare_tool_api_messages, repair_tool_api_messages, LlmMessage, MessageRole,
 };
 use crate::ai_runtime::tool_dispatch::{dispatch_tool, ToolDispatchContext};
+use crate::ai_runtime::tool_execution_pipeline::{
+    audit_dispatched_tool, evaluate_tool_execution, ToolExecutionGate,
+};
 use crate::ai_runtime::tool_executor::ToolRegistry;
 use crate::ai_runtime::tool_policy::ToolPolicyContext;
 use crate::ai_runtime::trace::{TraceRecorder, TraceStatus};
@@ -262,7 +265,6 @@ pub async fn dispatch_approved_tool_to_checkpoint(
     tool_call_id: &str,
     args: &serde_json::Value,
 ) -> AppResult<()> {
-    let registry = crate::ai_runtime::tool_executor::ToolRegistry::new();
     let policy_ctx = crate::ai_runtime::tool_policy::ToolPolicyContext {
         task_policy: None,
         scene: pending.scene,
@@ -272,10 +274,11 @@ pub async fn dispatch_approved_tool_to_checkpoint(
         depth: 0,
     };
 
-    if let Err(denied) = registry.check_tool_policy(&pending.tool_name, &policy_ctx) {
-        let hint =
-            crate::ai_runtime::tool_policy::denial_user_message(denied.reason, &pending.tool_name);
-        let payload = serde_json::json!({ "error": hint, "policy_denied": true });
+    let Some(entry) = crate::ai_runtime::tool_catalog::catalog_find(&pending.tool_name) else {
+        let payload = serde_json::json!({
+            "error": format!("工具 {} 尚未实现", pending.tool_name),
+            "policy_denied": true
+        });
         let content = serde_json::to_string(&payload).unwrap_or_default();
         append_tool_message_to_checkpoint(
             &state.db,
@@ -287,20 +290,32 @@ pub async fn dispatch_approved_tool_to_checkpoint(
             None,
             Some(&policy_ctx),
         )?;
-        let _ = crate::ai_runtime::tool_audit::record_audit(
+        return Ok(());
+    };
+    let execution_gate = ToolExecutionGate {
+        request_id: &pending.request_id,
+        harness_round: 0,
+        entry,
+        args,
+        policy_ctx: &policy_ctx,
+        skill_id: None,
+        scene: Some(pending.scene.profile()),
+        subagent_depth: 0,
+    };
+    let gate = evaluate_tool_execution(&state.db, execution_gate)?;
+    if let Some(result) = gate.tool_result {
+        let payload = result.output.clone();
+        let content = serde_json::to_string(&payload).unwrap_or_default();
+        append_tool_message_to_checkpoint(
             &state.db,
-            &crate::ai_runtime::tool_audit::ToolAuditInput {
-                request_id: &pending.request_id,
-                harness_round: 0,
-                tool_name: &pending.tool_name,
-                arguments: args,
-                result: &payload,
-                success: false,
-                duration_ms: 0,
-                scene: Some(pending.scene.profile()),
-                subagent_depth: 0,
-            },
-        );
+            &pending.request_id,
+            tool_call_id,
+            content,
+            "error",
+            Some(payload),
+            None,
+            Some(&policy_ctx),
+        )?;
         return Ok(());
     }
 
@@ -360,20 +375,11 @@ pub async fn dispatch_approved_tool_to_checkpoint(
         Some(&policy_ctx),
     )?;
 
-    let _ = crate::ai_runtime::tool_audit::record_audit(
-        &state.db,
-        &crate::ai_runtime::tool_audit::ToolAuditInput {
-            request_id: &pending.request_id,
-            harness_round: 0,
-            tool_name: &pending.tool_name,
-            arguments: args,
-            result: &audit_result,
-            success: result.success,
-            duration_ms: result.duration_ms,
-            scene: Some(pending.scene.profile()),
-            subagent_depth: 0,
-        },
-    );
+    let audit_result = crate::ai_runtime::ToolCallResult {
+        output: audit_result,
+        ..result.clone()
+    };
+    let _ = audit_dispatched_tool(&state.db, &execution_gate, &gate.decision, &audit_result);
 
     Ok(())
 }

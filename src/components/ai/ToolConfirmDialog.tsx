@@ -103,6 +103,21 @@ function previewList(request: ToolConfirmRequest, key: string): string[] {
   return value.filter((item): item is string => typeof item === "string");
 }
 
+function objectValue(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  return value as Record<string, unknown>;
+}
+
+function unknownStringList(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value.filter((item): item is string => typeof item === "string");
+}
+
+function trustWarnings(request: ToolConfirmRequest): string[] {
+  const trustPreview = objectValue(request.preview?.trust_profile_preview);
+  return unknownStringList(trustPreview?.warnings);
+}
+
 function compactUrl(url: string): Pick<PermissionCard, "target" | "detail"> {
   try {
     const parsed = new URL(url);
@@ -463,6 +478,11 @@ export function ToolConfirmDialog({
 
   const card = buildPermissionCard(request);
   const Icon = card.Icon;
+  const sandboxProfile = request.sandboxProfile;
+  const permissionDecision = request.permissionDecision;
+  const warnings = trustWarnings(request);
+  const pendingIndex = request.pendingConfirmationIndex ?? 1;
+  const pendingCount = request.pendingConfirmationCount ?? 1;
 
   return (
     <Dialog open={!!request} onOpenChange={() => onClose()}>
@@ -504,6 +524,55 @@ export function ToolConfirmDialog({
           <p className="mt-3 text-xs leading-5 text-muted-foreground">
             {card.impact}
           </p>
+
+          <div className="mt-3 space-y-2">
+            <div className="rounded-md border border-border/60 px-3 py-2 text-xs">
+              <div className="flex items-center justify-between gap-3">
+                <span className="font-medium">确认进度</span>
+                <span className="text-muted-foreground">
+                  {pendingIndex} / {pendingCount}
+                </span>
+              </div>
+              {permissionDecision ? (
+                <p className="mt-1 text-muted-foreground">
+                  权限决策: {permissionDecision.decision}
+                </p>
+              ) : null}
+            </div>
+
+            {sandboxProfile ? (
+              <div
+                className="rounded-md border border-border/60 px-3 py-2 text-xs"
+                data-testid="tool-confirm-sandbox-profile"
+              >
+                <div className="flex items-center justify-between gap-3">
+                  <span className="font-medium">Sandbox Profile</span>
+                  <span className="text-muted-foreground">
+                    {sandboxProfile.level}
+                  </span>
+                </div>
+                <p className="mt-1 text-muted-foreground">
+                  {sandboxProfile.summary}
+                </p>
+                {sandboxProfile.support === "unsupported" ? (
+                  <p className="mt-1 text-destructive">
+                    当前运行时不支持该级别隔离。
+                  </p>
+                ) : null}
+              </div>
+            ) : null}
+
+            {warnings.length > 0 ? (
+              <div className="rounded-md border border-amber-300/70 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+                <p className="font-medium">Skill Trust</p>
+                {warnings.slice(0, 3).map((warning) => (
+                  <p key={warning} className="mt-1">
+                    {warning}
+                  </p>
+                ))}
+              </div>
+            ) : null}
+          </div>
         </div>
 
         <DialogFooter className="border-t border-border/60 bg-surface-inset/60 px-5 py-4">

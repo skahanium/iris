@@ -15,6 +15,7 @@ import {
 import type {
   AgentTaskDto,
   AgentTaskEventDto,
+  AgentTaskStatus,
   AgentTaskStepDto,
 } from "@/types/ipc";
 
@@ -23,6 +24,22 @@ interface UseAgentTaskStatusParams {
   setLastError: Dispatch<SetStateAction<string | null>>;
   setPausedTaskId: Dispatch<SetStateAction<string | null>>;
 }
+
+const POLL_INTERVAL_MS = 2500;
+
+const POLLABLE_TASK_STATUSES = new Set<AgentTaskStatus>([
+  "queued",
+  "running",
+  "awaiting_confirmation",
+  "paused_budget",
+  "paused_recoverable",
+]);
+
+const TERMINAL_TASK_STATUSES = new Set<AgentTaskStatus>([
+  "completed",
+  "failed_safe",
+  "aborted",
+]);
 
 export function useAgentTaskStatus({
   taskId,
@@ -46,25 +63,47 @@ export function useAgentTaskStatus({
     }
 
     let cancelled = false;
-    void Promise.all([
-      agentTaskGet(taskId),
-      agentTaskSteps(taskId),
-      agentTaskEvents(taskId),
-    ])
-      .then(([task, steps, events]) => {
+    let intervalId: ReturnType<typeof window.setInterval> | null = null;
+
+    const refresh = async () => {
+      try {
+        const [task, steps, events] = await Promise.all([
+          agentTaskGet(taskId),
+          agentTaskSteps(taskId),
+          agentTaskEvents(taskId),
+        ]);
         if (cancelled) return;
+        if (!task) {
+          setAgentTask(null);
+          setAgentTaskStepsState([]);
+          setAgentTaskEventsState([]);
+          return;
+        }
         setAgentTask(task);
         setAgentTaskStepsState(steps);
         setAgentTaskEventsState(events);
-      })
-      .catch((error: unknown) => {
+
+        if (TERMINAL_TASK_STATUSES.has(task.status) && intervalId) {
+          window.clearInterval(intervalId);
+          intervalId = null;
+        }
+        if (POLLABLE_TASK_STATUSES.has(task.status) && !intervalId) {
+          intervalId = window.setInterval(() => {
+            void refresh();
+          }, POLL_INTERVAL_MS);
+        }
+      } catch (error: unknown) {
         if (cancelled) return;
         const message = error instanceof Error ? error.message : String(error);
         setLastError(message);
-      });
+      }
+    };
+
+    void refresh();
 
     return () => {
       cancelled = true;
+      if (intervalId) window.clearInterval(intervalId);
     };
   }, [taskId, setLastError]);
 

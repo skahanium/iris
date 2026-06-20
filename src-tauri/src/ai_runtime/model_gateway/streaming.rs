@@ -2,7 +2,7 @@ use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter};
 
-use crate::ai_types::{FunctionCall, TokenUsage, ToolCall};
+use crate::ai_types::{EndpointFamily, FunctionCall, TokenUsage, ToolCall};
 use crate::error::{AppError, AppResult};
 
 use super::{
@@ -41,6 +41,169 @@ pub enum StreamEventData {
     Error { message: String },
 }
 
+fn streaming_endpoint_url(base_url: &str, endpoint_family: EndpointFamily) -> String {
+    let base = base_url.trim_end_matches('/');
+    match endpoint_family {
+        EndpointFamily::AnthropicMessages => {
+            if base.ends_with("/v1") {
+                format!("{base}/messages")
+            } else {
+                format!("{base}/v1/messages")
+            }
+        }
+        EndpointFamily::OpenAiCompatibleChatCompletions | EndpointFamily::ResponsesReserved => {
+            crate::llm::providers::chat_completions_url(base_url)
+        }
+    }
+}
+
+fn apply_streaming_auth_headers(
+    builder: reqwest::RequestBuilder,
+    endpoint_family: EndpointFamily,
+    api_key: &str,
+) -> reqwest::RequestBuilder {
+    match endpoint_family {
+        EndpointFamily::AnthropicMessages => builder.header("x-api-key", api_key).header(
+            "anthropic-version",
+            crate::llm::providers::ANTHROPIC_API_VERSION,
+        ),
+        EndpointFamily::OpenAiCompatibleChatCompletions | EndpointFamily::ResponsesReserved => {
+            builder.header("Authorization", format!("Bearer {api_key}"))
+        }
+    }
+}
+
+#[derive(Default)]
+struct AnthropicToolUseBlock {
+    id: Option<String>,
+    name: Option<String>,
+    input_json: String,
+}
+
+#[derive(Default)]
+struct AnthropicStreamState {
+    content: String,
+    tool_blocks: std::collections::BTreeMap<usize, AnthropicToolUseBlock>,
+    usage: TokenUsage,
+    finish_reason: Option<String>,
+}
+
+impl AnthropicStreamState {
+    fn apply_event_json(&mut self, json: &serde_json::Value) -> AppResult<Option<String>> {
+        match json["type"].as_str() {
+            Some("content_block_start") => {
+                let index = json["index"].as_u64().unwrap_or(0) as usize;
+                let block = &json["content_block"];
+                match block["type"].as_str() {
+                    Some("text") => {
+                        if let Some(text) = block["text"].as_str() {
+                            self.content.push_str(text);
+                            return Ok(Some(text.to_string()));
+                        }
+                    }
+                    Some("tool_use") => {
+                        let entry = self.tool_blocks.entry(index).or_default();
+                        entry.id = block["id"].as_str().map(str::to_string);
+                        entry.name = block["name"].as_str().map(str::to_string);
+                        if let Some(input) = block.get("input") {
+                            if input != &serde_json::json!({}) {
+                                entry.input_json = serde_json::to_string(input)
+                                    .unwrap_or_else(|_| "{}".to_string());
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            Some("content_block_delta") => {
+                let index = json["index"].as_u64().unwrap_or(0) as usize;
+                let delta = &json["delta"];
+                match delta["type"].as_str() {
+                    Some("text_delta") => {
+                        if let Some(text) = delta["text"].as_str() {
+                            self.content.push_str(text);
+                            return Ok(Some(text.to_string()));
+                        }
+                    }
+                    Some("input_json_delta") => {
+                        if let Some(partial) = delta["partial_json"].as_str() {
+                            self.tool_blocks
+                                .entry(index)
+                                .or_default()
+                                .input_json
+                                .push_str(partial);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            Some("message_start") | Some("message_delta") => {
+                if let Some(stop_reason) = json["delta"]["stop_reason"].as_str() {
+                    self.finish_reason = Some(stop_reason.to_string());
+                }
+                if let Some(input_tokens) = json["message"]["usage"]["input_tokens"].as_u64() {
+                    self.usage.prompt_tokens = input_tokens as u32;
+                }
+                if let Some(input_tokens) = json["usage"]["input_tokens"].as_u64() {
+                    self.usage.prompt_tokens = input_tokens as u32;
+                }
+                if let Some(output_tokens) = json["usage"]["output_tokens"].as_u64() {
+                    self.usage.completion_tokens = output_tokens as u32;
+                }
+                self.usage.total_tokens = self.usage.prompt_tokens + self.usage.completion_tokens;
+            }
+            Some("error") => {
+                let message = json["error"]["message"]
+                    .as_str()
+                    .or_else(|| json["message"].as_str())
+                    .unwrap_or("Anthropic stream error");
+                return Err(AppError::msg(message.to_string()));
+            }
+            _ => {}
+        }
+        Ok(None)
+    }
+
+    fn into_gateway_response(self) -> GatewayResponse {
+        let tool_calls = self
+            .tool_blocks
+            .into_values()
+            .filter_map(|block| {
+                let id = block.id?;
+                let name = block.name?;
+                let arguments = normalize_tool_arguments(block.input_json);
+                Some(ToolCall {
+                    id,
+                    call_type: "function".to_string(),
+                    function: FunctionCall { name, arguments },
+                })
+            })
+            .collect();
+
+        GatewayResponse {
+            content: if self.content.is_empty() {
+                None
+            } else {
+                Some(self.content)
+            },
+            tool_calls,
+            usage: self.usage,
+            finish_reason: self.finish_reason.unwrap_or_else(|| "stop".to_string()),
+            reasoning_content: None,
+        }
+    }
+}
+
+fn normalize_tool_arguments(input_json: String) -> String {
+    let trimmed = input_json.trim();
+    if trimmed.is_empty() {
+        return "{}".to_string();
+    }
+    serde_json::from_str::<serde_json::Value>(trimmed)
+        .and_then(|value| serde_json::to_string(&value))
+        .unwrap_or(input_json)
+}
+
 /// Send a streaming request and emit events to frontend.
 pub async fn send_streaming_request(
     app_handle: &AppHandle,
@@ -53,7 +216,8 @@ pub async fn send_streaming_request(
         return Err(AppError::msg("request aborted"));
     }
 
-    let url = crate::llm::providers::chat_completions_url(&request.provider.base_url);
+    let endpoint_family = request.provider.endpoint_family;
+    let url = streaming_endpoint_url(request.provider.base_url.as_str(), endpoint_family);
 
     let mut body = build_llm_api_body(&request)?;
     body["stream"] = serde_json::json!(true);
@@ -61,7 +225,7 @@ pub async fn send_streaming_request(
     let mut req_builder = client.post(&url).header("Content-Type", "application/json");
 
     if let Some(api_key) = &request.provider.api_key {
-        req_builder = req_builder.header("Authorization", format!("Bearer {}", api_key));
+        req_builder = apply_streaming_auth_headers(req_builder, endpoint_family, api_key);
     }
 
     let response = req_builder
@@ -80,6 +244,7 @@ pub async fn send_streaming_request(
     let mut full_reasoning = String::new();
     let mut usage = TokenUsage::default();
     let mut token_index: u32 = 0;
+    let mut anthropic_state = AnthropicStreamState::default();
 
     // Incremental tool call accumulator: index -> (id, name, args_buf).
     // OpenAI streams tool calls as deltas: id+name arrive first, then
@@ -140,6 +305,29 @@ pub async fn send_streaming_request(
             }
 
             if let Ok(json) = serde_json::from_str::<serde_json::Value>(data) {
+                if endpoint_family == EndpointFamily::AnthropicMessages {
+                    if let Some(delta) = anthropic_state.apply_event_json(&json)? {
+                        let event = StreamEvent {
+                            request_id: request_id.to_string(),
+                            event_type: StreamEventType::Token,
+                            data: StreamEventData::Token { token: delta },
+                        };
+                        emit_stream_event(app_handle, &event, token_index)?;
+                        token_index += 1;
+                    }
+                    if json["type"].as_str() == Some("message_stop") {
+                        let event = StreamEvent {
+                            request_id: request_id.to_string(),
+                            event_type: StreamEventType::Done,
+                            data: StreamEventData::Done {
+                                usage: Some(anthropic_state.usage.clone()),
+                            },
+                        };
+                        emit_stream_event(app_handle, &event, token_index)?;
+                    }
+                    continue;
+                }
+
                 // Process content delta
                 if let Some(delta) = json["choices"][0]["delta"]["content"].as_str() {
                     full_content.push_str(delta);
@@ -194,6 +382,23 @@ pub async fn send_streaming_request(
                 let data = data.trim();
                 if data != "[DONE]" {
                     if let Ok(json) = serde_json::from_str::<serde_json::Value>(data) {
+                        if endpoint_family == EndpointFamily::AnthropicMessages {
+                            if let Some(delta) = anthropic_state.apply_event_json(&json)? {
+                                full_content.push_str(delta.as_str());
+                            }
+                            if json["type"].as_str() == Some("message_stop") {
+                                let event = StreamEvent {
+                                    request_id: request_id.to_string(),
+                                    event_type: StreamEventType::Done,
+                                    data: StreamEventData::Done {
+                                        usage: Some(anthropic_state.usage.clone()),
+                                    },
+                                };
+                                emit_stream_event(app_handle, &event, token_index)?;
+                            }
+                            return Ok(anthropic_state.into_gateway_response());
+                        }
+
                         if let Some(delta) = json["choices"][0]["delta"]["content"].as_str() {
                             full_content.push_str(delta);
                         }
@@ -227,6 +432,21 @@ pub async fn send_streaming_request(
                 }
             }
         }
+    }
+
+    if endpoint_family == EndpointFamily::AnthropicMessages {
+        let response = anthropic_state.into_gateway_response();
+        for tc in &response.tool_calls {
+            let event = StreamEvent {
+                request_id: request_id.to_string(),
+                event_type: StreamEventType::ToolCall,
+                data: StreamEventData::ToolCall {
+                    tool_call: tc.clone(),
+                },
+            };
+            emit_stream_event(app_handle, &event, token_index)?;
+        }
+        return Ok(response);
     }
 
     // Assemble tool calls from accumulated deltas (deduplicated by index)
@@ -324,4 +544,77 @@ pub(super) fn emit_stream_event(
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn anthropic_stream_state_accumulates_text_and_tool_use_blocks() {
+        let mut state = AnthropicStreamState::default();
+
+        state
+            .apply_event_json(&serde_json::json!({
+                "type": "content_block_delta",
+                "index": 0,
+                "delta": {
+                    "type": "text_delta",
+                    "text": "先查一下。"
+                }
+            }))
+            .unwrap();
+        state
+            .apply_event_json(&serde_json::json!({
+                "type": "content_block_start",
+                "index": 1,
+                "content_block": {
+                    "type": "tool_use",
+                    "id": "toolu_stream_1",
+                    "name": "search_hybrid",
+                    "input": {}
+                }
+            }))
+            .unwrap();
+        state
+            .apply_event_json(&serde_json::json!({
+                "type": "content_block_delta",
+                "index": 1,
+                "delta": {
+                    "type": "input_json_delta",
+                    "partial_json": "{\"query\":\"阶段 1\""
+                }
+            }))
+            .unwrap();
+        state
+            .apply_event_json(&serde_json::json!({
+                "type": "content_block_delta",
+                "index": 1,
+                "delta": {
+                    "type": "input_json_delta",
+                    "partial_json": ",\"limit\":5}"
+                }
+            }))
+            .unwrap();
+        state
+            .apply_event_json(&serde_json::json!({
+                "type": "message_delta",
+                "delta": { "stop_reason": "tool_use" },
+                "usage": { "output_tokens": 11 }
+            }))
+            .unwrap();
+
+        let response = state.into_gateway_response();
+        assert_eq!(response.content.as_deref(), Some("先查一下。"));
+        assert_eq!(response.finish_reason, "tool_use");
+        assert_eq!(response.usage.completion_tokens, 11);
+        assert_eq!(response.tool_calls.len(), 1);
+        assert_eq!(response.tool_calls[0].id, "toolu_stream_1");
+        assert_eq!(response.tool_calls[0].function.name, "search_hybrid");
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&response.tool_calls[0].function.arguments)
+                .unwrap(),
+            serde_json::json!({ "query": "阶段 1", "limit": 5 })
+        );
+    }
 }

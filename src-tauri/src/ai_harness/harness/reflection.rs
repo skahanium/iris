@@ -21,7 +21,7 @@ pub(crate) enum ReflectionOutcome {
     /// Continue agent loop with an extra evidence round.
     BonusRound,
     /// Final answer ready.
-    Done(HarnessRunResult),
+    Done(Box<HarnessRunResult>),
     /// Reflection did not produce a final answer; caller should fall through.
     NoAnswer,
 }
@@ -112,7 +112,7 @@ pub(crate) async fn run_reflection_round(
                 emit_thinking(app_handle, &input.request_id, harness_rounds, &t)?;
             }
             if let Some(content) = sanitize_reflection_visible(&visible) {
-                return Ok(ReflectionOutcome::Done(
+                return Ok(ReflectionOutcome::Done(Box::new(
                     finish_run(
                         state,
                         input.clone(),
@@ -133,7 +133,7 @@ pub(crate) async fn run_reflection_round(
                         },
                     )
                     .await?,
-                ));
+                )));
             }
         }
     }

@@ -1,4 +1,4 @@
-﻿//! Research Workflow — L3 limited agentic loop engine.
+//! Research Workflow — L3 limited agentic loop engine.
 //!
 //! The only scene that allows multi-round tool-calling loops.
 //! Follows the pipeline:
@@ -20,6 +20,7 @@ use crate::ai_runtime::{
         GatewayRequest, LlmMessage, LlmToolDef, MessageRole, ModelGateway, ProviderConfig,
         TokenUsage, ToolCall,
     },
+    research_state::{save_research_state, ResearchState, ResearchStateInput},
     session::SessionManager,
     tool_executor::{ToolRegistry, ToolSurfaceFilter},
     tool_policy::ToolPolicyContext,
@@ -105,6 +106,7 @@ pub struct ResearchResult {
     pub argument_chain: ArgumentChain,
     pub summary: String,
     pub total_tokens: TokenUsage,
+    pub research_state: ResearchState,
 }
 
 /// Research workflow configuration.
@@ -377,6 +379,24 @@ pub async fn execute_research(
 
     // Save assistant summary
     SessionManager::append_message(db, sid, "assistant", &summary, None, None)?;
+    let research_state = ResearchState::from_input(ResearchStateInput {
+        request_id: request_id.to_string(),
+        topic: topic.to_string(),
+        questions: evidence_matrix
+            .propositions
+            .iter()
+            .map(|proposition| format!("{}: {}", proposition.id, proposition.statement))
+            .collect(),
+        evidence: evidence_matrix
+            .propositions
+            .iter()
+            .flat_map(|proposition| proposition.evidence.clone())
+            .collect(),
+        global_gaps: evidence_matrix.global_gaps.clone(),
+        has_contradictions: argument_chain.has_contradictions,
+        summary: summary.clone(),
+    });
+    let _ = save_research_state(db, &research_state);
 
     Ok(ResearchResult {
         request_id: request_id.to_string(),
@@ -386,6 +406,7 @@ pub async fn execute_research(
         argument_chain,
         summary,
         total_tokens: total_usage,
+        research_state,
     })
 }
 

@@ -1,8 +1,9 @@
-import { act, createElement } from "react";
+import { act, createElement, type Dispatch, type SetStateAction } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { useAssistantConfirmations } from "@/components/ai/hooks/useAssistantConfirmations";
+import type { ChatLine } from "@/components/ai/AiMessageList";
 import type { ToolConfirmRequest } from "@/components/ai/ToolConfirmDialog";
 import type {
   AssistantActionState,
@@ -38,10 +39,12 @@ function Harness({
   onReady,
   confirmTool,
   setRunStatus,
+  setMessages,
 }: {
   onReady: (api: HookApi) => void;
   confirmTool: ConfirmTool;
   setRunStatus: (status: AssistantTaskStatus, intent: AssistantIntent) => void;
+  setMessages?: Dispatch<SetStateAction<ChatLine[]>>;
 }) {
   const api = useAssistantConfirmations({
     actionIntent: "chat",
@@ -50,7 +53,7 @@ function Harness({
     setActionState: vi.fn(),
     setActivityHint: vi.fn(),
     setHarnessRequestId: vi.fn(),
-    setMessages: vi.fn(),
+    setMessages: setMessages ?? vi.fn(),
     setPackets: vi.fn(),
     setSessionTokenUsage: vi.fn(),
     setStreaming: vi.fn(),
@@ -200,5 +203,49 @@ describe("useAssistantConfirmations", () => {
       source: "ai_detected",
     });
     expect(api.toolConfirmRequest).toBeNull();
+  });
+
+  it("shows a readable localized message when tool confirmation fails", async () => {
+    const messages: ChatLine[] = [];
+    confirmTool = vi.fn(async () => {
+      throw new Error("network unavailable");
+    });
+
+    act(() => {
+      root.unmount();
+    });
+    root = createRoot(container);
+    await act(async () => {
+      root.render(
+        createElement(Harness, {
+          onReady: (value) => {
+            api = value;
+          },
+          confirmTool,
+          setRunStatus: (status, intent) => {
+            runStatuses.push([status, intent]);
+          },
+          setMessages: (update) => {
+            const next =
+              typeof update === "function" ? update(messages) : update;
+            messages.splice(0, messages.length, ...next);
+          },
+        }),
+      );
+    });
+
+    await act(async () => {
+      api.setToolConfirmRequest(request);
+    });
+    await act(async () => {
+      await api.handleToolConfirm("req-1", "tool-1", "approve");
+    });
+
+    expect(messages.at(-1)).toEqual({
+      role: "system",
+      content: "工具确认失败: network unavailable",
+    });
+    expect(messages.at(-1)?.content).not.toContain("宸");
+    expect(runStatuses.at(-1)).toEqual(["error", "chat"]);
   });
 });

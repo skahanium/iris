@@ -5,11 +5,43 @@
 
 use std::fs;
 use std::path::Path;
+use std::time::{Duration, Instant};
 
 use hex;
 use sha2::{Digest, Sha256};
 
 use crate::error::{AppError, AppResult};
+
+#[rustfmt::skip]
+const SAFE_GIT_CLONE_ARGS: &[&str] = &["-c", "core.hooksPath=/dev/null", "-c", "filter.lfs.smudge=", "-c", "filter.lfs.required=false", "-c", "protocol.file.allow=never", "clone", "--depth", "1", "--no-tags", "--"];
+
+fn run_git_clone_with_timeout(repo_url: &str, target_dir: &Path) -> AppResult<()> {
+    let mut child = std::process::Command::new("git")
+        .env_clear()
+        .env("LANG", "C")
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .env("GIT_LFS_SKIP_SMUDGE", "1")
+        .args(SAFE_GIT_CLONE_ARGS)
+        .arg(repo_url)
+        .arg(target_dir.to_str().unwrap_or(""))
+        .spawn()
+        .map_err(|e| AppError::msg(format!("git not available: {e}")))?;
+    let start = Instant::now();
+    loop {
+        if let Some(status) = child.try_wait()? {
+            if status.success() {
+                return Ok(());
+            }
+            return Err(AppError::msg("git clone failed"));
+        }
+        if start.elapsed() > Duration::from_secs(30) {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(AppError::msg("git clone timed out"));
+        }
+        std::thread::sleep(Duration::from_millis(25));
+    }
+}
 
 #[path = "skills/activation.rs"]
 mod activation_impl;
@@ -149,15 +181,7 @@ pub async fn install_from_git(
         std::fs::create_dir_all(parent)
             .map_err(|e| AppError::msg(format!("无法创建临时目录: {e}")))?;
     }
-    let status = std::process::Command::new("git")
-        .args(["clone", "--depth", "1", "--"])
-        .arg(repo_url)
-        .arg(tmp.to_str().unwrap_or(""))
-        .status()
-        .map_err(|e| AppError::msg(format!("git not available: {e}")))?;
-    if !status.success() {
-        return Err(AppError::msg("git clone failed"));
-    }
+    run_git_clone_with_timeout(repo_url, &tmp)?;
 
     // Resolve subpath and ensure it stays inside the clone directory.
     let tmp_canonical = tmp

@@ -30,6 +30,7 @@ pub(crate) fn resolve_file_id(state: &AppState, note_path: Option<&str>) -> AppR
 
 pub(crate) struct InitialMessagesInput<'a> {
     pub(crate) scene: AiScene,
+    pub(crate) session_id: i64,
     pub(crate) task_policy: &'a AgentTaskPolicy,
     pub(crate) environment: &'a str,
     pub(crate) cold_start_packets: &'a [ContextPacket],
@@ -43,13 +44,21 @@ pub(crate) fn build_initial_messages(
     input: InitialMessagesInput<'_>,
 ) -> Vec<LlmMessage> {
     let profile = PromptProfile::load(&state.db).unwrap_or_default();
+    let mut history = Vec::new();
+    if let Ok(Some(memory)) = crate::ai_runtime::conversation_memory::build_memory_system_message(
+        &state.db,
+        input.session_id,
+    ) {
+        history.push(memory);
+    }
+    history.extend(input.history.iter().cloned());
     crate::ai_runtime::prompt_builder::build_initial_messages(
         &HarnessMessageInput {
             scene: input.scene,
             task_policy: input.task_policy,
             environment: input.environment,
             cold_start_packets: input.cold_start_packets,
-            history: input.history,
+            history: &history,
             web_search_enabled: input.web_search_enabled,
             skills_fragment: input.skills_fragment,
         },

@@ -1,5 +1,8 @@
 //! Harness run completion and evidence export.
 
+use crate::ai_runtime::deliberation::{
+    save_deliberation_state, verify_completion, DeliberationInput, DeliberationState,
+};
 use crate::ai_runtime::evidence_ledger::EvidenceLedger;
 use crate::ai_runtime::model_gateway::{TokenUsage, ToolCall};
 use crate::ai_runtime::trace::{TraceRecorder, TraceStatus};
@@ -50,6 +53,24 @@ pub(crate) async fn finish_run(
     } else {
         TraceStatus::Completed
     };
+    let deliberation_state = DeliberationState::from_input(DeliberationInput {
+        request_id: input.request_id.clone(),
+        session_id: input.session_id,
+        user_goal: input.user_message.clone(),
+        evidence_packet_count: evidence_packets.len(),
+        tool_result_count: tool_results.len(),
+        max_rounds: input.task_policy.max_agentic_rounds,
+        token_budget: input
+            .token_budget
+            .unwrap_or(input.task_policy.max_token_budget),
+    });
+    let verification_summary = verify_completion(
+        deliberation_state.clone(),
+        &content,
+        &evidence_packets,
+        finish_reason,
+    );
+    let _ = save_deliberation_state(&state.db, &deliberation_state, &verification_summary);
     TraceRecorder::update_status(&state.db, &input.request_id, trace_status)?;
     Ok(HarnessRunResult {
         request_id: input.request_id,
@@ -64,6 +85,8 @@ pub(crate) async fn finish_run(
         evidence_packets,
         usage_source,
         finish_reason,
+        deliberation_state: Some(deliberation_state),
+        verification_summary: Some(verification_summary),
     })
 }
 

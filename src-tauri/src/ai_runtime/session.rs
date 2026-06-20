@@ -3,7 +3,7 @@
 //! Sessions are identified by `session_key = scene + ":" + (note_path || "__global__")`.
 
 use crate::ai_runtime::AiScene;
-use crate::error::AppResult;
+use crate::error::{AppError, AppResult};
 use crate::storage::db::Database;
 use serde::{Deserialize, Serialize};
 
@@ -121,10 +121,20 @@ impl SessionManager {
                 .unwrap_or(1);
 
             let tool_json = tool_calls.map(|t| t.to_string());
+            let content_hash = crate::cas::hash::content_hash_str(content);
             conn.execute(
-                "INSERT INTO session_messages (session_id, seq, role, content, content_parts, tool_calls, created_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-                rusqlite::params![session_id, seq, role, content, content_parts, tool_json, now],
+                "INSERT INTO session_messages (session_id, seq, role, content, content_parts, tool_calls, content_hash, created_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                rusqlite::params![
+                    session_id,
+                    seq,
+                    role,
+                    content,
+                    content_parts,
+                    tool_json,
+                    content_hash,
+                    now
+                ],
             )?;
 
             conn.execute(
@@ -323,6 +333,10 @@ impl SessionManager {
     /// 撤回：删除指定 seq 及之后的所有消息，并更新 session 时间戳。
     /// 返回被删除的消息数量。
     pub fn retract_messages(db: &Database, session_id: i64, from_seq: i64) -> AppResult<u32> {
+        if from_seq <= 0 {
+            return Err(AppError::msg("from_seq must be positive"));
+        }
+
         db.with_conn(|conn| {
             let deleted = conn.execute(
                 "DELETE FROM session_messages WHERE session_id = ?1 AND seq >= ?2",

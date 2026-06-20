@@ -2,6 +2,7 @@
 
 use serde::Serialize;
 
+use crate::ai_runtime::deliberation::{DeliberationState, VerificationSummary};
 use crate::ai_runtime::model_gateway::{TokenUsage, ToolCall};
 use crate::ai_runtime::{
     agent_task_policy::AgentTaskPolicy, AiScene, ContextPacket, SkillActivationPlanSummary,
@@ -59,6 +60,8 @@ pub struct HarnessRunResult {
     pub evidence_packets: Vec<ContextPacket>,
     pub usage_source: UsageSource,
     pub finish_reason: HarnessFinishReason,
+    pub deliberation_state: Option<DeliberationState>,
+    pub verification_summary: Option<VerificationSummary>,
 }
 
 /// Inputs for a harness run.

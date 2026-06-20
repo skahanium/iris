@@ -8,6 +8,9 @@ use tauri::{AppHandle, Emitter};
 
 use crate::ai_runtime::agent_task_policy::intent_from_legacy_scene;
 use crate::ai_runtime::skill_registry::{InstallSpec, SkillInstallSource};
+use crate::ai_runtime::skill_trust_policy::{
+    build_skill_trust_profile, persist_skill_trust_profile, SkillSourceKind,
+};
 use crate::ai_runtime::skills::{
     blocked_capabilities_for_skill, capability_preview_for_entry, enrich_list_with_task,
     install_from_git, install_from_local, install_from_url, prepare_workspace_for_skill,
@@ -40,6 +43,14 @@ pub struct SkillPrepareWorkspacePreview {
     pub workspace_missing_items: Vec<String>,
     pub create_folders: Vec<String>,
     pub create_documents: Vec<String>,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct InstallTrustContext<'a> {
+    install_source_type: &'a str,
+    trust_source_type: SkillSourceKind,
+    source_url: Option<&'a str>,
+    expected_sha256: Option<&'a str>,
 }
 
 fn scope_db(scope: SkillScope) -> &'static str {
@@ -272,24 +283,31 @@ async fn install_entries(
     vault: &Path,
     app_handle: Option<&AppHandle>,
     entries: Vec<SkillEntry>,
-    source_type: &str,
-    source_url: Option<&str>,
+    trust_ctx: InstallTrustContext<'_>,
 ) -> AppResult<Vec<SkillListEntry>> {
     let mut out = Vec::new();
     for entry in entries {
         validate_skill_license(&entry)?;
-        let enabled = !has_blocked_critical_capability(&entry);
-        set_enabled(&entry.name, entry.scope, vault, enabled)?;
         let content_hash =
             skill_content_hash_for_path(&std::path::PathBuf::from(&entry.file_path)).ok();
+        let trust_profile = build_skill_trust_profile(
+            &entry,
+            trust_ctx.trust_source_type,
+            trust_ctx.source_url,
+            content_hash.as_deref(),
+            trust_ctx.expected_sha256,
+        );
+        let enabled = !has_blocked_critical_capability(&entry) && !trust_profile.high_risk;
+        set_enabled(&entry.name, entry.scope, vault, enabled)?;
         record_install_source(
             db,
             &entry.name,
             entry.scope,
-            source_type,
-            source_url,
+            trust_ctx.install_source_type,
+            trust_ctx.source_url,
             content_hash.as_deref(),
         )?;
+        persist_skill_trust_profile(db, &trust_profile)?;
         refresh_activation_index(db, &entry)?;
         out.push(entry_to_list_entry(&entry, vault)?);
     }
@@ -310,14 +328,26 @@ async fn install_from_spec(
     app_handle: Option<&AppHandle>,
     spec: InstallSpec,
     scope: SkillScope,
+    trust_source_type: SkillSourceKind,
     expected_sha256: Option<&str>,
 ) -> AppResult<SkillListEntry> {
     let source_url = Some(spec.path_or_url.as_str());
     match spec.source {
         SkillInstallSource::Url => {
             let entry = install_from_url(&spec.path_or_url, scope, vault, expected_sha256).await?;
-            let list =
-                install_entries(db, vault, app_handle, vec![entry], "url", source_url).await?;
+            let list = install_entries(
+                db,
+                vault,
+                app_handle,
+                vec![entry],
+                InstallTrustContext {
+                    install_source_type: "url",
+                    trust_source_type,
+                    source_url,
+                    expected_sha256,
+                },
+            )
+            .await?;
             list.into_iter()
                 .next()
                 .ok_or_else(|| AppError::msg("安装失败"))
@@ -325,7 +355,19 @@ async fn install_from_spec(
         SkillInstallSource::Git => {
             let entries =
                 install_from_git(&spec.path_or_url, spec.subpath.as_deref(), scope, vault).await?;
-            let list = install_entries(db, vault, app_handle, entries, "git", source_url).await?;
+            let list = install_entries(
+                db,
+                vault,
+                app_handle,
+                entries,
+                InstallTrustContext {
+                    install_source_type: "git",
+                    trust_source_type,
+                    source_url,
+                    expected_sha256,
+                },
+            )
+            .await?;
             list.into_iter()
                 .next()
                 .ok_or_else(|| AppError::msg("安装失败"))
@@ -333,8 +375,19 @@ async fn install_from_spec(
         SkillInstallSource::Local => {
             let path = PathBuf::from(&spec.path_or_url);
             let entry = install_from_local(&path, scope, vault)?;
-            let list =
-                install_entries(db, vault, app_handle, vec![entry], "local", source_url).await?;
+            let list = install_entries(
+                db,
+                vault,
+                app_handle,
+                vec![entry],
+                InstallTrustContext {
+                    install_source_type: "local",
+                    trust_source_type,
+                    source_url,
+                    expected_sha256,
+                },
+            )
+            .await?;
             list.into_iter()
                 .next()
                 .ok_or_else(|| AppError::msg("安装失败"))
@@ -382,6 +435,7 @@ pub async fn install_skill(
             app_handle,
             spec,
             req.scope,
+            SkillSourceKind::Registry,
             req.expected_sha256.as_deref(),
         )
         .await;
@@ -399,6 +453,12 @@ pub async fn install_skill(
         app_handle,
         spec,
         req.scope,
+        match req.source {
+            SkillInstallSource::Git => SkillSourceKind::Git,
+            SkillInstallSource::Local => SkillSourceKind::Local,
+            SkillInstallSource::Registry => SkillSourceKind::Registry,
+            SkillInstallSource::Url => SkillSourceKind::Url,
+        },
         req.expected_sha256.as_deref(),
     )
     .await
@@ -465,6 +525,8 @@ pub async fn preview_install(
         let mut preview =
             crate::ai_runtime::skill_registry::preview_registry_install(registry, &req.path_or_url)
                 .await?;
+        preview["trust_profile_preview"] =
+            trust_preview_for_request(req, SkillSourceKind::Registry);
         preview["target_install_dir"] = serde_json::json!(match req.scope {
             SkillScope::Global => crate::ai_runtime::skills::global_skills_dir()
                 .to_string_lossy()
@@ -503,9 +565,72 @@ pub async fn preview_install(
             let entry = crate::ai_runtime::skills::load_skill(&path, req.scope)?;
             validate_skill_license(&entry)?;
             preview["capability_diff"] = capability_preview_for_entry(&entry, &[]);
+            let profile = build_skill_trust_profile(
+                &entry,
+                SkillSourceKind::Local,
+                Some(&req.path_or_url),
+                None,
+                req.expected_sha256.as_deref(),
+            );
+            preview["trust_profile_preview"] = serde_json::to_value(profile).unwrap_or_default();
         }
+    } else {
+        preview["trust_profile_preview"] = trust_preview_for_request(
+            req,
+            match req.source {
+                SkillInstallSource::Git => SkillSourceKind::Git,
+                SkillInstallSource::Registry => SkillSourceKind::Registry,
+                SkillInstallSource::Url => SkillSourceKind::Url,
+                SkillInstallSource::Local => SkillSourceKind::Local,
+            },
+        );
     }
     Ok(preview)
+}
+
+fn trust_preview_for_request(
+    req: &SkillInstallRequest,
+    source_type: SkillSourceKind,
+) -> serde_json::Value {
+    let sha256_locked = req.expected_sha256.is_some();
+    let warnings = if !sha256_locked && source_type != SkillSourceKind::Local {
+        vec!["skill source is not locked with expected_sha256"]
+    } else {
+        Vec::new()
+    };
+    serde_json::json!({
+        "source_type": source_type.as_str(),
+        "source_url": req.path_or_url,
+        "sha256_locked": sha256_locked,
+        "warnings": warnings,
+    })
+}
+
+pub fn preview_update(
+    db: &Database,
+    name: &str,
+    scope: SkillScope,
+) -> AppResult<serde_json::Value> {
+    let (source_type, source_url, content_hash): (String, Option<String>, Option<String>) =
+        db.with_conn(|conn| {
+            conn.query_row(
+                "SELECT source_type, source_url, content_hash FROM skill_install_sources WHERE skill_name = ?1 AND scope = ?2",
+                rusqlite::params![name, scope_db(scope)],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .map_err(Into::into)
+        })?;
+    Ok(serde_json::json!({
+        "name": name,
+        "scope": scope_db(scope),
+        "source_type": source_type,
+        "source_url": source_url,
+        "previous_content_hash": content_hash,
+        "trust_profile_preview": {
+            "sha256_locked": false,
+            "warnings": ["skill update reuses the recorded source without a locked expected_sha256"],
+        },
+    }))
 }
 
 pub fn preview_skill_workspace(

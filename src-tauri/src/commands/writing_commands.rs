@@ -8,6 +8,7 @@ use crate::ai_runtime::evidence_mixer;
 use crate::ai_runtime::retrieval_broker::{RetrievalLayers, RetrievalRequest};
 use crate::ai_runtime::retrieval_scope::RetrievalScope;
 use crate::ai_runtime::trace::{TraceRecorder, TraceStatus};
+use crate::ai_runtime::writing_state::{save_writing_state, WritingState, WritingStateInput};
 use crate::ai_runtime::writing_workflow::{self, WritingTaskOutput};
 use crate::ai_runtime::{AiScene, PatchApplyResult, PatchProposal, TokenUsage, WritingIntent};
 use crate::app::AppState;
@@ -244,6 +245,16 @@ pub(crate) async fn execute_writing_task(
     );
 
     let _ = app_handle.emit("ai:writing_complete", &request_id);
+    let writing_state = WritingState::from_input(WritingStateInput {
+        request_id: request_id.clone(),
+        target_path: input.target_path.clone(),
+        base_content_hash: input.base_content_hash.clone(),
+        writing_goal: input.writing_goal.clone(),
+        intent: format!("{intent:?}").to_ascii_lowercase(),
+        evidence: evidence.clone(),
+        patches: patches.clone(),
+    });
+    let _ = save_writing_state(&state.db, &writing_state);
 
     Ok(WritingTaskOutput {
         request_id,
@@ -251,6 +262,7 @@ pub(crate) async fn execute_writing_task(
         patches,
         evidence_used: evidence,
         total_tokens,
+        writing_state,
     })
 }
 

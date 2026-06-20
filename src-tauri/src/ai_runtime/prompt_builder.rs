@@ -195,6 +195,7 @@ pub fn build_initial_messages(
             continue;
         }
         let r = match role.as_str() {
+            "system" => MessageRole::System,
             "assistant" => MessageRole::Assistant,
             _ => MessageRole::User,
         };

@@ -57,29 +57,47 @@ interface AssistantRunPort {
   ) => void;
 }
 
-interface UseAssistantTasksParams {
+interface AssistantTaskRuntimePorts {
   appendAssistantSummary: (intent: AssistantIntent, count?: number) => void;
   appendUserMessage: (rawMessage: string, imgs?: ImageAttachment[]) => void;
   assistantRun: AssistantRunPort;
   clearCitationMiss: () => void;
   clearTaskSurfaces: () => void;
+  ensureAssistantStreamSlot: () => void;
+  runPlanControls: {
+    setIntentDetection: Dispatch<SetStateAction<IntentDetectionResult | null>>;
+    setPermissionPreflightSummary: Dispatch<
+      SetStateAction<PermissionPreflightSummary | null>
+    >;
+    setRunPlanSummary: Dispatch<SetStateAction<AgentRunPlanSummary | null>>;
+  };
+}
+
+interface AssistantTaskContext {
   composerDisabled: boolean;
   contextScope: ContextScope;
-  ensureAssistantStreamSlot: () => void;
-  forceNewSessionRef: MutableRefObject<boolean>;
   getNoteContent: () => string;
   getParagraphText: () => string | null;
   getWritingContext: () => WritingEditorContext | null;
   input: string;
   messages: ChatLine[];
   notePath: string | null;
-  panelSendActiveRef: MutableRefObject<boolean>;
   packets: ContextPacket[];
-  requestIdRef: MutableRefObject<string | null>;
-  researchRequestIdRef: MutableRefObject<string | null>;
   selectedPacketIds: string[];
   selectionQuoteText?: string | null;
   sessionId: number | null;
+  webSearch: boolean;
+}
+
+interface AssistantTaskRefs {
+  forceNewSessionRef: MutableRefObject<boolean>;
+  panelSendActiveRef: MutableRefObject<boolean>;
+  requestIdRef: MutableRefObject<string | null>;
+  researchRequestIdRef: MutableRefObject<string | null>;
+  streamBufRef: MutableRefObject<string>;
+}
+
+interface AssistantTaskStatePorts {
   setActionState: Dispatch<SetStateAction<AssistantActionState>>;
   setActivityHint: Dispatch<SetStateAction<string | null>>;
   setCitationResult: Dispatch<
@@ -101,19 +119,17 @@ interface UseAssistantTasksParams {
   setResearchPanelExpanded: Dispatch<SetStateAction<boolean>>;
   setResearchResult: Dispatch<SetStateAction<ResearchFocusPayload | null>>;
   setResearchRunning: Dispatch<SetStateAction<boolean>>;
-  runPlanControls: {
-    setIntentDetection: Dispatch<SetStateAction<IntentDetectionResult | null>>;
-    setPermissionPreflightSummary: Dispatch<
-      SetStateAction<PermissionPreflightSummary | null>
-    >;
-    setRunPlanSummary: Dispatch<SetStateAction<AgentRunPlanSummary | null>>;
-  };
   setSessionId: Dispatch<SetStateAction<number | null>>;
   setSessionTokenUsage: Dispatch<SetStateAction<TokenUsage | null>>;
   setStreaming: Dispatch<SetStateAction<boolean>>;
   setWritingPatches: Dispatch<SetStateAction<PatchProposal[]>>;
-  streamBufRef: MutableRefObject<string>;
-  webSearch: boolean;
+}
+
+interface UseAssistantTasksParams {
+  runtime: AssistantTaskRuntimePorts;
+  context: AssistantTaskContext;
+  refs: AssistantTaskRefs;
+  state: AssistantTaskStatePorts;
 }
 
 interface UseAssistantTasksResult {
@@ -124,55 +140,67 @@ interface UseAssistantTasksResult {
 }
 
 export function useAssistantTasks({
-  appendAssistantSummary,
-  appendUserMessage,
-  assistantRun,
-  clearCitationMiss,
-  clearTaskSurfaces,
-  composerDisabled,
-  contextScope,
-  ensureAssistantStreamSlot,
-  forceNewSessionRef,
-  getNoteContent,
-  getParagraphText,
-  getWritingContext,
-  input,
-  messages,
-  notePath,
-  packets,
-  panelSendActiveRef,
-  requestIdRef,
-  researchRequestIdRef,
-  selectedPacketIds,
-  selectionQuoteText,
-  sessionId,
-  setActionState,
-  setActivityHint,
-  setCitationResult,
-  setContextStatusData,
-  setDocIssues,
-  setDocSummary,
-  setAgentTaskId,
-  setHarnessRequestId,
-  setInput,
-  setLastError,
-  setMessages,
-  setOrganizeSelection,
-  setOrganizeSuggestions,
-  setPackets,
-  setPacketsOpen,
-  setPausedTaskId,
-  setResearchPanelExpanded,
-  setResearchResult,
-  setResearchRunning,
-  runPlanControls,
-  setSessionId,
-  setSessionTokenUsage,
-  setStreaming,
-  setWritingPatches,
-  streamBufRef,
-  webSearch,
+  runtime,
+  context,
+  refs,
+  state,
 }: UseAssistantTasksParams): UseAssistantTasksResult {
+  const {
+    appendAssistantSummary,
+    appendUserMessage,
+    assistantRun,
+    clearCitationMiss,
+    clearTaskSurfaces,
+    ensureAssistantStreamSlot,
+    runPlanControls,
+  } = runtime;
+  const {
+    composerDisabled,
+    contextScope,
+    getNoteContent,
+    getParagraphText,
+    getWritingContext,
+    input,
+    messages,
+    notePath,
+    packets,
+    selectedPacketIds,
+    selectionQuoteText,
+    sessionId,
+    webSearch,
+  } = context;
+  const {
+    forceNewSessionRef,
+    panelSendActiveRef,
+    requestIdRef,
+    researchRequestIdRef,
+    streamBufRef,
+  } = refs;
+  const {
+    setActionState,
+    setActivityHint,
+    setCitationResult,
+    setContextStatusData,
+    setDocIssues,
+    setDocSummary,
+    setAgentTaskId,
+    setHarnessRequestId,
+    setInput,
+    setLastError,
+    setMessages,
+    setOrganizeSelection,
+    setOrganizeSuggestions,
+    setPackets,
+    setPacketsOpen,
+    setPausedTaskId,
+    setResearchPanelExpanded,
+    setResearchResult,
+    setResearchRunning,
+    setSessionId,
+    setSessionTokenUsage,
+    setStreaming,
+    setWritingPatches,
+  } = state;
   const [images, setImages] = useState<ImageAttachment[]>([]);
 
   const recordRunPlan = useCallback(

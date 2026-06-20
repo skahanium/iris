@@ -6,13 +6,20 @@
 use rusqlite::Connection;
 
 use crate::ai_runtime::packet_cache::PacketCache;
-use crate::ai_runtime::retrieval_scope::{filter_packets_by_scope, RetrievalScope};
+use crate::ai_runtime::retrieval_scope::RetrievalScope;
 use crate::ai_runtime::ContextPacket;
 use crate::error::AppResult;
 
 #[path = "retrieval_broker/query_hash.rs"]
 mod query_hash_impl;
 pub use query_hash_impl::query_hash;
+
+#[path = "retrieval_broker/diagnostics.rs"]
+mod diagnostics_impl;
+pub use diagnostics_impl::{
+    hybrid_retrieve_with_diagnostics, RetrievalLayerDiagnostic, RetrievalLayerStatus,
+    RetrievalOutcome,
+};
 
 #[path = "retrieval_broker/exact.rs"]
 mod exact_impl;
@@ -92,7 +99,7 @@ impl Default for RetrievalLayers {
 /// 4. **Exact** — 法规条文号精确解析（如 `《纪律处分条例》第六条`）
 /// 5. **Template** — 文种模板关键词匹配
 ///
-/// 各层内部错误会被静默忽略（表不存在等情况），不会中断整体检索。
+/// 各层内部错误会被降级为诊断信息，不会中断整体检索。
 ///
 /// # Arguments
 ///
@@ -106,61 +113,7 @@ pub fn hybrid_retrieve(
     conn: &Connection,
     request: &RetrievalRequest,
 ) -> AppResult<Vec<ContextPacket>> {
-    let mut packets: Vec<ContextPacket> = Vec::new();
-
-    // Layer 1: FTS (keyword + regulation name)
-    if request.layers.fts {
-        if let Ok(fts_results) = search_fts(conn, &request.query, request.max_results) {
-            packets.extend(fts_results);
-        }
-    }
-
-    // Layer 2: Vector (chunks + anchors + regulations)
-    if request.layers.vector && crate::storage::db::vector_index_ready() {
-        if let Ok(chunk_results) = search_vector_chunks(conn, &request.query, request.max_results) {
-            packets.extend(chunk_results);
-        }
-        if let Ok(vec_results) = search_vector_anchors(conn, &request.query, request.max_results) {
-            packets.extend(vec_results);
-        }
-        if let Ok(reg_results) =
-            search_vector_regulations(conn, &request.query, request.max_results)
-        {
-            packets.extend(reg_results);
-        }
-    }
-
-    // Layer 3: Graph (confirmed links)
-    if request.layers.graph {
-        if let Some(file_id) = request.file_id_context {
-            if let Ok(graph_results) =
-                search_graph_neighbors(conn, file_id, request.max_results / 2)
-            {
-                packets.extend(graph_results);
-            }
-        }
-    }
-
-    // Layer 4: Exact parser (regulation article lookup)
-    if request.layers.exact {
-        if let Ok(exact_results) = search_exact_regulation(conn, &request.query) {
-            packets.extend(exact_results);
-        }
-    }
-
-    // Layer 5: Template (genre template match)
-    if request.layers.template {
-        if let Ok(template_results) = search_template(conn, &request.query, request.max_results) {
-            packets.extend(template_results);
-        }
-    }
-
-    // Score fusion: normalize and weight by layer, then deduplicate
-    fuse_and_rank(&mut packets, request.max_results);
-
-    filter_packets_by_scope(&mut packets, &request.scope, |p| p.source_path.as_deref());
-
-    Ok(packets)
+    Ok(hybrid_retrieve_with_diagnostics(conn, request)?.packets)
 }
 
 /// 计算检索请求的稳定哈希值，用于缓存键。
@@ -223,7 +176,7 @@ mod tests {
     fn hybrid_retrieve_empty_db_returns_empty() {
         let conn = rusqlite::Connection::open_in_memory().unwrap();
         let req = RetrievalRequest {
-            query: "测试".into(),
+            query: "《纪律处分条例》第六条".into(),
             max_results: 10,
             layers: RetrievalLayers::default(),
             note_context: None,
@@ -233,6 +186,28 @@ mod tests {
         let packets = hybrid_retrieve(&conn, &req).unwrap();
         // No tables exist in a fresh in-memory DB, so all layers should fail gracefully
         assert!(packets.is_empty());
+    }
+
+    #[test]
+    fn hybrid_retrieve_with_diagnostics_reports_unavailable_layers() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        let req = RetrievalRequest {
+            query: "《纪律处分条例》第六条".into(),
+            max_results: 10,
+            layers: RetrievalLayers::default(),
+            note_context: None,
+            file_id_context: None,
+            scope: RetrievalScope::default(),
+        };
+
+        let outcome = hybrid_retrieve_with_diagnostics(&conn, &req).unwrap();
+        assert!(outcome.packets.is_empty());
+        assert!(outcome.diagnostics.iter().any(|diag| {
+            diag.layer == "fts" && diag.status == RetrievalLayerStatus::Unavailable
+        }));
+        assert!(outcome.diagnostics.iter().any(|diag| {
+            diag.layer == "vector" && diag.status == RetrievalLayerStatus::IndexNotReady
+        }));
     }
 
     #[test]

@@ -1,5 +1,7 @@
 //! Unified Agent Harness — multi-round tool loop with streaming final response.
 
+use std::collections::HashMap;
+
 use futures_util::future::join_all;
 use tauri::{AppHandle, Emitter};
 
@@ -28,14 +30,19 @@ use crate::ai_runtime::model_gateway::{
     clear_abort, is_abort_requested, prepare_tool_api_messages, GatewayRequest, GatewayResponse,
     LlmMessage, MessageRole, ModelGateway, ProviderConfig, TokenUsage, ToolCall,
 };
-use crate::ai_runtime::tool_audit;
+use crate::ai_runtime::permission_decision::{decide_tool_permission, PermissionDecisionRequest};
+use crate::ai_runtime::subagent_coordinator::{SubAgentCoordinator, SubAgentTaskSpec};
 use crate::ai_runtime::tool_catalog::catalog_find;
 use crate::ai_runtime::tool_dispatch::{dispatch_tool_with_retry, ToolDispatchContext};
+use crate::ai_runtime::tool_execution_pipeline::{
+    audit_dispatched_tool, evaluate_tool_execution, ToolExecutionGate,
+};
 use crate::ai_runtime::tool_executor::ToolRegistry;
 use crate::ai_runtime::tool_fallback::{
     parse_tool_calls_from_content, should_retry_tool_parse, strip_tool_markup_from_visible,
 };
 use crate::ai_runtime::tool_policy::{self, DenialReason, ToolPolicyContext};
+use crate::ai_runtime::ToolCallResult;
 use crate::app::AppState;
 use crate::error::{AppError, AppResult};
 
@@ -138,11 +145,17 @@ pub async fn run_harness(
     )?;
 
     let file_id = resolve_file_id(state, input.note_path.as_deref())?;
+    let _ = crate::ai_runtime::conversation_memory::ConversationMemory::refresh_for_session(
+        &state.db,
+        input.session_id,
+        crate::ai_runtime::conversation_memory::ConversationMemoryPolicy::default(),
+    );
 
     let mut messages = build_initial_messages(
         state,
         InitialMessagesInput {
             scene: input.scene,
+            session_id: input.session_id,
             task_policy: &input.task_policy,
             environment: &env_text,
             cold_start_packets: &input.cold_start_packets,
@@ -375,12 +388,49 @@ pub async fn run_harness(
                 break 'agent;
             }
 
-            let mut policy_denied: Vec<(ToolCall, DenialReason)> = Vec::new();
+            let mut policy_denied: Vec<(ToolCall, ToolCallResult)> = Vec::new();
             let mut policy_allowed: Vec<ToolCall> = Vec::new();
             for tc in tool_calls {
-                match registry.check_tool_policy(&tc.function.name, &policy_ctx) {
-                    Ok(()) => policy_allowed.push(tc),
-                    Err(denied) => policy_denied.push((tc, denied.reason)),
+                let args: serde_json::Value =
+                    serde_json::from_str(&tc.function.arguments).unwrap_or_default();
+                let Some(entry) = catalog_find(&tc.function.name) else {
+                    let hint = tool_policy::denial_user_message(
+                        DenialReason::NotImplemented,
+                        &tc.function.name,
+                    );
+                    policy_denied.push((
+                        tc.clone(),
+                        ToolCallResult {
+                            tool_name: tc.function.name.clone(),
+                            success: false,
+                            output: serde_json::json!({
+                                "error": hint,
+                                "policy_denied": true,
+                            }),
+                            duration_ms: 0,
+                            tokens_used: None,
+                            error: Some(hint),
+                        },
+                    ));
+                    continue;
+                };
+                let gate = evaluate_tool_execution(
+                    &state.db,
+                    ToolExecutionGate {
+                        request_id: &input.request_id,
+                        harness_round: harness_rounds,
+                        entry,
+                        args: &args,
+                        policy_ctx: &policy_ctx,
+                        skill_id: None,
+                        scene: Some(input.scene.profile()),
+                        subagent_depth: input.depth,
+                    },
+                )?;
+                if let Some(result) = gate.tool_result {
+                    policy_denied.push((tc, result));
+                } else {
+                    policy_allowed.push(tc);
                 }
             }
 
@@ -406,8 +456,8 @@ pub async fn run_harness(
                 reasoning_content: response.reasoning_content.clone(),
             });
 
-            for (tc, reason) in &policy_denied {
-                push_tool_policy_error(&mut messages, &mut tool_results_json, tc, *reason);
+            for (tc, result) in &policy_denied {
+                push_tool_result_error(&mut messages, &mut tool_results_json, tc, result);
                 all_tool_calls.push(tc.clone());
             }
 
@@ -434,9 +484,41 @@ pub async fn run_harness(
                     None,
                     None,
                 )?;
-                let sub_futures: Vec<_> = subagent_calls
+                let evidence_ids = evidence_ledger
+                    .packets()
+                    .iter()
+                    .map(|packet| packet.id.clone())
+                    .collect::<Vec<_>>();
+                let subagent_specs = subagent_calls
                     .iter()
                     .map(|tc| {
+                        SubAgentTaskSpec::from_tool_call(
+                            &input.request_id,
+                            tc,
+                            input.note_path.as_deref(),
+                            evidence_ids.clone(),
+                            skill_allowed_tools.clone(),
+                            input.token_budget,
+                        )
+                    })
+                    .collect::<Vec<_>>();
+                let coordination_plan = SubAgentCoordinator::plan(&subagent_specs);
+                let mut conflict_by_subagent =
+                    SubAgentCoordinator::conflict_errors_by_subagent(&coordination_plan);
+                let executable_indices = subagent_specs
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(idx, spec)| {
+                        if conflict_by_subagent.contains_key(&spec.id) {
+                            None
+                        } else {
+                            Some(idx)
+                        }
+                    })
+                    .collect::<Vec<_>>();
+                let sub_futures = executable_indices
+                    .iter()
+                    .map(|idx| {
                         run_subagent_harness(
                             state,
                             app_handle,
@@ -444,21 +526,74 @@ pub async fn run_harness(
                             provider_config.clone(),
                             max_tokens,
                             thinking_mode,
-                            tc,
+                            subagent_calls[*idx],
                         )
                     })
-                    .collect();
-                let sub_results: Vec<AppResult<HarnessRunResult>> = join_all(sub_futures).await;
-                for (tc, sub_out) in subagent_calls.iter().zip(sub_results) {
-                    let ok = sub_out.is_ok();
-                    let output = match &sub_out {
-                        Ok(r) => serde_json::json!({
-                            "content": r.content,
-                            "citation_valid": r.citation_valid,
-                            "harness_rounds": r.harness_rounds,
-                        }),
-                        Err(e) => serde_json::json!({ "error": e.to_string() }),
+                    .collect::<Vec<_>>();
+                let completed = join_all(sub_futures).await;
+                let mut sub_results: HashMap<usize, AppResult<HarnessRunResult>> = HashMap::new();
+                for (idx, result) in executable_indices.into_iter().zip(completed) {
+                    sub_results.insert(idx, result);
+                }
+
+                for (idx, (tc, spec)) in
+                    subagent_calls.iter().zip(subagent_specs.iter()).enumerate()
+                {
+                    let conflict_errors = conflict_by_subagent.remove(&spec.id);
+                    let output = if let Some(conflicts) = conflict_errors {
+                        let details = conflicts
+                            .iter()
+                            .map(|issue| {
+                                format!(
+                                    "{}:{} {}",
+                                    issue.resource_type, issue.resource_id, issue.message
+                                )
+                            })
+                            .collect::<Vec<_>>()
+                            .join("; ");
+                        let report = SubAgentCoordinator::report_error(spec, details);
+                        SubAgentCoordinator::tool_output_for_report(&report)
+                    } else {
+                        match sub_results.remove(&idx) {
+                            Some(Ok(r)) => {
+                                let report = SubAgentCoordinator::report_success(
+                                    spec,
+                                    r.content.clone(),
+                                    r.citation_valid,
+                                    r.harness_rounds,
+                                );
+                                serde_json::json!({
+                                    "content": r.content,
+                                    "citation_valid": r.citation_valid,
+                                    "harness_rounds": r.harness_rounds,
+                                    "subagent_report": report,
+                                })
+                            }
+                            Some(Err(e)) => {
+                                let report = SubAgentCoordinator::report_error(spec, e.to_string());
+                                serde_json::json!({
+                                    "error": report.errors.first().cloned().unwrap_or_default(),
+                                    "subagent_report": report,
+                                })
+                            }
+                            None => {
+                                let report = SubAgentCoordinator::report_error(
+                                    spec,
+                                    "subagent_result_missing",
+                                );
+                                serde_json::json!({
+                                    "error": "subagent_result_missing",
+                                    "subagent_report": report,
+                                })
+                            }
+                        }
                     };
+                    let ok = output.get("error").is_none()
+                        && output
+                            .get("subagent_report")
+                            .and_then(|report| report.get("errors"))
+                            .and_then(|errors| errors.as_array())
+                            .map_or(true, Vec::is_empty);
                     let output_str = serde_json::to_string(&output).unwrap_or_else(|_| "{}".into());
                     messages.push(LlmMessage {
                         role: MessageRole::Tool,
@@ -544,13 +679,46 @@ pub async fn run_harness(
                     tools_this_round += 1;
                     continue;
                 }
-                if let Err(denied) = registry.check_tool_policy(tool_name, &policy_ctx) {
+                let args: serde_json::Value =
+                    serde_json::from_str(&tool_call.function.arguments).unwrap_or_default();
+                let Some(entry) = catalog_find(tool_name) else {
                     push_tool_policy_error(
                         &mut messages,
                         &mut tool_results_json,
                         tool_call,
-                        denied.reason,
+                        DenialReason::NotImplemented,
                     );
+                    tools_this_round += 1;
+                    continue;
+                };
+                let execution_gate = ToolExecutionGate {
+                    request_id: &input.request_id,
+                    harness_round: harness_rounds,
+                    entry,
+                    args: &args,
+                    policy_ctx: &policy_ctx,
+                    skill_id: None,
+                    scene: Some(input.scene.profile()),
+                    subagent_depth: input.depth,
+                };
+                let gate = evaluate_tool_execution(&state.db, execution_gate)?;
+                if let Some(result) = gate.tool_result {
+                    let err = result.error.as_deref().unwrap_or("tool denied");
+                    messages.push(LlmMessage {
+                        role: MessageRole::Tool,
+                        content: serde_json::to_string(&result.output)
+                            .unwrap_or_else(|_| format!("{{\"error\":\"{err}\"}}"))
+                            .into(),
+                        tool_call_id: Some(tool_call.id.clone()),
+                        tool_calls: None,
+                        ..Default::default()
+                    });
+                    tool_results_json.push(serde_json::json!({
+                        "tool_call_id": tool_call.id,
+                        "status": "error",
+                        "error": err,
+                        "policy_denied": true,
+                    }));
                     tools_this_round += 1;
                     continue;
                 }
@@ -566,8 +734,6 @@ pub async fn run_harness(
                     None,
                 )?;
 
-                let args: serde_json::Value =
-                    serde_json::from_str(&tool_call.function.arguments).unwrap_or_default();
                 let dispatch_ctx = ToolDispatchContext {
                     scene: input.scene,
                     note_path: input.note_path.as_deref(),
@@ -599,21 +765,7 @@ pub async fn run_harness(
                     Some(preview),
                 )?;
 
-                // Record tool audit (sanitized, no sensitive data)
-                let _ = tool_audit::record_audit(
-                    &state.db,
-                    &tool_audit::ToolAuditInput {
-                        request_id: &input.request_id,
-                        harness_round: harness_rounds,
-                        tool_name,
-                        arguments: &args,
-                        result: &result.output,
-                        success: result.success,
-                        duration_ms: result.duration_ms,
-                        scene: Some(input.scene.profile()),
-                        subagent_depth: input.depth,
-                    },
-                );
+                let _ = audit_dispatched_tool(&state.db, &execution_gate, &gate.decision, &result);
                 messages.push(LlmMessage {
                     role: MessageRole::Tool,
                     content: if result.success {
@@ -693,7 +845,7 @@ pub async fn run_harness(
         .await?
         {
             ReflectionOutcome::BonusRound => continue 'agent,
-            ReflectionOutcome::Done(result) => return Ok(result),
+            ReflectionOutcome::Done(result) => return Ok(*result),
             ReflectionOutcome::NoAnswer => break 'agent,
         }
     }
@@ -822,6 +974,35 @@ fn push_tool_policy_error(
     }));
 }
 
+fn push_tool_result_error(
+    messages: &mut Vec<LlmMessage>,
+    tool_results_json: &mut Vec<serde_json::Value>,
+    tool_call: &ToolCall,
+    result: &ToolCallResult,
+) {
+    let err = result.error.as_deref().unwrap_or("tool execution denied");
+    messages.push(LlmMessage {
+        role: MessageRole::Tool,
+        content: serde_json::to_string(&result.output)
+            .unwrap_or_else(|_| {
+                format!(
+                    "{{\"error\": {}}}",
+                    serde_json::to_string(err).unwrap_or_default()
+                )
+            })
+            .into(),
+        tool_call_id: Some(tool_call.id.clone()),
+        tool_calls: None,
+        ..Default::default()
+    });
+    tool_results_json.push(serde_json::json!({
+        "tool_call_id": tool_call.id,
+        "status": "error",
+        "error": err,
+        "policy_denied": true,
+    }));
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn pause_for_tool_confirmation(
     state: &AppState,
@@ -867,13 +1048,46 @@ async fn pause_for_tool_confirmation(
     let permission_effects = catalog_find(tool_name)
         .map(|entry| preflight_tool_permission(entry, &args, None).effects)
         .unwrap_or_default();
+    let permission_decision = catalog_find(tool_name).and_then(|entry| {
+        decide_tool_permission(
+            &state.db,
+            PermissionDecisionRequest {
+                request_id: &input.request_id,
+                entry,
+                args: &args,
+                policy_ctx: &ToolPolicyContext {
+                    task_policy: Some(input.task_policy.clone()),
+                    scene: input.scene,
+                    autonomy_level: input.task_policy.autonomy_level,
+                    web_search_enabled: input.web_search_enabled,
+                    skill_allowed_tools: resolve_active_skill_allowed_tools_with_plan(
+                        state,
+                        &input.task_policy,
+                        &input.user_message,
+                        input.skill_activation_plan.as_ref(),
+                    )
+                    .unwrap_or_default(),
+                    depth: input.depth,
+                },
+                skill_id: None,
+            },
+        )
+        .ok()
+    });
     let mut confirm_request = serde_json::json!({
         "request_id": input.request_id,
         "tool_call_id": tool_call.id,
         "tool_name": tool_name,
         "arguments": args,
         "permissionEffects": permission_effects,
+        "pendingConfirmationIndex": 1,
+        "pendingConfirmationCount": 1,
+        "sandboxProfile": crate::ai_runtime::sandbox_profile::sandbox_profile_for_tool(tool_name),
     });
+    if let Some(permission_decision) = permission_decision {
+        confirm_request["permissionDecision"] =
+            serde_json::to_value(permission_decision).unwrap_or_default();
+    }
     if let Ok(args) = serde_json::from_str::<serde_json::Value>(&tool_call.function.arguments) {
         let vault = state.vault_path()?;
         if tool_name == "skills_install" {
@@ -918,6 +1132,19 @@ async fn pause_for_tool_confirmation(
             if let Some(name) = args.get("name").and_then(|v| v.as_str()) {
                 if let Ok(preview) = preview_skill_workspace(
                     &vault,
+                    name,
+                    normalize_skill_scope_arg(args.get("scope").and_then(|v| v.as_str())),
+                ) {
+                    confirm_request["preview"] = preview;
+                }
+            }
+        } else if tool_name == "skills_update" {
+            use crate::ai_runtime::skill_install_service::{
+                normalize_skill_scope_arg, preview_update,
+            };
+            if let Some(name) = args.get("name").and_then(|v| v.as_str()) {
+                if let Ok(preview) = preview_update(
+                    &state.db,
                     name,
                     normalize_skill_scope_arg(args.get("scope").and_then(|v| v.as_str())),
                 ) {
@@ -1195,6 +1422,8 @@ mod tests {
             evidence_packets: vec![],
             usage_source: UsageSource::Estimated,
             finish_reason: HarnessFinishReason::Completed,
+            deliberation_state: None,
+            verification_summary: None,
         };
 
         assert_eq!(result.usage_source, UsageSource::Estimated);

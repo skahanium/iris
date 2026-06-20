@@ -929,6 +929,8 @@ mod tests {
             harness_rounds: 1,
             evidence_packets: vec![],
             pending_confirmation: true,
+            deliberation_state: None,
+            verification_summary: None,
             evidence_refresh_notice: None,
             tool_call_id: None,
             decision: None,

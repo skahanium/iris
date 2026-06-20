@@ -4,6 +4,7 @@
 //! The estimates are intentionally conservative to prevent budget overshoot.
 
 use crate::ai_runtime::model_gateway::{LlmMessage, TokenUsage};
+use crate::ai_types::MessageContent;
 
 /// Source of token count — recorded in traces to make fallback visible.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
@@ -86,16 +87,32 @@ pub(crate) fn estimate_and_accumulate(
     messages: &[LlmMessage],
     response_content: &str,
 ) -> (u32, u32) {
-    let mut prompt_chars = 0_usize;
-    for msg in messages {
-        prompt_chars += msg.content.as_str().chars().count();
-    }
-    let prompt_est = estimate_tokens(&" ".repeat(prompt_chars.min(1)));
+    let prompt_est = messages.iter().map(estimate_message_tokens).sum();
     let completion_est = estimate_tokens(response_content);
     total.prompt_tokens += prompt_est;
     total.completion_tokens += completion_est;
     total.total_tokens += prompt_est + completion_est;
     (prompt_est, completion_est)
+}
+
+fn estimate_message_tokens(message: &LlmMessage) -> u32 {
+    let mut tokens = match &message.content {
+        MessageContent::Text(text) => estimate_tokens(text),
+        MessageContent::Parts(parts) => {
+            estimate_tool_json_tokens(&serde_json::to_string(parts).unwrap_or_default())
+        }
+    };
+
+    if let Some(tool_call_id) = &message.tool_call_id {
+        tokens += estimate_tokens(tool_call_id);
+    }
+    if let Some(tool_calls) = &message.tool_calls {
+        tokens += estimate_tool_json_tokens(&serde_json::to_string(tool_calls).unwrap_or_default());
+    }
+    if let Some(reasoning) = &message.reasoning_content {
+        tokens += estimate_tokens(reasoning);
+    }
+    tokens
 }
 
 #[cfg(test)]
@@ -161,6 +178,34 @@ mod tests {
         assert!(total.total_tokens > 0);
         assert!(p > 0);
         assert!(c > 0);
+    }
+
+    #[test]
+    fn estimate_and_accumulate_prompt_scales_with_real_message_text() {
+        let short_msg = LlmMessage {
+            role: crate::ai_runtime::model_gateway::MessageRole::User,
+            content: "short".into(),
+            tool_call_id: None,
+            tool_calls: None,
+            ..Default::default()
+        };
+        let long_msg = LlmMessage {
+            role: crate::ai_runtime::model_gateway::MessageRole::User,
+            content: "长文本".repeat(400).into(),
+            tool_call_id: None,
+            tool_calls: None,
+            ..Default::default()
+        };
+        let mut short_total = TokenUsage::default();
+        let mut long_total = TokenUsage::default();
+
+        let (short_prompt, _) = estimate_and_accumulate(&mut short_total, &[short_msg], "response");
+        let (long_prompt, _) = estimate_and_accumulate(&mut long_total, &[long_msg], "response");
+
+        assert!(
+            long_prompt > short_prompt * 50,
+            "long prompt estimate {long_prompt} should scale beyond short estimate {short_prompt}",
+        );
     }
 
     #[test]

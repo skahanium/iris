@@ -82,12 +82,51 @@ export interface ClassifiedFileTakenEvent {
   path: string;
 }
 
+export type PermissionExecutionDecision =
+  | "auto_allowed"
+  | "requires_confirmation"
+  | "denied";
+
+export interface PermissionPreflightSummary {
+  toolName: string;
+  decision:
+    | "allow"
+    | "allow_once"
+    | "allow_for_session"
+    | "deny_once"
+    | "deny_always_for_this_skill"
+    | "open_settings";
+  effects: PermissionEffectSummary[];
+  blocked: boolean;
+}
+
+export interface PermissionDecisionOutcome {
+  toolName: string;
+  decision: PermissionExecutionDecision;
+  preflight: PermissionPreflightSummary;
+  deniedReason?: string | null;
+  grantedBy?: PermissionPreflightSummary["decision"] | null;
+}
+
+export interface SandboxProfileSummary {
+  id: string;
+  level: "l0_app_boundary" | "l1_subprocess" | "l2_os_boundary";
+  support: "supported" | "unsupported";
+  summary: string;
+  constraints: string[];
+  limitations: string[];
+}
+
 export interface ToolConfirmRequestEvent {
   request_id: string;
   tool_call_id: string;
   tool_name: string;
   arguments: Record<string, string | number | boolean | null | undefined>;
   permissionEffects?: PermissionEffectSummary[];
+  permissionDecision?: PermissionDecisionOutcome;
+  sandboxProfile?: SandboxProfileSummary;
+  pendingConfirmationIndex?: number;
+  pendingConfirmationCount?: number;
   preview?: Record<string, unknown>;
 }
 

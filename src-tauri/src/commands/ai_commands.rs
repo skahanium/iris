@@ -594,6 +594,10 @@ pub struct AiChatResponse {
     pub evidence_packets: Vec<ContextPacket>,
     pub pending_confirmation: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub deliberation_state: Option<crate::ai_runtime::deliberation::DeliberationState>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub verification_summary: Option<crate::ai_runtime::deliberation::VerificationSummary>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub evidence_refresh_notice: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_call_id: Option<String>,
@@ -628,6 +632,8 @@ impl AiChatResponse {
             harness_rounds: harness_result.harness_rounds,
             evidence_packets: harness_result.evidence_packets.clone(),
             pending_confirmation: harness_result.pending_confirmation,
+            deliberation_state: harness_result.deliberation_state.clone(),
+            verification_summary: harness_result.verification_summary.clone(),
             evidence_refresh_notice,
             tool_call_id: None,
             decision: None,

@@ -212,8 +212,27 @@ pub(super) fn tools() -> Vec<ToolCatalogEntry> {
                 "type": "object",
                 "properties": {
                     "task": {"type": "string", "description": "子任务完整描述"},
+                    "role": {"type": "string", "description": "子 agent 角色，例如 researcher / verifier / writer"},
                     "context_hint": {"type": "string", "description": "可选额外上下文"},
-                    "max_rounds": {"type": "integer", "description": "子任务最大轮次", "default": 2}
+                    "max_rounds": {"type": "integer", "description": "子任务最大轮次", "default": 2},
+                    "allowed_tools": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "允许子 agent 使用的工具子集；只能收窄当前可用工具面"
+                    },
+                    "resource_locks": {
+                        "type": "array",
+                        "description": "子任务需要的资源锁；同一 note 的多个 write 锁会被协调器拒绝",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "resource_type": {"type": "string", "default": "note"},
+                                "resource_id": {"type": "string"},
+                                "access": {"type": "string", "enum": ["read", "write"], "default": "read"}
+                            },
+                            "required": ["resource_id"]
+                        }
+                    }
                 },
                 "required": ["task"]
             }),

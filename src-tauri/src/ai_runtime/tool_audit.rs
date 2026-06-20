@@ -190,9 +190,11 @@ fn sanitize_result(tool_name: &str, result: &serde_json::Value, success: bool) -
             let count = result.get("count").and_then(|v| v.as_u64()).unwrap_or(0);
             Some(format!("results={count}"))
         }
-        "git_read_status" => Some("status_summary=available".into()),
-        "git_read_diff" => Some("diff_summary=available".into()),
-        "git_read_log" => Some("log_summary=available".into()),
+        "process_run_readonly" => with_sandbox_summary("output_summary=available", result),
+        "git_read_status" => with_sandbox_summary("status_summary=available", result),
+        "git_read_diff" => with_sandbox_summary("diff_summary=available", result),
+        "git_read_log" => with_sandbox_summary("log_summary=available", result),
+        "git_write_commit" => with_sandbox_summary("commit_summary=available", result),
         "secret_exists" => {
             let exists = result
                 .get("exists")
@@ -202,6 +204,20 @@ fn sanitize_result(tool_name: &str, result: &serde_json::Value, success: bool) -
         }
         _ => Some(json_shape_summary(result)),
     }
+}
+
+fn with_sandbox_summary(base: &str, result: &serde_json::Value) -> Option<String> {
+    Some(match sandbox_profile_id(result) {
+        Some(id) => format!("{base}, sandbox_profile={id}"),
+        None => base.to_string(),
+    })
+}
+
+fn sandbox_profile_id(result: &serde_json::Value) -> Option<&str> {
+    result
+        .get("sandbox_profile")
+        .and_then(|profile| profile.get("id"))
+        .and_then(|id| id.as_str())
 }
 
 fn json_shape_summary(value: &serde_json::Value) -> String {

@@ -6,6 +6,7 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
+use crate::ai_runtime::research_state::ResearchState;
 use crate::ai_runtime::research_workflow::{
     execute_research, ArgumentChain, EvidenceMatrix, ResearchConfig,
 };
@@ -41,6 +42,7 @@ pub struct ResearchExecuteResponse {
     pub argument_chain: ArgumentChain,
     pub summary: String,
     pub total_tokens: TokenUsage,
+    pub research_state: ResearchState,
 }
 
 /// Execute a full research workflow (shared by IPC and assistant facade).
@@ -188,6 +190,7 @@ pub(crate) async fn execute_research_task(
         argument_chain: result.argument_chain,
         summary: result.summary,
         total_tokens: result.total_tokens,
+        research_state: result.research_state,
     })
 }
 

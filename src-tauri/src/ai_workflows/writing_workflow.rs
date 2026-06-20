@@ -14,6 +14,7 @@ use tauri::AppHandle;
 use crate::ai_runtime::model_gateway::{
     GatewayRequest, LlmMessage, MessageRole, ModelGateway, ProviderConfig,
 };
+use crate::ai_runtime::writing_state::WritingState;
 use crate::ai_runtime::{
     AiScene, ContextPacket, PatchProposal, RiskLevel, SourceSpan, WritingIntent, WritingSuggestion,
 };
@@ -47,6 +48,7 @@ pub struct WritingTaskOutput {
     pub patches: Vec<PatchProposal>,
     pub evidence_used: Vec<ContextPacket>,
     pub total_tokens: crate::ai_types::TokenUsage,
+    pub writing_state: WritingState,
 }
 
 /// Generate a unique patch ID.

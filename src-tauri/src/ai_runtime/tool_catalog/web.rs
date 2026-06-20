@@ -92,7 +92,7 @@ pub(super) fn tools() -> Vec<ToolCatalogEntry> {
         ToolCatalogEntry {
             name: "rendered_fetch",
             description:
-                "登记对 JS 渲染抓取的需求；当前安全实现回退到普通 HTTPS 正文抓取并标记未渲染",
+                "Static readability HTTPS fetch; not JavaScript-rendered. 抓取正文并标记未渲染",
             input_schema: serde_json::json!({
                 "type": "object",
                 "properties": {

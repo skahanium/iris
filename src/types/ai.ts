@@ -407,6 +407,8 @@ export interface AiChatExecutePayload {
   /** 冷启动 + 工具检索合并后的证据包 */
   evidence_packets?: ContextPacket[];
   pending_confirmation?: boolean;
+  deliberation_state?: DeliberationState | null;
+  verification_summary?: VerificationSummary | null;
   resumed?: boolean;
   /** 正式执行与预览证据不一致时的提示 */
   evidence_refresh_notice?: string | null;
@@ -416,6 +418,31 @@ export interface AiChatExecutePayload {
     used_local_date: boolean;
     backend?: string;
   } | null;
+}
+
+export type VerificationStatus = "pending" | "passed" | "failed";
+
+export interface VerificationItem {
+  id: string;
+  description: string;
+  status: VerificationStatus;
+}
+
+export interface DeliberationState {
+  request_id: string;
+  session_id: number;
+  current_goal: string;
+  plan_outline: string[];
+  assumptions: string[];
+  open_questions: string[];
+  evidence_gaps: string[];
+  verification_items: VerificationItem[];
+  status: string;
+}
+
+export interface VerificationSummary {
+  passed: boolean;
+  items: VerificationItem[];
 }
 
 export interface ChapterWritingResult {
@@ -789,6 +816,32 @@ export interface WritingTaskResult {
   evidence_used: ContextPacket[];
   /** Token 消耗 */
   total_tokens: TokenUsage;
+  /** 重要文稿协作状态 */
+  writing_state?: WritingState;
+}
+
+export interface WritingRevisionRecord {
+  patch_id: string;
+  scope: string;
+  reason: string;
+  risk: string;
+  rollback: string;
+  evidence_packet_ids: string[];
+}
+
+export interface WritingState {
+  request_id: string;
+  target_path: string;
+  document_goal: string;
+  audience: string;
+  genre: string;
+  structure_outline: string[];
+  key_arguments: string[];
+  material_packet_ids: string[];
+  citation_labels: string[];
+  style_constraints: string[];
+  revision_records: WritingRevisionRecord[];
+  draft_version_hash: string;
 }
 
 /** Token 使用量 */
@@ -1004,6 +1057,37 @@ export interface ResearchExecuteResult {
   argument_chain: ArgumentChain;
   summary: string;
   total_tokens: TokenUsage;
+  research_state?: ResearchState;
+}
+
+export interface EvidenceItem {
+  evidence_id: string;
+  citation_label: string;
+  source_type: string;
+  title: string;
+  credibility: string;
+  freshness: string;
+  score: number;
+}
+
+export interface ConclusionBoundary {
+  statement: string;
+  evidence_item_ids: string[];
+  boundary: string;
+  inference: boolean;
+}
+
+export interface ResearchState {
+  request_id: string;
+  research_question: string;
+  sub_questions: string[];
+  sources: EvidenceItem[];
+  credibility_summary: string;
+  freshness_summary: string;
+  conflicts: string[];
+  counter_arguments: string[];
+  evidence_gaps: string[];
+  preliminary_conclusions: ConclusionBoundary[];
 }
 
 /** 研究进度事件（`ai:research_progress`） */
@@ -1052,6 +1136,8 @@ export interface AiSendMessageResult {
   harness_rounds?: number;
   evidence_packets?: ContextPacket[];
   pending_confirmation?: boolean;
+  deliberation_state?: DeliberationState | null;
+  verification_summary?: VerificationSummary | null;
   evidence_refresh_notice?: string | null;
   resumed?: boolean;
 }

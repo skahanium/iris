@@ -2,6 +2,7 @@ use std::path::{Component, Path, PathBuf};
 use std::process::Command;
 use std::time::{Duration, Instant};
 
+use crate::ai_runtime::sandbox_profile::sandbox_profile_for_tool;
 use crate::app::AppState;
 use crate::error::{AppError, AppResult};
 use crate::storage::paths::is_user_note_path;
@@ -441,7 +442,16 @@ fn extract_urls(content: &str) -> Vec<String> {
 fn run_git(state: &AppState, args: &[&str], max: usize) -> AppResult<String> {
     let vault = state.vault_path()?;
     let output = Command::new("git")
-        .args(["-c", "core.quotepath=false"])
+        .args([
+            "-c",
+            "core.quotepath=false",
+            "-c",
+            "core.hooksPath=/dev/null",
+            "-c",
+            "filter.lfs.smudge=",
+            "-c",
+            "filter.lfs.required=false",
+        ])
         .args(args)
         .current_dir(&vault)
         .env_clear()
@@ -594,6 +604,7 @@ pub(super) fn process_run_readonly_tool(
         "program": program,
         "stdout": stdout,
         "stderr": stderr,
+        "sandbox_profile": sandbox_profile_for_tool("process_run_readonly"),
     }))
 }
 
@@ -615,7 +626,19 @@ pub(super) fn git_write_commit_tool(
     let vault = state.vault_path()?;
     for path in &paths {
         let output = Command::new("git")
-            .args(["-c", "core.quotepath=false", "add", "--", path])
+            .args([
+                "-c",
+                "core.quotepath=false",
+                "-c",
+                "core.hooksPath=/dev/null",
+                "-c",
+                "filter.lfs.smudge=",
+                "-c",
+                "filter.lfs.required=false",
+                "add",
+                "--",
+                path,
+            ])
             .current_dir(&vault)
             .env_clear()
             .env("LANG", "C")
@@ -628,6 +651,12 @@ pub(super) fn git_write_commit_tool(
         .args([
             "-c",
             "core.quotepath=false",
+            "-c",
+            "core.hooksPath=/dev/null",
+            "-c",
+            "filter.lfs.smudge=",
+            "-c",
+            "filter.lfs.required=false",
             "-c",
             "user.name=Iris Agent",
             "-c",
@@ -651,6 +680,7 @@ pub(super) fn git_write_commit_tool(
         "type": "git_write_commit",
         "commit": commit,
         "paths": paths,
+        "sandbox_profile": sandbox_profile_for_tool("git_write_commit"),
     }))
 }
 
@@ -667,6 +697,7 @@ pub(super) fn git_read_status_tool(
         "type": "git_read_status",
         "scope": "vault",
         "status": status,
+        "sandbox_profile": sandbox_profile_for_tool("git_read_status"),
     }))
 }
 
@@ -689,6 +720,7 @@ pub(super) fn git_read_diff_tool(
         "scope": "vault",
         "includePatch": include_patch,
         "diff": diff,
+        "sandbox_profile": sandbox_profile_for_tool("git_read_diff"),
     }))
 }
 
@@ -712,6 +744,7 @@ pub(super) fn git_read_log_tool(
         "scope": "vault",
         "limit": limit,
         "log": log,
+        "sandbox_profile": sandbox_profile_for_tool("git_read_log"),
     }))
 }
 

@@ -10,6 +10,8 @@ use tauri::AppHandle;
 
 #[path = "model_gateway/abort.rs"]
 mod abort_impl;
+#[path = "model_gateway/anthropic_response.rs"]
+mod anthropic_response_impl;
 #[path = "model_gateway/body.rs"]
 mod body_impl;
 #[path = "model_gateway/http_backend.rs"]
@@ -24,6 +26,7 @@ mod streaming_impl;
 mod usage_impl;
 
 pub use abort_impl::{clear_abort, is_abort_requested, request_abort};
+use anthropic_response_impl::parse_anthropic_response;
 use body_impl::build_llm_api_body;
 pub use body_impl::{build_chat_completions_body, GatewayRequest, LlmFunctionDef, LlmToolDef};
 use http_backend_impl::format_llm_http_error;
@@ -450,36 +453,6 @@ fn parse_openai_compatible_response(json: &serde_json::Value) -> GatewayResponse
             .unwrap_or("unknown")
             .to_string(),
         reasoning_content,
-    }
-}
-
-fn parse_anthropic_response(json: &serde_json::Value) -> GatewayResponse {
-    let content = json["content"]
-        .as_array()
-        .map(|parts| {
-            parts
-                .iter()
-                .filter_map(|part| part["text"].as_str())
-                .collect::<Vec<_>>()
-                .join("")
-        })
-        .filter(|s| !s.is_empty());
-    let usage = TokenUsage {
-        prompt_tokens: json["usage"]["input_tokens"].as_u64().unwrap_or(0) as u32,
-        completion_tokens: json["usage"]["output_tokens"].as_u64().unwrap_or(0) as u32,
-        total_tokens: json["usage"]["input_tokens"].as_u64().unwrap_or(0) as u32
-            + json["usage"]["output_tokens"].as_u64().unwrap_or(0) as u32,
-        ..Default::default()
-    };
-    GatewayResponse {
-        content,
-        tool_calls: Vec::new(),
-        usage,
-        finish_reason: json["stop_reason"]
-            .as_str()
-            .unwrap_or("unknown")
-            .to_string(),
-        reasoning_content: None,
     }
 }
 
