@@ -59,6 +59,42 @@ describe("unified assistant shell", () => {
     expect(tasks).not.toContain('kind: "research"');
   });
 
+  it("opens assistant artifacts in readonly workspace tabs instead of sidecar cards", () => {
+    const app = read("src/App.impl.tsx");
+    const workspace = read("src/components/layout/AppEditorWorkspace.tsx");
+    const titleBar = read("src/components/layout/DesktopTitleBar.tsx");
+    const aiSlot = read("src/components/layout/AppAiPanelSlot.tsx");
+    const assistantTypes = read("src/components/ai/types.ts");
+
+    expect(app).toContain("useArtifactTabs");
+    expect(app).toContain("onOpenArtifact");
+    expect(app).toContain("activeArtifactTab");
+    expect(workspace).toContain("ArtifactWorkspaceView");
+    expect(workspace).toContain("activeArtifactTab");
+    expect(titleBar).toContain('kind === "artifact"');
+    expect(titleBar).toContain("isArtifact");
+    expect(aiSlot).toContain("onOpenArtifact");
+    expect(assistantTypes).toContain("onOpenArtifact?");
+    expect(workspace).not.toContain("onRegenerate={() => undefined}");
+    expect(workspace).not.toContain('title="重新生成"');
+  });
+
+  it("does not expose the tool audit drawer as a normal user surface", () => {
+    const panel = read("src/components/ai/UnifiedAssistantPanel.impl.tsx");
+    const processPanel = read("src/components/ai/AgentTaskStatusPanel.tsx");
+    const statusBadge = read("src/components/ai/AgentStatusBadge.tsx");
+
+    expect(panel).not.toContain("AuditTrailDrawer");
+    expect(statusBadge).not.toContain("auditAvailable");
+    expect(statusBadge).not.toContain("onOpenAudit");
+    expect(processPanel).not.toContain("查看审计");
+    expect(read("src/components/layout/StatusBar.tsx")).not.toContain(
+      "工具审计",
+    );
+    expect(read("src/lib/audit-trail-events.ts")).toBe("");
+    expect(processPanel).not.toContain("onOpenAudit");
+  });
+
   it("Management Center hosts persona, rules, and model config", () => {
     const source = read("src/components/settings/ManagementCenterPanel.tsx");
     expect(source).toContain("PersonaSettingsBody");

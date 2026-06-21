@@ -16,8 +16,8 @@ describe("mapHarnessResultToArtifacts", () => {
       tool_calls: [{ id: "tc1", function: { name: "fetch_web_page" } }],
       tool_results: [{ tool_call_id: "tc1", status: "pending_confirmation" }],
     });
-    expect(artifacts.some((a) => a.kind === "message")).toBe(true);
-    expect(artifacts.some((a) => a.kind === "tool_confirmation")).toBe(true);
+    expect(artifacts).toHaveLength(1);
+    expect(artifacts[0]?.kind).toBe("task_process");
   });
 
   it("maps writing patches", () => {
@@ -45,7 +45,7 @@ describe("mapHarnessResultToArtifacts", () => {
         total_tokens: 2,
       },
     });
-    expect(artifacts[0]?.kind).toBe("patches");
+    expect(artifacts[0]?.kind).toBe("writing_change");
   });
 
   it("maps citation report", () => {
@@ -61,6 +61,6 @@ describe("mapHarnessResultToArtifacts", () => {
       },
       suggestions: [],
     });
-    expect(artifacts[0]?.kind).toBe("citation_report");
+    expect(artifacts[0]?.kind).toBe("structured_result");
   });
 });

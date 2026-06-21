@@ -689,7 +689,7 @@ git commit -m "refactor(ai): 对话区统一为 Markdown 文字流"
 - Modify: `src/components/ai/AssistantTaskSurfaces.tsx`
 - Modify: `src-tauri/src/ai_harness/harness_task.rs`
 
-- [ ] **Step 1: 新增 artifact gate 测试**
+- [x] **Step 1: 新增 artifact gate 测试**
 
 测试用例必须覆盖：
 
@@ -711,7 +711,7 @@ expect(read("src/lib/assistant-artifact-tabs.ts")).toContain(
 );
 ```
 
-- [ ] **Step 2: 改 artifact 类型**
+- [x] **Step 2: 改 artifact 类型**
 
 `src/types/assistant-artifact.ts` 改为：
 
@@ -735,7 +735,7 @@ export type ArtifactKind =
 
 所有旧 payload 通过 `payload.schema` 或 `payload.resultKind` 区分，不再用 UI kind 表示 workflow。
 
-- [ ] **Step 3: 实现 `artifactPassesValueGate`**
+- [x] **Step 3: 实现 `artifactPassesValueGate`**
 
 在 `src/lib/assistant-artifact-tabs.ts` 增加：
 
@@ -758,7 +758,7 @@ export function artifactPassesValueGate(
 
 `hasProcessValue` 只接受失败、暂停、等待确认、长任务多步骤诊断，不接受 `"assistant workflow output summarized by artifact metadata"`。
 
-- [ ] **Step 4: 改 workspace view**
+- [x] **Step 4: 改 workspace view**
 
 `ArtifactWorkspaceView.tsx` 使用四类 kind 渲染：
 
@@ -769,7 +769,7 @@ export function artifactPassesValueGate(
 
 旧 `ResearchArtifactView`、`ProcessArtifactView`、`CitationArtifactView`、`OrganizeArtifactView` 可以在同文件内逐步重命名，但最终不保留旧 kind 分支。
 
-- [ ] **Step 5: 后端 artifact wire 只发产品语义 kind**
+- [x] **Step 5: 后端 artifact wire 只发产品语义 kind**
 
 `HarnessArtifactWire.kind` 生成处改为四类 kind。`ResearchReport` 不直接产生 `"research"` wire；它只能在有真实 evidence/source 信息时产生 `"evidence_sources"`。
 
@@ -781,7 +781,7 @@ export function artifactPassesValueGate(
 
 这段只能进任务日志，不进入用户可见 tab。
 
-- [ ] **Step 6: 验证**
+- [x] **Step 6: 验证**
 
 Run:
 
@@ -793,7 +793,7 @@ cargo test harness_task
 
 Expected: PASS。旧测试如仍期待 `"research"` 或 `"process"` kind，应改为新四类。
 
-- [ ] **Step 7: 提交 artifact gate**
+- [x] **Step 7: 提交 artifact gate**
 
 ```bash
 git add src/types/assistant-artifact.ts src/lib/assistant-artifact-tabs.ts src/components/layout/ArtifactWorkspaceView.tsx src/components/ai/AssistantArtifactTagStrip.tsx src/components/ai/AssistantTaskSurfaces.tsx src-tauri/src/ai_harness/harness_task.rs tests/assistant-artifact-value-gates.test.ts tests/assistant-artifact-tabs.test.ts tests/writing-research-state-panel.test.tsx

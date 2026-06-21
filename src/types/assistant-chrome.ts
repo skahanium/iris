@@ -6,7 +6,7 @@ export interface AssistantChromeSnapshot {
   toolActivityLabel: string | null;
   evidenceCount: number;
   webPacketCount: number;
-  /** 活跃 harness 请求 ID，供底栏打开工具审计 */
+  /** 活跃 harness 请求 ID，仅用于暂停/错误恢复，不在普通界面展示。 */
   harnessRequestId: string | null;
 }
 

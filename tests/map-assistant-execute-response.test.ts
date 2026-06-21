@@ -17,19 +17,46 @@ describe("mapAssistantExecuteToArtifacts", () => {
       runStatus: "completed",
       artifacts: [
         {
-          kind: "message",
-          title: "回答",
+          kind: "evidence_sources",
+          title: "证据来源",
           status: "ready",
-          sourceTask: "chat",
+          sourceTask: "research",
           evidenceCount: 2,
-          payload: { content: "hi" },
+          payload: { sources: [{ title: "source" }] },
         },
       ],
     } as AssistantExecuteResponse;
 
     const items = mapAssistantExecuteToArtifacts(response);
     expect(items).toHaveLength(1);
-    expect(items[0]?.title).toBe("回答");
+    expect(items[0]?.kind).toBe("evidence_sources");
+    expect(items[0]?.title).toBe("证据来源");
     expect(items[0]?.evidenceCount).toBe(2);
+  });
+
+  it("drops legacy wire kinds instead of casting them into artifacts", () => {
+    const response = {
+      kind: "chat",
+      payload: {
+        request_id: "r1",
+        session_id: 1,
+        content: "hi",
+        status: "completed",
+      },
+      requestId: "r1",
+      runStatus: "completed",
+      artifacts: [
+        {
+          kind: ["research", "report"].join("_"),
+          title: "旧研究报告",
+          status: "ready",
+          sourceTask: "research",
+          evidenceCount: 0,
+          payload: {},
+        },
+      ],
+    } as AssistantExecuteResponse;
+
+    expect(mapAssistantExecuteToArtifacts(response)).toEqual([]);
   });
 });

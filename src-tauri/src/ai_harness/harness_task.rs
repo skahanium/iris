@@ -245,7 +245,7 @@ fn complete_workflow_runtime_task(
         "assistant_workflow",
         AgentTaskStatus::Completed,
         "assistant workflow input summarized in agent_tasks",
-        "assistant workflow output summarized by artifact metadata",
+        "assistant task completed; no process artifact generated for ordinary completion",
         serde_json::json!({
             "summary": "assistant workflow completed",
             "request_id": result.request_id,
@@ -275,15 +275,15 @@ fn legacy_intent_wire(intent: AssistantIntent) -> &'static str {
 
 fn artifact_kind(artifact: &HarnessArtifact) -> &'static str {
     match artifact {
-        HarnessArtifact::Message { .. } => "message",
-        HarnessArtifact::Patches { .. } => "patches",
-        HarnessArtifact::CitationReport { .. } => "citation_report",
-        HarnessArtifact::OrganizeReport { .. } => "organize_report",
-        HarnessArtifact::ResearchReport { .. } => "research_report",
-        HarnessArtifact::DocumentCheck { .. } => "document_check",
-        HarnessArtifact::ChapterWriting { .. } => "chapter_writing",
-        HarnessArtifact::ToolConfirmation { .. } => "tool_confirmation",
-        HarnessArtifact::LegacyPayload { .. } => "legacy_payload",
+        HarnessArtifact::Message { .. } => "not_displayed",
+        HarnessArtifact::Patches { .. } => "writing_change",
+        HarnessArtifact::CitationReport { .. }
+        | HarnessArtifact::OrganizeReport { .. }
+        | HarnessArtifact::DocumentCheck { .. } => "structured_result",
+        HarnessArtifact::ResearchReport { .. } => "evidence_sources",
+        HarnessArtifact::ChapterWriting { .. } => "not_displayed",
+        HarnessArtifact::ToolConfirmation { .. } => "task_process",
+        HarnessArtifact::LegacyPayload { .. } => "not_displayed",
     }
 }
 
@@ -693,15 +693,16 @@ fn task_result_from_research(
 ) -> HarnessTaskResult {
     let request_id = payload.request_id.clone();
     let payload_json = serde_json::to_value(&payload).unwrap_or_default();
-    let artifacts = vec![
-        HarnessArtifact::ResearchReport {
+    let mut artifacts = Vec::new();
+    if research_payload_has_real_evidence(&payload_json) {
+        artifacts.push(HarnessArtifact::ResearchReport {
             payload: payload_json.clone(),
-        },
-        HarnessArtifact::LegacyPayload {
-            intent: "research".into(),
-            json: payload_json.clone(),
-        },
-    ];
+        });
+    }
+    artifacts.push(HarnessArtifact::LegacyPayload {
+        intent: "research".into(),
+        json: payload_json.clone(),
+    });
     let artifact_wires = artifacts_to_wires(&artifacts, "research");
     HarnessTaskResult {
         request_id,
@@ -783,55 +784,189 @@ fn artifacts_to_wires(
 ) -> Vec<HarnessArtifactWire> {
     artifacts
         .iter()
-        .map(|a| {
-            let (kind, title, payload) = match a {
-                HarnessArtifact::Message { content, .. } => {
-                    ("message", "回答", serde_json::json!({ "content": content }))
+        .filter_map(|a| {
+            let (kind, title, evidence_count, payload) = match a {
+                HarnessArtifact::Message { .. } | HarnessArtifact::LegacyPayload { .. } => {
+                    return None;
                 }
-                HarnessArtifact::Patches { patches } => (
-                    "patches",
-                    "写作补丁",
-                    serde_json::to_value(patches).unwrap_or_default(),
-                ),
+                HarnessArtifact::Patches { patches } => {
+                    if patches.is_empty() {
+                        return None;
+                    }
+                    (
+                        "writing_change",
+                        "写作修改",
+                        0,
+                        serde_json::json!({
+                            "schema": "writing_change",
+                            "patches": patches,
+                        }),
+                    )
+                }
                 HarnessArtifact::CitationReport { report } => (
-                    "citation_report",
+                    "structured_result",
                     "引用检查",
-                    serde_json::to_value(report).unwrap_or_default(),
+                    0,
+                    serde_json::json!({
+                        "resultKind": "citation_check",
+                        "result": report,
+                    }),
                 ),
-                HarnessArtifact::OrganizeReport { report } => (
-                    "organize_report",
-                    "整理建议",
-                    serde_json::to_value(report).unwrap_or_default(),
-                ),
+                HarnessArtifact::OrganizeReport { report } => {
+                    if report.batch.suggestions.is_empty() {
+                        return None;
+                    }
+                    (
+                        "structured_result",
+                        "整理建议",
+                        0,
+                        serde_json::json!({
+                            "resultKind": "organize_suggestions",
+                            "suggestions": report.batch.suggestions,
+                        }),
+                    )
+                }
                 HarnessArtifact::ResearchReport { payload } => {
-                    ("research_report", "研究报告", payload.clone())
+                    if !research_payload_has_real_evidence(payload) {
+                        return None;
+                    }
+                    (
+                        "evidence_sources",
+                        "证据来源",
+                        research_payload_evidence_count(payload),
+                        payload.clone(),
+                    )
                 }
-                HarnessArtifact::DocumentCheck { report } => (
-                    "document_check",
-                    "文档检查",
-                    serde_json::to_value(report).unwrap_or_default(),
+                HarnessArtifact::DocumentCheck { report } => {
+                    let issues = document_issue_list(report);
+                    if issues.is_empty() && report.analysis_summary.is_none() {
+                        return None;
+                    }
+                    (
+                        "structured_result",
+                        "文档检查",
+                        report.evidence_used.len() as u32,
+                        serde_json::json!({
+                            "resultKind": "document_issues",
+                            "summary": report.analysis_summary,
+                            "issues": issues,
+                        }),
+                    )
+                }
+                HarnessArtifact::ChapterWriting { .. } => return None,
+                HarnessArtifact::ToolConfirmation {
+                    request_id,
+                    tool_call_id,
+                } => (
+                    "task_process",
+                    "工具确认",
+                    0,
+                    serde_json::json!({
+                        "schema": "task_process",
+                        "status": "pending_confirmation",
+                        "request_id": request_id,
+                        "tool_call_id": tool_call_id,
+                    }),
                 ),
-                HarnessArtifact::ChapterWriting { payload } => {
-                    ("chapter_writing", "章节写作", payload.clone())
-                }
-                HarnessArtifact::ToolConfirmation { .. } => {
-                    ("tool_confirmation", "工具确认", serde_json::Value::Null)
-                }
-                HarnessArtifact::LegacyPayload { intent, json } => {
-                    (intent.as_str(), "任务结果", json.clone())
-                }
             };
-            HarnessArtifactWire {
+            Some(HarnessArtifactWire {
                 kind: kind.into(),
                 title: title.into(),
                 status: "ready".into(),
                 source_task: source_task.into(),
-                // TODO: populate from actual evidence packets when HarnessArtifact carries this data
-                evidence_count: 0,
+                evidence_count,
                 payload,
-            }
+            })
         })
         .collect()
+}
+
+fn research_payload_evidence_count(payload: &serde_json::Value) -> u32 {
+    payload
+        .pointer("/evidence_matrix/total_evidence_count")
+        .and_then(serde_json::Value::as_u64)
+        .unwrap_or_default() as u32
+}
+
+fn research_payload_has_real_evidence(payload: &serde_json::Value) -> bool {
+    if research_payload_evidence_count(payload) > 0 {
+        return true;
+    }
+    let has_sources = payload
+        .pointer("/research_state/sources")
+        .and_then(serde_json::Value::as_array)
+        .is_some_and(|sources| !sources.is_empty());
+    let has_conflicts = payload
+        .pointer("/research_state/conflicts")
+        .and_then(serde_json::Value::as_array)
+        .is_some_and(|conflicts| !conflicts.is_empty());
+    let has_actionable_gap = payload
+        .pointer("/research_state/evidence_gaps")
+        .and_then(serde_json::Value::as_array)
+        .is_some_and(|gaps| has_actionable_evidence_gap(gaps.as_slice()))
+        || payload
+            .pointer("/evidence_matrix/global_gaps")
+            .and_then(serde_json::Value::as_array)
+            .is_some_and(|gaps| has_actionable_evidence_gap(gaps.as_slice()));
+    has_sources || has_conflicts || has_actionable_gap
+}
+
+fn has_actionable_evidence_gap(gaps: &[serde_json::Value]) -> bool {
+    gaps.iter().any(|gap| {
+        gap.as_str()
+            .is_some_and(|text| !is_mechanical_evidence_gap(text))
+    })
+}
+
+fn is_mechanical_evidence_gap(text: &str) -> bool {
+    let normalized = text.to_lowercase();
+    let mentions_evidence =
+        normalized.contains("evidence") || text.contains("证据") || text.contains("来源");
+    if !mentions_evidence {
+        return false;
+    }
+    normalized.contains("no evidence")
+        || normalized.contains("no source")
+        || text.contains("未授权")
+        || text.contains("未检索")
+        || text.contains("未找到")
+        || text.contains("暂无")
+        || text.contains("没有")
+}
+
+fn document_issue_list(report: &DocumentCheckResult) -> Vec<String> {
+    let mut issues = Vec::new();
+    if let Some(outline) = &report.outline_result {
+        issues.extend(
+            outline
+                .issues
+                .iter()
+                .map(|issue| format!("[大纲] {}", issue.description)),
+        );
+    }
+    if let Some(citation) = &report.citation_gap_result {
+        issues.extend(
+            citation
+                .uncited_claims
+                .iter()
+                .map(|claim| format!("[引用缺口] {}", claim.statement)),
+        );
+        issues.extend(
+            citation
+                .weak_citations
+                .iter()
+                .map(|weak| format!("[弱引用] {}", weak.reason)),
+        );
+    }
+    if let Some(style) = &report.style_result {
+        issues.extend(
+            style
+                .inconsistencies
+                .iter()
+                .map(|item| format!("[风格] {}", item.description)),
+        );
+    }
+    issues
 }
 
 pub fn map_task_result_to_response(
@@ -1020,5 +1155,66 @@ mod tests {
 
         assert_eq!(task.status, AgentTaskStatus::FailedSafe);
         assert_eq!(task.error_code.as_deref(), Some("MISSING_REQUIRED_INPUT"));
+    }
+
+    #[test]
+    fn research_wire_uses_evidence_sources_for_real_sources() {
+        let payload = serde_json::json!({
+            "topic": "行业资料",
+            "summary": "有来源的研究摘要",
+            "evidence_matrix": {
+                "total_evidence_count": 1,
+                "global_gaps": [],
+            },
+            "research_state": {
+                "sources": [{ "title": "来源 A", "url": "https://example.com" }],
+                "conflicts": [],
+                "evidence_gaps": [],
+            },
+        });
+        let artifacts = vec![HarnessArtifact::ResearchReport { payload }];
+        let wires = artifacts_to_wires(&artifacts, "research");
+
+        assert_eq!(wires.len(), 1);
+        assert_eq!(wires[0].kind, "evidence_sources");
+        assert_eq!(wires[0].evidence_count, 1);
+    }
+
+    #[test]
+    fn research_wire_drops_mechanical_gap_without_sources() {
+        let payload = serde_json::json!({
+            "topic": "行业资料",
+            "summary": "无来源研究摘要",
+            "evidence_matrix": {
+                "total_evidence_count": 0,
+                "global_gaps": ["未授权联网，未检索到可用证据来源"],
+            },
+            "research_state": {
+                "sources": [],
+                "conflicts": [],
+                "evidence_gaps": ["no evidence source was generated"],
+            },
+        });
+        let artifacts = vec![HarnessArtifact::ResearchReport { payload }];
+
+        assert!(artifacts_to_wires(&artifacts, "research").is_empty());
+    }
+
+    #[test]
+    fn ordinary_completion_summary_is_not_a_process_wire() {
+        let artifacts = vec![
+            HarnessArtifact::Message {
+                content: "普通回答".into(),
+                citation_valid: true,
+            },
+            HarnessArtifact::LegacyPayload {
+                intent: "chat".into(),
+                json: serde_json::json!({
+                    "output_summary": "assistant task completed; no process artifact generated for ordinary completion"
+                }),
+            },
+        ];
+
+        assert!(artifacts_to_wires(&artifacts, "chat").is_empty());
     }
 }

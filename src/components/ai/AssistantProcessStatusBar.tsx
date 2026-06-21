@@ -22,9 +22,11 @@ export interface ResearchProgressData {
 interface AssistantProcessStatusBarProps {
   activityHint: string | null;
   agentTask: AgentTaskDto | null;
+  hasError?: boolean;
   researchProgress: ResearchProgressData | null;
   researchRunning: boolean;
   onAbort: () => void;
+  streaming?: boolean;
 }
 
 function isActiveStatus(task: AgentTaskDto | null): boolean {
@@ -71,13 +73,15 @@ function baseStatusLabel(
 export function AssistantProcessStatusBar({
   activityHint,
   agentTask,
+  hasError = false,
   researchProgress,
   researchRunning,
   onAbort,
+  streaming = false,
 }: AssistantProcessStatusBarProps) {
   const [longRunning, setLongRunning] = useState(false);
   const active =
-    isActiveStatus(agentTask) || researchRunning || Boolean(activityHint);
+    isActiveStatus(agentTask) || researchRunning || streaming || hasError;
 
   useEffect(() => {
     if (!active) {
@@ -91,16 +95,24 @@ export function AssistantProcessStatusBar({
 
   if (!active) return null;
 
-  const label = longRunning
-    ? "仍在处理，可继续等待或中止"
-    : baseStatusLabel(
-        agentTask,
-        activityHint,
-        researchProgress,
-        researchRunning,
-      );
+  const mayShowLongRunning =
+    streaming ||
+    researchRunning ||
+    agentTask?.status === "queued" ||
+    agentTask?.status === "running";
+  const label = hasError
+    ? "处理遇到问题"
+    : longRunning && mayShowLongRunning
+      ? "仍在处理，可继续等待或中止"
+      : baseStatusLabel(
+          agentTask,
+          activityHint,
+          researchProgress,
+          researchRunning,
+        );
   const canAbort =
     researchRunning ||
+    streaming ||
     agentTask?.status === "queued" ||
     agentTask?.status === "running" ||
     agentTask?.status === "awaiting_confirmation" ||

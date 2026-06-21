@@ -1,4 +1,5 @@
 import type { WritingEditorContext } from "@/types/ai";
+import type { AssistantArtifactDraft } from "@/types/assistant-artifact";
 import type { AssistantChromeSnapshot } from "@/types/assistant-chrome";
 
 export interface AssistantSelectionQuote {
@@ -15,6 +16,7 @@ export interface UnifiedAssistantPanelProps {
   onPatchApplied?: (newContent: string) => void;
   onVaultRefresh?: () => void;
   onInsertToEditor?: (content: string) => void;
+  onOpenArtifact?: (draft: AssistantArtifactDraft) => void;
   selectionQuote?: AssistantSelectionQuote | null;
   prefillMessage?: string | null;
   onChromeChange?: (snapshot: AssistantChromeSnapshot) => void;

@@ -4,7 +4,10 @@ import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { DesktopTitleBar } from "@/components/layout/DesktopTitleBar";
+import {
+  DesktopTitleBar,
+  type TabItem,
+} from "@/components/layout/DesktopTitleBar";
 
 function read(path: string): string {
   try {
@@ -17,7 +20,15 @@ function read(path: string): string {
 let root: Root | null = null;
 let host: HTMLDivElement | null = null;
 
-function renderTitleBar() {
+function renderTitleBar(
+  tabs: TabItem[] = [
+    {
+      path: "/vault/女友的闺蜜.md",
+      title: "女友的闺蜜",
+      dirty: true,
+    },
+  ],
+) {
   host = document.createElement("div");
   document.body.append(host);
   root = createRoot(host);
@@ -25,14 +36,8 @@ function renderTitleBar() {
   act(() => {
     root?.render(
       createElement(DesktopTitleBar, {
-        tabs: [
-          {
-            path: "/vault/女友的闺蜜.md",
-            title: "女友的闺蜜",
-            dirty: true,
-          },
-        ],
-        activePath: "/vault/女友的闺蜜.md",
+        tabs,
+        activePath: tabs[0]?.path ?? null,
         onSelect: () => undefined,
         onClose: () => undefined,
         onNew: () => undefined,
@@ -172,5 +177,23 @@ describe("desktop title bar", () => {
     expect(closeButton).not.toBeNull();
     expect(tabSegment).not.toBeNull();
     expect(tabSegment?.textContent).toContain("女友的闺蜜");
+  });
+
+  it("does not expose artifact ids in tab tooltips", () => {
+    renderTitleBar([
+      {
+        path: "artifact:process:req-secret",
+        title: "过程详情",
+        kind: "artifact",
+      },
+    ]);
+
+    const tabSegment = document.querySelector<HTMLElement>(
+      '[data-testid="rail-segment-tab"]',
+    );
+
+    expect(tabSegment?.getAttribute("title")).toBe("过程详情");
+    expect(tabSegment?.getAttribute("title")).not.toContain("artifact:");
+    expect(tabSegment?.getAttribute("title")).not.toContain("req-secret");
   });
 });

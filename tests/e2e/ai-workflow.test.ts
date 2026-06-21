@@ -35,7 +35,10 @@ describe("统一助手工作流验收", () => {
 
   it("引用检查：选区 + 检查语义进入 citation", () => {
     expect(intentForFlow("citation_check")).toBe("citation");
-    expect(read("src/components/ai/UnifiedAssistantPanel.tsx")).toContain(
+    expect(read("src/components/ai/AssistantTaskSurfaces.tsx")).toContain(
+      'resultKind: "citation_check"',
+    );
+    expect(read("src/components/layout/ArtifactWorkspaceView.tsx")).toContain(
       "CitationCheckView",
     );
   });

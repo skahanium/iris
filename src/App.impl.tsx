@@ -43,6 +43,7 @@ import { useInlineAi } from "@/hooks/useInlineAi";
 import { useConnectivityStatus } from "@/hooks/useConnectivityStatus";
 import { useLlmProvider } from "@/hooks/useLlmProvider";
 import { useOverlayManager } from "@/hooks/useOverlayManager";
+import { useArtifactTabs } from "@/hooks/useArtifactTabs";
 import { useTabManager } from "@/hooks/useTabManager";
 import { useTheme } from "@/hooks/useTheme";
 import { useZenExitKeyboard } from "@/hooks/useZenExitKeyboard";
@@ -169,6 +170,14 @@ function App() {
     onVaultIndexBump: bumpVaultIndex,
     persistBeforeLeave: (path) => persistBeforeLeaveRef.current(path),
   });
+  const {
+    activateArtifact,
+    activeArtifactTab,
+    artifactTabs,
+    closeArtifact,
+    openArtifact,
+    setActiveArtifactId,
+  } = useArtifactTabs();
 
   const {
     aiPanelOpen,
@@ -194,23 +203,41 @@ function App() {
       options?: Parameters<typeof openNote>[2],
     ) => {
       leaveHome();
+      setActiveArtifactId(null);
       void openNote(path, titleHint, options);
     },
-    [leaveHome, openNote],
+    [leaveHome, openNote, setActiveArtifactId],
   );
 
-  const handleActivateTab = useCallback(
+  const handleActivateWorkspaceTab = useCallback(
     (path: string) => {
       leaveHome();
+      if (path.startsWith("artifact:")) {
+        activateArtifact(path);
+        return;
+      }
+      setActiveArtifactId(null);
       activateTab(path);
     },
-    [leaveHome, activateTab],
+    [activateArtifact, activateTab, leaveHome, setActiveArtifactId],
+  );
+
+  const handleCloseWorkspaceTab = useCallback(
+    (path: string) => {
+      if (path.startsWith("artifact:")) {
+        closeArtifact(path);
+        return;
+      }
+      void closeTab(path);
+    },
+    [closeArtifact, closeTab],
   );
 
   const handleNewNoteLeavingHome = useCallback(() => {
     leaveHome();
+    setActiveArtifactId(null);
     void handleNewNote();
-  }, [leaveHome, handleNewNote]);
+  }, [leaveHome, handleNewNote, setActiveArtifactId]);
 
   const tabsRef = useRef(tabs);
   tabsRef.current = tabs;
@@ -373,8 +400,11 @@ function App() {
     }
   }, [classifiedOpen, refreshClassifiedStatus]);
 
-  const activeNoteIsClassified = Boolean(
+  const currentNoteIsClassified = Boolean(
     activePath && isClassifiedVaultPath(activePath),
+  );
+  const activeNoteIsClassified = Boolean(
+    !activeArtifactTab && currentNoteIsClassified,
   );
 
   const handleLockToggle = useCallback(
@@ -639,10 +669,71 @@ function App() {
     if (!activePath) return null;
     return displayTitleForChrome(activePath, noteTitle);
   }, [activePath, noteTitle]);
-  const assistantNotePath = activeNoteIsClassified ? null : activePath;
-  const assistantDocumentTitle = activeNoteIsClassified
-    ? null
-    : activeDocumentTitle;
+  const assistantNotePath =
+    activeArtifactTab || activeNoteIsClassified ? null : activePath;
+  const workspaceTabs = useMemo(
+    () => [
+      ...tabs.map((tab) => ({ ...tab, kind: "note" as const })),
+      ...artifactTabs.map((tab) => ({
+        path: tab.id,
+        title: tab.title,
+        kind: "artifact" as const,
+        locked: true,
+      })),
+    ],
+    [artifactTabs, tabs],
+  );
+  const activeWorkspacePath = activeArtifactTab?.id ?? activePath;
+
+  const getAssistantLiveMarkdown = useCallback(
+    () => (activeArtifactTab ? "" : getLiveMarkdown()),
+    [activeArtifactTab, getLiveMarkdown],
+  );
+  const getAssistantWritingContext = useCallback(
+    () => (activeArtifactTab ? null : getWritingContext()),
+    [activeArtifactTab, getWritingContext],
+  );
+  const getAssistantParagraphText = useCallback(
+    () => (activeArtifactTab ? null : getParagraphText()),
+    [activeArtifactTab, getParagraphText],
+  );
+  const handleAssistantInsertToEditor = useCallback(
+    (content: string) => {
+      if (activeArtifactTab) {
+        setAiStatus("请先切回笔记再插入内容");
+        return;
+      }
+      handleInsertToEditor(content);
+    },
+    [activeArtifactTab, handleInsertToEditor],
+  );
+  const handlePatchApplied = useCallback(
+    (newContent: string) => {
+      if (currentNoteIsClassified) {
+        setAiStatus("涉密笔记不能接收 AI 改写");
+        return;
+      }
+      applyMarkdownToEditor(newContent);
+      markdownRef.current = newContent;
+      dirtyRef.current = false;
+      const path = activePathRef.current;
+      if (path) {
+        syncTabMarkdownCache(path, newContent);
+        markClean(path, activeDocumentTitle ?? noteTitle);
+      }
+    },
+    [
+      activeDocumentTitle,
+      activePathRef,
+      applyMarkdownToEditor,
+      currentNoteIsClassified,
+      markClean,
+      markdownRef,
+      noteTitle,
+      setAiStatus,
+      syncTabMarkdownCache,
+    ],
+  );
 
   if (!isTauriRuntime()) {
     return (
@@ -724,18 +815,19 @@ function App() {
         zen={zen}
         tabBar={
           <TabBar
-            tabs={tabs}
-            activePath={activePath}
+            tabs={workspaceTabs}
+            activePath={activeWorkspacePath}
             isHomeActive={homeActive}
             onHome={showHome}
-            onSelect={handleActivateTab}
-            onClose={closeTab}
+            onSelect={handleActivateWorkspaceTab}
+            onClose={handleCloseWorkspaceTab}
             onNew={handleNewNoteLeavingHome}
           />
         }
         editor={
           <AppEditorWorkspace
             activeFileLocked={activeFileLocked}
+            activeArtifactTab={activeArtifactTab}
             activeNoteIsClassified={activeNoteIsClassified}
             activePath={activePath}
             editorBodyMarkdown={editorBodyMarkdown}
@@ -750,6 +842,7 @@ function App() {
             handleEditorReady={handleEditorReady}
             handleLockToggle={handleLockToggle}
             handleNewNoteLeavingHome={handleNewNoteLeavingHome}
+            getNoteContent={getLiveMarkdown}
             homeActive={homeActive}
             inlineAi={inlineAi}
             onOutlineOpenChange={(open) => {
@@ -765,6 +858,8 @@ function App() {
             setFindReplaceMode={setFindReplaceMode}
             setFindReplaceOpen={setFindReplaceOpen}
             updateEditorStats={updateEditorStats}
+            onPatchApplied={handlePatchApplied}
+            onVaultRefresh={bumpVaultIndex}
             vaultIndexEpoch={vaultIndexEpoch}
             vaultPath={vaultPath}
             zen={zen}
@@ -772,33 +867,35 @@ function App() {
         }
         aiPanel={
           <AppAiPanelSlot
-            activeDocumentTitle={activeDocumentTitle}
-            activeNoteIsClassified={activeNoteIsClassified}
-            activePathRef={activePathRef}
-            assistantDocumentTitle={assistantDocumentTitle}
             assistantNotePath={assistantNotePath}
             assistantPrefill={assistantPrefill}
             bumpVaultIndex={bumpVaultIndex}
-            dirtyRef={dirtyRef}
-            getLiveMarkdown={getLiveMarkdown}
-            getParagraphText={getParagraphText}
-            getWritingContext={getWritingContext}
-            handleInsertToEditor={handleInsertToEditor}
-            markClean={markClean}
-            markdownRef={markdownRef}
-            selectionQuote={selectionQuote}
-            setAiStatus={setAiStatus}
+            getLiveMarkdown={getAssistantLiveMarkdown}
+            getParagraphText={getAssistantParagraphText}
+            getWritingContext={getAssistantWritingContext}
+            handleInsertToEditor={handleAssistantInsertToEditor}
+            onOpenArtifact={openArtifact}
+            onPatchApplied={handlePatchApplied}
+            selectionQuote={
+              activeArtifactTab || activeNoteIsClassified
+                ? null
+                : selectionQuote
+            }
             setAssistantChrome={setAssistantChrome}
-            syncTabMarkdownCache={syncTabMarkdownCache}
             webSearch={webSearch}
-            applyMarkdownToEditor={applyMarkdownToEditor}
           />
         }
         statusBar={
           <AppStatusBarSlot
-            activePath={activePath}
-            activeDocumentTitle={activeDocumentTitle}
-            unsaved={tabs.find((t) => t.path === activePath)?.dirty ?? false}
+            activePath={activeArtifactTab ? null : activePath}
+            activeDocumentTitle={
+              activeArtifactTab ? activeArtifactTab.title : activeDocumentTitle
+            }
+            unsaved={
+              activeArtifactTab
+                ? false
+                : (tabs.find((t) => t.path === activePath)?.dirty ?? false)
+            }
             characterCount={editorStats.characterCount}
             readingMinutes={editorStats.readingMinutes}
             aiStatus={aiStatus}

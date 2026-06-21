@@ -12,13 +12,11 @@ import { SessionHistoryDropdown } from "./SessionHistoryDropdown";
 interface AssistantPanelHeaderProps {
   chromeActionsDisabled: boolean;
   currentSessionId: number | null;
-  harnessRequestId: string | null;
   legacySceneHint: AiScene;
   notePath: string | null;
   onDeletedCurrentSession: () => void;
   onClearedAllSessions: () => void;
   onNewChat: () => void;
-  onOpenAudit: () => void;
   onSelectSession: (id: number, messages: ChatLine[]) => void;
   profile: PromptProfileDto;
   webSearch: boolean;
@@ -27,13 +25,11 @@ interface AssistantPanelHeaderProps {
 export function AssistantPanelHeader({
   chromeActionsDisabled,
   currentSessionId,
-  harnessRequestId,
   legacySceneHint,
   notePath,
   onDeletedCurrentSession,
   onClearedAllSessions,
   onNewChat,
-  onOpenAudit,
   onSelectSession,
   profile,
   webSearch,
@@ -49,8 +45,6 @@ export function AssistantPanelHeader({
             webSearchEnabled={webSearch}
             scene={legacySceneHint}
             disabled={chromeActionsDisabled}
-            auditAvailable={Boolean(harnessRequestId)}
-            onOpenAudit={onOpenAudit}
           />
           <SessionHistoryDropdown
             scene={legacySceneHint}

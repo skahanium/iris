@@ -13,24 +13,39 @@ import type {
   OrganizeTaskResult,
   WritingTaskResult,
 } from "@/types/ai";
+import type { ArtifactKind } from "@/types/assistant-artifact";
+
+function isArtifactKind(kind: string): kind is ArtifactKind {
+  return (
+    kind === "evidence_sources" ||
+    kind === "writing_change" ||
+    kind === "structured_result" ||
+    kind === "task_process"
+  );
+}
 
 function wireToUnified(
   wires: AssistantExecuteResponse["artifacts"],
 ): UnifiedArtifact[] {
-  return wires.map((w, index) => ({
-    id: `${w.kind}-${w.sourceTask}-${index}`,
-    kind: w.kind as UnifiedArtifact["kind"],
-    title: w.title,
-    status:
-      w.status === "pending" || w.status === "pending_confirmation"
-        ? "pending"
-        : w.status === "error"
-          ? "error"
-          : "ready",
-    sourceTask: w.sourceTask as UnifiedArtifact["sourceTask"],
-    evidenceCount: w.evidenceCount,
-    payload: w.payload,
-  }));
+  return wires.flatMap((w, index) => {
+    if (!isArtifactKind(w.kind)) return [];
+    return [
+      {
+        id: `${w.kind}-${w.sourceTask}-${index}`,
+        kind: w.kind,
+        title: w.title,
+        status:
+          w.status === "pending" || w.status === "pending_confirmation"
+            ? "pending"
+            : w.status === "error"
+              ? "error"
+              : "ready",
+        sourceTask: w.sourceTask as UnifiedArtifact["sourceTask"],
+        evidenceCount: w.evidenceCount,
+        payload: w.payload,
+      },
+    ];
+  });
 }
 
 /** Map IPC response to unified artifacts (server wires + typed fallbacks). */

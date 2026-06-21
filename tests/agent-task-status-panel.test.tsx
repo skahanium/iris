@@ -3,6 +3,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { AgentTaskStatusPanel } from "@/components/ai/AgentTaskStatusPanel";
+import type { AssistantArtifactDraft } from "@/types/assistant-artifact";
 import type {
   AgentTaskDto,
   AgentTaskEventDto,
@@ -72,7 +73,7 @@ describe("AgentTaskStatusPanel", () => {
           steps={steps}
           events={events}
           onAbort={vi.fn()}
-          onOpenAudit={vi.fn()}
+          onOpenArtifact={vi.fn()}
           onResume={vi.fn()}
         />,
       );
@@ -85,7 +86,7 @@ describe("AgentTaskStatusPanel", () => {
   it("shows safe complex task actions and progress summaries without raw checkpoint data", async () => {
     const onResume = vi.fn();
     const onAbort = vi.fn();
-    const onOpenAudit = vi.fn();
+    const onOpenArtifact = vi.fn<(draft: AssistantArtifactDraft) => void>();
 
     await act(async () => {
       root.render(
@@ -94,7 +95,7 @@ describe("AgentTaskStatusPanel", () => {
           steps={steps}
           events={events}
           onAbort={onAbort}
-          onOpenAudit={onOpenAudit}
+          onOpenArtifact={onOpenArtifact}
           onResume={onResume}
         />,
       );
@@ -116,10 +117,10 @@ describe("AgentTaskStatusPanel", () => {
       summaryButton?.click();
     });
 
-    expect(document.body.textContent).toContain("research");
-    expect(document.body.textContent).toContain("找到两条证据");
-    expect(document.body.textContent).toContain("引用 2");
-    expect(document.body.textContent).toContain("等待写入授权");
+    expect(document.body.textContent).not.toContain("research");
+    expect(document.body.textContent).not.toContain("找到两条证据");
+    expect(document.body.textContent).not.toContain("引用 2");
+    expect(document.body.textContent).not.toContain("等待写入授权");
 
     const continueButton = Array.from(
       document.body.querySelectorAll("button"),
@@ -127,18 +128,56 @@ describe("AgentTaskStatusPanel", () => {
     const abortButton = Array.from(
       document.body.querySelectorAll("button"),
     ).find((button) => button.textContent === "中止");
-    const auditButton = Array.from(
+    const processButton = Array.from(
       document.body.querySelectorAll("button"),
-    ).find((button) => button.textContent === "查看审计");
+    ).find((button) => button.textContent?.includes("在工作区打开"));
 
     await act(async () => {
       continueButton?.click();
       abortButton?.click();
-      auditButton?.click();
+      processButton?.click();
     });
 
     expect(onResume).toHaveBeenCalledTimes(1);
     expect(onAbort).toHaveBeenCalledTimes(1);
-    expect(onOpenAudit).toHaveBeenCalledTimes(1);
+    expect(onOpenArtifact).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: "task_process",
+        sourceRequestId: "req-1",
+      }),
+    );
+    expect(document.body.textContent).not.toContain("查看审计");
+  });
+
+  it("does not expose a process artifact for ordinary completed tasks", async () => {
+    const onOpenArtifact = vi.fn<(draft: AssistantArtifactDraft) => void>();
+    const completedStep: AgentTaskStepDto = {
+      ...steps[0]!,
+      status: "completed",
+      output_summary:
+        "assistant task completed; no process artifact generated for ordinary completion",
+    };
+
+    await act(async () => {
+      root.render(
+        <AgentTaskStatusPanel
+          task={{
+            ...baseTask,
+            status: "completed",
+            completed_at: "2026-06-19T00:06:00Z",
+          }}
+          steps={[completedStep]}
+          events={[]}
+          onAbort={vi.fn()}
+          onOpenArtifact={onOpenArtifact}
+          onResume={vi.fn()}
+        />,
+      );
+    });
+
+    expect(document.body.textContent).not.toContain("过程详情");
+    expect(document.body.textContent).not.toContain("已完成");
+    expect(document.body.querySelector("button")).toBeNull();
+    expect(onOpenArtifact).not.toHaveBeenCalled();
   });
 });

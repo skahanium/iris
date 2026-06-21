@@ -9,6 +9,7 @@ import {
 import { mergeContextPackets } from "@/lib/ai/merge-context-packets";
 import { shouldStartNewAiSession } from "@/lib/ai/session-thread";
 import { resolveAssistantDisplayContent } from "@/lib/assistant-message-content";
+import { buildArtifactDraftsFromTaskResult } from "@/lib/assistant-artifact-tabs";
 import { patchSpansPreferSidebar } from "@/lib/assistant-patch";
 import {
   detectAgentIntent,
@@ -42,6 +43,7 @@ import type {
   IntentDetectionResult,
   PermissionPreflightSummary,
 } from "@/types/ai";
+import type { AssistantArtifactDraft } from "@/types/assistant-artifact";
 
 import type { ChatLine, ImageAttachment } from "../AiMessageList";
 import {
@@ -102,6 +104,7 @@ interface AssistantTaskRefs {
 interface AssistantTaskStatePorts {
   setActionState: Dispatch<SetStateAction<AssistantActionState>>;
   setActivityHint: Dispatch<SetStateAction<string | null>>;
+  setAssistantArtifacts: Dispatch<SetStateAction<AssistantArtifactDraft[]>>;
   setCitationResult: Dispatch<
     SetStateAction<import("@/types/ai").CitationCheckResult | null>
   >;
@@ -183,6 +186,7 @@ export function useAssistantTasks({
   const {
     setActionState,
     setActivityHint,
+    setAssistantArtifacts,
     setCitationResult,
     setContextStatusData,
     setDocIssues,
@@ -218,6 +222,13 @@ export function useAssistantTasks({
       );
     },
     [runPlanControls],
+  );
+
+  const recordAssistantArtifacts = useCallback(
+    (response: AssistantExecuteResponse) => {
+      setAssistantArtifacts(buildArtifactDraftsFromTaskResult(response));
+    },
+    [setAssistantArtifacts],
   );
 
   const explicitIntentDetection = useCallback(
@@ -352,6 +363,7 @@ export function useAssistantTasks({
             selectedPacketIds.length > 0 ? selectedPacketIds : undefined,
         });
         recordRunPlan(response);
+        recordAssistantArtifacts(response);
         forceNewSessionRef.current = false;
         if (response.kind !== "chat") {
           throw new Error("助手路由异常：期望对话结果");
@@ -467,6 +479,7 @@ export function useAssistantTasks({
       packets,
       panelSendActiveRef,
       recordRunPlan,
+      recordAssistantArtifacts,
       requestIdRef,
       selectedPacketIds,
       sessionId,
@@ -553,6 +566,7 @@ export function useAssistantTasks({
         cursorContext: ctx.cursorContext,
       });
       recordRunPlan(response);
+      recordAssistantArtifacts(response);
       setAgentTaskId(response.taskId ?? null);
       if (response.kind !== "writing") {
         throw new Error("助手路由异常：期望写作结果");
@@ -587,6 +601,7 @@ export function useAssistantTasks({
       notePath,
       explicitIntentDetection,
       recordRunPlan,
+      recordAssistantArtifacts,
       setActionState,
       setAgentTaskId,
       setPackets,
@@ -624,6 +639,7 @@ export function useAssistantTasks({
       contextScope,
     });
     recordRunPlan(response);
+    recordAssistantArtifacts(response);
     setAgentTaskId(response.taskId ?? null);
     if (response.kind !== "citation") {
       throw new Error("助手路由异常：期望引用检查结果");
@@ -644,6 +660,7 @@ export function useAssistantTasks({
     getParagraphText,
     notePath,
     recordRunPlan,
+    recordAssistantArtifacts,
     setActionState,
     setAgentTaskId,
     setCitationResult,
@@ -672,6 +689,7 @@ export function useAssistantTasks({
         organizeTaskType: determineOrganizeTaskType(rawMessage),
       });
       recordRunPlan(response);
+      recordAssistantArtifacts(response);
       setAgentTaskId(response.taskId ?? null);
       if (response.kind !== "organize") {
         throw new Error("助手路由异常：期望整理结果");
@@ -698,6 +716,7 @@ export function useAssistantTasks({
       contextScope,
       explicitIntentDetection,
       recordRunPlan,
+      recordAssistantArtifacts,
       setActionState,
       setAgentTaskId,
       setOrganizeSelection,
@@ -735,6 +754,7 @@ export function useAssistantTasks({
         chapter,
       });
       recordRunPlan(response);
+      recordAssistantArtifacts(response);
       setAgentTaskId(response.taskId ?? null);
       if (response.kind !== "chapter") {
         throw new Error("助手路由异常：期望章节写作结果");
@@ -761,6 +781,7 @@ export function useAssistantTasks({
       getNoteContent,
       notePath,
       recordRunPlan,
+      recordAssistantArtifacts,
       setActionState,
       setAgentTaskId,
       setWritingPatches,
@@ -792,6 +813,7 @@ export function useAssistantTasks({
         documentCheckType: determineDocumentCheckType(rawMessage),
       });
       recordRunPlan(response);
+      recordAssistantArtifacts(response);
       setAgentTaskId(response.taskId ?? null);
       if (response.kind !== "document") {
         throw new Error("助手路由异常：期望文档检查结果");
@@ -837,6 +859,7 @@ export function useAssistantTasks({
       getNoteContent,
       notePath,
       recordRunPlan,
+      recordAssistantArtifacts,
       setActionState,
       setAgentTaskId,
       setDocIssues,
@@ -865,6 +888,7 @@ export function useAssistantTasks({
         webAuthorized: webSearch,
       });
       recordRunPlan(response);
+      recordAssistantArtifacts(response);
       setAgentTaskId(response.taskId ?? null);
       if (response.kind !== "research") {
         throw new Error("助手路由异常：期望研究结果");
@@ -894,6 +918,7 @@ export function useAssistantTasks({
       explicitIntentDetection,
       researchRequestIdRef,
       recordRunPlan,
+      recordAssistantArtifacts,
       setActionState,
       setAgentTaskId,
       setMessages,

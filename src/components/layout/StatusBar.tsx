@@ -4,7 +4,6 @@ import { Moon, Network, Redo2, Settings, Sun, Undo2 } from "lucide-react";
 import { ConnectivityIndicators } from "@/components/layout/ConnectivityIndicators";
 import { EditorZoomControl } from "@/components/layout/EditorZoomControl";
 import { StatusBarTokenUsage } from "@/components/layout/StatusBarTokenUsage";
-import { dispatchOpenAuditTrail } from "@/lib/audit-trail-events";
 import type { AssistantChromeSnapshot } from "@/types/assistant-chrome";
 import type { ConnectivityStatus } from "@/types/llm";
 
@@ -220,21 +219,6 @@ export const StatusBar = memo(function StatusBar({
             <StatusBarTokenUsage
               sessionUsage={assistantChrome.sessionTokenUsage}
             />
-          </>
-        ) : null}
-        {assistantChrome?.harnessRequestId ? (
-          <>
-            <span className="text-muted-foreground/60" aria-hidden>
-              ·
-            </span>
-            <button
-              type="button"
-              className="shrink-0 text-primary hover:underline"
-              data-testid="status-bar-audit-link"
-              onClick={dispatchOpenAuditTrail}
-            >
-              工具审计
-            </button>
           </>
         ) : null}
         {safeStatusLine ? (

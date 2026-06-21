@@ -20,6 +20,7 @@ import type {
   ResearchState,
   WritingState,
 } from "@/types/ai";
+import type { AssistantArtifactDraft } from "@/types/assistant-artifact";
 
 interface UseAssistantArtifactsParams {
   getNoteContent: () => string;
@@ -52,6 +53,8 @@ interface UseAssistantArtifactsResult {
   setDocSummary: Dispatch<SetStateAction<string | null>>;
   docIssues: string[];
   setDocIssues: Dispatch<SetStateAction<string[]>>;
+  assistantArtifacts: AssistantArtifactDraft[];
+  setAssistantArtifacts: Dispatch<SetStateAction<AssistantArtifactDraft[]>>;
   lastError: string | null;
   setLastError: Dispatch<SetStateAction<string | null>>;
   clearTaskSurfaces: () => void;
@@ -86,6 +89,9 @@ export function useAssistantArtifacts({
   const [writingState, setWritingState] = useState<WritingState | null>(null);
   const [docSummary, setDocSummary] = useState<string | null>(null);
   const [docIssues, setDocIssues] = useState<string[]>([]);
+  const [assistantArtifacts, setAssistantArtifacts] = useState<
+    AssistantArtifactDraft[]
+  >([]);
   const [lastError, setLastError] = useState<string | null>(null);
 
   const applyPatch = deps?.patchApply ?? defaultPatchApply;
@@ -101,6 +107,7 @@ export function useAssistantArtifacts({
     setWritingState(null);
     setDocSummary(null);
     setDocIssues([]);
+    setAssistantArtifacts([]);
     setLastError(null);
   }, []);
 
@@ -193,6 +200,8 @@ export function useAssistantArtifacts({
     setDocSummary,
     docIssues,
     setDocIssues,
+    assistantArtifacts,
+    setAssistantArtifacts,
     lastError,
     setLastError,
     clearTaskSurfaces,

@@ -142,4 +142,22 @@ describe("AssistantProcessStatusBar", () => {
 
     expect(document.body.textContent).toBe("");
   });
+
+  it("does not stay visible for a completed task with a stale activity hint", async () => {
+    await act(async () => {
+      root.render(
+        <AssistantProcessStatusBar
+          agentTask={{ ...runningTask, status: "completed" }}
+          activityHint="正在理解你的问题…"
+          researchProgress={null}
+          researchRunning={false}
+          streaming={false}
+          hasError={false}
+          onAbort={vi.fn()}
+        />,
+      );
+    });
+
+    expect(document.body.textContent).toBe("");
+  });
 });

@@ -17,8 +17,6 @@ interface AgentStatusBadgeProps {
   disabled?: boolean;
   scene?: AiScene;
   onOpenSkills?: () => void;
-  auditAvailable?: boolean;
-  onOpenAudit?: () => void;
 }
 
 function compatibilityContextLabel(scene: AiScene): string {
@@ -69,8 +67,6 @@ export function AgentStatusBadge({
   disabled,
   scene: sceneProp,
   onOpenSkills,
-  auditAvailable = false,
-  onOpenAudit,
 }: AgentStatusBadgeProps) {
   const [skills, setSkills] = useState<SkillListEntryDto[]>([]);
   const [open, setOpen] = useState(false);
@@ -258,39 +254,23 @@ export function AgentStatusBadge({
             </section>
           </div>
 
-          {(onOpenSkills || (auditAvailable && onOpenAudit)) && (
+          {onOpenSkills ? (
             <div className="flex items-center gap-2 border-t border-border/60 px-3 py-2">
-              {onOpenSkills ? (
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  className="h-7 flex-1 px-2 text-[10px]"
-                  onClick={() => {
-                    close();
-                    onOpenSkills();
-                  }}
-                >
-                  <Puzzle className="mr-1 inline h-3 w-3" />
-                  管理 Skills
-                </Button>
-              ) : null}
-              {auditAvailable && onOpenAudit ? (
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  className="h-7 flex-1 px-2 text-[10px]"
-                  onClick={() => {
-                    close();
-                    onOpenAudit();
-                  }}
-                >
-                  工具审计
-                </Button>
-              ) : null}
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="h-7 flex-1 px-2 text-[10px]"
+                onClick={() => {
+                  close();
+                  onOpenSkills();
+                }}
+              >
+                <Puzzle className="mr-1 inline h-3 w-3" />
+                管理 Skills
+              </Button>
             </div>
-          )}
+          ) : null}
         </div>
       ) : null}
     </div>

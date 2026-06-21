@@ -3,6 +3,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { AgentTaskStatusPanel } from "@/components/ai/AgentTaskStatusPanel";
+import type { AssistantArtifactDraft } from "@/types/assistant-artifact";
 import type { AgentTaskDto } from "@/types/ipc";
 
 const task: AgentTaskDto = {
@@ -63,6 +64,8 @@ describe("AgentTaskStatusPanel deliberation state", () => {
   });
 
   it("keeps deliberation details folded but available without raw internals", async () => {
+    const onOpenArtifact = vi.fn<(draft: AssistantArtifactDraft) => void>();
+
     await act(async () => {
       root.render(
         <AgentTaskStatusPanel
@@ -70,7 +73,7 @@ describe("AgentTaskStatusPanel deliberation state", () => {
           steps={[]}
           events={[]}
           onAbort={vi.fn()}
-          onOpenAudit={vi.fn()}
+          onOpenArtifact={onOpenArtifact}
           onResume={vi.fn()}
         />,
       );
@@ -86,12 +89,13 @@ describe("AgentTaskStatusPanel deliberation state", () => {
       button?.click();
     });
 
-    expect(document.body.textContent).toContain("计划");
-    expect(document.body.textContent).toContain("拆分问题");
-    expect(document.body.textContent).toContain("证据缺口");
-    expect(document.body.textContent).toContain("缺少 2026 年一手收入数据");
-    expect(document.body.textContent).toContain("验证未通过");
-    expect(document.body.textContent).toContain("查看审计");
+    expect(onOpenArtifact).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: "task_process",
+        sourceRequestId: "req-delib",
+      }),
+    );
+    expect(document.body.textContent).not.toContain("查看审计");
     expect(document.body.textContent).not.toContain("checkpoint_json");
     expect(document.body.textContent).not.toContain("noteContent");
     expect(document.body.textContent).not.toContain("apiKey");

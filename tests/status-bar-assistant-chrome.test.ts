@@ -18,6 +18,13 @@ describe("status bar assistant chrome", () => {
     expect(bar).toContain("toolActivityLabel");
   });
 
+  it("StatusBar does not expose the ordinary-user tool audit entry", () => {
+    const bar = read("src/components/layout/StatusBar.tsx");
+    expect(bar).not.toContain("status-bar-audit-link");
+    expect(bar).not.toContain("工具审计");
+    expect(bar).not.toContain("dispatchOpenAuditTrail");
+  });
+
   it("StatusBar never renders classified vault lock state in the global status line", () => {
     const bar = read("src/components/layout/StatusBar.tsx");
     const app = read("src/App.impl.tsx");

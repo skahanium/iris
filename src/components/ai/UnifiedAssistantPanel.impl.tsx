@@ -1,7 +1,7 @@
 import { useCallback, useRef, useState } from "react";
 
 import { AssistantPanelHeader } from "@/components/ai/AssistantPanelHeader";
-import { AuditTrailDrawer } from "@/components/ai/AuditTrailDrawer";
+import { AssistantProcessStatusBar } from "@/components/ai/AssistantProcessStatusBar";
 import { AiComposer } from "@/components/ui/ai-composer";
 import { usePromptProfile } from "@/hooks/usePromptProfile";
 import { useAssistantLlmStream } from "@/hooks/useAssistantLlmStream";
@@ -49,6 +49,7 @@ export function UnifiedAssistantPanel({
   onPatchApplied,
   onVaultRefresh,
   onInsertToEditor,
+  onOpenArtifact,
   selectionQuote,
   prefillMessage,
   onChromeChange,
@@ -71,7 +72,6 @@ export function UnifiedAssistantPanel({
   const [harnessRequestId, setHarnessRequestId] = useState<string | null>(null);
   const [agentTaskId, setAgentTaskId] = useState<string | null>(null);
   const [pausedTaskId, setPausedTaskId] = useState<string | null>(null);
-  const [auditDrawerOpen, setAuditDrawerOpen] = useState(false);
   const runPlan = useAssistantRunPlan();
   const assistantRun = useAssistantRun("chat");
   const clearResearchProgressRef = useRef<(() => void) | null>(null);
@@ -85,21 +85,17 @@ export function UnifiedAssistantPanel({
     useCitationClick(packets, () => setPacketsOpen(true), setSelectedPacketIds);
 
   const {
+    assistantArtifacts,
     citationResult,
     clearTaskSurfaces: clearArtifactSurfaces,
     docIssues,
     docSummary,
-    handleAcceptOrganize,
-    handleAcceptPatch,
-    handleClearOrganizeSelection,
-    handleCopyPatch,
-    handleRejectPatch,
-    handleToggleOrganizeSuggestion,
     lastError,
     organizeSelection,
     organizeSuggestions,
     researchResult,
     researchState,
+    setAssistantArtifacts,
     setCitationResult,
     setDocIssues,
     setDocSummary,
@@ -183,10 +179,6 @@ export function UnifiedAssistantPanel({
   const {
     abortResearch,
     clearResearchProgress,
-    generatingResearchNote,
-    handleGenerateResearchNote,
-    researchDetailRef,
-    researchPanelExpanded,
     researchProgress,
     researchRequestIdRef,
     researchRunning,
@@ -212,7 +204,6 @@ export function UnifiedAssistantPanel({
     selectionQuote,
     sessionTokenUsage,
     setActionState,
-    setAuditDrawerOpen,
     setHarnessRequestId,
     setInput,
     streaming,
@@ -270,7 +261,7 @@ export function UnifiedAssistantPanel({
   const composerDisabled =
     streaming || assistantRun.isBusy || toolConfirmRequest !== null;
 
-  const { runWriting, send, images, setImages } = useAssistantTasks({
+  const { send, images, setImages } = useAssistantTasks({
     runtime: {
       appendAssistantSummary,
       appendUserMessage,
@@ -305,6 +296,7 @@ export function UnifiedAssistantPanel({
     state: {
       setActionState,
       setActivityHint,
+      setAssistantArtifacts,
       setCitationResult,
       setContextStatusData,
       setDocIssues,
@@ -361,13 +353,11 @@ export function UnifiedAssistantPanel({
       <AssistantPanelHeader
         chromeActionsDisabled={streaming}
         currentSessionId={sessionId}
-        harnessRequestId={harnessRequestId}
         legacySceneHint={legacySceneHintForAssistantIntent(actionState.intent)}
         notePath={notePath}
         onClearedAllSessions={resetAssistantSessionState}
         onDeletedCurrentSession={resetAssistantSessionState}
         onNewChat={resetAssistantSessionState}
-        onOpenAudit={() => setAuditDrawerOpen(true)}
         onSelectSession={handleLoadSession}
         profile={promptProfile}
         webSearch={webSearch}
@@ -392,37 +382,16 @@ export function UnifiedAssistantPanel({
       />
 
       <AssistantTaskSurfaces
-        activityHint={activityHint}
-        agentTask={agentTaskStatus.agentTask}
-        researchProgress={researchProgress}
-        researchRunning={researchRunning}
-        onAbortProcess={() => {
-          if (researchRunning) void abortResearch();
-          else void agentTaskStatus.abortAgentTask();
-        }}
-        researchResult={researchResult}
-        researchPanelExpanded={researchPanelExpanded}
-        researchDetailRef={researchDetailRef}
-        generatingResearchNote={generatingResearchNote}
-        onGenerateResearchNote={() => void handleGenerateResearchNote()}
+        assistantArtifacts={assistantArtifacts}
         docSummary={docSummary}
         docIssues={docIssues}
         citationResult={citationResult}
         organizeSuggestions={organizeSuggestions}
         organizeSelection={organizeSelection}
-        onClearOrganizeSelection={handleClearOrganizeSelection}
-        onToggleOrganizeSuggestion={handleToggleOrganizeSuggestion}
-        onAcceptOrganize={() => void handleAcceptOrganize()}
         evidenceRefreshNotice={assistantRun.evidenceRefreshNotice}
         writingPatches={writingPatches}
         writingState={writingState}
-        onAcceptPatch={(item) => void handleAcceptPatch(item)}
-        onRejectPatch={handleRejectPatch}
-        onCopyPatch={(item) => void handleCopyPatch(item)}
-        onRegenerateWriting={() => {
-          if (!input.trim()) return;
-          void runWriting(input.trim());
-        }}
+        onOpenArtifact={(draft) => onOpenArtifact?.(draft)}
       />
 
       <ConversationSurface
@@ -442,7 +411,7 @@ export function UnifiedAssistantPanel({
         events={agentTaskStatus.agentTaskEvents}
         intentDetection={runPlan.intentDetection}
         onAbort={() => void agentTaskStatus.abortAgentTask()}
-        onOpenAudit={() => setAuditDrawerOpen(true)}
+        onOpenArtifact={(draft) => onOpenArtifact?.(draft)}
         onResume={() => void handleHarnessResume()}
         permissionPreflightSummary={runPlan.permissionPreflightSummary}
         researchState={researchState}
@@ -464,6 +433,19 @@ export function UnifiedAssistantPanel({
       <ContextScopeChips tokens={mentionTokens} onRemove={removeMentionToken} />
 
       <div data-testid="ai-input">
+        <AssistantProcessStatusBar
+          activityHint={activityHint}
+          agentTask={agentTaskStatus.agentTask}
+          hasError={Boolean(lastError)}
+          researchProgress={researchProgress}
+          researchRunning={researchRunning}
+          streaming={streaming}
+          onAbort={() => {
+            if (researchRunning) void abortResearch();
+            else if (streaming) stopStreaming();
+            else void agentTaskStatus.abortAgentTask();
+          }}
+        />
         <AiComposerContextMenu
           textareaRef={textareaRef}
           value={input}
@@ -507,11 +489,6 @@ export function UnifiedAssistantPanel({
         onConfirm={handleRuleConfirm}
         onReject={closeRuleConfirm}
         onClose={closeRuleConfirm}
-      />
-      <AuditTrailDrawer
-        open={auditDrawerOpen}
-        onOpenChange={setAuditDrawerOpen}
-        requestId={harnessRequestId}
       />
     </div>
   );

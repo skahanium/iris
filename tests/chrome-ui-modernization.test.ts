@@ -28,11 +28,11 @@ describe("v0.4.1-ui chrome modernization", () => {
     expect(source).not.toContain("💡");
   });
 
-  it("ResearchFocusView avoids high-saturation colors", () => {
-    const research = read("src/components/ai/assistant/ResearchFocusView.tsx");
-    expect(research).not.toContain("emerald-");
-    expect(research).not.toContain("purple-");
-    expect(research).not.toContain("amber-");
+  it("Artifact workspace surfaces avoid high-saturation colors", () => {
+    const workspace = read("src/components/layout/ArtifactWorkspaceView.tsx");
+    expect(workspace).not.toContain("emerald-");
+    expect(workspace).not.toContain("purple-");
+    expect(workspace).not.toContain("amber-");
   });
 
   it("ContextPacketCard avoids high-saturation trust colors", () => {

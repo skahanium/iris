@@ -7,7 +7,6 @@ import {
 
 import { buildAssistantChromeSnapshot } from "@/lib/assistant-chrome";
 import { syncActiveLegacySceneHint } from "@/lib/assistant-scene";
-import { OPEN_AUDIT_TRAIL_EVENT } from "@/lib/audit-trail-events";
 import { listenAiRequestStarted } from "@/lib/ipc";
 import type {
   AssistantActionState,
@@ -32,7 +31,6 @@ interface UseAssistantPanelEffectsParams {
   selectionQuote?: AssistantSelectionQuote | null;
   sessionTokenUsage: TokenUsage | null;
   setActionState: Dispatch<SetStateAction<AssistantActionState>>;
-  setAuditDrawerOpen: Dispatch<SetStateAction<boolean>>;
   setHarnessRequestId: Dispatch<SetStateAction<string | null>>;
   setInput: Dispatch<SetStateAction<string>>;
   streaming: boolean;
@@ -50,7 +48,6 @@ export function useAssistantPanelEffects({
   selectionQuote,
   sessionTokenUsage,
   setActionState,
-  setAuditDrawerOpen,
   setHarnessRequestId,
   setInput,
   streaming,
@@ -76,12 +73,6 @@ export function useAssistantPanelEffects({
     sessionTokenUsage,
     streaming,
   ]);
-
-  useEffect(() => {
-    const openAudit = () => setAuditDrawerOpen(true);
-    window.addEventListener(OPEN_AUDIT_TRAIL_EVENT, openAudit);
-    return () => window.removeEventListener(OPEN_AUDIT_TRAIL_EVENT, openAudit);
-  }, [setAuditDrawerOpen]);
 
   useEffect(() => {
     if (!streaming) return;

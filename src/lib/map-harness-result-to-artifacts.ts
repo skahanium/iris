@@ -8,16 +8,7 @@ import type {
   PatchProposal,
   WritingTaskResult,
 } from "@/types/ai";
-
-export type ArtifactKind =
-  | "message"
-  | "patches"
-  | "citation_report"
-  | "organize_report"
-  | "research_report"
-  | "document_check"
-  | "chapter_writing"
-  | "tool_confirmation";
+import type { ArtifactKind } from "@/types/assistant-artifact";
 
 export interface UnifiedArtifact {
   id: string;
@@ -33,29 +24,17 @@ export function mapChatResultToArtifacts(
   payload: AiChatExecutePayload,
 ): UnifiedArtifact[] {
   const artifacts: UnifiedArtifact[] = [];
-  if (payload.content) {
-    artifacts.push({
-      id: `msg-${payload.request_id}`,
-      kind: "message",
-      title: "回答",
-      status: payload.status === "pending_tools" ? "pending" : "ready",
-      sourceTask: "chat",
-      evidenceCount: payload.evidence_packets?.length ?? 0,
-      payload: {
-        content: payload.content,
-        citation_valid: payload.citation_valid,
-      },
-    });
-  }
   if (payload.status === "pending_tools") {
     artifacts.push({
       id: `confirm-${payload.request_id}`,
-      kind: "tool_confirmation",
+      kind: "task_process",
       title: "工具确认",
       status: "pending",
       sourceTask: "chat",
       evidenceCount: 0,
       payload: {
+        schema: "task_process",
+        status: "pending_confirmation",
         tool_calls: payload.tool_calls,
         tool_results: payload.tool_results,
       },
@@ -70,12 +49,15 @@ export function mapWritingToArtifacts(
   return [
     {
       id: `patches-${output.request_id}`,
-      kind: "patches",
-      title: "写作补丁",
+      kind: "writing_change",
+      title: "写作修改",
       status: "ready",
       sourceTask: "writing",
       evidenceCount: output.evidence_used?.length ?? 0,
-      payload: output.patches,
+      payload: {
+        schema: "writing_change",
+        patches: output.patches,
+      },
     },
   ];
 }
@@ -86,12 +68,15 @@ export function mapCitationToArtifacts(
   return [
     {
       id: `citation-${result.request_id}`,
-      kind: "citation_report",
+      kind: "structured_result",
       title: "引用检查",
       status: "ready",
       sourceTask: "citation",
       evidenceCount: 0,
-      payload: result,
+      payload: {
+        resultKind: "citation_check",
+        result,
+      },
     },
   ];
 }
@@ -102,12 +87,15 @@ export function mapOrganizeToArtifacts(
   return [
     {
       id: "organize",
-      kind: "organize_report",
+      kind: "structured_result",
       title: "整理建议",
       status: "ready",
       sourceTask: "organize",
       evidenceCount: 0,
-      payload: suggestions,
+      payload: {
+        resultKind: "organize_suggestions",
+        suggestions,
+      },
     },
   ];
 }
@@ -119,23 +107,29 @@ export function mapDocumentToArtifacts(
   const items: UnifiedArtifact[] = [
     {
       id: `doc-${result.request_id}`,
-      kind: "document_check",
+      kind: "structured_result",
       title: "文档检查",
       status: "ready",
       sourceTask: "document",
       evidenceCount: 0,
-      payload: result,
+      payload: {
+        resultKind: "document_issues",
+        result,
+      },
     },
   ];
   if (patches.length > 0) {
     items.push({
       id: `doc-patches-${result.request_id}`,
-      kind: "patches",
-      title: "修订补丁",
+      kind: "writing_change",
+      title: "写作修改",
       status: "ready",
       sourceTask: "document",
       evidenceCount: 0,
-      payload: patches,
+      payload: {
+        schema: "writing_change",
+        patches,
+      },
     });
   }
   return items;

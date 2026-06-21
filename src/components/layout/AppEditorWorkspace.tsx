@@ -1,6 +1,7 @@
 import type { Editor } from "@tiptap/react";
 import type { Dispatch, SetStateAction, ReactNode } from "react";
 
+import { ArtifactWorkspaceView } from "@/components/layout/ArtifactWorkspaceView";
 import { EditorFindReplaceBar } from "@/components/editor/EditorFindReplaceBar";
 import { EditorOutline } from "@/components/editor/EditorOutline";
 import { TipTapEditor } from "@/components/editor/TipTapEditor";
@@ -10,6 +11,7 @@ import { IrisContextMenu } from "@/components/ui/iris-context-menu";
 import type { IrisContextMenuGroup } from "@/components/ui/iris-context-menu";
 import { EDITOR_HTML_CACHE_FORMAT_VERSION } from "@/lib/editor-html-cache";
 import { cn } from "@/lib/utils";
+import type { ArtifactTab } from "@/types/assistant-artifact";
 
 interface EditorMenuPort {
   menu: {
@@ -24,6 +26,7 @@ interface EditorMenuPort {
 
 interface AppEditorWorkspaceProps {
   activeFileLocked: boolean;
+  activeArtifactTab: ArtifactTab | null;
   activeNoteIsClassified: boolean;
   activePath: string | null;
   editorBodyMarkdown: string;
@@ -38,6 +41,7 @@ interface AppEditorWorkspaceProps {
   handleEditorReady: (editor: Editor | null) => void;
   handleLockToggle: (locked: boolean) => Promise<void>;
   handleNewNoteLeavingHome: () => void;
+  getNoteContent: () => string;
   homeActive: boolean;
   inlineAi: {
     retry: (editor: Editor) => Promise<void>;
@@ -57,6 +61,8 @@ interface AppEditorWorkspaceProps {
     characterCount: number;
     readingMinutes: number;
   }) => void;
+  onPatchApplied?: (newContent: string) => void;
+  onVaultRefresh?: () => void;
   vaultIndexEpoch: number;
   vaultPath: string | null;
   zen: boolean;
@@ -64,6 +70,7 @@ interface AppEditorWorkspaceProps {
 
 export function AppEditorWorkspace({
   activeFileLocked,
+  activeArtifactTab,
   activeNoteIsClassified,
   activePath,
   editorBodyMarkdown,
@@ -78,6 +85,7 @@ export function AppEditorWorkspace({
   handleEditorReady,
   handleLockToggle,
   handleNewNoteLeavingHome,
+  getNoteContent,
   homeActive,
   inlineAi,
   onOutlineOpenChange,
@@ -90,6 +98,8 @@ export function AppEditorWorkspace({
   setFindReplaceMode,
   setFindReplaceOpen,
   updateEditorStats,
+  onPatchApplied,
+  onVaultRefresh,
   vaultIndexEpoch,
   vaultPath,
   zen,
@@ -102,7 +112,14 @@ export function AppEditorWorkspace({
         outlineOpen && !zen && activePath && "iris-editor-outline-open",
       )}
     >
-      {activePath && !homeActive ? (
+      {activeArtifactTab && !homeActive ? (
+        <ArtifactWorkspaceView
+          tab={activeArtifactTab}
+          getNoteContent={getNoteContent}
+          onPatchApplied={onPatchApplied}
+          onVaultRefresh={onVaultRefresh}
+        />
+      ) : activePath && !homeActive ? (
         <ErrorBoundary scope="编辑器">
           <TipTapEditor
             key={`${activePath}:${EDITOR_HTML_CACHE_FORMAT_VERSION}`}
@@ -160,7 +177,7 @@ export function AppEditorWorkspace({
       <EditorFindReplaceBar
         editor={editorInstance}
         mode={findReplaceMode}
-        open={findReplaceOpen && Boolean(activePath)}
+        open={findReplaceOpen && Boolean(activePath) && !activeArtifactTab}
         onClose={() => setFindReplaceOpen(false)}
         onModeChange={setFindReplaceMode}
       />

@@ -1,5 +1,5 @@
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { Lock, Plus, X } from "lucide-react";
+import { Lock, Plus, Sparkles, X } from "lucide-react";
 import { memo, useMemo } from "react";
 
 import { IrisMark } from "@/components/brand/IrisMark";
@@ -19,6 +19,7 @@ export interface TabItem {
   title: string;
   dirty?: boolean;
   locked?: boolean;
+  kind?: "note" | "artifact";
 }
 
 export type DesktopTitleBarVariant = "document" | "splash";
@@ -103,6 +104,7 @@ export const DesktopTitleBar = memo(function DesktopTitleBar({
             >
               {tabs.map((tab) => {
                 const active = activePath === tab.path;
+                const isArtifact = tab.kind === "artifact";
                 return (
                   <div
                     key={tab.path}
@@ -114,7 +116,13 @@ export const DesktopTitleBar = memo(function DesktopTitleBar({
                         ? "iris-rail-tab--active text-[hsl(var(--outline-rail-active))]"
                         : "text-muted-foreground hover:bg-[hsl(var(--outline-rail-active)/0.06)]",
                     )}
-                    title={tab.path !== tab.title ? tab.path : undefined}
+                    title={
+                      isArtifact
+                        ? tab.title
+                        : tab.path !== tab.title
+                          ? tab.path
+                          : undefined
+                    }
                   >
                     <button
                       type="button"
@@ -128,7 +136,15 @@ export const DesktopTitleBar = memo(function DesktopTitleBar({
                       {tab.locked ? (
                         <Lock className="mr-1 h-3 w-3 shrink-0 text-muted-foreground/70" />
                       ) : null}
+                      {isArtifact ? (
+                        <Sparkles className="mr-1 h-3 w-3 shrink-0 text-muted-foreground/70" />
+                      ) : null}
                       <span className="min-w-0 truncate">{tab.title}</span>
+                      {isArtifact ? (
+                        <span className="ml-1 shrink-0 rounded-sm border border-border/60 px-1 text-[10px] text-muted-foreground">
+                          临时
+                        </span>
+                      ) : null}
                       {tab.dirty ? (
                         <span className="shrink-0 text-muted-foreground">
                           {" "}
