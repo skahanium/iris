@@ -58,7 +58,7 @@
 - Modify: `tests/unified-assistant-routing.test.ts`
 - Modify: `tests/assistant-phase2-cleanup.test.ts`
 
-- [ ] **Step 1: 新增失败测试，锁定每轮独立 `TaskPlan`**
+- [x] **Step 1: 新增失败测试，锁定每轮独立 `TaskPlan`**
 
 创建 `tests/agent-taskplan-routing.test.ts`，测试直接读取 `src/lib/assistant-taskplan.ts` 和 `src/lib/assistant-routing.ts`，先断言尚不存在的新契约：
 
@@ -96,7 +96,7 @@ describe("assistant TaskPlan routing contract", () => {
 });
 ```
 
-- [ ] **Step 2: 改写旧 routing 测试的关键断言**
+- [x] **Step 2: 改写旧 routing 测试的关键断言**
 
 在 `tests/unified-assistant-routing.test.ts` 中新增或替换用例：
 
@@ -118,7 +118,7 @@ it("does not route fiction continuation to research only because it says 分析 
 });
 ```
 
-- [ ] **Step 3: 改写 scene cleanup 测试**
+- [x] **Step 3: 改写 scene cleanup 测试**
 
 在 `tests/assistant-phase2-cleanup.test.ts` 中删除继续要求 `legacySceneHintForAssistantIntent` 主导 UI 的断言，改成：
 
@@ -132,7 +132,7 @@ expect(read("src-tauri/src/ai_runtime/agent_task_policy.rs")).toContain(
 expect(read("src/lib/assistant-routing.ts")).toContain("buildAssistantTaskPlan");
 ```
 
-- [ ] **Step 4: 运行失败测试**
+- [x] **Step 4: 运行失败测试**
 
 Run:
 
@@ -142,7 +142,7 @@ npm run test -- tests/agent-taskplan-routing.test.ts tests/unified-assistant-rou
 
 Expected: FAIL，因为 `src/lib/assistant-taskplan.ts` 尚未存在，旧路由仍含 `RESEARCH_KEYWORDS`。
 
-- [ ] **Step 5: 提交失败测试**
+- [x] **Step 5: 提交失败测试**
 
 ```bash
 git add tests/agent-taskplan-routing.test.ts tests/unified-assistant-routing.test.ts tests/assistant-phase2-cleanup.test.ts
