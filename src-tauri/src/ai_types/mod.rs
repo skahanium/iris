@@ -555,10 +555,155 @@ pub enum SourceType {
 }
 
 /// UTF-8 byte offsets into a Markdown source string.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SourceSpan {
     pub start: usize,
     pub end: usize,
+}
+
+/// Per-turn assistant task intent produced by the TaskPlan contract.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TaskPlanIntent {
+    Chat,
+    AskNotes,
+    CreativeWrite,
+    RewriteSelection,
+    CitationCheck,
+    Research,
+    Organize,
+    DocumentCheck,
+    Chapter,
+    VisionChat,
+    SkillManagement,
+}
+
+/// Confidence bucket for a TaskPlan routing decision.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TaskPlanConfidence {
+    High,
+    Medium,
+    Low,
+}
+
+/// Retrieval strategy selected for this assistant turn.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RetrievalMode {
+    None,
+    CurrentReference,
+    LocalNotes,
+    ScopedNotes,
+    LongDocument,
+}
+
+/// Web evidence mode visible at the assistant boundary.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WebMode {
+    Disabled,
+    Brokered,
+}
+
+/// Execution shape derived from the TaskPlan.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ExecutionMode {
+    DirectAnswer,
+    ContextAnswer,
+    WritingCandidate,
+    PatchProposal,
+    StructuredTask,
+    LongTask,
+    Clarification,
+}
+
+/// Output surface selected for the assistant turn.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OutputMode {
+    MarkdownMessage,
+    ArtifactBackedMessage,
+    ConfirmationRequired,
+    Diagnostic,
+}
+
+/// Lightweight context reference kind carried instead of full note content.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ContextReferenceKind {
+    Selection,
+    Paragraph,
+    Heading,
+    Note,
+    Artifact,
+}
+
+/// ProseMirror editor range in document positions.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EditorRangeWire {
+    pub from: usize,
+    pub to: usize,
+}
+
+/// Wire-safe context reference passed through `assistant_execute`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ContextReferenceWire {
+    pub id: String,
+    pub kind: ContextReferenceKind,
+    pub file_path: Option<String>,
+    pub content_hash: Option<String>,
+    pub utf8_range: Option<SourceSpan>,
+    pub editor_range: Option<EditorRangeWire>,
+    pub excerpt: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub heading_path: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub anchor: Option<String>,
+    pub stale: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub invalid_reason: Option<String>,
+}
+
+/// Artifact family proposed by the TaskPlan value gate.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ArtifactPlanKind {
+    EvidenceSources,
+    WritingChange,
+    StructuredResult,
+    TaskProcess,
+}
+
+/// Planned artifact candidate; later tasks decide whether to materialize it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ArtifactPlanItemWire {
+    pub kind: ArtifactPlanKind,
+    pub reason: String,
+    pub value_gate: String,
+}
+
+/// Per-turn TaskPlan summary exchanged over the assistant IPC boundary.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TaskPlanSummary {
+    pub intent: TaskPlanIntent,
+    pub confidence: TaskPlanConfidence,
+    pub context_references: Vec<ContextReferenceWire>,
+    pub retrieval_mode: RetrievalMode,
+    pub web_mode: WebMode,
+    pub model_slot: CapabilitySlot,
+    pub execution_mode: ExecutionMode,
+    pub output_mode: OutputMode,
+    pub artifact_plan: Vec<ArtifactPlanItemWire>,
+    pub requires_clarification: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub clarification_question: Option<String>,
+    pub source_hints: Vec<String>,
 }
 
 /// 证据信任等级，按可信度从高到低排列。

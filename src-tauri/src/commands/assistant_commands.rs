@@ -18,9 +18,9 @@ use crate::ai_runtime::model_gateway::{LlmMessage, MessageRole, TokenUsage, Tool
 use crate::ai_runtime::retrieval_scope::ContextScopeDto;
 use crate::ai_runtime::writing_workflow::WritingTaskOutput;
 use crate::ai_runtime::{
-    AgentAuditSummary, AgentIntent, AgentRunPlanSummary, CitationCheckResult,
+    AgentAuditSummary, AgentIntent, AgentRunPlanSummary, CitationCheckResult, ContextReferenceWire,
     IntentDetectionSummary, OrganizeTaskResult, PermissionPreflightSummary,
-    SkillActivationPlanSummary, SkillCapabilitySupportStatus,
+    SkillActivationPlanSummary, SkillCapabilitySupportStatus, TaskPlanSummary,
 };
 use crate::app::AppState;
 use crate::error::AppResult;
@@ -35,6 +35,10 @@ pub struct AssistantExecuteRequest {
     pub intent: Option<AssistantIntent>,
     #[serde(default)]
     pub intent_detection: Option<IntentDetectionSummary>,
+    #[serde(default)]
+    pub task_plan: Option<TaskPlanSummary>,
+    #[serde(default)]
+    pub context_references: Vec<ContextReferenceWire>,
     pub message: String,
     #[serde(default)]
     pub note_path: Option<String>,
@@ -139,6 +143,15 @@ impl AssistantExecuteRequest {
         }
         if self.context_scope.is_some() {
             summary.push("包含用户指定检索范围".to_string());
+        }
+        if !self.context_references.is_empty() {
+            summary.push(format!(
+                "包含 {} 个上下文引用",
+                self.context_references.len()
+            ));
+        }
+        if self.task_plan.is_some() {
+            summary.push("包含 TaskPlan 摘要".to_string());
         }
         if self.web_authorized {
             summary.push("允许联网检索".to_string());
@@ -334,6 +347,7 @@ async fn maybe_handle_skillhub_direct_install(
             evidence_refresh_notice: None,
             artifacts: Vec::new(),
             intent_detection: Some(intent_detection.clone()),
+            task_plan: None,
             run_plan_summary: None,
             permission_preflight_summary: None,
         }));
@@ -482,6 +496,7 @@ async fn maybe_handle_skillhub_direct_install(
             payload: serde_json::Value::Null,
         }],
         intent_detection: Some(intent_detection.clone()),
+        task_plan: None,
         run_plan_summary: None,
         permission_preflight_summary: Some(build_permission_preflight_summary(
             skill_activation_plan,
@@ -532,6 +547,8 @@ pub struct AssistantExecuteResponse {
     pub artifacts: Vec<crate::ai_runtime::harness_task::HarnessArtifactWire>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub intent_detection: Option<IntentDetectionSummary>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub task_plan: Option<TaskPlanSummary>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub run_plan_summary: Option<AgentRunPlanSummary>,
     #[serde(skip_serializing_if = "Option::is_none")]

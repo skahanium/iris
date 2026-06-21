@@ -158,8 +158,9 @@ git commit -m "test(ai): 增加 TaskPlan 路由契约"
 - Modify: `src/lib/ipc.ts`
 - Modify: `src-tauri/src/ai_types/mod.rs`
 - Modify: `src-tauri/src/commands/assistant_commands.rs`
+- Modify: `src-tauri/src/ai_harness/harness_task.rs`（补齐 `AssistantExecuteResponse` 构造点的必要联动）
 
-- [ ] **Step 1: 先补 TypeScript 类型**
+- [x] **Step 1: 先补 TypeScript 类型**
 
 在 `src/types/ai.ts` 增加：
 
@@ -239,7 +240,7 @@ export interface TaskPlan {
 }
 ```
 
-- [ ] **Step 2: 同步 IPC 请求/响应类型**
+- [x] **Step 2: 同步 IPC 请求/响应类型**
 
 在 `AssistantExecuteRequest` 的 TypeScript 类型中加入：
 
@@ -256,7 +257,7 @@ taskPlan?: TaskPlan | null;
 
 在 `src/lib/ipc.ts` 的 `assistantExecute` wrapper 中保持 `invoke<AssistantExecuteResponse>("assistant_execute", { request })` 的类型安全，不直接调用裸 `invoke()`。
 
-- [ ] **Step 3: 补 Rust wire 类型**
+- [x] **Step 3: 补 Rust wire 类型**
 
 在 `src-tauri/src/ai_types/mod.rs` 增加与 TypeScript 一一对应的 enum/struct，使用 `#[serde(rename_all = "snake_case")]` 或 `camelCase` 与前端字段保持一致：
 
@@ -285,7 +286,7 @@ pub struct TaskPlanSummary {
 
 用 `cargo fmt --all -- --check` 确认命名和导出无格式问题。
 
-- [ ] **Step 4: 请求/响应接线**
+- [x] **Step 4: 请求/响应接线**
 
 在 `src-tauri/src/commands/assistant_commands.rs` 的 `AssistantExecuteRequest` 加入：
 
@@ -304,7 +305,7 @@ pub task_plan: Option<TaskPlanSummary>,
 
 所有构造 `AssistantExecuteResponse` 的地方先填 `task_plan: None`，下一任务再改成真实值。
 
-- [ ] **Step 5: 验证**
+- [x] **Step 5: 验证**
 
 Run:
 
@@ -316,7 +317,7 @@ cargo check
 
 Expected: PASS。若 `cargo check` 暴露 response 构造缺字段，逐个补齐。
 
-- [ ] **Step 6: 提交类型契约**
+- [x] **Step 6: 提交类型契约**
 
 ```bash
 git add src/types/ai.ts src/types/ipc.ts src/lib/ipc.ts src-tauri/src/ai_types/mod.rs src-tauri/src/commands/assistant_commands.rs

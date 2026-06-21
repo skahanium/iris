@@ -202,6 +202,84 @@ export type CapabilitySlot =
   | "reranker"
   | "local_private";
 
+export type TaskPlanIntent =
+  | "chat"
+  | "ask_notes"
+  | "creative_write"
+  | "rewrite_selection"
+  | "citation_check"
+  | "research"
+  | "organize"
+  | "document_check"
+  | "chapter"
+  | "vision_chat"
+  | "skill_management";
+
+export type TaskPlanConfidence = "high" | "medium" | "low";
+
+export type RetrievalMode =
+  | "none"
+  | "current_reference"
+  | "local_notes"
+  | "scoped_notes"
+  | "long_document";
+
+export type WebMode = "disabled" | "brokered";
+
+export type ExecutionMode =
+  | "direct_answer"
+  | "context_answer"
+  | "writing_candidate"
+  | "patch_proposal"
+  | "structured_task"
+  | "long_task"
+  | "clarification";
+
+export type OutputMode =
+  | "markdown_message"
+  | "artifact_backed_message"
+  | "confirmation_required"
+  | "diagnostic";
+
+export interface ContextReference {
+  id: string;
+  kind: "selection" | "paragraph" | "heading" | "note" | "artifact";
+  filePath: string | null;
+  contentHash: string | null;
+  utf8Range: SourceSpan | null;
+  editorRange: { from: number; to: number } | null;
+  excerpt: string;
+  headingPath?: string | null;
+  anchor?: string | null;
+  stale: boolean;
+  invalidReason?: string | null;
+}
+
+export interface ArtifactPlanItem {
+  kind:
+    | "evidence_sources"
+    | "writing_change"
+    | "structured_result"
+    | "task_process";
+  reason: string;
+  valueGate: string;
+}
+
+export interface TaskPlan {
+  intent: TaskPlanIntent;
+  confidence: TaskPlanConfidence;
+  contextReferences: ContextReference[];
+  retrievalMode: RetrievalMode;
+  webMode: WebMode;
+  modelSlot: CapabilitySlot;
+  executionMode: ExecutionMode;
+  outputMode: OutputMode;
+  artifactPlan: ArtifactPlanItem[];
+  requiresClarification: boolean;
+  clarificationQuestion?: string | null;
+  sourceHints: string[];
+}
+
 export interface CapabilityRouteSummary {
   slot: CapabilitySlot;
   providerId: string;
@@ -363,6 +441,8 @@ export interface AssistantExecuteRequest {
   agentIntent?: AgentIntent;
   intent?: AssistantIntent;
   intentDetection?: IntentDetectionResult | null;
+  taskPlan?: TaskPlan;
+  contextReferences?: ContextReference[];
   message: string;
   notePath?: string | null;
   noteContent?: string | null;
@@ -492,11 +572,12 @@ export type AssistantExecuteResponse = AssistantExecuteBody & {
   artifacts: HarnessArtifactWire[];
   evidenceRefreshNotice?: string | null;
   intentDetection?: IntentDetectionResult | null;
+  taskPlan?: TaskPlan | null;
   runPlanSummary?: AgentRunPlanSummary | null;
   permissionPreflightSummary?: PermissionPreflightSummary | null;
 };
 
-/** 研究任务结果（与 `ResearchFocusView` 对齐） */
+/** 研究任务结果（对话摘要 + artifact 工作区视图使用）。 */
 export interface ResearchFocusPayload {
   request_id: string;
   topic: string;
