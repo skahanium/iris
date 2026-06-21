@@ -133,17 +133,6 @@ function hasCheckpoint(payload: unknown): boolean {
 }
 
 function hasProcessValue(payload: unknown): boolean {
-  const text = JSON.stringify(payload);
-  if (
-    text.includes(
-      "assistant workflow output summarized by artifact metadata",
-    ) ||
-    text.includes(
-      "assistant task completed; no process artifact generated for ordinary completion",
-    )
-  ) {
-    return false;
-  }
   const status = processStatus(payload);
   if (
     [
@@ -187,7 +176,6 @@ function hasWritingChangeValue(payload: unknown): boolean {
 
 function hasStructuredResultValue(payload: unknown): boolean {
   const record = asRecord(payload);
-  const resultKind = record.resultKind ?? record.schema;
   const suggestions = asArray(record.suggestions);
   const issues = asArray(record.issues);
   if (suggestions.length > 0 || issues.length > 0) {
@@ -196,26 +184,14 @@ function hasStructuredResultValue(payload: unknown): boolean {
   if (collectionHasValue(record.coverage)) return true;
   const result = asRecord(record.result);
   const batch = asRecord(record.batch);
-  if (resultKind === "organize_suggestions") {
-    return suggestions.length > 0 || asArray(batch.suggestions).length > 0;
-  }
-  if (resultKind === "citation_check") {
-    return (
-      collectionHasValue(result.coverage) ||
-      asArray(result.claims).length > 0 ||
-      asArray(result.evidence_used).length > 0 ||
-      asArray(result.suggestions).length > 0
-    );
-  }
-  if (resultKind === "document_issues") {
-    return (
-      nonEmptyString(record.summary) ||
-      issues.length > 0 ||
-      collectionHasValue(asRecord(record.result).analysis_summary)
-    );
-  }
   return (
-    collectionHasValue(result.coverage) || asArray(batch.suggestions).length > 0
+    collectionHasValue(result.coverage) ||
+    asArray(result.claims).length > 0 ||
+    asArray(result.evidence_used).length > 0 ||
+    asArray(result.suggestions).length > 0 ||
+    collectionHasValue(result.analysis_summary) ||
+    nonEmptyString(record.summary) ||
+    asArray(batch.suggestions).length > 0
   );
 }
 
@@ -344,57 +320,6 @@ function draftFromWire(
   return artifactPassesValueGate(draft) ? draft : null;
 }
 
-function fallbackDraftFromBody(
-  result: TaskResultLike,
-): AssistantArtifactDraft | null {
-  const payload = result.payload;
-  const requestId = requestIdForResult(result);
-  if (result.kind === "writing") {
-    return {
-      kind: "writing_change",
-      title: ARTIFACT_KIND_TITLES.writing_change,
-      sourceRequestId: requestId,
-      payload: { schema: "writing_change", ...(asRecord(payload) || {}) },
-    };
-  }
-  if (result.kind === "citation") {
-    return {
-      kind: "structured_result",
-      title: "引用核查",
-      sourceRequestId: requestId,
-      payload: { resultKind: "citation_check", result: payload },
-    };
-  }
-  if (result.kind === "organize") {
-    return {
-      kind: "structured_result",
-      title: "整理建议",
-      sourceRequestId: requestId,
-      payload: {
-        resultKind: "organize_suggestions",
-        suggestions: asRecord(asRecord(payload).batch).suggestions,
-      },
-    };
-  }
-  if (result.kind === "document") {
-    return {
-      kind: "structured_result",
-      title: "文档问题清单",
-      sourceRequestId: requestId,
-      payload: { resultKind: "document_issues", result: payload },
-    };
-  }
-  if (result.kind === "research") {
-    return {
-      kind: "evidence_sources",
-      title: ARTIFACT_KIND_TITLES.evidence_sources,
-      sourceRequestId: requestId,
-      payload,
-    };
-  }
-  return null;
-}
-
 export function buildArtifactDraftsFromTaskResult(
   result: TaskResultLike,
 ): AssistantArtifactDraft[] {
@@ -404,8 +329,7 @@ export function buildArtifactDraftsFromTaskResult(
   if (wireDrafts.length > 0 || (result.artifacts?.length ?? 0) > 0) {
     return wireDrafts;
   }
-  const fallback = fallbackDraftFromBody(result);
-  return fallback && artifactPassesValueGate(fallback) ? [fallback] : [];
+  return [];
 }
 
 function isArtifactTab(value: unknown): value is ArtifactTab {

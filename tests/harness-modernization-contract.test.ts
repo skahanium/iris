@@ -24,6 +24,15 @@ describe("harness modernization remaining contracts", () => {
     expect(panel).toContain("web_search: webSearch");
   });
 
+  it("uses TaskPlan summaries and drops meaningless process placeholders", () => {
+    expect(read("src-tauri/src/ai_runtime/task_plan.rs")).toContain(
+      "TaskPlanSummary",
+    );
+    expect(read("src-tauri/src/ai_harness/harness_task.rs")).not.toContain(
+      "assistant workflow output summarized by artifact metadata",
+    );
+  });
+
   it("tool confirmation executes auto tools before pausing on confirm", () => {
     const toolTurn = read("src-tauri/src/ai_harness/tool_turn.rs");
     expect(toolTurn).toContain("outstanding_confirm_tool");

@@ -547,10 +547,10 @@ function DocumentIssuesStructuredResultView({ tab }: { tab: ArtifactTab }) {
 function StructuredResultArtifactView(props: ArtifactWorkspaceViewProps) {
   const record = asRecord(props.tab.payload);
   const resultKind = record.resultKind ?? record.schema;
-  if (resultKind === "citation_check") {
+  if (resultKind === "citation_report") {
     return <CitationStructuredResultView tab={props.tab} />;
   }
-  if (resultKind === "organize_suggestions") {
+  if (resultKind === "organize_result") {
     return <OrganizeStructuredResultView {...props} />;
   }
   if (resultKind === "document_issues") {

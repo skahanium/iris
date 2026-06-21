@@ -1,5 +1,4 @@
-import { setActiveAiScene } from "@/hooks/useConnectivityStatus";
-import type { AgentIntent, AssistantIntent } from "@/types/ai";
+import type { AgentIntent, TaskPlanIntent } from "@/types/ai";
 
 type LegacySceneHint =
   | "knowledge_lookup"
@@ -9,6 +8,7 @@ type LegacySceneHint =
 export function legacySceneHintForAgentIntent(
   intent: AgentIntent,
 ): LegacySceneHint {
+  // compatibility only: backend context assembly still accepts LegacyAiScene.
   switch (intent) {
     case "rewrite_selection":
     case "write":
@@ -28,29 +28,33 @@ export function legacySceneHintForAgentIntent(
   }
 }
 
-export function legacySceneHintForAssistantIntent(
-  intent: AssistantIntent,
+export function legacySceneHintForTaskPlanIntent(
+  intent: TaskPlanIntent | null | undefined,
 ): LegacySceneHint {
+  // compatibility only: session history is still bucketed by legacy scene.
   switch (intent) {
-    case "writing":
-    case "citation":
+    case "creative_write":
+      return legacySceneHintForAgentIntent("write");
+    case "rewrite_selection":
+      return legacySceneHintForAgentIntent("rewrite_selection");
     case "chapter":
-    case "document":
-      return "drafting_assist";
+      return legacySceneHintForAgentIntent("chapter");
+    case "document_check":
+      return legacySceneHintForAgentIntent("document_check");
+    case "citation_check":
+      return legacySceneHintForAgentIntent("citation_check");
     case "research":
-      return "research_synthesis";
+      return legacySceneHintForAgentIntent("research");
+    case "ask_notes":
+      return legacySceneHintForAgentIntent("ask_notes");
     case "organize":
-    case "knowledge":
+      return legacySceneHintForAgentIntent("organize");
+    case "vision_chat":
+      return legacySceneHintForAgentIntent("vision_chat");
+    case "skill_management":
+      return legacySceneHintForAgentIntent("skill_management");
     case "chat":
     default:
-      return "knowledge_lookup";
+      return legacySceneHintForAgentIntent("chat");
   }
-}
-
-export function syncActiveLegacySceneHint(
-  intent: AssistantIntent,
-): LegacySceneHint {
-  const hint = legacySceneHintForAssistantIntent(intent);
-  setActiveAiScene(hint);
-  return hint;
 }

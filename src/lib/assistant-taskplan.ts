@@ -81,7 +81,7 @@ const ORGANIZE_KEYWORDS = [
   "知识库",
 ];
 
-const RESEARCH_KEYWORDS = [
+const SYNTHESIS_TERMS = [
   "研究",
   "调研",
   "查资料",
@@ -89,7 +89,6 @@ const RESEARCH_KEYWORDS = [
   "多来源",
   "对比来源",
   "联网",
-  "综述",
   "文献",
   "论文",
   "深挖",
@@ -179,7 +178,9 @@ function skillHubDirectInstallSkill(message: string): string | null {
   return skill;
 }
 
-function basePlan(input: BuildAssistantTaskPlanInput): Pick<
+function basePlan(
+  input: BuildAssistantTaskPlanInput,
+): Pick<
   TaskPlan,
   | "contextReferences"
   | "retrievalMode"
@@ -256,7 +257,8 @@ function researchPlan(input: BuildAssistantTaskPlanInput): TaskPlan {
   const artifactPlan: ArtifactPlanItem[] = [
     {
       kind: "evidence_sources",
-      reason: "Research tasks need inspectable sources outside the chat stream.",
+      reason:
+        "Research tasks need inspectable sources outside the chat stream.",
       valueGate: "non_empty_evidence_sources",
     },
   ];
@@ -319,11 +321,7 @@ function simpleTaskPlan(
   input: BuildAssistantTaskPlanInput,
   intent: Exclude<
     TaskPlanIntent,
-    | "chat"
-    | "ask_notes"
-    | "creative_write"
-    | "rewrite_selection"
-    | "research"
+    "chat" | "ask_notes" | "creative_write" | "rewrite_selection" | "research"
   >,
 ): TaskPlan {
   switch (intent) {
@@ -487,7 +485,7 @@ export function buildAssistantTaskPlan(
   }
 
   if (
-    includesAny(message, RESEARCH_KEYWORDS) &&
+    includesAny(message, SYNTHESIS_TERMS) &&
     (input.explicitScope || !input.notePath || message.length > 12)
   ) {
     return researchPlan(input);

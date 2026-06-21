@@ -12,7 +12,7 @@ import { SessionHistoryDropdown } from "./SessionHistoryDropdown";
 interface AssistantPanelHeaderProps {
   chromeActionsDisabled: boolean;
   currentSessionId: number | null;
-  legacySceneHint: AiScene;
+  scene: AiScene;
   notePath: string | null;
   onDeletedCurrentSession: () => void;
   onClearedAllSessions: () => void;
@@ -27,7 +27,7 @@ interface AssistantPanelHeaderProps {
 export function AssistantPanelHeader({
   chromeActionsDisabled,
   currentSessionId,
-  legacySceneHint,
+  scene,
   notePath,
   onDeletedCurrentSession,
   onClearedAllSessions,
@@ -47,13 +47,13 @@ export function AssistantPanelHeader({
         <div className="flex shrink-0 items-center gap-1.5">
           <AgentStatusBadge
             webSearchEnabled={webSearch}
-            scene={legacySceneHint}
+            scene={scene}
             taskPlanIntent={taskPlanIntent}
             taskStatus={taskStatus}
             disabled={chromeActionsDisabled}
           />
           <SessionHistoryDropdown
-            scene={legacySceneHint}
+            scene={scene}
             notePath={notePath}
             currentSessionId={currentSessionId}
             disabled={chromeActionsDisabled}

@@ -808,7 +808,7 @@ fn artifacts_to_wires(
                     "引用检查",
                     0,
                     serde_json::json!({
-                        "resultKind": "citation_check",
+                        "schema": "citation_report",
                         "result": report,
                     }),
                 ),
@@ -821,7 +821,7 @@ fn artifacts_to_wires(
                         "整理建议",
                         0,
                         serde_json::json!({
-                            "resultKind": "organize_suggestions",
+                            "schema": "organize_result",
                             "suggestions": report.batch.suggestions,
                         }),
                     )

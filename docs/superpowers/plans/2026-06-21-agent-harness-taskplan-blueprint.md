@@ -1187,7 +1187,7 @@ git commit -m "feat(ai): 增加统一网络证据代理"
 - Modify: `tests/harness-modernization-contract.test.ts`
 - Modify: `docs/README.md` if it references removed cards or scene router
 
-- [ ] **Step 1: 删除旧主路径函数**
+- [x] **Step 1: 删除旧主路径函数**
 
 删除或降级以下内容：
 
@@ -1198,7 +1198,7 @@ git commit -m "feat(ai): 增加统一网络证据代理"
 - `ResearchResultMessage` 文件已删除且无 import。
 - artifact kind 不再出现 `"research"`、`"process"`、`"writing_patch"`、`"citation_check"`、`"organize_suggestions"`。
 
-- [ ] **Step 2: 全库搜索旧债**
+- [x] **Step 2: 全库搜索旧债**
 
 Run:
 
@@ -1212,7 +1212,7 @@ Expected: 只允许出现：
 - 历史兼容函数定义，且注释含 `compatibility only`。
 - 测试中用于 `not.toContain` 的字符串。
 
-- [ ] **Step 3: 改契约测试防回潮**
+- [x] **Step 3: 改契约测试防回潮**
 
 `tests/agent-task-phase-f-contract.test.ts` 增加：
 
@@ -1237,7 +1237,7 @@ expect(read("src-tauri/src/ai_harness/harness_task.rs")).not.toContain(
 );
 ```
 
-- [ ] **Step 4: 删除无意义临时兼容**
+- [x] **Step 4: 删除无意义临时兼容**
 
 如果 Tasks 1-10 为通过编译临时保留了 adapter，逐项处理：
 
@@ -1245,7 +1245,7 @@ expect(read("src-tauri/src/ai_harness/harness_task.rs")).not.toContain(
 - `AssistantArtifactTagStrip` 如果仍只用于消息流按钮条，删除组件与 tests；如果用于 workspace 内部操作，改名为 `ArtifactInlineActions` 并移出消息流。
 - `researchResult` state 如果只为旧卡片服务，删除；如果作为 artifact payload cache，改名为 `activeEvidenceArtifactPayload`。
 
-- [ ] **Step 5: 验证**
+- [x] **Step 5: 验证**
 
 Run:
 
@@ -1258,7 +1258,7 @@ cargo clippy --all-targets -- -D warnings
 
 Expected: PASS。旧债搜索结果符合 Step 2 白名单。
 
-- [ ] **Step 6: 提交删除收口**
+- [x] **Step 6: 提交删除收口**
 
 ```bash
 git add src src-tauri tests docs

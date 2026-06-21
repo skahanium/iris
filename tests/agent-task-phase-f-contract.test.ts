@@ -44,6 +44,18 @@ describe("Agent Task Runtime Phase F legacy scene cleanup", () => {
     expect(providerHook).not.toContain("routing.scenes");
   });
 
+  it("keeps legacy research cards and keyword routers out of the assistant stream", () => {
+    const routing = read("src/lib/assistant-routing.ts");
+    const taskPlan = read("src/lib/assistant-taskplan.ts");
+    const messageList = read("src/components/ai/AiMessageList.tsx");
+    const artifactTabs = read("src/lib/assistant-artifact-tabs.ts");
+
+    expect(routing).not.toContain("RESEARCH_KEYWORDS");
+    expect(taskPlan).not.toContain("RESEARCH_KEYWORDS");
+    expect(messageList).not.toContain("ResearchResultMessage");
+    expect(artifactTabs).toContain("artifactPassesValueGate");
+  });
+
   it("updates roadmap and architecture to Agent Task Runtime as the main AI architecture", () => {
     const roadmap = read("ROADMAP.md");
     const architecture = read("ARCHITECTURE.md");

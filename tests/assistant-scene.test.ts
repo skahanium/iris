@@ -1,36 +1,11 @@
+import { readFileSync } from "node:fs";
+
 import { describe, expect, it } from "vitest";
 
 import {
   legacySceneHintForAgentIntent,
-  legacySceneHintForAssistantIntent,
+  legacySceneHintForTaskPlanIntent,
 } from "@/lib/assistant-scene";
-
-describe("legacySceneHintForAssistantIntent", () => {
-  it("maps drafting intents to drafting_assist", () => {
-    expect(legacySceneHintForAssistantIntent("writing")).toBe(
-      "drafting_assist",
-    );
-    expect(legacySceneHintForAssistantIntent("chapter")).toBe(
-      "drafting_assist",
-    );
-    expect(legacySceneHintForAssistantIntent("document")).toBe(
-      "drafting_assist",
-    );
-  });
-
-  it("maps research to research_synthesis", () => {
-    expect(legacySceneHintForAssistantIntent("research")).toBe(
-      "research_synthesis",
-    );
-  });
-
-  it("maps knowledge and chat to knowledge_lookup", () => {
-    expect(legacySceneHintForAssistantIntent("knowledge")).toBe(
-      "knowledge_lookup",
-    );
-    expect(legacySceneHintForAssistantIntent("chat")).toBe("knowledge_lookup");
-  });
-});
 
 describe("legacySceneHintForAgentIntent", () => {
   it("maps Phase2 writing intents to drafting_assist", () => {
@@ -63,5 +38,44 @@ describe("legacySceneHintForAgentIntent", () => {
     expect(legacySceneHintForAgentIntent("skill_management")).toBe(
       "knowledge_lookup",
     );
+  });
+
+  it("marks the remaining scene mapping as backend compatibility only", () => {
+    const source = readFileSync("src/lib/assistant-scene.ts", "utf8");
+    expect(source).toContain("compatibility only");
+    expect(source).not.toContain("legacySceneHintForAssistantIntent");
+    expect(source).not.toContain("syncActiveLegacySceneHint");
+  });
+
+  it("maps TaskPlan intents to the session scene buckets used by history", () => {
+    expect(legacySceneHintForTaskPlanIntent("citation_check")).toBe(
+      "research_synthesis",
+    );
+    expect(legacySceneHintForTaskPlanIntent("research")).toBe(
+      "research_synthesis",
+    );
+    expect(legacySceneHintForTaskPlanIntent("creative_write")).toBe(
+      "drafting_assist",
+    );
+    expect(legacySceneHintForTaskPlanIntent("rewrite_selection")).toBe(
+      "drafting_assist",
+    );
+    expect(legacySceneHintForTaskPlanIntent("document_check")).toBe(
+      "drafting_assist",
+    );
+    expect(legacySceneHintForTaskPlanIntent("chapter")).toBe("drafting_assist");
+    expect(legacySceneHintForTaskPlanIntent("ask_notes")).toBe(
+      "knowledge_lookup",
+    );
+  });
+
+  it("passes the TaskPlan-derived scene into assistant header history controls", () => {
+    const source = readFileSync(
+      "src/components/ai/UnifiedAssistantPanel.impl.tsx",
+      "utf8",
+    );
+    expect(source).toContain("legacySceneHintForTaskPlanIntent(");
+    expect(source).toContain("scene={currentScene}");
+    expect(source).not.toContain('scene="knowledge_lookup"');
   });
 });

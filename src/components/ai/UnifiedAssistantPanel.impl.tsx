@@ -5,9 +5,9 @@ import { AssistantProcessStatusBar } from "@/components/ai/AssistantProcessStatu
 import { AiComposer } from "@/components/ui/ai-composer";
 import { usePromptProfile } from "@/hooks/usePromptProfile";
 import { useAssistantLlmStream } from "@/hooks/useAssistantLlmStream";
-import { legacySceneHintForAssistantIntent } from "@/lib/assistant-scene";
 import { harnessAbort } from "@/lib/ipc";
 import { createContextReference } from "@/lib/context-reference";
+import { legacySceneHintForTaskPlanIntent } from "@/lib/assistant-scene";
 import type {
   AssistantActionState,
   ContextPacket,
@@ -374,6 +374,7 @@ export function UnifiedAssistantPanel({
       prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id],
     );
   }, []);
+  const currentScene = legacySceneHintForTaskPlanIntent(currentTaskPlanIntent);
 
   return (
     <div
@@ -383,7 +384,7 @@ export function UnifiedAssistantPanel({
       <AssistantPanelHeader
         chromeActionsDisabled={streaming}
         currentSessionId={sessionId}
-        legacySceneHint={legacySceneHintForAssistantIntent(actionState.intent)}
+        scene={currentScene}
         notePath={notePath}
         onClearedAllSessions={resetAssistantSessionState}
         onDeletedCurrentSession={resetAssistantSessionState}

@@ -63,7 +63,7 @@ export function AssistantTaskSurfaces({
       kind: "structured_result",
       title: "引用检查",
       sourceRequestId: citationResult.request_id,
-      payload: { resultKind: "citation_check", result: citationResult },
+      payload: { schema: "citation_report", result: citationResult },
     });
   }
   if (organizeSuggestions.length > 0) {
@@ -72,7 +72,7 @@ export function AssistantTaskSurfaces({
       title: "整理建议",
       sourceRequestId: organizeSuggestions.map((item) => item.id).join("-"),
       payload: {
-        resultKind: "organize_suggestions",
+        schema: "organize_result",
         suggestions: organizeSuggestions,
         selectedIds: Array.from(organizeSelection),
       },

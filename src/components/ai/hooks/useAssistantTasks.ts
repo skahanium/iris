@@ -16,7 +16,7 @@ import {
   agentIntentForTaskPlan,
   intentDetectionForTaskPlan,
 } from "@/lib/assistant-routing";
-import { legacySceneHintForAssistantIntent } from "@/lib/assistant-scene";
+import { legacySceneHintForAgentIntent } from "@/lib/assistant-scene";
 import { buildAssistantTaskPlan } from "@/lib/assistant-taskplan";
 import { invokeErrorMessage } from "@/lib/credentials";
 import {
@@ -178,6 +178,24 @@ function assistantIntentForTaskPlanIntent(
   }
 }
 
+function agentIntentForAssistantIntent(intent: AssistantIntent): AgentIntent {
+  switch (intent) {
+    case "knowledge":
+      return "ask_notes";
+    case "writing":
+      return "rewrite_selection";
+    case "citation":
+      return "citation_check";
+    case "document":
+      return "document_check";
+    case "chat":
+    case "research":
+    case "organize":
+    case "chapter":
+      return intent;
+  }
+}
+
 export function useAssistantTasks({
   runtime,
   context,
@@ -314,17 +332,11 @@ export function useAssistantTasks({
 
   const assembleContextForChat = useCallback(
     async (query: string, intent: AssistantIntent) => {
-      const scene = legacySceneHintForAssistantIntent(intent);
+      const agentIntent = agentIntentForAssistantIntent(intent);
+      const scene = legacySceneHintForAgentIntent(agentIntent);
       const result = await contextAssemble({
         scene,
-        agent_intent:
-          intent === "knowledge"
-            ? "ask_notes"
-            : intent === "research"
-              ? "research"
-              : intent === "chat"
-                ? "chat"
-                : "ask_notes",
+        agent_intent: agentIntent,
         note_path: notePath,
         note_content_hash: null,
         query,

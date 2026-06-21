@@ -36,7 +36,7 @@ describe("统一助手工作流验收", () => {
   it("引用检查：选区 + 检查语义进入 citation", () => {
     expect(intentForFlow("citation_check")).toBe("citation");
     expect(read("src/components/ai/AssistantTaskSurfaces.tsx")).toContain(
-      'resultKind: "citation_check"',
+      'schema: "citation_report"',
     );
     expect(read("src/components/layout/ArtifactWorkspaceView.tsx")).toContain(
       "CitationCheckView",
@@ -83,8 +83,11 @@ describe("统一助手工作流验收", () => {
       "run_harness_task",
     );
     expect(read("src/hooks/useAssistantRun.ts")).toContain("AssistantRunState");
-    expect(read("src/lib/map-harness-result-to-artifacts.ts")).toContain(
-      "mapChatResultToArtifacts",
+    expect(read("src/lib/assistant-artifact-tabs.ts")).toContain(
+      "artifactPassesValueGate",
+    );
+    expect(read("src/components/ai/hooks/useAssistantTasks.ts")).toContain(
+      "buildArtifactDraftsFromTaskResult",
     );
   });
 

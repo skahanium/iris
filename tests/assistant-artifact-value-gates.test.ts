@@ -88,6 +88,19 @@ describe("assistant artifact value gates", () => {
     expect(drafts).toEqual([]);
   });
 
+  it("does not create artifacts from legacy task body kinds without wires", () => {
+    expect(
+      buildArtifactDraftsFromTaskResult({
+        requestId: "legacy-research",
+        runStatus: "completed",
+        kind: "research",
+        payload: {
+          evidence_matrix: { total_evidence_count: 2 },
+        },
+      }),
+    ).toEqual([]);
+  });
+
   it("keeps task_process for confirmations, failures, pauses, and checkpointed long tasks", () => {
     const cases: Array<unknown> = [
       { schema: "task_process", status: "pending_confirmation" },
@@ -135,7 +148,7 @@ describe("assistant artifact value gates", () => {
           sourceTask: "organize",
           evidenceCount: 0,
           payload: {
-            resultKind: "organize_suggestions",
+            schema: "organize_result",
             suggestions: [{ id: "org-1", reason: "路径应归档" }],
           },
         },
@@ -146,7 +159,7 @@ describe("assistant artifact value gates", () => {
           sourceTask: "citation",
           evidenceCount: 0,
           payload: {
-            resultKind: "citation_check",
+            schema: "citation_report",
             coverage: { supported: 1, missing: 1 },
           },
         },
@@ -179,13 +192,13 @@ describe("assistant artifact value gates", () => {
   it("drops structured_result drafts without substantive content", () => {
     expect(
       artifactPassesValueGate(
-        draft("structured_result", { resultKind: "citation_check" }),
+        draft("structured_result", { schema: "citation_report" }),
       ),
     ).toBe(false);
     expect(
       artifactPassesValueGate(
         draft("structured_result", {
-          resultKind: "organize_suggestions",
+          schema: "organize_result",
           suggestions: [],
         }),
       ),
