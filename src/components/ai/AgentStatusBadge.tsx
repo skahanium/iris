@@ -10,24 +10,69 @@ import {
   type SkillListEntryDto,
 } from "@/lib/ipc";
 import { cn } from "@/lib/utils";
-import type { AiScene } from "@/types/ai";
+import type { AiScene, AssistantTaskStatus, TaskPlanIntent } from "@/types/ai";
 
 interface AgentStatusBadgeProps {
   webSearchEnabled?: boolean;
   disabled?: boolean;
   scene?: AiScene;
+  taskPlanIntent?: TaskPlanIntent | null;
+  taskStatus?: AssistantTaskStatus;
   onOpenSkills?: () => void;
 }
 
-function compatibilityContextLabel(scene: AiScene): string {
-  switch (scene) {
-    case "drafting_assist":
-      return "写作任务";
-    case "research_synthesis":
-      return "研究任务";
-    case "knowledge_lookup":
+function currentTurnLabel(
+  taskPlanIntent: TaskPlanIntent | null | undefined,
+  taskStatus: AssistantTaskStatus | undefined,
+  fallbackScene: AiScene,
+): string {
+  if (taskStatus === "awaiting_confirmation") return "等待确认";
+
+  switch (taskPlanIntent) {
+    case "creative_write":
+    case "rewrite_selection":
+    case "chapter":
+    case "document_check":
+      return "写作候选";
+    case "citation_check":
+    case "research":
+      return "研究综合";
+    case "organize":
+    case "ask_notes":
+    case "chat":
+    case "vision_chat":
+    case "skill_management":
+      return "轻量对话";
     default:
-      return "问答任务";
+      return fallbackScene === "research_synthesis"
+        ? "研究综合"
+        : fallbackScene === "drafting_assist"
+          ? "写作候选"
+          : "轻量对话";
+  }
+}
+
+function sceneForSkillCompatibility(
+  taskPlanIntent: TaskPlanIntent | null | undefined,
+  fallbackScene: AiScene,
+): AiScene {
+  switch (taskPlanIntent) {
+    case "creative_write":
+    case "rewrite_selection":
+    case "chapter":
+    case "document_check":
+      return "drafting_assist";
+    case "citation_check":
+    case "research":
+      return "research_synthesis";
+    case "ask_notes":
+    case "chat":
+    case "vision_chat":
+    case "skill_management":
+    case "organize":
+      return "knowledge_lookup";
+    default:
+      return fallbackScene;
   }
 }
 
@@ -66,12 +111,15 @@ export function AgentStatusBadge({
   webSearchEnabled = false,
   disabled,
   scene: sceneProp,
+  taskPlanIntent,
+  taskStatus,
   onOpenSkills,
 }: AgentStatusBadgeProps) {
   const [skills, setSkills] = useState<SkillListEntryDto[]>([]);
   const [open, setOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
-  const scene = sceneProp ?? getActiveAiScene();
+  const fallbackScene = sceneProp ?? getActiveAiScene();
+  const scene = sceneForSkillCompatibility(taskPlanIntent, fallbackScene);
 
   const loadSkills = useCallback(async () => {
     try {
@@ -142,7 +190,8 @@ export function AgentStatusBadge({
           <div className="border-b border-border/60 px-3 py-2.5">
             <p className="text-xs font-medium text-foreground">Agent 状态</p>
             <p className="mt-0.5 text-[10px] text-muted-foreground">
-              任务：{compatibilityContextLabel(scene)}
+              本轮：
+              {currentTurnLabel(taskPlanIntent, taskStatus, fallbackScene)}
               {hasActiveSkills
                 ? ` · 当前可用 ${activeSkills.length} 个 Skill`
                 : enabledSkills.length > 0

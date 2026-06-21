@@ -4,7 +4,7 @@ import { AgentStatusBadge } from "@/components/ai/AgentStatusBadge";
 import { AssistantPersonaDisplay } from "@/components/ai/AssistantPersonaDisplay";
 import { Button } from "@/components/ui/button";
 import type { PromptProfileDto } from "@/lib/ipc";
-import type { AiScene } from "@/types/ai";
+import type { AiScene, AssistantTaskStatus, TaskPlanIntent } from "@/types/ai";
 
 import type { ChatLine } from "./AiMessageList";
 import { SessionHistoryDropdown } from "./SessionHistoryDropdown";
@@ -19,6 +19,8 @@ interface AssistantPanelHeaderProps {
   onNewChat: () => void;
   onSelectSession: (id: number, messages: ChatLine[]) => void;
   profile: PromptProfileDto;
+  taskPlanIntent?: TaskPlanIntent | null;
+  taskStatus: AssistantTaskStatus;
   webSearch: boolean;
 }
 
@@ -32,6 +34,8 @@ export function AssistantPanelHeader({
   onNewChat,
   onSelectSession,
   profile,
+  taskPlanIntent,
+  taskStatus,
   webSearch,
 }: AssistantPanelHeaderProps) {
   return (
@@ -44,6 +48,8 @@ export function AssistantPanelHeader({
           <AgentStatusBadge
             webSearchEnabled={webSearch}
             scene={legacySceneHint}
+            taskPlanIntent={taskPlanIntent}
+            taskStatus={taskStatus}
             disabled={chromeActionsDisabled}
           />
           <SessionHistoryDropdown

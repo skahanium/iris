@@ -97,9 +97,8 @@ pub fn legacy_intent_for_task_plan(plan: &TaskPlanSummary) -> AssistantIntent {
             AssistantIntent::Chat
         }
         TaskPlanIntent::AskNotes => AssistantIntent::Knowledge,
-        TaskPlanIntent::CreativeWrite | TaskPlanIntent::RewriteSelection => {
-            AssistantIntent::Writing
-        }
+        TaskPlanIntent::CreativeWrite => AssistantIntent::Chat,
+        TaskPlanIntent::RewriteSelection => AssistantIntent::Writing,
         TaskPlanIntent::CitationCheck => AssistantIntent::Citation,
         TaskPlanIntent::Research => AssistantIntent::Research,
         TaskPlanIntent::Organize => AssistantIntent::Organize,
@@ -345,6 +344,10 @@ mod tests {
         assert_eq!(task_plan.model_slot, CapabilitySlot::Writer);
         assert_eq!(task_plan.execution_mode, ExecutionMode::WritingCandidate);
         assert_eq!(agent_intent_for_task_plan(&task_plan), AgentIntent::Write);
+        assert_eq!(
+            legacy_intent_for_task_plan(&task_plan),
+            AssistantIntent::Chat
+        );
     }
 
     #[test]

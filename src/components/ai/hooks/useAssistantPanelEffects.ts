@@ -6,7 +6,6 @@ import {
 } from "react";
 
 import { buildAssistantChromeSnapshot } from "@/lib/assistant-chrome";
-import { syncActiveLegacySceneHint } from "@/lib/assistant-scene";
 import { listenAiRequestStarted } from "@/lib/ipc";
 import type {
   AssistantActionState,
@@ -20,7 +19,6 @@ import type { AssistantSelectionQuote } from "../types";
 import { buildActionState } from "../unified-assistant-panel-utils";
 
 interface UseAssistantPanelEffectsParams {
-  actionState: AssistantActionState;
   activityHint: string | null;
   harnessRequestId: string | null;
   messages: ChatLine[];
@@ -37,7 +35,6 @@ interface UseAssistantPanelEffectsParams {
 }
 
 export function useAssistantPanelEffects({
-  actionState,
   activityHint,
   harnessRequestId,
   messages,
@@ -101,8 +98,4 @@ export function useAssistantPanelEffects({
     if (!prefillMessage?.trim()) return;
     setInput(prefillMessage.trim());
   }, [prefillMessage, setInput]);
-
-  useEffect(() => {
-    syncActiveLegacySceneHint(actionState.intent);
-  }, [actionState.intent]);
 }

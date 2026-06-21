@@ -85,7 +85,8 @@ describe("context references", () => {
     const tasks = read("src/components/ai/hooks/useAssistantTasks.ts");
 
     expect(tasks).toContain("contextReferences: currentContextReferences()");
-    expect(tasks).toContain("activeContextReferences.length > 0");
+    expect(tasks).toContain("contextReferences: activeContextReferences");
+    expect(tasks).toContain('reference.kind === "selection"');
     expect(tasks).not.toContain("contextReferences: []");
   });
 });

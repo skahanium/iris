@@ -13,10 +13,11 @@ import { buildArtifactDraftsFromTaskResult } from "@/lib/assistant-artifact-tabs
 import { validateContextReference } from "@/lib/context-reference";
 import { patchSpansPreferSidebar } from "@/lib/assistant-patch";
 import {
-  detectAgentIntent,
-  legacyIntentForAgentIntent,
+  agentIntentForTaskPlan,
+  intentDetectionForTaskPlan,
 } from "@/lib/assistant-routing";
 import { legacySceneHintForAssistantIntent } from "@/lib/assistant-scene";
+import { buildAssistantTaskPlan } from "@/lib/assistant-taskplan";
 import { invokeErrorMessage } from "@/lib/credentials";
 import {
   assistantExecute,
@@ -44,6 +45,8 @@ import type {
   WritingEditorContext,
   IntentDetectionResult,
   PermissionPreflightSummary,
+  TaskPlan,
+  TaskPlanIntent,
 } from "@/types/ai";
 import type { AssistantArtifactDraft } from "@/types/assistant-artifact";
 
@@ -113,6 +116,7 @@ interface AssistantTaskStatePorts {
     SetStateAction<import("@/types/ai").CitationCheckResult | null>
   >;
   setContextStatusData: Dispatch<SetStateAction<ContextStatus | null>>;
+  setCurrentTaskPlanIntent: Dispatch<SetStateAction<TaskPlanIntent | null>>;
   setDocIssues: Dispatch<SetStateAction<string[]>>;
   setDocSummary: Dispatch<SetStateAction<string | null>>;
   setAgentTaskId: Dispatch<SetStateAction<string | null>>;
@@ -144,10 +148,34 @@ interface UseAssistantTasksParams {
 }
 
 interface UseAssistantTasksResult {
-  runWriting: (rawMessage: string) => Promise<void>;
+  runWriting: (rawMessage: string, taskPlan?: TaskPlan) => Promise<void>;
   send: () => Promise<void>;
   images: ImageAttachment[];
   setImages: Dispatch<SetStateAction<ImageAttachment[]>>;
+}
+
+function assistantIntentForTaskPlanIntent(
+  planIntent: TaskPlanIntent,
+): AssistantIntent {
+  switch (planIntent) {
+    case "ask_notes":
+      return "knowledge";
+    case "creative_write":
+    case "rewrite_selection":
+      return "writing";
+    case "citation_check":
+      return "citation";
+    case "document_check":
+      return "document";
+    case "vision_chat":
+    case "skill_management":
+      return "chat";
+    case "chat":
+    case "research":
+    case "organize":
+    case "chapter":
+      return planIntent;
+  }
 }
 
 export function useAssistantTasks({
@@ -195,6 +223,7 @@ export function useAssistantTasks({
     setAssistantArtifacts,
     setCitationResult,
     setContextStatusData,
+    setCurrentTaskPlanIntent,
     setDocIssues,
     setDocSummary,
     setAgentTaskId,
@@ -332,6 +361,7 @@ export function useAssistantTasks({
         agentIntent?: AgentIntent;
         intentDetection?: IntentDetectionResult;
         images?: ImageAttachment[];
+        taskPlan?: TaskPlan;
       },
     ) => {
       setStreaming(true);
@@ -370,6 +400,7 @@ export function useAssistantTasks({
             ),
           message: rawMessage,
           contextReferences: currentContextReferences(),
+          taskPlan: options?.taskPlan,
           images: options?.images,
           notePath,
           noteContent: getNoteContent(),
@@ -527,6 +558,7 @@ export function useAssistantTasks({
         agentIntent?: AgentIntent;
         intentDetection?: IntentDetectionResult;
         images?: ImageAttachment[];
+        taskPlan?: TaskPlan;
       },
     ) => {
       clearTaskSurfaces();
@@ -560,7 +592,7 @@ export function useAssistantTasks({
   );
 
   const runWriting = useCallback(
-    async (rawMessage: string) => {
+    async (rawMessage: string, taskPlan?: TaskPlan) => {
       const ctx = getWritingContext();
       if (!notePath || !ctx) {
         throw new Error("请先在编辑器中选中需要处理的内容。");
@@ -579,6 +611,7 @@ export function useAssistantTasks({
         ),
         message: rawMessage,
         contextReferences: currentContextReferences(),
+        taskPlan,
         notePath,
         noteContent: getNoteContent(),
         webAuthorized: webSearch,
@@ -633,67 +666,71 @@ export function useAssistantTasks({
     ],
   );
 
-  const runCitation = useCallback(async () => {
-    if (!notePath) {
-      throw new Error("请先打开一篇笔记。");
-    }
-    const text = getParagraphText();
-    if (!text?.trim()) {
-      throw new Error("请先在编辑器中选中要检查引用的段落。");
-    }
-    setActionState(buildActionState("citation", "running"));
-    assistantRun.setFromTaskStatus("running", "citation");
-    clearTaskSurfaces();
-    const response = await assistantExecute({
-      agentIntent: "citation_check",
-      intent: "citation",
-      intentDetection: explicitIntentDetection(
-        "citation_check",
-        "Citation command explicitly requested claim and evidence checking.",
-        ["ui_action:citation_check", "context:selection"],
-        ["ask_notes", "research"],
-      ),
-      message: "检查引用",
-      contextReferences: currentContextReferences(),
-      notePath,
-      webAuthorized: webSearch,
-      paragraphText: text,
+  const runCitation = useCallback(
+    async (rawMessage = "检查引用", taskPlan?: TaskPlan) => {
+      if (!notePath) {
+        throw new Error("请先打开一篇笔记。");
+      }
+      const text = getParagraphText();
+      if (!text?.trim()) {
+        throw new Error("请先在编辑器中选中要检查引用的段落。");
+      }
+      setActionState(buildActionState("citation", "running"));
+      assistantRun.setFromTaskStatus("running", "citation");
+      clearTaskSurfaces();
+      const response = await assistantExecute({
+        agentIntent: "citation_check",
+        intent: "citation",
+        intentDetection: explicitIntentDetection(
+          "citation_check",
+          "Citation command explicitly requested claim and evidence checking.",
+          ["ui_action:citation_check", "context:selection"],
+          ["ask_notes", "research"],
+        ),
+        message: rawMessage,
+        contextReferences: currentContextReferences(),
+        taskPlan,
+        notePath,
+        webAuthorized: webSearch,
+        paragraphText: text,
+        contextScope,
+      });
+      recordRunPlan(response);
+      recordAssistantArtifacts(response);
+      setAgentTaskId(response.taskId ?? null);
+      if (response.kind !== "citation") {
+        throw new Error("助手路由异常：期望引用检查结果");
+      }
+      const result = response.payload;
+      setCitationResult(result);
+      setPackets(result.evidence_used);
+      setPacketsOpen(result.evidence_used.length > 0);
+      setActionState(buildActionState("citation", "completed"));
+      assistantRun.setFromTaskStatus("completed", "citation");
+      appendAssistantSummary("citation");
+    },
+    [
+      appendAssistantSummary,
+      assistantRun,
+      clearTaskSurfaces,
       contextScope,
-    });
-    recordRunPlan(response);
-    recordAssistantArtifacts(response);
-    setAgentTaskId(response.taskId ?? null);
-    if (response.kind !== "citation") {
-      throw new Error("助手路由异常：期望引用检查结果");
-    }
-    const result = response.payload;
-    setCitationResult(result);
-    setPackets(result.evidence_used);
-    setPacketsOpen(result.evidence_used.length > 0);
-    setActionState(buildActionState("citation", "completed"));
-    assistantRun.setFromTaskStatus("completed", "citation");
-    appendAssistantSummary("citation");
-  }, [
-    appendAssistantSummary,
-    assistantRun,
-    clearTaskSurfaces,
-    contextScope,
-    explicitIntentDetection,
-    getParagraphText,
-    notePath,
-    recordRunPlan,
-    recordAssistantArtifacts,
-    currentContextReferences,
-    setActionState,
-    setAgentTaskId,
-    setCitationResult,
-    setPackets,
-    setPacketsOpen,
-    webSearch,
-  ]);
+      explicitIntentDetection,
+      getParagraphText,
+      notePath,
+      recordRunPlan,
+      recordAssistantArtifacts,
+      currentContextReferences,
+      setActionState,
+      setAgentTaskId,
+      setCitationResult,
+      setPackets,
+      setPacketsOpen,
+      webSearch,
+    ],
+  );
 
   const runOrganize = useCallback(
-    async (rawMessage: string) => {
+    async (rawMessage: string, taskPlan?: TaskPlan) => {
       setActionState(buildActionState("organize", "running"));
       assistantRun.setFromTaskStatus("running", "organize");
       clearTaskSurfaces();
@@ -708,6 +745,7 @@ export function useAssistantTasks({
         ),
         message: rawMessage,
         contextReferences: currentContextReferences(),
+        taskPlan,
         webAuthorized: webSearch,
         contextScope,
         organizeTaskType: determineOrganizeTaskType(rawMessage),
@@ -751,7 +789,7 @@ export function useAssistantTasks({
   );
 
   const runChapter = useCallback(
-    async (rawMessage: string) => {
+    async (rawMessage: string, taskPlan?: TaskPlan) => {
       if (!notePath) {
         throw new Error("请先打开一篇笔记。");
       }
@@ -774,6 +812,7 @@ export function useAssistantTasks({
         ),
         message: rawMessage,
         contextReferences: currentContextReferences(),
+        taskPlan,
         notePath,
         noteContent: getNoteContent(),
         webAuthorized: webSearch,
@@ -817,7 +856,7 @@ export function useAssistantTasks({
   );
 
   const runDocumentCheck = useCallback(
-    async (rawMessage: string) => {
+    async (rawMessage: string, taskPlan?: TaskPlan) => {
       if (!notePath) {
         throw new Error("请先打开一篇笔记。");
       }
@@ -835,6 +874,7 @@ export function useAssistantTasks({
         ),
         message: rawMessage,
         contextReferences: currentContextReferences(),
+        taskPlan,
         notePath,
         noteContent: getNoteContent(),
         webAuthorized: webSearch,
@@ -899,7 +939,7 @@ export function useAssistantTasks({
   );
 
   const runResearch = useCallback(
-    async (rawMessage: string) => {
+    async (rawMessage: string, taskPlan?: TaskPlan) => {
       setActionState(buildActionState("research", "running"));
       assistantRun.setFromTaskStatus("running", "research");
       setResearchRunning(true);
@@ -915,6 +955,7 @@ export function useAssistantTasks({
         ),
         message: rawMessage,
         contextReferences: currentContextReferences(),
+        taskPlan,
         webAuthorized: webSearch,
       });
       recordRunPlan(response);
@@ -965,21 +1006,27 @@ export function useAssistantTasks({
     if ((!input.trim() && images.length === 0) || composerDisabled) return;
     const rawMessage = input.trim();
     const activeContextReferences = currentContextReferences();
-    const intentDetection = detectAgentIntent({
+    const hasSelection = Boolean(
+      getWritingContext()?.selection ||
+      selectionQuoteText ||
+      activeContextReferences.some(
+        (reference) => reference.kind === "selection",
+      ),
+    );
+    const taskPlan = buildAssistantTaskPlan({
       message: rawMessage,
       contextReferences: activeContextReferences,
       hasImage: images.length > 0,
-      hasSelection: Boolean(
-        getWritingContext()?.selection ||
-        selectionQuoteText ||
-        activeContextReferences.length > 0,
-      ),
+      hasSelection,
       notePath,
       explicitScope:
         contextScope.paths.length > 0 || contextScope.pathPrefixes.length > 0,
+      webAuthorized: webSearch,
     });
-    const agentIntent = intentDetection.detectedIntent;
-    const intent = legacyIntentForAgentIntent(agentIntent);
+    const agentIntent = agentIntentForTaskPlan(taskPlan);
+    const intentDetection = intentDetectionForTaskPlan(taskPlan);
+    const intent = assistantIntentForTaskPlanIntent(taskPlan.intent);
+    setCurrentTaskPlanIntent(taskPlan.intent);
 
     const currentImages = images;
     setInput("");
@@ -994,33 +1041,71 @@ export function useAssistantTasks({
     setActivityHint("正在理解你的问题…");
 
     try {
-      switch (intent) {
-        case "writing":
-          await runWriting(rawMessage);
+      if (taskPlan.requiresClarification) {
+        clearTaskSurfaces();
+        runPlanControls.setIntentDetection(null);
+        runPlanControls.setRunPlanSummary(null);
+        runPlanControls.setPermissionPreflightSummary(null);
+        const question =
+          taskPlan.clarificationQuestion ??
+          "你希望我先做哪一种处理：普通回答、写作，还是研究？";
+        setMessages((prev) => [
+          ...prev,
+          {
+            role: "assistant",
+            content: question,
+          },
+        ]);
+        setActionState(buildActionState("chat", "completed"));
+        assistantRun.setFromTaskStatus("completed", "chat");
+        setActivityHint(null);
+        clearContextReferences();
+        return;
+      }
+
+      switch (taskPlan.intent) {
+        case "rewrite_selection":
+          await runWriting(rawMessage, taskPlan);
           break;
-        case "citation":
-          await runCitation();
-          break;
-        case "organize":
-          await runOrganize(rawMessage);
-          break;
-        case "research":
-          await runResearch(rawMessage);
-          break;
-        case "chapter":
-          await runChapter(rawMessage);
-          break;
-        case "document":
-          await runDocumentCheck(rawMessage);
-          break;
-        case "knowledge":
-        case "chat":
-          await runKnowledgeChat(rawMessage, intent, {
+        case "creative_write":
+          await runKnowledgeChat(rawMessage, "chat", {
             startNewSession,
             agentIntent,
             intentDetection,
             images: currentImages.length > 0 ? currentImages : undefined,
+            taskPlan,
           });
+          break;
+        case "citation_check":
+          await runCitation(rawMessage, taskPlan);
+          break;
+        case "organize":
+          await runOrganize(rawMessage, taskPlan);
+          break;
+        case "research":
+          await runResearch(rawMessage, taskPlan);
+          break;
+        case "chapter":
+          await runChapter(rawMessage, taskPlan);
+          break;
+        case "document_check":
+          await runDocumentCheck(rawMessage, taskPlan);
+          break;
+        case "ask_notes":
+        case "chat":
+        case "vision_chat":
+        case "skill_management":
+          await runKnowledgeChat(
+            rawMessage,
+            assistantIntentForTaskPlanIntent(taskPlan.intent),
+            {
+              startNewSession,
+              agentIntent,
+              intentDetection,
+              images: currentImages.length > 0 ? currentImages : undefined,
+              taskPlan,
+            },
+          );
           break;
       }
       clearContextReferences();
@@ -1040,6 +1125,7 @@ export function useAssistantTasks({
     assistantRun,
     clearCitationMiss,
     clearContextReferences,
+    clearTaskSurfaces,
     composerDisabled,
     contextScope.pathPrefixes.length,
     contextScope.paths.length,
@@ -1057,13 +1143,16 @@ export function useAssistantTasks({
     runOrganize,
     runResearch,
     runWriting,
+    runPlanControls,
     selectionQuoteText,
     setActionState,
     setActivityHint,
+    setCurrentTaskPlanIntent,
     setImages,
     setInput,
     setLastError,
     setMessages,
+    webSearch,
   ]);
 
   return { runWriting, send, images, setImages };

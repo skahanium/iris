@@ -925,7 +925,7 @@ git commit -m "feat(ai): 增加精确上下文引用胶囊"
 - Modify: `tests/use-assistant-confirmations.test.tsx`
 - Modify: `tests/ai-workflow-tasks.test.ts`
 
-- [ ] **Step 1: 把 `send` 改成先 build plan**
+- [x] **Step 1: 把 `send` 改成先 build plan**
 
 `useAssistantTasks.ts` 的 `send` 开头：
 
@@ -950,12 +950,13 @@ const taskPlan = buildAssistantTaskPlan({
 
 不调用 `assistantExecute`，不生成 tab。
 
-- [ ] **Step 2: 用 `taskPlan.intent` 调度**
+- [x] **Step 2: 用 `taskPlan.intent` 调度**
 
 将 `switch (intent)` 改为 `switch (taskPlan.intent)`，映射：
 
 - `chat`, `vision_chat`, `ask_notes` -> `runKnowledgeChat`
-- `creative_write`, `rewrite_selection` -> `runWriting`
+- `creative_write` -> 普通文字流承载的 writer TaskPlan
+- `rewrite_selection` -> `runWriting`
 - `citation_check` -> `runCitation`
 - `organize` -> `runOrganize`
 - `research` -> `runResearch`
@@ -965,7 +966,9 @@ const taskPlan = buildAssistantTaskPlan({
 
 所有 `assistantExecute` 调用传 `taskPlan`。
 
-- [ ] **Step 3: 状态徽标显示本轮 plan，不再显示固定 scene**
+Implementation note: `rewrite_selection` 继续走补丁式 `runWriting`；`creative_write` 走普通文字流承载的 writer TaskPlan，后端保持 writer 路由但使用 chat legacy workflow，避免无选区续写小说被迫进入补丁/研究路径。
+
+- [x] **Step 3: 状态徽标显示本轮 plan，不再显示固定 scene**
 
 `AgentStatusBadge.tsx` 文案从“任务：研究任务 · 使用核心默认工具集”改成当前本轮状态：
 
@@ -976,7 +979,7 @@ const taskPlan = buildAssistantTaskPlan({
 
 不要展示 `AiScene` 名称。
 
-- [ ] **Step 4: session history 兼容**
+- [x] **Step 4: session history 兼容**
 
 `SessionHistoryDropdown.tsx` 仍可用 legacy scene 查询旧 session，但新会话不因上一轮 scene 锁定下一轮。测试断言：
 
@@ -986,7 +989,7 @@ expect(panelEffects).not.toContain("syncActiveLegacySceneHint");
 
 如果历史 API 仍要求 scene，传 `taskPlan` 派生的兼容 scene，只作为 session key。
 
-- [ ] **Step 5: 验证跨场景**
+- [x] **Step 5: 验证跨场景**
 
 新增测试序列：
 
@@ -997,7 +1000,7 @@ expect(panelEffects).not.toContain("syncActiveLegacySceneHint");
 
 断言四次 plan 彼此独立，不读取上一轮 intent 作为硬锁。
 
-- [ ] **Step 6: 验证**
+- [x] **Step 6: 验证**
 
 Run:
 
@@ -1008,7 +1011,7 @@ npm run typecheck
 
 Expected: PASS。同会话切换不出现 scene lock。
 
-- [ ] **Step 7: 提交统一调度**
+- [x] **Step 7: 提交统一调度**
 
 ```bash
 git add src/components/ai/hooks/useAssistantTasks.ts src/components/ai/hooks/useAssistantPanelEffects.ts src/components/ai/AgentStatusBadge.tsx src/components/ai/SessionHistoryDropdown.tsx tests/use-assistant-confirmations.test.tsx tests/ai-workflow-tasks.test.ts

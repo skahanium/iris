@@ -12,6 +12,7 @@ import type {
   AssistantActionState,
   ContextPacket,
   ContextStatus,
+  TaskPlanIntent,
 } from "@/types/ai";
 
 import { buildActionState } from "./unified-assistant-panel-utils";
@@ -58,6 +59,8 @@ export function UnifiedAssistantPanel({
   const [actionState, setActionState] = useState<AssistantActionState>(
     buildActionState("chat", "idle"),
   );
+  const [currentTaskPlanIntent, setCurrentTaskPlanIntent] =
+    useState<TaskPlanIntent | null>(null);
   const [input, setInput] = useState("");
   const [streaming, setStreaming] = useState(false);
   const bubbleSelection = useAiBubbleSelection();
@@ -195,7 +198,6 @@ export function UnifiedAssistantPanel({
   clearResearchProgressRef.current = clearResearchProgress;
 
   useAssistantPanelEffects({
-    actionState,
     activityHint,
     harnessRequestId,
     messages,
@@ -315,6 +317,7 @@ export function UnifiedAssistantPanel({
       setActionState,
       setActivityHint,
       setAssistantArtifacts,
+      setCurrentTaskPlanIntent,
       setCitationResult,
       setContextStatusData,
       setDocIssues,
@@ -344,8 +347,17 @@ export function UnifiedAssistantPanel({
   const resetAssistantSessionState = useCallback(() => {
     setAgentTaskId(null);
     setPausedTaskId(null);
+    setCurrentTaskPlanIntent(null);
     handleNewChat();
   }, [handleNewChat]);
+
+  const loadSessionAndResetTaskPlan = useCallback(
+    (id: number, nextMessages: Parameters<typeof handleLoadSession>[1]) => {
+      setCurrentTaskPlanIntent(null);
+      handleLoadSession(id, nextMessages);
+    },
+    [handleLoadSession],
+  );
 
   const stopStreaming = useCallback(() => {
     const id = requestIdRef.current;
@@ -376,8 +388,10 @@ export function UnifiedAssistantPanel({
         onClearedAllSessions={resetAssistantSessionState}
         onDeletedCurrentSession={resetAssistantSessionState}
         onNewChat={resetAssistantSessionState}
-        onSelectSession={handleLoadSession}
+        onSelectSession={loadSessionAndResetTaskPlan}
         profile={promptProfile}
+        taskPlanIntent={currentTaskPlanIntent}
+        taskStatus={actionState.status}
         webSearch={webSearch}
       />
 

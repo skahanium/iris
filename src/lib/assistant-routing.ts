@@ -51,7 +51,7 @@ export function detectSkillHubDirectInstall(
   };
 }
 
-function legacyAgentIntentForTaskPlan(plan: TaskPlan): AgentIntent {
+export function agentIntentForTaskPlan(plan: TaskPlan): AgentIntent {
   if (plan.intent === "creative_write") return "write";
   return plan.intent;
 }
@@ -160,10 +160,14 @@ function fallbackFor(plan: TaskPlan): string {
 export function detectAgentIntent(
   input: AssistantRouteInput,
 ): IntentDetectionResult {
-  const plan = buildAssistantTaskPlan(input);
+  return intentDetectionForTaskPlan(buildAssistantTaskPlan(input));
+}
 
+export function intentDetectionForTaskPlan(
+  plan: TaskPlan,
+): IntentDetectionResult {
   return {
-    detectedIntent: legacyAgentIntentForTaskPlan(plan),
+    detectedIntent: agentIntentForTaskPlan(plan),
     confidence: confidenceScore(plan),
     reason: reasonFor(plan),
     alternatives: alternativesFor(plan),
