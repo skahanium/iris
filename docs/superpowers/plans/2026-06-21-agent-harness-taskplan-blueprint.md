@@ -1028,7 +1028,7 @@ git commit -m "refactor(ai): 统一按 TaskPlan 调度每轮任务"
 - Modify: `tests/assistant-artifact-value-gates.test.ts`
 - Modify: `tests/e2e/ai-workflow.test.ts`
 
-- [ ] **Step 1: 为研究输出写 Rust 单元测试**
+- [x] **Step 1: 为研究输出写 Rust 单元测试**
 
 在 `research_workflow.rs` 或相邻测试模块增加：
 
@@ -1037,7 +1037,7 @@ git commit -m "refactor(ai): 统一按 TaskPlan 调度每轮任务"
 - `research_summary_is_markdown_message`
 - `evidence_sources_include_real_source_count`
 
-- [ ] **Step 2: 删除默认机械矩阵行为**
+- [x] **Step 2: 删除默认机械矩阵行为**
 
 找到机械生成缺口的位置，例如根据 proposition 全量追加“缺少直接证据”。改为：
 
@@ -1045,7 +1045,7 @@ git commit -m "refactor(ai): 统一按 TaskPlan 调度每轮任务"
 - 只有模型推断出来的 proposition 且无来源时，`coverage` 状态为 `insufficient_evidence`，不展示为矩阵。
 - `global_gaps` 只保留用户能行动的缺口，例如缺少指定来源、联网关闭导致无法核验、具体引用冲突。
 
-- [ ] **Step 3: 研究 response 拆分**
+- [x] **Step 3: 研究 response 拆分**
 
 后端返回：
 
@@ -1054,11 +1054,13 @@ git commit -m "refactor(ai): 统一按 TaskPlan 调度每轮任务"
 - `coverage_diagnostics`: 有来源时才计算覆盖。
 - `artifact_wires`: 只在 `evidence_sources.len() > 0` 或存在可行动缺口时生成 `evidence_sources`。
 
-- [ ] **Step 4: 前端展示**
+Implementation note: 现有 `task_result_from_research`/`artifacts_to_wires` 已按真实证据或可行动缺口生成 `evidence_sources` wire；本任务补齐 workflow 层，不再让空 evidence matrix 产生机械缺口。
+
+- [x] **Step 4: 前端展示**
 
 `runResearch` 只把 `summary` 追加到 messages。`setResearchResult` 可以保留给临时 tab payload，但不再驱动消息卡。
 
-- [ ] **Step 5: 验证**
+- [x] **Step 5: 验证**
 
 Run:
 
@@ -1069,7 +1071,7 @@ npm run test -- tests/assistant-artifact-value-gates.test.ts tests/e2e/ai-workfl
 
 Expected: PASS。空证据不生成矩阵 tab；研究正文在消息流中可读。
 
-- [ ] **Step 6: 提交研究降噪**
+- [x] **Step 6: 提交研究降噪**
 
 ```bash
 git add src-tauri/src/ai_workflows/research_workflow.rs src-tauri/src/ai_harness/harness_task.rs src/types/ai.ts tests/assistant-artifact-value-gates.test.ts tests/e2e/ai-workflow.test.ts

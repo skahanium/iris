@@ -643,7 +643,7 @@ fn build_evidence_matrix(
             .collect();
 
         let gaps = if evidence.is_empty() {
-            vec![format!("子命题「{}」缺少直接证据", prop.statement)]
+            Vec::new()
         } else {
             // Check for trust level gaps
             let has_user_note = evidence
@@ -975,6 +975,90 @@ mod tests {
         let matrix = build_evidence_matrix("test", &[], &[]);
         assert_eq!(matrix.coverage_score, 0.0);
         assert_eq!(matrix.total_evidence_count, 0);
+        assert!(matrix.global_gaps.is_empty());
+    }
+
+    #[test]
+    fn empty_evidence_does_not_create_matrix_artifact() {
+        let props = vec![SubProposition {
+            id: "P1".into(),
+            statement: "需要真实资料支撑的命题".into(),
+            evidence: vec![],
+            gaps: vec![],
+        }];
+
+        let matrix = build_evidence_matrix("test topic", &props, &[]);
+
+        assert_eq!(matrix.total_evidence_count, 0);
+        assert_eq!(matrix.coverage_score, 0.0);
+        assert!(matrix.global_gaps.is_empty());
+        assert!(matrix.propositions[0].gaps.is_empty());
+    }
+
+    #[test]
+    fn mechanical_gap_without_source_is_not_a_displayable_gap() {
+        let props = vec![SubProposition {
+            id: "P1".into(),
+            statement: "模型拆出来但没有来源的子命题".into(),
+            evidence: vec![],
+            gaps: vec!["子命题缺少直接证据".into()],
+        }];
+
+        let matrix = build_evidence_matrix("test topic", &props, &[]);
+
+        assert!(matrix.global_gaps.is_empty());
+        assert!(matrix.propositions[0].gaps.is_empty());
+    }
+
+    #[test]
+    fn evidence_sources_include_real_source_count() {
+        let props = vec![SubProposition {
+            id: "P1".into(),
+            statement: "组织纪律".into(),
+            evidence: vec![],
+            gaps: vec![],
+        }];
+        let packets = vec![
+            ContextPacket {
+                id: "pkt-1".into(),
+                source_type: crate::ai_runtime::SourceType::Note,
+                source_path: Some("test.md".into()),
+                title: "组织纪律概述".into(),
+                heading_path: None,
+                source_span: None,
+                content_hash: "h1".into(),
+                excerpt: "组织纪律是党的纪律的重要组成部分".into(),
+                retrieval_reason: "fts".into(),
+                score: 0.9,
+                trust_level: TrustLevel::UserNote,
+                citation_label: "[1]".into(),
+                stale: false,
+                web: None,
+                corpus: None,
+            },
+            ContextPacket {
+                id: "pkt-2".into(),
+                source_type: crate::ai_runtime::SourceType::Note,
+                source_path: Some("test-2.md".into()),
+                title: "组织纪律案例".into(),
+                heading_path: None,
+                source_span: None,
+                content_hash: "h2".into(),
+                excerpt: "组织纪律案例材料".into(),
+                retrieval_reason: "fts".into(),
+                score: 0.8,
+                trust_level: TrustLevel::UserNote,
+                citation_label: "[2]".into(),
+                stale: false,
+                web: None,
+                corpus: None,
+            },
+        ];
+
+        let matrix = build_evidence_matrix("test topic", &props, &packets);
+
+        assert_eq!(matrix.total_evidence_count, 2);
+        assert_eq!(matrix.coverage_score, 1.0);
     }
 
     #[test]
