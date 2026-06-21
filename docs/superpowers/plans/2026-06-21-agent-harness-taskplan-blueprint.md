@@ -333,7 +333,7 @@ git commit -m "feat(ai): 增加 TaskPlan 与上下文引用契约"
 - Modify: `tests/agent-taskplan-routing.test.ts`
 - Modify: `tests/unified-assistant-routing.test.ts`
 
-- [ ] **Step 1: 新建 `src/lib/assistant-taskplan.ts`**
+- [x] **Step 1: 新建 `src/lib/assistant-taskplan.ts`**
 
 实现纯函数：
 
@@ -365,7 +365,7 @@ export function buildAssistantTaskPlan(
 export const writingKeywordBeforeResearchKeyword = true;
 ```
 
-- [ ] **Step 2: 明确每类默认 plan**
+- [x] **Step 2: 明确每类默认 plan**
 
 实现小函数，避免复制字段：
 
@@ -394,7 +394,7 @@ function clarifyPlan(input: BuildAssistantTaskPlanInput, question: string): Task
 - vision_chat: `modelSlot: "vision"`
 - skill_management: `modelSlot: "agent_tools"`
 
-- [ ] **Step 3: 将旧 `assistant-routing.ts` 改成适配层**
+- [x] **Step 3: 将旧 `assistant-routing.ts` 改成适配层**
 
 保留现有导出：
 
@@ -405,7 +405,7 @@ export function legacyIntentForAgentIntent(intent: AgentIntent): AssistantIntent
 
 `detectAgentIntent` 内部调用 `buildAssistantTaskPlan(input)`，把 `TaskPlan` 映射回旧 `IntentDetectionResult`，供尚未改完的 UI 使用。删除 `RESEARCH_KEYWORDS`、`WRITING_KEYWORDS` 等主决策数组；如果仍需少量关键词，放进 `assistant-taskplan.ts` 且按创作优先。
 
-- [ ] **Step 4: 运行测试**
+- [x] **Step 4: 运行测试**
 
 Run:
 
@@ -416,7 +416,7 @@ npm run typecheck
 
 Expected: PASS。小说续写回归用例必须落到 `creative_write` 或 `rewrite_selection`，不能是 `research`。
 
-- [ ] **Step 5: 提交前端 TaskPlan**
+- [x] **Step 5: 提交前端 TaskPlan**
 
 ```bash
 git add src/lib/assistant-taskplan.ts src/lib/assistant-routing.ts tests/agent-taskplan-routing.test.ts tests/unified-assistant-routing.test.ts

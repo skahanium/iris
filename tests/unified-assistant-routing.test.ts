@@ -196,6 +196,15 @@ describe("detectAgentIntent", () => {
     ).resolves.toMatchObject({ detectedIntent: "skill_management" });
   });
 
+  it("keeps image and skill signals ahead of empty-message fallback", async () => {
+    await expect(detect({ hasImage: true })).resolves.toMatchObject({
+      detectedIntent: "vision_chat",
+    });
+    await expect(detect({ skillMention: true })).resolves.toMatchObject({
+      detectedIntent: "skill_management",
+    });
+  });
+
   it("uses low-confidence chat fallback without exposing a scene selector", async () => {
     const result = await detect({ message: "随便聊聊" });
 
