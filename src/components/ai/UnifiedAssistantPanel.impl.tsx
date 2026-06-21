@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { AssistantPanelHeader } from "@/components/ai/AssistantPanelHeader";
 import { AssistantProcessStatusBar } from "@/components/ai/AssistantProcessStatusBar";
@@ -7,6 +7,7 @@ import { usePromptProfile } from "@/hooks/usePromptProfile";
 import { useAssistantLlmStream } from "@/hooks/useAssistantLlmStream";
 import { legacySceneHintForAssistantIntent } from "@/lib/assistant-scene";
 import { harnessAbort } from "@/lib/ipc";
+import { createContextReference } from "@/lib/context-reference";
 import type {
   AssistantActionState,
   ContextPacket,
@@ -141,6 +142,7 @@ export function UnifiedAssistantPanel({
     actionIntent: actionState.intent,
     bubbleSelection,
     clearCitationMiss,
+    clearContextReferences: bubbleSelection.clearContextReferences,
     clearTaskSurfaces,
     forceNewSessionRef,
     onInsertToEditor,
@@ -217,6 +219,20 @@ export function UnifiedAssistantPanel({
     setStreaming,
   });
 
+  useEffect(() => {
+    if (!selectionQuote?.text) return;
+    bubbleSelection.quoteSelectionAsReference(
+      createContextReference({
+        kind: "selection",
+        filePath: selectionQuote.filePath,
+        content: selectionQuote.content ?? selectionQuote.text,
+        excerpt: selectionQuote.text,
+        utf8Range: null,
+        editorRange: selectionQuote.editorRange ?? null,
+      }),
+    );
+  }, [bubbleSelection, selectionQuote]);
+
   const handleHarnessResume = useAssistantHarnessResume({
     ensureAssistantStreamSlot,
     harnessRequestId,
@@ -268,6 +284,7 @@ export function UnifiedAssistantPanel({
       assistantRun,
       clearCitationMiss,
       clearTaskSurfaces,
+      clearContextReferences: bubbleSelection.clearContextReferences,
       ensureAssistantStreamSlot,
       runPlanControls: runPlan,
     },
@@ -282,6 +299,7 @@ export function UnifiedAssistantPanel({
       notePath,
       packets,
       selectedPacketIds,
+      contextReferences: bubbleSelection.contextReferences,
       selectionQuoteText: selectionQuote?.text,
       sessionId,
       webSearch,
@@ -396,6 +414,7 @@ export function UnifiedAssistantPanel({
 
       <ConversationSurface
         messages={messages}
+        contextReferences={bubbleSelection.contextReferences}
         streaming={streaming}
         selectedIndices={bubbleSelection.selected}
         messageListRef={messageListRef}
@@ -403,6 +422,7 @@ export function UnifiedAssistantPanel({
         onRetract={handleRetract}
         onSelect={bubbleSelection.handleClick}
         onQuoteToInput={handleQuoteToInput}
+        onRemoveContextReference={bubbleSelection.removeContextReference}
       />
 
       <AgentTaskStatusPanel

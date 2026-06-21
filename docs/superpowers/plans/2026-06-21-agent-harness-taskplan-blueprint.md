@@ -813,7 +813,7 @@ git commit -m "refactor(ai): 为临时产物增加价值门槛"
 - Modify: `src/lib/iris-clipboard.ts`
 - Modify: `src/components/ai/hooks/useAssistantTasks.ts`
 
-- [ ] **Step 1: 新增失败测试**
+- [x] **Step 1: 新增失败测试**
 
 `tests/context-reference.test.ts` 覆盖：
 
@@ -829,7 +829,7 @@ it(
 it("serializes references through assistantExecute");
 ```
 
-- [ ] **Step 2: 实现 `src/lib/context-reference.ts`**
+- [x] **Step 2: 实现 `src/lib/context-reference.ts`**
 
 导出：
 
@@ -856,7 +856,7 @@ export function contextReferenceDisplayText(
 
 `createContextReference` 使用已有 hash 工具；若代码库没有现成 hash 工具，用浏览器 `crypto.subtle` 不适合同步测试，先在前端使用已有 `content_hash` 来源。不要新增 npm 依赖。
 
-- [ ] **Step 3: 输入框显示引用胶囊**
+- [x] **Step 3: 输入框显示引用胶囊**
 
 `ConversationSurface.tsx` 在 composer 上方或输入框内部显示轻量 capsule：
 
@@ -867,7 +867,7 @@ export function contextReferenceDisplayText(
 
 不显示完整原文，不在用户消息正文中拼接选区全文。
 
-- [ ] **Step 4: 右侧 AI 引用选区**
+- [x] **Step 4: 右侧 AI 引用选区**
 
 `useAiBubbleSelection.ts` 与 `useAssistantConversation.ts` 增加 `quoteSelectionAsReference`：
 
@@ -877,7 +877,7 @@ quoteSelectionAsReference(reference: ContextReference): void
 
 旧的 `selectionQuoteText` 可以短期保留做显示兼容，但发送请求时必须转为 `contextReferences`。
 
-- [ ] **Step 5: 悬浮 AI composer 接入**
+- [x] **Step 5: 悬浮 AI composer 接入**
 
 `useInlineAi.ts` 从 TipTap selection 构造 `ContextReference`，并提供两个明确动作：
 
@@ -886,7 +886,7 @@ quoteSelectionAsReference(reference: ContextReference): void
 
 这两个动作进入 `TaskPlan.executionMode = "patch_proposal"`，写入仍走确认。
 
-- [ ] **Step 6: assistantExecute 带上引用**
+- [x] **Step 6: assistantExecute 带上引用**
 
 `useAssistantTasks.ts` 的所有路径统一传：
 
@@ -896,7 +896,7 @@ contextReferences: activeContextReferences;
 
 写作路径不再只传裸 `selection`；迁移期可同时传 `selection`，但 plan 必须写明删除目标：Task 11 删除裸 selection 主路径。
 
-- [ ] **Step 7: 验证**
+- [x] **Step 7: 验证**
 
 Run:
 
@@ -907,7 +907,7 @@ npm run typecheck
 
 Expected: PASS。跨段局部选择不能被扩展成整段。
 
-- [ ] **Step 8: 提交 ContextReference**
+- [x] **Step 8: 提交 ContextReference**
 
 ```bash
 git add src/lib/context-reference.ts src/components/ai/ConversationSurface.tsx src/components/ai/hooks/useAssistantConversation.ts src/hooks/useInlineAi.ts src/hooks/useAiBubbleSelection.ts src/lib/iris-clipboard.ts src/components/ai/hooks/useAssistantTasks.ts tests/context-reference.test.ts tests/use-assistant-context-scope.test.tsx tests/app-shell-refactor-contract.test.ts

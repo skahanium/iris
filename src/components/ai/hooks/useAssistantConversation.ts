@@ -35,6 +35,7 @@ interface UseAssistantConversationParams {
   actionIntent: AssistantIntent;
   bubbleSelection: BubbleSelectionPort;
   clearCitationMiss: () => void;
+  clearContextReferences: () => void;
   clearTaskSurfaces: () => void;
   forceNewSessionRef: MutableRefObject<boolean>;
   onInsertToEditor?: (content: string) => void;
@@ -69,6 +70,7 @@ export function useAssistantConversation({
   actionIntent,
   bubbleSelection,
   clearCitationMiss,
+  clearContextReferences,
   clearTaskSurfaces,
   forceNewSessionRef,
   onInsertToEditor,
@@ -100,6 +102,7 @@ export function useAssistantConversation({
 
   const handleNewChat = useCallback(() => {
     clearTaskSurfaces();
+    clearContextReferences();
     clearCitationMiss();
     setPackets([]);
     setSelectedPacketIds([]);
@@ -116,6 +119,7 @@ export function useAssistantConversation({
     setActionState(buildActionState("chat", "idle"));
   }, [
     clearCitationMiss,
+    clearContextReferences,
     clearTaskSurfaces,
     forceNewSessionRef,
     requestIdRef,
@@ -278,12 +282,14 @@ export function useAssistantConversation({
       setMessages(loaded);
       forceNewSessionRef.current = false;
       clearTaskSurfaces();
+      clearContextReferences();
       clearCitationMiss();
       setActionState(buildActionState(actionIntent, "idle"));
     },
     [
       actionIntent,
       clearCitationMiss,
+      clearContextReferences,
       clearTaskSurfaces,
       forceNewSessionRef,
       setActionState,

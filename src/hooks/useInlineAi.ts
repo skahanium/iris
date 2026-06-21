@@ -2,6 +2,8 @@ import type { Editor } from "@tiptap/react";
 import { useCallback, useRef } from "react";
 
 import { buildInlineAiUserMessage } from "@/lib/inline-ai-prompts";
+import { createContextReference } from "@/lib/context-reference";
+import { getEditorSelectionSnapshot } from "@/lib/iris-clipboard";
 import {
   buildSlashCommandMessage,
   parseSlashActionId,
@@ -15,6 +17,10 @@ import {
   llmGenerate,
 } from "@/lib/ipc";
 import type { ChatMessage } from "@/types/ipc";
+import type { ContextReference } from "@/types/ai";
+
+export const INLINE_AI_INSERT_AFTER_SELECTION = "insert_after_selection";
+export const INLINE_AI_REPLACE_SELECTION = "replace_selection";
 
 export interface UseInlineAiOptions {
   provider?: string;
@@ -68,6 +74,21 @@ export function buildRetryRequest(ctx: {
       },
     ],
   };
+}
+
+export function buildInlineSelectionReference(
+  editor: Editor,
+  filePath: string | null,
+): ContextReference | null {
+  const snapshot = getEditorSelectionSnapshot(editor);
+  if (!snapshot) return null;
+  return createContextReference({
+    kind: "selection",
+    filePath,
+    content: snapshot.content,
+    utf8Range: null,
+    editorRange: snapshot.editorRange,
+  });
 }
 
 /**

@@ -3,6 +3,7 @@ import { useCallback, useEffect, useState, type RefObject } from "react";
 
 import type { AssistantSelectionQuote } from "@/components/ai/UnifiedAssistantPanel";
 import { isClassifiedVaultPath } from "@/lib/classified-path";
+import { getEditorSelectionSnapshot } from "@/lib/iris-clipboard";
 import { settingsGet, settingsSet } from "@/lib/ipc";
 import {
   EMPTY_ASSISTANT_CHROME,
@@ -12,12 +13,14 @@ import {
 interface UseAiSidecarBridgeParams {
   activePathRef: RefObject<string | null>;
   editorRef: RefObject<Editor | null>;
+  getNoteContent: () => string;
   setAiStatus: (message: string) => void;
 }
 
 export function useAiSidecarBridge({
   activePathRef,
   editorRef,
+  getNoteContent,
   setAiStatus,
 }: UseAiSidecarBridgeParams) {
   const [aiPanelOpen, setAiPanelOpen] = useState(true);
@@ -58,17 +61,21 @@ export function useAiSidecarBridge({
         setAiStatus("涉密笔记不能发送到 AI");
         return;
       }
-      const { from, to } = ed.state.selection;
-      const text = ed.state.doc.textBetween(from, to, "\n");
-      if (!text) {
+      const snapshot = getEditorSelectionSnapshot(ed);
+      if (!snapshot) {
         setAiStatus("请先在编辑器中选中文本");
         return;
       }
-      setSelectionQuote({ filePath: path, text });
+      setSelectionQuote({
+        filePath: path,
+        text: snapshot.text,
+        content: getNoteContent(),
+        editorRange: snapshot.editorRange,
+      });
       setPrefillMessage(options?.prefill ?? null);
       setAiPanelOpen(true);
     },
-    [activePathRef, editorRef, setAiStatus],
+    [activePathRef, editorRef, getNoteContent, setAiStatus],
   );
 
   return {

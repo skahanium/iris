@@ -23,6 +23,7 @@ function Harness({
       clear: vi.fn(),
     },
     clearCitationMiss: vi.fn(),
+    clearContextReferences: vi.fn(),
     clearTaskSurfaces: vi.fn(),
     forceNewSessionRef: { current: false },
     onInsertToEditor: vi.fn(),

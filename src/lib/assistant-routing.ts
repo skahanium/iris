@@ -3,6 +3,7 @@ import type {
   AssistantIntent,
   AssistantTaskStatus,
   IntentDetectionResult,
+  ContextReference,
   TaskPlan,
 } from "@/types/ai";
 
@@ -12,6 +13,7 @@ export interface AssistantRouteInput {
   message: string;
   hasSelection: boolean;
   notePath: string | null;
+  contextReferences?: ContextReference[];
   explicitScope: boolean;
   uiAction?: string;
   hasImage?: boolean;

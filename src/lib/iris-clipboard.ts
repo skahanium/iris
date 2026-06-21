@@ -33,6 +33,30 @@ export function getEditorSelectedText(editor: Editor): string {
   return editor.state.doc.textBetween(from, to, "\n");
 }
 
+export interface EditorSelectionSnapshot {
+  text: string;
+  content: string;
+  editorRange: { from: number; to: number };
+}
+
+export function getEditorSelectionSnapshot(
+  editor: Editor,
+): EditorSelectionSnapshot | null {
+  const { from, to } = editor.state.selection;
+  if (from === to) return null;
+  const text = editor.state.doc.textBetween(from, to, "\n");
+  if (!text) return null;
+  return {
+    text,
+    content: editor.state.doc.textBetween(
+      0,
+      editor.state.doc.content.size,
+      "\n",
+    ),
+    editorRange: { from, to },
+  };
+}
+
 /** 复制 TipTap 选区 */
 export async function copyEditorSelection(editor: Editor): Promise<boolean> {
   const text = getEditorSelectedText(editor);

@@ -5,6 +5,8 @@ import type { AssistantChromeSnapshot } from "@/types/assistant-chrome";
 export interface AssistantSelectionQuote {
   filePath: string;
   text: string;
+  content?: string;
+  editorRange?: { from: number; to: number } | null;
 }
 
 export interface UnifiedAssistantPanelProps {

@@ -1,5 +1,7 @@
 import { useCallback, useRef, useState } from "react";
 
+import type { ContextReference } from "@/types/ai";
+
 /**
  * AI 对话气泡选中状态管理。
  *
@@ -10,6 +12,9 @@ import { useCallback, useRef, useState } from "react";
  */
 export function useAiBubbleSelection() {
   const [selected, setSelected] = useState<Set<number>>(() => new Set());
+  const [contextReferences, setContextReferences] = useState<
+    ContextReference[]
+  >([]);
   const lastIndexRef = useRef<number>(-1);
 
   const handleClick = useCallback(
@@ -49,10 +54,37 @@ export function useAiBubbleSelection() {
     lastIndexRef.current = -1;
   }, []);
 
+  const quoteSelectionAsReference = useCallback(
+    (reference: ContextReference) => {
+      setContextReferences((prev) => {
+        const next = prev.filter((item) => item.id !== reference.id);
+        return [...next, reference];
+      });
+    },
+    [],
+  );
+
+  const removeContextReference = useCallback((id: string) => {
+    setContextReferences((prev) => prev.filter((item) => item.id !== id));
+  }, []);
+
+  const clearContextReferences = useCallback(() => {
+    setContextReferences([]);
+  }, []);
+
   const isSelected = useCallback(
     (index: number) => selected.has(index),
     [selected],
   );
 
-  return { selected, handleClick, clear, isSelected };
+  return {
+    selected,
+    contextReferences,
+    handleClick,
+    clear,
+    isSelected,
+    quoteSelectionAsReference,
+    removeContextReference,
+    clearContextReferences,
+  };
 }

@@ -10,6 +10,7 @@ import { mergeContextPackets } from "@/lib/ai/merge-context-packets";
 import { shouldStartNewAiSession } from "@/lib/ai/session-thread";
 import { resolveAssistantDisplayContent } from "@/lib/assistant-message-content";
 import { buildArtifactDraftsFromTaskResult } from "@/lib/assistant-artifact-tabs";
+import { validateContextReference } from "@/lib/context-reference";
 import { patchSpansPreferSidebar } from "@/lib/assistant-patch";
 import {
   detectAgentIntent,
@@ -30,6 +31,7 @@ import type {
   AgentRunPlanSummary,
   AssistantExecuteResponse,
   AssistantIntent,
+  ContextReference,
   ContextPacket,
   ContextScope,
   ContextStatus,
@@ -66,6 +68,7 @@ interface AssistantTaskRuntimePorts {
   appendUserMessage: (rawMessage: string, imgs?: ImageAttachment[]) => void;
   assistantRun: AssistantRunPort;
   clearCitationMiss: () => void;
+  clearContextReferences: () => void;
   clearTaskSurfaces: () => void;
   ensureAssistantStreamSlot: () => void;
   runPlanControls: {
@@ -80,6 +83,7 @@ interface AssistantTaskRuntimePorts {
 interface AssistantTaskContext {
   composerDisabled: boolean;
   contextScope: ContextScope;
+  contextReferences: ContextReference[];
   getNoteContent: () => string;
   getParagraphText: () => string | null;
   getWritingContext: () => WritingEditorContext | null;
@@ -157,6 +161,7 @@ export function useAssistantTasks({
     appendUserMessage,
     assistantRun,
     clearCitationMiss,
+    clearContextReferences,
     clearTaskSurfaces,
     ensureAssistantStreamSlot,
     runPlanControls,
@@ -164,6 +169,7 @@ export function useAssistantTasks({
   const {
     composerDisabled,
     contextScope,
+    contextReferences,
     getNoteContent,
     getParagraphText,
     getWritingContext,
@@ -229,6 +235,17 @@ export function useAssistantTasks({
       setAssistantArtifacts(buildArtifactDraftsFromTaskResult(response));
     },
     [setAssistantArtifacts],
+  );
+
+  const currentContextReferences = useCallback(
+    () =>
+      contextReferences.map((reference) =>
+        validateContextReference(
+          reference,
+          reference.filePath === notePath ? getNoteContent() : null,
+        ),
+      ),
+    [contextReferences, getNoteContent, notePath],
   );
 
   const explicitIntentDetection = useCallback(
@@ -352,6 +369,7 @@ export function useAssistantTasks({
               intent === "knowledge" ? 0.78 : 0.72,
             ),
           message: rawMessage,
+          contextReferences: currentContextReferences(),
           images: options?.images,
           notePath,
           noteContent: getNoteContent(),
@@ -480,6 +498,7 @@ export function useAssistantTasks({
       panelSendActiveRef,
       recordRunPlan,
       recordAssistantArtifacts,
+      currentContextReferences,
       requestIdRef,
       selectedPacketIds,
       sessionId,
@@ -559,6 +578,7 @@ export function useAssistantTasks({
           ["write", "chat"],
         ),
         message: rawMessage,
+        contextReferences: currentContextReferences(),
         notePath,
         noteContent: getNoteContent(),
         webAuthorized: webSearch,
@@ -602,6 +622,7 @@ export function useAssistantTasks({
       explicitIntentDetection,
       recordRunPlan,
       recordAssistantArtifacts,
+      currentContextReferences,
       setActionState,
       setAgentTaskId,
       setPackets,
@@ -633,6 +654,7 @@ export function useAssistantTasks({
         ["ask_notes", "research"],
       ),
       message: "检查引用",
+      contextReferences: currentContextReferences(),
       notePath,
       webAuthorized: webSearch,
       paragraphText: text,
@@ -661,6 +683,7 @@ export function useAssistantTasks({
     notePath,
     recordRunPlan,
     recordAssistantArtifacts,
+    currentContextReferences,
     setActionState,
     setAgentTaskId,
     setCitationResult,
@@ -684,6 +707,7 @@ export function useAssistantTasks({
           ["ask_notes", "chat"],
         ),
         message: rawMessage,
+        contextReferences: currentContextReferences(),
         webAuthorized: webSearch,
         contextScope,
         organizeTaskType: determineOrganizeTaskType(rawMessage),
@@ -717,6 +741,7 @@ export function useAssistantTasks({
       explicitIntentDetection,
       recordRunPlan,
       recordAssistantArtifacts,
+      currentContextReferences,
       setActionState,
       setAgentTaskId,
       setOrganizeSelection,
@@ -748,6 +773,7 @@ export function useAssistantTasks({
           ["write", "document_check"],
         ),
         message: rawMessage,
+        contextReferences: currentContextReferences(),
         notePath,
         noteContent: getNoteContent(),
         webAuthorized: webSearch,
@@ -782,6 +808,7 @@ export function useAssistantTasks({
       notePath,
       recordRunPlan,
       recordAssistantArtifacts,
+      currentContextReferences,
       setActionState,
       setAgentTaskId,
       setWritingPatches,
@@ -807,6 +834,7 @@ export function useAssistantTasks({
           ["chapter", "write"],
         ),
         message: rawMessage,
+        contextReferences: currentContextReferences(),
         notePath,
         noteContent: getNoteContent(),
         webAuthorized: webSearch,
@@ -860,6 +888,7 @@ export function useAssistantTasks({
       notePath,
       recordRunPlan,
       recordAssistantArtifacts,
+      currentContextReferences,
       setActionState,
       setAgentTaskId,
       setDocIssues,
@@ -885,6 +914,7 @@ export function useAssistantTasks({
           ["ask_notes", "chat"],
         ),
         message: rawMessage,
+        contextReferences: currentContextReferences(),
         webAuthorized: webSearch,
       });
       recordRunPlan(response);
@@ -919,6 +949,7 @@ export function useAssistantTasks({
       researchRequestIdRef,
       recordRunPlan,
       recordAssistantArtifacts,
+      currentContextReferences,
       setActionState,
       setAgentTaskId,
       setMessages,
@@ -933,11 +964,15 @@ export function useAssistantTasks({
   const send = useCallback(async () => {
     if ((!input.trim() && images.length === 0) || composerDisabled) return;
     const rawMessage = input.trim();
+    const activeContextReferences = currentContextReferences();
     const intentDetection = detectAgentIntent({
       message: rawMessage,
+      contextReferences: activeContextReferences,
       hasImage: images.length > 0,
       hasSelection: Boolean(
-        getWritingContext()?.selection || selectionQuoteText,
+        getWritingContext()?.selection ||
+        selectionQuoteText ||
+        activeContextReferences.length > 0,
       ),
       notePath,
       explicitScope:
@@ -988,6 +1023,7 @@ export function useAssistantTasks({
           });
           break;
       }
+      clearContextReferences();
     } catch (error) {
       const message = invokeErrorMessage(error);
       setLastError(message);
@@ -1003,9 +1039,11 @@ export function useAssistantTasks({
     appendUserMessage,
     assistantRun,
     clearCitationMiss,
+    clearContextReferences,
     composerDisabled,
     contextScope.pathPrefixes.length,
     contextScope.paths.length,
+    currentContextReferences,
     forceNewSessionRef,
     getWritingContext,
     images,

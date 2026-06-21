@@ -193,6 +193,7 @@ function App() {
   } = useAiSidecarBridge({
     activePathRef,
     editorRef,
+    getNoteContent: () => markdownRef.current,
     setAiStatus,
   });
 

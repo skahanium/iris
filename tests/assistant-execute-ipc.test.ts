@@ -46,6 +46,29 @@ describe("assistant_execute IPC contract", () => {
     expect(types).toContain("intent?: AssistantIntent");
   });
 
+  it("serializes context references through the unified request", () => {
+    const types = read("src/types/ai.ts");
+    const facade = read("src-tauri/src/commands/assistant_commands.rs");
+    const ipc = read("src/lib/ipc.ts");
+
+    expect(types).toContain("contextReferences?: ContextReference[]");
+    expect(facade).toContain(
+      "pub context_references: Vec<ContextReferenceWire>",
+    );
+    expect(ipc).toContain(
+      'invoke<AssistantExecuteResponse>("assistant_execute"',
+    );
+    expect(ipc).toContain("{ request }");
+  });
+
+  it("routes with context reference awareness", () => {
+    const routing = read("src/lib/assistant-routing.ts");
+    const taskplan = read("src/lib/assistant-taskplan.ts");
+
+    expect(routing).toContain("contextReferences?: ContextReference[]");
+    expect(taskplan).toContain("context:reference");
+  });
+
   it("routes intents via harness_task layer", () => {
     const facade = read("src-tauri/src/commands/assistant_commands.rs");
     expect(facade).toContain("run_harness_task");
