@@ -36,6 +36,7 @@ pub mod skill_registry;
 pub mod skill_trust_policy;
 pub mod skills;
 pub mod subagent_coordinator;
+pub mod task_plan;
 pub mod tool_audit;
 pub mod tool_catalog;
 pub mod tool_dispatch;

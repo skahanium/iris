@@ -433,7 +433,7 @@ git commit -m "feat(ai): 用 TaskPlan 驱动前端任务路由"
 - Modify: `src-tauri/src/commands/assistant_commands.rs`
 - Modify: `src-tauri/src/ai_harness/harness_task.rs`
 
-- [ ] **Step 1: 新建后端模块与单元测试**
+- [x] **Step 1: 新建后端模块与单元测试**
 
 `src-tauri/src/ai_runtime/task_plan.rs` 提供：
 
@@ -452,7 +452,7 @@ pub fn legacy_intent_for_task_plan(plan: &TaskPlanSummary) -> AssistantIntent;
 - `context_reference_sets_current_reference_retrieval`
 - `web_disabled_sets_max_fetch_zero`
 
-- [ ] **Step 2: 补全请求没有 taskPlan 时的服务端兜底**
+- [x] **Step 2: 补全请求没有 taskPlan 时的服务端兜底**
 
 如果前端未传 `task_plan`，后端用 request facts 构造保守 plan：
 
@@ -463,7 +463,7 @@ pub fn legacy_intent_for_task_plan(plan: &TaskPlanSummary) -> AssistantIntent;
 
 兜底只用于旧客户端兼容，`source_hints` 必须加入 `"compat:server_derived_task_plan"`。
 
-- [ ] **Step 3: 改 `agent_task_policy.rs`**
+- [x] **Step 3: 改 `agent_task_policy.rs`**
 
 新增：
 
@@ -475,7 +475,7 @@ impl AgentTaskPolicyInput {
 
 把原有 `model_slot_for_input` 测试扩展为 `TaskPlan` 测试。`legacy_scene_hint` 字段继续存在，但注释改成“compatibility only”。
 
-- [ ] **Step 4: 在 `assistant_execute` 主入口接入**
+- [x] **Step 4: 在 `assistant_execute` 主入口接入**
 
 在 `assistant_execute` 入口最早处：
 
@@ -487,7 +487,7 @@ let legacy_intent = legacy_intent_for_task_plan(&task_plan);
 
 后续 skill activation、policy summary、harness request 都使用这个 `agent_intent`。Response 的 `task_plan` 返回 `Some(task_plan.clone())`。
 
-- [ ] **Step 5: `HarnessTaskRequest` 携带 plan**
+- [x] **Step 5: `HarnessTaskRequest` 携带 plan**
 
 把 `HarnessTaskRequest` 改为：
 
@@ -501,7 +501,7 @@ pub(crate) struct HarnessTaskRequest {
 
 所有构造点显式传入 `task_plan`，避免 workflow 再自行猜 intent。
 
-- [ ] **Step 6: 验证**
+- [x] **Step 6: 验证**
 
 Run:
 
@@ -514,7 +514,7 @@ npm run test -- tests/assistant-execute-ipc.test.ts tests/agent-taskplan-routing
 
 Expected: PASS。若旧测试仍期待 `agent_intent` 为唯一事实源，改成断言 response 同时包含 `taskPlan`。
 
-- [ ] **Step 7: 提交后端 TaskPlan**
+- [x] **Step 7: 提交后端 TaskPlan**
 
 ```bash
 git add src-tauri/src/ai_runtime/task_plan.rs src-tauri/src/ai_runtime/mod.rs src-tauri/src/ai_runtime/agent_task_policy.rs src-tauri/src/commands/assistant_commands.rs src-tauri/src/ai_harness/harness_task.rs tests/assistant-execute-ipc.test.ts

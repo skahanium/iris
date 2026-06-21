@@ -6,6 +6,7 @@
 
 use crate::ai_runtime::agent_task::AgentTaskKind;
 use crate::ai_types::{AgentIntent, AiScene, AutonomyLevel, CapabilitySlot, ContextStrategy};
+use crate::commands::assistant_commands::AssistantExecuteRequest;
 use crate::error::AppResult;
 use crate::llm::config::{
     resolve_capability_route, CapabilityRouteInput, PrivacyPreference, ResolvedCapabilityRoute,
@@ -53,7 +54,31 @@ pub struct AgentTaskPolicy {
     pub model_slot: CapabilitySlot,
     pub context_strategy: ContextStrategy,
     pub max_fetch_per_round: u32,
+    /// Compatibility-only scene hint for old sessions, traces, and metadata.
     pub legacy_scene_hint: String,
+}
+
+impl AgentTaskPolicyInput {
+    /// Derive task policy facts from the validated per-turn TaskPlan.
+    pub fn from_task_plan(
+        plan: &crate::ai_types::TaskPlanSummary,
+        request: &AssistantExecuteRequest,
+    ) -> Self {
+        Self {
+            intent: crate::ai_runtime::task_plan::agent_intent_for_task_plan(plan),
+            task_kind: crate::ai_runtime::task_plan::task_kind_for_task_plan(plan),
+            scope: crate::ai_runtime::task_plan::scope_for_task_plan(plan, request),
+            web_authorized: request.web_authorized
+                && matches!(plan.web_mode, crate::ai_types::WebMode::Brokered),
+            has_attachments: request
+                .images
+                .as_ref()
+                .is_some_and(|items| !items.is_empty()),
+            write_permission_required:
+                crate::ai_runtime::task_plan::write_permission_required_for_task_plan(plan),
+            research_depth: crate::ai_runtime::task_plan::research_depth_for_task_plan(plan),
+        }
+    }
 }
 
 impl AgentTaskPolicy {

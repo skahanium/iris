@@ -16,10 +16,13 @@ use crate::ai_runtime::harness_support::{
 };
 use crate::ai_runtime::model_gateway::{LlmMessage, MessageRole, TokenUsage, ToolCall};
 use crate::ai_runtime::retrieval_scope::ContextScopeDto;
+use crate::ai_runtime::task_plan::{
+    agent_intent_for_task_plan, build_or_validate_task_plan, legacy_intent_for_task_plan,
+};
 use crate::ai_runtime::writing_workflow::WritingTaskOutput;
 use crate::ai_runtime::{
     AgentAuditSummary, AgentIntent, AgentRunPlanSummary, CitationCheckResult, ContextReferenceWire,
-    IntentDetectionSummary, OrganizeTaskResult, PermissionPreflightSummary,
+    ExecutionMode, IntentDetectionSummary, OrganizeTaskResult, PermissionPreflightSummary,
     SkillActivationPlanSummary, SkillCapabilitySupportStatus, TaskPlanSummary,
 };
 use crate::app::AppState;
@@ -255,6 +258,7 @@ async fn maybe_handle_skillhub_direct_install(
     app_handle: &AppHandle,
     request: &AssistantExecuteRequest,
     agent_intent: AgentIntent,
+    task_plan: &TaskPlanSummary,
     skill_activation_plan: &SkillActivationPlanSummary,
     intent_detection: &IntentDetectionSummary,
 ) -> AppResult<Option<AssistantExecuteResponse>> {
@@ -273,19 +277,9 @@ async fn maybe_handle_skillhub_direct_install(
 
     let request_id = uuid::Uuid::new_v4().to_string();
     let task_policy = crate::ai_runtime::agent_task_policy::AgentTaskPolicy::from_input(
-        crate::ai_runtime::agent_task_policy::AgentTaskPolicyInput {
-            intent: agent_intent,
-            task_kind: crate::ai_runtime::agent_task::AgentTaskKind::Complex,
-            scope: if request.note_path.is_some() {
-                crate::ai_runtime::agent_task_policy::AgentTaskScope::Note
-            } else {
-                crate::ai_runtime::agent_task_policy::AgentTaskScope::Vault
-            },
-            web_authorized: request.web_authorized,
-            has_attachments: false,
-            write_permission_required: true,
-            research_depth: 0,
-        },
+        crate::ai_runtime::agent_task_policy::AgentTaskPolicyInput::from_task_plan(
+            task_plan, request,
+        ),
     );
     let legacy_scene_hint = task_policy.legacy_scene();
     let session_id = crate::ai_runtime::session::SessionManager::ensure(
@@ -347,7 +341,7 @@ async fn maybe_handle_skillhub_direct_install(
             evidence_refresh_notice: None,
             artifacts: Vec::new(),
             intent_detection: Some(intent_detection.clone()),
-            task_plan: None,
+            task_plan: Some(task_plan.clone()),
             run_plan_summary: None,
             permission_preflight_summary: None,
         }));
@@ -496,7 +490,7 @@ async fn maybe_handle_skillhub_direct_install(
             payload: serde_json::Value::Null,
         }],
         intent_detection: Some(intent_detection.clone()),
-        task_plan: None,
+        task_plan: Some(task_plan.clone()),
         run_plan_summary: None,
         permission_preflight_summary: Some(build_permission_preflight_summary(
             skill_activation_plan,
@@ -555,6 +549,53 @@ pub struct AssistantExecuteResponse {
     pub permission_preflight_summary: Option<PermissionPreflightSummary>,
 }
 
+fn clarification_response(
+    task_plan: TaskPlanSummary,
+    intent_detection: IntentDetectionSummary,
+    legacy_scene_hint: crate::ai_runtime::AiScene,
+    context_summary: Vec<String>,
+) -> AssistantExecuteResponse {
+    let request_id = uuid::Uuid::new_v4().to_string();
+    let detected_intent = intent_detection.detected_intent;
+    let question = task_plan
+        .clarification_question
+        .clone()
+        .unwrap_or_else(|| "请补充你希望我如何处理这个请求。".to_string());
+
+    AssistantExecuteResponse {
+        body: AssistantExecuteBody::Chat {
+            payload: serde_json::json!({
+                "content": question,
+                "status": "completed",
+                "pending_confirmation": false,
+            }),
+        },
+        request_id: request_id.clone(),
+        task_id: None,
+        run_status: "completed".into(),
+        evidence_refresh_notice: None,
+        artifacts: Vec::new(),
+        intent_detection: Some(intent_detection),
+        task_plan: Some(task_plan),
+        run_plan_summary: Some(
+            AgentRunPlanSummary::for_intent(
+                request_id,
+                detected_intent,
+                legacy_scene_hint,
+                context_summary,
+                "TaskPlan 要求先澄清，本轮不调用模型、工具或 Harness".to_string(),
+            )
+            .with_execution_state(
+                "completed",
+                "无需权限预检；本轮仅返回澄清问题".to_string(),
+                Vec::new(),
+                false,
+            ),
+        ),
+        permission_preflight_summary: None,
+    }
+}
+
 /// Route a unified assistant request through the harness task layer.
 pub(crate) async fn route_assistant_execute(
     state: &AppState,
@@ -562,45 +603,30 @@ pub(crate) async fn route_assistant_execute(
     request: AssistantExecuteRequest,
 ) -> AppResult<AssistantExecuteResponse> {
     crate::commands::ai_commands::validate_ai_note_path(request.note_path.as_deref())?;
-    let agent_intent = request.effective_agent_intent();
+    let task_plan = build_or_validate_task_plan(&request)?;
+    let agent_intent = agent_intent_for_task_plan(&task_plan);
+    let legacy_intent = legacy_intent_for_task_plan(&task_plan);
     let task_policy = crate::ai_runtime::agent_task_policy::AgentTaskPolicy::from_input(
-        crate::ai_runtime::agent_task_policy::AgentTaskPolicyInput {
-            intent: agent_intent,
-            task_kind: match agent_intent {
-                AgentIntent::Research
-                | AgentIntent::CitationCheck
-                | AgentIntent::DocumentCheck
-                | AgentIntent::Chapter => crate::ai_runtime::agent_task::AgentTaskKind::Complex,
-                _ => crate::ai_runtime::agent_task::AgentTaskKind::Lightweight,
-            },
-            scope: if request.selection.as_ref().is_some_and(|s| !s.is_empty()) {
-                crate::ai_runtime::agent_task_policy::AgentTaskScope::Selection
-            } else if request.note_path.is_some() {
-                crate::ai_runtime::agent_task_policy::AgentTaskScope::Note
-            } else {
-                crate::ai_runtime::agent_task_policy::AgentTaskScope::Vault
-            },
-            web_authorized: request.web_authorized,
-            has_attachments: request
-                .images
-                .as_ref()
-                .is_some_and(|items| !items.is_empty()),
-            write_permission_required: matches!(
-                agent_intent,
-                AgentIntent::RewriteSelection
-                    | AgentIntent::Write
-                    | AgentIntent::Chapter
-                    | AgentIntent::DocumentCheck
-            ),
-            research_depth: matches!(
-                agent_intent,
-                AgentIntent::Research | AgentIntent::CitationCheck
-            ) as u32,
-        },
+        crate::ai_runtime::agent_task_policy::AgentTaskPolicyInput::from_task_plan(
+            &task_plan, &request,
+        ),
     );
-    let legacy_scene_hint = task_policy.legacy_scene();
-    let intent_detection = request.detection_summary();
+    let legacy_scene_hint = legacy_intent.scene();
+    let mut intent_detection = request.detection_summary();
+    intent_detection.detected_intent = agent_intent;
+    intent_detection.reason = "Derived from validated TaskPlan.".into();
+    intent_detection.source_hints = task_plan.source_hints.clone();
     let context_summary = request.context_summary();
+    if task_plan.requires_clarification
+        || matches!(task_plan.execution_mode, ExecutionMode::Clarification)
+    {
+        return Ok(clarification_response(
+            task_plan,
+            intent_detection,
+            legacy_scene_hint,
+            context_summary,
+        ));
+    }
     let skill_activation_plan = state
         .vault_path()
         .ok()
@@ -636,6 +662,7 @@ pub(crate) async fn route_assistant_execute(
         app_handle,
         &request,
         agent_intent,
+        &task_plan,
         &skill_activation_plan,
         &intent_detection,
     )
@@ -664,6 +691,7 @@ pub(crate) async fn route_assistant_execute(
         app_handle,
         crate::ai_runtime::harness_task::HarnessTaskRequest::from_assistant_with_routing(
             request,
+            task_plan.clone(),
             routing_override,
         ),
     )
@@ -679,6 +707,7 @@ pub(crate) async fn route_assistant_execute(
     let blocked_reasons = blocked_reasons_for_response(&response);
     let degraded = response.run_status != "completed";
     response.intent_detection = Some(intent_detection);
+    response.task_plan = Some(task_plan);
     response.run_plan_summary = Some(
         AgentRunPlanSummary::for_intent(
             response.request_id.clone(),
@@ -724,6 +753,10 @@ pub async fn assistant_execute(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ai_types::{
+        CapabilitySlot, ExecutionMode, OutputMode, RetrievalMode, TaskPlanConfidence,
+        TaskPlanIntent, WebMode,
+    };
 
     #[test]
     fn detects_skillhub_direct_install_target() {
@@ -734,5 +767,51 @@ mod tests {
             .as_deref(),
             Some("self-improving")
         );
+    }
+
+    #[test]
+    fn clarification_response_stays_out_of_harness_shape() {
+        let task_plan = TaskPlanSummary {
+            intent: TaskPlanIntent::Chat,
+            confidence: TaskPlanConfidence::Low,
+            context_references: Vec::new(),
+            retrieval_mode: RetrievalMode::None,
+            web_mode: WebMode::Disabled,
+            model_slot: CapabilitySlot::Fast,
+            execution_mode: ExecutionMode::Clarification,
+            output_mode: OutputMode::Diagnostic,
+            artifact_plan: Vec::new(),
+            requires_clarification: true,
+            clarification_question: Some("你希望我先查笔记还是直接回答？".into()),
+            source_hints: vec!["test:clarification".into()],
+        };
+        let intent_detection = IntentDetectionSummary {
+            detected_intent: AgentIntent::Chat,
+            confidence: 0.35,
+            reason: "test".into(),
+            alternatives: Vec::new(),
+            fallback_behavior: "ask".into(),
+            source_hints: task_plan.source_hints.clone(),
+        };
+
+        let response = clarification_response(
+            task_plan,
+            intent_detection,
+            crate::ai_runtime::AiScene::KnowledgeLookup,
+            vec!["无额外上下文".into()],
+        );
+
+        assert!(response.task_id.is_none());
+        assert!(response.artifacts.is_empty());
+        assert!(response.task_plan.is_some());
+        match response.body {
+            AssistantExecuteBody::Chat { payload } => {
+                assert_eq!(
+                    payload.get("content").and_then(serde_json::Value::as_str),
+                    Some("你希望我先查笔记还是直接回答？")
+                );
+            }
+            _ => panic!("clarification response must be a chat body"),
+        }
     }
 }

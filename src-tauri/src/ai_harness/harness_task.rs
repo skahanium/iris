@@ -18,6 +18,7 @@ use crate::ai_runtime::{
     CitationCheckInput, CitationCheckResult, CitationCheckScope, OrganizeTaskInput,
     OrganizeTaskResult, OrganizeTaskScope, PatchProposal,
 };
+use crate::ai_types::TaskPlanSummary;
 use crate::app::AppState;
 use crate::commands::assistant_commands::AssistantExecuteRequest;
 use crate::commands::writing_commands::WritingTaskInputIpc;
@@ -89,16 +90,19 @@ pub struct HarnessArtifactWire {
 #[derive(Debug, Clone)]
 pub(crate) struct HarnessTaskRequest {
     pub(crate) assistant: AssistantExecuteRequest,
+    pub(crate) task_plan: TaskPlanSummary,
     pub(crate) routing_override: Option<ai_commands::AiSendRoutingOverride>,
 }
 
 impl HarnessTaskRequest {
     pub(crate) fn from_assistant_with_routing(
         assistant: AssistantExecuteRequest,
+        task_plan: TaskPlanSummary,
         routing_override: ai_commands::AiSendRoutingOverride,
     ) -> Self {
         Self {
             assistant,
+            task_plan,
             routing_override: Some(routing_override),
         }
     }
@@ -290,10 +294,11 @@ pub(crate) async fn run_harness_task(
     task: HarnessTaskRequest,
 ) -> AppResult<HarnessTaskResult> {
     let request = task.assistant;
+    let task_plan = task.task_plan;
     let routing_override = task.routing_override;
     crate::commands::ai_commands::validate_ai_note_path(request.note_path.as_deref())?;
-    let legacy_intent = request.effective_legacy_intent();
-    let agent_intent = request.effective_agent_intent();
+    let legacy_intent = crate::ai_runtime::task_plan::legacy_intent_for_task_plan(&task_plan);
+    let agent_intent = crate::ai_runtime::task_plan::agent_intent_for_task_plan(&task_plan);
     let skill_activation_plan = routing_override
         .as_ref()
         .and_then(|route| route.skill_activation_plan.as_ref());
