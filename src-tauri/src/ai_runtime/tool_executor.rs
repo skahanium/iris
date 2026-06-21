@@ -64,6 +64,10 @@ impl ToolRegistry {
             .iter()
             .filter(|t| is_exposable_tool(&t.name))
             .filter(|t| {
+                !is_internal_network_fetch_tool(&t.name)
+                    || ctx.skill_allowed_tools.contains(&t.name)
+            })
+            .filter(|t| {
                 let verdict = tool_policy::evaluate_tool(&t.name, ctx);
                 match verdict {
                     ToolPolicyVerdict::AutoAllowed => true,
@@ -137,6 +141,13 @@ impl Default for ToolRegistry {
     fn default() -> Self {
         Self::new()
     }
+}
+
+fn is_internal_network_fetch_tool(name: &str) -> bool {
+    matches!(
+        name,
+        "fetch_web_page" | "web_fetch_batch" | "readability_fetch" | "rendered_fetch"
+    )
 }
 
 /// Error from the new policy engine (Phase 2).
@@ -292,6 +303,27 @@ mod tests {
         assert!(names.contains(&"search_hybrid"));
         assert!(!names.contains(&"web_search"));
         assert!(!names.contains(&"fetch_web_page"));
+    }
+
+    #[test]
+    fn ordinary_policy_surface_hides_low_level_fetch_tools() {
+        let reg = ToolRegistry::new();
+        let ctx = ToolPolicyContext {
+            task_policy: None,
+            scene: AiScene::ResearchSynthesis,
+            autonomy_level: AutonomyLevel::L3,
+            web_search_enabled: true,
+            skill_allowed_tools: vec![],
+            depth: 0,
+        };
+        let tools = reg.tools_for_policy_surface(&ctx, false);
+        let names: Vec<&str> = tools.iter().map(|t| t.name.as_str()).collect();
+
+        assert!(names.contains(&"web_search"));
+        assert!(!names.contains(&"fetch_web_page"));
+        assert!(!names.contains(&"web_fetch_batch"));
+        assert!(!names.contains(&"readability_fetch"));
+        assert!(!names.contains(&"rendered_fetch"));
     }
 
     #[test]

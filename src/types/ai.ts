@@ -149,6 +149,17 @@ export interface WebEvidenceMeta {
   fallback_from?: WebSearchBackend | null;
 }
 
+export interface WebEvidenceBrokerItem {
+  url: string;
+  title: string;
+  domain: string;
+  snippet: string;
+  fetched_excerpt?: string | null;
+  source_rank: WebSourceRank;
+  freshness_label?: string | null;
+  failure_reason?: string | null;
+}
+
 export interface ContextPacket {
   id: string;
   source_type: SourceType;

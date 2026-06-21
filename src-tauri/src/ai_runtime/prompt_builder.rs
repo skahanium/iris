@@ -282,7 +282,10 @@ mod tests {
         let profile = PromptProfile::default();
         let resolved = resolve_persona(&profile, AiScene::KnowledgeLookup, false);
         let rendered = render_persona(&resolved);
-        assert!(rendered.contains("不要调用 web_search"));
+        assert!(rendered.contains("仅使用本地知识库"));
+        assert!(rendered.contains("不要调用网络检索"));
+        assert!(!rendered.contains("web_search"));
+        assert!(!rendered.contains("fetch_web_page"));
     }
 
     #[test]
@@ -290,8 +293,9 @@ mod tests {
         let profile = PromptProfile::default();
         let resolved = resolve_persona(&profile, AiScene::KnowledgeLookup, true);
         let rendered = render_persona(&resolved);
-        assert!(rendered.contains("web_search"));
-        assert!(!rendered.contains("不要调用 web_search"));
+        assert!(rendered.contains("网络证据代理"));
+        assert!(!rendered.contains("web_search"));
+        assert!(!rendered.contains("fetch_web_page"));
     }
 
     #[test]

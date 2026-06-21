@@ -208,8 +208,8 @@ fn legacy_task_focus_from_scene(scene: AiScene, web_search_enabled: bool) -> Str
     match scene {
         AiScene::KnowledgeLookup => {
             if web_search_enabled {
-                "知识查阅：先 search_hybrid 检索本地笔记，再 web_search（Token Plan 搜索）补充摘要；\
-                 若摘要不足可对 1～2 个 HTTPS 链接调用 fetch_web_page 读取正文（需用户确认）；\
+                "知识查阅：先 search_hybrid 检索本地笔记，再通过网络证据代理补充外部摘要；\
+                 若摘要不足，仅在用户确认后补充少量 HTTPS 页面正文；\
                  本地与网络证据结合、交叉引用，不可偏废"
                     .into()
             } else {
@@ -227,14 +227,13 @@ fn legacy_task_focus_from_scene(scene: AiScene, web_search_enabled: bool) -> Str
 /// Web search instruction block.
 fn resolve_web_instruction(web_search_enabled: bool) -> String {
     if web_search_enabled {
-        "联网已开启：web_search 使用 MiniMax Token Plan 搜索 API（返回标题/链接/摘要），\
-         无需询问是否允许搜索。\n\
-         需要页面正文时对明确 URL 调用 fetch_web_page（会弹出用户确认，每轮最多 1～2 次）。\n\
+        "联网已开启：通过网络证据代理检索外部来源（返回标题/链接/摘要），无需询问是否允许搜索。\n\
+         需要页面正文时只补充明确 HTTPS URL 的少量内容，并保持用户确认与每轮限量。\n\
          禁止在正文中输出 DSML 或伪工具标记；必须通过工具 API 调用。\n\
          本地检索与网络搜索应结合、相互印证，不可只做其一。\n"
             .into()
     } else {
-        "联网未开启——仅使用本地知识库，不要调用 web_search 或 fetch_web_page。\n".into()
+        "联网未开启——仅使用本地知识库，不要调用网络检索或网页读取能力。\n".into()
     }
 }
 
@@ -290,11 +289,11 @@ pub fn render_persona(resolved: &ResolvedPersona) -> String {
     }
 
     parts.push(
-        "Skills 管理：安装 skill 请调用 skills_install（registry/url/git/local），不要用 fetch_web_page 代替安装。\n\
+        "Skills 管理：安装 skill 请调用 skills_install（registry/url/git/local），不要用网页读取代替安装。\n\
          SkillHub：skills_install(source=registry, registry=skillhub, path_or_url=<skill名或页面URL>)。\
          如果用户提到 https://skillhub.cn/install/skillhub.md 或 SkillHub 商店安装指南，同时要求安装某个具体技能，请忽略指南 URL，直接把目标技能名作为 path_or_url 调用 SkillHub registry；不要先抓取网页或安装外部 CLI。\n\
          查看已安装：skills_list。卸载/启停：skills_uninstall / skills_toggle，均需用户确认。\n\
-         fetch_web_page 仅用于阅读文档，不写入 skills 目录。"
+         单页网页读取仅用于阅读文档，不写入 skills 目录。"
             .into(),
     );
 
@@ -328,6 +327,16 @@ mod tests {
     }
 
     #[test]
+    fn ordinary_persona_does_not_expose_low_level_fetch_tool() {
+        let profile = PromptProfile::default();
+        let resolved = resolve_persona(&profile, AiScene::KnowledgeLookup, true);
+        let rendered = render_persona(&resolved);
+
+        assert!(rendered.contains("网络证据代理"));
+        assert!(!rendered.contains("fetch_web_page"));
+    }
+
+    #[test]
     fn custom_persona_does_not_contain_yan() {
         let profile = PromptProfile {
             persona: "My Custom AI".into(),
@@ -344,15 +353,20 @@ mod tests {
     fn web_search_disabled_prohibits_tools() {
         let profile = PromptProfile::default();
         let resolved = resolve_persona(&profile, AiScene::KnowledgeLookup, false);
-        assert!(resolved.web_instruction.contains("不要调用 web_search"));
+        assert!(resolved.web_instruction.contains("仅使用本地知识库"));
+        assert!(resolved.web_instruction.contains("不要调用网络检索"));
+        assert!(!resolved.web_instruction.contains("web_search"));
+        assert!(!resolved.web_instruction.contains("fetch_web_page"));
     }
 
     #[test]
     fn web_search_enabled_allows_tools() {
         let profile = PromptProfile::default();
         let resolved = resolve_persona(&profile, AiScene::KnowledgeLookup, true);
-        assert!(resolved.web_instruction.contains("web_search"));
+        assert!(resolved.web_instruction.contains("网络证据代理"));
         assert!(!resolved.web_instruction.contains("不要调用"));
+        assert!(!resolved.web_instruction.contains("web_search"));
+        assert!(!resolved.web_instruction.contains("fetch_web_page"));
     }
 
     #[test]

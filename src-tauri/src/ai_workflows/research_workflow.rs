@@ -15,6 +15,9 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
+use crate::ai_runtime::web_evidence_broker::{
+    collect_web_evidence, web_evidence_items_to_packets, WebEvidenceBrokerInput,
+};
 use crate::ai_runtime::{
     model_gateway::{
         GatewayRequest, LlmMessage, LlmToolDef, MessageRole, ModelGateway, ProviderConfig,
@@ -172,9 +175,13 @@ pub async fn execute_research(
 
     // ── Phase 2: Agentic retrieval loop (LLM-driven tool calling) ──
     let mut accumulated_evidence: Vec<ContextPacket> = Vec::new();
-    if config.web_research_authorized {
-        push_topic_web_evidence(db, topic, &mut accumulated_evidence).await;
-    }
+    push_topic_web_evidence(
+        db,
+        topic,
+        config.web_research_authorized,
+        &mut accumulated_evidence,
+    )
+    .await;
     let llm_tools = build_research_tool_defs(&registry, config.web_research_authorized);
 
     for round_num in 0..config.max_rounds {
@@ -353,7 +360,13 @@ pub async fn execute_research(
     }
 
     // ── Phase 3: Build evidence matrix ──────────────────
-    let evidence_matrix = build_evidence_matrix(topic, &sub_propositions, &accumulated_evidence);
+    let mut evidence_matrix =
+        build_evidence_matrix(topic, &sub_propositions, &accumulated_evidence);
+    if !config.web_research_authorized && evidence_matrix.total_evidence_count == 0 {
+        evidence_matrix
+            .global_gaps
+            .push("联网关闭，未检索外部来源".to_string());
+    }
 
     // ── Phase 4: Argument chain detection ───────────────
     let argument_chain = detect_argument_chains(
@@ -426,17 +439,30 @@ fn build_research_tool_defs(registry: &ToolRegistry, web_search_enabled: bool) -
 }
 
 /// Pre-fetch web search results for the research topic when the global toggle is on.
-async fn push_topic_web_evidence(db: &Database, topic: &str, accumulated: &mut Vec<ContextPacket>) {
-    let fetch = match crate::llm::search_web::fetch_search_context_for_db(db, topic).await {
-        Ok(f) => f,
-        Err(e) => {
-            tracing::warn!("Web search for research failed: {e}");
+async fn push_topic_web_evidence(
+    db: &Database,
+    topic: &str,
+    enabled: bool,
+    accumulated: &mut Vec<ContextPacket>,
+) {
+    let evidence = match collect_web_evidence(
+        db,
+        WebEvidenceBrokerInput {
+            query: topic.to_string(),
+            enabled,
+            max_search_results: 8,
+            max_fetches: 0,
+        },
+    )
+    .await
+    {
+        Ok(items) => items,
+        Err(error) => {
+            tracing::warn!("Web evidence broker failed: {error}");
             return;
         }
     };
-    let web_packets =
-        crate::ai_runtime::evidence_mixer::web_packets_from_fetch(&fetch, topic, None);
-    accumulated.extend(web_packets);
+    accumulated.extend(web_evidence_items_to_packets(topic, &evidence));
 }
 
 /// Format accumulated evidence into a concise summary for the LLM.
@@ -530,7 +556,30 @@ async fn execute_tool_call(
             // Return already-accumulated packets (no-op, they're tracked externally)
             Ok(vec![])
         }
+        "web_search" => {
+            execute_web_search_tool_call(db, &args, _config.web_research_authorized).await
+        }
         _ => Ok(vec![]),
+    }
+}
+
+async fn execute_web_search_tool_call(
+    db: &Database,
+    args: &serde_json::Value,
+    enabled: bool,
+) -> AppResult<Vec<ContextPacket>> {
+    let input = web_search_broker_input(args, enabled);
+    let query = input.query.clone();
+    let evidence = collect_web_evidence(db, input).await?;
+    Ok(web_evidence_items_to_packets(&query, &evidence))
+}
+
+fn web_search_broker_input(args: &serde_json::Value, enabled: bool) -> WebEvidenceBrokerInput {
+    WebEvidenceBrokerInput {
+        query: args["query"].as_str().unwrap_or("").to_string(),
+        enabled,
+        max_search_results: 8,
+        max_fetches: 0,
     }
 }
 
@@ -1126,6 +1175,37 @@ mod tests {
         assert!(chain.links.is_empty());
         assert!(!chain.has_contradictions);
         assert_eq!(chain.chain_strength, 0.0);
+    }
+
+    #[test]
+    fn research_web_search_tool_builds_broker_input_without_page_fetches() {
+        let args = serde_json::json!({ "query": "网络证据代理" });
+        let input = web_search_broker_input(&args, true);
+
+        assert_eq!(input.query, "网络证据代理");
+        assert!(input.enabled);
+        assert_eq!(input.max_search_results, 8);
+        assert_eq!(input.max_fetches, 0);
+    }
+
+    #[test]
+    fn research_web_search_tool_converts_broker_items_to_packets() {
+        let items = vec![crate::ai_runtime::web_evidence_broker::WebEvidenceItem {
+            url: "https://example.com/source".into(),
+            title: "Source".into(),
+            domain: "example.com".into(),
+            snippet: "Evidence snippet".into(),
+            fetched_excerpt: None,
+            source_rank: crate::ai_runtime::WebSourceRank::Unknown,
+            freshness_label: None,
+            failure_reason: None,
+        }];
+
+        let packets = web_evidence_items_to_packets("query", &items);
+
+        assert_eq!(packets.len(), 1);
+        assert_eq!(packets[0].retrieval_reason, "web_evidence_broker");
+        assert_eq!(packets[0].excerpt, "Evidence snippet");
     }
 
     #[test]

@@ -45,6 +45,7 @@ pub mod tool_executor;
 pub mod tool_fallback;
 pub mod tool_policy;
 pub mod trace;
+pub mod web_evidence_broker;
 pub mod writing_state;
 
 // ─── Re-exports from ai_workflows (backward compatibility) ─

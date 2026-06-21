@@ -1090,7 +1090,7 @@ git commit -m "refactor(ai): 降噪研究输出与证据产物"
 - Modify: `src-tauri/src/ai_workflows/research_workflow.rs`
 - Modify: `src/types/ai.ts`
 
-- [ ] **Step 1: 新增 broker 类型**
+- [x] **Step 1: 新增 broker 类型**
 
 `web_evidence_broker.rs` 定义：
 
@@ -1120,7 +1120,7 @@ pub struct WebEvidenceItem {
 pub async fn collect_web_evidence(db: &Database, input: WebEvidenceBrokerInput) -> AppResult<Vec<WebEvidenceItem>>;
 ```
 
-- [ ] **Step 2: broker 测试**
+- [x] **Step 2: broker 测试**
 
 Rust 测试覆盖：
 
@@ -1131,7 +1131,7 @@ Rust 测试覆盖：
 
 避免真实网络，使用可注入 trait 或内部纯函数测试去重/过滤/转换。
 
-- [ ] **Step 3: 工具目录降噪**
+- [x] **Step 3: 工具目录降噪**
 
 `tool_catalog/web.rs` 的用户/模型说明改成：
 
@@ -1139,11 +1139,11 @@ Rust 测试覆盖：
 - `fetch_web_page` 不再被普通对话 prompt 暴露成用户可见概念。
 - 非 HTTPS、下载、登录、外部写入仍要求确认或拒绝。
 
-- [ ] **Step 4: research workflow 调用 broker**
+- [x] **Step 4: research workflow 调用 broker**
 
 研究 workflow 不直接调用 `fetch_search_context_for_db` 作为散落逻辑，而是调用 `collect_web_evidence`。联网关闭时 broker 返回空 evidence，并写入可行动缺口：“联网关闭，未检索外部来源”。
 
-- [ ] **Step 5: 前端契约测试**
+- [x] **Step 5: 前端契约测试**
 
 `tests/web-evidence-broker.test.ts` 读取代码断言：
 
@@ -1159,7 +1159,7 @@ expect(read("src/components/ai/ConversationSurface.tsx")).not.toContain(
 );
 ```
 
-- [ ] **Step 6: 验证**
+- [x] **Step 6: 验证**
 
 Run:
 
@@ -1171,7 +1171,7 @@ npm run test -- tests/web-evidence-broker.test.ts
 
 Expected: PASS。用户界面只暴露联网开关，不暴露 search/fetch 区分。
 
-- [ ] **Step 7: 提交 broker**
+- [x] **Step 7: 提交 broker**
 
 ```bash
 git add src-tauri/src/ai_runtime/web_evidence_broker.rs src-tauri/src/ai_runtime/mod.rs src-tauri/src/ai_runtime/tool_catalog/web.rs src-tauri/src/ai_runtime/tool_dispatch/web.rs src-tauri/src/ai_workflows/research_workflow.rs src/types/ai.ts tests/web-evidence-broker.test.ts

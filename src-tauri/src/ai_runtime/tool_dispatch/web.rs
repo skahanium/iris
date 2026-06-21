@@ -14,11 +14,21 @@ pub(super) async fn web_search_tool(
     let query = args["query"]
         .as_str()
         .ok_or_else(|| AppError::msg("missing query"))?;
-    let result = crate::llm::search_web::fetch_search_context_for_db(&state.db, query).await?;
-    let packets = crate::ai_runtime::evidence_mixer::web_packets_from_fetch(&result, query, None);
+    let evidence = crate::ai_runtime::web_evidence_broker::collect_web_evidence(
+        &state.db,
+        crate::ai_runtime::web_evidence_broker::WebEvidenceBrokerInput {
+            query: query.to_string(),
+            enabled: ctx.web_search_enabled,
+            max_search_results: 8,
+            max_fetches: 0,
+        },
+    )
+    .await?;
+    let packets =
+        crate::ai_runtime::web_evidence_broker::web_evidence_items_to_packets(query, &evidence);
     Ok(serde_json::json!({
-        "context": result.body,
-        "backend": format!("{:?}", result.backend),
+        "broker": "网络证据代理",
+        "evidence": evidence,
         "results": packets,
         "count": packets.len(),
     }))

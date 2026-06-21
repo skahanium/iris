@@ -7,7 +7,7 @@ pub(super) fn tools() -> Vec<ToolCatalogEntry> {
         ToolCatalogEntry {
             name: "web_search",
             description:
-                "联网搜索实时信息；无需确认，直接调用。结果应与本地检索证据交叉引用、相互印证。",
+                "网络证据代理：检索实时外部来源并返回可追溯证据；无需确认，直接调用。结果应与本地检索证据交叉引用、相互印证。",
             input_schema: serde_json::json!({
                 "type": "object",
                 "properties": {
@@ -28,8 +28,8 @@ pub(super) fn tools() -> Vec<ToolCatalogEntry> {
         },
         ToolCatalogEntry {
             name: "fetch_web_page",
-            description: "打开单个 HTTPS 网页并提取正文片段（需用户确认）。\
-            仅在 web_search 或本地检索已给出 URL 且摘要不足时使用；\
+            description: "网络证据代理内部能力：打开单个 HTTPS 网页并提取正文片段（需用户确认）。\
+            仅在网络证据代理或本地检索已给出 URL 且摘要不足时使用；\
             每轮最多 1～2 次，禁止批量爬取。",
             input_schema: serde_json::json!({
                 "type": "object",
@@ -53,7 +53,7 @@ pub(super) fn tools() -> Vec<ToolCatalogEntry> {
         },
         ToolCatalogEntry {
             name: "web_fetch_batch",
-            description: "批量抓取少量 HTTPS 页面并返回正文证据包（需确认，限量）",
+            description: "网络证据代理内部能力：批量抓取少量 HTTPS 页面并返回正文证据包（需确认，限量）",
             input_schema: serde_json::json!({
                 "type": "object",
                 "properties": {
@@ -72,7 +72,7 @@ pub(super) fn tools() -> Vec<ToolCatalogEntry> {
         },
         ToolCatalogEntry {
             name: "readability_fetch",
-            description: "抓取 HTTPS 页面并提取适合阅读的正文（需确认）",
+            description: "网络证据代理内部能力：抓取 HTTPS 页面并提取适合阅读的正文（需确认）",
             input_schema: serde_json::json!({
                 "type": "object",
                 "properties": {
@@ -92,7 +92,7 @@ pub(super) fn tools() -> Vec<ToolCatalogEntry> {
         ToolCatalogEntry {
             name: "rendered_fetch",
             description:
-                "Static readability HTTPS fetch; not JavaScript-rendered. 抓取正文并标记未渲染",
+                "网络证据代理内部能力：Static readability HTTPS fetch; not JavaScript-rendered. 抓取正文并标记未渲染",
             input_schema: serde_json::json!({
                 "type": "object",
                 "properties": {
