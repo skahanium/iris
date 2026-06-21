@@ -677,7 +677,7 @@ impl ImageAttachmentDto {
 /// Send an AI message with full LLM pipeline (shared by IPC and assistant facade).
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn execute_ai_send_message(
-    state: &AppState,
+    state: &Arc<AppState>,
     app_handle: &tauri::AppHandle,
     scene: String,
     agent_intent: Option<AgentIntent>,
@@ -711,7 +711,7 @@ pub(crate) async fn execute_ai_send_message(
 /// Send an AI message using an already resolved capability route.
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn execute_ai_send_message_with_routing(
-    state: &AppState,
+    state: &Arc<AppState>,
     app_handle: &tauri::AppHandle,
     scene: String,
     agent_intent: Option<AgentIntent>,
@@ -1138,7 +1138,7 @@ pub async fn ai_send_message(
     new_session: Option<bool>,
 ) -> AppResult<AiChatResponse> {
     execute_ai_send_message(
-        state.inner().as_ref(),
+        state.inner(),
         &app_handle,
         scene,
         agent_intent,

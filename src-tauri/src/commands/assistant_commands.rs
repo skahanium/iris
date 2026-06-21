@@ -616,7 +616,7 @@ fn clarification_response(
 
 /// Route a unified assistant request through the harness task layer.
 pub(crate) async fn route_assistant_execute(
-    state: &AppState,
+    state: &Arc<AppState>,
     app_handle: &AppHandle,
     request: AssistantExecuteRequest,
 ) -> AppResult<AssistantExecuteResponse> {
@@ -765,7 +765,7 @@ pub async fn assistant_execute(
     app_handle: AppHandle,
     request: AssistantExecuteRequest,
 ) -> AppResult<AssistantExecuteResponse> {
-    route_assistant_execute(state.inner().as_ref(), &app_handle, request).await
+    route_assistant_execute(state.inner(), &app_handle, request).await
 }
 
 #[cfg(test)]

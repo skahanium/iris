@@ -5,7 +5,7 @@
 
 use iris_lib::app::AppState;
 use iris_lib::embedding::engine::{semantic_search, SemanticHit};
-use iris_lib::indexer::scan::scan_vault;
+use iris_lib::indexer::scan::{index_vault_incremental, IndexEmbeddingMode};
 use iris_lib::storage::migrate::migrate_up;
 use rusqlite::Connection;
 use std::path::PathBuf;
@@ -61,7 +61,7 @@ fn semantic_recall_at_5_on_fixture_vault() {
 
     let conn = Connection::open_in_memory().unwrap();
     migrate_up(&conn).unwrap();
-    scan_vault(&conn, &vault).expect("index fixture vault");
+    index_vault_incremental(&conn, &vault, IndexEmbeddingMode::Sync).expect("index fixture vault");
 
     let chunk_count: i64 = conn
         .query_row("SELECT COUNT(*) FROM chunks", [], |r| r.get(0))
@@ -103,7 +103,10 @@ fn semantic_recall_via_app_state_db() {
     let dir = tempfile::tempdir().unwrap();
     let state = AppState::new(dir.path().to_path_buf()).unwrap();
     state.set_vault(vault.clone()).unwrap();
-    state.db.with_conn(|conn| scan_vault(conn, &vault)).unwrap();
+    state
+        .db
+        .with_conn(|conn| index_vault_incremental(conn, &vault, IndexEmbeddingMode::Sync))
+        .unwrap();
 
     let (query, expected) = EVAL_QUERIES[0];
     let hits = state

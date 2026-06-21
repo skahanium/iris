@@ -109,7 +109,7 @@ fn file_write_inner(
             &abs,
             content,
             &hash,
-            Some(state),
+            crate::indexer::scan::IndexEmbeddingMode::Queue(state),
         )
     })
 }

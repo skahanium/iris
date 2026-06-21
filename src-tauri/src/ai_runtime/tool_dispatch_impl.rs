@@ -1,9 +1,11 @@
-use crate::ai_runtime::{AiScene, ContextPacket, ToolCallResult};
+use crate::ai_runtime::ToolCallResult;
 use crate::app::AppState;
 use crate::error::{AppError, AppResult};
 use std::time::Instant;
 #[path = "tool_dispatch/boundary.rs"]
 mod boundary_impl;
+#[path = "tool_dispatch/context.rs"]
+mod context_impl;
 #[path = "tool_dispatch/markdown.rs"]
 mod markdown_impl;
 #[path = "tool_dispatch/memory.rs"]
@@ -22,6 +24,8 @@ mod skills_impl;
 mod vault_impl;
 #[path = "tool_dispatch/web.rs"]
 mod web_impl;
+
+pub use context_impl::ToolDispatchContext;
 
 #[rustfmt::skip]
 pub const DISPATCHABLE_TOOL_NAMES: &[&str] = &[
@@ -45,16 +49,7 @@ pub fn is_exposable_tool(name: &str) -> bool {
         entry.implementation != crate::ai_runtime::tool_catalog::ToolImplementationStatus::Planned
     })
 }
-pub struct ToolDispatchContext<'a> {
-    pub scene: AiScene,
-    pub note_path: Option<&'a str>,
-    pub file_id: Option<i64>,
-    pub web_search_enabled: bool,
-    pub cold_start_packets: &'a [ContextPacket],
-    pub app_handle: Option<tauri::AppHandle>,
-    pub attachment_count: usize,
-    pub skill_activation_plan: Option<&'a crate::ai_types::SkillActivationPlanSummary>,
-}
+
 fn is_retryable_tool_error(tool_name: &str, result: &ToolCallResult) -> bool {
     if result.success {
         return false;
@@ -141,8 +136,8 @@ async fn dispatch_tool_inner(
         "web_fetch_batch" => web_impl::web_fetch_batch_tool(state, args, ctx).await,
         "readability_fetch" => web_impl::readability_fetch_tool(state, args, ctx, false).await,
         "rendered_fetch" => web_impl::readability_fetch_tool(state, args, ctx, true).await,
-        "vault_create_note" => vault_impl::vault_create_note_tool(state, args),
-        "vault_rename_move" => vault_impl::vault_rename_move_tool(state, args),
+        "vault_create_note" => vault_impl::vault_create_note_tool(state, ctx, args),
+        "vault_rename_move" => vault_impl::vault_rename_move_tool(state, ctx, args),
         "vault_delete_to_trash" => vault_impl::vault_delete_to_trash_tool(state, args),
         "vault_asset_write" => vault_impl::vault_asset_write_tool(state, args),
         "vault_version_list" => vault_impl::vault_version_list_tool(state, args),
@@ -156,7 +151,7 @@ async fn dispatch_tool_inner(
         "git_read_diff" => boundary_impl::git_read_diff_tool(state, args),
         "git_read_log" => boundary_impl::git_read_log_tool(state, args),
         "secret_exists" => boundary_impl::secret_exists_tool(state, args),
-        "fs_import_to_vault" => boundary_impl::fs_import_to_vault_tool(state, args),
+        "fs_import_to_vault" => boundary_impl::fs_import_to_vault_tool(state, ctx, args),
         "fs_export" => boundary_impl::fs_export_tool(args),
         "fs_read_authorized_folder" => boundary_impl::fs_read_authorized_folder_tool(args),
         "fs_write_authorized_export" => boundary_impl::fs_write_authorized_export_tool(args),
@@ -177,6 +172,7 @@ async fn dispatch_tool_inner(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ai_runtime::AiScene;
     use crate::app::AppState;
     use std::sync::Arc;
 
@@ -292,6 +288,7 @@ mod tests {
             app_handle: None,
             attachment_count: 0,
             skill_activation_plan: None,
+            embedding_state: None,
         };
         let result = markdown_impl::markdown_write_patch_apply(
             &state,
@@ -326,6 +323,7 @@ mod tests {
             app_handle: None,
             attachment_count: 0,
             skill_activation_plan: None,
+            embedding_state: None,
         };
         let result = markdown_impl::markdown_write_patch_apply(
             &state,

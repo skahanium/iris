@@ -114,7 +114,7 @@ pub fn version_restore_cmd(
     version_id: i64,
     current_content: String,
 ) -> AppResult<VersionRestoreResult> {
-    let content = version::version_restore(&state, version_id, &current_content)?;
+    let content = version::version_restore(state.inner(), version_id, &current_content)?;
     Ok(VersionRestoreResult { content })
 }
 

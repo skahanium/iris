@@ -1,6 +1,7 @@
 //! Unified Agent Harness — multi-round tool loop with streaming final response.
 
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use futures_util::future::join_all;
 use tauri::{AppHandle, Emitter};
@@ -103,7 +104,7 @@ async fn send_llm_request_with_retry(
 
 /// Run the unified agent harness loop.
 pub async fn run_harness(
-    state: &AppState,
+    state: &Arc<AppState>,
     app_handle: &AppHandle,
     input: HarnessRunInput,
     provider_config: crate::ai_runtime::model_gateway::ProviderConfig,
@@ -743,6 +744,7 @@ pub async fn run_harness(
                     app_handle: Some(app_handle.clone()),
                     attachment_count: input.images.as_ref().map_or(0, Vec::len),
                     skill_activation_plan: input.skill_activation_plan.as_ref(),
+                    embedding_state: Some(state),
                 };
                 let result = dispatch_tool_with_retry(state, &dispatch_ctx, tool_name, &args).await;
                 if result.success {
@@ -1211,7 +1213,7 @@ async fn pause_for_tool_confirmation(
 }
 
 async fn run_subagent_harness(
-    state: &AppState,
+    state: &Arc<AppState>,
     app_handle: &AppHandle,
     parent: &HarnessRunInput,
     provider_config: ProviderConfig,

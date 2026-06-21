@@ -42,15 +42,17 @@ pub struct StorageState {
     pub write_guard: WriteGuard,
     cas_store: OnceLock<CasObjectStore>,
     ref_counter: OnceLock<RefCounter>,
+    cas_key_override: Option<[u8; 32]>,
 }
 
 impl StorageState {
-    fn new(db: Arc<Database>) -> Self {
+    fn new(db: Arc<Database>, cas_key_override: Option<[u8; 32]>) -> Self {
         Self {
             db,
             write_guard: WriteGuard::default(),
             cas_store: OnceLock::new(),
             ref_counter: OnceLock::new(),
+            cas_key_override,
         }
     }
 
@@ -62,16 +64,20 @@ impl StorageState {
 
         let cas_path = vault.join(".iris").join("cas");
         let store = CasObjectStore::new(cas_path)?;
-        #[cfg(test)]
-        store.enable_encryption([0xC5; 32]);
-        #[cfg(not(test))]
-        {
-            let key = crate::cas::encryption::get_or_create_cas_key().map_err(|e| {
-                AppError::msg(format!(
-                    "CAS encryption unavailable; refusing plaintext writes: {e}"
-                ))
-            })?;
+        if let Some(key) = self.cas_key_override {
             store.enable_encryption(key);
+        } else {
+            #[cfg(test)]
+            store.enable_encryption([0xC5; 32]);
+            #[cfg(not(test))]
+            {
+                let key = crate::cas::encryption::get_or_create_cas_key().map_err(|e| {
+                    AppError::msg(format!(
+                        "CAS encryption unavailable; refusing plaintext writes: {e}"
+                    ))
+                })?;
+                store.enable_encryption(key);
+            }
         }
         let _ = self.cas_store.set(store);
         self.cas_store
@@ -142,12 +148,26 @@ pub struct AppState {
 }
 
 impl AppState {
+    /// Create application state using the production CAS key source.
     pub fn new(data_dir: PathBuf) -> AppResult<Arc<Self>> {
+        Self::new_with_cas_key_override(data_dir, None)
+    }
+
+    /// Create application state with a deterministic CAS key for integration tests.
+    #[doc(hidden)]
+    pub fn new_with_test_cas_key(data_dir: PathBuf, cas_key: [u8; 32]) -> AppResult<Arc<Self>> {
+        Self::new_with_cas_key_override(data_dir, Some(cas_key))
+    }
+
+    fn new_with_cas_key_override(
+        data_dir: PathBuf,
+        cas_key_override: Option<[u8; 32]>,
+    ) -> AppResult<Arc<Self>> {
         let db_path = data_dir.join("iris.db");
         let db = Arc::new(Database::open(&db_path)?);
         let vector_ready = db.vector_index_ready();
 
-        let storage = StorageState::new(Arc::clone(&db));
+        let storage = StorageState::new(Arc::clone(&db), cas_key_override);
         let ai = AiRuntimeState::new(vector_ready);
 
         let state = Arc::new(Self {
@@ -196,14 +216,6 @@ impl AppState {
     /// Get CAS store via the storage sub-state.
     pub fn cas_store(&self) -> AppResult<&CasObjectStore> {
         let vault = self.vault_path()?;
-        static EMBEDDING_WARMUP_STARTED: OnceLock<()> = OnceLock::new();
-        if let Ok(handle) = tokio::runtime::Handle::try_current() {
-            if EMBEDDING_WARMUP_STARTED.set(()).is_ok() {
-                handle.spawn(async {
-                    let _ = crate::embedding::engine::embed_text("warmup");
-                });
-            }
-        }
         self.storage.cas_store(&vault)
     }
 

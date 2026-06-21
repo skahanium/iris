@@ -6,7 +6,7 @@ use tauri::State;
 use crate::app::AppState;
 use crate::embedding::engine::{semantic_search, SemanticHit};
 use crate::error::AppResult;
-use crate::indexer::scan::index_vault_incremental;
+use crate::indexer::scan::{index_vault_incremental, IndexEmbeddingMode};
 
 #[derive(Debug, Clone, Serialize)]
 pub struct KeywordHit {
@@ -56,8 +56,8 @@ pub fn search_semantic(
 #[tauri::command]
 pub fn search_reindex(state: State<'_, Arc<AppState>>) -> AppResult<usize> {
     let vault = state.vault_path()?;
-    let entries = state
-        .db
-        .with_conn(|conn| index_vault_incremental(conn, &vault, Some(state.inner())))?;
+    let entries = state.db.with_conn(|conn| {
+        index_vault_incremental(conn, &vault, IndexEmbeddingMode::Queue(state.inner()))
+    })?;
     Ok(entries.len())
 }

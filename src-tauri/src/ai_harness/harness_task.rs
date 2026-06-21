@@ -1,6 +1,7 @@
 //! Unified harness task request/result/artifact contract.
 
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 use tauri::{AppHandle, Emitter};
 
 use crate::ai_runtime::agent_task::{
@@ -289,7 +290,7 @@ fn artifact_kind(artifact: &HarnessArtifact) -> &'static str {
 
 /// Execute unified assistant task and collect artifacts.
 pub(crate) async fn run_harness_task(
-    state: &AppState,
+    state: &Arc<AppState>,
     app_handle: &AppHandle,
     task: HarnessTaskRequest,
 ) -> AppResult<HarnessTaskResult> {

@@ -11,6 +11,8 @@ use crate::storage::paths::{
     is_user_note_path, read_file_lossy, resolve_vault_path, validate_user_note_relative_path,
 };
 
+use super::ToolDispatchContext;
+
 const MAX_NOTE_FILE_BYTES: usize = 20 * 1024 * 1024;
 const MAX_ASSET_BYTES: usize = 20 * 1024 * 1024;
 
@@ -23,6 +25,7 @@ struct LinkImpact {
 
 pub(super) fn vault_create_note_tool(
     state: &AppState,
+    ctx: &ToolDispatchContext<'_>,
     args: &serde_json::Value,
 ) -> AppResult<serde_json::Value> {
     let target_path = args["target_path"]
@@ -56,9 +59,16 @@ pub(super) fn vault_create_note_tool(
 
     let hash = content_hash(content);
     state.storage.write_guard.mark(target_path, &hash);
-    let entry = state
-        .db
-        .with_conn(|conn| index_file_from_content(conn, &vault, &abs, content, &hash, None))?;
+    let entry = state.db.with_conn(|conn| {
+        index_file_from_content(
+            conn,
+            &vault,
+            &abs,
+            content,
+            &hash,
+            ctx.index_embedding_mode(),
+        )
+    })?;
     Ok(serde_json::json!({
         "type": "vault_create_note",
         "path": entry.path,
@@ -69,6 +79,7 @@ pub(super) fn vault_create_note_tool(
 
 pub(super) fn vault_rename_move_tool(
     state: &AppState,
+    ctx: &ToolDispatchContext<'_>,
     args: &serde_json::Value,
 ) -> AppResult<serde_json::Value> {
     let path = args["path"]
@@ -133,16 +144,16 @@ pub(super) fn vault_rename_move_tool(
     state.storage.write_guard.mark(new_path, &hash);
     state.db.with_conn(|conn| {
         crate::indexer::scan::rename_file_index(conn, path, new_path)?;
-        index_file_with_embed(conn, &vault, &new_abs, None)
+        index_file_with_embed(conn, &vault, &new_abs, ctx.index_embedding_mode())
     })?;
 
     for source_path in &modified_sources {
         let abs_source = resolve_vault_path(&vault, source_path)?;
         let hash = crate::indexer::scan::file_hash(&abs_source)?;
         state.storage.write_guard.mark(source_path, &hash);
-        state
-            .db
-            .with_conn(|conn| index_file_with_embed(conn, &vault, &abs_source, None))?;
+        state.db.with_conn(|conn| {
+            index_file_with_embed(conn, &vault, &abs_source, ctx.index_embedding_mode())
+        })?;
     }
 
     Ok(serde_json::json!({

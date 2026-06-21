@@ -1,5 +1,6 @@
 //! Tool confirmation: append tool results to checkpoint and resume harness.
 
+use std::sync::Arc;
 use tauri::AppHandle;
 
 use crate::ai_harness::tool_turn::skip_stub_ids_for_checkpoint;
@@ -123,7 +124,7 @@ fn policy_ctx_from_checkpoint_meta(
 
 /// Resume harness from checkpoint after tool confirm (approve / reject / modify).
 pub async fn resume_harness_after_tool_confirm(
-    state: &AppState,
+    state: &Arc<AppState>,
     app_handle: &AppHandle,
     request_id: &str,
 ) -> AppResult<HarnessRunResult> {
@@ -239,7 +240,7 @@ fn latest_user_message(messages: &[LlmMessage]) -> String {
 
 /// Resume harness; on failure restore trace to awaiting confirm so checkpoint stays loadable.
 pub async fn resume_harness_after_tool_confirm_or_restore(
-    state: &AppState,
+    state: &Arc<AppState>,
     app_handle: &AppHandle,
     request_id: &str,
 ) -> AppResult<HarnessRunResult> {
@@ -259,7 +260,7 @@ pub async fn resume_harness_after_tool_confirm_or_restore(
 
 /// Dispatch an approved tool and append its result to checkpoint (does not resume).
 pub async fn dispatch_approved_tool_to_checkpoint(
-    state: &AppState,
+    state: &Arc<AppState>,
     app_handle: &AppHandle,
     pending: &PendingToolCall,
     tool_call_id: &str,
@@ -331,6 +332,7 @@ pub async fn dispatch_approved_tool_to_checkpoint(
             app_handle: Some(app_handle.clone()),
             attachment_count: 0,
             skill_activation_plan: pending.skill_activation_plan.as_ref(),
+            embedding_state: Some(state),
         },
         &pending.tool_name,
         args,

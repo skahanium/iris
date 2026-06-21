@@ -6,6 +6,7 @@ use tauri::State;
 
 use crate::app::AppState;
 use crate::error::{AppError, AppResult};
+use crate::indexer::scan::{index_file_with_embed, IndexEmbeddingMode};
 
 #[derive(Debug, Clone, Serialize)]
 pub struct TemplateInfo {
@@ -106,9 +107,9 @@ pub fn template_create(
         fs::create_dir_all(parent)?;
     }
     fs::write(&abs, &content)?;
-    state
-        .db
-        .with_conn(|conn| crate::indexer::scan::index_file(conn, &vault, &abs))
+    state.db.with_conn(|conn| {
+        index_file_with_embed(conn, &vault, &abs, IndexEmbeddingMode::Queue(&state))
+    })
 }
 
 /// Read template content by name.

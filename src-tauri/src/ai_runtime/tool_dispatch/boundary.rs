@@ -161,6 +161,7 @@ fn write_text_atomic(path: &Path, content: &str, overwrite: bool) -> AppResult<(
 
 pub(super) fn fs_import_to_vault_tool(
     state: &AppState,
+    ctx: &ToolDispatchContext<'_>,
     args: &serde_json::Value,
 ) -> AppResult<serde_json::Value> {
     let source = resolve_external_input(
@@ -179,7 +180,14 @@ pub(super) fn fs_import_to_vault_tool(
     let hash = crate::indexer::scan::content_hash(&content);
     state.storage.write_guard.mark(target_path, &hash);
     let entry = state.db.with_conn(|conn| {
-        crate::indexer::scan::index_file_from_content(conn, &vault, &dest, &content, &hash, None)
+        crate::indexer::scan::index_file_from_content(
+            conn,
+            &vault,
+            &dest,
+            &content,
+            &hash,
+            ctx.index_embedding_mode(),
+        )
     })?;
     Ok(serde_json::json!({
         "type": "fs_import_to_vault",

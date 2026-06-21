@@ -2,6 +2,7 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use chrono::{Duration, Utc};
 use rusqlite::OptionalExtension;
@@ -11,7 +12,7 @@ use uuid::Uuid;
 use crate::app::AppState;
 use crate::error::AppError;
 use crate::error::AppResult;
-use crate::indexer::scan::{index_file, remove_file_index};
+use crate::indexer::scan::{index_file_with_embed, remove_file_index, IndexEmbeddingMode};
 use crate::storage::paths::resolve_vault_path;
 use crate::version::VersionEntry;
 
@@ -345,7 +346,7 @@ pub fn list_recycle(state: &AppState) -> AppResult<Vec<RecycleBinItem>> {
 }
 
 /// Restore a trashed note (body + all version snapshots) to its original path.
-pub fn restore_document(state: &AppState, id: &str) -> AppResult<String> {
+pub fn restore_document(state: &Arc<AppState>, id: &str) -> AppResult<String> {
     let vault = state.vault_path()?;
     let (trash_rel, original_path): (String, String) = state.db.with_conn(|conn| {
         conn.query_row(
@@ -382,7 +383,9 @@ pub fn restore_document(state: &AppState, id: &str) -> AppResult<String> {
     }
     fs::rename(&doc, &dest)?;
 
-    let file_entry = state.db.with_conn(|conn| index_file(conn, &vault, &dest))?;
+    let file_entry = state.db.with_conn(|conn| {
+        index_file_with_embed(conn, &vault, &dest, IndexEmbeddingMode::Queue(state))
+    })?;
     let file_id = file_entry.id;
 
     for v in &manifest.versions {

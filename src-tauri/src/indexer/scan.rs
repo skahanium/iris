@@ -19,6 +19,13 @@ use crate::storage::paths::{
 };
 use std::sync::Arc;
 
+#[derive(Clone, Copy)]
+pub enum IndexEmbeddingMode<'a> {
+    Skip,
+    Queue(&'a Arc<AppState>),
+    Sync,
+}
+
 /// WalkDir `filter_entry` predicate: skip entire `.iris/` and `.classified/` subtrees.
 fn should_walk_vault_entry(vault: &Path, entry_path: &Path) -> bool {
     entry_path.strip_prefix(vault).is_ok_and(|rel| {
@@ -82,15 +89,15 @@ pub fn sync_file_tags(conn: &Connection, file_id: i64, tags: &[String]) -> AppRe
 
 /// Index a single file into SQLite.
 pub fn index_file(conn: &Connection, vault: &Path, absolute: &Path) -> AppResult<FileEntry> {
-    index_file_with_embed(conn, vault, absolute, None)
+    index_file_with_embed(conn, vault, absolute, IndexEmbeddingMode::Skip)
 }
 
-/// Index with optional background embedding queue (production paths should pass `Some`).
+/// Index with an explicit embedding policy.
 pub fn index_file_with_embed(
     conn: &Connection,
     vault: &Path,
     absolute: &Path,
-    #[allow(unused_variables)] app: Option<&Arc<AppState>>,
+    #[allow(unused_variables)] embedding_mode: IndexEmbeddingMode<'_>,
 ) -> AppResult<FileEntry> {
     let rel = relative_path(vault, absolute)?;
     if !is_user_note_path(&rel) {
@@ -180,15 +187,7 @@ pub fn index_file_with_embed(
 
     tx.commit()?;
 
-    #[cfg(not(test))]
-    match app {
-        Some(state) => state.enqueue_embedding(file_id),
-        None => {
-            if let Err(e) = store_chunk_embeddings(conn, file_id) {
-                tracing::warn!("embedding skipped for file {file_id}: {e}");
-            }
-        }
-    }
+    handle_index_embedding(conn, file_id, embedding_mode);
 
     Ok(FileEntry {
         id: file_id,
@@ -209,7 +208,7 @@ pub fn index_file_from_content(
     absolute: &Path,
     content: &str,
     hash: &str,
-    #[allow(unused_variables)] app: Option<&Arc<AppState>>,
+    #[allow(unused_variables)] embedding_mode: IndexEmbeddingMode<'_>,
 ) -> AppResult<FileEntry> {
     let rel = relative_path(vault, absolute)?;
     if !is_user_note_path(&rel) {
@@ -297,15 +296,7 @@ pub fn index_file_from_content(
 
     tx.commit()?;
 
-    #[cfg(not(test))]
-    match app {
-        Some(state) => state.enqueue_embedding(file_id),
-        None => {
-            if let Err(e) = store_chunk_embeddings(conn, file_id) {
-                tracing::warn!("embedding skipped for file {file_id}: {e}");
-            }
-        }
-    }
+    handle_index_embedding(conn, file_id, embedding_mode);
 
     Ok(FileEntry {
         id: file_id,
@@ -416,7 +407,7 @@ pub fn peek_file_entry_after_write(
 pub fn index_vault_incremental(
     conn: &Connection,
     vault: &Path,
-    app: Option<&Arc<AppState>>,
+    embedding_mode: IndexEmbeddingMode<'_>,
 ) -> AppResult<Vec<FileEntry>> {
     let files = collect_vault_files(vault);
     let mut entries = Vec::with_capacity(files.len());
@@ -460,7 +451,7 @@ pub fn index_vault_incremental(
             }
             continue;
         }
-        match index_file_with_embed(conn, vault, &abs, app) {
+        match index_file_with_embed(conn, vault, &abs, embedding_mode) {
             Ok(entry) => entries.push(entry),
             Err(e) => tracing::warn!("index failed for {}: {e}", abs.display()),
         }
@@ -570,7 +561,24 @@ pub fn collect_vault_folders(vault: &Path) -> Vec<String> {
 
 /// Recursively scan vault for `.md` files (full index; prefer `index_vault_incremental`).
 pub fn scan_vault(conn: &Connection, vault: &Path) -> AppResult<Vec<FileEntry>> {
-    index_vault_incremental(conn, vault, None::<&Arc<AppState>>)
+    index_vault_incremental(conn, vault, IndexEmbeddingMode::Skip)
+}
+
+fn handle_index_embedding(
+    #[allow(unused_variables)] conn: &Connection,
+    #[allow(unused_variables)] file_id: i64,
+    #[allow(unused_variables)] embedding_mode: IndexEmbeddingMode<'_>,
+) {
+    #[cfg(not(test))]
+    match embedding_mode {
+        IndexEmbeddingMode::Skip => {}
+        IndexEmbeddingMode::Queue(state) => state.enqueue_embedding(file_id),
+        IndexEmbeddingMode::Sync => {
+            if let Err(e) = store_chunk_embeddings(conn, file_id) {
+                tracing::warn!("embedding skipped for file {file_id}: {e}");
+            }
+        }
+    }
 }
 
 /// Collect all `.md` file paths in the vault without holding a DB lock.
@@ -618,7 +626,7 @@ mod tests {
         write_note(&vault, "normal.md", "# Normal\n\nContent.");
 
         db.with_conn(|conn| {
-            let entries = index_vault_incremental(conn, &vault, None::<&Arc<AppState>>)?;
+            let entries = index_vault_incremental(conn, &vault, IndexEmbeddingMode::Skip)?;
             assert_eq!(entries.len(), 1);
             assert_eq!(entries[0].path, "normal.md");
             let count: i64 = conn.query_row("SELECT COUNT(*) FROM files", [], |r| r.get(0))?;

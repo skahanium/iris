@@ -106,7 +106,7 @@ export function AgentTaskStatusPanel({
   const waitingForPermission = task ? permissionWaiting(task, events) : false;
   const canResumeTask = task ? canResume(task.status) : false;
   const canAbortTask = task ? canAbort(task.status) : false;
-  const deliberation = task?.deliberation_state ?? null;
+  const deliberation = task ? (task.deliberation_state ?? null) : null;
   const failedItems = task ? failedVerificationItems(task) : [];
   const sourceRequestId =
     task?.request_id ?? runPlanSummary?.requestId ?? "process";
@@ -141,6 +141,9 @@ export function AgentTaskStatusPanel({
   return (
     <div className="ai-task-surface px-3 pt-2" data-testid="agent-task-panel">
       <div className="rounded-md border border-border/60 bg-surface-inset px-3 py-2 text-xs">
+        {deliberation ? (
+          <span className="sr-only" data-testid="agent-task-deliberation" />
+        ) : null}
         <div className="flex flex-wrap items-center gap-1.5">
           {canOpenProcessArtifact ? (
             <Button

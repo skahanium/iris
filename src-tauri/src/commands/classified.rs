@@ -9,7 +9,7 @@ use crate::app::AppState;
 use crate::crypto::classified_io;
 use crate::crypto::vault_key::{VaultKey, VAULT_KEY};
 use crate::error::{AppError, AppResult};
-use crate::indexer::scan::{index_file, remove_file_index};
+use crate::indexer::scan::{index_file_with_embed, remove_file_index, IndexEmbeddingMode};
 use crate::storage::paths::{
     is_user_note_path, read_file_lossy, relative_path, resolve_vault_path,
 };
@@ -257,7 +257,7 @@ fn classified_import_inner(
 }
 
 fn classified_export_inner(
-    state: &AppState,
+    state: &Arc<AppState>,
     path: &str,
     target_folder: &str,
     overwrite: bool,
@@ -323,7 +323,7 @@ fn classified_export_inner(
     state.db.with_conn(|conn| {
         remove_file_index(conn, path)?;
         remove_file_index(conn, &dest_rel)?;
-        index_file(conn, &vault, &dest)
+        index_file_with_embed(conn, &vault, &dest, IndexEmbeddingMode::Queue(state))
     })?;
 
     Ok(())
@@ -521,6 +521,7 @@ pub fn classified_rename(
 mod tests {
     use super::*;
     use crate::crypto::vault_key::{init_vault_key, VAULT_KEY_TEST_LOCK};
+    use crate::indexer::scan::index_file;
     use std::sync::OnceLock;
     use tempfile::tempdir;
 

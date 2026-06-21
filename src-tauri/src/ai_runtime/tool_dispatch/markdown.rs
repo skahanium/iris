@@ -106,7 +106,7 @@ pub(super) fn markdown_write_patch_apply(
             &abs,
             &current,
             &current_hash,
-            None,
+            ctx.index_embedding_mode(),
         )
     })?;
     crate::version::create_snapshot(
@@ -124,7 +124,14 @@ pub(super) fn markdown_write_patch_apply(
     let hash = crate::ai_runtime::writing_workflow::compute_content_hash(&applied);
     state.storage.write_guard.mark(&target_path, &hash);
     let entry = state.db.with_conn(|conn| {
-        crate::indexer::scan::index_file_from_content(conn, &vault, &abs, &applied, &hash, None)
+        crate::indexer::scan::index_file_from_content(
+            conn,
+            &vault,
+            &abs,
+            &applied,
+            &hash,
+            ctx.index_embedding_mode(),
+        )
     })?;
     let result = PatchApplyResult {
         success: true,

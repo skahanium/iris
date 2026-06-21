@@ -4,12 +4,13 @@ use iris_lib::ai_runtime::tool_dispatch::{
 };
 use iris_lib::ai_runtime::{writing_workflow, AiScene};
 use iris_lib::app::AppState;
+use iris_lib::indexer::scan::IndexEmbeddingMode;
 
 fn test_state() -> (std::sync::Arc<AppState>, tempfile::TempDir) {
     let dir = tempfile::tempdir().unwrap();
     let vault = dir.path().join("vault");
     std::fs::create_dir_all(&vault).unwrap();
-    let state = AppState::new(dir.path().to_path_buf()).unwrap();
+    let state = AppState::new_with_test_cas_key(dir.path().to_path_buf(), [0xC5; 32]).unwrap();
     state.set_vault(vault).unwrap();
     (state, dir)
 }
@@ -24,6 +25,7 @@ fn ctx<'a>(note_path: Option<&'a str>) -> ToolDispatchContext<'a> {
         app_handle: None,
         attachment_count: 0,
         skill_activation_plan: None,
+        embedding_state: None,
     }
 }
 
@@ -44,7 +46,7 @@ fn index_note(state: &std::sync::Arc<AppState>, path: &str, content: &str) {
                 &abs,
                 content,
                 &hash,
-                Some(state),
+                IndexEmbeddingMode::Skip,
             )
         })
         .unwrap();

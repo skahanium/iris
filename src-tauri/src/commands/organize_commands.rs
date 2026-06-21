@@ -204,7 +204,7 @@ fn write_vault_file(state: &Arc<AppState>, path: &str, content: &str) -> AppResu
             &abs,
             content,
             &hash,
-            Some(state),
+            crate::indexer::scan::IndexEmbeddingMode::Queue(state),
         )
     })?;
     Ok(())
@@ -237,7 +237,7 @@ fn rename_vault_file(state: &Arc<AppState>, path: &str, new_path: &str) -> AppRe
             &new_abs,
             &content,
             &hash,
-            Some(state),
+            crate::indexer::scan::IndexEmbeddingMode::Queue(state),
         )
     })?;
     Ok(())

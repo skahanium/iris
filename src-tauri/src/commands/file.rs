@@ -10,7 +10,7 @@ use crate::error::{AppError, AppResult};
 use crate::indexer::frontmatter::resolve_display_title;
 use crate::indexer::scan::{
     collect_vault_folders, content_hash, index_file_from_content, index_file_with_embed,
-    index_vault_incremental, rename_file_index, FileEntry,
+    index_vault_incremental, rename_file_index, FileEntry, IndexEmbeddingMode,
 };
 use crate::recycle::{discard_document, trash_document};
 use base64::engine::general_purpose::STANDARD;
@@ -231,7 +231,12 @@ fn start_vault_index_task(app: AppHandle, state: Arc<AppState>) {
                 _ => continue,
             };
             if let Err(e) = state.db.with_conn(|conn| {
-                crate::indexer::scan::index_file_with_embed(conn, &vault, abs, Some(&state))
+                crate::indexer::scan::index_file_with_embed(
+                    conn,
+                    &vault,
+                    abs,
+                    IndexEmbeddingMode::Queue(&state),
+                )
             }) {
                 tracing::warn!(path = %rel, "vault_set background index skipped: {e}");
             }
@@ -419,7 +424,14 @@ pub async fn file_write(
             })
         } else {
             let entry = state.db.with_conn(|conn| {
-                index_file_from_content(conn, &vault, &abs, &content, &hash, Some(&state))
+                index_file_from_content(
+                    conn,
+                    &vault,
+                    &abs,
+                    &content,
+                    &hash,
+                    IndexEmbeddingMode::Queue(&state),
+                )
             })?;
             Ok(entry)
         }
@@ -580,9 +592,9 @@ pub async fn folder_rename(
             if let Ok(h) = crate::indexer::scan::file_hash(&abs_path) {
                 state.storage.write_guard.mark(rel, &h);
             }
-            let _ = state
-                .db
-                .with_conn(|conn| index_file_with_embed(conn, &vault, &abs_path, Some(&state)));
+            let _ = state.db.with_conn(|conn| {
+                index_file_with_embed(conn, &vault, &abs_path, IndexEmbeddingMode::Queue(&state))
+            });
         }
 
         let _ = state
@@ -797,7 +809,7 @@ pub async fn file_rename(
 
         state.db.with_conn(|conn| {
             rename_file_index(conn, &path, &new_path)?;
-            index_file_with_embed(conn, &vault, &new_abs, Some(&state))
+            index_file_with_embed(conn, &vault, &new_abs, IndexEmbeddingMode::Queue(&state))
         })?;
 
         for src_path in &modified_sources {
@@ -805,9 +817,9 @@ pub async fn file_rename(
                 if let Ok(h) = crate::indexer::scan::file_hash(&abs_src) {
                     state.storage.write_guard.mark(src_path, &h);
                 }
-                let _ = state
-                    .db
-                    .with_conn(|conn| index_file_with_embed(conn, &vault, &abs_src, Some(&state)));
+                let _ = state.db.with_conn(|conn| {
+                    index_file_with_embed(conn, &vault, &abs_src, IndexEmbeddingMode::Queue(&state))
+                });
             }
         }
 
@@ -997,9 +1009,9 @@ pub async fn file_create(
                 word_count: 0,
             })
         } else {
-            state
-                .db
-                .with_conn(|conn| index_file_with_embed(conn, &vault, &abs, Some(&state)))
+            state.db.with_conn(|conn| {
+                index_file_with_embed(conn, &vault, &abs, IndexEmbeddingMode::Queue(&state))
+            })
         }
     })
     .await
@@ -1056,9 +1068,9 @@ pub async fn index_rescan(state: State<'_, Arc<AppState>>) -> AppResult<Vec<File
     let state = state.inner().clone();
     tokio::task::spawn_blocking(move || {
         let vault = state.vault_path()?;
-        state
-            .db
-            .with_conn(|conn| index_vault_incremental(conn, &vault, Some(&state)))
+        state.db.with_conn(|conn| {
+            index_vault_incremental(conn, &vault, IndexEmbeddingMode::Queue(&state))
+        })
     })
     .await
     .map_err(|e| AppError::msg(format!("task join: {e}")))?

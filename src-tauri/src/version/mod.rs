@@ -3,6 +3,7 @@ mod policy;
 
 use std::fs;
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use chrono::Utc;
 use rusqlite::OptionalExtension;
@@ -523,7 +524,7 @@ pub fn version_preview(state: &AppState, version_id: i64) -> AppResult<String> {
 }
 
 pub fn version_restore(
-    state: &AppState,
+    state: &Arc<AppState>,
     version_id: i64,
     current_content: &str,
 ) -> AppResult<String> {
@@ -558,9 +559,14 @@ pub fn version_restore(
         let hash = crate::cas::hash::content_hash_str(&content);
         let _ = ensure_snapshot_file_id(state, &path, &hash, &content)?;
     } else {
-        state
-            .db
-            .with_conn(|conn| crate::indexer::scan::index_file(conn, &vault, &abs_note))?;
+        state.db.with_conn(|conn| {
+            crate::indexer::scan::index_file_with_embed(
+                conn,
+                &vault,
+                &abs_note,
+                crate::indexer::scan::IndexEmbeddingMode::Queue(state),
+            )
+        })?;
     }
 
     Ok(content)

@@ -1296,7 +1296,7 @@ git commit -m "refactor(ai): 删除旧场景路由和卡片产物债务"
 3. 普通完成不出现过程 tab。
 4. 选中文档局部文本后打开悬浮 AI，断言可选择插入后方或替换选区，执行写入前出现确认。
 
-- [ ] **Step 3: 全量验证（`cargo test` 阻塞）**
+- [x] **Step 3: 全量验证**
 
 Run:
 
@@ -1313,7 +1313,16 @@ npm run test:e2e
 
 Expected: PASS。若 E2E 依赖本地模型或网络而环境不可用，记录具体不可用原因，并至少完成单元/契约测试。
 
-Execution note: all listed commands passed except full `cargo test`. `cargo test` completed unit tests and then hung in `tests/agent_vault_tools.rs` at `markdown_patch_tool_creates_pre_write_snapshot` and `vault_rename_move_reports_link_impact_and_moves_note`; it was stopped after several minutes without output. Relevant Rust subsets (`cargo test ai_harness::harness_task`, `cargo test web_evidence_broker`) passed. This step remains unchecked until the hanging integration tests are resolved or isolated.
+Execution note: PASS. The prior full `cargo test` hang was traced to implicit synchronous embedding/keychain side effects in vault tool integration tests and resolved by explicit embedding modes plus a deterministic test CAS key. Fresh verification passed:
+
+- `npm run lint`
+- `npm run format:check`
+- `npm run typecheck`
+- `npm run test`
+- `cargo fmt --all -- --check`
+- `cargo clippy --all-targets -- -D warnings`
+- `cargo test`
+- `npm run test:e2e`
 
 - [x] **Step 4: 最终技术债搜索**
 
