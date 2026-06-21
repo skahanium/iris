@@ -183,7 +183,8 @@ describe("Phase3 model and persona routing contract", () => {
 
     expect(aiTypes).toContain("modelRoute");
     expect(aiTypes).toContain("personaLayers");
-    expect(hook).toContain("layer: null");
+    expect(hook).toContain("blockedCount");
+    expect(hook).toContain("confirmationCount");
     expect(hook).not.toContain("components/ai/RunPlanSummary");
     expect(hook).not.toContain("components/ai/RunPlanDrawer");
     expect(hook).not.toContain("noteContent");

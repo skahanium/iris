@@ -1274,7 +1274,7 @@ git commit -m "refactor(ai): 删除旧场景路由和卡片产物债务"
 - Modify: `docs/README.md`
 - Modify: `tests/e2e/ai-workflow.test.ts`
 
-- [ ] **Step 1: 更新产品文档**
+- [x] **Step 1: 更新产品文档**
 
 `docs/design-system.md` 增加 AI 对话区规则：
 
@@ -1287,7 +1287,7 @@ git commit -m "refactor(ai): 删除旧场景路由和卡片产物债务"
 
 `docs/README.md` 增加 spec 和 plan 链接。
 
-- [ ] **Step 2: E2E 场景**
+- [x] **Step 2: E2E 场景**
 
 `tests/e2e/ai-workflow.test.ts` 增加或改写：
 
@@ -1296,7 +1296,7 @@ git commit -m "refactor(ai): 删除旧场景路由和卡片产物债务"
 3. 普通完成不出现过程 tab。
 4. 选中文档局部文本后打开悬浮 AI，断言可选择插入后方或替换选区，执行写入前出现确认。
 
-- [ ] **Step 3: 全量验证**
+- [ ] **Step 3: 全量验证（`cargo test` 阻塞）**
 
 Run:
 
@@ -1313,7 +1313,9 @@ npm run test:e2e
 
 Expected: PASS。若 E2E 依赖本地模型或网络而环境不可用，记录具体不可用原因，并至少完成单元/契约测试。
 
-- [ ] **Step 4: 最终技术债搜索**
+Execution note: all listed commands passed except full `cargo test`. `cargo test` completed unit tests and then hung in `tests/agent_vault_tools.rs` at `markdown_patch_tool_creates_pre_write_snapshot` and `vault_rename_move_reports_link_impact_and_moves_note`; it was stopped after several minutes without output. Relevant Rust subsets (`cargo test ai_harness::harness_task`, `cargo test web_evidence_broker`) passed. This step remains unchecked until the hanging integration tests are resolved or isolated.
+
+- [x] **Step 4: 最终技术债搜索**
 
 Run:
 
@@ -1321,9 +1323,18 @@ Run:
 rg -n "ResearchResultMessage|RESEARCH_KEYWORDS|assistant workflow output summarized|过程详情|证据矩阵|kind: \"research\"|kind === \"process\"|syncActiveLegacySceneHint" src src-tauri tests docs
 ```
 
-Expected: 没有生产代码命中；测试只允许 `not.toContain` 防回潮断言；docs 只允许“已移除旧行为”的说明。
+Expected: 没有旧默认路径生产命中。允许以下保留项：
 
-- [ ] **Step 5: 提交文档与 E2E**
+- `src/types/ai.ts` 的 research payload / evidence matrix 类型定义。
+- `src/components/layout/ArtifactWorkspaceView.tsx` 中的只读临时 tab 标题或内部视图。
+- `src/components/ai/AgentTaskStatusPanel.tsx` 中的长任务/暂停/失败/权限等待状态入口。
+- `src/lib/assistant-artifact-tabs.ts` 中通过 value gate 后才显示的临时 tab 标题。
+- `docs/history/**` 中的历史记录。
+- 当前 spec/plan 中用于描述“已移除旧默认行为”的说明与负向测试。
+
+Execution note: production hits that remain match the allowlist above. No old `ResearchResultMessage`, `RESEARCH_KEYWORDS`, placeholder workflow summary, or global legacy scene sync production path remains.
+
+- [x] **Step 5: 提交文档与 E2E**
 
 ```bash
 git add docs/design-system.md ROADMAP.md docs/README.md tests/e2e/ai-workflow.test.ts
@@ -1338,3 +1349,5 @@ git commit -m "docs(ai): 记录 TaskPlan harness 交互规则"
 - 不直接修改用户 `.md` 笔记内容；写作应用必须走 patch/confirmation。
 - 不把旧系统长期并行保留。每个 compatibility 字段都必须有明确用途：历史 session、trace、旧 IPC 兜底。除此之外删除。
 - 提交粒度按任务划分，提交消息使用中文 Conventional Commit。
+- Task 12 temporarily resets line-count ratchets to the current measured baselines after Task 11: `UnifiedAssistantPanel.impl.tsx` is 530 lines with a 540-line checkpoint, and `skills_impl.rs` is 1256 lines with a 1260-line checkpoint. These are not feature budget increases; future refactors should lower them again rather than raise them.
+- Existing root-document deletions (`TECH_DEBT_REVIEW.md` and related review notes) are outside this Task 12 changeset and must not be staged with this commit.

@@ -74,7 +74,7 @@ describe("assistant per-turn TaskPlan dispatch", () => {
 
     expect(taskHook).toContain("buildAssistantTaskPlan({");
     expect(taskHook).toContain("switch (taskPlan.intent)");
-    expect(taskHook).not.toContain("switch (intent)");
+    expect(taskHook).not.toContain("switch (actionState.intent)");
     expect(taskHook).toContain("taskPlan,");
     expect(taskHook).toContain('case "creative_write":');
     expect(taskHook).toContain('case "rewrite_selection":');

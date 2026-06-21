@@ -29,19 +29,20 @@
 
 ## 专题
 
-| 主题                   | 文档                                                                                       |
-| ---------------------- | ------------------------------------------------------------------------------------------ |
-| 使用指南（用户向）     | Notion 官方文档站（无限期延后，URL 待发布）                                                |
-| IPC API 参考           | [ipc-api-reference.md](./ipc-api-reference.md)                                             |
-| 设计系统 · Notion N    | [design-system.md](./design-system.md)                                                     |
-| 品牌图标               | [design-system/brand.md](./design-system/brand.md)                                         |
-| 编辑器 Markdown 导出   | [markdown-export.md](./markdown-export.md)                                                 |
-| LLM 路由与连通性       | [llm-routing.md](./llm-routing.md)                                                         |
-| 语义搜索与 Recall@5    | [eval/semantic-search.md](./eval/semantic-search.md)                                       |
-| 语义评测 fixture vault | [eval/fixtures/semantic-vault/](./eval/fixtures/semantic-vault/)                           |
-| 审计与清理记录         | [audits/2026-06-11-project-review-v1.1.0.md](./audits/2026-06-11-project-review-v1.1.0.md) |
-| 关闭回归手工验收       | [testing/app-close-manual-checklist.md](./testing/app-close-manual-checklist.md)           |
-| 品牌图标               | [../scripts/assets/README.md](../scripts/assets/README.md)                                 |
+| 主题                     | 文档                                                                                                                                                           |
+| ------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 使用指南（用户向）       | Notion 官方文档站（无限期延后，URL 待发布）                                                                                                                    |
+| IPC API 参考             | [ipc-api-reference.md](./ipc-api-reference.md)                                                                                                                 |
+| 设计系统 · Notion N      | [design-system.md](./design-system.md)                                                                                                                         |
+| 品牌图标                 | [design-system/brand.md](./design-system/brand.md)                                                                                                             |
+| 编辑器 Markdown 导出     | [markdown-export.md](./markdown-export.md)                                                                                                                     |
+| LLM 路由与连通性         | [llm-routing.md](./llm-routing.md)                                                                                                                             |
+| AI Harness TaskPlan 蓝图 | [spec](./superpowers/specs/2026-06-21-agent-harness-taskplan-blueprint-design.md) · [plan](./superpowers/plans/2026-06-21-agent-harness-taskplan-blueprint.md) |
+| 语义搜索与 Recall@5      | [eval/semantic-search.md](./eval/semantic-search.md)                                                                                                           |
+| 语义评测 fixture vault   | [eval/fixtures/semantic-vault/](./eval/fixtures/semantic-vault/)                                                                                               |
+| 审计与清理记录           | [audits/2026-06-11-project-review-v1.1.0.md](./audits/2026-06-11-project-review-v1.1.0.md)                                                                     |
+| 关闭回归手工验收         | [testing/app-close-manual-checklist.md](./testing/app-close-manual-checklist.md)                                                                               |
+| 品牌图标                 | [../scripts/assets/README.md](../scripts/assets/README.md)                                                                                                     |
 
 ### v1.1.0 深拆与性能基线
 

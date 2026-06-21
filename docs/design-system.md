@@ -66,6 +66,7 @@ Iris Rail Refresh adds semantic surface tokens for the complete interface system
 - AI 侧栏：默认 `360px`，左缘拖拽调整（`280px`–`560px`，偏好写入 localStorage），可 `Ctrl+Shift+A` 收起
 - AI 对话排版：`15px` / `line-height: 1.52`，`data-prose-surface="conversation"`，与编辑区共用 `markdown-prose.css` 与代码高亮 token
 - AI 侧栏 chrome：**对话区仅消息流 + 证据包折叠条**；**Token 累计**、**工具/检索进行中**在全局底栏（`StatusBar` + `StatusBarTokenUsage`）；证据包标题行展示 **N 证据**、**M 搜索**（Token Plan 摘要）、**K 正文**（`fetch_web_page` 深读，`ContextPacketDrawer`）
+- AI 对话区规则：消息时间线 **Markdown-first**，助手输出默认是普通文字流；临时 tab 是高价值产物，不是 workflow 默认副产品；过程 tab 只用于长任务、暂停、失败、权限等待或有意义诊断；引用胶囊显示短摘要，不显示完整选区
 
 ### 编辑区结构
 
@@ -179,7 +180,7 @@ Iris Rail Refresh adds semantic surface tokens for the complete interface system
 
 | 场景        | 形态                                                                |
 | ----------- | ------------------------------------------------------------------- |
-| AI 场景     | `SceneSelector` 弹出（图标 + 描述）                                 |
+| AI 状态     | `AgentStatusBadge` 展示当前 TaskPlan intent、工具权限与联网状态     |
 | AI 发送     | `AiComposer` 多行；Enter 发送、Shift+Enter 换行                     |
 | 证据包      | 可折叠 Section 标题 + badge                                         |
 | 状态栏缩放  | Popover 滑块/步进（非三个并排按钮）                                 |
@@ -199,7 +200,7 @@ Iris Rail Refresh adds semantic surface tokens for the complete interface system
 
 - **引用卡**：`border-border`，`rounded-lg`，细 primary 边
 - **对话泡**：`AiMessageBubble` — 用户轻底、助手细边框；壳层 `overflow-hidden`；流式左边线 `--ai-stream-pulse`
-- **AI 产物展开**：对话时间线只保留 Markdown 文字流；证据、过程、写作补丁等展开内容进入只读临时 tab
+- **AI 产物展开**：对话时间线只保留 Markdown 文字流；证据、过程、写作补丁等展开内容进入只读临时 tab。临时 tab 必须有可读内容或可执行价值，禁止为空过程、占位综述或无证据矩阵
 - **流式节点**：与 primary 同系，无紫色渐变
 
 ---
