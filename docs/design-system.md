@@ -199,7 +199,7 @@ Iris Rail Refresh adds semantic surface tokens for the complete interface system
 
 - **引用卡**：`border-border`，`rounded-lg`，细 primary 边
 - **对话泡**：`AiMessageBubble` — 用户轻底、助手细边框；壳层 `overflow-hidden`；流式左边线 `--ai-stream-pulse`
-- **研究结果卡**：时间线内 `ResearchResultMessage`；详情展开 `ResearchFocusView`
+- **AI 产物展开**：对话时间线只保留 Markdown 文字流；证据、过程、写作补丁等展开内容进入只读临时 tab
 - **流式节点**：与 primary 同系，无紫色渐变
 
 ---

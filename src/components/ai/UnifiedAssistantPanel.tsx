@@ -16,8 +16,7 @@ AgentStatusBadge
 AiComposer
 AiMessageList
 ContextPacketDrawer
-kind: "research"
-onExpandResearch
+onOpenArtifact
 AssistantTaskSurfaces
 getNoteContent: () => string
 parseMentionTokens
@@ -25,9 +24,6 @@ assistantExecute(
 agentIntent
 runPlanSummary
 intentDetection
-CitationCheckView
-data-testid="research-focus"
-ResearchFocusView
 abortResearch
 assembleContextForChat
 executeKnowledgeChat

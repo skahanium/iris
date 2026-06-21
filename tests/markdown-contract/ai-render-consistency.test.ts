@@ -137,7 +137,7 @@ describe("system message behavior", () => {
       "editor_ingest",
       "editor_export",
       "vault_preview",
-      "research_card",
+      "artifact_readonly",
       "patch_preview",
       "citation_panel",
     ] as const;
@@ -160,7 +160,7 @@ describe("cross-profile semantic equivalence", () => {
       "chat_assistant",
       "chat_user",
       "vault_preview",
-      "research_card",
+      "artifact_readonly",
     ] as const;
     const results = displayProfiles.map((p) =>
       renderMarkdownWithProfile(md, p),
@@ -241,12 +241,12 @@ describe("streaming complete = non-streaming semantic equivalence", () => {
 });
 
 // ═══════════════════════════════════════════════════════════════
-// research_card / patch_preview / citation_panel profiles
+// artifact_readonly / patch_preview / citation_panel profiles
 // ═══════════════════════════════════════════════════════════════
 
-describe("artifact profiles: research_card, patch_preview, citation_panel", () => {
-  it("[BASELINE] research_card profile renders bold", () => {
-    const r = renderMarkdownWithProfile("**key**", "research_card");
+describe("artifact profiles: artifact_readonly, patch_preview, citation_panel", () => {
+  it("[BASELINE] artifact_readonly profile renders bold", () => {
+    const r = renderMarkdownWithProfile("**key**", "artifact_readonly");
     expect(r.output).toContain("<strong>");
   });
 
@@ -262,7 +262,7 @@ describe("artifact profiles: research_card, patch_preview, citation_panel", () =
 
   it("[BASELINE] all artifact profiles produce sanitized output", () => {
     for (const p of [
-      "research_card",
+      "artifact_readonly",
       "patch_preview",
       "citation_panel",
     ] as const) {

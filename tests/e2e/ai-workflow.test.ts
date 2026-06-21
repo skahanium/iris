@@ -40,11 +40,15 @@ describe("统一助手工作流验收", () => {
     );
   });
 
-  it("研究任务：专注态 UI 与中止", () => {
+  it("研究任务：对话摘要进入普通消息流，临时视图负责展开", () => {
     expect(intentForFlow("research_focus")).toBe("research");
     const panel = read("src/components/ai/UnifiedAssistantPanel.tsx");
-    expect(panel).toContain('data-testid="research-focus"');
-    expect(panel).toContain("ResearchFocusView");
+    const list = read("src/components/ai/AiMessageList.tsx");
+    const tasks = read("src/components/ai/hooks/useAssistantTasks.ts");
+    expect(list).toContain("AiMessageBubble");
+    expect(list).not.toContain("ResearchResultMessage");
+    expect(tasks).toContain("result.summary.trim()");
+    expect(list).not.toContain("artifactLinks");
     expect(panel).toContain("abortResearch");
   });
 

@@ -2,7 +2,6 @@ import { memo, type RefObject } from "react";
 
 import { AiMessageList, type ChatLine } from "./AiMessageList";
 import { AiMessageSelectionUi } from "./AiMessageSelectionUi";
-import type { ResearchFocusPayload } from "@/types/ai";
 
 interface ConversationSurfaceProps {
   messages: ChatLine[];
@@ -10,7 +9,6 @@ interface ConversationSurfaceProps {
   selectedIndices?: Set<number>;
   messageListRef: RefObject<HTMLDivElement | null>;
   onCitationClick: (ref: string) => void;
-  onExpandResearch: (result: ResearchFocusPayload) => void;
   onQuoteToInput: (text: string) => void;
   onRetract?: (index: number) => void;
   onSelect?: (
@@ -31,7 +29,6 @@ export const ConversationSurface = memo(function ConversationSurface({
   selectedIndices,
   messageListRef,
   onCitationClick,
-  onExpandResearch,
   onQuoteToInput,
   onRetract,
   onSelect,
@@ -47,7 +44,6 @@ export const ConversationSurface = memo(function ConversationSurface({
         streaming={streaming}
         selectedIndices={selectedIndices}
         onCitationClick={onCitationClick}
-        onExpandResearch={onExpandResearch}
         onRetract={onRetract}
         onSelect={onSelect}
       />

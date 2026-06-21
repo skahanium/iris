@@ -24,7 +24,7 @@ export type MarkdownProfile =
   | "editor_ingest"
   | "editor_export"
   | "vault_preview"
-  | "research_card"
+  | "artifact_readonly"
   | "patch_preview"
   | "citation_panel";
 
@@ -333,7 +333,10 @@ export const DEFAULT_PROFILE_RULES: Record<
     editor_ingest: { profile: "editor_ingest", strategy: "full_render" },
     editor_export: { profile: "editor_export", strategy: "full_render" },
     vault_preview: { profile: "vault_preview", strategy: "full_render" },
-    research_card: { profile: "research_card", strategy: "full_render" },
+    artifact_readonly: {
+      profile: "artifact_readonly",
+      strategy: "full_render",
+    },
     patch_preview: { profile: "patch_preview", strategy: "full_render" },
     citation_panel: { profile: "citation_panel", strategy: "full_render" },
   },
@@ -356,7 +359,10 @@ export const DEFAULT_PROFILE_RULES: Record<
     },
     editor_export: { profile: "editor_export", strategy: "raw_preserve" },
     vault_preview: { profile: "vault_preview", strategy: "full_render" },
-    research_card: { profile: "research_card", strategy: "full_render" },
+    artifact_readonly: {
+      profile: "artifact_readonly",
+      strategy: "full_render",
+    },
     patch_preview: { profile: "patch_preview", strategy: "full_render" },
     citation_panel: { profile: "citation_panel", strategy: "full_render" },
   },
@@ -379,7 +385,10 @@ export const DEFAULT_PROFILE_RULES: Record<
     },
     editor_export: { profile: "editor_export", strategy: "raw_preserve" },
     vault_preview: { profile: "vault_preview", strategy: "raw_preserve" },
-    research_card: { profile: "research_card", strategy: "raw_preserve" },
+    artifact_readonly: {
+      profile: "artifact_readonly",
+      strategy: "raw_preserve",
+    },
     patch_preview: { profile: "patch_preview", strategy: "raw_preserve" },
     citation_panel: { profile: "citation_panel", strategy: "raw_preserve" },
   },
@@ -408,8 +417,8 @@ export const DEFAULT_PROFILE_RULES: Record<
       strategy: "warning_block",
       placeholderClass: "iris-unsupported",
     },
-    research_card: {
-      profile: "research_card",
+    artifact_readonly: {
+      profile: "artifact_readonly",
       strategy: "warning_block",
       placeholderClass: "iris-unsupported",
     },

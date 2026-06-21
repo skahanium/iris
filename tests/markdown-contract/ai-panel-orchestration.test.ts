@@ -51,30 +51,30 @@ describe("ConversationSurface: contract specification", () => {
 // ═══════════════════════════════════════════════════════════════
 
 describe("ArtifactSurface: contract specification", () => {
-  it("[BASELINE] research_card renders via same contract as messages", () => {
+  it("[BASELINE] artifact_readonly renders via same contract as messages", () => {
     const md = "**Finding** with *evidence*.";
-    const research = renderMarkdownWithProfile(md, "research_card");
-    const asst = renderMarkdownWithProfile(md, "chat_assistant");
-    expect(research.meta.stats).toEqual(asst.meta.stats);
+    const artifact = renderMarkdownWithProfile(md, "artifact_readonly");
+    const assistant = renderMarkdownWithProfile(md, "chat_assistant");
+    expect(artifact.meta.stats).toEqual(assistant.meta.stats);
   });
 
   it("[BASELINE] patch_preview renders via same contract as messages", () => {
     const md = "**Warning** detail.";
     const patch = renderMarkdownWithProfile(md, "patch_preview");
-    const asst = renderMarkdownWithProfile(md, "chat_assistant");
-    expect(patch.meta.stats).toEqual(asst.meta.stats);
+    const assistant = renderMarkdownWithProfile(md, "chat_assistant");
+    expect(patch.meta.stats).toEqual(assistant.meta.stats);
   });
 
   it("[BASELINE] citation_panel renders via same contract as messages", () => {
     const md = "**Claim** with `code`.";
     const cite = renderMarkdownWithProfile(md, "citation_panel");
-    const asst = renderMarkdownWithProfile(md, "chat_assistant");
-    expect(cite.meta.stats).toEqual(asst.meta.stats);
+    const assistant = renderMarkdownWithProfile(md, "chat_assistant");
+    expect(cite.meta.stats).toEqual(assistant.meta.stats);
   });
 
   it("[BASELINE] all artifact profiles produce non-empty output", () => {
     for (const p of [
-      "research_card",
+      "artifact_readonly",
       "patch_preview",
       "citation_panel",
     ] as const) {
@@ -85,7 +85,7 @@ describe("ArtifactSurface: contract specification", () => {
 
   it("[BASELINE] artifact profiles produce sanitized output", () => {
     for (const p of [
-      "research_card",
+      "artifact_readonly",
       "patch_preview",
       "citation_panel",
     ] as const) {
@@ -112,22 +112,22 @@ describe("state isolation: messages vs artifacts", () => {
 
   it("[BASELINE] different profiles for same content produce same fragment stats", () => {
     const md = "# Title\n\n**bold**\n\n<div>raw</div>";
-    const asst = renderMarkdownWithProfile(md, "chat_assistant");
-    const research = renderMarkdownWithProfile(md, "research_card");
-    expect(asst.meta.stats).toEqual(research.meta.stats);
+    const assistant = renderMarkdownWithProfile(md, "chat_assistant");
+    const artifact = renderMarkdownWithProfile(md, "artifact_readonly");
+    expect(assistant.meta.stats).toEqual(artifact.meta.stats);
   });
 
   it("[BASELINE] warnings are generated consistently across profiles", () => {
     const md = "<script>alert(1)</script>";
-    const asst = renderMarkdownWithProfile(md, "chat_assistant");
+    const assistant = renderMarkdownWithProfile(md, "chat_assistant");
     const patch = renderMarkdownWithProfile(md, "patch_preview");
-    expect(asst.warnings.length).toBe(patch.warnings.length);
+    expect(assistant.warnings.length).toBe(patch.warnings.length);
   });
 
   it("[BASELINE] preserveFragments are identical for same content across profiles", () => {
     const md = "# Title\n<div class='x'>raw</div>\n\n**text**";
     const r1 = renderMarkdownWithProfile(md, "chat_assistant");
-    const r2 = renderMarkdownWithProfile(md, "research_card");
+    const r2 = renderMarkdownWithProfile(md, "artifact_readonly");
     expect(r1.preserveFragments.length).toBe(r2.preserveFragments.length);
   });
 });

@@ -870,6 +870,9 @@ export function useAssistantTasks({
         throw new Error("助手路由异常：期望研究结果");
       }
       const result = response.payload;
+      const summary =
+        result.summary.trim() ||
+        "研究已完成，但没有生成可展示正文。可在来源详情中查看证据状态。";
       researchRequestIdRef.current = result.request_id;
       setResearchResult(result);
       setResearchState(result.research_state ?? null);
@@ -881,9 +884,7 @@ export function useAssistantTasks({
         ...prev,
         {
           role: "assistant",
-          content: "",
-          kind: "research",
-          research: result,
+          content: summary,
         },
       ]);
     },

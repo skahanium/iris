@@ -221,10 +221,10 @@ describe("CRITERION 3: advanced syntax not destroyed on save", () => {
 // ═══════════════════════════════════════════════════════════════
 
 describe("CRITERION 4: all consumers use shared contract", () => {
-  it("[C4.1] research_card profile works", () => {
-    const r = renderMarkdownWithProfile("**Key finding**", "research_card");
+  it("[C4.1] artifact_readonly profile works", () => {
+    const r = renderMarkdownWithProfile("**Key finding**", "artifact_readonly");
     expect(r.output).toContain("<strong>");
-    expect(r.meta.profile).toBe("research_card");
+    expect(r.meta.profile).toBe("artifact_readonly");
   });
 
   it("[C4.2] chat_assistant profile includes citation linkification", () => {
@@ -471,9 +471,9 @@ describe("CRITERION 8: contract is extensible without redefinition", () => {
   });
 
   it("[C8.2] contract functions accept future profile extensions", () => {
-    // research_card, patch_preview, citation_panel are all valid profiles
+    // artifact_readonly, patch_preview, citation_panel are all valid profiles
     const futureProfiles: MarkdownProfile[] = [
-      "research_card",
+      "artifact_readonly",
       "patch_preview",
       "citation_panel",
     ];
@@ -490,7 +490,7 @@ describe("CRITERION 8: contract is extensible without redefinition", () => {
       "editor_ingest",
       "editor_export",
       "vault_preview",
-      "research_card",
+      "artifact_readonly",
       "patch_preview",
       "citation_panel",
     ];

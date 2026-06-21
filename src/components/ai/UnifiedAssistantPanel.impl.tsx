@@ -184,7 +184,6 @@ export function UnifiedAssistantPanel({
     abortResearch,
     clearResearchProgress,
     generatingResearchNote,
-    handleExpandResearchDetail,
     handleGenerateResearchNote,
     researchDetailRef,
     researchPanelExpanded,
@@ -432,7 +431,6 @@ export function UnifiedAssistantPanel({
         selectedIndices={bubbleSelection.selected}
         messageListRef={messageListRef}
         onCitationClick={handleCitationClick}
-        onExpandResearch={handleExpandResearchDetail}
         onRetract={handleRetract}
         onSelect={bubbleSelection.handleClick}
         onQuoteToInput={handleQuoteToInput}

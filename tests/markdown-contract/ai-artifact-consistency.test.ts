@@ -1,7 +1,7 @@
 /**
  * ai-artifact-consistency.test.ts — AI 展示重构 阶段 0 TDD 测试
  *
- * 测试工件表面（ResearchResult、PatchPreview、CitationCheckView）的
+ * 测试工件表面（ResearchSummary、PatchPreview、CitationCheckView）的
  * Markdown 渲染一致性和 MarkdownRenderable 组件行为。
  *
  * 当前全部 RED：MarkdownRenderable 组件尚未实现。
@@ -12,47 +12,47 @@ import { describe, expect, it } from "vitest";
 import { renderMarkdownWithProfile } from "@/lib/markdown-contract/contract";
 
 // ═══════════════════════════════════════════════════════════════
-// ResearchResultMessage 渲染一致性
+// Readonly artifact summary 渲染一致性
 // ═══════════════════════════════════════════════════════════════
 
-describe("ResearchResultMessage: contract rendering", () => {
-  it("[BASELINE] research_card renders **bold** as <strong>", () => {
+describe("Readonly artifact summary: contract rendering", () => {
+  it("[BASELINE] artifact_readonly renders **bold** as <strong>", () => {
     const r = renderMarkdownWithProfile(
       "**Key finding**: the result.",
-      "research_card",
+      "artifact_readonly",
     );
     expect(r.output).toContain("<strong>");
     expect(r.output).toContain("Key finding");
   });
 
-  it("[BASELINE] research_card renders code blocks with <pre>", () => {
+  it("[BASELINE] artifact_readonly renders code blocks with <pre>", () => {
     const r = renderMarkdownWithProfile(
       '```json\n{"key":"value"}\n```',
-      "research_card",
+      "artifact_readonly",
     );
     expect(r.output).toContain("<pre");
     expect(r.output).toContain("key");
   });
 
-  it("[BASELINE] research_card renders tables", () => {
+  it("[BASELINE] artifact_readonly renders tables", () => {
     const r = renderMarkdownWithProfile(
       "| Source | Score |\n| --- | --- |\n| A | 0.9 |",
-      "research_card",
+      "artifact_readonly",
     );
     expect(r.output).toContain("<table");
   });
 
   it("[BASELINE] research summary matches assistant rendering for same content", () => {
     const md = "**Finding**: data *supports* `hypothesis`.";
-    const research = renderMarkdownWithProfile(md, "research_card");
-    const asst = renderMarkdownWithProfile(md, "chat_assistant");
-    expect(research.meta.stats).toEqual(asst.meta.stats);
+    const artifact = renderMarkdownWithProfile(md, "artifact_readonly");
+    const assistant = renderMarkdownWithProfile(md, "chat_assistant");
+    expect(artifact.meta.stats).toEqual(assistant.meta.stats);
   });
 
-  it("[BASELINE] research_card output is sanitized (no XSS)", () => {
+  it("[BASELINE] artifact_readonly output is sanitized (no XSS)", () => {
     const r = renderMarkdownWithProfile(
       "<script>alert(1)</script>\n**safe**",
-      "research_card",
+      "artifact_readonly",
     );
     expect(r.output).not.toContain("<script");
     expect(r.output).toContain("safe");
@@ -81,8 +81,8 @@ describe("PatchPreview: markdown integration", () => {
   it("[BASELINE] patch_preview has same stats as chat_assistant for same content", () => {
     const md = "## Warning\n\n**Risk:** high.\n\n- check 1\n- check 2";
     const patch = renderMarkdownWithProfile(md, "patch_preview");
-    const asst = renderMarkdownWithProfile(md, "chat_assistant");
-    expect(patch.meta.stats).toEqual(asst.meta.stats);
+    const assistant = renderMarkdownWithProfile(md, "chat_assistant");
+    expect(patch.meta.stats).toEqual(assistant.meta.stats);
   });
 });
 
@@ -110,8 +110,8 @@ describe("CitationCheckView: markdown integration", () => {
   it("[BASELINE] citation_panel has same stats as chat_assistant for same content", () => {
     const md = "**Key claim** with `evidence`.\n\n> supporting quote";
     const cite = renderMarkdownWithProfile(md, "citation_panel");
-    const asst = renderMarkdownWithProfile(md, "chat_assistant");
-    expect(cite.meta.stats).toEqual(asst.meta.stats);
+    const assistant = renderMarkdownWithProfile(md, "chat_assistant");
+    expect(cite.meta.stats).toEqual(assistant.meta.stats);
   });
 });
 
@@ -124,7 +124,7 @@ describe("MarkdownRenderable: shared rendering shell", () => {
     // MarkdownRenderable component should delegate to renderMarkdownWithProfile
     // Test via contract API as proxy until component exists
     for (const p of [
-      "research_card",
+      "artifact_readonly",
       "patch_preview",
       "citation_panel",
     ] as const) {
@@ -135,7 +135,7 @@ describe("MarkdownRenderable: shared rendering shell", () => {
 
   it("[BASELINE] handles empty content gracefully", () => {
     for (const p of [
-      "research_card",
+      "artifact_readonly",
       "patch_preview",
       "citation_panel",
     ] as const) {

@@ -47,15 +47,16 @@ describe("unified assistant shell", () => {
     expect(read("src/hooks/useEditorContextMenu.ts")).toContain("context_menu");
   });
 
-  it("research results appear in message timeline", () => {
+  it("research results stay in the normal markdown message timeline", () => {
     const panel = read("src/components/ai/UnifiedAssistantPanel.tsx");
-    expect(panel).toContain('kind: "research"');
-    expect(panel).toContain("onExpandResearch");
     const list = read("src/components/ai/AiMessageList.tsx");
-    expect(list).toContain("ResearchResultMessage");
-    expect(read("src/components/ai/ResearchResultMessage.tsx")).toContain(
-      'data-testid="research-result-message"',
-    );
+    const tasks = read("src/components/ai/hooks/useAssistantTasks.ts");
+    expect(panel).toContain("AssistantTaskSurfaces");
+    expect(panel).toContain("onOpenArtifact");
+    expect(list).toContain("AiMessageBubble");
+    expect(list).not.toContain("ResearchResultMessage");
+    expect(tasks).toContain("result.summary.trim()");
+    expect(tasks).not.toContain('kind: "research"');
   });
 
   it("Management Center hosts persona, rules, and model config", () => {

@@ -4,11 +4,8 @@ import { memo, useCallback, useMemo, useRef, type MouseEvent } from "react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { AiMessage } from "@/components/ui/ai-message";
 import { AiMessageBubble } from "@/components/ai/AiMessageBubble";
-import { ResearchResultMessage } from "@/components/ai/ResearchResultMessage";
 import type { MentionToken } from "@/lib/ai-context-scope";
-import type { ContentPart, ResearchFocusPayload } from "@/types/ai";
-
-import type { ToolCallInfo } from "@/types/ai";
+import type { ContentPart, ToolCallInfo } from "@/types/ai";
 
 export interface ImageAttachment {
   id: string;
@@ -30,8 +27,6 @@ export interface ChatLine {
   seq?: number;
   created_at?: string;
   toolCalls?: ToolCallInfo[];
-  kind?: "research";
-  research?: ResearchFocusPayload;
 }
 
 interface AiMessageListProps {
@@ -39,7 +34,6 @@ interface AiMessageListProps {
   streaming: boolean;
   selectedIndices?: Set<number>;
   onCitationClick?: (ref: string) => void;
-  onExpandResearch?: (result: ResearchFocusPayload) => void;
   onRetract?: (index: number) => void;
   onSelect?: (
     index: number,
@@ -57,7 +51,6 @@ export const AiMessageList = memo(function AiMessageList({
   streaming,
   selectedIndices,
   onCitationClick,
-  onExpandResearch,
   onRetract,
   onSelect,
 }: AiMessageListProps) {
@@ -123,25 +116,8 @@ export const AiMessageList = memo(function AiMessageList({
     const i = row.messageIndex;
     const isLast = i === messages.length - 1;
     const assistantStreaming =
-      streaming &&
-      m.role === "assistant" &&
-      m.kind !== "research" &&
-      isLast &&
-      !m.content;
+      streaming && m.role === "assistant" && isLast && !m.content;
     const isSelected = selectedIndices?.has(i) ?? false;
-
-    if (m.role === "assistant" && m.kind === "research" && m.research) {
-      const result = m.research;
-      return (
-        <div className="flex w-full justify-start">
-          <ResearchResultMessage
-            result={result}
-            onExpandDetail={() => onExpandResearch?.(result)}
-            className="w-full max-w-full"
-          />
-        </div>
-      );
-    }
 
     if (m.role === "assistant") {
       const msgContent = m.content || "";

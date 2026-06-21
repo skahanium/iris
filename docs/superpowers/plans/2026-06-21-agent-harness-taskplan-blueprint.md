@@ -129,7 +129,9 @@ expect(read("src-tauri/src/ai_runtime/agent_task_policy.rs")).toContain(
 expect(read("src-tauri/src/ai_runtime/agent_task_policy.rs")).toContain(
   "compatibility",
 );
-expect(read("src/lib/assistant-routing.ts")).toContain("buildAssistantTaskPlan");
+expect(read("src/lib/assistant-routing.ts")).toContain(
+  "buildAssistantTaskPlan",
+);
 ```
 
 - [x] **Step 4: 运行失败测试**
@@ -370,7 +372,9 @@ export const writingKeywordBeforeResearchKeyword = true;
 实现小函数，避免复制字段：
 
 ```ts
-function basePlan(input: BuildAssistantTaskPlanInput): Pick<
+function basePlan(
+  input: BuildAssistantTaskPlanInput,
+): Pick<
   TaskPlan,
   | "contextReferences"
   | "retrievalMode"
@@ -379,9 +383,15 @@ function basePlan(input: BuildAssistantTaskPlanInput): Pick<
   | "requiresClarification"
   | "sourceHints"
 >;
-function writerPlan(input: BuildAssistantTaskPlanInput, intent: "creative_write" | "rewrite_selection"): TaskPlan;
+function writerPlan(
+  input: BuildAssistantTaskPlanInput,
+  intent: "creative_write" | "rewrite_selection",
+): TaskPlan;
 function researchPlan(input: BuildAssistantTaskPlanInput): TaskPlan;
-function clarifyPlan(input: BuildAssistantTaskPlanInput, question: string): TaskPlan;
+function clarifyPlan(
+  input: BuildAssistantTaskPlanInput,
+  question: string,
+): TaskPlan;
 ```
 
 默认值：
@@ -399,8 +409,12 @@ function clarifyPlan(input: BuildAssistantTaskPlanInput, question: string): Task
 保留现有导出：
 
 ```ts
-export function detectAgentIntent(input: AssistantRouteInput): IntentDetectionResult
-export function legacyIntentForAgentIntent(intent: AgentIntent): AssistantIntent
+export function detectAgentIntent(
+  input: AssistantRouteInput,
+): IntentDetectionResult;
+export function legacyIntentForAgentIntent(
+  intent: AgentIntent,
+): AssistantIntent;
 ```
 
 `detectAgentIntent` 内部调用 `buildAssistantTaskPlan(input)`，把 `TaskPlan` 映射回旧 `IntentDetectionResult`，供尚未改完的 UI 使用。删除 `RESEARCH_KEYWORDS`、`WRITING_KEYWORDS` 等主决策数组；如果仍需少量关键词，放进 `assistant-taskplan.ts` 且按创作优先。
@@ -533,7 +547,7 @@ git commit -m "feat(ai): 后端校验并执行 TaskPlan"
 - Modify: `tests/unified-assistant-shell.test.ts`
 - Modify: `tests/research-result-artifact-tags.test.tsx`
 
-- [ ] **Step 1: 新增失败测试**
+- [x] **Step 1: 新增失败测试**
 
 `tests/assistant-markdown-stream-contract.test.tsx` 断言：
 
@@ -556,7 +570,7 @@ expect(existsSync("src/components/ai/ResearchResultMessage.tsx")).toBe(false);
 expect(() => read("src/components/ai/ResearchResultMessage.tsx")).toThrow();
 ```
 
-- [ ] **Step 2: 修改消息类型**
+- [x] **Step 2: 修改消息类型**
 
 在 `AiMessageList.tsx` 的 `ChatLine` 中删除：
 
@@ -565,16 +579,11 @@ kind?: "research";
 research?: ResearchFocusPayload;
 ```
 
-增加：
-
-```ts
-contextReferences?: ContextReference[];
-artifactLinks?: ArtifactPlanItem[];
-```
+不增加未来占位字段；`ChatLine` 在 Task 5 只保留消息渲染实际消费的字段。
 
 `assistantStreaming` 不再排除 research kind。
 
-- [ ] **Step 3: 删除 research 特判渲染**
+- [x] **Step 3: 删除 research 特判渲染**
 
 从 `AiMessageList.tsx` 删除：
 
@@ -603,12 +612,15 @@ if (m.role === "assistant" && m.kind === "research" && m.research) {
 />
 ```
 
-- [ ] **Step 4: 改 `runResearch` 的消息写入**
+- [x] **Step 4: 改 `runResearch` 的消息写入**
 
 在 `useAssistantTasks.ts` 的 `runResearch` 中把：
 
 ```ts
-setMessages((prev) => [...prev, { role: "assistant", content: "", kind: "research", research: result }]);
+setMessages((prev) => [
+  ...prev,
+  { role: "assistant", content: "", kind: "research", research: result },
+]);
 ```
 
 替换为：
@@ -619,20 +631,21 @@ setMessages((prev) => [
   {
     role: "assistant",
     content: result.summary.trim(),
-    artifactLinks: response.taskPlan?.artifactPlan ?? [],
   },
 ]);
 ```
 
+不要在 `ChatLine` 中写入 `ContextReference` 或 `ArtifactPlanItem`。前者属于 Task 7 的上下文输入契约，后者只描述计划中的产物意图，不是可打开的临时 tab 数据；临时 tab 必须由 Task 6 的 `AssistantArtifactDraft` 与价值门槛统一生成。
+
 如果 `result.summary` 为空，显示一句正常 Markdown 诊断：
 
 ```ts
-"研究已完成，但没有生成可展示正文。可在来源详情中查看证据状态。"
+"研究已完成，但没有生成可展示正文。可在来源详情中查看证据状态。";
 ```
 
 这句只用于异常空正文，不生成过程卡。
 
-- [ ] **Step 5: 删除文件并改旧测试**
+- [x] **Step 5: 删除文件并改旧测试**
 
 删除 `src/components/ai/ResearchResultMessage.tsx`。
 
@@ -645,7 +658,7 @@ expect(list).toContain("AiMessageBubble");
 
 删除或重写 `tests/research-result-artifact-tags.test.tsx`，新测试归入 `assistant-artifact-value-gates.test.ts`，不再单独祝福研究消息卡。
 
-- [ ] **Step 6: 验证**
+- [x] **Step 6: 验证**
 
 Run:
 
@@ -656,7 +669,7 @@ npm run typecheck
 
 Expected: PASS。对话流中不再出现研究卡、过程按钮、证据矩阵按钮。
 
-- [ ] **Step 7: 提交 Markdown-first 消息流**
+- [x] **Step 7: 提交 Markdown-first 消息流**
 
 ```bash
 git add src/components/ai/AiMessageList.tsx src/components/ai/hooks/useAssistantTasks.ts src/components/ai/hooks/useAssistantConversation.ts tests/assistant-markdown-stream-contract.test.tsx tests/unified-assistant-shell.test.ts tests/research-result-artifact-tags.test.tsx
@@ -713,7 +726,11 @@ export type ArtifactKind =
 删除旧 kind：
 
 ```ts
-"research" | "process" | "writing_patch" | "citation_check" | "organize_suggestions"
+"research" |
+  "process" |
+  "writing_patch" |
+  "citation_check" |
+  "organize_suggestions";
 ```
 
 所有旧 payload 通过 `payload.schema` 或 `payload.resultKind` 区分，不再用 UI kind 表示 workflow。
@@ -723,7 +740,9 @@ export type ArtifactKind =
 在 `src/lib/assistant-artifact-tabs.ts` 增加：
 
 ```ts
-export function artifactPassesValueGate(draft: AssistantArtifactDraft): boolean {
+export function artifactPassesValueGate(
+  draft: AssistantArtifactDraft,
+): boolean {
   switch (draft.kind) {
     case "evidence_sources":
       return hasEvidenceValue(draft.payload);
@@ -800,9 +819,13 @@ git commit -m "refactor(ai): 为临时产物增加价值门槛"
 
 ```ts
 it("preserves an irregular partial selection range");
-it("preserves a cross-paragraph selection without expanding to full paragraphs");
+it(
+  "preserves a cross-paragraph selection without expanding to full paragraphs",
+);
 it("marks a reference stale when content hash changes");
-it("creates a lightweight display capsule without dumping the whole source text");
+it(
+  "creates a lightweight display capsule without dumping the whole source text",
+);
 it("serializes references through assistantExecute");
 ```
 
@@ -826,7 +849,9 @@ export function validateContextReference(
   currentContent: string | null,
 ): ContextReference;
 
-export function contextReferenceDisplayText(reference: ContextReference): string;
+export function contextReferenceDisplayText(
+  reference: ContextReference,
+): string;
 ```
 
 `createContextReference` 使用已有 hash 工具；若代码库没有现成 hash 工具，用浏览器 `crypto.subtle` 不适合同步测试，先在前端使用已有 `content_hash` 来源。不要新增 npm 依赖。
@@ -866,7 +891,7 @@ quoteSelectionAsReference(reference: ContextReference): void
 `useAssistantTasks.ts` 的所有路径统一传：
 
 ```ts
-contextReferences: activeContextReferences
+contextReferences: activeContextReferences;
 ```
 
 写作路径不再只传裸 `selection`；迁移期可同时传 `selection`，但 plan 必须写明删除目标：Task 11 删除裸 selection 主路径。
@@ -910,7 +935,8 @@ const taskPlan = buildAssistantTaskPlan({
   hasImage: images.length > 0,
   hasSelection: activeContextReferences.some((ref) => ref.kind === "selection"),
   notePath,
-  explicitScope: contextScope.paths.length > 0 || contextScope.pathPrefixes.length > 0,
+  explicitScope:
+    contextScope.paths.length > 0 || contextScope.pathPrefixes.length > 0,
   contextReferences: activeContextReferences,
   webAuthorized: webSearch,
 });
@@ -1187,14 +1213,20 @@ Expected: 只允许出现：
 
 ```ts
 expect(read("src/lib/assistant-routing.ts")).not.toContain("RESEARCH_KEYWORDS");
-expect(read("src/components/ai/AiMessageList.tsx")).not.toContain("ResearchResultMessage");
-expect(read("src/lib/assistant-artifact-tabs.ts")).toContain("artifactPassesValueGate");
+expect(read("src/components/ai/AiMessageList.tsx")).not.toContain(
+  "ResearchResultMessage",
+);
+expect(read("src/lib/assistant-artifact-tabs.ts")).toContain(
+  "artifactPassesValueGate",
+);
 ```
 
 `tests/harness-modernization-contract.test.ts` 增加后端断言：
 
 ```ts
-expect(read("src-tauri/src/ai_runtime/task_plan.rs")).toContain("TaskPlanSummary");
+expect(read("src-tauri/src/ai_runtime/task_plan.rs")).toContain(
+  "TaskPlanSummary",
+);
 expect(read("src-tauri/src/ai_harness/harness_task.rs")).not.toContain(
   "assistant workflow output summarized by artifact metadata",
 );
