@@ -121,6 +121,50 @@ describe("assistant artifact value gates", () => {
     ).toEqual([true, true, true, true]);
   });
 
+  it("keeps SkillHub confirmation wires only through unified task_process artifacts", () => {
+    expect(
+      buildArtifactDraftsFromTaskResult({
+        requestId: "skillhub-old",
+        runStatus: "pending_confirmation",
+        artifacts: [
+          {
+            kind: "tool_confirmation",
+            title: "工具确认",
+            status: "pending",
+            sourceTask: "skill_management",
+            payload: null,
+          },
+        ],
+      }),
+    ).toEqual([]);
+
+    const drafts = buildArtifactDraftsFromTaskResult({
+      requestId: "skillhub-new",
+      runStatus: "pending_confirmation",
+      artifacts: [
+        {
+          kind: "task_process",
+          title: "工具确认",
+          status: "pending",
+          sourceTask: "skill_management",
+          payload: {
+            schema: "task_process",
+            status: "pending_confirmation",
+            tool_name: "skills_install",
+            next_action: "wait_for_user_confirmation",
+          },
+        },
+      ],
+    });
+
+    expect(drafts).toHaveLength(1);
+    expect(drafts[0]).toMatchObject({
+      kind: "task_process",
+      title: "工具确认",
+      sourceRequestId: "skillhub-new",
+    });
+  });
+
   it("creates writing_change for patch, diff, insert, or replace candidates", () => {
     const payloads: Array<unknown> = [
       { schema: "writing_change", patches: [{ id: "patch-1" }] },

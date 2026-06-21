@@ -33,6 +33,20 @@ describe("harness modernization remaining contracts", () => {
     );
   });
 
+  it("keeps direct SkillHub confirmation on unified task_process artifact wires", () => {
+    const assistantCommands = read(
+      "src-tauri/src/commands/assistant_commands.rs",
+    );
+
+    expect(assistantCommands).not.toContain('kind: "tool_confirmation"');
+    expect(assistantCommands).toContain('kind: "task_process"');
+    expect(assistantCommands).toContain('"schema": "task_process"');
+    expect(assistantCommands).toContain('"tool_name": "skills_install"');
+    expect(assistantCommands).toContain(
+      '"next_action": "wait_for_user_confirmation"',
+    );
+  });
+
   it("tool confirmation executes auto tools before pausing on confirm", () => {
     const toolTurn = read("src-tauri/src/ai_harness/tool_turn.rs");
     expect(toolTurn).toContain("outstanding_confirm_tool");

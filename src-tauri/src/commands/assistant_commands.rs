@@ -204,7 +204,7 @@ fn blocked_reasons_for_response(response: &AssistantExecuteResponse) -> Vec<Stri
         let tool_titles: Vec<String> = response
             .artifacts
             .iter()
-            .filter(|artifact| artifact.kind == "tool_confirmation")
+            .filter(|artifact| is_pending_confirmation_artifact(artifact))
             .map(|artifact| format!("等待确认：{}", artifact.title))
             .collect();
         if tool_titles.is_empty() {
@@ -219,6 +219,17 @@ fn blocked_reasons_for_response(response: &AssistantExecuteResponse) -> Vec<Stri
     } else {
         Vec::new()
     }
+}
+
+fn is_pending_confirmation_artifact(
+    artifact: &crate::ai_runtime::harness_task::HarnessArtifactWire,
+) -> bool {
+    artifact.kind == "task_process"
+        && artifact
+            .payload
+            .get("status")
+            .and_then(serde_json::Value::as_str)
+            == Some("pending_confirmation")
 }
 
 fn detect_skillhub_direct_install(message: &str) -> Option<String> {
@@ -477,17 +488,24 @@ async fn maybe_handle_skillhub_direct_install(
                 "pending_confirmation": true,
             }),
         },
-        request_id,
+        request_id: request_id.clone(),
         task_id: Some(task_id),
         run_status: "pending_confirmation".into(),
         evidence_refresh_notice: None,
         artifacts: vec![crate::ai_runtime::harness_task::HarnessArtifactWire {
-            kind: "tool_confirmation".into(),
+            kind: "task_process".into(),
             title: "工具确认".into(),
             status: "pending".into(),
             source_task: "skill_management".into(),
             evidence_count: 0,
-            payload: serde_json::Value::Null,
+            payload: serde_json::json!({
+                "schema": "task_process",
+                "status": "pending_confirmation",
+                "request_id": request_id,
+                "tool_call_id": tool_call.id,
+                "tool_name": "skills_install",
+                "next_action": "wait_for_user_confirmation",
+            }),
         }],
         intent_detection: Some(intent_detection.clone()),
         task_plan: Some(task_plan.clone()),
@@ -730,7 +748,7 @@ pub(crate) async fn route_assistant_execute(
             confirmed_tools: response
                 .artifacts
                 .iter()
-                .filter(|artifact| artifact.kind == "tool_confirmation")
+                .filter(|artifact| is_pending_confirmation_artifact(artifact))
                 .count() as u32,
             denied_tools: 0,
             sanitized: true,
