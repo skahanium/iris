@@ -33,7 +33,9 @@ describe("assistant phase 2 cleanup", () => {
   });
 
   it("routes scenes internally instead of exposing SceneSelector", () => {
-    const policy = readRequired("src-tauri/src/ai_runtime/agent_task_policy.rs");
+    const policy = readRequired(
+      "src-tauri/src/ai_runtime/agent_task_policy.rs",
+    );
     const routing = readRequired("src/lib/assistant-routing.ts");
     const panel = readRequired(
       "src/components/ai/UnifiedAssistantPanel.impl.tsx",
