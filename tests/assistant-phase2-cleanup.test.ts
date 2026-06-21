@@ -1,13 +1,9 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 
 import { describe, expect, it } from "vitest";
 
-function read(path: string): string {
-  try {
-    return readFileSync(path, "utf8");
-  } catch {
-    return "";
-  }
+function readRequired(path: string): string {
+  return readFileSync(path, "utf8");
 }
 
 const REMOVED_ENTRY_PANELS = [
@@ -32,36 +28,39 @@ describe("assistant phase 2 cleanup", () => {
         : file.includes("InlineAiNodeView")
           ? `src/components/editor/${file}`
           : `src/components/ai/${file}`;
-      expect(read(path)).toBe("");
+      expect(existsSync(path)).toBe(false);
     }
   });
 
   it("routes scenes internally instead of exposing SceneSelector", () => {
-    const routing = read("src/lib/assistant-scene.ts");
-    const panel = read("src/components/ai/UnifiedAssistantPanel.tsx");
-    const panelImpl = read("src/components/ai/UnifiedAssistantPanel.impl.tsx");
-    const statusBadge = read("src/components/ai/AgentStatusBadge.tsx");
-    const connectivity = read("src/hooks/useConnectivityStatus.ts");
-    const header = read("src/components/ai/AssistantPanelHeader.tsx");
-    const historyDropdown = read(
+    const policy = readRequired("src-tauri/src/ai_runtime/agent_task_policy.rs");
+    const routing = readRequired("src/lib/assistant-routing.ts");
+    const panel = readRequired(
+      "src/components/ai/UnifiedAssistantPanel.impl.tsx",
+    );
+    const taskHook = readRequired(
+      "src/components/ai/hooks/useAssistantTasks.ts",
+    );
+    const statusBadge = readRequired("src/components/ai/AgentStatusBadge.tsx");
+    const connectivity = readRequired("src/hooks/useConnectivityStatus.ts");
+    const historyDropdown = readRequired(
       "src/components/ai/SessionHistoryDropdown.tsx",
     );
-    const skillsPanel = read("src/components/ai/SkillsPanel.tsx");
+    const skillsPanel = readRequired("src/components/ai/SkillsPanel.tsx");
 
-    expect(routing).toContain("legacySceneHintForAssistantIntent");
-    expect(routing).not.toContain("resolveAiSceneForIntent");
+    expect(policy).toContain("legacy_scene");
+    expect(policy).toContain("compatibility");
+    expect(routing).toContain("buildAssistantTaskPlan");
     expect(panel).not.toContain("ContextStatusBar");
     expect(panel).toContain("onChromeChange");
-    expect(read("src/components/ai/ContextPacketDrawer.tsx")).toContain("证据");
+    expect(readRequired("src/components/ai/ContextPacketDrawer.tsx")).toContain(
+      "证据",
+    );
     expect(panel).not.toContain("SceneSelector");
-    expect(panel).toContain("ResearchFocusView");
     expect(panel).not.toContain("ExecutionPlanPreview");
-    expect(panel).toContain("assistantExecute(");
-    expect(panelImpl).toContain("legacySceneHintForAssistantIntent");
-    expect(header).toContain("legacySceneHint");
-    expect(header).not.toContain("activeScene");
-    expect(panel).not.toContain("chapterWritingExecute");
-    expect(panel).not.toContain("documentCheckExecute");
+    expect(taskHook).toContain("assistantExecute(");
+    expect(taskHook).not.toContain("chapterWritingExecute");
+    expect(taskHook).not.toContain("documentCheckExecute");
     expect(statusBadge).not.toContain('case "exemplar_learning"');
     expect(connectivity).not.toContain('stored === "exemplar_learning"');
     expect(statusBadge).not.toContain("场景");
@@ -70,7 +69,7 @@ describe("assistant phase 2 cleanup", () => {
   });
 
   it("uses a single ai-stream suggestion node in the editor", () => {
-    const editor = read("src/components/editor/TipTapEditor.tsx");
+    const editor = readRequired("src/components/editor/TipTapEditor.tsx");
     expect(editor).toContain("AiStreamExtension");
     expect(editor).not.toContain("InlineAiExtension");
   });

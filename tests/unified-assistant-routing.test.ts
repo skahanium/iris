@@ -120,6 +120,35 @@ describe("resolveAssistantIntent", () => {
 });
 
 describe("detectAgentIntent", () => {
+  it("does not route fiction continuation to research only because it says 分析 or 研究", async () => {
+    await expect(
+      route({
+        message:
+          "根据以上文字写出第四章，要求描写更火爆、剧情更诱人，同时分析人物心理",
+        hasSelection: true,
+        notePath: "/novel.md",
+        explicitScope: false,
+      }),
+    ).resolves.toBe("writing");
+  });
+
+  it("builds a writer TaskPlan for fiction continuation with analysis words", async () => {
+    const spec = "../src/lib/assistant-taskplan";
+    const mod = await import(/* @vite-ignore */ spec);
+    const plan = mod.buildAssistantTaskPlan({
+      message:
+        "根据以上文字写出第四章，要求描写更火爆、剧情更诱人，同时分析人物心理",
+      hasSelection: true,
+      notePath: "/novel.md",
+      explicitScope: false,
+    });
+
+    expect(plan.intent).toBe("creative_write");
+    expect(plan.modelSlot).toBe("writer");
+    expect(plan.executionMode).toBe("writing_candidate");
+    expect(plan.artifactPlan).toEqual([]);
+  });
+
   it("explains UI action priority for selection rewrite", async () => {
     const result = await detect({
       message: "处理一下",
