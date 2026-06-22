@@ -392,7 +392,7 @@ async fn duckduckgo_instant_answer(query: &str) -> AppResult<String> {
         urlencoding::encode(query)
     );
     let client = https_client_builder()
-        .user_agent("Iris/1.1.0")
+        .user_agent("Iris/1.2.0")
         .build()
         .map_err(|e| AppError::msg(format!("HTTP client build failed: {e}")))?;
 

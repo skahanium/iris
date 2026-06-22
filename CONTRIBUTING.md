@@ -121,7 +121,6 @@ iris/
 ├── docs/                   # 文档
 │   ├── design-system/      # 设计系统细则
 │   ├── eval/               # 语义搜索评测
-│   └── history/            # 历史版本 Epic 与审计
 ├── scripts/                # 维护脚本
 │   └── assets/             # 品牌源图
 ├── AGENTS.md               # AI 开发规范

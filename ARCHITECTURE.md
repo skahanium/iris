@@ -498,7 +498,7 @@ src/components/
 │   └── surface-card.tsx, markdown-error-boundary.tsx
 ├── layout/                   # 布局组件
 │   ├── AppShell.tsx, TabBar.tsx, StatusBar.tsx
-│   ├── CommandPalette.tsx, ConnectivityIndicators.tsx
+│   ├── ConnectivityIndicators.tsx
 │   ├── WelcomeEmpty.tsx, DesktopFrame.tsx
 │   ├── AppBrandZone.tsx, EditorZoomControl.tsx
 │   └── MinimalWindowChrome.tsx, WindowControls.tsx
@@ -535,7 +535,7 @@ src/components/
 ├── brand/                    # 品牌
 │   └── IrisMark.tsx, iris-mark-paths.ts
 └── common/                   # 通用
-    └── ConfirmDialog.tsx, PromptDialog.tsx
+    └── ConfirmDialog.tsx
 ```
 
 ---

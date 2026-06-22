@@ -1338,7 +1338,7 @@ Expected: 没有旧默认路径生产命中。允许以下保留项：
 - `src/components/layout/ArtifactWorkspaceView.tsx` 中的只读临时 tab 标题或内部视图。
 - `src/components/ai/AgentTaskStatusPanel.tsx` 中的长任务/暂停/失败/权限等待状态入口。
 - `src/lib/assistant-artifact-tabs.ts` 中通过 value gate 后才显示的临时 tab 标题。
-- `docs/history/**` 中的历史记录。
+- 6 月 15 日以前的历史规划/设计资料已从工作树移除；需要追溯时查 git 历史。
 - 当前 spec/plan 中用于描述“已移除旧默认行为”的说明与负向测试。
 
 Execution note: production hits that remain match the allowlist above. No old `ResearchResultMessage`, `RESEARCH_KEYWORDS`, placeholder workflow summary, or global legacy scene sync production path remains.

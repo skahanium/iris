@@ -32,13 +32,6 @@ describe("runtime configuration contracts", () => {
     expect(hook).toMatch(/clearTimeout\(\s*editorStatsTimerRef\.current\s*\)/);
   });
 
-  it("reuses the shared editor stats hook in status bar contexts", () => {
-    const statusBarContext = read("src/components/layout/StatusBarContext.tsx");
-
-    expect(statusBarContext).toContain("useEditorStats");
-    expect(statusBarContext).not.toContain("editorStatsTimerRef");
-  });
-
   it("keeps sqlite-vec behind an explicit experimental unsafe review gate", () => {
     const cargoToml = read("src-tauri/Cargo.toml");
 

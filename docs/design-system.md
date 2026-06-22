@@ -1,16 +1,14 @@
 # Iris 设计系统
 
-**方向定稿**：**Iris 知识工作台**——Iris Rail 壳层 + 沉静编辑画布 + AI 协作侧车 + 任务舱 Overlay；备选 **C · 命令优先**（键盘与可收起面板，不抢编辑区）。历史 Notion 参考见 [history/2026-06-11-notion-reference-summary.md](./history/2026-06-11-notion-reference-summary.md)（**不作**当前验收依据）。
+**方向定稿**：**Iris 知识工作台**——Iris Rail 壳层 + 沉静编辑画布 + AI 协作侧车 + 任务舱 Overlay；备选 **C · 命令优先**（键盘与可收起面板，不抢编辑区）。
 
-**Iris Rail 完整刷新设计**：见 [docs/superpowers/specs/2026-06-09-iris-rail-refresh-design.md](./superpowers/specs/2026-06-09-iris-rail-refresh-design.md)。该 spec 是当前界面系统刷新目标态，覆盖 Home、顶栏、Rail Segments Tab、Editor Workspace、Outline Rail、AI Conversation Workspace、Overlay Family 与管理中心。
+**Iris Rail 完整刷新设计**：当前目标直接维护在本文，覆盖 Home、顶栏、Rail Segments Tab、Editor Workspace、Outline Rail、AI Conversation Workspace、Overlay Family 与管理中心。
 
 手工验收清单：见 [Iris Rail Refresh Manual Checklist](./testing/iris-rail-refresh-manual-checklist.md)。
 
 **排期**：阶段与路线图版本的绑定见下文「落地阶段与路线图版本对照」；**版本 checklist 以 [ROADMAP.md](../ROADMAP.md) 为准**。
 
 本文档是 **界面** 的单一参考；交互线框见 [ARCHITECTURE.md](../ARCHITECTURE.md)；全库文档索引见 [docs/README.md](./README.md)。
-
-**v0.4.0-ui 施工计划**：[history/2026-05-27-notion-ui-rebuild.md](./history/2026-05-27-notion-ui-rebuild.md)
 
 ---
 
@@ -35,7 +33,7 @@ Iris Rail Refresh 的 accent 演进为低饱和鼠尾草绿系，仅用于知识
 
 ### 色彩 token（CSS 变量）
 
-实现见 `src/styles/globals.css`。历史参考见 [history/2026-06-11-notion-reference-summary.md](./history/2026-06-11-notion-reference-summary.md)。
+实现见 `src/styles/globals.css`。
 
 **品牌 monogram**（几何「I」v3；桌面图标、顶栏、托盘、欢迎页）：见 [design-system/brand.md](./design-system/brand.md)。
 
@@ -252,12 +250,11 @@ v0.4.0-ui 起不再作为验收标准。历史实现含：`.iris-paper`、赭铜
 | **1.5**  | **v0.3.1-ui**      | 命令浮层基础设施                            | 部分 / 样式并入 v0.4.0-ui |
 | **N**    | **v0.4.0-ui**      | Notion 扁平编辑、去行线、Inter、蓝灰 accent | **已发布**                |
 | **N+**   | **v0.4.1-ui**      | Chrome 现代化：命令面板、AI、浮层原语       | **已发布**                |
-| **2**    | **v1.1.0**（按需） | 标签栏自动隐藏、高对比主题                  | 待做                      |
+| **2**    | **v1.2.0**（按需） | 标签栏自动隐藏、高对比主题                  | 待做                      |
 
 ---
 
 ## 参考
 
 - **路线图**：[ROADMAP.md](../ROADMAP.md)
-- **Notion 参考摘要（历史）**：[history/2026-06-11-notion-reference-summary.md](./history/2026-06-11-notion-reference-summary.md)
 - **交互线框**：[ARCHITECTURE.md](../ARCHITECTURE.md)
