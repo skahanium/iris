@@ -175,6 +175,8 @@ function App() {
     activeArtifactTab,
     artifactTabs,
     closeArtifact,
+    closeAllEvidenceArtifacts,
+    closeEvidenceArtifactsForSession,
     openArtifact,
     setActiveArtifactId,
   } = useArtifactTabs();
@@ -876,6 +878,9 @@ function App() {
             getWritingContext={getAssistantWritingContext}
             handleInsertToEditor={handleAssistantInsertToEditor}
             onOpenArtifact={openArtifact}
+            openNoteLeavingHome={openNoteLeavingHome}
+            onSessionDeleted={closeEvidenceArtifactsForSession}
+            onSessionsCleared={closeAllEvidenceArtifacts}
             onPatchApplied={handlePatchApplied}
             selectionQuote={
               activeArtifactTab || activeNoteIsClassified

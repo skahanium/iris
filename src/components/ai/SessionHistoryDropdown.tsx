@@ -4,10 +4,15 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { ChatLine } from "@/components/ai/AiMessageList";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import {
+  evidenceRecordsToContextPackets,
+  toChatLines,
+} from "@/lib/ai/session-history";
 import { invokeErrorMessage } from "@/lib/credentials";
 import {
   sessionClearAll,
   sessionDelete,
+  sessionEvidenceList,
   sessionList,
   sessionLoad,
   sessionRename,
@@ -28,27 +33,16 @@ function formatRelativeTime(iso: string): string {
   return new Date(iso).toLocaleDateString();
 }
 
-function toChatLines(
-  records: Awaited<ReturnType<typeof sessionLoad>>,
-): ChatLine[] {
-  return records
-    .filter(
-      (m) => m.role === "user" || m.role === "assistant" || m.role === "system",
-    )
-    .map((m) => ({
-      role: m.role as ChatLine["role"],
-      content: m.content,
-      seq: m.seq,
-      created_at: m.created_at,
-    }));
-}
-
 interface SessionHistoryDropdownProps {
   scene: AiScene;
   notePath: string | null;
   currentSessionId: number | null;
   disabled?: boolean;
-  onSelectSession: (sessionId: number, messages: ChatLine[]) => void;
+  onSelectSession: (
+    sessionId: number,
+    messages: ChatLine[],
+    ledgerPackets?: ChatLine["evidencePackets"],
+  ) => void;
   onDeleted?: (sessionId: number) => void;
   onClearedAll?: () => void;
 }
@@ -109,7 +103,12 @@ export function SessionHistoryDropdown({
     async (summary: SessionSummary) => {
       try {
         const records = await sessionLoad(summary.id);
-        onSelectSession(summary.id, toChatLines(records));
+        const ledger = await sessionEvidenceList(summary.id).catch(() => []);
+        onSelectSession(
+          summary.id,
+          toChatLines(records),
+          evidenceRecordsToContextPackets(ledger),
+        );
         setOpen(false);
       } catch (e) {
         setError(invokeErrorMessage(e));

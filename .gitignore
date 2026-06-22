@@ -94,5 +94,6 @@ $RECYCLE.BIN/
 .agent/
 .claude/
 .codex/
+.learnings/
 .opencode/
 .superpowers/brainstorm/

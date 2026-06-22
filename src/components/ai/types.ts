@@ -1,4 +1,4 @@
-import type { WritingEditorContext } from "@/types/ai";
+import type { ContextPacket, WritingEditorContext } from "@/types/ai";
 import type { AssistantArtifactDraft } from "@/types/assistant-artifact";
 import type { AssistantChromeSnapshot } from "@/types/assistant-chrome";
 
@@ -19,6 +19,9 @@ export interface UnifiedAssistantPanelProps {
   onVaultRefresh?: () => void;
   onInsertToEditor?: (content: string) => void;
   onOpenArtifact?: (draft: AssistantArtifactDraft) => void;
+  onOpenEvidenceSource?: (packet: ContextPacket) => void;
+  onSessionDeleted?: (sessionId: number) => void;
+  onSessionsCleared?: () => void;
   selectionQuote?: AssistantSelectionQuote | null;
   prefillMessage?: string | null;
   onChromeChange?: (snapshot: AssistantChromeSnapshot) => void;

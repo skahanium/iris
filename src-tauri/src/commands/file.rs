@@ -945,13 +945,19 @@ fn cascade_rename_sessions(state: &Arc<AppState>, old_path: &str, new_path: &str
             rusqlite::params![new_path, old_path],
         )?;
 
-        if updated_note > 0 || updated_key > 0 {
+        let updated_evidence =
+            crate::ai_runtime::session_evidence::update_local_evidence_source_path(
+                conn, old_path, new_path,
+            )?;
+
+        if updated_note > 0 || updated_key > 0 || updated_evidence > 0 {
             tracing::info!(
                 old = %old_path,
                 new = %new_path,
                 note_updated = updated_note,
                 key_updated = updated_key,
-                "cascade_rename: updated session references"
+                evidence_updated = updated_evidence,
+                "cascade_rename: updated session and evidence references"
             );
         }
         Ok(())

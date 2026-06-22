@@ -15,9 +15,14 @@ interface AssistantPanelHeaderProps {
   scene: AiScene;
   notePath: string | null;
   onDeletedCurrentSession: () => void;
+  onDeletedSession?: (sessionId: number) => void;
   onClearedAllSessions: () => void;
   onNewChat: () => void;
-  onSelectSession: (id: number, messages: ChatLine[]) => void;
+  onSelectSession: (
+    id: number,
+    messages: ChatLine[],
+    ledgerPackets?: ChatLine["evidencePackets"],
+  ) => void;
   profile: PromptProfileDto;
   taskPlanIntent?: TaskPlanIntent | null;
   taskStatus: AssistantTaskStatus;
@@ -30,6 +35,7 @@ export function AssistantPanelHeader({
   scene,
   notePath,
   onDeletedCurrentSession,
+  onDeletedSession,
   onClearedAllSessions,
   onNewChat,
   onSelectSession,
@@ -59,6 +65,7 @@ export function AssistantPanelHeader({
             disabled={chromeActionsDisabled}
             onSelectSession={onSelectSession}
             onDeleted={(id) => {
+              onDeletedSession?.(id);
               if (currentSessionId === id) {
                 onDeletedCurrentSession();
               }

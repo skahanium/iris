@@ -120,6 +120,29 @@ describe("desktop title bar", () => {
     expect(bar).toContain("absolute inset-y-0 right-0");
   });
 
+  it("gives Windows minimize and maximize controls a visible hover background", () => {
+    const css = read("src/styles/globals.css");
+
+    expect(css).toContain(".iris-window-control--windows:hover");
+    expect(css).toContain("background: hsl(var(--foreground) / 0.08)");
+    expect(css).toContain(".iris-window-control--close:hover");
+  });
+
+  it("uses soft chrome focus instead of coarse primary rings for titlebar controls", () => {
+    const bar = read("src/components/layout/DesktopTitleBar.tsx");
+    const controls = read("src/components/layout/WindowControls.tsx");
+
+    expect(bar).toContain("iris-focus-soft-within");
+    expect(bar).toContain("iris-focus-soft");
+    expect(controls).toContain("iris-focus-soft");
+    expect(bar).not.toContain("focus-within:ring-2 focus-within:ring-primary");
+    expect(bar).not.toContain(
+      "focus-visible:ring-2 focus-visible:ring-primary",
+    );
+    expect(controls).not.toContain("focus-visible:ring-2");
+    expect(controls).not.toContain("focus-visible:ring-primary");
+  });
+
   it("TabBar re-exports DesktopTitleBar for backward compatibility", () => {
     expect(read("src/components/layout/TabBar.tsx")).toContain(
       "DesktopTitleBar",

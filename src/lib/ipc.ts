@@ -49,6 +49,8 @@ import type {
   ProfileEntry,
   RecycleBinItem,
   SemanticHit,
+  SessionEvidenceRecord,
+  SessionEvidenceRegisterPacket,
   SessionMessageRecord,
   SessionSummary,
   TagGroup,
@@ -928,6 +930,34 @@ export async function sessionLoad(
   return invoke<SessionMessageRecord[]>("session_load", {
     sessionId,
     limit: limit ?? 50,
+  });
+}
+
+export async function sessionEvidenceList(
+  sessionId: number,
+): Promise<SessionEvidenceRecord[]> {
+  return invoke<SessionEvidenceRecord[]>("session_evidence_list", {
+    sessionId,
+  });
+}
+
+export async function sessionEvidenceDetail(
+  sessionId: number,
+): Promise<SessionEvidenceRecord[]> {
+  return invoke<SessionEvidenceRecord[]>("session_evidence_detail", {
+    sessionId,
+  });
+}
+
+export async function sessionEvidenceRegister(
+  sessionId: number,
+  messageSeq: number,
+  packets: SessionEvidenceRegisterPacket[],
+): Promise<SessionEvidenceRecord[]> {
+  return invoke<SessionEvidenceRecord[]>("session_evidence_register", {
+    sessionId,
+    messageSeq,
+    packets,
   });
 }
 

@@ -106,7 +106,6 @@ describe("outline ghost spine", () => {
 
     expect(outline).toContain("outline-ghost--active");
     expect(outline).toContain("outline-ghost-item");
-    expect(outline).toContain("useVirtualizer");
     expect(outline).not.toContain("outline-luminous-tick");
     expect(outline).not.toContain("OutlineLuminousCaption");
     expect(outline).not.toContain("getTickTop");
@@ -117,13 +116,13 @@ describe("outline ghost spine", () => {
     expect(css).not.toContain(".outline-luminous-caption");
   });
 
-  it("uses virtualized rows for long outlines without absolute tick geometry", () => {
+  it("uses the same stacked row layout for short and long outlines", () => {
     const outline = read("src/components/editor/EditorOutline.tsx");
     const css = read("src/styles/globals.css");
 
-    expect(outline).toContain("VIRTUAL_OUTLINE_THRESHOLD");
-    expect(outline).toContain("entries.length >= VIRTUAL_OUTLINE_THRESHOLD");
-    expect(outline).toContain("getTotalSize()");
+    expect(outline).not.toContain("useVirtualizer");
+    expect(outline).not.toContain("VIRTUAL_OUTLINE_THRESHOLD");
+    expect(outline).not.toContain("getTotalSize()");
     expect(css).not.toContain("--outline-tick-top");
     expect(css).not.toContain("top: var(--outline-tick-top)");
   });
@@ -247,7 +246,12 @@ describe("outline ghost spine", () => {
     expect(firstText?.className).toContain("min-w-0");
     expect(firstText?.className).toContain("overflow-hidden");
     expect(firstText?.className).toContain("text-ellipsis");
-    expect(firstText?.className).toContain("whitespace-nowrap");
+    expect(firstText?.className).not.toContain("whitespace-nowrap");
+    expect(firstText?.hasAttribute("title")).toBe(false);
+
+    const outline = read("src/components/editor/EditorOutline.tsx");
+    expect(outline).not.toContain("title={entry.text}");
+    expect(outline).not.toContain("whitespace-nowrap");
 
     const css = read("src/styles/globals.css");
     expect(css).toContain("text-align: left");
@@ -256,6 +260,10 @@ describe("outline ghost spine", () => {
     expect(css).not.toContain("grid-template-areas");
     expect(css).not.toContain("grid-area: text");
     expect(css).toContain("text-overflow: ellipsis");
+    expect(css).toMatch(/\.outline-ghost-text \{[\s\S]*white-space: pre;/);
+    expect(css).not.toMatch(
+      /\.outline-ghost-text \{[\s\S]*white-space: nowrap;/,
+    );
   });
 
   it("adds active-neighborhood classes around the selected heading", () => {
@@ -299,30 +307,60 @@ describe("outline ghost spine", () => {
     expect(items[0]?.className).not.toContain("outline-ghost-item--near");
   });
 
-  it("defines hierarchy, active emphasis, spacing, and reduced-motion styles", () => {
+  it("keeps outline typography visually aligned with the title-bar tab text", () => {
     const outline = read("src/components/editor/EditorOutline.tsx");
+    const titleBar = read("src/components/layout/DesktopTitleBar.tsx");
     const css = read("src/styles/globals.css");
 
-    expect(outline).toContain("const OUTLINE_ROW_HEIGHT = 56");
-    expect(css).toContain("row-gap: 0.65rem");
-    expect(css).toContain("min-height: 3rem");
-    expect(css).toContain(".outline-ghost-item--level-1");
-    expect(css).toContain(".outline-ghost-item--level-2");
-    expect(css).toContain(".outline-ghost-item--level-3");
-    expect(css).toContain("--outline-level-size: 0.95rem");
-    expect(css).toContain("--outline-level-size: 0.82rem");
-    expect(css).toContain("--outline-level-size: 0.72rem");
-    expect(css).toContain("--outline-text-indent: 0rem");
-    expect(css).toContain("--outline-text-indent: 1.35rem");
-    expect(css).toContain("--outline-text-indent: 2.5rem");
+    expect(titleBar).toContain("text-xs");
+    expect(titleBar).toContain("text-muted-foreground");
+    expect(titleBar).toContain("text-[hsl(var(--outline-rail-active))]");
+    expect(outline).toContain("text-[0.9375rem]");
+    expect(outline).toContain("leading-[1.45rem]");
+    expect(outline).toContain("font-normal");
+    expect(outline).toContain("text-muted-foreground");
+    expect(outline).toContain("text-[hsl(var(--outline-rail-active))]");
+    expect(outline).not.toContain(
+      "outline-ghost-item flex w-full items-center text-left text-xs",
+    );
+    expect(outline).not.toContain(
+      "outline-ghost-item flex w-full items-center text-left text-sm",
+    );
+
+    expect(css).toContain("--outline-item-height: 2.25rem");
+    expect(css).toContain("--outline-row-gap: 0.2rem");
+    expect(css).toContain("--outline-font-family: inherit");
+    expect(css).toContain("font-family: var(--outline-font-family)");
+    expect(css).toContain("font-size: 0.9375rem");
+    expect(css).toContain("font-weight: 400");
+    expect(css).toContain("line-height: 1.45rem");
+    expect(css).toContain("--outline-level-tone: hsl(var(--muted-foreground))");
+    expect(css).toContain("color: var(--outline-level-tone)");
+    expect(css).toContain("color: hsl(var(--outline-rail-active));");
+    expect(css).not.toContain("Segoe UI Variable Text");
+    expect(css).not.toContain("Microsoft YaHei UI Light");
+    expect(css).not.toContain("--outline-text-level-1");
+    expect(css).not.toContain("--outline-text-level-2");
+    expect(css).not.toContain("--outline-text-level-3");
+    expect(outline).not.toContain('fontSize: "0.8125rem"');
+    expect(outline).not.toContain('fontSize: "0.75rem"');
+    expect(outline).toContain('indent: "0rem"');
+    expect(outline).toContain('indent: "1.45rem"');
+    expect(outline).toContain('indent: "2.55rem"');
     expect(outline).toContain("paddingLeft");
     expect(css).not.toContain(".outline-ghost-indent");
-    expect(css).toContain("font-size: calc(var(--outline-level-size))");
+    expect(css).toContain(
+      "background: hsl(var(--outline-rail-active) / 0.075)",
+    );
+    expect(css).toContain("box-shadow: none");
+    expect(css).not.toContain(
+      "text-shadow: 0 1px 2px hsl(var(--background) / 0.95)",
+    );
     expect(css).toContain(".outline-ghost-item--near-1");
     expect(css).toContain(".outline-ghost-item--near-2");
-    expect(css).toContain("opacity: 0.85");
-    expect(css).toContain("opacity: 0.78");
-    expect(css).toContain("font-weight: 400");
+    expect(css).toMatch(/\.outline-ghost-item--near-1 \{[\s\S]*opacity: 0\.9/);
+    expect(css).toMatch(/\.outline-ghost-item--near-2 \{[\s\S]*opacity: 0\.82/);
+    expect(css).toContain("font-synthesis: none");
     expect(css).toContain("@media (prefers-reduced-motion: reduce)");
   });
 

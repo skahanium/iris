@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 
 import { CitationCheckView } from "@/components/ai/CitationCheckView";
+import { EvidenceDetailArtifactView } from "@/components/ai/EvidenceDetailArtifact";
 import { MarkdownRenderable } from "@/components/ai/MarkdownRenderable";
 import { DiffView } from "@/components/ai/PatchPreview";
 import { Badge } from "@/components/ui/badge";
@@ -580,6 +581,9 @@ export function ArtifactWorkspaceView(props: ArtifactWorkspaceViewProps) {
           ) : null}
           {tab.kind === "structured_result" ? (
             <StructuredResultArtifactView {...props} />
+          ) : null}
+          {tab.kind === "session_evidence_detail" ? (
+            <EvidenceDetailArtifactView payload={tab.payload} />
           ) : null}
         </div>
       </main>

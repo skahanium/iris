@@ -162,6 +162,14 @@ function adaptTaskLists(html: string): string {
         firstElement.checked ? "true" : "false",
       );
       firstElement.remove();
+      const firstChild = item.firstChild;
+      if (firstChild?.nodeType === Node.TEXT_NODE) {
+        firstChild.nodeValue = (firstChild.nodeValue ?? "").replace(
+          /^[ \t]/,
+          "",
+        );
+        if (!firstChild.nodeValue) firstChild.remove();
+      }
     }
   });
 

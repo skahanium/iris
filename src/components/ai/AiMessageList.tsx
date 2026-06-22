@@ -5,7 +5,11 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { AiMessage } from "@/components/ui/ai-message";
 import { AiMessageBubble } from "@/components/ai/AiMessageBubble";
 import type { MentionToken } from "@/lib/ai-context-scope";
-import type { ContentPart, ToolCallInfo } from "@/types/ai";
+import {
+  citationRecordsFromContextPackets,
+  replaceAiCitationsForDocument,
+} from "@/lib/ai/evidence-citations";
+import type { ContentPart, ContextPacket, ToolCallInfo } from "@/types/ai";
 
 export interface ImageAttachment {
   id: string;
@@ -27,6 +31,8 @@ export interface ChatLine {
   seq?: number;
   created_at?: string;
   toolCalls?: ToolCallInfo[];
+  /** 历史会话恢复用：该助手消息产生的证据包。 */
+  evidencePackets?: ContextPacket[];
 }
 
 interface AiMessageListProps {
@@ -91,7 +97,12 @@ export const AiMessageList = memo(function AiMessageList({
     });
   };
 
-  const handleCopyMessage = useCallback(async (content: string) => {
+  const handleCopyMessage = useCallback(async (message: ChatLine) => {
+    const ledger = citationRecordsFromContextPackets(message.evidencePackets);
+    const content =
+      message.role === "assistant"
+        ? replaceAiCitationsForDocument(message.content, ledger).markdown
+        : message.content;
     try {
       await navigator.clipboard.writeText(content);
     } catch {
@@ -135,9 +146,7 @@ export const AiMessageList = memo(function AiMessageList({
               createdAt={m.created_at}
               onCitationClick={onCitationClick}
               onRetract={onRetract ? () => onRetract(i) : undefined}
-              onCopy={
-                msgContent ? () => handleCopyMessage(msgContent) : undefined
-              }
+              onCopy={msgContent ? () => handleCopyMessage(m) : undefined}
             />
           </div>
         </div>

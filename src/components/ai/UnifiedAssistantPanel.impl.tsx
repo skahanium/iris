@@ -14,7 +14,6 @@ import type {
   ContextStatus,
   TaskPlanIntent,
 } from "@/types/ai";
-
 import { buildActionState } from "./unified-assistant-panel-utils";
 import { AiMentionPopover } from "./AiMentionPopover";
 import { AiComposerContextMenu } from "./AiComposerContextMenu";
@@ -52,6 +51,9 @@ export function UnifiedAssistantPanel({
   onVaultRefresh,
   onInsertToEditor,
   onOpenArtifact,
+  onOpenEvidenceSource,
+  onSessionDeleted,
+  onSessionsCleared,
   selectionQuote,
   prefillMessage,
   onChromeChange,
@@ -352,9 +354,9 @@ export function UnifiedAssistantPanel({
   }, [handleNewChat]);
 
   const loadSessionAndResetTaskPlan = useCallback(
-    (id: number, nextMessages: Parameters<typeof handleLoadSession>[1]) => {
+    (...args: Parameters<typeof handleLoadSession>) => {
       setCurrentTaskPlanIntent(null);
-      handleLoadSession(id, nextMessages);
+      handleLoadSession(...args);
     },
     [handleLoadSession],
   );
@@ -386,7 +388,11 @@ export function UnifiedAssistantPanel({
         currentSessionId={sessionId}
         scene={currentScene}
         notePath={notePath}
-        onClearedAllSessions={resetAssistantSessionState}
+        onClearedAllSessions={() => {
+          onSessionsCleared?.();
+          resetAssistantSessionState();
+        }}
+        onDeletedSession={onSessionDeleted}
         onDeletedCurrentSession={resetAssistantSessionState}
         onNewChat={resetAssistantSessionState}
         onSelectSession={loadSessionAndResetTaskPlan}
@@ -402,8 +408,11 @@ export function UnifiedAssistantPanel({
         packets={packets}
         selectedIds={selectedPacketIds}
         onSelect={togglePacketSelection}
+        onOpenSource={onOpenEvidenceSource}
         contextStatus={contextStatusData}
         citationMiss={citationMiss}
+        sessionId={sessionId}
+        onOpenArtifact={(draft) => onOpenArtifact?.(draft)}
       />
 
       <AssistantErrorRecovery

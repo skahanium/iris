@@ -44,7 +44,7 @@ export function EditorZoomControl({
     <div ref={rootRef} className="relative">
       <button
         type="button"
-        className="rounded-md px-2 py-0.5 text-[11px] tabular-nums text-muted-foreground transition-colors duration-base ease-iris-out hover:bg-surface-inset/80 hover:text-foreground focus:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-1 focus-visible:ring-offset-panel"
+        className="iris-focus-soft rounded-md px-2 py-0.5 text-[11px] tabular-nums text-muted-foreground transition-[color,background-color,box-shadow] duration-base ease-iris-out hover:bg-surface-inset/80 hover:text-foreground focus:outline-none"
         aria-expanded={open}
         aria-haspopup="dialog"
         aria-label="编辑器缩放"
@@ -60,7 +60,7 @@ export function EditorZoomControl({
         >
           <button
             type="button"
-            className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:bg-surface-inset hover:text-foreground disabled:cursor-not-allowed disabled:opacity-35"
+            className="iris-focus-soft flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:bg-surface-inset hover:text-foreground disabled:cursor-not-allowed disabled:opacity-35"
             aria-label="缩小"
             disabled={!canZoomOut}
             onClick={onZoomOut}
@@ -93,7 +93,7 @@ export function EditorZoomControl({
           </div>
           <button
             type="button"
-            className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:bg-surface-inset hover:text-foreground"
+            className="iris-focus-soft flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:bg-surface-inset hover:text-foreground"
             aria-label="重置缩放"
             onClick={onZoomReset}
           >
@@ -101,7 +101,7 @@ export function EditorZoomControl({
           </button>
           <button
             type="button"
-            className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:bg-surface-inset hover:text-foreground disabled:cursor-not-allowed disabled:opacity-35"
+            className="iris-focus-soft flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:bg-surface-inset hover:text-foreground disabled:cursor-not-allowed disabled:opacity-35"
             aria-label="放大"
             disabled={!canZoomIn}
             onClick={onZoomIn}

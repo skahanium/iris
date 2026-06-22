@@ -82,7 +82,7 @@ describe("Iris Rail complete interface contracts", () => {
     expect(outline).toContain('data-testid="outline-rail-handle"');
     expect(outline).toContain("outline-ghost--active");
     expect(outline).toContain("outline-ghost-item");
-    expect(outline).toContain("useVirtualizer");
+    expect(outline).not.toContain("useVirtualizer");
     expect(outline).toContain("ArrowDown");
     expect(outline).toContain("Escape");
     expect(outline).not.toContain("onPointerMove");
@@ -96,6 +96,7 @@ describe("Iris Rail complete interface contracts", () => {
     expect(outline).not.toContain("backdrop-filter");
     expect(editor).toContain("editor-edge-control");
     expect(css).toContain("--editor-outline-rail-width: 12rem");
+    expect(css).toContain("padding-left: var(--editor-outline-reserve);");
     expect(css).toContain(".outline-ghost");
     expect(css).toContain(".outline-ghost-item--level-1");
     expect(css).toContain(".outline-ghost-item--level-2");

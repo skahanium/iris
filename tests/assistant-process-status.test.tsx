@@ -127,6 +127,26 @@ describe("AssistantProcessStatusBar", () => {
     expect(document.body.textContent).toContain("中止");
   });
 
+  it("hides for ordinary streaming so the composer remains the only stop action", async () => {
+    await act(async () => {
+      root.render(
+        <AssistantProcessStatusBar
+          agentTask={null}
+          activityHint="正在生成回答"
+          researchProgress={null}
+          researchRunning={false}
+          streaming
+          onAbort={vi.fn()}
+        />,
+      );
+    });
+
+    expect(
+      document.querySelector('[data-testid="assistant-process-status"]'),
+    ).toBeNull();
+    expect(document.body.textContent).not.toContain("仍在处理");
+    expect(document.body.textContent).not.toContain("中止");
+  });
   it("hides when the task is completed", async () => {
     await act(async () => {
       root.render(

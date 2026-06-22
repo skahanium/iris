@@ -122,7 +122,7 @@ export const StatusBar = memo(function StatusBar({
             <button
               type="button"
               title="撤销 (⌘Z)"
-              className="flex h-5 w-5 items-center justify-center rounded text-muted-foreground/60 hover:bg-muted hover:text-foreground disabled:opacity-30"
+              className="iris-focus-soft flex h-5 w-5 items-center justify-center rounded text-muted-foreground/60 hover:bg-muted hover:text-foreground disabled:opacity-30"
               onClick={onUndo}
               disabled={!canUndo}
             >
@@ -131,7 +131,7 @@ export const StatusBar = memo(function StatusBar({
             <button
               type="button"
               title="重做 (⌘⇧Z)"
-              className="flex h-5 w-5 items-center justify-center rounded text-muted-foreground/60 hover:bg-muted hover:text-foreground disabled:opacity-30"
+              className="iris-focus-soft flex h-5 w-5 items-center justify-center rounded text-muted-foreground/60 hover:bg-muted hover:text-foreground disabled:opacity-30"
               onClick={onRedo}
               disabled={!canRedo}
             >
@@ -156,7 +156,7 @@ export const StatusBar = memo(function StatusBar({
               title="打开管理中心"
               aria-label="打开管理中心"
               data-testid="status-bar-management-button"
-              className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-sm border border-border/40 bg-surface-inset/30 text-muted-foreground transition-[background-color,color,transform] duration-base ease-iris-out hover:bg-muted/50 hover:text-foreground focus:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-1 focus-visible:ring-offset-panel active:scale-[0.98]"
+              className="iris-focus-soft inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-sm border border-border/40 bg-surface-inset/30 text-muted-foreground transition-[background-color,color,transform] duration-base ease-iris-out hover:bg-muted/50 hover:text-foreground focus:outline-none active:scale-[0.98]"
               onClick={onOpenManagementCenter}
             >
               <Settings className="h-3.5 w-3.5" />
@@ -176,7 +176,7 @@ export const StatusBar = memo(function StatusBar({
               title="打开知识图谱"
               aria-label="打开知识图谱"
               data-testid="status-bar-graph-button"
-              className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-sm border border-border/40 bg-surface-inset/30 text-muted-foreground transition-[background-color,color,transform] duration-base ease-iris-out hover:bg-muted/50 hover:text-foreground focus:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-1 focus-visible:ring-offset-panel active:scale-[0.98]"
+              className="iris-focus-soft inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-sm border border-border/40 bg-surface-inset/30 text-muted-foreground transition-[background-color,color,transform] duration-base ease-iris-out hover:bg-muted/50 hover:text-foreground focus:outline-none active:scale-[0.98]"
               onClick={onOpenGraph}
             >
               <Network className="h-3.5 w-3.5" />
@@ -202,7 +202,7 @@ export const StatusBar = memo(function StatusBar({
           aria-label={theme === "dark" ? "切换到亮色模式" : "切换到暗色模式"}
           title={theme === "dark" ? "切换到亮色模式" : "切换到暗色模式"}
           data-testid="status-bar-theme-switch"
-          className="inline-flex h-6 shrink-0 items-center gap-1 rounded-sm border border-border/40 bg-surface-inset/30 px-1.5 text-muted-foreground transition-[background-color,color,transform] duration-base ease-iris-out hover:bg-muted/50 hover:text-foreground focus:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-1 focus-visible:ring-offset-panel active:scale-[0.98]"
+          className="iris-focus-soft inline-flex h-6 shrink-0 items-center gap-1 rounded-sm border border-border/40 bg-surface-inset/30 px-1.5 text-muted-foreground transition-[background-color,color,transform] duration-base ease-iris-out hover:bg-muted/50 hover:text-foreground focus:outline-none active:scale-[0.98]"
           onClick={() => onThemeChange(theme === "dark" ? "light" : "dark")}
         >
           {theme === "dark" ? (

@@ -111,7 +111,7 @@ export const DesktopTitleBar = memo(function DesktopTitleBar({
                     data-testid="rail-segment-tab"
                     data-tauri-drag-region-exclude
                     className={cn(
-                      "iris-rail-tab group flex min-w-0 shrink-0 items-center gap-1 px-2 py-1 text-xs transition-colors duration-fast focus-within:ring-2 focus-within:ring-primary focus-within:ring-offset-1 focus-within:ring-offset-panel",
+                      "iris-focus-soft-within iris-rail-tab group flex min-w-0 shrink-0 items-center gap-1 px-2 py-1 text-xs transition-[background-color,color,box-shadow] duration-fast",
                       active
                         ? "iris-rail-tab--active text-[hsl(var(--outline-rail-active))]"
                         : "text-muted-foreground hover:bg-[hsl(var(--outline-rail-active)/0.06)]",
@@ -156,7 +156,7 @@ export const DesktopTitleBar = memo(function DesktopTitleBar({
                       type="button"
                       data-tauri-drag-region-exclude
                       className={cn(
-                        "flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-muted-foreground opacity-0 transition-all duration-fast hover:bg-muted/60 hover:text-foreground focus:outline-none focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-primary group-hover:opacity-100",
+                        "iris-focus-soft flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-muted-foreground opacity-0 transition-all duration-fast hover:bg-muted/60 hover:text-foreground focus:outline-none focus-visible:opacity-100 group-hover:opacity-100",
                         active && "opacity-60",
                       )}
                       aria-label={`关闭 ${tab.title}`}
@@ -177,7 +177,7 @@ export const DesktopTitleBar = memo(function DesktopTitleBar({
                 <button
                   type="button"
                   data-tauri-drag-region-exclude
-                  className="inline-flex h-8 w-8 items-center justify-center rounded-[10px] text-muted-foreground transition-all duration-fast hover:bg-muted/60 hover:text-foreground focus:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                  className="iris-focus-soft inline-flex h-8 w-8 items-center justify-center rounded-[10px] text-muted-foreground transition-all duration-fast hover:bg-muted/60 hover:text-foreground focus:outline-none"
                   aria-label="新建笔记"
                   onMouseDown={(event) => {
                     event.stopPropagation();

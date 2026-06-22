@@ -86,6 +86,12 @@ const MIGRATION_034_DOWN: &str =
     include_str!("../../migrations/034_writing_research_state.down.sql");
 const MIGRATION_035_UP: &str = include_str!("../../migrations/035_skill_trust_profiles.sql");
 const MIGRATION_035_DOWN: &str = include_str!("../../migrations/035_skill_trust_profiles.down.sql");
+const MIGRATION_036_UP: &str =
+    include_str!("../../migrations/036_session_message_evidence_packets.sql");
+const MIGRATION_036_DOWN: &str =
+    include_str!("../../migrations/036_session_message_evidence_packets.down.sql");
+const MIGRATION_037_UP: &str = include_str!("../../migrations/037_session_evidence.sql");
+const MIGRATION_037_DOWN: &str = include_str!("../../migrations/037_session_evidence.down.sql");
 
 fn is_applied(conn: &Connection, name: &str) -> bool {
     conn.query_row(
@@ -199,6 +205,13 @@ pub fn migrate_up(conn: &Connection) -> AppResult<()> {
     )?;
     apply_migration(conn, "034_writing_research_state", MIGRATION_034_UP, false)?;
     apply_migration(conn, "035_skill_trust_profiles", MIGRATION_035_UP, false)?;
+    apply_migration(
+        conn,
+        "036_session_message_evidence_packets",
+        MIGRATION_036_UP,
+        false,
+    )?;
+    apply_migration(conn, "037_session_evidence", MIGRATION_037_UP, false)?;
 
     Ok(())
 }
@@ -210,6 +223,12 @@ fn rollback_migration(conn: &Connection, name: &str, sql: &str) {
 
 /// Roll back all migrations in strict reverse order (for tests).
 pub fn migrate_down(conn: &Connection) -> AppResult<()> {
+    rollback_migration(conn, "037_session_evidence", MIGRATION_037_DOWN);
+    rollback_migration(
+        conn,
+        "036_session_message_evidence_packets",
+        MIGRATION_036_DOWN,
+    );
     rollback_migration(conn, "035_skill_trust_profiles", MIGRATION_035_DOWN);
     rollback_migration(conn, "034_writing_research_state", MIGRATION_034_DOWN);
     rollback_migration(
@@ -325,13 +344,13 @@ mod tests {
         migrate_up(&conn).unwrap();
         migrate_down(&conn).unwrap();
 
-        // After down, vec_chunks should not exist (best-effort — may fail if vec not loaded)
+        // After down, vec_chunks should not exist (best-effort - may fail if vec not loaded)
         let result = conn.query_row(
             "SELECT COUNT(*) FROM vec_chunks",
             [],
             |r: &rusqlite::Row| r.get::<_, i64>(0),
         );
-        // Either the table doesn't exist OR it's empty — both acceptable
+        // Either the table doesn't exist OR it's empty - both acceptable
         if let Ok(count) = result {
             assert_eq!(count, 0);
         }
@@ -910,6 +929,171 @@ mod tests {
         }
     }
 
+    #[test]
+    fn migration_036_adds_session_message_evidence_packets() {
+        let conn = Connection::open_in_memory().unwrap();
+        migrate_up(&conn).unwrap();
+
+        let has_column: bool = conn
+            .query_row(
+                "SELECT COUNT(*) FROM pragma_table_info('session_messages') WHERE name = 'evidence_packets'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .map(|count| count > 0)
+            .unwrap();
+
+        assert!(has_column, "missing evidence_packets on session_messages");
+    }
+    #[test]
+    fn migration_037_creates_session_evidence_without_body_snapshots() {
+        let conn = Connection::open_in_memory().unwrap();
+        migrate_up(&conn).unwrap();
+
+        let table_exists: bool = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='session_evidence'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .map(|count| count > 0)
+            .unwrap();
+        assert!(table_exists, "missing session_evidence table");
+
+        let columns = conn
+            .prepare("PRAGMA table_info(session_evidence)")
+            .unwrap()
+            .query_map([], |row| row.get::<_, String>(1))
+            .unwrap()
+            .flatten()
+            .collect::<Vec<_>>();
+
+        for required in [
+            "session_id",
+            "citation_index",
+            "citation_label",
+            "packet_key",
+            "message_seq_first",
+            "source_type",
+            "title",
+            "source_path",
+            "source_span_start",
+            "source_span_end",
+            "heading_path",
+            "content_hash",
+            "retrieval_reason",
+            "score",
+            "confidence",
+            "url",
+            "normalized_url",
+            "domain",
+            "retrieved_at",
+            "search_backend",
+            "source_rank",
+            "failure_reason",
+            "retired_at",
+        ] {
+            assert!(
+                columns.contains(&required.to_string()),
+                "missing {required}"
+            );
+        }
+
+        for forbidden in [
+            "body",
+            "content",
+            "excerpt",
+            "snapshot",
+            "note_content",
+            "page_body",
+            "page_excerpt",
+            "web_snapshot",
+        ] {
+            assert!(
+                !columns.contains(&forbidden.to_string()),
+                "session_evidence must not store {forbidden}"
+            );
+        }
+
+        let foreign_keys = conn
+            .prepare("PRAGMA foreign_key_list(session_evidence)")
+            .unwrap()
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                    row.get::<_, String>(4)?,
+                    row.get::<_, String>(6)?,
+                ))
+            })
+            .unwrap()
+            .flatten()
+            .collect::<Vec<_>>();
+        assert!(
+            foreign_keys.iter().any(|(table, from, to, on_delete)| {
+                table == "sessions"
+                    && from == "session_id"
+                    && to == "id"
+                    && on_delete.eq_ignore_ascii_case("CASCADE")
+            }),
+            "session_evidence.session_id must cascade with sessions.id"
+        );
+
+        conn.execute(
+            "INSERT INTO sessions (session_key, scene, created_at, updated_at)
+             VALUES ('evidence-session', 'knowledge_lookup', datetime('now'), datetime('now'))",
+            [],
+        )
+        .unwrap();
+        let session_id = conn.last_insert_rowid();
+        conn.execute(
+            "INSERT INTO session_evidence
+             (session_id, citation_index, citation_label, packet_key, message_seq_first,
+              source_type, title, source_path, content_hash, created_at)
+             VALUES (?1, 1, '[C1]', 'local:path:hash', 2,
+                     'local', 'Source', 'source.md', 'hash', datetime('now'))",
+            [session_id],
+        )
+        .unwrap();
+
+        let duplicate_label = conn.execute(
+            "INSERT INTO session_evidence
+             (session_id, citation_index, citation_label, packet_key, message_seq_first,
+              source_type, title, created_at)
+             VALUES (?1, 2, '[C1]', 'local:other:hash', 2,
+                     'local', 'Other', datetime('now'))",
+            [session_id],
+        );
+        assert!(
+            duplicate_label.is_err(),
+            "citation_label must be unique per session"
+        );
+
+        let duplicate_packet = conn.execute(
+            "INSERT INTO session_evidence
+             (session_id, citation_index, citation_label, packet_key, message_seq_first,
+              source_type, title, created_at)
+             VALUES (?1, 2, '[C2]', 'local:path:hash', 2,
+                     'local', 'Duplicate', datetime('now'))",
+            [session_id],
+        );
+        assert!(
+            duplicate_packet.is_err(),
+            "packet_key must be unique per session"
+        );
+
+        conn.execute("DELETE FROM sessions WHERE id = ?1", [session_id])
+            .unwrap();
+        let remaining: i64 = conn
+            .query_row("SELECT COUNT(*) FROM session_evidence", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(
+            remaining, 0,
+            "session_evidence must cascade on session delete"
+        );
+    }
     #[test]
     fn migration_032_creates_agent_task_tables_with_session_lifecycle() {
         let conn = Connection::open_in_memory().unwrap();

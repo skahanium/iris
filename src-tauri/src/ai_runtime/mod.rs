@@ -1,11 +1,11 @@
-//! Iris Agent Task Runtime — task policy, context planning, tool permission, trace.
+//! Iris Agent Task Runtime 閳?task policy, context planning, tool permission, trace.
 //!
 //! Shared data types live in [`crate::ai_types`] and are re-exported here
 //! for backward compatibility.
 
 pub use crate::ai_types::*;
 
-// ─── Modules that remain in ai_runtime (coordination layer) ─
+// 閳光偓閳光偓閳光偓 Modules that remain in ai_runtime (coordination layer) 閳光偓
 pub mod agent_permissions;
 pub mod agent_task;
 pub mod agent_task_policy;
@@ -31,6 +31,7 @@ pub mod retrieval_scope;
 pub mod runtime_context;
 pub mod sandbox_profile;
 pub mod session;
+pub mod session_evidence;
 pub mod skill_install_service;
 pub mod skill_registry;
 pub mod skill_trust_policy;
@@ -48,7 +49,7 @@ pub mod trace;
 pub mod web_evidence_broker;
 pub mod writing_state;
 
-// ─── Re-exports from ai_workflows (backward compatibility) ─
+// 閳光偓閳光偓閳光偓 Re-exports from ai_workflows (backward compatibility) 閳光偓
 pub use crate::ai_workflows::assistant_facade;
 pub use crate::ai_workflows::chapter_workflow;
 pub use crate::ai_workflows::citation_workflow;
@@ -57,7 +58,7 @@ pub use crate::ai_workflows::organize_workflow;
 pub use crate::ai_workflows::research_workflow;
 pub use crate::ai_workflows::writing_workflow;
 
-// ─── Re-exports from ai_harness (backward compatibility) ─
+// 閳光偓閳光偓閳光偓 Re-exports from ai_harness (backward compatibility) 閳光偓
 pub use crate::ai_harness::evidence_ledger;
 pub use crate::ai_harness::evidence_mixer;
 pub use crate::ai_harness::harness;
@@ -67,11 +68,10 @@ pub use crate::ai_harness::harness_task;
 
 use serde::{Deserialize, Serialize};
 
-// ─── AssembledContext (kept here: depends on execution_plan::ExecutionPlanDto) ─
+// 閳光偓閳光偓閳光偓 AssembledContext (kept here: depends on execution_plan::ExecutionPlanDto) 閳光偓
 
-/// 组装后的上下文，包含证据包、可用工具和状态摘要。
-///
-/// 由 context_planner 组装，直接传入 model_gateway 构建 prompt。
+/// 缂佸嫯顥婇崥搴ｆ畱娑撳﹣绗呴弬鍥风礉閸栧懎鎯堢拠浣瑰祦閸栧懌鈧礁褰查悽銊ヤ紣閸忓嘲鎷伴悩鑸碘偓浣规喅鐟曚降鈧?///
+/// 閻?context_planner 缂佸嫯顥婇敍宀€娲块幒銉ょ炊閸?model_gateway 閺嬪嫬缂?prompt閵?
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AssembledContext {
     #[serde(default)]

@@ -27,6 +27,7 @@ import { PreserveBlockExtension } from "@/components/editor/extensions/PreserveB
 import { PreserveInlineExtension } from "@/components/editor/extensions/PreserveInlineExtension";
 import { WikiLinkExtension } from "@/components/editor/extensions/WikiLinkExtension";
 import { editorDocToMarkdown } from "@/lib/editor-pm-serialize";
+import { EDITOR_PARSE_OPTIONS } from "@/lib/editor-parse-options";
 import { ingestMarkdownForEditor } from "@/lib/editor-ingest";
 import { markdownBodyToEditorHtml, parseNoteForEditor } from "@/lib/markdown";
 import { serializeOpenNote } from "@/lib/serialize-open-note";
@@ -79,6 +80,7 @@ export function createProductionEditorFromIngestedBody(
   return new Editor({
     extensions: productionExtensions(vaultPath),
     content: tipTapHtml,
+    parseOptions: EDITOR_PARSE_OPTIONS,
   });
 }
 
@@ -89,6 +91,7 @@ export function createProductionEditorFromBody(
   return new Editor({
     extensions: productionExtensions(vaultPath),
     content: markdownBodyToEditorHtml(bodyMd),
+    parseOptions: EDITOR_PARSE_OPTIONS,
   });
 }
 

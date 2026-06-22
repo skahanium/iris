@@ -77,11 +77,9 @@ export function AssistantProcessStatusBar({
   researchProgress,
   researchRunning,
   onAbort,
-  streaming = false,
 }: AssistantProcessStatusBarProps) {
   const [longRunning, setLongRunning] = useState(false);
-  const active =
-    isActiveStatus(agentTask) || researchRunning || streaming || hasError;
+  const active = isActiveStatus(agentTask) || researchRunning || hasError;
 
   useEffect(() => {
     if (!active) {
@@ -96,7 +94,6 @@ export function AssistantProcessStatusBar({
   if (!active) return null;
 
   const mayShowLongRunning =
-    streaming ||
     researchRunning ||
     agentTask?.status === "queued" ||
     agentTask?.status === "running";
@@ -112,7 +109,6 @@ export function AssistantProcessStatusBar({
         );
   const canAbort =
     researchRunning ||
-    streaming ||
     agentTask?.status === "queued" ||
     agentTask?.status === "running" ||
     agentTask?.status === "awaiting_confirmation" ||

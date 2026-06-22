@@ -1,4 +1,5 @@
 import type {
+  ContextPacket,
   DeliberationState,
   PermissionEffectSummary,
   VerificationSummary,
@@ -175,8 +176,61 @@ export interface SessionMessageRecord {
   role: string;
   content: string;
   tool_calls?: unknown;
+  evidence_packets?: ContextPacket[] | null;
   content_hash?: string | null;
   created_at: string;
+}
+
+export type SessionEvidenceSourceType = "local" | "web";
+
+export interface SessionEvidenceRecord {
+  id: number;
+  sessionId: number;
+  citationIndex: number;
+  citationLabel: string;
+  packetKey: string;
+  messageSeqFirst: number;
+  sourceType: SessionEvidenceSourceType;
+  title: string;
+  sourcePath?: string | null;
+  sourceSpanStart?: number | null;
+  sourceSpanEnd?: number | null;
+  headingPath?: string | null;
+  contentHash?: string | null;
+  retrievalReason?: string | null;
+  score?: number | null;
+  confidence?: string | null;
+  url?: string | null;
+  normalizedUrl?: string | null;
+  domain?: string | null;
+  retrievedAt?: string | null;
+  searchBackend?: string | null;
+  sourceRank?: number | null;
+  failureReason?: string | null;
+  retiredAt?: string | null;
+  createdAt: string;
+  detailStatus?: string | null;
+  liveExcerpt?: string | null;
+}
+
+export interface SessionEvidenceRegisterPacket {
+  sourceType: SessionEvidenceSourceType;
+  title: string;
+  sourcePath?: string | null;
+  sourceSpanStart?: number | null;
+  sourceSpanEnd?: number | null;
+  headingPath?: string | null;
+  contentHash?: string | null;
+  retrievalReason?: string | null;
+  score?: number | null;
+  confidence?: string | null;
+  url?: string | null;
+  normalizedUrl?: string | null;
+  domain?: string | null;
+  retrievedAt?: string | null;
+  searchBackend?: string | null;
+  sourceRank?: number | null;
+  failureReason?: string | null;
 }
 
 export interface BacklinkEntry {

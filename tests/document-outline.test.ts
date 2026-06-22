@@ -26,6 +26,23 @@ function docWithHeadings() {
 }
 
 describe("document-outline", () => {
+  it("preserves internal heading spaces while trimming boundary spaces", () => {
+    const doc = schema.node("doc", null, [
+      schema.node("heading", { level: 1 }, [
+        schema.text("  第一章    总 则  "),
+      ]),
+      schema.node("heading", { level: 2 }, [schema.text("    ")]),
+    ]);
+
+    const items = outlineFromDoc(doc);
+
+    expect(items).toHaveLength(1);
+    expect(items[0]).toMatchObject({
+      level: 1,
+      text: "第一章    总 则",
+    });
+  });
+
   it("extracts section headings with positions", () => {
     const doc = docWithHeadings();
     const items = outlineFromDoc(doc);

@@ -12,6 +12,11 @@ import {
   parseMentionTokens,
   stripMentionTokensForDisplay,
 } from "@/lib/ai-context-scope";
+import {
+  citationRecordsFromContextPackets,
+  replaceAiCitationsForDocument,
+} from "@/lib/ai/evidence-citations";
+import { mergeContextPackets } from "@/lib/ai/merge-context-packets";
 import { llmAbort, sessionRetract } from "@/lib/ipc";
 import type {
   AssistantActionState,
@@ -64,6 +69,44 @@ function selectedMessages(
     .sort((a, b) => a - b)
     .map((index) => messages[index])
     .filter((message): message is ChatLine => message != null);
+}
+
+interface DocumentContentResult {
+  content: string;
+  missing: string[];
+}
+
+function documentContentForMessage(message: ChatLine): DocumentContentResult {
+  if (message.role === "user") {
+    return { content: `> ${message.content}`, missing: [] };
+  }
+  if (message.role !== "assistant") {
+    return { content: message.content, missing: [] };
+  }
+  const result = replaceAiCitationsForDocument(
+    message.content,
+    citationRecordsFromContextPackets(message.evidencePackets),
+  );
+  return { content: result.markdown, missing: result.missing };
+}
+
+function documentContentForMessages(
+  messages: ChatLine[],
+): DocumentContentResult {
+  const converted = messages.map(documentContentForMessage);
+  return {
+    content: converted.map((item) => item.content).join("\n\n"),
+    missing: Array.from(new Set(converted.flatMap((item) => item.missing))),
+  };
+}
+
+function warnMissingCitations(
+  missing: string[],
+  setActivityHint: Dispatch<SetStateAction<string | null>>,
+) {
+  if (missing.length > 0) {
+    setActivityHint(`有引用未找到：${missing.join("、")}`);
+  }
 }
 
 export function useAssistantConversation({
@@ -161,37 +204,30 @@ export function useAssistantConversation({
 
   const handleInsertToEditor = useCallback(() => {
     if (!onInsertToEditor) return;
-    const content = selectedMessages(
-      messagesRef.current,
-      bubbleSelection.selected,
-    )
-      .map((message) => {
-        if (message.role === "user") return `> ${message.content}`;
-        return message.content;
-      })
-      .join("\n\n");
-    if (content) {
-      onInsertToEditor(content);
+    const result = documentContentForMessages(
+      selectedMessages(messagesRef.current, bubbleSelection.selected),
+    );
+    if (result.content) {
+      onInsertToEditor(result.content);
+      warnMissingCitations(result.missing, setActivityHint);
       bubbleSelection.clear();
     }
-  }, [bubbleSelection, onInsertToEditor]);
+  }, [bubbleSelection, onInsertToEditor, setActivityHint]);
 
   const handleCopySelected = useCallback(async () => {
-    const content = selectedMessages(
-      messagesRef.current,
-      bubbleSelection.selected,
-    )
-      .map((message) => message.content)
-      .join("\n\n");
-    if (content) {
+    const result = documentContentForMessages(
+      selectedMessages(messagesRef.current, bubbleSelection.selected),
+    );
+    if (result.content) {
       try {
-        await navigator.clipboard.writeText(content);
+        await navigator.clipboard.writeText(result.content);
+        warnMissingCitations(result.missing, setActivityHint);
       } catch {
         /* ignore */
       }
       bubbleSelection.clear();
     }
-  }, [bubbleSelection]);
+  }, [bubbleSelection, setActivityHint]);
 
   const handleExportSelected = useCallback(() => {
     const lines = selectedMessages(
@@ -277,9 +313,14 @@ export function useAssistantConversation({
   );
 
   const handleLoadSession = useCallback(
-    (id: number, loaded: ChatLine[]) => {
+    (id: number, loaded: ChatLine[], ledgerPackets?: ContextPacket[]) => {
+      const loadedPackets = ledgerPackets?.length
+        ? ledgerPackets
+        : loaded.flatMap((message) => message.evidencePackets ?? []);
       setSessionId(id);
       setMessages(loaded);
+      setPackets(mergeContextPackets([], loadedPackets));
+      setSelectedPacketIds([]);
       forceNewSessionRef.current = false;
       clearTaskSurfaces();
       clearContextReferences();
@@ -293,6 +334,8 @@ export function useAssistantConversation({
       clearTaskSurfaces,
       forceNewSessionRef,
       setActionState,
+      setPackets,
+      setSelectedPacketIds,
     ],
   );
 

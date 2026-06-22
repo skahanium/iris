@@ -10,6 +10,14 @@ import type {
   AssistantArtifactDraft,
 } from "@/types/assistant-artifact";
 
+function evidenceArtifactSessionId(tab: ArtifactTab): number | null {
+  if (tab.kind !== "session_evidence_detail") return null;
+  const payload = tab.payload;
+  if (typeof payload !== "object" || payload === null) return null;
+  const sessionId = (payload as { sessionId?: unknown }).sessionId;
+  return typeof sessionId === "number" ? sessionId : null;
+}
+
 function browserStorage(): Storage | null {
   try {
     return window.localStorage;
@@ -65,6 +73,43 @@ export function useArtifactTabs() {
     [persist],
   );
 
+  const closeEvidenceArtifactsForSession = useCallback(
+    (sessionId: number) => {
+      setArtifactTabs((prev) => {
+        const removedIds = new Set(
+          prev
+            .filter((item) => evidenceArtifactSessionId(item) === sessionId)
+            .map((item) => item.id),
+        );
+        if (removedIds.size === 0) return prev;
+        const next = prev.filter((item) => !removedIds.has(item.id));
+        persist(next);
+        setActiveArtifactId((current) =>
+          current && removedIds.has(current) ? null : current,
+        );
+        return next;
+      });
+    },
+    [persist],
+  );
+
+  const closeAllEvidenceArtifacts = useCallback(() => {
+    setArtifactTabs((prev) => {
+      const removedIds = new Set(
+        prev
+          .filter((item) => item.kind === "session_evidence_detail")
+          .map((item) => item.id),
+      );
+      if (removedIds.size === 0) return prev;
+      const next = prev.filter((item) => !removedIds.has(item.id));
+      persist(next);
+      setActiveArtifactId((current) =>
+        current && removedIds.has(current) ? null : current,
+      );
+      return next;
+    });
+  }, [persist]);
+
   const activeArtifactTab = useMemo(
     () => artifactTabs.find((item) => item.id === activeArtifactId) ?? null,
     [activeArtifactId, artifactTabs],
@@ -76,6 +121,8 @@ export function useArtifactTabs() {
     activeArtifactTab,
     artifactTabs,
     closeArtifact,
+    closeAllEvidenceArtifacts,
+    closeEvidenceArtifactsForSession,
     openArtifact,
     setActiveArtifactId,
   };

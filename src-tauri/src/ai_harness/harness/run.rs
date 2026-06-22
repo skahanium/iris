@@ -49,6 +49,65 @@ use crate::error::{AppError, AppResult};
 
 const LLM_MAX_RETRIES: u32 = 3;
 const LLM_RETRY_BASE_DELAY_MS: u64 = 1000;
+const FINAL_ANSWER_INSTRUCTION: &str = "停止继续检索、反思或调用工具。请只基于当前已有上下文直接回答用户；如果证据不足，说明局限并给出当前能支持的结论。不要再调用工具，也不要输出 NEED_MORE_EVIDENCE 或其他内部控制标记。";
+const FINAL_ROUND_FALLBACK: &str =
+    "我已停止继续调用工具，但这次没有生成可展示回答。请重试，或换一种问法。";
+const FINAL_BUDGET_FALLBACK: &str = "这次上下文预算已用尽，未能生成可展示回答。请缩小范围后重试。";
+const FINAL_EMPTY_FALLBACK: &str = "这次没有生成可展示回答。请重试，或换一种问法。";
+
+#[derive(Debug, Clone)]
+struct FinalAnswerDecision {
+    content: String,
+    finish_reason: HarnessFinishReason,
+    save_checkpoint: bool,
+}
+
+fn build_final_answer_messages(messages: &[LlmMessage]) -> Vec<LlmMessage> {
+    let mut final_messages = messages.to_vec();
+    final_messages.push(LlmMessage {
+        role: MessageRole::User,
+        content: FINAL_ANSWER_INSTRUCTION.into(),
+        tool_call_id: None,
+        tool_calls: None,
+        ..Default::default()
+    });
+    final_messages
+}
+
+fn classify_final_answer(
+    sanitized_final: Option<String>,
+    total_tokens: u32,
+    token_budget: u32,
+    harness_rounds: u32,
+    max_rounds: u32,
+) -> FinalAnswerDecision {
+    if let Some(content) = sanitized_final {
+        return FinalAnswerDecision {
+            content,
+            finish_reason: HarnessFinishReason::Completed,
+            save_checkpoint: false,
+        };
+    }
+
+    if total_tokens >= token_budget {
+        return FinalAnswerDecision {
+            content: FINAL_BUDGET_FALLBACK.into(),
+            finish_reason: HarnessFinishReason::BudgetExhausted,
+            save_checkpoint: true,
+        };
+    }
+
+    let fallback = if harness_rounds >= max_rounds {
+        FINAL_ROUND_FALLBACK
+    } else {
+        FINAL_EMPTY_FALLBACK
+    };
+    FinalAnswerDecision {
+        content: fallback.into(),
+        finish_reason: HarnessFinishReason::Completed,
+        save_checkpoint: false,
+    }
+}
 
 async fn send_llm_request_with_retry(
     app_handle: &AppHandle,
@@ -867,8 +926,8 @@ pub async fn run_harness(
         abort_if_requested(&input.request_id)?;
         let stream_request = GatewayRequest {
             provider: provider_config,
-            messages: messages.clone(),
-            tools: llm_tools,
+            messages: build_final_answer_messages(&messages),
+            tools: vec![],
             max_tokens,
             temperature: Some(0.7),
             stream: true,
@@ -896,20 +955,16 @@ pub async fn run_harness(
         emit_thinking(app_handle, &input.request_id, harness_rounds, &t)?;
     }
 
-    let sanitized_final = sanitize_reflection_visible(&final_visible);
-    let finish_reason = if sanitized_final.is_none() && total_usage.total_tokens >= token_budget {
-        HarnessFinishReason::BudgetExhausted
-    } else if sanitized_final.is_none() && harness_rounds >= max_rounds {
-        HarnessFinishReason::RoundLimit
-    } else {
-        HarnessFinishReason::Completed
-    };
+    let decision = classify_final_answer(
+        sanitize_reflection_visible(&final_visible),
+        total_usage.total_tokens,
+        token_budget,
+        harness_rounds,
+        max_rounds,
+    );
     let evidence_packets = ledger_to_packets(&evidence_ledger, token_budget);
 
-    if matches!(
-        finish_reason,
-        HarnessFinishReason::BudgetExhausted | HarnessFinishReason::RoundLimit
-    ) {
+    if decision.save_checkpoint {
         save_round_checkpoint(
             state,
             &input,
@@ -929,8 +984,7 @@ pub async fn run_harness(
         state,
         input,
         FinishRunParams {
-            content: sanitized_final
-                .unwrap_or_else(|| "抱歉，未能在限定轮次内完成回答。请缩小问题或重试。".into()),
+            content: decision.content,
             tool_calls: all_tool_calls,
             tool_results: tool_results_json,
             usage: total_usage,
@@ -938,7 +992,7 @@ pub async fn run_harness(
             pending_confirmation: false,
             evidence_packets,
             usage_source,
-            finish_reason,
+            finish_reason: decision.finish_reason,
         },
     )
     .await
@@ -1438,6 +1492,45 @@ mod tests {
         };
 
         assert_eq!(result.usage_source, UsageSource::Estimated);
+    }
+
+    #[test]
+    fn round_limit_without_budget_exhaustion_completes_with_fallback() {
+        let decision = classify_final_answer(None, 99, 100, 3, 3);
+
+        assert_eq!(decision.finish_reason, HarnessFinishReason::Completed);
+        assert!(!decision.save_checkpoint);
+        assert!(!decision.content.contains("限定轮次"));
+        assert!(!decision.content.contains("请缩小问题"));
+    }
+
+    #[test]
+    fn budget_exhaustion_still_pauses_for_recovery() {
+        let decision = classify_final_answer(None, 100, 100, 1, 3);
+
+        assert_eq!(decision.finish_reason, HarnessFinishReason::BudgetExhausted);
+        assert!(decision.save_checkpoint);
+    }
+
+    #[test]
+    fn final_answer_messages_force_no_tool_direct_answer() {
+        let messages = vec![LlmMessage {
+            role: MessageRole::User,
+            content: "分析一下当前引用".into(),
+            tool_call_id: None,
+            tool_calls: None,
+            ..Default::default()
+        }];
+
+        let final_messages = build_final_answer_messages(&messages);
+        let instruction = final_messages
+            .last()
+            .expect("final instruction should be appended");
+
+        assert_eq!(messages.len() + 1, final_messages.len());
+        assert!(matches!(instruction.role, MessageRole::User));
+        assert!(instruction.content.as_str().contains("不要再调用工具"));
+        assert!(instruction.content.as_str().contains("NEED_MORE_EVIDENCE"));
     }
 
     // ── depth-based reflection/subagent behavior ──────────

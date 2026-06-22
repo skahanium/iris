@@ -39,7 +39,7 @@ function StatusIndicator({
       aria-checked={role === "switch" ? ariaChecked : undefined}
       aria-label={ariaLabel}
       title={title}
-      className="inline-flex h-6 shrink-0 items-center gap-1 rounded-sm px-1.5 text-muted-foreground transition-[background-color,color,transform] duration-base ease-iris-out hover:bg-muted/50 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-1 focus-visible:ring-offset-panel active:scale-[0.98]"
+      className="iris-focus-soft inline-flex h-6 shrink-0 items-center gap-1 rounded-sm px-1.5 text-muted-foreground transition-[background-color,color,transform,box-shadow] duration-base ease-iris-out hover:bg-muted/50 focus:outline-none active:scale-[0.98]"
       onClick={onClick}
     >
       <span

@@ -252,6 +252,38 @@ describe("editorDocToMarkdown (prosemirror-markdown hot path)", () => {
     }
   });
 
+  it("preserves ordinary spaces in headings and paragraphs through ingest and save", () => {
+    const body = ["## 第一章    总 则", "", "正文    保留  空格"].join("\n");
+    const editor = createProductionEditorFromIngestedBody(body);
+    try {
+      const md = pmSerializeBody(editor).replace(/\r\n/g, "\n");
+
+      expect(md).toContain("## 第一章    总 则");
+      expect(md).toContain("正文    保留  空格");
+    } finally {
+      editor.destroy();
+    }
+  });
+
+  it("preserves ordinary spaces after reopening serialized markdown", () => {
+    const body = ["## 第一章    总 则", "", "正文    保留  空格"].join("\n");
+    const first = createProductionEditorFromIngestedBody(body);
+    try {
+      const saved = pmSerializeBody(first).replace(/\r\n/g, "\n");
+      const reopened = createProductionEditorFromIngestedBody(saved);
+      try {
+        const reopenedMd = pmSerializeBody(reopened).replace(/\r\n/g, "\n");
+
+        expect(reopenedMd).toContain("## 第一章    总 则");
+        expect(reopenedMd).toContain("正文    保留  空格");
+      } finally {
+        reopened.destroy();
+      }
+    } finally {
+      first.destroy();
+    }
+  });
+
   it("round-trips Iris indented paragraph HTML as an editable block", () => {
     const editor = createProductionEditorFromIngestedBody(
       '<p data-iris-indent="2"><strong>Bold</strong> text</p>',
@@ -435,6 +467,22 @@ describe("editorDocToMarkdown (prosemirror-markdown hot path)", () => {
 });
 
 describe("serializeOpenNote integration (PM + ingest)", () => {
+  it("preserves body heading and paragraph spaces through the full note pipeline", () => {
+    const md = [
+      "---",
+      'title: "Whitespace"',
+      "---",
+      "",
+      "## 第一章    总 则",
+      "",
+      "正文    保留  空格",
+    ].join("\n");
+
+    const out = normalizeMd(fullNoteRoundTrip(md));
+    expect(out).toContain("## 第一章    总 则");
+    expect(out).toContain("正文    保留  空格");
+  });
+
   it("preserves mixed advanced syntax through full note pipeline", () => {
     const md = [
       "---",

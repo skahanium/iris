@@ -10,6 +10,7 @@ import {
 
 import { pathStem } from "@/lib/note-display";
 import { ingestMarkdownForEditorAsync } from "@/lib/editor-ingest-async";
+import { EDITOR_PARSE_OPTIONS } from "@/lib/editor-parse-options";
 import { extractFrontmatterYaml, parseNoteForEditor } from "@/lib/markdown";
 import { isPlaceholderTitle } from "@/lib/path-sync";
 import { fileRename, pathSyncSuggest } from "@/lib/ipc";
@@ -203,13 +204,21 @@ export function useOpenNote({
             if (generation !== editorIngestGenerationRef.current) return;
             if (activePathRef.current !== path) return;
             if (dirtyRef?.current) return;
-            editorRef.current?.commands.setContent(tipTapHtml, false);
+            editorRef.current?.commands.setContent(
+              tipTapHtml,
+              false,
+              EDITOR_PARSE_OPTIONS,
+            );
           })
           .catch(() => {
             if (generation !== editorIngestGenerationRef.current) return;
             if (activePathRef.current !== path) return;
             if (dirtyRef?.current) return;
-            editorRef.current?.commands.setContent("<p></p>", false);
+            editorRef.current?.commands.setContent(
+              "<p></p>",
+              false,
+              EDITOR_PARSE_OPTIONS,
+            );
           });
       }
     },

@@ -44,6 +44,8 @@ pub struct SessionMessage {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub content_parts: Option<String>,
     pub tool_calls: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub evidence_packets: Option<serde_json::Value>,
     pub content_hash: Option<String>,
     pub created_at: String,
 }
@@ -110,6 +112,29 @@ impl SessionManager {
         content_parts: Option<&str>,
         tool_calls: Option<&serde_json::Value>,
     ) -> AppResult<i64> {
+        Self::append_message_with_evidence_packets(
+            db,
+            session_id,
+            role,
+            content,
+            content_parts,
+            tool_calls,
+            None,
+        )
+    }
+
+    /// 向 session 追加一条可携带证据包的消息。
+    ///
+    /// evidence_packets 仅用于历史会话恢复 UI，不作为会话证据账本的数据源。
+    pub fn append_message_with_evidence_packets(
+        db: &Database,
+        session_id: i64,
+        role: &str,
+        content: &str,
+        content_parts: Option<&str>,
+        tool_calls: Option<&serde_json::Value>,
+        evidence_packets: Option<&serde_json::Value>,
+    ) -> AppResult<i64> {
         let now = chrono::Utc::now().to_rfc3339();
         db.with_conn(|conn| {
             let seq: i64 = conn
@@ -121,10 +146,13 @@ impl SessionManager {
                 .unwrap_or(1);
 
             let tool_json = tool_calls.map(|t| t.to_string());
+            let evidence_json = evidence_packets
+                .map(sanitize_evidence_packets_for_persistence)
+                .map(|p| p.to_string());
             let content_hash = crate::cas::hash::content_hash_str(content);
             conn.execute(
-                "INSERT INTO session_messages (session_id, seq, role, content, content_parts, tool_calls, content_hash, created_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                "INSERT INTO session_messages (session_id, seq, role, content, content_parts, tool_calls, evidence_packets, content_hash, created_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
                 rusqlite::params![
                     session_id,
                     seq,
@@ -132,6 +160,7 @@ impl SessionManager {
                     content,
                     content_parts,
                     tool_json,
+                    evidence_json,
                     content_hash,
                     now
                 ],
@@ -146,7 +175,7 @@ impl SessionManager {
         })
     }
 
-    /// 获取 session 最近 N 条消息。
+    /// 最近 session 的 N 条消息。
     pub fn recent_messages(
         db: &Database,
         session_id: i64,
@@ -154,7 +183,7 @@ impl SessionManager {
     ) -> AppResult<Vec<SessionMessage>> {
         db.with_conn(|conn| {
             let mut stmt = conn.prepare(
-                "SELECT id, session_id, seq, role, content, content_parts, tool_calls, content_hash, created_at
+                "SELECT id, session_id, seq, role, content, content_parts, tool_calls, evidence_packets, content_hash, created_at
                  FROM session_messages
                  WHERE session_id = ?1
                  ORDER BY seq DESC
@@ -171,8 +200,11 @@ impl SessionManager {
                     tool_calls: row
                         .get::<_, Option<String>>(6)?
                         .and_then(|s| serde_json::from_str(&s).ok()),
-                    content_hash: row.get(7)?,
-                    created_at: row.get(8)?,
+                    evidence_packets: row
+                        .get::<_, Option<String>>(7)?
+                        .and_then(|s| serde_json::from_str(&s).ok()),
+                    content_hash: row.get(8)?,
+                    created_at: row.get(9)?,
                 })
             })?;
             let mut msgs = Vec::new();
@@ -343,6 +375,9 @@ impl SessionManager {
                 rusqlite::params![session_id, from_seq],
             )?;
             if deleted > 0 {
+                crate::ai_runtime::session_evidence::retire_evidence_first_introduced_at_or_after(
+                    conn, session_id, from_seq,
+                )?;
                 let now = chrono::Utc::now().to_rfc3339();
                 conn.execute(
                     "UPDATE sessions SET updated_at = ?1 WHERE id = ?2",
@@ -398,6 +433,40 @@ fn derive_session_title(first_user_message: &str) -> String {
 }
 
 // ─── Tests ───────────────────────────────────────────────
+
+fn sanitize_evidence_packets_for_persistence(value: &serde_json::Value) -> serde_json::Value {
+    let mut sanitized = value.clone();
+    strip_forbidden_evidence_text_fields(&mut sanitized);
+    sanitized
+}
+
+fn strip_forbidden_evidence_text_fields(value: &mut serde_json::Value) {
+    match value {
+        serde_json::Value::Array(items) => {
+            for item in items {
+                strip_forbidden_evidence_text_fields(item);
+            }
+        }
+        serde_json::Value::Object(map) => {
+            for key in [
+                "excerpt",
+                "body",
+                "note_body",
+                "page_body",
+                "web_page_body",
+                "snapshot",
+                "content_snapshot",
+                "screenshot",
+            ] {
+                map.remove(key);
+            }
+            for nested in map.values_mut() {
+                strip_forbidden_evidence_text_fields(nested);
+            }
+        }
+        _ => {}
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -601,6 +670,101 @@ mod tests {
         assert_eq!(msgs.len(), 1);
         assert!(msgs[0].content_parts.is_none());
         assert_eq!(msgs[0].content, "plain text");
+    }
+
+    #[test]
+    fn assistant_message_strips_evidence_packet_text_snapshots() {
+        let db = setup_db();
+        let sid = SessionManager::ensure(&db, AiScene::KnowledgeLookup, None).unwrap();
+        let evidence_packets = serde_json::json!([
+            {
+                "id": "packet-1",
+                "title": "Source Note",
+                "citation_label": "S1",
+                "excerpt": "important evidence",
+                "body": "full note body",
+                "snapshot": "stored page snapshot"
+            }
+        ]);
+        let expected = serde_json::json!([
+            {
+                "id": "packet-1",
+                "title": "Source Note",
+                "citation_label": "S1"
+            }
+        ]);
+
+        SessionManager::append_message_with_evidence_packets(
+            &db,
+            sid,
+            "assistant",
+            "answer with citation [S1]",
+            None,
+            None,
+            Some(&evidence_packets),
+        )
+        .unwrap();
+
+        let msgs = SessionManager::recent_messages(&db, sid, 10).unwrap();
+        assert_eq!(msgs.len(), 1);
+        assert_eq!(msgs[0].evidence_packets.as_ref(), Some(&expected));
+    }
+
+    #[test]
+    fn retract_messages_retires_evidence_introduced_by_retracted_suffix() {
+        use crate::ai_runtime::session_evidence::{
+            list_session_evidence, register_session_evidence, SessionEvidenceRegisterPacket,
+            SessionEvidenceSourceType,
+        };
+
+        fn packet(path: &str, hash: &str) -> SessionEvidenceRegisterPacket {
+            SessionEvidenceRegisterPacket {
+                source_type: SessionEvidenceSourceType::Local,
+                title: path.to_string(),
+                source_path: Some(path.to_string()),
+                source_span_start: Some(0),
+                source_span_end: Some(10),
+                heading_path: None,
+                content_hash: Some(hash.to_string()),
+                retrieval_reason: None,
+                score: None,
+                confidence: None,
+                url: None,
+                normalized_url: None,
+                domain: None,
+                retrieved_at: None,
+                search_backend: None,
+                source_rank: None,
+                failure_reason: None,
+            }
+        }
+
+        let db = setup_db();
+        let sid = SessionManager::ensure(&db, AiScene::KnowledgeLookup, None).unwrap();
+        SessionManager::append_message(&db, sid, "user", "first", None, None).unwrap();
+        SessionManager::append_message(&db, sid, "assistant", "first reply", None, None).unwrap();
+        SessionManager::append_message(&db, sid, "user", "second", None, None).unwrap();
+        SessionManager::append_message(&db, sid, "assistant", "second reply", None, None).unwrap();
+
+        db.with_conn(|conn| {
+            register_session_evidence(conn, sid, 2, &[packet("a.md", "hash-a")])?;
+            register_session_evidence(conn, sid, 4, &[packet("b.md", "hash-b")])?;
+            Ok(())
+        })
+        .unwrap();
+
+        let deleted = SessionManager::retract_messages(&db, sid, 3).unwrap();
+        assert_eq!(deleted, 2);
+
+        db.with_conn(|conn| {
+            let labels = list_session_evidence(conn, sid)?
+                .into_iter()
+                .map(|item| item.citation_label)
+                .collect::<Vec<_>>();
+            assert_eq!(labels, vec!["[C1]"]);
+            Ok(())
+        })
+        .unwrap();
     }
 
     #[test]

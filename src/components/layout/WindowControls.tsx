@@ -31,7 +31,7 @@ function MacTrafficLightButton({
       aria-label={label}
       data-tauri-drag-region-exclude
       className={cn(
-        "iris-window-control iris-traffic-light inline-flex size-3.5 items-center justify-center rounded-full transition-[box-shadow,transform,filter] duration-fast focus:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-panel active:scale-95",
+        "iris-focus-soft iris-window-control iris-traffic-light inline-flex size-3.5 items-center justify-center rounded-full transition-[box-shadow,transform,filter] duration-fast focus:outline-none active:scale-95",
         className,
       )}
       onMouseDown={stopTitlebarDrag}
@@ -58,7 +58,7 @@ function WindowsControlButton({
       aria-label={label}
       data-tauri-drag-region-exclude
       className={cn(
-        "iris-window-control iris-window-control--windows inline-flex h-[var(--titlebar-height)] w-11 items-center justify-center text-muted-foreground transition-[background-color,color] duration-fast focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary",
+        "iris-focus-soft iris-window-control iris-window-control--windows inline-flex h-[var(--titlebar-height)] w-11 items-center justify-center text-muted-foreground transition-[background-color,color,box-shadow] duration-fast focus:outline-none",
         className,
       )}
       onMouseDown={stopTitlebarDrag}
