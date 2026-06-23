@@ -65,6 +65,7 @@ describe("Agent Task Runtime Phase D lifecycle contract", () => {
     );
     const header = read("src/components/ai/AssistantPanelHeader.tsx");
     const panel = read("src/components/ai/UnifiedAssistantPanel.impl.tsx");
+    const history = read("src/components/ai/SessionHistoryDropdown.tsx");
 
     expect(recovery).toContain("isUnrecoverableResumeError");
     expect(recoveryLib).toContain("当前库已变更");
@@ -73,8 +74,10 @@ describe("Agent Task Runtime Phase D lifecycle contract", () => {
     expect(resumeHook).toContain("RESUME_PREFLIGHT_FAILED");
     expect(resumeHook).toContain("vault scope changed");
     expect(resumeHook).toContain("setPausedTaskId(null)");
-    expect(header).toContain("onClearedAllSessions");
-    expect(header).toContain("onClearedAll={onClearedAllSessions}");
+    expect(header).not.toContain("onClearedAllSessions");
+    expect(header).not.toContain("onClearedAll=");
+    expect(history).not.toContain("sessionClearAll");
+    expect(history).not.toContain("当前上下文");
     expect(panel).toContain("resetAssistantSessionState");
     expect(panel).toContain("setPausedTaskId(null)");
   });

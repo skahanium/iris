@@ -35,6 +35,7 @@ function currentTurnLabel(
     case "document_check":
       return "写作候选";
     case "citation_check":
+      return "引用核查";
     case "research":
       return "研究综合";
     case "organize":

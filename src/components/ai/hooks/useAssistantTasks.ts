@@ -12,6 +12,7 @@ import { resolveAssistantDisplayContent } from "@/lib/assistant-message-content"
 import { buildArtifactDraftsFromTaskResult } from "@/lib/assistant-artifact-tabs";
 import { validateContextReference } from "@/lib/context-reference";
 import { patchSpansPreferSidebar } from "@/lib/assistant-patch";
+import { pendingWriteConfirmationAction } from "@/lib/assistant-write-confirmation";
 import {
   agentIntentForTaskPlan,
   intentDetectionForTaskPlan,
@@ -87,6 +88,7 @@ interface AssistantTaskContext {
   composerDisabled: boolean;
   contextScope: ContextScope;
   contextReferences: ContextReference[];
+  acceptWritingPatch: (patch: PatchProposal) => Promise<boolean>;
   getNoteContent: () => string;
   getParagraphText: () => string | null;
   getWritingContext: () => WritingEditorContext | null;
@@ -98,6 +100,7 @@ interface AssistantTaskContext {
   selectionQuoteText?: string | null;
   sessionId: number | null;
   webSearch: boolean;
+  writingPatches: PatchProposal[];
 }
 
 interface AssistantTaskRefs {
@@ -216,6 +219,7 @@ export function useAssistantTasks({
     composerDisabled,
     contextScope,
     contextReferences,
+    acceptWritingPatch,
     getNoteContent,
     getParagraphText,
     getWritingContext,
@@ -227,6 +231,7 @@ export function useAssistantTasks({
     selectionQuoteText,
     sessionId,
     webSearch,
+    writingPatches,
   } = context;
   const {
     forceNewSessionRef,
@@ -1017,6 +1022,72 @@ export function useAssistantTasks({
   const send = useCallback(async () => {
     if ((!input.trim() && images.length === 0) || composerDisabled) return;
     const rawMessage = input.trim();
+    const currentImages = images;
+    const pendingWriteAction = pendingWriteConfirmationAction({
+      message: rawMessage,
+      pendingPatchCount: writingPatches.length,
+    });
+
+    if (pendingWriteAction !== "none") {
+      setInput("");
+      setImages([]);
+      setLastError(null);
+      clearCitationMiss();
+      appendUserMessage(rawMessage, currentImages);
+      setCurrentTaskPlanIntent("rewrite_selection");
+
+      if (pendingWriteAction === "clarify_multiple_patches") {
+        setActionState(buildActionState("writing", "awaiting_confirmation"));
+        assistantRun.setFromTaskStatus("awaiting_confirmation", "writing");
+        setMessages((prev) => [
+          ...prev,
+          {
+            role: "assistant",
+            content:
+              "当前有多条待确认修改。请在写作修改面板中逐条接受或拒绝，以避免多条补丁互相覆盖。",
+          },
+        ]);
+        setActivityHint(null);
+        return;
+      }
+
+      const [patch] = writingPatches;
+      if (!patch) {
+        setMessages((prev) => [
+          ...prev,
+          {
+            role: "assistant",
+            content: "当前没有待确认的文档修改。",
+          },
+        ]);
+        setActivityHint(null);
+        return;
+      }
+
+      setActionState(buildActionState("writing", "running"));
+      assistantRun.setFromTaskStatus("running", "writing");
+      setActivityHint("正在应用已确认的文档修改…");
+      const applied = await acceptWritingPatch(patch);
+      setMessages((prev) => [
+        ...prev,
+        {
+          role: applied ? "assistant" : "system",
+          content: applied
+            ? "已应用这条文档修改。"
+            : "错误: 文档修改应用失败，请查看上方错误提示后重试。",
+        },
+      ]);
+      setActionState(
+        buildActionState("writing", applied ? "completed" : "error"),
+      );
+      assistantRun.setFromTaskStatus(
+        applied ? "completed" : "error",
+        "writing",
+      );
+      setActivityHint(null);
+      return;
+    }
+
     const activeContextReferences = currentContextReferences();
     const hasSelection = Boolean(
       getWritingContext()?.selection ||
@@ -1040,7 +1111,6 @@ export function useAssistantTasks({
     const intent = assistantIntentForTaskPlanIntent(taskPlan.intent);
     setCurrentTaskPlanIntent(taskPlan.intent);
 
-    const currentImages = images;
     setInput("");
     setImages([]);
     setLastError(null);
@@ -1130,9 +1200,14 @@ export function useAssistantTasks({
       ]);
       setActionState(buildActionState(intent, "error", message));
       assistantRun.setFromTaskStatus("error", intent);
+    } finally {
+      panelSendActiveRef.current = false;
+      setStreaming(false);
       setActivityHint(null);
+      assistantRun.setActivityHint(null);
     }
   }, [
+    acceptWritingPatch,
     appendUserMessage,
     assistantRun,
     clearCitationMiss,
@@ -1148,6 +1223,7 @@ export function useAssistantTasks({
     input,
     messages,
     notePath,
+    panelSendActiveRef,
     runChapter,
     runCitation,
     runDocumentCheck,
@@ -1164,7 +1240,9 @@ export function useAssistantTasks({
     setInput,
     setLastError,
     setMessages,
+    setStreaming,
     webSearch,
+    writingPatches,
   ]);
 
   return { runWriting, send, images, setImages };

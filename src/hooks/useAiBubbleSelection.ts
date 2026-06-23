@@ -1,6 +1,40 @@
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 
 import type { ContextReference } from "@/types/ai";
+
+function sameUtf8Range(
+  left: ContextReference["utf8Range"],
+  right: ContextReference["utf8Range"],
+) {
+  if (left === right) return true;
+  if (!left || !right) return false;
+  return left.start === right.start && left.end === right.end;
+}
+
+function sameEditorRange(
+  left: ContextReference["editorRange"],
+  right: ContextReference["editorRange"],
+) {
+  if (left === right) return true;
+  if (!left || !right) return false;
+  return left.from === right.from && left.to === right.to;
+}
+
+function sameContextReference(left: ContextReference, right: ContextReference) {
+  return (
+    left.id === right.id &&
+    left.kind === right.kind &&
+    left.filePath === right.filePath &&
+    left.contentHash === right.contentHash &&
+    left.excerpt === right.excerpt &&
+    left.stale === right.stale &&
+    left.invalidReason === right.invalidReason &&
+    sameUtf8Range(left.utf8Range, right.utf8Range) &&
+    sameEditorRange(left.editorRange, right.editorRange) &&
+    left.headingPath === right.headingPath &&
+    left.anchor === right.anchor
+  );
+}
 
 /**
  * AI 对话气泡选中状态管理。
@@ -15,6 +49,7 @@ export function useAiBubbleSelection() {
   const [contextReferences, setContextReferences] = useState<
     ContextReference[]
   >([]);
+  const contextReferencesRef = useRef<ContextReference[]>([]);
   const lastIndexRef = useRef<number>(-1);
 
   const handleClick = useCallback(
@@ -56,19 +91,40 @@ export function useAiBubbleSelection() {
 
   const quoteSelectionAsReference = useCallback(
     (reference: ContextReference) => {
+      const existing = contextReferencesRef.current.find(
+        (item) => item.id === reference.id,
+      );
+      if (existing && sameContextReference(existing, reference)) {
+        return;
+      }
       setContextReferences((prev) => {
-        const next = prev.filter((item) => item.id !== reference.id);
-        return [...next, reference];
+        const next = [
+          ...prev.filter((item) => item.id !== reference.id),
+          reference,
+        ];
+        contextReferencesRef.current = next;
+        return next;
       });
     },
     [],
   );
 
   const removeContextReference = useCallback((id: string) => {
-    setContextReferences((prev) => prev.filter((item) => item.id !== id));
+    if (!contextReferencesRef.current.some((item) => item.id === id)) {
+      return;
+    }
+    setContextReferences((prev) => {
+      const next = prev.filter((item) => item.id !== id);
+      contextReferencesRef.current = next;
+      return next;
+    });
   }, []);
 
   const clearContextReferences = useCallback(() => {
+    if (contextReferencesRef.current.length === 0) {
+      return;
+    }
+    contextReferencesRef.current = [];
     setContextReferences([]);
   }, []);
 
@@ -77,14 +133,26 @@ export function useAiBubbleSelection() {
     [selected],
   );
 
-  return {
-    selected,
-    contextReferences,
-    handleClick,
-    clear,
-    isSelected,
-    quoteSelectionAsReference,
-    removeContextReference,
-    clearContextReferences,
-  };
+  return useMemo(
+    () => ({
+      selected,
+      contextReferences,
+      handleClick,
+      clear,
+      isSelected,
+      quoteSelectionAsReference,
+      removeContextReference,
+      clearContextReferences,
+    }),
+    [
+      selected,
+      contextReferences,
+      handleClick,
+      clear,
+      isSelected,
+      quoteSelectionAsReference,
+      removeContextReference,
+      clearContextReferences,
+    ],
+  );
 }

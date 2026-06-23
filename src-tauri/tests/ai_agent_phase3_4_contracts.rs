@@ -2,8 +2,8 @@ use iris_lib::ai_runtime::conversation_memory::{
     build_memory_prompt_messages, ConversationMemory, ConversationMemoryPolicy,
 };
 use iris_lib::ai_runtime::deliberation::{
-    append_verification_notice, verification_notice, verify_completion, DeliberationInput,
-    DeliberationState, VerificationNoticeStatus, VerificationStatus,
+    verification_notice, verify_completion, DeliberationInput, DeliberationState,
+    VerificationNoticeStatus, VerificationStatus,
 };
 use iris_lib::ai_runtime::harness::{HarnessFinishReason, HarnessRunResult};
 use iris_lib::ai_runtime::model_gateway::TokenUsage;
@@ -152,13 +152,9 @@ fn failed_verification_gets_short_user_visible_notice() {
     assert!(notice.message.contains("未验证项"));
     assert!(notice.failed_items.iter().any(|item| item.contains("证据")));
 
-    let content = append_verification_notice("已有初步回答", Some(&notice));
-    assert!(content.contains("已有初步回答"));
-    assert!(content.contains("未验证项"));
-
     let finalize = include_str!("../src/ai_harness/harness/finalize.rs");
-    assert!(finalize.contains("append_verification_notice"));
-    assert!(finalize.contains("verification_notice"));
+    assert!(!finalize.contains("append_verification_notice"));
+    assert!(finalize.contains("verification_summary"));
 }
 
 #[test]

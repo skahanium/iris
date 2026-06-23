@@ -205,6 +205,49 @@ describe("useAssistantConfirmations", () => {
     expect(api.toolConfirmRequest).toBeNull();
   });
 
+  it("labels database failures from write confirmations as document modification failures", async () => {
+    const messages: ChatLine[] = [];
+    confirmTool = vi.fn(async () => {
+      throw new Error("Database error");
+    });
+
+    act(() => {
+      root.unmount();
+    });
+    root = createRoot(container);
+    await act(async () => {
+      root.render(
+        createElement(Harness, {
+          onReady: (value) => {
+            api = value;
+          },
+          confirmTool,
+          setRunStatus: (status, intent) => {
+            runStatuses.push([status, intent]);
+          },
+          setMessages: (update) => {
+            const next =
+              typeof update === "function" ? update(messages) : update;
+            messages.splice(0, messages.length, ...next);
+          },
+        }),
+      );
+    });
+
+    await act(async () => {
+      api.setToolConfirmRequest({ ...request, tool_name: "replace_selection" });
+    });
+    await act(async () => {
+      await api.handleToolConfirm("req-1", "tool-1", "approve");
+    });
+
+    expect(messages.at(-1)).toEqual({
+      role: "system",
+      content: "文档修改确认失败: Database error",
+    });
+    expect(runStatuses.at(-1)).toEqual(["error", "chat"]);
+  });
+
   it("shows a readable localized message when tool confirmation fails", async () => {
     const messages: ChatLine[] = [];
     confirmTool = vi.fn(async () => {

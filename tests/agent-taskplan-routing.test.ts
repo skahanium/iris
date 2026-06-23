@@ -2,6 +2,8 @@ import { readFileSync } from "node:fs";
 
 import { describe, expect, it } from "vitest";
 
+import { buildAssistantTaskPlan } from "@/lib/assistant-taskplan";
+
 function read(path: string): string {
   return readFileSync(path, "utf8");
 }
@@ -82,5 +84,77 @@ describe("assistant TaskPlan routing contract", () => {
     });
 
     expect(result.detectedIntent).toBe("research");
+  });
+
+  it("routes selected-text opinion questions to notes instead of citation checks", async () => {
+    const routing = await loadRouting();
+    const result = routing.detectAgentIntent({
+      message:
+        "这个思路是不是过于浅薄了？万一该商人是血站的供应商呢？问题不是更严重吗？",
+      hasSelection: true,
+      notePath: "/notes/work.md",
+      explicitScope: false,
+    });
+
+    expect(result.detectedIntent).not.toBe("citation_check");
+    expect(result.detectedIntent).toBe("ask_notes");
+  });
+
+  it("keeps explicit citation evidence checks on the citation path", async () => {
+    const routing = await loadRouting();
+    const result = routing.detectAgentIntent({
+      message: "帮我核查这段引用证据是否充分，有没有可靠出处支撑",
+      hasSelection: true,
+      notePath: "/notes/work.md",
+      explicitScope: false,
+    });
+
+    expect(result.detectedIntent).toBe("citation_check");
+  });
+
+  it("routes note insertion requests to writing when a note is open", () => {
+    const plan = buildAssistantTaskPlan({
+      message: "请补充到当前标题下方",
+      hasSelection: false,
+      notePath: "/notes/work.md",
+      explicitScope: false,
+      contextReferences: [],
+      webAuthorized: false,
+    });
+
+    expect(plan.intent).toBe("creative_write");
+    expect(plan.modelSlot).toBe("writer");
+    expect(plan.executionMode).toBe("writing_candidate");
+    expect(plan.sourceHints).toContain("context:note");
+  });
+
+  it("does not treat bare confirmation text as writing without a pending proposal", () => {
+    const plan = buildAssistantTaskPlan({
+      message: "我确认",
+      hasSelection: false,
+      notePath: "/notes/work.md",
+      explicitScope: false,
+      contextReferences: [],
+      webAuthorized: false,
+    });
+
+    expect(plan.intent).not.toBe("creative_write");
+    expect(plan.intent).not.toBe("rewrite_selection");
+  });
+
+  it("recognizes confirmation text only when a writing proposal is pending", () => {
+    const plan = buildAssistantTaskPlan({
+      message: "按此修改",
+      hasSelection: false,
+      notePath: "/notes/work.md",
+      explicitScope: false,
+      contextReferences: [],
+      webAuthorized: false,
+      hasPendingWriteProposal: true,
+    });
+
+    expect(plan.intent).toBe("rewrite_selection");
+    expect(plan.outputMode).toBe("confirmation_required");
+    expect(plan.sourceHints).toContain("context:pending_write_proposal");
   });
 });

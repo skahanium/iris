@@ -10,14 +10,12 @@ import {
 } from "@/lib/ai/session-history";
 import { invokeErrorMessage } from "@/lib/credentials";
 import {
-  sessionClearAll,
   sessionDelete,
   sessionEvidenceList,
   sessionList,
   sessionLoad,
   sessionRename,
 } from "@/lib/ipc";
-import type { AiScene } from "@/types/ai";
 import type { SessionSummary } from "@/types/ipc";
 
 function formatRelativeTime(iso: string): string {
@@ -34,8 +32,6 @@ function formatRelativeTime(iso: string): string {
 }
 
 interface SessionHistoryDropdownProps {
-  scene: AiScene;
-  notePath: string | null;
   currentSessionId: number | null;
   disabled?: boolean;
   onSelectSession: (
@@ -44,17 +40,13 @@ interface SessionHistoryDropdownProps {
     ledgerPackets?: ChatLine["evidencePackets"],
   ) => void;
   onDeleted?: (sessionId: number) => void;
-  onClearedAll?: () => void;
 }
 
 export function SessionHistoryDropdown({
-  scene,
-  notePath,
   currentSessionId,
   disabled,
   onSelectSession,
   onDeleted,
-  onClearedAll,
 }: SessionHistoryDropdownProps) {
   const [open, setOpen] = useState(false);
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
@@ -68,18 +60,14 @@ export function SessionHistoryDropdown({
     setLoading(true);
     setError(null);
     try {
-      const list = await sessionList({
-        scene,
-        note_path: notePath,
-        limit: 40,
-      });
+      const list = await sessionList({ limit: 40 });
       setSessions(list);
     } catch (e) {
       setError(invokeErrorMessage(e));
     } finally {
       setLoading(false);
     }
-  }, [scene, notePath]);
+  }, []);
 
   useEffect(() => {
     if (open) void refresh();
@@ -152,21 +140,6 @@ export function SessionHistoryDropdown({
     [editTitle],
   );
 
-  const handleClearAll = useCallback(async () => {
-    if (
-      !window.confirm("确定清空当前任务上下文的全部历史会话？此操作不可恢复。")
-    ) {
-      return;
-    }
-    try {
-      await sessionClearAll({ scene, note_path: notePath });
-      setSessions([]);
-      onClearedAll?.();
-    } catch (e) {
-      setError(invokeErrorMessage(e));
-    }
-  }, [scene, notePath, onClearedAll]);
-
   return (
     <div className="relative" ref={containerRef}>
       <Button
@@ -187,24 +160,15 @@ export function SessionHistoryDropdown({
           className="absolute right-0 top-full z-50 mt-1 w-72 rounded-md border border-border bg-popover shadow-md"
           data-testid="session-history-popover"
         >
-          <div className="flex items-start justify-between gap-2 border-b border-border/60 px-3 py-2">
-            <div>
-              <p className="text-xs font-medium text-foreground">历史会话</p>
-              <p className="text-[10px] text-muted-foreground">
-                仅显示当前任务上下文的对话
-              </p>
+          <div className="border-b border-border/60 px-3 py-2">
+            <div className="flex items-start justify-between gap-2">
+              <div>
+                <p className="text-xs font-medium text-foreground">历史会话</p>
+                <p className="text-[10px] text-muted-foreground">
+                  显示全部历史会话
+                </p>
+              </div>
             </div>
-            {sessions.length > 0 ? (
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                className="h-7 shrink-0 px-2 text-[10px] text-destructive"
-                onClick={() => void handleClearAll()}
-              >
-                清空全部
-              </Button>
-            ) : null}
           </div>
           <div className="max-h-64 overflow-y-auto p-1">
             {loading ? (

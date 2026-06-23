@@ -61,6 +61,18 @@ type SaveRule = (params: {
   source: RuleConfirmRequest["source"];
 }) => Promise<unknown>;
 
+const DOCUMENT_WRITE_TOOLS = new Set([
+  "insert_text_at_cursor",
+  "replace_selection",
+]);
+
+function toolConfirmationFailurePrefix(request: ToolConfirmRequest | null) {
+  if (request && DOCUMENT_WRITE_TOOLS.has(request.tool_name)) {
+    return "文档修改确认失败";
+  }
+  return "工具确认失败";
+}
+
 interface AssistantRunPort {
   setFromTaskStatus: (
     status: AssistantTaskStatus,
@@ -240,9 +252,10 @@ export function useAssistantConfirmations({
       } catch (error) {
         const message = invokeErrorMessage(error);
         nextTaskStatus = "error";
+        const prefix = toolConfirmationFailurePrefix(pendingConfirm);
         setMessages((prev) => [
           ...prev,
-          { role: "system", content: `工具确认失败: ${message}` },
+          { role: "system", content: `${prefix}: ${message}` },
         ]);
         setActionState(buildActionState(intent, nextTaskStatus, message));
       } finally {

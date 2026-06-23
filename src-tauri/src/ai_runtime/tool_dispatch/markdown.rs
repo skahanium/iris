@@ -1,11 +1,24 @@
 use crate::ai_runtime::{PatchApplyResult, PatchProposal, RiskLevel, SourceSpan};
 use crate::app::AppState;
 use crate::error::{AppError, AppResult};
+use crate::indexer::scan::FileEntry;
 use crate::storage::paths::{is_user_note_path, resolve_vault_path};
 
 use super::ToolDispatchContext;
 
 const MAX_NOTE_FILE_BYTES: usize = 20 * 1024 * 1024;
+const INDEX_REFRESH_WARNING: &str = "文档已写入，但索引刷新失败。可继续编辑，稍后可重新索引。";
+
+fn fallback_entry_after_write(
+    state: &AppState,
+    vault: &std::path::Path,
+    abs: &std::path::Path,
+    content: &str,
+) -> AppResult<FileEntry> {
+    state.db.with_conn(|conn| {
+        crate::indexer::scan::peek_file_entry_after_write(conn, vault, abs, content)
+    })
+}
 
 pub(super) fn markdown_write_patch_apply(
     state: &AppState,
@@ -123,7 +136,8 @@ pub(super) fn markdown_write_patch_apply(
     }
     let hash = crate::ai_runtime::writing_workflow::compute_content_hash(&applied);
     state.storage.write_guard.mark(&target_path, &hash);
-    let entry = state.db.with_conn(|conn| {
+    let mut warnings = Vec::new();
+    let entry = match state.db.with_conn(|conn| {
         crate::indexer::scan::index_file_from_content(
             conn,
             &vault,
@@ -132,15 +146,27 @@ pub(super) fn markdown_write_patch_apply(
             &hash,
             ctx.index_embedding_mode(),
         )
-    })?;
+    }) {
+        Ok(entry) => entry,
+        Err(error) => {
+            tracing::warn!(
+                target_path = %target_path,
+                error = %error,
+                "markdown write succeeded but index refresh failed"
+            );
+            warnings.push(INDEX_REFRESH_WARNING.into());
+            fallback_entry_after_write(state, &vault, &abs, &applied)?
+        }
+    };
+    warnings.insert(
+        0,
+        format!("已写入《{}》，共 {} 字", entry.title, entry.word_count),
+    );
     let result = PatchApplyResult {
         success: true,
         new_content_hash: Some(hash),
         error: None,
-        warnings: vec![format!(
-            "已写入「{}」，共 {} 字",
-            entry.title, entry.word_count
-        )],
+        warnings,
     };
     Ok(serde_json::json!({
         "type": "patch_apply",

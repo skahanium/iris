@@ -91,6 +91,12 @@ fn capabilities_section(tools: &[ToolSpec]) -> String {
          你应通过工具主动获取信息，而非假设未检索到的内容存在。\n\n\
          ### 可用工具\n",
     );
+    let has_write_tool = tools.iter().any(|tool| {
+        matches!(
+            tool.name.as_str(),
+            "insert_text_at_cursor" | "replace_selection"
+        )
+    });
     for tool in tools {
         s.push_str(&format!(
             "- **{}**：{}（{}）\n",
@@ -103,9 +109,17 @@ fn capabilities_section(tools: &[ToolSpec]) -> String {
             }
         ));
     }
+    if has_write_tool {
+        s.push_str(
+            "\n写作或修改任务中，必须优先调用可用写入工具并等待用户确认；不要要求用户手动复制粘贴。\n",
+        );
+    } else {
+        s.push_str(
+            "\n本轮未授予写入工具；不要声称 Iris 没有写入接口。若用户要写入，请说明需要发起明确的写入或修改任务。\n",
+        );
+    }
     s
 }
-
 fn task_focus_section(policy: &AgentTaskPolicy) -> String {
     format!("## 当前任务侧重\n\n{}\n", policy.task_focus())
 }
@@ -217,6 +231,42 @@ mod tests {
         let text = capabilities_section(&tools);
         assert!(text.contains("search_hybrid"));
         assert!(text.contains("Iris"));
+    }
+
+    #[test]
+    fn capabilities_warns_when_write_tools_are_not_granted() {
+        let tools = vec![ToolSpec {
+            name: "search_hybrid".into(),
+            description: "混合搜索".into(),
+            input_schema: serde_json::json!({}),
+            access_level: ToolAccessLevel::ReadIndex,
+            requires_confirmation: false,
+            max_results: None,
+            scene_affinity: vec![],
+        }];
+
+        let text = capabilities_section(&tools);
+
+        assert!(text.contains("本轮未授予写入工具"));
+        assert!(text.contains("不要声称 Iris 没有写入接口"));
+    }
+
+    #[test]
+    fn capabilities_directs_model_to_use_write_tools_when_granted() {
+        let tools = vec![ToolSpec {
+            name: "insert_text_at_cursor".into(),
+            description: "在当前光标插入文本".into(),
+            input_schema: serde_json::json!({}),
+            access_level: ToolAccessLevel::WriteMarkdown,
+            requires_confirmation: true,
+            max_results: None,
+            scene_affinity: vec![],
+        }];
+
+        let text = capabilities_section(&tools);
+
+        assert!(text.contains("必须优先调用可用写入工具"));
+        assert!(text.contains("不要要求用户手动复制粘贴"));
     }
 
     #[test]

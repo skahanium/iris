@@ -6,12 +6,14 @@ import type {
 } from "@/types/ai";
 
 import type { AssistantRouteInput } from "./assistant-routing";
+import { isWritingConfirmationMessage } from "./assistant-write-confirmation";
 
 export const writingKeywordBeforeResearchKeyword = true;
 
 export interface BuildAssistantTaskPlanInput extends AssistantRouteInput {
   contextReferences?: ContextReference[];
   webAuthorized?: boolean;
+  hasPendingWriteProposal?: boolean;
 }
 
 const WRITING_KEYWORDS = [
@@ -61,14 +63,50 @@ const CREATIVE_KEYWORDS = [
   "更诱人",
 ];
 
-const CITATION_KEYWORDS = [
+const NOTE_WRITE_VERBS = [
+  "补充",
+  "插入",
+  "写入",
+  "写进",
+  "追加",
+  "添加到",
+  "加到",
+  "放到",
+  "填到",
+];
+
+const NOTE_WRITE_TARGETS = [
+  "当前标题",
+  "标题下",
+  "下方",
+  "下面",
+  "此处",
+  "这里",
+  "光标",
+  "正文",
+  "文档",
+  "笔记",
+];
+
+const CITATION_EVIDENCE_KEYWORDS = [
   "引用",
   "引证",
-  "依据",
   "证据",
   "出处",
+  "来源",
+  "支撑",
+];
+
+const CITATION_CHECK_ACTION_KEYWORDS = [
   "核查",
   "检查",
+  "验证",
+  "是否充分",
+  "是否可靠",
+  "补充",
+  "添加",
+  "加上",
+  "找",
 ];
 
 const ORGANIZE_KEYWORDS = [
@@ -130,8 +168,22 @@ function includesAny(haystack: string, needles: string[]): boolean {
   return needles.some((needle) => haystack.includes(needle));
 }
 
+function hasExplicitCitationCheckIntent(message: string): boolean {
+  return (
+    includesAny(message, CITATION_EVIDENCE_KEYWORDS) &&
+    includesAny(message, CITATION_CHECK_ACTION_KEYWORDS)
+  );
+}
+
 function hasChapterCreationIntent(message: string): boolean {
   return /第[一二三四五六七八九十\d]+章/.test(message);
+}
+
+function hasExplicitNoteWriteIntent(message: string): boolean {
+  return (
+    includesAny(message, NOTE_WRITE_VERBS) &&
+    includesAny(message, NOTE_WRITE_TARGETS)
+  );
 }
 
 function contextReferencesFor(
@@ -148,6 +200,8 @@ function sourceHintsFor(input: BuildAssistantTaskPlanInput): string[] {
   if (input.notePath) hints.push("context:note");
   if (input.explicitScope) hints.push("context:scope");
   if (input.hasImage) hints.push("context:image");
+  if (input.hasPendingWriteProposal)
+    hints.push("context:pending_write_proposal");
   if (input.skillMention) hints.push("skill:mention");
   if (contextReferencesFor(input).length > 0) hints.push("context:reference");
 
@@ -443,6 +497,14 @@ export function buildAssistantTaskPlan(
       : chatPlan(input);
   }
 
+  if (input.hasPendingWriteProposal && isWritingConfirmationMessage(message)) {
+    return writerPlan(input, "rewrite_selection");
+  }
+
+  if (input.notePath && hasExplicitNoteWriteIntent(message)) {
+    return writerPlan(input, "creative_write");
+  }
+
   if (input.notePath && includesAny(message, DOCUMENT_KEYWORDS)) {
     return simpleTaskPlan(input, "document_check");
   }
@@ -455,7 +517,7 @@ export function buildAssistantTaskPlan(
     return simpleTaskPlan(input, "chapter");
   }
 
-  if (input.hasSelection && includesAny(message, CITATION_KEYWORDS)) {
+  if (input.hasSelection && hasExplicitCitationCheckIntent(message)) {
     return simpleTaskPlan(input, "citation_check");
   }
 

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 
 import { AssistantPanelHeader } from "@/components/ai/AssistantPanelHeader";
 import { AssistantProcessStatusBar } from "@/components/ai/AssistantProcessStatusBar";
@@ -6,7 +6,6 @@ import { AiComposer } from "@/components/ui/ai-composer";
 import { usePromptProfile } from "@/hooks/usePromptProfile";
 import { useAssistantLlmStream } from "@/hooks/useAssistantLlmStream";
 import { harnessAbort } from "@/lib/ipc";
-import { createContextReference } from "@/lib/context-reference";
 import { legacySceneHintForTaskPlanIntent } from "@/lib/assistant-scene";
 import type {
   AssistantActionState,
@@ -38,6 +37,7 @@ import { AgentTaskStatusPanel } from "./AgentTaskStatusPanel";
 import { RuleConfirmDialog } from "./RuleConfirmDialog";
 import { ToolConfirmDialog } from "./ToolConfirmDialog";
 import { useAssistantRunPlan } from "./hooks/useAssistantRunPlan";
+import { useSelectionQuoteReference } from "./hooks/useSelectionQuoteReference";
 import { AssistantErrorRecovery } from "./AssistantErrorRecovery";
 import type { UnifiedAssistantPanelProps } from "./types";
 
@@ -53,7 +53,6 @@ export function UnifiedAssistantPanel({
   onOpenArtifact,
   onOpenEvidenceSource,
   onSessionDeleted,
-  onSessionsCleared,
   selectionQuote,
   prefillMessage,
   onChromeChange,
@@ -94,6 +93,7 @@ export function UnifiedAssistantPanel({
     assistantArtifacts,
     citationResult,
     clearTaskSurfaces: clearArtifactSurfaces,
+    handleAcceptPatch,
     docIssues,
     docSummary,
     lastError,
@@ -223,19 +223,10 @@ export function UnifiedAssistantPanel({
     setStreaming,
   });
 
-  useEffect(() => {
-    if (!selectionQuote?.text) return;
-    bubbleSelection.quoteSelectionAsReference(
-      createContextReference({
-        kind: "selection",
-        filePath: selectionQuote.filePath,
-        content: selectionQuote.content ?? selectionQuote.text,
-        excerpt: selectionQuote.text,
-        utf8Range: null,
-        editorRange: selectionQuote.editorRange ?? null,
-      }),
-    );
-  }, [bubbleSelection, selectionQuote]);
+  useSelectionQuoteReference({
+    quoteSelectionAsReference: bubbleSelection.quoteSelectionAsReference,
+    selectionQuote,
+  });
 
   const handleHarnessResume = useAssistantHarnessResume({
     ensureAssistantStreamSlot,
@@ -304,9 +295,11 @@ export function UnifiedAssistantPanel({
       packets,
       selectedPacketIds,
       contextReferences: bubbleSelection.contextReferences,
+      acceptWritingPatch: handleAcceptPatch,
       selectionQuoteText: selectionQuote?.text,
       sessionId,
       webSearch,
+      writingPatches,
     },
     refs: {
       forceNewSessionRef,
@@ -387,11 +380,6 @@ export function UnifiedAssistantPanel({
         chromeActionsDisabled={streaming}
         currentSessionId={sessionId}
         scene={currentScene}
-        notePath={notePath}
-        onClearedAllSessions={() => {
-          onSessionsCleared?.();
-          resetAssistantSessionState();
-        }}
         onDeletedSession={onSessionDeleted}
         onDeletedCurrentSession={resetAssistantSessionState}
         onNewChat={resetAssistantSessionState}

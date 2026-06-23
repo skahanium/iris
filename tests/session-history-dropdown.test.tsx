@@ -4,7 +4,6 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { SessionHistoryDropdown } from "@/components/ai/SessionHistoryDropdown";
 import {
-  sessionClearAll,
   sessionDelete,
   sessionEvidenceList,
   sessionList,
@@ -14,7 +13,6 @@ import {
 import type { SessionMessageRecord, SessionSummary } from "@/types/ipc";
 
 vi.mock("@/lib/ipc", () => ({
-  sessionClearAll: vi.fn(),
   sessionDelete: vi.fn(),
   sessionEvidenceList: vi.fn(),
   sessionList: vi.fn(),
@@ -22,7 +20,6 @@ vi.mock("@/lib/ipc", () => ({
   sessionRename: vi.fn(),
 }));
 
-const mockSessionClearAll = vi.mocked(sessionClearAll);
 const mockSessionDelete = vi.mocked(sessionDelete);
 const mockSessionEvidenceList = vi.mocked(sessionEvidenceList);
 const mockSessionList = vi.mocked(sessionList);
@@ -39,8 +36,6 @@ function renderHistory(onSelectSession = vi.fn()) {
   act(() => {
     root?.render(
       <SessionHistoryDropdown
-        scene="knowledge_lookup"
-        notePath={null}
         currentSessionId={null}
         onSelectSession={onSelectSession}
       />,
@@ -62,7 +57,6 @@ afterEach(() => {
   host?.remove();
   root = null;
   host = null;
-  mockSessionClearAll.mockReset();
   mockSessionDelete.mockReset();
   mockSessionEvidenceList.mockReset();
   mockSessionList.mockReset();
@@ -125,5 +119,26 @@ describe("SessionHistoryDropdown", () => {
       [],
     );
     expect(document.body.textContent).not.toContain("Database error");
+  });
+
+  it("loads all sessions without exposing a current-context filter", async () => {
+    mockSessionList.mockResolvedValue([]);
+    renderHistory();
+
+    act(() => {
+      document
+        .querySelector<HTMLButtonElement>(
+          '[data-testid="session-history-trigger"]',
+        )
+        ?.click();
+    });
+    await flushPromises();
+
+    expect(mockSessionList).toHaveBeenCalledTimes(1);
+    expect(mockSessionList).toHaveBeenLastCalledWith({
+      limit: 40,
+    });
+    expect(document.body.textContent).toContain("显示全部历史会话");
+    expect(document.body.textContent).not.toContain("当前上下文");
   });
 });

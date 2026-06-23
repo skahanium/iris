@@ -13,10 +13,8 @@ interface AssistantPanelHeaderProps {
   chromeActionsDisabled: boolean;
   currentSessionId: number | null;
   scene: AiScene;
-  notePath: string | null;
   onDeletedCurrentSession: () => void;
   onDeletedSession?: (sessionId: number) => void;
-  onClearedAllSessions: () => void;
   onNewChat: () => void;
   onSelectSession: (
     id: number,
@@ -33,10 +31,8 @@ export function AssistantPanelHeader({
   chromeActionsDisabled,
   currentSessionId,
   scene,
-  notePath,
   onDeletedCurrentSession,
   onDeletedSession,
-  onClearedAllSessions,
   onNewChat,
   onSelectSession,
   profile,
@@ -59,8 +55,6 @@ export function AssistantPanelHeader({
             disabled={chromeActionsDisabled}
           />
           <SessionHistoryDropdown
-            scene={scene}
-            notePath={notePath}
             currentSessionId={currentSessionId}
             disabled={chromeActionsDisabled}
             onSelectSession={onSelectSession}
@@ -70,7 +64,6 @@ export function AssistantPanelHeader({
                 onDeletedCurrentSession();
               }
             }}
-            onClearedAll={onClearedAllSessions}
           />
           <Button
             type="button"

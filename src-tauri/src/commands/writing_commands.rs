@@ -13,6 +13,7 @@ use crate::ai_runtime::writing_workflow::{self, WritingTaskOutput};
 use crate::ai_runtime::{AiScene, PatchApplyResult, PatchProposal, TokenUsage, WritingIntent};
 use crate::app::AppState;
 use crate::error::AppResult;
+use crate::indexer::scan::FileEntry;
 use crate::llm::search_web;
 
 /// Writing task input from frontend.
@@ -60,16 +61,17 @@ pub fn patch_apply(
             });
         }
     };
-    let entry = file_write_inner(state.inner(), &patch.target_path, &applied)?;
+    let (entry, mut warnings) = file_write_inner(state.inner(), &patch.target_path, &applied)?;
     let hash = writing_workflow::compute_content_hash(&applied);
+    warnings.insert(
+        0,
+        format!("已写入《{}》，共 {} 字", entry.title, entry.word_count),
+    );
     Ok(PatchApplyResult {
         success: true,
         new_content_hash: Some(hash),
         error: None,
-        warnings: vec![format!(
-            "已写入「{}」，共 {} 字",
-            entry.title, entry.word_count
-        )],
+        warnings,
     })
 }
 
@@ -83,7 +85,7 @@ fn file_write_inner(
     state: &Arc<AppState>,
     path: &str,
     content: &str,
-) -> AppResult<crate::indexer::scan::FileEntry> {
+) -> AppResult<(FileEntry, Vec<String>)> {
     use crate::error::AppError;
     use crate::storage::paths::is_user_note_path;
 
@@ -102,7 +104,7 @@ fn file_write_inner(
     let hash = crate::indexer::scan::content_hash(content);
     state.storage.write_guard.mark(path, &hash);
 
-    state.db.with_conn(|conn| {
+    match state.db.with_conn(|conn| {
         crate::indexer::scan::index_file_from_content(
             conn,
             &vault,
@@ -111,7 +113,23 @@ fn file_write_inner(
             &hash,
             crate::indexer::scan::IndexEmbeddingMode::Queue(state),
         )
-    })
+    }) {
+        Ok(entry) => Ok((entry, vec![])),
+        Err(error) => {
+            tracing::warn!(
+                target_path = %path,
+                error = %error,
+                "file write succeeded but index refresh failed"
+            );
+            let entry = state.db.with_conn(|conn| {
+                crate::indexer::scan::peek_file_entry_after_write(conn, &vault, &abs, content)
+            })?;
+            Ok((
+                entry,
+                vec!["文档已写入，但索引刷新失败。可继续编辑，稍后可重新索引。".into()],
+            ))
+        }
+    }
 }
 
 /// Execute a writing task (shared by IPC command and assistant facade).
@@ -319,5 +337,41 @@ fn find_selection_range(content: &str, selection: &str) -> crate::ai_runtime::So
             start: content.len(),
             end: content.len(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use tempfile::tempdir;
+
+    #[test]
+    fn file_write_inner_returns_warning_when_reindex_fails() {
+        let dir = tempdir().unwrap();
+        let vault = dir.path().join("vault");
+        fs::create_dir_all(&vault).unwrap();
+        fs::write(vault.join("note.md"), "# Old\n\nBody").unwrap();
+
+        let state = Arc::new(AppState::new(dir.path().join("data")).unwrap());
+        state.set_vault(vault.clone()).unwrap();
+        state
+            .db
+            .with_conn(|conn| {
+                conn.execute_batch("DROP TABLE chunks;")?;
+                Ok(())
+            })
+            .unwrap();
+
+        let (entry, warnings) = file_write_inner(&state, "note.md", "# New\n\nBody").unwrap();
+
+        assert_eq!(
+            fs::read_to_string(vault.join("note.md")).unwrap(),
+            "# New\n\nBody"
+        );
+        assert_eq!(entry.path, "note.md");
+        assert!(warnings
+            .iter()
+            .any(|warning| warning.contains("索引刷新失败")));
     }
 }

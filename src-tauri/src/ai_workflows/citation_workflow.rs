@@ -191,6 +191,14 @@ fn assess_coverage(claims: &[FactClaim]) -> CitationCoverage {
 }
 
 /// Generate citation suggestions based on claims and their coverage.
+fn truncate_chars(value: &str, max_chars: usize) -> String {
+    if value.chars().count() <= max_chars {
+        value.to_string()
+    } else {
+        value.chars().take(max_chars).collect()
+    }
+}
+
 fn generate_suggestions(claims: &[FactClaim]) -> Vec<CitationSuggestion> {
     let mut suggestions = Vec::new();
 
@@ -203,7 +211,7 @@ fn generate_suggestions(claims: &[FactClaim]) -> Vec<CitationSuggestion> {
                 suggested_citation: None,
                 explanation: format!(
                     "声明「{}」缺少引用依据，建议添加来源",
-                    &claim.statement[..claim.statement.len().min(50)]
+                    truncate_chars(&claim.statement, 50)
                 ),
             });
         } else if !claim.conflicting_evidence.is_empty() {
@@ -214,7 +222,7 @@ fn generate_suggestions(claims: &[FactClaim]) -> Vec<CitationSuggestion> {
                 suggested_citation: None,
                 explanation: format!(
                     "声明「{}」存在冲突证据，建议添加限定词（如可能、通常）",
-                    &claim.statement[..claim.statement.len().min(50)]
+                    truncate_chars(&claim.statement, 50)
                 ),
             });
         }
@@ -321,5 +329,39 @@ mod tests {
             assess_coverage(&claims),
             CitationCoverage::WellSupported
         ));
+    }
+
+    #[test]
+    fn execute_citation_check_handles_cjk_claim_without_panicking() {
+        let input = CitationCheckInput {
+            paragraph_text:
+                "【方向四】违反廉洁纪律——与商人谭昌路的关系。核查目标：核实王Y是否接受谭昌路安排的旅游及费用支付。"
+                    .to_string(),
+            document_path: "notes/work.md".to_string(),
+            scope: None,
+            web_authorized: false,
+        };
+
+        let result = execute_citation_check(&input, Vec::new()).unwrap();
+
+        assert!(!result.claims.is_empty());
+        assert!(!result.suggestions.is_empty());
+    }
+
+    #[test]
+    fn execute_citation_check_handles_mixed_utf8_claim_without_panicking() {
+        let input = CitationCheckInput {
+            paragraph_text:
+                "2026年，Iris ✅ 需要核查这段中文、emoji 和 English mixed claim 是否存在可靠证据支撑。"
+                    .to_string(),
+            document_path: "notes/work.md".to_string(),
+            scope: None,
+            web_authorized: false,
+        };
+
+        let result = execute_citation_check(&input, Vec::new()).unwrap();
+
+        assert!(!result.claims.is_empty());
+        assert!(!result.suggestions.is_empty());
     }
 }

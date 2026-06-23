@@ -1,8 +1,7 @@
 //! Harness run completion and evidence export.
 
 use crate::ai_runtime::deliberation::{
-    append_verification_notice, save_deliberation_state, verification_notice, verify_completion,
-    DeliberationInput, DeliberationState,
+    save_deliberation_state, verify_completion, DeliberationInput, DeliberationState,
 };
 use crate::ai_runtime::evidence_ledger::EvidenceLedger;
 use crate::ai_runtime::model_gateway::{TokenUsage, ToolCall};
@@ -33,7 +32,7 @@ pub(crate) async fn finish_run(
     params: FinishRunParams,
 ) -> AppResult<HarnessRunResult> {
     let FinishRunParams {
-        mut content,
+        content,
         tool_calls,
         tool_results,
         usage,
@@ -71,8 +70,6 @@ pub(crate) async fn finish_run(
         &evidence_packets,
         finish_reason,
     );
-    let notice = verification_notice(&verification_summary, finish_reason);
-    content = append_verification_notice(&content, notice.as_ref());
     let _ = save_deliberation_state(&state.db, &deliberation_state, &verification_summary);
     TraceRecorder::update_status(&state.db, &input.request_id, trace_status)?;
     Ok(HarnessRunResult {

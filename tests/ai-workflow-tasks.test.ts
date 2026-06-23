@@ -122,6 +122,33 @@ describe("assistant per-turn TaskPlan dispatch", () => {
     expect(statusBadge).toContain('case "creative_write"');
     expect(statusBadge).not.toContain("任务：");
   });
+
+  it("labels citation checks separately from research synthesis", () => {
+    const statusBadge = readFileSync(
+      "src/components/ai/AgentStatusBadge.tsx",
+      "utf8",
+    );
+
+    expect(statusBadge).toContain('case "citation_check"');
+    expect(statusBadge).toContain('return "引用核查"');
+    expect(statusBadge).toContain('case "research"');
+    expect(statusBadge).toContain('return "研究综合"');
+  });
+
+  it("does not depend on the whole bubble selection object for selection quotes", () => {
+    const panel = readFileSync(
+      "src/components/ai/UnifiedAssistantPanel.impl.tsx",
+      "utf8",
+    );
+    const hook = readFileSync(
+      "src/components/ai/hooks/useSelectionQuoteReference.ts",
+      "utf8",
+    );
+
+    expect(panel).not.toContain("}, [bubbleSelection, selectionQuote]);");
+    expect(panel).toContain("useSelectionQuoteReference");
+    expect(hook).toContain("quoteSelectionAsReference(");
+  });
 });
 
 describe("assistant state types", () => {
