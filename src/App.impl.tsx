@@ -17,6 +17,7 @@ import { AppShell } from "@/components/layout/AppShell";
 import { AppStatusBarSlot } from "@/components/layout/AppStatusBarSlot";
 import { DesktopFrame } from "@/components/layout/DesktopFrame";
 import { MinimalWindowChrome } from "@/components/layout/MinimalWindowChrome";
+import { StartupSplash } from "@/components/layout/StartupSplash";
 import { TabBar } from "@/components/layout/TabBar";
 import { Button } from "@/components/ui/button";
 import { useAppKeyboard } from "@/hooks/useAppKeyboard";
@@ -92,6 +93,8 @@ function App() {
 
   const { vaultPath, loading, pickVault, error: vaultError } = useVault();
   const { theme, setTheme } = useTheme();
+  const [startupSplashVisible, setStartupSplashVisible] =
+    useState(isTauriRuntime);
   const [aiStatus, setAiStatus] = useState("AI 空闲");
   const [conflictState, setConflictState] = useState<ConflictState | null>(
     null,
@@ -761,12 +764,13 @@ function App() {
     );
   }
 
-  if (loading) {
+  if (startupSplashVisible) {
     return (
       <PreVaultDesktopFrame>
-        <div className="flex min-h-0 flex-1 items-center justify-center bg-background text-muted-foreground">
-          加载中…
-        </div>
+        <StartupSplash
+          ready={!loading}
+          onExited={() => setStartupSplashVisible(false)}
+        />
       </PreVaultDesktopFrame>
     );
   }

@@ -1,6 +1,8 @@
 use serde::Serialize;
 use tauri::{AppHandle, WebviewWindow};
 
+use crate::error::{AppError, AppResult};
+
 /// 桌面顶栏指标（逻辑像素，与 `chrome_metrics` 一致）。
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -35,7 +37,22 @@ pub fn get_desktop_chrome_metrics(window: WebviewWindow) -> DesktopChromeMetrics
     }
 }
 
-/// 前端在 resize / 全屏切换后调用，重新应用无边框窗口标题与平台圆角。
+/// Show the hidden startup window once the React splash has mounted.
+#[tauri::command]
+pub fn show_main_window_when_ready(window: WebviewWindow) -> AppResult<()> {
+    crate::window_chrome::apply_main_window_chrome(&window);
+    window
+        .show()
+        .map_err(|e| AppError::msg(format!("Failed to show main window: {e}")))?;
+
+    #[cfg(target_os = "macos")]
+    crate::window_chrome::apply_main_window_chrome(&window);
+
+    let _ = window.set_focus();
+    Ok(())
+}
+
+/// Reapply borderless window title and platform corner styling.
 #[tauri::command]
 pub fn reapply_window_chrome(window: WebviewWindow) {
     crate::window_chrome::apply_main_window_chrome(&window);

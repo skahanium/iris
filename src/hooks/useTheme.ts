@@ -4,13 +4,27 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { settingsGet, settingsSet } from "@/lib/ipc";
 import { isTauriRuntime } from "@/lib/tauri-runtime";
 
-export function useTheme() {
-  const [theme, setThemeState] = useState<"dark" | "light">("dark");
+const THEME_STORAGE_KEY = "iris-theme";
 
-  const applyThemeClass = useCallback((t: "dark" | "light") => {
+type Theme = "dark" | "light";
+
+function readStoredTheme(): Theme {
+  try {
+    return localStorage.getItem(THEME_STORAGE_KEY) === "light"
+      ? "light"
+      : "dark";
+  } catch {
+    return "dark";
+  }
+}
+
+export function useTheme() {
+  const [theme, setThemeState] = useState<"dark" | "light">(readStoredTheme);
+
+  const applyThemeClass = useCallback((t: Theme) => {
     document.documentElement.classList.toggle("light", t === "light");
     try {
-      localStorage.setItem("iris-theme", t);
+      localStorage.setItem(THEME_STORAGE_KEY, t);
     } catch {
       /* ignore quota / private mode */
     }
@@ -18,6 +32,10 @@ export function useTheme() {
       void getCurrentWindow().setTheme(t);
     }
   }, []);
+
+  useEffect(() => {
+    applyThemeClass(theme);
+  }, [applyThemeClass, theme]);
 
   useEffect(() => {
     void settingsGet<string>("theme").then((t) => {
@@ -29,7 +47,7 @@ export function useTheme() {
   }, [applyThemeClass]);
 
   const setTheme = useCallback(
-    async (t: "dark" | "light") => {
+    async (t: Theme) => {
       setThemeState(t);
       applyThemeClass(t);
       await settingsSet("theme", t);

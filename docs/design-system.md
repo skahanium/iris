@@ -156,6 +156,10 @@ Iris Rail Refresh adds semantic surface tokens for the complete interface system
 
 动效：150–200ms，`prefers-reduced-motion` 降级。
 
+### 启动体验
+
+Iris 启动使用 Knowledge Orbit 启动层遮住 Tauri/WebView 首帧不稳定期：窗口先隐藏，窗口 chrome 和主题 token 就绪后显示应用；前端首屏以 Iris mark、低饱和知识轨道和少量节点涟漪表达“唤醒知识网络”。启动层只使用现有 `--background`、`--foreground`、`--surface-chrome`、`--knowledge-accent`、`--border` 等 token，日间/夜间模式由 `.light` 变量自然切换，不建立独立主题。启动层以真实就绪为退出条件，最短展示约 900ms，淡出约 220ms；`prefers-reduced-motion` 下禁用轨道旋转和涟漪，仅保留静态 mark 与淡入淡出。
+
 ### Chrome 表面与命令/AI token
 
 | Token                                                         | 用途                                                 |

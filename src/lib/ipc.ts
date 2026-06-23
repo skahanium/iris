@@ -1383,6 +1383,11 @@ export async function appExit(): Promise<AppExitResult> {
   return invoke<AppExitResult>("app_exit");
 }
 
+/** Show the hidden desktop window after the startup splash has mounted. */
+export async function showMainWindowWhenReady(): Promise<void> {
+  return invoke("show_main_window_when_ready");
+}
+
 /** 读取当前平台顶栏指标并用于 CSS 变量同步 */
 export async function getDesktopChromeMetrics(): Promise<DesktopChromeMetrics> {
   return invoke<DesktopChromeMetrics>("get_desktop_chrome_metrics");

@@ -8,6 +8,67 @@ function read(path: string): string {
 }
 
 describe("runtime configuration contracts", () => {
+  it("keeps the main window hidden until the React startup splash reveals it", () => {
+    const tauriConfig = JSON.parse(read("src-tauri/tauri.conf.json")) as {
+      app?: { windows?: Array<{ label?: string; visible?: boolean }> };
+    };
+    const mainWindow = tauriConfig.app?.windows?.find(
+      (window) => window.label === "main",
+    );
+    const lib = read("src-tauri/src/lib.rs");
+    const chromeCommand = read("src-tauri/src/commands/window_chrome_cmd.rs");
+    const ipc = read("src/lib/ipc.ts");
+    const splash = read("src/components/layout/StartupSplash.tsx");
+
+    const setupStart = lib.indexOf(".setup(|app| {");
+    const invokeHandlerStart = lib.indexOf(".invoke_handler(");
+    const setupBlock = lib.slice(setupStart, invokeHandlerStart);
+    const chromeIndex = chromeCommand.indexOf(
+      "window_chrome::apply_main_window_chrome(&window)",
+    );
+    const showIndex = chromeCommand.indexOf(".show()");
+
+    expect(mainWindow?.visible).toBe(false);
+    expect(setupBlock).toContain(
+      "window_chrome::apply_main_window_chrome(&window)",
+    );
+    expect(setupBlock).not.toContain(".show()");
+    expect(setupBlock).not.toContain("set_focus()");
+    expect(chromeIndex).toBeGreaterThanOrEqual(0);
+    expect(showIndex).toBeGreaterThan(chromeIndex);
+    expect(ipc).toContain("showMainWindowWhenReady");
+    expect(ipc).toContain('invoke("show_main_window_when_ready")');
+    expect(splash).toContain("showMainWindowWhenReady");
+    expect(lib).toContain(
+      "commands::window_chrome_cmd::show_main_window_when_ready",
+    );
+    expect(lib).not.toContain("Theme::Dark");
+  });
+
+  it("bootstraps persisted theme before React first render", () => {
+    const main = read("src/main.tsx");
+    const themeHook = read("src/hooks/useTheme.ts");
+    const bootstrapIndex = main.indexOf("bootstrapStoredTheme()");
+    const renderIndex = main.indexOf("createRoot(");
+
+    expect(main).toContain("function bootstrapStoredTheme");
+    expect(bootstrapIndex).toBeGreaterThanOrEqual(0);
+    expect(renderIndex).toBeGreaterThan(bootstrapIndex);
+    expect(themeHook).toContain("function readStoredTheme");
+    expect(themeHook).toContain('useState<"dark" | "light">(readStoredTheme)');
+    expect(themeHook).not.toContain('useState<"dark" | "light">("dark")');
+  });
+
+  it("defines a token-driven startup splash with reduced-motion fallback", () => {
+    const css = read("src/styles/globals.css");
+
+    expect(css).toContain(".iris-startup-splash");
+    expect(css).toContain("var(--background)");
+    expect(css).toContain("var(--knowledge-accent)");
+    expect(css).toContain("@keyframes iris-startup-orbit");
+    expect(css).toContain("@media (prefers-reduced-motion: reduce)");
+  });
+
   it("keeps DeepSeek default provider reachable from Tauri CSP", () => {
     const tauriConfig = JSON.parse(read("src-tauri/tauri.conf.json")) as {
       app?: { security?: { csp?: string } };

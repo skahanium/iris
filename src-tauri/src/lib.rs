@@ -63,19 +63,9 @@ pub fn run() {
             }
 
             if let Some(window) = app.get_webview_window("main") {
-                #[cfg(windows)]
-                {
-                    use tauri::Theme;
-                    let _ = window.set_theme(Some(Theme::Dark));
-                }
+                // Keep the hidden startup window styled, then let the React
+                // startup splash reveal it after the splash has mounted.
                 window_chrome::apply_main_window_chrome(&window);
-                window
-                    .show()
-                    .map_err(|e| crate::error::AppError::msg(format!("无法显示主窗口: {e}")))?;
-                // macOS：show 后再应用一次圆角/标题，确保无边框壳层稳定。
-                #[cfg(target_os = "macos")]
-                window_chrome::apply_main_window_chrome(&window);
-                let _ = window.set_focus();
             } else {
                 tracing::warn!("main window not found after setup");
             }
@@ -231,6 +221,7 @@ pub fn run() {
             commands::profile_commands::inbox_counts,
             commands::window_chrome_cmd::app_exit,
             commands::window_chrome_cmd::get_desktop_chrome_metrics,
+            commands::window_chrome_cmd::show_main_window_when_ready,
             commands::window_chrome_cmd::reapply_window_chrome,
         ])
         .run(tauri::generate_context!())
