@@ -95,6 +95,10 @@ function textRange(editor: Editor, text: string): { from: number; to: number } {
   return range;
 }
 
+function expectCursorAfterText(editor: Editor, text: string): void {
+  expect(editor.state.selection.from).toBe(textRange(editor, text).to);
+}
+
 function pressTab(editor: Editor, shiftKey = false): KeyboardEvent {
   editor.view.focus();
   const event = new KeyboardEvent("keydown", {
@@ -114,6 +118,19 @@ function pressEnter(editor: Editor): KeyboardEvent {
     key: "Enter",
     code: "Enter",
     keyCode: 13,
+    bubbles: true,
+    cancelable: true,
+  });
+  editor.view.dom.dispatchEvent(event);
+  return event;
+}
+
+function pressBackspace(editor: Editor): KeyboardEvent {
+  editor.view.focus();
+  const event = new KeyboardEvent("keydown", {
+    key: "Backspace",
+    code: "Backspace",
+    keyCode: 8,
     bubbles: true,
     cancelable: true,
   });
@@ -719,6 +736,244 @@ describe("ListIndentKeymapExtension", () => {
                   ]),
                 }),
               ]),
+            },
+          ],
+        },
+      ],
+    });
+  });
+
+  it("exits an empty trailing unordered list item on Backspace", () => {
+    editor = createProductionEditorFromIngestedBody("- AutoClaw\n- ZCode\n- ");
+    placeCursorInEmptyListItem(editor);
+
+    const event = pressBackspace(editor);
+
+    expect(event.defaultPrevented).toBe(true);
+    expect(editor.getJSON()).toMatchObject({
+      content: [
+        {
+          type: "bulletList",
+          content: [
+            {
+              type: "listItem",
+              content: [
+                {
+                  type: "paragraph",
+                  content: [{ type: "text", text: "AutoClaw" }],
+                },
+              ],
+            },
+            {
+              type: "listItem",
+              content: [
+                {
+                  type: "paragraph",
+                  content: [{ type: "text", text: "ZCode" }],
+                },
+              ],
+            },
+          ],
+        },
+        {
+          type: "paragraph",
+        },
+      ],
+    });
+  });
+
+  it("does not outdent the previous unordered item after empty-item Backspace", () => {
+    editor = createProductionEditorFromIngestedBody("- AutoClaw\n- ZCode\n- ");
+    placeCursorInEmptyListItem(editor);
+    pressBackspace(editor);
+
+    expect(editor.commands.keyboardShortcut("Shift-Tab")).toBe(true);
+
+    expect(editor.getJSON()).toMatchObject({
+      content: [
+        {
+          type: "bulletList",
+          content: [
+            {
+              type: "listItem",
+              content: [
+                {
+                  type: "paragraph",
+                  content: [{ type: "text", text: "AutoClaw" }],
+                },
+              ],
+            },
+            {
+              type: "listItem",
+              content: [
+                {
+                  type: "paragraph",
+                  content: [{ type: "text", text: "ZCode" }],
+                },
+              ],
+            },
+          ],
+        },
+        {
+          type: "paragraph",
+        },
+      ],
+    });
+  });
+
+  it("does not recreate an empty unordered list item on a second Backspace", () => {
+    editor = createProductionEditorFromIngestedBody("- AutoClaw\n- ZCode\n- ");
+    placeCursorInEmptyListItem(editor);
+
+    pressBackspace(editor);
+    const event = pressBackspace(editor);
+
+    expect(event.defaultPrevented).toBe(true);
+    expect(editor.getJSON()).toMatchObject({
+      content: [
+        {
+          type: "bulletList",
+          content: [
+            {
+              type: "listItem",
+              content: [
+                {
+                  type: "paragraph",
+                  content: [{ type: "text", text: "AutoClaw" }],
+                },
+              ],
+            },
+            {
+              type: "listItem",
+              content: [
+                {
+                  type: "paragraph",
+                  content: [{ type: "text", text: "ZCode" }],
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    });
+    expect(editor.getJSON().content).toHaveLength(1);
+    expectCursorAfterText(editor, "ZCode");
+  });
+
+  it("exits an empty trailing ordered list item on Backspace", () => {
+    editor = createProductionEditorFromIngestedBody(
+      "1. AutoClaw\n2. ZCode\n3. ",
+    );
+    placeCursorInEmptyListItem(editor);
+
+    const event = pressBackspace(editor);
+
+    expect(event.defaultPrevented).toBe(true);
+    expect(editor.getJSON()).toMatchObject({
+      content: [
+        {
+          type: "orderedList",
+          content: [
+            {
+              type: "listItem",
+              content: [
+                {
+                  type: "paragraph",
+                  content: [{ type: "text", text: "AutoClaw" }],
+                },
+              ],
+            },
+            {
+              type: "listItem",
+              content: [
+                {
+                  type: "paragraph",
+                  content: [{ type: "text", text: "ZCode" }],
+                },
+              ],
+            },
+          ],
+        },
+        {
+          type: "paragraph",
+        },
+      ],
+    });
+  });
+
+  it("does not recreate an empty ordered list item on a second Backspace", () => {
+    editor = createProductionEditorFromIngestedBody(
+      "1. AutoClaw\n2. ZCode\n3. ",
+    );
+    placeCursorInEmptyListItem(editor);
+
+    pressBackspace(editor);
+    const event = pressBackspace(editor);
+
+    expect(event.defaultPrevented).toBe(true);
+    expect(editor.getJSON()).toMatchObject({
+      content: [
+        {
+          type: "orderedList",
+          content: [
+            {
+              type: "listItem",
+              content: [
+                {
+                  type: "paragraph",
+                  content: [{ type: "text", text: "AutoClaw" }],
+                },
+              ],
+            },
+            {
+              type: "listItem",
+              content: [
+                {
+                  type: "paragraph",
+                  content: [{ type: "text", text: "ZCode" }],
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    });
+    expect(editor.getJSON().content).toHaveLength(1);
+    expectCursorAfterText(editor, "ZCode");
+  });
+
+  it("keeps default Backspace behavior for empty paragraphs inside non-empty list items", () => {
+    editor = new Editor({
+      extensions: [StarterKit, ListIndentKeymapExtension],
+      content: "<ul><li><p>AutoClaw</p></li><li><p>ZCode</p><p></p></li></ul>",
+    });
+    placeCursorInEmptyListItem(editor);
+
+    const event = pressBackspace(editor);
+
+    expect(event.defaultPrevented).toBe(true);
+    expect(editor.getJSON()).toMatchObject({
+      content: [
+        {
+          type: "bulletList",
+          content: [
+            {
+              type: "listItem",
+              content: [
+                {
+                  type: "paragraph",
+                  content: [{ type: "text", text: "AutoClaw" }],
+                },
+              ],
+            },
+            {
+              type: "listItem",
+              content: [
+                {
+                  type: "paragraph",
+                  content: [{ type: "text", text: "ZCode" }],
+                },
+              ],
             },
           ],
         },

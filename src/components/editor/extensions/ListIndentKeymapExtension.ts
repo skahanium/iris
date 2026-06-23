@@ -1,12 +1,13 @@
 import { Extension } from "@tiptap/core";
 import { Fragment, type Node as ProseMirrorNode } from "@tiptap/pm/model";
-import { TextSelection } from "@tiptap/pm/state";
+import { Selection, TextSelection } from "@tiptap/pm/state";
 
 type ListItemTypeName = "listItem" | "taskItem";
 
 const MAX_IRIS_INDENT = 6;
 const STOP_NODE_WALK = false;
 const INDENTABLE_TEXT_BLOCKS = new Set(["paragraph", "heading"]);
+const LIST_BLOCKS = new Set(["bulletList", "orderedList", "taskList"]);
 const NUMBERED_PARAGRAPH_RE = /^\s*\d+(?:[.)]|\u3001)\s*(\S[\s\S]*)$/u;
 
 interface TextBlockAtPos {
@@ -114,6 +115,35 @@ export const ListIndentKeymapExtension = Extension.create({
       return null;
     };
 
+    const currentEmptyListItemType = (): ListItemTypeName | null => {
+      const { selection } = this.editor.state;
+      if (!selection.empty) return null;
+
+      const { $from } = selection;
+      if (
+        $from.parent.type.name !== "paragraph" ||
+        $from.parentOffset !== 0 ||
+        $from.parent.content.size !== 0
+      ) {
+        return null;
+      }
+
+      for (let depth = $from.depth - 1; depth > 0; depth--) {
+        const node = $from.node(depth);
+        const name = node.type.name;
+        if (name !== "taskItem" && name !== "listItem") {
+          continue;
+        }
+
+        if ($from.index(depth) === 0 && node.childCount === 1) {
+          return name;
+        }
+        return null;
+      }
+
+      return null;
+    };
+
     const currentTextBlock = (): TextBlockAtPos | null => {
       const { selection } = this.editor.state;
       const { $from } = selection;
@@ -130,6 +160,45 @@ export const ListIndentKeymapExtension = Extension.create({
       }
 
       return null;
+    };
+
+    const deleteEmptyTopLevelParagraphAfterList = (): boolean => {
+      const { state, view } = this.editor;
+      const { selection } = state;
+      if (!selection.empty || selection.$from.parentOffset !== 0) {
+        return false;
+      }
+
+      const current = currentTextBlock();
+      if (
+        !current ||
+        current.parent.type.name !== "doc" ||
+        current.node.type.name !== "paragraph" ||
+        current.node.content.size !== 0
+      ) {
+        return false;
+      }
+
+      const previous = state.doc.childBefore(current.pos);
+      if (!previous.node || !LIST_BLOCKS.has(previous.node.type.name)) {
+        return false;
+      }
+
+      const tr = state.tr.delete(
+        current.pos,
+        current.pos + current.node.nodeSize,
+      );
+      const selectionPos = tr.mapping.map(current.pos, -1);
+      const nextSelection = Selection.findFrom(
+        tr.doc.resolve(selectionPos),
+        -1,
+        true,
+      );
+      if (nextSelection) {
+        tr.setSelection(nextSelection);
+      }
+      view.dispatch(tr.scrollIntoView());
+      return true;
     };
 
     const adjustSelectedTextBlockIndent = (direction: 1 | -1) => {
@@ -303,6 +372,13 @@ export const ListIndentKeymapExtension = Extension.create({
     };
 
     return {
+      Backspace: () => {
+        const listItemType = currentEmptyListItemType();
+        if (listItemType) {
+          return this.editor.commands.liftListItem(listItemType);
+        }
+        return deleteEmptyTopLevelParagraphAfterList();
+      },
       Tab: () => {
         const listItemType = currentListItemType();
         if (listItemType) {
