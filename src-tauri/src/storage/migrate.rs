@@ -92,6 +92,8 @@ const MIGRATION_036_DOWN: &str =
     include_str!("../../migrations/036_session_message_evidence_packets.down.sql");
 const MIGRATION_037_UP: &str = include_str!("../../migrations/037_session_evidence.sql");
 const MIGRATION_037_DOWN: &str = include_str!("../../migrations/037_session_evidence.down.sql");
+const MIGRATION_038_UP: &str = include_str!("../../migrations/038_attachments.sql");
+const MIGRATION_038_DOWN: &str = include_str!("../../migrations/038_attachments.down.sql");
 
 fn is_applied(conn: &Connection, name: &str) -> bool {
     conn.query_row(
@@ -212,6 +214,7 @@ pub fn migrate_up(conn: &Connection) -> AppResult<()> {
         false,
     )?;
     apply_migration(conn, "037_session_evidence", MIGRATION_037_UP, false)?;
+    apply_migration(conn, "038_attachments", MIGRATION_038_UP, false)?;
 
     Ok(())
 }
@@ -223,6 +226,7 @@ fn rollback_migration(conn: &Connection, name: &str, sql: &str) {
 
 /// Roll back all migrations in strict reverse order (for tests).
 pub fn migrate_down(conn: &Connection) -> AppResult<()> {
+    rollback_migration(conn, "038_attachments", MIGRATION_038_DOWN);
     rollback_migration(conn, "037_session_evidence", MIGRATION_037_DOWN);
     rollback_migration(
         conn,
@@ -1092,6 +1096,63 @@ mod tests {
         assert_eq!(
             remaining, 0,
             "session_evidence must cascade on session delete"
+        );
+    }
+
+    #[test]
+    fn migration_038_creates_attachment_refs() {
+        let conn = Connection::open_in_memory().unwrap();
+        migrate_up(&conn).unwrap();
+
+        let table_exists: bool = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='attachment_refs'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .map(|count| count > 0)
+            .unwrap();
+        assert!(table_exists, "missing attachment_refs table");
+
+        let columns = conn
+            .prepare("PRAGMA table_info(attachment_refs)")
+            .unwrap()
+            .query_map([], |row| row.get::<_, String>(1))
+            .unwrap()
+            .flatten()
+            .collect::<Vec<_>>();
+
+        for required in [
+            "id",
+            "source_path",
+            "target_path",
+            "ref_kind",
+            "created_at",
+            "updated_at",
+        ] {
+            assert!(
+                columns.contains(&required.to_string()),
+                "missing {required}"
+            );
+        }
+
+        conn.execute(
+            "INSERT INTO attachment_refs
+             (source_path, target_path, ref_kind, created_at, updated_at)
+             VALUES ('notes/a.md', 'media/image.png', 'embed', datetime('now'), datetime('now'))",
+            [],
+        )
+        .unwrap();
+
+        let duplicate = conn.execute(
+            "INSERT INTO attachment_refs
+             (source_path, target_path, ref_kind, created_at, updated_at)
+             VALUES ('notes/a.md', 'media/image.png', 'embed', datetime('now'), datetime('now'))",
+            [],
+        );
+        assert!(
+            duplicate.is_err(),
+            "attachment refs should be unique per source/target/kind"
         );
     }
     #[test]

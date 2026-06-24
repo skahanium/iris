@@ -40,6 +40,8 @@ import { useLlmProvider } from "@/hooks/useLlmProvider";
 import { useOverlayManager } from "@/hooks/useOverlayManager";
 import { useArtifactTabs } from "@/hooks/useArtifactTabs";
 import { usePreparedWorkspaceTransitions } from "@/hooks/usePreparedWorkspaceTransitions";
+import { useWorkspaceAssistantRouting } from "@/hooks/useWorkspaceAssistantRouting";
+import { useWorkspaceTabRouting } from "@/hooks/useWorkspaceTabRouting";
 import { useTabManager } from "@/hooks/useTabManager";
 import { useTheme } from "@/hooks/useTheme";
 import { useZenExitKeyboard } from "@/hooks/useZenExitKeyboard";
@@ -55,22 +57,19 @@ import {
 import { formatVersionSaveStatus } from "@/lib/version-save-status";
 import { isTauriRuntime } from "@/lib/tauri-runtime";
 
-const OUTLINE_OPEN_KEY = "iris-outline-open";
-
 function loadOutlineOpen(): boolean {
   try {
-    return localStorage.getItem(OUTLINE_OPEN_KEY) !== "false";
-  } catch (e) {
-    console.warn("[App] localStorage read failed:", e);
+    return localStorage.getItem("iris-outline-open") !== "false";
+  } catch {
     return true;
   }
 }
 
 function saveOutlineOpen(open: boolean): void {
   try {
-    localStorage.setItem(OUTLINE_OPEN_KEY, open ? "true" : "false");
-  } catch (e) {
-    console.warn("[App] localStorage write failed:", e);
+    localStorage.setItem("iris-outline-open", open ? "true" : "false");
+  } catch {
+    return;
   }
 }
 
@@ -212,7 +211,7 @@ function App() {
   }, [classifiedOpen, refreshClassifiedStatus]);
 
   const {
-    handleActivateWorkspaceTab,
+    handleActivateWorkspaceTab: handleActivateNoteOrArtifactTab,
     handleNewNoteLeavingHome,
     invalidatePreparedNote,
     openNoteLeavingHome,
@@ -237,16 +236,32 @@ function App() {
     vaultPath,
   });
 
-  const handleCloseWorkspaceTab = useCallback(
-    (path: string) => {
-      if (path.startsWith("artifact:")) {
-        closeArtifact(path);
-        return;
-      }
-      void closeTab(path);
-    },
-    [closeArtifact, closeTab],
+  const currentNoteIsClassified = Boolean(
+    activePath && isClassifiedVaultPath(activePath),
   );
+  const {
+    activeMediaTab,
+    activeNoteIsClassified,
+    activeWorkspacePath,
+    handleActivateWorkspaceTab,
+    handleCloseWorkspaceTab,
+    handleNewWorkspaceNote,
+    openWorkspacePathLeavingHome,
+    workspaceTabs,
+  } = useWorkspaceTabRouting<NonNullable<Parameters<typeof openNote>[2]>>({
+    activeArtifactTab,
+    activePath,
+    artifactTabs,
+    closeArtifact,
+    closeTab,
+    currentNoteIsClassified,
+    handleActivateNoteOrArtifactTab,
+    handleNewNoteLeavingHome,
+    openNoteLeavingHome,
+    setActiveArtifactId,
+    setHomeActive,
+    tabs,
+  });
 
   useEffect(() => {
     if (!activePath) {
@@ -380,13 +395,6 @@ function App() {
       unlisten?.();
     };
   }, [closeTab, bumpVaultIndex, invalidatePreparedNote]);
-
-  const currentNoteIsClassified = Boolean(
-    activePath && isClassifiedVaultPath(activePath),
-  );
-  const activeNoteIsClassified = Boolean(
-    !activeArtifactTab && currentNoteIsClassified,
-  );
 
   const applyMarkdownToEditor = useCallback(
     (content: string) => {
@@ -651,51 +659,47 @@ function App() {
     if (!activePath) return null;
     return displayTitleForChrome(activePath, noteTitle);
   }, [activePath, noteTitle]);
-  const assistantNotePath =
+  const assistantNotePathWithoutMedia =
     activeArtifactTab || activeNoteIsClassified ? null : activePath;
-  const workspaceTabs = useMemo(
-    () => [
-      ...tabs.map((tab) => ({ ...tab, kind: "note" as const })),
-      ...artifactTabs.map((tab) => ({
-        path: tab.id,
-        title: tab.title,
-        kind: "artifact" as const,
-        locked: true,
-      })),
-    ],
-    [artifactTabs, tabs],
-  );
-  const activeWorkspacePath = activeArtifactTab?.id ?? activePath;
-
-  const getAssistantLiveMarkdown = useCallback(
+  const getLiveMarkdownForNoteSurface = useCallback(
     () =>
       activeArtifactTab || activeNoteIsClassified ? "" : getLiveMarkdown(),
     [activeArtifactTab, activeNoteIsClassified, getLiveMarkdown],
   );
-  const getAssistantWritingContext = useCallback(
+  const getWritingContextForNoteSurface = useCallback(
     () =>
       activeArtifactTab || activeNoteIsClassified ? null : getWritingContext(),
     [activeArtifactTab, activeNoteIsClassified, getWritingContext],
   );
-  const getAssistantParagraphText = useCallback(
-    () =>
-      activeArtifactTab || activeNoteIsClassified ? null : getParagraphText(),
-    [activeArtifactTab, activeNoteIsClassified, getParagraphText],
-  );
-  const handleAssistantInsertToEditor = useCallback(
+  const handleInsertToNoteSurface = useCallback(
     (content: string) => {
-      if (activeArtifactTab) {
-        setAiStatus("请先切回笔记再插入内容");
-        return;
-      }
       if (activeNoteIsClassified) {
         setAiStatus("涉密笔记不能接收 AI 插入");
         return;
       }
       handleInsertToEditor(content);
     },
-    [activeArtifactTab, activeNoteIsClassified, handleInsertToEditor],
+    [activeNoteIsClassified, handleInsertToEditor, setAiStatus],
   );
+  const {
+    assistantNotePath,
+    assistantSelectionQuote,
+    getAssistantLiveMarkdown,
+    getAssistantParagraphText,
+    getAssistantWritingContext,
+    handleAssistantInsertToEditor,
+  } = useWorkspaceAssistantRouting({
+    activeArtifactTab,
+    activeMediaTab,
+    activeNoteIsClassified,
+    assistantNotePathWithoutMedia,
+    getLiveMarkdown: getLiveMarkdownForNoteSurface,
+    getParagraphText,
+    getWritingContext: getWritingContextForNoteSurface,
+    handleInsertToEditor: handleInsertToNoteSurface,
+    selectionQuote,
+    setAiStatus,
+  });
   const handlePatchApplied = useCallback(
     (newContent: string) => {
       if (currentNoteIsClassified) {
@@ -812,13 +816,14 @@ function App() {
             onHome={showHome}
             onSelect={handleActivateWorkspaceTab}
             onClose={handleCloseWorkspaceTab}
-            onNew={handleNewNoteLeavingHome}
+            onNew={handleNewWorkspaceNote}
           />
         }
         editor={
           <AppEditorWorkspace
             activeFileLocked={activeFileLocked}
             activeArtifactTab={activeArtifactTab}
+            activeMediaTab={activeMediaTab}
             activeNoteIsClassified={activeNoteIsClassified}
             activePath={activePath}
             editorBodyMarkdown={editorBodyMarkdown}
@@ -832,7 +837,7 @@ function App() {
             handleDirty={handleDirty}
             handleEditorReady={handleEditorReady}
             handleLockToggle={handleLockToggle}
-            handleNewNoteLeavingHome={handleNewNoteLeavingHome}
+            handleNewNoteLeavingHome={handleNewWorkspaceNote}
             getNoteContent={getLiveMarkdown}
             homeActive={homeActive}
             inlineAi={inlineAi}
@@ -843,7 +848,7 @@ function App() {
             onOpenAiManagement={() => overlays.openManagementCenter("ai")}
             onOpenQuickOpen={() => overlays.openOverlay("quickOpen")}
             onOpenSearch={() => overlays.openOverlay("search")}
-            openNoteLeavingHome={openNoteLeavingHome}
+            openNoteLeavingHome={openWorkspacePathLeavingHome}
             onPrepareNotePath={prepareNotePath}
             onPrepareNote={prepareVisibleNote}
             outlineOpen={outlineOpen}
@@ -872,28 +877,28 @@ function App() {
             getWritingContext={getAssistantWritingContext}
             handleInsertToEditor={handleAssistantInsertToEditor}
             onOpenArtifact={openArtifact}
-            openNoteLeavingHome={openNoteLeavingHome}
+            openNoteLeavingHome={openWorkspacePathLeavingHome}
             onPrepareNotePath={prepareNotePath}
             onSessionDeleted={closeEvidenceArtifactsForSession}
             onSessionsCleared={closeAllEvidenceArtifacts}
             onPatchApplied={handlePatchApplied}
-            selectionQuote={
-              activeArtifactTab || activeNoteIsClassified
-                ? null
-                : selectionQuote
-            }
+            selectionQuote={assistantSelectionQuote}
             setAssistantChrome={setAssistantChrome}
             webSearch={webSearch}
           />
         }
         statusBar={
           <AppStatusBarSlot
-            activePath={activeArtifactTab ? null : activePath}
+            activePath={activeArtifactTab || activeMediaTab ? null : activePath}
             activeDocumentTitle={
-              activeArtifactTab ? activeArtifactTab.title : activeDocumentTitle
+              activeArtifactTab
+                ? activeArtifactTab.title
+                : activeMediaTab
+                  ? activeMediaTab.title
+                  : activeDocumentTitle
             }
             unsaved={
-              activeArtifactTab
+              activeArtifactTab || activeMediaTab
                 ? false
                 : (tabs.find((t) => t.path === activePath)?.dirty ?? false)
             }
@@ -943,7 +948,7 @@ function App() {
             onFileDeleted={handleFileDeleted}
             onClassifiedUnlocked={onClassifiedUnlocked}
             openClassifiedPaths={openClassifiedPaths}
-            openNoteLeavingHome={openNoteLeavingHome}
+            openNoteLeavingHome={openWorkspacePathLeavingHome}
             onPrepareNote={prepareVisibleNote}
             onPrepareNotePath={prepareNotePath}
             onPrepareClassifiedNotePath={prepareClassifiedNotePath}

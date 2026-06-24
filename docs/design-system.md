@@ -80,17 +80,18 @@ Iris Rail Refresh adds semantic surface tokens for the complete interface system
 
 ### 文档与块样式
 
-| 元素                        | 规则                                                                                                                                    |
-| --------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
-| **文档标题**                | 独立字段 `DocumentTitleField`；**居中**、`Noto Serif SC`、`~2.25rem` bold；与正文间距 `--prose-title-gap`；Enter 进入正文               |
-| **章节标题**                | H1 `1.875rem` / H2 `1.5rem` / H3 `1.25rem`；左对齐；块间距 token 分级                                                                   |
-| **段落**                    | 无段首缩进；左对齐；块间距 `--prose-block-gap`；Markdown 空行只作为块分隔，不创建 spacer 段落                                           |
-| **共用排版**                | `data-prose-surface="editor"` \| `conversation`；AI `--prose-size-chat`（15px），编辑 `--prose-size-editor`（16px）                     |
-| **AI 消息**                 | 用户右对齐气泡；助手 `surface-elevated` 全宽壳；流式空态单行「正在思考…」，无 inset 左边条                                              |
-| **章节折叠**                | H1–H3 左侧 `▸/▾`（仅正文区章节标题）                                                                                                    |
-| **Zen**                     | `Ctrl+.` 隐藏 Tab/状态栏/AI，栏宽 `56rem`                                                                                               |
-| **缩放**                    | canvas `zoom` 75%–150%                                                                                                                  |
-| **文档目录（Ghost Spine）** | `EditorOutline`：左缘细线把手 + 透明文字索引列；H1/H2/H3 缩进；当前章节文字 / 背景 / 左侧滑动条高亮；50+ 条目虚拟化；锁定态仍可点击跳转 |
+| 元素                        | 规则                                                                                                                                                              |
+| --------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **文档标题**                | 独立字段 `DocumentTitleField`；**居中**、`Noto Serif SC`、`~2.25rem` bold；与正文间距 `--prose-title-gap`；Enter 进入正文                                         |
+| **章节标题**                | H1 `1.875rem` / H2 `1.5rem` / H3 `1.25rem`；左对齐；块间距 token 分级                                                                                             |
+| **段落**                    | 无段首缩进；左对齐；块间距 `--prose-block-gap`；Markdown 空行只作为块分隔，不创建 spacer 段落                                                                     |
+| **共用排版**                | `data-prose-surface="editor"` \| `conversation`；AI `--prose-size-chat`（15px），编辑 `--prose-size-editor`（16px）                                               |
+| **AI 消息**                 | 用户右对齐气泡；助手 `surface-elevated` 全宽壳；流式空态单行「正在思考…」，无 inset 左边条                                                                        |
+| **章节折叠**                | H1–H3 左侧 `▸/▾`（仅正文区章节标题）                                                                                                                              |
+| **Zen**                     | `Ctrl+.` 隐藏 Tab/状态栏/AI，栏宽 `56rem`                                                                                                                         |
+| **缩放**                    | canvas `zoom` 75%–150%                                                                                                                                            |
+| **文档目录（Ghost Spine）** | `EditorOutline`：左缘细线把手 + 透明文字索引列；H1/H2/H3 缩进；当前章节文字 / 背景 / 左侧滑动条高亮；50+ 条目虚拟化；锁定态仍可点击跳转                           |
+| **媒体嵌入**                | `![[path]]` 支持图片 / 视频 / PDF；隐藏或预热编辑器只保留占位与 `data-iris-media-src`，可见 surface 才申请 `iris-media` lease；PDF/video 使用稳定尺寸防止布局跳动 |
 
 ---
 

@@ -10,6 +10,10 @@ import {
   createMarkedInstance,
   repairTightStrongPunctuationBoundaries,
 } from "@/lib/markdown";
+import {
+  classifyWorkspacePath,
+  parseWikiMediaReference,
+} from "@/lib/media-reference";
 import { classifyMarkdownCapabilities } from "@/lib/markdown-contract/contract";
 import type {
   MarkdownCapabilityWarning,
@@ -132,6 +136,49 @@ function markdownToTipTapHtml(md: string): string {
   html = adaptWikiLinks(html);
   html = adaptTaskLists(html);
   return html;
+}
+
+function wikiMediaEmbedHtml(raw: string): string | null {
+  const reference = parseWikiMediaReference(raw.trim());
+  if (!reference?.embed) return null;
+  const classification = classifyWorkspacePath(reference.target);
+  if (classification.kind !== "media" || !classification.mediaKind) return null;
+  const attrs = [
+    `data-type="wiki-media-embed"`,
+    `data-wiki-media-embed=""`,
+    `data-target="${escapeHtml(reference.target)}"`,
+    `data-media-kind="${classification.mediaKind}"`,
+  ];
+  if (reference.alias) {
+    attrs.push(`data-alias="${escapeHtml(reference.alias)}"`);
+  }
+  return `<div ${attrs.join(" ")}></div>`;
+}
+
+function markdownWithWikiMediaEmbedsToTipTapHtml(md: string): string {
+  const lines = md.split("\n");
+  const parts: string[] = [];
+  let buffer: string[] = [];
+
+  const flushBuffer = () => {
+    const raw = buffer.join("\n");
+    buffer = [];
+    const html = markdownToTipTapHtml(raw);
+    if (html) parts.push(html);
+  };
+
+  for (const line of lines) {
+    const embedHtml = wikiMediaEmbedHtml(line);
+    if (embedHtml) {
+      flushBuffer();
+      parts.push(embedHtml);
+      continue;
+    }
+    buffer.push(line);
+  }
+
+  flushBuffer();
+  return parts.join("");
 }
 
 /**
@@ -372,7 +419,7 @@ export function ingestMarkdownForEditor(
   function flushNative() {
     if (nativeBuf.length === 0) return;
     const joined = nativeBuf.join("");
-    const html = markdownToTipTapHtml(joined);
+    const html = markdownWithWikiMediaEmbedsToTipTapHtml(joined);
     if (html) htmlParts.push(html);
     nativeBuf = [];
   }

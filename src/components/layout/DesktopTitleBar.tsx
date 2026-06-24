@@ -1,5 +1,5 @@
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { Lock, Plus, Sparkles, X } from "lucide-react";
+import { FileImage, Lock, Plus, Sparkles, X } from "lucide-react";
 import { memo, useMemo } from "react";
 
 import { IrisMark } from "@/components/brand/IrisMark";
@@ -19,7 +19,7 @@ export interface TabItem {
   title: string;
   dirty?: boolean;
   locked?: boolean;
-  kind?: "note" | "artifact";
+  kind?: "note" | "media" | "artifact";
 }
 
 export type DesktopTitleBarVariant = "document" | "splash";
@@ -124,6 +124,7 @@ export const DesktopTitleBar = memo(function DesktopTitleBar({
               {tabs.map((tab) => {
                 const active = activePath === tab.path;
                 const isArtifact = tab.kind === "artifact";
+                const isMedia = tab.kind === "media";
                 return (
                   <div
                     key={tab.path}
@@ -157,6 +158,9 @@ export const DesktopTitleBar = memo(function DesktopTitleBar({
                       ) : null}
                       {isArtifact ? (
                         <Sparkles className="mr-1 h-3 w-3 shrink-0 text-muted-foreground/70" />
+                      ) : null}
+                      {isMedia ? (
+                        <FileImage className="mr-1 h-3 w-3 shrink-0 text-muted-foreground/70" />
                       ) : null}
                       <span className="min-w-0 truncate">{tab.title}</span>
                       {isArtifact ? (

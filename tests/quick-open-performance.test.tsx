@@ -4,10 +4,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { QuickOpen } from "@/components/file/QuickOpen";
 
-const fileList = vi.fn();
+const workspaceList = vi.fn();
 
 vi.mock("@/lib/ipc", () => ({
-  fileList: (...args: unknown[]) => fileList(...args),
+  workspaceList: (...args: unknown[]) => workspaceList(...args),
 }));
 
 describe("QuickOpen note preparation", () => {
@@ -15,10 +15,15 @@ describe("QuickOpen note preparation", () => {
   let root: Root;
 
   beforeEach(() => {
-    fileList.mockReset();
-    fileList.mockResolvedValue([
+    workspaceList.mockReset();
+    workspaceList.mockResolvedValue([
       {
+        attachmentRole: "formal",
+        kind: "note",
+        mediaKind: null,
+        mimeType: null,
         path: "notes/a.md",
+        sizeBytes: 12,
         title: "Note A",
         updatedAt: "2026-06-24T00:00:00Z",
         isLocked: false,
@@ -83,5 +88,50 @@ describe("QuickOpen note preparation", () => {
       await Promise.resolve();
     });
     expect(onClose).toHaveBeenCalledOnce();
+  });
+
+  it("opens media results without note preparation", async () => {
+    workspaceList.mockResolvedValue([
+      {
+        attachmentRole: "attachment",
+        isLocked: false,
+        kind: "media",
+        mediaKind: "pdf",
+        mimeType: "application/pdf",
+        path: "assets/paper.pdf",
+        sizeBytes: 10,
+        title: "paper",
+        updatedAt: "2026-06-24T00:00:00Z",
+      },
+    ]);
+    const onPrepare = vi.fn();
+    const onSelect = vi.fn(async () => undefined);
+    const onClose = vi.fn();
+
+    await act(async () => {
+      root.render(
+        <QuickOpen
+          open
+          onClose={onClose}
+          onPrepare={onPrepare}
+          onSelect={onSelect}
+        />,
+      );
+    });
+
+    await vi.waitFor(() => {
+      expect(document.body.textContent).toContain("paper");
+    });
+    expect(onPrepare).not.toHaveBeenCalled();
+
+    const option = Array.from(document.querySelectorAll("button")).find((b) =>
+      b.textContent?.includes("paper"),
+    );
+    await act(async () => {
+      option?.click();
+      await Promise.resolve();
+    });
+
+    expect(onSelect).toHaveBeenCalledWith("assets/paper.pdf");
   });
 });

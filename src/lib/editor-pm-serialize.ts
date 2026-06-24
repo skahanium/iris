@@ -179,6 +179,15 @@ const irisMarkdownSerializer = new MarkdownSerializer(
     image(state, node, parent, index) {
       baseImageSerialize(state, node, parent, index);
     },
+    wikiMediaEmbed(state, node) {
+      const target =
+        typeof node.attrs.target === "string" ? node.attrs.target.trim() : "";
+      const alias =
+        typeof node.attrs.alias === "string" ? node.attrs.alias.trim() : "";
+      if (!target) return;
+      state.write(alias ? `![[${target}|${alias}]]` : `![[${target}]]`);
+      state.closeBlock(node);
+    },
     hardBreak(state, node, parent, index) {
       baseHardBreakSerialize(state, node, parent, index);
     },

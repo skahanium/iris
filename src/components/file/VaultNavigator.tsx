@@ -2,8 +2,10 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 import {
   BookMarked,
   ChevronRight,
+  FileImage,
   FileStack,
   FileText,
+  FileVideo,
   Folder,
   FolderInput,
   FolderPlus,
@@ -34,7 +36,6 @@ import {
   corpusList,
   corpusUpsert,
   fileDelete,
-  fileList,
   fileRename,
   fileSetLock,
   folderCreate,
@@ -44,6 +45,7 @@ import {
   knowledgeReindex,
   templateCreate,
   templateList,
+  workspaceList,
 } from "@/lib/ipc";
 import { createDefaultNote } from "@/lib/note-create";
 import { displayTitleForFileListItem } from "@/lib/note-display";
@@ -56,7 +58,7 @@ import {
   type VaultTreeNode,
 } from "@/lib/vault-tree";
 import { cn } from "@/lib/utils";
-import type { CorpusListItem, FileListItem } from "@/types/ipc";
+import type { CorpusListItem, FileListItem, WorkspaceItem } from "@/types/ipc";
 
 import {
   FolderCreateDialog,
@@ -78,6 +80,49 @@ import {
   type MoveTarget,
   type RenameTarget,
 } from "./vault-navigator-model";
+
+type VaultFileItem = FileListItem & {
+  kind?: WorkspaceItem["kind"];
+  mediaKind?: WorkspaceItem["mediaKind"];
+  mimeType?: string | null;
+};
+
+function vaultFileItem(item: WorkspaceItem): VaultFileItem {
+  return {
+    isLocked: item.isLocked,
+    kind: item.kind,
+    mediaKind: item.mediaKind,
+    mimeType: item.mimeType,
+    path: item.path,
+    title: item.title,
+    updatedAt: item.updatedAt ?? "",
+  };
+}
+
+function isNoteFile(file: VaultFileItem): boolean {
+  return !file.kind || file.kind === "note";
+}
+
+function noteListItem(file: VaultFileItem): FileListItem | null {
+  if (!isNoteFile(file)) return null;
+  return {
+    isLocked: file.isLocked,
+    path: file.path,
+    title: file.title,
+    updatedAt: file.updatedAt,
+  };
+}
+
+function vaultFileTitle(file: VaultFileItem): string {
+  if (isNoteFile(file)) return displayTitleForFileListItem(file);
+  return file.title || file.path.split("/").pop() || file.path;
+}
+
+function vaultFileIcon(file: VaultFileItem): LucideIcon {
+  if (file.mediaKind === "image") return FileImage;
+  if (file.mediaKind === "video") return FileVideo;
+  return FileText;
+}
 
 interface VaultNavigatorProps {
   open: boolean;
@@ -251,7 +296,7 @@ export function VaultNavigatorBody({
   onBeforeFileDelete,
   onFileDeleted,
 }: VaultNavigatorProps) {
-  const [files, setFiles] = useState<FileListItem[]>([]);
+  const [files, setFiles] = useState<VaultFileItem[]>([]);
   const [folders, setFolders] = useState<string[]>([]);
   const [corpora, setCorpora] = useState<CorpusListItem[]>([]);
   const [loading, setLoading] = useState(false);
@@ -288,11 +333,19 @@ export function VaultNavigatorBody({
     [files, selectedFolder],
   );
   const selectedFiles = useMemo(
-    () => folderFiles.filter((file) => selectedFilePaths.has(file.path)),
+    () =>
+      folderFiles.filter(
+        (file) => isNoteFile(file) && selectedFilePaths.has(file.path),
+      ),
     [folderFiles, selectedFilePaths],
   );
+  const selectableFolderFiles = useMemo(
+    () => folderFiles.filter(isNoteFile),
+    [folderFiles],
+  );
   const allFolderFilesSelected =
-    folderFiles.length > 0 && selectedFiles.length === folderFiles.length;
+    selectableFolderFiles.length > 0 &&
+    selectedFiles.length === selectableFolderFiles.length;
 
   const virtualizer = useVirtualizer({
     count: folderFiles.length,
@@ -318,9 +371,9 @@ export function VaultNavigatorBody({
   const refresh = useCallback(() => {
     setLoading(true);
     setError(null);
-    void Promise.all([fileList(), folderList(), corpusList()])
+    void Promise.all([workspaceList(), folderList(), corpusList()])
       .then(([nextFiles, nextFolders, nextCorpora]) => {
-        setFiles(nextFiles);
+        setFiles(nextFiles.map(vaultFileItem));
         setFolders(nextFolders);
         setCorpora(nextCorpora);
       })
@@ -366,7 +419,10 @@ export function VaultNavigatorBody({
   }, [folderFiles]);
 
   useEffect(() => {
-    folderFiles.slice(0, 50).forEach((file) => onPrepare?.(file));
+    folderFiles.slice(0, 50).forEach((file) => {
+      const note = noteListItem(file);
+      if (note) onPrepare?.(note);
+    });
   }, [folderFiles, onPrepare]);
 
   const toggleExpanded = useCallback((path: string) => {
@@ -378,14 +434,19 @@ export function VaultNavigatorBody({
     });
   }, []);
 
-  const toggleFileSelected = useCallback((path: string) => {
-    setSelectedFilePaths((prev) => {
-      const next = new Set(prev);
-      if (next.has(path)) next.delete(path);
-      else next.add(path);
-      return next;
-    });
-  }, []);
+  const toggleFileSelected = useCallback(
+    (path: string) => {
+      const target = folderFiles.find((file) => file.path === path);
+      if (target && !isNoteFile(target)) return;
+      setSelectedFilePaths((prev) => {
+        const next = new Set(prev);
+        if (next.has(path)) next.delete(path);
+        else next.add(path);
+        return next;
+      });
+    },
+    [folderFiles],
+  );
 
   const handleFolderCreate = useCallback(
     async (name: string) => {
@@ -846,7 +907,9 @@ export function VaultNavigatorBody({
                         setSelectedFilePaths(
                           allFolderFilesSelected
                             ? new Set()
-                            : new Set(folderFiles.map((file) => file.path)),
+                            : new Set(
+                                selectableFolderFiles.map((file) => file.path),
+                              ),
                         )
                       }
                     >
@@ -938,6 +1001,8 @@ export function VaultNavigatorBody({
             >
               {renderedFileItems.map((virtualItem) => {
                 const f = folderFiles[virtualItem.index]!;
+                const isNote = isNoteFile(f);
+                const Icon = vaultFileIcon(f);
                 return (
                   <div
                     key={f.path}
@@ -954,19 +1019,26 @@ export function VaultNavigatorBody({
                     {batchMode ? (
                       <input
                         type="checkbox"
-                        aria-label={`选择文档 ${displayTitleForFileListItem(f)}`}
+                        aria-label={`选择文档 ${vaultFileTitle(f)}`}
                         checked={selectedFilePaths.has(f.path)}
+                        disabled={!isNote}
                         className="h-3.5 w-3.5 shrink-0 rounded border-border"
                         onChange={() => toggleFileSelected(f.path)}
                         onClick={(event) => event.stopPropagation()}
                       />
                     ) : null}
-                    <FileText className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                    <Icon className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
                     <button
                       type="button"
                       className="min-w-0 flex-1 truncate text-left hover:text-primary"
-                      onFocus={() => onPrepare?.(f)}
-                      onMouseEnter={() => onPrepare?.(f)}
+                      onFocus={() => {
+                        const note = noteListItem(f);
+                        if (note) onPrepare?.(note);
+                      }}
+                      onMouseEnter={() => {
+                        const note = noteListItem(f);
+                        if (note) onPrepare?.(note);
+                      }}
                       onClick={() => {
                         void (async () => {
                           try {
@@ -978,55 +1050,63 @@ export function VaultNavigatorBody({
                         })();
                       }}
                     >
-                      {displayTitleForFileListItem(f)}
+                      {vaultFileTitle(f)}
                     </button>
-                    <Button
-                      type="button"
-                      size="icon"
-                      variant="ghost"
-                      title="重命名文档"
-                      aria-label="重命名文档"
-                      onClick={() => setRenameTarget({ kind: "file", file: f })}
-                    >
-                      <Pencil className="h-3 w-3" />
-                    </Button>
-                    <Button
-                      type="button"
-                      size="icon"
-                      variant="ghost"
-                      title="移动文档"
-                      aria-label="移动文档"
-                      onClick={() => setMoveTarget({ kind: "file", file: f })}
-                    >
-                      <MoveRight className="h-3 w-3" />
-                    </Button>
-                    <Button
-                      type="button"
-                      size="icon"
-                      variant="ghost"
-                      title={f.isLocked ? "解锁编辑" : "锁定编辑"}
-                      onClick={async () => {
-                        const next = !f.isLocked;
-                        await fileSetLock(f.path, next);
-                        refresh();
-                      }}
-                    >
-                      {f.isLocked ? (
-                        <Lock className="h-3 w-3" />
-                      ) : (
-                        <LockOpen className="h-3 w-3" />
-                      )}
-                    </Button>
-                    <Button
-                      type="button"
-                      size="icon"
-                      variant="ghost"
-                      title="移入回收站"
-                      aria-label="移入回收站"
-                      onClick={() => setDeleteTarget(f)}
-                    >
-                      <Trash2 className="h-3 w-3" />
-                    </Button>
+                    {isNote ? (
+                      <>
+                        <Button
+                          type="button"
+                          size="icon"
+                          variant="ghost"
+                          title="重命名文档"
+                          aria-label="重命名文档"
+                          onClick={() =>
+                            setRenameTarget({ kind: "file", file: f })
+                          }
+                        >
+                          <Pencil className="h-3 w-3" />
+                        </Button>
+                        <Button
+                          type="button"
+                          size="icon"
+                          variant="ghost"
+                          title="移动文档"
+                          aria-label="移动文档"
+                          onClick={() =>
+                            setMoveTarget({ kind: "file", file: f })
+                          }
+                        >
+                          <MoveRight className="h-3 w-3" />
+                        </Button>
+                        <Button
+                          type="button"
+                          size="icon"
+                          variant="ghost"
+                          title={f.isLocked ? "解锁编辑" : "锁定编辑"}
+                          onClick={async () => {
+                            const next = !f.isLocked;
+                            await fileSetLock(f.path, next);
+                            refresh();
+                          }}
+                        >
+                          {f.isLocked ? (
+                            <Lock className="h-3 w-3" />
+                          ) : (
+                            <LockOpen className="h-3 w-3" />
+                          )}
+                        </Button>
+                        <Button
+                          type="button"
+                          size="icon"
+                          variant="ghost"
+                          title="移入回收站"
+                          aria-label="移入回收站"
+                          onClick={() => setDeleteTarget(f)}
+                        >
+                          <Trash2 className="h-3 w-3" />
+                        </Button>
+                      </>
+                    ) : null}
                   </div>
                 );
               })}

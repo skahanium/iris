@@ -5,6 +5,7 @@ import type { Dispatch, SetStateAction, ReactNode } from "react";
 import { ArtifactWorkspaceView } from "@/components/layout/ArtifactWorkspaceView";
 import { EditorFindReplaceBar } from "@/components/editor/EditorFindReplaceBar";
 import { EditorOutline } from "@/components/editor/EditorOutline";
+import { MediaWorkspaceView } from "@/components/layout/MediaWorkspaceView";
 import { TipTapEditor } from "@/components/editor/TipTapEditor";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { WelcomeEmpty } from "@/components/layout/WelcomeEmpty";
@@ -14,6 +15,7 @@ import { useHomeRecentNotes } from "@/hooks/useHomeRecentNotes";
 import { EDITOR_HTML_CACHE_FORMAT_VERSION } from "@/lib/editor-html-cache";
 import { cn } from "@/lib/utils";
 import type { ArtifactTab } from "@/types/assistant-artifact";
+import type { MediaTab } from "@/hooks/useMediaTabs";
 import type { HomePendingOpen } from "@/lib/home-open-transition";
 import type { PreparedNoteOpen } from "@/lib/document-open-runtime";
 import type { PendingNoteOpen } from "@/hooks/useTabManager";
@@ -47,6 +49,7 @@ interface EditorSurfaceSnapshot {
 interface AppEditorWorkspaceProps {
   activeFileLocked: boolean;
   activeArtifactTab: ArtifactTab | null;
+  activeMediaTab: MediaTab | null;
   activeNoteIsClassified: boolean;
   activePath: string | null;
   editorBodyMarkdown: string;
@@ -100,6 +103,7 @@ interface AppEditorWorkspaceProps {
 export function AppEditorWorkspace({
   activeFileLocked,
   activeArtifactTab,
+  activeMediaTab,
   activeNoteIsClassified,
   activePath,
   editorBodyMarkdown,
@@ -146,7 +150,9 @@ export function AppEditorWorkspace({
   });
 
   const currentEditorSurface = useMemo<EditorSurfaceSnapshot | null>(() => {
-    if (!activePath || homeActive || activeArtifactTab) return null;
+    if (!activePath || homeActive || activeArtifactTab || activeMediaTab) {
+      return null;
+    }
     return {
       activeFileLocked,
       activeNoteIsClassified,
@@ -159,6 +165,7 @@ export function AppEditorWorkspace({
   }, [
     activeArtifactTab,
     activeFileLocked,
+    activeMediaTab,
     activeNoteIsClassified,
     activePath,
     editorBodyMarkdown,
@@ -187,7 +194,7 @@ export function AppEditorWorkspace({
 
   const visibleSurface = visibleEditorSurface ?? currentEditorSurface;
   const pendingEditorSurface = useMemo<EditorSurfaceSnapshot | null>(() => {
-    if (!pendingNoteOpen || activeArtifactTab) return null;
+    if (!pendingNoteOpen || activeArtifactTab || activeMediaTab) return null;
     return {
       activeFileLocked: pendingNoteOpen.isLocked,
       activeNoteIsClassified: pendingNoteOpen.namespace === "classified",
@@ -198,7 +205,7 @@ export function AppEditorWorkspace({
       path: pendingNoteOpen.path,
       pendingSequence: pendingNoteOpen.sequence,
     };
-  }, [activeArtifactTab, pendingNoteOpen]);
+  }, [activeArtifactTab, activeMediaTab, pendingNoteOpen]);
 
   const fallbackStagingSurface =
     currentEditorSurface &&
@@ -286,6 +293,7 @@ export function AppEditorWorkspace({
               reingestKey={snapshot.editorContentTick}
               zen={zen}
               zoom={editorZoom}
+              mediaLoading={isVisible ? "visible" : "deferred"}
               titleSlot={isVisible ? snapshot.editorTitleSlot : null}
               locked={isVisible ? snapshot.activeFileLocked : true}
               setLocked={
@@ -397,6 +405,8 @@ export function AppEditorWorkspace({
           onPatchApplied={onPatchApplied}
           onVaultRefresh={onVaultRefresh}
         />
+      ) : activeMediaTab && !homeActive ? (
+        <MediaWorkspaceView tab={activeMediaTab} />
       ) : visibleSurface ? (
         <>
           {editorSurfaceEntries.map(({ snapshot, visibility }) =>

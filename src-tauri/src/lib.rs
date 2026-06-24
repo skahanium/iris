@@ -36,7 +36,10 @@ pub fn run() {
         .with_env_filter(EnvFilter::from_default_env())
         .init();
 
-    tauri::Builder::default()
+    let builder = tauri::Builder::default();
+    let builder = commands::media::register_media_protocol(builder);
+
+    builder
         .plugin(tauri_plugin_dialog::init())
         .on_page_load(|webview, payload| {
             if payload.event() != PageLoadEvent::Finished || webview.label() != "main" {
@@ -125,6 +128,10 @@ pub fn run() {
             commands::file::file_read,
             commands::file::file_write,
             commands::file::file_set_lock,
+            commands::media::media_metadata,
+            commands::media::media_resolve,
+            commands::media::media_release,
+            commands::media::workspace_list,
             commands::classified::classified_setup,
             commands::classified::classified_unlock,
             commands::classified::classified_lock,

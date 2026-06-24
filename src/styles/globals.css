@@ -1116,6 +1116,29 @@
     transform: translateZ(0);
   }
 
+  .iris-editor-body .ProseMirror .iris-editor-media-embed {
+    @apply my-4 overflow-hidden rounded-md border border-border/70 bg-panel;
+    contain: content;
+  }
+
+  .iris-editor-body .ProseMirror .iris-editor-media-embed-title {
+    @apply block truncate border-b border-border/60 px-3 py-2 text-sm font-medium text-muted-foreground;
+  }
+
+  .iris-editor-body .ProseMirror .iris-editor-media-pdf {
+    display: block;
+    width: 100%;
+    min-height: min(70vh, 42rem);
+    background: hsl(var(--background));
+  }
+
+  .iris-editor-body .ProseMirror .iris-editor-media-video {
+    display: block;
+    width: 100%;
+    max-height: min(70vh, 42rem);
+    background: hsl(var(--background));
+  }
+
   .iris-editor-body .ProseMirror ::selection,
   .ai-message-body ::selection {
     background: hsl(var(--primary) / 0.22);

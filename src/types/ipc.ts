@@ -12,6 +12,35 @@ export interface FileListItem {
   isLocked: boolean;
 }
 
+export type WorkspaceItemKind = "note" | "media" | "unsupported";
+export type WorkspaceMediaKind = "image" | "pdf" | "video" | null;
+export type AttachmentRole = "attachment" | "formal";
+
+export interface WorkspaceItem {
+  attachmentRole: AttachmentRole;
+  isLocked: boolean;
+  kind: WorkspaceItemKind;
+  mediaKind: WorkspaceMediaKind;
+  mimeType: string | null;
+  path: string;
+  sizeBytes: number | null;
+  title: string;
+  updatedAt: string | null;
+}
+
+export interface MediaMetadata {
+  mediaKind: Exclude<WorkspaceMediaKind, null>;
+  mimeType: string;
+  path: string;
+  sizeBytes: number;
+  updatedAt: string | null;
+}
+
+export interface MediaResolveResult extends MediaMetadata {
+  handle: string;
+  url: string;
+}
+
 export interface FileReadResult {
   content: string;
   isLocked: boolean;

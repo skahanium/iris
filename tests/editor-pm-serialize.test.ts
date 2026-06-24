@@ -166,6 +166,22 @@ describe("editorDocToMarkdown (prosemirror-markdown hot path)", () => {
     }
   });
 
+  it("round-trips Obsidian-style media embeds without converting them to markdown images", () => {
+    const turndownSpy = vi.spyOn(markdownLib, "editorBodyHtmlToMarkdown");
+
+    const body = ["![[diagram.png]]", "", "![[paper.pdf|证据材料]]"].join("\n");
+    const editor = createProductionEditorFromIngestedBody(body);
+    try {
+      const md = normalizeMd(pmSerializeBody(editor));
+      expect(md).toContain("![[diagram.png]]");
+      expect(md).toContain("![[paper.pdf|证据材料]]");
+      expect(md).not.toContain("![diagram.png](diagram.png)");
+      expect(turndownSpy).not.toHaveBeenCalled();
+    } finally {
+      editor.destroy();
+    }
+  });
+
   it("renders vault-relative editor images through Tauri asset URLs without changing markdown src", () => {
     Object.defineProperty(window, "__TAURI_INTERNALS__", {
       configurable: true,

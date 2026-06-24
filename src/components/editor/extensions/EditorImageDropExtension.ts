@@ -12,7 +12,6 @@ function extensionFromMime(mime: string): string {
     "image/jpg": "jpg",
     "image/gif": "gif",
     "image/webp": "webp",
-    "image/svg+xml": "svg",
   };
   return map[mime] ?? "png";
 }
@@ -37,6 +36,7 @@ function fileToBase64(file: File): Promise<string> {
 
 async function saveImageFile(file: File): Promise<string | null> {
   if (!file.type.startsWith("image/")) return null;
+  if (file.type === "image/svg+xml") return null;
   const ext = extensionFromMime(file.type);
   const name = `assets/${crypto.randomUUID()}.${ext}`;
   const dataBase64 = await fileToBase64(file);

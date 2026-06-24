@@ -82,6 +82,7 @@ import { PreserveInlineExtension } from "./extensions/PreserveInlineExtension";
 import { SlashCommandExtension } from "./extensions/SlashCommandExtension";
 
 import { WikiLinkExtension } from "./extensions/WikiLinkExtension";
+import { WikiMediaEmbedExtension } from "./extensions/WikiMediaEmbedExtension";
 
 const lowlight = createLowlight(common);
 
@@ -154,6 +155,8 @@ interface TipTapEditorProps {
 
   locked?: boolean;
 
+  mediaLoading?: "deferred" | "visible";
+
   setLocked?: (locked: boolean) => void;
 }
 
@@ -199,6 +202,8 @@ function TipTapEditorInner({
   onBodyContextMenu,
 
   locked = false,
+
+  mediaLoading = "visible",
 
   setLocked,
 }: TipTapEditorProps) {
@@ -322,6 +327,12 @@ function TipTapEditorInner({
       LinkExtension,
 
       ImageExtension.configure({
+        mediaLoading,
+        vaultPath,
+      }),
+
+      WikiMediaEmbedExtension.configure({
+        mediaLoading,
         vaultPath,
       }),
 
@@ -381,7 +392,7 @@ function TipTapEditorInner({
       }),
     ],
 
-    [isLargeDoc, vaultPath],
+    [isLargeDoc, mediaLoading, vaultPath],
   );
 
   const ingestResultRef = useRef<{

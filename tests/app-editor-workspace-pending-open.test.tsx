@@ -19,6 +19,7 @@ vi.mock("@/components/editor/TipTapEditor", () => ({
     onInlineAiAccept?: unknown;
     onInlineAiDismiss?: unknown;
     onInlineAiRetry?: unknown;
+    mediaLoading?: unknown;
     onOpenWikiLink?: unknown;
     onSlashCommand?: unknown;
     onBodyStatsChange?: unknown;
@@ -64,6 +65,12 @@ vi.mock("@/components/layout/ArtifactWorkspaceView", () => ({
   ArtifactWorkspaceView: () => <div data-testid="artifact-workspace" />,
 }));
 
+vi.mock("@/components/layout/MediaWorkspaceView", () => ({
+  MediaWorkspaceView: ({ tab }: { tab: { path: string } }) => (
+    <div data-testid="media-workspace" data-path={tab.path} />
+  ),
+}));
+
 vi.mock("@/components/ErrorBoundary", () => ({
   ErrorBoundary: ({ children }: { children: ReactNode }) => (
     <div data-testid="error-boundary">{children}</div>
@@ -81,6 +88,7 @@ function baseProps() {
   return {
     activeFileLocked: false,
     activeArtifactTab: null,
+    activeMediaTab: null,
     activeNoteIsClassified: false,
     activePath: "old.md",
     editorBodyMarkdown: "old",
@@ -272,6 +280,7 @@ describe("AppEditorWorkspace pending Home opens", () => {
 
     const warmProps = editorPropsByPath.get("warm.md");
     expect(warmProps).toBeTruthy();
+    expect(warmProps?.mediaLoading).toBe("deferred");
     expect(warmProps?.onDirty).toBeUndefined();
     expect(warmProps?.onSlashCommand).toBeUndefined();
     expect(warmProps?.onBodyContextMenu).toBeUndefined();
@@ -303,6 +312,7 @@ describe("AppEditorWorkspace pending Home opens", () => {
 
     const stagingProps = editorPropsByPath.get("new.md");
     expect(stagingProps).toBeTruthy();
+    expect(stagingProps?.mediaLoading).toBe("deferred");
     expect(stagingProps?.onDirty).toBeUndefined();
     expect(stagingProps?.onSlashCommand).toBeUndefined();
     expect(stagingProps?.onBodyContextMenu).toBeUndefined();
@@ -314,6 +324,83 @@ describe("AppEditorWorkspace pending Home opens", () => {
     expect(stagingProps?.setLocked).toBeUndefined();
     expect(stagingProps?.titleSlot).toBeNull();
     expect(stagingProps?.locked).toBe(true);
+  });
+
+  it("loads media only on the visible editor surface", () => {
+    act(() => {
+      root.render(
+        <AppEditorWorkspace
+          {...baseProps()}
+          warmPreparedNotes={[
+            {
+              bodyMarkdown: "warm",
+              content: "warm",
+              frontmatterYaml: null,
+              isLocked: false,
+              namespace: "normal",
+              path: "warm.md",
+              signature: "sig",
+              title: "Warm",
+              traceKey: "normal:warm",
+            },
+          ]}
+        />,
+      );
+    });
+
+    expect(editorPropsByPath.get("old.md")?.mediaLoading).toBe("visible");
+    expect(editorPropsByPath.get("warm.md")?.mediaLoading).toBe("deferred");
+
+    act(() => {
+      root.render(
+        <AppEditorWorkspace
+          {...baseProps()}
+          activePath="new.md"
+          editorBodyMarkdown="new"
+          editorContentTick={1}
+        />,
+      );
+    });
+
+    expect(editorPropsByPath.get("new.md")?.mediaLoading).toBe("deferred");
+  });
+
+  it("renders the active media tab instead of mounting editor surfaces", () => {
+    act(() => {
+      root.render(
+        <AppEditorWorkspace
+          {...baseProps()}
+          activeMediaTab={{
+            id: "media:assets/paper.pdf",
+            mediaKind: "pdf",
+            mimeType: "application/pdf",
+            path: "assets/paper.pdf",
+            sizeBytes: null,
+            title: "paper.pdf",
+            updatedAt: null,
+          }}
+          warmPreparedNotes={[
+            {
+              bodyMarkdown: "warm",
+              content: "warm",
+              frontmatterYaml: null,
+              isLocked: false,
+              namespace: "normal",
+              path: "warm.md",
+              signature: "sig",
+              title: "Warm",
+              traceKey: "normal:warm",
+            },
+          ]}
+        />,
+      );
+    });
+
+    expect(
+      document.querySelector('[data-testid="media-workspace"]'),
+    ).toBeTruthy();
+    expect(document.querySelector('[data-testid="tiptap-editor"]')).toBeNull();
+    expect(editorPropsByPath.size).toBe(0);
   });
   it("commits a pending note only after the hidden staging editor is ready", () => {
     const commitPendingNoteOpen = vi.fn(() => true);

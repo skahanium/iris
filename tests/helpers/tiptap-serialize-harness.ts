@@ -26,6 +26,7 @@ import { ListIndentKeymapExtension } from "@/components/editor/extensions/ListIn
 import { PreserveBlockExtension } from "@/components/editor/extensions/PreserveBlockExtension";
 import { PreserveInlineExtension } from "@/components/editor/extensions/PreserveInlineExtension";
 import { WikiLinkExtension } from "@/components/editor/extensions/WikiLinkExtension";
+import { WikiMediaEmbedExtension } from "@/components/editor/extensions/WikiMediaEmbedExtension";
 import { editorDocToMarkdown } from "@/lib/editor-pm-serialize";
 import { EDITOR_PARSE_OPTIONS } from "@/lib/editor-parse-options";
 import { ingestMarkdownForEditor } from "@/lib/editor-ingest";
@@ -53,6 +54,7 @@ function productionExtensions(vaultPath: string | null = null) {
     FindHighlightExtension,
     LinkExtension,
     ImageExtension.configure({ vaultPath }),
+    WikiMediaEmbedExtension.configure({ vaultPath, mediaLoading: "visible" }),
     TaskList,
     TaskItem.configure({ nested: true }),
     Table.configure({ resizable: true }),

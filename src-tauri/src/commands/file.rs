@@ -1048,6 +1048,7 @@ pub fn vault_set(app: AppHandle, state: State<'_, Arc<AppState>>, path: String) 
 
     // Clear in-memory AI state to prevent data leakage between vaults
     state.clear_ai_state();
+    crate::commands::media::clear_media_leases();
 
     if let Err(e) = state.restart_file_watcher(app.clone()) {
         tracing::warn!("vault_set: file watcher did not start: {e}");

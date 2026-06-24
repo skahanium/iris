@@ -16,12 +16,33 @@ const folderRename = vi.fn();
 const knowledgeReindex = vi.fn();
 const templateList = vi.fn();
 
+interface MockFileItem {
+  path: string;
+  title: string;
+  updatedAt: string;
+  isLocked: boolean;
+}
+
 vi.mock("@/lib/ipc", () => ({
   corpusList: (...args: unknown[]) => corpusList(...args),
   corpusUpsert: (...args: unknown[]) => corpusUpsert(...args),
   exportFile: vi.fn(),
   fileDelete: (...args: unknown[]) => fileDelete(...args),
   fileList: (...args: unknown[]) => fileList(...args),
+  workspaceList: (...args: unknown[]) =>
+    fileList(...args).then((items: MockFileItem[]) =>
+      items.map((item) => ({
+        attachmentRole: "formal",
+        isLocked: item.isLocked,
+        kind: "note",
+        mediaKind: null,
+        mimeType: null,
+        path: item.path,
+        sizeBytes: null,
+        title: item.title,
+        updatedAt: item.updatedAt,
+      })),
+    ),
   fileRead: vi.fn(),
   fileRename: (...args: unknown[]) => fileRename(...args),
   fileSetLock: (...args: unknown[]) => fileSetLock(...args),

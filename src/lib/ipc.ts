@@ -46,6 +46,8 @@ import type {
   LlmGenerateParams,
   LlmProviderInfo,
   LlmTokenEvent,
+  MediaMetadata,
+  MediaResolveResult,
   ProfileEntry,
   RecycleBinItem,
   SemanticHit,
@@ -57,6 +59,7 @@ import type {
   ToolConfirmRequestEvent,
   VersionEntry,
   VersionSaveCompleteEvent,
+  WorkspaceItem,
 } from "@/types/ipc";
 import type {
   ConnectivityStatus,
@@ -121,6 +124,28 @@ export async function fileList(opts?: {
     limit: opts?.limit ?? null,
     offset: opts?.offset ?? null,
   });
+}
+
+export async function workspaceList(opts?: {
+  limit?: number;
+  offset?: number;
+}): Promise<WorkspaceItem[]> {
+  return invoke<WorkspaceItem[]>("workspace_list", {
+    limit: opts?.limit ?? null,
+    offset: opts?.offset ?? null,
+  });
+}
+
+export async function mediaMetadata(path: string): Promise<MediaMetadata> {
+  return invoke<MediaMetadata>("media_metadata", { path });
+}
+
+export async function mediaResolve(path: string): Promise<MediaResolveResult> {
+  return invoke<MediaResolveResult>("media_resolve", { path });
+}
+
+export async function mediaRelease(handle: string): Promise<void> {
+  return invoke("media_release", { handle });
 }
 
 export async function folderList(): Promise<string[]> {

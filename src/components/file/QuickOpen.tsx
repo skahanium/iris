@@ -1,4 +1,4 @@
-import { FileText } from "lucide-react";
+import { FileImage, FileText, FileVideo } from "lucide-react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import {
   useCallback,
@@ -21,15 +21,48 @@ import {
   displayTitleForFileListItem,
   noteListSubtitle,
 } from "@/lib/note-display";
-import { fileList } from "@/lib/ipc";
+import { workspaceList } from "@/lib/ipc";
 import { ensureOptionVisible } from "@/lib/command-palette-scroll";
-import type { FileListItem } from "@/types/ipc";
+import type { FileListItem, WorkspaceItem } from "@/types/ipc";
 
 interface QuickOpenProps {
   open: boolean;
   onClose: () => void;
   onPrepare?: (file: FileListItem) => void;
   onSelect: (path: string) => void | Promise<void>;
+}
+
+function noteItem(item: WorkspaceItem): FileListItem | null {
+  if (item.kind !== "note") return null;
+  return {
+    isLocked: item.isLocked,
+    path: item.path,
+    title: item.title,
+    updatedAt: item.updatedAt ?? "",
+  };
+}
+
+function itemTitle(item: WorkspaceItem): string {
+  if (item.kind === "note") {
+    return displayTitleForFileListItem({
+      isLocked: item.isLocked,
+      path: item.path,
+      title: item.title,
+      updatedAt: item.updatedAt ?? "",
+    });
+  }
+  return item.title || item.path.split("/").pop() || item.path;
+}
+
+function itemSubtitle(item: WorkspaceItem): string | undefined {
+  if (item.kind === "note") return noteListSubtitle(item.path);
+  return item.path;
+}
+
+function itemIcon(item: WorkspaceItem) {
+  if (item.mediaKind === "image") return FileImage;
+  if (item.mediaKind === "video") return FileVideo;
+  return FileText;
 }
 
 export function QuickOpen({
@@ -39,10 +72,10 @@ export function QuickOpen({
   onSelect,
 }: QuickOpenProps) {
   const [query, setQuery] = useState("");
-  const [files, setFiles] = useState<FileListItem[]>([]);
+  const [files, setFiles] = useState<WorkspaceItem[]>([]);
   const parentRef = useRef<HTMLDivElement>(null);
   const itemRefs = useRef(new Map<string, HTMLButtonElement>());
-  const filteredRef = useRef<FileListItem[]>([]);
+  const filteredRef = useRef<WorkspaceItem[]>([]);
   const onSelectRef = useRef(onSelect);
   const onCloseRef = useRef(onClose);
   onSelectRef.current = onSelect;
@@ -50,12 +83,12 @@ export function QuickOpen({
 
   useEffect(() => {
     if (!open) return;
-    void fileList().then(setFiles);
+    void workspaceList().then(setFiles);
     setQuery("");
   }, [open]);
 
   const filtered = files.filter((f) => {
-    const label = displayTitleForFileListItem(f);
+    const label = itemTitle(f);
     return (
       label.toLowerCase().includes(query.toLowerCase()) ||
       f.path.toLowerCase().includes(query.toLowerCase())
@@ -67,7 +100,10 @@ export function QuickOpen({
 
   useEffect(() => {
     if (!open) return;
-    visibleFiles.forEach((file) => onPrepare?.(file));
+    visibleFiles.forEach((file) => {
+      const note = noteItem(file);
+      if (note) onPrepare?.(note);
+    });
   }, [open, onPrepare, visibleFiles]);
 
   const { highlight, setHighlight, handleKeyDown, navDeltaRef } =
@@ -92,7 +128,8 @@ export function QuickOpen({
   useEffect(() => {
     if (!open) return;
     const item = filtered[highlight];
-    if (item) onPrepare?.(item);
+    const note = item ? noteItem(item) : null;
+    if (note) onPrepare?.(note);
   }, [filtered, highlight, onPrepare, open]);
 
   const virtualizer = useVirtualizer({
@@ -132,7 +169,7 @@ export function QuickOpen({
     <IrisOverlay
       open={open}
       onClose={onClose}
-      title="搜索笔记"
+      title="搜索工作区"
       size="compact"
       showTitleBar={false}
       bodyClassName="overflow-hidden"
@@ -140,9 +177,9 @@ export function QuickOpen({
       <OverlayChrome
         header={
           <OverlaySearchHeader
-            placeholder="搜索笔记…"
+            placeholder="搜索工作区…"
             value={query}
-            inputAriaLabel="搜索笔记"
+            inputAriaLabel="搜索工作区"
             onChange={setQuery}
             onKeyDown={handleKeyDown}
             onClose={onClose}
@@ -167,7 +204,7 @@ export function QuickOpen({
           {filtered.length === 0 ? (
             <div className="flex flex-col items-center gap-2 px-6 py-12 text-center">
               <FileText className="h-8 w-8 text-muted-foreground/60" />
-              <p className="text-sm text-muted-foreground">无匹配笔记</p>
+              <p className="text-sm text-muted-foreground">无匹配项目</p>
             </div>
           ) : (
             <div
@@ -176,7 +213,7 @@ export function QuickOpen({
                 position: "relative",
               }}
               role="listbox"
-              aria-label="笔记列表"
+              aria-label="工作区项目列表"
             >
               {renderedItems.map((virtualItem) => {
                 const f = filtered[virtualItem.index]!;
@@ -194,11 +231,11 @@ export function QuickOpen({
                   >
                     <CommandListOption
                       id={`quick-open-${f.path}`}
-                      label={displayTitleForFileListItem(f)}
+                      label={itemTitle(f)}
                       query={query}
-                      subtitle={noteListSubtitle(f.path)}
+                      subtitle={itemSubtitle(f)}
                       active={active}
-                      icon={FileText}
+                      icon={itemIcon(f)}
                       buttonRef={(el) => {
                         if (el) itemRefs.current.set(f.path, el);
                         else itemRefs.current.delete(f.path);
@@ -206,7 +243,8 @@ export function QuickOpen({
                       onMouseEnter={() => {
                         navDeltaRef.current = 0;
                         setHighlight(virtualItem.index);
-                        onPrepare?.(f);
+                        const note = noteItem(f);
+                        if (note) onPrepare?.(note);
                       }}
                       onSelect={() => {
                         void (async () => {
