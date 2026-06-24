@@ -22,10 +22,27 @@ vi.mock("@/lib/document-title", () => ({
     hint?.trim() || "未命名文档",
 }));
 
-vi.mock("@/lib/markdown", () => ({
-  extractFrontmatterYaml: () => null,
-  stripLeadingBodyTitleHeading: (body: string) => body,
-}));
+vi.mock("@/lib/markdown", async () => {
+  const actual =
+    await vi.importActual<typeof import("@/lib/markdown")>("@/lib/markdown");
+  return {
+    ...actual,
+    parseNoteForEditor: (markdown: string) => {
+      const match = markdown.match(/^---\n([\s\S]*?)\n---\n?([\s\S]*)$/);
+      const yaml = match?.[1] ?? null;
+      const bodyMd = match?.[2] ?? markdown;
+      const titleMatch = yaml?.match(/title:\s*"?([^"\n]+)"?/);
+      return {
+        bodyMarkdown: bodyMd,
+        bodyMd,
+        frontmatterYaml: yaml,
+        title: titleMatch?.[1] ?? null,
+        yaml,
+      };
+    },
+    stripLeadingBodyTitleHeading: (body: string) => body,
+  };
+});
 
 import type { TabItem } from "@/components/layout/TabBar";
 import { useTabManager } from "@/hooks/useTabManager";
@@ -44,6 +61,54 @@ function Harness({
   const api = useTabManager();
   apiRef.current = api;
   return null;
+}
+
+async function waitForPendingOpen(
+  apiRef: { current: ReturnType<typeof useTabManager> | null },
+  path: string,
+) {
+  await vi.waitFor(() => {
+    expect(apiRef.current?.pendingNoteOpen?.path).toBe(path);
+  });
+  return apiRef.current!.pendingNoteOpen!;
+}
+
+async function commitPendingOpen(apiRef: {
+  current: ReturnType<typeof useTabManager> | null;
+}) {
+  const pending = apiRef.current!.pendingNoteOpen;
+  expect(pending).toBeTruthy();
+  await act(async () => {
+    apiRef.current!.commitPendingNoteOpen(pending!.path, pending!.sequence);
+    await Promise.resolve();
+  });
+}
+
+async function runAndCommit(
+  apiRef: { current: ReturnType<typeof useTabManager> | null },
+  path: string,
+  action: () => Promise<void>,
+) {
+  let promise!: Promise<void>;
+  await act(async () => {
+    promise = action();
+    await Promise.resolve();
+  });
+  await waitForPendingOpen(apiRef, path);
+  await commitPendingOpen(apiRef);
+  await act(async () => {
+    await promise;
+  });
+}
+
+async function openAndCommit(
+  apiRef: { current: ReturnType<typeof useTabManager> | null },
+  path: string,
+  titleHint?: string,
+) {
+  await runAndCommit(apiRef, path, () =>
+    apiRef.current!.openFile(path, titleHint),
+  );
 }
 
 describe("useTabManager handleNewNote", () => {
@@ -81,9 +146,9 @@ describe("useTabManager handleNewNote", () => {
       root.render(createElement(Harness, { apiRef }));
     });
 
-    await act(async () => {
-      await apiRef.current!.handleNewNote();
-    });
+    await runAndCommit(apiRef, "未命名文档.md", () =>
+      apiRef.current!.handleNewNote(),
+    );
 
     expect(createDefaultNote).toHaveBeenCalledTimes(1);
     expect(apiRef.current!.activePath).toBe("未命名文档.md");
@@ -103,14 +168,12 @@ describe("useTabManager handleNewNote", () => {
       root.render(createElement(Harness, { apiRef }));
     });
 
-    await act(async () => {
-      await apiRef.current!.openFile("未命名文档.md", "未命名文档");
-    });
+    await openAndCommit(apiRef, "未命名文档.md", "未命名文档");
     expect(apiRef.current!.activePath).toBe("未命名文档.md");
 
-    await act(async () => {
-      await apiRef.current!.handleNewNote();
-    });
+    await runAndCommit(apiRef, "未命名文档（1）.md", () =>
+      apiRef.current!.handleNewNote(),
+    );
 
     expect(fileDiscard).toHaveBeenCalledWith("未命名文档.md");
     expect(createDefaultNote).toHaveBeenCalledWith({
@@ -143,14 +206,10 @@ describe("useTabManager handleNewNote", () => {
       root.render(createElement(Harness, { apiRef }));
     });
 
-    await act(async () => {
-      await apiRef.current!.openFile("a.md", "A");
-      await apiRef.current!.openFile("b.md", "B");
-    });
+    await openAndCommit(apiRef, "a.md", "A");
+    await openAndCommit(apiRef, "b.md", "B");
 
-    await act(async () => {
-      apiRef.current!.closeTab("b.md");
-    });
+    await runAndCommit(apiRef, "a.md", () => apiRef.current!.closeTab("b.md"));
 
     expect(apiRef.current!.activePath).toBe("a.md");
     expect(apiRef.current!.tabs.map((t: TabItem) => t.path)).toEqual(["a.md"]);
@@ -167,9 +226,7 @@ describe("useTabManager handleNewNote", () => {
       root.render(createElement(Harness, { apiRef }));
     });
 
-    await act(async () => {
-      await apiRef.current!.openFile("未命名文档.md", "未命名文档");
-    });
+    await openAndCommit(apiRef, "未命名文档.md", "未命名文档");
 
     await act(async () => {
       apiRef.current!.replaceOpenTabPath(

@@ -14,7 +14,8 @@ interface AppAiPanelSlotProps {
   getWritingContext: () => WritingEditorContext | null;
   handleInsertToEditor: (content: string) => void;
   onOpenArtifact: (draft: AssistantArtifactDraft) => void;
-  openNoteLeavingHome: (path: string) => void;
+  openNoteLeavingHome: (path: string) => void | Promise<void>;
+  onPrepareNotePath?: (path: string, titleHint?: string) => void;
   onSessionDeleted?: (sessionId: number) => void;
   onSessionsCleared?: () => void;
   onPatchApplied: (newContent: string) => void;
@@ -33,6 +34,7 @@ export function AppAiPanelSlot({
   handleInsertToEditor,
   onOpenArtifact,
   openNoteLeavingHome,
+  onPrepareNotePath,
   onSessionDeleted,
   onSessionsCleared,
   onPatchApplied,
@@ -47,6 +49,7 @@ export function AppAiPanelSlot({
       return;
     }
     if (packet.source_path) {
+      onPrepareNotePath?.(packet.source_path, packet.title);
       openNoteLeavingHome(packet.source_path);
     }
   };

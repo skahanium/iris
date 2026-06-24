@@ -185,6 +185,19 @@ describe("desktop title bar", () => {
     expect(bar).not.toContain("mb-1");
   });
 
+  it("preserves macOS native traffic light safe area on the splash titlebar", () => {
+    const bar = read("src/components/layout/DesktopTitleBar.tsx");
+    const splashBranch = bar.slice(
+      bar.indexOf("{isSplash ? ("),
+      bar.indexOf(") : (", bar.indexOf("{isSplash ? (")),
+    );
+
+    expect(splashBranch).toContain("isMacDesktop");
+    expect(splashBranch).toContain("iris-titlebar-traffic-spacer");
+    expect(splashBranch).toContain("--titlebar-traffic-inset");
+    expect(splashBranch).toContain("AppBrandZone");
+  });
+
   it("useMacOSWindowChromeSync handles fullscreen and chrome metrics IPC", () => {
     const hook = read("src/hooks/useMacOSWindowChromeSync.ts");
     expect(hook).toContain("isFullscreen");

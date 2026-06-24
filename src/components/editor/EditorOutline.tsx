@@ -37,6 +37,7 @@ interface EditorOutlineProps {
   onOpenChange: (open: boolean) => void;
   notePath?: string | null;
   onOpenNote?: (path: string) => void;
+  onPrepareNote?: (path: string, titleHint?: string) => void;
   locked?: boolean;
   zen?: boolean;
 }
@@ -47,14 +48,17 @@ interface OutlineLinkSummaryProps {
   summary: FileLinkSummary | null;
   unavailable: boolean;
   onOpenNote?: (path: string) => void;
+  onPrepareNote?: (path: string, titleHint?: string) => void;
 }
 
 function OutlineLinkItems({
   items,
   onOpenNote,
+  onPrepareNote,
 }: {
   items: FileLinkPreview[];
   onOpenNote?: (path: string) => void;
+  onPrepareNote?: (path: string, titleHint?: string) => void;
 }) {
   if (items.length === 0) {
     return <span className="outline-link-summary-empty">暂无链接</span>;
@@ -69,6 +73,8 @@ function OutlineLinkItems({
           data-testid="outline-link-summary-item"
           className="outline-link-summary-item"
           title={item.context ?? item.path}
+          onMouseEnter={() => onPrepareNote?.(item.path, item.title)}
+          onFocus={() => onPrepareNote?.(item.path, item.title)}
           onClick={() => onOpenNote?.(item.path)}
           onKeyDown={(event) => {
             event.stopPropagation();
@@ -85,6 +91,7 @@ function OutlineLinkSummary({
   summary,
   unavailable,
   onOpenNote,
+  onPrepareNote,
 }: OutlineLinkSummaryProps) {
   if (unavailable) {
     return (
@@ -124,13 +131,18 @@ function OutlineLinkSummary({
         <div className="outline-link-summary-groups">
           <div className="outline-link-summary-group">
             <span className="outline-link-summary-label">指向此文档</span>
-            <OutlineLinkItems items={summary.inbound} onOpenNote={onOpenNote} />
+            <OutlineLinkItems
+              items={summary.inbound}
+              onOpenNote={onOpenNote}
+              onPrepareNote={onPrepareNote}
+            />
           </div>
           <div className="outline-link-summary-group">
             <span className="outline-link-summary-label">本文指向</span>
             <OutlineLinkItems
               items={summary.outbound}
               onOpenNote={onOpenNote}
+              onPrepareNote={onPrepareNote}
             />
           </div>
         </div>
@@ -147,6 +159,7 @@ export const EditorOutline = memo(function EditorOutline({
   onOpenChange,
   notePath = null,
   onOpenNote,
+  onPrepareNote,
   locked = false,
   zen = false,
 }: EditorOutlineProps) {
@@ -435,6 +448,7 @@ export const EditorOutline = memo(function EditorOutline({
         summary={linkSummary}
         unavailable={linkSummaryUnavailable}
         onOpenNote={onOpenNote}
+        onPrepareNote={onPrepareNote}
       />
     </nav>
   );

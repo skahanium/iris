@@ -9,21 +9,18 @@ import {
 } from "@/lib/home-open-transition";
 
 describe("home open transition", () => {
-  it("immediately leaves Home into a target loading view", () => {
+  it("records a pending target without leaving the current surface", () => {
     const sequenceRef = { current: 0 };
-    const setHomeActive = vi.fn();
     const setPendingOpen = vi.fn();
 
     const sequence = beginHomeOpenLoading({
       path: "new.md",
       title: "New",
       sequenceRef,
-      setHomeActive,
       setPendingOpen,
     });
 
     expect(sequence).toBe(1);
-    expect(setHomeActive).toHaveBeenCalledWith(false);
     expect(setPendingOpen).toHaveBeenCalledWith({
       kind: "note",
       path: "new.md",
@@ -34,20 +31,17 @@ describe("home open transition", () => {
 
   it("only allows the latest target request to clear loading", () => {
     const sequenceRef = { current: 0 };
-    const setHomeActive = vi.fn();
     const setPendingOpen = vi.fn();
     const first = beginHomeOpenLoading({
       path: "b.md",
       title: "B",
       sequenceRef,
-      setHomeActive,
       setPendingOpen,
     });
     const second = beginHomeOpenLoading({
       path: "c.md",
       title: "C",
       sequenceRef,
-      setHomeActive,
       setPendingOpen,
     });
 
@@ -81,13 +75,11 @@ describe("home open transition", () => {
 
   it("ignores pending opens after the user explicitly returns Home", () => {
     const sequenceRef = { current: 0 };
-    const setHomeActive = vi.fn();
     const setPendingOpen = vi.fn();
     const sequence = beginHomeOpenLoading({
       path: "new.md",
       title: "New",
       sequenceRef,
-      setHomeActive,
       setPendingOpen,
     });
 
@@ -105,9 +97,8 @@ describe("home open transition", () => {
     expect(setPendingOpen).toHaveBeenLastCalledWith(null);
   });
 
-  it("marks the latest loading request as failed without restoring the old document", () => {
+  it("marks the latest loading request as failed without forcing a surface switch", () => {
     const sequenceRef = { current: 0 };
-    const setHomeActive = vi.fn();
     const setPendingOpen = vi.fn();
     const pending: HomePendingOpen = {
       kind: "note",
@@ -119,7 +110,6 @@ describe("home open transition", () => {
       path: pending.path,
       title: pending.title,
       sequenceRef,
-      setHomeActive,
       setPendingOpen,
     });
 
@@ -132,16 +122,14 @@ describe("home open transition", () => {
         setPendingOpen,
       }),
     ).toBe(true);
-    expect(setHomeActive).toHaveBeenCalledWith(false);
     expect(setPendingOpen).toHaveBeenLastCalledWith({
       ...pending,
       error: "无法打开笔记",
     });
   });
 
-  it("represents new-note creation as a loading target without an old active path", () => {
+  it("represents new-note creation as pending without leaving the current surface", () => {
     const sequenceRef = { current: 0 };
-    const setHomeActive = vi.fn();
     const setPendingOpen = vi.fn();
 
     const sequence = beginHomeOpenLoading({
@@ -149,12 +137,10 @@ describe("home open transition", () => {
       path: null,
       title: "新建笔记",
       sequenceRef,
-      setHomeActive,
       setPendingOpen,
     });
 
     expect(sequence).toBe(1);
-    expect(setHomeActive).toHaveBeenCalledWith(false);
     expect(setPendingOpen).toHaveBeenCalledWith({
       kind: "new-note",
       path: null,

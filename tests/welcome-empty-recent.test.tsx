@@ -66,6 +66,40 @@ describe("WelcomeEmpty recent notes", () => {
     expect(document.body.textContent).not.toContain("最近更新");
   });
 
+  it("prepares visible recent notes after loading the list", async () => {
+    const onPrepare = vi.fn();
+    fileList.mockResolvedValue([
+      {
+        path: "ready.md",
+        title: "Ready",
+        updatedAt: "2026-06-24T00:00:00Z",
+        isLocked: false,
+      },
+    ]);
+
+    await act(async () => {
+      root.render(
+        <WelcomeEmpty
+          onNew={vi.fn()}
+          onOpen={vi.fn()}
+          onOpenAiManagement={vi.fn()}
+          onPrepare={onPrepare}
+          onQuickOpen={vi.fn()}
+          onSearch={vi.fn()}
+        />,
+      );
+    });
+
+    await vi.waitFor(() => {
+      expect(onPrepare).toHaveBeenCalledWith({
+        path: "ready.md",
+        title: "Ready",
+        updatedAt: "2026-06-24T00:00:00Z",
+        isLocked: false,
+      });
+    });
+  });
+
   it("passes the recent note display title as an open hint", async () => {
     const onOpen = vi.fn();
     fileList.mockResolvedValue([

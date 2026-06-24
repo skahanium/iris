@@ -75,7 +75,17 @@ export const DesktopTitleBar = memo(function DesktopTitleBar({
       onMouseDown={onDragMouseDown}
     >
       {isSplash ? (
-        <AppBrandZone className="min-w-0 flex-1 justify-start px-5" />
+        <>
+          {isMacDesktop ? (
+            <div
+              aria-hidden="true"
+              className="iris-titlebar-traffic-spacer h-full shrink-0"
+              data-tauri-drag-region
+              style={{ width: "var(--titlebar-traffic-inset)" }}
+            />
+          ) : null}
+          <AppBrandZone className="min-w-0 flex-1 justify-start px-5" />
+        </>
       ) : (
         <>
           {isMacDesktop ? (

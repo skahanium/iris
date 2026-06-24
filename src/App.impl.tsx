@@ -1,13 +1,6 @@
 import type { Editor } from "@tiptap/react";
 import { Moon, Sun } from "lucide-react";
-import {
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  type ReactNode,
-} from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { DocumentTitleField } from "@/components/editor/DocumentTitleField";
 import { AppAiPanelSlot } from "@/components/layout/AppAiPanelSlot";
@@ -16,7 +9,7 @@ import { AppOverlays } from "@/components/layout/AppOverlays";
 import { AppShell } from "@/components/layout/AppShell";
 import { AppStatusBarSlot } from "@/components/layout/AppStatusBarSlot";
 import { DesktopFrame } from "@/components/layout/DesktopFrame";
-import { MinimalWindowChrome } from "@/components/layout/MinimalWindowChrome";
+import { PreVaultDesktopFrame } from "@/components/layout/PreVaultDesktopFrame";
 import { StartupSplash } from "@/components/layout/StartupSplash";
 import { TabBar } from "@/components/layout/TabBar";
 import { Button } from "@/components/ui/button";
@@ -38,6 +31,7 @@ import { useEditorContextMenu } from "@/hooks/useEditorContextMenu";
 import { useAutoVaultIndex } from "@/hooks/useAutoVaultIndex";
 import { useOpenNote } from "@/hooks/useOpenNote";
 import { useNavigatorFileLifecycle } from "@/hooks/useNavigatorFileLifecycle";
+import { useFileConflictResolution } from "@/hooks/useFileConflictResolution";
 import { useEditorZoom } from "@/hooks/useEditorZoom";
 import { useEditorStats } from "@/hooks/useEditorStats";
 import { useInlineAi } from "@/hooks/useInlineAi";
@@ -45,7 +39,7 @@ import { useConnectivityStatus } from "@/hooks/useConnectivityStatus";
 import { useLlmProvider } from "@/hooks/useLlmProvider";
 import { useOverlayManager } from "@/hooks/useOverlayManager";
 import { useArtifactTabs } from "@/hooks/useArtifactTabs";
-import { useHomeWorkspaceTransitions } from "@/hooks/useHomeWorkspaceTransitions";
+import { usePreparedWorkspaceTransitions } from "@/hooks/usePreparedWorkspaceTransitions";
 import { useTabManager } from "@/hooks/useTabManager";
 import { useTheme } from "@/hooks/useTheme";
 import { useZenExitKeyboard } from "@/hooks/useZenExitKeyboard";
@@ -78,15 +72,6 @@ function saveOutlineOpen(open: boolean): void {
   } catch (e) {
     console.warn("[App] localStorage write failed:", e);
   }
-}
-
-function PreVaultDesktopFrame({ children }: { children: ReactNode }) {
-  return (
-    <DesktopFrame>
-      <MinimalWindowChrome />
-      {children}
-    </DesktopFrame>
-  );
 }
 
 function App() {
@@ -161,11 +146,16 @@ function App() {
     setMarkdown,
     activeFileLocked,
     setFileLocked,
+    pendingNoteOpen,
+    commitPendingNoteOpen,
   } = useTabManager({
     onStatusChange: setAiStatus,
     onVaultIndexBump: bumpVaultIndex,
     persistBeforeLeave: (path) => persistBeforeLeaveRef.current(path),
   });
+  const tabsRef = useRef(tabs);
+  tabsRef.current = tabs;
+
   const {
     activateArtifact,
     activeArtifactTab,
@@ -195,20 +185,56 @@ function App() {
     setAiStatus,
   });
 
+  const openClassifiedPaths = useMemo(
+    () =>
+      tabs.filter((tab) => isClassifiedVaultPath(tab.path)).map((t) => t.path),
+    [tabs],
+  );
+
+  const {
+    status: classifiedVaultStatus,
+    waiting: classifiedWaiting,
+    idleDeadline: classifiedIdleDeadline,
+    refreshStatus: refreshClassifiedStatus,
+    touchActivity: touchClassifiedActivity,
+    requestLock: requestClassifiedLock,
+    onUnlocked: onClassifiedUnlocked,
+    setWaiting: setClassifiedWaiting,
+  } = useClassifiedVaultSession({
+    enabled: Boolean(vaultPath) && isTauriRuntime(),
+    openClassifiedPaths,
+  });
+
+  useEffect(() => {
+    if (classifiedOpen) {
+      void refreshClassifiedStatus();
+    }
+  }, [classifiedOpen, refreshClassifiedStatus]);
+
   const {
     handleActivateWorkspaceTab,
     handleNewNoteLeavingHome,
+    invalidatePreparedNote,
     openNoteLeavingHome,
     pendingOpen,
+    prepareVisibleNote,
+    prepareNotePath,
+    prepareClassifiedNotePath,
     showHome,
-  } = useHomeWorkspaceTransitions<Parameters<typeof openNote>[2]>({
+    warmPreparedNotes,
+  } = usePreparedWorkspaceTransitions<
+    NonNullable<Parameters<typeof openNote>[2]>
+  >({
     activePathRef,
     activateArtifact,
     activateTab,
+    classifiedVaultStatus,
     handleNewNote,
     openNote,
     setActiveArtifactId,
     setHomeActive,
+    tabs,
+    vaultPath,
   });
 
   const handleCloseWorkspaceTab = useCallback(
@@ -222,10 +248,6 @@ function App() {
     [closeArtifact, closeTab],
   );
 
-  const tabsRef = useRef(tabs);
-  tabsRef.current = tabs;
-
-  /** Resync dirty flag only when switching documents (not on every tab metadata update). */
   useEffect(() => {
     if (!activePath) {
       dirtyRef.current = false;
@@ -337,6 +359,7 @@ function App() {
     cancelPendingSave,
     discardOpenTab,
     getLiveMarkdownRef,
+    onFileChanged: invalidatePreparedNote,
     setConflictState,
   });
 
@@ -345,6 +368,7 @@ function App() {
     let unlisten: (() => void) | undefined;
     void listenClassifiedFileTaken((event) => {
       const path = event.path;
+      invalidatePreparedNote(path);
       if (tabsRef.current.some((tab) => tab.path === path)) {
         void closeTab(path);
       }
@@ -355,39 +379,22 @@ function App() {
     return () => {
       unlisten?.();
     };
-  }, [closeTab, bumpVaultIndex]);
-
-  const openClassifiedPaths = useMemo(
-    () =>
-      tabs.filter((tab) => isClassifiedVaultPath(tab.path)).map((t) => t.path),
-    [tabs],
-  );
-
-  const {
-    status: classifiedVaultStatus,
-    waiting: classifiedWaiting,
-    idleDeadline: classifiedIdleDeadline,
-    refreshStatus: refreshClassifiedStatus,
-    touchActivity: touchClassifiedActivity,
-    requestLock: requestClassifiedLock,
-    onUnlocked: onClassifiedUnlocked,
-    setWaiting: setClassifiedWaiting,
-  } = useClassifiedVaultSession({
-    enabled: Boolean(vaultPath) && isTauriRuntime(),
-    openClassifiedPaths,
-  });
-
-  useEffect(() => {
-    if (classifiedOpen) {
-      void refreshClassifiedStatus();
-    }
-  }, [classifiedOpen, refreshClassifiedStatus]);
+  }, [closeTab, bumpVaultIndex, invalidatePreparedNote]);
 
   const currentNoteIsClassified = Boolean(
     activePath && isClassifiedVaultPath(activePath),
   );
   const activeNoteIsClassified = Boolean(
     !activeArtifactTab && currentNoteIsClassified,
+  );
+
+  const applyMarkdownToEditor = useCallback(
+    (content: string) => {
+      markdownRef.current = content;
+      loadBodyIntoEditor(content);
+      setMarkdown(content);
+    },
+    [loadBodyIntoEditor, markdownRef, setMarkdown],
   );
 
   const handleLockToggle = useCallback(
@@ -400,31 +407,32 @@ function App() {
         }
         setFileLocked(path, locked);
         await fileSetLock(path, locked);
+        invalidatePreparedNote(path);
       } catch (err: unknown) {
         setFileLocked(path, !locked);
         const msg = err instanceof Error ? err.message : String(err);
         setAiStatus(`锁定状态保存失败：${msg}`);
       }
     },
-    [activePathRef, flushSave, setFileLocked],
+    [activePathRef, flushSave, invalidatePreparedNote, setFileLocked],
   );
 
-  const handleConflictKeepLocal = useCallback(() => {
-    setConflictState(null);
-    // Re-save local content to overwrite external changes
-    void flushSave();
-  }, [flushSave]);
-
-  const handleConflictAcceptExternal = useCallback(() => {
-    if (!conflictState) return;
-    setConflictState(null);
-    // Re-open the note from disk to load external content
-    openNoteLeavingHome(conflictState.filePath);
-  }, [conflictState, openNoteLeavingHome]);
-
-  const handleConflictManualEdit = useCallback(() => {
-    setConflictState(null);
-  }, []);
+  const {
+    handleConflictAcceptExternal,
+    handleConflictKeepLocal,
+    handleConflictManualEdit,
+  } = useFileConflictResolution({
+    activePathRef,
+    applyMarkdownToEditor,
+    conflictState,
+    dirtyRef,
+    flushSave,
+    invalidatePreparedNote,
+    markClean,
+    openNoteLeavingHome,
+    setConflictState,
+    syncTabMarkdownCache,
+  });
 
   const openFindReplace = useCallback((mode: "find" | "replace") => {
     setFindReplaceMode(mode);
@@ -467,15 +475,6 @@ function App() {
   const handleOpenConnectivitySettings = useCallback(
     () => overlays.openManagementCenter("ai"),
     [overlays],
-  );
-
-  const applyMarkdownToEditor = useCallback(
-    (content: string) => {
-      markdownRef.current = content;
-      loadBodyIntoEditor(content);
-      setMarkdown(content);
-    },
-    [loadBodyIntoEditor, markdownRef, setMarkdown],
   );
 
   const updateUndoRedoState = useCallback((ed: Editor | null) => {
@@ -669,16 +668,19 @@ function App() {
   const activeWorkspacePath = activeArtifactTab?.id ?? activePath;
 
   const getAssistantLiveMarkdown = useCallback(
-    () => (activeArtifactTab ? "" : getLiveMarkdown()),
-    [activeArtifactTab, getLiveMarkdown],
+    () =>
+      activeArtifactTab || activeNoteIsClassified ? "" : getLiveMarkdown(),
+    [activeArtifactTab, activeNoteIsClassified, getLiveMarkdown],
   );
   const getAssistantWritingContext = useCallback(
-    () => (activeArtifactTab ? null : getWritingContext()),
-    [activeArtifactTab, getWritingContext],
+    () =>
+      activeArtifactTab || activeNoteIsClassified ? null : getWritingContext(),
+    [activeArtifactTab, activeNoteIsClassified, getWritingContext],
   );
   const getAssistantParagraphText = useCallback(
-    () => (activeArtifactTab ? null : getParagraphText()),
-    [activeArtifactTab, getParagraphText],
+    () =>
+      activeArtifactTab || activeNoteIsClassified ? null : getParagraphText(),
+    [activeArtifactTab, activeNoteIsClassified, getParagraphText],
   );
   const handleAssistantInsertToEditor = useCallback(
     (content: string) => {
@@ -686,9 +688,13 @@ function App() {
         setAiStatus("请先切回笔记再插入内容");
         return;
       }
+      if (activeNoteIsClassified) {
+        setAiStatus("涉密笔记不能接收 AI 插入");
+        return;
+      }
       handleInsertToEditor(content);
     },
-    [activeArtifactTab, handleInsertToEditor],
+    [activeArtifactTab, activeNoteIsClassified, handleInsertToEditor],
   );
   const handlePatchApplied = useCallback(
     (newContent: string) => {
@@ -728,12 +734,13 @@ function App() {
           <code className="rounded bg-muted px-1 py-0.5 text-xs">
             http://127.0.0.1:1420
           </code>{" "}
-          只是 Vite 前端热更新地址，浏览器里没有 Rust 后端，无法读写笔记目录。
+          这里只是 Vite 前端热更新地址，浏览器里没有 Rust
+          后端，无法读写笔记目录。
         </p>
         <p className="max-w-md text-sm text-muted-foreground">
           方式 B 需要两个终端：一个 <code className="text-xs">npm run dev</code>
-          ，另一个启动 <code className="text-xs">npx tauri dev …</code>
-          ，使用弹出的{" "}
+          ，另一个启动 <code className="text-xs">npx tauri dev</code>
+          ，请使用弹出的{" "}
           <strong className="font-medium text-foreground">Iris</strong>{" "}
           窗口操作。
         </p>
@@ -837,8 +844,12 @@ function App() {
             onOpenQuickOpen={() => overlays.openOverlay("quickOpen")}
             onOpenSearch={() => overlays.openOverlay("search")}
             openNoteLeavingHome={openNoteLeavingHome}
+            onPrepareNotePath={prepareNotePath}
+            onPrepareNote={prepareVisibleNote}
             outlineOpen={outlineOpen}
             pendingOpen={pendingOpen}
+            pendingNoteOpen={pendingNoteOpen}
+            commitPendingNoteOpen={commitPendingNoteOpen}
             runEditorActionById={runEditorActionById}
             setFindReplaceMode={setFindReplaceMode}
             setFindReplaceOpen={setFindReplaceOpen}
@@ -847,6 +858,7 @@ function App() {
             onVaultRefresh={bumpVaultIndex}
             vaultIndexEpoch={vaultIndexEpoch}
             vaultPath={vaultPath}
+            warmPreparedNotes={warmPreparedNotes}
             zen={zen}
           />
         }
@@ -861,6 +873,7 @@ function App() {
             handleInsertToEditor={handleAssistantInsertToEditor}
             onOpenArtifact={openArtifact}
             openNoteLeavingHome={openNoteLeavingHome}
+            onPrepareNotePath={prepareNotePath}
             onSessionDeleted={closeEvidenceArtifactsForSession}
             onSessionsCleared={closeAllEvidenceArtifacts}
             onPatchApplied={handlePatchApplied}
@@ -931,6 +944,9 @@ function App() {
             onClassifiedUnlocked={onClassifiedUnlocked}
             openClassifiedPaths={openClassifiedPaths}
             openNoteLeavingHome={openNoteLeavingHome}
+            onPrepareNote={prepareVisibleNote}
+            onPrepareNotePath={prepareNotePath}
+            onPrepareClassifiedNotePath={prepareClassifiedNotePath}
             overlays={overlays}
             refreshClassifiedStatus={refreshClassifiedStatus}
             requestClassifiedLock={requestClassifiedLock}

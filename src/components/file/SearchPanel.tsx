@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { IrisOverlay } from "@/components/ui/iris-overlay";
@@ -14,16 +14,28 @@ import type { KeywordHit, SemanticHit } from "@/types/ipc";
 interface SearchPanelProps {
   open: boolean;
   onClose: () => void;
-  onOpen: (path: string) => void;
+  onOpen: (path: string) => void | Promise<void>;
+  onPrepare?: (path: string, title?: string) => void;
 }
 
-export function SearchPanel({ open, onClose, onOpen }: SearchPanelProps) {
+export function SearchPanel({
+  open,
+  onClose,
+  onOpen,
+  onPrepare,
+}: SearchPanelProps) {
   const [query, setQuery] = useState("");
   const [mode, setMode] = useState<"keyword" | "semantic">("keyword");
   const [keywordHits, setKeywordHits] = useState<KeywordHit[]>([]);
   const [semanticHits, setSemanticHits] = useState<SemanticHit[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    keywordHits.forEach((hit) => onPrepare?.(hit.path, hit.title));
+    semanticHits.forEach((hit) => onPrepare?.(hit.path, hit.title));
+  }, [keywordHits, onPrepare, open, semanticHits]);
 
   const runSearch = async () => {
     if (!query.trim()) return;
@@ -114,9 +126,17 @@ export function SearchPanel({ open, onClose, onOpen }: SearchPanelProps) {
               key={h.path}
               type="button"
               className="mb-2 w-full rounded-md border border-border/50 p-2 text-left text-sm transition-colors duration-base ease-iris-out hover:bg-surface-inset/80"
+              onMouseEnter={() => onPrepare?.(h.path, h.title)}
+              onFocus={() => onPrepare?.(h.path, h.title)}
               onClick={() => {
-                onOpen(h.path);
-                onClose();
+                void (async () => {
+                  try {
+                    await onOpen(h.path);
+                    onClose();
+                  } catch {
+                    /* Keep Search visible so the user can retry. */
+                  }
+                })();
               }}
             >
               <div className="font-medium">{h.title}</div>
@@ -131,9 +151,17 @@ export function SearchPanel({ open, onClose, onOpen }: SearchPanelProps) {
               key={`${h.path}-${h.chunk_id}`}
               type="button"
               className="mb-2 w-full rounded-md border border-border/50 p-2 text-left text-sm transition-colors duration-base ease-iris-out hover:bg-surface-inset/80"
+              onMouseEnter={() => onPrepare?.(h.path, h.title)}
+              onFocus={() => onPrepare?.(h.path, h.title)}
               onClick={() => {
-                onOpen(h.path);
-                onClose();
+                void (async () => {
+                  try {
+                    await onOpen(h.path);
+                    onClose();
+                  } catch {
+                    /* Keep Search visible so the user can retry. */
+                  }
+                })();
               }}
             >
               <div className="font-medium">

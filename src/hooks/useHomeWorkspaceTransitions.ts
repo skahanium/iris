@@ -48,7 +48,11 @@ export function useHomeWorkspaceTransitions<OpenNoteOptions>({
   }, [setHomeActive]);
 
   const openNoteLeavingHome = useCallback(
-    (path: string, titleHint?: string, options?: OpenNoteOptions) => {
+    (
+      path: string,
+      titleHint?: string,
+      options?: OpenNoteOptions,
+    ): Promise<void> => {
       const title = resolveNoteDisplayTitle({
         path,
         title: titleHint,
@@ -56,7 +60,6 @@ export function useHomeWorkspaceTransitions<OpenNoteOptions>({
       const sequence = beginHomeOpenLoading({
         path,
         sequenceRef: homeOpenSequenceRef,
-        setHomeActive,
         setPendingOpen,
         title,
       });
@@ -66,11 +69,10 @@ export function useHomeWorkspaceTransitions<OpenNoteOptions>({
         sequence,
         title,
       };
-      setActiveArtifactId(null);
-      void openNote(path, titleHint, options)
+      return openNote(path, titleHint, options)
         .then(() => {
           if (
-            !clearHomeOpenLoading({
+            clearHomeOpenLoading({
               activePath: activePathRef.current,
               path,
               sequence,
@@ -78,14 +80,18 @@ export function useHomeWorkspaceTransitions<OpenNoteOptions>({
               setPendingOpen,
             })
           ) {
-            failHomeOpenLoading({
-              message: "无法打开笔记",
-              pending,
-              sequence,
-              sequenceRef: homeOpenSequenceRef,
-              setPendingOpen,
-            });
+            setActiveArtifactId(null);
+            setHomeActive(false);
+            return;
           }
+
+          failHomeOpenLoading({
+            message: "无法打开笔记",
+            pending,
+            sequence,
+            sequenceRef: homeOpenSequenceRef,
+            setPendingOpen,
+          });
         })
         .catch((error: unknown) => {
           failHomeOpenLoading({
@@ -121,7 +127,6 @@ export function useHomeWorkspaceTransitions<OpenNoteOptions>({
       kind: "new-note",
       path: null,
       sequenceRef: homeOpenSequenceRef,
-      setHomeActive,
       setPendingOpen,
       title,
     });
@@ -135,7 +140,7 @@ export function useHomeWorkspaceTransitions<OpenNoteOptions>({
     void handleNewNote()
       .then(() => {
         if (
-          !clearHomeNewNoteLoading({
+          clearHomeNewNoteLoading({
             activePath: activePathRef.current,
             previousPath,
             sequence,
@@ -143,14 +148,18 @@ export function useHomeWorkspaceTransitions<OpenNoteOptions>({
             setPendingOpen,
           })
         ) {
-          failHomeOpenLoading({
-            message: "新建笔记失败",
-            pending,
-            sequence,
-            sequenceRef: homeOpenSequenceRef,
-            setPendingOpen,
-          });
+          setActiveArtifactId(null);
+          setHomeActive(false);
+          return;
         }
+
+        failHomeOpenLoading({
+          message: "新建笔记失败",
+          pending,
+          sequence,
+          sequenceRef: homeOpenSequenceRef,
+          setPendingOpen,
+        });
       })
       .catch((error: unknown) => {
         failHomeOpenLoading({

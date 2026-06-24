@@ -18,6 +18,25 @@ function legacyEditorHtmlDigest(markdown: string): string {
 }
 
 describe("editor-html-cache", () => {
+  it("declares an explicit cache namespace so classified entries cannot share normal keys", () => {
+    const source = readSource("src/lib/editor-html-cache.ts");
+
+    expect(source).toContain("EditorHtmlCacheNamespace");
+    expect(source).toContain("function cacheKey");
+  });
+
+  it("keeps normal and classified HTML isolated for the same path and digest", () => {
+    setCachedEditorHtml("same.md", "<p>normal</p>", "digest", "normal");
+    setCachedEditorHtml("same.md", "<p>classified</p>", "digest", "classified");
+
+    expect(getCachedEditorHtml("same.md", "digest", "normal")).toBe(
+      "<p>normal</p>",
+    );
+    expect(getCachedEditorHtml("same.md", "digest", "classified")).toBe(
+      "<p>classified</p>",
+    );
+  });
+
   it("stores and retrieves html per path", () => {
     setCachedEditorHtml("a.md", "<p>x</p>", "digest-a");
     expect(getCachedEditorHtml("a.md", "digest-a")).toBe("<p>x</p>");
@@ -98,10 +117,9 @@ describe("editor-html-cache", () => {
     const source = readSource("src/components/editor/TipTapEditor.tsx");
 
     expect(source).toContain("editorHtmlDigest(initialBodyMarkdown)");
-    expect(source).toMatch(/getCachedEditorHtml\([^,\n]+,\s*htmlDigest\)/);
-    expect(source).toMatch(
-      /setCachedEditorHtml\([^,\n]+,[^,\n]+,\s*htmlDigest\)/,
-    );
+    expect(source).toContain("getCachedEditorHtml(");
+    expect(source).toContain("contentCacheNamespace");
+    expect(source).toContain("setCachedEditorHtml(");
   });
 
   it("AppEditorWorkspace remounts TipTapEditor when ingest cache format changes", () => {
@@ -109,7 +127,7 @@ describe("editor-html-cache", () => {
 
     expect(source).toContain("EDITOR_HTML_CACHE_FORMAT_VERSION");
     expect(source).toContain(
-      "key={`${activePath}:${EDITOR_HTML_CACHE_FORMAT_VERSION}`}",
+      'key={snapshot.path + ":" + EDITOR_HTML_CACHE_FORMAT_VERSION}',
     );
   });
 });

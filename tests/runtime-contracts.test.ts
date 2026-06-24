@@ -157,6 +157,10 @@ describe("runtime configuration contracts", () => {
     expect(html).toContain("/brand/iris-mark.svg");
     expect(html).toContain("唤醒知识网络");
     expect(html).toContain("准备笔记");
+    expect(html).toContain("--iris-preboot-bg: #1a1a1a");
+    expect(html).toContain("--iris-preboot-chrome: #1f1f1f");
+    expect(html).toContain("html.light");
+    expect(html).toContain("--iris-preboot-bg: #fbfbfa");
     expect(html).not.toContain(
       'class="iris-preboot-mark" aria-hidden="true">I',
     );

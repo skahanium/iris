@@ -300,6 +300,11 @@ export function useAssistantTasks({
     [contextReferences, getNoteContent, notePath],
   );
 
+  const getNoteContentForRequest = useCallback(
+    () => (notePath ? getNoteContent() : undefined),
+    [getNoteContent, notePath],
+  );
+
   const explicitIntentDetection = useCallback(
     (
       detectedIntent: AgentIntent,
@@ -420,7 +425,7 @@ export function useAssistantTasks({
           taskPlan: options?.taskPlan,
           images: options?.images,
           notePath,
-          noteContent: getNoteContent(),
+          noteContent: getNoteContentForRequest(),
           webAuthorized: webSearch,
           contextScope,
           sessionId,
@@ -540,7 +545,7 @@ export function useAssistantTasks({
       ensureAssistantStreamSlot,
       forceNewSessionRef,
       explicitIntentDetection,
-      getNoteContent,
+      getNoteContentForRequest,
       notePath,
       packets,
       panelSendActiveRef,
@@ -630,7 +635,7 @@ export function useAssistantTasks({
         contextReferences: currentContextReferences(),
         taskPlan,
         notePath,
-        noteContent: getNoteContent(),
+        noteContent: getNoteContentForRequest(),
         webAuthorized: webSearch,
         selection: ctx.selection,
         cursorContext: ctx.cursorContext,
@@ -666,7 +671,7 @@ export function useAssistantTasks({
       appendAssistantSummary,
       assistantRun,
       clearTaskSurfaces,
-      getNoteContent,
+      getNoteContentForRequest,
       getWritingContext,
       notePath,
       explicitIntentDetection,
@@ -831,7 +836,7 @@ export function useAssistantTasks({
         contextReferences: currentContextReferences(),
         taskPlan,
         notePath,
-        noteContent: getNoteContent(),
+        noteContent: getNoteContentForRequest(),
         webAuthorized: webSearch,
         chapter,
       });
@@ -861,6 +866,7 @@ export function useAssistantTasks({
       clearTaskSurfaces,
       explicitIntentDetection,
       getNoteContent,
+      getNoteContentForRequest,
       notePath,
       recordRunPlan,
       recordAssistantArtifacts,
@@ -893,7 +899,7 @@ export function useAssistantTasks({
         contextReferences: currentContextReferences(),
         taskPlan,
         notePath,
-        noteContent: getNoteContent(),
+        noteContent: getNoteContentForRequest(),
         webAuthorized: webSearch,
         documentCheckType: determineDocumentCheckType(rawMessage),
       });
@@ -941,7 +947,7 @@ export function useAssistantTasks({
       assistantRun,
       clearTaskSurfaces,
       explicitIntentDetection,
-      getNoteContent,
+      getNoteContentForRequest,
       notePath,
       recordRunPlan,
       recordAssistantArtifacts,

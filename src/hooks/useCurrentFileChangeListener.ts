@@ -17,6 +17,7 @@ interface UseCurrentFileChangeListenerParams {
   cancelPendingSave: () => void;
   discardOpenTab: (path: string) => Promise<void>;
   getLiveMarkdownRef: MutableRefObject<() => string>;
+  onFileChanged?: (path: string) => void;
   setConflictState: (state: ConflictState | null) => void;
 }
 
@@ -27,12 +28,14 @@ export function useCurrentFileChangeListener({
   cancelPendingSave,
   discardOpenTab,
   getLiveMarkdownRef,
+  onFileChanged,
   setConflictState,
 }: UseCurrentFileChangeListenerParams) {
   useEffect(() => {
     if (!isTauriRuntime()) return;
     let unlisten: (() => void) | undefined;
     void listenFileChanged((event) => {
+      onFileChanged?.(event.path);
       const currentPath = activePathRef.current;
       if (!currentPath || event.path !== currentPath) return;
       if (event.event_type === "removed") {
@@ -73,6 +76,7 @@ export function useCurrentFileChangeListener({
     cancelPendingSave,
     discardOpenTab,
     getLiveMarkdownRef,
+    onFileChanged,
     setConflictState,
   ]);
 }

@@ -15,7 +15,8 @@ interface ClassifiedPanelProps {
   waiting: boolean;
   idleDeadline: number | null;
   openClassifiedPaths: string[];
-  onOpenFile: (path: string) => void;
+  onOpenFile: (path: string) => void | Promise<void>;
+  onPrepareFile?: (path: string, titleHint?: string) => void;
   onUnlockSuccess: () => void;
   onRequestLock: () => Promise<boolean>;
   onActivity: () => void;
@@ -31,6 +32,7 @@ export function ClassifiedPanel({
   idleDeadline,
   openClassifiedPaths,
   onOpenFile,
+  onPrepareFile,
   onUnlockSuccess,
   onRequestLock,
   onActivity,
@@ -124,11 +126,12 @@ export function ClassifiedPanel({
           <ClassifiedFileList
             idleDeadline={idleDeadline}
             onLock={() => void handleLock()}
-            onOpenFile={(path) => {
+            onOpenFile={async (path) => {
               onActivity();
-              onOpenFile(path);
+              await onOpenFile(path);
               onClose();
             }}
+            onPrepareFile={onPrepareFile}
             onActivity={onActivity}
           />
         ) : null}

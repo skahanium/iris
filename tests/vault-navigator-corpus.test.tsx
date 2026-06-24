@@ -365,6 +365,55 @@ describe("VaultNavigator corpus assignment", () => {
     expect(folderRename).toHaveBeenCalledWith("policy/", "archive/policy");
   });
 
+  it("prepares visible files and closes only after async open resolves", async () => {
+    const onPrepare = vi.fn();
+    let resolveOpen!: () => void;
+    const onOpen = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveOpen = resolve;
+        }),
+    );
+    const onClose = vi.fn();
+
+    await act(async () => {
+      root.render(
+        <VaultNavigator
+          open
+          onClose={onClose}
+          onOpen={onOpen}
+          onPrepare={onPrepare}
+        />,
+      );
+    });
+    await vi.waitFor(() => {
+      expect(document.body.textContent).toContain("A");
+    });
+    expect(onPrepare).toHaveBeenCalledWith({
+      path: "policy/a.md",
+      title: "A",
+      updatedAt: "",
+      isLocked: false,
+    });
+
+    const fileButton = Array.from(document.querySelectorAll("button")).find(
+      (button) => button.textContent?.trim() === "A",
+    );
+    expect(fileButton).toBeTruthy();
+    await act(async () => {
+      fileButton?.click();
+      await Promise.resolve();
+    });
+    expect(onOpen).toHaveBeenCalledWith("policy/a.md");
+    expect(onClose).not.toHaveBeenCalled();
+
+    await act(async () => {
+      resolveOpen();
+      await Promise.resolve();
+    });
+    expect(onClose).toHaveBeenCalledOnce();
+  });
+
   it("does not expose HTML export in the file row", async () => {
     await renderNavigator();
     await selectPolicyFolder();

@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+﻿import { readFileSync } from "node:fs";
 
 import { describe, expect, it } from "vitest";
 
@@ -119,11 +119,21 @@ describe("document lifecycle source contracts", () => {
     );
   });
 
-  it("activateTab clears HTML cache before restoring session markdown", () => {
-    const source = read("src/hooks/useTabManager.ts");
-    expect(source).toContain("clearCachedEditorHtml(path)");
+  it("tab switching relies on digest-guarded editor HTML cache instead of clearing every open", () => {
+    const tabManager = read("src/hooks/useTabManager.ts");
+    const htmlCache = read("src/lib/editor-html-cache.ts");
+    expect(tabManager).not.toContain("clearCachedEditorHtml(path)");
+    expect(htmlCache).toContain("expectedDigest");
+    expect(htmlCache).toContain("entry.digest !== expectedDigest");
   });
 
+  it("syncs committed note title and body before the first painted editor frame", () => {
+    const source = read("src/hooks/useOpenNote.ts");
+    expect(source).toContain("useLayoutEffect");
+    expect(source).toMatch(
+      /useLayoutEffect\(\(\) => \{[\s\S]*?syncFromMarkdown\(markdownRef\.current, activePath\)/,
+    );
+  });
   it("path sync forwards freshly serialized editor markdown before remounting by path", () => {
     const source = read("src/hooks/useOpenNote.ts");
     expect(source).toContain("const liveMarkdown = serializeOpenNote({");
@@ -140,6 +150,28 @@ describe("document lifecycle source contracts", () => {
       "generation !== editorIngestGenerationRef.current",
     );
     expect(source).toContain("activePathRef.current !== path");
+  });
+
+  it("accepting an external change for the active note applies external markdown directly", () => {
+    const source = read("src/hooks/useFileConflictResolution.ts");
+
+    expect(source).toContain(
+      "const { externalContent, filePath } = conflictState",
+    );
+    expect(source).toContain("filePath === activePathRef.current");
+    expect(source).toContain("applyMarkdownToEditor(externalContent)");
+    expect(source).toContain("syncTabMarkdownCache(filePath, externalContent)");
+    expect(source).toContain("markClean(");
+    expect(source).toContain("openNoteLeavingHome(filePath)");
+  });
+
+  it("active classified tab leave snapshots write editor HTML to the classified cache namespace", () => {
+    const source = read("src/hooks/useAppPersistenceLifecycle.ts");
+
+    expect(source).toContain('from "@/lib/classified-path"');
+    expect(source).toContain(
+      'isClassifiedVaultPath(path) ? "classified" : "normal"',
+    );
   });
 
   it("assistant stream listens for retry status without prompt content", () => {

@@ -14,7 +14,7 @@ import type {
   OverlayId,
 } from "@/hooks/useOverlayManager";
 import type { TabItem } from "@/components/layout/TabBar";
-import type { ClassifiedStatus } from "@/types/ipc";
+import type { ClassifiedStatus, FileListItem } from "@/types/ipc";
 
 const GraphView = lazy(() =>
   import("@/components/graph/GraphView").then((m) => ({
@@ -94,7 +94,10 @@ interface AppOverlaysProps {
     path: string,
     titleHint?: string,
     options?: { allowClassified?: boolean },
-  ) => void;
+  ) => void | Promise<void>;
+  onPrepareNote?: (file: FileListItem) => void;
+  onPrepareNotePath?: (path: string, titleHint?: string) => void;
+  onPrepareClassifiedNotePath?: (path: string, titleHint?: string) => void;
   overlays: OverlayPort;
   refreshClassifiedStatus: () => Promise<ClassifiedStatus>;
   requestClassifiedLock: () => Promise<boolean>;
@@ -132,6 +135,9 @@ export function AppOverlays({
   onFileDeleted,
   openClassifiedPaths,
   openNoteLeavingHome,
+  onPrepareNote,
+  onPrepareNotePath,
+  onPrepareClassifiedNotePath,
   overlays,
   refreshClassifiedStatus,
   requestClassifiedLock,
@@ -151,12 +157,14 @@ export function AppOverlays({
       <QuickOpen
         open={overlays.quickOpen}
         onClose={() => overlays.closeOverlay("quickOpen")}
+        onPrepare={onPrepareNote}
         onSelect={openNoteLeavingHome}
       />
       <VaultNavigator
         open={overlays.fileSheet}
         onClose={() => overlays.closeOverlay("fileSheet")}
         onOpen={openNoteLeavingHome}
+        onPrepare={onPrepareNote}
         onBeforeFilePathChange={onBeforeFilePathChange}
         onFilePathChanged={onFilePathChanged}
         onBeforeFileDelete={onBeforeFileDelete}
@@ -172,6 +180,7 @@ export function AppOverlays({
         open={overlays.searchOpen}
         onClose={() => overlays.closeOverlay("search")}
         onOpen={openNoteLeavingHome}
+        onPrepare={onPrepareNotePath}
       />
       <Suspense fallback={<LazyFallback />}>
         <ManagementCenterPanel
@@ -182,6 +191,7 @@ export function AppOverlays({
           webSearch={webSearch}
           onWebSearchChange={setWebSearch}
           onOpenNote={openNoteLeavingHome}
+          onPrepareNote={onPrepareNote}
           onOpenKnowledgeRelations={openKnowledgeRelations}
           onOpenVersion={openVersion}
           onRescanVault={rescanVault}
@@ -199,6 +209,7 @@ export function AppOverlays({
         onClose={() => overlays.closeOverlay("knowledgeRelations")}
         notePath={activePath}
         onOpen={openNoteLeavingHome}
+        onPreparePath={onPrepareNotePath}
       />
       <Suspense fallback={<LazyFallback />}>
         <VersionTimeline
@@ -225,6 +236,7 @@ export function AppOverlays({
             open={overlays.graphOpen}
             onClose={() => overlays.closeOverlay("graph")}
             onOpenNote={openNoteLeavingHome}
+            onPrepareNotePath={onPrepareNotePath}
           />
         </Suspense>
       </ErrorBoundary>
@@ -247,6 +259,7 @@ export function AppOverlays({
         onOpenFile={(path) =>
           openNoteLeavingHome(path, undefined, { allowClassified: true })
         }
+        onPrepareFile={onPrepareClassifiedNotePath}
         onUnlockSuccess={() => void onClassifiedUnlocked()}
         onRequestLock={() => requestClassifiedLock()}
         onActivity={touchClassifiedActivity}

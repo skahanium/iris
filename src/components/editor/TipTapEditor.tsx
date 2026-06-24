@@ -40,6 +40,7 @@ import {
   getCachedEditorHtml,
   setCachedEditorHtml,
 } from "@/lib/editor-html-cache";
+import type { EditorHtmlCacheNamespace } from "@/lib/editor-html-cache";
 import { ingestMarkdownForEditor } from "@/lib/editor-ingest";
 import { EDITOR_PARSE_OPTIONS } from "@/lib/editor-parse-options";
 
@@ -100,6 +101,9 @@ interface TipTapEditorProps {
   /** When set, reuse cached TipTap HTML for this path (tab switch). */
   contentCacheKey?: string | null;
 
+  /** Separates normal and classified prepared editor HTML. */
+  contentCacheNamespace?: EditorHtmlCacheNamespace;
+
   /** Absolute vault path used only to render vault-relative asset URLs. */
   vaultPath?: string | null;
 
@@ -127,6 +131,8 @@ interface TipTapEditorProps {
   onInlineAiAccept?: (editor: Editor) => void;
 
   onOpenWikiLink?: (title: string) => void;
+
+  onPrepareWikiLink?: (title: string) => void;
 
   zoom?: number;
 
@@ -156,6 +162,8 @@ function TipTapEditorInner({
 
   contentCacheKey = null,
 
+  contentCacheNamespace = "normal",
+
   vaultPath = null,
 
   reingestKey = 0,
@@ -177,6 +185,8 @@ function TipTapEditorInner({
   onInlineAiAccept,
 
   onOpenWikiLink,
+
+  onPrepareWikiLink,
 
   onIngestComplete,
 
@@ -223,12 +233,18 @@ function TipTapEditorInner({
 
   onOpenWikiLinkRef.current = onOpenWikiLink;
 
+  const onPrepareWikiLinkRef = useRef(onPrepareWikiLink);
+
+  onPrepareWikiLinkRef.current = onPrepareWikiLink;
+
   const onIngestCompleteRef = useRef(onIngestComplete);
 
   onIngestCompleteRef.current = onIngestComplete;
 
   const contentCacheKeyRef = useRef(contentCacheKey);
   contentCacheKeyRef.current = contentCacheKey;
+  const contentCacheNamespaceRef = useRef(contentCacheNamespace);
+  contentCacheNamespaceRef.current = contentCacheNamespace;
 
   const bodyStatsTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -361,6 +377,7 @@ function TipTapEditorInner({
 
       WikiLinkExtension.configure({
         onOpenNote: (title) => onOpenWikiLinkRef.current?.(title),
+        onPrepareNote: (title) => onPrepareWikiLinkRef.current?.(title),
       }),
     ],
 
@@ -380,7 +397,11 @@ function TipTapEditorInner({
     const bodyMd = initialBodyMarkdown.trim();
     const htmlDigest = editorHtmlDigest(initialBodyMarkdown);
     if (contentCacheKey && bodyMd && !skipHtmlCache) {
-      const cached = getCachedEditorHtml(contentCacheKey, htmlDigest);
+      const cached = getCachedEditorHtml(
+        contentCacheKey,
+        htmlDigest,
+        contentCacheNamespace,
+      );
       if (cached) {
         return cached;
       }
@@ -394,12 +415,23 @@ function TipTapEditorInner({
     ingestResultRef.current = { preserveFragments, bodyMd };
 
     if (contentCacheKey && bodyMd) {
-      setCachedEditorHtml(contentCacheKey, tipTapHtml, htmlDigest);
+      setCachedEditorHtml(
+        contentCacheKey,
+        tipTapHtml,
+        htmlDigest,
+        contentCacheNamespace,
+      );
     }
 
     return tipTapHtml;
     // eslint-disable-next-line react-hooks/exhaustive-deps -- reingestKey busts HTML cache on disk reload
-  }, [initialBodyMarkdown, contentCacheKey, reingestKey, skipHtmlCache]);
+  }, [
+    initialBodyMarkdown,
+    contentCacheKey,
+    contentCacheNamespace,
+    reingestKey,
+    skipHtmlCache,
+  ]);
 
   // Fire onIngestComplete after render (not inside useMemo)
   useEffect(() => {
@@ -413,9 +445,9 @@ function TipTapEditorInner({
   // Clear HTML cache on disk reload so reingest uses fresh markdown
   useEffect(() => {
     if (reingestKey > 0 && contentCacheKey) {
-      clearCachedEditorHtml(contentCacheKey);
+      clearCachedEditorHtml(contentCacheKey, contentCacheNamespace);
     }
-  }, [reingestKey, contentCacheKey]);
+  }, [reingestKey, contentCacheKey, contentCacheNamespace]);
 
   const editor = useEditor({
     extensions,
@@ -439,12 +471,18 @@ function TipTapEditorInner({
 
       // Throttled HTML cache update (2s) so tab-switch shows latest content
       const key = contentCacheKeyRef.current;
+      const namespace = contentCacheNamespaceRef.current;
       if (key) {
         const htmlDigest = editorHtmlDigest(initialBodyMarkdown);
         if (htmlCacheTimerRef.current) clearTimeout(htmlCacheTimerRef.current);
         htmlCacheTimerRef.current = setTimeout(() => {
           htmlCacheTimerRef.current = null;
-          setCachedEditorHtml(key, updatedEditor.getHTML(), htmlDigest);
+          setCachedEditorHtml(
+            key,
+            updatedEditor.getHTML(),
+            htmlDigest,
+            namespace,
+          );
         }, 2000);
       }
     },

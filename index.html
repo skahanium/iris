@@ -27,6 +27,17 @@
     <style>
       :root {
         color-scheme: dark;
+        --iris-preboot-bg: #1a1a1a;
+        --iris-preboot-fg: #ededed;
+        --iris-preboot-muted: #8c8c8c;
+        --iris-preboot-surface: #242424;
+        --iris-preboot-chrome: #1f1f1f;
+        --iris-preboot-border: rgb(255 255 255 / 0.1);
+        --iris-preboot-accent: #7d9488;
+      }
+
+      html.light {
+        color-scheme: light;
         --iris-preboot-bg: #fbfbfa;
         --iris-preboot-fg: #242424;
         --iris-preboot-muted: #737373;
@@ -34,10 +45,6 @@
         --iris-preboot-chrome: #f7f7f6;
         --iris-preboot-border: rgb(0 0 0 / 0.1);
         --iris-preboot-accent: #8fa99b;
-      }
-
-      html.light {
-        color-scheme: light;
       }
 
       html,
@@ -134,10 +141,14 @@
         place-items: center;
         border: 1px solid var(--iris-preboot-border);
         border-radius: 1.5rem;
-        background: rgb(255 255 255 / 0.82);
+        background: color-mix(
+          in srgb,
+          var(--iris-preboot-surface) 82%,
+          transparent
+        );
         box-shadow:
           0 18px 48px rgb(0 0 0 / 0.18),
-          inset 0 1px 0 rgb(36 36 36 / 0.08);
+          inset 0 1px 0 rgb(255 255 255 / 0.08);
       }
 
       .iris-preboot-mark-shell img {

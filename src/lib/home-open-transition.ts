@@ -16,7 +16,6 @@ interface BeginHomeOpenLoadingOptions {
   kind?: HomePendingOpenKind;
   path: string | null;
   sequenceRef: CurrentRef<number>;
-  setHomeActive: (active: boolean) => void;
   setPendingOpen: (pending: HomePendingOpen | null) => void;
   title: string;
 }
@@ -49,7 +48,6 @@ export function beginHomeOpenLoading({
   kind = "note",
   path,
   sequenceRef,
-  setHomeActive,
   setPendingOpen,
   title,
 }: BeginHomeOpenLoadingOptions): number {
@@ -60,7 +58,6 @@ export function beginHomeOpenLoading({
     sequence: sequenceRef.current,
     title,
   });
-  setHomeActive(false);
   return sequenceRef.current;
 }
 

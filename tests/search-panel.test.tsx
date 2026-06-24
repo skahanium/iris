@@ -73,7 +73,8 @@ describe("SearchPanel", () => {
 
     setQuery("hello");
     const searchBtn = Array.from(document.querySelectorAll("button")).find(
-      (b) => b.textContent === "搜索",
+      (b) =>
+        b.textContent?.includes("搜索") || b.textContent?.includes("鎼滅储"),
     );
     expect(searchBtn).toBeTruthy();
     await act(async () => {
@@ -95,6 +96,47 @@ describe("SearchPanel", () => {
     expect(onOpen).toHaveBeenCalledWith("notes/a.md");
     expect(onClose).toHaveBeenCalled();
     expect(searchSemantic).not.toHaveBeenCalled();
+  });
+
+  it("keeps the overlay open until async note opening resolves", async () => {
+    let resolveOpen!: () => void;
+    const onOpen = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveOpen = resolve;
+        }),
+    );
+    const onClose = vi.fn();
+    renderPanel({ onOpen, onClose });
+
+    setQuery("hello");
+    const searchBtn = Array.from(document.querySelectorAll("button")).find(
+      (b) =>
+        b.textContent?.includes("搜索") || b.textContent?.includes("鎼滅储"),
+    );
+    expect(searchBtn).toBeTruthy();
+    await act(async () => {
+      searchBtn?.click();
+    });
+    let hit: HTMLButtonElement | undefined;
+    await vi.waitFor(() => {
+      hit = Array.from(document.querySelectorAll("button")).find((b) =>
+        b.textContent?.includes("Note A"),
+      );
+      expect(hit).toBeTruthy();
+    });
+    await act(async () => {
+      hit?.click();
+      await Promise.resolve();
+    });
+    expect(onOpen).toHaveBeenCalledWith("notes/a.md");
+    expect(onClose).not.toHaveBeenCalled();
+
+    await act(async () => {
+      resolveOpen();
+      await Promise.resolve();
+    });
+    expect(onClose).toHaveBeenCalledOnce();
   });
 
   it("runs semantic search when semantic mode is selected", async () => {

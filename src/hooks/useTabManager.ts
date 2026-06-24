@@ -3,13 +3,18 @@ import { useCallback, useRef, useState } from "react";
 import type { TabItem } from "@/components/layout/TabBar";
 import { isClassifiedVaultPath } from "@/lib/classified-path";
 import { displayTitleFromMarkdown } from "@/lib/document-title";
-import { clearCachedEditorHtml } from "@/lib/editor-html-cache";
-import { extractFrontmatterYaml } from "@/lib/markdown";
+import { parseNoteForEditor } from "@/lib/markdown";
 import { fileRead } from "@/lib/ipc";
 import { createDefaultNote } from "@/lib/note-create";
 import { discardEmptyNoteIfNeeded } from "@/lib/note-tab-lifecycle";
-import { resolveNoteDisplayTitle } from "@/lib/note-display";
+import { pathStem, resolveNoteDisplayTitle } from "@/lib/note-display";
 import { mergeTabsAfterPathRename } from "@/lib/note-tab-rename";
+import {
+  emitNoteOpenVisibleCommitTrace,
+  type NoteOpenBudgetKind,
+  type PrepareNoteOpenRequest,
+  type PreparedNoteOpen,
+} from "@/lib/note-open-preparation";
 
 interface UseTabManagerOptions {
   onStatusChange?: (status: string) => void;
@@ -20,6 +25,46 @@ interface UseTabManagerOptions {
 
 interface OpenNoteOptions {
   allowClassified?: boolean;
+  openBudgetKind?: NoteOpenBudgetKind;
+  openStartedAt?: number;
+  openTraceRequest?: PrepareNoteOpenRequest;
+  preparedNote?: PreparedNoteOpen;
+}
+
+export interface PendingNoteOpen {
+  bodyMarkdown: string;
+  content: string;
+  frontmatterYaml: string | null;
+  isLocked: boolean;
+  namespace: "normal" | "classified";
+  openBudgetKind?: NoteOpenBudgetKind;
+  openStartedAt?: number;
+  openTraceRequest?: PrepareNoteOpenRequest;
+  path: string;
+  sequence: number;
+  title: string;
+}
+
+interface PendingNoteOpenCommit extends PendingNoteOpen {
+  discardedPreviousPath: string | null;
+  reject: (error: Error) => void;
+  resolve: () => void;
+}
+
+const OPEN_SUPERSEDED = "IRIS_OPEN_SUPERSEDED";
+
+function createSupersededError(): Error {
+  const error = new Error(OPEN_SUPERSEDED);
+  error.name = OPEN_SUPERSEDED;
+  return error;
+}
+
+function isSupersededError(error: unknown): boolean {
+  return error instanceof Error && error.name === OPEN_SUPERSEDED;
+}
+
+function namespaceForPath(path: string): "normal" | "classified" {
+  return isClassifiedVaultPath(path) ? "classified" : "normal";
 }
 
 export function useTabManager(options: UseTabManagerOptions = {}) {
@@ -32,17 +77,28 @@ export function useTabManager(options: UseTabManagerOptions = {}) {
   const [markdown, setMarkdownState] = useState("");
   /** Incremented when disk content is loaded into tab state (not on editor save). */
   const [editorContentTick, setEditorContentTick] = useState(0);
+  const [pendingNoteOpen, setPendingNoteOpen] =
+    useState<PendingNoteOpen | null>(null);
   const activePathRef = useRef<string | null>(null);
   const markdownRef = useRef("");
   const frontmatterYamlRef = useRef<string | null>(null);
   const tabsRef = useRef(tabs);
   const openFileSeqRef = useRef(0);
+  const pendingNoteOpenCommitRef = useRef<PendingNoteOpenCommit | null>(null);
   const tabMarkdownCacheRef = useRef(new Map<string, string>());
   const tabLockCacheRef = useRef(new Map<string, boolean>());
   const [activeFileLocked, setActiveFileLocked] = useState(false);
 
   activePathRef.current = activePath;
   tabsRef.current = tabs;
+
+  const cancelPendingNoteOpen = useCallback(() => {
+    const pending = pendingNoteOpenCommitRef.current;
+    if (!pending) return;
+    pendingNoteOpenCommitRef.current = null;
+    pending.reject(createSupersededError());
+    setPendingNoteOpen(null);
+  }, []);
 
   const setMarkdown = useCallback((md: string) => {
     markdownRef.current = md;
@@ -56,13 +112,14 @@ export function useTabManager(options: UseTabManagerOptions = {}) {
   const getEditorMarkdown = useCallback(() => markdownRef.current, []);
 
   const clearEditorState = useCallback(() => {
+    cancelPendingNoteOpen();
     activePathRef.current = null;
     markdownRef.current = "";
     frontmatterYamlRef.current = null;
     setActivePath(null);
     setActiveFileLocked(false);
     setMarkdown("");
-  }, [setMarkdown]);
+  }, [cancelPendingNoteOpen, setMarkdown]);
 
   const setFileLocked = useCallback((path: string, locked: boolean) => {
     tabLockCacheRef.current.set(path, locked);
@@ -112,6 +169,140 @@ export function useTabManager(options: UseTabManagerOptions = {}) {
     [onVaultIndexBump],
   );
 
+  const buildPendingNoteOpen = useCallback(
+    ({
+      content,
+      isLocked,
+      openBudgetKind,
+      openStartedAt,
+      openTraceRequest,
+      path,
+      preparedNote,
+      sequence,
+      titleHint,
+    }: {
+      content: string;
+      isLocked: boolean;
+      openBudgetKind?: NoteOpenBudgetKind;
+      openStartedAt?: number;
+      openTraceRequest?: PrepareNoteOpenRequest;
+      path: string;
+      preparedNote: PreparedNoteOpen | null;
+      sequence: number;
+      titleHint?: string;
+    }): PendingNoteOpen => {
+      const parsed = preparedNote
+        ? null
+        : parseNoteForEditor(content, pathStem(path));
+      const bodyMarkdown = preparedNote?.bodyMarkdown ?? parsed!.bodyMd;
+      const frontmatterYaml = preparedNote?.frontmatterYaml ?? parsed!.yaml;
+      const fromMarkdown = displayTitleFromMarkdown(content, "");
+      const title = resolveNoteDisplayTitle({
+        path,
+        title:
+          preparedNote?.title ||
+          fromMarkdown ||
+          titleHint?.trim() ||
+          parsed?.title,
+        markdown: content,
+      });
+      return {
+        bodyMarkdown,
+        content,
+        frontmatterYaml,
+        isLocked,
+        namespace: namespaceForPath(path),
+        openBudgetKind,
+        openStartedAt,
+        openTraceRequest,
+        path,
+        sequence,
+        title,
+      };
+    },
+    [],
+  );
+
+  const stagePendingNoteOpen = useCallback(
+    (
+      pending: PendingNoteOpen,
+      discardedPreviousPath: string | null,
+    ): Promise<void> => {
+      cancelPendingNoteOpen();
+      return new Promise<void>((resolve, reject) => {
+        pendingNoteOpenCommitRef.current = {
+          ...pending,
+          discardedPreviousPath,
+          reject,
+          resolve,
+        };
+        setPendingNoteOpen(pending);
+      });
+    },
+    [cancelPendingNoteOpen],
+  );
+
+  const commitPendingNoteOpen = useCallback(
+    (path: string, sequence: number): boolean => {
+      const pending = pendingNoteOpenCommitRef.current;
+      if (!pending || pending.path !== path || pending.sequence !== sequence) {
+        return false;
+      }
+
+      pendingNoteOpenCommitRef.current = null;
+      tabLockCacheRef.current.set(path, pending.isLocked);
+      tabMarkdownCacheRef.current.set(path, pending.content);
+      frontmatterYamlRef.current = pending.frontmatterYaml;
+      activePathRef.current = path;
+      markdownRef.current = pending.content;
+      setActiveFileLocked(pending.isLocked);
+      setActivePath(path);
+      setMarkdownState(pending.content);
+      setEditorContentTick((tick) => tick + 1);
+      setTabs((prev) => {
+        const withoutDiscarded = pending.discardedPreviousPath
+          ? prev.filter((tab) => tab.path !== pending.discardedPreviousPath)
+          : prev;
+        if (withoutDiscarded.some((tab) => tab.path === path)) {
+          return withoutDiscarded.map((tab) =>
+            tab.path === path
+              ? {
+                  ...tab,
+                  dirty: false,
+                  locked: pending.isLocked,
+                  title: pending.title,
+                }
+              : tab,
+          );
+        }
+        return [
+          ...withoutDiscarded,
+          {
+            dirty: false,
+            locked: pending.isLocked,
+            path,
+            title: pending.title,
+          },
+        ];
+      });
+      setPendingNoteOpen(null);
+      if (
+        pending.openStartedAt !== undefined &&
+        pending.openTraceRequest &&
+        pending.openBudgetKind
+      ) {
+        emitNoteOpenVisibleCommitTrace(
+          pending.openTraceRequest,
+          pending.openStartedAt,
+          pending.openBudgetKind,
+        );
+      }
+      pending.resolve();
+      return true;
+    },
+    [],
+  );
+
   const openFile = useCallback(
     async (
       path: string,
@@ -123,6 +314,8 @@ export function useTabManager(options: UseTabManagerOptions = {}) {
         return;
       }
       const seq = ++openFileSeqRef.current;
+      const openStartedAt = options?.openStartedAt ?? performance.now();
+      cancelPendingNoteOpen();
       const current = activePathRef.current;
 
       const previousCleanupPromise =
@@ -136,9 +329,23 @@ export function useTabManager(options: UseTabManagerOptions = {}) {
             })()
           : Promise.resolve(false);
 
-      const readPromise = fileRead(path, {
-        allowClassified: options?.allowClassified === true,
-      });
+      const preparedNote =
+        options?.preparedNote?.path === path ? options.preparedNote : null;
+      const openBudgetKind =
+        options?.openBudgetKind ?? (preparedNote ? "hot" : "none");
+      const openTraceRequest = options?.openTraceRequest ?? {
+        allowClassified: options?.allowClassified,
+        path,
+        titleHint,
+      };
+      const readPromise = preparedNote
+        ? Promise.resolve({
+            content: preparedNote.content,
+            isLocked: preparedNote.isLocked,
+          })
+        : fileRead(path, {
+            allowClassified: options?.allowClassified === true,
+          });
 
       try {
         const [{ content, isLocked }, discardedPrevious] = await Promise.all([
@@ -146,47 +353,36 @@ export function useTabManager(options: UseTabManagerOptions = {}) {
           previousCleanupPromise,
         ]);
         if (openFileSeqRef.current !== seq) return;
-        if (discardedPrevious && current) {
-          setTabs((prev) => prev.filter((t) => t.path !== current));
-        }
-        tabLockCacheRef.current.set(path, isLocked);
-        setActiveFileLocked(isLocked);
-        frontmatterYamlRef.current = extractFrontmatterYaml(content);
-        const fromMarkdown = displayTitleFromMarkdown(content, "");
-        const title = resolveNoteDisplayTitle({
+        const pending = buildPendingNoteOpen({
+          content,
+          isLocked,
+          openBudgetKind,
+          openStartedAt,
+          openTraceRequest,
           path,
-          title: fromMarkdown || titleHint?.trim(),
-          markdown: content,
+          preparedNote,
+          sequence: seq,
+          titleHint,
         });
-        clearCachedEditorHtml(path);
-        tabMarkdownCacheRef.current.set(path, content);
-        activePathRef.current = path;
-        setActivePath(path);
-        setMarkdown(content);
-        setEditorContentTick((t) => t + 1);
-        setTabs((prev) => {
-          if (prev.some((t) => t.path === path)) {
-            return prev.map((t) =>
-              t.path === path
-                ? { ...t, title, dirty: false, locked: isLocked }
-                : t,
-            );
-          }
-          return [...prev, { path, title, dirty: false, locked: isLocked }];
-        });
+        await stagePendingNoteOpen(
+          pending,
+          discardedPrevious && current ? current : null,
+        );
       } catch (e) {
-        if (openFileSeqRef.current !== seq) return;
+        if (openFileSeqRef.current !== seq || isSupersededError(e)) return;
         const msg = e instanceof Error ? e.message : String(e);
         onStatusChange?.(`无法打开笔记：${msg}`);
         onVaultIndexBump?.();
       }
     },
     [
+      buildPendingNoteOpen,
+      cancelPendingNoteOpen,
       maybeDiscardOnLeave,
       onStatusChange,
       onVaultIndexBump,
       persistAndCacheTab,
-      setMarkdown,
+      stagePendingNoteOpen,
     ],
   );
 
@@ -199,26 +395,49 @@ export function useTabManager(options: UseTabManagerOptions = {}) {
       }
       if (activePathRef.current === path) return;
 
+      const seq = ++openFileSeqRef.current;
+      const openStartedAt = performance.now();
+      cancelPendingNoteOpen();
       const leaving = activePathRef.current;
       if (leaving) {
         await persistAndCacheTab(leaving);
       }
+      if (openFileSeqRef.current !== seq) return;
 
       const cached = tabMarkdownCacheRef.current.get(path);
+      const cachedTitle = tabsRef.current.find(
+        (tab) => tab.path === path,
+      )?.title;
       if (cached) {
-        clearCachedEditorHtml(path);
-        activePathRef.current = path;
-        setActivePath(path);
-        frontmatterYamlRef.current = extractFrontmatterYaml(cached);
-        setMarkdown(cached);
-        setActiveFileLocked(tabLockCacheRef.current.get(path) ?? false);
-        setEditorContentTick((t) => t + 1);
+        const pending = buildPendingNoteOpen({
+          content: cached,
+          isLocked: tabLockCacheRef.current.get(path) ?? false,
+          openBudgetKind: "warm",
+          openStartedAt,
+          openTraceRequest: { path, titleHint: cachedTitle },
+          path,
+          preparedNote: null,
+          sequence: seq,
+          titleHint: cachedTitle,
+        });
+        await stagePendingNoteOpen(pending, null);
         return;
       }
 
-      await openFile(path, undefined, { skipDiscardPrevious: true });
+      await openFile(path, undefined, {
+        openBudgetKind: "none",
+        openStartedAt,
+        openTraceRequest: { path, titleHint: cachedTitle },
+        skipDiscardPrevious: true,
+      });
     },
-    [openFile, persistAndCacheTab, setMarkdown],
+    [
+      buildPendingNoteOpen,
+      cancelPendingNoteOpen,
+      openFile,
+      persistAndCacheTab,
+      stagePendingNoteOpen,
+    ],
   );
 
   /** Open a note from the vault UI: reuse tab session when already open. */
@@ -293,33 +512,48 @@ export function useTabManager(options: UseTabManagerOptions = {}) {
 
       tabMarkdownCacheRef.current.delete(path);
       tabLockCacheRef.current.delete(path);
-      setTabs(nextTabs);
 
       if (!isActive) {
+        setTabs(nextTabs);
         return;
       }
       if (switchTo === null) {
+        setTabs(nextTabs);
         clearEditorState();
         return;
       }
 
       const cached = tabMarkdownCacheRef.current.get(switchTo);
       if (cached !== undefined) {
-        clearCachedEditorHtml(switchTo);
-        activePathRef.current = switchTo;
-        setActivePath(switchTo);
-        frontmatterYamlRef.current = extractFrontmatterYaml(cached);
-        setMarkdown(cached);
-        setActiveFileLocked(tabLockCacheRef.current.get(switchTo) ?? false);
-        setEditorContentTick((t) => t + 1);
+        const seq = ++openFileSeqRef.current;
+        cancelPendingNoteOpen();
+        const pending = buildPendingNoteOpen({
+          content: cached,
+          isLocked: tabLockCacheRef.current.get(switchTo) ?? false,
+          openBudgetKind: "warm",
+          openStartedAt: performance.now(),
+          openTraceRequest: {
+            path: switchTo,
+            titleHint: nextTabs.find((tab) => tab.path === switchTo)?.title,
+          },
+          path: switchTo,
+          preparedNote: null,
+          sequence: seq,
+          titleHint: nextTabs.find((tab) => tab.path === switchTo)?.title,
+        });
+        await stagePendingNoteOpen(pending, path);
         return;
       }
 
-      activePathRef.current = null;
-      setActivePath(null);
       await openFile(switchTo, undefined, { skipDiscardPrevious: true });
     },
-    [clearEditorState, openFile, setMarkdown],
+    [
+      buildPendingNoteOpen,
+      cancelPendingNoteOpen,
+      clearEditorState,
+      openFile,
+      stagePendingNoteOpen,
+    ],
   );
 
   const handleNewNote = useCallback(async () => {
@@ -342,6 +576,7 @@ export function useTabManager(options: UseTabManagerOptions = {}) {
         skipDiscardPrevious: true,
       });
     } catch (e) {
+      if (isSupersededError(e)) return;
       const msg = e instanceof Error ? e.message : String(e);
       onStatusChange?.(`新建笔记失败：${msg}`);
     }
@@ -398,7 +633,7 @@ export function useTabManager(options: UseTabManagerOptions = {}) {
         mergeTabsAfterPathRename(prev, oldPath, newPath, displayTitle),
       );
       if (activePathRef.current === oldPath) {
-        // 路径变更会 remount 编辑器（key=path），须先同步内存正文避免从陈旧 state 恢复
+        // Path change remounts the editor (key=path); sync markdown first to avoid restoring stale state.
         activePathRef.current = newPath;
         setActivePath(newPath);
         setMarkdown(markdownOverride ?? markdownRef.current);
@@ -443,6 +678,7 @@ export function useTabManager(options: UseTabManagerOptions = {}) {
     activeFileLocked,
     markdown,
     editorContentTick,
+    pendingNoteOpen,
     activePathRef,
     markdownRef,
     frontmatterYamlRef,
@@ -452,6 +688,7 @@ export function useTabManager(options: UseTabManagerOptions = {}) {
     openFile,
     openNote,
     activateTab,
+    commitPendingNoteOpen,
     closeTab,
     discardOpenTab,
     handleNewNote,

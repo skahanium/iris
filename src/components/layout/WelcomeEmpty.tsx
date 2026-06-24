@@ -5,16 +5,19 @@ import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/common/ConfirmDialog";
 import { displayTitleForFileListItem } from "@/lib/note-display";
 import { fileDelete, fileList } from "@/lib/ipc";
+import type { HomePendingOpen } from "@/lib/home-open-transition";
 import type { FileListItem } from "@/types/ipc";
 
 interface WelcomeEmptyProps {
   /** Reload recent list when vault changes. */
   vaultKey?: string | null;
   onOpen: (path: string, titleHint?: string) => void;
+  onPrepare?: (file: FileListItem) => void;
   onNew: () => void | Promise<void>;
   onQuickOpen?: () => void;
   onSearch?: () => void;
   onOpenAiManagement?: () => void;
+  pendingOpen?: HomePendingOpen | null;
 }
 
 function dedupeByPath(files: FileListItem[]): FileListItem[] {
@@ -31,9 +34,11 @@ export function WelcomeEmpty({
   vaultKey,
   onOpen,
   onNew,
+  onPrepare,
   onQuickOpen,
   onSearch,
   onOpenAiManagement,
+  pendingOpen,
 }: WelcomeEmptyProps) {
   const [recent, setRecent] = useState<FileListItem[]>([]);
   const [deleteTarget, setDeleteTarget] = useState<FileListItem | null>(null);
@@ -41,9 +46,11 @@ export function WelcomeEmpty({
   const loadRecent = useCallback(() => {
     void fileList().then((files) => {
       const deduped = dedupeByPath(files);
-      setRecent(deduped.slice(0, 5));
+      const nextRecent = deduped.slice(0, 5);
+      setRecent(nextRecent);
+      nextRecent.forEach((file) => onPrepare?.(file));
     });
-  }, []);
+  }, [onPrepare]);
 
   useEffect(() => {
     loadRecent();
@@ -128,15 +135,26 @@ export function WelcomeEmpty({
                   <li
                     key={f.path}
                     className="group flex items-center transition-colors duration-base ease-iris-out hover:bg-surface-inset/60"
+                    onMouseEnter={() => onPrepare?.(f)}
                   >
                     <button
                       type="button"
-                      className="min-w-0 flex-1 px-2 py-3 text-left"
+                      className="min-w-0 flex-1 px-2 py-3 text-left disabled:cursor-progress disabled:opacity-70"
+                      disabled={
+                        pendingOpen?.path === f.path && !pendingOpen.error
+                      }
+                      data-opening={pendingOpen?.path === f.path || undefined}
+                      onFocus={() => onPrepare?.(f)}
                       onClick={() => onOpen(f.path, title)}
                     >
                       <span className="block truncate text-sm text-foreground">
                         {title}
                       </span>
+                      {pendingOpen?.path === f.path ? (
+                        <span className="mt-1 block truncate text-xs text-muted-foreground">
+                          {pendingOpen.error ?? "Opening..."}
+                        </span>
+                      ) : null}
                     </button>
                     <Button
                       type="button"

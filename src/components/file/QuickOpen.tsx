@@ -4,6 +4,7 @@ import {
   useCallback,
   useEffect,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
 } from "react";
@@ -27,10 +28,16 @@ import type { FileListItem } from "@/types/ipc";
 interface QuickOpenProps {
   open: boolean;
   onClose: () => void;
-  onSelect: (path: string) => void;
+  onPrepare?: (file: FileListItem) => void;
+  onSelect: (path: string) => void | Promise<void>;
 }
 
-export function QuickOpen({ open, onClose, onSelect }: QuickOpenProps) {
+export function QuickOpen({
+  open,
+  onClose,
+  onPrepare,
+  onSelect,
+}: QuickOpenProps) {
   const [query, setQuery] = useState("");
   const [files, setFiles] = useState<FileListItem[]>([]);
   const parentRef = useRef<HTMLDivElement>(null);
@@ -56,6 +63,13 @@ export function QuickOpen({ open, onClose, onSelect }: QuickOpenProps) {
   });
   filteredRef.current = filtered;
 
+  const visibleFiles = useMemo(() => filtered.slice(0, 30), [filtered]);
+
+  useEffect(() => {
+    if (!open) return;
+    visibleFiles.forEach((file) => onPrepare?.(file));
+  }, [open, onPrepare, visibleFiles]);
+
   const { highlight, setHighlight, handleKeyDown, navDeltaRef } =
     useListboxKeyboard({
       length: filtered.length,
@@ -64,10 +78,22 @@ export function QuickOpen({ open, onClose, onSelect }: QuickOpenProps) {
       onActivate: (index) => {
         const item = filteredRef.current[index];
         if (!item) return;
-        onSelectRef.current(item.path);
-        onCloseRef.current();
+        void (async () => {
+          try {
+            await onSelectRef.current(item.path);
+            onCloseRef.current();
+          } catch {
+            /* Keep Quick Open visible so the user can retry. */
+          }
+        })();
       },
     });
+
+  useEffect(() => {
+    if (!open) return;
+    const item = filtered[highlight];
+    if (item) onPrepare?.(item);
+  }, [filtered, highlight, onPrepare, open]);
 
   const virtualizer = useVirtualizer({
     count: filtered.length,
@@ -75,6 +101,18 @@ export function QuickOpen({ open, onClose, onSelect }: QuickOpenProps) {
     estimateSize: () => 56,
     overscan: 10,
   });
+  const virtualItems = virtualizer.getVirtualItems();
+  const renderedItems =
+    virtualItems.length > 0
+      ? virtualItems
+      : filtered.map((_, index) => ({
+          index,
+          key: filtered[index]!.path,
+          size: 56,
+          start: index * 56,
+        }));
+  const listHeight =
+    virtualItems.length > 0 ? virtualizer.getTotalSize() : filtered.length * 56;
 
   const scrollHighlightIntoView = useCallback(() => {
     const item = filteredRef.current[highlight];
@@ -134,13 +172,13 @@ export function QuickOpen({ open, onClose, onSelect }: QuickOpenProps) {
           ) : (
             <div
               style={{
-                height: `${virtualizer.getTotalSize()}px`,
+                height: `${listHeight}px`,
                 position: "relative",
               }}
               role="listbox"
               aria-label="笔记列表"
             >
-              {virtualizer.getVirtualItems().map((virtualItem) => {
+              {renderedItems.map((virtualItem) => {
                 const f = filtered[virtualItem.index]!;
                 const active = virtualItem.index === highlight;
                 return (
@@ -168,10 +206,17 @@ export function QuickOpen({ open, onClose, onSelect }: QuickOpenProps) {
                       onMouseEnter={() => {
                         navDeltaRef.current = 0;
                         setHighlight(virtualItem.index);
+                        onPrepare?.(f);
                       }}
                       onSelect={() => {
-                        onSelect(f.path);
-                        onClose();
+                        void (async () => {
+                          try {
+                            await onSelect(f.path);
+                            onClose();
+                          } catch {
+                            /* Keep Quick Open visible so the user can retry. */
+                          }
+                        })();
                       }}
                     />
                   </div>

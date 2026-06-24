@@ -12,6 +12,7 @@ import { useTauriCloseSave } from "@/hooks/useTauriCloseSave";
 import { useVersionIdle } from "@/hooks/useVersionIdle";
 import { fileWrite, versionSaveIdle, versionSaveManual } from "@/lib/ipc";
 import { editorHtmlDigest, setCachedEditorHtml } from "@/lib/editor-html-cache";
+import { isClassifiedVaultPath } from "@/lib/classified-path";
 import { splitFrontmatter } from "@/lib/frontmatter";
 import { isNoteSubstantivelyEmpty } from "@/lib/note-substance";
 import { resolveNoteDisplayTitle } from "@/lib/note-display";
@@ -165,6 +166,7 @@ export function useAppPersistenceLifecycle({
             path,
             ed.getHTML(),
             editorHtmlDigest(splitFrontmatter(md).body),
+            isClassifiedVaultPath(path) ? "classified" : "normal",
           );
         }
         markClean(path, resolveNoteDisplayTitle({ path, title: noteTitle }));

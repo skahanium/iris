@@ -26,7 +26,7 @@ use crate::ai_runtime::{
     SkillActivationPlanSummary, SkillCapabilitySupportStatus, TaskPlanSummary,
 };
 use crate::app::AppState;
-use crate::error::AppResult;
+use crate::error::{AppError, AppResult};
 
 /// Unified assistant execution request (camelCase for TypeScript IPC).
 #[derive(Debug, Clone, serde::Deserialize)]
@@ -164,6 +164,20 @@ impl AssistantExecuteRequest {
         }
         summary
     }
+}
+
+fn validate_note_content_boundary(request: &AssistantExecuteRequest) -> AppResult<()> {
+    if request.note_path.is_none()
+        && request
+            .note_content
+            .as_ref()
+            .is_some_and(|content| !content.trim().is_empty())
+    {
+        return Err(AppError::msg(
+            "assistant_execute noteContent requires a non-classified notePath",
+        ));
+    }
+    Ok(())
 }
 
 fn permission_summary_for_status(run_status: &str) -> String {
@@ -621,6 +635,7 @@ pub(crate) async fn route_assistant_execute(
     request: AssistantExecuteRequest,
 ) -> AppResult<AssistantExecuteResponse> {
     crate::commands::ai_commands::validate_ai_note_path(request.note_path.as_deref())?;
+    validate_note_content_boundary(&request)?;
     let task_plan = build_or_validate_task_plan(&request)?;
     let agent_intent = agent_intent_for_task_plan(&task_plan);
     let legacy_intent = legacy_intent_for_task_plan(&task_plan);
@@ -775,6 +790,47 @@ mod tests {
         CapabilitySlot, ExecutionMode, OutputMode, RetrievalMode, TaskPlanConfidence,
         TaskPlanIntent, WebMode,
     };
+
+    fn request_with_note_content(
+        note_path: Option<&str>,
+        note_content: Option<&str>,
+    ) -> AssistantExecuteRequest {
+        AssistantExecuteRequest {
+            agent_intent: None,
+            intent: Some(AssistantIntent::Chat),
+            intent_detection: None,
+            task_plan: None,
+            context_references: Vec::new(),
+            message: "test".into(),
+            note_path: note_path.map(str::to_string),
+            note_content: note_content.map(str::to_string),
+            web_authorized: false,
+            selection: None,
+            cursor_context: None,
+            paragraph_text: None,
+            context_scope: None,
+            session_id: None,
+            selected_packet_ids: None,
+            chapter: None,
+            document_check_type: None,
+            organize_task_type: None,
+            base_content_hash: None,
+            new_session: false,
+            images: None,
+        }
+    }
+
+    #[test]
+    fn note_content_requires_note_path_boundary() {
+        let leaked_content = request_with_note_content(None, Some("secret note body"));
+        assert!(validate_note_content_boundary(&leaked_content).is_err());
+
+        let empty_content = request_with_note_content(None, Some("   \n\t"));
+        assert!(validate_note_content_boundary(&empty_content).is_ok());
+
+        let scoped_content = request_with_note_content(Some("notes/a.md"), Some("note body"));
+        assert!(validate_note_content_boundary(&scoped_content).is_ok());
+    }
 
     #[test]
     fn detects_skillhub_direct_install_target() {

@@ -102,15 +102,21 @@ describe("classified vault phase 7", () => {
   });
 
   it("App wires file lock state and classified panel", () => {
-    const src = read("src/App.tsx");
+    const app = read("src/App.impl.tsx");
+    const overlays = read("src/components/layout/AppOverlays.tsx");
+    const workspace = read("src/components/layout/AppEditorWorkspace.tsx");
     const ipc = read("src/lib/ipc.ts");
-    expect(src).toContain("fileSetLock");
-    expect(src).toContain("ClassifiedPanel");
-    expect(src).toContain("classifiedOpen");
-    expect(src).toContain("listenClassifiedFileTaken");
+
+    expect(app).toContain("fileSetLock");
+    expect(app).toContain("classifiedOpen");
+    expect(app).toContain("listenClassifiedFileTaken");
     expect(ipc).toContain("classified:file_taken");
-    expect(src).toContain("locked={");
-    expect(src).toContain("setLocked={");
+    expect(overlays).toContain("ClassifiedPanel");
+    expect(workspace).toContain(
+      "locked={isVisible ? snapshot.activeFileLocked : true}",
+    );
+    expect(workspace).toContain("setLocked={");
+    expect(workspace).toContain("!snapshot.activeNoteIsClassified");
   });
 
   it("classified panel components exist with full file operations", () => {
@@ -128,22 +134,45 @@ describe("classified vault phase 7", () => {
   });
 
   it("App uses global classified vault idle session hook", () => {
-    const app = read("src/App.tsx");
+    const app = read("src/App.impl.tsx");
+    const persistence = read("src/hooks/useAppPersistenceLifecycle.ts");
+
     expect(app).toContain("useClassifiedVaultSession");
+    expect(app).toContain("openClassifiedPaths");
     expect(app).toContain("activeNoteIsClassified");
-    expect(app).toContain("笔记已锁定，无法保存");
+    expect(persistence).toContain("笔记已锁定，无法保存");
   });
 
   it("App never forwards classified note material into AI surfaces", () => {
-    const app = read("src/App.tsx");
+    const app = read("src/App.impl.tsx");
+    const panelSlot = read("src/components/layout/AppAiPanelSlot.tsx");
+    const editorActions = read("src/hooks/useAppEditorActions.ts");
+    const tasks = read("src/components/ai/hooks/useAssistantTasks.ts");
+    const facade = read("src-tauri/src/commands/assistant_commands.rs");
+
     expect(app).toContain(
-      "const assistantNotePath = activeNoteIsClassified ? null : activePath;",
+      "activeArtifactTab || activeNoteIsClassified ? null : activePath",
     );
-    expect(app).toContain("notePath={assistantNotePath}");
-    expect(app).toContain("getNoteContent={getLiveMarkdown}");
-    expect(app).toContain("if (isClassifiedVaultPath(path)) return null;");
-    expect(app).toContain("if (activeNoteIsClassified) {");
-    expect(app).toContain("涉密笔记不能发送到 AI");
+    expect(app).toContain(
+      `activeArtifactTab || activeNoteIsClassified ? "" : getLiveMarkdown()`,
+    );
+    expect(app).toContain(
+      "activeArtifactTab || activeNoteIsClassified ? null : getWritingContext()",
+    );
+    expect(app).toContain("涉密笔记不能接收 AI 插入");
+    expect(app).toContain("涉密笔记不能接收 AI 改写");
+    expect(panelSlot).toContain("notePath={assistantNotePath}");
+    expect(panelSlot).toContain("getNoteContent={getLiveMarkdown}");
+    expect(editorActions).toContain(
+      "if (isClassifiedVaultPath(path)) return null;",
+    );
+
+    expect(tasks).toContain("const getNoteContentForRequest = useCallback");
+    expect(tasks).toContain("notePath ? getNoteContent() : undefined");
+    expect(tasks).not.toContain("noteContent: getNoteContent(),");
+
+    expect(facade).toContain("fn validate_note_content_boundary");
+    expect(facade).toContain("validate_note_content_boundary(&request)?");
   });
 
   it("main note open paths cannot open classified notes", () => {
@@ -155,9 +184,9 @@ describe("classified vault phase 7", () => {
       "allowClassified: options?.allowClassified === true",
     );
 
-    const app = read("src/App.tsx");
-    expect(app).toContain("onOpenFile={(path) =>");
-    expect(app).toContain(
+    const overlays = read("src/components/layout/AppOverlays.tsx");
+    expect(overlays).toContain("onOpenFile={(path) =>");
+    expect(overlays).toContain(
       "openNoteLeavingHome(path, undefined, { allowClassified: true })",
     );
   });

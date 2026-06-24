@@ -82,7 +82,8 @@ import {
 interface VaultNavigatorProps {
   open: boolean;
   onClose: () => void;
-  onOpen: (path: string) => void;
+  onOpen: (path: string) => void | Promise<void>;
+  onPrepare?: (file: FileListItem) => void;
   onBeforeFilePathChange?: (path: string) => Promise<void>;
   onFilePathChanged?: (
     oldPath: string,
@@ -244,6 +245,7 @@ export function VaultNavigatorBody({
   open,
   onClose,
   onOpen,
+  onPrepare,
   onBeforeFilePathChange,
   onFilePathChanged,
   onBeforeFileDelete,
@@ -362,6 +364,10 @@ export function VaultNavigatorBody({
       return next.size === prev.size ? prev : next;
     });
   }, [folderFiles]);
+
+  useEffect(() => {
+    folderFiles.slice(0, 50).forEach((file) => onPrepare?.(file));
+  }, [folderFiles, onPrepare]);
 
   const toggleExpanded = useCallback((path: string) => {
     setExpanded((prev) => {
@@ -559,7 +565,7 @@ export function VaultNavigatorBody({
     const path = notePathInFolder(selectedFolder, newName);
     await templateCreate(path, tmplName);
     refresh();
-    onOpen(path);
+    await onOpen(path);
     setShowTemplates(false);
   };
 
@@ -620,7 +626,7 @@ export function VaultNavigatorBody({
               titleHint: trimmed,
             });
             refresh();
-            onOpen(created.path);
+            await onOpen(created.path);
           }}
         >
           <FolderPlus className="h-4 w-4" />
@@ -959,9 +965,17 @@ export function VaultNavigatorBody({
                     <button
                       type="button"
                       className="min-w-0 flex-1 truncate text-left hover:text-primary"
+                      onFocus={() => onPrepare?.(f)}
+                      onMouseEnter={() => onPrepare?.(f)}
                       onClick={() => {
-                        onOpen(f.path);
-                        onClose();
+                        void (async () => {
+                          try {
+                            await onOpen(f.path);
+                            onClose();
+                          } catch {
+                            /* Keep the navigator visible so the user can retry. */
+                          }
+                        })();
                       }}
                     >
                       {displayTitleForFileListItem(f)}

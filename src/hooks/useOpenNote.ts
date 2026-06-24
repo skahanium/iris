@@ -2,6 +2,7 @@ import type { Editor } from "@tiptap/react";
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -57,7 +58,7 @@ export function useOpenNote({
   const [noteTitle, setNoteTitle] = useState("");
   const [bodyMarkdown, setBodyMarkdown] = useState("");
 
-  /** Parsed body for TipTap on disk/tab load only — not on layer-1 save (`setMarkdown` must not remount editor). */
+  /** Parsed body for TipTap on disk/tab load only; layer-1 save must not remount editor. */
   const editorBodyMarkdown = useMemo(() => {
     if (!activePath) return "";
     return parseNoteForEditor(markdownRef.current, pathStem(activePath)).bodyMd;
@@ -77,7 +78,7 @@ export function useOpenNote({
     [frontmatterYamlRef],
   );
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!activePath) {
       setNoteTitle("");
       setBodyMarkdown("");
@@ -172,7 +173,7 @@ export function useOpenNote({
             });
           })
           .catch(() => {
-            /* 路径同步为可选增强 */
+            /* Path sync is optional so tests can isolate editor content flow. */
           });
       }, PATH_SYNC_DEBOUNCE_MS);
     },

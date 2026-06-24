@@ -12,7 +12,8 @@ interface KnowledgeRelationsPanelProps {
   open: boolean;
   onClose: () => void;
   notePath: string | null;
-  onOpen: (path: string) => void;
+  onOpen: (path: string) => void | Promise<void>;
+  onPreparePath?: (path: string, titleHint?: string) => void;
 }
 
 type KnowledgeRelationsTab = "backlinks" | "tags";
@@ -22,6 +23,7 @@ export function KnowledgeRelationsPanel({
   onClose,
   notePath,
   onOpen,
+  onPreparePath,
 }: KnowledgeRelationsPanelProps) {
   const [activeTab, setActiveTab] =
     useState<KnowledgeRelationsTab>("backlinks");
@@ -63,8 +65,8 @@ export function KnowledgeRelationsPanel({
     [tags],
   );
 
-  const openPath = (path: string) => {
-    onOpen(path);
+  const openPath = async (path: string) => {
+    await onOpen(path);
     onClose();
   };
 
@@ -122,7 +124,7 @@ export function KnowledgeRelationsPanel({
           <div className="border-b border-border/60 px-4 py-2">
             <Input
               className="h-7 text-xs"
-              placeholder="过滤标签…"
+              placeholder="过滤标签..."
               value={tagSearch}
               onChange={(e) => setTagSearch(e.target.value)}
             />
@@ -143,7 +145,13 @@ export function KnowledgeRelationsPanel({
                   key={backlink.source_path}
                   type="button"
                   className="w-full border-b border-border/50 px-4 py-2.5 text-left text-sm transition-colors duration-base ease-iris-out hover:bg-surface-inset/80"
-                  onClick={() => openPath(backlink.source_path)}
+                  onMouseEnter={() =>
+                    onPreparePath?.(backlink.source_path, backlink.source_title)
+                  }
+                  onFocus={() =>
+                    onPreparePath?.(backlink.source_path, backlink.source_title)
+                  }
+                  onClick={() => void openPath(backlink.source_path)}
                 >
                   <div className="font-medium text-primary">
                     {backlink.source_title}
@@ -160,7 +168,7 @@ export function KnowledgeRelationsPanel({
               ))
             )
           ) : tagsLoading ? (
-            <p className="p-3 text-xs text-muted-foreground">加载中…</p>
+            <p className="p-3 text-xs text-muted-foreground">加载中...</p>
           ) : filteredTags.length === 0 ? (
             <p className="p-3 text-xs text-muted-foreground">无标签</p>
           ) : (
@@ -185,7 +193,19 @@ export function KnowledgeRelationsPanel({
                         key={file.path}
                         type="button"
                         className="w-full border-b border-border/30 px-5 py-1 text-left text-xs text-muted-foreground hover:text-primary"
-                        onClick={() => openPath(file.path)}
+                        onMouseEnter={() =>
+                          onPreparePath?.(
+                            file.path,
+                            displayTitleForFileListItem(file),
+                          )
+                        }
+                        onFocus={() =>
+                          onPreparePath?.(
+                            file.path,
+                            displayTitleForFileListItem(file),
+                          )
+                        }
+                        onClick={() => void openPath(file.path)}
                       >
                         {displayTitleForFileListItem(file)}
                       </button>

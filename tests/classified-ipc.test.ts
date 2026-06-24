@@ -183,7 +183,8 @@ describe("classified vault IPC contract", () => {
 describe("fileRead call-site compatibility (Task 15)", () => {
   it("useTabManager reads content and lock state from fileRead without blocking target reads", () => {
     const source = read("src/hooks/useTabManager.ts");
-    expect(source).toContain("const readPromise = fileRead(");
+    expect(source).toContain(": fileRead(path,");
+    expect(source).toContain("const readPromise = preparedNote");
     expect(source).toContain("Promise.all");
     expect(source).toMatch(/\{\s*content,\s*isLocked\s*\}/);
   });
