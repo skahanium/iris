@@ -69,6 +69,26 @@ describe("runtime configuration contracts", () => {
     expect(css).toContain("@media (prefers-reduced-motion: reduce)");
   });
 
+  it("renders a critical preboot splash before React mounts", () => {
+    const html = read("index.html");
+
+    expect(html).toContain("iris-preboot-splash");
+    expect(html).toContain("iris-preboot-mark");
+    expect(html).toContain("唤醒知识网络");
+    expect(html).toContain("准备笔记");
+  });
+
+  it("allows frontend window APIs needed by custom chrome controls", () => {
+    const capabilities = read("src-tauri/capabilities/default.json");
+
+    expect(capabilities).toContain("core:window:allow-is-fullscreen");
+    expect(capabilities).toContain("core:window:allow-set-fullscreen");
+    expect(capabilities).not.toContain("core:window:allow-set-decorations");
+    expect(capabilities).not.toContain("core:window:allow-set-title-bar-style");
+    expect(capabilities).toContain("core:window:allow-is-maximized");
+    expect(capabilities).toContain("core:window:allow-toggle-maximize");
+  });
+
   it("keeps DeepSeek default provider reachable from Tauri CSP", () => {
     const tauriConfig = JSON.parse(read("src-tauri/tauri.conf.json")) as {
       app?: { security?: { csp?: string } };

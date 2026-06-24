@@ -4,7 +4,7 @@
  */
 export const DEFAULT_TITLEBAR_HEIGHT_PX = 44;
 export const MACOS_TITLEBAR_HEIGHT_PX = 44;
-export const MACOS_TRAFFIC_INSET_PX = 0;
+export const MACOS_TRAFFIC_INSET_PX = 88;
 
 export interface DesktopChromeMetrics {
   titlebarHeightLogical: number;

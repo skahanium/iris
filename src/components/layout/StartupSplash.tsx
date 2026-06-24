@@ -16,6 +16,19 @@ type StartupSplashState = "visible" | "exiting" | "hidden";
 
 let startupWindowRevealRequested = false;
 
+function afterNextPaint(callback: () => void): () => void {
+  let firstFrame = 0;
+  let secondFrame = 0;
+  firstFrame = window.requestAnimationFrame(() => {
+    secondFrame = window.requestAnimationFrame(callback);
+  });
+
+  return () => {
+    window.cancelAnimationFrame(firstFrame);
+    window.cancelAnimationFrame(secondFrame);
+  };
+}
+
 function prefersReducedMotion(): boolean {
   return (
     window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false
@@ -24,7 +37,7 @@ function prefersReducedMotion(): boolean {
 
 export function StartupSplash({
   ready,
-  minDurationMs = 900,
+  minDurationMs = 1600,
   fadeDurationMs = 220,
   onExited,
 }: StartupSplashProps) {
@@ -35,9 +48,12 @@ export function StartupSplash({
 
   useEffect(() => {
     if (!isTauriRuntime() || startupWindowRevealRequested) return;
-    startupWindowRevealRequested = true;
-    void showMainWindowWhenReady().catch((error: unknown) => {
-      console.error("Failed to show Iris startup window", error);
+    return afterNextPaint(() => {
+      if (startupWindowRevealRequested) return;
+      startupWindowRevealRequested = true;
+      void showMainWindowWhenReady().catch((error: unknown) => {
+        console.error("Failed to show Iris startup window", error);
+      });
     });
   }, []);
 

@@ -10,7 +10,7 @@ import type { FileListItem } from "@/types/ipc";
 interface WelcomeEmptyProps {
   /** Reload recent list when vault changes. */
   vaultKey?: string | null;
-  onOpen: (path: string) => void;
+  onOpen: (path: string, titleHint?: string) => void;
   onNew: () => void | Promise<void>;
   onQuickOpen?: () => void;
   onSearch?: () => void;
@@ -122,32 +122,35 @@ export function WelcomeEmpty({
           </div>
           {recent.length > 0 ? (
             <ul className="divide-y divide-border/50">
-              {recent.map((f) => (
-                <li
-                  key={f.path}
-                  className="group flex items-center transition-colors duration-base ease-iris-out hover:bg-surface-inset/60"
-                >
-                  <button
-                    type="button"
-                    className="min-w-0 flex-1 px-2 py-3 text-left"
-                    onClick={() => onOpen(f.path)}
+              {recent.map((f) => {
+                const title = displayTitleForFileListItem(f);
+                return (
+                  <li
+                    key={f.path}
+                    className="group flex items-center transition-colors duration-base ease-iris-out hover:bg-surface-inset/60"
                   >
-                    <span className="block truncate text-sm text-foreground">
-                      {displayTitleForFileListItem(f)}
-                    </span>
-                  </button>
-                  <Button
-                    type="button"
-                    size="icon"
-                    variant="ghost"
-                    className="mr-1 h-8 w-8 shrink-0 text-muted-foreground opacity-0 transition-opacity hover:text-destructive focus-visible:opacity-100 group-hover:opacity-100"
-                    aria-label={`删除 ${displayTitleForFileListItem(f)}`}
-                    onClick={() => setDeleteTarget(f)}
-                  >
-                    <Trash2 className="h-3.5 w-3.5" />
-                  </Button>
-                </li>
-              ))}
+                    <button
+                      type="button"
+                      className="min-w-0 flex-1 px-2 py-3 text-left"
+                      onClick={() => onOpen(f.path, title)}
+                    >
+                      <span className="block truncate text-sm text-foreground">
+                        {title}
+                      </span>
+                    </button>
+                    <Button
+                      type="button"
+                      size="icon"
+                      variant="ghost"
+                      className="mr-1 h-8 w-8 shrink-0 text-muted-foreground opacity-0 transition-opacity hover:text-destructive focus-visible:opacity-100 group-hover:opacity-100"
+                      aria-label={`删除 ${title}`}
+                      onClick={() => setDeleteTarget(f)}
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </Button>
+                  </li>
+                );
+              })}
             </ul>
           ) : (
             <div className="border border-dashed border-border/70 px-4 py-8 text-sm text-muted-foreground">

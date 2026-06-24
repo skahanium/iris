@@ -139,26 +139,28 @@ Iris Rail Refresh adds semantic surface tokens for the complete interface system
 
 桌面窗口：单行 **`DesktopTitleBar`**（`bg-surface-chrome`），禁止出现「Tauri App」或双层系统标题栏。顶栏高度统一为 44px，让品牌轨、Rail Segments 与右侧窗口控制在同一中线。
 
-| 平台            | `--titlebar-height` | 装饰 / 标题                                                                              | 窗口按钮                                                         | 顶栏左侧                            |
-| --------------- | ------------------- | ---------------------------------------------------------------------------------------- | ---------------------------------------------------------------- | ----------------------------------- |
-| macOS           | **44px（2.75rem）** | `titleBarStyle: Overlay`、`hiddenTitle: true`、`decorations: false`；内部 title **Iris** | 右侧自绘红黄绿 `WindowControls`；`--titlebar-traffic-inset: 0px` | 常驻 `iris-brand-rail`，点击回 Home |
-| Windows / Linux | **44px（2.75rem）** | `decorations: false`（Win 另 `shadow: true`）                                            | 右侧自绘红黄绿 `WindowControls`                                  | 常驻 `iris-brand-rail`，点击回 Home |
+| 平台            | `--titlebar-height` | 装饰 / 标题                                                                    | 窗口按钮                                             | 顶栏左侧                                                                       |
+| --------------- | ------------------- | ------------------------------------------------------------------------------ | ---------------------------------------------------- | ------------------------------------------------------------------------------ |
+| macOS           | **44px（2.75rem）** | `titleBarStyle: Overlay`、`hiddenTitle: true`、`decorations: true`、非透明窗口 | 左侧系统原生红黄绿；Iris 不渲染自绘 `WindowControls` | `--titlebar-traffic-inset: 88px` 空 spacer 后接 `iris-brand-rail`，点击回 Home |
+| Windows / Linux | **44px（2.75rem）** | `decorations: false`（Win 另 `shadow: true`）                                  | 右侧标准顺序窗口控件：最小化 / 最大化 / 关闭         | 常驻 `iris-brand-rail`，点击回 Home                                            |
 
-指标单一来源：Rust [`chrome_metrics.rs`](../src-tauri/src/chrome_metrics.rs)（统一 44）；前端镜像见 [`chrome-metrics.ts`](../src/lib/chrome-metrics.ts)。
+指标单一来源：Rust [`chrome_metrics.rs`](../src-tauri/src/chrome_metrics.rs)（顶栏统一 44px，macOS traffic inset 88px）；前端镜像见 [`chrome-metrics.ts`](../src/lib/chrome-metrics.ts)。
 
 - **Windows 11**：`transparent: false`（见 `tauri.windows.conf.json`），圆角由 DWM + `shadow` 提供；**勿**与 `transparent: true` 同开。
-- **macOS**：`transparent: true` + `set_effects`（`radius` = `--window-radius`）+ `data-iris-platform-macos`；不恢复系统交通灯，左侧空间交给品牌轨。
-- **macOS 全屏**：`useMacOSWindowChromeSync` 只同步标题栏高度与 fullscreen dataset；右侧自定义窗口控件随应用顶栏控制显隐。调试可用 `html[data-iris-window-fullscreen]`。
+- **macOS**：使用系统 AppKit 作为唯一窗口外壳 owner：`transparent: false`、`decorations: true`、Overlay titlebar、hidden title；禁止运行期动态 `setDecorations()` / `setTitleBarStyle()` 切换。左侧 88px spacer 不放按钮、文本或图标，系统红黄绿独占该区域。
+- **macOS 全屏**：使用系统绿色按钮进入 / 退出原生 fullscreen Space；标题栏双击仍执行最大化 / 还原，两者语义互不替代。macOS WindowServer 的全屏过渡快照不可由 Web 前端禁用，治理原则是避免 Iris 再渲染第二套交通灯或动态切换窗口壳层。
 
-**人工验收**：macOS 窗口模式 — 左侧 Iris 品牌轨常驻且承担 Home 入口，不出现独立 Home tab，右侧红黄绿三点可用；全屏→退出后标题栏高度与品牌轨不漂移。Windows — 顶栏 44px、三点窗口控制与 Tab 无回归。
+**人工验收**：macOS 窗口模式 — 左侧系统红黄绿正常显示，Iris 品牌轨从 88px spacer 后开始并承担 Home 入口，不出现独立 Home tab；系统绿色进入原生全屏，标题栏双击最大化 / 还原；全屏→退出后标题栏高度、品牌轨与系统窗口控件不漂移，不出现 Iris 自绘交通灯叠层。Windows — 顶栏 44px、最小化 / 最大化 / 关闭顺序与 Tab 无回归。
 
 阴影：仅浮层 / 悬浮工具条使用 `--shadow-overlay` / `--shadow-floating`；**编辑区无纸页阴影**。
 
 动效：150–200ms，`prefers-reduced-motion` 降级。
 
+Home / 欢迎页打开最近笔记：点击后立即离开 Home 进入目标文档 loading view，loading 绑定目标 path/title；旧 `activePath` 仍在后台保存或新文档读取未完成时，不得渲染上一个编辑器。连续点击多个目标时只允许最后一次请求决定最终显示。
+
 ### 启动体验
 
-Iris 启动使用 Knowledge Orbit 启动层遮住 Tauri/WebView 首帧不稳定期：窗口先隐藏，窗口 chrome 和主题 token 就绪后显示应用；前端首屏以 Iris mark、低饱和知识轨道和少量节点涟漪表达“唤醒知识网络”。启动层只使用现有 `--background`、`--foreground`、`--surface-chrome`、`--knowledge-accent`、`--border` 等 token，日间/夜间模式由 `.light` 变量自然切换，不建立独立主题。启动层以真实就绪为退出条件，最短展示约 900ms，淡出约 220ms；`prefers-reduced-motion` 下禁用轨道旋转和涟漪，仅保留静态 mark 与淡入淡出。
+Iris 启动使用 Knowledge Orbit 启动层遮住 Tauri/WebView 首帧不稳定期：窗口先隐藏，启动层首帧完成绘制后再显示主窗口；前端首屏以 Iris mark、低饱和知识轨道和少量节点涟漪表达“唤醒知识网络”。启动层只使用现有 `--background`、`--foreground`、`--surface-chrome`、`--knowledge-accent`、`--border` 等 token，日间/夜间模式由 `.light` 变量自然切换，不建立独立主题。启动层以真实就绪为退出条件，最短展示 1600ms，淡出约 220ms；`prefers-reduced-motion` 下禁用轨道旋转和涟漪，仅保留静态 mark 与淡入淡出。
 
 ### Chrome 表面与命令/AI token
 

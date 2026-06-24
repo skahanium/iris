@@ -56,11 +56,12 @@ afterEach(() => {
 });
 
 describe("desktop title bar", () => {
-  it("macOS config uses undecorated overlay shell with custom window controls", () => {
+  it("macOS config uses decorated overlay shell with native traffic lights", () => {
     const macos = read("src-tauri/tauri.macos.conf.json");
     expect(macos).toContain('"titleBarStyle": "Overlay"');
     expect(macos).toContain('"hiddenTitle": true');
-    expect(macos).toContain('"decorations": false');
+    expect(macos).toContain('"decorations": true');
+    expect(macos).toContain('"transparent": false');
     expect(macos).not.toContain("trafficLightPosition");
     expect(macos).not.toContain("Tauri App");
   });
@@ -72,28 +73,35 @@ describe("desktop title bar", () => {
     expect(chrome).toContain("set_title");
     expect(chrome).toContain("MAIN_WINDOW_TITLE");
     expect(chrome).toContain("set_decorations(false)");
+    expect(chrome).toContain('#[cfg(not(target_os = "macos"))]');
     expect(read("src/hooks/useMacOSWindowChromeSync.ts")).toContain(
       "getDesktopChromeMetrics",
     );
   });
 
-  it("macOS runtime does not re-enable native traffic lights when custom right controls are used", () => {
+  it("macOS runtime keeps native traffic lights as the only chrome owner", () => {
     const chrome = read("src-tauri/src/window_chrome.rs");
     const lib = read("src-tauri/src/lib.rs");
     const syncHook = read("src/hooks/useMacOSWindowChromeSync.ts");
+    const actions = read("src/lib/window-actions.ts");
 
-    expect(chrome).not.toContain("set_decorations(true)");
+    expect(chrome).not.toContain("apply_macos_rounded_window");
     expect(chrome).not.toContain("apply_traffic_light_position(window)");
     expect(lib).not.toContain("attach_macos_traffic_light_listeners");
     expect(syncHook).not.toContain("reapplyWindowChrome");
+    expect(actions).not.toContain("setTitleBarStyle");
+    expect(actions).not.toContain("setDecorations");
   });
 
   it("DesktopTitleBar is the single chrome component with platform-aware controls", () => {
     const bar = read("src/components/layout/DesktopTitleBar.tsx");
+    const frame = read("src/components/layout/DesktopFrame.tsx");
     expect(bar).toContain('data-testid="desktop-title-bar"');
     expect(bar).toContain("showCustomWindowControls");
     expect(bar).toContain("customWindowControls");
     expect(bar).toContain("headerNativeDragRegion");
+    expect(bar).toContain("iris-titlebar-traffic-spacer");
+    expect(bar).toContain("--titlebar-traffic-inset");
     expect(bar).toContain("iris-brand-rail");
     expect(bar).toContain('role="banner"');
 
@@ -101,11 +109,15 @@ describe("desktop title bar", () => {
     expect(platform).toContain("isMacOSDesktopChrome");
     expect(platform).toContain("isWindowsDesktopChrome");
     expect(platform).toContain("showCustomWindowControls");
+    expect(platform).toContain(
+      "return isTauriRuntime() && !isMacOSDesktopChrome()",
+    );
 
     const controls = read("src/components/layout/WindowControls.tsx");
     expect(controls).toContain("iris-window-controls");
     expect(controls).toContain("MacTrafficLightButton");
     expect(controls).toContain("WindowsControlButton");
+    expect(controls).toContain("isMacOSDesktopChrome");
     expect(controls).toContain("isWindowsDesktopChrome");
     expect(controls).toContain("iris-traffic-light--close");
     expect(controls).toContain("iris-traffic-light--minimize");
@@ -118,6 +130,8 @@ describe("desktop title bar", () => {
     expect(controls).toContain("stopPropagation");
     expect(bar).toContain("--window-controls-width");
     expect(bar).toContain("absolute inset-y-0 right-0");
+    expect(frame).toContain("/Mac/i.test(navigator.userAgent)");
+    expect(frame).toContain("return false");
   });
 
   it("gives Windows minimize and maximize controls a visible hover background", () => {
@@ -149,16 +163,17 @@ describe("desktop title bar", () => {
     );
   });
 
-  it("defines titlebar CSS tokens without a macOS left traffic inset", () => {
+  it("defines titlebar CSS tokens with a macOS native traffic-light safe area", () => {
     const css = read("src/styles/globals.css");
     expect(css).toContain("--titlebar-height");
     expect(css).toContain("--titlebar-traffic-inset");
+    expect(css).toContain(".iris-titlebar-traffic-spacer");
     expect(css).toContain("data-iris-platform-macos");
     expect(css).toMatch(
       /html\[data-iris-platform-macos\][\s\S]*--titlebar-height:\s*2\.75rem/,
     );
     expect(css).toMatch(
-      /html\[data-iris-platform-macos\][\s\S]*--titlebar-traffic-inset:\s*0px/,
+      /html\[data-iris-platform-macos\][\s\S]*--titlebar-traffic-inset:\s*88px/,
     );
   });
 
@@ -177,6 +192,7 @@ describe("desktop title bar", () => {
     expect(hook).toContain("getDesktopChromeMetrics");
     expect(read("src/lib/ipc.ts")).toContain("get_desktop_chrome_metrics");
     expect(hook).not.toContain("reapplyWindowChrome");
+    expect(hook).not.toContain("restoreMacOSWindowChrome");
   });
 
   it("DesktopTitleBar exposes Iris Rail brand rail and segment tab hooks", () => {

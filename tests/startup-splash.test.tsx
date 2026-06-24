@@ -31,7 +31,7 @@ function renderSplash(
     root?.render(
       createElement(StartupSplash, {
         ready: false,
-        minDurationMs: 900,
+        minDurationMs: 1600,
         fadeDurationMs: 220,
         ...props,
       }),
@@ -46,7 +46,7 @@ function rerenderSplash(
     root?.render(
       createElement(StartupSplash, {
         ready: false,
-        minDurationMs: 900,
+        minDurationMs: 1600,
         fadeDurationMs: 220,
         ...props,
       }),
@@ -72,6 +72,15 @@ beforeEach(() => {
       dispatchEvent: vi.fn(),
     }),
   });
+  Object.defineProperty(window, "requestAnimationFrame", {
+    configurable: true,
+    value: (callback: FrameRequestCallback) =>
+      window.setTimeout(() => callback(performance.now()), 16),
+  });
+  Object.defineProperty(window, "cancelAnimationFrame", {
+    configurable: true,
+    value: (id: number) => window.clearTimeout(id),
+  });
 });
 
 afterEach(() => {
@@ -95,7 +104,7 @@ describe("StartupSplash", () => {
     expect(document.body.textContent).toContain("唤醒知识网络");
     expect(document.body.textContent).toContain("准备笔记");
 
-    act(() => vi.advanceTimersByTime(1200));
+    act(() => vi.advanceTimersByTime(1700));
     expect(
       document.querySelector('[data-testid="startup-splash"]'),
     ).not.toBeNull();
@@ -118,11 +127,11 @@ describe("StartupSplash", () => {
   it("waits out the remaining minimum duration after startup becomes ready", () => {
     renderSplash({ ready: false });
 
-    act(() => vi.advanceTimersByTime(400));
+    act(() => vi.advanceTimersByTime(700));
     rerenderSplash({ ready: true });
     expect(document.querySelector('[data-state="visible"]')).not.toBeNull();
 
-    act(() => vi.advanceTimersByTime(499));
+    act(() => vi.advanceTimersByTime(899));
     expect(document.querySelector('[data-state="visible"]')).not.toBeNull();
 
     act(() => vi.advanceTimersByTime(1));
@@ -137,11 +146,17 @@ describe("StartupSplash", () => {
     expect(splash?.className).toContain("iris-startup-splash--reduced-motion");
   });
 
-  it("reveals the hidden Tauri window when the splash mounts", () => {
+  it("reveals the hidden Tauri window after the splash has painted", () => {
     startupSplashMocks.isTauriRuntime.mockReturnValue(true);
 
     renderSplash({ ready: false });
 
+    expect(startupSplashMocks.showMainWindowWhenReady).not.toHaveBeenCalled();
+
+    act(() => vi.advanceTimersByTime(16));
+    expect(startupSplashMocks.showMainWindowWhenReady).not.toHaveBeenCalled();
+
+    act(() => vi.advanceTimersByTime(16));
     expect(startupSplashMocks.showMainWindowWhenReady).toHaveBeenCalledTimes(1);
   });
 });

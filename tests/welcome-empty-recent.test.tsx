@@ -30,12 +30,12 @@ describe("WelcomeEmpty recent notes", () => {
     host.remove();
   });
 
-  async function renderWelcome() {
+  async function renderWelcome(onOpen = vi.fn()) {
     await act(async () => {
       root.render(
         <WelcomeEmpty
           onNew={vi.fn()}
-          onOpen={vi.fn()}
+          onOpen={onOpen}
           onOpenAiManagement={vi.fn()}
           onQuickOpen={vi.fn()}
           onSearch={vi.fn()}
@@ -64,5 +64,27 @@ describe("WelcomeEmpty recent notes", () => {
     expect(document.body.textContent).not.toContain("06/16 08:30");
     expect(document.body.textContent).not.toContain("未命名文档.md");
     expect(document.body.textContent).not.toContain("最近更新");
+  });
+
+  it("passes the recent note display title as an open hint", async () => {
+    const onOpen = vi.fn();
+    fileList.mockResolvedValue([
+      {
+        path: "MiMo.md",
+        title: "MiMo-V2.5-Pro-UltraSpeed",
+        updatedAt: "2026-06-16T08:30:00+08:00",
+        isLocked: false,
+      },
+    ]);
+
+    await renderWelcome(onOpen);
+
+    await vi.waitFor(() => {
+      expect(document.body.textContent).toContain("MiMo-V2.5-Pro-UltraSpeed");
+    });
+
+    document.querySelector<HTMLButtonElement>("li button")?.click();
+
+    expect(onOpen).toHaveBeenCalledWith("MiMo.md", "MiMo-V2.5-Pro-UltraSpeed");
   });
 });

@@ -27,7 +27,7 @@ async function syncChromeMetrics(): Promise<DesktopChromeMetrics> {
 
 /**
  * macOS：全屏/缩放/聚焦后同步标题栏指标。
- * Iris Rail 使用右侧自定义窗口控件，左侧品牌轨不再为系统交通灯预留空间。
+ * Iris Rail 为系统原生红黄绿预留左侧安全区，不再动态切换窗口装饰。
  */
 export function useMacOSWindowChromeSync(): void {
   useEffect(() => {

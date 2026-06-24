@@ -45,6 +45,7 @@ import { useConnectivityStatus } from "@/hooks/useConnectivityStatus";
 import { useLlmProvider } from "@/hooks/useLlmProvider";
 import { useOverlayManager } from "@/hooks/useOverlayManager";
 import { useArtifactTabs } from "@/hooks/useArtifactTabs";
+import { useHomeWorkspaceTransitions } from "@/hooks/useHomeWorkspaceTransitions";
 import { useTabManager } from "@/hooks/useTabManager";
 import { useTheme } from "@/hooks/useTheme";
 import { useZenExitKeyboard } from "@/hooks/useZenExitKeyboard";
@@ -133,14 +134,6 @@ function App() {
     [],
   );
 
-  const showHome = useCallback(() => {
-    setHomeActive(true);
-  }, []);
-
-  const leaveHome = useCallback(() => {
-    setHomeActive(false);
-  }, []);
-
   const dirtyRef = useRef(false);
   const autoSnapshotGenerationRef = useRef(0);
 
@@ -202,31 +195,21 @@ function App() {
     setAiStatus,
   });
 
-  const openNoteLeavingHome = useCallback(
-    (
-      path: string,
-      titleHint?: string,
-      options?: Parameters<typeof openNote>[2],
-    ) => {
-      leaveHome();
-      setActiveArtifactId(null);
-      void openNote(path, titleHint, options);
-    },
-    [leaveHome, openNote, setActiveArtifactId],
-  );
-
-  const handleActivateWorkspaceTab = useCallback(
-    (path: string) => {
-      leaveHome();
-      if (path.startsWith("artifact:")) {
-        activateArtifact(path);
-        return;
-      }
-      setActiveArtifactId(null);
-      activateTab(path);
-    },
-    [activateArtifact, activateTab, leaveHome, setActiveArtifactId],
-  );
+  const {
+    handleActivateWorkspaceTab,
+    handleNewNoteLeavingHome,
+    openNoteLeavingHome,
+    pendingOpen,
+    showHome,
+  } = useHomeWorkspaceTransitions<Parameters<typeof openNote>[2]>({
+    activePathRef,
+    activateArtifact,
+    activateTab,
+    handleNewNote,
+    openNote,
+    setActiveArtifactId,
+    setHomeActive,
+  });
 
   const handleCloseWorkspaceTab = useCallback(
     (path: string) => {
@@ -238,12 +221,6 @@ function App() {
     },
     [closeArtifact, closeTab],
   );
-
-  const handleNewNoteLeavingHome = useCallback(() => {
-    leaveHome();
-    setActiveArtifactId(null);
-    void handleNewNote();
-  }, [leaveHome, handleNewNote, setActiveArtifactId]);
 
   const tabsRef = useRef(tabs);
   tabsRef.current = tabs;
@@ -861,6 +838,7 @@ function App() {
             onOpenSearch={() => overlays.openOverlay("search")}
             openNoteLeavingHome={openNoteLeavingHome}
             outlineOpen={outlineOpen}
+            pendingOpen={pendingOpen}
             runEditorActionById={runEditorActionById}
             setFindReplaceMode={setFindReplaceMode}
             setFindReplaceOpen={setFindReplaceOpen}

@@ -12,7 +12,7 @@ pub struct DesktopChromeMetrics {
     pub scale_factor: f64,
 }
 
-/// 返回当前平台的顶栏高度。Iris Rail 使用右侧自定义窗口控件，左侧不再预留交通灯区域。
+/// 返回当前平台的顶栏高度。macOS 原生红黄绿独占左侧安全区。
 #[tauri::command]
 pub fn get_desktop_chrome_metrics(window: WebviewWindow) -> DesktopChromeMetrics {
     let scale_factor = window.scale_factor().unwrap_or(1.0);
@@ -21,7 +21,7 @@ pub fn get_desktop_chrome_metrics(window: WebviewWindow) -> DesktopChromeMetrics
     {
         DesktopChromeMetrics {
             titlebar_height_logical: crate::chrome_metrics::MACOS_TITLEBAR_HEIGHT,
-            traffic_inset_logical: 0.0,
+            traffic_inset_logical: crate::chrome_metrics::MACOS_TRAFFIC_INSET,
             scale_factor,
         }
     }

@@ -24,9 +24,119 @@
         }
       } catch (_) {}
     </script>
+    <style>
+      :root {
+        color-scheme: dark;
+        --iris-preboot-bg: #191919;
+        --iris-preboot-fg: #f4f4f4;
+        --iris-preboot-muted: #a8a8a8;
+        --iris-preboot-surface: #242424;
+        --iris-preboot-border: rgb(255 255 255 / 0.12);
+        --iris-preboot-accent: #8fa99b;
+      }
+
+      html.light {
+        color-scheme: light;
+        --iris-preboot-bg: #fbfbfa;
+        --iris-preboot-fg: #242424;
+        --iris-preboot-muted: #737373;
+        --iris-preboot-surface: #ffffff;
+        --iris-preboot-border: rgb(0 0 0 / 0.1);
+        --iris-preboot-accent: #6f8f7f;
+      }
+
+      html,
+      body,
+      #root {
+        height: 100%;
+        margin: 0;
+        background: transparent;
+      }
+
+      body {
+        overflow: hidden;
+        font-family:
+          Inter,
+          "Noto Sans SC",
+          -apple-system,
+          BlinkMacSystemFont,
+          "Segoe UI",
+          sans-serif;
+      }
+
+      .iris-preboot-splash {
+        box-sizing: border-box;
+        display: flex;
+        height: 100%;
+        min-height: 100vh;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 1.25rem;
+        background:
+          radial-gradient(
+            circle at 50% 44%,
+            rgb(143 169 155 / 0.14),
+            transparent 34rem
+          ),
+          var(--iris-preboot-bg);
+        color: var(--iris-preboot-fg);
+      }
+
+      .iris-preboot-mark {
+        display: grid;
+        width: 5.25rem;
+        height: 5.25rem;
+        place-items: center;
+        border: 1px solid var(--iris-preboot-border);
+        border-radius: 1.5rem;
+        background: var(--iris-preboot-surface);
+        box-shadow:
+          0 18px 48px rgb(0 0 0 / 0.18),
+          inset 0 1px 0 rgb(255 255 255 / 0.08);
+        color: var(--iris-preboot-accent);
+        font-size: 2.1rem;
+        font-weight: 700;
+        line-height: 1;
+      }
+
+      .iris-preboot-copy {
+        display: grid;
+        gap: 0.35rem;
+        text-align: center;
+      }
+
+      .iris-preboot-title,
+      .iris-preboot-status {
+        margin: 0;
+      }
+
+      .iris-preboot-title {
+        font-size: 0.95rem;
+        font-weight: 600;
+      }
+
+      .iris-preboot-status {
+        color: var(--iris-preboot-muted);
+        font-size: 0.78rem;
+      }
+    </style>
   </head>
   <body>
-    <div id="root"></div>
+    <div id="root">
+      <div
+        class="iris-preboot-splash"
+        role="status"
+        aria-live="polite"
+        aria-label="Iris 正在启动"
+      >
+        <div class="iris-preboot-mark" aria-hidden="true">I</div>
+        <div class="iris-preboot-copy">
+          <p class="iris-preboot-title">唤醒知识网络</p>
+          <p class="iris-preboot-status">准备笔记</p>
+        </div>
+      </div>
+    </div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

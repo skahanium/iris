@@ -2,10 +2,7 @@ import { useCallback, useRef, useState } from "react";
 
 import type { TabItem } from "@/components/layout/TabBar";
 import { isClassifiedVaultPath } from "@/lib/classified-path";
-import {
-  displayTitleFromMarkdown,
-  resolveDocumentTitle,
-} from "@/lib/document-title";
+import { displayTitleFromMarkdown } from "@/lib/document-title";
 import { clearCachedEditorHtml } from "@/lib/editor-html-cache";
 import { extractFrontmatterYaml } from "@/lib/markdown";
 import { fileRead } from "@/lib/ipc";
@@ -127,31 +124,38 @@ export function useTabManager(options: UseTabManagerOptions = {}) {
       }
       const seq = ++openFileSeqRef.current;
       const current = activePathRef.current;
-      if (current && current !== path) {
-        await persistAndCacheTab(current);
-      }
-      if (
-        !options?.skipDiscardPrevious &&
-        current &&
-        current !== path &&
-        (await maybeDiscardOnLeave(current))
-      ) {
-        setTabs((prev) => prev.filter((t) => t.path !== current));
-      }
+
+      const previousCleanupPromise =
+        current && current !== path
+          ? (async () => {
+              await persistAndCacheTab(current);
+              if (!options?.skipDiscardPrevious) {
+                return maybeDiscardOnLeave(current);
+              }
+              return false;
+            })()
+          : Promise.resolve(false);
+
+      const readPromise = fileRead(path, {
+        allowClassified: options?.allowClassified === true,
+      });
+
       try {
-        const { content, isLocked } = await fileRead(path, {
-          allowClassified: options?.allowClassified === true,
-        });
+        const [{ content, isLocked }, discardedPrevious] = await Promise.all([
+          readPromise,
+          previousCleanupPromise,
+        ]);
         if (openFileSeqRef.current !== seq) return;
+        if (discardedPrevious && current) {
+          setTabs((prev) => prev.filter((t) => t.path !== current));
+        }
         tabLockCacheRef.current.set(path, isLocked);
         setActiveFileLocked(isLocked);
         frontmatterYamlRef.current = extractFrontmatterYaml(content);
         const fromMarkdown = displayTitleFromMarkdown(content, "");
-        const fallbackDb = await resolveDocumentTitle(path, titleHint);
-        if (openFileSeqRef.current !== seq) return;
         const title = resolveNoteDisplayTitle({
           path,
-          title: fromMarkdown || titleHint?.trim() || fallbackDb,
+          title: fromMarkdown || titleHint?.trim(),
           markdown: content,
         });
         clearCachedEditorHtml(path);

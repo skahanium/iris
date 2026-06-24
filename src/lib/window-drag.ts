@@ -2,6 +2,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import type { MouseEvent as ReactMouseEvent } from "react";
 
 import { isTauriRuntime } from "@/lib/tauri-runtime";
+import { toggleWindowMaximize } from "@/lib/window-actions";
 
 const INTERACTIVE =
   "button, a, input, select, textarea, [contenteditable='true'], [data-tauri-drag-region-exclude]";
@@ -23,7 +24,7 @@ export function createWindowDragMouseDown(
     if (isInteractiveTarget(event.target)) return;
 
     if (event.detail === 2) {
-      void win.toggleMaximize();
+      void toggleWindowMaximize(win);
       return;
     }
 

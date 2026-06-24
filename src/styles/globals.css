@@ -401,8 +401,8 @@
   html[data-iris-platform-macos] {
     /* 44px；与 chrome_metrics::MACOS_TITLEBAR_HEIGHT 一致，hook 可 IPC 覆盖 */
     --titlebar-height: 2.75rem;
-    --titlebar-traffic-inset: 0px;
-    --window-controls-width: 5.5rem;
+    --titlebar-traffic-inset: 88px;
+    --window-controls-width: 0px;
   }
 
   [data-tauri-drag-region] {
@@ -440,6 +440,10 @@
 
   .iris-traffic-light--maximize {
     background: #28c840;
+  }
+
+  .iris-titlebar-traffic-spacer {
+    width: var(--titlebar-traffic-inset);
   }
 
   .iris-window-control--windows:hover {

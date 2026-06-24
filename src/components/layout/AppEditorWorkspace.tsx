@@ -12,6 +12,7 @@ import type { IrisContextMenuGroup } from "@/components/ui/iris-context-menu";
 import { EDITOR_HTML_CACHE_FORMAT_VERSION } from "@/lib/editor-html-cache";
 import { cn } from "@/lib/utils";
 import type { ArtifactTab } from "@/types/assistant-artifact";
+import type { HomePendingOpen } from "@/lib/home-open-transition";
 
 interface EditorMenuPort {
   menu: {
@@ -52,8 +53,9 @@ interface AppEditorWorkspaceProps {
   onOpenAiManagement: () => void;
   onOpenQuickOpen: () => void;
   onOpenSearch: () => void;
-  openNoteLeavingHome: (path: string) => void;
+  openNoteLeavingHome: (path: string, titleHint?: string) => void;
   outlineOpen: boolean;
+  pendingOpen: HomePendingOpen | null;
   runEditorActionById: (actionId: string) => void;
   setFindReplaceMode: Dispatch<SetStateAction<"find" | "replace">>;
   setFindReplaceOpen: (open: boolean) => void;
@@ -94,6 +96,7 @@ export function AppEditorWorkspace({
   onOpenSearch,
   openNoteLeavingHome,
   outlineOpen,
+  pendingOpen,
   runEditorActionById,
   setFindReplaceMode,
   setFindReplaceOpen,
@@ -112,7 +115,9 @@ export function AppEditorWorkspace({
         outlineOpen && !zen && activePath && "iris-editor-outline-open",
       )}
     >
-      {activeArtifactTab && !homeActive ? (
+      {pendingOpen && !homeActive ? (
+        <TargetOpenLoading pendingOpen={pendingOpen} />
+      ) : activeArtifactTab && !homeActive ? (
         <ArtifactWorkspaceView
           tab={activeArtifactTab}
           getNoteContent={getNoteContent}
@@ -181,6 +186,32 @@ export function AppEditorWorkspace({
         onClose={() => setFindReplaceOpen(false)}
         onModeChange={setFindReplaceMode}
       />
+    </div>
+  );
+}
+
+function TargetOpenLoading({ pendingOpen }: { pendingOpen: HomePendingOpen }) {
+  return (
+    <div
+      data-testid="target-open-loading"
+      className="flex min-h-0 flex-1 items-center justify-center bg-background px-6"
+    >
+      <div className="min-w-0 text-center">
+        <div className="mx-auto mb-4 h-8 w-8 animate-pulse rounded-md border border-border bg-surface-chrome" />
+        <p className="truncate text-sm font-medium text-foreground">
+          {pendingOpen.title}
+        </p>
+        {pendingOpen.path ? (
+          <p className="mt-1 max-w-[28rem] truncate text-xs text-muted-foreground">
+            {pendingOpen.path}
+          </p>
+        ) : null}
+        {pendingOpen.error ? (
+          <p className="mt-3 max-w-[28rem] text-xs text-destructive">
+            {pendingOpen.error}
+          </p>
+        ) : null}
+      </div>
     </div>
   );
 }

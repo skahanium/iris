@@ -1,6 +1,6 @@
 import { isTauriRuntime } from "@/lib/tauri-runtime";
 
-/** macOS 桌面 Tauri（Overlay 标题栏 + Iris Rail 自定义窗口控件） */
+/** macOS 桌面 Tauri（Decorated Overlay 标题栏 + 系统原生红黄绿） */
 export function isMacOSDesktopChrome(): boolean {
   return isTauriRuntime() && /Mac/i.test(navigator.userAgent);
 }
@@ -10,7 +10,7 @@ export function isWindowsDesktopChrome(): boolean {
   return isTauriRuntime() && /Windows/i.test(navigator.userAgent);
 }
 
-/** Iris Rail: all desktop platforms use right-side custom controls. */
+/** Iris Rail: Windows/Linux use right-side custom controls; macOS uses native traffic lights. */
 export function showCustomWindowControls(): boolean {
-  return isTauriRuntime();
+  return isTauriRuntime() && !isMacOSDesktopChrome();
 }
