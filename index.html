@@ -27,22 +27,17 @@
     <style>
       :root {
         color-scheme: dark;
-        --iris-preboot-bg: #191919;
-        --iris-preboot-fg: #f4f4f4;
-        --iris-preboot-muted: #a8a8a8;
-        --iris-preboot-surface: #242424;
-        --iris-preboot-border: rgb(255 255 255 / 0.12);
+        --iris-preboot-bg: #fbfbfa;
+        --iris-preboot-fg: #242424;
+        --iris-preboot-muted: #737373;
+        --iris-preboot-surface: #ffffff;
+        --iris-preboot-chrome: #f7f7f6;
+        --iris-preboot-border: rgb(0 0 0 / 0.1);
         --iris-preboot-accent: #8fa99b;
       }
 
       html.light {
         color-scheme: light;
-        --iris-preboot-bg: #fbfbfa;
-        --iris-preboot-fg: #242424;
-        --iris-preboot-muted: #737373;
-        --iris-preboot-surface: #ffffff;
-        --iris-preboot-border: rgb(0 0 0 / 0.1);
-        --iris-preboot-accent: #6f8f7f;
       }
 
       html,
@@ -50,7 +45,7 @@
       #root {
         height: 100%;
         margin: 0;
-        background: transparent;
+        background: var(--iris-preboot-bg);
       }
 
       body {
@@ -64,15 +59,54 @@
           sans-serif;
       }
 
-      .iris-preboot-splash {
-        box-sizing: border-box;
+      .iris-preboot-shell {
         display: flex;
         height: 100%;
         min-height: 100vh;
         flex-direction: column;
+        overflow: hidden;
+        background: var(--iris-preboot-bg);
+        color: var(--iris-preboot-fg);
+      }
+
+      .iris-preboot-titlebar {
+        box-sizing: border-box;
+        display: flex;
+        height: 2.75rem;
+        flex: 0 0 auto;
+        align-items: center;
+        border-bottom: 1px solid var(--iris-preboot-border);
+        background: var(--iris-preboot-chrome);
+      }
+
+      .iris-preboot-brand {
+        display: inline-flex;
+        height: 100%;
+        align-items: center;
+        gap: 0.65rem;
+        padding: 0 1rem;
+        color: var(--iris-preboot-fg);
+        font-size: 0.92rem;
+        font-weight: 650;
+      }
+
+      .iris-preboot-brand img {
+        display: block;
+        width: 1.25rem;
+        height: 1.25rem;
+      }
+
+      .iris-preboot-splash {
+        box-sizing: border-box;
+        position: relative;
+        display: flex;
+        min-height: 0;
+        flex: 1 1 auto;
+        flex-direction: column;
         align-items: center;
         justify-content: center;
         gap: 1.25rem;
+        overflow: hidden;
         background:
           radial-gradient(
             circle at 50% 44%,
@@ -83,24 +117,99 @@
         color: var(--iris-preboot-fg);
       }
 
-      .iris-preboot-mark {
+      .iris-preboot-orbit-stage {
+        position: relative;
+        display: grid;
+        width: min(18rem, 64vw);
+        aspect-ratio: 1;
+        place-items: center;
+      }
+
+      .iris-preboot-mark-shell {
+        position: relative;
+        z-index: 3;
         display: grid;
         width: 5.25rem;
         height: 5.25rem;
         place-items: center;
         border: 1px solid var(--iris-preboot-border);
         border-radius: 1.5rem;
-        background: var(--iris-preboot-surface);
+        background: rgb(255 255 255 / 0.82);
         box-shadow:
           0 18px 48px rgb(0 0 0 / 0.18),
-          inset 0 1px 0 rgb(255 255 255 / 0.08);
-        color: var(--iris-preboot-accent);
-        font-size: 2.1rem;
-        font-weight: 700;
-        line-height: 1;
+          inset 0 1px 0 rgb(36 36 36 / 0.08);
+      }
+
+      .iris-preboot-mark-shell img {
+        display: block;
+        width: 2.625rem;
+        height: 2.625rem;
+      }
+
+      .iris-preboot-orbit,
+      .iris-preboot-pulse {
+        position: absolute;
+        border-radius: 999px;
+        pointer-events: none;
+      }
+
+      .iris-preboot-orbit {
+        border: 1px solid rgb(143 169 155 / 0.28);
+        box-shadow: inset 0 0 24px rgb(143 169 155 / 0.035);
+      }
+
+      .iris-preboot-orbit--outer {
+        inset: 0.2rem;
+        opacity: 0.62;
+      }
+
+      .iris-preboot-orbit--middle {
+        inset: 2.15rem;
+        opacity: 0.78;
+      }
+
+      .iris-preboot-orbit--inner {
+        inset: 4.2rem;
+        opacity: 0.5;
+      }
+
+      .iris-preboot-node {
+        position: absolute;
+        z-index: 2;
+        width: 0.48rem;
+        height: 0.48rem;
+        border-radius: 999px;
+        background: var(--iris-preboot-accent);
+        box-shadow: 0 0 18px rgb(143 169 155 / 0.5);
+        opacity: 0.72;
+        pointer-events: none;
+      }
+
+      .iris-preboot-node--a {
+        top: 17%;
+        left: 58%;
+      }
+
+      .iris-preboot-node--b {
+        right: 18%;
+        bottom: 31%;
+      }
+
+      .iris-preboot-node--c {
+        bottom: 24%;
+        left: 22%;
+      }
+
+      .iris-preboot-pulse {
+        inset: 4.35rem;
+        border: 1px solid rgb(143 169 155 / 0.34);
+        opacity: 0.2;
+        transform: scale(1);
       }
 
       .iris-preboot-copy {
+        position: relative;
+        z-index: 2;
         display: grid;
         gap: 0.35rem;
         text-align: center;
@@ -124,16 +233,35 @@
   </head>
   <body>
     <div id="root">
-      <div
-        class="iris-preboot-splash"
-        role="status"
-        aria-live="polite"
-        aria-label="Iris 正在启动"
-      >
-        <div class="iris-preboot-mark" aria-hidden="true">I</div>
-        <div class="iris-preboot-copy">
-          <p class="iris-preboot-title">唤醒知识网络</p>
-          <p class="iris-preboot-status">准备笔记</p>
+      <div class="iris-preboot-shell">
+        <div class="iris-preboot-titlebar" aria-hidden="true">
+          <div class="iris-preboot-brand">
+            <img src="/brand/iris-mark.svg" alt="" />
+            <span>Iris</span>
+          </div>
+        </div>
+        <div
+          class="iris-preboot-splash"
+          role="status"
+          aria-live="polite"
+          aria-label="Iris 正在启动"
+        >
+          <div class="iris-preboot-orbit-stage" aria-hidden="true">
+            <span class="iris-preboot-orbit iris-preboot-orbit--outer"></span>
+            <span class="iris-preboot-orbit iris-preboot-orbit--middle"></span>
+            <span class="iris-preboot-orbit iris-preboot-orbit--inner"></span>
+            <span class="iris-preboot-node iris-preboot-node--a"></span>
+            <span class="iris-preboot-node iris-preboot-node--b"></span>
+            <span class="iris-preboot-node iris-preboot-node--c"></span>
+            <span class="iris-preboot-pulse"></span>
+            <div class="iris-preboot-mark-shell">
+              <img src="/brand/iris-mark.svg" alt="" />
+            </div>
+          </div>
+          <div class="iris-preboot-copy">
+            <p class="iris-preboot-title">唤醒知识网络</p>
+            <p class="iris-preboot-status">准备笔记</p>
+          </div>
         </div>
       </div>
     </div>

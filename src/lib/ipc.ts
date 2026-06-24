@@ -97,6 +97,14 @@ export async function settingsSet(key: string, value: unknown): Promise<void> {
   return invoke("settings_set", { key, value });
 }
 
+export async function settingsReset<K extends keyof SettingsMap>(
+  key: K,
+): Promise<void>;
+export async function settingsReset(key: string): Promise<void>;
+export async function settingsReset(key: string): Promise<void> {
+  return invoke("settings_reset", { key });
+}
+
 export async function vaultSet(path: string): Promise<void> {
   return invoke("vault_set", { path });
 }
@@ -308,6 +316,10 @@ export async function versionRestore(
 
 export async function versionDelete(versionId: number): Promise<void> {
   return invoke("version_delete_cmd", { versionId });
+}
+
+export async function versionCleanup(): Promise<number> {
+  return invoke<number>("version_cleanup_cmd");
 }
 
 export async function versionFinalizeCurrent(

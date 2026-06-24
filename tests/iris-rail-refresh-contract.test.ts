@@ -60,7 +60,7 @@ describe("Iris Rail complete interface contracts", () => {
     expect(welcome).not.toContain("<IrisMark");
     expect(platform).toContain("showCustomWindowControls");
     expect(platform).toContain("isWindowsDesktopChrome");
-    expect(macos).toContain('"decorations": false');
+    expect(macos).toContain('"decorations": true');
   });
 
   it("all document-opening overlay routes leave Home before opening a note", () => {

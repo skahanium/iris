@@ -37,6 +37,15 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
+            let main_window = app.get_webview_window("main");
+            if let Some(window) = &main_window {
+                // Apply Iris chrome before any slower startup work can reveal
+                // a default Tauri shell in dev mode. React still controls show().
+                window_chrome::apply_main_window_chrome(window);
+            } else {
+                tracing::warn!("main window not found at setup start");
+            }
+
             let data_dir = app
                 .path()
                 .app_data_dir()
@@ -62,12 +71,9 @@ pub fn run() {
                 let _ = state.restart_file_watcher(app.handle().clone());
             }
 
-            if let Some(window) = app.get_webview_window("main") {
-                // Keep the hidden startup window styled, then let the React
-                // startup splash reveal it after the splash has mounted.
-                window_chrome::apply_main_window_chrome(&window);
-            } else {
-                tracing::warn!("main window not found after setup");
+            if let Some(window) = &main_window {
+                // Reapply after startup side effects; show() remains frontend-gated.
+                window_chrome::apply_main_window_chrome(window);
             }
 
             tracing::info!("Iris 已启动 — 若未见窗口，请检查任务栏或 WebView2 运行时。");
