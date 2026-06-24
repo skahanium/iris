@@ -10,6 +10,7 @@ import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { WelcomeEmpty } from "@/components/layout/WelcomeEmpty";
 import { IrisContextMenu } from "@/components/ui/iris-context-menu";
 import type { IrisContextMenuGroup } from "@/components/ui/iris-context-menu";
+import { useHomeRecentNotes } from "@/hooks/useHomeRecentNotes";
 import { EDITOR_HTML_CACHE_FORMAT_VERSION } from "@/lib/editor-html-cache";
 import { cn } from "@/lib/utils";
 import type { ArtifactTab } from "@/types/assistant-artifact";
@@ -59,7 +60,7 @@ interface AppEditorWorkspaceProps {
   handleDirty: () => void;
   handleEditorReady: (editor: Editor | null) => void;
   handleLockToggle: (locked: boolean) => Promise<void>;
-  handleNewNoteLeavingHome: () => void;
+  handleNewNoteLeavingHome: () => void | Promise<void>;
   getNoteContent: () => string;
   homeActive: boolean;
   inlineAi: {
@@ -138,6 +139,12 @@ export function AppEditorWorkspace({
   warmPreparedNotes,
   zen,
 }: AppEditorWorkspaceProps) {
+  const { recentNotes, refreshRecent } = useHomeRecentNotes({
+    onPrepare: onPrepareNote,
+    vaultIndexEpoch,
+    vaultPath,
+  });
+
   const currentEditorSurface = useMemo<EditorSurfaceSnapshot | null>(() => {
     if (!activePath || homeActive || activeArtifactTab) return null;
     return {
@@ -402,14 +409,15 @@ export function AppEditorWorkspace({
             renderEditorSurface(snapshot, visibility),
           )}
           <WelcomeEmpty
-            vaultKey={(vaultPath ?? "") + ":" + vaultIndexEpoch}
             onOpen={openNoteLeavingHome}
             onNew={handleNewNoteLeavingHome}
             onQuickOpen={onOpenQuickOpen}
             onSearch={onOpenSearch}
             onOpenAiManagement={onOpenAiManagement}
             onPrepare={onPrepareNote}
+            onRefreshRecent={refreshRecent}
             pendingOpen={pendingOpen}
+            recentNotes={recentNotes}
           />
         </>
       )}

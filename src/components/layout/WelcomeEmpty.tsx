@@ -1,60 +1,37 @@
 import { Bot, FilePlus2, FolderSearch, Search, Trash2 } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import { useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/common/ConfirmDialog";
 import { displayTitleForFileListItem } from "@/lib/note-display";
-import { fileDelete, fileList } from "@/lib/ipc";
+import { fileDelete } from "@/lib/ipc";
 import type { HomePendingOpen } from "@/lib/home-open-transition";
 import type { FileListItem } from "@/types/ipc";
 
 interface WelcomeEmptyProps {
-  /** Reload recent list when vault changes. */
-  vaultKey?: string | null;
   onOpen: (path: string, titleHint?: string) => void;
   onPrepare?: (file: FileListItem) => void;
   onNew: () => void | Promise<void>;
   onQuickOpen?: () => void;
+  onRefreshRecent: () => void | Promise<void>;
   onSearch?: () => void;
   onOpenAiManagement?: () => void;
   pendingOpen?: HomePendingOpen | null;
-}
-
-function dedupeByPath(files: FileListItem[]): FileListItem[] {
-  const byPath = new Map<string, FileListItem>();
-  for (const f of files) {
-    if (!byPath.has(f.path)) {
-      byPath.set(f.path, f);
-    }
-  }
-  return [...byPath.values()];
+  recentNotes: readonly FileListItem[];
 }
 
 export function WelcomeEmpty({
-  vaultKey,
   onOpen,
   onNew,
   onPrepare,
   onQuickOpen,
+  onRefreshRecent,
   onSearch,
   onOpenAiManagement,
   pendingOpen,
+  recentNotes,
 }: WelcomeEmptyProps) {
-  const [recent, setRecent] = useState<FileListItem[]>([]);
   const [deleteTarget, setDeleteTarget] = useState<FileListItem | null>(null);
-
-  const loadRecent = useCallback(() => {
-    void fileList().then((files) => {
-      const deduped = dedupeByPath(files);
-      const nextRecent = deduped.slice(0, 5);
-      setRecent(nextRecent);
-      nextRecent.forEach((file) => onPrepare?.(file));
-    });
-  }, [onPrepare]);
-
-  useEffect(() => {
-    loadRecent();
-  }, [loadRecent, vaultKey]);
 
   return (
     <div
@@ -70,7 +47,7 @@ export function WelcomeEmpty({
               onClick={() => {
                 void (async () => {
                   await onNew();
-                  loadRecent();
+                  await onRefreshRecent();
                 })();
               }}
             >
@@ -124,12 +101,12 @@ export function WelcomeEmpty({
               </p>
             </div>
             <span className="text-xs tabular-nums text-muted-foreground">
-              {recent.length}
+              {recentNotes.length}
             </span>
           </div>
-          {recent.length > 0 ? (
+          {recentNotes.length > 0 ? (
             <ul className="divide-y divide-border/50">
-              {recent.map((f) => {
+              {recentNotes.map((f) => {
                 const title = displayTitleForFileListItem(f);
                 return (
                   <li
@@ -191,7 +168,7 @@ export function WelcomeEmpty({
           void (async () => {
             await fileDelete(deleteTarget.path);
             setDeleteTarget(null);
-            loadRecent();
+            await onRefreshRecent();
           })();
         }}
       />

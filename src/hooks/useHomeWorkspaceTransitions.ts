@@ -120,7 +120,7 @@ export function useHomeWorkspaceTransitions<OpenNoteOptions>({
     [activateArtifact, activateTab, setActiveArtifactId, setHomeActive],
   );
 
-  const handleNewNoteLeavingHome = useCallback(() => {
+  const handleNewNoteLeavingHome = useCallback((): Promise<void> => {
     const previousPath = activePathRef.current;
     const title = "新建笔记";
     const sequence = beginHomeOpenLoading({
@@ -137,7 +137,7 @@ export function useHomeWorkspaceTransitions<OpenNoteOptions>({
       title,
     };
     setActiveArtifactId(null);
-    void handleNewNote()
+    return handleNewNote()
       .then(() => {
         if (
           clearHomeNewNoteLoading({

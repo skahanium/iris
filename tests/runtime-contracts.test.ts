@@ -23,6 +23,7 @@ interface TauriWindowConfig {
   transparent?: boolean;
   titleBarStyle?: string;
   hiddenTitle?: boolean;
+  trafficLightPosition?: { x: number; y: number };
 }
 
 function readMainWindow(path: string): TauriWindowConfig {
@@ -72,6 +73,7 @@ describe("runtime configuration contracts", () => {
       shadow: true,
       titleBarStyle: "Overlay",
       hiddenTitle: true,
+      trafficLightPosition: { x: 14, y: 18 },
     });
     expectStartupWindowInvariant("src-tauri/tauri.linux.conf.json", {
       transparent: true,
@@ -103,6 +105,9 @@ describe("runtime configuration contracts", () => {
       "window_chrome::apply_main_window_chrome",
     );
     const stateInitIndex = setupBlock.indexOf("AppState::new(data_dir)");
+    const pageLoadIndex = lib.indexOf(".on_page_load(");
+    const setupIndex = lib.indexOf(".setup(|app| {");
+    const pageLoadBlock = lib.slice(pageLoadIndex, setupIndex);
 
     expect(mainWindow?.visible).toBe(false);
     expect(setupBlock).toContain("window_chrome::apply_main_window_chrome");
@@ -119,6 +124,18 @@ describe("runtime configuration contracts", () => {
       "commands::window_chrome_cmd::show_main_window_when_ready",
     );
     expect(lib).not.toContain("Theme::Dark");
+    expect(chromeCommand).toContain("pub(crate) fn reveal_main_window");
+    expect(chromeCommand).toContain("reveal_main_window(&window)");
+    expect(pageLoadIndex).toBeGreaterThanOrEqual(0);
+    expect(setupIndex).toBeGreaterThan(pageLoadIndex);
+    expect(pageLoadBlock).toContain("PageLoadEvent::Finished");
+    expect(pageLoadBlock).toContain('webview.label() != "main"');
+    expect(pageLoadBlock).toContain('get_webview_window("main")');
+    expect(pageLoadBlock).toContain(".is_visible()");
+    expect(pageLoadBlock).toContain("if visible");
+    expect(pageLoadBlock).toContain(
+      "commands::window_chrome_cmd::reveal_main_window",
+    );
   });
 
   it("bootstraps persisted theme before React first render", () => {

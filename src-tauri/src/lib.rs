@@ -23,7 +23,9 @@ pub mod version;
 mod watcher;
 mod window_chrome;
 
-use tauri::Manager;
+use std::time::Duration;
+
+use tauri::{webview::PageLoadEvent, Manager};
 use tracing_subscriber::EnvFilter;
 
 use app::AppState;
@@ -36,6 +38,39 @@ pub fn run() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .on_page_load(|webview, payload| {
+            if payload.event() != PageLoadEvent::Finished || webview.label() != "main" {
+                return;
+            }
+
+            let app = webview.app_handle().clone();
+            std::thread::spawn(move || {
+                std::thread::sleep(Duration::from_millis(750));
+
+                let Some(window) = app.get_webview_window("main") else {
+                    tracing::warn!("startup reveal fallback skipped: main window not found");
+                    return;
+                };
+
+                let visible = match window.is_visible() {
+                    Ok(visible) => visible,
+                    Err(e) => {
+                        tracing::warn!(
+                            "startup reveal fallback skipped: visibility check failed: {e}"
+                        );
+                        return;
+                    }
+                };
+
+                if visible {
+                    return;
+                }
+
+                if let Err(e) = commands::window_chrome_cmd::reveal_main_window(&window) {
+                    tracing::warn!("startup reveal fallback failed: {e}");
+                }
+            });
+        })
         .setup(|app| {
             let main_window = app.get_webview_window("main");
             if let Some(window) = &main_window {

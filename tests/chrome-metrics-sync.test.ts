@@ -46,12 +46,21 @@ describe("chrome metrics SSOT", () => {
   });
 
   it("macOS uses decorated overlay shell with native traffic lights", () => {
-    const macos = read("src-tauri/tauri.macos.conf.json");
-    expect(macos).toContain('"decorations": true');
-    expect(macos).toContain('"transparent": false');
-    expect(macos).toContain('"titleBarStyle": "Overlay"');
-    expect(macos).toContain('"hiddenTitle": true');
-    expect(macos).not.toContain("trafficLightPosition");
+    const macosSource = read("src-tauri/tauri.macos.conf.json");
+    const macos = JSON.parse(macosSource) as {
+      app?: {
+        windows?: Array<{
+          trafficLightPosition?: { x?: number; y?: number };
+        }>;
+      };
+    };
+    const mainWindow = macos.app?.windows?.[0];
+
+    expect(macosSource).toContain('"decorations": true');
+    expect(macosSource).toContain('"transparent": false');
+    expect(macosSource).toContain('"titleBarStyle": "Overlay"');
+    expect(macosSource).toContain('"hiddenTitle": true');
+    expect(mainWindow?.trafficLightPosition).toEqual({ x: 14, y: 18 });
     expect(read("src/lib/platform-chrome.ts")).toContain(
       "return isTauriRuntime() && !isMacOSDesktopChrome()",
     );

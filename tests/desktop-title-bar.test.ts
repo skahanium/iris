@@ -57,13 +57,24 @@ afterEach(() => {
 
 describe("desktop title bar", () => {
   it("macOS config uses decorated overlay shell with native traffic lights", () => {
-    const macos = read("src-tauri/tauri.macos.conf.json");
-    expect(macos).toContain('"titleBarStyle": "Overlay"');
-    expect(macos).toContain('"hiddenTitle": true');
-    expect(macos).toContain('"decorations": true');
-    expect(macos).toContain('"transparent": false');
-    expect(macos).not.toContain("trafficLightPosition");
-    expect(macos).not.toContain("Tauri App");
+    const macosSource = read("src-tauri/tauri.macos.conf.json");
+    const macos = JSON.parse(macosSource) as {
+      app?: {
+        windows?: Array<{
+          trafficLightPosition?: { x?: number; y?: number };
+        }>;
+      };
+    };
+
+    expect(macosSource).toContain('"titleBarStyle": "Overlay"');
+    expect(macosSource).toContain('"hiddenTitle": true');
+    expect(macosSource).toContain('"decorations": true');
+    expect(macosSource).toContain('"transparent": false');
+    expect(macos.app?.windows?.[0]?.trafficLightPosition).toEqual({
+      x: 14,
+      y: 18,
+    });
+    expect(macosSource).not.toContain("Tauri App");
   });
 
   it("main window title is Iris in tauri config and rust chrome", () => {

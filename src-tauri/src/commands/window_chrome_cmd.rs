@@ -40,13 +40,17 @@ pub fn get_desktop_chrome_metrics(window: WebviewWindow) -> DesktopChromeMetrics
 /// Show the hidden startup window once the React splash has mounted.
 #[tauri::command]
 pub fn show_main_window_when_ready(window: WebviewWindow) -> AppResult<()> {
-    crate::window_chrome::apply_main_window_chrome(&window);
+    reveal_main_window(&window)
+}
+
+pub(crate) fn reveal_main_window(window: &WebviewWindow) -> AppResult<()> {
+    crate::window_chrome::apply_main_window_chrome(window);
     window
         .show()
         .map_err(|e| AppError::msg(format!("Failed to show main window: {e}")))?;
 
     #[cfg(target_os = "macos")]
-    crate::window_chrome::apply_main_window_chrome(&window);
+    crate::window_chrome::apply_main_window_chrome(window);
 
     let _ = window.set_focus();
     Ok(())
