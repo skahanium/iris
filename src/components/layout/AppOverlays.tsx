@@ -32,12 +32,6 @@ const VersionTimeline = lazy(() =>
   })),
 );
 
-const LazyFallback = () => (
-  <div className="flex items-center justify-center p-8 text-sm text-muted-foreground">
-    加载中…
-  </div>
-);
-
 interface OverlayPort {
   quickOpen: boolean;
   fileSheet: boolean;
@@ -182,28 +176,32 @@ export function AppOverlays({
         onOpen={openNoteLeavingHome}
         onPrepare={onPrepareNotePath}
       />
-      <Suspense fallback={<LazyFallback />}>
-        <ManagementCenterPanel
-          open={overlays.managementCenterOpen}
-          onClose={() => overlays.closeOverlay("managementCenter")}
-          section={overlays.managementCenterSection}
-          detail={overlays.managementCenterDetail}
-          webSearch={webSearch}
-          onWebSearchChange={setWebSearch}
-          onOpenNote={openNoteLeavingHome}
-          onPrepareNote={onPrepareNote}
-          onOpenKnowledgeRelations={openKnowledgeRelations}
-          onOpenVersion={openVersion}
-          onRescanVault={rescanVault}
-          onRecycleIndexChange={bumpVaultIndex}
-          autoVersionEnabled={autoVersionSettings.autoVersionEnabled}
-          autoVersionIdleMinutes={autoVersionSettings.autoVersionIdleMinutes}
-          onAutoVersionEnabledChange={autoVersionSettings.setAutoVersionEnabled}
-          onAutoVersionIdleMinutesChange={
-            autoVersionSettings.setAutoVersionIdleMinutes
-          }
-        />
-      </Suspense>
+      {overlays.managementCenterOpen ? (
+        <Suspense fallback={null}>
+          <ManagementCenterPanel
+            open={overlays.managementCenterOpen}
+            onClose={() => overlays.closeOverlay("managementCenter")}
+            section={overlays.managementCenterSection}
+            detail={overlays.managementCenterDetail}
+            webSearch={webSearch}
+            onWebSearchChange={setWebSearch}
+            onOpenNote={openNoteLeavingHome}
+            onPrepareNote={onPrepareNote}
+            onOpenKnowledgeRelations={openKnowledgeRelations}
+            onOpenVersion={openVersion}
+            onRescanVault={rescanVault}
+            onRecycleIndexChange={bumpVaultIndex}
+            autoVersionEnabled={autoVersionSettings.autoVersionEnabled}
+            autoVersionIdleMinutes={autoVersionSettings.autoVersionIdleMinutes}
+            onAutoVersionEnabledChange={
+              autoVersionSettings.setAutoVersionEnabled
+            }
+            onAutoVersionIdleMinutesChange={
+              autoVersionSettings.setAutoVersionIdleMinutes
+            }
+          />
+        </Suspense>
+      ) : null}
       <KnowledgeRelationsPanel
         open={overlays.knowledgeRelationsOpen}
         onClose={() => overlays.closeOverlay("knowledgeRelations")}
@@ -211,35 +209,39 @@ export function AppOverlays({
         onOpen={openNoteLeavingHome}
         onPreparePath={onPrepareNotePath}
       />
-      <Suspense fallback={<LazyFallback />}>
-        <VersionTimeline
-          open={overlays.versionOpen}
-          onClose={() => overlays.closeOverlay("version")}
-          notePath={activePath}
-          currentContent={markdown}
-          getCurrentContent={getCurrentContent}
-          hasUnsavedEdits={
-            tabs.find((tab) => tab.path === activePath)?.dirty ?? false
-          }
-          onRestore={applyMarkdownToEditor}
-          onHighPriorityStart={(path) =>
-            versionSnapshotScheduler.markHighPriorityStart(path)
-          }
-          onHighPriorityEnd={(path) =>
-            versionSnapshotScheduler.markHighPriorityEnd(path)
-          }
-        />
-      </Suspense>
-      <ErrorBoundary scope="知识图谱">
-        <Suspense fallback={<LazyFallback />}>
-          <GraphView
-            open={overlays.graphOpen}
-            onClose={() => overlays.closeOverlay("graph")}
-            onOpenNote={openNoteLeavingHome}
-            onPrepareNotePath={onPrepareNotePath}
+      {overlays.versionOpen ? (
+        <Suspense fallback={null}>
+          <VersionTimeline
+            open={overlays.versionOpen}
+            onClose={() => overlays.closeOverlay("version")}
+            notePath={activePath}
+            currentContent={markdown}
+            getCurrentContent={getCurrentContent}
+            hasUnsavedEdits={
+              tabs.find((tab) => tab.path === activePath)?.dirty ?? false
+            }
+            onRestore={applyMarkdownToEditor}
+            onHighPriorityStart={(path) =>
+              versionSnapshotScheduler.markHighPriorityStart(path)
+            }
+            onHighPriorityEnd={(path) =>
+              versionSnapshotScheduler.markHighPriorityEnd(path)
+            }
           />
         </Suspense>
-      </ErrorBoundary>
+      ) : null}
+      {overlays.graphOpen ? (
+        <ErrorBoundary scope="知识图谱">
+          <Suspense fallback={null}>
+            <GraphView
+              open={overlays.graphOpen}
+              onClose={() => overlays.closeOverlay("graph")}
+              onOpenNote={openNoteLeavingHome}
+              onPrepareNotePath={onPrepareNotePath}
+            />
+          </Suspense>
+        </ErrorBoundary>
+      ) : null}
       <ConflictDialog
         open={conflictState?.open ?? false}
         localContent={conflictState?.localContent ?? ""}

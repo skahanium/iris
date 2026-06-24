@@ -55,6 +55,15 @@ describe("App shell refactor contract", () => {
     expect(app).not.toContain("<VersionTimeline");
   });
 
+  it("does not mount closed lazy overlays or expose suspense fallbacks", () => {
+    const component = read("src/components/layout/AppOverlays.tsx");
+
+    expect(component).toContain("overlays.managementCenterOpen ? (");
+    expect(component).toContain("overlays.versionOpen ? (");
+    expect(component).toContain("overlays.graphOpen ? (");
+    expect(component).toContain("fallback={null}");
+    expect(component).not.toContain("LazyFallback");
+  });
   it("moves editor workspace composition behind a layout component", () => {
     const component = read("src/components/layout/AppEditorWorkspace.tsx");
     const app = read("src/App.impl.tsx");
