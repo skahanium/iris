@@ -60,7 +60,7 @@ describe("chrome metrics SSOT", () => {
     expect(macosSource).toContain('"transparent": false');
     expect(macosSource).toContain('"titleBarStyle": "Overlay"');
     expect(macosSource).toContain('"hiddenTitle": true');
-    expect(mainWindow?.trafficLightPosition).toEqual({ x: 14, y: 18 });
+    expect(mainWindow?.trafficLightPosition).toEqual({ x: 14, y: 16 });
     expect(read("src/lib/platform-chrome.ts")).toContain(
       "return isTauriRuntime() && !isMacOSDesktopChrome()",
     );

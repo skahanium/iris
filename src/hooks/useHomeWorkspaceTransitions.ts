@@ -24,6 +24,7 @@ interface UseHomeWorkspaceTransitionsOptions<OpenNoteOptions> {
     titleHint?: string,
     options?: OpenNoteOptions,
   ) => Promise<void>;
+  openTabs?: readonly { path: string }[];
   setActiveArtifactId: (id: string | null) => void;
   setHomeActive: (active: boolean) => void;
 }
@@ -33,6 +34,7 @@ export function useHomeWorkspaceTransitions<OpenNoteOptions>({
   activateTab,
   handleNewNote,
   openNote,
+  openTabs = [],
   setActiveArtifactId,
   setHomeActive,
 }: UseHomeWorkspaceTransitionsOptions<OpenNoteOptions>) {
@@ -58,6 +60,15 @@ export function useHomeWorkspaceTransitions<OpenNoteOptions>({
       titleHint?: string,
       options?: OpenNoteOptions,
     ): Promise<void> => {
+      if (openTabs.some((tab) => tab.path === path)) {
+        cancelHomeOpenTransitions(homeOpenSequenceRef, setPendingOpen);
+        setActiveArtifactId(null);
+        setHomeActive(false);
+        return openNote(path, titleHint, options).catch(() => {
+          setHomeActive(true);
+        });
+      }
+
       const title = resolveNoteDisplayTitle({ path, title: titleHint });
       const sequence = beginHomeOpenLoading({
         path,
@@ -90,7 +101,7 @@ export function useHomeWorkspaceTransitions<OpenNoteOptions>({
           });
         });
     },
-    [openNote, setActiveArtifactId, setHomeActive, setPendingOpen],
+    [openNote, openTabs, setActiveArtifactId, setHomeActive, setPendingOpen],
   );
 
   const clearPendingOpenFromWorkspace = useCallback(

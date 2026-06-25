@@ -13,10 +13,6 @@ import { WelcomeEmpty } from "@/components/layout/WelcomeEmpty";
 import { IrisContextMenu } from "@/components/ui/iris-context-menu";
 import type { IrisContextMenuGroup } from "@/components/ui/iris-context-menu";
 import { useHomeRecentNotes } from "@/hooks/useHomeRecentNotes";
-import {
-  EDITOR_HTML_CACHE_FORMAT_VERSION,
-  editorHtmlDigest,
-} from "@/lib/editor-html-cache";
 import { cn } from "@/lib/utils";
 import type { ArtifactTab } from "@/types/assistant-artifact";
 import type { MediaTab } from "@/hooks/useMediaTabs";
@@ -62,8 +58,8 @@ interface DocumentLoadingGate {
   visible: boolean;
 }
 
-const DOCUMENT_OPEN_LOADING_DELAY_MS = 100;
 const DOCUMENT_OPEN_LOADING_MIN_MS = 800;
+const DOCUMENT_OPEN_LOADING_WATCHDOG_MS = 5000;
 
 interface AppEditorWorkspaceProps {
   activeFileLocked: boolean;
@@ -143,11 +139,7 @@ function homePendingMatchesPath(
 }
 
 function surfaceIdentity(snapshot: EditorSurfaceSnapshot): string {
-  return [
-    snapshot.path,
-    EDITOR_HTML_CACHE_FORMAT_VERSION,
-    editorHtmlDigest(snapshot.editorBodyMarkdown),
-  ].join("\0");
+  return snapshot.path;
 }
 
 export function AppEditorWorkspace({
@@ -280,24 +272,24 @@ export function AppEditorWorkspace({
       visible: false,
     });
   const documentLoadingGateRef = useRef(documentLoadingGate);
-  const loadingDelayTimerRef = useRef<number | null>(null);
   const loadingReleaseTimerRef = useRef<number | null>(null);
+  const loadingWatchdogTimerRef = useRef<number | null>(null);
 
   const syncDocumentLoadingGate = useCallback((next: DocumentLoadingGate) => {
     documentLoadingGateRef.current = next;
     setDocumentLoadingGate(next);
   }, []);
 
-  const clearLoadingDelayTimer = useCallback(() => {
-    if (loadingDelayTimerRef.current === null) return;
-    window.clearTimeout(loadingDelayTimerRef.current);
-    loadingDelayTimerRef.current = null;
-  }, []);
-
   const clearLoadingReleaseTimer = useCallback(() => {
     if (loadingReleaseTimerRef.current === null) return;
     window.clearTimeout(loadingReleaseTimerRef.current);
     loadingReleaseTimerRef.current = null;
+  }, []);
+
+  const clearLoadingWatchdogTimer = useCallback(() => {
+    if (loadingWatchdogTimerRef.current === null) return;
+    window.clearTimeout(loadingWatchdogTimerRef.current);
+    loadingWatchdogTimerRef.current = null;
   }, []);
 
   useEffect(() => {
@@ -320,14 +312,6 @@ export function AppEditorWorkspace({
       }
       return previous.map((record) => {
         if (record.snapshot.path !== currentEditorSurface.path) return record;
-        if (record.identityKey !== identityKey) {
-          return {
-            editor: null,
-            identityKey,
-            ready: false,
-            snapshot: currentEditorSurface,
-          };
-        }
         return {
           ...record,
           snapshot: currentEditorSurface,
@@ -384,67 +368,6 @@ export function AppEditorWorkspace({
     documentLoadingGate.identityKey === currentSurfaceIdentity &&
     documentLoadingGate.visible,
   );
-
-  useEffect(() => {
-    clearLoadingDelayTimer();
-    clearLoadingReleaseTimer();
-
-    const pendingForCurrentSurface =
-      pendingOpen &&
-      currentEditorSurface &&
-      homePendingMatchesPath(pendingOpen, currentEditorSurface.path)
-        ? pendingOpen
-        : null;
-
-    if (!currentSurfaceIdentity || activeSurfaceReadyRef.current) {
-      syncDocumentLoadingGate({
-        identityKey: null,
-        shownAt: null,
-        visible: false,
-      });
-      return;
-    }
-
-    if (pendingForCurrentSurface) {
-      syncDocumentLoadingGate({
-        identityKey: currentSurfaceIdentity,
-        shownAt: pendingForCurrentSurface.startedAt,
-        visible: true,
-      });
-      return;
-    }
-
-    syncDocumentLoadingGate({
-      identityKey: currentSurfaceIdentity,
-      shownAt: null,
-      visible: false,
-    });
-    loadingDelayTimerRef.current = window.setTimeout(() => {
-      loadingDelayTimerRef.current = null;
-      if (
-        documentLoadingGateRef.current.identityKey !== currentSurfaceIdentity
-      ) {
-        return;
-      }
-      syncDocumentLoadingGate({
-        identityKey: currentSurfaceIdentity,
-        shownAt: Date.now(),
-        visible: true,
-      });
-    }, DOCUMENT_OPEN_LOADING_DELAY_MS);
-
-    return () => {
-      clearLoadingDelayTimer();
-      clearLoadingReleaseTimer();
-    };
-  }, [
-    clearLoadingDelayTimer,
-    clearLoadingReleaseTimer,
-    currentEditorSurface,
-    currentSurfaceIdentity,
-    pendingOpen,
-    syncDocumentLoadingGate,
-  ]);
 
   useEffect(() => {
     if (!activePath) {
@@ -507,10 +430,80 @@ export function AppEditorWorkspace({
     [syncDocumentLoadingGate],
   );
 
+  useEffect(() => {
+    clearLoadingReleaseTimer();
+    clearLoadingWatchdogTimer();
+
+    const pendingForCurrentSurface =
+      pendingOpen &&
+      currentEditorSurface &&
+      homePendingMatchesPath(pendingOpen, currentEditorSurface.path)
+        ? pendingOpen
+        : null;
+
+    if (!currentSurfaceIdentity || activeSurfaceReadyRef.current) {
+      syncDocumentLoadingGate({
+        identityKey: null,
+        shownAt: null,
+        visible: false,
+      });
+      return;
+    }
+
+    loadingWatchdogTimerRef.current = window.setTimeout(() => {
+      loadingWatchdogTimerRef.current = null;
+      setSurfaceRecords((previous) => {
+        const record = previous.find(
+          (item) => item.identityKey === currentSurfaceIdentity,
+        );
+        if (!record?.editor || record.ready) return previous;
+
+        releaseSurfaceFirstFrame(
+          record.snapshot.path,
+          record.identityKey,
+          record.editor,
+        );
+        return previous.map((item) =>
+          item.identityKey === currentSurfaceIdentity
+            ? { ...item, ready: true }
+            : item,
+        );
+      });
+    }, DOCUMENT_OPEN_LOADING_WATCHDOG_MS);
+
+    if (pendingForCurrentSurface) {
+      syncDocumentLoadingGate({
+        identityKey: currentSurfaceIdentity,
+        shownAt: pendingForCurrentSurface.startedAt,
+        visible: true,
+      });
+      return;
+    }
+
+    syncDocumentLoadingGate({
+      identityKey: currentSurfaceIdentity,
+      shownAt: Date.now(),
+      visible: true,
+    });
+
+    return () => {
+      clearLoadingReleaseTimer();
+      clearLoadingWatchdogTimer();
+    };
+  }, [
+    clearLoadingReleaseTimer,
+    clearLoadingWatchdogTimer,
+    currentEditorSurface,
+    currentSurfaceIdentity,
+    pendingOpen,
+    releaseSurfaceFirstFrame,
+    syncDocumentLoadingGate,
+  ]);
+
   const handleSurfaceFirstFrameReady = useCallback(
     (path: string, identityKey: string, editor: Editor) => {
-      clearLoadingDelayTimer();
       clearLoadingReleaseTimer();
+      clearLoadingWatchdogTimer();
       setSurfaceRecords((previous) =>
         previous.map((record) =>
           record.snapshot.path === path
@@ -549,8 +542,8 @@ export function AppEditorWorkspace({
       releaseSurfaceFirstFrame(path, identityKey, editor);
     },
     [
-      clearLoadingDelayTimer,
       clearLoadingReleaseTimer,
+      clearLoadingWatchdogTimer,
       releaseSurfaceFirstFrame,
     ],
   );

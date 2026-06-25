@@ -122,12 +122,11 @@ describe("editor-html-cache", () => {
     expect(source).toContain("setCachedEditorHtml(");
   });
 
-  it("AppEditorWorkspace remounts TipTapEditor when ingest cache format changes", () => {
+  it("AppEditorWorkspace uses path-stable surface identity for open tabs", () => {
     const source = readSource("src/components/layout/AppEditorWorkspace.tsx");
 
-    expect(source).toContain("EDITOR_HTML_CACHE_FORMAT_VERSION");
     expect(source).toContain("function surfaceIdentity");
-    expect(source).toContain("editorHtmlDigest(snapshot.editorBodyMarkdown)");
+    expect(source).toContain("return snapshot.path;");
     expect(source).toContain("key={record.identityKey}");
   });
 });

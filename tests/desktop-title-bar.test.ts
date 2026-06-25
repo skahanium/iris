@@ -72,7 +72,7 @@ describe("desktop title bar", () => {
     expect(macosSource).toContain('"transparent": false');
     expect(macos.app?.windows?.[0]?.trafficLightPosition).toEqual({
       x: 14,
-      y: 18,
+      y: 16,
     });
     expect(macosSource).not.toContain("Tauri App");
   });
@@ -227,6 +227,19 @@ describe("desktop title bar", () => {
     expect(bar).not.toContain("iris-home-segment");
     expect(bar).toContain("iris-brand-rail--active");
     expect(bar).toContain("iris-rail-tab--active");
+  });
+
+  it("keeps the tab rail single-row without native scrollbars", () => {
+    const bar = read("src/components/layout/DesktopTitleBar.tsx");
+    const css = read("src/styles/globals.css");
+
+    expect(bar).toContain("iris-titlebar-tab-rail");
+    expect(bar).not.toContain("overflow-x-auto");
+    expect(bar).not.toContain("overflow-y-auto");
+    expect(css).toContain(".iris-titlebar-tab-rail");
+    expect(css).toContain("scrollbar-width: none");
+    expect(css).toContain(".iris-titlebar-tab-rail::-webkit-scrollbar");
+    expect(css).toContain("display: none");
   });
 
   it("keeps the close button inside the visible tab segment", () => {

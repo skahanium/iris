@@ -190,14 +190,6 @@ describe("document open first frame surface", () => {
 
     expect(
       document.querySelector('[data-testid="document-open-loading"]'),
-    ).toBeNull();
-
-    act(() => {
-      vi.advanceTimersByTime(100);
-    });
-
-    expect(
-      document.querySelector('[data-testid="document-open-loading"]'),
     ).toBeTruthy();
     expect(
       document.querySelector('[data-testid="readable-note-preview"]'),
@@ -234,7 +226,7 @@ describe("document open first frame surface", () => {
     expect(handleEditorReady).toHaveBeenCalledWith({ path: "new.md" });
   });
 
-  it("skips the loading surface when the first frame is ready before the display threshold", async () => {
+  it("shows loading immediately for a staged pending note open", async () => {
     vi.useFakeTimers();
     const commitPendingNoteOpen = vi.fn(() => true);
 
@@ -261,10 +253,16 @@ describe("document open first frame surface", () => {
 
     expect(
       document.querySelector('[data-testid="document-open-loading"]'),
-    ).toBeNull();
+    ).toBeTruthy();
 
     act(() => {
       firstFrameCallbacks.get("new.md")?.({ path: "new.md" });
+    });
+
+    expect(commitPendingNoteOpen).not.toHaveBeenCalled();
+
+    act(() => {
+      vi.advanceTimersByTime(800);
     });
 
     expect(commitPendingNoteOpen).toHaveBeenCalledWith("new.md", 1);
@@ -357,10 +355,6 @@ describe("document open first frame surface", () => {
       );
     });
 
-    act(() => {
-      vi.advanceTimersByTime(100);
-    });
-
     expect(
       document.querySelector('[data-testid="document-open-loading"]'),
     ).toBeTruthy();
@@ -382,6 +376,42 @@ describe("document open first frame surface", () => {
     });
 
     expect(commitPendingNoteOpen).toHaveBeenCalledWith("new.md", 2);
+  });
+
+  it("releases a staged open through a watchdog when editor ready fires but first-frame is lost", async () => {
+    vi.useFakeTimers();
+    const commitPendingNoteOpen = vi.fn(() => true);
+
+    act(() => {
+      root.render(
+        <AppEditorWorkspace
+          {...baseProps()}
+          pendingNoteOpen={{
+            path: "new.md",
+            title: "New",
+            bodyMarkdown: "new body",
+            content: "new body",
+            frontmatterYaml: null,
+            isLocked: false,
+            namespace: "normal",
+            sequence: 3,
+            preparedEditorHtml: "<p>prepared new body</p>",
+          }}
+          commitPendingNoteOpen={commitPendingNoteOpen}
+          openNotePaths={["old.md", "new.md"]}
+        />,
+      );
+    });
+
+    act(() => {
+      editorReadyCallbacks.get("new.md")?.({ path: "new.md" });
+      vi.advanceTimersByTime(5000);
+    });
+
+    expect(commitPendingNoteOpen).toHaveBeenCalledWith("new.md", 3);
+    expect(
+      document.querySelector('[data-testid="document-open-loading"]'),
+    ).toBeNull();
   });
 
   it("keeps ready tab surfaces mounted so switching back has no loading page", async () => {

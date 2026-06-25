@@ -414,6 +414,7 @@ function TipTapEditorInner({
   } | null>(null);
 
   const prevReingestKeyRef = useRef(reingestKey);
+  const prevReingestApplyRef = useRef(reingestKey);
   const skipHtmlCache = prevReingestKeyRef.current !== reingestKey;
   prevReingestKeyRef.current = reingestKey;
 
@@ -536,6 +537,17 @@ function TipTapEditorInner({
     if (!editor) return;
     editor.setEditable(!locked);
   }, [editor, locked]);
+
+  useEffect(() => {
+    if (!editor || editor.isDestroyed) return;
+    const prev = prevReingestApplyRef.current;
+    prevReingestApplyRef.current = reingestKey;
+    if (prev === 0 || prev === reingestKey) return;
+    const content = initialContent;
+    if (content) {
+      editor.commands.setContent(content, false, EDITOR_PARSE_OPTIONS);
+    }
+  }, [editor, reingestKey, initialContent]);
 
   const openLinkEditor = useCallback(
     (targetEditor: Editor) => {

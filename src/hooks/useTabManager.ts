@@ -232,7 +232,11 @@ export function useTabManager(options: UseTabManagerOptions = {}) {
   );
 
   const applyCommittedNoteOpen = useCallback(
-    (pending: PendingNoteOpen, discardedPreviousPath: string | null) => {
+    (
+      pending: PendingNoteOpen,
+      discardedPreviousPath: string | null,
+      skipTickBump?: boolean,
+    ) => {
       tabLockCacheRef.current.set(pending.path, pending.isLocked);
       tabMarkdownCacheRef.current.set(pending.path, pending.content);
       frontmatterYamlRef.current = pending.frontmatterYaml;
@@ -241,7 +245,9 @@ export function useTabManager(options: UseTabManagerOptions = {}) {
       setActiveFileLocked(pending.isLocked);
       setActivePath(pending.path);
       setMarkdownState(pending.content);
-      setEditorContentTick((tick) => tick + 1);
+      if (!skipTickBump) {
+        setEditorContentTick((tick) => tick + 1);
+      }
       setTabs((prev) => {
         const withoutDiscarded = discardedPreviousPath
           ? prev.filter((tab) => tab.path !== discardedPreviousPath)
@@ -431,7 +437,7 @@ export function useTabManager(options: UseTabManagerOptions = {}) {
       const cachedTitle = tabsRef.current.find(
         (tab) => tab.path === path,
       )?.title;
-      if (cached) {
+      if (cached !== undefined) {
         const pending = buildPendingNoteOpen({
           content: cached,
           isLocked: tabLockCacheRef.current.get(path) ?? false,
@@ -443,7 +449,7 @@ export function useTabManager(options: UseTabManagerOptions = {}) {
           sequence: seq,
           titleHint: cachedTitle,
         });
-        applyCommittedNoteOpen(pending, null);
+        applyCommittedNoteOpen(pending, null, true);
         return;
       }
 
@@ -564,7 +570,7 @@ export function useTabManager(options: UseTabManagerOptions = {}) {
           sequence: seq,
           titleHint: nextTabs.find((tab) => tab.path === switchTo)?.title,
         });
-        applyCommittedNoteOpen(pending, path);
+        applyCommittedNoteOpen(pending, path, true);
         return;
       }
 

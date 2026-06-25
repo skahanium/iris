@@ -83,6 +83,7 @@ export function usePreparedWorkspaceTransitions<
     activateTab,
     handleNewNote,
     openNote: openPreparedNote,
+    openTabs: tabs,
     setActiveArtifactId,
     setHomeActive,
   });

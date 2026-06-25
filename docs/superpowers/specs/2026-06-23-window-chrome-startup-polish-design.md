@@ -9,7 +9,7 @@ Iris 采用 Tauri 2 + React 自绘桌面 chrome。现有实现存在四个体验
 ## 设计决策
 
 - macOS 使用系统左侧原生红黄绿，Iris 不渲染自绘窗口控件。
-- macOS 原生红黄绿位置由 Tauri 配置期 `trafficLightPosition: { x: 14, y: 18 }` 固定，禁止前端运行期接管或动态重排。
+- macOS 原生红黄绿位置由 Tauri 配置期 `trafficLightPosition: { x: 14, y: 16 }` 固定，禁止前端运行期接管或动态重排。
 - macOS 系统绿色按钮负责进入 / 退出原生 fullscreen Space，不再由前端绿色按钮承担。
 - macOS 与 Windows 标题栏双击都负责最大化 / 还原，不与 fullscreen 语义混用。
 - Windows 控件保持标准最小化 / 最大化 / 关闭顺序。

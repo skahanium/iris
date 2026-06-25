@@ -186,14 +186,6 @@ describe("AppEditorWorkspace complete-frame note opens", () => {
 
     expect(
       document.querySelector('[data-testid="document-open-loading"]'),
-    ).toBeNull();
-
-    act(() => {
-      vi.advanceTimersByTime(100);
-    });
-
-    expect(
-      document.querySelector('[data-testid="document-open-loading"]'),
     ).toBeTruthy();
     expect(
       document.querySelector('[data-testid="readable-note-preview"]'),

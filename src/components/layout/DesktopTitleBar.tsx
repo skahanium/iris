@@ -118,7 +118,7 @@ export const DesktopTitleBar = memo(function DesktopTitleBar({
 
           {showTabStrip ? (
             <div
-              className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto px-2"
+              className="iris-titlebar-tab-rail flex min-w-0 flex-1 items-center gap-1 overflow-y-hidden overflow-x-scroll px-2"
               data-tauri-drag-region={customWindowControls ? true : undefined}
             >
               {tabs.map((tab) => {
