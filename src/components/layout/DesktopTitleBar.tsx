@@ -103,7 +103,7 @@ export const DesktopTitleBar = memo(function DesktopTitleBar({
               data-testid="iris-brand-rail"
               data-tauri-drag-region-exclude
               className={cn(
-                "iris-brand-rail flex h-full shrink-0 items-center gap-2 border-r border-border/70 px-3 text-foreground",
+                "iris-brand-rail flex h-8 min-w-[6.75rem] shrink-0 items-center justify-center gap-2 px-3 text-foreground",
                 isHomeActive && "iris-brand-rail--active",
               )}
               aria-label={isHomeActive ? "Home" : "回到 Home"}

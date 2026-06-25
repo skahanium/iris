@@ -30,6 +30,7 @@ describe("Iris Rail complete interface contracts", () => {
 
   it("defines persistent brand rail as the only Home entry plus Rail Segments tabs", () => {
     const titleBar = read("src/components/layout/DesktopTitleBar.tsx");
+    const css = read("src/styles/globals.css");
     const app = read("src/App.tsx");
     const welcome = read("src/components/layout/WelcomeEmpty.tsx");
     const platform = read("src/lib/platform-chrome.ts");
@@ -41,6 +42,10 @@ describe("Iris Rail complete interface contracts", () => {
     expect(titleBar).not.toContain("iris-home-segment");
     expect(titleBar).toContain("onHome");
     expect(titleBar).toContain("isHomeActive");
+    expect(titleBar).toContain("iris-brand-rail flex h-8");
+    expect(titleBar).toContain("min-w-[6.75rem]");
+    expect(titleBar).not.toContain("iris-brand-rail flex h-full");
+    expect(css).toContain(".iris-brand-rail:hover");
     expect(titleBar).toContain("iris-brand-rail--active");
     expect(app).toContain("homeActive");
     expect(welcome).toContain('data-testid="home-workbench"');

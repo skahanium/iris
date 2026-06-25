@@ -231,12 +231,18 @@ describe("desktop title bar", () => {
 
   it("DesktopTitleBar exposes Iris Rail brand rail and segment tab hooks", () => {
     const bar = read("src/components/layout/DesktopTitleBar.tsx");
+    const css = read("src/styles/globals.css");
     expect(bar).toContain('data-testid="iris-brand-rail"');
     expect(bar).toContain('data-testid="rail-segment-tab"');
     expect(bar).not.toContain('data-testid="home-segment"');
     expect(bar).not.toContain("iris-home-segment");
+    expect(bar).toContain("iris-brand-rail flex h-8");
+    expect(bar).toContain("min-w-[6.75rem]");
+    expect(bar).not.toContain("iris-brand-rail flex h-full");
     expect(bar).toContain("iris-brand-rail--active");
     expect(bar).toContain("iris-rail-tab--active");
+    expect(css).toContain(".iris-brand-rail:hover");
+    expect(css).toContain("inset 0 0 0 1px hsl(var(--knowledge-accent)");
   });
 
   it("keeps the tab rail single-row without native scrollbars", () => {

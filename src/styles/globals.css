@@ -690,12 +690,22 @@
     border-radius: 10px;
     transition:
       background 180ms var(--motion-ease),
-      box-shadow 180ms var(--motion-ease);
+      box-shadow 180ms var(--motion-ease),
+      color 180ms var(--motion-ease);
+  }
+
+  .iris-brand-rail:hover {
+    background: hsl(var(--knowledge-accent) / 0.1);
+    box-shadow:
+      inset 0 0 0 1px hsl(var(--knowledge-accent) / 0.2),
+      0 1px 2px hsl(0 0% 0% / 0.04);
   }
 
   .iris-brand-rail--active {
-    background: hsl(var(--surface-inset) / 0.8);
-    box-shadow: 0 1px 2px hsl(0 0% 0% / 0.04);
+    background: hsl(var(--knowledge-accent) / 0.14);
+    box-shadow:
+      inset 0 0 0 1px hsl(var(--knowledge-accent) / 0.24),
+      0 1px 2px hsl(0 0% 0% / 0.04);
   }
 
   .iris-titlebar-tab-rail {
