@@ -90,7 +90,7 @@ describe("useHomeWorkspaceTransitions", () => {
       kind: "note",
       path: "new.md",
       sequence: 1,
-      startedAt: 1000,
+      startedAt: expect.any(Number),
       title: "New",
     });
 
@@ -102,7 +102,7 @@ describe("useHomeWorkspaceTransitions", () => {
     expect(apiRef.current!.pendingOpen).toMatchObject({
       path: "new.md",
       sequence: 1,
-      startedAt: 1000,
+      startedAt: expect.any(Number),
     });
   });
 

@@ -41,7 +41,14 @@ import {
   setCachedEditorHtml,
 } from "@/lib/editor-html-cache";
 import type { EditorHtmlCacheNamespace } from "@/lib/editor-html-cache";
-import { ingestMarkdownForEditorAsync } from "@/lib/editor-ingest-async";
+import {
+  ingestMarkdownForEditor,
+  type EditorIngestResult,
+} from "@/lib/editor-ingest";
+import {
+  EDITOR_INGEST_WORKER_THRESHOLD_BYTES,
+  ingestMarkdownForEditorAsync,
+} from "@/lib/editor-ingest-async";
 import { EDITOR_PARSE_OPTIONS } from "@/lib/editor-parse-options";
 
 import type { MarkdownSyntaxFragment } from "@/lib/markdown-contract/types";
@@ -124,6 +131,8 @@ interface TipTapEditorProps {
 
   onFirstFrameReady?: (editor: Editor) => void;
 
+  onContentReady?: (editor: Editor) => void;
+
   onBodyStatsChange?: (stats: {
     characterCount: number;
 
@@ -187,6 +196,8 @@ function TipTapEditorInner({
   onEditorReady,
 
   onFirstFrameReady,
+
+  onContentReady,
 
   onBodyStatsChange,
 
@@ -258,6 +269,10 @@ function TipTapEditorInner({
   const onFirstFrameReadyRef = useRef(onFirstFrameReady);
 
   onFirstFrameReadyRef.current = onFirstFrameReady;
+
+  const onContentReadyRef = useRef(onContentReady);
+
+  onContentReadyRef.current = onContentReady;
 
   const contentCacheKeyRef = useRef(contentCacheKey);
   contentCacheKeyRef.current = contentCacheKey;
@@ -414,18 +429,20 @@ function TipTapEditorInner({
   } | null>(null);
 
   const prevReingestKeyRef = useRef(reingestKey);
-  const prevReingestApplyRef = useRef(reingestKey);
   const skipHtmlCache = prevReingestKeyRef.current !== reingestKey;
   prevReingestKeyRef.current = reingestKey;
 
-  const [parsedContent, setParsedContent] = useState<string | null>(null);
   const parsedContentRef = useRef<string | null>(null);
+  const parsedContentRevisionRef = useRef(0);
+  const [parsedContentRevision, setParsedContentRevision] = useState(0);
   const contentReadyRef = useRef(false);
+  const firstFrameGenerationRef = useRef(0);
 
   useEffect(() => {
     const bodyMd = initialBodyMarkdown.trim();
     const htmlDigest = editorHtmlDigest(initialBodyMarkdown);
     let cancelled = false;
+    contentReadyRef.current = false;
 
     const setContent = (
       html: string,
@@ -434,8 +451,8 @@ function TipTapEditorInner({
     ) => {
       if (cancelled) return;
       parsedContentRef.current = html;
-      setParsedContent(html);
-      contentReadyRef.current = true;
+      parsedContentRevisionRef.current += 1;
+      setParsedContentRevision(parsedContentRevisionRef.current);
       if (fragments && bodyMdParam) {
         ingestResultRef.current = {
           preserveFragments: fragments,
@@ -444,7 +461,7 @@ function TipTapEditorInner({
       }
     };
 
-    if (initialEditorHtml && bodyMd) {
+    if (initialEditorHtml) {
       if (contentCacheKey) {
         setCachedEditorHtml(
           contentCacheKey,
@@ -456,6 +473,24 @@ function TipTapEditorInner({
       setContent(initialEditorHtml);
       return;
     }
+
+    if (!bodyMd) {
+      setContent("<p></p>", [], bodyMd);
+      return;
+    }
+
+    const rememberIngestResult = (result: EditorIngestResult) => {
+      const html = result.tipTapHtml || "<p></p>";
+      setContent(html, result.preserveFragments, bodyMd);
+      if (contentCacheKey) {
+        setCachedEditorHtml(
+          contentCacheKey,
+          html,
+          htmlDigest,
+          contentCacheNamespace,
+        );
+      }
+    };
 
     if (contentCacheKey && bodyMd && !skipHtmlCache) {
       const cached = getCachedEditorHtml(
@@ -473,22 +508,22 @@ function TipTapEditorInner({
       clearCachedEditorHtml(contentCacheKey, contentCacheNamespace);
     }
 
+    if (bodyMd.length <= EDITOR_INGEST_WORKER_THRESHOLD_BYTES) {
+      try {
+        rememberIngestResult(ingestMarkdownForEditor({ bodyMarkdown: bodyMd }));
+      } catch {
+        contentReadyRef.current = false;
+      }
+      return;
+    }
+
     ingestMarkdownForEditorAsync({ bodyMarkdown: bodyMd })
       .then((result) => {
         if (cancelled) return;
-        const html = result.tipTapHtml || "<p></p>";
-        setContent(html, result.preserveFragments, bodyMd);
-        if (contentCacheKey && bodyMd) {
-          setCachedEditorHtml(
-            contentCacheKey,
-            html,
-            htmlDigest,
-            contentCacheNamespace,
-          );
-        }
+        rememberIngestResult(result);
       })
       .catch(() => {
-        if (!cancelled) contentReadyRef.current = true;
+        if (!cancelled) contentReadyRef.current = false;
       });
 
     return () => {
@@ -564,14 +599,38 @@ function TipTapEditorInner({
   useEffect(() => {
     if (!editor || editor.isDestroyed) return;
     const content = parsedContentRef.current;
-    if (content) {
-      const prev = prevReingestApplyRef.current;
-      prevReingestApplyRef.current = reingestKey;
-      if (prev === 0 || prev !== reingestKey) {
-        editor.commands.setContent(content, false, EDITOR_PARSE_OPTIONS);
-      }
-    }
-  }, [editor, reingestKey, parsedContent]);
+    if (!content) return undefined;
+
+    let cancelled = false;
+    let firstFrameId: number | null = null;
+    let secondFrameId: number | null = null;
+    const requestFrame =
+      window.requestAnimationFrame ??
+      ((cb: FrameRequestCallback) =>
+        window.setTimeout(() => cb(performance.now()), 16));
+    const cancelFrame =
+      window.cancelAnimationFrame ?? ((id: number) => window.clearTimeout(id));
+    const generation = ++firstFrameGenerationRef.current;
+
+    editor.commands.setContent(content, false, EDITOR_PARSE_OPTIONS);
+    contentReadyRef.current = true;
+    onContentReadyRef.current?.(editor);
+    flushBodyStats(editor);
+
+    firstFrameId = requestFrame(() => {
+      secondFrameId = requestFrame(() => {
+        if (!cancelled && firstFrameGenerationRef.current === generation) {
+          onFirstFrameReadyRef.current?.(editor);
+        }
+      });
+    });
+
+    return () => {
+      cancelled = true;
+      if (firstFrameId !== null) cancelFrame(firstFrameId);
+      if (secondFrameId !== null) cancelFrame(secondFrameId);
+    };
+  }, [editor, flushBodyStats, parsedContentRevision]);
 
   const openLinkEditor = useCallback(
     (targetEditor: Editor) => {
@@ -650,37 +709,13 @@ function TipTapEditorInner({
   useEffect(() => {
     if (!editor) return;
 
-    let cancelled = false;
-    const requestFrame =
-      window.requestAnimationFrame ??
-      ((cb: FrameRequestCallback) =>
-        window.setTimeout(() => cb(performance.now()), 16));
-    const cancelFrame =
-      window.cancelAnimationFrame ?? ((id: number) => window.clearTimeout(id));
-
     editorRef.current = editor;
 
     onEditorReady?.(editor);
 
     flushBodyStats(editor);
 
-    const waitForContentThenFire = () => {
-      if (cancelled) return;
-      if (contentReadyRef.current) {
-        requestFrame(() => {
-          const secondFrame = requestFrame(() => {
-            if (!cancelled) onFirstFrameReadyRef.current?.(editor);
-          });
-          if (cancelled) cancelFrame(secondFrame);
-        });
-      } else {
-        setTimeout(waitForContentThenFire, 16);
-      }
-    };
-    waitForContentThenFire();
-
     return () => {
-      cancelled = true;
       flushBodyStats(editor);
 
       editorRef.current = null;

@@ -105,6 +105,20 @@ describe("serializeOpenNote", () => {
     expect(md).toContain("后备正文");
   });
 
+  it("uses bodyFallback when the editor exists but is not ready for persistence", () => {
+    editor = bodyEditor("<p></p>");
+    const md = serializeOpenNote({
+      yaml: null,
+      title: "仅标题",
+      editor,
+      editorReady: false,
+      bodyFallbackMd: "已加载但尚未灌入编辑器的正文",
+    });
+
+    expect(displayTitleFromMarkdown(md)).toBe("仅标题");
+    expect(md).toContain("已加载但尚未灌入编辑器的正文");
+  });
+
   it("preserves special characters in title", () => {
     const md = serializeOpenNote({
       yaml: null,

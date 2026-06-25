@@ -39,7 +39,7 @@ describe("QuickOpen note preparation", () => {
     host.remove();
   });
 
-  it("prepares visible results and closes only after async open resolves", async () => {
+  it("prepares visible results and closes immediately when opening a result", async () => {
     const onPrepare = vi.fn();
     let resolveOpen!: () => void;
     const onSelect = vi.fn(
@@ -84,7 +84,7 @@ describe("QuickOpen note preparation", () => {
     });
 
     expect(onSelect).toHaveBeenCalledWith("notes/a.md", "quick-open");
-    expect(onClose).not.toHaveBeenCalled();
+    expect(onClose).toHaveBeenCalledOnce();
 
     await act(async () => {
       resolveOpen();

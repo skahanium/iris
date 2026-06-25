@@ -79,6 +79,7 @@ vi.mock("@/components/ui/iris-context-menu", () => ({
 }));
 
 import { AppEditorWorkspace } from "@/components/layout/AppEditorWorkspace";
+import { DOCUMENT_OPEN_BUDGETS } from "@/lib/document-open-runtime";
 import type { HomePendingOpen } from "@/lib/home-open-transition";
 
 function baseProps() {
@@ -153,6 +154,8 @@ describe("AppEditorWorkspace complete-frame note opens", () => {
   });
 
   it("renders the document loading surface instead of Home while a Home open is pending", () => {
+    vi.useFakeTimers();
+
     act(() => {
       root.render(
         <AppEditorWorkspace
@@ -175,6 +178,15 @@ describe("AppEditorWorkspace complete-frame note opens", () => {
 
     expect(
       document.querySelector('[data-testid="document-open-loading"]'),
+    ).toBeNull();
+    expect(document.querySelector('[data-testid="home-workbench"]')).toBeNull();
+
+    act(() => {
+      vi.advanceTimersByTime(DOCUMENT_OPEN_BUDGETS.coldLoadingVisibleMs);
+    });
+
+    expect(
+      document.querySelector('[data-testid="document-open-loading"]'),
     ).toBeTruthy();
     expect(document.querySelector('[data-testid="home-workbench"]')).toBeNull();
     expect(document.querySelector("[data-opening]")).toBeNull();
@@ -193,6 +205,14 @@ describe("AppEditorWorkspace complete-frame note opens", () => {
           openNotePaths={["old.md", "new.md"]}
         />,
       );
+    });
+
+    expect(
+      document.querySelector('[data-testid="document-open-loading"]'),
+    ).toBeNull();
+
+    act(() => {
+      vi.advanceTimersByTime(DOCUMENT_OPEN_BUDGETS.coldLoadingVisibleMs);
     });
 
     expect(
@@ -240,7 +260,6 @@ describe("AppEditorWorkspace complete-frame note opens", () => {
 
     act(() => {
       firstFrame?.({ can: () => ({ undo: () => false, redo: () => false }) });
-      vi.advanceTimersByTime(800);
     });
 
     expect(commitPendingNoteOpen).toHaveBeenCalledWith("new.md", 7);

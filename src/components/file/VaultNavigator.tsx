@@ -1042,14 +1042,10 @@ export function VaultNavigatorBody({
                         if (note) onPrepare?.(note, "file-tree");
                       }}
                       onClick={() => {
-                        void (async () => {
-                          try {
-                            await onOpen(f.path, "file-tree");
-                            onClose();
-                          } catch {
-                            /* Keep the navigator visible so the user can retry. */
-                          }
-                        })();
+                        onClose();
+                        void Promise.resolve(onOpen(f.path, "file-tree")).catch(
+                          () => undefined,
+                        );
                       }}
                     >
                       {vaultFileTitle(f)}

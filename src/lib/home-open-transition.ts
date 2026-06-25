@@ -45,6 +45,10 @@ interface FailHomeOpenLoadingOptions {
   setPendingOpen: (pending: HomePendingOpen | null) => void;
 }
 
+function openTransitionNow(): number {
+  return globalThis.performance?.now?.() ?? Date.now();
+}
+
 export function beginHomeOpenLoading({
   kind = "note",
   path,
@@ -57,7 +61,7 @@ export function beginHomeOpenLoading({
     kind,
     path,
     sequence: sequenceRef.current,
-    startedAt: Date.now(),
+    startedAt: openTransitionNow(),
     title,
   });
   return sequenceRef.current;

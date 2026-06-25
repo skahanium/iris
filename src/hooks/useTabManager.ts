@@ -451,13 +451,12 @@ export function useTabManager(options: UseTabManagerOptions = {}) {
       const openStartedAt = performance.now();
       cancelPendingNoteOpen();
       const leaving = activePathRef.current;
+      const leavingTab = leaving
+        ? tabsRef.current.find((t) => t.path === leaving)
+        : undefined;
+      const shouldPersistLeavingInBackground = Boolean(leavingTab?.dirty);
       if (leaving) {
-        const leavingTab = tabsRef.current.find((t) => t.path === leaving);
-        if (leavingTab?.dirty) {
-          await persistAndCacheTab(leaving);
-        } else {
-          cacheTabMarkdown(leaving, markdownRef.current);
-        }
+        cacheTabMarkdown(leaving, markdownRef.current);
       }
       if (openFileSeqRef.current !== seq) return;
 
@@ -483,6 +482,12 @@ export function useTabManager(options: UseTabManagerOptions = {}) {
           titleHint: cachedTitle,
         });
         applyCommittedNoteOpen(pending, null, true);
+        if (leaving && shouldPersistLeavingInBackground) {
+          void persistAndCacheTab(leaving).catch((error: unknown) => {
+            const msg = error instanceof Error ? error.message : String(error);
+            onStatusChange?.(`保存离开的笔记失败：${msg}`);
+          });
+        }
         return;
       }
 
@@ -504,6 +509,7 @@ export function useTabManager(options: UseTabManagerOptions = {}) {
       buildPendingNoteOpen,
       cacheTabMarkdown,
       cancelPendingNoteOpen,
+      onStatusChange,
       openFile,
       persistAndCacheTab,
     ],

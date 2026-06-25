@@ -60,6 +60,10 @@ function outranks(
   return PRIORITY_RANK[next] < PRIORITY_RANK[current];
 }
 
+function canBypassConcurrency(priority: DocumentOpenPriority): boolean {
+  return priority === "foreground" || priority === "hot";
+}
+
 export class DocumentOpenScheduler {
   private readonly maxConcurrent: number;
   private nextSequence = 0;
@@ -176,11 +180,18 @@ export class DocumentOpenScheduler {
   }
 
   private pump(): void {
-    while (
-      this.runningByKey.size < this.maxConcurrent &&
-      this.pending.length > 0
-    ) {
-      const entry = this.pending.shift();
+    while (this.pending.length > 0) {
+      const underLimit = this.runningByKey.size < this.maxConcurrent;
+      const bypassingLimit = !underLimit;
+      const nextIndex = underLimit
+        ? 0
+        : this.pending.findIndex((entry) =>
+            canBypassConcurrency(entry.job.priority),
+          );
+      if (nextIndex < 0) {
+        return;
+      }
+      const entry = this.pending.splice(nextIndex, 1)[0];
       if (!entry) {
         return;
       }
@@ -205,6 +216,9 @@ export class DocumentOpenScheduler {
         });
       this.runningByKey.set(entry.job.key, running);
       void running.catch(() => undefined);
+      if (bypassingLimit) {
+        return;
+      }
     }
   }
 

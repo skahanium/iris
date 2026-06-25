@@ -110,4 +110,122 @@ describe("DocumentOpenScheduler", () => {
     await expect(warm.promise).resolves.toBe("ready");
     expect(run).toHaveBeenCalledTimes(1);
   });
+
+  it("starts foreground work even when background work already occupies the concurrency slot", async () => {
+    const order: string[] = [];
+    const scheduler = new DocumentOpenScheduler({ maxConcurrent: 1 });
+    let releaseBackground!: () => void;
+
+    const background = scheduler.enqueue({
+      key: "background",
+      namespace: "vault-a",
+      path: "background.md",
+      source: "startup",
+      priority: "background",
+      run: async () => {
+        order.push("background");
+        await new Promise<void>((resolve) => {
+          releaseBackground = resolve;
+        });
+        return "background";
+      },
+    });
+    await Promise.resolve();
+    expect(order).toEqual(["background"]);
+
+    const foreground = scheduler.enqueue(
+      job("foreground", "foreground", order),
+    );
+    await Promise.resolve();
+
+    await expect(foreground.promise).resolves.toBe("foreground");
+    expect(order).toEqual(["background", "foreground"]);
+
+    releaseBackground();
+    await expect(background.promise).resolves.toBe("background");
+  });
+
+  it("starts hot tab work even when background work already occupies the concurrency slot", async () => {
+    const order: string[] = [];
+    const scheduler = new DocumentOpenScheduler({ maxConcurrent: 1 });
+    let releaseBackground!: () => void;
+
+    const background = scheduler.enqueue({
+      key: "background",
+      namespace: "vault-a",
+      path: "background.md",
+      source: "startup",
+      priority: "background",
+      run: async () => {
+        order.push("background");
+        await new Promise<void>((resolve) => {
+          releaseBackground = resolve;
+        });
+        return "background";
+      },
+    });
+    await Promise.resolve();
+    expect(order).toEqual(["background"]);
+
+    const hot = scheduler.enqueue(job("hot", "hot", order));
+    await Promise.resolve();
+
+    await expect(hot.promise).resolves.toBe("hot");
+    expect(order).toEqual(["background", "hot"]);
+
+    releaseBackground();
+    await expect(background.promise).resolves.toBe("background");
+  });
+
+  it("does not start every queued interactive job while the scheduler is over the concurrency limit", async () => {
+    const order: string[] = [];
+    const scheduler = new DocumentOpenScheduler({ maxConcurrent: 1 });
+    let releaseBackground!: () => void;
+    let releaseFirstForeground!: () => void;
+
+    const background = scheduler.enqueue({
+      key: "background",
+      namespace: "vault-a",
+      path: "background.md",
+      source: "startup",
+      priority: "background",
+      run: async () => {
+        order.push("background");
+        await new Promise<void>((resolve) => {
+          releaseBackground = resolve;
+        });
+        return "background";
+      },
+    });
+    await Promise.resolve();
+
+    const firstForeground = scheduler.enqueue({
+      key: "foreground-a",
+      namespace: "vault-a",
+      path: "foreground-a.md",
+      source: "test",
+      priority: "foreground",
+      run: async () => {
+        order.push("foreground-a");
+        await new Promise<void>((resolve) => {
+          releaseFirstForeground = resolve;
+        });
+        return "foreground-a";
+      },
+    });
+    const secondForeground = scheduler.enqueue(
+      job("foreground-b", "foreground", order),
+    );
+    await Promise.resolve();
+
+    expect(order).toEqual(["background", "foreground-a"]);
+
+    releaseFirstForeground();
+    await expect(firstForeground.promise).resolves.toBe("foreground-a");
+    await expect(secondForeground.promise).resolves.toBe("foreground-b");
+    expect(order).toEqual(["background", "foreground-a", "foreground-b"]);
+
+    releaseBackground();
+    await expect(background.promise).resolves.toBe("background");
+  });
 });

@@ -34,6 +34,7 @@ interface UseOpenNoteOptions {
   markdownRef: RefObject<string>;
   frontmatterYamlRef: RefObject<string | null>;
   editorRef: RefObject<Editor | null>;
+  editorReadyRef?: RefObject<boolean>;
   dirtyRef?: RefObject<boolean>;
   updateTabTitle: (path: string, title: string) => void;
   replaceOpenTabPath: (
@@ -51,6 +52,7 @@ export function useOpenNote({
   markdownRef,
   frontmatterYamlRef,
   editorRef,
+  editorReadyRef,
   dirtyRef,
   updateTabTitle,
   replaceOpenTabPath,
@@ -101,9 +103,10 @@ export function useOpenNote({
       yaml: frontmatterYamlRef.current,
       title: noteTitle,
       editor: editorRef.current,
+      editorReady: editorReadyRef?.current ?? true,
       bodyFallbackMd: bodyMarkdownFromNoteRef(markdownRef.current),
     });
-  }, [noteTitle, frontmatterYamlRef, editorRef, markdownRef]);
+  }, [noteTitle, frontmatterYamlRef, editorRef, editorReadyRef, markdownRef]);
 
   const applySavedMarkdown = useCallback(
     (md: string) => {
@@ -164,6 +167,7 @@ export function useOpenNote({
                 yaml: frontmatterYamlRef.current,
                 title: nextTitle,
                 editor: editorRef.current,
+                editorReady: editorReadyRef?.current ?? true,
                 bodyFallbackMd: bodyMarkdownFromNoteRef(markdownRef.current),
               });
               replaceOpenTabPath(path, entry.path, nextTitle, liveMarkdown);
@@ -180,6 +184,7 @@ export function useOpenNote({
     [
       activePathRef,
       editorRef,
+      editorReadyRef,
       frontmatterYamlRef,
       markdownRef,
       replaceOpenTabPath,

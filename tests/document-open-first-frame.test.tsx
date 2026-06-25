@@ -9,6 +9,9 @@ const firstFrameCallbacks = vi.hoisted(
 const editorReadyCallbacks = vi.hoisted(
   () => new Map<string, (editor: unknown) => void>(),
 );
+const contentReadyCallbacks = vi.hoisted(
+  () => new Map<string, (editor: unknown) => void>(),
+);
 const editorMountsByPath = vi.hoisted(() => new Map<string, number>());
 
 vi.mock("@/components/editor/TipTapEditor", () => ({
@@ -17,6 +20,7 @@ vi.mock("@/components/editor/TipTapEditor", () => ({
     initialBodyMarkdown: string;
     initialEditorHtml?: string;
     mediaLoading?: unknown;
+    onContentReady?: (editor: unknown) => void;
     onEditorReady?: (editor: unknown) => void;
     onFirstFrameReady?: (editor: unknown) => void;
   }) => {
@@ -24,6 +28,7 @@ vi.mock("@/components/editor/TipTapEditor", () => ({
       contentCacheKey,
       initialBodyMarkdown,
       initialEditorHtml,
+      onContentReady,
       onEditorReady,
       onFirstFrameReady,
     } = props;
@@ -40,14 +45,18 @@ vi.mock("@/components/editor/TipTapEditor", () => ({
       if (!contentCacheKey) return;
       if (onEditorReady)
         editorReadyCallbacks.set(contentCacheKey, onEditorReady);
+      if (onContentReady) {
+        contentReadyCallbacks.set(contentCacheKey, onContentReady);
+      }
       if (onFirstFrameReady) {
         firstFrameCallbacks.set(contentCacheKey, onFirstFrameReady);
       }
       return () => {
+        contentReadyCallbacks.delete(contentCacheKey);
         editorReadyCallbacks.delete(contentCacheKey);
         firstFrameCallbacks.delete(contentCacheKey);
       };
-    }, [contentCacheKey, onEditorReady, onFirstFrameReady]);
+    }, [contentCacheKey, onContentReady, onEditorReady, onFirstFrameReady]);
 
     return (
       <div data-testid="tiptap-editor" data-path={contentCacheKey ?? ""}>
@@ -90,6 +99,7 @@ vi.mock("@/components/ui/iris-context-menu", () => ({
 }));
 
 import { AppEditorWorkspace } from "@/components/layout/AppEditorWorkspace";
+import { DOCUMENT_OPEN_BUDGETS } from "@/lib/document-open-runtime";
 import type { HomePendingOpen } from "@/lib/home-open-transition";
 
 function baseProps() {
@@ -160,6 +170,7 @@ describe("document open first frame surface", () => {
     document.body.append(host);
     root = createRoot(host);
     firstFrameCallbacks.clear();
+    contentReadyCallbacks.clear();
     editorReadyCallbacks.clear();
     editorMountsByPath.clear();
   });
@@ -190,6 +201,12 @@ describe("document open first frame surface", () => {
 
     expect(
       document.querySelector('[data-testid="document-open-loading"]'),
+    ).toBeNull();
+    act(() => {
+      vi.advanceTimersByTime(DOCUMENT_OPEN_BUDGETS.coldLoadingVisibleMs);
+    });
+    expect(
+      document.querySelector('[data-testid="document-open-loading"]'),
     ).toBeTruthy();
     expect(
       document.querySelector('[data-testid="readable-note-preview"]'),
@@ -209,14 +226,6 @@ describe("document open first frame surface", () => {
 
     expect(
       document.querySelector('[data-testid="document-open-loading"]'),
-    ).toBeTruthy();
-
-    act(() => {
-      vi.advanceTimersByTime(800);
-    });
-
-    expect(
-      document.querySelector('[data-testid="document-open-loading"]'),
     ).toBeNull();
     expect(
       document
@@ -226,7 +235,7 @@ describe("document open first frame surface", () => {
     expect(handleEditorReady).toHaveBeenCalledWith({ path: "new.md" });
   });
 
-  it("shows loading immediately for a staged pending note open", async () => {
+  it("delays loading for a staged pending note open and skips it when the first frame is fast", async () => {
     vi.useFakeTimers();
     const commitPendingNoteOpen = vi.fn(() => true);
 
@@ -253,16 +262,10 @@ describe("document open first frame surface", () => {
 
     expect(
       document.querySelector('[data-testid="document-open-loading"]'),
-    ).toBeTruthy();
+    ).toBeNull();
 
     act(() => {
       firstFrameCallbacks.get("new.md")?.({ path: "new.md" });
-    });
-
-    expect(commitPendingNoteOpen).not.toHaveBeenCalled();
-
-    act(() => {
-      vi.advanceTimersByTime(800);
     });
 
     expect(commitPendingNoteOpen).toHaveBeenCalledWith("new.md", 1);
@@ -271,7 +274,49 @@ describe("document open first frame surface", () => {
     ).toBeNull();
   });
 
-  it("uses the Home pending start time for the minimum loading duration", async () => {
+  it("shows loading only after the cold-open delay budget is exceeded", async () => {
+    vi.useFakeTimers();
+
+    act(() => {
+      root.render(
+        <AppEditorWorkspace
+          {...baseProps()}
+          pendingNoteOpen={{
+            path: "new.md",
+            title: "New",
+            bodyMarkdown: "new body",
+            content: "new body",
+            frontmatterYaml: null,
+            isLocked: false,
+            namespace: "normal",
+            sequence: 1,
+            preparedEditorHtml: "<p>prepared new body</p>",
+          }}
+          openNotePaths={["old.md", "new.md"]}
+        />,
+      );
+    });
+
+    expect(
+      document.querySelector('[data-testid="document-open-loading"]'),
+    ).toBeNull();
+
+    act(() => {
+      vi.advanceTimersByTime(DOCUMENT_OPEN_BUDGETS.coldLoadingVisibleMs - 1);
+    });
+    expect(
+      document.querySelector('[data-testid="document-open-loading"]'),
+    ).toBeNull();
+
+    act(() => {
+      vi.advanceTimersByTime(1);
+    });
+    expect(
+      document.querySelector('[data-testid="document-open-loading"]'),
+    ).toBeTruthy();
+  });
+
+  it("does not delay a Home pending open after the first frame is ready", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(0);
     const commitPendingNoteOpen = vi.fn(() => true);
@@ -308,29 +353,17 @@ describe("document open first frame surface", () => {
 
     expect(
       document.querySelector('[data-testid="document-open-loading"]'),
-    ).toBeTruthy();
+    ).toBeNull();
 
     act(() => {
-      vi.advanceTimersByTime(100);
+      vi.advanceTimersByTime(DOCUMENT_OPEN_BUDGETS.coldLoadingVisibleMs);
       firstFrameCallbacks.get("new.md")?.({ path: "new.md" });
-    });
-
-    expect(commitPendingNoteOpen).not.toHaveBeenCalled();
-
-    act(() => {
-      vi.advanceTimersByTime(699);
-    });
-
-    expect(commitPendingNoteOpen).not.toHaveBeenCalled();
-
-    act(() => {
-      vi.advanceTimersByTime(1);
     });
 
     expect(commitPendingNoteOpen).toHaveBeenCalledWith("new.md", 7);
   });
 
-  it("keeps the loading surface visible for at least 800ms once displayed", async () => {
+  it("releases a staged open as soon as the first frame is ready", async () => {
     vi.useFakeTimers();
     const commitPendingNoteOpen = vi.fn(() => true);
 
@@ -357,22 +390,10 @@ describe("document open first frame surface", () => {
 
     expect(
       document.querySelector('[data-testid="document-open-loading"]'),
-    ).toBeTruthy();
+    ).toBeNull();
 
     act(() => {
       firstFrameCallbacks.get("new.md")?.({ path: "new.md" });
-    });
-
-    expect(commitPendingNoteOpen).not.toHaveBeenCalled();
-
-    act(() => {
-      vi.advanceTimersByTime(799);
-    });
-
-    expect(commitPendingNoteOpen).not.toHaveBeenCalled();
-
-    act(() => {
-      vi.advanceTimersByTime(1);
     });
 
     expect(commitPendingNoteOpen).toHaveBeenCalledWith("new.md", 2);
@@ -405,6 +426,7 @@ describe("document open first frame surface", () => {
 
     act(() => {
       editorReadyCallbacks.get("new.md")?.({ path: "new.md" });
+      contentReadyCallbacks.get("new.md")?.({ path: "new.md" });
       vi.advanceTimersByTime(5000);
     });
 

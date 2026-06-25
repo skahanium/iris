@@ -386,7 +386,7 @@ describe("VaultNavigator corpus assignment", () => {
     expect(folderRename).toHaveBeenCalledWith("policy/", "archive/policy");
   });
 
-  it("prepares visible files and closes only after async open resolves", async () => {
+  it("prepares visible files and closes immediately when opening a file", async () => {
     const onPrepare = vi.fn();
     let resolveOpen!: () => void;
     const onOpen = vi.fn(
@@ -429,7 +429,7 @@ describe("VaultNavigator corpus assignment", () => {
       await Promise.resolve();
     });
     expect(onOpen).toHaveBeenCalledWith("policy/a.md", "file-tree");
-    expect(onClose).not.toHaveBeenCalled();
+    expect(onClose).toHaveBeenCalledOnce();
 
     await act(async () => {
       resolveOpen();

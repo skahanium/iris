@@ -217,6 +217,60 @@ describe("useTabManager activateTab / openNote", () => {
     expect(apiRef.current!.activePath).toBe("a.md");
   });
 
+  it("switches to an already-open tab without waiting for dirty-tab persistence", async () => {
+    let resolvePersist: ((value: string | null) => void) | null = null;
+    const persistBeforeLeave = vi.fn<() => Promise<string | null>>(
+      async () => null,
+    );
+    const apiRef: { current: ReturnType<typeof useTabManager> | null } = {
+      current: null,
+    };
+
+    function PersistHarness() {
+      const api = useTabManager({ persistBeforeLeave });
+      apiRef.current = api;
+      return null;
+    }
+
+    await act(async () => {
+      root.render(createElement(PersistHarness));
+    });
+
+    await openAndWait(apiRef, "a.md", "A");
+    await openAndWait(apiRef, "b.md", "B");
+    await act(async () => {
+      await apiRef.current!.activateTab("a.md");
+    });
+    act(() => {
+      apiRef.current!.setMarkdown('---\ntitle: "A"\n---\n\nedited-a');
+      apiRef.current!.markDirty();
+    });
+    persistBeforeLeave.mockImplementation(
+      () =>
+        new Promise<string | null>((resolve) => {
+          resolvePersist = resolve;
+        }),
+    );
+
+    const switchPromise = apiRef.current!.activateTab("b.md");
+    await Promise.resolve();
+
+    expect(persistBeforeLeave).toHaveBeenCalledWith("a.md");
+    expect(apiRef.current!.activePathRef.current).toBe("b.md");
+    expect(apiRef.current!.markdownRef.current).toContain("body-b");
+
+    await act(async () => {
+      (resolvePersist as unknown as (value: string | null) => void)(
+        '---\ntitle: "A"\n---\n\nedited-a',
+      );
+      await switchPromise;
+      await Promise.resolve();
+    });
+
+    expect(apiRef.current!.activePath).toBe("b.md");
+    expect(apiRef.current!.markdown).toContain("body-b");
+  });
+
   it("openNote reads disk when the tab is not open yet", async () => {
     const apiRef: { current: ReturnType<typeof useTabManager> | null } = {
       current: null,

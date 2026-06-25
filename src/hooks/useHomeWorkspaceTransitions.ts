@@ -14,6 +14,10 @@ interface CurrentRef<T> {
 
 type MaybePromise<T> = T | Promise<T>;
 
+function openTransitionNow(): number {
+  return globalThis.performance?.now?.() ?? Date.now();
+}
+
 interface UseHomeWorkspaceTransitionsOptions<OpenNoteOptions> {
   activePathRef: CurrentRef<string | null>;
   activateArtifact: (id: string) => void;
@@ -80,7 +84,7 @@ export function useHomeWorkspaceTransitions<OpenNoteOptions>({
         kind: "note" as const,
         path,
         sequence,
-        startedAt: Date.now(),
+        startedAt: openTransitionNow(),
         title,
       };
       setActiveArtifactId(null);
@@ -165,7 +169,7 @@ export function useHomeWorkspaceTransitions<OpenNoteOptions>({
       kind: "new-note" as const,
       path: null,
       sequence,
-      startedAt: Date.now(),
+      startedAt: openTransitionNow(),
       title,
     };
     setActiveArtifactId(null);

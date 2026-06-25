@@ -126,6 +126,13 @@ export function QuickOpen({
     visibleFiles.forEach(prepareWorkspaceItem);
   }, [open, prepareWorkspaceItem, visibleFiles]);
 
+  const activateItem = useCallback((item: WorkspaceItem) => {
+    onCloseRef.current();
+    void Promise.resolve(onSelectRef.current(item.path, "quick-open")).catch(
+      () => undefined,
+    );
+  }, []);
+
   const { highlight, setHighlight, handleKeyDown, navDeltaRef } =
     useListboxKeyboard({
       length: filtered.length,
@@ -134,14 +141,7 @@ export function QuickOpen({
       onActivate: (index) => {
         const item = filteredRef.current[index];
         if (!item) return;
-        void (async () => {
-          try {
-            await onSelectRef.current(item.path, "quick-open");
-            onCloseRef.current();
-          } catch {
-            /* Keep Quick Open visible so the user can retry. */
-          }
-        })();
+        activateItem(item);
       },
     });
 
@@ -265,14 +265,7 @@ export function QuickOpen({
                         prepareWorkspaceItem(f);
                       }}
                       onSelect={() => {
-                        void (async () => {
-                          try {
-                            await onSelect(f.path, "quick-open");
-                            onClose();
-                          } catch {
-                            /* Keep Quick Open visible so the user can retry. */
-                          }
-                        })();
+                        activateItem(f);
                       }}
                     />
                   </div>

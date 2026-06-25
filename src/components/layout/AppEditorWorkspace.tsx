@@ -23,6 +23,7 @@ import type {
   NoteOpenSource,
   PreparedNoteOpen,
 } from "@/lib/document-open-runtime";
+import { DOCUMENT_OPEN_BUDGETS } from "@/lib/document-open-runtime";
 import type { PendingNoteOpen } from "@/hooks/useTabManager";
 import type { EditorHtmlCacheNamespace } from "@/lib/editor-html-cache";
 import type { FileListItem } from "@/types/ipc";
@@ -51,6 +52,7 @@ interface EditorSurfaceSnapshot {
 }
 
 interface EditorSurfaceRecord {
+  contentReady: boolean;
   editor: Editor | null;
   identityKey: string;
   lastActivatedAt: number;
@@ -64,7 +66,6 @@ interface DocumentLoadingGate {
   visible: boolean;
 }
 
-const DOCUMENT_OPEN_LOADING_MIN_MS = 800;
 const DOCUMENT_OPEN_LOADING_WATCHDOG_MS = 5000;
 const READY_SURFACE_RETAIN_LIMIT = 8;
 
@@ -155,6 +156,11 @@ function homePendingMatchesPath(
 
 function surfaceIdentity(snapshot: EditorSurfaceSnapshot): string {
   return snapshot.path;
+}
+
+function pendingOpenIdentity(pending: HomePendingOpen): string {
+  const path = pending.kind === "new-note" ? "new-note" : pending.path;
+  return `pending:${pending.kind}:${path}:${pending.sequence}`;
 }
 
 function endDocumentOpenToken(token?: string): void {
@@ -328,18 +334,12 @@ export function AppEditorWorkspace({
     [],
   );
   const documentLoadingGateRef = useRef(documentLoadingGate);
-  const loadingReleaseTimerRef = useRef<number | null>(null);
   const loadingWatchdogTimerRef = useRef<number | null>(null);
+  const loadingVisibilityTimerRef = useRef<number | null>(null);
 
   const syncDocumentLoadingGate = useCallback((next: DocumentLoadingGate) => {
     documentLoadingGateRef.current = next;
     setDocumentLoadingGate(next);
-  }, []);
-
-  const clearLoadingReleaseTimer = useCallback(() => {
-    if (loadingReleaseTimerRef.current === null) return;
-    window.clearTimeout(loadingReleaseTimerRef.current);
-    loadingReleaseTimerRef.current = null;
   }, []);
 
   const clearLoadingWatchdogTimer = useCallback(() => {
@@ -347,6 +347,45 @@ export function AppEditorWorkspace({
     window.clearTimeout(loadingWatchdogTimerRef.current);
     loadingWatchdogTimerRef.current = null;
   }, []);
+
+  const clearLoadingVisibilityTimer = useCallback(() => {
+    if (loadingVisibilityTimerRef.current === null) return;
+    window.clearTimeout(loadingVisibilityTimerRef.current);
+    loadingVisibilityTimerRef.current = null;
+  }, []);
+
+  const scheduleDocumentLoadingVisibility = useCallback(
+    (identityKey: string, startedAt: number) => {
+      clearLoadingVisibilityTimer();
+      const elapsed = Math.max(0, performance.now() - startedAt);
+      const remaining = DOCUMENT_OPEN_BUDGETS.coldLoadingVisibleMs - elapsed;
+      const hiddenGate = {
+        identityKey,
+        shownAt: startedAt,
+        visible: false,
+      };
+
+      if (remaining <= 0) {
+        syncDocumentLoadingGate({
+          ...hiddenGate,
+          visible: true,
+        });
+        return;
+      }
+
+      syncDocumentLoadingGate(hiddenGate);
+      loadingVisibilityTimerRef.current = window.setTimeout(() => {
+        loadingVisibilityTimerRef.current = null;
+        if (documentLoadingGateRef.current.identityKey !== identityKey) return;
+        syncDocumentLoadingGate({
+          identityKey,
+          shownAt: startedAt,
+          visible: true,
+        });
+      }, remaining);
+    },
+    [clearLoadingVisibilityTimer, syncDocumentLoadingGate],
+  );
 
   useEffect(() => {
     if (!currentEditorSurface) return;
@@ -360,6 +399,7 @@ export function AppEditorWorkspace({
         return retainCurrentSurfaceRecords([
           ...previous,
           {
+            contentReady: false,
             editor: null,
             identityKey,
             lastActivatedAt,
@@ -371,8 +411,17 @@ export function AppEditorWorkspace({
       return retainCurrentSurfaceRecords(
         previous.map((record) => {
           if (record.snapshot.path !== currentEditorSurface.path) return record;
+          const contentChanged =
+            record.snapshot.editorContentTick !==
+              currentEditorSurface.editorContentTick ||
+            record.snapshot.editorBodyMarkdown !==
+              currentEditorSurface.editorBodyMarkdown ||
+            record.snapshot.editorPreparedHtml !==
+              currentEditorSurface.editorPreparedHtml;
           return {
             ...record,
+            contentReady: contentChanged ? false : record.contentReady,
+            ready: contentChanged ? false : record.ready,
             lastActivatedAt,
             snapshot: currentEditorSurface,
           };
@@ -419,6 +468,8 @@ export function AppEditorWorkspace({
       homePendingMatchesPath(pendingOpen, currentEditorSurface.path)) &&
     !activeSurfaceRecord?.ready,
   );
+  const pendingOpenLoadingIdentity =
+    pendingOpenLoading && pendingOpen ? pendingOpenIdentity(pendingOpen) : null;
   const loadingPath =
     currentEditorSurface?.path ?? pendingNoteOpen?.path ?? pendingOpen?.path;
   const loadingTitle =
@@ -430,8 +481,9 @@ export function AppEditorWorkspace({
     !activeArtifactTab &&
     !activeMediaTab &&
     !homeActive &&
-    currentEditorSurface &&
-    documentLoadingGate.identityKey === currentSurfaceIdentity &&
+    (currentEditorSurface || pendingOpenLoadingIdentity) &&
+    documentLoadingGate.identityKey ===
+      (currentSurfaceIdentity ?? pendingOpenLoadingIdentity) &&
     documentLoadingGate.visible,
   );
 
@@ -464,8 +516,24 @@ export function AppEditorWorkspace({
     [handleEditorReady, retainCurrentSurfaceRecords],
   );
 
+  const handleSurfaceContentReady = useCallback(
+    (path: string, editor: Editor) => {
+      setSurfaceRecords((previous) =>
+        retainCurrentSurfaceRecords(
+          previous.map((record) =>
+            record.snapshot.path === path
+              ? { ...record, contentReady: true, editor }
+              : record,
+          ),
+        ),
+      );
+    },
+    [retainCurrentSurfaceRecords],
+  );
+
   const releaseSurfaceFirstFrame = useCallback(
     (path: string, identityKey: string, editor: Editor) => {
+      clearLoadingVisibilityTimer();
       if (documentLoadingGateRef.current.identityKey === identityKey) {
         syncDocumentLoadingGate({
           identityKey: null,
@@ -496,12 +564,12 @@ export function AppEditorWorkspace({
         handleEditorReadyRef.current(editor);
       }
     },
-    [syncDocumentLoadingGate],
+    [clearLoadingVisibilityTimer, syncDocumentLoadingGate],
   );
 
   useEffect(() => {
-    clearLoadingReleaseTimer();
     clearLoadingWatchdogTimer();
+    clearLoadingVisibilityTimer();
 
     const pendingForCurrentSurface =
       pendingOpen &&
@@ -509,6 +577,27 @@ export function AppEditorWorkspace({
       homePendingMatchesPath(pendingOpen, currentEditorSurface.path)
         ? pendingOpen
         : null;
+    const pendingOnlyIdentity =
+      !currentSurfaceIdentity && pendingOpenLoadingIdentity
+        ? pendingOpenLoadingIdentity
+        : null;
+
+    if (!currentSurfaceIdentity && !pendingOnlyIdentity) {
+      syncDocumentLoadingGate({
+        identityKey: null,
+        shownAt: null,
+        visible: false,
+      });
+      return;
+    }
+
+    if (!currentSurfaceIdentity && pendingOnlyIdentity && pendingOpen) {
+      scheduleDocumentLoadingVisibility(
+        pendingOnlyIdentity,
+        pendingOpen.startedAt,
+      );
+      return;
+    }
 
     if (!currentSurfaceIdentity || activeSurfaceReadyRef.current) {
       syncDocumentLoadingGate({
@@ -525,7 +614,9 @@ export function AppEditorWorkspace({
         const record = previous.find(
           (item) => item.identityKey === currentSurfaceIdentity,
         );
-        if (!record?.editor || record.ready) return previous;
+        if (!record?.editor || !record.contentReady || record.ready) {
+          return previous;
+        }
 
         releaseSurfaceFirstFrame(
           record.snapshot.path,
@@ -543,80 +634,51 @@ export function AppEditorWorkspace({
     }, DOCUMENT_OPEN_LOADING_WATCHDOG_MS);
 
     if (pendingForCurrentSurface) {
-      syncDocumentLoadingGate({
-        identityKey: currentSurfaceIdentity,
-        shownAt: pendingForCurrentSurface.startedAt,
-        visible: true,
-      });
+      scheduleDocumentLoadingVisibility(
+        currentSurfaceIdentity,
+        pendingForCurrentSurface.startedAt,
+      );
       return;
     }
 
-    syncDocumentLoadingGate({
-      identityKey: currentSurfaceIdentity,
-      shownAt: Date.now(),
-      visible: true,
-    });
+    scheduleDocumentLoadingVisibility(
+      currentSurfaceIdentity,
+      performance.now(),
+    );
 
     return () => {
-      clearLoadingReleaseTimer();
       clearLoadingWatchdogTimer();
+      clearLoadingVisibilityTimer();
     };
   }, [
-    clearLoadingReleaseTimer,
     clearLoadingWatchdogTimer,
+    clearLoadingVisibilityTimer,
     currentEditorSurface,
     currentSurfaceIdentity,
     pendingOpen,
+    pendingOpenLoadingIdentity,
     releaseSurfaceFirstFrame,
     retainCurrentSurfaceRecords,
+    scheduleDocumentLoadingVisibility,
     syncDocumentLoadingGate,
   ]);
 
   const handleSurfaceFirstFrameReady = useCallback(
     (path: string, identityKey: string, editor: Editor) => {
-      clearLoadingReleaseTimer();
       clearLoadingWatchdogTimer();
       setSurfaceRecords((previous) =>
         retainCurrentSurfaceRecords(
           previous.map((record) =>
             record.snapshot.path === path
-              ? { ...record, editor, ready: true }
+              ? { ...record, contentReady: true, editor, ready: true }
               : record,
           ),
         ),
       );
 
-      const gate = documentLoadingGateRef.current;
-      const pendingStartedAt =
-        pendingOpenRef.current &&
-        homePendingMatchesPath(pendingOpenRef.current, path) &&
-        typeof pendingOpenRef.current.startedAt === "number"
-          ? pendingOpenRef.current.startedAt
-          : null;
-      const shownAt =
-        gate.identityKey === identityKey &&
-        gate.visible &&
-        typeof gate.shownAt === "number"
-          ? gate.shownAt
-          : pendingStartedAt;
-      if (shownAt !== null) {
-        const remaining = Math.max(
-          DOCUMENT_OPEN_LOADING_MIN_MS - (Date.now() - shownAt),
-          0,
-        );
-        if (remaining > 0) {
-          loadingReleaseTimerRef.current = window.setTimeout(() => {
-            loadingReleaseTimerRef.current = null;
-            releaseSurfaceFirstFrame(path, identityKey, editor);
-          }, remaining);
-          return;
-        }
-      }
-
       releaseSurfaceFirstFrame(path, identityKey, editor);
     },
     [
-      clearLoadingReleaseTimer,
       clearLoadingWatchdogTimer,
       releaseSurfaceFirstFrame,
       retainCurrentSurfaceRecords,
@@ -667,6 +729,9 @@ export function AppEditorWorkspace({
               onEditorReady={(editor) => {
                 handleSurfaceEditorReady(snapshot.path, editor);
               }}
+              onContentReady={(editor) => {
+                handleSurfaceContentReady(snapshot.path, editor);
+              }}
               onFirstFrameReady={(editor) => {
                 handleSurfaceFirstFrameReady(
                   snapshot.path,
@@ -698,6 +763,7 @@ export function AppEditorWorkspace({
       editorZoom,
       handleDirty,
       handleLockToggle,
+      handleSurfaceContentReady,
       handleSurfaceEditorReady,
       handleSurfaceFirstFrameReady,
       inlineAi,
@@ -713,7 +779,7 @@ export function AppEditorWorkspace({
   const renderEditorStack = () => (
     <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden">
       {surfaceRecords.map(renderEditorSurface)}
-      {(showDocumentLoading || pendingOpenLoading) && loadingPath ? (
+      {showDocumentLoading && loadingPath ? (
         <DocumentOpenLoadingSurface
           path={loadingPath}
           title={loadingTitle}

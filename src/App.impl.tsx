@@ -1,6 +1,13 @@
 import type { Editor } from "@tiptap/react";
 import { Moon, Sun } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 
 import { DocumentTitleField } from "@/components/editor/DocumentTitleField";
 import { AppAiPanelSlot } from "@/components/layout/AppAiPanelSlot";
@@ -106,6 +113,7 @@ function App() {
     resetZoom,
   } = useEditorZoom();
   const editorRef = useRef<Editor | null>(null);
+  const editorReadyForPersistenceRef = useRef(false);
   const overlays = useOverlayManager();
   const { provider: llmProvider } = useLlmProvider();
   const { status: connectivityStatus } = useConnectivityStatus();
@@ -295,6 +303,7 @@ function App() {
     markdownRef,
     frontmatterYamlRef,
     editorRef,
+    editorReadyRef: editorReadyForPersistenceRef,
     dirtyRef,
     updateTabTitle,
     replaceOpenTabPath,
@@ -322,6 +331,7 @@ function App() {
     autoVersionIdleMinutes: autoVersionSettings.autoVersionIdleMinutes,
     dirtyRef,
     editorRef,
+    editorReadyRef: editorReadyForPersistenceRef,
     getLiveMarkdownRef,
     getTabMarkdownCached,
     markClean,
@@ -515,9 +525,21 @@ function App() {
     canRedo,
     canUndo,
     editorInstance,
-    handleEditorReady,
+    handleEditorReady: handleUndoRedoEditorReady,
     scheduleUndoRedoStateRefresh,
   } = useEditorUndoRedoState({ activePath, editorRef });
+
+  const handleEditorReady = useCallback(
+    (editor: Editor | null) => {
+      editorReadyForPersistenceRef.current = editor != null;
+      handleUndoRedoEditorReady(editor);
+    },
+    [handleUndoRedoEditorReady],
+  );
+
+  useLayoutEffect(() => {
+    editorReadyForPersistenceRef.current = false;
+  }, [activePath, editorContentTick]);
 
   useEffect(() => {
     if (!activePath) {

@@ -8,14 +8,16 @@ export interface SerializeOpenNoteOptions {
   yaml: string | null;
   title: string;
   editor: Editor | null;
+  /** True only after the editor body has been hydrated with the current note. */
+  editorReady?: boolean;
   /** Used when `editor` is unavailable; typically `splitFrontmatter(ref).body`. */
   bodyFallbackMd: string;
 }
 
 /** Single persistence pipeline: title state + TipTap body → full note markdown. */
 export function serializeOpenNote(options: SerializeOpenNoteOptions): string {
-  const { yaml, title, editor, bodyFallbackMd } = options;
-  const hasEditor = editor != null && !editor.isDestroyed;
+  const { yaml, title, editor, editorReady = true, bodyFallbackMd } = options;
+  const hasEditor = editorReady && editor != null && !editor.isDestroyed;
   const bodyMd = hasEditor ? editorDocToMarkdown(editor) : bodyFallbackMd;
   return buildNoteMarkdown(yaml, title.trim(), bodyMd);
 }
