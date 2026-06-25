@@ -72,7 +72,7 @@ describe("desktop title bar", () => {
     expect(macosSource).toContain('"transparent": false');
     expect(macos.app?.windows?.[0]?.trafficLightPosition).toEqual({
       x: 14,
-      y: 16,
+      y: 24,
     });
     expect(macosSource).not.toContain("Tauri App");
   });
@@ -186,6 +186,12 @@ describe("desktop title bar", () => {
     expect(css).toMatch(
       /html\[data-iris-platform-macos\][\s\S]*--titlebar-traffic-inset:\s*88px/,
     );
+    expect(css).toMatch(
+      /html\[data-iris-platform-macos\]\[data-iris-window-fullscreen\][\s\S]*--titlebar-traffic-inset:\s*0px/,
+    );
+    expect(css).toMatch(
+      /\.iris-titlebar-traffic-spacer\s*\{[\s\S]*transition:\s*width 180ms var\(--motion-ease\)/,
+    );
   });
 
   it("DesktopTitleBar uses items-center on macOS and avoids items-end for tabs", () => {
@@ -211,8 +217,12 @@ describe("desktop title bar", () => {
 
   it("useMacOSWindowChromeSync handles fullscreen and chrome metrics IPC", () => {
     const hook = read("src/hooks/useMacOSWindowChromeSync.ts");
+    const metrics = read("src/lib/chrome-metrics.ts");
     expect(hook).toContain("isFullscreen");
-    expect(hook).toContain("irisWindowFullscreen");
+    expect(hook).toContain("applyDesktopChromeFullscreenStateToDocument");
+    expect(metrics).toContain("irisWindowFullscreen");
+    expect(metrics).toContain("--titlebar-traffic-inset");
+    expect(metrics).toContain('"0px"');
     expect(hook).toContain("getDesktopChromeMetrics");
     expect(read("src/lib/ipc.ts")).toContain("get_desktop_chrome_metrics");
     expect(hook).not.toContain("reapplyWindowChrome");

@@ -3,6 +3,8 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 import {
+  applyDesktopChromeFullscreenStateToDocument,
+  applyDesktopChromeMetricsToDocument,
   DEFAULT_TITLEBAR_HEIGHT_PX,
   MACOS_TITLEBAR_HEIGHT_PX,
   MACOS_TRAFFIC_INSET_PX,
@@ -17,6 +19,44 @@ function read(path: string): string {
 }
 
 describe("chrome metrics SSOT", () => {
+  it("fullscreen state overrides the inline macOS traffic inset", () => {
+    applyDesktopChromeMetricsToDocument({
+      titlebarHeightLogical: MACOS_TITLEBAR_HEIGHT_PX,
+      trafficInsetLogical: MACOS_TRAFFIC_INSET_PX,
+      scaleFactor: 2,
+    });
+
+    expect(
+      document.documentElement.style.getPropertyValue(
+        "--titlebar-traffic-inset",
+      ),
+    ).toBe("88px");
+
+    applyDesktopChromeFullscreenStateToDocument(true);
+
+    expect(document.documentElement.dataset.irisWindowFullscreen).toBe("");
+    expect(
+      document.documentElement.style.getPropertyValue(
+        "--titlebar-traffic-inset",
+      ),
+    ).toBe("0px");
+
+    applyDesktopChromeFullscreenStateToDocument(false, {
+      titlebarHeightLogical: MACOS_TITLEBAR_HEIGHT_PX,
+      trafficInsetLogical: MACOS_TRAFFIC_INSET_PX,
+      scaleFactor: 2,
+    });
+
+    expect(document.documentElement.dataset.irisWindowFullscreen).toBe(
+      undefined,
+    );
+    expect(
+      document.documentElement.style.getPropertyValue(
+        "--titlebar-traffic-inset",
+      ),
+    ).toBe("88px");
+  });
+
   it("TypeScript mirror matches Rust chrome_metrics constants", () => {
     const rust = read("src-tauri/src/chrome_metrics.rs");
     expect(rust).toContain("pub const TITLEBAR_HEIGHT: f64 = 44.0");
@@ -43,6 +83,12 @@ describe("chrome metrics SSOT", () => {
     expect(css).toMatch(
       /html\[data-iris-platform-macos\][\s\S]*--titlebar-traffic-inset:\s*88px/,
     );
+    expect(css).toMatch(
+      /html\[data-iris-platform-macos\]\[data-iris-window-fullscreen\][\s\S]*--titlebar-traffic-inset:\s*0px/,
+    );
+    expect(css).toMatch(
+      /\.iris-titlebar-traffic-spacer\s*\{[\s\S]*transition:\s*width 180ms var\(--motion-ease\)/,
+    );
   });
 
   it("macOS uses decorated overlay shell with native traffic lights", () => {
@@ -60,7 +106,7 @@ describe("chrome metrics SSOT", () => {
     expect(macosSource).toContain('"transparent": false');
     expect(macosSource).toContain('"titleBarStyle": "Overlay"');
     expect(macosSource).toContain('"hiddenTitle": true');
-    expect(mainWindow?.trafficLightPosition).toEqual({ x: 14, y: 16 });
+    expect(mainWindow?.trafficLightPosition).toEqual({ x: 14, y: 24 });
     expect(read("src/lib/platform-chrome.ts")).toContain(
       "return isTauriRuntime() && !isMacOSDesktopChrome()",
     );

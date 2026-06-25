@@ -405,6 +405,10 @@
     --window-controls-width: 0px;
   }
 
+  html[data-iris-platform-macos][data-iris-window-fullscreen] {
+    --titlebar-traffic-inset: 0px;
+  }
+
   [data-tauri-drag-region] {
     -webkit-app-region: drag;
     app-region: drag;
@@ -444,6 +448,7 @@
 
   .iris-titlebar-traffic-spacer {
     width: var(--titlebar-traffic-inset);
+    transition: width 180ms var(--motion-ease);
   }
 
   .iris-window-control--windows:hover {

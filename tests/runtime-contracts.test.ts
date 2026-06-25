@@ -73,7 +73,7 @@ describe("runtime configuration contracts", () => {
       shadow: true,
       titleBarStyle: "Overlay",
       hiddenTitle: true,
-      trafficLightPosition: { x: 14, y: 16 },
+      trafficLightPosition: { x: 14, y: 24 },
     });
     expectStartupWindowInvariant("src-tauri/tauri.linux.conf.json", {
       transparent: true,

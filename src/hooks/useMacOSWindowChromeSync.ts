@@ -2,6 +2,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useEffect } from "react";
 
 import {
+  applyDesktopChromeFullscreenStateToDocument,
   applyDesktopChromeMetricsToDocument,
   type DesktopChromeMetrics,
 } from "@/lib/chrome-metrics";
@@ -10,19 +11,19 @@ import { isMacOSDesktopChrome } from "@/lib/platform-chrome";
 
 const DEBOUNCE_MS = 48;
 
-function setFullscreenDataset(fullscreen: boolean): void {
-  const root = document.documentElement;
-  if (fullscreen) {
-    root.dataset.irisWindowFullscreen = "";
-  } else {
-    delete root.dataset.irisWindowFullscreen;
-  }
-}
-
 async function syncChromeMetrics(): Promise<DesktopChromeMetrics> {
   const metrics = await getDesktopChromeMetrics();
   applyDesktopChromeMetricsToDocument(metrics);
   return metrics;
+}
+
+async function syncFullscreenChromeState(fullscreen: boolean): Promise<void> {
+  if (fullscreen) {
+    applyDesktopChromeFullscreenStateToDocument(true);
+    return;
+  }
+  const metrics = await syncChromeMetrics();
+  applyDesktopChromeFullscreenStateToDocument(false, metrics);
 }
 
 /**
@@ -41,10 +42,7 @@ export function useMacOSWindowChromeSync(): void {
       debounce = setTimeout(() => {
         void (async () => {
           const fullscreen = await win.isFullscreen();
-          setFullscreenDataset(fullscreen);
-          if (!fullscreen) {
-            await syncChromeMetrics();
-          }
+          await syncFullscreenChromeState(fullscreen);
         })();
       }, DEBOUNCE_MS);
     };
@@ -52,7 +50,7 @@ export function useMacOSWindowChromeSync(): void {
     void (async () => {
       await syncChromeMetrics();
       const fullscreen = await win.isFullscreen();
-      setFullscreenDataset(fullscreen);
+      await syncFullscreenChromeState(fullscreen);
     })();
 
     const unlistenPromise = Promise.all([

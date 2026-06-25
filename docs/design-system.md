@@ -140,18 +140,18 @@ Iris Rail Refresh adds semantic surface tokens for the complete interface system
 
 桌面窗口：单行 **`DesktopTitleBar`**（`bg-surface-chrome`），禁止出现「Tauri App」或双层系统标题栏。顶栏高度统一为 44px，让品牌轨、Rail Segments 与右侧窗口控制在同一中线。
 
-| 平台            | `--titlebar-height` | 装饰 / 标题                                                                                                              | 窗口按钮                                             | 顶栏左侧                                                                       |
-| --------------- | ------------------- | ------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------- | ------------------------------------------------------------------------------ |
-| macOS           | **44px（2.75rem）** | `titleBarStyle: Overlay`、`hiddenTitle: true`、`decorations: true`、`trafficLightPosition: { x: 14, y: 16 }`、非透明窗口 | 左侧系统原生红黄绿；Iris 不渲染自绘 `WindowControls` | `--titlebar-traffic-inset: 88px` 空 spacer 后接 `iris-brand-rail`，点击回 Home |
-| Windows / Linux | **44px（2.75rem）** | `decorations: false`（Win 另 `shadow: true`）                                                                            | 右侧标准顺序窗口控件：最小化 / 最大化 / 关闭         | 常驻 `iris-brand-rail`，点击回 Home                                            |
+| 平台            | `--titlebar-height` | 装饰 / 标题                                                                                                              | 窗口按钮                                             | 顶栏左侧                                                                                                                                  |
+| --------------- | ------------------- | ------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| macOS           | **44px（2.75rem）** | `titleBarStyle: Overlay`、`hiddenTitle: true`、`decorations: true`、`trafficLightPosition: { x: 14, y: 24 }`、非透明窗口 | 左侧系统原生红黄绿；Iris 不渲染自绘 `WindowControls` | 窗口态 `--titlebar-traffic-inset: 88px` 空 spacer 后接 `iris-brand-rail`；fullscreen 时 spacer 收为 `0px`，完整 `Iris` 品牌轨顺滑左移贴边 |
+| Windows / Linux | **44px（2.75rem）** | `decorations: false`（Win 另 `shadow: true`）                                                                            | 右侧标准顺序窗口控件：最小化 / 最大化 / 关闭         | 常驻 `iris-brand-rail`，点击回 Home                                                                                                       |
 
 指标单一来源：Rust [`chrome_metrics.rs`](../src-tauri/src/chrome_metrics.rs)（顶栏统一 44px，macOS traffic inset 88px）；前端镜像见 [`chrome-metrics.ts`](../src/lib/chrome-metrics.ts)。
 
 - **Windows 11**：`transparent: false`（见 `tauri.windows.conf.json`），圆角由 DWM + `shadow` 提供；**勿**与 `transparent: true` 同开。
-- **macOS**：使用系统 AppKit 作为唯一窗口外壳 owner：`transparent: false`、`decorations: true`、Overlay titlebar、hidden title，并通过配置期 `trafficLightPosition: { x: 14, y: 16 }` 让系统红黄绿与 Iris 44px 顶栏视觉中线对齐；禁止运行期动态 `setDecorations()` / `setTitleBarStyle()` 切换。左侧 88px spacer 不放按钮、文本或图标，系统红黄绿独占该区域。
-- **macOS 全屏**：使用系统绿色按钮进入 / 退出原生 fullscreen Space；标题栏双击仍执行最大化 / 还原，两者语义互不替代。macOS WindowServer 的全屏过渡快照不可由 Web 前端禁用，治理原则是避免 Iris 再渲染第二套交通灯或动态切换窗口壳层。
+- **macOS**：使用系统 AppKit 作为唯一窗口外壳 owner：`transparent: false`、`decorations: true`、Overlay titlebar、hidden title，并通过配置期 `trafficLightPosition: { x: 14, y: 24 }` 让系统红黄绿与 Iris 44px 顶栏视觉中线对齐；禁止运行期动态 `setDecorations()` / `setTitleBarStyle()` 切换。窗口态左侧 88px spacer 不放按钮、文本或图标，系统红黄绿独占该区域。
+- **macOS 全屏**：使用系统绿色按钮进入 / 退出原生 fullscreen Space；标题栏双击仍执行最大化 / 还原，两者语义互不替代。fullscreen 状态由 `data-iris-window-fullscreen` 驱动，左侧 traffic-light spacer 从 88px 顺滑收为 0px，完整 `Iris` 品牌轨和 tab 左移补位。macOS WindowServer 的贴顶 reveal 行为不可由 Web 前端完全接管，治理原则是避免 Iris 再渲染第二套交通灯、保留空白或动态切换窗口壳层。
 
-**人工验收**：macOS 窗口模式 — 左侧系统红黄绿正常显示且在 Iris 顶栏内垂直居中，Iris 品牌轨从 88px spacer 后开始并承担 Home 入口，不出现独立 Home tab；系统绿色进入原生全屏，标题栏双击最大化 / 还原；全屏→退出后标题栏高度、品牌轨与系统窗口控件不漂移，不出现 Iris 自绘交通灯叠层。Windows — 顶栏 44px、最小化 / 最大化 / 关闭顺序与 Tab 无回归。
+**人工验收**：macOS 窗口模式 — 左侧系统红黄绿正常显示且在 Iris 顶栏内垂直居中，Iris 品牌轨从 88px spacer 后开始并承担 Home 入口，不出现独立 Home tab；系统绿色进入原生全屏，标题栏双击最大化 / 还原；fullscreen 后左侧 spacer 收起为 0px，完整 Iris 品牌轨与 tab 顺滑左移补位；全屏→退出后标题栏高度、品牌轨和系统窗口控件不漂移，不出现 Iris 自绘交通灯叠层。Windows — 顶栏 44px、最小化 / 最大化 / 关闭顺序与 Tab 无回归。
 
 阴影：仅浮层 / 悬浮工具条使用 `--shadow-overlay` / `--shadow-floating`；**编辑区无纸页阴影**。
 

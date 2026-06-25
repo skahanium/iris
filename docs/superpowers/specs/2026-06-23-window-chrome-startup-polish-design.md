@@ -1,6 +1,6 @@
 # macOS 窗口控制与启动首帧治理设计
 
-> 2026-06-24 修订：macOS 不再使用 Iris 右侧自绘交通灯，也不再运行期动态切换 `decorations` / `titleBarStyle`。最终方案为 macOS 原生 decorated overlay chrome：系统左侧红黄绿是唯一窗口控件 owner，Iris 顶栏通过 88px traffic-light spacer 避让，并使用配置期 `trafficLightPosition` 与顶栏中线对齐。
+> 2026-06-24 修订：macOS 不再使用 Iris 右侧自绘交通灯，也不再运行期动态切换 `decorations` / `titleBarStyle`。最终方案为 macOS 原生 decorated overlay chrome：系统左侧红黄绿是唯一窗口控件 owner，Iris 顶栏在窗口态通过 88px traffic-light spacer 避让，并使用配置期 `trafficLightPosition` 与顶栏中线对齐。2026-06-26 修订：fullscreen 时 traffic-light spacer 收为 0px，完整 Iris 品牌轨与 tab 顺滑左移补位，避免红绿灯隐藏后留下空洞。
 
 ## 背景
 
@@ -9,8 +9,9 @@ Iris 采用 Tauri 2 + React 自绘桌面 chrome。现有实现存在四个体验
 ## 设计决策
 
 - macOS 使用系统左侧原生红黄绿，Iris 不渲染自绘窗口控件。
-- macOS 原生红黄绿位置由 Tauri 配置期 `trafficLightPosition: { x: 14, y: 16 }` 固定，禁止前端运行期接管或动态重排。
+- macOS 原生红黄绿位置由 Tauri 配置期 `trafficLightPosition: { x: 14, y: 24 }` 固定，禁止前端运行期接管或动态重排。
 - macOS 系统绿色按钮负责进入 / 退出原生 fullscreen Space，不再由前端绿色按钮承担。
+- macOS fullscreen 状态下前端仅收起 traffic-light spacer，不渲染自绘红绿灯，不动态切换 AppKit titlebar；完整 Iris 品牌轨保留并顺滑左移贴边。
 - macOS 与 Windows 标题栏双击都负责最大化 / 还原，不与 fullscreen 语义混用。
 - Windows 控件保持标准最小化 / 最大化 / 关闭顺序。
 - 窗口动作拆为两个前端内部 helper：native fullscreen 与 window maximize，避免继续把不同平台行为塞进一个 `toggleMaximize` 路径。
@@ -30,6 +31,7 @@ Iris 采用 Tauri 2 + React 自绘桌面 chrome。现有实现存在四个体验
 ## 验收标准
 
 - macOS 窗口态：左侧系统原生红黄绿正常显示并在 Iris 顶栏内垂直居中；Iris 标识和 tab 从 88px spacer 后开始。
+- macOS fullscreen：左侧 88px spacer 收为 0px，完整 Iris 标识和 tab 顺滑左移补位，不留下红绿灯隐藏后的空洞。
 - macOS 标题栏双击：最大化 / 还原。
 - macOS 全屏退出后：标题栏高度、品牌轨和系统窗口控件不漂移；不出现 Iris 自绘灯叠层。
 - Windows：冷启动不暴露旧黑色标题栏或扭曲模块；窗口控件仍为最小化 / 最大化 / 关闭。

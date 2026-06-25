@@ -29,3 +29,19 @@ export function applyDesktopChromeMetricsToDocument(
     `${metrics.trafficInsetLogical}px`,
   );
 }
+
+export function applyDesktopChromeFullscreenStateToDocument(
+  fullscreen: boolean,
+  metrics?: DesktopChromeMetrics,
+): void {
+  const root = document.documentElement;
+  if (fullscreen) {
+    root.dataset.irisWindowFullscreen = "";
+    root.style.setProperty("--titlebar-traffic-inset", "0px");
+  } else {
+    delete root.dataset.irisWindowFullscreen;
+    if (metrics) {
+      applyDesktopChromeMetricsToDocument(metrics);
+    }
+  }
+}
