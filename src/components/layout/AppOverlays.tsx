@@ -14,6 +14,10 @@ import type {
   OverlayId,
 } from "@/hooks/useOverlayManager";
 import type { TabItem } from "@/components/layout/TabBar";
+import type {
+  DocumentOpenPriority,
+  NoteOpenSource,
+} from "@/lib/document-open-runtime";
 import type { ClassifiedStatus, FileListItem } from "@/types/ipc";
 
 const GraphView = lazy(() =>
@@ -87,11 +91,23 @@ interface AppOverlaysProps {
   openNoteLeavingHome: (
     path: string,
     titleHint?: string,
-    options?: { allowClassified?: boolean },
+    options?: {
+      allowClassified?: boolean;
+      priority?: DocumentOpenPriority;
+      source?: NoteOpenSource;
+    },
   ) => void | Promise<void>;
-  onPrepareNote?: (file: FileListItem) => void;
-  onPrepareNotePath?: (path: string, titleHint?: string) => void;
-  onPrepareClassifiedNotePath?: (path: string, titleHint?: string) => void;
+  onPrepareNote?: (file: FileListItem, source?: NoteOpenSource) => void;
+  onPrepareNotePath?: (
+    path: string,
+    titleHint?: string,
+    source?: NoteOpenSource,
+  ) => void;
+  onPrepareClassifiedNotePath?: (
+    path: string,
+    titleHint?: string,
+    source?: NoteOpenSource,
+  ) => void;
   overlays: OverlayPort;
   refreshClassifiedStatus: () => Promise<ClassifiedStatus>;
   requestClassifiedLock: () => Promise<boolean>;
@@ -151,14 +167,24 @@ export function AppOverlays({
       <QuickOpen
         open={overlays.quickOpen}
         onClose={() => overlays.closeOverlay("quickOpen")}
-        onPrepare={onPrepareNote}
-        onSelect={openNoteLeavingHome}
+        onPrepare={(file, source) => onPrepareNote?.(file, source)}
+        onSelect={(path, source) =>
+          openNoteLeavingHome(path, undefined, {
+            priority: "foreground",
+            source,
+          })
+        }
       />
       <VaultNavigator
         open={overlays.fileSheet}
         onClose={() => overlays.closeOverlay("fileSheet")}
-        onOpen={openNoteLeavingHome}
-        onPrepare={onPrepareNote}
+        onOpen={(path, source) =>
+          openNoteLeavingHome(path, undefined, {
+            priority: "foreground",
+            source,
+          })
+        }
+        onPrepare={(file, source) => onPrepareNote?.(file, source)}
         onBeforeFilePathChange={onBeforeFilePathChange}
         onFilePathChanged={onFilePathChanged}
         onBeforeFileDelete={onBeforeFileDelete}
@@ -167,14 +193,26 @@ export function AppOverlays({
       <RecycleBinSheet
         open={overlays.recycleBinOpen}
         onClose={() => overlays.closeOverlay("recycleBin")}
-        onRestored={openNoteLeavingHome}
+        onRestored={(path) =>
+          openNoteLeavingHome(path, undefined, {
+            priority: "foreground",
+            source: "recycle",
+          })
+        }
         onIndexChange={bumpVaultIndex}
       />
       <SearchPanel
         open={overlays.searchOpen}
         onClose={() => overlays.closeOverlay("search")}
-        onOpen={openNoteLeavingHome}
-        onPrepare={onPrepareNotePath}
+        onOpen={(path) =>
+          openNoteLeavingHome(path, undefined, {
+            priority: "foreground",
+            source: "search",
+          })
+        }
+        onPrepare={(path, titleHint) =>
+          onPrepareNotePath?.(path, titleHint, "search")
+        }
       />
       {overlays.managementCenterOpen ? (
         <Suspense fallback={null}>
@@ -185,8 +223,13 @@ export function AppOverlays({
             detail={overlays.managementCenterDetail}
             webSearch={webSearch}
             onWebSearchChange={setWebSearch}
-            onOpenNote={openNoteLeavingHome}
-            onPrepareNote={onPrepareNote}
+            onOpenNote={(path) =>
+              openNoteLeavingHome(path, undefined, {
+                priority: "foreground",
+                source: "management",
+              })
+            }
+            onPrepareNote={(file) => onPrepareNote?.(file, "management")}
             onOpenKnowledgeRelations={openKnowledgeRelations}
             onOpenVersion={openVersion}
             onRescanVault={rescanVault}
@@ -206,8 +249,15 @@ export function AppOverlays({
         open={overlays.knowledgeRelationsOpen}
         onClose={() => overlays.closeOverlay("knowledgeRelations")}
         notePath={activePath}
-        onOpen={openNoteLeavingHome}
-        onPreparePath={onPrepareNotePath}
+        onOpen={(path) =>
+          openNoteLeavingHome(path, undefined, {
+            priority: "foreground",
+            source: "link",
+          })
+        }
+        onPreparePath={(path, titleHint) =>
+          onPrepareNotePath?.(path, titleHint, "link")
+        }
       />
       {overlays.versionOpen ? (
         <Suspense fallback={null}>
@@ -236,8 +286,15 @@ export function AppOverlays({
             <GraphView
               open={overlays.graphOpen}
               onClose={() => overlays.closeOverlay("graph")}
-              onOpenNote={openNoteLeavingHome}
-              onPrepareNotePath={onPrepareNotePath}
+              onOpenNote={(path) =>
+                openNoteLeavingHome(path, undefined, {
+                  priority: "foreground",
+                  source: "graph",
+                })
+              }
+              onPrepareNotePath={(path, titleHint) =>
+                onPrepareNotePath?.(path, titleHint, "graph")
+              }
             />
           </Suspense>
         </ErrorBoundary>
@@ -259,9 +316,15 @@ export function AppOverlays({
         idleDeadline={classifiedIdleDeadline}
         openClassifiedPaths={openClassifiedPaths}
         onOpenFile={(path) =>
-          openNoteLeavingHome(path, undefined, { allowClassified: true })
+          openNoteLeavingHome(path, undefined, {
+            allowClassified: true,
+            priority: "foreground",
+            source: "classified",
+          })
         }
-        onPrepareFile={onPrepareClassifiedNotePath}
+        onPrepareFile={(path, titleHint) =>
+          onPrepareClassifiedNotePath?.(path, titleHint, "classified")
+        }
         onUnlockSuccess={() => void onClassifiedUnlocked()}
         onRequestLock={() => requestClassifiedLock()}
         onActivity={touchClassifiedActivity}

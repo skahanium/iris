@@ -6,11 +6,16 @@ import { ConfirmDialog } from "@/components/common/ConfirmDialog";
 import { displayTitleForFileListItem } from "@/lib/note-display";
 import { fileDelete } from "@/lib/ipc";
 import type { HomePendingOpen } from "@/lib/home-open-transition";
+import type { NoteOpenSource } from "@/lib/document-open-runtime";
 import type { FileListItem } from "@/types/ipc";
 
 interface WelcomeEmptyProps {
-  onOpen: (path: string, titleHint?: string) => void;
-  onPrepare?: (file: FileListItem) => void;
+  onOpen: (
+    path: string,
+    titleHint: string | undefined,
+    source: NoteOpenSource,
+  ) => void;
+  onPrepare?: (file: FileListItem, source: NoteOpenSource) => void;
   onNew: () => void | Promise<void>;
   onQuickOpen?: () => void;
   onRefreshRecent: () => void | Promise<void>;
@@ -112,24 +117,20 @@ export function WelcomeEmpty({
                   <li
                     key={f.path}
                     className="group flex items-center transition-colors duration-base ease-iris-out hover:bg-surface-inset/60"
-                    onMouseEnter={() => onPrepare?.(f)}
+                    onMouseEnter={() => onPrepare?.(f, "welcome")}
                   >
                     <button
                       type="button"
-                      className="min-w-0 flex-1 px-2 py-3 text-left disabled:cursor-progress disabled:opacity-70"
-                      disabled={
-                        pendingOpen?.path === f.path && !pendingOpen.error
-                      }
-                      data-opening={pendingOpen?.path === f.path || undefined}
-                      onFocus={() => onPrepare?.(f)}
-                      onClick={() => onOpen(f.path, title)}
+                      className="min-w-0 flex-1 px-2 py-3 text-left"
+                      onFocus={() => onPrepare?.(f, "welcome")}
+                      onClick={() => onOpen(f.path, title, "welcome")}
                     >
                       <span className="block truncate text-sm text-foreground">
                         {title}
                       </span>
-                      {pendingOpen?.path === f.path ? (
-                        <span className="mt-1 block truncate text-xs text-muted-foreground">
-                          {pendingOpen.error ?? "Opening..."}
+                      {pendingOpen?.path === f.path && pendingOpen.error ? (
+                        <span className="mt-1 block truncate text-xs text-destructive">
+                          {pendingOpen.error}
                         </span>
                       ) : null}
                     </button>

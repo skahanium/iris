@@ -20,7 +20,10 @@ describe("classified note-open preparation contract", () => {
     expect(app).toContain(
       "onPrepareClassifiedNotePath={prepareClassifiedNotePath}",
     );
-    expect(overlays).toContain("onPrepareFile={onPrepareClassifiedNotePath}");
+    expect(overlays).toContain(
+      "onPrepareClassifiedNotePath?.(path, titleHint,",
+    );
+    expect(overlays).toContain('source: "classified"');
     expect(panel).toContain("onPrepareFile");
     expect(panel).toMatch(/await onOpenFile\(path\)/);
     expect(fileList).toContain("onPrepareFile");

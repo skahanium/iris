@@ -1,4 +1,4 @@
-import type {
+﻿import type {
   ContextPacket,
   DeliberationState,
   PermissionEffectSummary,
@@ -44,6 +44,17 @@ export interface MediaResolveResult extends MediaMetadata {
 export interface FileReadResult {
   content: string;
   isLocked: boolean;
+}
+
+export interface FileSignatureResult {
+  byteLength: number;
+  contentHash: string;
+  isLocked: boolean;
+  modifiedMs: number | null;
+}
+
+export interface DocumentOpenScopeResult {
+  token: string;
 }
 
 export interface ClassifiedFileEntry {
@@ -345,9 +356,9 @@ export interface VersionSaveCompleteEvent {
   error: string | null;
 }
 
-// ─── AI Runtime IPC types ───
+// 鈹€鈹€鈹€ AI Runtime IPC types 鈹€鈹€鈹€
 
-/** `ai_cache_clear` 返回值：清空会话、checkpoint、追踪记录与知识沉淀缓存。 */
+/** `ai_cache_clear` 杩斿洖鍊硷細娓呯┖浼氳瘽銆乧heckpoint銆佽拷韪褰曚笌鐭ヨ瘑娌夋穩缂撳瓨銆?*/
 export interface AiCacheClearResult {
   sessions_deleted: number;
   aborted_tasks: number;
@@ -413,7 +424,7 @@ export interface AgentTaskListParams {
   status?: AgentTaskStatus | null;
 }
 
-/** 用户画像条目（`profile_list` / `profile_get` 返回） */
+/** 鐢ㄦ埛鐢诲儚鏉＄洰锛坄profile_list` / `profile_get` 杩斿洖锛?*/
 export interface ProfileEntry {
   key: string;
   value: unknown;
@@ -423,7 +434,7 @@ export interface ProfileEntry {
   updated_at: string;
 }
 
-/** 收件箱条目（`inbox_list` 返回） */
+/** 鏀朵欢绠辨潯鐩紙`inbox_list` 杩斿洖锛?*/
 export interface InboxItem {
   id: number;
   session_id: number | null;
@@ -436,7 +447,7 @@ export interface InboxItem {
   updated_at: string;
 }
 
-/** 前端传入的图片附件 DTO */
+/** 鍓嶇浼犲叆鐨勫浘鐗囬檮浠?DTO */
 export interface ImageAttachmentDto {
   id: string;
   dataBase64: string;

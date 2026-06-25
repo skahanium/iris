@@ -23,6 +23,7 @@ import {
 } from "@/lib/note-display";
 import { workspaceList } from "@/lib/ipc";
 import { ensureOptionVisible } from "@/lib/command-palette-scroll";
+import type { NoteOpenSource } from "@/lib/document-open-runtime";
 import type { FileListItem, WorkspaceItem } from "@/types/ipc";
 
 const PREPARE_VISIBLE_LIMIT = 3;
@@ -30,8 +31,8 @@ const PREPARE_VISIBLE_LIMIT = 3;
 interface QuickOpenProps {
   open: boolean;
   onClose: () => void;
-  onPrepare?: (file: FileListItem) => void;
-  onSelect: (path: string) => void | Promise<void>;
+  onPrepare?: (file: FileListItem, source: NoteOpenSource) => void;
+  onSelect: (path: string, source: NoteOpenSource) => void | Promise<void>;
 }
 
 function noteItem(item: WorkspaceItem): FileListItem | null {
@@ -98,7 +99,7 @@ export function QuickOpen({
       const key = note.path + "\0" + note.updatedAt;
       if (preparedKeysRef.current.has(key)) return;
       preparedKeysRef.current.add(key);
-      onPrepare?.(note);
+      onPrepare?.(note, "quick-open");
     },
     [onPrepare],
   );
@@ -135,7 +136,7 @@ export function QuickOpen({
         if (!item) return;
         void (async () => {
           try {
-            await onSelectRef.current(item.path);
+            await onSelectRef.current(item.path, "quick-open");
             onCloseRef.current();
           } catch {
             /* Keep Quick Open visible so the user can retry. */
@@ -266,7 +267,7 @@ export function QuickOpen({
                       onSelect={() => {
                         void (async () => {
                           try {
-                            await onSelect(f.path);
+                            await onSelect(f.path, "quick-open");
                             onClose();
                           } catch {
                             /* Keep Quick Open visible so the user can retry. */

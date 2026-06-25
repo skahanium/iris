@@ -64,12 +64,15 @@ describe("QuickOpen note preparation", () => {
     await vi.waitFor(() => {
       expect(document.body.textContent).toContain("Note A");
     });
-    expect(onPrepare).toHaveBeenCalledWith({
-      path: "notes/a.md",
-      title: "Note A",
-      updatedAt: "2026-06-24T00:00:00Z",
-      isLocked: false,
-    });
+    expect(onPrepare).toHaveBeenCalledWith(
+      {
+        path: "notes/a.md",
+        title: "Note A",
+        updatedAt: "2026-06-24T00:00:00Z",
+        isLocked: false,
+      },
+      "quick-open",
+    );
 
     const option = Array.from(document.querySelectorAll("button")).find((b) =>
       b.textContent?.includes("Note A"),
@@ -80,7 +83,7 @@ describe("QuickOpen note preparation", () => {
       await Promise.resolve();
     });
 
-    expect(onSelect).toHaveBeenCalledWith("notes/a.md");
+    expect(onSelect).toHaveBeenCalledWith("notes/a.md", "quick-open");
     expect(onClose).not.toHaveBeenCalled();
 
     await act(async () => {
@@ -171,6 +174,6 @@ describe("QuickOpen note preparation", () => {
       await Promise.resolve();
     });
 
-    expect(onSelect).toHaveBeenCalledWith("assets/paper.pdf");
+    expect(onSelect).toHaveBeenCalledWith("assets/paper.pdf", "quick-open");
   });
 });

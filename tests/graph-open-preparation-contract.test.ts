@@ -17,6 +17,7 @@ describe("graph note-open preparation contract", () => {
     expect(graph).toMatch(/onPrepareNotePath\?\.\(node\.path,\s*node\.title\)/);
     expect(graph).toMatch(/await onOpenNote\(node\.path\)/);
     expect(graph).toMatch(/await onOpenNote\(node\.path\)[\s\S]*onClose\(\)/);
-    expect(overlays).toContain("onPrepareNotePath={onPrepareNotePath}");
+    expect(overlays).toContain('source: "graph"');
+    expect(overlays).toContain('onPrepareNotePath?.(path, titleHint, "graph")');
   });
 });

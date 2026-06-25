@@ -4,14 +4,16 @@ import type { TabItem } from "@/components/layout/TabBar";
 import { isClassifiedVaultPath } from "@/lib/classified-path";
 import { displayTitleFromMarkdown } from "@/lib/document-title";
 import { parseNoteForEditor } from "@/lib/markdown";
-import { fileRead } from "@/lib/ipc";
+import { documentOpenEnd, fileRead } from "@/lib/ipc";
 import { createDefaultNote } from "@/lib/note-create";
 import { discardEmptyNoteIfNeeded } from "@/lib/note-tab-lifecycle";
 import { pathStem, resolveNoteDisplayTitle } from "@/lib/note-display";
 import { mergeTabsAfterPathRename } from "@/lib/note-tab-rename";
 import {
   emitNoteOpenVisibleCommitTrace,
+  type DocumentOpenPriority,
   type NoteOpenBudgetKind,
+  type NoteOpenSource,
   type PrepareNoteOpenRequest,
   type PreparedNoteOpen,
 } from "@/lib/note-open-preparation";
@@ -25,16 +27,21 @@ interface UseTabManagerOptions {
 
 interface OpenNoteOptions {
   allowClassified?: boolean;
+  documentOpenToken?: string;
+  onDocumentOpenTokenRetained?: () => void;
   openBudgetKind?: NoteOpenBudgetKind;
   openStartedAt?: number;
   openTraceRequest?: PrepareNoteOpenRequest;
   preparedNote?: PreparedNoteOpen;
+  priority?: DocumentOpenPriority;
+  source?: NoteOpenSource;
 }
 
 export interface PendingNoteOpen {
   bodyMarkdown: string;
   content: string;
   editorHtmlDigest?: string;
+  documentOpenToken?: string;
   editorHtmlStatus?: PreparedNoteOpen["editorHtmlStatus"];
   frontmatterYaml: string | null;
   isLocked: boolean;
@@ -65,6 +72,11 @@ function createSupersededError(): Error {
 
 function isSupersededError(error: unknown): boolean {
   return error instanceof Error && error.name === OPEN_SUPERSEDED;
+}
+
+function endDocumentOpenToken(token?: string): void {
+  if (!token) return;
+  void documentOpenEnd(token).catch(() => undefined);
 }
 
 function namespaceForPath(path: string): "normal" | "classified" {
@@ -100,6 +112,7 @@ export function useTabManager(options: UseTabManagerOptions = {}) {
     const pending = pendingNoteOpenCommitRef.current;
     if (!pending) return;
     pendingNoteOpenCommitRef.current = null;
+    endDocumentOpenToken(pending.documentOpenToken);
     pending.reject(createSupersededError());
     setPendingNoteOpen(null);
   }, []);
@@ -176,6 +189,7 @@ export function useTabManager(options: UseTabManagerOptions = {}) {
   const buildPendingNoteOpen = useCallback(
     ({
       content,
+      documentOpenToken,
       isLocked,
       openBudgetKind,
       openStartedAt,
@@ -186,6 +200,7 @@ export function useTabManager(options: UseTabManagerOptions = {}) {
       titleHint,
     }: {
       content: string;
+      documentOpenToken?: string;
       isLocked: boolean;
       openBudgetKind?: NoteOpenBudgetKind;
       openStartedAt?: number;
@@ -213,6 +228,7 @@ export function useTabManager(options: UseTabManagerOptions = {}) {
       return {
         bodyMarkdown,
         content,
+        documentOpenToken,
         editorHtmlDigest: preparedNote?.editorHtmlDigest,
         editorHtmlStatus: preparedNote?.editorHtmlStatus,
         frontmatterYaml,
@@ -296,7 +312,10 @@ export function useTabManager(options: UseTabManagerOptions = {}) {
       discardedPreviousPath: string | null,
     ): Promise<void> => {
       const previous = pendingNoteOpenCommitRef.current;
-      if (previous) previous.reject(createSupersededError());
+      if (previous) {
+        endDocumentOpenToken(previous.documentOpenToken);
+        previous.reject(createSupersededError());
+      }
       const commit: PendingNoteOpenCommit = {
         ...pending,
         discardedPreviousPath,
@@ -377,6 +396,7 @@ export function useTabManager(options: UseTabManagerOptions = {}) {
         if (openFileSeqRef.current !== seq) return;
         const pending = buildPendingNoteOpen({
           content,
+          documentOpenToken: options?.documentOpenToken,
           isLocked,
           openBudgetKind,
           openStartedAt,
@@ -393,6 +413,9 @@ export function useTabManager(options: UseTabManagerOptions = {}) {
         );
         if (shouldStageOpen) {
           await stagePendingNoteOpen(pending, discardedPreviousPath);
+          if (options?.documentOpenToken) {
+            options.onDocumentOpenTokenRetained?.();
+          }
           return;
         }
         applyCommittedNoteOpen(pending, discardedPreviousPath);
@@ -417,9 +440,9 @@ export function useTabManager(options: UseTabManagerOptions = {}) {
 
   /** Switch to an already-open tab without re-reading disk when session cache exists. */
   const activateTab = useCallback(
-    async (path: string) => {
+    async (path: string, options?: OpenNoteOptions) => {
       if (!tabsRef.current.some((t) => t.path === path)) {
-        await openFile(path);
+        await openFile(path, undefined, options);
         return;
       }
       if (activePathRef.current === path) return;
@@ -429,7 +452,12 @@ export function useTabManager(options: UseTabManagerOptions = {}) {
       cancelPendingNoteOpen();
       const leaving = activePathRef.current;
       if (leaving) {
-        await persistAndCacheTab(leaving);
+        const leavingTab = tabsRef.current.find((t) => t.path === leaving);
+        if (leavingTab?.dirty) {
+          await persistAndCacheTab(leaving);
+        } else {
+          cacheTabMarkdown(leaving, markdownRef.current);
+        }
       }
       if (openFileSeqRef.current !== seq) return;
 
@@ -441,9 +469,14 @@ export function useTabManager(options: UseTabManagerOptions = {}) {
         const pending = buildPendingNoteOpen({
           content: cached,
           isLocked: tabLockCacheRef.current.get(path) ?? false,
-          openBudgetKind: "warm",
-          openStartedAt,
-          openTraceRequest: { path, titleHint: cachedTitle },
+          openBudgetKind: options?.openBudgetKind ?? "hot",
+          openStartedAt: options?.openStartedAt ?? openStartedAt,
+          openTraceRequest: options?.openTraceRequest ?? {
+            path,
+            priority: options?.priority ?? "hot",
+            source: options?.source ?? "tab",
+            titleHint: cachedTitle,
+          },
           path,
           preparedNote: null,
           sequence: seq,
@@ -454,15 +487,22 @@ export function useTabManager(options: UseTabManagerOptions = {}) {
       }
 
       await openFile(path, undefined, {
-        openBudgetKind: "none",
-        openStartedAt,
-        openTraceRequest: { path, titleHint: cachedTitle },
+        ...options,
+        openBudgetKind: options?.openBudgetKind ?? "none",
+        openStartedAt: options?.openStartedAt ?? openStartedAt,
+        openTraceRequest: options?.openTraceRequest ?? {
+          path,
+          priority: options?.priority ?? "hot",
+          source: options?.source ?? "tab",
+          titleHint: cachedTitle,
+        },
         skipDiscardPrevious: true,
       });
     },
     [
       applyCommittedNoteOpen,
       buildPendingNoteOpen,
+      cacheTabMarkdown,
       cancelPendingNoteOpen,
       openFile,
       persistAndCacheTab,
@@ -477,7 +517,7 @@ export function useTabManager(options: UseTabManagerOptions = {}) {
       options?: OpenNoteOptions,
     ): Promise<void> => {
       if (tabsRef.current.some((t) => t.path === path)) {
-        return activateTab(path);
+        return activateTab(path, options);
       }
       return openFile(path, titleHint, options);
     },

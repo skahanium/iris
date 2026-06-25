@@ -1,11 +1,13 @@
 use std::collections::BTreeSet;
 use std::fs;
 use std::sync::Arc;
+use std::time::UNIX_EPOCH;
 
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::app::AppState;
+use crate::cas::hash::content_hash as content_hash_bytes;
 use crate::error::{AppError, AppResult};
 use crate::indexer::frontmatter::resolve_display_title;
 use crate::indexer::scan::{
@@ -45,6 +47,21 @@ struct VaultIndexProgress {
 pub struct FileReadResult {
     pub content: String,
     pub is_locked: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FileSignatureResult {
+    pub byte_length: u64,
+    pub content_hash: String,
+    pub is_locked: bool,
+    pub modified_ms: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DocumentOpenScopeResult {
+    pub token: String,
 }
 
 fn query_is_locked(db: &crate::storage::db::Database, path: &str) -> AppResult<bool> {
@@ -226,6 +243,9 @@ fn start_vault_index_task(app: AppHandle, state: Arc<AppState>) {
 
         let mut processed = 0usize;
         for abs in &files {
+            if state.has_foreground_document_open() {
+                std::thread::sleep(std::time::Duration::from_millis(8));
+            }
             let rel = match crate::storage::paths::relative_path(&vault, abs) {
                 Ok(rel) if crate::storage::paths::is_user_note_path(&rel) => rel,
                 _ => continue,
@@ -347,6 +367,57 @@ fn file_list_inner(
         }
         Ok(files)
     })
+}
+
+fn file_signature_inner(
+    state: &AppState,
+    path: &str,
+    allow_classified: bool,
+) -> AppResult<FileSignatureResult> {
+    validate_file_read_path(path, allow_classified)?;
+    let vault = state.vault_path()?;
+    let abs = resolve_vault_path(&vault, path)?;
+    let raw_bytes = fs::read(&abs)?;
+    let modified_ms = fs::metadata(&abs)?
+        .modified()
+        .ok()
+        .and_then(|modified| modified.duration_since(UNIX_EPOCH).ok())
+        .map(|duration| duration.as_millis() as i64);
+    let is_locked = query_is_locked(&state.db, path)?;
+    Ok(FileSignatureResult {
+        byte_length: raw_bytes.len() as u64,
+        content_hash: content_hash_bytes(&raw_bytes),
+        is_locked,
+        modified_ms,
+    })
+}
+
+#[tauri::command]
+pub async fn file_signature(
+    state: State<'_, Arc<AppState>>,
+    path: String,
+    allow_classified: Option<bool>,
+) -> AppResult<FileSignatureResult> {
+    validate_file_read_path(&path, allow_classified.unwrap_or(false))?;
+    let state = state.inner().clone();
+    tokio::task::spawn_blocking(move || {
+        file_signature_inner(&state, &path, allow_classified.unwrap_or(false))
+    })
+    .await
+    .map_err(|e| AppError::msg(format!("task join: {e}")))?
+}
+
+#[tauri::command]
+pub fn document_open_begin(state: State<'_, Arc<AppState>>) -> AppResult<DocumentOpenScopeResult> {
+    Ok(DocumentOpenScopeResult {
+        token: state.begin_document_open(),
+    })
+}
+
+#[tauri::command]
+pub fn document_open_end(state: State<'_, Arc<AppState>>, token: String) -> AppResult<()> {
+    state.end_document_open(&token);
+    Ok(())
 }
 
 #[tauri::command]
@@ -1303,6 +1374,41 @@ mod file_io_pipeline_tests {
         assert!(files.is_empty());
     }
 
+    #[test]
+    fn file_signature_inner_reports_hash_size_modified_and_lock_state() {
+        let dir = tempdir().unwrap();
+        let vault = dir.path().join("vault");
+        fs::create_dir_all(vault.join("notes")).unwrap();
+        fs::write(
+            vault.join("notes/sig.md"),
+            b"# Signature
+
+Body",
+        )
+        .unwrap();
+        let state = AppState::new(dir.path().join("data")).unwrap();
+        state.set_vault(vault).unwrap();
+        state
+            .db
+            .with_conn(|conn| {
+                migrate_up(conn)?;
+                conn.execute(
+                    "INSERT INTO files (path, title, content_hash, created_at, updated_at, is_locked)
+                     VALUES ('notes/sig.md', 'Sig', 'old', '2020-01-01', '2020-01-01', 0)",
+                    [],
+                )?;
+                Ok(())
+            })
+            .unwrap();
+        set_file_lock(&state, "notes/sig.md", true).unwrap();
+
+        let signature = file_signature_inner(&state, "notes/sig.md", false).unwrap();
+
+        assert_eq!(signature.byte_length, 17);
+        assert_eq!(signature.content_hash.len(), 64);
+        assert!(signature.modified_ms.is_some());
+        assert!(signature.is_locked);
+    }
     #[test]
     fn file_read_validation_requires_classified_opt_in() {
         assert!(validate_file_read_path("notes/a.md", false).is_ok());

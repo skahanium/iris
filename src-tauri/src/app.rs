@@ -1,6 +1,6 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicBool, AtomicU64};
 use std::sync::{Arc, Mutex, OnceLock};
 
 use serde_json::Value;
@@ -104,6 +104,46 @@ pub struct AiRuntimeState {
     embed_queue: OnceLock<EmbedQueue>,
 }
 
+pub struct DocumentOpenState {
+    active_tokens: Mutex<HashSet<String>>,
+    next_token: AtomicU64,
+}
+
+impl DocumentOpenState {
+    fn new() -> Self {
+        Self {
+            active_tokens: Mutex::new(HashSet::new()),
+            next_token: AtomicU64::new(1),
+        }
+    }
+
+    fn begin(&self) -> String {
+        let token = format!(
+            "doc-open-{}",
+            self.next_token
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        );
+        if let Ok(mut active) = self.active_tokens.lock() {
+            active.insert(token.clone());
+        }
+        token
+    }
+
+    fn end(&self, token: &str) -> bool {
+        self.active_tokens
+            .lock()
+            .map(|mut active| active.remove(token))
+            .unwrap_or(false)
+    }
+
+    fn count(&self) -> usize {
+        self.active_tokens
+            .lock()
+            .map(|active| active.len())
+            .unwrap_or(0)
+    }
+}
+
 impl AiRuntimeState {
     fn new(vector_ready: bool) -> Self {
         Self {
@@ -139,6 +179,7 @@ impl AiRuntimeState {
 pub struct AppState {
     pub storage: StorageState,
     pub ai: AiRuntimeState,
+    pub document_open: DocumentOpenState,
     vault: Mutex<Option<PathBuf>>,
     data_dir: PathBuf,
     pub watcher: Mutex<Option<FileWatcher>>,
@@ -174,6 +215,7 @@ impl AppState {
             db: Arc::clone(&storage.db),
             storage,
             ai,
+            document_open: DocumentOpenState::new(),
             vault: Mutex::new(None),
             data_dir,
             watcher: Mutex::new(None),
@@ -211,6 +253,22 @@ impl AppState {
 
     pub fn enqueue_embedding(self: &Arc<Self>, file_id: i64) {
         self.ensure_embed_queue().enqueue(file_id);
+    }
+
+    pub fn begin_document_open(&self) -> String {
+        self.document_open.begin()
+    }
+
+    pub fn end_document_open(&self, token: &str) -> bool {
+        self.document_open.end(token)
+    }
+
+    pub fn foreground_document_open_count(&self) -> usize {
+        self.document_open.count()
+    }
+
+    pub fn has_foreground_document_open(&self) -> bool {
+        self.foreground_document_open_count() > 0
     }
 
     /// Get CAS store via the storage sub-state.
@@ -323,5 +381,29 @@ impl AppState {
             .map_err(|_| AppError::msg("Lock error"))?;
         *guard = Some(watcher);
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod document_open_state_tests {
+    use super::*;
+
+    #[test]
+    fn document_open_tokens_are_counted_and_duplicate_end_is_ignored() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = AppState::new_with_test_cas_key(dir.path().join("data"), [0xA5; 32]).unwrap();
+
+        assert_eq!(state.foreground_document_open_count(), 0);
+        let first = state.begin_document_open();
+        let second = state.begin_document_open();
+        assert_ne!(first, second);
+        assert_eq!(state.foreground_document_open_count(), 2);
+
+        assert!(state.end_document_open(&first));
+        assert_eq!(state.foreground_document_open_count(), 1);
+        assert!(!state.end_document_open(&first));
+        assert_eq!(state.foreground_document_open_count(), 1);
+        assert!(state.end_document_open(&second));
+        assert_eq!(state.foreground_document_open_count(), 0);
     }
 }

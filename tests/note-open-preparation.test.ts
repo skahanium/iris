@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+﻿import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   clearAllEditorHtmlCache,
@@ -100,6 +100,7 @@ describe("note open preparation", () => {
       path: "a.md",
       meta: { updatedAt: "same", isLocked: false },
     });
+    await Promise.resolve();
     resolveRead({ content: "# A\n\nBody", isLocked: false });
 
     await expect(Promise.all([first, second])).resolves.toHaveLength(2);
@@ -405,5 +406,76 @@ describe("note open preparation", () => {
     expect(source).not.toContain("llm_");
     expect(source).not.toContain("fileWrite");
     expect(source).not.toContain("versionSave");
+  });
+
+  it("invalidates prepared records when the explicit file signature changes", async () => {
+    fileRead
+      .mockResolvedValueOnce({
+        content: "# Signature\n\nOld",
+        isLocked: false,
+      })
+      .mockResolvedValueOnce({
+        content: "# Signature\n\nNew",
+        isLocked: false,
+      });
+
+    await prepareNoteOpen({
+      path: "signature.md",
+      signature: { contentHash: "hash-a", byteLength: 16, modifiedMs: 100 },
+    });
+    const prepared = await prepareNoteOpen({
+      path: "signature.md",
+      signature: { contentHash: "hash-b", byteLength: 16, modifiedMs: 200 },
+    });
+
+    expect(fileRead).toHaveBeenCalledTimes(2);
+    expect(prepared.bodyMarkdown).toContain("New");
+  });
+
+  it("emits source and priority in anonymized traces without leaking the note path", async () => {
+    const traces: unknown[] = [];
+    setNoteOpenTraceSink((trace) => traces.push(trace));
+    fileRead.mockResolvedValue({
+      content: "# Trace\n\nBody",
+      isLocked: false,
+    });
+
+    await prepareNoteOpen({
+      path: "private/path/source-priority.md",
+      source: "quick-open",
+      priority: "foreground",
+      signature: { contentHash: "trace-hash", byteLength: 12, modifiedMs: 300 },
+    });
+
+    const serialized = JSON.stringify(traces);
+    expect(serialized).toContain("quick-open");
+    expect(serialized).toContain("foreground");
+    expect(serialized).not.toContain("private/path");
+    expect(serialized).not.toContain("source-priority");
+  });
+
+  it("prioritizes foreground preparation ahead of queued background warmup", async () => {
+    const order: string[] = [];
+    fileRead.mockImplementation(async (path: string) => {
+      order.push(path);
+      return { content: `# ${path}\n\nBody`, isLocked: false };
+    });
+
+    const background = prepareNoteOpen({
+      path: "background.md",
+      source: "startup",
+      priority: "background",
+      signature: { contentHash: "background", byteLength: 10, modifiedMs: 1 },
+    });
+    const foreground = prepareNoteOpen({
+      path: "foreground.md",
+      source: "quick-open",
+      priority: "foreground",
+      signature: { contentHash: "foreground", byteLength: 10, modifiedMs: 1 },
+    });
+
+    await foreground;
+    await background;
+    expect(order[0]).toBe("foreground.md");
   });
 });

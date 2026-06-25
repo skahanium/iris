@@ -6,24 +6,35 @@ import {
   invalidateNoteOpenPreparation,
   prepareNoteOpen,
 } from "@/lib/document-open-runtime";
+import { documentOpenBegin, documentOpenEnd, fileSignature } from "@/lib/ipc";
 import type {
+  DocumentOpenPriority,
   PrepareNoteOpenRequest,
   NoteOpenBudgetKind,
   NoteOpenNamespace,
+  NoteOpenSource,
   PreparedNoteOpen,
 } from "@/lib/document-open-runtime";
 import type { FileListItem } from "@/types/ipc";
 
 interface OpenPreparedNoteOptions {
   allowClassified?: boolean;
+  documentOpenToken?: string;
+  onDocumentOpenTokenRetained?: () => void;
   openBudgetKind?: NoteOpenBudgetKind;
   openStartedAt?: number;
   openTraceRequest?: PrepareNoteOpenRequest;
   preparedNote?: PreparedNoteOpen;
+  priority?: DocumentOpenPriority;
+  source?: NoteOpenSource;
 }
 
 interface OpenTabLike {
   path: string;
+}
+
+interface RememberPreparedRequestOptions {
+  useSignature?: boolean;
 }
 
 interface UsePreparedNoteOpenerOptions<
@@ -41,17 +52,63 @@ export function usePreparedNoteOpener<
   OpenOptions extends OpenPreparedNoteOptions,
 >({ openNote, openTabs }: UsePreparedNoteOpenerOptions<OpenOptions>) {
   const preparedRequestsRef = useRef(new Map<string, PrepareNoteOpenRequest>());
-  const prepareSequenceRef = useRef(0);
+  const prepareTokensRef = useRef(new Map<string, symbol>());
   const [warmPreparedNotes, setWarmPreparedNotes] = useState<
     PreparedNoteOpen[]
   >([]);
 
+  const enrichRequestSignature = useCallback(
+    async (
+      request: PrepareNoteOpenRequest,
+    ): Promise<PrepareNoteOpenRequest> => {
+      if (request.signature) return request;
+      try {
+        const signature = await fileSignature(request.path, {
+          allowClassified: request.allowClassified === true,
+        });
+        return {
+          ...request,
+          meta: {
+            ...request.meta,
+            isLocked: signature.isLocked,
+          },
+          signature: {
+            byteLength: signature.byteLength,
+            contentHash: signature.contentHash,
+            modifiedMs: signature.modifiedMs,
+          },
+        };
+      } catch {
+        return request;
+      }
+    },
+    [],
+  );
+
   const rememberPreparedRequest = useCallback(
-    (request: PrepareNoteOpenRequest) => {
+    (
+      request: PrepareNoteOpenRequest,
+      options: RememberPreparedRequestOptions = {},
+    ) => {
+      const token = Symbol(request.path);
+      const shouldUseSignature = options.useSignature !== false;
       preparedRequestsRef.current.set(request.path, request);
-      const sequence = ++prepareSequenceRef.current;
-      void prepareNoteOpen(request)
+      prepareTokensRef.current.set(request.path, token);
+
+      const isLatest = (path: string) =>
+        prepareTokensRef.current.get(path) === token;
+      const requestPromise = shouldUseSignature
+        ? enrichRequestSignature(request)
+        : Promise.resolve(request);
+
+      void requestPromise
+        .then((enriched) => {
+          if (!isLatest(enriched.path)) return null;
+          preparedRequestsRef.current.set(enriched.path, enriched);
+          return prepareNoteOpen(enriched);
+        })
         .then((prepared) => {
+          if (!prepared || !isLatest(prepared.path)) return;
           setWarmPreparedNotes((previous) =>
             [
               prepared,
@@ -60,58 +117,100 @@ export function usePreparedNoteOpener<
           );
         })
         .catch(() => {
-          if (sequence === prepareSequenceRef.current) {
-            setWarmPreparedNotes([]);
+          if (isLatest(request.path)) {
+            preparedRequestsRef.current.delete(request.path);
+            prepareTokensRef.current.delete(request.path);
+            setWarmPreparedNotes((previous) =>
+              previous.filter((note) => note.path !== request.path),
+            );
           }
         });
     },
-    [],
+    [enrichRequestSignature],
   );
 
   const openPreparedNote = useCallback(
     async (path: string, titleHint?: string, options?: OpenOptions) => {
       const openStartedAt = options?.openStartedAt ?? performance.now();
-      if (openTabs.some((tab) => tab.path === path)) {
-        await openNote(path, titleHint, {
-          ...options,
-          openBudgetKind: options?.openBudgetKind ?? "warm",
-          openStartedAt,
-          openTraceRequest: options?.openTraceRequest ?? { path, titleHint },
-        } as OpenOptions);
-        return;
-      }
-
       const remembered = preparedRequestsRef.current.get(path);
-      const request: PrepareNoteOpenRequest = {
+      const source = options?.source ?? remembered?.source ?? "tab";
+      const priority = options?.priority ?? "foreground";
+      const baseRequest: PrepareNoteOpenRequest = {
         ...remembered,
         allowClassified:
           options?.allowClassified ?? remembered?.allowClassified,
         path,
+        priority,
+        source,
         titleHint: titleHint ?? remembered?.titleHint,
       };
-      const providedPreparedNote = options?.preparedNote;
-      const cachedPreparedNote =
-        providedPreparedNote ?? getPreparedNoteOpen(request);
-      const preparedNote =
-        cachedPreparedNote ?? (await prepareNoteOpen(request));
+      const openTraceRequest = options?.openTraceRequest ?? baseRequest;
+      const shouldScopeOpen = priority === "foreground" || priority === "hot";
+      let documentOpenToken: string | null = null;
+      let documentOpenTokenRetained = false;
 
-      await openNote(path, titleHint, {
+      if (shouldScopeOpen) {
+        try {
+          documentOpenToken = (await documentOpenBegin()).token;
+        } catch {
+          documentOpenToken = null;
+        }
+      }
+
+      const openOptionsWithScope = {
         ...options,
-        openBudgetKind:
-          options?.openBudgetKind ?? (cachedPreparedNote ? "hot" : "none"),
-        openStartedAt,
-        openTraceRequest: options?.openTraceRequest ?? request,
-        preparedNote,
-      } as OpenOptions);
+        ...(documentOpenToken ? { documentOpenToken } : {}),
+        onDocumentOpenTokenRetained: () => {
+          documentOpenTokenRetained = true;
+          options?.onDocumentOpenTokenRetained?.();
+        },
+      } as OpenOptions;
+
+      try {
+        if (openTabs.some((tab) => tab.path === path)) {
+          await openNote(path, titleHint, {
+            ...openOptionsWithScope,
+            openBudgetKind: options?.openBudgetKind ?? "warm",
+            openStartedAt,
+            openTraceRequest,
+          } as OpenOptions);
+          return;
+        }
+
+        const providedPreparedNote = options?.preparedNote;
+        const cachedPreparedNote =
+          providedPreparedNote ?? getPreparedNoteOpen(baseRequest);
+        const preparedNote =
+          cachedPreparedNote ?? (await prepareNoteOpen(baseRequest));
+
+        await openNote(path, titleHint, {
+          ...openOptionsWithScope,
+          openBudgetKind:
+            options?.openBudgetKind ?? (cachedPreparedNote ? "hot" : "none"),
+          openStartedAt,
+          openTraceRequest,
+          preparedNote,
+        } as OpenOptions);
+      } finally {
+        if (documentOpenToken && !documentOpenTokenRetained) {
+          try {
+            await documentOpenEnd(documentOpenToken);
+          } catch {
+            /* Best-effort scheduler hint cleanup; opening must not fail here. */
+          }
+        }
+      }
     },
     [openNote, openTabs],
   );
 
   const prepareVisibleNote = useCallback(
-    (file: FileListItem) => {
+    (file: FileListItem, source: NoteOpenSource = "file-tree") => {
       rememberPreparedRequest({
         meta: { isLocked: file.isLocked, updatedAt: file.updatedAt },
         path: file.path,
+        priority: "warm",
+        source,
         titleHint: file.title,
       });
     },
@@ -119,15 +218,51 @@ export function usePreparedNoteOpener<
   );
 
   const prepareNotePath = useCallback(
-    (path: string, titleHint?: string) => {
-      rememberPreparedRequest({ path, titleHint });
+    (path: string, titleHint?: string, source: NoteOpenSource = "link") => {
+      rememberPreparedRequest({ path, priority: "warm", source, titleHint });
+    },
+    [rememberPreparedRequest],
+  );
+
+  const warmNotePath = useCallback(
+    (
+      path: string,
+      titleHint?: string,
+      options: {
+        isLocked?: boolean;
+        priority?: DocumentOpenPriority;
+        source?: NoteOpenSource;
+        useSignature?: boolean;
+      } = {},
+    ) => {
+      const source = options.source ?? "startup";
+      rememberPreparedRequest(
+        {
+          meta: { isLocked: options.isLocked },
+          path,
+          priority: options.priority ?? "background",
+          source,
+          titleHint,
+        },
+        { useSignature: options.useSignature ?? source !== "startup" },
+      );
     },
     [rememberPreparedRequest],
   );
 
   const prepareClassifiedNotePath = useCallback(
-    (path: string, titleHint?: string) => {
-      rememberPreparedRequest({ allowClassified: true, path, titleHint });
+    (
+      path: string,
+      titleHint?: string,
+      source: NoteOpenSource = "file-tree",
+    ) => {
+      rememberPreparedRequest({
+        allowClassified: true,
+        path,
+        priority: "warm",
+        source,
+        titleHint,
+      });
     },
     [rememberPreparedRequest],
   );
@@ -135,6 +270,7 @@ export function usePreparedNoteOpener<
   const invalidatePreparedNote = useCallback((path: string) => {
     invalidateNoteOpenPreparation(path);
     preparedRequestsRef.current.delete(path);
+    prepareTokensRef.current.delete(path);
     setWarmPreparedNotes((previous) =>
       previous.filter((note) => note.path !== path),
     );
@@ -144,6 +280,7 @@ export function usePreparedNoteOpener<
     clearNoteOpenPreparationCache(namespace);
     if (!namespace) {
       preparedRequestsRef.current.clear();
+      prepareTokensRef.current.clear();
       setWarmPreparedNotes([]);
       return;
     }
@@ -151,9 +288,11 @@ export function usePreparedNoteOpener<
       const isClassified = request.allowClassified === true;
       if (namespace === "classified" && isClassified) {
         preparedRequestsRef.current.delete(path);
+        prepareTokensRef.current.delete(path);
       }
       if (namespace === "normal" && !isClassified) {
         preparedRequestsRef.current.delete(path);
+        prepareTokensRef.current.delete(path);
       }
     }
     setWarmPreparedNotes((previous) =>
@@ -168,6 +307,7 @@ export function usePreparedNoteOpener<
     prepareVisibleNote,
     prepareNotePath,
     prepareClassifiedNotePath,
+    warmNotePath,
     warmPreparedNotes,
   };
 }

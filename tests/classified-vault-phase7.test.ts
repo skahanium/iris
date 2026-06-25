@@ -184,8 +184,7 @@ describe("classified vault phase 7", () => {
 
     const overlays = read("src/components/layout/AppOverlays.tsx");
     expect(overlays).toContain("onOpenFile={(path) =>");
-    expect(overlays).toContain(
-      "openNoteLeavingHome(path, undefined, { allowClassified: true })",
-    );
+    expect(overlays).toContain("allowClassified: true");
+    expect(overlays).toContain('source: "classified"');
   });
 });

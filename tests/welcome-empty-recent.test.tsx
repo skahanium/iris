@@ -97,12 +97,15 @@ describe("WelcomeEmpty recent notes", () => {
       ?.dispatchEvent(new MouseEvent("mouseenter", { bubbles: true }));
     document.querySelector<HTMLButtonElement>("li button")?.focus();
 
-    expect(onPrepare).toHaveBeenCalledWith({
-      path: "ready.md",
-      title: "Ready",
-      updatedAt: "2026-06-24T00:00:00Z",
-      isLocked: false,
-    });
+    expect(onPrepare).toHaveBeenCalledWith(
+      {
+        path: "ready.md",
+        title: "Ready",
+        updatedAt: "2026-06-24T00:00:00Z",
+        isLocked: false,
+      },
+      "welcome",
+    );
   });
 
   it("passes the recent note display title as an open hint", async () => {
@@ -121,7 +124,11 @@ describe("WelcomeEmpty recent notes", () => {
 
     document.querySelector<HTMLButtonElement>("li button")?.click();
 
-    expect(onOpen).toHaveBeenCalledWith("MiMo.md", "MiMo-V2.5-Pro-UltraSpeed");
+    expect(onOpen).toHaveBeenCalledWith(
+      "MiMo.md",
+      "MiMo-V2.5-Pro-UltraSpeed",
+      "welcome",
+    );
   });
 
   it("refreshes recent notes after creating or deleting a note", async () => {
@@ -185,5 +192,39 @@ describe("WelcomeEmpty recent notes", () => {
     await renderWelcome(recentNotes);
     expect(document.body.textContent).toContain("Delete Me");
     expect(document.body.textContent).not.toContain("暂无最近笔记");
+  });
+
+  it("does not show row-level opening text for pending recent-note opens", async () => {
+    await act(async () => {
+      root.render(
+        <WelcomeEmpty
+          onNew={vi.fn()}
+          onOpen={vi.fn()}
+          onOpenAiManagement={vi.fn()}
+          onQuickOpen={vi.fn()}
+          onRefreshRecent={vi.fn()}
+          onSearch={vi.fn()}
+          pendingOpen={{
+            kind: "note",
+            path: "pending.md",
+            sequence: 1,
+            startedAt: Date.now(),
+            title: "Pending",
+          }}
+          recentNotes={[
+            {
+              path: "pending.md",
+              title: "Pending",
+              updatedAt: "2026-06-24T00:00:00Z",
+              isLocked: false,
+            },
+          ]}
+        />,
+      );
+    });
+
+    expect(document.body.textContent).toContain("Pending");
+    expect(document.body.textContent).not.toContain("Opening");
+    expect(document.body.textContent).not.toContain("正在打开");
   });
 });

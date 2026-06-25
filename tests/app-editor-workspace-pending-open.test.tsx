@@ -9,6 +9,15 @@ const firstFrameCallbacks = vi.hoisted(
 const editorPropsByPath = vi.hoisted(
   () => new Map<string, Record<string, unknown>>(),
 );
+const documentOpenEnd = vi.hoisted(() => vi.fn());
+
+vi.mock("@/lib/ipc", () => ({
+  documentOpenEnd: (...args: unknown[]) => documentOpenEnd(...args),
+}));
+
+vi.mock("@/hooks/useHomeRecentNotes", () => ({
+  useHomeRecentNotes: () => ({ recentNotes: [], refreshRecent: vi.fn() }),
+}));
 
 vi.mock("@/components/editor/TipTapEditor", () => ({
   TipTapEditor: (props: {
@@ -133,6 +142,8 @@ describe("AppEditorWorkspace complete-frame note opens", () => {
     root = createRoot(host);
     firstFrameCallbacks.clear();
     editorPropsByPath.clear();
+    documentOpenEnd.mockReset();
+    documentOpenEnd.mockResolvedValue(undefined);
   });
 
   afterEach(() => {
@@ -195,6 +206,45 @@ describe("AppEditorWorkspace complete-frame note opens", () => {
         .querySelector('[data-path="new.md"]')
         ?.getAttribute("data-editor-visibility"),
     ).toBe("staging");
+  });
+
+  it("ends retained document-open tokens after the first editor frame settles", () => {
+    vi.useFakeTimers();
+    const commitPendingNoteOpen = vi.fn(() => true);
+
+    act(() => {
+      root.render(
+        <AppEditorWorkspace
+          {...baseProps()}
+          activePath={null}
+          editorBodyMarkdown="old"
+          openNotePaths={["old.md", "new.md"]}
+          pendingNoteOpen={{
+            bodyMarkdown: "new staged body",
+            content: "# New\n\nnew staged body",
+            documentOpenToken: "open-token",
+            frontmatterYaml: null,
+            isLocked: false,
+            namespace: "normal",
+            path: "new.md",
+            sequence: 7,
+            title: "New",
+          }}
+          commitPendingNoteOpen={commitPendingNoteOpen}
+        />,
+      );
+    });
+
+    const firstFrame = firstFrameCallbacks.get("new.md");
+    expect(firstFrame).toBeDefined();
+
+    act(() => {
+      firstFrame?.({ can: () => ({ undo: () => false, redo: () => false }) });
+      vi.advanceTimersByTime(800);
+    });
+
+    expect(commitPendingNoteOpen).toHaveBeenCalledWith("new.md", 7);
+    expect(documentOpenEnd).toHaveBeenCalledWith("open-token");
   });
 
   it("does not mount warm prepared notes as hidden TipTap editors", () => {

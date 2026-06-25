@@ -410,12 +410,15 @@ describe("VaultNavigator corpus assignment", () => {
     await vi.waitFor(() => {
       expect(document.body.textContent).toContain("A");
     });
-    expect(onPrepare).toHaveBeenCalledWith({
-      path: "policy/a.md",
-      title: "A",
-      updatedAt: "",
-      isLocked: false,
-    });
+    expect(onPrepare).toHaveBeenCalledWith(
+      {
+        path: "policy/a.md",
+        title: "A",
+        updatedAt: "",
+        isLocked: false,
+      },
+      "file-tree",
+    );
 
     const fileButton = Array.from(document.querySelectorAll("button")).find(
       (button) => button.textContent?.trim() === "A",
@@ -425,7 +428,7 @@ describe("VaultNavigator corpus assignment", () => {
       fileButton?.click();
       await Promise.resolve();
     });
-    expect(onOpen).toHaveBeenCalledWith("policy/a.md");
+    expect(onOpen).toHaveBeenCalledWith("policy/a.md", "file-tree");
     expect(onClose).not.toHaveBeenCalled();
 
     await act(async () => {

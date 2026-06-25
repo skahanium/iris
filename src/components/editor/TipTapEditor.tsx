@@ -41,7 +41,7 @@ import {
   setCachedEditorHtml,
 } from "@/lib/editor-html-cache";
 import type { EditorHtmlCacheNamespace } from "@/lib/editor-html-cache";
-import { ingestMarkdownForEditor } from "@/lib/editor-ingest";
+import { ingestMarkdownForEditorAsync } from "@/lib/editor-ingest-async";
 import { EDITOR_PARSE_OPTIONS } from "@/lib/editor-parse-options";
 
 import type { MarkdownSyntaxFragment } from "@/lib/markdown-contract/types";
@@ -418,9 +418,32 @@ function TipTapEditorInner({
   const skipHtmlCache = prevReingestKeyRef.current !== reingestKey;
   prevReingestKeyRef.current = reingestKey;
 
-  const initialContent = useMemo(() => {
+  const [parsedContent, setParsedContent] = useState<string | null>(null);
+  const parsedContentRef = useRef<string | null>(null);
+  const contentReadyRef = useRef(false);
+
+  useEffect(() => {
     const bodyMd = initialBodyMarkdown.trim();
     const htmlDigest = editorHtmlDigest(initialBodyMarkdown);
+    let cancelled = false;
+
+    const setContent = (
+      html: string,
+      fragments?: MarkdownSyntaxFragment[],
+      bodyMdParam?: string,
+    ) => {
+      if (cancelled) return;
+      parsedContentRef.current = html;
+      setParsedContent(html);
+      contentReadyRef.current = true;
+      if (fragments && bodyMdParam) {
+        ingestResultRef.current = {
+          preserveFragments: fragments,
+          bodyMd: bodyMdParam,
+        };
+      }
+    };
+
     if (initialEditorHtml && bodyMd) {
       if (contentCacheKey) {
         setCachedEditorHtml(
@@ -430,7 +453,8 @@ function TipTapEditorInner({
           contentCacheNamespace,
         );
       }
-      return initialEditorHtml;
+      setContent(initialEditorHtml);
+      return;
     }
 
     if (contentCacheKey && bodyMd && !skipHtmlCache) {
@@ -440,28 +464,36 @@ function TipTapEditorInner({
         contentCacheNamespace,
       );
       if (cached) {
-        return cached;
+        setContent(cached);
+        return;
       }
     }
 
-    const { tipTapHtml, preserveFragments } = ingestMarkdownForEditor({
-      bodyMarkdown: bodyMd,
-    });
-
-    // Store for useEffect callback (avoid side effect in useMemo)
-    ingestResultRef.current = { preserveFragments, bodyMd };
-
-    if (contentCacheKey && bodyMd) {
-      setCachedEditorHtml(
-        contentCacheKey,
-        tipTapHtml,
-        htmlDigest,
-        contentCacheNamespace,
-      );
+    if (contentCacheKey && bodyMd && skipHtmlCache) {
+      clearCachedEditorHtml(contentCacheKey, contentCacheNamespace);
     }
 
-    return tipTapHtml;
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- reingestKey busts HTML cache on disk reload
+    ingestMarkdownForEditorAsync({ bodyMarkdown: bodyMd })
+      .then((result) => {
+        if (cancelled) return;
+        const html = result.tipTapHtml || "<p></p>";
+        setContent(html, result.preserveFragments, bodyMd);
+        if (contentCacheKey && bodyMd) {
+          setCachedEditorHtml(
+            contentCacheKey,
+            html,
+            htmlDigest,
+            contentCacheNamespace,
+          );
+        }
+      })
+      .catch(() => {
+        if (!cancelled) contentReadyRef.current = true;
+      });
+
+    return () => {
+      cancelled = true;
+    };
   }, [
     initialBodyMarkdown,
     initialEditorHtml,
@@ -471,7 +503,7 @@ function TipTapEditorInner({
     skipHtmlCache,
   ]);
 
-  // Fire onIngestComplete after render (not inside useMemo)
+  // Fire onIngestComplete after render (not inside async callback)
   useEffect(() => {
     const result = ingestResultRef.current;
     if (result) {
@@ -480,25 +512,16 @@ function TipTapEditorInner({
     }
   });
 
-  // Clear HTML cache on disk reload so reingest uses fresh markdown
-  useEffect(() => {
-    if (reingestKey > 0 && contentCacheKey) {
-      clearCachedEditorHtml(contentCacheKey, contentCacheNamespace);
-    }
-  }, [reingestKey, contentCacheKey, contentCacheNamespace]);
-
   const editor = useEditor({
     extensions,
 
-    content: initialContent,
+    content: "<p></p>",
 
     parseOptions: EDITOR_PARSE_OPTIONS,
 
     immediatelyRender: true,
 
     editable: !locked,
-
-    /** Avoid re-rendering this React tree on every keystroke (major lag on large docs). */
 
     shouldRerenderOnTransaction: false,
 
@@ -507,7 +530,6 @@ function TipTapEditorInner({
 
       scheduleBodyStats(updatedEditor);
 
-      // Throttled HTML cache update (2s) so tab-switch shows latest content
       const key = contentCacheKeyRef.current;
       const namespace = contentCacheNamespaceRef.current;
       if (key) {
@@ -538,16 +560,18 @@ function TipTapEditorInner({
     editor.setEditable(!locked);
   }, [editor, locked]);
 
+  // Apply parsed content to editor when ready
   useEffect(() => {
     if (!editor || editor.isDestroyed) return;
-    const prev = prevReingestApplyRef.current;
-    prevReingestApplyRef.current = reingestKey;
-    if (prev === 0 || prev === reingestKey) return;
-    const content = initialContent;
+    const content = parsedContentRef.current;
     if (content) {
-      editor.commands.setContent(content, false, EDITOR_PARSE_OPTIONS);
+      const prev = prevReingestApplyRef.current;
+      prevReingestApplyRef.current = reingestKey;
+      if (prev === 0 || prev !== reingestKey) {
+        editor.commands.setContent(content, false, EDITOR_PARSE_OPTIONS);
+      }
     }
-  }, [editor, reingestKey, initialContent]);
+  }, [editor, reingestKey, parsedContent]);
 
   const openLinkEditor = useCallback(
     (targetEditor: Editor) => {
@@ -633,12 +657,6 @@ function TipTapEditorInner({
         window.setTimeout(() => cb(performance.now()), 16));
     const cancelFrame =
       window.cancelAnimationFrame ?? ((id: number) => window.clearTimeout(id));
-    const firstFrame = requestFrame(() => {
-      const secondFrame = requestFrame(() => {
-        if (!cancelled) onFirstFrameReadyRef.current?.(editor);
-      });
-      if (cancelled) cancelFrame(secondFrame);
-    });
 
     editorRef.current = editor;
 
@@ -646,9 +664,23 @@ function TipTapEditorInner({
 
     flushBodyStats(editor);
 
+    const waitForContentThenFire = () => {
+      if (cancelled) return;
+      if (contentReadyRef.current) {
+        requestFrame(() => {
+          const secondFrame = requestFrame(() => {
+            if (!cancelled) onFirstFrameReadyRef.current?.(editor);
+          });
+          if (cancelled) cancelFrame(secondFrame);
+        });
+      } else {
+        setTimeout(waitForContentThenFire, 16);
+      }
+    };
+    waitForContentThenFire();
+
     return () => {
       cancelled = true;
-      cancelFrame(firstFrame);
       flushBodyStats(editor);
 
       editorRef.current = null;

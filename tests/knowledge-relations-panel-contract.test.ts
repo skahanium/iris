@@ -51,6 +51,7 @@ describe("knowledge relations panel contract", () => {
     expect(panel).toMatch(
       /onFocus=\{\(\) =>\s*onPreparePath\?\.\(\s*file\.path,\s*displayTitleForFileListItem\(file\),?\s*\)\s*\}/,
     );
-    expect(overlays).toContain("onPreparePath={onPrepareNotePath}");
+    expect(overlays).toContain('source: "link"');
+    expect(overlays).toContain('onPrepareNotePath?.(path, titleHint, "link")');
   });
 });

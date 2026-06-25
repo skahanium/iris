@@ -468,4 +468,34 @@ describe("document open first frame surface", () => {
         ?.getAttribute("data-editor-visibility"),
     ).toBe("visible");
   });
+  it("caps retained clean ready editor surfaces while keeping the active surface", async () => {
+    const openNotePaths = Array.from(
+      { length: 10 },
+      (_, index) => `note-${index + 1}.md`,
+    );
+
+    for (const [index, path] of openNotePaths.entries()) {
+      act(() => {
+        root.render(
+          <AppEditorWorkspace
+            {...baseProps()}
+            activePath={path}
+            editorBodyMarkdown={`body ${index + 1}`}
+            editorContentTick={index + 1}
+            openNotePaths={openNotePaths}
+          />,
+        );
+      });
+      act(() => {
+        firstFrameCallbacks.get(path)?.({ path });
+      });
+      await flushFrame();
+    }
+
+    expect(
+      document.querySelectorAll('[data-testid="tiptap-editor"]'),
+    ).toHaveLength(9);
+    expect(document.querySelector('[data-path="note-10.md"]')).toBeTruthy();
+    expect(document.querySelector('[data-path="note-1.md"]')).toBeNull();
+  });
 });

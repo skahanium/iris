@@ -13,11 +13,16 @@ import { WelcomeEmpty } from "@/components/layout/WelcomeEmpty";
 import { IrisContextMenu } from "@/components/ui/iris-context-menu";
 import type { IrisContextMenuGroup } from "@/components/ui/iris-context-menu";
 import { useHomeRecentNotes } from "@/hooks/useHomeRecentNotes";
+import { documentOpenEnd } from "@/lib/ipc";
 import { cn } from "@/lib/utils";
 import type { ArtifactTab } from "@/types/assistant-artifact";
 import type { MediaTab } from "@/hooks/useMediaTabs";
 import type { HomePendingOpen } from "@/lib/home-open-transition";
-import type { PreparedNoteOpen } from "@/lib/document-open-runtime";
+import type {
+  DocumentOpenPriority,
+  NoteOpenSource,
+  PreparedNoteOpen,
+} from "@/lib/document-open-runtime";
 import type { PendingNoteOpen } from "@/hooks/useTabManager";
 import type { EditorHtmlCacheNamespace } from "@/lib/editor-html-cache";
 import type { FileListItem } from "@/types/ipc";
@@ -48,6 +53,7 @@ interface EditorSurfaceSnapshot {
 interface EditorSurfaceRecord {
   editor: Editor | null;
   identityKey: string;
+  lastActivatedAt: number;
   ready: boolean;
   snapshot: EditorSurfaceSnapshot;
 }
@@ -60,6 +66,7 @@ interface DocumentLoadingGate {
 
 const DOCUMENT_OPEN_LOADING_MIN_MS = 800;
 const DOCUMENT_OPEN_LOADING_WATCHDOG_MS = 5000;
+const READY_SURFACE_RETAIN_LIMIT = 8;
 
 interface AppEditorWorkspaceProps {
   activeFileLocked: boolean;
@@ -94,9 +101,17 @@ interface AppEditorWorkspaceProps {
   openNoteLeavingHome: (
     path: string,
     titleHint?: string,
+    options?: {
+      priority?: DocumentOpenPriority;
+      source?: NoteOpenSource;
+    },
   ) => void | Promise<void>;
-  onPrepareNote?: (file: FileListItem) => void;
-  onPrepareNotePath?: (path: string, titleHint?: string) => void;
+  onPrepareNote?: (file: FileListItem, source?: NoteOpenSource) => void;
+  onPrepareNotePath?: (
+    path: string,
+    titleHint?: string,
+    source?: NoteOpenSource,
+  ) => void;
   outlineOpen: boolean;
   pendingOpen: HomePendingOpen | null;
   pendingNoteOpen: PendingNoteOpen | null;
@@ -140,6 +155,34 @@ function homePendingMatchesPath(
 
 function surfaceIdentity(snapshot: EditorSurfaceSnapshot): string {
   return snapshot.path;
+}
+
+function endDocumentOpenToken(token?: string): void {
+  if (!token) return;
+  void documentOpenEnd(token).catch(() => undefined);
+}
+
+function retainedSurfaceRecords(
+  records: EditorSurfaceRecord[],
+  context: { activePath: string | null; pendingPath: string | null },
+): EditorSurfaceRecord[] {
+  const requiredPaths = new Set(
+    [context.activePath, context.pendingPath].filter(
+      (path): path is string => typeof path === "string" && path.length > 0,
+    ),
+  );
+  const required = records.filter((record) =>
+    requiredPaths.has(record.snapshot.path),
+  );
+  const cleanReady = records
+    .filter(
+      (record) =>
+        !requiredPaths.has(record.snapshot.path) && record.ready === true,
+    )
+    .sort((a, b) => b.lastActivatedAt - a.lastActivatedAt)
+    .slice(0, READY_SURFACE_RETAIN_LIMIT);
+  const retained = new Set([...required, ...cleanReady]);
+  return records.filter((record) => retained.has(record));
 }
 
 export function AppEditorWorkspace({
@@ -265,12 +308,25 @@ export function AppEditorWorkspace({
   const [surfaceRecords, setSurfaceRecords] = useState<EditorSurfaceRecord[]>(
     [],
   );
+  const surfaceActivationSeqRef = useRef(0);
   const [documentLoadingGate, setDocumentLoadingGate] =
     useState<DocumentLoadingGate>({
       identityKey: null,
       shownAt: null,
       visible: false,
     });
+
+  const retainCurrentSurfaceRecords = useCallback(
+    (records: EditorSurfaceRecord[]) =>
+      retainedSurfaceRecords(records, {
+        activePath: effectiveNotePathRef.current ?? activePathRef.current,
+        pendingPath:
+          pendingNoteOpenRef.current?.path ??
+          pendingOpenRef.current?.path ??
+          null,
+      }),
+    [],
+  );
   const documentLoadingGateRef = useRef(documentLoadingGate);
   const loadingReleaseTimerRef = useRef<number | null>(null);
   const loadingWatchdogTimerRef = useRef<number | null>(null);
@@ -295,30 +351,35 @@ export function AppEditorWorkspace({
   useEffect(() => {
     if (!currentEditorSurface) return;
     const identityKey = surfaceIdentity(currentEditorSurface);
+    const lastActivatedAt = ++surfaceActivationSeqRef.current;
     setSurfaceRecords((previous) => {
       const existing = previous.find(
         (record) => record.snapshot.path === currentEditorSurface.path,
       );
       if (!existing) {
-        return [
+        return retainCurrentSurfaceRecords([
           ...previous,
           {
             editor: null,
             identityKey,
+            lastActivatedAt,
             ready: false,
             snapshot: currentEditorSurface,
           },
-        ];
+        ]);
       }
-      return previous.map((record) => {
-        if (record.snapshot.path !== currentEditorSurface.path) return record;
-        return {
-          ...record,
-          snapshot: currentEditorSurface,
-        };
-      });
+      return retainCurrentSurfaceRecords(
+        previous.map((record) => {
+          if (record.snapshot.path !== currentEditorSurface.path) return record;
+          return {
+            ...record,
+            lastActivatedAt,
+            snapshot: currentEditorSurface,
+          };
+        }),
+      );
     });
-  }, [currentEditorSurface]);
+  }, [currentEditorSurface, retainCurrentSurfaceRecords]);
 
   useEffect(() => {
     const allowed = new Set(openNotePaths);
@@ -328,9 +389,13 @@ export function AppEditorWorkspace({
           allowed.has(record.snapshot.path) ||
           record.snapshot.path === effectiveNotePathRef.current,
       );
-      return next.length === previous.length ? previous : next;
+      const retained = retainCurrentSurfaceRecords(next);
+      return retained.length === previous.length &&
+        retained.every((record, index) => record === previous[index])
+        ? previous
+        : retained;
     });
-  }, [openNotePaths]);
+  }, [openNotePaths, retainCurrentSurfaceRecords]);
 
   const activeSurfaceRecord = surfaceRecords.find(
     (record) => record.snapshot.path === effectiveNotePath,
@@ -351,7 +416,8 @@ export function AppEditorWorkspace({
     pendingOpen &&
     !pendingOpen.error &&
     (!currentEditorSurface ||
-      homePendingMatchesPath(pendingOpen, currentEditorSurface.path)),
+      homePendingMatchesPath(pendingOpen, currentEditorSurface.path)) &&
+    !activeSurfaceRecord?.ready,
   );
   const loadingPath =
     currentEditorSurface?.path ?? pendingNoteOpen?.path ?? pendingOpen?.path;
@@ -385,15 +451,17 @@ export function AppEditorWorkspace({
   const handleSurfaceEditorReady = useCallback(
     (path: string, editor: Editor | null) => {
       setSurfaceRecords((previous) =>
-        previous.map((record) =>
-          record.snapshot.path === path ? { ...record, editor } : record,
+        retainCurrentSurfaceRecords(
+          previous.map((record) =>
+            record.snapshot.path === path ? { ...record, editor } : record,
+          ),
         ),
       );
       if (!editor && path === activePathRef.current) {
         handleEditorReady(null);
       }
     },
-    [handleEditorReady],
+    [handleEditorReady, retainCurrentSurfaceRecords],
   );
 
   const releaseSurfaceFirstFrame = useCallback(
@@ -413,6 +481,7 @@ export function AppEditorWorkspace({
           pending.sequence,
         );
         const homePending = pendingOpenRef.current;
+        endDocumentOpenToken(pending.documentOpenToken);
         if (
           committed &&
           homePending &&
@@ -463,10 +532,12 @@ export function AppEditorWorkspace({
           record.identityKey,
           record.editor,
         );
-        return previous.map((item) =>
-          item.identityKey === currentSurfaceIdentity
-            ? { ...item, ready: true }
-            : item,
+        return retainCurrentSurfaceRecords(
+          previous.map((item) =>
+            item.identityKey === currentSurfaceIdentity
+              ? { ...item, ready: true }
+              : item,
+          ),
         );
       });
     }, DOCUMENT_OPEN_LOADING_WATCHDOG_MS);
@@ -497,6 +568,7 @@ export function AppEditorWorkspace({
     currentSurfaceIdentity,
     pendingOpen,
     releaseSurfaceFirstFrame,
+    retainCurrentSurfaceRecords,
     syncDocumentLoadingGate,
   ]);
 
@@ -505,10 +577,12 @@ export function AppEditorWorkspace({
       clearLoadingReleaseTimer();
       clearLoadingWatchdogTimer();
       setSurfaceRecords((previous) =>
-        previous.map((record) =>
-          record.snapshot.path === path
-            ? { ...record, editor, ready: true }
-            : record,
+        retainCurrentSurfaceRecords(
+          previous.map((record) =>
+            record.snapshot.path === path
+              ? { ...record, editor, ready: true }
+              : record,
+          ),
         ),
       );
 
@@ -545,6 +619,7 @@ export function AppEditorWorkspace({
       clearLoadingReleaseTimer,
       clearLoadingWatchdogTimer,
       releaseSurfaceFirstFrame,
+      retainCurrentSurfaceRecords,
     ],
   );
 
@@ -603,9 +678,14 @@ export function AppEditorWorkspace({
               onInlineAiRetry={(ed) => void inlineAi.retry(ed)}
               onInlineAiDismiss={(ed) => inlineAi.dismiss(ed)}
               onInlineAiAccept={() => inlineAi.finish()}
-              onOpenWikiLink={(title) => openNoteLeavingHome(title + ".md")}
+              onOpenWikiLink={(title) =>
+                openNoteLeavingHome(title + ".md", title, {
+                  priority: "foreground",
+                  source: "link",
+                })
+              }
               onPrepareWikiLink={(title) =>
-                onPrepareNotePath?.(title + ".md", title)
+                onPrepareNotePath?.(title + ".md", title, "link")
               }
             />
           </ErrorBoundary>
@@ -645,8 +725,15 @@ export function AppEditorWorkspace({
           editor={editorInstance}
           open={outlineOpen}
           notePath={effectiveNotePath}
-          onOpenNote={openNoteLeavingHome}
-          onPrepareNote={onPrepareNotePath}
+          onOpenNote={(path: string) =>
+            openNoteLeavingHome(path, undefined, {
+              priority: "foreground",
+              source: "outline",
+            })
+          }
+          onPrepareNote={(path, titleHint) =>
+            onPrepareNotePath?.(path, titleHint, "outline")
+          }
           locked={currentEditorSurface?.activeFileLocked ?? activeFileLocked}
           zen={zen}
           onOpenChange={onOutlineOpenChange}
@@ -677,12 +764,17 @@ export function AppEditorWorkspace({
       ) : (
         <>
           <WelcomeEmpty
-            onOpen={openNoteLeavingHome}
+            onOpen={(path, titleHint, source) =>
+              openNoteLeavingHome(path, titleHint, {
+                priority: "foreground",
+                source,
+              })
+            }
             onNew={handleNewNoteLeavingHome}
             onQuickOpen={onOpenQuickOpen}
             onSearch={onOpenSearch}
             onOpenAiManagement={onOpenAiManagement}
-            onPrepare={onPrepareNote}
+            onPrepare={(file, source) => onPrepareNote?.(file, source)}
             onRefreshRecent={refreshRecent}
             pendingOpen={pendingOpen}
             recentNotes={recentNotes}

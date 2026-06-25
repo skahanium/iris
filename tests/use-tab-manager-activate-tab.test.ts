@@ -4,10 +4,12 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const fileDiscard = vi.fn();
+const documentOpenEnd = vi.fn();
 const fileRead = vi.fn();
 const resolveDocumentTitle = vi.fn();
 
 vi.mock("@/lib/ipc", () => ({
+  documentOpenEnd: (...args: unknown[]) => documentOpenEnd(...args),
   fileDiscard: (...args: unknown[]) => fileDiscard(...args),
   fileRead: (...args: unknown[]) => fileRead(...args),
 }));
@@ -83,6 +85,8 @@ describe("useTabManager activateTab / openNote", () => {
     container = document.createElement("div");
     document.body.appendChild(container);
     root = createRoot(container);
+    documentOpenEnd.mockReset();
+    documentOpenEnd.mockResolvedValue(undefined);
     fileDiscard.mockReset();
     fileRead.mockReset();
     resolveDocumentTitle.mockReset();
@@ -355,6 +359,45 @@ describe("useTabManager activateTab / openNote", () => {
     expect(visibleCommit?.key).not.toContain("Prepared");
     expect(fileRead).not.toHaveBeenCalled();
     nowSpy.mockRestore();
+  });
+
+  it("preserves entry source and priority when reopening an already-open tab", async () => {
+    const apiRef: { current: ReturnType<typeof useTabManager> | null } = {
+      current: null,
+    };
+    const traces: NoteOpenTrace[] = [];
+
+    setNoteOpenTraceSink((trace) => traces.push(trace));
+    await act(async () => {
+      root.render(createElement(Harness, { apiRef }));
+    });
+
+    await openAndWait(apiRef, "a.md", "A");
+    await openAndWait(apiRef, "b.md", "B");
+    traces.length = 0;
+
+    await act(async () => {
+      await apiRef.current!.openNote("a.md", "A", {
+        openBudgetKind: "warm",
+        openStartedAt: 1000,
+        openTraceRequest: {
+          path: "a.md",
+          priority: "foreground",
+          source: "quick-open",
+          titleHint: "A",
+        },
+        priority: "foreground",
+        source: "quick-open",
+      });
+    });
+
+    expect(fileRead).toHaveBeenCalledTimes(2);
+    expect(traces.find((trace) => trace.phase === "visible-commit")).toEqual(
+      expect.objectContaining({
+        priority: "foreground",
+        source: "quick-open",
+      }),
+    );
   });
 
   it("discards an externally deleted open tab without persisting the deleted path", async () => {

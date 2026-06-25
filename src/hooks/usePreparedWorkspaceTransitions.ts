@@ -2,6 +2,7 @@ import { useEffect } from "react";
 
 import { useHomeWorkspaceTransitions } from "@/hooks/useHomeWorkspaceTransitions";
 import { usePreparedNoteOpener } from "@/hooks/usePreparedNoteOpener";
+import { loadWorkspaceSessionSnapshot } from "@/lib/workspace-session-snapshot";
 import type {
   NoteOpenBudgetKind,
   PrepareNoteOpenRequest,
@@ -65,7 +66,7 @@ export function usePreparedWorkspaceTransitions<
     openTabs: tabs,
   });
 
-  const { clearPreparedNotes, openPreparedNote } = prepared;
+  const { clearPreparedNotes, openPreparedNote, warmNotePath } = prepared;
 
   useEffect(() => {
     clearPreparedNotes();
@@ -76,6 +77,22 @@ export function usePreparedWorkspaceTransitions<
       clearPreparedNotes("classified");
     }
   }, [classifiedVaultStatus, clearPreparedNotes]);
+
+  useEffect(() => {
+    if (!vaultPath) return;
+    const timer = window.setTimeout(() => {
+      const snapshot = loadWorkspaceSessionSnapshot(vaultPath);
+      for (const note of snapshot?.openNotes ?? []) {
+        warmNotePath(note.path, note.title, {
+          isLocked: note.isLocked,
+          priority: "background",
+          source: "startup",
+          useSignature: false,
+        });
+      }
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [vaultPath, warmNotePath]);
 
   const transitions = useHomeWorkspaceTransitions<OpenOptions>({
     activePathRef,

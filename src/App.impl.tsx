@@ -34,13 +34,16 @@ import { useNavigatorFileLifecycle } from "@/hooks/useNavigatorFileLifecycle";
 import { useFileConflictResolution } from "@/hooks/useFileConflictResolution";
 import { useEditorZoom } from "@/hooks/useEditorZoom";
 import { useEditorStats } from "@/hooks/useEditorStats";
+import { useEditorUndoRedoState } from "@/hooks/useEditorUndoRedoState";
 import { useInlineAi } from "@/hooks/useInlineAi";
 import { useConnectivityStatus } from "@/hooks/useConnectivityStatus";
 import { useLlmProvider } from "@/hooks/useLlmProvider";
 import { useOverlayManager } from "@/hooks/useOverlayManager";
 import { useArtifactTabs } from "@/hooks/useArtifactTabs";
 import { usePreparedWorkspaceTransitions } from "@/hooks/usePreparedWorkspaceTransitions";
+import { usePreparedNoteInvalidationCallbacks } from "@/hooks/usePreparedNoteInvalidationCallbacks";
 import { useWorkspaceAssistantRouting } from "@/hooks/useWorkspaceAssistantRouting";
+import { useWorkspaceSessionSnapshot } from "@/hooks/useWorkspaceSessionSnapshot";
 import { useWorkspaceTabRouting } from "@/hooks/useWorkspaceTabRouting";
 import { useTabManager } from "@/hooks/useTabManager";
 import { useTheme } from "@/hooks/useTheme";
@@ -103,12 +106,6 @@ function App() {
     resetZoom,
   } = useEditorZoom();
   const editorRef = useRef<Editor | null>(null);
-  const [editorInstance, setEditorInstance] = useState<Editor | null>(null);
-  const [canUndo, setCanUndo] = useState(false);
-  const [canRedo, setCanRedo] = useState(false);
-  const undoRedoStateRef = useRef({ canUndo: false, canRedo: false });
-  const editorTransactionCleanupRef = useRef<(() => void) | null>(null);
-  const undoRedoRafRef = useRef<number | null>(null);
   const overlays = useOverlayManager();
   const { provider: llmProvider } = useLlmProvider();
   const { status: connectivityStatus } = useConnectivityStatus();
@@ -155,6 +152,8 @@ function App() {
   const tabsRef = useRef(tabs);
   tabsRef.current = tabs;
   const openNotePaths = useMemo(() => tabs.map((tab) => tab.path), [tabs]);
+
+  useWorkspaceSessionSnapshot({ activePath, tabs, vaultPath });
   const {
     activateArtifact,
     activeArtifactTab,
@@ -354,6 +353,17 @@ function App() {
     tabsRef,
   });
 
+  const {
+    handlePreparedFileDeleted,
+    handlePreparedFilePathChanged,
+    invalidateActivePreparedNote,
+  } = usePreparedNoteInvalidationCallbacks({
+    activePathRef,
+    handleFileDeleted,
+    handleFilePathChanged,
+    invalidatePreparedNote,
+  });
+
   useEffect(() => {
     if (!isTauriRuntime()) return;
     let unlisten: (() => void) | undefined;
@@ -453,10 +463,17 @@ function App() {
     if (!dirtyRef.current) {
       dirtyRef.current = true;
       markDirty();
+      invalidateActivePreparedNote();
     }
     notifyDirty();
     resetVersionIdle();
-  }, [activeFileLocked, notifyDirty, resetVersionIdle, markDirty]);
+  }, [
+    activeFileLocked,
+    invalidateActivePreparedNote,
+    markDirty,
+    notifyDirty,
+    resetVersionIdle,
+  ]);
 
   const handleTitleChange = useCallback(
     (raw: string) => {
@@ -465,11 +482,19 @@ function App() {
       if (!dirtyRef.current) {
         dirtyRef.current = true;
         markDirty();
+        invalidateActivePreparedNote();
       }
       notifyDirty();
       resetVersionIdle();
     },
-    [activeFileLocked, markDirty, notifyDirty, onTitleChange, resetVersionIdle],
+    [
+      activeFileLocked,
+      invalidateActivePreparedNote,
+      markDirty,
+      notifyDirty,
+      onTitleChange,
+      resetVersionIdle,
+    ],
   );
 
   const { rescanVault } = useAutoVaultIndex(vaultPath, loading, {
@@ -486,106 +511,19 @@ function App() {
     [overlays],
   );
 
-  const updateUndoRedoState = useCallback((ed: Editor | null) => {
-    const next = ed
-      ? {
-          canUndo: ed.can().undo(),
-          canRedo: ed.can().redo(),
-        }
-      : { canUndo: false, canRedo: false };
-    const prev = undoRedoStateRef.current;
-    undoRedoStateRef.current = next;
-    if (prev.canUndo !== next.canUndo) setCanUndo(next.canUndo);
-    if (prev.canRedo !== next.canRedo) setCanRedo(next.canRedo);
-  }, []);
-
-  const cancelUndoRedoStateRefresh = useCallback(() => {
-    if (undoRedoRafRef.current === null) return;
-    cancelAnimationFrame(undoRedoRafRef.current);
-    undoRedoRafRef.current = null;
-  }, []);
-
-  const scheduleUndoRedoStateRefresh = useCallback(
-    (ed: Editor | null = editorRef.current) => {
-      if (undoRedoRafRef.current !== null) {
-        cancelAnimationFrame(undoRedoRafRef.current);
-      }
-      undoRedoRafRef.current = requestAnimationFrame(() => {
-        undoRedoRafRef.current = null;
-        const currentEditor = ed && !ed.isDestroyed ? ed : editorRef.current;
-        updateUndoRedoState(
-          currentEditor && !currentEditor.isDestroyed ? currentEditor : null,
-        );
-      });
-    },
-    [updateUndoRedoState],
-  );
-
-  const clearEditorTransactionListener = useCallback(() => {
-    editorTransactionCleanupRef.current?.();
-    editorTransactionCleanupRef.current = null;
-  }, []);
-
-  useEffect(() => {
-    if (!activePath) {
-      clearEditorTransactionListener();
-      cancelUndoRedoStateRefresh();
-      setEditorInstance(null);
-      updateUndoRedoState(null);
-    }
-  }, [
-    activePath,
-    cancelUndoRedoStateRefresh,
-    clearEditorTransactionListener,
-    updateUndoRedoState,
-  ]);
-
-  useEffect(() => {
-    return () => {
-      cancelUndoRedoStateRefresh();
-    };
-  }, [cancelUndoRedoStateRefresh]);
+  const {
+    canRedo,
+    canUndo,
+    editorInstance,
+    handleEditorReady,
+    scheduleUndoRedoStateRefresh,
+  } = useEditorUndoRedoState({ activePath, editorRef });
 
   useEffect(() => {
     if (!activePath) {
       resetEditorStats();
     }
   }, [activePath, resetEditorStats]);
-
-  const handleEditorReady = useCallback(
-    (ed: Editor | null) => {
-      clearEditorTransactionListener();
-      editorRef.current = ed;
-      if (!ed) {
-        cancelUndoRedoStateRefresh();
-        setEditorInstance(null);
-        updateUndoRedoState(null);
-        return;
-      }
-
-      setEditorInstance(ed);
-      updateUndoRedoState(ed);
-
-      const handleTransaction = ({
-        editor: currentEditor,
-      }: {
-        editor: Editor;
-      }) => {
-        scheduleUndoRedoStateRefresh(currentEditor);
-      };
-
-      ed.on("transaction", handleTransaction);
-      editorTransactionCleanupRef.current = () => {
-        ed.off("transaction", handleTransaction);
-      };
-    },
-    [
-      cancelUndoRedoStateRefresh,
-      clearEditorTransactionListener,
-      scheduleUndoRedoStateRefresh,
-      updateUndoRedoState,
-    ],
-  );
 
   const editorTitleSlot = useMemo(
     () => (
@@ -710,6 +648,7 @@ function App() {
       dirtyRef.current = false;
       const path = activePathRef.current;
       if (path) {
+        invalidatePreparedNote(path);
         syncTabMarkdownCache(path, newContent);
         markClean(path, activeDocumentTitle ?? noteTitle);
       }
@@ -719,6 +658,7 @@ function App() {
       activePathRef,
       applyMarkdownToEditor,
       currentNoteIsClassified,
+      invalidatePreparedNote,
       markClean,
       markdownRef,
       noteTitle,
@@ -944,9 +884,9 @@ function App() {
             handleConflictManualEdit={handleConflictManualEdit}
             markdown={markdown}
             onBeforeFilePathChange={handleBeforeFilePathChange}
-            onFilePathChanged={handleFilePathChanged}
+            onFilePathChanged={handlePreparedFilePathChanged}
             onBeforeFileDelete={handleBeforeFileDelete}
-            onFileDeleted={handleFileDeleted}
+            onFileDeleted={handlePreparedFileDeleted}
             onClassifiedUnlocked={onClassifiedUnlocked}
             openClassifiedPaths={openClassifiedPaths}
             openNoteLeavingHome={openWorkspacePathLeavingHome}

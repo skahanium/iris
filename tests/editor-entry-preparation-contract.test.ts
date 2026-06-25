@@ -21,7 +21,9 @@ describe("editor entry note preparation contract", () => {
     expect(wiki).toContain("focusin");
     expect(tiptap).toContain("onPrepareWikiLink");
     expect(workspace).toContain("onPrepareWikiLink");
-    expect(workspace).toContain('onPrepareNotePath?.(title + ".md", title)');
+    expect(workspace).toContain(
+      'onPrepareNotePath?.(title + ".md", title, "link")',
+    );
     expect(outline).toContain("onPrepareNote");
     expect(outline).toContain(
       "onMouseEnter={() => onPrepareNote?.(item.path, item.title)}",
@@ -30,8 +32,9 @@ describe("editor entry note preparation contract", () => {
       "onFocus={() => onPrepareNote?.(item.path, item.title)}",
     );
     expect(aiSlot).toContain(
-      "onPrepareNotePath?.(packet.source_path, packet.title)",
+      'onPrepareNotePath?.(packet.source_path, packet.title, "ai")',
     );
     expect(app).toContain("onPrepareNotePath={prepareNotePath}");
+    expect(workspace).toContain('source: "outline"');
   });
 });

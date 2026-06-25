@@ -121,7 +121,7 @@ describe("management center contract", () => {
 
     expect(center).toContain("onPrepareNote");
     expect(center).toContain("onPrepare={onPrepareNote}");
-    expect(overlays).toContain("onPrepareNote={onPrepareNote}");
+    expect(overlays).toContain('onPrepareNote?.(file, "management")');
   });
 
   it("waits for restored notes to open before closing recycle views", () => {

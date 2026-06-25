@@ -58,6 +58,7 @@ import {
   type VaultTreeNode,
 } from "@/lib/vault-tree";
 import { cn } from "@/lib/utils";
+import type { NoteOpenSource } from "@/lib/document-open-runtime";
 import type { CorpusListItem, FileListItem, WorkspaceItem } from "@/types/ipc";
 
 import {
@@ -127,8 +128,8 @@ function vaultFileIcon(file: VaultFileItem): LucideIcon {
 interface VaultNavigatorProps {
   open: boolean;
   onClose: () => void;
-  onOpen: (path: string) => void | Promise<void>;
-  onPrepare?: (file: FileListItem) => void;
+  onOpen: (path: string, source: NoteOpenSource) => void | Promise<void>;
+  onPrepare?: (file: FileListItem, source: NoteOpenSource) => void;
   onBeforeFilePathChange?: (path: string) => Promise<void>;
   onFilePathChanged?: (
     oldPath: string,
@@ -422,7 +423,7 @@ export function VaultNavigatorBody({
   useEffect(() => {
     folderFiles.slice(0, PREPARE_FOLDER_LIMIT).forEach((file) => {
       const note = noteListItem(file);
-      if (note) onPrepare?.(note);
+      if (note) onPrepare?.(note, "file-tree");
     });
   }, [folderFiles, onPrepare]);
 
@@ -627,7 +628,7 @@ export function VaultNavigatorBody({
     const path = notePathInFolder(selectedFolder, newName);
     await templateCreate(path, tmplName);
     refresh();
-    await onOpen(path);
+    await onOpen(path, "file-tree");
     setShowTemplates(false);
   };
 
@@ -688,7 +689,7 @@ export function VaultNavigatorBody({
               titleHint: trimmed,
             });
             refresh();
-            await onOpen(created.path);
+            await onOpen(created.path, "file-tree");
           }}
         >
           <FolderPlus className="h-4 w-4" />
@@ -1034,16 +1035,16 @@ export function VaultNavigatorBody({
                       className="min-w-0 flex-1 truncate text-left hover:text-primary"
                       onFocus={() => {
                         const note = noteListItem(f);
-                        if (note) onPrepare?.(note);
+                        if (note) onPrepare?.(note, "file-tree");
                       }}
                       onMouseEnter={() => {
                         const note = noteListItem(f);
-                        if (note) onPrepare?.(note);
+                        if (note) onPrepare?.(note, "file-tree");
                       }}
                       onClick={() => {
                         void (async () => {
                           try {
-                            await onOpen(f.path);
+                            await onOpen(f.path, "file-tree");
                             onClose();
                           } catch {
                             /* Keep the navigator visible so the user can retry. */

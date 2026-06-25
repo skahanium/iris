@@ -17,7 +17,7 @@ type MaybePromise<T> = T | Promise<T>;
 interface UseHomeWorkspaceTransitionsOptions<OpenNoteOptions> {
   activePathRef: CurrentRef<string | null>;
   activateArtifact: (id: string) => void;
-  activateTab: (path: string) => MaybePromise<void>;
+  activateTab: (path: string, options?: OpenNoteOptions) => MaybePromise<void>;
   handleNewNote: () => Promise<void>;
   openNote: (
     path: string,
@@ -123,15 +123,25 @@ export function useHomeWorkspaceTransitions<OpenNoteOptions>({
   );
 
   const handleActivateWorkspaceTab = useCallback(
-    (path: string) => {
+    async (path: string) => {
       cancelHomeOpenTransitions(homeOpenSequenceRef, setPendingOpen);
-      setHomeActive(false);
       if (path.startsWith("artifact:")) {
+        setHomeActive(false);
         activateArtifact(path);
         return;
       }
       setActiveArtifactId(null);
-      void activateTab(path);
+      await activateTab(path, {
+        openBudgetKind: "hot",
+        openTraceRequest: {
+          path,
+          priority: "hot",
+          source: "tab",
+        },
+        priority: "hot",
+        source: "tab",
+      } as OpenNoteOptions);
+      setHomeActive(false);
     },
     [
       activateArtifact,

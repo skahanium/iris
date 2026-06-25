@@ -1,4 +1,4 @@
-import { invoke } from "@tauri-apps/api/core";
+﻿import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 
 import type {
@@ -39,6 +39,8 @@ import type {
   ClassifiedFileEntry,
   ClassifiedStatus,
   FileReadResult,
+  FileSignatureResult,
+  DocumentOpenScopeResult,
   GraphData,
   ImageAttachmentDto,
   InboxItem,
@@ -75,11 +77,11 @@ import type {
 export interface SettingsMap {
   theme: "dark" | "light";
   llm_custom_base_url: string | null;
-  /** 底栏「联网」开关，跨会话保持 */
+  /** 搴曟爮銆岃仈缃戙€嶅紑鍏筹紝璺ㄤ細璇濅繚鎸?*/
   web_search_enabled: boolean;
-  /** 自动版本追踪总开关，默认开启。 */
+  /** 鑷姩鐗堟湰杩借釜鎬诲紑鍏筹紝榛樿寮€鍚€?*/
   auto_version_enabled: boolean;
-  /** 自动版本追踪空闲间隔，单位分钟。 */
+  /** 鑷姩鐗堟湰杩借釜绌洪棽闂撮殧锛屽崟浣嶅垎閽熴€?*/
   auto_version_idle_minutes: number;
 }
 
@@ -160,6 +162,24 @@ export async function fileRead(
     path,
     allowClassified: options?.allowClassified === true,
   });
+}
+
+export async function fileSignature(
+  path: string,
+  options?: { allowClassified?: boolean },
+): Promise<FileSignatureResult> {
+  return invoke<FileSignatureResult>("file_signature", {
+    path,
+    allowClassified: options?.allowClassified === true,
+  });
+}
+
+export async function documentOpenBegin(): Promise<DocumentOpenScopeResult> {
+  return invoke<DocumentOpenScopeResult>("document_open_begin");
+}
+
+export async function documentOpenEnd(token: string): Promise<void> {
+  return invoke("document_open_end", { token });
 }
 
 export async function fileSetLock(
@@ -635,7 +655,7 @@ export async function listenAiRequestStarted(
   );
 }
 
-// ─── AI Runtime IPC ───
+// 鈹€鈹€鈹€ AI Runtime IPC 鈹€鈹€鈹€
 
 import type { CorpusListItem } from "@/types/ipc";
 
@@ -862,7 +882,7 @@ export async function sessionClearAll(params?: {
   });
 }
 
-/** 清空 AI 运行时持久化缓存（会话、harness checkpoint、知识沉淀）。 */
+/** 娓呯┖ AI 杩愯鏃舵寔涔呭寲缂撳瓨锛堜細璇濄€乭arness checkpoint銆佺煡璇嗘矇娣€锛夈€?*/
 export async function aiCacheClear(): Promise<AiCacheClearResult> {
   return invoke<AiCacheClearResult>("ai_cache_clear");
 }
@@ -938,7 +958,7 @@ export async function skillsMigrateLegacy(
   });
 }
 
-// ─── Tool Audit ────────────────────────────────────────
+// 鈹€鈹€鈹€ Tool Audit 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
 
 export interface ToolAuditEntry {
   id: number;
@@ -1020,7 +1040,7 @@ export async function contextAssemble(params: {
   });
 }
 
-/** 统一助手执行门面 — 按 intent 路由到既有工作流 */
+/** 缁熶竴鍔╂墜鎵ц闂ㄩ潰 鈥?鎸?intent 璺敱鍒版棦鏈夊伐浣滄祦 */
 export async function assistantExecute(
   request: AssistantExecuteRequest,
 ): Promise<AssistantExecuteResponse> {
@@ -1036,7 +1056,7 @@ export async function aiSendMessage(params: {
   note_path?: string | null;
   selected_packet_ids?: string[];
   context_scope?: ContextScope | null;
-  /** 为 true 时在发送前注入 MiniMax / DuckDuckGo 网页检索摘要 */
+  /** 涓?true 鏃跺湪鍙戦€佸墠娉ㄥ叆 MiniMax / DuckDuckGo 缃戦〉妫€绱㈡憳瑕?*/
   web_search?: boolean;
 }): Promise<AiSendMessageResult> {
   return invoke<AiSendMessageResult>("ai_send_message", {
@@ -1077,7 +1097,7 @@ export async function aiListTools(scene: AiScene): Promise<
   return invoke("ai_list_tools", { scene });
 }
 
-// ─── Knowledge Index IPC ───
+// 鈹€鈹€鈹€ Knowledge Index IPC 鈹€鈹€鈹€
 
 export async function knowledgeReindex(): Promise<{
   anchors: number;
@@ -1100,7 +1120,7 @@ export async function searchHybrid(params: {
   });
 }
 
-// ─── Research Workflow IPC (D) ───
+// 鈹€鈹€鈹€ Research Workflow IPC (D) 鈹€鈹€鈹€
 
 export async function researchExecute(params: {
   topic: string;
@@ -1161,7 +1181,7 @@ export async function listenResearchProgress(
   );
 }
 
-// ─── Writing Workflow IPC (Phase 1) ───
+// 鈹€鈹€鈹€ Writing Workflow IPC (Phase 1) 鈹€鈹€鈹€
 
 export async function writingExecute(params: {
   target_path: string;
@@ -1203,7 +1223,7 @@ export async function patchApply(patch: {
   return invoke("patch_apply", { patch });
 }
 
-// ─── Citation Check IPC (Phase 1) ───
+// 鈹€鈹€鈹€ Citation Check IPC (Phase 1) 鈹€鈹€鈹€
 
 export async function citationCheck(params: {
   paragraph_text: string;
@@ -1225,7 +1245,7 @@ export async function citationCheck(params: {
   });
 }
 
-// ─── Organize Workflow IPC (Phase 2) ───
+// 鈹€鈹€鈹€ Organize Workflow IPC (Phase 2) 鈹€鈹€鈹€
 
 export async function organizeExecute(params: {
   scope?: {
@@ -1263,7 +1283,7 @@ export async function organizeApply(
   return invoke("organize_apply", { request: { suggestions } });
 }
 
-// ─── Chapter & Document Writing IPC (Phase 3) ───
+// 鈹€鈹€鈹€ Chapter & Document Writing IPC (Phase 3) 鈹€鈹€鈹€
 
 export async function chapterWritingExecute(params: {
   target_path: string;
@@ -1307,7 +1327,7 @@ export async function parseDocumentChapters(
   return invoke<ChapterInfo[]>("parse_document_chapters", { content });
 }
 
-// ─── Personalization IPC (E) ───
+// 鈹€鈹€鈹€ Personalization IPC (E) 鈹€鈹€鈹€
 
 export async function profileList(params: {
   include_inactive?: boolean;
@@ -1337,7 +1357,7 @@ export async function profileSet(params: {
   });
 }
 
-/** 以纯文本保存用户确认的规则（Phase 5） */
+/** 浠ョ函鏂囨湰淇濆瓨鐢ㄦ埛纭鐨勮鍒欙紙Phase 5锛?*/
 export async function profileSetRule(params: {
   key: string;
   description: string;
@@ -1408,7 +1428,7 @@ export async function inboxCounts(): Promise<{
   return invoke("inbox_counts");
 }
 
-/** 桌面顶栏指标（逻辑像素），与 Rust `chrome_metrics` 一致 */
+/** 妗岄潰椤舵爮鎸囨爣锛堥€昏緫鍍忕礌锛夛紝涓?Rust `chrome_metrics` 涓€鑷?*/
 export interface DesktopChromeMetrics {
   titlebarHeightLogical: number;
   trafficInsetLogical: number;
@@ -1425,12 +1445,12 @@ export async function showMainWindowWhenReady(): Promise<void> {
   return invoke("show_main_window_when_ready");
 }
 
-/** 读取当前平台顶栏指标并用于 CSS 变量同步 */
+/** 璇诲彇褰撳墠骞冲彴椤舵爮鎸囨爣骞剁敤浜?CSS 鍙橀噺鍚屾 */
 export async function getDesktopChromeMetrics(): Promise<DesktopChromeMetrics> {
   return invoke<DesktopChromeMetrics>("get_desktop_chrome_metrics");
 }
 
-/** 重新应用无边框窗口标题与平台圆角 */
+/** 閲嶆柊搴旂敤鏃犺竟妗嗙獥鍙ｆ爣棰樹笌骞冲彴鍦嗚 */
 export async function reapplyWindowChrome(): Promise<void> {
   return invoke("reapply_window_chrome");
 }

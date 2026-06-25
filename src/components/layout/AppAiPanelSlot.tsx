@@ -4,6 +4,10 @@ import { ErrorBoundary } from "@/components/ErrorBoundary";
 import type { ContextPacket, WritingEditorContext } from "@/types/ai";
 import type { AssistantChromeSnapshot } from "@/types/assistant-chrome";
 import type { AssistantArtifactDraft } from "@/types/assistant-artifact";
+import type {
+  DocumentOpenPriority,
+  NoteOpenSource,
+} from "@/lib/document-open-runtime";
 
 interface AppAiPanelSlotProps {
   assistantNotePath: string | null;
@@ -14,8 +18,16 @@ interface AppAiPanelSlotProps {
   getWritingContext: () => WritingEditorContext | null;
   handleInsertToEditor: (content: string) => void;
   onOpenArtifact: (draft: AssistantArtifactDraft) => void;
-  openNoteLeavingHome: (path: string) => void | Promise<void>;
-  onPrepareNotePath?: (path: string, titleHint?: string) => void;
+  openNoteLeavingHome: (
+    path: string,
+    titleHint?: string,
+    options?: { priority?: DocumentOpenPriority; source?: NoteOpenSource },
+  ) => void | Promise<void>;
+  onPrepareNotePath?: (
+    path: string,
+    titleHint?: string,
+    source?: NoteOpenSource,
+  ) => void;
   onSessionDeleted?: (sessionId: number) => void;
   onSessionsCleared?: () => void;
   onPatchApplied: (newContent: string) => void;
@@ -49,8 +61,11 @@ export function AppAiPanelSlot({
       return;
     }
     if (packet.source_path) {
-      onPrepareNotePath?.(packet.source_path, packet.title);
-      openNoteLeavingHome(packet.source_path);
+      onPrepareNotePath?.(packet.source_path, packet.title, "ai");
+      openNoteLeavingHome(packet.source_path, packet.title, {
+        priority: "foreground",
+        source: "ai",
+      });
     }
   };
 

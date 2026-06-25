@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { fileList } from "@/lib/ipc";
+import type { NoteOpenSource } from "@/lib/document-open-runtime";
 import type { FileListItem } from "@/types/ipc";
 
 interface UseHomeRecentNotesOptions {
-  onPrepare?: (file: FileListItem) => void;
+  onPrepare?: (file: FileListItem, source: NoteOpenSource) => void;
   vaultIndexEpoch: number;
   vaultPath: string | null;
 }
@@ -71,7 +72,7 @@ export function useHomeRecentNotes({
   }, [refreshRecent, vaultIndexEpoch, vaultPath]);
 
   useEffect(() => {
-    recentNotes.forEach((file) => onPrepare?.(file));
+    recentNotes.forEach((file) => onPrepare?.(file, "welcome"));
   }, [onPrepare, recentNotes]);
 
   return {

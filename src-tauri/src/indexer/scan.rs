@@ -1,6 +1,7 @@
 use std::collections::HashSet;
 use std::fs;
 use std::path::Path;
+use std::time::Duration;
 
 use chrono::{DateTime, Utc};
 use rusqlite::{params_from_iter, Connection};
@@ -25,6 +26,19 @@ pub enum IndexEmbeddingMode<'a> {
     Skip,
     Queue(&'a Arc<AppState>),
     Sync,
+}
+
+fn should_yield_for_foreground_document_open(embedding_mode: IndexEmbeddingMode<'_>) -> bool {
+    match embedding_mode {
+        IndexEmbeddingMode::Queue(state) => state.has_foreground_document_open(),
+        IndexEmbeddingMode::Skip | IndexEmbeddingMode::Sync => false,
+    }
+}
+
+fn yield_for_foreground_document_open(embedding_mode: IndexEmbeddingMode<'_>) {
+    if should_yield_for_foreground_document_open(embedding_mode) {
+        std::thread::sleep(Duration::from_millis(8));
+    }
 }
 
 /// WalkDir `filter_entry` predicate: skip entire `.iris/` and `.classified/` subtrees.
@@ -526,6 +540,7 @@ pub fn index_vault_incremental(
     let files = collect_vault_files(vault);
     let mut entries = Vec::with_capacity(files.len());
     for abs in files {
+        yield_for_foreground_document_open(embedding_mode);
         let rel = match relative_path(vault, &abs) {
             Ok(r) => r,
             Err(_) => continue,
@@ -731,6 +746,31 @@ mod tests {
         fs::create_dir_all(&vault).unwrap();
         let db = Database::open_in_memory().unwrap();
         (dir, vault, db)
+    }
+
+    #[test]
+    fn queued_index_mode_yields_when_a_document_open_is_active() {
+        let dir = tempdir().unwrap();
+        let state =
+            Arc::new(AppState::new_with_test_cas_key(dir.path().join("data"), [0xA6; 32]).unwrap());
+
+        assert!(!should_yield_for_foreground_document_open(
+            IndexEmbeddingMode::Queue(&state),
+        ));
+        let token = state.begin_document_open();
+        assert!(should_yield_for_foreground_document_open(
+            IndexEmbeddingMode::Queue(&state),
+        ));
+        assert!(!should_yield_for_foreground_document_open(
+            IndexEmbeddingMode::Skip
+        ));
+        assert!(!should_yield_for_foreground_document_open(
+            IndexEmbeddingMode::Sync
+        ));
+        assert!(state.end_document_open(&token));
+        assert!(!should_yield_for_foreground_document_open(
+            IndexEmbeddingMode::Queue(&state),
+        ));
     }
 
     #[test]
