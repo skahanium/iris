@@ -99,6 +99,9 @@ interface TipTapEditorProps {
 
   initialBodyMarkdown: string;
 
+  /** Already-ingested TipTap HTML prepared before this editor becomes visible. */
+  initialEditorHtml?: string | null;
+
   /** When set, reuse cached TipTap HTML for this path (tab switch). */
   contentCacheKey?: string | null;
 
@@ -118,6 +121,8 @@ interface TipTapEditorProps {
   onSlashCommand?: (command: string) => void;
 
   onEditorReady?: (editor: Editor | null) => void;
+
+  onFirstFrameReady?: (editor: Editor) => void;
 
   onBodyStatsChange?: (stats: {
     characterCount: number;
@@ -163,6 +168,8 @@ interface TipTapEditorProps {
 function TipTapEditorInner({
   initialBodyMarkdown,
 
+  initialEditorHtml = null,
+
   contentCacheKey = null,
 
   contentCacheNamespace = "normal",
@@ -178,6 +185,8 @@ function TipTapEditorInner({
   onSlashCommand,
 
   onEditorReady,
+
+  onFirstFrameReady,
 
   onBodyStatsChange,
 
@@ -245,6 +254,10 @@ function TipTapEditorInner({
   const onIngestCompleteRef = useRef(onIngestComplete);
 
   onIngestCompleteRef.current = onIngestComplete;
+
+  const onFirstFrameReadyRef = useRef(onFirstFrameReady);
+
+  onFirstFrameReadyRef.current = onFirstFrameReady;
 
   const contentCacheKeyRef = useRef(contentCacheKey);
   contentCacheKeyRef.current = contentCacheKey;
@@ -407,6 +420,18 @@ function TipTapEditorInner({
   const initialContent = useMemo(() => {
     const bodyMd = initialBodyMarkdown.trim();
     const htmlDigest = editorHtmlDigest(initialBodyMarkdown);
+    if (initialEditorHtml && bodyMd) {
+      if (contentCacheKey) {
+        setCachedEditorHtml(
+          contentCacheKey,
+          initialEditorHtml,
+          htmlDigest,
+          contentCacheNamespace,
+        );
+      }
+      return initialEditorHtml;
+    }
+
     if (contentCacheKey && bodyMd && !skipHtmlCache) {
       const cached = getCachedEditorHtml(
         contentCacheKey,
@@ -438,6 +463,7 @@ function TipTapEditorInner({
     // eslint-disable-next-line react-hooks/exhaustive-deps -- reingestKey busts HTML cache on disk reload
   }, [
     initialBodyMarkdown,
+    initialEditorHtml,
     contentCacheKey,
     contentCacheNamespace,
     reingestKey,
@@ -588,6 +614,20 @@ function TipTapEditorInner({
   useEffect(() => {
     if (!editor) return;
 
+    let cancelled = false;
+    const requestFrame =
+      window.requestAnimationFrame ??
+      ((cb: FrameRequestCallback) =>
+        window.setTimeout(() => cb(performance.now()), 16));
+    const cancelFrame =
+      window.cancelAnimationFrame ?? ((id: number) => window.clearTimeout(id));
+    const firstFrame = requestFrame(() => {
+      const secondFrame = requestFrame(() => {
+        if (!cancelled) onFirstFrameReadyRef.current?.(editor);
+      });
+      if (cancelled) cancelFrame(secondFrame);
+    });
+
     editorRef.current = editor;
 
     onEditorReady?.(editor);
@@ -595,6 +635,8 @@ function TipTapEditorInner({
     flushBodyStats(editor);
 
     return () => {
+      cancelled = true;
+      cancelFrame(firstFrame);
       flushBodyStats(editor);
 
       editorRef.current = null;

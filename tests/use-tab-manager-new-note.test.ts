@@ -71,6 +71,15 @@ async function runAndWait(
   await act(async () => {
     await action();
   });
+
+  const pending = apiRef.current!.pendingNoteOpen;
+  if (pending) {
+    expect(pending.path).toBe(path);
+    await act(async () => {
+      apiRef.current!.commitPendingNoteOpen(pending.path, pending.sequence);
+    });
+  }
+
   expect(apiRef.current!.activePath).toBe(path);
   expect(apiRef.current!.pendingNoteOpen).toBeNull();
 }

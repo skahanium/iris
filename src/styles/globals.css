@@ -1095,6 +1095,108 @@
     padding-bottom: clamp(5rem, 14vh, 9rem);
   }
 
+  .iris-document-open-loading {
+    @apply absolute inset-0 z-10 bg-background;
+    animation: iris-document-open-loading-in 150ms var(--motion-ease-out) both;
+  }
+
+  .iris-document-open-loading-header {
+    @apply mx-auto flex max-w-[32rem] flex-col items-center gap-1 text-center;
+    margin-bottom: clamp(2.25rem, 7vh, 4rem);
+  }
+
+  .iris-document-open-loading-title {
+    @apply max-w-full truncate text-sm font-medium text-foreground;
+  }
+
+  .iris-document-open-loading-status {
+    @apply text-xs text-muted-foreground;
+  }
+
+  .iris-document-open-loading-skeleton {
+    @apply relative mx-auto flex max-w-[42rem] flex-col gap-3 overflow-hidden;
+  }
+
+  .iris-document-open-loading-skeleton::after {
+    content: "";
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: -22%;
+    width: 18%;
+    opacity: 0.42;
+    transform: skewX(-12deg);
+    background: linear-gradient(
+      90deg,
+      hsl(var(--primary) / 0) 0%,
+      hsl(var(--primary) / 0.16) 45%,
+      hsl(var(--knowledge-accent) / 0.24) 52%,
+      hsl(var(--primary) / 0) 100%
+    );
+    animation: iris-document-open-loading-scan 1400ms var(--motion-ease)
+      infinite;
+  }
+
+  .iris-document-open-loading-line {
+    height: 0.75rem;
+    width: 72%;
+    border-radius: 9999px;
+    background: linear-gradient(
+      90deg,
+      hsl(var(--surface-inset) / 0.72),
+      hsl(var(--border) / 0.46)
+    );
+  }
+
+  .iris-document-open-loading-line.is-heading {
+    height: 1.4rem;
+    width: 58%;
+    margin-bottom: 0.7rem;
+    background: hsl(var(--foreground) / 0.13);
+  }
+
+  .iris-document-open-loading-line.is-wide {
+    width: 88%;
+  }
+
+  .iris-document-open-loading-line.is-medium {
+    width: 64%;
+  }
+
+  .iris-document-open-loading-line.is-short {
+    width: 38%;
+  }
+
+  .iris-document-open-loading-quote {
+    @apply mt-3 flex flex-col gap-3 border-l pl-4;
+    border-color: hsl(var(--knowledge-accent) / 0.35);
+  }
+
+  @keyframes iris-document-open-loading-in {
+    from {
+      opacity: 0;
+    }
+    to {
+      opacity: 1;
+    }
+  }
+
+  @keyframes iris-document-open-loading-scan {
+    from {
+      transform: translateX(0) skewX(-12deg);
+    }
+    to {
+      transform: translateX(700%) skewX(-12deg);
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .iris-document-open-loading,
+    .iris-document-open-loading-skeleton::after {
+      animation: none;
+    }
+  }
+
   .iris-editor-body {
     @apply relative min-w-0;
     padding-left: var(--editor-fold-column);
@@ -1109,6 +1211,8 @@
     display: block;
     max-width: 100%;
     height: auto;
+    min-height: min(40vh, 22rem);
+    aspect-ratio: var(--iris-media-aspect-ratio, 16 / 9);
     object-fit: contain;
     background: hsl(var(--background));
     contain: paint;
@@ -1116,9 +1220,23 @@
     transform: translateZ(0);
   }
 
+  .iris-editor-body .ProseMirror .iris-editor-media-image[src] {
+    min-height: 0;
+  }
+
   .iris-editor-body .ProseMirror .iris-editor-media-embed {
     @apply my-4 overflow-hidden rounded-md border border-border/70 bg-panel;
+    min-height: min(40vh, 22rem);
     contain: content;
+  }
+
+  .iris-editor-body
+    .ProseMirror
+    .iris-editor-media-embed[data-media-kind="image"],
+  .iris-editor-body
+    .ProseMirror
+    .iris-editor-media-embed[data-media-kind="video"] {
+    aspect-ratio: var(--iris-media-aspect-ratio, 16 / 9);
   }
 
   .iris-editor-body .ProseMirror .iris-editor-media-embed-title {

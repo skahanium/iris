@@ -26,6 +26,7 @@ describe("home open transition", () => {
       path: "new.md",
       sequence: 1,
       title: "New",
+      startedAt: expect.any(Number),
     });
   });
 
@@ -59,6 +60,7 @@ describe("home open transition", () => {
       path: "c.md",
       sequence: second,
       title: "C",
+      startedAt: expect.any(Number),
     });
 
     expect(
@@ -104,6 +106,7 @@ describe("home open transition", () => {
       kind: "note",
       path: "missing.md",
       sequence: 1,
+      startedAt: 123,
       title: "Missing",
     };
     const sequence = beginHomeOpenLoading({
@@ -146,6 +149,7 @@ describe("home open transition", () => {
       path: null,
       sequence: 1,
       title: "新建笔记",
+      startedAt: expect.any(Number),
     });
   });
 });

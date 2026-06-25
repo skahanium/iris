@@ -3,7 +3,7 @@ import type { ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const editorReadyCallbacks = vi.hoisted(
+const firstFrameCallbacks = vi.hoisted(
   () => new Map<string, (editor: unknown) => void>(),
 );
 const editorPropsByPath = vi.hoisted(
@@ -14,32 +14,22 @@ vi.mock("@/components/editor/TipTapEditor", () => ({
   TipTapEditor: (props: {
     contentCacheKey?: string | null;
     initialBodyMarkdown: string;
-    onBodyContextMenu?: unknown;
-    onDirty?: unknown;
-    onInlineAiAccept?: unknown;
-    onInlineAiDismiss?: unknown;
-    onInlineAiRetry?: unknown;
     mediaLoading?: unknown;
-    onOpenWikiLink?: unknown;
-    onSlashCommand?: unknown;
-    onBodyStatsChange?: unknown;
-    setLocked?: unknown;
-    titleSlot?: unknown;
-    onEditorReady?: (editor: unknown) => void;
+    onFirstFrameReady?: (editor: unknown) => void;
   }) => {
-    const { contentCacheKey, initialBodyMarkdown, onEditorReady } = props;
+    const { contentCacheKey, initialBodyMarkdown, onFirstFrameReady } = props;
     if (contentCacheKey) editorPropsByPath.set(contentCacheKey, props);
     useEffect(() => {
-      if (contentCacheKey && onEditorReady) {
-        editorReadyCallbacks.set(contentCacheKey, onEditorReady);
+      if (contentCacheKey && onFirstFrameReady) {
+        firstFrameCallbacks.set(contentCacheKey, onFirstFrameReady);
       }
       return () => {
         if (contentCacheKey) {
-          editorReadyCallbacks.delete(contentCacheKey);
+          firstFrameCallbacks.delete(contentCacheKey);
           editorPropsByPath.delete(contentCacheKey);
         }
       };
-    }, [contentCacheKey, onEditorReady]);
+    }, [contentCacheKey, onFirstFrameReady]);
 
     return (
       <div data-testid="tiptap-editor" data-path={contentCacheKey ?? ""}>
@@ -72,9 +62,7 @@ vi.mock("@/components/layout/MediaWorkspaceView", () => ({
 }));
 
 vi.mock("@/components/ErrorBoundary", () => ({
-  ErrorBoundary: ({ children }: { children: ReactNode }) => (
-    <div data-testid="error-boundary">{children}</div>
-  ),
+  ErrorBoundary: ({ children }: { children: ReactNode }) => <>{children}</>,
 }));
 
 vi.mock("@/components/ui/iris-context-menu", () => ({
@@ -130,17 +118,12 @@ function baseProps() {
     updateEditorStats: vi.fn(),
     vaultIndexEpoch: 0,
     vaultPath: "/vault",
+    openNotePaths: ["old.md"],
     zen: false,
   };
 }
 
-async function flushEditorHydration() {
-  await act(async () => {
-    await new Promise((resolve) => setTimeout(resolve, 0));
-  });
-}
-
-describe("AppEditorWorkspace content-first note opens", () => {
+describe("AppEditorWorkspace complete-frame note opens", () => {
   let host: HTMLDivElement;
   let root: Root;
 
@@ -148,41 +131,47 @@ describe("AppEditorWorkspace content-first note opens", () => {
     host = document.createElement("div");
     document.body.append(host);
     root = createRoot(host);
-    editorReadyCallbacks.clear();
+    firstFrameCallbacks.clear();
     editorPropsByPath.clear();
   });
 
   afterEach(() => {
+    vi.useRealTimers();
     act(() => root.unmount());
     host.remove();
   });
 
-  it("keeps the current readable document visible while a Home open is pending", () => {
-    const pendingOpen: HomePendingOpen = {
-      kind: "note",
-      path: "new.md",
-      sequence: 3,
-      title: "New Note",
-    };
-
+  it("renders the document loading surface instead of Home while a Home open is pending", () => {
     act(() => {
       root.render(
         <AppEditorWorkspace
           {...baseProps()}
-          activePath="old.md"
-          pendingOpen={pendingOpen}
+          activePath={null}
+          homeActive={false}
+          openNotePaths={[]}
+          pendingOpen={
+            {
+              kind: "note",
+              path: "new.md",
+              sequence: 1,
+              startedAt: 1000,
+              title: "New",
+            } as HomePendingOpen
+          }
         />,
       );
     });
 
-    expect(document.querySelector('[data-testid="home-workbench"]')).toBeNull();
     expect(
-      document.querySelector('[data-testid="readable-note-preview"]'),
+      document.querySelector('[data-testid="document-open-loading"]'),
     ).toBeTruthy();
-    expect(document.body.textContent).toContain("old");
+    expect(document.querySelector('[data-testid="home-workbench"]')).toBeNull();
+    expect(document.querySelector("[data-opening]")).toBeNull();
   });
 
-  it("renders active note content before TipTap editor hydration", () => {
+  it("shows loading instead of readable markdown before the first editor frame", () => {
+    vi.useFakeTimers();
+
     act(() => {
       root.render(
         <AppEditorWorkspace
@@ -190,32 +179,33 @@ describe("AppEditorWorkspace content-first note opens", () => {
           activePath="new.md"
           editorBodyMarkdown="new staged body"
           editorContentTick={1}
+          openNotePaths={["old.md", "new.md"]}
         />,
       );
     });
 
     expect(
-      document.querySelector('[data-testid="readable-note-preview"]'),
-    ).toBeTruthy();
-    expect(document.querySelector('[data-testid="tiptap-editor"]')).toBeNull();
-    expect(document.body.textContent).toContain("new staged body");
-  });
+      document.querySelector('[data-testid="document-open-loading"]'),
+    ).toBeNull();
 
-  it("hydrates only the visible TipTap editor after the readable paint", async () => {
     act(() => {
-      root.render(<AppEditorWorkspace {...baseProps()} />);
+      vi.advanceTimersByTime(100);
     });
 
-    expect(editorPropsByPath.get("old.md")).toBeUndefined();
-    await flushEditorHydration();
-
-    expect(editorPropsByPath.get("old.md")?.mediaLoading).toBe("visible");
     expect(
-      document.querySelector('[data-editor-visibility="visible"]'),
+      document.querySelector('[data-testid="document-open-loading"]'),
     ).toBeTruthy();
+    expect(
+      document.querySelector('[data-testid="readable-note-preview"]'),
+    ).toBeNull();
+    expect(
+      document
+        .querySelector('[data-path="new.md"]')
+        ?.getAttribute("data-editor-visibility"),
+    ).toBe("staging");
   });
 
-  it("does not mount warm prepared notes as hidden TipTap editors", async () => {
+  it("does not mount warm prepared notes as hidden TipTap editors", () => {
     act(() => {
       root.render(
         <AppEditorWorkspace
@@ -247,52 +237,14 @@ describe("AppEditorWorkspace content-first note opens", () => {
         />,
       );
     });
-    await flushEditorHydration();
 
-    const editors = Array.from(
-      document.querySelectorAll('[data-testid="tiptap-editor"]'),
-    );
-    expect(editors.map((node) => node.getAttribute("data-path"))).toEqual([
-      "old.md",
-    ]);
     expect(editorPropsByPath.get("warm.md")).toBeUndefined();
     expect(editorPropsByPath.get(".classified/secret.md")).toBeUndefined();
     expect(document.body.textContent).not.toContain("warm");
     expect(document.body.textContent).not.toContain("classified secret body");
   });
 
-  it("does not mount deferred staging or warm editors when switching notes", async () => {
-    act(() => {
-      root.render(<AppEditorWorkspace {...baseProps()} />);
-    });
-    await flushEditorHydration();
-    expect(editorPropsByPath.get("old.md")?.mediaLoading).toBe("visible");
-
-    act(() => {
-      root.render(
-        <AppEditorWorkspace
-          {...baseProps()}
-          activePath="new.md"
-          editorBodyMarkdown="new"
-          editorContentTick={1}
-        />,
-      );
-    });
-
-    expect(
-      document.querySelector('[data-testid="readable-note-preview"]'),
-    ).toBeTruthy();
-    expect(editorPropsByPath.get("new.md")).toBeUndefined();
-    await flushEditorHydration();
-
-    expect(editorPropsByPath.get("old.md")).toBeUndefined();
-    expect(editorPropsByPath.get("new.md")?.mediaLoading).toBe("visible");
-    expect(
-      document.querySelectorAll('[data-testid="tiptap-editor"]'),
-    ).toHaveLength(1);
-  });
-
-  it("renders the active media tab instead of mounting editor surfaces", async () => {
+  it("renders the active media tab instead of mounting editor surfaces", () => {
     act(() => {
       root.render(
         <AppEditorWorkspace
@@ -322,14 +274,13 @@ describe("AppEditorWorkspace content-first note opens", () => {
         />,
       );
     });
-    await flushEditorHydration();
 
     expect(
       document.querySelector('[data-testid="media-workspace"]'),
     ).toBeTruthy();
     expect(document.querySelector('[data-testid="tiptap-editor"]')).toBeNull();
     expect(
-      document.querySelector('[data-testid="readable-note-preview"]'),
+      document.querySelector('[data-testid="document-open-loading"]'),
     ).toBeNull();
     expect(editorPropsByPath.size).toBe(0);
   });

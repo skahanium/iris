@@ -34,6 +34,8 @@ interface OpenNoteOptions {
 export interface PendingNoteOpen {
   bodyMarkdown: string;
   content: string;
+  editorHtmlDigest?: string;
+  editorHtmlStatus?: PreparedNoteOpen["editorHtmlStatus"];
   frontmatterYaml: string | null;
   isLocked: boolean;
   namespace: "normal" | "classified";
@@ -41,6 +43,8 @@ export interface PendingNoteOpen {
   openStartedAt?: number;
   openTraceRequest?: PrepareNoteOpenRequest;
   path: string;
+  preparedEditorHtml?: string;
+  preserveFragments?: PreparedNoteOpen["preserveFragments"];
   sequence: number;
   title: string;
 }
@@ -209,6 +213,8 @@ export function useTabManager(options: UseTabManagerOptions = {}) {
       return {
         bodyMarkdown,
         content,
+        editorHtmlDigest: preparedNote?.editorHtmlDigest,
+        editorHtmlStatus: preparedNote?.editorHtmlStatus,
         frontmatterYaml,
         isLocked,
         namespace: namespaceForPath(path),
@@ -216,6 +222,8 @@ export function useTabManager(options: UseTabManagerOptions = {}) {
         openStartedAt,
         openTraceRequest,
         path,
+        preparedEditorHtml: preparedNote?.preparedEditorHtml,
+        preserveFragments: preparedNote?.preserveFragments,
         sequence,
         title,
       };
@@ -272,6 +280,26 @@ export function useTabManager(options: UseTabManagerOptions = {}) {
           pending.openBudgetKind,
         );
       }
+    },
+    [],
+  );
+
+  const stagePendingNoteOpen = useCallback(
+    (
+      pending: PendingNoteOpen,
+      discardedPreviousPath: string | null,
+    ): Promise<void> => {
+      const previous = pendingNoteOpenCommitRef.current;
+      if (previous) previous.reject(createSupersededError());
+      const commit: PendingNoteOpenCommit = {
+        ...pending,
+        discardedPreviousPath,
+        reject: () => undefined,
+        resolve: () => undefined,
+      };
+      pendingNoteOpenCommitRef.current = commit;
+      setPendingNoteOpen(pending);
+      return Promise.resolve();
     },
     [],
   );
@@ -352,10 +380,16 @@ export function useTabManager(options: UseTabManagerOptions = {}) {
           sequence: seq,
           titleHint,
         });
-        applyCommittedNoteOpen(
-          pending,
-          discardedPrevious && current ? current : null,
+        const discardedPreviousPath =
+          discardedPrevious && current ? current : null;
+        const shouldStageOpen = !tabsRef.current.some(
+          (tab) => tab.path === path,
         );
+        if (shouldStageOpen) {
+          await stagePendingNoteOpen(pending, discardedPreviousPath);
+          return;
+        }
+        applyCommittedNoteOpen(pending, discardedPreviousPath);
       } catch (e) {
         if (openFileSeqRef.current !== seq || isSupersededError(e)) return;
         const msg = e instanceof Error ? e.message : String(e);
@@ -371,6 +405,7 @@ export function useTabManager(options: UseTabManagerOptions = {}) {
       onStatusChange,
       onVaultIndexBump,
       persistAndCacheTab,
+      stagePendingNoteOpen,
     ],
   );
 

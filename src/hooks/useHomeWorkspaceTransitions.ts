@@ -3,8 +3,6 @@ import { useCallback, useRef, useState } from "react";
 import {
   beginHomeOpenLoading,
   cancelHomeOpenTransitions,
-  clearHomeNewNoteLoading,
-  clearHomeOpenLoading,
   failHomeOpenLoading,
   type HomePendingOpen,
 } from "@/lib/home-open-transition";
@@ -31,7 +29,6 @@ interface UseHomeWorkspaceTransitionsOptions<OpenNoteOptions> {
 }
 
 export function useHomeWorkspaceTransitions<OpenNoteOptions>({
-  activePathRef,
   activateArtifact,
   activateTab,
   handleNewNote,
@@ -40,12 +37,20 @@ export function useHomeWorkspaceTransitions<OpenNoteOptions>({
   setHomeActive,
 }: UseHomeWorkspaceTransitionsOptions<OpenNoteOptions>) {
   const homeOpenSequenceRef = useRef(0);
-  const [pendingOpen, setPendingOpen] = useState<HomePendingOpen | null>(null);
+  const [pendingOpen, setPendingOpenState] = useState<HomePendingOpen | null>(
+    null,
+  );
+  const pendingOpenRef = useRef<HomePendingOpen | null>(null);
+
+  const setPendingOpen = useCallback((next: HomePendingOpen | null) => {
+    pendingOpenRef.current = next;
+    setPendingOpenState(next);
+  }, []);
 
   const showHome = useCallback(() => {
     cancelHomeOpenTransitions(homeOpenSequenceRef, setPendingOpen);
     setHomeActive(true);
-  }, [setHomeActive]);
+  }, [setHomeActive, setPendingOpen]);
 
   const openNoteLeavingHome = useCallback(
     (
@@ -53,47 +58,29 @@ export function useHomeWorkspaceTransitions<OpenNoteOptions>({
       titleHint?: string,
       options?: OpenNoteOptions,
     ): Promise<void> => {
-      const title = resolveNoteDisplayTitle({
-        path,
-        title: titleHint,
-      });
+      const title = resolveNoteDisplayTitle({ path, title: titleHint });
       const sequence = beginHomeOpenLoading({
         path,
         sequenceRef: homeOpenSequenceRef,
         setPendingOpen,
         title,
       });
-      const pending: HomePendingOpen = {
-        kind: "note",
+      const pending = pendingOpenRef.current ?? {
+        kind: "note" as const,
         path,
         sequence,
+        startedAt: Date.now(),
         title,
       };
+      setActiveArtifactId(null);
+      setHomeActive(false);
       return openNote(path, titleHint, options)
         .then(() => {
-          if (
-            clearHomeOpenLoading({
-              activePath: activePathRef.current,
-              path,
-              sequence,
-              sequenceRef: homeOpenSequenceRef,
-              setPendingOpen,
-            })
-          ) {
-            setActiveArtifactId(null);
-            setHomeActive(false);
-            return;
-          }
-
-          failHomeOpenLoading({
-            message: "无法打开笔记",
-            pending,
-            sequence,
-            sequenceRef: homeOpenSequenceRef,
-            setPendingOpen,
-          });
+          if (homeOpenSequenceRef.current !== sequence) return;
+          setActiveArtifactId(null);
         })
         .catch((error: unknown) => {
+          setHomeActive(true);
           failHomeOpenLoading({
             message: error instanceof Error ? error.message : "无法打开笔记",
             pending,
@@ -103,7 +90,25 @@ export function useHomeWorkspaceTransitions<OpenNoteOptions>({
           });
         });
     },
-    [activePathRef, openNote, setActiveArtifactId, setHomeActive],
+    [openNote, setActiveArtifactId, setHomeActive, setPendingOpen],
+  );
+
+  const clearPendingOpenFromWorkspace = useCallback(
+    (pending: HomePendingOpen): boolean => {
+      const current = pendingOpenRef.current;
+      if (
+        homeOpenSequenceRef.current !== pending.sequence ||
+        !current ||
+        current.kind !== pending.kind ||
+        current.path !== pending.path ||
+        current.sequence !== pending.sequence
+      ) {
+        return false;
+      }
+      setPendingOpen(null);
+      return true;
+    },
+    [setPendingOpen],
   );
 
   const handleActivateWorkspaceTab = useCallback(
@@ -117,11 +122,16 @@ export function useHomeWorkspaceTransitions<OpenNoteOptions>({
       setActiveArtifactId(null);
       void activateTab(path);
     },
-    [activateArtifact, activateTab, setActiveArtifactId, setHomeActive],
+    [
+      activateArtifact,
+      activateTab,
+      setActiveArtifactId,
+      setHomeActive,
+      setPendingOpen,
+    ],
   );
 
   const handleNewNoteLeavingHome = useCallback((): Promise<void> => {
-    const previousPath = activePathRef.current;
     const title = "新建笔记";
     const sequence = beginHomeOpenLoading({
       kind: "new-note",
@@ -130,38 +140,22 @@ export function useHomeWorkspaceTransitions<OpenNoteOptions>({
       setPendingOpen,
       title,
     });
-    const pending: HomePendingOpen = {
-      kind: "new-note",
+    const pending = pendingOpenRef.current ?? {
+      kind: "new-note" as const,
       path: null,
       sequence,
+      startedAt: Date.now(),
       title,
     };
     setActiveArtifactId(null);
+    setHomeActive(false);
     return handleNewNote()
       .then(() => {
-        if (
-          clearHomeNewNoteLoading({
-            activePath: activePathRef.current,
-            previousPath,
-            sequence,
-            sequenceRef: homeOpenSequenceRef,
-            setPendingOpen,
-          })
-        ) {
-          setActiveArtifactId(null);
-          setHomeActive(false);
-          return;
-        }
-
-        failHomeOpenLoading({
-          message: "新建笔记失败",
-          pending,
-          sequence,
-          sequenceRef: homeOpenSequenceRef,
-          setPendingOpen,
-        });
+        if (homeOpenSequenceRef.current !== sequence) return;
+        setActiveArtifactId(null);
       })
       .catch((error: unknown) => {
+        setHomeActive(true);
         failHomeOpenLoading({
           message: error instanceof Error ? error.message : "新建笔记失败",
           pending,
@@ -170,9 +164,10 @@ export function useHomeWorkspaceTransitions<OpenNoteOptions>({
           setPendingOpen,
         });
       });
-  }, [activePathRef, handleNewNote, setActiveArtifactId, setHomeActive]);
+  }, [handleNewNote, setActiveArtifactId, setHomeActive, setPendingOpen]);
 
   return {
+    clearPendingOpenFromWorkspace,
     handleActivateWorkspaceTab,
     handleNewNoteLeavingHome,
     openNoteLeavingHome,

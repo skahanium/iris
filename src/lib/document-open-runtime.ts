@@ -1,8 +1,15 @@
 import { isClassifiedVaultPath } from "@/lib/classified-path";
 import { displayTitleFromMarkdown } from "@/lib/document-title";
+import {
+  editorHtmlDigest,
+  getCachedEditorHtml,
+  setCachedEditorHtml,
+} from "@/lib/editor-html-cache";
+import { ingestMarkdownForEditorAsync } from "@/lib/editor-ingest-async";
 import { fileRead } from "@/lib/ipc";
 import { parseNoteForEditor } from "@/lib/markdown";
 import { pathStem, resolveNoteDisplayTitle } from "@/lib/note-display";
+import type { MarkdownSyntaxFragment } from "@/lib/markdown-contract/types";
 
 interface NoteOpenSignature {
   isLocked?: boolean;
@@ -11,6 +18,12 @@ interface NoteOpenSignature {
 
 export type NoteOpenNamespace = "normal" | "classified";
 export type NoteOpenBudgetKind = "hot" | "warm" | "none";
+export type PreparedEditorHtmlStatus =
+  | "cache-hit"
+  | "worker"
+  | "sync"
+  | "pending"
+  | "failed";
 type NoteOpenTracePhase =
   | "cache-hit"
   | "prepare-start"
@@ -31,10 +44,14 @@ export interface PrepareNoteOpenRequest {
 export interface PreparedNoteOpen {
   bodyMarkdown: string;
   content: string;
+  editorHtmlDigest?: string;
+  editorHtmlStatus?: PreparedEditorHtmlStatus;
   frontmatterYaml: string | null;
   isLocked: boolean;
   namespace: NoteOpenNamespace;
   path: string;
+  preparedEditorHtml?: string;
+  preserveFragments?: MarkdownSyntaxFragment[];
   signature: string;
   title: string;
   traceKey: string;
@@ -206,6 +223,43 @@ function budgetForTrace(
   return { budgetKind: "none", budgetMs: null };
 }
 
+async function prepareEditorHtml(
+  path: string,
+  namespace: NoteOpenNamespace,
+  bodyMarkdown: string,
+): Promise<{
+  digest: string;
+  html?: string;
+  preserveFragments?: MarkdownSyntaxFragment[];
+  status: PreparedEditorHtmlStatus;
+}> {
+  const digest = editorHtmlDigest(bodyMarkdown);
+  if (!bodyMarkdown.trim()) {
+    return {
+      digest,
+      html: "<p></p>",
+      preserveFragments: [],
+      status: "sync",
+    };
+  }
+  const cached = getCachedEditorHtml(path, digest, namespace);
+  if (cached) {
+    return { digest, html: cached, status: "cache-hit" };
+  }
+  try {
+    const result = await ingestMarkdownForEditorAsync({ bodyMarkdown });
+    setCachedEditorHtml(path, result.tipTapHtml, digest, namespace);
+    return {
+      digest,
+      html: result.tipTapHtml,
+      preserveFragments: result.preserveFragments,
+      status: bodyMarkdown.length > 50 * 1024 ? "worker" : "sync",
+    };
+  } catch {
+    return { digest, status: "failed" };
+  }
+}
+
 function emitTrace(
   request: PrepareNoteOpenRequest,
   phase: NoteOpenTracePhase,
@@ -324,7 +378,7 @@ export function prepareNoteOpen(
   const promise = fileRead(request.path, {
     allowClassified: request.allowClassified === true,
   })
-    .then(({ content, isLocked }) => {
+    .then(async ({ content, isLocked }) => {
       emitTrace(request, "file-read", startedAt);
       const parsed = parseNoteForEditor(content, pathStem(request.path));
       const fromMarkdown = displayTitleFromMarkdown(content, "");
@@ -333,14 +387,23 @@ export function prepareNoteOpen(
         title: fromMarkdown || request.titleHint?.trim() || parsed.title,
         markdown: content,
       });
+      const preparedHtml = await prepareEditorHtml(
+        request.path,
+        namespace,
+        parsed.bodyMd,
+      );
       emitTrace(request, "parse-ingest", startedAt, "ok", "none");
       const prepared: PreparedNoteOpen = {
         bodyMarkdown: parsed.bodyMd,
         content,
+        editorHtmlDigest: preparedHtml.digest,
+        editorHtmlStatus: preparedHtml.status,
         frontmatterYaml: parsed.yaml,
         isLocked,
         namespace,
         path: request.path,
+        preparedEditorHtml: preparedHtml.html,
+        preserveFragments: preparedHtml.preserveFragments,
         signature,
         title,
         traceKey: anonymousKey(request),

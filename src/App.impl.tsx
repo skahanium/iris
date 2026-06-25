@@ -154,7 +154,7 @@ function App() {
   });
   const tabsRef = useRef(tabs);
   tabsRef.current = tabs;
-
+  const openNotePaths = useMemo(() => tabs.map((tab) => tab.path), [tabs]);
   const {
     activateArtifact,
     activeArtifactTab,
@@ -211,6 +211,7 @@ function App() {
   }, [classifiedOpen, refreshClassifiedStatus]);
 
   const {
+    clearPendingOpenFromWorkspace,
     handleActivateWorkspaceTab: handleActivateNoteOrArtifactTab,
     handleNewNoteLeavingHome,
     invalidatePreparedNote,
@@ -655,10 +656,8 @@ function App() {
     onAction: handleAppShortcut,
   });
 
-  const activeDocumentTitle = useMemo(() => {
-    if (!activePath) return null;
-    return displayTitleForChrome(activePath, noteTitle);
-  }, [activePath, noteTitle]);
+  const activeDocumentTitle =
+    activePath && displayTitleForChrome(activePath, noteTitle);
   const assistantNotePathWithoutMedia =
     activeArtifactTab || activeNoteIsClassified ? null : activePath;
   const getLiveMarkdownForNoteSurface = useCallback(
@@ -854,6 +853,7 @@ function App() {
             outlineOpen={outlineOpen}
             pendingOpen={pendingOpen}
             pendingNoteOpen={pendingNoteOpen}
+            onPendingOpenSettled={clearPendingOpenFromWorkspace}
             commitPendingNoteOpen={commitPendingNoteOpen}
             runEditorActionById={runEditorActionById}
             setFindReplaceMode={setFindReplaceMode}
@@ -864,6 +864,7 @@ function App() {
             vaultIndexEpoch={vaultIndexEpoch}
             vaultPath={vaultPath}
             warmPreparedNotes={warmPreparedNotes}
+            openNotePaths={openNotePaths}
             zen={zen}
           />
         }

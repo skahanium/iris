@@ -9,6 +9,7 @@ export interface HomePendingOpen {
   kind: HomePendingOpenKind;
   path: string | null;
   sequence: number;
+  startedAt: number;
   title: string;
 }
 
@@ -56,6 +57,7 @@ export function beginHomeOpenLoading({
     kind,
     path,
     sequence: sequenceRef.current,
+    startedAt: Date.now(),
     title,
   });
   return sequenceRef.current;

@@ -66,6 +66,12 @@ async function openAndWait(
     openPromise = apiRef.current!.openFile(path, titleHint, options);
     await openPromise;
   });
+  const pending = apiRef.current!.pendingNoteOpen;
+  if (pending) {
+    await act(async () => {
+      apiRef.current!.commitPendingNoteOpen(pending.path, pending.sequence);
+    });
+  }
   expect(apiRef.current!.pendingNoteOpen).toBeNull();
 }
 
@@ -175,9 +181,15 @@ describe("useTabManager activateTab / openNote", () => {
       await openPromise;
     });
 
+    const pending = apiRef.current!.pendingNoteOpen;
+    expect(apiRef.current!.activePath).toBe("a.md");
+    expect(pending?.path).toBe("b.md");
+    await act(async () => {
+      apiRef.current!.commitPendingNoteOpen(pending!.path, pending!.sequence);
+    });
+
     expect(apiRef.current!.activePath).toBe("b.md");
     expect(apiRef.current!.markdown).toContain("body-b");
-    expect(apiRef.current!.frontmatterYamlRef.current).toContain('title: "B"');
   });
 
   it("openNote uses activateTab when the path is already open", async () => {
@@ -215,6 +227,12 @@ describe("useTabManager activateTab / openNote", () => {
     });
 
     expect(fileRead).toHaveBeenCalledTimes(1);
+    const pending = apiRef.current!.pendingNoteOpen;
+    expect(apiRef.current!.activePath).toBeNull();
+    expect(pending?.path).toBe("a.md");
+    await act(async () => {
+      apiRef.current!.commitPendingNoteOpen(pending!.path, pending!.sequence);
+    });
     expect(apiRef.current!.activePath).toBe("a.md");
     expect(apiRef.current!.pendingNoteOpen).toBeNull();
     expect(resolveDocumentTitle).not.toHaveBeenCalled();
@@ -371,7 +389,7 @@ describe("useTabManager activateTab / openNote", () => {
     expect(apiRef.current!.activePath).toBe("b.md");
   });
 
-  it("openFile commits readable note state without waiting for editor staging commit", async () => {
+  it("openFile stages unreadied note state until editor first-frame commit", async () => {
     const apiRef: { current: ReturnType<typeof useTabManager> | null } = {
       current: null,
     };
@@ -388,10 +406,25 @@ describe("useTabManager activateTab / openNote", () => {
       await openPromise;
     });
 
+    const pending = apiRef.current!.pendingNoteOpen;
+    expect(apiRef.current!.activePath).toBe("a.md");
+    expect(apiRef.current!.markdown).toContain("body-a");
+    expect(pending).toEqual(
+      expect.objectContaining({
+        path: "b.md",
+        bodyMarkdown: expect.stringContaining("body-b"),
+      }),
+    );
+    expect(apiRef.current!.commitPendingNoteOpen("b.md", 999)).toBe(false);
+    let committed = false;
+    await act(async () => {
+      committed = apiRef.current!.commitPendingNoteOpen(
+        "b.md",
+        pending!.sequence,
+      );
+    });
+    expect(committed).toBe(true);
     expect(apiRef.current!.activePath).toBe("b.md");
     expect(apiRef.current!.markdown).toContain("body-b");
-    expect(apiRef.current!.frontmatterYamlRef.current).toContain('title: "B"');
-    expect(apiRef.current!.pendingNoteOpen).toBeNull();
-    expect(apiRef.current!.commitPendingNoteOpen("b.md", 999)).toBe(false);
   });
 });

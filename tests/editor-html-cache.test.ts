@@ -126,9 +126,9 @@ describe("editor-html-cache", () => {
     const source = readSource("src/components/layout/AppEditorWorkspace.tsx");
 
     expect(source).toContain("EDITOR_HTML_CACHE_FORMAT_VERSION");
-    expect(source).toContain(
-      'key={snapshot.path + ":" + EDITOR_HTML_CACHE_FORMAT_VERSION}',
-    );
+    expect(source).toContain("function surfaceIdentity");
+    expect(source).toContain("editorHtmlDigest(snapshot.editorBodyMarkdown)");
+    expect(source).toContain("key={record.identityKey}");
   });
 });
 

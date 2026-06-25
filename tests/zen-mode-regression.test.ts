@@ -10,7 +10,7 @@ describe("zen mode regression contracts", () => {
     const workspace = read("src/components/layout/AppEditorWorkspace.tsx");
 
     expect(workspace).toContain(
-      'outlineOpen && !zen && activePath && "iris-editor-outline-open"',
+      'outlineOpen && !zen && effectiveNotePath && "iris-editor-outline-open"',
     );
   });
 

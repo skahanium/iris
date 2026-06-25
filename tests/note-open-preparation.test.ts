@@ -37,7 +37,7 @@ describe("note open preparation", () => {
     setNoteOpenTraceSink(null);
   });
 
-  it("prepares note content once for a stable file signature without TipTap HTML", async () => {
+  it("prepares note content and editor HTML once for a stable file signature", async () => {
     fileRead.mockResolvedValue({
       content: '---\ntitle: "Prepared"\n---\n\nBody',
       isLocked: false,
@@ -56,12 +56,13 @@ describe("note open preparation", () => {
     expect(preparedAgain).toBe(prepared);
     expect(prepared.title).toBe("Prepared");
     expect(prepared.bodyMarkdown.trim()).toBe("Body");
+    expect(prepared.preparedEditorHtml).toContain("Body");
     expect(
       getCachedEditorHtml("a.md", editorHtmlDigest(prepared.bodyMarkdown)),
-    ).toBeUndefined();
+    ).toBe(prepared.preparedEditorHtml);
   });
 
-  it("prepares readable note data without generating TipTap HTML on the hot path", async () => {
+  it("prepares readable note data with reusable TipTap HTML", async () => {
     fileRead.mockResolvedValue({
       content: "# Prepared\n\nReadable body",
       isLocked: false,
@@ -73,12 +74,13 @@ describe("note open preparation", () => {
     });
 
     expect(prepared.bodyMarkdown).toContain("Readable body");
+    expect(prepared.preparedEditorHtml).toContain("Readable body");
     expect(
       getCachedEditorHtml(
         "readable.md",
         editorHtmlDigest(prepared.bodyMarkdown),
       ),
-    ).toBeUndefined();
+    ).toBe(prepared.preparedEditorHtml);
   });
 
   it("coalesces concurrent preparations for the same file signature", async () => {
@@ -189,7 +191,7 @@ describe("note open preparation", () => {
     ).toBe(prepared);
   });
 
-  it("does not generate classified prepared TipTap HTML in any namespace", async () => {
+  it("generates classified prepared TipTap HTML only in the classified namespace", async () => {
     fileRead.mockResolvedValue({
       content: "# Secret\n\nClassified body",
       isLocked: true,
@@ -207,7 +209,7 @@ describe("note open preparation", () => {
     ).toBeUndefined();
     expect(
       getCachedEditorHtml(".classified/secret.md", digest, "classified"),
-    ).toBeUndefined();
+    ).toBe(prepared.preparedEditorHtml);
   });
 
   it("can clear classified preparation without dropping normal entries", async () => {
@@ -401,7 +403,7 @@ describe("note open preparation", () => {
     expect(source).not.toContain("fileWrite");
     expect(source).not.toContain("versionSave");
     expect(source).not.toContain("llm_");
-    expect(source).not.toContain("ingestMarkdownForEditor");
-    expect(source).not.toContain("setCachedEditorHtml");
+    expect(source).not.toContain("fileWrite");
+    expect(source).not.toContain("versionSave");
   });
 });
