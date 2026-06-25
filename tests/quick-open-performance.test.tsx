@@ -90,6 +90,45 @@ describe("QuickOpen note preparation", () => {
     expect(onClose).toHaveBeenCalledOnce();
   });
 
+  it("limits speculative note preparation to the first few candidates", async () => {
+    workspaceList.mockResolvedValue(
+      Array.from({ length: 8 }, (_, index) => ({
+        attachmentRole: "formal",
+        kind: "note",
+        mediaKind: null,
+        mimeType: null,
+        path: `notes/${index}.md`,
+        sizeBytes: 12,
+        title: `Note ${index}`,
+        updatedAt: "2026-06-24T00:00:00Z",
+        isLocked: false,
+      })),
+    );
+    const onPrepare = vi.fn();
+
+    await act(async () => {
+      root.render(
+        <QuickOpen
+          open
+          onClose={vi.fn()}
+          onPrepare={onPrepare}
+          onSelect={vi.fn()}
+        />,
+      );
+    });
+
+    await vi.waitFor(() => {
+      expect(document.body.textContent).toContain("Note 0");
+    });
+
+    expect(onPrepare).toHaveBeenCalledTimes(3);
+    expect(onPrepare.mock.calls.map(([file]) => file.path)).toEqual([
+      "notes/0.md",
+      "notes/1.md",
+      "notes/2.md",
+    ]);
+  });
+
   it("opens media results without note preparation", async () => {
     workspaceList.mockResolvedValue([
       {

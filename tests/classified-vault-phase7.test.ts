@@ -112,9 +112,7 @@ describe("classified vault phase 7", () => {
     expect(app).toContain("listenClassifiedFileTaken");
     expect(ipc).toContain("classified:file_taken");
     expect(overlays).toContain("ClassifiedPanel");
-    expect(workspace).toContain(
-      "locked={isVisible ? snapshot.activeFileLocked : true}",
-    );
+    expect(workspace).toContain("locked={snapshot.activeFileLocked}");
     expect(workspace).toContain("setLocked={");
     expect(workspace).toContain("!snapshot.activeNoteIsClassified");
   });

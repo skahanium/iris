@@ -223,49 +223,24 @@ export function useTabManager(options: UseTabManagerOptions = {}) {
     [],
   );
 
-  const stagePendingNoteOpen = useCallback(
-    (
-      pending: PendingNoteOpen,
-      discardedPreviousPath: string | null,
-    ): Promise<void> => {
-      cancelPendingNoteOpen();
-      return new Promise<void>((resolve, reject) => {
-        pendingNoteOpenCommitRef.current = {
-          ...pending,
-          discardedPreviousPath,
-          reject,
-          resolve,
-        };
-        setPendingNoteOpen(pending);
-      });
-    },
-    [cancelPendingNoteOpen],
-  );
-
-  const commitPendingNoteOpen = useCallback(
-    (path: string, sequence: number): boolean => {
-      const pending = pendingNoteOpenCommitRef.current;
-      if (!pending || pending.path !== path || pending.sequence !== sequence) {
-        return false;
-      }
-
-      pendingNoteOpenCommitRef.current = null;
-      tabLockCacheRef.current.set(path, pending.isLocked);
-      tabMarkdownCacheRef.current.set(path, pending.content);
+  const applyCommittedNoteOpen = useCallback(
+    (pending: PendingNoteOpen, discardedPreviousPath: string | null) => {
+      tabLockCacheRef.current.set(pending.path, pending.isLocked);
+      tabMarkdownCacheRef.current.set(pending.path, pending.content);
       frontmatterYamlRef.current = pending.frontmatterYaml;
-      activePathRef.current = path;
+      activePathRef.current = pending.path;
       markdownRef.current = pending.content;
       setActiveFileLocked(pending.isLocked);
-      setActivePath(path);
+      setActivePath(pending.path);
       setMarkdownState(pending.content);
       setEditorContentTick((tick) => tick + 1);
       setTabs((prev) => {
-        const withoutDiscarded = pending.discardedPreviousPath
-          ? prev.filter((tab) => tab.path !== pending.discardedPreviousPath)
+        const withoutDiscarded = discardedPreviousPath
+          ? prev.filter((tab) => tab.path !== discardedPreviousPath)
           : prev;
-        if (withoutDiscarded.some((tab) => tab.path === path)) {
+        if (withoutDiscarded.some((tab) => tab.path === pending.path)) {
           return withoutDiscarded.map((tab) =>
-            tab.path === path
+            tab.path === pending.path
               ? {
                   ...tab,
                   dirty: false,
@@ -280,7 +255,7 @@ export function useTabManager(options: UseTabManagerOptions = {}) {
           {
             dirty: false,
             locked: pending.isLocked,
-            path,
+            path: pending.path,
             title: pending.title,
           },
         ];
@@ -297,10 +272,23 @@ export function useTabManager(options: UseTabManagerOptions = {}) {
           pending.openBudgetKind,
         );
       }
+    },
+    [],
+  );
+
+  const commitPendingNoteOpen = useCallback(
+    (path: string, sequence: number): boolean => {
+      const pending = pendingNoteOpenCommitRef.current;
+      if (!pending || pending.path !== path || pending.sequence !== sequence) {
+        return false;
+      }
+
+      pendingNoteOpenCommitRef.current = null;
+      applyCommittedNoteOpen(pending, pending.discardedPreviousPath);
       pending.resolve();
       return true;
     },
-    [],
+    [applyCommittedNoteOpen],
   );
 
   const openFile = useCallback(
@@ -364,7 +352,7 @@ export function useTabManager(options: UseTabManagerOptions = {}) {
           sequence: seq,
           titleHint,
         });
-        await stagePendingNoteOpen(
+        applyCommittedNoteOpen(
           pending,
           discardedPrevious && current ? current : null,
         );
@@ -376,13 +364,13 @@ export function useTabManager(options: UseTabManagerOptions = {}) {
       }
     },
     [
+      applyCommittedNoteOpen,
       buildPendingNoteOpen,
       cancelPendingNoteOpen,
       maybeDiscardOnLeave,
       onStatusChange,
       onVaultIndexBump,
       persistAndCacheTab,
-      stagePendingNoteOpen,
     ],
   );
 
@@ -420,7 +408,7 @@ export function useTabManager(options: UseTabManagerOptions = {}) {
           sequence: seq,
           titleHint: cachedTitle,
         });
-        await stagePendingNoteOpen(pending, null);
+        applyCommittedNoteOpen(pending, null);
         return;
       }
 
@@ -432,11 +420,11 @@ export function useTabManager(options: UseTabManagerOptions = {}) {
       });
     },
     [
+      applyCommittedNoteOpen,
       buildPendingNoteOpen,
       cancelPendingNoteOpen,
       openFile,
       persistAndCacheTab,
-      stagePendingNoteOpen,
     ],
   );
 
@@ -541,18 +529,18 @@ export function useTabManager(options: UseTabManagerOptions = {}) {
           sequence: seq,
           titleHint: nextTabs.find((tab) => tab.path === switchTo)?.title,
         });
-        await stagePendingNoteOpen(pending, path);
+        applyCommittedNoteOpen(pending, path);
         return;
       }
 
       await openFile(switchTo, undefined, { skipDiscardPrevious: true });
     },
     [
+      applyCommittedNoteOpen,
       buildPendingNoteOpen,
       cancelPendingNoteOpen,
       clearEditorState,
       openFile,
-      stagePendingNoteOpen,
     ],
   );
 

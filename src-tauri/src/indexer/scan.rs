@@ -1,7 +1,8 @@
+use std::collections::HashSet;
 use std::fs;
 use std::path::Path;
 
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use rusqlite::{params_from_iter, Connection};
 use walkdir::WalkDir;
 
@@ -15,7 +16,7 @@ use crate::app::AppState;
 use crate::embedding::store::store_chunk_embeddings;
 use crate::error::AppResult;
 use crate::storage::paths::{
-    is_user_note_path, read_file_lossy, relative_path, resolve_vault_path,
+    has_reserved_path_root, is_user_note_path, read_file_lossy, relative_path, resolve_vault_path,
 };
 use std::sync::Arc;
 
@@ -35,6 +36,119 @@ fn should_walk_vault_entry(vault: &Path, entry_path: &Path) -> bool {
             })
         })
     })
+}
+
+fn workspace_media_kind_for_extension(ext: &str) -> Option<(&'static str, &'static str)> {
+    match ext.to_ascii_lowercase().as_str() {
+        "avif" => Some(("image", "image/avif")),
+        "gif" => Some(("image", "image/gif")),
+        "jpg" | "jpeg" => Some(("image", "image/jpeg")),
+        "m4v" => Some(("video", "video/x-m4v")),
+        "mov" => Some(("video", "video/quicktime")),
+        "mp4" => Some(("video", "video/mp4")),
+        "pdf" => Some(("pdf", "application/pdf")),
+        "png" => Some(("image", "image/png")),
+        "webm" => Some(("video", "video/webm")),
+        "webp" => Some(("image", "image/webp")),
+        _ => None,
+    }
+}
+
+pub(crate) fn workspace_media_kind_for_path(path: &Path) -> Option<(&'static str, &'static str)> {
+    let ext = path.extension()?.to_str()?;
+    workspace_media_kind_for_extension(ext)
+}
+
+fn title_from_workspace_path(relative: &str) -> String {
+    let name = relative.rsplit('/').next().unwrap_or(relative);
+    name.rsplit_once('.')
+        .map(|(stem, _)| stem)
+        .unwrap_or(name)
+        .to_string()
+}
+
+pub fn remove_workspace_media_index(conn: &Connection, path: &str) -> AppResult<()> {
+    conn.execute("DELETE FROM workspace_media WHERE path = ?1", [path])?;
+    Ok(())
+}
+
+pub fn index_workspace_media_file(
+    conn: &Connection,
+    vault: &Path,
+    absolute: &Path,
+) -> AppResult<Option<String>> {
+    let Some((media_kind, mime_type)) = workspace_media_kind_for_path(absolute) else {
+        return Ok(None);
+    };
+    let rel = relative_path(vault, absolute)?;
+    if has_reserved_path_root(&rel) {
+        return Ok(None);
+    }
+    let metadata = std::fs::metadata(absolute)?;
+    if !metadata.is_file() {
+        return Ok(None);
+    }
+    let updated_at = metadata
+        .modified()
+        .map(DateTime::<Utc>::from)
+        .unwrap_or_else(|_| Utc::now())
+        .to_rfc3339();
+    conn.execute(
+        "INSERT INTO workspace_media
+            (path, title, media_kind, mime_type, size_bytes, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+         ON CONFLICT(path) DO UPDATE SET
+            title = excluded.title,
+            media_kind = excluded.media_kind,
+            mime_type = excluded.mime_type,
+            size_bytes = excluded.size_bytes,
+            updated_at = excluded.updated_at",
+        rusqlite::params![
+            rel,
+            title_from_workspace_path(&rel),
+            media_kind,
+            mime_type,
+            metadata.len() as i64,
+            updated_at,
+        ],
+    )?;
+    Ok(Some(rel))
+}
+
+pub fn index_workspace_media(conn: &Connection, vault: &Path) -> AppResult<usize> {
+    if !vault.exists() {
+        conn.execute("DELETE FROM workspace_media", [])?;
+        return Ok(0);
+    }
+
+    let mut seen = HashSet::new();
+    for entry in WalkDir::new(vault)
+        .follow_links(false)
+        .into_iter()
+        .filter_entry(|e| should_walk_vault_entry(vault, e.path()))
+        .filter_map(Result::ok)
+    {
+        if !entry.file_type().is_file() {
+            continue;
+        }
+        if workspace_media_kind_for_path(entry.path()).is_none() {
+            continue;
+        }
+        if let Some(rel) = index_workspace_media_file(conn, vault, entry.path())? {
+            seen.insert(rel);
+        }
+    }
+
+    if seen.is_empty() {
+        conn.execute("DELETE FROM workspace_media", [])?;
+    } else {
+        let placeholders = vec!["?"; seen.len()].join(",");
+        let sql = format!("DELETE FROM workspace_media WHERE path NOT IN ({placeholders})");
+        let mut values = seen.into_iter().collect::<Vec<_>>();
+        values.sort();
+        conn.execute(&sql, params_from_iter(values.iter()))?;
+    }
+    Ok(conn.changes() as usize)
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -457,6 +571,7 @@ pub fn index_vault_incremental(
         }
     }
     let _ = prune_stale_file_indexes(conn, vault)?;
+    let _ = index_workspace_media(conn, vault)?;
     Ok(entries)
 }
 

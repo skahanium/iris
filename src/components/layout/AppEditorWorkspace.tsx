@@ -33,8 +33,6 @@ interface EditorMenuPort {
   close: () => void;
 }
 
-type EditorSurfaceVisibility = "visible" | "staging" | "warm";
-
 interface EditorSurfaceSnapshot {
   activeFileLocked: boolean;
   activeNoteIsClassified: boolean;
@@ -43,7 +41,6 @@ interface EditorSurfaceSnapshot {
   editorContentTick: number;
   editorTitleSlot: ReactNode;
   path: string;
-  pendingSequence?: number;
 }
 
 interface AppEditorWorkspaceProps {
@@ -130,8 +127,6 @@ export function AppEditorWorkspace({
   onPrepareNotePath,
   outlineOpen,
   pendingOpen,
-  pendingNoteOpen,
-  commitPendingNoteOpen,
   runEditorActionById,
   setFindReplaceMode,
   setFindReplaceOpen,
@@ -140,7 +135,6 @@ export function AppEditorWorkspace({
   onVaultRefresh,
   vaultIndexEpoch,
   vaultPath,
-  warmPreparedNotes,
   zen,
 }: AppEditorWorkspaceProps) {
   const { recentNotes, refreshRecent } = useHomeRecentNotes({
@@ -174,76 +168,27 @@ export function AppEditorWorkspace({
     homeActive,
   ]);
 
-  const [visibleEditorSurface, setVisibleEditorSurface] =
-    useState<EditorSurfaceSnapshot | null>(currentEditorSurface);
-  const visibleEditorPathRef = useRef(visibleEditorSurface?.path ?? null);
-  visibleEditorPathRef.current = visibleEditorSurface?.path ?? null;
+  const visibleSurface = currentEditorSurface;
+  const visibleEditorPathRef = useRef(visibleSurface?.path ?? null);
+  visibleEditorPathRef.current = visibleSurface?.path ?? null;
+  const surfaceHydrationKey = visibleSurface
+    ? visibleSurface.path + "\0" + visibleSurface.editorContentTick
+    : null;
+  const [hydratedSurfaceKey, setHydratedSurfaceKey] = useState<string | null>(
+    null,
+  );
 
   useEffect(() => {
-    if (!currentEditorSurface) {
-      setVisibleEditorSurface(null);
-      return;
-    }
-    setVisibleEditorSurface((previous) => {
-      if (!previous || previous.path === currentEditorSurface.path) {
-        return currentEditorSurface;
-      }
-      return previous;
-    });
-  }, [currentEditorSurface]);
+    setHydratedSurfaceKey(null);
+    if (!surfaceHydrationKey) return;
+    const timer = window.setTimeout(() => {
+      setHydratedSurfaceKey(surfaceHydrationKey);
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [surfaceHydrationKey]);
 
-  const visibleSurface = visibleEditorSurface ?? currentEditorSurface;
-  const pendingEditorSurface = useMemo<EditorSurfaceSnapshot | null>(() => {
-    if (!pendingNoteOpen || activeArtifactTab || activeMediaTab) return null;
-    return {
-      activeFileLocked: pendingNoteOpen.isLocked,
-      activeNoteIsClassified: pendingNoteOpen.namespace === "classified",
-      cacheNamespace: pendingNoteOpen.namespace,
-      editorBodyMarkdown: pendingNoteOpen.bodyMarkdown,
-      editorContentTick: 0,
-      editorTitleSlot: null,
-      path: pendingNoteOpen.path,
-      pendingSequence: pendingNoteOpen.sequence,
-    };
-  }, [activeArtifactTab, activeMediaTab, pendingNoteOpen]);
-
-  const fallbackStagingSurface =
-    currentEditorSurface &&
-    visibleSurface &&
-    currentEditorSurface.path !== visibleSurface.path
-      ? currentEditorSurface
-      : null;
-  const stagingSurface =
-    pendingEditorSurface && pendingEditorSurface.path !== visibleSurface?.path
-      ? pendingEditorSurface
-      : fallbackStagingSurface;
-
-  const warmSurfaces = useMemo<EditorSurfaceSnapshot[]>(() => {
-    const blockedPaths = new Set(
-      [visibleSurface?.path, stagingSurface?.path].filter(
-        (path): path is string => Boolean(path),
-      ),
-    );
-    const allowClassifiedWarm = visibleSurface?.activeNoteIsClassified === true;
-    return (warmPreparedNotes ?? [])
-      .filter((note) => !blockedPaths.has(note.path))
-      .filter((note) => note.namespace !== "classified" || allowClassifiedWarm)
-      .slice(0, 2)
-      .map((note) => ({
-        activeFileLocked: note.isLocked,
-        activeNoteIsClassified: note.namespace === "classified",
-        cacheNamespace: note.namespace,
-        editorBodyMarkdown: note.bodyMarkdown,
-        editorContentTick: 0,
-        editorTitleSlot: null,
-        path: note.path,
-      }));
-  }, [
-    stagingSurface?.path,
-    visibleSurface?.activeNoteIsClassified,
-    visibleSurface?.path,
-    warmPreparedNotes,
-  ]);
+  const visibleEditorHydrated =
+    surfaceHydrationKey !== null && hydratedSurfaceKey === surfaceHydrationKey;
 
   const handleVisibleEditorReady = useCallback(
     (path: string, editor: Editor | null) => {
@@ -253,35 +198,13 @@ export function AppEditorWorkspace({
     [handleEditorReady],
   );
 
-  const handleStagingEditorReady = useCallback(
-    (snapshot: EditorSurfaceSnapshot, editor: Editor | null) => {
-      if (!editor) return;
-      if (snapshot.pendingSequence !== undefined) {
-        if (!commitPendingNoteOpen(snapshot.path, snapshot.pendingSequence)) {
-          return;
-        }
-      } else if (activePath !== snapshot.path) {
-        return;
-      }
-      setVisibleEditorSurface(snapshot);
-      handleEditorReady(editor);
-    },
-    [activePath, commitPendingNoteOpen, handleEditorReady],
-  );
-
   const renderEditorSurface = useCallback(
-    (snapshot: EditorSurfaceSnapshot, visibility: EditorSurfaceVisibility) => {
-      const isVisible = visibility === "visible";
+    (snapshot: EditorSurfaceSnapshot) => {
       return (
         <div
           key={snapshot.path}
-          data-editor-visibility={visibility}
-          aria-hidden={isVisible ? undefined : true}
-          className={cn(
-            isVisible
-              ? "flex min-h-0 flex-1 flex-col"
-              : "pointer-events-none absolute inset-0 min-h-0 overflow-hidden opacity-0",
-          )}
+          data-editor-visibility="visible"
+          className="flex min-h-0 flex-1 flex-col"
         >
           <ErrorBoundary scope="editor">
             <TipTapEditor
@@ -293,59 +216,39 @@ export function AppEditorWorkspace({
               reingestKey={snapshot.editorContentTick}
               zen={zen}
               zoom={editorZoom}
-              mediaLoading={isVisible ? "visible" : "deferred"}
-              titleSlot={isVisible ? snapshot.editorTitleSlot : null}
-              locked={isVisible ? snapshot.activeFileLocked : true}
+              mediaLoading="visible"
+              titleSlot={snapshot.editorTitleSlot}
+              locked={snapshot.activeFileLocked}
               setLocked={
-                isVisible && !snapshot.activeNoteIsClassified
+                !snapshot.activeNoteIsClassified
                   ? (locked) => void handleLockToggle(locked)
                   : undefined
               }
-              onDirty={isVisible ? handleDirty : undefined}
-              onSlashCommand={isVisible ? runEditorActionById : undefined}
-              onBodyContextMenu={
-                isVisible ? editorContextMenu.handleContextMenu : undefined
-              }
+              onDirty={handleDirty}
+              onSlashCommand={runEditorActionById}
+              onBodyContextMenu={editorContextMenu.handleContextMenu}
               onEditorReady={(editor) => {
-                if (isVisible) {
-                  handleVisibleEditorReady(snapshot.path, editor);
-                  return;
-                }
-                if (visibility === "staging") {
-                  handleStagingEditorReady(snapshot, editor);
-                }
+                handleVisibleEditorReady(snapshot.path, editor);
               }}
-              onBodyStatsChange={isVisible ? updateEditorStats : undefined}
-              onInlineAiRetry={
-                isVisible ? (ed) => void inlineAi.retry(ed) : undefined
-              }
-              onInlineAiDismiss={
-                isVisible ? (ed) => inlineAi.dismiss(ed) : undefined
-              }
-              onInlineAiAccept={isVisible ? () => inlineAi.finish() : undefined}
-              onOpenWikiLink={
-                isVisible
-                  ? (title) => openNoteLeavingHome(title + ".md")
-                  : undefined
-              }
-              onPrepareWikiLink={
-                isVisible
-                  ? (title) => onPrepareNotePath?.(title + ".md", title)
-                  : undefined
+              onBodyStatsChange={updateEditorStats}
+              onInlineAiRetry={(ed) => void inlineAi.retry(ed)}
+              onInlineAiDismiss={(ed) => inlineAi.dismiss(ed)}
+              onInlineAiAccept={() => inlineAi.finish()}
+              onOpenWikiLink={(title) => openNoteLeavingHome(title + ".md")}
+              onPrepareWikiLink={(title) =>
+                onPrepareNotePath?.(title + ".md", title)
               }
             />
-            {isVisible ? (
-              <EditorOutline
-                editor={editorInstance}
-                open={outlineOpen}
-                notePath={snapshot.path}
-                onOpenNote={openNoteLeavingHome}
-                onPrepareNote={onPrepareNotePath}
-                locked={isVisible ? snapshot.activeFileLocked : true}
-                zen={zen}
-                onOpenChange={onOutlineOpenChange}
-              />
-            ) : null}
+            <EditorOutline
+              editor={editorInstance}
+              open={outlineOpen}
+              notePath={snapshot.path}
+              onOpenNote={openNoteLeavingHome}
+              onPrepareNote={onPrepareNotePath}
+              locked={snapshot.activeFileLocked}
+              zen={zen}
+              onOpenChange={onOutlineOpenChange}
+            />
           </ErrorBoundary>
         </div>
       );
@@ -356,7 +259,6 @@ export function AppEditorWorkspace({
       editorZoom,
       handleDirty,
       handleLockToggle,
-      handleStagingEditorReady,
       handleVisibleEditorReady,
       inlineAi,
       onOutlineOpenChange,
@@ -370,25 +272,33 @@ export function AppEditorWorkspace({
     ],
   );
 
-  const editorSurfaceEntries: Array<{
-    snapshot: EditorSurfaceSnapshot;
-    visibility: EditorSurfaceVisibility;
-  }> = [];
-  if (visibleSurface) {
-    editorSurfaceEntries.push({
-      snapshot: visibleSurface,
-      visibility: "visible",
-    });
-  }
-  if (stagingSurface) {
-    editorSurfaceEntries.push({
-      snapshot: stagingSurface,
-      visibility: "staging",
-    });
-  }
-  warmSurfaces.forEach((snapshot) => {
-    editorSurfaceEntries.push({ snapshot, visibility: "warm" });
-  });
+  const renderReadablePreview = useCallback(
+    (snapshot: EditorSurfaceSnapshot) => (
+      <div
+        key={snapshot.path}
+        data-testid="readable-note-preview"
+        data-path={snapshot.path}
+        className="iris-editor flex min-h-0 flex-1 flex-col"
+      >
+        <div className="iris-editor-zoom-scroll min-h-0 flex-1 overflow-y-auto overflow-x-hidden">
+          <div className="iris-editor-canvas">
+            <pre className="iris-markdown-content whitespace-pre-wrap font-sans text-base leading-7 text-foreground">
+              {snapshot.editorBodyMarkdown}
+            </pre>
+          </div>
+        </div>
+      </div>
+    ),
+    [],
+  );
+
+  const renderVisibleSurface = useCallback(
+    (snapshot: EditorSurfaceSnapshot) =>
+      visibleEditorHydrated
+        ? renderEditorSurface(snapshot)
+        : renderReadablePreview(snapshot),
+    [renderEditorSurface, renderReadablePreview, visibleEditorHydrated],
+  );
 
   return (
     <div
@@ -408,16 +318,9 @@ export function AppEditorWorkspace({
       ) : activeMediaTab && !homeActive ? (
         <MediaWorkspaceView tab={activeMediaTab} />
       ) : visibleSurface ? (
-        <>
-          {editorSurfaceEntries.map(({ snapshot, visibility }) =>
-            renderEditorSurface(snapshot, visibility),
-          )}
-        </>
+        renderVisibleSurface(visibleSurface)
       ) : (
         <>
-          {editorSurfaceEntries.map(({ snapshot, visibility }) =>
-            renderEditorSurface(snapshot, visibility),
-          )}
           <WelcomeEmpty
             onOpen={openNoteLeavingHome}
             onNew={handleNewNoteLeavingHome}

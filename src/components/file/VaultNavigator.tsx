@@ -221,6 +221,7 @@ CORPUS_KIND_OPTIONS.splice(
   },
 );
 const DEFAULT_CORPUS_KIND_OPTION = CORPUS_KIND_OPTIONS[0]!;
+const PREPARE_FOLDER_LIMIT = 3;
 
 function TreeFolder({
   node,
@@ -419,7 +420,7 @@ export function VaultNavigatorBody({
   }, [folderFiles]);
 
   useEffect(() => {
-    folderFiles.slice(0, 50).forEach((file) => {
+    folderFiles.slice(0, PREPARE_FOLDER_LIMIT).forEach((file) => {
       const note = noteListItem(file);
       if (note) onPrepare?.(note);
     });

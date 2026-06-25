@@ -25,6 +25,8 @@ import { workspaceList } from "@/lib/ipc";
 import { ensureOptionVisible } from "@/lib/command-palette-scroll";
 import type { FileListItem, WorkspaceItem } from "@/types/ipc";
 
+const PREPARE_VISIBLE_LIMIT = 3;
+
 interface QuickOpenProps {
   open: boolean;
   onClose: () => void;
@@ -76,6 +78,7 @@ export function QuickOpen({
   const parentRef = useRef<HTMLDivElement>(null);
   const itemRefs = useRef(new Map<string, HTMLButtonElement>());
   const filteredRef = useRef<WorkspaceItem[]>([]);
+  const preparedKeysRef = useRef(new Set<string>());
   const onSelectRef = useRef(onSelect);
   const onCloseRef = useRef(onClose);
   onSelectRef.current = onSelect;
@@ -83,28 +86,44 @@ export function QuickOpen({
 
   useEffect(() => {
     if (!open) return;
+    preparedKeysRef.current.clear();
     void workspaceList().then(setFiles);
     setQuery("");
   }, [open]);
 
-  const filtered = files.filter((f) => {
-    const label = itemTitle(f);
-    return (
-      label.toLowerCase().includes(query.toLowerCase()) ||
-      f.path.toLowerCase().includes(query.toLowerCase())
-    );
-  });
+  const prepareWorkspaceItem = useCallback(
+    (file: WorkspaceItem) => {
+      const note = noteItem(file);
+      if (!note) return;
+      const key = note.path + "\0" + note.updatedAt;
+      if (preparedKeysRef.current.has(key)) return;
+      preparedKeysRef.current.add(key);
+      onPrepare?.(note);
+    },
+    [onPrepare],
+  );
+
+  const filtered = useMemo(() => {
+    const normalizedQuery = query.toLowerCase();
+    return files.filter((f) => {
+      const label = itemTitle(f);
+      return (
+        label.toLowerCase().includes(normalizedQuery) ||
+        f.path.toLowerCase().includes(normalizedQuery)
+      );
+    });
+  }, [files, query]);
   filteredRef.current = filtered;
 
-  const visibleFiles = useMemo(() => filtered.slice(0, 30), [filtered]);
+  const visibleFiles = useMemo(
+    () => filtered.slice(0, PREPARE_VISIBLE_LIMIT),
+    [filtered],
+  );
 
   useEffect(() => {
     if (!open) return;
-    visibleFiles.forEach((file) => {
-      const note = noteItem(file);
-      if (note) onPrepare?.(note);
-    });
-  }, [open, onPrepare, visibleFiles]);
+    visibleFiles.forEach(prepareWorkspaceItem);
+  }, [open, prepareWorkspaceItem, visibleFiles]);
 
   const { highlight, setHighlight, handleKeyDown, navDeltaRef } =
     useListboxKeyboard({
@@ -128,9 +147,8 @@ export function QuickOpen({
   useEffect(() => {
     if (!open) return;
     const item = filtered[highlight];
-    const note = item ? noteItem(item) : null;
-    if (note) onPrepare?.(note);
-  }, [filtered, highlight, onPrepare, open]);
+    if (item) prepareWorkspaceItem(item);
+  }, [filtered, highlight, open, prepareWorkspaceItem]);
 
   const virtualizer = useVirtualizer({
     count: filtered.length,
@@ -243,8 +261,7 @@ export function QuickOpen({
                       onMouseEnter={() => {
                         navDeltaRef.current = 0;
                         setHighlight(virtualItem.index);
-                        const note = noteItem(f);
-                        if (note) onPrepare?.(note);
+                        prepareWorkspaceItem(f);
                       }}
                       onSelect={() => {
                         void (async () => {

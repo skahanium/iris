@@ -94,6 +94,8 @@ const MIGRATION_037_UP: &str = include_str!("../../migrations/037_session_eviden
 const MIGRATION_037_DOWN: &str = include_str!("../../migrations/037_session_evidence.down.sql");
 const MIGRATION_038_UP: &str = include_str!("../../migrations/038_attachments.sql");
 const MIGRATION_038_DOWN: &str = include_str!("../../migrations/038_attachments.down.sql");
+const MIGRATION_039_UP: &str = include_str!("../../migrations/039_workspace_media.sql");
+const MIGRATION_039_DOWN: &str = include_str!("../../migrations/039_workspace_media.down.sql");
 
 fn is_applied(conn: &Connection, name: &str) -> bool {
     conn.query_row(
@@ -215,6 +217,7 @@ pub fn migrate_up(conn: &Connection) -> AppResult<()> {
     )?;
     apply_migration(conn, "037_session_evidence", MIGRATION_037_UP, false)?;
     apply_migration(conn, "038_attachments", MIGRATION_038_UP, false)?;
+    apply_migration(conn, "039_workspace_media", MIGRATION_039_UP, false)?;
 
     Ok(())
 }
@@ -226,6 +229,7 @@ fn rollback_migration(conn: &Connection, name: &str, sql: &str) {
 
 /// Roll back all migrations in strict reverse order (for tests).
 pub fn migrate_down(conn: &Connection) -> AppResult<()> {
+    rollback_migration(conn, "039_workspace_media", MIGRATION_039_DOWN);
     rollback_migration(conn, "038_attachments", MIGRATION_038_DOWN);
     rollback_migration(conn, "037_session_evidence", MIGRATION_037_DOWN);
     rollback_migration(

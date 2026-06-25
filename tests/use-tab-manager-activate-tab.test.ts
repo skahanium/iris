@@ -55,28 +55,7 @@ function Harness({
   return null;
 }
 
-async function waitForPendingOpen(
-  apiRef: { current: ReturnType<typeof useTabManager> | null },
-  path: string,
-) {
-  await vi.waitFor(() => {
-    expect(apiRef.current?.pendingNoteOpen?.path).toBe(path);
-  });
-  return apiRef.current!.pendingNoteOpen!;
-}
-
-async function commitPendingOpen(apiRef: {
-  current: ReturnType<typeof useTabManager> | null;
-}) {
-  const pending = apiRef.current!.pendingNoteOpen;
-  expect(pending).toBeTruthy();
-  await act(async () => {
-    apiRef.current!.commitPendingNoteOpen(pending!.path, pending!.sequence);
-    await Promise.resolve();
-  });
-}
-
-async function openAndCommit(
+async function openAndWait(
   apiRef: { current: ReturnType<typeof useTabManager> | null },
   path: string,
   titleHint?: string,
@@ -85,13 +64,9 @@ async function openAndCommit(
   let openPromise!: Promise<void>;
   await act(async () => {
     openPromise = apiRef.current!.openFile(path, titleHint, options);
-    await Promise.resolve();
-  });
-  await waitForPendingOpen(apiRef, path);
-  await commitPendingOpen(apiRef);
-  await act(async () => {
     await openPromise;
   });
+  expect(apiRef.current!.pendingNoteOpen).toBeNull();
 }
 
 describe("useTabManager activateTab / openNote", () => {
@@ -138,29 +113,23 @@ describe("useTabManager activateTab / openNote", () => {
       root.render(createElement(Harness, { apiRef }));
     });
 
-    await openAndCommit(apiRef, "a.md", "A");
+    await openAndWait(apiRef, "a.md", "A");
     const edited = '---\ntitle: "A"\n---\n\nedited-a';
     act(() => {
       apiRef.current!.setMarkdown(edited);
     });
 
-    await openAndCommit(apiRef, "b.md", "B");
+    await openAndWait(apiRef, "b.md", "B");
     expect(fileRead).toHaveBeenCalledTimes(2);
 
-    let activatePromise!: Promise<void>;
     await act(async () => {
-      activatePromise = apiRef.current!.activateTab("a.md");
-      await Promise.resolve();
-    });
-    await waitForPendingOpen(apiRef, "a.md");
-    await commitPendingOpen(apiRef);
-    await act(async () => {
-      await activatePromise;
+      await apiRef.current!.activateTab("a.md");
     });
 
     expect(fileRead).toHaveBeenCalledTimes(2);
     expect(apiRef.current!.activePath).toBe("a.md");
     expect(apiRef.current!.markdown).toBe(edited);
+    expect(apiRef.current!.pendingNoteOpen).toBeNull();
   });
 
   it("starts reading the target note without waiting for old-note persistence", async () => {
@@ -185,10 +154,10 @@ describe("useTabManager activateTab / openNote", () => {
       root.render(createElement(PersistHarness));
     });
 
-    await openAndCommit(apiRef, "a.md", "A");
+    await openAndWait(apiRef, "a.md", "A");
     fileRead.mockClear();
 
-    let openPromise: Promise<void>;
+    let openPromise!: Promise<void>;
     await act(async () => {
       openPromise = apiRef.current!.openFile("b.md", "B");
       await Promise.resolve();
@@ -198,20 +167,17 @@ describe("useTabManager activateTab / openNote", () => {
     expect(fileRead).toHaveBeenCalledWith("b.md", {
       allowClassified: false,
     });
+    expect(apiRef.current!.activePath).toBe("a.md");
+    expect(apiRef.current!.markdown).toContain("body-a");
 
     await act(async () => {
       (resolvePersist as unknown as (value: string | null) => void)("saved-a");
-      await Promise.resolve();
-    });
-    await waitForPendingOpen(apiRef, "b.md");
-    expect(apiRef.current!.activePath).toBe("a.md");
-    expect(apiRef.current!.markdown).toContain("body-a");
-    await commitPendingOpen(apiRef);
-    await act(async () => {
-      await openPromise!;
+      await openPromise;
     });
 
     expect(apiRef.current!.activePath).toBe("b.md");
+    expect(apiRef.current!.markdown).toContain("body-b");
+    expect(apiRef.current!.frontmatterYamlRef.current).toContain('title: "B"');
   });
 
   it("openNote uses activateTab when the path is already open", async () => {
@@ -223,19 +189,12 @@ describe("useTabManager activateTab / openNote", () => {
       root.render(createElement(Harness, { apiRef }));
     });
 
-    await openAndCommit(apiRef, "a.md", "A");
-    await openAndCommit(apiRef, "b.md", "B");
+    await openAndWait(apiRef, "a.md", "A");
+    await openAndWait(apiRef, "b.md", "B");
     expect(fileRead).toHaveBeenCalledTimes(2);
 
-    let openPromise!: Promise<void>;
     await act(async () => {
-      openPromise = apiRef.current!.openNote("a.md");
-      await Promise.resolve();
-    });
-    await waitForPendingOpen(apiRef, "a.md");
-    await commitPendingOpen(apiRef);
-    await act(async () => {
-      await openPromise;
+      await apiRef.current!.openNote("a.md");
     });
 
     expect(fileRead).toHaveBeenCalledTimes(2);
@@ -251,19 +210,13 @@ describe("useTabManager activateTab / openNote", () => {
       root.render(createElement(Harness, { apiRef }));
     });
 
-    let openPromise!: Promise<void>;
     await act(async () => {
-      openPromise = apiRef.current!.openNote("a.md", "A");
-      await Promise.resolve();
-    });
-    await waitForPendingOpen(apiRef, "a.md");
-    await commitPendingOpen(apiRef);
-    await act(async () => {
-      await openPromise;
+      await apiRef.current!.openNote("a.md", "A");
     });
 
     expect(fileRead).toHaveBeenCalledTimes(1);
     expect(apiRef.current!.activePath).toBe("a.md");
+    expect(apiRef.current!.pendingNoteOpen).toBeNull();
     expect(resolveDocumentTitle).not.toHaveBeenCalled();
   });
 
@@ -271,43 +224,40 @@ describe("useTabManager activateTab / openNote", () => {
     const apiRef: { current: ReturnType<typeof useTabManager> | null } = {
       current: null,
     };
+    const traces: NoteOpenTrace[] = [];
     const prepared = {
       bodyMarkdown: "classified body",
       content: '---\ntitle: "Secret"\n---\n\nclassified body',
       frontmatterYaml: 'title: "Secret"',
       isLocked: false,
-      namespace: "normal",
+      namespace: "normal" as const,
       path: ".classified/secret.md",
       signature: "sig",
       title: "Secret",
       traceKey: "normal:bad",
     } as const;
 
+    setNoteOpenTraceSink((trace) => traces.push(trace));
     await act(async () => {
       root.render(createElement(Harness, { apiRef }));
     });
 
-    let openPromise!: Promise<void>;
-    await act(async () => {
-      openPromise = apiRef.current!.openFile(
-        ".classified/secret.md",
-        "Secret",
-        {
-          allowClassified: true,
-          preparedNote: prepared,
-        },
-      );
-      await Promise.resolve();
-    });
-
-    const pending = await waitForPendingOpen(apiRef, ".classified/secret.md");
-    expect(pending.namespace).toBe("classified");
-    await commitPendingOpen(apiRef);
-    await act(async () => {
-      await openPromise;
+    await openAndWait(apiRef, ".classified/secret.md", "Secret", {
+      allowClassified: true,
+      openBudgetKind: "hot",
+      openStartedAt: 1,
+      openTraceRequest: {
+        allowClassified: true,
+        path: ".classified/secret.md",
+      },
+      preparedNote: prepared,
     });
 
     expect(fileRead).not.toHaveBeenCalled();
+    expect(apiRef.current!.activePath).toBe(".classified/secret.md");
+    expect(traces.find((trace) => trace.phase === "visible-commit")).toEqual(
+      expect.objectContaining({ namespace: "classified" }),
+    );
   });
 
   it("openFile can consume a prepared note without re-reading disk", async () => {
@@ -319,7 +269,7 @@ describe("useTabManager activateTab / openNote", () => {
       content: '---\ntitle: "Prepared"\n---\n\nprepared body',
       frontmatterYaml: 'title: "Prepared"',
       isLocked: true,
-      namespace: "normal",
+      namespace: "normal" as const,
       path: "prepared.md",
       signature: "sig",
       title: "Prepared",
@@ -330,11 +280,9 @@ describe("useTabManager activateTab / openNote", () => {
       root.render(createElement(Harness, { apiRef }));
     });
 
-    await openAndCommit(apiRef, "prepared.md", "Prepared", {
+    await openAndWait(apiRef, "prepared.md", "Prepared", {
       preparedNote: prepared,
-    } as unknown as Parameters<
-      ReturnType<typeof useTabManager>["openFile"]
-    >[2]);
+    });
 
     expect(fileRead).not.toHaveBeenCalled();
     expect(apiRef.current!.activePath).toBe("prepared.md");
@@ -353,7 +301,7 @@ describe("useTabManager activateTab / openNote", () => {
       content: '---\ntitle: "Prepared"\n---\n\nprepared body',
       frontmatterYaml: 'title: "Prepared"',
       isLocked: false,
-      namespace: "normal",
+      namespace: "normal" as const,
       path: "prepared.md",
       signature: "sig",
       title: "Prepared",
@@ -365,14 +313,12 @@ describe("useTabManager activateTab / openNote", () => {
       root.render(createElement(Harness, { apiRef }));
     });
 
-    await openAndCommit(apiRef, "prepared.md", "Prepared", {
+    await openAndWait(apiRef, "prepared.md", "Prepared", {
       openBudgetKind: "hot",
       openStartedAt: 1000,
       openTraceRequest: { path: "prepared.md", titleHint: "Prepared" },
       preparedNote: prepared,
-    } as unknown as Parameters<
-      ReturnType<typeof useTabManager>["openFile"]
-    >[2]);
+    });
 
     const visibleCommit = traces.find(
       (trace) => trace.phase === "visible-commit",
@@ -383,7 +329,7 @@ describe("useTabManager activateTab / openNote", () => {
       budgetMs: NOTE_OPEN_HOT_PATH_BUDGET_MS,
       cache: "none",
       durationMs: 10,
-      namespace: "normal",
+      namespace: "normal" as const,
       phase: "visible-commit",
       status: "ok",
     });
@@ -409,29 +355,15 @@ describe("useTabManager activateTab / openNote", () => {
       root.render(createElement(PersistHarness));
     });
 
-    await openAndCommit(apiRef, "a.md", "A");
-    await openAndCommit(apiRef, "b.md", "B");
-    let activatePromise!: Promise<void>;
+    await openAndWait(apiRef, "a.md", "A");
+    await openAndWait(apiRef, "b.md", "B");
     await act(async () => {
-      activatePromise = apiRef.current!.activateTab("a.md");
-      await Promise.resolve();
-    });
-    await waitForPendingOpen(apiRef, "a.md");
-    await commitPendingOpen(apiRef);
-    await act(async () => {
-      await activatePromise;
+      await apiRef.current!.activateTab("a.md");
     });
     persistBeforeLeave.mockClear();
 
-    let discardPromise!: Promise<void>;
     await act(async () => {
-      discardPromise = apiRef.current!.discardOpenTab("a.md");
-      await Promise.resolve();
-    });
-    await waitForPendingOpen(apiRef, "b.md");
-    await commitPendingOpen(apiRef);
-    await act(async () => {
-      await discardPromise;
+      await apiRef.current!.discardOpenTab("a.md");
     });
 
     expect(persistBeforeLeave).not.toHaveBeenCalledWith("a.md");
@@ -439,7 +371,7 @@ describe("useTabManager activateTab / openNote", () => {
     expect(apiRef.current!.activePath).toBe("b.md");
   });
 
-  it("keeps committed document state unchanged until the staged editor commits", async () => {
+  it("openFile commits readable note state without waiting for editor staging commit", async () => {
     const apiRef: { current: ReturnType<typeof useTabManager> | null } = {
       current: null,
     };
@@ -448,29 +380,18 @@ describe("useTabManager activateTab / openNote", () => {
       root.render(createElement(Harness, { apiRef }));
     });
 
-    await openAndCommit(apiRef, "a.md", "A");
-    expect(apiRef.current!.activePath).toBe("a.md");
-    expect(apiRef.current!.markdown).toContain("body-a");
+    await openAndWait(apiRef, "a.md", "A");
 
     let openPromise!: Promise<void>;
     await act(async () => {
       openPromise = apiRef.current!.openFile("b.md", "B");
-      await Promise.resolve();
-    });
-
-    const pending = await waitForPendingOpen(apiRef, "b.md");
-    expect(pending.bodyMarkdown).toContain("body-b");
-    expect(apiRef.current!.activePath).toBe("a.md");
-    expect(apiRef.current!.markdown).toContain("body-a");
-    expect(apiRef.current!.frontmatterYamlRef.current).toContain('title: "A"');
-
-    await commitPendingOpen(apiRef);
-    await act(async () => {
       await openPromise;
     });
 
     expect(apiRef.current!.activePath).toBe("b.md");
     expect(apiRef.current!.markdown).toContain("body-b");
     expect(apiRef.current!.frontmatterYamlRef.current).toContain('title: "B"');
+    expect(apiRef.current!.pendingNoteOpen).toBeNull();
+    expect(apiRef.current!.commitPendingNoteOpen("b.md", 999)).toBe(false);
   });
 });

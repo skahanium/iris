@@ -1,7 +1,5 @@
 import { isClassifiedVaultPath } from "@/lib/classified-path";
 import { displayTitleFromMarkdown } from "@/lib/document-title";
-import { editorHtmlDigest, setCachedEditorHtml } from "@/lib/editor-html-cache";
-import { ingestMarkdownForEditor } from "@/lib/editor-ingest";
 import { fileRead } from "@/lib/ipc";
 import { parseNoteForEditor } from "@/lib/markdown";
 import { pathStem, resolveNoteDisplayTitle } from "@/lib/note-display";
@@ -335,16 +333,7 @@ export function prepareNoteOpen(
         title: fromMarkdown || request.titleHint?.trim() || parsed.title,
         markdown: content,
       });
-      const { tipTapHtml } = ingestMarkdownForEditor({
-        bodyMarkdown: parsed.bodyMd.trim(),
-      });
-      setCachedEditorHtml(
-        request.path,
-        tipTapHtml,
-        editorHtmlDigest(parsed.bodyMd),
-        namespace,
-      );
-      emitTrace(request, "parse-ingest", startedAt, "ok", "write");
+      emitTrace(request, "parse-ingest", startedAt, "ok", "none");
       const prepared: PreparedNoteOpen = {
         bodyMarkdown: parsed.bodyMd,
         content,

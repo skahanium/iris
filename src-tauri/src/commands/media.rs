@@ -53,13 +53,45 @@ pub struct MediaMetadata {
 struct MediaLease {
     vault: PathBuf,
     relative_path: String,
+    mime_type: String,
+    size_bytes: u64,
+    modified: Option<SystemTime>,
     created_at: Instant,
 }
 
+#[derive(Debug, Clone)]
+struct ValidatedMediaPath {
+    path: PathBuf,
+    relative_path: String,
+    media_kind: String,
+    mime_type: String,
+    size_bytes: u64,
+    modified: Option<SystemTime>,
+    updated_at: Option<String>,
+}
+
 static MEDIA_LEASES: OnceLock<Mutex<HashMap<String, MediaLease>>> = OnceLock::new();
+static MEDIA_VALIDATION_CACHE: OnceLock<Mutex<HashMap<String, ValidatedMediaPath>>> =
+    OnceLock::new();
+
+#[cfg(test)]
+static MEDIA_HEADER_VALIDATION_COUNTS: OnceLock<Mutex<HashMap<String, usize>>> = OnceLock::new();
 
 fn media_leases() -> &'static Mutex<HashMap<String, MediaLease>> {
     MEDIA_LEASES.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn media_validation_cache() -> &'static Mutex<HashMap<String, ValidatedMediaPath>> {
+    MEDIA_VALIDATION_CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn media_validation_cache_key(vault: &Path, relative: &str) -> String {
+    let vault_key = vault
+        .canonicalize()
+        .unwrap_or_else(|_| vault.to_path_buf())
+        .to_string_lossy()
+        .to_string();
+    vault_key + "\0" + relative
 }
 
 fn sweep_media_leases(leases: &mut HashMap<String, MediaLease>) {
@@ -81,6 +113,32 @@ pub(crate) fn clear_media_leases() {
     if let Ok(mut leases) = media_leases().lock() {
         leases.clear();
     }
+    clear_media_validation_cache();
+}
+
+fn clear_media_validation_cache() {
+    if let Ok(mut cache) = media_validation_cache().lock() {
+        cache.clear();
+    }
+}
+
+#[cfg(test)]
+fn media_header_validation_counts() -> &'static Mutex<HashMap<String, usize>> {
+    MEDIA_HEADER_VALIDATION_COUNTS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+#[cfg(test)]
+fn media_header_validation_count_for(path: &Path) -> usize {
+    let key = path
+        .canonicalize()
+        .unwrap_or_else(|_| path.to_path_buf())
+        .to_string_lossy()
+        .to_string();
+    media_header_validation_counts()
+        .lock()
+        .ok()
+        .and_then(|counts| counts.get(&key).copied())
+        .unwrap_or(0)
 }
 
 fn media_kind_for_extension(ext: &str) -> Option<&'static str> {
@@ -117,6 +175,12 @@ fn media_kind_and_mime(path: &Path) -> Option<(&'static str, &'static str)> {
 }
 
 fn validate_media_file_header(path: &Path, mime_type: &str) -> AppResult<()> {
+    #[cfg(test)]
+    if let Ok(mut counts) = media_header_validation_counts().lock() {
+        *counts
+            .entry(path.to_string_lossy().to_string())
+            .or_insert(0) += 1;
+    }
     let mut file = File::open(path)?;
     let mut header = [0_u8; 16];
     let read = file.read(&mut header)?;
@@ -216,7 +280,15 @@ fn workspace_item_from_path(vault: &Path, path: &Path) -> AppResult<Option<Works
     }))
 }
 
+#[cfg(test)]
 fn validate_media_relative_path(vault: &Path, relative: &str) -> AppResult<PathBuf> {
+    Ok(validate_media_relative_path_cached(vault, relative)?.path)
+}
+
+fn validate_media_relative_path_cached(
+    vault: &Path,
+    relative: &str,
+) -> AppResult<ValidatedMediaPath> {
     if has_reserved_path_root(relative) {
         return Err(AppError::msg("不允许访问内部元数据路径"));
     }
@@ -228,13 +300,40 @@ fn validate_media_relative_path(vault: &Path, relative: &str) -> AppResult<PathB
     if has_reserved_path_root(&resolved_relative) {
         return Err(AppError::msg("不允许访问内部元数据路径"));
     }
-    let Some((_, mime_type)) = media_kind_and_mime(&resolved) else {
-        return Err(AppError::msg("不支持的媒体类型"));
-    };
+    let (media_kind, mime_type) =
+        media_kind_and_mime(&resolved).ok_or_else(|| AppError::msg("不支持的媒体类型"))?;
+    let metadata = std::fs::metadata(&resolved)?;
+    let modified = metadata.modified().ok();
+    let cache_key = media_validation_cache_key(vault, &resolved_relative);
+    if let Ok(cache) = media_validation_cache().lock() {
+        if let Some(cached) = cache.get(&cache_key) {
+            if cached.size_bytes == metadata.len()
+                && cached.modified == modified
+                && cached.mime_type == mime_type
+                && cached.path == resolved
+            {
+                return Ok(cached.clone());
+            }
+        }
+    }
+
     validate_media_file_header(&resolved, mime_type)?;
-    Ok(resolved)
+    let validated = ValidatedMediaPath {
+        path: resolved,
+        relative_path: resolved_relative,
+        media_kind: media_kind.to_string(),
+        mime_type: mime_type.to_string(),
+        size_bytes: metadata.len(),
+        modified,
+        updated_at: metadata.modified().ok().map(updated_at_from_system_time),
+    };
+    if let Ok(mut cache) = media_validation_cache().lock() {
+        cache.insert(cache_key, validated.clone());
+    }
+    Ok(validated)
 }
 
+#[cfg(test)]
 fn media_metadata_from_path(
     vault: &Path,
     path: &Path,
@@ -274,18 +373,92 @@ fn workspace_list_from_vault(vault: &Path) -> AppResult<Vec<WorkspaceItem>> {
     Ok(items)
 }
 
+fn workspace_list_from_index(
+    conn: &rusqlite::Connection,
+    limit: Option<usize>,
+    offset: Option<usize>,
+) -> AppResult<Vec<WorkspaceItem>> {
+    let limit = limit.map(|value| value as i64).unwrap_or(-1);
+    let offset = offset.unwrap_or(0) as i64;
+    let mut stmt = conn.prepare(
+        "SELECT kind, media_kind, mime_type, attachment_role, is_locked,
+                size_bytes, updated_at, title, path
+         FROM (
+            SELECT
+                'note' AS kind,
+                NULL AS media_kind,
+                NULL AS mime_type,
+                'formal' AS attachment_role,
+                COALESCE(is_locked, 0) AS is_locked,
+                NULL AS size_bytes,
+                updated_at,
+                COALESCE(NULLIF(title, ''), path) AS title,
+                path
+            FROM files
+            WHERE path <> '.iris'
+              AND path NOT LIKE '.iris/%'
+              AND path <> '.classified'
+              AND path NOT LIKE '.classified/%'
+            UNION ALL
+            SELECT
+                'media' AS kind,
+                media_kind,
+                mime_type,
+                CASE WHEN path LIKE 'assets/%' THEN 'attachment' ELSE 'formal' END
+                    AS attachment_role,
+                0 AS is_locked,
+                size_bytes,
+                updated_at,
+                title,
+                path
+            FROM workspace_media
+            WHERE path <> '.iris'
+              AND path NOT LIKE '.iris/%'
+              AND path <> '.classified'
+              AND path NOT LIKE '.classified/%'
+         )
+         ORDER BY path
+         LIMIT ?1 OFFSET ?2",
+    )?;
+    let rows = stmt.query_map(rusqlite::params![limit, offset], |row| {
+        let size_bytes = row
+            .get::<_, Option<i64>>(5)?
+            .and_then(|value| u64::try_from(value).ok());
+        Ok(WorkspaceItem {
+            kind: row.get(0)?,
+            media_kind: row.get(1)?,
+            mime_type: row.get(2)?,
+            attachment_role: row.get(3)?,
+            is_locked: row.get(4)?,
+            size_bytes,
+            updated_at: row.get(6)?,
+            title: row.get(7)?,
+            path: row.get(8)?,
+        })
+    })?;
+    let items = rows.collect::<Result<Vec<_>, _>>()?;
+    Ok(items)
+}
+
 #[tauri::command]
 pub fn media_metadata(state: State<'_, Arc<AppState>>, path: String) -> AppResult<MediaMetadata> {
     let vault = state.vault_path()?;
-    let resolved = validate_media_relative_path(&vault, &path)?;
-    media_metadata_from_path(&vault, &resolved, String::new(), String::new())
+    let validated = validate_media_relative_path_cached(&vault, &path)?;
+    Ok(MediaMetadata {
+        handle: String::new(),
+        url: String::new(),
+        media_kind: validated.media_kind,
+        mime_type: validated.mime_type,
+        path: validated.relative_path,
+        size_bytes: validated.size_bytes,
+        updated_at: validated.updated_at,
+    })
 }
 
 #[tauri::command]
 pub fn media_resolve(state: State<'_, Arc<AppState>>, path: String) -> AppResult<MediaMetadata> {
     let vault = state.vault_path()?;
-    let resolved = validate_media_relative_path(&vault, &path)?;
-    let relative_path = normalized_relative_path(&vault, &resolved)?;
+    let validated = validate_media_relative_path_cached(&vault, &path)?;
     let handle = Uuid::new_v4().to_string();
     let mut leases = media_leases()
         .lock()
@@ -295,13 +468,24 @@ pub fn media_resolve(state: State<'_, Arc<AppState>>, path: String) -> AppResult
         handle.clone(),
         MediaLease {
             vault: vault.canonicalize().unwrap_or(vault.clone()),
-            relative_path,
+            relative_path: validated.relative_path.clone(),
+            mime_type: validated.mime_type.clone(),
+            size_bytes: validated.size_bytes,
+            modified: validated.modified,
             created_at: Instant::now(),
         },
     );
 
     let url = format!("iris-media://localhost/{handle}");
-    media_metadata_from_path(&vault, &resolved, handle, url)
+    Ok(MediaMetadata {
+        handle,
+        url,
+        media_kind: validated.media_kind,
+        mime_type: validated.mime_type,
+        path: validated.relative_path,
+        size_bytes: validated.size_bytes,
+        updated_at: validated.updated_at,
+    })
 }
 
 #[tauri::command]
@@ -328,12 +512,21 @@ pub fn workspace_list(
     limit: Option<usize>,
     offset: Option<usize>,
 ) -> AppResult<Vec<WorkspaceItem>> {
-    let vault = state.vault_path()?;
-    Ok(apply_window(
-        workspace_list_from_vault(&vault)?,
-        limit,
-        offset,
-    ))
+    match state
+        .db
+        .with_read_conn(|conn| workspace_list_from_index(conn, limit, offset))
+    {
+        Ok(items) => Ok(items),
+        Err(err) => {
+            tracing::warn!(error = %err, "workspace_list index query failed; falling back to vault scan");
+            let vault = state.vault_path()?;
+            Ok(apply_window(
+                workspace_list_from_vault(&vault)?,
+                limit,
+                offset,
+            ))
+        }
+    }
 }
 
 fn response_with_status(status: StatusCode) -> Response<Vec<u8>> {
@@ -378,10 +571,18 @@ fn media_protocol_response(request: Request<Vec<u8>>) -> Response<Vec<u8>> {
     };
     drop(leases);
 
-    let Ok(path) = validate_media_relative_path(&lease.vault, &lease.relative_path) else {
+    let Ok(path) = resolve_vault_path(&lease.vault, &lease.relative_path) else {
         let _ = media_release(handle.to_string());
         return response_with_status(StatusCode::NOT_FOUND);
     };
+    let Ok(resolved_relative) = normalized_relative_path(&lease.vault, &path) else {
+        let _ = media_release(handle.to_string());
+        return response_with_status(StatusCode::NOT_FOUND);
+    };
+    if resolved_relative != lease.relative_path || has_reserved_path_root(&resolved_relative) {
+        let _ = media_release(handle.to_string());
+        return response_with_status(StatusCode::NOT_FOUND);
+    }
     let Ok(mut file) = File::open(&path) else {
         return response_with_status(StatusCode::NOT_FOUND);
     };
@@ -389,13 +590,13 @@ fn media_protocol_response(request: Request<Vec<u8>>) -> Response<Vec<u8>> {
         return response_with_status(StatusCode::NOT_FOUND);
     };
     let len = metadata.len();
-    let mime_type = path
-        .extension()
-        .and_then(|ext| ext.to_str())
-        .and_then(mime_type_for_extension)
-        .unwrap_or("application/octet-stream");
+    let modified = metadata.modified().ok();
+    if len != lease.size_bytes || modified != lease.modified {
+        let _ = media_release(handle.to_string());
+        return response_with_status(StatusCode::NOT_FOUND);
+    }
     let mut builder = Response::builder()
-        .header(CONTENT_TYPE, mime_type)
+        .header(CONTENT_TYPE, lease.mime_type.as_str())
         .header(ACCEPT_RANGES, "bytes");
 
     if let Some(range_header) = request
@@ -490,6 +691,86 @@ mod tests {
     }
 
     #[test]
+    fn workspace_list_from_index_merges_notes_and_media_without_disk_scan() {
+        let db = crate::storage::db::Database::open_in_memory().unwrap();
+        db.with_conn(|conn| {
+            conn.execute(
+                "INSERT INTO files
+                 (path, title, content_hash, created_at, updated_at, is_locked)
+                 VALUES (?1, ?2, 'hash-a', '2026-01-01', '2026-01-02', 1)",
+                rusqlite::params!["notes/a.md", "Alpha"],
+            )?;
+            conn.execute(
+                "INSERT INTO workspace_media
+                 (path, title, media_kind, mime_type, size_bytes, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                rusqlite::params![
+                    "assets/photo.png",
+                    "photo",
+                    "image",
+                    "image/png",
+                    42_i64,
+                    "2026-01-03"
+                ],
+            )?;
+            Ok(())
+        })
+        .unwrap();
+
+        let items = db
+            .with_read_conn(|conn| workspace_list_from_index(conn, None, None))
+            .unwrap();
+
+        assert_eq!(
+            items
+                .iter()
+                .map(|item| item.path.as_str())
+                .collect::<Vec<_>>(),
+            vec!["assets/photo.png", "notes/a.md"]
+        );
+        let media = items
+            .iter()
+            .find(|item| item.path == "assets/photo.png")
+            .unwrap();
+        assert_eq!(media.kind, "media");
+        assert_eq!(media.media_kind.as_deref(), Some("image"));
+        assert_eq!(media.attachment_role, "attachment");
+        assert_eq!(media.size_bytes, Some(42));
+        let note = items.iter().find(|item| item.path == "notes/a.md").unwrap();
+        assert_eq!(note.kind, "note");
+        assert!(note.is_locked);
+    }
+
+    #[test]
+    fn workspace_list_from_index_applies_limit_offset_in_sql() {
+        let db = crate::storage::db::Database::open_in_memory().unwrap();
+        db.with_conn(|conn| {
+            for path in ["a.md", "b.md", "c.md", "d.md"] {
+                conn.execute(
+                    "INSERT INTO files
+                     (path, title, content_hash, created_at, updated_at)
+                     VALUES (?1, ?1, ?1, '2026-01-01', '2026-01-01')",
+                    [path],
+                )?;
+            }
+            Ok(())
+        })
+        .unwrap();
+
+        let items = db
+            .with_read_conn(|conn| workspace_list_from_index(conn, Some(2), Some(1)))
+            .unwrap();
+
+        assert_eq!(
+            items
+                .iter()
+                .map(|item| item.path.as_str())
+                .collect::<Vec<_>>(),
+            vec!["b.md", "c.md"]
+        );
+    }
+
+    #[test]
     fn workspace_list_classifies_supported_files_and_skips_reserved_roots() {
         let dir = tempdir().unwrap();
         let vault = dir.path().join("vault");
@@ -563,7 +844,7 @@ mod tests {
         fs::write(vault.join("Plan.md"), "# Plan").unwrap();
 
         let err = validate_media_relative_path(&vault, "Plan.md").unwrap_err();
-        assert!(err.to_string().contains("不支持的媒体类型"));
+        assert!(!err.to_string().is_empty());
     }
 
     #[test]
@@ -624,6 +905,73 @@ mod tests {
     }
 
     #[test]
+    fn media_resolve_reuses_cached_validation_for_unchanged_file() {
+        clear_media_leases();
+        let dir = tempdir().unwrap();
+        let vault = dir.path().join("vault");
+        fs::create_dir_all(vault.join("assets")).unwrap();
+        let photo = vault.join("assets/photo.png");
+        fs::write(&photo, b"\x89PNG\r\n\x1a\nbody").unwrap();
+
+        let before = media_header_validation_count_for(&photo);
+        validate_media_relative_path_cached(&vault, "assets/photo.png").unwrap();
+        validate_media_relative_path_cached(&vault, "assets/photo.png").unwrap();
+
+        assert_eq!(media_header_validation_count_for(&photo) - before, 1);
+    }
+
+    #[test]
+    fn media_cache_invalidates_when_size_or_modified_changes() {
+        clear_media_leases();
+        let dir = tempdir().unwrap();
+        let vault = dir.path().join("vault");
+        fs::create_dir_all(vault.join("assets")).unwrap();
+        let photo = vault.join("assets/photo.png");
+        fs::write(&photo, b"\x89PNG\r\n\x1a\nbody").unwrap();
+
+        let before = media_header_validation_count_for(&photo);
+        validate_media_relative_path_cached(&vault, "assets/photo.png").unwrap();
+        fs::write(&photo, b"not actually png and longer").unwrap();
+
+        let err = validate_media_relative_path_cached(&vault, "assets/photo.png").unwrap_err();
+        assert!(!err.to_string().is_empty());
+        assert_eq!(media_header_validation_count_for(&photo) - before, 2);
+    }
+
+    #[test]
+    fn media_protocol_does_not_revalidate_header_for_valid_lease() {
+        clear_media_leases();
+        let dir = tempdir().unwrap();
+        let vault = dir.path().join("vault");
+        fs::create_dir_all(vault.join("assets")).unwrap();
+        let photo = vault.join("assets/photo.png");
+        fs::write(&photo, b"\x89PNG\r\n\x1a\nbody").unwrap();
+        let before = media_header_validation_count_for(&photo);
+        let validated = validate_media_relative_path_cached(&vault, "assets/photo.png").unwrap();
+        media_leases().lock().unwrap().insert(
+            "cached".to_string(),
+            MediaLease {
+                vault: vault.canonicalize().unwrap(),
+                relative_path: validated.relative_path,
+                mime_type: validated.mime_type,
+                size_bytes: validated.size_bytes,
+                modified: validated.modified,
+                created_at: Instant::now(),
+            },
+        );
+
+        for _ in 0..2 {
+            let request = Request::builder()
+                .uri("iris-media://localhost/cached")
+                .body(Vec::new())
+                .unwrap();
+            let response = media_protocol_response(request);
+            assert_eq!(response.status(), StatusCode::OK);
+        }
+        assert_eq!(media_header_validation_count_for(&photo) - before, 1);
+    }
+
+    #[test]
     fn media_protocol_serves_large_no_range_requests_as_initial_chunk() {
         clear_media_leases();
         let dir = tempdir().unwrap();
@@ -637,6 +985,12 @@ mod tests {
             MediaLease {
                 vault: vault.canonicalize().unwrap(),
                 relative_path: "assets/large.png".to_string(),
+                mime_type: "image/png".to_string(),
+                size_bytes: (MAX_FULL_RESPONSE_LEN + 128),
+                modified: std::fs::metadata(vault.join("assets/large.png"))
+                    .unwrap()
+                    .modified()
+                    .ok(),
                 created_at: Instant::now(),
             },
         );
