@@ -1,4 +1,4 @@
-import { getCurrentWindow } from "@tauri-apps/api/window";
+﻿import { getCurrentWindow } from "@tauri-apps/api/window";
 import { FileImage, Lock, Plus, Sparkles, X } from "lucide-react";
 import { memo, useMemo } from "react";
 
@@ -49,11 +49,9 @@ export const DesktopTitleBar = memo(function DesktopTitleBar({
   const isMacDesktop = isMacOSDesktopChrome();
   const isSplash = variant === "splash";
   const showTabStrip = !isSplash;
-  /** macOS 窗口模式：整行 items-center，与 44px 顶栏中线对齐 */
-  const macCenteredChrome = isMacDesktop && !isSplash;
 
   const customWindowControls = isDesktop && showCustomWindowControls();
-  /** Win/Linux 自定义三键时勿在 header 根上设 drag-region，否则 WebView2 会吞掉最小化/最大化点击 */
+  /** Win/Linux 鑷畾涔変笁閿椂鍕垮湪 header 鏍逛笂璁?drag-region锛屽惁鍒?WebView2 浼氬悶鎺夋渶灏忓寲/鏈€澶у寲鐐瑰嚮 */
   const headerNativeDragRegion = isDesktop && !customWindowControls;
 
   const onDragMouseDown = useMemo(() => {
@@ -67,7 +65,7 @@ export const DesktopTitleBar = memo(function DesktopTitleBar({
       data-testid="desktop-title-bar"
       className={cn(
         "iris-desktop-titlebar flex h-[var(--titlebar-height)] shrink-0 cursor-default select-none border-b border-border/60 bg-surface-chrome",
-        macCenteredChrome ? "items-center" : "items-stretch",
+        "items-center",
         isDesktop && "iris-desktop-titlebar--desktop",
         customWindowControls && "relative pr-[var(--window-controls-width)]",
       )}
@@ -104,9 +102,10 @@ export const DesktopTitleBar = memo(function DesktopTitleBar({
               data-tauri-drag-region-exclude
               className={cn(
                 "iris-brand-rail flex h-8 min-w-[6.75rem] shrink-0 items-center justify-center gap-2 px-3 text-foreground",
+                isMacDesktop && "-ml-1.5",
                 isHomeActive && "iris-brand-rail--active",
               )}
-              aria-label={isHomeActive ? "Home" : "回到 Home"}
+              aria-label={isHomeActive ? "Home" : "鍥炲埌 Home"}
               aria-current={isHomeActive ? "page" : undefined}
               onMouseDown={(event) => event.stopPropagation()}
               onClick={onHome}
@@ -165,13 +164,13 @@ export const DesktopTitleBar = memo(function DesktopTitleBar({
                       <span className="min-w-0 truncate">{tab.title}</span>
                       {isArtifact ? (
                         <span className="ml-1 shrink-0 rounded-sm border border-border/60 px-1 text-[10px] text-muted-foreground">
-                          临时
+                          涓存椂
                         </span>
                       ) : null}
                       {tab.dirty ? (
                         <span className="shrink-0 text-muted-foreground">
                           {" "}
-                          •
+                          鈥?{" "}
                         </span>
                       ) : null}
                     </button>
@@ -182,7 +181,7 @@ export const DesktopTitleBar = memo(function DesktopTitleBar({
                         "iris-focus-soft flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-muted-foreground opacity-0 transition-all duration-fast hover:bg-muted/60 hover:text-foreground focus:outline-none focus-visible:opacity-100 group-hover:opacity-100",
                         active && "opacity-60",
                       )}
-                      aria-label={`关闭 ${tab.title}`}
+                      aria-label={`鍏抽棴 ${tab.title}`}
                       onMouseDown={(event) => {
                         event.stopPropagation();
                       }}
@@ -201,7 +200,7 @@ export const DesktopTitleBar = memo(function DesktopTitleBar({
                   type="button"
                   data-tauri-drag-region-exclude
                   className="iris-focus-soft inline-flex h-8 w-8 items-center justify-center rounded-[10px] text-muted-foreground transition-all duration-fast hover:bg-muted/60 hover:text-foreground focus:outline-none"
-                  aria-label="新建笔记"
+                  aria-label="鏂板缓绗旇"
                   onMouseDown={(event) => {
                     event.stopPropagation();
                   }}

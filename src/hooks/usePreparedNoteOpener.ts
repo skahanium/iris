@@ -1,12 +1,18 @@
-import { useCallback, useRef, useState } from "react";
+﻿import { useCallback, useRef, useState } from "react";
 
 import {
   clearNoteOpenPreparationCache,
   getPreparedNoteOpen,
   invalidateNoteOpenPreparation,
   prepareNoteOpen,
+  prepareNoteOpenFromContent,
 } from "@/lib/document-open-runtime";
-import { documentOpenBegin, documentOpenEnd, fileSignature } from "@/lib/ipc";
+import {
+  documentOpen,
+  documentOpenBegin,
+  documentOpenEnd,
+  fileSignature,
+} from "@/lib/ipc";
 import type {
   DocumentOpenPriority,
   PrepareNoteOpenRequest,
@@ -148,12 +154,27 @@ export function usePreparedNoteOpener<
       const shouldScopeOpen = priority === "foreground" || priority === "hot";
       let documentOpenToken: string | null = null;
       let documentOpenTokenRetained = false;
+      let documentOpenResult: Awaited<ReturnType<typeof documentOpen>> | null =
+        null;
+      const providedPreparedNote = options?.preparedNote;
+      const cachedPreparedNote =
+        providedPreparedNote ?? getPreparedNoteOpen(baseRequest);
+      const usePreparationPipeline = Boolean(cachedPreparedNote || remembered);
 
       if (shouldScopeOpen) {
         try {
-          documentOpenToken = (await documentOpenBegin()).token;
+          if (usePreparationPipeline) {
+            documentOpenToken = (await documentOpenBegin()).token;
+          } else {
+            documentOpenResult = await documentOpen(
+              path,
+              baseRequest.allowClassified === true,
+            );
+            documentOpenToken = documentOpenResult.token;
+          }
         } catch {
           documentOpenToken = null;
+          documentOpenResult = null;
         }
       }
 
@@ -177,16 +198,20 @@ export function usePreparedNoteOpener<
           return;
         }
 
-        const providedPreparedNote = options?.preparedNote;
-        const cachedPreparedNote =
-          providedPreparedNote ?? getPreparedNoteOpen(baseRequest);
         const preparedNote =
-          cachedPreparedNote ?? (await prepareNoteOpen(baseRequest));
+          cachedPreparedNote ??
+          (documentOpenResult
+            ? await prepareNoteOpenFromContent(baseRequest, {
+                content: documentOpenResult.content,
+                isLocked: documentOpenResult.isLocked,
+              })
+            : await prepareNoteOpen(baseRequest));
 
         await openNote(path, titleHint, {
           ...openOptionsWithScope,
           openBudgetKind:
-            options?.openBudgetKind ?? (cachedPreparedNote ? "hot" : "none"),
+            options?.openBudgetKind ??
+            (cachedPreparedNote || documentOpenResult ? "hot" : "none"),
           openStartedAt,
           openTraceRequest,
           preparedNote,
@@ -203,7 +228,6 @@ export function usePreparedNoteOpener<
     },
     [openNote, openTabs],
   );
-
   const prepareVisibleNote = useCallback(
     (file: FileListItem, source: NoteOpenSource = "file-tree") => {
       rememberPreparedRequest({

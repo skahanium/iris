@@ -57,6 +57,13 @@ export interface DocumentOpenScopeResult {
   token: string;
 }
 
+/** Merged document open response: token, content, and lock status in a single IPC. */
+export interface DocumentOpenResult {
+  token: string;
+  content: string;
+  isLocked: boolean;
+}
+
 export interface ClassifiedFileEntry {
   path: string;
   isDir: boolean;

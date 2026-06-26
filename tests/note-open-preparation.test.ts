@@ -14,6 +14,7 @@ import {
   NOTE_OPEN_PERFORMANCE_ENTRY_PREFIX,
   NOTE_OPEN_WARM_PATH_BUDGET_MS,
   prepareNoteOpen,
+  prepareNoteOpenFromContent,
   resetNoteOpenTraceSession,
   setNoteOpenTraceSink,
   warmNoteOpen,
@@ -37,6 +38,27 @@ describe("note open preparation", () => {
     setNoteOpenTraceSink(null);
   });
 
+  it("prepares already-read document_open content without another file read", async () => {
+    const prepared = await prepareNoteOpenFromContent(
+      {
+        path: "single-ipc.md",
+        source: "quick-open",
+        priority: "foreground",
+        titleHint: "Fallback Title",
+      },
+      {
+        content: '---\ntitle: "Single IPC"\n---\n\nBody from merged IPC',
+        isLocked: true,
+      },
+    );
+
+    expect(fileRead).not.toHaveBeenCalled();
+    expect(prepared.title).toBe("Single IPC");
+    expect(prepared.bodyMarkdown.trim()).toBe("Body from merged IPC");
+    expect(prepared.frontmatterYaml).toContain('title: "Single IPC"');
+    expect(prepared.isLocked).toBe(true);
+    expect(prepared.preparedEditorHtml).toContain("Body from merged IPC");
+  });
   it("prepares note content and editor HTML once for a stable file signature", async () => {
     fileRead.mockResolvedValue({
       content: '---\ntitle: "Prepared"\n---\n\nBody',

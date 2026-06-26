@@ -12,12 +12,14 @@ import type {
 } from "@/lib/document-open-runtime";
 import type { FileListItem } from "@/types/ipc";
 
+const documentOpen = vi.fn();
 const documentOpenBegin = vi.fn();
 const documentOpenEnd = vi.fn();
 const fileRead = vi.fn();
 const fileSignature = vi.fn();
 
 vi.mock("@/lib/ipc", () => ({
+  documentOpen: (...args: unknown[]) => documentOpen(...args),
   documentOpenBegin: (...args: unknown[]) => documentOpenBegin(...args),
   documentOpenEnd: (...args: unknown[]) => documentOpenEnd(...args),
   fileRead: (...args: unknown[]) => fileRead(...args),
@@ -92,6 +94,12 @@ describe("usePreparedNoteOpener", () => {
   let root: Root;
 
   beforeEach(() => {
+    documentOpen.mockReset();
+    documentOpen.mockResolvedValue({
+      token: "open-token",
+      content: "# Direct\\n\\nBody",
+      isLocked: false,
+    });
     documentOpenBegin.mockReset();
     documentOpenBegin.mockResolvedValue({ token: "open-token" });
     documentOpenEnd.mockReset();
@@ -147,6 +155,43 @@ describe("usePreparedNoteOpener", () => {
     );
   });
 
+  it("prepares single-IPC document_open content before opening", async () => {
+    const openNote = vi.fn(async () => undefined);
+    let api!: HookApi;
+    documentOpen.mockResolvedValueOnce({
+      token: "merged-token",
+      content: '---\ntitle: "Merged"\n---\n\nMerged body',
+      isLocked: true,
+    });
+
+    await act(async () => {
+      root.render(
+        <Harness openNote={openNote} onReady={(next) => (api = next)} />,
+      );
+    });
+
+    await act(async () => {
+      await api.openPreparedNote("notes/merged.md", "Merged", {
+        source: "quick-open",
+      });
+    });
+
+    expect(documentOpen).toHaveBeenCalledWith("notes/merged.md", false);
+    expect(fileRead).not.toHaveBeenCalled();
+    expect(openNote).toHaveBeenCalledWith(
+      "notes/merged.md",
+      "Merged",
+      expect.objectContaining({
+        documentOpenToken: "merged-token",
+        preparedNote: expect.objectContaining({
+          bodyMarkdown: expect.stringContaining("Merged body"),
+          frontmatterYaml: expect.stringContaining('title: "Merged"'),
+          isLocked: true,
+          title: "Merged",
+        }),
+      }),
+    );
+  });
   it("wraps foreground opens in a backend document-open token", async () => {
     const openNote = vi.fn(async () => undefined);
     let api!: HookApi;
@@ -167,7 +212,8 @@ describe("usePreparedNoteOpener", () => {
       });
     });
 
-    expect(documentOpenBegin).toHaveBeenCalledOnce();
+    expect(documentOpen).toHaveBeenCalledWith("notes/direct.md", false);
+    expect(documentOpenBegin).not.toHaveBeenCalled();
     expect(documentOpenEnd).toHaveBeenCalledWith("open-token");
     expect(openNote).toHaveBeenCalledWith(
       "notes/direct.md",

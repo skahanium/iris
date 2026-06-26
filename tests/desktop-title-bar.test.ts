@@ -17,18 +17,57 @@ function read(path: string): string {
   }
 }
 
+const originalUserAgent = window.navigator.userAgent;
 let root: Root | null = null;
 let host: HTMLDivElement | null = null;
+
+function setTauriRuntime(enabled: boolean): void {
+  const runtimeWindow = window as typeof window & {
+    __TAURI__?: unknown;
+    __TAURI_EVENT_PLUGIN_INTERNALS__?: {
+      unregisterListener: () => void;
+    };
+    __TAURI_INTERNALS__?: {
+      invoke: () => Promise<boolean>;
+      metadata: { currentWindow: { label: string } };
+      transformCallback: () => number;
+    };
+  };
+  if (enabled) {
+    Object.defineProperty(window.navigator, "userAgent", {
+      configurable: true,
+      value: "Macintosh",
+    });
+    runtimeWindow.__TAURI__ = {};
+    runtimeWindow.__TAURI_INTERNALS__ = {
+      invoke: () => Promise.resolve(false),
+      metadata: { currentWindow: { label: "main" } },
+      transformCallback: () => 1,
+    };
+    runtimeWindow.__TAURI_EVENT_PLUGIN_INTERNALS__ = {
+      unregisterListener: () => undefined,
+    };
+    return;
+  }
+  Reflect.deleteProperty(runtimeWindow, "__TAURI__");
+  Reflect.deleteProperty(runtimeWindow, "__TAURI_INTERNALS__");
+  Reflect.deleteProperty(runtimeWindow, "__TAURI_EVENT_PLUGIN_INTERNALS__");
+  Object.defineProperty(window.navigator, "userAgent", {
+    configurable: true,
+    value: originalUserAgent,
+  });
+}
 
 function renderTitleBar(
   tabs: TabItem[] = [
     {
-      path: "/vault/女友的闺蜜.md",
-      title: "女友的闺蜜",
+      path: "/vault/sample-note.md",
+      title: "Sample Note",
       dirty: true,
     },
   ],
 ) {
+  setTauriRuntime(true);
   host = document.createElement("div");
   document.body.append(host);
   root = createRoot(host);
@@ -46,13 +85,15 @@ function renderTitleBar(
   });
 }
 
-afterEach(() => {
+afterEach(async () => {
   if (root) {
     act(() => root?.unmount());
   }
   host?.remove();
   root = null;
   host = null;
+  await Promise.resolve();
+  setTauriRuntime(false);
 });
 
 describe("desktop title bar", () => {
@@ -194,10 +235,10 @@ describe("desktop title bar", () => {
     );
   });
 
-  it("DesktopTitleBar uses items-center on macOS and avoids items-end for tabs", () => {
+  it("DesktopTitleBar keeps titlebar contents vertically centered", () => {
     const bar = read("src/components/layout/DesktopTitleBar.tsx");
-    expect(bar).toContain("macCenteredChrome");
     expect(bar).toContain("items-center");
+    expect(bar).not.toContain("items-stretch");
     expect(bar).not.toContain("items-end");
     expect(bar).not.toContain("mb-1");
   });
@@ -229,6 +270,22 @@ describe("desktop title bar", () => {
     expect(hook).not.toContain("restoreMacOSWindowChrome");
   });
 
+  it("keeps the Iris brand rail vertically centered in the titlebar", () => {
+    renderTitleBar();
+
+    const titleBar = document.querySelector<HTMLElement>(
+      '[data-testid="desktop-title-bar"]',
+    );
+    const brandRail = document.querySelector<HTMLElement>(
+      '[data-testid="iris-brand-rail"]',
+    );
+
+    expect(titleBar?.className).toContain("items-center");
+    expect(titleBar?.className).not.toContain("items-stretch");
+    expect(brandRail?.className).toContain("h-8");
+    expect(brandRail?.className).toContain("-ml-1.5");
+    expect(brandRail?.className).not.toContain("h-full");
+  });
   it("DesktopTitleBar exposes Iris Rail brand rail and segment tab hooks", () => {
     const bar = read("src/components/layout/DesktopTitleBar.tsx");
     const css = read("src/styles/globals.css");
@@ -237,6 +294,7 @@ describe("desktop title bar", () => {
     expect(bar).not.toContain('data-testid="home-segment"');
     expect(bar).not.toContain("iris-home-segment");
     expect(bar).toContain("iris-brand-rail flex h-8");
+    expect(bar).toContain('isMacDesktop && "-ml-1.5"');
     expect(bar).toContain("min-w-[6.75rem]");
     expect(bar).not.toContain("iris-brand-rail flex h-full");
     expect(bar).toContain("iris-brand-rail--active");
@@ -262,20 +320,20 @@ describe("desktop title bar", () => {
     renderTitleBar();
 
     const closeButton = document.querySelector<HTMLButtonElement>(
-      '[aria-label="关闭 女友的闺蜜"]',
+      'button[aria-label$="Sample Note"]',
     );
     const tabSegment = closeButton?.closest('[data-testid="rail-segment-tab"]');
 
     expect(closeButton).not.toBeNull();
     expect(tabSegment).not.toBeNull();
-    expect(tabSegment?.textContent).toContain("女友的闺蜜");
+    expect(tabSegment?.textContent).toContain("Sample Note");
   });
 
   it("does not expose artifact ids in tab tooltips", () => {
     renderTitleBar([
       {
         path: "artifact:process:req-secret",
-        title: "过程详情",
+        title: "Process Detail",
         kind: "artifact",
       },
     ]);
@@ -284,7 +342,7 @@ describe("desktop title bar", () => {
       '[data-testid="rail-segment-tab"]',
     );
 
-    expect(tabSegment?.getAttribute("title")).toBe("过程详情");
+    expect(tabSegment?.getAttribute("title")).toBe("Process Detail");
     expect(tabSegment?.getAttribute("title")).not.toContain("artifact:");
     expect(tabSegment?.getAttribute("title")).not.toContain("req-secret");
   });

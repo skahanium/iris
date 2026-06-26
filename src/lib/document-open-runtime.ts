@@ -1,4 +1,4 @@
-import { isClassifiedVaultPath } from "@/lib/classified-path";
+﻿import { isClassifiedVaultPath } from "@/lib/classified-path";
 import {
   DocumentOpenScheduler,
   type DocumentOpenPriority,
@@ -417,6 +417,83 @@ export function warmNoteOpen(request: PrepareNoteOpenRequest): void {
   });
 }
 
+async function buildPreparedNoteOpen(
+  normalized: ReturnType<typeof normalizeRequest>,
+  namespace: NoteOpenNamespace,
+  signature: string,
+  content: string,
+  isLocked: boolean,
+  startedAt: number,
+): Promise<PreparedNoteOpen> {
+  const parsed = parseNoteForEditor(content, pathStem(normalized.path));
+  const fromMarkdown = displayTitleFromMarkdown(content, "");
+  const title = resolveNoteDisplayTitle({
+    path: normalized.path,
+    title: fromMarkdown || normalized.titleHint?.trim() || parsed.title,
+    markdown: content,
+  });
+  const preparedHtml = await prepareEditorHtml(
+    normalized.path,
+    namespace,
+    parsed.bodyMd,
+  );
+  emitTrace(normalized, "parse-ingest", startedAt, "ok", "none");
+  return {
+    bodyMarkdown: parsed.bodyMd,
+    content,
+    editorHtmlDigest: preparedHtml.digest,
+    editorHtmlStatus: preparedHtml.status,
+    frontmatterYaml: parsed.yaml,
+    isLocked,
+    namespace,
+    path: normalized.path,
+    preparedEditorHtml: preparedHtml.html,
+    preserveFragments: preparedHtml.preserveFragments,
+    signature,
+    title,
+    traceKey: anonymousKey(normalized),
+  };
+}
+
+export async function prepareNoteOpenFromContent(
+  request: PrepareNoteOpenRequest,
+  source: { content: string; isLocked: boolean },
+): Promise<PreparedNoteOpen> {
+  const normalized = normalizeRequest(request);
+  const startedAt = performance.now();
+  if (!canAccessNamespace(normalized)) {
+    emitTrace(normalized, "prepare-denied", startedAt, "denied", "none");
+    return Promise.reject(
+      new Error("Classified note preparation requires explicit permission"),
+    );
+  }
+
+  const namespace = namespaceFor(normalized);
+  const signature = signatureFor(normalized);
+  const cacheKey = preparationCacheKey(normalized);
+  emitTrace(normalized, "prepare-start", startedAt, "ok", "miss");
+  try {
+    const prepared = await buildPreparedNoteOpen(
+      normalized,
+      namespace,
+      signature,
+      source.content,
+      source.isLocked,
+      startedAt,
+    );
+    remember(namespace, cacheKey, {
+      path: normalized.path,
+      signature,
+      value: prepared,
+    });
+    emitTrace(normalized, "prepare-done", startedAt, "ok", "write");
+    return prepared;
+  } catch (error: unknown) {
+    emitTrace(normalized, "prepare-error", startedAt, "error", "none");
+    throw error;
+  }
+}
+
 export function prepareNoteOpen(
   request: PrepareNoteOpenRequest,
 ): Promise<PreparedNoteOpen> {
@@ -467,34 +544,14 @@ export function prepareNoteOpen(
         throw new DOMException("Document open job cancelled", "AbortError");
       }
       emitTrace(normalized, "file-read", startedAt);
-      const parsed = parseNoteForEditor(content, pathStem(normalized.path));
-      const fromMarkdown = displayTitleFromMarkdown(content, "");
-      const title = resolveNoteDisplayTitle({
-        path: normalized.path,
-        title: fromMarkdown || normalized.titleHint?.trim() || parsed.title,
-        markdown: content,
-      });
-      const preparedHtml = await prepareEditorHtml(
-        normalized.path,
+      return buildPreparedNoteOpen(
+        normalized,
         namespace,
-        parsed.bodyMd,
-      );
-      emitTrace(normalized, "parse-ingest", startedAt, "ok", "none");
-      return {
-        bodyMarkdown: parsed.bodyMd,
-        content,
-        editorHtmlDigest: preparedHtml.digest,
-        editorHtmlStatus: preparedHtml.status,
-        frontmatterYaml: parsed.yaml,
-        isLocked,
-        namespace,
-        path: normalized.path,
-        preparedEditorHtml: preparedHtml.html,
-        preserveFragments: preparedHtml.preserveFragments,
         signature,
-        title,
-        traceKey: anonymousKey(normalized),
-      };
+        content,
+        isLocked,
+        startedAt,
+      );
     },
   });
 

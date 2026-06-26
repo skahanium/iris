@@ -128,6 +128,7 @@ pub fn run() {
             commands::file::file_signature,
             commands::file::document_open_begin,
             commands::file::document_open_end,
+            commands::file::document_open,
             commands::file::file_read,
             commands::file::file_write,
             commands::file::file_set_lock,

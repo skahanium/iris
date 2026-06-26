@@ -64,6 +64,14 @@ pub struct DocumentOpenScopeResult {
     pub token: String,
 }
 
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DocumentOpenResult {
+    pub token: String,
+    pub content: String,
+    pub is_locked: bool,
+}
+
 fn query_is_locked(db: &crate::storage::db::Database, path: &str) -> AppResult<bool> {
     db.with_read_conn(|conn| {
         let mut stmt = conn.prepare("SELECT is_locked FROM files WHERE path = ?1")?;
@@ -418,6 +426,41 @@ pub fn document_open_begin(state: State<'_, Arc<AppState>>) -> AppResult<Documen
 pub fn document_open_end(state: State<'_, Arc<AppState>>, token: String) -> AppResult<()> {
     state.end_document_open(&token);
     Ok(())
+}
+
+/// Open a document with a single IPC roundtrip.
+///
+/// Acquires a foreground scope token (so the indexer yields), reads the file
+/// from disk (with classified vault decryption if needed), checks the lock
+/// status, and returns everything in one response. The caller must release the
+/// returned token with `document_open_end` after the first editor frame commits
+/// or the open is cancelled.
+#[tauri::command]
+pub async fn document_open(
+    state: State<'_, Arc<AppState>>,
+    path: String,
+    allow_classified: Option<bool>,
+) -> AppResult<DocumentOpenResult> {
+    validate_file_read_path(&path, allow_classified.unwrap_or(false))?;
+    let token = state.begin_document_open();
+    let vault = state.vault_path()?;
+    let abs = resolve_vault_path(&vault, &path)?;
+    let db = state.inner().db.clone();
+    let path_for_db = path.clone();
+
+    let result = tokio::task::spawn_blocking(move || {
+        let raw_bytes = std::fs::read(&abs)?;
+        let content = decode_file_content(&raw_bytes)?;
+        let is_locked = query_is_locked(&db, &path_for_db)?;
+        Ok(DocumentOpenResult {
+            token,
+            content,
+            is_locked,
+        })
+    })
+    .await
+    .map_err(|e| AppError::msg(format!("task join: {e}")))?;
+    result
 }
 
 #[tauri::command]

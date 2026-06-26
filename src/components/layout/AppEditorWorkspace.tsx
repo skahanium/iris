@@ -1,4 +1,4 @@
-import type { Editor } from "@tiptap/react";
+﻿import type { Editor } from "@tiptap/react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Dispatch, SetStateAction, ReactNode } from "react";
 

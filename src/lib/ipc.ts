@@ -41,6 +41,7 @@ import type {
   FileReadResult,
   FileSignatureResult,
   DocumentOpenScopeResult,
+  DocumentOpenResult,
   GraphData,
   ImageAttachmentDto,
   InboxItem,
@@ -180,6 +181,16 @@ export async function documentOpenBegin(): Promise<DocumentOpenScopeResult> {
 
 export async function documentOpenEnd(token: string): Promise<void> {
   return invoke("document_open_end", { token });
+}
+
+export async function documentOpen(
+  path: string,
+  allowClassified?: boolean,
+): Promise<DocumentOpenResult> {
+  return invoke<DocumentOpenResult>("document_open", {
+    path,
+    allowClassified: allowClassified ?? false,
+  });
 }
 
 export async function fileSetLock(
