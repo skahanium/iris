@@ -37,7 +37,7 @@ pub use messages_impl::{
 };
 use prompts_impl::is_rule_applicable_for_scene;
 pub use prompts_impl::{build_citation_prompt, build_drafting_prompt};
-pub use streaming_impl::{StreamEvent, StreamEventData, StreamEventType};
+pub use streaming_impl::{emit_stream_reset, StreamEvent, StreamEventData, StreamEventType};
 use usage_impl::parse_usage;
 
 /// Gateway response (non-streaming).

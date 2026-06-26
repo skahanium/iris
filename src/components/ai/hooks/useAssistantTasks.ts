@@ -109,6 +109,7 @@ interface AssistantTaskRefs {
   requestIdRef: MutableRefObject<string | null>;
   researchRequestIdRef: MutableRefObject<string | null>;
   streamBufRef: MutableRefObject<string>;
+  docStreamActiveRef: MutableRefObject<boolean>;
 }
 
 interface AssistantTaskStatePorts {
@@ -239,6 +240,7 @@ export function useAssistantTasks({
     requestIdRef,
     researchRequestIdRef,
     streamBufRef,
+    docStreamActiveRef,
   } = refs;
   const {
     setActionState,
@@ -886,72 +888,85 @@ export function useAssistantTasks({
       setActionState(buildActionState("document", "running"));
       assistantRun.setFromTaskStatus("running", "document");
       clearTaskSurfaces();
-      const response = await assistantExecute({
-        agentIntent: "document_check",
-        intent: "document",
-        intentDetection: explicitIntentDetection(
-          "document_check",
-          "Document action explicitly requested whole-note checking.",
-          ["ui_action:document_check", "context:note"],
-          ["chapter", "write"],
-        ),
-        message: rawMessage,
-        contextReferences: currentContextReferences(),
-        taskPlan,
-        notePath,
-        noteContent: getNoteContentForRequest(),
-        webAuthorized: webSearch,
-        documentCheckType: determineDocumentCheckType(rawMessage),
-      });
-      recordRunPlan(response);
-      recordAssistantArtifacts(response);
-      setAgentTaskId(response.taskId ?? null);
-      if (response.kind !== "document") {
-        throw new Error("助手路由异常：期望文档检查结果");
-      }
-      const result = response.payload;
-      setDocSummary(result.analysis_summary ?? null);
-      const issues: string[] = [];
-      if (result.outline_result) {
-        for (const issue of result.outline_result.issues) {
-          issues.push(`[大纲] ${issue.description}`);
+      // Activate the doc-summary stream so useDocSummaryStream renders the
+      // analysis_summary tokens incrementally into the doc panel. Uses a
+      // dedicated ref so tokens do not leak into the chat message list.
+      docStreamActiveRef.current = true;
+      requestIdRef.current = null;
+      try {
+        const response = await assistantExecute({
+          agentIntent: "document_check",
+          intent: "document",
+          intentDetection: explicitIntentDetection(
+            "document_check",
+            "Document action explicitly requested whole-note checking.",
+            ["ui_action:document_check", "context:note"],
+            ["chapter", "write"],
+          ),
+          message: rawMessage,
+          contextReferences: currentContextReferences(),
+          taskPlan,
+          notePath,
+          noteContent: getNoteContentForRequest(),
+          webAuthorized: webSearch,
+          documentCheckType: determineDocumentCheckType(rawMessage),
+        });
+        recordRunPlan(response);
+        recordAssistantArtifacts(response);
+        setAgentTaskId(response.taskId ?? null);
+        if (response.kind !== "document") {
+          throw new Error("助手路由异常：期望文档检查结果");
         }
-      }
-      if (result.citation_gap_result) {
-        for (const claim of result.citation_gap_result.uncited_claims) {
-          issues.push(`[引用缺口] ${claim.statement}`);
+        const result = response.payload;
+        // The authoritative summary wins over any streamed snapshot.
+        setDocSummary(result.analysis_summary ?? null);
+        const issues: string[] = [];
+        if (result.outline_result) {
+          for (const issue of result.outline_result.issues) {
+            issues.push(`[大纲] ${issue.description}`);
+          }
         }
-      }
-      if (result.style_result) {
-        for (const item of result.style_result.inconsistencies) {
-          issues.push(`[风格] ${item.description}`);
+        if (result.citation_gap_result) {
+          for (const claim of result.citation_gap_result.uncited_claims) {
+            issues.push(`[引用缺口] ${claim.statement}`);
+          }
         }
-      }
-      setDocIssues(issues);
-      const nextPatches = result.patches ?? [];
-      setWritingPatches(nextPatches);
-      setActionState(
-        buildActionState(
-          "document",
+        if (result.style_result) {
+          for (const item of result.style_result.inconsistencies) {
+            issues.push(`[风格] ${item.description}`);
+          }
+        }
+        setDocIssues(issues);
+        const nextPatches = result.patches ?? [];
+        setWritingPatches(nextPatches);
+        setActionState(
+          buildActionState(
+            "document",
+            nextPatches.length > 0 ? "awaiting_confirmation" : "completed",
+          ),
+        );
+        assistantRun.setFromTaskStatus(
           nextPatches.length > 0 ? "awaiting_confirmation" : "completed",
-        ),
-      );
-      assistantRun.setFromTaskStatus(
-        nextPatches.length > 0 ? "awaiting_confirmation" : "completed",
-        "document",
-      );
-      appendAssistantSummary("document", nextPatches.length);
+          "document",
+        );
+        appendAssistantSummary("document", nextPatches.length);
+      } finally {
+        docStreamActiveRef.current = false;
+        requestIdRef.current = null;
+      }
     },
     [
       appendAssistantSummary,
       assistantRun,
       clearTaskSurfaces,
+      docStreamActiveRef,
       explicitIntentDetection,
       getNoteContentForRequest,
       notePath,
       recordRunPlan,
       recordAssistantArtifacts,
       currentContextReferences,
+      requestIdRef,
       setActionState,
       setAgentTaskId,
       setDocIssues,
@@ -967,53 +982,86 @@ export function useAssistantTasks({
       assistantRun.setFromTaskStatus("running", "research");
       setResearchRunning(true);
       clearTaskSurfaces();
-      const response = await assistantExecute({
-        agentIntent: "research",
-        intent: "research",
-        intentDetection: explicitIntentDetection(
-          "research",
-          "Research action explicitly requested multi-evidence synthesis.",
-          ["ui_action:research"],
-          ["ask_notes", "chat"],
-        ),
-        message: rawMessage,
-        contextReferences: currentContextReferences(),
-        taskPlan,
-        webAuthorized: webSearch,
-      });
-      recordRunPlan(response);
-      recordAssistantArtifacts(response);
-      setAgentTaskId(response.taskId ?? null);
-      if (response.kind !== "research") {
-        throw new Error("助手路由异常：期望研究结果");
+      // Activate the chat stream slot so useAssistantLlmStream renders the
+      // synthesize_summary tokens incrementally instead of dumping the whole
+      // summary when the IPC call resolves.
+      setStreaming(true);
+      panelSendActiveRef.current = true;
+      streamBufRef.current = "";
+      requestIdRef.current = null;
+      ensureAssistantStreamSlot();
+      let completedOk = false;
+      try {
+        const response = await assistantExecute({
+          agentIntent: "research",
+          intent: "research",
+          intentDetection: explicitIntentDetection(
+            "research",
+            "Research action explicitly requested multi-evidence synthesis.",
+            ["ui_action:research"],
+            ["ask_notes", "chat"],
+          ),
+          message: rawMessage,
+          contextReferences: currentContextReferences(),
+          taskPlan,
+          webAuthorized: webSearch,
+        });
+        recordRunPlan(response);
+        recordAssistantArtifacts(response);
+        setAgentTaskId(response.taskId ?? null);
+        if (response.kind !== "research") {
+          throw new Error("助手路由异常：期望研究结果");
+        }
+        const result = response.payload;
+        const serverSummary =
+          result.summary.trim() ||
+          "研究已完成，但没有生成可展示正文。可在来源详情中查看证据状态。";
+        researchRequestIdRef.current = result.request_id;
+        setResearchResult(result);
+        setResearchState(result.research_state ?? null);
+        setResearchPanelExpanded(false);
+        setResearchRunning(false);
+        setActionState(buildActionState("research", "completed"));
+        assistantRun.setFromTaskStatus("completed", "research");
+        // The streamed tokens already populated the assistant slot; reconcile
+        // it with the authoritative server summary rather than appending a
+        // duplicate message.
+        const finalContent = resolveAssistantDisplayContent(
+          serverSummary,
+          streamBufRef.current,
+          undefined,
+        );
+        setMessages((prev) => {
+          const next = [...prev];
+          const last = next[next.length - 1];
+          if (last?.role === "assistant") {
+            next[next.length - 1] = { ...last, content: finalContent };
+          } else {
+            next.push({ role: "assistant", content: finalContent });
+          }
+          return next;
+        });
+        completedOk = true;
+      } finally {
+        panelSendActiveRef.current = false;
+        setStreaming(false);
+        streamBufRef.current = "";
+        if (completedOk) {
+          requestIdRef.current = null;
+        }
       }
-      const result = response.payload;
-      const summary =
-        result.summary.trim() ||
-        "研究已完成，但没有生成可展示正文。可在来源详情中查看证据状态。";
-      researchRequestIdRef.current = result.request_id;
-      setResearchResult(result);
-      setResearchState(result.research_state ?? null);
-      setResearchPanelExpanded(false);
-      setResearchRunning(false);
-      setActionState(buildActionState("research", "completed"));
-      assistantRun.setFromTaskStatus("completed", "research");
-      setMessages((prev) => [
-        ...prev,
-        {
-          role: "assistant",
-          content: summary,
-        },
-      ]);
     },
     [
       assistantRun,
       clearTaskSurfaces,
+      ensureAssistantStreamSlot,
       explicitIntentDetection,
       researchRequestIdRef,
       recordRunPlan,
       recordAssistantArtifacts,
       currentContextReferences,
+      panelSendActiveRef,
+      requestIdRef,
       setActionState,
       setAgentTaskId,
       setMessages,
@@ -1021,6 +1069,8 @@ export function useAssistantTasks({
       setResearchResult,
       setResearchState,
       setResearchRunning,
+      setStreaming,
+      streamBufRef,
       webSearch,
     ],
   );

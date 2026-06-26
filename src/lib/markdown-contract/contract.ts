@@ -49,6 +49,65 @@ import { isDangerousHtml } from "./html-safety";
 const contractMarked = createMarkedInstance({ gfm: true, breaks: true });
 
 // ═══════════════════════════════════════════════════════════════════
+// Render Result Cache (cross-mount LRU)
+// ═══════════════════════════════════════════════════════════════════
+//
+// Virtualized message rows unmount when scrolled out of view and remount on
+// return. Without a cache, each remount re-parses markdown from scratch
+// (2× marked parse + per-code-block lowlight highlighting + DOMPurify),
+// causing the "blank then re-load" flicker on scroll. This module-level LRU
+// cache keyed on (source, profile, streaming) survives row unmount/remount,
+// so re-entering a measured row returns the pre-parsed HTML in O(1).
+//
+// Streaming results are NOT cached: mid-stream content is incomplete and will
+// grow, so caching would return stale snapshots. Only finalized (streaming=
+// false or omitted) renders are cached.
+
+const RENDER_CACHE_MAX = 64;
+const renderCache = new Map<string, MarkdownContractResult>();
+
+/** Build a cache key from the render inputs. */
+function renderCacheKey(
+  source: string,
+  profile: MarkdownProfile,
+  streaming: boolean,
+  context?: string,
+): string {
+  // Include context (if provided) so context-sensitive renders don't collide.
+  return `${profile}\u0000${streaming ? "1" : "0"}\u0000${context ?? ""}\u0000${source}`;
+}
+
+/** Clear the render cache (for tests). */
+export function clearMarkdownRenderCache(): void {
+  renderCache.clear();
+}
+
+/**
+ * Look up a cached render result. Moves the entry to the end of the Map
+ * (most-recently-used) to implement LRU eviction.
+ */
+function getCachedResult(key: string): MarkdownContractResult | undefined {
+  const cached = renderCache.get(key);
+  if (cached === undefined) return undefined;
+  // Map preserves insertion order; delete + re-insert = move to end (MRU).
+  renderCache.delete(key);
+  renderCache.set(key, cached);
+  return cached;
+}
+
+/** Store a render result, evicting the oldest entry if over capacity. */
+function setCachedResult(key: string, result: MarkdownContractResult): void {
+  if (renderCache.size >= RENDER_CACHE_MAX) {
+    // Evict the oldest (first-inserted) entry — Map iteration is insertion order.
+    const oldestKey = renderCache.keys().next().value;
+    if (oldestKey !== undefined) {
+      renderCache.delete(oldestKey);
+    }
+  }
+  renderCache.set(key, result);
+}
+
+// ═══════════════════════════════════════════════════════════════════
 // Token Walker & Fragment Builder
 // ═══════════════════════════════════════════════════════════════════
 
@@ -567,6 +626,15 @@ export function renderMarkdownWithProfile(
   options?: RenderOptions,
 ): MarkdownContractResult {
   const streaming = options?.streaming ?? false;
+
+  // Only cache finalized (non-streaming) renders. Streaming content is
+  // mid-flight and will grow; caching would return stale snapshots.
+  if (!streaming) {
+    const key = renderCacheKey(source, profile, false, options?.context);
+    const cached = getCachedResult(key);
+    if (cached !== undefined) return cached;
+  }
+
   const fragments = buildFragments(source);
   const output = renderByProfile(source, profile, streaming, options);
   const warnings = buildWarnings(fragments, profile);
@@ -576,7 +644,7 @@ export function renderMarkdownWithProfile(
   );
   const stats = computeStats(fragments);
 
-  return {
+  const result: MarkdownContractResult = {
     output,
     preserveFragments,
     warnings,
@@ -588,4 +656,12 @@ export function renderMarkdownWithProfile(
       renderedAt: Date.now(),
     },
   };
+
+  // Cache finalized renders for cross-mount reuse.
+  if (!streaming) {
+    const key = renderCacheKey(source, profile, false, options?.context);
+    setCachedResult(key, result);
+  }
+
+  return result;
 }

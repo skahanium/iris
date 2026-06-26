@@ -10,6 +10,7 @@ import {
   listenAiRetryStatus,
   listenLlmDone,
   listenLlmError,
+  listenLlmReset,
   listenLlmToken,
 } from "@/lib/ipc";
 import type { LlmTokenEvent } from "@/types/ipc";
@@ -42,6 +43,7 @@ export function useAssistantLlmStream(options: {
     let unlistenToken: (() => void) | undefined;
     let unlistenDone: (() => void) | undefined;
     let unlistenError: (() => void) | undefined;
+    let unlistenReset: (() => void) | undefined;
     let unlistenRetryStatus: (() => void) | undefined;
 
     function flushSnapshot() {
@@ -96,10 +98,45 @@ export function useAssistantLlmStream(options: {
         rafRef.current = undefined;
         flushSnapshot();
       }
-      setStreaming(false);
+      // NOTE: streaming state is owned by the task runner's finally block.
+      // The harness may emit multiple llm:done events across rounds; ending
+      // streaming here would suppress tokens from subsequent rounds.
     }).then((fn) => {
       if (disposed) fn();
       else unlistenDone = fn;
+    });
+
+    void listenLlmReset((ev) => {
+      if (disposed || !panelSendActiveRef.current) return;
+      if (
+        requestIdRef.current &&
+        ev.request_id &&
+        ev.request_id !== requestIdRef.current
+      ) {
+        return;
+      }
+      // A non-terminal round (tool-call round or inconclusive reflection)
+      // produced tokens that should not be shown as the final answer. Drop
+      // the buffered content and empty the assistant slot so the next round
+      // streams into a clean surface.
+      if (rafRef.current !== undefined) {
+        clearTimeout(rafRef.current);
+        rafRef.current = undefined;
+      }
+      streamBufRef.current = "";
+      setMessages((prev) => {
+        const copy = [...prev];
+        const last = copy[copy.length - 1];
+        if (last?.role === "assistant") {
+          copy[copy.length - 1] = { ...last, content: "" };
+        } else {
+          copy.push({ role: "assistant", content: "" });
+        }
+        return copy;
+      });
+    }).then((fn) => {
+      if (disposed) fn();
+      else unlistenReset = fn;
     });
 
     void listenLlmError((ev) => {
@@ -163,6 +200,7 @@ export function useAssistantLlmStream(options: {
       unlistenToken?.();
       unlistenDone?.();
       unlistenError?.();
+      unlistenReset?.();
       unlistenRetryStatus?.();
     };
   }, [

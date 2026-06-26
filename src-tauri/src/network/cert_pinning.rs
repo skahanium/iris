@@ -5,7 +5,8 @@ use reqwest::ClientBuilder;
 
 use crate::error::AppResult;
 
-const DEFAULT_TIMEOUT_SECS: u64 = 60;
+const DEFAULT_TIMEOUT_SECS: u64 = 300;
+const DEFAULT_READ_TIMEOUT_SECS: u64 = 60;
 
 /// 创建带有安全 TLS 配置的 HTTP client builder（无证书固定）。
 ///
@@ -13,12 +14,17 @@ const DEFAULT_TIMEOUT_SECS: u64 = 60;
 ///
 /// - 强制 HTTPS（拒绝明文 HTTP）
 /// - 使用 rustls TLS 后端（不依赖系统 OpenSSL）
-/// - 默认 60 秒超时
+/// - 总超时 300 秒（整体 deadline，兜底长请求上界）
+/// - 读超时 60 秒（每次读操作超时，成功读后重置；用于检测 SSE/流式
+///   stalled 连接——某些 provider 在 `[DONE]` 后保持 socket 打开，或
+///   中途停止发送，`read_timeout` 能在 60s 无数据时强制断流，而不是
+///   靠总超时等待。对非流式请求无副作用）
 pub fn https_client_builder() -> ClientBuilder {
     reqwest::Client::builder()
         .use_rustls_tls()
         .https_only(true)
         .timeout(Duration::from_secs(DEFAULT_TIMEOUT_SECS))
+        .read_timeout(Duration::from_secs(DEFAULT_READ_TIMEOUT_SECS))
 }
 
 /// 返回全局单例 Client 的克隆，共享 HTTP 连接池 (keep-alive)。

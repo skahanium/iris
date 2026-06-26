@@ -254,14 +254,45 @@ pub async fn send_streaming_request(
         (Option<String>, Option<String>, String),
     > = std::collections::HashMap::new();
 
-    // Process SSE stream with carry buffer to handle chunks split across TCP boundaries
+    // Process SSE stream with carry buffer to handle chunks split across TCP boundaries.
+    // The outer loop is labeled so the [DONE] / message_stop terminators can break out
+    // of the stream entirely instead of looping back to `stream.next().await` (which
+    // would block on keep-alive sockets until the read_timeout, surfacing as a
+    // spurious "重试中" cycle to the user).
+    //
+    // The loop races `stream.next()` against a periodic abort poll via
+    // `tokio::time::timeout`. Without this, a stalled/half-open socket (no chunks
+    // arriving) would block `stream.next().await` and the per-chunk abort check
+    // would never run — so clicking "中止" could not interrupt a hung stream until
+    // reqwest's read_timeout killed it. The timeout race lets abort fire within
+    // ~500ms regardless of whether chunks are flowing.
     let mut stream = response.bytes_stream();
     use futures_util::StreamExt;
     let mut carry = String::new();
     let mut carry_truncated = false;
     const MAX_CARRY_BYTES: usize = 1_048_576;
+    const ABORT_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(500);
 
-    while let Some(chunk_result) = stream.next().await {
+    'stream: loop {
+        // Race the next stream chunk against a periodic abort poll so a stalled
+        // socket (no incoming chunks) can still be interrupted by the user
+        // within ~500ms, rather than waiting for reqwest's read_timeout.
+        let chunk_opt = match tokio::time::timeout(ABORT_POLL_INTERVAL, stream.next()).await {
+            Ok(chunk) => chunk,
+            Err(_) => {
+                if is_abort_requested(request_id) {
+                    clear_abort(request_id);
+                    return Err(AppError::msg("request aborted"));
+                }
+                continue 'stream;
+            }
+        };
+
+        let chunk_result = match chunk_opt {
+            Some(r) => r,
+            None => break 'stream,
+        };
+
         if is_abort_requested(request_id) {
             clear_abort(request_id);
             return Err(AppError::msg("request aborted"));
@@ -301,7 +332,11 @@ pub async fn send_streaming_request(
                     },
                 };
                 emit_stream_event(app_handle, &event, token_index)?;
-                continue;
+                // The stream is finished; stop reading from the socket. Some
+                // providers/proxies keep the connection open after [DONE];
+                // `continue` here would wait for the server to close (or the
+                // 60s timeout), surfacing as a hang.
+                break 'stream;
             }
 
             if let Ok(json) = serde_json::from_str::<serde_json::Value>(data) {
@@ -324,6 +359,9 @@ pub async fn send_streaming_request(
                             },
                         };
                         emit_stream_event(app_handle, &event, token_index)?;
+                        // Anthropic's terminal event; stop reading the socket
+                        // so a half-open connection cannot hang the loop.
+                        break 'stream;
                     }
                     continue;
                 }
@@ -543,6 +581,17 @@ pub(super) fn emit_stream_event(
             app_handle.emit("ai:tool_call", event).map_err(emit_err)?;
         }
     }
+    Ok(())
+}
+
+/// Emit a `llm:reset` event so the frontend drops buffered tokens from a
+/// non-terminal round (tool-call round or inconclusive reflection) before the
+/// next round begins streaming. This prevents intermediate preamble or
+/// `NEED_MORE_EVIDENCE` sentinels from sticking to the final answer surface.
+pub fn emit_stream_reset(app_handle: &AppHandle, request_id: &str) -> AppResult<()> {
+    app_handle
+        .emit("llm:reset", serde_json::json!({ "request_id": request_id }))
+        .map_err(|e| AppError::msg(format!("Failed to emit llm:reset: {e}")))?;
     Ok(())
 }
 

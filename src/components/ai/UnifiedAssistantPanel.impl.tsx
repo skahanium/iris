@@ -5,6 +5,7 @@ import { AssistantProcessStatusBar } from "@/components/ai/AssistantProcessStatu
 import { AiComposer } from "@/components/ui/ai-composer";
 import { usePromptProfile } from "@/hooks/usePromptProfile";
 import { useAssistantLlmStream } from "@/hooks/useAssistantLlmStream";
+import { useDocSummaryStream } from "@/hooks/useDocSummaryStream";
 import { harnessAbort } from "@/lib/ipc";
 import { legacySceneHintForTaskPlanIntent } from "@/lib/assistant-scene";
 import type {
@@ -81,6 +82,7 @@ export function UnifiedAssistantPanel({
   const assistantRun = useAssistantRun("chat");
   const clearResearchProgressRef = useRef<(() => void) | null>(null);
   const panelSendActiveRef = useRef(false);
+  const docStreamActiveRef = useRef(false);
   const forceNewSessionRef = useRef(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const messageListRef = useRef<HTMLDivElement>(null);
@@ -223,6 +225,12 @@ export function UnifiedAssistantPanel({
     setStreaming,
   });
 
+  useDocSummaryStream({
+    docStreamActiveRef,
+    requestIdRef,
+    setDocSummary,
+  });
+
   useSelectionQuoteReference({
     quoteSelectionAsReference: bubbleSelection.quoteSelectionAsReference,
     selectionQuote,
@@ -307,6 +315,7 @@ export function UnifiedAssistantPanel({
       requestIdRef,
       researchRequestIdRef,
       streamBufRef: streamBuf,
+      docStreamActiveRef,
     },
     state: {
       setActionState,

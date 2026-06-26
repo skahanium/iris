@@ -630,6 +630,14 @@ export async function listenLlmError(
   );
 }
 
+export async function listenLlmReset(
+  handler: (payload: { request_id?: string }) => void,
+): Promise<() => void> {
+  return listen<{ request_id?: string }>(IPC_EVENTS.LLM_RESET, (e) =>
+    handler(e.payload),
+  );
+}
+
 export async function listenAiRetryStatus(
   handler: (payload: import("@/types/ipc").AiRetryStatusEvent) => void,
 ): Promise<() => void> {

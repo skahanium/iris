@@ -28,8 +28,8 @@ use crate::ai_runtime::harness_support::{
     extract_thinking_blocks, load_harness_checkpoint, HarnessCheckpointMeta,
 };
 use crate::ai_runtime::model_gateway::{
-    clear_abort, is_abort_requested, prepare_tool_api_messages, GatewayRequest, GatewayResponse,
-    LlmMessage, MessageRole, ModelGateway, ProviderConfig, TokenUsage, ToolCall,
+    clear_abort, emit_stream_reset, is_abort_requested, prepare_tool_api_messages, GatewayRequest,
+    GatewayResponse, LlmMessage, MessageRole, ModelGateway, ProviderConfig, TokenUsage, ToolCall,
 };
 use crate::ai_runtime::permission_decision::{decide_tool_permission, PermissionDecisionRequest};
 use crate::ai_runtime::subagent_coordinator::{SubAgentCoordinator, SubAgentTaskSpec};
@@ -109,10 +109,15 @@ fn classify_final_answer(
     }
 }
 
-async fn send_llm_request_with_retry(
+/// Streaming agent-round LLM call: reuses the circuit breaker and
+/// exponential-backoff retry logic, but dispatches through
+/// `ModelGateway::send_streaming_request` so `llm:token` events are emitted to
+/// the frontend as tokens arrive. Used by the agent round so the user sees the
+/// answer form incrementally instead of a single dump at the end.
+async fn send_llm_streaming_request_with_retry(
     app_handle: &AppHandle,
     gateway: &ModelGateway,
-    request: &GatewayRequest,
+    request: GatewayRequest,
     request_id: &str,
     provider_id: &str,
 ) -> AppResult<GatewayResponse> {
@@ -123,7 +128,10 @@ async fn send_llm_request_with_retry(
     }
     let mut last_err: Option<String> = None;
     for attempt in 0..=LLM_MAX_RETRIES {
-        match gateway.send_request(request.clone()).await {
+        match gateway
+            .send_streaming_request(request_id, request.clone())
+            .await
+        {
             Ok(response) => {
                 circuit_breaker::record_success(provider_id);
                 return Ok(response);
@@ -146,7 +154,7 @@ async fn send_llm_request_with_retry(
                         attempt = attempt + 1,
                         delay_ms,
                         error = %msg,
-                        "LLM 请求失败，{}ms后重试",
+                        "LLM 流式请求失败，{}ms后重试",
                         delay_ms
                     );
                     tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
@@ -157,12 +165,50 @@ async fn send_llm_request_with_retry(
     }
     circuit_breaker::record_failure(provider_id);
     Err(AppError::msg(last_err.unwrap_or_else(|| {
-        "LLM request failed after all retries".into()
+        "LLM streaming request failed after all retries".into()
     })))
 }
 
 /// Run the unified agent harness loop.
+///
+/// Wraps [`run_harness_inner`] in a hard global deadline so the agent loop can
+/// never run indefinitely even if individual LLM/tool calls each hang up to
+/// their own per-call timeout. The deadline bounds the worst case (many rounds
+/// × retries × tools) that would otherwise surface to the user as a permanent
+/// "正在思考" freeze.
 pub async fn run_harness(
+    state: &Arc<AppState>,
+    app_handle: &AppHandle,
+    input: HarnessRunInput,
+    provider_config: crate::ai_runtime::model_gateway::ProviderConfig,
+    max_tokens: Option<u32>,
+    thinking_mode: bool,
+) -> AppResult<HarnessRunResult> {
+    const HARNESS_DEADLINE_SECS: u64 = 300;
+    match tokio::time::timeout(
+        std::time::Duration::from_secs(HARNESS_DEADLINE_SECS),
+        run_harness_inner(
+            state,
+            app_handle,
+            input,
+            provider_config,
+            max_tokens,
+            thinking_mode,
+        ),
+    )
+    .await
+    {
+        Ok(result) => result,
+        Err(_elapsed) => {
+            tracing::error!("harness 超过 {HARNESS_DEADLINE_SECS}s 全局截止时间，强制结束",);
+            Err(AppError::msg(format!(
+                "助手处理超过 {HARNESS_DEADLINE_SECS} 秒仍未完成，已强制中止。请缩小问题范围后重试。"
+            )))
+        }
+    }
+}
+
+async fn run_harness_inner(
     state: &Arc<AppState>,
     app_handle: &AppHandle,
     input: HarnessRunInput,
@@ -363,15 +409,15 @@ pub async fn run_harness(
                 tools: llm_tools.clone(),
                 max_tokens,
                 temperature: Some(0.7),
-                stream: false,
+                stream: true,
                 thinking: thinking_mode,
                 skip_stub_ids: vec![],
             };
 
-            let response = send_llm_request_with_retry(
+            let response = send_llm_streaming_request_with_retry(
                 app_handle,
                 &gateway,
-                &request,
+                request,
                 &input.request_id,
                 &provider_config.name,
             )
@@ -393,6 +439,21 @@ pub async fn run_harness(
 
             if should_retry_tool_parse(&tool_calls) {
                 consecutive_parse_failures += 1;
+                // Non-terminal: the streamed content is malformed tool JSON,
+                // not a user-facing answer. Drop it before the next attempt.
+                emit_stream_reset(app_handle, &input.request_id)?;
+                // Surface this as a retry to the UI so the user sees progress
+                // instead of a silent multi-minute stall (each retried round
+                // is a full LLM call of up to ~247s).
+                let _ = app_handle.emit(
+                    "ai:retry_status",
+                    &serde_json::json!({
+                        "request_id": input.request_id,
+                        "attempt": consecutive_parse_failures,
+                        "max_attempts": 3u32,
+                        "delay_ms": 0u64,
+                    }),
+                );
                 if consecutive_parse_failures >= 3 {
                     tracing::warn!(
                         request_id = %input.request_id,
@@ -440,6 +501,12 @@ pub async fn run_harness(
                 )
                 .await;
             }
+
+            // Non-terminal round: tool calls were produced (either to dispatch
+            // or a conclude_reasoning signal). The streamed preamble must not
+            // stick to the surface — the next round or the FinalStream phase
+            // will stream the real answer into a clean buffer.
+            emit_stream_reset(app_handle, &input.request_id)?;
 
             if tool_calls
                 .iter()

@@ -79,23 +79,64 @@ export const AiMessageList = memo(function AiMessageList({
       })),
     ];
   }, [messages, showStandaloneThinking]);
+
+  // Content-aware row height estimate. The old fixed `() => 112` was wrong
+  // by up to 10× for tall assistant messages, causing the virtualizer to
+  // compute incorrect total height / offsets on first scroll-through (blank
+  // gaps + scroll position jumps until measureElement lands real values).
+  // This heuristic uses content length to get within ~2× of the true height,
+  // so measureElement only nudges instead of recalculating drastically.
+  const estimateSizeByContent = useCallback(
+    (index: number): number => {
+      const row = rows[index];
+      if (!row || row.type !== "message") return 80;
+      const content = row.message.content || "";
+      // Base 56px (bubble chrome) + ~0.55px per char (wrapping at ~42 chars/
+      // line at 11px font in a ~480px-wide panel → ~13px line height). Code
+      // blocks (``` fences) add extra height — count them roughly.
+      const fenceCount = (content.match(/```/g) ?? []).length;
+      const codeBlockExtra = Math.floor(fenceCount / 2) * 80;
+      const textHeight = Math.max(56, content.length * 0.55);
+      // Cap at 2000 to avoid absurd estimates for very long messages.
+      return Math.min(2000, textHeight + codeBlockExtra + 24);
+    },
+    [rows],
+  );
+
   const rowVirtualizer = useVirtualizer({
     count: rows.length,
     getScrollElement: () => viewportRef.current,
-    estimateSize: () => 112,
+    estimateSize: estimateSizeByContent,
     overscan: 8,
   });
 
-  const handleBubbleClick = (index: number, e: MouseEvent) => {
-    if (!onSelect) return;
-    const target = e.target as HTMLElement;
-    if (target.closest("a, button")) return;
-    onSelect(index, {
-      shiftKey: e.shiftKey,
-      metaKey: e.metaKey,
-      ctrlKey: e.ctrlKey,
-    });
-  };
+  // Stable per-index callback cache. Inline arrows like `() => onRetract(i)`
+  // create new function refs every render, breaking AiMessageBubble's memo
+  // during streaming (every bubble re-diffs at ~20fps). This Map persists
+  // across renders so each index always gets the same function ref.
+  const retractCallbackRef = useRef<Map<number, () => void>>(new Map());
+  const copyCallbackRef = useRef<Map<number, () => void>>(new Map());
+
+  // Prune stale entries when the message list shrinks (e.g., retract/session
+  // switch) so the Maps don't retain dead-index callbacks indefinitely.
+  if (retractCallbackRef.current.size > messages.length) {
+    retractCallbackRef.current = new Map();
+    copyCallbackRef.current = new Map();
+  }
+
+  const handleBubbleClick = useCallback(
+    (index: number, e: MouseEvent) => {
+      if (!onSelect) return;
+      const target = e.target as HTMLElement;
+      if (target.closest("a, button")) return;
+      onSelect(index, {
+        shiftKey: e.shiftKey,
+        metaKey: e.metaKey,
+        ctrlKey: e.ctrlKey,
+      });
+    },
+    [onSelect],
+  );
 
   const handleCopyMessage = useCallback(async (message: ChatLine) => {
     const ledger = citationRecordsFromContextPackets(message.evidencePackets);
@@ -132,6 +173,20 @@ export const AiMessageList = memo(function AiMessageList({
 
     if (m.role === "assistant") {
       const msgContent = m.content || "";
+      // Fetch or create stable callbacks for this index. The Map persists
+      // across renders, so the same index always gets the same function ref,
+      // preserving AiMessageBubble's memo during streaming re-renders.
+      let retractCb = retractCallbackRef.current.get(i);
+      if (!retractCb && onRetract) {
+        retractCb = () => onRetract(i);
+        retractCallbackRef.current.set(i, retractCb);
+      }
+      let copyCb = copyCallbackRef.current.get(i);
+      if (!copyCb && msgContent) {
+        const messageRef = m;
+        copyCb = () => void handleCopyMessage(messageRef);
+        copyCallbackRef.current.set(i, copyCb);
+      }
       return (
         <div
           className="flex w-full justify-start"
@@ -145,8 +200,8 @@ export const AiMessageList = memo(function AiMessageList({
               selected={isSelected}
               createdAt={m.created_at}
               onCitationClick={onCitationClick}
-              onRetract={onRetract ? () => onRetract(i) : undefined}
-              onCopy={msgContent ? () => handleCopyMessage(m) : undefined}
+              onRetract={retractCb}
+              onCopy={copyCb}
             />
           </div>
         </div>

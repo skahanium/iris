@@ -127,7 +127,11 @@ describe("AssistantProcessStatusBar", () => {
     expect(document.body.textContent).toContain("中止");
   });
 
-  it("hides for ordinary streaming so the composer remains the only stop action", async () => {
+  it("shows the abort button for ordinary streaming so the user can stop a hung chat", async () => {
+    // Previously the bar hid during streaming, leaving only the composer's
+    // stop square — which was unreachable when the chat froze (composer
+    // disabled, chrome locked). The bar + 中止 button must now render while
+    // streaming so the user always has an abort entry point.
     await act(async () => {
       root.render(
         <AssistantProcessStatusBar
@@ -143,9 +147,8 @@ describe("AssistantProcessStatusBar", () => {
 
     expect(
       document.querySelector('[data-testid="assistant-process-status"]'),
-    ).toBeNull();
-    expect(document.body.textContent).not.toContain("仍在处理");
-    expect(document.body.textContent).not.toContain("中止");
+    ).not.toBeNull();
+    expect(document.body.textContent).toContain("中止");
   });
   it("hides when the task is completed", async () => {
     await act(async () => {

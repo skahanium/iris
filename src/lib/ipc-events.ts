@@ -7,6 +7,7 @@ export const IPC_EVENTS = {
   LLM_TOKEN: "llm:token",
   LLM_DONE: "llm:done",
   LLM_ERROR: "llm:error",
+  LLM_RESET: "llm:reset",
   AI_RETRY_STATUS: "ai:retry_status",
   HARNESS_TRACE: "ai:harness_trace",
   AI_THINKING: "ai:thinking",

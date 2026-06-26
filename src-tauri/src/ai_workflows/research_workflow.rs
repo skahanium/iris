@@ -244,14 +244,14 @@ pub async fn execute_research(
             tools: llm_tools.clone(),
             max_tokens: Some(2000),
             temperature: Some(0.3),
-            stream: true,
+            stream: false,
             thinking: false,
             skip_stub_ids: vec![],
         };
 
         let gateway =
             ModelGateway::with_defaults(app_handle.clone(), vec![provider_config.clone()])?;
-        let response = gateway.send_streaming_request(request_id, request).await?;
+        let response = gateway.send_request(request).await?;
 
         accumulate_usage(&mut total_usage, &response.usage);
 
@@ -618,13 +618,13 @@ async fn decompose_topic(
         tools: vec![],
         max_tokens: Some(2000),
         temperature: Some(0.3),
-        stream: true,
+        stream: false,
         thinking: false,
         skip_stub_ids: vec![],
     };
 
     let gateway = ModelGateway::with_defaults(app_handle.clone(), vec![provider.clone()])?;
-    let response = gateway.send_streaming_request(_request_id, request).await?;
+    let response = gateway.send_request(request).await?;
 
     accumulate_usage(usage, &response.usage);
 
@@ -806,13 +806,13 @@ async fn detect_argument_chains(
         tools: vec![],
         max_tokens: Some(2000),
         temperature: Some(0.2),
-        stream: true,
+        stream: false,
         thinking: false,
         skip_stub_ids: vec![],
     };
 
     let gateway = ModelGateway::with_defaults(app_handle.clone(), vec![provider.clone()])?;
-    let response = gateway.send_streaming_request(_request_id, request).await?;
+    let response = gateway.send_request(request).await?;
 
     accumulate_usage(usage, &response.usage);
 

@@ -20,6 +20,7 @@ describe("IPC event registry", () => {
       "llm:token",
       "llm:done",
       "llm:error",
+      "llm:reset",
       "ai:retry_status",
       "ai:harness_trace",
       "ai:thinking",
