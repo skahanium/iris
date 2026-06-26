@@ -51,7 +51,7 @@ export const DesktopTitleBar = memo(function DesktopTitleBar({
   const showTabStrip = !isSplash;
 
   const customWindowControls = isDesktop && showCustomWindowControls();
-  /** Win/Linux 鑷畾涔変笁閿椂鍕垮湪 header 鏍逛笂璁?drag-region锛屽惁鍒?WebView2 浼氬悶鎺夋渶灏忓寲/鏈€澶у寲鐐瑰嚮 */
+  /** Win/Linux 自定义三键时不要在 header 根上设 drag-region，否则 WebView2 会吞掉最小化/最大化点击。 */
   const headerNativeDragRegion = isDesktop && !customWindowControls;
 
   const onDragMouseDown = useMemo(() => {
@@ -105,7 +105,7 @@ export const DesktopTitleBar = memo(function DesktopTitleBar({
                 isMacDesktop && "-ml-1.5",
                 isHomeActive && "iris-brand-rail--active",
               )}
-              aria-label={isHomeActive ? "Home" : "鍥炲埌 Home"}
+              aria-label={isHomeActive ? "Home" : "回到 Home"}
               aria-current={isHomeActive ? "page" : undefined}
               onMouseDown={(event) => event.stopPropagation()}
               onClick={onHome}
@@ -164,13 +164,13 @@ export const DesktopTitleBar = memo(function DesktopTitleBar({
                       <span className="min-w-0 truncate">{tab.title}</span>
                       {isArtifact ? (
                         <span className="ml-1 shrink-0 rounded-sm border border-border/60 px-1 text-[10px] text-muted-foreground">
-                          涓存椂
+                          临时
                         </span>
                       ) : null}
                       {tab.dirty ? (
                         <span className="shrink-0 text-muted-foreground">
                           {" "}
-                          鈥?{" "}
+                          •{" "}
                         </span>
                       ) : null}
                     </button>
@@ -181,7 +181,7 @@ export const DesktopTitleBar = memo(function DesktopTitleBar({
                         "iris-focus-soft flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-muted-foreground opacity-0 transition-all duration-fast hover:bg-muted/60 hover:text-foreground focus:outline-none focus-visible:opacity-100 group-hover:opacity-100",
                         active && "opacity-60",
                       )}
-                      aria-label={`鍏抽棴 ${tab.title}`}
+                      aria-label={`关闭 ${tab.title}`}
                       onMouseDown={(event) => {
                         event.stopPropagation();
                       }}
@@ -200,7 +200,7 @@ export const DesktopTitleBar = memo(function DesktopTitleBar({
                   type="button"
                   data-tauri-drag-region-exclude
                   className="iris-focus-soft inline-flex h-8 w-8 items-center justify-center rounded-[10px] text-muted-foreground transition-all duration-fast hover:bg-muted/60 hover:text-foreground focus:outline-none"
-                  aria-label="鏂板缓绗旇"
+                  aria-label="新建笔记"
                   onMouseDown={(event) => {
                     event.stopPropagation();
                   }}

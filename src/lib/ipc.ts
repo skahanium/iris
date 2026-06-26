@@ -1,6 +1,8 @@
 ﻿import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 
+import { IPC_EVENTS } from "@/lib/ipc-events";
+
 import type {
   AgentIntent,
   AiScene,
@@ -78,11 +80,11 @@ import type {
 export interface SettingsMap {
   theme: "dark" | "light";
   llm_custom_base_url: string | null;
-  /** 搴曟爮銆岃仈缃戙€嶅紑鍏筹紝璺ㄤ細璇濅繚鎸?*/
+  /** 底栏“联网”开关，跨会话保持。 */
   web_search_enabled: boolean;
-  /** 鑷姩鐗堟湰杩借釜鎬诲紑鍏筹紝榛樿寮€鍚€?*/
+  /** 自动版本追踪总开关，默认开启。 */
   auto_version_enabled: boolean;
-  /** 鑷姩鐗堟湰杩借釜绌洪棽闂撮殧锛屽崟浣嶅垎閽熴€?*/
+  /** 自动版本追踪空闲间隔，单位分钟。 */
   auto_version_idle_minutes: number;
 }
 
@@ -409,8 +411,9 @@ export async function versionSaveIdle(
 export function listenVersionSaveComplete(
   handler: (payload: VersionSaveCompleteEvent) => void,
 ): Promise<() => void> {
-  return listen<VersionSaveCompleteEvent>("version:save_complete", (event) =>
-    handler(event.payload),
+  return listen<VersionSaveCompleteEvent>(
+    IPC_EVENTS.VERSION_SAVE_COMPLETE,
+    (event) => handler(event.payload),
   );
 }
 
@@ -438,13 +441,6 @@ export async function templateSave(
 
 export async function templateDelete(name: string): Promise<void> {
   return invoke("template_delete", { name });
-}
-
-export async function exportFile(
-  destPath: string,
-  content: string,
-): Promise<void> {
-  return invoke("export_file", { destPath, content });
 }
 
 export async function searchKeyword(
@@ -583,27 +579,30 @@ export async function credentialDelete(service: string): Promise<void> {
 export async function listenFileChanged(
   handler: (payload: FileChangedEvent) => void,
 ): Promise<() => void> {
-  return listen<FileChangedEvent>("file:changed", (e) => handler(e.payload));
+  return listen<FileChangedEvent>(IPC_EVENTS.FILE_CHANGED, (e) =>
+    handler(e.payload),
+  );
 }
 
 export async function listenClassifiedFileTaken(
   handler: (payload: ClassifiedFileTakenEvent) => void,
 ): Promise<() => void> {
-  return listen<ClassifiedFileTakenEvent>("classified:file_taken", (e) =>
-    handler(e.payload),
+  return listen<ClassifiedFileTakenEvent>(
+    IPC_EVENTS.CLASSIFIED_FILE_TAKEN,
+    (e) => handler(e.payload),
   );
 }
 
 export async function listenSkillsChanged(
   handler: () => void,
 ): Promise<() => void> {
-  return listen("skills:changed", () => handler());
+  return listen(IPC_EVENTS.SKILLS_CHANGED, () => handler());
 }
 
 export async function listenToolConfirmRequest(
   handler: (payload: ToolConfirmRequestEvent) => void,
 ): Promise<() => void> {
-  return listen<ToolConfirmRequestEvent>("ai:tool_confirm_request", (e) =>
+  return listen<ToolConfirmRequestEvent>(IPC_EVENTS.TOOL_CONFIRM_REQUEST, (e) =>
     handler(e.payload),
   );
 }
@@ -611,20 +610,23 @@ export async function listenToolConfirmRequest(
 export async function listenLlmToken(
   handler: (payload: LlmTokenEvent) => void,
 ): Promise<() => void> {
-  return listen<LlmTokenEvent>("llm:token", (e) => handler(e.payload));
+  return listen<LlmTokenEvent>(IPC_EVENTS.LLM_TOKEN, (e) => handler(e.payload));
 }
 
 export async function listenLlmDone(
   handler: (payload: { request_id?: string }) => void,
 ): Promise<() => void> {
-  return listen<{ request_id?: string }>("llm:done", (e) => handler(e.payload));
+  return listen<{ request_id?: string }>(IPC_EVENTS.LLM_DONE, (e) =>
+    handler(e.payload),
+  );
 }
 
 export async function listenLlmError(
   handler: (payload: { request_id?: string; error?: string }) => void,
 ): Promise<() => void> {
-  return listen<{ request_id?: string; error?: string }>("llm:error", (e) =>
-    handler(e.payload),
+  return listen<{ request_id?: string; error?: string }>(
+    IPC_EVENTS.LLM_ERROR,
+    (e) => handler(e.payload),
   );
 }
 
@@ -632,7 +634,7 @@ export async function listenAiRetryStatus(
   handler: (payload: import("@/types/ipc").AiRetryStatusEvent) => void,
 ): Promise<() => void> {
   return listen<import("@/types/ipc").AiRetryStatusEvent>(
-    "ai:retry_status",
+    IPC_EVENTS.AI_RETRY_STATUS,
     (e) => handler(e.payload),
   );
 }
@@ -641,7 +643,7 @@ export async function listenHarnessTrace(
   handler: (payload: import("@/types/ipc").HarnessTraceEvent) => void,
 ): Promise<() => void> {
   return listen<import("@/types/ipc").HarnessTraceEvent>(
-    "ai:harness_trace",
+    IPC_EVENTS.HARNESS_TRACE,
     (e) => handler(e.payload),
   );
 }
@@ -655,18 +657,20 @@ export interface AiThinkingEvent {
 export async function listenAiThinking(
   handler: (payload: AiThinkingEvent) => void,
 ): Promise<() => void> {
-  return listen<AiThinkingEvent>("ai:thinking", (e) => handler(e.payload));
+  return listen<AiThinkingEvent>(IPC_EVENTS.AI_THINKING, (e) =>
+    handler(e.payload),
+  );
 }
 
 export async function listenAiRequestStarted(
   handler: (payload: { request_id: string }) => void,
 ): Promise<() => void> {
-  return listen<{ request_id: string }>("ai:request_started", (e) =>
+  return listen<{ request_id: string }>(IPC_EVENTS.AI_REQUEST_STARTED, (e) =>
     handler(e.payload),
   );
 }
 
-// 鈹€鈹€鈹€ AI Runtime IPC 鈹€鈹€鈹€
+// AI Runtime IPC
 
 import type { CorpusListItem } from "@/types/ipc";
 
@@ -893,7 +897,7 @@ export async function sessionClearAll(params?: {
   });
 }
 
-/** 娓呯┖ AI 杩愯鏃舵寔涔呭寲缂撳瓨锛堜細璇濄€乭arness checkpoint銆佺煡璇嗘矇娣€锛夈€?*/
+/** 清空 AI 运行时持久化缓存（会话、harness checkpoint、知识沉淀）。 */
 export async function aiCacheClear(): Promise<AiCacheClearResult> {
   return invoke<AiCacheClearResult>("ai_cache_clear");
 }
@@ -935,8 +939,10 @@ export async function agentTaskAbort(taskId: string): Promise<void> {
   return invoke("agent_task_abort", { taskId });
 }
 
-export async function harnessResume(requestId: string): Promise<unknown> {
-  return invoke("harness_resume", { requestId });
+export async function harnessResume(
+  requestId: string,
+): Promise<AiSendMessageResult> {
+  return invoke<AiSendMessageResult>("harness_resume", { requestId });
 }
 
 export async function harnessAbort(requestId: string): Promise<void> {
@@ -969,7 +975,7 @@ export async function skillsMigrateLegacy(
   });
 }
 
-// 鈹€鈹€鈹€ Tool Audit 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+// Tool Audit
 
 export interface ToolAuditEntry {
   id: number;
@@ -1051,7 +1057,7 @@ export async function contextAssemble(params: {
   });
 }
 
-/** 缁熶竴鍔╂墜鎵ц闂ㄩ潰 鈥?鎸?intent 璺敱鍒版棦鏈夊伐浣滄祦 */
+/** 统一助手执行门面：按 intent 路由到既有工作流。 */
 export async function assistantExecute(
   request: AssistantExecuteRequest,
 ): Promise<AssistantExecuteResponse> {
@@ -1067,8 +1073,10 @@ export async function aiSendMessage(params: {
   note_path?: string | null;
   selected_packet_ids?: string[];
   context_scope?: ContextScope | null;
-  /** 涓?true 鏃跺湪鍙戦€佸墠娉ㄥ叆 MiniMax / DuckDuckGo 缃戦〉妫€绱㈡憳瑕?*/
+  /** 为 true 时在发送前注入 MiniMax / DuckDuckGo 网页检索摘要。 */
   web_search?: boolean;
+  /** 为 true 时创建新会话，而不是续写当前 scene/note 会话。 */
+  new_session?: boolean;
 }): Promise<AiSendMessageResult> {
   return invoke<AiSendMessageResult>("ai_send_message", {
     scene: params.scene,
@@ -1080,6 +1088,7 @@ export async function aiSendMessage(params: {
     selectedPacketIds: params.selected_packet_ids ?? null,
     contextScope: params.context_scope ?? null,
     webSearch: params.web_search ?? false,
+    newSession: params.new_session ?? false,
   });
 }
 
@@ -1088,8 +1097,8 @@ export async function toolConfirm(params: {
   tool_call_id: string;
   decision: "approve" | "reject" | "modify";
   modified_args?: unknown;
-}): Promise<{ request_id: string; tool_call_id: string; status: string }> {
-  return invoke("tool_confirm", {
+}): Promise<AiSendMessageResult> {
+  return invoke<AiSendMessageResult>("tool_confirm", {
     requestId: params.request_id,
     toolCallId: params.tool_call_id,
     decision: params.decision,
@@ -1108,7 +1117,7 @@ export async function aiListTools(scene: AiScene): Promise<
   return invoke("ai_list_tools", { scene });
 }
 
-// 鈹€鈹€鈹€ Knowledge Index IPC 鈹€鈹€鈹€
+// Knowledge Index IPC
 
 export async function knowledgeReindex(): Promise<{
   anchors: number;
@@ -1131,7 +1140,7 @@ export async function searchHybrid(params: {
   });
 }
 
-// 鈹€鈹€鈹€ Research Workflow IPC (D) 鈹€鈹€鈹€
+// Research Workflow IPC (D)
 
 export async function researchExecute(params: {
   topic: string;
@@ -1187,12 +1196,12 @@ export async function researchGenerateNote(params: {
 export async function listenResearchProgress(
   handler: (payload: ResearchProgressEvent) => void,
 ): Promise<() => void> {
-  return listen<ResearchProgressEvent>("ai:research_progress", (e) =>
+  return listen<ResearchProgressEvent>(IPC_EVENTS.RESEARCH_PROGRESS, (e) =>
     handler(e.payload),
   );
 }
 
-// 鈹€鈹€鈹€ Writing Workflow IPC (Phase 1) 鈹€鈹€鈹€
+// Writing Workflow IPC (Phase 1)
 
 export async function writingExecute(params: {
   target_path: string;
@@ -1234,7 +1243,7 @@ export async function patchApply(patch: {
   return invoke("patch_apply", { patch });
 }
 
-// 鈹€鈹€鈹€ Citation Check IPC (Phase 1) 鈹€鈹€鈹€
+// Citation Check IPC (Phase 1)
 
 export async function citationCheck(params: {
   paragraph_text: string;
@@ -1256,19 +1265,32 @@ export async function citationCheck(params: {
   });
 }
 
-// 鈹€鈹€鈹€ Organize Workflow IPC (Phase 2) 鈹€鈹€鈹€
+// Organize Workflow IPC (Phase 2)
+
+type OrganizeScopeInput = {
+  paths?: string[];
+  pathPrefixes?: string[];
+  corpusIds?: string[];
+  path_prefixes?: string[];
+  corpus_ids?: string[];
+};
 
 export async function organizeExecute(params: {
-  scope?: {
-    paths?: string[];
-    path_prefixes?: string[];
-    corpus_ids?: string[];
-  };
+  scope?: OrganizeScopeInput;
   task_type: string;
 }): Promise<OrganizeExecuteResult> {
+  const scope = params.scope
+    ? {
+        paths: params.scope.paths ?? [],
+        pathPrefixes:
+          params.scope.pathPrefixes ?? params.scope.path_prefixes ?? [],
+        corpusIds: params.scope.corpusIds ?? params.scope.corpus_ids ?? [],
+      }
+    : null;
+
   return invoke<OrganizeExecuteResult>("organize_execute", {
     input: {
-      scope: params.scope ?? null,
+      scope,
       task_type: params.task_type,
     },
   });
@@ -1294,7 +1316,7 @@ export async function organizeApply(
   return invoke("organize_apply", { request: { suggestions } });
 }
 
-// 鈹€鈹€鈹€ Chapter & Document Writing IPC (Phase 3) 鈹€鈹€鈹€
+// Chapter & Document Writing IPC (Phase 3)
 
 export async function chapterWritingExecute(params: {
   target_path: string;
@@ -1338,7 +1360,7 @@ export async function parseDocumentChapters(
   return invoke<ChapterInfo[]>("parse_document_chapters", { content });
 }
 
-// 鈹€鈹€鈹€ Personalization IPC (E) 鈹€鈹€鈹€
+// Personalization IPC (E)
 
 export async function profileList(params: {
   include_inactive?: boolean;
@@ -1368,7 +1390,7 @@ export async function profileSet(params: {
   });
 }
 
-/** 浠ョ函鏂囨湰淇濆瓨鐢ㄦ埛纭鐨勮鍒欙紙Phase 5锛?*/
+/** 以纯文本保存用户确认的规则（Phase 5）。 */
 export async function profileSetRule(params: {
   key: string;
   description: string;
@@ -1439,7 +1461,7 @@ export async function inboxCounts(): Promise<{
   return invoke("inbox_counts");
 }
 
-/** 妗岄潰椤舵爮鎸囨爣锛堥€昏緫鍍忕礌锛夛紝涓?Rust `chrome_metrics` 涓€鑷?*/
+/** 桌面顶栏指标（逻辑像素），与 Rust `chrome_metrics` 一致。 */
 export interface DesktopChromeMetrics {
   titlebarHeightLogical: number;
   trafficInsetLogical: number;
@@ -1456,12 +1478,12 @@ export async function showMainWindowWhenReady(): Promise<void> {
   return invoke("show_main_window_when_ready");
 }
 
-/** 璇诲彇褰撳墠骞冲彴椤舵爮鎸囨爣骞剁敤浜?CSS 鍙橀噺鍚屾 */
+/** 读取当前平台顶栏指标并用于 CSS 变量同步。 */
 export async function getDesktopChromeMetrics(): Promise<DesktopChromeMetrics> {
   return invoke<DesktopChromeMetrics>("get_desktop_chrome_metrics");
 }
 
-/** 閲嶆柊搴旂敤鏃犺竟妗嗙獥鍙ｆ爣棰樹笌骞冲彴鍦嗚 */
+/** 重新应用无边框窗口标题与平台圆角。 */
 export async function reapplyWindowChrome(): Promise<void> {
   return invoke("reapply_window_chrome");
 }

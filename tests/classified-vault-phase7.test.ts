@@ -106,11 +106,13 @@ describe("classified vault phase 7", () => {
     const overlays = read("src/components/layout/AppOverlays.tsx");
     const workspace = read("src/components/layout/AppEditorWorkspace.tsx");
     const ipc = read("src/lib/ipc.ts");
+    const events = read("src/lib/ipc-events.ts");
 
     expect(app).toContain("fileSetLock");
     expect(app).toContain("classifiedOpen");
     expect(app).toContain("listenClassifiedFileTaken");
-    expect(ipc).toContain("classified:file_taken");
+    expect(ipc).toContain("IPC_EVENTS.CLASSIFIED_FILE_TAKEN");
+    expect(events).toContain("classified:file_taken");
     expect(overlays).toContain("ClassifiedPanel");
     expect(workspace).toContain("locked={snapshot.activeFileLocked}");
     expect(workspace).toContain("setLocked={");

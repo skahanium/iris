@@ -1,4 +1,4 @@
-import {
+﻿import {
   useCallback,
   useEffect,
   useRef,
@@ -132,9 +132,11 @@ export function useAssistantConfirmations({
   const saveRule = deps?.saveRule ?? profileSetRule;
 
   useEffect(() => {
+    let disposed = false;
     let unlisten: (() => void) | undefined;
 
     void listenForToolConfirmRequests((req) => {
+      if (disposed) return;
       if (req.tool_name === "update_user_rule") {
         const ruleType =
           typeof req.arguments.rule_type === "string"
@@ -153,10 +155,12 @@ export function useAssistantConfirmations({
         setToolConfirmRequest(req);
       }
     }).then((fn) => {
-      unlisten = fn;
+      if (disposed) fn();
+      else unlisten = fn;
     });
 
     return () => {
+      disposed = true;
       unlisten?.();
     };
   }, [listenForToolConfirmRequests]);

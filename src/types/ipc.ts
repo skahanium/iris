@@ -222,6 +222,7 @@ export interface SessionMessageRecord {
   seq: number;
   role: string;
   content: string;
+  content_parts?: string | null;
   tool_calls?: unknown;
   evidence_packets?: ContextPacket[] | null;
   content_hash?: string | null;
@@ -363,9 +364,9 @@ export interface VersionSaveCompleteEvent {
   error: string | null;
 }
 
-// 鈹€鈹€鈹€ AI Runtime IPC types 鈹€鈹€鈹€
+// AI Runtime IPC types
 
-/** `ai_cache_clear` 杩斿洖鍊硷細娓呯┖浼氳瘽銆乧heckpoint銆佽拷韪褰曚笌鐭ヨ瘑娌夋穩缂撳瓨銆?*/
+/** `ai_cache_clear` return value: cleared sessions, checkpoints, traces, and caches. */
 export interface AiCacheClearResult {
   sessions_deleted: number;
   aborted_tasks: number;
@@ -431,7 +432,7 @@ export interface AgentTaskListParams {
   status?: AgentTaskStatus | null;
 }
 
-/** 鐢ㄦ埛鐢诲儚鏉＄洰锛坄profile_list` / `profile_get` 杩斿洖锛?*/
+/** User profile entry returned by `profile_list` / `profile_get`. */
 export interface ProfileEntry {
   key: string;
   value: unknown;
@@ -441,7 +442,7 @@ export interface ProfileEntry {
   updated_at: string;
 }
 
-/** 鏀朵欢绠辨潯鐩紙`inbox_list` 杩斿洖锛?*/
+/** Inbox item returned by `inbox_list`. */
 export interface InboxItem {
   id: number;
   session_id: number | null;
@@ -454,7 +455,7 @@ export interface InboxItem {
   updated_at: string;
 }
 
-/** 鍓嶇浼犲叆鐨勫浘鐗囬檮浠?DTO */
+/** Image attachment DTO passed from the frontend. */
 export interface ImageAttachmentDto {
   id: string;
   dataBase64: string;

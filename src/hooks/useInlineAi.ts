@@ -1,5 +1,5 @@
 import type { Editor } from "@tiptap/react";
-import { useCallback, useRef } from "react";
+import { useCallback, useEffect, useRef } from "react";
 
 import { buildInlineAiUserMessage } from "@/lib/inline-ai-prompts";
 import { createContextReference } from "@/lib/context-reference";
@@ -293,6 +293,13 @@ export function useInlineAi({
     detachListeners();
     onStatus?.("AI 空闲");
   }, [detachListeners, onStatus]);
+
+  useEffect(
+    () => () => {
+      detachListeners();
+    },
+    [detachListeners],
+  );
 
   return { run, runSlash, retry, abort, dismiss, finish };
 }

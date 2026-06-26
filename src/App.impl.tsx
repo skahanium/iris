@@ -1,4 +1,4 @@
-import type { Editor } from "@tiptap/react";
+﻿import type { Editor } from "@tiptap/react";
 import { Moon, Sun } from "lucide-react";
 import {
   useCallback,
@@ -376,14 +376,18 @@ function App() {
 
   useEffect(() => {
     if (!isTauriRuntime()) return;
+    let disposed = false;
     let unlisten: (() => void) | undefined;
     void listenVersionSaveComplete((payload) => {
+      if (disposed) return;
       if (payload.path !== activePathRef.current) return;
       setAiStatus(formatVersionSaveStatus(payload));
     }).then((fn) => {
-      unlisten = fn;
+      if (disposed) fn();
+      else unlisten = fn;
     });
     return () => {
+      disposed = true;
       unlisten?.();
     };
   }, [activePathRef]);
@@ -401,8 +405,10 @@ function App() {
 
   useEffect(() => {
     if (!isTauriRuntime()) return;
+    let disposed = false;
     let unlisten: (() => void) | undefined;
     void listenClassifiedFileTaken((event) => {
+      if (disposed) return;
       const path = event.path;
       invalidatePreparedNote(path);
       if (tabsRef.current.some((tab) => tab.path === path)) {
@@ -410,9 +416,11 @@ function App() {
       }
       bumpVaultIndex();
     }).then((fn) => {
-      unlisten = fn;
+      if (disposed) fn();
+      else unlisten = fn;
     });
     return () => {
+      disposed = true;
       unlisten?.();
     };
   }, [closeTab, bumpVaultIndex, invalidatePreparedNote]);

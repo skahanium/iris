@@ -136,13 +136,17 @@ export function AgentStatusBadge({
   }, [open, loadSkills]);
 
   useEffect(() => {
+    let disposed = false;
     let unlisten: (() => void) | undefined;
     void listenSkillsChanged(() => {
+      if (disposed) return;
       void loadSkills();
     }).then((fn) => {
-      unlisten = fn;
+      if (disposed) fn();
+      else unlisten = fn;
     });
     return () => {
+      disposed = true;
       unlisten?.();
     };
   }, [loadSkills]);

@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+﻿import { readFileSync } from "node:fs";
 
 import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -345,5 +345,14 @@ describe("desktop title bar", () => {
     expect(tabSegment?.getAttribute("title")).toBe("Process Detail");
     expect(tabSegment?.getAttribute("title")).not.toContain("artifact:");
     expect(tabSegment?.getAttribute("title")).not.toContain("req-secret");
+  });
+  it("does not expose mojibake in visible titlebar text or aria labels", () => {
+    const bar = read("src/components/layout/DesktopTitleBar.tsx");
+
+    expect(bar).not.toMatch(/[涓鈥鍏鏂鍏抽棴绗旇]/);
+    expect(bar).toContain("临时");
+    expect(bar).toContain("•");
+    expect(bar).toContain("aria-label={`关闭 ${tab.title}`}");
+    expect(bar).toContain('aria-label="新建笔记"');
   });
 });

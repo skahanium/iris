@@ -1,10 +1,10 @@
-import { Paperclip, Send, Square, X } from "lucide-react";
+﻿import { Paperclip, Send, Square, X } from "lucide-react";
 import type { KeyboardEvent, ReactNode, RefObject } from "react";
 import { useCallback, useRef } from "react";
 
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import type { ImageAttachment } from "@/components/ai/AiMessageList";
+import type { ImageAttachmentDto } from "@/types/ipc";
 
 interface AiComposerProps {
   value: string;
@@ -22,9 +22,9 @@ interface AiComposerProps {
   /** @deprecated 工具/检索状态已移至底栏，保留以兼容旧调用 */
   statusHint?: string | null;
   /** 已附加的图片列表 */
-  images?: ImageAttachment[];
+  images?: ImageAttachmentDto[];
   /** 图片列表变更回调 */
-  onImagesChange?: (images: ImageAttachment[]) => void;
+  onImagesChange?: (images: ImageAttachmentDto[]) => void;
 }
 
 const MAX_IMAGE_SIZE = 20 * 1024 * 1024; // 20MB
@@ -42,8 +42,8 @@ function fileToBase64(file: File): Promise<string> {
   });
 }
 
-async function processImageFiles(files: File[]): Promise<ImageAttachment[]> {
-  const out: ImageAttachment[] = [];
+async function processImageFiles(files: File[]): Promise<ImageAttachmentDto[]> {
+  const out: ImageAttachmentDto[] = [];
   for (const file of files) {
     if (file.size > MAX_IMAGE_SIZE) continue;
     if (!ALLOWED_MIME.includes(file.type)) continue;

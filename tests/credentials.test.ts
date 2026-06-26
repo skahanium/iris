@@ -19,4 +19,8 @@ describe("credential service names", () => {
   it("explains keyring failures as credential access problems", () => {
     expect(invokeErrorMessage("Keyring error")).toContain("系统凭据");
   });
+
+  it("explains structured credential errors even when only code is present", () => {
+    expect(invokeErrorMessage({ code: "credential" })).toContain("系统凭据");
+  });
 });

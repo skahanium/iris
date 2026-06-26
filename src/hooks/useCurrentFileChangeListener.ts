@@ -1,4 +1,4 @@
-import { useEffect, type MutableRefObject } from "react";
+﻿import { useEffect, type MutableRefObject } from "react";
 
 import { fileRead, listenFileChanged } from "@/lib/ipc";
 import { isTauriRuntime } from "@/lib/tauri-runtime";
@@ -33,8 +33,10 @@ export function useCurrentFileChangeListener({
 }: UseCurrentFileChangeListenerParams) {
   useEffect(() => {
     if (!isTauriRuntime()) return;
+    let disposed = false;
     let unlisten: (() => void) | undefined;
     void listenFileChanged((event) => {
+      if (disposed) return;
       onFileChanged?.(event.path);
       const currentPath = activePathRef.current;
       if (!currentPath || event.path !== currentPath) return;
@@ -64,9 +66,11 @@ export function useCurrentFileChangeListener({
           console.warn("[App] failed to read external file for conflict:", err);
         });
     }).then((fn) => {
-      unlisten = fn;
+      if (disposed) fn();
+      else unlisten = fn;
     });
     return () => {
+      disposed = true;
       unlisten?.();
     };
   }, [

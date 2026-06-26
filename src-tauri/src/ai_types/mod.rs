@@ -1038,6 +1038,7 @@ pub struct CitationCheckInput {
 
 /// 引用检查范围。
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct CitationCheckScope {
     pub paths: Vec<String>,
     pub path_prefixes: Vec<String>,
@@ -1142,6 +1143,7 @@ pub struct OrganizeTaskInput {
 
 /// 整理任务范围。
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct OrganizeTaskScope {
     pub paths: Vec<String>,
     pub path_prefixes: Vec<String>,

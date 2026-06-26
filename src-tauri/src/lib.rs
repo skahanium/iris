@@ -197,7 +197,6 @@ pub fn run() {
             commands::template::template_save,
             commands::template::template_delete,
             commands::tag::tag_list,
-            commands::export::export_file,
             commands::corpus_commands::corpus_list,
             commands::corpus_commands::corpus_upsert,
             // Writing Workflow (Phase 1)

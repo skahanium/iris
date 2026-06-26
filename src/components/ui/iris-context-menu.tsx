@@ -1,3 +1,20 @@
+﻿import {
+  ArrowLeftRight,
+  ClipboardPaste,
+  Copy,
+  Download,
+  FileText,
+  Languages,
+  Lightbulb,
+  ListTree,
+  Pencil,
+  Quote,
+  Scissors,
+  Sparkles,
+  TextSelect,
+  Trash2,
+  type LucideIcon,
+} from "lucide-react";
 import { useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
 
@@ -6,8 +23,29 @@ import {
   IrisSurfaceMenuItem,
   IrisSurfaceMenuPanel,
 } from "@/components/ui/iris-surface-menu";
-import { resolveCommandIcon } from "@/lib/command-palette-icons";
 import { cn } from "@/lib/utils";
+
+const MENU_ICONS: Record<string, LucideIcon> = {
+  ArrowLeftRight,
+  ClipboardPaste,
+  Copy,
+  Download,
+  FileText,
+  Languages,
+  Lightbulb,
+  ListTree,
+  Pencil,
+  Quote,
+  Scissors,
+  Sparkles,
+  TextSelect,
+  Trash2,
+};
+
+function resolveMenuIcon(name?: string): LucideIcon | null {
+  if (!name) return null;
+  return MENU_ICONS[name] ?? null;
+}
 
 export interface IrisContextMenuItem {
   id: string;
@@ -108,7 +146,7 @@ export function IrisContextMenu({
         {groups.map(({ group, items }) => (
           <IrisSurfaceMenuGroup key={group} title={group}>
             {items.map((item) => {
-              const Icon = resolveCommandIcon(item.icon);
+              const Icon = resolveMenuIcon(item.icon);
               return (
                 <IrisSurfaceMenuItem
                   key={item.id}
