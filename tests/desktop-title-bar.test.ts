@@ -283,7 +283,7 @@ describe("desktop title bar", () => {
     expect(titleBar?.className).toContain("items-center");
     expect(titleBar?.className).not.toContain("items-stretch");
     expect(brandRail?.className).toContain("h-8");
-    expect(brandRail?.className).toContain("-ml-1.5");
+    expect(brandRail?.className).not.toContain("-ml-1.5");
     expect(brandRail?.className).not.toContain("h-full");
   });
   it("DesktopTitleBar exposes Iris Rail brand rail and segment tab hooks", () => {
@@ -294,7 +294,7 @@ describe("desktop title bar", () => {
     expect(bar).not.toContain('data-testid="home-segment"');
     expect(bar).not.toContain("iris-home-segment");
     expect(bar).toContain("iris-brand-rail flex h-8");
-    expect(bar).toContain('isMacDesktop && "-ml-1.5"');
+    expect(bar).not.toContain('isMacDesktop && "-ml-1.5"');
     expect(bar).toContain("min-w-[6.75rem]");
     expect(bar).not.toContain("iris-brand-rail flex h-full");
     expect(bar).toContain("iris-brand-rail--active");
@@ -303,17 +303,57 @@ describe("desktop title bar", () => {
     expect(css).toContain("inset 0 0 0 1px hsl(var(--knowledge-accent)");
   });
 
-  it("keeps the tab rail single-row without native scrollbars", () => {
+  it("reserves a left safe-area for the brand rail on Windows and macOS fullscreen", () => {
+    const bar = read("src/components/layout/DesktopTitleBar.tsx");
+    const css = read("src/styles/globals.css");
+
+    expect(css).toContain("--titlebar-leading-inset: 0px");
+    expect(css).toMatch(
+      /html\[data-iris-desktop\]:not\(\[data-iris-platform-macos\]\)\s*\{[^}]*--titlebar-leading-inset:\s*0\.5rem/,
+    );
+    expect(css).toMatch(
+      /html\[data-iris-platform-macos\]\[data-iris-window-fullscreen\]\s*\{[^}]*--titlebar-leading-inset:\s*0\.5rem/,
+    );
+    expect(bar).toContain("pl-[var(--titlebar-leading-inset)]");
+    expect(bar).not.toContain("-ml-1.5");
+    expect(css).toMatch(
+      /html\[data-iris-platform-macos\]:not\(\[data-iris-window-fullscreen\]\)\s+button\.iris-brand-rail\s*\{[^}]*margin-left:\s*-0\.375rem/,
+    );
+  });
+
+  it("compresses tabs instead of scrolling when the rail overflows", () => {
     const bar = read("src/components/layout/DesktopTitleBar.tsx");
     const css = read("src/styles/globals.css");
 
     expect(bar).toContain("iris-titlebar-tab-rail");
+    expect(bar).toContain("overflow-x-hidden");
+    expect(bar).not.toContain("overflow-x-scroll");
     expect(bar).not.toContain("overflow-x-auto");
     expect(bar).not.toContain("overflow-y-auto");
-    expect(css).toContain(".iris-titlebar-tab-rail");
-    expect(css).toContain("scrollbar-width: none");
-    expect(css).toContain(".iris-titlebar-tab-rail::-webkit-scrollbar");
-    expect(css).toContain("display: none");
+    expect(css).toContain(".iris-rail-tab");
+    expect(css).toContain("min-width: 4.5rem");
+  });
+
+  it("pins the new-note button outside the tab rail and spills overflow into a 更多 menu", () => {
+    const bar = read("src/components/layout/DesktopTitleBar.tsx");
+
+    expect(bar).toContain("computeVisibleTabCount");
+    expect(bar).toContain("MoreHorizontal");
+    expect(bar).toContain("IrisSurfaceMenuPanel");
+    expect(bar).toContain("更多笔记");
+    expect(bar).not.toContain("shrink-0 items-center gap-1 px-2 py-1");
+  });
+
+  it("lets tabs compress instead of locking a 7rem minimum width", () => {
+    renderTitleBar([
+      { path: "/vault/a.md", title: "Alpha" },
+      { path: "/vault/b.md", title: "Beta" },
+    ]);
+
+    const segment = document.querySelector<HTMLElement>(
+      '[data-testid="rail-segment-tab"]',
+    );
+    expect(segment?.className).not.toContain("shrink-0");
   });
 
   it("keeps the close button inside the visible tab segment", () => {

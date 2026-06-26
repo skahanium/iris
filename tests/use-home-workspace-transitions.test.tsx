@@ -11,6 +11,7 @@ type OpenNoteFn = (
   options?: unknown,
 ) => Promise<void>;
 type SetHomeActiveFn = (active: boolean) => void;
+type ActivateTabFn = (path: string, options?: unknown) => Promise<void> | void;
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -24,12 +25,14 @@ function deferred<T>() {
 
 function Harness({
   activePath = null,
+  activateTab = vi.fn(),
   apiRef,
   openTabs = [],
   openNote,
   setHomeActive,
 }: {
   activePath?: string | null;
+  activateTab?: ActivateTabFn;
   apiRef: { current: ReturnType<typeof useHomeWorkspaceTransitions> | null };
   openTabs?: Array<{ path: string }>;
   openNote: OpenNoteFn;
@@ -38,7 +41,7 @@ function Harness({
   apiRef.current = useHomeWorkspaceTransitions({
     activePathRef: { current: activePath },
     activateArtifact: vi.fn(),
-    activateTab: vi.fn(),
+    activateTab,
     handleNewNote: vi.fn(async () => undefined),
     openNote,
     openTabs,
@@ -106,12 +109,13 @@ describe("useHomeWorkspaceTransitions", () => {
     });
   });
 
-  it("directly activates an already-open note from Home without pending loading", async () => {
+  it("directly activates an already-open note from Home via activateTab without an openNote detour", async () => {
     const apiRef: {
       current: ReturnType<typeof useHomeWorkspaceTransitions> | null;
     } = {
       current: null,
     };
+    const activateTab = vi.fn(async () => undefined);
     const openNote = vi.fn(async () => undefined);
     const setHomeActive = vi.fn();
 
@@ -119,6 +123,7 @@ describe("useHomeWorkspaceTransitions", () => {
       root.render(
         createElement(Harness, {
           activePath: "current.md",
+          activateTab,
           apiRef,
           openNote,
           openTabs: [{ path: "current.md" }],
@@ -128,11 +133,120 @@ describe("useHomeWorkspaceTransitions", () => {
     });
 
     await act(async () => {
-      await apiRef.current!.openNoteLeavingHome("current.md", "Current");
+      await apiRef.current!.openNoteLeavingHome("current.md", "Current", {
+        source: "welcome",
+      });
     });
 
-    expect(openNote).toHaveBeenCalledWith("current.md", "Current", undefined);
+    expect(activateTab).toHaveBeenCalledWith(
+      "current.md",
+      expect.objectContaining({ openBudgetKind: "hot", source: "welcome" }),
+    );
+    expect(openNote).not.toHaveBeenCalled();
     expect(setHomeActive).toHaveBeenCalledWith(false);
     expect(apiRef.current!.pendingOpen).toBeNull();
+  });
+
+  it("does not flip homeActive until the target tab commits, avoiding a flash of the previous document", async () => {
+    const apiRef: {
+      current: ReturnType<typeof useHomeWorkspaceTransitions> | null;
+    } = {
+      current: null,
+    };
+    const stagedActivate = deferred<void>();
+    const activateTab = vi.fn(() => stagedActivate.promise);
+    const openNote = vi.fn(async () => undefined);
+    const setHomeActive = vi.fn();
+
+    await act(async () => {
+      root.render(
+        createElement(Harness, {
+          activePath: "current.md",
+          activateTab,
+          apiRef,
+          openNote,
+          openTabs: [{ path: "current.md" }],
+          setHomeActive,
+        }),
+      );
+    });
+
+    let openPromise!: Promise<void>;
+    await act(async () => {
+      openPromise = apiRef.current!.openNoteLeavingHome(
+        "current.md",
+        "Current",
+      );
+    });
+
+    // Before the target tab commits: must NOT route through openNote (its async
+    // IPC gap is what reveals the still-active previous document), and must NOT
+    // flip homeActive yet (that would surface the previous document's retained
+    // editor surface at full opacity).
+    expect(activateTab).toHaveBeenCalledWith(
+      "current.md",
+      expect.objectContaining({ openBudgetKind: "hot" }),
+    );
+    expect(openNote).not.toHaveBeenCalled();
+    expect(setHomeActive).not.toHaveBeenCalledWith(false);
+
+    await act(async () => {
+      stagedActivate.resolve();
+      await openPromise;
+    });
+
+    // Once activateTab has committed the target tab, homeActive flips so the
+    // target document is shown directly — with no intermediate render of the
+    // previous document.
+    expect(setHomeActive).toHaveBeenCalledWith(false);
+    expect(apiRef.current!.pendingOpen).toBeNull();
+  });
+
+  it("leaves Home active when showHome interrupts an in-flight already-open tab activation", async () => {
+    const apiRef: {
+      current: ReturnType<typeof useHomeWorkspaceTransitions> | null;
+    } = {
+      current: null,
+    };
+    const stagedActivate = deferred<void>();
+    const activateTab = vi.fn(() => stagedActivate.promise);
+    const openNote = vi.fn(async () => undefined);
+    const setHomeActive = vi.fn();
+
+    await act(async () => {
+      root.render(
+        createElement(Harness, {
+          activePath: "current.md",
+          activateTab,
+          apiRef,
+          openNote,
+          openTabs: [{ path: "current.md" }],
+          setHomeActive,
+        }),
+      );
+    });
+
+    let openPromise!: Promise<void>;
+    await act(async () => {
+      openPromise = apiRef.current!.openNoteLeavingHome(
+        "current.md",
+        "Current",
+      );
+    });
+
+    // User clicks the logo to stay on Home while activation is in flight.
+    await act(async () => {
+      apiRef.current!.showHome();
+    });
+
+    await act(async () => {
+      stagedActivate.resolve();
+      await openPromise;
+    });
+
+    // showHome won: the late activateTab resolution must NOT override it by
+    // flipping homeActive off, or the user would be dragged out of Home.
+    expect(setHomeActive).toHaveBeenCalledWith(true);
+    expect(setHomeActive).not.toHaveBeenCalledWith(false);
   });
 });

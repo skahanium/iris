@@ -364,6 +364,13 @@ describe("outline ghost spine", () => {
     expect(css).toContain("@media (prefers-reduced-motion: reduce)");
   });
 
+  it("keeps a comfortable text-to-rail gap via a 0.75rem left padding constant", () => {
+    const outline = read("src/components/editor/EditorOutline.tsx");
+
+    expect(outline).toContain("+ 0.75rem");
+    expect(outline).not.toContain("+ 0.5rem");
+  });
+
   it("shows backlink summary below the open outline and opens linked notes", async () => {
     mockFileLinkSummary.mockResolvedValue({
       inboundCount: 2,

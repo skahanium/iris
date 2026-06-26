@@ -66,11 +66,19 @@ export function useHomeWorkspaceTransitions<OpenNoteOptions>({
     ): Promise<void> => {
       if (openTabs.some((tab) => tab.path === path)) {
         cancelHomeOpenTransitions(homeOpenSequenceRef, setPendingOpen);
+        const sequence = homeOpenSequenceRef.current;
         setActiveArtifactId(null);
-        setHomeActive(false);
-        return openNote(path, titleHint, options).catch(() => {
-          setHomeActive(true);
-        });
+        return Promise.resolve(
+          activateTab(path, {
+            ...options,
+            openBudgetKind: "hot",
+          } as OpenNoteOptions),
+        )
+          .then(() => {
+            if (homeOpenSequenceRef.current !== sequence) return;
+            setHomeActive(false);
+          })
+          .catch(() => undefined);
       }
 
       const title = resolveNoteDisplayTitle({ path, title: titleHint });
@@ -105,7 +113,14 @@ export function useHomeWorkspaceTransitions<OpenNoteOptions>({
           });
         });
     },
-    [openNote, openTabs, setActiveArtifactId, setHomeActive, setPendingOpen],
+    [
+      activateTab,
+      openNote,
+      openTabs,
+      setActiveArtifactId,
+      setHomeActive,
+      setPendingOpen,
+    ],
   );
 
   const clearPendingOpenFromWorkspace = useCallback(

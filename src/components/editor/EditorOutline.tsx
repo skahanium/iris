@@ -354,7 +354,7 @@ export const EditorOutline = memo(function EditorOutline({
     const lvl = LEVEL_STYLES[entry.level]!;
     const itemStyle: CSSProperties = {
       "--outline-text-indent": lvl.indent,
-      paddingLeft: `calc(${lvl.indent} + 0.5rem)`,
+      paddingLeft: `calc(${lvl.indent} + 0.75rem)`,
     } as CSSProperties;
     return (
       <button
