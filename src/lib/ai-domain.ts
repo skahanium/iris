@@ -1,4 +1,6 @@
-export type AiDomain = "normal" | "classified";
+import type { AiDomain } from "@/types/ai";
+
+export type { AiDomain };
 
 export interface AiDomainState {
   domain: AiDomain;

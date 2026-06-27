@@ -1,7 +1,8 @@
-import { useCallback } from "react";
+import { useCallback, useMemo } from "react";
 
 import type { AssistantSelectionQuote } from "@/components/ai/UnifiedAssistantPanel";
 import type { MediaTab } from "@/hooks/useMediaTabs";
+import { deriveAiDomainState } from "@/lib/ai-domain";
 import type { ArtifactTab } from "@/types/assistant-artifact";
 import type { WritingEditorContext } from "@/types/ai";
 
@@ -9,7 +10,9 @@ interface UseWorkspaceAssistantRoutingOptions {
   activeArtifactTab: ArtifactTab | null;
   activeMediaTab: MediaTab | null;
   activeNoteIsClassified: boolean;
+  activePath: string | null;
   assistantNotePathWithoutMedia: string | null;
+  classifiedUnlocked: boolean;
   getLiveMarkdown: () => string;
   getParagraphText: () => string | null;
   getWritingContext: () => WritingEditorContext | null;
@@ -22,7 +25,9 @@ export function useWorkspaceAssistantRouting({
   activeArtifactTab,
   activeMediaTab,
   activeNoteIsClassified,
+  activePath,
   assistantNotePathWithoutMedia,
+  classifiedUnlocked,
   getLiveMarkdown,
   getParagraphText,
   getWritingContext,
@@ -30,21 +35,43 @@ export function useWorkspaceAssistantRouting({
   selectionQuote,
   setAiStatus,
 }: UseWorkspaceAssistantRoutingOptions) {
+  const domainState = useMemo(
+    () =>
+      deriveAiDomainState({
+        activePath,
+        activeNoteIsClassified,
+        classifiedUnlocked,
+        activeArtifactTab,
+        activeMediaTab,
+      }),
+    [
+      activePath,
+      activeNoteIsClassified,
+      classifiedUnlocked,
+      activeArtifactTab,
+      activeMediaTab,
+    ],
+  );
+
   const nonNoteSurfaceActive = Boolean(
     activeArtifactTab || activeMediaTab || activeNoteIsClassified,
   );
 
+  const isNormalDomain = domainState.domain === "normal";
+
   const getAssistantLiveMarkdown = useCallback(
-    () => (nonNoteSurfaceActive ? "" : getLiveMarkdown()),
-    [getLiveMarkdown, nonNoteSurfaceActive],
+    () => (isNormalDomain && !nonNoteSurfaceActive ? getLiveMarkdown() : ""),
+    [getLiveMarkdown, isNormalDomain, nonNoteSurfaceActive],
   );
   const getAssistantWritingContext = useCallback(
-    () => (nonNoteSurfaceActive ? null : getWritingContext()),
-    [getWritingContext, nonNoteSurfaceActive],
+    () =>
+      isNormalDomain && !nonNoteSurfaceActive ? getWritingContext() : null,
+    [getWritingContext, isNormalDomain, nonNoteSurfaceActive],
   );
   const getAssistantParagraphText = useCallback(
-    () => (nonNoteSurfaceActive ? null : getParagraphText()),
-    [getParagraphText, nonNoteSurfaceActive],
+    () =>
+      isNormalDomain && !nonNoteSurfaceActive ? getParagraphText() : null,
+    [getParagraphText, isNormalDomain, nonNoteSurfaceActive],
   );
   const handleAssistantInsertToEditor = useCallback(
     (content: string) => {
@@ -52,8 +79,7 @@ export function useWorkspaceAssistantRouting({
         setAiStatus("请先切回笔记再插入内容");
         return;
       }
-      if (activeNoteIsClassified) {
-        setAiStatus("涉密笔记不能接收 AI 插入");
+      if (domainState.domain === "classified") {
         return;
       }
       handleInsertToEditor(content);
@@ -61,15 +87,17 @@ export function useWorkspaceAssistantRouting({
     [
       activeArtifactTab,
       activeMediaTab,
-      activeNoteIsClassified,
+      domainState.domain,
       handleInsertToEditor,
       setAiStatus,
     ],
   );
 
   return {
+    aiDomain: domainState.domain,
     assistantNotePath: activeMediaTab ? null : assistantNotePathWithoutMedia,
     assistantSelectionQuote: nonNoteSurfaceActive ? null : selectionQuote,
+    classifiedPath: domainState.classifiedActivePath,
     getAssistantLiveMarkdown,
     getAssistantParagraphText,
     getAssistantWritingContext,
