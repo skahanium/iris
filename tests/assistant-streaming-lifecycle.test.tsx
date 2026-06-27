@@ -109,4 +109,30 @@ describe("assistant streaming lifecycle contract", () => {
       expect(parseBranch).toContain("ai:retry_status");
     });
   });
+
+  describe("classified chat uses the unified streaming lifecycle", () => {
+    it("classified chat emits request_started before model work and does not force stream false", () => {
+      const src = read("src-tauri/src/ai_harness/harness_task.rs");
+      const fnBody =
+        src
+          .split("async fn run_classified_chat_task")[1]
+          ?.split("async fn")[0] ?? "";
+
+      expect(fnBody).toContain('"ai:request_started"');
+      expect(fnBody).toContain("send_classified_streaming_request");
+      expect(fnBody).not.toContain("stream: false");
+    });
+
+    it("stream events can mark classified payloads for domain filtering", () => {
+      const streaming = read(
+        "src-tauri/src/ai_runtime/model_gateway/streaming.rs",
+      );
+      const ipcTypes = read("src/types/ipc.ts");
+
+      expect(ipcTypes).toContain("classified?: boolean");
+      expect(streaming).toContain("classified");
+      expect(streaming).toContain("send_streaming_request_with_meta");
+      expect(streaming).toContain('"classified"');
+    });
+  });
 });

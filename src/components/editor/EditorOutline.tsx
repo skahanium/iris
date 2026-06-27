@@ -5,6 +5,7 @@ import {
   memo,
   useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState,
   type CSSProperties,
@@ -174,6 +175,18 @@ export const EditorOutline = memo(function EditorOutline({
   const listRef = useRef<HTMLDivElement | null>(null);
   const itemRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const barRef = useRef<HTMLDivElement | null>(null);
+  const relativeLevelByHeadingLevel = useMemo(() => {
+    const levels = Array.from(
+      new Set(entries.map((entry) => entry.level)),
+    ).sort((a, b) => a - b);
+    return new Map(
+      levels.map((level, index) => [
+        level,
+        Math.min(index + 1, 3) as 1 | 2 | 3,
+      ]),
+    );
+  }, [entries]);
+
   useEffect(() => {
     if (!editor || !open) return;
 
@@ -351,10 +364,11 @@ export const EditorOutline = memo(function EditorOutline({
     const focused = index === focusIndex;
     const hovered = index === hoverIndex;
     const activeDistance = activeIndex >= 0 ? Math.abs(index - activeIndex) : 0;
-    const lvl = LEVEL_STYLES[entry.level]!;
+    const relativeLevel = relativeLevelByHeadingLevel.get(entry.level) ?? 1;
+    const lvl = LEVEL_STYLES[relativeLevel]!;
     const itemStyle: CSSProperties = {
       "--outline-text-indent": lvl.indent,
-      paddingLeft: `calc(${lvl.indent} + 0.75rem)`,
+      paddingLeft: `calc(${lvl.indent} + var(--editor-outline-text-offset))`,
     } as CSSProperties;
     return (
       <button

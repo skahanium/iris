@@ -368,6 +368,22 @@ impl ModelGateway {
         streaming_impl::send_streaming_request(&self.app_handle, &self.client, request_id, request)
             .await
     }
+
+    /// Send a streaming request and mark emitted frontend events as classified.
+    pub async fn send_classified_streaming_request(
+        &self,
+        request_id: &str,
+        request: GatewayRequest,
+    ) -> AppResult<GatewayResponse> {
+        streaming_impl::send_streaming_request_with_meta(
+            &self.app_handle,
+            &self.client,
+            request_id,
+            request,
+            true,
+        )
+        .await
+    }
 }
 
 fn llm_endpoint_url(provider: &ProviderConfig) -> String {

@@ -181,4 +181,33 @@ describe("AssistantProcessStatusBar", () => {
 
     expect(document.body.textContent).toBe("");
   });
+
+  it("renders failed_safe as a terminal error state without spinner or abort", async () => {
+    await act(async () => {
+      root.render(
+        <AssistantProcessStatusBar
+          agentTask={{ ...runningTask, status: "failed_safe" }}
+          activityHint="正在处理"
+          researchProgress={null}
+          researchRunning={false}
+          hasError
+          onAbort={vi.fn()}
+        />,
+      );
+    });
+
+    expect(document.body.textContent).toContain("处理遇到问题");
+    expect(document.body.textContent).not.toContain("中止");
+    expect(
+      document.querySelector(
+        '[data-testid="assistant-process-status-strip"] .animate-spin',
+      ),
+    ).toBeNull();
+
+    await act(async () => {
+      vi.advanceTimersByTime(8_100);
+    });
+
+    expect(document.body.textContent).not.toContain("仍在处理");
+  });
 });

@@ -614,17 +614,22 @@ export async function listenLlmToken(
 }
 
 export async function listenLlmDone(
-  handler: (payload: { request_id?: string }) => void,
+  handler: (payload: { request_id?: string; classified?: boolean }) => void,
 ): Promise<() => void> {
-  return listen<{ request_id?: string }>(IPC_EVENTS.LLM_DONE, (e) =>
-    handler(e.payload),
+  return listen<{ request_id?: string; classified?: boolean }>(
+    IPC_EVENTS.LLM_DONE,
+    (e) => handler(e.payload),
   );
 }
 
 export async function listenLlmError(
-  handler: (payload: { request_id?: string; error?: string }) => void,
+  handler: (payload: {
+    request_id?: string;
+    error?: string;
+    classified?: boolean;
+  }) => void,
 ): Promise<() => void> {
-  return listen<{ request_id?: string; error?: string }>(
+  return listen<{ request_id?: string; error?: string; classified?: boolean }>(
     IPC_EVENTS.LLM_ERROR,
     (e) => handler(e.payload),
   );

@@ -133,6 +133,28 @@ const SYNTHESIS_TERMS = [
   "取舍",
 ];
 
+const FRESH_WEB_TERMS = [
+  "最新",
+  "现在",
+  "今天",
+  "昨日",
+  "昨天",
+  "本周",
+  "本月",
+  "榜单",
+  "排名",
+  "排行",
+  "arena",
+  "swe-bench",
+  "livebench",
+  "新闻",
+  "消息",
+  "发布",
+  "价格",
+  "股价",
+  "汇率",
+];
+
 const KNOWLEDGE_KEYWORDS = [
   "查一下",
   "查阅",
@@ -186,6 +208,10 @@ function hasExplicitNoteWriteIntent(message: string): boolean {
   );
 }
 
+function needsFreshWebEvidence(message: string): boolean {
+  return includesAny(message, FRESH_WEB_TERMS) || /\b20\d{2}\b/.test(message);
+}
+
 function contextReferencesFor(
   input: BuildAssistantTaskPlanInput,
 ): ContextReference[] {
@@ -204,6 +230,12 @@ function sourceHintsFor(input: BuildAssistantTaskPlanInput): string[] {
     hints.push("context:pending_write_proposal");
   if (input.skillMention) hints.push("skill:mention");
   if (contextReferencesFor(input).length > 0) hints.push("context:reference");
+  if (
+    input.webAuthorized &&
+    needsFreshWebEvidence(input.message.toLowerCase())
+  ) {
+    hints.push("web:fresh_required");
+  }
 
   const skillHubSkill = skillHubDirectInstallSkill(input.message);
   if (skillHubSkill) {
@@ -550,6 +582,10 @@ export function buildAssistantTaskPlan(
     includesAny(message, SYNTHESIS_TERMS) &&
     (input.explicitScope || !input.notePath || message.length > 12)
   ) {
+    return researchPlan(input);
+  }
+
+  if (input.webAuthorized && needsFreshWebEvidence(message)) {
     return researchPlan(input);
   }
 

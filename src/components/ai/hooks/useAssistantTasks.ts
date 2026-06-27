@@ -161,6 +161,10 @@ interface UseAssistantTasksResult {
   setImages: Dispatch<SetStateAction<ImageAttachment[]>>;
 }
 
+function isAbortErrorMessage(message: string): boolean {
+  return message.toLowerCase().includes("request aborted");
+}
+
 function assistantIntentForTaskPlanIntent(
   planIntent: TaskPlanIntent,
 ): AssistantIntent {
@@ -410,8 +414,8 @@ export function useAssistantTasks({
       ensureAssistantStreamSlot();
       setActivityHint("正在连接模型并处理工具调用…");
       assistantRun.setActivityHint("正在连接模型并处理工具调用…");
-
       let completedOk = false;
+
       try {
         const agentIntent =
           options?.agentIntent ??
@@ -534,6 +538,11 @@ export function useAssistantTasks({
         completedOk = !pendingTools && !pausedBudget;
       } catch (error) {
         const message = invokeErrorMessage(error);
+        if (isAbortErrorMessage(message)) {
+          setActionState(buildActionState(intent, "idle"));
+          assistantRun.setFromTaskStatus("idle", intent);
+          return;
+        }
         setLastError(message);
         setMessages((prev) => [
           ...prev,
@@ -615,6 +624,11 @@ export function useAssistantTasks({
         await executeKnowledgeChat(rawMessage, intent, options);
       } catch (error) {
         const message = invokeErrorMessage(error);
+        if (isAbortErrorMessage(message)) {
+          setActionState(buildActionState(intent, "idle"));
+          setActivityHint(null);
+          return;
+        }
         setLastError(message);
         setMessages((prev) => [
           ...prev,
@@ -1021,7 +1035,6 @@ export function useAssistantTasks({
       streamBufRef.current = "";
       requestIdRef.current = null;
       ensureAssistantStreamSlot();
-      let completedOk = false;
       try {
         const response = await assistantExecute({
           agentIntent: "research",
@@ -1073,14 +1086,12 @@ export function useAssistantTasks({
           }
           return next;
         });
-        completedOk = true;
       } finally {
         panelSendActiveRef.current = false;
+        setResearchRunning(false);
         setStreaming(false);
         streamBufRef.current = "";
-        if (completedOk) {
-          requestIdRef.current = null;
-        }
+        requestIdRef.current = null;
       }
     },
     [
@@ -1282,6 +1293,11 @@ export function useAssistantTasks({
       clearContextReferences();
     } catch (error) {
       const message = invokeErrorMessage(error);
+      if (isAbortErrorMessage(message)) {
+        setActionState(buildActionState(intent, "idle"));
+        assistantRun.setFromTaskStatus("idle", intent);
+        return;
+      }
       setLastError(message);
       setMessages((prev) => [
         ...prev,

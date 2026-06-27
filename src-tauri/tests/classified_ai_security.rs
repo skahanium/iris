@@ -382,3 +382,58 @@ fn trace_rows_do_not_contain_document_title_or_sentinel() {
         "trace error must not contain classified path"
     );
 }
+
+#[test]
+fn classified_chat_uses_streaming_without_ordinary_session_writes() {
+    let harness_src = include_str!("../src/ai_harness/harness_task.rs");
+    let classified_fn = harness_src
+        .split("async fn run_classified_chat_task")
+        .nth(1)
+        .and_then(|src| src.split("fn legacy_intent_wire").next())
+        .unwrap_or("");
+
+    assert!(
+        classified_fn.contains("\"ai:request_started\""),
+        "classified chat must publish request id before model work"
+    );
+    assert!(
+        classified_fn.contains("send_classified_streaming_request"),
+        "classified chat must use streaming gateway"
+    );
+    assert!(
+        classified_fn.contains("stream: true"),
+        "classified chat GatewayRequest must opt into streaming"
+    );
+    assert!(
+        !classified_fn.contains("send_request("),
+        "classified chat must not use one-shot send_request"
+    );
+    assert!(
+        !classified_fn.contains("SessionManager::append_message"),
+        "classified chat must not write ordinary session_messages"
+    );
+}
+
+#[test]
+fn classified_stream_events_and_abort_use_unified_gateway_contract() {
+    let gateway_src = include_str!("../src/ai_runtime/model_gateway_impl.rs");
+    let streaming_src = include_str!("../src/ai_runtime/model_gateway/streaming.rs");
+
+    assert!(
+        gateway_src.contains("send_classified_streaming_request"),
+        "ModelGateway must expose classified streaming wrapper"
+    );
+    assert!(
+        gateway_src.contains("send_streaming_request_with_meta") && gateway_src.contains("true"),
+        "classified wrapper must mark emitted stream events"
+    );
+    assert!(
+        streaming_src.contains("pub classified: bool") && streaming_src.contains("\"classified\""),
+        "stream event payloads must carry classified metadata"
+    );
+    assert!(
+        streaming_src.contains("is_abort_requested(request_id)")
+            && streaming_src.contains("return Err(AppError::msg(\"request aborted\"))"),
+        "streaming path must return aborted/error when request id is aborted"
+    );
+}

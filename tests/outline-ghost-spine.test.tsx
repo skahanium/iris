@@ -221,6 +221,79 @@ describe("outline ghost spine", () => {
     }
   });
 
+  it("uses relative heading levels so the shallowest present level sits on the baseline", () => {
+    editor = makeEditor(
+      ["只有二级", "二级续写", "三级细节", "跳级细节", "二级收束"],
+      [2, 2, 3, 3, 2],
+    );
+
+    renderOutline(editor);
+
+    const items = Array.from(
+      document.querySelectorAll<HTMLElement>(
+        '[data-testid="outline-ghost-item"]',
+      ),
+    );
+
+    expect(items).toHaveLength(5);
+    expect(items[0]?.style.paddingLeft).toBe(
+      "calc(0rem + var(--editor-outline-text-offset))",
+    );
+    expect(items[1]?.style.paddingLeft).toBe(
+      "calc(0rem + var(--editor-outline-text-offset))",
+    );
+    expect(items[2]?.style.paddingLeft).toBe(
+      "calc(1.45rem + var(--editor-outline-text-offset))",
+    );
+    expect(items[3]?.style.paddingLeft).toBe(
+      "calc(1.45rem + var(--editor-outline-text-offset))",
+    );
+    expect(items[4]?.style.paddingLeft).toBe(
+      "calc(0rem + var(--editor-outline-text-offset))",
+    );
+  });
+
+  it("compresses skipped heading levels when calculating outline indentation", () => {
+    editor = makeEditor(["一级", "三级", "三级续写"], [1, 3, 3]);
+
+    renderOutline(editor);
+
+    const items = Array.from(
+      document.querySelectorAll<HTMLElement>(
+        '[data-testid="outline-ghost-item"]',
+      ),
+    );
+
+    expect(items[0]?.style.paddingLeft).toBe(
+      "calc(0rem + var(--editor-outline-text-offset))",
+    );
+    expect(items[1]?.style.paddingLeft).toBe(
+      "calc(1.45rem + var(--editor-outline-text-offset))",
+    );
+    expect(items[2]?.style.paddingLeft).toBe(
+      "calc(1.45rem + var(--editor-outline-text-offset))",
+    );
+  });
+
+  it("keeps h3-only outlines on the top-level baseline", () => {
+    editor = makeEditor(["三级章", "三级续章"], [3, 3]);
+
+    renderOutline(editor);
+
+    const items = Array.from(
+      document.querySelectorAll<HTMLElement>(
+        '[data-testid="outline-ghost-item"]',
+      ),
+    );
+
+    expect(items[0]?.style.paddingLeft).toBe(
+      "calc(0rem + var(--editor-outline-text-offset))",
+    );
+    expect(items[1]?.style.paddingLeft).toBe(
+      "calc(0rem + var(--editor-outline-text-offset))",
+    );
+  });
+
   it("keeps level labels in a left column and truncates long left-aligned titles", () => {
     editor = makeEditor(
       ["很长很长很长很长很长很长很长很长的一级标题", "二级标题", "三级标题"],
@@ -364,10 +437,23 @@ describe("outline ghost spine", () => {
     expect(css).toContain("@media (prefers-reduced-motion: reduce)");
   });
 
-  it("keeps a comfortable text-to-rail gap via a 0.75rem left padding constant", () => {
+  it("separates rail placement from a shared readable text offset", () => {
     const outline = read("src/components/editor/EditorOutline.tsx");
+    const css = read("src/styles/globals.css");
 
-    expect(outline).toContain("+ 0.75rem");
+    expect(css).toContain("--editor-outline-inset: 0.75rem");
+    expect(css).toContain("--editor-outline-text-offset: 2rem");
+    expect(css).toMatch(
+      /\.outline-ghost-list \{[\s\S]*padding: 0\.25rem 0\.25rem 0\.45rem 0;/,
+    );
+    expect(css).toMatch(
+      /\.outline-ghost-item \{[\s\S]*padding-left: var\(--editor-outline-text-offset\)/,
+    );
+    expect(css).toMatch(
+      /\.outline-link-summary \{[\s\S]*margin-left: var\(--editor-outline-text-offset\)/,
+    );
+    expect(outline).toContain("+ var(--editor-outline-text-offset)");
+    expect(outline).not.toContain("+ var(--editor-outline-inset)");
     expect(outline).not.toContain("+ 0.5rem");
   });
 

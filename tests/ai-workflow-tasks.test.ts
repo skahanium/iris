@@ -66,6 +66,40 @@ describe("assistant per-turn TaskPlan dispatch", () => {
     expect(intents).toEqual(sequence.map((turn) => turn.expected));
   });
 
+  it("routes authorized freshness questions to web-backed research without asking again", () => {
+    const plan = buildAssistantTaskPlan({
+      message:
+        "2026年6月最新 Chatbot Arena / SWE-bench Live / LiveBench 榜单是什么？",
+      hasImage: false,
+      hasSelection: false,
+      notePath: null,
+      explicitScope: false,
+      contextReferences: [],
+      webAuthorized: true,
+    });
+
+    expect(plan.intent).toBe("research");
+    expect(plan.webMode).toBe("brokered");
+    expect(plan.requiresClarification).toBe(false);
+    expect(plan.sourceHints).toContain("web:fresh_required");
+  });
+
+  it("does not treat the web toggle alone as a research command", () => {
+    const plan = buildAssistantTaskPlan({
+      message: "这个概念是什么意思？",
+      hasImage: false,
+      hasSelection: false,
+      notePath: "/notes/topic.md",
+      explicitScope: false,
+      contextReferences: [],
+      webAuthorized: true,
+    });
+
+    expect(plan.intent).toBe("ask_notes");
+    expect(plan.webMode).toBe("brokered");
+    expect(plan.sourceHints).not.toContain("web:fresh_required");
+  });
+
   it("uses TaskPlan as the primary send dispatcher contract", () => {
     const taskHook = readFileSync(
       "src/components/ai/hooks/useAssistantTasks.ts",

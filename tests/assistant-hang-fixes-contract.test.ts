@@ -52,7 +52,10 @@ describe("AI hang/stuck root-cause fixes contract", () => {
       // Ordinary streaming already has the thinking bubble, composer stop
       // button, and status bar footer; this strip must not duplicate them.
       expect(s).toContain(
-        "const active = isActiveStatus(agentTask) || researchRunning || hasError",
+        'const terminalError = hasError || agentTask?.status === "failed_safe"',
+      );
+      expect(s).toContain(
+        "const active = isActiveStatus(agentTask) || researchRunning || terminalError",
       );
       expect(s).not.toMatch(/const active[\s\S]*\|\|\s*streaming[\s\S]*;/);
     });
@@ -62,6 +65,13 @@ describe("AI hang/stuck root-cause fixes contract", () => {
       expect(s).toContain("streaming && onStop");
       expect(s).toContain('aria-label="停止生成"');
       expect(s).toContain("onClick={onStop}");
+    });
+
+    it("assistant task runner treats request aborted as cancellation", () => {
+      const s = read("src/components/ai/hooks/useAssistantTasks.ts");
+      expect(s).toContain("isAbortErrorMessage");
+      expect(s).toContain('includes("request aborted")');
+      expect(s).toContain('buildActionState(intent, "idle")');
     });
   });
 

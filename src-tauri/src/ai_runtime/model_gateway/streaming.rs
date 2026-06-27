@@ -19,6 +19,8 @@ pub struct StreamEvent {
     pub request_id: String,
     pub event_type: StreamEventType,
     pub data: StreamEventData,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub classified: bool,
 }
 
 /// Stream event types.
@@ -211,6 +213,17 @@ pub async fn send_streaming_request(
     request_id: &str,
     request: GatewayRequest,
 ) -> AppResult<GatewayResponse> {
+    send_streaming_request_with_meta(app_handle, _client, request_id, request, false).await
+}
+
+/// Send a streaming request and attach domain metadata to emitted events.
+pub async fn send_streaming_request_with_meta(
+    app_handle: &AppHandle,
+    _client: &Client,
+    request_id: &str,
+    request: GatewayRequest,
+    classified: bool,
+) -> AppResult<GatewayResponse> {
     if is_abort_requested(request_id) {
         clear_abort(request_id);
         return Err(AppError::msg("request aborted"));
@@ -333,6 +346,7 @@ pub async fn send_streaming_request(
                     data: StreamEventData::Done {
                         usage: Some(usage.clone()),
                     },
+                    classified,
                 };
                 emit_stream_event(app_handle, &event, token_index)?;
                 // The stream is finished; stop reading from the socket. Some
@@ -349,6 +363,7 @@ pub async fn send_streaming_request(
                             request_id: request_id.to_string(),
                             event_type: StreamEventType::Token,
                             data: StreamEventData::Token { token: delta },
+                            classified,
                         };
                         emit_stream_event(app_handle, &event, token_index)?;
                         token_index += 1;
@@ -360,6 +375,7 @@ pub async fn send_streaming_request(
                             data: StreamEventData::Done {
                                 usage: Some(anthropic_state.usage.clone()),
                             },
+                            classified,
                         };
                         emit_stream_event(app_handle, &event, token_index)?;
                         // Anthropic's terminal event; stop reading the socket
@@ -378,6 +394,7 @@ pub async fn send_streaming_request(
                         data: StreamEventData::Token {
                             token: delta.to_string(),
                         },
+                        classified,
                     };
                     emit_stream_event(app_handle, &event, token_index)?;
                     token_index += 1;
@@ -434,6 +451,7 @@ pub async fn send_streaming_request(
                                     data: StreamEventData::Done {
                                         usage: Some(anthropic_state.usage.clone()),
                                     },
+                                    classified,
                                 };
                                 emit_stream_event(app_handle, &event, token_index)?;
                             }
@@ -484,6 +502,7 @@ pub async fn send_streaming_request(
                 data: StreamEventData::ToolCall {
                     tool_call: tc.clone(),
                 },
+                classified,
             };
             emit_stream_event(app_handle, &event, token_index)?;
         }
@@ -513,6 +532,7 @@ pub async fn send_streaming_request(
             data: StreamEventData::ToolCall {
                 tool_call: tc.clone(),
             },
+            classified,
         };
         emit_stream_event(app_handle, &event, token_index)?;
     }
@@ -544,25 +564,23 @@ pub(super) fn emit_stream_event(
     match event.event_type {
         StreamEventType::Token => {
             if let StreamEventData::Token { token } = &event.data {
-                app_handle
-                    .emit(
-                        "llm:token",
-                        serde_json::json!({
-                            "request_id": event.request_id,
-                            "token": token,
-                            "index": token_index,
-                        }),
-                    )
-                    .map_err(emit_err)?;
+                let mut payload = serde_json::json!({
+                    "request_id": event.request_id,
+                    "token": token,
+                    "index": token_index,
+                });
+                if event.classified {
+                    payload["classified"] = serde_json::json!(true);
+                }
+                app_handle.emit("llm:token", payload).map_err(emit_err)?;
             }
         }
         StreamEventType::Done => {
-            app_handle
-                .emit(
-                    "llm:done",
-                    serde_json::json!({ "request_id": event.request_id }),
-                )
-                .map_err(emit_err)?;
+            let mut payload = serde_json::json!({ "request_id": event.request_id });
+            if event.classified {
+                payload["classified"] = serde_json::json!(true);
+            }
+            app_handle.emit("llm:done", payload).map_err(emit_err)?;
         }
         StreamEventType::Error => {
             let message = if let StreamEventData::Error { message } = &event.data {
@@ -570,15 +588,14 @@ pub(super) fn emit_stream_event(
             } else {
                 "stream error".to_string()
             };
-            app_handle
-                .emit(
-                    "llm:error",
-                    serde_json::json!({
-                        "request_id": event.request_id,
-                        "error": message,
-                    }),
-                )
-                .map_err(emit_err)?;
+            let mut payload = serde_json::json!({
+                "request_id": event.request_id,
+                "error": message,
+            });
+            if event.classified {
+                payload["classified"] = serde_json::json!(true);
+            }
+            app_handle.emit("llm:error", payload).map_err(emit_err)?;
         }
         StreamEventType::ToolCall => {
             app_handle.emit("ai:tool_call", event).map_err(emit_err)?;

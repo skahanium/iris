@@ -134,11 +134,52 @@ describe("AI message left rail layout contract", () => {
       expect(selectButton).not.toBeNull();
     });
 
-    it("assistant message actions do not render during streaming", async () => {
+    it("assistant message actions stay mounted during streaming", async () => {
+      const onRetract = vi.fn();
       await act(async () => {
         root.render(
           <AiMessageList
             messages={[{ role: "assistant", content: "" }]}
+            streaming={true}
+            selectedIndices={new Set()}
+            onSelect={vi.fn()}
+            onRetract={onRetract}
+          />,
+        );
+      });
+
+      const copyButton = host.querySelector<HTMLButtonElement>(
+        'button[title="复制此消息"]',
+      );
+      const retractButton = host.querySelector<HTMLButtonElement>(
+        'button[title="撤回此消息及后续所有消息"]',
+      );
+
+      expect(copyButton).not.toBeNull();
+      expect(copyButton?.disabled).toBe(true);
+      expect(retractButton).not.toBeNull();
+      expect(retractButton?.disabled).toBe(false);
+
+      await act(async () => {
+        retractButton?.dispatchEvent(
+          new MouseEvent("click", { bubbles: true }),
+        );
+      });
+
+      expect(onRetract).toHaveBeenCalledWith(0);
+    });
+
+    it("copies partial streamed assistant content when available", async () => {
+      const writeText = vi.fn().mockResolvedValue(undefined);
+      Object.defineProperty(navigator, "clipboard", {
+        configurable: true,
+        value: { writeText },
+      });
+
+      await act(async () => {
+        root.render(
+          <AiMessageList
+            messages={[{ role: "assistant", content: "正在生成的内容" }]}
             streaming={true}
             selectedIndices={new Set()}
             onSelect={vi.fn()}
@@ -147,11 +188,17 @@ describe("AI message left rail layout contract", () => {
         );
       });
 
-      // Copy and retract buttons should not be present during streaming
-      expect(host.querySelector('button[title="复制此消息"]')).toBeNull();
-      expect(
-        host.querySelector('button[title="撤回此消息及后续所有消息"]'),
-      ).toBeNull();
+      const copyButton = host.querySelector<HTMLButtonElement>(
+        'button[title="复制此消息"]',
+      );
+      expect(copyButton).not.toBeNull();
+      expect(copyButton?.disabled).toBe(false);
+
+      await act(async () => {
+        copyButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      });
+
+      expect(writeText).toHaveBeenCalledWith("正在生成的内容");
     });
   });
 

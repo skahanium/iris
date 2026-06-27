@@ -547,32 +547,44 @@ async fn run_classified_chat_task(
     let route = routing_override
         .ok_or_else(|| AppError::msg("classified assistant requires resolved model route"))?;
     let provider_config = route.resolved.to_provider_config_for_slot(route.slot);
+    app_handle
+        .emit(
+            "ai:request_started",
+            serde_json::json!({
+                "request_id": request_id.clone(),
+                "classified": true,
+            }),
+        )
+        .ok();
     let gateway = crate::ai_runtime::model_gateway::ModelGateway::with_defaults(
         app_handle.clone(),
         vec![provider_config.clone()],
     )?;
     let response = gateway
-        .send_request(crate::ai_runtime::model_gateway::GatewayRequest {
-            provider: provider_config,
-            messages: vec![
-                LlmMessage {
-                    role: MessageRole::System,
-                    content: system_prompt.into(),
-                    ..Default::default()
-                },
-                LlmMessage {
-                    role: MessageRole::User,
-                    content: request.message.clone().into(),
-                    ..Default::default()
-                },
-            ],
-            tools: Vec::new(),
-            max_tokens: Some(route.resolved.output_budget),
-            temperature: Some(0.2),
-            stream: false,
-            thinking: route.resolved.thinking,
-            skip_stub_ids: Vec::new(),
-        })
+        .send_classified_streaming_request(
+            &request_id,
+            crate::ai_runtime::model_gateway::GatewayRequest {
+                provider: provider_config,
+                messages: vec![
+                    LlmMessage {
+                        role: MessageRole::System,
+                        content: system_prompt.into(),
+                        ..Default::default()
+                    },
+                    LlmMessage {
+                        role: MessageRole::User,
+                        content: request.message.clone().into(),
+                        ..Default::default()
+                    },
+                ],
+                tools: Vec::new(),
+                max_tokens: Some(route.resolved.output_budget),
+                temperature: Some(0.2),
+                stream: true,
+                thinking: route.resolved.thinking,
+                skip_stub_ids: Vec::new(),
+            },
+        )
         .await?;
     let content = response.content.unwrap_or_default();
     Ok(HarnessTaskResult {

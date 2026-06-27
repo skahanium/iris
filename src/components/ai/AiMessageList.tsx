@@ -97,13 +97,13 @@ function MessageSelectControl({
 function AssistantMessageActions({
   onCopy,
   onRetract,
-  streaming,
+  copyDisabled,
 }: {
   onCopy?: () => void;
   onRetract?: () => void;
-  streaming: boolean;
+  copyDisabled?: boolean;
 }) {
-  if (streaming || (!onCopy && !onRetract)) {
+  if (!onCopy && !onRetract) {
     return <span className="h-6 w-6" aria-hidden="true" />;
   }
 
@@ -113,10 +113,12 @@ function AssistantMessageActions({
         <button
           type="button"
           title="复制此消息"
+          disabled={copyDisabled}
           className="flex h-6 w-6 items-center justify-center rounded text-muted-foreground/45 hover:bg-muted hover:text-muted-foreground"
           onClick={(event) => {
             event.preventDefault();
             event.stopPropagation();
+            if (copyDisabled) return;
             onCopy();
           }}
         >
@@ -241,6 +243,11 @@ export const AiMessageList = memo(function AiMessageList({
   // across renders so each index always gets the same function ref.
   const retractCallbackRef = useRef<Map<number, () => void>>(new Map());
   const copyCallbackRef = useRef<Map<number, () => void>>(new Map());
+  const messagesRef = useRef(messages);
+
+  useEffect(() => {
+    messagesRef.current = messages;
+  }, [messages]);
 
   // Prune stale entries when the message list shrinks (e.g., retract/session
   // switch) so the Maps don't retain dead-index callbacks indefinitely.
@@ -303,9 +310,11 @@ export const AiMessageList = memo(function AiMessageList({
         retractCallbackRef.current.set(i, retractCb);
       }
       let copyCb = copyCallbackRef.current.get(i);
-      if (!copyCb && msgContent) {
-        const messageRef = m;
-        copyCb = () => void handleCopyMessage(messageRef);
+      if (!copyCb) {
+        copyCb = () => {
+          const latestMessage = messagesRef.current[i];
+          if (latestMessage) void handleCopyMessage(latestMessage);
+        };
         copyCallbackRef.current.set(i, copyCb);
       }
       return (
@@ -320,7 +329,7 @@ export const AiMessageList = memo(function AiMessageList({
             <AssistantMessageActions
               onCopy={copyCb}
               onRetract={retractCb}
-              streaming={streaming}
+              copyDisabled={!msgContent}
             />
           </div>
           <div className="min-w-0 max-w-full flex-1">

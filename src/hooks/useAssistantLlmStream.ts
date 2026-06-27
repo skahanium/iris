@@ -103,6 +103,9 @@ export function useAssistantLlmStream(options: {
       ) {
         return;
       }
+      if (domainRef.current !== "classified" && ev.classified) {
+        return;
+      }
       if (rafRef.current !== undefined) {
         clearTimeout(rafRef.current);
         rafRef.current = undefined;
@@ -156,6 +159,9 @@ export function useAssistantLlmStream(options: {
         ev.request_id &&
         ev.request_id !== requestIdRef.current
       ) {
+        return;
+      }
+      if (domainRef.current !== "classified" && ev.classified) {
         return;
       }
       panelSendActiveRef.current = false;

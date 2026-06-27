@@ -231,6 +231,7 @@ export function SessionHistoryDropdown({
                   key={s.threadId}
                   role="button"
                   tabIndex={0}
+                  data-current={s.threadId === currentSessionId}
                   className={`group flex w-full cursor-pointer items-start gap-2 rounded-md px-2 py-2 text-left text-xs hover:bg-muted/60 ${
                     s.threadId === currentSessionId ? "bg-muted/50" : ""
                   }`}
@@ -267,6 +268,7 @@ export function SessionHistoryDropdown({
                   key={s.id}
                   role="button"
                   tabIndex={0}
+                  data-current={s.id === currentSessionId}
                   className={`group flex w-full cursor-pointer items-start gap-2 rounded-md px-2 py-2 text-left text-xs hover:bg-muted/60 ${
                     s.id === currentSessionId ? "bg-muted/50" : ""
                   }`}

@@ -139,5 +139,20 @@ describe("AI dual-domain routing contract", () => {
         "validate_ai_note_path(request.note_path.as_deref())?;",
       );
     });
+
+    it("classified assistant panel domain has visible chrome styles", () => {
+      const panel = read("src/components/ai/UnifiedAssistantPanel.impl.tsx");
+      const css = read("src/styles/globals.css");
+
+      expect(panel).toContain("data-ai-domain={aiDomain}");
+      expect(css).toContain('[data-ai-domain="classified"]');
+      expect(css).toContain("--classified-accent");
+      expect(css).toContain("--ai-domain-accent");
+      expect(css).toContain("--ai-domain-ring");
+      expect(css).not.toContain("--ai-domain-accent: hsl(var(--warning))");
+      expect(css).toMatch(
+        /--ai-domain-ring:\s*hsl\(var\(--classified-accent\) \/ 0\.18\)/,
+      );
+    });
   });
 });

@@ -313,6 +313,7 @@ export const AiMessageBubble = memo(function AiMessageBubble({
 
           className,
         )}
+        data-selected={selected ? "" : undefined}
       >
         {images && images.length > 0 && (
           <div className="mb-1.5 flex flex-wrap gap-1.5">
@@ -354,6 +355,7 @@ export const AiMessageBubble = memo(function AiMessageBubble({
         className,
       )}
       data-streaming={streaming ? "" : undefined}
+      data-selected={selected ? "" : undefined}
     >
       {showThinking ? <AiThinkingIndicator /> : null}
 

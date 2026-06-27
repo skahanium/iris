@@ -63,6 +63,14 @@ describe("classified editor AI parity contract", () => {
       expect(workspace).toContain("locked={snapshot.activeFileLocked}");
       expect(workspace).toContain("setLocked={");
     });
+
+    it("context menu preserves the last non-empty editor selection before opening", () => {
+      const src = read("src/hooks/useEditorContextMenu.ts");
+      expect(src).toContain("lastSelectionRef");
+      expect(src).toContain('editor.on("selectionUpdate"');
+      expect(src).toContain("restoreSelectionForContextMenu");
+      expect(src).toContain("editor.commands.setTextSelection");
+    });
   });
 
   describe("classified editor actions route to classified AI handlers", () => {
@@ -76,6 +84,14 @@ describe("classified editor AI parity contract", () => {
       const src = read("src/hooks/useAppEditorActions.ts");
       expect(src).toContain("insertAssistantMarkdownAtCursor(ed, content)");
       expect(src).not.toContain("涉密笔记不能接收 AI 插入");
+    });
+
+    it("send selection to AI accepts classified selections without sending the full note as normal context", () => {
+      const src = read("src/hooks/useAiSidecarBridge.ts");
+      expect(src).not.toContain("涉密笔记不能发送到 AI");
+      expect(src).toContain("isClassifiedVaultPath(path)");
+      expect(src).toContain("snapshot.text : getNoteContent()");
+      expect(src).toContain("setSelectionQuote({");
     });
 
     it("App patch handler no longer blocks classified rewrite by path alone", () => {
