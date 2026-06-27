@@ -3,6 +3,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { AssistantProcessStatusBar } from "@/components/ai/AssistantProcessStatusBar";
+import { AiComposer } from "@/components/ui/ai-composer";
 import type { AgentTaskDto } from "@/types/ipc";
 
 describe("AssistantProcessStatusBar abort visibility", () => {
@@ -42,40 +43,35 @@ describe("AssistantProcessStatusBar abort visibility", () => {
     });
   }
 
-  it("renders the status bar and abort button when streaming with no agent task", () => {
-    // Symptom: chat hangs, agentTaskId is null, researchRunning false.
-    // Before fix: `active` and `canAbort` ignored `streaming`, so the bar
-    // vanished entirely and the user had no abort entry point.
+  it("does not render the status bar for ordinary streaming with no agent task", () => {
     render({ streaming: true });
 
     expect(
       document.querySelector('[data-testid="assistant-process-status"]'),
-    ).not.toBeNull();
-    const abortBtn = document.querySelector("button");
-    expect(abortBtn).not.toBeNull();
-    expect(abortBtn?.textContent).toContain("中止");
+    ).toBeNull();
+    expect(document.body.textContent).not.toContain("中止");
   });
 
-  it("clicking the abort button invokes onAbort while streaming", () => {
+  it("uses the composer stop button as the ordinary streaming abort entry", () => {
     let clicked = false;
     act(() => {
       root.render(
-        createElement(AssistantProcessStatusBar, {
-          activityHint: "正在连接模型并处理工具调用…",
-          agentTask: null,
-          researchProgress: null,
-          researchRunning: false,
+        createElement(AiComposer, {
+          value: "",
+          onChange: () => {},
+          onSubmit: () => {},
           streaming: true,
-          onAbort: () => {
+          disabled: true,
+          onStop: () => {
             clicked = true;
           },
         }),
       );
     });
-    const abortBtn = document.querySelector("button");
-    expect(abortBtn).not.toBeNull();
+    const stopButton = document.querySelector('button[aria-label="停止生成"]');
+    expect(stopButton).not.toBeNull();
     act(() => {
-      abortBtn?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      stopButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
     expect(clicked).toBe(true);
   });

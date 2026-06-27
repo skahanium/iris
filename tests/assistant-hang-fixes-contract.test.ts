@@ -46,20 +46,22 @@ describe("AI hang/stuck root-cause fixes contract", () => {
     });
   });
 
-  describe("Fix 4: abort button visible while streaming", () => {
-    it("AssistantProcessStatusBar treats streaming as active", () => {
+  describe("Fix 4: ordinary streaming abort stays in the composer", () => {
+    it("AssistantProcessStatusBar does not treat streaming alone as active", () => {
       const s = read("src/components/ai/AssistantProcessStatusBar.tsx");
-      // `active` must include streaming so the bar renders at all.
-      expect(s).toMatch(
-        /isActiveStatus\(agentTask\)\s*\|\|\s*researchRunning\s*\|\|\s*hasError\s*\|\|\s*streaming/,
+      // Ordinary streaming already has the thinking bubble, composer stop
+      // button, and status bar footer; this strip must not duplicate them.
+      expect(s).toContain(
+        "const active = isActiveStatus(agentTask) || researchRunning || hasError",
       );
+      expect(s).not.toMatch(/const active[\s\S]*\|\|\s*streaming[\s\S]*;/);
     });
 
-    it("AssistantProcessStatusBar allows abort while streaming", () => {
-      const s = read("src/components/ai/AssistantProcessStatusBar.tsx");
-      // canAbort must include streaming so the 中止 button renders.
-      const canAbortBlock = s.split("const canAbort")[1] ?? "";
-      expect(canAbortBlock).toContain("streaming");
+    it("AiComposer keeps the streaming stop button", () => {
+      const s = read("src/components/ui/ai-composer.tsx");
+      expect(s).toContain("streaming && onStop");
+      expect(s).toContain('aria-label="停止生成"');
+      expect(s).toContain("onClick={onStop}");
     });
   });
 

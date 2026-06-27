@@ -82,4 +82,44 @@ describe("useAiBubbleSelection", () => {
     expect(api.contextReferences).toEqual([reference]);
     expect(renderCount).toBe(renderCountAfterFirstQuote);
   });
+
+  it("toggles individual message selections and supports shift ranges", async () => {
+    await act(async () => {
+      api.handleClick(1, { shiftKey: false, metaKey: false, ctrlKey: false });
+    });
+
+    expect([...api.selected]).toEqual([1]);
+
+    await act(async () => {
+      api.handleClick(1, { shiftKey: false, metaKey: false, ctrlKey: false });
+    });
+
+    expect([...api.selected]).toEqual([]);
+
+    await act(async () => {
+      api.handleClick(1, { shiftKey: false, metaKey: false, ctrlKey: false });
+    });
+    await act(async () => {
+      api.handleClick(3, { shiftKey: true, metaKey: false, ctrlKey: false });
+    });
+
+    expect([...api.selected]).toEqual([1, 2, 3]);
+  });
+
+  it("prunes selected indices that no longer have messages", async () => {
+    await act(async () => {
+      api.handleClick(1, { shiftKey: false, metaKey: false, ctrlKey: false });
+    });
+    await act(async () => {
+      api.handleClick(3, { shiftKey: true, metaKey: false, ctrlKey: false });
+    });
+
+    expect([...api.selected]).toEqual([1, 2, 3]);
+
+    await act(async () => {
+      api.pruneSelected(2);
+    });
+
+    expect([...api.selected]).toEqual([1]);
+  });
 });

@@ -1,0 +1,252 @@
+import { act } from "react";
+import { createRoot, type Root } from "react-dom/client";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+import { AiMessageList } from "@/components/ai/AiMessageList";
+import { ConversationSurface } from "@/components/ai/ConversationSurface";
+
+vi.mock("@tanstack/react-virtual", () => ({
+  useVirtualizer: ({ count }: { count: number }) => ({
+    getTotalSize: () => count * 112,
+    getVirtualItems: () =>
+      Array.from({ length: count }, (_, index) => ({
+        index,
+        key: `row-${index}`,
+        start: index * 112,
+      })),
+    measureElement: vi.fn(),
+  }),
+}));
+
+describe("AI message selection behavior", () => {
+  let host: HTMLDivElement;
+  let root: Root;
+  const writeText = vi.fn<Clipboard["writeText"]>();
+
+  beforeEach(() => {
+    host = document.createElement("div");
+    document.body.append(host);
+    root = createRoot(host);
+    writeText.mockReset();
+    writeText.mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText },
+    });
+  });
+
+  afterEach(() => {
+    act(() => root.unmount());
+    host.remove();
+  });
+
+  it("keeps body clicks for text selection and selects messages from the checkbox control", async () => {
+    const onSelect = vi.fn();
+
+    await act(async () => {
+      root.render(
+        <AiMessageList
+          messages={[
+            { role: "assistant", content: "可复制的局部文字" },
+            { role: "user", content: "用户消息也可以勾选" },
+          ]}
+          streaming={false}
+          selectedIndices={new Set()}
+          onSelect={onSelect}
+        />,
+      );
+    });
+
+    const body = host.querySelector(".ai-message-body");
+    expect(body).not.toBeNull();
+
+    await act(async () => {
+      body?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    expect(onSelect).not.toHaveBeenCalled();
+
+    const selectButton = host.querySelector<HTMLButtonElement>(
+      'button[aria-label="选择此消息"]',
+    );
+    expect(selectButton).not.toBeNull();
+
+    await act(async () => {
+      selectButton?.dispatchEvent(
+        new MouseEvent("click", { bubbles: true, shiftKey: true }),
+      );
+    });
+
+    expect(onSelect).toHaveBeenCalledTimes(1);
+    expect(onSelect).toHaveBeenCalledWith(0, {
+      shiftKey: true,
+      metaKey: false,
+      ctrlKey: false,
+    });
+  });
+
+  it("keeps message action controls outside the message bubble content layer", async () => {
+    await act(async () => {
+      root.render(
+        <AiMessageList
+          messages={[{ role: "assistant", content: "正文不应被按钮遮挡" }]}
+          streaming={false}
+          selectedIndices={new Set([0])}
+          onSelect={vi.fn()}
+          onRetract={vi.fn()}
+        />,
+      );
+    });
+
+    const bubble = host.querySelector(".ai-message-bubble");
+    expect(bubble).not.toBeNull();
+    expect(
+      bubble?.querySelector('button[aria-label="取消选择此消息"]'),
+    ).toBeNull();
+    expect(bubble?.querySelector('button[title="复制此消息"]')).toBeNull();
+    expect(
+      bubble?.querySelector('button[title="撤回此消息及后续所有消息"]'),
+    ).toBeNull();
+
+    expect(
+      host.querySelector('button[aria-label="取消选择此消息"]'),
+    ).not.toBeNull();
+    expect(host.querySelector('button[title="复制此消息"]')).not.toBeNull();
+    expect(
+      host.querySelector('button[title="撤回此消息及后续所有消息"]'),
+    ).not.toBeNull();
+  });
+
+  it("copies the context-menu selection snapshot even if the DOM selection is cleared", async () => {
+    const messageListRef = { current: null as HTMLDivElement | null };
+    const onQuoteToInput = vi.fn();
+
+    await act(async () => {
+      root.render(
+        <ConversationSurface
+          messages={[{ role: "assistant", content: "复制这一段文字" }]}
+          streaming={false}
+          selectedIndices={new Set()}
+          messageListRef={messageListRef}
+          onCitationClick={vi.fn()}
+          onQuoteToInput={onQuoteToInput}
+          onSelect={vi.fn()}
+        />,
+      );
+    });
+
+    const body = host.querySelector(".ai-message-body");
+    expect(body?.firstChild).toBeTruthy();
+    const range = document.createRange();
+    range.selectNodeContents(body!.firstChild!);
+    const selection = window.getSelection();
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+
+    await act(async () => {
+      body?.dispatchEvent(
+        new MouseEvent("contextmenu", {
+          bubbles: true,
+          cancelable: true,
+          clientX: 12,
+          clientY: 12,
+        }),
+      );
+    });
+
+    selection?.removeAllRanges();
+    const copyItem = document.getElementById("ctx-copy");
+    expect(copyItem).not.toBeNull();
+
+    await act(async () => {
+      copyItem?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    expect(writeText).toHaveBeenCalledWith("复制这一段文字");
+  });
+
+  it("does not clear the native text selection after context-menu copy", async () => {
+    const messageListRef = { current: null as HTMLDivElement | null };
+
+    await act(async () => {
+      root.render(
+        <ConversationSurface
+          messages={[{ role: "assistant", content: "保持选区文字" }]}
+          streaming={false}
+          selectedIndices={new Set()}
+          messageListRef={messageListRef}
+          onCitationClick={vi.fn()}
+          onQuoteToInput={vi.fn()}
+          onSelect={vi.fn()}
+        />,
+      );
+    });
+
+    const body = host.querySelector(".ai-message-body");
+    expect(body?.firstChild).toBeTruthy();
+    const range = document.createRange();
+    range.selectNodeContents(body!.firstChild!);
+    const selection = window.getSelection();
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+
+    await act(async () => {
+      body?.dispatchEvent(
+        new MouseEvent("contextmenu", {
+          bubbles: true,
+          cancelable: true,
+          clientX: 12,
+          clientY: 12,
+        }),
+      );
+    });
+
+    const copyItem = document.getElementById("ctx-copy");
+    expect(copyItem).not.toBeNull();
+
+    await act(async () => {
+      copyItem?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    expect(writeText).toHaveBeenCalledWith("保持选区文字");
+    expect(window.getSelection()?.toString()).toBe("保持选区文字");
+  });
+
+  it("copies AI message text selection with the keyboard shortcut", async () => {
+    const messageListRef = { current: null as HTMLDivElement | null };
+
+    await act(async () => {
+      root.render(
+        <ConversationSurface
+          messages={[{ role: "assistant", content: "快捷键复制文字" }]}
+          streaming={false}
+          selectedIndices={new Set()}
+          messageListRef={messageListRef}
+          onCitationClick={vi.fn()}
+          onQuoteToInput={vi.fn()}
+          onSelect={vi.fn()}
+        />,
+      );
+    });
+
+    const body = host.querySelector(".ai-message-body");
+    expect(body?.firstChild).toBeTruthy();
+    const range = document.createRange();
+    range.selectNodeContents(body!.firstChild!);
+    const selection = window.getSelection();
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+
+    await act(async () => {
+      document.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          key: "c",
+          bubbles: true,
+          ctrlKey: true,
+        }),
+      );
+    });
+
+    expect(writeText).toHaveBeenCalledWith("快捷键复制文字");
+  });
+});

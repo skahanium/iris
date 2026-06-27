@@ -1,5 +1,7 @@
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { memo, useCallback, useMemo, useRef, type MouseEvent } from "react";
+import { memo, useCallback, useMemo, useRef } from "react";
+
+import { Check, Copy, RotateCcw } from "lucide-react";
 
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { AiMessage } from "@/components/ui/ai-message";
@@ -51,6 +53,94 @@ type MessageRow =
   | { type: "empty" }
   | { type: "thinking" }
   | { type: "message"; message: ChatLine; messageIndex: number };
+
+function MessageSelectControl({
+  selected,
+  onSelect,
+}: {
+  selected: boolean;
+  onSelect?: (event: {
+    shiftKey: boolean;
+    metaKey: boolean;
+    ctrlKey: boolean;
+  }) => void;
+}) {
+  if (!onSelect) return <span className="h-6 w-6" aria-hidden="true" />;
+
+  return (
+    <button
+      type="button"
+      aria-label={selected ? "取消选择此消息" : "选择此消息"}
+      aria-pressed={selected}
+      title={selected ? "取消选择此消息" : "选择此消息"}
+      className={[
+        "flex h-6 w-6 items-center justify-center rounded-md border text-[10px] transition",
+        selected
+          ? "border-primary bg-primary text-primary-foreground opacity-100"
+          : "border-border/60 bg-panel/85 text-muted-foreground opacity-0 hover:border-primary/50 hover:text-foreground group-focus-within/ai-message-row:opacity-100 group-hover/ai-message-row:opacity-100",
+      ].join(" ")}
+      onClick={(event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        onSelect({
+          shiftKey: event.shiftKey,
+          metaKey: event.metaKey,
+          ctrlKey: event.ctrlKey,
+        });
+      }}
+    >
+      <Check className="h-3.5 w-3.5" />
+    </button>
+  );
+}
+
+function AssistantMessageActions({
+  onCopy,
+  onRetract,
+  streaming,
+}: {
+  onCopy?: () => void;
+  onRetract?: () => void;
+  streaming: boolean;
+}) {
+  if (streaming || (!onCopy && !onRetract)) {
+    return <span className="h-6 w-14" aria-hidden="true" />;
+  }
+
+  return (
+    <div className="flex h-6 w-14 items-center justify-end gap-0.5 opacity-0 transition-opacity group-focus-within/ai-message-row:opacity-100 group-hover/ai-message-row:opacity-100">
+      {onCopy ? (
+        <button
+          type="button"
+          title="复制此消息"
+          className="flex h-6 w-6 items-center justify-center rounded text-muted-foreground/45 hover:bg-muted hover:text-muted-foreground"
+          onClick={(event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            onCopy();
+          }}
+        >
+          <Copy className="h-3.5 w-3.5" />
+        </button>
+      ) : null}
+
+      {onRetract ? (
+        <button
+          type="button"
+          title="撤回此消息及后续所有消息"
+          className="flex h-6 w-6 items-center justify-center rounded text-muted-foreground/45 hover:bg-muted hover:text-muted-foreground"
+          onClick={(event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            onRetract();
+          }}
+        >
+          <RotateCcw className="h-3.5 w-3.5" />
+        </button>
+      ) : null}
+    </div>
+  );
+}
 
 export const AiMessageList = memo(function AiMessageList({
   messages,
@@ -124,16 +214,12 @@ export const AiMessageList = memo(function AiMessageList({
     copyCallbackRef.current = new Map();
   }
 
-  const handleBubbleClick = useCallback(
-    (index: number, e: MouseEvent) => {
-      if (!onSelect) return;
-      const target = e.target as HTMLElement;
-      if (target.closest("a, button")) return;
-      onSelect(index, {
-        shiftKey: e.shiftKey,
-        metaKey: e.metaKey,
-        ctrlKey: e.ctrlKey,
-      });
+  const handleMessageSelect = useCallback(
+    (
+      index: number,
+      event: { shiftKey: boolean; metaKey: boolean; ctrlKey: boolean },
+    ) => {
+      onSelect?.(index, event);
     },
     [onSelect],
   );
@@ -188,10 +274,15 @@ export const AiMessageList = memo(function AiMessageList({
         copyCallbackRef.current.set(i, copyCb);
       }
       return (
-        <div
-          className="flex w-full justify-start"
-          onClick={(e) => handleBubbleClick(i, e)}
-        >
+        <div className="group/ai-message-row grid w-full grid-cols-[1.75rem_minmax(0,1fr)_3.5rem] items-start gap-1">
+          <div className="flex justify-center pt-1">
+            <MessageSelectControl
+              selected={isSelected}
+              onSelect={
+                onSelect ? (event) => handleMessageSelect(i, event) : undefined
+              }
+            />
+          </div>
           <div className="min-w-0 max-w-full flex-1">
             <AiMessageBubble
               role="assistant"
@@ -200,8 +291,13 @@ export const AiMessageList = memo(function AiMessageList({
               selected={isSelected}
               createdAt={m.created_at}
               onCitationClick={onCitationClick}
-              onRetract={retractCb}
+            />
+          </div>
+          <div className="flex justify-end pt-1">
+            <AssistantMessageActions
               onCopy={copyCb}
+              onRetract={retractCb}
+              streaming={streaming}
             />
           </div>
         </div>
@@ -210,10 +306,15 @@ export const AiMessageList = memo(function AiMessageList({
 
     if (m.role === "user") {
       return (
-        <div
-          className="flex w-full justify-end"
-          onClick={(e) => handleBubbleClick(i, e)}
-        >
+        <div className="group/ai-message-row flex w-full items-start justify-end gap-1">
+          <div className="pt-1">
+            <MessageSelectControl
+              selected={isSelected}
+              onSelect={
+                onSelect ? (event) => handleMessageSelect(i, event) : undefined
+              }
+            />
+          </div>
           <AiMessageBubble
             role="user"
             content={m.content}

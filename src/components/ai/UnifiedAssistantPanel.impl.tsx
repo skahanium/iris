@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { AssistantPanelHeader } from "@/components/ai/AssistantPanelHeader";
 import { AssistantProcessStatusBar } from "@/components/ai/AssistantProcessStatusBar";
@@ -166,6 +166,9 @@ export function UnifiedAssistantPanel({
     streaming,
   });
 
+  useEffect(() => {
+    bubbleSelection.pruneSelected(messages.length);
+  }, [bubbleSelection, messages.length]);
   const {
     contextScope,
     handleComposerKeyDown,
