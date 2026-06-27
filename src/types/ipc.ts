@@ -229,6 +229,23 @@ export interface SessionMessageRecord {
   created_at: string;
 }
 
+export interface ClassifiedAiThread {
+  id: string;
+  document_path: string;
+  created_at: string;
+  updated_at: string;
+  message_count: number;
+}
+
+export interface ClassifiedAiMessage {
+  id: string;
+  thread_id: string;
+  seq: number;
+  role: string;
+  content: string;
+  created_at: string;
+}
+
 export type SessionEvidenceSourceType = "local" | "web";
 
 export interface SessionEvidenceRecord {

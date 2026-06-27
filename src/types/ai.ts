@@ -1326,3 +1326,18 @@ export type ContentPart =
 
 /** `organize_execute` IPC 返回值（结构同 OrganizeTaskResult） */
 export type OrganizeExecuteResult = OrganizeTaskResult;
+
+// ─── AI Dual-Domain Types ────────────────────────────────
+
+export type AiDomain = "normal" | "classified";
+
+export type AiConversationRef =
+  | { domain: "normal"; sessionId: number | null }
+  | { domain: "classified"; threadId: string | null; documentPath: string };
+
+export interface AssistantRequestContext {
+  domain: AiDomain;
+  notePath: string | null;
+  contextReferences: ContextReference[];
+  classifiedThreadId?: string | null;
+}
