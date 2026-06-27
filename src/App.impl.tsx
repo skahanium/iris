@@ -282,12 +282,22 @@ function App() {
     dirtyRef.current = tab?.dirty ?? false;
   }, [activePath]);
 
+  const getLiveMarkdownRef = useRef(() => markdownRef.current);
+  const inlineAiDomain =
+    activeNoteIsClassified &&
+    classifiedUnlocked &&
+    !activeArtifactTab &&
+    !activeMediaTab &&
+    activePath
+      ? "classified"
+      : "normal";
   const inlineAi = useInlineAi({
     provider: llmProvider,
+    domain: inlineAiDomain,
+    notePath: inlineAiDomain === "classified" ? activePath : null,
+    getNoteContent: () => getLiveMarkdownRef.current(),
     onStatus: setAiStatus,
   });
-
-  const getLiveMarkdownRef = useRef(() => markdownRef.current);
 
   const {
     noteTitle,
@@ -593,6 +603,10 @@ function App() {
     Boolean(activePath),
     () => setAiStatus("选区 AI：请使用右键菜单"),
     activeFileLocked,
+    {
+      aiDomain: activeNoteIsClassified ? "classified" : "normal",
+      classifiedUnlocked,
+    },
   );
 
   const { appShortcutItems, handleAppShortcut } = useAppShortcuts({

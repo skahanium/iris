@@ -16,6 +16,11 @@ export interface EditorContextMenuState {
   y: number;
 }
 
+export interface EditorContextMenuDomainContext {
+  aiDomain?: "normal" | "classified";
+  classifiedUnlocked?: boolean;
+}
+
 const closed: EditorContextMenuState = { open: false, x: 0, y: 0 };
 
 const SELECTION_CONTEXT_HINT_KEY = "iris.hint.selection-context";
@@ -25,6 +30,7 @@ export function useEditorContextMenu(
   hasNote: boolean,
   onSelectionHint?: () => void,
   locked = false,
+  domainContext: EditorContextMenuDomainContext = {},
 ) {
   const [menu, setMenu] = useState<EditorContextMenuState>(closed);
 
@@ -36,6 +42,8 @@ export function useEditorContextMenu(
       hasSelection: from !== to,
       streaming: editorHasActiveAiStream(editor),
       isLocked: locked,
+      aiDomain: domainContext.aiDomain,
+      classifiedUnlocked: domainContext.classifiedUnlocked,
     };
     const actions = filterEditorActions(
       "context_menu",
@@ -62,7 +70,14 @@ export function useEditorContextMenu(
         })),
       }),
     );
-  }, [menu.open, editor, hasNote, locked]);
+  }, [
+    menu.open,
+    editor,
+    hasNote,
+    locked,
+    domainContext.aiDomain,
+    domainContext.classifiedUnlocked,
+  ]);
 
   const openAt = useCallback((x: number, y: number) => {
     setMenu({ open: true, x, y });

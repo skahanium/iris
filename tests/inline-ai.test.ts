@@ -11,10 +11,12 @@ import { buildInlineAiUserMessage } from "@/lib/inline-ai-prompts";
 
 const llmGenerate = vi.fn();
 const llmAbort = vi.fn();
+const assistantExecute = vi.fn();
 
 vi.mock("@/lib/ipc", () => ({
   llmGenerate: (...args: unknown[]) => llmGenerate(...args),
   llmAbort: (...args: unknown[]) => llmAbort(...args),
+  assistantExecute: (...args: unknown[]) => assistantExecute(...args),
   listenLlmToken: vi.fn().mockResolvedValue(() => {}),
   listenLlmDone: vi.fn().mockResolvedValue(() => {}),
   listenLlmError: vi.fn().mockResolvedValue(() => {}),
@@ -215,8 +217,40 @@ describe("useInlineAi with mocked IPC", () => {
   beforeEach(() => {
     llmGenerate.mockReset();
     llmAbort.mockReset();
+    assistantExecute.mockReset();
     llmGenerate.mockResolvedValue("req-1");
     llmAbort.mockResolvedValue(undefined);
+    assistantExecute.mockResolvedValue({
+      kind: "writing",
+      payload: {
+        request_id: "classified-req-1",
+        suggestions: [],
+        patches: [
+          {
+            id: "patch-classified",
+            target_path: ".classified/secret.md",
+            base_content_hash: "hash",
+            range: { start: 0, end: 4 },
+            original_text: "原文内容",
+            replacement_text: "涉密改写结果",
+            evidence_packet_ids: [],
+            risk_level: "low",
+            warnings: [],
+            created_at: "2026-06-27T00:00:00",
+          },
+        ],
+        evidence_used: [],
+        total_tokens: {
+          prompt_tokens: 0,
+          completion_tokens: 0,
+          total_tokens: 0,
+        },
+        writing_state: null,
+      },
+      requestId: "classified-req-1",
+      runStatus: "completed",
+      artifacts: [],
+    });
     container = document.createElement("div");
     document.body.appendChild(container);
     root = createRoot(container);
@@ -296,6 +330,111 @@ describe("useInlineAi with mocked IPC", () => {
     });
 
     expect(llmAbort).toHaveBeenCalledWith("req-1");
+
+    editor.destroy();
+  });
+
+  it("classified inline rewrite uses assistantExecute instead of normal llmGenerate", async () => {
+    function ClassifiedHost() {
+      api = useInlineAi({
+        provider: "openai",
+        domain: "classified",
+        notePath: ".classified/secret.md",
+        getNoteContent: () => "# Secret\n\n原文内容",
+      });
+      return null;
+    }
+    act(() => {
+      root.render(createElement(ClassifiedHost));
+    });
+    const editor = new Editor({
+      extensions: editorExtensions,
+      content: {
+        type: "doc",
+        content: [
+          {
+            type: "paragraph",
+            content: [{ type: "text", text: "原文内容" }],
+          },
+        ],
+      },
+    });
+    editor.commands.setTextSelection({ from: 1, to: 5 });
+
+    await act(async () => {
+      await api.run(editor, "rewrite");
+    });
+
+    expect(llmGenerate).not.toHaveBeenCalled();
+    expect(assistantExecute).toHaveBeenCalledTimes(1);
+    expect(assistantExecute).toHaveBeenCalledWith(
+      expect.objectContaining({
+        aiDomain: "classified",
+        intent: "writing",
+        notePath: ".classified/secret.md",
+        selection: "原文内容",
+        noteContent: null,
+        contextReferences: [],
+      }),
+    );
+    expect(editor.getText()).toContain("涉密改写结果");
+
+    editor.destroy();
+  });
+
+  it("classified slash command uses classified chat without leaking note markdown as normal llm system", async () => {
+    assistantExecute.mockResolvedValueOnce({
+      kind: "chat",
+      payload: {
+        request_id: "classified-chat-1",
+        session_id: 0,
+        status: "completed",
+        content: "涉密插入结果",
+        tool_calls: [],
+        tool_results: [],
+        harness_rounds: 1,
+        usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
+        usage_source: "provider",
+        citation_valid: true,
+        evidence_packets: [],
+        pending_confirmation: false,
+      },
+      requestId: "classified-chat-1",
+      runStatus: "completed",
+      artifacts: [],
+    });
+    function ClassifiedHost() {
+      api = useInlineAi({
+        provider: "openai",
+        domain: "classified",
+        notePath: ".classified/secret.md",
+        getNoteContent: () => "# Secret\n\n不可外泄正文",
+      });
+      return null;
+    }
+    act(() => {
+      root.render(createElement(ClassifiedHost));
+    });
+    const editor = new Editor({
+      extensions: editorExtensions,
+      content: { type: "doc", content: [{ type: "paragraph" }] },
+    });
+
+    await act(async () => {
+      await api.runSlash(editor, "续写", "# Secret\n\n不可外泄正文");
+    });
+
+    expect(llmGenerate).not.toHaveBeenCalled();
+    expect(assistantExecute).toHaveBeenCalledWith(
+      expect.objectContaining({
+        aiDomain: "classified",
+        intent: "chat",
+        notePath: ".classified/secret.md",
+        noteContent: null,
+        contextReferences: [],
+      }),
+    );
+    expect(editor.getText()).toContain("涉密插入结果");
 
     editor.destroy();
   });

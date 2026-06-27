@@ -10,6 +10,7 @@ import {
   slashActionId,
 } from "@/lib/slash-command-prompts";
 import {
+  assistantExecute,
   listenLlmDone,
   listenLlmError,
   listenLlmToken,
@@ -17,13 +18,16 @@ import {
   llmGenerate,
 } from "@/lib/ipc";
 import type { ChatMessage } from "@/types/ipc";
-import type { ContextReference } from "@/types/ai";
+import type { AiDomain, ContextReference } from "@/types/ai";
 
 export const INLINE_AI_INSERT_AFTER_SELECTION = "insert_after_selection";
 export const INLINE_AI_REPLACE_SELECTION = "replace_selection";
 
 export interface UseInlineAiOptions {
   provider?: string;
+  domain?: AiDomain;
+  notePath?: string | null;
+  getNoteContent?: () => string;
   onStatus?: (status: string) => void;
 }
 
@@ -96,6 +100,9 @@ export function buildInlineSelectionReference(
  */
 export function useInlineAi({
   provider = "openai",
+  domain = "normal",
+  notePath = null,
+  getNoteContent,
   onStatus,
 }: UseInlineAiOptions = {}) {
   const requestIdRef = useRef<string | null>(null);
@@ -216,6 +223,52 @@ export function useInlineAi({
     [provider, onStatus, attachListeners, markStreamReady],
   );
 
+  const runClassifiedAssistantIntoAiNode = useCallback(
+    async (editor: Editor, request: AiStreamRequest) => {
+      if (!notePath) {
+        editor.commands.setAiStreamStatus("error");
+        onStatus?.("AI 错误: 缺少涉密文档路径");
+        return;
+      }
+
+      streamBufRef.current = "";
+      editor.commands.clearAiStreamContent();
+      editor.commands.setAiStreamStatus("streaming");
+      onStatus?.("涉密 AI 处理中…");
+
+      try {
+        const hasSelection = request.originalText.trim().length > 0;
+        const response = await assistantExecute({
+          aiDomain: "classified",
+          agentIntent: hasSelection ? "rewrite_selection" : "chat",
+          intent: hasSelection ? "writing" : "chat",
+          message: request.messages[0]?.content ?? "",
+          notePath,
+          noteContent: null,
+          contextReferences: [],
+          selection: hasSelection ? request.originalText : null,
+          cursorContext: getNoteContent?.() ?? null,
+          webAuthorized: false,
+        });
+        const content =
+          response.kind === "writing"
+            ? (response.payload.patches[0]?.replacement_text ?? "")
+            : response.kind === "chat"
+              ? (response.payload.content ?? "")
+              : "";
+        streamBufRef.current = content;
+        editor.commands.updateAiStream(content);
+        editor.commands.setAiStreamStatus("ready");
+        onStatus?.("AI 空闲");
+      } catch (e) {
+        editor.commands.setAiStreamStatus("error");
+        onStatus?.(`AI 错误: ${e instanceof Error ? e.message : String(e)}`);
+        throw e;
+      }
+    },
+    [getNoteContent, notePath, onStatus],
+  );
+
   const run = useCallback(
     async (editor: Editor, action: string) => {
       const { from, to } = editor.state.selection;
@@ -223,7 +276,7 @@ export function useInlineAi({
       if (!originalText) return;
 
       editor.commands.insertAiStreamForSelection({ originalText, action });
-      await streamIntoAiNode(editor, {
+      const request = {
         action,
         originalText,
         messages: [
@@ -232,9 +285,14 @@ export function useInlineAi({
             content: buildInlineAiUserMessage(action, originalText),
           },
         ],
-      });
+      };
+      if (domain === "classified") {
+        await runClassifiedAssistantIntoAiNode(editor, request);
+      } else {
+        await streamIntoAiNode(editor, request);
+      }
     },
-    [streamIntoAiNode],
+    [domain, runClassifiedAssistantIntoAiNode, streamIntoAiNode],
   );
 
   const runSlash = useCallback(
@@ -247,16 +305,21 @@ export function useInlineAi({
         action,
       });
 
-      await streamIntoAiNode(editor, {
+      const request = {
         action,
         originalText: "",
         messages: [
           { role: "user", content: buildSlashCommandMessage(command) },
         ],
         system: slashSystemRef.current,
-      });
+      };
+      if (domain === "classified") {
+        await runClassifiedAssistantIntoAiNode(editor, request);
+      } else {
+        await streamIntoAiNode(editor, request);
+      }
     },
-    [streamIntoAiNode],
+    [domain, runClassifiedAssistantIntoAiNode, streamIntoAiNode],
   );
 
   const retry = useCallback(
@@ -267,9 +330,13 @@ export function useInlineAi({
       if (parseSlashActionId(ctx.action) && slashSystemRef.current) {
         request.system = slashSystemRef.current;
       }
-      await streamIntoAiNode(editor, request);
+      if (domain === "classified") {
+        await runClassifiedAssistantIntoAiNode(editor, request);
+      } else {
+        await streamIntoAiNode(editor, request);
+      }
     },
-    [streamIntoAiNode],
+    [domain, runClassifiedAssistantIntoAiNode, streamIntoAiNode],
   );
 
   const abort = useCallback(async () => {

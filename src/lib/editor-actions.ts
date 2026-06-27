@@ -223,6 +223,8 @@ export interface EditorActionContext {
   hasSelection: boolean;
   streaming: boolean;
   isLocked?: boolean;
+  aiDomain?: "normal" | "classified";
+  classifiedUnlocked?: boolean;
 }
 
 export function isEditorActionEnabled(
