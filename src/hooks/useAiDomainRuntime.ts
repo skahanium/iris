@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import type { AiDomain, AiDomainState } from "@/lib/ai-domain";
+import { classifiedAiCacheClear } from "@/lib/ipc";
 
 interface ClassifiedThreadSnapshot {
   path: string;
@@ -24,6 +25,7 @@ export interface UseAiDomainRuntimeReturn {
   clearClassifiedSelection: () => void;
   classifiedThreadByPath: Map<string, ClassifiedThreadSnapshot>;
   abortClassifiedRequest: () => void;
+  clearClassifiedVolatileState: (reason: string) => void;
 }
 
 export function useAiDomainRuntime({
@@ -46,12 +48,31 @@ export function useAiDomainRuntime({
     domainState.classifiedActivePath,
   );
 
+  const classifiedStreamBufRef = useRef("");
+  const classifiedPendingPatchesRef = useRef<unknown[]>([]);
+  const classifiedWritingArtifactsRef = useRef<unknown[]>([]);
+
   const abortClassifiedRequest = useCallback(() => {
     if (abortControllerRef.current) {
       abortControllerRef.current.abort();
       abortControllerRef.current = null;
     }
   }, []);
+
+  const clearClassifiedVolatileState = useCallback(
+    (reason: string) => {
+      console.debug("[classified-ai] volatile state cleared:", reason);
+      abortClassifiedRequest();
+      setClassifiedDraft("");
+      setClassifiedSelectedMessageIds(new Set());
+      setClassifiedThreadByPath(new Map());
+      classifiedStreamBufRef.current = "";
+      classifiedPendingPatchesRef.current = [];
+      classifiedWritingArtifactsRef.current = [];
+      void classifiedAiCacheClear();
+    },
+    [abortClassifiedRequest],
+  );
 
   const toggleNormalMessageSelection = useCallback((id: number) => {
     setNormalSelectedMessageIds((prev) => {
@@ -87,12 +108,11 @@ export function useAiDomainRuntime({
     const currDomain = domainState.domain;
 
     if (prevDomain === "classified" && currDomain === "normal") {
-      abortClassifiedRequest();
-      setClassifiedSelectedMessageIds(new Set());
+      clearClassifiedVolatileState("domain_switch_classified_to_normal");
     }
 
     prevDomainRef.current = currDomain;
-  }, [domainState.domain, abortClassifiedRequest]);
+  }, [domainState.domain, clearClassifiedVolatileState]);
 
   // Handle classified path switch: save current, load target
   useEffect(() => {
@@ -151,5 +171,6 @@ export function useAiDomainRuntime({
     clearClassifiedSelection,
     classifiedThreadByPath,
     abortClassifiedRequest,
+    clearClassifiedVolatileState,
   };
 }

@@ -186,6 +186,7 @@ export interface LlmTokenEvent {
   request_id: string;
   token: string;
   index: number;
+  classified?: boolean;
 }
 
 export interface AiRetryStatusEvent {

@@ -16,6 +16,7 @@ import {
 import type { LlmTokenEvent } from "@/types/ipc";
 
 import type { ChatLine } from "@/components/ai/AiMessageList";
+import type { AiDomain } from "@/lib/ai-domain";
 
 /**
  * 统一助手 LLM 流式事件监听（RAF 节流 + request_id 过滤）。
@@ -26,6 +27,7 @@ export function useAssistantLlmStream(options: {
   streamBufRef: MutableRefObject<string>;
   setMessages: Dispatch<SetStateAction<ChatLine[]>>;
   setStreaming: Dispatch<SetStateAction<boolean>>;
+  domain?: AiDomain;
 }) {
   const {
     panelSendActiveRef,
@@ -33,7 +35,11 @@ export function useAssistantLlmStream(options: {
     streamBufRef,
     setMessages,
     setStreaming,
+    domain,
   } = options;
+
+  const domainRef = useRef(domain);
+  domainRef.current = domain;
 
   const rafRef = useRef<number | undefined>(undefined);
   const lastFlushRef = useRef<number>(0);
@@ -65,6 +71,10 @@ export function useAssistantLlmStream(options: {
       if (!requestIdRef.current) {
         requestIdRef.current = ev.request_id;
       } else if (ev.request_id !== requestIdRef.current) {
+        return;
+      }
+      // Ignore late classified tokens after leaving classified domain
+      if (domainRef.current !== "classified" && ev.classified) {
         return;
       }
       streamBufRef.current += ev.token;
