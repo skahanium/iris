@@ -10,13 +10,17 @@ import {
 } from "@/lib/ai/session-history";
 import { invokeErrorMessage } from "@/lib/credentials";
 import {
+  classifiedAiThreadList,
+  classifiedAiThreadLoad,
+  classifiedAiThreadDelete,
   sessionDelete,
   sessionEvidenceList,
   sessionList,
   sessionLoad,
   sessionRename,
 } from "@/lib/ipc";
-import type { SessionSummary } from "@/types/ipc";
+import type { AiDomain } from "@/types/ai";
+import type { ClassifiedAiThreadSummary, SessionSummary } from "@/types/ipc";
 
 function formatRelativeTime(iso: string): string {
   const then = new Date(iso).getTime();
@@ -32,27 +36,32 @@ function formatRelativeTime(iso: string): string {
 }
 
 interface SessionHistoryDropdownProps {
-  currentSessionId: number | null;
+  currentSessionId: number | string | null;
   disabled?: boolean;
+  domain?: AiDomain;
   onSelectSession: (
-    sessionId: number,
+    sessionId: number | string,
     messages: ChatLine[],
     ledgerPackets?: ChatLine["evidencePackets"],
   ) => void;
-  onDeleted?: (sessionId: number) => void;
+  onDeleted?: (sessionId: number | string) => void;
 }
 
 export function SessionHistoryDropdown({
   currentSessionId,
   disabled,
+  domain = "normal",
   onSelectSession,
   onDeleted,
 }: SessionHistoryDropdownProps) {
   const [open, setOpen] = useState(false);
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
+  const [classifiedSessions, setClassifiedSessions] = useState<
+    ClassifiedAiThreadSummary[]
+  >([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [editingId, setEditingId] = useState<number | null>(null);
+  const [editingId, setEditingId] = useState<number | string | null>(null);
   const [editTitle, setEditTitle] = useState("");
   const containerRef = useRef<HTMLDivElement>(null);
 
@@ -60,14 +69,19 @@ export function SessionHistoryDropdown({
     setLoading(true);
     setError(null);
     try {
-      const list = await sessionList({ limit: 40 });
-      setSessions(list);
+      if (domain === "classified") {
+        const list = await classifiedAiThreadList();
+        setClassifiedSessions(list);
+      } else {
+        const list = await sessionList({ limit: 40 });
+        setSessions(list);
+      }
     } catch (e) {
       setError(invokeErrorMessage(e));
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [domain]);
 
   useEffect(() => {
     if (open) void refresh();
@@ -88,57 +102,87 @@ export function SessionHistoryDropdown({
   }, [open]);
 
   const handleSelect = useCallback(
-    async (summary: SessionSummary) => {
+    async (summary: SessionSummary | ClassifiedAiThreadSummary) => {
       try {
-        const records = await sessionLoad(summary.id);
-        const ledger = await sessionEvidenceList(summary.id).catch(() => []);
-        onSelectSession(
-          summary.id,
-          toChatLines(records),
-          evidenceRecordsToContextPackets(ledger),
-        );
+        if (domain === "classified") {
+          const thread = await classifiedAiThreadLoad(
+            (summary as ClassifiedAiThreadSummary).threadId,
+          );
+          // Convert classified messages to ChatLine format
+          const chatLines: ChatLine[] = thread.messages.map((msg) => ({
+            role: msg.role as ChatLine["role"],
+            content: msg.content,
+            seq: msg.seq,
+            evidencePackets: msg.toolCalls ? undefined : undefined,
+          }));
+          onSelectSession(thread.threadId, chatLines, undefined);
+        } else {
+          const records = await sessionLoad((summary as SessionSummary).id);
+          const ledger = await sessionEvidenceList(
+            (summary as SessionSummary).id,
+          ).catch(() => []);
+          onSelectSession(
+            (summary as SessionSummary).id,
+            toChatLines(records),
+            evidenceRecordsToContextPackets(ledger),
+          );
+        }
         setOpen(false);
       } catch (e) {
         setError(invokeErrorMessage(e));
       }
     },
-    [onSelectSession],
+    [domain, onSelectSession],
   );
 
   const handleDelete = useCallback(
-    async (sessionId: number, event: React.MouseEvent) => {
+    async (sessionId: number | string, event: React.MouseEvent) => {
       event.stopPropagation();
       if (!window.confirm("确定删除这条会话？此操作不可恢复。")) return;
       try {
-        await sessionDelete(sessionId);
-        setSessions((prev) => prev.filter((s) => s.id !== sessionId));
+        if (domain === "classified") {
+          await classifiedAiThreadDelete(sessionId as string);
+          setClassifiedSessions((prev) =>
+            prev.filter((s) => s.threadId !== sessionId),
+          );
+        } else {
+          await sessionDelete(sessionId as number);
+          setSessions((prev) => prev.filter((s) => s.id !== sessionId));
+        }
         onDeleted?.(sessionId);
       } catch (e) {
         setError(invokeErrorMessage(e));
       }
     },
-    [onDeleted],
+    [domain, onDeleted],
   );
 
   const handleRenameSubmit = useCallback(
-    async (sessionId: number) => {
+    async (sessionId: number | string) => {
       const title = editTitle.trim();
       if (!title) {
         setEditingId(null);
         return;
       }
       try {
-        await sessionRename(sessionId, title);
-        setSessions((prev) =>
-          prev.map((s) => (s.id === sessionId ? { ...s, title } : s)),
-        );
+        if (domain === "normal") {
+          await sessionRename(sessionId as number, title);
+          setSessions((prev) =>
+            prev.map((s) => (s.id === sessionId ? { ...s, title } : s)),
+          );
+        }
         setEditingId(null);
       } catch (e) {
         setError(invokeErrorMessage(e));
       }
     },
-    [editTitle],
+    [domain, editTitle],
   );
+
+  const isClassified = domain === "classified";
+  const isEmpty = isClassified
+    ? classifiedSessions.length === 0
+    : sessions.length === 0;
 
   return (
     <div className="relative" ref={containerRef}>
@@ -165,7 +209,7 @@ export function SessionHistoryDropdown({
               <div>
                 <p className="text-xs font-medium text-foreground">历史会话</p>
                 <p className="text-[10px] text-muted-foreground">
-                  显示全部历史会话
+                  {isClassified ? "涉密会话历史" : "显示全部历史会话"}
                 </p>
               </div>
             </div>
@@ -177,10 +221,46 @@ export function SessionHistoryDropdown({
               </p>
             ) : error ? (
               <p className="px-2 py-2 text-xs text-destructive">{error}</p>
-            ) : sessions.length === 0 ? (
+            ) : isEmpty ? (
               <p className="px-2 py-4 text-center text-xs text-muted-foreground">
                 暂无历史会话
               </p>
+            ) : isClassified ? (
+              classifiedSessions.map((s) => (
+                <div
+                  key={s.threadId}
+                  role="button"
+                  tabIndex={0}
+                  className={`group flex w-full cursor-pointer items-start gap-2 rounded-md px-2 py-2 text-left text-xs hover:bg-muted/60 ${
+                    s.threadId === currentSessionId ? "bg-muted/50" : ""
+                  }`}
+                  onClick={() => void handleSelect(s)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") void handleSelect(s);
+                  }}
+                >
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate font-medium text-foreground">
+                      {s.title}
+                    </p>
+                    <p className="mt-0.5 text-[10px] text-muted-foreground">
+                      {formatRelativeTime(s.updatedAt)} · {s.messageCount} 条
+                    </p>
+                  </div>
+                  <div className="flex shrink-0 gap-0.5 opacity-0 group-hover:opacity-100">
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      className="h-6 w-6 text-destructive"
+                      title="删除"
+                      onClick={(e) => void handleDelete(s.threadId, e)}
+                    >
+                      <Trash2 className="h-3 w-3" />
+                    </Button>
+                  </div>
+                </div>
+              ))
             ) : (
               sessions.map((s) => (
                 <div

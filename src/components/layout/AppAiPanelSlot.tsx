@@ -2,6 +2,7 @@ import { UnifiedAssistantPanel } from "@/components/ai/UnifiedAssistantPanel";
 import type { AssistantSelectionQuote } from "@/components/ai/UnifiedAssistantPanel";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import type { ContextPacket, WritingEditorContext } from "@/types/ai";
+import type { AiDomain } from "@/types/ai";
 import type { AssistantChromeSnapshot } from "@/types/assistant-chrome";
 import type { AssistantArtifactDraft } from "@/types/assistant-artifact";
 import type {
@@ -10,9 +11,11 @@ import type {
 } from "@/lib/document-open-runtime";
 
 interface AppAiPanelSlotProps {
+  aiDomain: AiDomain;
   assistantNotePath: string | null;
   assistantPrefill: string | null;
   bumpVaultIndex: () => void;
+  classifiedPath: string | null;
   getLiveMarkdown: () => string;
   getParagraphText: () => string | null;
   getWritingContext: () => WritingEditorContext | null;
@@ -28,7 +31,7 @@ interface AppAiPanelSlotProps {
     titleHint?: string,
     source?: NoteOpenSource,
   ) => void;
-  onSessionDeleted?: (sessionId: number) => void;
+  onSessionDeleted?: (sessionId: number | string) => void;
   onSessionsCleared?: () => void;
   onPatchApplied: (newContent: string) => void;
   selectionQuote: AssistantSelectionQuote | null;
@@ -37,9 +40,11 @@ interface AppAiPanelSlotProps {
 }
 
 export function AppAiPanelSlot({
+  aiDomain,
   assistantNotePath,
   assistantPrefill,
   bumpVaultIndex,
+  classifiedPath,
   getLiveMarkdown,
   getParagraphText,
   getWritingContext,
@@ -72,6 +77,8 @@ export function AppAiPanelSlot({
   return (
     <ErrorBoundary scope="AI面板">
       <UnifiedAssistantPanel
+        aiDomain={aiDomain}
+        classifiedPath={classifiedPath}
         notePath={assistantNotePath}
         getNoteContent={getLiveMarkdown}
         webSearch={webSearch}

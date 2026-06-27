@@ -143,8 +143,9 @@ describe("classified vault phase 7", () => {
     expect(persistence).toContain("笔记已锁定，无法保存");
   });
 
-  it("App never forwards classified note material into AI surfaces", () => {
+  it("App never forwards classified material into normal AI surfaces; classified AI uses classified domain only", () => {
     const app = read("src/App.impl.tsx");
+    const routing = read("src/hooks/useWorkspaceAssistantRouting.ts");
     const panelSlot = read("src/components/layout/AppAiPanelSlot.tsx");
     const editorActions = read("src/hooks/useAppEditorActions.ts");
     const tasks = read("src/components/ai/hooks/useAssistantTasks.ts");
@@ -161,8 +162,27 @@ describe("classified vault phase 7", () => {
     );
     expect(app).toContain("涉密笔记不能接收 AI 插入");
     expect(app).toContain("涉密笔记不能接收 AI 改写");
+    expect(app).toContain("classifiedUnlocked");
+    expect(app).toContain("aiDomain");
+    expect(app).toContain("classifiedPath");
+
+    // useWorkspaceAssistantRouting uses deriveAiDomainState for domain-aware gating
+    expect(routing).toContain(
+      'import { deriveAiDomainState } from "@/lib/ai-domain"',
+    );
+    expect(routing).toContain("deriveAiDomainState(");
+    expect(routing).toContain("domainState.domain");
+    expect(routing).toContain("aiDomain: domainState.domain");
+    expect(routing).toContain(
+      "classifiedPath: domainState.classifiedActivePath",
+    );
+
+    // AppAiPanelSlot forwards domain info to UnifiedAssistantPanel
+    expect(panelSlot).toContain("aiDomain={aiDomain}");
+    expect(panelSlot).toContain("classifiedPath={classifiedPath}");
     expect(panelSlot).toContain("notePath={assistantNotePath}");
     expect(panelSlot).toContain("getNoteContent={getLiveMarkdown}");
+
     expect(editorActions).toContain(
       "if (isClassifiedVaultPath(path)) return null;",
     );

@@ -229,21 +229,34 @@ export interface SessionMessageRecord {
   created_at: string;
 }
 
+export interface ClassifiedAiThreadSummary {
+  threadId: string;
+  documentPath: string;
+  title: string;
+  messageCount: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface ClassifiedAiThread {
-  id: string;
-  document_path: string;
-  created_at: string;
-  updated_at: string;
-  message_count: number;
+  version: number;
+  threadId: string;
+  documentPath: string;
+  title: string | null;
+  createdAt: string;
+  updatedAt: string;
+  messages: ClassifiedAiMessage[];
+  evidencePackets: unknown[];
+  tokenUsage: unknown | null;
 }
 
 export interface ClassifiedAiMessage {
-  id: string;
-  thread_id: string;
   seq: number;
   role: string;
   content: string;
-  created_at: string;
+  contentParts?: unknown;
+  toolCalls?: unknown;
+  createdAt: string;
 }
 
 export type SessionEvidenceSourceType = "local" | "web";

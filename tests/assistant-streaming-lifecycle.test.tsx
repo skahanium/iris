@@ -12,7 +12,9 @@ describe("assistant streaming lifecycle contract", () => {
       const src = read("src/hooks/useStreamingContent.ts");
       // Must debounce/throttle token batches to avoid excessive re-renders
       // Contract: must have a measurable delay/interval constant or mechanism
-      expect(src).toMatch(/(?:debounce|throttle|MIN_FLUSH|flushInterval|delayMs)/);
+      expect(src).toMatch(
+        /(?:debounce|throttle|MIN_FLUSH|flushInterval|delayMs)/,
+      );
     });
 
     it("AiMessageBubble uses useStreamingContent for streamed content", () => {
@@ -39,7 +41,9 @@ describe("assistant streaming lifecycle contract", () => {
       const src = read("src/components/ai/AiMessageList.tsx");
       // Contract: must have a scroll follow state that tracks whether user is near bottom
       // States: "following" (auto-scroll) and "detached" (user scrolled up)
-      expect(src).toMatch(/(?:isNearBottom|scrollFollow|following|detached|userScrolledUp|autoScroll)/);
+      expect(src).toMatch(
+        /(?:isNearBottom|scrollFollow|following|detached|userScrolledUp|autoScroll)/,
+      );
     });
   });
 
@@ -54,7 +58,9 @@ describe("assistant streaming lifecycle contract", () => {
     it("scroll handler detects when user returns to bottom", () => {
       const src = read("src/components/ai/AiMessageList.tsx");
       // Contract: must have logic to resume auto-scroll when user scrolls back to bottom
-      expect(src).toMatch(/(?:scrollTop|scrollHeight|clientHeight|nearBottom|threshold)/);
+      expect(src).toMatch(
+        /(?:scrollTop|scrollHeight|clientHeight|nearBottom|threshold)/,
+      );
     });
   });
 

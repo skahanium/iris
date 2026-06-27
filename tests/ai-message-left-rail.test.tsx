@@ -128,7 +128,9 @@ describe("AI message left rail layout contract", () => {
       expect(rightActions).toBeNull();
 
       // Actions must be present in a left-side rail
-      const selectButton = host.querySelector('button[aria-label="选择此消息"]');
+      const selectButton = host.querySelector(
+        'button[aria-label="选择此消息"]',
+      );
       expect(selectButton).not.toBeNull();
     });
 

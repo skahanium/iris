@@ -11,13 +11,13 @@ import { SessionHistoryDropdown } from "./SessionHistoryDropdown";
 
 interface AssistantPanelHeaderProps {
   chromeActionsDisabled: boolean;
-  currentSessionId: number | null;
+  currentSessionId: number | string | null;
   scene: AiScene;
   onDeletedCurrentSession: () => void;
-  onDeletedSession?: (sessionId: number) => void;
+  onDeletedSession?: (sessionId: number | string) => void;
   onNewChat: () => void;
   onSelectSession: (
-    id: number,
+    id: number | string,
     messages: ChatLine[],
     ledgerPackets?: ChatLine["evidencePackets"],
   ) => void;

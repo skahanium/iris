@@ -211,6 +211,8 @@ function App() {
     openClassifiedPaths,
   });
 
+  const classifiedUnlocked = classifiedVaultStatus === "unlocked";
+
   useEffect(() => {
     if (classifiedOpen) {
       void refreshClassifiedStatus();
@@ -649,8 +651,10 @@ function App() {
     [activeNoteIsClassified, handleInsertToEditor, setAiStatus],
   );
   const {
+    aiDomain,
     assistantNotePath,
     assistantSelectionQuote,
+    classifiedPath,
     getAssistantLiveMarkdown,
     getAssistantParagraphText,
     getAssistantWritingContext,
@@ -659,7 +663,9 @@ function App() {
     activeArtifactTab,
     activeMediaTab,
     activeNoteIsClassified,
+    activePath,
     assistantNotePathWithoutMedia,
+    classifiedUnlocked,
     getLiveMarkdown: getLiveMarkdownForNoteSurface,
     getParagraphText,
     getWritingContext: getWritingContextForNoteSurface,
@@ -840,9 +846,11 @@ function App() {
         }
         aiPanel={
           <AppAiPanelSlot
+            aiDomain={aiDomain}
             assistantNotePath={assistantNotePath}
             assistantPrefill={assistantPrefill}
             bumpVaultIndex={bumpVaultIndex}
+            classifiedPath={classifiedPath}
             getLiveMarkdown={getAssistantLiveMarkdown}
             getParagraphText={getAssistantParagraphText}
             getWritingContext={getAssistantWritingContext}

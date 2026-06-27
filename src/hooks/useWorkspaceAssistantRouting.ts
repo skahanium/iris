@@ -69,8 +69,7 @@ export function useWorkspaceAssistantRouting({
     [getWritingContext, isNormalDomain, nonNoteSurfaceActive],
   );
   const getAssistantParagraphText = useCallback(
-    () =>
-      isNormalDomain && !nonNoteSurfaceActive ? getParagraphText() : null,
+    () => (isNormalDomain && !nonNoteSurfaceActive ? getParagraphText() : null),
     [getParagraphText, isNormalDomain, nonNoteSurfaceActive],
   );
   const handleAssistantInsertToEditor = useCallback(

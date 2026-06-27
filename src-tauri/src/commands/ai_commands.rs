@@ -2155,6 +2155,54 @@ pub async fn tool_audit_query(
     crate::ai_runtime::tool_audit::query_by_request(&state.db, &request_id)
 }
 
+// ── Classified AI Thread IPC Commands ────────────────────────────────────────
+
+/// List classified AI threads, optionally filtered by document path.
+#[tauri::command]
+pub async fn classified_ai_thread_list(
+    state: State<'_, Arc<AppState>>,
+    document_path: Option<String>,
+) -> AppResult<Vec<crate::ai_runtime::classified_session::ClassifiedAiThreadSummary>> {
+    let vault = state.vault_path()?;
+    crate::ai_runtime::classified_session::classified_ai_thread_list(&vault, document_path)
+}
+
+/// Load a classified AI thread by id.
+#[tauri::command]
+pub async fn classified_ai_thread_load(
+    state: State<'_, Arc<AppState>>,
+    thread_id: String,
+) -> AppResult<crate::ai_runtime::classified_session::ClassifiedAiThread> {
+    let vault = state.vault_path()?;
+    crate::ai_runtime::classified_session::classified_ai_thread_load(&vault, thread_id)
+}
+
+/// Save a classified AI thread.
+#[tauri::command]
+pub async fn classified_ai_thread_save(
+    state: State<'_, Arc<AppState>>,
+    thread: crate::ai_runtime::classified_session::ClassifiedAiThread,
+) -> AppResult<()> {
+    let vault = state.vault_path()?;
+    crate::ai_runtime::classified_session::classified_ai_thread_save(&vault, thread)
+}
+
+/// Delete a classified AI thread.
+#[tauri::command]
+pub async fn classified_ai_thread_delete(
+    state: State<'_, Arc<AppState>>,
+    thread_id: String,
+) -> AppResult<()> {
+    let vault = state.vault_path()?;
+    crate::ai_runtime::classified_session::classified_ai_thread_delete(&vault, thread_id)
+}
+
+/// Clear the in-memory classified AI thread index cache.
+#[tauri::command]
+pub async fn classified_ai_cache_clear() -> AppResult<()> {
+    crate::ai_runtime::classified_session::classified_ai_cache_clear()
+}
+
 #[cfg(test)]
 mod tests {
     use super::validate_ai_note_path;

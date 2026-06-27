@@ -195,6 +195,12 @@ fn classified_files_inner(
             let entry = entry?;
             let path = entry.path();
             let rel = relative_path(&vault, &path)?;
+
+            // Hide .iris-ai directory from file listings
+            if path.is_dir() && path.file_name().is_some_and(|n| n == ".iris-ai") {
+                continue;
+            }
+
             entries.push(ClassifiedFileEntry {
                 is_dir: path.is_dir(),
                 path: rel,

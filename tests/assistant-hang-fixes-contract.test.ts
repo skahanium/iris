@@ -66,20 +66,37 @@ describe("AI hang/stuck root-cause fixes contract", () => {
   });
 
   describe("Fix 6: run_harness enforces idle/stall timeout and abort polling", () => {
-    it("wraps the harness body in tokio::time::timeout for global deadline", () => {
+    it("does NOT use a fixed global wall-clock deadline on the streaming path", () => {
       const s = read("src-tauri/src/ai_harness/harness/run.rs");
-      expect(s).toContain("tokio::time::timeout");
+      // The old design wrapped the entire harness in a single
+      // `tokio::time::timeout(Duration::from_secs(HARNESS_DEADLINE_SECS), …)`.
+      // That must be replaced with per-round idle/stall detection so a
+      // slow-but-active conversation is never killed by a stale timer.
+      expect(s).not.toContain("HARNESS_DEADLINE_SECS");
     });
 
-    it("uses a named deadline constant instead of a magic number", () => {
+    it("uses an idle/stall timeout mechanism instead of a global deadline", () => {
       const s = read("src-tauri/src/ai_harness/harness/run.rs");
-      expect(s).toContain("HARNESS_DEADLINE_SECS");
+      // The new design must detect when the harness is *idle* (no chunks
+      // arriving, no tool activity) rather than measuring total wall-clock
+      // elapsed time.  Accept either an explicit idle-timeout constant or
+      // a per-round `tokio::time::timeout` inside the streaming/tool loop.
+      const hasIdleConstant =
+        s.includes("IDLE_TIMEOUT") ||
+        s.includes("STALL_TIMEOUT") ||
+        s.includes("HARNESS_IDLE_SECS");
+      const hasPerRoundTimeout =
+        s.includes("idle_timeout") || s.includes("stall_timeout");
+      expect(hasIdleConstant || hasPerRoundTimeout).toBe(true);
     });
 
-    it("emits a descriptive Chinese error message on timeout", () => {
+    it("polls for abort signals during idle periods via ABORT_POLL_INTERVAL", () => {
       const s = read("src-tauri/src/ai_harness/harness/run.rs");
-      expect(s).toContain("助手处理超过");
-      expect(s).toContain("秒仍未完成");
+      // When no chunks are arriving the harness must still check whether
+      // the user pressed "Stop".  This is done by racing stream.next()
+      // against a short abort-poll interval so the abort flag is evaluated
+      // even on a half-open / stalled socket.
+      expect(s).toContain("ABORT_POLL_INTERVAL");
     });
   });
 

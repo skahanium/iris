@@ -10,12 +10,15 @@ import type {
   AssistantArtifactDraft,
 } from "@/types/assistant-artifact";
 
-function evidenceArtifactSessionId(tab: ArtifactTab): number | null {
+function evidenceArtifactSessionId(tab: ArtifactTab): number | string | null {
   if (tab.kind !== "session_evidence_detail") return null;
   const payload = tab.payload;
   if (typeof payload !== "object" || payload === null) return null;
   const sessionId = (payload as { sessionId?: unknown }).sessionId;
-  return typeof sessionId === "number" ? sessionId : null;
+  if (typeof sessionId === "number" || typeof sessionId === "string") {
+    return sessionId;
+  }
+  return null;
 }
 
 function browserStorage(): Storage | null {
@@ -74,11 +77,13 @@ export function useArtifactTabs() {
   );
 
   const closeEvidenceArtifactsForSession = useCallback(
-    (sessionId: number) => {
+    (sessionId: number | string) => {
       setArtifactTabs((prev) => {
         const removedIds = new Set(
           prev
-            .filter((item) => evidenceArtifactSessionId(item) === sessionId)
+            .filter(
+              (item) => evidenceArtifactSessionId(item) === String(sessionId),
+            )
             .map((item) => item.id),
         );
         if (removedIds.size === 0) return prev;

@@ -252,6 +252,11 @@ pub fn run() {
             commands::ai_commands::prompt_profile_get,
             commands::ai_commands::prompt_profile_set,
             commands::ai_commands::prompt_profile_presets,
+            commands::ai_commands::classified_ai_thread_list,
+            commands::ai_commands::classified_ai_thread_load,
+            commands::ai_commands::classified_ai_thread_save,
+            commands::ai_commands::classified_ai_thread_delete,
+            commands::ai_commands::classified_ai_cache_clear,
             // Research Workflow (D)
             commands::research_commands::research_execute,
             commands::research_commands::research_status,

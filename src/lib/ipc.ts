@@ -1495,3 +1495,38 @@ export async function getDesktopChromeMetrics(): Promise<DesktopChromeMetrics> {
 export async function reapplyWindowChrome(): Promise<void> {
   return invoke("reapply_window_chrome");
 }
+
+// ── Classified AI Thread IPC ─────────────────────────────────────────────────
+
+/** List classified AI threads, optionally filtered by document path. */
+export async function classifiedAiThreadList(
+  documentPath?: string,
+): Promise<import("@/types/ipc").ClassifiedAiThreadSummary[]> {
+  return invoke("classified_ai_thread_list", { documentPath });
+}
+
+/** Load a classified AI thread by id. */
+export async function classifiedAiThreadLoad(
+  threadId: string,
+): Promise<import("@/types/ipc").ClassifiedAiThread> {
+  return invoke("classified_ai_thread_load", { threadId });
+}
+
+/** Save a classified AI thread. */
+export async function classifiedAiThreadSave(
+  thread: import("@/types/ipc").ClassifiedAiThread,
+): Promise<void> {
+  return invoke("classified_ai_thread_save", { thread });
+}
+
+/** Delete a classified AI thread. */
+export async function classifiedAiThreadDelete(
+  threadId: string,
+): Promise<void> {
+  return invoke("classified_ai_thread_delete", { threadId });
+}
+
+/** Clear the in-memory classified AI thread index cache. */
+export async function classifiedAiCacheClear(): Promise<void> {
+  return invoke("classified_ai_cache_clear");
+}

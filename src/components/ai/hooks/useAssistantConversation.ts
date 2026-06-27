@@ -17,13 +17,19 @@ import {
   replaceAiCitationsForDocument,
 } from "@/lib/ai/evidence-citations";
 import { mergeContextPackets } from "@/lib/ai/merge-context-packets";
-import { llmAbort, sessionRetract } from "@/lib/ipc";
+import {
+  classifiedAiThreadLoad,
+  classifiedAiThreadSave,
+  llmAbort,
+  sessionRetract,
+} from "@/lib/ipc";
 import type {
   AssistantActionState,
   AssistantIntent,
   ContextPacket,
   TokenUsage,
 } from "@/types/ai";
+import type { ClassifiedAiThread, ClassifiedAiMessage } from "@/types/ipc";
 
 import type { ChatLine } from "../AiMessageList";
 import {
@@ -38,10 +44,12 @@ interface BubbleSelectionPort {
 
 interface UseAssistantConversationParams {
   actionIntent: AssistantIntent;
+  aiDomain?: "normal" | "classified";
   bubbleSelection: BubbleSelectionPort;
   clearCitationMiss: () => void;
   clearContextReferences: () => void;
   clearTaskSurfaces: () => void;
+  documentPath?: string;
   forceNewSessionRef: MutableRefObject<boolean>;
   onInsertToEditor?: (content: string) => void;
   requestIdRef: MutableRefObject<string | null>;
@@ -111,10 +119,12 @@ function warnMissingCitations(
 
 export function useAssistantConversation({
   actionIntent,
+  aiDomain = "normal",
   bubbleSelection,
   clearCitationMiss,
   clearContextReferences,
   clearTaskSurfaces,
+  documentPath,
   forceNewSessionRef,
   onInsertToEditor,
   requestIdRef,
@@ -132,6 +142,9 @@ export function useAssistantConversation({
 }: UseAssistantConversationParams) {
   const [messages, setMessages] = useState<ChatLine[]>([]);
   const [sessionId, setSessionId] = useState<number | null>(null);
+  const [classifiedThreadId, setClassifiedThreadId] = useState<string | null>(
+    null,
+  );
   const [sessionTokenUsage, setSessionTokenUsage] = useState<TokenUsage | null>(
     null,
   );
@@ -139,6 +152,8 @@ export function useAssistantConversation({
   messagesRef.current = messages;
   const sessionIdRef = useRef(sessionId);
   sessionIdRef.current = sessionId;
+  const classifiedThreadIdRef = useRef(classifiedThreadId);
+  classifiedThreadIdRef.current = classifiedThreadId;
 
   const abortLlm = deps?.abortLlm ?? llmAbort;
   const retractSession = deps?.retractSession ?? sessionRetract;
@@ -151,6 +166,7 @@ export function useAssistantConversation({
     setSelectedPacketIds([]);
     setMessages([]);
     setSessionId(null);
+    setClassifiedThreadId(null);
     setSessionTokenUsage(null);
     setInput("");
     setActivityHint(null);
@@ -188,18 +204,46 @@ export function useAssistantConversation({
         }
         setStreaming(false);
       }
-      const sid = sessionIdRef.current;
-      const seq = target.seq;
-      if (sid && seq) {
-        try {
-          await retractSession(sid, seq);
-        } catch (err) {
-          console.warn("[retract] backend failed:", err);
+
+      if (aiDomain === "classified") {
+        // In classified domain, update the encrypted thread
+        const threadId = classifiedThreadIdRef.current;
+        if (threadId) {
+          try {
+            const thread = await classifiedAiThreadLoad(threadId);
+            const updatedMessages = thread.messages.slice(0, index);
+            await classifiedAiThreadSave({
+              ...thread,
+              messages: updatedMessages,
+              updatedAt: new Date().toISOString(),
+            });
+          } catch (err) {
+            console.warn("[retract] classified thread update failed:", err);
+          }
+        }
+      } else {
+        const sid = sessionIdRef.current;
+        const seq = target.seq;
+        if (sid && seq) {
+          try {
+            await retractSession(sid, seq);
+          } catch (err) {
+            console.warn("[retract] backend failed:", err);
+          }
         }
       }
+
       setMessages((prev) => prev.slice(0, index));
     },
-    [abortLlm, requestIdRef, retractSession, setStreaming, streaming],
+    [
+      abortLlm,
+      aiDomain,
+      classifiedThreadIdRef,
+      requestIdRef,
+      retractSession,
+      setStreaming,
+      streaming,
+    ],
   );
 
   const handleInsertToEditor = useCallback(() => {
@@ -313,11 +357,23 @@ export function useAssistantConversation({
   );
 
   const handleLoadSession = useCallback(
-    (id: number, loaded: ChatLine[], ledgerPackets?: ContextPacket[]) => {
+    (
+      id: number | string,
+      loaded: ChatLine[],
+      ledgerPackets?: ContextPacket[],
+    ) => {
       const loadedPackets = ledgerPackets?.length
         ? ledgerPackets
         : loaded.flatMap((message) => message.evidencePackets ?? []);
-      setSessionId(id);
+
+      if (aiDomain === "classified") {
+        setClassifiedThreadId(id as string);
+        setSessionId(null);
+      } else {
+        setSessionId(id as number);
+        setClassifiedThreadId(null);
+      }
+
       setMessages(loaded);
       setPackets(mergeContextPackets([], loadedPackets));
       setSelectedPacketIds([]);
@@ -329,6 +385,7 @@ export function useAssistantConversation({
     },
     [
       actionIntent,
+      aiDomain,
       clearCitationMiss,
       clearContextReferences,
       clearTaskSurfaces,
@@ -339,9 +396,55 @@ export function useAssistantConversation({
     ],
   );
 
+  const saveClassifiedThread = useCallback(
+    async (messagesToSave: ChatLine[]) => {
+      if (aiDomain !== "classified" || !documentPath) return;
+
+      const now = new Date().toISOString();
+      const threadId = classifiedThreadIdRef.current ?? crypto.randomUUID();
+
+      const classifiedMessages: ClassifiedAiMessage[] = messagesToSave.map(
+        (msg, idx) => ({
+          seq: idx + 1,
+          role: msg.role,
+          content: msg.content,
+          contentParts: msg.images?.length
+            ? msg.images.map((img) => ({
+                type: "image_url",
+                image_url: {
+                  url: `data:${img.mimeType};base64,${img.dataBase64}`,
+                  detail: "auto",
+                },
+              }))
+            : undefined,
+          createdAt: now,
+        }),
+      );
+
+      const thread: ClassifiedAiThread = {
+        version: 1,
+        threadId,
+        documentPath,
+        title: null,
+        createdAt: now,
+        updatedAt: now,
+        messages: classifiedMessages,
+        evidencePackets: [],
+        tokenUsage: null,
+      };
+
+      await classifiedAiThreadSave(thread);
+      if (!classifiedThreadIdRef.current) {
+        setClassifiedThreadId(threadId);
+      }
+    },
+    [aiDomain, classifiedThreadIdRef, documentPath],
+  );
+
   return {
     appendAssistantSummary,
     appendUserMessage,
+    classifiedThreadId,
     ensureAssistantStreamSlot,
     handleCopySelected,
     handleExportSelected,
@@ -352,6 +455,7 @@ export function useAssistantConversation({
     handleRetract,
     messages,
     messagesRef,
+    saveClassifiedThread,
     sessionId,
     sessionIdRef,
     sessionTokenUsage,
