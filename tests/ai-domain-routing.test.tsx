@@ -19,11 +19,11 @@ describe("AI dual-domain routing contract", () => {
       expect(src).toMatch(/isNormalDomain\s*&&\s*!\s*nonNoteSurfaceActive/);
     });
 
-    it("useAppEditorActions blocks classified paths from reaching AI", () => {
+    it("useAppEditorActions does not blanket-block classified editor AI actions", () => {
       const src = read("src/hooks/useAppEditorActions.ts");
-      expect(src).toContain("涉密笔记不能发送到 AI");
-      expect(src).toContain("if (activeNoteIsClassified)");
-      expect(src).toContain("isClassifiedVaultPath(path)");
+      expect(src).toContain("void inlineAi.run(ed, action)");
+      expect(src).not.toContain("涉密笔记不能发送到 AI");
+      expect(src).not.toContain("isClassifiedVaultPath(path)");
     });
 
     it("App impl nulls out note path and content when classified note is active", () => {
@@ -73,9 +73,12 @@ describe("AI dual-domain routing contract", () => {
   describe("media/artifact tabs never inherit classified permissions", () => {
     it("useWorkspaceAssistantRouting gates note content for non-note surfaces via domain model", () => {
       const src = read("src/hooks/useWorkspaceAssistantRouting.ts");
-      // assistantNotePath is nulled when activeMediaTab is truthy
-      expect(src).toContain(
-        "assistantNotePath: activeMediaTab ? null : assistantNotePathWithoutMedia",
+      // assistantNotePath is nulled for media/artifact surfaces and normal chat
+      // only receives the active note when explicit note context exists.
+      expect(src).toContain("activeMediaTab || activeArtifactTab");
+      expect(src).toContain("hasExplicitNoteContext");
+      expect(src).toMatch(
+        /hasExplicitNoteContext[\s\S]*assistantNotePathWithoutMedia/,
       );
       // assistantSelectionQuote is nulled for any non-note surface
       expect(src).toContain(
@@ -83,17 +86,18 @@ describe("AI dual-domain routing contract", () => {
       );
     });
 
-    it("insert-to-editor blocks artifact/media and defers classified to domain model", () => {
+    it("insert-to-editor blocks artifact/media but allows classified editor domain", () => {
       const src = read("src/hooks/useWorkspaceAssistantRouting.ts");
-      // artifact/media check comes before domain check
       const artifactBlock = src.indexOf(
         "if (activeArtifactTab || activeMediaTab)",
       );
-      const classifiedDomainBlock = src.indexOf(
-        'if (domainState.domain === "classified")',
-      );
       expect(artifactBlock).toBeGreaterThan(0);
-      expect(classifiedDomainBlock).toBeGreaterThan(artifactBlock);
+      const insertBlock =
+        src
+          .split("const handleAssistantInsertToEditor")[1]
+          ?.split("return {")[0] ?? "";
+      expect(insertBlock).toContain("handleInsertToEditor(content)");
+      expect(insertBlock).not.toContain('domainState.domain === "classified"');
     });
 
     it("useWorkspaceAssistantRouting returns aiDomain and classifiedPath", () => {
@@ -116,6 +120,24 @@ describe("AI dual-domain routing contract", () => {
       const types = read("src/components/ai/types.ts");
       expect(types).toContain("aiDomain?: AiDomain");
       expect(types).toContain("classifiedPath?: string | null");
+    });
+
+    it("assistant execution requests carry the active domain and strip normal context in classified mode", () => {
+      const hook = read("src/components/ai/hooks/useAssistantTasks.ts");
+      const aiTypes = read("src/types/ai.ts");
+      const backend = read("src-tauri/src/commands/assistant_commands.rs");
+      const harness = read("src-tauri/src/ai_harness/harness_task.rs");
+
+      expect(aiTypes).toContain('aiDomain?: "normal" | "classified"');
+      expect(hook).toContain("aiDomain,");
+      expect(hook).toContain('aiDomain === "classified" ? []');
+      expect(hook).toContain('if (aiDomain === "classified") return null');
+      expect(backend).toContain("pub ai_domain: AssistantAiDomain");
+      expect(backend).toContain("validate_assistant_domain_boundary");
+      expect(harness).toContain("run_classified_chat_task");
+      expect(harness).not.toContain(
+        "validate_ai_note_path(request.note_path.as_deref())?;",
+      );
     });
   });
 });

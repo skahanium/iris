@@ -636,19 +636,14 @@ function App() {
     [activeArtifactTab, activeNoteIsClassified, getLiveMarkdown],
   );
   const getWritingContextForNoteSurface = useCallback(
-    () =>
-      activeArtifactTab || activeNoteIsClassified ? null : getWritingContext(),
-    [activeArtifactTab, activeNoteIsClassified, getWritingContext],
+    () => (activeArtifactTab ? null : getWritingContext()),
+    [activeArtifactTab, getWritingContext],
   );
   const handleInsertToNoteSurface = useCallback(
     (content: string) => {
-      if (activeNoteIsClassified) {
-        setAiStatus("涉密笔记不能接收 AI 插入");
-        return;
-      }
       handleInsertToEditor(content);
     },
-    [activeNoteIsClassified, handleInsertToEditor, setAiStatus],
+    [handleInsertToEditor],
   );
   const {
     aiDomain,
@@ -675,10 +670,6 @@ function App() {
   });
   const handlePatchApplied = useCallback(
     (newContent: string) => {
-      if (currentNoteIsClassified) {
-        setAiStatus("涉密笔记不能接收 AI 改写");
-        return;
-      }
       applyMarkdownToEditor(newContent);
       markdownRef.current = newContent;
       dirtyRef.current = false;
@@ -693,12 +684,10 @@ function App() {
       activeDocumentTitle,
       activePathRef,
       applyMarkdownToEditor,
-      currentNoteIsClassified,
       invalidatePreparedNote,
       markClean,
       markdownRef,
       noteTitle,
-      setAiStatus,
       syncTabMarkdownCache,
     ],
   );

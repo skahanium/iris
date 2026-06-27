@@ -171,11 +171,13 @@ async fn send_llm_streaming_request_with_retry(
 
 /// Run the unified agent harness loop.
 ///
-/// Wraps [`run_harness_inner`] in a hard global deadline so the agent loop can
-/// never run indefinitely even if individual LLM/tool calls each hang up to
-/// their own per-call timeout. The deadline bounds the worst case (many rounds
-/// × retries × tools) that would otherwise surface to the user as a permanent
-/// "正在思考" freeze.
+/// Streaming progress is protected by idle_timeout/stall_timeout checks in the model
+/// gateway: SSE reads use a per-read stall timeout, and the stream loop races
+/// each read against `ABORT_POLL_INTERVAL` so the composer stop button remains
+/// responsive even when a socket goes quiet. Do not wrap the whole harness in a
+/// fixed wall-clock deadline; continuous token/tool progress can legitimately
+/// run longer than any single old-style global timer. Max rounds and token
+/// budgets below still bound non-streaming agent work.
 pub async fn run_harness(
     state: &Arc<AppState>,
     app_handle: &AppHandle,
@@ -184,28 +186,15 @@ pub async fn run_harness(
     max_tokens: Option<u32>,
     thinking_mode: bool,
 ) -> AppResult<HarnessRunResult> {
-    const HARNESS_DEADLINE_SECS: u64 = 300;
-    match tokio::time::timeout(
-        std::time::Duration::from_secs(HARNESS_DEADLINE_SECS),
-        run_harness_inner(
-            state,
-            app_handle,
-            input,
-            provider_config,
-            max_tokens,
-            thinking_mode,
-        ),
+    run_harness_inner(
+        state,
+        app_handle,
+        input,
+        provider_config,
+        max_tokens,
+        thinking_mode,
     )
     .await
-    {
-        Ok(result) => result,
-        Err(_elapsed) => {
-            tracing::error!("harness 超过 {HARNESS_DEADLINE_SECS}s 全局截止时间，强制结束",);
-            Err(AppError::msg(format!(
-                "助手处理超过 {HARNESS_DEADLINE_SECS} 秒仍未完成，已强制中止。请缩小问题范围后重试。"
-            )))
-        }
-    }
 }
 
 async fn run_harness_inner(

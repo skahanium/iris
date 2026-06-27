@@ -85,7 +85,8 @@ describe("assistant_execute IPC contract", () => {
     expect(facade).toContain("fn validate_note_content_boundary");
     expect(facade).toContain("request.note_path.is_none()");
     expect(facade).toContain("note_content");
-    expect(facade).toContain("validate_note_content_boundary(&request)?");
+    expect(facade).toContain("validate_assistant_domain_boundary(&request)?");
+    expect(facade).toContain("validate_note_content_boundary(request)");
   });
 
   it("UnifiedAssistantPanel calls assistantExecute", () => {

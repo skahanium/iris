@@ -9,11 +9,12 @@ use crate::error::AppResult;
 use crate::storage::db::Database;
 use serde::{Deserialize, Serialize};
 
-/// Redact classified paths, sentinel markers, suspicious tokens, API keys,
+/// Redact classified paths, document title metadata, suspicious tokens, API keys,
 /// and file path leaks from diagnostic strings.
 ///
 /// Strips:
 /// - `.classified/` path segments
+/// - `title`, `document`, `document_title`, and `note_title` key/value pairs
 /// - Content following the `涉密` marker through end of line
 /// - Long base64-looking tokens (40+ consecutive base64 chars)
 /// - API key patterns (`sk-*`, `key=*`, `token=*`, `Bearer *`)
@@ -40,7 +41,23 @@ pub fn redact_classified_leaks(input: &str) -> String {
         out.replace_range(marker_start..line_end, "[REDACTED]");
     }
 
-    // 3. Redact long base64-looking tokens (40+ consecutive base64 chars)
+    // 3. Redact explicit title/document metadata fields that may carry
+    // classified document names in provider or tool errors.
+    let metadata_keys = ["title", "document", "document_title", "note_title"];
+    for key in metadata_keys {
+        for marker in [format!("\"{key}\":"), format!("{key}:")] {
+            while let Some(start) = out.find(&marker) {
+                let value_start = start + marker.len();
+                let end = out[value_start..]
+                    .find([',', '\n', '}', ']'])
+                    .map(|p| value_start + p)
+                    .unwrap_or(out.len());
+                out.replace_range(start..end, &format!("{key}:\"[REDACTED]\""));
+            }
+        }
+    }
+
+    // 4. Redact long base64-looking tokens (40+ consecutive base64 chars)
     //    Scan byte-by-byte, tracking runs of [A-Za-z0-9+/=].
     let mut result = String::with_capacity(out.len());
     let mut run_start: Option<usize> = None;
@@ -72,7 +89,7 @@ pub fn redact_classified_leaks(input: &str) -> String {
     }
     out = result;
 
-    // 4. Redact API key patterns: sk-*, key=VALUE, token=VALUE
+    // 5. Redact API key patterns: sk-*, key=VALUE, token=VALUE
     let api_prefixes: &[&str] = &["sk-", "key=", "token=", "secret="];
     for prefix in api_prefixes {
         while let Some(start) = out.find(prefix) {
@@ -92,7 +109,7 @@ pub fn redact_classified_leaks(input: &str) -> String {
         }
     }
 
-    // 5. Redact Bearer tokens
+    // 6. Redact Bearer tokens
     while let Some(start) = out.find("Bearer ") {
         let val_start = start + "Bearer ".len();
         let end = out[val_start..]
@@ -106,7 +123,7 @@ pub fn redact_classified_leaks(input: &str) -> String {
         }
     }
 
-    // 6. Redact absolute file paths (Unix-style: /Users/..., /home/..., /tmp/...)
+    // 7. Redact absolute file paths (Unix-style: /Users/..., /home/..., /tmp/...)
     let path_prefixes: &[&str] = &["/Users/", "/home/", "/tmp/", "/var/", "/opt/"];
     for prefix in path_prefixes {
         while let Some(start) = out.find(prefix) {

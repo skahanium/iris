@@ -1530,3 +1530,23 @@ export async function classifiedAiThreadDelete(
 export async function classifiedAiCacheClear(): Promise<void> {
   return invoke("classified_ai_cache_clear");
 }
+
+/** Search classified documents using the in-memory retrieval index. */
+export async function classifiedAiContextSearch(
+  query: string,
+  currentDocument?: string,
+  scopePaths?: string[],
+  limit?: number,
+): Promise<import("@/types/ipc").ClassifiedSearchHit[]> {
+  return invoke("classified_ai_context_search", {
+    query,
+    currentDocument: currentDocument ?? null,
+    scopePaths: scopePaths ?? null,
+    limit: limit ?? null,
+  });
+}
+
+/** Clear the in-memory classified retrieval chunk index. */
+export async function classifiedAiRetrievalClear(): Promise<void> {
+  return invoke("classified_ai_retrieval_clear");
+}

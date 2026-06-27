@@ -1,5 +1,5 @@
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { memo, useCallback, useMemo, useRef } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { Check, Copy, RotateCcw } from "lucide-react";
 
@@ -104,11 +104,11 @@ function AssistantMessageActions({
   streaming: boolean;
 }) {
   if (streaming || (!onCopy && !onRetract)) {
-    return <span className="h-6 w-14" aria-hidden="true" />;
+    return <span className="h-6 w-6" aria-hidden="true" />;
   }
 
   return (
-    <div className="flex h-6 w-14 items-center justify-end gap-0.5 opacity-0 transition-opacity group-focus-within/ai-message-row:opacity-100 group-hover/ai-message-row:opacity-100">
+    <div className="flex flex-col items-center gap-0.5 opacity-0 transition-opacity group-focus-within/ai-message-row:opacity-100 group-hover/ai-message-row:opacity-100">
       {onCopy ? (
         <button
           type="button"
@@ -158,6 +158,9 @@ export const AiMessageList = memo(function AiMessageList({
       (last?.role === "system" &&
         !messages.some((m) => m.role === "assistant")));
   const viewportRef = useRef<HTMLDivElement | null>(null);
+  const [scrollFollow, setScrollFollow] = useState<"following" | "detached">(
+    "following",
+  );
   const rows = useMemo<MessageRow[]>(() => {
     if (messages.length === 0) return [{ type: "empty" }];
     return [
@@ -199,6 +202,38 @@ export const AiMessageList = memo(function AiMessageList({
     estimateSize: estimateSizeByContent,
     overscan: 8,
   });
+
+  const isNearBottom = useCallback((viewport: HTMLDivElement) => {
+    const threshold = 48;
+    const distanceFromBottom =
+      viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight;
+    return distanceFromBottom <= threshold;
+  }, []);
+
+  const handleScroll = useCallback(() => {
+    const viewport = viewportRef.current;
+    if (!viewport) return;
+    setScrollFollow(isNearBottom(viewport) ? "following" : "detached");
+  }, [isNearBottom]);
+
+  useEffect(() => {
+    const viewport = viewportRef.current;
+    if (!viewport) return;
+
+    viewport.addEventListener("scroll", handleScroll, { passive: true });
+    setScrollFollow(isNearBottom(viewport) ? "following" : "detached");
+
+    return () => {
+      viewport.removeEventListener("scroll", handleScroll);
+    };
+  }, [handleScroll, isNearBottom]);
+
+  useEffect(() => {
+    const viewport = viewportRef.current;
+    if (!viewport || scrollFollow !== "following") return;
+
+    viewport.scrollTop = viewport.scrollHeight - viewport.clientHeight;
+  }, [messages, rows.length, rowVirtualizer, scrollFollow, streaming]);
 
   // Stable per-index callback cache. Inline arrows like `() => onRetract(i)`
   // create new function refs every render, breaking AiMessageBubble's memo
@@ -274,13 +309,18 @@ export const AiMessageList = memo(function AiMessageList({
         copyCallbackRef.current.set(i, copyCb);
       }
       return (
-        <div className="group/ai-message-row grid w-full grid-cols-[1.75rem_minmax(0,1fr)_3.5rem] items-start gap-1">
-          <div className="flex justify-center pt-1">
+        <div className="group/ai-message-row grid w-full grid-cols-[1.75rem_minmax(0,1fr)] items-start gap-1">
+          <div className="flex flex-col items-center gap-1 pt-1">
             <MessageSelectControl
               selected={isSelected}
               onSelect={
                 onSelect ? (event) => handleMessageSelect(i, event) : undefined
               }
+            />
+            <AssistantMessageActions
+              onCopy={copyCb}
+              onRetract={retractCb}
+              streaming={streaming}
             />
           </div>
           <div className="min-w-0 max-w-full flex-1">
@@ -291,13 +331,6 @@ export const AiMessageList = memo(function AiMessageList({
               selected={isSelected}
               createdAt={m.created_at}
               onCitationClick={onCitationClick}
-            />
-          </div>
-          <div className="flex justify-end pt-1">
-            <AssistantMessageActions
-              onCopy={copyCb}
-              onRetract={retractCb}
-              streaming={streaming}
             />
           </div>
         </div>

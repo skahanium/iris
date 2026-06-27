@@ -162,7 +162,7 @@ describe("session history evidence packets", () => {
     );
 
     expect(header).toMatch(
-      /onSelectSession:\s*\(\s*id: number,\s*messages: ChatLine\[\],\s*ledgerPackets\?: ChatLine\["evidencePackets"\],\s*\) => void/,
+      /onSelectSession:\s*\(\s*id: number \| string,\s*messages: ChatLine\[\],\s*ledgerPackets\?: ChatLine\["evidencePackets"\],\s*\) => void/,
     );
     expect(panel).toContain("...args: Parameters<typeof handleLoadSession>");
     expect(panel).toContain("handleLoadSession(...args)");

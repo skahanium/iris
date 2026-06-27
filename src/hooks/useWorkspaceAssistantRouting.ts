@@ -53,24 +53,46 @@ export function useWorkspaceAssistantRouting({
     ],
   );
 
-  const nonNoteSurfaceActive = Boolean(
-    activeArtifactTab || activeMediaTab || activeNoteIsClassified,
-  );
+  const nonNoteSurfaceActive = Boolean(activeArtifactTab || activeMediaTab);
 
   const isNormalDomain = domainState.domain === "normal";
+  const hasExplicitNoteContext = Boolean(selectionQuote);
 
   const getAssistantLiveMarkdown = useCallback(
-    () => (isNormalDomain && !nonNoteSurfaceActive ? getLiveMarkdown() : ""),
-    [getLiveMarkdown, isNormalDomain, nonNoteSurfaceActive],
+    () =>
+      isNormalDomain && !nonNoteSurfaceActive && hasExplicitNoteContext
+        ? getLiveMarkdown()
+        : "",
+    [
+      getLiveMarkdown,
+      hasExplicitNoteContext,
+      isNormalDomain,
+      nonNoteSurfaceActive,
+    ],
   );
   const getAssistantWritingContext = useCallback(
     () =>
-      isNormalDomain && !nonNoteSurfaceActive ? getWritingContext() : null,
-    [getWritingContext, isNormalDomain, nonNoteSurfaceActive],
+      isNormalDomain && !nonNoteSurfaceActive && hasExplicitNoteContext
+        ? getWritingContext()
+        : null,
+    [
+      getWritingContext,
+      hasExplicitNoteContext,
+      isNormalDomain,
+      nonNoteSurfaceActive,
+    ],
   );
   const getAssistantParagraphText = useCallback(
-    () => (isNormalDomain && !nonNoteSurfaceActive ? getParagraphText() : null),
-    [getParagraphText, isNormalDomain, nonNoteSurfaceActive],
+    () =>
+      isNormalDomain && !nonNoteSurfaceActive && hasExplicitNoteContext
+        ? getParagraphText()
+        : null,
+    [
+      getParagraphText,
+      hasExplicitNoteContext,
+      isNormalDomain,
+      nonNoteSurfaceActive,
+    ],
   );
   const handleAssistantInsertToEditor = useCallback(
     (content: string) => {
@@ -78,23 +100,21 @@ export function useWorkspaceAssistantRouting({
         setAiStatus("请先切回笔记再插入内容");
         return;
       }
-      if (domainState.domain === "classified") {
-        return;
-      }
       handleInsertToEditor(content);
     },
-    [
-      activeArtifactTab,
-      activeMediaTab,
-      domainState.domain,
-      handleInsertToEditor,
-      setAiStatus,
-    ],
+    [activeArtifactTab, activeMediaTab, handleInsertToEditor, setAiStatus],
   );
 
   return {
     aiDomain: domainState.domain,
-    assistantNotePath: activeMediaTab ? null : assistantNotePathWithoutMedia,
+    assistantNotePath:
+      activeMediaTab || activeArtifactTab
+        ? null
+        : domainState.domain === "classified"
+          ? domainState.classifiedActivePath
+          : hasExplicitNoteContext
+            ? assistantNotePathWithoutMedia
+            : null,
     assistantSelectionQuote: nonNoteSurfaceActive ? null : selectionQuote,
     classifiedPath: domainState.classifiedActivePath,
     getAssistantLiveMarkdown,

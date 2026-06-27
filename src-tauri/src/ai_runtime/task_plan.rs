@@ -293,6 +293,7 @@ mod tests {
 
     fn request_with_plan(plan: TaskPlanSummary) -> AssistantExecuteRequest {
         AssistantExecuteRequest {
+            ai_domain: crate::commands::assistant_commands::AssistantAiDomain::Normal,
             agent_intent: None,
             intent: None,
             intent_detection: None,

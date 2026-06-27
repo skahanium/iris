@@ -207,7 +207,7 @@ fn normalize_tool_arguments(input_json: String) -> String {
 /// Send a streaming request and emit events to frontend.
 pub async fn send_streaming_request(
     app_handle: &AppHandle,
-    client: &Client,
+    _client: &Client,
     request_id: &str,
     request: GatewayRequest,
 ) -> AppResult<GatewayResponse> {
@@ -222,7 +222,10 @@ pub async fn send_streaming_request(
     let mut body = build_llm_api_body(&request)?;
     body["stream"] = serde_json::json!(true);
 
-    let mut req_builder = client.post(&url).header("Content-Type", "application/json");
+    let streaming_client = crate::network::cert_pinning::create_streaming_https_client()?;
+    let mut req_builder = streaming_client
+        .post(&url)
+        .header("Content-Type", "application/json");
 
     if let Some(api_key) = &request.provider.api_key {
         req_builder = apply_streaming_auth_headers(req_builder, endpoint_family, api_key);

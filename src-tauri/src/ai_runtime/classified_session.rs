@@ -9,6 +9,7 @@ use std::path::{Path, PathBuf};
 use std::sync::RwLock;
 
 use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 
 use crate::crypto::classified_io;
 use crate::crypto::vault_key::{VaultKey, VAULT_KEY};
@@ -96,6 +97,15 @@ fn thread_file_path(vault: &Path, thread_id: &str) -> PathBuf {
     sessions_dir(vault).join(format!("{thread_id}.cef"))
 }
 
+fn validate_thread_id(thread_id: &str) -> AppResult<Uuid> {
+    let parsed =
+        Uuid::parse_str(thread_id).map_err(|_| AppError::msg("涉密 AI thread_id 必须是 UUID"))?;
+    if parsed.to_string() != thread_id.to_ascii_lowercase() {
+        return Err(AppError::msg("涉密 AI thread_id 必须使用标准 UUID 文件名"));
+    }
+    Ok(parsed)
+}
+
 /// Ensure the `.iris-ai/sessions` directory structure exists.
 fn ensure_ai_dirs(vault: &Path) -> AppResult<()> {
     let dir = sessions_dir(vault);
@@ -178,6 +188,7 @@ fn filter_index(
 pub fn classified_ai_thread_load(vault: &Path, thread_id: String) -> AppResult<ClassifiedAiThread> {
     let vk = require_unlocked()?;
     let key = vk.key()?;
+    validate_thread_id(&thread_id)?;
 
     let path = thread_file_path(vault, &thread_id);
     if !path.exists() {
@@ -194,6 +205,7 @@ pub fn classified_ai_thread_load(vault: &Path, thread_id: String) -> AppResult<C
 pub fn classified_ai_thread_save(vault: &Path, thread: ClassifiedAiThread) -> AppResult<()> {
     let vk = require_unlocked()?;
     let key = vk.key()?;
+    validate_thread_id(&thread.thread_id)?;
 
     ensure_ai_dirs(vault)?;
 
@@ -236,6 +248,7 @@ pub fn classified_ai_thread_save(vault: &Path, thread: ClassifiedAiThread) -> Ap
 pub fn classified_ai_thread_delete(vault: &Path, thread_id: String) -> AppResult<()> {
     let _vk = require_unlocked()?;
     let key = _vk.key()?;
+    validate_thread_id(&thread_id)?;
 
     // Remove thread file
     let path = thread_file_path(vault, &thread_id);
@@ -257,6 +270,7 @@ pub fn classified_ai_cache_clear() -> AppResult<()> {
     if let Ok(mut cache) = THREAD_INDEX_CACHE.write() {
         *cache = None;
     }
+    crate::ai_runtime::classified_retrieval::clear_classified_index();
     Ok(())
 }
 
@@ -297,7 +311,7 @@ mod tests {
         let key = test_key();
         let thread = ClassifiedAiThread {
             version: 1,
-            thread_id: "test-uuid-1".into(),
+            thread_id: "019f0871-0000-7000-8000-000000000001".into(),
             document_path: ".classified/secret.md".into(),
             title: Some("测试线程".into()),
             created_at: "2026-01-01T00:00:00Z".into(),
@@ -320,7 +334,7 @@ mod tests {
 
         let decrypted = classified_io::decrypt_cef(&encrypted, &key).unwrap();
         let restored: ClassifiedAiThread = serde_json::from_slice(&decrypted).unwrap();
-        assert_eq!(restored.thread_id, "test-uuid-1");
+        assert_eq!(restored.thread_id, "019f0871-0000-7000-8000-000000000001");
         assert_eq!(restored.messages.len(), 1);
         assert_eq!(restored.messages[0].content, "你好");
     }
@@ -341,6 +355,14 @@ mod tests {
         assert!(json.contains("messageCount"));
         assert!(json.contains("createdAt"));
         assert!(json.contains("updatedAt"));
+    }
+
+    #[test]
+    fn validate_thread_id_rejects_path_traversal() {
+        assert!(validate_thread_id("../secret").is_err());
+        assert!(validate_thread_id(".classified/secret").is_err());
+        assert!(validate_thread_id("not-a-uuid").is_err());
+        assert!(validate_thread_id("019f0871-0000-7000-8000-000000000002").is_ok());
     }
 
     #[test]

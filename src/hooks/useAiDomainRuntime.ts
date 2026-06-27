@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import type { Dispatch, SetStateAction } from "react";
 
 import type { AiDomain, AiDomainState } from "@/lib/ai-domain";
-import { classifiedAiCacheClear } from "@/lib/ipc";
+import { classifiedAiCacheClear, classifiedAiRetrievalClear } from "@/lib/ipc";
 
 interface ClassifiedThreadSnapshot {
   path: string;
@@ -14,6 +15,8 @@ export interface UseAiDomainRuntimeOptions {
 }
 
 export interface UseAiDomainRuntimeReturn {
+  activeDraft: string;
+  setActiveDraft: Dispatch<SetStateAction<string>>;
   normalDraft: string;
   setNormalDraft: (value: string) => void;
   classifiedDraft: string;
@@ -70,6 +73,7 @@ export function useAiDomainRuntime({
       classifiedPendingPatchesRef.current = [];
       classifiedWritingArtifactsRef.current = [];
       void classifiedAiCacheClear();
+      void classifiedAiRetrievalClear();
     },
     [abortClassifiedRequest],
   );
@@ -101,6 +105,19 @@ export function useAiDomainRuntime({
   const clearClassifiedSelection = useCallback(() => {
     setClassifiedSelectedMessageIds(new Set());
   }, []);
+
+  const activeDraft =
+    domainState.domain === "classified" ? classifiedDraft : normalDraft;
+  const setActiveDraft = useCallback(
+    (next: SetStateAction<string>) => {
+      const setDraft =
+        domainState.domain === "classified"
+          ? setClassifiedDraft
+          : setNormalDraft;
+      setDraft(next);
+    },
+    [domainState.domain],
+  );
 
   // Handle domain switch: classified → normal
   useEffect(() => {
@@ -160,6 +177,8 @@ export function useAiDomainRuntime({
   ]);
 
   return {
+    activeDraft,
+    setActiveDraft,
     normalDraft,
     setNormalDraft,
     classifiedDraft,

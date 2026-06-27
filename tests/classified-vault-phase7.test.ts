@@ -157,11 +157,9 @@ describe("classified vault phase 7", () => {
     expect(app).toContain(
       `activeArtifactTab || activeNoteIsClassified ? "" : getLiveMarkdown()`,
     );
-    expect(app).toContain(
-      "activeArtifactTab || activeNoteIsClassified ? null : getWritingContext()",
-    );
-    expect(app).toContain("涉密笔记不能接收 AI 插入");
-    expect(app).toContain("涉密笔记不能接收 AI 改写");
+    expect(app).toContain("activeArtifactTab ? null : getWritingContext()");
+    expect(app).not.toContain("涉密笔记不能接收 AI 插入");
+    expect(app).not.toContain("涉密笔记不能接收 AI 改写");
     expect(app).toContain("classifiedUnlocked");
     expect(app).toContain("aiDomain");
     expect(app).toContain("classifiedPath");
@@ -184,15 +182,20 @@ describe("classified vault phase 7", () => {
     expect(panelSlot).toContain("getNoteContent={getLiveMarkdown}");
 
     expect(editorActions).toContain(
-      "if (isClassifiedVaultPath(path)) return null;",
+      "insertAssistantMarkdownAtCursor(ed, content)",
     );
+    expect(editorActions).not.toContain("isClassifiedVaultPath(path)");
 
     expect(tasks).toContain("const getNoteContentForRequest = useCallback");
+    expect(tasks).toContain('if (aiDomain === "classified") return null');
+    expect(tasks).toContain(
+      "const getContextReferencesForRequest = useCallback",
+    );
     expect(tasks).toContain("notePath ? getNoteContent() : undefined");
     expect(tasks).not.toContain("noteContent: getNoteContent(),");
 
     expect(facade).toContain("fn validate_note_content_boundary");
-    expect(facade).toContain("validate_note_content_boundary(&request)?");
+    expect(facade).toContain("validate_assistant_domain_boundary(&request)?");
   });
 
   it("main note open paths cannot open classified notes", () => {

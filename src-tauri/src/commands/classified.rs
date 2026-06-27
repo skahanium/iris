@@ -158,6 +158,8 @@ async fn classified_unlock_async_inner(
 fn classified_lock_inner() -> AppResult<()> {
     let mut vk = vault_key_write()?;
     vk.lock();
+    crate::ai_runtime::classified_session::classified_ai_cache_clear()?;
+    crate::ai_runtime::classified_retrieval::clear_classified_index();
     Ok(())
 }
 

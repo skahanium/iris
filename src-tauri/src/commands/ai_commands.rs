@@ -2203,6 +2203,51 @@ pub async fn classified_ai_cache_clear() -> AppResult<()> {
     crate::ai_runtime::classified_session::classified_ai_cache_clear()
 }
 
+/// Search classified documents using the in-memory retrieval index.
+///
+/// Builds (or reuses) a heading-aware chunk index of `.classified/` Markdown
+/// files and returns ranked results by term frequency, heading match,
+/// current-document boost, path similarity, and recency.
+#[tauri::command]
+pub async fn classified_ai_context_search(
+    state: State<'_, Arc<AppState>>,
+    query: String,
+    current_document: Option<String>,
+    scope_paths: Option<Vec<String>>,
+    limit: Option<usize>,
+) -> AppResult<Vec<crate::ai_runtime::classified_retrieval::ClassifiedSearchHit>> {
+    let vault = state.vault_path()?;
+    let chunks = crate::ai_runtime::classified_retrieval::build_classified_index(&vault)?;
+
+    let filtered: Vec<_> = if let Some(ref paths) = scope_paths {
+        chunks
+            .into_iter()
+            .filter(|c| paths.iter().any(|p| c.document_path.starts_with(p)))
+            .collect()
+    } else if let Some(ref current) = current_document {
+        chunks
+            .into_iter()
+            .filter(|c| c.document_path == *current)
+            .collect()
+    } else {
+        Vec::new()
+    };
+
+    Ok(crate::ai_runtime::classified_retrieval::search_chunks(
+        &filtered,
+        &query,
+        current_document.as_deref(),
+        limit.unwrap_or(10),
+    ))
+}
+
+/// Clear the in-memory classified retrieval chunk index.
+#[tauri::command]
+pub async fn classified_ai_retrieval_clear() -> AppResult<()> {
+    crate::ai_runtime::classified_retrieval::clear_classified_index();
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::validate_ai_note_path;

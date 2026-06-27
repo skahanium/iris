@@ -66,21 +66,22 @@ describe("classified editor AI parity contract", () => {
   });
 
   describe("classified editor actions route to classified AI handlers", () => {
-    it("useAppEditorActions blocks classified inline AI with Chinese error", () => {
+    it("useAppEditorActions allows classified inline AI through the shared handler", () => {
       const src = read("src/hooks/useAppEditorActions.ts");
-      expect(src).toContain("涉密笔记不能发送到 AI");
-      expect(src).toContain("if (activeNoteIsClassified)");
+      expect(src).toContain("void inlineAi.run(ed, action)");
+      expect(src).not.toContain("涉密笔记不能发送到 AI");
     });
 
-    it("useAppEditorActions blocks classified insert with Chinese error", () => {
+    it("useAppEditorActions allows classified insert through editor transaction", () => {
       const src = read("src/hooks/useAppEditorActions.ts");
-      expect(src).toContain("涉密笔记不能接收 AI 插入");
-      expect(src).toContain("isClassifiedVaultPath(path)");
+      expect(src).toContain("insertAssistantMarkdownAtCursor(ed, content)");
+      expect(src).not.toContain("涉密笔记不能接收 AI 插入");
     });
 
-    it("useAppEditorActions blocks classified rewrite with Chinese error", () => {
+    it("App patch handler no longer blocks classified rewrite by path alone", () => {
       const app = read("src/App.impl.tsx");
-      expect(app).toContain("涉密笔记不能接收 AI 改写");
+      expect(app).toContain("applyMarkdownToEditor(newContent)");
+      expect(app).not.toContain("涉密笔记不能接收 AI 改写");
     });
 
     it("classified context menu handler blocks editing actions when locked", () => {

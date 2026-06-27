@@ -239,6 +239,13 @@ export interface ClassifiedAiThreadSummary {
   updatedAt: string;
 }
 
+export interface ClassifiedSearchHit {
+  documentPath: string;
+  heading: string | null;
+  snippet: string;
+  score: number;
+}
+
 export interface ClassifiedAiThread {
   version: number;
   threadId: string;

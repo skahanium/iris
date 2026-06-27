@@ -449,6 +449,7 @@ export interface WritingEditorContext {
 
 /** 统一助手 IPC 请求（`assistant_execute`） */
 export interface AssistantExecuteRequest {
+  aiDomain?: "normal" | "classified";
   agentIntent?: AgentIntent;
   intent?: AssistantIntent;
   intentDetection?: IntentDetectionResult | null;

@@ -1,5 +1,9 @@
 import { useRef } from "react";
 
+const MIN_FLUSH_INTERVAL_MS = 120;
+const STREAMING_SHORT_CONTENT_LIMIT = 200;
+const STREAMING_BIG_JUMP_CHARS = 300;
+
 /**
  * 流式输出期间节流渲染内容。
  *
@@ -39,9 +43,9 @@ export function useStreamingContent(
     return content;
   }
 
-  const shortContent = content.length < 200;
-  const bigJump = added > 300;
-  const timeUp = timeSince > 120;
+  const shortContent = content.length < STREAMING_SHORT_CONTENT_LIMIT;
+  const bigJump = added > STREAMING_BIG_JUMP_CHARS;
+  const timeUp = timeSince > MIN_FLUSH_INTERVAL_MS;
   const paragraphBreak =
     content.indexOf("\n\n", cacheRef.current.content.length) >= 0;
 

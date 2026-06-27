@@ -58,10 +58,11 @@ describe("classified AI session store contract", () => {
 
     it("session_key uses scene prefix and note_path but not title", () => {
       const src = read("src-tauri/src/ai_runtime/session.rs");
-      expect(src).toContain("pub fn session_key");
-      expect(src).toContain("scene_str");
+      const sessionKeyFn =
+        src.split("pub fn session_key")[1]?.split("\n}")[0] ?? "";
+      expect(sessionKeyFn).toContain("scene_str");
       // session_key does not include title
-      expect(src).not.toMatch(/session_key[\s\S]*title/);
+      expect(sessionKeyFn).not.toContain("title");
     });
 
     it("classified paths are excluded from user note paths used by session system", () => {
@@ -116,7 +117,9 @@ describe("classified AI session store contract", () => {
       const src = read("src-tauri/src/ai_runtime/classified_session.rs");
       // Contract: filenames must be UUID, not contain paths or titles
       expect(src).toContain("Uuid");
-      expect(src).not.toMatch(/thread_id[\s\S]*\.classified/);
+      const pathFn = src.split("fn thread_file_path")[1]?.split("\n}")[0] ?? "";
+      expect(pathFn).toContain("{thread_id}.cef");
+      expect(pathFn).not.toContain(".classified");
     });
   });
 });

@@ -4,7 +4,12 @@ import { AgentStatusBadge } from "@/components/ai/AgentStatusBadge";
 import { AssistantPersonaDisplay } from "@/components/ai/AssistantPersonaDisplay";
 import { Button } from "@/components/ui/button";
 import type { PromptProfileDto } from "@/lib/ipc";
-import type { AiScene, AssistantTaskStatus, TaskPlanIntent } from "@/types/ai";
+import type {
+  AiDomain,
+  AiScene,
+  AssistantTaskStatus,
+  TaskPlanIntent,
+} from "@/types/ai";
 
 import type { ChatLine } from "./AiMessageList";
 import { SessionHistoryDropdown } from "./SessionHistoryDropdown";
@@ -12,6 +17,7 @@ import { SessionHistoryDropdown } from "./SessionHistoryDropdown";
 interface AssistantPanelHeaderProps {
   chromeActionsDisabled: boolean;
   currentSessionId: number | string | null;
+  domain?: AiDomain;
   scene: AiScene;
   onDeletedCurrentSession: () => void;
   onDeletedSession?: (sessionId: number | string) => void;
@@ -30,6 +36,7 @@ interface AssistantPanelHeaderProps {
 export function AssistantPanelHeader({
   chromeActionsDisabled,
   currentSessionId,
+  domain = "normal",
   scene,
   onDeletedCurrentSession,
   onDeletedSession,
@@ -57,6 +64,7 @@ export function AssistantPanelHeader({
           <SessionHistoryDropdown
             currentSessionId={currentSessionId}
             disabled={chromeActionsDisabled}
+            domain={domain}
             onSelectSession={onSelectSession}
             onDeleted={(id) => {
               onDeletedSession?.(id);

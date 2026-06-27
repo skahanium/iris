@@ -82,7 +82,8 @@ export function useArtifactTabs() {
         const removedIds = new Set(
           prev
             .filter(
-              (item) => evidenceArtifactSessionId(item) === String(sessionId),
+              (item) =>
+                String(evidenceArtifactSessionId(item)) === String(sessionId),
             )
             .map((item) => item.id),
         );

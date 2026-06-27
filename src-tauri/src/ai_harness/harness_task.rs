@@ -20,8 +20,11 @@ use crate::ai_runtime::{
     OrganizeTaskResult, OrganizeTaskScope, PatchProposal,
 };
 use crate::ai_types::TaskPlanSummary;
+use crate::ai_types::{LlmMessage, MessageRole};
 use crate::app::AppState;
-use crate::commands::assistant_commands::AssistantExecuteRequest;
+use crate::commands::assistant_commands::{
+    validate_assistant_domain_boundary, AssistantAiDomain, AssistantExecuteRequest,
+};
 use crate::commands::writing_commands::WritingTaskInputIpc;
 use crate::commands::{
     ai_commands, citation_commands, document_commands, organize_commands, research_commands,
@@ -261,6 +264,119 @@ fn fail_workflow_runtime_task(db: &Database, task_id: &str, error_code: &str) ->
     AgentTaskRuntime::fail_safe(db, task_id, error_code)
 }
 
+async fn run_classified_chat_task(
+    state: &Arc<AppState>,
+    app_handle: &AppHandle,
+    request: &AssistantExecuteRequest,
+    routing_override: Option<&ai_commands::AiSendRoutingOverride>,
+) -> AppResult<HarnessTaskResult> {
+    let note_path = request
+        .note_path
+        .as_deref()
+        .ok_or_else(|| AppError::msg("classified assistant requires notePath"))?;
+    let vault = state.vault_path()?;
+    let abs_path = crate::storage::paths::resolve_vault_path(&vault, note_path)?;
+    let document = {
+        let raw = std::fs::read(&abs_path)?;
+        let vk_guard = crate::crypto::vault_key::VAULT_KEY
+            .get()
+            .ok_or_else(|| AppError::msg("保险库未初始化"))?;
+        let vk = vk_guard
+            .read()
+            .map_err(|e| AppError::msg(format!("lock error: {e}")))?;
+        let key = vk.key()?;
+        let decrypted = crate::crypto::classified_io::decrypt_cef(&raw, key)?;
+        String::from_utf8(decrypted)
+            .map_err(|_| AppError::msg("Classified note is not valid UTF-8"))?
+    };
+
+    let chunks = crate::ai_runtime::classified_retrieval::build_classified_index(&vault)?;
+    let scoped_hits = crate::ai_runtime::classified_retrieval::search_chunks(
+        &chunks,
+        &request.message,
+        Some(note_path),
+        4,
+    );
+    let mut evidence = String::new();
+    for (index, hit) in scoped_hits.iter().enumerate() {
+        evidence.push_str(&format!(
+            "\n[片段 {}] {}\n{}\n",
+            index + 1,
+            hit.heading.as_deref().unwrap_or("当前文档"),
+            hit.snippet
+        ));
+    }
+    let system_prompt = format!(
+        "你是 Iris 的涉密域助手。只使用本次提供的当前涉密文档与涉密检索片段回答；不要请求或引用普通笔记、普通会话、外部缓存或工具。不要泄露内部保险库路径。\n\n当前涉密文档：\n{}\n\n涉密检索片段：\n{}",
+        document, evidence
+    );
+    let request_id = uuid::Uuid::new_v4().to_string();
+    let route = routing_override
+        .ok_or_else(|| AppError::msg("classified assistant requires resolved model route"))?;
+    let provider_config = route.resolved.to_provider_config_for_slot(route.slot);
+    let gateway = crate::ai_runtime::model_gateway::ModelGateway::with_defaults(
+        app_handle.clone(),
+        vec![provider_config.clone()],
+    )?;
+    let response = gateway
+        .send_request(crate::ai_runtime::model_gateway::GatewayRequest {
+            provider: provider_config,
+            messages: vec![
+                LlmMessage {
+                    role: MessageRole::System,
+                    content: system_prompt.into(),
+                    ..Default::default()
+                },
+                LlmMessage {
+                    role: MessageRole::User,
+                    content: request.message.clone().into(),
+                    ..Default::default()
+                },
+            ],
+            tools: Vec::new(),
+            max_tokens: Some(route.resolved.output_budget),
+            temperature: Some(0.2),
+            stream: false,
+            thinking: route.resolved.thinking,
+            skip_stub_ids: Vec::new(),
+        })
+        .await?;
+    let content = response.content.unwrap_or_default();
+    Ok(HarnessTaskResult {
+        request_id: request_id.clone(),
+        task_id: None,
+        run_status: HarnessRunStatus::Completed,
+        artifacts: vec![HarnessArtifact::Message {
+            content: content.clone(),
+            citation_valid: true,
+        }],
+        artifact_wires: Vec::new(),
+        evidence_packet_ids: Vec::new(),
+        usage: Some(response.usage.clone()),
+        evidence_refresh_notice: None,
+        chat_payload: Some(serde_json::json!({
+            "request_id": request_id,
+            "session_id": 0,
+            "status": "completed",
+            "content": content,
+            "tool_calls": response.tool_calls,
+            "tool_results": [],
+            "harness_rounds": 1,
+            "usage": response.usage,
+            "usage_source": "provider",
+            "citation_valid": true,
+            "evidence_packets": [],
+            "pending_confirmation": false,
+        })),
+        writing: None,
+        citation: None,
+        organize: None,
+        research: None,
+        chapter: None,
+        document: None,
+    })
+}
+
 fn legacy_intent_wire(intent: AssistantIntent) -> &'static str {
     match intent {
         AssistantIntent::Chat => "chat",
@@ -297,9 +413,26 @@ pub(crate) async fn run_harness_task(
     let request = task.assistant;
     let task_plan = task.task_plan;
     let routing_override = task.routing_override;
-    crate::commands::ai_commands::validate_ai_note_path(request.note_path.as_deref())?;
+    validate_assistant_domain_boundary(&request)?;
     let legacy_intent = crate::ai_runtime::task_plan::legacy_intent_for_task_plan(&task_plan);
     let agent_intent = crate::ai_runtime::task_plan::agent_intent_for_task_plan(&task_plan);
+    if request.ai_domain == AssistantAiDomain::Classified {
+        if matches!(
+            legacy_intent,
+            AssistantIntent::Chat | AssistantIntent::Knowledge
+        ) {
+            return run_classified_chat_task(
+                state,
+                app_handle,
+                &request,
+                routing_override.as_ref(),
+            )
+            .await;
+        }
+        return Err(AppError::msg(
+            "classified assistant currently supports chat and knowledge intents only",
+        ));
+    }
     let skill_activation_plan = routing_override
         .as_ref()
         .and_then(|route| route.skill_activation_plan.as_ref());
@@ -1087,6 +1220,7 @@ mod tests {
     fn workflow_runtime_task_is_created_for_non_chat_intent() {
         let db = Database::open_in_memory().unwrap();
         let request = AssistantExecuteRequest {
+            ai_domain: AssistantAiDomain::Normal,
             agent_intent: None,
             intent: Some(AssistantIntent::Research),
             intent_detection: None,
@@ -1126,6 +1260,7 @@ mod tests {
     fn workflow_runtime_task_failure_is_safe_and_terminal() {
         let db = Database::open_in_memory().unwrap();
         let request = AssistantExecuteRequest {
+            ai_domain: AssistantAiDomain::Normal,
             agent_intent: None,
             intent: Some(AssistantIntent::Writing),
             intent_detection: None,

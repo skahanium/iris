@@ -19,6 +19,7 @@ import {
 } from "@/lib/assistant-routing";
 import { legacySceneHintForAgentIntent } from "@/lib/assistant-scene";
 import { buildAssistantTaskPlan } from "@/lib/assistant-taskplan";
+import type { AiDomain } from "@/lib/ai-domain";
 import { invokeErrorMessage } from "@/lib/credentials";
 import {
   assistantExecute,
@@ -82,9 +83,11 @@ interface AssistantTaskRuntimePorts {
     >;
     setRunPlanSummary: Dispatch<SetStateAction<AgentRunPlanSummary | null>>;
   };
+  saveConversationSnapshot?: (messages: ChatLine[]) => Promise<void>;
 }
 
 interface AssistantTaskContext {
+  aiDomain: AiDomain;
   composerDisabled: boolean;
   contextScope: ContextScope;
   contextReferences: ContextReference[];
@@ -215,9 +218,11 @@ export function useAssistantTasks({
     clearTaskSurfaces,
     ensureAssistantStreamSlot,
     runPlanControls,
+    saveConversationSnapshot,
   } = runtime;
   const {
     composerDisabled,
+    aiDomain,
     contextScope,
     contextReferences,
     acceptWritingPatch,
@@ -302,9 +307,14 @@ export function useAssistantTasks({
     [contextReferences, getNoteContent, notePath],
   );
 
-  const getNoteContentForRequest = useCallback(
-    () => (notePath ? getNoteContent() : undefined),
-    [getNoteContent, notePath],
+  const getNoteContentForRequest = useCallback(() => {
+    if (aiDomain === "classified") return null;
+    return notePath ? getNoteContent() : undefined;
+  }, [aiDomain, getNoteContent, notePath]);
+
+  const getContextReferencesForRequest = useCallback(
+    () => (aiDomain === "classified" ? [] : currentContextReferences()),
+    [aiDomain, currentContextReferences],
   );
 
   const explicitIntentDetection = useCallback(
@@ -423,7 +433,8 @@ export function useAssistantTasks({
               intent === "knowledge" ? 0.78 : 0.72,
             ),
           message: rawMessage,
-          contextReferences: currentContextReferences(),
+          aiDomain,
+          contextReferences: getContextReferencesForRequest(),
           taskPlan: options?.taskPlan,
           images: options?.images,
           notePath,
@@ -494,6 +505,7 @@ export function useAssistantTasks({
               toolCalls,
             });
           }
+          void saveConversationSnapshot?.(next);
           return next;
         });
         const pendingTools =
@@ -542,6 +554,7 @@ export function useAssistantTasks({
       }
     },
     [
+      aiDomain,
       assistantRun,
       contextScope,
       ensureAssistantStreamSlot,
@@ -553,7 +566,8 @@ export function useAssistantTasks({
       panelSendActiveRef,
       recordRunPlan,
       recordAssistantArtifacts,
-      currentContextReferences,
+      saveConversationSnapshot,
+      getContextReferencesForRequest,
       requestIdRef,
       selectedPacketIds,
       sessionId,
@@ -588,10 +602,16 @@ export function useAssistantTasks({
       clearTaskSurfaces();
       setLastError(null);
       setActionState(buildActionState(intent, "running"));
-      setActivityHint("正在检索知识库与本地笔记…");
+      setActivityHint(
+        aiDomain === "classified"
+          ? "正在准备涉密上下文…"
+          : "正在检索知识库与本地笔记…",
+      );
 
       try {
-        await assembleContextForChat(rawMessage, intent);
+        if (aiDomain === "normal") {
+          await assembleContextForChat(rawMessage, intent);
+        }
         await executeKnowledgeChat(rawMessage, intent, options);
       } catch (error) {
         const message = invokeErrorMessage(error);
@@ -606,6 +626,7 @@ export function useAssistantTasks({
     },
     [
       assembleContextForChat,
+      aiDomain,
       clearTaskSurfaces,
       executeKnowledgeChat,
       setActionState,
@@ -634,7 +655,8 @@ export function useAssistantTasks({
           ["write", "chat"],
         ),
         message: rawMessage,
-        contextReferences: currentContextReferences(),
+        aiDomain,
+        contextReferences: getContextReferencesForRequest(),
         taskPlan,
         notePath,
         noteContent: getNoteContentForRequest(),
@@ -670,6 +692,7 @@ export function useAssistantTasks({
       appendAssistantSummary("writing", nextPatches.length);
     },
     [
+      aiDomain,
       appendAssistantSummary,
       assistantRun,
       clearTaskSurfaces,
@@ -679,7 +702,7 @@ export function useAssistantTasks({
       explicitIntentDetection,
       recordRunPlan,
       recordAssistantArtifacts,
-      currentContextReferences,
+      getContextReferencesForRequest,
       setActionState,
       setAgentTaskId,
       setPackets,
@@ -712,7 +735,8 @@ export function useAssistantTasks({
           ["ask_notes", "research"],
         ),
         message: rawMessage,
-        contextReferences: currentContextReferences(),
+        aiDomain,
+        contextReferences: getContextReferencesForRequest(),
         taskPlan,
         notePath,
         webAuthorized: webSearch,
@@ -734,6 +758,7 @@ export function useAssistantTasks({
       appendAssistantSummary("citation");
     },
     [
+      aiDomain,
       appendAssistantSummary,
       assistantRun,
       clearTaskSurfaces,
@@ -743,7 +768,7 @@ export function useAssistantTasks({
       notePath,
       recordRunPlan,
       recordAssistantArtifacts,
-      currentContextReferences,
+      getContextReferencesForRequest,
       setActionState,
       setAgentTaskId,
       setCitationResult,
@@ -768,7 +793,8 @@ export function useAssistantTasks({
           ["ask_notes", "chat"],
         ),
         message: rawMessage,
-        contextReferences: currentContextReferences(),
+        aiDomain,
+        contextReferences: getContextReferencesForRequest(),
         taskPlan,
         webAuthorized: webSearch,
         contextScope,
@@ -796,6 +822,7 @@ export function useAssistantTasks({
       appendAssistantSummary("organize", suggestions.length);
     },
     [
+      aiDomain,
       appendAssistantSummary,
       assistantRun,
       clearTaskSurfaces,
@@ -803,7 +830,7 @@ export function useAssistantTasks({
       explicitIntentDetection,
       recordRunPlan,
       recordAssistantArtifacts,
-      currentContextReferences,
+      getContextReferencesForRequest,
       setActionState,
       setAgentTaskId,
       setOrganizeSelection,
@@ -835,7 +862,8 @@ export function useAssistantTasks({
           ["write", "document_check"],
         ),
         message: rawMessage,
-        contextReferences: currentContextReferences(),
+        aiDomain,
+        contextReferences: getContextReferencesForRequest(),
         taskPlan,
         notePath,
         noteContent: getNoteContentForRequest(),
@@ -863,6 +891,7 @@ export function useAssistantTasks({
       appendAssistantSummary("chapter", nextPatches.length);
     },
     [
+      aiDomain,
       appendAssistantSummary,
       assistantRun,
       clearTaskSurfaces,
@@ -872,7 +901,7 @@ export function useAssistantTasks({
       notePath,
       recordRunPlan,
       recordAssistantArtifacts,
-      currentContextReferences,
+      getContextReferencesForRequest,
       setActionState,
       setAgentTaskId,
       setWritingPatches,
@@ -904,7 +933,8 @@ export function useAssistantTasks({
             ["chapter", "write"],
           ),
           message: rawMessage,
-          contextReferences: currentContextReferences(),
+          aiDomain,
+          contextReferences: getContextReferencesForRequest(),
           taskPlan,
           notePath,
           noteContent: getNoteContentForRequest(),
@@ -956,6 +986,7 @@ export function useAssistantTasks({
       }
     },
     [
+      aiDomain,
       appendAssistantSummary,
       assistantRun,
       clearTaskSurfaces,
@@ -965,7 +996,7 @@ export function useAssistantTasks({
       notePath,
       recordRunPlan,
       recordAssistantArtifacts,
-      currentContextReferences,
+      getContextReferencesForRequest,
       requestIdRef,
       setActionState,
       setAgentTaskId,
@@ -1002,7 +1033,8 @@ export function useAssistantTasks({
             ["ask_notes", "chat"],
           ),
           message: rawMessage,
-          contextReferences: currentContextReferences(),
+          aiDomain,
+          contextReferences: getContextReferencesForRequest(),
           taskPlan,
           webAuthorized: webSearch,
         });
@@ -1052,6 +1084,7 @@ export function useAssistantTasks({
       }
     },
     [
+      aiDomain,
       assistantRun,
       clearTaskSurfaces,
       ensureAssistantStreamSlot,
@@ -1059,7 +1092,7 @@ export function useAssistantTasks({
       researchRequestIdRef,
       recordRunPlan,
       recordAssistantArtifacts,
-      currentContextReferences,
+      getContextReferencesForRequest,
       panelSendActiveRef,
       requestIdRef,
       setActionState,
@@ -1144,7 +1177,7 @@ export function useAssistantTasks({
       return;
     }
 
-    const activeContextReferences = currentContextReferences();
+    const activeContextReferences = getContextReferencesForRequest();
     const hasSelection = Boolean(
       getWritingContext()?.selection ||
       selectionQuoteText ||
@@ -1272,7 +1305,7 @@ export function useAssistantTasks({
     composerDisabled,
     contextScope.pathPrefixes.length,
     contextScope.paths.length,
-    currentContextReferences,
+    getContextReferencesForRequest,
     forceNewSessionRef,
     getWritingContext,
     images,

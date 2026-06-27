@@ -10,6 +10,7 @@ pub mod agent_permissions;
 pub mod agent_task;
 pub mod agent_task_policy;
 pub mod circuit_breaker;
+pub mod classified_retrieval;
 pub mod classified_session;
 pub mod context_cache;
 pub mod context_planner;

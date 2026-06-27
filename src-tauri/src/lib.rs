@@ -257,6 +257,8 @@ pub fn run() {
             commands::ai_commands::classified_ai_thread_save,
             commands::ai_commands::classified_ai_thread_delete,
             commands::ai_commands::classified_ai_cache_clear,
+            commands::ai_commands::classified_ai_context_search,
+            commands::ai_commands::classified_ai_retrieval_clear,
             // Research Workflow (D)
             commands::research_commands::research_execute,
             commands::research_commands::research_status,

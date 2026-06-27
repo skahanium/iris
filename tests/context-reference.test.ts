@@ -84,7 +84,12 @@ describe("context references", () => {
   it("serializes references through assistantExecute", () => {
     const tasks = read("src/components/ai/hooks/useAssistantTasks.ts");
 
-    expect(tasks).toContain("contextReferences: currentContextReferences()");
+    expect(tasks).toContain(
+      "const getContextReferencesForRequest = useCallback",
+    );
+    expect(tasks).toContain(
+      "contextReferences: getContextReferencesForRequest()",
+    );
     expect(tasks).toContain("contextReferences: activeContextReferences");
     expect(tasks).toContain('reference.kind === "selection"');
     expect(tasks).not.toContain("contextReferences: []");
