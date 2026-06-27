@@ -48,12 +48,11 @@ describe("AI dual-domain routing contract", () => {
       );
     });
 
-    it("type definitions do not yet contain AiDomain union", () => {
+    it("type definitions contain AiDomain union", () => {
       const aiTypes = read("src/types/ai.ts");
-      // This assertion LOCKS that AiDomain does not exist yet.
-      // When the feature is implemented, this test must be updated to assert
-      // the opposite: that `type AiDomain = "normal" | "classified"` exists.
-      expect(aiTypes).not.toContain("AiDomain");
+      // Contract: AiDomain type must exist with normal/classified variants
+      expect(aiTypes).toContain("AiDomain");
+      expect(aiTypes).toMatch(/type\s+AiDomain\s*=\s*["']normal["']\s*\|\s*["']classified["']/);
     });
   });
 
@@ -63,15 +62,11 @@ describe("AI dual-domain routing contract", () => {
       expect(app).toContain("activeNoteIsClassified");
     });
 
-    it("IPC types do not yet carry a domain field on AI messages", () => {
+    it("IPC types carry AiDomain and classified thread types", () => {
       const ipcTypes = read("src/types/ipc.ts");
-      // domain currently only means web URL domain in IPC types
-      // This locks that there is no AI domain routing in IPC yet.
-      const aiSections = ipcTypes.split("domain");
-      // The word "domain" appears only in non-AI contexts currently
-      for (const section of aiSections) {
-        expect(section).not.toMatch(/classified/);
-      }
+      // Contract: IPC types must include classified AI thread DTOs
+      expect(ipcTypes).toContain("ClassifiedAiThread");
+      expect(ipcTypes).toContain("ClassifiedAiMessage");
     });
   });
 

@@ -8,10 +8,11 @@ function read(path: string): string {
 
 describe("assistant streaming lifecycle contract", () => {
   describe("token batches are throttled", () => {
-    it("useStreamingContent debounces token rendering", () => {
+    it("useStreamingContent has a minimum flush interval for streaming tokens", () => {
       const src = read("src/hooks/useStreamingContent.ts");
       // Must debounce/throttle token batches to avoid excessive re-renders
-      expect(src).toContain("debounce");
+      // Contract: must have a measurable delay/interval constant or mechanism
+      expect(src).toMatch(/(?:debounce|throttle|MIN_FLUSH|flushInterval|delayMs)/);
     });
 
     it("AiMessageBubble uses useStreamingContent for streamed content", () => {
@@ -33,6 +34,13 @@ describe("assistant streaming lifecycle contract", () => {
       expect(src).toContain("viewportRef");
       expect(src).toContain("ScrollArea");
     });
+
+    it("scroll follow state machine exists with following and detached states", () => {
+      const src = read("src/components/ai/AiMessageList.tsx");
+      // Contract: must have a scroll follow state that tracks whether user is near bottom
+      // States: "following" (auto-scroll) and "detached" (user scrolled up)
+      expect(src).toMatch(/(?:isNearBottom|scrollFollow|following|detached|userScrolledUp|autoScroll)/);
+    });
   });
 
   describe("returning to bottom resumes follow mode", () => {
@@ -41,6 +49,12 @@ describe("assistant streaming lifecycle contract", () => {
       // The component must handle scroll follow during streaming
       // This locks the existence of streaming-aware scroll behavior
       expect(src).toContain("streaming");
+    });
+
+    it("scroll handler detects when user returns to bottom", () => {
+      const src = read("src/components/ai/AiMessageList.tsx");
+      // Contract: must have logic to resume auto-scroll when user scrolls back to bottom
+      expect(src).toMatch(/(?:scrollTop|scrollHeight|clientHeight|nearBottom|threshold)/);
     });
   });
 

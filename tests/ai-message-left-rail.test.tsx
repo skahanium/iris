@@ -107,8 +107,8 @@ describe("AI message left rail layout contract", () => {
     });
   });
 
-  describe("assistant rows do not render a right action rail", () => {
-    it("assistant row has a 3-column grid layout with select, bubble, and actions", async () => {
+  describe("assistant rows use left rail layout without right action rail", () => {
+    it("assistant row uses left-rail plus content layout (no right actions column)", async () => {
       await act(async () => {
         root.render(
           <AiMessageList
@@ -121,29 +121,15 @@ describe("AI message left rail layout contract", () => {
         );
       });
 
-      // The grid layout is: [select] [bubble] [actions]
-      const gridRow = host.querySelector(
-        ".group\\/ai-message-row.grid.grid-cols-\\[1\\.75rem_minmax\\(0\\,1fr\\)_3\\.5rem\\]",
-      );
-      expect(gridRow).not.toBeNull();
-    });
+      // Contract: actions (select/copy/retract) must be in a LEFT rail, not right
+      // The old layout had grid-cols-[1.75rem_minmax(0,1fr)_3.5rem] with right actions
+      // The new layout should NOT have a right-side actions column
+      const rightActions = host.querySelector(".flex.justify-end.pt-1");
+      expect(rightActions).toBeNull();
 
-    it("assistant message actions container has fixed 3.5rem width", async () => {
-      await act(async () => {
-        root.render(
-          <AiMessageList
-            messages={[{ role: "assistant", content: "宽度测试" }]}
-            streaming={false}
-            selectedIndices={new Set()}
-            onSelect={vi.fn()}
-            onRetract={vi.fn()}
-          />,
-        );
-      });
-
-      // The right column should be a flex container with justify-end
-      const actionsContainer = host.querySelector(".flex.justify-end.pt-1");
-      expect(actionsContainer).not.toBeNull();
+      // Actions must be present in a left-side rail
+      const selectButton = host.querySelector('button[aria-label="选择此消息"]');
+      expect(selectButton).not.toBeNull();
     });
 
     it("assistant message actions do not render during streaming", async () => {

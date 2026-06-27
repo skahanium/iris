@@ -87,4 +87,36 @@ describe("classified AI session store contract", () => {
       expect(createFresh).not.toContain(".classified");
     });
   });
+
+  describe("classified AI thread store exists as separate module", () => {
+    it("classified_session.rs module exists in ai_runtime", () => {
+      const mod = read("src-tauri/src/ai_runtime/mod.rs");
+      // Contract: classified_session module must be declared
+      expect(mod).toContain("classified_session");
+    });
+
+    it("classified AI thread struct is defined", () => {
+      const src = read("src-tauri/src/ai_runtime/classified_session.rs");
+      // Contract: ClassifiedAiThread struct must exist
+      expect(src).toContain("ClassifiedAiThread");
+      expect(src).toContain("thread_id");
+      expect(src).toContain("document_path");
+      expect(src).toContain("messages");
+    });
+
+    it("classified AI thread uses classified_io for encryption", () => {
+      const src = read("src-tauri/src/ai_runtime/classified_session.rs");
+      // Contract: must use classified_io for encrypt/decrypt
+      expect(src).toContain("classified_io");
+      expect(src).toContain("encrypt_cef");
+      expect(src).toContain("decrypt_cef");
+    });
+
+    it("classified AI thread filenames are UUID-based", () => {
+      const src = read("src-tauri/src/ai_runtime/classified_session.rs");
+      // Contract: filenames must be UUID, not contain paths or titles
+      expect(src).toContain("Uuid");
+      expect(src).not.toMatch(/thread_id[\s\S]*\.classified/);
+    });
+  });
 });
