@@ -65,10 +65,21 @@ describe("AI hang/stuck root-cause fixes contract", () => {
     });
   });
 
-  describe("Fix 6: run_harness has a global deadline", () => {
-    it("wraps the harness body in tokio::time::timeout", () => {
+  describe("Fix 6: run_harness enforces idle/stall timeout and abort polling", () => {
+    it("wraps the harness body in tokio::time::timeout for global deadline", () => {
       const s = read("src-tauri/src/ai_harness/harness/run.rs");
       expect(s).toContain("tokio::time::timeout");
+    });
+
+    it("uses a named deadline constant instead of a magic number", () => {
+      const s = read("src-tauri/src/ai_harness/harness/run.rs");
+      expect(s).toContain("HARNESS_DEADLINE_SECS");
+    });
+
+    it("emits a descriptive Chinese error message on timeout", () => {
+      const s = read("src-tauri/src/ai_harness/harness/run.rs");
+      expect(s).toContain("助手处理超过");
+      expect(s).toContain("秒仍未完成");
     });
   });
 
