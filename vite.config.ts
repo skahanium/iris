@@ -43,10 +43,13 @@ function manualVendorChunk(id: string): string | undefined {
     return "icons-vendor";
   }
 
+  if (normalized.includes("/node_modules/@tanstack/react-virtual/")) {
+    return "virtualization-vendor";
+  }
+
   if (
     normalized.includes("/node_modules/@radix-ui/") ||
     normalized.includes("/node_modules/@floating-ui/") ||
-    normalized.includes("/node_modules/@tanstack/react-virtual/") ||
     normalized.includes("/node_modules/class-variance-authority/") ||
     normalized.includes("/node_modules/clsx/") ||
     normalized.includes("/node_modules/tailwind-merge/")

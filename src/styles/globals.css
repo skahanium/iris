@@ -1,5 +1,59 @@
 @import "./markdown-prose.css";
 
+@font-face {
+  font-family: "Inter";
+  src: url("/src/assets/fonts/inter-latin-400-normal.woff2") format("woff2");
+  font-display: swap;
+  font-style: normal;
+  font-weight: 400;
+}
+
+@font-face {
+  font-family: "Inter";
+  src: url("/src/assets/fonts/inter-latin-500-normal.woff2") format("woff2");
+  font-display: swap;
+  font-style: normal;
+  font-weight: 500;
+}
+
+@font-face {
+  font-family: "Inter";
+  src: url("/src/assets/fonts/inter-latin-600-normal.woff2") format("woff2");
+  font-display: swap;
+  font-style: normal;
+  font-weight: 600;
+}
+
+@font-face {
+  font-family: "Inter";
+  src: url("/src/assets/fonts/inter-latin-700-normal.woff2") format("woff2");
+  font-display: swap;
+  font-style: normal;
+  font-weight: 700;
+}
+
+@font-face {
+  font-family: "JetBrains Mono";
+  src: url("/src/assets/fonts/jetbrains-mono-latin-400-normal.woff2") format("woff2");
+  font-display: swap;
+  font-style: normal;
+  font-weight: 400;
+}
+
+@font-face {
+  font-family: "JetBrains Mono";
+  src: url("/src/assets/fonts/jetbrains-mono-latin-500-normal.woff2") format("woff2");
+  font-display: swap;
+  font-style: normal;
+  font-weight: 500;
+}
+
+:root {
+  --font-sans: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", "Noto Sans SC", sans-serif;
+  --font-title: "Noto Serif SC", "Songti SC", "STSong", "Noto Sans SC", Georgia, serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
@@ -1623,6 +1677,11 @@
   .ai-message-bubble-streaming[data-streaming] {
     @apply border-border/40;
     contain: layout paint style;
+  }
+
+  .ai-message-bubble-assistant:not([data-streaming]) {
+    content-visibility: auto;
+    contain-intrinsic-size: auto 320px;
   }
 
   .ai-message-body {

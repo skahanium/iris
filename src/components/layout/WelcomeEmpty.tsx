@@ -1,5 +1,5 @@
 import { Bot, FilePlus2, FolderSearch, Search, Trash2 } from "lucide-react";
-import { useState } from "react";
+import { memo, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/common/ConfirmDialog";
@@ -25,7 +25,7 @@ interface WelcomeEmptyProps {
   recentNotes: readonly FileListItem[];
 }
 
-export function WelcomeEmpty({
+export const WelcomeEmpty = memo(function WelcomeEmpty({
   onOpen,
   onNew,
   onPrepare,
@@ -175,4 +175,4 @@ export function WelcomeEmpty({
       />
     </div>
   );
-}
+});

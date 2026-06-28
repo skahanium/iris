@@ -1,0 +1,8 @@
+Bundled fonts:
+
+- Inter latin woff2 files sourced from @fontsource/inter 5.2.8.
+- JetBrains Mono latin woff2 files sourced from @fontsource/jetbrains-mono 5.2.8.
+
+Both font families are distributed under the SIL Open Font License 1.1.
+
+When refreshing these assets, verify the upstream license remains OFL-compatible before replacing files.

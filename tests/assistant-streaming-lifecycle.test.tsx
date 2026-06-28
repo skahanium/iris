@@ -23,6 +23,28 @@ describe("assistant streaming lifecycle contract", () => {
       expect(src).toContain("streaming");
     });
 
+    it("AiMessageBubble defers streamed markdown snapshots but renders final content immediately", () => {
+      const src = read("src/components/ai/AiMessageBubble.tsx");
+
+      expect(src).toContain("useDeferredValue");
+      expect(src).toContain("const deferredRenderContent = useDeferredValue");
+      expect(src).toContain(
+        "const markdownContent = streaming ? deferredRenderContent : content",
+      );
+      expect(src).toContain("renderMarkdownWithProfile(");
+      expect(src).toContain('markdownContent || ""');
+    });
+
+    it("AiMessageBubble uses the markdown render worker only for streaming assistant content", () => {
+      const src = read("src/components/ai/AiMessageBubble.tsx");
+
+      expect(src).toContain("useMarkdownRenderWorker");
+      expect(src).toContain("workerRender = useMarkdownRenderWorker");
+      expect(src).toContain("enabled: streaming");
+      expect(src).toContain("workerRender.html");
+      expect(src).toContain("workerRender.failed");
+    });
+
     it("AiMessageList keeps the latest assistant message streaming even when it has content", () => {
       const src = read("src/components/ai/AiMessageList.tsx");
       expect(src).toContain(

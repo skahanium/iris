@@ -45,4 +45,18 @@ describe("AiMessageBubble rendered HTML safety", () => {
     );
     expect(writeText).not.toHaveBeenCalled();
   });
+
+  it("renders final assistant markdown content when streaming is false", async () => {
+    await act(async () => {
+      root.render(
+        createElement(AiMessageBubble, {
+          role: "assistant",
+          content: "**final answer**",
+          streaming: false,
+        }),
+      );
+    });
+
+    expect(host.querySelector("strong")?.textContent).toBe("final answer");
+  });
 });

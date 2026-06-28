@@ -7,9 +7,10 @@ const globalsCss = readFileSync("src/styles/globals.css", "utf8");
 const indexHtml = readFileSync("index.html", "utf8");
 
 describe("prose polish v2 tokens", () => {
-  it("loads Noto fonts in index.html", () => {
-    expect(indexHtml).toContain("Noto+Sans+SC");
-    expect(indexHtml).toContain("Noto+Serif+SC");
+  it("uses local fonts instead of external Google Fonts", () => {
+    expect(indexHtml).not.toContain("fonts.googleapis.com");
+    expect(indexHtml).not.toContain("fonts.gstatic.com");
+    expect(indexHtml).toContain("/src/assets/fonts/");
   });
 
   it("defines editor and conversation prose surfaces", () => {

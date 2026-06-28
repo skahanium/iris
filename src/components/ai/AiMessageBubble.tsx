@@ -1,5 +1,6 @@
 import {
   useCallback,
+  useDeferredValue,
   useMemo,
   memo,
   type MouseEvent,
@@ -17,6 +18,7 @@ import { renderMarkdownWithProfile } from "@/lib/markdown-contract";
 import { cn } from "@/lib/utils";
 
 import { useStreamingContent } from "@/hooks/useStreamingContent";
+import { useMarkdownRenderWorker } from "@/hooks/useMarkdownRenderWorker";
 import type { MentionToken } from "@/lib/ai-context-scope";
 
 interface AiMessageBubbleProps {
@@ -124,10 +126,23 @@ const AssistantBody = memo(function AssistantBody({
 }) {
   const renderContent = useStreamingContent(content, streaming);
 
+  const deferredRenderContent = useDeferredValue(renderContent);
+  const markdownContent = streaming ? deferredRenderContent : content;
+
+  const workerRender = useMarkdownRenderWorker({
+    content: markdownContent,
+    enabled: streaming,
+    streaming,
+  });
+
   const html = useMemo(() => {
+    if (streaming && !workerRender.failed && workerRender.html != null) {
+      return workerRender.html;
+    }
+
     try {
       const result = renderMarkdownWithProfile(
-        renderContent || "",
+        markdownContent || "",
 
         "chat_assistant",
 
@@ -139,7 +154,7 @@ const AssistantBody = memo(function AssistantBody({
       return result.output;
     } catch (err) {
       console.warn("[ai-message] Markdown render failed", {
-        contentSummary: summarizeLogContent(renderContent || ""),
+        contentSummary: summarizeLogContent(markdownContent || ""),
 
         error:
           err instanceof Error
@@ -147,7 +162,7 @@ const AssistantBody = memo(function AssistantBody({
             : { name: typeof err, messageLength: String(err).length },
       });
 
-      const escaped = (renderContent || "")
+      const escaped = (markdownContent || "")
 
         .replace(/&/g, "&amp;")
 
@@ -159,7 +174,7 @@ const AssistantBody = memo(function AssistantBody({
 
       return `<p class="text-muted-foreground whitespace-pre-wrap">${escaped}</p>`;
     }
-  }, [renderContent, streaming]);
+  }, [markdownContent, streaming, workerRender.failed, workerRender.html]);
 
   const handleCodeCopy = useCallback(async (button: HTMLButtonElement) => {
     const code = button.closest(".ai-code-block")?.querySelector("pre code");
@@ -354,6 +369,7 @@ export const AiMessageBubble = memo(function AiMessageBubble({
 
         className,
       )}
+      data-role={role}
       data-streaming={streaming ? "" : undefined}
       data-selected={selected ? "" : undefined}
     >

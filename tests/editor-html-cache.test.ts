@@ -129,6 +129,18 @@ describe("editor-html-cache", () => {
     expect(source).toContain("return snapshot.path;");
     expect(source).toContain("key={record.identityKey}");
   });
+
+  it("does not introduce a second editor view cache or WeakRef editor pool", () => {
+    const workspace = readSource(
+      "src/components/layout/AppEditorWorkspace.tsx",
+    );
+
+    expect(workspace).toContain("surfaceRecords");
+    expect(workspace).toContain("READY_SURFACE_RETAIN_LIMIT");
+    expect(workspace).toContain("data-editor-visibility");
+    expect(workspace).not.toContain("new WeakRef");
+    expect(workspace).not.toContain("EditorViewCache");
+  });
 });
 
 function readSource(path: string): string {

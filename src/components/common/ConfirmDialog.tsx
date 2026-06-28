@@ -1,4 +1,5 @@
 import { AlertTriangle } from "lucide-react";
+import { memo } from "react";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -24,7 +25,7 @@ interface ConfirmDialogProps {
   onCancel: () => void;
 }
 
-export function ConfirmDialog({
+export const ConfirmDialog = memo(function ConfirmDialog({
   open,
   title,
   message,
@@ -92,4 +93,4 @@ export function ConfirmDialog({
       </DialogContent>
     </Dialog>
   );
-}
+});

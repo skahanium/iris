@@ -375,3 +375,5 @@ export const DesktopTitleBar = memo(function DesktopTitleBar({
     </header>
   );
 });
+
+DesktopTitleBar.displayName = "DesktopTitleBar";

@@ -104,16 +104,29 @@ export function QuickOpen({
     [onPrepare],
   );
 
+  // Pre-normalize titles and paths once when the file list changes, so each
+  // keystroke filter only does string comparison without repeated toLowerCase().
+  const normalizedEntries = useMemo(
+    () =>
+      files.map((f) => ({
+        item: f,
+        titleLower: itemTitle(f).toLowerCase(),
+        pathLower: f.path.toLowerCase(),
+      })),
+    [files],
+  );
+
   const filtered = useMemo(() => {
     const normalizedQuery = query.toLowerCase();
-    return files.filter((f) => {
-      const label = itemTitle(f);
-      return (
-        label.toLowerCase().includes(normalizedQuery) ||
-        f.path.toLowerCase().includes(normalizedQuery)
-      );
-    });
-  }, [files, query]);
+    if (!normalizedQuery) return files;
+    return normalizedEntries
+      .filter(
+        (e) =>
+          e.titleLower.includes(normalizedQuery) ||
+          e.pathLower.includes(normalizedQuery),
+      )
+      .map((e) => e.item);
+  }, [normalizedEntries, files, query]);
   filteredRef.current = filtered;
 
   const visibleFiles = useMemo(
