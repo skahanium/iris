@@ -80,17 +80,18 @@ Iris Rail Refresh adds semantic surface tokens for the complete interface system
 
 ### 文档与块样式
 
-| 元素                        | 规则                                                                                                                                    |
-| --------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
-| **文档标题**                | 独立字段 `DocumentTitleField`；**居中**、`Noto Serif SC`、`~2.25rem` bold；与正文间距 `--prose-title-gap`；Enter 进入正文               |
-| **章节标题**                | H1 `1.875rem` / H2 `1.5rem` / H3 `1.25rem`；左对齐；块间距 token 分级                                                                   |
-| **段落**                    | 无段首缩进；左对齐；块间距 `--prose-block-gap`；Markdown 空行只作为块分隔，不创建 spacer 段落                                           |
-| **共用排版**                | `data-prose-surface="editor"` \| `conversation`；AI `--prose-size-chat`（15px），编辑 `--prose-size-editor`（16px）                     |
-| **AI 消息**                 | 用户右对齐气泡；助手 `surface-elevated` 全宽壳；流式空态单行「正在思考…」，无 inset 左边条                                              |
-| **章节折叠**                | H1–H3 左侧 `▸/▾`（仅正文区章节标题）                                                                                                    |
-| **Zen**                     | `Ctrl+.` 隐藏 Tab/状态栏/AI，栏宽 `56rem`                                                                                               |
-| **缩放**                    | canvas `zoom` 75%–150%                                                                                                                  |
-| **文档目录（Ghost Spine）** | `EditorOutline`：左缘细线把手 + 透明文字索引列；H1/H2/H3 缩进；当前章节文字 / 背景 / 左侧滑动条高亮；50+ 条目虚拟化；锁定态仍可点击跳转 |
+| 元素                        | 规则                                                                                                                                                                                                                                                                        |
+| --------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **文档标题**                | 独立字段 `DocumentTitleField`；**居中**、`Noto Serif SC`、`~2.25rem` bold；与正文间距 `--prose-title-gap`；Enter 进入正文                                                                                                                                                   |
+| **章节标题**                | H1 `1.875rem` / H2 `1.5rem` / H3 `1.25rem`；左对齐；块间距 token 分级                                                                                                                                                                                                       |
+| **段落**                    | 无段首缩进；左对齐；块间距 `--prose-block-gap`；Markdown 空行只作为块分隔，不创建 spacer 段落                                                                                                                                                                               |
+| **共用排版**                | `data-prose-surface="editor"` \| `conversation`；AI `--prose-size-chat`（15px），编辑 `--prose-size-editor`（16px）                                                                                                                                                         |
+| **AI 消息**                 | 用户右对齐气泡；助手 `surface-elevated` 全宽壳；流式空态单行「正在思考…」，无 inset 左边条                                                                                                                                                                                  |
+| **章节折叠**                | H1–H3 左侧 `▸/▾`（仅正文区章节标题）                                                                                                                                                                                                                                        |
+| **Zen**                     | `Ctrl+.` 隐藏 Tab/状态栏/AI，栏宽 `56rem`                                                                                                                                                                                                                                   |
+| **缩放**                    | canvas `zoom` 75%–150%                                                                                                                                                                                                                                                      |
+| **文档目录（Ghost Spine）** | `EditorOutline`：左缘细线把手 + 透明文字索引列；H1/H2/H3 缩进；当前章节文字 / 背景 / 左侧滑动条高亮；50+ 条目虚拟化；锁定态仍可点击跳转。竖轴（`.outline-ghost-list::before`，3px）与文字间距统一 `0.75rem`（9px），不分平台，避免 macOS/Windows 字体度量差异导致的紧贴观感 |
+| **媒体嵌入**                | `![[path]]` 支持图片 / 视频 / PDF；隐藏或预热编辑器只保留占位与 `data-iris-media-src`，可见 surface 才申请 `iris-media` lease；PDF/video 使用稳定尺寸防止布局跳动                                                                                                           |
 
 ---
 
@@ -139,22 +140,32 @@ Iris Rail Refresh adds semantic surface tokens for the complete interface system
 
 桌面窗口：单行 **`DesktopTitleBar`**（`bg-surface-chrome`），禁止出现「Tauri App」或双层系统标题栏。顶栏高度统一为 44px，让品牌轨、Rail Segments 与右侧窗口控制在同一中线。
 
-| 平台            | `--titlebar-height` | 装饰 / 标题                                                                              | 窗口按钮                                                         | 顶栏左侧                            |
-| --------------- | ------------------- | ---------------------------------------------------------------------------------------- | ---------------------------------------------------------------- | ----------------------------------- |
-| macOS           | **44px（2.75rem）** | `titleBarStyle: Overlay`、`hiddenTitle: true`、`decorations: false`；内部 title **Iris** | 右侧自绘红黄绿 `WindowControls`；`--titlebar-traffic-inset: 0px` | 常驻 `iris-brand-rail`，点击回 Home |
-| Windows / Linux | **44px（2.75rem）** | `decorations: false`（Win 另 `shadow: true`）                                            | 右侧自绘红黄绿 `WindowControls`                                  | 常驻 `iris-brand-rail`，点击回 Home |
+| 平台            | `--titlebar-height` | 装饰 / 标题                                                                                                              | 窗口按钮                                             | 顶栏左侧                                                                                                                                                                                                                                                                           |
+| --------------- | ------------------- | ------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| macOS           | **44px（2.75rem）** | `titleBarStyle: Overlay`、`hiddenTitle: true`、`decorations: true`、`trafficLightPosition: { x: 14, y: 24 }`、非透明窗口 | 左侧系统原生红黄绿；Iris 不渲染自绘 `WindowControls` | 窗口态 `--titlebar-traffic-inset: 88px` 空 spacer 后接 `iris-brand-rail`（`--titlebar-leading-inset: 0px`，brand-rail 以 `margin-left: -0.375rem` 在红黄绿旁居中）；fullscreen 时 spacer 收为 `0px` 且 `--titlebar-leading-inset: 0.5rem`，brand-rail 与 tab 右移 8px 不再贴左边缘 |
+| Windows / Linux | **44px（2.75rem）** | `decorations: false`（Win 另 `shadow: true`）                                                                            | 右侧标准顺序窗口控件：最小化 / 最大化 / 关闭         | 常驻 `iris-brand-rail`；`--titlebar-leading-inset: 0.5rem`，brand-rail 与 tab 距窗口左缘 8px，圆角 / hover / 激活态高亮完整可见                                                                                                                                                    |
 
-指标单一来源：Rust [`chrome_metrics.rs`](../src-tauri/src/chrome_metrics.rs)（统一 44）；前端镜像见 [`chrome-metrics.ts`](../src/lib/chrome-metrics.ts)。
+顶栏左侧安全区由 CSS 变量 `--titlebar-leading-inset` 驱动（默认 `0px`，覆盖 macOS 窗口态；Windows/Linux 与 macOS 全屏为 `0.5rem`），`<header>` 以 `pl-[var(--titlebar-leading-inset)]` 消费，splash 与 document 变体共用。
+
+指标单一来源：Rust [`chrome_metrics.rs`](../src-tauri/src/chrome_metrics.rs)（顶栏统一 44px，macOS traffic inset 88px）；前端镜像见 [`chrome-metrics.ts`](../src/lib/chrome-metrics.ts)。
 
 - **Windows 11**：`transparent: false`（见 `tauri.windows.conf.json`），圆角由 DWM + `shadow` 提供；**勿**与 `transparent: true` 同开。
-- **macOS**：`transparent: true` + `set_effects`（`radius` = `--window-radius`）+ `data-iris-platform-macos`；不恢复系统交通灯，左侧空间交给品牌轨。
-- **macOS 全屏**：`useMacOSWindowChromeSync` 只同步标题栏高度与 fullscreen dataset；右侧自定义窗口控件随应用顶栏控制显隐。调试可用 `html[data-iris-window-fullscreen]`。
+- **macOS**：使用系统 AppKit 作为唯一窗口外壳 owner：`transparent: false`、`decorations: true`、Overlay titlebar、hidden title，并通过配置期 `trafficLightPosition: { x: 14, y: 24 }` 让系统红黄绿与 Iris 44px 顶栏视觉中线对齐；禁止运行期动态 `setDecorations()` / `setTitleBarStyle()` 切换。窗口态左侧 88px spacer 不放按钮、文本或图标，系统红黄绿独占该区域。
+- **macOS 全屏**：使用系统绿色按钮进入 / 退出原生 fullscreen Space；标题栏双击仍执行最大化 / 还原，两者语义互不替代。fullscreen 状态由 `data-iris-window-fullscreen` 驱动，左侧 traffic-light spacer 从 88px 顺滑收为 0px，`--titlebar-leading-inset` 由 0px 升为 `0.5rem`，完整 `Iris` 品牌轨和 tab 右移补位但不贴左边缘。macOS WindowServer 的贴顶 reveal 行为不可由 Web 前端完全接管，治理原则是避免 Iris 再渲染第二套交通灯、保留空白或动态切换窗口壳层。
 
-**人工验收**：macOS 窗口模式 — 左侧 Iris 品牌轨常驻且承担 Home 入口，不出现独立 Home tab，右侧红黄绿三点可用；全屏→退出后标题栏高度与品牌轨不漂移。Windows — 顶栏 44px、三点窗口控制与 Tab 无回归。
+**Tab 条压缩与溢出**：`.iris-rail-tab` 硬下限 `min-width: 4.5rem`（72px）、`max-width: 14rem`，默认 `flex-shrink` 可压缩。`DesktopTitleBar` 用 `ResizeObserver` + 测量渲染（`measuring` 态，全量 tab 自然宽度，`overflow-x-hidden` 不滚动、无滚动条）判定是否溢出：不溢出时全部自然宽度；溢出时切换压缩态（可见 tab 固定 `4.5rem`），装不下的 tab 收进 tab 条末尾「更多笔记」按钮的下拉菜单（`IrisSurfaceMenuPanel`），活动 tab 始终保持在可见区（必要时占用末位）。新建「+」按钮固定在 tab 条之外的 header 兄弟位，永不随溢出滚走。指标计算见 `src/lib/tab-overflow.ts` 的 `computeVisibleTabCount`。
+
+**人工验收**：macOS 窗口模式 — 左侧系统红黄绿正常显示且在 Iris 顶栏内垂直居中，Iris 品牌轨从 88px spacer 后开始并承担 Home 入口，不出现独立 Home tab；系统绿色进入原生全屏，标题栏双击最大化 / 还原；fullscreen 后左侧 spacer 收起为 0px、`--titlebar-leading-inset` 升为 `0.5rem`，完整 Iris 品牌轨与 tab 右移补位且不贴左边缘；全屏→退出后标题栏高度、品牌轨和系统窗口控件不漂移，不出现 Iris 自绘交通灯叠层。Windows — 顶栏 44px、左侧 `0.5rem` 安全区、最小化 / 最大化 / 关闭顺序与 Tab 无回归。Tab 溢出 — 打开 20+ 文档，tab 压缩到 72px，溢出项进「更多笔记」菜单可激活 / 关闭，活动 tab 始终可见，「+」始终可达，不出现横向滚动条或滚轮。
 
 阴影：仅浮层 / 悬浮工具条使用 `--shadow-overlay` / `--shadow-floating`；**编辑区无纸页阴影**。
 
 动效：150–200ms，`prefers-reduced-motion` 降级。
+
+Home / 欢迎页打开最近笔记：点击后立即离开 Home 进入目标文档 loading view，loading 绑定目标 path/title；旧 `activePath` 仍在后台保存或新文档读取未完成时，不得渲染上一个编辑器。连续点击多个目标时只允许最后一次请求决定最终显示。
+
+### 启动体验
+
+Iris 启动使用 Knowledge Orbit 启动层遮住 Tauri/WebView 首帧不稳定期：窗口先隐藏，启动层首帧完成绘制后再显示主窗口；前端首屏以 Iris mark、低饱和知识轨道和少量节点涟漪表达“唤醒知识网络”。启动层只使用现有 `--background`、`--foreground`、`--surface-chrome`、`--knowledge-accent`、`--border` 等 token，日间/夜间模式由 `.light` 变量自然切换，不建立独立主题。启动层以真实就绪为退出条件，最短展示 1600ms，淡出约 220ms；`prefers-reduced-motion` 下禁用轨道旋转和涟漪，仅保留静态 mark 与淡入淡出。
 
 ### Chrome 表面与命令/AI token
 
@@ -250,7 +261,7 @@ v0.4.0-ui 起不再作为验收标准。历史实现含：`.iris-paper`、赭铜
 | **1.5**  | **v0.3.1-ui**      | 命令浮层基础设施                            | 部分 / 样式并入 v0.4.0-ui |
 | **N**    | **v0.4.0-ui**      | Notion 扁平编辑、去行线、Inter、蓝灰 accent | **已发布**                |
 | **N+**   | **v0.4.1-ui**      | Chrome 现代化：命令面板、AI、浮层原语       | **已发布**                |
-| **2**    | **v1.2.0**（按需） | 标签栏自动隐藏、高对比主题                  | 待做                      |
+| **2**    | **v1.2.1**（按需） | 标签栏自动隐藏、高对比主题                  | 待做                      |
 
 ---
 

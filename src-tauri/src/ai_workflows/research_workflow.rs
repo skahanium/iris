@@ -244,14 +244,14 @@ pub async fn execute_research(
             tools: llm_tools.clone(),
             max_tokens: Some(2000),
             temperature: Some(0.3),
-            stream: true,
+            stream: false,
             thinking: false,
             skip_stub_ids: vec![],
         };
 
         let gateway =
             ModelGateway::with_defaults(app_handle.clone(), vec![provider_config.clone()])?;
-        let response = gateway.send_streaming_request(request_id, request).await?;
+        let response = gateway.send_request(request).await?;
 
         accumulate_usage(&mut total_usage, &response.usage);
 
@@ -618,30 +618,32 @@ async fn decompose_topic(
         tools: vec![],
         max_tokens: Some(2000),
         temperature: Some(0.3),
-        stream: true,
+        stream: false,
         thinking: false,
         skip_stub_ids: vec![],
     };
 
     let gateway = ModelGateway::with_defaults(app_handle.clone(), vec![provider.clone()])?;
-    let response = gateway.send_streaming_request(_request_id, request).await?;
+    let response = gateway.send_request(request).await?;
 
     accumulate_usage(usage, &response.usage);
 
     let content = response.content.unwrap_or_default();
-    parse_sub_propositions(&content)
+    match parse_sub_propositions(&content) {
+        Ok(props) if !props.is_empty() => Ok(props),
+        Ok(_) => Ok(fallback_sub_propositions(topic)),
+        Err(error) => {
+            tracing::warn!("sub-proposition decomposition degraded to fallback: {error}");
+            Ok(fallback_sub_propositions(topic))
+        }
+    }
 }
 
 fn parse_sub_propositions(json_str: &str) -> AppResult<Vec<SubProposition>> {
     // Try to extract JSON from the response (may be wrapped in markdown code block)
     let json_str = json_str.trim();
-    let json_str = if json_str.starts_with("```") {
-        let start = json_str.find('[').unwrap_or(0);
-        let end = json_str.rfind(']').unwrap_or(json_str.len());
-        &json_str[start..=end]
-    } else {
-        json_str
-    };
+    let json_str = extract_json_array(json_str)
+        .ok_or_else(|| AppError::msg("failed to parse sub-propositions: missing JSON array"))?;
 
     let parsed: Vec<serde_json::Value> = serde_json::from_str(json_str)
         .map_err(|e| AppError::msg(format!("failed to parse sub-propositions: {e}")))?;
@@ -660,6 +662,34 @@ fn parse_sub_propositions(json_str: &str) -> AppResult<Vec<SubProposition>> {
         })
         .filter(|p| !p.statement.is_empty())
         .collect())
+}
+
+fn extract_json_array(input: &str) -> Option<&str> {
+    let start = input.find('[')?;
+    let end = input.rfind(']')?;
+    if start > end {
+        return None;
+    }
+    Some(&input[start..=end])
+}
+
+fn fallback_sub_propositions(topic: &str) -> Vec<SubProposition> {
+    let statement = topic
+        .split(['。', '，', ',', ';', '；', '\n'])
+        .map(str::trim)
+        .find(|part| !part.is_empty())
+        .unwrap_or(topic)
+        .trim();
+    vec![SubProposition {
+        id: "P1".to_string(),
+        statement: if statement.is_empty() {
+            "研究主题".to_string()
+        } else {
+            statement.to_string()
+        },
+        evidence: Vec::new(),
+        gaps: Vec::new(),
+    }]
 }
 
 // ─── Evidence Matrix ─────────────────────────────────────
@@ -806,13 +836,13 @@ async fn detect_argument_chains(
         tools: vec![],
         max_tokens: Some(2000),
         temperature: Some(0.2),
-        stream: true,
+        stream: false,
         thinking: false,
         skip_stub_ids: vec![],
     };
 
     let gateway = ModelGateway::with_defaults(app_handle.clone(), vec![provider.clone()])?;
-    let response = gateway.send_streaming_request(_request_id, request).await?;
+    let response = gateway.send_request(request).await?;
 
     accumulate_usage(usage, &response.usage);
 
@@ -1017,6 +1047,30 @@ mod tests {
 ```"#;
         let props = parse_sub_propositions(json).unwrap();
         assert_eq!(props.len(), 1);
+    }
+
+    #[test]
+    fn parse_sub_propositions_extracts_json_array_from_model_text() {
+        let json = r#"可以，分解如下：
+[
+  {"id": "P1", "statement": "Chatbot Arena 最新排名"},
+  {"id": "P2", "statement": "SWE-bench Live 最新排名"}
+]
+以上子命题可独立检索。"#;
+        let props = parse_sub_propositions(json).unwrap();
+        assert_eq!(props.len(), 2);
+        assert_eq!(props[0].statement, "Chatbot Arena 最新排名");
+    }
+
+    #[test]
+    fn fallback_sub_propositions_keeps_research_running_after_bad_json() {
+        let props = fallback_sub_propositions("2026年6月最新模型榜单、消息速度和来源");
+
+        assert!(!props.is_empty());
+        assert_eq!(props[0].id, "P1");
+        assert!(props[0].statement.contains("2026年6月最新模型榜单"));
+        assert!(props.iter().all(|prop| prop.evidence.is_empty()));
+        assert!(props.iter().all(|prop| prop.gaps.is_empty()));
     }
 
     #[test]

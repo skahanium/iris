@@ -18,6 +18,15 @@ describe("status bar assistant chrome", () => {
     expect(bar).toContain("toolActivityLabel");
   });
 
+  it("StatusBar keeps the document title as a bounded location hint", () => {
+    const bar = read("src/components/layout/StatusBar.tsx");
+
+    expect(bar).toContain("status-bar-document-title");
+    expect(bar).toContain("max-w-[min(18rem,32vw)]");
+    expect(bar).toContain("title={trimmedTitle || path || undefined}");
+    expect(bar).toContain('className="shrink-0 tabular-nums"');
+  });
+
   it("StatusBar does not expose the ordinary-user tool audit entry", () => {
     const bar = read("src/components/layout/StatusBar.tsx");
     expect(bar).not.toContain("status-bar-audit-link");

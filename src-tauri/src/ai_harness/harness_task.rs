@@ -14,14 +14,18 @@ use crate::ai_runtime::chapter_workflow::{self, ChapterInfo, ChapterWritingInput
 use crate::ai_runtime::document_workflow::DocumentCheckInput;
 use crate::ai_runtime::document_workflow::DocumentCheckResult;
 use crate::ai_runtime::model_gateway::TokenUsage;
+use crate::ai_runtime::writing_state::{WritingState, WritingStateInput};
 use crate::ai_runtime::writing_workflow::WritingTaskOutput;
 use crate::ai_runtime::{
-    CitationCheckInput, CitationCheckResult, CitationCheckScope, OrganizeTaskInput,
-    OrganizeTaskResult, OrganizeTaskScope, PatchProposal,
+    CitationCheckInput, CitationCheckResult, CitationCheckScope, ContextPacket, OrganizeTaskInput,
+    OrganizeTaskResult, OrganizeTaskScope, PatchProposal, SourceSpan, SourceType, TrustLevel,
 };
 use crate::ai_types::TaskPlanSummary;
+use crate::ai_types::{LlmMessage, MessageRole};
 use crate::app::AppState;
-use crate::commands::assistant_commands::AssistantExecuteRequest;
+use crate::commands::assistant_commands::{
+    validate_assistant_domain_boundary, AssistantAiDomain, AssistantExecuteRequest,
+};
 use crate::commands::writing_commands::WritingTaskInputIpc;
 use crate::commands::{
     ai_commands, citation_commands, document_commands, organize_commands, research_commands,
@@ -261,6 +265,363 @@ fn fail_workflow_runtime_task(db: &Database, task_id: &str, error_code: &str) ->
     AgentTaskRuntime::fail_safe(db, task_id, error_code)
 }
 
+fn read_classified_document(vault: &std::path::Path, note_path: &str) -> AppResult<String> {
+    let abs_path = crate::storage::paths::resolve_vault_path(vault, note_path)?;
+    let raw = std::fs::read(&abs_path)?;
+    let vk_guard = crate::crypto::vault_key::VAULT_KEY
+        .get()
+        .ok_or_else(|| AppError::msg("保险库未初始化"))?;
+    let vk = vk_guard
+        .read()
+        .map_err(|e| AppError::msg(format!("lock error: {e}")))?;
+    let key = vk.key()?;
+    let decrypted = crate::crypto::classified_io::decrypt_cef(&raw, key)?;
+    String::from_utf8(decrypted).map_err(|_| AppError::msg("Classified note is not valid UTF-8"))
+}
+
+fn classified_query_requests_vault_scope(message: &str) -> bool {
+    const KEYWORDS: [&str; 6] = [
+        "涉密库",
+        "保险库",
+        "其他涉密文档",
+        "全库",
+        "所有涉密",
+        "全部涉密",
+    ];
+    KEYWORDS.iter().any(|keyword| message.contains(keyword))
+}
+
+fn validate_classified_scope(
+    scope: Option<&crate::ai_runtime::retrieval_scope::ContextScopeDto>,
+) -> AppResult<bool> {
+    let Some(scope) = scope else {
+        return Ok(false);
+    };
+    for path in &scope.paths {
+        if !crate::storage::paths::is_classified_note_path(path) {
+            return Err(AppError::msg(
+                "classified assistant contextScope must stay inside .classified",
+            ));
+        }
+    }
+    for prefix in &scope.path_prefixes {
+        let normalized = prefix.replace('\\', "/");
+        if normalized != ".classified" && !normalized.starts_with(".classified/") {
+            return Err(AppError::msg(
+                "classified assistant contextScope must stay inside .classified",
+            ));
+        }
+    }
+    if !scope.corpus_ids.is_empty() {
+        return Err(AppError::msg(
+            "classified assistant contextScope cannot use normal corpus IDs",
+        ));
+    }
+    Ok(!scope.paths.is_empty() || !scope.path_prefixes.is_empty())
+}
+
+fn classified_scope_matches(
+    hit_path: &str,
+    scope: &crate::ai_runtime::retrieval_scope::ContextScopeDto,
+) -> bool {
+    if scope
+        .paths
+        .iter()
+        .any(|path| hit_path == path.replace('\\', "/"))
+    {
+        return true;
+    }
+    scope
+        .path_prefixes
+        .iter()
+        .map(|prefix| prefix.replace('\\', "/").trim_end_matches('/').to_string())
+        .any(|prefix| hit_path == prefix || hit_path.starts_with(&format!("{prefix}/")))
+}
+
+fn scoped_classified_hits(
+    vault: &std::path::Path,
+    request: &AssistantExecuteRequest,
+    note_path: &str,
+) -> AppResult<Vec<crate::ai_runtime::classified_retrieval::ClassifiedSearchHit>> {
+    let has_explicit_scope = validate_classified_scope(request.context_scope.as_ref())?;
+    let chunks = crate::ai_runtime::classified_retrieval::build_classified_index(vault)?;
+    let current_doc =
+        if has_explicit_scope || classified_query_requests_vault_scope(&request.message) {
+            None
+        } else {
+            Some(note_path)
+        };
+    let mut hits = crate::ai_runtime::classified_retrieval::search_chunks(
+        &chunks,
+        &request.message,
+        current_doc,
+        8,
+    );
+    if let Some(scope) = request.context_scope.as_ref() {
+        hits.retain(|hit| classified_scope_matches(&hit.document_path, scope));
+    }
+    if current_doc.is_some() {
+        hits.retain(|hit| hit.document_path == note_path);
+    }
+    hits.truncate(4);
+    Ok(hits)
+}
+
+fn classified_hits_to_packets(
+    hits: &[crate::ai_runtime::classified_retrieval::ClassifiedSearchHit],
+) -> Vec<ContextPacket> {
+    hits.iter()
+        .enumerate()
+        .map(|(index, hit)| ContextPacket {
+            id: format!("classified-evidence-{}", index + 1),
+            source_type: SourceType::Note,
+            source_path: Some(hit.document_path.clone()),
+            title: hit
+                .heading
+                .clone()
+                .unwrap_or_else(|| "涉密文档片段".to_string()),
+            heading_path: hit.heading.clone(),
+            source_span: None,
+            content_hash: crate::ai_runtime::writing_workflow::compute_content_hash(&hit.snippet),
+            excerpt: hit.snippet.clone(),
+            retrieval_reason: "classified scoped retrieval".to_string(),
+            score: hit.score,
+            trust_level: TrustLevel::UserNote,
+            citation_label: format!("[C{}]", index + 1),
+            stale: false,
+            web: None,
+            corpus: None,
+        })
+        .collect()
+}
+
+fn selection_range(document: &str, selection: &str) -> SourceSpan {
+    if let Some(start) = document.find(selection) {
+        return SourceSpan {
+            start,
+            end: start + selection.len(),
+        };
+    }
+    SourceSpan {
+        start: 0,
+        end: selection.len().min(document.len()),
+    }
+}
+
+struct ClassifiedWritingOutputInput<'a> {
+    request_id: String,
+    note_path: &'a str,
+    document: &'a str,
+    selection: &'a str,
+    message: &'a str,
+    intent: crate::ai_runtime::WritingIntent,
+    replacement: String,
+    evidence: Vec<ContextPacket>,
+    usage: TokenUsage,
+}
+
+fn build_classified_writing_output(input: ClassifiedWritingOutputInput<'_>) -> WritingTaskOutput {
+    let base_content_hash =
+        crate::ai_runtime::writing_workflow::compute_content_hash(input.document);
+    let patch = crate::ai_runtime::writing_workflow::build_patch_proposal(
+        input.note_path,
+        &base_content_hash,
+        input.selection,
+        &input.replacement,
+        selection_range(input.document, input.selection),
+        input
+            .evidence
+            .iter()
+            .map(|packet| packet.id.clone())
+            .collect(),
+    );
+    let suggestions = vec![
+        crate::ai_runtime::writing_workflow::build_writing_suggestion(
+            input.intent.clone(),
+            "涉密选区改写建议",
+            0.86,
+        ),
+    ];
+    let writing_state = WritingState::from_input(WritingStateInput {
+        request_id: input.request_id.clone(),
+        target_path: input.note_path.to_string(),
+        base_content_hash,
+        writing_goal: input.message.to_string(),
+        intent: format!("{:?}", input.intent).to_ascii_lowercase(),
+        evidence: input.evidence.clone(),
+        patches: vec![patch.clone()],
+    });
+    WritingTaskOutput {
+        request_id: input.request_id,
+        suggestions,
+        patches: vec![patch],
+        evidence_used: input.evidence,
+        total_tokens: input.usage,
+        writing_state,
+    }
+}
+
+async fn run_classified_writing_task(
+    state: &Arc<AppState>,
+    app_handle: &AppHandle,
+    request: &AssistantExecuteRequest,
+    routing_override: Option<&ai_commands::AiSendRoutingOverride>,
+) -> AppResult<HarnessTaskResult> {
+    let note_path = request
+        .note_path
+        .as_deref()
+        .ok_or_else(|| AppError::msg("classified assistant requires notePath"))?;
+    let selection = request
+        .selection
+        .as_deref()
+        .filter(|selection| !selection.trim().is_empty())
+        .ok_or_else(|| AppError::msg("classified writing requires selection"))?;
+    let vault = state.vault_path()?;
+    let document = read_classified_document(&vault, note_path)?;
+    let hits = scoped_classified_hits(&vault, request, note_path)?;
+    let evidence = classified_hits_to_packets(&hits);
+    let route = routing_override
+        .ok_or_else(|| AppError::msg("classified assistant requires resolved model route"))?;
+    let provider_config = route.resolved.to_provider_config_for_slot(route.slot);
+    let intent = crate::ai_runtime::writing_workflow::detect_writing_intent(
+        &request.message,
+        Some(selection),
+    );
+    let cursor_context = request
+        .cursor_context
+        .as_deref()
+        .unwrap_or(document.as_str());
+    let (replacement, usage) = crate::ai_runtime::writing_workflow::generate_replacement_with_llm(
+        &state.db,
+        app_handle,
+        &provider_config,
+        &intent,
+        selection,
+        cursor_context,
+        &request.message,
+        &evidence,
+    )
+    .await?;
+    let request_id = uuid::Uuid::new_v4().to_string();
+    let output = build_classified_writing_output(ClassifiedWritingOutputInput {
+        request_id,
+        note_path,
+        document: &document,
+        selection,
+        message: &request.message,
+        intent,
+        replacement,
+        evidence,
+        usage,
+    });
+    Ok(task_result_from_writing(output))
+}
+
+async fn run_classified_chat_task(
+    state: &Arc<AppState>,
+    app_handle: &AppHandle,
+    request: &AssistantExecuteRequest,
+    routing_override: Option<&ai_commands::AiSendRoutingOverride>,
+) -> AppResult<HarnessTaskResult> {
+    let note_path = request
+        .note_path
+        .as_deref()
+        .ok_or_else(|| AppError::msg("classified assistant requires notePath"))?;
+    let vault = state.vault_path()?;
+    let document = read_classified_document(&vault, note_path)?;
+    let scoped_hits = scoped_classified_hits(&vault, request, note_path)?;
+    let mut evidence = String::new();
+    for (index, hit) in scoped_hits.iter().enumerate() {
+        evidence.push_str(&format!(
+            "\n[片段 {}] {}\n{}\n",
+            index + 1,
+            hit.heading.as_deref().unwrap_or("当前文档"),
+            hit.snippet
+        ));
+    }
+    let system_prompt = format!(
+        "你是 Iris 的涉密域助手。只使用本次提供的当前涉密文档与涉密检索片段回答；不要请求或引用普通笔记、普通会话、外部缓存或工具。不要泄露内部保险库路径。\n\n当前涉密文档：\n{}\n\n涉密检索片段：\n{}",
+        document, evidence
+    );
+    let request_id = uuid::Uuid::new_v4().to_string();
+    let route = routing_override
+        .ok_or_else(|| AppError::msg("classified assistant requires resolved model route"))?;
+    let provider_config = route.resolved.to_provider_config_for_slot(route.slot);
+    app_handle
+        .emit(
+            "ai:request_started",
+            serde_json::json!({
+                "request_id": request_id.clone(),
+                "classified": true,
+            }),
+        )
+        .ok();
+    let gateway = crate::ai_runtime::model_gateway::ModelGateway::with_defaults(
+        app_handle.clone(),
+        vec![provider_config.clone()],
+    )?;
+    let response = gateway
+        .send_classified_streaming_request(
+            &request_id,
+            crate::ai_runtime::model_gateway::GatewayRequest {
+                provider: provider_config,
+                messages: vec![
+                    LlmMessage {
+                        role: MessageRole::System,
+                        content: system_prompt.into(),
+                        ..Default::default()
+                    },
+                    LlmMessage {
+                        role: MessageRole::User,
+                        content: request.message.clone().into(),
+                        ..Default::default()
+                    },
+                ],
+                tools: Vec::new(),
+                max_tokens: Some(route.resolved.output_budget),
+                temperature: Some(0.2),
+                stream: true,
+                thinking: route.resolved.thinking,
+                skip_stub_ids: Vec::new(),
+            },
+        )
+        .await?;
+    let content = response.content.unwrap_or_default();
+    Ok(HarnessTaskResult {
+        request_id: request_id.clone(),
+        task_id: None,
+        run_status: HarnessRunStatus::Completed,
+        artifacts: vec![HarnessArtifact::Message {
+            content: content.clone(),
+            citation_valid: true,
+        }],
+        artifact_wires: Vec::new(),
+        evidence_packet_ids: Vec::new(),
+        usage: Some(response.usage.clone()),
+        evidence_refresh_notice: None,
+        chat_payload: Some(serde_json::json!({
+            "request_id": request_id,
+            "session_id": 0,
+            "status": "completed",
+            "content": content,
+            "tool_calls": response.tool_calls,
+            "tool_results": [],
+            "harness_rounds": 1,
+            "usage": response.usage,
+            "usage_source": "provider",
+            "citation_valid": true,
+            "evidence_packets": [],
+            "pending_confirmation": false,
+        })),
+        writing: None,
+        citation: None,
+        organize: None,
+        research: None,
+        chapter: None,
+        document: None,
+    })
+}
+
 fn legacy_intent_wire(intent: AssistantIntent) -> &'static str {
     match intent {
         AssistantIntent::Chat => "chat",
@@ -297,9 +658,22 @@ pub(crate) async fn run_harness_task(
     let request = task.assistant;
     let task_plan = task.task_plan;
     let routing_override = task.routing_override;
-    crate::commands::ai_commands::validate_ai_note_path(request.note_path.as_deref())?;
+    validate_assistant_domain_boundary(&request)?;
     let legacy_intent = crate::ai_runtime::task_plan::legacy_intent_for_task_plan(&task_plan);
     let agent_intent = crate::ai_runtime::task_plan::agent_intent_for_task_plan(&task_plan);
+    if request.ai_domain == AssistantAiDomain::Classified {
+        if matches!(legacy_intent, AssistantIntent::Writing) {
+            return run_classified_writing_task(
+                state,
+                app_handle,
+                &request,
+                routing_override.as_ref(),
+            )
+            .await;
+        }
+        return run_classified_chat_task(state, app_handle, &request, routing_override.as_ref())
+            .await;
+    }
     let skill_activation_plan = routing_override
         .as_ref()
         .and_then(|route| route.skill_activation_plan.as_ref());
@@ -1087,6 +1461,7 @@ mod tests {
     fn workflow_runtime_task_is_created_for_non_chat_intent() {
         let db = Database::open_in_memory().unwrap();
         let request = AssistantExecuteRequest {
+            ai_domain: AssistantAiDomain::Normal,
             agent_intent: None,
             intent: Some(AssistantIntent::Research),
             intent_detection: None,
@@ -1126,6 +1501,7 @@ mod tests {
     fn workflow_runtime_task_failure_is_safe_and_terminal() {
         let db = Database::open_in_memory().unwrap();
         let request = AssistantExecuteRequest {
+            ai_domain: AssistantAiDomain::Normal,
             agent_intent: None,
             intent: Some(AssistantIntent::Writing),
             intent_detection: None,
@@ -1156,6 +1532,94 @@ mod tests {
 
         assert_eq!(task.status, AgentTaskStatus::FailedSafe);
         assert_eq!(task.error_code.as_deref(), Some("MISSING_REQUIRED_INPUT"));
+    }
+
+    #[test]
+    fn classified_writing_intent_is_not_rejected_at_dispatch_boundary() {
+        let source = include_str!("harness_task.rs");
+        let legacy_rejection = concat!(
+            "classified assistant currently supports chat and knowledge intents ",
+            "only"
+        );
+        assert!(
+            !source.contains(legacy_rejection),
+            "classified domain must support writing/rewrite instead of hard-rejecting non-chat intents"
+        );
+    }
+
+    #[test]
+    fn classified_scope_validation_accepts_only_classified_paths() {
+        let scope = crate::ai_runtime::retrieval_scope::ContextScopeDto {
+            paths: vec![".classified/a.md".into()],
+            path_prefixes: vec![".classified/projects".into()],
+            corpus_ids: vec![],
+        };
+        assert!(validate_classified_scope(Some(&scope)).unwrap());
+
+        let ordinary_path = crate::ai_runtime::retrieval_scope::ContextScopeDto {
+            paths: vec!["normal.md".into()],
+            path_prefixes: vec![],
+            corpus_ids: vec![],
+        };
+        assert!(validate_classified_scope(Some(&ordinary_path)).is_err());
+
+        let ordinary_prefix = crate::ai_runtime::retrieval_scope::ContextScopeDto {
+            paths: vec![],
+            path_prefixes: vec!["notes/".into()],
+            corpus_ids: vec![],
+        };
+        assert!(validate_classified_scope(Some(&ordinary_prefix)).is_err());
+
+        let corpus_scope = crate::ai_runtime::retrieval_scope::ContextScopeDto {
+            paths: vec![],
+            path_prefixes: vec![".classified".into()],
+            corpus_ids: vec!["default".into()],
+        };
+        assert!(validate_classified_scope(Some(&corpus_scope)).is_err());
+    }
+
+    #[test]
+    fn classified_scope_keywords_and_matching_are_strict() {
+        assert!(classified_query_requests_vault_scope("请检索所有涉密材料"));
+        assert!(classified_query_requests_vault_scope("到涉密库里查一下"));
+        assert!(!classified_query_requests_vault_scope("只看当前这篇"));
+
+        let scope = crate::ai_runtime::retrieval_scope::ContextScopeDto {
+            paths: vec![".classified/exact.md".into()],
+            path_prefixes: vec![".classified/team".into()],
+            corpus_ids: vec![],
+        };
+        assert!(classified_scope_matches(".classified/exact.md", &scope));
+        assert!(classified_scope_matches(".classified/team/a.md", &scope));
+        assert!(!classified_scope_matches(".classified/other.md", &scope));
+    }
+
+    #[test]
+    fn classified_writing_output_builds_controlled_patch() {
+        let output = build_classified_writing_output(ClassifiedWritingOutputInput {
+            request_id: "classified-request-1".into(),
+            note_path: ".classified/secret.md",
+            document: "# Secret\n\n原文内容\n",
+            selection: "原文内容",
+            message: "改写得更清晰",
+            intent: crate::ai_runtime::WritingIntent::Rewrite,
+            replacement: "涉密改写结果".into(),
+            evidence: vec![],
+            usage: TokenUsage::default(),
+        });
+
+        assert_eq!(output.request_id, "classified-request-1");
+        assert_eq!(output.patches.len(), 1);
+        let patch = &output.patches[0];
+        assert_eq!(patch.target_path, ".classified/secret.md");
+        assert_eq!(patch.original_text, "原文内容");
+        assert_eq!(patch.replacement_text, "涉密改写结果");
+        assert_eq!(patch.range, SourceSpan { start: 10, end: 22 });
+        assert_eq!(
+            output.writing_state.target_path,
+            ".classified/secret.md".to_string()
+        );
+        assert!(output.evidence_used.is_empty());
     }
 
     #[test]

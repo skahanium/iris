@@ -7,7 +7,8 @@ import type { GraphData } from "@/types/ipc";
 interface GraphViewProps {
   open: boolean;
   onClose: () => void;
-  onOpenNote: (path: string) => void;
+  onOpenNote: (path: string) => void | Promise<void>;
+  onPrepareNotePath?: (path: string, titleHint?: string) => void;
 }
 
 interface SimNode {
@@ -120,7 +121,33 @@ function buildSimulation(data: GraphData, width: number, height: number) {
   return { nodes, edges, nodeById };
 }
 
-export function GraphView({ open, onClose, onOpenNote }: GraphViewProps) {
+function findNodeAtCanvasEvent(
+  canvas: HTMLCanvasElement,
+  sim: { nodes: SimNode[] },
+  e: React.MouseEvent<HTMLCanvasElement>,
+): SimNode | null {
+  const rect = canvas.getBoundingClientRect();
+  const scaleX = canvas.width / rect.width;
+  const scaleY = canvas.height / rect.height;
+  const x = (e.clientX - rect.left) * scaleX;
+  const y = (e.clientY - rect.top) * scaleY;
+
+  for (const node of sim.nodes) {
+    const dx = node.x - x;
+    const dy = node.y - y;
+    if (Math.sqrt(dx * dx + dy * dy) < node.radius) {
+      return node;
+    }
+  }
+  return null;
+}
+
+export function GraphView({
+  open,
+  onClose,
+  onOpenNote,
+  onPrepareNotePath,
+}: GraphViewProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const simRef = useRef<{
@@ -129,6 +156,7 @@ export function GraphView({ open, onClose, onOpenNote }: GraphViewProps) {
     nodeById: Map<number, SimNode>;
   } | null>(null);
   const animRef = useRef<number>(0);
+  const lastPreparedPathRef = useRef<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -263,28 +291,38 @@ export function GraphView({ open, onClose, onOpenNote }: GraphViewProps) {
     };
   }, []);
 
-  const handleClick = useCallback(
+  const handleMouseMove = useCallback(
     (e: React.MouseEvent<HTMLCanvasElement>) => {
       const canvas = canvasRef.current;
-      if (!canvas) return;
-      const rect = canvas.getBoundingClientRect();
-      const scaleX = canvas.width / rect.width;
-      const scaleY = canvas.height / rect.height;
-      const x = (e.clientX - rect.left) * scaleX;
-      const y = (e.clientY - rect.top) * scaleY;
       const sim = simRef.current;
-      if (!sim) return;
-
-      for (const node of sim.nodes) {
-        const dx = node.x - x;
-        const dy = node.y - y;
-        if (Math.sqrt(dx * dx + dy * dy) < node.radius) {
-          onOpenNote(node.path);
-          break;
-        }
+      if (!canvas || !sim) return;
+      const node = findNodeAtCanvasEvent(canvas, sim, e);
+      if (!node) {
+        lastPreparedPathRef.current = null;
+        return;
       }
+      if (lastPreparedPathRef.current === node.path) return;
+      lastPreparedPathRef.current = node.path;
+      onPrepareNotePath?.(node.path, node.title);
     },
-    [onOpenNote],
+    [onPrepareNotePath],
+  );
+
+  const handleMouseLeave = useCallback(() => {
+    lastPreparedPathRef.current = null;
+  }, []);
+
+  const handleClick = useCallback(
+    async (e: React.MouseEvent<HTMLCanvasElement>) => {
+      const canvas = canvasRef.current;
+      const sim = simRef.current;
+      if (!canvas || !sim) return;
+      const node = findNodeAtCanvasEvent(canvas, sim, e);
+      if (!node) return;
+      await onOpenNote(node.path);
+      onClose();
+    },
+    [onClose, onOpenNote],
   );
 
   useEffect(() => {
@@ -344,7 +382,9 @@ export function GraphView({ open, onClose, onOpenNote }: GraphViewProps) {
         <canvas
           ref={canvasRef}
           className="h-full w-full cursor-pointer"
-          onClick={handleClick}
+          onMouseMove={handleMouseMove}
+          onMouseLeave={handleMouseLeave}
+          onClick={(event) => void handleClick(event)}
         />
       </div>
     </IrisOverlay>

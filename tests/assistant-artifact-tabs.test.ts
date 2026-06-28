@@ -65,6 +65,40 @@ describe("assistant artifact tabs", () => {
     );
   });
 
+  it("does not persist temporary evidence detail tabs", () => {
+    const memory = new Map<string, string>();
+    const storage: Storage = {
+      get length() {
+        return memory.size;
+      },
+      clear: () => memory.clear(),
+      getItem: (key) => memory.get(key) ?? null,
+      key: (index) => Array.from(memory.keys())[index] ?? null,
+      removeItem: (key) => memory.delete(key),
+      setItem: (key, value) => {
+        memory.set(key, value);
+      },
+    };
+    const persistent = buildArtifactTab(draft(1), "2026-06-20T00:00:00.000Z");
+    const temporary = buildArtifactTab(
+      {
+        kind: "session_evidence_detail",
+        title: "Evidence Detail",
+        sourceRequestId: "session-1",
+        payload: { sessionId: 1 },
+        persistent: false,
+      },
+      "2026-06-20T00:00:01.000Z",
+    );
+
+    saveArtifactTabsSnapshot(storage, [persistent, temporary]);
+
+    expect(loadArtifactTabsSnapshot(storage)).toEqual([persistent]);
+    expect(storage.getItem(ARTIFACT_TAB_STORAGE_KEY)).not.toContain(
+      "session_evidence_detail",
+    );
+  });
+
   it("drops persisted tabs with legacy artifact kinds", () => {
     const memory = new Map<string, string>();
     const storage: Storage = {

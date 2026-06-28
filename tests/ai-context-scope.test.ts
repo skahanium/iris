@@ -44,12 +44,14 @@ describe("ai-context-scope", () => {
     expect(scope.paths).toEqual([]);
   });
 
-  it("strips tokens for display", () => {
+  it("keeps mention labels readable in display text", () => {
     const display = stripMentionTokensForDisplay(
       "@[问题线索工作思路（WY）.md] 根据问题线索情况，请给出核查思路",
     );
-    expect(display).toBe("根据问题线索情况，请给出核查思路");
-    expect(display).not.toContain("问题线索工作思路");
+    expect(display).toBe(
+      "@问题线索工作思路（WY）.md 根据问题线索情况，请给出核查思路",
+    );
+    expect(display).toContain("问题线索工作思路");
     expect(display).not.toContain("@[");
   });
 

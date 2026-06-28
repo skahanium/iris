@@ -24,6 +24,7 @@ import {
 export interface WikiLinkOptions {
   HTMLAttributes: Record<string, unknown>;
   onOpenNote?: (title: string) => void;
+  onPrepareNote?: (title: string) => void;
   getSuggestions?: () => Promise<WikiLinkSuggestionItem[]>;
 }
 
@@ -48,6 +49,7 @@ export const WikiLinkExtension = Mark.create<WikiLinkOptions>({
     return {
       HTMLAttributes: {},
       onOpenNote: undefined,
+      onPrepareNote: undefined,
       getSuggestions: async () =>
         buildWikiLinkSuggestionItems(await fileList()),
     };
@@ -103,6 +105,7 @@ export const WikiLinkExtension = Mark.create<WikiLinkOptions>({
 
   addProseMirrorPlugins() {
     const onOpenNote = this.options.onOpenNote;
+    const onPrepareNote = this.options.onPrepareNote;
     const getSuggestions =
       this.options.getSuggestions ??
       (async () => buildWikiLinkSuggestionItems(await fileList()));
@@ -134,6 +137,24 @@ export const WikiLinkExtension = Mark.create<WikiLinkOptions>({
               return true;
             }
             return false;
+          },
+          handleDOMEvents: {
+            mouseover: (_view, event) => {
+              const target = event.target as HTMLElement;
+              const title = target
+                .closest("[data-wiki-link]")
+                ?.getAttribute("data-wiki-title");
+              if (title) onPrepareNote?.(title);
+              return false;
+            },
+            focusin: (_view, event) => {
+              const target = event.target as HTMLElement;
+              const title = target
+                .closest("[data-wiki-link]")
+                ?.getAttribute("data-wiki-title");
+              if (title) onPrepareNote?.(title);
+              return false;
+            },
           },
         },
       }),

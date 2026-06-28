@@ -5,6 +5,7 @@ import {
   BookOpen,
   MessageSquare,
   Globe,
+  ExternalLink,
 } from "lucide-react";
 import { useMemo } from "react";
 
@@ -42,6 +43,7 @@ interface ContextPacketCardProps {
   packet: ContextPacket;
   selected?: boolean;
   onSelect?: (id: string) => void;
+  onOpenSource?: (packet: ContextPacket) => void;
   compact?: boolean;
 }
 
@@ -49,6 +51,7 @@ export function ContextPacketCard({
   packet,
   selected = false,
   onSelect,
+  onOpenSource,
   compact = false,
 }: ContextPacketCardProps) {
   const Icon = SOURCE_ICONS[packet.source_type] ?? FileText;
@@ -69,6 +72,7 @@ export function ContextPacketCard({
 
   return (
     <SurfaceCard
+      as={onOpenSource ? "div" : undefined}
       selected={selected}
       className={cn(packet.stale && "opacity-60")}
       onClick={() => onSelect?.(packet.id)}
@@ -86,6 +90,19 @@ export function ContextPacketCard({
             >
               预览
             </Badge>
+          ) : null}
+          {onOpenSource ? (
+            <button
+              type="button"
+              title="Open source"
+              className="inline-flex h-5 w-5 items-center justify-center rounded-sm text-muted-foreground hover:bg-surface-inset hover:text-foreground"
+              onClick={(event) => {
+                event.stopPropagation();
+                onOpenSource(packet);
+              }}
+            >
+              <ExternalLink className="h-3 w-3" />
+            </button>
           ) : null}
           <Badge variant="secondary" className="px-1.5 py-0 text-[10px]">
             {packet.citation_label}
@@ -136,6 +153,7 @@ interface ContextPacketListProps {
   packets: ContextPacket[];
   selectedIds?: string[];
   onSelect?: (id: string) => void;
+  onOpenSource?: (packet: ContextPacket) => void;
   compact?: boolean;
   emptyHint?: string;
 }
@@ -144,6 +162,7 @@ export function ContextPacketList({
   packets,
   selectedIds = [],
   onSelect,
+  onOpenSource,
   compact = false,
   emptyHint,
 }: ContextPacketListProps) {
@@ -173,6 +192,7 @@ export function ContextPacketList({
                 packet={packet}
                 selected={selectedIds.includes(packet.id)}
                 onSelect={onSelect}
+                onOpenSource={onOpenSource}
                 compact={compact}
               />
             ))}
@@ -191,6 +211,7 @@ export function ContextPacketList({
                 packet={packet}
                 selected={selectedIds.includes(packet.id)}
                 onSelect={onSelect}
+                onOpenSource={onOpenSource}
                 compact={compact}
               />
             ))}

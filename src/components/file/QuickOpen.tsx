@@ -1,9 +1,10 @@
-import { FileText } from "lucide-react";
+import { FileImage, FileText, FileVideo } from "lucide-react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import {
   useCallback,
   useEffect,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
 } from "react";
@@ -20,22 +21,65 @@ import {
   displayTitleForFileListItem,
   noteListSubtitle,
 } from "@/lib/note-display";
-import { fileList } from "@/lib/ipc";
+import { workspaceList } from "@/lib/ipc";
 import { ensureOptionVisible } from "@/lib/command-palette-scroll";
-import type { FileListItem } from "@/types/ipc";
+import type { NoteOpenSource } from "@/lib/document-open-runtime";
+import type { FileListItem, WorkspaceItem } from "@/types/ipc";
+
+const PREPARE_VISIBLE_LIMIT = 3;
 
 interface QuickOpenProps {
   open: boolean;
   onClose: () => void;
-  onSelect: (path: string) => void;
+  onPrepare?: (file: FileListItem, source: NoteOpenSource) => void;
+  onSelect: (path: string, source: NoteOpenSource) => void | Promise<void>;
 }
 
-export function QuickOpen({ open, onClose, onSelect }: QuickOpenProps) {
+function noteItem(item: WorkspaceItem): FileListItem | null {
+  if (item.kind !== "note") return null;
+  return {
+    isLocked: item.isLocked,
+    path: item.path,
+    title: item.title,
+    updatedAt: item.updatedAt ?? "",
+  };
+}
+
+function itemTitle(item: WorkspaceItem): string {
+  if (item.kind === "note") {
+    return displayTitleForFileListItem({
+      isLocked: item.isLocked,
+      path: item.path,
+      title: item.title,
+      updatedAt: item.updatedAt ?? "",
+    });
+  }
+  return item.title || item.path.split("/").pop() || item.path;
+}
+
+function itemSubtitle(item: WorkspaceItem): string | undefined {
+  if (item.kind === "note") return noteListSubtitle(item.path);
+  return item.path;
+}
+
+function itemIcon(item: WorkspaceItem) {
+  if (item.mediaKind === "image") return FileImage;
+  if (item.mediaKind === "video") return FileVideo;
+  return FileText;
+}
+
+export function QuickOpen({
+  open,
+  onClose,
+  onPrepare,
+  onSelect,
+}: QuickOpenProps) {
   const [query, setQuery] = useState("");
-  const [files, setFiles] = useState<FileListItem[]>([]);
+  const [files, setFiles] = useState<WorkspaceItem[]>([]);
   const parentRef = useRef<HTMLDivElement>(null);
   const itemRefs = useRef(new Map<string, HTMLButtonElement>());
-  const filteredRef = useRef<FileListItem[]>([]);
+  const filteredRef = useRef<WorkspaceItem[]>([]);
+  const preparedKeysRef = useRef(new Set<string>());
   const onSelectRef = useRef(onSelect);
   const onCloseRef = useRef(onClose);
   onSelectRef.current = onSelect;
@@ -43,18 +87,51 @@ export function QuickOpen({ open, onClose, onSelect }: QuickOpenProps) {
 
   useEffect(() => {
     if (!open) return;
-    void fileList().then(setFiles);
+    preparedKeysRef.current.clear();
+    void workspaceList().then(setFiles);
     setQuery("");
   }, [open]);
 
-  const filtered = files.filter((f) => {
-    const label = displayTitleForFileListItem(f);
-    return (
-      label.toLowerCase().includes(query.toLowerCase()) ||
-      f.path.toLowerCase().includes(query.toLowerCase())
-    );
-  });
+  const prepareWorkspaceItem = useCallback(
+    (file: WorkspaceItem) => {
+      const note = noteItem(file);
+      if (!note) return;
+      const key = note.path + "\0" + note.updatedAt;
+      if (preparedKeysRef.current.has(key)) return;
+      preparedKeysRef.current.add(key);
+      onPrepare?.(note, "quick-open");
+    },
+    [onPrepare],
+  );
+
+  const filtered = useMemo(() => {
+    const normalizedQuery = query.toLowerCase();
+    return files.filter((f) => {
+      const label = itemTitle(f);
+      return (
+        label.toLowerCase().includes(normalizedQuery) ||
+        f.path.toLowerCase().includes(normalizedQuery)
+      );
+    });
+  }, [files, query]);
   filteredRef.current = filtered;
+
+  const visibleFiles = useMemo(
+    () => filtered.slice(0, PREPARE_VISIBLE_LIMIT),
+    [filtered],
+  );
+
+  useEffect(() => {
+    if (!open) return;
+    visibleFiles.forEach(prepareWorkspaceItem);
+  }, [open, prepareWorkspaceItem, visibleFiles]);
+
+  const activateItem = useCallback((item: WorkspaceItem) => {
+    onCloseRef.current();
+    void Promise.resolve(onSelectRef.current(item.path, "quick-open")).catch(
+      () => undefined,
+    );
+  }, []);
 
   const { highlight, setHighlight, handleKeyDown, navDeltaRef } =
     useListboxKeyboard({
@@ -64,10 +141,15 @@ export function QuickOpen({ open, onClose, onSelect }: QuickOpenProps) {
       onActivate: (index) => {
         const item = filteredRef.current[index];
         if (!item) return;
-        onSelectRef.current(item.path);
-        onCloseRef.current();
+        activateItem(item);
       },
     });
+
+  useEffect(() => {
+    if (!open) return;
+    const item = filtered[highlight];
+    if (item) prepareWorkspaceItem(item);
+  }, [filtered, highlight, open, prepareWorkspaceItem]);
 
   const virtualizer = useVirtualizer({
     count: filtered.length,
@@ -75,6 +157,18 @@ export function QuickOpen({ open, onClose, onSelect }: QuickOpenProps) {
     estimateSize: () => 56,
     overscan: 10,
   });
+  const virtualItems = virtualizer.getVirtualItems();
+  const renderedItems =
+    virtualItems.length > 0
+      ? virtualItems
+      : filtered.map((_, index) => ({
+          index,
+          key: filtered[index]!.path,
+          size: 56,
+          start: index * 56,
+        }));
+  const listHeight =
+    virtualItems.length > 0 ? virtualizer.getTotalSize() : filtered.length * 56;
 
   const scrollHighlightIntoView = useCallback(() => {
     const item = filteredRef.current[highlight];
@@ -94,7 +188,7 @@ export function QuickOpen({ open, onClose, onSelect }: QuickOpenProps) {
     <IrisOverlay
       open={open}
       onClose={onClose}
-      title="搜索笔记"
+      title="搜索工作区"
       size="compact"
       showTitleBar={false}
       bodyClassName="overflow-hidden"
@@ -102,9 +196,9 @@ export function QuickOpen({ open, onClose, onSelect }: QuickOpenProps) {
       <OverlayChrome
         header={
           <OverlaySearchHeader
-            placeholder="搜索笔记…"
+            placeholder="搜索工作区…"
             value={query}
-            inputAriaLabel="搜索笔记"
+            inputAriaLabel="搜索工作区"
             onChange={setQuery}
             onKeyDown={handleKeyDown}
             onClose={onClose}
@@ -129,18 +223,18 @@ export function QuickOpen({ open, onClose, onSelect }: QuickOpenProps) {
           {filtered.length === 0 ? (
             <div className="flex flex-col items-center gap-2 px-6 py-12 text-center">
               <FileText className="h-8 w-8 text-muted-foreground/60" />
-              <p className="text-sm text-muted-foreground">无匹配笔记</p>
+              <p className="text-sm text-muted-foreground">无匹配项目</p>
             </div>
           ) : (
             <div
               style={{
-                height: `${virtualizer.getTotalSize()}px`,
+                height: `${listHeight}px`,
                 position: "relative",
               }}
               role="listbox"
-              aria-label="笔记列表"
+              aria-label="工作区项目列表"
             >
-              {virtualizer.getVirtualItems().map((virtualItem) => {
+              {renderedItems.map((virtualItem) => {
                 const f = filtered[virtualItem.index]!;
                 const active = virtualItem.index === highlight;
                 return (
@@ -156,11 +250,11 @@ export function QuickOpen({ open, onClose, onSelect }: QuickOpenProps) {
                   >
                     <CommandListOption
                       id={`quick-open-${f.path}`}
-                      label={displayTitleForFileListItem(f)}
+                      label={itemTitle(f)}
                       query={query}
-                      subtitle={noteListSubtitle(f.path)}
+                      subtitle={itemSubtitle(f)}
                       active={active}
-                      icon={FileText}
+                      icon={itemIcon(f)}
                       buttonRef={(el) => {
                         if (el) itemRefs.current.set(f.path, el);
                         else itemRefs.current.delete(f.path);
@@ -168,10 +262,10 @@ export function QuickOpen({ open, onClose, onSelect }: QuickOpenProps) {
                       onMouseEnter={() => {
                         navDeltaRef.current = 0;
                         setHighlight(virtualItem.index);
+                        prepareWorkspaceItem(f);
                       }}
                       onSelect={() => {
-                        onSelect(f.path);
-                        onClose();
+                        activateItem(f);
                       }}
                     />
                   </div>

@@ -79,6 +79,16 @@ describe("assistant_execute IPC contract", () => {
     expect(router).toContain("AssistantIntent::Document");
   });
 
+  it("rejects noteContent without a validated notePath", () => {
+    const facade = read("src-tauri/src/commands/assistant_commands.rs");
+
+    expect(facade).toContain("fn validate_note_content_boundary");
+    expect(facade).toContain("request.note_path.is_none()");
+    expect(facade).toContain("note_content");
+    expect(facade).toContain("validate_assistant_domain_boundary(&request)?");
+    expect(facade).toContain("validate_note_content_boundary(request)");
+  });
+
   it("UnifiedAssistantPanel calls assistantExecute", () => {
     const panel = read("src/components/ai/UnifiedAssistantPanel.tsx");
     const tasks = read("src/components/ai/hooks/useAssistantTasks.ts");

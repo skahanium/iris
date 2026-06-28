@@ -19,6 +19,11 @@ use crate::ai_runtime::{
     packet_builder::{build_context_packets, max_results_from_budget, ContextBuildOptions},
     retrieval_scope::ContextScopeDto,
     session::{SessionManager, SessionMessage, SessionSummary},
+    session_evidence::{
+        enrich_session_evidence_details, list_session_evidence,
+        register_packets_from_context_packets, register_session_evidence, SessionEvidenceItem,
+        SessionEvidenceRegisterPacket,
+    },
     tool_executor::ToolRegistry,
     trace::{TraceRecorder, TraceStatus},
     AgentIntent, AiScene, AssembledContext, ContextPacket, TokenUsage, ToolAccessLevel,
@@ -928,7 +933,7 @@ pub(crate) async fn execute_ai_send_message_with_routing(
     } else {
         (vec![], None)
     };
-    let filtered_packets: Vec<_> = if resolved_ids.is_empty() {
+    let mut filtered_packets: Vec<_> = if resolved_ids.is_empty() {
         ledger.packets().to_vec()
     } else {
         ledger
@@ -938,6 +943,23 @@ pub(crate) async fn execute_ai_send_message_with_routing(
             .cloned()
             .collect()
     };
+
+    if !filtered_packets.is_empty() {
+        let register_packets = register_packets_from_context_packets(&filtered_packets);
+        let evidence_message_seq = state.db.with_conn(|conn| {
+            Ok(conn.query_row(
+                "SELECT COALESCE(MAX(seq), 0) + 1 FROM session_messages WHERE session_id = ?1",
+                [sid],
+                |row| row.get::<_, i64>(0),
+            )?)
+        })?;
+        let registered = state.db.with_conn(|conn| {
+            register_session_evidence(conn, sid, evidence_message_seq, &register_packets)
+        })?;
+        for (packet, evidence) in filtered_packets.iter_mut().zip(registered.iter()) {
+            packet.citation_label = evidence.citation_label.clone();
+        }
+    }
 
     let note_title = note_path.as_ref().and_then(|p| {
         state
@@ -1169,13 +1191,20 @@ fn finalize_chat_harness_run(
     } else {
         Some(serde_json::to_value(&harness_result.tool_calls).unwrap_or_default())
     };
-    SessionManager::append_message(
+    let evidence_packets_value: Option<serde_json::Value> =
+        if harness_result.evidence_packets.is_empty() {
+            None
+        } else {
+            Some(serde_json::to_value(&harness_result.evidence_packets).unwrap_or_default())
+        };
+    SessionManager::append_message_with_evidence_packets(
         &state.db,
         session_id,
         "assistant",
         &harness_result.content,
         None,
         tool_calls_value.as_ref(),
+        evidence_packets_value.as_ref(),
     )?;
 
     if harness_result.usage.prompt_cache_hit_tokens > 0
@@ -1626,6 +1655,43 @@ pub async fn session_load(
     limit: Option<u32>,
 ) -> AppResult<Vec<SessionMessage>> {
     SessionManager::recent_messages(&state.db, session_id, limit.unwrap_or(50))
+}
+
+/// List active evidence ledger rows for a session.
+#[tauri::command]
+pub async fn session_evidence_list(
+    state: State<'_, Arc<AppState>>,
+    session_id: i64,
+) -> AppResult<Vec<SessionEvidenceItem>> {
+    state
+        .db
+        .with_conn(|conn| list_session_evidence(conn, session_id))
+}
+
+/// Return evidence metadata for the read-only detail view.
+#[tauri::command]
+pub async fn session_evidence_detail(
+    state: State<'_, Arc<AppState>>,
+    session_id: i64,
+) -> AppResult<Vec<SessionEvidenceItem>> {
+    let vault = state.vault_path()?;
+    let items = state
+        .db
+        .with_conn(|conn| list_session_evidence(conn, session_id))?;
+    Ok(enrich_session_evidence_details(items, &vault))
+}
+
+/// Register evidence metadata against a session and return stable citation labels.
+#[tauri::command]
+pub async fn session_evidence_register(
+    state: State<'_, Arc<AppState>>,
+    session_id: i64,
+    message_seq: i64,
+    packets: Vec<SessionEvidenceRegisterPacket>,
+) -> AppResult<Vec<SessionEvidenceItem>> {
+    state
+        .db
+        .with_conn(|conn| register_session_evidence(conn, session_id, message_seq, &packets))
 }
 
 /// List installed skills (global + vault) with validation status.
@@ -2087,6 +2153,99 @@ pub async fn tool_audit_query(
     request_id: String,
 ) -> AppResult<Vec<crate::ai_runtime::tool_audit::ToolAuditEntry>> {
     crate::ai_runtime::tool_audit::query_by_request(&state.db, &request_id)
+}
+
+// ── Classified AI Thread IPC Commands ────────────────────────────────────────
+
+/// List classified AI threads, optionally filtered by document path.
+#[tauri::command]
+pub async fn classified_ai_thread_list(
+    state: State<'_, Arc<AppState>>,
+    document_path: Option<String>,
+) -> AppResult<Vec<crate::ai_runtime::classified_session::ClassifiedAiThreadSummary>> {
+    let vault = state.vault_path()?;
+    crate::ai_runtime::classified_session::classified_ai_thread_list(&vault, document_path)
+}
+
+/// Load a classified AI thread by id.
+#[tauri::command]
+pub async fn classified_ai_thread_load(
+    state: State<'_, Arc<AppState>>,
+    thread_id: String,
+) -> AppResult<crate::ai_runtime::classified_session::ClassifiedAiThread> {
+    let vault = state.vault_path()?;
+    crate::ai_runtime::classified_session::classified_ai_thread_load(&vault, thread_id)
+}
+
+/// Save a classified AI thread.
+#[tauri::command]
+pub async fn classified_ai_thread_save(
+    state: State<'_, Arc<AppState>>,
+    thread: crate::ai_runtime::classified_session::ClassifiedAiThread,
+) -> AppResult<()> {
+    let vault = state.vault_path()?;
+    crate::ai_runtime::classified_session::classified_ai_thread_save(&vault, thread)
+}
+
+/// Delete a classified AI thread.
+#[tauri::command]
+pub async fn classified_ai_thread_delete(
+    state: State<'_, Arc<AppState>>,
+    thread_id: String,
+) -> AppResult<()> {
+    let vault = state.vault_path()?;
+    crate::ai_runtime::classified_session::classified_ai_thread_delete(&vault, thread_id)
+}
+
+/// Clear the in-memory classified AI thread index cache.
+#[tauri::command]
+pub async fn classified_ai_cache_clear() -> AppResult<()> {
+    crate::ai_runtime::classified_session::classified_ai_cache_clear()
+}
+
+/// Search classified documents using the in-memory retrieval index.
+///
+/// Builds (or reuses) a heading-aware chunk index of `.classified/` Markdown
+/// files and returns ranked results by term frequency, heading match,
+/// current-document boost, path similarity, and recency.
+#[tauri::command]
+pub async fn classified_ai_context_search(
+    state: State<'_, Arc<AppState>>,
+    query: String,
+    current_document: Option<String>,
+    scope_paths: Option<Vec<String>>,
+    limit: Option<usize>,
+) -> AppResult<Vec<crate::ai_runtime::classified_retrieval::ClassifiedSearchHit>> {
+    let vault = state.vault_path()?;
+    let chunks = crate::ai_runtime::classified_retrieval::build_classified_index(&vault)?;
+
+    let filtered: Vec<_> = if let Some(ref paths) = scope_paths {
+        chunks
+            .into_iter()
+            .filter(|c| paths.iter().any(|p| c.document_path.starts_with(p)))
+            .collect()
+    } else if let Some(ref current) = current_document {
+        chunks
+            .into_iter()
+            .filter(|c| c.document_path == *current)
+            .collect()
+    } else {
+        Vec::new()
+    };
+
+    Ok(crate::ai_runtime::classified_retrieval::search_chunks(
+        &filtered,
+        &query,
+        current_document.as_deref(),
+        limit.unwrap_or(10),
+    ))
+}
+
+/// Clear the in-memory classified retrieval chunk index.
+#[tauri::command]
+pub async fn classified_ai_retrieval_clear() -> AppResult<()> {
+    crate::ai_runtime::classified_retrieval::clear_classified_index();
+    Ok(())
 }
 
 #[cfg(test)]

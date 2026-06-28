@@ -9,8 +9,15 @@ import {
   type ReactNode,
 } from "react";
 
-import { isWindowsDesktopChrome } from "@/lib/platform-chrome";
+import {
+  isMacOSDesktopChrome,
+  isWindowsDesktopChrome,
+} from "@/lib/platform-chrome";
 import { cn } from "@/lib/utils";
+import {
+  toggleNativeFullscreen,
+  toggleWindowMaximize,
+} from "@/lib/window-actions";
 
 function stopTitlebarDrag(event: ReactMouseEvent) {
   event.stopPropagation();
@@ -31,7 +38,7 @@ function MacTrafficLightButton({
       aria-label={label}
       data-tauri-drag-region-exclude
       className={cn(
-        "iris-window-control iris-traffic-light inline-flex size-3.5 items-center justify-center rounded-full transition-[box-shadow,transform,filter] duration-fast focus:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-panel active:scale-95",
+        "iris-focus-soft iris-window-control iris-traffic-light inline-flex size-3.5 items-center justify-center rounded-full transition-[box-shadow,transform,filter] duration-fast focus:outline-none active:scale-95",
         className,
       )}
       onMouseDown={stopTitlebarDrag}
@@ -58,7 +65,7 @@ function WindowsControlButton({
       aria-label={label}
       data-tauri-drag-region-exclude
       className={cn(
-        "iris-window-control iris-window-control--windows inline-flex h-[var(--titlebar-height)] w-11 items-center justify-center text-muted-foreground transition-[background-color,color] duration-fast focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary",
+        "iris-focus-soft iris-window-control iris-window-control--windows inline-flex h-[var(--titlebar-height)] w-11 items-center justify-center text-muted-foreground transition-[background-color,color,box-shadow] duration-fast focus:outline-none",
         className,
       )}
       onMouseDown={stopTitlebarDrag}
@@ -73,36 +80,54 @@ function WindowsControlButton({
 /** 无边框窗口：最小化 / 最大化 / 关闭（仅 Tauri） */
 export function WindowControls() {
   const win = useMemo(() => getCurrentWindow(), []);
+  const [fullscreen, setFullscreen] = useState(false);
   const [maximized, setMaximized] = useState(false);
+  const macOSControls = isMacOSDesktopChrome();
   const windowsControls = isWindowsDesktopChrome();
 
   useEffect(() => {
+    if (macOSControls) return;
+
     let cancelled = false;
-    void win.isMaximized().then((v) => {
-      if (!cancelled) setMaximized(v);
-    });
+    const syncWindowState = () => {
+      void Promise.all([win.isMaximized(), win.isFullscreen()]).then(
+        ([nextMaximized, nextFullscreen]) => {
+          if (cancelled) return;
+          setMaximized(nextMaximized);
+          setFullscreen(nextFullscreen);
+        },
+      );
+    };
+
+    syncWindowState();
     const unlisten = win.onResized(() => {
-      void win.isMaximized().then((v) => {
-        if (!cancelled) setMaximized(v);
-      });
+      syncWindowState();
     });
     return () => {
       cancelled = true;
       void unlisten.then((fn) => fn());
     };
-  }, [win]);
+  }, [macOSControls, win]);
 
   const minimize = useCallback(() => {
     void win.minimize();
   }, [win]);
 
   const toggleMaximize = useCallback(() => {
-    void win.toggleMaximize();
+    void toggleWindowMaximize(win);
+  }, [win]);
+
+  const toggleFullscreen = useCallback(() => {
+    void toggleNativeFullscreen(win).then(setFullscreen);
   }, [win]);
 
   const close = useCallback(() => {
     void win.close();
   }, [win]);
+
+  if (macOSControls) {
+    return null;
+  }
 
   if (windowsControls) {
     return (
@@ -144,9 +169,9 @@ export function WindowControls() {
       onPointerDown={stopTitlebarDrag}
     >
       <MacTrafficLightButton
-        label="关闭"
-        onClick={close}
-        className="iris-traffic-light--close"
+        label={fullscreen ? "退出全屏" : "进入全屏"}
+        onClick={toggleFullscreen}
+        className="iris-traffic-light--maximize"
       />
       <MacTrafficLightButton
         label="最小化"
@@ -154,9 +179,9 @@ export function WindowControls() {
         className="iris-traffic-light--minimize"
       />
       <MacTrafficLightButton
-        label={maximized ? "还原" : "最大化"}
-        onClick={toggleMaximize}
-        className="iris-traffic-light--maximize"
+        label="关闭"
+        onClick={close}
+        className="iris-traffic-light--close"
       />
     </div>
   );

@@ -30,7 +30,8 @@ export function AiMessageSelectionUi({
   streaming,
   onQuoteToInput,
 }: AiMessageSelectionUiProps) {
-  const { selection, clear, sync } = useAiMessageSelection(messageListRef);
+  const { selection, sync } = useAiMessageSelection(messageListRef);
+  const [selectionSnapshot, setSelectionSnapshot] = useState("");
   const [menu, setMenu] = useState<{ open: boolean; x: number; y: number }>({
     open: false,
     x: 0,
@@ -40,10 +41,10 @@ export function AiMessageSelectionUi({
   const ctx: EditorActionContext = useMemo(
     () => ({
       hasNote: true,
-      hasSelection: Boolean(selection.text),
+      hasSelection: Boolean(selectionSnapshot || selection.text),
       streaming,
     }),
-    [selection.text, streaming],
+    [selection.text, selectionSnapshot, streaming],
   );
 
   const menuGroups = useMemo(
@@ -64,19 +65,17 @@ export function AiMessageSelectionUi({
 
   const runAction = useCallback(
     async (id: string, textOverride?: string) => {
-      const text = textOverride ?? selection.text;
+      const text = textOverride ?? (selectionSnapshot || selection.text);
       if (!text) return;
       if (id === "copy") {
         await writeClipboardText(text);
-        clear();
         return;
       }
       if (id === "quote-to-input") {
         onQuoteToInput(text);
-        clear();
       }
     },
-    [clear, onQuoteToInput, selection.text],
+    [onQuoteToInput, selection.text, selectionSnapshot],
   );
 
   const handleContextMenu = useCallback(
@@ -91,6 +90,7 @@ export function AiMessageSelectionUi({
 
       event.preventDefault();
       event.stopPropagation();
+      setSelectionSnapshot(text);
       sync();
       setMenu({ open: true, x: event.clientX, y: event.clientY });
     },
@@ -104,6 +104,31 @@ export function AiMessageSelectionUi({
     return () => root.removeEventListener("contextmenu", handleContextMenu);
   }, [messageListRef, handleContextMenu]);
 
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.defaultPrevented) return;
+      if (event.key.toLowerCase() !== "c") return;
+      if (!event.metaKey && !event.ctrlKey) return;
+      const target = event.target;
+      if (
+        target instanceof HTMLInputElement ||
+        target instanceof HTMLTextAreaElement ||
+        (target instanceof HTMLElement && target.isContentEditable)
+      ) {
+        return;
+      }
+      const root = messageListRef.current;
+      if (!root) return;
+      const text = selectionTextInRoot(root);
+      if (!text) return;
+      event.preventDefault();
+      void writeClipboardText(text);
+    };
+
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, [messageListRef]);
+
   return (
     <IrisContextMenu
       open={menu.open}
@@ -111,11 +136,12 @@ export function AiMessageSelectionUi({
       y={menu.y}
       groups={menuGroups}
       onSelect={(id) => {
-        const root = messageListRef.current;
-        const text = root ? selectionTextInRoot(root) : selection.text;
-        void runAction(id, text || undefined);
+        void runAction(id, selectionSnapshot || undefined);
       }}
-      onClose={() => setMenu({ open: false, x: 0, y: 0 })}
+      onClose={() => {
+        setMenu({ open: false, x: 0, y: 0 });
+        setSelectionSnapshot("");
+      }}
     />
   );
 }

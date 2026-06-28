@@ -1,11 +1,13 @@
 use std::collections::BTreeSet;
 use std::fs;
 use std::sync::Arc;
+use std::time::UNIX_EPOCH;
 
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::app::AppState;
+use crate::cas::hash::content_hash as content_hash_bytes;
 use crate::error::{AppError, AppResult};
 use crate::indexer::frontmatter::resolve_display_title;
 use crate::indexer::scan::{
@@ -43,6 +45,29 @@ struct VaultIndexProgress {
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FileReadResult {
+    pub content: String,
+    pub is_locked: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FileSignatureResult {
+    pub byte_length: u64,
+    pub content_hash: String,
+    pub is_locked: bool,
+    pub modified_ms: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DocumentOpenScopeResult {
+    pub token: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DocumentOpenResult {
+    pub token: String,
     pub content: String,
     pub is_locked: bool,
 }
@@ -226,6 +251,9 @@ fn start_vault_index_task(app: AppHandle, state: Arc<AppState>) {
 
         let mut processed = 0usize;
         for abs in &files {
+            if state.has_foreground_document_open() {
+                std::thread::sleep(std::time::Duration::from_millis(8));
+            }
             let rel = match crate::storage::paths::relative_path(&vault, abs) {
                 Ok(rel) if crate::storage::paths::is_user_note_path(&rel) => rel,
                 _ => continue,
@@ -347,6 +375,92 @@ fn file_list_inner(
         }
         Ok(files)
     })
+}
+
+fn file_signature_inner(
+    state: &AppState,
+    path: &str,
+    allow_classified: bool,
+) -> AppResult<FileSignatureResult> {
+    validate_file_read_path(path, allow_classified)?;
+    let vault = state.vault_path()?;
+    let abs = resolve_vault_path(&vault, path)?;
+    let raw_bytes = fs::read(&abs)?;
+    let modified_ms = fs::metadata(&abs)?
+        .modified()
+        .ok()
+        .and_then(|modified| modified.duration_since(UNIX_EPOCH).ok())
+        .map(|duration| duration.as_millis() as i64);
+    let is_locked = query_is_locked(&state.db, path)?;
+    Ok(FileSignatureResult {
+        byte_length: raw_bytes.len() as u64,
+        content_hash: content_hash_bytes(&raw_bytes),
+        is_locked,
+        modified_ms,
+    })
+}
+
+#[tauri::command]
+pub async fn file_signature(
+    state: State<'_, Arc<AppState>>,
+    path: String,
+    allow_classified: Option<bool>,
+) -> AppResult<FileSignatureResult> {
+    validate_file_read_path(&path, allow_classified.unwrap_or(false))?;
+    let state = state.inner().clone();
+    tokio::task::spawn_blocking(move || {
+        file_signature_inner(&state, &path, allow_classified.unwrap_or(false))
+    })
+    .await
+    .map_err(|e| AppError::msg(format!("task join: {e}")))?
+}
+
+#[tauri::command]
+pub fn document_open_begin(state: State<'_, Arc<AppState>>) -> AppResult<DocumentOpenScopeResult> {
+    Ok(DocumentOpenScopeResult {
+        token: state.begin_document_open(),
+    })
+}
+
+#[tauri::command]
+pub fn document_open_end(state: State<'_, Arc<AppState>>, token: String) -> AppResult<()> {
+    state.end_document_open(&token);
+    Ok(())
+}
+
+/// Open a document with a single IPC roundtrip.
+///
+/// Acquires a foreground scope token (so the indexer yields), reads the file
+/// from disk (with classified vault decryption if needed), checks the lock
+/// status, and returns everything in one response. The caller must release the
+/// returned token with `document_open_end` after the first editor frame commits
+/// or the open is cancelled.
+#[tauri::command]
+pub async fn document_open(
+    state: State<'_, Arc<AppState>>,
+    path: String,
+    allow_classified: Option<bool>,
+) -> AppResult<DocumentOpenResult> {
+    validate_file_read_path(&path, allow_classified.unwrap_or(false))?;
+    let token = state.begin_document_open();
+    let vault = state.vault_path()?;
+    let abs = resolve_vault_path(&vault, &path)?;
+    let db = state.inner().db.clone();
+    let path_for_db = path.clone();
+
+    let result = tokio::task::spawn_blocking(move || {
+        let raw_bytes = std::fs::read(&abs)?;
+        let content = decode_file_content(&raw_bytes)?;
+        let is_locked = query_is_locked(&db, &path_for_db)?;
+        Ok(DocumentOpenResult {
+            token,
+            content,
+            is_locked,
+        })
+    })
+    .await
+    .map_err(|e| AppError::msg(format!("task join: {e}")))?;
+    result
 }
 
 #[tauri::command]
@@ -931,27 +1045,53 @@ fn cascade_rewrite_wikilinks_on_disk(
 /// Update all AI session `note_path` and `session_key` references from old to new path.
 fn cascade_rename_sessions(state: &Arc<AppState>, old_path: &str, new_path: &str) -> AppResult<()> {
     state.db.with_conn(|conn| {
-        // Update note_path (direct reference)
-        let updated_note = conn.execute(
-            "UPDATE sessions SET note_path = ?1 WHERE note_path = ?2",
-            rusqlite::params![new_path, old_path],
-        )?;
+        conn.execute_batch("BEGIN IMMEDIATE")?;
+        let result = (|| -> AppResult<(usize, usize, usize)> {
+            let updated_note = conn.execute(
+                "UPDATE sessions SET note_path = ?1 WHERE note_path = ?2",
+                rusqlite::params![new_path, old_path],
+            )?;
 
-        // Update session_key — rebuild it from scene + new note_path
-        // session_key format = "scene:note_path" or "scene:__global__"
-        let updated_key = conn.execute(
-            "UPDATE sessions SET session_key = scene || ':' || ?1
-             WHERE session_key = scene || ':' || ?2",
-            rusqlite::params![new_path, old_path],
-        )?;
+            let updated_key = conn.execute(
+                "UPDATE sessions SET session_key = scene || ':' || ?1
+                 WHERE session_key = scene || ':' || ?2",
+                rusqlite::params![new_path, old_path],
+            )?;
 
-        if updated_note > 0 || updated_key > 0 {
+            let updated_evidence =
+                crate::ai_runtime::session_evidence::update_local_evidence_source_path(
+                    conn, old_path, new_path,
+                )?;
+
+            Ok((updated_note, updated_key, updated_evidence))
+        })();
+
+        let (updated_note, updated_key, updated_evidence) = match result {
+            Ok(updates) => {
+                conn.execute_batch("COMMIT")?;
+                updates
+            }
+            Err(err) => {
+                if let Err(rollback_err) = conn.execute_batch("ROLLBACK") {
+                    tracing::error!(
+                        old = %old_path,
+                        new = %new_path,
+                        rollback_error = %rollback_err,
+                        "cascade_rename: failed to roll back session rename transaction"
+                    );
+                }
+                return Err(err);
+            }
+        };
+
+        if updated_note > 0 || updated_key > 0 || updated_evidence > 0 {
             tracing::info!(
                 old = %old_path,
                 new = %new_path,
                 note_updated = updated_note,
                 key_updated = updated_key,
-                "cascade_rename: updated session references"
+                evidence_updated = updated_evidence,
+                "cascade_rename: updated session and evidence references"
             );
         }
         Ok(())
@@ -1042,6 +1182,7 @@ pub fn vault_set(app: AppHandle, state: State<'_, Arc<AppState>>, path: String) 
 
     // Clear in-memory AI state to prevent data leakage between vaults
     state.clear_ai_state();
+    crate::commands::media::clear_media_leases();
 
     if let Err(e) = state.restart_file_watcher(app.clone()) {
         tracing::warn!("vault_set: file watcher did not start: {e}");
@@ -1297,6 +1438,41 @@ mod file_io_pipeline_tests {
     }
 
     #[test]
+    fn file_signature_inner_reports_hash_size_modified_and_lock_state() {
+        let dir = tempdir().unwrap();
+        let vault = dir.path().join("vault");
+        fs::create_dir_all(vault.join("notes")).unwrap();
+        fs::write(
+            vault.join("notes/sig.md"),
+            b"# Signature
+
+Body",
+        )
+        .unwrap();
+        let state = AppState::new(dir.path().join("data")).unwrap();
+        state.set_vault(vault).unwrap();
+        state
+            .db
+            .with_conn(|conn| {
+                migrate_up(conn)?;
+                conn.execute(
+                    "INSERT INTO files (path, title, content_hash, created_at, updated_at, is_locked)
+                     VALUES ('notes/sig.md', 'Sig', 'old', '2020-01-01', '2020-01-01', 0)",
+                    [],
+                )?;
+                Ok(())
+            })
+            .unwrap();
+        set_file_lock(&state, "notes/sig.md", true).unwrap();
+
+        let signature = file_signature_inner(&state, "notes/sig.md", false).unwrap();
+
+        assert_eq!(signature.byte_length, 17);
+        assert_eq!(signature.content_hash.len(), 64);
+        assert!(signature.modified_ms.is_some());
+        assert!(signature.is_locked);
+    }
+    #[test]
     fn file_read_validation_requires_classified_opt_in() {
         assert!(validate_file_read_path("notes/a.md", false).is_ok());
 
@@ -1335,6 +1511,62 @@ mod file_io_pipeline_tests {
     fn query_is_locked_defaults_false_when_missing() {
         let db = Database::open_in_memory().unwrap();
         assert!(!query_is_locked(&db, "missing.md").unwrap());
+    }
+
+    #[test]
+    fn cascade_rename_sessions_rolls_back_when_evidence_update_fails() {
+        let dir = tempdir().unwrap();
+        let state = Arc::new(AppState::new(dir.path().join("data")).unwrap());
+
+        state
+            .db
+            .with_conn(|conn| {
+                migrate_up(conn)?;
+                conn.execute(
+                    "INSERT INTO sessions (id, session_key, scene, note_path, created_at, updated_at)
+                     VALUES (42, 'chat:old.md', 'chat', 'old.md', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')",
+                    [],
+                )?;
+                conn.execute(
+                    "INSERT INTO session_evidence
+                     (session_id, citation_index, citation_label, packet_key, message_seq_first,
+                      source_type, title, source_path, created_at)
+                     VALUES (42, 1, '[C1]', 'local:old.md', 1, 'local', 'Old', 'old.md', '2026-01-01T00:00:00Z')",
+                    [],
+                )?;
+                conn.execute_batch(
+                    "CREATE TRIGGER fail_evidence_rename
+                     BEFORE UPDATE OF source_path ON session_evidence
+                     BEGIN
+                       SELECT RAISE(ABORT, 'simulated evidence failure');
+                     END;",
+                )?;
+                Ok(())
+            })
+            .unwrap();
+
+        assert!(cascade_rename_sessions(&state, "old.md", "new.md").is_err());
+
+        state
+            .db
+            .with_read_conn(|conn| {
+                let (note_path, session_key): (String, String) = conn.query_row(
+                    "SELECT note_path, session_key FROM sessions WHERE id = 42",
+                    [],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                )?;
+                let source_path: String = conn.query_row(
+                    "SELECT source_path FROM session_evidence WHERE session_id = 42",
+                    [],
+                    |row| row.get(0),
+                )?;
+
+                assert_eq!(note_path, "old.md");
+                assert_eq!(session_key, "chat:old.md");
+                assert_eq!(source_path, "old.md");
+                Ok(())
+            })
+            .unwrap();
     }
 
     #[test]

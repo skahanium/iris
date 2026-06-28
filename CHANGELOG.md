@@ -6,9 +6,17 @@
 
 ---
 
-## [1.1.0] — Current
+## [1.2.1] — Current
 
-当前基线版本。代码实际建设已远超原 v0.x 规划，合并历史版本后统一切换至 v1.1.0。以下按功能域组织，非严格时间线排序。
+当前基线版本。相比 v1.1.0 的主要变更：
+
+- AI Agent 系统全面修复与加固（10 阶段 remediation）
+- 文档打开运行时（Document Open Runtime）重构：优先级调度、前台抢占、热标签激活
+- 模型与提供商注册表（Model Registry）设计与实现
+- 窗口 Chrome 现代化与启动流程优化
+- 数据库 migration 扩展至 39 个
+
+以下按功能域组织当前完整功能集。
 
 ### 编辑器
 
@@ -163,7 +171,7 @@
 ### 存储与数据库
 
 - SQLite（WAL 模式）+ `.md` 权威数据源
-- 17 个增量 migration（含 up/down 脚本）：
+- 39 个增量 migration（含 up/down 脚本）：
   - `001_core`：files、tags、file_tags、links、chunks、chunk_embeddings、settings、FTS5
   - `002_vec`：sqlite-vec `vec0` 虚拟表
   - `003_versions` / `006_versions_kind`：版本系统
@@ -176,12 +184,13 @@
   - `015_search_cache`：搜索结果缓存
   - `016_cas_refs`：CAS 对象引用计数
   - `017_rename_cascade`：级联重命名支持
+  - `018`–`039`：后续增量 migration（详见 `src-tauri/migrations/`）
 
 ### 工程质量
 
-- 前端测试 126 文件（Vitest），覆盖 AI 管线、编辑器、命令面板、UI 组件、版本系统等
-- E2E 测试 5 文件（Vitest）：验收、AI 工作流、编辑器上下文操作、统一助手契约
-- Rust 集成测试 4 文件：文件操作、frontmatter、语义召回、vault 监听
+- 前端测试 220+ 文件（Vitest），覆盖 AI 管线、编辑器、命令面板、UI 组件、版本系统等
+- E2E 测试 6 文件（Vitest）：验收、AI 工作流、编辑器上下文操作、统一助手契约
+- Rust 集成测试 19 文件：文件操作、frontmatter、语义召回、vault 监听、agent 权限、CAS 操作等
 - `cargo fmt` / `cargo clippy -D warnings` / `cargo test` Rust CI
 - `npm lint` / `npm format:check` / `npm typecheck` / `npm test` 前端 CI
 - 品牌图标系统（`IrisMark`、`iris-mark-paths`、桌面图标全套）
@@ -192,7 +201,7 @@
 - 旧 `AiPanel` 多入口合并为 `UnifiedAssistantPanel` 单入口自动路由
 - `file_write` 仅持久化 `.md`，不再自动创建版本快照
 
-### Known limitations (v1.1.0)
+### Known limitations (v1.2.1)
 
 - 无 Playwright 全链路 E2E（Vitest 场景测试已有；无限期延后目标 Playwright + 覆盖率 > 80%）
 - 无国际化（仅中文界面；无限期延后目标简中 + 英文）
@@ -215,4 +224,4 @@
 
 ## 历史版本
 
-v0.1.0–v0.5.2 的功能记录已合并入上方的 v1.1.0；对应 Epic 与施工计划不再在工作树中维护，必要时通过 git 历史查阅。
+v0.1.0–v0.5.2 的功能记录已合并入上方的 v1.2.1；对应 Epic 与施工计划不再在工作树中维护，必要时通过 git 历史查阅。

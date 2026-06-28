@@ -1,4 +1,4 @@
-use serde::Serialize;
+use serde::{ser::SerializeStruct, Serialize};
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -23,14 +23,21 @@ impl AppError {
     pub fn msg(s: impl Into<String>) -> Self {
         Self::Message(s.into())
     }
-}
 
-impl Serialize for AppError {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        let sanitized = match self {
+    fn code(&self) -> &'static str {
+        match self {
+            Self::Io(_) => "io",
+            Self::Db(_) => "database",
+            Self::Json(_) => "json",
+            Self::Http(_) => "http",
+            Self::Keyring(_) => "credential",
+            Self::Embed(_) => "embedding",
+            Self::Message(_) => "message",
+        }
+    }
+
+    fn sanitized_message(&self) -> String {
+        match self {
             Self::Io(_) => "IO error".to_string(),
             Self::Db(_) => "Database error".to_string(),
             Self::Json(_) => "JSON error".to_string(),
@@ -38,8 +45,19 @@ impl Serialize for AppError {
             Self::Keyring(_) => credential_access_message().to_string(),
             Self::Embed(_) => "Embedding error".to_string(),
             Self::Message(s) => s.clone(),
-        };
-        serializer.serialize_str(&sanitized)
+        }
+    }
+}
+
+impl Serialize for AppError {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        let mut state = serializer.serialize_struct("AppError", 2)?;
+        state.serialize_field("code", self.code())?;
+        state.serialize_field("message", &self.sanitized_message())?;
+        state.end()
     }
 }
 
@@ -108,6 +126,17 @@ mod tests {
         let json = serde_json::to_string(&err).unwrap();
         assert!(json.contains("Database error"));
         assert!(!json.contains("bad"));
+    }
+
+    #[test]
+    fn structured_error_payload_includes_stable_code() {
+        let db_err = rusqlite::Error::InvalidParameterName("bad".into());
+        let err = AppError::Db(db_err);
+        let value = serde_json::to_value(&err).unwrap();
+
+        assert_eq!(value["code"], "database");
+        assert_eq!(value["message"], "Database error");
+        assert!(!value.to_string().contains("bad"));
     }
 
     #[test]

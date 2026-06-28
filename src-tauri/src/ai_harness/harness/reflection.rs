@@ -10,7 +10,7 @@ use super::util::accumulate_usage;
 use crate::ai_runtime::evidence_ledger::EvidenceLedger;
 use crate::ai_runtime::harness_support::extract_thinking_blocks;
 use crate::ai_runtime::model_gateway::{
-    GatewayRequest, LlmMessage, MessageRole, ModelGateway, TokenUsage, ToolCall,
+    emit_stream_reset, GatewayRequest, LlmMessage, MessageRole, ModelGateway, TokenUsage, ToolCall,
 };
 use crate::ai_runtime::tool_fallback::strip_tool_markup_from_visible;
 use crate::app::AppState;
@@ -71,11 +71,14 @@ pub(crate) async fn run_reflection_round(
         tools: vec![],
         max_tokens,
         temperature: Some(0.5),
-        stream: false,
+        stream: true,
         thinking,
         skip_stub_ids: vec![],
     };
-    if let Ok(reflect_resp) = gateway.send_request(reflect_request).await {
+    if let Ok(reflect_resp) = gateway
+        .send_streaming_request(&input.request_id, reflect_request)
+        .await
+    {
         if usage_is_empty(&reflect_resp.usage) {
             let content = reflect_resp.content.as_deref().unwrap_or("");
             estimate_and_accumulate(total_usage, messages, content);
@@ -104,6 +107,10 @@ pub(crate) async fn run_reflection_round(
                     ..Default::default()
                 });
                 *max_rounds = (harness_rounds + 1).min(input.task_policy.max_agentic_rounds);
+                // Non-terminal: reflection returned the NEED_MORE_EVIDENCE
+                // sentinel. The streamed sentinel must not reach the answer
+                // surface; clear it before the bonus round re-streams.
+                emit_stream_reset(app_handle, &input.request_id)?;
                 return Ok(ReflectionOutcome::BonusRound);
             }
             let stripped = strip_tool_markup_from_visible(&text);
@@ -137,6 +144,9 @@ pub(crate) async fn run_reflection_round(
             }
         }
     }
+    // Non-terminal: reflection produced no usable answer. Any streamed content
+    // was inconclusive; clear it before the caller falls through to FinalStream.
+    emit_stream_reset(app_handle, &input.request_id)?;
     Ok(ReflectionOutcome::NoAnswer)
 }
 

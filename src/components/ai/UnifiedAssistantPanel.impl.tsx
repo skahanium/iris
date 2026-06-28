@@ -1,12 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { AssistantPanelHeader } from "@/components/ai/AssistantPanelHeader";
-import { AssistantProcessStatusBar } from "@/components/ai/AssistantProcessStatusBar";
-import { AiComposer } from "@/components/ui/ai-composer";
 import { usePromptProfile } from "@/hooks/usePromptProfile";
 import { useAssistantLlmStream } from "@/hooks/useAssistantLlmStream";
+import { useAiDomainRuntime } from "@/hooks/useAiDomainRuntime";
+import { useDocSummaryStream } from "@/hooks/useDocSummaryStream";
 import { harnessAbort } from "@/lib/ipc";
-import { createContextReference } from "@/lib/context-reference";
 import { legacySceneHintForTaskPlanIntent } from "@/lib/assistant-scene";
 import type {
   AssistantActionState,
@@ -14,12 +13,10 @@ import type {
   ContextStatus,
   TaskPlanIntent,
 } from "@/types/ai";
-
 import { buildActionState } from "./unified-assistant-panel-utils";
-import { AiMentionPopover } from "./AiMentionPopover";
-import { AiComposerContextMenu } from "./AiComposerContextMenu";
+import { AssistantComposerDock } from "./AssistantComposerDock";
 import { ConversationSurface } from "./ConversationSurface";
-import { AiSelectionActionBar } from "./AiSelectionActionBar";
+import { SelectedMessagesActionDock } from "./SelectedMessagesActionDock";
 import { useCitationClick } from "./hooks/useCitationClick";
 import { ContextPacketDrawer } from "./ContextPacketDrawer";
 import { useAiBubbleSelection } from "@/hooks/useAiBubbleSelection";
@@ -36,13 +33,15 @@ import { useResearchControl } from "./hooks/useResearchControl";
 import { ContextScopeChips } from "./ContextScopeChips";
 import { AssistantTaskSurfaces } from "./AssistantTaskSurfaces";
 import { AgentTaskStatusPanel } from "./AgentTaskStatusPanel";
-import { RuleConfirmDialog } from "./RuleConfirmDialog";
-import { ToolConfirmDialog } from "./ToolConfirmDialog";
+import { AssistantConfirmDialogs } from "./AssistantConfirmDialogs";
 import { useAssistantRunPlan } from "./hooks/useAssistantRunPlan";
+import { useSelectionQuoteReference } from "./hooks/useSelectionQuoteReference";
 import { AssistantErrorRecovery } from "./AssistantErrorRecovery";
 import type { UnifiedAssistantPanelProps } from "./types";
 
 export function UnifiedAssistantPanel({
+  aiDomain = "normal",
+  classifiedPath = null,
   notePath,
   getNoteContent,
   webSearch = false,
@@ -52,6 +51,8 @@ export function UnifiedAssistantPanel({
   onVaultRefresh,
   onInsertToEditor,
   onOpenArtifact,
+  onOpenEvidenceSource,
+  onSessionDeleted,
   selectionQuote,
   prefillMessage,
   onChromeChange,
@@ -61,7 +62,6 @@ export function UnifiedAssistantPanel({
   );
   const [currentTaskPlanIntent, setCurrentTaskPlanIntent] =
     useState<TaskPlanIntent | null>(null);
-  const [input, setInput] = useState("");
   const [streaming, setStreaming] = useState(false);
   const bubbleSelection = useAiBubbleSelection();
   const [packets, setPackets] = useState<ContextPacket[]>([]);
@@ -80,18 +80,28 @@ export function UnifiedAssistantPanel({
   const assistantRun = useAssistantRun("chat");
   const clearResearchProgressRef = useRef<(() => void) | null>(null);
   const panelSendActiveRef = useRef(false);
+  const docStreamActiveRef = useRef(false);
   const forceNewSessionRef = useRef(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const messageListRef = useRef<HTMLDivElement>(null);
   const { profile: promptProfile } = usePromptProfile();
-
+  const aiRuntime = useAiDomainRuntime({
+    domainState: {
+      domain: aiDomain,
+      normalActivePath: aiDomain === "normal" ? notePath : null,
+      classifiedActivePath: aiDomain === "classified" ? classifiedPath : null,
+      classifiedUnlocked: aiDomain === "classified",
+    },
+  });
+  const input = aiRuntime.activeDraft;
+  const setInput = aiRuntime.setActiveDraft;
   const { handleCitationClick, citationMiss, clearCitationMiss } =
     useCitationClick(packets, () => setPacketsOpen(true), setSelectedPacketIds);
-
   const {
     assistantArtifacts,
     citationResult,
     clearTaskSurfaces: clearArtifactSurfaces,
+    handleAcceptPatch,
     docIssues,
     docSummary,
     lastError,
@@ -127,6 +137,7 @@ export function UnifiedAssistantPanel({
   const {
     appendAssistantSummary,
     appendUserMessage,
+    classifiedThreadId,
     ensureAssistantStreamSlot,
     handleCopySelected,
     handleExportSelected,
@@ -136,6 +147,7 @@ export function UnifiedAssistantPanel({
     handleQuoteToInput,
     handleRetract,
     messages,
+    saveClassifiedThread,
     sessionId,
     sessionTokenUsage,
     setMessages,
@@ -143,10 +155,12 @@ export function UnifiedAssistantPanel({
     setSessionTokenUsage,
   } = useAssistantConversation({
     actionIntent: actionState.intent,
+    aiDomain,
     bubbleSelection,
     clearCitationMiss,
     clearContextReferences: bubbleSelection.clearContextReferences,
     clearTaskSurfaces,
+    documentPath: classifiedPath ?? undefined,
     forceNewSessionRef,
     onInsertToEditor,
     requestIdRef,
@@ -162,6 +176,9 @@ export function UnifiedAssistantPanel({
     streaming,
   });
 
+  useEffect(() => {
+    bubbleSelection.pruneSelected(messages.length);
+  }, [bubbleSelection, messages.length]);
   const {
     contextScope,
     handleComposerKeyDown,
@@ -214,6 +231,7 @@ export function UnifiedAssistantPanel({
   });
 
   useAssistantLlmStream({
+    domain: aiDomain,
     panelSendActiveRef,
     requestIdRef,
     streamBufRef: streamBuf,
@@ -221,19 +239,16 @@ export function UnifiedAssistantPanel({
     setStreaming,
   });
 
-  useEffect(() => {
-    if (!selectionQuote?.text) return;
-    bubbleSelection.quoteSelectionAsReference(
-      createContextReference({
-        kind: "selection",
-        filePath: selectionQuote.filePath,
-        content: selectionQuote.content ?? selectionQuote.text,
-        excerpt: selectionQuote.text,
-        utf8Range: null,
-        editorRange: selectionQuote.editorRange ?? null,
-      }),
-    );
-  }, [bubbleSelection, selectionQuote]);
+  useDocSummaryStream({
+    docStreamActiveRef,
+    requestIdRef,
+    setDocSummary,
+  });
+
+  useSelectionQuoteReference({
+    quoteSelectionAsReference: bubbleSelection.quoteSelectionAsReference,
+    selectionQuote,
+  });
 
   const handleHarnessResume = useAssistantHarnessResume({
     ensureAssistantStreamSlot,
@@ -289,8 +304,11 @@ export function UnifiedAssistantPanel({
       clearContextReferences: bubbleSelection.clearContextReferences,
       ensureAssistantStreamSlot,
       runPlanControls: runPlan,
+      saveConversationSnapshot:
+        aiDomain === "classified" ? saveClassifiedThread : undefined,
     },
     context: {
+      aiDomain,
       composerDisabled,
       contextScope,
       getNoteContent,
@@ -302,9 +320,11 @@ export function UnifiedAssistantPanel({
       packets,
       selectedPacketIds,
       contextReferences: bubbleSelection.contextReferences,
+      acceptWritingPatch: handleAcceptPatch,
       selectionQuoteText: selectionQuote?.text,
       sessionId,
       webSearch,
+      writingPatches,
     },
     refs: {
       forceNewSessionRef,
@@ -312,6 +332,7 @@ export function UnifiedAssistantPanel({
       requestIdRef,
       researchRequestIdRef,
       streamBufRef: streamBuf,
+      docStreamActiveRef,
     },
     state: {
       setActionState,
@@ -352,9 +373,9 @@ export function UnifiedAssistantPanel({
   }, [handleNewChat]);
 
   const loadSessionAndResetTaskPlan = useCallback(
-    (id: number, nextMessages: Parameters<typeof handleLoadSession>[1]) => {
+    (...args: Parameters<typeof handleLoadSession>) => {
       setCurrentTaskPlanIntent(null);
-      handleLoadSession(id, nextMessages);
+      handleLoadSession(...args);
     },
     [handleLoadSession],
   );
@@ -375,18 +396,21 @@ export function UnifiedAssistantPanel({
     );
   }, []);
   const currentScene = legacySceneHintForTaskPlanIntent(currentTaskPlanIntent);
+  const currentConversationId =
+    aiDomain === "classified" ? classifiedThreadId : sessionId;
 
   return (
     <div
       className="ai-sidecar flex h-full flex-col bg-ai-workspace"
+      data-ai-domain={aiDomain}
       data-testid="unified-assistant-panel"
     >
       <AssistantPanelHeader
         chromeActionsDisabled={streaming}
-        currentSessionId={sessionId}
+        currentSessionId={currentConversationId}
+        domain={aiDomain}
         scene={currentScene}
-        notePath={notePath}
-        onClearedAllSessions={resetAssistantSessionState}
+        onDeletedSession={onSessionDeleted}
         onDeletedCurrentSession={resetAssistantSessionState}
         onNewChat={resetAssistantSessionState}
         onSelectSession={loadSessionAndResetTaskPlan}
@@ -402,8 +426,11 @@ export function UnifiedAssistantPanel({
         packets={packets}
         selectedIds={selectedPacketIds}
         onSelect={togglePacketSelection}
+        onOpenSource={onOpenEvidenceSource}
         contextStatus={contextStatusData}
         citationMiss={citationMiss}
+        sessionId={sessionId}
+        onOpenArtifact={(draft) => onOpenArtifact?.(draft)}
       />
 
       <AssistantErrorRecovery
@@ -426,7 +453,6 @@ export function UnifiedAssistantPanel({
         writingState={writingState}
         onOpenArtifact={(draft) => onOpenArtifact?.(draft)}
       />
-
       <ConversationSurface
         messages={messages}
         contextReferences={bubbleSelection.contextReferences}
@@ -439,7 +465,6 @@ export function UnifiedAssistantPanel({
         onQuoteToInput={handleQuoteToInput}
         onRemoveContextReference={bubbleSelection.removeContextReference}
       />
-
       <AgentTaskStatusPanel
         task={agentTaskStatus.agentTask}
         steps={agentTaskStatus.agentTaskSteps}
@@ -453,77 +478,55 @@ export function UnifiedAssistantPanel({
         runPlanSummary={runPlan.runPlanSummary}
       />
 
-      {bubbleSelection.selected.size > 0 ? (
-        <div className="flex justify-center px-3 py-1.5">
-          <AiSelectionActionBar
-            count={bubbleSelection.selected.size}
-            onInsert={onInsertToEditor ? handleInsertToEditor : undefined}
-            onCopy={handleCopySelected}
-            onExport={handleExportSelected}
-            onClear={bubbleSelection.clear}
-          />
-        </div>
-      ) : null}
+      <SelectedMessagesActionDock
+        count={bubbleSelection.selected.size}
+        onClear={bubbleSelection.clear}
+        onCopy={handleCopySelected}
+        onExport={handleExportSelected}
+        onInsert={onInsertToEditor ? handleInsertToEditor : undefined}
+      />
 
       <ContextScopeChips tokens={mentionTokens} onRemove={removeMentionToken} />
 
-      <div data-testid="ai-input">
-        <AssistantProcessStatusBar
-          activityHint={activityHint}
-          agentTask={agentTaskStatus.agentTask}
-          hasError={Boolean(lastError)}
-          researchProgress={researchProgress}
-          researchRunning={researchRunning}
-          streaming={streaming}
-          onAbort={() => {
-            if (researchRunning) void abortResearch();
-            else if (streaming) stopStreaming();
-            else void agentTaskStatus.abortAgentTask();
-          }}
-        />
-        <AiComposerContextMenu
-          textareaRef={textareaRef}
-          value={input}
-          onValueChange={setInput}
-        >
-          <AiComposer
-            value={input}
-            streaming={streaming}
-            disabled={composerDisabled}
-            placeholder="输入问题，或直接说明你想查、想改、想检、想整理什么"
-            textareaRef={textareaRef}
-            onComposerKeyDown={handleComposerKeyDown}
-            onSelect={syncMentionFromInput}
-            onChange={setInput}
-            onSubmit={() => void send()}
-            onStop={stopStreaming}
-            images={images}
-            onImagesChange={setImages}
-            mentionPopover={
-              <AiMentionPopover
-                open={mentionOpen}
-                query={mentionQuery}
-                candidates={mentionCandidates}
-                highlight={mentionHighlight}
-                onHighlight={setMentionHighlight}
-                navDeltaRef={mentionNavDeltaRef}
-                onSelect={selectMention}
-              />
-            }
-          />
-        </AiComposerContextMenu>
-      </div>
-
-      <ToolConfirmDialog
-        request={toolConfirmRequest}
-        onConfirm={handleToolConfirm}
-        onClose={dismissToolConfirm}
+      <AssistantComposerDock
+        activityHint={activityHint}
+        agentTask={agentTaskStatus.agentTask}
+        composerDisabled={composerDisabled}
+        hasError={Boolean(lastError)}
+        images={images}
+        input={input}
+        mentionCandidates={mentionCandidates}
+        mentionHighlight={mentionHighlight}
+        mentionNavDeltaRef={mentionNavDeltaRef}
+        mentionOpen={mentionOpen}
+        mentionQuery={mentionQuery}
+        researchProgress={researchProgress}
+        researchRunning={researchRunning}
+        streaming={streaming}
+        textareaRef={textareaRef}
+        onAbort={() => {
+          if (researchRunning) void abortResearch();
+          else if (streaming) stopStreaming();
+          else void agentTaskStatus.abortAgentTask();
+        }}
+        onComposerKeyDown={handleComposerKeyDown}
+        onImagesChange={setImages}
+        onMentionHighlight={setMentionHighlight}
+        onMentionSelect={selectMention}
+        onSelect={syncMentionFromInput}
+        onStop={stopStreaming}
+        onSubmit={() => void send()}
+        onValueChange={setInput}
       />
-      <RuleConfirmDialog
-        request={ruleConfirmRequest}
-        onConfirm={handleRuleConfirm}
-        onReject={closeRuleConfirm}
-        onClose={closeRuleConfirm}
+
+      <AssistantConfirmDialogs
+        ruleConfirmRequest={ruleConfirmRequest}
+        toolConfirmRequest={toolConfirmRequest}
+        onRuleClose={closeRuleConfirm}
+        onRuleConfirm={handleRuleConfirm}
+        onRuleReject={closeRuleConfirm}
+        onToolClose={dismissToolConfirm}
+        onToolConfirm={handleToolConfirm}
       />
     </div>
   );

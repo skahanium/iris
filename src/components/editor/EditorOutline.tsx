@@ -1,11 +1,11 @@
 import type { Editor } from "@tiptap/react";
 import { TextSelection } from "@tiptap/pm/state";
-import { useVirtualizer } from "@tanstack/react-virtual";
 import { Link2, ListTree } from "lucide-react";
 import {
   memo,
   useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState,
   type CSSProperties,
@@ -20,18 +20,15 @@ import { fileLinkSummary } from "@/lib/ipc";
 import { cn } from "@/lib/utils";
 import type { FileLinkPreview, FileLinkSummary } from "@/types/ipc";
 
-const LEVEL_STYLES: Record<number, { fontSize: string; indent: string }> = {
+const LEVEL_STYLES: Record<number, { indent: string }> = {
   1: {
-    fontSize: "0.95rem",
     indent: "0rem",
   },
   2: {
-    fontSize: "0.82rem",
-    indent: "1.35rem",
+    indent: "1.45rem",
   },
   3: {
-    fontSize: "0.72rem",
-    indent: "2.5rem",
+    indent: "2.55rem",
   },
 };
 
@@ -41,26 +38,28 @@ interface EditorOutlineProps {
   onOpenChange: (open: boolean) => void;
   notePath?: string | null;
   onOpenNote?: (path: string) => void;
+  onPrepareNote?: (path: string, titleHint?: string) => void;
   locked?: boolean;
   zen?: boolean;
 }
 
 const OUTLINE_REFRESH_DEBOUNCE_MS = 300;
-const VIRTUAL_OUTLINE_THRESHOLD = 50;
-const OUTLINE_ROW_HEIGHT = 56;
 
 interface OutlineLinkSummaryProps {
   summary: FileLinkSummary | null;
   unavailable: boolean;
   onOpenNote?: (path: string) => void;
+  onPrepareNote?: (path: string, titleHint?: string) => void;
 }
 
 function OutlineLinkItems({
   items,
   onOpenNote,
+  onPrepareNote,
 }: {
   items: FileLinkPreview[];
   onOpenNote?: (path: string) => void;
+  onPrepareNote?: (path: string, titleHint?: string) => void;
 }) {
   if (items.length === 0) {
     return <span className="outline-link-summary-empty">暂无链接</span>;
@@ -75,6 +74,8 @@ function OutlineLinkItems({
           data-testid="outline-link-summary-item"
           className="outline-link-summary-item"
           title={item.context ?? item.path}
+          onMouseEnter={() => onPrepareNote?.(item.path, item.title)}
+          onFocus={() => onPrepareNote?.(item.path, item.title)}
           onClick={() => onOpenNote?.(item.path)}
           onKeyDown={(event) => {
             event.stopPropagation();
@@ -91,6 +92,7 @@ function OutlineLinkSummary({
   summary,
   unavailable,
   onOpenNote,
+  onPrepareNote,
 }: OutlineLinkSummaryProps) {
   if (unavailable) {
     return (
@@ -130,13 +132,18 @@ function OutlineLinkSummary({
         <div className="outline-link-summary-groups">
           <div className="outline-link-summary-group">
             <span className="outline-link-summary-label">指向此文档</span>
-            <OutlineLinkItems items={summary.inbound} onOpenNote={onOpenNote} />
+            <OutlineLinkItems
+              items={summary.inbound}
+              onOpenNote={onOpenNote}
+              onPrepareNote={onPrepareNote}
+            />
           </div>
           <div className="outline-link-summary-group">
             <span className="outline-link-summary-label">本文指向</span>
             <OutlineLinkItems
               items={summary.outbound}
               onOpenNote={onOpenNote}
+              onPrepareNote={onPrepareNote}
             />
           </div>
         </div>
@@ -153,6 +160,7 @@ export const EditorOutline = memo(function EditorOutline({
   onOpenChange,
   notePath = null,
   onOpenNote,
+  onPrepareNote,
   locked = false,
   zen = false,
 }: EditorOutlineProps) {
@@ -167,15 +175,17 @@ export const EditorOutline = memo(function EditorOutline({
   const listRef = useRef<HTMLDivElement | null>(null);
   const itemRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const barRef = useRef<HTMLDivElement | null>(null);
-  const shouldVirtualize = entries.length >= VIRTUAL_OUTLINE_THRESHOLD;
-
-  const rowVirtualizer = useVirtualizer({
-    count: entries.length,
-    getScrollElement: () => listRef.current,
-    estimateSize: () => OUTLINE_ROW_HEIGHT,
-    overscan: 8,
-    enabled: shouldVirtualize,
-  });
+  const relativeLevelByHeadingLevel = useMemo(() => {
+    const levels = Array.from(
+      new Set(entries.map((entry) => entry.level)),
+    ).sort((a, b) => a - b);
+    return new Map(
+      levels.map((level, index) => [
+        level,
+        Math.min(index + 1, 3) as 1 | 2 | 3,
+      ]),
+    );
+  }, [entries]);
 
   useEffect(() => {
     if (!editor || !open) return;
@@ -246,12 +256,8 @@ export const EditorOutline = memo(function EditorOutline({
 
   useEffect(() => {
     if (!open || activeIndex < 0) return;
-    if (shouldVirtualize) {
-      rowVirtualizer.scrollToIndex(activeIndex, { align: "auto" });
-      return;
-    }
     itemRefs.current[activeIndex]?.scrollIntoView({ block: "nearest" });
-  }, [activeIndex, open, rowVirtualizer, shouldVirtualize]);
+  }, [activeIndex, open]);
 
   // Sliding indicator bar position
   useEffect(() => {
@@ -272,21 +278,6 @@ export const EditorOutline = memo(function EditorOutline({
     const listEl = listRef.current;
     if (!listEl) return;
 
-    // For virtualized lists, use the virtualizer's offset
-    if (shouldVirtualize) {
-      const virtualItem = rowVirtualizer
-        .getVirtualItems()
-        .find((vi) => vi.index === activeIndex);
-      if (virtualItem) {
-        bar.style.opacity = "1";
-        bar.style.transform = `translateY(${virtualItem.start}px)`;
-        bar.style.height = `${virtualItem.size}px`;
-      } else {
-        bar.style.opacity = "0";
-      }
-      return;
-    }
-
     const listRect = listEl.getBoundingClientRect();
     const targetRect = target.getBoundingClientRect();
     const top = targetRect.top - listRect.top + listEl.scrollTop;
@@ -295,7 +286,7 @@ export const EditorOutline = memo(function EditorOutline({
     bar.style.opacity = "1";
     bar.style.transform = `translateY(${top}px)`;
     bar.style.height = `${height}px`;
-  }, [activeIndex, entries.length, rowVirtualizer, shouldVirtualize]);
+  }, [activeIndex, entries.length]);
 
   const jumpTo = useCallback(
     (pos: number) => {
@@ -331,20 +322,9 @@ export const EditorOutline = memo(function EditorOutline({
       );
       setFocusIndex(next);
       setHoverIndex(null);
-      if (shouldVirtualize) {
-        rowVirtualizer.scrollToIndex(next, { align: "auto" });
-      } else {
-        itemRefs.current[next]?.scrollIntoView({ block: "nearest" });
-      }
+      itemRefs.current[next]?.scrollIntoView({ block: "nearest" });
     },
-    [
-      activeIndex,
-      entries.length,
-      focusIndex,
-      hoverIndex,
-      rowVirtualizer,
-      shouldVirtualize,
-    ],
+    [activeIndex, entries.length, focusIndex, hoverIndex],
   );
 
   const handleKeyDown = useCallback(
@@ -384,11 +364,11 @@ export const EditorOutline = memo(function EditorOutline({
     const focused = index === focusIndex;
     const hovered = index === hoverIndex;
     const activeDistance = activeIndex >= 0 ? Math.abs(index - activeIndex) : 0;
-    const lvl = LEVEL_STYLES[entry.level]!;
+    const relativeLevel = relativeLevelByHeadingLevel.get(entry.level) ?? 1;
+    const lvl = LEVEL_STYLES[relativeLevel]!;
     const itemStyle: CSSProperties = {
-      "--outline-level-size": lvl.fontSize,
       "--outline-text-indent": lvl.indent,
-      paddingLeft: `calc(${lvl.indent} + 0.5rem)`,
+      paddingLeft: `calc(${lvl.indent} + var(--editor-outline-text-offset))`,
     } as CSSProperties;
     return (
       <button
@@ -399,9 +379,10 @@ export const EditorOutline = memo(function EditorOutline({
         type="button"
         data-testid="outline-ghost-item"
         className={cn(
-          "outline-ghost-item flex w-full items-center text-left",
+          "outline-ghost-item flex w-full items-center text-left text-[0.9375rem] font-normal leading-[1.45rem] text-muted-foreground",
           `outline-ghost-item--level-${entry.level}`,
-          active && "outline-ghost-item--active",
+          active &&
+            "outline-ghost-item--active text-[hsl(var(--outline-rail-active))]",
           !active && activeDistance === 1 && "outline-ghost-item--near-1",
           !active && activeDistance === 2 && "outline-ghost-item--near-2",
           focused && "outline-ghost-item--focused",
@@ -423,10 +404,7 @@ export const EditorOutline = memo(function EditorOutline({
           setHoverIndex(null);
         }}
       >
-        <span
-          className="outline-ghost-text block min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap text-left"
-          title={entry.text}
-        >
+        <span className="outline-ghost-text block min-w-0 flex-1 overflow-hidden text-ellipsis text-left">
           {entry.text}
         </span>
       </button>
@@ -450,8 +428,6 @@ export const EditorOutline = memo(function EditorOutline({
       </button>
     );
   }
-
-  const virtualItems = shouldVirtualize ? rowVirtualizer.getVirtualItems() : [];
 
   return (
     <nav
@@ -478,30 +454,6 @@ export const EditorOutline = memo(function EditorOutline({
         <div ref={barRef} className="outline-ghost-bar" aria-hidden />
         {entries.length === 0 ? (
           <span className="outline-ghost-empty">暂无章节</span>
-        ) : shouldVirtualize ? (
-          <div
-            className="outline-ghost-virtual"
-            style={{ height: `${rowVirtualizer.getTotalSize()}px` }}
-          >
-            {virtualItems.map((virtualItem) => {
-              const entry = entries[virtualItem.index];
-              if (!entry) return null;
-              return (
-                <div
-                  key={virtualItem.key}
-                  className="outline-ghost-virtual-row"
-                  style={
-                    {
-                      height: `${virtualItem.size}px`,
-                      transform: `translateY(${virtualItem.start}px)`,
-                    } as CSSProperties
-                  }
-                >
-                  {renderItem(entry, virtualItem.index)}
-                </div>
-              );
-            })}
-          </div>
         ) : (
           entries.map((entry, index) => renderItem(entry, index))
         )}
@@ -510,6 +462,7 @@ export const EditorOutline = memo(function EditorOutline({
         summary={linkSummary}
         unavailable={linkSummaryUnavailable}
         onOpenNote={onOpenNote}
+        onPrepareNote={onPrepareNote}
       />
     </nav>
   );

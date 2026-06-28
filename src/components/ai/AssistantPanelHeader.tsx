@@ -4,20 +4,29 @@ import { AgentStatusBadge } from "@/components/ai/AgentStatusBadge";
 import { AssistantPersonaDisplay } from "@/components/ai/AssistantPersonaDisplay";
 import { Button } from "@/components/ui/button";
 import type { PromptProfileDto } from "@/lib/ipc";
-import type { AiScene, AssistantTaskStatus, TaskPlanIntent } from "@/types/ai";
+import type {
+  AiDomain,
+  AiScene,
+  AssistantTaskStatus,
+  TaskPlanIntent,
+} from "@/types/ai";
 
 import type { ChatLine } from "./AiMessageList";
 import { SessionHistoryDropdown } from "./SessionHistoryDropdown";
 
 interface AssistantPanelHeaderProps {
   chromeActionsDisabled: boolean;
-  currentSessionId: number | null;
+  currentSessionId: number | string | null;
+  domain?: AiDomain;
   scene: AiScene;
-  notePath: string | null;
   onDeletedCurrentSession: () => void;
-  onClearedAllSessions: () => void;
+  onDeletedSession?: (sessionId: number | string) => void;
   onNewChat: () => void;
-  onSelectSession: (id: number, messages: ChatLine[]) => void;
+  onSelectSession: (
+    id: number | string,
+    messages: ChatLine[],
+    ledgerPackets?: ChatLine["evidencePackets"],
+  ) => void;
   profile: PromptProfileDto;
   taskPlanIntent?: TaskPlanIntent | null;
   taskStatus: AssistantTaskStatus;
@@ -27,10 +36,10 @@ interface AssistantPanelHeaderProps {
 export function AssistantPanelHeader({
   chromeActionsDisabled,
   currentSessionId,
+  domain = "normal",
   scene,
-  notePath,
   onDeletedCurrentSession,
-  onClearedAllSessions,
+  onDeletedSession,
   onNewChat,
   onSelectSession,
   profile,
@@ -53,17 +62,16 @@ export function AssistantPanelHeader({
             disabled={chromeActionsDisabled}
           />
           <SessionHistoryDropdown
-            scene={scene}
-            notePath={notePath}
             currentSessionId={currentSessionId}
             disabled={chromeActionsDisabled}
+            domain={domain}
             onSelectSession={onSelectSession}
             onDeleted={(id) => {
+              onDeletedSession?.(id);
               if (currentSessionId === id) {
                 onDeletedCurrentSession();
               }
             }}
-            onClearedAll={onClearedAllSessions}
           />
           <Button
             type="button"

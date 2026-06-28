@@ -1,4 +1,4 @@
-import { readdirSync, readFileSync } from "node:fs";
+﻿import { readdirSync, readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 function read(path: string): string {
@@ -20,6 +20,15 @@ function testSourceFiles(root: string): string[] {
 
   return files;
 }
+
+const checkedUserFacingFiles = [
+  "src/components/ai/AgentStatusBadge.tsx",
+  "src/components/ai/SkillsPanel.tsx",
+  "src/components/ai/hooks/useResearchControl.ts",
+  "src/hooks/useInlineAi.ts",
+  "src/lib/ipc.ts",
+  "src/types/ipc.ts",
+];
 
 describe("repository text hygiene", () => {
   it("pins repository text files to LF line endings", () => {
@@ -43,6 +52,16 @@ describe("repository text hygiene", () => {
     const staleLabel = "[TDD" + "-FAIL]";
     const offenders = testSourceFiles("tests").filter((path) =>
       read(path).includes(staleLabel),
+    );
+
+    expect(offenders).toEqual([]);
+  });
+
+  it("does not expose mojibake in AI-facing UI and IPC contract text", () => {
+    const mojibakePattern =
+      /[鈹€鍘熸枃鐮旂┒缁煎悎鍐欎綔寮曠敤鏍告煡杞婚噺瀵硅瘽鐘舵€褰撳墠瀹夎璺緞鏃ф牸闇€纭]/;
+    const offenders = checkedUserFacingFiles.filter((path) =>
+      mojibakePattern.test(read(path)),
     );
 
     expect(offenders).toEqual([]);

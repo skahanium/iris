@@ -35,6 +35,7 @@ function currentTurnLabel(
     case "document_check":
       return "写作候选";
     case "citation_check":
+      return "引用核查";
     case "research":
       return "研究综合";
     case "organize":
@@ -135,13 +136,17 @@ export function AgentStatusBadge({
   }, [open, loadSkills]);
 
   useEffect(() => {
+    let disposed = false;
     let unlisten: (() => void) | undefined;
     void listenSkillsChanged(() => {
+      if (disposed) return;
       void loadSkills();
     }).then((fn) => {
-      unlisten = fn;
+      if (disposed) fn();
+      else unlisten = fn;
     });
     return () => {
+      disposed = true;
       unlisten?.();
     };
   }, [loadSkills]);

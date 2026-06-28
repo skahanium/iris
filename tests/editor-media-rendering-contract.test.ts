@@ -19,5 +19,9 @@ describe("editor media rendering contract", () => {
     expect(css).toContain("background: hsl(var(--background))");
     expect(css).toContain("contain: paint");
     expect(css).toContain("backface-visibility: hidden");
+    expect(css).toContain(
+      "aspect-ratio: var(--iris-media-aspect-ratio, 16 / 9)",
+    );
+    expect(css).toContain("min-height: min(40vh, 22rem)");
   });
 });

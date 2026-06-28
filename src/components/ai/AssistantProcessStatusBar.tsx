@@ -77,30 +77,28 @@ export function AssistantProcessStatusBar({
   researchProgress,
   researchRunning,
   onAbort,
-  streaming = false,
 }: AssistantProcessStatusBarProps) {
   const [longRunning, setLongRunning] = useState(false);
-  const active =
-    isActiveStatus(agentTask) || researchRunning || streaming || hasError;
+  const terminalError = hasError || agentTask?.status === "failed_safe";
+  const active = isActiveStatus(agentTask) || researchRunning || terminalError;
 
   useEffect(() => {
-    if (!active) {
+    if (!active || terminalError) {
       setLongRunning(false);
       return;
     }
     setLongRunning(false);
     const timer = window.setTimeout(() => setLongRunning(true), 8_000);
     return () => window.clearTimeout(timer);
-  }, [active, activityHint, agentTask?.status, researchRunning]);
+  }, [active, activityHint, agentTask?.status, researchRunning, terminalError]);
 
   if (!active) return null;
 
   const mayShowLongRunning =
-    streaming ||
     researchRunning ||
     agentTask?.status === "queued" ||
     agentTask?.status === "running";
-  const label = hasError
+  const label = terminalError
     ? "处理遇到问题"
     : longRunning && mayShowLongRunning
       ? "仍在处理，可继续等待或中止"
@@ -112,7 +110,6 @@ export function AssistantProcessStatusBar({
         );
   const canAbort =
     researchRunning ||
-    streaming ||
     agentTask?.status === "queued" ||
     agentTask?.status === "running" ||
     agentTask?.status === "awaiting_confirmation" ||
@@ -127,7 +124,9 @@ export function AssistantProcessStatusBar({
         role="status"
       >
         <div className="flex min-w-0 items-center gap-2">
-          <Loader2 className="h-3 w-3 shrink-0 animate-spin text-muted-foreground" />
+          {terminalError ? null : (
+            <Loader2 className="h-3 w-3 shrink-0 animate-spin text-muted-foreground" />
+          )}
           <span className="truncate text-muted-foreground">{label}</span>
         </div>
         {canAbort ? (

@@ -2,6 +2,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useEffect } from "react";
 
 import {
+  applyDesktopChromeFullscreenStateToDocument,
   applyDesktopChromeMetricsToDocument,
   type DesktopChromeMetrics,
 } from "@/lib/chrome-metrics";
@@ -10,24 +11,24 @@ import { isMacOSDesktopChrome } from "@/lib/platform-chrome";
 
 const DEBOUNCE_MS = 48;
 
-function setFullscreenDataset(fullscreen: boolean): void {
-  const root = document.documentElement;
-  if (fullscreen) {
-    root.dataset.irisWindowFullscreen = "";
-  } else {
-    delete root.dataset.irisWindowFullscreen;
-  }
-}
-
 async function syncChromeMetrics(): Promise<DesktopChromeMetrics> {
   const metrics = await getDesktopChromeMetrics();
   applyDesktopChromeMetricsToDocument(metrics);
   return metrics;
 }
 
+async function syncFullscreenChromeState(fullscreen: boolean): Promise<void> {
+  if (fullscreen) {
+    applyDesktopChromeFullscreenStateToDocument(true);
+    return;
+  }
+  const metrics = await syncChromeMetrics();
+  applyDesktopChromeFullscreenStateToDocument(false, metrics);
+}
+
 /**
  * macOS：全屏/缩放/聚焦后同步标题栏指标。
- * Iris Rail 使用右侧自定义窗口控件，左侧品牌轨不再为系统交通灯预留空间。
+ * Iris Rail 为系统原生红黄绿预留左侧安全区，不再动态切换窗口装饰。
  */
 export function useMacOSWindowChromeSync(): void {
   useEffect(() => {
@@ -41,10 +42,7 @@ export function useMacOSWindowChromeSync(): void {
       debounce = setTimeout(() => {
         void (async () => {
           const fullscreen = await win.isFullscreen();
-          setFullscreenDataset(fullscreen);
-          if (!fullscreen) {
-            await syncChromeMetrics();
-          }
+          await syncFullscreenChromeState(fullscreen);
         })();
       }, DEBOUNCE_MS);
     };
@@ -52,7 +50,7 @@ export function useMacOSWindowChromeSync(): void {
     void (async () => {
       await syncChromeMetrics();
       const fullscreen = await win.isFullscreen();
-      setFullscreenDataset(fullscreen);
+      await syncFullscreenChromeState(fullscreen);
     })();
 
     const unlistenPromise = Promise.all([

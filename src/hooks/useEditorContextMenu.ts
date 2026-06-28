@@ -1,5 +1,5 @@
 import type { Editor } from "@tiptap/react";
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import type { IrisContextMenuGroup } from "@/components/ui/iris-context-menu";
 import {
@@ -16,17 +16,98 @@ export interface EditorContextMenuState {
   y: number;
 }
 
+export interface EditorContextMenuDomainContext {
+  aiDomain?: "normal" | "classified";
+  classifiedUnlocked?: boolean;
+}
+
 const closed: EditorContextMenuState = { open: false, x: 0, y: 0 };
 
 const SELECTION_CONTEXT_HINT_KEY = "iris.hint.selection-context";
+
+interface EditorSelectionRange {
+  from: number;
+  to: number;
+}
 
 export function useEditorContextMenu(
   editor: Editor | null,
   hasNote: boolean,
   onSelectionHint?: () => void,
   locked = false,
+  domainContext: EditorContextMenuDomainContext = {},
 ) {
   const [menu, setMenu] = useState<EditorContextMenuState>(closed);
+  const lastSelectionRef = useRef<EditorSelectionRange | null>(null);
+  const preserveSelectionUntilRef = useRef(0);
+
+  useEffect(() => {
+    lastSelectionRef.current = null;
+    preserveSelectionUntilRef.current = 0;
+    if (!editor) return;
+
+    const rememberSelection = () => {
+      const { from, to } = editor.state.selection;
+      if (from !== to) {
+        lastSelectionRef.current = { from, to };
+        return;
+      }
+      if (Date.now() > preserveSelectionUntilRef.current) {
+        lastSelectionRef.current = null;
+      }
+    };
+
+    const preserveSelectionOnRightMouseDown = (event: MouseEvent) => {
+      if (event.button !== 2) return;
+      const { from, to } = editor.state.selection;
+      if (from === to) return;
+      lastSelectionRef.current = { from, to };
+      preserveSelectionUntilRef.current = Date.now() + 500;
+    };
+
+    rememberSelection();
+    editor.view.dom.addEventListener(
+      "mousedown",
+      preserveSelectionOnRightMouseDown,
+      true,
+    );
+    editor.on("selectionUpdate", rememberSelection);
+    return () => {
+      editor.view.dom.removeEventListener(
+        "mousedown",
+        preserveSelectionOnRightMouseDown,
+        true,
+      );
+      editor.off("selectionUpdate", rememberSelection);
+    };
+  }, [editor]);
+
+  const restoreSelectionForContextMenu = useCallback(() => {
+    if (!editor) return false;
+    const { from, to } = editor.state.selection;
+    if (from !== to) {
+      lastSelectionRef.current = { from, to };
+      return true;
+    }
+
+    const previous = lastSelectionRef.current;
+    if (!previous) return false;
+    const max = editor.state.doc.content.size;
+    if (
+      previous.from < 0 ||
+      previous.to < 0 ||
+      previous.from > max ||
+      previous.to > max ||
+      previous.from === previous.to
+    ) {
+      lastSelectionRef.current = null;
+      return false;
+    }
+
+    editor.commands.setTextSelection(previous);
+    preserveSelectionUntilRef.current = 0;
+    return true;
+  }, [editor]);
 
   const groups = useMemo((): IrisContextMenuGroup[] => {
     if (!menu.open || !editor) return [];
@@ -36,6 +117,8 @@ export function useEditorContextMenu(
       hasSelection: from !== to,
       streaming: editorHasActiveAiStream(editor),
       isLocked: locked,
+      aiDomain: domainContext.aiDomain,
+      classifiedUnlocked: domainContext.classifiedUnlocked,
     };
     const actions = filterEditorActions(
       "context_menu",
@@ -62,7 +145,14 @@ export function useEditorContextMenu(
         })),
       }),
     );
-  }, [menu.open, editor, hasNote, locked]);
+  }, [
+    menu.open,
+    editor,
+    hasNote,
+    locked,
+    domainContext.aiDomain,
+    domainContext.classifiedUnlocked,
+  ]);
 
   const openAt = useCallback((x: number, y: number) => {
     setMenu({ open: true, x, y });
@@ -78,6 +168,7 @@ export function useEditorContextMenu(
       if (!editor || !hasNote) return;
       event.preventDefault();
       event.stopPropagation();
+      restoreSelectionForContextMenu();
       const { from, to } = editor.state.selection;
       if (
         from !== to &&
@@ -89,7 +180,14 @@ export function useEditorContextMenu(
       }
       openAt(event.clientX, event.clientY);
     },
-    [editor, hasNote, locked, onSelectionHint, openAt],
+    [
+      editor,
+      hasNote,
+      locked,
+      onSelectionHint,
+      openAt,
+      restoreSelectionForContextMenu,
+    ],
   );
 
   return {

@@ -11,13 +11,17 @@ import {
 import { useMemo } from "react";
 
 import { ContextPacketList } from "@/components/ai/ContextPacketCard";
+import { Button } from "@/components/ui/button";
 import { EvidenceChainView } from "@/components/ai/EvidenceChainView";
 import { Badge } from "@/components/ui/badge";
 import {
   countWebPageFetchPackets,
   countWebSearchPackets,
 } from "@/lib/assistant-chrome";
+import { sessionEvidenceDetail } from "@/lib/ipc";
 import { cn } from "@/lib/utils";
+import type { AssistantArtifactDraft } from "@/types/assistant-artifact";
+import type { SessionEvidenceRecord } from "@/types/ipc";
 import type {
   ContextPacket,
   ContextStatus,
@@ -30,10 +34,13 @@ interface ContextPacketDrawerProps {
   packets: ContextPacket[];
   selectedIds: string[];
   onSelect: (id: string) => void;
+  onOpenSource?: (packet: ContextPacket) => void;
   relations?: EvidenceRelation[];
   contextStatus?: ContextStatus | null;
   /** 点击了回复中的引用，但当前列表中无对应证据包 */
   citationMiss?: string | null;
+  sessionId?: number | null;
+  onOpenArtifact?: (draft: AssistantArtifactDraft) => void;
 }
 
 export function ContextPacketDrawer({
@@ -42,9 +49,12 @@ export function ContextPacketDrawer({
   packets,
   selectedIds,
   onSelect,
+  onOpenSource,
   relations,
   contextStatus = null,
   citationMiss = null,
+  sessionId = null,
+  onOpenArtifact,
 }: ContextPacketDrawerProps) {
   const hasEvidenceChain = relations && relations.length > 0;
   const webSearchCount = useMemo(
@@ -95,6 +105,60 @@ export function ContextPacketDrawer({
     }
     return items;
   }, [contextStatus]);
+
+  const evidenceFromPackets = (): SessionEvidenceRecord[] =>
+    packets.map((packet, index) => ({
+      id: index + 1,
+      sessionId: sessionId ?? 0,
+      citationIndex: index + 1,
+      citationLabel: packet.citation_label,
+      packetKey: packet.id,
+      messageSeqFirst: 0,
+      sourceType:
+        packet.source_type === "web" ? ("web" as const) : ("local" as const),
+      title: packet.title,
+      sourcePath: packet.source_path ?? null,
+      sourceSpanStart: packet.source_span?.start ?? null,
+      sourceSpanEnd: packet.source_span?.end ?? null,
+      headingPath: packet.heading_path ?? null,
+      contentHash: packet.content_hash ?? null,
+      retrievalReason: packet.retrieval_reason ?? null,
+      score: packet.score,
+      confidence: packet.trust_level,
+      url:
+        packet.web?.url ??
+        (packet.source_type === "web" ? packet.source_path : null),
+      normalizedUrl: packet.web?.url?.toLowerCase() ?? null,
+      domain: packet.web?.domain ?? null,
+      retrievedAt: packet.web?.fetched_at ?? null,
+      searchBackend: packet.web?.search_backend ?? null,
+      sourceRank: null,
+      failureReason: packet.web?.failure_reason ?? null,
+      retiredAt: null,
+      createdAt: new Date().toISOString(),
+    }));
+
+  const openEvidenceDetail = async () => {
+    if (!onOpenArtifact || packets.length === 0) return;
+    let evidence: SessionEvidenceRecord[] = evidenceFromPackets();
+    if (sessionId != null) {
+      try {
+        evidence = await sessionEvidenceDetail(sessionId);
+      } catch (err) {
+        console.warn("[evidence] failed to load session evidence detail:", err);
+      }
+    }
+    onOpenArtifact({
+      kind: "session_evidence_detail",
+      title: "Evidence Detail",
+      sourceRequestId: sessionId ? String(sessionId) : "current-session",
+      payload: {
+        sessionId: sessionId ?? 0,
+        evidence,
+      },
+      persistent: false,
+    });
+  };
 
   return (
     <div className="shrink-0 border-b border-border/60">
@@ -172,10 +236,23 @@ export function ContextPacketDrawer({
       >
         <div className="overflow-hidden">
           <div className="ai-task-surface mx-3 mb-3 max-h-[220px] overflow-auto px-3 pb-3 pt-3">
+            {packets.length > 0 && onOpenArtifact ? (
+              <div className="mb-2 flex justify-end">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={openEvidenceDetail}
+                >
+                  Detail
+                </Button>
+              </div>
+            ) : null}
             <ContextPacketList
               packets={packets}
               selectedIds={selectedIds}
               onSelect={onSelect}
+              onOpenSource={onOpenSource}
               compact
               emptyHint={
                 citationMiss

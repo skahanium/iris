@@ -7,7 +7,199 @@ function read(path: string): string {
   return readFileSync(path, "utf8");
 }
 
+interface TauriWindowConfig {
+  label?: string;
+  title?: string;
+  width?: number;
+  height?: number;
+  minWidth?: number;
+  minHeight?: number;
+  visible?: boolean;
+  center?: boolean;
+  focus?: boolean;
+  decorations?: boolean;
+  shadow?: boolean;
+  dragDropEnabled?: boolean;
+  transparent?: boolean;
+  titleBarStyle?: string;
+  hiddenTitle?: boolean;
+  trafficLightPosition?: { x: number; y: number };
+}
+
+function readMainWindow(path: string): TauriWindowConfig {
+  const config = JSON.parse(read(path)) as {
+    app?: { windows?: TauriWindowConfig[] };
+  };
+  const main = config.app?.windows?.find((window) => window.label === "main");
+  expect(main, path + " must define a complete main window").toBeTruthy();
+  return main!;
+}
+
+function expectStartupWindowInvariant(
+  path: string,
+  expected: Partial<TauriWindowConfig>,
+) {
+  const main = readMainWindow(path);
+
+  expect(main).toMatchObject({
+    label: "main",
+    title: "Iris",
+    width: 1280,
+    height: 800,
+    minWidth: 800,
+    minHeight: 600,
+    visible: false,
+    center: true,
+    focus: true,
+    dragDropEnabled: false,
+    ...expected,
+  });
+}
+
 describe("runtime configuration contracts", () => {
+  it("keeps startup window invariants in every platform config without relying on array deep-merge", () => {
+    expectStartupWindowInvariant("src-tauri/tauri.conf.json", {
+      decorations: false,
+      shadow: true,
+    });
+    expectStartupWindowInvariant("src-tauri/tauri.windows.conf.json", {
+      transparent: false,
+      decorations: false,
+      shadow: true,
+    });
+    expectStartupWindowInvariant("src-tauri/tauri.macos.conf.json", {
+      transparent: false,
+      decorations: true,
+      shadow: true,
+      titleBarStyle: "Overlay",
+      hiddenTitle: true,
+      trafficLightPosition: { x: 14, y: 24 },
+    });
+    expectStartupWindowInvariant("src-tauri/tauri.linux.conf.json", {
+      transparent: true,
+      decorations: false,
+      shadow: true,
+    });
+  });
+
+  it("keeps the main window hidden until the React startup splash reveals it", () => {
+    const tauriConfig = JSON.parse(read("src-tauri/tauri.conf.json")) as {
+      app?: { windows?: Array<{ label?: string; visible?: boolean }> };
+    };
+    const mainWindow = tauriConfig.app?.windows?.find(
+      (window) => window.label === "main",
+    );
+    const lib = read("src-tauri/src/lib.rs");
+    const chromeCommand = read("src-tauri/src/commands/window_chrome_cmd.rs");
+    const ipc = read("src/lib/ipc.ts");
+    const splash = read("src/components/layout/StartupSplash.tsx");
+
+    const setupStart = lib.indexOf(".setup(|app| {");
+    const invokeHandlerStart = lib.indexOf(".invoke_handler(");
+    const setupBlock = lib.slice(setupStart, invokeHandlerStart);
+    const chromeIndex = chromeCommand.indexOf(
+      "window_chrome::apply_main_window_chrome",
+    );
+    const showIndex = chromeCommand.indexOf(".show()");
+    const setupChromeIndex = setupBlock.indexOf(
+      "window_chrome::apply_main_window_chrome",
+    );
+    const stateInitIndex = setupBlock.indexOf("AppState::new(data_dir)");
+    const pageLoadIndex = lib.indexOf(".on_page_load(");
+    const setupIndex = lib.indexOf(".setup(|app| {");
+    const pageLoadBlock = lib.slice(pageLoadIndex, setupIndex);
+
+    expect(mainWindow?.visible).toBe(false);
+    expect(setupBlock).toContain("window_chrome::apply_main_window_chrome");
+    expect(setupChromeIndex).toBeGreaterThanOrEqual(0);
+    expect(stateInitIndex).toBeGreaterThan(setupChromeIndex);
+    expect(setupBlock).not.toContain(".show()");
+    expect(setupBlock).not.toContain("set_focus()");
+    expect(chromeIndex).toBeGreaterThanOrEqual(0);
+    expect(showIndex).toBeGreaterThan(chromeIndex);
+    expect(ipc).toContain("showMainWindowWhenReady");
+    expect(ipc).toContain('invoke("show_main_window_when_ready")');
+    expect(splash).toContain("showMainWindowWhenReady");
+    expect(lib).toContain(
+      "commands::window_chrome_cmd::show_main_window_when_ready",
+    );
+    expect(lib).not.toContain("Theme::Dark");
+    expect(chromeCommand).toContain("pub(crate) fn reveal_main_window");
+    expect(chromeCommand).toContain("reveal_main_window(&window)");
+    expect(pageLoadIndex).toBeGreaterThanOrEqual(0);
+    expect(setupIndex).toBeGreaterThan(pageLoadIndex);
+    expect(pageLoadBlock).toContain("PageLoadEvent::Finished");
+    expect(pageLoadBlock).toContain('webview.label() != "main"');
+    expect(pageLoadBlock).toContain('get_webview_window("main")');
+    expect(pageLoadBlock).toContain(".is_visible()");
+    expect(pageLoadBlock).toContain("if visible");
+    expect(pageLoadBlock).toContain(
+      "commands::window_chrome_cmd::reveal_main_window",
+    );
+  });
+
+  it("bootstraps persisted theme before React first render", () => {
+    const main = read("src/main.tsx");
+    const themeHook = read("src/hooks/useTheme.ts");
+    const bootstrapIndex = main.indexOf("bootstrapStoredTheme()");
+    const renderIndex = main.indexOf("createRoot(");
+
+    expect(main).toContain("function bootstrapStoredTheme");
+    expect(bootstrapIndex).toBeGreaterThanOrEqual(0);
+    expect(renderIndex).toBeGreaterThan(bootstrapIndex);
+    expect(themeHook).toContain("function readStoredTheme");
+    expect(themeHook).toContain('useState<"dark" | "light">(readStoredTheme)');
+    expect(themeHook).not.toContain('useState<"dark" | "light">("dark")');
+  });
+
+  it("defines a token-driven startup splash with reduced-motion fallback", () => {
+    const css = read("src/styles/globals.css");
+
+    expect(css).toContain(".iris-startup-splash");
+    expect(css).toContain("var(--background)");
+    expect(css).toContain("var(--knowledge-accent)");
+    expect(css).toContain("@keyframes iris-startup-orbit");
+    expect(css).toContain("@media (prefers-reduced-motion: reduce)");
+  });
+
+  it("renders a critical preboot splash before React mounts", () => {
+    const html = read("index.html");
+
+    expect(html).toContain("iris-preboot-splash");
+    expect(html).toContain("iris-preboot-titlebar");
+    expect(html).toContain("iris-preboot-orbit-stage");
+    expect(html).toContain("iris-preboot-orbit--outer");
+    expect(html).toContain("iris-preboot-node--a");
+    expect(html).toContain("iris-preboot-mark-shell");
+    expect(html).toContain("/brand/iris-mark.svg");
+    expect(html).toContain("唤醒知识网络");
+    expect(html).toContain("准备笔记");
+    expect(html).toContain("--iris-preboot-bg: #1a1a1a");
+    expect(html).toContain("--iris-preboot-chrome: #1f1f1f");
+    expect(html).toContain("html.light");
+    expect(html).toContain("--iris-preboot-bg: #fbfbfa");
+    expect(html).not.toContain(
+      'class="iris-preboot-mark" aria-hidden="true">I',
+    );
+  });
+
+  it("allows frontend window APIs needed by custom chrome controls", () => {
+    const capabilities = read("src-tauri/capabilities/default.json");
+    const parsed = JSON.parse(capabilities) as { permissions?: string[] };
+    const permissions = parsed.permissions ?? [];
+
+    expect(permissions).not.toContain("core:default");
+    expect(permissions).not.toContain("core:event:default");
+    expect(permissions).not.toContain("core:menu:default");
+    expect(permissions).not.toContain("core:tray:default");
+    expect(capabilities).toContain("core:window:allow-is-fullscreen");
+    expect(capabilities).toContain("core:window:allow-set-fullscreen");
+    expect(capabilities).not.toContain("core:window:allow-set-decorations");
+    expect(capabilities).not.toContain("core:window:allow-set-title-bar-style");
+    expect(capabilities).toContain("core:window:allow-is-maximized");
+    expect(capabilities).toContain("core:window:allow-toggle-maximize");
+  });
+
   it("keeps DeepSeek default provider reachable from Tauri CSP", () => {
     const tauriConfig = JSON.parse(read("src-tauri/tauri.conf.json")) as {
       app?: { security?: { csp?: string } };

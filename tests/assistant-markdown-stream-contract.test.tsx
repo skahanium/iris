@@ -73,6 +73,65 @@ describe("assistant markdown-first message stream", () => {
     );
   });
 
+  it("keeps the latest assistant markdown bubble in streaming mode after content appears", async () => {
+    await act(async () => {
+      root.render(
+        <AiMessageList
+          messages={[
+            {
+              role: "assistant",
+              content: "**正在生成**\n\n第一段内容",
+            },
+          ]}
+          streaming={true}
+        />,
+      );
+    });
+
+    const bubble = document.body.querySelector(
+      ".ai-message-bubble-assistant[data-streaming]",
+    );
+
+    expect(bubble).not.toBeNull();
+    expect(document.body.textContent).toContain("正在生成");
+    expect(document.body.textContent).toContain("第一段内容");
+  });
+
+  it("renders the complete final assistant content after streaming throttling", async () => {
+    const finalContent = `起${"中".repeat(210)}最终内容`;
+
+    await act(async () => {
+      root.render(
+        <AiMessageList
+          messages={[{ role: "assistant", content: "起" }]}
+          streaming={true}
+        />,
+      );
+    });
+
+    await act(async () => {
+      root.render(
+        <AiMessageList
+          messages={[{ role: "assistant", content: finalContent }]}
+          streaming={true}
+        />,
+      );
+    });
+
+    expect(document.body.textContent).not.toContain("最终内容");
+
+    await act(async () => {
+      root.render(
+        <AiMessageList
+          messages={[{ role: "assistant", content: finalContent }]}
+          streaming={false}
+        />,
+      );
+    });
+
+    expect(document.body.textContent).toContain("最终内容");
+  });
+
   it("renders a research summary as a plain assistant markdown bubble", async () => {
     await act(async () => {
       root.render(

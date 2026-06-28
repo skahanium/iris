@@ -1095,13 +1095,15 @@ pub async fn enhance_document_check_with_llm(
         tools: vec![],
         max_tokens: Some(2048),
         temperature: Some(0.3),
-        stream: false,
+        stream: true,
         thinking: false,
         skip_stub_ids: vec![],
     };
 
     let gateway = ModelGateway::with_defaults(app_handle.clone(), vec![provider.clone()])?;
-    let response = gateway.send_request(request).await?;
+    let response = gateway
+        .send_streaming_request(&result.request_id, request)
+        .await?;
     let summary = response.content.unwrap_or_default().trim().to_string();
     result.analysis_summary = if summary.is_empty() {
         None

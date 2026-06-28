@@ -84,9 +84,12 @@ export function useNavigatorFileLifecycle({
     ],
   );
 
-  const handleFileDeleted = useCallback(() => {
-    bumpVaultIndex();
-  }, [bumpVaultIndex]);
+  const handleFileDeleted = useCallback(
+    (_path?: string) => {
+      bumpVaultIndex();
+    },
+    [bumpVaultIndex],
+  );
 
   return {
     handleBeforeFilePathChange,

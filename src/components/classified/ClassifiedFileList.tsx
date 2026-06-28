@@ -46,7 +46,8 @@ import type { ClassifiedFileEntry } from "@/types/ipc";
 interface ClassifiedFileListProps {
   idleDeadline: number | null;
   onLock: () => void;
-  onOpenFile: (path: string) => void;
+  onOpenFile: (path: string) => void | Promise<void>;
+  onPrepareFile?: (path: string, titleHint?: string) => void;
   onActivity: () => void;
 }
 
@@ -289,6 +290,7 @@ export function ClassifiedFileList({
   idleDeadline,
   onLock,
   onOpenFile,
+  onPrepareFile,
   onActivity,
 }: ClassifiedFileListProps) {
   const [currentFolder, setCurrentFolder] = useState(".classified");
@@ -563,6 +565,14 @@ export function ClassifiedFileList({
                   "flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-left text-sm hover:bg-surface-inset",
                   selected === entry.path && "bg-surface-inset text-foreground",
                 )}
+                onMouseEnter={() =>
+                  !entry.isDir &&
+                  onPrepareFile?.(entry.path, classifiedDisplayName(entry.path))
+                }
+                onFocus={() =>
+                  !entry.isDir &&
+                  onPrepareFile?.(entry.path, classifiedDisplayName(entry.path))
+                }
                 onClick={() => {
                   onActivity();
                   if (entry.isDir) {
@@ -571,7 +581,7 @@ export function ClassifiedFileList({
                     return;
                   }
                   setSelected(entry.path);
-                  onOpenFile(entry.path);
+                  void onOpenFile(entry.path);
                 }}
                 onContextMenu={(event) => {
                   if (entry.isDir) return;
@@ -735,7 +745,7 @@ export function ClassifiedFileList({
           if (!menuTarget) return;
           setMenu({ open: false, x: 0, y: 0 });
           if (id === "open") {
-            onOpenFile(menuTarget);
+            void onOpenFile(menuTarget);
           } else if (id === "export") {
             openExportDialog(menuTarget);
           } else if (id === "rename") {

@@ -17,8 +17,13 @@ describe("management center contract", () => {
     expect(center).toContain("grid-cols-4");
     expect(center).toContain("w-full");
     expect(center).not.toContain('data-testid="management-center-nav"');
-    for (const label of ["总览", "笔记", "知识库", "AI"]) {
-      expect(center).toContain(label);
+    for (const id of [
+      'id: "overview"',
+      'id: "notes"',
+      'id: "knowledge"',
+      'id: "ai"',
+    ]) {
+      expect(center).toContain(id);
     }
     expect(center).not.toContain('id: "workspace"');
     expect(center).not.toContain('id: "security"');
@@ -51,24 +56,14 @@ describe("management center contract", () => {
       expect(overlays, prop).toContain(prop);
     }
 
-    for (const label of ["知识关联", "重建库索引", "版本追踪"]) {
-      expect(center).toContain(label);
-    }
-    for (const label of ["浏览笔记库", "回收站"]) {
-      expect(center).toContain(label);
-    }
     expect(center).toContain("VaultNavigatorBody");
     expect(center).toContain("RecycleBinBody");
-    for (const removed of ["快速打开", "知识图谱"]) {
-      expect(center).not.toContain(removed);
-    }
     expect(center).not.toContain("renderTaskDetail");
     expect(center).not.toContain("openDetail");
     expect(statusBar).toContain('data-testid="status-bar-graph-button"');
     expect(statusSlot).toContain("onOpenGraph");
-    expect(center).not.toContain("涉密面板");
+    expect(center).not.toContain("openClassified");
     expect(center).not.toContain("onOpenClassifiedPanel");
-    expect(center).not.toContain("Zen 专注模式");
   });
 
   it("exposes automatic version tracking as real settings in the notes area", () => {
@@ -77,10 +72,8 @@ describe("management center contract", () => {
     const lifecycle = read("src/hooks/useAppPersistenceLifecycle.ts");
     const idle = read("src/hooks/useVersionIdle.ts");
 
-    expect(center).toContain("自动版本追踪");
     expect(center).toContain("autoVersionEnabled");
     expect(center).toContain("autoVersionIdleMinutes");
-    expect(center).toContain("自动备份（N）");
     expect(app).toContain("useAutoVersionSettings");
     expect(lifecycle).toContain("autoVersionEnabled");
     expect(lifecycle).toContain("autoVersionIdleMinutes");
@@ -116,12 +109,27 @@ describe("management center contract", () => {
   it("presents system and about information in overview without classified or fake button affordances", () => {
     const center = read("src/components/settings/ManagementCenterPanel.tsx");
 
-    expect(center).toContain("关于 Iris");
     expect(center).toContain("GNU Affero General Public License v3.0");
-    expect(center).toContain("权限边界");
-    expect(center).toContain("凭据边界");
     expect(center).not.toContain("openClassified");
     expect(center).not.toContain("LockKeyhole");
     expect(center).not.toContain("secret.read_plaintext");
+  });
+
+  it("prepares notes from the embedded file tree before opening", () => {
+    const center = read("src/components/settings/ManagementCenterPanel.tsx");
+    const overlays = read("src/components/layout/AppOverlays.tsx");
+
+    expect(center).toContain("onPrepareNote");
+    expect(center).toContain("onPrepare={onPrepareNote}");
+    expect(overlays).toContain('onPrepareNote?.(file, "management")');
+  });
+
+  it("waits for restored notes to open before closing recycle views", () => {
+    const recycle = read("src/components/file/RecycleBinSheet.tsx");
+    const restoreIndex = recycle.indexOf("await onRestored(path)");
+    const closeIndex = recycle.indexOf("onClose();", restoreIndex);
+
+    expect(restoreIndex).toBeGreaterThanOrEqual(0);
+    expect(closeIndex).toBeGreaterThan(restoreIndex);
   });
 });

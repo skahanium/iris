@@ -12,6 +12,7 @@ import { useTauriCloseSave } from "@/hooks/useTauriCloseSave";
 import { useVersionIdle } from "@/hooks/useVersionIdle";
 import { fileWrite, versionSaveIdle, versionSaveManual } from "@/lib/ipc";
 import { editorHtmlDigest, setCachedEditorHtml } from "@/lib/editor-html-cache";
+import { isClassifiedVaultPath } from "@/lib/classified-path";
 import { splitFrontmatter } from "@/lib/frontmatter";
 import { isNoteSubstantivelyEmpty } from "@/lib/note-substance";
 import { resolveNoteDisplayTitle } from "@/lib/note-display";
@@ -25,7 +26,6 @@ import {
   createVersionSnapshotScheduler,
   type LastSavedSnapshot,
 } from "@/lib/version-snapshot-scheduler";
-import { waitForEditorRef } from "@/lib/wait-for-editor";
 
 export interface PersistBeforeLeaveOptions {
   reason?: AutoSnapshotLeaveReason;
@@ -46,6 +46,7 @@ interface UseAppPersistenceLifecycleParams {
   autoVersionIdleMinutes: number;
   dirtyRef: MutableRefObject<boolean>;
   editorRef: RefObject<Editor | null>;
+  editorReadyRef: RefObject<boolean>;
   getLiveMarkdownRef: MutableRefObject<() => string>;
   getTabMarkdownCached: (path: string) => string | undefined;
   markClean: (path: string, title: string) => void;
@@ -68,6 +69,7 @@ export function useAppPersistenceLifecycle({
   autoVersionIdleMinutes,
   dirtyRef,
   editorRef,
+  editorReadyRef,
   getLiveMarkdownRef,
   getTabMarkdownCached,
   markClean,
@@ -146,28 +148,45 @@ export function useAppPersistenceLifecycle({
     const reason = options.reason ?? "tab_leave";
     const tab = tabsRef.current.find((t) => t.path === path);
     if (path === activePathRef.current) {
-      await waitForEditorRef(editorRef);
+      const markdownSnapshot = getLiveMarkdownRef.current();
+      const titleSnapshot = noteTitle;
+      const editor = editorRef.current;
+      const editorHtmlSnapshot =
+        editorReadyRef.current && editor && !editor.isDestroyed
+          ? editor.getHTML()
+          : null;
+      const namespace = isClassifiedVaultPath(path) ? "classified" : "normal";
+      syncTabMarkdownCache(path, markdownSnapshot);
       const md = await persistActiveTabBeforeLeave({
         path,
         reason,
-        getMarkdown: () => getLiveMarkdownRef.current(),
+        getMarkdown: () => markdownSnapshot,
         flushSaveForPath,
         getLastSavedSnapshot,
         enqueueIdleSnapshot,
       });
       if (md) {
-        dirtyRef.current = false;
-        setMarkdown(md);
         syncTabMarkdownCache(path, md);
-        const ed = editorRef.current;
-        if (ed && !ed.isDestroyed) {
+        if (editorHtmlSnapshot) {
           setCachedEditorHtml(
             path,
-            ed.getHTML(),
+            editorHtmlSnapshot,
             editorHtmlDigest(splitFrontmatter(md).body),
+            namespace,
           );
         }
-        markClean(path, resolveNoteDisplayTitle({ path, title: noteTitle }));
+        markClean(
+          path,
+          resolveNoteDisplayTitle({ path, title: titleSnapshot }),
+        );
+        if (activePathRef.current === path) {
+          applySavedMarkdown(md);
+          dirtyRef.current = false;
+          setMarkdown(md);
+          if (titleSnapshot.trim() === "") {
+            schedulePathSync(path, titleSnapshot);
+          }
+        }
       }
       return md;
     }

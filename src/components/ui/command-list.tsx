@@ -1,8 +1,7 @@
-import type { LucideIcon } from "lucide-react";
+﻿import type { LucideIcon } from "lucide-react";
 import type { ReactNode } from "react";
 
 import { Kbd } from "@/components/ui/kbd";
-import { splitLabelByMatch } from "@/lib/command-palette-match";
 import { cn } from "@/lib/utils";
 
 interface CommandListGroupProps {
@@ -22,6 +21,26 @@ export function CommandListGroup({ title, className }: CommandListGroupProps) {
       {title}
     </p>
   );
+}
+
+interface LabelSegment {
+  text: string;
+  highlighted: boolean;
+}
+
+function splitLabelByMatch(label: string, query: string): LabelSegment[] {
+  const q = query.trim().toLowerCase();
+  if (!q) return [{ text: label, highlighted: false }];
+  const idx = label.toLowerCase().indexOf(q);
+  if (idx < 0) return [{ text: label, highlighted: false }];
+  const end = idx + q.length;
+  return [
+    ...(idx > 0 ? [{ text: label.slice(0, idx), highlighted: false }] : []),
+    { text: label.slice(idx, end), highlighted: true },
+    ...(end < label.length
+      ? [{ text: label.slice(end), highlighted: false }]
+      : []),
+  ];
 }
 
 interface HighlightedLabelProps {

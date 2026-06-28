@@ -101,12 +101,15 @@ export function useResearchControl({
       });
     };
 
+    let disposed = false;
     let unlisten: (() => void) | undefined;
     void setupResearchListener().then((fn) => {
-      unlisten = fn;
+      if (disposed) fn();
+      else unlisten = fn;
     });
 
     return () => {
+      disposed = true;
       unlisten?.();
     };
   }, [listenResearchProgress, setActionState]);

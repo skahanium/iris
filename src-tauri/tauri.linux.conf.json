@@ -3,6 +3,18 @@
   "app": {
     "windows": [
       {
+        "label": "main",
+        "title": "Iris",
+        "width": 1280,
+        "height": 800,
+        "minWidth": 800,
+        "minHeight": 600,
+        "visible": false,
+        "center": true,
+        "focus": true,
+        "decorations": false,
+        "shadow": true,
+        "dragDropEnabled": false,
         "transparent": true
       }
     ]

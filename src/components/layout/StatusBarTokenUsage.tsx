@@ -40,7 +40,7 @@ export function StatusBarTokenUsage({
     <div ref={rootRef} className="relative shrink-0">
       <button
         type="button"
-        className="max-w-[11rem] truncate rounded-sm px-1 tabular-nums text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground focus:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-1 focus-visible:ring-offset-panel"
+        className="iris-focus-soft max-w-[11rem] truncate rounded-sm px-1 tabular-nums text-muted-foreground transition-[color,background-color,box-shadow] hover:bg-muted/50 hover:text-foreground focus:outline-none"
         aria-expanded={open}
         aria-haspopup="dialog"
         title={summary}

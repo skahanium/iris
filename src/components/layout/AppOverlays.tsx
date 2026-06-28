@@ -14,7 +14,11 @@ import type {
   OverlayId,
 } from "@/hooks/useOverlayManager";
 import type { TabItem } from "@/components/layout/TabBar";
-import type { ClassifiedStatus } from "@/types/ipc";
+import type {
+  DocumentOpenPriority,
+  NoteOpenSource,
+} from "@/lib/document-open-runtime";
+import type { ClassifiedStatus, FileListItem } from "@/types/ipc";
 
 const GraphView = lazy(() =>
   import("@/components/graph/GraphView").then((m) => ({
@@ -30,12 +34,6 @@ const VersionTimeline = lazy(() =>
   import("@/components/version/VersionTimeline").then((m) => ({
     default: m.VersionTimeline,
   })),
-);
-
-const LazyFallback = () => (
-  <div className="flex items-center justify-center p-8 text-sm text-muted-foreground">
-    加载中…
-  </div>
 );
 
 interface OverlayPort {
@@ -93,7 +91,22 @@ interface AppOverlaysProps {
   openNoteLeavingHome: (
     path: string,
     titleHint?: string,
-    options?: { allowClassified?: boolean },
+    options?: {
+      allowClassified?: boolean;
+      priority?: DocumentOpenPriority;
+      source?: NoteOpenSource;
+    },
+  ) => void | Promise<void>;
+  onPrepareNote?: (file: FileListItem, source?: NoteOpenSource) => void;
+  onPrepareNotePath?: (
+    path: string,
+    titleHint?: string,
+    source?: NoteOpenSource,
+  ) => void;
+  onPrepareClassifiedNotePath?: (
+    path: string,
+    titleHint?: string,
+    source?: NoteOpenSource,
   ) => void;
   overlays: OverlayPort;
   refreshClassifiedStatus: () => Promise<ClassifiedStatus>;
@@ -132,6 +145,9 @@ export function AppOverlays({
   onFileDeleted,
   openClassifiedPaths,
   openNoteLeavingHome,
+  onPrepareNote,
+  onPrepareNotePath,
+  onPrepareClassifiedNotePath,
   overlays,
   refreshClassifiedStatus,
   requestClassifiedLock,
@@ -151,12 +167,24 @@ export function AppOverlays({
       <QuickOpen
         open={overlays.quickOpen}
         onClose={() => overlays.closeOverlay("quickOpen")}
-        onSelect={openNoteLeavingHome}
+        onPrepare={(file, source) => onPrepareNote?.(file, source)}
+        onSelect={(path, source) =>
+          openNoteLeavingHome(path, undefined, {
+            priority: "foreground",
+            source,
+          })
+        }
       />
       <VaultNavigator
         open={overlays.fileSheet}
         onClose={() => overlays.closeOverlay("fileSheet")}
-        onOpen={openNoteLeavingHome}
+        onOpen={(path, source) =>
+          openNoteLeavingHome(path, undefined, {
+            priority: "foreground",
+            source,
+          })
+        }
+        onPrepare={(file, source) => onPrepareNote?.(file, source)}
         onBeforeFilePathChange={onBeforeFilePathChange}
         onFilePathChanged={onFilePathChanged}
         onBeforeFileDelete={onBeforeFileDelete}
@@ -165,69 +193,112 @@ export function AppOverlays({
       <RecycleBinSheet
         open={overlays.recycleBinOpen}
         onClose={() => overlays.closeOverlay("recycleBin")}
-        onRestored={openNoteLeavingHome}
+        onRestored={(path) =>
+          openNoteLeavingHome(path, undefined, {
+            priority: "foreground",
+            source: "recycle",
+          })
+        }
         onIndexChange={bumpVaultIndex}
       />
       <SearchPanel
         open={overlays.searchOpen}
         onClose={() => overlays.closeOverlay("search")}
-        onOpen={openNoteLeavingHome}
+        onOpen={(path) =>
+          openNoteLeavingHome(path, undefined, {
+            priority: "foreground",
+            source: "search",
+          })
+        }
+        onPrepare={(path, titleHint) =>
+          onPrepareNotePath?.(path, titleHint, "search")
+        }
       />
-      <Suspense fallback={<LazyFallback />}>
-        <ManagementCenterPanel
-          open={overlays.managementCenterOpen}
-          onClose={() => overlays.closeOverlay("managementCenter")}
-          section={overlays.managementCenterSection}
-          detail={overlays.managementCenterDetail}
-          webSearch={webSearch}
-          onWebSearchChange={setWebSearch}
-          onOpenNote={openNoteLeavingHome}
-          onOpenKnowledgeRelations={openKnowledgeRelations}
-          onOpenVersion={openVersion}
-          onRescanVault={rescanVault}
-          onRecycleIndexChange={bumpVaultIndex}
-          autoVersionEnabled={autoVersionSettings.autoVersionEnabled}
-          autoVersionIdleMinutes={autoVersionSettings.autoVersionIdleMinutes}
-          onAutoVersionEnabledChange={autoVersionSettings.setAutoVersionEnabled}
-          onAutoVersionIdleMinutesChange={
-            autoVersionSettings.setAutoVersionIdleMinutes
-          }
-        />
-      </Suspense>
+      {overlays.managementCenterOpen ? (
+        <Suspense fallback={null}>
+          <ManagementCenterPanel
+            open={overlays.managementCenterOpen}
+            onClose={() => overlays.closeOverlay("managementCenter")}
+            section={overlays.managementCenterSection}
+            detail={overlays.managementCenterDetail}
+            webSearch={webSearch}
+            onWebSearchChange={setWebSearch}
+            onOpenNote={(path) =>
+              openNoteLeavingHome(path, undefined, {
+                priority: "foreground",
+                source: "management",
+              })
+            }
+            onPrepareNote={(file) => onPrepareNote?.(file, "management")}
+            onOpenKnowledgeRelations={openKnowledgeRelations}
+            onOpenVersion={openVersion}
+            onRescanVault={rescanVault}
+            onRecycleIndexChange={bumpVaultIndex}
+            autoVersionEnabled={autoVersionSettings.autoVersionEnabled}
+            autoVersionIdleMinutes={autoVersionSettings.autoVersionIdleMinutes}
+            onAutoVersionEnabledChange={
+              autoVersionSettings.setAutoVersionEnabled
+            }
+            onAutoVersionIdleMinutesChange={
+              autoVersionSettings.setAutoVersionIdleMinutes
+            }
+          />
+        </Suspense>
+      ) : null}
       <KnowledgeRelationsPanel
         open={overlays.knowledgeRelationsOpen}
         onClose={() => overlays.closeOverlay("knowledgeRelations")}
         notePath={activePath}
-        onOpen={openNoteLeavingHome}
+        onOpen={(path) =>
+          openNoteLeavingHome(path, undefined, {
+            priority: "foreground",
+            source: "link",
+          })
+        }
+        onPreparePath={(path, titleHint) =>
+          onPrepareNotePath?.(path, titleHint, "link")
+        }
       />
-      <Suspense fallback={<LazyFallback />}>
-        <VersionTimeline
-          open={overlays.versionOpen}
-          onClose={() => overlays.closeOverlay("version")}
-          notePath={activePath}
-          currentContent={markdown}
-          getCurrentContent={getCurrentContent}
-          hasUnsavedEdits={
-            tabs.find((tab) => tab.path === activePath)?.dirty ?? false
-          }
-          onRestore={applyMarkdownToEditor}
-          onHighPriorityStart={(path) =>
-            versionSnapshotScheduler.markHighPriorityStart(path)
-          }
-          onHighPriorityEnd={(path) =>
-            versionSnapshotScheduler.markHighPriorityEnd(path)
-          }
-        />
-      </Suspense>
-      <ErrorBoundary scope="知识图谱">
-        <Suspense fallback={<LazyFallback />}>
-          <GraphView
-            open={overlays.graphOpen}
-            onClose={() => overlays.closeOverlay("graph")}
-            onOpenNote={openNoteLeavingHome}
+      {overlays.versionOpen ? (
+        <Suspense fallback={null}>
+          <VersionTimeline
+            open={overlays.versionOpen}
+            onClose={() => overlays.closeOverlay("version")}
+            notePath={activePath}
+            currentContent={markdown}
+            getCurrentContent={getCurrentContent}
+            hasUnsavedEdits={
+              tabs.find((tab) => tab.path === activePath)?.dirty ?? false
+            }
+            onRestore={applyMarkdownToEditor}
+            onHighPriorityStart={(path) =>
+              versionSnapshotScheduler.markHighPriorityStart(path)
+            }
+            onHighPriorityEnd={(path) =>
+              versionSnapshotScheduler.markHighPriorityEnd(path)
+            }
           />
         </Suspense>
-      </ErrorBoundary>
+      ) : null}
+      {overlays.graphOpen ? (
+        <ErrorBoundary scope="知识图谱">
+          <Suspense fallback={null}>
+            <GraphView
+              open={overlays.graphOpen}
+              onClose={() => overlays.closeOverlay("graph")}
+              onOpenNote={(path) =>
+                openNoteLeavingHome(path, undefined, {
+                  priority: "foreground",
+                  source: "graph",
+                })
+              }
+              onPrepareNotePath={(path, titleHint) =>
+                onPrepareNotePath?.(path, titleHint, "graph")
+              }
+            />
+          </Suspense>
+        </ErrorBoundary>
+      ) : null}
       <ConflictDialog
         open={conflictState?.open ?? false}
         localContent={conflictState?.localContent ?? ""}
@@ -245,7 +316,14 @@ export function AppOverlays({
         idleDeadline={classifiedIdleDeadline}
         openClassifiedPaths={openClassifiedPaths}
         onOpenFile={(path) =>
-          openNoteLeavingHome(path, undefined, { allowClassified: true })
+          openNoteLeavingHome(path, undefined, {
+            allowClassified: true,
+            priority: "foreground",
+            source: "classified",
+          })
+        }
+        onPrepareFile={(path, titleHint) =>
+          onPrepareClassifiedNotePath?.(path, titleHint, "classified")
         }
         onUnlockSuccess={() => void onClassifiedUnlocked()}
         onRequestLock={() => requestClassifiedLock()}

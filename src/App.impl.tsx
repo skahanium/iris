@@ -1,12 +1,12 @@
-import type { Editor } from "@tiptap/react";
+﻿import type { Editor } from "@tiptap/react";
 import { Moon, Sun } from "lucide-react";
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
-  type ReactNode,
 } from "react";
 
 import { DocumentTitleField } from "@/components/editor/DocumentTitleField";
@@ -16,7 +16,8 @@ import { AppOverlays } from "@/components/layout/AppOverlays";
 import { AppShell } from "@/components/layout/AppShell";
 import { AppStatusBarSlot } from "@/components/layout/AppStatusBarSlot";
 import { DesktopFrame } from "@/components/layout/DesktopFrame";
-import { MinimalWindowChrome } from "@/components/layout/MinimalWindowChrome";
+import { PreVaultDesktopFrame } from "@/components/layout/PreVaultDesktopFrame";
+import { StartupSplash } from "@/components/layout/StartupSplash";
 import { TabBar } from "@/components/layout/TabBar";
 import { Button } from "@/components/ui/button";
 import { useAppKeyboard } from "@/hooks/useAppKeyboard";
@@ -37,13 +38,20 @@ import { useEditorContextMenu } from "@/hooks/useEditorContextMenu";
 import { useAutoVaultIndex } from "@/hooks/useAutoVaultIndex";
 import { useOpenNote } from "@/hooks/useOpenNote";
 import { useNavigatorFileLifecycle } from "@/hooks/useNavigatorFileLifecycle";
+import { useFileConflictResolution } from "@/hooks/useFileConflictResolution";
 import { useEditorZoom } from "@/hooks/useEditorZoom";
 import { useEditorStats } from "@/hooks/useEditorStats";
+import { useEditorUndoRedoState } from "@/hooks/useEditorUndoRedoState";
 import { useInlineAi } from "@/hooks/useInlineAi";
 import { useConnectivityStatus } from "@/hooks/useConnectivityStatus";
 import { useLlmProvider } from "@/hooks/useLlmProvider";
 import { useOverlayManager } from "@/hooks/useOverlayManager";
 import { useArtifactTabs } from "@/hooks/useArtifactTabs";
+import { usePreparedWorkspaceTransitions } from "@/hooks/usePreparedWorkspaceTransitions";
+import { usePreparedNoteInvalidationCallbacks } from "@/hooks/usePreparedNoteInvalidationCallbacks";
+import { useWorkspaceAssistantRouting } from "@/hooks/useWorkspaceAssistantRouting";
+import { useWorkspaceSessionSnapshot } from "@/hooks/useWorkspaceSessionSnapshot";
+import { useWorkspaceTabRouting } from "@/hooks/useWorkspaceTabRouting";
 import { useTabManager } from "@/hooks/useTabManager";
 import { useTheme } from "@/hooks/useTheme";
 import { useZenExitKeyboard } from "@/hooks/useZenExitKeyboard";
@@ -59,32 +67,20 @@ import {
 import { formatVersionSaveStatus } from "@/lib/version-save-status";
 import { isTauriRuntime } from "@/lib/tauri-runtime";
 
-const OUTLINE_OPEN_KEY = "iris-outline-open";
-
 function loadOutlineOpen(): boolean {
   try {
-    return localStorage.getItem(OUTLINE_OPEN_KEY) !== "false";
-  } catch (e) {
-    console.warn("[App] localStorage read failed:", e);
+    return localStorage.getItem("iris-outline-open") !== "false";
+  } catch {
     return true;
   }
 }
 
 function saveOutlineOpen(open: boolean): void {
   try {
-    localStorage.setItem(OUTLINE_OPEN_KEY, open ? "true" : "false");
-  } catch (e) {
-    console.warn("[App] localStorage write failed:", e);
+    localStorage.setItem("iris-outline-open", open ? "true" : "false");
+  } catch {
+    return;
   }
-}
-
-function PreVaultDesktopFrame({ children }: { children: ReactNode }) {
-  return (
-    <DesktopFrame>
-      <MinimalWindowChrome />
-      {children}
-    </DesktopFrame>
-  );
 }
 
 function App() {
@@ -92,6 +88,8 @@ function App() {
 
   const { vaultPath, loading, pickVault, error: vaultError } = useVault();
   const { theme, setTheme } = useTheme();
+  const [startupSplashVisible, setStartupSplashVisible] =
+    useState(isTauriRuntime);
   const [aiStatus, setAiStatus] = useState("AI 空闲");
   const [conflictState, setConflictState] = useState<ConflictState | null>(
     null,
@@ -115,12 +113,7 @@ function App() {
     resetZoom,
   } = useEditorZoom();
   const editorRef = useRef<Editor | null>(null);
-  const [editorInstance, setEditorInstance] = useState<Editor | null>(null);
-  const [canUndo, setCanUndo] = useState(false);
-  const [canRedo, setCanRedo] = useState(false);
-  const undoRedoStateRef = useRef({ canUndo: false, canRedo: false });
-  const editorTransactionCleanupRef = useRef<(() => void) | null>(null);
-  const undoRedoRafRef = useRef<number | null>(null);
+  const editorReadyForPersistenceRef = useRef(false);
   const overlays = useOverlayManager();
   const { provider: llmProvider } = useLlmProvider();
   const { status: connectivityStatus } = useConnectivityStatus();
@@ -129,14 +122,6 @@ function App() {
     () => setVaultIndexEpoch((n) => n + 1),
     [],
   );
-
-  const showHome = useCallback(() => {
-    setHomeActive(true);
-  }, []);
-
-  const leaveHome = useCallback(() => {
-    setHomeActive(false);
-  }, []);
 
   const dirtyRef = useRef(false);
   const autoSnapshotGenerationRef = useRef(0);
@@ -165,16 +150,25 @@ function App() {
     setMarkdown,
     activeFileLocked,
     setFileLocked,
+    pendingNoteOpen,
+    commitPendingNoteOpen,
   } = useTabManager({
     onStatusChange: setAiStatus,
     onVaultIndexBump: bumpVaultIndex,
     persistBeforeLeave: (path) => persistBeforeLeaveRef.current(path),
   });
+  const tabsRef = useRef(tabs);
+  tabsRef.current = tabs;
+  const openNotePaths = useMemo(() => tabs.map((tab) => tab.path), [tabs]);
+
+  useWorkspaceSessionSnapshot({ activePath, tabs, vaultPath });
   const {
     activateArtifact,
     activeArtifactTab,
     artifactTabs,
     closeArtifact,
+    closeAllEvidenceArtifacts,
+    closeEvidenceArtifactsForSession,
     openArtifact,
     setActiveArtifactId,
   } = useArtifactTabs();
@@ -197,53 +191,88 @@ function App() {
     setAiStatus,
   });
 
-  const openNoteLeavingHome = useCallback(
-    (
-      path: string,
-      titleHint?: string,
-      options?: Parameters<typeof openNote>[2],
-    ) => {
-      leaveHome();
-      setActiveArtifactId(null);
-      void openNote(path, titleHint, options);
-    },
-    [leaveHome, openNote, setActiveArtifactId],
+  const openClassifiedPaths = useMemo(
+    () =>
+      tabs.filter((tab) => isClassifiedVaultPath(tab.path)).map((t) => t.path),
+    [tabs],
   );
 
-  const handleActivateWorkspaceTab = useCallback(
-    (path: string) => {
-      leaveHome();
-      if (path.startsWith("artifact:")) {
-        activateArtifact(path);
-        return;
-      }
-      setActiveArtifactId(null);
-      activateTab(path);
-    },
-    [activateArtifact, activateTab, leaveHome, setActiveArtifactId],
+  const {
+    status: classifiedVaultStatus,
+    waiting: classifiedWaiting,
+    idleDeadline: classifiedIdleDeadline,
+    refreshStatus: refreshClassifiedStatus,
+    touchActivity: touchClassifiedActivity,
+    requestLock: requestClassifiedLock,
+    onUnlocked: onClassifiedUnlocked,
+    setWaiting: setClassifiedWaiting,
+  } = useClassifiedVaultSession({
+    enabled: Boolean(vaultPath) && isTauriRuntime(),
+    openClassifiedPaths,
+  });
+
+  const classifiedUnlocked = classifiedVaultStatus === "unlocked";
+
+  useEffect(() => {
+    if (classifiedOpen) {
+      void refreshClassifiedStatus();
+    }
+  }, [classifiedOpen, refreshClassifiedStatus]);
+
+  const {
+    clearPendingOpenFromWorkspace,
+    handleActivateWorkspaceTab: handleActivateNoteOrArtifactTab,
+    handleNewNoteLeavingHome,
+    invalidatePreparedNote,
+    openNoteLeavingHome,
+    pendingOpen,
+    prepareVisibleNote,
+    prepareNotePath,
+    prepareClassifiedNotePath,
+    showHome,
+    warmPreparedNotes,
+  } = usePreparedWorkspaceTransitions<
+    NonNullable<Parameters<typeof openNote>[2]>
+  >({
+    activePathRef,
+    activateArtifact,
+    activateTab,
+    classifiedVaultStatus,
+    handleNewNote,
+    openNote,
+    setActiveArtifactId,
+    setHomeActive,
+    tabs,
+    vaultPath,
+  });
+
+  const currentNoteIsClassified = Boolean(
+    activePath && isClassifiedVaultPath(activePath),
   );
+  const {
+    activeMediaTab,
+    activeNoteIsClassified,
+    activeWorkspacePath,
+    handleActivateWorkspaceTab,
+    handleCloseWorkspaceTab,
+    handleNewWorkspaceNote,
+    openWorkspacePathLeavingHome,
+    workspaceTabs,
+  } = useWorkspaceTabRouting<NonNullable<Parameters<typeof openNote>[2]>>({
+    activeArtifactTab,
+    activePath,
+    artifactTabs,
+    closeArtifact,
+    closeTab,
+    currentNoteIsClassified,
+    handleActivateNoteOrArtifactTab,
+    handleNewNoteLeavingHome,
+    openNoteLeavingHome,
+    setActiveArtifactId,
+    setHomeActive,
+    tabs,
+  });
 
-  const handleCloseWorkspaceTab = useCallback(
-    (path: string) => {
-      if (path.startsWith("artifact:")) {
-        closeArtifact(path);
-        return;
-      }
-      void closeTab(path);
-    },
-    [closeArtifact, closeTab],
-  );
-
-  const handleNewNoteLeavingHome = useCallback(() => {
-    leaveHome();
-    setActiveArtifactId(null);
-    void handleNewNote();
-  }, [leaveHome, handleNewNote, setActiveArtifactId]);
-
-  const tabsRef = useRef(tabs);
-  tabsRef.current = tabs;
-
-  /** Resync dirty flag only when switching documents (not on every tab metadata update). */
   useEffect(() => {
     if (!activePath) {
       dirtyRef.current = false;
@@ -253,12 +282,22 @@ function App() {
     dirtyRef.current = tab?.dirty ?? false;
   }, [activePath]);
 
+  const getLiveMarkdownRef = useRef(() => markdownRef.current);
+  const inlineAiDomain =
+    activeNoteIsClassified &&
+    classifiedUnlocked &&
+    !activeArtifactTab &&
+    !activeMediaTab &&
+    activePath
+      ? "classified"
+      : "normal";
   const inlineAi = useInlineAi({
     provider: llmProvider,
+    domain: inlineAiDomain,
+    notePath: inlineAiDomain === "classified" ? activePath : null,
+    getNoteContent: () => getLiveMarkdownRef.current(),
     onStatus: setAiStatus,
   });
-
-  const getLiveMarkdownRef = useRef(() => markdownRef.current);
 
   const {
     noteTitle,
@@ -276,6 +315,7 @@ function App() {
     markdownRef,
     frontmatterYamlRef,
     editorRef,
+    editorReadyRef: editorReadyForPersistenceRef,
     dirtyRef,
     updateTabTitle,
     replaceOpenTabPath,
@@ -303,6 +343,7 @@ function App() {
     autoVersionIdleMinutes: autoVersionSettings.autoVersionIdleMinutes,
     dirtyRef,
     editorRef,
+    editorReadyRef: editorReadyForPersistenceRef,
     getLiveMarkdownRef,
     getTabMarkdownCached,
     markClean,
@@ -334,16 +375,31 @@ function App() {
     tabsRef,
   });
 
+  const {
+    handlePreparedFileDeleted,
+    handlePreparedFilePathChanged,
+    invalidateActivePreparedNote,
+  } = usePreparedNoteInvalidationCallbacks({
+    activePathRef,
+    handleFileDeleted,
+    handleFilePathChanged,
+    invalidatePreparedNote,
+  });
+
   useEffect(() => {
     if (!isTauriRuntime()) return;
+    let disposed = false;
     let unlisten: (() => void) | undefined;
     void listenVersionSaveComplete((payload) => {
+      if (disposed) return;
       if (payload.path !== activePathRef.current) return;
       setAiStatus(formatVersionSaveStatus(payload));
     }).then((fn) => {
-      unlisten = fn;
+      if (disposed) fn();
+      else unlisten = fn;
     });
     return () => {
+      disposed = true;
       unlisten?.();
     };
   }, [activePathRef]);
@@ -355,57 +411,39 @@ function App() {
     cancelPendingSave,
     discardOpenTab,
     getLiveMarkdownRef,
+    onFileChanged: invalidatePreparedNote,
     setConflictState,
   });
 
   useEffect(() => {
     if (!isTauriRuntime()) return;
+    let disposed = false;
     let unlisten: (() => void) | undefined;
     void listenClassifiedFileTaken((event) => {
+      if (disposed) return;
       const path = event.path;
+      invalidatePreparedNote(path);
       if (tabsRef.current.some((tab) => tab.path === path)) {
         void closeTab(path);
       }
       bumpVaultIndex();
     }).then((fn) => {
-      unlisten = fn;
+      if (disposed) fn();
+      else unlisten = fn;
     });
     return () => {
+      disposed = true;
       unlisten?.();
     };
-  }, [closeTab, bumpVaultIndex]);
+  }, [closeTab, bumpVaultIndex, invalidatePreparedNote]);
 
-  const openClassifiedPaths = useMemo(
-    () =>
-      tabs.filter((tab) => isClassifiedVaultPath(tab.path)).map((t) => t.path),
-    [tabs],
-  );
-
-  const {
-    status: classifiedVaultStatus,
-    waiting: classifiedWaiting,
-    idleDeadline: classifiedIdleDeadline,
-    refreshStatus: refreshClassifiedStatus,
-    touchActivity: touchClassifiedActivity,
-    requestLock: requestClassifiedLock,
-    onUnlocked: onClassifiedUnlocked,
-    setWaiting: setClassifiedWaiting,
-  } = useClassifiedVaultSession({
-    enabled: Boolean(vaultPath) && isTauriRuntime(),
-    openClassifiedPaths,
-  });
-
-  useEffect(() => {
-    if (classifiedOpen) {
-      void refreshClassifiedStatus();
-    }
-  }, [classifiedOpen, refreshClassifiedStatus]);
-
-  const currentNoteIsClassified = Boolean(
-    activePath && isClassifiedVaultPath(activePath),
-  );
-  const activeNoteIsClassified = Boolean(
-    !activeArtifactTab && currentNoteIsClassified,
+  const applyMarkdownToEditor = useCallback(
+    (content: string) => {
+      markdownRef.current = content;
+      loadBodyIntoEditor(content);
+      setMarkdown(content);
+    },
+    [loadBodyIntoEditor, markdownRef, setMarkdown],
   );
 
   const handleLockToggle = useCallback(
@@ -418,31 +456,32 @@ function App() {
         }
         setFileLocked(path, locked);
         await fileSetLock(path, locked);
+        invalidatePreparedNote(path);
       } catch (err: unknown) {
         setFileLocked(path, !locked);
         const msg = err instanceof Error ? err.message : String(err);
         setAiStatus(`锁定状态保存失败：${msg}`);
       }
     },
-    [activePathRef, flushSave, setFileLocked],
+    [activePathRef, flushSave, invalidatePreparedNote, setFileLocked],
   );
 
-  const handleConflictKeepLocal = useCallback(() => {
-    setConflictState(null);
-    // Re-save local content to overwrite external changes
-    void flushSave();
-  }, [flushSave]);
-
-  const handleConflictAcceptExternal = useCallback(() => {
-    if (!conflictState) return;
-    setConflictState(null);
-    // Re-open the note from disk to load external content
-    openNoteLeavingHome(conflictState.filePath);
-  }, [conflictState, openNoteLeavingHome]);
-
-  const handleConflictManualEdit = useCallback(() => {
-    setConflictState(null);
-  }, []);
+  const {
+    handleConflictAcceptExternal,
+    handleConflictKeepLocal,
+    handleConflictManualEdit,
+  } = useFileConflictResolution({
+    activePathRef,
+    applyMarkdownToEditor,
+    conflictState,
+    dirtyRef,
+    flushSave,
+    invalidatePreparedNote,
+    markClean,
+    openNoteLeavingHome,
+    setConflictState,
+    syncTabMarkdownCache,
+  });
 
   const openFindReplace = useCallback((mode: "find" | "replace") => {
     setFindReplaceMode(mode);
@@ -454,10 +493,17 @@ function App() {
     if (!dirtyRef.current) {
       dirtyRef.current = true;
       markDirty();
+      invalidateActivePreparedNote();
     }
     notifyDirty();
     resetVersionIdle();
-  }, [activeFileLocked, notifyDirty, resetVersionIdle, markDirty]);
+  }, [
+    activeFileLocked,
+    invalidateActivePreparedNote,
+    markDirty,
+    notifyDirty,
+    resetVersionIdle,
+  ]);
 
   const handleTitleChange = useCallback(
     (raw: string) => {
@@ -466,11 +512,19 @@ function App() {
       if (!dirtyRef.current) {
         dirtyRef.current = true;
         markDirty();
+        invalidateActivePreparedNote();
       }
       notifyDirty();
       resetVersionIdle();
     },
-    [activeFileLocked, markDirty, notifyDirty, onTitleChange, resetVersionIdle],
+    [
+      activeFileLocked,
+      invalidateActivePreparedNote,
+      markDirty,
+      notifyDirty,
+      onTitleChange,
+      resetVersionIdle,
+    ],
   );
 
   const { rescanVault } = useAutoVaultIndex(vaultPath, loading, {
@@ -487,115 +541,31 @@ function App() {
     [overlays],
   );
 
-  const applyMarkdownToEditor = useCallback(
-    (content: string) => {
-      markdownRef.current = content;
-      loadBodyIntoEditor(content);
-      setMarkdown(content);
+  const {
+    canRedo,
+    canUndo,
+    editorInstance,
+    handleEditorReady: handleUndoRedoEditorReady,
+    scheduleUndoRedoStateRefresh,
+  } = useEditorUndoRedoState({ activePath, editorRef });
+
+  const handleEditorReady = useCallback(
+    (editor: Editor | null) => {
+      editorReadyForPersistenceRef.current = editor != null;
+      handleUndoRedoEditorReady(editor);
     },
-    [loadBodyIntoEditor, markdownRef, setMarkdown],
+    [handleUndoRedoEditorReady],
   );
 
-  const updateUndoRedoState = useCallback((ed: Editor | null) => {
-    const next = ed
-      ? {
-          canUndo: ed.can().undo(),
-          canRedo: ed.can().redo(),
-        }
-      : { canUndo: false, canRedo: false };
-    const prev = undoRedoStateRef.current;
-    undoRedoStateRef.current = next;
-    if (prev.canUndo !== next.canUndo) setCanUndo(next.canUndo);
-    if (prev.canRedo !== next.canRedo) setCanRedo(next.canRedo);
-  }, []);
-
-  const cancelUndoRedoStateRefresh = useCallback(() => {
-    if (undoRedoRafRef.current === null) return;
-    cancelAnimationFrame(undoRedoRafRef.current);
-    undoRedoRafRef.current = null;
-  }, []);
-
-  const scheduleUndoRedoStateRefresh = useCallback(
-    (ed: Editor | null = editorRef.current) => {
-      if (undoRedoRafRef.current !== null) {
-        cancelAnimationFrame(undoRedoRafRef.current);
-      }
-      undoRedoRafRef.current = requestAnimationFrame(() => {
-        undoRedoRafRef.current = null;
-        const currentEditor = ed && !ed.isDestroyed ? ed : editorRef.current;
-        updateUndoRedoState(
-          currentEditor && !currentEditor.isDestroyed ? currentEditor : null,
-        );
-      });
-    },
-    [updateUndoRedoState],
-  );
-
-  const clearEditorTransactionListener = useCallback(() => {
-    editorTransactionCleanupRef.current?.();
-    editorTransactionCleanupRef.current = null;
-  }, []);
-
-  useEffect(() => {
-    if (!activePath) {
-      clearEditorTransactionListener();
-      cancelUndoRedoStateRefresh();
-      setEditorInstance(null);
-      updateUndoRedoState(null);
-    }
-  }, [
-    activePath,
-    cancelUndoRedoStateRefresh,
-    clearEditorTransactionListener,
-    updateUndoRedoState,
-  ]);
-
-  useEffect(() => {
-    return () => {
-      cancelUndoRedoStateRefresh();
-    };
-  }, [cancelUndoRedoStateRefresh]);
+  useLayoutEffect(() => {
+    editorReadyForPersistenceRef.current = false;
+  }, [activePath, editorContentTick]);
 
   useEffect(() => {
     if (!activePath) {
       resetEditorStats();
     }
   }, [activePath, resetEditorStats]);
-
-  const handleEditorReady = useCallback(
-    (ed: Editor | null) => {
-      clearEditorTransactionListener();
-      editorRef.current = ed;
-      if (!ed) {
-        cancelUndoRedoStateRefresh();
-        setEditorInstance(null);
-        updateUndoRedoState(null);
-        return;
-      }
-
-      setEditorInstance(ed);
-      updateUndoRedoState(ed);
-
-      const handleTransaction = ({
-        editor: currentEditor,
-      }: {
-        editor: Editor;
-      }) => {
-        scheduleUndoRedoStateRefresh(currentEditor);
-      };
-
-      ed.on("transaction", handleTransaction);
-      editorTransactionCleanupRef.current = () => {
-        ed.off("transaction", handleTransaction);
-      };
-    },
-    [
-      cancelUndoRedoStateRefresh,
-      clearEditorTransactionListener,
-      scheduleUndoRedoStateRefresh,
-      updateUndoRedoState,
-    ],
-  );
 
   const editorTitleSlot = useMemo(
     () => (
@@ -633,6 +603,10 @@ function App() {
     Boolean(activePath),
     () => setAiStatus("选区 AI：请使用右键菜单"),
     activeFileLocked,
+    {
+      aiDomain: activeNoteIsClassified ? "classified" : "normal",
+      classifiedUnlocked,
+    },
   );
 
   const { appShortcutItems, handleAppShortcut } = useAppShortcuts({
@@ -666,59 +640,56 @@ function App() {
     onAction: handleAppShortcut,
   });
 
-  const activeDocumentTitle = useMemo(() => {
-    if (!activePath) return null;
-    return displayTitleForChrome(activePath, noteTitle);
-  }, [activePath, noteTitle]);
-  const assistantNotePath =
+  const activeDocumentTitle =
+    activePath && displayTitleForChrome(activePath, noteTitle);
+  const assistantNotePathWithoutMedia =
     activeArtifactTab || activeNoteIsClassified ? null : activePath;
-  const workspaceTabs = useMemo(
-    () => [
-      ...tabs.map((tab) => ({ ...tab, kind: "note" as const })),
-      ...artifactTabs.map((tab) => ({
-        path: tab.id,
-        title: tab.title,
-        kind: "artifact" as const,
-        locked: true,
-      })),
-    ],
-    [artifactTabs, tabs],
+  const getLiveMarkdownForNoteSurface = useCallback(
+    () =>
+      activeArtifactTab || activeNoteIsClassified ? "" : getLiveMarkdown(),
+    [activeArtifactTab, activeNoteIsClassified, getLiveMarkdown],
   );
-  const activeWorkspacePath = activeArtifactTab?.id ?? activePath;
-
-  const getAssistantLiveMarkdown = useCallback(
-    () => (activeArtifactTab ? "" : getLiveMarkdown()),
-    [activeArtifactTab, getLiveMarkdown],
-  );
-  const getAssistantWritingContext = useCallback(
+  const getWritingContextForNoteSurface = useCallback(
     () => (activeArtifactTab ? null : getWritingContext()),
     [activeArtifactTab, getWritingContext],
   );
-  const getAssistantParagraphText = useCallback(
-    () => (activeArtifactTab ? null : getParagraphText()),
-    [activeArtifactTab, getParagraphText],
-  );
-  const handleAssistantInsertToEditor = useCallback(
+  const handleInsertToNoteSurface = useCallback(
     (content: string) => {
-      if (activeArtifactTab) {
-        setAiStatus("请先切回笔记再插入内容");
-        return;
-      }
       handleInsertToEditor(content);
     },
-    [activeArtifactTab, handleInsertToEditor],
+    [handleInsertToEditor],
   );
+  const {
+    aiDomain,
+    assistantNotePath,
+    assistantSelectionQuote,
+    classifiedPath,
+    getAssistantLiveMarkdown,
+    getAssistantParagraphText,
+    getAssistantWritingContext,
+    handleAssistantInsertToEditor,
+  } = useWorkspaceAssistantRouting({
+    activeArtifactTab,
+    activeMediaTab,
+    activeNoteIsClassified,
+    activePath,
+    assistantNotePathWithoutMedia,
+    classifiedUnlocked,
+    getLiveMarkdown: getLiveMarkdownForNoteSurface,
+    getParagraphText,
+    getWritingContext: getWritingContextForNoteSurface,
+    handleInsertToEditor: handleInsertToNoteSurface,
+    selectionQuote,
+    setAiStatus,
+  });
   const handlePatchApplied = useCallback(
     (newContent: string) => {
-      if (currentNoteIsClassified) {
-        setAiStatus("涉密笔记不能接收 AI 改写");
-        return;
-      }
       applyMarkdownToEditor(newContent);
       markdownRef.current = newContent;
       dirtyRef.current = false;
       const path = activePathRef.current;
       if (path) {
+        invalidatePreparedNote(path);
         syncTabMarkdownCache(path, newContent);
         markClean(path, activeDocumentTitle ?? noteTitle);
       }
@@ -727,11 +698,10 @@ function App() {
       activeDocumentTitle,
       activePathRef,
       applyMarkdownToEditor,
-      currentNoteIsClassified,
+      invalidatePreparedNote,
       markClean,
       markdownRef,
       noteTitle,
-      setAiStatus,
       syncTabMarkdownCache,
     ],
   );
@@ -746,12 +716,13 @@ function App() {
           <code className="rounded bg-muted px-1 py-0.5 text-xs">
             http://127.0.0.1:1420
           </code>{" "}
-          只是 Vite 前端热更新地址，浏览器里没有 Rust 后端，无法读写笔记目录。
+          这里只是 Vite 前端热更新地址，浏览器里没有 Rust
+          后端，无法读写笔记目录。
         </p>
         <p className="max-w-md text-sm text-muted-foreground">
           方式 B 需要两个终端：一个 <code className="text-xs">npm run dev</code>
-          ，另一个启动 <code className="text-xs">npx tauri dev …</code>
-          ，使用弹出的{" "}
+          ，另一个启动 <code className="text-xs">npx tauri dev</code>
+          ，请使用弹出的{" "}
           <strong className="font-medium text-foreground">Iris</strong>{" "}
           窗口操作。
         </p>
@@ -759,12 +730,13 @@ function App() {
     );
   }
 
-  if (loading) {
+  if (startupSplashVisible) {
     return (
       <PreVaultDesktopFrame>
-        <div className="flex min-h-0 flex-1 items-center justify-center bg-background text-muted-foreground">
-          加载中…
-        </div>
+        <StartupSplash
+          ready={!loading}
+          onExited={() => setStartupSplashVisible(false)}
+        />
       </PreVaultDesktopFrame>
     );
   }
@@ -822,13 +794,14 @@ function App() {
             onHome={showHome}
             onSelect={handleActivateWorkspaceTab}
             onClose={handleCloseWorkspaceTab}
-            onNew={handleNewNoteLeavingHome}
+            onNew={handleNewWorkspaceNote}
           />
         }
         editor={
           <AppEditorWorkspace
             activeFileLocked={activeFileLocked}
             activeArtifactTab={activeArtifactTab}
+            activeMediaTab={activeMediaTab}
             activeNoteIsClassified={activeNoteIsClassified}
             activePath={activePath}
             editorBodyMarkdown={editorBodyMarkdown}
@@ -842,7 +815,7 @@ function App() {
             handleDirty={handleDirty}
             handleEditorReady={handleEditorReady}
             handleLockToggle={handleLockToggle}
-            handleNewNoteLeavingHome={handleNewNoteLeavingHome}
+            handleNewNoteLeavingHome={handleNewWorkspaceNote}
             getNoteContent={getLiveMarkdown}
             homeActive={homeActive}
             inlineAi={inlineAi}
@@ -853,8 +826,14 @@ function App() {
             onOpenAiManagement={() => overlays.openManagementCenter("ai")}
             onOpenQuickOpen={() => overlays.openOverlay("quickOpen")}
             onOpenSearch={() => overlays.openOverlay("search")}
-            openNoteLeavingHome={openNoteLeavingHome}
+            openNoteLeavingHome={openWorkspacePathLeavingHome}
+            onPrepareNotePath={prepareNotePath}
+            onPrepareNote={prepareVisibleNote}
             outlineOpen={outlineOpen}
+            pendingOpen={pendingOpen}
+            pendingNoteOpen={pendingNoteOpen}
+            onPendingOpenSettled={clearPendingOpenFromWorkspace}
+            commitPendingNoteOpen={commitPendingNoteOpen}
             runEditorActionById={runEditorActionById}
             setFindReplaceMode={setFindReplaceMode}
             setFindReplaceOpen={setFindReplaceOpen}
@@ -863,37 +842,45 @@ function App() {
             onVaultRefresh={bumpVaultIndex}
             vaultIndexEpoch={vaultIndexEpoch}
             vaultPath={vaultPath}
+            warmPreparedNotes={warmPreparedNotes}
+            openNotePaths={openNotePaths}
             zen={zen}
           />
         }
         aiPanel={
           <AppAiPanelSlot
+            aiDomain={aiDomain}
             assistantNotePath={assistantNotePath}
             assistantPrefill={assistantPrefill}
             bumpVaultIndex={bumpVaultIndex}
+            classifiedPath={classifiedPath}
             getLiveMarkdown={getAssistantLiveMarkdown}
             getParagraphText={getAssistantParagraphText}
             getWritingContext={getAssistantWritingContext}
             handleInsertToEditor={handleAssistantInsertToEditor}
             onOpenArtifact={openArtifact}
+            openNoteLeavingHome={openWorkspacePathLeavingHome}
+            onPrepareNotePath={prepareNotePath}
+            onSessionDeleted={closeEvidenceArtifactsForSession}
+            onSessionsCleared={closeAllEvidenceArtifacts}
             onPatchApplied={handlePatchApplied}
-            selectionQuote={
-              activeArtifactTab || activeNoteIsClassified
-                ? null
-                : selectionQuote
-            }
+            selectionQuote={assistantSelectionQuote}
             setAssistantChrome={setAssistantChrome}
             webSearch={webSearch}
           />
         }
         statusBar={
           <AppStatusBarSlot
-            activePath={activeArtifactTab ? null : activePath}
+            activePath={activeArtifactTab || activeMediaTab ? null : activePath}
             activeDocumentTitle={
-              activeArtifactTab ? activeArtifactTab.title : activeDocumentTitle
+              activeArtifactTab
+                ? activeArtifactTab.title
+                : activeMediaTab
+                  ? activeMediaTab.title
+                  : activeDocumentTitle
             }
             unsaved={
-              activeArtifactTab
+              activeArtifactTab || activeMediaTab
                 ? false
                 : (tabs.find((t) => t.path === activePath)?.dirty ?? false)
             }
@@ -938,12 +925,15 @@ function App() {
             handleConflictManualEdit={handleConflictManualEdit}
             markdown={markdown}
             onBeforeFilePathChange={handleBeforeFilePathChange}
-            onFilePathChanged={handleFilePathChanged}
+            onFilePathChanged={handlePreparedFilePathChanged}
             onBeforeFileDelete={handleBeforeFileDelete}
-            onFileDeleted={handleFileDeleted}
+            onFileDeleted={handlePreparedFileDeleted}
             onClassifiedUnlocked={onClassifiedUnlocked}
             openClassifiedPaths={openClassifiedPaths}
-            openNoteLeavingHome={openNoteLeavingHome}
+            openNoteLeavingHome={openWorkspacePathLeavingHome}
+            onPrepareNote={prepareVisibleNote}
+            onPrepareNotePath={prepareNotePath}
+            onPrepareClassifiedNotePath={prepareClassifiedNotePath}
             overlays={overlays}
             refreshClassifiedStatus={refreshClassifiedStatus}
             requestClassifiedLock={requestClassifiedLock}

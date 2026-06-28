@@ -59,10 +59,13 @@ export function tokensToContextScope(tokens: MentionToken[]): ContextScope {
   return { paths, pathPrefixes };
 }
 
-/** User-visible message without `@[...]` tokens. */
+/** User-visible message with `@[...]` tokens rendered as readable `@label` text. */
 export function stripMentionTokensForDisplay(text: string): string {
   return text
-    .replace(MENTION_TOKEN_RE, "")
+    .replace(MENTION_TOKEN_RE, (_raw, value: string) => {
+      const label = value.replace(/\\/g, "/").replace(/\/$/, "").trim();
+      return label ? `@${label}` : "";
+    })
     .replace(/[ \t]{2,}/g, " ")
     .replace(/[ \t]+\n/g, "\n")
     .replace(/\n[ \t]+/g, "\n")

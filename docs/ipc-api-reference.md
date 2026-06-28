@@ -1333,7 +1333,7 @@ pub fn get_desktop_chrome_metrics(
 ) -> DesktopChromeMetrics
 ```
 
-- **描述**：返回当前平台的顶栏高度与窗口控件预留指标，供前端写入 CSS 变量。Iris Rail 使用右侧自绘红黄绿窗口控件，因此 macOS `traffic_inset_logical` 为 `0`。`DesktopChromeMetrics { titlebar_height_logical, traffic_inset_logical, scale_factor }`。
+- **描述**：返回当前平台的顶栏高度与窗口控件预留指标，供前端写入 CSS 变量。macOS 使用左侧系统原生红黄绿，Iris Rail 通过 `traffic_inset_logical: 88` 预留窗口态安全区；fullscreen 时前端通过 `data-iris-window-fullscreen` 将该 spacer 收为 `0px`。Windows / Linux 使用右侧自绘窗口控件且该值为 `0`。`DesktopChromeMetrics { titlebar_height_logical, traffic_inset_logical, scale_factor }`。
 
 ### reapply_window_chrome
 

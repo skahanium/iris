@@ -7,15 +7,26 @@ use tauri::{AppHandle, Emitter};
 use tracing::info;
 
 use crate::app::AppState;
-use crate::error::AppResult;
+use crate::error::{AppError, AppResult};
 use crate::indexer::scan::{
-    content_hash, index_file_from_content, remove_file_index, IndexEmbeddingMode,
+    content_hash, index_file_from_content, index_workspace_media_file, remove_file_index,
+    remove_workspace_media_index, workspace_media_kind_for_path, IndexEmbeddingMode,
 };
 use crate::storage::paths::{is_user_note_path, relative_path};
 
 /// Returns whether the file watcher should re-index or emit for a vault-relative path.
 pub(crate) fn watcher_should_index_path(relative: &str) -> bool {
     is_user_note_path(relative)
+}
+
+fn event_relative_path(vault: &std::path::Path, path: &std::path::Path) -> AppResult<String> {
+    if path.exists() {
+        return relative_path(vault, path);
+    }
+    let rel = path
+        .strip_prefix(vault)
+        .map_err(|_| AppError::msg("Path is outside the vault"))?;
+    Ok(rel.to_string_lossy().replace('\\', "/"))
 }
 
 /// 持有 debouncer；Drop 时自动取消目录监听。切换 vault 时需 drop 后重建。
@@ -55,22 +66,31 @@ impl FileWatcher {
                     }
                     let kind = event_kind_label(&event.kind);
                     for path in &event.paths {
-                        if path.extension().is_some_and(|e| e == "md") {
-                            state_clone.clear_context_cache();
+                        let is_note = path.extension().is_some_and(|e| e == "md");
+                        let is_media = workspace_media_kind_for_path(path).is_some();
+                        if is_note || is_media {
+                            if is_note {
+                                state_clone.clear_context_cache();
+                            }
                             let Ok(vault) = state_clone.vault_path() else {
                                 continue;
                             };
-                            let Ok(rel) = relative_path(&vault, path) else {
+                            let Ok(rel) = event_relative_path(&vault, path) else {
                                 continue;
                             };
-                            if !watcher_should_index_path(&rel) {
+                            if is_note && !watcher_should_index_path(&rel) {
                                 tracing::debug!(
                                     path = %rel,
                                     "skipping classified/internal path in watcher"
                                 );
                                 continue;
                             }
-                            match handle_file_event(&app_clone, &state_clone, path, kind) {
+                            let result = if is_note {
+                                handle_file_event(&app_clone, &state_clone, path, kind)
+                            } else {
+                                handle_workspace_media_event(&app_clone, &state_clone, path, kind)
+                            };
+                            match result {
                                 Ok(()) => {}
                                 Err(e) => {
                                     tracing::warn!("File event error for {}: {e}", path.display())
@@ -101,7 +121,7 @@ fn handle_file_event(
 ) -> AppResult<()> {
     let vault = state.vault_path()?;
     if !path.exists() {
-        if let Ok(rel) = relative_path(&vault, path) {
+        if let Ok(rel) = event_relative_path(&vault, path) {
             state.db.with_conn(|conn| remove_file_index(conn, &rel))?;
             let _ = app.emit(
                 "file:changed",
@@ -116,7 +136,7 @@ fn handle_file_event(
 
     let content = std::fs::read_to_string(path)?;
     let hash = content_hash(&content);
-    let rel = relative_path(&vault, path)?;
+    let rel = event_relative_path(&vault, path)?;
     if state.storage.write_guard.should_skip_watcher(&rel, &hash) {
         tracing::debug!(path = %rel, "watcher skipped: recent app write");
         return Ok(());
@@ -143,6 +163,42 @@ fn handle_file_event(
         serde_json::json!({
             "path": rel,
             "hash": hash,
+            "event_type": event_type,
+        }),
+    );
+    Ok(())
+}
+
+fn handle_workspace_media_event(
+    app: &AppHandle,
+    state: &Arc<AppState>,
+    path: &std::path::Path,
+    event_type: &str,
+) -> AppResult<()> {
+    let vault = state.vault_path()?;
+    let rel = event_relative_path(&vault, path)?;
+    if !path.exists() {
+        state
+            .db
+            .with_conn(|conn| remove_workspace_media_index(conn, &rel))?;
+        let _ = app.emit(
+            "file:changed",
+            serde_json::json!({
+                "path": rel,
+                "event_type": "removed",
+            }),
+        );
+        return Ok(());
+    }
+
+    state.db.with_conn(|conn| {
+        let _ = index_workspace_media_file(conn, &vault, path)?;
+        Ok(())
+    })?;
+    let _ = app.emit(
+        "file:changed",
+        serde_json::json!({
+            "path": rel,
             "event_type": event_type,
         }),
     );

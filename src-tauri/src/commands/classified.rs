@@ -158,6 +158,8 @@ async fn classified_unlock_async_inner(
 fn classified_lock_inner() -> AppResult<()> {
     let mut vk = vault_key_write()?;
     vk.lock();
+    crate::ai_runtime::classified_session::classified_ai_cache_clear()?;
+    crate::ai_runtime::classified_retrieval::clear_classified_index();
     Ok(())
 }
 
@@ -195,6 +197,12 @@ fn classified_files_inner(
             let entry = entry?;
             let path = entry.path();
             let rel = relative_path(&vault, &path)?;
+
+            // Hide .iris-ai directory from file listings
+            if path.is_dir() && path.file_name().is_some_and(|n| n == ".iris-ai") {
+                continue;
+            }
+
             entries.push(ClassifiedFileEntry {
                 is_dir: path.is_dir(),
                 path: rel,

@@ -23,7 +23,9 @@ pub mod version;
 mod watcher;
 mod window_chrome;
 
-use tauri::Manager;
+use std::time::Duration;
+
+use tauri::{webview::PageLoadEvent, Manager};
 use tracing_subscriber::EnvFilter;
 
 use app::AppState;
@@ -34,9 +36,54 @@ pub fn run() {
         .with_env_filter(EnvFilter::from_default_env())
         .init();
 
-    tauri::Builder::default()
+    let builder = tauri::Builder::default();
+    let builder = commands::media::register_media_protocol(builder);
+
+    builder
         .plugin(tauri_plugin_dialog::init())
+        .on_page_load(|webview, payload| {
+            if payload.event() != PageLoadEvent::Finished || webview.label() != "main" {
+                return;
+            }
+
+            let app = webview.app_handle().clone();
+            std::thread::spawn(move || {
+                std::thread::sleep(Duration::from_millis(750));
+
+                let Some(window) = app.get_webview_window("main") else {
+                    tracing::warn!("startup reveal fallback skipped: main window not found");
+                    return;
+                };
+
+                let visible = match window.is_visible() {
+                    Ok(visible) => visible,
+                    Err(e) => {
+                        tracing::warn!(
+                            "startup reveal fallback skipped: visibility check failed: {e}"
+                        );
+                        return;
+                    }
+                };
+
+                if visible {
+                    return;
+                }
+
+                if let Err(e) = commands::window_chrome_cmd::reveal_main_window(&window) {
+                    tracing::warn!("startup reveal fallback failed: {e}");
+                }
+            });
+        })
         .setup(|app| {
+            let main_window = app.get_webview_window("main");
+            if let Some(window) = &main_window {
+                // Apply Iris chrome before any slower startup work can reveal
+                // a default Tauri shell in dev mode. React still controls show().
+                window_chrome::apply_main_window_chrome(window);
+            } else {
+                tracing::warn!("main window not found at setup start");
+            }
+
             let data_dir = app
                 .path()
                 .app_data_dir()
@@ -62,22 +109,9 @@ pub fn run() {
                 let _ = state.restart_file_watcher(app.handle().clone());
             }
 
-            if let Some(window) = app.get_webview_window("main") {
-                #[cfg(windows)]
-                {
-                    use tauri::Theme;
-                    let _ = window.set_theme(Some(Theme::Dark));
-                }
-                window_chrome::apply_main_window_chrome(&window);
-                window
-                    .show()
-                    .map_err(|e| crate::error::AppError::msg(format!("无法显示主窗口: {e}")))?;
-                // macOS：show 后再应用一次圆角/标题，确保无边框壳层稳定。
-                #[cfg(target_os = "macos")]
-                window_chrome::apply_main_window_chrome(&window);
-                let _ = window.set_focus();
-            } else {
-                tracing::warn!("main window not found after setup");
+            if let Some(window) = &main_window {
+                // Reapply after startup side effects; show() remains frontend-gated.
+                window_chrome::apply_main_window_chrome(window);
             }
 
             tracing::info!("Iris 已启动 — 若未见窗口，请检查任务栏或 WebView2 运行时。");
@@ -91,9 +125,17 @@ pub fn run() {
             commands::settings::credential_has,
             commands::settings::credential_delete,
             commands::file::file_list,
+            commands::file::file_signature,
+            commands::file::document_open_begin,
+            commands::file::document_open_end,
+            commands::file::document_open,
             commands::file::file_read,
             commands::file::file_write,
             commands::file::file_set_lock,
+            commands::media::media_metadata,
+            commands::media::media_resolve,
+            commands::media::media_release,
+            commands::media::workspace_list,
             commands::classified::classified_setup,
             commands::classified::classified_unlock,
             commands::classified::classified_lock,
@@ -155,7 +197,6 @@ pub fn run() {
             commands::template::template_save,
             commands::template::template_delete,
             commands::tag::tag_list,
-            commands::export::export_file,
             commands::corpus_commands::corpus_list,
             commands::corpus_commands::corpus_upsert,
             // Writing Workflow (Phase 1)
@@ -183,6 +224,9 @@ pub fn run() {
             commands::ai_commands::session_rename,
             commands::ai_commands::session_retract,
             commands::ai_commands::session_load,
+            commands::ai_commands::session_evidence_list,
+            commands::ai_commands::session_evidence_detail,
+            commands::ai_commands::session_evidence_register,
             commands::ai_commands::session_clear_all,
             commands::ai_commands::ai_cache_clear,
             commands::ai_commands::agent_task_get,
@@ -208,6 +252,13 @@ pub fn run() {
             commands::ai_commands::prompt_profile_get,
             commands::ai_commands::prompt_profile_set,
             commands::ai_commands::prompt_profile_presets,
+            commands::ai_commands::classified_ai_thread_list,
+            commands::ai_commands::classified_ai_thread_load,
+            commands::ai_commands::classified_ai_thread_save,
+            commands::ai_commands::classified_ai_thread_delete,
+            commands::ai_commands::classified_ai_cache_clear,
+            commands::ai_commands::classified_ai_context_search,
+            commands::ai_commands::classified_ai_retrieval_clear,
             // Research Workflow (D)
             commands::research_commands::research_execute,
             commands::research_commands::research_status,
@@ -228,6 +279,7 @@ pub fn run() {
             commands::profile_commands::inbox_counts,
             commands::window_chrome_cmd::app_exit,
             commands::window_chrome_cmd::get_desktop_chrome_metrics,
+            commands::window_chrome_cmd::show_main_window_when_ready,
             commands::window_chrome_cmd::reapply_window_chrome,
         ])
         .run(tauri::generate_context!())

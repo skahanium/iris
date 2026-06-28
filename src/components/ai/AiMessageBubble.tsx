@@ -6,7 +6,7 @@ import {
   type ReactNode,
 } from "react";
 
-import { Check, Copy, FileText, Folder, RotateCcw } from "lucide-react";
+import { FileText, Folder } from "lucide-react";
 
 import { MarkdownErrorBoundary } from "@/components/ui/markdown-error-boundary";
 
@@ -35,10 +35,6 @@ interface AiMessageBubbleProps {
   className?: string;
 
   onCitationClick?: (ref: string) => void;
-
-  onRetract?: () => void;
-
-  onCopy?: () => void;
 
   /** 用户附加的图片列表 */
   images?: import("./AiMessageList").ImageAttachment[];
@@ -267,10 +263,6 @@ export const AiMessageBubble = memo(function AiMessageBubble({
 
   onCitationClick,
 
-  onRetract,
-
-  onCopy,
-
   images,
 
   mentions,
@@ -317,8 +309,11 @@ export const AiMessageBubble = memo(function AiMessageBubble({
         className={cn(
           "ai-message-bubble ai-message-bubble-user ai-message-surface-user self-end",
 
+          selected && "ring-1 ring-primary/50",
+
           className,
         )}
+        data-selected={selected ? "" : undefined}
       >
         {images && images.length > 0 && (
           <div className="mb-1.5 flex flex-wrap gap-1.5">
@@ -351,48 +346,17 @@ export const AiMessageBubble = memo(function AiMessageBubble({
   return (
     <div
       className={cn(
-        "ai-message-assistant ai-message-bubble ai-message-bubble-assistant ai-message-surface-assistant group relative w-full max-w-full overflow-hidden",
+        "ai-message-assistant ai-message-bubble ai-message-bubble-assistant ai-message-surface-assistant relative w-full max-w-full overflow-hidden",
 
         streaming && "ai-message-bubble-streaming",
 
-        selected && "ring-2 ring-primary/60",
+        selected && "ring-1 ring-primary/50",
 
         className,
       )}
       data-streaming={streaming ? "" : undefined}
+      data-selected={selected ? "" : undefined}
     >
-      {selected ? (
-        <div className="absolute left-1.5 top-1.5 z-10 flex h-5 w-5 items-center justify-center rounded bg-primary text-primary-foreground">
-          <Check className="h-3 w-3" />
-        </div>
-      ) : null}
-
-      {(onRetract || onCopy) && !streaming ? (
-        <div className="absolute right-1.5 top-1.5 z-10 flex items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">
-          {onCopy ? (
-            <button
-              type="button"
-              title="复制此消息"
-              className="flex h-6 w-6 items-center justify-center rounded text-muted-foreground/40 hover:bg-muted hover:text-muted-foreground"
-              onClick={onCopy}
-            >
-              <Copy className="h-3.5 w-3.5" />
-            </button>
-          ) : null}
-
-          {onRetract ? (
-            <button
-              type="button"
-              title="撤回此消息及后续所有消息"
-              className="flex h-6 w-6 items-center justify-center rounded text-muted-foreground/40 hover:bg-muted hover:text-muted-foreground"
-              onClick={onRetract}
-            >
-              <RotateCcw className="h-3.5 w-3.5" />
-            </button>
-          ) : null}
-        </div>
-      ) : null}
-
       {showThinking ? <AiThinkingIndicator /> : null}
 
       {content ? (

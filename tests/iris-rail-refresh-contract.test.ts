@@ -30,6 +30,7 @@ describe("Iris Rail complete interface contracts", () => {
 
   it("defines persistent brand rail as the only Home entry plus Rail Segments tabs", () => {
     const titleBar = read("src/components/layout/DesktopTitleBar.tsx");
+    const css = read("src/styles/globals.css");
     const app = read("src/App.tsx");
     const welcome = read("src/components/layout/WelcomeEmpty.tsx");
     const platform = read("src/lib/platform-chrome.ts");
@@ -41,6 +42,10 @@ describe("Iris Rail complete interface contracts", () => {
     expect(titleBar).not.toContain("iris-home-segment");
     expect(titleBar).toContain("onHome");
     expect(titleBar).toContain("isHomeActive");
+    expect(titleBar).toContain("iris-brand-rail flex h-8");
+    expect(titleBar).toContain("min-w-[6.75rem]");
+    expect(titleBar).not.toContain("iris-brand-rail flex h-full");
+    expect(css).toContain(".iris-brand-rail:hover");
     expect(titleBar).toContain("iris-brand-rail--active");
     expect(app).toContain("homeActive");
     expect(welcome).toContain('data-testid="home-workbench"');
@@ -60,7 +65,7 @@ describe("Iris Rail complete interface contracts", () => {
     expect(welcome).not.toContain("<IrisMark");
     expect(platform).toContain("showCustomWindowControls");
     expect(platform).toContain("isWindowsDesktopChrome");
-    expect(macos).toContain('"decorations": false');
+    expect(macos).toContain('"decorations": true');
   });
 
   it("all document-opening overlay routes leave Home before opening a note", () => {
@@ -82,7 +87,7 @@ describe("Iris Rail complete interface contracts", () => {
     expect(outline).toContain('data-testid="outline-rail-handle"');
     expect(outline).toContain("outline-ghost--active");
     expect(outline).toContain("outline-ghost-item");
-    expect(outline).toContain("useVirtualizer");
+    expect(outline).not.toContain("useVirtualizer");
     expect(outline).toContain("ArrowDown");
     expect(outline).toContain("Escape");
     expect(outline).not.toContain("onPointerMove");
@@ -96,6 +101,7 @@ describe("Iris Rail complete interface contracts", () => {
     expect(outline).not.toContain("backdrop-filter");
     expect(editor).toContain("editor-edge-control");
     expect(css).toContain("--editor-outline-rail-width: 12rem");
+    expect(css).toContain("padding-left: var(--editor-outline-reserve);");
     expect(css).toContain(".outline-ghost");
     expect(css).toContain(".outline-ghost-item--level-1");
     expect(css).toContain(".outline-ghost-item--level-2");

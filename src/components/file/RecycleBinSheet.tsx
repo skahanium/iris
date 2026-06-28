@@ -17,7 +17,7 @@ import type { RecycleBinItem } from "@/types/ipc";
 interface RecycleBinSheetProps {
   open: boolean;
   onClose: () => void;
-  onRestored: (path: string) => void;
+  onRestored: (path: string) => void | Promise<void>;
   onIndexChange?: () => void;
 }
 
@@ -200,7 +200,7 @@ export function RecycleBinBody({
               const path = await recycleRestore(target.id);
               onIndexChange?.();
               refresh();
-              onRestored(path);
+              await onRestored(path);
               onClose();
             } catch (e) {
               setError(e instanceof Error ? e.message : "恢复失败");

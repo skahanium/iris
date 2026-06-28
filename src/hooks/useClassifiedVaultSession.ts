@@ -9,6 +9,7 @@ interface UseClassifiedVaultSessionOptions {
   enabled: boolean;
   openClassifiedPaths: string[];
   onLocked?: () => void;
+  abortClassifiedRequest?: () => void;
 }
 
 /**
@@ -19,6 +20,7 @@ export function useClassifiedVaultSession({
   enabled,
   openClassifiedPaths,
   onLocked,
+  abortClassifiedRequest,
 }: UseClassifiedVaultSessionOptions) {
   const [status, setStatus] = useState<ClassifiedStatus>("locked");
   const [waiting, setWaiting] = useState(false);
@@ -26,6 +28,9 @@ export function useClassifiedVaultSession({
   const idleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const onLockedRef = useRef(onLocked);
   onLockedRef.current = onLocked;
+
+  const abortClassifiedRequestRef = useRef(abortClassifiedRequest);
+  abortClassifiedRequestRef.current = abortClassifiedRequest;
 
   const clearIdleTimer = useCallback(() => {
     if (idleTimerRef.current) {
@@ -59,6 +64,7 @@ export function useClassifiedVaultSession({
 
   const performLock = useCallback(async () => {
     clearIdleTimer();
+    abortClassifiedRequestRef.current?.();
     try {
       await classifiedLock();
     } catch {

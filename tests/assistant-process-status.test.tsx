@@ -127,6 +127,27 @@ describe("AssistantProcessStatusBar", () => {
     expect(document.body.textContent).toContain("中止");
   });
 
+  it("does not duplicate the thinking bubble and composer stop button during ordinary streaming", async () => {
+    await act(async () => {
+      root.render(
+        <AssistantProcessStatusBar
+          agentTask={null}
+          activityHint="正在生成回答"
+          researchProgress={null}
+          researchRunning={false}
+          streaming
+          onAbort={vi.fn()}
+        />,
+      );
+    });
+
+    expect(
+      document.querySelector('[data-testid="assistant-process-status"]'),
+    ).toBeNull();
+    expect(document.body.textContent).not.toContain("正在分析");
+    expect(document.body.textContent).not.toContain("中止");
+  });
+
   it("hides when the task is completed", async () => {
     await act(async () => {
       root.render(
@@ -159,5 +180,34 @@ describe("AssistantProcessStatusBar", () => {
     });
 
     expect(document.body.textContent).toBe("");
+  });
+
+  it("renders failed_safe as a terminal error state without spinner or abort", async () => {
+    await act(async () => {
+      root.render(
+        <AssistantProcessStatusBar
+          agentTask={{ ...runningTask, status: "failed_safe" }}
+          activityHint="正在处理"
+          researchProgress={null}
+          researchRunning={false}
+          hasError
+          onAbort={vi.fn()}
+        />,
+      );
+    });
+
+    expect(document.body.textContent).toContain("处理遇到问题");
+    expect(document.body.textContent).not.toContain("中止");
+    expect(
+      document.querySelector(
+        '[data-testid="assistant-process-status-strip"] .animate-spin',
+      ),
+    ).toBeNull();
+
+    await act(async () => {
+      vi.advanceTimersByTime(8_100);
+    });
+
+    expect(document.body.textContent).not.toContain("仍在处理");
   });
 });

@@ -66,6 +66,40 @@ describe("assistant per-turn TaskPlan dispatch", () => {
     expect(intents).toEqual(sequence.map((turn) => turn.expected));
   });
 
+  it("routes authorized freshness questions to web-backed research without asking again", () => {
+    const plan = buildAssistantTaskPlan({
+      message:
+        "2026年6月最新 Chatbot Arena / SWE-bench Live / LiveBench 榜单是什么？",
+      hasImage: false,
+      hasSelection: false,
+      notePath: null,
+      explicitScope: false,
+      contextReferences: [],
+      webAuthorized: true,
+    });
+
+    expect(plan.intent).toBe("research");
+    expect(plan.webMode).toBe("brokered");
+    expect(plan.requiresClarification).toBe(false);
+    expect(plan.sourceHints).toContain("web:fresh_required");
+  });
+
+  it("does not treat the web toggle alone as a research command", () => {
+    const plan = buildAssistantTaskPlan({
+      message: "这个概念是什么意思？",
+      hasImage: false,
+      hasSelection: false,
+      notePath: "/notes/topic.md",
+      explicitScope: false,
+      contextReferences: [],
+      webAuthorized: true,
+    });
+
+    expect(plan.intent).toBe("ask_notes");
+    expect(plan.webMode).toBe("brokered");
+    expect(plan.sourceHints).not.toContain("web:fresh_required");
+  });
+
   it("uses TaskPlan as the primary send dispatcher contract", () => {
     const taskHook = readFileSync(
       "src/components/ai/hooks/useAssistantTasks.ts",
@@ -121,6 +155,33 @@ describe("assistant per-turn TaskPlan dispatch", () => {
     expect(statusBadge).toContain("taskPlanIntent");
     expect(statusBadge).toContain('case "creative_write"');
     expect(statusBadge).not.toContain("任务：");
+  });
+
+  it("labels citation checks separately from research synthesis", () => {
+    const statusBadge = readFileSync(
+      "src/components/ai/AgentStatusBadge.tsx",
+      "utf8",
+    );
+
+    expect(statusBadge).toContain('case "citation_check"');
+    expect(statusBadge).toContain('return "引用核查"');
+    expect(statusBadge).toContain('case "research"');
+    expect(statusBadge).toContain('return "研究综合"');
+  });
+
+  it("does not depend on the whole bubble selection object for selection quotes", () => {
+    const panel = readFileSync(
+      "src/components/ai/UnifiedAssistantPanel.impl.tsx",
+      "utf8",
+    );
+    const hook = readFileSync(
+      "src/components/ai/hooks/useSelectionQuoteReference.ts",
+      "utf8",
+    );
+
+    expect(panel).not.toContain("}, [bubbleSelection, selectionQuote]);");
+    expect(panel).toContain("useSelectionQuoteReference");
+    expect(hook).toContain("quoteSelectionAsReference(");
   });
 });
 

@@ -33,6 +33,7 @@ describe("Agent Task Runtime Phase E UI contract", () => {
     const panel = read("src/components/ai/AgentTaskStatusPanel.tsx");
     const surfaces = read("src/components/ai/AssistantTaskSurfaces.tsx");
     const unified = read("src/components/ai/UnifiedAssistantPanel.impl.tsx");
+    const composerDock = read("src/components/ai/AssistantComposerDock.tsx");
     const assistantTasks = read("src/components/ai/hooks/useAssistantTasks.ts");
     const taskStatusHook = read(
       "src/components/ai/hooks/useAgentTaskStatus.ts",
@@ -51,7 +52,7 @@ describe("Agent Task Runtime Phase E UI contract", () => {
     expect(surfaces).not.toContain("<AssistantProcessStatusBar");
     expect(surfaces).toContain("AssistantArtifactTagStrip");
     expect(unified).toContain("AgentTaskStatusPanel");
-    expect(unified).toContain("AssistantProcessStatusBar");
+    expect(composerDock).toContain("AssistantProcessStatusBar");
     expect(unified).toContain("agentTaskId");
     expect(unified).toContain("useAgentTaskStatus");
     expect(assistantTasks).toContain("setAgentTaskId(response.taskId");

@@ -31,6 +31,7 @@ pub async fn llm_generate(
     llm_generate_stream(app, &state.db, merged).await
 }
 
+/// Deprecated compatibility alias for legacy callers; prefer `llm_generate`.
 #[tauri::command]
 pub async fn llm_chat(
     app: AppHandle,

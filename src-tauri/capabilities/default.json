@@ -4,9 +4,8 @@
   "description": "Default Iris capabilities",
   "windows": ["main"],
   "permissions": [
-    "core:default",
-    "core:event:default",
     "core:event:allow-listen",
+    "core:event:allow-unlisten",
     "dialog:default",
     "core:window:allow-start-dragging",
     "core:window:allow-minimize",
@@ -14,6 +13,8 @@
     "core:window:allow-unmaximize",
     "core:window:allow-close",
     "core:window:allow-toggle-maximize",
+    "core:window:allow-is-fullscreen",
+    "core:window:allow-set-fullscreen",
     "core:window:allow-set-theme",
     "core:window:allow-is-maximized"
   ]

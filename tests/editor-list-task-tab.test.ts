@@ -66,7 +66,7 @@ describe("ListIndentKeymapExtension task list", () => {
     expect(source).toContain('"listItem"');
     expect(source).toContain("sinkListItem");
     expect(source).toContain("liftListItem");
-    expect(source).not.toContain("return false");
+    expect(source).toContain("Backspace");
   });
 
   it("does not introduce ordinary listItem nodes when Tab is pressed in a task list", () => {

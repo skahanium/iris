@@ -59,7 +59,7 @@ function DialogContent({
       >
         {children}
         {showClose ? (
-          <DialogPrimitive.Close className="absolute right-3 top-3 inline-flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground duration-fast ease-iris-out hover:bg-muted hover:text-foreground focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-1 focus:ring-offset-panel">
+          <DialogPrimitive.Close className="iris-focus-soft absolute right-3 top-3 inline-flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground duration-fast ease-iris-out hover:bg-muted hover:text-foreground focus:outline-none">
             <X className="h-4 w-4" />
             <span className="sr-only">关闭</span>
           </DialogPrimitive.Close>

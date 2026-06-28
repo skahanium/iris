@@ -37,9 +37,12 @@ describe("assistant panel performance contract", () => {
     const panel = read("src/components/ai/UnifiedAssistantPanel.tsx");
     const impl = read("src/components/ai/UnifiedAssistantPanel.impl.tsx");
 
-    expect(streamHook).toContain(
+    expect(streamHook).toContain("window.requestAnimationFrame");
+    expect(streamHook).toContain("window.cancelAnimationFrame");
+    expect(streamHook).not.toContain(
       "const delay = elapsed < 50 ? 50 - elapsed : 0",
     );
+    expect(streamHook).not.toContain("window.setTimeout");
     expect(panel).toContain("AssistantTaskSurfaces");
     expect(impl).toContain("<AssistantTaskSurfaces");
     expect(impl).not.toContain('from "./PatchPreview"');

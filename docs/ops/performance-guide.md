@@ -70,3 +70,14 @@ ps aux | egrep 'iris|vite|node.*1420' | grep -v grep
 # Rust 侧日志（索引跳过/嵌入队列）
 RUST_LOG=iris_lib::indexer=info,iris_lib::embedding=info npm run dev:desktop
 ```
+
+## Document Open Runtime
+
+Budgets:
+
+- Hot mounted tab activation: <= 16ms visible commit, no disk read.
+- Warm prepared open: <= 50ms visible commit after selection.
+- Cold open: loading surface visible within 100ms.
+- Cold 50KB Markdown note: first editor frame within 1000ms on a normal development machine.
+
+When investigating regressions, check runtime traces by source (`welcome`, `quick-open`, `file-tree`, `tab`, `startup`, `search`, `graph`, `outline`, `ai`, `management`, `recycle`, `classified`) and cache state (`hit`, `miss`, `write`, `none`). Trace output must not include note paths, titles, Markdown body, frontmatter, prompts, selections, credentials, or decrypted classified content.

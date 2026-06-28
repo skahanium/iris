@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+﻿import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 function lineCount(path: string): number {
@@ -24,6 +24,20 @@ describe("module boundary contract", () => {
       expect(lineCount(path), `${path} is still too large`).toBeLessThanOrEqual(
         700,
       );
+    }
+  });
+  it("keeps shared ui primitives independent from assistant and command-palette business modules", () => {
+    const uiFiles = [
+      "src/components/ui/ai-composer.tsx",
+      "src/components/ui/ai-message.tsx",
+      "src/components/ui/command-list.tsx",
+      "src/components/ui/iris-context-menu.tsx",
+    ];
+
+    for (const path of uiFiles) {
+      const source = readFileSync(path, "utf8");
+      expect(source, path).not.toMatch(/@\/components\/ai/);
+      expect(source, path).not.toMatch(/@\/lib\/command-palette/);
     }
   });
 });

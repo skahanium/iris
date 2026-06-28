@@ -35,6 +35,7 @@ function renderImageSrc(src: string, vaultPath: string | null): string {
 }
 
 interface ImageExtensionOptions {
+  mediaLoading: "deferred" | "visible";
   vaultPath: string | null;
 }
 
@@ -49,6 +50,7 @@ export const ImageExtension = Node.create<ImageExtensionOptions>({
 
   addOptions() {
     return {
+      mediaLoading: "visible",
       vaultPath: null,
     };
   },
@@ -111,8 +113,15 @@ export const ImageExtension = Node.create<ImageExtensionOptions>({
 
         img.className = "iris-editor-media-image";
         img.draggable = true;
+        img.dataset.irisMediaSrc = src;
+        img.setAttribute("loading", "lazy");
+        img.setAttribute("decoding", "async");
         if (src && isSafeImageSrc(src)) {
-          img.src = renderImageSrc(src, this.options.vaultPath);
+          if (this.options.mediaLoading === "visible") {
+            img.src = renderImageSrc(src, this.options.vaultPath);
+          } else {
+            img.removeAttribute("src");
+          }
         } else {
           img.removeAttribute("src");
         }

@@ -58,7 +58,7 @@ interface UseAssistantArtifactsResult {
   lastError: string | null;
   setLastError: Dispatch<SetStateAction<string | null>>;
   clearTaskSurfaces: () => void;
-  handleAcceptPatch: (patch: PatchProposal) => Promise<void>;
+  handleAcceptPatch: (patch: PatchProposal) => Promise<boolean>;
   handleRejectPatch: (patch: PatchProposal) => void;
   handleCopyPatch: (patch: PatchProposal) => Promise<void>;
   handleClearOrganizeSelection: () => void;
@@ -132,8 +132,10 @@ export function useAssistantArtifacts({
         setWritingPatches((prev) =>
           prev.filter((item) => item.id !== patch.id),
         );
+        return true;
       } catch (error) {
         setLastError(invokeErrorMessage(error));
+        return false;
       }
     },
     [applyPatch, getNoteContent, onPatchApplied],

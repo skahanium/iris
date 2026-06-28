@@ -113,6 +113,108 @@ describe("editor performance regressions", () => {
     vi.useRealTimers();
   });
 
+  it("applies parsed body content on first mount when reingestKey is non-zero", async () => {
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root: Root = createRoot(container);
+    let editor: ReactEditor | null = null;
+
+    await act(async () => {
+      root.render(
+        createElement(TipTapEditor, {
+          initialBodyMarkdown: "Visible body after a later document open.",
+          reingestKey: 2,
+          onEditorReady: (nextEditor: ReactEditor | null) => {
+            editor = nextEditor;
+          },
+        }),
+      );
+    });
+
+    await vi.waitFor(() => {
+      expect(editor?.getText()).toContain(
+        "Visible body after a later document open.",
+      );
+    });
+
+    act(() => {
+      root.unmount();
+    });
+    container.remove();
+  });
+
+  it("fires first-frame readiness only after the body is in ProseMirror", async () => {
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root: Root = createRoot(container);
+    let firstFrameText: string | null = null;
+
+    await act(async () => {
+      root.render(
+        createElement(TipTapEditor, {
+          initialBodyMarkdown: "Ready means the body is visible.",
+          reingestKey: 3,
+          onFirstFrameReady: (editor: ReactEditor) => {
+            firstFrameText = editor.getText();
+          },
+        }),
+      );
+    });
+
+    await vi.waitFor(() => {
+      expect(firstFrameText).toContain("Ready means the body is visible.");
+    });
+
+    act(() => {
+      root.unmount();
+    });
+    container.remove();
+  });
+
+  it("fires first-frame readiness again after a same-editor body reingest", async () => {
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root: Root = createRoot(container);
+    const firstFrameTexts: string[] = [];
+
+    await act(async () => {
+      root.render(
+        createElement(TipTapEditor, {
+          initialBodyMarkdown: "First body.",
+          reingestKey: 1,
+          onFirstFrameReady: (editor: ReactEditor) => {
+            firstFrameTexts.push(editor.getText());
+          },
+        }),
+      );
+    });
+
+    await vi.waitFor(() => {
+      expect(firstFrameTexts.at(-1)).toContain("First body.");
+    });
+
+    await act(async () => {
+      root.render(
+        createElement(TipTapEditor, {
+          initialBodyMarkdown: "Second body after reingest.",
+          reingestKey: 2,
+          onFirstFrameReady: (editor: ReactEditor) => {
+            firstFrameTexts.push(editor.getText());
+          },
+        }),
+      );
+    });
+
+    await vi.waitFor(() => {
+      expect(firstFrameTexts.at(-1)).toContain("Second body after reingest.");
+    });
+
+    act(() => {
+      root.unmount();
+    });
+    container.remove();
+  });
+
   it("does not rebuild the whole outline from selectionUpdate events", () => {
     const source = readFileSync(
       "src/components/editor/EditorOutline.tsx",

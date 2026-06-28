@@ -127,7 +127,10 @@ describe("harness modernization remaining contracts", () => {
     expect(resume).toContain("pausedTaskId");
     expect(panel).toContain("pausedTaskId");
     expect(run).toContain(
-      "HarnessFinishReason::BudgetExhausted | HarnessFinishReason::RoundLimit",
+      "finish_reason: HarnessFinishReason::BudgetExhausted",
+    );
+    expect(run).toContain(
+      "round_limit_without_budget_exhaustion_completes_with_fallback",
     );
     expect(run.indexOf("save_round_checkpoint(")).toBeLessThan(
       run.lastIndexOf("finish_run("),

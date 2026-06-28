@@ -2,7 +2,6 @@ import type { Editor } from "@tiptap/react";
 import { useCallback, useMemo, type RefObject } from "react";
 
 import type { WritingEditorContext } from "@/types/ai";
-import { isClassifiedVaultPath } from "@/lib/classified-path";
 import { runEditorAction } from "@/lib/editor-action-executor";
 import { insertAssistantMarkdownAtCursor } from "@/lib/editor-insert";
 
@@ -27,7 +26,7 @@ interface UseAppEditorActionsParams {
 }
 
 export function useAppEditorActions({
-  activeNoteIsClassified,
+  activeNoteIsClassified: _activeNoteIsClassified,
   activePathRef,
   editorRef,
   getLiveMarkdown,
@@ -40,7 +39,6 @@ export function useAppEditorActions({
     const ed = editorRef.current;
     const path = activePathRef.current;
     if (!ed || !path) return null;
-    if (isClassifiedVaultPath(path)) return null;
     const { from, to } = ed.state.selection;
     const selection =
       from !== to ? ed.state.doc.textBetween(from, to, "\n") : "";
@@ -54,7 +52,6 @@ export function useAppEditorActions({
     const ed = editorRef.current;
     const path = activePathRef.current;
     if (!ed || !path) return null;
-    if (isClassifiedVaultPath(path)) return null;
     const { from, to } = ed.state.selection;
     if (from !== to) {
       return ed.state.doc.textBetween(from, to, "\n");
@@ -67,27 +64,19 @@ export function useAppEditorActions({
 
   const runInlineAi = useCallback(
     (action: string) => {
-      if (activeNoteIsClassified) {
-        setAiStatus("涉密笔记不能发送到 AI");
-        return;
-      }
       const ed = editorRef.current;
       if (!ed) return;
       void inlineAi.run(ed, action);
     },
-    [activeNoteIsClassified, editorRef, inlineAi, setAiStatus],
+    [editorRef, inlineAi],
   );
 
   const handleSlashCommand = useCallback(
     (command: string) => {
-      if (activeNoteIsClassified) {
-        setAiStatus("涉密笔记不能发送到 AI");
-        return;
-      }
       if (!editorRef.current) return;
       void inlineAi.runSlash(editorRef.current, command, getLiveMarkdown());
     },
-    [activeNoteIsClassified, editorRef, getLiveMarkdown, inlineAi, setAiStatus],
+    [editorRef, getLiveMarkdown, inlineAi],
   );
 
   const editorActionHandlers = useMemo(
@@ -113,13 +102,9 @@ export function useAppEditorActions({
       const ed = editorRef.current;
       const path = activePathRef.current;
       if (!ed || !path) return;
-      if (isClassifiedVaultPath(path)) {
-        setAiStatus("涉密笔记不能接收 AI 插入");
-        return;
-      }
       insertAssistantMarkdownAtCursor(ed, content);
     },
-    [activePathRef, editorRef, setAiStatus],
+    [activePathRef, editorRef],
   );
 
   const handleUndo = useCallback(() => {

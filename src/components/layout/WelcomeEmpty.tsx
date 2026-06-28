@@ -1,53 +1,42 @@
 import { Bot, FilePlus2, FolderSearch, Search, Trash2 } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import { useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { ConfirmDialog } from "@/components/common/ConfirmDialog";
 import { displayTitleForFileListItem } from "@/lib/note-display";
-import { fileDelete, fileList } from "@/lib/ipc";
+import { fileDelete } from "@/lib/ipc";
+import type { HomePendingOpen } from "@/lib/home-open-transition";
+import type { NoteOpenSource } from "@/lib/document-open-runtime";
 import type { FileListItem } from "@/types/ipc";
 
 interface WelcomeEmptyProps {
-  /** Reload recent list when vault changes. */
-  vaultKey?: string | null;
-  onOpen: (path: string) => void;
+  onOpen: (
+    path: string,
+    titleHint: string | undefined,
+    source: NoteOpenSource,
+  ) => void;
+  onPrepare?: (file: FileListItem, source: NoteOpenSource) => void;
   onNew: () => void | Promise<void>;
   onQuickOpen?: () => void;
+  onRefreshRecent: () => void | Promise<void>;
   onSearch?: () => void;
   onOpenAiManagement?: () => void;
-}
-
-function dedupeByPath(files: FileListItem[]): FileListItem[] {
-  const byPath = new Map<string, FileListItem>();
-  for (const f of files) {
-    if (!byPath.has(f.path)) {
-      byPath.set(f.path, f);
-    }
-  }
-  return [...byPath.values()];
+  pendingOpen?: HomePendingOpen | null;
+  recentNotes: readonly FileListItem[];
 }
 
 export function WelcomeEmpty({
-  vaultKey,
   onOpen,
   onNew,
+  onPrepare,
   onQuickOpen,
+  onRefreshRecent,
   onSearch,
   onOpenAiManagement,
+  pendingOpen,
+  recentNotes,
 }: WelcomeEmptyProps) {
-  const [recent, setRecent] = useState<FileListItem[]>([]);
   const [deleteTarget, setDeleteTarget] = useState<FileListItem | null>(null);
-
-  const loadRecent = useCallback(() => {
-    void fileList().then((files) => {
-      const deduped = dedupeByPath(files);
-      setRecent(deduped.slice(0, 5));
-    });
-  }, []);
-
-  useEffect(() => {
-    loadRecent();
-  }, [loadRecent, vaultKey]);
 
   return (
     <div
@@ -63,7 +52,7 @@ export function WelcomeEmpty({
               onClick={() => {
                 void (async () => {
                   await onNew();
-                  loadRecent();
+                  await onRefreshRecent();
                 })();
               }}
             >
@@ -117,37 +106,47 @@ export function WelcomeEmpty({
               </p>
             </div>
             <span className="text-xs tabular-nums text-muted-foreground">
-              {recent.length}
+              {recentNotes.length}
             </span>
           </div>
-          {recent.length > 0 ? (
+          {recentNotes.length > 0 ? (
             <ul className="divide-y divide-border/50">
-              {recent.map((f) => (
-                <li
-                  key={f.path}
-                  className="group flex items-center transition-colors duration-base ease-iris-out hover:bg-surface-inset/60"
-                >
-                  <button
-                    type="button"
-                    className="min-w-0 flex-1 px-2 py-3 text-left"
-                    onClick={() => onOpen(f.path)}
+              {recentNotes.map((f) => {
+                const title = displayTitleForFileListItem(f);
+                return (
+                  <li
+                    key={f.path}
+                    className="group flex items-center transition-colors duration-base ease-iris-out hover:bg-surface-inset/60"
+                    onMouseEnter={() => onPrepare?.(f, "welcome")}
                   >
-                    <span className="block truncate text-sm text-foreground">
-                      {displayTitleForFileListItem(f)}
-                    </span>
-                  </button>
-                  <Button
-                    type="button"
-                    size="icon"
-                    variant="ghost"
-                    className="mr-1 h-8 w-8 shrink-0 text-muted-foreground opacity-0 transition-opacity hover:text-destructive focus-visible:opacity-100 group-hover:opacity-100"
-                    aria-label={`删除 ${displayTitleForFileListItem(f)}`}
-                    onClick={() => setDeleteTarget(f)}
-                  >
-                    <Trash2 className="h-3.5 w-3.5" />
-                  </Button>
-                </li>
-              ))}
+                    <button
+                      type="button"
+                      className="min-w-0 flex-1 px-2 py-3 text-left"
+                      onFocus={() => onPrepare?.(f, "welcome")}
+                      onClick={() => onOpen(f.path, title, "welcome")}
+                    >
+                      <span className="block truncate text-sm text-foreground">
+                        {title}
+                      </span>
+                      {pendingOpen?.path === f.path && pendingOpen.error ? (
+                        <span className="mt-1 block truncate text-xs text-destructive">
+                          {pendingOpen.error}
+                        </span>
+                      ) : null}
+                    </button>
+                    <Button
+                      type="button"
+                      size="icon"
+                      variant="ghost"
+                      className="mr-1 h-8 w-8 shrink-0 text-muted-foreground opacity-0 transition-opacity hover:text-destructive focus-visible:opacity-100 group-hover:opacity-100"
+                      aria-label={`删除 ${title}`}
+                      onClick={() => setDeleteTarget(f)}
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </Button>
+                  </li>
+                );
+              })}
             </ul>
           ) : (
             <div className="border border-dashed border-border/70 px-4 py-8 text-sm text-muted-foreground">
@@ -170,7 +169,7 @@ export function WelcomeEmpty({
           void (async () => {
             await fileDelete(deleteTarget.path);
             setDeleteTarget(null);
-            loadRecent();
+            await onRefreshRecent();
           })();
         }}
       />

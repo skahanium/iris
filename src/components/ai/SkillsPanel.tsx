@@ -295,13 +295,17 @@ export function SkillsPanelBody({
 
   useEffect(() => {
     if (!open) return;
+    let disposed = false;
     let unlisten: (() => void) | undefined;
     void listenSkillsChanged(() => {
+      if (disposed) return;
       void refresh();
     }).then((fn) => {
-      unlisten = fn;
+      if (disposed) fn();
+      else unlisten = fn;
     });
     return () => {
+      disposed = true;
       unlisten?.();
     };
   }, [open, refresh]);

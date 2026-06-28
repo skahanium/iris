@@ -31,6 +31,7 @@ import type {
   ManagementCenterSection,
 } from "@/hooks/useOverlayManager";
 import { cn } from "@/lib/utils";
+import type { FileListItem } from "@/types/ipc";
 
 import { LlmRoutingSection } from "./LlmRoutingSection";
 import { MinimaxSearchSection } from "./MinimaxSearchSection";
@@ -43,7 +44,8 @@ interface ManagementCenterPanelProps {
   detail: ManagementCenterDetail;
   webSearch: boolean;
   onWebSearchChange: (enabled: boolean) => void;
-  onOpenNote: (path: string) => void;
+  onOpenNote: (path: string) => void | Promise<void>;
+  onPrepareNote?: (file: FileListItem) => void;
   onOpenKnowledgeRelations: () => void;
   onOpenVersion: () => void;
   onRescanVault: () => void;
@@ -263,6 +265,7 @@ export function ManagementCenterPanel({
   webSearch,
   onWebSearchChange,
   onOpenNote,
+  onPrepareNote,
   onOpenKnowledgeRelations,
   onOpenVersion,
   onRescanVault,
@@ -504,6 +507,7 @@ export function ManagementCenterPanel({
               open={open && activeSection === "notes" && isFileTree}
               onClose={onClose}
               onOpen={onOpenNote}
+              onPrepare={onPrepareNote}
             />
           ) : (
             <RecycleBinBody

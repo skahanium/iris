@@ -1,5 +1,14 @@
 /** Cached TipTap HTML per note path to skip re-ingest when switching tabs. */
+export type EditorHtmlCacheNamespace = "normal" | "classified";
+
 const htmlByPath = new Map<string, { html: string; digest: string }>();
+
+function cacheKey(
+  path: string,
+  namespace: EditorHtmlCacheNamespace = "normal",
+): string {
+  return namespace + "\0" + path;
+}
 
 /** Maximum number of cached entries to prevent unbounded memory growth. */
 const MAX_CACHE_SIZE = 30;
@@ -91,18 +100,20 @@ export function editorHtmlDigest(markdown: string): string {
 export function getCachedEditorHtml(
   path: string,
   expectedDigest: string,
+  namespace: EditorHtmlCacheNamespace = "normal",
 ): string | undefined {
-  const entry = htmlByPath.get(path);
+  const key = cacheKey(path, namespace);
+  const entry = htmlByPath.get(key);
   if (!entry) return undefined;
   if (entry.digest !== expectedDigest) {
-    htmlByPath.delete(path);
+    htmlByPath.delete(key);
     return undefined;
   }
   if (
     cachedHtmlHasVisibleFailedBold(entry.html) ||
     cachedHtmlHasVisibleUnparsedMarkdownBlock(entry.html)
   ) {
-    htmlByPath.delete(path);
+    htmlByPath.delete(key);
     return undefined;
   }
   return entry.html;
@@ -112,27 +123,37 @@ export function setCachedEditorHtml(
   path: string,
   html: string,
   digest: string,
+  namespace: EditorHtmlCacheNamespace = "normal",
 ): void {
+  const key = cacheKey(path, namespace);
   if (
     cachedHtmlHasVisibleFailedBold(html) ||
     cachedHtmlHasVisibleUnparsedMarkdownBlock(html)
   ) {
-    htmlByPath.delete(path);
+    htmlByPath.delete(key);
     return;
   }
 
   // Evict oldest entries if cache is full
-  if (htmlByPath.size >= MAX_CACHE_SIZE && !htmlByPath.has(path)) {
+  if (htmlByPath.size >= MAX_CACHE_SIZE && !htmlByPath.has(key)) {
     const oldestKey = htmlByPath.keys().next().value;
     if (oldestKey !== undefined) {
       htmlByPath.delete(oldestKey);
     }
   }
-  htmlByPath.set(path, { html, digest });
+  htmlByPath.set(key, { html, digest });
 }
 
-export function clearCachedEditorHtml(path: string): void {
-  htmlByPath.delete(path);
+export function clearCachedEditorHtml(
+  path: string,
+  namespace?: EditorHtmlCacheNamespace,
+): void {
+  if (namespace) {
+    htmlByPath.delete(cacheKey(path, namespace));
+    return;
+  }
+  htmlByPath.delete(cacheKey(path, "normal"));
+  htmlByPath.delete(cacheKey(path, "classified"));
 }
 
 export function clearAllEditorHtmlCache(): void {

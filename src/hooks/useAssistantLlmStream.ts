@@ -1,4 +1,5 @@
 import {
+  startTransition,
   useEffect,
   useRef,
   type Dispatch,
@@ -10,11 +11,13 @@ import {
   listenAiRetryStatus,
   listenLlmDone,
   listenLlmError,
+  listenLlmReset,
   listenLlmToken,
 } from "@/lib/ipc";
 import type { LlmTokenEvent } from "@/types/ipc";
 
 import type { ChatLine } from "@/components/ai/AiMessageList";
+import type { AiDomain } from "@/lib/ai-domain";
 
 /**
  * 统一助手 LLM 流式事件监听（RAF 节流 + request_id 过滤）。
@@ -25,6 +28,7 @@ export function useAssistantLlmStream(options: {
   streamBufRef: MutableRefObject<string>;
   setMessages: Dispatch<SetStateAction<ChatLine[]>>;
   setStreaming: Dispatch<SetStateAction<boolean>>;
+  domain?: AiDomain;
 }) {
   const {
     panelSendActiveRef,
@@ -32,30 +36,65 @@ export function useAssistantLlmStream(options: {
     streamBufRef,
     setMessages,
     setStreaming,
+    domain,
   } = options;
 
+  const domainRef = useRef(domain);
+  domainRef.current = domain;
+
   const rafRef = useRef<number | undefined>(undefined);
-  const lastFlushRef = useRef<number>(0);
 
   useEffect(() => {
     let disposed = false;
     let unlistenToken: (() => void) | undefined;
     let unlistenDone: (() => void) | undefined;
     let unlistenError: (() => void) | undefined;
+    let unlistenReset: (() => void) | undefined;
     let unlistenRetryStatus: (() => void) | undefined;
 
-    function flushSnapshot() {
+    function setMessagesFromBuf() {
       const snapshot = streamBufRef.current;
       setMessages((prev) => {
-        const copy = [...prev];
-        const last = copy[copy.length - 1];
+        const last = prev[prev.length - 1];
         if (last?.role === "assistant") {
+          if (last.content === snapshot) return prev;
+          const copy = [...prev];
           copy[copy.length - 1] = { ...last, content: snapshot };
-        } else {
-          copy.push({ role: "assistant", content: snapshot });
+          return copy;
         }
+        const copy = [...prev];
+        copy.push({ role: "assistant", content: snapshot });
         return copy;
       });
+    }
+
+    function clearAssistantSlot() {
+      setMessages((prev) => {
+        const last = prev[prev.length - 1];
+        if (last?.role === "assistant") {
+          if (last.content === "") return prev;
+          const copy = [...prev];
+          copy[copy.length - 1] = { ...last, content: "" };
+          return copy;
+        }
+        const copy = [...prev];
+        copy.push({ role: "assistant", content: "" });
+        return copy;
+      });
+    }
+
+    /** rAF 回调中的中间流式更新，用 startTransition 降低优先级。 */
+    function flushSnapshot() {
+      startTransition(() => {
+        setMessagesFromBuf();
+      });
+    }
+
+    function cancelScheduledFlush() {
+      if (rafRef.current !== undefined) {
+        window.cancelAnimationFrame(rafRef.current);
+        rafRef.current = undefined;
+      }
     }
 
     void listenLlmToken((ev: LlmTokenEvent) => {
@@ -65,17 +104,18 @@ export function useAssistantLlmStream(options: {
       } else if (ev.request_id !== requestIdRef.current) {
         return;
       }
+      // Ignore late classified tokens after leaving classified domain
+      if (domainRef.current !== "classified" && ev.classified) {
+        return;
+      }
       streamBufRef.current += ev.token;
 
       if (rafRef.current === undefined) {
-        const elapsed = performance.now() - lastFlushRef.current;
-        const delay = elapsed < 50 ? 50 - elapsed : 0;
-        rafRef.current = window.setTimeout(() => {
+        rafRef.current = window.requestAnimationFrame(() => {
           rafRef.current = undefined;
           if (disposed) return;
-          lastFlushRef.current = performance.now();
           flushSnapshot();
-        }, delay) as unknown as number;
+        });
       }
     }).then((fn) => {
       if (disposed) fn();
@@ -91,15 +131,38 @@ export function useAssistantLlmStream(options: {
       ) {
         return;
       }
-      if (rafRef.current !== undefined) {
-        clearTimeout(rafRef.current);
-        rafRef.current = undefined;
-        flushSnapshot();
+      if (domainRef.current !== "classified" && ev.classified) {
+        return;
       }
-      setStreaming(false);
+      cancelScheduledFlush();
+      setMessagesFromBuf();
+      // NOTE: streaming state is owned by the task runner's finally block.
+      // The harness may emit multiple llm:done events across rounds; ending
+      // streaming here would suppress tokens from subsequent rounds.
     }).then((fn) => {
       if (disposed) fn();
       else unlistenDone = fn;
+    });
+
+    void listenLlmReset((ev) => {
+      if (disposed || !panelSendActiveRef.current) return;
+      if (
+        requestIdRef.current &&
+        ev.request_id &&
+        ev.request_id !== requestIdRef.current
+      ) {
+        return;
+      }
+      // A non-terminal round (tool-call round or inconclusive reflection)
+      // produced tokens that should not be shown as the final answer. Drop
+      // the buffered content and empty the assistant slot so the next round
+      // streams into a clean surface.
+      cancelScheduledFlush();
+      streamBufRef.current = "";
+      clearAssistantSlot();
+    }).then((fn) => {
+      if (disposed) fn();
+      else unlistenReset = fn;
     });
 
     void listenLlmError((ev) => {
@@ -111,14 +174,14 @@ export function useAssistantLlmStream(options: {
       ) {
         return;
       }
+      if (domainRef.current !== "classified" && ev.classified) {
+        return;
+      }
       panelSendActiveRef.current = false;
       setStreaming(false);
       streamBufRef.current = "";
       requestIdRef.current = null;
-      if (rafRef.current !== undefined) {
-        clearTimeout(rafRef.current);
-        rafRef.current = undefined;
-      }
+      cancelScheduledFlush();
       setMessages((prev) => [
         ...prev,
         {
@@ -156,13 +219,11 @@ export function useAssistantLlmStream(options: {
 
     return () => {
       disposed = true;
-      if (rafRef.current !== undefined) {
-        clearTimeout(rafRef.current);
-        rafRef.current = undefined;
-      }
+      cancelScheduledFlush();
       unlistenToken?.();
       unlistenDone?.();
       unlistenError?.();
+      unlistenReset?.();
       unlistenRetryStatus?.();
     };
   }, [

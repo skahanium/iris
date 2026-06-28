@@ -1,4 +1,4 @@
-import { useEffect, type MutableRefObject } from "react";
+﻿import { useEffect, type MutableRefObject } from "react";
 
 import { fileRead, listenFileChanged } from "@/lib/ipc";
 import { isTauriRuntime } from "@/lib/tauri-runtime";
@@ -17,6 +17,7 @@ interface UseCurrentFileChangeListenerParams {
   cancelPendingSave: () => void;
   discardOpenTab: (path: string) => Promise<void>;
   getLiveMarkdownRef: MutableRefObject<() => string>;
+  onFileChanged?: (path: string) => void;
   setConflictState: (state: ConflictState | null) => void;
 }
 
@@ -27,12 +28,16 @@ export function useCurrentFileChangeListener({
   cancelPendingSave,
   discardOpenTab,
   getLiveMarkdownRef,
+  onFileChanged,
   setConflictState,
 }: UseCurrentFileChangeListenerParams) {
   useEffect(() => {
     if (!isTauriRuntime()) return;
+    let disposed = false;
     let unlisten: (() => void) | undefined;
     void listenFileChanged((event) => {
+      if (disposed) return;
+      onFileChanged?.(event.path);
       const currentPath = activePathRef.current;
       if (!currentPath || event.path !== currentPath) return;
       if (event.event_type === "removed") {
@@ -61,9 +66,11 @@ export function useCurrentFileChangeListener({
           console.warn("[App] failed to read external file for conflict:", err);
         });
     }).then((fn) => {
-      unlisten = fn;
+      if (disposed) fn();
+      else unlisten = fn;
     });
     return () => {
+      disposed = true;
       unlisten?.();
     };
   }, [
@@ -73,6 +80,7 @@ export function useCurrentFileChangeListener({
     cancelPendingSave,
     discardOpenTab,
     getLiveMarkdownRef,
+    onFileChanged,
     setConflictState,
   ]);
 }

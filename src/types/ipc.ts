@@ -1,4 +1,5 @@
-import type {
+﻿import type {
+  ContextPacket,
   DeliberationState,
   PermissionEffectSummary,
   VerificationSummary,
@@ -11,7 +12,54 @@ export interface FileListItem {
   isLocked: boolean;
 }
 
+export type WorkspaceItemKind = "note" | "media" | "unsupported";
+export type WorkspaceMediaKind = "image" | "pdf" | "video" | null;
+export type AttachmentRole = "attachment" | "formal";
+
+export interface WorkspaceItem {
+  attachmentRole: AttachmentRole;
+  isLocked: boolean;
+  kind: WorkspaceItemKind;
+  mediaKind: WorkspaceMediaKind;
+  mimeType: string | null;
+  path: string;
+  sizeBytes: number | null;
+  title: string;
+  updatedAt: string | null;
+}
+
+export interface MediaMetadata {
+  mediaKind: Exclude<WorkspaceMediaKind, null>;
+  mimeType: string;
+  path: string;
+  sizeBytes: number;
+  updatedAt: string | null;
+}
+
+export interface MediaResolveResult extends MediaMetadata {
+  handle: string;
+  url: string;
+}
+
 export interface FileReadResult {
+  content: string;
+  isLocked: boolean;
+}
+
+export interface FileSignatureResult {
+  byteLength: number;
+  contentHash: string;
+  isLocked: boolean;
+  modifiedMs: number | null;
+}
+
+export interface DocumentOpenScopeResult {
+  token: string;
+}
+
+/** Merged document open response: token, content, and lock status in a single IPC. */
+export interface DocumentOpenResult {
+  token: string;
   content: string;
   isLocked: boolean;
 }
@@ -138,6 +186,7 @@ export interface LlmTokenEvent {
   request_id: string;
   token: string;
   index: number;
+  classified?: boolean;
 }
 
 export interface AiRetryStatusEvent {
@@ -174,9 +223,100 @@ export interface SessionMessageRecord {
   seq: number;
   role: string;
   content: string;
+  content_parts?: string | null;
   tool_calls?: unknown;
+  evidence_packets?: ContextPacket[] | null;
   content_hash?: string | null;
   created_at: string;
+}
+
+export interface ClassifiedAiThreadSummary {
+  threadId: string;
+  documentPath: string;
+  title: string;
+  messageCount: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ClassifiedSearchHit {
+  documentPath: string;
+  heading: string | null;
+  snippet: string;
+  score: number;
+}
+
+export interface ClassifiedAiThread {
+  version: number;
+  threadId: string;
+  documentPath: string;
+  title: string | null;
+  createdAt: string;
+  updatedAt: string;
+  messages: ClassifiedAiMessage[];
+  evidencePackets: unknown[];
+  tokenUsage: unknown | null;
+}
+
+export interface ClassifiedAiMessage {
+  seq: number;
+  role: string;
+  content: string;
+  contentParts?: unknown;
+  toolCalls?: unknown;
+  createdAt: string;
+}
+
+export type SessionEvidenceSourceType = "local" | "web";
+
+export interface SessionEvidenceRecord {
+  id: number;
+  sessionId: number;
+  citationIndex: number;
+  citationLabel: string;
+  packetKey: string;
+  messageSeqFirst: number;
+  sourceType: SessionEvidenceSourceType;
+  title: string;
+  sourcePath?: string | null;
+  sourceSpanStart?: number | null;
+  sourceSpanEnd?: number | null;
+  headingPath?: string | null;
+  contentHash?: string | null;
+  retrievalReason?: string | null;
+  score?: number | null;
+  confidence?: string | null;
+  url?: string | null;
+  normalizedUrl?: string | null;
+  domain?: string | null;
+  retrievedAt?: string | null;
+  searchBackend?: string | null;
+  sourceRank?: number | null;
+  failureReason?: string | null;
+  retiredAt?: string | null;
+  createdAt: string;
+  detailStatus?: string | null;
+  liveExcerpt?: string | null;
+}
+
+export interface SessionEvidenceRegisterPacket {
+  sourceType: SessionEvidenceSourceType;
+  title: string;
+  sourcePath?: string | null;
+  sourceSpanStart?: number | null;
+  sourceSpanEnd?: number | null;
+  headingPath?: string | null;
+  contentHash?: string | null;
+  retrievalReason?: string | null;
+  score?: number | null;
+  confidence?: string | null;
+  url?: string | null;
+  normalizedUrl?: string | null;
+  domain?: string | null;
+  retrievedAt?: string | null;
+  searchBackend?: string | null;
+  sourceRank?: number | null;
+  failureReason?: string | null;
 }
 
 export interface BacklinkEntry {
@@ -262,9 +402,9 @@ export interface VersionSaveCompleteEvent {
   error: string | null;
 }
 
-// ─── AI Runtime IPC types ───
+// AI Runtime IPC types
 
-/** `ai_cache_clear` 返回值：清空会话、checkpoint、追踪记录与知识沉淀缓存。 */
+/** `ai_cache_clear` return value: cleared sessions, checkpoints, traces, and caches. */
 export interface AiCacheClearResult {
   sessions_deleted: number;
   aborted_tasks: number;
@@ -330,7 +470,7 @@ export interface AgentTaskListParams {
   status?: AgentTaskStatus | null;
 }
 
-/** 用户画像条目（`profile_list` / `profile_get` 返回） */
+/** User profile entry returned by `profile_list` / `profile_get`. */
 export interface ProfileEntry {
   key: string;
   value: unknown;
@@ -340,7 +480,7 @@ export interface ProfileEntry {
   updated_at: string;
 }
 
-/** 收件箱条目（`inbox_list` 返回） */
+/** Inbox item returned by `inbox_list`. */
 export interface InboxItem {
   id: number;
   session_id: number | null;
@@ -353,7 +493,7 @@ export interface InboxItem {
   updated_at: string;
 }
 
-/** 前端传入的图片附件 DTO */
+/** Image attachment DTO passed from the frontend. */
 export interface ImageAttachmentDto {
   id: string;
   dataBase64: string;

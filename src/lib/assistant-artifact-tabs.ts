@@ -207,6 +207,8 @@ export function artifactPassesValueGate(
       return hasStructuredResultValue(draft.payload);
     case "task_process":
       return hasProcessValue(draft.payload);
+    case "session_evidence_detail":
+      return true;
   }
 }
 
@@ -244,6 +246,7 @@ export function buildArtifactTab(
     payload: sanitizeArtifactPayload(draft.payload),
     createdAt,
     readonly: true,
+    persistent: draft.persistent,
   };
 }
 
@@ -273,6 +276,7 @@ const ARTIFACT_KIND_TITLES: Record<ArtifactKind, string> = {
   writing_change: "写作修改",
   structured_result: "结构化结果",
   task_process: "过程详情",
+  session_evidence_detail: "证据详情",
 };
 
 function isArtifactKind(kind: string): kind is ArtifactKind {
@@ -280,7 +284,8 @@ function isArtifactKind(kind: string): kind is ArtifactKind {
     kind === "evidence_sources" ||
     kind === "writing_change" ||
     kind === "structured_result" ||
-    kind === "task_process"
+    kind === "task_process" ||
+    kind === "session_evidence_detail"
   );
 }
 
@@ -342,7 +347,8 @@ function isArtifactTab(value: unknown): value is ArtifactTab {
     typeof value.title === "string" &&
     typeof value.sourceRequestId === "string" &&
     typeof value.createdAt === "string" &&
-    value.readonly === true
+    value.readonly === true &&
+    value.persistent !== false
   );
 }
 
@@ -362,6 +368,8 @@ export function saveArtifactTabsSnapshot(
   storage: Storage,
   tabs: ArtifactTab[],
 ): void {
-  const next = tabs.slice(-ARTIFACT_TAB_LIMIT);
+  const next = tabs
+    .filter((tab) => tab.persistent !== false)
+    .slice(-ARTIFACT_TAB_LIMIT);
   storage.setItem(ARTIFACT_TAB_STORAGE_KEY, JSON.stringify(next));
 }

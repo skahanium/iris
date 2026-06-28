@@ -1,5 +1,7 @@
-import { invoke } from "@tauri-apps/api/core";
+﻿import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+
+import { IPC_EVENTS } from "@/lib/ipc-events";
 
 import type {
   AgentIntent,
@@ -39,6 +41,9 @@ import type {
   ClassifiedFileEntry,
   ClassifiedStatus,
   FileReadResult,
+  FileSignatureResult,
+  DocumentOpenScopeResult,
+  DocumentOpenResult,
   GraphData,
   ImageAttachmentDto,
   InboxItem,
@@ -46,15 +51,20 @@ import type {
   LlmGenerateParams,
   LlmProviderInfo,
   LlmTokenEvent,
+  MediaMetadata,
+  MediaResolveResult,
   ProfileEntry,
   RecycleBinItem,
   SemanticHit,
+  SessionEvidenceRecord,
+  SessionEvidenceRegisterPacket,
   SessionMessageRecord,
   SessionSummary,
   TagGroup,
   ToolConfirmRequestEvent,
   VersionEntry,
   VersionSaveCompleteEvent,
+  WorkspaceItem,
 } from "@/types/ipc";
 import type {
   ConnectivityStatus,
@@ -70,7 +80,7 @@ import type {
 export interface SettingsMap {
   theme: "dark" | "light";
   llm_custom_base_url: string | null;
-  /** 底栏「联网」开关，跨会话保持 */
+  /** 底栏“联网”开关，跨会话保持。 */
   web_search_enabled: boolean;
   /** 自动版本追踪总开关，默认开启。 */
   auto_version_enabled: boolean;
@@ -95,6 +105,14 @@ export async function settingsSet(key: string, value: unknown): Promise<void> {
   return invoke("settings_set", { key, value });
 }
 
+export async function settingsReset<K extends keyof SettingsMap>(
+  key: K,
+): Promise<void>;
+export async function settingsReset(key: string): Promise<void>;
+export async function settingsReset(key: string): Promise<void> {
+  return invoke("settings_reset", { key });
+}
+
 export async function vaultSet(path: string): Promise<void> {
   return invoke("vault_set", { path });
 }
@@ -113,6 +131,28 @@ export async function fileList(opts?: {
   });
 }
 
+export async function workspaceList(opts?: {
+  limit?: number;
+  offset?: number;
+}): Promise<WorkspaceItem[]> {
+  return invoke<WorkspaceItem[]>("workspace_list", {
+    limit: opts?.limit ?? null,
+    offset: opts?.offset ?? null,
+  });
+}
+
+export async function mediaMetadata(path: string): Promise<MediaMetadata> {
+  return invoke<MediaMetadata>("media_metadata", { path });
+}
+
+export async function mediaResolve(path: string): Promise<MediaResolveResult> {
+  return invoke<MediaResolveResult>("media_resolve", { path });
+}
+
+export async function mediaRelease(handle: string): Promise<void> {
+  return invoke("media_release", { handle });
+}
+
 export async function folderList(): Promise<string[]> {
   return invoke<string[]>("folder_list");
 }
@@ -124,6 +164,34 @@ export async function fileRead(
   return invoke<FileReadResult>("file_read", {
     path,
     allowClassified: options?.allowClassified === true,
+  });
+}
+
+export async function fileSignature(
+  path: string,
+  options?: { allowClassified?: boolean },
+): Promise<FileSignatureResult> {
+  return invoke<FileSignatureResult>("file_signature", {
+    path,
+    allowClassified: options?.allowClassified === true,
+  });
+}
+
+export async function documentOpenBegin(): Promise<DocumentOpenScopeResult> {
+  return invoke<DocumentOpenScopeResult>("document_open_begin");
+}
+
+export async function documentOpenEnd(token: string): Promise<void> {
+  return invoke("document_open_end", { token });
+}
+
+export async function documentOpen(
+  path: string,
+  allowClassified?: boolean,
+): Promise<DocumentOpenResult> {
+  return invoke<DocumentOpenResult>("document_open", {
+    path,
+    allowClassified: allowClassified ?? false,
   });
 }
 
@@ -308,6 +376,10 @@ export async function versionDelete(versionId: number): Promise<void> {
   return invoke("version_delete_cmd", { versionId });
 }
 
+export async function versionCleanup(): Promise<number> {
+  return invoke<number>("version_cleanup_cmd");
+}
+
 export async function versionFinalizeCurrent(
   path: string,
   content: string,
@@ -339,8 +411,9 @@ export async function versionSaveIdle(
 export function listenVersionSaveComplete(
   handler: (payload: VersionSaveCompleteEvent) => void,
 ): Promise<() => void> {
-  return listen<VersionSaveCompleteEvent>("version:save_complete", (event) =>
-    handler(event.payload),
+  return listen<VersionSaveCompleteEvent>(
+    IPC_EVENTS.VERSION_SAVE_COMPLETE,
+    (event) => handler(event.payload),
   );
 }
 
@@ -368,13 +441,6 @@ export async function templateSave(
 
 export async function templateDelete(name: string): Promise<void> {
   return invoke("template_delete", { name });
-}
-
-export async function exportFile(
-  destPath: string,
-  content: string,
-): Promise<void> {
-  return invoke("export_file", { destPath, content });
 }
 
 export async function searchKeyword(
@@ -513,27 +579,30 @@ export async function credentialDelete(service: string): Promise<void> {
 export async function listenFileChanged(
   handler: (payload: FileChangedEvent) => void,
 ): Promise<() => void> {
-  return listen<FileChangedEvent>("file:changed", (e) => handler(e.payload));
+  return listen<FileChangedEvent>(IPC_EVENTS.FILE_CHANGED, (e) =>
+    handler(e.payload),
+  );
 }
 
 export async function listenClassifiedFileTaken(
   handler: (payload: ClassifiedFileTakenEvent) => void,
 ): Promise<() => void> {
-  return listen<ClassifiedFileTakenEvent>("classified:file_taken", (e) =>
-    handler(e.payload),
+  return listen<ClassifiedFileTakenEvent>(
+    IPC_EVENTS.CLASSIFIED_FILE_TAKEN,
+    (e) => handler(e.payload),
   );
 }
 
 export async function listenSkillsChanged(
   handler: () => void,
 ): Promise<() => void> {
-  return listen("skills:changed", () => handler());
+  return listen(IPC_EVENTS.SKILLS_CHANGED, () => handler());
 }
 
 export async function listenToolConfirmRequest(
   handler: (payload: ToolConfirmRequestEvent) => void,
 ): Promise<() => void> {
-  return listen<ToolConfirmRequestEvent>("ai:tool_confirm_request", (e) =>
+  return listen<ToolConfirmRequestEvent>(IPC_EVENTS.TOOL_CONFIRM_REQUEST, (e) =>
     handler(e.payload),
   );
 }
@@ -541,19 +610,35 @@ export async function listenToolConfirmRequest(
 export async function listenLlmToken(
   handler: (payload: LlmTokenEvent) => void,
 ): Promise<() => void> {
-  return listen<LlmTokenEvent>("llm:token", (e) => handler(e.payload));
+  return listen<LlmTokenEvent>(IPC_EVENTS.LLM_TOKEN, (e) => handler(e.payload));
 }
 
 export async function listenLlmDone(
-  handler: (payload: { request_id?: string }) => void,
+  handler: (payload: { request_id?: string; classified?: boolean }) => void,
 ): Promise<() => void> {
-  return listen<{ request_id?: string }>("llm:done", (e) => handler(e.payload));
+  return listen<{ request_id?: string; classified?: boolean }>(
+    IPC_EVENTS.LLM_DONE,
+    (e) => handler(e.payload),
+  );
 }
 
 export async function listenLlmError(
-  handler: (payload: { request_id?: string; error?: string }) => void,
+  handler: (payload: {
+    request_id?: string;
+    error?: string;
+    classified?: boolean;
+  }) => void,
 ): Promise<() => void> {
-  return listen<{ request_id?: string; error?: string }>("llm:error", (e) =>
+  return listen<{ request_id?: string; error?: string; classified?: boolean }>(
+    IPC_EVENTS.LLM_ERROR,
+    (e) => handler(e.payload),
+  );
+}
+
+export async function listenLlmReset(
+  handler: (payload: { request_id?: string }) => void,
+): Promise<() => void> {
+  return listen<{ request_id?: string }>(IPC_EVENTS.LLM_RESET, (e) =>
     handler(e.payload),
   );
 }
@@ -562,7 +647,7 @@ export async function listenAiRetryStatus(
   handler: (payload: import("@/types/ipc").AiRetryStatusEvent) => void,
 ): Promise<() => void> {
   return listen<import("@/types/ipc").AiRetryStatusEvent>(
-    "ai:retry_status",
+    IPC_EVENTS.AI_RETRY_STATUS,
     (e) => handler(e.payload),
   );
 }
@@ -571,7 +656,7 @@ export async function listenHarnessTrace(
   handler: (payload: import("@/types/ipc").HarnessTraceEvent) => void,
 ): Promise<() => void> {
   return listen<import("@/types/ipc").HarnessTraceEvent>(
-    "ai:harness_trace",
+    IPC_EVENTS.HARNESS_TRACE,
     (e) => handler(e.payload),
   );
 }
@@ -585,18 +670,20 @@ export interface AiThinkingEvent {
 export async function listenAiThinking(
   handler: (payload: AiThinkingEvent) => void,
 ): Promise<() => void> {
-  return listen<AiThinkingEvent>("ai:thinking", (e) => handler(e.payload));
+  return listen<AiThinkingEvent>(IPC_EVENTS.AI_THINKING, (e) =>
+    handler(e.payload),
+  );
 }
 
 export async function listenAiRequestStarted(
   handler: (payload: { request_id: string }) => void,
 ): Promise<() => void> {
-  return listen<{ request_id: string }>("ai:request_started", (e) =>
+  return listen<{ request_id: string }>(IPC_EVENTS.AI_REQUEST_STARTED, (e) =>
     handler(e.payload),
   );
 }
 
-// ─── AI Runtime IPC ───
+// AI Runtime IPC
 
 import type { CorpusListItem } from "@/types/ipc";
 
@@ -865,8 +952,10 @@ export async function agentTaskAbort(taskId: string): Promise<void> {
   return invoke("agent_task_abort", { taskId });
 }
 
-export async function harnessResume(requestId: string): Promise<unknown> {
-  return invoke("harness_resume", { requestId });
+export async function harnessResume(
+  requestId: string,
+): Promise<AiSendMessageResult> {
+  return invoke<AiSendMessageResult>("harness_resume", { requestId });
 }
 
 export async function harnessAbort(requestId: string): Promise<void> {
@@ -899,7 +988,7 @@ export async function skillsMigrateLegacy(
   });
 }
 
-// ─── Tool Audit ────────────────────────────────────────
+// Tool Audit
 
 export interface ToolAuditEntry {
   id: number;
@@ -931,6 +1020,34 @@ export async function sessionLoad(
   });
 }
 
+export async function sessionEvidenceList(
+  sessionId: number,
+): Promise<SessionEvidenceRecord[]> {
+  return invoke<SessionEvidenceRecord[]>("session_evidence_list", {
+    sessionId,
+  });
+}
+
+export async function sessionEvidenceDetail(
+  sessionId: number,
+): Promise<SessionEvidenceRecord[]> {
+  return invoke<SessionEvidenceRecord[]>("session_evidence_detail", {
+    sessionId,
+  });
+}
+
+export async function sessionEvidenceRegister(
+  sessionId: number,
+  messageSeq: number,
+  packets: SessionEvidenceRegisterPacket[],
+): Promise<SessionEvidenceRecord[]> {
+  return invoke<SessionEvidenceRecord[]>("session_evidence_register", {
+    sessionId,
+    messageSeq,
+    packets,
+  });
+}
+
 export async function contextAssemble(params: {
   scene: AiScene;
   agent_intent?: AgentIntent;
@@ -953,7 +1070,7 @@ export async function contextAssemble(params: {
   });
 }
 
-/** 统一助手执行门面 — 按 intent 路由到既有工作流 */
+/** 统一助手执行门面：按 intent 路由到既有工作流。 */
 export async function assistantExecute(
   request: AssistantExecuteRequest,
 ): Promise<AssistantExecuteResponse> {
@@ -969,8 +1086,10 @@ export async function aiSendMessage(params: {
   note_path?: string | null;
   selected_packet_ids?: string[];
   context_scope?: ContextScope | null;
-  /** 为 true 时在发送前注入 MiniMax / DuckDuckGo 网页检索摘要 */
+  /** 为 true 时在发送前注入 MiniMax / DuckDuckGo 网页检索摘要。 */
   web_search?: boolean;
+  /** 为 true 时创建新会话，而不是续写当前 scene/note 会话。 */
+  new_session?: boolean;
 }): Promise<AiSendMessageResult> {
   return invoke<AiSendMessageResult>("ai_send_message", {
     scene: params.scene,
@@ -982,6 +1101,7 @@ export async function aiSendMessage(params: {
     selectedPacketIds: params.selected_packet_ids ?? null,
     contextScope: params.context_scope ?? null,
     webSearch: params.web_search ?? false,
+    newSession: params.new_session ?? false,
   });
 }
 
@@ -990,8 +1110,8 @@ export async function toolConfirm(params: {
   tool_call_id: string;
   decision: "approve" | "reject" | "modify";
   modified_args?: unknown;
-}): Promise<{ request_id: string; tool_call_id: string; status: string }> {
-  return invoke("tool_confirm", {
+}): Promise<AiSendMessageResult> {
+  return invoke<AiSendMessageResult>("tool_confirm", {
     requestId: params.request_id,
     toolCallId: params.tool_call_id,
     decision: params.decision,
@@ -1010,7 +1130,7 @@ export async function aiListTools(scene: AiScene): Promise<
   return invoke("ai_list_tools", { scene });
 }
 
-// ─── Knowledge Index IPC ───
+// Knowledge Index IPC
 
 export async function knowledgeReindex(): Promise<{
   anchors: number;
@@ -1033,7 +1153,7 @@ export async function searchHybrid(params: {
   });
 }
 
-// ─── Research Workflow IPC (D) ───
+// Research Workflow IPC (D)
 
 export async function researchExecute(params: {
   topic: string;
@@ -1089,12 +1209,12 @@ export async function researchGenerateNote(params: {
 export async function listenResearchProgress(
   handler: (payload: ResearchProgressEvent) => void,
 ): Promise<() => void> {
-  return listen<ResearchProgressEvent>("ai:research_progress", (e) =>
+  return listen<ResearchProgressEvent>(IPC_EVENTS.RESEARCH_PROGRESS, (e) =>
     handler(e.payload),
   );
 }
 
-// ─── Writing Workflow IPC (Phase 1) ───
+// Writing Workflow IPC (Phase 1)
 
 export async function writingExecute(params: {
   target_path: string;
@@ -1136,7 +1256,7 @@ export async function patchApply(patch: {
   return invoke("patch_apply", { patch });
 }
 
-// ─── Citation Check IPC (Phase 1) ───
+// Citation Check IPC (Phase 1)
 
 export async function citationCheck(params: {
   paragraph_text: string;
@@ -1158,19 +1278,32 @@ export async function citationCheck(params: {
   });
 }
 
-// ─── Organize Workflow IPC (Phase 2) ───
+// Organize Workflow IPC (Phase 2)
+
+type OrganizeScopeInput = {
+  paths?: string[];
+  pathPrefixes?: string[];
+  corpusIds?: string[];
+  path_prefixes?: string[];
+  corpus_ids?: string[];
+};
 
 export async function organizeExecute(params: {
-  scope?: {
-    paths?: string[];
-    path_prefixes?: string[];
-    corpus_ids?: string[];
-  };
+  scope?: OrganizeScopeInput;
   task_type: string;
 }): Promise<OrganizeExecuteResult> {
+  const scope = params.scope
+    ? {
+        paths: params.scope.paths ?? [],
+        pathPrefixes:
+          params.scope.pathPrefixes ?? params.scope.path_prefixes ?? [],
+        corpusIds: params.scope.corpusIds ?? params.scope.corpus_ids ?? [],
+      }
+    : null;
+
   return invoke<OrganizeExecuteResult>("organize_execute", {
     input: {
-      scope: params.scope ?? null,
+      scope,
       task_type: params.task_type,
     },
   });
@@ -1196,7 +1329,7 @@ export async function organizeApply(
   return invoke("organize_apply", { request: { suggestions } });
 }
 
-// ─── Chapter & Document Writing IPC (Phase 3) ───
+// Chapter & Document Writing IPC (Phase 3)
 
 export async function chapterWritingExecute(params: {
   target_path: string;
@@ -1240,7 +1373,7 @@ export async function parseDocumentChapters(
   return invoke<ChapterInfo[]>("parse_document_chapters", { content });
 }
 
-// ─── Personalization IPC (E) ───
+// Personalization IPC (E)
 
 export async function profileList(params: {
   include_inactive?: boolean;
@@ -1270,7 +1403,7 @@ export async function profileSet(params: {
   });
 }
 
-/** 以纯文本保存用户确认的规则（Phase 5） */
+/** 以纯文本保存用户确认的规则（Phase 5）。 */
 export async function profileSetRule(params: {
   key: string;
   description: string;
@@ -1341,7 +1474,7 @@ export async function inboxCounts(): Promise<{
   return invoke("inbox_counts");
 }
 
-/** 桌面顶栏指标（逻辑像素），与 Rust `chrome_metrics` 一致 */
+/** 桌面顶栏指标（逻辑像素），与 Rust `chrome_metrics` 一致。 */
 export interface DesktopChromeMetrics {
   titlebarHeightLogical: number;
   trafficInsetLogical: number;
@@ -1353,12 +1486,72 @@ export async function appExit(): Promise<AppExitResult> {
   return invoke<AppExitResult>("app_exit");
 }
 
-/** 读取当前平台顶栏指标并用于 CSS 变量同步 */
+/** Show the hidden desktop window after the startup splash has mounted. */
+export async function showMainWindowWhenReady(): Promise<void> {
+  return invoke("show_main_window_when_ready");
+}
+
+/** 读取当前平台顶栏指标并用于 CSS 变量同步。 */
 export async function getDesktopChromeMetrics(): Promise<DesktopChromeMetrics> {
   return invoke<DesktopChromeMetrics>("get_desktop_chrome_metrics");
 }
 
-/** 重新应用无边框窗口标题与平台圆角 */
+/** 重新应用无边框窗口标题与平台圆角。 */
 export async function reapplyWindowChrome(): Promise<void> {
   return invoke("reapply_window_chrome");
+}
+
+// ── Classified AI Thread IPC ─────────────────────────────────────────────────
+
+/** List classified AI threads, optionally filtered by document path. */
+export async function classifiedAiThreadList(
+  documentPath?: string,
+): Promise<import("@/types/ipc").ClassifiedAiThreadSummary[]> {
+  return invoke("classified_ai_thread_list", { documentPath });
+}
+
+/** Load a classified AI thread by id. */
+export async function classifiedAiThreadLoad(
+  threadId: string,
+): Promise<import("@/types/ipc").ClassifiedAiThread> {
+  return invoke("classified_ai_thread_load", { threadId });
+}
+
+/** Save a classified AI thread. */
+export async function classifiedAiThreadSave(
+  thread: import("@/types/ipc").ClassifiedAiThread,
+): Promise<void> {
+  return invoke("classified_ai_thread_save", { thread });
+}
+
+/** Delete a classified AI thread. */
+export async function classifiedAiThreadDelete(
+  threadId: string,
+): Promise<void> {
+  return invoke("classified_ai_thread_delete", { threadId });
+}
+
+/** Clear the in-memory classified AI thread index cache. */
+export async function classifiedAiCacheClear(): Promise<void> {
+  return invoke("classified_ai_cache_clear");
+}
+
+/** Search classified documents using the in-memory retrieval index. */
+export async function classifiedAiContextSearch(
+  query: string,
+  currentDocument?: string,
+  scopePaths?: string[],
+  limit?: number,
+): Promise<import("@/types/ipc").ClassifiedSearchHit[]> {
+  return invoke("classified_ai_context_search", {
+    query,
+    currentDocument: currentDocument ?? null,
+    scopePaths: scopePaths ?? null,
+    limit: limit ?? null,
+  });
+}
+
+/** Clear the in-memory classified retrieval chunk index. */
+export async function classifiedAiRetrievalClear(): Promise<void> {
+  return invoke("classified_ai_retrieval_clear");
 }

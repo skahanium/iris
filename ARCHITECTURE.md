@@ -593,9 +593,8 @@ opt-level = "s"; lto = true; codegen-units = 1; strip = true; panic = "abort"
 
 ## 设计文档参考
 
-| 文档                                                                         | 内容                 |
-| ---------------------------------------------------------------------------- | -------------------- |
-| [docs/design-system.md](./docs/design-system.md)                             | 界面 token、组件规则 |
-| [docs/design-system/notion-master.md](./docs/design-system/notion-master.md) | Notion 参考摘要      |
-| [docs/llm-routing.md](./docs/llm-routing.md)                                 | LLM 路由与连通性     |
-| [docs/eval/semantic-search.md](./docs/eval/semantic-search.md)               | 语义搜索评测         |
+| 文档                                                           | 内容                 |
+| -------------------------------------------------------------- | -------------------- |
+| [docs/design-system.md](./docs/design-system.md)               | 界面 token、组件规则 |
+| [docs/llm-routing.md](./docs/llm-routing.md)                   | LLM 路由与连通性     |
+| [docs/eval/semantic-search.md](./docs/eval/semantic-search.md) | 语义搜索评测         |

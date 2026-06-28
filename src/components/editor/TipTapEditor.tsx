@@ -40,7 +40,16 @@ import {
   getCachedEditorHtml,
   setCachedEditorHtml,
 } from "@/lib/editor-html-cache";
-import { ingestMarkdownForEditor } from "@/lib/editor-ingest";
+import type { EditorHtmlCacheNamespace } from "@/lib/editor-html-cache";
+import {
+  ingestMarkdownForEditor,
+  type EditorIngestResult,
+} from "@/lib/editor-ingest";
+import {
+  EDITOR_INGEST_WORKER_THRESHOLD_BYTES,
+  ingestMarkdownForEditorAsync,
+} from "@/lib/editor-ingest-async";
+import { EDITOR_PARSE_OPTIONS } from "@/lib/editor-parse-options";
 
 import type { MarkdownSyntaxFragment } from "@/lib/markdown-contract/types";
 
@@ -80,6 +89,7 @@ import { PreserveInlineExtension } from "./extensions/PreserveInlineExtension";
 import { SlashCommandExtension } from "./extensions/SlashCommandExtension";
 
 import { WikiLinkExtension } from "./extensions/WikiLinkExtension";
+import { WikiMediaEmbedExtension } from "./extensions/WikiMediaEmbedExtension";
 
 const lowlight = createLowlight(common);
 
@@ -96,8 +106,14 @@ interface TipTapEditorProps {
 
   initialBodyMarkdown: string;
 
+  /** Already-ingested TipTap HTML prepared before this editor becomes visible. */
+  initialEditorHtml?: string | null;
+
   /** When set, reuse cached TipTap HTML for this path (tab switch). */
   contentCacheKey?: string | null;
+
+  /** Separates normal and classified prepared editor HTML. */
+  contentCacheNamespace?: EditorHtmlCacheNamespace;
 
   /** Absolute vault path used only to render vault-relative asset URLs. */
   vaultPath?: string | null;
@@ -113,6 +129,10 @@ interface TipTapEditorProps {
 
   onEditorReady?: (editor: Editor | null) => void;
 
+  onFirstFrameReady?: (editor: Editor) => void;
+
+  onContentReady?: (editor: Editor) => void;
+
   onBodyStatsChange?: (stats: {
     characterCount: number;
 
@@ -126,6 +146,8 @@ interface TipTapEditorProps {
   onInlineAiAccept?: (editor: Editor) => void;
 
   onOpenWikiLink?: (title: string) => void;
+
+  onPrepareWikiLink?: (title: string) => void;
 
   zoom?: number;
 
@@ -147,13 +169,19 @@ interface TipTapEditorProps {
 
   locked?: boolean;
 
+  mediaLoading?: "deferred" | "visible";
+
   setLocked?: (locked: boolean) => void;
 }
 
 function TipTapEditorInner({
   initialBodyMarkdown,
 
+  initialEditorHtml = null,
+
   contentCacheKey = null,
+
+  contentCacheNamespace = "normal",
 
   vaultPath = null,
 
@@ -167,6 +195,10 @@ function TipTapEditorInner({
 
   onEditorReady,
 
+  onFirstFrameReady,
+
+  onContentReady,
+
   onBodyStatsChange,
 
   onInlineAiRetry,
@@ -176,6 +208,8 @@ function TipTapEditorInner({
   onInlineAiAccept,
 
   onOpenWikiLink,
+
+  onPrepareWikiLink,
 
   onIngestComplete,
 
@@ -188,6 +222,8 @@ function TipTapEditorInner({
   onBodyContextMenu,
 
   locked = false,
+
+  mediaLoading = "visible",
 
   setLocked,
 }: TipTapEditorProps) {
@@ -222,12 +258,26 @@ function TipTapEditorInner({
 
   onOpenWikiLinkRef.current = onOpenWikiLink;
 
+  const onPrepareWikiLinkRef = useRef(onPrepareWikiLink);
+
+  onPrepareWikiLinkRef.current = onPrepareWikiLink;
+
   const onIngestCompleteRef = useRef(onIngestComplete);
 
   onIngestCompleteRef.current = onIngestComplete;
 
+  const onFirstFrameReadyRef = useRef(onFirstFrameReady);
+
+  onFirstFrameReadyRef.current = onFirstFrameReady;
+
+  const onContentReadyRef = useRef(onContentReady);
+
+  onContentReadyRef.current = onContentReady;
+
   const contentCacheKeyRef = useRef(contentCacheKey);
   contentCacheKeyRef.current = contentCacheKey;
+  const contentCacheNamespaceRef = useRef(contentCacheNamespace);
+  contentCacheNamespaceRef.current = contentCacheNamespace;
 
   const bodyStatsTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -305,6 +355,12 @@ function TipTapEditorInner({
       LinkExtension,
 
       ImageExtension.configure({
+        mediaLoading,
+        vaultPath,
+      }),
+
+      WikiMediaEmbedExtension.configure({
+        mediaLoading,
         vaultPath,
       }),
 
@@ -360,10 +416,11 @@ function TipTapEditorInner({
 
       WikiLinkExtension.configure({
         onOpenNote: (title) => onOpenWikiLinkRef.current?.(title),
+        onPrepareNote: (title) => onPrepareWikiLinkRef.current?.(title),
       }),
     ],
 
-    [isLargeDoc, vaultPath],
+    [isLargeDoc, mediaLoading, vaultPath],
   );
 
   const ingestResultRef = useRef<{
@@ -375,32 +432,113 @@ function TipTapEditorInner({
   const skipHtmlCache = prevReingestKeyRef.current !== reingestKey;
   prevReingestKeyRef.current = reingestKey;
 
-  const initialContent = useMemo(() => {
+  const parsedContentRef = useRef<string | null>(null);
+  const parsedContentRevisionRef = useRef(0);
+  const [parsedContentRevision, setParsedContentRevision] = useState(0);
+  const contentReadyRef = useRef(false);
+  const firstFrameGenerationRef = useRef(0);
+
+  useEffect(() => {
     const bodyMd = initialBodyMarkdown.trim();
     const htmlDigest = editorHtmlDigest(initialBodyMarkdown);
+    let cancelled = false;
+    contentReadyRef.current = false;
+
+    const setContent = (
+      html: string,
+      fragments?: MarkdownSyntaxFragment[],
+      bodyMdParam?: string,
+    ) => {
+      if (cancelled) return;
+      parsedContentRef.current = html;
+      parsedContentRevisionRef.current += 1;
+      setParsedContentRevision(parsedContentRevisionRef.current);
+      if (fragments && bodyMdParam) {
+        ingestResultRef.current = {
+          preserveFragments: fragments,
+          bodyMd: bodyMdParam,
+        };
+      }
+    };
+
+    if (initialEditorHtml) {
+      if (contentCacheKey) {
+        setCachedEditorHtml(
+          contentCacheKey,
+          initialEditorHtml,
+          htmlDigest,
+          contentCacheNamespace,
+        );
+      }
+      setContent(initialEditorHtml);
+      return;
+    }
+
+    if (!bodyMd) {
+      setContent("<p></p>", [], bodyMd);
+      return;
+    }
+
+    const rememberIngestResult = (result: EditorIngestResult) => {
+      const html = result.tipTapHtml || "<p></p>";
+      setContent(html, result.preserveFragments, bodyMd);
+      if (contentCacheKey) {
+        setCachedEditorHtml(
+          contentCacheKey,
+          html,
+          htmlDigest,
+          contentCacheNamespace,
+        );
+      }
+    };
+
     if (contentCacheKey && bodyMd && !skipHtmlCache) {
-      const cached = getCachedEditorHtml(contentCacheKey, htmlDigest);
+      const cached = getCachedEditorHtml(
+        contentCacheKey,
+        htmlDigest,
+        contentCacheNamespace,
+      );
       if (cached) {
-        return cached;
+        setContent(cached);
+        return;
       }
     }
 
-    const { tipTapHtml, preserveFragments } = ingestMarkdownForEditor({
-      bodyMarkdown: bodyMd,
-    });
-
-    // Store for useEffect callback (avoid side effect in useMemo)
-    ingestResultRef.current = { preserveFragments, bodyMd };
-
-    if (contentCacheKey && bodyMd) {
-      setCachedEditorHtml(contentCacheKey, tipTapHtml, htmlDigest);
+    if (contentCacheKey && bodyMd && skipHtmlCache) {
+      clearCachedEditorHtml(contentCacheKey, contentCacheNamespace);
     }
 
-    return tipTapHtml;
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- reingestKey busts HTML cache on disk reload
-  }, [initialBodyMarkdown, contentCacheKey, reingestKey, skipHtmlCache]);
+    if (bodyMd.length <= EDITOR_INGEST_WORKER_THRESHOLD_BYTES) {
+      try {
+        rememberIngestResult(ingestMarkdownForEditor({ bodyMarkdown: bodyMd }));
+      } catch {
+        contentReadyRef.current = false;
+      }
+      return;
+    }
 
-  // Fire onIngestComplete after render (not inside useMemo)
+    ingestMarkdownForEditorAsync({ bodyMarkdown: bodyMd })
+      .then((result) => {
+        if (cancelled) return;
+        rememberIngestResult(result);
+      })
+      .catch(() => {
+        if (!cancelled) contentReadyRef.current = false;
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    initialBodyMarkdown,
+    initialEditorHtml,
+    contentCacheKey,
+    contentCacheNamespace,
+    reingestKey,
+    skipHtmlCache,
+  ]);
+
+  // Fire onIngestComplete after render (not inside async callback)
   useEffect(() => {
     const result = ingestResultRef.current;
     if (result) {
@@ -409,23 +547,16 @@ function TipTapEditorInner({
     }
   });
 
-  // Clear HTML cache on disk reload so reingest uses fresh markdown
-  useEffect(() => {
-    if (reingestKey > 0 && contentCacheKey) {
-      clearCachedEditorHtml(contentCacheKey);
-    }
-  }, [reingestKey, contentCacheKey]);
-
   const editor = useEditor({
     extensions,
 
-    content: initialContent,
+    content: "<p></p>",
+
+    parseOptions: EDITOR_PARSE_OPTIONS,
 
     immediatelyRender: true,
 
     editable: !locked,
-
-    /** Avoid re-rendering this React tree on every keystroke (major lag on large docs). */
 
     shouldRerenderOnTransaction: false,
 
@@ -434,14 +565,19 @@ function TipTapEditorInner({
 
       scheduleBodyStats(updatedEditor);
 
-      // Throttled HTML cache update (2s) so tab-switch shows latest content
       const key = contentCacheKeyRef.current;
+      const namespace = contentCacheNamespaceRef.current;
       if (key) {
         const htmlDigest = editorHtmlDigest(initialBodyMarkdown);
         if (htmlCacheTimerRef.current) clearTimeout(htmlCacheTimerRef.current);
         htmlCacheTimerRef.current = setTimeout(() => {
           htmlCacheTimerRef.current = null;
-          setCachedEditorHtml(key, updatedEditor.getHTML(), htmlDigest);
+          setCachedEditorHtml(
+            key,
+            updatedEditor.getHTML(),
+            htmlDigest,
+            namespace,
+          );
         }, 2000);
       }
     },
@@ -458,6 +594,43 @@ function TipTapEditorInner({
     if (!editor) return;
     editor.setEditable(!locked);
   }, [editor, locked]);
+
+  // Apply parsed content to editor when ready
+  useEffect(() => {
+    if (!editor || editor.isDestroyed) return;
+    const content = parsedContentRef.current;
+    if (!content) return undefined;
+
+    let cancelled = false;
+    let firstFrameId: number | null = null;
+    let secondFrameId: number | null = null;
+    const requestFrame =
+      window.requestAnimationFrame ??
+      ((cb: FrameRequestCallback) =>
+        window.setTimeout(() => cb(performance.now()), 16));
+    const cancelFrame =
+      window.cancelAnimationFrame ?? ((id: number) => window.clearTimeout(id));
+    const generation = ++firstFrameGenerationRef.current;
+
+    editor.commands.setContent(content, false, EDITOR_PARSE_OPTIONS);
+    contentReadyRef.current = true;
+    onContentReadyRef.current?.(editor);
+    flushBodyStats(editor);
+
+    firstFrameId = requestFrame(() => {
+      secondFrameId = requestFrame(() => {
+        if (!cancelled && firstFrameGenerationRef.current === generation) {
+          onFirstFrameReadyRef.current?.(editor);
+        }
+      });
+    });
+
+    return () => {
+      cancelled = true;
+      if (firstFrameId !== null) cancelFrame(firstFrameId);
+      if (secondFrameId !== null) cancelFrame(secondFrameId);
+    };
+  }, [editor, flushBodyStats, parsedContentRevision]);
 
   const openLinkEditor = useCallback(
     (targetEditor: Editor) => {
@@ -581,7 +754,7 @@ function TipTapEditorInner({
         <button
           type="button"
           data-testid="editor-lock-toggle"
-          className="editor-edge-control editor-lock-btn absolute right-3 top-3 z-10 inline-flex h-8 w-8 items-center justify-center rounded-md border border-border/60 bg-surface-elevated/90 text-muted-foreground shadow-sm backdrop-blur-sm duration-fast ease-iris-out hover:bg-surface-inset hover:text-foreground focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-1"
+          className="iris-focus-soft editor-edge-control editor-lock-btn absolute right-3 top-3 z-10 inline-flex h-8 w-8 items-center justify-center rounded-md border border-border/60 bg-surface-elevated/90 text-muted-foreground shadow-sm backdrop-blur-sm duration-fast ease-iris-out hover:bg-surface-inset hover:text-foreground focus:outline-none"
           onClick={() => setLocked(!locked)}
           title={locked ? "解锁编辑" : "锁定编辑"}
           aria-label={locked ? "解锁编辑" : "锁定编辑"}

@@ -65,7 +65,7 @@ export function IrisOverlay({
                 {title}
               </DialogPrimitive.Title>
               <DialogPrimitive.Close
-                className="inline-flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground duration-fast ease-iris-out hover:bg-surface-inset hover:text-foreground focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-1 focus:ring-offset-panel"
+                className="iris-focus-soft inline-flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground duration-fast ease-iris-out hover:bg-surface-inset hover:text-foreground focus:outline-none"
                 aria-label="关闭"
               >
                 <X className="h-4 w-4" />

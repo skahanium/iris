@@ -3,10 +3,25 @@
   "app": {
     "windows": [
       {
-        "transparent": true,
-        "decorations": false,
+        "label": "main",
+        "title": "Iris",
+        "width": 1280,
+        "height": 800,
+        "minWidth": 800,
+        "minHeight": 600,
+        "visible": false,
+        "center": true,
+        "focus": true,
+        "decorations": true,
+        "shadow": true,
+        "dragDropEnabled": false,
+        "transparent": false,
         "titleBarStyle": "Overlay",
-        "hiddenTitle": true
+        "hiddenTitle": true,
+        "trafficLightPosition": {
+          "x": 14,
+          "y": 24
+        }
       }
     ]
   }

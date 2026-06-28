@@ -1,4 +1,4 @@
-import {
+﻿import {
   useCallback,
   useEffect,
   useRef,
@@ -61,6 +61,18 @@ type SaveRule = (params: {
   source: RuleConfirmRequest["source"];
 }) => Promise<unknown>;
 
+const DOCUMENT_WRITE_TOOLS = new Set([
+  "insert_text_at_cursor",
+  "replace_selection",
+]);
+
+function toolConfirmationFailurePrefix(request: ToolConfirmRequest | null) {
+  if (request && DOCUMENT_WRITE_TOOLS.has(request.tool_name)) {
+    return "文档修改确认失败";
+  }
+  return "工具确认失败";
+}
+
 interface AssistantRunPort {
   setFromTaskStatus: (
     status: AssistantTaskStatus,
@@ -120,9 +132,11 @@ export function useAssistantConfirmations({
   const saveRule = deps?.saveRule ?? profileSetRule;
 
   useEffect(() => {
+    let disposed = false;
     let unlisten: (() => void) | undefined;
 
     void listenForToolConfirmRequests((req) => {
+      if (disposed) return;
       if (req.tool_name === "update_user_rule") {
         const ruleType =
           typeof req.arguments.rule_type === "string"
@@ -141,10 +155,12 @@ export function useAssistantConfirmations({
         setToolConfirmRequest(req);
       }
     }).then((fn) => {
-      unlisten = fn;
+      if (disposed) fn();
+      else unlisten = fn;
     });
 
     return () => {
+      disposed = true;
       unlisten?.();
     };
   }, [listenForToolConfirmRequests]);
@@ -240,9 +256,10 @@ export function useAssistantConfirmations({
       } catch (error) {
         const message = invokeErrorMessage(error);
         nextTaskStatus = "error";
+        const prefix = toolConfirmationFailurePrefix(pendingConfirm);
         setMessages((prev) => [
           ...prev,
-          { role: "system", content: `工具确认失败: ${message}` },
+          { role: "system", content: `${prefix}: ${message}` },
         ]);
         setActionState(buildActionState(intent, nextTaskStatus, message));
       } finally {

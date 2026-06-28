@@ -1,5 +1,11 @@
 import type { Editor } from "@tiptap/react";
-import { useRef, type RefObject } from "react";
+import {
+  useCallback,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type RefObject,
+} from "react";
 
 import { DocumentTitleContextMenu } from "@/components/editor/DocumentTitleContextMenu";
 
@@ -31,9 +37,21 @@ export function DocumentTitleField({
   placeholder = "未命名文档",
   className,
 }: DocumentTitleFieldProps) {
-  const inputRef = useRef<HTMLInputElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
+  const [focused, setFocused] = useState(false);
   const len = value.length;
   const showCount = len > NOTE_TITLE_SOFT_LIMIT;
+
+  const resizeTitle = useCallback(() => {
+    const el = inputRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${el.scrollHeight}px`;
+  }, []);
+
+  useLayoutEffect(() => {
+    resizeTitle();
+  }, [focused, resizeTitle, value]);
 
   const commit = (raw: string) => {
     const next = sanitizeDocumentTitleInput(raw).slice(
@@ -58,9 +76,9 @@ export function DocumentTitleField({
         )}
         data-testid="document-title-field"
       >
-        <input
+        <textarea
           ref={inputRef}
-          type="text"
+          rows={1}
           data-testid="document-title"
           className="iris-doc-title"
           value={value}
@@ -68,14 +86,25 @@ export function DocumentTitleField({
           readOnly={readOnly}
           placeholder={placeholder}
           aria-label="文档标题"
-          onChange={(event) => commit(event.target.value)}
-          onBlur={onBlur}
+          title={value || undefined}
+          onChange={(event) => {
+            commit(event.target.value);
+            resizeTitle();
+          }}
+          onFocus={() => {
+            setFocused(true);
+            requestAnimationFrame(resizeTitle);
+          }}
+          onBlur={() => {
+            setFocused(false);
+            onBlur?.();
+          }}
           onKeyDown={(event) => {
             if (event.key === "Enter") {
               event.preventDefault();
               const ed = editorRef.current;
               if (!ed) {
-                (event.target as HTMLInputElement).blur();
+                (event.target as HTMLTextAreaElement).blur();
                 return;
               }
               requestAnimationFrame(() => {
@@ -90,6 +119,7 @@ export function DocumentTitleField({
             const pasted = event.clipboardData.getData("text/plain");
             const merged = sanitizeDocumentTitleInput(value + pasted);
             commit(merged);
+            requestAnimationFrame(resizeTitle);
           }}
         />
         {showCount ? (

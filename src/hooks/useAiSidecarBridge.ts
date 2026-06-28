@@ -57,19 +57,16 @@ export function useAiSidecarBridge({
       const ed = editorRef.current;
       const path = activePathRef.current;
       if (!ed || !path) return;
-      if (isClassifiedVaultPath(path)) {
-        setAiStatus("涉密笔记不能发送到 AI");
-        return;
-      }
       const snapshot = getEditorSelectionSnapshot(ed);
       if (!snapshot) {
         setAiStatus("请先在编辑器中选中文本");
         return;
       }
+      const classifiedSelection = isClassifiedVaultPath(path);
       setSelectionQuote({
         filePath: path,
         text: snapshot.text,
-        content: getNoteContent(),
+        content: classifiedSelection ? snapshot.text : getNoteContent(),
         editorRange: snapshot.editorRange,
       });
       setPrefillMessage(options?.prefill ?? null);

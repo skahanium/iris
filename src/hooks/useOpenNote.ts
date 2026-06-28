@@ -2,6 +2,7 @@ import type { Editor } from "@tiptap/react";
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -10,6 +11,7 @@ import {
 
 import { pathStem } from "@/lib/note-display";
 import { ingestMarkdownForEditorAsync } from "@/lib/editor-ingest-async";
+import { EDITOR_PARSE_OPTIONS } from "@/lib/editor-parse-options";
 import { extractFrontmatterYaml, parseNoteForEditor } from "@/lib/markdown";
 import { isPlaceholderTitle } from "@/lib/path-sync";
 import { fileRename, pathSyncSuggest } from "@/lib/ipc";
@@ -32,6 +34,7 @@ interface UseOpenNoteOptions {
   markdownRef: RefObject<string>;
   frontmatterYamlRef: RefObject<string | null>;
   editorRef: RefObject<Editor | null>;
+  editorReadyRef?: RefObject<boolean>;
   dirtyRef?: RefObject<boolean>;
   updateTabTitle: (path: string, title: string) => void;
   replaceOpenTabPath: (
@@ -49,6 +52,7 @@ export function useOpenNote({
   markdownRef,
   frontmatterYamlRef,
   editorRef,
+  editorReadyRef,
   dirtyRef,
   updateTabTitle,
   replaceOpenTabPath,
@@ -56,7 +60,7 @@ export function useOpenNote({
   const [noteTitle, setNoteTitle] = useState("");
   const [bodyMarkdown, setBodyMarkdown] = useState("");
 
-  /** Parsed body for TipTap on disk/tab load only — not on layer-1 save (`setMarkdown` must not remount editor). */
+  /** Parsed body for TipTap on disk/tab load only; layer-1 save must not remount editor. */
   const editorBodyMarkdown = useMemo(() => {
     if (!activePath) return "";
     return parseNoteForEditor(markdownRef.current, pathStem(activePath)).bodyMd;
@@ -76,7 +80,7 @@ export function useOpenNote({
     [frontmatterYamlRef],
   );
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!activePath) {
       setNoteTitle("");
       setBodyMarkdown("");
@@ -99,9 +103,10 @@ export function useOpenNote({
       yaml: frontmatterYamlRef.current,
       title: noteTitle,
       editor: editorRef.current,
+      editorReady: editorReadyRef?.current ?? true,
       bodyFallbackMd: bodyMarkdownFromNoteRef(markdownRef.current),
     });
-  }, [noteTitle, frontmatterYamlRef, editorRef, markdownRef]);
+  }, [noteTitle, frontmatterYamlRef, editorRef, editorReadyRef, markdownRef]);
 
   const applySavedMarkdown = useCallback(
     (md: string) => {
@@ -162,6 +167,7 @@ export function useOpenNote({
                 yaml: frontmatterYamlRef.current,
                 title: nextTitle,
                 editor: editorRef.current,
+                editorReady: editorReadyRef?.current ?? true,
                 bodyFallbackMd: bodyMarkdownFromNoteRef(markdownRef.current),
               });
               replaceOpenTabPath(path, entry.path, nextTitle, liveMarkdown);
@@ -171,13 +177,14 @@ export function useOpenNote({
             });
           })
           .catch(() => {
-            /* 路径同步为可选增强 */
+            /* Path sync is optional so tests can isolate editor content flow. */
           });
       }, PATH_SYNC_DEBOUNCE_MS);
     },
     [
       activePathRef,
       editorRef,
+      editorReadyRef,
       frontmatterYamlRef,
       markdownRef,
       replaceOpenTabPath,
@@ -203,13 +210,21 @@ export function useOpenNote({
             if (generation !== editorIngestGenerationRef.current) return;
             if (activePathRef.current !== path) return;
             if (dirtyRef?.current) return;
-            editorRef.current?.commands.setContent(tipTapHtml, false);
+            editorRef.current?.commands.setContent(
+              tipTapHtml,
+              false,
+              EDITOR_PARSE_OPTIONS,
+            );
           })
           .catch(() => {
             if (generation !== editorIngestGenerationRef.current) return;
             if (activePathRef.current !== path) return;
             if (dirtyRef?.current) return;
-            editorRef.current?.commands.setContent("<p></p>", false);
+            editorRef.current?.commands.setContent(
+              "<p></p>",
+              false,
+              EDITOR_PARSE_OPTIONS,
+            );
           });
       }
     },

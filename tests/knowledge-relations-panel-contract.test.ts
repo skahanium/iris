@@ -33,4 +33,25 @@ describe("knowledge relations panel contract", () => {
     expect(palette).not.toContain('id: "backlinks"');
     expect(palette).not.toContain('id: "tags"');
   });
+
+  it("prepares relation target notes before opening them", () => {
+    const panel = read("src/components/knowledge/KnowledgeRelationsPanel.tsx");
+    const overlays = read("src/components/layout/AppOverlays.tsx");
+
+    expect(panel).toContain("onPreparePath");
+    expect(panel).toMatch(
+      /onMouseEnter=\{\(\) =>\s*onPreparePath\?\.\(\s*backlink\.source_path,\s*backlink\.source_title,?\s*\)\s*\}/,
+    );
+    expect(panel).toMatch(
+      /onFocus=\{\(\) =>\s*onPreparePath\?\.\(\s*backlink\.source_path,\s*backlink\.source_title,?\s*\)\s*\}/,
+    );
+    expect(panel).toMatch(
+      /onMouseEnter=\{\(\) =>\s*onPreparePath\?\.\(\s*file\.path,\s*displayTitleForFileListItem\(file\),?\s*\)\s*\}/,
+    );
+    expect(panel).toMatch(
+      /onFocus=\{\(\) =>\s*onPreparePath\?\.\(\s*file\.path,\s*displayTitleForFileListItem\(file\),?\s*\)\s*\}/,
+    );
+    expect(overlays).toContain('source: "link"');
+    expect(overlays).toContain('onPrepareNotePath?.(path, titleHint, "link")');
+  });
 });

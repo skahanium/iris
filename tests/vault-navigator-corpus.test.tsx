@@ -16,12 +16,33 @@ const folderRename = vi.fn();
 const knowledgeReindex = vi.fn();
 const templateList = vi.fn();
 
+interface MockFileItem {
+  path: string;
+  title: string;
+  updatedAt: string;
+  isLocked: boolean;
+}
+
 vi.mock("@/lib/ipc", () => ({
   corpusList: (...args: unknown[]) => corpusList(...args),
   corpusUpsert: (...args: unknown[]) => corpusUpsert(...args),
   exportFile: vi.fn(),
   fileDelete: (...args: unknown[]) => fileDelete(...args),
   fileList: (...args: unknown[]) => fileList(...args),
+  workspaceList: (...args: unknown[]) =>
+    fileList(...args).then((items: MockFileItem[]) =>
+      items.map((item) => ({
+        attachmentRole: "formal",
+        isLocked: item.isLocked,
+        kind: "note",
+        mediaKind: null,
+        mimeType: null,
+        path: item.path,
+        sizeBytes: null,
+        title: item.title,
+        updatedAt: item.updatedAt,
+      })),
+    ),
   fileRead: vi.fn(),
   fileRename: (...args: unknown[]) => fileRename(...args),
   fileSetLock: (...args: unknown[]) => fileSetLock(...args),
@@ -363,6 +384,58 @@ describe("VaultNavigator corpus assignment", () => {
     });
 
     expect(folderRename).toHaveBeenCalledWith("policy/", "archive/policy");
+  });
+
+  it("prepares visible files and closes immediately when opening a file", async () => {
+    const onPrepare = vi.fn();
+    let resolveOpen!: () => void;
+    const onOpen = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveOpen = resolve;
+        }),
+    );
+    const onClose = vi.fn();
+
+    await act(async () => {
+      root.render(
+        <VaultNavigator
+          open
+          onClose={onClose}
+          onOpen={onOpen}
+          onPrepare={onPrepare}
+        />,
+      );
+    });
+    await vi.waitFor(() => {
+      expect(document.body.textContent).toContain("A");
+    });
+    expect(onPrepare).toHaveBeenCalledWith(
+      {
+        path: "policy/a.md",
+        title: "A",
+        updatedAt: "",
+        isLocked: false,
+      },
+      "file-tree",
+    );
+
+    const fileButton = Array.from(document.querySelectorAll("button")).find(
+      (button) => button.textContent?.trim() === "A",
+    );
+    expect(fileButton).toBeTruthy();
+    await act(async () => {
+      fileButton?.click();
+      await Promise.resolve();
+    });
+    expect(onOpen).toHaveBeenCalledWith("policy/a.md", "file-tree");
+    expect(onClose).toHaveBeenCalledOnce();
+
+    await act(async () => {
+      resolveOpen();
+      await Promise.resolve();
+    });
+    expect(onClose).toHaveBeenCalledOnce();
   });
 
   it("does not expose HTML export in the file row", async () => {

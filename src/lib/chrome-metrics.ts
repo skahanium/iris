@@ -4,7 +4,7 @@
  */
 export const DEFAULT_TITLEBAR_HEIGHT_PX = 44;
 export const MACOS_TITLEBAR_HEIGHT_PX = 44;
-export const MACOS_TRAFFIC_INSET_PX = 0;
+export const MACOS_TRAFFIC_INSET_PX = 88;
 
 export interface DesktopChromeMetrics {
   titlebarHeightLogical: number;
@@ -28,4 +28,20 @@ export function applyDesktopChromeMetricsToDocument(
     "--titlebar-traffic-inset",
     `${metrics.trafficInsetLogical}px`,
   );
+}
+
+export function applyDesktopChromeFullscreenStateToDocument(
+  fullscreen: boolean,
+  metrics?: DesktopChromeMetrics,
+): void {
+  const root = document.documentElement;
+  if (fullscreen) {
+    root.dataset.irisWindowFullscreen = "";
+    root.style.setProperty("--titlebar-traffic-inset", "0px");
+  } else {
+    delete root.dataset.irisWindowFullscreen;
+    if (metrics) {
+      applyDesktopChromeMetricsToDocument(metrics);
+    }
+  }
 }

@@ -19,6 +19,8 @@ pub struct StreamEvent {
     pub request_id: String,
     pub event_type: StreamEventType,
     pub data: StreamEventData,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub classified: bool,
 }
 
 /// Stream event types.
@@ -207,9 +209,20 @@ fn normalize_tool_arguments(input_json: String) -> String {
 /// Send a streaming request and emit events to frontend.
 pub async fn send_streaming_request(
     app_handle: &AppHandle,
-    client: &Client,
+    _client: &Client,
     request_id: &str,
     request: GatewayRequest,
+) -> AppResult<GatewayResponse> {
+    send_streaming_request_with_meta(app_handle, _client, request_id, request, false).await
+}
+
+/// Send a streaming request and attach domain metadata to emitted events.
+pub async fn send_streaming_request_with_meta(
+    app_handle: &AppHandle,
+    _client: &Client,
+    request_id: &str,
+    request: GatewayRequest,
+    classified: bool,
 ) -> AppResult<GatewayResponse> {
     if is_abort_requested(request_id) {
         clear_abort(request_id);
@@ -222,7 +235,10 @@ pub async fn send_streaming_request(
     let mut body = build_llm_api_body(&request)?;
     body["stream"] = serde_json::json!(true);
 
-    let mut req_builder = client.post(&url).header("Content-Type", "application/json");
+    let streaming_client = crate::network::cert_pinning::create_streaming_https_client()?;
+    let mut req_builder = streaming_client
+        .post(&url)
+        .header("Content-Type", "application/json");
 
     if let Some(api_key) = &request.provider.api_key {
         req_builder = apply_streaming_auth_headers(req_builder, endpoint_family, api_key);
@@ -254,14 +270,45 @@ pub async fn send_streaming_request(
         (Option<String>, Option<String>, String),
     > = std::collections::HashMap::new();
 
-    // Process SSE stream with carry buffer to handle chunks split across TCP boundaries
+    // Process SSE stream with carry buffer to handle chunks split across TCP boundaries.
+    // The outer loop is labeled so the [DONE] / message_stop terminators can break out
+    // of the stream entirely instead of looping back to `stream.next().await` (which
+    // would block on keep-alive sockets until the read_timeout, surfacing as a
+    // spurious "重试中" cycle to the user).
+    //
+    // The loop races `stream.next()` against a periodic abort poll via
+    // `tokio::time::timeout`. Without this, a stalled/half-open socket (no chunks
+    // arriving) would block `stream.next().await` and the per-chunk abort check
+    // would never run — so clicking "中止" could not interrupt a hung stream until
+    // reqwest's read_timeout killed it. The timeout race lets abort fire within
+    // ~500ms regardless of whether chunks are flowing.
     let mut stream = response.bytes_stream();
     use futures_util::StreamExt;
     let mut carry = String::new();
     let mut carry_truncated = false;
     const MAX_CARRY_BYTES: usize = 1_048_576;
+    const ABORT_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(500);
 
-    while let Some(chunk_result) = stream.next().await {
+    'stream: loop {
+        // Race the next stream chunk against a periodic abort poll so a stalled
+        // socket (no incoming chunks) can still be interrupted by the user
+        // within ~500ms, rather than waiting for reqwest's read_timeout.
+        let chunk_opt = match tokio::time::timeout(ABORT_POLL_INTERVAL, stream.next()).await {
+            Ok(chunk) => chunk,
+            Err(_) => {
+                if is_abort_requested(request_id) {
+                    clear_abort(request_id);
+                    return Err(AppError::msg("request aborted"));
+                }
+                continue 'stream;
+            }
+        };
+
+        let chunk_result = match chunk_opt {
+            Some(r) => r,
+            None => break 'stream,
+        };
+
         if is_abort_requested(request_id) {
             clear_abort(request_id);
             return Err(AppError::msg("request aborted"));
@@ -299,9 +346,14 @@ pub async fn send_streaming_request(
                     data: StreamEventData::Done {
                         usage: Some(usage.clone()),
                     },
+                    classified,
                 };
                 emit_stream_event(app_handle, &event, token_index)?;
-                continue;
+                // The stream is finished; stop reading from the socket. Some
+                // providers/proxies keep the connection open after [DONE];
+                // `continue` here would wait for the server to close (or the
+                // 60s timeout), surfacing as a hang.
+                break 'stream;
             }
 
             if let Ok(json) = serde_json::from_str::<serde_json::Value>(data) {
@@ -311,6 +363,7 @@ pub async fn send_streaming_request(
                             request_id: request_id.to_string(),
                             event_type: StreamEventType::Token,
                             data: StreamEventData::Token { token: delta },
+                            classified,
                         };
                         emit_stream_event(app_handle, &event, token_index)?;
                         token_index += 1;
@@ -322,8 +375,12 @@ pub async fn send_streaming_request(
                             data: StreamEventData::Done {
                                 usage: Some(anthropic_state.usage.clone()),
                             },
+                            classified,
                         };
                         emit_stream_event(app_handle, &event, token_index)?;
+                        // Anthropic's terminal event; stop reading the socket
+                        // so a half-open connection cannot hang the loop.
+                        break 'stream;
                     }
                     continue;
                 }
@@ -337,6 +394,7 @@ pub async fn send_streaming_request(
                         data: StreamEventData::Token {
                             token: delta.to_string(),
                         },
+                        classified,
                     };
                     emit_stream_event(app_handle, &event, token_index)?;
                     token_index += 1;
@@ -393,6 +451,7 @@ pub async fn send_streaming_request(
                                     data: StreamEventData::Done {
                                         usage: Some(anthropic_state.usage.clone()),
                                     },
+                                    classified,
                                 };
                                 emit_stream_event(app_handle, &event, token_index)?;
                             }
@@ -443,6 +502,7 @@ pub async fn send_streaming_request(
                 data: StreamEventData::ToolCall {
                     tool_call: tc.clone(),
                 },
+                classified,
             };
             emit_stream_event(app_handle, &event, token_index)?;
         }
@@ -472,6 +532,7 @@ pub async fn send_streaming_request(
             data: StreamEventData::ToolCall {
                 tool_call: tc.clone(),
             },
+            classified,
         };
         emit_stream_event(app_handle, &event, token_index)?;
     }
@@ -503,25 +564,23 @@ pub(super) fn emit_stream_event(
     match event.event_type {
         StreamEventType::Token => {
             if let StreamEventData::Token { token } = &event.data {
-                app_handle
-                    .emit(
-                        "llm:token",
-                        serde_json::json!({
-                            "request_id": event.request_id,
-                            "token": token,
-                            "index": token_index,
-                        }),
-                    )
-                    .map_err(emit_err)?;
+                let mut payload = serde_json::json!({
+                    "request_id": event.request_id,
+                    "token": token,
+                    "index": token_index,
+                });
+                if event.classified {
+                    payload["classified"] = serde_json::json!(true);
+                }
+                app_handle.emit("llm:token", payload).map_err(emit_err)?;
             }
         }
         StreamEventType::Done => {
-            app_handle
-                .emit(
-                    "llm:done",
-                    serde_json::json!({ "request_id": event.request_id }),
-                )
-                .map_err(emit_err)?;
+            let mut payload = serde_json::json!({ "request_id": event.request_id });
+            if event.classified {
+                payload["classified"] = serde_json::json!(true);
+            }
+            app_handle.emit("llm:done", payload).map_err(emit_err)?;
         }
         StreamEventType::Error => {
             let message = if let StreamEventData::Error { message } = &event.data {
@@ -529,20 +588,30 @@ pub(super) fn emit_stream_event(
             } else {
                 "stream error".to_string()
             };
-            app_handle
-                .emit(
-                    "llm:error",
-                    serde_json::json!({
-                        "request_id": event.request_id,
-                        "error": message,
-                    }),
-                )
-                .map_err(emit_err)?;
+            let mut payload = serde_json::json!({
+                "request_id": event.request_id,
+                "error": message,
+            });
+            if event.classified {
+                payload["classified"] = serde_json::json!(true);
+            }
+            app_handle.emit("llm:error", payload).map_err(emit_err)?;
         }
         StreamEventType::ToolCall => {
             app_handle.emit("ai:tool_call", event).map_err(emit_err)?;
         }
     }
+    Ok(())
+}
+
+/// Emit a `llm:reset` event so the frontend drops buffered tokens from a
+/// non-terminal round (tool-call round or inconclusive reflection) before the
+/// next round begins streaming. This prevents intermediate preamble or
+/// `NEED_MORE_EVIDENCE` sentinels from sticking to the final answer surface.
+pub fn emit_stream_reset(app_handle: &AppHandle, request_id: &str) -> AppResult<()> {
+    app_handle
+        .emit("llm:reset", serde_json::json!({ "request_id": request_id }))
+        .map_err(|e| AppError::msg(format!("Failed to emit llm:reset: {e}")))?;
     Ok(())
 }
 

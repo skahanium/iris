@@ -12,12 +12,14 @@ import { resolveAssistantDisplayContent } from "@/lib/assistant-message-content"
 import { buildArtifactDraftsFromTaskResult } from "@/lib/assistant-artifact-tabs";
 import { validateContextReference } from "@/lib/context-reference";
 import { patchSpansPreferSidebar } from "@/lib/assistant-patch";
+import { pendingWriteConfirmationAction } from "@/lib/assistant-write-confirmation";
 import {
   agentIntentForTaskPlan,
   intentDetectionForTaskPlan,
 } from "@/lib/assistant-routing";
 import { legacySceneHintForAgentIntent } from "@/lib/assistant-scene";
 import { buildAssistantTaskPlan } from "@/lib/assistant-taskplan";
+import type { AiDomain } from "@/lib/ai-domain";
 import { invokeErrorMessage } from "@/lib/credentials";
 import {
   assistantExecute,
@@ -81,12 +83,15 @@ interface AssistantTaskRuntimePorts {
     >;
     setRunPlanSummary: Dispatch<SetStateAction<AgentRunPlanSummary | null>>;
   };
+  saveConversationSnapshot?: (messages: ChatLine[]) => Promise<void>;
 }
 
 interface AssistantTaskContext {
+  aiDomain: AiDomain;
   composerDisabled: boolean;
   contextScope: ContextScope;
   contextReferences: ContextReference[];
+  acceptWritingPatch: (patch: PatchProposal) => Promise<boolean>;
   getNoteContent: () => string;
   getParagraphText: () => string | null;
   getWritingContext: () => WritingEditorContext | null;
@@ -98,6 +103,7 @@ interface AssistantTaskContext {
   selectionQuoteText?: string | null;
   sessionId: number | null;
   webSearch: boolean;
+  writingPatches: PatchProposal[];
 }
 
 interface AssistantTaskRefs {
@@ -106,6 +112,7 @@ interface AssistantTaskRefs {
   requestIdRef: MutableRefObject<string | null>;
   researchRequestIdRef: MutableRefObject<string | null>;
   streamBufRef: MutableRefObject<string>;
+  docStreamActiveRef: MutableRefObject<boolean>;
 }
 
 interface AssistantTaskStatePorts {
@@ -152,6 +159,10 @@ interface UseAssistantTasksResult {
   send: () => Promise<void>;
   images: ImageAttachment[];
   setImages: Dispatch<SetStateAction<ImageAttachment[]>>;
+}
+
+function isAbortErrorMessage(message: string): boolean {
+  return message.toLowerCase().includes("request aborted");
 }
 
 function assistantIntentForTaskPlanIntent(
@@ -211,11 +222,14 @@ export function useAssistantTasks({
     clearTaskSurfaces,
     ensureAssistantStreamSlot,
     runPlanControls,
+    saveConversationSnapshot,
   } = runtime;
   const {
     composerDisabled,
+    aiDomain,
     contextScope,
     contextReferences,
+    acceptWritingPatch,
     getNoteContent,
     getParagraphText,
     getWritingContext,
@@ -227,6 +241,7 @@ export function useAssistantTasks({
     selectionQuoteText,
     sessionId,
     webSearch,
+    writingPatches,
   } = context;
   const {
     forceNewSessionRef,
@@ -234,6 +249,7 @@ export function useAssistantTasks({
     requestIdRef,
     researchRequestIdRef,
     streamBufRef,
+    docStreamActiveRef,
   } = refs;
   const {
     setActionState,
@@ -293,6 +309,16 @@ export function useAssistantTasks({
         ),
       ),
     [contextReferences, getNoteContent, notePath],
+  );
+
+  const getNoteContentForRequest = useCallback(() => {
+    if (aiDomain === "classified") return null;
+    return notePath ? getNoteContent() : undefined;
+  }, [aiDomain, getNoteContent, notePath]);
+
+  const getContextReferencesForRequest = useCallback(
+    () => (aiDomain === "classified" ? [] : currentContextReferences()),
+    [aiDomain, currentContextReferences],
   );
 
   const explicitIntentDetection = useCallback(
@@ -388,8 +414,8 @@ export function useAssistantTasks({
       ensureAssistantStreamSlot();
       setActivityHint("正在连接模型并处理工具调用…");
       assistantRun.setActivityHint("正在连接模型并处理工具调用…");
-
       let completedOk = false;
+
       try {
         const agentIntent =
           options?.agentIntent ??
@@ -411,11 +437,12 @@ export function useAssistantTasks({
               intent === "knowledge" ? 0.78 : 0.72,
             ),
           message: rawMessage,
-          contextReferences: currentContextReferences(),
+          aiDomain,
+          contextReferences: getContextReferencesForRequest(),
           taskPlan: options?.taskPlan,
           images: options?.images,
           notePath,
-          noteContent: getNoteContent(),
+          noteContent: getNoteContentForRequest(),
           webAuthorized: webSearch,
           contextScope,
           sessionId,
@@ -482,6 +509,7 @@ export function useAssistantTasks({
               toolCalls,
             });
           }
+          void saveConversationSnapshot?.(next);
           return next;
         });
         const pendingTools =
@@ -510,6 +538,11 @@ export function useAssistantTasks({
         completedOk = !pendingTools && !pausedBudget;
       } catch (error) {
         const message = invokeErrorMessage(error);
+        if (isAbortErrorMessage(message)) {
+          setActionState(buildActionState(intent, "idle"));
+          assistantRun.setFromTaskStatus("idle", intent);
+          return;
+        }
         setLastError(message);
         setMessages((prev) => [
           ...prev,
@@ -530,18 +563,20 @@ export function useAssistantTasks({
       }
     },
     [
+      aiDomain,
       assistantRun,
       contextScope,
       ensureAssistantStreamSlot,
       forceNewSessionRef,
       explicitIntentDetection,
-      getNoteContent,
+      getNoteContentForRequest,
       notePath,
       packets,
       panelSendActiveRef,
       recordRunPlan,
       recordAssistantArtifacts,
-      currentContextReferences,
+      saveConversationSnapshot,
+      getContextReferencesForRequest,
       requestIdRef,
       selectedPacketIds,
       sessionId,
@@ -576,13 +611,24 @@ export function useAssistantTasks({
       clearTaskSurfaces();
       setLastError(null);
       setActionState(buildActionState(intent, "running"));
-      setActivityHint("正在检索知识库与本地笔记…");
+      setActivityHint(
+        aiDomain === "classified"
+          ? "正在准备涉密上下文…"
+          : "正在检索知识库与本地笔记…",
+      );
 
       try {
-        await assembleContextForChat(rawMessage, intent);
+        if (aiDomain === "normal") {
+          await assembleContextForChat(rawMessage, intent);
+        }
         await executeKnowledgeChat(rawMessage, intent, options);
       } catch (error) {
         const message = invokeErrorMessage(error);
+        if (isAbortErrorMessage(message)) {
+          setActionState(buildActionState(intent, "idle"));
+          setActivityHint(null);
+          return;
+        }
         setLastError(message);
         setMessages((prev) => [
           ...prev,
@@ -594,6 +640,7 @@ export function useAssistantTasks({
     },
     [
       assembleContextForChat,
+      aiDomain,
       clearTaskSurfaces,
       executeKnowledgeChat,
       setActionState,
@@ -622,10 +669,11 @@ export function useAssistantTasks({
           ["write", "chat"],
         ),
         message: rawMessage,
-        contextReferences: currentContextReferences(),
+        aiDomain,
+        contextReferences: getContextReferencesForRequest(),
         taskPlan,
         notePath,
-        noteContent: getNoteContent(),
+        noteContent: getNoteContentForRequest(),
         webAuthorized: webSearch,
         selection: ctx.selection,
         cursorContext: ctx.cursorContext,
@@ -658,16 +706,17 @@ export function useAssistantTasks({
       appendAssistantSummary("writing", nextPatches.length);
     },
     [
+      aiDomain,
       appendAssistantSummary,
       assistantRun,
       clearTaskSurfaces,
-      getNoteContent,
+      getNoteContentForRequest,
       getWritingContext,
       notePath,
       explicitIntentDetection,
       recordRunPlan,
       recordAssistantArtifacts,
-      currentContextReferences,
+      getContextReferencesForRequest,
       setActionState,
       setAgentTaskId,
       setPackets,
@@ -700,7 +749,8 @@ export function useAssistantTasks({
           ["ask_notes", "research"],
         ),
         message: rawMessage,
-        contextReferences: currentContextReferences(),
+        aiDomain,
+        contextReferences: getContextReferencesForRequest(),
         taskPlan,
         notePath,
         webAuthorized: webSearch,
@@ -722,6 +772,7 @@ export function useAssistantTasks({
       appendAssistantSummary("citation");
     },
     [
+      aiDomain,
       appendAssistantSummary,
       assistantRun,
       clearTaskSurfaces,
@@ -731,7 +782,7 @@ export function useAssistantTasks({
       notePath,
       recordRunPlan,
       recordAssistantArtifacts,
-      currentContextReferences,
+      getContextReferencesForRequest,
       setActionState,
       setAgentTaskId,
       setCitationResult,
@@ -756,7 +807,8 @@ export function useAssistantTasks({
           ["ask_notes", "chat"],
         ),
         message: rawMessage,
-        contextReferences: currentContextReferences(),
+        aiDomain,
+        contextReferences: getContextReferencesForRequest(),
         taskPlan,
         webAuthorized: webSearch,
         contextScope,
@@ -784,6 +836,7 @@ export function useAssistantTasks({
       appendAssistantSummary("organize", suggestions.length);
     },
     [
+      aiDomain,
       appendAssistantSummary,
       assistantRun,
       clearTaskSurfaces,
@@ -791,7 +844,7 @@ export function useAssistantTasks({
       explicitIntentDetection,
       recordRunPlan,
       recordAssistantArtifacts,
-      currentContextReferences,
+      getContextReferencesForRequest,
       setActionState,
       setAgentTaskId,
       setOrganizeSelection,
@@ -823,10 +876,11 @@ export function useAssistantTasks({
           ["write", "document_check"],
         ),
         message: rawMessage,
-        contextReferences: currentContextReferences(),
+        aiDomain,
+        contextReferences: getContextReferencesForRequest(),
         taskPlan,
         notePath,
-        noteContent: getNoteContent(),
+        noteContent: getNoteContentForRequest(),
         webAuthorized: webSearch,
         chapter,
       });
@@ -851,15 +905,17 @@ export function useAssistantTasks({
       appendAssistantSummary("chapter", nextPatches.length);
     },
     [
+      aiDomain,
       appendAssistantSummary,
       assistantRun,
       clearTaskSurfaces,
       explicitIntentDetection,
       getNoteContent,
+      getNoteContentForRequest,
       notePath,
       recordRunPlan,
       recordAssistantArtifacts,
-      currentContextReferences,
+      getContextReferencesForRequest,
       setActionState,
       setAgentTaskId,
       setWritingPatches,
@@ -875,72 +931,87 @@ export function useAssistantTasks({
       setActionState(buildActionState("document", "running"));
       assistantRun.setFromTaskStatus("running", "document");
       clearTaskSurfaces();
-      const response = await assistantExecute({
-        agentIntent: "document_check",
-        intent: "document",
-        intentDetection: explicitIntentDetection(
-          "document_check",
-          "Document action explicitly requested whole-note checking.",
-          ["ui_action:document_check", "context:note"],
-          ["chapter", "write"],
-        ),
-        message: rawMessage,
-        contextReferences: currentContextReferences(),
-        taskPlan,
-        notePath,
-        noteContent: getNoteContent(),
-        webAuthorized: webSearch,
-        documentCheckType: determineDocumentCheckType(rawMessage),
-      });
-      recordRunPlan(response);
-      recordAssistantArtifacts(response);
-      setAgentTaskId(response.taskId ?? null);
-      if (response.kind !== "document") {
-        throw new Error("助手路由异常：期望文档检查结果");
-      }
-      const result = response.payload;
-      setDocSummary(result.analysis_summary ?? null);
-      const issues: string[] = [];
-      if (result.outline_result) {
-        for (const issue of result.outline_result.issues) {
-          issues.push(`[大纲] ${issue.description}`);
+      // Activate the doc-summary stream so useDocSummaryStream renders the
+      // analysis_summary tokens incrementally into the doc panel. Uses a
+      // dedicated ref so tokens do not leak into the chat message list.
+      docStreamActiveRef.current = true;
+      requestIdRef.current = null;
+      try {
+        const response = await assistantExecute({
+          agentIntent: "document_check",
+          intent: "document",
+          intentDetection: explicitIntentDetection(
+            "document_check",
+            "Document action explicitly requested whole-note checking.",
+            ["ui_action:document_check", "context:note"],
+            ["chapter", "write"],
+          ),
+          message: rawMessage,
+          aiDomain,
+          contextReferences: getContextReferencesForRequest(),
+          taskPlan,
+          notePath,
+          noteContent: getNoteContentForRequest(),
+          webAuthorized: webSearch,
+          documentCheckType: determineDocumentCheckType(rawMessage),
+        });
+        recordRunPlan(response);
+        recordAssistantArtifacts(response);
+        setAgentTaskId(response.taskId ?? null);
+        if (response.kind !== "document") {
+          throw new Error("助手路由异常：期望文档检查结果");
         }
-      }
-      if (result.citation_gap_result) {
-        for (const claim of result.citation_gap_result.uncited_claims) {
-          issues.push(`[引用缺口] ${claim.statement}`);
+        const result = response.payload;
+        // The authoritative summary wins over any streamed snapshot.
+        setDocSummary(result.analysis_summary ?? null);
+        const issues: string[] = [];
+        if (result.outline_result) {
+          for (const issue of result.outline_result.issues) {
+            issues.push(`[大纲] ${issue.description}`);
+          }
         }
-      }
-      if (result.style_result) {
-        for (const item of result.style_result.inconsistencies) {
-          issues.push(`[风格] ${item.description}`);
+        if (result.citation_gap_result) {
+          for (const claim of result.citation_gap_result.uncited_claims) {
+            issues.push(`[引用缺口] ${claim.statement}`);
+          }
         }
-      }
-      setDocIssues(issues);
-      const nextPatches = result.patches ?? [];
-      setWritingPatches(nextPatches);
-      setActionState(
-        buildActionState(
-          "document",
+        if (result.style_result) {
+          for (const item of result.style_result.inconsistencies) {
+            issues.push(`[风格] ${item.description}`);
+          }
+        }
+        setDocIssues(issues);
+        const nextPatches = result.patches ?? [];
+        setWritingPatches(nextPatches);
+        setActionState(
+          buildActionState(
+            "document",
+            nextPatches.length > 0 ? "awaiting_confirmation" : "completed",
+          ),
+        );
+        assistantRun.setFromTaskStatus(
           nextPatches.length > 0 ? "awaiting_confirmation" : "completed",
-        ),
-      );
-      assistantRun.setFromTaskStatus(
-        nextPatches.length > 0 ? "awaiting_confirmation" : "completed",
-        "document",
-      );
-      appendAssistantSummary("document", nextPatches.length);
+          "document",
+        );
+        appendAssistantSummary("document", nextPatches.length);
+      } finally {
+        docStreamActiveRef.current = false;
+        requestIdRef.current = null;
+      }
     },
     [
+      aiDomain,
       appendAssistantSummary,
       assistantRun,
       clearTaskSurfaces,
+      docStreamActiveRef,
       explicitIntentDetection,
-      getNoteContent,
+      getNoteContentForRequest,
       notePath,
       recordRunPlan,
       recordAssistantArtifacts,
-      currentContextReferences,
+      getContextReferencesForRequest,
+      requestIdRef,
       setActionState,
       setAgentTaskId,
       setDocIssues,
@@ -956,53 +1027,85 @@ export function useAssistantTasks({
       assistantRun.setFromTaskStatus("running", "research");
       setResearchRunning(true);
       clearTaskSurfaces();
-      const response = await assistantExecute({
-        agentIntent: "research",
-        intent: "research",
-        intentDetection: explicitIntentDetection(
-          "research",
-          "Research action explicitly requested multi-evidence synthesis.",
-          ["ui_action:research"],
-          ["ask_notes", "chat"],
-        ),
-        message: rawMessage,
-        contextReferences: currentContextReferences(),
-        taskPlan,
-        webAuthorized: webSearch,
-      });
-      recordRunPlan(response);
-      recordAssistantArtifacts(response);
-      setAgentTaskId(response.taskId ?? null);
-      if (response.kind !== "research") {
-        throw new Error("助手路由异常：期望研究结果");
+      // Activate the chat stream slot so useAssistantLlmStream renders the
+      // synthesize_summary tokens incrementally instead of dumping the whole
+      // summary when the IPC call resolves.
+      setStreaming(true);
+      panelSendActiveRef.current = true;
+      streamBufRef.current = "";
+      requestIdRef.current = null;
+      ensureAssistantStreamSlot();
+      try {
+        const response = await assistantExecute({
+          agentIntent: "research",
+          intent: "research",
+          intentDetection: explicitIntentDetection(
+            "research",
+            "Research action explicitly requested multi-evidence synthesis.",
+            ["ui_action:research"],
+            ["ask_notes", "chat"],
+          ),
+          message: rawMessage,
+          aiDomain,
+          contextReferences: getContextReferencesForRequest(),
+          taskPlan,
+          webAuthorized: webSearch,
+        });
+        recordRunPlan(response);
+        recordAssistantArtifacts(response);
+        setAgentTaskId(response.taskId ?? null);
+        if (response.kind !== "research") {
+          throw new Error("助手路由异常：期望研究结果");
+        }
+        const result = response.payload;
+        const serverSummary =
+          result.summary.trim() ||
+          "研究已完成，但没有生成可展示正文。可在来源详情中查看证据状态。";
+        researchRequestIdRef.current = result.request_id;
+        setResearchResult(result);
+        setResearchState(result.research_state ?? null);
+        setResearchPanelExpanded(false);
+        setResearchRunning(false);
+        setActionState(buildActionState("research", "completed"));
+        assistantRun.setFromTaskStatus("completed", "research");
+        // The streamed tokens already populated the assistant slot; reconcile
+        // it with the authoritative server summary rather than appending a
+        // duplicate message.
+        const finalContent = resolveAssistantDisplayContent(
+          serverSummary,
+          streamBufRef.current,
+          undefined,
+        );
+        setMessages((prev) => {
+          const next = [...prev];
+          const last = next[next.length - 1];
+          if (last?.role === "assistant") {
+            next[next.length - 1] = { ...last, content: finalContent };
+          } else {
+            next.push({ role: "assistant", content: finalContent });
+          }
+          return next;
+        });
+      } finally {
+        panelSendActiveRef.current = false;
+        setResearchRunning(false);
+        setStreaming(false);
+        streamBufRef.current = "";
+        requestIdRef.current = null;
       }
-      const result = response.payload;
-      const summary =
-        result.summary.trim() ||
-        "研究已完成，但没有生成可展示正文。可在来源详情中查看证据状态。";
-      researchRequestIdRef.current = result.request_id;
-      setResearchResult(result);
-      setResearchState(result.research_state ?? null);
-      setResearchPanelExpanded(false);
-      setResearchRunning(false);
-      setActionState(buildActionState("research", "completed"));
-      assistantRun.setFromTaskStatus("completed", "research");
-      setMessages((prev) => [
-        ...prev,
-        {
-          role: "assistant",
-          content: summary,
-        },
-      ]);
     },
     [
+      aiDomain,
       assistantRun,
       clearTaskSurfaces,
+      ensureAssistantStreamSlot,
       explicitIntentDetection,
       researchRequestIdRef,
       recordRunPlan,
       recordAssistantArtifacts,
-      currentContextReferences,
+      getContextReferencesForRequest,
+      panelSendActiveRef,
+      requestIdRef,
       setActionState,
       setAgentTaskId,
       setMessages,
@@ -1010,6 +1113,8 @@ export function useAssistantTasks({
       setResearchResult,
       setResearchState,
       setResearchRunning,
+      setStreaming,
+      streamBufRef,
       webSearch,
     ],
   );
@@ -1017,7 +1122,73 @@ export function useAssistantTasks({
   const send = useCallback(async () => {
     if ((!input.trim() && images.length === 0) || composerDisabled) return;
     const rawMessage = input.trim();
-    const activeContextReferences = currentContextReferences();
+    const currentImages = images;
+    const pendingWriteAction = pendingWriteConfirmationAction({
+      message: rawMessage,
+      pendingPatchCount: writingPatches.length,
+    });
+
+    if (pendingWriteAction !== "none") {
+      setInput("");
+      setImages([]);
+      setLastError(null);
+      clearCitationMiss();
+      appendUserMessage(rawMessage, currentImages);
+      setCurrentTaskPlanIntent("rewrite_selection");
+
+      if (pendingWriteAction === "clarify_multiple_patches") {
+        setActionState(buildActionState("writing", "awaiting_confirmation"));
+        assistantRun.setFromTaskStatus("awaiting_confirmation", "writing");
+        setMessages((prev) => [
+          ...prev,
+          {
+            role: "assistant",
+            content:
+              "当前有多条待确认修改。请在写作修改面板中逐条接受或拒绝，以避免多条补丁互相覆盖。",
+          },
+        ]);
+        setActivityHint(null);
+        return;
+      }
+
+      const [patch] = writingPatches;
+      if (!patch) {
+        setMessages((prev) => [
+          ...prev,
+          {
+            role: "assistant",
+            content: "当前没有待确认的文档修改。",
+          },
+        ]);
+        setActivityHint(null);
+        return;
+      }
+
+      setActionState(buildActionState("writing", "running"));
+      assistantRun.setFromTaskStatus("running", "writing");
+      setActivityHint("正在应用已确认的文档修改…");
+      const applied = await acceptWritingPatch(patch);
+      setMessages((prev) => [
+        ...prev,
+        {
+          role: applied ? "assistant" : "system",
+          content: applied
+            ? "已应用这条文档修改。"
+            : "错误: 文档修改应用失败，请查看上方错误提示后重试。",
+        },
+      ]);
+      setActionState(
+        buildActionState("writing", applied ? "completed" : "error"),
+      );
+      assistantRun.setFromTaskStatus(
+        applied ? "completed" : "error",
+        "writing",
+      );
+      setActivityHint(null);
+      return;
+    }
+
+    const activeContextReferences = getContextReferencesForRequest();
     const hasSelection = Boolean(
       getWritingContext()?.selection ||
       selectionQuoteText ||
@@ -1040,7 +1211,6 @@ export function useAssistantTasks({
     const intent = assistantIntentForTaskPlanIntent(taskPlan.intent);
     setCurrentTaskPlanIntent(taskPlan.intent);
 
-    const currentImages = images;
     setInput("");
     setImages([]);
     setLastError(null);
@@ -1123,6 +1293,11 @@ export function useAssistantTasks({
       clearContextReferences();
     } catch (error) {
       const message = invokeErrorMessage(error);
+      if (isAbortErrorMessage(message)) {
+        setActionState(buildActionState(intent, "idle"));
+        assistantRun.setFromTaskStatus("idle", intent);
+        return;
+      }
       setLastError(message);
       setMessages((prev) => [
         ...prev,
@@ -1130,9 +1305,14 @@ export function useAssistantTasks({
       ]);
       setActionState(buildActionState(intent, "error", message));
       assistantRun.setFromTaskStatus("error", intent);
+    } finally {
+      panelSendActiveRef.current = false;
+      setStreaming(false);
       setActivityHint(null);
+      assistantRun.setActivityHint(null);
     }
   }, [
+    acceptWritingPatch,
     appendUserMessage,
     assistantRun,
     clearCitationMiss,
@@ -1141,13 +1321,14 @@ export function useAssistantTasks({
     composerDisabled,
     contextScope.pathPrefixes.length,
     contextScope.paths.length,
-    currentContextReferences,
+    getContextReferencesForRequest,
     forceNewSessionRef,
     getWritingContext,
     images,
     input,
     messages,
     notePath,
+    panelSendActiveRef,
     runChapter,
     runCitation,
     runDocumentCheck,
@@ -1164,7 +1345,9 @@ export function useAssistantTasks({
     setInput,
     setLastError,
     setMessages,
+    setStreaming,
     webSearch,
+    writingPatches,
   ]);
 
   return { runWriting, send, images, setImages };

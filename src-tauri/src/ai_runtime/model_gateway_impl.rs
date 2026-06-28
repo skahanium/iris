@@ -37,7 +37,7 @@ pub use messages_impl::{
 };
 use prompts_impl::is_rule_applicable_for_scene;
 pub use prompts_impl::{build_citation_prompt, build_drafting_prompt};
-pub use streaming_impl::{StreamEvent, StreamEventData, StreamEventType};
+pub use streaming_impl::{emit_stream_reset, StreamEvent, StreamEventData, StreamEventType};
 use usage_impl::parse_usage;
 
 /// Gateway response (non-streaming).
@@ -367,6 +367,22 @@ impl ModelGateway {
     ) -> AppResult<GatewayResponse> {
         streaming_impl::send_streaming_request(&self.app_handle, &self.client, request_id, request)
             .await
+    }
+
+    /// Send a streaming request and mark emitted frontend events as classified.
+    pub async fn send_classified_streaming_request(
+        &self,
+        request_id: &str,
+        request: GatewayRequest,
+    ) -> AppResult<GatewayResponse> {
+        streaming_impl::send_streaming_request_with_meta(
+            &self.app_handle,
+            &self.client,
+            request_id,
+            request,
+            true,
+        )
+        .await
     }
 }
 

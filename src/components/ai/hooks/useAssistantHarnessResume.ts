@@ -6,11 +6,7 @@ import { invokeErrorMessage } from "@/lib/credentials";
 import { agentTaskResume, harnessResume } from "@/lib/ipc";
 import { mapChatToolCallsForUi } from "@/lib/map-chat-tool-calls";
 import { accumulateTokenUsage } from "@/lib/token-usage";
-import type {
-  AiSendMessageResult,
-  ContextPacket,
-  TokenUsage,
-} from "@/types/ai";
+import type { ContextPacket, TokenUsage } from "@/types/ai";
 
 import type { ChatLine } from "../AiMessageList";
 
@@ -52,7 +48,7 @@ export function useAssistantHarnessResume({
     try {
       const result = pausedTaskId
         ? await agentTaskResume(pausedTaskId)
-        : ((await harnessResume(harnessRequestId!)) as AiSendMessageResult);
+        : await harnessResume(harnessRequestId!);
       const toolCalls = mapChatToolCallsForUi(
         result.tool_calls,
         result.tool_results,
