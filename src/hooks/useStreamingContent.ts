@@ -1,22 +1,22 @@
 import { useRef } from "react";
 
-const MIN_FLUSH_INTERVAL_MS = 120;
+const MIN_FLUSH_INTERVAL_MS = 80;
 const STREAMING_SHORT_CONTENT_LIMIT = 200;
-const STREAMING_BIG_JUMP_CHARS = 300;
+const STREAMING_BIG_JUMP_CHARS = 240;
 
 /**
  * 流式输出期间节流渲染内容。
  *
  * 在 streaming=true 时，仅在满足以下条件之一时更新返回值：
- * 1. 新增内容超过 300 字符
- * 2. 距上次更新超过 120ms
+ * 1. 新增内容超过 240 字符
+ * 2. 距上次更新超过 80ms
  * 3. 遇到段落分隔符（双换行）
  * 4. 总内容不足 200 字符（短文本不节流）
  *
  * 非流式状态下始终返回最新内容。
  *
- * 与下游 useMemo([content]) 配合，可将长文本 markdown 重解析
- * 频率从 ~20fps 降至 ~8fps，显著降低 CPU 占用。
+ * 与下游 useMemo([content]) 配合，降低流式 Markdown 重解析频率，
+ * 同时避免 120ms 级固定顿挫。
  */
 export function useStreamingContent(
   content: string,

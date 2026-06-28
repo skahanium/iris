@@ -22,6 +22,33 @@ describe("assistant streaming lifecycle contract", () => {
       expect(src).toContain("useStreamingContent");
       expect(src).toContain("streaming");
     });
+
+    it("AiMessageList keeps the latest assistant message streaming even when it has content", () => {
+      const src = read("src/components/ai/AiMessageList.tsx");
+      expect(src).toContain(
+        'const assistantStreaming = streaming && m.role === "assistant" && isLast',
+      );
+      expect(src).not.toContain(
+        'streaming && m.role === "assistant" && isLast && !m.content',
+      );
+    });
+
+    it("useAssistantLlmStream batches token snapshots on animation frames", () => {
+      const src = read("src/hooks/useAssistantLlmStream.ts");
+      expect(src).toContain("window.requestAnimationFrame");
+      expect(src).toContain("window.cancelAnimationFrame");
+      expect(src).not.toContain("lastFlushRef");
+      expect(src).not.toContain("clearTimeout");
+    });
+
+    it("AiMessageList does not depend scroll-follow effects on the virtualizer object", () => {
+      const src = read("src/components/ai/AiMessageList.tsx");
+      expect(src).toContain("const virtualTotalSize =");
+      expect(src).toContain("const virtualItems =");
+      expect(src).not.toContain(
+        "[messages, rows.length, rowVirtualizer, scrollFollow, streaming]",
+      );
+    });
   });
 
   describe("user-scrolled-up state prevents forced scroll-to-bottom", () => {

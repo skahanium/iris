@@ -10,7 +10,7 @@ import {
 } from "@/lib/iris-clipboard";
 
 interface DocumentTitleContextMenuProps {
-  inputRef: React.RefObject<HTMLInputElement | null>;
+  inputRef: React.RefObject<HTMLInputElement | HTMLTextAreaElement | null>;
   value: string;
   onValueChange: (value: string) => void;
   children: React.ReactNode;

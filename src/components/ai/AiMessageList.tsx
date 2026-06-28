@@ -204,6 +204,8 @@ export const AiMessageList = memo(function AiMessageList({
     estimateSize: estimateSizeByContent,
     overscan: 8,
   });
+  const virtualTotalSize = rowVirtualizer.getTotalSize();
+  const virtualItems = rowVirtualizer.getVirtualItems();
 
   const isNearBottom = useCallback((viewport: HTMLDivElement) => {
     const threshold = 48;
@@ -215,7 +217,8 @@ export const AiMessageList = memo(function AiMessageList({
   const handleScroll = useCallback(() => {
     const viewport = viewportRef.current;
     if (!viewport) return;
-    setScrollFollow(isNearBottom(viewport) ? "following" : "detached");
+    const next = isNearBottom(viewport) ? "following" : "detached";
+    setScrollFollow((prev) => (prev === next ? prev : next));
   }, [isNearBottom]);
 
   useEffect(() => {
@@ -223,7 +226,8 @@ export const AiMessageList = memo(function AiMessageList({
     if (!viewport) return;
 
     viewport.addEventListener("scroll", handleScroll, { passive: true });
-    setScrollFollow(isNearBottom(viewport) ? "following" : "detached");
+    const next = isNearBottom(viewport) ? "following" : "detached";
+    setScrollFollow((prev) => (prev === next ? prev : next));
 
     return () => {
       viewport.removeEventListener("scroll", handleScroll);
@@ -234,8 +238,11 @@ export const AiMessageList = memo(function AiMessageList({
     const viewport = viewportRef.current;
     if (!viewport || scrollFollow !== "following") return;
 
-    viewport.scrollTop = viewport.scrollHeight - viewport.clientHeight;
-  }, [messages, rows.length, rowVirtualizer, scrollFollow, streaming]);
+    viewport.scrollTop = Math.max(
+      0,
+      viewport.scrollHeight - viewport.clientHeight,
+    );
+  }, [messages, rows.length, virtualTotalSize, scrollFollow, streaming]);
 
   // Stable per-index callback cache. Inline arrows like `() => onRetract(i)`
   // create new function refs every render, breaking AiMessageBubble's memo
@@ -295,8 +302,7 @@ export const AiMessageList = memo(function AiMessageList({
     const m = row.message;
     const i = row.messageIndex;
     const isLast = i === messages.length - 1;
-    const assistantStreaming =
-      streaming && m.role === "assistant" && isLast && !m.content;
+    const assistantStreaming = streaming && m.role === "assistant" && isLast;
     const isSelected = selectedIndices?.has(i) ?? false;
 
     if (m.role === "assistant") {
@@ -375,9 +381,9 @@ export const AiMessageList = memo(function AiMessageList({
     <ScrollArea className="min-h-0 flex-1" viewportRef={viewportRef}>
       <div
         className="relative py-3"
-        style={{ height: `${rowVirtualizer.getTotalSize()}px` }}
+        style={{ height: `${virtualTotalSize}px` }}
       >
-        {rowVirtualizer.getVirtualItems().map((virtualRow) => {
+        {virtualItems.map((virtualRow) => {
           const row = rows[virtualRow.index];
           if (!row) return null;
           return (

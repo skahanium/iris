@@ -1352,6 +1352,9 @@
 
   .iris-document-title-field.iris-doc-title-wrap {
     @apply relative w-full;
+    --doc-title-line-height: 1.2;
+    --doc-title-max-lines: 3;
+    --doc-title-focus-max-lines: 6;
     margin-bottom: var(--prose-title-gap);
     padding-left: 0;
   }
@@ -1360,10 +1363,26 @@
     @apply m-0 w-full border-0 bg-transparent text-center font-bold text-editor-ink outline-none;
     font-family: var(--font-title);
     font-size: calc(2.25rem * var(--editor-zoom));
-    line-height: 1.2;
+    line-height: var(--doc-title-line-height);
     letter-spacing: 0.02em;
+    max-height: calc(
+      var(--doc-title-max-lines) * var(--doc-title-line-height) * 2.25rem *
+        var(--editor-zoom)
+    );
+    overflow-x: hidden;
+    overflow-y: hidden;
+    overflow-wrap: anywhere;
     padding: 0;
+    resize: none;
     box-shadow: none;
+  }
+
+  .iris-document-title-field:focus-within .iris-doc-title {
+    max-height: calc(
+      var(--doc-title-focus-max-lines) * var(--doc-title-line-height) *
+        2.25rem * var(--editor-zoom)
+    );
+    overflow-y: auto;
   }
 
   .iris-document-title-field .iris-doc-title::placeholder {
@@ -1603,6 +1622,7 @@
 
   .ai-message-bubble-streaming[data-streaming] {
     @apply border-border/40;
+    contain: layout paint style;
   }
 
   .ai-message-body {

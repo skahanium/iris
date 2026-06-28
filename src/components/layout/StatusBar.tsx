@@ -83,7 +83,11 @@ export const StatusBar = memo(function StatusBar({
       data-testid="status-bar"
       className="flex h-8 shrink-0 items-center gap-3 border-t border-border/60 bg-surface-chrome px-3 font-sans text-[11px] tracking-wide text-muted-foreground"
     >
-      <span className="min-w-0 truncate" title={path ?? undefined}>
+      <span
+        data-testid="status-bar-document-title"
+        className="min-w-0 max-w-[min(18rem,32vw)] truncate"
+        title={trimmedTitle || path || undefined}
+      >
         {label}
       </span>
       <span className="shrink-0 text-muted-foreground/60" aria-hidden>
