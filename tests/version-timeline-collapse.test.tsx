@@ -96,7 +96,9 @@ describe("VersionTimeline collapsed auto backups", () => {
       await Promise.resolve();
     });
 
-    expect(document.body.textContent).toContain("自动备份（5）");
+    expect(
+      document.body.querySelector('[data-testid="version-group-toggle"]'),
+    ).toBeTruthy();
     expect(
       document.body.querySelectorAll('[data-testid="version-entry-row"]'),
     ).toHaveLength(0);
@@ -160,8 +162,8 @@ describe("VersionTimeline collapsed auto backups", () => {
       await Promise.resolve();
     });
 
-    const restore = Array.from(document.body.querySelectorAll("button")).find(
-      (button) => button.textContent?.includes("恢复"),
+    const restore = document.body.querySelector(
+      "button[title]",
     ) as HTMLButtonElement;
     await act(async () => {
       restore.click();
@@ -193,11 +195,12 @@ describe("VersionTimeline collapsed auto backups", () => {
 
     expect(getCurrentContent).not.toHaveBeenCalled();
 
-    const finalize = Array.from(document.body.querySelectorAll("button")).find(
-      (button) => button.textContent?.includes("定稿"),
-    ) as HTMLButtonElement;
+    const finalizeLabelInput = document.body.querySelector("input");
+    const finalize = finalizeLabelInput?.nextElementSibling as
+      | HTMLButtonElement
+      | undefined;
     await act(async () => {
-      finalize.click();
+      finalize?.click();
       await Promise.resolve();
     });
 

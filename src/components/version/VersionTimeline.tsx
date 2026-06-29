@@ -36,6 +36,7 @@ interface VersionTimelineProps {
   notePath: string | null;
   currentContent?: string;
   getCurrentContent?: () => string;
+  onBeforeFinalizeCurrent?: () => Promise<string | null>;
   hasUnsavedEdits?: boolean;
   onRestore: (content: string) => void;
   /** Blocks low-priority `auto_idle` while finalize IPC is in flight. */
@@ -51,6 +52,7 @@ export function VersionTimeline({
   notePath,
   currentContent,
   getCurrentContent,
+  onBeforeFinalizeCurrent,
   hasUnsavedEdits = false,
   onRestore,
   onHighPriorityStart,
@@ -132,7 +134,10 @@ export function VersionTimeline({
     setFinalizing(true);
     onHighPriorityStart?.(notePath);
     try {
-      const liveContent = getCurrentContent?.() ?? currentContent ?? "";
+      const liveContent = onBeforeFinalizeCurrent
+        ? await onBeforeFinalizeCurrent()
+        : (getCurrentContent?.() ?? currentContent ?? "");
+      if (!liveContent) return;
       await versionFinalizeCurrent(
         notePath,
         liveContent,

@@ -142,6 +142,21 @@ describe("document lifecycle source contracts", () => {
     );
   });
 
+  it("finalizing a note flushes layer-1 save and refreshes the vault index", () => {
+    const app = read("src/App.impl.tsx");
+    const overlays = read("src/components/layout/AppOverlays.tsx");
+    const timeline = read("src/components/version/VersionTimeline.tsx");
+
+    expect(app).toContain("handleBeforeFinalizeCurrent");
+    expect(app).toMatch(
+      /const md = await flushSave\(\);[\s\S]*?if \(md\) \{[\s\S]*?bumpVaultIndex\(\);[\s\S]*?return md;/,
+    );
+    expect(overlays).toContain("onBeforeFinalizeCurrent");
+    expect(timeline).toContain(
+      "onBeforeFinalizeCurrent?: () => Promise<string | null>",
+    );
+  });
+
   it("large editor ingest is worker-backed and guarded against stale results", () => {
     const source = read("src/hooks/useOpenNote.ts");
     expect(source).toContain("ingestMarkdownForEditorAsync");

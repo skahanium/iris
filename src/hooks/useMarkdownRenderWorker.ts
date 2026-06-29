@@ -39,12 +39,23 @@ export function useMarkdownRenderWorker({
   });
 
   useEffect(() => {
-    if (!enabled || !streaming || typeof Worker === "undefined") {
+    if (!enabled || !streaming) {
       workerRef.current?.terminate();
       workerRef.current = null;
       setState({
         failed: false,
         html: null,
+        pending: false,
+      });
+      return;
+    }
+
+    if (typeof Worker === "undefined") {
+      workerRef.current?.terminate();
+      workerRef.current = null;
+      setState({
+        failed: true,
+        html: lastHtmlRef.current,
         pending: false,
       });
       return;

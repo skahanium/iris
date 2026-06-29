@@ -21,6 +21,8 @@ describe("VersionTimeline finalize", () => {
   let root: Root;
 
   beforeEach(() => {
+    versionList.mockReset();
+    versionFinalizeCurrent.mockReset();
     versionList.mockResolvedValue([]);
     versionFinalizeCurrent.mockResolvedValue(null);
     host = document.createElement("div");
@@ -59,9 +61,10 @@ describe("VersionTimeline finalize", () => {
       );
     });
 
-    const finalizeBtn = Array.from(document.querySelectorAll("button")).find(
-      (b) => b.textContent === "定稿",
-    );
+    const finalizeLabelInput = document.querySelector("input");
+    const finalizeBtn = finalizeLabelInput?.nextElementSibling as
+      | HTMLButtonElement
+      | undefined;
     expect(finalizeBtn).toBeTruthy();
 
     await act(async () => {
@@ -80,5 +83,78 @@ describe("VersionTimeline finalize", () => {
     await vi.waitFor(() => {
       expect(onHighPriorityEnd).toHaveBeenCalledWith("notes/a.md");
     });
+  });
+
+  it("flushes current note before finalizing and versions the flushed markdown", async () => {
+    const onBeforeFinalizeCurrent = vi.fn(async () => "# saved markdown");
+    const getCurrentContent = vi.fn(() => "# live fallback");
+
+    act(() => {
+      root.render(
+        <VersionTimeline
+          open
+          onClose={() => {}}
+          notePath="notes/a.md"
+          currentContent="# stale state"
+          getCurrentContent={getCurrentContent}
+          onBeforeFinalizeCurrent={onBeforeFinalizeCurrent}
+          onRestore={() => {}}
+        />,
+      );
+    });
+
+    const finalizeLabelInput = document.querySelector("input");
+    const finalizeBtn = finalizeLabelInput?.nextElementSibling as
+      | HTMLButtonElement
+      | undefined;
+    expect(finalizeBtn).toBeTruthy();
+
+    await act(async () => {
+      finalizeBtn?.click();
+      await Promise.resolve();
+    });
+
+    await vi.waitFor(() => {
+      expect(onBeforeFinalizeCurrent).toHaveBeenCalledTimes(1);
+      expect(versionFinalizeCurrent).toHaveBeenCalledWith(
+        "notes/a.md",
+        "# saved markdown",
+        null,
+      );
+    });
+    expect(getCurrentContent).not.toHaveBeenCalled();
+  });
+
+  it("does not create a finalized version when the pre-finalize flush returns no markdown", async () => {
+    const onBeforeFinalizeCurrent = vi.fn(async () => null);
+
+    act(() => {
+      root.render(
+        <VersionTimeline
+          open
+          onClose={() => {}}
+          notePath="notes/a.md"
+          currentContent="# stale state"
+          onBeforeFinalizeCurrent={onBeforeFinalizeCurrent}
+          onRestore={() => {}}
+        />,
+      );
+    });
+
+    const finalizeLabelInput = document.querySelector("input");
+    const finalizeBtn = finalizeLabelInput?.nextElementSibling as
+      | HTMLButtonElement
+      | undefined;
+    expect(finalizeBtn).toBeTruthy();
+
+    await act(async () => {
+      finalizeBtn?.click();
+      await Promise.resolve();
+    });
+
+    await vi.waitFor(() => {
+      expect(onBeforeFinalizeCurrent).toHaveBeenCalledTimes(1);
+    });
+    expect(versionFinalizeCurrent).not.toHaveBeenCalled();
   });
 });

@@ -4,12 +4,6 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Iris 品牌预览 · 几何 monogram</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link
-      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap"
-      rel="stylesheet"
-    />
     <style>
       * {
         box-sizing: border-box;
@@ -169,12 +163,13 @@
     <div class="page">
       <h1>Iris 几何 monogram 预览</h1>
       <p class="sub">
-        v3：在 v2 可读结构上加轻微斜切、不对称衬线与竖干弧线，偏编辑感；仍保持灰阶几何，非墨迹手写。
+        v3：在 v2
+        可读结构上加轻微斜切、不对称衬线与竖干弧线，偏编辑感；仍保持灰阶几何，非墨迹手写。
       </p>
 
       <section>
         <h2>多尺寸（透明底）</h2>
-        <div class="grid grid-2">
+        <div class="grid-2 grid">
           <div class="card">
             <div class="sizes" id="sizes-light"></div>
             <p class="spec">
@@ -183,19 +178,19 @@
           </div>
           <div class="card dark">
             <div class="sizes" id="sizes-dark"></div>
-            <p class="spec">
-              暗色 UI：frame #333333 · ink #f0f0f0
-            </p>
+            <p class="spec">暗色 UI：frame #333333 · ink #f0f0f0</p>
           </div>
         </div>
       </section>
 
       <section>
         <h2>应用图标（1024 → 128 示意）</h2>
-        <div class="grid grid-2">
+        <div class="grid-2 grid">
           <div class="card">
             <div class="app-icon dark-bg" id="app-dark"></div>
-            <p class="spec" style="margin-top: 1rem">暗色底 #191919 · Windows 任务栏 / 安装包</p>
+            <p class="spec" style="margin-top: 1rem">
+              暗色底 #191919 · Windows 任务栏 / 安装包
+            </p>
           </div>
           <div class="card">
             <div class="app-icon light-bg" id="app-light"></div>
@@ -206,14 +201,22 @@
 
       <section>
         <h2>界面示意</h2>
-        <div class="grid grid-2">
+        <div class="grid-2 grid">
           <div class="card">
             <div class="chrome-mock" id="chrome-light"></div>
-            <div class="welcome-mock" id="welcome-light" style="margin-top: 1rem"></div>
+            <div
+              class="welcome-mock"
+              id="welcome-light"
+              style="margin-top: 1rem"
+            ></div>
           </div>
           <div class="card dark">
             <div class="chrome-mock dark" id="chrome-dark"></div>
-            <div class="welcome-mock dark" id="welcome-dark" style="margin-top: 1rem"></div>
+            <div
+              class="welcome-mock dark"
+              id="welcome-dark"
+              style="margin-top: 1rem"
+            ></div>
           </div>
         </div>
       </section>

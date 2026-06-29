@@ -45,6 +45,34 @@ interface EditorOutlineProps {
 
 const OUTLINE_REFRESH_DEBOUNCE_MS = 300;
 
+function closestHeadingElement(node: Node | null): HTMLElement | null {
+  const element =
+    node instanceof HTMLElement ? node : (node?.parentElement ?? null);
+  return (
+    element?.closest<HTMLElement>("h1,h2,h3,.iris-section-heading") ?? null
+  );
+}
+
+function headingElementForPos(editor: Editor, pos: number): HTMLElement | null {
+  const doc = editor.view.dom;
+  const nodeAtHeadingStart = editor.view.nodeDOM(Math.max(0, pos - 1));
+  const directHeading = closestHeadingElement(nodeAtHeadingStart);
+  if (directHeading && doc.contains(directHeading)) return directHeading;
+
+  const domAtPos = editor.view.domAtPos(pos).node;
+  const fallbackHeading = closestHeadingElement(domAtPos);
+  return fallbackHeading && doc.contains(fallbackHeading)
+    ? fallbackHeading
+    : null;
+}
+
+function scrollHeadingToViewportTop(editor: Editor, pos: number): void {
+  headingElementForPos(editor, pos)?.scrollIntoView({
+    block: "start",
+    inline: "nearest",
+  });
+}
+
 interface OutlineLinkSummaryProps {
   summary: FileLinkSummary | null;
   unavailable: boolean;
@@ -291,22 +319,16 @@ export const EditorOutline = memo(function EditorOutline({
   const jumpTo = useCallback(
     (pos: number) => {
       if (!editor) return;
+      const { doc } = editor.state;
+      const resolvedPos = Math.max(0, Math.min(pos, doc.content.size));
       if (locked) {
-        const { doc } = editor.state;
-        const resolvedPos = Math.max(0, Math.min(pos, doc.content.size));
         const selection = TextSelection.create(doc, resolvedPos);
-        editor.view.dispatch(
-          editor.state.tr.setSelection(selection).scrollIntoView(),
-        );
-        const targetNode = editor.view.nodeDOM(resolvedPos);
-        const targetElement =
-          targetNode instanceof Element
-            ? targetNode
-            : targetNode?.parentElement;
-        targetElement?.scrollIntoView({ block: "start" });
+        editor.view.dispatch(editor.state.tr.setSelection(selection));
+        scrollHeadingToViewportTop(editor, resolvedPos);
         return;
       }
-      editor.chain().focus().setTextSelection(pos).scrollIntoView().run();
+      editor.chain().focus().setTextSelection(resolvedPos).run();
+      scrollHeadingToViewportTop(editor, resolvedPos);
     },
     [editor, locked],
   );
@@ -391,6 +413,11 @@ export const EditorOutline = memo(function EditorOutline({
         style={itemStyle}
         aria-current={active ? "location" : undefined}
         aria-label={entry.text}
+        onPointerDown={(event) => {
+          if (event.button !== 0) return;
+          event.preventDefault();
+          jumpTo(entry.pos);
+        }}
         onClick={() => jumpTo(entry.pos)}
         onFocus={() => {
           setFocusIndex(index);

@@ -26,6 +26,15 @@ import {
 
 const PATH_SYNC_DEBOUNCE_MS = 800;
 
+function shouldSerializeEditorBody(
+  editor: Editor | null,
+  editorReady: boolean,
+  dirty: boolean,
+): boolean {
+  if (!editor || editor.isDestroyed) return false;
+  return editorReady || dirty;
+}
+
 interface UseOpenNoteOptions {
   activePath: string | null;
   /** Bumped when a note is read from disk into tab state (openFile); not bumped on save. */
@@ -99,14 +108,27 @@ export function useOpenNote({
   }, []);
 
   const getLiveMarkdown = useCallback(() => {
+    const editor = editorRef.current;
+    const editorReady = shouldSerializeEditorBody(
+      editor,
+      editorReadyRef?.current ?? true,
+      dirtyRef?.current ?? false,
+    );
     return serializeOpenNote({
       yaml: frontmatterYamlRef.current,
       title: noteTitle,
-      editor: editorRef.current,
-      editorReady: editorReadyRef?.current ?? true,
+      editor,
+      editorReady,
       bodyFallbackMd: bodyMarkdownFromNoteRef(markdownRef.current),
     });
-  }, [noteTitle, frontmatterYamlRef, editorRef, editorReadyRef, markdownRef]);
+  }, [
+    noteTitle,
+    frontmatterYamlRef,
+    editorRef,
+    editorReadyRef,
+    dirtyRef,
+    markdownRef,
+  ]);
 
   const applySavedMarkdown = useCallback(
     (md: string) => {
@@ -163,11 +185,16 @@ export function useOpenNote({
               const allocatedTitle = pathStem(entry.path);
               const nextTitle =
                 title.trim() === "" ? allocatedTitle : title.trim();
+              const editor = editorRef.current;
               const liveMarkdown = serializeOpenNote({
                 yaml: frontmatterYamlRef.current,
                 title: nextTitle,
-                editor: editorRef.current,
-                editorReady: editorReadyRef?.current ?? true,
+                editor,
+                editorReady: shouldSerializeEditorBody(
+                  editor,
+                  editorReadyRef?.current ?? true,
+                  dirtyRef?.current ?? false,
+                ),
                 bodyFallbackMd: bodyMarkdownFromNoteRef(markdownRef.current),
               });
               replaceOpenTabPath(path, entry.path, nextTitle, liveMarkdown);
@@ -184,6 +211,7 @@ export function useOpenNote({
     [
       activePathRef,
       editorRef,
+      dirtyRef,
       editorReadyRef,
       frontmatterYamlRef,
       markdownRef,

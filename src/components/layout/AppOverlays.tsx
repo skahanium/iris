@@ -78,6 +78,7 @@ interface AppOverlaysProps {
   classifiedWaiting: boolean;
   conflictState: ConflictState | null;
   getCurrentContent: () => string;
+  onBeforeFinalizeCurrent: () => Promise<string | null>;
   handleConflictAcceptExternal: () => void;
   handleConflictKeepLocal: () => void;
   handleConflictManualEdit: () => void;
@@ -134,6 +135,7 @@ export function AppOverlays({
   classifiedWaiting,
   conflictState,
   getCurrentContent,
+  onBeforeFinalizeCurrent,
   handleConflictAcceptExternal,
   handleConflictKeepLocal,
   handleConflictManualEdit,
@@ -267,6 +269,7 @@ export function AppOverlays({
             notePath={activePath}
             currentContent={markdown}
             getCurrentContent={getCurrentContent}
+            onBeforeFinalizeCurrent={onBeforeFinalizeCurrent}
             hasUnsavedEdits={
               tabs.find((tab) => tab.path === activePath)?.dirty ?? false
             }

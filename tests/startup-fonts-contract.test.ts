@@ -37,6 +37,12 @@ describe("startup font loading contract", () => {
     expect(css).toContain("Microsoft YaHei");
   });
 
+  it("keeps static brand preview free of external font CDNs", () => {
+    const preview = read("public/brand-preview.html");
+
+    expect(preview).not.toContain("fonts.googleapis.com");
+    expect(preview).not.toContain("fonts.gstatic.com");
+  });
   it("keeps font licenses with the bundled font assets", () => {
     expect(existsSync("src/assets/fonts/OFL.txt")).toBe(true);
   });

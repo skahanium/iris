@@ -415,6 +415,15 @@ function App() {
     setConflictState,
   });
 
+  const handleBeforeFinalizeCurrent = useCallback(async () => {
+    const md = await flushSave();
+    if (md) {
+      bumpVaultIndex();
+      return md;
+    }
+    return null;
+  }, [bumpVaultIndex, flushSave]);
+
   useEffect(() => {
     if (!isTauriRuntime()) return;
     let disposed = false;
@@ -920,6 +929,7 @@ function App() {
             classifiedWaiting={classifiedWaiting}
             conflictState={conflictState}
             getCurrentContent={() => getLiveMarkdownRef.current()}
+            onBeforeFinalizeCurrent={handleBeforeFinalizeCurrent}
             handleConflictAcceptExternal={handleConflictAcceptExternal}
             handleConflictKeepLocal={handleConflictKeepLocal}
             handleConflictManualEdit={handleConflictManualEdit}

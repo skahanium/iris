@@ -40,6 +40,7 @@ describe("useAssistantLlmStream reset + done behavior", () => {
   let rootUnmounted: boolean;
   let rafCallbacks: Map<number, FrameRequestCallback>;
   let nextRafId: number;
+  let requestAnimationFrameSpy: { mockRestore: () => void };
   let cancelAnimationFrameSpy: ReturnType<typeof vi.spyOn>;
 
   function flushRaf() {
@@ -88,12 +89,14 @@ describe("useAssistantLlmStream reset + done behavior", () => {
     streamBuf = { current: "" };
     rafCallbacks = new Map();
     nextRafId = 1;
-    vi.spyOn(window, "requestAnimationFrame").mockImplementation((callback) => {
-      const id = nextRafId;
-      nextRafId += 1;
-      rafCallbacks.set(id, callback);
-      return id;
-    });
+    requestAnimationFrameSpy = vi
+      .spyOn(window, "requestAnimationFrame")
+      .mockImplementation((callback) => {
+        const id = nextRafId;
+        nextRafId += 1;
+        rafCallbacks.set(id, callback);
+        return id;
+      });
     cancelAnimationFrameSpy = vi
       .spyOn(window, "cancelAnimationFrame")
       .mockImplementation((id) => {
@@ -109,7 +112,9 @@ describe("useAssistantLlmStream reset + done behavior", () => {
       });
     }
     container.remove();
-    vi.restoreAllMocks();
+    requestAnimationFrameSpy.mockRestore();
+    cancelAnimationFrameSpy.mockRestore();
+    vi.clearAllMocks();
   });
 
   it("streams tokens into the assistant slot", async () => {

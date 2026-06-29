@@ -185,6 +185,106 @@ describe("outline ghost spine", () => {
     expect(focusSpy).not.toHaveBeenCalled();
   });
 
+  it("aligns clicked headings to the top of the editor viewport", () => {
+    editor = makeEditor(["Intro", "Target", "After"], [1, 1, 1]);
+    const entries = outlineFromDoc(editor.state.doc);
+    renderOutline(editor);
+
+    const targetHeading = editor.view.nodeDOM(
+      entries[1]!.pos - 1,
+    ) as HTMLElement | null;
+    const targetScrollIntoView = vi.fn();
+    Object.defineProperty(targetHeading!, "scrollIntoView", {
+      configurable: true,
+      value: targetScrollIntoView,
+    });
+
+    const items = Array.from(
+      document.querySelectorAll<HTMLButtonElement>(
+        '[data-testid="outline-ghost-item"]',
+      ),
+    );
+
+    act(() => {
+      items[1]?.click();
+    });
+
+    expect(editor.state.selection.head).toBe(entries[1]!.pos);
+    expect(targetScrollIntoView).toHaveBeenCalledWith({
+      block: "start",
+      inline: "nearest",
+    });
+  });
+
+  it("jumps on primary pointer down without waiting for a second click", () => {
+    editor = makeEditor(["Intro", "Pointer Target", "After"], [1, 1, 1]);
+    const entries = outlineFromDoc(editor.state.doc);
+    renderOutline(editor);
+
+    const targetHeading = editor.view.nodeDOM(
+      entries[1]!.pos - 1,
+    ) as HTMLElement | null;
+    const targetScrollIntoView = vi.fn();
+    Object.defineProperty(targetHeading!, "scrollIntoView", {
+      configurable: true,
+      value: targetScrollIntoView,
+    });
+
+    const items = Array.from(
+      document.querySelectorAll<HTMLButtonElement>(
+        '[data-testid="outline-ghost-item"]',
+      ),
+    );
+    const event = new Event("pointerdown", { bubbles: true, cancelable: true });
+    Object.defineProperty(event, "button", { value: 0 });
+
+    act(() => {
+      items[1]?.dispatchEvent(event);
+    });
+
+    expect(event.defaultPrevented).toBe(true);
+    expect(editor.state.selection.head).toBe(entries[1]!.pos);
+    expect(targetScrollIntoView).toHaveBeenCalledWith({
+      block: "start",
+      inline: "nearest",
+    });
+  });
+
+  it("aligns locked-editor jumps without focusing the editor", () => {
+    editor = makeEditor(["Intro", "Locked Target", "After"], [1, 1, 1]);
+    const entries = outlineFromDoc(editor.state.doc);
+    editor.commands.setTextSelection(entries[0]!.pos);
+    editor.setEditable(false);
+    const focusSpy = vi.spyOn(editor.view, "focus");
+    renderOutline(editor, true, true);
+
+    const targetHeading = editor.view.nodeDOM(
+      entries[1]!.pos - 1,
+    ) as HTMLElement | null;
+    const targetScrollIntoView = vi.fn();
+    Object.defineProperty(targetHeading!, "scrollIntoView", {
+      configurable: true,
+      value: targetScrollIntoView,
+    });
+
+    const items = Array.from(
+      document.querySelectorAll<HTMLButtonElement>(
+        '[data-testid="outline-ghost-item"]',
+      ),
+    );
+
+    act(() => {
+      items[1]?.click();
+    });
+
+    expect(editor.state.selection.head).toBe(entries[1]!.pos);
+    expect(targetScrollIntoView).toHaveBeenCalledWith({
+      block: "start",
+      inline: "nearest",
+    });
+    expect(focusSpy).not.toHaveBeenCalled();
+  });
+
   it("keeps adjacent top-level headings as full-width stacked rows", () => {
     editor = makeEditor(
       ["chidafan", "Shui大叫", "sha d j k na s j k d"],
