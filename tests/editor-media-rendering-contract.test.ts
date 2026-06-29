@@ -11,17 +11,30 @@ describe("editor media rendering contract", () => {
     const extension = read(
       "src/components/editor/extensions/ImageExtension.ts",
     );
+    const wikiExtension = read(
+      "src/components/editor/extensions/WikiMediaEmbedExtension.ts",
+    );
     const css = read("src/styles/globals.css");
 
+    expect(extension).toContain('"iris-editor-media-frame"');
     expect(extension).toContain('"iris-editor-media-image"');
+    expect(wikiExtension).toContain("iris-editor-media-frame");
+    expect(css).toContain(".iris-editor-media-frame");
     expect(css).toContain(".iris-editor-media-image");
-    expect(css).toContain("object-fit: contain");
     expect(css).toContain("background: hsl(var(--background))");
-    expect(css).toContain("contain: paint");
-    expect(css).toContain("backface-visibility: hidden");
+    expect(css).toContain(".iris-editor-media-frame[data-media-error");
     expect(css).toContain(
       "aspect-ratio: var(--iris-media-aspect-ratio, 16 / 9)",
     );
     expect(css).toContain("min-height: min(40vh, 22rem)");
+    expect(css).toContain("object-fit: contain");
+
+    const imageRule = css.match(
+      /\.iris-editor-body \.ProseMirror \.iris-editor-media-image \{[^}]+\}/,
+    )?.[0];
+    expect(imageRule).toBeTruthy();
+    expect(imageRule).not.toContain("background:");
+    expect(imageRule).not.toContain("contain: paint");
+    expect(imageRule).not.toContain("transform: translateZ");
   });
 });

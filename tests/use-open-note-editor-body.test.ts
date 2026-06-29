@@ -12,6 +12,13 @@ import { markdownBodyToEditorHtml } from "@/lib/markdown";
 const pathSyncSuggest = vi.fn();
 const fileRename = vi.fn();
 
+type ReplaceOpenTabPath = (
+  oldPath: string,
+  newPath: string,
+  title?: string,
+  markdownOverride?: string,
+) => void;
+
 vi.mock("@/lib/ipc", () => ({
   pathSyncSuggest: (...args: unknown[]) => pathSyncSuggest(...args),
   fileRename: (...args: unknown[]) => fileRename(...args),
@@ -47,7 +54,7 @@ function Harness({
   editor?: Editor | null;
   editorReady?: boolean;
   dirty?: boolean;
-  replaceOpenTabPath?: ReturnType<typeof vi.fn>;
+  replaceOpenTabPath?: ReplaceOpenTabPath;
   outRef: {
     current: {
       editorBodyMarkdown: string;
@@ -68,7 +75,7 @@ function Harness({
     editorReadyRef,
     dirtyRef: { current: dirty ?? false },
     updateTabTitle: vi.fn(),
-    replaceOpenTabPath: replaceOpenTabPath ?? vi.fn(),
+    replaceOpenTabPath: replaceOpenTabPath ?? vi.fn<ReplaceOpenTabPath>(),
   });
   outRef.current = {
     editorBodyMarkdown: api.editorBodyMarkdown,
@@ -205,7 +212,7 @@ describe("useOpenNote editorBodyMarkdown", () => {
       word_count: 7,
     });
 
-    const replaceOpenTabPath = vi.fn();
+    const replaceOpenTabPath = vi.fn<ReplaceOpenTabPath>();
     const md = '---\ntitle: "Doc A"\n---\n\n';
     editor = bodyEditor("Rename must not drop this body.");
     const outRef: {

@@ -53,7 +53,13 @@ describe("editor media deferred loading", () => {
   it("does not attach real image src while a surface is hidden or staging", () => {
     const editor = createEditorWithImageMediaMode("deferred");
     try {
-      const image = editor.view.dom.querySelector("img");
+      const frame = editor.view.dom.querySelector(".iris-editor-media-frame");
+      const image = frame?.querySelector("img");
+      expect(frame).toBeTruthy();
+      expect(frame?.getAttribute("data-iris-media-src")).toBe(
+        "assets/example.png",
+      );
+      expect(frame?.getAttribute("data-media-state")).toBe("deferred");
       expect(image).toBeTruthy();
       expect(image?.getAttribute("data-iris-media-src")).toBe(
         "assets/example.png",
@@ -67,11 +73,34 @@ describe("editor media deferred loading", () => {
   it("uses lazy async browser loading when media is visible", () => {
     const editor = createEditorWithImageMediaMode("visible");
     try {
-      const image = editor.view.dom.querySelector("img");
+      const frame = editor.view.dom.querySelector(".iris-editor-media-frame");
+      const image = frame?.querySelector("img");
+      expect(frame).toBeTruthy();
+      expect(frame?.getAttribute("data-media-state")).toBe("pending");
       expect(image).toBeTruthy();
       expect(image?.getAttribute("src")).toBe("assets/example.png");
       expect(image?.getAttribute("loading")).toBe("lazy");
       expect(image?.getAttribute("decoding")).toBe("async");
+    } finally {
+      editor.destroy();
+    }
+  });
+
+  it("moves image load and error state onto the stable media frame", () => {
+    const editor = createEditorWithImageMediaMode("visible");
+    try {
+      const frame = editor.view.dom.querySelector(".iris-editor-media-frame");
+      const image = frame?.querySelector("img");
+      expect(frame).toBeTruthy();
+      expect(image).toBeTruthy();
+
+      image?.dispatchEvent(new Event("load"));
+      expect(frame?.getAttribute("data-media-state")).toBe("loaded");
+      expect(frame?.hasAttribute("data-media-error")).toBe(false);
+
+      image?.dispatchEvent(new Event("error"));
+      expect(frame?.getAttribute("data-media-state")).toBe("error");
+      expect(frame?.getAttribute("data-media-error")).toBe("true");
     } finally {
       editor.destroy();
     }
@@ -142,7 +171,11 @@ describe("wiki media embed deferred loading", () => {
       parseOptions: EDITOR_PARSE_OPTIONS,
     });
     try {
-      const image = editor.view.dom.querySelector("img");
+      const frame = editor.view.dom.querySelector(".iris-editor-media-frame");
+      const image = frame?.querySelector("img");
+      expect(frame).toBeTruthy();
+      expect(frame?.getAttribute("data-iris-media-src")).toBe("diagram.png");
+      expect(frame?.getAttribute("data-media-state")).toBe("deferred");
       expect(image).toBeTruthy();
       expect(image?.getAttribute("data-iris-media-src")).toBe("diagram.png");
       expect(image?.hasAttribute("src")).toBe(false);
@@ -209,6 +242,15 @@ describe("wiki media embed deferred loading", () => {
       await vi.waitFor(() => {
         expect(mediaResolve).toHaveBeenCalledWith("diagram.png");
       });
+      await vi.waitFor(() => {
+        expect(
+          editor.view.dom
+            .querySelector(".iris-editor-media-frame img")
+            ?.getAttribute("src"),
+        ).toBe("iris-media://localhost/lease-image");
+      });
+      const frame = editor.view.dom.querySelector(".iris-editor-media-frame");
+      expect(frame?.getAttribute("data-media-state")).toBe("pending");
     } finally {
       editor.destroy();
       vi.unstubAllGlobals();

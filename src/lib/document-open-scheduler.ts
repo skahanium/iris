@@ -13,6 +13,7 @@ export type NoteOpenSource =
   | "management"
   | "recycle"
   | "classified"
+  | "new-note"
   | "startup"
   | "test";
 

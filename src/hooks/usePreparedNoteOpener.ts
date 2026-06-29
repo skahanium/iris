@@ -54,6 +54,8 @@ interface UsePreparedNoteOpenerOptions<
   openTabs: readonly OpenTabLike[];
 }
 
+const WARM_PREPARED_NOTES_LIMIT = 8;
+
 export function usePreparedNoteOpener<
   OpenOptions extends OpenPreparedNoteOptions,
 >({ openNote, openTabs }: UsePreparedNoteOpenerOptions<OpenOptions>) {
@@ -119,7 +121,7 @@ export function usePreparedNoteOpener<
             [
               prepared,
               ...previous.filter((note) => note.path !== prepared.path),
-            ].slice(0, 2),
+            ].slice(0, WARM_PREPARED_NOTES_LIMIT),
           );
         })
         .catch(() => {

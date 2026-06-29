@@ -34,6 +34,18 @@ function renderImageSrc(src: string, vaultPath: string | null): string {
   return convertFileSrc(joinVaultAssetPath(vaultPath, src));
 }
 
+function setFrameState(
+  frame: HTMLElement,
+  state: "deferred" | "pending" | "loaded" | "error",
+): void {
+  frame.dataset.mediaState = state;
+  if (state === "error") {
+    frame.dataset.mediaError = "true";
+  } else {
+    delete frame.dataset.mediaError;
+  }
+}
+
 interface ImageExtensionOptions {
   mediaLoading: "deferred" | "visible";
   vaultPath: string | null;
@@ -95,6 +107,7 @@ export const ImageExtension = Node.create<ImageExtensionOptions>({
   addNodeView(): NodeViewRenderer {
     return ({ node }) => {
       let currentNode = node;
+      const frame = document.createElement("div");
       const img = document.createElement("img");
 
       const update = () => {
@@ -111,6 +124,10 @@ export const ImageExtension = Node.create<ImageExtensionOptions>({
             ? currentNode.attrs.title
             : "";
 
+        frame.className = "iris-editor-media-frame";
+        frame.draggable = true;
+        frame.dataset.irisMediaSrc = src;
+        frame.dataset.mediaKind = "image";
         img.className = "iris-editor-media-image";
         img.draggable = true;
         img.dataset.irisMediaSrc = src;
@@ -118,11 +135,14 @@ export const ImageExtension = Node.create<ImageExtensionOptions>({
         img.setAttribute("decoding", "async");
         if (src && isSafeImageSrc(src)) {
           if (this.options.mediaLoading === "visible") {
+            setFrameState(frame, "pending");
             img.src = renderImageSrc(src, this.options.vaultPath);
           } else {
+            setFrameState(frame, "deferred");
             img.removeAttribute("src");
           }
         } else {
+          setFrameState(frame, "error");
           img.removeAttribute("src");
         }
         img.alt = alt;
@@ -133,9 +153,16 @@ export const ImageExtension = Node.create<ImageExtensionOptions>({
         }
       };
 
+      img.addEventListener("load", () => {
+        setFrameState(frame, "loaded");
+      });
+      img.addEventListener("error", () => {
+        setFrameState(frame, "error");
+      });
+      frame.appendChild(img);
       update();
       return {
-        dom: img,
+        dom: frame,
         update: (updatedNode) => {
           if (updatedNode.type !== currentNode.type) return false;
           currentNode = updatedNode;

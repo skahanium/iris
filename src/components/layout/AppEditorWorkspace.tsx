@@ -253,12 +253,19 @@ export function AppEditorWorkspace({
     pendingNoteOpen?.namespace ??
     (activeNoteIsClassified ? "classified" : "normal");
   const effectiveTitle = pendingNoteOpen?.title;
+  const hideCurrentSurfaceForPendingOpen = Boolean(
+    !pendingNoteOpen &&
+    pendingOpen &&
+    pendingOpen.kind !== "new-note" &&
+    !pendingOpen.error &&
+    !homeActive,
+  );
 
   const currentEditorSurface = useMemo<EditorSurfaceSnapshot | null>(() => {
     if (
       !effectiveNotePath ||
       (homeActive && !pendingNoteOpen) ||
-      (!pendingNoteOpen && pendingOpen && !pendingOpen.error && !homeActive) ||
+      hideCurrentSurfaceForPendingOpen ||
       activeArtifactTab ||
       activeMediaTab
     ) {
@@ -291,9 +298,9 @@ export function AppEditorWorkspace({
     effectiveNotePath,
     effectivePreparedHtml,
     effectiveTitle,
+    hideCurrentSurfaceForPendingOpen,
     homeActive,
     pendingNoteOpen,
-    pendingOpen,
     warmPreparedNotes,
   ]);
 

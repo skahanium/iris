@@ -20,6 +20,18 @@ function labelFor(target: string, alias: string | null): string {
   return alias?.trim() || target.split(/[\\/]/).pop() || target;
 }
 
+function setFrameState(
+  frame: HTMLElement,
+  state: "deferred" | "pending" | "loaded" | "error",
+): void {
+  frame.dataset.mediaState = state;
+  if (state === "error") {
+    frame.dataset.mediaError = "true";
+  } else {
+    delete frame.dataset.mediaError;
+  }
+}
+
 export const WikiMediaEmbedExtension = Node.create<WikiMediaEmbedOptions>({
   name: "wikiMediaEmbed",
 
@@ -109,7 +121,7 @@ export const WikiMediaEmbedExtension = Node.create<WikiMediaEmbedOptions>({
             })
             .catch(() => {
               if (generation !== leaseGeneration) return;
-              root.dataset.mediaError = "true";
+              setFrameState(root, "error");
             });
         };
         if (!("IntersectionObserver" in window)) {
@@ -147,11 +159,20 @@ export const WikiMediaEmbedExtension = Node.create<WikiMediaEmbedOptions>({
         root.className = "iris-editor-media-embed";
         root.dataset.target = target;
         root.dataset.mediaKind = mediaKind ?? "unknown";
+        delete root.dataset.irisMediaSrc;
+        delete root.dataset.mediaState;
+        delete root.dataset.mediaError;
         if (alias?.trim()) root.dataset.alias = alias;
         else delete root.dataset.alias;
         root.replaceChildren();
 
         if (mediaKind === "image" && isSafeMediaTarget(target)) {
+          root.className = "iris-editor-media-embed iris-editor-media-frame";
+          root.dataset.irisMediaSrc = target;
+          setFrameState(
+            root,
+            this.options.mediaLoading === "visible" ? "pending" : "deferred",
+          );
           const img = document.createElement("img");
           img.className = "iris-editor-media-image";
           img.draggable = true;
@@ -159,6 +180,12 @@ export const WikiMediaEmbedExtension = Node.create<WikiMediaEmbedOptions>({
           img.setAttribute("loading", "lazy");
           img.setAttribute("decoding", "async");
           img.alt = label;
+          img.addEventListener("load", () => {
+            setFrameState(root, "loaded");
+          });
+          img.addEventListener("error", () => {
+            setFrameState(root, "error");
+          });
           root.appendChild(img);
           attachLease(target, generation, (url) => {
             img.src = url;

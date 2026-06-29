@@ -443,6 +443,68 @@ describe("usePreparedNoteOpener", () => {
       }),
     );
   });
+
+  it("keeps the latest eight warm prepared notes with newest entries first", async () => {
+    const openNote = vi.fn(async () => undefined);
+    let api!: HookApi;
+    fileSignature.mockImplementation(async (path: string) => ({
+      byteLength: path.length,
+      contentHash: `hash:${path}`,
+      isLocked: false,
+      modifiedMs: Number(path.match(/\d+/)?.[0] ?? 0),
+    }));
+    fileRead.mockImplementation(async (path: string) => ({
+      content: `# ${path}\n\nPrepared body`,
+      isLocked: false,
+    }));
+
+    await act(async () => {
+      root.render(
+        <Harness openNote={openNote} onReady={(next) => (api = next)} />,
+      );
+    });
+
+    await act(async () => {
+      for (let index = 0; index < 9; index++) {
+        api.prepareVisibleNote({
+          path: `notes/${index}.md`,
+          title: `Note ${index}`,
+          updatedAt: `mtime-${index}`,
+          isLocked: false,
+        });
+      }
+    });
+
+    await vi.waitFor(() => expect(api.warmPreparedNotes).toHaveLength(8));
+    expect(api.warmPreparedNotes.map((note) => note.path)).toEqual([
+      "notes/8.md",
+      "notes/7.md",
+      "notes/6.md",
+      "notes/5.md",
+      "notes/4.md",
+      "notes/3.md",
+      "notes/2.md",
+      "notes/1.md",
+    ]);
+
+    await act(async () => {
+      api.prepareVisibleNote({
+        path: "notes/4.md",
+        title: "Note 4 refreshed",
+        updatedAt: "mtime-4b",
+        isLocked: false,
+      });
+    });
+
+    await vi.waitFor(() =>
+      expect(api.warmPreparedNotes[0]?.path).toBe("notes/4.md"),
+    );
+    expect(api.warmPreparedNotes).toHaveLength(8);
+    expect(new Set(api.warmPreparedNotes.map((note) => note.path)).size).toBe(
+      8,
+    );
+  });
+
   it("uses explicit file signatures for visible warm preparations", async () => {
     const openNote = vi.fn(async () => undefined);
     let api!: HookApi;

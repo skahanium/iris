@@ -11,6 +11,7 @@ import { pathStem, resolveNoteDisplayTitle } from "@/lib/note-display";
 import { mergeTabsAfterPathRename } from "@/lib/note-tab-rename";
 import {
   emitNoteOpenVisibleCommitTrace,
+  prepareNoteOpenFromContent,
   type DocumentOpenPriority,
   type NoteOpenBudgetKind,
   type NoteOpenSource,
@@ -647,7 +648,22 @@ export function useTabManager(options: UseTabManagerOptions = {}) {
           .map((t) => t.title),
       });
       onVaultIndexBump?.();
+      const openStartedAt = performance.now();
+      const openTraceRequest: PrepareNoteOpenRequest = {
+        path: created.path,
+        priority: "hot",
+        source: "new-note",
+        titleHint: created.title,
+      };
+      const preparedNote = await prepareNoteOpenFromContent(openTraceRequest, {
+        content: created.content,
+        isLocked: false,
+      });
       await openFile(created.path, created.title, {
+        openBudgetKind: "hot",
+        openStartedAt,
+        openTraceRequest,
+        preparedNote,
         skipDiscardPrevious: true,
       });
     } catch (e) {

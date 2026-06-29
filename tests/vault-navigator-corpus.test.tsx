@@ -16,6 +16,7 @@ const folderCreate = vi.fn();
 const folderRename = vi.fn();
 const knowledgeReindex = vi.fn();
 const templateList = vi.fn();
+const prepareNoteOpenFromContent = vi.fn();
 
 interface MockFileItem {
   path: string;
@@ -60,6 +61,17 @@ vi.mock("@/lib/note-create", () => ({
   createDefaultNote: vi.fn(),
 }));
 
+vi.mock("@/lib/note-open-preparation", async () => {
+  const actual = await vi.importActual<
+    typeof import("@/lib/note-open-preparation")
+  >("@/lib/note-open-preparation");
+  return {
+    ...actual,
+    prepareNoteOpenFromContent: (...args: unknown[]) =>
+      prepareNoteOpenFromContent(...args),
+  };
+});
+
 describe("VaultNavigator corpus assignment", () => {
   let host: HTMLDivElement;
   let root: Root;
@@ -76,6 +88,7 @@ describe("VaultNavigator corpus assignment", () => {
     folderRename.mockReset();
     knowledgeReindex.mockReset();
     templateList.mockReset();
+    prepareNoteOpenFromContent.mockReset();
     vi.mocked(createDefaultNote).mockReset();
     fileList.mockResolvedValue([
       {
@@ -102,9 +115,26 @@ describe("VaultNavigator corpus assignment", () => {
     folderRename.mockResolvedValue(undefined);
     knowledgeReindex.mockResolvedValue({ anchors: 0, regulations: 1 });
     vi.mocked(createDefaultNote).mockResolvedValue({
+      content: '---\ntitle: "未命名文档"\n---\n\n',
       path: "未命名文档.md",
       title: "未命名文档",
     });
+    prepareNoteOpenFromContent.mockImplementation(
+      async (
+        request: { path: string; titleHint?: string },
+        source: { content: string; isLocked: boolean },
+      ) => ({
+        bodyMarkdown: "\n",
+        content: source.content,
+        frontmatterYaml: 'title: "未命名文档"',
+        isLocked: source.isLocked,
+        namespace: "normal",
+        path: request.path,
+        signature: "prepared-file-tree-new-note",
+        title: request.titleHint ?? "未命名文档",
+        traceKey: "trace-file-tree-new-note",
+      }),
+    );
     host = document.createElement("div");
     document.body.append(host);
     root = createRoot(host);
@@ -199,7 +229,29 @@ describe("VaultNavigator corpus assignment", () => {
     });
 
     expect(createDefaultNote).toHaveBeenCalledWith({ folderPrefix: "" });
-    expect(onOpen).toHaveBeenCalledWith("未命名文档.md", "file-tree");
+    expect(prepareNoteOpenFromContent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        path: "未命名文档.md",
+        priority: "hot",
+        source: "new-note",
+        titleHint: "未命名文档",
+      }),
+      {
+        content: '---\ntitle: "未命名文档"\n---\n\n',
+        isLocked: false,
+      },
+    );
+    expect(onOpen).toHaveBeenCalledWith(
+      "未命名文档.md",
+      "file-tree",
+      expect.objectContaining({
+        openBudgetKind: "hot",
+        preparedNote: expect.objectContaining({
+          path: "未命名文档.md",
+          title: "未命名文档",
+        }),
+      }),
+    );
     expect(newNoteInput().value).toBe("");
   });
 
@@ -592,6 +644,41 @@ describe("VaultNavigator corpus assignment", () => {
       await Promise.resolve();
     });
     expect(onClose).toHaveBeenCalledOnce();
+  });
+
+  it("prepares only the first eight visible note candidates from the file tree", async () => {
+    const onPrepare = vi.fn();
+    fileList.mockResolvedValue(
+      Array.from({ length: 12 }, (_, index) => ({
+        path: `notes/${index}.md`,
+        title: `Note ${index}`,
+        updatedAt: "",
+        isLocked: false,
+      })),
+    );
+
+    await act(async () => {
+      root.render(
+        <VaultNavigator
+          open
+          onClose={vi.fn()}
+          onOpen={vi.fn()}
+          onPrepare={onPrepare}
+        />,
+      );
+    });
+
+    await vi.waitFor(() => expect(onPrepare).toHaveBeenCalledTimes(8));
+    expect(onPrepare.mock.calls.map(([file]) => file.path)).toEqual([
+      "notes/0.md",
+      "notes/1.md",
+      "notes/2.md",
+      "notes/3.md",
+      "notes/4.md",
+      "notes/5.md",
+      "notes/6.md",
+      "notes/7.md",
+    ]);
   });
 
   it("does not expose HTML export in the file row", async () => {

@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const fileDiscard = vi.fn();
 const fileRead = vi.fn();
 const createDefaultNote = vi.fn();
+const prepareNoteOpenFromContent = vi.fn();
 
 vi.mock("@/lib/ipc", () => ({
   fileDiscard: (...args: unknown[]) => fileDiscard(...args),
@@ -15,6 +16,17 @@ vi.mock("@/lib/ipc", () => ({
 vi.mock("@/lib/note-create", () => ({
   createDefaultNote: (options: unknown) => createDefaultNote(options),
 }));
+
+vi.mock("@/lib/note-open-preparation", async () => {
+  const actual = await vi.importActual<
+    typeof import("@/lib/note-open-preparation")
+  >("@/lib/note-open-preparation");
+  return {
+    ...actual,
+    prepareNoteOpenFromContent: (...args: unknown[]) =>
+      prepareNoteOpenFromContent(...args),
+  };
+});
 
 vi.mock("@/lib/document-title", () => ({
   displayTitleFromMarkdown: (_md: string, fallback: string) => fallback,
@@ -105,12 +117,30 @@ describe("useTabManager handleNewNote", () => {
     fileDiscard.mockReset();
     fileRead.mockReset();
     createDefaultNote.mockReset();
+    prepareNoteOpenFromContent.mockReset();
     fileDiscard.mockResolvedValue(undefined);
     fileRead.mockResolvedValue(fileReadResult(EMPTY_MD));
     createDefaultNote.mockResolvedValue({
+      content: EMPTY_MD,
       path: "未命名文档.md",
       title: "未命名文档",
     });
+    prepareNoteOpenFromContent.mockImplementation(
+      async (
+        request: { path: string; titleHint?: string },
+        source: { content: string; isLocked: boolean },
+      ) => ({
+        bodyMarkdown: "\n",
+        content: source.content,
+        frontmatterYaml: 'title: "未命名文档"',
+        isLocked: source.isLocked,
+        namespace: "normal",
+        path: request.path,
+        signature: "prepared-new-note",
+        title: request.titleHint ?? "未命名文档",
+        traceKey: "trace-new-note",
+      }),
+    );
   });
 
   afterEach(() => {
@@ -137,12 +167,54 @@ describe("useTabManager handleNewNote", () => {
     expect(apiRef.current!.activePath).toBe("未命名文档.md");
   });
 
+  it("opens a newly created note from prepared content without reading it back", async () => {
+    const apiRef: { current: ReturnType<typeof useTabManager> | null } = {
+      current: null,
+    };
+
+    await act(async () => {
+      root.render(createElement(Harness, { apiRef }));
+    });
+
+    await act(async () => {
+      await apiRef.current!.handleNewNote();
+    });
+
+    expect(fileRead).not.toHaveBeenCalled();
+    expect(prepareNoteOpenFromContent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        path: "未命名文档.md",
+        priority: "hot",
+        source: "new-note",
+        titleHint: "未命名文档",
+      }),
+      { content: EMPTY_MD, isLocked: false },
+    );
+    expect(apiRef.current!.pendingNoteOpen).toMatchObject({
+      bodyMarkdown: "\n",
+      content: EMPTY_MD,
+      frontmatterYaml: 'title: "未命名文档"',
+      openBudgetKind: "hot",
+      path: "未命名文档.md",
+      title: "未命名文档",
+    });
+
+    const pending = apiRef.current!.pendingNoteOpen!;
+    await act(async () => {
+      apiRef.current!.commitPendingNoteOpen(pending.path, pending.sequence);
+    });
+
+    expect(apiRef.current!.activePath).toBe("未命名文档.md");
+    expect(apiRef.current!.pendingNoteOpen).toBeNull();
+  });
+
   it("discards an empty active tab before creating the next note", async () => {
     const apiRef: { current: ReturnType<typeof useTabManager> | null } = {
       current: null,
     };
 
     createDefaultNote.mockResolvedValueOnce({
+      content: '---\ntitle: "未命名文档（1）"\n---\n\n',
       path: "未命名文档（1）.md",
       title: "未命名文档（1）",
     });

@@ -16,7 +16,10 @@ import type {
 import type { TabItem } from "@/components/layout/TabBar";
 import type {
   DocumentOpenPriority,
+  NoteOpenBudgetKind,
   NoteOpenSource,
+  PrepareNoteOpenRequest,
+  PreparedNoteOpen,
 } from "@/lib/document-open-runtime";
 import type { ClassifiedStatus, FileListItem } from "@/types/ipc";
 
@@ -94,6 +97,10 @@ interface AppOverlaysProps {
     titleHint?: string,
     options?: {
       allowClassified?: boolean;
+      openBudgetKind?: NoteOpenBudgetKind;
+      openStartedAt?: number;
+      openTraceRequest?: PrepareNoteOpenRequest;
+      preparedNote?: PreparedNoteOpen;
       priority?: DocumentOpenPriority;
       source?: NoteOpenSource;
     },
@@ -180,9 +187,10 @@ export function AppOverlays({
       <VaultNavigator
         open={overlays.fileSheet}
         onClose={() => overlays.closeOverlay("fileSheet")}
-        onOpen={(path, source) =>
-          openNoteLeavingHome(path, undefined, {
-            priority: "foreground",
+        onOpen={(path, source, options) =>
+          openNoteLeavingHome(path, options?.titleHint, {
+            ...options,
+            priority: options?.priority ?? "foreground",
             source,
           })
         }

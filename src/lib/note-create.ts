@@ -3,6 +3,7 @@ import { fileCreate, fileList } from "@/lib/ipc";
 import { allocateNewDocumentName } from "@/lib/note-names";
 
 export interface CreatedNote {
+  content: string;
   path: string;
   title: string;
 }
@@ -14,6 +15,10 @@ export interface CreateDefaultNoteOptions {
   folderPrefix?: string;
   /** Optional user-provided title or filename from the file tree input. */
   titleHint?: string;
+}
+
+export function buildDefaultNoteContent(title: string): string {
+  return `---\ntitle: ${quoteYamlString(title)}\n---\n\n`;
 }
 
 /** Create a note with display title in frontmatter; path aligns with title. */
@@ -32,10 +37,10 @@ export async function createDefaultNote(
       folderPrefix,
       titleHint,
     );
-    const content = `---\ntitle: ${quoteYamlString(title)}\n---\n\n`;
+    const content = buildDefaultNoteContent(title);
     try {
       const entry = await fileCreate(path, content);
-      return { path: entry.path, title };
+      return { content, path: entry.path, title };
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       if (

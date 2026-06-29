@@ -49,6 +49,12 @@ import {
 } from "@/lib/ipc";
 import { createDefaultNote } from "@/lib/note-create";
 import {
+  prepareNoteOpenFromContent,
+  type NoteOpenBudgetKind,
+  type PrepareNoteOpenRequest,
+  type PreparedNoteOpen,
+} from "@/lib/note-open-preparation";
+import {
   allocateAvailableNotePath,
   DEFAULT_NEW_DOCUMENT_TITLE,
   isAutoSyncableNotePath,
@@ -94,6 +100,15 @@ type VaultFileItem = FileListItem & {
   mediaKind?: WorkspaceItem["mediaKind"];
   mimeType?: string | null;
 };
+
+interface VaultNavigatorOpenOptions {
+  openBudgetKind?: NoteOpenBudgetKind;
+  openStartedAt?: number;
+  openTraceRequest?: PrepareNoteOpenRequest;
+  preparedNote?: PreparedNoteOpen;
+  priority?: "foreground" | "hot" | "warm" | "background";
+  titleHint?: string;
+}
 
 function vaultFileItem(item: WorkspaceItem): VaultFileItem {
   return {
@@ -145,7 +160,11 @@ function errorMessage(error: unknown, fallback: string): string {
 interface VaultNavigatorProps {
   open: boolean;
   onClose: () => void;
-  onOpen: (path: string, source: NoteOpenSource) => void | Promise<void>;
+  onOpen: (
+    path: string,
+    source: NoteOpenSource,
+    options?: VaultNavigatorOpenOptions,
+  ) => void | Promise<void>;
   onPrepare?: (file: FileListItem, source: NoteOpenSource) => void;
   onBeforeFilePathChange?: (path: string) => Promise<void>;
   onFilePathChanged?: (
@@ -240,7 +259,7 @@ CORPUS_KIND_OPTIONS.splice(
   },
 );
 const DEFAULT_CORPUS_KIND_OPTION = CORPUS_KIND_OPTIONS[0]!;
-const PREPARE_FOLDER_LIMIT = 3;
+const PREPARE_FOLDER_LIMIT = 8;
 
 function TreeFolder({
   node,
@@ -795,10 +814,31 @@ export function VaultNavigatorBody({
               folderPrefix: selectedFolder,
               ...(trimmed ? { titleHint: trimmed } : {}),
             });
+            const openStartedAt = performance.now();
+            const openTraceRequest: PrepareNoteOpenRequest = {
+              path: created.path,
+              priority: "hot",
+              source: "new-note",
+              titleHint: created.title,
+            };
+            const preparedNote = await prepareNoteOpenFromContent(
+              openTraceRequest,
+              {
+                content: created.content,
+                isLocked: false,
+              },
+            );
             setNewName("");
             onIndexChange?.();
             refresh();
-            await onOpen(created.path, "file-tree");
+            await onOpen(created.path, "file-tree", {
+              openBudgetKind: "hot",
+              openStartedAt,
+              openTraceRequest,
+              preparedNote,
+              priority: "hot",
+              titleHint: created.title,
+            });
           }}
         >
           <FolderPlus className="h-4 w-4" />

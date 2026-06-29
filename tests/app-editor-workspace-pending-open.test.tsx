@@ -192,6 +192,83 @@ describe("AppEditorWorkspace complete-frame note opens", () => {
     expect(document.querySelector("[data-opening]")).toBeNull();
   });
 
+  it("keeps the current ready editor surface instead of flashing Home while a new note is pending", () => {
+    vi.useFakeTimers();
+
+    act(() => {
+      root.render(<AppEditorWorkspace {...baseProps()} />);
+    });
+
+    act(() => {
+      firstFrameCallbacks.get("old.md")?.({ path: "old.md" });
+    });
+
+    act(() => {
+      root.render(
+        <AppEditorWorkspace
+          {...baseProps()}
+          pendingOpen={
+            {
+              kind: "new-note",
+              path: null,
+              sequence: 1,
+              startedAt: 1000,
+              title: "新建笔记",
+            } as HomePendingOpen
+          }
+        />,
+      );
+    });
+
+    expect(document.querySelector('[data-testid="home-workbench"]')).toBeNull();
+    expect(
+      document
+        .querySelector('[data-path="old.md"]')
+        ?.getAttribute("data-editor-visibility"),
+    ).toBe("visible");
+  });
+
+  it("commits a new-note pending open after the new document first frame is ready", () => {
+    vi.useFakeTimers();
+    const commitPendingNoteOpen = vi.fn(() => true);
+
+    act(() => {
+      root.render(
+        <AppEditorWorkspace
+          {...baseProps()}
+          pendingOpen={
+            {
+              kind: "new-note",
+              path: null,
+              sequence: 7,
+              startedAt: 1000,
+              title: "新建笔记",
+            } as HomePendingOpen
+          }
+          pendingNoteOpen={{
+            bodyMarkdown: "new staged body",
+            content: "# New\n\nnew staged body",
+            frontmatterYaml: null,
+            isLocked: false,
+            namespace: "normal",
+            path: "new.md",
+            sequence: 7,
+            title: "New",
+          }}
+          commitPendingNoteOpen={commitPendingNoteOpen}
+          openNotePaths={["old.md", "new.md"]}
+        />,
+      );
+    });
+
+    act(() => {
+      firstFrameCallbacks.get("new.md")?.({ path: "new.md" });
+    });
+
+    expect(commitPendingNoteOpen).toHaveBeenCalledWith("new.md", 7);
+    expect(document.querySelector('[data-testid="home-workbench"]')).toBeNull();
+  });
+
   it("shows loading instead of readable markdown before the first editor frame", () => {
     vi.useFakeTimers();
 
