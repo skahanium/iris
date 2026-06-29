@@ -27,6 +27,74 @@ export function titleToNotePath(title: string): string {
   return `${sanitizeNoteFileName(title)}.md`;
 }
 
+export function isAutoSyncableNotePath(path: string): boolean {
+  return (
+    isInternalUntitledPath(path) ||
+    mapLegacyPlaceholderStemToDisplay(pathStem(path)) !== null
+  );
+}
+
+export function isPlaceholderDocumentTitle(title: string): boolean {
+  const trimmed = title.trim();
+  return (
+    !trimmed ||
+    isInternalUntitledLabel(trimmed) ||
+    mapLegacyPlaceholderStemToDisplay(trimmed) !== null
+  );
+}
+
+interface AllocateAvailableNotePathOptions {
+  files: FileListItem[];
+  folderPrefix: string;
+  preferredFileName: string;
+  excludePaths?: Iterable<string>;
+  reservedPaths?: Iterable<string>;
+}
+
+function normalizeVaultPathForCompare(path: string): string {
+  return path.replace(/\\/g, "/");
+}
+
+function normalizePreferredNoteFileName(fileName: string): string {
+  const leaf = fileName.replace(/\\/g, "/").split("/").pop()?.trim() ?? "";
+  const stem = leaf.replace(/\.md$/i, "");
+  return titleToNotePath(stem || DEFAULT_NEW_DOCUMENT_TITLE);
+}
+
+export function allocateAvailableNotePath({
+  files,
+  folderPrefix,
+  preferredFileName,
+  excludePaths,
+  reservedPaths,
+}: AllocateAvailableNotePathOptions): string {
+  const excluded = new Set(
+    Array.from(excludePaths ?? [], normalizeVaultPathForCompare),
+  );
+  const taken = new Set(
+    files
+      .map((file) => normalizeVaultPathForCompare(file.path))
+      .filter((filePath) => !excluded.has(filePath)),
+  );
+  for (const reserved of reservedPaths ?? []) {
+    taken.add(normalizeVaultPathForCompare(reserved));
+  }
+
+  const normalizedFileName = normalizePreferredNoteFileName(preferredFileName);
+  const baseTitle = normalizedFileName.replace(/\.md$/i, "");
+  let candidate = notePathInFolder(folderPrefix, normalizedFileName);
+  if (!taken.has(candidate)) return candidate;
+
+  for (let n = 1; n <= 500; n += 1) {
+    candidate = notePathInFolder(
+      folderPrefix,
+      `${baseTitle}\uff08${n}\uff09.md`,
+    );
+    if (!taken.has(candidate)) return candidate;
+  }
+  throw new Error("Unable to allocate a non-conflicting note path");
+}
+
 /** Collect display titles and path stems already used in the vault index. */
 export function collectTakenDocumentNames(files: FileListItem[]): Set<string> {
   const taken = new Set<string>();

@@ -236,6 +236,11 @@ export function AppOverlays({
             onOpenVersion={openVersion}
             onRescanVault={rescanVault}
             onRecycleIndexChange={bumpVaultIndex}
+            onBeforeFilePathChange={onBeforeFilePathChange}
+            onFilePathChanged={onFilePathChanged}
+            onBeforeFileDelete={onBeforeFileDelete}
+            onFileDeleted={onFileDeleted}
+            onIndexChange={bumpVaultIndex}
             autoVersionEnabled={autoVersionSettings.autoVersionEnabled}
             autoVersionIdleMinutes={autoVersionSettings.autoVersionIdleMinutes}
             onAutoVersionEnabledChange={

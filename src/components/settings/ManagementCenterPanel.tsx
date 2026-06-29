@@ -50,6 +50,15 @@ interface ManagementCenterPanelProps {
   onOpenVersion: () => void;
   onRescanVault: () => void;
   onRecycleIndexChange: () => void;
+  onBeforeFilePathChange?: (path: string) => Promise<void>;
+  onFilePathChanged?: (
+    oldPath: string,
+    newPath: string,
+    title?: string,
+  ) => void;
+  onBeforeFileDelete?: (path: string) => Promise<void>;
+  onFileDeleted?: (path: string) => void;
+  onIndexChange?: () => void;
   autoVersionEnabled: boolean;
   autoVersionIdleMinutes: number;
   onAutoVersionEnabledChange: (enabled: boolean) => void;
@@ -270,6 +279,11 @@ export function ManagementCenterPanel({
   onOpenVersion,
   onRescanVault,
   onRecycleIndexChange,
+  onBeforeFilePathChange,
+  onFilePathChanged,
+  onBeforeFileDelete,
+  onFileDeleted,
+  onIndexChange,
   autoVersionEnabled,
   autoVersionIdleMinutes,
   onAutoVersionEnabledChange,
@@ -508,6 +522,11 @@ export function ManagementCenterPanel({
               onClose={onClose}
               onOpen={onOpenNote}
               onPrepare={onPrepareNote}
+              onBeforeFilePathChange={onBeforeFilePathChange}
+              onFilePathChanged={onFilePathChanged}
+              onBeforeFileDelete={onBeforeFileDelete}
+              onFileDeleted={onFileDeleted}
+              onIndexChange={onIndexChange}
             />
           ) : (
             <RecycleBinBody

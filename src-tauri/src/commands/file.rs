@@ -679,10 +679,17 @@ pub async fn folder_rename(
 
             let old_stem = title_from_path(rel_old);
             let new_stem = title_from_path(&rel_new);
-            let mut mods = cascade_rewrite_wikilinks_on_disk(
+            match cascade_rewrite_wikilinks_on_disk(
                 &state, &vault, rel_old, &rel_new, &old_stem, &new_stem,
-            )?;
-            all_modified_sources.append(&mut mods);
+            ) {
+                Ok(mut mods) => all_modified_sources.append(&mut mods),
+                Err(err) => tracing::warn!(
+                    old = %rel_old,
+                    new = %rel_new,
+                    error = %err,
+                    "folder_rename: skipped wikilink cascade for child"
+                ),
+            }
             cascade_rename_sessions(&state, rel_old, &rel_new)?;
         }
 
@@ -893,69 +900,119 @@ pub async fn file_rename(
     path: String,
     new_path: String,
 ) -> AppResult<FileEntry> {
-    if !is_user_note_path(&path) || !is_user_note_path(&new_path) {
-        return Err(AppError::msg("只能重命名用户笔记路径"));
-    }
     let state = state.inner().clone();
-    tokio::task::spawn_blocking(move || {
-        let vault = state.vault_path()?;
-        let abs = resolve_vault_path(&vault, &path)?;
-        let new_abs = resolve_vault_path(&vault, &new_path)?;
-        if new_abs.exists() {
-            return Err(AppError::msg("Target path already exists"));
-        }
-        if let Some(parent) = new_abs.parent() {
-            fs::create_dir_all(parent)?;
-        }
+    tokio::task::spawn_blocking(move || file_rename_inner(state, path, new_path))
+        .await
+        .map_err(|e| AppError::msg(format!("task join: {e}")))?
+}
 
-        let old_stem = title_from_path(&path);
-        let new_stem = title_from_path(&new_path);
-
-        let modified_sources = cascade_rewrite_wikilinks_on_disk(
-            &state, &vault, &path, &new_path, &old_stem, &new_stem,
-        )?;
-
-        cascade_rename_sessions(&state, &path, &new_path)?;
-
-        fs::rename(&abs, &new_abs)?;
-        let hash = crate::indexer::scan::file_hash(&new_abs)?;
-        state.storage.write_guard.mark(&new_path, &hash);
-
-        state.db.with_conn(|conn| {
-            rename_file_index(conn, &path, &new_path)?;
-            index_file_with_embed(conn, &vault, &new_abs, IndexEmbeddingMode::Queue(&state))
-        })?;
-
-        for src_path in &modified_sources {
-            if let Ok(abs_src) = resolve_vault_path(&vault, src_path) {
-                if let Ok(h) = crate::indexer::scan::file_hash(&abs_src) {
-                    state.storage.write_guard.mark(src_path, &h);
-                }
-                let _ = state.db.with_conn(|conn| {
-                    index_file_with_embed(conn, &vault, &abs_src, IndexEmbeddingMode::Queue(&state))
-                });
-            }
-        }
-
-        state.db.with_read_conn(|conn| {
-            let entry = conn.query_row(
-                "SELECT id, path, title, updated_at, word_count FROM files WHERE path = ?1",
-                [&new_path],
-                |row| {
-                    Ok(FileEntry {
-                        id: row.get(0)?,
-                        path: row.get(1)?,
-                        title: row.get(2)?,
-                        updated_at: row.get(3)?,
-                        word_count: row.get(4)?,
-                    })
-                },
-            )?;
-            Ok(entry)
-        })
+fn fallback_file_entry(path: &str, absolute: &std::path::Path) -> AppResult<FileEntry> {
+    let content = read_file_lossy(absolute)?;
+    Ok(FileEntry {
+        id: 0,
+        path: path.to_string(),
+        title: title_from_path(path),
+        updated_at: chrono::Utc::now().to_rfc3339(),
+        word_count: content.split_whitespace().count() as i64,
     })
-    .await
-    .map_err(|e| AppError::msg(format!("task join: {e}")))?
+}
+
+fn file_rename_inner(state: Arc<AppState>, path: String, new_path: String) -> AppResult<FileEntry> {
+    if !is_user_note_path(&path) || !is_user_note_path(&new_path) {
+        return Err(AppError::msg("Only user note paths can be renamed"));
+    }
+
+    let vault = state.vault_path()?;
+    let abs = resolve_vault_path(&vault, &path)?;
+    let new_abs = resolve_vault_path(&vault, &new_path)?;
+    if new_abs.exists() {
+        return Err(AppError::msg("Target path already exists"));
+    }
+    if let Some(parent) = new_abs.parent() {
+        fs::create_dir_all(parent)?;
+    }
+
+    let old_stem = title_from_path(&path);
+    let new_stem = title_from_path(&new_path);
+
+    if let Err(err) = state
+        .db
+        .with_conn(|conn| crate::indexer::scan::prune_stale_file_indexes(conn, &vault))
+    {
+        tracing::warn!(
+            old = %path,
+            new = %new_path,
+            error = %err,
+            "file_rename: skipped stale index prune before move"
+        );
+    }
+
+    let modified_sources = match cascade_rewrite_wikilinks_on_disk(
+        &state, &vault, &path, &new_path, &old_stem, &new_stem,
+    ) {
+        Ok(paths) => paths,
+        Err(err) => {
+            tracing::warn!(
+                old = %path,
+                new = %new_path,
+                error = %err,
+                "file_rename: skipped wikilink cascade before move"
+            );
+            Vec::new()
+        }
+    };
+
+    cascade_rename_sessions(&state, &path, &new_path)?;
+
+    fs::rename(&abs, &new_abs)?;
+    let hash = crate::indexer::scan::file_hash(&new_abs)?;
+    state.storage.write_guard.mark(&new_path, &hash);
+
+    let entry = match state.db.with_conn(|conn| {
+        if let Err(err) = rename_file_index(conn, &path, &new_path) {
+            tracing::warn!(
+                old = %path,
+                new = %new_path,
+                error = %err,
+                "file_rename: skipped stale or missing file index rename"
+            );
+        }
+        let entry =
+            index_file_with_embed(conn, &vault, &new_abs, IndexEmbeddingMode::Queue(&state))?;
+        if let Err(err) = crate::indexer::scan::prune_stale_file_indexes(conn, &vault) {
+            tracing::warn!(
+                old = %path,
+                new = %new_path,
+                error = %err,
+                "file_rename: skipped stale index prune after move"
+            );
+        }
+        Ok(entry)
+    }) {
+        Ok(entry) => entry,
+        Err(err) => {
+            tracing::warn!(
+                old = %path,
+                new = %new_path,
+                error = %err,
+                "file_rename: moved file but index refresh failed"
+            );
+            fallback_file_entry(&new_path, &new_abs)?
+        }
+    };
+
+    for src_path in &modified_sources {
+        if let Ok(abs_src) = resolve_vault_path(&vault, src_path) {
+            if let Ok(h) = crate::indexer::scan::file_hash(&abs_src) {
+                state.storage.write_guard.mark(src_path, &h);
+            }
+            let _ = state.db.with_conn(|conn| {
+                index_file_with_embed(conn, &vault, &abs_src, IndexEmbeddingMode::Queue(&state))
+            });
+        }
+    }
+
+    Ok(entry)
 }
 
 /// Rewrite wikilink text in all files referencing `old_path` on disk.
@@ -985,6 +1042,14 @@ fn cascade_rewrite_wikilinks_on_disk(
 
     for src_path in &source_paths {
         let abs = resolve_vault_path(vault, src_path)?;
+        if !abs.exists() {
+            tracing::warn!(
+                source = %src_path,
+                target = %old_path,
+                "skipping stale wikilink source during file rename"
+            );
+            continue;
+        }
         let content = read_file_lossy(&abs)?;
 
         // Rewrite line-by-line, skipping code blocks
@@ -1042,7 +1107,10 @@ fn cascade_rewrite_wikilinks_on_disk(
     Ok(modified)
 }
 
-/// Update all AI session `note_path` and `session_key` references from old to new path.
+/// Best-effort update of AI session references from old to new path.
+///
+/// User notes on disk are the source of truth. Session/evidence references are
+/// runtime state, so a constraint conflict here must not block a file move.
 fn cascade_rename_sessions(state: &Arc<AppState>, old_path: &str, new_path: &str) -> AppResult<()> {
     state.db.with_conn(|conn| {
         conn.execute_batch("BEGIN IMMEDIATE")?;
@@ -1079,8 +1147,15 @@ fn cascade_rename_sessions(state: &Arc<AppState>, old_path: &str, new_path: &str
                         rollback_error = %rollback_err,
                         "cascade_rename: failed to roll back session rename transaction"
                     );
+                    return Err(rollback_err.into());
                 }
-                return Err(err);
+                tracing::warn!(
+                    old = %old_path,
+                    new = %new_path,
+                    error = %err,
+                    "cascade_rename: skipped session/evidence reference update"
+                );
+                return Ok(());
             }
         };
 
@@ -1514,9 +1589,9 @@ Body",
     }
 
     #[test]
-    fn cascade_rename_sessions_rolls_back_when_evidence_update_fails() {
+    fn cascade_rename_sessions_keeps_history_when_evidence_update_fails() {
         let dir = tempdir().unwrap();
-        let state = Arc::new(AppState::new(dir.path().join("data")).unwrap());
+        let state = AppState::new(dir.path().join("data")).unwrap();
 
         state
             .db
@@ -1545,7 +1620,7 @@ Body",
             })
             .unwrap();
 
-        assert!(cascade_rename_sessions(&state, "old.md", "new.md").is_err());
+        cascade_rename_sessions(&state, "old.md", "new.md").unwrap();
 
         state
             .db
@@ -1567,6 +1642,155 @@ Body",
                 Ok(())
             })
             .unwrap();
+    }
+
+    #[test]
+    fn cascade_rename_sessions_keeps_history_when_target_session_key_exists() {
+        let dir = tempdir().unwrap();
+        let state = AppState::new(dir.path().join("data")).unwrap();
+
+        state
+            .db
+            .with_conn(|conn| {
+                migrate_up(conn)?;
+                conn.execute_batch(
+                    "INSERT INTO sessions (id, session_key, scene, note_path, created_at, updated_at)
+                     VALUES (42, 'chat:old.md', 'chat', 'old.md', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z'),
+                            (43, 'chat:new.md', 'chat', 'new.md', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z');",
+                )?;
+                Ok(())
+            })
+            .unwrap();
+
+        cascade_rename_sessions(&state, "old.md", "new.md").unwrap();
+
+        state
+            .db
+            .with_read_conn(|conn| {
+                let rows = conn
+                    .prepare("SELECT id, note_path, session_key FROM sessions ORDER BY id")?
+                    .query_map([], |row| {
+                        Ok((
+                            row.get::<_, i64>(0)?,
+                            row.get::<_, String>(1)?,
+                            row.get::<_, String>(2)?,
+                        ))
+                    })?
+                    .collect::<Result<Vec<_>, _>>()?;
+
+                assert_eq!(
+                    rows,
+                    vec![
+                        (42, "old.md".to_string(), "chat:old.md".to_string()),
+                        (43, "new.md".to_string(), "chat:new.md".to_string())
+                    ]
+                );
+                Ok(())
+            })
+            .unwrap();
+    }
+
+    #[test]
+    fn file_rename_inner_moves_note_when_session_key_conflicts() {
+        let dir = tempdir().unwrap();
+        let vault = dir.path().join("vault");
+        fs::create_dir_all(&vault).unwrap();
+        fs::write(
+            vault.join("old.md"),
+            "# Old
+
+Body",
+        )
+        .unwrap();
+        let state = AppState::new(dir.path().join("data")).unwrap();
+        state.set_vault(vault.clone()).unwrap();
+        state
+            .db
+            .with_conn(|conn| {
+                index_file_with_embed(conn, &vault, &vault.join("old.md"), IndexEmbeddingMode::Skip)?;
+                conn.execute_batch(
+                    "INSERT INTO sessions (id, session_key, scene, note_path, created_at, updated_at)
+                     VALUES (42, 'chat:old.md', 'chat', 'old.md', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z'),
+                            (43, 'chat:new.md', 'chat', 'new.md', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z');",
+                )?;
+                Ok(())
+            })
+            .unwrap();
+
+        let entry =
+            file_rename_inner(state.clone(), "old.md".to_string(), "new.md".to_string()).unwrap();
+
+        assert_eq!(entry.path, "new.md");
+        assert!(!vault.join("old.md").exists());
+        assert_eq!(
+            fs::read_to_string(vault.join("new.md")).unwrap(),
+            "# Old
+
+Body"
+        );
+        state
+            .db
+            .with_read_conn(|conn| {
+                let old_session: String = conn.query_row(
+                    "SELECT session_key FROM sessions WHERE id = 42",
+                    [],
+                    |row| row.get(0),
+                )?;
+                assert_eq!(old_session, "chat:old.md");
+                let indexed_count: i64 = conn.query_row(
+                    "SELECT COUNT(*) FROM files WHERE path = 'new.md'",
+                    [],
+                    |row| row.get(0),
+                )?;
+                assert_eq!(indexed_count, 1);
+                Ok(())
+            })
+            .unwrap();
+    }
+
+    #[test]
+    fn file_rename_inner_prunes_stale_target_index_before_move() {
+        let dir = tempdir().unwrap();
+        let vault = dir.path().join("vault");
+        fs::create_dir_all(&vault).unwrap();
+        fs::write(
+            vault.join("old.md"),
+            "# Old
+
+Body",
+        )
+        .unwrap();
+        let state = AppState::new(dir.path().join("data")).unwrap();
+        state.set_vault(vault.clone()).unwrap();
+        state
+            .db
+            .with_conn(|conn| {
+                index_file_with_embed(conn, &vault, &vault.join("old.md"), IndexEmbeddingMode::Skip)?;
+                conn.execute(
+                    "INSERT INTO files (path, title, content_hash, created_at, updated_at)
+                     VALUES ('new.md', 'Stale', 'stale', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')",
+                    [],
+                )?;
+                Ok(())
+            })
+            .unwrap();
+
+        let old_id: i64 = state
+            .db
+            .with_read_conn(|conn| {
+                conn.query_row("SELECT id FROM files WHERE path = 'old.md'", [], |row| {
+                    row.get(0)
+                })
+                .map_err(Into::into)
+            })
+            .unwrap();
+
+        let entry =
+            file_rename_inner(state.clone(), "old.md".to_string(), "new.md".to_string()).unwrap();
+
+        assert_eq!(entry.id, old_id);
+        assert_eq!(entry.path, "new.md");
+        assert!(vault.join("new.md").is_file());
     }
 
     #[test]
@@ -1606,6 +1830,87 @@ Body",
 
         let err = encode_file_payload(".CLASSIFIED/secret.md", "# Hi").unwrap_err();
         assert!(err.to_string().contains("classified"));
+    }
+
+    #[test]
+    fn file_rename_inner_returns_fallback_entry_when_index_refresh_fails_after_move() {
+        let dir = tempdir().unwrap();
+        let vault = dir.path().join("vault");
+        fs::create_dir_all(&vault).unwrap();
+        fs::write(vault.join("old.md"), "# Old\n\nBody").unwrap();
+        let state = AppState::new(dir.path().join("data")).unwrap();
+        state.set_vault(vault.clone()).unwrap();
+        state
+            .db
+            .with_conn(|conn| {
+                index_file_with_embed(
+                    conn,
+                    &vault,
+                    &vault.join("old.md"),
+                    IndexEmbeddingMode::Skip,
+                )?;
+                conn.execute_batch(
+                    "CREATE TRIGGER fail_index_refresh
+                     BEFORE UPDATE OF title ON files
+                     WHEN NEW.path = 'new.md'
+                     BEGIN
+                       SELECT RAISE(ABORT, 'simulated index failure');
+                     END;",
+                )?;
+                Ok(())
+            })
+            .unwrap();
+        fs::write(vault.join("old.md"), "# Changed\n\nBody").unwrap();
+
+        let entry = file_rename_inner(state, "old.md".to_string(), "new.md".to_string()).unwrap();
+
+        assert_eq!(entry.id, 0);
+        assert_eq!(entry.path, "new.md");
+        assert!(!vault.join("old.md").exists());
+        assert_eq!(
+            fs::read_to_string(vault.join("new.md")).unwrap(),
+            "# Changed\n\nBody"
+        );
+    }
+    #[test]
+    fn wikilink_rewrite_skips_stale_inbound_sources() {
+        let dir = tempdir().unwrap();
+        let vault = dir.path().join("vault");
+        fs::create_dir_all(&vault).unwrap();
+        fs::write(
+            vault.join("target.md"),
+            "# Target
+",
+        )
+        .unwrap();
+        let state = AppState::new(dir.path().join("data")).unwrap();
+        state.set_vault(vault.clone()).unwrap();
+        state
+            .db
+            .with_conn(|conn| {
+                migrate_up(conn)?;
+                conn.execute_batch(
+                    "INSERT INTO files (id, path, title, content_hash, created_at, updated_at)
+                     VALUES (1, 'target.md', 'Target', 'h1', '2020-01-01', '2020-01-01'),
+                            (2, 'missing-source.md', 'Missing', 'h2', '2020-01-02', '2020-01-02');
+                     INSERT INTO links (source_id, target_id, context)
+                     VALUES (2, 1, 'Missing links [[Target]]');",
+                )?;
+                Ok(())
+            })
+            .unwrap();
+
+        let modified = cascade_rewrite_wikilinks_on_disk(
+            &state,
+            &vault,
+            "target.md",
+            "folder/target.md",
+            "target",
+            "target",
+        )
+        .unwrap();
+
+        assert!(modified.is_empty());
     }
 
     #[test]

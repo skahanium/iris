@@ -344,6 +344,17 @@ describe("desktop title bar", () => {
     expect(bar).not.toContain("shrink-0 items-center gap-1 px-2 py-1");
   });
 
+  it("keeps source order as brand rail, new-note button, then tab rail", () => {
+    const bar = read("src/components/layout/DesktopTitleBar.tsx");
+    const brandIndex = bar.indexOf('data-testid="iris-brand-rail"');
+    const newButtonIndex = bar.indexOf('aria-label="新建笔记"');
+    const tabRailIndex = bar.indexOf("iris-titlebar-tab-rail");
+
+    expect(brandIndex).toBeGreaterThanOrEqual(0);
+    expect(newButtonIndex).toBeGreaterThan(brandIndex);
+    expect(tabRailIndex).toBeGreaterThan(newButtonIndex);
+  });
+
   it("lets tabs compress instead of locking a 7rem minimum width", () => {
     renderTitleBar([
       { path: "/vault/a.md", title: "Alpha" },

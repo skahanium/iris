@@ -296,6 +296,20 @@ export const DesktopTitleBar = memo(function DesktopTitleBar({
 
           {showTabStrip ? (
             <>
+              <div className="shrink-0" data-tauri-drag-region-exclude>
+                <button
+                  type="button"
+                  data-tauri-drag-region-exclude
+                  className="iris-focus-soft inline-flex h-8 w-8 items-center justify-center rounded-[10px] text-muted-foreground transition-all duration-fast hover:bg-muted/60 hover:text-foreground focus:outline-none"
+                  aria-label="新建笔记"
+                  onMouseDown={(event) => {
+                    event.stopPropagation();
+                  }}
+                  onClick={onNew}
+                >
+                  <Plus className="h-4 w-4" />
+                </button>
+              </div>
               <div
                 ref={railRef}
                 className="iris-titlebar-tab-rail flex min-w-0 flex-1 items-center gap-1 overflow-x-hidden px-2"
@@ -342,20 +356,6 @@ export const DesktopTitleBar = memo(function DesktopTitleBar({
                     ) : null}
                   </div>
                 ) : null}
-              </div>
-              <div className="shrink-0" data-tauri-drag-region-exclude>
-                <button
-                  type="button"
-                  data-tauri-drag-region-exclude
-                  className="iris-focus-soft inline-flex h-8 w-8 items-center justify-center rounded-[10px] text-muted-foreground transition-all duration-fast hover:bg-muted/60 hover:text-foreground focus:outline-none"
-                  aria-label="新建笔记"
-                  onMouseDown={(event) => {
-                    event.stopPropagation();
-                  }}
-                  onClick={onNew}
-                >
-                  <Plus className="h-4 w-4" />
-                </button>
               </div>
             </>
           ) : (

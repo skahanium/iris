@@ -222,11 +222,13 @@ export function MoveItemDialog({
   folders,
   onCancel,
   onSubmit,
+  previewPath,
 }: {
   target: MoveTarget | null;
   folders: string[];
   onCancel: () => void;
   onSubmit: (folderPath: string) => void;
+  previewPath?: (folderPath: string) => string;
 }) {
   const options = useMemo(
     () => availableMoveFolders(folders, target),
@@ -256,11 +258,12 @@ export function MoveItemDialog({
           : "";
   const preview =
     target && targetName
-      ? target.kind === "file"
-        ? joinVaultChildPath(selected, targetName)
-        : target.kind === "files"
-          ? `${displayFolderPath(selected)} / ${targetName}`
-          : buildFolderPrefix(selected, targetName)
+      ? (previewPath?.(selected) ??
+        (target.kind === "file"
+          ? joinVaultChildPath(selected, targetName)
+          : target.kind === "files"
+            ? `${displayFolderPath(selected)} / ${targetName}`
+            : buildFolderPrefix(selected, targetName)))
       : "";
 
   return (

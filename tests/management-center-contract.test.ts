@@ -124,6 +124,33 @@ describe("management center contract", () => {
     expect(overlays).toContain('onPrepareNote?.(file, "management")');
   });
 
+  it("passes file lifecycle callbacks into the embedded management file tree", () => {
+    const center = read("src/components/settings/ManagementCenterPanel.tsx");
+    const overlays = read("src/components/layout/AppOverlays.tsx");
+
+    for (const prop of [
+      "onBeforeFilePathChange",
+      "onFilePathChanged",
+      "onBeforeFileDelete",
+      "onFileDeleted",
+      "onIndexChange",
+    ]) {
+      expect(center).toContain(prop);
+    }
+    expect(center).toContain("onBeforeFilePathChange={onBeforeFilePathChange}");
+    expect(center).toContain("onFilePathChanged={onFilePathChanged}");
+    expect(center).toContain("onBeforeFileDelete={onBeforeFileDelete}");
+    expect(center).toContain("onFileDeleted={onFileDeleted}");
+    expect(center).toContain("onIndexChange={onIndexChange}");
+    expect(overlays).toContain(
+      "onBeforeFilePathChange={onBeforeFilePathChange}",
+    );
+    expect(overlays).toContain("onFilePathChanged={onFilePathChanged}");
+    expect(overlays).toContain("onBeforeFileDelete={onBeforeFileDelete}");
+    expect(overlays).toContain("onFileDeleted={onFileDeleted}");
+    expect(overlays).toContain("onIndexChange={bumpVaultIndex}");
+  });
+
   it("waits for restored notes to open before closing recycle views", () => {
     const recycle = read("src/components/file/RecycleBinSheet.tsx");
     const restoreIndex = recycle.indexOf("await onRestored(path)");

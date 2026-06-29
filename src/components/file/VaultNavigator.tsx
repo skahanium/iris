@@ -48,13 +48,19 @@ import {
   workspaceList,
 } from "@/lib/ipc";
 import { createDefaultNote } from "@/lib/note-create";
+import {
+  allocateAvailableNotePath,
+  DEFAULT_NEW_DOCUMENT_TITLE,
+  isAutoSyncableNotePath,
+  isPlaceholderDocumentTitle,
+  titleToNotePath,
+} from "@/lib/note-names";
 import { displayTitleForFileListItem } from "@/lib/note-display";
 import {
   buildVaultTree,
   folderParentPath,
   joinVaultChildPath,
   listFilesInFolder,
-  notePathInFolder,
   type VaultTreeNode,
 } from "@/lib/vault-tree";
 import { cn } from "@/lib/utils";
@@ -70,6 +76,7 @@ import {
   buildFolderPath,
   canonicalCorpusKind,
   defaultScenesForKind,
+  displayFolderPath,
   fileNameFromPath,
   fileParentPath,
   folderNameFromPath,
@@ -125,6 +132,16 @@ function vaultFileIcon(file: VaultFileItem): LucideIcon {
   return FileText;
 }
 
+function errorMessage(error: unknown, fallback: string): string {
+  if (error instanceof Error && error.message.trim()) return error.message;
+  if (typeof error === "string" && error.trim()) return error;
+  if (error && typeof error === "object" && "message" in error) {
+    const message = (error as { message?: unknown }).message;
+    if (typeof message === "string" && message.trim()) return message;
+  }
+  return fallback;
+}
+
 interface VaultNavigatorProps {
   open: boolean;
   onClose: () => void;
@@ -138,6 +155,7 @@ interface VaultNavigatorProps {
   ) => void;
   onBeforeFileDelete?: (path: string) => Promise<void>;
   onFileDeleted?: (path: string) => void;
+  onIndexChange?: () => void;
 }
 
 interface CorpusKindOption {
@@ -297,13 +315,14 @@ export function VaultNavigatorBody({
   onFilePathChanged,
   onBeforeFileDelete,
   onFileDeleted,
+  onIndexChange,
 }: VaultNavigatorProps) {
   const [files, setFiles] = useState<VaultFileItem[]>([]);
   const [folders, setFolders] = useState<string[]>([]);
   const [corpora, setCorpora] = useState<CorpusListItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [newName, setNewName] = useState("未命名文档.md");
+  const [newName, setNewName] = useState("");
   const [templates, setTemplates] = useState<{ name: string }[]>([]);
   const [showTemplates, setShowTemplates] = useState(false);
   const [renameTarget, setRenameTarget] = useState<RenameTarget | null>(null);
@@ -450,6 +469,48 @@ export function VaultNavigatorBody({
     [folderFiles],
   );
 
+  const preferredMoveFileName = useCallback((file: FileListItem) => {
+    const title = displayTitleForFileListItem(file).trim();
+    if (
+      isAutoSyncableNotePath(file.path) &&
+      title &&
+      !isPlaceholderDocumentTitle(title)
+    ) {
+      return titleToNotePath(title);
+    }
+    return fileNameFromPath(file.path);
+  }, []);
+
+  const resolveMoveFilePath = useCallback(
+    (
+      file: FileListItem,
+      targetFolder: string,
+      reservedPaths?: Iterable<string>,
+    ) =>
+      allocateAvailableNotePath({
+        files: files.filter(isNoteFile),
+        folderPrefix: targetFolder,
+        preferredFileName: preferredMoveFileName(file),
+        excludePaths: [file.path],
+        reservedPaths,
+      }),
+    [files, preferredMoveFileName],
+  );
+
+  const movePreviewPath = useCallback(
+    (target: MoveTarget | null, targetFolder: string): string => {
+      if (!target) return "";
+      if (target.kind === "file") {
+        return resolveMoveFilePath(target.file, targetFolder);
+      }
+      if (target.kind === "files") {
+        return `${displayFolderPath(targetFolder)} / ${target.files.length} 个文档`;
+      }
+      return buildFolderPath(targetFolder, folderNameFromPath(target.path));
+    },
+    [resolveMoveFilePath],
+  );
+
   const handleFolderCreate = useCallback(
     async (name: string) => {
       const trimmed = name.trim();
@@ -467,12 +528,13 @@ export function VaultNavigatorBody({
         setExpanded((prev) =>
           new Set(prev).add(`${folderPath.replace(/\\/g, "/")}/`),
         );
+        onIndexChange?.();
         refresh();
       } catch (e) {
         setError(e instanceof Error ? e.message : "创建文件夹失败");
       }
     },
-    [folderCreateParent, refresh],
+    [folderCreateParent, onIndexChange, refresh],
   );
 
   const handleRename = useCallback(
@@ -508,18 +570,30 @@ export function VaultNavigatorBody({
                 newPrefix,
                 file.path.slice(oldPrefix.length),
               );
-              onFilePathChanged?.(file.path, remappedPath);
+              onFilePathChanged?.(
+                file.path,
+                remappedPath,
+                vaultFileTitle(file),
+              );
             }
             setSelectedFolder(normalizeFolderPrefix(nextPath));
           }
         }
         setRenameTarget(null);
+        onIndexChange?.();
         refresh();
       } catch (e) {
         setError(e instanceof Error ? e.message : "重命名失败");
       }
     },
-    [onBeforeFilePathChange, onFilePathChanged, files, refresh, renameTarget],
+    [
+      onBeforeFilePathChange,
+      onFilePathChanged,
+      onIndexChange,
+      files,
+      refresh,
+      renameTarget,
+    ],
   );
 
   const handleMove = useCallback(
@@ -527,25 +601,29 @@ export function VaultNavigatorBody({
       if (!moveTarget) return;
       try {
         if (moveTarget.kind === "file") {
-          const nextPath = joinVaultChildPath(
-            targetFolder,
-            fileNameFromPath(moveTarget.file.path),
-          );
+          const nextPath = resolveMoveFilePath(moveTarget.file, targetFolder);
           if (nextPath !== moveTarget.file.path) {
             await onBeforeFilePathChange?.(moveTarget.file.path);
             await fileRename(moveTarget.file.path, nextPath);
-            onFilePathChanged?.(moveTarget.file.path, nextPath);
+            onFilePathChanged?.(
+              moveTarget.file.path,
+              nextPath,
+              vaultFileTitle(moveTarget.file),
+            );
           }
         } else if (moveTarget.kind === "files") {
+          const reservedPaths = new Set<string>();
           for (const file of moveTarget.files) {
-            const nextPath = joinVaultChildPath(
+            const nextPath = resolveMoveFilePath(
+              file,
               targetFolder,
-              fileNameFromPath(file.path),
+              reservedPaths,
             );
             if (nextPath === file.path) continue;
             await onBeforeFilePathChange?.(file.path);
             await fileRename(file.path, nextPath);
-            onFilePathChanged?.(file.path, nextPath);
+            onFilePathChanged?.(file.path, nextPath, vaultFileTitle(file));
+            reservedPaths.add(nextPath);
           }
         } else {
           const nextPath = buildFolderPath(
@@ -567,18 +645,31 @@ export function VaultNavigatorBody({
                 newPrefix,
                 file.path.slice(oldPrefix.length),
               );
-              onFilePathChanged?.(file.path, remappedPath);
+              onFilePathChanged?.(
+                file.path,
+                remappedPath,
+                vaultFileTitle(file),
+              );
             }
             setSelectedFolder(normalizeFolderPrefix(nextPath));
           }
         }
         setMoveTarget(null);
+        onIndexChange?.();
         refresh();
       } catch (e) {
-        setError(e instanceof Error ? e.message : "移动失败");
+        setError(errorMessage(e, "移动失败"));
       }
     },
-    [files, moveTarget, onBeforeFilePathChange, onFilePathChanged, refresh],
+    [
+      files,
+      moveTarget,
+      onBeforeFilePathChange,
+      onFilePathChanged,
+      onIndexChange,
+      refresh,
+      resolveMoveFilePath,
+    ],
   );
 
   const handleBatchSetLock = useCallback(
@@ -607,26 +698,41 @@ export function VaultNavigatorBody({
       setBatchDeleteTarget([]);
       setSelectedFilePaths(new Set());
       setBatchMode(false);
+      onIndexChange?.();
       refresh();
     } catch (e) {
       setError(e instanceof Error ? e.message : "批量删除失败");
     }
-  }, [batchDeleteTarget, onBeforeFileDelete, onFileDeleted, refresh]);
+  }, [
+    batchDeleteTarget,
+    onBeforeFileDelete,
+    onFileDeleted,
+    onIndexChange,
+    refresh,
+  ]);
 
   const handleFolderDelete = useCallback(async () => {
     if (!folderDeleteTarget) return;
     try {
       await folderDelete(folderDeleteTarget.path);
       setFolderDeleteTarget(null);
+      onIndexChange?.();
       refresh();
     } catch (e) {
       setError(e instanceof Error ? e.message : "删除文件夹失败");
     }
-  }, [folderDeleteTarget, refresh]);
+  }, [folderDeleteTarget, onIndexChange, refresh]);
 
   const createFromTemplate = async (tmplName: string) => {
-    const path = notePathInFolder(selectedFolder, newName);
+    const trimmed = newName.trim();
+    const path = allocateAvailableNotePath({
+      files: files.filter(isNoteFile),
+      folderPrefix: selectedFolder,
+      preferredFileName: trimmed || `${DEFAULT_NEW_DOCUMENT_TITLE}.md`,
+    });
     await templateCreate(path, tmplName);
+    setNewName("");
+    onIndexChange?.();
     refresh();
     await onOpen(path, "file-tree");
     setShowTemplates(false);
@@ -674,6 +780,7 @@ export function VaultNavigatorBody({
         <Input
           className="text-xs"
           value={newName}
+          placeholder={`${DEFAULT_NEW_DOCUMENT_TITLE}.md`}
           onChange={(e) => setNewName(e.target.value)}
         />
         <Button
@@ -686,8 +793,10 @@ export function VaultNavigatorBody({
             const trimmed = newName.trim();
             const created = await createDefaultNote({
               folderPrefix: selectedFolder,
-              titleHint: trimmed,
+              ...(trimmed ? { titleHint: trimmed } : {}),
             });
+            setNewName("");
+            onIndexChange?.();
             refresh();
             await onOpen(created.path, "file-tree");
           }}
@@ -1134,6 +1243,7 @@ export function VaultNavigatorBody({
         folders={folders}
         onCancel={() => setMoveTarget(null)}
         onSubmit={(folderPath) => void handleMove(folderPath)}
+        previewPath={(folderPath) => movePreviewPath(moveTarget, folderPath)}
       />
 
       <ConfirmDialog

@@ -3,6 +3,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { VaultNavigator } from "@/components/file/VaultNavigator";
+import { createDefaultNote } from "@/lib/note-create";
 
 const corpusList = vi.fn();
 const corpusUpsert = vi.fn();
@@ -75,6 +76,7 @@ describe("VaultNavigator corpus assignment", () => {
     folderRename.mockReset();
     knowledgeReindex.mockReset();
     templateList.mockReset();
+    vi.mocked(createDefaultNote).mockReset();
     fileList.mockResolvedValue([
       {
         path: "policy/a.md",
@@ -99,6 +101,10 @@ describe("VaultNavigator corpus assignment", () => {
     folderCreate.mockResolvedValue(undefined);
     folderRename.mockResolvedValue(undefined);
     knowledgeReindex.mockResolvedValue({ anchors: 0, regulations: 1 });
+    vi.mocked(createDefaultNote).mockResolvedValue({
+      path: "未命名文档.md",
+      title: "未命名文档",
+    });
     host = document.createElement("div");
     document.body.append(host);
     root = createRoot(host);
@@ -156,6 +162,46 @@ describe("VaultNavigator corpus assignment", () => {
     if (!button) throw new Error("corpus confirm button missing");
     return button;
   }
+
+  function fileActionButton(label: string): HTMLButtonElement {
+    const button = document.querySelector<HTMLButtonElement>(
+      `button[aria-label="${label}"]`,
+    );
+    if (!button) throw new Error(`file action missing: ${label}`);
+    return button;
+  }
+  function newNoteInput(): HTMLInputElement {
+    const input = document.querySelector<HTMLInputElement>(
+      ".task-overlay-filter input",
+    );
+    if (!input) throw new Error("new note input missing");
+    return input;
+  }
+
+  it("keeps the new-note field empty and uses default allocation for empty creates", async () => {
+    const onOpen = vi.fn();
+    await act(async () => {
+      root.render(<VaultNavigator open onClose={vi.fn()} onOpen={onOpen} />);
+    });
+    await vi.waitFor(() => {
+      expect(document.body.textContent).toContain("policy");
+    });
+
+    const input = newNoteInput();
+    expect(input.value).toBe("");
+    expect(input.placeholder).toBe("未命名文档.md");
+
+    await act(async () => {
+      document
+        .querySelector<HTMLButtonElement>('button[title="新建笔记"]')
+        ?.click();
+      await Promise.resolve();
+    });
+
+    expect(createDefaultNote).toHaveBeenCalledWith({ folderPrefix: "" });
+    expect(onOpen).toHaveBeenCalledWith("未命名文档.md", "file-tree");
+    expect(newNoteInput().value).toBe("");
+  });
 
   it("creates folders from a dedicated dialog with parent and path preview", async () => {
     await renderNavigator();
@@ -293,6 +339,116 @@ describe("VaultNavigator corpus assignment", () => {
     });
 
     expect(fileRename).toHaveBeenCalledWith("policy/a.md", "archive/a.md");
+  });
+
+  it("surfaces structured move errors instead of hiding them behind a generic label", async () => {
+    fileRename.mockRejectedValueOnce({ message: "IO error" });
+    await renderNavigator();
+    await selectPolicyFolder();
+
+    await act(async () => {
+      fileActionButton("移动文档").click();
+    });
+    await act(async () => {
+      findButton("archive/").click();
+    });
+    await act(async () => {
+      findButton("移动到此处").click();
+    });
+
+    expect(document.body.textContent).toContain("IO error");
+    expect(document.body.textContent).not.toContain("移动失败");
+  });
+
+  it("moves placeholder-named documents with their real display title", async () => {
+    fileList.mockResolvedValue([
+      {
+        path: "policy/未命名文档.md",
+        title: "案件总结",
+        updatedAt: "",
+        isLocked: false,
+      },
+    ]);
+    await renderNavigator();
+    await selectPolicyFolder();
+
+    await act(async () => {
+      fileActionButton("移动文档").click();
+    });
+    await act(async () => {
+      findButton("archive/").click();
+    });
+    expect(document.body.textContent).toContain("archive/案件总结.md");
+    await act(async () => {
+      findButton("移动到此处").click();
+    });
+
+    expect(fileRename).toHaveBeenCalledWith(
+      "policy/未命名文档.md",
+      "archive/案件总结.md",
+    );
+  });
+
+  it("preserves custom file basenames when moving documents with different titles", async () => {
+    fileList.mockResolvedValue([
+      {
+        path: "policy/custom-slug.md",
+        title: "案件总结",
+        updatedAt: "",
+        isLocked: false,
+      },
+    ]);
+    await renderNavigator();
+    await selectPolicyFolder();
+
+    await act(async () => {
+      fileActionButton("移动文档").click();
+    });
+    await act(async () => {
+      findButton("archive/").click();
+    });
+    await act(async () => {
+      findButton("移动到此处").click();
+    });
+
+    expect(fileRename).toHaveBeenCalledWith(
+      "policy/custom-slug.md",
+      "archive/custom-slug.md",
+    );
+  });
+
+  it("allocates a suffix when a title-based move target already exists", async () => {
+    fileList.mockResolvedValue([
+      {
+        path: "policy/未命名文档.md",
+        title: "案件总结",
+        updatedAt: "",
+        isLocked: false,
+      },
+      {
+        path: "archive/案件总结.md",
+        title: "案件总结",
+        updatedAt: "",
+        isLocked: false,
+      },
+    ]);
+    await renderNavigator();
+    await selectPolicyFolder();
+
+    await act(async () => {
+      fileActionButton("移动文档").click();
+    });
+    await act(async () => {
+      findButton("archive/").click();
+    });
+    await act(async () => {
+      findButton("移动到此处").click();
+    });
+
+    expect(fileRename).toHaveBeenCalledWith(
+      "policy/未命名文档.md",
+      "archive/案件总结（1）.md",
+    );
   });
 
   it("uses icon-only buttons for document rename and move", async () => {
