@@ -78,14 +78,34 @@ describe("AssistantProcessStatusBar", () => {
     expect(document.body.textContent).not.toContain("req-progress");
   });
 
-  it("uses a visually distinct status strip instead of a message bubble", async () => {
+  it("does not render the extra status strip for ordinary running agent tasks", async () => {
     await act(async () => {
       root.render(
         <AssistantProcessStatusBar
           agentTask={runningTask}
-          activityHint="正在理解你的问题…"
+          activityHint="正在理解你的问题"
           researchProgress={null}
           researchRunning={false}
+          onAbort={vi.fn()}
+        />,
+      );
+    });
+
+    expect(
+      document.querySelector('[data-testid="assistant-process-status"]'),
+    ).toBeNull();
+    expect(document.body.textContent).not.toContain("仍在处理");
+    expect(document.body.textContent).not.toContain("中止");
+  });
+
+  it("uses a visually distinct status strip for research progress only", async () => {
+    await act(async () => {
+      root.render(
+        <AssistantProcessStatusBar
+          agentTask={runningTask}
+          activityHint="researching"
+          researchProgress={progress}
+          researchRunning
           onAbort={vi.fn()}
         />,
       );
@@ -105,12 +125,12 @@ describe("AssistantProcessStatusBar", () => {
     expect(strip?.className).not.toContain("bg-surface-inset");
   });
 
-  it("changes long-running copy after eight seconds", async () => {
+  it("does not switch ordinary running tasks into a long-running status strip", async () => {
     await act(async () => {
       root.render(
         <AssistantProcessStatusBar
           agentTask={runningTask}
-          activityHint="正在理解你的问题…"
+          activityHint="understanding"
           researchProgress={null}
           researchRunning={false}
           onAbort={vi.fn()}
@@ -118,15 +138,16 @@ describe("AssistantProcessStatusBar", () => {
       );
     });
 
-    expect(document.body.textContent).toContain("正在理解");
     await act(async () => {
       vi.advanceTimersByTime(8_100);
     });
 
-    expect(document.body.textContent).toContain("仍在处理");
-    expect(document.body.textContent).toContain("中止");
+    expect(
+      document.querySelector('[data-testid="assistant-process-status"]'),
+    ).toBeNull();
+    expect(document.body.textContent).not.toContain("still processing");
+    expect(document.body.textContent).not.toContain("abort");
   });
-
   it("does not duplicate the thinking bubble and composer stop button during ordinary streaming", async () => {
     await act(async () => {
       root.render(

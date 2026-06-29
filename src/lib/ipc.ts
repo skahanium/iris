@@ -1,4 +1,4 @@
-﻿import { invoke } from "@tauri-apps/api/core";
+import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 
 import { IPC_EVENTS } from "@/lib/ipc-events";
@@ -675,10 +675,20 @@ export async function listenAiThinking(
   );
 }
 
+export interface AiRequestStartedEvent {
+  request_id: string;
+  session_id?: number;
+  task_id?: string | null;
+  intent?: string;
+  scene?: string;
+  domain?: string;
+  classified?: boolean;
+}
+
 export async function listenAiRequestStarted(
-  handler: (payload: { request_id: string }) => void,
+  handler: (payload: AiRequestStartedEvent) => void,
 ): Promise<() => void> {
-  return listen<{ request_id: string }>(IPC_EVENTS.AI_REQUEST_STARTED, (e) =>
+  return listen<AiRequestStartedEvent>(IPC_EVENTS.AI_REQUEST_STARTED, (e) =>
     handler(e.payload),
   );
 }

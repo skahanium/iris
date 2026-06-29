@@ -184,4 +184,46 @@ describe("assistant streaming lifecycle contract", () => {
       expect(streaming).toContain('"classified"');
     });
   });
+  describe("request identity is available before IPC completion", () => {
+    it("ai_send_message emits request_started after durable session and task exist", () => {
+      const src = read("src-tauri/src/commands/ai_commands.rs");
+      const fnBody =
+        src
+          .split("pub(crate) async fn execute_ai_send_message_with_routing")[1]
+          ?.split("info!(")[0] ?? "";
+      const createTaskIndex = fnBody.indexOf("AgentTaskRuntime::create_task");
+      const emitIndex = fnBody.indexOf('"ai:request_started"');
+
+      expect(createTaskIndex).toBeGreaterThanOrEqual(0);
+      expect(emitIndex).toBeGreaterThan(createTaskIndex);
+      expect(fnBody).toContain('"session_id": sid');
+      expect(fnBody).toContain('"task_id": task_id');
+    });
+
+    it("request_started listener stays mounted outside streaming windows", () => {
+      const src = read("src/components/ai/hooks/useAssistantPanelEffects.ts");
+      const effectBody = src.split("listenAiRequestStarted")[1] ?? "";
+
+      expect(effectBody).not.toContain("if (!streaming) return");
+      expect(effectBody).toContain("setHarnessRequestId");
+      expect(effectBody).toContain("setAgentTaskId");
+      expect(effectBody).toContain("setSessionId");
+    });
+  });
+  describe("composer abort targets durable tasks first", () => {
+    it("stopStreaming aborts by agent task before falling back to harness request", () => {
+      const src = read("src/components/ai/UnifiedAssistantPanel.impl.tsx");
+      const fnBody =
+        src
+          .split("const stopStreaming = useCallback")[1]
+          ?.split("const togglePacketSelection")[0] ?? "";
+
+      expect(fnBody).toContain("agentTaskAbort");
+      expect(fnBody).toContain("agentTaskId");
+      expect(fnBody).toContain("harnessAbort");
+      expect(fnBody.indexOf("agentTaskAbort")).toBeLessThan(
+        fnBody.indexOf("harnessAbort"),
+      );
+    });
+  });
 });

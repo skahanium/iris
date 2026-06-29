@@ -2,7 +2,10 @@ import { readFileSync } from "node:fs";
 
 import { describe, expect, it } from "vitest";
 
-import { buildAssistantTaskPlan } from "@/lib/assistant-taskplan";
+import {
+  buildAssistantTaskPlan,
+  shouldAttachNoteContextToTaskPlan,
+} from "@/lib/assistant-taskplan";
 
 function read(path: string): string {
   return readFileSync(path, "utf8");
@@ -156,5 +159,135 @@ describe("assistant TaskPlan routing contract", () => {
     expect(plan.intent).toBe("rewrite_selection");
     expect(plan.outputMode).toBe("confirmation_required");
     expect(plan.sourceHints).toContain("context:pending_write_proposal");
+  });
+});
+describe("regression: ordinary chat must not be promoted by open note or fresh words", () => {
+  it("keeps a greeting in chat even when a note is open", () => {
+    const plan = buildAssistantTaskPlan({
+      message: "你好？",
+      hasSelection: false,
+      notePath: "/notes/empty.md",
+      explicitScope: false,
+      contextReferences: [],
+      webAuthorized: false,
+    });
+
+    expect(plan.intent).toBe("chat");
+    expect(plan.retrievalMode).toBe("none");
+    expect(plan.executionMode).toBe("direct_answer");
+    expect(plan.artifactPlan).toEqual([]);
+    expect(shouldAttachNoteContextToTaskPlan(plan)).toBe(false);
+  });
+
+  it("keeps public fact lookup in chat while preserving brokered web access", () => {
+    const plan = buildAssistantTaskPlan({
+      message: "冯小刚的出生年月？",
+      hasSelection: false,
+      notePath: null,
+      explicitScope: false,
+      contextReferences: [],
+      webAuthorized: true,
+    });
+
+    expect(plan.intent).toBe("chat");
+    expect(plan.webMode).toBe("brokered");
+    expect(plan.executionMode).toBe("direct_answer");
+    expect(plan.outputMode).toBe("markdown_message");
+    expect(plan.artifactPlan).toEqual([]);
+  });
+
+  it("keeps a simple date question out of research even with web enabled", () => {
+    const plan = buildAssistantTaskPlan({
+      message: "今天是几月几日？",
+      hasSelection: false,
+      notePath: "/notes/empty.md",
+      explicitScope: false,
+      contextReferences: [],
+      webAuthorized: true,
+    });
+
+    expect(plan.intent).toBe("chat");
+    expect(plan.modelSlot).toBe("fast");
+    expect(plan.executionMode).toBe("direct_answer");
+    expect(plan.outputMode).toBe("markdown_message");
+    expect(plan.artifactPlan).toEqual([]);
+  });
+
+  it("answers a legal basis question directly unless the user asks for research output", () => {
+    const plan = buildAssistantTaskPlan({
+      message:
+        "在我国，国家公职人员或者领导干部关于兼职取酬、兼职兼薪方面的规定是怎么样的？依据是什么？",
+      hasSelection: false,
+      notePath: "/notes/empty.md",
+      explicitScope: false,
+      contextReferences: [],
+      webAuthorized: true,
+    });
+
+    expect(plan.intent).toBe("chat");
+    expect(plan.executionMode).toBe("direct_answer");
+    expect(plan.outputMode).toBe("markdown_message");
+    expect(plan.artifactPlan).toEqual([]);
+  });
+
+  it("uses note QA only for explicit current-note references", () => {
+    const plan = buildAssistantTaskPlan({
+      message: "请根据当前笔记回答这个问题",
+      hasSelection: false,
+      notePath: "/notes/empty.md",
+      explicitScope: false,
+      contextReferences: [],
+      webAuthorized: false,
+    });
+
+    expect(plan.intent).toBe("ask_notes");
+    expect(plan.executionMode).toBe("context_answer");
+    expect(shouldAttachNoteContextToTaskPlan(plan)).toBe(true);
+  });
+
+  it("keeps follow-up permission to search in chat with brokered web access", () => {
+    const plan = buildAssistantTaskPlan({
+      message: "可以，去补充吧",
+      hasSelection: false,
+      notePath: null,
+      explicitScope: false,
+      contextReferences: [],
+      webAuthorized: true,
+    });
+
+    expect(plan.intent).toBe("chat");
+    expect(plan.webMode).toBe("brokered");
+    expect(plan.executionMode).toBe("direct_answer");
+    expect(plan.artifactPlan).toEqual([]);
+  });
+
+  it("promotes only explicit multi-source research requests to research artifacts", () => {
+    const plan = buildAssistantTaskPlan({
+      message: "请联网调研这个主题，形成研究综述并对比多来源证据",
+      hasSelection: false,
+      notePath: "/notes/empty.md",
+      explicitScope: false,
+      contextReferences: [],
+      webAuthorized: true,
+    });
+
+    expect(plan.intent).toBe("research");
+    expect(plan.executionMode).toBe("structured_task");
+    expect(plan.outputMode).toBe("artifact_backed_message");
+    expect(plan.artifactPlan).toEqual([
+      expect.objectContaining({ kind: "evidence_sources" }),
+    ]);
+  });
+});
+describe("backend compatibility routing fallback", () => {
+  it("does not promote legacy requests only because a note is open or sources are requested", () => {
+    const src = read("src-tauri/src/commands/ai_commands.rs");
+    const fnBody =
+      src
+        .split("fn infer_agent_intent_for_new_request")[1]
+        ?.split("fn derive_task_policy_for_new_request")[0] ?? "";
+
+    expect(fnBody).not.toContain("note_path.is_some()");
+    expect(fnBody).not.toContain('"依据"');
   });
 });

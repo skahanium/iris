@@ -259,6 +259,7 @@ fn autonomy_for_input(input: AgentTaskPolicyInput) -> AutonomyLevel {
 
 fn max_rounds_for_input(input: AgentTaskPolicyInput) -> u32 {
     let base = match input.intent {
+        AgentIntent::Chat if input.web_authorized => 2,
         AgentIntent::Chat | AgentIntent::VisionChat => 1,
         AgentIntent::Research | AgentIntent::CitationCheck => 4,
         AgentIntent::DocumentCheck => 4,
@@ -284,6 +285,7 @@ fn max_tools_for_input(input: AgentTaskPolicyInput) -> u32 {
 
 fn token_budget_for_input(input: AgentTaskPolicyInput) -> (u32, u32) {
     match input.intent {
+        AgentIntent::Chat if input.web_authorized => (80_000, 120_000),
         AgentIntent::Research | AgentIntent::CitationCheck => (100_000, 240_000),
         AgentIntent::DocumentCheck => (120_000, 240_000),
         AgentIntent::Write | AgentIntent::Chapter | AgentIntent::RewriteSelection => {
@@ -302,5 +304,41 @@ fn context_strategy_for_input(input: AgentTaskPolicyInput, _max_budget: u32) -> 
         ContextStrategy::LongContext
     } else {
         ContextStrategy::Hybrid
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn chat_policy(web_authorized: bool) -> AgentTaskPolicy {
+        AgentTaskPolicy::from_input(AgentTaskPolicyInput {
+            intent: crate::ai_types::AgentIntent::Chat,
+            task_kind: AgentTaskKind::Lightweight,
+            scope: AgentTaskScope::Vault,
+            web_authorized,
+            has_attachments: false,
+            write_permission_required: false,
+            research_depth: 0,
+        })
+    }
+
+    #[test]
+    fn web_authorized_chat_allows_a_tool_round_and_answer_round() {
+        let policy = chat_policy(true);
+
+        assert_eq!(policy.autonomy_level, crate::ai_types::AutonomyLevel::L1);
+        assert_eq!(policy.max_agentic_rounds, 2);
+        assert!(policy.default_token_budget >= 60_000);
+        assert!(policy.max_token_budget >= policy.default_token_budget);
+        assert_eq!(policy.max_fetch_per_round, 1);
+    }
+
+    #[test]
+    fn offline_chat_keeps_single_round() {
+        let policy = chat_policy(false);
+
+        assert_eq!(policy.max_agentic_rounds, 1);
+        assert_eq!(policy.max_fetch_per_round, 0);
     }
 }

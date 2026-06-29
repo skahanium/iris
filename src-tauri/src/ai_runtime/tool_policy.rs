@@ -173,6 +173,10 @@ fn evaluate_entry(entry: &ToolCatalogEntry, ctx: &ToolPolicyContext) -> ToolPoli
 
 /// Minimum autonomy level required for a tool's access level.
 fn required_autonomy(entry: &ToolCatalogEntry) -> Option<AutonomyLevel> {
+    if entry.name == "web_search" {
+        return Some(AutonomyLevel::L1);
+    }
+
     match entry.access_level {
         ToolAccessLevel::ReadIndex
         | ToolAccessLevel::ReadNoteSpan
@@ -342,6 +346,18 @@ mod tests {
         }
     }
 
+    fn chat_ctx(web_search_enabled: bool) -> ToolPolicyContext {
+        let task_policy = policy_for(AgentIntent::Chat, false);
+        ToolPolicyContext {
+            task_policy: Some(task_policy.clone()),
+            scene: AiScene::KnowledgeLookup,
+            autonomy_level: task_policy.autonomy_level,
+            web_search_enabled,
+            skill_allowed_tools: vec![],
+            depth: 0,
+        }
+    }
+
     // ── Hard gate ──────────────────────────────────────────
 
     #[test]
@@ -439,13 +455,44 @@ mod tests {
     }
 
     #[test]
-    fn network_tool_denied_at_l1() {
+    fn chat_with_web_authorized_exposes_web_search_at_l1() {
+        let ctx = chat_ctx(true);
+
+        assert_eq!(ctx.autonomy_level, AutonomyLevel::L1);
+        assert_eq!(
+            evaluate_tool("web_search", &ctx),
+            ToolPolicyVerdict::AutoAllowed
+        );
+    }
+
+    #[test]
+    fn chat_without_web_authorization_does_not_expose_web_search() {
+        let ctx = chat_ctx(false);
+
+        assert_eq!(
+            evaluate_tool("web_search", &ctx),
+            ToolPolicyVerdict::Denied(DenialReason::WebSearchDisabled)
+        );
+    }
+
+    #[test]
+    fn chat_does_not_auto_expose_page_fetch_tools() {
+        let ctx = chat_ctx(true);
+
+        assert!(!is_tool_exposed("fetch_web_page", &ctx));
+        assert!(!is_tool_exposed("web_fetch_batch", &ctx));
+        assert!(!is_tool_exposed("readability_fetch", &ctx));
+        assert!(!is_tool_exposed("rendered_fetch", &ctx));
+    }
+
+    #[test]
+    fn page_fetch_tool_denied_at_l1() {
         let ctx = ToolPolicyContext {
             autonomy_level: AutonomyLevel::L1,
             ..default_ctx()
         };
         assert_eq!(
-            evaluate_tool("web_search", &ctx),
+            evaluate_tool("fetch_web_page", &ctx),
             ToolPolicyVerdict::Denied(DenialReason::InsufficientAutonomy)
         );
     }

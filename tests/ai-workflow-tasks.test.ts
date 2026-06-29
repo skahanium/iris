@@ -28,7 +28,7 @@ describe("assistant per-turn TaskPlan dispatch", () => {
         message: "这个概念是什么意思？",
         notePath: "/notes/topic.md",
         explicitScope: false,
-        expected: "ask_notes",
+        expected: "chat",
       },
       {
         message: "根据上文续写一段，剧情更诱人",
@@ -95,7 +95,7 @@ describe("assistant per-turn TaskPlan dispatch", () => {
       webAuthorized: true,
     });
 
-    expect(plan.intent).toBe("ask_notes");
+    expect(plan.intent).toBe("chat");
     expect(plan.webMode).toBe("brokered");
     expect(plan.sourceHints).not.toContain("web:fresh_required");
   });

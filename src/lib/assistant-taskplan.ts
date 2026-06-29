@@ -119,28 +119,45 @@ const ORGANIZE_KEYWORDS = [
   "知识库",
 ];
 
-const SYNTHESIS_TERMS = [
-  "研究",
-  "调研",
-  "查资料",
-  "找证据",
-  "多来源",
-  "对比来源",
-  "联网",
-  "文献",
-  "论文",
-  "深挖",
-  "取舍",
+const KNOWLEDGE_KEYWORDS = [
+  "查一下",
+  "查阅",
+  "搜索",
+  "搜一下",
+  "库里",
+  "文档里",
+  "找一下",
 ];
 
-const FRESH_WEB_TERMS = [
+const EXPLICIT_NOTE_REFERENCE_TERMS = [
+  "当前笔记",
+  "当前文档",
+  "本文",
+  "这篇笔记",
+  "这个文档",
+  "这段",
+  "选中内容",
+  "以上内容",
+  "根据当前",
+  "基于当前",
+];
+
+const EXPLICIT_RESEARCH_TERMS = [
+  "联网调研",
+  "联网研究",
+  "研究综述",
+  "文献综述",
+  "多来源",
+  "对比来源",
+  "证据矩阵",
+  "查资料",
+  "找证据",
+];
+
+const RESEARCH_ACTION_TERMS = ["研究", "调研", "深挖", "文献", "论文", "取舍"];
+
+const FRESH_EXTERNAL_FACT_TERMS = [
   "最新",
-  "现在",
-  "今天",
-  "昨日",
-  "昨天",
-  "本周",
-  "本月",
   "榜单",
   "排名",
   "排行",
@@ -153,17 +170,9 @@ const FRESH_WEB_TERMS = [
   "价格",
   "股价",
   "汇率",
-];
-
-const KNOWLEDGE_KEYWORDS = [
-  "查一下",
-  "查阅",
-  "搜索",
-  "搜一下",
-  "库里",
-  "文档里",
-  "找一下",
-  "什么是",
+  "天气",
+  "赛程",
+  "日程",
 ];
 
 const CHAPTER_KEYWORDS = ["章节", "这一章", "本章", "章内", "heading"];
@@ -208,8 +217,46 @@ function hasExplicitNoteWriteIntent(message: string): boolean {
   );
 }
 
+function isSimpleDateQuestion(message: string): boolean {
+  return /^(今天|现在|此刻)?(是)?(几月几日|什么日期|星期几|哪一天|日期)[？?。\s]*$/.test(
+    message,
+  );
+}
+
+function hasExplicitContextReference(
+  input: BuildAssistantTaskPlanInput,
+  message: string,
+): boolean {
+  return (
+    input.hasSelection ||
+    input.explicitScope ||
+    contextReferencesFor(input).length > 0 ||
+    Boolean(
+      input.notePath && includesAny(message, EXPLICIT_NOTE_REFERENCE_TERMS),
+    )
+  );
+}
+
+function hasExplicitResearchIntent(
+  input: BuildAssistantTaskPlanInput,
+  message: string,
+): boolean {
+  if (includesAny(message, EXPLICIT_RESEARCH_TERMS)) return true;
+  if (input.explicitScope && includesAny(message, RESEARCH_ACTION_TERMS)) {
+    return true;
+  }
+  return (
+    !input.notePath &&
+    includesAny(message, ["研究一下", "调研一下", "深挖一下"])
+  );
+}
+
 function needsFreshWebEvidence(message: string): boolean {
-  return includesAny(message, FRESH_WEB_TERMS) || /\b20\d{2}\b/.test(message);
+  if (isSimpleDateQuestion(message)) return false;
+  return (
+    includesAny(message, FRESH_EXTERNAL_FACT_TERMS) ||
+    /\b20\d{2}\b/.test(message)
+  );
 }
 
 function contextReferencesFor(
@@ -503,6 +550,9 @@ function planForUiAction(input: BuildAssistantTaskPlanInput): TaskPlan | null {
   return null;
 }
 
+export function shouldAttachNoteContextToTaskPlan(plan: TaskPlan): boolean {
+  return plan.retrievalMode !== "none";
+}
 export function buildAssistantTaskPlan(
   input: BuildAssistantTaskPlanInput,
 ): TaskPlan {
@@ -578,10 +628,7 @@ export function buildAssistantTaskPlan(
     }
   }
 
-  if (
-    includesAny(message, SYNTHESIS_TERMS) &&
-    (input.explicitScope || !input.notePath || message.length > 12)
-  ) {
+  if (hasExplicitResearchIntent(input, message)) {
     return researchPlan(input);
   }
 
@@ -599,9 +646,7 @@ export function buildAssistantTaskPlan(
 
   if (
     includesAny(message, KNOWLEDGE_KEYWORDS) ||
-    input.explicitScope ||
-    input.notePath ||
-    contextReferencesFor(input).length > 0
+    hasExplicitContextReference(input, message)
   ) {
     return askNotesPlan(input);
   }

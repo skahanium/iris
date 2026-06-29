@@ -54,8 +54,11 @@ describe("AI hang/stuck root-cause fixes contract", () => {
       expect(s).toContain(
         'const terminalError = hasError || agentTask?.status === "failed_safe"',
       );
-      expect(s).toContain(
-        "const active = isActiveStatus(agentTask) || researchRunning || terminalError",
+      expect(s).toContain("const active = researchRunning || terminalError");
+      expect(s).not.toContain("function isActiveStatus");
+      expect(s).not.toContain("longRunning");
+      expect(s).not.toContain(
+        "\u4ecd\u5728\u5904\u7406\uff0c\u53ef\u7ee7\u7eed\u7b49\u5f85\u6216\u4e2d\u6b62",
       );
       expect(s).not.toMatch(/const active[\s\S]*\|\|\s*streaming[\s\S]*;/);
     });

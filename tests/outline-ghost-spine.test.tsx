@@ -446,6 +446,54 @@ describe("outline ghost spine", () => {
     );
   });
 
+  it("anchors the hover title beside the hovered bar", () => {
+    editor = makeEditor(["Intro", "Hovered Target", "After"], [1, 1, 1]);
+    renderOutline(editor);
+
+    const rail = document.querySelector<HTMLElement>(
+      '[data-testid="outline-rail"]',
+    );
+    const items = Array.from(
+      document.querySelectorAll<HTMLElement>(
+        '[data-testid="outline-ghost-item"]',
+      ),
+    );
+    expect(rail).not.toBeNull();
+    expect(items).toHaveLength(3);
+
+    const originalRailRect = rail!.getBoundingClientRect.bind(rail);
+    const originalTargetRect = items[1]!.getBoundingClientRect.bind(items[1]);
+    Object.defineProperty(rail!, "getBoundingClientRect", {
+      configurable: true,
+      value: () => ({
+        ...originalRailRect(),
+        top: 40,
+        bottom: 400,
+        height: 360,
+      }),
+    });
+    Object.defineProperty(items[1]!, "getBoundingClientRect", {
+      configurable: true,
+      value: () => ({
+        ...originalTargetRect(),
+        top: 158,
+        bottom: 178,
+        height: 20,
+      }),
+    });
+
+    act(() => {
+      items[1]?.dispatchEvent(new Event("pointerover", { bubbles: true }));
+    });
+
+    const popover = document.querySelector<HTMLElement>(
+      '[data-testid="outline-ghost-popover"]',
+    );
+    expect(popover?.textContent).toContain("Hovered Target");
+    expect(popover?.style.getPropertyValue("--outline-popover-top")).toBe(
+      "128px",
+    );
+  });
   it("reveals only the hovered or focused title inside the popover", () => {
     editor = makeEditor(
       ["很长很长很长很长很长很长很长很长的一级标题", "二级标题", "三级标题"],

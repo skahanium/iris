@@ -994,7 +994,7 @@
   .outline-ghost-popover {
     position: absolute;
     left: calc(var(--editor-outline-rail-width) + 0.35rem);
-    top: 2.75rem;
+    top: var(--outline-popover-top, 2.75rem);
     display: grid;
     width: max-content;
     max-width: min(22rem, 42vw);
@@ -1007,6 +1007,7 @@
     color: hsl(var(--popover-foreground));
     box-shadow: var(--shadow-floating);
     pointer-events: none;
+    transform: translateY(-50%);
   }
 
   .outline-ghost-popover-kicker {

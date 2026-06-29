@@ -30,4 +30,12 @@ describe("AI message list scroll performance fixes (Fix 2 + Fix 3)", () => {
       expect(s).not.toContain("() => handleCopyMessage(m)");
     });
   });
+  describe("Fix 4: stable virtualizer measurement ref", () => {
+    it("does not pass rowVirtualizer.measureElement directly as a React ref", () => {
+      const s = read("src/components/ai/AiMessageList.tsx");
+
+      expect(s).not.toContain("ref={rowVirtualizer.measureElement}");
+      expect(s).toContain("measureRowElement");
+    });
+  });
 });

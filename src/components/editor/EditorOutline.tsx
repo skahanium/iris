@@ -4,6 +4,7 @@ import {
   memo,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -81,6 +82,8 @@ export const EditorOutline = memo(function EditorOutline({
   const listRef = useRef<HTMLDivElement | null>(null);
   const itemRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const barRef = useRef<HTMLDivElement | null>(null);
+  const railRef = useRef<HTMLElement | null>(null);
+  const [previewTop, setPreviewTop] = useState<string | null>(null);
   const relativeLevelByHeadingLevel = useMemo(() => {
     const levels = Array.from(
       new Set(entries.map((entry) => entry.level)),
@@ -222,6 +225,25 @@ export const EditorOutline = memo(function EditorOutline({
     [activeIndex, entries, focusIndex, jumpTo, moveFocus],
   );
 
+  const updatePreviewTop = useCallback((index: number | null) => {
+    if (index == null || index < 0) {
+      setPreviewTop(null);
+      return;
+    }
+
+    const rail = railRef.current;
+    const target = itemRefs.current[index];
+    if (!rail || !target) {
+      setPreviewTop(null);
+      return;
+    }
+
+    const railRect = rail.getBoundingClientRect();
+    const targetRect = target.getBoundingClientRect();
+    const targetCenter = targetRect.top - railRect.top + targetRect.height / 2;
+    setPreviewTop(`${Math.round(targetCenter)}px`);
+  }, []);
+
   const renderItem = (entry: OutlineEntry, index: number) => {
     const active = index === activeIndex;
     const focused = index === focusIndex;
@@ -272,10 +294,12 @@ export const EditorOutline = memo(function EditorOutline({
         }}
         onClick={() => jumpTo(entry.pos)}
         onFocus={() => {
+          updatePreviewTop(index);
           setFocusIndex(index);
           setHoverIndex(null);
         }}
         onPointerEnter={() => {
+          updatePreviewTop(index);
           setHoverIndex(index);
           setFocusIndex(null);
         }}
@@ -288,11 +312,19 @@ export const EditorOutline = memo(function EditorOutline({
   const previewIndex = hoverIndex ?? focusIndex;
   const previewEntry =
     previewIndex != null && previewIndex >= 0 ? entries[previewIndex] : null;
+  const previewStyle = previewTop
+    ? ({ "--outline-popover-top": previewTop } as CSSProperties)
+    : undefined;
+
+  useLayoutEffect(() => {
+    updatePreviewTop(previewIndex ?? null);
+  }, [entries.length, previewIndex, updatePreviewTop]);
 
   if (zen) return null;
 
   return (
     <nav
+      ref={railRef}
       data-testid="outline-rail"
       className="outline-ghost outline-ghost--active pointer-events-auto absolute z-editor-chrome flex w-[var(--editor-outline-rail-width)] min-w-[var(--editor-outline-rail-width)] flex-col"
       style={{ left: "var(--editor-outline-inset)" }}
@@ -307,6 +339,7 @@ export const EditorOutline = memo(function EditorOutline({
         ref={listRef}
         className="outline-ghost-list outline-ghost-bar-track flex flex-col"
         role="list"
+        onScroll={() => updatePreviewTop(previewIndex ?? null)}
       >
         <div ref={barRef} className="outline-ghost-bar" aria-hidden />
         <div className="outline-ghost-items">
@@ -321,6 +354,7 @@ export const EditorOutline = memo(function EditorOutline({
         <aside
           data-testid="outline-ghost-popover"
           className="outline-ghost-popover"
+          style={previewStyle}
           aria-live="polite"
         >
           <div className="outline-ghost-popover-kicker">

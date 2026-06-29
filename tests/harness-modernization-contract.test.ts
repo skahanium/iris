@@ -115,11 +115,12 @@ describe("harness modernization remaining contracts", () => {
     expect(ipc).toContain("export async function agentTaskList");
   });
 
-  it("paused-budget chat can be resumed by durable task id", () => {
+  it("paused-budget non-chat tasks can be resumed by durable task id", () => {
     const tasks = read("src/components/ai/hooks/useAssistantTasks.ts");
     const resume = read("src/components/ai/hooks/useAssistantHarnessResume.ts");
     const panel = read("src/components/ai/UnifiedAssistantPanel.tsx");
     const run = read("src-tauri/src/ai_harness/harness/run.rs");
+    const backend = read("src-tauri/src/commands/ai_commands.rs");
 
     expect(tasks).toContain("setPausedTaskId");
     expect(tasks).toContain('result.status === "paused_budget"');
@@ -134,6 +135,9 @@ describe("harness modernization remaining contracts", () => {
     );
     expect(run.indexOf("save_round_checkpoint(")).toBeLessThan(
       run.lastIndexOf("finish_run("),
+    );
+    expect(backend).toContain(
+      "!matches!(task_policy.intent, AgentIntent::Chat)",
     );
   });
 

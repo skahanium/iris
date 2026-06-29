@@ -18,7 +18,10 @@ import {
   intentDetectionForTaskPlan,
 } from "@/lib/assistant-routing";
 import { legacySceneHintForAgentIntent } from "@/lib/assistant-scene";
-import { buildAssistantTaskPlan } from "@/lib/assistant-taskplan";
+import {
+  buildAssistantTaskPlan,
+  shouldAttachNoteContextToTaskPlan,
+} from "@/lib/assistant-taskplan";
 import type { AiDomain } from "@/lib/ai-domain";
 import { invokeErrorMessage } from "@/lib/credentials";
 import {
@@ -420,6 +423,9 @@ export function useAssistantTasks({
         const agentIntent =
           options?.agentIntent ??
           (intent === "knowledge" ? "ask_notes" : "chat");
+        const attachNoteContext = options?.taskPlan
+          ? shouldAttachNoteContextToTaskPlan(options.taskPlan)
+          : intent !== "chat";
         const response = await assistantExecute({
           agentIntent,
           intent,
@@ -441,8 +447,8 @@ export function useAssistantTasks({
           contextReferences: getContextReferencesForRequest(),
           taskPlan: options?.taskPlan,
           images: options?.images,
-          notePath,
-          noteContent: getNoteContentForRequest(),
+          notePath: attachNoteContext ? notePath : null,
+          noteContent: attachNoteContext ? getNoteContentForRequest() : null,
           webAuthorized: webSearch,
           contextScope,
           sessionId,

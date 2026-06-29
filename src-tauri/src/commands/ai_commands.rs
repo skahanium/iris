@@ -170,7 +170,7 @@ fn legacy_task_policy_from_scene(
 
 fn infer_agent_intent_for_new_request(
     message: &str,
-    note_path: Option<&str>,
+    _note_path: Option<&str>,
     has_attachments: bool,
 ) -> AgentIntent {
     if has_attachments {
@@ -181,9 +181,20 @@ fn infer_agent_intent_for_new_request(
     let contains_any = |needles: &[&str]| needles.iter().any(|needle| text.contains(needle));
     if contains_any(&["skillhub", "技能", "安装 skill", "install skill"]) {
         AgentIntent::SkillManagement
-    } else if contains_any(&["研究", "调研", "综述", "对比", "深挖"]) {
+    } else if contains_any(&[
+        "联网调研",
+        "联网研究",
+        "研究综述",
+        "文献综述",
+        "多来源",
+        "对比来源",
+        "证据矩阵",
+        "研究一下",
+        "调研一下",
+        "深挖一下",
+    ]) {
         AgentIntent::Research
-    } else if contains_any(&["引用", "引证", "依据", "出处", "核查", "citation"]) {
+    } else if contains_any(&["引用", "引证", "出处", "核查", "citation"]) {
         AgentIntent::CitationCheck
     } else if contains_any(&["全文检查", "文档检查", "大纲检查", "风格一致"]) {
         AgentIntent::DocumentCheck
@@ -193,9 +204,16 @@ fn infer_agent_intent_for_new_request(
         AgentIntent::Organize
     } else if contains_any(&["改写", "重写", "润色", "续写", "扩写", "写一段"]) {
         AgentIntent::Write
-    } else if note_path.is_some()
-        || contains_any(&["查一下", "查阅", "搜索", "找一下", "库里", "笔记"])
-    {
+    } else if contains_any(&[
+        "查一下",
+        "查阅",
+        "搜索",
+        "找一下",
+        "库里",
+        "笔记里",
+        "当前笔记",
+        "本文",
+    ]) {
         AgentIntent::AskNotes
     } else {
         AgentIntent::Chat
@@ -759,13 +777,6 @@ pub(crate) async fn execute_ai_send_message_with_routing(
     // Start trace
     TraceRecorder::start(&state.db, &request_id, scene)?;
 
-    app_handle
-        .emit(
-            "ai:request_started",
-            &serde_json::json!({ "request_id": request_id }),
-        )
-        .map_err(|e| AppError::msg(format!("emit request_started: {e}")))?;
-
     // Create the durable task before guardrails or model routing so early
     // failures still have a safe lifecycle record. The user message is only
     // appended to chat history after guardrails pass.
@@ -796,6 +807,19 @@ pub(crate) async fn execute_ai_send_message_with_routing(
         "started",
         serde_json::json!({ "request_id": request_id.clone() }),
     )?;
+    app_handle
+        .emit(
+            "ai:request_started",
+            &serde_json::json!({
+                "request_id": request_id.clone(),
+                "session_id": sid,
+                "task_id": task_id.clone(),
+                "intent": task_policy.intent,
+                "scene": scene.profile(),
+                "domain": "normal",
+            }),
+        )
+        .map_err(|e| AppError::msg(format!("emit request_started: {e}")))?;
 
     // Sanitize query for injection attempts
     match guardrails::sanitize_query(&message) {
@@ -1037,13 +1061,15 @@ pub(crate) async fn execute_ai_send_message_with_routing(
     };
 
     TraceRecorder::update_status(&state.db, &request_id, TraceStatus::ModelCalled)?;
-    let task_status = if harness_result.pending_confirmation {
-        AgentTaskStatus::AwaitingConfirmation
-    } else if matches!(
+    let budget_finish = matches!(
         harness_result.finish_reason,
         crate::ai_runtime::harness::HarnessFinishReason::BudgetExhausted
             | crate::ai_runtime::harness::HarnessFinishReason::RoundLimit
-    ) {
+    );
+    let should_pause_for_budget = !matches!(task_policy.intent, AgentIntent::Chat) && budget_finish;
+    let task_status = if harness_result.pending_confirmation {
+        AgentTaskStatus::AwaitingConfirmation
+    } else if should_pause_for_budget {
         AgentTaskStatus::PausedBudget
     } else {
         AgentTaskStatus::Completed

@@ -29,8 +29,10 @@ interface UseAssistantPanelEffectsParams {
   selectionQuote?: AssistantSelectionQuote | null;
   sessionTokenUsage: TokenUsage | null;
   setActionState: Dispatch<SetStateAction<AssistantActionState>>;
+  setAgentTaskId: Dispatch<SetStateAction<string | null>>;
   setHarnessRequestId: Dispatch<SetStateAction<string | null>>;
   setInput: Dispatch<SetStateAction<string>>;
+  setSessionId: Dispatch<SetStateAction<number | null>>;
   streaming: boolean;
 }
 
@@ -45,8 +47,10 @@ export function useAssistantPanelEffects({
   selectionQuote,
   sessionTokenUsage,
   setActionState,
+  setAgentTaskId,
   setHarnessRequestId,
   setInput,
+  setSessionId,
   streaming,
 }: UseAssistantPanelEffectsParams) {
   useEffect(() => {
@@ -72,13 +76,18 @@ export function useAssistantPanelEffects({
   ]);
 
   useEffect(() => {
-    if (!streaming) return;
     let unlisten: (() => void) | undefined;
     let cancelled = false;
     void listenAiRequestStarted((payload) => {
       if (cancelled) return;
       requestIdRef.current = payload.request_id;
       setHarnessRequestId(payload.request_id);
+      if (typeof payload.session_id === "number") {
+        setSessionId(payload.session_id);
+      }
+      if (payload.task_id) {
+        setAgentTaskId(payload.task_id);
+      }
     }).then((fn) => {
       if (cancelled) fn();
       else unlisten = fn;
@@ -87,7 +96,7 @@ export function useAssistantPanelEffects({
       cancelled = true;
       unlisten?.();
     };
-  }, [requestIdRef, setHarnessRequestId, streaming]);
+  }, [requestIdRef, setAgentTaskId, setHarnessRequestId, setSessionId]);
 
   useEffect(() => {
     if (!selectionQuote?.text) return;

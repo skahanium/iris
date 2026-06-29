@@ -301,7 +301,7 @@ mod tests {
         let names: Vec<&str> = tools.iter().map(|t| t.name.as_str()).collect();
 
         assert!(names.contains(&"search_hybrid"));
-        assert!(!names.contains(&"web_search"));
+        assert!(names.contains(&"web_search"));
         assert!(!names.contains(&"fetch_web_page"));
     }
 

@@ -97,6 +97,7 @@ fn capabilities_section(tools: &[ToolSpec]) -> String {
             "insert_text_at_cursor" | "replace_selection"
         )
     });
+    let has_web_search = tools.iter().any(|tool| tool.name == "web_search");
     for tool in tools {
         s.push_str(&format!(
             "- **{}**：{}（{}）\n",
@@ -109,6 +110,16 @@ fn capabilities_section(tools: &[ToolSpec]) -> String {
             }
         ));
     }
+    if has_web_search {
+        s.push_str(
+            "\n本轮可调用 `web_search` 进行联网搜索；遇到外部事实、公开人物信息、实时资料或用户要求补充搜索时，应主动调用它。不要声称 Iris 没有搜索能力，也不要把工具名写成 `search_web`。\n",
+        );
+    } else {
+        s.push_str(
+            "\n本轮未授予 web_search；如需要联网搜索，请说明本轮未授予联网搜索工具，不要声称 Iris 没有搜索能力。\n",
+        );
+    }
+
     if has_write_tool {
         s.push_str(
             "\n写作或修改任务中，必须优先调用可用写入工具并等待用户确认；不要要求用户手动复制粘贴。\n",
@@ -249,6 +260,43 @@ mod tests {
 
         assert!(text.contains("本轮未授予写入工具"));
         assert!(text.contains("不要声称 Iris 没有写入接口"));
+    }
+
+    #[test]
+    fn capabilities_explain_web_search_when_available() {
+        let tools = vec![ToolSpec {
+            name: "web_search".into(),
+            description: "联网搜索".into(),
+            input_schema: serde_json::json!({}),
+            access_level: ToolAccessLevel::Network,
+            requires_confirmation: false,
+            max_results: Some(8),
+            scene_affinity: vec![AiScene::KnowledgeLookup],
+        }];
+
+        let text = capabilities_section(&tools);
+
+        assert!(text.contains("web_search"));
+        assert!(text.contains("本轮可调用"));
+        assert!(text.contains("不要声称 Iris 没有搜索能力"));
+    }
+
+    #[test]
+    fn capabilities_describe_missing_web_tool_as_turn_scope_not_app_capability() {
+        let tools = vec![ToolSpec {
+            name: "search_hybrid".into(),
+            description: "混合搜索".into(),
+            input_schema: serde_json::json!({}),
+            access_level: ToolAccessLevel::ReadIndex,
+            requires_confirmation: false,
+            max_results: None,
+            scene_affinity: vec![],
+        }];
+
+        let text = capabilities_section(&tools);
+
+        assert!(text.contains("本轮未授予 web_search"));
+        assert!(text.contains("不要声称 Iris 没有搜索能力"));
     }
 
     #[test]

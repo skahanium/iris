@@ -102,4 +102,17 @@ describe("unified assistant shell", () => {
     expect(source).toContain("MinimaxSearchSection");
     expect(source).toContain('id: "ai"');
   });
+  it("contains local error boundaries around volatile AI panel surfaces", () => {
+    const panel = read("src/components/ai/UnifiedAssistantPanel.impl.tsx");
+
+    expect(panel).toContain('scope="AI任务区"');
+    expect(panel).toContain('scope="AI对话区"');
+    expect(panel).toContain('scope="AI任务状态"');
+    expect(panel.indexOf('scope="AI任务区"')).toBeLessThan(
+      panel.indexOf("<AssistantTaskSurfaces"),
+    );
+    expect(panel.indexOf('scope="AI对话区"')).toBeLessThan(
+      panel.indexOf("<ConversationSurface"),
+    );
+  });
 });

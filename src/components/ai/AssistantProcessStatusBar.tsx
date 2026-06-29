@@ -1,6 +1,4 @@
 import { Loader2, StopCircle } from "lucide-react";
-import { useEffect, useState } from "react";
-
 import { Button } from "@/components/ui/button";
 import type { AgentTaskDto } from "@/types/ipc";
 
@@ -27,20 +25,6 @@ interface AssistantProcessStatusBarProps {
   researchRunning: boolean;
   onAbort: () => void;
   streaming?: boolean;
-}
-
-function isActiveStatus(task: AgentTaskDto | null): boolean {
-  return Boolean(
-    task &&
-    [
-      "queued",
-      "running",
-      "awaiting_confirmation",
-      "paused_budget",
-      "paused_recoverable",
-      "failed_safe",
-    ].includes(task.status),
-  );
 }
 
 function baseStatusLabel(
@@ -78,43 +62,20 @@ export function AssistantProcessStatusBar({
   researchRunning,
   onAbort,
 }: AssistantProcessStatusBarProps) {
-  const [longRunning, setLongRunning] = useState(false);
   const terminalError = hasError || agentTask?.status === "failed_safe";
-  const active = isActiveStatus(agentTask) || researchRunning || terminalError;
-
-  useEffect(() => {
-    if (!active || terminalError) {
-      setLongRunning(false);
-      return;
-    }
-    setLongRunning(false);
-    const timer = window.setTimeout(() => setLongRunning(true), 8_000);
-    return () => window.clearTimeout(timer);
-  }, [active, activityHint, agentTask?.status, researchRunning, terminalError]);
+  const active = researchRunning || terminalError;
 
   if (!active) return null;
 
-  const mayShowLongRunning =
-    researchRunning ||
-    agentTask?.status === "queued" ||
-    agentTask?.status === "running";
   const label = terminalError
     ? "处理遇到问题"
-    : longRunning && mayShowLongRunning
-      ? "仍在处理，可继续等待或中止"
-      : baseStatusLabel(
-          agentTask,
-          activityHint,
-          researchProgress,
-          researchRunning,
-        );
-  const canAbort =
-    researchRunning ||
-    agentTask?.status === "queued" ||
-    agentTask?.status === "running" ||
-    agentTask?.status === "awaiting_confirmation" ||
-    agentTask?.status === "paused_budget" ||
-    agentTask?.status === "paused_recoverable";
+    : baseStatusLabel(
+        agentTask,
+        activityHint,
+        researchProgress,
+        researchRunning,
+      );
+  const canAbort = researchRunning;
 
   return (
     <div className="px-4 pb-4 pt-2" data-testid="assistant-process-status">

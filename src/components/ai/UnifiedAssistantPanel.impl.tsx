@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { AssistantPanelHeader } from "@/components/ai/AssistantPanelHeader";
+import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { usePromptProfile } from "@/hooks/usePromptProfile";
 import { useAssistantLlmStream } from "@/hooks/useAssistantLlmStream";
 import { useAiDomainRuntime } from "@/hooks/useAiDomainRuntime";
 import { useDocSummaryStream } from "@/hooks/useDocSummaryStream";
-import { harnessAbort } from "@/lib/ipc";
+import { agentTaskAbort, harnessAbort } from "@/lib/ipc";
 import { legacySceneHintForTaskPlanIntent } from "@/lib/assistant-scene";
 import type {
   AssistantActionState,
@@ -225,8 +226,10 @@ export function UnifiedAssistantPanel({
     selectionQuote,
     sessionTokenUsage,
     setActionState,
+    setAgentTaskId,
     setHarnessRequestId,
     setInput,
+    setSessionId,
     streaming,
   });
 
@@ -381,14 +384,17 @@ export function UnifiedAssistantPanel({
   );
 
   const stopStreaming = useCallback(() => {
+    const taskId = agentTaskId;
     const id = requestIdRef.current;
-    if (id) {
+    if (taskId) {
+      void agentTaskAbort(taskId);
+    } else if (id) {
       void harnessAbort(id);
     }
     panelSendActiveRef.current = false;
     setStreaming(false);
     setActivityHint(null);
-  }, []);
+  }, [agentTaskId]);
 
   const togglePacketSelection = useCallback((id: string) => {
     setSelectedPacketIds((prev) =>
@@ -398,7 +404,6 @@ export function UnifiedAssistantPanel({
   const currentScene = legacySceneHintForTaskPlanIntent(currentTaskPlanIntent);
   const currentConversationId =
     aiDomain === "classified" ? classifiedThreadId : sessionId;
-
   return (
     <div
       className="ai-sidecar flex h-full flex-col bg-ai-workspace"
@@ -419,7 +424,6 @@ export function UnifiedAssistantPanel({
         taskStatus={actionState.status}
         webSearch={webSearch}
       />
-
       <ContextPacketDrawer
         open={packetsOpen}
         onOpenChange={setPacketsOpen}
@@ -432,7 +436,6 @@ export function UnifiedAssistantPanel({
         sessionId={sessionId}
         onOpenArtifact={(draft) => onOpenArtifact?.(draft)}
       />
-
       <AssistantErrorRecovery
         disabled={streaming}
         harnessRequestId={harnessRequestId}
@@ -440,44 +443,48 @@ export function UnifiedAssistantPanel({
         pausedTaskId={pausedTaskId}
         onResume={() => void handleHarnessResume()}
       />
-
-      <AssistantTaskSurfaces
-        assistantArtifacts={assistantArtifacts}
-        docSummary={docSummary}
-        docIssues={docIssues}
-        citationResult={citationResult}
-        organizeSuggestions={organizeSuggestions}
-        organizeSelection={organizeSelection}
-        evidenceRefreshNotice={assistantRun.evidenceRefreshNotice}
-        writingPatches={writingPatches}
-        writingState={writingState}
-        onOpenArtifact={(draft) => onOpenArtifact?.(draft)}
-      />
-      <ConversationSurface
-        messages={messages}
-        contextReferences={bubbleSelection.contextReferences}
-        streaming={streaming}
-        selectedIndices={bubbleSelection.selected}
-        messageListRef={messageListRef}
-        onCitationClick={handleCitationClick}
-        onRetract={handleRetract}
-        onSelect={bubbleSelection.handleClick}
-        onQuoteToInput={handleQuoteToInput}
-        onRemoveContextReference={bubbleSelection.removeContextReference}
-      />
-      <AgentTaskStatusPanel
-        task={agentTaskStatus.agentTask}
-        steps={agentTaskStatus.agentTaskSteps}
-        events={agentTaskStatus.agentTaskEvents}
-        intentDetection={runPlan.intentDetection}
-        onAbort={() => void agentTaskStatus.abortAgentTask()}
-        onOpenArtifact={(draft) => onOpenArtifact?.(draft)}
-        onResume={() => void handleHarnessResume()}
-        permissionPreflightSummary={runPlan.permissionPreflightSummary}
-        researchState={researchState}
-        runPlanSummary={runPlan.runPlanSummary}
-      />
-
+      <ErrorBoundary scope="AI任务区">
+        <AssistantTaskSurfaces
+          assistantArtifacts={assistantArtifacts}
+          docSummary={docSummary}
+          docIssues={docIssues}
+          citationResult={citationResult}
+          organizeSuggestions={organizeSuggestions}
+          organizeSelection={organizeSelection}
+          evidenceRefreshNotice={assistantRun.evidenceRefreshNotice}
+          writingPatches={writingPatches}
+          writingState={writingState}
+          onOpenArtifact={(draft) => onOpenArtifact?.(draft)}
+        />
+      </ErrorBoundary>
+      <ErrorBoundary scope="AI对话区">
+        <ConversationSurface
+          messages={messages}
+          contextReferences={bubbleSelection.contextReferences}
+          streaming={streaming}
+          selectedIndices={bubbleSelection.selected}
+          messageListRef={messageListRef}
+          onCitationClick={handleCitationClick}
+          onRetract={handleRetract}
+          onSelect={bubbleSelection.handleClick}
+          onQuoteToInput={handleQuoteToInput}
+          onRemoveContextReference={bubbleSelection.removeContextReference}
+        />
+      </ErrorBoundary>
+      <ErrorBoundary scope="AI任务状态">
+        <AgentTaskStatusPanel
+          task={agentTaskStatus.agentTask}
+          steps={agentTaskStatus.agentTaskSteps}
+          events={agentTaskStatus.agentTaskEvents}
+          intentDetection={runPlan.intentDetection}
+          onAbort={() => void agentTaskStatus.abortAgentTask()}
+          onOpenArtifact={(draft) => onOpenArtifact?.(draft)}
+          onResume={() => void handleHarnessResume()}
+          permissionPreflightSummary={runPlan.permissionPreflightSummary}
+          researchState={researchState}
+          runPlanSummary={runPlan.runPlanSummary}
+        />
+      </ErrorBoundary>
       <SelectedMessagesActionDock
         count={bubbleSelection.selected.size}
         onClear={bubbleSelection.clear}
@@ -485,9 +492,7 @@ export function UnifiedAssistantPanel({
         onExport={handleExportSelected}
         onInsert={onInsertToEditor ? handleInsertToEditor : undefined}
       />
-
       <ContextScopeChips tokens={mentionTokens} onRemove={removeMentionToken} />
-
       <AssistantComposerDock
         activityHint={activityHint}
         agentTask={agentTaskStatus.agentTask}
@@ -518,7 +523,6 @@ export function UnifiedAssistantPanel({
         onSubmit={() => void send()}
         onValueChange={setInput}
       />
-
       <AssistantConfirmDialogs
         ruleConfirmRequest={ruleConfirmRequest}
         toolConfirmRequest={toolConfirmRequest}

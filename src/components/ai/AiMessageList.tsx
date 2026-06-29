@@ -204,6 +204,12 @@ export const AiMessageList = memo(function AiMessageList({
     estimateSize: estimateSizeByContent,
     overscan: 8,
   });
+  const rowVirtualizerRef = useRef(rowVirtualizer);
+  rowVirtualizerRef.current = rowVirtualizer;
+  const measureRowElement = useCallback((node: HTMLDivElement | null) => {
+    if (!node) return;
+    rowVirtualizerRef.current.measureElement(node);
+  }, []);
   const virtualTotalSize = rowVirtualizer.getTotalSize();
   const virtualItems = rowVirtualizer.getVirtualItems();
 
@@ -389,7 +395,7 @@ export const AiMessageList = memo(function AiMessageList({
           return (
             <div
               key={virtualRow.key}
-              ref={rowVirtualizer.measureElement}
+              ref={measureRowElement}
               data-index={virtualRow.index}
               className="absolute left-0 top-0 w-full px-3"
               style={{ transform: `translateY(${virtualRow.start}px)` }}
