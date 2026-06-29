@@ -1,7 +1,7 @@
 const STORAGE_KEY = "iris.aiPanelWidth";
 export const AI_PANEL_WIDTH_DEFAULT = 360;
 export const AI_PANEL_WIDTH_MIN = 280;
-export const AI_PANEL_WIDTH_MAX = 560;
+export const AI_PANEL_WIDTH_MAX = 720;
 
 export function loadAiPanelWidth(): number {
   if (typeof localStorage === "undefined") {

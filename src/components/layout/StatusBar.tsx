@@ -5,6 +5,7 @@ import { ConnectivityIndicators } from "@/components/layout/ConnectivityIndicato
 import { EditorZoomControl } from "@/components/layout/EditorZoomControl";
 import { StatusBarTokenUsage } from "@/components/layout/StatusBarTokenUsage";
 import type { AssistantChromeSnapshot } from "@/types/assistant-chrome";
+import type { FileLinkSummary } from "@/types/ipc";
 import type { ConnectivityStatus } from "@/types/llm";
 
 interface StatusBarProps {
@@ -35,6 +36,9 @@ interface StatusBarProps {
   onOpenGraph?: () => void;
   /** AI 侧栏上报的 Token / 工具活动（见 UnifiedAssistantPanel） */
   assistantChrome?: AssistantChromeSnapshot | null;
+  linkSummary?: FileLinkSummary | null;
+  linkSummaryUnavailable?: boolean;
+  onOpenKnowledgeRelations?: () => void;
 }
 
 function isClassifiedStatusLine(value: string | null | undefined) {
@@ -67,6 +71,9 @@ export const StatusBar = memo(function StatusBar({
   onOpenManagementCenter,
   onOpenGraph,
   assistantChrome = null,
+  linkSummary = null,
+  linkSummaryUnavailable = false,
+  onOpenKnowledgeRelations,
 }: StatusBarProps) {
   const trimmedTitle = documentTitle?.trim();
   const label = trimmedTitle || (path ? "无标题" : "未打开文件");
@@ -150,6 +157,28 @@ export const StatusBar = memo(function StatusBar({
             ·
           </span>
           <span className="shrink-0 text-muted-foreground">未保存</span>
+        </>
+      ) : null}
+      {path &&
+      onOpenKnowledgeRelations &&
+      (linkSummary || linkSummaryUnavailable) ? (
+        <>
+          <span className="shrink-0 text-muted-foreground/60" aria-hidden>
+            ·
+          </span>
+          <button
+            type="button"
+            data-testid="status-bar-link-summary"
+            className="iris-focus-soft inline-flex h-5 shrink-0 items-center rounded-sm px-1.5 tabular-nums text-muted-foreground transition-[background-color,color,transform] duration-base ease-iris-out hover:bg-muted/50 hover:text-foreground focus:outline-none active:scale-[0.98]"
+            title="打开知识关联"
+            onClick={onOpenKnowledgeRelations}
+          >
+            {linkSummaryUnavailable
+              ? "双链暂不可用"
+              : `入链 ${linkSummary?.inboundCount ?? 0} · 出链 ${
+                  linkSummary?.outboundCount ?? 0
+                }`}
+          </button>
         </>
       ) : null}
       <div className="ml-auto flex min-w-0 shrink-0 items-center gap-3">

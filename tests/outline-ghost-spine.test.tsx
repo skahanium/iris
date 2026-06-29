@@ -40,7 +40,12 @@ function makeEditor(
   });
 }
 
-function renderOutline(ed: Editor, open = true, locked = false) {
+function renderOutline(
+  ed: Editor,
+  open = true,
+  locked = false,
+  onOpenChange = vi.fn(),
+) {
   host = document.createElement("div");
   host.style.height = "640px";
   document.body.append(host);
@@ -51,29 +56,23 @@ function renderOutline(ed: Editor, open = true, locked = false) {
         editor={ed}
         open={open}
         locked={locked}
-        onOpenChange={() => {}}
+        onOpenChange={onOpenChange}
       />,
     );
   });
+  return onOpenChange;
 }
 
-function renderOutlineWithLinks(ed: Editor, onOpenNote = vi.fn(), open = true) {
+function renderOutlineWithPath(ed: Editor, open = true) {
   host = document.createElement("div");
   host.style.height = "640px";
   document.body.append(host);
   root = createRoot(host);
   act(() => {
     root?.render(
-      <EditorOutline
-        editor={ed}
-        open={open}
-        notePath="target.md"
-        onOpenNote={onOpenNote}
-        onOpenChange={() => {}}
-      />,
+      <EditorOutline editor={ed} open={open} onOpenChange={() => {}} />,
     );
   });
-  return onOpenNote;
 }
 
 function press(key: string) {
@@ -100,18 +99,36 @@ afterEach(() => {
 });
 
 describe("outline ghost spine", () => {
-  it("renders a transparent text index instead of minimap ticks or captions", () => {
+  it("renders a floating bar rail instead of minimap ticks or always-visible text rows", () => {
     const outline = read("src/components/editor/EditorOutline.tsx");
     const css = read("src/styles/globals.css");
 
     expect(outline).toContain("outline-ghost--active");
     expect(outline).toContain("outline-ghost-item");
+    expect(outline).toContain("outline-ghost-items");
+    expect(outline).toContain("outline-ghost-bar-track");
+    expect(outline).toContain("outline-ghost-item-line");
+    expect(outline).toContain("outline-ghost-popover");
+    expect(outline).not.toContain("ListTree");
+    expect(outline).not.toContain('data-testid="outline-rail-handle"');
+    expect(outline).not.toContain("outline-ghost-handle");
+    expect(outline).not.toContain("显示目录");
+    expect(outline).not.toContain("隐藏目录");
     expect(outline).not.toContain("outline-luminous-tick");
     expect(outline).not.toContain("OutlineLuminousCaption");
     expect(outline).not.toContain("getTickTop");
     expect(outline).not.toContain("nearestIndexFromPointer");
     expect(css).toContain(".outline-ghost");
+    expect(css).toMatch(/\.outline-ghost \{[\s\S]*top: 50%/);
+    expect(css).toMatch(
+      /\.outline-ghost \{[\s\S]*transform: translateY\(-50%\)/,
+    );
     expect(css).toContain(".outline-ghost-item--active");
+    expect(css).toContain(".outline-ghost-item-line");
+    expect(css).toContain(".outline-ghost-popover");
+    expect(css).not.toContain(".outline-ghost-handle");
+    expect(css).not.toContain(".outline-ghost-popover-list");
+    expect(css).not.toContain(".outline-ghost-popover-item");
     expect(css).not.toContain(".outline-luminous-tick");
     expect(css).not.toContain(".outline-luminous-caption");
   });
@@ -140,16 +157,40 @@ describe("outline ghost spine", () => {
     renderOutline(editor);
 
     expect(
-      document.querySelector(
-        '[data-testid="outline-ghost-item"][aria-current="location"]',
-      )?.textContent,
-    ).toContain("第一章");
+      document
+        .querySelector(
+          '[data-testid="outline-ghost-item"][aria-current="location"]',
+        )
+        ?.getAttribute("aria-label"),
+    ).toBe("第一章");
 
     press("ArrowDown");
     press("Enter");
 
     expect(editor.state.selection.head).toBe(entries[1]!.pos);
     expect(scrollSpy).toHaveBeenCalled();
+  });
+
+  it("keeps the outline rail resident and ignores close shortcuts", () => {
+    editor = makeEditor(["常驻一", "常驻二"], [1, 1]);
+    const onOpenChange = renderOutline(editor, false, false);
+
+    expect(
+      document.querySelector('[data-testid="outline-rail"]'),
+    ).not.toBeNull();
+    expect(
+      document.querySelector('[data-testid="outline-rail-handle"]'),
+    ).toBeNull();
+    expect(
+      document.querySelectorAll('[data-testid="outline-ghost-item"]'),
+    ).toHaveLength(2);
+
+    press("Escape");
+
+    expect(onOpenChange).not.toHaveBeenCalled();
+    expect(
+      document.querySelector('[data-testid="outline-rail"]'),
+    ).not.toBeNull();
   });
 
   it("jumps to outline entries while the editor is locked without focusing the editor", () => {
@@ -285,7 +326,7 @@ describe("outline ghost spine", () => {
     expect(focusSpy).not.toHaveBeenCalled();
   });
 
-  it("keeps adjacent top-level headings as full-width stacked rows", () => {
+  it("keeps adjacent top-level headings as compact animated rail bars", () => {
     editor = makeEditor(
       ["chidafan", "Shui大叫", "sha d j k na s j k d"],
       [1, 1, 1],
@@ -297,6 +338,9 @@ describe("outline ghost spine", () => {
       '[data-testid="outline-rail"]',
     );
     const list = document.querySelector<HTMLElement>(".outline-ghost-list");
+    const itemGroup = document.querySelector<HTMLElement>(
+      ".outline-ghost-items",
+    );
     const items = Array.from(
       document.querySelectorAll<HTMLElement>(
         '[data-testid="outline-ghost-item"]',
@@ -309,8 +353,14 @@ describe("outline ghost spine", () => {
     );
     expect(list?.className).toContain("flex");
     expect(list?.className).toContain("flex-col");
+    expect(itemGroup).not.toBeNull();
+    expect(itemGroup?.className).toContain("outline-ghost-items");
+    expect(itemGroup?.parentElement).toBe(list);
     expect(items).toHaveLength(3);
-    expect(items.map((item) => item.textContent)).toEqual([
+    for (const item of items) {
+      expect(item.parentElement).toBe(itemGroup);
+    }
+    expect(items.map((item) => item.getAttribute("aria-label"))).toEqual([
       "chidafan",
       "Shui大叫",
       "sha d j k na s j k d",
@@ -318,6 +368,8 @@ describe("outline ghost spine", () => {
     for (const item of items) {
       expect(item.className).toContain("outline-ghost-item");
       expect(item.className).toContain("w-full");
+      expect(item.querySelector(".outline-ghost-item-line")).not.toBeNull();
+      expect(item.querySelector(".outline-ghost-text")).toBeNull();
     }
   });
 
@@ -337,19 +389,19 @@ describe("outline ghost spine", () => {
 
     expect(items).toHaveLength(5);
     expect(items[0]?.style.paddingLeft).toBe(
-      "calc(0rem + var(--editor-outline-text-offset))",
+      "calc(0rem + var(--editor-outline-bar-offset))",
     );
     expect(items[1]?.style.paddingLeft).toBe(
-      "calc(0rem + var(--editor-outline-text-offset))",
+      "calc(0rem + var(--editor-outline-bar-offset))",
     );
     expect(items[2]?.style.paddingLeft).toBe(
-      "calc(1.45rem + var(--editor-outline-text-offset))",
+      "calc(0.55rem + var(--editor-outline-bar-offset))",
     );
     expect(items[3]?.style.paddingLeft).toBe(
-      "calc(1.45rem + var(--editor-outline-text-offset))",
+      "calc(0.55rem + var(--editor-outline-bar-offset))",
     );
     expect(items[4]?.style.paddingLeft).toBe(
-      "calc(0rem + var(--editor-outline-text-offset))",
+      "calc(0rem + var(--editor-outline-bar-offset))",
     );
   });
 
@@ -365,13 +417,13 @@ describe("outline ghost spine", () => {
     );
 
     expect(items[0]?.style.paddingLeft).toBe(
-      "calc(0rem + var(--editor-outline-text-offset))",
+      "calc(0rem + var(--editor-outline-bar-offset))",
     );
     expect(items[1]?.style.paddingLeft).toBe(
-      "calc(1.45rem + var(--editor-outline-text-offset))",
+      "calc(0.55rem + var(--editor-outline-bar-offset))",
     );
     expect(items[2]?.style.paddingLeft).toBe(
-      "calc(1.45rem + var(--editor-outline-text-offset))",
+      "calc(0.55rem + var(--editor-outline-bar-offset))",
     );
   });
 
@@ -387,14 +439,14 @@ describe("outline ghost spine", () => {
     );
 
     expect(items[0]?.style.paddingLeft).toBe(
-      "calc(0rem + var(--editor-outline-text-offset))",
+      "calc(0rem + var(--editor-outline-bar-offset))",
     );
     expect(items[1]?.style.paddingLeft).toBe(
-      "calc(0rem + var(--editor-outline-text-offset))",
+      "calc(0rem + var(--editor-outline-bar-offset))",
     );
   });
 
-  it("keeps level labels in a left column and truncates long left-aligned titles", () => {
+  it("reveals only the hovered or focused title inside the popover", () => {
     editor = makeEditor(
       ["很长很长很长很长很长很长很长很长的一级标题", "二级标题", "三级标题"],
       [1, 2, 3],
@@ -407,36 +459,43 @@ describe("outline ghost spine", () => {
         '[data-testid="outline-ghost-item"]',
       ),
     );
-    const firstText = items[0]?.querySelector(".outline-ghost-text");
+    const firstLine = items[0]?.querySelector(".outline-ghost-item-line");
 
     expect(items[0]?.querySelector(".outline-ghost-marker")).toBeNull();
-    expect(firstText).not.toBeNull();
+    expect(firstLine).not.toBeNull();
     expect(items[0]?.className).toContain("flex");
     expect(items[0]?.className).not.toContain("grid-cols-[");
-    expect(firstText?.className).toContain("block");
-    expect(firstText?.className).toContain("flex-1");
-    expect(firstText?.className).toContain("text-left");
-    expect(firstText?.className).toContain("min-w-0");
-    expect(firstText?.className).toContain("overflow-hidden");
-    expect(firstText?.className).toContain("text-ellipsis");
-    expect(firstText?.className).not.toContain("whitespace-nowrap");
-    expect(firstText?.hasAttribute("title")).toBe(false);
+    expect(items[0]?.querySelector(".outline-ghost-text")).toBeNull();
+
+    act(() => {
+      items[0]?.focus();
+    });
+
+    const popover = document.querySelector<HTMLElement>(
+      '[data-testid="outline-ghost-popover"]',
+    );
+    expect(popover?.textContent).toContain(
+      "很长很长很长很长很长很长很长很长的一级标题",
+    );
+    expect(popover?.textContent).toContain("H1");
+    expect(popover?.textContent).not.toContain("二级标题");
+    expect(popover?.textContent).not.toContain("三级标题");
+    expect(popover?.querySelector(".outline-ghost-popover-list")).toBeNull();
+    expect(popover?.querySelector(".outline-ghost-popover-item")).toBeNull();
 
     const outline = read("src/components/editor/EditorOutline.tsx");
     expect(outline).not.toContain("title={entry.text}");
-    expect(outline).not.toContain("whitespace-nowrap");
+    expect(outline).toContain('data-testid="outline-ghost-popover"');
+    expect(outline).not.toContain("outline-ghost-popover-list");
+    expect(outline).not.toContain("outline-ghost-popover-item");
 
     const css = read("src/styles/globals.css");
-    expect(css).toContain("text-align: left");
-    expect(css).toContain(".outline-ghost-text");
+    expect(css).toContain(".outline-ghost-popover");
+    expect(css).not.toContain(".outline-ghost-popover-list");
+    expect(css).not.toContain(".outline-ghost-popover-item");
     expect(css).not.toContain(".outline-ghost-marker");
     expect(css).not.toContain("grid-template-areas");
     expect(css).not.toContain("grid-area: text");
-    expect(css).toContain("text-overflow: ellipsis");
-    expect(css).toMatch(/\.outline-ghost-text \{[\s\S]*white-space: pre;/);
-    expect(css).not.toMatch(
-      /\.outline-ghost-text \{[\s\S]*white-space: nowrap;/,
-    );
   });
 
   it("adds active-neighborhood classes around the selected heading", () => {
@@ -488,10 +547,7 @@ describe("outline ghost spine", () => {
     expect(titleBar).toContain("text-xs");
     expect(titleBar).toContain("text-muted-foreground");
     expect(titleBar).toContain("text-[hsl(var(--outline-rail-active))]");
-    expect(outline).toContain("text-[0.9375rem]");
-    expect(outline).toContain("leading-[1.45rem]");
-    expect(outline).toContain("font-normal");
-    expect(outline).toContain("text-muted-foreground");
+    expect(outline).toContain("outline-ghost-item-line");
     expect(outline).toContain("text-[hsl(var(--outline-rail-active))]");
     expect(outline).not.toContain(
       "outline-ghost-item flex w-full items-center text-left text-xs",
@@ -500,16 +556,21 @@ describe("outline ghost spine", () => {
       "outline-ghost-item flex w-full items-center text-left text-sm",
     );
 
-    expect(css).toContain("--outline-item-height: 2.25rem");
-    expect(css).toContain("--outline-row-gap: 0.2rem");
-    expect(css).toContain("--outline-font-family: inherit");
-    expect(css).toContain("font-family: var(--outline-font-family)");
-    expect(css).toContain("font-size: 0.9375rem");
-    expect(css).toContain("font-weight: 400");
-    expect(css).toContain("line-height: 1.45rem");
-    expect(css).toContain("--outline-level-tone: hsl(var(--muted-foreground))");
-    expect(css).toContain("color: var(--outline-level-tone)");
-    expect(css).toContain("color: hsl(var(--outline-rail-active));");
+    expect(css).toContain("--outline-item-height: 1.05rem");
+    expect(css).toContain("--outline-row-gap: 0.84rem");
+    expect(css).toContain("--outline-bar-width: 0.95rem");
+    expect(css).toContain("--outline-bar-active-width: 3rem");
+    expect(css).toContain("--outline-bar-candidate-width: 3.5rem");
+    expect(css).toContain("height: 4px");
+    expect(css).toContain("height: min(74.4dvh, 33.6rem)");
+    expect(css).toMatch(/\.outline-ghost-list \{[\s\S]*overflow-y: auto;/);
+    expect(css).toMatch(/\.outline-ghost-list::before \{[\s\S]*bottom: 0;/);
+    expect(css).toMatch(/\.outline-ghost-items \{[\s\S]*margin-block: auto;/);
+    expect(css).toMatch(
+      /\.outline-ghost-items \{[\s\S]*row-gap: var\(--outline-row-gap\);/,
+    );
+    expect(css).toMatch(/\.outline-ghost-items \{[\s\S]*flex: 0 0 auto;/);
+    expect(css).toContain("transition: width 180ms var(--motion-ease)");
     expect(css).not.toContain("Segoe UI Variable Text");
     expect(css).not.toContain("Microsoft YaHei UI Light");
     expect(css).not.toContain("--outline-text-level-1");
@@ -518,13 +579,10 @@ describe("outline ghost spine", () => {
     expect(outline).not.toContain('fontSize: "0.8125rem"');
     expect(outline).not.toContain('fontSize: "0.75rem"');
     expect(outline).toContain('indent: "0rem"');
-    expect(outline).toContain('indent: "1.45rem"');
-    expect(outline).toContain('indent: "2.55rem"');
+    expect(outline).toContain('indent: "0.55rem"');
+    expect(outline).toContain('indent: "1.1rem"');
     expect(outline).toContain("paddingLeft");
     expect(css).not.toContain(".outline-ghost-indent");
-    expect(css).toContain(
-      "background: hsl(var(--outline-rail-active) / 0.075)",
-    );
     expect(css).toContain("box-shadow: none");
     expect(css).not.toContain(
       "text-shadow: 0 1px 2px hsl(var(--background) / 0.95)",
@@ -542,22 +600,22 @@ describe("outline ghost spine", () => {
     const css = read("src/styles/globals.css");
 
     expect(css).toContain("--editor-outline-inset: 0.75rem");
-    expect(css).toContain("--editor-outline-text-offset: 2rem");
+    expect(css).toContain("--editor-outline-bar-offset: 0.45rem");
     expect(css).toMatch(
-      /\.outline-ghost-list \{[\s\S]*padding: 0\.25rem 0\.25rem 0\.45rem 0;/,
+      /\.outline-ghost-list \{[\s\S]*padding: 0\.25rem 0\.35rem 0\.45rem 0;/,
     );
+    expect(css).toMatch(/\.outline-ghost-list \{[\s\S]*min-height: 100%;/);
+    expect(css).not.toContain("min-height: calc(min(74.4dvh, 33.6rem) - 3rem)");
     expect(css).toMatch(
-      /\.outline-ghost-item \{[\s\S]*padding-left: var\(--editor-outline-text-offset\)/,
+      /\.outline-ghost-item \{[\s\S]*padding-left: var\(--editor-outline-bar-offset\)/,
     );
-    expect(css).toMatch(
-      /\.outline-link-summary \{[\s\S]*margin-left: var\(--editor-outline-text-offset\)/,
-    );
-    expect(outline).toContain("+ var(--editor-outline-text-offset)");
+    expect(css).not.toContain(".outline-link-summary");
+    expect(outline).toContain("+ var(--editor-outline-bar-offset)");
     expect(outline).not.toContain("+ var(--editor-outline-inset)");
     expect(outline).not.toContain("+ 0.5rem");
   });
 
-  it("shows backlink summary below the open outline and opens linked notes", async () => {
+  it("keeps backlink summary out of the floating outline", async () => {
     mockFileLinkSummary.mockResolvedValue({
       inboundCount: 2,
       outboundCount: 1,
@@ -577,34 +635,19 @@ describe("outline ghost spine", () => {
       ],
     });
     editor = makeEditor(["Overview"]);
-    const onOpenNote = renderOutlineWithLinks(editor);
+    renderOutlineWithPath(editor);
 
     await act(async () => {
       await Promise.resolve();
     });
 
-    expect(mockFileLinkSummary).toHaveBeenCalledWith("target.md");
     expect(
-      document.querySelector('[data-testid="outline-link-summary"]')
-        ?.textContent,
-    ).toContain("2 入链");
-    expect(
-      document.querySelector('[data-testid="outline-link-summary"]')
-        ?.textContent,
-    ).toContain("1 出链");
-
-    act(() => {
-      document
-        .querySelector<HTMLButtonElement>(
-          '[data-testid="outline-link-summary-item"]',
-        )
-        ?.click();
-    });
-
-    expect(onOpenNote).toHaveBeenCalledWith("source.md");
+      document.querySelector('[data-testid="outline-link-summary"]'),
+    ).toBeNull();
+    expect(mockFileLinkSummary).not.toHaveBeenCalled();
   });
 
-  it("does not render backlink summary while the outline is collapsed", () => {
+  it("does not load backlink summary while the resident outline receives a stale closed prop", () => {
     mockFileLinkSummary.mockResolvedValue({
       inboundCount: 0,
       outboundCount: 0,
@@ -613,10 +656,13 @@ describe("outline ghost spine", () => {
     });
     editor = makeEditor(["Overview"]);
 
-    renderOutlineWithLinks(editor, vi.fn(), false);
+    renderOutlineWithPath(editor, false);
 
     expect(
       document.querySelector('[data-testid="outline-rail-handle"]'),
+    ).toBeNull();
+    expect(
+      document.querySelector('[data-testid="outline-rail"]'),
     ).not.toBeNull();
     expect(
       document.querySelector('[data-testid="outline-link-summary"]'),

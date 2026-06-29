@@ -916,6 +916,9 @@ function App() {
               overlays.openManagementCenter("overview")
             }
             onOpenGraph={() => overlays.openOverlay("graph")}
+            onOpenKnowledgeRelations={() =>
+              overlays.openOverlay("knowledgeRelations")
+            }
           />
         }
         overlays={

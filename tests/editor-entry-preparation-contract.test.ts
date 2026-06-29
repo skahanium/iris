@@ -7,7 +7,7 @@ function read(path: string): string {
 }
 
 describe("editor entry note preparation contract", () => {
-  it("prepares wiki links, outline linked notes, and AI evidence sources before opening", () => {
+  it("prepares wiki links and AI evidence sources before opening", () => {
     const wiki = read("src/components/editor/extensions/WikiLinkExtension.ts");
     const tiptap = read("src/components/editor/TipTapEditor.tsx");
     const workspace = read("src/components/layout/AppEditorWorkspace.tsx");
@@ -24,17 +24,13 @@ describe("editor entry note preparation contract", () => {
     expect(workspace).toContain(
       'onPrepareNotePath?.(title + ".md", title, "link")',
     );
-    expect(outline).toContain("onPrepareNote");
-    expect(outline).toContain(
-      "onMouseEnter={() => onPrepareNote?.(item.path, item.title)}",
-    );
-    expect(outline).toContain(
-      "onFocus={() => onPrepareNote?.(item.path, item.title)}",
-    );
+    expect(outline).not.toContain("onPrepareNote");
+    expect(outline).not.toContain("fileLinkSummary");
+    expect(outline).toContain("outline-ghost-popover");
     expect(aiSlot).toContain(
       'onPrepareNotePath?.(packet.source_path, packet.title, "ai")',
     );
     expect(app).toContain("onPrepareNotePath={prepareNotePath}");
-    expect(workspace).toContain('source: "outline"');
+    expect(workspace).not.toContain('source: "outline"');
   });
 });

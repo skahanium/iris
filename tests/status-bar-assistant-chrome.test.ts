@@ -1,6 +1,18 @@
 import { readFileSync } from "node:fs";
+import { act, createElement } from "react";
+import { createRoot, type Root } from "react-dom/client";
 
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+import { AppStatusBarSlot } from "@/components/layout/AppStatusBarSlot";
+import { fileLinkSummary } from "@/lib/ipc";
+import { EMPTY_ASSISTANT_CHROME } from "@/types/assistant-chrome";
+
+vi.mock("@/lib/ipc", () => ({
+  fileLinkSummary: vi.fn(),
+}));
+
+const mockFileLinkSummary = vi.mocked(fileLinkSummary);
 
 function read(path: string): string {
   try {
@@ -9,6 +21,61 @@ function read(path: string): string {
     return "";
   }
 }
+
+let root: Root | null = null;
+let host: HTMLDivElement | null = null;
+
+function renderStatusBarSlot(
+  props: Partial<Parameters<typeof AppStatusBarSlot>[0]> = {},
+) {
+  host = document.createElement("div");
+  document.body.append(host);
+  root = createRoot(host);
+  const onOpenKnowledgeRelations = vi.fn();
+  act(() => {
+    root?.render(
+      createElement(AppStatusBarSlot, {
+        activePath: "target.md",
+        activeDocumentTitle: "Target",
+        unsaved: false,
+        characterCount: 1200,
+        readingMinutes: 6,
+        aiStatus: "AI 空闲",
+        assistantChrome: EMPTY_ASSISTANT_CHROME,
+        editorZoom: 1,
+        onEditorZoomIn: () => {},
+        onEditorZoomOut: () => {},
+        onEditorZoomReset: () => {},
+        onEditorZoomChange: () => {},
+        onUndo: () => {},
+        onRedo: () => {},
+        canUndo: false,
+        canRedo: false,
+        webSearch: false,
+        onWebSearchChange: () => {},
+        theme: "dark",
+        onThemeChange: () => {},
+        connectivity: null,
+        onOpenConnectivitySettings: () => {},
+        onOpenManagementCenter: () => {},
+        onOpenGraph: () => {},
+        onOpenKnowledgeRelations,
+        ...props,
+      }),
+    );
+  });
+  return onOpenKnowledgeRelations;
+}
+
+afterEach(() => {
+  if (root) {
+    act(() => root?.unmount());
+  }
+  host?.remove();
+  root = null;
+  host = null;
+  mockFileLinkSummary.mockReset();
+});
 
 describe("status bar assistant chrome", () => {
   it("StatusBar accepts assistantChrome and renders token usage", () => {
@@ -61,5 +128,68 @@ describe("status bar assistant chrome", () => {
     expect(panel).not.toContain("TokenUsageBar");
     expect(panel).not.toContain("ContextStatusBar");
     expect(panel).not.toContain("HarnessActivityStrip");
+  });
+
+  it("StatusBarSlot loads link counts for the active note and opens knowledge relations", async () => {
+    mockFileLinkSummary.mockResolvedValue({
+      inboundCount: 2,
+      outboundCount: 1,
+      inbound: [],
+      outbound: [],
+    });
+
+    const onOpenKnowledgeRelations = renderStatusBarSlot();
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(mockFileLinkSummary).toHaveBeenCalledWith("target.md");
+    const linkButton = document.querySelector<HTMLButtonElement>(
+      '[data-testid="status-bar-link-summary"]',
+    );
+    expect(linkButton?.textContent).toContain("入链 2");
+    expect(linkButton?.textContent).toContain("出链 1");
+
+    act(() => {
+      linkButton?.click();
+    });
+
+    expect(onOpenKnowledgeRelations).toHaveBeenCalledTimes(1);
+  });
+
+  it("StatusBarSlot does not load or render link counts without an active path", async () => {
+    mockFileLinkSummary.mockResolvedValue({
+      inboundCount: 0,
+      outboundCount: 0,
+      inbound: [],
+      outbound: [],
+    });
+
+    renderStatusBarSlot({ activePath: null });
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(mockFileLinkSummary).not.toHaveBeenCalled();
+    expect(
+      document.querySelector('[data-testid="status-bar-link-summary"]'),
+    ).toBeNull();
+  });
+
+  it("StatusBarSlot degrades link counts when summary loading fails", async () => {
+    mockFileLinkSummary.mockRejectedValue(new Error("offline"));
+
+    renderStatusBarSlot();
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    const linkButton = document.querySelector<HTMLButtonElement>(
+      '[data-testid="status-bar-link-summary"]',
+    );
+    expect(linkButton?.textContent).toContain("双链暂不可用");
   });
 });

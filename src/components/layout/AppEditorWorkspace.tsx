@@ -797,16 +797,6 @@ export function AppEditorWorkspace({
         <EditorOutline
           editor={editorInstance}
           open={outlineOpen}
-          notePath={effectiveNotePath}
-          onOpenNote={(path: string) =>
-            openNoteLeavingHome(path, undefined, {
-              priority: "foreground",
-              source: "outline",
-            })
-          }
-          onPrepareNote={(path, titleHint) =>
-            onPrepareNotePath?.(path, titleHint, "outline")
-          }
           locked={currentEditorSurface?.activeFileLocked ?? activeFileLocked}
           zen={zen}
           onOpenChange={onOutlineOpenChange}

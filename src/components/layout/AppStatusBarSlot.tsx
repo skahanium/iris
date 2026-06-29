@@ -1,5 +1,8 @@
 import { StatusBar } from "@/components/layout/StatusBar";
+import { useEffect, useState } from "react";
+import { fileLinkSummary } from "@/lib/ipc";
 import type { AssistantChromeSnapshot } from "@/types/assistant-chrome";
+import type { FileLinkSummary } from "@/types/ipc";
 import type { ConnectivityStatus } from "@/types/llm";
 
 interface AppStatusBarSlotProps {
@@ -27,6 +30,7 @@ interface AppStatusBarSlotProps {
   onOpenConnectivitySettings: () => void;
   onOpenManagementCenter: () => void;
   onOpenGraph: () => void;
+  onOpenKnowledgeRelations: () => void;
 }
 
 export function AppStatusBarSlot({
@@ -54,7 +58,37 @@ export function AppStatusBarSlot({
   onOpenConnectivitySettings,
   onOpenManagementCenter,
   onOpenGraph,
+  onOpenKnowledgeRelations,
 }: AppStatusBarSlotProps) {
+  const [linkSummary, setLinkSummary] = useState<FileLinkSummary | null>(null);
+  const [linkSummaryUnavailable, setLinkSummaryUnavailable] = useState(false);
+
+  useEffect(() => {
+    if (!activePath) {
+      setLinkSummary(null);
+      setLinkSummaryUnavailable(false);
+      return;
+    }
+
+    let cancelled = false;
+    setLinkSummaryUnavailable(false);
+
+    void fileLinkSummary(activePath)
+      .then((summary) => {
+        if (cancelled) return;
+        setLinkSummary(summary);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setLinkSummary(null);
+        setLinkSummaryUnavailable(true);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activePath]);
+
   return (
     <StatusBar
       path={activePath}
@@ -81,6 +115,9 @@ export function AppStatusBarSlot({
       onOpenConnectivitySettings={onOpenConnectivitySettings}
       onOpenManagementCenter={onOpenManagementCenter}
       onOpenGraph={onOpenGraph}
+      linkSummary={linkSummary}
+      linkSummaryUnavailable={linkSummaryUnavailable}
+      onOpenKnowledgeRelations={onOpenKnowledgeRelations}
     />
   );
 }

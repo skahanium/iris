@@ -78,18 +78,29 @@ describe("Iris Rail complete interface contracts", () => {
     expect(app).not.toMatch(/onOpenWikiLink=\{\(title\) => void openNote/);
   });
 
-  it("uses Ghost Spine outline instead of a minimap or floating outline card", () => {
+  it("uses a centered floating Ghost Spine bar island with single-title preview", () => {
     const outline = read("src/components/editor/EditorOutline.tsx");
     const editor = read("src/components/editor/TipTapEditor.tsx");
     const css = read("src/styles/globals.css");
+    const aiPanelWidth = read("src/lib/ai-panel-width.ts");
 
     expect(outline).toContain('data-testid="outline-rail"');
-    expect(outline).toContain('data-testid="outline-rail-handle"');
+    expect(outline).not.toContain('data-testid="outline-rail-handle"');
+    expect(outline).toContain('data-testid="outline-ghost-popover"');
     expect(outline).toContain("outline-ghost--active");
     expect(outline).toContain("outline-ghost-item");
+    expect(outline).toContain("outline-ghost-items");
+    expect(outline).toContain("outline-ghost-item-line");
+    expect(outline).toContain("previewEntry.text");
+    expect(outline).not.toContain("ListTree");
+    expect(outline).not.toContain("outline-ghost-handle");
+    expect(outline).not.toContain("显示目录");
+    expect(outline).not.toContain("隐藏目录");
+    expect(outline).not.toContain("outline-ghost-popover-list");
+    expect(outline).not.toContain("outline-ghost-popover-item");
     expect(outline).not.toContain("useVirtualizer");
     expect(outline).toContain("ArrowDown");
-    expect(outline).toContain("Escape");
+    expect(outline).not.toContain("Escape");
     expect(outline).not.toContain("onPointerMove");
     expect(outline).not.toContain("wheelScrubIndex");
     expect(outline).not.toContain("outline-luminous-tick");
@@ -100,15 +111,37 @@ describe("Iris Rail complete interface contracts", () => {
     expect(outline).not.toContain("shadow-floating");
     expect(outline).not.toContain("backdrop-filter");
     expect(editor).toContain("editor-edge-control");
-    expect(css).toContain("--editor-outline-rail-width: 12rem");
-    expect(css).toContain("padding-left: var(--editor-outline-reserve);");
+    expect(css).toContain("--editor-outline-rail-width: 3.25rem");
+    expect(css).not.toContain("padding-left: var(--editor-outline-reserve);");
+    expect(css).toContain(".outline-ghost-popover");
+    expect(css).toMatch(/\.outline-ghost \{[\s\S]*top: 50%/);
+    expect(css).toMatch(
+      /\.outline-ghost \{[\s\S]*transform: translateY\(-50%\)/,
+    );
+    expect(css).toContain("height: min(74.4dvh, 33.6rem)");
+    expect(css).toContain("--outline-bar-width: 0.95rem");
+    expect(css).toContain("--outline-row-gap: 0.84rem");
+    expect(css).toContain("--outline-bar-active-width: 3rem");
+    expect(css).toContain("--outline-bar-candidate-width: 3.5rem");
+    expect(css).toMatch(/\.outline-ghost-list \{[\s\S]*min-height: 100%;/);
+    expect(css).toMatch(/\.outline-ghost-list \{[\s\S]*overflow-y: auto;/);
+    expect(css).toMatch(/\.outline-ghost-list::before \{[\s\S]*bottom: 0;/);
+    expect(css).toMatch(/\.outline-ghost-items \{[\s\S]*margin-block: auto;/);
+    expect(css).toMatch(
+      /\.outline-ghost-items \{[\s\S]*row-gap: var\(--outline-row-gap\);/,
+    );
+    expect(css).toContain(".outline-ghost-item-line");
     expect(css).toContain(".outline-ghost");
+    expect(css).not.toContain(".outline-ghost-handle");
+    expect(css).not.toContain(".outline-ghost-popover-list");
+    expect(css).not.toContain(".outline-ghost-popover-item");
     expect(css).toContain(".outline-ghost-item--level-1");
     expect(css).toContain(".outline-ghost-item--level-2");
     expect(css).toContain(".outline-ghost-item--level-3");
     expect(css).not.toContain(".outline-luminous-tick");
     expect(css).not.toContain(".outline-minimap-tick");
     expect(css).not.toContain("backdrop-filter: blur(12px)");
+    expect(aiPanelWidth).toContain("AI_PANEL_WIDTH_MAX = 720");
   });
 
   it("moves AI configuration into Management Center", () => {
