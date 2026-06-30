@@ -178,7 +178,7 @@ pub fn task_focus(
         }
         AgentIntent::DocumentCheck => "文档检查：面向整篇文档检查结构、风格、引用和交叉引用",
         AgentIntent::Organize => "知识整理：处理标题、标签、文件夹、链接和语料归属建议",
-        AgentIntent::SkillManagement => "Skills 管理：诊断、安装、更新或切换技能，写入前等待确认",
+        AgentIntent::SkillManagement => "Skills 管理：创建或确认 prompt-only 技能",
         AgentIntent::VisionChat => "图像对话：结合附件与当前上下文回答，不编造图像外信息",
         AgentIntent::AskNotes => match scope {
             AgentTaskScope::Note | AgentTaskScope::Selection => "笔记问答：优先当前笔记与选中范围",

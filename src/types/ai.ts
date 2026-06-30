@@ -61,12 +61,6 @@ export type AgentPermissionAtom =
   | "web.download_to_assets"
   | "web.citation_extract"
   | "net.localhost"
-  | "skill.read_resource"
-  | "skill.write_storage"
-  | "skill.request_capabilities"
-  | "skill.execute_script_sandboxed"
-  | "skill.install_dependency"
-  | "skill.mcp_bridge"
   | "process.run_markdown_tool"
   | "process.run_readonly"
   | "process.run_mutating"
@@ -83,7 +77,6 @@ export type AgentPermissionAtom =
   | "browser.screenshot"
   | "browser.control_page"
   | "secret.exists"
-  | "secret.use_named"
   | "secret.create_update"
   | "secret.read_plaintext"
   | "app_state.read"
@@ -145,19 +138,36 @@ export interface WebEvidenceMeta {
   fetched_at: string;
   search_backend: WebSearchBackend;
   source_rank: WebSourceRank;
+  provider_id?: string | null;
+  provider_kind?: string | null;
+  raw_result_hash?: string | null;
+  extraction_method?: string | null;
+  conflict_group?: string | null;
+  conflict_note?: string | null;
   failure_reason?: string | null;
   fallback_from?: WebSearchBackend | null;
 }
 
 export interface WebEvidenceBrokerItem {
   url: string;
+  canonical_url: string;
   title: string;
   domain: string;
   snippet: string;
   fetched_excerpt?: string | null;
+  provider_id: string;
+  provider_kind: string;
+  cost_class: string;
+  raw_result_hash: string;
+  extraction_method: string;
+  trust_level: "external_untrusted" | string;
+  retrieval_reason: string;
+  search_backend: WebSearchBackend;
   source_rank: WebSourceRank;
   freshness_label?: string | null;
   failure_reason?: string | null;
+  conflict_group?: string | null;
+  conflict_note?: string | null;
 }
 
 export interface ContextPacket {
@@ -306,16 +316,6 @@ export interface PersonaLayerSummary {
   summary: string;
 }
 
-export type SkillCompatibilitySource = "iris" | "claude" | "hermes" | "unknown";
-
-export type SkillRuntimeCapability =
-  | "skill.read_resource"
-  | "skill.write_storage"
-  | "skill.request_capabilities"
-  | "skill.execute_script_sandboxed"
-  | "skill.install_dependency"
-  | "skill.mcp_bridge";
-
 export type SkillCapabilitySupportStatus =
   | "supported"
   | "supported_with_confirmation"
@@ -323,15 +323,6 @@ export type SkillCapabilitySupportStatus =
   | "unsupported_by_product_scope"
   | "blocked_by_policy"
   | "missing_user_grant";
-
-export interface SkillResourceStatusSummary {
-  relativePath: string;
-  kind: string;
-  available: boolean;
-  sizeBytes?: number | null;
-  truncated: boolean;
-  reason?: string | null;
-}
 
 export interface BlockedCapabilitySummary {
   skillName: string;
@@ -342,6 +333,13 @@ export interface BlockedCapabilitySummary {
   fallbackGuidance: string;
 }
 
+export type SkillConfirmationStatus = "confirmed" | "needs_confirmation";
+
+export interface SkillScopeRule {
+  kind: string;
+  pattern: string;
+}
+
 export interface SkillActivationItemSummary {
   name: string;
   scope: string;
@@ -350,20 +348,13 @@ export interface SkillActivationItemSummary {
   injectedSections: string[];
   degradedReasons: string[];
   requestedTools: string[];
-  requestedCapabilities: SkillRuntimeCapability[];
   confirmationRequiredTools: string[];
-  resources: SkillResourceStatusSummary[];
   blockedCapabilities: BlockedCapabilitySummary[];
-  compatibilitySource: SkillCompatibilitySource;
-  workspaceRoot: string;
-  workspaceReady: boolean;
-  workspaceMissingItems: string[];
 }
 
 export interface SkillActivationPlanSummary {
   activatedSkills: SkillActivationItemSummary[];
   requestedTools: string[];
-  requestedCapabilities: SkillRuntimeCapability[];
   confirmationRequiredTools: string[];
   blockedCapabilities: BlockedCapabilitySummary[];
   skillOverlaySummary: string;
@@ -1248,7 +1239,6 @@ export interface AiSendMessageResult {
   verification_summary?: VerificationSummary | null;
   evidence_refresh_notice?: string | null;
   resumed?: boolean;
-  installed_skill?: string;
   tool_confirmation_partial?: boolean;
   resume_error_code?: string;
   resume_error_message?: string;

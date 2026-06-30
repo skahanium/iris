@@ -113,8 +113,9 @@ describe("Agent Task Runtime Phase C capability affinity contract", () => {
     expect(resolver).toContain("missing_mcp_profile");
     expect(resolver).toContain("profile_disabled");
     expect(resolver).toContain("profile_unhealthy");
-    expect(resolver).toContain("explicit_mapping_contains_capability");
-    expect(resolver).toContain('get("capability")');
+    expect(resolver).toContain("web_search_mapping_json");
+    expect(resolver).toContain("web_fetch_mapping_json");
+    expect(resolver).toContain('get("tool")');
     expect(resolver).not.toContain('get("annotations")');
   });
 });

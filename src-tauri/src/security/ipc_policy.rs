@@ -1,22 +1,7 @@
 //! IPC input validation helpers.
 
-use std::path::{Component, Path, PathBuf};
-
 use crate::credentials::MINIMAX_CREDENTIAL_SERVICE;
 use crate::error::{AppError, AppResult};
-
-/// Cross-platform user home directory.
-/// On Unix: uses `HOME`, on Windows: falls back to `USERPROFILE`.
-fn user_home_dir() -> Option<PathBuf> {
-    if let Ok(home) = std::env::var("HOME") {
-        return Some(PathBuf::from(home));
-    }
-    #[cfg(target_os = "windows")]
-    if let Ok(profile) = std::env::var("USERPROFILE") {
-        return Some(PathBuf::from(profile));
-    }
-    None
-}
 
 /// Settings keys writable via generic `settings_set` IPC.
 const ALLOWED_SETTINGS_KEYS: &[&str] = &[
@@ -76,60 +61,6 @@ pub fn validate_https_url(url: &str) -> AppResult<()> {
 /// Validate LLM base URL: all LLM provider endpoints must use HTTPS.
 pub fn validate_llm_base_url(url: &str) -> AppResult<()> {
     validate_https_url(url)
-}
-
-/// Validate remote skill install URL (HTTPS only).
-pub fn validate_skill_remote_url(url: &str) -> AppResult<()> {
-    validate_https_url(url)?;
-    if url.contains("..") {
-        return Err(AppError::msg("非法 URL"));
-    }
-    Ok(())
-}
-
-/// Validate git remote for skill install (no option injection).
-pub fn validate_skill_git_url(repo_url: &str) -> AppResult<()> {
-    let trimmed = repo_url.trim();
-    if trimmed.is_empty() {
-        return Err(AppError::msg("仓库 URL 不能为空"));
-    }
-    if trimmed.starts_with('-') {
-        return Err(AppError::msg("非法 git 仓库 URL"));
-    }
-    if !(trimmed.starts_with("https://") || trimmed.starts_with("git@")) {
-        return Err(AppError::msg("仅允许 https:// 或 git@ 形式的仓库 URL"));
-    }
-    Ok(())
-}
-
-/// Local skill install: SKILL.md under vault or user home only.
-pub fn validate_local_skill_source(source: &Path, vault: &Path) -> AppResult<PathBuf> {
-    if source.file_name().and_then(|s| s.to_str()) != Some("SKILL.md") {
-        return Err(AppError::msg("本地安装路径必须是 SKILL.md 文件"));
-    }
-    let canon = source
-        .canonicalize()
-        .map_err(|e| AppError::msg(format!("无法解析路径: {e}")))?;
-    for component in canon.components() {
-        if matches!(component, Component::ParentDir) {
-            return Err(AppError::msg("非法路径"));
-        }
-    }
-    if let Ok(vault_canon) = vault.canonicalize() {
-        if canon.starts_with(&vault_canon) {
-            return Ok(canon);
-        }
-    }
-    if let Some(home) = user_home_dir() {
-        if let Ok(home_canon) = home.canonicalize() {
-            if canon.starts_with(&home_canon) {
-                return Ok(canon);
-            }
-        }
-    }
-    Err(AppError::msg(
-        "本地 Skill 仅允许从笔记库目录或用户主目录安装",
-    ))
 }
 
 #[cfg(test)]

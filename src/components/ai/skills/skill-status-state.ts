@@ -10,9 +10,29 @@ export function scopeText(scope: string): string {
 
 export function statusText(skill: SkillListEntryDto): string {
   if (!skill.enabled) return "已禁用";
+  if (skill.confirmation_status === "needs_confirmation") return "需要确认";
   if (skill.task_active === true) return "本次匹配";
   if (skill.task_active === false) return "已启用";
   return skill.availability === "partial" ? "部分可用" : "已启用";
+}
+
+export function confirmationState(skill: SkillListEntryDto): {
+  label: string;
+  detail: string;
+  needsAttention: boolean;
+} {
+  if (skill.confirmation_status === "confirmed") {
+    return {
+      label: "已确认",
+      detail: "当前 SKILL.md 内容已确认。",
+      needsAttention: false,
+    };
+  }
+  return {
+    label: "需要确认",
+    detail: "确认后才会参与提示注入。",
+    needsAttention: true,
+  };
 }
 
 export function runtimeState(skill: SkillListEntryDto): {
@@ -20,28 +40,9 @@ export function runtimeState(skill: SkillListEntryDto): {
   detail: string;
   needsAttention: boolean;
 } {
-  const deps = skill.mcp_dependencies ?? [];
-  const status =
-    skill.runtime_status ?? (skill.runtime_ready ? "ready" : "unknown");
-
-  if (skill.runtime_kind === "mcp" || deps.length > 0) {
-    const detail = deps.length > 0 ? deps.join(", ") : "MCP profile";
+  if (skill.degraded_reasons.length > 0 || skill.blocked_sections.length > 0) {
     return {
-      label: skill.runtime_ready ? "MCP 已就绪" : "MCP 未就绪",
-      detail: skill.runtime_ready
-        ? detail
-        : `缺少或未启用 MCP profile${deps.length > 0 ? `：${detail}` : ""}`,
-      needsAttention: !skill.runtime_ready,
-    };
-  }
-
-  if (
-    status === "degraded" ||
-    status === "blocked" ||
-    status === "unavailable"
-  ) {
-    return {
-      label: status,
+      label: "prompt-only 部分可用",
       detail:
         (skill.degraded_reasons ?? []).slice(0, 2).join("; ") || skill.kind,
       needsAttention: true,

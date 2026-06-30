@@ -116,58 +116,45 @@ fn write_tools_not_in_default_readonly() {
 }
 
 #[test]
-fn catalog_exposes_mcp_runtime_diagnostics_as_read_only() {
-    for name in [
+fn reign_in_catalog_exposes_only_one_network_tool() {
+    let names: Vec<&str> = TOOL_CATALOG.iter().map(|entry| entry.name).collect();
+    assert!(names.contains(&"web_search"));
+    for legacy in [
+        "fetch_web_page",
+        "web_fetch_batch",
+        "readability_fetch",
+        "rendered_fetch",
+        "skills_install",
+        "skills_prepare_workspace",
+        "skills_update",
+        "skills_toggle",
+        "skills_workspace_list",
+        "skills_workspace_read",
+        "skills_workspace_write",
         "mcp_runtime_profiles_list",
         "mcp_runtime_diagnostics",
         "mcp_runtime_tool_inventory_list",
         "mcp_runtime_health_events_list",
-    ] {
-        let entry = catalog_find(name).unwrap_or_else(|| panic!("{name} missing from catalog"));
-        assert_eq!(entry.access_level, ToolAccessLevel::ReadIndex);
-        assert!(!entry.requires_confirmation);
-        assert_eq!(entry.implementation, ToolImplementationStatus::Dispatchable);
-        assert!(entry.default_enabled_without_skill);
-    }
-}
-
-#[test]
-fn catalog_exposes_live_mcp_runtime_tools_as_confirmation_required() {
-    for name in [
         "mcp_runtime_tools_list",
         "mcp_runtime_health_check",
         "mcp_runtime_capability_call",
-    ] {
-        let entry = catalog_find(name).unwrap_or_else(|| panic!("{name} missing from catalog"));
-        assert_eq!(entry.access_level, ToolAccessLevel::ManageSkills);
-        assert!(entry.requires_confirmation);
-        assert_eq!(entry.implementation, ToolImplementationStatus::Dispatchable);
-        assert!(entry.default_enabled_without_skill);
-    }
-}
-
-#[test]
-fn catalog_exposes_mcp_profile_management_as_confirmation_required() {
-    for name in [
         "mcp_server_catalog_upsert",
         "mcp_runtime_profile_upsert",
         "mcp_runtime_profile_toggle",
         "mcp_runtime_profile_delete",
     ] {
-        let entry = catalog_find(name).unwrap_or_else(|| panic!("{name} missing from catalog"));
-        assert_eq!(entry.access_level, ToolAccessLevel::ManageSkills);
-        assert!(entry.requires_confirmation);
-        assert_eq!(entry.implementation, ToolImplementationStatus::Dispatchable);
-        assert!(entry.default_enabled_without_skill);
+        assert!(
+            !names.contains(&legacy),
+            "{legacy} must not be agent-visible"
+        );
     }
 }
 
 #[test]
 fn total_catalog_count() {
-    assert_eq!(
-        catalog_total_count(),
-        98,
-        "catalog should have exactly 98 tools"
+    assert!(
+        catalog_total_count() < 98,
+        "catalog should shrink after removing legacy Skills/MCP/fetch tools"
     );
 }
 
@@ -185,9 +172,6 @@ fn catalog_exposes_skill_root_capability_tools() {
         "scheduled_task_create",
         "scheduled_task_list",
         "scheduled_task_delete",
-        "web_fetch_batch",
-        "readability_fetch",
-        "rendered_fetch",
     ] {
         assert!(
             catalog_find(name).is_some(),
@@ -196,9 +180,4 @@ fn catalog_exposes_skill_root_capability_tools() {
     }
     assert!(!catalog_find("memory_read").unwrap().requires_confirmation);
     assert!(catalog_find("memory_write").unwrap().requires_confirmation);
-    assert!(
-        catalog_find("web_fetch_batch")
-            .unwrap()
-            .requires_confirmation
-    );
 }

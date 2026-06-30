@@ -17,11 +17,12 @@ describe("harness modernization remaining contracts", () => {
     );
 
     const ipc = read("src/lib/ipc.ts");
-    expect(ipc).toContain("web_search?: boolean");
-    expect(ipc).toContain("webSearch: params.web_search ?? false");
+    expect(ipc).toContain("webSearch?: boolean");
+    expect(ipc).toContain("webSearch: params.webSearch ?? false");
+    expect(ipc).not.toContain("params.web_search");
 
     const panel = read("src/components/ai/UnifiedAssistantPanel.tsx");
-    expect(panel).toContain("web_search: webSearch");
+    expect(panel).toContain("webSearch");
   });
 
   it("uses TaskPlan summaries and drops meaningless process placeholders", () => {
@@ -33,18 +34,14 @@ describe("harness modernization remaining contracts", () => {
     );
   });
 
-  it("keeps direct SkillHub confirmation on unified task_process artifact wires", () => {
+  it("does not synthesize direct SkillHub install confirmation artifacts", () => {
     const assistantCommands = read(
       "src-tauri/src/commands/assistant_commands.rs",
     );
 
     expect(assistantCommands).not.toContain('kind: "tool_confirmation"');
-    expect(assistantCommands).toContain('kind: "task_process"');
-    expect(assistantCommands).toContain('"schema": "task_process"');
-    expect(assistantCommands).toContain('"tool_name": "skills_install"');
-    expect(assistantCommands).toContain(
-      '"next_action": "wait_for_user_confirmation"',
-    );
+    expect(assistantCommands).not.toContain('"tool_name": "skills_install"');
+    expect(assistantCommands).not.toContain("skillhub:direct_install");
   });
 
   it("tool confirmation executes auto tools before pausing on confirm", () => {
@@ -163,19 +160,25 @@ describe("harness modernization remaining contracts", () => {
     );
   });
 
-  it("skills lifecycle exposes update and capability diagnostics to the UI", () => {
+  it("skills lifecycle exposes prompt-only diagnostics to the UI", () => {
     const ipc = read("src/lib/ipc.ts");
-    expect(ipc).toContain("export async function skillsUpdate");
-    expect(ipc).toContain("export async function skillsPrepareWorkspace");
+    expect(ipc).toContain("export async function skillsCreateDraft");
+    expect(ipc).toContain("export async function skillsConfirm");
+    expect(ipc).not.toContain("export async function skillsUpdate");
+    expect(ipc).not.toContain("export async function skillsPrepareWorkspace");
     expect(ipc).toContain("content_hash?: string");
     expect(ipc).toContain("capability_preview?:");
     expect(ipc).toContain("availability:");
 
     const panel = read("src/components/ai/SkillsPanel.tsx");
-    expect(panel).toContain("skillsUpdate");
-    expect(panel).toContain("权限摘要");
-    expect(panel).toContain("已准备");
-    expect(panel).toContain("工作区");
+    const card = read("src/components/ai/skills/SkillCard.tsx");
+    const badges = read("src/components/ai/skills/SkillStatusBadges.tsx");
+    const ui = `${panel}\n${card}\n${badges}`;
+    expect(panel).not.toContain("skillsUpdate");
+    expect(ui).toContain("权限摘要");
+    expect(ui).toContain("确认状态");
+    expect(ui).toContain("已确认");
+    expect(ui).toContain("需要确认");
   });
 
   it("tool confirmation suppresses duplicate resume calls for the same tool call", () => {

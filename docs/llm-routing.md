@@ -51,11 +51,11 @@
 
 - 两枚 **8px 圆点 + 简短文案**（LLM · 联网）并排成组，未就绪统一灰（`--status-inactive`），就绪分别为 emerald / sky token
 - **LLM**：emerald 就绪 / red 检测失败 / 灰 未配置或缺 Key
-- **联网**：底栏 sky 圆点开/关；四场景共用。开启后 **仅** AI 场景条底边一条质感蓝线；发送前自动注入网页摘要
-  - **主通道**：MiniMax Token Plan `POST /v1/coding_plan/search`（国内默认 `https://api.minimaxi.com`，Key 为 `iris.minimax`；可选请求体字段 `model`，设置页「检索模型名称」）
+- **联网**：底栏 sky 圆点开/关；四场景共用。开启后 **仅** AI 场景条底边一条质感蓝线；所有网页证据统一经 `WebEvidenceBroker` 收集为证据包
+  - **主通道**：Broker 在显式 provider 映射内选择 MCP `web.search`，并以 MiniMax Token Plan `POST /v1/coding_plan/search`（国内默认 `https://api.minimaxi.com`，Key 为 `iris.minimax`；可选请求体字段 `model`，设置页「检索模型名称」）和 DuckDuckGo 作为 native provider 兜底
   - **API Host 约束**：仅接受干净 HTTPS origin（如 `https://api.minimaxi.com`）；拒绝 HTTP、userinfo、query、fragment、空 host 和额外 path。
-  - **降级**：无 Key、API 失败或设置强制 `duckduckgo` 时使用 DuckDuckGo HTML
-  - **深读（正文）**：助手工具 `fetch_web_page` 对单个 HTTPS URL 受控抓取正文（需用户确认、每轮 1～2 次）；与 Token Plan 搜索（仅摘要）互补，非 MCP 运行时
+  - **降级**：无 Key、API 失败或设置强制 `duckduckgo` 时使用 DuckDuckGo；MCP provider 失败时由 Broker 继续使用可用 native provider
+  - **深读（正文）**：用户明确给出 HTTPS URL 时仍通过 `web_search` 语义进入 Broker，由 MCP `web.fetch` 与 native readability provider 受控抓取正文；不再暴露独立抓取工具
   - 对话模型不受检索通道影响，仍为 DeepSeek 四场景路由
 
 ## MiniMax 联网检索 IPC

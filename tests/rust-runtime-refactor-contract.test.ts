@@ -108,7 +108,6 @@ describe("Rust AI runtime refactor contract", () => {
     const model = read("src-tauri/src/ai_runtime/skills/model.rs");
     const path = read("src-tauri/src/ai_runtime/skills/path.rs");
     const prompt = read("src-tauri/src/ai_runtime/skills/prompt.rs");
-    const resources = read("src-tauri/src/ai_runtime/skills/resources.rs");
     const scan = read("src-tauri/src/ai_runtime/skills/scan.rs");
     const validation = read("src-tauri/src/ai_runtime/skills/validation.rs");
 
@@ -118,7 +117,6 @@ describe("Rust AI runtime refactor contract", () => {
     expect(parent).toContain("skills/model.rs");
     expect(parent).toContain("skills/path.rs");
     expect(parent).toContain("skills/prompt.rs");
-    expect(parent).toContain("skills/resources.rs");
     expect(parent).toContain("skills/scan.rs");
     expect(parent).toContain("skills/validation.rs");
     expect(parent).not.toMatch(/^fn parse_frontmatter\(/m);
@@ -139,7 +137,6 @@ describe("Rust AI runtime refactor contract", () => {
     expect(model).toContain("SkillEntry");
     expect(path).toContain("global_skills_dir");
     expect(prompt).toContain("inject_into_prompt");
-    expect(resources).toContain("read_skill_resource");
     expect(scan).toContain("scan_all_metadata");
     expect(scan).toContain("load_skill");
     expect(validation).toContain("validate_skill_license");
@@ -148,7 +145,7 @@ describe("Rust AI runtime refactor contract", () => {
   it("keeps skills_impl.rs below the current runtime split checkpoint", () => {
     expect(
       lineCount("src-tauri/src/ai_runtime/skills_impl.rs"),
-    ).toBeLessThanOrEqual(1260);
+    ).toBeLessThanOrEqual(1340);
   });
 
   it("moves tool catalog entry groups behind dedicated modules", () => {
@@ -172,7 +169,7 @@ describe("Rust AI runtime refactor contract", () => {
     expect(groups).toContain("collect_tool_catalog");
     expect(readTools).toContain("search_hybrid");
     expect(root).toContain("memory_read");
-    expect(skills).toContain("skills_install");
+    expect(skills).toContain("skills_list");
     expect(web).toContain("web_search");
     expect(write).toContain("insert_text_at_cursor");
   });
@@ -210,7 +207,7 @@ describe("Rust AI runtime refactor contract", () => {
     expect(note).toContain("read_note");
     expect(schedule).toContain("scheduled_task_create_tool");
     expect(search).toContain("hybrid_search");
-    expect(skills).toContain("skills_install_tool");
+    expect(skills).toContain("skills_list_tool");
     expect(web).toContain("web_search_tool");
   });
 

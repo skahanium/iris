@@ -74,7 +74,7 @@ pub enum DenialReason {
 pub fn denial_user_message(reason: DenialReason, tool_name: &str) -> String {
     match reason {
         DenialReason::WebSearchDisabled => format!(
-            "Web search is disabled, so {tool_name} cannot be used. Install SkillHub skills through skills_install(source=registry, registry=skillhub, path_or_url=<skill name>) instead of fetch_web_page."
+            "Web search is disabled, so {tool_name} cannot be used. Use local notes or ask the user to enable web evidence collection."
         ),
         DenialReason::NotImplemented => format!("tool {tool_name} is not implemented"),
         DenialReason::CapabilityMismatch => {
@@ -91,29 +91,8 @@ pub fn denial_user_message(reason: DenialReason, tool_name: &str) -> String {
         }
     }
 }
-/// Core meta tools for skill management 閳?always available, not blocked by skill allowlist.
-const META_SKILL_TOOLS: &[&str] = &[
-    "skills_list",
-    "skills_install",
-    "skills_prepare_workspace",
-    "skills_uninstall",
-    "skills_update",
-    "skills_toggle",
-    "mcp_runtime_profiles_list",
-    "mcp_runtime_diagnostics",
-    "mcp_runtime_tool_inventory_list",
-    "mcp_runtime_health_events_list",
-    "mcp_runtime_tools_list",
-    "mcp_runtime_health_check",
-    "mcp_runtime_capability_call",
-    "mcp_server_catalog_upsert",
-    "mcp_runtime_profile_upsert",
-    "mcp_runtime_profile_toggle",
-    "mcp_runtime_profile_delete",
-    "skills_workspace_list",
-    "skills_workspace_read",
-    "skills_workspace_write",
-];
+/// Core meta tools for prompt-only skill awareness.
+const META_SKILL_TOOLS: &[&str] = &["skills_list"];
 
 /// Evaluate the policy verdict for a single tool.
 pub fn evaluate_tool(tool_name: &str, ctx: &ToolPolicyContext) -> ToolPolicyVerdict {
@@ -388,38 +367,20 @@ mod tests {
             evaluate_tool("skills_list", &ctx),
             ToolPolicyVerdict::AutoAllowed
         );
-        assert_eq!(
-            evaluate_tool("skills_install", &ctx),
-            ToolPolicyVerdict::RequiresConfirmation
-        );
-        assert_eq!(
-            evaluate_tool("mcp_runtime_profiles_list", &ctx),
-            ToolPolicyVerdict::AutoAllowed
-        );
-        assert_eq!(
-            evaluate_tool("mcp_runtime_tools_list", &ctx),
-            ToolPolicyVerdict::RequiresConfirmation
-        );
-        assert_eq!(
-            evaluate_tool("mcp_runtime_health_check", &ctx),
-            ToolPolicyVerdict::RequiresConfirmation
-        );
-        assert_eq!(
-            evaluate_tool("mcp_runtime_capability_call", &ctx),
-            ToolPolicyVerdict::RequiresConfirmation
-        );
-        assert_eq!(
-            evaluate_tool("mcp_runtime_profile_upsert", &ctx),
-            ToolPolicyVerdict::RequiresConfirmation
-        );
-        assert_eq!(
-            evaluate_tool("mcp_runtime_profile_toggle", &ctx),
-            ToolPolicyVerdict::RequiresConfirmation
-        );
-        assert_eq!(
-            evaluate_tool("mcp_runtime_profile_delete", &ctx),
-            ToolPolicyVerdict::RequiresConfirmation
-        );
+        for legacy in [
+            "mcp_runtime_profiles_list",
+            "mcp_runtime_tools_list",
+            "mcp_runtime_health_check",
+            "mcp_runtime_capability_call",
+            "mcp_runtime_profile_upsert",
+            "mcp_runtime_profile_toggle",
+            "mcp_runtime_profile_delete",
+        ] {
+            assert_eq!(
+                evaluate_tool(legacy, &ctx),
+                ToolPolicyVerdict::Denied(DenialReason::NotImplemented)
+            );
+        }
     }
 
     #[test]
@@ -433,8 +394,8 @@ mod tests {
             ToolPolicyVerdict::AutoAllowed
         );
         assert_eq!(
-            evaluate_tool("skills_install", &ctx),
-            ToolPolicyVerdict::RequiresConfirmation
+            evaluate_tool("removed_skill_install_tool", &ctx),
+            ToolPolicyVerdict::Denied(DenialReason::NotImplemented)
         );
     }
 
@@ -528,14 +489,14 @@ mod tests {
     }
 
     #[test]
-    fn page_fetch_tool_denied_at_l1() {
+    fn page_fetch_tool_is_not_implemented() {
         let ctx = ToolPolicyContext {
             autonomy_level: AutonomyLevel::L1,
             ..default_ctx()
         };
         assert_eq!(
             evaluate_tool("fetch_web_page", &ctx),
-            ToolPolicyVerdict::Denied(DenialReason::InsufficientAutonomy)
+            ToolPolicyVerdict::Denied(DenialReason::NotImplemented)
         );
     }
 
@@ -563,14 +524,14 @@ mod tests {
     }
 
     #[test]
-    fn fetch_web_page_denied_by_web_flag() {
+    fn fetch_web_page_is_not_implemented_even_when_web_disabled() {
         let ctx = ToolPolicyContext {
             web_search_enabled: false,
             ..default_ctx()
         };
         assert_eq!(
             evaluate_tool("fetch_web_page", &ctx),
-            ToolPolicyVerdict::Denied(DenialReason::WebSearchDisabled)
+            ToolPolicyVerdict::Denied(DenialReason::NotImplemented)
         );
     }
 
@@ -675,8 +636,7 @@ mod tests {
                 "{name} should be auto-allowed"
             );
         }
-        // fetch_web_page requires confirmation
-        assert!(confirm.contains(&"fetch_web_page".to_string()));
+        assert!(!confirm.contains(&"fetch_web_page".to_string()));
     }
 
     #[test]

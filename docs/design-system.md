@@ -63,7 +63,7 @@ Iris Rail Refresh adds semantic surface tokens for the complete interface system
 - 编辑区：`max-width: 52rem`，水平 `clamp(1.5rem, 5vw, 6rem)`，正文 `16px` / `line-height: 1.62`，段落左对齐
 - AI 侧栏：默认 `360px`，左缘拖拽调整（`280px`–`560px`，偏好写入 localStorage），可 `Ctrl+Shift+A` 收起
 - AI 对话排版：`15px` / `line-height: 1.52`，`data-prose-surface="conversation"`，与编辑区共用 `markdown-prose.css` 与代码高亮 token
-- AI 侧栏 chrome：**对话区仅消息流 + 证据包折叠条**；**Token 累计**、**工具/检索进行中**在全局底栏（`StatusBar` + `StatusBarTokenUsage`）；证据包标题行展示 **N 证据**、**M 搜索**（Token Plan 摘要）、**K 正文**（`fetch_web_page` 深读，`ContextPacketDrawer`）
+- AI 侧栏 chrome：**对话区仅消息流 + 证据包折叠条**；**Token 累计**、**工具/检索进行中**在全局底栏（`StatusBar` + `StatusBarTokenUsage`）；证据包标题行展示 **N 证据**、**M 搜索**、**K 正文片段**（由 WebEvidenceBroker URL 深读与 `ContextPacketDrawer` 提供）
 - AI 对话区规则：消息时间线 **Markdown-first**，助手输出默认是普通文字流；临时 tab 是高价值产物，不是 workflow 默认副产品；过程 tab 只用于长任务、暂停、失败、权限等待或有意义诊断；引用胶囊显示短摘要，不显示完整选区
 
 ### 编辑区结构

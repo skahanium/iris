@@ -13,7 +13,6 @@ export const TOOL_DISPLAY_NAMES: Record<string, string> = {
   get_outline: "文档大纲",
   get_backlinks: "反向链接",
   web_search: "联网搜索",
-  fetch_web_page: "打开网页正文",
   insert_text_at_cursor: "插入文本",
   replace_selection: "替换选区",
   add_tags: "添加标签",

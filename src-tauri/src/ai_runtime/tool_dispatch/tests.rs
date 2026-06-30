@@ -1,5 +1,6 @@
 use super::*;
-use crate::ai_runtime::AiScene;
+use crate::ai_runtime::{skills::SkillScopeRule, AiScene};
+use crate::ai_types::{SkillActivationItemSummary, SkillActivationPlanSummary};
 use crate::app::AppState;
 use std::sync::Arc;
 
@@ -10,16 +11,90 @@ fn test_state() -> (Arc<AppState>, tempfile::TempDir) {
     let notes = vault.join("notes");
     std::fs::create_dir_all(&notes).unwrap();
     std::fs::write(notes.join("test.md"), "# Test\nHello world").unwrap();
+    let private = vault.join("private");
+    std::fs::create_dir_all(&private).unwrap();
+    std::fs::write(private.join("secret.md"), "# Secret\nHidden").unwrap();
     let state = AppState::new(dir.path().to_path_buf()).unwrap();
     state.set_vault(vault).unwrap();
     (state, dir)
 }
 
+fn scoped_plan(pattern: &str) -> SkillActivationPlanSummary {
+    scoped_plan_rule("glob", pattern)
+}
+
+fn scoped_plan_rule(kind: &str, pattern: &str) -> SkillActivationPlanSummary {
+    SkillActivationPlanSummary {
+        activated_skills: vec![SkillActivationItemSummary {
+            name: "daily-skill".into(),
+            scope: "vault".into(),
+            scope_rules: vec![SkillScopeRule {
+                kind: kind.into(),
+                pattern: pattern.into(),
+            }],
+            score: 1.0,
+            match_reason: "test".into(),
+            injected_sections: vec!["skill_overlay".into()],
+            degraded_reasons: Vec::new(),
+            requested_tools: vec!["read_note".into(), "replace_selection".into()],
+            confirmation_required_tools: vec!["replace_selection".into()],
+            blocked_capabilities: Vec::new(),
+        }],
+        requested_tools: vec!["read_note".into(), "replace_selection".into()],
+        confirmation_required_tools: vec!["replace_selection".into()],
+        blocked_capabilities: Vec::new(),
+        skill_overlay_summary: "test".into(),
+        degraded: false,
+    }
+}
+
+fn index_tagged_note(state: &AppState, path: &str, tag: &str) {
+    state
+        .db
+        .with_conn(|conn| {
+            conn.execute(
+                "INSERT OR REPLACE INTO files
+                 (id, path, title, frontmatter, content_hash, word_count, created_at, updated_at)
+                 VALUES (1, ?1, NULL, NULL, 'hash', 0, datetime('now'), datetime('now'))",
+                [path],
+            )?;
+            conn.execute("INSERT OR IGNORE INTO tags (name) VALUES (?1)", [tag])?;
+            let tag_id: i64 =
+                conn.query_row("SELECT id FROM tags WHERE name = ?1", [tag], |row| {
+                    row.get(0)
+                })?;
+            conn.execute(
+                "INSERT OR IGNORE INTO file_tags (file_id, tag_id) VALUES (1, ?1)",
+                [tag_id],
+            )?;
+            Ok(())
+        })
+        .unwrap();
+}
+
+fn dispatch_context_with_plan<'a>(
+    plan: Option<&'a SkillActivationPlanSummary>,
+) -> ToolDispatchContext<'a> {
+    ToolDispatchContext {
+        scene: AiScene::DraftingAssist,
+        note_path: None,
+        file_id: None,
+        web_search_enabled: false,
+        max_web_fetches: 3,
+        cold_start_packets: &[],
+        app_handle: None,
+        attachment_count: 0,
+        skill_activation_plan: plan,
+        embedding_state: None,
+    }
+}
+
 #[tokio::test]
 async fn read_note_rejects_parent_dir_traversal() {
     let (state, _dir) = test_state();
+    let ctx = dispatch_context_with_plan(None);
     let args = serde_json::json!({ "path": "../../etc/passwd" });
-    let result = note_impl::read_note(&state, &args).await;
+    let result = note_impl::read_note(&state, &ctx, &args).await;
     assert!(result.is_err());
     let err = result.unwrap_err().to_string();
     assert!(
@@ -31,8 +106,9 @@ async fn read_note_rejects_parent_dir_traversal() {
 #[tokio::test]
 async fn read_note_rejects_iris_metadata() {
     let (state, _dir) = test_state();
+    let ctx = dispatch_context_with_plan(None);
     let args = serde_json::json!({ "path": ".iris/versions/1/test.md" });
-    let result = note_impl::read_note(&state, &args).await;
+    let result = note_impl::read_note(&state, &ctx, &args).await;
     assert!(result.is_err());
     assert!(!result.unwrap_err().to_string().is_empty());
 }
@@ -40,8 +116,9 @@ async fn read_note_rejects_iris_metadata() {
 #[tokio::test]
 async fn read_note_accepts_valid_path() {
     let (state, _dir) = test_state();
+    let ctx = dispatch_context_with_plan(None);
     let args = serde_json::json!({ "path": "notes/test.md" });
-    let result = note_impl::read_note(&state, &args).await;
+    let result = note_impl::read_note(&state, &ctx, &args).await;
     assert!(result.is_ok());
     let val = result.unwrap();
     assert_eq!(val["path"], "notes/test.md");
@@ -49,78 +126,15 @@ async fn read_note_accepts_valid_path() {
 }
 
 #[tokio::test]
-async fn get_outline_rejects_iris_metadata() {
+async fn read_note_rejects_path_outside_active_skill_scope() {
     let (state, _dir) = test_state();
-    let args = serde_json::json!({ "path": ".iris/skills/my-skill/SKILL.md" });
-    let result = note_impl::get_outline(&state, &args).await;
-    assert!(result.is_err());
-    assert!(!result.unwrap_err().to_string().is_empty());
-}
-
-#[tokio::test]
-async fn get_backlinks_rejects_iris_metadata() {
-    let (state, _dir) = test_state();
-    let args = serde_json::json!({ "path": ".iris/versions/x.md" });
-    let result = note_impl::get_backlinks(&state, &args).await;
-    assert!(result.is_err());
-    assert!(!result.unwrap_err().to_string().is_empty());
-}
-
-#[tokio::test]
-async fn get_backlinks_rejects_parent_dir() {
-    let (state, _dir) = test_state();
-    let args = serde_json::json!({ "path": "../secret.md" });
-    let result = note_impl::get_backlinks(&state, &args).await;
-    assert!(result.is_err());
-    assert!(!result.unwrap_err().to_string().is_empty());
-}
-
-#[tokio::test]
-async fn get_block_links_rejects_parent_dir() {
-    let (state, _dir) = test_state();
-    let args = serde_json::json!({ "note_path": "../note.md" });
-    let result = note_impl::get_block_links(&state, &args).await;
-    assert!(result.is_err());
-    assert!(!result.unwrap_err().to_string().is_empty());
-}
-
-#[tokio::test]
-async fn get_block_links_rejects_iris_metadata() {
-    let (state, _dir) = test_state();
-    let args = serde_json::json!({ "note_path": ".iris/versions/x.md" });
-    let result = note_impl::get_block_links(&state, &args).await;
-    assert!(result.is_err());
-    assert!(!result.unwrap_err().to_string().is_empty());
-}
-
-#[tokio::test]
-async fn read_note_rejects_absolute_path() {
-    let (state, _dir) = test_state();
-    let args = serde_json::json!({ "path": "/etc/passwd" });
-    let result = note_impl::read_note(&state, &args).await;
-    assert!(result.is_err());
-}
-
-#[tokio::test]
-async fn mcp_capability_call_reports_missing_provider_through_dispatch() {
-    let (state, _dir) = test_state();
-    let ctx = ToolDispatchContext {
-        scene: AiScene::DraftingAssist,
-        note_path: None,
-        file_id: None,
-        web_search_enabled: false,
-        cold_start_packets: &[],
-        app_handle: None,
-        attachment_count: 0,
-        skill_activation_plan: None,
-        embedding_state: None,
-    };
-
+    let plan = scoped_plan("notes/**");
+    let ctx = dispatch_context_with_plan(Some(&plan));
     let result = dispatch_tool(
         &state,
         &ctx,
-        "mcp_runtime_capability_call",
-        &serde_json::json!({"capability": "web.search", "arguments": {"q": "iris"}}),
+        "read_note",
+        &serde_json::json!({ "path": "private/secret.md" }),
     )
     .await;
 
@@ -129,210 +143,101 @@ async fn mcp_capability_call_reports_missing_provider_through_dispatch() {
         .error
         .as_deref()
         .unwrap_or("")
-        .contains("missing_mcp_profile"));
+        .contains("outside the confirmed Skill scope"));
 }
 
 #[tokio::test]
-async fn mcp_profile_management_tools_update_registry_after_confirmation() {
-    use crate::ai_runtime::mcp_runtime_registry::{
-        list_recent_health_events, list_runtime_profiles, upsert_server_catalog,
-        McpServerCatalogInput,
-    };
-
+async fn read_note_allows_paths_matching_active_skill_tag_scope() {
     let (state, _dir) = test_state();
-    upsert_server_catalog(
-        &state.db,
-        &McpServerCatalogInput {
-            id: "fake-server".into(),
-            display_name: "Fake Server".into(),
-            transport: "stdio".into(),
-            command: Some("fake-mcp".into()),
-            args_json: "[]".into(),
-            url: None,
-            env_schema_json: "{}".into(),
-            capability_tags_json: "[\"web.search\"]".into(),
-            source: "test".into(),
-        },
-    )
-    .unwrap();
+    index_tagged_note(&state, "notes/test.md", "daily");
+    let plan = scoped_plan_rule("tag", "#daily");
+    let ctx = dispatch_context_with_plan(Some(&plan));
 
-    let ctx = ToolDispatchContext {
-        scene: AiScene::DraftingAssist,
-        note_path: None,
-        file_id: None,
-        web_search_enabled: false,
-        cold_start_packets: &[],
-        app_handle: None,
-        attachment_count: 0,
-        skill_activation_plan: None,
-        embedding_state: None,
-    };
-
-    let upserted = dispatch_tool(
+    let allowed = dispatch_tool(
         &state,
         &ctx,
-        "mcp_runtime_profile_upsert",
-        &serde_json::json!({
-            "id": "fake-profile",
-            "server_id": "fake-server",
-            "vault_scope_hash": null,
-            "display_name": "Fake Profile",
-            "enabled": true,
-            "transport_config_json": "{}",
-            "env_bindings_json": "{}",
-            "status": "unknown",
-            "last_error": null
-        }),
+        "read_note",
+        &serde_json::json!({ "path": "notes/test.md" }),
     )
     .await;
-    assert!(upserted.success, "upsert failed: {:?}", upserted.error);
-    assert_eq!(upserted.output["ok"], true);
+    assert!(
+        allowed.success,
+        "tag-scoped read failed: {:?}",
+        allowed.error
+    );
 
-    let profiles = list_runtime_profiles(&state.db).unwrap();
-    assert_eq!(profiles.len(), 1);
-    assert_eq!(profiles[0].id, "fake-profile");
-    assert!(profiles[0].enabled);
-
-    let toggled = dispatch_tool(
+    let rejected = dispatch_tool(
         &state,
         &ctx,
-        "mcp_runtime_profile_toggle",
-        &serde_json::json!({"profile_id": "fake-profile", "enabled": false}),
+        "read_note",
+        &serde_json::json!({ "path": "private/secret.md" }),
     )
     .await;
-    assert!(toggled.success, "toggle failed: {:?}", toggled.error);
-    assert!(!list_runtime_profiles(&state.db).unwrap()[0].enabled);
-
-    let live_tools = dispatch_tool(
-        &state,
-        &ctx,
-        "mcp_runtime_tools_list",
-        &serde_json::json!({"profile_id": "fake-profile"}),
-    )
-    .await;
-    assert!(!live_tools.success);
-    let events = list_recent_health_events(&state.db, "fake-profile", 5).unwrap();
-    assert_eq!(events[0].reason_code, "agent_live_tools_list_failed");
-    assert_eq!(events[0].status.as_str(), "unavailable");
-
-    let deleted = dispatch_tool(
-        &state,
-        &ctx,
-        "mcp_runtime_profile_delete",
-        &serde_json::json!({"profile_id": "fake-profile"}),
-    )
-    .await;
-    assert!(deleted.success, "delete failed: {:?}", deleted.error);
-    assert!(list_runtime_profiles(&state.db).unwrap().is_empty());
+    assert!(!rejected.success);
+    assert!(rejected
+        .error
+        .as_deref()
+        .unwrap_or("")
+        .contains("outside the confirmed Skill scope"));
 }
 
 #[tokio::test]
-async fn mcp_runtime_diagnostics_tools_return_registry_metadata_only() {
-    use crate::ai_runtime::mcp_runtime_registry::{
-        record_health_event, record_tool_inventory, upsert_runtime_profile, upsert_server_catalog,
-        McpHealthEventInput, McpRuntimeProfileInput, McpRuntimeStatus, McpServerCatalogInput,
-        McpToolInventoryInput,
-    };
-
+async fn get_outline_rejects_iris_metadata() {
     let (state, _dir) = test_state();
-    upsert_server_catalog(
-        &state.db,
-        &McpServerCatalogInput {
-            id: "anysearch".into(),
-            display_name: "AnySearch".into(),
-            transport: "stdio".into(),
-            command: Some("anysearch".into()),
-            args_json: "[]".into(),
-            url: None,
-            env_schema_json: "{}".into(),
-            capability_tags_json: "[\"web_search\"]".into(),
-            source: "test".into(),
-        },
-    )
-    .unwrap();
-    upsert_runtime_profile(
-        &state.db,
-        &McpRuntimeProfileInput {
-            id: "anysearch-local".into(),
-            server_id: "anysearch".into(),
-            vault_scope_hash: None,
-            display_name: "AnySearch Local".into(),
-            enabled: true,
-            transport_config_json: "{}".into(),
-            env_bindings_json: "{}".into(),
-            status: McpRuntimeStatus::Ready,
-            last_error: None,
-        },
-    )
-    .unwrap();
-    record_tool_inventory(
-        &state.db,
-        &McpToolInventoryInput {
-            profile_id: "anysearch-local".into(),
-            tool_name: "web_search".into(),
-            schema_hash: "sha256:test".into(),
-            capability_mapping_json: "{\"capability\":\"web_search\"}".into(),
-            description: Some("Search the web".into()),
-        },
-    )
-    .unwrap();
-    record_health_event(
-        &state.db,
-        &McpHealthEventInput {
-            profile_id: "anysearch-local".into(),
-            status: McpRuntimeStatus::Ready,
-            reason_code: "probe_ok".into(),
-            message: Some("ready".into()),
-            metadata_json: "{}".into(),
-        },
-    )
-    .unwrap();
+    let ctx = dispatch_context_with_plan(None);
+    let args = serde_json::json!({ "path": ".iris/skills/my-skill/SKILL.md" });
+    let result = note_impl::get_outline(&state, &ctx, &args).await;
+    assert!(result.is_err());
+    assert!(!result.unwrap_err().to_string().is_empty());
+}
 
-    let ctx = ToolDispatchContext {
-        scene: AiScene::DraftingAssist,
-        note_path: None,
-        file_id: None,
-        web_search_enabled: false,
-        cold_start_packets: &[],
-        app_handle: None,
-        attachment_count: 0,
-        skill_activation_plan: None,
-        embedding_state: None,
-    };
+#[tokio::test]
+async fn get_backlinks_rejects_iris_metadata() {
+    let (state, _dir) = test_state();
+    let ctx = dispatch_context_with_plan(None);
+    let args = serde_json::json!({ "path": ".iris/versions/x.md" });
+    let result = note_impl::get_backlinks(&state, &ctx, &args).await;
+    assert!(result.is_err());
+    assert!(!result.unwrap_err().to_string().is_empty());
+}
 
-    let profiles = dispatch_tool(
-        &state,
-        &ctx,
-        "mcp_runtime_profiles_list",
-        &serde_json::json!({}),
-    )
-    .await;
-    assert!(
-        profiles.success,
-        "profiles tool failed: {:?}",
-        profiles.error
-    );
-    assert_eq!(profiles.output["profiles"][0]["id"], "anysearch-local");
-    assert_eq!(profiles.output["profiles"][0]["status"], "ready");
+#[tokio::test]
+async fn get_backlinks_rejects_parent_dir() {
+    let (state, _dir) = test_state();
+    let ctx = dispatch_context_with_plan(None);
+    let args = serde_json::json!({ "path": "../secret.md" });
+    let result = note_impl::get_backlinks(&state, &ctx, &args).await;
+    assert!(result.is_err());
+    assert!(!result.unwrap_err().to_string().is_empty());
+}
 
-    let diagnostics = dispatch_tool(
-        &state,
-        &ctx,
-        "mcp_runtime_diagnostics",
-        &serde_json::json!({ "profile_id": "anysearch-local", "health_limit": 5 }),
-    )
-    .await;
-    assert!(
-        diagnostics.success,
-        "diagnostics tool failed: {:?}",
-        diagnostics.error
-    );
-    assert_eq!(diagnostics.output["profile_id"], "anysearch-local");
-    assert_eq!(diagnostics.output["tools"][0]["tool_name"], "web_search");
-    assert_eq!(
-        diagnostics.output["health_events"][0]["reason_code"],
-        "probe_ok"
-    );
+#[tokio::test]
+async fn get_block_links_rejects_parent_dir() {
+    let (state, _dir) = test_state();
+    let ctx = dispatch_context_with_plan(None);
+    let args = serde_json::json!({ "note_path": "../note.md" });
+    let result = note_impl::get_block_links(&state, &ctx, &args).await;
+    assert!(result.is_err());
+    assert!(!result.unwrap_err().to_string().is_empty());
+}
+
+#[tokio::test]
+async fn get_block_links_rejects_iris_metadata() {
+    let (state, _dir) = test_state();
+    let ctx = dispatch_context_with_plan(None);
+    let args = serde_json::json!({ "note_path": ".iris/versions/x.md" });
+    let result = note_impl::get_block_links(&state, &ctx, &args).await;
+    assert!(result.is_err());
+    assert!(!result.unwrap_err().to_string().is_empty());
+}
+
+#[tokio::test]
+async fn read_note_rejects_absolute_path() {
+    let (state, _dir) = test_state();
+    let ctx = dispatch_context_with_plan(None);
+    let args = serde_json::json!({ "path": "/etc/passwd" });
+    let result = note_impl::read_note(&state, &ctx, &args).await;
+    assert!(result.is_err());
 }
 
 #[test]
@@ -345,6 +250,7 @@ fn write_tool_approval_applies_patch_with_cas() {
         note_path: Some("notes/test.md"),
         file_id: None,
         web_search_enabled: false,
+        max_web_fetches: 3,
         cold_start_packets: &[],
         app_handle: None,
         attachment_count: 0,
@@ -373,6 +279,41 @@ fn write_tool_approval_applies_patch_with_cas() {
 }
 
 #[test]
+fn write_tool_rejects_target_outside_active_skill_scope_before_apply() {
+    let (state, _dir) = test_state();
+    let plan = scoped_plan("notes/**");
+    let mut ctx = dispatch_context_with_plan(Some(&plan));
+    ctx.note_path = Some("private/secret.md");
+    let base = "# Secret\nHidden";
+    let base_hash = crate::ai_runtime::writing_workflow::compute_content_hash(base);
+
+    let result = markdown_impl::markdown_write_patch_apply(
+        &state,
+        &ctx,
+        "replace_selection",
+        &serde_json::json!({
+            "target_path": "private/secret.md",
+            "replacement": "Public",
+            "base_content_hash": base_hash,
+            "range": {"start": 9, "end": 15},
+            "original_text": "Hidden",
+            "risk_level": "low"
+        }),
+    )
+    .unwrap();
+
+    assert_eq!(result["type"], "patch_apply");
+    assert_eq!(result["result"]["success"], false);
+    assert!(result["result"]["error"]
+        .as_str()
+        .unwrap_or("")
+        .contains("outside the confirmed Skill scope"));
+    let content =
+        std::fs::read_to_string(state.vault_path().unwrap().join("private/secret.md")).unwrap();
+    assert_eq!(content, "# Secret\nHidden");
+}
+
+#[test]
 fn write_tool_approval_reports_hash_conflict_without_writing() {
     let (state, _dir) = test_state();
     let ctx = ToolDispatchContext {
@@ -380,6 +321,7 @@ fn write_tool_approval_reports_hash_conflict_without_writing() {
         note_path: Some("notes/test.md"),
         file_id: None,
         web_search_enabled: false,
+        max_web_fetches: 3,
         cold_start_packets: &[],
         app_handle: None,
         attachment_count: 0,

@@ -284,31 +284,7 @@ function sourceHintsFor(input: BuildAssistantTaskPlanInput): string[] {
     hints.push("web:fresh_required");
   }
 
-  const skillHubSkill = skillHubDirectInstallSkill(input.message);
-  if (skillHubSkill) {
-    hints.push(`skillhub:direct_install:${skillHubSkill}`);
-  }
-
   return hints;
-}
-
-function skillHubDirectInstallSkill(message: string): string | null {
-  const raw = message.trim();
-  const lower = raw.toLowerCase();
-  const hasSkillHubSource =
-    lower.includes("skillhub") ||
-    lower.includes("skillhub.cn/install/skillhub.md") ||
-    lower.includes("skillhub 商店") ||
-    lower.includes("skillhub商店");
-  if (!hasSkillHubSource) return null;
-
-  const installSkillPattern =
-    /(?:安装|install)\s*([a-z0-9][a-z0-9_-]{1,80})\s*(?:技能|skill)/i;
-  const match = raw.match(installSkillPattern);
-  const skill = match?.[1]?.toLowerCase();
-  if (!skill || skill === "skillhub") return null;
-
-  return skill;
 }
 
 function basePlan(
@@ -566,7 +542,6 @@ export function buildAssistantTaskPlan(
 
   if (
     input.skillMention ||
-    skillHubDirectInstallSkill(input.message) ||
     message.includes("skill") ||
     message.includes("技能")
   ) {

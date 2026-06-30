@@ -4,21 +4,6 @@ use iris_lib::ai_runtime::sandbox_profile::{
 
 #[test]
 fn high_risk_tools_have_honest_sandbox_profiles() {
-    let process = sandbox_profile_for_tool("process_run_readonly");
-    assert_eq!(process.level, SandboxLevel::L1Subprocess);
-    assert_eq!(process.support, SandboxSupport::Supported);
-    assert!(process.constraints.contains(&"cwd_fixed".to_string()));
-    assert!(process.constraints.contains(&"env_cleared".to_string()));
-    assert!(process
-        .constraints
-        .contains(&"timeout_enforced".to_string()));
-    assert!(process
-        .constraints
-        .contains(&"stdout_stderr_limited".to_string()));
-    assert!(process
-        .constraints
-        .contains(&"argument_allowlist".to_string()));
-
     let git = sandbox_profile_for_tool("git_write_commit");
     assert_eq!(git.level, SandboxLevel::L1Subprocess);
     assert!(git.constraints.contains(&"git_hooks_disabled".to_string()));
@@ -26,20 +11,13 @@ fn high_risk_tools_have_honest_sandbox_profiles() {
         .constraints
         .contains(&"git_filters_disabled".to_string()));
 
-    let skill_install = sandbox_profile_for_tool("skills_install");
-    assert_eq!(skill_install.level, SandboxLevel::L1Subprocess);
-    assert!(skill_install
-        .limitations
-        .iter()
-        .any(|item| item.contains("not an OS sandbox")));
-
     let os = os_sandbox_profile();
     assert_eq!(os.level, SandboxLevel::L2OsBoundary);
     assert_eq!(os.support, SandboxSupport::Unsupported);
 }
 
 #[test]
-fn subprocess_sources_apply_l1_constraints_without_claiming_l2() {
+fn subprocess_sources_apply_l1_constraints_without_claiming_l2_or_skill_install_runtime() {
     let boundary = include_str!("../src/ai_runtime/tool_dispatch/boundary.rs");
     let skills = include_str!("../src/ai_runtime/skills_impl.rs");
     let confirm = include_str!("../src/ai_harness/harness/run.rs");
@@ -49,11 +27,11 @@ fn subprocess_sources_apply_l1_constraints_without_claiming_l2() {
     assert!(boundary.contains("core.hooksPath=/dev/null"));
     assert!(boundary.contains("filter.lfs.smudge="));
     assert!(boundary.contains("env_clear()"));
-    assert!(boundary.contains("Duration::from_secs(5)"));
-    assert!(skills.contains("SAFE_GIT_CLONE_ARGS"));
-    assert!(skills.contains("run_git_clone_with_timeout"));
-    assert!(skills.contains("env_clear()"));
-    assert!(skills.contains("Duration::from_secs"));
+    assert!(!boundary.contains("process_run_readonly_tool"));
+    assert!(skills.contains("write_confirmed_skill_content"));
+    assert!(!skills.contains("SAFE_GIT_CLONE_ARGS"));
+    assert!(!skills.contains("run_git_clone_with_timeout"));
+    assert!(!skills.contains("Command::new(\"git\")"));
     assert!(confirm.contains("\"sandboxProfile\""));
     assert!(audit.contains("sandbox_profile_id"));
     assert!(audit.contains("sandbox_profile="));

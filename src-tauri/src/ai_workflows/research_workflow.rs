@@ -449,9 +449,10 @@ async fn push_topic_web_evidence(
         db,
         WebEvidenceBrokerInput {
             query: topic.to_string(),
+            urls: Vec::new(),
             enabled,
             max_search_results: 8,
-            max_fetches: 0,
+            max_fetches: 3,
         },
     )
     .await
@@ -577,9 +578,18 @@ async fn execute_web_search_tool_call(
 fn web_search_broker_input(args: &serde_json::Value, enabled: bool) -> WebEvidenceBrokerInput {
     WebEvidenceBrokerInput {
         query: args["query"].as_str().unwrap_or("").to_string(),
+        urls: args["urls"]
+            .as_array()
+            .map(|items| {
+                items
+                    .iter()
+                    .filter_map(|item| item.as_str().map(str::to_string))
+                    .collect()
+            })
+            .unwrap_or_default(),
         enabled,
         max_search_results: 8,
-        max_fetches: 0,
+        max_fetches: 3,
     }
 }
 
@@ -1239,20 +1249,31 @@ mod tests {
         assert_eq!(input.query, "网络证据代理");
         assert!(input.enabled);
         assert_eq!(input.max_search_results, 8);
-        assert_eq!(input.max_fetches, 0);
+        assert_eq!(input.max_fetches, 3);
     }
 
     #[test]
     fn research_web_search_tool_converts_broker_items_to_packets() {
         let items = vec![crate::ai_runtime::web_evidence_broker::WebEvidenceItem {
             url: "https://example.com/source".into(),
+            canonical_url: "https://example.com/source".into(),
             title: "Source".into(),
             domain: "example.com".into(),
             snippet: "Evidence snippet".into(),
             fetched_excerpt: None,
+            provider_id: "native.duckduckgo".into(),
+            provider_kind: "native".into(),
+            cost_class: "free".into(),
+            raw_result_hash: "hash".into(),
+            extraction_method: "search_snippet".into(),
+            trust_level: "external_untrusted".into(),
+            retrieval_reason: "web.search".into(),
+            search_backend: crate::ai_runtime::WebSearchBackend::Duckduckgo,
             source_rank: crate::ai_runtime::WebSourceRank::Unknown,
             freshness_label: None,
             failure_reason: None,
+            conflict_group: None,
+            conflict_note: None,
         }];
 
         let packets = web_evidence_items_to_packets("query", &items);

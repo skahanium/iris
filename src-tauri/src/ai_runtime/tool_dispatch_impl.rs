@@ -31,17 +31,14 @@ pub use context_impl::ToolDispatchContext;
 pub const DISPATCHABLE_TOOL_NAMES: &[&str] = &[
     "search_hybrid", "search_semantic", "search_keyword", "get_regulation", "get_context_packets",
     "system_time_now", "app_context_read", "capabilities_read",
-    "web_search", "fetch_web_page", "read_note", "list_vault", "get_outline", "get_backlinks",
+    "web_search", "read_note", "list_vault", "get_outline", "get_backlinks",
     "get_block_links", "memory_read", "memory_write", "scheduled_task_create", "scheduled_task_list",
-    "scheduled_task_delete", "web_fetch_batch", "readability_fetch", "rendered_fetch",
+    "scheduled_task_delete",
     "vault_create_note", "vault_rename_move", "vault_delete_to_trash", "vault_asset_write",
-    "vault_version_list", "insert_text_at_cursor", "replace_selection", "skills_list", "skills_install",
-    "mcp_runtime_profiles_list", "mcp_runtime_diagnostics", "mcp_runtime_tool_inventory_list", "mcp_runtime_health_events_list", "mcp_runtime_tools_list", "mcp_runtime_health_check", "mcp_runtime_capability_call", "mcp_server_catalog_upsert", "mcp_runtime_profile_upsert", "mcp_runtime_profile_toggle", "mcp_runtime_profile_delete", "skills_prepare_workspace", "skills_uninstall", "skills_update", "skills_toggle", "skills_read_resource",
-    "skills_workspace_list", "skills_workspace_read", "skills_workspace_write", "git_read_status",
+    "vault_version_list", "insert_text_at_cursor", "replace_selection", "skills_list", "git_read_status",
     "git_read_diff", "git_read_log", "secret_exists", "fs_import_to_vault", "fs_export",
     "fs_read_authorized_folder", "fs_write_authorized_export", "doc_normalize_markdown",
-    "doc_extract_citations", "web_to_markdown", "web_download_to_assets", "web_citation_extract",
-    "skill_request_capabilities", "process_run_readonly", "git_write_commit",
+    "doc_extract_citations", "git_write_commit",
 ];
 pub const HARNESS_ONLY_TOOL_NAMES: &[&str] = &["spawn_subagent", "conclude_reasoning"];
 pub fn is_exposable_tool(name: &str) -> bool {
@@ -55,7 +52,7 @@ fn is_retryable_tool_error(tool_name: &str, result: &ToolCallResult) -> bool {
         return false;
     }
     let err = result.error.as_deref().unwrap_or("");
-    (tool_name == "web_search" || tool_name == "fetch_web_page")
+    tool_name == "web_search"
         && (err.contains("timeout") || err.contains("network") || err.contains("connection"))
 }
 pub async fn dispatch_tool_with_retry(
@@ -122,20 +119,16 @@ async fn dispatch_tool_inner(
         "app_context_read" => runtime_impl::app_context_read_tool(state, ctx),
         "capabilities_read" => runtime_impl::capabilities_read_tool(state, ctx),
         "web_search" => web_impl::web_search_tool(state, args, ctx).await,
-        "fetch_web_page" => web_impl::fetch_web_page_tool(state, args, ctx).await,
-        "read_note" => note_impl::read_note(state, args).await,
+        "read_note" => note_impl::read_note(state, ctx, args).await,
         "list_vault" => note_impl::list_vault(state, args).await,
-        "get_outline" => note_impl::get_outline(state, args).await,
-        "get_backlinks" => note_impl::get_backlinks(state, args).await,
-        "get_block_links" => note_impl::get_block_links(state, args).await,
+        "get_outline" => note_impl::get_outline(state, ctx, args).await,
+        "get_backlinks" => note_impl::get_backlinks(state, ctx, args).await,
+        "get_block_links" => note_impl::get_block_links(state, ctx, args).await,
         "memory_read" => memory_impl::memory_read_tool(state, args, ctx).await,
         "memory_write" => memory_impl::memory_write_tool(state, args, ctx).await,
         "scheduled_task_create" => schedule_impl::scheduled_task_create_tool(state, args).await,
         "scheduled_task_list" => schedule_impl::scheduled_task_list_tool(state, args).await,
         "scheduled_task_delete" => schedule_impl::scheduled_task_delete_tool(state, args).await,
-        "web_fetch_batch" => web_impl::web_fetch_batch_tool(state, args, ctx).await,
-        "readability_fetch" => web_impl::readability_fetch_tool(state, args, ctx, false).await,
-        "rendered_fetch" => web_impl::readability_fetch_tool(state, args, ctx, true).await,
         "vault_create_note" => vault_impl::vault_create_note_tool(state, ctx, args),
         "vault_rename_move" => vault_impl::vault_rename_move_tool(state, ctx, args),
         "vault_delete_to_trash" => vault_impl::vault_delete_to_trash_tool(state, args),
@@ -157,13 +150,6 @@ async fn dispatch_tool_inner(
         "fs_write_authorized_export" => boundary_impl::fs_write_authorized_export_tool(args),
         "doc_normalize_markdown" => boundary_impl::doc_normalize_markdown_tool(args),
         "doc_extract_citations" => boundary_impl::doc_extract_citations_tool(args),
-        "web_to_markdown" => boundary_impl::web_to_markdown_tool(state, args, ctx).await,
-        "web_download_to_assets" => {
-            boundary_impl::web_download_to_assets_tool(state, args, ctx).await
-        }
-        "web_citation_extract" => boundary_impl::web_citation_extract_tool(state, args, ctx).await,
-        "skill_request_capabilities" => boundary_impl::skill_request_capabilities_tool(args),
-        "process_run_readonly" => boundary_impl::process_run_readonly_tool(state, args),
         "git_write_commit" => boundary_impl::git_write_commit_tool(state, args),
         _ => Err(AppError::msg(format!("unknown tool: {tool_name}"))),
     }

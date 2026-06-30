@@ -45,6 +45,13 @@ pub(super) fn markdown_write_patch_apply(
             args,
         ));
     }
+    if let Err(error) = ctx.ensure_active_skill_scope_allows_path(&state.db, &target_path) {
+        return Ok(markdown_write_not_applied(
+            tool_name,
+            &error.to_string(),
+            args,
+        ));
+    }
     let Some(base_content_hash) = args
         .get("base_content_hash")
         .and_then(|v| v.as_str())

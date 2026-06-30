@@ -32,9 +32,8 @@ describe("Phase5 permission UI", () => {
 
     expect(source).toContain("buildPermissionCard");
     expect(source).toContain("permissionEffects");
-    expect(source).toContain("skills_prepare_workspace");
-    expect(source).toContain("准备 Skill 工作区");
-    expect(source).toContain("将创建");
+    expect(source).not.toContain("web_to_markdown");
+    expect(source).not.toContain("process_run_readonly");
     expect(source).not.toContain("调用参数");
     expect(source).not.toContain("参数 JSON");
     expect(source).not.toContain("reversibleBy");

@@ -91,11 +91,6 @@ pub fn os_sandbox_profile() -> SandboxProfile {
 /// Resolve the sandbox profile that applies to a tool.
 pub fn sandbox_profile_for_tool(tool_name: &str) -> SandboxProfile {
     match tool_name {
-        "process_run_readonly" => SandboxProfile::l1(
-            tool_name,
-            "Readonly subprocess with fixed vault cwd, cleared env, timeout, output cap, and argument allowlist",
-            &[],
-        ),
         "git_read_status" | "git_read_diff" | "git_read_log" | "git_write_commit" => {
             SandboxProfile::l1(
                 tool_name,
@@ -103,18 +98,9 @@ pub fn sandbox_profile_for_tool(tool_name: &str) -> SandboxProfile {
                 &["git_hooks_disabled", "git_filters_disabled"],
             )
         }
-        "skills_install" | "skills_update" => SandboxProfile::l1(
+        _ => SandboxProfile::l0(
             tool_name,
-            "Skill install/update uses HTTPS-only fetch or bounded git clone with source validation",
-            &[
-                "https_only_remote_fetch",
-                "git_hooks_disabled",
-                "git_filters_disabled",
-            ],
+            "Application-level policy and permission boundary",
         ),
-        "skill.execute_script_sandboxed" | "skill.install_dependency" | "skill.mcp_bridge" => {
-            os_sandbox_profile()
-        }
-        _ => SandboxProfile::l0(tool_name, "Application-level policy and permission boundary"),
     }
 }

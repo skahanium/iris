@@ -736,6 +736,12 @@ mod tests {
                 search_backend: None,
                 source_rank: None,
                 failure_reason: None,
+                provider_id: None,
+                provider_kind: None,
+                raw_result_hash: None,
+                extraction_method: None,
+                conflict_group: None,
+                conflict_note: None,
             }
         }
 

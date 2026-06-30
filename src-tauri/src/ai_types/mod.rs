@@ -101,7 +101,7 @@ pub enum AgentIntent {
     DocumentCheck,
     /// Image-aware chat path, with safe fallback to chat.
     VisionChat,
-    /// Natural-language skill install, update, toggle, or diagnostic request.
+    /// Natural-language prompt-only Skill draft or confirmation request.
     SkillManagement,
 }
 
@@ -134,65 +134,6 @@ pub struct IntentDetectionSummary {
     pub source_hints: Vec<String>,
 }
 
-/// Skill manifest compatibility source.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum SkillCompatibilitySource {
-    Iris,
-    Claude,
-    Hermes,
-    #[default]
-    Unknown,
-}
-
-/// Runtime capability a skill may declare for preflight.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub enum SkillRuntimeCapability {
-    #[serde(rename = "skill.read_resource")]
-    ReadResource,
-    #[serde(rename = "skill.write_storage")]
-    WriteStorage,
-    #[serde(rename = "skill.request_capabilities")]
-    RequestCapabilities,
-    #[serde(rename = "skill.execute_script_sandboxed")]
-    ExecuteScriptSandboxed,
-    #[serde(rename = "skill.install_dependency")]
-    InstallDependency,
-    #[serde(rename = "skill.mcp_bridge")]
-    McpBridge,
-}
-
-impl SkillRuntimeCapability {
-    /// Parse a manifest capability string.
-    pub fn parse(value: &str) -> Option<Self> {
-        match value.trim() {
-            "skill.read_resource" | "read_resource" => Some(Self::ReadResource),
-            "skill.write_storage" | "write_storage" => Some(Self::WriteStorage),
-            "skill.request_capabilities" | "request_capabilities" => {
-                Some(Self::RequestCapabilities)
-            }
-            "skill.execute_script_sandboxed" | "execute_script_sandboxed" => {
-                Some(Self::ExecuteScriptSandboxed)
-            }
-            "skill.install_dependency" | "install_dependency" => Some(Self::InstallDependency),
-            "skill.mcp_bridge" | "mcp_bridge" => Some(Self::McpBridge),
-            _ => None,
-        }
-    }
-
-    /// Stable manifest string.
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::ReadResource => "skill.read_resource",
-            Self::WriteStorage => "skill.write_storage",
-            Self::RequestCapabilities => "skill.request_capabilities",
-            Self::ExecuteScriptSandboxed => "skill.execute_script_sandboxed",
-            Self::InstallDependency => "skill.install_dependency",
-            Self::McpBridge => "skill.mcp_bridge",
-        }
-    }
-}
-
 /// Support status for a requested skill capability.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -203,20 +144,6 @@ pub enum SkillCapabilitySupportStatus {
     UnsupportedByProductScope,
     BlockedByPolicy,
     MissingUserGrant,
-}
-
-/// Resource metadata safe for UI and audit summaries.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct SkillResourceStatusSummary {
-    pub relative_path: String,
-    pub kind: String,
-    pub available: bool,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub size_bytes: Option<u64>,
-    pub truncated: bool,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub reason: Option<String>,
 }
 
 /// Safe summary for a blocked or degraded skill capability.
@@ -238,19 +165,15 @@ pub struct BlockedCapabilitySummary {
 pub struct SkillActivationItemSummary {
     pub name: String,
     pub scope: String,
+    #[serde(default)]
+    pub scope_rules: Vec<crate::ai_runtime::skills::SkillScopeRule>,
     pub score: f64,
     pub match_reason: String,
     pub injected_sections: Vec<String>,
     pub degraded_reasons: Vec<String>,
     pub requested_tools: Vec<String>,
-    pub requested_capabilities: Vec<SkillRuntimeCapability>,
     pub confirmation_required_tools: Vec<String>,
-    pub resources: Vec<SkillResourceStatusSummary>,
     pub blocked_capabilities: Vec<BlockedCapabilitySummary>,
-    pub compatibility_source: SkillCompatibilitySource,
-    pub workspace_root: String,
-    pub workspace_ready: bool,
-    pub workspace_missing_items: Vec<String>,
 }
 
 /// Per-run skill activation plan safe for UI display.
@@ -259,7 +182,6 @@ pub struct SkillActivationItemSummary {
 pub struct SkillActivationPlanSummary {
     pub activated_skills: Vec<SkillActivationItemSummary>,
     pub requested_tools: Vec<String>,
-    pub requested_capabilities: Vec<SkillRuntimeCapability>,
     pub confirmation_required_tools: Vec<String>,
     pub blocked_capabilities: Vec<BlockedCapabilitySummary>,
     pub skill_overlay_summary: String,
@@ -492,6 +414,18 @@ pub struct WebEvidenceMeta {
     pub fetched_at: String,
     pub search_backend: WebSearchBackend,
     pub source_rank: WebSourceRank,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider_kind: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub raw_result_hash: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub extraction_method: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub conflict_group: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub conflict_note: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub failure_reason: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -742,7 +676,7 @@ pub enum ToolAccessLevel {
     WriteCache,
     WriteMarkdown,
     WriteSettings,
-    /// Install / uninstall / toggle agent skills.
+    /// Create or confirm prompt-only agent Skills.
     #[serde(rename = "manage_skills")]
     ManageSkills,
 }

@@ -97,68 +97,53 @@ pub fn resolve_required_capability(
         ));
     }
 
-    let profiles =
-        crate::ai_runtime::mcp_runtime_registry::list_runtime_profiles(db).map_err(|err| {
+    let providers = crate::ai_runtime::mcp_runtime_registry::list_enabled_web_provider_mappings(db)
+        .map_err(|err| {
             blocked(
                 &capability,
                 CapabilityBlockReason::ProviderNotImplemented,
-                format!("failed to read MCP runtime profiles: {err}"),
+                format!("failed to read web evidence provider mappings: {err}"),
             )
         })?;
 
-    let mut saw_disabled = false;
-    let mut saw_unhealthy = false;
-    for profile in profiles {
-        let tools = crate::ai_runtime::mcp_runtime_registry::list_tool_inventory(db, &profile.id)
-            .map_err(|err| {
-            blocked(
-                &capability,
-                CapabilityBlockReason::ProviderNotImplemented,
-                format!("failed to read MCP tool inventory: {err}"),
-            )
-        })?;
-        for tool in tools {
-            if !explicit_mapping_contains_capability(&tool.capability_mapping_json, &capability) {
-                continue;
-            }
-            if !profile.enabled {
-                saw_disabled = true;
-                continue;
-            }
-            if profile.status != crate::ai_runtime::mcp_runtime_registry::McpRuntimeStatus::Ready {
-                saw_unhealthy = true;
-                continue;
-            }
-            return Ok(ResolvedCapabilityProvider {
-                capability,
-                provider_kind: "mcp".into(),
-                profile_id: profile.id,
-                tool_name: tool.tool_name,
-                schema_hash: tool.schema_hash,
-                requires_confirmation: true,
-            });
+    for provider in providers {
+        if provider.kind != "mcp" {
+            continue;
         }
+        let mapping_json = match capability.as_str() {
+            "web.search" => provider.web_search_mapping_json.as_deref(),
+            "web.fetch" => provider.web_fetch_mapping_json.as_deref(),
+            _ => None,
+        };
+        let Some(tool_name) = mapping_json.and_then(mapping_tool_name) else {
+            continue;
+        };
+        return Ok(ResolvedCapabilityProvider {
+            capability,
+            provider_kind: "mcp".into(),
+            profile_id: provider.id,
+            tool_name,
+            schema_hash: provider.provider_config_hash,
+            requires_confirmation: true,
+        });
     }
 
-    if saw_disabled {
-        return Err(blocked(
-            &capability,
-            CapabilityBlockReason::ProfileDisabled,
-            "a mapped MCP profile exists but is disabled",
-        ));
-    }
-    if saw_unhealthy {
-        return Err(blocked(
-            &capability,
-            CapabilityBlockReason::ProfileUnhealthy,
-            "a mapped MCP profile exists but is not ready",
-        ));
-    }
     Err(blocked(
         &capability,
         CapabilityBlockReason::MissingMcpProfile,
-        "no enabled ready MCP profile exposes an approved mapping for this capability",
+        "no enabled MCP web evidence provider exposes an explicit mapping for this capability",
     ))
+}
+
+fn mapping_tool_name(mapping_json: &str) -> Option<String> {
+    let value = serde_json::from_str::<serde_json::Value>(mapping_json).ok()?;
+    value
+        .get("tool")
+        .or_else(|| value.get("tool_name"))
+        .and_then(|value| value.as_str())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
 }
 
 fn blocked(
@@ -174,58 +159,11 @@ fn blocked(
 }
 
 fn is_supported_capability(capability: &str) -> bool {
-    matches!(
-        capability,
-        "web.search"
-            | "web.fetch"
-            | "web.to_markdown"
-            | "web.download_to_assets"
-            | "skill.read_resource"
-            | "skill.write_storage"
-            | "skill.mcp_bridge"
-            | "app_state.read"
-            | "app_state.write"
-            | "secret.exists"
-            | "secret.use_named"
-            | "process.run_readonly"
-            | "process.long_running"
-    )
+    matches!(capability, "web.search" | "web.fetch")
 }
 
 fn normalize_capability(raw: &str) -> String {
     raw.trim().to_lowercase().replace('_', ".")
-}
-
-fn explicit_mapping_contains_capability(mapping_json: &str, capability: &str) -> bool {
-    let Ok(value) = serde_json::from_str::<serde_json::Value>(mapping_json) else {
-        return false;
-    };
-    match value {
-        serde_json::Value::String(raw) => normalize_capability(&raw) == capability,
-        serde_json::Value::Array(items) => items.iter().any(|item| {
-            item.as_str()
-                .map(|raw| normalize_capability(raw) == capability)
-                .unwrap_or(false)
-        }),
-        serde_json::Value::Object(map) => {
-            map.get("capability")
-                .and_then(|value| value.as_str())
-                .map(|raw| normalize_capability(raw) == capability)
-                .unwrap_or(false)
-                || map
-                    .get("capabilities")
-                    .and_then(|value| value.as_array())
-                    .map(|items| {
-                        items.iter().any(|item| {
-                            item.as_str()
-                                .map(|raw| normalize_capability(raw) == capability)
-                                .unwrap_or(false)
-                        })
-                    })
-                    .unwrap_or(false)
-        }
-        _ => false,
-    }
 }
 
 pub fn grant_requirement_for_capability(capability: &str) -> CapabilityGrantRequirement {
@@ -262,150 +200,66 @@ pub fn resolve_required_capability_app(
 mod tests {
     use super::*;
     use crate::ai_runtime::mcp_runtime_registry::{
-        record_tool_inventory, upsert_runtime_profile, upsert_server_catalog,
-        McpRuntimeProfileInput, McpRuntimeStatus, McpServerCatalogInput, McpToolInventoryInput,
+        upsert_web_evidence_provider, WebEvidenceProviderInput,
     };
 
-    fn db() -> Database {
-        Database::open_in_memory().unwrap()
-    }
-
-    fn server(id: &str) -> McpServerCatalogInput {
-        McpServerCatalogInput {
-            id: id.into(),
-            display_name: id.into(),
-            transport: "stdio".into(),
-            command: Some("fake-mcp".into()),
-            args_json: "[]".into(),
-            url: None,
-            env_schema_json: "{}".into(),
-            capability_tags_json: "[\"web.search\"]".into(),
-            source: "test".into(),
-        }
-    }
-
-    fn profile(
-        profile_id: &str,
-        server_id: &str,
-        enabled: bool,
-        status: McpRuntimeStatus,
-    ) -> McpRuntimeProfileInput {
-        McpRuntimeProfileInput {
-            id: profile_id.into(),
-            server_id: server_id.into(),
-            vault_scope_hash: None,
-            display_name: profile_id.into(),
-            enabled,
+    fn provider() -> WebEvidenceProviderInput {
+        WebEvidenceProviderInput {
+            id: "anysearch".into(),
+            name: "AnySearch".into(),
+            kind: "mcp".into(),
+            enabled: true,
+            transport_kind: "stdio".into(),
             transport_config_json: "{}".into(),
-            env_bindings_json: "{}".into(),
-            status,
-            last_error: None,
-        }
-    }
-
-    fn inventory(profile_id: &str, tool_name: &str, mapping: &str) -> McpToolInventoryInput {
-        McpToolInventoryInput {
-            profile_id: profile_id.into(),
-            tool_name: tool_name.into(),
-            schema_hash: "sha256:test".into(),
-            capability_mapping_json: mapping.into(),
-            description: Some("test tool".into()),
+            credential_refs_json: "{}".into(),
+            web_search_mapping_json: Some(r#"{"tool":"search"}"#.into()),
+            web_fetch_mapping_json: Some(r#"{"tool":"fetch"}"#.into()),
         }
     }
 
     #[test]
-    fn resolver_distinguishes_missing_profile_from_unsupported_capability() {
-        let db = db();
+    fn target_state_supports_only_web_search_and_fetch() {
+        assert!(is_supported_capability("web.search"));
+        assert!(is_supported_capability("web.fetch"));
 
-        let missing = resolve_required_capability(&db, "web.search").unwrap_err();
-        assert_eq!(missing.reason_code(), "missing_mcp_profile");
-
-        let unsupported = resolve_required_capability(&db, "unknown.capability").unwrap_err();
-        assert_eq!(unsupported.reason_code(), "unsupported_capability");
+        for capability in [
+            "web.to_markdown",
+            "web.download_to_assets",
+            "app_state.read",
+            "app_state.write",
+            "secret.exists",
+            "secret.use_named",
+            "process.run_readonly",
+            "process.long_running",
+            "skill.mcp_bridge",
+        ] {
+            assert!(
+                !is_supported_capability(capability),
+                "{capability} must not remain in target-state capability vocabulary"
+            );
+        }
     }
 
     #[test]
-    fn resolver_uses_only_explicit_approved_capability_mapping() {
-        let db = db();
-        upsert_server_catalog(&db, &server("search-server")).unwrap();
-        upsert_runtime_profile(
-            &db,
-            &profile(
-                "search-profile",
-                "search-server",
-                true,
-                McpRuntimeStatus::Ready,
-            ),
-        )
-        .unwrap();
-        record_tool_inventory(
-            &db,
-            &inventory(
-                "search-profile",
-                "annotated_search",
-                "{\"annotations\":{\"capability\":\"web.search\"}}",
-            ),
-        )
-        .unwrap();
-
-        let missing = resolve_required_capability(&db, "web.search").unwrap_err();
-        assert_eq!(missing.reason_code(), "missing_mcp_profile");
-
-        record_tool_inventory(
-            &db,
-            &inventory(
-                "search-profile",
-                "approved_search",
-                "{\"capability\":\"web.search\"}",
-            ),
-        )
-        .unwrap();
+    fn resolves_explicit_enabled_web_provider_mapping() {
+        let db = Database::open_in_memory().unwrap();
+        upsert_web_evidence_provider(&db, &provider()).unwrap();
 
         let resolved = resolve_required_capability(&db, "web.search").unwrap();
         assert_eq!(resolved.provider_kind, "mcp");
-        assert_eq!(resolved.profile_id, "search-profile");
-        assert_eq!(resolved.tool_name, "approved_search");
-        assert!(resolved.requires_confirmation);
+        assert_eq!(resolved.profile_id, "anysearch");
+        assert_eq!(resolved.tool_name, "search");
+        assert_eq!(resolved.schema_hash.len(), 24);
     }
 
     #[test]
-    fn resolver_reports_disabled_and_unhealthy_profiles_separately() {
-        let db = db();
-        upsert_server_catalog(&db, &server("search-server")).unwrap();
-        upsert_runtime_profile(
-            &db,
-            &profile(
-                "disabled-profile",
-                "search-server",
-                false,
-                McpRuntimeStatus::Ready,
-            ),
-        )
-        .unwrap();
-        record_tool_inventory(
-            &db,
-            &inventory(
-                "disabled-profile",
-                "search",
-                "{\"capability\":\"web.search\"}",
-            ),
-        )
-        .unwrap();
+    fn disabled_provider_mapping_is_not_resolved() {
+        let db = Database::open_in_memory().unwrap();
+        let mut input = provider();
+        input.enabled = false;
+        upsert_web_evidence_provider(&db, &input).unwrap();
 
-        let disabled = resolve_required_capability(&db, "web.search").unwrap_err();
-        assert_eq!(disabled.reason_code(), "profile_disabled");
-
-        upsert_runtime_profile(
-            &db,
-            &profile(
-                "disabled-profile",
-                "search-server",
-                true,
-                McpRuntimeStatus::Unavailable,
-            ),
-        )
-        .unwrap();
-        let unhealthy = resolve_required_capability(&db, "web.search").unwrap_err();
-        assert_eq!(unhealthy.reason_code(), "profile_unhealthy");
+        let err = resolve_required_capability(&db, "web.search").unwrap_err();
+        assert_eq!(err.reason, CapabilityBlockReason::MissingMcpProfile);
     }
 }

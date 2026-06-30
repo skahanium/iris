@@ -1,7 +1,5 @@
 use crate::ai_runtime::tool_catalog::{catalog_find, ToolImplementationStatus};
-use crate::ai_types::{
-    BlockedCapabilitySummary, SkillCapabilitySupportStatus, SkillRuntimeCapability,
-};
+use crate::ai_types::{BlockedCapabilitySummary, SkillCapabilitySupportStatus};
 
 use super::SkillEntry;
 
@@ -37,13 +35,9 @@ pub fn support_status_for_capability(raw: &str) -> SkillCapabilitySupportStatus 
         "bash" | "shell" | "computer" | "computer_control" => {
             SkillCapabilitySupportStatus::BlockedByPolicy
         }
-        "skill.execute_script_sandboxed" | "execute_script_sandboxed" => {
+        "execute_script_sandboxed" | "install_dependency" | "dependency_install" | "mcp_bridge" => {
             SkillCapabilitySupportStatus::BlockedByPolicy
         }
-        "skill.install_dependency" | "install_dependency" | "dependency_install" => {
-            SkillCapabilitySupportStatus::BlockedByPolicy
-        }
-        "skill.mcp_bridge" | "mcp_bridge" => SkillCapabilitySupportStatus::Planned,
         _ => SkillCapabilitySupportStatus::UnsupportedByProductScope,
     }
 }
@@ -103,31 +97,6 @@ pub fn blocked_capabilities_for_skill(entry: &SkillEntry) -> Vec<BlockedCapabili
                 permission: catalog_find(&normalize_external_capability(tool))
                     .map(|tool| tool.access_level),
                 fallback_guidance: fallback_guidance(tool, status),
-            });
-        }
-    }
-    for capability in entry.requested_capabilities() {
-        let raw = capability.as_str();
-        let status = match capability {
-            SkillRuntimeCapability::ReadResource
-            | SkillRuntimeCapability::WriteStorage
-            | SkillRuntimeCapability::RequestCapabilities => {
-                SkillCapabilitySupportStatus::Supported
-            }
-            SkillRuntimeCapability::ExecuteScriptSandboxed
-            | SkillRuntimeCapability::InstallDependency => {
-                SkillCapabilitySupportStatus::BlockedByPolicy
-            }
-            SkillRuntimeCapability::McpBridge => SkillCapabilitySupportStatus::Planned,
-        };
-        if !matches!(status, SkillCapabilitySupportStatus::Supported) {
-            blocked.push(BlockedCapabilitySummary {
-                skill_name: entry.name.clone(),
-                capability: raw.into(),
-                status,
-                risk_level: risk_level(status).into(),
-                permission: None,
-                fallback_guidance: fallback_guidance(raw, status),
             });
         }
     }

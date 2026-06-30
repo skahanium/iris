@@ -64,13 +64,13 @@ fn permission_decision_hard_denies_unsupported_profiles() {
 #[test]
 fn permission_decision_applies_exact_session_grants_only() {
     let db = Database::open_in_memory().unwrap();
-    let ctx = policy_ctx(AiScene::KnowledgeLookup, AutonomyLevel::L2);
-    let entry = catalog_entry("fetch_web_page");
+    let ctx = policy_ctx(AiScene::DraftingAssist, AutonomyLevel::L2);
+    let entry = catalog_entry("replace_selection");
 
     iris_lib::ai_runtime::agent_permissions::upsert_permission_grant(
         &db,
         &PermissionGrantInput {
-            permission_name: "web.fetch",
+            permission_name: "vault.write.patch",
             decision: PermissionDecision::AllowForSession,
             scope_kind: PermissionScopeKind::Session,
             scope_value: Some("other-session"),
@@ -86,7 +86,7 @@ fn permission_decision_applies_exact_session_grants_only() {
         PermissionDecisionRequest {
             request_id: "phase2-session-a",
             entry,
-            args: &serde_json::json!({ "url": "https://example.com" }),
+            args: &serde_json::json!({ "replacement": "text" }),
             policy_ctx: &ctx,
             skill_id: None,
         },
@@ -100,7 +100,7 @@ fn permission_decision_applies_exact_session_grants_only() {
     iris_lib::ai_runtime::agent_permissions::upsert_permission_grant(
         &db,
         &PermissionGrantInput {
-            permission_name: "web.fetch",
+            permission_name: "vault.write.patch",
             decision: PermissionDecision::AllowForSession,
             scope_kind: PermissionScopeKind::Session,
             scope_value: Some("phase2-session-a"),
@@ -116,7 +116,7 @@ fn permission_decision_applies_exact_session_grants_only() {
         PermissionDecisionRequest {
             request_id: "phase2-session-a",
             entry,
-            args: &serde_json::json!({ "url": "https://example.com" }),
+            args: &serde_json::json!({ "replacement": "text" }),
             policy_ctx: &ctx,
             skill_id: None,
         },
@@ -192,16 +192,16 @@ fn source_paths_use_tool_execution_pipeline_for_runtime_gates() {
 #[test]
 fn pending_confirmation_position_reports_true_serial_progress() {
     let registry = ToolRegistry::new();
-    let ctx = policy_ctx(AiScene::KnowledgeLookup, AutonomyLevel::L2);
+    let ctx = policy_ctx(AiScene::DraftingAssist, AutonomyLevel::L2);
     let fetch_a = ToolCall::new(
         "call_fetch_a",
-        "fetch_web_page",
-        r#"{"url":"https://example.com/a"}"#,
+        "insert_text_at_cursor",
+        r#"{"target_path":"notes/a.md","text":"A"}"#,
     );
     let fetch_b = ToolCall::new(
         "call_fetch_b",
-        "fetch_web_page",
-        r#"{"url":"https://example.com/b"}"#,
+        "replace_selection",
+        r#"{"target_path":"notes/b.md","replacement":"B"}"#,
     );
     let mut messages = vec![LlmMessage {
         role: MessageRole::Assistant,

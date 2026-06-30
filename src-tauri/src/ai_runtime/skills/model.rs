@@ -5,12 +5,10 @@ use serde::{Deserialize, Serialize};
 use super::manifest_impl::SkillManifestKind;
 use crate::ai_runtime::tool_catalog::TOOL_CATALOG;
 
-use crate::ai_types::{
-    BlockedCapabilitySummary, SkillCapabilitySupportStatus, SkillCompatibilitySource,
-    SkillRuntimeCapability,
-};
+use crate::ai_types::{BlockedCapabilitySummary, SkillCapabilitySupportStatus};
 
 pub(super) const VALIDATION_MISSING_FRONTMATTER: &str = "_iris_missing_frontmatter";
+pub(super) const VALIDATION_MANIFEST_ERROR: &str = "_iris_manifest_error";
 pub(super) const VALIDATION_NAME_MISMATCH: &str = "_iris_name_mismatch";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -20,20 +18,23 @@ pub enum SkillScope {
     Vault,
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillScopeRule {
+    pub kind: String,
+    pub pattern: String,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SkillConfirmationStatus {
+    Confirmed,
+    #[default]
+    NeedsConfirmation,
+}
+
 /// Metadata bag - arbitrary key-value pairs from frontmatter.
 pub type SkillMetadata = HashMap<String, serde_json::Value>;
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct SkillWorkspaceDocument {
-    pub source: String,
-    pub target: String,
-}
-
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct SkillWorkspaceManifest {
-    pub folders: Vec<String>,
-    pub documents: Vec<SkillWorkspaceDocument>,
-}
 
 /// Validation status of a skill file.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -57,29 +58,43 @@ pub struct SkillEntry {
     pub allowed_tools: Vec<String>,
     pub content: String,
     pub scope: SkillScope,
-    pub source_url: Option<String>,
     pub enabled: bool,
     pub file_path: String,
+    #[serde(default)]
+    pub scope_rules: Vec<SkillScopeRule>,
+    #[serde(default)]
+    pub content_hash: String,
+    #[serde(default)]
+    pub confirmed_hash: Option<String>,
+    #[serde(default)]
+    pub confirmation_status: SkillConfirmationStatus,
     /// Preserved from old-format `trigger` field for backward compatibility.
     pub legacy_trigger: Option<String>,
 }
 
-impl SkillEntry {
-    fn metadata_json_value(&self, keys: &[&str]) -> Option<serde_json::Value> {
-        for key in keys {
-            let Some(value) = self.metadata.get(*key) else {
-                continue;
-            };
-            return match value {
-                serde_json::Value::String(raw) => serde_json::from_str(raw)
-                    .ok()
-                    .or_else(|| Some(serde_json::Value::String(raw.clone()))),
-                other => Some(other.clone()),
-            };
+impl Default for SkillEntry {
+    fn default() -> Self {
+        Self {
+            name: String::new(),
+            description: String::new(),
+            license: None,
+            compatibility: None,
+            metadata: SkillMetadata::new(),
+            allowed_tools: Vec::new(),
+            content: String::new(),
+            scope: SkillScope::Vault,
+            enabled: false,
+            file_path: String::new(),
+            scope_rules: Vec::new(),
+            content_hash: String::new(),
+            confirmed_hash: None,
+            confirmation_status: SkillConfirmationStatus::NeedsConfirmation,
+            legacy_trigger: None,
         }
-        None
     }
+}
 
+impl SkillEntry {
     fn metadata_string_list(&self, keys: &[&str]) -> Vec<String> {
         for key in keys {
             if let Some(value) = self.metadata.get(*key) {
@@ -109,84 +124,6 @@ impl SkillEntry {
         self.metadata_string_list(&["trigger-hints", "trigger_hints", "triggers"])
     }
 
-    /// Runtime capabilities requested by this skill manifest.
-    pub fn requested_capabilities(&self) -> Vec<SkillRuntimeCapability> {
-        self.metadata_string_list(&["requested-capabilities", "requested_capabilities"])
-            .into_iter()
-            .filter_map(|raw| SkillRuntimeCapability::parse(&raw))
-            .collect()
-    }
-
-    /// Required skill-local resources.
-    pub fn required_resources(&self) -> Vec<String> {
-        self.metadata_string_list(&["required-resources", "required_resources"])
-    }
-
-    /// Optional skill-local resources.
-    pub fn optional_resources(&self) -> Vec<String> {
-        self.metadata_string_list(&["optional-resources", "optional_resources"])
-    }
-
-    /// Declared public workspace layout for this skill.
-    pub fn workspace_manifest(&self) -> Option<SkillWorkspaceManifest> {
-        let value = self.metadata_json_value(&["iris-workspace", "iris_workspace"])?;
-        let obj = value.as_object()?;
-
-        let folders = obj
-            .get("folders")
-            .and_then(|value| value.as_array())
-            .map(|items| {
-                items
-                    .iter()
-                    .filter_map(|item| item.as_str().map(str::to_string))
-                    .collect()
-            })
-            .unwrap_or_default();
-
-        let documents = obj
-            .get("documents")
-            .and_then(|value| value.as_array())
-            .map(|items| {
-                items
-                    .iter()
-                    .filter_map(|item| {
-                        let source = item.get("source")?.as_str()?.to_string();
-                        let target = item.get("target")?.as_str()?.to_string();
-                        Some(SkillWorkspaceDocument { source, target })
-                    })
-                    .collect()
-            })
-            .unwrap_or_default();
-
-        Some(SkillWorkspaceManifest { folders, documents })
-    }
-
-    /// External dependencies declared by this skill.
-    pub fn external_dependencies(&self) -> Vec<String> {
-        self.metadata_string_list(&["external-dependencies", "external_dependencies"])
-    }
-
-    /// Compatibility source parsed from frontmatter.
-    pub fn compatibility_source(&self) -> SkillCompatibilitySource {
-        let raw = self
-            .metadata
-            .get("compatibility-source")
-            .or_else(|| self.metadata.get("compatibility_source"))
-            .and_then(|v| v.as_str())
-            .or(self.compatibility.as_deref())
-            .unwrap_or("unknown")
-            .to_lowercase();
-        if raw.contains("hermes") {
-            SkillCompatibilitySource::Hermes
-        } else if raw.contains("claude") {
-            SkillCompatibilitySource::Claude
-        } else if raw.contains("iris") {
-            SkillCompatibilitySource::Iris
-        } else {
-            SkillCompatibilitySource::Unknown
-        }
-    }
-
     /// Validation status: Valid / Legacy / Invalid.
     pub fn validation_status(&self) -> SkillValidationStatus {
         if self.name.is_empty() {
@@ -202,6 +139,14 @@ impl SkillEntry {
             if compat.len() > 500 {
                 return SkillValidationStatus::Invalid("compatibility exceeds 500 chars".into());
             }
+        }
+        if self
+            .metadata
+            .get(VALIDATION_MANIFEST_ERROR)
+            .and_then(|v| v.as_str())
+            .is_some()
+        {
+            return SkillValidationStatus::Invalid("manifest is not prompt_only".into());
         }
         if self
             .metadata
@@ -285,6 +230,8 @@ impl SkillEntry {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub(super) struct SkillsConfig {
     pub disabled: Vec<String>,
+    #[serde(default)]
+    pub confirmed_hashes: HashMap<String, String>,
 }
 
 /// Scored skill match result.
@@ -334,28 +281,14 @@ pub struct SkillListEntry {
     pub kind: SkillManifestKind,
     /// Whether the skill can be considered during activation.
     pub activation_ready: bool,
-    /// Runtime kind: not_applicable / mcp / unavailable.
-    pub runtime_kind: String,
-    /// Whether all runtime dependencies are currently satisfied.
-    pub runtime_ready: bool,
-    /// Runtime status: ready / degraded / unavailable / blocked / unknown.
-    pub runtime_status: String,
     /// Human-readable capability status: available / partial / unavailable.
     pub availability: String,
-    /// Explicit workspace declaration state; false means no workspace requirement exists.
-    pub workspace_declared: bool,
-    /// Whether declared workspace items exist. True for skills without workspace requirements.
-    pub workspace_prepared: bool,
-    /// Number of generated files currently present in the skill workspace.
-    pub generated_files_count: usize,
     /// Prompt sections currently safe to activate.
     pub activated_sections: Vec<String>,
     /// Prompt sections or runtime gates blocked by missing dependencies.
     pub blocked_sections: Vec<String>,
     /// Safe degradation reasons for UI and run-plan summaries.
     pub degraded_reasons: Vec<String>,
-    /// MCP profile ids declared by the manifest.
-    pub mcp_dependencies: Vec<String>,
     /// Last match timestamp from Phase4 diagnostics.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub last_matched_at: Option<String>,
@@ -371,16 +304,8 @@ pub struct SkillListEntry {
     /// Last resource status from Phase4 diagnostics.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub last_resource_status: Option<String>,
-    /// Requested capabilities computed from manifest fields.
-    pub requested_capabilities: Vec<SkillRuntimeCapability>,
     /// Blocked capabilities computed from manifest/tool compatibility.
     pub blocked_capabilities: Vec<BlockedCapabilitySummary>,
     /// Compatibility warnings shown in Skills UI.
     pub compatibility_warnings: Vec<String>,
-    /// Public workspace root for skill-generated documents in the current vault.
-    pub workspace_root: String,
-    /// Whether all declared workspace items already exist.
-    pub workspace_ready: bool,
-    /// Missing workspace folders/documents that can be prepared on demand.
-    pub workspace_missing_items: Vec<String>,
 }

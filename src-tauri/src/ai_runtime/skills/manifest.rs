@@ -11,10 +11,6 @@ use crate::error::{AppError, AppResult};
 pub enum SkillManifestKind {
     LegacyPromptOnly,
     PromptOnly,
-    Resource,
-    Workspace,
-    McpDependent,
-    Hybrid,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -31,16 +27,6 @@ pub struct IrisSkillManifest {
     #[serde(default)]
     pub prompt: SkillPromptContract,
     #[serde(default)]
-    pub resources: SkillResourceContract,
-    #[serde(default)]
-    pub workspace: SkillWorkspaceContract,
-    #[serde(default)]
-    pub capabilities: SkillCapabilityContract,
-    #[serde(default)]
-    pub mcp: SkillMcpContract,
-    #[serde(default)]
-    pub degradation: SkillDegradationPolicy,
-    #[serde(default)]
     pub metadata: BTreeMap<String, toml::Value>,
 }
 
@@ -56,80 +42,6 @@ pub struct SkillPromptContract {
 pub struct PromptSection {
     pub id: String,
     pub source: String,
-    #[serde(default)]
-    pub requires_runtime: bool,
-    #[serde(default)]
-    pub requires_capabilities: Vec<String>,
-    #[serde(default)]
-    pub requires_resources: Vec<String>,
-    #[serde(default)]
-    pub requires_workspace: bool,
-}
-
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct SkillResourceContract {
-    #[serde(default)]
-    pub required: Vec<String>,
-    #[serde(default)]
-    pub optional: Vec<String>,
-}
-
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct SkillWorkspaceContract {
-    #[serde(default)]
-    pub declared: bool,
-    #[serde(default)]
-    pub folders: Vec<String>,
-    #[serde(default)]
-    pub documents: Vec<SkillWorkspaceDocumentContract>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct SkillWorkspaceDocumentContract {
-    pub source: String,
-    pub target: String,
-}
-
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct SkillCapabilityContract {
-    #[serde(default)]
-    pub requires: Vec<String>,
-}
-
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct SkillMcpContract {
-    #[serde(default)]
-    pub dependencies: Vec<McpDependency>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct McpDependency {
-    pub profile_id: String,
-    #[serde(default)]
-    pub required_capabilities: Vec<String>,
-    #[serde(default)]
-    pub required: bool,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct SkillDegradationPolicy {
-    #[serde(default = "default_runtime_missing_policy")]
-    pub when_runtime_missing: String,
-    #[serde(default)]
-    pub message: Option<String>,
-}
-
-impl Default for SkillDegradationPolicy {
-    fn default() -> Self {
-        Self {
-            when_runtime_missing: default_runtime_missing_policy(),
-            message: None,
-        }
-    }
-}
-
-fn default_runtime_missing_policy() -> String {
-    "not_applicable".to_string()
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -188,11 +100,6 @@ impl IrisSkillManifest {
             compatibility: None,
             license: None,
             prompt: SkillPromptContract::default(),
-            resources: SkillResourceContract::default(),
-            workspace: SkillWorkspaceContract::default(),
-            capabilities: SkillCapabilityContract::default(),
-            mcp: SkillMcpContract::default(),
-            degradation: SkillDegradationPolicy::default(),
             metadata: BTreeMap::new(),
         }
     }
@@ -204,9 +111,6 @@ impl IrisSkillManifest {
         if self.name.trim().is_empty() {
             return Err(AppError::msg("manifest name is required"));
         }
-        normalize_string_list(&mut self.capabilities.requires);
-        normalize_string_list(&mut self.resources.required);
-        normalize_string_list(&mut self.resources.optional);
         for section in &mut self.prompt.sections {
             if section.id.trim().is_empty() {
                 return Err(AppError::msg("prompt section id is required"));
@@ -214,26 +118,9 @@ impl IrisSkillManifest {
             if section.source.trim().is_empty() {
                 return Err(AppError::msg("prompt section source is required"));
             }
-            normalize_string_list(&mut section.requires_capabilities);
-            normalize_string_list(&mut section.requires_resources);
-        }
-        for dep in &mut self.mcp.dependencies {
-            if dep.profile_id.trim().is_empty() {
-                return Err(AppError::msg("mcp dependency profile_id is required"));
-            }
-            normalize_string_list(&mut dep.required_capabilities);
         }
         Ok(())
     }
-}
-
-fn normalize_string_list(items: &mut Vec<String>) {
-    for item in items.iter_mut() {
-        *item = item.trim().to_string();
-    }
-    items.retain(|item| !item.is_empty());
-    items.sort();
-    items.dedup();
 }
 
 fn resolve_manifest_path(skill_dir: &Path, relative: &str) -> AppResult<PathBuf> {
@@ -269,11 +156,6 @@ fn validate_top_level_sections(raw: &str) -> AppResult<Vec<String>> {
         "compatibility",
         "license",
         "prompt",
-        "resources",
-        "workspace",
-        "capabilities",
-        "mcp",
-        "degradation",
         "metadata",
     ]
     .into_iter()
@@ -331,14 +213,7 @@ fn validate_security_sensitive_nested_fields(
     ]
     .into_iter()
     .collect();
-    for root in [
-        "mcp",
-        "workspace",
-        "capabilities",
-        "permissions",
-        "permission",
-        "runtime",
-    ] {
+    for root in ["metadata", "permissions", "permission", "runtime"] {
         if let Some(value) = table.get(root) {
             reject_sensitive_keys(value, root, &nested_sensitive)?;
         }
@@ -409,6 +284,97 @@ mod tests {
 
     use super::*;
 
+    #[cfg(test)]
+    #[derive(Debug, PartialEq, Eq)]
+    struct ParsedSkillMarkdownForTest {
+        name: String,
+        scope_rules: Vec<ParsedSkillScopeRuleForTest>,
+    }
+
+    #[cfg(test)]
+    #[derive(Debug, PartialEq, Eq)]
+    struct ParsedSkillScopeRuleForTest {
+        kind: String,
+        pattern: String,
+    }
+
+    #[cfg(test)]
+    fn load_manifest_from_str_for_test(raw: &str) -> AppResult<IrisSkillManifest> {
+        let mut manifest: IrisSkillManifest = toml::from_str(raw)
+            .map_err(|err| AppError::msg(format!("invalid iris.skill.toml: {err}")))?;
+        manifest.validate()?;
+        Ok(manifest)
+    }
+
+    #[cfg(test)]
+    fn parse_skill_markdown_for_test(raw: &str) -> AppResult<ParsedSkillMarkdownForTest> {
+        #[derive(Deserialize)]
+        struct Frontmatter {
+            name: String,
+            #[serde(default)]
+            scope: Vec<ScopeRule>,
+        }
+
+        #[derive(Deserialize)]
+        struct ScopeRule {
+            kind: String,
+            pattern: String,
+        }
+
+        let trimmed = raw.trim_start();
+        let Some(rest) = trimmed.strip_prefix("---") else {
+            return Err(AppError::msg("missing SKILL.md frontmatter"));
+        };
+        let Some(end) = rest.find("\n---") else {
+            return Err(AppError::msg("unterminated SKILL.md frontmatter"));
+        };
+        let frontmatter: Frontmatter = serde_yaml::from_str(&rest[..end])
+            .map_err(|err| AppError::msg(format!("invalid SKILL.md frontmatter: {err}")))?;
+        Ok(ParsedSkillMarkdownForTest {
+            name: frontmatter.name,
+            scope_rules: frontmatter
+                .scope
+                .into_iter()
+                .map(|rule| ParsedSkillScopeRuleForTest {
+                    kind: rule.kind,
+                    pattern: rule.pattern,
+                })
+                .collect(),
+        })
+    }
+
+    #[test]
+    fn rejects_unknown_manifest_kind() {
+        let raw = r#"
+schema_version = "1"
+name = "bad"
+kind = "runtime_bound"
+"#;
+        let err = load_manifest_from_str_for_test(raw)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("unknown variant"), "{err}");
+    }
+
+    #[test]
+    fn parses_prompt_only_scope_from_skill_md_frontmatter() {
+        let raw = r#"---
+name: daily-review
+description: Review daily notes
+scope:
+  - kind: glob
+    pattern: "Daily/*.md"
+---
+
+Use the user's daily notes.
+"#;
+        let parsed = parse_skill_markdown_for_test(raw).unwrap();
+        assert_eq!(parsed.name, "daily-review");
+        assert_eq!(parsed.scope_rules.len(), 1);
+        assert_eq!(parsed.scope_rules[0].kind, "glob");
+        assert_eq!(parsed.scope_rules[0].pattern, "Daily/*.md");
+    }
+
     #[test]
     fn missing_manifest_is_prompt_only_without_runtime_requirement() {
         let dir = tempfile::tempdir().unwrap();
@@ -423,9 +389,6 @@ mod tests {
         let outcome = load_manifest_for_skill_dir(&skill_dir, None).unwrap();
 
         assert_eq!(outcome.manifest.kind, SkillManifestKind::LegacyPromptOnly);
-        assert!(!outcome.manifest.workspace.declared);
-        assert!(outcome.manifest.capabilities.requires.is_empty());
-        assert!(outcome.manifest.mcp.dependencies.is_empty());
         assert!(outcome
             .warnings
             .iter()
@@ -451,16 +414,6 @@ default_sections = ["behavior"]
 [[prompt.sections]]
 id = "behavior"
 source = "SKILL.md"
-requires_runtime = false
-
-[workspace]
-declared = false
-
-[capabilities]
-requires = []
-
-[degradation]
-when_runtime_missing = "not_applicable"
 "#,
         )
         .unwrap();
@@ -474,16 +427,16 @@ when_runtime_missing = "not_applicable"
     }
 
     #[test]
-    fn parses_mcp_dependent_manifest_without_requiring_profile_to_exist() {
+    fn rejects_runtime_bound_manifest_sections() {
         let dir = tempfile::tempdir().unwrap();
-        let skill_dir = dir.path().join("anysearch");
+        let skill_dir = dir.path().join("runtime-bound");
         fs::create_dir_all(&skill_dir).unwrap();
         fs::write(
             skill_dir.join("iris.skill.toml"),
             r#"
 schema_version = "1"
-name = "anysearch"
-kind = "mcp_dependent"
+name = "runtime-bound"
+kind = "prompt_only"
 
 [prompt]
 default_sections = ["behavior"]
@@ -491,38 +444,22 @@ default_sections = ["behavior"]
 [[prompt.sections]]
 id = "behavior"
 source = "SKILL.md"
-requires_runtime = false
 
-[workspace]
-declared = false
-
-[capabilities]
-requires = ["web.search", "web.fetch"]
-
-[[mcp.dependencies]]
-profile_id = "anysearch"
-required_capabilities = ["web.search", "web.fetch"]
-required = true
-
-[degradation]
-when_runtime_missing = "partial"
-message = "Enable AnySearch MCP profile to execute web search."
+[runtime]
+profile = "external"
 "#,
         )
         .unwrap();
 
-        let outcome = load_manifest_for_skill_dir(&skill_dir, None).unwrap();
+        let err = load_manifest_for_skill_dir(&skill_dir, None).unwrap_err();
 
-        assert_eq!(outcome.manifest.kind, SkillManifestKind::McpDependent);
-        assert_eq!(
-            outcome.manifest.capabilities.requires,
-            vec!["web.fetch".to_string(), "web.search".to_string()]
-        );
-        assert_eq!(outcome.manifest.mcp.dependencies[0].profile_id, "anysearch");
+        assert!(err
+            .to_string()
+            .contains("unsupported manifest section `runtime`"));
     }
 
     #[test]
-    fn frontmatter_manifest_path_takes_precedence_over_default_manifest() {
+    fn frontmatter_manifest_path_rejects_unsupported_sections() {
         let dir = tempfile::tempdir().unwrap();
         let skill_dir = dir.path().join("chooser");
         fs::create_dir_all(&skill_dir).unwrap();
@@ -533,14 +470,15 @@ message = "Enable AnySearch MCP profile to execute web search."
         .unwrap();
         fs::write(
             skill_dir.join("custom.toml"),
-            "schema_version = \"1\"\nname = \"custom\"\nkind = \"resource\"\n",
+            "schema_version = \"1\"\nname = \"custom\"\nkind = \"prompt_only\"\n[process]\ncommand = \"run\"\n",
         )
         .unwrap();
 
-        let outcome = load_manifest_for_skill_dir(&skill_dir, Some("custom.toml")).unwrap();
+        let err = load_manifest_for_skill_dir(&skill_dir, Some("custom.toml")).unwrap_err();
 
-        assert_eq!(outcome.manifest.name, "custom");
-        assert_eq!(outcome.manifest.kind, SkillManifestKind::Resource);
+        assert!(err
+            .to_string()
+            .contains("unsupported manifest section `process`"));
     }
 
     #[test]
@@ -569,21 +507,19 @@ command = "start.sh"
     }
 
     #[test]
-    fn rejects_embedded_mcp_command_in_dependency() {
+    fn rejects_embedded_command_in_metadata() {
         let dir = tempfile::tempdir().unwrap();
-        let skill_dir = dir.path().join("bad-mcp-command");
+        let skill_dir = dir.path().join("bad-command");
         fs::create_dir_all(&skill_dir).unwrap();
         fs::write(
             skill_dir.join("iris.skill.toml"),
             r#"
 schema_version = "1"
-name = "bad-mcp-command"
-kind = "mcp_dependent"
+name = "bad-command"
+kind = "prompt_only"
 
-[[mcp.dependencies]]
-profile_id = "bad"
+[metadata]
 command = "npx"
-required = true
 "#,
         )
         .unwrap();
@@ -592,7 +528,7 @@ required = true
 
         assert!(err
             .to_string()
-            .contains("unknown security-sensitive field `mcp.dependencies.command`"));
+            .contains("unknown security-sensitive field `metadata.command`"));
     }
 
     #[test]

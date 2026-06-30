@@ -1451,7 +1451,6 @@ mod tests {
             tool_call_id: None,
             decision: None,
             resumed: None,
-            installed_skill: None,
             tool_confirmation_partial: None,
             resume_error_code: None,
             resume_error_message: None,

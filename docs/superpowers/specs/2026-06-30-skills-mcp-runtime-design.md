@@ -1,5 +1,8 @@
 # Iris Skills 与 MCP Runtime 终局体系设计
 
+> Superseded by [2026-07-01-iris-reign-in-design.md](./2026-07-01-iris-reign-in-design.md).
+> This file is retained for historical context only and must not be used as the implementation target.
+
 日期：2026-06-30
 状态：设计基线
 

@@ -58,6 +58,7 @@ mod tests {
             note_path: Some("notes/test.md"),
             file_id: Some(7),
             web_search_enabled: true,
+            max_web_fetches: 3,
             cold_start_packets: &[],
             app_handle: None,
             attachment_count: 2,

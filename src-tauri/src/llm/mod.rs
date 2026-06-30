@@ -53,7 +53,6 @@ pub struct LlmGenerateParams {
     pub system: Option<String>,
     pub stream: Option<bool>,
     pub custom_base_url: Option<String>,
-    pub web_search: Option<bool>,
 }
 
 #[cfg(test)]

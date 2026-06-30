@@ -215,30 +215,21 @@ describe("detectAgentIntent", () => {
   });
 });
 
-describe("detectSkillHubDirectInstall", () => {
-  it("extracts the target skill from SkillHub install-guide phrasing", async () => {
+describe("skill install routing", () => {
+  it("does not expose direct SkillHub install parsing", async () => {
     const mod = await loadRouter();
 
-    expect(mod?.detectSkillHubDirectInstall).toBeTypeOf("function");
-    expect(
-      mod!.detectSkillHubDirectInstall(
-        "请先检查是否已安装 SkillHub 商店，若未安装，请根据 https://skillhub.cn/install/skillhub.md 安装SkillHub商店，但是只安装CLI，然后安装self-improving技能。",
-      ),
-    ).toEqual({
-      registry: "skillhub",
-      skill: "self-improving",
-      scope: "vault",
-    });
+    expect(mod?.detectSkillHubDirectInstall).toBeUndefined();
   });
 
-  it("routes direct SkillHub install phrasing through skill management hints", async () => {
+  it("keeps generic skill install phrasing in skill management without store hints", async () => {
     const result = await detect({
       message:
         "根据 https://skillhub.cn/install/skillhub.md 安装self-improving技能",
     });
 
     expect(result.detectedIntent).toBe("skill_management");
-    expect(result.sourceHints).toContain(
+    expect(result.sourceHints).not.toContain(
       "skillhub:direct_install:self-improving",
     );
   });

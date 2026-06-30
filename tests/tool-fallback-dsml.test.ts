@@ -10,48 +10,52 @@ function read(path: string): string {
   }
 }
 
-describe("fetch_web_page integration surface", () => {
-  it("registers fetch_web_page tool and UI labels", () => {
-    const executor = read("src-tauri/src/ai_runtime/tool_executor.rs");
-    expect(executor).toContain("fetch_web_page");
-
-    const catalog = read("src-tauri/src/ai_runtime/tool_catalog.rs");
-    expect(catalog).toContain('name: "fetch_web_page"');
-    expect(catalog).toContain("requires_confirmation: true");
-
-    const dispatch = read("src-tauri/src/ai_runtime/tool_dispatch.rs");
-    expect(dispatch).toContain("fetch_web_page_tool");
-
+describe("AI reign-in target surface", () => {
+  it("does not expose legacy fetch, skill-install, or MCP management tools", () => {
+    const catalogWeb = read("src-tauri/src/ai_runtime/tool_catalog/web.rs");
+    const catalogSkills = read(
+      "src-tauri/src/ai_runtime/tool_catalog/skills.rs",
+    );
+    const dispatch = read("src-tauri/src/ai_runtime/tool_dispatch_impl.rs");
     const names = read("src/lib/tool-display-names.ts");
-    expect(names).toContain("fetch_web_page");
-
     const dialog = read("src/components/ai/ToolConfirmDialog.tsx");
-    expect(dialog).toContain("fetch_web_page");
+
+    for (const legacy of [
+      "fetch_web_page",
+      "web_fetch_batch",
+      "readability_fetch",
+      "rendered_fetch",
+      "skills_install",
+      "skills_prepare_workspace",
+      "mcp_runtime_capability_call",
+      "mcp_server_catalog_upsert",
+      "mcp_runtime_profile_upsert",
+      "mcp_runtime_tools_list",
+      "mcp_runtime_health_check",
+    ]) {
+      expect(catalogWeb + catalogSkills).not.toContain(`name: "${legacy}"`);
+      expect(dispatch).not.toContain(`"${legacy}" =>`);
+      expect(names).not.toContain(legacy);
+      expect(dialog).not.toContain(`case "${legacy}"`);
+    }
   });
 
-  it("registers skills management tools in catalog and dispatch", () => {
-    const catalog = read("src-tauri/src/ai_runtime/tool_catalog.rs");
-    expect(catalog).toContain('name: "skills_list"');
-    expect(catalog).toContain('name: "skills_install"');
-    expect(catalog).toContain('name: "skills_uninstall"');
-    expect(catalog).toContain('name: "skills_toggle"');
+  it("keeps web_search as the single model-visible network tool", () => {
+    const catalogWeb = read("src-tauri/src/ai_runtime/tool_catalog/web.rs");
 
-    const dispatch = read("src-tauri/src/ai_runtime/tool_dispatch.rs");
-    expect(dispatch).toContain("skills_install_tool");
-    expect(dispatch).toContain("skills_list_tool");
-
-    const dialog = read("src/components/ai/ToolConfirmDialog.tsx");
-    expect(dialog).toContain("skills_install");
+    expect(catalogWeb).toContain('name: "web_search"');
+    expect(catalogWeb).toContain('"urls"');
+    expect(catalogWeb).toContain("WebEvidenceBroker");
   });
 
-  it("ipc skillsInstall accepts registry source field", () => {
-    const ipc = read("src/lib/ipc.ts");
-    expect(ipc).toContain("registry?: string");
-  });
-
-  it("assistant panel shows skill install success notice helper", () => {
+  it("does not expose SkillHub direct install routing", () => {
+    const routing = read("src/lib/assistant-routing.ts");
+    const taskplan = read("src/lib/assistant-taskplan.ts");
     const panel = read("src/components/ai/UnifiedAssistantPanel.tsx");
-    expect(panel).toContain("skillInstallSuccessNotice");
-    expect(panel).toContain('pendingConfirm?.tool_name === "skills_install"');
+    const notice = read("src/lib/skill-install-notice.ts");
+
+    expect(routing + taskplan + panel + notice).not.toContain("SkillHub");
+    expect(routing + taskplan + panel + notice).not.toContain("skills_install");
+    expect(panel).not.toContain("skillInstallSuccessNotice");
   });
 });

@@ -55,6 +55,12 @@ pub struct SessionEvidenceRegisterPacket {
     pub search_backend: Option<String>,
     pub source_rank: Option<i64>,
     pub failure_reason: Option<String>,
+    pub provider_id: Option<String>,
+    pub provider_kind: Option<String>,
+    pub raw_result_hash: Option<String>,
+    pub extraction_method: Option<String>,
+    pub conflict_group: Option<String>,
+    pub conflict_note: Option<String>,
 }
 
 impl SessionEvidenceRegisterPacket {
@@ -102,6 +108,12 @@ impl SessionEvidenceRegisterPacket {
                 crate::ai_runtime::WebSourceRank::Unknown => 5,
             }),
             failure_reason: web.and_then(|meta| meta.failure_reason.clone()),
+            provider_id: web.and_then(|meta| meta.provider_id.clone()),
+            provider_kind: web.and_then(|meta| meta.provider_kind.clone()),
+            raw_result_hash: web.and_then(|meta| meta.raw_result_hash.clone()),
+            extraction_method: web.and_then(|meta| meta.extraction_method.clone()),
+            conflict_group: web.and_then(|meta| meta.conflict_group.clone()),
+            conflict_note: web.and_then(|meta| meta.conflict_note.clone()),
         }
     }
 }
@@ -133,6 +145,12 @@ pub struct SessionEvidenceItem {
     pub search_backend: Option<String>,
     pub source_rank: Option<i64>,
     pub failure_reason: Option<String>,
+    pub provider_id: Option<String>,
+    pub provider_kind: Option<String>,
+    pub raw_result_hash: Option<String>,
+    pub extraction_method: Option<String>,
+    pub conflict_group: Option<String>,
+    pub conflict_note: Option<String>,
     pub retired_at: Option<String>,
     pub created_at: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -185,12 +203,14 @@ pub(crate) fn register_session_evidence(
               source_type, title, source_path, source_span_start, source_span_end,
               heading_path, content_hash, retrieval_reason, score, confidence,
               url, normalized_url, domain, retrieved_at, search_backend, source_rank,
-              failure_reason, created_at)
+              failure_reason, provider_id, provider_kind, raw_result_hash, extraction_method,
+              conflict_group, conflict_note, created_at)
              VALUES (?1, ?2, ?3, ?4, ?5,
                      ?6, ?7, ?8, ?9, ?10,
                      ?11, ?12, ?13, ?14, ?15,
                      ?16, ?17, ?18, ?19, ?20, ?21,
-                     ?22, ?23)",
+                     ?22, ?23, ?24, ?25, ?26,
+                     ?27, ?28, ?29)",
             params![
                 session_id,
                 next_index,
@@ -214,6 +234,12 @@ pub(crate) fn register_session_evidence(
                 packet.search_backend,
                 packet.source_rank,
                 packet.failure_reason,
+                packet.provider_id,
+                packet.provider_kind,
+                packet.raw_result_hash,
+                packet.extraction_method,
+                packet.conflict_group,
+                packet.conflict_note,
                 now,
             ],
         )?;
@@ -231,7 +257,8 @@ pub(crate) fn list_session_evidence(
                 source_type, title, source_path, source_span_start, source_span_end,
                 heading_path, content_hash, retrieval_reason, score, confidence,
                 url, normalized_url, domain, retrieved_at, search_backend, source_rank,
-                failure_reason, retired_at, created_at
+                failure_reason, provider_id, provider_kind, raw_result_hash, extraction_method,
+                conflict_group, conflict_note, retired_at, created_at
          FROM session_evidence
          WHERE session_id = ?1 AND retired_at IS NULL
          ORDER BY citation_index ASC",
@@ -388,7 +415,8 @@ fn find_by_packet_key(
                 source_type, title, source_path, source_span_start, source_span_end,
                 heading_path, content_hash, retrieval_reason, score, confidence,
                 url, normalized_url, domain, retrieved_at, search_backend, source_rank,
-                failure_reason, retired_at, created_at
+                failure_reason, provider_id, provider_kind, raw_result_hash, extraction_method,
+                conflict_group, conflict_note, retired_at, created_at
          FROM session_evidence
          WHERE session_id = ?1 AND packet_key = ?2",
     )?;
@@ -403,7 +431,8 @@ fn find_by_id(conn: &Connection, id: i64) -> AppResult<SessionEvidenceItem> {
                 source_type, title, source_path, source_span_start, source_span_end,
                 heading_path, content_hash, retrieval_reason, score, confidence,
                 url, normalized_url, domain, retrieved_at, search_backend, source_rank,
-                failure_reason, retired_at, created_at
+                failure_reason, provider_id, provider_kind, raw_result_hash, extraction_method,
+                conflict_group, conflict_note, retired_at, created_at
          FROM session_evidence
          WHERE id = ?1",
         [id],
@@ -438,8 +467,14 @@ fn row_to_item(row: &Row<'_>) -> rusqlite::Result<SessionEvidenceItem> {
         search_backend: row.get(20)?,
         source_rank: row.get(21)?,
         failure_reason: row.get(22)?,
-        retired_at: row.get(23)?,
-        created_at: row.get(24)?,
+        provider_id: row.get(23)?,
+        provider_kind: row.get(24)?,
+        raw_result_hash: row.get(25)?,
+        extraction_method: row.get(26)?,
+        conflict_group: row.get(27)?,
+        conflict_note: row.get(28)?,
+        retired_at: row.get(29)?,
+        created_at: row.get(30)?,
         detail_status: None,
         live_excerpt: None,
     })
@@ -476,6 +511,12 @@ mod tests {
             search_backend: None,
             source_rank: None,
             failure_reason: None,
+            provider_id: None,
+            provider_kind: None,
+            raw_result_hash: None,
+            extraction_method: None,
+            conflict_group: None,
+            conflict_note: None,
         }
     }
 
@@ -498,6 +539,12 @@ mod tests {
             search_backend: Some("test".to_string()),
             source_rank: Some(1),
             failure_reason: None,
+            provider_id: Some("native.duckduckgo".to_string()),
+            provider_kind: Some("native".to_string()),
+            raw_result_hash: Some("hash".to_string()),
+            extraction_method: Some("search_snippet".to_string()),
+            conflict_group: None,
+            conflict_note: None,
         }
     }
 

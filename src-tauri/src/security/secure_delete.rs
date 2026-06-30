@@ -2,11 +2,17 @@
 
 use std::fs::OpenOptions;
 use std::io::{Seek, SeekFrom, Write};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
-use crate::error::{AppError, AppResult};
+#[cfg(test)]
+use std::path::PathBuf;
+
+#[cfg(test)]
+use crate::error::AppError;
+use crate::error::AppResult;
 
 /// 获取用户专属的临时目录，优先使用 `HOME/.iris/tmp`，回退到系统 temp dir。
+#[cfg(test)]
 pub fn user_temp_dir() -> PathBuf {
     let home = std::env::var("HOME")
         .or_else(|_| std::env::var("USERPROFILE"))
@@ -53,6 +59,7 @@ pub fn secure_delete(path: &Path) -> AppResult<()> {
 }
 
 /// 安全删除目录：递归覆写所有文件后删除整个目录树。
+#[cfg(test)]
 pub fn secure_remove_dir_all(path: &Path) -> AppResult<()> {
     if !path.exists() {
         return Ok(());

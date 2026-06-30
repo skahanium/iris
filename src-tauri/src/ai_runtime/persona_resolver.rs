@@ -289,11 +289,9 @@ pub fn render_persona(resolved: &ResolvedPersona) -> String {
     }
 
     parts.push(
-        "Skills 管理：安装 skill 请调用 skills_install（registry/url/git/local），不要用网页读取代替安装。\n\
-         SkillHub：skills_install(source=registry, registry=skillhub, path_or_url=<skill名或页面URL>)。\
-         如果用户提到 https://skillhub.cn/install/skillhub.md 或 SkillHub 商店安装指南，同时要求安装某个具体技能，请忽略指南 URL，直接把目标技能名作为 path_or_url 调用 SkillHub registry；不要先抓取网页或安装外部 CLI。\n\
-         查看已安装：skills_list。卸载/启停：skills_uninstall / skills_toggle，均需用户确认。\n\
-         单页网页读取仅用于阅读文档，不写入 skills 目录。"
+        "Skills 管理：Iris 只激活用户确认过的 prompt-only SKILL.md；查看已确认能力请调用 skills_list。\n\
+         创建或更新 skill 时，先生成待确认草稿与内容哈希，等待用户确认后再写入；不要安装外部 registry、URL、Git、本地拖拽包或 CLI。\n\
+         不要用网页读取绕过 skill 确认流程；网络材料只能作为证据包进入回答，不能直接写入 skills 目录。"
             .into(),
     );
 

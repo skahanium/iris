@@ -8,13 +8,15 @@ use crate::ai_runtime::evidence_mixer;
 use crate::ai_runtime::retrieval_broker::{RetrievalLayers, RetrievalRequest};
 use crate::ai_runtime::retrieval_scope::RetrievalScope;
 use crate::ai_runtime::trace::{TraceRecorder, TraceStatus};
+use crate::ai_runtime::web_evidence_broker::{
+    collect_web_evidence, web_evidence_items_to_packets, WebEvidenceBrokerInput,
+};
 use crate::ai_runtime::writing_state::{save_writing_state, WritingState, WritingStateInput};
 use crate::ai_runtime::writing_workflow::{self, WritingTaskOutput};
 use crate::ai_runtime::{AiScene, PatchApplyResult, PatchProposal, TokenUsage, WritingIntent};
 use crate::app::AppState;
 use crate::error::AppResult;
 use crate::indexer::scan::FileEntry;
-use crate::llm::search_web;
 
 /// Writing task input from frontend.
 #[derive(Debug, Clone, serde::Deserialize)]
@@ -153,8 +155,19 @@ pub(crate) async fn execute_writing_task(
             input.writing_goal,
             input.selection.as_deref().unwrap_or("")
         );
-        if let Ok(fetch) = search_web::fetch_search_context_for_db(&state.db, query.trim()).await {
-            let web = evidence_mixer::web_packets_from_fetch(&fetch, &input.writing_goal, None);
+        if let Ok(items) = collect_web_evidence(
+            &state.db,
+            WebEvidenceBrokerInput {
+                query: query.trim().to_string(),
+                urls: Vec::new(),
+                enabled: input.web_authorized,
+                max_search_results: 8,
+                max_fetches: 3,
+            },
+        )
+        .await
+        {
+            let web = web_evidence_items_to_packets(&input.writing_goal, &items);
             evidence = evidence_mixer::mix_and_rank(evidence, web, 20);
         }
     }

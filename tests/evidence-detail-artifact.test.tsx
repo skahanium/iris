@@ -37,6 +37,11 @@ const webEvidence: SessionEvidenceRecord = {
   url: "https://example.com/report",
   domain: "example.com",
   retrievalReason: "web_search",
+  providerId: "mcp.primary",
+  extractionMethod: "mcp.web_fetch",
+  conflictGroup: "reported-price",
+  conflictNote: "provider disagreement: price is 10 vs 12",
+  liveExcerpt: "short excerpt from a public web source",
   score: 0.7,
   confidence: "medium",
   createdAt: "2026-06-22T00:00:00Z",
@@ -57,7 +62,7 @@ describe("EvidenceDetailArtifactView", () => {
     container.remove();
   });
 
-  it("renders document-style evidence headings and metadata-only web notice", () => {
+  it("renders evidence and conflicts without provider process details", () => {
     act(() => {
       root.render(
         createElement(EvidenceDetailArtifactView, {
@@ -72,7 +77,14 @@ describe("EvidenceDetailArtifactView", () => {
     expect(container.textContent).toContain("Cases/Alpha.md");
     expect(container.textContent).toContain("source_unchanged");
     expect(container.textContent).toContain(
-      "External webpage; page body and excerpt were not saved.",
+      "short excerpt from a public web source",
     );
+    expect(container.textContent).toContain("reported-price");
+    expect(container.textContent).toContain("provider disagreement");
+    expect(container.textContent).not.toContain("mcp.primary");
+    expect(container.textContent).not.toContain("mcp.web_fetch");
+    expect(container.textContent).not.toContain("Provider");
+    expect(container.textContent).not.toContain("cache hit");
+    expect(container.textContent).not.toContain("fetch backend");
   });
 });

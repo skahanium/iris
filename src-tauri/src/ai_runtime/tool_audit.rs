@@ -95,19 +95,21 @@ fn sanitize_arguments(tool_name: &str, args: &serde_json::Value) -> Option<Strin
             Some(format!("len={len}, hash={hash}, risk={risk}"))
         }
         "web_search" => {
-            // Record query only, not full args
             let query = obj.get("query").and_then(|v| v.as_str()).unwrap_or("");
-            Some(format!("query={query}"))
+            let url_count = obj
+                .get("urls")
+                .and_then(|v| v.as_array())
+                .map(|items| items.len())
+                .unwrap_or(0);
+            Some(format!(
+                "query_hash={}, url_count={url_count}",
+                audit_hash(query)
+            ))
         }
         "search_hybrid" | "search_semantic" | "search_keyword" => {
             let query = obj.get("query").and_then(|v| v.as_str()).unwrap_or("");
             let limit = obj.get("limit").and_then(|v| v.as_u64());
             Some(format!("query={query}, limit={limit:?}"))
-        }
-        "fetch_web_page" => {
-            // Record URL only
-            let url = obj.get("url").and_then(|v| v.as_str()).unwrap_or("");
-            Some(format!("url={url}"))
         }
         "git_read_status" => Some("scope=vault".into()),
         "git_read_diff" => {
@@ -124,39 +126,6 @@ fn sanitize_arguments(tool_name: &str, args: &serde_json::Value) -> Option<Strin
         "secret_exists" => {
             let service = obj.get("service").and_then(|v| v.as_str()).unwrap_or("");
             Some(format!("service={service}"))
-        }
-        "skills_install" => {
-            let source = obj.get("source").and_then(|v| v.as_str()).unwrap_or("");
-            let path = obj
-                .get("path_or_url")
-                .and_then(|v| v.as_str())
-                .unwrap_or("");
-            let scope = obj
-                .get("scope")
-                .and_then(|v| v.as_str())
-                .unwrap_or("global");
-            let registry = obj.get("registry").and_then(|v| v.as_str()).unwrap_or("");
-            Some(format!(
-                "source={source}, path_or_url={path}, scope={scope}, registry={registry}"
-            ))
-        }
-        "skills_prepare_workspace" => {
-            let name = obj.get("name").and_then(|v| v.as_str()).unwrap_or("");
-            let scope = obj.get("scope").and_then(|v| v.as_str()).unwrap_or("vault");
-            Some(format!("name={name}, scope={scope}"))
-        }
-        "skills_uninstall" | "skills_toggle" => {
-            let name = obj.get("name").and_then(|v| v.as_str()).unwrap_or("");
-            let scope = obj.get("scope").and_then(|v| v.as_str()).unwrap_or("vault");
-            if tool_name == "skills_toggle" {
-                let enabled = obj
-                    .get("enabled")
-                    .and_then(|v| v.as_bool())
-                    .unwrap_or(false);
-                Some(format!("name={name}, scope={scope}, enabled={enabled}"))
-            } else {
-                Some(format!("name={name}, scope={scope}"))
-            }
         }
         "skills_list" => Some("list".into()),
         _ => Some(json_shape_summary(args)),
@@ -190,7 +159,6 @@ fn sanitize_result(tool_name: &str, result: &serde_json::Value, success: bool) -
             let count = result.get("count").and_then(|v| v.as_u64()).unwrap_or(0);
             Some(format!("results={count}"))
         }
-        "process_run_readonly" => with_sandbox_summary("output_summary=available", result),
         "git_read_status" => with_sandbox_summary("status_summary=available", result),
         "git_read_diff" => with_sandbox_summary("diff_summary=available", result),
         "git_read_log" => with_sandbox_summary("log_summary=available", result),
@@ -248,6 +216,12 @@ fn content_hash(text: &str) -> String {
     let mut hasher = DefaultHasher::new();
     text.hash(&mut hasher);
     format!("{:016x}", hasher.finish())
+}
+
+fn audit_hash(text: &str) -> String {
+    use sha2::{Digest, Sha256};
+    let digest = Sha256::digest(text.as_bytes());
+    hex::encode(&digest[..12])
 }
 
 /// Assess write risk level based on content characteristics.
@@ -351,6 +325,15 @@ mod tests {
         let args = serde_json::json!({"query": "test query", "limit": 10});
         let summary = sanitize_arguments("search_hybrid", &args).unwrap();
         assert!(summary.contains("test query"));
+    }
+
+    #[test]
+    fn sanitize_web_search_args_hashes_query_without_raw_text() {
+        let args = serde_json::json!({"query": "private health query"});
+        let summary = sanitize_arguments("web_search", &args).unwrap();
+
+        assert!(summary.contains("query_hash="));
+        assert!(!summary.contains("private health query"));
     }
 
     #[test]

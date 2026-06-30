@@ -20,8 +20,6 @@ import type {
   ResearchExecuteResult,
   ResearchProgressEvent,
   BlockedCapabilitySummary,
-  SkillCompatibilitySource,
-  SkillRuntimeCapability,
   ToolAccessLevel,
   WritingExecuteResult,
 } from "@/types/ai";
@@ -752,22 +750,18 @@ export interface SkillEntryDto {
   allowed_tools: string[];
   content: string;
   scope: string;
-  source_url?: string | null;
   enabled: boolean;
   file_path: string;
+  scope_rules: Array<{ kind: string; pattern: string }>;
+  confirmed_hash?: string | null;
+  confirmation_status: "confirmed" | "needs_confirmation";
   legacy_trigger?: string | null;
-  content_hash?: string;
+  content_hash: string;
 }
 
 export type SkillValidationStatus = "valid" | "legacy" | { invalid: string };
 
-export type SkillManifestKind =
-  | "legacy_prompt_only"
-  | "prompt_only"
-  | "resource"
-  | "workspace"
-  | "mcp_dependent"
-  | "hybrid";
+export type SkillManifestKind = "legacy_prompt_only" | "prompt_only";
 
 export interface SkillListEntryDto {
   /** Embedded skill fields (flattened via serde). */
@@ -779,9 +773,12 @@ export interface SkillListEntryDto {
   allowed_tools: string[];
   content: string;
   scope: string;
-  source_url?: string | null;
   enabled: boolean;
   file_path: string;
+  scope_rules: Array<{ kind: string; pattern: string }>;
+  content_hash: string;
+  confirmed_hash?: string | null;
+  confirmation_status: "confirmed" | "needs_confirmation";
   legacy_trigger?: string | null;
   /** Computed fields. */
   validation: SkillValidationStatus;
@@ -792,26 +789,13 @@ export interface SkillListEntryDto {
   task_score?: number;
   /** Subset of allowed_tools that require harness confirmation. */
   confirmation_required_tools: string[];
-  content_hash?: string;
   capability_preview?: {
     requested_tools?: string[];
-    requested_capabilities?: SkillRuntimeCapability[];
     confirmation_required_tools?: string[];
     unrecognized_tools?: string[];
     missing_deps?: string[];
     blocked_capabilities?: BlockedCapabilitySummary[];
-    compatibility_source?: SkillCompatibilitySource;
     compatibility_warnings?: string[];
-    resource_status?: Array<{
-      relative_path: string;
-      kind: string;
-      available: boolean;
-      size_bytes?: number | null;
-      truncated: boolean;
-      reason?: string | null;
-    }>;
-    allows_script_execution?: boolean;
-    script_policy?: string;
     [key: string]: unknown;
   };
   lastMatchedAt?: string | null;
@@ -819,220 +803,103 @@ export interface SkillListEntryDto {
   lastActivationScore?: number | null;
   lastBlockedReason?: string | null;
   lastResourceStatus?: string | null;
-  requestedCapabilities?: SkillRuntimeCapability[];
   blockedCapabilities?: BlockedCapabilitySummary[];
   compatibilityWarnings?: string[];
-  workspaceRoot?: string;
-  workspaceReady?: boolean;
-  workspaceMissingItems?: string[];
   kind: SkillManifestKind;
   activation_ready: boolean;
-  runtime_kind: "not_applicable" | "mcp" | "unavailable" | string;
-  runtime_ready: boolean;
-  runtime_status:
-    | "ready"
-    | "degraded"
-    | "unavailable"
-    | "blocked"
-    | "unknown"
-    | string;
-  workspace_declared: boolean;
-  workspace_prepared: boolean;
-  generated_files_count: number;
   activated_sections: string[];
   blocked_sections: string[];
   degraded_reasons: string[];
-  mcp_dependencies: string[];
-  workspace_root?: string;
-  workspace_ready?: boolean;
-  workspace_missing_items?: string[];
   availability: "available" | "partial" | "unavailable" | "disabled" | string;
 }
 
-export type McpRuntimeStatusDto =
-  | "unknown"
-  | "ready"
-  | "degraded"
-  | "unavailable"
-  | "blocked";
-
-export interface McpServerCatalogInputDto {
+export interface WebEvidenceProviderInput {
   id: string;
-  display_name: string;
-  transport: "stdio" | "https" | "sse" | string;
-  command?: string | null;
-  args_json: string;
-  url?: string | null;
-  env_schema_json: string;
-  capability_tags_json: string;
-  source: string;
-}
-
-export interface McpRuntimeProfileInputDto {
-  id: string;
-  server_id: string;
-  vault_scope_hash?: string | null;
-  display_name: string;
-  enabled: boolean;
-  transport_config_json: string;
-  env_bindings_json: string;
-  status: McpRuntimeStatusDto;
-  last_error?: string | null;
-}
-
-export interface McpRuntimeProfileSummaryDto {
-  id: string;
-  server_id: string;
-  display_name: string;
-  enabled: boolean;
-  status: McpRuntimeStatusDto;
-  last_error?: string | null;
-  transport: "stdio" | "https" | "sse" | string;
-  scope: "global" | "vault" | string;
-  trust_level: string;
-  credential_binding_status: "configured" | "not_configured" | string;
-  credential_binding_count: number;
-}
-
-export interface McpToolInventorySummaryDto {
-  profile_id: string;
-  tool_name: string;
-  schema_hash: string;
-  capability_mapping_json: string;
-  description?: string | null;
-  last_discovered_at: string;
-}
-
-export interface McpHealthEventSummaryDto {
-  id: number;
-  profile_id: string;
-  status: McpRuntimeStatusDto;
-  reason_code: string;
-  message?: string | null;
-  metadata_json: string;
-  created_at: string;
-}
-
-export interface McpToolDefinitionDto {
   name: string;
-  title?: string | null;
+  providerKind: "native" | "mcp" | string;
+  enabled: boolean;
+  transportKind?: "stdio" | "https" | string | null;
+  searchMapping?: string | null;
+  fetchMapping?: string | null;
+}
+
+export interface WebEvidenceProviderSummary {
+  id: string;
+  name: string;
+  providerKind: "native" | "mcp" | string;
+  enabled: boolean;
+  hasSearchMapping: boolean;
+  hasFetchMapping: boolean;
+}
+
+export interface WebEvidenceProviderDiagnostics {
+  providerId?: string | null;
+  status: string;
+  failures: string[];
+}
+
+export interface SkillDraftScopeRule {
+  kind: string;
+  pattern: string;
+}
+
+export interface SkillCreateDraftRequest {
+  name: string;
   description?: string | null;
-  input_schema: unknown;
-  output_schema?: unknown | null;
+  body?: string | null;
+  scopeRules: SkillDraftScopeRule[];
 }
 
-export interface McpRuntimeDiscoveryDto {
-  protocol_version: string;
-  server_name: string;
-  server_version?: string | null;
-  tools: McpToolDefinitionDto[];
-  stderr_summary?: string | null;
+export interface SkillDraft {
+  name: string;
+  markdown: string;
+  scopeRules: SkillDraftScopeRule[];
+  contentHash: string;
+  targetPath: string;
 }
 
-export interface McpRuntimeHealthCheckDto {
-  profileId: string;
-  status: McpRuntimeStatusDto;
-  toolCount: number;
-  message?: string | null;
-}
-
-export interface McpRuntimeCapabilityCallResultDto {
-  profile_id: string;
-  tool_name: string;
-  result: unknown;
-  stderr_summary?: string | null;
-}
-export async function mcpServerCatalogUpsert(
-  input: McpServerCatalogInputDto,
+export async function webEvidenceProviderUpsert(
+  input: WebEvidenceProviderInput,
 ): Promise<void> {
-  return invoke("mcp_server_catalog_upsert", { input });
+  return invoke("web_evidence_provider_upsert", { input });
 }
 
-export async function mcpRuntimeProfileUpsert(
-  input: McpRuntimeProfileInputDto,
-): Promise<void> {
-  return invoke("mcp_runtime_profile_upsert", { input });
-}
-
-export async function mcpRuntimeProfilesList(): Promise<
-  McpRuntimeProfileSummaryDto[]
+export async function webEvidenceProvidersList(): Promise<
+  WebEvidenceProviderSummary[]
 > {
-  return invoke<McpRuntimeProfileSummaryDto[]>("mcp_runtime_profiles_list");
+  return invoke<WebEvidenceProviderSummary[]>("web_evidence_providers_list");
 }
-export async function mcpRuntimeProfileToggle(
-  profileId: string,
+
+export async function webEvidenceProviderToggle(
+  providerId: string,
   enabled: boolean,
 ): Promise<void> {
-  return invoke("mcp_runtime_profile_toggle", { profileId, enabled });
+  return invoke("web_evidence_provider_toggle", { providerId, enabled });
 }
 
-export async function mcpRuntimeProfileDelete(
-  profileId: string,
+export async function webEvidenceProviderDelete(
+  providerId: string,
 ): Promise<void> {
-  return invoke("mcp_runtime_profile_delete", { profileId });
+  return invoke("web_evidence_provider_delete", { providerId });
 }
 
-export async function mcpRuntimeToolInventoryList(
-  profileId: string,
-): Promise<McpToolInventorySummaryDto[]> {
-  return invoke<McpToolInventorySummaryDto[]>(
-    "mcp_runtime_tool_inventory_list",
-    {
-      profileId,
-    },
+export async function webEvidenceProviderDiagnostics(
+  providerId?: string,
+): Promise<WebEvidenceProviderDiagnostics> {
+  return invoke<WebEvidenceProviderDiagnostics>(
+    "web_evidence_provider_diagnostics",
+    { providerId: providerId ?? null },
   );
 }
 
-export async function mcpRuntimeHealthEventsList(
-  profileId: string,
-  limit?: number,
-): Promise<McpHealthEventSummaryDto[]> {
-  return invoke<McpHealthEventSummaryDto[]>("mcp_runtime_health_events_list", {
-    profileId,
-    limit: limit ?? null,
-  });
+export async function skillsCreateDraft(
+  request: SkillCreateDraftRequest,
+): Promise<SkillDraft> {
+  return invoke<SkillDraft>("skills_create_draft", { request });
 }
 
-export async function mcpToolInventoryList(
-  profileId: string,
-): Promise<McpToolInventorySummaryDto[]> {
-  return mcpRuntimeToolInventoryList(profileId);
-}
-
-export async function mcpHealthEventsList(
-  profileId: string,
-  limit?: number,
-): Promise<McpHealthEventSummaryDto[]> {
-  return mcpRuntimeHealthEventsList(profileId, limit);
-}
-
-export async function mcpRuntimeToolsList(
-  profileId: string,
-): Promise<McpRuntimeDiscoveryDto> {
-  return invoke<McpRuntimeDiscoveryDto>("mcp_runtime_tools_list", {
-    profileId,
-  });
-}
-
-export async function mcpRuntimeHealthCheck(
-  profileId: string,
-): Promise<McpRuntimeHealthCheckDto> {
-  return invoke<McpRuntimeHealthCheckDto>("mcp_runtime_health_check", {
-    profileId,
-  });
-}
-
-export async function mcpRuntimeCapabilityCall(
-  capability: string,
-  arguments_: Record<string, unknown>,
-): Promise<McpRuntimeCapabilityCallResultDto> {
-  return invoke<McpRuntimeCapabilityCallResultDto>(
-    "mcp_runtime_capability_call",
-    {
-      capability,
-      arguments: arguments_,
-    },
-  );
+export async function skillsConfirm(draft: SkillDraft): Promise<void> {
+  return invoke("skills_confirm", { draft });
 }
 export interface PromptProfileDto {
   display_name: string;
@@ -1056,56 +923,6 @@ export async function skillsList(
 
 export async function skillsPaths(): Promise<SkillsPathsDto> {
   return invoke<SkillsPathsDto>("skills_paths");
-}
-
-export async function skillsReadResource(request: {
-  name: string;
-  scope?: string;
-  relative_path: string;
-}): Promise<string> {
-  return invoke<string>("skills_read_resource", { request });
-}
-
-export async function skillsInstall(request: {
-  source: string;
-  path_or_url: string;
-  scope?: string;
-  subpath?: string;
-  registry?: string;
-  expected_sha256?: string;
-}): Promise<unknown> {
-  return invoke("skills_install", { request });
-}
-
-export async function skillsPrepareWorkspace(
-  name: string,
-  scope?: string,
-): Promise<unknown> {
-  return invoke("skills_prepare_workspace", {
-    request: { name, scope: scope ?? null },
-  });
-}
-
-export async function skillsUninstall(
-  name: string,
-  scope: string,
-): Promise<void> {
-  return invoke("skills_uninstall", { name, scope });
-}
-
-export async function skillsUpdate(
-  name: string,
-  scope: string,
-): Promise<unknown> {
-  return invoke("skills_update", { name, scope });
-}
-
-export async function skillsToggle(
-  name: string,
-  scope: string,
-  enabled: boolean,
-): Promise<void> {
-  return invoke("skills_toggle", { name, scope, enabled });
 }
 
 export async function promptProfileGet(): Promise<PromptProfileDto> {
@@ -1186,32 +1003,6 @@ export async function harnessAbort(requestId: string): Promise<void> {
   return invoke("harness_abort", { requestId });
 }
 
-export async function skillsRead(filePath: string): Promise<string> {
-  return invoke<string>("skills_read", {
-    request: { file_path: filePath },
-  });
-}
-
-export async function skillsWrite(
-  filePath: string,
-  scope: string,
-  content: string,
-): Promise<SkillEntryDto> {
-  return invoke<SkillEntryDto>("skills_write", {
-    request: { file_path: filePath, scope, content },
-  });
-}
-
-export async function skillsMigrateLegacy(
-  filePath: string,
-  scope: string,
-): Promise<SkillEntryDto> {
-  return invoke<SkillEntryDto>("skills_migrate_legacy", {
-    filePath,
-    scope,
-  });
-}
-
 // Tool Audit
 
 export interface ToolAuditEntry {
@@ -1280,7 +1071,7 @@ export async function contextAssemble(params: {
   query: string;
   session_id: number | null;
   context_scope?: ContextScope | null;
-  web_search?: boolean;
+  webSearch?: boolean;
 }): Promise<AssembledContext> {
   return invoke<AssembledContext>("context_assemble", {
     scene: params.scene,
@@ -1290,7 +1081,7 @@ export async function contextAssemble(params: {
     query: params.query,
     sessionId: params.session_id,
     contextScope: params.context_scope ?? null,
-    webSearch: params.web_search ?? false,
+    webSearch: params.webSearch ?? false,
   });
 }
 
@@ -1310,8 +1101,8 @@ export async function aiSendMessage(params: {
   note_path?: string | null;
   selected_packet_ids?: string[];
   context_scope?: ContextScope | null;
-  /** 为 true 时在发送前注入 MiniMax / DuckDuckGo 网页检索摘要。 */
-  web_search?: boolean;
+  /** 为 true 时通过 WebEvidenceBroker 收集联网证据。 */
+  webSearch?: boolean;
   /** 为 true 时创建新会话，而不是续写当前 scene/note 会话。 */
   new_session?: boolean;
 }): Promise<AiSendMessageResult> {
@@ -1324,7 +1115,7 @@ export async function aiSendMessage(params: {
     notePath: params.note_path ?? null,
     selectedPacketIds: params.selected_packet_ids ?? null,
     contextScope: params.context_scope ?? null,
-    webSearch: params.web_search ?? false,
+    webSearch: params.webSearch ?? false,
     newSession: params.new_session ?? false,
   });
 }

@@ -1,12 +1,18 @@
 import type { SkillListEntryDto } from "@/lib/ipc";
 
-import { runtimeState, scopeText, statusText } from "./skill-status-state";
+import {
+  confirmationState,
+  runtimeState,
+  scopeText,
+  statusText,
+} from "./skill-status-state";
 
 export function SkillStatusBadges({ skill }: { skill: SkillListEntryDto }) {
   const legacy = Boolean(skill.legacy_trigger);
   const invalid =
     typeof skill.validation === "object" && "invalid" in skill.validation;
   const runtime = runtimeState(skill);
+  const confirmation = confirmationState(skill);
 
   return (
     <div className="flex flex-wrap items-center gap-2">
@@ -24,6 +30,15 @@ export function SkillStatusBadges({ skill }: { skill: SkillListEntryDto }) {
         }`}
       >
         {runtime.label}
+      </span>
+      <span
+        className={`rounded-full border px-2 py-0.5 text-[10px] ${
+          confirmation.needsAttention
+            ? "border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-900/60 dark:bg-amber-950/35 dark:text-amber-300"
+            : "border-border/70 bg-background text-muted-foreground"
+        }`}
+      >
+        {confirmation.label}
       </span>
       {legacy ? (
         <span className="rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[10px] text-amber-700 dark:border-amber-900/60 dark:bg-amber-950/35 dark:text-amber-300">

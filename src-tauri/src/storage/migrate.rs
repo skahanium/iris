@@ -102,6 +102,9 @@ const MIGRATION_041_UP: &str =
     include_str!("../../migrations/041_mcp_transport_https_contract.sql");
 const MIGRATION_041_DOWN: &str =
     include_str!("../../migrations/041_mcp_transport_https_contract.down.sql");
+const MIGRATION_042_UP: &str = include_str!("../../migrations/042_reign_in_ai_capabilities.sql");
+const MIGRATION_042_DOWN: &str =
+    include_str!("../../migrations/042_reign_in_ai_capabilities.down.sql");
 
 fn is_applied(conn: &Connection, name: &str) -> bool {
     conn.query_row(
@@ -231,6 +234,12 @@ pub fn migrate_up(conn: &Connection) -> AppResult<()> {
         MIGRATION_041_UP,
         false,
     )?;
+    apply_migration(
+        conn,
+        "042_reign_in_ai_capabilities",
+        MIGRATION_042_UP,
+        false,
+    )?;
 
     Ok(())
 }
@@ -242,6 +251,7 @@ fn rollback_migration(conn: &Connection, name: &str, sql: &str) {
 
 /// Roll back all migrations in strict reverse order (for tests).
 pub fn migrate_down(conn: &Connection) -> AppResult<()> {
+    rollback_migration(conn, "042_reign_in_ai_capabilities", MIGRATION_042_DOWN);
     rollback_migration(conn, "041_mcp_transport_https_contract", MIGRATION_041_DOWN);
     rollback_migration(conn, "040_mcp_runtime_registry", MIGRATION_040_DOWN);
     rollback_migration(conn, "039_workspace_media", MIGRATION_039_DOWN);
@@ -742,7 +752,7 @@ mod tests {
     }
 
     #[test]
-    fn migration_026_creates_skill_closed_loop_tables() {
+    fn migration_026_legacy_skill_closed_loop_tables_are_removed_by_reign_in() {
         let conn = Connection::open_in_memory().unwrap();
         migrate_up(&conn).unwrap();
 
@@ -755,31 +765,15 @@ mod tests {
                 )
                 .map(|c| c > 0)
                 .unwrap();
-            assert!(has, "missing {table}");
+            assert!(!has, "{table} must be removed by reign-in migration");
         }
-
-        conn.execute(
-            "INSERT INTO skill_diagnostics
-             (skill_name, scope, last_matched_at, last_activation_score, last_blocked_reason)
-             VALUES ('research-skill', 'Vault', datetime('now'), 0.91, 'none')",
-            [],
-        )
-        .unwrap();
-        let score: f64 = conn
-            .query_row(
-                "SELECT last_activation_score FROM skill_diagnostics WHERE skill_name = 'research-skill'",
-                [],
-                |row| row.get(0),
-            )
-            .unwrap();
-        assert!(score > 0.9);
     }
 
     #[test]
-    fn migration_026_roundtrip() {
+    fn migration_026_roundtrip_final_state_has_no_legacy_tables() {
         let conn = Connection::open_in_memory().unwrap();
         migrate_up(&conn).unwrap();
-        assert!(conn
+        assert!(!conn
             .query_row(
                 "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='skill_diagnostics'",
                 [],
@@ -787,21 +781,6 @@ mod tests {
             )
             .map(|c| c > 0)
             .unwrap());
-
-        rollback_migration(
-            &conn,
-            "026_skill_closed_loop_diagnostics",
-            MIGRATION_026_DOWN,
-        );
-        let gone: bool = conn
-            .query_row(
-                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='skill_diagnostics'",
-                [],
-                |row| row.get::<_, i64>(0),
-            )
-            .map(|c| c > 0)
-            .unwrap();
-        assert!(!gone);
     }
 
     #[test]
@@ -1386,16 +1365,24 @@ mod tests {
     }
 
     #[test]
-    fn migration_040_creates_mcp_runtime_registry() {
+    fn reign_in_provider_schema_has_minimal_tables() {
         let conn = Connection::open_in_memory().unwrap();
         migrate_up(&conn).unwrap();
 
+        let provider_exists: bool = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name = 'web_evidence_providers'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .map(|count| count > 0)
+            .unwrap();
+        assert!(provider_exists, "missing web_evidence_providers table");
+
         for table in [
-            "mcp_server_catalog",
-            "mcp_runtime_profiles",
-            "skill_runtime_requirements",
             "mcp_tool_inventory",
             "mcp_health_events",
+            "skill_runtime_requirements",
         ] {
             let exists: bool = conn
                 .query_row(
@@ -1405,32 +1392,8 @@ mod tests {
                 )
                 .map(|count| count > 0)
                 .unwrap();
-            assert!(exists, "missing {table} table");
+            assert!(!exists, "{table} must be removed by reign-in migration");
         }
-
-        conn.execute(
-            "INSERT INTO mcp_server_catalog
-             (id, display_name, transport, command, args_json, env_schema_json, capability_tags_json)
-             VALUES ('anysearch', 'AnySearch', 'stdio', 'anysearch-mcp', '[]', '{}', '[\"web.search\"]')",
-            [],
-        )
-        .unwrap();
-        conn.execute(
-            "INSERT INTO mcp_runtime_profiles
-             (id, server_id, display_name, enabled, status, transport_config_json, env_bindings_json)
-             VALUES ('anysearch-default', 'anysearch', 'AnySearch default', 1, 'unknown', '{}', '{}')",
-            [],
-        )
-        .unwrap();
-        conn.execute(
-            "INSERT INTO skill_runtime_requirements
-             (skill_name, scope, manifest_hash, kind, runtime_kind, required_profiles_json,
-              required_capabilities_json, workspace_contract_json, degradation_policy_json)
-             VALUES ('anysearch', 'Vault', 'hash', 'mcp_dependent', 'mcp', '[\"anysearch-default\"]',
-                     '[\"web.search\"]', '{}', '{}')",
-            [],
-        )
-        .unwrap();
     }
     #[test]
     fn migration_041_converts_legacy_http_transport_to_https_contract() {
@@ -1527,7 +1490,7 @@ mod tests {
     }
 
     #[test]
-    fn migration_018_creates_skill_install_sources() {
+    fn migration_018_legacy_skill_install_sources_is_removed_by_reign_in() {
         let conn = Connection::open_in_memory().unwrap();
         migrate_up(&conn).unwrap();
 
@@ -1539,28 +1502,14 @@ mod tests {
             )
             .map(|c| c > 0)
             .unwrap();
-        assert!(has, "missing skill_install_sources table");
-
-        // Verify can insert
-        conn.execute(
-            "INSERT INTO skill_install_sources (skill_name, scope, source_type, source_url)
-             VALUES ('test-skill', 'Vault', 'url', 'https://example.com/SKILL.md')",
-            [],
-        )
-        .unwrap();
-
-        let count: i64 = conn
-            .query_row(
-                "SELECT COUNT(*) FROM skill_install_sources WHERE skill_name = 'test-skill'",
-                [],
-                |r| r.get(0),
-            )
-            .unwrap();
-        assert_eq!(count, 1);
+        assert!(
+            !has,
+            "skill_install_sources must be removed by reign-in migration"
+        );
     }
 
     #[test]
-    fn migration_018_roundtrip() {
+    fn migration_018_roundtrip_final_state_has_no_legacy_table() {
         let conn = Connection::open_in_memory().unwrap();
         migrate_up(&conn).unwrap();
 
@@ -1572,23 +1521,7 @@ mod tests {
             )
             .map(|c| c > 0)
             .unwrap();
-        assert!(has);
-
-        let _ = conn.execute_batch(MIGRATION_018_DOWN);
-        let _ = conn.execute(
-            "DELETE FROM _migrations WHERE name = '018_skill_install_sources'",
-            [],
-        );
-
-        let gone: bool = conn
-            .query_row(
-                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='skill_install_sources'",
-                [],
-                |row| row.get::<_, i64>(0),
-            )
-            .map(|c| c > 0)
-            .unwrap();
-        assert!(!gone);
+        assert!(!has);
     }
 
     #[test]

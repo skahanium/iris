@@ -17,7 +17,6 @@ import {
 } from "@/lib/ipc";
 import { mapChatToolCallsForUi } from "@/lib/map-chat-tool-calls";
 import { mergeContextPackets } from "@/lib/ai/merge-context-packets";
-import { skillInstallSuccessNotice } from "@/lib/skill-install-notice";
 import type {
   AssistantActionState,
   AssistantIntent,
@@ -54,7 +53,6 @@ interface ToolConfirmResult {
   usage?: TokenUsage;
   pending_confirmation?: boolean;
   status?: string;
-  installed_skill?: string;
   tool_confirmation_partial?: boolean;
   resume_error_code?: string;
   resume_error_message?: string;
@@ -102,20 +100,12 @@ function isPartialToolConfirmation(result: ToolConfirmResult): boolean {
 
 function partialToolConfirmationNotice(
   result: ToolConfirmResult,
-  request: ToolConfirmRequest | null,
+  _request: ToolConfirmRequest | null,
 ): string {
   const structuredMessage = result.assistantResumeOutcome?.userMessage?.trim();
   if (structuredMessage) return structuredMessage;
   const content = result.content?.trim();
   if (content) return content;
-  const skillName =
-    result.installed_skill ??
-    (typeof request?.arguments?.path_or_url === "string"
-      ? request.arguments.path_or_url
-      : null);
-  if (skillName || request?.tool_name === "skills_install") {
-    return "安装已完成，但继续生成回复失败。";
-  }
   const reason =
     result.assistantResumeOutcome?.failureClass ??
     result.resume_error_code ??
@@ -293,19 +283,6 @@ export function useAssistantConfirmations({
             };
           } else {
             next.push({ role: "assistant", content, toolCalls });
-          }
-          if (
-            (decision === "approve" || decision === "modify") &&
-            pendingConfirm?.tool_name === "skills_install"
-          ) {
-            const notice = skillInstallSuccessNotice({
-              installedSkill: result.installed_skill,
-              preview: pendingConfirm.preview,
-              arguments: pendingConfirm.arguments,
-            });
-            if (notice) {
-              next.push({ role: "system", content: notice });
-            }
           }
           return next;
         });

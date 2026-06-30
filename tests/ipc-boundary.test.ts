@@ -113,15 +113,14 @@ describe("IPC boundary", () => {
     expect(types).toContain("content_parts?: string | null");
   });
 
-  it("exposes MCP runtime registry commands through typed wrappers", () => {
+  it("replaces MCP runtime registry IPC with web evidence provider IPC", () => {
     const ipc = read("src/lib/ipc.ts");
     const aiCommands = read("src-tauri/src/commands/ai_commands.rs");
     const lib = read("src-tauri/src/lib.rs");
 
-    for (const command of [
+    for (const removed of [
       "mcp_server_catalog_upsert",
       "mcp_runtime_profile_upsert",
-      "mcp_runtime_profiles_list",
       "mcp_runtime_profile_toggle",
       "mcp_runtime_profile_delete",
       "mcp_runtime_tool_inventory_list",
@@ -130,34 +129,38 @@ describe("IPC boundary", () => {
       "mcp_runtime_health_check",
       "mcp_runtime_capability_call",
     ]) {
+      expect(aiCommands).not.toContain(removed);
+      expect(lib).not.toContain(`commands::ai_commands::${removed}`);
+      expect(ipc).not.toContain(`"${removed}"`);
+    }
+
+    for (const command of [
+      "web_evidence_provider_upsert",
+      "web_evidence_providers_list",
+      "web_evidence_provider_toggle",
+      "web_evidence_provider_delete",
+      "web_evidence_provider_diagnostics",
+      "skills_create_draft",
+      "skills_confirm",
+    ]) {
       expect(aiCommands).toContain(command);
       expect(lib).toContain(`commands::ai_commands::${command}`);
       expect(ipc).toContain(`"${command}"`);
     }
 
-    expect(ipc).toContain("export interface McpServerCatalogInputDto");
-    expect(ipc).toContain("export interface McpRuntimeProfileInputDto");
-    expect(ipc).toContain("export interface McpToolInventorySummaryDto");
-    expect(ipc).toContain("export interface McpHealthEventSummaryDto");
-    expect(ipc).toContain("export async function mcpRuntimeProfilesList");
-    expect(ipc).toContain("export async function mcpRuntimeProfileToggle");
-    expect(ipc).toContain("export async function mcpRuntimeProfileDelete");
-    expect(ipc).toContain("export async function mcpRuntimeToolInventoryList");
-    expect(ipc).toContain("export async function mcpRuntimeHealthEventsList");
-    expect(ipc).toContain("export async function mcpRuntimeToolsList");
-    expect(ipc).toContain("export async function mcpRuntimeHealthCheck");
-    expect(ipc).toContain("export async function mcpRuntimeCapabilityCall");
-    expect(ipc).toContain("mcpRuntimeToolInventoryList");
+    expect(ipc).toContain("export interface WebEvidenceProviderSummary");
+    expect(ipc).toContain("export async function webEvidenceProvidersList");
+    expect(ipc).toContain("export async function skillsCreateDraft");
+    expect(ipc).toContain("export async function skillsConfirm");
   });
-  it("documents Skills and MCP runtime IPC status semantics", () => {
+
+  it("documents reign-in Skills and web provider IPC semantics", () => {
     const docs = read("docs/ipc-api-reference.md");
 
-    expect(docs).toContain("prompt-only skills do not require MCP");
-    expect(docs).toContain("runtime_ready vs activation_ready");
-    expect(docs).toContain("workspace_declared vs workspace_prepared");
-    expect(docs).toContain("partial success confirmation outcome");
-    expect(docs).toContain("mcpRuntimeToolInventoryList");
-    expect(docs).toContain("mcpRuntimeHealthEventsList");
-    expect(docs).toContain("mcpRuntimeCapabilityCall");
+    expect(docs).toContain("Skills are prompt-only");
+    expect(docs).toContain("SKILL.md scope is the fact source");
+    expect(docs).toContain("webEvidenceProvidersList");
+    expect(docs).toContain("webEvidenceProviderDiagnostics");
+    expect(docs).not.toContain("mcpRuntimeCapabilityCall");
   });
 });

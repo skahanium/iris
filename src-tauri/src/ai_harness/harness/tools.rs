@@ -1,11 +1,6 @@
 //! Tool output → evidence packet merging.
 
-use crate::ai_runtime::agent_task_policy::AgentTaskPolicy;
 use crate::ai_runtime::ContextPacket;
-
-pub(crate) fn max_fetch_per_round(policy: &AgentTaskPolicy) -> u32 {
-    policy.max_fetch_per_round
-}
 
 pub(crate) fn merge_tool_packets_into(
     tool_name: &str,
@@ -14,12 +9,7 @@ pub(crate) fn merge_tool_packets_into(
 ) {
     if !matches!(
         tool_name,
-        "search_hybrid"
-            | "search_semantic"
-            | "search_keyword"
-            | "get_regulation"
-            | "web_search"
-            | "fetch_web_page"
+        "search_hybrid" | "search_semantic" | "search_keyword" | "get_regulation" | "web_search"
     ) {
         return;
     }

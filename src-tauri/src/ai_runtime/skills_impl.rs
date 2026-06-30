@@ -4,44 +4,12 @@
 //! security model. Old `trigger`-based skills continue to work via `legacy_trigger`.
 
 use std::fs;
-use std::path::Path;
-use std::time::{Duration, Instant};
+use std::path::{Component, Path, PathBuf};
 
-use hex;
-use sha2::{Digest, Sha256};
-
+use crate::ai_runtime::AiScene;
+use crate::ai_types::SkillActivationPlanSummary;
 use crate::error::{AppError, AppResult};
-
-#[rustfmt::skip]
-const SAFE_GIT_CLONE_ARGS: &[&str] = &["-c", "core.hooksPath=/dev/null", "-c", "filter.lfs.smudge=", "-c", "filter.lfs.required=false", "-c", "protocol.file.allow=never", "clone", "--depth", "1", "--no-tags", "--"];
-
-fn run_git_clone_with_timeout(repo_url: &str, target_dir: &Path) -> AppResult<()> {
-    let mut child = std::process::Command::new("git")
-        .env_clear()
-        .env("LANG", "C")
-        .env("GIT_TERMINAL_PROMPT", "0")
-        .env("GIT_LFS_SKIP_SMUDGE", "1")
-        .args(SAFE_GIT_CLONE_ARGS)
-        .arg(repo_url)
-        .arg(target_dir.to_str().unwrap_or(""))
-        .spawn()
-        .map_err(|e| AppError::msg(format!("git not available: {e}")))?;
-    let start = Instant::now();
-    loop {
-        if let Some(status) = child.try_wait()? {
-            if status.success() {
-                return Ok(());
-            }
-            return Err(AppError::msg("git clone failed"));
-        }
-        if start.elapsed() > Duration::from_secs(30) {
-            let _ = child.kill();
-            let _ = child.wait();
-            return Err(AppError::msg("git clone timed out"));
-        }
-        std::thread::sleep(Duration::from_millis(25));
-    }
-}
+use crate::storage::db::Database;
 
 #[path = "skills/activation.rs"]
 mod activation_impl;
@@ -59,14 +27,10 @@ mod model_impl;
 mod path_impl;
 #[path = "skills/prompt.rs"]
 mod prompt_impl;
-#[path = "skills/resources.rs"]
-mod resources_impl;
 #[path = "skills/scan.rs"]
 mod scan_impl;
 #[path = "skills/validation.rs"]
 mod validation_impl;
-#[path = "skills/workspace.rs"]
-mod workspace_impl;
 
 pub use activation_impl::{
     active_skill_allowed_tools, active_skill_allowed_tools_for_task, active_skills_for_prompt,
@@ -80,21 +44,22 @@ pub use compatibility_impl::{
     blocked_capabilities_for_skill, fallback_guidance, normalize_external_capability,
     support_status_for_capability,
 };
+#[cfg(test)]
 use frontmatter_impl::parse_frontmatter;
 pub use legacy_impl::{is_legacy_format, migrate_legacy_skill};
 pub use manifest_impl::{
     load_manifest_for_skill_dir, IrisSkillManifest, ManifestLoadOutcome, SkillManifestKind,
 };
 pub use model_impl::{
-    ActivationIndexMap, ScoredSkill, SkillActivationIndexRow, SkillEntry, SkillListEntry,
-    SkillMetadata, SkillScope, SkillValidationStatus, SkillWorkspaceDocument,
-    SkillWorkspaceManifest,
+    ActivationIndexMap, ScoredSkill, SkillActivationIndexRow, SkillConfirmationStatus, SkillEntry,
+    SkillListEntry, SkillMetadata, SkillScope, SkillScopeRule, SkillValidationStatus,
 };
 pub use path_impl::validate_skill_path;
-use path_impl::{atomic_copy_dir, load_config, save_config, skill_key, slugify, validate_subpath};
+#[cfg(test)]
+use path_impl::{atomic_copy_dir, slugify, validate_subpath};
 pub(crate) use path_impl::{global_skills_dir, vault_skills_dir};
+use path_impl::{load_config, save_config, skill_key};
 pub use prompt_impl::inject_into_prompt;
-pub use resources_impl::read_skill_resource;
 pub use scan_impl::{
     load_skill, scan_all, scan_all_metadata, scan_all_with_status, skill_content_hash_for_path,
 };
@@ -102,147 +67,9 @@ pub use validation_impl::{
     capability_preview_for_entry, confirmation_required_tools, license_is_agpl_compatible,
     validate_skill_license,
 };
-pub use workspace_impl::{
-    list_workspace_files, prepare_workspace_for_skill, preview_prepare_workspace,
-    read_workspace_file, validate_workspace_folder_path, validate_workspace_source_path,
-    validate_workspace_target_path, workspace_manifest_items, workspace_root_path,
-    workspace_root_relative, workspace_status_for_skill, write_workspace_file,
-    SkillWorkspacePrepareResult, SkillWorkspaceStatus,
-};
 
-/// Install skill from HTTP(S) URL (raw SKILL.md or GitHub raw link).
-pub async fn install_from_url(
-    url: &str,
-    scope: SkillScope,
-    vault: &Path,
-    expected_sha256: Option<&str>,
-) -> AppResult<SkillEntry> {
-    crate::security::ipc_policy::validate_skill_remote_url(url)?;
-    let client = crate::network::cert_pinning::create_https_client()?;
-    let resp = client
-        .get(url)
-        .send()
-        .await
-        .map_err(|e| AppError::msg(format!("download failed: {e}")))?;
-    if !resp.status().is_success() {
-        return Err(AppError::msg(format!("HTTP {}", resp.status())));
-    }
-    let body = resp
-        .text()
-        .await
-        .map_err(|e| AppError::msg(format!("read body: {e}")))?;
-
-    if let Some(expected) = expected_sha256 {
-        let actual = hex::encode(Sha256::digest(body.as_bytes()));
-        if !actual.eq_ignore_ascii_case(expected.trim()) {
-            return Err(AppError::msg("skill sha256 mismatch"));
-        }
-        tracing::info!(
-            url = %url,
-            sha256 = %actual,
-            "skill content hash verified"
-        );
-    }
-
-    let (meta, _) = parse_frontmatter(&body);
-    let dir_name = meta
-        .get("name")
-        .map(|s| slugify(s))
-        .unwrap_or_else(|| format!("skill-{}", chrono::Utc::now().timestamp()));
-
-    let base = match scope {
-        SkillScope::Global => global_skills_dir(),
-        SkillScope::Vault => vault_skills_dir(vault),
-    };
-    fs::create_dir_all(&base)?;
-    let target_dir = base.join(&dir_name);
-    fs::create_dir_all(&target_dir)?;
-    let skill_path = target_dir.join("SKILL.md");
-    fs::write(&skill_path, &body)?;
-
-    let mut entry = load_skill(&skill_path, scope)?;
-    entry.source_url = Some(url.to_string());
-    Ok(entry)
-}
-
-/// Shallow git clone and copy SKILL.md or skill directory.
-pub async fn install_from_git(
-    repo_url: &str,
-    subpath: Option<&str>,
-    scope: SkillScope,
-    vault: &Path,
-) -> AppResult<Vec<SkillEntry>> {
-    crate::security::ipc_policy::validate_skill_git_url(repo_url)?;
-
-    // Validate subpath before passing to git or filesystem.
-    if let Some(sp) = subpath {
-        validate_subpath(sp)?;
-    }
-
-    let tmp = crate::security::secure_delete::user_temp_dir()
-        .join(format!("iris-skill-{}", uuid::Uuid::new_v4()));
-    if let Some(parent) = tmp.parent() {
-        std::fs::create_dir_all(parent)
-            .map_err(|e| AppError::msg(format!("create temp dir failed: {e}")))?;
-    }
-    run_git_clone_with_timeout(repo_url, &tmp)?;
-
-    // Resolve subpath and ensure it stays inside the clone directory.
-    let tmp_canonical = tmp
-        .canonicalize()
-        .map_err(|_| AppError::msg("clone directory missing"))?;
-    let src = match subpath {
-        Some(sp) => {
-            let joined = tmp.join(sp);
-            let canon = joined
-                .canonicalize()
-                .map_err(|_| AppError::msg(format!("subpath does not exist: {sp}")))?;
-            if !canon.starts_with(&tmp_canonical) {
-                return Err(AppError::msg("subpath escapes clone directory"));
-            }
-            canon
-        }
-        None => tmp_canonical.clone(),
-    };
-
-    let base = match scope {
-        SkillScope::Global => global_skills_dir(),
-        SkillScope::Vault => vault_skills_dir(vault),
-    };
-    fs::create_dir_all(&base)?;
-
-    let mut installed = Vec::new();
-    if src.join("SKILL.md").is_file() {
-        let name = slugify(src.file_name().and_then(|s| s.to_str()).unwrap_or("skill"));
-        let dest = base.join(&name);
-        atomic_copy_dir(&src, &dest)?;
-        let skill_path = dest.join("SKILL.md");
-        installed.push(load_skill(&skill_path, scope)?);
-    } else if src.is_dir() {
-        for entry in fs::read_dir(&src)? {
-            let entry = entry?;
-            let p = entry.path();
-            if p.join("SKILL.md").is_file() {
-                let name = p
-                    .file_name()
-                    .and_then(|s| s.to_str())
-                    .map(slugify)
-                    .unwrap_or_else(|| "skill".into());
-                let dest = base.join(&name);
-                atomic_copy_dir(&p, &dest)?;
-                installed.push(load_skill(&dest.join("SKILL.md"), scope)?);
-            }
-        }
-    }
-
-    let _ = crate::security::secure_delete::secure_remove_dir_all(&tmp);
-    if installed.is_empty() {
-        return Err(AppError::msg("no SKILL.md found in repository"));
-    }
-    Ok(installed)
-}
-
-pub fn uninstall(name: &str, scope: SkillScope, vault: &Path) -> AppResult<()> {
+#[cfg(test)]
+fn uninstall(name: &str, scope: SkillScope, vault: &Path) -> AppResult<()> {
     let base = match scope {
         SkillScope::Global => global_skills_dir(),
         SkillScope::Vault => vault_skills_dir(vault),
@@ -270,109 +97,119 @@ pub fn uninstall(name: &str, scope: SkillScope, vault: &Path) -> AppResult<()> {
     Ok(())
 }
 
-pub fn set_enabled(name: &str, scope: SkillScope, vault: &Path, enabled: bool) -> AppResult<()> {
+pub fn parse_scope(scope: &str) -> SkillScope {
+    if scope == "global" {
+        SkillScope::Global
+    } else {
+        SkillScope::Vault
+    }
+}
+
+pub fn normalize_skill_scope_arg(scope: Option<&str>) -> SkillScope {
+    parse_scope(scope.unwrap_or("vault"))
+}
+
+pub fn list_skills(
+    db: &Database,
+    vault: &Path,
+    scene: Option<AiScene>,
+) -> AppResult<Vec<SkillListEntry>> {
+    let entries = scan_all_with_status(vault)?;
+    if let Some(scene) = scene {
+        enrich_list_with_scene(entries, scene, Some(db))
+    } else {
+        Ok(entries)
+    }
+}
+
+pub fn record_skill_activation_matched(
+    _db: &Database,
+    _plan: &SkillActivationPlanSummary,
+) -> AppResult<()> {
+    Ok(())
+}
+
+pub fn record_skill_activation_used(
+    _db: &Database,
+    _plan: &SkillActivationPlanSummary,
+) -> AppResult<()> {
+    Ok(())
+}
+
+fn record_confirmed_skill_hash(
+    name: &str,
+    scope: SkillScope,
+    vault: &Path,
+    content_hash: &str,
+) -> AppResult<()> {
     let mut config = load_config(scope, vault);
     let key = skill_key(scope, name);
-    if enabled {
-        config.disabled.retain(|k| k != &key);
-    } else if !config.disabled.contains(&key) {
-        config.disabled.push(key);
-    }
+    config.disabled.retain(|disabled| disabled != &key);
+    config
+        .confirmed_hashes
+        .insert(key, content_hash.trim().to_string());
     save_config(scope, vault, &config)
 }
 
-fn copy_local_skill_manifest(
-    source_dir: &Path,
-    target_dir: &Path,
-    manifest_path: Option<&str>,
-) -> AppResult<()> {
-    let manifest_path = manifest_path.unwrap_or("iris.skill.toml");
-    validate_subpath(manifest_path)?;
-    let source_manifest = source_dir.join(manifest_path);
-    if !source_manifest.is_file() {
-        return Ok(());
-    }
-    let target_manifest = target_dir.join(manifest_path);
-    if let Some(parent) = target_manifest.parent() {
-        fs::create_dir_all(parent)?;
-    }
-    fs::copy(source_manifest, target_manifest)?;
-    Ok(())
-}
-
-fn copy_local_skill_resource_dirs(source_dir: &Path, target_dir: &Path) -> AppResult<()> {
-    for dir_name in resources_impl::ALLOWED_RESOURCE_DIRS {
-        let source_resource_dir = source_dir.join(dir_name);
-        if source_resource_dir.is_dir() {
-            atomic_copy_dir(&source_resource_dir, &target_dir.join(dir_name))?;
-        }
-    }
-    Ok(())
-}
-
-fn copy_local_skill_companion_files(
-    source: &Path,
-    target_dir: &Path,
-    metadata: &std::collections::HashMap<String, String>,
-) -> AppResult<()> {
-    let Some(source_dir) = source.parent() else {
-        return Ok(());
-    };
-    copy_local_skill_manifest(
-        source_dir,
-        target_dir,
-        metadata.get("iris_manifest").map(String::as_str),
-    )?;
-    copy_local_skill_resource_dirs(source_dir, target_dir)
-}
-/// Install SKILL.md from a local file path (copies into skills directory).
-pub fn install_from_local(source: &Path, scope: SkillScope, vault: &Path) -> AppResult<SkillEntry> {
-    let source = crate::security::ipc_policy::validate_local_skill_source(source, vault)?;
-    if !source.is_file() {
-        return Err(AppError::msg("local install requires SKILL.md file path"));
-    }
-    let body = fs::read_to_string(&source)?;
-    let (meta, _) = parse_frontmatter(&body);
-    let dir_name = meta
-        .get("name")
-        .cloned()
-        .or_else(|| {
-            source
-                .parent()
-                .and_then(|p| p.file_name())
-                .and_then(|s| s.to_str())
-                .map(slugify)
-        })
-        .unwrap_or_else(|| format!("skill-{}", uuid::Uuid::new_v4()));
-
-    let base = match scope {
-        SkillScope::Global => global_skills_dir(),
-        SkillScope::Vault => vault_skills_dir(vault),
-    };
-    fs::create_dir_all(&base)?;
-    let target_dir = base.join(&dir_name);
-    fs::create_dir_all(&target_dir)?;
-    let skill_path = target_dir.join("SKILL.md");
-    fs::write(&skill_path, &body)?;
-    copy_local_skill_companion_files(&source, &target_dir, &meta)?;
-
-    let mut entry = load_skill(&skill_path, scope)?;
-    entry.source_url = Some(source.to_string_lossy().into_owned());
-    Ok(entry)
-}
-
-/// Read skill file content for editing.
-pub fn read_skill_content(path: &Path) -> AppResult<String> {
-    fs::read_to_string(path).map_err(Into::into)
-}
-
 /// Write updated skill content (must be `SKILL.md`).
-pub fn write_skill_content(path: &Path, scope: SkillScope, content: &str) -> AppResult<SkillEntry> {
+fn write_skill_content(path: &Path, scope: SkillScope, content: &str) -> AppResult<SkillEntry> {
     if path.file_name().and_then(|n| n.to_str()) != Some("SKILL.md") {
         return Err(AppError::msg("only SKILL.md can be written"));
     }
     fs::write(path, content)?;
     load_skill(path, scope)
+}
+
+pub fn write_confirmed_skill_content(
+    vault: &Path,
+    path: &Path,
+    scope: SkillScope,
+    content: &str,
+) -> AppResult<SkillEntry> {
+    if path.file_name().and_then(|name| name.to_str()) != Some("SKILL.md") {
+        return Err(AppError::msg("only SKILL.md can be confirmed"));
+    }
+    let base = match scope {
+        SkillScope::Global => global_skills_dir(),
+        SkillScope::Vault => vault_skills_dir(vault),
+    };
+    fs::create_dir_all(&base)?;
+    if path
+        .components()
+        .any(|component| matches!(component, Component::ParentDir | Component::Prefix(_)))
+    {
+        return Err(AppError::msg(
+            "Skill target path must stay inside the skills directory",
+        ));
+    }
+    let target_path: PathBuf = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        base.join(path)
+    };
+    if !target_path.starts_with(&base) {
+        return Err(AppError::msg(
+            "Skill target path must stay inside the skills directory",
+        ));
+    }
+    let parent = target_path
+        .parent()
+        .ok_or_else(|| AppError::msg("invalid Skill target path"))?;
+    fs::create_dir_all(parent)?;
+    let base_canonical = base.canonicalize()?;
+    let parent_canonical = parent.canonicalize()?;
+    if !parent_canonical.starts_with(base_canonical) {
+        return Err(AppError::msg(
+            "Skill target path must stay inside the skills directory",
+        ));
+    }
+    let entry = write_skill_content(&target_path, scope, content)?;
+    record_confirmed_skill_hash(&entry.name, scope, vault, &entry.content_hash)?;
+    let mut confirmed = entry;
+    confirmed.confirmed_hash = Some(confirmed.content_hash.clone());
+    confirmed.confirmation_status = SkillConfirmationStatus::Confirmed;
+    confirmed.enabled = true;
+    Ok(confirmed)
 }
 
 #[cfg(test)]
@@ -480,7 +317,7 @@ name: yaml-skill
 description: Parses modern Agent Skills frontmatter
 allowed-tools:
   - memory_read
-  - skills_read_resource
+  - search_hybrid
 metadata:
   depends:
     - helper-skill
@@ -498,33 +335,26 @@ license: AGPL-3.0
         let skill = load_skill(&path, SkillScope::Global).unwrap();
         assert_eq!(
             skill.allowed_tools,
-            vec![
-                "memory_read".to_string(),
-                "skills_read_resource".to_string()
-            ]
+            vec!["memory_read".to_string(), "search_hybrid".to_string()]
         );
         assert_eq!(skill.depends(), vec!["helper-skill".to_string()]);
         assert_eq!(skill.license.as_deref(), Some("AGPL-3.0"));
     }
 
     #[test]
-    fn load_skill_reads_workspace_manifest_from_top_level_and_metadata() {
+    fn load_skill_keeps_scope_rules_as_prompt_only_metadata() {
         let dir = tempfile::tempdir().unwrap();
-        let top_level_dir = dir.path().join("top-level-workspace");
-        fs::create_dir_all(&top_level_dir).unwrap();
-        let top_level_path = top_level_dir.join("SKILL.md");
+        let skill_dir = dir.path().join("scoped-skill");
+        fs::create_dir_all(&skill_dir).unwrap();
+        let skill_path = skill_dir.join("SKILL.md");
         fs::write(
-            &top_level_path,
+            &skill_path,
             r#"---
-name: top-level-workspace
-description: Reads top-level workspace declaration
-iris-workspace:
-  folders:
-    - inputs
-    - outputs
-  documents:
-    - source: resources/default-note.md
-      target: README.md
+name: scoped-skill
+description: Reads scope rules without runtime setup
+scope:
+  - kind: glob
+    pattern: notes/**
 ---
 
 # Body
@@ -532,42 +362,10 @@ iris-workspace:
         )
         .unwrap();
 
-        let metadata_dir = dir.path().join("metadata-workspace");
-        fs::create_dir_all(&metadata_dir).unwrap();
-        let metadata_path = metadata_dir.join("SKILL.md");
-        fs::write(
-            &metadata_path,
-            r#"---
-name: metadata-workspace
-description: Reads metadata workspace declaration
-metadata:
-  iris_workspace:
-    folders:
-      - cache
-    documents:
-      - source: references/guide.md
-        target: docs/guide.md
----
-
-# Body
-"#,
-        )
-        .unwrap();
-
-        let top_level = load_skill(&top_level_path, SkillScope::Vault).unwrap();
-        let metadata = load_skill(&metadata_path, SkillScope::Vault).unwrap();
-
-        let top_level_workspace = top_level.workspace_manifest().unwrap();
-        assert_eq!(top_level_workspace.folders, vec!["inputs", "outputs"]);
-        assert_eq!(top_level_workspace.documents[0].target, "README.md");
-
-        let metadata_workspace = metadata.workspace_manifest().unwrap();
-        assert_eq!(metadata_workspace.folders, vec!["cache"]);
-        assert_eq!(
-            metadata_workspace.documents[0].source,
-            "references/guide.md"
-        );
-        assert_eq!(metadata_workspace.documents[0].target, "docs/guide.md");
+        let skill = load_skill(&skill_path, SkillScope::Vault).unwrap();
+        assert_eq!(skill.scope_rules.len(), 1);
+        assert_eq!(skill.scope_rules[0].kind, "glob");
+        assert_eq!(skill.scope_rules[0].pattern, "notes/**");
     }
 
     #[test]
@@ -603,17 +401,13 @@ Body
             license: Some("AGPL-3.0".into()),
             compatibility: None,
             metadata: Default::default(),
-            allowed_tools: vec![
-                "memory_write".into(),
-                "fetch_web_page".into(),
-                "totally_unknown".into(),
-            ],
+            allowed_tools: vec!["web_search".into(), "totally_unknown".into()],
             content: String::new(),
             scope: SkillScope::Global,
-            source_url: None,
             enabled: true,
             file_path: String::new(),
             legacy_trigger: None,
+            ..SkillEntry::default()
         };
 
         let preview = capability_preview_for_entry(&entry, &[]);
@@ -622,8 +416,8 @@ Body
             .as_array()
             .unwrap()
             .iter()
-            .any(|v| v == "memory_write"));
-        assert!(preview["confirmation_required_tools"]
+            .any(|v| v == "web_search"));
+        assert!(!preview["confirmation_required_tools"]
             .as_array()
             .unwrap()
             .iter()
@@ -634,8 +428,6 @@ Body
             .iter()
             .any(|v| v == "totally_unknown"));
     }
-    // install_from_git symlink escape check
-
     #[allow(unused_variables)]
     #[test]
     fn subpath_symlink_escape_rejected_by_canonicalize() {
@@ -841,10 +633,10 @@ Large instruction body."#,
             allowed_tools: vec![],
             content: "body".into(),
             scope: SkillScope::Vault,
-            source_url: None,
             enabled: true,
             file_path: "/test".into(),
             legacy_trigger: None,
+            ..SkillEntry::default()
         };
         assert!(matches!(
             entry.validation_status(),
@@ -863,10 +655,10 @@ Large instruction body."#,
             allowed_tools: vec![],
             content: "body".into(),
             scope: SkillScope::Vault,
-            source_url: None,
             enabled: true,
             file_path: "/test".into(),
             legacy_trigger: None,
+            ..SkillEntry::default()
         };
         assert!(matches!(
             entry.validation_status(),
@@ -885,10 +677,10 @@ Large instruction body."#,
             allowed_tools: vec!["nonexistent_tool".into()],
             content: "body".into(),
             scope: SkillScope::Vault,
-            source_url: None,
             enabled: true,
             file_path: "/test".into(),
             legacy_trigger: None,
+            ..SkillEntry::default()
         };
         assert_eq!(entry.validation_status(), SkillValidationStatus::Valid);
         assert!(!entry.all_allowed_tools_recognized());
@@ -907,10 +699,10 @@ Large instruction body."#,
             allowed_tools: vec!["search_hybrid".into(), "read_note".into()],
             content: "body".into(),
             scope: SkillScope::Vault,
-            source_url: None,
             enabled: true,
             file_path: "/test".into(),
             legacy_trigger: None,
+            ..SkillEntry::default()
         };
         assert_eq!(entry.validation_status(), SkillValidationStatus::Valid);
         assert!(entry.all_allowed_tools_recognized());
@@ -928,10 +720,11 @@ Large instruction body."#,
             allowed_tools: vec![],
             content: String::new(),
             scope: SkillScope::Vault,
-            source_url: None,
             enabled,
             file_path: format!("/test/{name}"),
             legacy_trigger: legacy_trigger.map(String::from),
+            confirmation_status: SkillConfirmationStatus::Confirmed,
+            ..SkillEntry::default()
         }
     }
 
@@ -962,6 +755,57 @@ Large instruction body."#,
         let skills = vec![make_skill("disabled", None, false)];
         let matched = skills_for_scene(&skills, AiScene::KnowledgeLookup, "");
         assert!(matched.is_empty());
+    }
+
+    #[test]
+    fn confirmed_skill_hash_is_recorded_and_invalidated_on_edit() {
+        let vault = tempfile::tempdir().unwrap();
+        let target = vault.path().join(".iris/skills/demo/SKILL.md");
+        let markdown = "---\nname: demo\ndescription: Demo skill\nscope:\n  - kind: glob\n    pattern: \"notes/**\"\n---\n\nUse demo behavior.\n";
+
+        let entry =
+            write_confirmed_skill_content(vault.path(), &target, SkillScope::Vault, markdown)
+                .unwrap();
+        assert_eq!(
+            entry.confirmation_status,
+            SkillConfirmationStatus::Confirmed
+        );
+
+        let scanned = scan_all(vault.path()).unwrap();
+        assert_eq!(
+            scanned[0].confirmation_status,
+            SkillConfirmationStatus::Confirmed
+        );
+
+        std::fs::write(
+            &target,
+            markdown.replace("demo behavior", "changed behavior"),
+        )
+        .unwrap();
+        let changed = scan_all(vault.path()).unwrap();
+        assert_eq!(
+            changed[0].confirmation_status,
+            SkillConfirmationStatus::NeedsConfirmation
+        );
+    }
+
+    #[test]
+    fn confirmed_skill_rejects_outside_target_without_creating_parent() {
+        let vault = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        let target = outside.path().join("escape").join("SKILL.md");
+        let markdown = "---\nname: escape\ndescription: Escape skill\n---\n\nNo escape.\n";
+
+        let err = write_confirmed_skill_content(vault.path(), &target, SkillScope::Vault, markdown)
+            .unwrap_err();
+
+        assert!(err
+            .to_string()
+            .contains("Skill target path must stay inside the skills directory"));
+        assert!(
+            !outside.path().join("escape").exists(),
+            "rejecting an out-of-scope skill target must not create directories outside .iris/skills"
+        );
     }
 
     #[test]
@@ -999,10 +843,11 @@ Large instruction body."#,
             allowed_tools: vec![],
             content: String::new(),
             scope: SkillScope::Vault,
-            source_url: None,
             enabled: true,
             file_path: "/test/research".into(),
             legacy_trigger: None,
+            confirmation_status: SkillConfirmationStatus::Confirmed,
+            ..SkillEntry::default()
         }];
         let ranked = rank_skills_for_scene(&skills, AiScene::ResearchSynthesis);
         assert_eq!(ranked.len(), 1);
@@ -1020,10 +865,11 @@ Large instruction body."#,
             allowed_tools: vec![],
             content: String::new(),
             scope: SkillScope::Vault,
-            source_url: None,
             enabled: true,
             file_path: "/test/kg".into(),
             legacy_trigger: None,
+            confirmation_status: SkillConfirmationStatus::Confirmed,
+            ..SkillEntry::default()
         }];
         let ranked = rank_skills_for_scene(&skills, AiScene::KnowledgeLookup);
         assert_eq!(ranked.len(), 1);
@@ -1047,10 +893,11 @@ Large instruction body."#,
             allowed_tools: vec![],
             content: String::new(),
             scope: SkillScope::Vault,
-            source_url: None,
             enabled: true,
             file_path: "/test/tool".into(),
             legacy_trigger: None,
+            confirmation_status: SkillConfirmationStatus::Confirmed,
+            ..SkillEntry::default()
         }];
         let ranked = rank_skills_for_scene(&skills, AiScene::ResearchSynthesis);
         assert_eq!(ranked.len(), 1);
@@ -1075,10 +922,10 @@ Large instruction body."#,
             allowed_tools: vec![],
             content: String::new(),
             scope: SkillScope::Vault,
-            source_url: None,
             enabled: true,
             file_path: "/test/child".into(),
             legacy_trigger: None,
+            ..SkillEntry::default()
         };
         assert_eq!(entry.depends(), vec!["base-skill", "helper-skill"]);
     }
@@ -1102,10 +949,10 @@ Large instruction body."#,
             allowed_tools: vec![],
             content: String::new(),
             scope: SkillScope::Vault,
-            source_url: None,
             enabled: true,
             file_path: "/test/child".into(),
             legacy_trigger: None,
+            ..SkillEntry::default()
         };
         assert_eq!(entry.depends(), vec!["alpha", "beta"]);
     }
@@ -1126,10 +973,10 @@ Large instruction body."#,
             allowed_tools: vec![],
             content: String::new(),
             scope: SkillScope::Vault,
-            source_url: None,
             enabled: true,
             file_path: "/test/child".into(),
             legacy_trigger: None,
+            ..SkillEntry::default()
         };
         let installed = vec!["installed-skill".to_string(), "other".to_string()];
         let missing = entry.missing_dependencies(&installed);

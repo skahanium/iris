@@ -141,7 +141,7 @@ describe("assistant chrome helpers", () => {
     expect(countWebPageFetchPackets(packets)).toBe(1);
   });
 
-  it("resolveToolActivityLabel shows fetch_web_page name", () => {
+  it("resolveToolActivityLabel shows web_search name", () => {
     const messages: ChatLine[] = [
       {
         role: "assistant",
@@ -149,7 +149,7 @@ describe("assistant chrome helpers", () => {
         toolCalls: [
           {
             id: "2",
-            name: "fetch_web_page",
+            name: "web_search",
             status: "pending",
           },
         ],
@@ -161,6 +161,6 @@ describe("assistant chrome helpers", () => {
       messages,
       harnessPhaseLabel: null,
     });
-    expect(label).toBe("打开网页正文");
+    expect(label).toBe("联网搜索");
   });
 });

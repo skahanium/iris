@@ -16,7 +16,6 @@ use super::finalize::{finish_run, ingest_tool_packets, ledger_to_packets, Finish
 use super::planning::{resolve_max_rounds, resolve_token_budget};
 use super::reflection::{run_reflection_round, sanitize_reflection_visible, ReflectionOutcome};
 use super::token_estimator::{estimate_and_accumulate, usage_is_empty, UsageSource};
-use super::tools::max_fetch_per_round;
 use super::trace_emit::{emit_thinking, emit_trace_phase};
 use super::types::{HarnessFinishReason, HarnessPhase, HarnessRunInput, HarnessRunResult};
 use super::util::accumulate_usage;
@@ -878,8 +877,6 @@ async fn run_harness_inner(
             }
 
             let mut tools_this_round = 0u32;
-            let mut fetch_this_round = 0u32;
-            let fetch_limit = max_fetch_per_round(&input.task_policy);
             for tool_call in &other_calls {
                 abort_if_requested(&input.request_id)?;
                 if registry.requires_confirmation(&tool_call.function.name) {
@@ -889,37 +886,6 @@ async fn run_harness_inner(
                     break;
                 }
                 let tool_name = &tool_call.function.name;
-                if tool_name == "fetch_web_page" && fetch_this_round >= fetch_limit {
-                    let err_msg = format!("本轮 fetch_web_page 已达上限 ({fetch_limit})");
-                    emit_trace_phase(
-                        app_handle,
-                        &input.request_id,
-                        harness_rounds,
-                        HarnessPhase::ToolComplete,
-                        tool_name,
-                        "error",
-                        None,
-                        Some(err_msg.clone()),
-                    )?;
-                    messages.push(LlmMessage {
-                        role: MessageRole::Tool,
-                        content: format!(
-                            "{{\"error\": {}}}",
-                            serde_json::to_string(&err_msg).unwrap_or_default()
-                        )
-                        .into(),
-                        tool_call_id: Some(tool_call.id.clone()),
-                        tool_calls: None,
-                        ..Default::default()
-                    });
-                    tool_results_json.push(serde_json::json!({
-                        "tool_call_id": tool_call.id,
-                        "status": "error",
-                        "error": err_msg,
-                    }));
-                    tools_this_round += 1;
-                    continue;
-                }
                 let args: serde_json::Value =
                     serde_json::from_str(&tool_call.function.arguments).unwrap_or_default();
                 let Some(entry) = catalog_find(tool_name) else {
@@ -980,6 +946,7 @@ async fn run_harness_inner(
                     note_path: input.note_path.as_deref(),
                     file_id,
                     web_search_enabled: input.web_search_enabled,
+                    max_web_fetches: input.task_policy.max_fetch_per_round as usize,
                     cold_start_packets: evidence_ledger.packets(),
                     app_handle: Some(app_handle.clone()),
                     attachment_count: input.images.as_ref().map_or(0, Vec::len),
@@ -988,9 +955,6 @@ async fn run_harness_inner(
                 };
                 let result = dispatch_tool_with_retry(state, &dispatch_ctx, tool_name, &args).await;
                 if result.success {
-                    if tool_name == "fetch_web_page" {
-                        fetch_this_round += 1;
-                    }
                     ingest_tool_packets(&mut evidence_ledger, tool_name, &result.output);
                 }
                 let output_str =
@@ -1250,128 +1214,6 @@ fn push_tool_result_error(
     }));
 }
 
-fn string_json_field<'a>(value: &'a serde_json::Value, key: &str) -> Option<&'a str> {
-    value
-        .get(key)
-        .and_then(|item| item.as_str())
-        .map(str::trim)
-        .filter(|item| !item.is_empty())
-}
-
-fn parse_json_object_arg(
-    value: &serde_json::Value,
-    key: &str,
-) -> Option<serde_json::Map<String, serde_json::Value>> {
-    let raw = string_json_field(value, key)?;
-    serde_json::from_str::<serde_json::Value>(raw)
-        .ok()
-        .and_then(|parsed| parsed.as_object().cloned())
-}
-
-fn mcp_transport_kind(args: &serde_json::Value) -> String {
-    parse_json_object_arg(args, "transport_config_json")
-        .and_then(|transport| {
-            transport
-                .get("type")
-                .or_else(|| transport.get("transport"))
-                .and_then(|value| value.as_str())
-                .map(str::to_string)
-        })
-        .unwrap_or_else(|| "unknown".to_string())
-}
-
-fn mcp_env_binding_count(args: &serde_json::Value) -> usize {
-    parse_json_object_arg(args, "env_bindings_json")
-        .map(|bindings| bindings.len())
-        .unwrap_or(0)
-}
-
-fn mcp_tool_confirmation_preview(
-    tool_name: &str,
-    args: &serde_json::Value,
-) -> Option<serde_json::Value> {
-    match tool_name {
-        "mcp_server_catalog_upsert" => Some(serde_json::json!({
-            "operation": "mcp_server_catalog_upsert",
-            "server_id": string_json_field(args, "id").unwrap_or(""),
-            "display_name": string_json_field(args, "display_name").unwrap_or(""),
-            "transport": string_json_field(args, "transport").unwrap_or(""),
-            "source": string_json_field(args, "source").unwrap_or("user"),
-            "starts_process": false,
-            "capability_boundary": "controlled_iris_capability_mapping",
-        })),
-        "mcp_runtime_profile_upsert" => Some(serde_json::json!({
-            "operation": "mcp_profile_upsert",
-            "profile_id": string_json_field(args, "id").unwrap_or(""),
-            "server_id": string_json_field(args, "server_id").unwrap_or(""),
-            "display_name": string_json_field(args, "display_name").unwrap_or(""),
-            "transport": mcp_transport_kind(args),
-            "vault_scope": string_json_field(args, "vault_scope_hash").unwrap_or("global"),
-            "enabled": args.get("enabled").and_then(|value| value.as_bool()).unwrap_or(false),
-            "credential_bindings": mcp_env_binding_count(args),
-            "starts_process": false,
-            "capability_boundary": "controlled_iris_capability_mapping",
-        })),
-        "mcp_runtime_tools_list" => Some(serde_json::json!({
-            "operation": "mcp_tools_list",
-            "profile_id": string_json_field(args, "profile_id").unwrap_or(""),
-            "starts_process": true,
-            "process_kind": "bounded_stdio_mcp",
-            "result_scope": "sanitized_tool_inventory",
-            "reason": string_json_field(args, "reason").unwrap_or(""),
-        })),
-        "mcp_runtime_health_check" => Some(serde_json::json!({
-            "operation": "mcp_health_check",
-            "profile_id": string_json_field(args, "profile_id").unwrap_or(""),
-            "starts_process": true,
-            "process_kind": "bounded_stdio_mcp",
-            "result_scope": "metadata_only_health_status",
-            "reason": string_json_field(args, "reason").unwrap_or(""),
-        })),
-        "mcp_runtime_capability_call" => Some(serde_json::json!({
-            "operation": "mcp_capability_call",
-            "capability": string_json_field(args, "capability").unwrap_or(""),
-            "starts_process": true,
-            "process_kind": "bounded_stdio_mcp",
-            "result_scope": "model_safe_tool_result",
-            "capability_boundary": "controlled_iris_capability_mapping",
-            "reason": string_json_field(args, "reason").unwrap_or(""),
-        })),
-        _ => None,
-    }
-}
-
-fn safe_string_argument(args: &serde_json::Value, key: &str) -> serde_json::Value {
-    string_json_field(args, key)
-        .map(|value| serde_json::Value::String(value.to_string()))
-        .unwrap_or(serde_json::Value::Null)
-}
-
-fn confirmation_arguments_for_tool(tool_name: &str, args: &serde_json::Value) -> serde_json::Value {
-    match tool_name {
-        "mcp_server_catalog_upsert" => serde_json::json!({
-            "id": safe_string_argument(args, "id"),
-            "display_name": safe_string_argument(args, "display_name"),
-            "transport": safe_string_argument(args, "transport"),
-            "source": safe_string_argument(args, "source"),
-        }),
-        "mcp_runtime_profile_upsert" => serde_json::json!({
-            "id": safe_string_argument(args, "id"),
-            "server_id": safe_string_argument(args, "server_id"),
-            "display_name": safe_string_argument(args, "display_name"),
-            "enabled": args.get("enabled").and_then(|value| value.as_bool()).unwrap_or(false),
-        }),
-        "mcp_runtime_tools_list" | "mcp_runtime_health_check" => serde_json::json!({
-            "profile_id": safe_string_argument(args, "profile_id"),
-            "reason": safe_string_argument(args, "reason"),
-        }),
-        "mcp_runtime_capability_call" => serde_json::json!({
-            "capability": safe_string_argument(args, "capability"),
-            "reason": safe_string_argument(args, "reason"),
-        }),
-        _ => args.clone(),
-    }
-}
 #[allow(clippy::too_many_arguments)]
 async fn pause_for_tool_confirmation(
     state: &AppState,
@@ -1456,7 +1298,7 @@ async fn pause_for_tool_confirmation(
         "request_id": input.request_id,
         "tool_call_id": tool_call.id,
         "tool_name": tool_name,
-        "arguments": confirmation_arguments_for_tool(tool_name, &args),
+        "arguments": args,
         "permissionEffects": permission_effects,
         "pendingConfirmationIndex": confirmation_position.map_or(1, |position| position.index),
         "pendingConfirmationCount": confirmation_position.map_or(1, |position| position.count),
@@ -1465,74 +1307,6 @@ async fn pause_for_tool_confirmation(
     if let Some(permission_decision) = permission_decision {
         confirm_request["permissionDecision"] =
             serde_json::to_value(permission_decision).unwrap_or_default();
-    }
-    if let Some(preview) = mcp_tool_confirmation_preview(tool_name, &args) {
-        confirm_request["preview"] = preview;
-    }
-    if let Ok(args) = serde_json::from_str::<serde_json::Value>(&tool_call.function.arguments) {
-        let vault = state.vault_path()?;
-        if tool_name == "skills_install" {
-            use crate::ai_runtime::skill_install_service::{
-                normalize_skill_scope_arg, preview_install, SkillInstallRequest,
-            };
-            use crate::ai_runtime::skill_registry::SkillInstallSource;
-            if let Some(source_str) = args.get("source").and_then(|v| v.as_str()) {
-                if let Some(source) = SkillInstallSource::parse(source_str) {
-                    let req = SkillInstallRequest {
-                        source,
-                        path_or_url: args
-                            .get("path_or_url")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("")
-                            .to_string(),
-                        scope: normalize_skill_scope_arg(
-                            args.get("scope").and_then(|v| v.as_str()),
-                        ),
-                        subpath: args
-                            .get("subpath")
-                            .and_then(|v| v.as_str())
-                            .map(String::from),
-                        registry: args
-                            .get("registry")
-                            .and_then(|v| v.as_str())
-                            .map(String::from),
-                        expected_sha256: args
-                            .get("expected_sha256")
-                            .and_then(|v| v.as_str())
-                            .map(String::from),
-                    };
-                    if let Ok(preview) = preview_install(&vault, &req).await {
-                        confirm_request["preview"] = preview;
-                    }
-                }
-            }
-        } else if tool_name == "skills_prepare_workspace" {
-            use crate::ai_runtime::skill_install_service::{
-                normalize_skill_scope_arg, preview_skill_workspace,
-            };
-            if let Some(name) = args.get("name").and_then(|v| v.as_str()) {
-                if let Ok(preview) = preview_skill_workspace(
-                    &vault,
-                    name,
-                    normalize_skill_scope_arg(args.get("scope").and_then(|v| v.as_str())),
-                ) {
-                    confirm_request["preview"] = preview;
-                }
-            }
-        } else if tool_name == "skills_update" {
-            use crate::ai_runtime::skill_install_service::{
-                normalize_skill_scope_arg, preview_update,
-            };
-            if let Some(name) = args.get("name").and_then(|v| v.as_str()) {
-                if let Ok(preview) = preview_update(
-                    &state.db,
-                    name,
-                    normalize_skill_scope_arg(args.get("scope").and_then(|v| v.as_str())),
-                ) {
-                    confirm_request["preview"] = preview;
-                }
-            }
-        }
     }
     app_handle
         .emit("ai:tool_confirm_request", &confirm_request)
@@ -1667,8 +1441,19 @@ mod tests {
     use crate::ai_runtime::{AiScene, AutonomyLevel};
 
     fn test_policy_ctx(web_search_enabled: bool) -> ToolPolicyContext {
+        let task_policy = crate::ai_runtime::agent_task_policy::AgentTaskPolicy::from_input(
+            crate::ai_runtime::agent_task_policy::AgentTaskPolicyInput {
+                intent: crate::ai_runtime::AgentIntent::Write,
+                task_kind: crate::ai_runtime::agent_task::AgentTaskKind::Lightweight,
+                scope: crate::ai_runtime::agent_task_policy::AgentTaskScope::Vault,
+                web_authorized: web_search_enabled,
+                has_attachments: false,
+                write_permission_required: true,
+                research_depth: 0,
+            },
+        );
         ToolPolicyContext {
-            task_policy: None,
+            task_policy: Some(task_policy),
             scene: AiScene::DraftingAssist,
             autonomy_level: AutonomyLevel::L2,
             web_search_enabled,
@@ -1688,82 +1473,26 @@ mod tests {
     }
 
     #[test]
-    fn mcp_capability_confirmation_arguments_do_not_expose_provider_payload() {
-        let args = serde_json::json!({
-            "capability": "web.search",
-            "arguments": {
-                "query": "heartflow status",
-                "api_key": "sk-secret-value",
-                "token": "raw-token-value"
-            },
-            "reason": "diagnose skill runtime"
-        });
-
-        let safe = confirmation_arguments_for_tool("mcp_runtime_capability_call", &args);
-
-        assert_eq!(safe["capability"], "web.search");
-        assert_eq!(safe["reason"], "diagnose skill runtime");
-        assert!(safe.get("arguments").is_none());
-        let serialized = serde_json::to_string(&safe).unwrap();
-        assert!(!serialized.contains("sk-secret-value"));
-        assert!(!serialized.contains("raw-token-value"));
-        assert!(!serialized.contains("api_key"));
-    }
-    #[test]
-    fn mcp_profile_confirmation_arguments_do_not_expose_transport_or_credentials() {
-        let args = serde_json::json!({
-            "id": "anysearch-local",
-            "server_id": "anysearch",
-            "display_name": "AnySearch Local",
-            "enabled": true,
-            "transport_config_json": "{\"type\":\"stdio\",\"command\":\"anysearch-mcp\",\"args\":[\"--secret\"]}",
-            "env_bindings_json": "{\"ANYSEARCH_API_KEY\":\"credential://iris.mcp.anysearch\",\"RAW_TOKEN\":\"secret-token\"}"
-        });
-
-        let safe = confirmation_arguments_for_tool("mcp_runtime_profile_upsert", &args);
-
-        assert_eq!(safe["id"], "anysearch-local");
-        assert_eq!(safe["display_name"], "AnySearch Local");
-        assert_eq!(safe["enabled"], true);
-        assert!(safe.get("transport_config_json").is_none());
-        assert!(safe.get("env_bindings_json").is_none());
-        let serialized = serde_json::to_string(&safe).unwrap();
-        assert!(!serialized.contains("credential://iris.mcp.anysearch"));
-        assert!(!serialized.contains("secret-token"));
-        assert!(!serialized.contains("--secret"));
-    }
-    #[test]
     fn test_mixed_auto_and_confirm_tools_only_fetch_pauses() {
         let registry = ToolRegistry::new();
         let ctx = test_policy_ctx(true);
         let messages = assistant_with_tools(vec![
             make_tool_call("search_hybrid"),
-            make_tool_call("fetch_web_page"),
+            make_tool_call("replace_selection"),
         ]);
         let pending = outstanding_confirm_tool(&registry, &messages, &ctx);
-        assert_eq!(pending.unwrap().function.name, "fetch_web_page");
+        assert_eq!(pending.unwrap().function.name, "replace_selection");
         assert!(!registry.requires_confirmation("search_hybrid"));
-        assert!(registry.requires_confirmation("fetch_web_page"));
+        assert!(registry.requires_confirmation("replace_selection"));
     }
 
     #[test]
     fn test_pending_tool_call_returns_pending_result() {
         let registry = ToolRegistry::new();
-        let messages = assistant_with_tools(vec![make_tool_call("fetch_web_page")]);
+        let messages = assistant_with_tools(vec![make_tool_call("replace_selection")]);
         let result = outstanding_confirm_tool(&registry, &messages, &test_policy_ctx(true));
         assert!(result.is_some());
-        assert_eq!(result.unwrap().function.name, "fetch_web_page");
-    }
-
-    #[test]
-    fn test_fetch_web_page_skipped_when_web_search_disabled() {
-        let registry = ToolRegistry::new();
-        let messages = assistant_with_tools(vec![make_tool_call("fetch_web_page")]);
-        let result = outstanding_confirm_tool(&registry, &messages, &test_policy_ctx(false));
-        assert!(
-            result.is_none(),
-            "fetch_web_page should not prompt when web search is disabled"
-        );
+        assert_eq!(result.unwrap().function.name, "replace_selection");
     }
 
     #[test]
@@ -1820,8 +1549,8 @@ mod tests {
         let registry = ToolRegistry::new();
         let ctx = test_policy_ctx(true);
         let web = make_tool_call("web_search");
-        let fetch = make_tool_call("fetch_web_page");
-        let mut messages = assistant_with_tools(vec![web.clone(), fetch.clone()]);
+        let edit = make_tool_call("replace_selection");
+        let mut messages = assistant_with_tools(vec![web.clone(), edit.clone()]);
         messages.push(LlmMessage {
             role: MessageRole::Tool,
             content: r#"{"results":[]}"#.into(),
@@ -1830,7 +1559,7 @@ mod tests {
             ..Default::default()
         });
         let pending = outstanding_confirm_tool(&registry, &messages, &ctx);
-        assert_eq!(pending.unwrap().id, fetch.id);
+        assert_eq!(pending.unwrap().id, edit.id);
     }
 
     #[test]
@@ -1957,53 +1686,5 @@ mod tests {
     fn depth_2_blocks_subagent_spawn() {
         let depth = 2u32;
         assert!(depth >= 2, "depth 2 should block subagent spawn");
-    }
-    #[test]
-    fn mcp_profile_upsert_confirmation_preview_is_sanitized_and_specific() {
-        let args = serde_json::json!({
-            "id": "anysearch-local",
-            "server_id": "anysearch",
-            "display_name": "AnySearch Local",
-            "enabled": true,
-            "vault_scope_hash": "vault-abc",
-            "transport_config_json": "{\"type\":\"stdio\",\"command\":\"anysearch-mcp\",\"args\":[\"serve\"]}",
-            "env_bindings_json": "{\"ANYSEARCH_API_KEY\":\"credential://iris.mcp.anysearch\"}"
-        });
-
-        let preview = mcp_tool_confirmation_preview("mcp_runtime_profile_upsert", &args)
-            .expect("profile upsert should produce an MCP confirmation preview");
-
-        assert_eq!(preview["operation"], "mcp_profile_upsert");
-        assert_eq!(preview["profile_id"], "anysearch-local");
-        assert_eq!(preview["server_id"], "anysearch");
-        assert_eq!(preview["transport"], "stdio");
-        assert_eq!(preview["vault_scope"], "vault-abc");
-        assert_eq!(preview["credential_bindings"], 1);
-        assert_eq!(preview["starts_process"], false);
-        assert_eq!(
-            preview["capability_boundary"],
-            "controlled_iris_capability_mapping"
-        );
-        assert!(!preview
-            .to_string()
-            .contains("credential://iris.mcp.anysearch"));
-    }
-
-    #[test]
-    fn mcp_live_tools_list_confirmation_preview_warns_about_process_start() {
-        let args = serde_json::json!({
-            "profile_id": "anysearch-local",
-            "reason": "discover provider tools"
-        });
-
-        let preview = mcp_tool_confirmation_preview("mcp_runtime_tools_list", &args)
-            .expect("live tools/list should produce an MCP confirmation preview");
-
-        assert_eq!(preview["operation"], "mcp_tools_list");
-        assert_eq!(preview["profile_id"], "anysearch-local");
-        assert_eq!(preview["starts_process"], true);
-        assert_eq!(preview["process_kind"], "bounded_stdio_mcp");
-        assert_eq!(preview["result_scope"], "sanitized_tool_inventory");
-        assert_eq!(preview["reason"], "discover provider tools");
     }
 }

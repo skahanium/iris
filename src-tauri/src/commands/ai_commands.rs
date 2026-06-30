@@ -187,7 +187,7 @@ fn infer_agent_intent_for_new_request(
 
     let text = message.to_lowercase();
     let contains_any = |needles: &[&str]| needles.iter().any(|needle| text.contains(needle));
-    if contains_any(&["skillhub", "技能", "安装 skill", "install skill"]) {
+    if contains_any(&["技能", "安装 skill", "install skill"]) {
         AgentIntent::SkillManagement
     } else if contains_any(&[
         "联网调研",
@@ -321,7 +321,6 @@ fn intrinsic_resume_permission(permission: &str) -> bool {
             | "vault.search"
             | "runtime.context.read"
             | "web.search"
-            | "skill.read_resource"
             | "app_state.read"
             | "git.read_status"
             | "git.read_diff"
@@ -662,8 +661,6 @@ pub struct AiChatResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub resumed: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub installed_skill: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_confirmation_partial: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub resume_error_code: Option<String>,
@@ -710,7 +707,6 @@ impl AiChatResponse {
             tool_call_id: None,
             decision: None,
             resumed: None,
-            installed_skill: None,
             tool_confirmation_partial: None,
             resume_error_code: None,
             resume_error_message: None,
@@ -719,17 +715,11 @@ impl AiChatResponse {
         }
     }
 
-    fn with_tool_confirmation(
-        mut self,
-        tool_call_id: String,
-        decision: impl Into<String>,
-        installed_skill: Option<String>,
-    ) -> Self {
+    fn with_tool_confirmation(mut self, tool_call_id: String, decision: impl Into<String>) -> Self {
         self.tool_call_id = Some(tool_call_id);
         self.decision = Some(decision.into());
         let decision = self.decision.as_deref().unwrap_or_default();
         self.resumed = Some(true);
-        self.installed_skill = installed_skill;
         self.tool_execution_outcome = Some(ToolExecutionOutcomeWire {
             status: if decision == "reject" {
                 "rejected".into()
@@ -752,34 +742,25 @@ impl AiChatResponse {
         mut self,
         tool_call_id: String,
         decision: impl Into<String>,
-        installed_skill: Option<String>,
         resume_error_code: String,
         resume_error_message: String,
     ) -> Self {
         self.tool_call_id = Some(tool_call_id);
         self.decision = Some(decision.into());
         self.resumed = Some(false);
-        self.installed_skill = installed_skill;
         self.tool_confirmation_partial = Some(true);
         self.resume_error_code = Some(resume_error_code.clone());
         self.resume_error_message = Some(resume_error_message);
         self.tool_execution_outcome = Some(ToolExecutionOutcomeWire {
             status: "succeeded".into(),
             side_effect_committed: true,
-            tool_name: Some(if self.installed_skill.is_some() {
-                "skills_install".into()
-            } else {
-                "confirmed_tool".into()
-            }),
-            result_summary: self
-                .installed_skill
-                .as_ref()
-                .map(|skill| format!("Skill {skill} 已安装。")),
+            tool_name: Some("confirmed_tool".into()),
+            result_summary: None,
         });
         self.assistant_resume_outcome = Some(AssistantResumeOutcomeWire {
             status: "failed".into(),
             failure_class: Some(resume_error_code),
-            user_message: Some("安装已完成，但继续生成回复失败。".into()),
+            user_message: Some("工具已执行，但继续生成回复失败。".into()),
         });
         self
     }
@@ -1490,11 +1471,8 @@ pub async fn tool_confirm(
         }
         sync_agent_task_after_harness(state.inner(), &harness_result)?;
         return Ok(
-            harness_run_to_chat_response(state.inner(), &harness_result)?.with_tool_confirmation(
-                tool_call_id,
-                "reject",
-                None,
-            ),
+            harness_run_to_chat_response(state.inner(), &harness_result)?
+                .with_tool_confirmation(tool_call_id, "reject"),
         );
     }
 
@@ -1520,25 +1498,6 @@ pub async fn tool_confirm(
     )
     .await?;
 
-    let mut installed_skill: Option<String> = None;
-    if pending.tool_name == "skills_install" {
-        if let Ok(Some(cp)) =
-            crate::ai_runtime::harness_support::load_harness_checkpoint(&state.db, &request_id)
-        {
-            if let Some(msg) = cp.messages.iter().rev().find(|m| {
-                matches!(m.role, crate::ai_runtime::model_gateway::MessageRole::Tool)
-                    && m.tool_call_id.as_deref() == Some(tool_call_id.as_str())
-            }) {
-                if let Some(content) = msg.content.as_str() {
-                    if let Ok(json) = serde_json::from_str::<serde_json::Value>(content) {
-                        installed_skill =
-                            json.get("name").and_then(|n| n.as_str()).map(String::from);
-                    }
-                }
-            }
-        }
-    }
-
     let harness_result =
         match resume_harness_after_tool_confirm_or_restore(state.inner(), &app_handle, &request_id)
             .await
@@ -1554,7 +1513,6 @@ pub async fn tool_confirm(
                     } else {
                         "approve"
                     },
-                    installed_skill,
                     &error,
                 );
             }
@@ -1572,7 +1530,6 @@ pub async fn tool_confirm(
         } else {
             "approve"
         },
-        installed_skill,
     );
 
     // Migration-period event; frontend should use resumed harness payload.
@@ -1586,7 +1543,6 @@ fn partial_tool_confirm_response(
     request_id: &str,
     tool_call_id: String,
     decision: &str,
-    installed_skill: Option<String>,
     error: &AppError,
 ) -> AppResult<AiChatResponse> {
     use crate::ai_runtime::harness_support::load_harness_checkpoint;
@@ -1595,11 +1551,7 @@ fn partial_tool_confirm_response(
         .ok_or_else(|| AppError::msg("checkpoint missing"))?;
     let error_message = error.to_string();
     let error_code = crate::ai_runtime::harness_confirm::classify_resume_error(&error_message);
-    let content = if installed_skill.is_some() {
-        "安装已完成，但继续生成回复失败。".to_string()
-    } else {
-        format!("工具已执行，但继续生成回复失败：{error_code}")
-    };
+    let content = format!("工具已执行，但继续生成回复失败：{error_code}");
     Ok(AiChatResponse {
         request_id: request_id.to_string(),
         task_id: None,
@@ -1620,7 +1572,6 @@ fn partial_tool_confirm_response(
         tool_call_id: None,
         decision: None,
         resumed: None,
-        installed_skill: None,
         tool_confirmation_partial: None,
         resume_error_code: None,
         resume_error_message: None,
@@ -1631,7 +1582,6 @@ fn partial_tool_confirm_response(
         response.with_partial_tool_confirmation(
             tool_call_id,
             decision.to_string(),
-            installed_skill,
             error_code.to_string(),
             error_message,
         )
@@ -1908,7 +1858,7 @@ pub async fn skills_list(
 ) -> AppResult<Vec<crate::ai_runtime::skills::SkillListEntry>> {
     let vault = state.vault_path()?;
     let scene = scene.as_deref().map(parse_ai_scene).transpose()?;
-    crate::ai_runtime::skill_install_service::list_skills(&state.db, &vault, scene)
+    crate::ai_runtime::skills::list_skills(&state.db, &vault, scene)
 }
 
 #[derive(Debug, Serialize)]
@@ -1929,321 +1879,275 @@ pub async fn skills_paths(state: State<'_, Arc<AppState>>) -> AppResult<SkillsPa
     })
 }
 
-#[derive(Debug, serde::Deserialize)]
-pub struct SkillsInstallRequest {
-    pub source: String,
-    pub path_or_url: String,
-    pub scope: Option<String>,
-    pub subpath: Option<String>,
-    pub registry: Option<String>,
-    pub expected_sha256: Option<String>,
-}
-
-/// Install skill from url, git, local, or registry.
-#[tauri::command]
-pub async fn skills_install(
-    state: State<'_, Arc<AppState>>,
-    app_handle: tauri::AppHandle,
-    request: SkillsInstallRequest,
-) -> AppResult<serde_json::Value> {
-    use crate::ai_runtime::skill_install_service::{
-        install_skill, normalize_skill_scope_arg, SkillInstallRequest,
-    };
-    use crate::ai_runtime::skill_registry::SkillInstallSource;
-
-    let source = SkillInstallSource::parse(&request.source)
-        .ok_or_else(|| AppError::msg(format!("unknown install source: {}", request.source)))?;
-    let vault = state.vault_path()?;
-    let req = SkillInstallRequest {
-        source,
-        path_or_url: request.path_or_url,
-        scope: normalize_skill_scope_arg(request.scope.as_deref()),
-        subpath: request.subpath,
-        registry: request.registry,
-        expected_sha256: request.expected_sha256,
-    };
-    let entry = install_skill(&state.db, &vault, Some(&app_handle), req).await?;
-    Ok(serde_json::to_value(entry).unwrap_or_default())
-}
-
-#[derive(Debug, serde::Deserialize)]
-pub struct SkillsPrepareWorkspaceRequest {
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WebEvidenceProviderInput {
+    pub id: String,
     pub name: String,
-    pub scope: Option<String>,
-}
-
-#[tauri::command]
-pub async fn skills_prepare_workspace(
-    state: State<'_, Arc<AppState>>,
-    app_handle: tauri::AppHandle,
-    request: SkillsPrepareWorkspaceRequest,
-) -> AppResult<serde_json::Value> {
-    use crate::ai_runtime::skill_install_service::{
-        normalize_skill_scope_arg, prepare_skill_workspace,
-    };
-
-    let vault = state.vault_path()?;
-    let result = prepare_skill_workspace(
-        &vault,
-        Some(&state.db),
-        Some(&app_handle),
-        &request.name,
-        normalize_skill_scope_arg(request.scope.as_deref()),
-    )?;
-    Ok(serde_json::to_value(result).unwrap_or_default())
-}
-
-#[tauri::command]
-pub async fn skills_uninstall(
-    state: State<'_, Arc<AppState>>,
-    app_handle: tauri::AppHandle,
-    name: String,
-    scope: String,
-) -> AppResult<()> {
-    use crate::ai_runtime::skill_install_service::{parse_scope, uninstall_skill};
-    let vault = state.vault_path()?;
-    uninstall_skill(
-        &state.db,
-        &vault,
-        Some(&app_handle),
-        &name,
-        parse_scope(&scope),
-    )
-}
-
-#[tauri::command]
-pub async fn skills_update(
-    state: State<'_, Arc<AppState>>,
-    app_handle: tauri::AppHandle,
-    name: String,
-    scope: String,
-) -> AppResult<serde_json::Value> {
-    use crate::ai_runtime::skill_install_service::{parse_scope, update_skill};
-    let vault = state.vault_path()?;
-    let entry = update_skill(
-        &state.db,
-        &vault,
-        Some(&app_handle),
-        &name,
-        parse_scope(&scope),
-    )
-    .await?;
-    Ok(serde_json::to_value(entry).unwrap_or_default())
-}
-
-#[tauri::command]
-pub async fn skills_toggle(
-    state: State<'_, Arc<AppState>>,
-    app_handle: tauri::AppHandle,
-    name: String,
-    scope: String,
-    enabled: bool,
-) -> AppResult<()> {
-    use crate::ai_runtime::skill_install_service::{parse_scope, toggle_skill};
-    let vault = state.vault_path()?;
-    toggle_skill(
-        &vault,
-        Some(&app_handle),
-        &name,
-        parse_scope(&scope),
-        enabled,
-    )
-}
-
-#[tauri::command]
-pub async fn mcp_server_catalog_upsert(
-    state: State<'_, Arc<AppState>>,
-    input: crate::ai_runtime::mcp_runtime_registry::McpServerCatalogInput,
-) -> AppResult<()> {
-    crate::ai_runtime::mcp_runtime_registry::upsert_server_catalog(&state.db, &input)
-}
-
-#[tauri::command]
-pub async fn mcp_runtime_profile_upsert(
-    state: State<'_, Arc<AppState>>,
-    input: crate::ai_runtime::mcp_runtime_registry::McpRuntimeProfileInput,
-) -> AppResult<()> {
-    crate::ai_runtime::mcp_runtime_registry::upsert_runtime_profile(&state.db, &input)
-}
-
-#[tauri::command]
-pub async fn mcp_runtime_profiles_list(
-    state: State<'_, Arc<AppState>>,
-) -> AppResult<Vec<crate::ai_runtime::mcp_runtime_registry::McpRuntimeProfileSummary>> {
-    crate::ai_runtime::mcp_runtime_registry::list_runtime_profiles(&state.db)
-}
-#[tauri::command]
-pub async fn mcp_runtime_profile_toggle(
-    state: State<'_, Arc<AppState>>,
-    profile_id: String,
-    enabled: bool,
-) -> AppResult<()> {
-    crate::ai_runtime::mcp_runtime_registry::set_runtime_profile_enabled(
-        &state.db,
-        &profile_id,
-        enabled,
-    )
-}
-
-#[tauri::command]
-pub async fn mcp_runtime_profile_delete(
-    state: State<'_, Arc<AppState>>,
-    profile_id: String,
-) -> AppResult<()> {
-    crate::ai_runtime::mcp_runtime_registry::delete_runtime_profile(&state.db, &profile_id)
-}
-
-#[tauri::command]
-pub async fn mcp_tool_inventory_list(
-    state: State<'_, Arc<AppState>>,
-    profile_id: String,
-) -> AppResult<Vec<crate::ai_runtime::mcp_runtime_registry::McpToolInventorySummary>> {
-    crate::ai_runtime::mcp_runtime_registry::list_tool_inventory(&state.db, &profile_id)
-}
-
-#[tauri::command]
-pub async fn mcp_runtime_tool_inventory_list(
-    state: State<'_, Arc<AppState>>,
-    profile_id: String,
-) -> AppResult<Vec<crate::ai_runtime::mcp_runtime_registry::McpToolInventorySummary>> {
-    crate::ai_runtime::mcp_runtime_registry::list_tool_inventory(&state.db, &profile_id)
-}
-
-#[tauri::command]
-pub async fn mcp_health_events_list(
-    state: State<'_, Arc<AppState>>,
-    profile_id: String,
-    limit: Option<usize>,
-) -> AppResult<Vec<crate::ai_runtime::mcp_runtime_registry::McpHealthEventSummary>> {
-    crate::ai_runtime::mcp_runtime_registry::list_recent_health_events(
-        &state.db,
-        &profile_id,
-        limit.unwrap_or(20),
-    )
-}
-
-#[tauri::command]
-pub async fn mcp_runtime_health_events_list(
-    state: State<'_, Arc<AppState>>,
-    profile_id: String,
-    limit: Option<usize>,
-) -> AppResult<Vec<crate::ai_runtime::mcp_runtime_registry::McpHealthEventSummary>> {
-    crate::ai_runtime::mcp_runtime_registry::list_recent_health_events(
-        &state.db,
-        &profile_id,
-        limit.unwrap_or(20),
-    )
-}
-
-fn mcp_runtime_options() -> crate::ai_runtime::mcp_host_runtime::McpHostRuntimeOptions {
-    crate::ai_runtime::mcp_host_runtime::McpHostRuntimeOptions {
-        request_timeout: std::time::Duration::from_secs(8),
-        max_stdout_line_bytes: 64 * 1024,
-        max_stderr_bytes: 8 * 1024,
-        cwd: None,
-    }
+    pub provider_kind: String,
+    pub enabled: bool,
+    pub transport_kind: Option<String>,
+    pub search_mapping: Option<String>,
+    pub fetch_mapping: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct McpRuntimeHealthCheckDto {
-    pub profile_id: String,
-    pub status: crate::ai_runtime::mcp_runtime_registry::McpRuntimeStatus,
-    pub tool_count: usize,
-    pub message: Option<String>,
+pub struct WebEvidenceProviderSummary {
+    pub id: String,
+    pub name: String,
+    pub provider_kind: String,
+    pub enabled: bool,
+    pub has_search_mapping: bool,
+    pub has_fetch_mapping: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WebEvidenceProviderDiagnostics {
+    pub provider_id: Option<String>,
+    pub status: String,
+    pub failures: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillDraftScopeRuleDto {
+    pub kind: String,
+    pub pattern: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillCreateDraftRequest {
+    pub name: String,
+    pub description: Option<String>,
+    pub body: Option<String>,
+    pub scope_rules: Vec<SkillDraftScopeRuleDto>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillDraftDto {
+    pub name: String,
+    pub markdown: String,
+    pub scope_rules: Vec<SkillDraftScopeRuleDto>,
+    pub content_hash: String,
+    pub target_path: String,
 }
 
 #[tauri::command]
-pub async fn mcp_runtime_tools_list(
+pub async fn web_evidence_provider_upsert(
     state: State<'_, Arc<AppState>>,
-    profile_id: String,
-) -> AppResult<crate::ai_runtime::mcp_host_runtime::McpStdioDiscovery> {
-    crate::ai_runtime::mcp_host_runtime::discover_profile_tools(
+    input: WebEvidenceProviderInput,
+) -> AppResult<()> {
+    crate::ai_runtime::mcp_runtime_registry::upsert_web_evidence_provider(
         &state.db,
-        &profile_id,
-        mcp_runtime_options(),
+        &provider_input_to_registry(input)?,
     )
-    .await
 }
 
 #[tauri::command]
-pub async fn mcp_runtime_health_check(
+pub async fn web_evidence_providers_list(
     state: State<'_, Arc<AppState>>,
-    profile_id: String,
-) -> AppResult<McpRuntimeHealthCheckDto> {
-    use crate::ai_runtime::mcp_runtime_registry::{
-        record_health_event, McpHealthEventInput, McpRuntimeStatus,
-    };
+) -> AppResult<Vec<WebEvidenceProviderSummary>> {
+    crate::ai_runtime::mcp_runtime_registry::list_web_evidence_providers(&state.db).map(|items| {
+        items
+            .into_iter()
+            .map(|item| WebEvidenceProviderSummary {
+                id: item.id,
+                name: item.name,
+                provider_kind: item.kind,
+                enabled: item.enabled,
+                has_search_mapping: item.has_search_mapping,
+                has_fetch_mapping: item.has_fetch_mapping,
+            })
+            .collect()
+    })
+}
 
-    match crate::ai_runtime::mcp_host_runtime::discover_profile_tools(
+#[tauri::command]
+pub async fn web_evidence_provider_toggle(
+    state: State<'_, Arc<AppState>>,
+    provider_id: String,
+    enabled: bool,
+) -> AppResult<()> {
+    crate::ai_runtime::mcp_runtime_registry::toggle_web_evidence_provider(
         &state.db,
-        &profile_id,
-        mcp_runtime_options(),
+        &provider_id,
+        enabled,
     )
-    .await
-    {
-        Ok(discovery) => {
-            record_health_event(
-                &state.db,
-                &McpHealthEventInput {
-                    profile_id: profile_id.clone(),
-                    status: McpRuntimeStatus::Ready,
-                    reason_code: "live_tools_list_ok".into(),
-                    message: Some(format!("{} MCP tools discovered", discovery.tools.len())),
-                    metadata_json: serde_json::json!({
-                        "tool_count": discovery.tools.len(),
-                        "protocol_version": discovery.protocol_version,
-                        "server_name": discovery.server_name,
-                    })
-                    .to_string(),
-                },
-            )?;
-            Ok(McpRuntimeHealthCheckDto {
-                profile_id,
-                status: McpRuntimeStatus::Ready,
-                tool_count: discovery.tools.len(),
-                message: None,
-            })
-        }
-        Err(err) => {
-            let message = crate::ai_runtime::trace::redact_classified_leaks(&err.to_string());
-            let _ = record_health_event(
-                &state.db,
-                &McpHealthEventInput {
-                    profile_id: profile_id.clone(),
-                    status: McpRuntimeStatus::Unavailable,
-                    reason_code: "live_tools_list_failed".into(),
-                    message: Some(message.clone()),
-                    metadata_json: serde_json::json!({"tool_count": 0}).to_string(),
-                },
-            );
-            Ok(McpRuntimeHealthCheckDto {
-                profile_id,
-                status: McpRuntimeStatus::Unavailable,
-                tool_count: 0,
-                message: Some(message),
-            })
-        }
+}
+
+#[tauri::command]
+pub async fn web_evidence_provider_delete(
+    state: State<'_, Arc<AppState>>,
+    provider_id: String,
+) -> AppResult<()> {
+    crate::ai_runtime::mcp_runtime_registry::delete_web_evidence_provider(&state.db, &provider_id)
+}
+
+#[tauri::command]
+pub async fn web_evidence_provider_diagnostics(
+    state: State<'_, Arc<AppState>>,
+    provider_id: Option<String>,
+) -> AppResult<WebEvidenceProviderDiagnostics> {
+    if let Some(provider_id) = provider_id.as_deref() {
+        let exists = crate::ai_runtime::mcp_runtime_registry::web_evidence_provider_exists(
+            &state.db,
+            provider_id,
+        )?;
+        return Ok(WebEvidenceProviderDiagnostics {
+            provider_id: Some(provider_id.to_string()),
+            status: if exists { "configured" } else { "missing" }.into(),
+            failures: Vec::new(),
+        });
     }
+
+    let providers =
+        crate::ai_runtime::mcp_runtime_registry::list_web_evidence_providers(&state.db)?;
+    Ok(WebEvidenceProviderDiagnostics {
+        provider_id: None,
+        status: if providers.is_empty() {
+            "not_configured".into()
+        } else {
+            "configured".into()
+        },
+        failures: Vec::new(),
+    })
 }
+
+fn mapping_json_from_tool_name(value: Option<String>) -> AppResult<Option<String>> {
+    let Some(value) = value
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+    else {
+        return Ok(None);
+    };
+    if value.starts_with('{') || value.starts_with('[') {
+        serde_json::from_str::<serde_json::Value>(&value)
+            .map_err(|err| AppError::msg(format!("invalid provider mapping JSON: {err}")))?;
+        return Ok(Some(value));
+    }
+    Ok(Some(
+        serde_json::json!({
+            "tool": value,
+        })
+        .to_string(),
+    ))
+}
+
+fn provider_input_to_registry(
+    input: WebEvidenceProviderInput,
+) -> AppResult<crate::ai_runtime::mcp_runtime_registry::WebEvidenceProviderInput> {
+    let provider_kind = input.provider_kind.trim().to_lowercase();
+    let transport_kind = input
+        .transport_kind
+        .unwrap_or_else(|| {
+            if provider_kind == "native" {
+                "native".into()
+            } else {
+                "stdio".into()
+            }
+        })
+        .trim()
+        .to_lowercase();
+    Ok(
+        crate::ai_runtime::mcp_runtime_registry::WebEvidenceProviderInput {
+            id: input.id,
+            name: input.name,
+            kind: provider_kind,
+            enabled: input.enabled,
+            transport_kind,
+            transport_config_json: "{}".into(),
+            credential_refs_json: "{}".into(),
+            web_search_mapping_json: mapping_json_from_tool_name(input.search_mapping)?,
+            web_fetch_mapping_json: mapping_json_from_tool_name(input.fetch_mapping)?,
+        },
+    )
+}
+
 #[tauri::command]
-pub async fn mcp_runtime_capability_call(
+pub async fn skills_create_draft(
     state: State<'_, Arc<AppState>>,
-    capability: String,
-    arguments: serde_json::Value,
-) -> AppResult<crate::ai_runtime::mcp_host_runtime::McpToolCallResult> {
-    if !arguments.is_object() {
+    request: SkillCreateDraftRequest,
+) -> AppResult<SkillDraftDto> {
+    let description = request
+        .description
+        .as_deref()
+        .unwrap_or("Iris prompt-only skill");
+    let body = request
+        .body
+        .as_deref()
+        .unwrap_or("Use this skill for the confirmed scope.");
+    let scope_yaml = request
+        .scope_rules
+        .iter()
+        .map(|rule| format!("  - kind: {}\n    pattern: {:?}", rule.kind, rule.pattern))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let markdown = format!(
+        "---\nname: {}\ndescription: {}\nscope:\n{}\n---\n\n{}\n",
+        request.name, description, scope_yaml, body
+    );
+    let digest = Sha256::digest(markdown.as_bytes());
+    let vault = state.vault_path()?;
+    let slug = skill_draft_slug(&request.name);
+    Ok(SkillDraftDto {
+        target_path: vault
+            .join(".iris")
+            .join("skills")
+            .join(slug)
+            .join("SKILL.md")
+            .to_string_lossy()
+            .to_string(),
+        name: request.name,
+        markdown,
+        scope_rules: request.scope_rules,
+        content_hash: hex::encode(digest),
+    })
+}
+
+#[tauri::command]
+pub async fn skills_confirm(
+    state: State<'_, Arc<AppState>>,
+    draft: SkillDraftDto,
+) -> AppResult<()> {
+    let digest = Sha256::digest(draft.markdown.as_bytes());
+    let actual_hash = hex::encode(digest);
+    if actual_hash != draft.content_hash {
         return Err(AppError::msg(
-            "mcp_runtime_capability_call arguments must be a JSON object",
+            "Skill draft hash does not match confirmed content",
         ));
     }
-    crate::ai_runtime::mcp_host_runtime::call_required_capability(
-        &state.db,
-        &capability,
-        arguments,
-        mcp_runtime_options(),
-    )
-    .await
+    let vault = state.vault_path()?;
+    crate::ai_runtime::skills::write_confirmed_skill_content(
+        &vault,
+        Path::new(&draft.target_path),
+        crate::ai_runtime::skills::SkillScope::Vault,
+        &draft.markdown,
+    )?;
+    Ok(())
+}
+
+fn skill_draft_slug(name: &str) -> String {
+    let slug = name
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' {
+                ch.to_ascii_lowercase()
+            } else {
+                '-'
+            }
+        })
+        .collect::<String>()
+        .trim_matches('-')
+        .to_string();
+    if slug.is_empty() {
+        "skill".into()
+    } else {
+        slug
+    }
 }
 #[tauri::command]
 pub async fn prompt_profile_get(
@@ -2459,94 +2363,6 @@ pub async fn harness_abort(state: State<'_, Arc<AppState>>, request_id: String) 
     Ok(())
 }
 
-#[derive(Debug, serde::Deserialize)]
-pub struct SkillsReadResourceRequest {
-    pub name: String,
-    pub scope: Option<String>,
-    pub relative_path: String,
-}
-
-/// Read a file under a skill's references/scripts/assets directory.
-#[tauri::command]
-pub async fn skills_read_resource(
-    state: State<'_, Arc<AppState>>,
-    request: SkillsReadResourceRequest,
-) -> AppResult<String> {
-    use crate::ai_runtime::skill_install_service::normalize_skill_scope_arg;
-    use crate::ai_runtime::skills::read_skill_resource;
-    let vault = state.vault_path()?;
-    read_skill_resource(
-        &vault,
-        &request.name,
-        normalize_skill_scope_arg(request.scope.as_deref()),
-        &request.relative_path,
-    )
-}
-
-#[derive(Debug, serde::Deserialize)]
-pub struct SkillsReadRequest {
-    pub file_path: String,
-}
-
-#[derive(Debug, serde::Deserialize)]
-pub struct SkillsWriteRequest {
-    pub file_path: String,
-    pub scope: String,
-    pub content: String,
-}
-
-/// Read SKILL.md content for in-app editing.
-#[tauri::command]
-pub async fn skills_read(
-    state: State<'_, Arc<AppState>>,
-    request: SkillsReadRequest,
-) -> AppResult<String> {
-    let path = std::path::PathBuf::from(&request.file_path);
-    let vault = state.vault_path()?;
-    crate::ai_runtime::skills::validate_skill_path(&path, &vault)?;
-    crate::ai_runtime::skills::read_skill_content(&path)
-}
-
-/// Write SKILL.md content after editing.
-#[tauri::command]
-pub async fn skills_write(
-    state: State<'_, Arc<AppState>>,
-    request: SkillsWriteRequest,
-) -> AppResult<serde_json::Value> {
-    use crate::ai_runtime::skills::{write_skill_content, SkillScope};
-    let path = std::path::PathBuf::from(&request.file_path);
-    let vault = state.vault_path()?;
-    crate::ai_runtime::skills::validate_skill_path(&path, &vault)?;
-    let scope = if request.scope == "vault" {
-        SkillScope::Vault
-    } else {
-        SkillScope::Global
-    };
-    let entry = write_skill_content(&path, scope, &request.content)?;
-    Ok(serde_json::to_value(entry).unwrap_or_default())
-}
-
-/// Migrate a legacy trigger-based skill to new format.
-/// Creates a .bak backup before overwriting.
-#[tauri::command]
-pub async fn skills_migrate_legacy(
-    state: State<'_, Arc<AppState>>,
-    file_path: String,
-    scope: String,
-) -> AppResult<serde_json::Value> {
-    use crate::ai_runtime::skills::{migrate_legacy_skill, SkillScope};
-    let path = std::path::PathBuf::from(&file_path);
-    let vault = state.vault_path()?;
-    crate::ai_runtime::skills::validate_skill_path(&path, &vault)?;
-    let sc = if scope == "vault" {
-        SkillScope::Vault
-    } else {
-        SkillScope::Global
-    };
-    let entry = migrate_legacy_skill(&path, sc)?;
-    Ok(serde_json::to_value(entry).unwrap_or_default())
-}
-
 /// Query tool audit entries by request_id.
 #[tauri::command]
 pub async fn tool_audit_query(
@@ -2708,9 +2524,9 @@ mod tests {
                 messages: Vec::new(),
                 tool_calls: Vec::new(),
                 tool_results: vec![serde_json::json!({
-                    "tool_call_id": "tc-install",
+                    "tool_call_id": "tc-write",
                     "status": "completed",
-                    "result": { "name": "heartflow" },
+                    "result": { "status": "ok" },
                 })],
                 evidence_packets: Vec::new(),
                 usage: TokenUsage::default(),
@@ -2723,14 +2539,16 @@ mod tests {
         let response = partial_tool_confirm_response(
             &state,
             request_id,
-            "tc-install".into(),
+            "tc-write".into(),
             "approve",
-            Some("heartflow".into()),
             &crate::error::AppError::msg("provider_bad_request: 400 Bad Request"),
         )
         .unwrap();
 
-        assert_eq!(response.content, "安装已完成，但继续生成回复失败。");
+        assert_eq!(
+            response.content,
+            "工具已执行，但继续生成回复失败：provider_bad_request"
+        );
         assert_eq!(
             response.tool_execution_outcome.as_ref().unwrap().status,
             "succeeded"
@@ -2763,7 +2581,7 @@ mod tests {
         );
         assert_eq!(
             serialized["assistantResumeOutcome"]["userMessage"],
-            "安装已完成，但继续生成回复失败。"
+            "工具已执行，但继续生成回复失败。"
         );
     }
 

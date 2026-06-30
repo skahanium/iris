@@ -42,25 +42,23 @@ fn stage1_source_contracts_remove_misleading_tool_executor_stub() {
 }
 
 #[test]
-fn stage1_source_contracts_make_rendered_fetch_honest() {
+fn stage1_source_contracts_remove_rendered_fetch_from_catalog() {
     let catalog = include_str!("../src/ai_runtime/tool_catalog_impl.rs");
     let web_catalog = include_str!("../src/ai_runtime/tool_catalog/web.rs");
 
-    assert!(catalog.contains("rendered_fetch") || web_catalog.contains("rendered_fetch"));
-    assert!(
-        catalog.contains("static readability")
-            || web_catalog.contains("static readability")
-            || catalog.contains("not JavaScript-rendered")
-            || web_catalog.contains("not JavaScript-rendered")
-    );
+    assert!(!catalog.contains("rendered_fetch"));
+    assert!(!web_catalog.contains("rendered_fetch"));
+    assert!(web_catalog.contains("WebEvidenceBroker"));
 }
 
 #[test]
-fn stage1_source_contracts_git_skill_install_disables_hooks_and_filters() {
+fn stage1_source_contracts_remove_git_skill_install_runtime() {
+    let runtime_mod = include_str!("../src/ai_runtime/mod.rs");
     let skills = include_str!("../src/ai_runtime/skills_impl.rs");
 
-    assert!(skills.contains("core.hooksPath=/dev/null"));
-    assert!(skills.contains("filter.lfs.smudge="));
-    assert!(skills.contains("protocol.file.allow=never"));
-    assert!(skills.contains("--no-tags"));
+    assert!(!runtime_mod.contains("skill_install_service"));
+    assert!(!skills.contains("Command::new(\"git\")"));
+    assert!(!skills.contains("core.hooksPath=/dev/null"));
+    assert!(!skills.contains("protocol.file.allow=never"));
+    assert!(!skills.contains("--no-tags"));
 }

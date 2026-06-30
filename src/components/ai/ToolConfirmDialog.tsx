@@ -5,12 +5,9 @@ import {
   FileText,
   FolderOpen,
   GitCommitHorizontal,
-  Globe2,
   KeyRound,
-  PackagePlus,
   Search,
   ShieldCheck,
-  Terminal,
   Trash2,
   X,
   type LucideIcon,
@@ -66,7 +63,6 @@ const WRITE_TOOLS = new Set([
   "fs_import_to_vault",
   "fs_export",
   "fs_write_authorized_export",
-  "web_download_to_assets",
   "git_write_commit",
 ]);
 
@@ -85,36 +81,6 @@ function argText(
   return fallback;
 }
 
-function previewText(
-  request: ToolConfirmRequest,
-  keys: string[],
-  fallback = "",
-): string {
-  for (const key of keys) {
-    const value = request.preview?.[key];
-    if (typeof value === "string" && value.trim()) return value.trim();
-  }
-  return fallback;
-}
-
-function previewList(request: ToolConfirmRequest, key: string): string[] {
-  const value = request.preview?.[key];
-  if (!Array.isArray(value)) return [];
-  return value.filter((item): item is string => typeof item === "string");
-}
-function previewValueText(
-  request: ToolConfirmRequest,
-  key: string,
-  fallback = "",
-): string {
-  const value = request.preview?.[key];
-  if (typeof value === "string" && value.trim()) return value.trim();
-  if (typeof value === "number" || typeof value === "boolean") {
-    return String(value);
-  }
-  return fallback;
-}
-
 function objectValue(value: unknown): Record<string, unknown> | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   return value as Record<string, unknown>;
@@ -128,19 +94,6 @@ function unknownStringList(value: unknown): string[] {
 function trustWarnings(request: ToolConfirmRequest): string[] {
   const trustPreview = objectValue(request.preview?.trust_profile_preview);
   return unknownStringList(trustPreview?.warnings);
-}
-
-function compactUrl(url: string): Pick<PermissionCard, "target" | "detail"> {
-  try {
-    const parsed = new URL(url);
-    const detail = `${parsed.pathname}${parsed.search}`;
-    return {
-      target: parsed.hostname,
-      detail: detail === "/" ? undefined : detail,
-    };
-  } catch {
-    return { target: url || "外部网页" };
-  }
 }
 
 function compactPath(path: string, fallback: string): string {
@@ -182,16 +135,6 @@ function buildPermissionCard(request: ToolConfirmRequest): PermissionCard {
   }
 
   switch (request.tool_name) {
-    case "fetch_web_page": {
-      const url = argText(request, ["url"], "外部网页");
-      return {
-        action: "读取网页内容",
-        ...compactUrl(url),
-        impact: "会向该网站发送一次请求，网页内容会进入当前对话。",
-        tone: "web",
-        Icon: Globe2,
-      };
-    }
     case "web_search":
       return {
         action: "联网搜索",
@@ -199,145 +142,6 @@ function buildPermissionCard(request: ToolConfirmRequest): PermissionCard {
         impact: "搜索结果会进入当前对话。",
         tone: "web",
         Icon: Search,
-      };
-    case "web_to_markdown":
-    case "web_citation_extract": {
-      const url = argText(request, ["url"], "外部网页");
-      return {
-        action:
-          request.tool_name === "web_to_markdown"
-            ? "提取网页正文"
-            : "提取网页引用",
-        ...compactUrl(url),
-        impact: "会读取该网页，并把结果带回当前对话。",
-        tone: "web",
-        Icon: Globe2,
-      };
-    }
-    case "web_download_to_assets": {
-      const url = argText(request, ["url"], "外部资源");
-      return {
-        action: "下载资源",
-        ...compactUrl(url),
-        impact: "会把下载结果写入当前库。",
-        tone: "write",
-        Icon: Download,
-      };
-    }
-    case "mcp_server_catalog_upsert": {
-      const server =
-        previewValueText(request, "display_name") ||
-        previewValueText(request, "server_id") ||
-        argText(request, ["display_name", "id"], "MCP Server");
-      const transport = previewValueText(request, "transport", "unknown");
-      const source = previewValueText(request, "source", "user");
-      return {
-        action: "注册 MCP Server",
-        target: server,
-        detail: `transport: ${transport} · source: ${source}`,
-        impact:
-          "不会启动本地进程；只登记受控 runtime provider 元数据，后续 profile 启用和 live MCP 调用仍需要单独确认。",
-        tone: "skill",
-        Icon: ShieldCheck,
-      };
-    }
-    case "mcp_runtime_profile_upsert": {
-      const profile =
-        previewValueText(request, "display_name") ||
-        previewValueText(request, "profile_id") ||
-        argText(request, ["display_name", "id"], "MCP Profile");
-      const transport = previewValueText(request, "transport", "unknown");
-      const scope = previewValueText(request, "vault_scope", "global");
-      const credentials = previewValueText(request, "credential_bindings", "0");
-      return {
-        action: "注册 MCP Profile",
-        target: profile,
-        detail: `transport: ${transport} · scope: ${scope} · credential bindings: ${credentials}`,
-        impact:
-          "不会启动本地进程；能力边界: Iris capability mapping。后续 MCP 调用仍需要单独确认。",
-        tone: "skill",
-        Icon: ShieldCheck,
-      };
-    }
-    case "mcp_runtime_tools_list":
-      return {
-        action: "发现 MCP 工具",
-        target:
-          previewValueText(request, "profile_id") ||
-          argText(request, ["profile_id"], "MCP Profile"),
-        detail: `${previewValueText(request, "process_kind", "bounded_stdio_mcp")} -> ${previewValueText(request, "result_scope", "sanitized_tool_inventory")}`,
-        impact: `会启动受控本地 MCP 进程，结果仅保存 ${previewValueText(request, "result_scope", "sanitized_tool_inventory")}。${previewValueText(request, "reason")}`,
-        tone: "skill",
-        Icon: Terminal,
-      };
-    case "mcp_runtime_health_check":
-      return {
-        action: "检查 MCP Profile",
-        target:
-          previewValueText(request, "profile_id") ||
-          argText(request, ["profile_id"], "MCP Profile"),
-        detail: previewValueText(request, "process_kind", "bounded_stdio_mcp"),
-        impact: "会启动受控本地 MCP 进程，只记录 metadata-only health status。",
-        tone: "skill",
-        Icon: Terminal,
-      };
-    case "mcp_runtime_capability_call":
-      return {
-        action: "调用 MCP 能力",
-        target:
-          previewValueText(request, "capability") ||
-          argText(request, ["capability"], "Iris capability"),
-        detail: previewValueText(request, "process_kind", "bounded_stdio_mcp"),
-        impact:
-          "会通过 Iris capability mapping 启动受控 MCP provider，并只把 model-safe tool result 带回对话。",
-        tone: "skill",
-        Icon: Terminal,
-      };
-    case "skills_install":
-      return {
-        action: "安装 Skill",
-        target:
-          previewText(request, ["display_name"]) ||
-          argText(request, ["name", "path_or_url", "pathOrUrl"], "Skill"),
-        detail:
-          previewText(request, ["target_install_dir"]) ||
-          argText(request, ["scope"], "vault"),
-        impact: "会把 Skill 安装到指定目录，并在当前会话中可用。",
-        tone: "skill",
-        Icon: PackagePlus,
-      };
-    case "skills_prepare_workspace": {
-      const folders = previewList(request, "create_folders");
-      const documents = previewList(request, "create_documents");
-      const summary = [...folders.map((item) => `${item}/`), ...documents]
-        .slice(0, 4)
-        .join("、");
-      return {
-        action: "准备 Skill 工作区",
-        target:
-          previewText(request, ["workspace_root"]) ||
-          argText(request, ["name"], "Skills 工作区"),
-        detail: summary ? `将创建 ${summary}` : undefined,
-        impact: "会在当前库创建声明的文件夹与模板文档。",
-        tone: "skill",
-        Icon: FolderOpen,
-      };
-    }
-    case "skills_uninstall":
-      return {
-        action: "卸载 Skill",
-        target: argText(request, ["name"], "Skill"),
-        impact: "会删除本地 Skill 文件。",
-        tone: "danger",
-        Icon: Trash2,
-      };
-    case "skills_toggle":
-      return {
-        action: request.arguments.enabled ? "启用 Skill" : "禁用 Skill",
-        target: argText(request, ["name"], "Skill"),
-        impact: "只会切换这个 Skill 的启用状态。",
-        tone: "skill",
-        Icon: PackagePlus,
       };
     case "insert_text_at_cursor":
       return {
@@ -484,14 +288,6 @@ function buildPermissionCard(request: ToolConfirmRequest): PermissionCard {
         tone: "read",
         Icon: FileText,
       };
-    case "process_run_readonly":
-      return {
-        action: "运行只读命令",
-        target: argText(request, ["command", "cmd"], "只读命令"),
-        impact: "只会读取输出，不会修改库内容。",
-        tone: "read",
-        Icon: Terminal,
-      };
     case "secret_exists":
       return {
         action: "检查凭据",
@@ -499,14 +295,6 @@ function buildPermissionCard(request: ToolConfirmRequest): PermissionCard {
         impact: "只检查是否存在，不会读取明文。",
         tone: "read",
         Icon: KeyRound,
-      };
-    case "skill_request_capabilities":
-      return {
-        action: "检查 Skill 能力",
-        target: argText(request, ["name"], "Skill"),
-        impact: "只做能力预检。",
-        tone: "read",
-        Icon: ShieldCheck,
       };
     default:
       return {

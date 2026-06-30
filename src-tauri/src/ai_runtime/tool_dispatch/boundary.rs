@@ -1,6 +1,5 @@
 use std::path::{Component, Path, PathBuf};
 use std::process::Command;
-use std::time::{Duration, Instant};
 
 use crate::ai_runtime::sandbox_profile::sandbox_profile_for_tool;
 use crate::app::AppState;
@@ -10,7 +9,6 @@ use crate::storage::paths::is_user_note_path;
 use super::ToolDispatchContext;
 
 const MAX_EXTERNAL_TEXT_BYTES: usize = 20 * 1024 * 1024;
-const MAX_WEB_ASSET_BYTES: usize = 20 * 1024 * 1024;
 
 #[cfg(unix)]
 const SENSITIVE_PREFIXES: &[&str] = &[
@@ -287,92 +285,6 @@ pub(super) fn doc_extract_citations_tool(args: &serde_json::Value) -> AppResult<
     }))
 }
 
-pub(super) async fn web_to_markdown_tool(
-    state: &AppState,
-    args: &serde_json::Value,
-    ctx: &ToolDispatchContext<'_>,
-) -> AppResult<serde_json::Value> {
-    if !ctx.web_search_enabled {
-        return Err(AppError::msg("web fetch not enabled for this request"));
-    }
-    let url = arg_str(args, "url")?;
-    let page =
-        crate::llm::fetch_web_page::fetch_web_page(&state.db, url, max_chars(args, 24_000)).await?;
-    let markdown = format!(
-        "# {}\n\nSource: <{}>\n\n{}\n",
-        page.title, page.url, page.text
-    );
-    Ok(serde_json::json!({
-        "type": "web_to_markdown",
-        "url": page.url,
-        "title": page.title,
-        "markdown": markdown,
-        "truncated": page.truncated,
-        "fromCache": page.from_cache,
-    }))
-}
-
-pub(super) async fn web_citation_extract_tool(
-    state: &AppState,
-    args: &serde_json::Value,
-    ctx: &ToolDispatchContext<'_>,
-) -> AppResult<serde_json::Value> {
-    if !ctx.web_search_enabled {
-        return Err(AppError::msg("web fetch not enabled for this request"));
-    }
-    let url = arg_str(args, "url")?;
-    let page =
-        crate::llm::fetch_web_page::fetch_web_page(&state.db, url, max_chars(args, 12_000)).await?;
-    Ok(serde_json::json!({
-        "type": "web_citation_extract",
-        "citation": {
-            "title": page.title,
-            "url": page.url,
-            "accessedAt": chrono::Utc::now().to_rfc3339(),
-            "contentHash": page.content_hash,
-        }
-    }))
-}
-
-pub(super) async fn web_download_to_assets_tool(
-    state: &AppState,
-    args: &serde_json::Value,
-    ctx: &ToolDispatchContext<'_>,
-) -> AppResult<serde_json::Value> {
-    let asset_path = arg_str(args, "asset_path")?;
-    if !crate::commands::file::is_vault_asset_path(asset_path) {
-        return Err(AppError::msg("资源路径必须位于 assets/ 下"));
-    }
-    if !ctx.web_search_enabled {
-        return Err(AppError::msg("web fetch not enabled for this request"));
-    }
-    let url = arg_str(args, "url")?;
-    crate::llm::fetch_web_page::validate_fetch_url(url)?;
-    let response = crate::network::cert_pinning::create_https_client()?
-        .get(url)
-        .send()
-        .await?
-        .error_for_status()?;
-    let bytes = response.bytes().await?;
-    if bytes.is_empty() {
-        return Err(AppError::msg("downloaded resource is empty"));
-    }
-    if bytes.len() > MAX_WEB_ASSET_BYTES {
-        return Err(AppError::msg("downloaded resource exceeds 20MB limit"));
-    }
-    let vault = state.vault_path()?;
-    let dest = crate::storage::paths::resolve_vault_path(&vault, asset_path)?;
-    if let Some(parent) = dest.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-    std::fs::write(&dest, &bytes)?;
-    Ok(serde_json::json!({
-        "type": "web_download_to_assets",
-        "path": asset_path,
-        "bytes": bytes.len(),
-    }))
-}
-
 fn normalize_markdown(content: &str) -> String {
     let normalized = content.replace("\r\n", "\n").replace('\r', "\n");
     let mut out = String::new();
@@ -502,118 +414,6 @@ fn string_array_arg(args: &serde_json::Value, key: &str) -> AppResult<Vec<String
                 .ok_or_else(|| AppError::msg(format!("{key} entries must be strings")))
         })
         .collect()
-}
-
-fn run_limited_process(
-    state: &AppState,
-    program: &str,
-    args: &[String],
-    max: usize,
-) -> AppResult<(String, String)> {
-    let vault = state.vault_path()?;
-    let mut child = Command::new(program)
-        .args(args)
-        .current_dir(&vault)
-        .env_clear()
-        .env("LANG", "C")
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .spawn()?;
-    let start = Instant::now();
-    loop {
-        if child.try_wait()?.is_some() {
-            let output = child.wait_with_output()?;
-            if !output.status.success() {
-                return Err(AppError::msg(format!(
-                    "readonly command failed: {}",
-                    truncate_chars(String::from_utf8_lossy(&output.stderr).trim(), 400)
-                )));
-            }
-            return Ok((
-                truncate_chars(String::from_utf8_lossy(&output.stdout).trim(), max),
-                truncate_chars(
-                    String::from_utf8_lossy(&output.stderr).trim(),
-                    max.min(2000),
-                ),
-            ));
-        }
-        if start.elapsed() > Duration::from_secs(5) {
-            let _ = child.kill();
-            let _ = child.wait();
-            return Err(AppError::msg("readonly command timed out"));
-        }
-        std::thread::sleep(Duration::from_millis(20));
-    }
-}
-
-fn validate_readonly_command(program: &str, args: &[String]) -> AppResult<()> {
-    if args.iter().any(|arg| arg.contains('\0')) {
-        return Err(AppError::msg("command arguments contain invalid bytes"));
-    }
-    for arg in args {
-        if !arg.starts_with('-') {
-            validate_vault_relative_path(arg)?;
-        }
-    }
-    match program {
-        "wc" => Ok(()),
-        "ls" => Ok(()),
-        "rg" => {
-            if args.iter().any(|arg| {
-                matches!(
-                    arg.as_str(),
-                    "--files-without-match" | "--replace" | "-r" | "--passthru"
-                )
-            }) {
-                return Err(AppError::msg("rg argument is not allowed"));
-            }
-            Ok(())
-        }
-        "git" => match args.first().map(String::as_str) {
-            Some("status" | "diff" | "log" | "show") => Ok(()),
-            _ => Err(AppError::msg("only readonly git subcommands are allowed")),
-        },
-        _ => Err(AppError::msg("program is not in the readonly allowlist")),
-    }
-}
-
-pub(super) fn skill_request_capabilities_tool(
-    args: &serde_json::Value,
-) -> AppResult<serde_json::Value> {
-    let capabilities = string_array_arg(args, "capabilities")?;
-    let results: Vec<serde_json::Value> = capabilities
-        .iter()
-        .map(|capability| {
-            let status = crate::ai_runtime::skills::support_status_for_capability(capability);
-            serde_json::json!({
-                "capability": capability,
-                "status": status,
-                "guidance": crate::ai_runtime::skills::fallback_guidance(capability, status),
-            })
-        })
-        .collect();
-    Ok(serde_json::json!({
-        "type": "skill_request_capabilities",
-        "results": results,
-        "count": results.len(),
-    }))
-}
-
-pub(super) fn process_run_readonly_tool(
-    state: &AppState,
-    args: &serde_json::Value,
-) -> AppResult<serde_json::Value> {
-    let program = arg_str(args, "program")?;
-    let argv = string_array_arg(args, "args")?;
-    validate_readonly_command(program, &argv)?;
-    let (stdout, stderr) = run_limited_process(state, program, &argv, max_chars(args, 12_000))?;
-    Ok(serde_json::json!({
-        "type": "process_run_readonly",
-        "program": program,
-        "stdout": stdout,
-        "stderr": stderr,
-        "sandbox_profile": sandbox_profile_for_tool("process_run_readonly"),
-    }))
 }
 
 pub(super) fn git_write_commit_tool(

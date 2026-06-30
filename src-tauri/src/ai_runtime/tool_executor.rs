@@ -64,10 +64,6 @@ impl ToolRegistry {
             .iter()
             .filter(|t| is_exposable_tool(&t.name))
             .filter(|t| {
-                !is_internal_network_fetch_tool(&t.name)
-                    || ctx.skill_allowed_tools.contains(&t.name)
-            })
-            .filter(|t| {
                 let verdict = tool_policy::evaluate_tool(&t.name, ctx);
                 match verdict {
                     ToolPolicyVerdict::AutoAllowed => true,
@@ -141,13 +137,6 @@ impl Default for ToolRegistry {
     fn default() -> Self {
         Self::new()
     }
-}
-
-fn is_internal_network_fetch_tool(name: &str) -> bool {
-    matches!(
-        name,
-        "fetch_web_page" | "web_fetch_batch" | "readability_fetch" | "rendered_fetch"
-    )
 }
 
 /// Error from the new policy engine (Phase 2).

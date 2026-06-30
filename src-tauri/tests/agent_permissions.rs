@@ -46,22 +46,42 @@ fn markdown_write_tools_map_to_patch_permission() {
 }
 
 #[test]
-fn web_fetch_preflight_summarizes_domain_not_body() {
+fn web_search_preflight_summarizes_query_or_domain_without_body() {
     let preflight = preflight_tool_permission(
-        catalog_find("fetch_web_page").unwrap(),
+        catalog_find("web_search").unwrap(),
         &serde_json::json!({
-            "url": "https://example.com/articles/phase5",
-            "reason": "read external evidence"
+            "query": "Iris release notes",
+            "urls": ["https://example.com/articles/phase5"],
+            "reason": "collect external evidence"
         }),
         None,
     );
-    assert_eq!(preflight.decision, PermissionDecision::AllowOnce);
-    assert_eq!(preflight.effects[0].permission_name, "web.fetch");
-    assert_eq!(preflight.effects[0].risk_level, PermissionRiskLevel::Medium);
+    assert_eq!(preflight.decision, PermissionDecision::Allow);
+    assert_eq!(preflight.effects[0].permission_name, "web.search");
+    assert_eq!(preflight.effects[0].risk_level, PermissionRiskLevel::Low);
     assert!(preflight.effects[0].scope_summary.contains("example.com"));
     assert!(!preflight.effects[0]
         .scope_summary
         .contains("/articles/phase5"));
+}
+
+#[test]
+fn legacy_fetch_tools_have_no_permission_profile() {
+    for legacy in [
+        "fetch_web_page",
+        "web_fetch_batch",
+        "readability_fetch",
+        "rendered_fetch",
+    ] {
+        assert!(
+            catalog_find(legacy).is_none(),
+            "{legacy} should not be in catalog"
+        );
+        assert!(
+            permission_profile_for_tool(legacy).is_none(),
+            "{legacy} should not have a permission profile"
+        );
+    }
 }
 
 #[test]

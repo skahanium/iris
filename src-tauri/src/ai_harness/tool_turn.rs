@@ -120,16 +120,28 @@ fn responded_tool_ids(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ai_runtime::{AiScene, AutonomyLevel};
+    use crate::ai_runtime::{
+        agent_task_policy::{AgentTaskPolicy, AgentTaskPolicyInput, AgentTaskScope},
+        AgentIntent, AiScene, AutonomyLevel,
+    };
 
     fn make_tool_call(name: &str) -> ToolCall {
         ToolCall::new(format!("call-{name}"), name, "{}")
     }
 
     fn ctx(web: bool) -> ToolPolicyContext {
+        let task_policy = AgentTaskPolicy::from_input(AgentTaskPolicyInput {
+            intent: AgentIntent::Write,
+            task_kind: crate::ai_runtime::agent_task::AgentTaskKind::Lightweight,
+            scope: AgentTaskScope::Vault,
+            web_authorized: web,
+            has_attachments: false,
+            write_permission_required: true,
+            research_depth: 0,
+        });
         ToolPolicyContext {
-            task_policy: None,
-            scene: AiScene::KnowledgeLookup,
+            task_policy: Some(task_policy),
+            scene: AiScene::DraftingAssist,
             autonomy_level: AutonomyLevel::L2,
             web_search_enabled: web,
             skill_allowed_tools: vec![],
@@ -151,8 +163,8 @@ mod tests {
     fn outstanding_confirm_ids_lists_unresponded_confirm_tools() {
         let registry = ToolRegistry::new();
         let web = make_tool_call("web_search");
-        let fetch = make_tool_call("fetch_web_page");
-        let mut messages = assistant_with(vec![web.clone(), fetch.clone()]);
+        let edit = make_tool_call("replace_selection");
+        let mut messages = assistant_with(vec![web.clone(), edit.clone()]);
         messages.push(LlmMessage {
             role: MessageRole::Tool,
             content: r#"{"results":[]}"#.into(),
@@ -161,13 +173,13 @@ mod tests {
             ..Default::default()
         });
         let ids = outstanding_confirm_ids(&registry, &messages, &ctx(true));
-        assert_eq!(ids, vec![fetch.id]);
+        assert_eq!(ids, vec![edit.id]);
     }
 
     #[test]
-    fn fetch_skipped_when_web_disabled() {
+    fn web_search_skipped_when_web_disabled() {
         let registry = ToolRegistry::new();
-        let messages = assistant_with(vec![make_tool_call("fetch_web_page")]);
+        let messages = assistant_with(vec![make_tool_call("web_search")]);
         assert!(outstanding_confirm_tool(&registry, &messages, &ctx(false)).is_none());
     }
 }

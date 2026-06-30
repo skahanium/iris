@@ -8,11 +8,10 @@ use uuid::Uuid;
 
 use super::anthropic;
 use super::providers::{api_base, credential_service, uses_anthropic_messages_api};
-use super::{ChatMessage, LlmGenerateParams, LlmStreamContext};
+use super::{LlmGenerateParams, LlmStreamContext};
 
 use crate::credentials;
 use crate::error::{AppError, AppResult};
-use crate::llm::search_web;
 use crate::network::cert_pinning::create_https_client;
 use crate::storage::db::Database;
 
@@ -57,24 +56,6 @@ fn resolve_model(provider: &str, model: Option<String>) -> String {
             .map(|p| p.default_model)
             .unwrap_or_else(|| "gpt-4o-mini".to_string())
     })
-}
-
-async fn apply_web_search(
-    db: &Database,
-    messages: &mut [ChatMessage],
-    enabled: bool,
-) -> AppResult<()> {
-    if !enabled {
-        return Ok(());
-    }
-    if let Some(last) = messages.last_mut() {
-        if last.role == "user" {
-            let (prefixed, _) =
-                search_web::prepend_web_search_context_for_db(db, &last.content).await?;
-            last.content = prefixed;
-        }
-    }
-    Ok(())
 }
 
 /// OpenAI 兼容 `POST /chat/completions` 流式。
@@ -178,8 +159,7 @@ pub async fn llm_generate_stream(
     let base = api_base(&params.provider, params.custom_base_url.as_deref());
     let model = resolve_model(&params.provider, params.model.clone());
 
-    let mut messages = params.messages.clone();
-    apply_web_search(db, &mut messages, params.web_search.unwrap_or(false)).await?;
+    let messages = params.messages.clone();
 
     let stream_ctx = LlmStreamContext {
         app: &app,

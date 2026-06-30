@@ -30,7 +30,7 @@ executeKnowledgeChat
 toolConfirmIpc
 已拒绝，正在生成替代回答
 webAuthorized: webSearch
-web_search: webSearch
+webSearch
 harnessAbort(id)
 pausedTaskId
 assistantRun.setFromTaskStatus("running"
@@ -55,9 +55,6 @@ ai-sidecar
 ai-sidecar-header
 ai-task-surface
 onChromeChange
-skillInstallSuccessNotice
-fetch_web_page
-pendingConfirm?.tool_name === "skills_install"
 AiComposerContextMenu
 */
 

@@ -27,6 +27,7 @@ fn ctx() -> ToolDispatchContext<'static> {
         note_path: None,
         file_id: None,
         web_search_enabled: false,
+        max_web_fetches: 3,
         cold_start_packets: &[],
         app_handle: None,
         attachment_count: 0,
@@ -51,31 +52,13 @@ fn catalog_declares_phase5_remaining_permission_boundaries() {
         "doc_normalize_markdown",
         "doc_fix_links",
         "doc_extract_citations",
-        "web_to_markdown",
-        "web_download_to_assets",
-        "web_citation_extract",
-        "net_localhost",
-        "skill_request_capabilities",
-        "skill_execute_script_sandboxed",
-        "skill_install_dependency",
-        "skill_mcp_bridge",
-        "process_run_markdown_tool",
-        "process_run_readonly",
-        "process_run_mutating",
-        "process_run_network",
-        "process_long_running",
-        "process_kill_owned",
         "git_read_status",
         "git_read_diff",
         "git_read_log",
         "git_write_commit",
         "clipboard_write",
         "clipboard_read",
-        "browser_read_page",
-        "browser_screenshot",
-        "browser_control_page",
         "secret_exists",
-        "secret_use_named",
         "secret_create_update",
         "secret_read_plaintext",
     ];
@@ -93,17 +76,7 @@ fn catalog_declares_phase5_remaining_permission_boundaries() {
 
 #[test]
 fn unsupported_high_risk_boundaries_are_planned_not_exposed() {
-    for name in [
-        "process_run_mutating",
-        "process_run_network",
-        "process_long_running",
-        "skill_execute_script_sandboxed",
-        "skill_install_dependency",
-        "skill_mcp_bridge",
-        "clipboard_read",
-        "browser_control_page",
-        "secret_read_plaintext",
-    ] {
+    for name in ["clipboard_read", "secret_read_plaintext"] {
         let entry = catalog_find(name).unwrap();
         assert_eq!(entry.implementation, ToolImplementationStatus::Planned);
         let preflight = preflight_tool_permission(entry, &serde_json::json!({}), None);
@@ -123,21 +96,8 @@ fn host_dependent_or_policy_blocked_boundaries_stay_planned() {
         "doc_extract_pdf",
         "doc_extract_table",
         "doc_fix_links",
-        "net_localhost",
-        "skill_execute_script_sandboxed",
-        "skill_install_dependency",
-        "skill_mcp_bridge",
-        "process_run_markdown_tool",
-        "process_run_mutating",
-        "process_run_network",
-        "process_long_running",
-        "process_kill_owned",
         "clipboard_write",
         "clipboard_read",
-        "browser_read_page",
-        "browser_screenshot",
-        "browser_control_page",
-        "secret_use_named",
         "secret_create_update",
         "secret_read_plaintext",
     ] {
@@ -158,12 +118,37 @@ fn skill_compatibility_reports_planned_phase5_boundaries() {
         iris_lib::ai_runtime::skills::support_status_for_capability("process_run_readonly");
     assert_eq!(
         status,
-        SkillCapabilitySupportStatus::SupportedWithConfirmation
+        SkillCapabilitySupportStatus::UnsupportedByProductScope
     );
 
     let blocked =
         iris_lib::ai_runtime::skills::support_status_for_capability("secret_read_plaintext");
     assert_eq!(blocked, SkillCapabilitySupportStatus::Planned);
+}
+
+#[test]
+fn generic_web_process_and_browser_tools_are_removed_by_reign_in() {
+    for name in [
+        "web_to_markdown",
+        "web_download_to_assets",
+        "web_citation_extract",
+        "net_localhost",
+        "process_run_markdown_tool",
+        "process_run_readonly",
+        "process_run_mutating",
+        "process_run_network",
+        "process_long_running",
+        "process_kill_owned",
+        "browser_read_page",
+        "browser_screenshot",
+        "browser_control_page",
+    ] {
+        assert!(catalog_find(name).is_none(), "{name} must not be cataloged");
+        assert!(
+            permission_profile_for_tool(name).is_none(),
+            "{name} must not keep a permission profile"
+        );
+    }
 }
 
 #[tokio::test]
@@ -329,113 +314,6 @@ async fn doc_normalize_markdown_is_content_only() {
     assert!(result.success, "{:?}", result.error);
     assert_eq!(result.output["type"], "doc_normalize_markdown");
     assert_eq!(result.output["markdown"], "# Title\n\nBody\n");
-}
-
-#[tokio::test]
-async fn web_download_to_assets_rejects_non_asset_path_before_network() {
-    assert!(dispatchable("web_download_to_assets"));
-    let (state, _dir) = test_state();
-    let result = dispatch_tool(
-        &state,
-        &ctx(),
-        "web_download_to_assets",
-        &serde_json::json!({
-            "url": "https://example.com/file.txt",
-            "asset_path": "notes/file.txt"
-        }),
-    )
-    .await;
-
-    assert!(!result.success);
-    assert!(result.error.unwrap().contains("assets"));
-}
-
-#[tokio::test]
-async fn web_to_markdown_requires_web_authorization() {
-    assert!(dispatchable("web_to_markdown"));
-    let (state, _dir) = test_state();
-    let result = dispatch_tool(
-        &state,
-        &ctx(),
-        "web_to_markdown",
-        &serde_json::json!({"url": "https://example.com"}),
-    )
-    .await;
-
-    assert!(!result.success);
-    assert!(result.error.unwrap().contains("not enabled"));
-}
-
-#[tokio::test]
-async fn skill_request_capabilities_reports_supported_and_planned() {
-    assert!(dispatchable("skill_request_capabilities"));
-    let (state, _dir) = test_state();
-    let result = dispatch_tool(
-        &state,
-        &ctx(),
-        "skill_request_capabilities",
-        &serde_json::json!({
-            "capabilities": ["read", "process_run_readonly", "secret_read_plaintext"]
-        }),
-    )
-    .await;
-
-    assert!(result.success, "{:?}", result.error);
-    assert_eq!(result.output["type"], "skill_request_capabilities");
-    assert_eq!(result.output["results"][0]["status"], "supported");
-    assert_eq!(
-        result.output["results"][1]["status"],
-        "supported_with_confirmation"
-    );
-    assert_eq!(result.output["results"][2]["status"], "planned");
-}
-
-#[tokio::test]
-async fn process_run_readonly_is_allowlisted_and_vault_scoped() {
-    assert!(dispatchable("process_run_readonly"));
-    let (state, _dir) = test_state();
-    let vault = state.vault_path().unwrap();
-    std::fs::write(vault.join("note.md"), "one\ntwo\n").unwrap();
-    let _ = std::process::Command::new("git")
-        .arg("init")
-        .current_dir(&vault)
-        .output()
-        .unwrap();
-
-    let _ = std::process::Command::new("git")
-        .arg("init")
-        .current_dir(&vault)
-        .output();
-
-    let result = dispatch_tool(
-        &state,
-        &ctx(),
-        "process_run_readonly",
-        &serde_json::json!({
-            "program": "git",
-            "args": ["status"],
-            "max_chars": 2000
-        }),
-    )
-    .await;
-    assert!(result.success, "{:?}", result.error);
-    assert_eq!(result.output["type"], "process_run_readonly");
-    assert!(result.output["stdout"]
-        .as_str()
-        .unwrap()
-        .contains("note.md"));
-
-    let blocked = dispatch_tool(
-        &state,
-        &ctx(),
-        "process_run_readonly",
-        &serde_json::json!({
-            "program": "sh",
-            "args": ["-c", "echo nope"]
-        }),
-    )
-    .await;
-    assert!(!blocked.success);
 }
 
 #[tokio::test]

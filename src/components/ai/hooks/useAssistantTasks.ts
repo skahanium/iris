@@ -388,7 +388,7 @@ export function useAssistantTasks({
         query,
         session_id: sessionId,
         context_scope: contextScope,
-        web_search: webSearch,
+        webSearch,
       });
       const preview = result.provisional !== false;
       setPackets(

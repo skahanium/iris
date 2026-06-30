@@ -358,6 +358,7 @@ pub async fn dispatch_approved_tool_to_checkpoint(
             note_path: pending.note_path.as_deref(),
             file_id,
             web_search_enabled: pending.web_search_enabled,
+            max_web_fetches: 3,
             cold_start_packets: &[],
             app_handle: Some(app_handle.clone()),
             attachment_count: 0,

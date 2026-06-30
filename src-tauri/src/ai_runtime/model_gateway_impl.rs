@@ -578,8 +578,8 @@ mod tests {
             tool_call_id: None,
             tool_calls: Some(vec![ToolCall::new(
                 "call_1",
-                "fetch_web_page",
-                r#"{"url":"https://example.com"}"#,
+                "web_search",
+                r#"{"query":"https://example.com"}"#,
             )]),
             reasoning_content: Some("internal chain of thought".into()),
         }];
@@ -607,8 +607,8 @@ mod tests {
                 tool_call_id: None,
                 tool_calls: Some(vec![ToolCall::new(
                     "call_1",
-                    "fetch_web_page",
-                    r#"{"url":"https://example.com"}"#,
+                    "web_search",
+                    r#"{"query":"https://example.com"}"#,
                 )]),
                 reasoning_content: Some("internal chain of thought".into()),
             },
@@ -685,8 +685,8 @@ mod tests {
                     ToolCall::new("call_search", "web_search", r#"{"query":"x"}"#),
                     ToolCall::new(
                         "call_fetch",
-                        "fetch_web_page",
-                        r#"{"url":"https://example.com"}"#,
+                        "web_search",
+                        r#"{"query":"https://example.com"}"#,
                     ),
                 ]),
                 reasoning_content: None,

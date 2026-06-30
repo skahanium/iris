@@ -8,7 +8,9 @@ use iris_lib::ai_runtime::model_gateway::{
     LlmToolDef, MessageRole, ProviderConfig, ToolCall,
 };
 use iris_lib::ai_runtime::retrieval_broker::{query_hash, RetrievalLayers, RetrievalRequest};
-use iris_lib::ai_runtime::skills::{inject_into_prompt, SkillEntry, SkillScope};
+use iris_lib::ai_runtime::skills::{
+    inject_into_prompt, SkillConfirmationStatus, SkillEntry, SkillScope,
+};
 use iris_lib::ai_runtime::{AiScene, CapabilitySlot, EndpointFamily};
 use iris_lib::indexer::chunker::chunk_markdown;
 
@@ -136,10 +138,13 @@ fn sample_skill(i: usize) -> SkillEntry {
             "Detailed instruction. ".repeat(300),
         ),
         scope: SkillScope::Vault,
-        source_url: None,
         enabled: true,
         file_path: format!(".iris/skills/skill-{i}/SKILL.md"),
         legacy_trigger: None,
+        scope_rules: Vec::new(),
+        content_hash: format!("hash-{i}"),
+        confirmed_hash: Some(format!("hash-{i}")),
+        confirmation_status: SkillConfirmationStatus::Confirmed,
     }
 }
 

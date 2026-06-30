@@ -1,5 +1,8 @@
 # Iris 网络能力、MCP 地基与 AI 联网生命周期设计
 
+> Superseded by [2026-07-01-iris-reign-in-design.md](./2026-07-01-iris-reign-in-design.md).
+> This file is retained for historical context only and must not be used as the implementation target.
+
 日期：2026-06-21
 
 ## 摘要

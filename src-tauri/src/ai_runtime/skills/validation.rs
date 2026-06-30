@@ -75,15 +75,10 @@ pub fn capability_preview_for_entry(
         "name": entry.name,
         "license": entry.license,
         "requested_tools": entry.allowed_tools,
-        "requested_capabilities": entry.requested_capabilities(),
         "confirmation_required_tools": confirmation_required_tools(&entry.allowed_tools),
         "unrecognized_tools": entry.unrecognized_tools(),
         "missing_deps": entry.missing_dependencies(installed_names),
         "blocked_capabilities": blocked_capabilities,
-        "compatibility_source": entry.compatibility_source(),
         "compatibility_warnings": compatibility_warnings,
-        "resource_status": [],
-        "allows_script_execution": false,
-        "script_policy": "Skill scripts, dependency installs, and MCP bridges are preflighted only in Phase4; Iris does not execute them.",
     })
 }

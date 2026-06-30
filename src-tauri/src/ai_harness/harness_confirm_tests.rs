@@ -44,10 +44,10 @@ mod tests {
                 role: MessageRole::Assistant,
                 content: "partial".into(),
                 tool_call_id: None,
-                tool_calls: Some(vec![ToolCall::new("tc1", "fetch_web_page", "{}")]),
+                tool_calls: Some(vec![ToolCall::new("tc1", "replace_selection", "{}")]),
                 ..Default::default()
             }],
-            tool_calls: vec![ToolCall::new("tc1", "fetch_web_page", "{}")],
+            tool_calls: vec![ToolCall::new("tc1", "replace_selection", "{}")],
             tool_results: vec![serde_json::json!({
                 "tool_call_id": "tc1",
                 "status": "pending_confirmation",
@@ -111,7 +111,7 @@ mod tests {
 
         let entries = crate::ai_runtime::tool_audit::query_by_request(&state.db, rid).unwrap();
         assert_eq!(entries.len(), 1);
-        assert_eq!(entries[0].tool_name, "fetch_web_page");
+        assert_eq!(entries[0].tool_name, "replace_selection");
         assert!(!entries[0].success);
         assert!(entries[0]
             .result_summary
@@ -133,7 +133,7 @@ mod tests {
             tool_call_id: None,
             tool_calls: Some(vec![ToolCall::new(
                 "call_1",
-                "fetch_web_page",
+                "replace_selection",
                 r#"{"url":"https://example.com"}"#,
             )]),
             reasoning_content: Some("internal chain of thought".into()),
@@ -189,7 +189,7 @@ mod tests {
             tool_call_id: None,
             tool_calls: Some(vec![ToolCall::new(
                 "call_1",
-                "fetch_web_page",
+                "replace_selection",
                 r#"{"url":"https://example.com"}"#,
             )]),
             reasoning_content: Some("internal chain of thought".into()),
@@ -252,17 +252,17 @@ mod tests {
         cp.messages = vec![
             LlmMessage {
                 role: MessageRole::User,
-                content: "install anysearch from SkillHub".into(),
+                content: "create a drafting skill from Skill draft".into(),
                 ..Default::default()
             },
             LlmMessage {
                 role: MessageRole::Assistant,
-                content: "Ready to install anysearch from SkillHub.".into(),
+                content: "Ready to create a drafting skill from Skill draft.".into(),
                 tool_call_id: None,
                 tool_calls: Some(vec![ToolCall::new(
                     "direct-skillhub-1",
-                    "skills_install",
-                    r#"{"source":"registry","registry":"skillhub","path_or_url":"anysearch"}"#,
+                    "replace_selection",
+                    r#"{"target_path":"notes/a.md","replacement":"text"}"#,
                 )]),
                 reasoning_content: None,
             },
@@ -315,8 +315,19 @@ mod tests {
         use crate::ai_runtime::{AutonomyLevel, CapabilitySlot};
 
         let registry = ToolRegistry::new();
+        let task_policy = crate::ai_runtime::agent_task_policy::AgentTaskPolicy::from_input(
+            crate::ai_runtime::agent_task_policy::AgentTaskPolicyInput {
+                intent: crate::ai_runtime::AgentIntent::Write,
+                task_kind: crate::ai_runtime::agent_task::AgentTaskKind::Lightweight,
+                scope: crate::ai_runtime::agent_task_policy::AgentTaskScope::Vault,
+                web_authorized: true,
+                has_attachments: false,
+                write_permission_required: true,
+                research_depth: 0,
+            },
+        );
         let ctx = ToolPolicyContext {
-            task_policy: None,
+            task_policy: Some(task_policy),
             scene: AiScene::KnowledgeLookup,
             autonomy_level: AutonomyLevel::L2,
             web_search_enabled: true,
@@ -326,8 +337,8 @@ mod tests {
         let web = ToolCall::new("call_web", "web_search", r#"{"query":"chapter 10"}"#);
         let fetch = ToolCall::new(
             "call_fetch",
-            "fetch_web_page",
-            r#"{"url":"https://example.com/ch10"}"#,
+            "replace_selection",
+            r#"{"target_path":"notes/a.md","replacement":"text"}"#,
         );
         let messages = vec![
             LlmMessage {
@@ -339,7 +350,8 @@ mod tests {
             },
             LlmMessage {
                 role: MessageRole::Tool,
-                content: r#"{"results":[{"url":"https://example.com/ch10"}]}"#.into(),
+                content: r#"{"results":[{"target_path":"notes/a.md","replacement":"text"}]}"#
+                    .into(),
                 tool_call_id: Some(web.id.clone()),
                 tool_calls: None,
                 ..Default::default()
@@ -393,8 +405,19 @@ mod tests {
         use crate::ai_runtime::{AutonomyLevel, CapabilitySlot};
 
         let registry = ToolRegistry::new();
+        let task_policy = crate::ai_runtime::agent_task_policy::AgentTaskPolicy::from_input(
+            crate::ai_runtime::agent_task_policy::AgentTaskPolicyInput {
+                intent: crate::ai_runtime::AgentIntent::Write,
+                task_kind: crate::ai_runtime::agent_task::AgentTaskKind::Lightweight,
+                scope: crate::ai_runtime::agent_task_policy::AgentTaskScope::Vault,
+                web_authorized: true,
+                has_attachments: false,
+                write_permission_required: true,
+                research_depth: 0,
+            },
+        );
         let ctx = ToolPolicyContext {
-            task_policy: None,
+            task_policy: Some(task_policy),
             scene: AiScene::KnowledgeLookup,
             autonomy_level: AutonomyLevel::L2,
             web_search_enabled: true,
@@ -403,13 +426,13 @@ mod tests {
         };
         let fetch_a = ToolCall::new(
             "call_fetch_a",
-            "fetch_web_page",
-            r#"{"url":"https://example.com/a"}"#,
+            "replace_selection",
+            r#"{"target_path":"notes/a.md","replacement":"text"}"#,
         );
         let fetch_b = ToolCall::new(
             "call_fetch_b",
-            "fetch_web_page",
-            r#"{"url":"https://example.com/b"}"#,
+            "replace_selection",
+            r#"{"target_path":"notes/a.md","replacement":"text"}"#,
         );
         let mut messages = vec![LlmMessage {
             role: MessageRole::Assistant,

@@ -9,15 +9,12 @@ use std::path::PathBuf;
 use std::process::Stdio;
 use std::time::Duration;
 
-use rusqlite::params;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use sha2::{Digest, Sha256};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, Command};
 use tokio::time::timeout;
 
-use crate::ai_runtime::mcp_runtime_registry::{record_tool_inventory, McpToolInventoryInput};
 use crate::error::{AppError, AppResult};
 use crate::storage::db::Database;
 
@@ -99,7 +96,7 @@ pub struct McpStdioDiscovery {
 }
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct McpToolCallResult {
-    pub profile_id: String,
+    pub provider_id: String,
     pub tool_name: String,
     pub result: serde_json::Value,
     pub stderr_summary: Option<String>,
@@ -406,60 +403,26 @@ fn parse_stdio_args(args_json: &str) -> AppResult<Vec<String>> {
         .collect()
 }
 
-fn schema_hash(schema: &serde_json::Value) -> AppResult<String> {
-    let bytes = serde_json::to_vec(schema)?;
-    let digest = Sha256::digest(&bytes);
-    Ok(format!("sha256:{}", hex::encode(digest)))
-}
-
-fn safe_tool_description(description: &Option<String>) -> Option<String> {
-    let description = description.as_ref()?.trim();
-    if description.is_empty() {
-        return None;
-    }
-    let lower = description.to_lowercase();
-    if [
-        "api_key",
-        "apikey",
-        "access_token",
-        "bearer",
-        "password",
-        "secret",
-        "token=",
-        "sk-",
-    ]
-    .iter()
-    .any(|marker| lower.contains(marker))
-    {
-        return None;
-    }
-    Some(description.chars().take(500).collect())
-}
-
 #[derive(Debug)]
-struct StoredStdioProfile {
+struct StoredStdioProvider {
     command: PathBuf,
     args: Vec<String>,
     env: Vec<(String, String)>,
-    capability_mapping_json: String,
 }
 
 #[derive(Debug)]
-struct StoredRemoteProfile {
-    transport: String,
+struct StoredRemoteProvider {
     url: String,
     allow_localhost_dev: bool,
-    capability_mapping_json: String,
 }
 
-fn load_profile_transport(db: &Database, profile_id: &str) -> AppResult<String> {
+fn load_provider_transport(db: &Database, provider_id: &str) -> AppResult<String> {
     db.with_read_conn(|conn| {
         let transport: String = conn.query_row(
-            "SELECT s.transport
-             FROM mcp_runtime_profiles p
-             JOIN mcp_server_catalog s ON s.id = p.server_id
-             WHERE p.id = ?1",
-            params![profile_id],
+            "SELECT transport_kind
+             FROM web_evidence_providers
+             WHERE id = ?1",
+            [provider_id],
             |row| row.get(0),
         )?;
         Ok(transport.trim().to_ascii_lowercase())
@@ -514,146 +477,88 @@ fn resolve_env_bindings(
     Ok(env)
 }
 
-fn record_discovered_tool_inventory(
-    db: &Database,
-    profile_id: &str,
-    capability_mapping_json: &str,
-    tools: &[McpToolDefinition],
-) -> AppResult<()> {
-    for tool in tools {
-        record_tool_inventory(
-            db,
-            &McpToolInventoryInput {
-                profile_id: profile_id.to_string(),
-                tool_name: tool.name.clone(),
-                schema_hash: schema_hash(&tool.input_schema)?,
-                capability_mapping_json: capability_mapping_json.to_string(),
-                description: safe_tool_description(&tool.description),
-            },
-        )?;
-    }
-    Ok(())
-}
-
-fn load_remote_profile(db: &Database, profile_id: &str) -> AppResult<StoredRemoteProfile> {
+fn load_remote_provider(db: &Database, provider_id: &str) -> AppResult<StoredRemoteProvider> {
     db.with_read_conn(|conn| {
-        let (enabled, transport_config_json, server_transport, server_url, capability_tags_json): (
-            i64,
-            String,
-            String,
-            Option<String>,
-            String,
-        ) = conn.query_row(
-            "SELECT p.enabled, p.transport_config_json, s.transport, s.url, s.capability_tags_json
-             FROM mcp_runtime_profiles p
-             JOIN mcp_server_catalog s ON s.id = p.server_id
-             WHERE p.id = ?1",
-            params![profile_id],
-            |row| {
-                Ok((
-                    row.get(0)?,
-                    row.get(1)?,
-                    row.get(2)?,
-                    row.get(3)?,
-                    row.get(4)?,
-                ))
-            },
+        let (enabled, transport, transport_config_json): (i64, String, String) = conn.query_row(
+            "SELECT enabled, transport_kind, transport_config_json
+             FROM web_evidence_providers
+             WHERE id = ?1 AND kind = 'mcp'",
+            [provider_id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
         )?;
         if enabled == 0 {
             return Err(runtime_error(
                 McpRuntimeFailureKind::PolicyDenied,
-                "MCP profile is disabled",
+                "MCP provider is disabled",
             ));
         }
-        let transport = server_transport.trim().to_ascii_lowercase();
-        if !matches!(transport.as_str(), "http" | "https" | "sse") {
+        let transport = transport.trim().to_ascii_lowercase();
+        if transport != "https" {
             return Err(runtime_error(
                 McpRuntimeFailureKind::PolicyDenied,
-                "unsupported_transport: MCP profile is not HTTP/SSE",
+                "unsupported_transport: MCP provider is not HTTPS",
             ));
         }
         let config: serde_json::Value = serde_json::from_str(&transport_config_json)?;
-        let url = config_string(&config, "url")
-            .or(server_url)
-            .ok_or_else(|| {
-                runtime_error(
-                    McpRuntimeFailureKind::InvalidResponse,
-                    "MCP HTTP profile has no URL",
-                )
-            })?;
+        let url = config_string(&config, "url").ok_or_else(|| {
+            runtime_error(
+                McpRuntimeFailureKind::InvalidResponse,
+                "MCP HTTPS provider has no URL",
+            )
+        })?;
         let allow_localhost_dev = config
             .get("allow_localhost_dev")
             .and_then(|value| value.as_bool())
             == Some(true);
         validate_mcp_http_runtime_url(&url, allow_localhost_dev)?;
-        Ok(StoredRemoteProfile {
-            transport,
+        Ok(StoredRemoteProvider {
             url,
             allow_localhost_dev,
-            capability_mapping_json: capability_tags_json,
         })
     })
 }
 
-fn load_stdio_profile(db: &Database, profile_id: &str) -> AppResult<StoredStdioProfile> {
+fn load_stdio_provider(db: &Database, provider_id: &str) -> AppResult<StoredStdioProvider> {
     db.with_read_conn(|conn| {
-        let (
-            enabled,
-            transport_config_json,
-            env_bindings_json,
-            server_transport,
-            server_command,
-            server_args_json,
-            capability_tags_json,
-        ): (i64, String, String, String, Option<String>, String, String) = conn.query_row(
-            "SELECT p.enabled, p.transport_config_json, p.env_bindings_json,
-                    s.transport, s.command, s.args_json, s.capability_tags_json
-             FROM mcp_runtime_profiles p
-             JOIN mcp_server_catalog s ON s.id = p.server_id
-             WHERE p.id = ?1",
-            params![profile_id],
-            |row| {
-                Ok((
-                    row.get(0)?,
-                    row.get(1)?,
-                    row.get(2)?,
-                    row.get(3)?,
-                    row.get(4)?,
-                    row.get(5)?,
-                    row.get(6)?,
-                ))
-            },
+        let (enabled, transport_config_json, credential_refs_json, transport): (
+            i64,
+            String,
+            String,
+            String,
+        ) = conn.query_row(
+            "SELECT enabled, transport_config_json, credential_refs_json, transport_kind
+             FROM web_evidence_providers
+             WHERE id = ?1 AND kind = 'mcp'",
+            [provider_id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
         )?;
         if enabled == 0 {
             return Err(runtime_error(
                 McpRuntimeFailureKind::PolicyDenied,
-                "MCP profile is disabled",
+                "MCP provider is disabled",
             ));
         }
-        if server_transport != "stdio" {
+        if transport != "stdio" {
             return Err(runtime_error(
                 McpRuntimeFailureKind::PolicyDenied,
-                "only stdio MCP profile discovery is implemented",
+                "MCP provider is not stdio",
             ));
         }
         let config: serde_json::Value = serde_json::from_str(&transport_config_json)?;
-        let command = config_string(&config, "command")
-            .or(server_command)
-            .ok_or_else(|| {
-                runtime_error(
-                    McpRuntimeFailureKind::InvalidResponse,
-                    "MCP profile has no stdio command",
-                )
-            })?;
+        let command = config_string(&config, "command").ok_or_else(|| {
+            runtime_error(
+                McpRuntimeFailureKind::InvalidResponse,
+                "MCP provider has no stdio command",
+            )
+        })?;
         let args_json = config
             .get("args")
             .map(serde_json::Value::to_string)
-            .unwrap_or(server_args_json);
-        Ok(StoredStdioProfile {
+            .unwrap_or_else(|| "[]".to_string());
+        Ok(StoredStdioProvider {
             command: PathBuf::from(command),
             args: parse_stdio_args(&args_json)?,
-            env: resolve_env_bindings(db, &env_bindings_json)?,
-            capability_mapping_json: capability_tags_json,
+            env: resolve_env_bindings(db, &credential_refs_json)?,
         })
     })
 }
@@ -769,7 +674,7 @@ where
     }
 }
 
-pub async fn discover_http_tools(launch: McpHttpLaunch) -> AppResult<McpStdioDiscovery> {
+async fn discover_http_tools(launch: McpHttpLaunch) -> AppResult<McpStdioDiscovery> {
     let parsed = validate_mcp_http_runtime_url(&launch.url, launch.allow_localhost_dev)?;
     let url = parsed.to_string();
     let max_response_bytes = launch.max_response_bytes;
@@ -833,7 +738,7 @@ pub async fn discover_http_tools(launch: McpHttpLaunch) -> AppResult<McpStdioDis
     .await
 }
 
-pub async fn call_http_tool_with_sender<F, Fut>(
+async fn call_http_tool_with_sender<F, Fut>(
     launch: McpHttpLaunch,
     tool_name: String,
     arguments: serde_json::Value,
@@ -901,7 +806,7 @@ where
     }
 }
 
-pub async fn call_http_tool(
+async fn call_http_tool(
     launch: McpHttpLaunch,
     tool_name: String,
     arguments: serde_json::Value,
@@ -968,10 +873,6 @@ pub async fn call_http_tool(
     })
     .await
 }
-pub async fn discover_stdio_tools(launch: McpStdioLaunch) -> AppResult<McpStdioDiscovery> {
-    discover_stdio_tools_inner(launch, &[]).await
-}
-
 async fn discover_stdio_tools_inner(
     launch: McpStdioLaunch,
     env: &[(String, String)],
@@ -1224,7 +1125,7 @@ async fn call_stdio_tool(
     }
 }
 
-pub async fn call_profile_stdio_tool(
+pub async fn call_provider_stdio_tool(
     db: &Database,
     provider: &crate::ai_runtime::capability_resolver::ResolvedCapabilityProvider,
     arguments: serde_json::Value,
@@ -1236,11 +1137,11 @@ pub async fn call_profile_stdio_tool(
             "resolved provider is not an MCP provider",
         ));
     }
-    let profile = load_stdio_profile(db, &provider.profile_id)?;
+    let loaded_provider = load_stdio_provider(db, &provider.profile_id)?;
     let (result, stderr_summary) = call_stdio_tool(McpStdioToolCallLaunch {
-        command: profile.command,
-        args: profile.args,
-        env: profile.env,
+        command: loaded_provider.command,
+        args: loaded_provider.args,
+        env: loaded_provider.env,
         cwd: options.cwd,
         request_timeout: options.request_timeout,
         max_stdout_line_bytes: options.max_stdout_line_bytes,
@@ -1250,14 +1151,14 @@ pub async fn call_profile_stdio_tool(
     })
     .await?;
     Ok(McpToolCallResult {
-        profile_id: provider.profile_id.clone(),
+        provider_id: provider.profile_id.clone(),
         tool_name: provider.tool_name.clone(),
         result,
         stderr_summary,
     })
 }
 
-pub async fn call_profile_http_tool_with_sender<F, Fut>(
+pub async fn call_provider_http_tool_with_sender<F, Fut>(
     db: &Database,
     provider: &crate::ai_runtime::capability_resolver::ResolvedCapabilityProvider,
     arguments: serde_json::Value,
@@ -1274,19 +1175,13 @@ where
             "resolved provider is not an MCP provider",
         ));
     }
-    let profile = load_remote_profile(db, &provider.profile_id)?;
-    if profile.transport == "sse" {
-        return Err(runtime_error(
-            McpRuntimeFailureKind::PolicyDenied,
-            "unsupported_transport: MCP SSE runtime is not implemented",
-        ));
-    }
+    let loaded_provider = load_remote_provider(db, &provider.profile_id)?;
     let result = call_http_tool_with_sender(
         McpHttpLaunch {
-            url: profile.url,
+            url: loaded_provider.url,
             request_timeout: options.request_timeout,
             max_response_bytes: options.max_stdout_line_bytes,
-            allow_localhost_dev: profile.allow_localhost_dev,
+            allow_localhost_dev: loaded_provider.allow_localhost_dev,
         },
         provider.tool_name.clone(),
         arguments,
@@ -1294,14 +1189,14 @@ where
     )
     .await?;
     Ok(McpToolCallResult {
-        profile_id: provider.profile_id.clone(),
+        provider_id: provider.profile_id.clone(),
         tool_name: provider.tool_name.clone(),
         result,
         stderr_summary: None,
     })
 }
 
-pub async fn call_profile_http_tool(
+pub async fn call_provider_http_tool(
     db: &Database,
     provider: &crate::ai_runtime::capability_resolver::ResolvedCapabilityProvider,
     arguments: serde_json::Value,
@@ -1313,45 +1208,35 @@ pub async fn call_profile_http_tool(
             "resolved provider is not an MCP provider",
         ));
     }
-    let profile = load_remote_profile(db, &provider.profile_id)?;
-    if profile.transport == "sse" {
-        return Err(runtime_error(
-            McpRuntimeFailureKind::PolicyDenied,
-            "unsupported_transport: MCP SSE runtime is not implemented",
-        ));
-    }
+    let loaded_provider = load_remote_provider(db, &provider.profile_id)?;
     let result = call_http_tool(
         McpHttpLaunch {
-            url: profile.url,
+            url: loaded_provider.url,
             request_timeout: options.request_timeout,
             max_response_bytes: options.max_stdout_line_bytes,
-            allow_localhost_dev: profile.allow_localhost_dev,
+            allow_localhost_dev: loaded_provider.allow_localhost_dev,
         },
         provider.tool_name.clone(),
         arguments,
     )
     .await?;
     Ok(McpToolCallResult {
-        profile_id: provider.profile_id.clone(),
+        provider_id: provider.profile_id.clone(),
         tool_name: provider.tool_name.clone(),
         result,
         stderr_summary: None,
     })
 }
 
-pub async fn call_profile_tool(
+pub async fn call_provider_tool(
     db: &Database,
     provider: &crate::ai_runtime::capability_resolver::ResolvedCapabilityProvider,
     arguments: serde_json::Value,
     options: McpHostRuntimeOptions,
 ) -> AppResult<McpToolCallResult> {
-    match load_profile_transport(db, &provider.profile_id)?.as_str() {
-        "stdio" => call_profile_stdio_tool(db, provider, arguments, options).await,
-        "http" | "https" => call_profile_http_tool(db, provider, arguments, options).await,
-        "sse" => Err(runtime_error(
-            McpRuntimeFailureKind::PolicyDenied,
-            "unsupported_transport: MCP SSE runtime is not implemented",
-        )),
+    match load_provider_transport(db, &provider.profile_id)?.as_str() {
+        "stdio" => call_provider_stdio_tool(db, provider, arguments, options).await,
+        "https" => call_provider_http_tool(db, provider, arguments, options).await,
         other => Err(runtime_error(
             McpRuntimeFailureKind::PolicyDenied,
             format!("unsupported_transport: {other}"),
@@ -1367,19 +1252,19 @@ pub async fn call_required_capability(
 ) -> AppResult<McpToolCallResult> {
     let provider =
         crate::ai_runtime::capability_resolver::resolve_required_capability(db, capability)?;
-    call_profile_tool(db, &provider, arguments, options).await
+    call_provider_tool(db, &provider, arguments, options).await
 }
-pub async fn discover_profile_stdio_tools(
+pub async fn discover_provider_stdio_tools(
     db: &Database,
-    profile_id: &str,
+    provider_id: &str,
     options: McpHostRuntimeOptions,
 ) -> AppResult<McpStdioDiscovery> {
-    let profile = load_stdio_profile(db, profile_id)?;
-    let env = profile.env;
-    let discovery = discover_stdio_tools_inner(
+    let provider = load_stdio_provider(db, provider_id)?;
+    let env = provider.env;
+    discover_stdio_tools_inner(
         McpStdioLaunch {
-            command: profile.command,
-            args: profile.args,
+            command: provider.command,
+            args: provider.args,
             cwd: options.cwd,
             request_timeout: options.request_timeout,
             max_stdout_line_bytes: options.max_stdout_line_bytes,
@@ -1387,21 +1272,12 @@ pub async fn discover_profile_stdio_tools(
         },
         &env,
     )
-    .await?;
-
-    record_discovered_tool_inventory(
-        db,
-        profile_id,
-        &profile.capability_mapping_json,
-        &discovery.tools,
-    )?;
-
-    Ok(discovery)
+    .await
 }
 
-pub async fn discover_profile_http_tools_with_sender<F, Fut>(
+pub async fn discover_provider_http_tools_with_sender<F, Fut>(
     db: &Database,
-    profile_id: &str,
+    provider_id: &str,
     options: McpHostRuntimeOptions,
     sender: F,
 ) -> AppResult<McpStdioDiscovery>
@@ -1409,656 +1285,74 @@ where
     F: FnMut(serde_json::Value) -> Fut,
     Fut: Future<Output = AppResult<serde_json::Value>>,
 {
-    let profile = load_remote_profile(db, profile_id)?;
-    if profile.transport == "sse" {
-        return Err(runtime_error(
-            McpRuntimeFailureKind::PolicyDenied,
-            "unsupported_transport: MCP SSE runtime is not implemented",
-        ));
-    }
-    let discovery = discover_http_tools_with_sender(
+    let provider = load_remote_provider(db, provider_id)?;
+    discover_http_tools_with_sender(
         McpHttpLaunch {
-            url: profile.url,
+            url: provider.url,
             request_timeout: options.request_timeout,
             max_response_bytes: options.max_stdout_line_bytes,
-            allow_localhost_dev: profile.allow_localhost_dev,
+            allow_localhost_dev: provider.allow_localhost_dev,
         },
         sender,
     )
-    .await?;
-    record_discovered_tool_inventory(
-        db,
-        profile_id,
-        &profile.capability_mapping_json,
-        &discovery.tools,
-    )?;
-    Ok(discovery)
+    .await
 }
 
-pub async fn discover_profile_tools(
+pub async fn discover_provider_tools(
     db: &Database,
-    profile_id: &str,
+    provider_id: &str,
     options: McpHostRuntimeOptions,
 ) -> AppResult<McpStdioDiscovery> {
-    match load_profile_transport(db, profile_id)?.as_str() {
-        "stdio" => discover_profile_stdio_tools(db, profile_id, options).await,
-        "http" | "https" => {
-            let profile = load_remote_profile(db, profile_id)?;
-            let discovery = discover_http_tools(McpHttpLaunch {
-                url: profile.url,
+    match load_provider_transport(db, provider_id)?.as_str() {
+        "stdio" => discover_provider_stdio_tools(db, provider_id, options).await,
+        "https" => {
+            let provider = load_remote_provider(db, provider_id)?;
+            discover_http_tools(McpHttpLaunch {
+                url: provider.url,
                 request_timeout: options.request_timeout,
                 max_response_bytes: options.max_stdout_line_bytes,
-                allow_localhost_dev: profile.allow_localhost_dev,
+                allow_localhost_dev: provider.allow_localhost_dev,
             })
-            .await?;
-            record_discovered_tool_inventory(
-                db,
-                profile_id,
-                &profile.capability_mapping_json,
-                &discovery.tools,
-            )?;
-            Ok(discovery)
+            .await
         }
-        "sse" => Err(runtime_error(
-            McpRuntimeFailureKind::PolicyDenied,
-            "unsupported_transport: MCP SSE runtime is not implemented",
-        )),
         other => Err(runtime_error(
             McpRuntimeFailureKind::PolicyDenied,
             format!("unsupported_transport: {other}"),
         )),
     }
 }
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::fs;
-    use std::process::Command;
 
-    fn fake_server_source() -> &'static str {
-        r##"
-use std::io::{self, BufRead, Write};
-
-fn main() {
-    let mode = std::env::args().nth(1).unwrap_or_else(|| "ok".to_string());
-    if mode == "invalid" {
-        println!("not-json");
-        return;
+    #[test]
+    fn http_runtime_url_requires_https_for_remote_hosts() {
+        let err = validate_mcp_http_runtime_url("http://example.com/mcp", false)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("requires HTTPS"), "{err}");
     }
 
-    let stdin = io::stdin();
-    let mut lines = stdin.lock().lines();
-    let _initialize = lines.next();
-    println!("{}", r#"{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2025-06-18","capabilities":{"tools":{"listChanged":false}},"serverInfo":{"name":"fake-mcp","version":"0.1.0"}}}"#);
-    io::stdout().flush().unwrap();
-
-    let _initialized = lines.next();
-    let request = lines.next().and_then(Result::ok).unwrap_or_default();
-    if mode == "secret-stderr" {
-        eprintln!("token=sk-live-should-not-appear-in-summary");
-    } else {
-        eprintln!("fake server log");
-    }
-    if request.contains("\"tools/call\"") {
-        println!("{}", r#"{"jsonrpc":"2.0","id":2,"result":{"content":[{"type":"text","text":"search result for iris"}],"isError":false}}"#);
-    } else {
-        println!("{}", r#"{"jsonrpc":"2.0","id":2,"result":{"tools":[{"name":"search","title":"Search","description":"Search the web","inputSchema":{"type":"object","properties":{"q":{"type":"string"}},"required":["q"]}}]}}"#);
-    }
-    io::stdout().flush().unwrap();
-}
-"##
+    #[test]
+    fn http_runtime_url_rejects_secret_material() {
+        let err = validate_mcp_http_runtime_url("https://example.com/mcp?api_key=secret", false)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("secret material"), "{err}");
     }
 
-    fn compile_fake_server() -> PathBuf {
-        let temp_dir = tempfile::tempdir().unwrap();
-        let dir = temp_dir.keep();
-        let src = dir.join("fake_mcp_server.rs");
-        let exe = dir.join(if cfg!(windows) {
-            "fake_mcp_server.exe"
-        } else {
-            "fake_mcp_server"
-        });
-        fs::write(&src, fake_server_source()).unwrap();
-        let output = Command::new("rustc")
-            .arg(&src)
-            .arg("-o")
-            .arg(&exe)
-            .output()
-            .unwrap();
-        assert!(
-            output.status.success(),
-            "rustc failed: {}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-        exe
+    #[test]
+    fn http_runtime_url_blocks_private_hosts_outside_dev_mode() {
+        let err = validate_mcp_http_runtime_url("https://127.0.0.1:9000/mcp", false)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("private, loopback, or metadata"), "{err}");
     }
 
-    fn launch(command: PathBuf) -> McpStdioLaunch {
-        McpStdioLaunch {
-            command,
-            args: Vec::new(),
-            cwd: None,
-            request_timeout: Duration::from_secs(5),
-            max_stdout_line_bytes: 16 * 1024,
-            max_stderr_bytes: 1024,
-        }
-    }
-
-    #[tokio::test]
-    async fn stdio_discovery_initializes_and_lists_tools() {
-        let exe = compile_fake_server();
-        let discovery = discover_stdio_tools(launch(exe)).await.unwrap();
-
-        assert_eq!(discovery.protocol_version, MCP_PROTOCOL_VERSION);
-        assert_eq!(discovery.server_name, "fake-mcp");
-        assert_eq!(discovery.server_version, Some("0.1.0".into()));
-        assert_eq!(discovery.tools.len(), 1);
-        assert_eq!(discovery.tools[0].name, "search");
-        assert_eq!(discovery.tools[0].title, Some("Search".into()));
-        assert_eq!(discovery.tools[0].input_schema["type"], "object");
-        assert!(discovery
-            .stderr_summary
-            .unwrap()
-            .contains("fake server log"));
-    }
-
-    #[tokio::test]
-    async fn stdio_discovery_normalizes_invalid_stdout_as_invalid_response() {
-        let exe = compile_fake_server();
-        let mut launch = launch(exe);
-        launch.args.push("invalid".into());
-
-        let err = discover_stdio_tools(launch).await.unwrap_err();
-        assert!(err.to_string().contains("invalid_response"));
-    }
-
-    #[tokio::test]
-    async fn stdio_discovery_redacts_secret_stderr_summary() {
-        let exe = compile_fake_server();
-        let mut launch = launch(exe);
-        launch.args.push("secret-stderr".into());
-
-        let discovery = discover_stdio_tools(launch).await.unwrap();
-        let stderr = discovery.stderr_summary.unwrap();
-        assert!(stderr.contains("[REDACTED:SECRET]"));
-        assert!(!stderr.contains("sk-live-should-not-appear"));
-    }
-
-    #[tokio::test]
-    async fn mcp_tools_call_mapped_capability_invokes_stdio_tools_call() {
-        use crate::ai_runtime::mcp_runtime_registry::{
-            record_tool_inventory, upsert_runtime_profile, upsert_server_catalog,
-            McpRuntimeProfileInput, McpRuntimeStatus, McpServerCatalogInput, McpToolInventoryInput,
-        };
-        use crate::storage::db::Database;
-
-        let db = Database::open_in_memory().unwrap();
-        let exe = compile_fake_server();
-        upsert_server_catalog(
-            &db,
-            &McpServerCatalogInput {
-                id: "fake".into(),
-                display_name: "Fake MCP".into(),
-                transport: "stdio".into(),
-                command: Some(exe.to_string_lossy().into_owned()),
-                args_json: "[]".into(),
-                url: None,
-                env_schema_json: "{}".into(),
-                capability_tags_json: "{\"capability\":\"web.search\"}".into(),
-                source: "test".into(),
-            },
-        )
-        .unwrap();
-        upsert_runtime_profile(
-            &db,
-            &McpRuntimeProfileInput {
-                id: "fake-default".into(),
-                server_id: "fake".into(),
-                vault_scope_hash: None,
-                display_name: "Fake default".into(),
-                enabled: true,
-                transport_config_json: "{}".into(),
-                env_bindings_json: "{}".into(),
-                status: McpRuntimeStatus::Ready,
-                last_error: None,
-            },
-        )
-        .unwrap();
-        record_tool_inventory(
-            &db,
-            &McpToolInventoryInput {
-                profile_id: "fake-default".into(),
-                tool_name: "search".into(),
-                schema_hash: "sha256:test".into(),
-                capability_mapping_json: "{\"capability\":\"web.search\"}".into(),
-                description: Some("Search the web".into()),
-            },
-        )
-        .unwrap();
-
-        let call = call_required_capability(
-            &db,
-            "web.search",
-            json!({"q": "iris"}),
-            McpHostRuntimeOptions {
-                request_timeout: Duration::from_secs(5),
-                max_stdout_line_bytes: 16 * 1024,
-                max_stderr_bytes: 1024,
-                cwd: None,
-            },
-        )
-        .await
-        .unwrap();
-
-        assert_eq!(call.profile_id, "fake-default");
-        assert_eq!(call.tool_name, "search");
-        assert_eq!(call.result["isError"], false);
-        assert_eq!(call.result["content"][0]["text"], "search result for iris");
-    }
-
-    #[tokio::test]
-    async fn http_discovery_initializes_and_lists_tools_with_mock_sender() {
-        let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
-        let seen_calls = seen.clone();
-        let discovery = discover_http_tools_with_sender(
-            McpHttpLaunch {
-                url: "https://example.com/mcp".into(),
-                request_timeout: Duration::from_secs(5),
-                max_response_bytes: 16 * 1024,
-                allow_localhost_dev: false,
-            },
-            move |request: serde_json::Value| {
-                let seen_calls = seen_calls.clone();
-                async move {
-                    let method = request
-                        .get("method")
-                        .and_then(|value| value.as_str())
-                        .unwrap_or_default()
-                        .to_string();
-                    seen_calls.lock().unwrap().push(method.clone());
-                    match method.as_str() {
-                        "initialize" => Ok(json!({
-                            "jsonrpc": "2.0",
-                            "id": 1,
-                            "result": {
-                                "protocolVersion": MCP_PROTOCOL_VERSION,
-                                "serverInfo": {"name": "http-mcp", "version": "0.2.0"}
-                            }
-                        })),
-                        "notifications/initialized" => Ok(json!({"accepted": true})),
-                        "tools/list" => Ok(json!({
-                            "jsonrpc": "2.0",
-                            "id": 2,
-                            "result": {
-                                "tools": [{
-                                    "name": "search",
-                                    "title": "Search",
-                                    "description": "HTTP search",
-                                    "inputSchema": {"type": "object", "properties": {"q": {"type": "string"}}}
-                                }]
-                            }
-                        })),
-                        _ => Err(AppError::msg("unexpected MCP method")),
-                    }
-                }
-            },
-        )
-        .await
-        .unwrap();
-
-        assert_eq!(discovery.protocol_version, MCP_PROTOCOL_VERSION);
-        assert_eq!(discovery.server_name, "http-mcp");
-        assert_eq!(discovery.server_version, Some("0.2.0".into()));
-        assert_eq!(discovery.tools.len(), 1);
-        assert_eq!(discovery.tools[0].name, "search");
-        assert_eq!(
-            seen.lock().unwrap().as_slice(),
-            ["initialize", "notifications/initialized", "tools/list"]
-        );
-    }
-
-    #[tokio::test]
-    async fn http_discovery_rejects_unsafe_targets_before_send() {
-        let sent = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
-        let sent_count = sent.clone();
-        let err = discover_http_tools_with_sender(
-            McpHttpLaunch {
-                url: "http://example.com/mcp".into(),
-                request_timeout: Duration::from_secs(5),
-                max_response_bytes: 16 * 1024,
-                allow_localhost_dev: false,
-            },
-            move |_request| {
-                let sent_count = sent_count.clone();
-                async move {
-                    sent_count.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-                    Ok(json!({}))
-                }
-            },
-        )
-        .await
-        .unwrap_err();
-
-        assert!(err.to_string().contains("network_denied"));
-        assert_eq!(sent.load(std::sync::atomic::Ordering::SeqCst), 0);
-
-        let err = validate_mcp_http_runtime_url("https://169.254.169.254/mcp", false).unwrap_err();
-        assert!(err.to_string().contains("network_denied"));
-    }
-    #[tokio::test]
-    async fn profile_http_discovery_persists_tool_inventory_with_mock_sender() {
-        use crate::ai_runtime::mcp_runtime_registry::{
-            list_tool_inventory, upsert_runtime_profile, upsert_server_catalog,
-            McpRuntimeProfileInput, McpRuntimeStatus, McpServerCatalogInput,
-        };
-        use crate::storage::db::Database;
-
-        let db = Database::open_in_memory().unwrap();
-        upsert_server_catalog(
-            &db,
-            &McpServerCatalogInput {
-                id: "http-fake".into(),
-                display_name: "HTTP Fake MCP".into(),
-                transport: "https".into(),
-                command: None,
-                args_json: "[]".into(),
-                url: Some("https://example.com/mcp".into()),
-                env_schema_json: "{}".into(),
-                capability_tags_json: "[\"web.search\"]".into(),
-                source: "test".into(),
-            },
-        )
-        .unwrap();
-        upsert_runtime_profile(
-            &db,
-            &McpRuntimeProfileInput {
-                id: "http-fake-default".into(),
-                server_id: "http-fake".into(),
-                vault_scope_hash: None,
-                display_name: "HTTP fake default".into(),
-                enabled: true,
-                transport_config_json: "{}".into(),
-                env_bindings_json: "{}".into(),
-                status: McpRuntimeStatus::Unknown,
-                last_error: None,
-            },
-        )
-        .unwrap();
-
-        let discovery = discover_profile_http_tools_with_sender(
-            &db,
-            "http-fake-default",
-            McpHostRuntimeOptions {
-                request_timeout: Duration::from_secs(5),
-                max_stdout_line_bytes: 16 * 1024,
-                max_stderr_bytes: 1024,
-                cwd: None,
-            },
-            |request| async move {
-                match request.get("method").and_then(|value| value.as_str()) {
-                    Some("initialize") => Ok(json!({
-                        "jsonrpc": "2.0",
-                        "id": 1,
-                        "result": {
-                            "protocolVersion": MCP_PROTOCOL_VERSION,
-                            "serverInfo": {"name": "http-profile-mcp", "version": "1.0.0"}
-                        }
-                    })),
-                    Some("notifications/initialized") => Ok(json!({"accepted": true})),
-                    Some("tools/list") => Ok(json!({
-                        "jsonrpc": "2.0",
-                        "id": 2,
-                        "result": {
-                            "tools": [{
-                                "name": "search",
-                                "description": "HTTP profile search",
-                                "inputSchema": {"type": "object", "properties": {"q": {"type": "string"}}}
-                            }]
-                        }
-                    })),
-                    _ => Err(AppError::msg("unexpected MCP HTTP profile method")),
-                }
-            },
-        )
-        .await
-        .unwrap();
-
-        assert_eq!(discovery.server_name, "http-profile-mcp");
-        assert_eq!(discovery.tools[0].name, "search");
-        let inventory = list_tool_inventory(&db, "http-fake-default").unwrap();
-        assert_eq!(inventory.len(), 1);
-        assert_eq!(inventory[0].tool_name, "search");
-        assert_eq!(inventory[0].capability_mapping_json, "[\"web.search\"]");
-    }
-
-    #[tokio::test]
-    async fn http_mcp_tools_call_invokes_mapped_capability_with_mock_sender() {
-        use crate::ai_runtime::capability_resolver::resolve_required_capability;
-        use crate::ai_runtime::mcp_runtime_registry::{
-            record_tool_inventory, upsert_runtime_profile, upsert_server_catalog,
-            McpRuntimeProfileInput, McpRuntimeStatus, McpServerCatalogInput, McpToolInventoryInput,
-        };
-        use crate::storage::db::Database;
-
-        let db = Database::open_in_memory().unwrap();
-        upsert_server_catalog(
-            &db,
-            &McpServerCatalogInput {
-                id: "http-fake".into(),
-                display_name: "HTTP Fake MCP".into(),
-                transport: "https".into(),
-                command: None,
-                args_json: "[]".into(),
-                url: Some("https://example.com/mcp".into()),
-                env_schema_json: "{}".into(),
-                capability_tags_json: "[\"web.search\"]".into(),
-                source: "test".into(),
-            },
-        )
-        .unwrap();
-        upsert_runtime_profile(
-            &db,
-            &McpRuntimeProfileInput {
-                id: "http-fake-default".into(),
-                server_id: "http-fake".into(),
-                vault_scope_hash: None,
-                display_name: "HTTP fake default".into(),
-                enabled: true,
-                transport_config_json: "{}".into(),
-                env_bindings_json: "{}".into(),
-                status: McpRuntimeStatus::Ready,
-                last_error: None,
-            },
-        )
-        .unwrap();
-        record_tool_inventory(
-            &db,
-            &McpToolInventoryInput {
-                profile_id: "http-fake-default".into(),
-                tool_name: "search".into(),
-                schema_hash: "sha256:test".into(),
-                capability_mapping_json: "{\"capability\":\"web.search\"}".into(),
-                description: Some("HTTP search".into()),
-            },
-        )
-        .unwrap();
-        let provider = resolve_required_capability(&db, "web.search").unwrap();
-        let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
-        let seen_calls = seen.clone();
-
-        let call = call_profile_http_tool_with_sender(
-            &db,
-            &provider,
-            json!({"q": "iris"}),
-            McpHostRuntimeOptions {
-                request_timeout: Duration::from_secs(5),
-                max_stdout_line_bytes: 16 * 1024,
-                max_stderr_bytes: 1024,
-                cwd: None,
-            },
-            move |request| {
-                let seen_calls = seen_calls.clone();
-                async move {
-                    let method = request
-                        .get("method")
-                        .and_then(|value| value.as_str())
-                        .unwrap_or_default()
-                        .to_string();
-                    seen_calls.lock().unwrap().push(method.clone());
-                    match method.as_str() {
-                        "initialize" => Ok(json!({
-                            "jsonrpc": "2.0",
-                            "id": 1,
-                            "result": {
-                                "protocolVersion": MCP_PROTOCOL_VERSION,
-                                "serverInfo": {"name": "http-profile-mcp", "version": "1.0.0"}
-                            }
-                        })),
-                        "notifications/initialized" => Ok(json!({"accepted": true})),
-                        "tools/call" => Ok(json!({
-                            "jsonrpc": "2.0",
-                            "id": 2,
-                            "result": {
-                                "content": [{"type": "text", "text": "http search result for iris"}],
-                                "isError": false
-                            }
-                        })),
-                        _ => Err(AppError::msg("unexpected MCP HTTP profile method")),
-                    }
-                }
-            },
-        )
-        .await
-        .unwrap();
-
-        assert_eq!(call.profile_id, "http-fake-default");
-        assert_eq!(call.tool_name, "search");
-        assert_eq!(call.result["isError"], false);
-        assert_eq!(
-            call.result["content"][0]["text"],
-            "http search result for iris"
-        );
-        assert_eq!(
-            seen.lock().unwrap().as_slice(),
-            ["initialize", "notifications/initialized", "tools/call"]
-        );
-    }
-
-    #[tokio::test]
-    async fn profile_sse_discovery_returns_stable_unsupported_transport() {
-        use crate::ai_runtime::mcp_runtime_registry::{
-            upsert_runtime_profile, upsert_server_catalog, McpRuntimeProfileInput,
-            McpRuntimeStatus, McpServerCatalogInput,
-        };
-        use crate::storage::db::Database;
-
-        let db = Database::open_in_memory().unwrap();
-        upsert_server_catalog(
-            &db,
-            &McpServerCatalogInput {
-                id: "sse-fake".into(),
-                display_name: "SSE Fake MCP".into(),
-                transport: "sse".into(),
-                command: None,
-                args_json: "[]".into(),
-                url: Some("https://example.com/sse".into()),
-                env_schema_json: "{}".into(),
-                capability_tags_json: "[\"web.search\"]".into(),
-                source: "test".into(),
-            },
-        )
-        .unwrap();
-        upsert_runtime_profile(
-            &db,
-            &McpRuntimeProfileInput {
-                id: "sse-fake-default".into(),
-                server_id: "sse-fake".into(),
-                vault_scope_hash: None,
-                display_name: "SSE fake default".into(),
-                enabled: true,
-                transport_config_json: "{}".into(),
-                env_bindings_json: "{}".into(),
-                status: McpRuntimeStatus::Unknown,
-                last_error: None,
-            },
-        )
-        .unwrap();
-
-        let err = discover_profile_tools(
-            &db,
-            "sse-fake-default",
-            McpHostRuntimeOptions {
-                request_timeout: Duration::from_secs(5),
-                max_stdout_line_bytes: 16 * 1024,
-                max_stderr_bytes: 1024,
-                cwd: None,
-            },
-        )
-        .await
-        .unwrap_err();
-
-        assert!(err.to_string().contains("unsupported_transport"));
-    }
-
-    #[tokio::test]
-    async fn profile_stdio_discovery_persists_tool_inventory() {
-        use crate::ai_runtime::mcp_runtime_registry::{
-            list_tool_inventory, upsert_runtime_profile, upsert_server_catalog,
-            McpRuntimeProfileInput, McpRuntimeStatus, McpServerCatalogInput,
-        };
-        use crate::storage::db::Database;
-
-        let db = Database::open_in_memory().unwrap();
-        let exe = compile_fake_server();
-        upsert_server_catalog(
-            &db,
-            &McpServerCatalogInput {
-                id: "fake".into(),
-                display_name: "Fake MCP".into(),
-                transport: "stdio".into(),
-                command: Some(exe.to_string_lossy().into_owned()),
-                args_json: "[]".into(),
-                url: None,
-                env_schema_json: "{}".into(),
-                capability_tags_json: "[\"web.search\"]".into(),
-                source: "test".into(),
-            },
-        )
-        .unwrap();
-        upsert_runtime_profile(
-            &db,
-            &McpRuntimeProfileInput {
-                id: "fake-default".into(),
-                server_id: "fake".into(),
-                vault_scope_hash: None,
-                display_name: "Fake default".into(),
-                enabled: true,
-                transport_config_json: "{}".into(),
-                env_bindings_json: "{}".into(),
-                status: McpRuntimeStatus::Unknown,
-                last_error: None,
-            },
-        )
-        .unwrap();
-
-        let discovery = discover_profile_stdio_tools(
-            &db,
-            "fake-default",
-            McpHostRuntimeOptions {
-                request_timeout: Duration::from_secs(5),
-                max_stdout_line_bytes: 16 * 1024,
-                max_stderr_bytes: 1024,
-                cwd: None,
-            },
-        )
-        .await
-        .unwrap();
-
-        assert_eq!(discovery.tools[0].name, "search");
-        let inventory = list_tool_inventory(&db, "fake-default").unwrap();
-        assert_eq!(inventory.len(), 1);
-        assert_eq!(inventory[0].tool_name, "search");
-        assert!(inventory[0].schema_hash.starts_with("sha256:"));
-        assert_eq!(inventory[0].capability_mapping_json, "[\"web.search\"]");
+    #[test]
+    fn http_runtime_url_allows_localhost_only_in_dev_mode() {
+        assert!(validate_mcp_http_runtime_url("http://localhost:9000/mcp", true).is_ok());
+        assert!(validate_mcp_http_runtime_url("https://localhost:9000/mcp", true).is_ok());
     }
 }

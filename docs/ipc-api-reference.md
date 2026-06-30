@@ -1038,65 +1038,29 @@ pub async fn skills_list(
 
 - **描述**：列出所有已安装的 Skills（全局 + vault 级别）。返回 `Vec<SkillEntry>`。
 
-### skills_install
+### skills_create_draft
 
 ```rust
-pub async fn skills_install(
+pub async fn skills_create_draft(
     state: State<'_, Arc<AppState>>,
-    app_handle: tauri::AppHandle,
-    request: SkillsInstallRequest,
-) -> AppResult<serde_json::Value>
+    request: SkillCreateDraftRequest,
+) -> AppResult<SkillDraftDto>
 ```
 
-- **描述**：安装 Skill。支持四种来源：`"url"`（从 URL 下载）、`"git"`（从 Git 仓库克隆）、`"local"`（从本地路径复制）、`"registry"`（注册表解析，如 SkillHub：`registry=skillhub`，`path_or_url` 为 skill 名或页面 URL）。
-- **副作用**：写入 `skill_install_sources`、刷新 `skill_activation_index`、默认启用，并 emit `skills:changed`。
+- **描述**：生成 prompt-only `SKILL.md` 草稿、目标路径和内容哈希。不会写入文件。
+- **副作用**：无；调用方必须展示草稿并等待用户确认。
 
-### skills_uninstall
+### skills_confirm
 
 ```rust
-pub async fn skills_uninstall(
+pub async fn skills_confirm(
     state: State<'_, Arc<AppState>>,
-    name: String,
-    scope: String,
+    draft: SkillDraftDto,
 ) -> AppResult<()>
 ```
 
-- **描述**：卸载指定 Skill。scope 为 `"global"` 或 `"vault"`。
-
-### skills_toggle
-
-```rust
-pub async fn skills_toggle(
-    state: State<'_, Arc<AppState>>,
-    name: String,
-    scope: String,
-    enabled: bool,
-) -> AppResult<()>
-```
-
-- **描述**：启用/禁用指定 Skill。
-
-### skills_read
-
-```rust
-pub async fn skills_read(
-    state: State<'_, Arc<AppState>>,
-    request: SkillsReadRequest,
-) -> AppResult<String>
-```
-
-- **描述**：读取 SKILL.md 文件内容（用于应用内编辑）。
-
-### skills_write
-
-```rust
-pub async fn skills_write(
-    state: State<'_, Arc<AppState>>,
-    request: SkillsWriteRequest,
-) -> AppResult<serde_json::Value>
-```
-
-- **描述**：写入 SKILL.md 文件内容（编辑后保存）。
+- **描述**：校验草稿 markdown 与 `content_hash` 一致后写入 vault 级 `.iris/skills/<slug>/SKILL.md`，记录确认哈希并启用。
+- **副作用**：写入已确认的 prompt-only Skill 文件与确认元数据。
 
 ### prompt_profile_get
 
@@ -1380,72 +1344,35 @@ pub fn app_exit(
 
 ## 附录：注册顺序（lib.rs invoke_handler）
 
-完整的 110 个命令按注册顺序列出（`src-tauri/src/lib.rs:86-204`）：
+完整命令注册顺序以 `src-tauri/src/lib.rs` 的 `tauri::generate_handler!` 为准。AI 能力收口后，Skills / Web Evidence 相关公开命令为：
 
 ```
-settings_get, settings_set, settings_reset, credential_set, credential_has, credential_delete,
-file_list, file_read, file_write, vault_asset_write, file_delete, file_discard, file_rename,
-file_create, vault_set, vault_get, index_rescan, file_backlinks, folder_list, folder_create,
-folder_rename, folder_delete, recycle_list_cmd, recycle_restore_cmd, recycle_purge_cmd,
-search_keyword, search_semantic, search_reindex, llm_providers, llm_generate, llm_chat,
-llm_abort_cmd, llm_config_get, llm_config_set, llm_config_apply_deepseek_defaults,
-connectivity_status, llm_config_test, minimax_config_get, minimax_config_set, minimax_config_test,
-graph_data, version_list_cmd, version_preview_cmd, version_restore_cmd, version_delete_cmd,
-version_finalize_current_cmd, version_cleanup_cmd, version_save_manual_cmd, version_save_idle_cmd,
-template_list, template_create, template_read, template_save, template_delete, tag_list,
-export_file, corpus_list, corpus_upsert, writing_execute, patch_apply, path_sync_suggest,
-citation_check, organize_execute, organize_apply, chapter_writing_execute, document_check_execute,
-parse_document_chapters, assistant_execute, context_assemble, ai_send_message, tool_confirm,
-ai_list_tools, knowledge_reindex, search_hybrid, session_list, session_delete, session_rename,
-session_retract, session_load, session_clear_all, ai_cache_clear, harness_resume, harness_abort,
-skills_list, skills_install, skills_uninstall, skills_toggle, skills_read, skills_write,
-prompt_profile_get, prompt_profile_set, prompt_profile_presets, research_execute, research_status,
-research_abort, research_active_tasks, research_generate_note, profile_list, profile_get,
-profile_set, profile_set_rule, profile_deactivate, profile_delete, inbox_list, inbox_add,
-inbox_update_status, inbox_delete, inbox_counts, app_exit, get_desktop_chrome_metrics,
-reapply_window_chrome
+skills_list, skills_paths, skills_create_draft, skills_confirm,
+web_evidence_provider_upsert, web_evidence_providers_list,
+web_evidence_provider_toggle, web_evidence_provider_delete,
+web_evidence_provider_diagnostics
 ```
 
 ---
 
-## Skills and MCP Runtime IPC Contract
+## Prompt-Only Skills and Web Evidence Provider IPC Contract
 
-This section is the stable frontend contract for the current Skills/MCP runtime boundary.
+This section is the stable frontend contract after the Iris AI reign-in.
 
-### Prompt-only Skills
+### Prompt-Only Skills
 
-- prompt-only skills do not require MCP.
-- A Skill with only `SKILL.md` and no `iris.skill.toml` is treated as legacy prompt-only behavior guidance.
-- Prompt-only availability must not be degraded merely because no MCP profile, daemon, workspace, or generated files exist.
+- Skills are prompt-only `SKILL.md` files created inside Iris and confirmed by the user.
+- SKILL.md scope is the fact source; SQLite stores only enable/index state and confirmed hash metadata.
+- Changed skill content or scope changes the hash and requires reconfirmation before activation.
+- Frontend callers use `skillsCreateDraft` and `skillsConfirm` for the creation flow.
 
-### Runtime and Activation Status
+### Web Evidence Providers
 
-- runtime_ready vs activation_ready: `runtime_ready` describes whether declared external runtime dependencies are ready; `activation_ready` describes whether Iris may inject the usable Skill sections into the model prompt.
-- A prompt-only Skill can have `runtime_ready = true` because no runtime is required.
-- An MCP-dependent Skill can be installed and enabled while `runtime_ready = false`; in that state Iris must avoid injecting runtime-dependent instructions that would claim unavailable capability.
-
-### Workspace Status
-
-- workspace_declared vs workspace_prepared: `workspace_declared` means the manifest declares a workspace contract; `workspace_prepared` means the declared folders/files have actually been prepared for the current vault.
-- `generated_files_count = 0` is not by itself a failure. Empty generated files can still be valid when the declared workspace exists and has no generated documents yet.
-
-### MCP Runtime Wrappers
-
-Frontend callers use these typed wrappers in `src/lib/ipc.ts`:
-
-- `mcpRuntimeProfileUpsert`
-- `mcpRuntimeProfileToggle`
-- `mcpRuntimeProfileDelete`
-- `mcpRuntimeProfilesList`
-- `mcpRuntimeToolsList`
-- `mcpRuntimeHealthCheck`
-- `mcpRuntimeCapabilityCall`
-- `mcpRuntimeToolInventoryList`
-- `mcpRuntimeHealthEventsList`
-
-Inventory and health event reads are metadata-only. They must not expose raw secrets, raw environment values, or raw MCP process output.
+- MCP is not exposed as arbitrary agent tooling. It is only a Web Evidence Provider when explicitly mapped to `web.search` or `web.fetch`.
+- Frontend callers use `webEvidenceProvidersList`, `webEvidenceProviderUpsert`, `webEvidenceProviderToggle`, `webEvidenceProviderDelete`, and `webEvidenceProviderDiagnostics`.
+- Provider diagnostics belong in management center UI, not in ordinary AI evidence packets.
 
 ### Tool Confirmation Outcomes
 
-- partial success confirmation outcome means the confirmed tool side effect succeeded, but assistant resume failed afterward.
-- The UI must not label that state as a tool failure. It should report that the tool action was committed and that only the model resume failed.
+- External web evidence and conflicts appear through the existing AI evidence packet UI and evidence detail temporary tab.
+- Provider process details, failures, and cache diagnostics are management-center diagnostics.

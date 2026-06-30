@@ -62,6 +62,7 @@ pub(super) fn skill_key(scope: SkillScope, name: &str) -> String {
 }
 
 /// Reject subpaths that attempt directory traversal or are absolute.
+#[cfg(test)]
 pub(super) fn validate_subpath(subpath: &str) -> AppResult<()> {
     use std::path::Component;
     for component in std::path::Path::new(subpath).components() {
@@ -80,6 +81,7 @@ pub(super) fn validate_subpath(subpath: &str) -> AppResult<()> {
 
 /// Copy `src` into `dest` atomically: write to a sibling temp directory first,
 /// then rename. This prevents half-written skill directories on error.
+#[cfg(test)]
 pub(super) fn atomic_copy_dir(src: &Path, dest: &Path) -> AppResult<()> {
     let parent = dest
         .parent()
@@ -99,6 +101,7 @@ pub(super) fn atomic_copy_dir(src: &Path, dest: &Path) -> AppResult<()> {
     Ok(())
 }
 
+#[cfg(test)]
 fn copy_dir_recursive(src: &Path, dest: &Path) -> AppResult<()> {
     fs::create_dir_all(dest)?;
     for entry in fs::read_dir(src)? {

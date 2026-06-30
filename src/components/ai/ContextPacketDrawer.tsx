@@ -134,8 +134,15 @@ export function ContextPacketDrawer({
       searchBackend: packet.web?.search_backend ?? null,
       sourceRank: null,
       failureReason: packet.web?.failure_reason ?? null,
+      providerId: packet.web?.provider_id ?? null,
+      providerKind: packet.web?.provider_kind ?? null,
+      rawResultHash: packet.web?.raw_result_hash ?? null,
+      extractionMethod: packet.web?.extraction_method ?? null,
+      conflictGroup: packet.web?.conflict_group ?? null,
+      conflictNote: packet.web?.conflict_note ?? null,
       retiredAt: null,
       createdAt: new Date().toISOString(),
+      liveExcerpt: packet.excerpt ?? null,
     }));
 
   const openEvidenceDetail = async () => {

@@ -13,11 +13,13 @@ use crate::ai_runtime::model_gateway::ProviderConfig;
 use crate::ai_runtime::retrieval_broker::{RetrievalLayers, RetrievalRequest};
 use crate::ai_runtime::retrieval_scope::RetrievalScope;
 use crate::ai_runtime::trace::{TraceRecorder, TraceStatus};
+use crate::ai_runtime::web_evidence_broker::{
+    collect_web_evidence, web_evidence_items_to_packets, WebEvidenceBrokerInput,
+};
 use crate::ai_runtime::writing_workflow;
 use crate::ai_runtime::{AiScene, TokenUsage, WritingIntent};
 use crate::app::AppState;
 use crate::error::AppResult;
-use crate::llm::search_web;
 
 /// Execute a chapter-level writing task (shared by IPC and assistant facade).
 pub(crate) async fn execute_chapter_writing(
@@ -35,8 +37,19 @@ pub(crate) async fn execute_chapter_writing(
 
     if input.web_authorized {
         let query = format!("{} {}", input.chapter.heading_text, input.writing_goal);
-        if let Ok(fetch) = search_web::fetch_search_context_for_db(&state.db, query.trim()).await {
-            let web = evidence_mixer::web_packets_from_fetch(&fetch, &input.writing_goal, None);
+        if let Ok(items) = collect_web_evidence(
+            &state.db,
+            WebEvidenceBrokerInput {
+                query: query.trim().to_string(),
+                urls: Vec::new(),
+                enabled: input.web_authorized,
+                max_search_results: 8,
+                max_fetches: 3,
+            },
+        )
+        .await
+        {
+            let web = web_evidence_items_to_packets(&input.writing_goal, &items);
             evidence = evidence_mixer::mix_and_rank(evidence, web, 20);
         }
     }
@@ -141,8 +154,19 @@ pub(crate) async fn execute_document_check(
 
     if input.web_authorized {
         let query = input.content[..input.content.len().min(200)].to_string();
-        if let Ok(fetch) = search_web::fetch_search_context_for_db(&state.db, &query).await {
-            let web = evidence_mixer::web_packets_from_fetch(&fetch, &input.target_path, None);
+        if let Ok(items) = collect_web_evidence(
+            &state.db,
+            WebEvidenceBrokerInput {
+                query: query.clone(),
+                urls: Vec::new(),
+                enabled: input.web_authorized,
+                max_search_results: 8,
+                max_fetches: 3,
+            },
+        )
+        .await
+        {
+            let web = web_evidence_items_to_packets(&input.target_path, &items);
             evidence = evidence_mixer::mix_and_rank(evidence, web, 20);
         }
     }

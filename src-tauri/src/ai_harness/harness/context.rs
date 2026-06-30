@@ -196,7 +196,6 @@ mod tests {
         let plan = SkillActivationPlanSummary {
             activated_skills: Vec::new(),
             requested_tools: vec!["mcp_runtime_profiles_list".into()],
-            requested_capabilities: Vec::new(),
             confirmation_required_tools: Vec::new(),
             blocked_capabilities: Vec::new(),
             skill_overlay_summary: "test".into(),

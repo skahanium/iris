@@ -4,13 +4,17 @@ use crate::app::AppState;
 use crate::error::{AppError, AppResult};
 use crate::storage::paths::validate_user_note_relative_path;
 
+use super::ToolDispatchContext;
+
 pub(super) async fn read_note(
     state: &AppState,
+    ctx: &ToolDispatchContext<'_>,
     args: &serde_json::Value,
 ) -> AppResult<serde_json::Value> {
     let path = args["path"]
         .as_str()
         .ok_or_else(|| AppError::msg("missing path"))?;
+    ctx.ensure_active_skill_scope_allows_path(&state.db, path)?;
     let vault = state.vault_path()?;
     let abs = validate_user_note_relative_path(&vault, path)?;
     let content = std::fs::read_to_string(abs)?;
@@ -54,11 +58,13 @@ pub(super) async fn list_vault(
 
 pub(super) async fn get_outline(
     state: &AppState,
+    ctx: &ToolDispatchContext<'_>,
     args: &serde_json::Value,
 ) -> AppResult<serde_json::Value> {
     let path = args["path"]
         .as_str()
         .ok_or_else(|| AppError::msg("missing path"))?;
+    ctx.ensure_active_skill_scope_allows_path(&state.db, path)?;
     let vault = state.vault_path()?;
     let abs = validate_user_note_relative_path(&vault, path)?;
     let content = std::fs::read_to_string(abs)?;
@@ -82,11 +88,13 @@ pub(super) async fn get_outline(
 
 pub(super) async fn get_backlinks(
     state: &AppState,
+    ctx: &ToolDispatchContext<'_>,
     args: &serde_json::Value,
 ) -> AppResult<serde_json::Value> {
     let path = args["path"]
         .as_str()
         .ok_or_else(|| AppError::msg("missing path"))?;
+    ctx.ensure_active_skill_scope_allows_path(&state.db, path)?;
     let vault = state.vault_path()?;
     let _abs = validate_user_note_relative_path(&vault, path)?;
     let entries = state.db.with_read_conn(|conn| {
@@ -113,11 +121,13 @@ pub(super) async fn get_backlinks(
 
 pub(super) async fn get_block_links(
     state: &AppState,
+    ctx: &ToolDispatchContext<'_>,
     args: &serde_json::Value,
 ) -> AppResult<serde_json::Value> {
     let note_path = args["note_path"]
         .as_str()
         .ok_or_else(|| AppError::msg("missing note_path"))?;
+    ctx.ensure_active_skill_scope_allows_path(&state.db, note_path)?;
     let vault: &Path = &state.vault_path()?;
     let _abs = validate_user_note_relative_path(vault, note_path)?;
     let links = state.db.with_read_conn(|conn| {

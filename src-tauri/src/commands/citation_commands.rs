@@ -8,6 +8,9 @@ use crate::ai_runtime::citation_workflow;
 use crate::ai_runtime::retrieval_broker::{RetrievalLayers, RetrievalRequest};
 use crate::ai_runtime::retrieval_scope::RetrievalScope;
 use crate::ai_runtime::trace::{TraceRecorder, TraceStatus};
+use crate::ai_runtime::web_evidence_broker::{
+    collect_web_evidence, web_evidence_items_to_packets, WebEvidenceBrokerInput,
+};
 use crate::ai_runtime::{CitationCheckInput, CitationCheckResult};
 use crate::app::AppState;
 use crate::error::AppResult;
@@ -37,15 +40,19 @@ pub(crate) async fn execute_citation_check(
     let mut evidence = retrieve_citation_evidence(state, &input).await?;
 
     if input.web_authorized {
-        if let Ok(fetch) =
-            crate::llm::search_web::fetch_search_context_for_db(&state.db, &input.paragraph_text)
-                .await
+        if let Ok(items) = collect_web_evidence(
+            &state.db,
+            WebEvidenceBrokerInput {
+                query: input.paragraph_text.clone(),
+                urls: Vec::new(),
+                enabled: input.web_authorized,
+                max_search_results: 8,
+                max_fetches: 3,
+            },
+        )
+        .await
         {
-            let web = crate::ai_runtime::evidence_mixer::web_packets_from_fetch(
-                &fetch,
-                &input.paragraph_text,
-                None,
-            );
+            let web = web_evidence_items_to_packets(&input.paragraph_text, &items);
             evidence = crate::ai_runtime::evidence_mixer::mix_and_rank(evidence, web, 20);
         }
     }

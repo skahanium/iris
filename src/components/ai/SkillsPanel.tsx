@@ -1,36 +1,16 @@
-import { open as openFileDialog } from "@tauri-apps/plugin-dialog";
-import { Download, Search } from "lucide-react";
-import {
-  useCallback,
-  useEffect,
-  useMemo,
-  useState,
-  type DragEvent,
-} from "react";
+import { Search } from "lucide-react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
-import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { IrisOverlay } from "@/components/ui/iris-overlay";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Textarea } from "@/components/ui/textarea";
 import { getActiveAiScene } from "@/hooks/useConnectivityStatus";
 import { invokeErrorMessage } from "@/lib/credentials";
 import {
   listenSkillsChanged,
-  skillsInstall,
   skillsList,
-  skillsMigrateLegacy,
-  skillsPaths,
-  skillsPrepareWorkspace,
-  skillsRead,
-  skillsToggle,
-  skillsUninstall,
-  skillsUpdate,
-  skillsWrite,
   type SkillListEntryDto,
-  type SkillsPathsDto,
 } from "@/lib/ipc";
-import { McpProfilesPanel } from "@/components/ai/skills/McpProfilesPanel";
 import { SkillCard } from "@/components/ai/skills/SkillCard";
 
 interface SkillsPanelProps {
@@ -49,9 +29,6 @@ interface CapabilityGroup {
 const SKILL_PERMISSION_SUMMARY_LABEL = "权限摘要";
 
 const CRITICAL_CAPABILITIES = new Set([
-  "skill.execute_script_sandboxed",
-  "skill.install_dependency",
-  "skill.mcp_bridge",
   "execute_script_sandboxed",
   "install_dependency",
   "mcp_bridge",
@@ -66,7 +43,6 @@ function scopeLabel(scope: string): SkillScope {
 }
 
 function sourceSummary(skill: SkillListEntryDto): string {
-  if (skill.source_url) return skill.source_url;
   return skill.file_path;
 }
 
@@ -99,15 +75,9 @@ function collectCapabilityTokens(skill: SkillListEntryDto): string[] {
     skill.blockedCapabilities ??
     skill.capability_preview?.blocked_capabilities ??
     [];
-  const requested =
-    skill.requestedCapabilities ??
-    skill.capability_preview?.requested_capabilities ??
-    [];
-
   return [
     ...skill.allowed_tools,
     ...skill.confirmation_required_tools,
-    ...requested,
     ...blocked.map((capability) => capability.capability),
   ].map((token) => token.toLowerCase());
 }
@@ -127,8 +97,7 @@ function capabilityGroups(skill: SkillListEntryDto): CapabilityGroup[] {
     joined.includes("read") ||
     joined.includes("search") ||
     joined.includes("note") ||
-    joined.includes("vault") ||
-    joined.includes("skill.read_resource")
+    joined.includes("vault")
   ) {
     add({ label: "只读笔记", tone: "calm" });
   }
@@ -144,8 +113,7 @@ function capabilityGroups(skill: SkillListEntryDto): CapabilityGroup[] {
     joined.includes("write") ||
     joined.includes("replace") ||
     joined.includes("insert") ||
-    joined.includes("edit") ||
-    joined.includes("skill.write_storage")
+    joined.includes("edit")
   ) {
     add({ label: "写入笔记", tone: "warn" });
   }
@@ -190,43 +158,19 @@ function capabilityToneClass(tone: CapabilityGroup["tone"]): string {
   }
 }
 
-function workspaceState(skill: SkillListEntryDto): {
+function confirmationState(skill: SkillListEntryDto): {
   label: string;
   detail: string;
-  needsPrepare: boolean;
 } {
-  const root =
-    skill.workspace_root ?? skill.workspaceRoot ?? `Skills/${skill.name}`;
-  const missing =
-    skill.workspace_missing_items ?? skill.workspaceMissingItems ?? [];
-  const declared = skill.workspace_declared ?? true;
-  const prepared =
-    skill.workspace_prepared ?? skill.workspace_ready ?? skill.workspaceReady;
-
-  if (!declared) {
+  if (skill.confirmation_status === "confirmed") {
     return {
-      label: "无工作区",
-      detail: "该 Skill 不声明独立工作区。",
-      needsPrepare: false,
+      label: "已确认",
+      detail: "当前 SKILL.md 内容哈希已经由用户确认。",
     };
   }
-
-  if (prepared === false) {
-    const summary =
-      missing.length > 0
-        ? `缺少 ${missing.slice(0, 3).join("、")}${missing.length > 3 ? " 等" : ""}`
-        : "尚未准备";
-    return {
-      label: "需要准备",
-      detail: `${root} · ${summary}`,
-      needsPrepare: true,
-    };
-  }
-
   return {
-    label: "已准备",
-    detail: root,
-    needsPrepare: false,
+    label: "需要确认",
+    detail: "内容新增或变更后，需要用户确认后才会参与提示注入。",
   };
 }
 
@@ -247,38 +191,15 @@ export function SkillsPanelBody({
   scene?: import("@/types/ai").AiScene;
 }) {
   const [skills, setSkills] = useState<SkillListEntryDto[]>([]);
-  const [paths, setPaths] = useState<SkillsPathsDto | null>(null);
   const [query, setQuery] = useState("");
-  const [url, setUrl] = useState("");
-  const [gitUrl, setGitUrl] = useState("");
-  const [gitSubpath, setGitSubpath] = useState("");
-  const [scope, setScope] = useState<"global" | "vault">("vault");
   const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [showInstall, setShowInstall] = useState(false);
-  const [editingSkill, setEditingSkill] = useState<SkillListEntryDto | null>(
-    null,
-  );
-  const [editContent, setEditContent] = useState("");
-  const [dragOver, setDragOver] = useState(false);
-  const [pendingWorkspaceSkill, setPendingWorkspaceSkill] = useState<
-    string | null
-  >(null);
-  const [activeTab, setActiveTab] = useState<"skills" | "mcp">("skills");
 
   const legacySceneHint = scene ?? getActiveAiScene();
-  const installTargetPath =
-    paths?.[scope] ??
-    (scope === "vault" ? "<当前库>/.iris/skills" : "<用户目录>/.iris/skills");
 
   const refresh = useCallback(async () => {
     try {
-      const [nextSkills, nextPaths] = await Promise.all([
-        skillsList(legacySceneHint),
-        skillsPaths(),
-      ]);
+      const nextSkills = await skillsList(legacySceneHint);
       setSkills(nextSkills);
-      setPaths(nextPaths);
     } catch (nextError) {
       setError(invokeErrorMessage(nextError));
     }
@@ -322,171 +243,27 @@ export function SkillsPanelBody({
   );
   const vault = filtered.filter((skill) => scopeLabel(skill.scope) === "vault");
 
-  const installUrl = async () => {
-    if (!url.trim()) return;
-    setLoading(true);
-    setError(null);
-    try {
-      await skillsInstall({
-        source: "url",
-        path_or_url: url.trim(),
-        scope,
-      });
-      setUrl("");
-      await refresh();
-    } catch (nextError) {
-      setError(invokeErrorMessage(nextError));
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const installLocalPath = async (filePath: string) => {
-    setLoading(true);
-    setError(null);
-    try {
-      await skillsInstall({
-        source: "local",
-        path_or_url: filePath,
-        scope,
-      });
-      await refresh();
-    } catch (nextError) {
-      setError(invokeErrorMessage(nextError));
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const pickLocalFile = async () => {
-    const selected = await openFileDialog({
-      multiple: false,
-      filters: [{ name: "Skill", extensions: ["md"] }],
-    });
-    if (typeof selected === "string") {
-      await installLocalPath(selected);
-    }
-  };
-
-  const onDropFiles = async (event: DragEvent<HTMLDivElement>) => {
-    event.preventDefault();
-    setDragOver(false);
-    const file = event.dataTransfer.files[0];
-    if (!file?.name.toLowerCase().endsWith(".md")) {
-      setError("请拖入 SKILL.md 文件。");
-      return;
-    }
-    const path = (file as File & { path?: string }).path;
-    if (path) {
-      await installLocalPath(path);
-    } else {
-      setError("无法读取拖入文件路径，请改用“选择本地文件”。");
-    }
-  };
-
-  const openEditor = async (skill: SkillListEntryDto) => {
-    setError(null);
-    try {
-      const content = await skillsRead(skill.file_path);
-      setEditingSkill(skill);
-      setEditContent(content);
-    } catch (nextError) {
-      setError(invokeErrorMessage(nextError));
-    }
-  };
-
-  const saveEditor = async () => {
-    if (!editingSkill) return;
-    setLoading(true);
-    setError(null);
-    try {
-      await skillsWrite(
-        editingSkill.file_path,
-        scopeLabel(editingSkill.scope),
-        editContent,
-      );
-      setEditingSkill(null);
-      await refresh();
-    } catch (nextError) {
-      setError(invokeErrorMessage(nextError));
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const installGit = async () => {
-    if (!gitUrl.trim()) return;
-    setLoading(true);
-    setError(null);
-    try {
-      await skillsInstall({
-        source: "git",
-        path_or_url: gitUrl.trim(),
-        scope,
-        subpath: gitSubpath.trim() || undefined,
-      });
-      setGitUrl("");
-      setGitSubpath("");
-      await refresh();
-    } catch (nextError) {
-      setError(invokeErrorMessage(nextError));
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const prepareWorkspace = async (skill: SkillListEntryDto) => {
-    const sc = scopeLabel(skill.scope);
-    setPendingWorkspaceSkill(`${sc}:${skill.name}`);
-    setError(null);
-    try {
-      await skillsPrepareWorkspace(skill.name, sc);
-      await refresh();
-    } catch (nextError) {
-      setError(invokeErrorMessage(nextError));
-    } finally {
-      setPendingWorkspaceSkill(null);
-    }
-  };
-
   const renderSkillCard = (skill: SkillListEntryDto) => {
     const sc = scopeLabel(skill.scope);
     const criticalBlocked = hasBlockedCriticalCapabilities(skill);
     const compatibilityWarning = hasCompatibilityWarning(skill);
     const groups = capabilityGroups(skill);
-    const workspace = workspaceState(skill);
+    const confirmation = confirmationState(skill);
     const sections = sectionState(skill);
-    const workspacePending = pendingWorkspaceSkill === `${sc}:${skill.name}`;
 
     return (
       <SkillCard
         key={`${sc}-${skill.name}`}
         skill={skill}
         sourceSummary={sourceSummary(skill)}
-        workspace={workspace}
+        confirmation={confirmation}
         sections={sections}
         capabilityGroups={groups}
         capabilityToneClass={capabilityToneClass}
         capabilitySummaryLabel={SKILL_PERMISSION_SUMMARY_LABEL}
         criticalBlocked={criticalBlocked}
         compatibilityWarning={compatibilityWarning}
-        workspacePending={workspacePending}
-        onPrepareWorkspace={() => void prepareWorkspace(skill)}
-        onUpdate={() => void skillsUpdate(skill.name, sc).then(refresh)}
-        onEdit={() => void openEditor(skill)}
-        onMigrate={() => {
-          if (
-            confirm(
-              `将 “${skill.name}” 迁移到新格式？\n\n原文件会备份为 SKILL.md.bak`,
-            )
-          ) {
-            void skillsMigrateLegacy(skill.file_path, sc).then(refresh);
-          }
-        }}
-        onToggle={(enabled) =>
-          void skillsToggle(skill.name, sc, enabled).then(refresh)
-        }
-        onUninstall={() => void skillsUninstall(skill.name, sc).then(refresh)}
+        onUpdate={() => void refresh()}
       />
     );
   };
@@ -512,193 +289,25 @@ export function SkillsPanelBody({
   return (
     <div className="flex min-h-0 flex-1 flex-col" data-testid="skills-panel">
       <div className="task-overlay-filter flex shrink-0 items-center justify-between border-b border-border/60 px-3 py-2">
-        <div className="flex items-center gap-1 rounded-md border border-border/70 bg-muted/35 p-0.5">
-          <Button
-            type="button"
-            variant={activeTab === "skills" ? "secondary" : "ghost"}
-            size="sm"
-            className="h-7 text-xs"
-            onClick={() => setActiveTab("skills")}
-          >
-            Skills
-          </Button>
-          <Button
-            type="button"
-            variant={activeTab === "mcp" ? "secondary" : "ghost"}
-            size="sm"
-            className="h-7 text-xs"
-            onClick={() => setActiveTab("mcp")}
-          >
-            MCP / Providers
-          </Button>
-        </div>
-        {activeTab === "skills" ? (
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            className="h-7 text-xs"
-            onClick={() => setShowInstall((value) => !value)}
-          >
-            {showInstall ? "收起安装" : "安装 Skill"}
-          </Button>
-        ) : null}
+        <p className="text-xs font-medium text-muted-foreground">Skills</p>
       </div>
 
       <ScrollArea className="task-overlay-results flex-1">
-        <div
-          className={`space-y-3 p-3 ${
-            dragOver ? "ring-2 ring-inset ring-primary/40" : ""
-          }`}
-          onDragOver={(event) => {
-            event.preventDefault();
-            setDragOver(true);
-          }}
-          onDragLeave={() => setDragOver(false)}
-          onDrop={(event) => void onDropFiles(event)}
-        >
-          {activeTab === "mcp" ? (
-            <McpProfilesPanel open={open && activeTab === "mcp"} />
-          ) : null}
-
-          {activeTab === "skills" && editingSkill ? (
-            <div className="space-y-2 rounded-lg border border-border/70 bg-background p-3 shadow-sm">
-              <p className="text-xs font-medium">编辑 {editingSkill.name}</p>
-              <Textarea
-                className="min-h-[220px] font-mono text-xs"
-                value={editContent}
-                onChange={(event) => setEditContent(event.target.value)}
-              />
-              <div className="flex gap-2">
-                <Button
-                  type="button"
-                  size="sm"
-                  disabled={loading}
-                  onClick={() => void saveEditor()}
-                >
-                  保存
-                </Button>
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="ghost"
-                  onClick={() => setEditingSkill(null)}
-                >
-                  取消
-                </Button>
-              </div>
-            </div>
-          ) : null}
-
-          {activeTab === "skills" && showInstall ? (
-            <div className="space-y-3 rounded-lg border border-border/70 bg-background p-3 shadow-sm">
-              <div className="grid gap-2">
-                <div className="flex items-center gap-2">
-                  <span className="text-xs text-muted-foreground">安装到</span>
-                  <select
-                    className="h-8 rounded-md border border-border bg-background px-2 text-xs"
-                    value={scope}
-                    onChange={(event) =>
-                      setScope(
-                        event.target.value === "global" ? "global" : "vault",
-                      )
-                    }
-                  >
-                    <option value="vault">当前库</option>
-                    <option value="global">全局</option>
-                  </select>
-                </div>
-                <div className="rounded-md border border-border/70 bg-muted/35 px-2.5 py-2 text-[11px] text-muted-foreground">
-                  <span className="font-medium text-foreground/80">
-                    目标路径
-                  </span>
-                  <span className="ml-2 break-all">{installTargetPath}</span>
-                </div>
-              </div>
-
-              <div className="space-y-2">
-                <span className="text-xs text-muted-foreground">网页地址</span>
-                <div className="flex gap-2">
-                  <Input
-                    className="h-8 text-xs"
-                    value={url}
-                    onChange={(event) => setUrl(event.target.value)}
-                    placeholder="https://.../SKILL.md"
-                  />
-                  <Button
-                    type="button"
-                    size="sm"
-                    disabled={loading}
-                    title="从 URL 安装"
-                    onClick={() => void installUrl()}
-                  >
-                    <Download className="h-3.5 w-3.5" />
-                  </Button>
-                </div>
-              </div>
-
-              <div className="space-y-2">
-                <span className="text-xs text-muted-foreground">Git 仓库</span>
-                <Input
-                  className="h-8 text-xs"
-                  value={gitUrl}
-                  onChange={(event) => setGitUrl(event.target.value)}
-                  placeholder="https://github.com/owner/repo"
-                />
-                <Input
-                  className="h-8 text-xs"
-                  value={gitSubpath}
-                  onChange={(event) => setGitSubpath(event.target.value)}
-                  placeholder="子路径，可选"
-                />
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="secondary"
-                  disabled={loading}
-                  onClick={() => void installGit()}
-                >
-                  从 Git 安装
-                </Button>
-              </div>
-
-              <div className="space-y-2">
-                <span className="text-xs text-muted-foreground">
-                  本地 SKILL.md，也可以直接拖进这个面板
-                </span>
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="outline"
-                  disabled={loading}
-                  onClick={() => void pickLocalFile()}
-                >
-                  选择本地文件
-                </Button>
-              </div>
-            </div>
-          ) : null}
-
-          {activeTab === "skills" ? (
-            <div className="relative">
-              <Search className="absolute left-2 top-2 h-3.5 w-3.5 text-muted-foreground" />
-              <Input
-                className="h-8 pl-8 text-xs"
-                placeholder="搜索 Skills"
-                value={query}
-                onChange={(event) => setQuery(event.target.value)}
-              />
-            </div>
-          ) : null}
+        <div className="space-y-3 p-3">
+          <div className="relative">
+            <Search className="absolute left-2 top-2 h-3.5 w-3.5 text-muted-foreground" />
+            <Input
+              className="h-8 pl-8 text-xs"
+              placeholder="搜索 Skills"
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+            />
+          </div>
 
           {error ? <p className="text-xs text-destructive">{error}</p> : null}
 
-          {activeTab === "skills" ? (
-            <>
-              {renderGroup("当前库", vault)}
-              {renderGroup("全局", global)}
-            </>
-          ) : null}
+          {renderGroup("当前库", vault)}
+          {renderGroup("全局", global)}
         </div>
       </ScrollArea>
     </div>

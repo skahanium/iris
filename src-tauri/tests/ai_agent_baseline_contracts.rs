@@ -8,7 +8,11 @@ use iris_lib::ai_runtime::tool_executor::ToolRegistry;
 use iris_lib::ai_runtime::tool_policy::{
     evaluate_tool, DenialReason, ToolPolicyContext, ToolPolicyVerdict,
 };
-use iris_lib::ai_runtime::{AiScene, AutonomyLevel};
+use iris_lib::ai_runtime::{
+    agent_task::AgentTaskKind,
+    agent_task_policy::{AgentTaskPolicy, AgentTaskPolicyInput, AgentTaskScope},
+    AgentIntent, AiScene, AutonomyLevel,
+};
 
 fn policy_ctx(depth: u32, web_search_enabled: bool) -> ToolPolicyContext {
     ToolPolicyContext {
@@ -18,6 +22,26 @@ fn policy_ctx(depth: u32, web_search_enabled: bool) -> ToolPolicyContext {
         web_search_enabled,
         skill_allowed_tools: vec![],
         depth,
+    }
+}
+
+fn write_policy_ctx() -> ToolPolicyContext {
+    let task_policy = AgentTaskPolicy::from_input(AgentTaskPolicyInput {
+        intent: AgentIntent::Write,
+        task_kind: AgentTaskKind::Lightweight,
+        scope: AgentTaskScope::Vault,
+        web_authorized: true,
+        has_attachments: false,
+        write_permission_required: true,
+        research_depth: 0,
+    });
+    ToolPolicyContext {
+        task_policy: Some(task_policy.clone()),
+        scene: AiScene::DraftingAssist,
+        autonomy_level: task_policy.autonomy_level,
+        web_search_enabled: true,
+        skill_allowed_tools: vec![],
+        depth: 0,
     }
 }
 
@@ -81,24 +105,24 @@ fn implemented_tools_keep_permission_profiles_and_unsupported_secret_stays_close
 #[test]
 fn confirmation_helpers_track_one_active_prompt_and_remaining_pending_ids() {
     let registry = ToolRegistry::new();
-    let fetch = tool_call("fetch_web_page");
-    let readability = tool_call("readability_fetch");
-    let mut messages = assistant_with_tool_calls(vec![fetch.clone(), readability.clone()]);
+    let first_write = tool_call("replace_selection");
+    let second_write = tool_call("vault_delete_to_trash");
+    let mut messages = assistant_with_tool_calls(vec![first_write.clone(), second_write.clone()]);
 
-    let first = outstanding_confirm_tool(&registry, &messages, &policy_ctx(0, true))
-        .expect("first confirmation");
-    assert_eq!(first.id, fetch.id);
+    let ctx = write_policy_ctx();
+    let first = outstanding_confirm_tool(&registry, &messages, &ctx).expect("first confirmation");
+    assert_eq!(first.id, first_write.id);
 
     messages.push(LlmMessage {
         role: MessageRole::Tool,
         content: r#"{"results":[]}"#.into(),
-        tool_call_id: Some(fetch.id),
+        tool_call_id: Some(first_write.id),
         tool_calls: None,
         ..Default::default()
     });
 
-    let ids = outstanding_confirm_ids(&registry, &messages, &policy_ctx(0, true));
-    assert_eq!(ids, vec![readability.id]);
+    let ids = outstanding_confirm_ids(&registry, &messages, &ctx);
+    assert_eq!(ids, vec![second_write.id]);
 }
 
 #[test]

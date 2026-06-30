@@ -1,216 +1,88 @@
-//! Persistent registry for MCP runtime profiles and skill runtime requirements.
+//! Persistent registry for web evidence providers.
 //!
-//! This module stores configuration and health summaries only. It never starts
-//! external processes and never handles raw secrets.
-
-use std::net::IpAddr;
+//! MCP is represented here only as one provider kind for broker-owned
+//! `web.search` / `web.fetch` calls. This module never starts external
+//! processes and never handles raw secrets.
 
 use rusqlite::{params, OptionalExtension};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 
-use crate::ai_runtime::skills::SkillScope;
 use crate::error::{AppError, AppResult};
 use crate::storage::db::Database;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum McpRuntimeStatus {
-    Unknown,
-    Ready,
-    Degraded,
-    Unavailable,
-    Blocked,
-}
-
-impl McpRuntimeStatus {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            Self::Unknown => "unknown",
-            Self::Ready => "ready",
-            Self::Degraded => "degraded",
-            Self::Unavailable => "unavailable",
-            Self::Blocked => "blocked",
-        }
-    }
-
-    fn from_db(value: &str) -> Self {
-        match value {
-            "ready" => Self::Ready,
-            "degraded" => Self::Degraded,
-            "unavailable" => Self::Unavailable,
-            "blocked" => Self::Blocked,
-            _ => Self::Unknown,
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct McpServerCatalogInput {
+#[serde(rename_all = "camelCase")]
+pub struct WebEvidenceProviderInput {
     pub id: String,
-    pub display_name: String,
-    pub transport: String,
-    pub command: Option<String>,
-    pub args_json: String,
-    pub url: Option<String>,
-    pub env_schema_json: String,
-    pub capability_tags_json: String,
-    pub source: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct McpRuntimeProfileInput {
-    pub id: String,
-    pub server_id: String,
-    pub vault_scope_hash: Option<String>,
-    pub display_name: String,
-    pub enabled: bool,
-    pub transport_config_json: String,
-    pub env_bindings_json: String,
-    pub status: McpRuntimeStatus,
-    pub last_error: Option<String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct McpRuntimeProfileSummary {
-    pub id: String,
-    pub server_id: String,
-    pub display_name: String,
-    pub enabled: bool,
-    pub status: McpRuntimeStatus,
-    pub last_error: Option<String>,
-    pub transport: String,
-    pub scope: String,
-    pub trust_level: String,
-    pub credential_binding_status: String,
-    pub credential_binding_count: usize,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct McpToolInventoryInput {
-    pub profile_id: String,
-    pub tool_name: String,
-    pub schema_hash: String,
-    pub capability_mapping_json: String,
-    pub description: Option<String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct McpToolInventorySummary {
-    pub profile_id: String,
-    pub tool_name: String,
-    pub schema_hash: String,
-    pub capability_mapping_json: String,
-    pub description: Option<String>,
-    pub last_discovered_at: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct McpHealthEventInput {
-    pub profile_id: String,
-    pub status: McpRuntimeStatus,
-    pub reason_code: String,
-    pub message: Option<String>,
-    pub metadata_json: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct McpHealthEventSummary {
-    pub id: i64,
-    pub profile_id: String,
-    pub status: McpRuntimeStatus,
-    pub reason_code: String,
-    pub message: Option<String>,
-    pub metadata_json: String,
-    pub created_at: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct SkillRuntimeRequirementInput {
-    pub skill_name: String,
-    pub scope: SkillScope,
-    pub manifest_hash: Option<String>,
+    pub name: String,
     pub kind: String,
-    pub runtime_kind: String,
-    pub required_profiles_json: String,
-    pub required_capabilities_json: String,
-    pub workspace_contract_json: String,
-    pub degradation_policy_json: String,
+    pub enabled: bool,
+    pub transport_kind: String,
+    pub transport_config_json: String,
+    pub credential_refs_json: String,
+    pub web_search_mapping_json: Option<String>,
+    pub web_fetch_mapping_json: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct SkillRuntimeReadiness {
-    pub runtime_kind: String,
-    pub ready: bool,
-    pub status: McpRuntimeStatus,
-    pub required_profiles: Vec<String>,
-    pub missing_profiles: Vec<String>,
-    pub degraded_reasons: Vec<String>,
+#[serde(rename_all = "camelCase")]
+pub struct WebEvidenceProviderSummary {
+    pub id: String,
+    pub name: String,
+    pub kind: String,
+    pub enabled: bool,
+    pub transport_kind: String,
+    pub provider_config_hash: String,
+    pub has_search_mapping: bool,
+    pub has_fetch_mapping: bool,
 }
 
-fn scope_db(scope: SkillScope) -> &'static str {
-    match scope {
-        SkillScope::Global => "Global",
-        SkillScope::Vault => "Vault",
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WebEvidenceProviderMappingSummary {
+    pub id: String,
+    pub kind: String,
+    pub transport_kind: String,
+    pub provider_config_hash: String,
+    pub web_search_mapping_json: Option<String>,
+    pub web_fetch_mapping_json: Option<String>,
+}
+
+fn provider_config_hash(input: &WebEvidenceProviderInput) -> String {
+    let raw = serde_json::json!({
+        "id": input.id,
+        "kind": input.kind,
+        "transport_kind": input.transport_kind,
+        "transport_config_json": input.transport_config_json,
+        "credential_refs_json": input.credential_refs_json,
+        "web_search_mapping_json": input.web_search_mapping_json,
+        "web_fetch_mapping_json": input.web_fetch_mapping_json,
+    });
+    let digest = Sha256::digest(raw.to_string().as_bytes());
+    hex::encode(&digest[..12])
+}
+
+fn validate_provider_identifier(label: &str, value: &str) -> AppResult<String> {
+    let value = value.trim();
+    if value.is_empty() {
+        return Err(AppError::msg(format!("{label} is required")));
     }
+    if !value
+        .chars()
+        .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '.' | '_' | '-'))
+    {
+        return Err(AppError::msg(format!(
+            "{label} contains unsupported characters"
+        )));
+    }
+    Ok(value.to_string())
 }
 
-pub fn upsert_server_catalog(db: &Database, input: &McpServerCatalogInput) -> AppResult<()> {
-    db.with_conn(|conn| {
-        conn.execute(
-            "INSERT INTO mcp_server_catalog
-             (id, display_name, transport, command, args_json, url, env_schema_json,
-              capability_tags_json, source, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, datetime('now'))
-             ON CONFLICT(id) DO UPDATE SET
-               display_name = excluded.display_name,
-               transport = excluded.transport,
-               command = excluded.command,
-               args_json = excluded.args_json,
-               url = excluded.url,
-               env_schema_json = excluded.env_schema_json,
-               capability_tags_json = excluded.capability_tags_json,
-               source = excluded.source,
-               updated_at = datetime('now')",
-            params![
-                input.id,
-                input.display_name,
-                input.transport,
-                input.command,
-                input.args_json,
-                input.url,
-                input.env_schema_json,
-                input.capability_tags_json,
-                input.source
-            ],
-        )?;
-        Ok(())
-    })
-}
-
-#[derive(Debug, Clone)]
-struct McpServerRuntimeConfig {
-    transport: String,
-    command: Option<String>,
-    args_json: String,
-    url: Option<String>,
-}
-
-fn config_json(value: &str) -> AppResult<serde_json::Value> {
-    serde_json::from_str(value)
-        .map_err(|err| AppError::msg(format!("invalid MCP transport config JSON: {err}")))
-}
-
-fn optional_config_string(config: &serde_json::Value, key: &str) -> Option<String> {
-    config
-        .get(key)
-        .and_then(|value| value.as_str())
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(str::to_string)
-}
-
-fn validate_no_sensitive_json(label: &str, value: &serde_json::Value) -> AppResult<()> {
-    let raw = value.to_string().to_lowercase();
+fn validate_provider_json(label: &str, raw: &str) -> AppResult<()> {
+    let value: serde_json::Value = serde_json::from_str(raw)
+        .map_err(|err| AppError::msg(format!("invalid {label} JSON: {err}")))?;
+    let lowered = value.to_string().to_lowercase();
     for marker in [
         "api_key",
         "apikey",
@@ -218,612 +90,218 @@ fn validate_no_sensitive_json(label: &str, value: &serde_json::Value) -> AppResu
         "bearer",
         "password",
         "secret",
-        "token=",
-        "sk-",
+        "token",
     ] {
-        if raw.contains(marker) {
+        if lowered.contains(marker) {
             return Err(AppError::msg(format!(
-                "MCP {label} must not contain raw secret material"
+                "{label} must contain credential references, not raw secrets"
             )));
         }
     }
     Ok(())
 }
 
-fn credential_service_from_binding(value: &serde_json::Value) -> AppResult<Option<String>> {
-    let Some(raw) = value
-        .as_str()
+fn validate_optional_mapping(label: &str, raw: &Option<String>) -> AppResult<()> {
+    let Some(raw) = raw
+        .as_deref()
         .map(str::trim)
-        .filter(|item| !item.is_empty())
+        .filter(|value| !value.is_empty())
     else {
-        return Ok(None);
+        return Ok(());
     };
-    let service = raw.strip_prefix("credential://").unwrap_or(raw).trim();
-    if service.is_empty() || !service.starts_with("iris.") {
+    validate_provider_json(label, raw)
+}
+
+fn normalize_provider_input(
+    input: &WebEvidenceProviderInput,
+) -> AppResult<WebEvidenceProviderInput> {
+    let id = validate_provider_identifier("provider id", &input.id)?;
+    let name = input.name.trim();
+    if name.is_empty() {
+        return Err(AppError::msg("provider name is required"));
+    }
+    let kind = input.kind.trim().to_lowercase();
+    if !matches!(kind.as_str(), "native" | "mcp") {
+        return Err(AppError::msg("provider kind must be native or mcp"));
+    }
+    let transport_kind = input.transport_kind.trim().to_lowercase();
+    if !matches!(transport_kind.as_str(), "native" | "stdio" | "https") {
         return Err(AppError::msg(
-            "MCP env bindings must reference named credentials such as credential://iris.mcp.service",
+            "provider transport must be native, stdio, or https",
         ));
     }
-    crate::security::ipc_policy::validate_credential_service(service)?;
-    Ok(Some(service.to_string()))
-}
-
-fn validate_env_bindings_json(value: &serde_json::Value) -> AppResult<()> {
-    let bindings = value
-        .as_object()
-        .ok_or_else(|| AppError::msg("MCP env bindings must be a JSON object"))?;
-    for (env_name, binding) in bindings {
-        if env_name.trim().is_empty()
-            || !env_name
-                .chars()
-                .all(|ch| ch.is_ascii_uppercase() || ch.is_ascii_digit() || ch == '_')
-        {
-            return Err(AppError::msg(
-                "MCP env binding names must be uppercase environment variable names",
-            ));
-        }
-        let Some(_) = credential_service_from_binding(binding)? else {
-            return Err(AppError::msg(
-                "MCP env binding values must be named credential references",
-            ));
-        };
+    if kind == "native" && transport_kind != "native" {
+        return Err(AppError::msg("native provider must use native transport"));
     }
-    Ok(())
-}
-
-fn credential_binding_count(raw: &str) -> usize {
-    serde_json::from_str::<serde_json::Value>(raw)
-        .ok()
-        .and_then(|value| {
-            value.as_object().map(|bindings| {
-                bindings
-                    .values()
-                    .filter(|binding| {
-                        credential_service_from_binding(binding)
-                            .ok()
-                            .flatten()
-                            .is_some()
-                    })
-                    .count()
-            })
-        })
-        .unwrap_or(0)
-}
-
-fn validate_stdio_command(command: &str) -> AppResult<()> {
-    let command = command.trim();
-    if command.is_empty() {
-        return Err(AppError::msg("MCP stdio command is required"));
-    }
-    let lower = command.to_lowercase();
-    let banned_commands = [
-        "cmd",
-        "cmd.exe",
-        "powershell",
-        "powershell.exe",
-        "pwsh",
-        "pwsh.exe",
-        "sh",
-        "bash",
-        "zsh",
-        "fish",
-        "npm",
-        "npm.cmd",
-        "npx",
-        "npx.cmd",
-        "pnpm",
-        "pnpm.cmd",
-        "yarn",
-        "yarn.cmd",
-        "bun",
-        "bunx",
-    ];
-    if banned_commands.contains(&lower.as_str()) {
-        let reason = if matches!(
-            lower.as_str(),
-            "npm"
-                | "npm.cmd"
-                | "npx"
-                | "npx.cmd"
-                | "pnpm"
-                | "pnpm.cmd"
-                | "yarn"
-                | "yarn.cmd"
-                | "bun"
-                | "bunx"
-        ) {
-            "MCP stdio command may not invoke a package manager"
-        } else {
-            "MCP stdio command may not invoke a shell wrapper"
-        };
-        return Err(AppError::msg(reason));
-    }
-    if command
-        .chars()
-        .any(|ch| ch.is_whitespace() || matches!(ch, '|' | '&' | ';' | '<' | '>' | '`' | '$'))
-    {
+    if kind == "mcp" && transport_kind == "native" {
         return Err(AppError::msg(
-            "MCP stdio command must be a structured executable path, not a shell string",
+            "MCP provider must use stdio or https transport",
         ));
     }
-    Ok(())
-}
+    validate_provider_json("transport config", &input.transport_config_json)?;
+    validate_provider_json("credential refs", &input.credential_refs_json)?;
+    validate_optional_mapping("web.search mapping", &input.web_search_mapping_json)?;
+    validate_optional_mapping("web.fetch mapping", &input.web_fetch_mapping_json)?;
 
-fn validate_stdio_args(args_json: &str) -> AppResult<()> {
-    let args: serde_json::Value = serde_json::from_str(args_json)
-        .map_err(|err| AppError::msg(format!("invalid MCP stdio args JSON: {err}")))?;
-    let Some(items) = args.as_array() else {
-        return Err(AppError::msg("MCP stdio args must be a JSON array"));
-    };
-    for item in items {
-        let Some(arg) = item.as_str() else {
-            return Err(AppError::msg("MCP stdio args must contain strings only"));
-        };
-        if arg.contains("\0") || arg.contains("<<") {
-            return Err(AppError::msg("MCP stdio args contain unsafe shell syntax"));
-        }
-    }
-    Ok(())
-}
-
-fn host_is_localhost_or_loopback(host: &str) -> bool {
-    host.eq_ignore_ascii_case("localhost")
-        || host
-            .parse::<IpAddr>()
-            .map(|ip| ip.is_loopback())
-            .unwrap_or(false)
-}
-
-fn host_is_private_or_metadata(host: &str) -> bool {
-    if host.eq_ignore_ascii_case("localhost") {
-        return true;
-    }
-    if host == "169.254.169.254" || host.eq_ignore_ascii_case("metadata.google.internal") {
-        return true;
-    }
-    let Ok(ip) = host.parse::<IpAddr>() else {
-        return false;
-    };
-    match ip {
-        IpAddr::V4(ip) => {
-            ip.is_private() || ip.is_loopback() || ip.is_link_local() || ip.is_unspecified()
-        }
-        IpAddr::V6(ip) => {
-            let first_segment = ip.segments()[0];
-            ip.is_loopback() || ip.is_unspecified() || (first_segment & 0xfe00) == 0xfc00
-        }
-    }
-}
-
-fn url_contains_secret(parsed: &reqwest::Url) -> bool {
-    if !parsed.username().is_empty() || parsed.password().is_some() {
-        return true;
-    }
-    parsed.query_pairs().any(|(key, value)| {
-        let key = key.to_lowercase();
-        let value = value.to_lowercase();
-        [
-            "api_key",
-            "apikey",
-            "access_token",
-            "token",
-            "secret",
-            "password",
-            "bearer",
-        ]
-        .iter()
-        .any(|marker| key.contains(marker) || value.contains(marker))
+    Ok(WebEvidenceProviderInput {
+        id,
+        name: name.to_string(),
+        kind,
+        enabled: input.enabled,
+        transport_kind,
+        transport_config_json: input.transport_config_json.trim().to_string(),
+        credential_refs_json: input.credential_refs_json.trim().to_string(),
+        web_search_mapping_json: input
+            .web_search_mapping_json
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string),
+        web_fetch_mapping_json: input
+            .web_fetch_mapping_json
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string),
     })
 }
 
-fn validate_http_url(url: &str, allow_localhost_dev: bool) -> AppResult<()> {
-    let parsed = reqwest::Url::parse(url)
-        .map_err(|err| AppError::msg(format!("invalid MCP HTTP URL: {err}")))?;
-    let host = parsed
-        .host_str()
-        .ok_or_else(|| AppError::msg("MCP HTTP URL must include a host"))?;
-    if url_contains_secret(&parsed) {
-        return Err(AppError::msg(
-            "MCP HTTP URL must not contain secret material",
-        ));
-    }
-    if parsed.scheme() == "https" {
-        if host_is_private_or_metadata(host)
-            && !(allow_localhost_dev && host_is_localhost_or_loopback(host))
-        {
-            return Err(AppError::msg(
-                "MCP HTTPS URL may not target private, loopback, or metadata hosts outside dev mode",
-            ));
-        }
-        return Ok(());
-    }
-    if parsed.scheme() == "http" && allow_localhost_dev && host_is_localhost_or_loopback(host) {
-        return Ok(());
-    }
-    Err(AppError::msg(
-        "MCP HTTP transport requires HTTPS unless localhost dev mode is explicitly enabled",
-    ))
-}
-
-fn validate_runtime_profile_transport(
-    server: &McpServerRuntimeConfig,
-    input: &McpRuntimeProfileInput,
+pub fn upsert_web_evidence_provider(
+    db: &Database,
+    input: &WebEvidenceProviderInput,
 ) -> AppResult<()> {
-    let config = config_json(&input.transport_config_json)?;
-    let env_bindings = config_json(&input.env_bindings_json)?;
-    validate_no_sensitive_json("transport config", &config)?;
-    validate_env_bindings_json(&env_bindings)?;
-    let transport = server.transport.trim().to_lowercase();
-    match transport.as_str() {
-        "stdio" => {
-            let command = optional_config_string(&config, "command")
-                .or_else(|| server.command.clone())
-                .ok_or_else(|| AppError::msg("MCP stdio command is required"))?;
-            validate_stdio_command(&command)?;
-            let args_json = config
-                .get("args")
-                .map(serde_json::Value::to_string)
-                .unwrap_or_else(|| server.args_json.clone());
-            validate_stdio_args(&args_json)
-        }
-        "http" | "https" | "sse" => {
-            let url = optional_config_string(&config, "url")
-                .or_else(|| server.url.clone())
-                .ok_or_else(|| AppError::msg("MCP HTTP URL is required"))?;
-            let allow_localhost_dev = config
-                .get("allow_localhost_dev")
-                .and_then(|value| value.as_bool())
-                == Some(true);
-            validate_http_url(&url, allow_localhost_dev)
-        }
-        _ => Err(AppError::msg(format!(
-            "unsupported MCP transport: {}",
-            server.transport
-        ))),
-    }
-}
-
-pub fn upsert_runtime_profile(db: &Database, input: &McpRuntimeProfileInput) -> AppResult<()> {
+    let input = normalize_provider_input(input)?;
+    let config_hash = provider_config_hash(&input);
     db.with_conn(|conn| {
-        let server = conn.query_row(
-            "SELECT transport, command, args_json, url FROM mcp_server_catalog WHERE id = ?1",
-            [&input.server_id],
-            |row| {
-                Ok(McpServerRuntimeConfig {
-                    transport: row.get(0)?,
-                    command: row.get(1)?,
-                    args_json: row.get(2)?,
-                    url: row.get(3)?,
-                })
-            },
-        )?;
-        validate_runtime_profile_transport(&server, input)?;
         conn.execute(
-            "INSERT INTO mcp_runtime_profiles
-             (id, server_id, vault_scope_hash, display_name, enabled, transport_config_json,
-              env_bindings_json, status, last_checked_at, last_error, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, datetime('now'), ?9, datetime('now'))
+            "INSERT INTO web_evidence_providers
+             (id, name, kind, enabled, transport_kind, transport_config_json,
+              credential_refs_json, web_search_mapping_json, web_fetch_mapping_json,
+              provider_config_hash, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, datetime('now'))
              ON CONFLICT(id) DO UPDATE SET
-               server_id = excluded.server_id,
-               vault_scope_hash = excluded.vault_scope_hash,
-               display_name = excluded.display_name,
+               name = excluded.name,
+               kind = excluded.kind,
                enabled = excluded.enabled,
+               transport_kind = excluded.transport_kind,
                transport_config_json = excluded.transport_config_json,
-               env_bindings_json = excluded.env_bindings_json,
-               status = excluded.status,
-               last_checked_at = excluded.last_checked_at,
-               last_error = excluded.last_error,
+               credential_refs_json = excluded.credential_refs_json,
+               web_search_mapping_json = excluded.web_search_mapping_json,
+               web_fetch_mapping_json = excluded.web_fetch_mapping_json,
+               provider_config_hash = excluded.provider_config_hash,
                updated_at = datetime('now')",
             params![
                 input.id,
-                input.server_id,
-                input.vault_scope_hash,
-                input.display_name,
-                input.enabled as i64,
+                input.name,
+                input.kind,
+                if input.enabled { 1 } else { 0 },
+                input.transport_kind,
                 input.transport_config_json,
-                input.env_bindings_json,
-                input.status.as_str(),
-                input.last_error
+                input.credential_refs_json,
+                input.web_search_mapping_json,
+                input.web_fetch_mapping_json,
+                config_hash
             ],
         )?;
         Ok(())
     })
 }
 
-pub fn set_runtime_profile_enabled(
-    db: &Database,
-    profile_id: &str,
-    enabled: bool,
-) -> AppResult<()> {
-    db.with_conn(|conn| {
-        conn.execute(
-            "UPDATE mcp_runtime_profiles
-             SET enabled = ?2, updated_at = datetime('now')
-             WHERE id = ?1",
-            params![profile_id, enabled as i64],
-        )?;
-        Ok(())
-    })
-}
-
-pub fn delete_runtime_profile(db: &Database, profile_id: &str) -> AppResult<()> {
-    db.with_conn(|conn| {
-        conn.execute(
-            "DELETE FROM mcp_runtime_profiles WHERE id = ?1",
-            [profile_id],
-        )?;
-        Ok(())
-    })
-}
-
-pub fn list_runtime_profiles(db: &Database) -> AppResult<Vec<McpRuntimeProfileSummary>> {
+pub fn list_web_evidence_providers(db: &Database) -> AppResult<Vec<WebEvidenceProviderSummary>> {
     db.with_conn(|conn| {
         let mut stmt = conn.prepare(
-            "SELECT p.id, p.server_id, p.display_name, p.enabled, p.status, p.last_error,
-                    s.transport,
-                    CASE WHEN p.vault_scope_hash IS NULL THEN 'global' ELSE 'vault' END AS scope,
-                    s.source,
-                    p.env_bindings_json
-             FROM mcp_runtime_profiles p
-             JOIN mcp_server_catalog s ON s.id = p.server_id
-             ORDER BY p.display_name, p.id",
+            "SELECT id, name, kind, enabled, transport_kind, provider_config_hash,
+                    web_search_mapping_json IS NOT NULL,
+                    web_fetch_mapping_json IS NOT NULL
+             FROM web_evidence_providers
+             ORDER BY kind, name, id",
         )?;
         let rows = stmt.query_map([], |row| {
-            let env_bindings_json: String = row.get(9)?;
-            let credential_binding_count = credential_binding_count(&env_bindings_json);
-            Ok(McpRuntimeProfileSummary {
+            Ok(WebEvidenceProviderSummary {
                 id: row.get(0)?,
-                server_id: row.get(1)?,
-                display_name: row.get(2)?,
+                name: row.get(1)?,
+                kind: row.get(2)?,
                 enabled: row.get::<_, i64>(3)? != 0,
-                status: McpRuntimeStatus::from_db(&row.get::<_, String>(4)?),
-                last_error: row.get(5)?,
-                transport: row.get(6)?,
-                scope: row.get(7)?,
-                trust_level: row.get(8)?,
-                credential_binding_status: if credential_binding_count > 0 {
-                    "configured".into()
-                } else {
-                    "not_configured".into()
-                },
-                credential_binding_count,
+                transport_kind: row.get(4)?,
+                provider_config_hash: row.get(5)?,
+                has_search_mapping: row.get::<_, i64>(6)? != 0,
+                has_fetch_mapping: row.get::<_, i64>(7)? != 0,
             })
         })?;
-        Ok(rows.collect::<Result<Vec<_>, _>>()?)
+        rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
     })
 }
 
-pub fn record_tool_inventory(db: &Database, input: &McpToolInventoryInput) -> AppResult<()> {
-    db.with_conn(|conn| {
-        conn.execute(
-            "INSERT INTO mcp_tool_inventory
-             (profile_id, tool_name, schema_hash, capability_mapping_json, description, last_discovered_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, datetime('now'))
-             ON CONFLICT(profile_id, tool_name) DO UPDATE SET
-               schema_hash = excluded.schema_hash,
-               capability_mapping_json = excluded.capability_mapping_json,
-               description = excluded.description,
-               last_discovered_at = datetime('now')",
-            params![
-                input.profile_id,
-                input.tool_name,
-                input.schema_hash,
-                input.capability_mapping_json,
-                input.description
-            ],
-        )?;
-        Ok(())
-    })
-}
-
-pub fn list_tool_inventory(
+pub fn list_enabled_web_provider_mappings(
     db: &Database,
-    profile_id: &str,
-) -> AppResult<Vec<McpToolInventorySummary>> {
+) -> AppResult<Vec<WebEvidenceProviderMappingSummary>> {
     db.with_conn(|conn| {
         let mut stmt = conn.prepare(
-            "SELECT profile_id, tool_name, schema_hash, capability_mapping_json,
-                    description, last_discovered_at
-             FROM mcp_tool_inventory
-             WHERE profile_id = ?1
-             ORDER BY tool_name",
+            "SELECT id, kind, transport_kind, provider_config_hash,
+                    web_search_mapping_json, web_fetch_mapping_json
+             FROM web_evidence_providers
+             WHERE enabled = 1
+             ORDER BY
+               CASE kind WHEN 'mcp' THEN 0 WHEN 'native' THEN 1 ELSE 2 END,
+               name,
+               id",
         )?;
-        let rows = stmt.query_map([profile_id], |row| {
-            Ok(McpToolInventorySummary {
-                profile_id: row.get(0)?,
-                tool_name: row.get(1)?,
-                schema_hash: row.get(2)?,
-                capability_mapping_json: row.get(3)?,
-                description: row.get(4)?,
-                last_discovered_at: row.get(5)?,
-            })
-        })?;
-        Ok(rows.collect::<Result<Vec<_>, _>>()?)
-    })
-}
-
-pub fn record_health_event(db: &Database, input: &McpHealthEventInput) -> AppResult<()> {
-    db.with_conn(|conn| {
-        conn.execute(
-            "INSERT INTO mcp_health_events
-             (profile_id, status, reason_code, message, metadata_json, created_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, datetime('now'))",
-            params![
-                input.profile_id,
-                input.status.as_str(),
-                input.reason_code,
-                input.message,
-                input.metadata_json
-            ],
-        )?;
-        conn.execute(
-            "UPDATE mcp_runtime_profiles
-             SET status = ?2, last_checked_at = datetime('now'), last_error = ?3, updated_at = datetime('now')
-             WHERE id = ?1",
-            params![input.profile_id, input.status.as_str(), input.message],
-        )?;
-        Ok(())
-    })
-}
-
-pub fn list_recent_health_events(
-    db: &Database,
-    profile_id: &str,
-    limit: usize,
-) -> AppResult<Vec<McpHealthEventSummary>> {
-    db.with_conn(|conn| {
-        let mut stmt = conn.prepare(
-            "SELECT id, profile_id, status, reason_code, message, metadata_json, created_at
-             FROM mcp_health_events
-             WHERE profile_id = ?1
-             ORDER BY id DESC
-             LIMIT ?2",
-        )?;
-        let rows = stmt.query_map(params![profile_id, limit as i64], |row| {
-            Ok(McpHealthEventSummary {
+        let rows = stmt.query_map([], |row| {
+            Ok(WebEvidenceProviderMappingSummary {
                 id: row.get(0)?,
-                profile_id: row.get(1)?,
-                status: McpRuntimeStatus::from_db(&row.get::<_, String>(2)?),
-                reason_code: row.get(3)?,
-                message: row.get(4)?,
-                metadata_json: row.get(5)?,
-                created_at: row.get(6)?,
+                kind: row.get(1)?,
+                transport_kind: row.get(2)?,
+                provider_config_hash: row.get(3)?,
+                web_search_mapping_json: row.get(4)?,
+                web_fetch_mapping_json: row.get(5)?,
             })
         })?;
-        Ok(rows.collect::<Result<Vec<_>, _>>()?)
+        rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
     })
 }
 
-pub fn upsert_skill_runtime_requirement(
+pub fn toggle_web_evidence_provider(
     db: &Database,
-    input: &SkillRuntimeRequirementInput,
+    provider_id: &str,
+    enabled: bool,
 ) -> AppResult<()> {
+    let provider_id = validate_provider_identifier("provider id", provider_id)?;
+    db.with_conn(|conn| {
+        let changed = conn.execute(
+            "UPDATE web_evidence_providers
+             SET enabled = ?2, updated_at = datetime('now')
+             WHERE id = ?1",
+            params![provider_id, if enabled { 1 } else { 0 }],
+        )?;
+        if changed == 0 {
+            return Err(AppError::msg("web evidence provider not found"));
+        }
+        Ok(())
+    })
+}
+
+pub fn delete_web_evidence_provider(db: &Database, provider_id: &str) -> AppResult<()> {
+    let provider_id = validate_provider_identifier("provider id", provider_id)?;
     db.with_conn(|conn| {
         conn.execute(
-            "INSERT INTO skill_runtime_requirements
-             (skill_name, scope, manifest_hash, kind, runtime_kind, required_profiles_json,
-              required_capabilities_json, workspace_contract_json, degradation_policy_json, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, datetime('now'))
-             ON CONFLICT(skill_name, scope) DO UPDATE SET
-               manifest_hash = excluded.manifest_hash,
-               kind = excluded.kind,
-               runtime_kind = excluded.runtime_kind,
-               required_profiles_json = excluded.required_profiles_json,
-               required_capabilities_json = excluded.required_capabilities_json,
-               workspace_contract_json = excluded.workspace_contract_json,
-               degradation_policy_json = excluded.degradation_policy_json,
-               updated_at = datetime('now')",
-            params![
-                input.skill_name,
-                scope_db(input.scope),
-                input.manifest_hash,
-                input.kind,
-                input.runtime_kind,
-                input.required_profiles_json,
-                input.required_capabilities_json,
-                input.workspace_contract_json,
-                input.degradation_policy_json
-            ],
+            "DELETE FROM web_evidence_providers WHERE id = ?1",
+            [provider_id],
         )?;
         Ok(())
     })
 }
 
-pub fn clear_skill_runtime_requirement(
-    db: &Database,
-    skill_name: &str,
-    scope: SkillScope,
-) -> AppResult<()> {
+pub fn web_evidence_provider_exists(db: &Database, provider_id: &str) -> AppResult<bool> {
+    let provider_id = validate_provider_identifier("provider id", provider_id)?;
     db.with_conn(|conn| {
-        conn.execute(
-            "DELETE FROM skill_runtime_requirements WHERE skill_name = ?1 AND scope = ?2",
-            params![skill_name, scope_db(scope)],
-        )?;
-        Ok(())
-    })
-}
-
-pub fn resolve_skill_runtime(
-    db: &Database,
-    skill_name: &str,
-    scope: SkillScope,
-) -> AppResult<SkillRuntimeReadiness> {
-    db.with_conn(|conn| {
-        let row: Option<(String, String)> = conn
-            .query_row(
-                "SELECT runtime_kind, required_profiles_json
-                 FROM skill_runtime_requirements
-                 WHERE skill_name = ?1 AND scope = ?2",
-                params![skill_name, scope_db(scope)],
-                |row| Ok((row.get(0)?, row.get(1)?)),
-            )
-            .optional()?;
-
-        let Some((runtime_kind, profiles_json)) = row else {
-            return Ok(SkillRuntimeReadiness {
-                runtime_kind: "not_applicable".to_string(),
-                ready: true,
-                status: McpRuntimeStatus::Ready,
-                required_profiles: Vec::new(),
-                missing_profiles: Vec::new(),
-                degraded_reasons: Vec::new(),
-            });
-        };
-
-        let required_profiles: Vec<String> =
-            serde_json::from_str(&profiles_json).unwrap_or_default();
-        if runtime_kind != "mcp" || required_profiles.is_empty() {
-            return Ok(SkillRuntimeReadiness {
-                runtime_kind,
-                ready: true,
-                status: McpRuntimeStatus::Ready,
-                required_profiles,
-                missing_profiles: Vec::new(),
-                degraded_reasons: Vec::new(),
-            });
-        }
-
-        let mut missing_profiles = Vec::new();
-        let mut degraded_reasons = Vec::new();
-        let mut worst_status = McpRuntimeStatus::Ready;
-        for profile_id in &required_profiles {
-            let profile: Option<(i64, String, Option<String>)> = conn
-                .query_row(
-                    "SELECT enabled, status, last_error FROM mcp_runtime_profiles WHERE id = ?1",
-                    [profile_id],
-                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
-                )
-                .optional()?;
-            match profile {
-                Some((enabled, status, _last_error)) if enabled != 0 && status == "ready" => {}
-                Some((_enabled, status, last_error)) => {
-                    worst_status = McpRuntimeStatus::from_db(&status);
-                    degraded_reasons.push(
-                        last_error
-                            .unwrap_or_else(|| format!("MCP profile {profile_id} is {status}")),
-                    );
-                    missing_profiles.push(profile_id.clone());
-                }
-                None => {
-                    worst_status = McpRuntimeStatus::Unavailable;
-                    degraded_reasons.push(format!("MCP profile {profile_id} is not configured"));
-                    missing_profiles.push(profile_id.clone());
-                }
-            }
-        }
-
-        Ok(SkillRuntimeReadiness {
-            runtime_kind,
-            ready: missing_profiles.is_empty(),
-            status: if missing_profiles.is_empty() {
-                McpRuntimeStatus::Ready
-            } else {
-                worst_status
-            },
-            required_profiles,
-            missing_profiles,
-            degraded_reasons,
-        })
+        conn.query_row(
+            "SELECT 1 FROM web_evidence_providers WHERE id = ?1",
+            [provider_id],
+            |_| Ok(()),
+        )
+        .optional()
+        .map(|value| value.is_some())
+        .map_err(Into::into)
     })
 }
 
@@ -831,233 +309,74 @@ pub fn resolve_skill_runtime(
 mod tests {
     use super::*;
 
-    fn server() -> McpServerCatalogInput {
-        McpServerCatalogInput {
+    fn provider() -> WebEvidenceProviderInput {
+        WebEvidenceProviderInput {
             id: "anysearch".into(),
-            display_name: "AnySearch".into(),
-            transport: "stdio".into(),
-            command: Some("anysearch-mcp".into()),
-            args_json: "[]".into(),
-            url: None,
-            env_schema_json: "{}".into(),
-            capability_tags_json: "[\"web.search\"]".into(),
-            source: "test".into(),
-        }
-    }
-
-    fn profile(status: McpRuntimeStatus, enabled: bool) -> McpRuntimeProfileInput {
-        McpRuntimeProfileInput {
-            id: "anysearch-default".into(),
-            server_id: "anysearch".into(),
-            vault_scope_hash: Some("vault".into()),
-            display_name: "AnySearch default".into(),
-            enabled,
+            name: "AnySearch".into(),
+            kind: "mcp".into(),
+            enabled: true,
+            transport_kind: "stdio".into(),
             transport_config_json: "{}".into(),
-            env_bindings_json: "{}".into(),
-            status,
-            last_error: None,
-        }
-    }
-
-    fn requirement() -> SkillRuntimeRequirementInput {
-        SkillRuntimeRequirementInput {
-            skill_name: "anysearch".into(),
-            scope: SkillScope::Vault,
-            manifest_hash: Some("hash".into()),
-            kind: "mcp_dependent".into(),
-            runtime_kind: "mcp".into(),
-            required_profiles_json: "[\"anysearch-default\"]".into(),
-            required_capabilities_json: "[\"web.search\"]".into(),
-            workspace_contract_json: "{}".into(),
-            degradation_policy_json: "{}".into(),
+            credential_refs_json: "{}".into(),
+            web_search_mapping_json: Some(r#"{"tool":"search"}"#.into()),
+            web_fetch_mapping_json: Some(r#"{"tool":"fetch"}"#.into()),
         }
     }
 
     #[test]
-    fn missing_requirement_is_ready_prompt_only_path() {
+    fn web_evidence_provider_registry_round_trips_minimal_mapping() {
         let db = Database::open_in_memory().unwrap();
-        let readiness = resolve_skill_runtime(&db, "plain", SkillScope::Vault).unwrap();
+        upsert_web_evidence_provider(&db, &provider()).unwrap();
 
-        assert_eq!(readiness.runtime_kind, "not_applicable");
-        assert!(readiness.ready);
-        assert!(readiness.required_profiles.is_empty());
+        let providers = list_web_evidence_providers(&db).unwrap();
+        assert_eq!(providers.len(), 1);
+        assert_eq!(providers[0].id, "anysearch");
+        assert_eq!(providers[0].kind, "mcp");
+        assert!(providers[0].enabled);
+        assert!(providers[0].has_search_mapping);
+        assert!(providers[0].has_fetch_mapping);
+
+        toggle_web_evidence_provider(&db, "anysearch", false).unwrap();
+        assert!(!list_web_evidence_providers(&db).unwrap()[0].enabled);
+
+        delete_web_evidence_provider(&db, "anysearch").unwrap();
+        assert!(list_web_evidence_providers(&db).unwrap().is_empty());
     }
 
     #[test]
-    fn mcp_requirement_is_ready_only_when_profile_is_ready() {
+    fn web_evidence_provider_rejects_raw_secret_material() {
         let db = Database::open_in_memory().unwrap();
-        upsert_server_catalog(&db, &server()).unwrap();
-        upsert_runtime_profile(&db, &profile(McpRuntimeStatus::Ready, true)).unwrap();
-        upsert_skill_runtime_requirement(&db, &requirement()).unwrap();
+        let mut input = provider();
+        input.credential_refs_json = r#"{"api_key":"plain"}"#.into();
 
-        let readiness = resolve_skill_runtime(&db, "anysearch", SkillScope::Vault).unwrap();
-        assert!(readiness.ready);
-        assert_eq!(readiness.status, McpRuntimeStatus::Ready);
-        assert_eq!(readiness.required_profiles, vec!["anysearch-default"]);
+        let err = upsert_web_evidence_provider(&db, &input).unwrap_err();
+        assert!(err.to_string().contains("credential references"));
     }
 
     #[test]
-    fn disabled_mcp_profile_blocks_runtime_readiness() {
+    fn legacy_mcp_runtime_tables_are_not_target_state() {
         let db = Database::open_in_memory().unwrap();
-        upsert_server_catalog(&db, &server()).unwrap();
-        upsert_runtime_profile(&db, &profile(McpRuntimeStatus::Ready, false)).unwrap();
-        upsert_skill_runtime_requirement(&db, &requirement()).unwrap();
 
-        let readiness = resolve_skill_runtime(&db, "anysearch", SkillScope::Vault).unwrap();
-        assert!(!readiness.ready);
-        assert_eq!(readiness.missing_profiles, vec!["anysearch-default"]);
-    }
-
-    #[test]
-    fn profile_toggle_and_delete_updates_registry_and_readiness() {
-        let db = Database::open_in_memory().unwrap();
-        upsert_server_catalog(&db, &server()).unwrap();
-        upsert_runtime_profile(&db, &profile(McpRuntimeStatus::Ready, true)).unwrap();
-        upsert_skill_runtime_requirement(&db, &requirement()).unwrap();
-
-        set_runtime_profile_enabled(&db, "anysearch-default", false).unwrap();
-        let disabled = resolve_skill_runtime(&db, "anysearch", SkillScope::Vault).unwrap();
-        assert!(!disabled.ready);
-        assert_eq!(disabled.missing_profiles, vec!["anysearch-default"]);
-
-        set_runtime_profile_enabled(&db, "anysearch-default", true).unwrap();
-        let enabled = resolve_skill_runtime(&db, "anysearch", SkillScope::Vault).unwrap();
-        assert!(enabled.ready);
-
-        delete_runtime_profile(&db, "anysearch-default").unwrap();
-        let deleted = resolve_skill_runtime(&db, "anysearch", SkillScope::Vault).unwrap();
-        assert!(!deleted.ready);
-        assert_eq!(deleted.status, McpRuntimeStatus::Unavailable);
-    }
-
-    #[test]
-    fn runtime_profile_upsert_rejects_unsafe_stdio_transport() {
-        let db = Database::open_in_memory().unwrap();
-        let mut unsafe_server = server();
-        unsafe_server.command = Some("cmd.exe /C anysearch".into());
-        upsert_server_catalog(&db, &unsafe_server).unwrap();
-
-        let err = upsert_runtime_profile(&db, &profile(McpRuntimeStatus::Ready, true)).unwrap_err();
-        assert!(err.to_string().contains("stdio command"));
-
-        let mut package_server = server();
-        package_server.id = "npx-search".into();
-        package_server.command = Some("npx".into());
-        upsert_server_catalog(&db, &package_server).unwrap();
-        let mut package_profile = profile(McpRuntimeStatus::Ready, true);
-        package_profile.id = "npx-search-default".into();
-        package_profile.server_id = "npx-search".into();
-        let err = upsert_runtime_profile(&db, &package_profile).unwrap_err();
-        assert!(err.to_string().contains("package manager"));
-    }
-
-    #[test]
-    fn runtime_profile_upsert_rejects_unsafe_http_transport() {
-        let db = Database::open_in_memory().unwrap();
-        let mut http_server = server();
-        http_server.id = "remote".into();
-        http_server.transport = "https".into();
-        http_server.command = None;
-        http_server.url = Some("http://example.com/mcp".into());
-        upsert_server_catalog(&db, &http_server).unwrap();
-        let mut remote_profile = profile(McpRuntimeStatus::Ready, true);
-        remote_profile.id = "remote-default".into();
-        remote_profile.server_id = "remote".into();
-        let err = upsert_runtime_profile(&db, &remote_profile).unwrap_err();
-        assert!(err.to_string().contains("HTTPS"));
-
-        let mut token_server = http_server;
-        token_server.id = "token-remote".into();
-        token_server.url = Some("https://example.com/mcp?api_key=secret".into());
-        upsert_server_catalog(&db, &token_server).unwrap();
-        let mut token_profile = remote_profile;
-        token_profile.id = "token-remote-default".into();
-        token_profile.server_id = "token-remote".into();
-        let err = upsert_runtime_profile(&db, &token_profile).unwrap_err();
-        assert!(err.to_string().contains("secret"));
-    }
-
-    #[test]
-    fn runtime_profile_upsert_accepts_structured_stdio_and_https() {
-        let db = Database::open_in_memory().unwrap();
-        upsert_server_catalog(&db, &server()).unwrap();
-        upsert_runtime_profile(&db, &profile(McpRuntimeStatus::Ready, true)).unwrap();
-
-        let mut https_server = server();
-        https_server.id = "remote".into();
-        https_server.transport = "https".into();
-        https_server.command = None;
-        https_server.url = Some("https://example.com/mcp".into());
-        upsert_server_catalog(&db, &https_server).unwrap();
-        let mut remote_profile = profile(McpRuntimeStatus::Ready, true);
-        remote_profile.id = "remote-default".into();
-        remote_profile.server_id = "remote".into();
-        upsert_runtime_profile(&db, &remote_profile).unwrap();
-
-        let profiles = list_runtime_profiles(&db).unwrap();
-        assert_eq!(profiles.len(), 2);
-        let remote = profiles
-            .iter()
-            .find(|profile| profile.id == "remote-default")
-            .unwrap();
-        assert_eq!(remote.transport, "https");
-        assert_eq!(remote.scope, "vault");
-        assert_eq!(remote.trust_level, "test");
-        assert_eq!(remote.credential_binding_status, "not_configured");
-    }
-    #[test]
-    fn runtime_profile_accepts_named_credential_env_bindings_without_exposing_values() {
-        let db = Database::open_in_memory().unwrap();
-        upsert_server_catalog(&db, &server()).unwrap();
-        let mut bound_profile = profile(McpRuntimeStatus::Ready, true);
-        bound_profile.env_bindings_json =
-            "{\"ANYSEARCH_API_KEY\":\"credential://iris.mcp.anysearch\"}".into();
-        upsert_runtime_profile(&db, &bound_profile).unwrap();
-
-        let profiles = list_runtime_profiles(&db).unwrap();
-        assert_eq!(profiles[0].credential_binding_status, "configured");
-        assert_eq!(profiles[0].credential_binding_count, 1);
-        assert!(!serde_json::to_string(&profiles[0])
-            .unwrap()
-            .contains("iris.mcp.anysearch"));
-    }
-    #[test]
-    fn tool_inventory_and_health_events_are_metadata_only() {
-        let db = Database::open_in_memory().unwrap();
-        upsert_server_catalog(&db, &server()).unwrap();
-        upsert_runtime_profile(&db, &profile(McpRuntimeStatus::Ready, true)).unwrap();
-
-        record_tool_inventory(
-            &db,
-            &McpToolInventoryInput {
-                profile_id: "anysearch-default".into(),
-                tool_name: "search".into(),
-                schema_hash: "sha256:abc".into(),
-                capability_mapping_json: "[\"web.search\"]".into(),
-                description: Some("Search the web".into()),
-            },
-        )
-        .unwrap();
-        let tools = list_tool_inventory(&db, "anysearch-default").unwrap();
-        assert_eq!(tools.len(), 1);
-        assert_eq!(tools[0].tool_name, "search");
-        assert_eq!(tools[0].schema_hash, "sha256:abc");
-
-        record_health_event(
-            &db,
-            &McpHealthEventInput {
-                profile_id: "anysearch-default".into(),
-                status: McpRuntimeStatus::Degraded,
-                reason_code: "timeout".into(),
-                message: Some("health check timed out".into()),
-                metadata_json: "{\"duration_ms\":5000}".into(),
-            },
-        )
-        .unwrap();
-        let events = list_recent_health_events(&db, "anysearch-default", 5).unwrap();
-        assert_eq!(events.len(), 1);
-        assert_eq!(events[0].reason_code, "timeout");
-        assert!(events[0].metadata_json.contains("duration_ms"));
-        assert!(!events[0].metadata_json.contains("raw_output"));
+        for table in [
+            "mcp_server_catalog",
+            "mcp_runtime_profiles",
+            "mcp_tool_inventory",
+            "mcp_health_events",
+            "skill_runtime_requirements",
+        ] {
+            let exists = db
+                .with_conn(|conn| {
+                    conn.query_row(
+                        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?1",
+                        [table],
+                        |_| Ok(()),
+                    )
+                    .optional()
+                    .map(|value| value.is_some())
+                    .map_err(Into::into)
+                })
+                .unwrap();
+            assert!(!exists, "{table} must not exist after AI reign-in");
+        }
     }
 }

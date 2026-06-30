@@ -71,18 +71,6 @@ pub enum AgentPermissionAtom {
     WebCitationExtract,
     #[serde(rename = "net.localhost")]
     NetLocalhost,
-    #[serde(rename = "skill.read_resource")]
-    SkillReadResource,
-    #[serde(rename = "skill.write_storage")]
-    SkillWriteStorage,
-    #[serde(rename = "skill.request_capabilities")]
-    SkillRequestCapabilities,
-    #[serde(rename = "skill.execute_script_sandboxed")]
-    SkillExecuteScriptSandboxed,
-    #[serde(rename = "skill.install_dependency")]
-    SkillInstallDependency,
-    #[serde(rename = "skill.mcp_bridge")]
-    SkillMcpBridge,
     #[serde(rename = "process.run_markdown_tool")]
     ProcessRunMarkdownTool,
     #[serde(rename = "process.run_readonly")]
@@ -115,8 +103,6 @@ pub enum AgentPermissionAtom {
     BrowserControlPage,
     #[serde(rename = "secret.exists")]
     SecretExists,
-    #[serde(rename = "secret.use_named")]
-    SecretUseNamed,
     #[serde(rename = "secret.create_update")]
     SecretCreateUpdate,
     #[serde(rename = "secret.read_plaintext")]
@@ -162,12 +148,6 @@ impl AgentPermissionAtom {
             Self::WebDownloadToAssets => "web.download_to_assets",
             Self::WebCitationExtract => "web.citation_extract",
             Self::NetLocalhost => "net.localhost",
-            Self::SkillReadResource => "skill.read_resource",
-            Self::SkillWriteStorage => "skill.write_storage",
-            Self::SkillRequestCapabilities => "skill.request_capabilities",
-            Self::SkillExecuteScriptSandboxed => "skill.execute_script_sandboxed",
-            Self::SkillInstallDependency => "skill.install_dependency",
-            Self::SkillMcpBridge => "skill.mcp_bridge",
             Self::ProcessRunMarkdownTool => "process.run_markdown_tool",
             Self::ProcessRunReadonly => "process.run_readonly",
             Self::ProcessRunMutating => "process.run_mutating",
@@ -184,7 +164,6 @@ impl AgentPermissionAtom {
             Self::BrowserScreenshot => "browser.screenshot",
             Self::BrowserControlPage => "browser.control_page",
             Self::SecretExists => "secret.exists",
-            Self::SecretUseNamed => "secret.use_named",
             Self::SecretCreateUpdate => "secret.create_update",
             Self::SecretReadPlaintext => "secret.read_plaintext",
             Self::AppStateRead => "app_state.read",
@@ -348,9 +327,6 @@ pub fn permission_profile_for_tool(tool_name: &str) -> Option<ToolPermissionProf
             (vec![Atom::RuntimeContextRead], Risk::Low, true)
         }
         "web_search" => (vec![Atom::WebSearch], Risk::Low, true),
-        "fetch_web_page" | "web_fetch_batch" | "readability_fetch" | "rendered_fetch" => {
-            (vec![Atom::WebFetch], Risk::Medium, true)
-        }
         "insert_text_at_cursor" | "replace_selection" | "add_tags" => {
             (vec![Atom::VaultWritePatch], Risk::Medium, true)
         }
@@ -374,33 +350,12 @@ pub fn permission_profile_for_tool(tool_name: &str) -> Option<ToolPermissionProf
         "doc_normalize_markdown" => (vec![Atom::DocNormalizeMarkdown], Risk::Medium, true),
         "doc_fix_links" => (vec![Atom::DocFixLinks], Risk::Medium, false),
         "doc_extract_citations" => (vec![Atom::DocExtractCitations], Risk::Medium, true),
-        "web_to_markdown" => (vec![Atom::WebToMarkdown], Risk::Medium, true),
-        "web_download_to_assets" => (vec![Atom::WebDownloadToAssets], Risk::Medium, true),
-        "web_citation_extract" => (vec![Atom::WebCitationExtract], Risk::Medium, true),
-        "net_localhost" => (vec![Atom::NetLocalhost], Risk::High, false),
-        "skill_request_capabilities" => (vec![Atom::SkillRequestCapabilities], Risk::Low, true),
-        "skill_execute_script_sandboxed" => (
-            vec![Atom::SkillExecuteScriptSandboxed],
-            Risk::Critical,
-            false,
-        ),
-        "skill_install_dependency" => (vec![Atom::SkillInstallDependency], Risk::Critical, false),
-        "skill_mcp_bridge" => (vec![Atom::SkillMcpBridge], Risk::Critical, false),
-        "process_run_markdown_tool" => (vec![Atom::ProcessRunMarkdownTool], Risk::High, false),
-        "process_run_readonly" => (vec![Atom::ProcessRunReadonly], Risk::High, true),
-        "process_run_mutating" => (vec![Atom::ProcessRunMutating], Risk::High, false),
-        "process_run_network" => (vec![Atom::ProcessRunNetwork], Risk::Critical, false),
-        "process_long_running" => (vec![Atom::ProcessLongRunning], Risk::Critical, false),
-        "process_kill_owned" => (vec![Atom::ProcessKillOwned], Risk::High, false),
         "git_read_status" => (vec![Atom::GitReadStatus], Risk::Low, true),
         "git_read_diff" => (vec![Atom::GitReadDiff], Risk::Low, true),
         "git_read_log" => (vec![Atom::GitReadLog], Risk::Low, true),
         "git_write_commit" => (vec![Atom::GitWriteCommit], Risk::High, true),
         "clipboard_write" => (vec![Atom::ClipboardWrite], Risk::High, false),
         "clipboard_read" => (vec![Atom::ClipboardRead], Risk::High, false),
-        "browser_read_page" => (vec![Atom::BrowserReadPage], Risk::High, false),
-        "browser_screenshot" => (vec![Atom::BrowserScreenshot], Risk::High, false),
-        "browser_control_page" => (vec![Atom::BrowserControlPage], Risk::High, false),
         "confirm_block_link"
         | "save_genre_template"
         | "update_user_rule"
@@ -408,35 +363,8 @@ pub fn permission_profile_for_tool(tool_name: &str) -> Option<ToolPermissionProf
         | "scheduled_task_create"
         | "scheduled_task_delete" => (vec![Atom::AppStateWrite], Risk::Medium, true),
         "memory_read" | "scheduled_task_list" => (vec![Atom::AppStateRead], Risk::Low, true),
-        "skills_list"
-        | "mcp_runtime_profiles_list"
-        | "mcp_runtime_diagnostics"
-        | "mcp_runtime_tool_inventory_list"
-        | "mcp_runtime_health_events_list"
-        | "skills_read_resource"
-        | "skills_workspace_list"
-        | "skills_workspace_read" => (vec![Atom::SkillReadResource], Risk::Low, true),
-        "mcp_runtime_tools_list" | "mcp_runtime_health_check" | "mcp_runtime_capability_call" => (
-            vec![Atom::SkillMcpBridge, Atom::ProcessRunReadonly],
-            Risk::High,
-            true,
-        ),
-        "mcp_server_catalog_upsert"
-        | "mcp_runtime_profile_upsert"
-        | "mcp_runtime_profile_toggle"
-        | "mcp_runtime_profile_delete" => (
-            vec![Atom::SkillMcpBridge, Atom::SkillWriteStorage],
-            Risk::High,
-            true,
-        ),
-        "skills_install"
-        | "skills_prepare_workspace"
-        | "skills_uninstall"
-        | "skills_update"
-        | "skills_toggle"
-        | "skills_workspace_write" => (vec![Atom::SkillWriteStorage], Risk::High, true),
+        "skills_list" => (vec![Atom::AppStateRead], Risk::Low, true),
         "secret.exists" | "secret_exists" => (vec![Atom::SecretExists], Risk::Low, true),
-        "secret.use_named" | "secret_use_named" => (vec![Atom::SecretUseNamed], Risk::High, false),
         "secret.create_update" | "secret_create_update" => {
             (vec![Atom::SecretCreateUpdate], Risk::Critical, false)
         }
@@ -613,18 +541,11 @@ pub fn preflight_tool_permission(
 
 fn scope_kind_for_atom(atom: AgentPermissionAtom) -> PermissionScopeKind {
     match atom {
-        AgentPermissionAtom::SkillReadResource
-        | AgentPermissionAtom::SkillWriteStorage
-        | AgentPermissionAtom::SkillRequestCapabilities
-        | AgentPermissionAtom::SkillExecuteScriptSandboxed
-        | AgentPermissionAtom::SkillInstallDependency
-        | AgentPermissionAtom::SkillMcpBridge => PermissionScopeKind::Skill,
         AgentPermissionAtom::FsPickFile
         | AgentPermissionAtom::FsPickFolder
         | AgentPermissionAtom::FsReadAuthorizedFolder
         | AgentPermissionAtom::FsWriteAuthorizedExport => PermissionScopeKind::Folder,
         AgentPermissionAtom::SecretExists
-        | AgentPermissionAtom::SecretUseNamed
         | AgentPermissionAtom::SecretCreateUpdate
         | AgentPermissionAtom::SecretReadPlaintext => PermissionScopeKind::Global,
         _ => PermissionScopeKind::Request,
@@ -638,7 +559,6 @@ fn reversible_by(atom: AgentPermissionAtom) -> String {
         | AgentPermissionAtom::VaultRenameMove
         | AgentPermissionAtom::VaultVersioning => "version history".into(),
         AgentPermissionAtom::VaultDeleteToTrash => "recycle bin restore".into(),
-        AgentPermissionAtom::SkillWriteStorage => "Skills settings".into(),
         AgentPermissionAtom::SecretCreateUpdate => "system credential manager".into(),
         _ => "permission settings".into(),
     }
@@ -648,10 +568,7 @@ fn scope_summary(tool_name: &str, args: &serde_json::Value, skill_id: Option<&st
     if let Some(skill) = skill_id {
         return format!("skill={}", safe_fragment(skill));
     }
-    if matches!(
-        tool_name,
-        "fetch_web_page" | "web_fetch_batch" | "readability_fetch" | "rendered_fetch"
-    ) {
+    if tool_name == "web_search" {
         return web_scope_summary(args);
     }
     for key in ["target_path", "path", "note_path"] {
@@ -771,36 +688,24 @@ mod tests {
     }
 
     #[test]
-    fn live_mcp_runtime_tools_require_process_confirmation_permissions() {
+    fn live_mcp_runtime_tools_have_no_permission_profile() {
         for name in [
             "mcp_runtime_tools_list",
             "mcp_runtime_health_check",
             "mcp_runtime_capability_call",
         ] {
-            let profile = permission_profile_for_tool(name).unwrap_or_else(|| panic!("{name}"));
-            assert!(profile.supported);
-            assert_eq!(profile.risk_level, PermissionRiskLevel::High);
-            assert!(profile.atoms.contains(&AgentPermissionAtom::SkillMcpBridge));
-            assert!(profile
-                .atoms
-                .contains(&AgentPermissionAtom::ProcessRunReadonly));
+            assert!(permission_profile_for_tool(name).is_none(), "{name}");
         }
     }
 
     #[test]
-    fn mcp_profile_management_requires_storage_confirmation_permissions() {
+    fn mcp_profile_management_tools_have_no_permission_profile() {
         for name in [
             "mcp_runtime_profile_upsert",
             "mcp_runtime_profile_toggle",
             "mcp_runtime_profile_delete",
         ] {
-            let profile = permission_profile_for_tool(name).unwrap_or_else(|| panic!("{name}"));
-            assert!(profile.supported);
-            assert_eq!(profile.risk_level, PermissionRiskLevel::High);
-            assert!(profile.atoms.contains(&AgentPermissionAtom::SkillMcpBridge));
-            assert!(profile
-                .atoms
-                .contains(&AgentPermissionAtom::SkillWriteStorage));
+            assert!(permission_profile_for_tool(name).is_none(), "{name}");
         }
     }
 }

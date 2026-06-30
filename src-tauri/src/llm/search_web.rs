@@ -4,7 +4,6 @@ use std::time::{Duration, Instant};
 use chrono::{Duration as ChronoDuration, Utc};
 use regex::Regex;
 use scraper::{Html, Selector};
-use serde::Serialize;
 use std::sync::LazyLock;
 
 use sha2::{Digest, Sha256};
@@ -20,10 +19,102 @@ use super::web_search_config::{
     WebSearchPreferences,
 };
 
-fn query_hash_key(query: &str, backend: WebSearchEffectiveBackend, minimax_model: &str) -> String {
+pub const SEARCH_CACHE_BROKER_VERSION: &str = "web-evidence-broker.v1";
+const MAX_SEARCH_CACHE_ROWS: usize = 512;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SearchCacheScope {
+    pub vault_id: Option<String>,
+    pub provider_id: String,
+    pub provider_kind: String,
+    pub provider_config_hash: String,
+    pub broker_version: String,
+}
+
+impl SearchCacheScope {
+    #[cfg(test)]
+    pub fn native(
+        backend: WebSearchEffectiveBackend,
+        vault_id: Option<String>,
+        broker_version: &str,
+    ) -> Self {
+        let provider_id = match backend {
+            WebSearchEffectiveBackend::Minimax => "native.minimax",
+            WebSearchEffectiveBackend::Duckduckgo => "native.duckduckgo",
+        };
+        Self {
+            vault_id,
+            provider_id: provider_id.into(),
+            provider_kind: "native".into(),
+            provider_config_hash: native_provider_config_hash(backend, "", ""),
+            broker_version: broker_version.into(),
+        }
+    }
+
+    fn native_minimax(vault_id: Option<String>, host: &str, model: &str) -> Self {
+        Self {
+            vault_id,
+            provider_id: "native.minimax".into(),
+            provider_kind: "native".into(),
+            provider_config_hash: native_provider_config_hash(
+                WebSearchEffectiveBackend::Minimax,
+                host,
+                model,
+            ),
+            broker_version: SEARCH_CACHE_BROKER_VERSION.into(),
+        }
+    }
+
+    fn native_duckduckgo(vault_id: Option<String>) -> Self {
+        Self {
+            vault_id,
+            provider_id: "native.duckduckgo".into(),
+            provider_kind: "native".into(),
+            provider_config_hash: native_provider_config_hash(
+                WebSearchEffectiveBackend::Duckduckgo,
+                "",
+                "",
+            ),
+            broker_version: SEARCH_CACHE_BROKER_VERSION.into(),
+        }
+    }
+}
+
+fn native_provider_config_hash(
+    backend: WebSearchEffectiveBackend,
+    host: &str,
+    model: &str,
+) -> String {
     let mut hasher = Sha256::new();
-    hasher.update(query.as_bytes());
     hasher.update(backend.as_str().as_bytes());
+    hasher.update(b"\0");
+    hasher.update(host.trim().as_bytes());
+    hasher.update(b"\0");
+    hasher.update(model.trim().as_bytes());
+    hex::encode(hasher.finalize())
+}
+
+fn query_hash_key(
+    query: &str,
+    backend: WebSearchEffectiveBackend,
+    minimax_model: &str,
+    scope: &SearchCacheScope,
+) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(scope.vault_id.as_deref().unwrap_or("default").as_bytes());
+    hasher.update(b"\0");
+    hasher.update(scope.provider_id.as_bytes());
+    hasher.update(b"\0");
+    hasher.update(scope.provider_kind.as_bytes());
+    hasher.update(b"\0");
+    hasher.update(scope.provider_config_hash.as_bytes());
+    hasher.update(b"\0");
+    hasher.update(scope.broker_version.as_bytes());
+    hasher.update(b"\0");
+    hasher.update(query.as_bytes());
+    hasher.update(b"\0");
+    hasher.update(backend.as_str().as_bytes());
+    hasher.update(b"\0");
     if backend == WebSearchEffectiveBackend::Minimax {
         hasher.update(minimax_model.trim().as_bytes());
     }
@@ -41,50 +132,34 @@ pub struct WebSearchFetchResult {
     pub backend: WebSearchEffectiveBackend,
 }
 
-/// Fetch web search context（MiniMax 优先，失败或无 Key 时降级 DuckDuckGo）。
-pub async fn fetch_search_context(
+/// Fetch search context for an explicit native provider.
+pub async fn fetch_native_provider_context(
     db: &Database,
     query: &str,
-    prefs: &WebSearchPreferences,
-) -> AppResult<WebSearchFetchResult> {
-    let mode = prefs.backend_mode;
-    let host = prefs.minimax_api_host.as_str();
-    let model = prefs.minimax_search_model.as_str();
-
-    tracing::info!(
-        query_hash = %hex::encode(&Sha256::digest(query.as_bytes())[..8]),
-        backend_mode = ?mode,
-        "web_search_start"
-    );
-
-    if mode == WebSearchBackendMode::Duckduckgo {
-        return fetch_duckduckgo_only(db, query).await;
-    }
-
-    if mode == WebSearchBackendMode::Minimax {
-        return fetch_minimax_only(db, query, host, model).await;
-    }
-
-    // auto: MiniMax → DuckDuckGo
-    if credentials::api_key_configured(db, MINIMAX_CREDENTIAL_SERVICE)? {
-        match fetch_minimax_cached(db, query, host, model).await {
-            Ok(r) => return Ok(r),
-            Err(e) => {
-                tracing::warn!("MiniMax search failed, falling back: {e}");
-            }
-        }
-    }
-
-    fetch_duckduckgo_only(db, query).await
-}
-
-/// 从数据库加载偏好并检索。
-pub async fn fetch_search_context_for_db(
-    db: &Database,
-    query: &str,
+    backend: WebSearchEffectiveBackend,
 ) -> AppResult<WebSearchFetchResult> {
     let prefs = load_web_search_preferences(db)?;
-    fetch_search_context(db, query, &prefs).await
+    match backend {
+        WebSearchEffectiveBackend::Minimax => {
+            let scope = SearchCacheScope::native_minimax(
+                None,
+                &prefs.minimax_api_host,
+                &prefs.minimax_search_model,
+            );
+            fetch_minimax_only(
+                db,
+                query,
+                &prefs.minimax_api_host,
+                &prefs.minimax_search_model,
+                &scope,
+            )
+            .await
+        }
+        WebSearchEffectiveBackend::Duckduckgo => {
+            let scope = SearchCacheScope::native_duckduckgo(None);
+            fetch_duckduckgo_only(db, query, &scope).await
+        }
+    }
 }
 
 async fn fetch_minimax_only(
@@ -92,11 +167,12 @@ async fn fetch_minimax_only(
     query: &str,
     host: &str,
     model: &str,
+    scope: &SearchCacheScope,
 ) -> AppResult<WebSearchFetchResult> {
     if !credentials::api_key_configured(db, MINIMAX_CREDENTIAL_SERVICE)? {
         return Err(AppError::msg("未配置 MiniMax API Key"));
     }
-    fetch_minimax_cached(db, query, host, model).await
+    fetch_minimax_cached(db, query, host, model, scope).await
 }
 
 async fn fetch_minimax_cached(
@@ -104,10 +180,11 @@ async fn fetch_minimax_cached(
     query: &str,
     host: &str,
     model: &str,
+    scope: &SearchCacheScope,
 ) -> AppResult<WebSearchFetchResult> {
     let backend = WebSearchEffectiveBackend::Minimax;
-    let key = query_hash_key(query, backend, model);
-    if let Some(cached) = cache_get_db(db, &key)? {
+    let key = query_hash_key(query, backend, model, scope);
+    if let Some(cached) = cache_get_db(db, &key, scope)? {
         return Ok(WebSearchFetchResult {
             body: cached,
             backend,
@@ -120,15 +197,20 @@ async fn fetch_minimax_cached(
         &key,
         &hex::encode(&Sha256::digest(query.as_bytes())[..8]),
         backend.as_str(),
+        scope,
         &body,
     )?;
     Ok(WebSearchFetchResult { body, backend })
 }
 
-async fn fetch_duckduckgo_only(db: &Database, query: &str) -> AppResult<WebSearchFetchResult> {
+async fn fetch_duckduckgo_only(
+    db: &Database,
+    query: &str,
+    scope: &SearchCacheScope,
+) -> AppResult<WebSearchFetchResult> {
     let backend = WebSearchEffectiveBackend::Duckduckgo;
-    let key = query_hash_key(query, backend, "");
-    if let Some(cached) = cache_get_db(db, &key)? {
+    let key = query_hash_key(query, backend, "", scope);
+    if let Some(cached) = cache_get_db(db, &key, scope)? {
         return Ok(WebSearchFetchResult {
             body: cached,
             backend,
@@ -141,130 +223,10 @@ async fn fetch_duckduckgo_only(db: &Database, query: &str) -> AppResult<WebSearc
         &key,
         &hex::encode(&Sha256::digest(query.as_bytes())[..8]),
         backend.as_str(),
+        scope,
         &body,
     )?;
     Ok(WebSearchFetchResult { body, backend })
-}
-
-/// 联网注入元数据（供前端展示与调试）。
-#[derive(Debug, Clone, Serialize)]
-pub struct WebSearchInjectMeta {
-    pub injected: bool,
-    pub result_count: usize,
-    /// 是否在上下文中附加了本机日历日期（问「今天几号」类问题）。
-    pub used_local_date: bool,
-    pub backend: String,
-}
-
-/// 带联网偏好与用户库设置的拼接。
-pub async fn prepend_web_search_context_for_db(
-    db: &Database,
-    user_content: &str,
-) -> AppResult<(String, WebSearchInjectMeta)> {
-    let prefs = load_web_search_preferences(db)?;
-    prepend_web_search_context_with_prefs(db, user_content, &prefs).await
-}
-
-async fn prepend_web_search_context_with_prefs(
-    db: &Database,
-    user_content: &str,
-    prefs: &WebSearchPreferences,
-) -> AppResult<(String, WebSearchInjectMeta)> {
-    let mut prefix = String::new();
-    let used_local_date = if asks_for_today_date(user_content) {
-        prefix.push_str(&crate::ai_runtime::runtime_context::local_date_line_zh());
-        prefix.push('\n');
-        prefix.push('\n');
-        true
-    } else {
-        false
-    };
-
-    let query = normalize_search_query(user_content);
-    let fetched = fetch_search_context(db, &query, prefs).await?;
-    let result_count = count_search_results(&fetched.body);
-    prefix.push_str(&fetched.body);
-
-    let meta = WebSearchInjectMeta {
-        injected: true,
-        result_count,
-        used_local_date,
-        backend: fetched.backend.as_str().to_string(),
-    };
-    Ok((format!("{prefix}\n\n用户问题: {user_content}"), meta))
-}
-
-/// 从用户原文提取更适合检索的查询词。
-pub fn normalize_search_query(user_content: &str) -> String {
-    let mut q = user_content.trim().to_string();
-    for phrase in [
-        "请帮我搜索",
-        "请帮我搜",
-        "可以联网搜索",
-        "请联网搜索",
-        "联网搜索",
-        "上网查一下",
-        "帮我搜一下",
-        "帮我搜索",
-        "帮我查一下",
-        "帮我上网搜",
-        "请搜索",
-        "搜索一下",
-        "查一下",
-        "please search",
-        "look up",
-        "search for",
-    ] {
-        q = q.replace(phrase, "");
-    }
-    q = q
-        .trim_matches(['？', '?', '。', '，', ' ', '\n', '!', '！', '：', ':'])
-        .trim()
-        .to_string();
-    if asks_for_today_date(user_content) {
-        return "今天 公历 日期 星期".to_string();
-    }
-    if q.is_empty() {
-        user_content.trim().to_string()
-    } else {
-        q
-    }
-}
-
-/// 用户是否在问「今天几月几日」等需实时日期的问题。
-pub fn asks_for_today_date(text: &str) -> bool {
-    let t = text.to_lowercase();
-    let has_today = t.contains("今天")
-        || t.contains("今日")
-        || t.contains("今儿")
-        || t.contains("today")
-        || t.contains("current date")
-        || t.contains("当前日期")
-        || t.contains("现在日期")
-        || t.contains("今天的日期");
-    if t.contains("today's date") || t.contains("todays date") {
-        return true;
-    }
-    let asks_date = t.contains("几月")
-        || t.contains("几号")
-        || t.contains("几日")
-        || t.contains("日期")
-        || t.contains("星期")
-        || t.contains("星期几")
-        || t.contains("what date")
-        || t.contains("what day")
-        || t.contains("what's the date")
-        || t.contains("whats the date");
-    has_today && asks_date
-}
-
-pub fn count_search_results(body: &str) -> usize {
-    body.lines()
-        .filter(|line| {
-            let t = line.trim_start();
-            t.starts_with('[') && t.contains("] 标题:")
-        })
-        .count()
 }
 
 /// 推断连通性展示用的「预期主后端」（未实际发请求）。
@@ -324,12 +286,26 @@ async fn throttle_backend(last: &'static LazyLock<Mutex<Option<Instant>>>) -> Ap
     Ok(())
 }
 
-fn cache_get_db(db: &Database, key: &str) -> AppResult<Option<String>> {
+fn cache_get_db(db: &Database, key: &str, scope: &SearchCacheScope) -> AppResult<Option<String>> {
     db.with_read_conn(|conn| {
         let mut stmt = conn.prepare(
-            "SELECT body FROM search_cache WHERE cache_key = ?1 AND expires_at > datetime('now')",
+            "SELECT body FROM search_cache
+             WHERE cache_key = ?1
+               AND ((vault_id IS NULL AND ?2 IS NULL) OR vault_id = ?2)
+               AND provider_id = ?3
+               AND provider_kind = ?4
+               AND provider_config_hash = ?5
+               AND broker_version = ?6
+               AND expires_at > datetime('now')",
         )?;
-        let mut rows = stmt.query([key])?;
+        let mut rows = stmt.query(rusqlite::params![
+            key,
+            scope.vault_id.as_deref(),
+            scope.provider_id,
+            scope.provider_kind,
+            scope.provider_config_hash,
+            scope.broker_version,
+        ])?;
         if let Some(row) = rows.next()? {
             Ok(Some(row.get(0)?))
         } else {
@@ -343,6 +319,7 @@ fn cache_set_db(
     key: &str,
     query_hash: &str,
     backend: &str,
+    scope: &SearchCacheScope,
     body: &str,
 ) -> AppResult<()> {
     let created_at = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
@@ -351,13 +328,42 @@ fn cache_set_db(
         .to_string();
     db.with_conn(|conn| {
         conn.execute(
-            "INSERT INTO search_cache (cache_key, query_hash, backend, body, created_at, expires_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+            "INSERT INTO search_cache (
+               cache_key,
+               query_hash,
+               backend,
+               body,
+               created_at,
+               expires_at,
+               vault_id,
+               provider_id,
+               provider_kind,
+               provider_config_hash,
+               broker_version
+             )
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
              ON CONFLICT(cache_key) DO UPDATE SET
                body = excluded.body,
                created_at = excluded.created_at,
-               expires_at = excluded.expires_at",
-            rusqlite::params![key, query_hash, backend, body, created_at, expires_at],
+               expires_at = excluded.expires_at,
+               vault_id = excluded.vault_id,
+               provider_id = excluded.provider_id,
+               provider_kind = excluded.provider_kind,
+               provider_config_hash = excluded.provider_config_hash,
+               broker_version = excluded.broker_version",
+            rusqlite::params![
+                key,
+                query_hash,
+                backend,
+                body,
+                created_at,
+                expires_at,
+                scope.vault_id.as_deref(),
+                scope.provider_id,
+                scope.provider_kind,
+                scope.provider_config_hash,
+                scope.broker_version,
+            ],
         )?;
         Ok(())
     })
@@ -369,6 +375,28 @@ pub fn cleanup_expired_search_cache(db: &Database) -> AppResult<usize> {
         let deleted = conn.execute(
             "DELETE FROM search_cache WHERE expires_at < datetime('now')",
             [],
+        )?;
+        Ok(deleted)
+    })
+    .and_then(|expired| prune_search_cache_lru(db, MAX_SEARCH_CACHE_ROWS).map(|lru| expired + lru))
+}
+
+fn prune_search_cache_lru(db: &Database, max_rows: usize) -> AppResult<usize> {
+    db.with_conn(|conn| {
+        let row_count: i64 =
+            conn.query_row("SELECT COUNT(*) FROM search_cache", [], |row| row.get(0))?;
+        let overflow = row_count.saturating_sub(max_rows as i64);
+        if overflow == 0 {
+            return Ok(0);
+        }
+        let deleted = conn.execute(
+            "DELETE FROM search_cache
+             WHERE cache_key IN (
+               SELECT cache_key FROM search_cache
+               ORDER BY datetime(created_at) ASC, cache_key ASC
+               LIMIT ?1
+             )",
+            [overflow],
         )?;
         Ok(deleted)
     })
@@ -570,40 +598,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn normalize_strips_web_hint() {
-        let q = normalize_search_query("今天是几月几日？可以联网搜索");
-        assert_eq!(q, "今天 公历 日期 星期");
-    }
-
-    #[test]
-    fn normalize_removes_various_hints() {
-        assert_eq!(normalize_search_query("帮我查一下最新的法规"), "最新的法规");
-        assert_eq!(
-            normalize_search_query("请帮我搜索 党纪处分条例"),
-            "党纪处分条例"
-        );
-        assert_eq!(normalize_search_query("search for AI safety"), "AI safety");
-    }
-
-    #[test]
-    fn detects_today_date_query() {
-        assert!(asks_for_today_date("今天是几月几日"));
-        assert!(asks_for_today_date("What is today's date?"));
-        assert!(asks_for_today_date("当前日期是什么？"));
-        assert!(asks_for_today_date("今天星期几"));
-        assert!(asks_for_today_date("What's the date today?"));
-        assert!(!asks_for_today_date("2020年宪法修订内容"));
-    }
-
-    #[test]
-    fn counts_result_lines() {
-        let body = "以下是与问题相关的网页搜索结果：\n\n\
-            [1] 标题: A\n    链接: https://a\n    摘要: x\n\n\
-            [2] 标题: B\n    链接: https://b\n    摘要: y\n\n";
-        assert_eq!(count_search_results(body), 2);
-    }
-
-    #[test]
     fn expected_backend_respects_mode() {
         use crate::llm::web_search_config::WebSearchBackendMode;
 
@@ -637,6 +631,147 @@ mod tests {
         assert_eq!(
             expected_search_backend_for_connectivity(&db, &prefs),
             WebSearchEffectiveBackend::Minimax
+        );
+    }
+
+    #[test]
+    fn search_cache_key_is_scoped_by_provider_config_and_vault() {
+        let base = SearchCacheScope::native(
+            WebSearchEffectiveBackend::Duckduckgo,
+            None,
+            SEARCH_CACHE_BROKER_VERSION,
+        );
+        let alternate_provider = SearchCacheScope {
+            provider_id: "native.duckduckgo.alt".into(),
+            ..base.clone()
+        };
+        let alternate_config = SearchCacheScope {
+            provider_config_hash: "changed-config".into(),
+            ..base.clone()
+        };
+        let alternate_vault = SearchCacheScope {
+            vault_id: Some("vault-b".into()),
+            ..base.clone()
+        };
+
+        let base_key = query_hash_key(
+            "private query",
+            WebSearchEffectiveBackend::Duckduckgo,
+            "",
+            &base,
+        );
+
+        assert_ne!(
+            base_key,
+            query_hash_key(
+                "private query",
+                WebSearchEffectiveBackend::Duckduckgo,
+                "",
+                &alternate_provider
+            )
+        );
+        assert_ne!(
+            base_key,
+            query_hash_key(
+                "private query",
+                WebSearchEffectiveBackend::Duckduckgo,
+                "",
+                &alternate_config
+            )
+        );
+        assert_ne!(
+            base_key,
+            query_hash_key(
+                "private query",
+                WebSearchEffectiveBackend::Duckduckgo,
+                "",
+                &alternate_vault
+            )
+        );
+        assert!(!base_key.contains("private query"));
+    }
+
+    #[test]
+    fn search_cache_reads_only_matching_provider_scope() {
+        let db = Database::open_in_memory().expect("mem db");
+        let base = SearchCacheScope::native(
+            WebSearchEffectiveBackend::Duckduckgo,
+            None,
+            SEARCH_CACHE_BROKER_VERSION,
+        );
+        let alternate = SearchCacheScope {
+            provider_config_hash: "changed-config".into(),
+            ..base.clone()
+        };
+        let key = query_hash_key(
+            "same query",
+            WebSearchEffectiveBackend::Duckduckgo,
+            "",
+            &base,
+        );
+
+        cache_set_db(
+            &db,
+            &key,
+            &hex::encode(&Sha256::digest("same query".as_bytes())[..8]),
+            WebSearchEffectiveBackend::Duckduckgo.as_str(),
+            &base,
+            "base body",
+        )
+        .expect("store scoped cache");
+
+        assert_eq!(
+            cache_get_db(&db, &key, &base).expect("read base"),
+            Some("base body".into())
+        );
+        assert_eq!(
+            cache_get_db(&db, &key, &alternate).expect("read alternate"),
+            None
+        );
+    }
+
+    #[test]
+    fn search_cache_lru_prunes_oldest_rows_over_limit() {
+        let db = Database::open_in_memory().expect("mem db");
+        let scope = SearchCacheScope::native(
+            WebSearchEffectiveBackend::Duckduckgo,
+            None,
+            SEARCH_CACHE_BROKER_VERSION,
+        );
+
+        for (key, created_at) in [
+            ("old", "2026-01-01T00:00:00Z"),
+            ("middle", "2026-01-02T00:00:00Z"),
+            ("new", "2026-01-03T00:00:00Z"),
+        ] {
+            cache_set_db(
+                &db,
+                key,
+                "query-hash",
+                WebSearchEffectiveBackend::Duckduckgo.as_str(),
+                &scope,
+                key,
+            )
+            .expect("store cache row");
+            db.with_conn(|conn| {
+                conn.execute(
+                    "UPDATE search_cache SET created_at = ?2 WHERE cache_key = ?1",
+                    rusqlite::params![key, created_at],
+                )?;
+                Ok::<(), crate::error::AppError>(())
+            })
+            .expect("set created_at");
+        }
+
+        assert_eq!(prune_search_cache_lru(&db, 2).expect("prune lru"), 1);
+        assert_eq!(cache_get_db(&db, "old", &scope).expect("read old"), None);
+        assert_eq!(
+            cache_get_db(&db, "middle", &scope).expect("read middle"),
+            Some("middle".into())
+        );
+        assert_eq!(
+            cache_get_db(&db, "new", &scope).expect("read new"),
+            Some("new".into())
         );
     }
 }

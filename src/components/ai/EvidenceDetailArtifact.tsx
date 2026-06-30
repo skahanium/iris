@@ -22,6 +22,10 @@ function localStatus(evidence: SessionEvidenceRecord): string {
   return evidence.contentHash ? "source_unchanged" : "span_missing";
 }
 
+function evidenceStatus(evidence: SessionEvidenceRecord): string {
+  return evidence.sourceType === "web" ? "web_source" : localStatus(evidence);
+}
+
 function webTitle(evidence: SessionEvidenceRecord): string {
   return (
     evidence.title?.trim() ||
@@ -95,11 +99,7 @@ export function EvidenceDetailArtifactView({ payload }: { payload: unknown }) {
             </div>
             <dl className="mt-3 grid gap-2 text-sm sm:grid-cols-[140px_minmax(0,1fr)]">
               <dt className="text-muted-foreground">Status</dt>
-              <dd>
-                {item.sourceType === "web"
-                  ? "external_metadata_only"
-                  : localStatus(item)}
-              </dd>
+              <dd>{evidenceStatus(item)}</dd>
               <dt className="text-muted-foreground">Source</dt>
               <dd className="break-words">
                 {item.sourceType === "web"
@@ -118,13 +118,17 @@ export function EvidenceDetailArtifactView({ payload }: { payload: unknown }) {
                   <dd>{item.retrievalReason}</dd>
                 </>
               ) : null}
+              {item.conflictGroup || item.conflictNote ? (
+                <>
+                  <dt className="text-muted-foreground">Conflict</dt>
+                  <dd>
+                    {item.conflictGroup ? `${item.conflictGroup}: ` : ""}
+                    {item.conflictNote || "conflict marked"}
+                  </dd>
+                </>
+              ) : null}
             </dl>
-            {item.sourceType === "web" ? (
-              <p className="mt-3 text-sm text-muted-foreground">
-                External webpage; page body and excerpt were not saved.
-              </p>
-            ) : null}
-            {item.sourceType === "local" && item.liveExcerpt ? (
+            {item.liveExcerpt ? (
               <pre className="mt-3 whitespace-pre-wrap rounded-md bg-surface-inset p-3 text-sm text-foreground">
                 {item.liveExcerpt}
               </pre>

@@ -253,17 +253,16 @@ describe("useAssistantConfirmations", () => {
     confirmTool = vi.fn(async () => ({
       resumed: false,
       status: "tool_executed_resume_failed",
-      installed_skill: "heartflow",
       toolExecutionOutcome: {
         status: "succeeded",
         sideEffectCommitted: true,
-        toolName: "skills_install",
-        resultSummary: "Skill heartflow 已安装。",
+        toolName: "confirmed_tool",
+        resultSummary: null,
       },
       assistantResumeOutcome: {
         status: "failed",
         failureClass: "provider_bad_request",
-        userMessage: "安装已完成，但继续生成回复失败。",
+        userMessage: "工具已执行，但继续生成回复失败。",
       },
     }));
 
@@ -291,7 +290,7 @@ describe("useAssistantConfirmations", () => {
     });
 
     await act(async () => {
-      api.setToolConfirmRequest({ ...request, tool_name: "skills_install" });
+      api.setToolConfirmRequest({ ...request, tool_name: "replace_selection" });
     });
     await act(async () => {
       await api.handleToolConfirm("req-1", "tool-1", "approve");
@@ -299,7 +298,7 @@ describe("useAssistantConfirmations", () => {
 
     expect(messages.at(-1)).toEqual({
       role: "system",
-      content: "安装已完成，但继续生成回复失败。",
+      content: "工具已执行，但继续生成回复失败。",
     });
     expect(messages.at(-1)?.content).not.toContain("工具确认失败");
     expect(messages.at(-1)?.content).not.toContain("Skill 安装失败");

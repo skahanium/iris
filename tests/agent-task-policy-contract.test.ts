@@ -53,7 +53,9 @@ describe("Agent Task Policy Phase B contract", () => {
     expect(body).toContain("input.task_policy");
     expect(body).toContain("resolve_max_rounds(&input.task_policy");
     expect(body).toContain("resolve_token_budget(&input.task_policy");
-    expect(body).toContain("max_fetch_per_round(&input.task_policy)");
+    expect(body).toContain(
+      "max_web_fetches: input.task_policy.max_fetch_per_round as usize",
+    );
     expect(body).not.toContain("resolve_scene(");
     expect(body).not.toContain("slot_for_scene(");
 

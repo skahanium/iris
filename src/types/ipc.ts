@@ -99,7 +99,6 @@ export interface LlmGenerateParams {
   system?: string;
   stream?: boolean;
   custom_base_url?: string;
-  web_search?: boolean;
 }
 
 export interface LlmProviderInfo {
@@ -327,6 +326,12 @@ export interface SessionEvidenceRecord {
   searchBackend?: string | null;
   sourceRank?: number | null;
   failureReason?: string | null;
+  providerId?: string | null;
+  providerKind?: string | null;
+  rawResultHash?: string | null;
+  extractionMethod?: string | null;
+  conflictGroup?: string | null;
+  conflictNote?: string | null;
   retiredAt?: string | null;
   createdAt: string;
   detailStatus?: string | null;
@@ -351,6 +356,12 @@ export interface SessionEvidenceRegisterPacket {
   searchBackend?: string | null;
   sourceRank?: number | null;
   failureReason?: string | null;
+  providerId?: string | null;
+  providerKind?: string | null;
+  rawResultHash?: string | null;
+  extractionMethod?: string | null;
+  conflictGroup?: string | null;
+  conflictNote?: string | null;
 }
 
 export interface BacklinkEntry {

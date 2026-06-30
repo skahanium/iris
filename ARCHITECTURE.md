@@ -208,48 +208,48 @@ Tauri 的命令式 IPC 基于 JSON 序列化。所有 Rust 函数通过 `#[tauri
 
 ### 命令分类
 
-| 前缀               | 模块        | 示例                                                                                                                        |
-| ------------------ | ----------- | --------------------------------------------------------------------------------------------------------------------------- |
-| `file_*`           | 文件系统    | `file_list`, `file_read`, `file_write`                                                                                      |
-| `llm_*`            | AI 集成     | `llm_generate`, `llm_chat`, `llm_abort`                                                                                     |
-| `search_*`         | 搜索        | `search_keyword`, `search_semantic`                                                                                         |
-| `index_*`          | 索引/元数据 | `index_tags`, `index_links`, `index_stats`                                                                                  |
-| `version_*`        | 版本快照    | `version_list`, `version_preview`, `version_restore`                                                                        |
-| `skills_*`         | AI Skills   | `skills_list`, `skills_install`, `skills_uninstall`, `skills_toggle`, `skills_read`, `skills_write`, `skills_read_resource` |
-| `settings_*`       | 配置        | `settings_get`, `settings_set`                                                                                              |
-| `credential_*`     | 凭据        | `credential_set`, `credential_get`                                                                                          |
-| `template_*`       | 模板        | `template_list`, `template_apply`                                                                                           |
-| `corpus_*`         | 语料库      | `corpus_list`, `corpus_upsert`                                                                                              |
-| `assistant_*`      | AI 助理     | `context_assemble`, `ai_send_message`, `tool_confirm`                                                                       |
-| `citation_*`       | 引用        | `citation_check`                                                                                                            |
-| `research_*`       | 研究        | `research_start`, `research_poll`                                                                                           |
-| `writing_*`        | 写作        | `writing_suggest`, `writing_apply`                                                                                          |
-| `organize_*`       | 整理        | `organize_run`                                                                                                              |
-| `profile_*`        | 个性化      | `profile_set_rule`                                                                                                          |
-| `llm_config_*`     | LLM 配置    | `llm_config_get`, `llm_config_set`                                                                                          |
-| `minimax_config_*` | 联网检索    | `minimax_config_get`, `minimax_config_set`                                                                                  |
-| `recycle_*`        | 回收站      | `recycle_list`, `recycle_restore`                                                                                           |
-| `graph_*`          | 知识图谱    | `graph_data`                                                                                                                |
-| `export_*`         | 导出        | `export_html`, `export_markdown`                                                                                            |
-| `document_*`       | 文档级      | `document_check`, `document_apply`                                                                                          |
+| 前缀               | 模块        | 示例                                                                   |
+| ------------------ | ----------- | ---------------------------------------------------------------------- |
+| `file_*`           | 文件系统    | `file_list`, `file_read`, `file_write`                                 |
+| `llm_*`            | AI 集成     | `llm_generate`, `llm_chat`, `llm_abort`                                |
+| `search_*`         | 搜索        | `search_keyword`, `search_semantic`                                    |
+| `index_*`          | 索引/元数据 | `index_tags`, `index_links`, `index_stats`                             |
+| `version_*`        | 版本快照    | `version_list`, `version_preview`, `version_restore`                   |
+| `skills_*`         | AI Skills   | `skills_list`, `skills_paths`, `skills_create_draft`, `skills_confirm` |
+| `settings_*`       | 配置        | `settings_get`, `settings_set`                                         |
+| `credential_*`     | 凭据        | `credential_set`, `credential_get`                                     |
+| `template_*`       | 模板        | `template_list`, `template_apply`                                      |
+| `corpus_*`         | 语料库      | `corpus_list`, `corpus_upsert`                                         |
+| `assistant_*`      | AI 助理     | `context_assemble`, `ai_send_message`, `tool_confirm`                  |
+| `citation_*`       | 引用        | `citation_check`                                                       |
+| `research_*`       | 研究        | `research_start`, `research_poll`                                      |
+| `writing_*`        | 写作        | `writing_suggest`, `writing_apply`                                     |
+| `organize_*`       | 整理        | `organize_run`                                                         |
+| `profile_*`        | 个性化      | `profile_set_rule`                                                     |
+| `llm_config_*`     | LLM 配置    | `llm_config_get`, `llm_config_set`                                     |
+| `minimax_config_*` | 联网检索    | `minimax_config_get`, `minimax_config_set`                             |
+| `recycle_*`        | 回收站      | `recycle_list`, `recycle_restore`                                      |
+| `graph_*`          | 知识图谱    | `graph_data`                                                           |
+| `export_*`         | 导出        | `export_html`, `export_markdown`                                       |
+| `document_*`       | 文档级      | `document_check`, `document_apply`                                     |
 
 ### 事件（Rust → WebView）
 
-| 事件名                    | 触发时机             | 载荷                                                           |
-| ------------------------- | -------------------- | -------------------------------------------------------------- |
-| `llm:token`               | LLM 流式返回 token   | `{ request_id, token, index }`                                 |
-| `llm:done`                | LLM 请求完成         | `{ request_id }`                                               |
-| `llm:error`               | LLM 请求失败         | `{ request_id, error }`                                        |
-| `file:changed`            | 外部文件变更检测     | `{ path, hash, event_type }`                                   |
-| `file:conflict`           | 文件冲突需要用户处理 | `{ path, local_hash, external_hash }`                          |
-| `version:created`         | 新版本快照已创建     | `{ file_id, version_id, timestamp }`                           |
-| `version:cleanup`         | 自动版本清理完成     | `{ cleaned_count, remaining_count }`                           |
-| `skills:changed`          | Skill 安装/卸载/启停 | （无载荷）                                                     |
-| `ai:tool_confirm_request` | Agent 工具需用户确认 | `{ request_id, tool_call_id, tool_name, arguments, preview? }` |
+| 事件名                    | 触发时机                 | 载荷                                                           |
+| ------------------------- | ------------------------ | -------------------------------------------------------------- |
+| `llm:token`               | LLM 流式返回 token       | `{ request_id, token, index }`                                 |
+| `llm:done`                | LLM 请求完成             | `{ request_id }`                                               |
+| `llm:error`               | LLM 请求失败             | `{ request_id, error }`                                        |
+| `file:changed`            | 外部文件变更检测         | `{ path, hash, event_type }`                                   |
+| `file:conflict`           | 文件冲突需要用户处理     | `{ path, local_hash, external_hash }`                          |
+| `version:created`         | 新版本快照已创建         | `{ file_id, version_id, timestamp }`                           |
+| `version:cleanup`         | 自动版本清理完成         | `{ cleaned_count, remaining_count }`                           |
+| `skills:changed`          | Skill 确认状态或索引刷新 | （无载荷）                                                     |
+| `ai:tool_confirm_request` | Agent 工具需用户确认     | `{ request_id, tool_call_id, tool_name, arguments, preview? }` |
 
 ### Agent Skills 数据流
 
-面板（`SkillsPanel`）与 Harness Agent 共用 `SkillInstallService`：IPC `skills_*` 与 Agent 工具 `skills_list` / `skills_install` / `skills_uninstall` / `skills_toggle` / `skills_read_resource` 调用同一 Rust 层。Registry 安装走 `skill_registry`（SkillHub → `api.skillhub.tencent.com`，`SkillRegistryAdapter` 可扩展注册表），变更操作经 `ToolConfirmDialog` 确认；成功后写入 `skill_install_sources`、刷新 `skill_activation_index`（关键词 + 描述 embedding）、emit `skills:changed` 刷新 UI。
+面板（`SkillsPanel`）与 Harness Agent 共用 prompt-only Skills 服务：IPC 只保留列出、创建草稿和确认保存；Agent 工具只保留非平台化的 skill awareness。Iris 不再提供外部 SkillHub / Git / 本地安装入口，也不通过 Skill 声明注册 MCP、脚本、资源读取或专用工作区。用户确认后的 `SKILL.md` 哈希写入 `skills-config.json`，并刷新 `skill_activation_index`（关键词 + 描述 embedding）、emit `skills:changed` 刷新 UI。
 
 ### AI Runtime v1.2.1 模块边界
 
@@ -273,17 +273,17 @@ cargo bench --manifest-path src-tauri/Cargo.toml --bench ai_benchmarks
 
 #### Skills 运行时能力边界
 
-| 能力        | 行为                                                                                        |
-| ----------- | ------------------------------------------------------------------------------------------- |
-| Prompt 注入 | `rank_skills_for_scene` 匹配后，将 `SKILL.md` 正文拼入 system message                       |
-| 工具扩权    | `allowed-tools` 与 `ToolPolicy` 硬约束求交；**不注册新 Rust 工具**                          |
-| 场景匹配    | 优先读 `skill_activation_index` 关键词/描述，文件扫描 fallback；embedding cosine rerank     |
-| 资源读取    | Agent 通过 `skills_read_resource` 读取 skill root 内 `references/`、`scripts/`、`assets/`   |
-| UI 语义     | **已启用**（config）≠ **本场景注入**（rank>0）；`AgentStatusBadge` / `SkillsPanel` 区分展示 |
+| 能力        | 行为                                                                                       |
+| ----------- | ------------------------------------------------------------------------------------------ |
+| Prompt 注入 | `rank_skills_for_scene` 匹配后，将 `SKILL.md` 正文拼入 system message                      |
+| 工具扩权    | `allowed-tools` 与 `ToolPolicy` 硬约束求交；**不注册新 Rust 工具**                         |
+| 场景匹配    | 优先读 `skill_activation_index` 关键词/描述，文件扫描 fallback；embedding cosine rerank    |
+| 确认门禁    | 新建或修改后的 Skill 需要用户确认内容哈希后才会参与注入                                    |
+| UI 语义     | **已启用**（config）≠ **已确认**（hash）≠ **本场景注入**（rank>0），`SkillsPanel` 区分展示 |
 
 | 不能做什么      | 说明                                                                           |
 | --------------- | ------------------------------------------------------------------------------ |
-| 任意插件执行    | 不会运行 skill 内任意脚本或注册 MCP                                            |
+| 任意插件执行    | 不会运行 skill 内任意脚本、安装依赖、读取资源目录或注册 MCP                    |
 | 突破 ToolPolicy | `requires_confirmation` 工具仍需用户确认；联网工具受 `web_search_enabled` 约束 |
 | Catalog 外工具  | `allowed-tools` 中未在 `ToolCatalog` 实现的名称仅 UI 警告，运行时不可用        |
 
