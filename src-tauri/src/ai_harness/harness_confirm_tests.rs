@@ -231,6 +231,76 @@ mod tests {
     }
 
     #[test]
+    fn resume_thinking_guard_disables_thinking_for_synthetic_tool_call_without_reasoning() {
+        use crate::ai_runtime::harness_confirm::{
+            append_tool_message_to_checkpoint, thinking_mode_for_resume_checkpoint,
+        };
+        use crate::ai_runtime::model_gateway::{
+            build_chat_completions_body, GatewayRequest, ProviderConfig,
+        };
+        use crate::ai_types::CapabilitySlot;
+
+        let db = Database::open_in_memory().unwrap();
+        let rid = "synthetic-skillhub-resume-1";
+        TraceRecorder::start(&db, rid, AiScene::KnowledgeLookup).unwrap();
+        TraceRecorder::update_status(&db, rid, TraceStatus::AwaitingToolConfirmation).unwrap();
+        let mut cp = sample_checkpoint(rid);
+        cp.messages = vec![
+            LlmMessage {
+                role: MessageRole::User,
+                content: "install anysearch from SkillHub".into(),
+                ..Default::default()
+            },
+            LlmMessage {
+                role: MessageRole::Assistant,
+                content: "Ready to install anysearch from SkillHub.".into(),
+                tool_call_id: None,
+                tool_calls: Some(vec![ToolCall::new(
+                    "direct-skillhub-1",
+                    "skills_install",
+                    r#"{"source":"registry","registry":"skillhub","path_or_url":"anysearch"}"#,
+                )]),
+                reasoning_content: None,
+            },
+        ];
+        save_harness_checkpoint(&db, rid, &cp).unwrap();
+
+        append_tool_message_to_checkpoint(
+            &db,
+            rid,
+            "direct-skillhub-1",
+            r#"{"installed":true}"#.into(),
+            "completed",
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+
+        let loaded = load_harness_checkpoint(&db, rid).unwrap().unwrap();
+        let thinking = thinking_mode_for_resume_checkpoint(&loaded.messages, true);
+        assert!(!thinking);
+
+        let body = build_chat_completions_body(&GatewayRequest {
+            provider: ProviderConfig {
+                name: "deepseek".into(),
+                base_url: "https://api.deepseek.com".into(),
+                model: "deepseek-reasoner".into(),
+                api_key: Some("test".into()),
+                slot: CapabilitySlot::Reasoner,
+                endpoint_family: crate::ai_types::EndpointFamily::OpenAiCompatibleChatCompletions,
+            },
+            messages: loaded.messages,
+            tools: vec![],
+            max_tokens: Some(2048),
+            temperature: Some(0.7),
+            stream: false,
+            thinking,
+            skip_stub_ids: vec![],
+        });
+        assert!(body.get("thinking").is_none());
+    }
+    #[test]
     fn mixed_auto_and_confirm_batch_resume_body_is_valid() {
         use crate::ai_harness::tool_turn::outstanding_confirm_ids;
         use crate::ai_runtime::model_gateway::{

@@ -40,6 +40,28 @@ pub fn classify_resume_error(message: &str) -> &'static str {
         "resume_failed"
     }
 }
+/// Keep thinking-mode resumes compatible with providers that require replayed reasoning.
+pub fn thinking_mode_for_resume_checkpoint(messages: &[LlmMessage], requested: bool) -> bool {
+    requested
+        && !messages
+            .iter()
+            .any(assistant_tool_call_missing_reasoning_content)
+}
+
+fn assistant_tool_call_missing_reasoning_content(message: &LlmMessage) -> bool {
+    if !matches!(message.role, MessageRole::Assistant) {
+        return false;
+    }
+    let has_tool_calls = message
+        .tool_calls
+        .as_ref()
+        .is_some_and(|tool_calls| !tool_calls.is_empty());
+    let has_reasoning = message
+        .reasoning_content
+        .as_deref()
+        .is_some_and(|reasoning| !reasoning.is_empty());
+    has_tool_calls && !has_reasoning
+}
 
 /// Append a tool-role message to checkpoint and persist.
 #[allow(clippy::too_many_arguments)]
@@ -178,6 +200,14 @@ pub async fn resume_harness_after_tool_confirm(
             let thinking = resolved.thinking;
             (resolved, provider_config, thinking)
         };
+    let requested_thinking = thinking;
+    let thinking = thinking_mode_for_resume_checkpoint(&cp.messages, requested_thinking);
+    if requested_thinking && !thinking {
+        tracing::warn!(
+            request_id = %request_id,
+            "Disabling thinking for tool-confirm resume because checkpoint has assistant tool_calls without reasoning_content"
+        );
+    }
     let user_message = latest_user_message(&cp.messages);
 
     let harness_result = run_harness(

@@ -343,11 +343,7 @@ export const EditorOutline = memo(function EditorOutline({
       >
         <div ref={barRef} className="outline-ghost-bar" aria-hidden />
         <div className="outline-ghost-items">
-          {entries.length === 0 ? (
-            <span className="outline-ghost-empty">暂无章节</span>
-          ) : (
-            entries.map((entry, index) => renderItem(entry, index))
-          )}
+          {entries.map((entry, index) => renderItem(entry, index))}
         </div>
       </div>
       {previewEntry ? (
