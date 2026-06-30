@@ -37,5 +37,29 @@ describe("AI message list scroll performance fixes (Fix 2 + Fix 3)", () => {
       expect(s).not.toContain("ref={rowVirtualizer.measureElement}");
       expect(s).toContain("measureRowElement");
     });
+
+    it("batches virtualizer row measurements on animation frames", () => {
+      const s = read("src/components/ai/AiMessageList.tsx");
+      const measureCallback = s.split("const measureRowElement")[1] ?? "";
+
+      expect(measureCallback).toContain("requestAnimationFrame");
+      expect(measureCallback).toContain("cancelAnimationFrame");
+      expect(measureCallback).toContain("pendingMeasureNodesRef");
+      expect(measureCallback).not.toContain(
+        "rowVirtualizerRef.current.measureElement(node)",
+      );
+    });
+  });
+
+  describe("Fix 5: guarded auto-scroll writes", () => {
+    it("only writes scrollTop when the bottom target meaningfully changes", () => {
+      const s = read("src/components/ai/AiMessageList.tsx");
+
+      expect(s).toContain("SCROLL_WRITE_EPSILON_PX");
+      expect(s).toMatch(/Math\.abs\([^)]*scrollTop[^)]*\)/);
+      expect(s).not.toContain(
+        "viewport.scrollTop = Math.max(\n      0,\n      viewport.scrollHeight - viewport.clientHeight,\n    );",
+      );
+    });
   });
 });

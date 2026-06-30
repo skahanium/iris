@@ -2,15 +2,15 @@
 
 use tauri::AppHandle;
 
-use super::finalize::{finish_run, ledger_to_packets, FinishRunParams};
 use super::token_estimator::{estimate_and_accumulate, usage_is_empty, UsageSource};
 use super::trace_emit::{emit_thinking, emit_trace_phase};
-use super::types::{HarnessFinishReason, HarnessPhase, HarnessRunInput, HarnessRunResult};
+use super::types::{HarnessPhase, HarnessRunInput};
 use super::util::accumulate_usage;
 use crate::ai_runtime::evidence_ledger::EvidenceLedger;
 use crate::ai_runtime::harness_support::extract_thinking_blocks;
 use crate::ai_runtime::model_gateway::{
-    emit_stream_reset, GatewayRequest, LlmMessage, MessageRole, ModelGateway, TokenUsage, ToolCall,
+    emit_stream_reset_with_surface, GatewayRequest, LlmMessage, MessageRole, ModelGateway,
+    StreamSurface, TokenUsage, ToolCall,
 };
 use crate::ai_runtime::tool_fallback::strip_tool_markup_from_visible;
 use crate::app::AppState;
@@ -20,15 +20,13 @@ use crate::error::AppResult;
 pub(crate) enum ReflectionOutcome {
     /// Continue agent loop with an extra evidence round.
     BonusRound,
-    /// Final answer ready.
-    Done(Box<HarnessRunResult>),
     /// Reflection did not produce a final answer; caller should fall through.
     NoAnswer,
 }
 
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn run_reflection_round(
-    state: &AppState,
+    _state: &AppState,
     app_handle: &AppHandle,
     input: &HarnessRunInput,
     gateway: &ModelGateway,
@@ -36,15 +34,15 @@ pub(crate) async fn run_reflection_round(
     max_tokens: Option<u32>,
     thinking: bool,
     messages: &mut Vec<LlmMessage>,
-    evidence_ledger: &EvidenceLedger,
-    all_tool_calls: &[ToolCall],
-    tool_results_json: &[serde_json::Value],
+    _evidence_ledger: &EvidenceLedger,
+    _all_tool_calls: &[ToolCall],
+    _tool_results_json: &[serde_json::Value],
     total_usage: &mut TokenUsage,
     harness_rounds: u32,
-    pending_confirmation: bool,
+    _pending_confirmation: bool,
     bonus_round_used: &mut bool,
     max_rounds: &mut u32,
-    token_budget: u32,
+    _token_budget: u32,
     usage_source: &mut UsageSource,
 ) -> AppResult<ReflectionOutcome> {
     emit_trace_phase(
@@ -59,7 +57,7 @@ pub(crate) async fn run_reflection_round(
     )?;
     messages.push(LlmMessage {
         role: MessageRole::User,
-        content: "请审视当前证据是否足以准确回答用户。若不足，回复 NEED_MORE_EVIDENCE；否则直接给出完整回答（勿再调用工具）。"
+        content: "请审视当前证据是否足以准确回答用户。若不足，只回复 NEED_MORE_EVIDENCE；若足够，只回复 EVIDENCE_SUFFICIENT。不要调用工具，不要生成最终正文。"
             .into(),
         tool_call_id: None,
         tool_calls: None,
@@ -76,7 +74,11 @@ pub(crate) async fn run_reflection_round(
         skip_stub_ids: vec![],
     };
     if let Ok(reflect_resp) = gateway
-        .send_streaming_request(&input.request_id, reflect_request)
+        .send_streaming_request_with_surface(
+            &input.request_id,
+            reflect_request,
+            StreamSurface::InternalCandidate,
+        )
         .await
     {
         if usage_is_empty(&reflect_resp.usage) {
@@ -110,7 +112,21 @@ pub(crate) async fn run_reflection_round(
                 // Non-terminal: reflection returned the NEED_MORE_EVIDENCE
                 // sentinel. The streamed sentinel must not reach the answer
                 // surface; clear it before the bonus round re-streams.
-                emit_stream_reset(app_handle, &input.request_id)?;
+                tracing::debug!(
+                    request_id = %input.request_id,
+                    event = "reflection_reset",
+                    candidate_kind = "internal_candidate",
+                    reason_kind = "need_more_evidence",
+                    round = harness_rounds,
+                    "AI lifecycle reflection reset"
+                );
+                emit_stream_reset_with_surface(
+                    app_handle,
+                    &input.request_id,
+                    "need_more_evidence",
+                    StreamSurface::InternalCandidate,
+                    Some(harness_rounds),
+                )?;
                 return Ok(ReflectionOutcome::BonusRound);
             }
             let stripped = strip_tool_markup_from_visible(&text);
@@ -118,35 +134,35 @@ pub(crate) async fn run_reflection_round(
             if let Some(t) = thinking {
                 emit_thinking(app_handle, &input.request_id, harness_rounds, &t)?;
             }
-            if let Some(content) = sanitize_reflection_visible(&visible) {
-                return Ok(ReflectionOutcome::Done(Box::new(
-                    finish_run(
-                        state,
-                        input.clone(),
-                        FinishRunParams {
-                            content,
-                            tool_calls: all_tool_calls.to_vec(),
-                            tool_results: tool_results_json.to_vec(),
-                            usage: total_usage.clone(),
-                            harness_rounds,
-                            pending_confirmation,
-                            evidence_packets: ledger_to_packets(evidence_ledger, token_budget),
-                            usage_source: *usage_source,
-                            finish_reason: if pending_confirmation {
-                                HarnessFinishReason::AwaitingConfirmation
-                            } else {
-                                HarnessFinishReason::Completed
-                            },
-                        },
-                    )
-                    .await?,
-                )));
+            if sanitize_reflection_visible(&visible).is_some() {
+                tracing::debug!(
+                    request_id = %input.request_id,
+                    event = "reflection_sufficient",
+                    candidate_kind = "internal_candidate",
+                    round = harness_rounds,
+                    "AI lifecycle reflection found sufficient evidence"
+                );
+                return Ok(ReflectionOutcome::NoAnswer);
             }
         }
     }
     // Non-terminal: reflection produced no usable answer. Any streamed content
     // was inconclusive; clear it before the caller falls through to FinalStream.
-    emit_stream_reset(app_handle, &input.request_id)?;
+    tracing::debug!(
+        request_id = %input.request_id,
+        event = "reflection_reset",
+        candidate_kind = "internal_candidate",
+        reason_kind = "reflection_no_answer",
+        round = harness_rounds,
+        "AI lifecycle reflection reset"
+    );
+    emit_stream_reset_with_surface(
+        app_handle,
+        &input.request_id,
+        "reflection_no_answer",
+        StreamSurface::InternalCandidate,
+        Some(harness_rounds),
+    )?;
     Ok(ReflectionOutcome::NoAnswer)
 }
 

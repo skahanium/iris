@@ -63,6 +63,18 @@ describe("assistant streaming lifecycle contract", () => {
       expect(src).not.toContain("clearTimeout");
     });
 
+    it("useAssistantLlmStream only mutates messages for visible answer stream events", () => {
+      const src = read("src/hooks/useAssistantLlmStream.ts");
+
+      expect(src).toContain("function isVisibleAnswerSurface");
+      expect(src).toContain('surface === "visible_answer"');
+      expect(src).toMatch(
+        /return\s+\(?\s*surface === undefined \|\| surface === null/,
+      );
+      expect(src).toContain("if (!isVisibleAnswerSurface(ev.surface))");
+      expect(src).toContain('surface: ev.surface ?? "visible_answer"');
+    });
+
     it("AiMessageList does not depend scroll-follow effects on the virtualizer object", () => {
       const src = read("src/components/ai/AiMessageList.tsx");
       expect(src).toContain("const virtualTotalSize =");
@@ -156,6 +168,66 @@ describe("assistant streaming lifecycle contract", () => {
       const parseBranch =
         src.split("should_retry_tool_parse(&tool_calls)")[1] ?? "";
       expect(parseBranch).toContain("ai:retry_status");
+    });
+  });
+
+  describe("auditable stream lifecycle", () => {
+    it("useAssistantTasks records final reconcile without logging raw content", () => {
+      const src = read("src/components/ai/hooks/useAssistantTasks.ts");
+
+      expect(src).toContain("lifecycleRecorder");
+      expect(src).toContain('event: "final_reconcile"');
+      expect(src).toContain("serverContentSummary");
+      expect(src).toContain("streamBufferSummary");
+      expect(src).toContain("summarizeLifecycleContent");
+    });
+
+    it("llm reset payload carries a safe reason kind", () => {
+      const ipc = read("src/lib/ipc.ts");
+      const ipcTypes = read("src/types/ipc.ts");
+      const streaming = read(
+        "src-tauri/src/ai_runtime/model_gateway/streaming.rs",
+      );
+
+      expect(ipcTypes).toContain("LlmResetEvent");
+      expect(ipcTypes).toContain("reason_kind?");
+      expect(ipcTypes).toContain("surface?: StreamSurface");
+      expect(ipcTypes).toContain("candidate_kind?");
+      expect(ipc).toContain("LlmResetEvent");
+      expect(streaming).toContain("emit_stream_reset_with_reason");
+      expect(streaming).toContain('"reason_kind"');
+      expect(streaming).toContain('"surface"');
+      expect(streaming).toContain('"candidate_kind"');
+    });
+
+    it("harness marks internal and visible stream candidates in safe traces", () => {
+      const run = read("src-tauri/src/ai_harness/harness/run.rs");
+      const reflection = read("src-tauri/src/ai_harness/harness/reflection.rs");
+
+      expect(run).toContain('candidate_kind = "internal_candidate"');
+      expect(run).toContain('candidate_kind = "visible_answer_candidate"');
+      expect(run).toContain('event = "final_stream_started"');
+      expect(run).toContain('event = "agent_round_reset"');
+      expect(reflection).toContain('"need_more_evidence"');
+      expect(reflection).toContain('"reflection_no_answer"');
+    });
+
+    it("harness uses internal candidate stream mode for agent and reflection rounds", () => {
+      const run = read("src-tauri/src/ai_harness/harness/run.rs");
+      const reflection = read("src-tauri/src/ai_harness/harness/reflection.rs");
+      const streaming = read(
+        "src-tauri/src/ai_runtime/model_gateway/streaming.rs",
+      );
+      const gateway = read("src-tauri/src/ai_runtime/model_gateway_impl.rs");
+
+      expect(streaming).toContain("pub enum StreamSurface");
+      expect(streaming).toContain("InternalCandidate");
+      expect(streaming).toContain("VisibleAnswer");
+      expect(gateway).toContain("send_streaming_request_with_surface");
+      expect(run).toContain("StreamSurface::InternalCandidate");
+      expect(run).toContain("StreamSurface::VisibleAnswer");
+      expect(reflection).toContain("StreamSurface::InternalCandidate");
+      expect(reflection).not.toContain("ReflectionOutcome::Done");
     });
   });
 

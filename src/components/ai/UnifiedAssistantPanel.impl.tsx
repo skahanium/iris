@@ -238,6 +238,7 @@ export function UnifiedAssistantPanel({
     panelSendActiveRef,
     requestIdRef,
     streamBufRef: streamBuf,
+    setActivityHint,
     setMessages,
     setStreaming,
   });

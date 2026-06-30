@@ -28,8 +28,9 @@ use crate::ai_runtime::harness_support::{
     extract_thinking_blocks, load_harness_checkpoint, HarnessCheckpointMeta,
 };
 use crate::ai_runtime::model_gateway::{
-    clear_abort, emit_stream_reset, is_abort_requested, prepare_tool_api_messages, GatewayRequest,
-    GatewayResponse, LlmMessage, MessageRole, ModelGateway, ProviderConfig, TokenUsage, ToolCall,
+    clear_abort, emit_stream_reset_with_surface, is_abort_requested, prepare_tool_api_messages,
+    GatewayRequest, GatewayResponse, LlmMessage, MessageRole, ModelGateway, ProviderConfig,
+    StreamSurface, TokenUsage, ToolCall,
 };
 use crate::ai_runtime::permission_decision::{decide_tool_permission, PermissionDecisionRequest};
 use crate::ai_runtime::subagent_coordinator::{SubAgentCoordinator, SubAgentTaskSpec};
@@ -109,17 +110,85 @@ fn classify_final_answer(
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+struct RetryReason {
+    reason_kind: &'static str,
+    status_code: Option<u16>,
+}
+
+fn extract_http_status_code(message: &str) -> Option<u16> {
+    let bytes = message.as_bytes();
+    if bytes.len() < 3 {
+        return None;
+    }
+
+    for index in 0..=(bytes.len() - 3) {
+        let code = &bytes[index..index + 3];
+        if code.iter().all(u8::is_ascii_digit) {
+            let value = (code[0] - b'0') as u16 * 100
+                + (code[1] - b'0') as u16 * 10
+                + (code[2] - b'0') as u16;
+            if (400..=599).contains(&value) {
+                return Some(value);
+            }
+        }
+    }
+
+    None
+}
+
+fn classify_retry_reason(message: &str) -> RetryReason {
+    let lower = message.to_lowercase();
+    let status_code = extract_http_status_code(message);
+    let reason_kind = if status_code == Some(429)
+        || lower.contains("rate limit")
+        || lower.contains("too many requests")
+        || lower.contains("请求过于频繁")
+    {
+        "http_429"
+    } else if status_code == Some(503)
+        || lower.contains("service unavailable")
+        || lower.contains("too busy")
+        || lower.contains("overloaded")
+        || lower.contains("模型服务繁忙")
+    {
+        "http_503"
+    } else if lower.contains("stream read error") {
+        "stream_read_error"
+    } else if lower.contains("timeout")
+        || lower.contains("timed out")
+        || lower.contains("deadline")
+        || lower.contains("operation timed out")
+    {
+        "timeout_or_stall"
+    } else if lower.contains("llm streaming request failed")
+        || lower.contains("request failed")
+        || lower.contains("error sending request")
+    {
+        "request_failed"
+    } else if status_code.is_some() || lower.contains("模型请求失败") {
+        "http_error"
+    } else {
+        "unknown"
+    };
+
+    RetryReason {
+        reason_kind,
+        status_code,
+    }
+}
+
 /// Streaming agent-round LLM call: reuses the circuit breaker and
 /// exponential-backoff retry logic, but dispatches through
-/// `ModelGateway::send_streaming_request` so `llm:token` events are emitted to
-/// the frontend as tokens arrive. Used by the agent round so the user sees the
-/// answer form incrementally instead of a single dump at the end.
+/// `ModelGateway::send_streaming_request_with_surface` so caller chooses whether
+/// provider tokens are internal candidates or visible answer text.
 async fn send_llm_streaming_request_with_retry(
     app_handle: &AppHandle,
     gateway: &ModelGateway,
     request: GatewayRequest,
     request_id: &str,
     provider_id: &str,
+    surface: StreamSurface,
 ) -> AppResult<GatewayResponse> {
     if !circuit_breaker::is_request_allowed(provider_id) {
         return Err(AppError::msg(format!(
@@ -129,7 +198,7 @@ async fn send_llm_streaming_request_with_retry(
     let mut last_err: Option<String> = None;
     for attempt in 0..=LLM_MAX_RETRIES {
         match gateway
-            .send_streaming_request(request_id, request.clone())
+            .send_streaming_request_with_surface(request_id, request.clone(), surface)
             .await
         {
             Ok(response) => {
@@ -140,6 +209,7 @@ async fn send_llm_streaming_request_with_retry(
                 let msg = e.to_string();
                 if attempt < LLM_MAX_RETRIES {
                     let delay_ms = LLM_RETRY_BASE_DELAY_MS * 2u64.pow(attempt);
+                    let retry_reason = classify_retry_reason(&msg);
                     let _ = app_handle.emit(
                         "ai:retry_status",
                         &serde_json::json!({
@@ -147,6 +217,8 @@ async fn send_llm_streaming_request_with_retry(
                             "attempt": attempt + 1,
                             "max_attempts": LLM_MAX_RETRIES,
                             "delay_ms": delay_ms,
+                            "reason_kind": retry_reason.reason_kind,
+                            "status_code": retry_reason.status_code,
                         }),
                     );
                     tracing::warn!(
@@ -296,6 +368,16 @@ async fn run_harness_inner(
     let mut consecutive_parse_failures: u32 = 0;
     let token_budget = resolve_token_budget(&input.task_policy, input.token_budget);
     let mut max_rounds = resolve_max_rounds(&input.task_policy, input.max_rounds_override);
+    tracing::debug!(
+        request_id = %input.request_id,
+        event = "policy_resolved",
+        intent = ?input.task_policy.intent,
+        scene = %input.scene.profile(),
+        capability_slot = ?provider_config.slot,
+        max_rounds,
+        token_budget,
+        "AI lifecycle policy resolved"
+    );
 
     if input.resume_from_checkpoint {
         if let Some(cp) = load_harness_checkpoint(&state.db, &input.request_id)? {
@@ -402,6 +484,13 @@ async fn run_harness_inner(
                 thinking: thinking_mode,
                 skip_stub_ids: vec![],
             };
+            tracing::debug!(
+                request_id = %input.request_id,
+                event = "agent_round_started",
+                candidate_kind = "unclassified_candidate",
+                round = harness_rounds,
+                "AI lifecycle agent round started"
+            );
 
             let response = send_llm_streaming_request_with_retry(
                 app_handle,
@@ -409,6 +498,7 @@ async fn run_harness_inner(
                 request,
                 &input.request_id,
                 &provider_config.name,
+                StreamSurface::InternalCandidate,
             )
             .await?;
             if usage_is_empty(&response.usage) {
@@ -430,7 +520,21 @@ async fn run_harness_inner(
                 consecutive_parse_failures += 1;
                 // Non-terminal: the streamed content is malformed tool JSON,
                 // not a user-facing answer. Drop it before the next attempt.
-                emit_stream_reset(app_handle, &input.request_id)?;
+                tracing::debug!(
+                    request_id = %input.request_id,
+                    event = "agent_round_reset",
+                    candidate_kind = "internal_candidate",
+                    reason_kind = "parse_retry",
+                    round = harness_rounds,
+                    "AI lifecycle agent round reset"
+                );
+                emit_stream_reset_with_surface(
+                    app_handle,
+                    &input.request_id,
+                    "parse_retry",
+                    StreamSurface::InternalCandidate,
+                    Some(harness_rounds),
+                )?;
                 // Surface this as a retry to the UI so the user sees progress
                 // instead of a silent multi-minute stall (each retried round
                 // is a full LLM call of up to ~247s).
@@ -466,6 +570,13 @@ async fn run_harness_inner(
             consecutive_parse_failures = 0;
 
             if tool_calls.is_empty() {
+                tracing::debug!(
+                    request_id = %input.request_id,
+                    event = "agent_round_promoted_to_final",
+                    candidate_kind = "visible_answer_candidate",
+                    round = harness_rounds,
+                    "AI lifecycle agent round promoted to final answer"
+                );
                 let raw = response.content.clone().unwrap_or_default();
                 let stripped = strip_tool_markup_from_visible(&raw);
                 let (visible, thinking) = extract_thinking_blocks(&stripped);
@@ -495,7 +606,21 @@ async fn run_harness_inner(
             // or a conclude_reasoning signal). The streamed preamble must not
             // stick to the surface — the next round or the FinalStream phase
             // will stream the real answer into a clean buffer.
-            emit_stream_reset(app_handle, &input.request_id)?;
+            tracing::debug!(
+                request_id = %input.request_id,
+                event = "agent_round_reset",
+                candidate_kind = "internal_candidate",
+                reason_kind = "tool_round",
+                round = harness_rounds,
+                "AI lifecycle agent round reset"
+            );
+            emit_stream_reset_with_surface(
+                app_handle,
+                &input.request_id,
+                "tool_round",
+                StreamSurface::InternalCandidate,
+                Some(harness_rounds),
+            )?;
 
             if tool_calls
                 .iter()
@@ -962,7 +1087,6 @@ async fn run_harness_inner(
         .await?
         {
             ReflectionOutcome::BonusRound => continue 'agent,
-            ReflectionOutcome::Done(result) => return Ok(*result),
             ReflectionOutcome::NoAnswer => break 'agent,
         }
     }
@@ -977,6 +1101,13 @@ async fn run_harness_inner(
         None,
         None,
     )?;
+    tracing::debug!(
+        request_id = %input.request_id,
+        event = "final_stream_started",
+        candidate_kind = "visible_answer_candidate",
+        round = harness_rounds,
+        "AI lifecycle final stream started"
+    );
 
     let final_content = {
         abort_if_requested(&input.request_id)?;
@@ -991,7 +1122,11 @@ async fn run_harness_inner(
             skip_stub_ids: vec![],
         };
         let response = gateway
-            .send_streaming_request(&input.request_id, stream_request)
+            .send_streaming_request_with_surface(
+                &input.request_id,
+                stream_request,
+                StreamSurface::VisibleAnswer,
+            )
             .await?;
         if usage_is_empty(&response.usage) {
             // Prompt tokens already accumulated from prior rounds.

@@ -8,10 +8,15 @@ import {
 
 import { mergeContextPackets } from "@/lib/ai/merge-context-packets";
 import { shouldStartNewAiSession } from "@/lib/ai/session-thread";
-import { resolveAssistantDisplayContent } from "@/lib/assistant-message-content";
+import { resolveAssistantReconcileContent } from "@/lib/assistant-message-content";
 import { buildArtifactDraftsFromTaskResult } from "@/lib/assistant-artifact-tabs";
 import { validateContextReference } from "@/lib/context-reference";
 import { patchSpansPreferSidebar } from "@/lib/assistant-patch";
+import {
+  recordAiLifecycleEvent,
+  summarizeLifecycleContent,
+  type AiLifecycleRecorder,
+} from "@/lib/ai-lifecycle-trace";
 import { pendingWriteConfirmationAction } from "@/lib/assistant-write-confirmation";
 import {
   agentIntentForTaskPlan,
@@ -86,6 +91,7 @@ interface AssistantTaskRuntimePorts {
     >;
     setRunPlanSummary: Dispatch<SetStateAction<AgentRunPlanSummary | null>>;
   };
+  lifecycleRecorder?: AiLifecycleRecorder;
   saveConversationSnapshot?: (messages: ChatLine[]) => Promise<void>;
 }
 
@@ -210,6 +216,16 @@ function agentIntentForAssistantIntent(intent: AssistantIntent): AgentIntent {
   }
 }
 
+function lastAssistantContent(messages: ChatLine[]): string {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (message?.role === "assistant") {
+      return message.content;
+    }
+  }
+  return "";
+}
+
 export function useAssistantTasks({
   runtime,
   context,
@@ -224,6 +240,7 @@ export function useAssistantTasks({
     clearContextReferences,
     clearTaskSurfaces,
     ensureAssistantStreamSlot,
+    lifecycleRecorder,
     runPlanControls,
     saveConversationSnapshot,
   } = runtime;
@@ -487,11 +504,26 @@ export function useAssistantTasks({
           result.tool_results,
         );
         const serverContent = result.content?.trim() ?? "";
-        const finalContent = resolveAssistantDisplayContent(
+        const reconcile = resolveAssistantReconcileContent({
+          currentContent: lastAssistantContent(messages),
           serverContent,
-          streamBufRef.current,
+          streamBuffer: streamBufRef.current,
           toolCalls,
+        });
+        const serverContentSummary = summarizeLifecycleContent(serverContent);
+        const streamBufferSummary = summarizeLifecycleContent(
+          streamBufRef.current,
         );
+        recordAiLifecycleEvent(lifecycleRecorder, {
+          contentSummary: summarizeLifecycleContent(reconcile.content),
+          event: "final_reconcile",
+          phase: "frontend_reconcile",
+          reconcileReason: reconcile.reason,
+          requestId: result.request_id,
+          serverContentSummary,
+          source: "chat_ipc_result",
+          streamBufferSummary,
+        });
 
         const evidencePackets = mergeContextPackets(
           packets,
@@ -503,15 +535,19 @@ export function useAssistantTasks({
           const next = [...prev];
           const last = next[next.length - 1];
           if (last?.role === "assistant") {
+            if (reconcile.mutation === "noop" && last.toolCalls === toolCalls) {
+              void saveConversationSnapshot?.(next);
+              return prev;
+            }
             next[next.length - 1] = {
               ...last,
-              content: finalContent,
+              content: reconcile.content,
               toolCalls,
             };
           } else {
             next.push({
               role: "assistant",
-              content: finalContent,
+              content: reconcile.content,
               toolCalls,
             });
           }
@@ -576,6 +612,8 @@ export function useAssistantTasks({
       forceNewSessionRef,
       explicitIntentDetection,
       getNoteContentForRequest,
+      lifecycleRecorder,
+      messages,
       notePath,
       packets,
       panelSendActiveRef,
@@ -1077,18 +1115,36 @@ export function useAssistantTasks({
         // The streamed tokens already populated the assistant slot; reconcile
         // it with the authoritative server summary rather than appending a
         // duplicate message.
-        const finalContent = resolveAssistantDisplayContent(
-          serverSummary,
+        const reconcile = resolveAssistantReconcileContent({
+          currentContent: lastAssistantContent(messages),
+          serverContent: serverSummary,
+          streamBuffer: streamBufRef.current,
+          toolCalls: undefined,
+        });
+        const serverContentSummary = summarizeLifecycleContent(serverSummary);
+        const streamBufferSummary = summarizeLifecycleContent(
           streamBufRef.current,
-          undefined,
         );
+        recordAiLifecycleEvent(lifecycleRecorder, {
+          contentSummary: summarizeLifecycleContent(reconcile.content),
+          event: "final_reconcile",
+          phase: "frontend_reconcile",
+          reconcileReason: reconcile.reason,
+          requestId: result.request_id,
+          serverContentSummary,
+          source: "research_ipc_result",
+          streamBufferSummary,
+        });
         setMessages((prev) => {
           const next = [...prev];
           const last = next[next.length - 1];
           if (last?.role === "assistant") {
-            next[next.length - 1] = { ...last, content: finalContent };
+            if (reconcile.mutation === "noop") {
+              return prev;
+            }
+            next[next.length - 1] = { ...last, content: reconcile.content };
           } else {
-            next.push({ role: "assistant", content: finalContent });
+            next.push({ role: "assistant", content: reconcile.content });
           }
           return next;
         });
@@ -1106,6 +1162,8 @@ export function useAssistantTasks({
       clearTaskSurfaces,
       ensureAssistantStreamSlot,
       explicitIntentDetection,
+      lifecycleRecorder,
+      messages,
       researchRequestIdRef,
       recordRunPlan,
       recordAssistantArtifacts,

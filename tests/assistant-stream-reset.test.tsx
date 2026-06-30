@@ -34,9 +34,11 @@ describe("useAssistantLlmStream reset + done behavior", () => {
   let container: HTMLDivElement;
   let messagesState: ChatLine[];
   let streamingState: boolean;
+  let activityHintState: string | null;
   let panelSendActive: { current: boolean };
   let requestId: { current: string | null };
   let streamBuf: { current: string };
+  let lifecycleEvents: unknown[];
   let rootUnmounted: boolean;
   let rafCallbacks: Map<number, FrameRequestCallback>;
   let nextRafId: number;
@@ -53,10 +55,14 @@ describe("useAssistantLlmStream reset + done behavior", () => {
     const { useAssistantLlmStream } =
       await import("@/hooks/useAssistantLlmStream");
     function Host() {
+      const lifecycleRecorder = (entry: unknown) => {
+        lifecycleEvents.push(entry);
+      };
       useAssistantLlmStream({
         panelSendActiveRef: panelSendActive,
         requestIdRef: requestId,
         streamBufRef: streamBuf,
+        lifecycleRecorder,
         setMessages: (updater) => {
           messagesState =
             typeof updater === "function"
@@ -68,6 +74,12 @@ describe("useAssistantLlmStream reset + done behavior", () => {
             typeof v === "function"
               ? (v as (p: boolean) => boolean)(streamingState)
               : (v as boolean);
+        },
+        setActivityHint: (v) => {
+          activityHintState =
+            typeof v === "function"
+              ? (v as (p: string | null) => string | null)(activityHintState)
+              : (v as string | null);
         },
       });
       return null;
@@ -84,6 +96,8 @@ describe("useAssistantLlmStream reset + done behavior", () => {
     rootUnmounted = false;
     messagesState = [];
     streamingState = false;
+    activityHintState = null;
+    lifecycleEvents = [];
     panelSendActive = { current: true };
     requestId = { current: "req-1" };
     streamBuf = { current: "" };
@@ -121,10 +135,20 @@ describe("useAssistantLlmStream reset + done behavior", () => {
     await mountHook();
 
     await act(async () => {
-      handlers.token?.({ request_id: "req-1", token: "你好", index: 0 });
+      handlers.token?.({
+        request_id: "req-1",
+        token: "你好",
+        index: 0,
+        surface: "visible_answer",
+      });
     });
     await act(async () => {
-      handlers.token?.({ request_id: "req-1", token: "世界", index: 1 });
+      handlers.token?.({
+        request_id: "req-1",
+        token: "世界",
+        index: 1,
+        surface: "visible_answer",
+      });
     });
 
     await act(async () => {
@@ -137,12 +161,70 @@ describe("useAssistantLlmStream reset + done behavior", () => {
     expect(last?.content).toContain("你好世界");
   });
 
-  it("llm:reset clears the stream buffer and empties the assistant slot", async () => {
+  it("internal candidate tokens, done, and reset do not touch the visible assistant slot", async () => {
+    messagesState = [{ role: "user", content: "问题" }];
+    await mountHook();
+    const firstMessagesRef = messagesState;
+
+    await act(async () => {
+      handlers.token?.({
+        request_id: "req-1",
+        token: "内部前导",
+        index: 0,
+        surface: "internal_candidate",
+        candidate_kind: "internal_candidate",
+      });
+    });
+    await act(async () => {
+      flushRaf();
+    });
+    await act(async () => {
+      handlers.done?.({
+        request_id: "req-1",
+        surface: "internal_candidate",
+        candidate_kind: "internal_candidate",
+      });
+    });
+    await act(async () => {
+      handlers.reset?.({
+        request_id: "req-1",
+        reason_kind: "tool_round",
+        surface: "internal_candidate",
+        candidate_kind: "internal_candidate",
+      });
+    });
+
+    expect(streamBuf.current).toBe("");
+    expect(messagesState).toBe(firstMessagesRef);
+    expect(messagesState).toEqual([{ role: "user", content: "问题" }]);
+    expect(lifecycleEvents).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          event: "llm_token",
+          source: "llm:token",
+          surface: "internal_candidate",
+        }),
+        expect.objectContaining({
+          event: "llm_reset",
+          reasonKind: "tool_round",
+          source: "llm:reset",
+          surface: "internal_candidate",
+        }),
+      ]),
+    );
+  });
+
+  it("visible llm:reset clears the stream buffer and empties the assistant slot", async () => {
     await mountHook();
 
     // seed some streamed content first
     await act(async () => {
-      handlers.token?.({ request_id: "req-1", token: "前导文本", index: 0 });
+      handlers.token?.({
+        request_id: "req-1",
+        token: "前导文本",
+        index: 0,
+        surface: "visible_answer",
+      });
     });
     await act(async () => {
       flushRaf();
@@ -151,13 +233,70 @@ describe("useAssistantLlmStream reset + done behavior", () => {
 
     // fire reset
     await act(async () => {
-      handlers.reset?.({ request_id: "req-1" });
+      handlers.reset?.({
+        request_id: "req-1",
+        surface: "visible_answer",
+      });
     });
 
     expect(streamBuf.current).toBe("");
     const last = messagesState[messagesState.length - 1];
     expect(last?.role).toBe("assistant");
     expect(last?.content).toBe("");
+  });
+
+  it("records safe lifecycle entries for token, done, and reset message mutations", async () => {
+    await mountHook();
+
+    await act(async () => {
+      handlers.token?.({
+        request_id: "req-1",
+        token: "不应泄漏",
+        index: 0,
+        surface: "visible_answer",
+      });
+    });
+    await act(async () => {
+      flushRaf();
+    });
+    await act(async () => {
+      handlers.done?.({ request_id: "req-1" });
+    });
+    await act(async () => {
+      handlers.reset?.({
+        request_id: "req-1",
+        reason_kind: "tool_round",
+        surface: "visible_answer",
+      });
+    });
+
+    expect(lifecycleEvents).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          event: "llm_token",
+          phase: "frontend_stream",
+          requestId: "req-1",
+          source: "llm:token",
+        }),
+        expect.objectContaining({
+          event: "message_mutation",
+          mutation: "push_assistant",
+          phase: "frontend_stream",
+          source: "llm_token_raf",
+        }),
+        expect.objectContaining({
+          event: "message_mutation",
+          mutation: "clear_assistant",
+          phase: "frontend_stream",
+          reasonKind: "tool_round",
+          source: "llm_reset",
+        }),
+      ]),
+    );
+    const serialized = JSON.stringify(lifecycleEvents);
+    expect(serialized).not.toContain("不应泄漏");
+    expect(serialized).toContain("contentSummary");
+    expect(serialized).toContain("hash");
   });
 
   it("llm:done does not flip streaming to false (task runner owns streaming state)", async () => {
@@ -191,6 +330,44 @@ describe("useAssistantLlmStream reset + done behavior", () => {
     });
   });
 
+  it("ai:retry_status updates activity hint without adding transcript messages", async () => {
+    messagesState = [{ role: "user", content: "你好" }];
+    await mountHook();
+    const firstMessagesRef = messagesState;
+
+    await act(async () => {
+      handlers.retry?.({
+        request_id: "req-1",
+        attempt: 1,
+        max_attempts: 3,
+        delay_ms: 1000,
+        reason_kind: "http_503",
+        status_code: 503,
+      });
+    });
+
+    expect(messagesState).toBe(firstMessagesRef);
+    expect(messagesState).toEqual([{ role: "user", content: "你好" }]);
+    expect(activityHintState).toBe("重试中（1/3），约 1 秒后继续。");
+  });
+
+  it("ai:retry_status ignores mismatched request ids", async () => {
+    await mountHook();
+
+    await act(async () => {
+      handlers.retry?.({
+        request_id: "other-req",
+        attempt: 1,
+        max_attempts: 3,
+        delay_ms: 1000,
+        reason_kind: "request_failed",
+      });
+    });
+
+    expect(messagesState).toEqual([]);
+    expect(activityHintState).toBeNull();
+  });
+
   it("llm:reset does not replace an already-empty assistant slot", async () => {
     messagesState = [{ role: "assistant", content: "" }];
     await mountHook();
@@ -211,7 +388,12 @@ describe("useAssistantLlmStream reset + done behavior", () => {
     await mountHook();
 
     await act(async () => {
-      handlers.token?.({ request_id: "req-1", token: "不应泄漏", index: 0 });
+      handlers.token?.({
+        request_id: "req-1",
+        token: "不应泄漏",
+        index: 0,
+        surface: "visible_answer",
+      });
     });
     expect(rafCallbacks.size).toBe(1);
 
@@ -233,7 +415,12 @@ describe("useAssistantLlmStream reset + done behavior", () => {
     await mountHook();
 
     await act(async () => {
-      handlers.token?.({ request_id: "req-1", token: "不应保留", index: 0 });
+      handlers.token?.({
+        request_id: "req-1",
+        token: "不应保留",
+        index: 0,
+        surface: "visible_answer",
+      });
     });
     expect(rafCallbacks.size).toBe(1);
 
@@ -256,7 +443,12 @@ describe("useAssistantLlmStream reset + done behavior", () => {
     await mountHook();
 
     await act(async () => {
-      handlers.token?.({ request_id: "req-1", token: "卸载前", index: 0 });
+      handlers.token?.({
+        request_id: "req-1",
+        token: "卸载前",
+        index: 0,
+        surface: "visible_answer",
+      });
     });
     expect(rafCallbacks.size).toBe(1);
 

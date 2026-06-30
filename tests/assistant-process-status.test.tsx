@@ -169,6 +169,29 @@ describe("AssistantProcessStatusBar", () => {
     expect(document.body.textContent).not.toContain("中止");
   });
 
+  it("shows retry progress during ordinary streaming without an abort button", async () => {
+    await act(async () => {
+      root.render(
+        <AssistantProcessStatusBar
+          agentTask={null}
+          activityHint="重试中（1/3），约 1 秒后继续。"
+          researchProgress={null}
+          researchRunning={false}
+          streaming
+          onAbort={vi.fn()}
+        />,
+      );
+    });
+
+    expect(document.body.textContent).toContain(
+      "重试中（1/3），约 1 秒后继续。",
+    );
+    expect(
+      document.querySelector('[data-testid="assistant-process-status"]'),
+    ).not.toBeNull();
+    expect(document.body.textContent).not.toContain("中止");
+  });
+
   it("hides when the task is completed", async () => {
     await act(async () => {
       root.render(

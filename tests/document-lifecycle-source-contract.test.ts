@@ -195,8 +195,12 @@ describe("document lifecycle source contracts", () => {
     const backend = read("src-tauri/src/ai_harness/harness/run.rs");
     expect(ipc).toContain("listenAiRetryStatus");
     expect(hook).toContain("listenAiRetryStatus");
+    expect(hook).toContain("setActivityHint");
+    expect(hook).not.toContain('role: "system",\n          content: `重试中');
     expect(backend).toContain('"ai:retry_status"');
     expect(backend).toContain('"delay_ms": delay_ms');
+    expect(backend).toContain('"reason_kind": retry_reason.reason_kind');
+    expect(backend).toContain('"status_code": retry_reason.status_code');
     expect(backend).not.toContain('"message": request');
     expect(backend).not.toContain('"prompt"');
   });

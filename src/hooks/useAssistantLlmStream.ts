@@ -14,10 +14,21 @@ import {
   listenLlmReset,
   listenLlmToken,
 } from "@/lib/ipc";
-import type { LlmTokenEvent } from "@/types/ipc";
+import type { LlmDoneEvent, LlmTokenEvent, StreamSurface } from "@/types/ipc";
 
 import type { ChatLine } from "@/components/ai/AiMessageList";
 import type { AiDomain } from "@/lib/ai-domain";
+import {
+  recordAiLifecycleEvent,
+  summarizeLifecycleContent,
+  type AiLifecycleRecorder,
+} from "@/lib/ai-lifecycle-trace";
+
+function isVisibleAnswerSurface(surface: StreamSurface | undefined | null) {
+  return (
+    surface === undefined || surface === null || surface === "visible_answer"
+  );
+}
 
 /**
  * 统一助手 LLM 流式事件监听（RAF 节流 + request_id 过滤）。
@@ -26,17 +37,21 @@ export function useAssistantLlmStream(options: {
   panelSendActiveRef: MutableRefObject<boolean>;
   requestIdRef: MutableRefObject<string | null>;
   streamBufRef: MutableRefObject<string>;
+  setActivityHint: Dispatch<SetStateAction<string | null>>;
   setMessages: Dispatch<SetStateAction<ChatLine[]>>;
   setStreaming: Dispatch<SetStateAction<boolean>>;
   domain?: AiDomain;
+  lifecycleRecorder?: AiLifecycleRecorder;
 }) {
   const {
     panelSendActiveRef,
     requestIdRef,
     streamBufRef,
+    setActivityHint,
     setMessages,
     setStreaming,
     domain,
+    lifecycleRecorder,
   } = options;
 
   const domainRef = useRef(domain);
@@ -52,33 +67,92 @@ export function useAssistantLlmStream(options: {
     let unlistenReset: (() => void) | undefined;
     let unlistenRetryStatus: (() => void) | undefined;
 
-    function setMessagesFromBuf() {
+    function setMessagesFromBuf(source: string) {
       const snapshot = streamBufRef.current;
       setMessages((prev) => {
         const last = prev[prev.length - 1];
         if (last?.role === "assistant") {
-          if (last.content === snapshot) return prev;
+          if (last.content === snapshot) {
+            recordAiLifecycleEvent(lifecycleRecorder, {
+              event: "message_mutation",
+              mutation: "noop",
+              nextSummary: summarizeLifecycleContent(snapshot),
+              phase: "frontend_stream",
+              previousSummary: summarizeLifecycleContent(last.content),
+              requestId: requestIdRef.current,
+              source,
+            });
+            return prev;
+          }
           const copy = [...prev];
           copy[copy.length - 1] = { ...last, content: snapshot };
+          recordAiLifecycleEvent(lifecycleRecorder, {
+            event: "message_mutation",
+            mutation: "replace_assistant",
+            nextSummary: summarizeLifecycleContent(snapshot),
+            phase: "frontend_stream",
+            previousSummary: summarizeLifecycleContent(last.content),
+            requestId: requestIdRef.current,
+            source,
+          });
           return copy;
         }
         const copy = [...prev];
         copy.push({ role: "assistant", content: snapshot });
+        recordAiLifecycleEvent(lifecycleRecorder, {
+          event: "message_mutation",
+          mutation: "push_assistant",
+          nextSummary: summarizeLifecycleContent(snapshot),
+          phase: "frontend_stream",
+          requestId: requestIdRef.current,
+          source,
+        });
         return copy;
       });
     }
 
-    function clearAssistantSlot() {
+    function clearAssistantSlot(reasonKind?: string | null) {
       setMessages((prev) => {
         const last = prev[prev.length - 1];
         if (last?.role === "assistant") {
-          if (last.content === "") return prev;
+          if (last.content === "") {
+            recordAiLifecycleEvent(lifecycleRecorder, {
+              event: "message_mutation",
+              mutation: "noop",
+              nextSummary: summarizeLifecycleContent(""),
+              phase: "frontend_stream",
+              previousSummary: summarizeLifecycleContent(last.content),
+              reasonKind,
+              requestId: requestIdRef.current,
+              source: "llm_reset",
+            });
+            return prev;
+          }
           const copy = [...prev];
           copy[copy.length - 1] = { ...last, content: "" };
+          recordAiLifecycleEvent(lifecycleRecorder, {
+            event: "message_mutation",
+            mutation: "clear_assistant",
+            nextSummary: summarizeLifecycleContent(""),
+            phase: "frontend_stream",
+            previousSummary: summarizeLifecycleContent(last.content),
+            reasonKind,
+            requestId: requestIdRef.current,
+            source: "llm_reset",
+          });
           return copy;
         }
         const copy = [...prev];
         copy.push({ role: "assistant", content: "" });
+        recordAiLifecycleEvent(lifecycleRecorder, {
+          event: "message_mutation",
+          mutation: "push_empty_assistant",
+          nextSummary: summarizeLifecycleContent(""),
+          phase: "frontend_stream",
+          reasonKind,
+          requestId: requestIdRef.current,
+          source: "llm_reset",
+        });
         return copy;
       });
     }
@@ -86,7 +160,7 @@ export function useAssistantLlmStream(options: {
     /** rAF 回调中的中间流式更新，用 startTransition 降低优先级。 */
     function flushSnapshot() {
       startTransition(() => {
-        setMessagesFromBuf();
+        setMessagesFromBuf("llm_token_raf");
       });
     }
 
@@ -108,6 +182,18 @@ export function useAssistantLlmStream(options: {
       if (domainRef.current !== "classified" && ev.classified) {
         return;
       }
+      recordAiLifecycleEvent(lifecycleRecorder, {
+        candidateKind: ev.candidate_kind,
+        contentSummary: summarizeLifecycleContent(ev.token),
+        event: "llm_token",
+        phase: "frontend_stream",
+        requestId: ev.request_id,
+        source: "llm:token",
+        surface: ev.surface ?? "visible_answer",
+      });
+      if (!isVisibleAnswerSurface(ev.surface)) {
+        return;
+      }
       streamBufRef.current += ev.token;
 
       if (rafRef.current === undefined) {
@@ -122,7 +208,7 @@ export function useAssistantLlmStream(options: {
       else unlistenToken = fn;
     });
 
-    void listenLlmDone((ev) => {
+    void listenLlmDone((ev: LlmDoneEvent) => {
       if (disposed || !panelSendActiveRef.current) return;
       if (
         requestIdRef.current &&
@@ -134,8 +220,20 @@ export function useAssistantLlmStream(options: {
       if (domainRef.current !== "classified" && ev.classified) {
         return;
       }
+      recordAiLifecycleEvent(lifecycleRecorder, {
+        candidateKind: ev.candidate_kind,
+        contentSummary: summarizeLifecycleContent(streamBufRef.current),
+        event: "llm_done",
+        phase: "frontend_stream",
+        requestId: ev.request_id ?? requestIdRef.current,
+        source: "llm:done",
+        surface: ev.surface ?? "visible_answer",
+      });
+      if (!isVisibleAnswerSurface(ev.surface)) {
+        return;
+      }
       cancelScheduledFlush();
-      setMessagesFromBuf();
+      setMessagesFromBuf("llm_done");
       // NOTE: streaming state is owned by the task runner's finally block.
       // The harness may emit multiple llm:done events across rounds; ending
       // streaming here would suppress tokens from subsequent rounds.
@@ -153,13 +251,29 @@ export function useAssistantLlmStream(options: {
       ) {
         return;
       }
-      // A non-terminal round (tool-call round or inconclusive reflection)
-      // produced tokens that should not be shown as the final answer. Drop
-      // the buffered content and empty the assistant slot so the next round
-      // streams into a clean surface.
+      recordAiLifecycleEvent(lifecycleRecorder, {
+        candidateKind: ev.candidate_kind,
+        contentSummary: summarizeLifecycleContent(streamBufRef.current),
+        event: "llm_reset",
+        phase: "frontend_stream",
+        reasonKind: ev.reason_kind ?? null,
+        requestId: ev.request_id ?? requestIdRef.current,
+        source: "llm:reset",
+        surface: ev.surface ?? "visible_answer",
+      });
+      if (!isVisibleAnswerSurface(ev.surface)) {
+        if (ev.reason_kind === "tool_round") {
+          setActivityHint("正在处理工具结果…");
+        } else if (ev.reason_kind === "need_more_evidence") {
+          setActivityHint("证据不足，正在补充检索…");
+        } else if (ev.reason_kind === "parse_retry") {
+          setActivityHint("模型工具参数异常，正在重试…");
+        }
+        return;
+      }
       cancelScheduledFlush();
       streamBufRef.current = "";
-      clearAssistantSlot();
+      clearAssistantSlot(ev.reason_kind ?? null);
     }).then((fn) => {
       if (disposed) fn();
       else unlistenReset = fn;
@@ -179,6 +293,12 @@ export function useAssistantLlmStream(options: {
       }
       panelSendActiveRef.current = false;
       setStreaming(false);
+      recordAiLifecycleEvent(lifecycleRecorder, {
+        event: "llm_error",
+        phase: "frontend_stream",
+        requestId: ev.request_id ?? requestIdRef.current,
+        source: "llm:error",
+      });
       streamBufRef.current = "";
       requestIdRef.current = null;
       cancelScheduledFlush();
@@ -203,15 +323,18 @@ export function useAssistantLlmStream(options: {
       ) {
         return;
       }
-      setMessages((prev) => [
-        ...prev,
-        {
-          role: "system",
-          content: `重试中（${ev.attempt}/${ev.max_attempts}），约 ${Math.ceil(
-            ev.delay_ms / 1000,
-          )} 秒后继续。`,
-        },
-      ]);
+      setActivityHint(
+        `重试中（${ev.attempt}/${ev.max_attempts}），约 ${Math.ceil(
+          ev.delay_ms / 1000,
+        )} 秒后继续。`,
+      );
+      recordAiLifecycleEvent(lifecycleRecorder, {
+        event: "retry_status",
+        phase: "frontend_stream",
+        reasonKind: ev.reason_kind ?? null,
+        requestId: ev.request_id,
+        source: "ai:retry_status",
+      });
     }).then((fn) => {
       if (disposed) fn();
       else unlistenRetryStatus = fn;
@@ -230,7 +353,9 @@ export function useAssistantLlmStream(options: {
     panelSendActiveRef,
     requestIdRef,
     streamBufRef,
+    setActivityHint,
     setMessages,
     setStreaming,
+    lifecycleRecorder,
   ]);
 }

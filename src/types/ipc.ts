@@ -182,11 +182,36 @@ export interface ToolConfirmRequestEvent {
   preview?: Record<string, unknown>;
 }
 
+export type StreamSurface = "internal_candidate" | "visible_answer";
+
 export interface LlmTokenEvent {
   request_id: string;
   token: string;
   index: number;
   classified?: boolean;
+  surface?: StreamSurface;
+  candidate_kind?: "internal_candidate" | "visible_answer_candidate";
+}
+
+export interface LlmDoneEvent {
+  request_id?: string;
+  classified?: boolean;
+  surface?: StreamSurface;
+  candidate_kind?: "internal_candidate" | "visible_answer_candidate";
+}
+
+export interface LlmResetEvent {
+  request_id?: string;
+  reason_kind?:
+    | "parse_retry"
+    | "tool_round"
+    | "need_more_evidence"
+    | "reflection_no_answer"
+    | "unknown";
+  classified?: boolean;
+  surface?: StreamSurface;
+  candidate_kind?: "internal_candidate" | "visible_answer_candidate";
+  round?: number | null;
 }
 
 export interface AiRetryStatusEvent {
@@ -194,6 +219,15 @@ export interface AiRetryStatusEvent {
   attempt: number;
   max_attempts: number;
   delay_ms: number;
+  reason_kind?:
+    | "http_429"
+    | "http_503"
+    | "http_error"
+    | "stream_read_error"
+    | "request_failed"
+    | "timeout_or_stall"
+    | "unknown";
+  status_code?: number | null;
 }
 
 /** Harness agent loop tool execution trace (backend `ai:harness_trace`). */

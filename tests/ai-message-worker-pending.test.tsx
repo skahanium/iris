@@ -57,7 +57,7 @@ describe("AiMessageBubble markdown worker pending behavior", () => {
     };
   });
 
-  it("does not synchronously render streaming markdown while worker output is pending", () => {
+  it("renders first streaming frame synchronously while worker output is pending", () => {
     workerState.value = {
       failed: false,
       html: null,
@@ -66,8 +66,25 @@ describe("AiMessageBubble markdown worker pending behavior", () => {
 
     renderBubble({ content: "**streaming**", streaming: true });
 
+    expect(renderMarkdownWithProfileMock).toHaveBeenCalledWith(
+      "**streaming**",
+      "chat_assistant",
+      { streaming: true },
+    );
+    expect(container.innerHTML).toContain("sync-rendered");
+  });
+
+  it("keeps previous worker html while a later streaming render is pending", () => {
+    workerState.value = {
+      failed: false,
+      html: "<p>previous-worker-render</p>",
+      pending: true,
+    };
+
+    renderBubble({ content: "**streaming**", streaming: true });
+
     expect(renderMarkdownWithProfileMock).not.toHaveBeenCalled();
-    expect(container.innerHTML).not.toContain("sync-rendered");
+    expect(container.innerHTML).toContain("previous-worker-render");
   });
 
   it("renders final assistant content synchronously", () => {

@@ -133,4 +133,33 @@ describe("Agent Task Policy Phase B contract", () => {
     expect(config).not.toContain("default_routing_has_four_scenes");
     expect(config).not.toContain("assert_eq!(c.scenes.len(), 4)");
   });
+
+  it("frontend chat execution passes task policy facts without letting legacy scene override routing", () => {
+    const tasks = read("src/components/ai/hooks/useAssistantTasks.ts");
+    const executeKnowledgeChat = functionSlice(
+      tasks,
+      "const executeKnowledgeChat = useCallback",
+      "const runKnowledgeChat = useCallback",
+    );
+
+    expect(executeKnowledgeChat).toContain("agentIntent");
+    expect(executeKnowledgeChat).toContain("taskPlan");
+    expect(executeKnowledgeChat).toContain("intentDetection");
+    expect(executeKnowledgeChat).toContain("assistantExecute({");
+    expect(executeKnowledgeChat).not.toContain("legacySceneHintForAgentIntent");
+  });
+
+  it("capability slot selection does not inspect legacy scene", () => {
+    const config = read("src-tauri/src/llm/config.rs");
+    const requestedSlot = functionSlice(
+      config,
+      "fn requested_slot",
+      "fn fallback_chain_for",
+    );
+
+    expect(requestedSlot).toContain("input.intent");
+    expect(requestedSlot).not.toContain("AiScene");
+    expect(requestedSlot).not.toContain("scene");
+    expect(requestedSlot).not.toContain("slot_for_legacy_scene");
+  });
 });

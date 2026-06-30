@@ -54,6 +54,8 @@ type MessageRow =
   | { type: "thinking" }
   | { type: "message"; message: ChatLine; messageIndex: number };
 
+const SCROLL_WRITE_EPSILON_PX = 1;
+
 function MessageSelectControl({
   selected,
   onSelect,
@@ -206,9 +208,23 @@ export const AiMessageList = memo(function AiMessageList({
   });
   const rowVirtualizerRef = useRef(rowVirtualizer);
   rowVirtualizerRef.current = rowVirtualizer;
+  const pendingMeasureNodesRef = useRef<Set<HTMLDivElement>>(new Set());
+  const measureFrameRef = useRef<number | null>(null);
   const measureRowElement = useCallback((node: HTMLDivElement | null) => {
     if (!node) return;
-    rowVirtualizerRef.current.measureElement(node);
+    pendingMeasureNodesRef.current.add(node);
+    if (measureFrameRef.current !== null) return;
+
+    measureFrameRef.current = window.requestAnimationFrame(() => {
+      measureFrameRef.current = null;
+      const nodes = Array.from(pendingMeasureNodesRef.current);
+      pendingMeasureNodesRef.current.clear();
+
+      for (const measureNode of nodes) {
+        if (!measureNode.isConnected) continue;
+        rowVirtualizerRef.current.measureElement(measureNode);
+      }
+    });
   }, []);
   const virtualTotalSize = rowVirtualizer.getTotalSize();
   const virtualItems = rowVirtualizer.getVirtualItems();
@@ -244,11 +260,30 @@ export const AiMessageList = memo(function AiMessageList({
     const viewport = viewportRef.current;
     if (!viewport || scrollFollow !== "following") return;
 
-    viewport.scrollTop = Math.max(
+    const nextScrollTop = Math.max(
       0,
       viewport.scrollHeight - viewport.clientHeight,
     );
+    if (
+      Math.abs(viewport.scrollTop - nextScrollTop) <= SCROLL_WRITE_EPSILON_PX
+    ) {
+      return;
+    }
+
+    viewport.scrollTop = nextScrollTop;
   }, [messages, rows.length, virtualTotalSize, scrollFollow, streaming]);
+
+  useEffect(() => {
+    const pendingMeasureNodes = pendingMeasureNodesRef.current;
+
+    return () => {
+      if (measureFrameRef.current !== null) {
+        window.cancelAnimationFrame(measureFrameRef.current);
+        measureFrameRef.current = null;
+      }
+      pendingMeasureNodes.clear();
+    };
+  }, []);
 
   // Stable per-index callback cache. Inline arrows like `() => onRetract(i)`
   // create new function refs every render, breaking AiMessageBubble's memo

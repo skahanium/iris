@@ -136,8 +136,8 @@ const AssistantBody = memo(function AssistantBody({
   });
 
   const html = useMemo(() => {
-    if (streaming && !workerRender.failed) {
-      return workerRender.html ?? "";
+    if (streaming && !workerRender.failed && workerRender.html !== null) {
+      return workerRender.html;
     }
 
     try {

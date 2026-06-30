@@ -19,6 +19,7 @@ pub struct StreamEvent {
     pub request_id: String,
     pub event_type: StreamEventType,
     pub data: StreamEventData,
+    pub surface: StreamSurface,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub classified: bool,
 }
@@ -33,6 +34,34 @@ pub enum StreamEventType {
     Error,
 }
 
+/// Stream surface controls whether provider tokens are allowed to reach the visible answer slot.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum StreamSurface {
+    InternalCandidate,
+    VisibleAnswer,
+}
+
+impl StreamSurface {
+    fn wire(self) -> &'static str {
+        match self {
+            StreamSurface::InternalCandidate => "internal_candidate",
+            StreamSurface::VisibleAnswer => "visible_answer",
+        }
+    }
+
+    fn candidate_kind(self) -> &'static str {
+        match self {
+            StreamSurface::InternalCandidate => "internal_candidate",
+            StreamSurface::VisibleAnswer => "visible_answer_candidate",
+        }
+    }
+
+    fn is_visible(self) -> bool {
+        matches!(self, StreamSurface::VisibleAnswer)
+    }
+}
+
 /// Stream event data payload.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
@@ -41,6 +70,15 @@ pub enum StreamEventData {
     ToolCall { tool_call: ToolCall },
     Done { usage: Option<TokenUsage> },
     Error { message: String },
+}
+
+fn lifecycle_content_hash(value: &str) -> String {
+    let mut hash = 0x811c9dc5u32;
+    for byte in value.as_bytes() {
+        hash ^= u32::from(*byte);
+        hash = hash.wrapping_mul(0x01000193);
+    }
+    format!("{hash:08x}")
 }
 
 fn streaming_endpoint_url(base_url: &str, endpoint_family: EndpointFamily) -> String {
@@ -213,7 +251,26 @@ pub async fn send_streaming_request(
     request_id: &str,
     request: GatewayRequest,
 ) -> AppResult<GatewayResponse> {
-    send_streaming_request_with_meta(app_handle, _client, request_id, request, false).await
+    send_streaming_request_with_meta(
+        app_handle,
+        _client,
+        request_id,
+        request,
+        false,
+        StreamSurface::VisibleAnswer,
+    )
+    .await
+}
+
+/// Send a streaming request with an explicit surface for lifecycle-safe UI routing.
+pub async fn send_streaming_request_with_surface(
+    app_handle: &AppHandle,
+    _client: &Client,
+    request_id: &str,
+    request: GatewayRequest,
+    surface: StreamSurface,
+) -> AppResult<GatewayResponse> {
+    send_streaming_request_with_meta(app_handle, _client, request_id, request, false, surface).await
 }
 
 /// Send a streaming request and attach domain metadata to emitted events.
@@ -223,6 +280,7 @@ pub async fn send_streaming_request_with_meta(
     request_id: &str,
     request: GatewayRequest,
     classified: bool,
+    surface: StreamSurface,
 ) -> AppResult<GatewayResponse> {
     if is_abort_requested(request_id) {
         clear_abort(request_id);
@@ -346,6 +404,7 @@ pub async fn send_streaming_request_with_meta(
                     data: StreamEventData::Done {
                         usage: Some(usage.clone()),
                     },
+                    surface,
                     classified,
                 };
                 emit_stream_event(app_handle, &event, token_index)?;
@@ -363,6 +422,7 @@ pub async fn send_streaming_request_with_meta(
                             request_id: request_id.to_string(),
                             event_type: StreamEventType::Token,
                             data: StreamEventData::Token { token: delta },
+                            surface,
                             classified,
                         };
                         emit_stream_event(app_handle, &event, token_index)?;
@@ -375,6 +435,7 @@ pub async fn send_streaming_request_with_meta(
                             data: StreamEventData::Done {
                                 usage: Some(anthropic_state.usage.clone()),
                             },
+                            surface,
                             classified,
                         };
                         emit_stream_event(app_handle, &event, token_index)?;
@@ -394,6 +455,7 @@ pub async fn send_streaming_request_with_meta(
                         data: StreamEventData::Token {
                             token: delta.to_string(),
                         },
+                        surface,
                         classified,
                     };
                     emit_stream_event(app_handle, &event, token_index)?;
@@ -451,6 +513,7 @@ pub async fn send_streaming_request_with_meta(
                                     data: StreamEventData::Done {
                                         usage: Some(anthropic_state.usage.clone()),
                                     },
+                                    surface,
                                     classified,
                                 };
                                 emit_stream_event(app_handle, &event, token_index)?;
@@ -502,6 +565,7 @@ pub async fn send_streaming_request_with_meta(
                 data: StreamEventData::ToolCall {
                     tool_call: tc.clone(),
                 },
+                surface,
                 classified,
             };
             emit_stream_event(app_handle, &event, token_index)?;
@@ -532,6 +596,7 @@ pub async fn send_streaming_request_with_meta(
             data: StreamEventData::ToolCall {
                 tool_call: tc.clone(),
             },
+            surface,
             classified,
         };
         emit_stream_event(app_handle, &event, token_index)?;
@@ -564,10 +629,26 @@ pub(super) fn emit_stream_event(
     match event.event_type {
         StreamEventType::Token => {
             if let StreamEventData::Token { token } = &event.data {
+                tracing::debug!(
+                    request_id = %event.request_id,
+                    event = "stream_token_emitted",
+                    token_index,
+                    content_len = token.len(),
+                    content_hash = %lifecycle_content_hash(token),
+                    surface = event.surface.wire(),
+                    candidate_kind = event.surface.candidate_kind(),
+                    classified = event.classified,
+                    "AI lifecycle stream token emitted"
+                );
+                if !event.surface.is_visible() {
+                    return Ok(());
+                }
                 let mut payload = serde_json::json!({
                     "request_id": event.request_id,
                     "token": token,
                     "index": token_index,
+                    "surface": event.surface.wire(),
+                    "candidate_kind": event.surface.candidate_kind(),
                 });
                 if event.classified {
                     payload["classified"] = serde_json::json!(true);
@@ -576,7 +657,23 @@ pub(super) fn emit_stream_event(
             }
         }
         StreamEventType::Done => {
-            let mut payload = serde_json::json!({ "request_id": event.request_id });
+            tracing::debug!(
+                request_id = %event.request_id,
+                event = "stream_done_emitted",
+                token_index,
+                surface = event.surface.wire(),
+                candidate_kind = event.surface.candidate_kind(),
+                classified = event.classified,
+                "AI lifecycle stream done emitted"
+            );
+            if !event.surface.is_visible() {
+                return Ok(());
+            }
+            let mut payload = serde_json::json!({
+                "request_id": event.request_id,
+                "surface": event.surface.wire(),
+                "candidate_kind": event.surface.candidate_kind(),
+            });
             if event.classified {
                 payload["classified"] = serde_json::json!(true);
             }
@@ -591,6 +688,8 @@ pub(super) fn emit_stream_event(
             let mut payload = serde_json::json!({
                 "request_id": event.request_id,
                 "error": message,
+                "surface": event.surface.wire(),
+                "candidate_kind": event.surface.candidate_kind(),
             });
             if event.classified {
                 payload["classified"] = serde_json::json!(true);
@@ -609,8 +708,56 @@ pub(super) fn emit_stream_event(
 /// next round begins streaming. This prevents intermediate preamble or
 /// `NEED_MORE_EVIDENCE` sentinels from sticking to the final answer surface.
 pub fn emit_stream_reset(app_handle: &AppHandle, request_id: &str) -> AppResult<()> {
+    emit_stream_reset_with_surface(
+        app_handle,
+        request_id,
+        "unknown",
+        StreamSurface::VisibleAnswer,
+        None,
+    )
+}
+
+pub fn emit_stream_reset_with_reason(
+    app_handle: &AppHandle,
+    request_id: &str,
+    reason_kind: &str,
+) -> AppResult<()> {
+    emit_stream_reset_with_surface(
+        app_handle,
+        request_id,
+        reason_kind,
+        StreamSurface::InternalCandidate,
+        None,
+    )
+}
+
+pub fn emit_stream_reset_with_surface(
+    app_handle: &AppHandle,
+    request_id: &str,
+    reason_kind: &str,
+    surface: StreamSurface,
+    round: Option<u32>,
+) -> AppResult<()> {
+    tracing::debug!(
+        request_id = %request_id,
+        event = "stream_reset_emitted",
+        reason_kind,
+        surface = surface.wire(),
+        candidate_kind = surface.candidate_kind(),
+        round,
+        "AI lifecycle stream reset emitted"
+    );
     app_handle
-        .emit("llm:reset", serde_json::json!({ "request_id": request_id }))
+        .emit(
+            "llm:reset",
+            serde_json::json!({
+                "request_id": request_id,
+                "reason_kind": reason_kind,
+                "surface": surface.wire(),
+                "candidate_kind": surface.candidate_kind(),
+                "round": round,
+            }),
+        )
         .map_err(|e| AppError::msg(format!("Failed to emit llm:reset: {e}")))?;
     Ok(())
 }

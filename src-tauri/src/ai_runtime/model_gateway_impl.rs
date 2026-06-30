@@ -37,7 +37,10 @@ pub use messages_impl::{
 };
 use prompts_impl::is_rule_applicable_for_scene;
 pub use prompts_impl::{build_citation_prompt, build_drafting_prompt};
-pub use streaming_impl::{emit_stream_reset, StreamEvent, StreamEventData, StreamEventType};
+pub use streaming_impl::{
+    emit_stream_reset, emit_stream_reset_with_reason, emit_stream_reset_with_surface, StreamEvent,
+    StreamEventData, StreamEventType, StreamSurface,
+};
 use usage_impl::parse_usage;
 
 /// Gateway response (non-streaming).
@@ -83,7 +86,6 @@ impl ModelGateway {
         self.providers.get(&slot)
     }
 
-    /// Select appropriate capability slot for scene.
     pub fn slot_for_scene(scene: AiScene) -> CapabilitySlot {
         match scene {
             AiScene::KnowledgeLookup => CapabilitySlot::Fast,
@@ -359,7 +361,6 @@ impl ModelGateway {
         ))
     }
 
-    /// Send a streaming request and emit events to frontend.
     pub async fn send_streaming_request(
         &self,
         request_id: &str,
@@ -369,7 +370,22 @@ impl ModelGateway {
             .await
     }
 
-    /// Send a streaming request and mark emitted frontend events as classified.
+    pub async fn send_streaming_request_with_surface(
+        &self,
+        request_id: &str,
+        request: GatewayRequest,
+        surface: StreamSurface,
+    ) -> AppResult<GatewayResponse> {
+        streaming_impl::send_streaming_request_with_surface(
+            &self.app_handle,
+            &self.client,
+            request_id,
+            request,
+            surface,
+        )
+        .await
+    }
+
     pub async fn send_classified_streaming_request(
         &self,
         request_id: &str,
@@ -381,6 +397,7 @@ impl ModelGateway {
             request_id,
             request,
             true,
+            StreamSurface::VisibleAnswer,
         )
         .await
     }
@@ -761,18 +778,13 @@ mod tests {
 
     #[test]
     fn slot_for_scene_mapping() {
-        assert_eq!(
-            ModelGateway::slot_for_scene(AiScene::KnowledgeLookup),
-            CapabilitySlot::Fast
-        );
-        assert_eq!(
-            ModelGateway::slot_for_scene(AiScene::DraftingAssist),
-            CapabilitySlot::Writer
-        );
-        assert_eq!(
-            ModelGateway::slot_for_scene(AiScene::ResearchSynthesis),
-            CapabilitySlot::Reasoner
-        );
+        for (scene, slot) in [
+            (AiScene::KnowledgeLookup, CapabilitySlot::Fast),
+            (AiScene::DraftingAssist, CapabilitySlot::Writer),
+            (AiScene::ResearchSynthesis, CapabilitySlot::Reasoner),
+        ] {
+            assert_eq!(ModelGateway::slot_for_scene(scene), slot);
+        }
     }
 
     #[test]

@@ -115,4 +115,55 @@ describe("AiMessageList real virtualizer regression", () => {
         ),
     ).toBe(false);
   });
+
+  it("keeps the conversation surface mounted through a rich markdown stream", async () => {
+    const consoleError = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => undefined);
+    const messageListRef = {
+      current: null,
+    } as React.RefObject<HTMLDivElement | null>;
+    const renderConversation = (answer: string, streaming: boolean) =>
+      root.render(
+        <ErrorBoundary scope="AI对话区">
+          <ConversationSurface
+            messages={[
+              {
+                role: "user",
+                content: "听说 glm5.2 的性能几乎不弱于 opus 4.8，是真的吗？",
+              },
+              { role: "assistant", content: answer },
+            ]}
+            streaming={streaming}
+            messageListRef={messageListRef}
+            onCitationClick={() => undefined}
+            onQuoteToInput={() => undefined}
+          />
+        </ErrorBoundary>,
+      );
+    const streamFrames = [
+      "基本属实，但需要分场景来看。",
+      "基本属实，但需要分场景来看。\n\n## 差距被拉到 1% 以内的场景\n\n根据公开评测，GLM-5.2 在部分长上下文和工具使用任务上已经非常接近 Opus 4.8 [C1][W2]。",
+      "基本属实，但需要分场景来看。\n\n## 差距被拉到 1% 以内的场景\n\n根据公开评测，GLM-5.2 在部分长上下文和工具使用任务上已经非常接近 Opus 4.8 [C1][W2]。\n\n| 评测基准 | GLM-5.2 vs Opus 4.8 |\n| --- | --- |\n| FrontierSWE | 仅低 1% [C1][W2] |\n| MCP-Atlas | 仅低 0.8% [C1] |\n| Code Arena | 全球可用模型第一 [C1] |",
+      "基本属实，但需要分场景来看。\n\n## 差距被拉到 1% 以内的场景\n\n根据公开评测，GLM-5.2 在部分长上下文和工具使用任务上已经非常接近 Opus 4.8 [C1][W2]。\n\n| 评测基准 | GLM-5.2 vs Opus 4.8 |\n| --- | --- |\n| FrontierSWE | 仅低 1% [C1][W2] |\n| MCP-Atlas | 仅低 0.8% [C1] |\n| Code Arena | 全球可用模型第一 [C1] |\n\n## 仍有明显差距的场景\n\n| 评测基准 | 结果 |\n| --- | --- |\n| SWE-Marathon | 低 13% |\n| Terminal-Bench 2.1 | 低 4% |\n\n一句话总结：简单问答看起来几乎同档，但长周期工程任务仍要分场景判断。",
+    ];
+
+    for (const frame of streamFrames) {
+      await act(async () => {
+        renderConversation(frame, true);
+      });
+    }
+    await act(async () => {
+      renderConversation(streamFrames.at(-1) ?? "", false);
+    });
+
+    expect(document.body.textContent).not.toContain("界面出现异常");
+    expect(
+      consoleError.mock.calls
+        .flat()
+        .some((entry) =>
+          String(entry).includes("Maximum update depth exceeded"),
+        ),
+    ).toBe(false);
+  });
 });

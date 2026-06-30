@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 
-import { resolveAssistantDisplayContent } from "@/lib/assistant-message-content";
+import {
+  resolveAssistantDisplayContent,
+  resolveAssistantReconcileContent,
+} from "@/lib/assistant-message-content";
 
 describe("resolveAssistantDisplayContent", () => {
   it("prefers server content over stream buffer", () => {
@@ -32,5 +35,50 @@ describe("resolveAssistantDisplayContent", () => {
     expect(resolveAssistantDisplayContent("", "", undefined)).toContain(
       "模型未返回正文",
     );
+  });
+
+  it("does not replace an equivalent final answer during reconcile", () => {
+    expect(
+      resolveAssistantReconcileContent({
+        currentContent: "最终回答",
+        serverContent: " 最终回答 ",
+        streamBuffer: "最终回答",
+        toolCalls: undefined,
+      }),
+    ).toEqual({
+      content: "最终回答",
+      mutation: "noop",
+      reason: "equivalent_noop",
+    });
+  });
+
+  it("uses authoritative server content when it differs after visible streaming", () => {
+    expect(
+      resolveAssistantReconcileContent({
+        currentContent: "流式草稿",
+        serverContent: "最终回答",
+        streamBuffer: "流式草稿",
+        toolCalls: undefined,
+      }),
+    ).toEqual({
+      content: "最终回答",
+      mutation: "replace",
+      reason: "server_authoritative",
+    });
+  });
+
+  it("fills an empty visible stream from server content", () => {
+    expect(
+      resolveAssistantReconcileContent({
+        currentContent: "",
+        serverContent: "最终回答",
+        streamBuffer: "",
+        toolCalls: undefined,
+      }),
+    ).toEqual({
+      content: "最终回答",
+      mutation: "replace",
+      reason: "server_fills_empty_stream",
+    });
   });
 });

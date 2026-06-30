@@ -44,6 +44,7 @@ function baseStatusLabel(
   if (researchRunning && progress) {
     return `正在研究 · 第 ${progress.current_round}/${progress.max_rounds} 轮 · 已收集 ${progress.total_evidence_count} 条证据`;
   }
+  if (activityHint?.includes("重试中")) return activityHint;
   if (activityHint?.includes("检索")) return "正在检索证据";
   if (activityHint?.includes("最终") || activityHint?.includes("生成")) {
     return "正在生成回答";
@@ -61,9 +62,11 @@ export function AssistantProcessStatusBar({
   researchProgress,
   researchRunning,
   onAbort,
+  streaming = false,
 }: AssistantProcessStatusBarProps) {
   const terminalError = hasError || agentTask?.status === "failed_safe";
-  const active = researchRunning || terminalError;
+  const retrying = streaming && activityHint?.includes("重试中");
+  const active = researchRunning || terminalError || retrying;
 
   if (!active) return null;
 

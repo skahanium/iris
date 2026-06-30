@@ -1,4 +1,4 @@
-import { Component, type ErrorInfo, type ReactNode } from "react";
+import { Component, Fragment, type ErrorInfo, type ReactNode } from "react";
 
 import { Button } from "@/components/ui/button";
 
@@ -9,22 +9,31 @@ interface Props {
 
 interface State {
   error: Error | null;
+  resetVersion: number;
 }
 
 export class ErrorBoundary extends Component<Props, State> {
-  state: State = { error: null };
+  state: State = { error: null, resetVersion: 0 };
 
-  static getDerivedStateFromError(error: Error): State {
+  static getDerivedStateFromError(error: Error): Pick<State, "error"> {
     return { error };
   }
 
   componentDidCatch(error: Error, info: ErrorInfo) {
-    console.error(
-      `Iris render error${this.props.scope ? ` [${this.props.scope}]` : ""}:`,
-      error,
-      info.componentStack,
-    );
+    console.error("Iris render error:", {
+      componentStack: info.componentStack,
+      errorName: error.name,
+      messageLength: error.message.length,
+      scope: this.props.scope ?? null,
+    });
   }
+
+  private handleRetry = () => {
+    this.setState((prev) => ({
+      error: null,
+      resetVersion: prev.resetVersion + 1,
+    }));
+  };
 
   render() {
     if (this.state.error) {
@@ -36,16 +45,14 @@ export class ErrorBoundary extends Component<Props, State> {
           <p className="max-w-md text-xs text-muted-foreground">
             {this.state.error.message}
           </p>
-          <Button
-            type="button"
-            size="sm"
-            onClick={() => this.setState({ error: null })}
-          >
+          <Button type="button" size="sm" onClick={this.handleRetry}>
             重试
           </Button>
         </div>
       );
     }
-    return this.props.children;
+    return (
+      <Fragment key={this.state.resetVersion}>{this.props.children}</Fragment>
+    );
   }
 }
