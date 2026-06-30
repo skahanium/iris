@@ -50,6 +50,41 @@ pub(super) fn tools() -> Vec<ToolCatalogEntry> {
             max_results: None,
         },
         ToolCatalogEntry {
+            name: "mcp_runtime_tool_inventory_list",
+            description: "List stored MCP tool inventory for a profile. Metadata only; does not invoke MCP tools or launch external processes.",
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "profile_id": {"type": "string", "description": "MCP runtime profile id"}
+                },
+                "required": ["profile_id"]
+            }),
+            access_level: ToolAccessLevel::ReadIndex,
+            requires_confirmation: false,
+            implementation: ToolImplementationStatus::Dispatchable,
+            default_enabled_without_skill: true,
+            scene_affinity: &[],
+            max_results: None,
+        },
+        ToolCatalogEntry {
+            name: "mcp_runtime_health_events_list",
+            description: "List recent sanitized MCP health events for a profile. Metadata only; does not touch the live runtime.",
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "profile_id": {"type": "string", "description": "MCP runtime profile id"},
+                    "limit": {"type": "integer", "minimum": 1, "maximum": 50, "default": 20}
+                },
+                "required": ["profile_id"]
+            }),
+            access_level: ToolAccessLevel::ReadIndex,
+            requires_confirmation: false,
+            implementation: ToolImplementationStatus::Dispatchable,
+            default_enabled_without_skill: true,
+            scene_affinity: &[],
+            max_results: None,
+        },
+        ToolCatalogEntry {
             name: "mcp_runtime_tools_list",
             description: "Run a confirmed live MCP stdio tools/list discovery for one configured profile. Starts a bounded local process and stores sanitized tool inventory.",
             input_schema: serde_json::json!({
@@ -103,7 +138,34 @@ pub(super) fn tools() -> Vec<ToolCatalogEntry> {
             default_enabled_without_skill: true,
             scene_affinity: &[],
             max_results: None,
-        },        ToolCatalogEntry {
+        },
+        ToolCatalogEntry {
+            name: "mcp_server_catalog_upsert",
+            description: "Register or update an MCP server catalog entry. Does not start the server; requires confirmation because future profiles may use this runtime endpoint.",
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "id": {"type": "string", "description": "MCP server id"},
+                    "display_name": {"type": "string"},
+                    "transport": {"type": "string", "enum": ["stdio", "http", "sse"]},
+                    "command": {"type": ["string", "null"], "description": "structured stdio command path/name; never a shell string"},
+                    "args_json": {"type": "string", "description": "JSON array of stdio args"},
+                    "url": {"type": ["string", "null"], "description": "HTTPS MCP endpoint or localhost dev URL"},
+                    "env_schema_json": {"type": "string", "description": "JSON schema for named credential bindings; never raw secrets"},
+                    "capability_tags_json": {"type": "string", "description": "Approved capability tags/mapping metadata"},
+                    "source": {"type": "string", "default": "user"},
+                    "reason": {"type": "string", "description": "shown in confirmation"},
+                },
+                "required": ["id", "display_name", "transport", "args_json", "env_schema_json", "capability_tags_json", "source"]
+            }),
+            access_level: ToolAccessLevel::ManageSkills,
+            requires_confirmation: true,
+            implementation: ToolImplementationStatus::Dispatchable,
+            default_enabled_without_skill: true,
+            scene_affinity: &[],
+            max_results: None,
+        },
+        ToolCatalogEntry {
             name: "mcp_runtime_profile_upsert",
             description: "Register or update an MCP runtime profile in the controlled Iris registry. Does not start the MCP server; requires confirmation because it changes future runtime capability wiring.",
             input_schema: serde_json::json!({

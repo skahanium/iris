@@ -411,6 +411,8 @@ pub fn permission_profile_for_tool(tool_name: &str) -> Option<ToolPermissionProf
         "skills_list"
         | "mcp_runtime_profiles_list"
         | "mcp_runtime_diagnostics"
+        | "mcp_runtime_tool_inventory_list"
+        | "mcp_runtime_health_events_list"
         | "skills_read_resource"
         | "skills_workspace_list"
         | "skills_workspace_read" => (vec![Atom::SkillReadResource], Risk::Low, true),
@@ -419,7 +421,8 @@ pub fn permission_profile_for_tool(tool_name: &str) -> Option<ToolPermissionProf
             Risk::High,
             true,
         ),
-        "mcp_runtime_profile_upsert"
+        "mcp_server_catalog_upsert"
+        | "mcp_runtime_profile_upsert"
         | "mcp_runtime_profile_toggle"
         | "mcp_runtime_profile_delete" => (
             vec![Atom::SkillMcpBridge, Atom::SkillWriteStorage],

@@ -2089,7 +2089,28 @@ pub async fn mcp_tool_inventory_list(
 }
 
 #[tauri::command]
+pub async fn mcp_runtime_tool_inventory_list(
+    state: State<'_, Arc<AppState>>,
+    profile_id: String,
+) -> AppResult<Vec<crate::ai_runtime::mcp_runtime_registry::McpToolInventorySummary>> {
+    crate::ai_runtime::mcp_runtime_registry::list_tool_inventory(&state.db, &profile_id)
+}
+
+#[tauri::command]
 pub async fn mcp_health_events_list(
+    state: State<'_, Arc<AppState>>,
+    profile_id: String,
+    limit: Option<usize>,
+) -> AppResult<Vec<crate::ai_runtime::mcp_runtime_registry::McpHealthEventSummary>> {
+    crate::ai_runtime::mcp_runtime_registry::list_recent_health_events(
+        &state.db,
+        &profile_id,
+        limit.unwrap_or(20),
+    )
+}
+
+#[tauri::command]
+pub async fn mcp_runtime_health_events_list(
     state: State<'_, Arc<AppState>>,
     profile_id: String,
     limit: Option<usize>,

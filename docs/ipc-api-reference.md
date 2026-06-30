@@ -1439,6 +1439,7 @@ Frontend callers use these typed wrappers in `src/lib/ipc.ts`:
 - `mcpRuntimeProfilesList`
 - `mcpRuntimeToolsList`
 - `mcpRuntimeHealthCheck`
+- `mcpRuntimeCapabilityCall`
 - `mcpRuntimeToolInventoryList`
 - `mcpRuntimeHealthEventsList`
 

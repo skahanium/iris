@@ -1291,6 +1291,15 @@ fn mcp_tool_confirmation_preview(
     args: &serde_json::Value,
 ) -> Option<serde_json::Value> {
     match tool_name {
+        "mcp_server_catalog_upsert" => Some(serde_json::json!({
+            "operation": "mcp_server_catalog_upsert",
+            "server_id": string_json_field(args, "id").unwrap_or(""),
+            "display_name": string_json_field(args, "display_name").unwrap_or(""),
+            "transport": string_json_field(args, "transport").unwrap_or(""),
+            "source": string_json_field(args, "source").unwrap_or("user"),
+            "starts_process": false,
+            "capability_boundary": "controlled_iris_capability_mapping",
+        })),
         "mcp_runtime_profile_upsert" => Some(serde_json::json!({
             "operation": "mcp_profile_upsert",
             "profile_id": string_json_field(args, "id").unwrap_or(""),
@@ -1340,6 +1349,12 @@ fn safe_string_argument(args: &serde_json::Value, key: &str) -> serde_json::Valu
 
 fn confirmation_arguments_for_tool(tool_name: &str, args: &serde_json::Value) -> serde_json::Value {
     match tool_name {
+        "mcp_server_catalog_upsert" => serde_json::json!({
+            "id": safe_string_argument(args, "id"),
+            "display_name": safe_string_argument(args, "display_name"),
+            "transport": safe_string_argument(args, "transport"),
+            "source": safe_string_argument(args, "source"),
+        }),
         "mcp_runtime_profile_upsert" => serde_json::json!({
             "id": safe_string_argument(args, "id"),
             "server_id": safe_string_argument(args, "server_id"),

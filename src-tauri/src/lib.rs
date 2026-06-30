@@ -255,6 +255,8 @@ pub fn run() {
             commands::ai_commands::mcp_runtime_profile_delete,
             commands::ai_commands::mcp_tool_inventory_list,
             commands::ai_commands::mcp_health_events_list,
+            commands::ai_commands::mcp_runtime_tool_inventory_list,
+            commands::ai_commands::mcp_runtime_health_events_list,
             commands::ai_commands::mcp_runtime_tools_list,
             commands::ai_commands::mcp_runtime_health_check,
             commands::ai_commands::mcp_runtime_capability_call,

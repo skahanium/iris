@@ -124,8 +124,8 @@ describe("IPC boundary", () => {
       "mcp_runtime_profiles_list",
       "mcp_runtime_profile_toggle",
       "mcp_runtime_profile_delete",
-      "mcp_tool_inventory_list",
-      "mcp_health_events_list",
+      "mcp_runtime_tool_inventory_list",
+      "mcp_runtime_health_events_list",
       "mcp_runtime_tools_list",
       "mcp_runtime_health_check",
       "mcp_runtime_capability_call",
@@ -158,5 +158,6 @@ describe("IPC boundary", () => {
     expect(docs).toContain("partial success confirmation outcome");
     expect(docs).toContain("mcpRuntimeToolInventoryList");
     expect(docs).toContain("mcpRuntimeHealthEventsList");
+    expect(docs).toContain("mcpRuntimeCapabilityCall");
   });
 });

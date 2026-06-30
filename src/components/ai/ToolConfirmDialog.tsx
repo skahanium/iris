@@ -224,6 +224,23 @@ function buildPermissionCard(request: ToolConfirmRequest): PermissionCard {
         Icon: Download,
       };
     }
+    case "mcp_server_catalog_upsert": {
+      const server =
+        previewValueText(request, "display_name") ||
+        previewValueText(request, "server_id") ||
+        argText(request, ["display_name", "id"], "MCP Server");
+      const transport = previewValueText(request, "transport", "unknown");
+      const source = previewValueText(request, "source", "user");
+      return {
+        action: "注册 MCP Server",
+        target: server,
+        detail: `transport: ${transport} · source: ${source}`,
+        impact:
+          "不会启动本地进程；只登记受控 runtime provider 元数据，后续 profile 启用和 live MCP 调用仍需要单独确认。",
+        tone: "skill",
+        Icon: ShieldCheck,
+      };
+    }
     case "mcp_runtime_profile_upsert": {
       const profile =
         previewValueText(request, "display_name") ||

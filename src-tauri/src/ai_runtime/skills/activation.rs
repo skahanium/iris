@@ -635,6 +635,23 @@ fn evaluate_prompt_sections(
             )),
         }
     }
+    if !evaluation.degraded_reasons.is_empty() {
+        let degradation_message = manifest.degradation.message.as_deref().unwrap_or(
+            "部分 Skill section 因 runtime、workspace、resource 或 capability 未就绪而跳过。",
+        );
+        if !degradation_message.trim().is_empty()
+            && !evaluation
+                .prompt_content
+                .contains(degradation_message.trim())
+        {
+            if !evaluation.prompt_content.is_empty() {
+                evaluation.prompt_content.push_str("\n\n");
+            }
+            evaluation
+                .prompt_content
+                .push_str(degradation_message.trim());
+        }
+    }
     Some(evaluation)
 }
 
@@ -1325,6 +1342,7 @@ required = true
 
 [degradation]
 when_runtime_missing = "partial"
+message = "MCP profile 未启用时，只注入行为说明。"
 "#,
         )
         .unwrap();
@@ -1342,6 +1360,7 @@ when_runtime_missing = "partial"
         assert_eq!(active.len(), 1);
         assert!(active[0].content.contains("BEHAVIOR ONLY"));
         assert!(!active[0].content.contains("WEB ONLY"));
+        assert!(active[0].content.contains("MCP profile 未启用"));
     }
     #[test]
     fn build_skill_activation_plan_reports_resource_availability_and_truncation() {

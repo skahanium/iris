@@ -90,3 +90,31 @@ pub fn read_skill_resource(
     let content = fs::read_to_string(&file_canonical)?;
     Ok(content.chars().take(MAX_SKILL_RESOURCE_CHARS).collect())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn skills_resource_read_stays_inside_declared_resource_dirs() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = dir.path().join("vault");
+        let skill_root = vault.join(".iris/skills/demo-skill");
+        std::fs::create_dir_all(skill_root.join("resources")).unwrap();
+        std::fs::write(skill_root.join("resources/guide.md"), "guide").unwrap();
+        std::fs::write(skill_root.join("secret.md"), "secret").unwrap();
+
+        let content = read_skill_resource(
+            &vault,
+            "demo-skill",
+            SkillScope::Vault,
+            "resources/guide.md",
+        )
+        .unwrap();
+        assert_eq!(content, "guide");
+        assert!(read_skill_resource(&vault, "demo-skill", SkillScope::Vault, "secret.md").is_err());
+        assert!(
+            read_skill_resource(&vault, "demo-skill", SkillScope::Vault, "../secret.md").is_err()
+        );
+    }
+}

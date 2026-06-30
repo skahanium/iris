@@ -758,6 +758,142 @@ pub async fn discover_http_tools(launch: McpHttpLaunch) -> AppResult<McpStdioDis
     })
     .await
 }
+
+pub async fn call_http_tool_with_sender<F, Fut>(
+    launch: McpHttpLaunch,
+    tool_name: String,
+    arguments: serde_json::Value,
+    mut sender: F,
+) -> AppResult<serde_json::Value>
+where
+    F: FnMut(serde_json::Value) -> Fut,
+    Fut: Future<Output = AppResult<serde_json::Value>>,
+{
+    validate_mcp_http_runtime_url(&launch.url, launch.allow_localhost_dev)?;
+    if launch.max_response_bytes == 0 {
+        return Err(runtime_error(
+            McpRuntimeFailureKind::OutputTooLarge,
+            "MCP HTTP response cap must be greater than zero",
+        ));
+    }
+
+    let run = async {
+        let init = sender(json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {
+                "protocolVersion": MCP_PROTOCOL_VERSION,
+                "capabilities": {},
+                "clientInfo": {
+                    "name": "iris",
+                    "version": env!("CARGO_PKG_VERSION"),
+                },
+            },
+        }))
+        .await?;
+        ensure_json_value_under_cap(&init, launch.max_response_bytes)?;
+        let init = result_or_error(json_rpc_envelope_from_value(init)?, 1)?;
+        let _ = parse_initialize_result(init)?;
+
+        let initialized = sender(json!({
+            "jsonrpc": "2.0",
+            "method": "notifications/initialized",
+            "params": {},
+        }))
+        .await?;
+        ensure_json_value_under_cap(&initialized, launch.max_response_bytes)?;
+
+        let call = sender(json!({
+            "jsonrpc": "2.0",
+            "id": 2,
+            "method": "tools/call",
+            "params": {
+                "name": tool_name,
+                "arguments": arguments,
+            },
+        }))
+        .await?;
+        ensure_json_value_under_cap(&call, launch.max_response_bytes)?;
+        result_or_error(json_rpc_envelope_from_value(call)?, 2)
+    };
+
+    match timeout(launch.request_timeout, run).await {
+        Ok(result) => result,
+        Err(_) => Err(runtime_error(
+            McpRuntimeFailureKind::Timeout,
+            "MCP HTTP tool call timed out",
+        )),
+    }
+}
+
+pub async fn call_http_tool(
+    launch: McpHttpLaunch,
+    tool_name: String,
+    arguments: serde_json::Value,
+) -> AppResult<serde_json::Value> {
+    let parsed = validate_mcp_http_runtime_url(&launch.url, launch.allow_localhost_dev)?;
+    let url = parsed.to_string();
+    let max_response_bytes = launch.max_response_bytes;
+    let mut builder = reqwest::Client::builder()
+        .use_rustls_tls()
+        .redirect(reqwest::redirect::Policy::none())
+        .timeout(launch.request_timeout);
+    if !launch.allow_localhost_dev {
+        builder = builder.https_only(true);
+    }
+    let client = builder.build()?;
+    call_http_tool_with_sender(launch, tool_name, arguments, move |request| {
+        let client = client.clone();
+        let url = url.clone();
+        async move {
+            let response = client
+                .post(&url)
+                .header(reqwest::header::CONTENT_TYPE, "application/json")
+                .json(&request)
+                .send()
+                .await?;
+            let status = response.status();
+            if status.is_redirection() {
+                return Err(runtime_error(
+                    McpRuntimeFailureKind::NetworkDenied,
+                    "MCP HTTP redirect denied",
+                ));
+            }
+            if status == reqwest::StatusCode::UNAUTHORIZED
+                || status == reqwest::StatusCode::FORBIDDEN
+            {
+                return Err(runtime_error(
+                    McpRuntimeFailureKind::AuthFailed,
+                    "MCP HTTP authentication failed",
+                ));
+            }
+            if !status.is_success() {
+                return Err(runtime_error(
+                    McpRuntimeFailureKind::Unavailable,
+                    format!("MCP HTTP server returned status {status}"),
+                ));
+            }
+            let text = response.text().await?;
+            if text.len() > max_response_bytes {
+                return Err(runtime_error(
+                    McpRuntimeFailureKind::OutputTooLarge,
+                    "MCP HTTP response exceeded configured cap",
+                ));
+            }
+            if text.trim().is_empty() {
+                return Ok(json!({}));
+            }
+            serde_json::from_str(&text).map_err(|err| {
+                runtime_error(
+                    McpRuntimeFailureKind::InvalidResponse,
+                    format!("MCP HTTP server returned invalid JSON: {err}"),
+                )
+            })
+        }
+    })
+    .await
+}
 pub async fn discover_stdio_tools(launch: McpStdioLaunch) -> AppResult<McpStdioDiscovery> {
     if launch.max_stdout_line_bytes == 0 {
         return Err(runtime_error(
@@ -1037,6 +1173,108 @@ pub async fn call_profile_stdio_tool(
     })
 }
 
+pub async fn call_profile_http_tool_with_sender<F, Fut>(
+    db: &Database,
+    provider: &crate::ai_runtime::capability_resolver::ResolvedCapabilityProvider,
+    arguments: serde_json::Value,
+    options: McpHostRuntimeOptions,
+    sender: F,
+) -> AppResult<McpToolCallResult>
+where
+    F: FnMut(serde_json::Value) -> Fut,
+    Fut: Future<Output = AppResult<serde_json::Value>>,
+{
+    if provider.provider_kind != "mcp" {
+        return Err(runtime_error(
+            McpRuntimeFailureKind::PolicyDenied,
+            "resolved provider is not an MCP provider",
+        ));
+    }
+    let profile = load_remote_profile(db, &provider.profile_id)?;
+    if profile.transport == "sse" {
+        return Err(runtime_error(
+            McpRuntimeFailureKind::PolicyDenied,
+            "unsupported_transport: MCP SSE runtime is not implemented",
+        ));
+    }
+    let result = call_http_tool_with_sender(
+        McpHttpLaunch {
+            url: profile.url,
+            request_timeout: options.request_timeout,
+            max_response_bytes: options.max_stdout_line_bytes,
+            allow_localhost_dev: profile.allow_localhost_dev,
+        },
+        provider.tool_name.clone(),
+        arguments,
+        sender,
+    )
+    .await?;
+    Ok(McpToolCallResult {
+        profile_id: provider.profile_id.clone(),
+        tool_name: provider.tool_name.clone(),
+        result,
+        stderr_summary: None,
+    })
+}
+
+pub async fn call_profile_http_tool(
+    db: &Database,
+    provider: &crate::ai_runtime::capability_resolver::ResolvedCapabilityProvider,
+    arguments: serde_json::Value,
+    options: McpHostRuntimeOptions,
+) -> AppResult<McpToolCallResult> {
+    if provider.provider_kind != "mcp" {
+        return Err(runtime_error(
+            McpRuntimeFailureKind::PolicyDenied,
+            "resolved provider is not an MCP provider",
+        ));
+    }
+    let profile = load_remote_profile(db, &provider.profile_id)?;
+    if profile.transport == "sse" {
+        return Err(runtime_error(
+            McpRuntimeFailureKind::PolicyDenied,
+            "unsupported_transport: MCP SSE runtime is not implemented",
+        ));
+    }
+    let result = call_http_tool(
+        McpHttpLaunch {
+            url: profile.url,
+            request_timeout: options.request_timeout,
+            max_response_bytes: options.max_stdout_line_bytes,
+            allow_localhost_dev: profile.allow_localhost_dev,
+        },
+        provider.tool_name.clone(),
+        arguments,
+    )
+    .await?;
+    Ok(McpToolCallResult {
+        profile_id: provider.profile_id.clone(),
+        tool_name: provider.tool_name.clone(),
+        result,
+        stderr_summary: None,
+    })
+}
+
+pub async fn call_profile_tool(
+    db: &Database,
+    provider: &crate::ai_runtime::capability_resolver::ResolvedCapabilityProvider,
+    arguments: serde_json::Value,
+    options: McpHostRuntimeOptions,
+) -> AppResult<McpToolCallResult> {
+    match load_profile_transport(db, &provider.profile_id)?.as_str() {
+        "stdio" => call_profile_stdio_tool(db, provider, arguments, options).await,
+        "http" | "https" => call_profile_http_tool(db, provider, arguments, options).await,
+        "sse" => Err(runtime_error(
+            McpRuntimeFailureKind::PolicyDenied,
+            "unsupported_transport: MCP SSE runtime is not implemented",
+        )),
+        other => Err(runtime_error(
+            McpRuntimeFailureKind::PolicyDenied,
+            format!("unsupported_transport: {other}"),
+        )),
+    }
+}
+
 pub async fn call_required_capability_stdio(
     db: &Database,
     capability: &str,
@@ -1045,7 +1283,7 @@ pub async fn call_required_capability_stdio(
 ) -> AppResult<McpToolCallResult> {
     let provider =
         crate::ai_runtime::capability_resolver::resolve_required_capability(db, capability)?;
-    call_profile_stdio_tool(db, &provider, arguments, options).await
+    call_profile_tool(db, &provider, arguments, options).await
 }
 pub async fn discover_profile_stdio_tools(
     db: &Database,
@@ -1243,7 +1481,7 @@ fn main() {
     }
 
     #[tokio::test]
-    async fn mapped_capability_invokes_stdio_tools_call() {
+    async fn mcp_tools_call_mapped_capability_invokes_stdio_tools_call() {
         use crate::ai_runtime::mcp_runtime_registry::{
             record_tool_inventory, upsert_runtime_profile, upsert_server_catalog,
             McpRuntimeProfileInput, McpRuntimeStatus, McpServerCatalogInput, McpToolInventoryInput,
@@ -1325,7 +1563,7 @@ fn main() {
                 max_response_bytes: 16 * 1024,
                 allow_localhost_dev: false,
             },
-            move |request| {
+            move |request: serde_json::Value| {
                 let seen_calls = seen_calls.clone();
                 async move {
                     let method = request
@@ -1487,6 +1725,119 @@ fn main() {
         assert_eq!(inventory.len(), 1);
         assert_eq!(inventory[0].tool_name, "search");
         assert_eq!(inventory[0].capability_mapping_json, "[\"web.search\"]");
+    }
+
+    #[tokio::test]
+    async fn http_mcp_tools_call_invokes_mapped_capability_with_mock_sender() {
+        use crate::ai_runtime::capability_resolver::resolve_required_capability;
+        use crate::ai_runtime::mcp_runtime_registry::{
+            record_tool_inventory, upsert_runtime_profile, upsert_server_catalog,
+            McpRuntimeProfileInput, McpRuntimeStatus, McpServerCatalogInput, McpToolInventoryInput,
+        };
+        use crate::storage::db::Database;
+
+        let db = Database::open_in_memory().unwrap();
+        upsert_server_catalog(
+            &db,
+            &McpServerCatalogInput {
+                id: "http-fake".into(),
+                display_name: "HTTP Fake MCP".into(),
+                transport: "http".into(),
+                command: None,
+                args_json: "[]".into(),
+                url: Some("https://example.com/mcp".into()),
+                env_schema_json: "{}".into(),
+                capability_tags_json: "[\"web.search\"]".into(),
+                source: "test".into(),
+            },
+        )
+        .unwrap();
+        upsert_runtime_profile(
+            &db,
+            &McpRuntimeProfileInput {
+                id: "http-fake-default".into(),
+                server_id: "http-fake".into(),
+                vault_scope_hash: None,
+                display_name: "HTTP fake default".into(),
+                enabled: true,
+                transport_config_json: "{}".into(),
+                env_bindings_json: "{}".into(),
+                status: McpRuntimeStatus::Ready,
+                last_error: None,
+            },
+        )
+        .unwrap();
+        record_tool_inventory(
+            &db,
+            &McpToolInventoryInput {
+                profile_id: "http-fake-default".into(),
+                tool_name: "search".into(),
+                schema_hash: "sha256:test".into(),
+                capability_mapping_json: "{\"capability\":\"web.search\"}".into(),
+                description: Some("HTTP search".into()),
+            },
+        )
+        .unwrap();
+        let provider = resolve_required_capability(&db, "web.search").unwrap();
+        let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+        let seen_calls = seen.clone();
+
+        let call = call_profile_http_tool_with_sender(
+            &db,
+            &provider,
+            json!({"q": "iris"}),
+            McpHostRuntimeOptions {
+                request_timeout: Duration::from_secs(5),
+                max_stdout_line_bytes: 16 * 1024,
+                max_stderr_bytes: 1024,
+                cwd: None,
+            },
+            move |request| {
+                let seen_calls = seen_calls.clone();
+                async move {
+                    let method = request
+                        .get("method")
+                        .and_then(|value| value.as_str())
+                        .unwrap_or_default()
+                        .to_string();
+                    seen_calls.lock().unwrap().push(method.clone());
+                    match method.as_str() {
+                        "initialize" => Ok(json!({
+                            "jsonrpc": "2.0",
+                            "id": 1,
+                            "result": {
+                                "protocolVersion": MCP_PROTOCOL_VERSION,
+                                "serverInfo": {"name": "http-profile-mcp", "version": "1.0.0"}
+                            }
+                        })),
+                        "notifications/initialized" => Ok(json!({"accepted": true})),
+                        "tools/call" => Ok(json!({
+                            "jsonrpc": "2.0",
+                            "id": 2,
+                            "result": {
+                                "content": [{"type": "text", "text": "http search result for iris"}],
+                                "isError": false
+                            }
+                        })),
+                        _ => Err(AppError::msg("unexpected MCP HTTP profile method")),
+                    }
+                }
+            },
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(call.profile_id, "http-fake-default");
+        assert_eq!(call.tool_name, "search");
+        assert_eq!(call.result["isError"], false);
+        assert_eq!(
+            call.result["content"][0]["text"],
+            "http search result for iris"
+        );
+        assert_eq!(
+            seen.lock().unwrap().as_slice(),
+            ["initialize", "notifications/initialized", "tools/call"]
+        );
     }
 
     #[tokio::test]

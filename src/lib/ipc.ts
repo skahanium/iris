@@ -970,16 +970,19 @@ export async function mcpRuntimeProfileDelete(
 export async function mcpRuntimeToolInventoryList(
   profileId: string,
 ): Promise<McpToolInventorySummaryDto[]> {
-  return invoke<McpToolInventorySummaryDto[]>("mcp_tool_inventory_list", {
-    profileId,
-  });
+  return invoke<McpToolInventorySummaryDto[]>(
+    "mcp_runtime_tool_inventory_list",
+    {
+      profileId,
+    },
+  );
 }
 
 export async function mcpRuntimeHealthEventsList(
   profileId: string,
   limit?: number,
 ): Promise<McpHealthEventSummaryDto[]> {
-  return invoke<McpHealthEventSummaryDto[]>("mcp_health_events_list", {
+  return invoke<McpHealthEventSummaryDto[]>("mcp_runtime_health_events_list", {
     profileId,
     limit: limit ?? null,
   });

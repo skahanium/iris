@@ -205,6 +205,45 @@ describe("ToolConfirmDialog", () => {
     expect(document.body.textContent).not.toContain("credential://anysearch");
   });
 
+  it("renders MCP server catalog upsert without raw secret config", async () => {
+    await act(async () => {
+      root.render(
+        <ToolConfirmDialog
+          request={{
+            request_id: "req-mcp-server-1",
+            tool_call_id: "tc-mcp-server-1",
+            tool_name: "mcp_server_catalog_upsert",
+            arguments: {
+              id: "anysearch",
+              display_name: "AnySearch",
+              transport: "stdio",
+              command: "anysearch-mcp",
+              env_schema_json:
+                '{"ANYSEARCH_API_KEY":{"description":"credential://anysearch"}}',
+            },
+            preview: {
+              operation: "mcp_server_catalog_upsert",
+              server_id: "anysearch",
+              display_name: "AnySearch",
+              transport: "stdio",
+              source: "user",
+              starts_process: false,
+              capability_boundary: "controlled_iris_capability_mapping",
+            },
+          }}
+          onConfirm={() => {}}
+          onClose={() => {}}
+        />,
+      );
+    });
+
+    expect(document.body.textContent).toContain("注册 MCP Server");
+    expect(document.body.textContent).toContain("AnySearch");
+    expect(document.body.textContent).toContain("transport: stdio");
+    expect(document.body.textContent).toContain("不会启动本地进程");
+    expect(document.body.textContent).not.toContain("credential://anysearch");
+  });
+
   it("renders live MCP tools discovery as a bounded local process", async () => {
     await act(async () => {
       root.render(

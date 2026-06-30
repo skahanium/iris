@@ -214,7 +214,12 @@ mod tests {
 
     #[test]
     fn catalog_exposes_mcp_runtime_diagnostics_as_read_only() {
-        for name in ["mcp_runtime_profiles_list", "mcp_runtime_diagnostics"] {
+        for name in [
+            "mcp_runtime_profiles_list",
+            "mcp_runtime_diagnostics",
+            "mcp_runtime_tool_inventory_list",
+            "mcp_runtime_health_events_list",
+        ] {
             let entry = catalog_find(name).unwrap_or_else(|| panic!("{name} missing from catalog"));
             assert_eq!(entry.access_level, ToolAccessLevel::ReadIndex);
             assert!(!entry.requires_confirmation);
@@ -241,6 +246,7 @@ mod tests {
     #[test]
     fn catalog_exposes_mcp_profile_management_as_confirmation_required() {
         for name in [
+            "mcp_server_catalog_upsert",
             "mcp_runtime_profile_upsert",
             "mcp_runtime_profile_toggle",
             "mcp_runtime_profile_delete",
@@ -256,8 +262,8 @@ mod tests {
     fn total_catalog_count() {
         assert_eq!(
             catalog_total_count(),
-            95,
-            "catalog should have exactly 95 tools"
+            98,
+            "catalog should have exactly 98 tools"
         );
     }
 

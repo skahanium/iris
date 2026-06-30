@@ -173,3 +173,23 @@ pub(crate) fn resolve_active_skill_allowed_tools_with_plan(
     }
     resolve_active_skill_allowed_tools(state, task_policy, user_message)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn harness_context_uses_activation_plan_allowed_tools_without_rescanning() {
+        let plan = SkillActivationPlanSummary {
+            activated_skills: Vec::new(),
+            requested_tools: vec!["mcp_runtime_profiles_list".into()],
+            requested_capabilities: Vec::new(),
+            confirmation_required_tools: Vec::new(),
+            blocked_capabilities: Vec::new(),
+            skill_overlay_summary: "test".into(),
+            degraded: false,
+        };
+
+        assert_eq!(plan.allowed_tools(), vec!["mcp_runtime_profiles_list"]);
+    }
+}

@@ -10,9 +10,12 @@ pub(super) fn is_skill_tool(name: &str) -> bool {
         "skills_list"
             | "mcp_runtime_profiles_list"
             | "mcp_runtime_diagnostics"
+            | "mcp_runtime_tool_inventory_list"
+            | "mcp_runtime_health_events_list"
             | "mcp_runtime_tools_list"
             | "mcp_runtime_health_check"
             | "mcp_runtime_capability_call"
+            | "mcp_server_catalog_upsert"
             | "mcp_runtime_profile_upsert"
             | "mcp_runtime_profile_toggle"
             | "mcp_runtime_profile_delete"
@@ -38,9 +41,14 @@ pub(super) async fn dispatch_skill_tool(
         "skills_list" => skills_list_tool(state, ctx).await,
         "mcp_runtime_profiles_list" => mcp_runtime_profiles_list_tool(state).await,
         "mcp_runtime_diagnostics" => mcp_runtime_diagnostics_tool(state, args).await,
+        "mcp_runtime_tool_inventory_list" => {
+            mcp_runtime_tool_inventory_list_tool(state, args).await
+        }
+        "mcp_runtime_health_events_list" => mcp_runtime_health_events_list_tool(state, args).await,
         "mcp_runtime_tools_list" => mcp_runtime_tools_list_tool(state, args).await,
         "mcp_runtime_health_check" => mcp_runtime_health_check_tool(state, args).await,
         "mcp_runtime_capability_call" => mcp_runtime_capability_call_tool(state, args).await,
+        "mcp_server_catalog_upsert" => mcp_server_catalog_upsert_tool(state, args).await,
         "mcp_runtime_profile_upsert" => mcp_runtime_profile_upsert_tool(state, args).await,
         "mcp_runtime_profile_toggle" => mcp_runtime_profile_toggle_tool(state, args).await,
         "mcp_runtime_profile_delete" => mcp_runtime_profile_delete_tool(state, args).await,
@@ -124,6 +132,43 @@ pub(super) async fn mcp_runtime_diagnostics_tool(
     }))
 }
 
+pub(super) async fn mcp_runtime_tool_inventory_list_tool(
+    state: &AppState,
+    args: &serde_json::Value,
+) -> AppResult<serde_json::Value> {
+    let profile_id = mcp_profile_id_arg(args, "mcp_runtime_tool_inventory_list")?;
+    let tools =
+        crate::ai_runtime::mcp_runtime_registry::list_tool_inventory(&state.db, &profile_id)?;
+    Ok(serde_json::json!({
+        "profile_id": profile_id,
+        "tools": tools,
+    }))
+}
+
+pub(super) async fn mcp_runtime_health_events_list_tool(
+    state: &AppState,
+    args: &serde_json::Value,
+) -> AppResult<serde_json::Value> {
+    let profile_id = mcp_profile_id_arg(args, "mcp_runtime_health_events_list")?;
+    let health_limit = args
+        .get("limit")
+        .or_else(|| args.get("health_limit"))
+        .and_then(|value| value.as_u64())
+        .unwrap_or(20)
+        .clamp(1, 50) as usize;
+    let health_events = sanitize_health_events(
+        crate::ai_runtime::mcp_runtime_registry::list_recent_health_events(
+            &state.db,
+            &profile_id,
+            health_limit,
+        )?,
+    );
+    Ok(serde_json::json!({
+        "profile_id": profile_id,
+        "health_events": health_events,
+    }))
+}
+
 fn mcp_profile_id_arg(args: &serde_json::Value, tool_name: &str) -> AppResult<String> {
     args.get("profile_id")
         .and_then(|value| value.as_str())
@@ -189,6 +234,22 @@ pub(super) async fn mcp_runtime_profile_upsert_tool(
         "ok": true,
         "profile_id": input.id,
         "enabled": input.enabled
+    }))
+}
+
+pub(super) async fn mcp_server_catalog_upsert_tool(
+    state: &AppState,
+    args: &serde_json::Value,
+) -> AppResult<serde_json::Value> {
+    let input: crate::ai_runtime::mcp_runtime_registry::McpServerCatalogInput =
+        serde_json::from_value(args.clone()).map_err(|err| {
+            AppError::msg(format!("mcp_server_catalog_upsert invalid input: {err}"))
+        })?;
+    crate::ai_runtime::mcp_runtime_registry::upsert_server_catalog(&state.db, &input)?;
+    Ok(serde_json::json!({
+        "ok": true,
+        "server_id": input.id,
+        "transport": input.transport,
     }))
 }
 

@@ -448,7 +448,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn workspace_file_ops_stay_inside_skill_workspace() {
+    fn skills_workspace_file_ops_stay_inside_skill_workspace() {
         let dir = tempfile::tempdir().unwrap();
         let vault = dir.path().join("vault");
         std::fs::create_dir_all(&vault).unwrap();

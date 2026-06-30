@@ -27,6 +27,8 @@ describe("Skills settings permission UX contract", () => {
 
   it("shows user-language capability groups instead of raw capability debug labels", () => {
     const panel = read("src/components/ai/SkillsPanel.tsx");
+    const card = read("src/components/ai/skills/SkillCard.tsx");
+    const ui = `${panel}\n${card}`;
 
     for (const label of [
       "只读笔记",
@@ -37,12 +39,12 @@ describe("Skills settings permission UX contract", () => {
       "凭据访问",
       "权限摘要",
     ]) {
-      expect(panel).toContain(label);
+      expect(ui).toContain(label);
     }
 
-    expect(panel).not.toContain("Requested capabilities:");
-    expect(panel).not.toContain("Blocked capabilities:");
-    expect(panel).not.toContain("Compatibility warnings:");
+    expect(ui).not.toContain("Requested capabilities:");
+    expect(ui).not.toContain("Blocked capabilities:");
+    expect(ui).not.toContain("Compatibility warnings:");
   });
 
   it("keeps scope explicit when toggling or uninstalling skills", () => {
@@ -54,11 +56,13 @@ describe("Skills settings permission UX contract", () => {
 
   it("shows workspace archive status and prepare path in the Skills panel", () => {
     const panel = read("src/components/ai/SkillsPanel.tsx");
+    const card = read("src/components/ai/skills/SkillCard.tsx");
+    const ui = `${panel}\n${card}`;
     const ipc = read("src/lib/ipc.ts");
 
-    expect(panel).toContain("工作区");
+    expect(ui).toContain("工作区");
     expect(panel).toContain("需要准备");
-    expect(panel).toContain("准备工作区");
+    expect(ui).toContain("准备工作区");
     expect(panel).toContain("skillsPrepareWorkspace");
     expect(ipc).toContain("export async function skillsPrepareWorkspace");
     expect(ipc).toContain("workspaceRoot");
@@ -68,14 +72,43 @@ describe("Skills settings permission UX contract", () => {
 
   it("does not compress layered skill state into a generic current available label", () => {
     const panel = read("src/components/ai/SkillsPanel.tsx");
+    const badges = read("src/components/ai/skills/SkillStatusBadges.tsx");
+    const statusState = read("src/components/ai/skills/skill-status-state.ts");
+    const ui = `${panel}\n${badges}\n${statusState}`;
 
-    expect(panel).not.toContain("当前可用");
-    expect(panel).toContain("部分可用");
-    expect(panel).toContain("不需要运行时");
-    expect(panel).toContain("缺少或未启用 MCP profile");
+    expect(ui).not.toContain("当前可用");
+    expect(ui).toContain("部分可用");
+    expect(ui).toContain("不需要运行时");
+    expect(ui).toContain("缺少或未启用 MCP profile");
   });
+
+  it("splits Skills cards and MCP provider management into focused components", () => {
+    const panel = read("src/components/ai/SkillsPanel.tsx");
+    const skillCard = read("src/components/ai/skills/SkillCard.tsx");
+    const statusBadges = read("src/components/ai/skills/SkillStatusBadges.tsx");
+    const statusState = read("src/components/ai/skills/skill-status-state.ts");
+    const profilesPanel = read("src/components/ai/skills/McpProfilesPanel.tsx");
+    const profileCard = read("src/components/ai/skills/McpProfileCard.tsx");
+
+    expect(panel).toContain("MCP / Providers");
+    expect(panel).toContain("<SkillCard");
+    expect(panel).toContain("<McpProfilesPanel");
+    expect(skillCard).toContain("SkillStatusBadges");
+    expect(`${statusBadges}\n${statusState}`).toContain(
+      "缺少或未启用 MCP profile",
+    );
+    expect(profilesPanel).toContain("mcpRuntimeProfilesList");
+    expect(profilesPanel).toContain("mcpRuntimeToolInventoryList");
+    expect(profilesPanel).toContain("mcpRuntimeHealthEventsList");
+    expect(profileCard).toContain("MCP Profile");
+  });
+
   it("surfaces manifest runtime and workspace summary in the Skills panel contract", () => {
     const panel = read("src/components/ai/SkillsPanel.tsx");
+    const card = read("src/components/ai/skills/SkillCard.tsx");
+    const badges = read("src/components/ai/skills/SkillStatusBadges.tsx");
+    const statusState = read("src/components/ai/skills/skill-status-state.ts");
+    const ui = `${panel}\n${card}\n${badges}\n${statusState}`;
     const ipc = read("src/lib/ipc.ts");
 
     expect(ipc).toContain("export type SkillManifestKind");
@@ -94,10 +127,10 @@ describe("Skills settings permission UX contract", () => {
     expect(panel).toContain("sectionState");
     expect(panel).toContain("skill.activated_sections");
     expect(panel).toContain("skill.blocked_sections");
-    expect(panel).toContain("可用片段");
-    expect(panel).toContain("阻塞片段");
-    expect(panel).toContain("runtimeState");
-    expect(panel).toContain("skill.runtime_status");
+    expect(ui).toContain("可用片段");
+    expect(ui).toContain("阻塞片段");
+    expect(ui).toContain("runtimeState");
+    expect(ui).toContain("skill.runtime_status");
     expect(panel).toContain("skill.workspace_declared");
     expect(panel).toContain("skill.workspace_prepared");
   });

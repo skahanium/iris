@@ -36,7 +36,7 @@ pub const DISPATCHABLE_TOOL_NAMES: &[&str] = &[
     "scheduled_task_delete", "web_fetch_batch", "readability_fetch", "rendered_fetch",
     "vault_create_note", "vault_rename_move", "vault_delete_to_trash", "vault_asset_write",
     "vault_version_list", "insert_text_at_cursor", "replace_selection", "skills_list", "skills_install",
-    "mcp_runtime_profiles_list", "mcp_runtime_diagnostics", "mcp_runtime_tools_list", "mcp_runtime_health_check", "mcp_runtime_capability_call", "mcp_runtime_profile_upsert", "mcp_runtime_profile_toggle", "mcp_runtime_profile_delete", "skills_prepare_workspace", "skills_uninstall", "skills_update", "skills_toggle", "skills_read_resource",
+    "mcp_runtime_profiles_list", "mcp_runtime_diagnostics", "mcp_runtime_tool_inventory_list", "mcp_runtime_health_events_list", "mcp_runtime_tools_list", "mcp_runtime_health_check", "mcp_runtime_capability_call", "mcp_server_catalog_upsert", "mcp_runtime_profile_upsert", "mcp_runtime_profile_toggle", "mcp_runtime_profile_delete", "skills_prepare_workspace", "skills_uninstall", "skills_update", "skills_toggle", "skills_read_resource",
     "skills_workspace_list", "skills_workspace_read", "skills_workspace_write", "git_read_status",
     "git_read_diff", "git_read_log", "secret_exists", "fs_import_to_vault", "fs_export",
     "fs_read_authorized_folder", "fs_write_authorized_export", "doc_normalize_markdown",
