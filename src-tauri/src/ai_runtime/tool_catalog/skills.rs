@@ -147,7 +147,7 @@ pub(super) fn tools() -> Vec<ToolCatalogEntry> {
                 "properties": {
                     "id": {"type": "string", "description": "MCP server id"},
                     "display_name": {"type": "string"},
-                    "transport": {"type": "string", "enum": ["stdio", "http", "sse"]},
+                    "transport": {"type": "string", "enum": ["stdio", "https", "sse"]},
                     "command": {"type": ["string", "null"], "description": "structured stdio command path/name; never a shell string"},
                     "args_json": {"type": "string", "description": "JSON array of stdio args"},
                     "url": {"type": ["string", "null"], "description": "HTTPS MCP endpoint or localhost dev URL"},

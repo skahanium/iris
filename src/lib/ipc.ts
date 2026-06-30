@@ -859,7 +859,7 @@ export type McpRuntimeStatusDto =
 export interface McpServerCatalogInputDto {
   id: string;
   display_name: string;
-  transport: "stdio" | "http" | "sse" | string;
+  transport: "stdio" | "https" | "sse" | string;
   command?: string | null;
   args_json: string;
   url?: string | null;
@@ -887,6 +887,11 @@ export interface McpRuntimeProfileSummaryDto {
   enabled: boolean;
   status: McpRuntimeStatusDto;
   last_error?: string | null;
+  transport: "stdio" | "https" | "sse" | string;
+  scope: "global" | "vault" | string;
+  trust_level: string;
+  credential_binding_status: "configured" | "not_configured" | string;
+  credential_binding_count: number;
 }
 
 export interface McpToolInventorySummaryDto {

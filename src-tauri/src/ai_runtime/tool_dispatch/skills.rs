@@ -212,7 +212,7 @@ pub(super) async fn mcp_runtime_capability_call_tool(
         .cloned()
         .filter(|value| value.is_object())
         .ok_or_else(|| AppError::msg("mcp_runtime_capability_call missing arguments"))?;
-    let result = crate::ai_runtime::mcp_host_runtime::call_required_capability_stdio(
+    let result = crate::ai_runtime::mcp_host_runtime::call_required_capability(
         &state.db,
         &capability,
         arguments,
@@ -286,13 +286,34 @@ pub(super) async fn mcp_runtime_tools_list_tool(
     state: &AppState,
     args: &serde_json::Value,
 ) -> AppResult<serde_json::Value> {
+    use crate::ai_runtime::mcp_runtime_registry::{
+        record_health_event, McpHealthEventInput, McpRuntimeStatus,
+    };
+
     let profile_id = mcp_profile_id_arg(args, "mcp_runtime_tools_list")?;
-    let discovery = crate::ai_runtime::mcp_host_runtime::discover_profile_tools(
+    let discovery = match crate::ai_runtime::mcp_host_runtime::discover_profile_tools(
         &state.db,
         &profile_id,
         mcp_runtime_options(),
     )
-    .await?;
+    .await
+    {
+        Ok(discovery) => discovery,
+        Err(err) => {
+            let message = crate::ai_runtime::trace::redact_classified_leaks(&err.to_string());
+            let _ = record_health_event(
+                &state.db,
+                &McpHealthEventInput {
+                    profile_id: profile_id.clone(),
+                    status: McpRuntimeStatus::Unavailable,
+                    reason_code: "agent_live_tools_list_failed".into(),
+                    message: Some(message.clone()),
+                    metadata_json: serde_json::json!({"tool_count": 0}).to_string(),
+                },
+            );
+            return Err(AppError::msg(message));
+        }
+    };
     Ok(serde_json::json!({
         "profile_id": profile_id,
         "protocol_version": discovery.protocol_version,

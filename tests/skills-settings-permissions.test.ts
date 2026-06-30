@@ -100,7 +100,16 @@ describe("Skills settings permission UX contract", () => {
     expect(profilesPanel).toContain("mcpRuntimeProfilesList");
     expect(profilesPanel).toContain("mcpRuntimeToolInventoryList");
     expect(profilesPanel).toContain("mcpRuntimeHealthEventsList");
+    expect(profilesPanel).toContain("mcpRuntimeProfileToggle");
+    expect(profilesPanel).toContain("mcpRuntimeProfileDelete");
+    expect(profilesPanel).toContain("mcpRuntimeHealthCheck");
+    expect(profilesPanel).toContain("mcpRuntimeToolsList");
     expect(profileCard).toContain("MCP Profile");
+    expect(profileCard).toContain("profile.transport");
+    expect(profileCard).toContain("profile.scope");
+    expect(profileCard).toContain("profile.trust_level");
+    expect(profileCard).toContain("profile.credential_binding_status");
+    expect(profileCard).toContain("删除 MCP profile");
   });
 
   it("surfaces manifest runtime and workspace summary in the Skills panel contract", () => {

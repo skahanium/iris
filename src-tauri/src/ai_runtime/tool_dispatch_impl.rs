@@ -307,7 +307,8 @@ mod tests {
     #[tokio::test]
     async fn mcp_profile_management_tools_update_registry_after_confirmation() {
         use crate::ai_runtime::mcp_runtime_registry::{
-            list_runtime_profiles, upsert_server_catalog, McpServerCatalogInput,
+            list_recent_health_events, list_runtime_profiles, upsert_server_catalog,
+            McpServerCatalogInput,
         };
 
         let (state, _dir) = test_state();
@@ -373,6 +374,18 @@ mod tests {
         .await;
         assert!(toggled.success, "toggle failed: {:?}", toggled.error);
         assert!(!list_runtime_profiles(&state.db).unwrap()[0].enabled);
+
+        let live_tools = dispatch_tool(
+            &state,
+            &ctx,
+            "mcp_runtime_tools_list",
+            &serde_json::json!({"profile_id": "fake-profile"}),
+        )
+        .await;
+        assert!(!live_tools.success);
+        let events = list_recent_health_events(&state.db, "fake-profile", 5).unwrap();
+        assert_eq!(events[0].reason_code, "agent_live_tools_list_failed");
+        assert_eq!(events[0].status.as_str(), "unavailable");
 
         let deleted = dispatch_tool(
             &state,

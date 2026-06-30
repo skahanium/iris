@@ -1,8 +1,5 @@
 import { open as openFileDialog } from "@tauri-apps/plugin-dialog";
-import {
-  Download,
-  Search,
-} from "lucide-react";
+import { Download, Search } from "lucide-react";
 import {
   useCallback,
   useEffect,
@@ -483,7 +480,9 @@ export function SkillsPanelBody({
             void skillsMigrateLegacy(skill.file_path, sc).then(refresh);
           }
         }}
-        onToggle={(enabled) => void skillsToggle(skill.name, sc, enabled).then(refresh)}
+        onToggle={(enabled) =>
+          void skillsToggle(skill.name, sc, enabled).then(refresh)
+        }
         onUninstall={() => void skillsUninstall(skill.name, sc).then(refresh)}
       />
     );

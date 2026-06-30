@@ -176,7 +176,7 @@ describe("ToolConfirmDialog", () => {
               transport_config_json:
                 '{"type":"stdio","command":"anysearch-mcp"}',
               env_bindings_json:
-                '{"ANYSEARCH_API_KEY":"credential://anysearch"}',
+                '{"ANYSEARCH_API_KEY":"credential://iris.mcp.anysearch"}',
             },
             preview: {
               operation: "mcp_profile_upsert",
@@ -202,7 +202,9 @@ describe("ToolConfirmDialog", () => {
     expect(document.body.textContent).toContain("vault-abc");
     expect(document.body.textContent).toContain("Iris capability mapping");
     expect(document.body.textContent).toContain("不会启动本地进程");
-    expect(document.body.textContent).not.toContain("credential://anysearch");
+    expect(document.body.textContent).not.toContain(
+      "credential://iris.mcp.anysearch",
+    );
   });
 
   it("renders MCP server catalog upsert without raw secret config", async () => {
@@ -219,7 +221,7 @@ describe("ToolConfirmDialog", () => {
               transport: "stdio",
               command: "anysearch-mcp",
               env_schema_json:
-                '{"ANYSEARCH_API_KEY":{"description":"credential://anysearch"}}',
+                '{"ANYSEARCH_API_KEY":{"description":"credential://iris.mcp.anysearch"}}',
             },
             preview: {
               operation: "mcp_server_catalog_upsert",
@@ -241,7 +243,9 @@ describe("ToolConfirmDialog", () => {
     expect(document.body.textContent).toContain("AnySearch");
     expect(document.body.textContent).toContain("transport: stdio");
     expect(document.body.textContent).toContain("不会启动本地进程");
-    expect(document.body.textContent).not.toContain("credential://anysearch");
+    expect(document.body.textContent).not.toContain(
+      "credential://iris.mcp.anysearch",
+    );
   });
 
   it("renders live MCP tools discovery as a bounded local process", async () => {

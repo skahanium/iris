@@ -98,6 +98,10 @@ const MIGRATION_039_UP: &str = include_str!("../../migrations/039_workspace_medi
 const MIGRATION_039_DOWN: &str = include_str!("../../migrations/039_workspace_media.down.sql");
 const MIGRATION_040_UP: &str = include_str!("../../migrations/040_mcp_runtime_registry.sql");
 const MIGRATION_040_DOWN: &str = include_str!("../../migrations/040_mcp_runtime_registry.down.sql");
+const MIGRATION_041_UP: &str =
+    include_str!("../../migrations/041_mcp_transport_https_contract.sql");
+const MIGRATION_041_DOWN: &str =
+    include_str!("../../migrations/041_mcp_transport_https_contract.down.sql");
 
 fn is_applied(conn: &Connection, name: &str) -> bool {
     conn.query_row(
@@ -221,6 +225,12 @@ pub fn migrate_up(conn: &Connection) -> AppResult<()> {
     apply_migration(conn, "038_attachments", MIGRATION_038_UP, false)?;
     apply_migration(conn, "039_workspace_media", MIGRATION_039_UP, false)?;
     apply_migration(conn, "040_mcp_runtime_registry", MIGRATION_040_UP, false)?;
+    apply_migration(
+        conn,
+        "041_mcp_transport_https_contract",
+        MIGRATION_041_UP,
+        false,
+    )?;
 
     Ok(())
 }
@@ -232,6 +242,7 @@ fn rollback_migration(conn: &Connection, name: &str, sql: &str) {
 
 /// Roll back all migrations in strict reverse order (for tests).
 pub fn migrate_down(conn: &Connection) -> AppResult<()> {
+    rollback_migration(conn, "041_mcp_transport_https_contract", MIGRATION_041_DOWN);
     rollback_migration(conn, "040_mcp_runtime_registry", MIGRATION_040_DOWN);
     rollback_migration(conn, "039_workspace_media", MIGRATION_039_DOWN);
     rollback_migration(conn, "038_attachments", MIGRATION_038_DOWN);
@@ -1420,6 +1431,53 @@ mod tests {
             [],
         )
         .unwrap();
+    }
+    #[test]
+    fn migration_041_converts_legacy_http_transport_to_https_contract() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "
+            CREATE TABLE mcp_server_catalog (
+                id TEXT PRIMARY KEY,
+                display_name TEXT NOT NULL,
+                transport TEXT NOT NULL CHECK (transport IN ('stdio', 'http', 'sse')),
+                command TEXT,
+                args_json TEXT NOT NULL DEFAULT '[]',
+                url TEXT,
+                env_schema_json TEXT NOT NULL DEFAULT '{}',
+                capability_tags_json TEXT NOT NULL DEFAULT '[]',
+                source TEXT NOT NULL DEFAULT 'user',
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+            );
+            INSERT INTO mcp_server_catalog
+                (id, display_name, transport, args_json, url, env_schema_json,
+                 capability_tags_json, source)
+            VALUES
+                ('remote', 'Remote MCP', 'http', '[]', 'https://example.com/mcp',
+                 '{}', '[]', 'test');
+            ",
+        )
+        .unwrap();
+
+        conn.execute_batch(MIGRATION_041_UP).unwrap();
+        let transport: String = conn
+            .query_row(
+                "SELECT transport FROM mcp_server_catalog WHERE id = 'remote'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(transport, "https");
+        let err = conn
+            .execute(
+                "INSERT INTO mcp_server_catalog
+                 (id, display_name, transport, args_json, env_schema_json, capability_tags_json)
+                 VALUES ('legacy', 'Legacy', 'http', '[]', '{}', '[]')",
+                [],
+            )
+            .unwrap_err();
+        assert!(err.to_string().contains("CHECK constraint failed"));
     }
     #[test]
     fn migration_registry_covers_all_sql_files() {

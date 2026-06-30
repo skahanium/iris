@@ -78,6 +78,11 @@ pub struct McpRuntimeProfileSummary {
     pub enabled: bool,
     pub status: McpRuntimeStatus,
     pub last_error: Option<String>,
+    pub transport: String,
+    pub scope: String,
+    pub trust_level: String,
+    pub credential_binding_status: String,
+    pub credential_binding_count: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -223,6 +228,66 @@ fn validate_no_sensitive_json(label: &str, value: &serde_json::Value) -> AppResu
         }
     }
     Ok(())
+}
+
+fn credential_service_from_binding(value: &serde_json::Value) -> AppResult<Option<String>> {
+    let Some(raw) = value
+        .as_str()
+        .map(str::trim)
+        .filter(|item| !item.is_empty())
+    else {
+        return Ok(None);
+    };
+    let service = raw.strip_prefix("credential://").unwrap_or(raw).trim();
+    if service.is_empty() || !service.starts_with("iris.") {
+        return Err(AppError::msg(
+            "MCP env bindings must reference named credentials such as credential://iris.mcp.service",
+        ));
+    }
+    crate::security::ipc_policy::validate_credential_service(service)?;
+    Ok(Some(service.to_string()))
+}
+
+fn validate_env_bindings_json(value: &serde_json::Value) -> AppResult<()> {
+    let bindings = value
+        .as_object()
+        .ok_or_else(|| AppError::msg("MCP env bindings must be a JSON object"))?;
+    for (env_name, binding) in bindings {
+        if env_name.trim().is_empty()
+            || !env_name
+                .chars()
+                .all(|ch| ch.is_ascii_uppercase() || ch.is_ascii_digit() || ch == '_')
+        {
+            return Err(AppError::msg(
+                "MCP env binding names must be uppercase environment variable names",
+            ));
+        }
+        let Some(_) = credential_service_from_binding(binding)? else {
+            return Err(AppError::msg(
+                "MCP env binding values must be named credential references",
+            ));
+        };
+    }
+    Ok(())
+}
+
+fn credential_binding_count(raw: &str) -> usize {
+    serde_json::from_str::<serde_json::Value>(raw)
+        .ok()
+        .and_then(|value| {
+            value.as_object().map(|bindings| {
+                bindings
+                    .values()
+                    .filter(|binding| {
+                        credential_service_from_binding(binding)
+                            .ok()
+                            .flatten()
+                            .is_some()
+                    })
+                    .count()
+            })
+        })
+        .unwrap_or(0)
 }
 
 fn validate_stdio_command(command: &str) -> AppResult<()> {
@@ -386,7 +451,8 @@ fn validate_runtime_profile_transport(
 ) -> AppResult<()> {
     let config = config_json(&input.transport_config_json)?;
     let env_bindings = config_json(&input.env_bindings_json)?;
-    validate_no_sensitive_json("env bindings", &env_bindings)?;
+    validate_no_sensitive_json("transport config", &config)?;
+    validate_env_bindings_json(&env_bindings)?;
     let transport = server.transport.trim().to_lowercase();
     match transport.as_str() {
         "stdio" => {
@@ -493,11 +559,18 @@ pub fn delete_runtime_profile(db: &Database, profile_id: &str) -> AppResult<()> 
 pub fn list_runtime_profiles(db: &Database) -> AppResult<Vec<McpRuntimeProfileSummary>> {
     db.with_conn(|conn| {
         let mut stmt = conn.prepare(
-            "SELECT id, server_id, display_name, enabled, status, last_error
-             FROM mcp_runtime_profiles
-             ORDER BY display_name, id",
+            "SELECT p.id, p.server_id, p.display_name, p.enabled, p.status, p.last_error,
+                    s.transport,
+                    CASE WHEN p.vault_scope_hash IS NULL THEN 'global' ELSE 'vault' END AS scope,
+                    s.source,
+                    p.env_bindings_json
+             FROM mcp_runtime_profiles p
+             JOIN mcp_server_catalog s ON s.id = p.server_id
+             ORDER BY p.display_name, p.id",
         )?;
         let rows = stmt.query_map([], |row| {
+            let env_bindings_json: String = row.get(9)?;
+            let credential_binding_count = credential_binding_count(&env_bindings_json);
             Ok(McpRuntimeProfileSummary {
                 id: row.get(0)?,
                 server_id: row.get(1)?,
@@ -505,6 +578,15 @@ pub fn list_runtime_profiles(db: &Database) -> AppResult<Vec<McpRuntimeProfileSu
                 enabled: row.get::<_, i64>(3)? != 0,
                 status: McpRuntimeStatus::from_db(&row.get::<_, String>(4)?),
                 last_error: row.get(5)?,
+                transport: row.get(6)?,
+                scope: row.get(7)?,
+                trust_level: row.get(8)?,
+                credential_binding_status: if credential_binding_count > 0 {
+                    "configured".into()
+                } else {
+                    "not_configured".into()
+                },
+                credential_binding_count,
             })
         })?;
         Ok(rows.collect::<Result<Vec<_>, _>>()?)
@@ -874,7 +956,7 @@ mod tests {
         let db = Database::open_in_memory().unwrap();
         let mut http_server = server();
         http_server.id = "remote".into();
-        http_server.transport = "http".into();
+        http_server.transport = "https".into();
         http_server.command = None;
         http_server.url = Some("http://example.com/mcp".into());
         upsert_server_catalog(&db, &http_server).unwrap();
@@ -903,7 +985,7 @@ mod tests {
 
         let mut https_server = server();
         https_server.id = "remote".into();
-        https_server.transport = "http".into();
+        https_server.transport = "https".into();
         https_server.command = None;
         https_server.url = Some("https://example.com/mcp".into());
         upsert_server_catalog(&db, &https_server).unwrap();
@@ -914,6 +996,30 @@ mod tests {
 
         let profiles = list_runtime_profiles(&db).unwrap();
         assert_eq!(profiles.len(), 2);
+        let remote = profiles
+            .iter()
+            .find(|profile| profile.id == "remote-default")
+            .unwrap();
+        assert_eq!(remote.transport, "https");
+        assert_eq!(remote.scope, "vault");
+        assert_eq!(remote.trust_level, "test");
+        assert_eq!(remote.credential_binding_status, "not_configured");
+    }
+    #[test]
+    fn runtime_profile_accepts_named_credential_env_bindings_without_exposing_values() {
+        let db = Database::open_in_memory().unwrap();
+        upsert_server_catalog(&db, &server()).unwrap();
+        let mut bound_profile = profile(McpRuntimeStatus::Ready, true);
+        bound_profile.env_bindings_json =
+            "{\"ANYSEARCH_API_KEY\":\"credential://iris.mcp.anysearch\"}".into();
+        upsert_runtime_profile(&db, &bound_profile).unwrap();
+
+        let profiles = list_runtime_profiles(&db).unwrap();
+        assert_eq!(profiles[0].credential_binding_status, "configured");
+        assert_eq!(profiles[0].credential_binding_count, 1);
+        assert!(!serde_json::to_string(&profiles[0])
+            .unwrap()
+            .contains("iris.mcp.anysearch"));
     }
     #[test]
     fn tool_inventory_and_health_events_are_metadata_only() {

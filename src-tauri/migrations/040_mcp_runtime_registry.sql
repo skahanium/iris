@@ -1,7 +1,7 @@
 CREATE TABLE IF NOT EXISTS mcp_server_catalog (
     id TEXT PRIMARY KEY,
     display_name TEXT NOT NULL,
-    transport TEXT NOT NULL CHECK (transport IN ('stdio', 'http', 'sse')),
+    transport TEXT NOT NULL CHECK (transport IN ('stdio', 'https', 'sse')),
     command TEXT,
     args_json TEXT NOT NULL DEFAULT '[]',
     url TEXT,

@@ -109,6 +109,7 @@ pub struct McpToolCallResult {
 struct McpStdioToolCallLaunch {
     command: PathBuf,
     args: Vec<String>,
+    env: Vec<(String, String)>,
     cwd: Option<PathBuf>,
     request_timeout: Duration,
     max_stdout_line_bytes: usize,
@@ -439,6 +440,7 @@ fn safe_tool_description(description: &Option<String>) -> Option<String> {
 struct StoredStdioProfile {
     command: PathBuf,
     args: Vec<String>,
+    env: Vec<(String, String)>,
     capability_mapping_json: String,
 }
 
@@ -462,6 +464,54 @@ fn load_profile_transport(db: &Database, profile_id: &str) -> AppResult<String> 
         )?;
         Ok(transport.trim().to_ascii_lowercase())
     })
+}
+
+fn credential_service_from_binding(value: &serde_json::Value) -> AppResult<Option<String>> {
+    let Some(raw) = value
+        .as_str()
+        .map(str::trim)
+        .filter(|item| !item.is_empty())
+    else {
+        return Ok(None);
+    };
+    let service = raw.strip_prefix("credential://").unwrap_or(raw).trim();
+    crate::security::ipc_policy::validate_credential_service(service)?;
+    Ok(Some(service.to_string()))
+}
+
+fn resolve_env_bindings(
+    db: &Database,
+    env_bindings_json: &str,
+) -> AppResult<Vec<(String, String)>> {
+    let value: serde_json::Value = serde_json::from_str(env_bindings_json).map_err(|err| {
+        runtime_error(
+            McpRuntimeFailureKind::AuthMissing,
+            format!("MCP env bindings are invalid JSON: {err}"),
+        )
+    })?;
+    let Some(bindings) = value.as_object() else {
+        return Err(runtime_error(
+            McpRuntimeFailureKind::AuthMissing,
+            "MCP env bindings must be a JSON object",
+        ));
+    };
+    let mut env = Vec::new();
+    for (env_name, binding) in bindings {
+        let service = credential_service_from_binding(binding)?.ok_or_else(|| {
+            runtime_error(
+                McpRuntimeFailureKind::AuthMissing,
+                "MCP env binding omitted named credential service",
+            )
+        })?;
+        let value = crate::credentials::get_api_key(db, &service).map_err(|_| {
+            runtime_error(
+                McpRuntimeFailureKind::AuthMissing,
+                format!("MCP credential binding is missing: {service}"),
+            )
+        })?;
+        env.push((env_name.clone(), value));
+    }
+    Ok(env)
 }
 
 fn record_discovered_tool_inventory(
@@ -547,20 +597,32 @@ fn load_remote_profile(db: &Database, profile_id: &str) -> AppResult<StoredRemot
 
 fn load_stdio_profile(db: &Database, profile_id: &str) -> AppResult<StoredStdioProfile> {
     db.with_read_conn(|conn| {
-        let (enabled, transport_config_json, server_transport, server_command, server_args_json, capability_tags_json): (
-            i64,
-            String,
-            String,
-            Option<String>,
-            String,
-            String,
-        ) = conn.query_row(
-            "SELECT p.enabled, p.transport_config_json, s.transport, s.command, s.args_json, s.capability_tags_json
+        let (
+            enabled,
+            transport_config_json,
+            env_bindings_json,
+            server_transport,
+            server_command,
+            server_args_json,
+            capability_tags_json,
+        ): (i64, String, String, String, Option<String>, String, String) = conn.query_row(
+            "SELECT p.enabled, p.transport_config_json, p.env_bindings_json,
+                    s.transport, s.command, s.args_json, s.capability_tags_json
              FROM mcp_runtime_profiles p
              JOIN mcp_server_catalog s ON s.id = p.server_id
              WHERE p.id = ?1",
             params![profile_id],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?)),
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                    row.get(5)?,
+                    row.get(6)?,
+                ))
+            },
         )?;
         if enabled == 0 {
             return Err(runtime_error(
@@ -577,7 +639,12 @@ fn load_stdio_profile(db: &Database, profile_id: &str) -> AppResult<StoredStdioP
         let config: serde_json::Value = serde_json::from_str(&transport_config_json)?;
         let command = config_string(&config, "command")
             .or(server_command)
-            .ok_or_else(|| runtime_error(McpRuntimeFailureKind::InvalidResponse, "MCP profile has no stdio command"))?;
+            .ok_or_else(|| {
+                runtime_error(
+                    McpRuntimeFailureKind::InvalidResponse,
+                    "MCP profile has no stdio command",
+                )
+            })?;
         let args_json = config
             .get("args")
             .map(serde_json::Value::to_string)
@@ -585,9 +652,16 @@ fn load_stdio_profile(db: &Database, profile_id: &str) -> AppResult<StoredStdioP
         Ok(StoredStdioProfile {
             command: PathBuf::from(command),
             args: parse_stdio_args(&args_json)?,
+            env: resolve_env_bindings(db, &env_bindings_json)?,
             capability_mapping_json: capability_tags_json,
         })
     })
+}
+
+fn sanitize_runtime_output(raw: &str) -> String {
+    crate::ai_runtime::trace::redact_classified_leaks(raw)
+        .trim()
+        .to_string()
 }
 
 async fn drain_stderr<R>(mut stderr: R, max_bytes: usize) -> String
@@ -608,7 +682,7 @@ where
             Err(_) => break,
         }
     }
-    String::from_utf8_lossy(&collected).trim().to_string()
+    sanitize_runtime_output(&String::from_utf8_lossy(&collected))
 }
 
 async fn kill_child(child: &mut Child) {
@@ -895,6 +969,13 @@ pub async fn call_http_tool(
     .await
 }
 pub async fn discover_stdio_tools(launch: McpStdioLaunch) -> AppResult<McpStdioDiscovery> {
+    discover_stdio_tools_inner(launch, &[]).await
+}
+
+async fn discover_stdio_tools_inner(
+    launch: McpStdioLaunch,
+    env: &[(String, String)],
+) -> AppResult<McpStdioDiscovery> {
     if launch.max_stdout_line_bytes == 0 {
         return Err(runtime_error(
             McpRuntimeFailureKind::OutputTooLarge,
@@ -908,6 +989,7 @@ pub async fn discover_stdio_tools(launch: McpStdioLaunch) -> AppResult<McpStdioD
         command.current_dir(cwd);
     }
     command.env_clear();
+    command.envs(env.iter().map(|(key, value)| (key, value)));
     command.stdin(Stdio::piped());
     command.stdout(Stdio::piped());
     command.stderr(Stdio::piped());
@@ -1035,6 +1117,7 @@ async fn call_stdio_tool(
         command.current_dir(cwd);
     }
     command.env_clear();
+    command.envs(launch.env.iter().map(|(key, value)| (key, value)));
     command.stdin(Stdio::piped());
     command.stdout(Stdio::piped());
     command.stderr(Stdio::piped());
@@ -1157,6 +1240,7 @@ pub async fn call_profile_stdio_tool(
     let (result, stderr_summary) = call_stdio_tool(McpStdioToolCallLaunch {
         command: profile.command,
         args: profile.args,
+        env: profile.env,
         cwd: options.cwd,
         request_timeout: options.request_timeout,
         max_stdout_line_bytes: options.max_stdout_line_bytes,
@@ -1275,7 +1359,7 @@ pub async fn call_profile_tool(
     }
 }
 
-pub async fn call_required_capability_stdio(
+pub async fn call_required_capability(
     db: &Database,
     capability: &str,
     arguments: serde_json::Value,
@@ -1291,14 +1375,18 @@ pub async fn discover_profile_stdio_tools(
     options: McpHostRuntimeOptions,
 ) -> AppResult<McpStdioDiscovery> {
     let profile = load_stdio_profile(db, profile_id)?;
-    let discovery = discover_stdio_tools(McpStdioLaunch {
-        command: profile.command,
-        args: profile.args,
-        cwd: options.cwd,
-        request_timeout: options.request_timeout,
-        max_stdout_line_bytes: options.max_stdout_line_bytes,
-        max_stderr_bytes: options.max_stderr_bytes,
-    })
+    let env = profile.env;
+    let discovery = discover_stdio_tools_inner(
+        McpStdioLaunch {
+            command: profile.command,
+            args: profile.args,
+            cwd: options.cwd,
+            request_timeout: options.request_timeout,
+            max_stdout_line_bytes: options.max_stdout_line_bytes,
+            max_stderr_bytes: options.max_stderr_bytes,
+        },
+        &env,
+    )
     .await?;
 
     record_discovered_tool_inventory(
@@ -1406,7 +1494,11 @@ fn main() {
 
     let _initialized = lines.next();
     let request = lines.next().and_then(Result::ok).unwrap_or_default();
-    eprintln!("fake server log");
+    if mode == "secret-stderr" {
+        eprintln!("token=sk-live-should-not-appear-in-summary");
+    } else {
+        eprintln!("fake server log");
+    }
     if request.contains("\"tools/call\"") {
         println!("{}", r#"{"jsonrpc":"2.0","id":2,"result":{"content":[{"type":"text","text":"search result for iris"}],"isError":false}}"#);
     } else {
@@ -1481,6 +1573,18 @@ fn main() {
     }
 
     #[tokio::test]
+    async fn stdio_discovery_redacts_secret_stderr_summary() {
+        let exe = compile_fake_server();
+        let mut launch = launch(exe);
+        launch.args.push("secret-stderr".into());
+
+        let discovery = discover_stdio_tools(launch).await.unwrap();
+        let stderr = discovery.stderr_summary.unwrap();
+        assert!(stderr.contains("[REDACTED:SECRET]"));
+        assert!(!stderr.contains("sk-live-should-not-appear"));
+    }
+
+    #[tokio::test]
     async fn mcp_tools_call_mapped_capability_invokes_stdio_tools_call() {
         use crate::ai_runtime::mcp_runtime_registry::{
             record_tool_inventory, upsert_runtime_profile, upsert_server_catalog,
@@ -1532,7 +1636,7 @@ fn main() {
         )
         .unwrap();
 
-        let call = call_required_capability_stdio(
+        let call = call_required_capability(
             &db,
             "web.search",
             json!({"q": "iris"}),
@@ -1655,7 +1759,7 @@ fn main() {
             &McpServerCatalogInput {
                 id: "http-fake".into(),
                 display_name: "HTTP Fake MCP".into(),
-                transport: "http".into(),
+                transport: "https".into(),
                 command: None,
                 args_json: "[]".into(),
                 url: Some("https://example.com/mcp".into()),
@@ -1742,7 +1846,7 @@ fn main() {
             &McpServerCatalogInput {
                 id: "http-fake".into(),
                 display_name: "HTTP Fake MCP".into(),
-                transport: "http".into(),
+                transport: "https".into(),
                 command: None,
                 args_json: "[]".into(),
                 url: Some("https://example.com/mcp".into()),

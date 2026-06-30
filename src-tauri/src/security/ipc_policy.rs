@@ -39,11 +39,14 @@ pub fn validate_credential_service(service: &str) -> AppResult<()> {
     } else {
         service.to_string()
     };
-    if canonical == MINIMAX_CREDENTIAL_SERVICE || canonical.starts_with("iris.llm.") {
+    if canonical == MINIMAX_CREDENTIAL_SERVICE
+        || canonical.starts_with("iris.llm.")
+        || canonical.starts_with("iris.mcp.")
+    {
         return Ok(());
     }
     Err(AppError::msg(format!(
-        "不允许的凭据服务名: {service}（仅支持 iris.llm.* 与 {MINIMAX_CREDENTIAL_SERVICE}）"
+        "不允许的凭据服务名: {service}（仅支持 iris.llm.*、iris.mcp.* 与 {MINIMAX_CREDENTIAL_SERVICE}）"
     )))
 }
 
@@ -136,6 +139,7 @@ mod tests {
     #[test]
     fn credential_service_allows_llm_prefix() {
         validate_credential_service("iris.llm.deepseek").unwrap();
+        validate_credential_service("iris.mcp.anysearch").unwrap();
         validate_credential_service("iris.minimax").unwrap();
         assert!(validate_credential_service("evil.service").is_err());
     }

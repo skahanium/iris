@@ -1717,7 +1717,7 @@ mod tests {
             "display_name": "AnySearch Local",
             "enabled": true,
             "transport_config_json": "{\"type\":\"stdio\",\"command\":\"anysearch-mcp\",\"args\":[\"--secret\"]}",
-            "env_bindings_json": "{\"ANYSEARCH_API_KEY\":\"credential://anysearch\",\"RAW_TOKEN\":\"secret-token\"}"
+            "env_bindings_json": "{\"ANYSEARCH_API_KEY\":\"credential://iris.mcp.anysearch\",\"RAW_TOKEN\":\"secret-token\"}"
         });
 
         let safe = confirmation_arguments_for_tool("mcp_runtime_profile_upsert", &args);
@@ -1728,7 +1728,7 @@ mod tests {
         assert!(safe.get("transport_config_json").is_none());
         assert!(safe.get("env_bindings_json").is_none());
         let serialized = serde_json::to_string(&safe).unwrap();
-        assert!(!serialized.contains("credential://anysearch"));
+        assert!(!serialized.contains("credential://iris.mcp.anysearch"));
         assert!(!serialized.contains("secret-token"));
         assert!(!serialized.contains("--secret"));
     }
@@ -1959,7 +1959,7 @@ mod tests {
             "enabled": true,
             "vault_scope_hash": "vault-abc",
             "transport_config_json": "{\"type\":\"stdio\",\"command\":\"anysearch-mcp\",\"args\":[\"serve\"]}",
-            "env_bindings_json": "{\"ANYSEARCH_API_KEY\":\"credential://anysearch\"}"
+            "env_bindings_json": "{\"ANYSEARCH_API_KEY\":\"credential://iris.mcp.anysearch\"}"
         });
 
         let preview = mcp_tool_confirmation_preview("mcp_runtime_profile_upsert", &args)
@@ -1976,7 +1976,9 @@ mod tests {
             preview["capability_boundary"],
             "controlled_iris_capability_mapping"
         );
-        assert!(!preview.to_string().contains("credential://anysearch"));
+        assert!(!preview
+            .to_string()
+            .contains("credential://iris.mcp.anysearch"));
     }
 
     #[test]

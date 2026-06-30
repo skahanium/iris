@@ -2193,7 +2193,7 @@ pub async fn mcp_runtime_health_check(
             })
         }
         Err(err) => {
-            let message = err.to_string();
+            let message = crate::ai_runtime::trace::redact_classified_leaks(&err.to_string());
             let _ = record_health_event(
                 &state.db,
                 &McpHealthEventInput {
@@ -2224,7 +2224,7 @@ pub async fn mcp_runtime_capability_call(
             "mcp_runtime_capability_call arguments must be a JSON object",
         ));
     }
-    crate::ai_runtime::mcp_host_runtime::call_required_capability_stdio(
+    crate::ai_runtime::mcp_host_runtime::call_required_capability(
         &state.db,
         &capability,
         arguments,

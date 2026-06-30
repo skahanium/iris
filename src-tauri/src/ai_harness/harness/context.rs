@@ -180,6 +180,19 @@ mod tests {
 
     #[test]
     fn harness_context_uses_activation_plan_allowed_tools_without_rescanning() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = AppState::new(dir.path().to_path_buf()).unwrap();
+        let task_policy = crate::ai_runtime::agent_task_policy::AgentTaskPolicy::from_input(
+            crate::ai_runtime::agent_task_policy::AgentTaskPolicyInput {
+                intent: crate::ai_types::AgentIntent::Chat,
+                task_kind: crate::ai_runtime::agent_task::AgentTaskKind::Lightweight,
+                scope: crate::ai_runtime::agent_task_policy::AgentTaskScope::Vault,
+                web_authorized: false,
+                has_attachments: false,
+                write_permission_required: false,
+                research_depth: 0,
+            },
+        );
         let plan = SkillActivationPlanSummary {
             activated_skills: Vec::new(),
             requested_tools: vec!["mcp_runtime_profiles_list".into()],
@@ -190,6 +203,14 @@ mod tests {
             degraded: false,
         };
 
-        assert_eq!(plan.allowed_tools(), vec!["mcp_runtime_profiles_list"]);
+        let allowed = resolve_active_skill_allowed_tools_with_plan(
+            &state,
+            &task_policy,
+            "list MCP profiles",
+            Some(&plan),
+        )
+        .unwrap();
+
+        assert_eq!(allowed, vec!["mcp_runtime_profiles_list"]);
     }
 }
