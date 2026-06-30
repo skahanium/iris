@@ -27,12 +27,14 @@ describe("Phase4 skills closed-loop contract", () => {
       "workspaceRoot",
       "workspaceReady",
       "workspaceMissingItems",
+      "degradedReasons",
     ]) {
       expect(aiTypes).toContain(token);
     }
     expect(rustTypes).toContain("workspace_root");
     expect(rustTypes).toContain("workspace_ready");
     expect(rustTypes).toContain("workspace_missing_items");
+    expect(rustTypes).toContain("degraded_reasons");
     expect(aiTypes).toContain("skillActivationPlan");
     expect(aiTypes).toContain("blockedCapabilities");
     expect(aiTypes).toContain("auditSummary");

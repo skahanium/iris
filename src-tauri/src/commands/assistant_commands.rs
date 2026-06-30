@@ -716,13 +716,14 @@ pub(crate) async fn route_assistant_execute(
             let skills = crate::ai_runtime::skills::scan_all_metadata(&vault).ok()?;
             let index = crate::ai_runtime::skills::load_activation_index(&state.db).ok();
             Some(
-                crate::ai_runtime::skills::build_skill_activation_plan_for_task(
+                crate::ai_runtime::skills::build_skill_activation_plan_for_task_with_runtime(
                     &skills,
                     agent_intent,
                     &request.message,
                     &intent_detection.source_hints,
                     index.as_ref(),
                     Some(legacy_scene_hint),
+                    Some(&state.db),
                 ),
             )
         })

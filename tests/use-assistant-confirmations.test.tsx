@@ -248,6 +248,63 @@ describe("useAssistantConfirmations", () => {
     expect(runStatuses.at(-1)).toEqual(["error", "chat"]);
   });
 
+  it("reports partial success from structured tool and resume outcomes", async () => {
+    const messages: ChatLine[] = [];
+    confirmTool = vi.fn(async () => ({
+      resumed: false,
+      status: "tool_executed_resume_failed",
+      installed_skill: "heartflow",
+      toolExecutionOutcome: {
+        status: "succeeded",
+        sideEffectCommitted: true,
+        toolName: "skills_install",
+        resultSummary: "Skill heartflow 已安装。",
+      },
+      assistantResumeOutcome: {
+        status: "failed",
+        failureClass: "provider_bad_request",
+        userMessage: "安装已完成，但继续生成回复失败。",
+      },
+    }));
+
+    act(() => {
+      root.unmount();
+    });
+    root = createRoot(container);
+    await act(async () => {
+      root.render(
+        createElement(Harness, {
+          onReady: (value) => {
+            api = value;
+          },
+          confirmTool,
+          setRunStatus: (status, intent) => {
+            runStatuses.push([status, intent]);
+          },
+          setMessages: (update) => {
+            const next =
+              typeof update === "function" ? update(messages) : update;
+            messages.splice(0, messages.length, ...next);
+          },
+        }),
+      );
+    });
+
+    await act(async () => {
+      api.setToolConfirmRequest({ ...request, tool_name: "skills_install" });
+    });
+    await act(async () => {
+      await api.handleToolConfirm("req-1", "tool-1", "approve");
+    });
+
+    expect(messages.at(-1)).toEqual({
+      role: "system",
+      content: "安装已完成，但继续生成回复失败。",
+    });
+    expect(messages.at(-1)?.content).not.toContain("工具确认失败");
+    expect(messages.at(-1)?.content).not.toContain("Skill 安装失败");
+    expect(runStatuses.at(-1)).toEqual(["error", "chat"]);
+  });
   it("shows a readable localized message when tool confirmation fails", async () => {
     const messages: ChatLine[] = [];
     confirmTool = vi.fn(async () => {

@@ -1,19 +1,24 @@
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 use crate::ai_runtime::{
-    agent_task_policy::intent_from_legacy_scene, tool_catalog::catalog_find, AiScene,
+    agent_task_policy::intent_from_legacy_scene, capability_resolver::resolve_required_capability,
+    tool_catalog::catalog_find, AiScene,
 };
 use crate::ai_types::{
     AgentIntent, SkillActivationItemSummary, SkillActivationPlanSummary,
     SkillResourceStatusSummary, SkillRuntimeCapability, ToolCapabilityAffinity,
 };
 use crate::embedding::engine::{cosine_similarity, embed_text};
-use crate::error::AppResult;
+use crate::error::{AppError, AppResult};
 use crate::storage::db::Database;
 
 use super::compatibility_impl::blocked_capabilities_for_skill;
-use super::resources_impl::{ALLOWED_RESOURCE_DIRS, MAX_SKILL_RESOURCE_CHARS};
+use super::manifest_impl::load_manifest_for_skill_dir;
+use super::resources_impl::{
+    effective_optional_resources_for_skill, effective_required_resources_for_skill,
+    ALLOWED_RESOURCE_DIRS, MAX_SKILL_RESOURCE_CHARS,
+};
 use super::validation_impl::confirmation_required_tools;
 use super::workspace_impl::{workspace_root_relative, workspace_status_for_skill};
 use super::{
@@ -416,17 +421,239 @@ fn build_resource_summary(
 
 fn build_resource_summaries(skill: &SkillEntry) -> Vec<SkillResourceStatusSummary> {
     let skill_root = Path::new(&skill.file_path).parent();
-    skill
-        .required_resources()
+    effective_required_resources_for_skill(skill)
         .into_iter()
         .map(|relative_path| build_resource_summary(skill_root, relative_path, "required"))
         .chain(
-            skill
-                .optional_resources()
+            effective_optional_resources_for_skill(skill)
                 .into_iter()
                 .map(|relative_path| build_resource_summary(skill_root, relative_path, "optional")),
         )
         .collect()
+}
+
+#[derive(Debug, Clone, Default)]
+struct PromptSectionEvaluation {
+    injected_sections: Vec<String>,
+    prompt_content: String,
+    degraded_reasons: Vec<String>,
+}
+
+fn skill_root_for_entry(skill: &SkillEntry) -> Option<&Path> {
+    Path::new(&skill.file_path).parent()
+}
+
+fn safe_section_source_path(skill_root: &Path, source: &str) -> AppResult<PathBuf> {
+    let rel = Path::new(source.trim_start_matches('/'));
+    if source.trim().is_empty()
+        || rel.is_absolute()
+        || rel.components().any(|component| {
+            matches!(
+                component,
+                Component::ParentDir | Component::RootDir | Component::Prefix(_)
+            )
+        })
+    {
+        return Err(AppError::msg(
+            "prompt section source escapes skill directory",
+        ));
+    }
+    Ok(skill_root.join(rel))
+}
+
+fn read_prompt_section_source(skill: &SkillEntry, source: &str) -> AppResult<String> {
+    let Some(skill_root) = skill_root_for_entry(skill) else {
+        return Err(AppError::msg("skill root unavailable"));
+    };
+    if source == "SKILL.md" {
+        return Ok(skill.content.clone());
+    }
+    let path = safe_section_source_path(skill_root, source)?;
+    let root = skill_root.canonicalize()?;
+    let canonical = path.canonicalize()?;
+    if !canonical.starts_with(root) {
+        return Err(AppError::msg(
+            "prompt section source escapes skill directory",
+        ));
+    }
+    Ok(std::fs::read_to_string(canonical)?.trim().to_string())
+}
+
+fn runtime_ready_for_manifest(
+    manifest: &super::manifest_impl::IrisSkillManifest,
+    db: Option<&Database>,
+) -> (bool, Vec<String>) {
+    let required_profiles: Vec<&str> = manifest
+        .mcp
+        .dependencies
+        .iter()
+        .filter(|dependency| dependency.required)
+        .map(|dependency| dependency.profile_id.as_str())
+        .collect();
+    if required_profiles.is_empty() {
+        return (true, Vec::new());
+    }
+    let Some(db) = db else {
+        return (
+            false,
+            vec!["MCP runtime registry is unavailable for this run".into()],
+        );
+    };
+    let profiles = match crate::ai_runtime::mcp_runtime_registry::list_runtime_profiles(db) {
+        Ok(profiles) => profiles,
+        Err(err) => {
+            return (
+                false,
+                vec![format!("MCP runtime registry unavailable: {err}")],
+            )
+        }
+    };
+    let mut reasons = Vec::new();
+    for profile_id in required_profiles {
+        match profiles.iter().find(|profile| profile.id == profile_id) {
+            Some(profile)
+                if profile.enabled
+                    && profile.status
+                        == crate::ai_runtime::mcp_runtime_registry::McpRuntimeStatus::Ready => {}
+            Some(profile) => reasons.push(profile.last_error.clone().unwrap_or_else(|| {
+                format!("MCP profile {profile_id} is {}", profile.status.as_str())
+            })),
+            None => reasons.push(format!("MCP profile {profile_id} is not configured")),
+        }
+    }
+    (reasons.is_empty(), reasons)
+}
+
+fn evaluate_prompt_sections(
+    skill: &SkillEntry,
+    vault_root: Option<&Path>,
+    db: Option<&Database>,
+    selected_section_ids: Option<&[String]>,
+) -> Option<PromptSectionEvaluation> {
+    let skill_root = skill_root_for_entry(skill)?;
+    let outcome = load_manifest_for_skill_dir(skill_root, None).ok()?;
+    let manifest = &outcome.manifest;
+    if manifest.prompt.sections.is_empty() {
+        return None;
+    }
+
+    let selected: Vec<String> = selected_section_ids
+        .map(|ids| {
+            ids.iter()
+                .filter(|id| id.as_str() != "skill_overlay")
+                .cloned()
+                .collect()
+        })
+        .unwrap_or_else(|| {
+            if manifest.prompt.default_sections.is_empty() {
+                manifest
+                    .prompt
+                    .sections
+                    .iter()
+                    .map(|section| section.id.clone())
+                    .collect()
+            } else {
+                manifest.prompt.default_sections.clone()
+            }
+        });
+    let (runtime_ready, runtime_reasons) = runtime_ready_for_manifest(manifest, db);
+    let workspace_status = vault_root.map(|vault| workspace_status_for_skill(vault, skill));
+
+    let mut evaluation = PromptSectionEvaluation::default();
+    for section in manifest
+        .prompt
+        .sections
+        .iter()
+        .filter(|section| selected.contains(&section.id))
+    {
+        let mut section_reasons = Vec::new();
+        if section.requires_runtime && !runtime_ready {
+            section_reasons.push(format!(
+                "section `{}` skipped: runtime unavailable",
+                section.id
+            ));
+            section_reasons.extend(runtime_reasons.iter().cloned());
+        }
+        if section.requires_workspace
+            && workspace_status
+                .as_ref()
+                .is_some_and(|status| !status.workspace_ready)
+        {
+            section_reasons.push(format!(
+                "section `{}` skipped: workspace is not prepared",
+                section.id
+            ));
+        }
+        for resource in &section.requires_resources {
+            let summary = build_resource_summary(Some(skill_root), resource.clone(), "required");
+            if !summary.available {
+                section_reasons.push(format!(
+                    "section `{}` skipped: required resource `{}` is unavailable",
+                    section.id, resource
+                ));
+            }
+        }
+        for capability in &section.requires_capabilities {
+            match db {
+                Some(db) => {
+                    if let Err(err) = resolve_required_capability(db, capability) {
+                        section_reasons.push(format!(
+                            "section `{}` skipped: required capability `{}` is unavailable: {}",
+                            section.id,
+                            err.capability,
+                            err.reason_code()
+                        ));
+                    }
+                }
+                None => section_reasons.push(format!(
+                    "section `{}` skipped: required capability `{}` cannot be resolved without runtime registry",
+                    section.id, capability
+                )),
+            }
+        }
+        if !section_reasons.is_empty() {
+            for reason in section_reasons {
+                if !evaluation.degraded_reasons.contains(&reason) {
+                    evaluation.degraded_reasons.push(reason);
+                }
+            }
+            continue;
+        }
+        match read_prompt_section_source(skill, &section.source) {
+            Ok(content) => {
+                if !content.trim().is_empty() {
+                    if !evaluation.prompt_content.is_empty() {
+                        evaluation.prompt_content.push_str("\n\n");
+                    }
+                    evaluation.prompt_content.push_str(content.trim());
+                }
+                evaluation.injected_sections.push(section.id.clone());
+            }
+            Err(err) => evaluation.degraded_reasons.push(format!(
+                "section `{}` skipped: source unavailable: {err}",
+                section.id
+            )),
+        }
+    }
+    Some(evaluation)
+}
+
+pub fn filter_skill_content_to_injected_sections(
+    skill: &mut SkillEntry,
+    injected_sections: &[String],
+) -> AppResult<()> {
+    let Some(evaluation) = evaluate_prompt_sections(skill, None, None, Some(injected_sections))
+    else {
+        return Ok(());
+    };
+    skill.content = evaluation.prompt_content;
+    Ok(())
+}
+
+fn apply_runtime_prompt_sections(skill: &mut SkillEntry, vault: &Path, db: Option<&Database>) {
+    if let Some(evaluation) = evaluate_prompt_sections(skill, Some(vault), db, None) {
+        skill.content = evaluation.prompt_content;
+    }
 }
 
 fn activation_reason(
@@ -491,6 +718,13 @@ pub fn build_skill_activation_plan(
     )
 }
 
+#[derive(Clone, Copy)]
+struct SkillActivationBuildOptions<'a> {
+    index: Option<&'a ActivationIndexMap>,
+    legacy_scene_hint: Option<AiScene>,
+    db: Option<&'a Database>,
+    enable_manifest_gating: bool,
+}
 /// Build a safe, per-run skill activation plan from task facts.
 pub fn build_skill_activation_plan_for_task(
     skills: &[SkillEntry],
@@ -499,6 +733,51 @@ pub fn build_skill_activation_plan_for_task(
     source_hints: &[String],
     index: Option<&ActivationIndexMap>,
     legacy_scene_hint: Option<AiScene>,
+) -> SkillActivationPlanSummary {
+    build_skill_activation_plan_for_task_inner(
+        skills,
+        agent_intent,
+        user_message,
+        source_hints,
+        SkillActivationBuildOptions {
+            index,
+            legacy_scene_hint,
+            db: None,
+            enable_manifest_gating: false,
+        },
+    )
+}
+
+/// Build a skill activation plan that evaluates typed manifest sections against runtime state.
+pub fn build_skill_activation_plan_for_task_with_runtime(
+    skills: &[SkillEntry],
+    agent_intent: AgentIntent,
+    user_message: &str,
+    source_hints: &[String],
+    index: Option<&ActivationIndexMap>,
+    legacy_scene_hint: Option<AiScene>,
+    db: Option<&Database>,
+) -> SkillActivationPlanSummary {
+    build_skill_activation_plan_for_task_inner(
+        skills,
+        agent_intent,
+        user_message,
+        source_hints,
+        SkillActivationBuildOptions {
+            index,
+            legacy_scene_hint,
+            db,
+            enable_manifest_gating: true,
+        },
+    )
+}
+
+fn build_skill_activation_plan_for_task_inner(
+    skills: &[SkillEntry],
+    agent_intent: AgentIntent,
+    user_message: &str,
+    source_hints: &[String],
+    options: SkillActivationBuildOptions<'_>,
 ) -> SkillActivationPlanSummary {
     let vault_root = skills
         .iter()
@@ -514,9 +793,15 @@ pub fn build_skill_activation_plan_for_task(
     }
 
     let ranked = rerank_skills_with_vectors(
-        rank_skills_for_task(skills, agent_intent, user_message, source_hints, index),
+        rank_skills_for_task(
+            skills,
+            agent_intent,
+            user_message,
+            source_hints,
+            options.index,
+        ),
         task_query(agent_intent, user_message),
-        index,
+        options.index,
     );
     for scored in ranked {
         if scored.score >= 0.35
@@ -546,7 +831,7 @@ pub fn build_skill_activation_plan_for_task(
         let reason = activation_reason(skill, agent_intent, user_message, source_hints)
             .map(|(_, reason)| reason)
             .unwrap_or_else(|| {
-                if legacy_scene_hint.is_some() {
+                if options.legacy_scene_hint.is_some() {
                     "legacy_scene_or_vector_match".into()
                 } else {
                     "task_capability_or_vector_match".into()
@@ -572,12 +857,25 @@ pub fn build_skill_activation_plan_for_task(
         let workspace_status = vault_root
             .as_deref()
             .map(|vault| workspace_status_for_skill(vault, skill));
+        let section_evaluation = options
+            .enable_manifest_gating
+            .then(|| evaluate_prompt_sections(skill, vault_root.as_deref(), options.db, None))
+            .flatten();
+        let injected_sections = section_evaluation
+            .as_ref()
+            .map(|evaluation| evaluation.injected_sections.clone())
+            .unwrap_or_else(|| vec!["skill_overlay".into()]);
+        let degraded_reasons = section_evaluation
+            .as_ref()
+            .map(|evaluation| evaluation.degraded_reasons.clone())
+            .unwrap_or_default();
         activated.push(SkillActivationItemSummary {
             name: skill.name.clone(),
             scope: scope_wire(skill.scope),
             score: scored.score,
             match_reason: reason,
-            injected_sections: vec!["skill_overlay".into()],
+            injected_sections,
+            degraded_reasons,
             requested_tools: skill.allowed_tools.clone(),
             requested_capabilities: skill.requested_capabilities(),
             confirmation_required_tools: confirmation_required_tools(&skill.allowed_tools),
@@ -598,6 +896,9 @@ pub fn build_skill_activation_plan_for_task(
         });
     }
 
+    let manifest_degraded = activated
+        .iter()
+        .any(|skill| !skill.degraded_reasons.is_empty());
     SkillActivationPlanSummary {
         skill_overlay_summary: if activated.is_empty() {
             "No skills activated for this run.".into()
@@ -608,11 +909,10 @@ pub fn build_skill_activation_plan_for_task(
         requested_tools,
         requested_capabilities,
         confirmation_required_tools: confirmation_required,
-        degraded: !blocked.is_empty(),
+        degraded: !blocked.is_empty() || manifest_degraded,
         blocked_capabilities: blocked,
     }
 }
-
 /// Load enabled skills for prompt injection after metadata matching.
 pub fn active_skills_for_prompt(
     vault: &Path,
@@ -658,6 +958,7 @@ pub fn active_skills_for_task_prompt(
         if let Ok(mut skill) = load_skill(&path, scored.skill.scope) {
             skill.enabled = scored.skill.enabled;
             if skill.enabled {
+                apply_runtime_prompt_sections(&mut skill, vault, db);
                 out.push(skill);
             }
         }
@@ -825,6 +1126,223 @@ mod phase4_tests {
         assert!(!serde_json::to_string(&plan).unwrap().contains("api_key"));
     }
 
+    #[test]
+    fn build_skill_activation_plan_with_runtime_skips_unavailable_runtime_sections() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = dir.path().join("vault");
+        let skill_root = vault.join(".iris/skills/hybrid-helper");
+        std::fs::create_dir_all(skill_root.join("sections")).unwrap();
+        std::fs::write(
+            skill_root.join("SKILL.md"),
+            "---\nname: hybrid-helper\ndescription: hybrid helper\n---\n\nFallback",
+        )
+        .unwrap();
+        std::fs::write(skill_root.join("sections/behavior.md"), "BEHAVIOR ONLY").unwrap();
+        std::fs::write(skill_root.join("sections/web.md"), "WEB ONLY").unwrap();
+        std::fs::write(
+            skill_root.join("iris.skill.toml"),
+            r#"
+schema_version = "1"
+name = "hybrid-helper"
+kind = "hybrid"
+
+[prompt]
+default_sections = ["behavior", "web"]
+
+[[prompt.sections]]
+id = "behavior"
+source = "sections/behavior.md"
+
+[[prompt.sections]]
+id = "web"
+source = "sections/web.md"
+requires_runtime = true
+
+[[mcp.dependencies]]
+profile_id = "anysearch"
+required = true
+
+[degradation]
+when_runtime_missing = "partial"
+message = "AnySearch runtime is unavailable."
+"#,
+        )
+        .unwrap();
+
+        let db = Database::open_in_memory().unwrap();
+        let mut entry = skill("hybrid-helper");
+        entry.file_path = skill_root.join("SKILL.md").to_string_lossy().into_owned();
+        let plan = build_skill_activation_plan_for_task_with_runtime(
+            &[entry],
+            AgentIntent::AskNotes,
+            "Use hybrid-helper",
+            &[],
+            None,
+            Some(AiScene::KnowledgeLookup),
+            Some(&db),
+        );
+
+        let activated = &plan.activated_skills[0];
+        assert_eq!(activated.injected_sections, vec!["behavior".to_string()]);
+        assert!(activated
+            .degraded_reasons
+            .iter()
+            .any(|reason| reason.contains("web") && reason.contains("runtime")));
+        assert!(plan.degraded);
+    }
+
+    #[test]
+    fn build_skill_activation_plan_with_runtime_skips_unmapped_capability_sections() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = dir.path().join("vault");
+        let skill_root = vault.join(".iris/skills/search-helper");
+        std::fs::create_dir_all(skill_root.join("sections")).unwrap();
+        std::fs::write(
+            skill_root.join("SKILL.md"),
+            "---\nname: search-helper\ndescription: search helper\n---\n\nFallback",
+        )
+        .unwrap();
+        std::fs::write(skill_root.join("sections/behavior.md"), "BEHAVIOR ONLY").unwrap();
+        std::fs::write(skill_root.join("sections/search.md"), "SEARCH ONLY").unwrap();
+        std::fs::write(
+            skill_root.join("iris.skill.toml"),
+            r#"
+schema_version = "1"
+name = "search-helper"
+kind = "hybrid"
+
+[prompt]
+default_sections = ["behavior", "search"]
+
+[[prompt.sections]]
+id = "behavior"
+source = "sections/behavior.md"
+
+[[prompt.sections]]
+id = "search"
+source = "sections/search.md"
+requires_runtime = true
+requires_capabilities = ["web.search"]
+
+[capabilities]
+requires = ["web.search"]
+
+[[mcp.dependencies]]
+profile_id = "search-profile"
+required_capabilities = ["web.search"]
+required = true
+"#,
+        )
+        .unwrap();
+
+        let db = Database::open_in_memory().unwrap();
+        crate::ai_runtime::mcp_runtime_registry::upsert_server_catalog(
+            &db,
+            &crate::ai_runtime::mcp_runtime_registry::McpServerCatalogInput {
+                id: "search-server".into(),
+                display_name: "Search Server".into(),
+                transport: "stdio".into(),
+                command: Some("search-mcp".into()),
+                args_json: "[]".into(),
+                url: None,
+                env_schema_json: "{}".into(),
+                capability_tags_json: "[\"web.search\"]".into(),
+                source: "test".into(),
+            },
+        )
+        .unwrap();
+        crate::ai_runtime::mcp_runtime_registry::upsert_runtime_profile(
+            &db,
+            &crate::ai_runtime::mcp_runtime_registry::McpRuntimeProfileInput {
+                id: "search-profile".into(),
+                server_id: "search-server".into(),
+                vault_scope_hash: None,
+                display_name: "Search profile".into(),
+                enabled: true,
+                transport_config_json: "{}".into(),
+                env_bindings_json: "{}".into(),
+                status: crate::ai_runtime::mcp_runtime_registry::McpRuntimeStatus::Ready,
+                last_error: None,
+            },
+        )
+        .unwrap();
+
+        let mut entry = skill("search-helper");
+        entry.file_path = skill_root.join("SKILL.md").to_string_lossy().into_owned();
+        let plan = build_skill_activation_plan_for_task_with_runtime(
+            &[entry],
+            AgentIntent::AskNotes,
+            "Use search-helper",
+            &[],
+            None,
+            Some(AiScene::KnowledgeLookup),
+            Some(&db),
+        );
+
+        let activated = &plan.activated_skills[0];
+        assert_eq!(activated.injected_sections, vec!["behavior".to_string()]);
+        assert!(activated
+            .degraded_reasons
+            .iter()
+            .any(|reason| reason.contains("web.search")));
+        assert!(plan.degraded);
+    }
+    #[test]
+    fn active_skills_prompt_filters_unavailable_runtime_section_content() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = dir.path().join("vault");
+        let skill_root = vault.join(".iris/skills/hybrid-helper");
+        std::fs::create_dir_all(skill_root.join("sections")).unwrap();
+        std::fs::write(
+            skill_root.join("SKILL.md"),
+            "---\nname: hybrid-helper\ndescription: hybrid helper\n---\n\nFallback",
+        )
+        .unwrap();
+        std::fs::write(skill_root.join("sections/behavior.md"), "BEHAVIOR ONLY").unwrap();
+        std::fs::write(skill_root.join("sections/web.md"), "WEB ONLY").unwrap();
+        std::fs::write(
+            skill_root.join("iris.skill.toml"),
+            r#"
+schema_version = "1"
+name = "hybrid-helper"
+kind = "hybrid"
+
+[prompt]
+default_sections = ["behavior", "web"]
+
+[[prompt.sections]]
+id = "behavior"
+source = "sections/behavior.md"
+
+[[prompt.sections]]
+id = "web"
+source = "sections/web.md"
+requires_runtime = true
+
+[[mcp.dependencies]]
+profile_id = "anysearch"
+required = true
+
+[degradation]
+when_runtime_missing = "partial"
+"#,
+        )
+        .unwrap();
+
+        let db = Database::open_in_memory().unwrap();
+        let active = active_skills_for_task_prompt(
+            &vault,
+            AgentIntent::AskNotes,
+            Some(&db),
+            "Use hybrid-helper",
+            &[],
+        )
+        .unwrap();
+
+        assert_eq!(active.len(), 1);
+        assert!(active[0].content.contains("BEHAVIOR ONLY"));
+        assert!(!active[0].content.contains("WEB ONLY"));
+    }
     #[test]
     fn build_skill_activation_plan_reports_resource_availability_and_truncation() {
         let dir = tempfile::tempdir().unwrap();

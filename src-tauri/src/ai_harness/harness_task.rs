@@ -1452,6 +1452,11 @@ mod tests {
             decision: None,
             resumed: None,
             installed_skill: None,
+            tool_confirmation_partial: None,
+            resume_error_code: None,
+            resume_error_message: None,
+            tool_execution_outcome: None,
+            assistant_resume_outcome: None,
         };
         let r = task_result_from_chat(payload);
         assert_eq!(r.run_status, HarnessRunStatus::PendingConfirmation);

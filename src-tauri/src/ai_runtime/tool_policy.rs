@@ -1,14 +1,14 @@
-//! ToolPolicy — hard security boundary for tool exposure and execution.
+//! ToolPolicy 閳?hard security boundary for tool exposure and execution.
 //!
 //! Computes the set of tools available for a given request by intersecting:
 //!
 //! ```text
 //! implemented/harness-only hard gate
-//!   ∩ task capability affinity
-//!   ∩ autonomy level
-//!   ∩ web_search_enabled
-//!   ∩ skill allowed-tools request
-//!   ∩ user settings
+//!   閳?task capability affinity
+//!   閳?autonomy level
+//!   閳?web_search_enabled
+//!   閳?skill allowed-tools request
+//!   閳?user settings
 //! ```
 //!
 //! Key invariants:
@@ -38,7 +38,7 @@ pub struct ToolPolicyContext {
     pub web_search_enabled: bool,
     /// Tools explicitly requested by active skills (via `allowed-tools`).
     pub skill_allowed_tools: Vec<String>,
-    /// Depth of sub-agent nesting (≥ 2 hides `spawn_subagent`).
+    /// Depth of sub-agent nesting (閳?2 hides `spawn_subagent`).
     pub depth: u32,
 }
 
@@ -64,7 +64,7 @@ pub enum DenialReason {
     InsufficientAutonomy,
     /// Network tool but web_search is disabled.
     WebSearchDisabled,
-    /// Sub-agent depth ≥ 2 hides spawn_subagent.
+    /// Sub-agent depth 閳?2 hides spawn_subagent.
     DepthLimit,
     /// Not in skill allowed-tools when skills are active and tool is non-default.
     NotInSkillAllowlist,
@@ -74,21 +74,24 @@ pub enum DenialReason {
 pub fn denial_user_message(reason: DenialReason, tool_name: &str) -> String {
     match reason {
         DenialReason::WebSearchDisabled => format!(
-            "联网搜索已关闭，无法使用 {tool_name}。安装 Skill 请调用 skills_install(source=registry, registry=skillhub, path_or_url=<skill名>)，不要用 fetch_web_page。"
+            "Web search is disabled, so {tool_name} cannot be used. Install SkillHub skills through skills_install(source=registry, registry=skillhub, path_or_url=<skill name>) instead of fetch_web_page."
         ),
-        DenialReason::NotImplemented => format!("工具 {tool_name} 尚未实现"),
-        DenialReason::CapabilityMismatch => format!("工具 {tool_name} 在当前任务不可用"),
-        DenialReason::InsufficientAutonomy => {
-            format!("当前自治等级不足以使用 {tool_name}")
+        DenialReason::NotImplemented => format!("tool {tool_name} is not implemented"),
+        DenialReason::CapabilityMismatch => {
+            format!("tool {tool_name} is not available for this task")
         }
-        DenialReason::DepthLimit => format!("工具 {tool_name} 在子任务深度限制下不可用"),
+        DenialReason::InsufficientAutonomy => {
+            format!("current autonomy level is too low to use {tool_name}")
+        }
+        DenialReason::DepthLimit => {
+            format!("tool {tool_name} is unavailable at this sub-agent depth")
+        }
         DenialReason::NotInSkillAllowlist => {
-            format!("活动 Skill 未授权工具 {tool_name}")
+            format!("active Skills did not allow tool {tool_name}")
         }
     }
 }
-
-/// Core meta tools for skill management — always available, not blocked by skill allowlist.
+/// Core meta tools for skill management 閳?always available, not blocked by skill allowlist.
 const META_SKILL_TOOLS: &[&str] = &[
     "skills_list",
     "skills_install",
@@ -96,6 +99,14 @@ const META_SKILL_TOOLS: &[&str] = &[
     "skills_uninstall",
     "skills_update",
     "skills_toggle",
+    "mcp_runtime_profiles_list",
+    "mcp_runtime_diagnostics",
+    "mcp_runtime_tools_list",
+    "mcp_runtime_health_check",
+    "mcp_runtime_capability_call",
+    "mcp_runtime_profile_upsert",
+    "mcp_runtime_profile_toggle",
+    "mcp_runtime_profile_delete",
     "skills_workspace_list",
     "skills_workspace_read",
     "skills_workspace_write",
@@ -120,7 +131,7 @@ fn evaluate_entry(entry: &ToolCatalogEntry, ctx: &ToolPolicyContext) -> ToolPoli
         return ToolPolicyVerdict::Denied(DenialReason::NotImplemented);
     }
 
-    // 2. Depth limit: spawn_subagent hidden at depth ≥ 2
+    // 2. Depth limit: spawn_subagent hidden at depth 閳?2
     if entry.name == "spawn_subagent" && ctx.depth >= 2 {
         return ToolPolicyVerdict::Denied(DenialReason::DepthLimit);
     }
@@ -259,7 +270,7 @@ fn capability_allowed(
 }
 
 /// Compute the set of tool names available for the given context.
-/// Returns (auto_allowed, requires_confirmation) — both subsets of exposable tools.
+/// Returns (auto_allowed, requires_confirmation) 閳?both subsets of exposable tools.
 pub fn compute_available_tools(ctx: &ToolPolicyContext) -> (Vec<String>, Vec<String>) {
     let mut auto_allowed = Vec::new();
     let mut requires_confirmation = Vec::new();
@@ -358,7 +369,7 @@ mod tests {
         }
     }
 
-    // ── Hard gate ──────────────────────────────────────────
+    // 閳光偓閳光偓 Hard gate 閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓
 
     #[test]
     fn meta_skill_tools_always_available_with_active_skill_allowlist() {
@@ -376,6 +387,34 @@ mod tests {
         );
         assert_eq!(
             evaluate_tool("skills_install", &ctx),
+            ToolPolicyVerdict::RequiresConfirmation
+        );
+        assert_eq!(
+            evaluate_tool("mcp_runtime_profiles_list", &ctx),
+            ToolPolicyVerdict::AutoAllowed
+        );
+        assert_eq!(
+            evaluate_tool("mcp_runtime_tools_list", &ctx),
+            ToolPolicyVerdict::RequiresConfirmation
+        );
+        assert_eq!(
+            evaluate_tool("mcp_runtime_health_check", &ctx),
+            ToolPolicyVerdict::RequiresConfirmation
+        );
+        assert_eq!(
+            evaluate_tool("mcp_runtime_capability_call", &ctx),
+            ToolPolicyVerdict::RequiresConfirmation
+        );
+        assert_eq!(
+            evaluate_tool("mcp_runtime_profile_upsert", &ctx),
+            ToolPolicyVerdict::RequiresConfirmation
+        );
+        assert_eq!(
+            evaluate_tool("mcp_runtime_profile_toggle", &ctx),
+            ToolPolicyVerdict::RequiresConfirmation
+        );
+        assert_eq!(
+            evaluate_tool("mcp_runtime_profile_delete", &ctx),
             ToolPolicyVerdict::RequiresConfirmation
         );
     }
@@ -405,7 +444,7 @@ mod tests {
         );
     }
 
-    // ── Capability affinity ────────────────────────────────
+    // 閳光偓閳光偓 Capability affinity 閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓
 
     #[test]
     fn ask_notes_policy_allows_search_notes() {
@@ -431,7 +470,7 @@ mod tests {
         assert!(is_tool_exposed("search_semantic", &ctx));
     }
 
-    // ── Autonomy level ─────────────────────────────────────
+    // 閳光偓閳光偓 Autonomy level 閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓
 
     #[test]
     fn write_tool_denied_at_l1() {
@@ -506,7 +545,7 @@ mod tests {
         assert!(is_tool_exposed("search_hybrid", &ctx));
     }
 
-    // ── Web search gating ──────────────────────────────────
+    // 閳光偓閳光偓 Web search gating 閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓
 
     #[test]
     fn web_search_denied_when_disabled() {
@@ -532,7 +571,7 @@ mod tests {
         );
     }
 
-    // ── Confirmation ───────────────────────────────────────
+    // 閳光偓閳光偓 Confirmation 閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓
 
     #[test]
     fn read_tool_auto_allowed() {
@@ -561,7 +600,7 @@ mod tests {
         );
     }
 
-    // ── Depth limit ────────────────────────────────────────
+    // 閳光偓閳光偓 Depth limit 閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓
 
     #[test]
     fn spawn_subagent_hidden_at_depth_2() {
@@ -584,7 +623,7 @@ mod tests {
         assert!(is_tool_exposed("spawn_subagent", &ctx));
     }
 
-    // ── Skill allowlist ────────────────────────────────────
+    // 閳光偓閳光偓 Skill allowlist 閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓
 
     #[test]
     fn non_default_tool_denied_without_skill_allowlist() {
@@ -615,7 +654,7 @@ mod tests {
         assert!(!is_tool_exposed("insert_text_at_cursor", &ctx));
     }
 
-    // ── compute_available_tools ────────────────────────────
+    // 閳光偓閳光偓 compute_available_tools 閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓
 
     #[test]
     fn compute_available_includes_core_defaults() {
@@ -645,7 +684,7 @@ mod tests {
         assert!(!confirm.contains(&"insert_text_at_cursor".to_string()));
     }
 
-    // ── Core default tools invariant ───────────────────────
+    // 閳光偓閳光偓 Core default tools invariant 閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓
 
     #[test]
     fn core_defaults_always_available_without_skills() {
@@ -675,7 +714,7 @@ mod tests {
         assert!(auto.contains(&"conclude_reasoning".to_string()));
     }
 
-    // ── Writing task specifics ─────────────────────────────
+    // 閳光偓閳光偓 Writing task specifics 閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓
 
     #[test]
     fn write_policy_write_tools_need_confirmation() {
@@ -687,7 +726,7 @@ mod tests {
         assert!(auto.contains(&"search_hybrid".to_string()));
     }
 
-    // ── Ask-notes task specifics ───────────────────────────
+    // 閳光偓閳光偓 Ask-notes task specifics 閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓
 
     #[test]
     fn ask_notes_policy_no_write_tools() {

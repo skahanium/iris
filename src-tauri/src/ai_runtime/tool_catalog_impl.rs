@@ -213,11 +213,51 @@ mod tests {
     }
 
     #[test]
+    fn catalog_exposes_mcp_runtime_diagnostics_as_read_only() {
+        for name in ["mcp_runtime_profiles_list", "mcp_runtime_diagnostics"] {
+            let entry = catalog_find(name).unwrap_or_else(|| panic!("{name} missing from catalog"));
+            assert_eq!(entry.access_level, ToolAccessLevel::ReadIndex);
+            assert!(!entry.requires_confirmation);
+            assert_eq!(entry.implementation, ToolImplementationStatus::Dispatchable);
+            assert!(entry.default_enabled_without_skill);
+        }
+    }
+
+    #[test]
+    fn catalog_exposes_live_mcp_runtime_tools_as_confirmation_required() {
+        for name in [
+            "mcp_runtime_tools_list",
+            "mcp_runtime_health_check",
+            "mcp_runtime_capability_call",
+        ] {
+            let entry = catalog_find(name).unwrap_or_else(|| panic!("{name} missing from catalog"));
+            assert_eq!(entry.access_level, ToolAccessLevel::ManageSkills);
+            assert!(entry.requires_confirmation);
+            assert_eq!(entry.implementation, ToolImplementationStatus::Dispatchable);
+            assert!(entry.default_enabled_without_skill);
+        }
+    }
+
+    #[test]
+    fn catalog_exposes_mcp_profile_management_as_confirmation_required() {
+        for name in [
+            "mcp_runtime_profile_upsert",
+            "mcp_runtime_profile_toggle",
+            "mcp_runtime_profile_delete",
+        ] {
+            let entry = catalog_find(name).unwrap_or_else(|| panic!("{name} missing from catalog"));
+            assert_eq!(entry.access_level, ToolAccessLevel::ManageSkills);
+            assert!(entry.requires_confirmation);
+            assert_eq!(entry.implementation, ToolImplementationStatus::Dispatchable);
+            assert!(entry.default_enabled_without_skill);
+        }
+    }
+    #[test]
     fn total_catalog_count() {
         assert_eq!(
             catalog_total_count(),
-            87,
-            "catalog should have exactly 87 tools"
+            95,
+            "catalog should have exactly 95 tools"
         );
     }
 

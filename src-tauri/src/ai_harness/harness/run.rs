@@ -1250,6 +1250,113 @@ fn push_tool_result_error(
     }));
 }
 
+fn string_json_field<'a>(value: &'a serde_json::Value, key: &str) -> Option<&'a str> {
+    value
+        .get(key)
+        .and_then(|item| item.as_str())
+        .map(str::trim)
+        .filter(|item| !item.is_empty())
+}
+
+fn parse_json_object_arg(
+    value: &serde_json::Value,
+    key: &str,
+) -> Option<serde_json::Map<String, serde_json::Value>> {
+    let raw = string_json_field(value, key)?;
+    serde_json::from_str::<serde_json::Value>(raw)
+        .ok()
+        .and_then(|parsed| parsed.as_object().cloned())
+}
+
+fn mcp_transport_kind(args: &serde_json::Value) -> String {
+    parse_json_object_arg(args, "transport_config_json")
+        .and_then(|transport| {
+            transport
+                .get("type")
+                .or_else(|| transport.get("transport"))
+                .and_then(|value| value.as_str())
+                .map(str::to_string)
+        })
+        .unwrap_or_else(|| "unknown".to_string())
+}
+
+fn mcp_env_binding_count(args: &serde_json::Value) -> usize {
+    parse_json_object_arg(args, "env_bindings_json")
+        .map(|bindings| bindings.len())
+        .unwrap_or(0)
+}
+
+fn mcp_tool_confirmation_preview(
+    tool_name: &str,
+    args: &serde_json::Value,
+) -> Option<serde_json::Value> {
+    match tool_name {
+        "mcp_runtime_profile_upsert" => Some(serde_json::json!({
+            "operation": "mcp_profile_upsert",
+            "profile_id": string_json_field(args, "id").unwrap_or(""),
+            "server_id": string_json_field(args, "server_id").unwrap_or(""),
+            "display_name": string_json_field(args, "display_name").unwrap_or(""),
+            "transport": mcp_transport_kind(args),
+            "vault_scope": string_json_field(args, "vault_scope_hash").unwrap_or("global"),
+            "enabled": args.get("enabled").and_then(|value| value.as_bool()).unwrap_or(false),
+            "credential_bindings": mcp_env_binding_count(args),
+            "starts_process": false,
+            "capability_boundary": "controlled_iris_capability_mapping",
+        })),
+        "mcp_runtime_tools_list" => Some(serde_json::json!({
+            "operation": "mcp_tools_list",
+            "profile_id": string_json_field(args, "profile_id").unwrap_or(""),
+            "starts_process": true,
+            "process_kind": "bounded_stdio_mcp",
+            "result_scope": "sanitized_tool_inventory",
+            "reason": string_json_field(args, "reason").unwrap_or(""),
+        })),
+        "mcp_runtime_health_check" => Some(serde_json::json!({
+            "operation": "mcp_health_check",
+            "profile_id": string_json_field(args, "profile_id").unwrap_or(""),
+            "starts_process": true,
+            "process_kind": "bounded_stdio_mcp",
+            "result_scope": "metadata_only_health_status",
+            "reason": string_json_field(args, "reason").unwrap_or(""),
+        })),
+        "mcp_runtime_capability_call" => Some(serde_json::json!({
+            "operation": "mcp_capability_call",
+            "capability": string_json_field(args, "capability").unwrap_or(""),
+            "starts_process": true,
+            "process_kind": "bounded_stdio_mcp",
+            "result_scope": "model_safe_tool_result",
+            "capability_boundary": "controlled_iris_capability_mapping",
+            "reason": string_json_field(args, "reason").unwrap_or(""),
+        })),
+        _ => None,
+    }
+}
+
+fn safe_string_argument(args: &serde_json::Value, key: &str) -> serde_json::Value {
+    string_json_field(args, key)
+        .map(|value| serde_json::Value::String(value.to_string()))
+        .unwrap_or(serde_json::Value::Null)
+}
+
+fn confirmation_arguments_for_tool(tool_name: &str, args: &serde_json::Value) -> serde_json::Value {
+    match tool_name {
+        "mcp_runtime_profile_upsert" => serde_json::json!({
+            "id": safe_string_argument(args, "id"),
+            "server_id": safe_string_argument(args, "server_id"),
+            "display_name": safe_string_argument(args, "display_name"),
+            "enabled": args.get("enabled").and_then(|value| value.as_bool()).unwrap_or(false),
+        }),
+        "mcp_runtime_tools_list" | "mcp_runtime_health_check" => serde_json::json!({
+            "profile_id": safe_string_argument(args, "profile_id"),
+            "reason": safe_string_argument(args, "reason"),
+        }),
+        "mcp_runtime_capability_call" => serde_json::json!({
+            "capability": safe_string_argument(args, "capability"),
+            "reason": safe_string_argument(args, "reason"),
+        }),
+        _ => args.clone(),
+    }
+}
 #[allow(clippy::too_many_arguments)]
 async fn pause_for_tool_confirmation(
     state: &AppState,
@@ -1334,7 +1441,7 @@ async fn pause_for_tool_confirmation(
         "request_id": input.request_id,
         "tool_call_id": tool_call.id,
         "tool_name": tool_name,
-        "arguments": args,
+        "arguments": confirmation_arguments_for_tool(tool_name, &args),
         "permissionEffects": permission_effects,
         "pendingConfirmationIndex": confirmation_position.map_or(1, |position| position.index),
         "pendingConfirmationCount": confirmation_position.map_or(1, |position| position.count),
@@ -1343,6 +1450,9 @@ async fn pause_for_tool_confirmation(
     if let Some(permission_decision) = permission_decision {
         confirm_request["permissionDecision"] =
             serde_json::to_value(permission_decision).unwrap_or_default();
+    }
+    if let Some(preview) = mcp_tool_confirmation_preview(tool_name, &args) {
+        confirm_request["preview"] = preview;
     }
     if let Ok(args) = serde_json::from_str::<serde_json::Value>(&tool_call.function.arguments) {
         let vault = state.vault_path()?;
@@ -1563,6 +1673,51 @@ mod tests {
     }
 
     #[test]
+    fn mcp_capability_confirmation_arguments_do_not_expose_provider_payload() {
+        let args = serde_json::json!({
+            "capability": "web.search",
+            "arguments": {
+                "query": "heartflow status",
+                "api_key": "sk-secret-value",
+                "token": "raw-token-value"
+            },
+            "reason": "diagnose skill runtime"
+        });
+
+        let safe = confirmation_arguments_for_tool("mcp_runtime_capability_call", &args);
+
+        assert_eq!(safe["capability"], "web.search");
+        assert_eq!(safe["reason"], "diagnose skill runtime");
+        assert!(safe.get("arguments").is_none());
+        let serialized = serde_json::to_string(&safe).unwrap();
+        assert!(!serialized.contains("sk-secret-value"));
+        assert!(!serialized.contains("raw-token-value"));
+        assert!(!serialized.contains("api_key"));
+    }
+    #[test]
+    fn mcp_profile_confirmation_arguments_do_not_expose_transport_or_credentials() {
+        let args = serde_json::json!({
+            "id": "anysearch-local",
+            "server_id": "anysearch",
+            "display_name": "AnySearch Local",
+            "enabled": true,
+            "transport_config_json": "{\"type\":\"stdio\",\"command\":\"anysearch-mcp\",\"args\":[\"--secret\"]}",
+            "env_bindings_json": "{\"ANYSEARCH_API_KEY\":\"credential://anysearch\",\"RAW_TOKEN\":\"secret-token\"}"
+        });
+
+        let safe = confirmation_arguments_for_tool("mcp_runtime_profile_upsert", &args);
+
+        assert_eq!(safe["id"], "anysearch-local");
+        assert_eq!(safe["display_name"], "AnySearch Local");
+        assert_eq!(safe["enabled"], true);
+        assert!(safe.get("transport_config_json").is_none());
+        assert!(safe.get("env_bindings_json").is_none());
+        let serialized = serde_json::to_string(&safe).unwrap();
+        assert!(!serialized.contains("credential://anysearch"));
+        assert!(!serialized.contains("secret-token"));
+        assert!(!serialized.contains("--secret"));
+    }
+    #[test]
     fn test_mixed_auto_and_confirm_tools_only_fetch_pauses() {
         let registry = ToolRegistry::new();
         let ctx = test_policy_ctx(true);
@@ -1779,5 +1934,51 @@ mod tests {
     fn depth_2_blocks_subagent_spawn() {
         let depth = 2u32;
         assert!(depth >= 2, "depth 2 should block subagent spawn");
+    }
+    #[test]
+    fn mcp_profile_upsert_confirmation_preview_is_sanitized_and_specific() {
+        let args = serde_json::json!({
+            "id": "anysearch-local",
+            "server_id": "anysearch",
+            "display_name": "AnySearch Local",
+            "enabled": true,
+            "vault_scope_hash": "vault-abc",
+            "transport_config_json": "{\"type\":\"stdio\",\"command\":\"anysearch-mcp\",\"args\":[\"serve\"]}",
+            "env_bindings_json": "{\"ANYSEARCH_API_KEY\":\"credential://anysearch\"}"
+        });
+
+        let preview = mcp_tool_confirmation_preview("mcp_runtime_profile_upsert", &args)
+            .expect("profile upsert should produce an MCP confirmation preview");
+
+        assert_eq!(preview["operation"], "mcp_profile_upsert");
+        assert_eq!(preview["profile_id"], "anysearch-local");
+        assert_eq!(preview["server_id"], "anysearch");
+        assert_eq!(preview["transport"], "stdio");
+        assert_eq!(preview["vault_scope"], "vault-abc");
+        assert_eq!(preview["credential_bindings"], 1);
+        assert_eq!(preview["starts_process"], false);
+        assert_eq!(
+            preview["capability_boundary"],
+            "controlled_iris_capability_mapping"
+        );
+        assert!(!preview.to_string().contains("credential://anysearch"));
+    }
+
+    #[test]
+    fn mcp_live_tools_list_confirmation_preview_warns_about_process_start() {
+        let args = serde_json::json!({
+            "profile_id": "anysearch-local",
+            "reason": "discover provider tools"
+        });
+
+        let preview = mcp_tool_confirmation_preview("mcp_runtime_tools_list", &args)
+            .expect("live tools/list should produce an MCP confirmation preview");
+
+        assert_eq!(preview["operation"], "mcp_tools_list");
+        assert_eq!(preview["profile_id"], "anysearch-local");
+        assert_eq!(preview["starts_process"], true);
+        assert_eq!(preview["process_kind"], "bounded_stdio_mcp");
+        assert_eq!(preview["result_scope"], "sanitized_tool_inventory");
+        assert_eq!(preview["reason"], "discover provider tools");
     }
 }

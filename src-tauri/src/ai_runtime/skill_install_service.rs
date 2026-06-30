@@ -7,18 +7,28 @@ use std::path::{Path, PathBuf};
 use tauri::{AppHandle, Emitter};
 
 use crate::ai_runtime::agent_task_policy::intent_from_legacy_scene;
+use crate::ai_runtime::capability_resolver::{
+    resolve_required_capability, CapabilityBlockReason, CapabilityResolutionError,
+};
+use crate::ai_runtime::mcp_runtime_registry::{
+    clear_skill_runtime_requirement, resolve_skill_runtime, upsert_skill_runtime_requirement,
+    SkillRuntimeRequirementInput,
+};
 use crate::ai_runtime::skill_registry::{InstallSpec, SkillInstallSource};
 use crate::ai_runtime::skill_trust_policy::{
     build_skill_trust_profile, persist_skill_trust_profile, SkillSourceKind,
 };
 use crate::ai_runtime::skills::{
     blocked_capabilities_for_skill, capability_preview_for_entry, enrich_list_with_task,
-    install_from_git, install_from_local, install_from_url, prepare_workspace_for_skill,
-    preview_prepare_workspace, scan_all_with_status, set_enabled, skill_content_hash_for_path,
-    uninstall, validate_skill_license, SkillEntry, SkillListEntry, SkillScope,
+    install_from_git, install_from_local, install_from_url, load_manifest_for_skill_dir,
+    prepare_workspace_for_skill, preview_prepare_workspace, scan_all_with_status, set_enabled,
+    skill_content_hash_for_path, uninstall, validate_skill_license, SkillEntry, SkillListEntry,
+    SkillScope, SkillValidationStatus,
 };
 use crate::ai_runtime::AiScene;
-use crate::ai_types::SkillActivationPlanSummary;
+use crate::ai_types::{
+    BlockedCapabilitySummary, SkillActivationPlanSummary, SkillCapabilitySupportStatus,
+};
 use crate::embedding::engine::embed_text;
 use crate::error::{AppError, AppResult};
 use crate::storage::db::Database;
@@ -207,6 +217,287 @@ fn enrich_with_diagnostics(db: &Database, entries: &mut [SkillListEntry]) -> App
     })
 }
 
+fn manifest_for_entry(
+    entry: &SkillListEntry,
+) -> Option<crate::ai_runtime::skills::IrisSkillManifest> {
+    PathBuf::from(&entry.skill.file_path)
+        .parent()
+        .and_then(|skill_dir| load_manifest_for_skill_dir(skill_dir, None).ok())
+        .map(|outcome| outcome.manifest)
+}
+
+fn manifest_required_capabilities(entry: &SkillListEntry) -> Vec<String> {
+    let Some(manifest) = manifest_for_entry(entry) else {
+        return Vec::new();
+    };
+    let mut capabilities = manifest.capabilities.requires;
+    capabilities.extend(
+        manifest
+            .prompt
+            .sections
+            .iter()
+            .flat_map(|section| section.requires_capabilities.iter().cloned()),
+    );
+    capabilities.sort();
+    capabilities.dedup();
+    capabilities
+}
+
+fn missing_capability_blocks_sections(entry: &mut SkillListEntry, missing_capabilities: &[String]) {
+    let Some(manifest) = manifest_for_entry(entry) else {
+        return;
+    };
+    if manifest.prompt.sections.is_empty() {
+        if !missing_capabilities.is_empty()
+            && !entry
+                .blocked_sections
+                .iter()
+                .any(|section| section == "capabilities")
+        {
+            entry.blocked_sections.push("capabilities".into());
+        }
+        return;
+    }
+    for section in &manifest.prompt.sections {
+        if section
+            .requires_capabilities
+            .iter()
+            .any(|capability| missing_capabilities.contains(capability))
+        {
+            entry.activated_sections.retain(|id| id != &section.id);
+            if !entry.blocked_sections.contains(&section.id) {
+                entry.blocked_sections.push(section.id.clone());
+            }
+        }
+    }
+}
+
+fn capability_status(reason: CapabilityBlockReason) -> SkillCapabilitySupportStatus {
+    match reason {
+        CapabilityBlockReason::UnsupportedCapability => {
+            SkillCapabilitySupportStatus::UnsupportedByProductScope
+        }
+        CapabilityBlockReason::PolicyBlocked => SkillCapabilitySupportStatus::BlockedByPolicy,
+        _ => SkillCapabilitySupportStatus::MissingUserGrant,
+    }
+}
+
+fn capability_block_summary(
+    skill_name: &str,
+    error: &CapabilityResolutionError,
+) -> BlockedCapabilitySummary {
+    let status = capability_status(error.reason);
+    BlockedCapabilitySummary {
+        skill_name: skill_name.to_string(),
+        capability: error.capability.clone(),
+        status,
+        risk_level: "high".into(),
+        permission: None,
+        fallback_guidance: format!("{}: {}", error.reason_code(), error.message),
+    }
+}
+
+fn enrich_with_capability_resolver(db: &Database, entries: &mut [SkillListEntry]) {
+    for entry in entries {
+        let required_capabilities = manifest_required_capabilities(entry);
+        if required_capabilities.is_empty() {
+            continue;
+        }
+        let mut missing_capabilities = Vec::new();
+        for capability in required_capabilities {
+            if let Err(error) = resolve_required_capability(db, &capability) {
+                missing_capabilities.push(error.capability.clone());
+                let summary = capability_block_summary(&entry.skill.name, &error);
+                if !entry
+                    .blocked_capabilities
+                    .iter()
+                    .any(|blocked| blocked.capability == summary.capability)
+                {
+                    entry.blocked_capabilities.push(summary);
+                }
+                let reason = format!(
+                    "required capability `{}` is unavailable: {}",
+                    error.capability,
+                    error.reason_code()
+                );
+                if !entry.degraded_reasons.contains(&reason) {
+                    entry.degraded_reasons.push(reason);
+                }
+            }
+        }
+        if missing_capabilities.is_empty() {
+            continue;
+        }
+        missing_capability_blocks_sections(entry, &missing_capabilities);
+        entry.activation_ready = false;
+        if entry.skill.enabled && !matches!(entry.validation, SkillValidationStatus::Invalid(_)) {
+            entry.availability = "partial".to_string();
+        }
+    }
+}
+fn sync_runtime_requirements(db: &Database, entries: &[SkillListEntry]) -> AppResult<()> {
+    for entry in entries {
+        if entry.mcp_dependencies.is_empty() {
+            clear_skill_runtime_requirement(db, &entry.skill.name, entry.skill.scope)?;
+            continue;
+        }
+
+        let required_profiles_json =
+            serde_json::to_string(&entry.mcp_dependencies).unwrap_or_else(|_| "[]".to_string());
+        let manifest_capabilities = manifest_required_capabilities(entry);
+        let required_capabilities_json = if manifest_capabilities.is_empty() {
+            serde_json::to_string(&entry.requested_capabilities)
+                .unwrap_or_else(|_| "[]".to_string())
+        } else {
+            serde_json::to_string(&manifest_capabilities).unwrap_or_else(|_| "[]".to_string())
+        };
+        let workspace_contract_json = serde_json::json!({
+            "declared": entry.workspace_declared,
+            "prepared": entry.workspace_prepared,
+            "root": entry.workspace_root,
+            "missing_items": entry.workspace_missing_items,
+        })
+        .to_string();
+        let degradation_policy_json = serde_json::json!({
+            "reasons": entry.degraded_reasons,
+        })
+        .to_string();
+        let kind = serde_json::to_value(entry.kind)
+            .ok()
+            .and_then(|value| value.as_str().map(str::to_string))
+            .unwrap_or_else(|| "legacy_prompt_only".to_string());
+
+        upsert_skill_runtime_requirement(
+            db,
+            &SkillRuntimeRequirementInput {
+                skill_name: entry.skill.name.clone(),
+                scope: entry.skill.scope,
+                manifest_hash: entry.content_hash.clone(),
+                kind,
+                runtime_kind: entry.runtime_kind.clone(),
+                required_profiles_json,
+                required_capabilities_json,
+                workspace_contract_json,
+                degradation_policy_json,
+            },
+        )?;
+    }
+    Ok(())
+}
+
+fn skill_resource_file_exists(skill_root: &Path, relative_path: &str) -> bool {
+    if relative_path.trim().is_empty() || relative_path.contains("..") {
+        return false;
+    }
+    let rel = Path::new(relative_path.trim_start_matches('/'));
+    if rel.is_absolute() {
+        return false;
+    }
+    let Some(top) = rel.components().next().and_then(|c| c.as_os_str().to_str()) else {
+        return false;
+    };
+    if !matches!(top, "references" | "resources" | "assets") {
+        return false;
+    }
+    let Ok(root) = skill_root.canonicalize() else {
+        return false;
+    };
+    let Ok(candidate) = skill_root.join(rel).canonicalize() else {
+        return false;
+    };
+    candidate.starts_with(root) && candidate.is_file()
+}
+
+fn refresh_prompt_sections_from_current_status(entry: &mut SkillListEntry) {
+    let Some(manifest) = manifest_for_entry(entry) else {
+        return;
+    };
+    if manifest.prompt.sections.is_empty() {
+        return;
+    }
+    let Some(skill_root) = PathBuf::from(&entry.skill.file_path)
+        .parent()
+        .map(Path::to_path_buf)
+    else {
+        return;
+    };
+    let selected = if manifest.prompt.default_sections.is_empty() {
+        manifest
+            .prompt
+            .sections
+            .iter()
+            .map(|section| section.id.clone())
+            .collect::<Vec<_>>()
+    } else {
+        manifest.prompt.default_sections.clone()
+    };
+    let mut activated = Vec::new();
+    let mut blocked = Vec::new();
+    for section_id in selected {
+        let Some(section) = manifest
+            .prompt
+            .sections
+            .iter()
+            .find(|section| section.id == section_id)
+        else {
+            continue;
+        };
+        let runtime_ok = !section.requires_runtime || entry.runtime_ready;
+        let workspace_ok = !section.requires_workspace || entry.workspace_prepared;
+        let resources_ok = section
+            .requires_resources
+            .iter()
+            .all(|resource| skill_resource_file_exists(&skill_root, resource));
+        if runtime_ok && workspace_ok && resources_ok {
+            activated.push(section.id.clone());
+        } else {
+            blocked.push(section.id.clone());
+        }
+    }
+    entry.activated_sections = activated;
+    entry.blocked_sections = blocked;
+}
+fn enrich_with_runtime_registry(db: &Database, entries: &mut [SkillListEntry]) -> AppResult<()> {
+    sync_runtime_requirements(db, entries)?;
+    for entry in entries {
+        let readiness = resolve_skill_runtime(db, &entry.skill.name, entry.skill.scope)?;
+        if readiness.required_profiles.is_empty() && entry.mcp_dependencies.is_empty() {
+            continue;
+        }
+
+        entry.runtime_kind = readiness.runtime_kind;
+        entry.runtime_ready = readiness.ready;
+        entry.runtime_status = readiness.status.as_str().to_string();
+        if !readiness.required_profiles.is_empty() {
+            entry.mcp_dependencies = readiness.required_profiles;
+        }
+        for reason in readiness.degraded_reasons {
+            if !entry.degraded_reasons.contains(&reason) {
+                entry.degraded_reasons.push(reason);
+            }
+        }
+
+        if entry.runtime_ready {
+            refresh_prompt_sections_from_current_status(entry);
+            let otherwise_available = entry.skill.enabled
+                && !matches!(entry.validation, SkillValidationStatus::Invalid(_))
+                && entry.workspace_prepared
+                && entry.unrecognized_tools.is_empty()
+                && entry.missing_deps.is_empty();
+            if otherwise_available {
+                entry.availability = "available".to_string();
+                entry.activation_ready = true;
+            }
+        } else {
+            entry.activation_ready = false;
+            if entry.skill.enabled && !matches!(entry.validation, SkillValidationStatus::Invalid(_))
+            {
+                entry.availability = "partial".to_string();
+            }
+        }
+    }
+    Ok(())
+}
 /// Record safe per-run skill activation diagnostics.
 pub fn record_skill_activation_matched(
     db: &Database,
@@ -404,6 +695,8 @@ pub fn list_skills(
 ) -> AppResult<Vec<SkillListEntry>> {
     let mut entries = scan_all_with_status(vault)?;
     enrich_with_diagnostics(db, &mut entries)?;
+    enrich_with_runtime_registry(db, &mut entries)?;
+    enrich_with_capability_resolver(db, &mut entries);
     if let Some(scene) = scene {
         enrich_list_with_task(
             entries,
@@ -951,6 +1244,370 @@ Body
         assert!(prepared.migrated_legacy_items.contains(&"legacy.md".into()));
     }
 
+    #[tokio::test]
+    async fn prepare_workspace_uses_typed_manifest_contract() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = dir.path().join("vault");
+        std::fs::create_dir_all(&vault).unwrap();
+        let source_dir = vault.join("incoming-typed-workspace");
+        std::fs::create_dir_all(source_dir.join("resources")).unwrap();
+        std::fs::write(source_dir.join("resources/seed.md"), "# Seed\n").unwrap();
+        std::fs::write(
+            source_dir.join("SKILL.md"),
+            r#"---
+name: typed-workspace-skill
+description: Declares workspace in iris.skill.toml
+license: AGPL-3.0
+iris_manifest: iris.skill.toml
+---
+
+Body
+"#,
+        )
+        .unwrap();
+        std::fs::write(
+            source_dir.join("iris.skill.toml"),
+            r#"schema_version = "1"
+name = "typed-workspace-skill"
+kind = "workspace"
+license = "AGPL-3.0"
+
+[workspace]
+declared = true
+folders = ["inputs", "outputs"]
+
+[[workspace.documents]]
+source = "resources/seed.md"
+target = "README.md"
+"#,
+        )
+        .unwrap();
+        let state = AppState::new(dir.path().to_path_buf()).unwrap();
+        state.set_vault(vault.clone()).unwrap();
+
+        install_skill(
+            &state.db,
+            &vault,
+            None,
+            SkillInstallRequest {
+                source: SkillInstallSource::Local,
+                path_or_url: source_dir.join("SKILL.md").to_string_lossy().into_owned(),
+                scope: SkillScope::Vault,
+                subpath: None,
+                registry: None,
+                expected_sha256: None,
+            },
+        )
+        .await
+        .unwrap();
+
+        let prepared = prepare_skill_workspace(
+            &vault,
+            Some(&state.db),
+            None,
+            "typed-workspace-skill",
+            SkillScope::Vault,
+        )
+        .unwrap();
+        let workspace_root = vault.join(".iris/skills-workspaces/typed-workspace-skill");
+
+        assert_eq!(prepared.created_folders, vec!["inputs", "outputs"]);
+        assert_eq!(prepared.created_documents, vec!["README.md"]);
+        assert!(workspace_root.join("inputs").is_dir());
+        assert!(workspace_root.join("outputs").is_dir());
+        assert_eq!(
+            std::fs::read_to_string(workspace_root.join("README.md")).unwrap(),
+            "# Seed\n"
+        );
+    }
+
+    #[test]
+    fn list_skills_blocks_section_when_required_capability_has_no_mapping() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = dir.path().join("vault");
+        let skill_dir = vault.join(".iris/skills/capability-skill");
+        std::fs::create_dir_all(&skill_dir).unwrap();
+        std::fs::write(
+            skill_dir.join("SKILL.md"),
+            r#"---
+name: capability-skill
+description: Needs web search capability
+license: AGPL-3.0
+iris_manifest: iris.skill.toml
+---
+
+Use search when available.
+"#,
+        )
+        .unwrap();
+        std::fs::write(
+            skill_dir.join("iris.skill.toml"),
+            r#"schema_version = "1"
+name = "capability-skill"
+kind = "mcp_dependent"
+license = "AGPL-3.0"
+
+[prompt]
+default_sections = ["search"]
+
+[[prompt.sections]]
+id = "search"
+source = "SKILL.md"
+requires_runtime = true
+requires_capabilities = ["web.search"]
+
+[capabilities]
+requires = ["web.search"]
+
+[[mcp.dependencies]]
+profile_id = "search-profile"
+required_capabilities = ["web.search"]
+required = true
+"#,
+        )
+        .unwrap();
+        let db = Database::open_in_memory().unwrap();
+        crate::ai_runtime::mcp_runtime_registry::upsert_server_catalog(
+            &db,
+            &crate::ai_runtime::mcp_runtime_registry::McpServerCatalogInput {
+                id: "search-server".into(),
+                display_name: "Search Server".into(),
+                transport: "stdio".into(),
+                command: Some("search-mcp".into()),
+                args_json: "[]".into(),
+                url: None,
+                env_schema_json: "{}".into(),
+                capability_tags_json: "[\"web.search\"]".into(),
+                source: "test".into(),
+            },
+        )
+        .unwrap();
+        crate::ai_runtime::mcp_runtime_registry::upsert_runtime_profile(
+            &db,
+            &crate::ai_runtime::mcp_runtime_registry::McpRuntimeProfileInput {
+                id: "search-profile".into(),
+                server_id: "search-server".into(),
+                vault_scope_hash: None,
+                display_name: "Search profile".into(),
+                enabled: true,
+                transport_config_json: "{}".into(),
+                env_bindings_json: "{}".into(),
+                status: crate::ai_runtime::mcp_runtime_registry::McpRuntimeStatus::Ready,
+                last_error: None,
+            },
+        )
+        .unwrap();
+
+        let entries = list_skills(&db, &vault, None).unwrap();
+        let entry = entries
+            .iter()
+            .find(|entry| entry.skill.name == "capability-skill")
+            .unwrap();
+
+        assert!(
+            entry.runtime_ready,
+            "profile readiness is separate from capability mapping"
+        );
+        assert_eq!(entry.availability, "partial");
+        assert!(entry.activated_sections.is_empty());
+        assert_eq!(entry.blocked_sections, vec!["search".to_string()]);
+        assert!(entry
+            .blocked_capabilities
+            .iter()
+            .any(|blocked| blocked.capability == "web.search"));
+        assert!(entry
+            .degraded_reasons
+            .iter()
+            .any(|reason| reason.contains("web.search")));
+    }
+
+    #[test]
+    fn list_skills_allows_section_when_required_capability_has_approved_mapping() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = dir.path().join("vault");
+        let skill_dir = vault.join(".iris/skills/capability-ready-skill");
+        std::fs::create_dir_all(&skill_dir).unwrap();
+        std::fs::write(
+            skill_dir.join("SKILL.md"),
+            r#"---
+name: capability-ready-skill
+description: Uses mapped web search capability
+license: AGPL-3.0
+iris_manifest: iris.skill.toml
+---
+
+Use search when available.
+"#,
+        )
+        .unwrap();
+        std::fs::write(
+            skill_dir.join("iris.skill.toml"),
+            r#"schema_version = "1"
+name = "capability-ready-skill"
+kind = "mcp_dependent"
+license = "AGPL-3.0"
+
+[prompt]
+default_sections = ["search"]
+
+[[prompt.sections]]
+id = "search"
+source = "SKILL.md"
+requires_runtime = true
+requires_capabilities = ["web.search"]
+
+[capabilities]
+requires = ["web.search"]
+
+[[mcp.dependencies]]
+profile_id = "search-profile"
+required_capabilities = ["web.search"]
+required = true
+"#,
+        )
+        .unwrap();
+        let db = Database::open_in_memory().unwrap();
+        crate::ai_runtime::mcp_runtime_registry::upsert_server_catalog(
+            &db,
+            &crate::ai_runtime::mcp_runtime_registry::McpServerCatalogInput {
+                id: "search-server".into(),
+                display_name: "Search Server".into(),
+                transport: "stdio".into(),
+                command: Some("search-mcp".into()),
+                args_json: "[]".into(),
+                url: None,
+                env_schema_json: "{}".into(),
+                capability_tags_json: "[\"web.search\"]".into(),
+                source: "test".into(),
+            },
+        )
+        .unwrap();
+        crate::ai_runtime::mcp_runtime_registry::upsert_runtime_profile(
+            &db,
+            &crate::ai_runtime::mcp_runtime_registry::McpRuntimeProfileInput {
+                id: "search-profile".into(),
+                server_id: "search-server".into(),
+                vault_scope_hash: None,
+                display_name: "Search profile".into(),
+                enabled: true,
+                transport_config_json: "{}".into(),
+                env_bindings_json: "{}".into(),
+                status: crate::ai_runtime::mcp_runtime_registry::McpRuntimeStatus::Ready,
+                last_error: None,
+            },
+        )
+        .unwrap();
+        crate::ai_runtime::mcp_runtime_registry::record_tool_inventory(
+            &db,
+            &crate::ai_runtime::mcp_runtime_registry::McpToolInventoryInput {
+                profile_id: "search-profile".into(),
+                tool_name: "search".into(),
+                schema_hash: "sha256:test".into(),
+                capability_mapping_json: "{\"capability\":\"web.search\"}".into(),
+                description: Some("Search".into()),
+            },
+        )
+        .unwrap();
+
+        let entries = list_skills(&db, &vault, None).unwrap();
+        let entry = entries
+            .iter()
+            .find(|entry| entry.skill.name == "capability-ready-skill")
+            .unwrap();
+
+        assert!(entry.runtime_ready);
+        assert_eq!(entry.availability, "available");
+        assert_eq!(entry.activated_sections, vec!["search".to_string()]);
+        assert!(entry.blocked_sections.is_empty());
+        assert!(entry.blocked_capabilities.is_empty());
+    }
+    #[test]
+    fn list_skills_resolves_mcp_runtime_profile_readiness() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = dir.path().join("vault");
+        let skill_dir = vault.join(".iris/skills/anysearch");
+        std::fs::create_dir_all(&skill_dir).unwrap();
+        std::fs::write(
+            skill_dir.join("SKILL.md"),
+            r#"---
+name: anysearch
+description: Search through MCP
+license: AGPL-3.0
+---
+
+Use AnySearch.
+"#,
+        )
+        .unwrap();
+        std::fs::write(
+            skill_dir.join("iris.skill.toml"),
+            r#"schema_version = "1"
+name = "anysearch"
+version = "0.1.0"
+kind = "mcp_dependent"
+license = "AGPL-3.0"
+
+[prompt]
+sections = [{ id = "main", source = "SKILL.md" }]
+
+[[mcp.dependencies]]
+profile_id = "anysearch-default"
+server_id = "anysearch"
+required = true
+"#,
+        )
+        .unwrap();
+        let db = Database::open_in_memory().unwrap();
+
+        let first = list_skills(&db, &vault, None).unwrap();
+        let first = first
+            .iter()
+            .find(|entry| entry.skill.name == "anysearch")
+            .unwrap();
+        assert!(!first.runtime_ready);
+        assert_eq!(first.runtime_status, "unavailable");
+        assert_eq!(first.availability, "partial");
+
+        crate::ai_runtime::mcp_runtime_registry::upsert_server_catalog(
+            &db,
+            &crate::ai_runtime::mcp_runtime_registry::McpServerCatalogInput {
+                id: "anysearch".into(),
+                display_name: "AnySearch".into(),
+                transport: "stdio".into(),
+                command: Some("anysearch-mcp".into()),
+                args_json: "[]".into(),
+                url: None,
+                env_schema_json: "{}".into(),
+                capability_tags_json: "[\"web.search\"]".into(),
+                source: "test".into(),
+            },
+        )
+        .unwrap();
+        crate::ai_runtime::mcp_runtime_registry::upsert_runtime_profile(
+            &db,
+            &crate::ai_runtime::mcp_runtime_registry::McpRuntimeProfileInput {
+                id: "anysearch-default".into(),
+                server_id: "anysearch".into(),
+                vault_scope_hash: None,
+                display_name: "AnySearch default".into(),
+                enabled: true,
+                transport_config_json: "{}".into(),
+                env_bindings_json: "{}".into(),
+                status: crate::ai_runtime::mcp_runtime_registry::McpRuntimeStatus::Ready,
+                last_error: None,
+            },
+        )
+        .unwrap();
+
+        let second = list_skills(&db, &vault, None).unwrap();
+        let second = second
+            .iter()
+            .find(|entry| entry.skill.name == "anysearch")
+            .unwrap();
+        assert!(second.runtime_ready);
+        assert_eq!(second.runtime_status, "ready");
+        assert!(second.activation_ready);
+    }
     #[test]
     fn workspace_root_is_internal_reserved_path() {
         assert_eq!(

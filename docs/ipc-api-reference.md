@@ -1405,3 +1405,46 @@ profile_set, profile_set_rule, profile_deactivate, profile_delete, inbox_list, i
 inbox_update_status, inbox_delete, inbox_counts, app_exit, get_desktop_chrome_metrics,
 reapply_window_chrome
 ```
+
+---
+
+## Skills and MCP Runtime IPC Contract
+
+This section is the stable frontend contract for the current Skills/MCP runtime boundary.
+
+### Prompt-only Skills
+
+- prompt-only skills do not require MCP.
+- A Skill with only `SKILL.md` and no `iris.skill.toml` is treated as legacy prompt-only behavior guidance.
+- Prompt-only availability must not be degraded merely because no MCP profile, daemon, workspace, or generated files exist.
+
+### Runtime and Activation Status
+
+- runtime_ready vs activation_ready: `runtime_ready` describes whether declared external runtime dependencies are ready; `activation_ready` describes whether Iris may inject the usable Skill sections into the model prompt.
+- A prompt-only Skill can have `runtime_ready = true` because no runtime is required.
+- An MCP-dependent Skill can be installed and enabled while `runtime_ready = false`; in that state Iris must avoid injecting runtime-dependent instructions that would claim unavailable capability.
+
+### Workspace Status
+
+- workspace_declared vs workspace_prepared: `workspace_declared` means the manifest declares a workspace contract; `workspace_prepared` means the declared folders/files have actually been prepared for the current vault.
+- `generated_files_count = 0` is not by itself a failure. Empty generated files can still be valid when the declared workspace exists and has no generated documents yet.
+
+### MCP Runtime Wrappers
+
+Frontend callers use these typed wrappers in `src/lib/ipc.ts`:
+
+- `mcpRuntimeProfileUpsert`
+- `mcpRuntimeProfileToggle`
+- `mcpRuntimeProfileDelete`
+- `mcpRuntimeProfilesList`
+- `mcpRuntimeToolsList`
+- `mcpRuntimeHealthCheck`
+- `mcpRuntimeToolInventoryList`
+- `mcpRuntimeHealthEventsList`
+
+Inventory and health event reads are metadata-only. They must not expose raw secrets, raw environment values, or raw MCP process output.
+
+### Tool Confirmation Outcomes
+
+- partial success confirmation outcome means the confirmed tool side effect succeeded, but assistant resume failed afterward.
+- The UI must not label that state as a tool failure. It should report that the tool action was committed and that only the model resume failed.

@@ -65,4 +65,40 @@ describe("Skills settings permission UX contract", () => {
     expect(ipc).toContain("workspaceReady");
     expect(ipc).toContain("workspaceMissingItems");
   });
+
+  it("does not compress layered skill state into a generic current available label", () => {
+    const panel = read("src/components/ai/SkillsPanel.tsx");
+
+    expect(panel).not.toContain("当前可用");
+    expect(panel).toContain("部分可用");
+    expect(panel).toContain("不需要运行时");
+    expect(panel).toContain("缺少或未启用 MCP profile");
+  });
+  it("surfaces manifest runtime and workspace summary in the Skills panel contract", () => {
+    const panel = read("src/components/ai/SkillsPanel.tsx");
+    const ipc = read("src/lib/ipc.ts");
+
+    expect(ipc).toContain("export type SkillManifestKind");
+    expect(ipc).toContain("kind: SkillManifestKind");
+    expect(ipc).toContain("runtime_kind:");
+    expect(ipc).toContain("runtime_status:");
+    expect(ipc).toContain("runtime_ready:");
+    expect(ipc).toContain("workspace_declared:");
+    expect(ipc).toContain("workspace_prepared:");
+    expect(ipc).toContain("generated_files_count:");
+    expect(ipc).toContain("activated_sections: string[]");
+    expect(ipc).toContain("blocked_sections: string[]");
+    expect(ipc).toContain("degraded_reasons: string[]");
+    expect(ipc).toContain("mcp_dependencies: string[]");
+
+    expect(panel).toContain("sectionState");
+    expect(panel).toContain("skill.activated_sections");
+    expect(panel).toContain("skill.blocked_sections");
+    expect(panel).toContain("可用片段");
+    expect(panel).toContain("阻塞片段");
+    expect(panel).toContain("runtimeState");
+    expect(panel).toContain("skill.runtime_status");
+    expect(panel).toContain("skill.workspace_declared");
+    expect(panel).toContain("skill.workspace_prepared");
+  });
 });

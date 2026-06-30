@@ -7,9 +7,12 @@ use serde::Serialize;
 use crate::error::{AppError, AppResult};
 use crate::storage::paths::has_reserved_path_root;
 
+use super::manifest_impl::load_manifest_for_skill_dir;
 use super::path_impl::slugify;
 use super::resources_impl::{ALLOWED_RESOURCE_DIRS, MAX_SKILL_RESOURCE_CHARS};
-use super::{read_skill_resource, SkillEntry, SkillScope, SkillWorkspaceManifest};
+use super::{
+    read_skill_resource, SkillEntry, SkillScope, SkillWorkspaceDocument, SkillWorkspaceManifest,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct SkillWorkspaceStatus {
@@ -80,6 +83,31 @@ fn validate_workspace_relative_path(relative: &str, directory: bool) -> AppResul
     }
 }
 
+fn typed_workspace_manifest_for_skill(skill: &SkillEntry) -> Option<SkillWorkspaceManifest> {
+    let skill_root = Path::new(&skill.file_path).parent()?;
+    let outcome = load_manifest_for_skill_dir(skill_root, None).ok()?;
+    let workspace = outcome.manifest.workspace;
+    if !workspace.declared && workspace.folders.is_empty() && workspace.documents.is_empty() {
+        return None;
+    }
+    Some(SkillWorkspaceManifest {
+        folders: workspace.folders,
+        documents: workspace
+            .documents
+            .into_iter()
+            .map(|document| SkillWorkspaceDocument {
+                source: document.source,
+                target: document.target,
+            })
+            .collect(),
+    })
+}
+
+pub(crate) fn effective_workspace_manifest_for_skill(
+    skill: &SkillEntry,
+) -> Option<SkillWorkspaceManifest> {
+    typed_workspace_manifest_for_skill(skill).or_else(|| skill.workspace_manifest())
+}
 pub fn validate_workspace_source_path(relative: &str) -> AppResult<String> {
     let normalized = validate_workspace_target_path(relative)?;
     let top = normalized.split('/').next().unwrap_or("");
@@ -94,7 +122,7 @@ pub fn validate_workspace_source_path(relative: &str) -> AppResult<String> {
 pub fn workspace_status_for_skill(vault: &Path, skill: &SkillEntry) -> SkillWorkspaceStatus {
     let workspace_root = workspace_root_relative(&skill.name);
     let workspace_path = vault.join(&workspace_root);
-    let Some(manifest) = skill.workspace_manifest() else {
+    let Some(manifest) = effective_workspace_manifest_for_skill(skill) else {
         return SkillWorkspaceStatus {
             workspace_root,
             workspace_ready: true,
@@ -121,7 +149,7 @@ pub fn workspace_status_for_skill(vault: &Path, skill: &SkillEntry) -> SkillWork
 
 pub fn preview_prepare_workspace(vault: &Path, skill: &SkillEntry) -> AppResult<serde_json::Value> {
     let status = workspace_status_for_skill(vault, skill);
-    let manifest = skill.workspace_manifest().unwrap_or_default();
+    let manifest = effective_workspace_manifest_for_skill(skill).unwrap_or_default();
     Ok(serde_json::json!({
         "name": skill.name,
         "scope": match skill.scope {
@@ -269,7 +297,7 @@ pub fn prepare_workspace_for_skill(
         migrate_legacy_workspace(vault, &skill.name, &workspace_root_path)?;
     std::fs::create_dir_all(&workspace_root_path)?;
 
-    let manifest = skill.workspace_manifest().unwrap_or_default();
+    let manifest = effective_workspace_manifest_for_skill(skill).unwrap_or_default();
     let mut created_folders = Vec::new();
     let mut created_documents = Vec::new();
     let mut skipped_existing = Vec::new();

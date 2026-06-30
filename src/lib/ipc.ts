@@ -761,6 +761,14 @@ export interface SkillEntryDto {
 
 export type SkillValidationStatus = "valid" | "legacy" | { invalid: string };
 
+export type SkillManifestKind =
+  | "legacy_prompt_only"
+  | "prompt_only"
+  | "resource"
+  | "workspace"
+  | "mcp_dependent"
+  | "hybrid";
+
 export interface SkillListEntryDto {
   /** Embedded skill fields (flattened via serde). */
   name: string;
@@ -817,9 +825,207 @@ export interface SkillListEntryDto {
   workspaceRoot?: string;
   workspaceReady?: boolean;
   workspaceMissingItems?: string[];
+  kind: SkillManifestKind;
+  activation_ready: boolean;
+  runtime_kind: "not_applicable" | "mcp" | "unavailable" | string;
+  runtime_ready: boolean;
+  runtime_status:
+    | "ready"
+    | "degraded"
+    | "unavailable"
+    | "blocked"
+    | "unknown"
+    | string;
+  workspace_declared: boolean;
+  workspace_prepared: boolean;
+  generated_files_count: number;
+  activated_sections: string[];
+  blocked_sections: string[];
+  degraded_reasons: string[];
+  mcp_dependencies: string[];
+  workspace_root?: string;
+  workspace_ready?: boolean;
+  workspace_missing_items?: string[];
   availability: "available" | "partial" | "unavailable" | "disabled" | string;
 }
 
+export type McpRuntimeStatusDto =
+  | "unknown"
+  | "ready"
+  | "degraded"
+  | "unavailable"
+  | "blocked";
+
+export interface McpServerCatalogInputDto {
+  id: string;
+  display_name: string;
+  transport: "stdio" | "http" | "sse" | string;
+  command?: string | null;
+  args_json: string;
+  url?: string | null;
+  env_schema_json: string;
+  capability_tags_json: string;
+  source: string;
+}
+
+export interface McpRuntimeProfileInputDto {
+  id: string;
+  server_id: string;
+  vault_scope_hash?: string | null;
+  display_name: string;
+  enabled: boolean;
+  transport_config_json: string;
+  env_bindings_json: string;
+  status: McpRuntimeStatusDto;
+  last_error?: string | null;
+}
+
+export interface McpRuntimeProfileSummaryDto {
+  id: string;
+  server_id: string;
+  display_name: string;
+  enabled: boolean;
+  status: McpRuntimeStatusDto;
+  last_error?: string | null;
+}
+
+export interface McpToolInventorySummaryDto {
+  profile_id: string;
+  tool_name: string;
+  schema_hash: string;
+  capability_mapping_json: string;
+  description?: string | null;
+  last_discovered_at: string;
+}
+
+export interface McpHealthEventSummaryDto {
+  id: number;
+  profile_id: string;
+  status: McpRuntimeStatusDto;
+  reason_code: string;
+  message?: string | null;
+  metadata_json: string;
+  created_at: string;
+}
+
+export interface McpToolDefinitionDto {
+  name: string;
+  title?: string | null;
+  description?: string | null;
+  input_schema: unknown;
+  output_schema?: unknown | null;
+}
+
+export interface McpRuntimeDiscoveryDto {
+  protocol_version: string;
+  server_name: string;
+  server_version?: string | null;
+  tools: McpToolDefinitionDto[];
+  stderr_summary?: string | null;
+}
+
+export interface McpRuntimeHealthCheckDto {
+  profileId: string;
+  status: McpRuntimeStatusDto;
+  toolCount: number;
+  message?: string | null;
+}
+
+export interface McpRuntimeCapabilityCallResultDto {
+  profile_id: string;
+  tool_name: string;
+  result: unknown;
+  stderr_summary?: string | null;
+}
+export async function mcpServerCatalogUpsert(
+  input: McpServerCatalogInputDto,
+): Promise<void> {
+  return invoke("mcp_server_catalog_upsert", { input });
+}
+
+export async function mcpRuntimeProfileUpsert(
+  input: McpRuntimeProfileInputDto,
+): Promise<void> {
+  return invoke("mcp_runtime_profile_upsert", { input });
+}
+
+export async function mcpRuntimeProfilesList(): Promise<
+  McpRuntimeProfileSummaryDto[]
+> {
+  return invoke<McpRuntimeProfileSummaryDto[]>("mcp_runtime_profiles_list");
+}
+export async function mcpRuntimeProfileToggle(
+  profileId: string,
+  enabled: boolean,
+): Promise<void> {
+  return invoke("mcp_runtime_profile_toggle", { profileId, enabled });
+}
+
+export async function mcpRuntimeProfileDelete(
+  profileId: string,
+): Promise<void> {
+  return invoke("mcp_runtime_profile_delete", { profileId });
+}
+
+export async function mcpRuntimeToolInventoryList(
+  profileId: string,
+): Promise<McpToolInventorySummaryDto[]> {
+  return invoke<McpToolInventorySummaryDto[]>("mcp_tool_inventory_list", {
+    profileId,
+  });
+}
+
+export async function mcpRuntimeHealthEventsList(
+  profileId: string,
+  limit?: number,
+): Promise<McpHealthEventSummaryDto[]> {
+  return invoke<McpHealthEventSummaryDto[]>("mcp_health_events_list", {
+    profileId,
+    limit: limit ?? null,
+  });
+}
+
+export async function mcpToolInventoryList(
+  profileId: string,
+): Promise<McpToolInventorySummaryDto[]> {
+  return mcpRuntimeToolInventoryList(profileId);
+}
+
+export async function mcpHealthEventsList(
+  profileId: string,
+  limit?: number,
+): Promise<McpHealthEventSummaryDto[]> {
+  return mcpRuntimeHealthEventsList(profileId, limit);
+}
+
+export async function mcpRuntimeToolsList(
+  profileId: string,
+): Promise<McpRuntimeDiscoveryDto> {
+  return invoke<McpRuntimeDiscoveryDto>("mcp_runtime_tools_list", {
+    profileId,
+  });
+}
+
+export async function mcpRuntimeHealthCheck(
+  profileId: string,
+): Promise<McpRuntimeHealthCheckDto> {
+  return invoke<McpRuntimeHealthCheckDto>("mcp_runtime_health_check", {
+    profileId,
+  });
+}
+
+export async function mcpRuntimeCapabilityCall(
+  capability: string,
+  arguments_: Record<string, unknown>,
+): Promise<McpRuntimeCapabilityCallResultDto> {
+  return invoke<McpRuntimeCapabilityCallResultDto>(
+    "mcp_runtime_capability_call",
+    {
+      capability,
+      arguments: arguments_,
+    },
+  );
+}
 export interface PromptProfileDto {
   display_name: string;
   avatar_emoji: string | null;

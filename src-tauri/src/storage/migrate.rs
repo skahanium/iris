@@ -96,6 +96,8 @@ const MIGRATION_038_UP: &str = include_str!("../../migrations/038_attachments.sq
 const MIGRATION_038_DOWN: &str = include_str!("../../migrations/038_attachments.down.sql");
 const MIGRATION_039_UP: &str = include_str!("../../migrations/039_workspace_media.sql");
 const MIGRATION_039_DOWN: &str = include_str!("../../migrations/039_workspace_media.down.sql");
+const MIGRATION_040_UP: &str = include_str!("../../migrations/040_mcp_runtime_registry.sql");
+const MIGRATION_040_DOWN: &str = include_str!("../../migrations/040_mcp_runtime_registry.down.sql");
 
 fn is_applied(conn: &Connection, name: &str) -> bool {
     conn.query_row(
@@ -218,6 +220,7 @@ pub fn migrate_up(conn: &Connection) -> AppResult<()> {
     apply_migration(conn, "037_session_evidence", MIGRATION_037_UP, false)?;
     apply_migration(conn, "038_attachments", MIGRATION_038_UP, false)?;
     apply_migration(conn, "039_workspace_media", MIGRATION_039_UP, false)?;
+    apply_migration(conn, "040_mcp_runtime_registry", MIGRATION_040_UP, false)?;
 
     Ok(())
 }
@@ -229,6 +232,7 @@ fn rollback_migration(conn: &Connection, name: &str, sql: &str) {
 
 /// Roll back all migrations in strict reverse order (for tests).
 pub fn migrate_down(conn: &Connection) -> AppResult<()> {
+    rollback_migration(conn, "040_mcp_runtime_registry", MIGRATION_040_DOWN);
     rollback_migration(conn, "039_workspace_media", MIGRATION_039_DOWN);
     rollback_migration(conn, "038_attachments", MIGRATION_038_DOWN);
     rollback_migration(conn, "037_session_evidence", MIGRATION_037_DOWN);
@@ -1370,6 +1374,53 @@ mod tests {
         .unwrap();
     }
 
+    #[test]
+    fn migration_040_creates_mcp_runtime_registry() {
+        let conn = Connection::open_in_memory().unwrap();
+        migrate_up(&conn).unwrap();
+
+        for table in [
+            "mcp_server_catalog",
+            "mcp_runtime_profiles",
+            "skill_runtime_requirements",
+            "mcp_tool_inventory",
+            "mcp_health_events",
+        ] {
+            let exists: bool = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name = ?1",
+                    [table],
+                    |row| row.get::<_, i64>(0),
+                )
+                .map(|count| count > 0)
+                .unwrap();
+            assert!(exists, "missing {table} table");
+        }
+
+        conn.execute(
+            "INSERT INTO mcp_server_catalog
+             (id, display_name, transport, command, args_json, env_schema_json, capability_tags_json)
+             VALUES ('anysearch', 'AnySearch', 'stdio', 'anysearch-mcp', '[]', '{}', '[\"web.search\"]')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO mcp_runtime_profiles
+             (id, server_id, display_name, enabled, status, transport_config_json, env_bindings_json)
+             VALUES ('anysearch-default', 'anysearch', 'AnySearch default', 1, 'unknown', '{}', '{}')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO skill_runtime_requirements
+             (skill_name, scope, manifest_hash, kind, runtime_kind, required_profiles_json,
+              required_capabilities_json, workspace_contract_json, degradation_policy_json)
+             VALUES ('anysearch', 'Vault', 'hash', 'mcp_dependent', 'mcp', '[\"anysearch-default\"]',
+                     '[\"web.search\"]', '{}', '{}')",
+            [],
+        )
+        .unwrap();
+    }
     #[test]
     fn migration_registry_covers_all_sql_files() {
         use std::collections::BTreeSet;

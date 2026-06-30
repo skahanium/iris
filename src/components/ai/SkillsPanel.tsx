@@ -79,7 +79,7 @@ function scopeText(scope: string): string {
 
 function statusText(skill: SkillListEntryDto): string {
   if (!skill.enabled) return "已禁用";
-  if (skill.task_active === true) return "当前可用";
+  if (skill.task_active === true) return "本次匹配";
   if (skill.task_active === false) return "已启用";
   return skill.availability === "partial" ? "部分可用" : "已启用";
 }
@@ -214,10 +214,15 @@ function workspaceState(skill: SkillListEntryDto): {
   detail: string;
   needsPrepare: boolean;
 } {
-  const root = skill.workspaceRoot ?? `Skills/${skill.name}`;
-  const missing = skill.workspaceMissingItems ?? [];
+  const root =
+    skill.workspace_root ?? skill.workspaceRoot ?? `Skills/${skill.name}`;
+  const missing =
+    skill.workspace_missing_items ?? skill.workspaceMissingItems ?? [];
+  const declared = skill.workspace_declared ?? true;
+  const prepared =
+    skill.workspace_prepared ?? skill.workspace_ready ?? skill.workspaceReady;
 
-  if (!root) {
+  if (!declared) {
     return {
       label: "无工作区",
       detail: "该 Skill 不声明独立工作区。",
@@ -225,7 +230,7 @@ function workspaceState(skill: SkillListEntryDto): {
     };
   }
 
-  if (skill.workspaceReady === false) {
+  if (prepared === false) {
     const summary =
       missing.length > 0
         ? `缺少 ${missing.slice(0, 3).join("、")}${missing.length > 3 ? " 等" : ""}`
@@ -244,6 +249,54 @@ function workspaceState(skill: SkillListEntryDto): {
   };
 }
 
+function sectionState(skill: SkillListEntryDto): {
+  activated: string[];
+  blocked: string[];
+} {
+  return {
+    activated: skill.activated_sections ?? [],
+    blocked: skill.blocked_sections ?? [],
+  };
+}
+function runtimeState(skill: SkillListEntryDto): {
+  label: string;
+  detail: string;
+  needsAttention: boolean;
+} {
+  const deps = skill.mcp_dependencies ?? [];
+  const status =
+    skill.runtime_status ?? (skill.runtime_ready ? "ready" : "unknown");
+
+  if (skill.runtime_kind === "mcp" || deps.length > 0) {
+    const detail = deps.length > 0 ? deps.join(", ") : "MCP profile";
+    return {
+      label: skill.runtime_ready ? "MCP 已就绪" : "MCP 未就绪",
+      detail: skill.runtime_ready
+        ? detail
+        : `缺少或未启用 MCP profile${deps.length > 0 ? `：${detail}` : ""}`,
+      needsAttention: !skill.runtime_ready,
+    };
+  }
+
+  if (
+    status === "degraded" ||
+    status === "blocked" ||
+    status === "unavailable"
+  ) {
+    return {
+      label: status,
+      detail:
+        (skill.degraded_reasons ?? []).slice(0, 2).join("; ") || skill.kind,
+      needsAttention: true,
+    };
+  }
+
+  return {
+    label: skill.kind === "legacy_prompt_only" ? "prompt-only" : skill.kind,
+    detail: "不需要运行时",
+    needsAttention: false,
+  };
+}
 export function SkillsPanelBody({
   open,
   scene,
@@ -462,6 +515,8 @@ export function SkillsPanelBody({
     const compatibilityWarning = hasCompatibilityWarning(skill);
     const groups = capabilityGroups(skill);
     const workspace = workspaceState(skill);
+    const runtime = runtimeState(skill);
+    const sections = sectionState(skill);
     const workspacePending = pendingWorkspaceSkill === `${sc}:${skill.name}`;
 
     return (
@@ -546,6 +601,44 @@ export function SkillsPanelBody({
               ) : null}
             </div>
 
+            <div className="rounded-md border border-border/70 bg-muted/35 px-2.5 py-2">
+              <div className="flex items-center gap-1.5 text-[11px] font-medium text-muted-foreground">
+                <ShieldCheck className="h-3.5 w-3.5" />
+                <span>Runtime</span>
+                <span
+                  className={`rounded-full border px-1.5 py-0.5 text-[10px] ${runtime.needsAttention ? "border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-900/60 dark:bg-amber-950/35 dark:text-amber-300" : "border-border/70 bg-background text-foreground/70"}`}
+                >
+                  {runtime.label}
+                </span>
+              </div>
+              <p className="mt-1 text-[11px] leading-5 text-muted-foreground">
+                {runtime.detail}
+              </p>
+              {sections.activated.length > 0 || sections.blocked.length > 0 ? (
+                <div className="mt-2 grid gap-1 text-[11px] leading-5 text-muted-foreground">
+                  {sections.activated.length > 0 ? (
+                    <p>
+                      <span className="font-medium text-foreground/75">
+                        可用片段
+                      </span>
+                      <span className="ml-1">
+                        {sections.activated.join(", ")}
+                      </span>
+                    </p>
+                  ) : null}
+                  {sections.blocked.length > 0 ? (
+                    <p>
+                      <span className="font-medium text-foreground/75">
+                        阻塞片段
+                      </span>
+                      <span className="ml-1">
+                        {sections.blocked.join(", ")}
+                      </span>
+                    </p>
+                  ) : null}
+                </div>
+              ) : null}
+            </div>
             <div className="space-y-1.5">
               <div className="flex items-center gap-1.5 text-[11px] font-medium text-muted-foreground">
                 <ShieldCheck className="h-3.5 w-3.5" />

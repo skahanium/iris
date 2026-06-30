@@ -409,9 +409,23 @@ pub fn permission_profile_for_tool(tool_name: &str) -> Option<ToolPermissionProf
         | "scheduled_task_delete" => (vec![Atom::AppStateWrite], Risk::Medium, true),
         "memory_read" | "scheduled_task_list" => (vec![Atom::AppStateRead], Risk::Low, true),
         "skills_list"
+        | "mcp_runtime_profiles_list"
+        | "mcp_runtime_diagnostics"
         | "skills_read_resource"
         | "skills_workspace_list"
         | "skills_workspace_read" => (vec![Atom::SkillReadResource], Risk::Low, true),
+        "mcp_runtime_tools_list" | "mcp_runtime_health_check" | "mcp_runtime_capability_call" => (
+            vec![Atom::SkillMcpBridge, Atom::ProcessRunReadonly],
+            Risk::High,
+            true,
+        ),
+        "mcp_runtime_profile_upsert"
+        | "mcp_runtime_profile_toggle"
+        | "mcp_runtime_profile_delete" => (
+            vec![Atom::SkillMcpBridge, Atom::SkillWriteStorage],
+            Risk::High,
+            true,
+        ),
         "skills_install"
         | "skills_prepare_workspace"
         | "skills_uninstall"
@@ -751,5 +765,39 @@ mod tests {
             AgentPermissionAtom::SecretReadPlaintext.as_str(),
             "secret.read_plaintext"
         );
+    }
+
+    #[test]
+    fn live_mcp_runtime_tools_require_process_confirmation_permissions() {
+        for name in [
+            "mcp_runtime_tools_list",
+            "mcp_runtime_health_check",
+            "mcp_runtime_capability_call",
+        ] {
+            let profile = permission_profile_for_tool(name).unwrap_or_else(|| panic!("{name}"));
+            assert!(profile.supported);
+            assert_eq!(profile.risk_level, PermissionRiskLevel::High);
+            assert!(profile.atoms.contains(&AgentPermissionAtom::SkillMcpBridge));
+            assert!(profile
+                .atoms
+                .contains(&AgentPermissionAtom::ProcessRunReadonly));
+        }
+    }
+
+    #[test]
+    fn mcp_profile_management_requires_storage_confirmation_permissions() {
+        for name in [
+            "mcp_runtime_profile_upsert",
+            "mcp_runtime_profile_toggle",
+            "mcp_runtime_profile_delete",
+        ] {
+            let profile = permission_profile_for_tool(name).unwrap_or_else(|| panic!("{name}"));
+            assert!(profile.supported);
+            assert_eq!(profile.risk_level, PermissionRiskLevel::High);
+            assert!(profile.atoms.contains(&AgentPermissionAtom::SkillMcpBridge));
+            assert!(profile
+                .atoms
+                .contains(&AgentPermissionAtom::SkillWriteStorage));
+        }
     }
 }

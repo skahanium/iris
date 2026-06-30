@@ -241,6 +241,7 @@ pub struct SkillActivationItemSummary {
     pub score: f64,
     pub match_reason: String,
     pub injected_sections: Vec<String>,
+    pub degraded_reasons: Vec<String>,
     pub requested_tools: Vec<String>,
     pub requested_capabilities: Vec<SkillRuntimeCapability>,
     pub confirmation_required_tools: Vec<String>,

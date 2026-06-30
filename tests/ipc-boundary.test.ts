@@ -112,4 +112,51 @@ describe("IPC boundary", () => {
     expect(session).toContain("pub content_parts: Option<String>");
     expect(types).toContain("content_parts?: string | null");
   });
+
+  it("exposes MCP runtime registry commands through typed wrappers", () => {
+    const ipc = read("src/lib/ipc.ts");
+    const aiCommands = read("src-tauri/src/commands/ai_commands.rs");
+    const lib = read("src-tauri/src/lib.rs");
+
+    for (const command of [
+      "mcp_server_catalog_upsert",
+      "mcp_runtime_profile_upsert",
+      "mcp_runtime_profiles_list",
+      "mcp_runtime_profile_toggle",
+      "mcp_runtime_profile_delete",
+      "mcp_tool_inventory_list",
+      "mcp_health_events_list",
+      "mcp_runtime_tools_list",
+      "mcp_runtime_health_check",
+      "mcp_runtime_capability_call",
+    ]) {
+      expect(aiCommands).toContain(command);
+      expect(lib).toContain(`commands::ai_commands::${command}`);
+      expect(ipc).toContain(`"${command}"`);
+    }
+
+    expect(ipc).toContain("export interface McpServerCatalogInputDto");
+    expect(ipc).toContain("export interface McpRuntimeProfileInputDto");
+    expect(ipc).toContain("export interface McpToolInventorySummaryDto");
+    expect(ipc).toContain("export interface McpHealthEventSummaryDto");
+    expect(ipc).toContain("export async function mcpRuntimeProfilesList");
+    expect(ipc).toContain("export async function mcpRuntimeProfileToggle");
+    expect(ipc).toContain("export async function mcpRuntimeProfileDelete");
+    expect(ipc).toContain("export async function mcpRuntimeToolInventoryList");
+    expect(ipc).toContain("export async function mcpRuntimeHealthEventsList");
+    expect(ipc).toContain("export async function mcpRuntimeToolsList");
+    expect(ipc).toContain("export async function mcpRuntimeHealthCheck");
+    expect(ipc).toContain("export async function mcpRuntimeCapabilityCall");
+    expect(ipc).toContain("mcpRuntimeToolInventoryList");
+  });
+  it("documents Skills and MCP runtime IPC status semantics", () => {
+    const docs = read("docs/ipc-api-reference.md");
+
+    expect(docs).toContain("prompt-only skills do not require MCP");
+    expect(docs).toContain("runtime_ready vs activation_ready");
+    expect(docs).toContain("workspace_declared vs workspace_prepared");
+    expect(docs).toContain("partial success confirmation outcome");
+    expect(docs).toContain("mcpRuntimeToolInventoryList");
+    expect(docs).toContain("mcpRuntimeHealthEventsList");
+  });
 });

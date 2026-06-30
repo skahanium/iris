@@ -126,17 +126,23 @@ pub(crate) fn prepare_environment_and_skills_with_plan(
         },
     )?;
     let plan = plan.expect("checked above");
-    let selected: Vec<_> = scan_all(&vault)?
+    let mut selected: Vec<_> = scan_all(&vault)?
         .into_iter()
-        .filter(|skill| {
-            plan.activated_skills.iter().any(|active| {
+        .filter_map(|mut skill| {
+            let active = plan.activated_skills.iter().find(|active| {
                 active.name == skill.name
                     && active
                         .scope
                         .eq_ignore_ascii_case(&format!("{:?}", skill.scope))
-            })
+            })?;
+            let _ = crate::ai_runtime::skills::filter_skill_content_to_injected_sections(
+                &mut skill,
+                &active.injected_sections,
+            );
+            Some(skill)
         })
         .collect();
+    selected.retain(|skill| !skill.content.trim().is_empty());
     let skills_prompt = inject_into_prompt(&vault, &selected, input.scene, input.user_message);
     Ok((env_text, skills_prompt))
 }

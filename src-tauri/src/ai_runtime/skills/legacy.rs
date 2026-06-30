@@ -19,7 +19,7 @@ pub fn migrate_legacy_skill(path: &Path, scope: SkillScope) -> AppResult<SkillEn
     let (meta, body) = parse_frontmatter(&raw);
 
     if !meta.contains_key("trigger") {
-        return Err(AppError::msg("skill 已是新格式，无需迁移"));
+        return Err(AppError::msg("skill is already in the new format"));
     }
 
     let backup_path = path.with_extension("md.bak");

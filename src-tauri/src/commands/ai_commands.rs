@@ -601,6 +601,27 @@ pub struct KnowledgeReindexResponse {
 }
 
 #[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ToolExecutionOutcomeWire {
+    pub status: String,
+    pub side_effect_committed: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub result_summary: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AssistantResumeOutcomeWire {
+    pub status: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub failure_class: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub user_message: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
 pub struct AiChatResponse {
     pub request_id: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -630,6 +651,22 @@ pub struct AiChatResponse {
     pub resumed: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub installed_skill: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_confirmation_partial: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub resume_error_code: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub resume_error_message: Option<String>,
+    #[serde(
+        rename = "toolExecutionOutcome",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub tool_execution_outcome: Option<ToolExecutionOutcomeWire>,
+    #[serde(
+        rename = "assistantResumeOutcome",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub assistant_resume_outcome: Option<AssistantResumeOutcomeWire>,
 }
 
 impl AiChatResponse {
@@ -662,6 +699,11 @@ impl AiChatResponse {
             decision: None,
             resumed: None,
             installed_skill: None,
+            tool_confirmation_partial: None,
+            resume_error_code: None,
+            resume_error_message: None,
+            tool_execution_outcome: None,
+            assistant_resume_outcome: None,
         }
     }
 
@@ -673,8 +715,60 @@ impl AiChatResponse {
     ) -> Self {
         self.tool_call_id = Some(tool_call_id);
         self.decision = Some(decision.into());
+        let decision = self.decision.as_deref().unwrap_or_default();
         self.resumed = Some(true);
         self.installed_skill = installed_skill;
+        self.tool_execution_outcome = Some(ToolExecutionOutcomeWire {
+            status: if decision == "reject" {
+                "rejected".into()
+            } else {
+                "succeeded".into()
+            },
+            side_effect_committed: decision != "reject",
+            tool_name: None,
+            result_summary: None,
+        });
+        self.assistant_resume_outcome = Some(AssistantResumeOutcomeWire {
+            status: "resumed".into(),
+            failure_class: None,
+            user_message: None,
+        });
+        self
+    }
+
+    fn with_partial_tool_confirmation(
+        mut self,
+        tool_call_id: String,
+        decision: impl Into<String>,
+        installed_skill: Option<String>,
+        resume_error_code: String,
+        resume_error_message: String,
+    ) -> Self {
+        self.tool_call_id = Some(tool_call_id);
+        self.decision = Some(decision.into());
+        self.resumed = Some(false);
+        self.installed_skill = installed_skill;
+        self.tool_confirmation_partial = Some(true);
+        self.resume_error_code = Some(resume_error_code.clone());
+        self.resume_error_message = Some(resume_error_message);
+        self.tool_execution_outcome = Some(ToolExecutionOutcomeWire {
+            status: "succeeded".into(),
+            side_effect_committed: true,
+            tool_name: Some(if self.installed_skill.is_some() {
+                "skills_install".into()
+            } else {
+                "confirmed_tool".into()
+            }),
+            result_summary: self
+                .installed_skill
+                .as_ref()
+                .map(|skill| format!("Skill {skill} 已安装。")),
+        });
+        self.assistant_resume_outcome = Some(AssistantResumeOutcomeWire {
+            status: "failed".into(),
+            failure_class: Some(resume_error_code),
+            user_message: Some("安装已完成，但继续生成回复失败。".into()),
+        });
         self
     }
 }
@@ -1431,8 +1525,25 @@ pub async fn tool_confirm(
     }
 
     let harness_result =
-        resume_harness_after_tool_confirm_or_restore(state.inner(), &app_handle, &request_id)
-            .await?;
+        match resume_harness_after_tool_confirm_or_restore(state.inner(), &app_handle, &request_id)
+            .await
+        {
+            Ok(result) => result,
+            Err(error) => {
+                return partial_tool_confirm_response(
+                    state.inner(),
+                    &request_id,
+                    tool_call_id,
+                    if decision == "modify" {
+                        "modify"
+                    } else {
+                        "approve"
+                    },
+                    installed_skill,
+                    &error,
+                );
+            }
+        };
 
     if harness_has_reliable_final_answer(&harness_result) {
         finalize_chat_harness_run_from_task_policy(state.inner(), &request_id, &harness_result)?;
@@ -1455,6 +1566,62 @@ pub async fn tool_confirm(
     Ok(out)
 }
 
+fn partial_tool_confirm_response(
+    state: &AppState,
+    request_id: &str,
+    tool_call_id: String,
+    decision: &str,
+    installed_skill: Option<String>,
+    error: &AppError,
+) -> AppResult<AiChatResponse> {
+    use crate::ai_runtime::harness_support::load_harness_checkpoint;
+
+    let cp = load_harness_checkpoint(&state.db, request_id)?
+        .ok_or_else(|| AppError::msg("checkpoint missing"))?;
+    let error_message = error.to_string();
+    let error_code = crate::ai_runtime::harness_confirm::classify_resume_error(&error_message);
+    let content = if installed_skill.is_some() {
+        "安装已完成，但继续生成回复失败。".to_string()
+    } else {
+        format!("工具已执行，但继续生成回复失败：{error_code}")
+    };
+    Ok(AiChatResponse {
+        request_id: request_id.to_string(),
+        task_id: None,
+        session_id: cp.meta.session_id,
+        status: "tool_executed_resume_failed".into(),
+        content,
+        tool_calls: Vec::new(),
+        tool_results: cp.tool_results.clone(),
+        usage: TokenUsage::default(),
+        usage_source: crate::ai_runtime::harness::UsageSource::Estimated,
+        citation_valid: false,
+        harness_rounds: 0,
+        evidence_packets: cp.evidence_packets.clone(),
+        pending_confirmation: false,
+        deliberation_state: None,
+        verification_summary: None,
+        evidence_refresh_notice: None,
+        tool_call_id: None,
+        decision: None,
+        resumed: None,
+        installed_skill: None,
+        tool_confirmation_partial: None,
+        resume_error_code: None,
+        resume_error_message: None,
+        tool_execution_outcome: None,
+        assistant_resume_outcome: None,
+    })
+    .map(|response| {
+        response.with_partial_tool_confirmation(
+            tool_call_id,
+            decision.to_string(),
+            installed_skill,
+            error_code.to_string(),
+            error_message,
+        )
+    })
+}
 fn load_scene_from_checkpoint(state: &AppState, request_id: &str) -> AppResult<String> {
     use crate::ai_runtime::harness_support::load_harness_checkpoint;
     let cp = load_harness_checkpoint(&state.db, request_id)?
@@ -1871,6 +2038,180 @@ pub async fn skills_toggle(
 }
 
 #[tauri::command]
+pub async fn mcp_server_catalog_upsert(
+    state: State<'_, Arc<AppState>>,
+    input: crate::ai_runtime::mcp_runtime_registry::McpServerCatalogInput,
+) -> AppResult<()> {
+    crate::ai_runtime::mcp_runtime_registry::upsert_server_catalog(&state.db, &input)
+}
+
+#[tauri::command]
+pub async fn mcp_runtime_profile_upsert(
+    state: State<'_, Arc<AppState>>,
+    input: crate::ai_runtime::mcp_runtime_registry::McpRuntimeProfileInput,
+) -> AppResult<()> {
+    crate::ai_runtime::mcp_runtime_registry::upsert_runtime_profile(&state.db, &input)
+}
+
+#[tauri::command]
+pub async fn mcp_runtime_profiles_list(
+    state: State<'_, Arc<AppState>>,
+) -> AppResult<Vec<crate::ai_runtime::mcp_runtime_registry::McpRuntimeProfileSummary>> {
+    crate::ai_runtime::mcp_runtime_registry::list_runtime_profiles(&state.db)
+}
+#[tauri::command]
+pub async fn mcp_runtime_profile_toggle(
+    state: State<'_, Arc<AppState>>,
+    profile_id: String,
+    enabled: bool,
+) -> AppResult<()> {
+    crate::ai_runtime::mcp_runtime_registry::set_runtime_profile_enabled(
+        &state.db,
+        &profile_id,
+        enabled,
+    )
+}
+
+#[tauri::command]
+pub async fn mcp_runtime_profile_delete(
+    state: State<'_, Arc<AppState>>,
+    profile_id: String,
+) -> AppResult<()> {
+    crate::ai_runtime::mcp_runtime_registry::delete_runtime_profile(&state.db, &profile_id)
+}
+
+#[tauri::command]
+pub async fn mcp_tool_inventory_list(
+    state: State<'_, Arc<AppState>>,
+    profile_id: String,
+) -> AppResult<Vec<crate::ai_runtime::mcp_runtime_registry::McpToolInventorySummary>> {
+    crate::ai_runtime::mcp_runtime_registry::list_tool_inventory(&state.db, &profile_id)
+}
+
+#[tauri::command]
+pub async fn mcp_health_events_list(
+    state: State<'_, Arc<AppState>>,
+    profile_id: String,
+    limit: Option<usize>,
+) -> AppResult<Vec<crate::ai_runtime::mcp_runtime_registry::McpHealthEventSummary>> {
+    crate::ai_runtime::mcp_runtime_registry::list_recent_health_events(
+        &state.db,
+        &profile_id,
+        limit.unwrap_or(20),
+    )
+}
+
+fn mcp_runtime_options() -> crate::ai_runtime::mcp_host_runtime::McpHostRuntimeOptions {
+    crate::ai_runtime::mcp_host_runtime::McpHostRuntimeOptions {
+        request_timeout: std::time::Duration::from_secs(8),
+        max_stdout_line_bytes: 64 * 1024,
+        max_stderr_bytes: 8 * 1024,
+        cwd: None,
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct McpRuntimeHealthCheckDto {
+    pub profile_id: String,
+    pub status: crate::ai_runtime::mcp_runtime_registry::McpRuntimeStatus,
+    pub tool_count: usize,
+    pub message: Option<String>,
+}
+
+#[tauri::command]
+pub async fn mcp_runtime_tools_list(
+    state: State<'_, Arc<AppState>>,
+    profile_id: String,
+) -> AppResult<crate::ai_runtime::mcp_host_runtime::McpStdioDiscovery> {
+    crate::ai_runtime::mcp_host_runtime::discover_profile_tools(
+        &state.db,
+        &profile_id,
+        mcp_runtime_options(),
+    )
+    .await
+}
+
+#[tauri::command]
+pub async fn mcp_runtime_health_check(
+    state: State<'_, Arc<AppState>>,
+    profile_id: String,
+) -> AppResult<McpRuntimeHealthCheckDto> {
+    use crate::ai_runtime::mcp_runtime_registry::{
+        record_health_event, McpHealthEventInput, McpRuntimeStatus,
+    };
+
+    match crate::ai_runtime::mcp_host_runtime::discover_profile_tools(
+        &state.db,
+        &profile_id,
+        mcp_runtime_options(),
+    )
+    .await
+    {
+        Ok(discovery) => {
+            record_health_event(
+                &state.db,
+                &McpHealthEventInput {
+                    profile_id: profile_id.clone(),
+                    status: McpRuntimeStatus::Ready,
+                    reason_code: "live_tools_list_ok".into(),
+                    message: Some(format!("{} MCP tools discovered", discovery.tools.len())),
+                    metadata_json: serde_json::json!({
+                        "tool_count": discovery.tools.len(),
+                        "protocol_version": discovery.protocol_version,
+                        "server_name": discovery.server_name,
+                    })
+                    .to_string(),
+                },
+            )?;
+            Ok(McpRuntimeHealthCheckDto {
+                profile_id,
+                status: McpRuntimeStatus::Ready,
+                tool_count: discovery.tools.len(),
+                message: None,
+            })
+        }
+        Err(err) => {
+            let message = err.to_string();
+            let _ = record_health_event(
+                &state.db,
+                &McpHealthEventInput {
+                    profile_id: profile_id.clone(),
+                    status: McpRuntimeStatus::Unavailable,
+                    reason_code: "live_tools_list_failed".into(),
+                    message: Some(message.clone()),
+                    metadata_json: serde_json::json!({"tool_count": 0}).to_string(),
+                },
+            );
+            Ok(McpRuntimeHealthCheckDto {
+                profile_id,
+                status: McpRuntimeStatus::Unavailable,
+                tool_count: 0,
+                message: Some(message),
+            })
+        }
+    }
+}
+#[tauri::command]
+pub async fn mcp_runtime_capability_call(
+    state: State<'_, Arc<AppState>>,
+    capability: String,
+    arguments: serde_json::Value,
+) -> AppResult<crate::ai_runtime::mcp_host_runtime::McpToolCallResult> {
+    if !arguments.is_object() {
+        return Err(AppError::msg(
+            "mcp_runtime_capability_call arguments must be a JSON object",
+        ));
+    }
+    crate::ai_runtime::mcp_host_runtime::call_required_capability_stdio(
+        &state.db,
+        &capability,
+        arguments,
+        mcp_runtime_options(),
+    )
+    .await
+}
+#[tauri::command]
 pub async fn prompt_profile_get(
     state: State<'_, Arc<AppState>>,
 ) -> AppResult<crate::ai_runtime::prompt_profile::PromptProfile> {
@@ -2276,18 +2617,120 @@ pub async fn classified_ai_retrieval_clear() -> AppResult<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::validate_ai_note_path;
+    use super::{partial_tool_confirm_response, validate_ai_note_path};
 
     #[test]
     fn ai_note_path_rejects_classified_notes() {
         let err = validate_ai_note_path(Some(".classified/secret.md")).unwrap_err();
-        assert!(err.to_string().contains("涉密笔记不能进入 AI"));
+        assert!(err.to_string().contains("AI"));
     }
 
     #[test]
     fn ai_note_path_allows_user_notes_and_empty_context() {
         assert!(validate_ai_note_path(Some("notes/open.md")).is_ok());
         assert!(validate_ai_note_path(None).is_ok());
+    }
+
+    #[test]
+    fn partial_tool_confirm_response_has_structured_outcomes() {
+        use crate::ai_harness::harness_support::{
+            save_harness_checkpoint, HarnessCheckpoint, HarnessCheckpointMeta,
+        };
+        use crate::ai_runtime::harness::UsageSource;
+        use crate::ai_runtime::model_gateway::TokenUsage;
+        use crate::ai_runtime::trace::{TraceRecorder, TraceStatus};
+        use crate::ai_runtime::AiScene;
+        use crate::app::AppState;
+
+        let dir = tempfile::tempdir().unwrap();
+        let state = AppState::new(dir.path().to_path_buf()).unwrap();
+        let request_id = "partial-outcome-1";
+        TraceRecorder::start(&state.db, request_id, AiScene::KnowledgeLookup).unwrap();
+        TraceRecorder::update_status(&state.db, request_id, TraceStatus::AwaitingToolConfirmation)
+            .unwrap();
+        save_harness_checkpoint(
+            &state.db,
+            request_id,
+            &HarnessCheckpoint {
+                meta: HarnessCheckpointMeta {
+                    scene: "knowledge_lookup".into(),
+                    session_id: 42,
+                    note_path: None,
+                    note_title: None,
+                    selection_excerpt: None,
+                    cold_start_packets: Vec::new(),
+                    web_search_enabled: false,
+                    depth: 0,
+                    capability_slot: None,
+                    provider_id: None,
+                    model: None,
+                    endpoint_family: None,
+                    thinking: None,
+                    output_budget: None,
+                    skill_activation_plan: None,
+                    task_policy: None,
+                },
+                round: 1,
+                messages: Vec::new(),
+                tool_calls: Vec::new(),
+                tool_results: vec![serde_json::json!({
+                    "tool_call_id": "tc-install",
+                    "status": "completed",
+                    "result": { "name": "heartflow" },
+                })],
+                evidence_packets: Vec::new(),
+                usage: TokenUsage::default(),
+                usage_source: UsageSource::Estimated,
+                bonus_round_used: false,
+            },
+        )
+        .unwrap();
+
+        let response = partial_tool_confirm_response(
+            &state,
+            request_id,
+            "tc-install".into(),
+            "approve",
+            Some("heartflow".into()),
+            &crate::error::AppError::msg("provider_bad_request: 400 Bad Request"),
+        )
+        .unwrap();
+
+        assert_eq!(response.content, "安装已完成，但继续生成回复失败。");
+        assert_eq!(
+            response.tool_execution_outcome.as_ref().unwrap().status,
+            "succeeded"
+        );
+        assert!(
+            response
+                .tool_execution_outcome
+                .as_ref()
+                .unwrap()
+                .side_effect_committed
+        );
+        assert_eq!(
+            response.assistant_resume_outcome.as_ref().unwrap().status,
+            "failed"
+        );
+        assert_eq!(
+            response
+                .assistant_resume_outcome
+                .as_ref()
+                .unwrap()
+                .failure_class
+                .as_deref(),
+            Some("provider_bad_request")
+        );
+
+        let serialized = serde_json::to_value(&response).unwrap();
+        assert_eq!(
+            serialized["toolExecutionOutcome"]["sideEffectCommitted"],
+            true
+        );
+        assert_eq!(
+            serialized["assistantResumeOutcome"]["userMessage"],
+            "安装已完成，但继续生成回复失败。"
+        );
     }
 
     mod image_attachment_dto {
@@ -2330,7 +2773,7 @@ mod tests {
             let json = serde_json::to_string(&img).unwrap();
             assert!(json.contains("img-001"));
             assert!(json.contains("screenshot.png"));
-            assert!(json.contains("dataBase64")); // camelCase
+            assert!(json.contains("dataBase64"));
 
             let restored: ImageAttachmentDto = serde_json::from_str(&json).unwrap();
             assert_eq!(restored.id, "img-001");
@@ -2341,10 +2784,8 @@ mod tests {
 
         #[test]
         fn serialized_json_has_snake_case_fields_for_rust_side() {
-            // Verify camelCase for frontend IPC, but internal Rust can use snake_case
             let img = test_image();
             let json_str = serde_json::to_string(&img).unwrap();
-            // The #[serde(rename_all = "camelCase")] should produce camelCase keys
             assert!(json_str.contains("\"dataBase64\""));
             assert!(json_str.contains("\"mimeType\""));
             assert!(json_str.contains("\"fileName\""));

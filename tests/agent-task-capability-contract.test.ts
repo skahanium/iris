@@ -102,4 +102,19 @@ describe("Agent Task Runtime Phase C capability affinity contract", () => {
     expect(skillsPanel).not.toContain("scene_active");
     expect(statusBadge).not.toContain("scene_active");
   });
+
+  it("MCP capability resolver exists and ignores unapproved MCP annotations", () => {
+    const runtimeMod = read("src-tauri/src/ai_runtime/mod.rs");
+    const resolver = read("src-tauri/src/ai_runtime/capability_resolver.rs");
+
+    expect(runtimeMod).toContain("pub mod capability_resolver;");
+    expect(resolver).toContain("pub fn resolve_required_capability");
+    expect(resolver).toContain("unsupported_capability");
+    expect(resolver).toContain("missing_mcp_profile");
+    expect(resolver).toContain("profile_disabled");
+    expect(resolver).toContain("profile_unhealthy");
+    expect(resolver).toContain("explicit_mapping_contains_capability");
+    expect(resolver).toContain('get("capability")');
+    expect(resolver).not.toContain('get("annotations")');
+  });
 });

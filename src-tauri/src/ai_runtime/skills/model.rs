@@ -2,7 +2,9 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
+use super::manifest_impl::SkillManifestKind;
 use crate::ai_runtime::tool_catalog::TOOL_CATALOG;
+
 use crate::ai_types::{
     BlockedCapabilitySummary, SkillCapabilitySupportStatus, SkillCompatibilitySource,
     SkillRuntimeCapability,
@@ -328,8 +330,32 @@ pub struct SkillListEntry {
     pub content_hash: Option<String>,
     /// Capability summary shown before/after install.
     pub capability_preview: serde_json::Value,
+    /// Manifest/runtime kind for this skill.
+    pub kind: SkillManifestKind,
+    /// Whether the skill can be considered during activation.
+    pub activation_ready: bool,
+    /// Runtime kind: not_applicable / mcp / unavailable.
+    pub runtime_kind: String,
+    /// Whether all runtime dependencies are currently satisfied.
+    pub runtime_ready: bool,
+    /// Runtime status: ready / degraded / unavailable / blocked / unknown.
+    pub runtime_status: String,
     /// Human-readable capability status: available / partial / unavailable.
     pub availability: String,
+    /// Explicit workspace declaration state; false means no workspace requirement exists.
+    pub workspace_declared: bool,
+    /// Whether declared workspace items exist. True for skills without workspace requirements.
+    pub workspace_prepared: bool,
+    /// Number of generated files currently present in the skill workspace.
+    pub generated_files_count: usize,
+    /// Prompt sections currently safe to activate.
+    pub activated_sections: Vec<String>,
+    /// Prompt sections or runtime gates blocked by missing dependencies.
+    pub blocked_sections: Vec<String>,
+    /// Safe degradation reasons for UI and run-plan summaries.
+    pub degraded_reasons: Vec<String>,
+    /// MCP profile ids declared by the manifest.
+    pub mcp_dependencies: Vec<String>,
     /// Last match timestamp from Phase4 diagnostics.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub last_matched_at: Option<String>,

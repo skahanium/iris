@@ -1,4 +1,4 @@
-﻿import {
+import {
   useCallback,
   useEffect,
   useRef,
@@ -32,6 +32,19 @@ import type { ToolConfirmRequest } from "../ToolConfirmDialog";
 
 type ToolDecision = "approve" | "reject" | "modify";
 
+interface ToolExecutionOutcome {
+  status?: "succeeded" | "failed" | "rejected" | string;
+  sideEffectCommitted?: boolean;
+  toolName?: string;
+  resultSummary?: string | null;
+}
+
+interface AssistantResumeOutcome {
+  status?: "resumed" | "skipped" | "failed" | string;
+  failureClass?: string | null;
+  userMessage?: string | null;
+}
+
 interface ToolConfirmResult {
   resumed?: boolean;
   content?: string;
@@ -42,6 +55,11 @@ interface ToolConfirmResult {
   pending_confirmation?: boolean;
   status?: string;
   installed_skill?: string;
+  tool_confirmation_partial?: boolean;
+  resume_error_code?: string;
+  resume_error_message?: string;
+  toolExecutionOutcome?: ToolExecutionOutcome;
+  assistantResumeOutcome?: AssistantResumeOutcome;
 }
 
 type ListenForToolConfirmRequests = (
@@ -71,6 +89,39 @@ function toolConfirmationFailurePrefix(request: ToolConfirmRequest | null) {
     return "文档修改确认失败";
   }
   return "工具确认失败";
+}
+
+function isPartialToolConfirmation(result: ToolConfirmResult): boolean {
+  if (result.tool_confirmation_partial) return true;
+  return (
+    result.toolExecutionOutcome?.sideEffectCommitted === true &&
+    result.toolExecutionOutcome.status === "succeeded" &&
+    result.assistantResumeOutcome?.status === "failed"
+  );
+}
+
+function partialToolConfirmationNotice(
+  result: ToolConfirmResult,
+  request: ToolConfirmRequest | null,
+): string {
+  const structuredMessage = result.assistantResumeOutcome?.userMessage?.trim();
+  if (structuredMessage) return structuredMessage;
+  const content = result.content?.trim();
+  if (content) return content;
+  const skillName =
+    result.installed_skill ??
+    (typeof request?.arguments?.path_or_url === "string"
+      ? request.arguments.path_or_url
+      : null);
+  if (skillName || request?.tool_name === "skills_install") {
+    return "安装已完成，但继续生成回复失败。";
+  }
+  const reason =
+    result.assistantResumeOutcome?.failureClass ??
+    result.resume_error_code ??
+    result.resume_error_message ??
+    "resume_failed";
+  return `工具已执行，但继续生成回复失败：${reason}`;
 }
 
 interface AssistantRunPort {
@@ -197,6 +248,21 @@ export function useAssistantConfirmations({
           modified_args: modifiedArgs,
         })) as ToolConfirmResult;
         if (!result.resumed) {
+          if (isPartialToolConfirmation(result)) {
+            const notice = partialToolConfirmationNotice(
+              result,
+              pendingConfirm,
+            );
+            nextTaskStatus = "error";
+            setMessages((prev) => [
+              ...prev,
+              { role: "system", content: notice },
+            ]);
+            setActionState(buildActionState(intent, nextTaskStatus, notice));
+            setHarnessRequestId(requestId);
+            requestIdRef.current = requestId;
+            return;
+          }
           nextTaskStatus = "completed";
           setActionState(buildActionState(intent, nextTaskStatus));
           return;

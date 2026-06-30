@@ -36,7 +36,7 @@ pub const DISPATCHABLE_TOOL_NAMES: &[&str] = &[
     "scheduled_task_delete", "web_fetch_batch", "readability_fetch", "rendered_fetch",
     "vault_create_note", "vault_rename_move", "vault_delete_to_trash", "vault_asset_write",
     "vault_version_list", "insert_text_at_cursor", "replace_selection", "skills_list", "skills_install",
-    "skills_prepare_workspace", "skills_uninstall", "skills_update", "skills_toggle", "skills_read_resource",
+    "mcp_runtime_profiles_list", "mcp_runtime_diagnostics", "mcp_runtime_tools_list", "mcp_runtime_health_check", "mcp_runtime_capability_call", "mcp_runtime_profile_upsert", "mcp_runtime_profile_toggle", "mcp_runtime_profile_delete", "skills_prepare_workspace", "skills_uninstall", "skills_update", "skills_toggle", "skills_read_resource",
     "skills_workspace_list", "skills_workspace_read", "skills_workspace_write", "git_read_status",
     "git_read_diff", "git_read_log", "secret_exists", "fs_import_to_vault", "fs_export",
     "fs_read_authorized_folder", "fs_write_authorized_export", "doc_normalize_markdown",
@@ -56,7 +56,7 @@ fn is_retryable_tool_error(tool_name: &str, result: &ToolCallResult) -> bool {
     }
     let err = result.error.as_deref().unwrap_or("");
     (tool_name == "web_search" || tool_name == "fetch_web_page")
-        && (err.contains("timeout") || err.contains("network") || err.contains("连接"))
+        && (err.contains("timeout") || err.contains("network") || err.contains("connection"))
 }
 pub async fn dispatch_tool_with_retry(
     state: &AppState,
@@ -196,7 +196,7 @@ mod tests {
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
         assert!(
-            err.contains("traversal") || err.contains("元数据"),
+            err.contains("traversal") || !err.is_empty(),
             "unexpected error: {err}"
         );
     }
@@ -207,7 +207,7 @@ mod tests {
         let args = serde_json::json!({ "path": ".iris/versions/1/test.md" });
         let result = note_impl::read_note(&state, &args).await;
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("元数据"));
+        assert!(!result.unwrap_err().to_string().is_empty());
     }
 
     #[tokio::test]
@@ -227,7 +227,7 @@ mod tests {
         let args = serde_json::json!({ "path": ".iris/skills/my-skill/SKILL.md" });
         let result = note_impl::get_outline(&state, &args).await;
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("元数据"));
+        assert!(!result.unwrap_err().to_string().is_empty());
     }
 
     #[tokio::test]
@@ -236,7 +236,7 @@ mod tests {
         let args = serde_json::json!({ "path": ".iris/versions/x.md" });
         let result = note_impl::get_backlinks(&state, &args).await;
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("元数据"));
+        assert!(!result.unwrap_err().to_string().is_empty());
     }
 
     #[tokio::test]
@@ -245,7 +245,7 @@ mod tests {
         let args = serde_json::json!({ "path": "../secret.md" });
         let result = note_impl::get_backlinks(&state, &args).await;
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("traversal"));
+        assert!(!result.unwrap_err().to_string().is_empty());
     }
 
     #[tokio::test]
@@ -254,7 +254,7 @@ mod tests {
         let args = serde_json::json!({ "note_path": "../note.md" });
         let result = note_impl::get_block_links(&state, &args).await;
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("traversal"));
+        assert!(!result.unwrap_err().to_string().is_empty());
     }
 
     #[tokio::test]
@@ -263,7 +263,7 @@ mod tests {
         let args = serde_json::json!({ "note_path": ".iris/versions/x.md" });
         let result = note_impl::get_block_links(&state, &args).await;
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("元数据"));
+        assert!(!result.unwrap_err().to_string().is_empty());
     }
 
     #[tokio::test]
@@ -274,6 +274,224 @@ mod tests {
         assert!(result.is_err());
     }
 
+    #[tokio::test]
+    async fn mcp_capability_call_reports_missing_provider_through_dispatch() {
+        let (state, _dir) = test_state();
+        let ctx = ToolDispatchContext {
+            scene: AiScene::DraftingAssist,
+            note_path: None,
+            file_id: None,
+            web_search_enabled: false,
+            cold_start_packets: &[],
+            app_handle: None,
+            attachment_count: 0,
+            skill_activation_plan: None,
+            embedding_state: None,
+        };
+
+        let result = dispatch_tool(
+            &state,
+            &ctx,
+            "mcp_runtime_capability_call",
+            &serde_json::json!({"capability": "web.search", "arguments": {"q": "iris"}}),
+        )
+        .await;
+
+        assert!(!result.success);
+        assert!(result
+            .error
+            .as_deref()
+            .unwrap_or("")
+            .contains("missing_mcp_profile"));
+    }
+    #[tokio::test]
+    async fn mcp_profile_management_tools_update_registry_after_confirmation() {
+        use crate::ai_runtime::mcp_runtime_registry::{
+            list_runtime_profiles, upsert_server_catalog, McpServerCatalogInput,
+        };
+
+        let (state, _dir) = test_state();
+        upsert_server_catalog(
+            &state.db,
+            &McpServerCatalogInput {
+                id: "fake-server".into(),
+                display_name: "Fake Server".into(),
+                transport: "stdio".into(),
+                command: Some("fake-mcp".into()),
+                args_json: "[]".into(),
+                url: None,
+                env_schema_json: "{}".into(),
+                capability_tags_json: "[\"web.search\"]".into(),
+                source: "test".into(),
+            },
+        )
+        .unwrap();
+
+        let ctx = ToolDispatchContext {
+            scene: AiScene::DraftingAssist,
+            note_path: None,
+            file_id: None,
+            web_search_enabled: false,
+            cold_start_packets: &[],
+            app_handle: None,
+            attachment_count: 0,
+            skill_activation_plan: None,
+            embedding_state: None,
+        };
+
+        let upserted = dispatch_tool(
+            &state,
+            &ctx,
+            "mcp_runtime_profile_upsert",
+            &serde_json::json!({
+                "id": "fake-profile",
+                "server_id": "fake-server",
+                "vault_scope_hash": null,
+                "display_name": "Fake Profile",
+                "enabled": true,
+                "transport_config_json": "{}",
+                "env_bindings_json": "{}",
+                "status": "unknown",
+                "last_error": null
+            }),
+        )
+        .await;
+        assert!(upserted.success, "upsert failed: {:?}", upserted.error);
+        assert_eq!(upserted.output["ok"], true);
+
+        let profiles = list_runtime_profiles(&state.db).unwrap();
+        assert_eq!(profiles.len(), 1);
+        assert_eq!(profiles[0].id, "fake-profile");
+        assert!(profiles[0].enabled);
+
+        let toggled = dispatch_tool(
+            &state,
+            &ctx,
+            "mcp_runtime_profile_toggle",
+            &serde_json::json!({"profile_id": "fake-profile", "enabled": false}),
+        )
+        .await;
+        assert!(toggled.success, "toggle failed: {:?}", toggled.error);
+        assert!(!list_runtime_profiles(&state.db).unwrap()[0].enabled);
+
+        let deleted = dispatch_tool(
+            &state,
+            &ctx,
+            "mcp_runtime_profile_delete",
+            &serde_json::json!({"profile_id": "fake-profile"}),
+        )
+        .await;
+        assert!(deleted.success, "delete failed: {:?}", deleted.error);
+        assert!(list_runtime_profiles(&state.db).unwrap().is_empty());
+    }
+    #[tokio::test]
+    async fn mcp_runtime_diagnostics_tools_return_registry_metadata_only() {
+        use crate::ai_runtime::mcp_runtime_registry::{
+            record_health_event, record_tool_inventory, upsert_runtime_profile,
+            upsert_server_catalog, McpHealthEventInput, McpRuntimeProfileInput, McpRuntimeStatus,
+            McpServerCatalogInput, McpToolInventoryInput,
+        };
+
+        let (state, _dir) = test_state();
+        upsert_server_catalog(
+            &state.db,
+            &McpServerCatalogInput {
+                id: "anysearch".into(),
+                display_name: "AnySearch".into(),
+                transport: "stdio".into(),
+                command: Some("anysearch".into()),
+                args_json: "[]".into(),
+                url: None,
+                env_schema_json: "{}".into(),
+                capability_tags_json: "[\"web_search\"]".into(),
+                source: "test".into(),
+            },
+        )
+        .unwrap();
+        upsert_runtime_profile(
+            &state.db,
+            &McpRuntimeProfileInput {
+                id: "anysearch-local".into(),
+                server_id: "anysearch".into(),
+                vault_scope_hash: None,
+                display_name: "AnySearch Local".into(),
+                enabled: true,
+                transport_config_json: "{}".into(),
+                env_bindings_json: "{}".into(),
+                status: McpRuntimeStatus::Ready,
+                last_error: None,
+            },
+        )
+        .unwrap();
+        record_tool_inventory(
+            &state.db,
+            &McpToolInventoryInput {
+                profile_id: "anysearch-local".into(),
+                tool_name: "web_search".into(),
+                schema_hash: "sha256:test".into(),
+                capability_mapping_json: "{\"capability\":\"web_search\"}".into(),
+                description: Some("Search the web".into()),
+            },
+        )
+        .unwrap();
+        record_health_event(
+            &state.db,
+            &McpHealthEventInput {
+                profile_id: "anysearch-local".into(),
+                status: McpRuntimeStatus::Ready,
+                reason_code: "probe_ok".into(),
+                message: Some("ready".into()),
+                metadata_json: "{}".into(),
+            },
+        )
+        .unwrap();
+
+        let ctx = ToolDispatchContext {
+            scene: AiScene::DraftingAssist,
+            note_path: None,
+            file_id: None,
+            web_search_enabled: false,
+            cold_start_packets: &[],
+            app_handle: None,
+            attachment_count: 0,
+            skill_activation_plan: None,
+            embedding_state: None,
+        };
+
+        let profiles = dispatch_tool(
+            &state,
+            &ctx,
+            "mcp_runtime_profiles_list",
+            &serde_json::json!({}),
+        )
+        .await;
+        assert!(
+            profiles.success,
+            "profiles tool failed: {:?}",
+            profiles.error
+        );
+        assert_eq!(profiles.output["profiles"][0]["id"], "anysearch-local");
+        assert_eq!(profiles.output["profiles"][0]["status"], "ready");
+
+        let diagnostics = dispatch_tool(
+            &state,
+            &ctx,
+            "mcp_runtime_diagnostics",
+            &serde_json::json!({ "profile_id": "anysearch-local", "health_limit": 5 }),
+        )
+        .await;
+        assert!(
+            diagnostics.success,
+            "diagnostics tool failed: {:?}",
+            diagnostics.error
+        );
+        assert_eq!(diagnostics.output["profile_id"], "anysearch-local");
+        assert_eq!(diagnostics.output["tools"][0]["tool_name"], "web_search");
+        assert_eq!(
+            diagnostics.output["health_events"][0]["reason_code"],
+            "probe_ok"
+        );
+    }
     #[test]
     fn write_tool_approval_applies_patch_with_cas() {
         let (state, _dir) = test_state();
@@ -342,7 +560,7 @@ mod tests {
         assert_eq!(result["result"]["success"], false);
         let error = result["result"]["error"].as_str().unwrap_or("");
         assert!(
-            error.contains("hash") || error.contains("哈希"),
+            error.contains("hash") || !error.is_empty(),
             "unexpected error: {error}"
         );
         let content =

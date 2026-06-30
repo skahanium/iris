@@ -1,4 +1,4 @@
-//! Agent Skills runtime 鈥?SKILL.md registry, validation, matching, prompt injection.
+//! Agent Skills runtime - SKILL.md registry, validation, matching, prompt injection.
 //!
 //! Compatible with Agent Skills specification while preserving Iris local-first
 //! security model. Old `trigger`-based skills continue to work via `legacy_trigger`.
@@ -51,6 +51,8 @@ mod compatibility_impl;
 mod frontmatter_impl;
 #[path = "skills/legacy.rs"]
 mod legacy_impl;
+#[path = "skills/manifest.rs"]
+mod manifest_impl;
 #[path = "skills/model.rs"]
 mod model_impl;
 #[path = "skills/path.rs"]
@@ -69,7 +71,8 @@ mod workspace_impl;
 pub use activation_impl::{
     active_skill_allowed_tools, active_skill_allowed_tools_for_task, active_skills_for_prompt,
     active_skills_for_task_prompt, build_skill_activation_plan,
-    build_skill_activation_plan_for_task, enrich_list_with_scene, enrich_list_with_task,
+    build_skill_activation_plan_for_task, build_skill_activation_plan_for_task_with_runtime,
+    enrich_list_with_scene, enrich_list_with_task, filter_skill_content_to_injected_sections,
     load_activation_index, rank_skills_for_scene, rank_skills_for_scene_with_index,
     rank_skills_for_task, rerank_skills_with_vectors, skills_for_scene, skills_for_task,
 };
@@ -79,6 +82,9 @@ pub use compatibility_impl::{
 };
 use frontmatter_impl::parse_frontmatter;
 pub use legacy_impl::{is_legacy_format, migrate_legacy_skill};
+pub use manifest_impl::{
+    load_manifest_for_skill_dir, IrisSkillManifest, ManifestLoadOutcome, SkillManifestKind,
+};
 pub use model_impl::{
     ActivationIndexMap, ScoredSkill, SkillActivationIndexRow, SkillEntry, SkillListEntry,
     SkillMetadata, SkillScope, SkillValidationStatus, SkillWorkspaceDocument,
@@ -129,9 +135,7 @@ pub async fn install_from_url(
     if let Some(expected) = expected_sha256 {
         let actual = hex::encode(Sha256::digest(body.as_bytes()));
         if !actual.eq_ignore_ascii_case(expected.trim()) {
-            return Err(AppError::msg(
-                "Skill 内容 SHA-256 校验失败（可能被篡改或不完整）",
-            ));
+            return Err(AppError::msg("skill sha256 mismatch"));
         }
         tracing::info!(
             url = %url,
@@ -179,7 +183,7 @@ pub async fn install_from_git(
         .join(format!("iris-skill-{}", uuid::Uuid::new_v4()));
     if let Some(parent) = tmp.parent() {
         std::fs::create_dir_all(parent)
-            .map_err(|e| AppError::msg(format!("无法创建临时目录: {e}")))?;
+            .map_err(|e| AppError::msg(format!("create temp dir failed: {e}")))?;
     }
     run_git_clone_with_timeout(repo_url, &tmp)?;
 
@@ -277,11 +281,55 @@ pub fn set_enabled(name: &str, scope: SkillScope, vault: &Path, enabled: bool) -
     save_config(scope, vault, &config)
 }
 
+fn copy_local_skill_manifest(
+    source_dir: &Path,
+    target_dir: &Path,
+    manifest_path: Option<&str>,
+) -> AppResult<()> {
+    let manifest_path = manifest_path.unwrap_or("iris.skill.toml");
+    validate_subpath(manifest_path)?;
+    let source_manifest = source_dir.join(manifest_path);
+    if !source_manifest.is_file() {
+        return Ok(());
+    }
+    let target_manifest = target_dir.join(manifest_path);
+    if let Some(parent) = target_manifest.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    fs::copy(source_manifest, target_manifest)?;
+    Ok(())
+}
+
+fn copy_local_skill_resource_dirs(source_dir: &Path, target_dir: &Path) -> AppResult<()> {
+    for dir_name in resources_impl::ALLOWED_RESOURCE_DIRS {
+        let source_resource_dir = source_dir.join(dir_name);
+        if source_resource_dir.is_dir() {
+            atomic_copy_dir(&source_resource_dir, &target_dir.join(dir_name))?;
+        }
+    }
+    Ok(())
+}
+
+fn copy_local_skill_companion_files(
+    source: &Path,
+    target_dir: &Path,
+    metadata: &std::collections::HashMap<String, String>,
+) -> AppResult<()> {
+    let Some(source_dir) = source.parent() else {
+        return Ok(());
+    };
+    copy_local_skill_manifest(
+        source_dir,
+        target_dir,
+        metadata.get("iris_manifest").map(String::as_str),
+    )?;
+    copy_local_skill_resource_dirs(source_dir, target_dir)
+}
 /// Install SKILL.md from a local file path (copies into skills directory).
 pub fn install_from_local(source: &Path, scope: SkillScope, vault: &Path) -> AppResult<SkillEntry> {
     let source = crate::security::ipc_policy::validate_local_skill_source(source, vault)?;
     if !source.is_file() {
-        return Err(AppError::msg("本地安装需要 SKILL.md 文件路径"));
+        return Err(AppError::msg("local install requires SKILL.md file path"));
     }
     let body = fs::read_to_string(&source)?;
     let (meta, _) = parse_frontmatter(&body);
@@ -306,6 +354,7 @@ pub fn install_from_local(source: &Path, scope: SkillScope, vault: &Path) -> App
     fs::create_dir_all(&target_dir)?;
     let skill_path = target_dir.join("SKILL.md");
     fs::write(&skill_path, &body)?;
+    copy_local_skill_companion_files(&source, &target_dir, &meta)?;
 
     let mut entry = load_skill(&skill_path, scope)?;
     entry.source_url = Some(source.to_string_lossy().into_owned());
@@ -320,7 +369,7 @@ pub fn read_skill_content(path: &Path) -> AppResult<String> {
 /// Write updated skill content (must be `SKILL.md`).
 pub fn write_skill_content(path: &Path, scope: SkillScope, content: &str) -> AppResult<SkillEntry> {
     if path.file_name().and_then(|n| n.to_str()) != Some("SKILL.md") {
-        return Err(AppError::msg("只能写入 SKILL.md"));
+        return Err(AppError::msg("only SKILL.md can be written"));
     }
     fs::write(path, content)?;
     load_skill(path, scope)
@@ -333,8 +382,7 @@ mod tests {
     use crate::ai_runtime::AiScene;
 
     use super::*;
-
-    // 鈹€鈹€ validate_subpath 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+    // validate_subpath
 
     #[test]
     fn subpath_rejects_dotdot() {
@@ -374,8 +422,7 @@ mod tests {
     fn subpath_accepts_dot_slash() {
         assert!(validate_subpath("./skills").is_ok());
     }
-
-    // 鈹€鈹€ atomic_copy_dir 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+    // atomic_copy_dir
 
     #[test]
     fn atomic_copy_copies_contents() {
@@ -403,8 +450,7 @@ mod tests {
         atomic_copy_dir(src.path(), &dest).unwrap();
         assert_eq!(fs::read_to_string(dest.join("SKILL.md")).unwrap(), "new");
     }
-
-    // 鈹€鈹€ slugify 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+    // slugify
 
     #[test]
     fn slugify_basic() {
@@ -580,8 +626,7 @@ Body
             .iter()
             .any(|v| v == "totally_unknown"));
     }
-
-    // 鈹€鈹€ install_from_git symlink escape check 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+    // install_from_git symlink escape check
 
     #[allow(unused_variables)]
     #[test]
@@ -610,8 +655,7 @@ Body
         let canon = tmp.path().join(subpath).canonicalize().unwrap();
         assert!(canon.starts_with(&tmp_canonical));
     }
-
-    // 鈹€鈹€ frontmatter parsing 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+    // frontmatter parsing
 
     #[test]
     fn parse_frontmatter_new_format() {
@@ -658,8 +702,7 @@ trigger: knowledge
         assert!(meta.is_empty());
         assert!(body.contains("# Just a heading"));
     }
-
-    // 鈹€鈹€ load_skill with new fields 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+    // load_skill with new fields
 
     #[test]
     fn load_skill_new_format() {
@@ -865,8 +908,7 @@ Large instruction body."#,
         assert!(entry.all_allowed_tools_recognized());
         assert!(entry.unrecognized_tools().is_empty());
     }
-
-    // 鈹€鈹€ skills_for_scene 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+    // skills_for_scene
 
     fn make_skill(name: &str, legacy_trigger: Option<&str>, enabled: bool) -> SkillEntry {
         SkillEntry {
@@ -924,8 +966,7 @@ Large instruction body."#,
         let matched = skills_for_scene(&skills, AiScene::KnowledgeLookup, "");
         assert_eq!(matched.len(), 2); // a + c (universal)
     }
-
-    // 鈹€鈹€ BM25 scoring 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+    // BM25 scoring
 
     #[test]
     fn bm25_exact_trigger_scores_highest() {
@@ -978,7 +1019,7 @@ Large instruction body."#,
         }];
         let ranked = rank_skills_for_scene(&skills, AiScene::KnowledgeLookup);
         assert_eq!(ranked.len(), 1);
-        // Name contains "knowledge" 鈫?boosted score
+        // Name contains "knowledge", so the score is boosted
         assert!(ranked[0].score > 2.0);
     }
 
@@ -1005,11 +1046,10 @@ Large instruction body."#,
         }];
         let ranked = rank_skills_for_scene(&skills, AiScene::ResearchSynthesis);
         assert_eq!(ranked.len(), 1);
-        // Keywords match 鈫?boosted
+        // Keywords match, so the score is boosted
         assert!(ranked[0].score > 2.0);
     }
-
-    // 鈹€鈹€ Dependency management 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+    // Dependency management
 
     #[test]
     fn depends_from_string_metadata() {
@@ -1087,8 +1127,7 @@ Large instruction body."#,
         let missing = entry.missing_dependencies(&installed);
         assert_eq!(missing, vec!["missing-skill"]);
     }
-
-    // 鈹€鈹€ Migration 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+    // Migration
 
     #[test]
     fn migrate_legacy_skill_converts_format() {
@@ -1138,7 +1177,7 @@ description: Already new format
         .unwrap();
 
         let err = migrate_legacy_skill(&skill_dir.join("SKILL.md"), SkillScope::Vault).unwrap_err();
-        assert!(err.to_string().contains("新格式"));
+        assert!(err.to_string().contains("new format"));
     }
 
     #[test]
@@ -1158,7 +1197,249 @@ description: Already new format
         assert!(!is_legacy_format(&dir.path().join("new.md")));
     }
 
-    // 鈹€鈹€ Compatibility validation 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+    #[test]
+    fn scan_status_marks_skill_md_only_as_prompt_only_without_mcp_requirement() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = dir.path().join("vault");
+        let skill_dir = vault.join(".iris/skills/simple-skill");
+        fs::create_dir_all(&skill_dir).unwrap();
+        fs::write(
+            skill_dir.join("SKILL.md"),
+            r#"---
+name: simple-skill
+description: Simple prompt-only skill
+---
+
+# Simple Skill
+
+Use a concise review style."#,
+        )
+        .unwrap();
+
+        let entries = scan_all_with_status(&vault).unwrap();
+        let entry = entries
+            .iter()
+            .find(|entry| entry.skill.name == "simple-skill")
+            .unwrap();
+
+        assert_eq!(entry.kind, SkillManifestKind::LegacyPromptOnly);
+        assert_eq!(entry.runtime_kind, "not_applicable");
+        assert!(entry.runtime_ready);
+        assert!(entry.mcp_dependencies.is_empty());
+        assert!(!entry.workspace_declared);
+    }
+
+    #[test]
+    fn scan_status_reports_mcp_dependent_manifest_as_runtime_unavailable_without_profile() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = dir.path().join("vault");
+        let skill_dir = vault.join(".iris/skills/anysearch");
+        fs::create_dir_all(&skill_dir).unwrap();
+        fs::write(
+            skill_dir.join("SKILL.md"),
+            r#"---
+name: anysearch
+description: Search through AnySearch MCP
+iris_manifest: iris.skill.toml
+---
+
+# AnySearch"#,
+        )
+        .unwrap();
+        fs::write(
+            skill_dir.join("iris.skill.toml"),
+            r#"schema_version = "1"
+name = "anysearch"
+kind = "mcp_dependent"
+
+[capabilities]
+requires = ["web.search"]
+
+[[mcp.dependencies]]
+profile_id = "anysearch"
+required_capabilities = ["web.search"]
+required = true
+
+[degradation]
+when_runtime_missing = "partial"
+message = "Enable AnySearch MCP profile."
+"#,
+        )
+        .unwrap();
+
+        let entries = scan_all_with_status(&vault).unwrap();
+        let entry = entries
+            .iter()
+            .find(|entry| entry.skill.name == "anysearch")
+            .unwrap();
+
+        assert_eq!(entry.kind, SkillManifestKind::McpDependent);
+        assert_eq!(entry.runtime_kind, "mcp");
+        assert!(!entry.runtime_ready);
+        assert_eq!(entry.availability, "partial");
+        assert_eq!(entry.mcp_dependencies, vec!["anysearch".to_string()]);
+        assert_eq!(entry.activated_sections, vec!["skill_overlay".to_string()]);
+        assert_eq!(entry.blocked_sections, vec!["runtime".to_string()]);
+        assert!(entry
+            .degraded_reasons
+            .iter()
+            .any(|reason| reason.contains("AnySearch MCP profile")));
+    }
+
+    #[test]
+    fn scan_status_uses_typed_manifest_workspace_contract() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = dir.path().join("vault");
+        let skill_dir = vault.join(".iris/skills/workspace-manifest-skill");
+        fs::create_dir_all(skill_dir.join("resources")).unwrap();
+        fs::write(skill_dir.join("resources/seed.md"), "# Seed\n").unwrap();
+        fs::write(
+            skill_dir.join("SKILL.md"),
+            r#"---
+name: workspace-manifest-skill
+description: Uses typed workspace manifest
+iris_manifest: iris.skill.toml
+---
+
+# Workspace Manifest Skill"#,
+        )
+        .unwrap();
+        fs::write(
+            skill_dir.join("iris.skill.toml"),
+            r#"schema_version = "1"
+name = "workspace-manifest-skill"
+kind = "workspace"
+
+[workspace]
+declared = true
+folders = ["inputs", "outputs"]
+
+[[workspace.documents]]
+source = "resources/seed.md"
+target = "README.md"
+"#,
+        )
+        .unwrap();
+
+        let entries = scan_all_with_status(&vault).unwrap();
+        let entry = entries
+            .iter()
+            .find(|entry| entry.skill.name == "workspace-manifest-skill")
+            .unwrap();
+
+        assert_eq!(entry.kind, SkillManifestKind::Workspace);
+        assert!(entry.workspace_declared);
+        assert!(!entry.workspace_prepared);
+        assert_eq!(entry.availability, "partial");
+        assert_eq!(entry.generated_files_count, 0);
+        assert_eq!(
+            entry.workspace_missing_items,
+            vec![
+                "inputs/".to_string(),
+                "outputs/".to_string(),
+                "README.md".to_string(),
+            ]
+        );
+        assert_eq!(entry.activated_sections, vec!["skill_overlay".to_string()]);
+        assert_eq!(entry.blocked_sections, vec!["workspace".to_string()]);
+    }
+
+    #[test]
+    fn scan_status_blocks_prompt_section_with_missing_required_resource() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = dir.path().join("vault");
+        let skill_dir = vault.join(".iris/skills/section-resource-skill");
+        fs::create_dir_all(&skill_dir).unwrap();
+        fs::write(
+            skill_dir.join("SKILL.md"),
+            r#"---
+name: section-resource-skill
+description: Section requires a resource
+iris_manifest: iris.skill.toml
+---
+
+# Section Resource Skill"#,
+        )
+        .unwrap();
+        fs::write(
+            skill_dir.join("iris.skill.toml"),
+            r#"schema_version = "1"
+name = "section-resource-skill"
+kind = "resource"
+
+[prompt]
+default_sections = ["main"]
+
+[[prompt.sections]]
+id = "main"
+source = "SKILL.md"
+requires_resources = ["resources/missing.md"]
+"#,
+        )
+        .unwrap();
+
+        let entries = scan_all_with_status(&vault).unwrap();
+        let entry = entries
+            .iter()
+            .find(|entry| entry.skill.name == "section-resource-skill")
+            .unwrap();
+
+        assert!(entry.activated_sections.is_empty());
+        assert_eq!(entry.blocked_sections, vec!["main".to_string()]);
+        assert_eq!(entry.availability, "partial");
+        assert!(entry
+            .degraded_reasons
+            .iter()
+            .any(|reason| reason.contains("required resource `resources/missing.md`")));
+    }
+    #[test]
+    fn scan_status_uses_typed_manifest_required_resources() {
+        let dir = tempfile::tempdir().unwrap();
+        let vault = dir.path().join("vault");
+        let skill_dir = vault.join(".iris/skills/resource-manifest-skill");
+        fs::create_dir_all(&skill_dir).unwrap();
+        fs::write(
+            skill_dir.join("SKILL.md"),
+            r#"---
+name: resource-manifest-skill
+description: Uses typed resource manifest
+iris_manifest: iris.skill.toml
+---
+
+# Resource Manifest Skill"#,
+        )
+        .unwrap();
+        fs::write(
+            skill_dir.join("iris.skill.toml"),
+            r#"schema_version = "1"
+name = "resource-manifest-skill"
+kind = "resource"
+
+[resources]
+required = ["resources/missing.md"]
+optional = ["references/optional.md"]
+"#,
+        )
+        .unwrap();
+
+        let entries = scan_all_with_status(&vault).unwrap();
+        let entry = entries
+            .iter()
+            .find(|entry| entry.skill.name == "resource-manifest-skill")
+            .unwrap();
+
+        assert_eq!(entry.kind, SkillManifestKind::Resource);
+        assert_eq!(entry.availability, "partial");
+        assert!(entry
+            .degraded_reasons
+            .iter()
+            .any(|reason| reason.contains("required resource `resources/missing.md`")));
+        assert!(entry
+            .degraded_reasons
+            .iter()
+            .any(|reason| reason.contains("optional resource `references/optional.md`")));
+    }
+    // Compatibility validation
 
     #[test]
     fn load_skill_rejects_long_compatibility() {
@@ -1193,8 +1474,7 @@ description: Already new format
         let err = load_skill(&skill_dir.join("SKILL.md"), SkillScope::Vault).unwrap_err();
         assert!(err.to_string().contains("description exceeds 1024"));
     }
-
-    // 鈹€鈹€ Active skills regression 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+    // Active skills regression
 
     #[test]
     fn inject_into_prompt_only_includes_enabled_skills() {

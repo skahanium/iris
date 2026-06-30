@@ -160,4 +160,82 @@ describe("ToolConfirmDialog", () => {
     expect(document.body.textContent).toContain("确认进度");
     expect(document.body.textContent).toContain("2 / 3");
   });
+  it("renders MCP profile upsert with transport scope and capability boundary", async () => {
+    await act(async () => {
+      root.render(
+        <ToolConfirmDialog
+          request={{
+            request_id: "req-mcp-1",
+            tool_call_id: "tc-mcp-1",
+            tool_name: "mcp_runtime_profile_upsert",
+            arguments: {
+              id: "anysearch-local",
+              server_id: "anysearch",
+              display_name: "AnySearch Local",
+              enabled: true,
+              transport_config_json:
+                '{"type":"stdio","command":"anysearch-mcp"}',
+              env_bindings_json:
+                '{"ANYSEARCH_API_KEY":"credential://anysearch"}',
+            },
+            preview: {
+              operation: "mcp_profile_upsert",
+              profile_id: "anysearch-local",
+              server_id: "anysearch",
+              display_name: "AnySearch Local",
+              transport: "stdio",
+              vault_scope: "vault-abc",
+              credential_bindings: 1,
+              starts_process: false,
+              capability_boundary: "controlled_iris_capability_mapping",
+            },
+          }}
+          onConfirm={() => {}}
+          onClose={() => {}}
+        />,
+      );
+    });
+
+    expect(document.body.textContent).toContain("注册 MCP Profile");
+    expect(document.body.textContent).toContain("AnySearch Local");
+    expect(document.body.textContent).toContain("stdio");
+    expect(document.body.textContent).toContain("vault-abc");
+    expect(document.body.textContent).toContain("Iris capability mapping");
+    expect(document.body.textContent).toContain("不会启动本地进程");
+    expect(document.body.textContent).not.toContain("credential://anysearch");
+  });
+
+  it("renders live MCP tools discovery as a bounded local process", async () => {
+    await act(async () => {
+      root.render(
+        <ToolConfirmDialog
+          request={{
+            request_id: "req-mcp-2",
+            tool_call_id: "tc-mcp-2",
+            tool_name: "mcp_runtime_tools_list",
+            arguments: {
+              profile_id: "anysearch-local",
+              reason: "discover provider tools",
+            },
+            preview: {
+              operation: "mcp_tools_list",
+              profile_id: "anysearch-local",
+              starts_process: true,
+              process_kind: "bounded_stdio_mcp",
+              result_scope: "sanitized_tool_inventory",
+              reason: "discover provider tools",
+            },
+          }}
+          onConfirm={() => {}}
+          onClose={() => {}}
+        />,
+      );
+    });
+
+    expect(document.body.textContent).toContain("发现 MCP 工具");
+    expect(document.body.textContent).toContain("anysearch-local");
+    expect(document.body.textContent).toContain("会启动受控本地 MCP 进程");
+    expect(document.body.textContent).toContain("sanitized_tool_inventory");
+    expect(document.body.textContent).toContain("discover provider tools");
+  });
 });

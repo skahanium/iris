@@ -1,5 +1,5 @@
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 use hex;
 use sha2::{Digest, Sha256};
@@ -8,12 +8,18 @@ use crate::error::{AppError, AppResult};
 
 use super::compatibility_impl::blocked_capabilities_for_skill;
 use super::frontmatter_impl::parse_frontmatter;
+use super::manifest_impl::{load_manifest_for_skill_dir, SkillManifestKind};
 use super::model_impl::{VALIDATION_MISSING_FRONTMATTER, VALIDATION_NAME_MISMATCH};
 use super::path_impl::{global_skills_dir, load_config, skill_key, slugify, vault_skills_dir};
+use super::resources_impl::{
+    effective_optional_resources_for_skill, effective_required_resources_for_skill,
+    ALLOWED_RESOURCE_DIRS,
+};
 use super::validation_impl::{capability_preview_for_entry, confirmation_required_tools};
+use super::workspace_impl::effective_workspace_manifest_for_skill;
 use super::{
-    workspace_status_for_skill, SkillEntry, SkillListEntry, SkillMetadata, SkillScope,
-    SkillValidationStatus,
+    list_workspace_files, workspace_status_for_skill, SkillEntry, SkillListEntry, SkillMetadata,
+    SkillScope, SkillValidationStatus,
 };
 
 /// Scan global + vault skill directories.
@@ -213,6 +219,127 @@ pub fn skill_content_hash_for_path(path: &Path) -> AppResult<String> {
     Ok(hex::encode(hasher.finalize()))
 }
 
+fn prompt_section_status_for_manifest(
+    manifest: Option<&super::manifest_impl::IrisSkillManifest>,
+    runtime_ready: bool,
+    workspace_prepared: bool,
+    unavailable_resources: &[String],
+) -> (Vec<String>, Vec<String>) {
+    let Some(manifest) = manifest else {
+        return (vec!["skill_overlay".into()], Vec::new());
+    };
+    if manifest.prompt.sections.is_empty() {
+        let mut blocked = Vec::new();
+        if !runtime_ready {
+            blocked.push("runtime".into());
+        }
+        if !workspace_prepared {
+            blocked.push("workspace".into());
+        }
+        if !unavailable_resources.is_empty() {
+            blocked.push("resources".into());
+        }
+        return (vec!["skill_overlay".into()], blocked);
+    }
+
+    let selected: Vec<String> = if manifest.prompt.default_sections.is_empty() {
+        manifest
+            .prompt
+            .sections
+            .iter()
+            .map(|section| section.id.clone())
+            .collect()
+    } else {
+        manifest.prompt.default_sections.clone()
+    };
+    let mut activated = Vec::new();
+    let mut blocked = Vec::new();
+    for section_id in selected {
+        let Some(section) = manifest
+            .prompt
+            .sections
+            .iter()
+            .find(|section| section.id == section_id)
+        else {
+            continue;
+        };
+        if (section.requires_runtime && !runtime_ready)
+            || (section.requires_workspace && !workspace_prepared)
+            || section
+                .requires_resources
+                .iter()
+                .any(|resource| unavailable_resources.contains(resource))
+        {
+            blocked.push(section.id.clone());
+        } else {
+            activated.push(section.id.clone());
+        }
+    }
+    if activated.is_empty() && blocked.is_empty() {
+        activated.push("skill_overlay".into());
+    }
+    (activated, blocked)
+}
+
+fn skill_resource_available(skill_root: Option<&Path>, relative_path: &str) -> bool {
+    let Some(skill_root) = skill_root else {
+        return false;
+    };
+    if relative_path.trim().is_empty() || relative_path.contains("..") {
+        return false;
+    }
+    let rel = Path::new(relative_path.trim_start_matches('/'));
+    if rel.is_absolute()
+        || rel.components().any(|component| {
+            matches!(
+                component,
+                Component::ParentDir | Component::RootDir | Component::Prefix(_)
+            )
+        })
+    {
+        return false;
+    }
+    let Some(top) = rel.components().next().and_then(|c| c.as_os_str().to_str()) else {
+        return false;
+    };
+    if !ALLOWED_RESOURCE_DIRS.contains(&top) {
+        return false;
+    }
+    let Ok(root) = skill_root.canonicalize() else {
+        return false;
+    };
+    let Ok(candidate) = skill_root.join(rel).canonicalize() else {
+        return false;
+    };
+    candidate.starts_with(root) && candidate.is_file()
+}
+
+fn missing_resource_paths(skill: &SkillEntry, resources: Vec<String>) -> Vec<String> {
+    let skill_root = Path::new(&skill.file_path).parent();
+    resources
+        .into_iter()
+        .filter(|relative_path| !skill_resource_available(skill_root, relative_path))
+        .collect()
+}
+
+fn missing_section_resource_paths(
+    skill: &SkillEntry,
+    manifest: Option<&super::manifest_impl::IrisSkillManifest>,
+) -> Vec<String> {
+    let Some(manifest) = manifest else {
+        return Vec::new();
+    };
+    let resources = manifest
+        .prompt
+        .sections
+        .iter()
+        .flat_map(|section| section.requires_resources.iter().cloned())
+        .collect::<Vec<_>>();
+    let mut missing = missing_resource_paths(skill, resources);
+    missing.sort();
+    missing.dedup();
+    missing
+}
 /// Build the skills list with computed validation/dependency info.
 pub fn scan_all_with_status(vault: &Path) -> AppResult<Vec<SkillListEntry>> {
     let skills = scan_all(vault)?;
@@ -238,17 +365,102 @@ pub fn scan_all_with_status(vault: &Path) -> AppResult<Vec<SkillListEntry>> {
                         .collect::<Vec<_>>()
                 })
                 .unwrap_or_default();
+            let manifest_outcome = PathBuf::from(&skill.file_path)
+                .parent()
+                .and_then(|skill_dir| load_manifest_for_skill_dir(skill_dir, None).ok());
+            let manifest = manifest_outcome.as_ref().map(|outcome| &outcome.manifest);
+            let kind = manifest
+                .map(|manifest| manifest.kind)
+                .unwrap_or(SkillManifestKind::LegacyPromptOnly);
+            let mcp_dependencies = manifest
+                .map(|manifest| {
+                    manifest
+                        .mcp
+                        .dependencies
+                        .iter()
+                        .map(|dep| dep.profile_id.clone())
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+            let workspace_declared = effective_workspace_manifest_for_skill(&skill).is_some();
             let workspace_status = workspace_status_for_skill(vault, &skill);
+            let generated_files_count = list_workspace_files(vault, &skill.name, "")
+                .map(|files| files.len())
+                .unwrap_or(0);
+            let workspace_prepared = if workspace_declared {
+                workspace_status.workspace_ready
+            } else {
+                true
+            };
+            let runtime_kind = if mcp_dependencies.is_empty() {
+                "not_applicable"
+            } else {
+                "mcp"
+            }
+            .to_string();
+            let runtime_ready = mcp_dependencies.is_empty();
+            let missing_required_resources =
+                missing_resource_paths(&skill, effective_required_resources_for_skill(&skill));
+            let missing_optional_resources =
+                missing_resource_paths(&skill, effective_optional_resources_for_skill(&skill));
+            let missing_section_resources = missing_section_resource_paths(&skill, manifest);
+            let mut unavailable_section_resources = missing_required_resources.clone();
+            unavailable_section_resources.extend(missing_section_resources.iter().cloned());
+            unavailable_section_resources.sort();
+            unavailable_section_resources.dedup();
+            let mut degraded_reasons: Vec<String> = manifest_outcome
+                .as_ref()
+                .map(|outcome| outcome.warnings.clone())
+                .unwrap_or_default();
+            if !runtime_ready {
+                let message = manifest
+                    .and_then(|manifest| manifest.degradation.message.clone())
+                    .unwrap_or_else(|| "Required MCP profile is not enabled or healthy".into());
+                degraded_reasons.push(message);
+            }
+            if workspace_declared && !workspace_prepared {
+                degraded_reasons.push("Skill workspace is not prepared".into());
+            }
+            for resource in missing_required_resources
+                .iter()
+                .chain(missing_section_resources.iter())
+            {
+                degraded_reasons.push(format!("required resource `{resource}` is unavailable"));
+            }
+            for resource in &missing_optional_resources {
+                degraded_reasons.push(format!("optional resource `{resource}` is unavailable"));
+            }
+            let (activated_sections, blocked_sections) = prompt_section_status_for_manifest(
+                manifest,
+                runtime_ready,
+                workspace_prepared,
+                &unavailable_section_resources,
+            );
+            let runtime_status = if runtime_ready {
+                "ready"
+            } else {
+                "unavailable"
+            }
+            .to_string();
             let availability = if !skill.enabled {
                 "disabled"
             } else if matches!(validation, SkillValidationStatus::Invalid(_)) {
                 "unavailable"
-            } else if !unrecognized_tools.is_empty() || !missing_deps.is_empty() {
+            } else if !runtime_ready
+                || !workspace_prepared
+                || !missing_required_resources.is_empty()
+                || !missing_section_resources.is_empty()
+                || !unrecognized_tools.is_empty()
+                || !missing_deps.is_empty()
+            {
                 "partial"
             } else {
                 "available"
             }
             .to_string();
+            let activation_ready = skill.enabled
+                && !matches!(validation, SkillValidationStatus::Invalid(_))
+                && (runtime_ready || !matches!(kind, SkillManifestKind::McpDependent));
             SkillListEntry {
                 skill,
                 validation,
@@ -259,7 +471,19 @@ pub fn scan_all_with_status(vault: &Path) -> AppResult<Vec<SkillListEntry>> {
                 confirmation_required_tools,
                 content_hash,
                 capability_preview,
+                kind,
+                activation_ready,
+                runtime_kind,
+                runtime_ready,
+                runtime_status,
                 availability,
+                workspace_declared,
+                workspace_prepared,
+                generated_files_count,
+                activated_sections,
+                blocked_sections,
+                degraded_reasons,
+                mcp_dependencies,
                 last_matched_at: None,
                 last_used_at: None,
                 last_activation_score: None,

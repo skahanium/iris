@@ -348,6 +348,7 @@ export interface SkillActivationItemSummary {
   score: number;
   matchReason: string;
   injectedSections: string[];
+  degradedReasons: string[];
   requestedTools: string[];
   requestedCapabilities: SkillRuntimeCapability[];
   confirmationRequiredTools: string[];
@@ -1215,6 +1216,19 @@ export interface AiToolResult {
   result?: unknown;
 }
 
+export interface ToolExecutionOutcome {
+  status: "succeeded" | "failed" | "rejected" | string;
+  sideEffectCommitted: boolean;
+  toolName?: string | null;
+  resultSummary?: string | null;
+}
+
+export interface AssistantResumeOutcome {
+  status: "resumed" | "skipped" | "failed" | string;
+  failureClass?: string | null;
+  userMessage?: string | null;
+}
+
 /** `ai_send_message` IPC 返回值 */
 export interface AiSendMessageResult {
   request_id: string;
@@ -1234,6 +1248,12 @@ export interface AiSendMessageResult {
   verification_summary?: VerificationSummary | null;
   evidence_refresh_notice?: string | null;
   resumed?: boolean;
+  installed_skill?: string;
+  tool_confirmation_partial?: boolean;
+  resume_error_code?: string;
+  resume_error_message?: string;
+  toolExecutionOutcome?: ToolExecutionOutcome;
+  assistantResumeOutcome?: AssistantResumeOutcome;
 }
 
 // ─── Document Check Sub-types ────────────────────────────

@@ -102,6 +102,18 @@ function previewList(request: ToolConfirmRequest, key: string): string[] {
   if (!Array.isArray(value)) return [];
   return value.filter((item): item is string => typeof item === "string");
 }
+function previewValueText(
+  request: ToolConfirmRequest,
+  key: string,
+  fallback = "",
+): string {
+  const value = request.preview?.[key];
+  if (typeof value === "string" && value.trim()) return value.trim();
+  if (typeof value === "number" || typeof value === "boolean") {
+    return String(value);
+  }
+  return fallback;
+}
 
 function objectValue(value: unknown): Record<string, unknown> | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
@@ -212,6 +224,58 @@ function buildPermissionCard(request: ToolConfirmRequest): PermissionCard {
         Icon: Download,
       };
     }
+    case "mcp_runtime_profile_upsert": {
+      const profile =
+        previewValueText(request, "display_name") ||
+        previewValueText(request, "profile_id") ||
+        argText(request, ["display_name", "id"], "MCP Profile");
+      const transport = previewValueText(request, "transport", "unknown");
+      const scope = previewValueText(request, "vault_scope", "global");
+      const credentials = previewValueText(request, "credential_bindings", "0");
+      return {
+        action: "注册 MCP Profile",
+        target: profile,
+        detail: `transport: ${transport} · scope: ${scope} · credential bindings: ${credentials}`,
+        impact:
+          "不会启动本地进程；能力边界: Iris capability mapping。后续 MCP 调用仍需要单独确认。",
+        tone: "skill",
+        Icon: ShieldCheck,
+      };
+    }
+    case "mcp_runtime_tools_list":
+      return {
+        action: "发现 MCP 工具",
+        target:
+          previewValueText(request, "profile_id") ||
+          argText(request, ["profile_id"], "MCP Profile"),
+        detail: `${previewValueText(request, "process_kind", "bounded_stdio_mcp")} -> ${previewValueText(request, "result_scope", "sanitized_tool_inventory")}`,
+        impact: `会启动受控本地 MCP 进程，结果仅保存 ${previewValueText(request, "result_scope", "sanitized_tool_inventory")}。${previewValueText(request, "reason")}`,
+        tone: "skill",
+        Icon: Terminal,
+      };
+    case "mcp_runtime_health_check":
+      return {
+        action: "检查 MCP Profile",
+        target:
+          previewValueText(request, "profile_id") ||
+          argText(request, ["profile_id"], "MCP Profile"),
+        detail: previewValueText(request, "process_kind", "bounded_stdio_mcp"),
+        impact: "会启动受控本地 MCP 进程，只记录 metadata-only health status。",
+        tone: "skill",
+        Icon: Terminal,
+      };
+    case "mcp_runtime_capability_call":
+      return {
+        action: "调用 MCP 能力",
+        target:
+          previewValueText(request, "capability") ||
+          argText(request, ["capability"], "Iris capability"),
+        detail: previewValueText(request, "process_kind", "bounded_stdio_mcp"),
+        impact:
+          "会通过 Iris capability mapping 启动受控 MCP provider，并只把 model-safe tool result 带回对话。",
+        tone: "skill",
+        Icon: Terminal,
+      };
     case "skills_install":
       return {
         action: "安装 Skill",
