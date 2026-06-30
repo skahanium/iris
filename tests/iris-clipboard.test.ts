@@ -8,6 +8,7 @@ import {
   writeClipboardText,
   copyTextFieldSelection,
   cutTextFieldSelection,
+  normalizePastedEditorHtml,
   pasteIntoEditor,
   pasteIntoTextField,
 } from "@/lib/iris-clipboard";
@@ -50,6 +51,57 @@ describe("iris-clipboard", () => {
   it("pasteIntoTextField inserts clipboard at selection", async () => {
     const result = await pasteIntoTextField("hi", { start: 2, end: 2 });
     expect(result).toEqual({ value: "hipasted", caret: 8 });
+  });
+
+  it("normalizes pasted web html spacing after bold text", () => {
+    const html = "<p><strong>标题：</strong>&nbsp;&nbsp;&nbsp;\t&nbsp;正文</p>";
+
+    expect(normalizePastedEditorHtml(html)).toBe(
+      "<p><strong>标题：</strong> 正文</p>",
+    );
+  });
+
+  it("keeps code and pre spacing intact while normalizing prose", () => {
+    const html =
+      "<p><strong>标题：</strong>&nbsp;&nbsp;正文</p><pre>a&nbsp;&nbsp;b</pre><code>x&nbsp;&nbsp;y</code>";
+
+    expect(normalizePastedEditorHtml(html)).toBe(
+      "<p><strong>标题：</strong> 正文</p><pre>a&nbsp;&nbsp;b</pre><code>x&nbsp;&nbsp;y</code>",
+    );
+  });
+
+  it("collapses non-code web html spacing during editor paste", () => {
+    const editor = new Editor({
+      extensions: [StarterKit],
+      content: "<p>前</p>",
+      editorProps: {
+        transformPastedHTML: normalizePastedEditorHtml,
+      },
+    });
+    editor.commands.setTextSelection(editor.state.doc.content.size - 1);
+
+    try {
+      const event = new Event("paste", { bubbles: true, cancelable: true });
+      Object.defineProperty(event, "clipboardData", {
+        value: {
+          types: ["text/html", "text/plain"],
+          getData: (type: string) => {
+            if (type === "text/html") {
+              return "<p><strong>标题：</strong>&nbsp;&nbsp;&nbsp;&nbsp;正文</p>";
+            }
+            if (type === "text/plain") return "标题：    正文";
+            return "";
+          },
+        },
+      });
+
+      editor.view.dom.dispatchEvent(event);
+
+      expect(editor.state.doc.textContent).toBe("前标题： 正文");
+      expect(editor.state.doc.textContent).not.toContain("\u00a0\u00a0");
+    } finally {
+      editor.destroy();
+    }
   });
 
   it("pasteIntoEditor ingests markdown with tight bold labels", async () => {

@@ -50,6 +50,7 @@ import {
   ingestMarkdownForEditorAsync,
 } from "@/lib/editor-ingest-async";
 import { EDITOR_PARSE_OPTIONS } from "@/lib/editor-parse-options";
+import { normalizePastedEditorHtml } from "@/lib/iris-clipboard";
 
 import type { MarkdownSyntaxFragment } from "@/lib/markdown-contract/types";
 
@@ -583,6 +584,8 @@ function TipTapEditorInner({
     },
 
     editorProps: {
+      transformPastedHTML: normalizePastedEditorHtml,
+
       attributes: {
         class: "iris-markdown-content focus:outline-none",
         "data-prose-surface": "editor",

@@ -9,6 +9,47 @@ export class IrisClipboardError extends Error {
   }
 }
 
+const PASTE_SPACE_PATTERN = /[ \t\u00a0]+/gu;
+const PASTE_SPACE_PRESERVE_TAGS = new Set([
+  "CODE",
+  "PRE",
+  "SCRIPT",
+  "STYLE",
+  "TEXTAREA",
+]);
+
+function shouldPreservePasteSpacing(node: Node): boolean {
+  let current = node.parentElement;
+  while (current) {
+    if (PASTE_SPACE_PRESERVE_TAGS.has(current.tagName)) return true;
+    current = current.parentElement;
+  }
+  return false;
+}
+
+function normalizePasteTextNodes(node: Node): void {
+  for (const child of Array.from(node.childNodes)) {
+    if (child.nodeType === Node.TEXT_NODE) {
+      if (!shouldPreservePasteSpacing(child)) {
+        child.textContent = (child.textContent ?? "").replace(
+          PASTE_SPACE_PATTERN,
+          " ",
+        );
+      }
+      continue;
+    }
+    normalizePasteTextNodes(child);
+  }
+}
+
+export function normalizePastedEditorHtml(html: string): string {
+  if (!html || typeof DOMParser === "undefined") return html;
+
+  const doc = new DOMParser().parseFromString(html, "text/html");
+  normalizePasteTextNodes(doc.body);
+  return doc.body.innerHTML;
+}
+
 /** 读取系统剪贴板纯文本 */
 export async function readClipboardText(): Promise<string> {
   try {
