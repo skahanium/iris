@@ -163,9 +163,7 @@ impl AiRuntimeState {
         if let Ok(mut research) = self.active_research.lock() {
             research.clear();
         }
-        if let Ok(mut cache) = self.context_cache.lock() {
-            cache.clear();
-        }
+        crate::llm::safe_lock(&self.context_cache).clear();
         self.vector_index_ready
             .store(false, std::sync::atomic::Ordering::Relaxed);
         tracing::info!(
@@ -356,9 +354,7 @@ impl AppState {
 
     /// Clear context assembly cache (called on .md file changes to prevent stale results).
     pub fn clear_context_cache(&self) {
-        if let Ok(mut cache) = self.ai.context_cache.lock() {
-            cache.clear();
-        }
+        crate::llm::safe_lock(&self.ai.context_cache).clear();
     }
 
     pub fn data_dir(&self) -> &PathBuf {

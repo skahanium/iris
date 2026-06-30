@@ -5,7 +5,6 @@
 
 use rusqlite::Connection;
 
-use crate::ai_runtime::packet_cache::PacketCache;
 use crate::ai_runtime::retrieval_scope::RetrievalScope;
 use crate::ai_runtime::ContextPacket;
 use crate::error::AppResult;
@@ -114,24 +113,6 @@ pub fn hybrid_retrieve(
     request: &RetrievalRequest,
 ) -> AppResult<Vec<ContextPacket>> {
     Ok(hybrid_retrieve_with_diagnostics(conn, request)?.packets)
-}
-
-/// 计算检索请求的稳定哈希值，用于缓存键。
-///
-/// 基于 `query`、`layers` 开关和 `max_results` 生成，
-/// Run hybrid retrieval with an in-memory packet cache keyed by [`query_hash`].
-pub fn hybrid_retrieve_cached(
-    conn: &Connection,
-    request: &RetrievalRequest,
-    cache: &mut PacketCache,
-) -> AppResult<Vec<ContextPacket>> {
-    let hash = query_hash(request);
-    if let Some(cached) = cache.get(&hash) {
-        return Ok(cached);
-    }
-    let packets = hybrid_retrieve(conn, request)?;
-    cache.insert(hash, packets.clone());
-    Ok(packets)
 }
 
 fn truncate(s: &str, max_chars: usize) -> String {

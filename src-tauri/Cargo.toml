@@ -99,10 +99,6 @@ path = "tests/cas/ref_counter_test.rs"
 name = "cas_garbage_collector"
 path = "tests/cas/garbage_collector_test.rs"
 
-[target.'cfg(target_os = "macos")'.dependencies]
-objc2 = "0.6.4"
-objc2-app-kit = "0.3.2"
-
 [profile.release]
 opt-level = 3
 lto = true

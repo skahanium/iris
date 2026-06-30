@@ -11,6 +11,7 @@ pub struct ContextAssemblyCacheKey {
     scope_json: String,
     strategy: String,
     input_budget: u32,
+    prompt_profile_fingerprint: String,
 }
 
 impl ContextAssemblyCacheKey {
@@ -21,6 +22,7 @@ impl ContextAssemblyCacheKey {
         scope_json: &str,
         strategy: &str,
         input_budget: u32,
+        prompt_profile_fingerprint: &str,
     ) -> Self {
         Self {
             scene,
@@ -29,6 +31,7 @@ impl ContextAssemblyCacheKey {
             scope_json: scope_json.to_string(),
             strategy: strategy.to_string(),
             input_budget,
+            prompt_profile_fingerprint: prompt_profile_fingerprint.to_string(),
         }
     }
 }

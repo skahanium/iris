@@ -155,7 +155,7 @@ fn build_anthropic_messages_body_inner(request: &GatewayRequest) -> serde_json::
     let mut messages = Vec::new();
     for message in &request.messages {
         match message.role {
-            MessageRole::System => system_parts.push(message.content.as_str().to_string()),
+            MessageRole::System => system_parts.push(message.content.text_content()),
             MessageRole::Assistant => messages.push(serde_json::json!({
                 "role": "assistant",
                 "content": content_to_anthropic_json(&message.content),

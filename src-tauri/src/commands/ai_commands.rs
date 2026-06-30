@@ -68,6 +68,14 @@ fn capability_slot_wire(slot: crate::ai_types::CapabilitySlot) -> &'static str {
     }
 }
 
+fn prompt_profile_fingerprint(
+    profile: &crate::ai_runtime::prompt_profile::PromptProfile,
+) -> String {
+    let raw = serde_json::to_string(profile).unwrap_or_default();
+    let digest = Sha256::digest(raw.as_bytes());
+    hex::encode(&digest[..12])
+}
+
 fn vault_scope_hash(vault: &Path) -> String {
     let normalized = vault
         .canonicalize()
@@ -406,6 +414,9 @@ fn build_context_packets_cached(
     crate::ai_runtime::ContextStatus,
 )> {
     let scope_json = serde_json::to_string(user_scope).unwrap_or_default();
+    let profile =
+        crate::ai_runtime::prompt_profile::PromptProfile::load(&state.db).unwrap_or_default();
+    let profile_fingerprint = prompt_profile_fingerprint(&profile);
     let cache_key = ContextAssemblyCacheKey::new(
         scene,
         note_path,
@@ -413,11 +424,10 @@ fn build_context_packets_cached(
         &scope_json,
         &format!("{:?}", build_opts.strategy),
         build_opts.input_budget as u32,
+        &profile_fingerprint,
     );
-    if let Ok(mut cache) = state.ai.context_cache.lock() {
-        if let Some(cached) = cache.get(&cache_key) {
-            return Ok(cached);
-        }
+    if let Some(cached) = crate::llm::safe_lock(&state.ai.context_cache).get(&cache_key) {
+        return Ok(cached);
     }
 
     let built = state.db.with_conn(|conn| {
@@ -426,9 +436,11 @@ fn build_context_packets_cached(
         )
     })?;
 
-    if let Ok(mut cache) = state.ai.context_cache.lock() {
-        cache.insert(cache_key, built.0.clone(), built.1.clone());
-    }
+    crate::llm::safe_lock(&state.ai.context_cache).insert(
+        cache_key,
+        built.0.clone(),
+        built.1.clone(),
+    );
     Ok(built)
 }
 
@@ -1517,8 +1529,11 @@ pub async fn tool_confirm(
                 matches!(m.role, crate::ai_runtime::model_gateway::MessageRole::Tool)
                     && m.tool_call_id.as_deref() == Some(tool_call_id.as_str())
             }) {
-                if let Ok(json) = serde_json::from_str::<serde_json::Value>(msg.content.as_str()) {
-                    installed_skill = json.get("name").and_then(|n| n.as_str()).map(String::from);
+                if let Some(content) = msg.content.as_str() {
+                    if let Ok(json) = serde_json::from_str::<serde_json::Value>(content) {
+                        installed_skill =
+                            json.get("name").and_then(|n| n.as_str()).map(String::from);
+                    }
                 }
             }
         }
@@ -1726,9 +1741,7 @@ pub async fn knowledge_reindex(
         }
         Ok::<_, crate::error::AppError>(())
     })?;
-    if let Ok(mut cache) = state.ai.context_cache.lock() {
-        cache.clear();
-    }
+    crate::llm::safe_lock(&state.ai.context_cache).clear();
 
     Ok(stats)
 }
@@ -2244,7 +2257,9 @@ pub async fn prompt_profile_set(
     state: State<'_, Arc<AppState>>,
     profile: crate::ai_runtime::prompt_profile::PromptProfile,
 ) -> AppResult<()> {
-    crate::ai_runtime::prompt_profile::PromptProfile::save(&state.db, &profile)
+    crate::ai_runtime::prompt_profile::PromptProfile::save(&state.db, &profile)?;
+    crate::llm::safe_lock(&state.ai.context_cache).clear();
+    Ok(())
 }
 
 /// List built-in prompt profile presets.
@@ -2288,9 +2303,7 @@ pub async fn ai_cache_clear(state: State<'_, Arc<AppState>>) -> AppResult<serde_
     })?;
     let web_pages = crate::llm::fetch_web_page::clear_web_cache(&state.db).unwrap_or(0);
     let searches = crate::llm::search_web::cleanup_expired_search_cache(&state.db).unwrap_or(0);
-    if let Ok(mut cache) = state.ai.context_cache.lock() {
-        cache.clear();
-    }
+    crate::llm::safe_lock(&state.ai.context_cache).clear();
     Ok(serde_json::json!({
         "sessions_deleted": sessions,
         "aborted_tasks": aborted_tasks,

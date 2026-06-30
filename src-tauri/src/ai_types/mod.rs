@@ -1309,23 +1309,34 @@ impl From<&str> for MessageContent {
 }
 
 impl MessageContent {
-    /// Extract the text content, panics if this is a Parts variant (for migration safety).
-    pub fn as_str(&self) -> &str {
+    /// Borrow plain text content when this message is a text-only payload.
+    pub fn as_str(&self) -> Option<&str> {
         match self {
-            MessageContent::Text(s) => s.as_str(),
-            MessageContent::Parts(_) => {
-                panic!("called as_str() on multimodal Parts content")
-            }
+            MessageContent::Text(s) => Some(s.as_str()),
+            MessageContent::Parts(_) => None,
         }
     }
 
-    /// Mutable access to text content.
-    pub fn as_mut_str(&mut self) -> &mut String {
+    /// Mutable access to plain text content.
+    pub fn as_mut_str(&mut self) -> Option<&mut String> {
         match self {
-            MessageContent::Text(s) => s,
-            MessageContent::Parts(_) => {
-                panic!("called as_mut_str() on multimodal Parts content")
-            }
+            MessageContent::Text(s) => Some(s),
+            MessageContent::Parts(_) => None,
+        }
+    }
+
+    /// Return the model-visible text, joining text parts from multimodal content.
+    pub fn text_content(&self) -> String {
+        match self {
+            MessageContent::Text(s) => s.clone(),
+            MessageContent::Parts(parts) => parts
+                .iter()
+                .filter_map(|part| match part {
+                    ContentPart::Text { text } if !text.is_empty() => Some(text.as_str()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+                .join("\n"),
         }
     }
 
@@ -1874,5 +1885,39 @@ mod multimodal_message_content_tests {
             }
             _ => panic!("round-trip should preserve Parts"),
         }
+    }
+
+    #[test]
+    fn multimodal_parts_do_not_expose_panic_text_borrow() {
+        let content = MessageContent::Parts(vec![
+            ContentPart::Text {
+                text: "第一段".to_string(),
+            },
+            ContentPart::ImageUrl {
+                image_url: ImageUrlPayload {
+                    url: "data:image/png;base64,iVBORw0KGgo=".to_string(),
+                    detail: None,
+                },
+            },
+            ContentPart::Text {
+                text: "第二段".to_string(),
+            },
+        ]);
+
+        assert!(content.as_str().is_none());
+        assert_eq!(content.text_content(), "第一段\n第二段");
+    }
+
+    #[test]
+    fn text_content_still_allows_mutable_text_access() {
+        let mut content = MessageContent::Text("hello".to_string());
+
+        content
+            .as_mut_str()
+            .expect("text content")
+            .push_str(" world");
+
+        assert_eq!(content.as_str(), Some("hello world"));
+        assert_eq!(content.text_content(), "hello world");
     }
 }

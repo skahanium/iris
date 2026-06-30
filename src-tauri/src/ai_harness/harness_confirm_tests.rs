@@ -44,10 +44,10 @@ mod tests {
                 role: MessageRole::Assistant,
                 content: "partial".into(),
                 tool_call_id: None,
-                tool_calls: None,
+                tool_calls: Some(vec![ToolCall::new("tc1", "fetch_web_page", "{}")]),
                 ..Default::default()
             }],
-            tool_calls: vec![],
+            tool_calls: vec![ToolCall::new("tc1", "fetch_web_page", "{}")],
             tool_results: vec![serde_json::json!({
                 "tool_call_id": "tc1",
                 "status": "pending_confirmation",
@@ -87,7 +87,11 @@ mod tests {
         assert_eq!(api[0]["tool_calls"][0]["id"], "tc1");
         assert_eq!(cp.messages.len(), 2);
         assert!(matches!(cp.messages[1].role, MessageRole::Tool));
-        assert!(cp.messages[1].content.as_str().contains("rejected"));
+        assert!(cp.messages[1]
+            .content
+            .as_str()
+            .expect("tool rejection is text")
+            .contains("rejected"));
         assert!(cp
             .tool_results
             .iter()
@@ -107,7 +111,7 @@ mod tests {
 
         let entries = crate::ai_runtime::tool_audit::query_by_request(&state.db, rid).unwrap();
         assert_eq!(entries.len(), 1);
-        assert_eq!(entries[0].tool_name, "tool_confirmation");
+        assert_eq!(entries[0].tool_name, "fetch_web_page");
         assert!(!entries[0].success);
         assert!(entries[0]
             .result_summary

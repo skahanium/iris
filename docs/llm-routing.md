@@ -27,12 +27,12 @@
 ## 长上下文
 
 - 模型能力见 Rust `llm/model_catalog.rs`（DeepSeek V4 等为 1M `context_window`）。
-- `resolve_for_scene` 计算 `input_budget` / `output_budget`；`packet_builder` 按预算缩放 Top-K。
+- `resolve_for_task_policy` / `resolve_capability_route` 计算 `input_budget` / `output_budget`；`packet_builder` 按预算缩放 Top-K。
 - `long_context` 策略会优先注入当前笔记全文，检索包作补充。
 
 ## DeepSeek 前缀缓存纪律
 
-1. 消息分层：静态人设 → 用户规则 → 证据包 → 会话历史（可变内容在历史尾部）。
+1. 消息分层：静态人设与规则 → 动态环境 → Skills → 证据包 → 会话历史（可变内容在稳定层之后）。
 2. 会话内不重写已发送的稳定层；新证据以追加消息进入历史。
 3. 同会话保持 `model`、`temperature`、思考模式一致；勿混用 `deepseek-reasoner` 与 Flash 非思考。
 4. 命中率：`usage.prompt_cache_hit_tokens` / `prompt_cache_miss_tokens` 写入 `settings.llm_usage_last`，底栏 LLM 指示器 hover 可查看。

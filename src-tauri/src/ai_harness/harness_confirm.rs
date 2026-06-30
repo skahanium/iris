@@ -264,7 +264,7 @@ fn latest_user_message(messages: &[LlmMessage]) -> String {
         .iter()
         .rev()
         .find(|message| matches!(message.role, MessageRole::User))
-        .map(|message| message.content.as_str().to_string())
+        .map(|message| message.content.text_content())
         .unwrap_or_default()
 }
 
@@ -427,7 +427,7 @@ pub fn append_rejected_tool_to_checkpoint(
         "message": "用户已拒绝执行此工具，请在不使用该工具的前提下继续回答。",
     });
     let content_str = serde_json::to_string(&content).unwrap_or_default();
-    append_tool_message_to_checkpoint(
+    let cp = append_tool_message_to_checkpoint(
         &state.db,
         request_id,
         tool_call_id,
@@ -437,19 +437,35 @@ pub fn append_rejected_tool_to_checkpoint(
         None,
         None,
     )?;
+    let tool_name = checkpoint_tool_name(&cp, tool_call_id).unwrap_or("unknown_tool");
     let _ = crate::ai_runtime::tool_audit::record_audit(
         &state.db,
         &crate::ai_runtime::tool_audit::ToolAuditInput {
             request_id,
-            harness_round: 0,
-            tool_name: "tool_confirmation",
+            harness_round: cp.round,
+            tool_name,
             arguments: &serde_json::json!({ "tool_call_id": tool_call_id }),
             result: &serde_json::json!({ "error": "rejected" }),
             success: false,
             duration_ms: 0,
-            scene: None,
-            subagent_depth: 0,
+            scene: Some(cp.meta.scene.as_str()),
+            subagent_depth: cp.meta.depth,
         },
     );
     Ok(())
+}
+
+fn checkpoint_tool_name<'a>(cp: &'a HarnessCheckpoint, tool_call_id: &str) -> Option<&'a str> {
+    cp.tool_calls
+        .iter()
+        .find(|call| call.id == tool_call_id)
+        .map(|call| call.function.name.as_str())
+        .or_else(|| {
+            cp.messages
+                .iter()
+                .filter_map(|message| message.tool_calls.as_ref())
+                .flat_map(|calls| calls.iter())
+                .find(|call| call.id == tool_call_id)
+                .map(|call| call.function.name.as_str())
+        })
 }

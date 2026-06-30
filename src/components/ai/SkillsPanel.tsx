@@ -46,6 +46,8 @@ interface CapabilityGroup {
   tone: "calm" | "info" | "warn" | "danger";
 }
 
+const SKILL_PERMISSION_SUMMARY_LABEL = "权限摘要";
+
 const CRITICAL_CAPABILITIES = new Set([
   "skill.execute_script_sandboxed",
   "skill.install_dependency",
@@ -465,6 +467,7 @@ export function SkillsPanelBody({
         sections={sections}
         capabilityGroups={groups}
         capabilityToneClass={capabilityToneClass}
+        capabilitySummaryLabel={SKILL_PERMISSION_SUMMARY_LABEL}
         criticalBlocked={criticalBlocked}
         compatibilityWarning={compatibilityWarning}
         workspacePending={workspacePending}

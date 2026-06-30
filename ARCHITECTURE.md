@@ -120,7 +120,7 @@
   → WebView: 搜索结果列表，点击跳转到对应笔记
 ```
 
-### 4. Agent Task Runtime 完整管线（v1.1.0）
+### 4. Agent Task Runtime 完整管线（v1.2.1）
 
 ```
 用户提问 → AiComposer
@@ -251,7 +251,7 @@ Tauri 的命令式 IPC 基于 JSON 序列化。所有 Rust 函数通过 `#[tauri
 
 面板（`SkillsPanel`）与 Harness Agent 共用 `SkillInstallService`：IPC `skills_*` 与 Agent 工具 `skills_list` / `skills_install` / `skills_uninstall` / `skills_toggle` / `skills_read_resource` 调用同一 Rust 层。Registry 安装走 `skill_registry`（SkillHub → `api.skillhub.tencent.com`，`SkillRegistryAdapter` 可扩展注册表），变更操作经 `ToolConfirmDialog` 确认；成功后写入 `skill_install_sources`、刷新 `skill_activation_index`（关键词 + 描述 embedding）、emit `skills:changed` 刷新 UI。
 
-### AI Runtime v1.1.0 模块边界
+### AI Runtime v1.2.1 模块边界
 
 `src-tauri/src/ai_runtime/` 通过 facade 模块保持旧 public import path 可用，同时把大实现迁到 `*_impl.rs`。当前兼容入口：
 
@@ -418,7 +418,7 @@ CREATE TABLE regulation_index (…);
 CREATE TABLE genre_templates (…);
 
 -- 其余：knowledge_deposits、user_profile、ai_traces、eval_results、web_page_cache、search_cache、cas_refs
--- 完整 schema 见 src-tauri/migrations/（共 25 个 migration：001_core 到 025_knowledge_scalar_backfill）
+-- 完整 schema 见 src-tauri/migrations/（共 41 组 migration：001_core 到 041_mcp_transport_https_contract，均含 up/down 脚本）
 ```
 
 ---
@@ -562,7 +562,7 @@ Notion 式 Block 编辑器牺牲了 Markdown 的纯文本可移植性。Iris 的
 
 ## 性能标准
 
-| 指标        | v1.1.0 目标                      | 当前状态                        |
+| 指标        | v1.2.1 目标                      | 当前状态                        |
 | ----------- | -------------------------------- | ------------------------------- |
 | 冷启动时间  | < 3 秒（10000 篇笔记）           | 待基准测试                      |
 | 热启动时间  | < 400ms                          | 达标                            |
@@ -578,7 +578,7 @@ Notion 式 Block 编辑器牺牲了 Markdown 的纯文本可移植性。Iris 的
 
 ```sql
 PRAGMA journal_mode=WAL;  PRAGMA synchronous=NORMAL;
-PRAGMA cache_size=-8000;  PRAGMA mmap_size=268435456;
+PRAGMA cache_size=-32000; PRAGMA mmap_size=268435456;
 PRAGMA temp_store=MEMORY; PRAGMA busy_timeout=5000;
 ```
 
@@ -586,7 +586,7 @@ PRAGMA temp_store=MEMORY; PRAGMA busy_timeout=5000;
 
 ```toml
 # Cargo.toml [profile.release]
-opt-level = "s"; lto = true; codegen-units = 1; strip = true; panic = "abort"
+opt-level = 3; lto = true; codegen-units = 1; strip = true; panic = "abort"
 ```
 
 ---

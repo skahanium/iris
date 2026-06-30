@@ -21,6 +21,7 @@ fn context_cache_hits_and_expires_by_ttl() {
         "{}",
         "balanced",
         4096,
+        "profile-a",
     );
 
     cache.insert(key.clone(), vec![], status(12));
@@ -33,9 +34,9 @@ fn context_cache_hits_and_expires_by_ttl() {
 #[test]
 fn context_cache_evicts_lru_entry() {
     let mut cache = ContextAssemblyCache::new(2, 60);
-    let a = ContextAssemblyCacheKey::new(AiScene::KnowledgeLookup, None, "a", "{}", "fast", 1);
-    let b = ContextAssemblyCacheKey::new(AiScene::KnowledgeLookup, None, "b", "{}", "fast", 1);
-    let c = ContextAssemblyCacheKey::new(AiScene::KnowledgeLookup, None, "c", "{}", "fast", 1);
+    let a = ContextAssemblyCacheKey::new(AiScene::KnowledgeLookup, None, "a", "{}", "fast", 1, "p");
+    let b = ContextAssemblyCacheKey::new(AiScene::KnowledgeLookup, None, "b", "{}", "fast", 1, "p");
+    let c = ContextAssemblyCacheKey::new(AiScene::KnowledgeLookup, None, "c", "{}", "fast", 1, "p");
 
     cache.insert(a.clone(), vec![], status(1));
     cache.insert(b.clone(), vec![], status(2));
@@ -45,4 +46,21 @@ fn context_cache_evicts_lru_entry() {
     assert!(cache.get(&a).is_some());
     assert!(cache.get(&b).is_none());
     assert!(cache.get(&c).is_some());
+}
+
+#[test]
+fn context_cache_key_separates_prompt_profiles() {
+    let mut cache = ContextAssemblyCache::new(2, 60);
+    let default_profile =
+        ContextAssemblyCacheKey::new(AiScene::KnowledgeLookup, None, "q", "{}", "fast", 1, "a");
+    let strict_profile =
+        ContextAssemblyCacheKey::new(AiScene::KnowledgeLookup, None, "q", "{}", "fast", 1, "b");
+
+    cache.insert(default_profile.clone(), vec![], status(11));
+
+    assert_eq!(
+        cache.get(&default_profile).unwrap().1.total_tokens_estimate,
+        11
+    );
+    assert!(cache.get(&strict_profile).is_none());
 }

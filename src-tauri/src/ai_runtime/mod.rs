@@ -1,11 +1,11 @@
-//! Iris Agent Task Runtime 閳?task policy, context planning, tool permission, trace.
+//! Iris Agent Task Runtime: task policy, context planning, tool permission, trace.
 //!
 //! Shared data types live in [`crate::ai_types`] and are re-exported here
 //! for backward compatibility.
 
 pub use crate::ai_types::*;
 
-// 閳光偓閳光偓閳光偓 Modules that remain in ai_runtime (coordination layer) 閳光偓
+// Modules that remain in ai_runtime (coordination layer).
 pub mod agent_permissions;
 pub mod agent_task;
 pub mod agent_task_policy;
@@ -25,7 +25,6 @@ pub mod mcp_runtime_registry;
 pub mod model_gateway;
 pub mod model_registry;
 pub mod packet_builder;
-pub mod packet_cache;
 pub mod permission_decision;
 pub mod persona_resolver;
 pub mod prompt_builder;

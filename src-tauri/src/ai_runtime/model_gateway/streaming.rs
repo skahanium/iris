@@ -244,6 +244,56 @@ fn normalize_tool_arguments(input_json: String) -> String {
         .unwrap_or(input_json)
 }
 
+fn sanitize_stream_error_message(message: &str) -> String {
+    let redacted = crate::ai_runtime::trace::redact_classified_leaks(message);
+    if let Some((prefix, _)) = redacted.split_once("）：") {
+        return format!("{prefix}）");
+    }
+    const MAX_ERROR_CHARS: usize = 200;
+    if redacted.chars().count() <= MAX_ERROR_CHARS {
+        return redacted;
+    }
+    redacted.chars().take(MAX_ERROR_CHARS).collect::<String>() + "…"
+}
+
+fn stream_error_event(
+    request_id: &str,
+    message: &str,
+    classified: bool,
+    surface: StreamSurface,
+) -> StreamEvent {
+    StreamEvent {
+        request_id: request_id.to_string(),
+        event_type: StreamEventType::Error,
+        data: StreamEventData::Error {
+            message: sanitize_stream_error_message(message),
+        },
+        surface,
+        classified,
+    }
+}
+
+fn finish_stream_with_error(
+    app_handle: &AppHandle,
+    request_id: &str,
+    message: impl Into<String>,
+    classified: bool,
+    surface: StreamSurface,
+    token_index: u32,
+) -> AppError {
+    let message = message.into();
+    let event = stream_error_event(request_id, &message, classified, surface);
+    if let Err(err) = emit_stream_event(app_handle, &event, token_index) {
+        tracing::warn!(
+            request_id = %request_id,
+            error = %err,
+            "failed to emit llm:error for streaming failure"
+        );
+    }
+    clear_abort(request_id);
+    AppError::msg(sanitize_stream_error_message(&message))
+}
+
 /// Send a streaming request and emit events to frontend.
 pub async fn send_streaming_request(
     app_handle: &AppHandle,
@@ -283,17 +333,42 @@ pub async fn send_streaming_request_with_meta(
     surface: StreamSurface,
 ) -> AppResult<GatewayResponse> {
     if is_abort_requested(request_id) {
-        clear_abort(request_id);
-        return Err(AppError::msg("request aborted"));
+        return Err(finish_stream_with_error(
+            app_handle,
+            request_id,
+            "request aborted",
+            classified,
+            surface,
+            0,
+        ));
     }
 
     let endpoint_family = request.provider.endpoint_family;
     let url = streaming_endpoint_url(request.provider.base_url.as_str(), endpoint_family);
 
-    let mut body = build_llm_api_body(&request)?;
+    let mut body = build_llm_api_body(&request).map_err(|e| {
+        finish_stream_with_error(
+            app_handle,
+            request_id,
+            e.to_string(),
+            classified,
+            surface,
+            0,
+        )
+    })?;
     body["stream"] = serde_json::json!(true);
 
-    let streaming_client = crate::network::cert_pinning::create_streaming_https_client()?;
+    let streaming_client =
+        crate::network::cert_pinning::create_streaming_https_client().map_err(|e| {
+            finish_stream_with_error(
+                app_handle,
+                request_id,
+                e.to_string(),
+                classified,
+                surface,
+                0,
+            )
+        })?;
     let mut req_builder = streaming_client
         .post(&url)
         .header("Content-Type", "application/json");
@@ -302,16 +377,28 @@ pub async fn send_streaming_request_with_meta(
         req_builder = apply_streaming_auth_headers(req_builder, endpoint_family, api_key);
     }
 
-    let response = req_builder
-        .json(&body)
-        .send()
-        .await
-        .map_err(|e| AppError::msg(format!("LLM streaming request failed: {}", e)))?;
+    let response = req_builder.json(&body).send().await.map_err(|e| {
+        finish_stream_with_error(
+            app_handle,
+            request_id,
+            format!("LLM streaming request failed: {e}"),
+            classified,
+            surface,
+            0,
+        )
+    })?;
 
     if !response.status().is_success() {
         let status = response.status();
         let text = response.text().await.unwrap_or_default();
-        return Err(AppError::msg(format_llm_http_error(status, &text)));
+        return Err(finish_stream_with_error(
+            app_handle,
+            request_id,
+            format_llm_http_error(status, &text),
+            classified,
+            surface,
+            0,
+        ));
     }
 
     let mut full_content = String::new();
@@ -355,8 +442,14 @@ pub async fn send_streaming_request_with_meta(
             Ok(chunk) => chunk,
             Err(_) => {
                 if is_abort_requested(request_id) {
-                    clear_abort(request_id);
-                    return Err(AppError::msg("request aborted"));
+                    return Err(finish_stream_with_error(
+                        app_handle,
+                        request_id,
+                        "request aborted",
+                        classified,
+                        surface,
+                        token_index,
+                    ));
                 }
                 continue 'stream;
             }
@@ -368,11 +461,26 @@ pub async fn send_streaming_request_with_meta(
         };
 
         if is_abort_requested(request_id) {
-            clear_abort(request_id);
-            return Err(AppError::msg("request aborted"));
+            return Err(finish_stream_with_error(
+                app_handle,
+                request_id,
+                "request aborted",
+                classified,
+                surface,
+                token_index,
+            ));
         }
 
-        let chunk = chunk_result.map_err(|e| AppError::msg(format!("Stream read error: {}", e)))?;
+        let chunk = chunk_result.map_err(|e| {
+            finish_stream_with_error(
+                app_handle,
+                request_id,
+                format!("Stream read error: {e}"),
+                classified,
+                surface,
+                token_index,
+            )
+        })?;
 
         let chunk_text = String::from_utf8_lossy(&chunk);
         if carry.len() + chunk_text.len() > MAX_CARRY_BYTES {
@@ -417,7 +525,16 @@ pub async fn send_streaming_request_with_meta(
 
             if let Ok(json) = serde_json::from_str::<serde_json::Value>(data) {
                 if endpoint_family == EndpointFamily::AnthropicMessages {
-                    if let Some(delta) = anthropic_state.apply_event_json(&json)? {
+                    if let Some(delta) = anthropic_state.apply_event_json(&json).map_err(|e| {
+                        finish_stream_with_error(
+                            app_handle,
+                            request_id,
+                            e.to_string(),
+                            classified,
+                            surface,
+                            token_index,
+                        )
+                    })? {
                         let event = StreamEvent {
                             request_id: request_id.to_string(),
                             event_type: StreamEventType::Token,
@@ -503,7 +620,18 @@ pub async fn send_streaming_request_with_meta(
                 if data != "[DONE]" {
                     if let Ok(json) = serde_json::from_str::<serde_json::Value>(data) {
                         if endpoint_family == EndpointFamily::AnthropicMessages {
-                            if let Some(delta) = anthropic_state.apply_event_json(&json)? {
+                            if let Some(delta) =
+                                anthropic_state.apply_event_json(&json).map_err(|e| {
+                                    finish_stream_with_error(
+                                        app_handle,
+                                        request_id,
+                                        e.to_string(),
+                                        classified,
+                                        surface,
+                                        token_index,
+                                    )
+                                })?
+                            {
                                 full_content.push_str(delta.as_str());
                             }
                             if json["type"].as_str() == Some("message_stop") {
@@ -518,6 +646,7 @@ pub async fn send_streaming_request_with_meta(
                                 };
                                 emit_stream_event(app_handle, &event, token_index)?;
                             }
+                            clear_abort(request_id);
                             return Ok(anthropic_state.into_gateway_response());
                         }
 
@@ -570,6 +699,7 @@ pub async fn send_streaming_request_with_meta(
             };
             emit_stream_event(app_handle, &event, token_index)?;
         }
+        clear_abort(request_id);
         return Ok(response);
     }
 
@@ -602,6 +732,7 @@ pub async fn send_streaming_request_with_meta(
         emit_stream_event(app_handle, &event, token_index)?;
     }
 
+    clear_abort(request_id);
     Ok(GatewayResponse {
         content: if full_content.is_empty() {
             None
@@ -832,5 +963,25 @@ mod tests {
                 .unwrap(),
             serde_json::json!({ "query": "阶段 1", "limit": 5 })
         );
+    }
+
+    #[test]
+    fn stream_error_event_uses_public_lifecycle_contract() {
+        let event = stream_error_event(
+            "req-stream-error",
+            "模型请求失败（500）：provider echoed prompt text",
+            false,
+            StreamSurface::VisibleAnswer,
+        );
+
+        assert_eq!(event.request_id, "req-stream-error");
+        assert!(matches!(event.event_type, StreamEventType::Error));
+        match event.data {
+            StreamEventData::Error { message } => {
+                assert!(message.contains("模型请求失败"));
+                assert!(!message.contains("prompt text"));
+            }
+            _ => panic!("expected error payload"),
+        }
     }
 }

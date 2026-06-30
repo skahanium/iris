@@ -149,26 +149,38 @@ pub fn build_initial_messages(
     let resolved = resolve_persona_for_policy(profile, input.task_policy, input.skills_fragment);
     let mut messages = Vec::new();
 
-    // System message: persona + environment + skills
+    // Stable persona layer: keep dynamic environment and skills in later messages
+    // so provider-side prefix caching can reuse the invariant prompt prefix.
     let persona_text = render_persona(&resolved);
-    let mut system_content = persona_text;
-    if !input.environment.is_empty() {
-        system_content.push_str("\n\n");
-        system_content.push_str(input.environment);
-    }
-    if let Some(skills) = input.skills_fragment {
-        if !skills.is_empty() {
-            system_content.push_str("\n\n");
-            system_content.push_str(skills);
-        }
-    }
     messages.push(LlmMessage {
         role: MessageRole::System,
-        content: system_content.into(),
+        content: persona_text.into(),
         tool_call_id: None,
         tool_calls: None,
         ..Default::default()
     });
+
+    if !input.environment.is_empty() {
+        messages.push(LlmMessage {
+            role: MessageRole::System,
+            content: input.environment.into(),
+            tool_call_id: None,
+            tool_calls: None,
+            ..Default::default()
+        });
+    }
+
+    if let Some(skills) = input.skills_fragment {
+        if !skills.is_empty() {
+            messages.push(LlmMessage {
+                role: MessageRole::System,
+                content: skills.into(),
+                tool_call_id: None,
+                tool_calls: None,
+                ..Default::default()
+            });
+        }
+    }
 
     // Evidence packets
     if !input.cold_start_packets.is_empty() {
@@ -346,5 +358,38 @@ mod tests {
         let resolved = resolve_persona(&profile, AiScene::KnowledgeLookup, false);
         let rendered = render_persona(&resolved);
         assert!(rendered.contains("Always cite sources"));
+    }
+
+    #[test]
+    fn harness_initial_messages_keep_stable_persona_separate_from_dynamic_layers() {
+        let profile = PromptProfile::default();
+        let policy = legacy_policy(AiScene::KnowledgeLookup, false);
+        let input = HarnessMessageInput {
+            scene: AiScene::KnowledgeLookup,
+            task_policy: &policy,
+            environment: "Environment: 当前笔记标题 A",
+            cold_start_packets: &[],
+            history: &[("user".to_string(), "问题".to_string())],
+            web_search_enabled: false,
+            skills_fragment: Some("Skill overlay: active skill"),
+        };
+
+        let messages = build_initial_messages(&input, &profile);
+
+        assert!(messages[0].content.as_str().unwrap().contains("Iris"));
+        assert!(!messages[0]
+            .content
+            .as_str()
+            .unwrap()
+            .contains("当前笔记标题 A"));
+        assert_eq!(
+            messages[1].content.as_str(),
+            Some("Environment: 当前笔记标题 A")
+        );
+        assert_eq!(
+            messages[2].content.as_str(),
+            Some("Skill overlay: active skill")
+        );
+        assert_eq!(messages[3].content.as_str(), Some("问题"));
     }
 }

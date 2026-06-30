@@ -36,6 +36,7 @@ interface SkillCardProps {
   };
   capabilityGroups: CapabilityGroup[];
   capabilityToneClass: (tone: CapabilityGroup["tone"]) => string;
+  capabilitySummaryLabel: string;
   criticalBlocked: boolean;
   compatibilityWarning: boolean;
   workspacePending: boolean;
@@ -55,6 +56,7 @@ export function SkillCard({
   sections,
   capabilityGroups,
   capabilityToneClass,
+  capabilitySummaryLabel,
   criticalBlocked,
   compatibilityWarning,
   workspacePending,
@@ -178,7 +180,7 @@ export function SkillCard({
           <div className="space-y-1.5">
             <div className="flex items-center gap-1.5 text-[11px] font-medium text-muted-foreground">
               <ShieldCheck className="h-3.5 w-3.5" />
-              <span>权限摘要</span>
+              <span>{capabilitySummaryLabel}</span>
             </div>
             <div className="flex flex-wrap gap-1.5">
               {capabilityGroups.map((group) => (

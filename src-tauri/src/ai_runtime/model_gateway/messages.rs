@@ -166,7 +166,7 @@ pub fn messages_for_api(messages: &[LlmMessage]) -> Vec<serde_json::Value> {
                 let content: serde_json::Value = if m.content.is_empty() {
                     serde_json::Value::Null
                 } else {
-                    serde_json::Value::String(m.content.as_str().to_string())
+                    serde_json::Value::String(m.content.text_content())
                 };
                 let tool_calls = serde_json::to_value(m.tool_calls.as_ref().unwrap())
                     .unwrap_or_else(|_| serde_json::json!([]));

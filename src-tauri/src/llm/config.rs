@@ -297,15 +297,6 @@ pub fn deepseek_defaults() -> LlmRoutingConfig {
             thinking: false,
         },
     );
-    slots.insert(
-        "local_private".into(),
-        SlotRoute {
-            provider_id: "deepseek".into(),
-            model: "deepseek-v4-flash".into(),
-            thinking: false,
-        },
-    );
-
     LlmRoutingConfig {
         version: 1,
         schema_version: LlmRoutingConfig::CURRENT_SCHEMA_VERSION,
@@ -381,6 +372,13 @@ fn sanitize_routing(config: &mut LlmRoutingConfig) {
         crate::llm::providers::is_allowed_provider(id)
             || crate::llm::providers::is_custom_provider(id)
     });
+    if config
+        .slots
+        .get("local_private")
+        .is_some_and(|route| route.provider_id == "deepseek")
+    {
+        config.slots.remove("local_private");
+    }
 }
 
 pub fn save(db: &Database, config: &LlmRoutingConfig) -> AppResult<()> {
@@ -501,8 +499,7 @@ pub fn resolve_capability_route_from_config(
                 let degraded = *slot != requested_slot;
                 let reason = if degraded {
                     format!(
-                        "Requested {:?} but selected {:?} via fallback (provider unavailable).",
-                        requested_slot, slot
+                        "Requested {requested_slot:?} but selected {slot:?} via fallback because the requested slot is unavailable or misconfigured."
                     )
                 } else {
                     format!("Selected {:?} for {:?}.", slot, input.intent)
@@ -1135,6 +1132,8 @@ mod tests {
         assert_eq!(route.summary.slot, crate::ai_types::CapabilitySlot::Fast);
         assert!(route.summary.degraded);
         assert!(route.summary.reason.contains("fallback"));
+        assert!(route.summary.reason.contains("Vision"));
+        assert!(route.summary.reason.contains("Fast"));
         assert_eq!(
             route.summary.fallback_chain,
             vec![
@@ -1151,6 +1150,13 @@ mod tests {
 
         assert!(err.to_string().contains("MiMo"));
         assert!(err.to_string().contains("Base URL"));
+    }
+
+    #[test]
+    fn local_private_is_not_bound_to_external_deepseek_by_default() {
+        let routing = deepseek_defaults();
+
+        assert!(!routing.slots.contains_key("local_private"));
     }
 
     #[test]

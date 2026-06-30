@@ -345,7 +345,7 @@ async fn run_harness_inner(
                 .find(|m| matches!(m.role, crate::ai_types::MessageRole::User))
             {
                 let mut parts = vec![crate::ai_types::ContentPart::Text {
-                    text: last_user.content.as_str().to_string(),
+                    text: last_user.content.text_content(),
                 }];
                 for img in images {
                     parts.push(img.to_content_part());
@@ -452,7 +452,7 @@ async fn run_harness_inner(
                     .iter()
                     .rev()
                     .find(|m| matches!(m.role, MessageRole::Assistant))
-                    .map(|m| m.content.as_str().to_string())
+                    .map(|m| m.content.text_content())
                     .unwrap_or_default();
                 return pause_for_tool_confirmation(
                     state,
@@ -1890,8 +1890,16 @@ mod tests {
 
         assert_eq!(messages.len() + 1, final_messages.len());
         assert!(matches!(instruction.role, MessageRole::User));
-        assert!(instruction.content.as_str().contains("不要再调用工具"));
-        assert!(instruction.content.as_str().contains("NEED_MORE_EVIDENCE"));
+        assert!(instruction
+            .content
+            .as_str()
+            .expect("text instruction")
+            .contains("不要再调用工具"));
+        assert!(instruction
+            .content
+            .as_str()
+            .expect("text instruction")
+            .contains("NEED_MORE_EVIDENCE"));
     }
 
     // ── depth-based reflection/subagent behavior ──────────

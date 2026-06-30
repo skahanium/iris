@@ -433,7 +433,9 @@ fn classified_stream_events_and_abort_use_unified_gateway_contract() {
     );
     assert!(
         streaming_src.contains("is_abort_requested(request_id)")
-            && streaming_src.contains("return Err(AppError::msg(\"request aborted\"))"),
-        "streaming path must return aborted/error when request id is aborted"
+            && streaming_src.contains("finish_stream_with_error")
+            && streaming_src.contains("\"llm:error\"")
+            && streaming_src.contains("clear_abort(request_id)"),
+        "streaming path must emit error and clear abort state when request id is aborted"
     );
 }

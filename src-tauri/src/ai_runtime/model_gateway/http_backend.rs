@@ -118,9 +118,22 @@ pub(super) fn format_llm_http_error(status: reqwest::StatusCode, text: &str) -> 
     if status == reqwest::StatusCode::UNAUTHORIZED || lower.contains("invalid_api_key") {
         return "API Key 无效或未配置，请在设置中检查。".into();
     }
-    if text.len() > 200 {
-        format!("模型请求失败（{}）", status)
-    } else {
-        format!("模型请求失败（{}）：{}", status, text)
+    format!("模型请求失败（{}）", status)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn generic_http_error_does_not_echo_provider_body() {
+        let message = format_llm_http_error(
+            reqwest::StatusCode::BAD_REQUEST,
+            "bad prompt: 用户原文和 provider echo",
+        );
+
+        assert_eq!(message, "模型请求失败（400 Bad Request）");
+        assert!(!message.contains("用户原文"));
+        assert!(!message.contains("provider echo"));
     }
 }
