@@ -123,6 +123,10 @@ interface AssistantRunPort {
 
 interface UseAssistantConfirmationsParams {
   actionIntent: AssistantIntent;
+  /// Active conversation id. When it changes while a tool confirmation is
+  /// pending, the pending confirmation is invalidated so a stale write from
+  /// the previous session can never dispatch into the now-active document.
+  activeSessionId: number | null;
   assistantRun: AssistantRunPort;
   buildActionState: (
     intent: AssistantIntent,
@@ -147,6 +151,7 @@ interface UseAssistantConfirmationsParams {
 
 export function useAssistantConfirmations({
   actionIntent,
+  activeSessionId,
   assistantRun,
   buildActionState,
   ensureAssistantStreamSlot,
@@ -164,6 +169,9 @@ export function useAssistantConfirmations({
     useState<ToolConfirmRequest | null>(null);
   const [ruleConfirmRequest, setRuleConfirmRequest] =
     useState<RuleConfirmRequest | null>(null);
+  const [toolConfirmStaleReason, setToolConfirmStaleReason] = useState<
+    string | null
+  >(null);
   const toolConfirmInFlightRef = useRef<Set<string>>(new Set());
   const toolConfirmSettledRef = useRef<Set<string>>(new Set());
 
@@ -214,10 +222,14 @@ export function useAssistantConfirmations({
       modifiedArgs?: unknown,
     ) => {
       const pendingConfirm = toolConfirmRequest;
+      if (!pendingConfirm) {
+        // No pending confirmation (e.g. invalidated by a session switch).
+        // Dropping here keeps the IPC/backend write from firing.
+        return;
+      }
       if (
-        pendingConfirm &&
-        (pendingConfirm.request_id !== requestId ||
-          pendingConfirm.tool_call_id !== toolCallId)
+        pendingConfirm.request_id !== requestId ||
+        pendingConfirm.tool_call_id !== toolCallId
       ) {
         return;
       }
@@ -352,6 +364,48 @@ export function useAssistantConfirmations({
     assistantRun.setFromTaskStatus("completed", actionIntent);
   }, [actionIntent, assistantRun, handleToolConfirm, toolConfirmRequest]);
 
+  const invalidatePendingToolConfirm = useCallback(
+    (reason: string = "会话已切换") => {
+      const req = toolConfirmRequest;
+      if (!req) return;
+      setToolConfirmStaleReason(reason);
+      setMessages((prev) => [
+        ...prev,
+        { role: "system", content: `确认已失效：${reason}` },
+      ]);
+      setToolConfirmRequest(null);
+      toolConfirmInFlightRef.current.clear();
+      toolConfirmSettledRef.current.clear();
+      requestIdRef.current = null;
+      const nextStatus: AssistantTaskStatus = "completed";
+      setActionState(buildActionState(actionIntent, nextStatus));
+      assistantRun.setFromTaskStatus(nextStatus, actionIntent);
+    },
+    [
+      actionIntent,
+      assistantRun,
+      buildActionState,
+      requestIdRef,
+      setActionState,
+      setMessages,
+      toolConfirmRequest,
+    ],
+  );
+
+  // Switching the active conversation invalidates any pending write
+  // confirmation from the previous session so it can never dispatch into the
+  // now-active document.
+  const previousActiveSessionIdRef = useRef<number | null>(activeSessionId);
+  useEffect(() => {
+    if (
+      activeSessionId !== previousActiveSessionIdRef.current &&
+      toolConfirmRequest !== null
+    ) {
+      invalidatePendingToolConfirm("会话已切换");
+    }
+    previousActiveSessionIdRef.current = activeSessionId;
+  }, [activeSessionId, invalidatePendingToolConfirm, toolConfirmRequest]);
+
   const handleRuleConfirm = useCallback(
     async (request: RuleConfirmRequest) => {
       const key =
@@ -377,8 +431,10 @@ export function useAssistantConfirmations({
     dismissToolConfirm,
     handleRuleConfirm,
     handleToolConfirm,
+    invalidatePendingToolConfirm,
     ruleConfirmRequest,
     setToolConfirmRequest,
     toolConfirmRequest,
+    toolConfirmStaleReason,
   };
 }

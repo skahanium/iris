@@ -395,6 +395,60 @@ describe("useInlineAi with mocked IPC", () => {
     editor.destroy();
   });
 
+  it("keeps long selection body out of the assistant user message", async () => {
+    function ClassifiedHost() {
+      api = useInlineAi({
+        provider: "openai",
+        domain: "classified",
+        notePath: ".classified/secret.md",
+        getNoteContent: () => "# Secret\n\n长选区正文不应进入 userMessage",
+      });
+      return null;
+    }
+    act(() => {
+      root.render(createElement(ClassifiedHost));
+    });
+    const sentinel = "长选区正文不应进入 userMessage。".repeat(6);
+    const editor = new Editor({
+      extensions: editorExtensions,
+      content: {
+        type: "doc",
+        content: [
+          {
+            type: "paragraph",
+            content: [{ type: "text", text: sentinel }],
+          },
+        ],
+      },
+    });
+    editor.commands.setTextSelection({ from: 1, to: 1 + sentinel.length });
+
+    await act(async () => {
+      await api.run(editor, "rewrite");
+    });
+
+    expect(assistantExecute).toHaveBeenCalledTimes(1);
+    const request = assistantExecute.mock.calls[0]?.[0];
+    expect(request.agentIntent).toBe("rewrite_selection");
+    expect(request.intent).toBe("writing");
+    // The full long selection must never be pasted into the prompt-facing
+    // user message — it flows via the bounded `selection` and
+    // `contextReferences.excerpt` channels instead.
+    expect(request.message).not.toContain("长选区正文不应进入 userMessage");
+    expect(request.selection).toBe(sentinel);
+    expect(request.contextReferences[0]).toMatchObject({
+      kind: "selection",
+      filePath: ".classified/secret.md",
+    });
+    // The excerpt carried by the reference is bounded, so even a long
+    // selection cannot leak its full body through the context reference.
+    expect((request.contextReferences[0]?.excerpt ?? "").length).toBeLessThan(
+      sentinel.length,
+    );
+
+    editor.destroy();
+  });
+
   it("classified slash command uses classified chat without leaking note markdown as normal llm system", async () => {
     assistantExecute.mockResolvedValueOnce({
       kind: "chat",

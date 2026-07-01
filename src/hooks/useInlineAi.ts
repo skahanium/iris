@@ -1,7 +1,10 @@
 import type { Editor } from "@tiptap/react";
 import { useCallback, useEffect, useRef } from "react";
 
-import { buildInlineAiUserMessage } from "@/lib/inline-ai-prompts";
+import {
+  buildInlineAiSelectionReferentPrompt,
+  buildInlineAiUserMessage,
+} from "@/lib/inline-ai-prompts";
 import { createContextReference } from "@/lib/context-reference";
 import { getEditorSelectionSnapshot } from "@/lib/iris-clipboard";
 import {
@@ -245,7 +248,9 @@ export function useInlineAi({
           aiDomain: "classified",
           agentIntent: hasSelection ? "rewrite_selection" : "chat",
           intent: hasSelection ? "writing" : "chat",
-          message: request.messages[0]?.content ?? "",
+          message: hasSelection
+            ? buildInlineAiSelectionReferentPrompt(request.action)
+            : (request.messages[0]?.content ?? ""),
           notePath,
           noteContent: null,
           contextReferences: selectionReference ? [selectionReference] : [],

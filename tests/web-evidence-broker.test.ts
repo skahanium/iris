@@ -29,8 +29,17 @@ describe("web evidence broker contract", () => {
         ?.split("async fn collect_search_provider_fetches")[0] ?? "";
 
     expect(candidateBody).toContain("SearchProviderCandidate::Mcp");
-    expect(candidateBody).toContain("WebSearchEffectiveBackend::Duckduckgo");
+    expect(candidateBody).toContain("SearchProviderCandidate::Native");
+
+    // The candidate-construction region must never reference MiniMax.
     expect(candidateBody).not.toContain("WebSearchEffectiveBackend::Minimax");
     expect(candidateBody).not.toContain("MINIMAX_CREDENTIAL_SERVICE");
+
+    // No production path in the broker module names a Minimax effective backend
+    // or a Minimax provider id; the only remaining `MINIMAX_CREDENTIAL_SERVICE`
+    // reference is the in-module test that proves credentials are ignored.
+    expect(broker).not.toContain("WebSearchEffectiveBackend::Minimax");
+    expect(broker).not.toContain("WebSearchBackend::Minimax");
+    expect(broker).not.toContain('"native.minimax"');
   });
 });

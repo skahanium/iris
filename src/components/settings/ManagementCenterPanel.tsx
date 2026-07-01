@@ -38,10 +38,7 @@ import type {
   ManagementCenterDetail,
   ManagementCenterSection,
 } from "@/hooks/useOverlayManager";
-import {
-  webEvidenceProviderDiagnostics,
-  webEvidenceProvidersList,
-} from "@/lib/ipc";
+import { webEvidenceProvidersList } from "@/lib/ipc";
 import { cn } from "@/lib/utils";
 import type { FileListItem } from "@/types/ipc";
 
@@ -330,7 +327,7 @@ export function ManagementCenterPanel({
     [activeSection],
   );
 
-  const nativeSearchBackend = "DuckDuckGo / 原生托底";
+  const nativeSearchBackend = "DuckDuckGo";
 
   const refreshWebProviderSummary = useCallback(async () => {
     if (!open || !isTauri()) {
@@ -340,22 +337,20 @@ export function ManagementCenterPanel({
 
     try {
       const providers = await webEvidenceProvidersList();
-      const provider = providers.find(
+      const mcpSearchProviders = providers.filter(
         (item) =>
           item.providerKind === "mcp" && item.enabled && item.hasSearchMapping,
       );
-      if (!provider) {
-        setWebProviderRoute(null);
+      if (mcpSearchProviders.length === 0) {
+        setWebProviderRoute({
+          label: `未配置 MCP 提供方，原生托底 ${nativeSearchBackend}`,
+          ready: false,
+        });
         return;
       }
-
-      const diagnostics = await webEvidenceProviderDiagnostics(
-        provider.id,
-        false,
-      );
       setWebProviderRoute({
-        label: `MCP：${provider.name}（${diagnostics.canUseForSearch ? "优先" : "需诊断"}） · 原生兜底：${nativeSearchBackend}`,
-        ready: diagnostics.canUseForSearch,
+        label: `MCP 提供方 ${mcpSearchProviders.length} 个，原生托底 ${nativeSearchBackend}`,
+        ready: true,
       });
     } catch {
       setWebProviderRoute(null);

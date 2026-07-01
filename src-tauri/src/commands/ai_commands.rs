@@ -2140,23 +2140,44 @@ async fn provider_diagnostics_for_summary(
     provider: &crate::ai_runtime::mcp_runtime_registry::WebEvidenceProviderSummary,
     live_check: bool,
 ) -> AppResult<WebEvidenceProviderDiagnostics> {
+    let transport_ok = provider.transport_kind == "https" || provider.transport_kind == "stdio";
     let mut checks = vec![
         provider_diagnostic_check("configured", true, "提供方记录存在"),
-        provider_diagnostic_check("enabled", provider.enabled, "提供方已启用"),
+        provider_diagnostic_check(
+            "enabled",
+            provider.enabled,
+            if provider.enabled {
+                "提供方已启用"
+            } else {
+                "提供方未启用"
+            },
+        ),
         provider_diagnostic_check(
             "transport",
-            provider.transport_kind == "https" || provider.transport_kind == "stdio",
-            "连接方式支持 MCP 联网证据",
+            transport_ok,
+            if transport_ok {
+                "连接方式支持 MCP 联网证据"
+            } else {
+                "连接方式不支持 MCP 联网证据"
+            },
         ),
         provider_diagnostic_check(
             "searchMapping",
             provider.has_search_mapping,
-            "已配置搜索映射",
+            if provider.has_search_mapping {
+                "已配置搜索映射"
+            } else {
+                "未配置搜索映射"
+            },
         ),
         provider_diagnostic_check(
             "fetchMapping",
             provider.has_fetch_mapping,
-            "已配置网页读取映射",
+            if provider.has_fetch_mapping {
+                "已配置网页读取映射"
+            } else {
+                "未配置网页读取映射"
+            },
         ),
     ];
     if provider.kind != "mcp" {

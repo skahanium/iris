@@ -48,6 +48,7 @@ function Harness({
 }) {
   const api = useAssistantConfirmations({
     actionIntent: "chat",
+    activeSessionId: 101,
     buildActionState,
     ensureAssistantStreamSlot: vi.fn(),
     setActionState: vi.fn(),
@@ -166,6 +167,7 @@ describe("useAssistantConfirmations", () => {
     function ListenerHarness({ onReady }: { onReady: (api: HookApi) => void }) {
       const api = useAssistantConfirmations({
         actionIntent: "chat",
+        activeSessionId: 101,
         buildActionState,
         ensureAssistantStreamSlot: vi.fn(),
         setActionState: vi.fn(),
@@ -361,5 +363,52 @@ describe("useAssistantConfirmations", () => {
     });
     expect(messages.at(-1)?.content).not.toContain("宸");
     expect(runStatuses.at(-1)).toEqual(["error", "chat"]);
+  });
+
+  it("does not confirm a pending write after switching sessions", async () => {
+    const messages: ChatLine[] = [];
+    confirmTool = vi.fn();
+
+    act(() => {
+      root.unmount();
+    });
+    root = createRoot(container);
+    await act(async () => {
+      root.render(
+        createElement(Harness, {
+          onReady: (value) => {
+            api = value;
+          },
+          confirmTool,
+          setRunStatus: (status, intent) => {
+            runStatuses.push([status, intent]);
+          },
+          setMessages: (update) => {
+            const next =
+              typeof update === "function" ? update(messages) : update;
+            messages.splice(0, messages.length, ...next);
+          },
+        }),
+      );
+    });
+
+    await act(async () => {
+      api.setToolConfirmRequest({ ...request, tool_name: "replace_selection" });
+    });
+
+    // Simulate switching to another session: the pending write confirmation
+    // is invalidated before the user can approve it.
+    await act(async () => {
+      api.invalidatePendingToolConfirm();
+    });
+
+    await act(async () => {
+      await api.handleToolConfirm("req-1", "tool-1", "approve");
+    });
+
+    expect(confirmTool).not.toHaveBeenCalled();
+    expect(runStatuses).toEqual([["completed", "chat"]]);
+    expect(api.toolConfirmRequest).toBeNull();
+    expect(messages.some((m) => m.content.includes("确认已失效"))).toBe(true);
   });
 });

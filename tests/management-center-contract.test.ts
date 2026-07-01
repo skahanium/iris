@@ -157,6 +157,11 @@ describe("management center contract", () => {
       expect(mcpCard).toContain(label);
     }
 
+    // The preset entry is a single dropdown; its "快速预设" label and the
+    // "自定义 MCP 服务" option must each render inside the card.
+    expect(mcpCard).toContain("快速预设");
+    expect(mcpCard).toContain("自定义 MCP 服务");
+
     expect(mcpPanel).toContain("persisted={false}");
 
     for (const leakedLabel of [
@@ -216,9 +221,10 @@ describe("management center contract", () => {
     const mcpPanel = read("src/components/ai/skills/McpProfilesPanel.tsx");
 
     expect(center).toContain("webEvidenceProvidersList");
-    expect(center).toContain("webEvidenceProviderDiagnostics");
-    expect(center).toContain("MCP：");
-    expect(center).toContain("原生兜底");
+    expect(center).not.toContain("webEvidenceProviderDiagnostics");
+    expect(center).toContain("MCP 提供方");
+    expect(center).toContain("原生托底");
+    expect(center).toContain("未配置 MCP 提供方");
     expect(center).toContain("refreshWebProviderSummary");
     expect(center).toContain("onProvidersChanged={refreshWebProviderSummary}");
     expect(center).not.toMatch(/effectiveBackend === "minimax"/);
@@ -278,6 +284,28 @@ describe("management center contract", () => {
     expect(overlays).toContain("onBeforeFileDelete={onBeforeFileDelete}");
     expect(overlays).toContain("onFileDeleted={onFileDeleted}");
     expect(overlays).toContain("onIndexChange={bumpVaultIndex}");
+  });
+
+  it("renders MCP provider diagnostic messages that match their pass/fail status", () => {
+    const diagnostics = read("src-tauri/src/commands/ai_commands.rs");
+    const card = read("src/components/ai/skills/McpProfileCard.tsx");
+
+    // Backend must emit status-aware messages for the mapping checks so the
+    // UI never shows "已配置搜索映射" against a failed (NULL) mapping again.
+    expect(diagnostics).toContain("已配置搜索映射");
+    expect(diagnostics).toContain("未配置搜索映射");
+    expect(diagnostics).toContain("已配置网页读取映射");
+    expect(diagnostics).toContain("未配置网页读取映射");
+    expect(diagnostics).toContain("提供方未启用");
+    expect(diagnostics).toContain("连接方式不支持 MCP 联网证据");
+
+    // The diagnostic line is rendered as label：status · message; the card
+    // must keep the status text and message on the same line so users can
+    // cross-check them.
+    expect(card).toContain(
+      "{checkLabelText(check.label)}：{checkStatusText(check.status)} ·",
+    );
+    expect(card).toContain("调度可用性：搜索");
   });
 
   it("waits for restored notes to open before closing recycle views", () => {

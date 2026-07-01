@@ -10,7 +10,7 @@ use crate::ai_runtime::{
 };
 use crate::error::{AppError, AppResult};
 use crate::llm::fetch_web_page::PageFetchResult;
-use crate::llm::search_web::{fetch_native_provider_context, WebSearchFetchResult};
+use crate::llm::search_web::fetch_native_provider_context;
 use crate::llm::web_search_config::WebSearchEffectiveBackend;
 use crate::storage::db::Database;
 
@@ -266,7 +266,7 @@ fn normalize_query_whitespace(query: &str) -> String {
 #[derive(Debug, Clone)]
 struct SearchProviderFetch {
     body: String,
-    backend: WebSearchEffectiveBackend,
+    search_backend: WebSearchBackend,
     provider_id: String,
     provider_kind: String,
 }
@@ -274,7 +274,10 @@ struct SearchProviderFetch {
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum SearchProviderCandidate {
     Mcp(String),
-    Native(WebSearchEffectiveBackend),
+    /// Native DuckDuckGo fallback. The broker never produces a native Minimax
+    /// candidate — MiniMax is an ordinary LLM provider, not a web evidence
+    /// backend (see spec 2.1).
+    Native,
 }
 
 fn search_provider_candidates(db: &Database) -> Vec<SearchProviderCandidate> {
@@ -287,9 +290,7 @@ fn search_provider_candidates(db: &Database) -> Vec<SearchProviderCandidate> {
         }
     }
 
-    candidates.push(SearchProviderCandidate::Native(
-        WebSearchEffectiveBackend::Duckduckgo,
-    ));
+    candidates.push(SearchProviderCandidate::Native);
     candidates.truncate(2);
     candidates
 }
@@ -305,8 +306,8 @@ async fn collect_search_provider_fetches(
                 SearchProviderCandidate::Mcp(provider_id) => {
                     collect_mcp_search_provider_fetch(db, query, &provider_id).await
                 }
-                SearchProviderCandidate::Native(backend) => {
-                    collect_native_search_provider_fetch(db, query, backend).await
+                SearchProviderCandidate::Native => {
+                    collect_native_search_provider_fetch(db, query).await
                 }
             }
             .map_err(|err| err.to_string())
@@ -317,17 +318,21 @@ async fn collect_search_provider_fetches(
 async fn collect_native_search_provider_fetch(
     db: &Database,
     query: &str,
-    backend: WebSearchEffectiveBackend,
 ) -> AppResult<SearchProviderFetch> {
-    let provider_id = provider_id_for_effective(backend);
-    ensure_provider_circuit_allows(provider_id)?;
-    match fetch_native_provider_context(db, query, backend).await {
+    const PROVIDER_ID: &str = "native.duckduckgo";
+    ensure_provider_circuit_allows(PROVIDER_ID)?;
+    match fetch_native_provider_context(db, query, WebSearchEffectiveBackend::Duckduckgo).await {
         Ok(fetch) => {
-            record_provider_success(provider_id);
-            Ok(search_provider_fetch_from_native(fetch))
+            record_provider_success(PROVIDER_ID);
+            Ok(SearchProviderFetch {
+                body: fetch.body,
+                search_backend: WebSearchBackend::Duckduckgo,
+                provider_id: PROVIDER_ID.into(),
+                provider_kind: "native".into(),
+            })
         }
         Err(error) => {
-            record_provider_failure(provider_id);
+            record_provider_failure(PROVIDER_ID);
             Err(error)
         }
     }
@@ -364,7 +369,7 @@ async fn collect_mcp_search_provider_fetch(
     };
     Ok(SearchProviderFetch {
         body: mcp_search_result_body(&call.result),
-        backend: WebSearchEffectiveBackend::Duckduckgo,
+        search_backend: WebSearchBackend::Duckduckgo,
         provider_id: call.provider_id,
         provider_kind: "mcp".into(),
     })
@@ -506,15 +511,6 @@ fn build_mcp_fetch_arguments(mapping_json: &str, url: &str, max_chars: usize) ->
     serde_json::Value::Object(args)
 }
 
-fn search_provider_fetch_from_native(fetch: WebSearchFetchResult) -> SearchProviderFetch {
-    SearchProviderFetch {
-        body: fetch.body,
-        backend: fetch.backend,
-        provider_id: provider_id_for_effective(fetch.backend).into(),
-        provider_kind: "native".into(),
-    }
-}
-
 fn mcp_search_result_body(result: &serde_json::Value) -> String {
     if let Some(text) = result.as_str() {
         return text.to_string();
@@ -584,7 +580,7 @@ snippet: {}
     (!body.trim().is_empty()).then_some(body)
 }
 fn web_evidence_items_from_search_fetch(fetch: &SearchProviderFetch) -> Vec<WebEvidenceItem> {
-    let search_backend = search_backend_for_effective(fetch.backend);
+    let search_backend = fetch.search_backend;
     parse_search_result_rows(&fetch.body)
         .into_iter()
         .map(|row| {
@@ -665,19 +661,6 @@ fn parse_search_result_rows(body: &str) -> Vec<SearchResultRow> {
         rows.push(row);
     }
     rows
-}
-fn search_backend_for_effective(backend: WebSearchEffectiveBackend) -> WebSearchBackend {
-    match backend {
-        WebSearchEffectiveBackend::Minimax => WebSearchBackend::Minimax,
-        WebSearchEffectiveBackend::Duckduckgo => WebSearchBackend::Duckduckgo,
-    }
-}
-
-fn provider_id_for_effective(backend: WebSearchEffectiveBackend) -> &'static str {
-    match backend {
-        WebSearchEffectiveBackend::Minimax => "native.minimax",
-        WebSearchEffectiveBackend::Duckduckgo => "native.duckduckgo",
-    }
 }
 
 fn normalize_evidence_items(items: Vec<WebEvidenceItem>) -> Vec<WebEvidenceItem> {
@@ -1204,12 +1187,7 @@ mod tests {
 
         let candidates = search_provider_candidates(&db);
 
-        assert_eq!(
-            candidates,
-            vec![SearchProviderCandidate::Native(
-                WebSearchEffectiveBackend::Duckduckgo
-            )]
-        );
+        assert_eq!(candidates, vec![SearchProviderCandidate::Native]);
     }
 
     #[test]
@@ -1237,7 +1215,7 @@ mod tests {
             candidates,
             vec![
                 SearchProviderCandidate::Mcp("mcp-search".into()),
-                SearchProviderCandidate::Native(WebSearchEffectiveBackend::Duckduckgo),
+                SearchProviderCandidate::Native,
             ]
         );
     }
@@ -1253,12 +1231,7 @@ mod tests {
 
         let candidates = search_provider_candidates(&db);
 
-        assert_eq!(
-            candidates,
-            vec![SearchProviderCandidate::Native(
-                WebSearchEffectiveBackend::Duckduckgo
-            )]
-        );
+        assert_eq!(candidates, vec![SearchProviderCandidate::Native]);
     }
 
     #[test]

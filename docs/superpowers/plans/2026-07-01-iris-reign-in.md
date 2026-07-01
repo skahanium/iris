@@ -1,5 +1,7 @@
 # Iris AI Reign-In Implementation Plan
 
+> **状态：已被取代（superseded）**。本计划已被 [`2026-07-01-iris-ai-harness-architecture.md`](./2026-07-01-iris-ai-harness-architecture.md) 取代，对应 spec [`2026-07-01-iris-reign-in-design.md`](../specs/2026-07-01-iris-reign-in-design.md) 已标注 superseded。下方内容仅保留作为历史与上下文，请勿据此规划新工作；联网证据目标态以新计划为准（MCP -> DDG，MiniMax 退回普通 LLM provider）。
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 根据 `docs/superpowers/specs/2026-07-01-iris-reign-in-design.md` 一次性完成 Iris AI 能力收口：Skills 回到自产 prompt-only，MCP 只作为联网 Provider，`WebEvidenceBroker` 成为唯一联网语义层，联网证据复用现有证据包与临时 tab。

@@ -26,7 +26,18 @@ impl EmbedQueue {
         let pending_worker = pending.clone();
         let worker = thread::Builder::new()
             .name("iris-embed".into())
-            .spawn(move || embed_worker_loop(Arc::downgrade(&state), rx, pending_worker))
+            .spawn(move || {
+                // Downgrade the strong Arc to a Weak BEFORE entering the worker
+                // loop and drop the strong reference. Otherwise the move closure
+                // would keep a strong `Arc<AppState>` alive for the entire
+                // lifetime of the worker thread (which blocks on `rx.recv()`),
+                // pinning `AppState` in memory even after all other holders drop
+                // it — both a test invariant violation and a production leak on
+                // app shutdown.
+                let weak = Arc::downgrade(&state);
+                drop(state);
+                embed_worker_loop(weak, rx, pending_worker)
+            })
             .expect("embed worker thread");
 
         Self {

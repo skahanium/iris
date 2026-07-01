@@ -44,7 +44,18 @@ pub struct ToolAuditInput<'a> {
 ///
 /// Sanitizes arguments and result before storage.
 pub fn record_audit(db: &Database, input: &ToolAuditInput<'_>) -> AppResult<()> {
-    let args_summary = sanitize_arguments(input.tool_name, input.arguments);
+    let mut args_summary = sanitize_arguments(input.tool_name, input.arguments);
+    // On failure we attach a safe, stable failure classification alongside
+    // the sanitized arguments so diagnostic/audit readers can triage without
+    // ever reading the raw query/url/headers/body that were redacted.
+    if !input.success {
+        if let Some(class) = classify_failure(input.result) {
+            args_summary = Some(match args_summary {
+                Some(existing) => format!("{existing}, failure_class={class}"),
+                None => format!("failure_class={class}"),
+            });
+        }
+    }
     let result_summary = sanitize_result(input.tool_name, input.result, input.success);
 
     db.with_conn(|conn| {
@@ -234,6 +245,58 @@ fn assess_write_risk(text: &str) -> &'static str {
     } else {
         "low"
     }
+}
+
+/// Derive a stable, safe failure class from a failed tool result.
+///
+/// Prefers an explicit `failure_class` / `failure_kind` field emitted by the
+/// provider or broker; falls back to classifying the human-readable `error`
+/// string. Always returns a sanitized token (no raw query/url/secret) so it is
+/// safe to persist into `arguments_summary`.
+fn classify_failure(result: &serde_json::Value) -> Option<String> {
+    for key in ["failure_class", "failure_kind"] {
+        if let Some(class) = result.get(key).and_then(|v| v.as_str()) {
+            let trimmed = class.trim();
+            if !trimmed.is_empty() {
+                return Some(safe_failure_token(trimmed));
+            }
+        }
+    }
+    let err = result
+        .get("error")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    if err.is_empty() {
+        return None;
+    }
+    let token = if err.contains("auth") || err.contains("credential") || err.contains("401") {
+        "provider_auth_missing"
+    } else if err.contains("timeout") || err.contains("timed out") {
+        "provider_timeout"
+    } else if err.contains("denied") || err.contains("policy") {
+        "policy_denied"
+    } else if err.contains("unavailable") || err.contains("network") {
+        "provider_unavailable"
+    } else {
+        "unknown"
+    };
+    Some(token.into())
+}
+
+/// Coerce an arbitrary failure label into a stable, persistence-safe token.
+fn safe_failure_token(raw: &str) -> String {
+    raw.chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || ch == '_' {
+                ch
+            } else {
+                '_'
+            }
+        })
+        .collect::<String>()
+        .trim_matches('_')
+        .to_string()
 }
 
 /// Query audit entries by request_id.
@@ -493,5 +556,101 @@ mod tests {
 
         let count = count_by_request(&db, "req-1").unwrap();
         assert_eq!(count, 1);
+    }
+
+    fn setup_audit_db() -> Database {
+        let db = Database::open_in_memory().unwrap();
+        db.with_conn(|conn| {
+            conn.execute_batch(
+                "CREATE TABLE IF NOT EXISTS ai_traces (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    request_id TEXT NOT NULL UNIQUE,
+                    scene TEXT NOT NULL,
+                    model_slot TEXT, provider TEXT,
+                    tool_names JSON, packet_ids JSON,
+                    latency_ms INTEGER, token_input INTEGER, token_output INTEGER,
+                    status TEXT NOT NULL, error_code TEXT,
+                    created_at TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS tool_audit (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    request_id TEXT NOT NULL, harness_round INTEGER NOT NULL,
+                    tool_name TEXT NOT NULL, arguments_summary TEXT,
+                    result_summary TEXT, success INTEGER NOT NULL DEFAULT 0,
+                    duration_ms INTEGER, scene TEXT,
+                    subagent_depth INTEGER NOT NULL DEFAULT 0,
+                    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+                );",
+            )?;
+            conn.execute(
+                "INSERT INTO ai_traces (request_id, scene, status, created_at)
+                 VALUES ('req-privacy', 'knowledge_lookup', 'running', datetime('now'))",
+                [],
+            )?;
+            Ok(())
+        })
+        .unwrap();
+        db
+    }
+
+    #[test]
+    fn tool_audit_redacts_queries_urls_headers_and_page_body() {
+        let db = setup_audit_db();
+        record_audit(
+            &db,
+            &ToolAuditInput {
+                request_id: "req-privacy",
+                harness_round: 1,
+                tool_name: "web_search",
+                arguments: &serde_json::json!({
+                    "query": "完整用户问题不应保存",
+                    "urls": ["https://example.com/private/path?token=secret"],
+                    "headers": {"Authorization": "Bearer secret"},
+                    "page_body": "完整网页正文不应保存"
+                }),
+                result: &serde_json::json!({
+                    "failure_class": "provider_auth_missing",
+                    "error": "provider authentication missing"
+                }),
+                success: false,
+                duration_ms: 0,
+                scene: Some("knowledge_lookup"),
+                subagent_depth: 0,
+            },
+        )
+        .unwrap();
+
+        let row = query_by_request(&db, "req-privacy").unwrap().remove(0);
+        let summary = row.arguments_summary.expect("args summary");
+        assert!(summary.contains("provider_auth_missing"));
+        assert!(summary.contains("query_hash="));
+        assert!(summary.contains("url_count=1"));
+        assert!(!summary.contains("完整用户问题"));
+        assert!(!summary.contains("example.com/private"));
+        assert!(!summary.contains("token=secret"));
+        assert!(!summary.contains("Authorization"));
+        assert!(!summary.contains("完整网页正文"));
+    }
+
+    #[test]
+    fn tool_audit_failure_class_falls_back_from_error_text() {
+        let args = serde_json::json!({"query": "private query"});
+        let result = serde_json::json!({"error": "upstream provider timed out"});
+        let mut summary = sanitize_arguments("web_search", &args).unwrap();
+        if let Some(class) = classify_failure(&result) {
+            summary = format!("{summary}, failure_class={class}");
+        }
+        assert!(summary.contains("failure_class=provider_timeout"));
+        assert!(!summary.contains("private query"));
+    }
+
+    #[test]
+    fn safe_failure_token_strips_unsafe_characters() {
+        assert_eq!(
+            safe_failure_token("provider auth-missing!"),
+            "provider_auth_missing"
+        );
+        assert_eq!(safe_failure_token("__leading"), "leading");
+        assert_eq!(safe_failure_token(""), "");
     }
 }

@@ -283,6 +283,7 @@ export function UnifiedAssistantPanel({
     toolConfirmRequest,
   } = useAssistantConfirmations({
     actionIntent: actionState.intent,
+    activeSessionId: sessionId,
     assistantRun,
     buildActionState,
     ensureAssistantStreamSlot,
@@ -295,6 +296,7 @@ export function UnifiedAssistantPanel({
     setSessionTokenUsage,
     setStreaming,
   });
+
   const composerDisabled =
     streaming || assistantRun.isBusy || toolConfirmRequest !== null;
 

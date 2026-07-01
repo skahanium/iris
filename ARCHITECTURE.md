@@ -122,6 +122,8 @@
 
 ### 4. Agent Task Runtime 完整管线（v1.2.1）
 
+目标链路命名：`Intent Router -> TaskPlan -> Task Policy -> Capability Gate -> Provider Layer -> Dispatch/Permission`。下文管线是该链路的具体实现细节。
+
 ```
 用户提问 → AiComposer
   → ai_send_message IPC

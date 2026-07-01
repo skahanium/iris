@@ -837,6 +837,13 @@ pub async fn assistant_execute(
 
 - **描述**：统一助手入口——根据 `intent` 字段路由到不同工作流（Chat / Writing / Citation / Organize / Research / Chapter / Document）。通过 harness task 层执行。返回标记联合 `AssistantExecuteBody` + harness 元数据。
 
+- **TaskPlan 过渡字段**：前端 `buildAssistantTaskPlan` 与 Rust `TaskPlanSummary` 共享四个可选语义字段，用于让 Task Policy / Capability Gate 派生策略，避免 `intent` 过载：
+  - `evidenceNeed`：`"none"` | `"fresh_web"` | `"multi_source_research"`。fresh web 短答查证不升格为 research。
+  - `contextNeed`：`"none"` | `"current_reference"` | `"vault_search"` | `"long_document"`。选区/引用走 `current_reference`。
+  - `operationKind`：`"answer"` | `"patch"` | `"create"` | `"organize"` | `"diagnose"`。rewrite_selection 为 `patch`。
+  - `outputShape`：`"chat"` | `"confirmation"` | `"artifact"` | `"diagnostic"`。rewrite_selection 走 `confirmation`，research 走 `artifact`。
+  - 字段在 TS `src/types/ai.ts` 与 Rust `src-tauri/src/ai_types/mod.rs` 同名（serde `snake_case` + `skip_serializing_if = "Option::is_none"`），缺省按 `none`/`answer`/`chat` 处理，旧前端可继续只发 `intent`。
+
 ---
 
 ## 十九、AI 运行时 (AI Runtime) — `commands::ai_commands`
