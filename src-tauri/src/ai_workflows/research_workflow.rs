@@ -303,7 +303,6 @@ pub async fn execute_research(
                 scene: AiScene::ResearchSynthesis,
                 autonomy_level: AutonomyLevel::L3,
                 web_search_enabled: config.web_research_authorized,
-                skill_allowed_tools: vec![],
                 depth: 0,
             };
             if registry

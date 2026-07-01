@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+﻿import { readFileSync } from "node:fs";
 
 import { describe, expect, it } from "vitest";
 
@@ -160,27 +160,26 @@ describe("harness modernization remaining contracts", () => {
     );
   });
 
-  it("skills lifecycle exposes prompt-only diagnostics to the UI", () => {
+  it("skills lifecycle exposes prompt-only draft confirmation to the UI", () => {
     const ipc = read("src/lib/ipc.ts");
     expect(ipc).toContain("export async function skillsCreateDraft");
     expect(ipc).toContain("export async function skillsConfirm");
     expect(ipc).not.toContain("export async function skillsUpdate");
     expect(ipc).not.toContain("export async function skillsPrepareWorkspace");
     expect(ipc).toContain("content_hash?: string");
-    expect(ipc).toContain("capability_preview?:");
-    expect(ipc).toContain("availability:");
+    expect(ipc).not.toContain("capability_preview?:");
+    expect(ipc).toContain("activation_ready:");
 
     const panel = read("src/components/ai/SkillsPanel.tsx");
     const card = read("src/components/ai/skills/SkillCard.tsx");
     const badges = read("src/components/ai/skills/SkillStatusBadges.tsx");
     const ui = `${panel}\n${card}\n${badges}`;
     expect(panel).not.toContain("skillsUpdate");
-    expect(ui).toContain("权限摘要");
-    expect(ui).toContain("确认状态");
-    expect(ui).toContain("已确认");
-    expect(ui).toContain("需要确认");
+    expect(ui).toContain("skillsCreateDraft");
+    expect(ui).toContain("skillsConfirm");
+    expect(ui).toContain("confirmationState");
+    expect(ui).not.toContain("capability_preview");
   });
-
   it("tool confirmation suppresses duplicate resume calls for the same tool call", () => {
     const panel = read("src/components/ai/UnifiedAssistantPanel.tsx");
     expect(panel).toContain("toolConfirmInFlightRef");

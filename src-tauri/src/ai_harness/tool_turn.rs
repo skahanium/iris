@@ -144,7 +144,6 @@ mod tests {
             scene: AiScene::DraftingAssist,
             autonomy_level: AutonomyLevel::L2,
             web_search_enabled: web,
-            skill_allowed_tools: vec![],
             depth: 0,
         }
     }

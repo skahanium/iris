@@ -21,7 +21,7 @@ import {
 import { sessionEvidenceDetail } from "@/lib/ipc";
 import { cn } from "@/lib/utils";
 import type { AssistantArtifactDraft } from "@/types/assistant-artifact";
-import type { SessionEvidenceRecord } from "@/types/ipc";
+import type { SessionEvidenceDetailRecord } from "@/types/ipc";
 import type {
   ContextPacket,
   ContextStatus,
@@ -106,48 +106,34 @@ export function ContextPacketDrawer({
     return items;
   }, [contextStatus]);
 
-  const evidenceFromPackets = (): SessionEvidenceRecord[] =>
+  const evidenceFromPackets = (): SessionEvidenceDetailRecord[] =>
     packets.map((packet, index) => ({
       id: index + 1,
       sessionId: sessionId ?? 0,
       citationIndex: index + 1,
       citationLabel: packet.citation_label,
-      packetKey: packet.id,
-      messageSeqFirst: 0,
       sourceType:
         packet.source_type === "web" ? ("web" as const) : ("local" as const),
       title: packet.title,
       sourcePath: packet.source_path ?? null,
-      sourceSpanStart: packet.source_span?.start ?? null,
-      sourceSpanEnd: packet.source_span?.end ?? null,
       headingPath: packet.heading_path ?? null,
-      contentHash: packet.content_hash ?? null,
       retrievalReason: packet.retrieval_reason ?? null,
-      score: packet.score,
-      confidence: packet.trust_level,
       url:
         packet.web?.url ??
         (packet.source_type === "web" ? packet.source_path : null),
       normalizedUrl: packet.web?.url?.toLowerCase() ?? null,
       domain: packet.web?.domain ?? null,
-      retrievedAt: packet.web?.fetched_at ?? null,
-      searchBackend: packet.web?.search_backend ?? null,
-      sourceRank: null,
       failureReason: packet.web?.failure_reason ?? null,
-      providerId: packet.web?.provider_id ?? null,
-      providerKind: packet.web?.provider_kind ?? null,
-      rawResultHash: packet.web?.raw_result_hash ?? null,
-      extractionMethod: packet.web?.extraction_method ?? null,
       conflictGroup: packet.web?.conflict_group ?? null,
       conflictNote: packet.web?.conflict_note ?? null,
-      retiredAt: null,
       createdAt: new Date().toISOString(),
+      detailStatus: packet.source_path ? "source_available" : "source_missing",
       liveExcerpt: packet.excerpt ?? null,
     }));
 
   const openEvidenceDetail = async () => {
     if (!onOpenArtifact || packets.length === 0) return;
-    let evidence: SessionEvidenceRecord[] = evidenceFromPackets();
+    let evidence: SessionEvidenceDetailRecord[] = evidenceFromPackets();
     if (sessionId != null) {
       try {
         evidence = await sessionEvidenceDetail(sessionId);

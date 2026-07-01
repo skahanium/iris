@@ -135,11 +135,6 @@ fn policy_ctx_from_checkpoint_meta(
         scene,
         autonomy_level,
         web_search_enabled: meta.web_search_enabled,
-        skill_allowed_tools: meta
-            .skill_activation_plan
-            .as_ref()
-            .map(crate::ai_runtime::SkillActivationPlanSummary::allowed_tools)
-            .unwrap_or_default(),
         depth: meta.depth,
     }
 }
@@ -301,7 +296,6 @@ pub async fn dispatch_approved_tool_to_checkpoint(
         scene: pending.scene,
         autonomy_level: pending.autonomy_level,
         web_search_enabled: pending.web_search_enabled,
-        skill_allowed_tools: pending.skill_allowed_tools.clone(),
         depth: 0,
     };
 

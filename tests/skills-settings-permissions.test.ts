@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+﻿import { readFileSync } from "node:fs";
 
 import { describe, expect, it } from "vitest";
 
@@ -6,7 +6,7 @@ function read(path: string): string {
   return readFileSync(path, "utf8");
 }
 
-describe("Skills settings permission UX contract", () => {
+describe("Skills settings prompt-only contract", () => {
   it("does not expose external skill installation entry points", () => {
     const panel = read("src/components/ai/SkillsPanel.tsx");
     const ipc = read("src/lib/ipc.ts");
@@ -14,8 +14,8 @@ describe("Skills settings permission UX contract", () => {
     const catalog = read("src-tauri/src/ai_runtime/tool_catalog/skills.rs");
 
     expect(panel).not.toContain("skillsInstall");
-    expect(panel).not.toContain("从 Git 安装");
-    expect(panel).not.toContain("选择本地文件");
+    expect(panel).not.toContain("Git");
+    expect(panel).not.toContain("Registry");
     expect(ipc).not.toContain("export async function skillsInstall");
     expect(ipc).not.toContain('"skills_install"');
     expect(lib).not.toContain("commands::ai_commands::skills_install");
@@ -23,26 +23,36 @@ describe("Skills settings permission UX contract", () => {
     expect(catalog).not.toContain("skills_install");
   });
 
-  it("shows user-language capability groups instead of raw capability debug labels", () => {
+  it("keeps Skills prompt-only without platform capability vocabulary", () => {
     const panel = read("src/components/ai/SkillsPanel.tsx");
     const card = read("src/components/ai/skills/SkillCard.tsx");
+    const ipc = read("src/lib/ipc.ts");
+    const model = read("src-tauri/src/ai_runtime/skills/model.rs");
+    const scan = read("src-tauri/src/ai_runtime/skills/scan.rs");
+    const activation = read("src-tauri/src/ai_runtime/skills/activation.rs");
+    const prompt = read("src-tauri/src/ai_runtime/skills/prompt.rs");
     const ui = `${panel}\n${card}`;
 
-    for (const label of [
-      "只读笔记",
-      "联网读取",
-      "写入笔记",
-      "管理 Skills",
+    for (const token of [
+      "allowed_tools",
+      "confirmation_required_tools",
+      "capability_preview",
+      "execute_script_sandboxed",
+      "install_dependency",
+      "mcp_bridge",
+      "Requested Iris tools",
       "运行命令",
       "凭据访问",
-      "权限摘要",
     ]) {
-      expect(ui).toContain(label);
+      expect(ui).not.toContain(token);
+      expect(ipc).not.toContain(token);
+      expect(prompt).not.toContain(token);
     }
 
-    expect(ui).not.toContain("Requested capabilities:");
-    expect(ui).not.toContain("Blocked capabilities:");
-    expect(ui).not.toContain("Compatibility warnings:");
+    expect(model).not.toContain("pub allowed_tools");
+    expect(model).not.toContain("capability_preview");
+    expect(scan).not.toContain('meta.get("allowed-tools")');
+    expect(activation).not.toContain("active_skill_allowed_tools");
   });
 
   it("does not expose toggle uninstall or arbitrary SKILL.md editor controls", () => {
@@ -62,8 +72,6 @@ describe("Skills settings permission UX contract", () => {
       "<Textarea",
       "onToggle",
       "onUninstall",
-      'title="卸载"',
-      'title="编辑 SKILL.md"',
     ]) {
       expect(`${panel}\n${card}`).not.toContain(token);
     }
@@ -89,7 +97,7 @@ describe("Skills settings permission UX contract", () => {
     expect(lib).not.toContain("commands::ai_commands::skills_uninstall");
   });
 
-  it("keeps prompt-only skill state visible without prepare/install actions", () => {
+  it("keeps prompt-only skill state visible and supports draft confirmation", () => {
     const panel = read("src/components/ai/SkillsPanel.tsx");
     const card = read("src/components/ai/skills/SkillCard.tsx");
     const ui = `${panel}\n${card}`;
@@ -99,41 +107,15 @@ describe("Skills settings permission UX contract", () => {
     expect(ipc).not.toContain('"skills_prepare_workspace"');
     expect(ipc).toContain("confirmation_status");
     expect(ipc).toContain("scope_rules");
-    expect(ui).toContain("需要确认");
-    expect(ui).toContain("已确认");
+    expect(ipc).toContain("export async function skillsCreateDraft");
+    expect(ipc).toContain("export async function skillsConfirm");
+    expect(ui).toContain("skillsCreateDraft");
+    expect(ui).toContain("skillsConfirm");
+    expect(ui).toContain('data-testid="skill-create-draft"');
+    expect(ui).toContain('data-testid="skill-confirm-draft"');
   });
 
-  it("does not compress layered skill state into a generic current available label", () => {
-    const panel = read("src/components/ai/SkillsPanel.tsx");
-    const badges = read("src/components/ai/skills/SkillStatusBadges.tsx");
-    const statusState = read("src/components/ai/skills/skill-status-state.ts");
-    const ui = `${panel}\n${badges}\n${statusState}`;
-
-    expect(ui).not.toContain("当前可用");
-    expect(ui).toContain("部分可用");
-    expect(ui).toContain("不需要运行时");
-    expect(ui).toContain("需要确认");
-  });
-
-  it("splits Skills cards from web evidence provider IPC management", () => {
-    const panel = read("src/components/ai/SkillsPanel.tsx");
-    const skillCard = read("src/components/ai/skills/SkillCard.tsx");
-    const statusBadges = read("src/components/ai/skills/SkillStatusBadges.tsx");
-    const statusState = read("src/components/ai/skills/skill-status-state.ts");
-    const ipc = read("src/lib/ipc.ts");
-
-    expect(panel).toContain("<SkillCard");
-    expect(skillCard).toContain("SkillStatusBadges");
-    expect(`${statusBadges}\n${statusState}`).toContain("需要确认");
-    expect(panel).not.toContain("MCP / Providers");
-    expect(ipc).toContain("export async function webEvidenceProvidersList");
-    expect(ipc).toContain(
-      "export async function webEvidenceProviderDiagnostics",
-    );
-    expect(ipc).not.toContain("mcpRuntimeProfilesList");
-  });
-
-  it("surfaces prompt-only manifest summary in the Skills panel contract", () => {
+  it("keeps prompt-only manifest summary minimal in the Skills panel contract", () => {
     const panel = read("src/components/ai/SkillsPanel.tsx");
     const card = read("src/components/ai/skills/SkillCard.tsx");
     const badges = read("src/components/ai/skills/SkillStatusBadges.tsx");
@@ -145,17 +127,36 @@ describe("Skills settings permission UX contract", () => {
     expect(ipc).toContain("kind: SkillManifestKind");
     expect(ipc).toContain("confirmation_status:");
     expect(ipc).toContain("scope_rules:");
-    expect(ipc).toContain("activated_sections: string[]");
-    expect(ipc).toContain("blocked_sections: string[]");
-    expect(ipc).toContain("degraded_reasons: string[]");
+    expect(ipc).toContain("activation_ready: boolean");
+    expect(ipc).not.toContain("activated_sections: string[]");
+    expect(ipc).not.toContain("blocked_sections: string[]");
+    expect(ipc).not.toContain("degraded_reasons: string[]");
     expect(ipc).not.toContain("mcp_dependencies: string[]");
 
-    expect(panel).toContain("sectionState");
-    expect(panel).toContain("skill.activated_sections");
-    expect(panel).toContain("skill.blocked_sections");
-    expect(ui).toContain("可用片段");
-    expect(ui).toContain("阻塞片段");
+    expect(panel).not.toContain("sectionState");
+    expect(panel).not.toContain("skill.activated_sections");
+    expect(panel).not.toContain("skill.blocked_sections");
+    expect(ui).not.toContain("可用片段");
+    expect(ui).not.toContain("阻塞片段");
     expect(ui).toContain("confirmationState");
     expect(ui).toContain("skill.confirmation_status");
+  });
+
+  it("splits Skills cards from web evidence provider IPC management", () => {
+    const panel = read("src/components/ai/SkillsPanel.tsx");
+    const skillCard = read("src/components/ai/skills/SkillCard.tsx");
+    const statusBadges = read("src/components/ai/skills/SkillStatusBadges.tsx");
+    const statusState = read("src/components/ai/skills/skill-status-state.ts");
+    const ipc = read("src/lib/ipc.ts");
+
+    expect(panel).toContain("<SkillCard");
+    expect(skillCard).toContain("SkillStatusBadges");
+    expect(`${statusBadges}\n${statusState}`).toContain("needs_confirmation");
+    expect(panel).not.toContain("MCP / Providers");
+    expect(ipc).toContain("export async function webEvidenceProvidersList");
+    expect(ipc).toContain(
+      "export async function webEvidenceProviderDiagnostics",
+    );
+    expect(ipc).not.toContain("mcpRuntimeProfilesList");
   });
 });

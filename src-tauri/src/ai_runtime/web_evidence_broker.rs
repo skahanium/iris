@@ -345,14 +345,11 @@ async fn collect_mcp_search_provider_fetch(
     provider_id: &str,
 ) -> AppResult<SearchProviderFetch> {
     ensure_provider_circuit_allows(provider_id)?;
-    let provider = resolve_mcp_provider_mapping(db, provider_id, "web.search")?;
+    let (provider, mapping_json) = resolve_mcp_provider_mapping(db, provider_id, "web.search")?;
     let call_result = crate::ai_runtime::mcp_host_runtime::call_provider_tool(
         db,
         &provider,
-        serde_json::json!({
-            "query": query,
-            "q": query,
-        }),
+        build_mcp_search_arguments(&mapping_json, query, 10),
         crate::ai_runtime::mcp_host_runtime::McpHostRuntimeOptions {
             request_timeout: std::time::Duration::from_secs(20),
             max_stdout_line_bytes: 64 * 1024,
@@ -399,22 +396,27 @@ fn resolve_mcp_provider_mapping(
     db: &Database,
     provider_id: &str,
     capability: &str,
-) -> AppResult<crate::ai_runtime::capability_resolver::ResolvedCapabilityProvider> {
+) -> AppResult<(
+    crate::ai_runtime::capability_resolver::ResolvedCapabilityProvider,
+    String,
+)> {
     let providers =
         crate::ai_runtime::mcp_runtime_registry::list_enabled_web_provider_mappings(db)?;
     for provider in providers {
         if provider.id != provider_id || provider.kind != "mcp" {
             continue;
         }
-        let mapping_json = match capability {
+        let Some(mapping_json) = (match capability {
             "web.search" => provider.web_search_mapping_json.as_deref(),
             "web.fetch" => provider.web_fetch_mapping_json.as_deref(),
             _ => None,
-        };
-        let Some(tool_name) = mapping_json.and_then(mapping_tool_name) else {
+        }) else {
             break;
         };
-        return Ok(
+        let Some(tool_name) = mapping_tool_name(mapping_json) else {
+            break;
+        };
+        return Ok((
             crate::ai_runtime::capability_resolver::ResolvedCapabilityProvider {
                 capability: capability.into(),
                 provider_kind: "mcp".into(),
@@ -423,7 +425,8 @@ fn resolve_mcp_provider_mapping(
                 schema_hash: provider.provider_config_hash,
                 requires_confirmation: true,
             },
-        );
+            mapping_json.to_string(),
+        ));
     }
     Err(AppError::msg(format!(
         "no enabled MCP provider mapping for {provider_id}:{capability}"
@@ -441,6 +444,74 @@ fn mapping_tool_name(mapping_json: &str) -> Option<String> {
         .map(str::to_string)
 }
 
+fn mapping_json_value(mapping_json: &str) -> serde_json::Value {
+    serde_json::from_str(mapping_json).unwrap_or_else(|_| serde_json::json!({}))
+}
+
+fn mapping_string(value: &serde_json::Value, key: &str) -> Option<String> {
+    value
+        .get(key)
+        .and_then(|item| item.as_str())
+        .map(str::trim)
+        .filter(|item| !item.is_empty())
+        .map(str::to_string)
+}
+
+fn merge_mapping_extra_args(
+    target: &mut serde_json::Map<String, serde_json::Value>,
+    mapping: &serde_json::Value,
+) {
+    if let Some(extra) = mapping.get("extraArgs").and_then(|item| item.as_object()) {
+        for (key, value) in extra {
+            target.insert(key.clone(), value.clone());
+        }
+    }
+}
+
+fn build_mcp_search_arguments(
+    mapping_json: &str,
+    query: &str,
+    max_results: usize,
+) -> serde_json::Value {
+    let mapping = mapping_json_value(mapping_json);
+    let explicit = mapping.get("queryArg").is_some()
+        || mapping.get("maxResultsArg").is_some()
+        || mapping.get("extraArgs").is_some();
+    let mut args = serde_json::Map::new();
+    let query_arg = mapping_string(&mapping, "queryArg").unwrap_or_else(|| "query".into());
+    args.insert(query_arg, serde_json::Value::String(query.to_string()));
+    if !explicit {
+        args.insert("q".into(), serde_json::Value::String(query.to_string()));
+    }
+    if let Some(max_results_arg) = mapping_string(&mapping, "maxResultsArg") {
+        args.insert(max_results_arg, serde_json::json!(max_results));
+    }
+    merge_mapping_extra_args(&mut args, &mapping);
+    serde_json::Value::Object(args)
+}
+
+fn build_mcp_fetch_arguments(mapping_json: &str, url: &str, max_chars: usize) -> serde_json::Value {
+    let mapping = mapping_json_value(mapping_json);
+    let explicit = mapping.get("urlArg").is_some()
+        || mapping.get("urlListArg").is_some()
+        || mapping.get("maxCharsArg").is_some()
+        || mapping.get("extraArgs").is_some();
+    let mut args = serde_json::Map::new();
+    if let Some(url_list_arg) = mapping_string(&mapping, "urlListArg") {
+        args.insert(url_list_arg, serde_json::json!([url]));
+    } else {
+        let url_arg = mapping_string(&mapping, "urlArg").unwrap_or_else(|| "url".into());
+        args.insert(url_arg, serde_json::Value::String(url.to_string()));
+    }
+    if let Some(max_chars_arg) = mapping_string(&mapping, "maxCharsArg") {
+        args.insert(max_chars_arg, serde_json::json!(max_chars));
+    } else if !explicit {
+        args.insert("max_chars".into(), serde_json::json!(max_chars));
+    }
+    merge_mapping_extra_args(&mut args, &mapping);
+    serde_json::Value::Object(args)
+}
+
 fn search_provider_fetch_from_native(fetch: WebSearchFetchResult) -> SearchProviderFetch {
     SearchProviderFetch {
         body: fetch.body,
@@ -453,6 +524,9 @@ fn search_provider_fetch_from_native(fetch: WebSearchFetchResult) -> SearchProvi
 fn mcp_search_result_body(result: &serde_json::Value) -> String {
     if let Some(text) = result.as_str() {
         return text.to_string();
+    }
+    if let Some(body) = structured_search_rows_body(result) {
+        return body;
     }
     if let Some(items) = result.get("content").and_then(|value| value.as_array()) {
         let mut body = String::new();
@@ -469,6 +543,52 @@ fn mcp_search_result_body(result: &serde_json::Value) -> String {
     result.to_string()
 }
 
+fn structured_search_rows_body(result: &serde_json::Value) -> Option<String> {
+    let items = result
+        .get("results")
+        .or_else(|| result.get("items"))
+        .or_else(|| result.get("data"))
+        .and_then(|value| value.as_array())?;
+    let mut body = String::new();
+    for (index, item) in items.iter().enumerate() {
+        let Some(object) = item.as_object() else {
+            continue;
+        };
+        let title = object
+            .get("title")
+            .or_else(|| object.get("name"))
+            .and_then(|value| value.as_str())
+            .unwrap_or_default()
+            .trim();
+        let url = object
+            .get("url")
+            .or_else(|| object.get("link"))
+            .and_then(|value| value.as_str())
+            .unwrap_or_default()
+            .trim();
+        if url.is_empty() {
+            continue;
+        }
+        let snippet = object
+            .get("snippet")
+            .or_else(|| object.get("content"))
+            .or_else(|| object.get("description"))
+            .and_then(|value| value.as_str())
+            .unwrap_or_default()
+            .trim();
+        body.push_str(&format!(
+            "[{}] title: {}
+url: {}
+snippet: {}
+",
+            index + 1,
+            title,
+            url,
+            snippet
+        ));
+    }
+    (!body.trim().is_empty()).then_some(body)
+}
 fn web_evidence_items_from_search_fetch(fetch: &SearchProviderFetch) -> Vec<WebEvidenceItem> {
     let search_backend = search_backend_for_effective(fetch.backend);
     parse_search_result_rows(&fetch.body)
@@ -520,7 +640,11 @@ fn parse_search_result_rows(body: &str) -> Vec<SearchResultRow> {
     let mut current: Option<SearchResultRow> = None;
     for line in body.lines() {
         let trimmed = line.trim();
-        if let Some((_, title)) = trimmed.split_once("] 标题:") {
+        let lower = trimmed.to_ascii_lowercase();
+        if let Some((_, title)) = trimmed
+            .split_once("] title:")
+            .or_else(|| trimmed.split_once("] 鏍囬:"))
+        {
             if let Some(row) = current.take().filter(|row| !row.url.trim().is_empty()) {
                 rows.push(row);
             }
@@ -532,9 +656,13 @@ fn parse_search_result_rows(body: &str) -> Vec<SearchResultRow> {
             continue;
         }
         if let Some(row) = current.as_mut() {
-            if let Some(url) = trimmed.strip_prefix("链接:") {
+            if lower.starts_with("url:") {
+                row.url = trimmed[4..].trim().to_string();
+            } else if lower.starts_with("snippet:") {
+                row.snippet = trimmed[8..].trim().to_string();
+            } else if let Some(url) = trimmed.strip_prefix("閾炬帴:") {
                 row.url = url.trim().to_string();
-            } else if let Some(snippet) = trimmed.strip_prefix("摘要:") {
+            } else if let Some(snippet) = trimmed.strip_prefix("鎽樿:") {
                 row.snippet = snippet.trim().to_string();
             }
         }
@@ -544,7 +672,6 @@ fn parse_search_result_rows(body: &str) -> Vec<SearchResultRow> {
     }
     rows
 }
-
 fn search_backend_for_effective(backend: WebSearchEffectiveBackend) -> WebSearchBackend {
     match backend {
         WebSearchEffectiveBackend::Minimax => WebSearchBackend::Minimax,
@@ -734,14 +861,11 @@ async fn collect_mcp_page_fetch(
 ) -> AppResult<PageProviderFetch> {
     crate::llm::fetch_web_page::validate_fetch_url(url)?;
     ensure_provider_circuit_allows(provider_id)?;
-    let provider = resolve_mcp_provider_mapping(db, provider_id, "web.fetch")?;
+    let (provider, mapping_json) = resolve_mcp_provider_mapping(db, provider_id, "web.fetch")?;
     let call_result = crate::ai_runtime::mcp_host_runtime::call_provider_tool(
         db,
         &provider,
-        serde_json::json!({
-            "url": url,
-            "max_chars": FETCH_EXCERPT_MAX_CHARS,
-        }),
+        build_mcp_fetch_arguments(&mapping_json, url, FETCH_EXCERPT_MAX_CHARS),
         crate::ai_runtime::mcp_host_runtime::McpHostRuntimeOptions {
             request_timeout: std::time::Duration::from_secs(20),
             max_stdout_line_bytes: 128 * 1024,
@@ -1142,6 +1266,48 @@ mod tests {
                 SearchProviderCandidate::Native(WebSearchEffectiveBackend::Duckduckgo),
             ]
         );
+    }
+
+    #[test]
+    fn mcp_mapping_builds_provider_specific_search_and_fetch_args() {
+        let search = build_mcp_search_arguments(
+            r#"{"tool":"tavily-search","queryArg":"query","maxResultsArg":"max_results","extraArgs":{"topic":"general"}}"#,
+            "rust mcp",
+            7,
+        );
+        assert_eq!(
+            search,
+            serde_json::json!({"query": "rust mcp", "max_results": 7, "topic": "general"})
+        );
+
+        let fetch = build_mcp_fetch_arguments(
+            r#"{"tool":"tavily-extract","urlListArg":"urls","extraArgs":{"extract_depth":"basic"}}"#,
+            "https://example.com/a",
+            12000,
+        );
+        assert_eq!(
+            fetch,
+            serde_json::json!({"urls": ["https://example.com/a"], "extract_depth": "basic"})
+        );
+    }
+
+    #[test]
+    fn mcp_search_body_normalizes_structured_result_arrays() {
+        let body = mcp_search_result_body(&serde_json::json!({
+            "results": [
+                {
+                    "title": "Iris MCP",
+                    "url": "https://example.com/iris",
+                    "content": "evidence snippet"
+                }
+            ]
+        }));
+        let rows = parse_search_result_rows(&body);
+
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].title, "Iris MCP");
+        assert_eq!(rows[0].url, "https://example.com/iris");
+        assert_eq!(rows[0].snippet, "evidence snippet");
     }
 
     #[test]

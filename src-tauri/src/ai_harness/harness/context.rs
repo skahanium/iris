@@ -6,10 +6,7 @@ use crate::ai_runtime::environment::{build_environment_map, EnvironmentInput};
 use crate::ai_runtime::model_gateway::LlmMessage;
 use crate::ai_runtime::prompt_builder::HarnessMessageInput;
 use crate::ai_runtime::prompt_profile::PromptProfile;
-use crate::ai_runtime::skills::{
-    active_skill_allowed_tools_for_task, active_skills_for_task_prompt, inject_into_prompt,
-    scan_all,
-};
+use crate::ai_runtime::skills::{active_skills_for_task_prompt, inject_into_prompt, scan_all};
 use crate::ai_runtime::ToolSpec;
 use crate::ai_runtime::{AiScene, ContextPacket, SkillActivationPlanSummary};
 use crate::app::AppState;
@@ -145,71 +142,4 @@ pub(crate) fn prepare_environment_and_skills_with_plan(
     selected.retain(|skill| !skill.content.trim().is_empty());
     let skills_prompt = inject_into_prompt(&vault, &selected, input.scene, input.user_message);
     Ok((env_text, skills_prompt))
-}
-
-pub(crate) fn resolve_active_skill_allowed_tools(
-    state: &AppState,
-    task_policy: &crate::ai_runtime::agent_task_policy::AgentTaskPolicy,
-    user_message: &str,
-) -> AppResult<Vec<String>> {
-    let vault = state.vault_path()?;
-    active_skill_allowed_tools_for_task(
-        &vault,
-        task_policy.intent,
-        Some(&state.db),
-        user_message,
-        &[],
-    )
-}
-
-pub(crate) fn resolve_active_skill_allowed_tools_with_plan(
-    state: &AppState,
-    task_policy: &crate::ai_runtime::agent_task_policy::AgentTaskPolicy,
-    user_message: &str,
-    plan: Option<&SkillActivationPlanSummary>,
-) -> AppResult<Vec<String>> {
-    if let Some(plan) = plan {
-        return Ok(plan.allowed_tools());
-    }
-    resolve_active_skill_allowed_tools(state, task_policy, user_message)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn harness_context_uses_activation_plan_allowed_tools_without_rescanning() {
-        let dir = tempfile::tempdir().unwrap();
-        let state = AppState::new(dir.path().to_path_buf()).unwrap();
-        let task_policy = crate::ai_runtime::agent_task_policy::AgentTaskPolicy::from_input(
-            crate::ai_runtime::agent_task_policy::AgentTaskPolicyInput {
-                intent: crate::ai_types::AgentIntent::Chat,
-                task_kind: crate::ai_runtime::agent_task::AgentTaskKind::Lightweight,
-                scope: crate::ai_runtime::agent_task_policy::AgentTaskScope::Vault,
-                web_authorized: false,
-                has_attachments: false,
-                write_permission_required: false,
-                research_depth: 0,
-            },
-        );
-        let plan = SkillActivationPlanSummary {
-            activated_skills: Vec::new(),
-            requested_tools: vec!["mcp_runtime_profiles_list".into()],
-            confirmation_required_tools: Vec::new(),
-            blocked_capabilities: Vec::new(),
-            skill_overlay_summary: "test".into(),
-            degraded: false,
-        };
-
-        let allowed = resolve_active_skill_allowed_tools_with_plan(
-            &state,
-            &task_policy,
-            "list MCP profiles",
-            Some(&plan),
-        )
-        .unwrap();
-
-        assert_eq!(allowed, vec!["mcp_runtime_profiles_list"]);
-    }
 }

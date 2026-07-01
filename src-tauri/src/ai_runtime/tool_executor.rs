@@ -48,7 +48,6 @@ impl ToolRegistry {
             scene,
             autonomy_level: scene.autonomy_level(),
             web_search_enabled: filter.web_search_enabled,
-            skill_allowed_tools: vec![],
             depth: filter.depth,
         };
         self.tools_for_policy_surface(&ctx, filter.only_auto)
@@ -201,7 +200,6 @@ mod tests {
             scene: AiScene::DraftingAssist,
             autonomy_level: AutonomyLevel::L2,
             web_search_enabled: true,
-            skill_allowed_tools: vec![],
             depth: 0,
         };
         let l1_ctx = ToolPolicyContext {
@@ -232,7 +230,6 @@ mod tests {
             scene: AiScene::KnowledgeLookup,
             autonomy_level: AutonomyLevel::L2,
             web_search_enabled: true,
-            skill_allowed_tools: vec![],
             depth: 0,
         };
         assert!(reg
@@ -283,7 +280,6 @@ mod tests {
             scene: AiScene::KnowledgeLookup,
             autonomy_level: AutonomyLevel::L1,
             web_search_enabled: true,
-            skill_allowed_tools: vec![],
             depth: 0,
         };
         let tools = reg.tools_for_policy_surface(&ctx, false);
@@ -302,7 +298,6 @@ mod tests {
             scene: AiScene::ResearchSynthesis,
             autonomy_level: AutonomyLevel::L3,
             web_search_enabled: true,
-            skill_allowed_tools: vec![],
             depth: 0,
         };
         let tools = reg.tools_for_policy_surface(&ctx, false);
@@ -316,21 +311,29 @@ mod tests {
     }
 
     #[test]
-    fn policy_surface_intersects_skill_allowed_tools() {
+    fn policy_surface_follows_task_policy() {
         let reg = ToolRegistry::new();
+        let task_policy = AgentTaskPolicy::from_input(AgentTaskPolicyInput {
+            intent: AgentIntent::Write,
+            task_kind: AgentTaskKind::Lightweight,
+            scope: AgentTaskScope::Vault,
+            web_authorized: true,
+            has_attachments: false,
+            write_permission_required: true,
+            research_depth: 0,
+        });
         let ctx = ToolPolicyContext {
-            task_policy: None,
+            task_policy: Some(task_policy),
             scene: AiScene::DraftingAssist,
             autonomy_level: AutonomyLevel::L2,
             web_search_enabled: true,
-            skill_allowed_tools: vec!["insert_text_at_cursor".to_string()],
             depth: 0,
         };
         let tools = reg.tools_for_policy_surface(&ctx, false);
         let names: Vec<&str> = tools.iter().map(|t| t.name.as_str()).collect();
 
         assert!(names.contains(&"insert_text_at_cursor"));
-        assert!(!names.contains(&"replace_selection"));
+        assert!(names.contains(&"replace_selection"));
     }
 
     #[test]
@@ -372,7 +375,6 @@ mod tests {
             scene: AiScene::KnowledgeLookup,
             autonomy_level: AutonomyLevel::L2,
             web_search_enabled: true,
-            skill_allowed_tools: vec![],
             depth: 0,
         };
         assert!(reg.check_tool_policy("search_hybrid", &ctx).is_ok());
@@ -387,7 +389,6 @@ mod tests {
             scene: AiScene::KnowledgeLookup,
             autonomy_level: AutonomyLevel::L2,
             web_search_enabled: true,
-            skill_allowed_tools: vec![],
             depth: 0,
         };
         assert!(reg
@@ -403,7 +404,6 @@ mod tests {
             scene: AiScene::DraftingAssist,
             autonomy_level: AutonomyLevel::L2,
             web_search_enabled: true,
-            skill_allowed_tools: vec![],
             depth: 0,
         };
         assert!(reg.check_tool_policy("insert_text_at_cursor", &ctx).is_ok());
@@ -417,7 +417,6 @@ mod tests {
             scene: AiScene::DraftingAssist,
             autonomy_level: AutonomyLevel::L1,
             web_search_enabled: true,
-            skill_allowed_tools: vec![],
             depth: 0,
         };
         assert!(reg

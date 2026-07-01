@@ -21,8 +21,8 @@ use crate::ai_runtime::{
     session::{SessionManager, SessionMessage, SessionSummary},
     session_evidence::{
         enrich_session_evidence_details, list_session_evidence,
-        register_packets_from_context_packets, register_session_evidence, SessionEvidenceItem,
-        SessionEvidenceRegisterPacket,
+        register_packets_from_context_packets, register_session_evidence,
+        SessionEvidenceDetailItem, SessionEvidenceItem, SessionEvidenceRegisterPacket,
     },
     tool_executor::ToolRegistry,
     trace::{TraceRecorder, TraceStatus},
@@ -472,26 +472,11 @@ pub async fn context_assemble(
     );
 
     let registry = ToolRegistry::new();
-    let skill_allowed_tools = state
-        .vault_path()
-        .ok()
-        .and_then(|vault| {
-            crate::ai_runtime::skills::active_skill_allowed_tools_for_task(
-                &vault,
-                task_policy.intent,
-                Some(&state.db),
-                &query,
-                &[],
-            )
-            .ok()
-        })
-        .unwrap_or_default();
     let policy_ctx = crate::ai_runtime::tool_policy::ToolPolicyContext {
         task_policy: Some(task_policy.clone()),
         scene,
         autonomy_level: task_policy.autonomy_level,
         web_search_enabled,
-        skill_allowed_tools,
         depth: 0,
     };
     let tools: Vec<_> = registry.tools_for_policy_surface(&policy_ctx, false);
@@ -1634,30 +1619,18 @@ fn finalize_chat_harness_run_from_task_policy(
 
 /// Get available tools for a scene (for frontend display).
 #[tauri::command]
-pub fn ai_list_tools(state: State<'_, Arc<AppState>>, scene: String) -> AppResult<Vec<AiToolInfo>> {
+pub fn ai_list_tools(
+    _state: State<'_, Arc<AppState>>,
+    scene: String,
+) -> AppResult<Vec<AiToolInfo>> {
     let scene = parse_ai_scene(&scene)?;
     let registry = ToolRegistry::new();
     let task_policy = legacy_task_policy_from_scene(scene, None, true, false);
-    let skill_allowed_tools = state
-        .vault_path()
-        .ok()
-        .and_then(|vault| {
-            crate::ai_runtime::skills::active_skill_allowed_tools_for_task(
-                &vault,
-                task_policy.intent,
-                Some(&state.db),
-                scene.profile(),
-                &[],
-            )
-            .ok()
-        })
-        .unwrap_or_default();
     let ctx = crate::ai_runtime::tool_policy::ToolPolicyContext {
         task_policy: Some(task_policy.clone()),
         scene,
         autonomy_level: task_policy.autonomy_level,
         web_search_enabled: true,
-        skill_allowed_tools,
         depth: 0,
     };
     let tools: Vec<_> = registry
@@ -1829,12 +1802,15 @@ pub async fn session_evidence_list(
 pub async fn session_evidence_detail(
     state: State<'_, Arc<AppState>>,
     session_id: i64,
-) -> AppResult<Vec<SessionEvidenceItem>> {
+) -> AppResult<Vec<SessionEvidenceDetailItem>> {
     let vault = state.vault_path()?;
     let items = state
         .db
         .with_conn(|conn| list_session_evidence(conn, session_id))?;
-    Ok(enrich_session_evidence_details(items, &vault))
+    Ok(enrich_session_evidence_details(items, &vault)
+        .into_iter()
+        .map(SessionEvidenceDetailItem::from)
+        .collect())
 }
 
 /// Register evidence metadata against a session and return stable citation labels.
@@ -1887,8 +1863,16 @@ pub struct WebEvidenceProviderInput {
     pub provider_kind: String,
     pub enabled: bool,
     pub transport_kind: Option<String>,
+    #[serde(default = "default_provider_config_json")]
+    pub transport_config_json: String,
+    #[serde(default = "default_provider_config_json")]
+    pub credential_refs_json: String,
     pub search_mapping: Option<String>,
     pub fetch_mapping: Option<String>,
+}
+
+fn default_provider_config_json() -> String {
+    "{}".into()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1898,8 +1882,25 @@ pub struct WebEvidenceProviderSummary {
     pub name: String,
     pub provider_kind: String,
     pub enabled: bool,
+    pub transport_kind: String,
+    pub transport_config_json: String,
+    pub credential_refs_json: String,
+    pub search_mapping: Option<String>,
+    pub fetch_mapping: Option<String>,
+    pub mapping_status: String,
+    pub diagnostic_status: String,
+    pub is_native: bool,
+    pub editable: bool,
     pub has_search_mapping: bool,
     pub has_fetch_mapping: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WebEvidenceProviderDiagnosticCheck {
+    pub label: String,
+    pub status: String,
+    pub message: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1908,6 +1909,9 @@ pub struct WebEvidenceProviderDiagnostics {
     pub provider_id: Option<String>,
     pub status: String,
     pub failures: Vec<String>,
+    pub checks: Vec<WebEvidenceProviderDiagnosticCheck>,
+    pub can_use_for_search: bool,
+    pub can_use_for_fetch: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1954,13 +1958,26 @@ pub async fn web_evidence_providers_list(
     crate::ai_runtime::mcp_runtime_registry::list_web_evidence_providers(&state.db).map(|items| {
         items
             .into_iter()
-            .map(|item| WebEvidenceProviderSummary {
-                id: item.id,
-                name: item.name,
-                provider_kind: item.kind,
-                enabled: item.enabled,
-                has_search_mapping: item.has_search_mapping,
-                has_fetch_mapping: item.has_fetch_mapping,
+            .map(|item| {
+                let mapping_status =
+                    provider_mapping_status(item.has_search_mapping, item.has_fetch_mapping);
+                WebEvidenceProviderSummary {
+                    id: item.id,
+                    name: item.name,
+                    provider_kind: item.kind.clone(),
+                    enabled: item.enabled,
+                    transport_kind: item.transport_kind,
+                    transport_config_json: item.transport_config_json,
+                    credential_refs_json: item.credential_refs_json,
+                    search_mapping: item.web_search_mapping_json,
+                    fetch_mapping: item.web_fetch_mapping_json,
+                    diagnostic_status: provider_diagnostic_status(item.enabled, &mapping_status),
+                    mapping_status,
+                    is_native: item.kind == "native",
+                    editable: item.kind == "mcp",
+                    has_search_mapping: item.has_search_mapping,
+                    has_fetch_mapping: item.has_fetch_mapping,
+                }
             })
             .collect()
     })
@@ -1991,30 +2008,145 @@ pub async fn web_evidence_provider_delete(
 pub async fn web_evidence_provider_diagnostics(
     state: State<'_, Arc<AppState>>,
     provider_id: Option<String>,
+    live_check: Option<bool>,
 ) -> AppResult<WebEvidenceProviderDiagnostics> {
+    let _live_check = live_check.unwrap_or(false);
+    let providers =
+        crate::ai_runtime::mcp_runtime_registry::list_web_evidence_providers(&state.db)?;
+
     if let Some(provider_id) = provider_id.as_deref() {
-        let exists = crate::ai_runtime::mcp_runtime_registry::web_evidence_provider_exists(
-            &state.db,
-            provider_id,
-        )?;
+        if let Some(provider) = providers.iter().find(|item| item.id == provider_id) {
+            return Ok(provider_diagnostics_for_summary(provider));
+        }
         return Ok(WebEvidenceProviderDiagnostics {
             provider_id: Some(provider_id.to_string()),
-            status: if exists { "configured" } else { "missing" }.into(),
-            failures: Vec::new(),
+            status: "missing".into(),
+            failures: vec!["provider not found".into()],
+            checks: vec![provider_diagnostic_check(
+                "configured",
+                false,
+                "provider registry entry is missing",
+            )],
+            can_use_for_search: false,
+            can_use_for_fetch: false,
         });
     }
 
-    let providers =
-        crate::ai_runtime::mcp_runtime_registry::list_web_evidence_providers(&state.db)?;
+    let can_use_for_search = providers
+        .iter()
+        .any(|item| item.enabled && item.has_search_mapping);
+    let can_use_for_fetch = providers
+        .iter()
+        .any(|item| item.enabled && item.has_fetch_mapping);
+    let status = if providers.is_empty() {
+        "not_configured"
+    } else if can_use_for_search || can_use_for_fetch {
+        "configured"
+    } else {
+        "needs_mapping"
+    };
+    let checks = if providers.is_empty() {
+        vec![provider_diagnostic_check(
+            "registry",
+            false,
+            "no MCP web evidence providers configured",
+        )]
+    } else {
+        vec![provider_diagnostic_check(
+            "registry",
+            true,
+            "MCP web evidence provider registry is available",
+        )]
+    };
+    let failures = checks
+        .iter()
+        .filter(|check| check.status != "pass")
+        .map(|check| check.message.clone())
+        .collect();
     Ok(WebEvidenceProviderDiagnostics {
         provider_id: None,
-        status: if providers.is_empty() {
-            "not_configured".into()
-        } else {
-            "configured".into()
-        },
-        failures: Vec::new(),
+        status: status.into(),
+        failures,
+        checks,
+        can_use_for_search,
+        can_use_for_fetch,
     })
+}
+
+fn provider_mapping_status(has_search_mapping: bool, has_fetch_mapping: bool) -> String {
+    match (has_search_mapping, has_fetch_mapping) {
+        (true, true) => "complete".into(),
+        (true, false) | (false, true) => "partial".into(),
+        (false, false) => "missing".into(),
+    }
+}
+
+fn provider_diagnostic_status(enabled: bool, mapping_status: &str) -> String {
+    if !enabled {
+        "disabled".into()
+    } else if mapping_status == "complete" {
+        "ready".into()
+    } else {
+        "needs_mapping".into()
+    }
+}
+
+fn provider_diagnostic_check(
+    label: &str,
+    passed: bool,
+    message: &str,
+) -> WebEvidenceProviderDiagnosticCheck {
+    WebEvidenceProviderDiagnosticCheck {
+        label: label.into(),
+        status: if passed { "pass" } else { "fail" }.into(),
+        message: message.into(),
+    }
+}
+
+fn provider_diagnostics_for_summary(
+    provider: &crate::ai_runtime::mcp_runtime_registry::WebEvidenceProviderSummary,
+) -> WebEvidenceProviderDiagnostics {
+    let mut checks = vec![
+        provider_diagnostic_check("configured", true, "provider registry entry exists"),
+        provider_diagnostic_check("enabled", provider.enabled, "provider is enabled"),
+        provider_diagnostic_check(
+            "transport",
+            provider.transport_kind == "https" || provider.transport_kind == "stdio",
+            "transport kind is supported for MCP web evidence",
+        ),
+        provider_diagnostic_check(
+            "searchMapping",
+            provider.has_search_mapping,
+            "web.search mapping is configured",
+        ),
+        provider_diagnostic_check(
+            "fetchMapping",
+            provider.has_fetch_mapping,
+            "web.fetch mapping is configured",
+        ),
+    ];
+    if provider.kind != "mcp" {
+        checks.push(provider_diagnostic_check(
+            "providerKind",
+            false,
+            "only MCP providers are editable web evidence providers",
+        ));
+    }
+    let failures = checks
+        .iter()
+        .filter(|check| check.status != "pass")
+        .map(|check| check.message.clone())
+        .collect::<Vec<_>>();
+    let mapping_status =
+        provider_mapping_status(provider.has_search_mapping, provider.has_fetch_mapping);
+    WebEvidenceProviderDiagnostics {
+        provider_id: Some(provider.id.clone()),
+        status: provider_diagnostic_status(provider.enabled, &mapping_status),
+        failures,
+        checks,
+        can_use_for_search: provider.enabled && provider.has_search_mapping,
+        can_use_for_fetch: provider.enabled && provider.has_fetch_mapping,
+    }
 }
 
 fn mapping_json_from_tool_name(value: Option<String>) -> AppResult<Option<String>> {
@@ -2059,8 +2191,8 @@ fn provider_input_to_registry(
             kind: provider_kind,
             enabled: input.enabled,
             transport_kind,
-            transport_config_json: "{}".into(),
-            credential_refs_json: "{}".into(),
+            transport_config_json: input.transport_config_json,
+            credential_refs_json: input.credential_refs_json,
             web_search_mapping_json: mapping_json_from_tool_name(input.search_mapping)?,
             web_fetch_mapping_json: mapping_json_from_tool_name(input.fetch_mapping)?,
         },

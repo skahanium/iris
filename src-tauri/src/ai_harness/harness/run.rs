@@ -8,9 +8,8 @@ use tauri::{AppHandle, Emitter};
 
 use super::archive::save_round_checkpoint;
 use super::context::{
-    build_initial_messages, prepare_environment_and_skills_with_plan,
-    resolve_active_skill_allowed_tools_with_plan, resolve_file_id, EnvironmentAndSkillsInput,
-    InitialMessagesInput,
+    build_initial_messages, prepare_environment_and_skills_with_plan, resolve_file_id,
+    EnvironmentAndSkillsInput, InitialMessagesInput,
 };
 use super::finalize::{finish_run, ingest_tool_packets, ledger_to_packets, FinishRunParams};
 use super::planning::{resolve_max_rounds, resolve_token_budget};
@@ -277,18 +276,11 @@ async fn run_harness_inner(
     thinking_mode: bool,
 ) -> AppResult<HarnessRunResult> {
     let registry = ToolRegistry::new();
-    let skill_allowed_tools = resolve_active_skill_allowed_tools_with_plan(
-        state,
-        &input.task_policy,
-        &input.user_message,
-        input.skill_activation_plan.as_ref(),
-    )?;
     let policy_ctx = ToolPolicyContext {
         task_policy: Some(input.task_policy.clone()),
         scene: input.scene,
         autonomy_level: input.task_policy.autonomy_level,
         web_search_enabled: input.web_search_enabled,
-        skill_allowed_tools: skill_allowed_tools.clone(),
         depth: input.depth,
     };
     let scene_tools = registry.tools_for_policy_surface(&policy_ctx, false);
@@ -737,7 +729,7 @@ async fn run_harness_inner(
                             tc,
                             input.note_path.as_deref(),
                             evidence_ids.clone(),
-                            skill_allowed_tools.clone(),
+                            Vec::new(),
                             input.token_budget,
                         )
                     })
@@ -1233,13 +1225,6 @@ async fn pause_for_tool_confirmation(
     tool_call: &ToolCall,
 ) -> AppResult<HarnessRunResult> {
     let tool_name = &tool_call.function.name;
-    let skill_allowed_tools = resolve_active_skill_allowed_tools_with_plan(
-        state,
-        &input.task_policy,
-        &input.user_message,
-        input.skill_activation_plan.as_ref(),
-    )
-    .unwrap_or_default();
     crate::llm::safe_lock(&state.ai.pending_tool_calls).insert(
         tool_call.id.clone(),
         crate::app::PendingToolCall {
@@ -1251,7 +1236,6 @@ async fn pause_for_tool_confirmation(
             file_id,
             web_search_enabled: input.web_search_enabled,
             autonomy_level: input.task_policy.autonomy_level,
-            skill_allowed_tools: skill_allowed_tools.clone(),
             skill_activation_plan: input.skill_activation_plan.clone(),
         },
     );
@@ -1272,7 +1256,6 @@ async fn pause_for_tool_confirmation(
                     scene: input.scene,
                     autonomy_level: input.task_policy.autonomy_level,
                     web_search_enabled: input.web_search_enabled,
-                    skill_allowed_tools: skill_allowed_tools.clone(),
                     depth: input.depth,
                 },
                 skill_id: None,
@@ -1289,7 +1272,6 @@ async fn pause_for_tool_confirmation(
             scene: input.scene,
             autonomy_level: input.task_policy.autonomy_level,
             web_search_enabled: input.web_search_enabled,
-            skill_allowed_tools,
             depth: input.depth,
         },
         &tool_call.id,
@@ -1457,7 +1439,6 @@ mod tests {
             scene: AiScene::DraftingAssist,
             autonomy_level: AutonomyLevel::L2,
             web_search_enabled,
-            skill_allowed_tools: vec![],
             depth: 0,
         }
     }

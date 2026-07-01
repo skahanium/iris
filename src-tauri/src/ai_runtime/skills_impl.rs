@@ -33,8 +33,7 @@ mod scan_impl;
 mod validation_impl;
 
 pub use activation_impl::{
-    active_skill_allowed_tools, active_skill_allowed_tools_for_task, active_skills_for_prompt,
-    active_skills_for_task_prompt, build_skill_activation_plan,
+    active_skills_for_prompt, active_skills_for_task_prompt, build_skill_activation_plan,
     build_skill_activation_plan_for_task, build_skill_activation_plan_for_task_with_runtime,
     enrich_list_with_scene, enrich_list_with_task, filter_skill_content_to_injected_sections,
     load_activation_index, rank_skills_for_scene, rank_skills_for_scene_with_index,
@@ -63,10 +62,7 @@ pub use prompt_impl::inject_into_prompt;
 pub use scan_impl::{
     load_skill, scan_all, scan_all_metadata, scan_all_with_status, skill_content_hash_for_path,
 };
-pub use validation_impl::{
-    capability_preview_for_entry, confirmation_required_tools, license_is_agpl_compatible,
-    validate_skill_license,
-};
+pub use validation_impl::{license_is_agpl_compatible, validate_skill_license};
 
 #[cfg(test)]
 fn uninstall(name: &str, scope: SkillScope, vault: &Path) -> AppResult<()> {
@@ -315,9 +311,6 @@ mod tests {
             r#"---
 name: yaml-skill
 description: Parses modern Agent Skills frontmatter
-allowed-tools:
-  - memory_read
-  - search_hybrid
 metadata:
   depends:
     - helper-skill
@@ -333,10 +326,6 @@ license: AGPL-3.0
         .unwrap();
 
         let skill = load_skill(&path, SkillScope::Global).unwrap();
-        assert_eq!(
-            skill.allowed_tools,
-            vec!["memory_read".to_string(), "search_hybrid".to_string()]
-        );
         assert_eq!(skill.depends(), vec!["helper-skill".to_string()]);
         assert_eq!(skill.license.as_deref(), Some("AGPL-3.0"));
     }
@@ -393,41 +382,6 @@ Body
         );
     }
 
-    #[test]
-    fn capability_preview_reports_requested_and_missing_tools() {
-        let entry = SkillEntry {
-            name: "preview".into(),
-            description: "Preview".into(),
-            license: Some("AGPL-3.0".into()),
-            compatibility: None,
-            metadata: Default::default(),
-            allowed_tools: vec!["web_search".into(), "totally_unknown".into()],
-            content: String::new(),
-            scope: SkillScope::Global,
-            enabled: true,
-            file_path: String::new(),
-            legacy_trigger: None,
-            ..SkillEntry::default()
-        };
-
-        let preview = capability_preview_for_entry(&entry, &[]);
-        assert_eq!(preview["license"], "AGPL-3.0");
-        assert!(preview["requested_tools"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|v| v == "web_search"));
-        assert!(!preview["confirmation_required_tools"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|v| v == "fetch_web_page"));
-        assert!(preview["unrecognized_tools"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|v| v == "totally_unknown"));
-    }
     #[allow(unused_variables)]
     #[test]
     fn subpath_symlink_escape_rejected_by_canonicalize() {
@@ -462,7 +416,6 @@ Body
         let raw = r#"---
 name: my-skill
 description: A test skill
-allowed-tools: search_hybrid read_note
 license: MIT
 compatibility: "Iris 1.0+"
 ---
@@ -473,10 +426,6 @@ Instructions here."#;
         let (meta, body) = parse_frontmatter(raw);
         assert_eq!(meta.get("name").unwrap(), "my-skill");
         assert_eq!(meta.get("description").unwrap(), "A test skill");
-        assert_eq!(
-            meta.get("allowed-tools").unwrap(),
-            "search_hybrid read_note"
-        );
         assert_eq!(meta.get("license").unwrap(), "MIT");
         assert!(body.contains("Instructions here"));
     }
@@ -514,7 +463,6 @@ trigger: knowledge
             r#"---
 name: my-skill
 description: A test skill
-allowed-tools: search_hybrid read_note
 license: MIT
 ---
 
@@ -525,7 +473,6 @@ license: MIT
         assert_eq!(entry.name, "my-skill");
         assert_eq!(entry.description, "A test skill");
         assert_eq!(entry.license, Some("MIT".into()));
-        assert_eq!(entry.allowed_tools, vec!["search_hybrid", "read_note"]);
         assert!(entry.legacy_trigger.is_none());
         assert_eq!(entry.validation_status(), SkillValidationStatus::Valid);
     }
@@ -630,7 +577,6 @@ Large instruction body."#,
             license: None,
             compatibility: None,
             metadata: HashMap::new(),
-            allowed_tools: vec![],
             content: "body".into(),
             scope: SkillScope::Vault,
             enabled: true,
@@ -652,7 +598,6 @@ Large instruction body."#,
             license: None,
             compatibility: None,
             metadata: HashMap::new(),
-            allowed_tools: vec![],
             content: "body".into(),
             scope: SkillScope::Vault,
             enabled: true,
@@ -666,48 +611,6 @@ Large instruction body."#,
         ));
     }
 
-    #[test]
-    fn unrecognized_tool_is_partial_diagnostic_not_invalid() {
-        let entry = SkillEntry {
-            name: "test".into(),
-            description: "Valid desc".into(),
-            license: None,
-            compatibility: None,
-            metadata: HashMap::new(),
-            allowed_tools: vec!["nonexistent_tool".into()],
-            content: "body".into(),
-            scope: SkillScope::Vault,
-            enabled: true,
-            file_path: "/test".into(),
-            legacy_trigger: None,
-            ..SkillEntry::default()
-        };
-        assert_eq!(entry.validation_status(), SkillValidationStatus::Valid);
-        assert!(!entry.all_allowed_tools_recognized());
-        assert_eq!(entry.unrecognized_tools(), vec!["nonexistent_tool"]);
-        assert_eq!(entry.blocked_capabilities().len(), 1);
-    }
-
-    #[test]
-    fn recognized_tools_are_valid() {
-        let entry = SkillEntry {
-            name: "test".into(),
-            description: "Valid desc".into(),
-            license: None,
-            compatibility: None,
-            metadata: HashMap::new(),
-            allowed_tools: vec!["search_hybrid".into(), "read_note".into()],
-            content: "body".into(),
-            scope: SkillScope::Vault,
-            enabled: true,
-            file_path: "/test".into(),
-            legacy_trigger: None,
-            ..SkillEntry::default()
-        };
-        assert_eq!(entry.validation_status(), SkillValidationStatus::Valid);
-        assert!(entry.all_allowed_tools_recognized());
-        assert!(entry.unrecognized_tools().is_empty());
-    }
     // skills_for_scene
 
     fn make_skill(name: &str, legacy_trigger: Option<&str>, enabled: bool) -> SkillEntry {
@@ -717,7 +620,6 @@ Large instruction body."#,
             license: None,
             compatibility: None,
             metadata: HashMap::new(),
-            allowed_tools: vec![],
             content: String::new(),
             scope: SkillScope::Vault,
             enabled,
@@ -760,7 +662,8 @@ Large instruction body."#,
     #[test]
     fn confirmed_skill_hash_is_recorded_and_invalidated_on_edit() {
         let vault = tempfile::tempdir().unwrap();
-        let target = vault.path().join(".iris/skills/demo/SKILL.md");
+        let target = PathBuf::from("demo/SKILL.md");
+        let actual_target = vault.path().join(".iris/skills/demo/SKILL.md");
         let markdown = "---\nname: demo\ndescription: Demo skill\nscope:\n  - kind: glob\n    pattern: \"notes/**\"\n---\n\nUse demo behavior.\n";
 
         let entry =
@@ -778,7 +681,7 @@ Large instruction body."#,
         );
 
         std::fs::write(
-            &target,
+            &actual_target,
             markdown.replace("demo behavior", "changed behavior"),
         )
         .unwrap();
@@ -840,7 +743,6 @@ Large instruction body."#,
             license: None,
             compatibility: None,
             metadata: HashMap::new(),
-            allowed_tools: vec![],
             content: String::new(),
             scope: SkillScope::Vault,
             enabled: true,
@@ -862,7 +764,6 @@ Large instruction body."#,
             license: None,
             compatibility: None,
             metadata: HashMap::new(),
-            allowed_tools: vec![],
             content: String::new(),
             scope: SkillScope::Vault,
             enabled: true,
@@ -890,7 +791,6 @@ Large instruction body."#,
             license: None,
             compatibility: None,
             metadata,
-            allowed_tools: vec![],
             content: String::new(),
             scope: SkillScope::Vault,
             enabled: true,
@@ -919,7 +819,6 @@ Large instruction body."#,
             license: None,
             compatibility: None,
             metadata,
-            allowed_tools: vec![],
             content: String::new(),
             scope: SkillScope::Vault,
             enabled: true,
@@ -946,7 +845,6 @@ Large instruction body."#,
             license: None,
             compatibility: None,
             metadata,
-            allowed_tools: vec![],
             content: String::new(),
             scope: SkillScope::Vault,
             enabled: true,
@@ -970,7 +868,6 @@ Large instruction body."#,
             license: None,
             compatibility: None,
             metadata,
-            allowed_tools: vec![],
             content: String::new(),
             scope: SkillScope::Vault,
             enabled: true,

@@ -35,9 +35,6 @@ pub fn support_status_for_capability(raw: &str) -> SkillCapabilitySupportStatus 
         "bash" | "shell" | "computer" | "computer_control" => {
             SkillCapabilitySupportStatus::BlockedByPolicy
         }
-        "execute_script_sandboxed" | "install_dependency" | "dependency_install" | "mcp_bridge" => {
-            SkillCapabilitySupportStatus::BlockedByPolicy
-        }
         _ => SkillCapabilitySupportStatus::UnsupportedByProductScope,
     }
 }
@@ -66,39 +63,7 @@ pub fn fallback_guidance(raw: &str, status: SkillCapabilitySupportStatus) -> Str
     }
 }
 
-fn risk_level(status: SkillCapabilitySupportStatus) -> &'static str {
-    match status {
-        SkillCapabilitySupportStatus::Supported => "low",
-        SkillCapabilitySupportStatus::SupportedWithConfirmation
-        | SkillCapabilitySupportStatus::MissingUserGrant => "medium",
-        SkillCapabilitySupportStatus::Planned
-        | SkillCapabilitySupportStatus::UnsupportedByProductScope
-        | SkillCapabilitySupportStatus::BlockedByPolicy => "high",
-    }
-}
-
 /// Build blocked/degraded capability summaries for a skill.
-pub fn blocked_capabilities_for_skill(entry: &SkillEntry) -> Vec<BlockedCapabilitySummary> {
-    let mut blocked = Vec::new();
-    for tool in &entry.allowed_tools {
-        let status = support_status_for_capability(tool);
-        if matches!(
-            status,
-            SkillCapabilitySupportStatus::Planned
-                | SkillCapabilitySupportStatus::UnsupportedByProductScope
-                | SkillCapabilitySupportStatus::BlockedByPolicy
-                | SkillCapabilitySupportStatus::MissingUserGrant
-        ) {
-            blocked.push(BlockedCapabilitySummary {
-                skill_name: entry.name.clone(),
-                capability: tool.clone(),
-                status,
-                risk_level: risk_level(status).into(),
-                permission: catalog_find(&normalize_external_capability(tool))
-                    .map(|tool| tool.access_level),
-                fallback_guidance: fallback_guidance(tool, status),
-            });
-        }
-    }
-    blocked
+pub fn blocked_capabilities_for_skill(_entry: &SkillEntry) -> Vec<BlockedCapabilitySummary> {
+    Vec::new()
 }

@@ -231,7 +231,7 @@ mod tests {
             "secret.use_named",
             "process.run_readonly",
             "process.long_running",
-            "skill.mcp_bridge",
+            "unsupported.runtime_bridge",
         ] {
             assert!(
                 !is_supported_capability(capability),

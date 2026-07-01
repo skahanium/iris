@@ -1,7 +1,5 @@
-use crate::ai_runtime::tool_catalog::TOOL_CATALOG;
 use crate::error::{AppError, AppResult};
 
-use super::compatibility_impl::blocked_capabilities_for_skill;
 use super::SkillEntry;
 
 /// Return true when a declared skill license is acceptable for Iris.
@@ -46,39 +44,4 @@ pub fn validate_skill_license(entry: &SkillEntry) -> AppResult<()> {
             entry.license.as_deref().unwrap_or("unknown")
         )))
     }
-}
-
-/// Tools declared by a skill that require user confirmation in the harness.
-pub fn confirmation_required_tools(tools: &[String]) -> Vec<String> {
-    tools
-        .iter()
-        .filter(|t| {
-            TOOL_CATALOG
-                .iter()
-                .any(|e| e.name == t.as_str() && e.requires_confirmation)
-        })
-        .cloned()
-        .collect()
-}
-
-/// Build a read-only capability preview for install confirmation and Skills UI.
-pub fn capability_preview_for_entry(
-    entry: &SkillEntry,
-    installed_names: &[String],
-) -> serde_json::Value {
-    let blocked_capabilities = blocked_capabilities_for_skill(entry);
-    let compatibility_warnings: Vec<String> = blocked_capabilities
-        .iter()
-        .map(|cap| format!("{}: {}", cap.capability, cap.fallback_guidance))
-        .collect();
-    serde_json::json!({
-        "name": entry.name,
-        "license": entry.license,
-        "requested_tools": entry.allowed_tools,
-        "confirmation_required_tools": confirmation_required_tools(&entry.allowed_tools),
-        "unrecognized_tools": entry.unrecognized_tools(),
-        "missing_deps": entry.missing_dependencies(installed_names),
-        "blocked_capabilities": blocked_capabilities,
-        "compatibility_warnings": compatibility_warnings,
-    })
 }

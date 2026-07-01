@@ -1,11 +1,11 @@
 import { FileText, Globe } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
-import type { SessionEvidenceRecord } from "@/types/ipc";
+import type { SessionEvidenceDetailRecord } from "@/types/ipc";
 
 export interface EvidenceDetailArtifactPayload {
   sessionId: number;
-  evidence: SessionEvidenceRecord[];
+  evidence: SessionEvidenceDetailRecord[];
 }
 
 function isEvidencePayload(
@@ -16,17 +16,16 @@ function isEvidencePayload(
   return typeof record.sessionId === "number" && Array.isArray(record.evidence);
 }
 
-function localStatus(evidence: SessionEvidenceRecord): string {
+function localStatus(evidence: SessionEvidenceDetailRecord): string {
   if (evidence.detailStatus) return evidence.detailStatus;
-  if (!evidence.sourcePath) return "source_missing";
-  return evidence.contentHash ? "source_unchanged" : "span_missing";
+  return evidence.sourcePath ? "source_available" : "source_missing";
 }
 
-function evidenceStatus(evidence: SessionEvidenceRecord): string {
+function evidenceStatus(evidence: SessionEvidenceDetailRecord): string {
   return evidence.sourceType === "web" ? "web_source" : localStatus(evidence);
 }
 
-function webTitle(evidence: SessionEvidenceRecord): string {
+function webTitle(evidence: SessionEvidenceDetailRecord): string {
   return (
     evidence.title?.trim() ||
     evidence.domain?.trim() ||

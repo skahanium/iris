@@ -37,9 +37,7 @@ Use a concise review style."#,
         entry.skill.confirmation_status,
         SkillConfirmationStatus::Confirmed
     );
-    assert_eq!(entry.activated_sections, vec!["skill_overlay"]);
     assert!(entry.activation_ready);
-    assert_eq!(entry.availability, "available");
 }
 
 #[test]
@@ -72,5 +70,4 @@ Keep responses terse."#,
         SkillConfirmationStatus::NeedsConfirmation
     );
     assert!(!entry.activation_ready);
-    assert_eq!(entry.availability, "partial");
 }

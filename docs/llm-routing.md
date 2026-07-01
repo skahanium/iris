@@ -63,3 +63,11 @@
 - `minimax_config_get` / `minimax_config_set`（Host、`minimax_search_model`、`web_search_backend`：`auto` | `minimax` | `duckduckgo`；Host 保存时会规范化并强制 HTTPS origin）
 - `minimax_config_test`（极简查询探测 Key，不记录 Key）
 - Key 读写：`credential_set` / `credential_has` / `credential_delete`，服务 ID `iris.minimax`
+
+## Web Evidence Provider Target Contract
+
+- `web_search` is the only assistant-facing network switch. Search, URL deep-read, and page fetch evidence all enter `WebEvidenceBroker`; explicit URLs are passed as broker URLs rather than through a separate fetch tool.
+- Native providers remain synthetic UI cards: MiniMax and DuckDuckGo are configured by MiniMax/search settings and are not migrated into the persistent provider table.
+- MCP providers are persisted only when explicitly configured as web evidence providers. Supported transport configs are `{"url":"https://...","allow_localhost_dev":false}` for HTTPS and `{"command":"...","args":[...]}` for stdio. Credential fields store OS credential service references only.
+- Broker candidate order is MCP mapping first, then MiniMax when configured/selected, then DuckDuckGo fallback. Provider diagnostics expose mapping completeness and recent circuit state in Management Center.
+- Ordinary evidence details show citation, title, safe URL/domain, retrieval reason, conflict markers, and excerpt. Provider ids, provider kind, raw result hashes, and extraction methods are audit/diagnostic metadata only.

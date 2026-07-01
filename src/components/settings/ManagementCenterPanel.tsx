@@ -21,6 +21,7 @@ import { useEffect, useMemo, useState, type ReactNode } from "react";
 
 import { AiRulesPanel } from "@/components/ai/AiRulesPanel";
 import { SkillsPanelBody } from "@/components/ai/SkillsPanel";
+import { McpProfilesPanel } from "@/components/ai/skills/McpProfilesPanel";
 import { RecycleBinBody } from "@/components/file/RecycleBinSheet";
 import { VaultNavigatorBody } from "@/components/file/VaultNavigator";
 import { Button } from "@/components/ui/button";
@@ -656,6 +657,7 @@ export function ManagementCenterPanel({
               </SettingRow>
             </PanelSection>
             <MinimaxSearchSection open={open} />
+            <McpProfilesPanel open={open} />
           </div>
         ) : null}
         {detail === "persona" ? <PersonaSettingsBody open={open} /> : null}

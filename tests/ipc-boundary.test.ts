@@ -149,9 +149,28 @@ describe("IPC boundary", () => {
     }
 
     expect(ipc).toContain("export interface WebEvidenceProviderSummary");
+    expect(ipc).toContain("transportConfigJson: string");
+    expect(ipc).toContain("credentialRefsJson: string");
+    expect(ipc).toContain("transportKind:");
+    expect(ipc).toContain("mappingStatus:");
+    expect(ipc).toContain("diagnosticStatus:");
+    expect(ipc).toContain("isNative:");
+    expect(ipc).toContain("editable:");
+    expect(ipc).toContain("checks:");
+    expect(ipc).toContain("canUseForSearch:");
+    expect(ipc).toContain("canUseForFetch:");
+    expect(ipc).toContain("liveCheck?: boolean");
     expect(ipc).toContain("export async function webEvidenceProvidersList");
     expect(ipc).toContain("export async function skillsCreateDraft");
     expect(ipc).toContain("export async function skillsConfirm");
+    expect(aiCommands).toContain(
+      "transport_config_json: input.transport_config_json",
+    );
+    expect(aiCommands).toContain(
+      "credential_refs_json: input.credential_refs_json",
+    );
+    expect(aiCommands).not.toContain('transport_config_json: "{}".into()');
+    expect(aiCommands).not.toContain('credential_refs_json: "{}".into()');
   });
 
   it("documents reign-in Skills and web provider IPC semantics", () => {

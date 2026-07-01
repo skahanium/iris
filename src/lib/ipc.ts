@@ -19,7 +19,6 @@ import type {
   OrganizeExecuteResult,
   ResearchExecuteResult,
   ResearchProgressEvent,
-  BlockedCapabilitySummary,
   ToolAccessLevel,
   WritingExecuteResult,
 } from "@/types/ai";
@@ -55,6 +54,7 @@ import type {
   RecycleBinItem,
   SemanticHit,
   SessionEvidenceRecord,
+  SessionEvidenceDetailRecord,
   SessionEvidenceRegisterPacket,
   SessionMessageRecord,
   SessionSummary,
@@ -747,7 +747,6 @@ export interface SkillEntryDto {
   license?: string | null;
   compatibility?: string | null;
   metadata: Record<string, unknown>;
-  allowed_tools: string[];
   content: string;
   scope: string;
   enabled: boolean;
@@ -764,13 +763,11 @@ export type SkillValidationStatus = "valid" | "legacy" | { invalid: string };
 export type SkillManifestKind = "legacy_prompt_only" | "prompt_only";
 
 export interface SkillListEntryDto {
-  /** Embedded skill fields (flattened via serde). */
   name: string;
   description: string;
   license?: string | null;
   compatibility?: string | null;
   metadata: Record<string, unknown>;
-  allowed_tools: string[];
   content: string;
   scope: string;
   enabled: boolean;
@@ -780,37 +777,16 @@ export interface SkillListEntryDto {
   confirmed_hash?: string | null;
   confirmation_status: "confirmed" | "needs_confirmation";
   legacy_trigger?: string | null;
-  /** Computed fields. */
   validation: SkillValidationStatus;
-  unrecognized_tools: string[];
-  missing_deps: string[];
-  /** Present when `skillsList` includes task affinity scoring. */
   task_active?: boolean;
   task_score?: number;
-  /** Subset of allowed_tools that require harness confirmation. */
-  confirmation_required_tools: string[];
-  capability_preview?: {
-    requested_tools?: string[];
-    confirmation_required_tools?: string[];
-    unrecognized_tools?: string[];
-    missing_deps?: string[];
-    blocked_capabilities?: BlockedCapabilitySummary[];
-    compatibility_warnings?: string[];
-    [key: string]: unknown;
-  };
   lastMatchedAt?: string | null;
   lastUsedAt?: string | null;
   lastActivationScore?: number | null;
   lastBlockedReason?: string | null;
   lastResourceStatus?: string | null;
-  blockedCapabilities?: BlockedCapabilitySummary[];
-  compatibilityWarnings?: string[];
   kind: SkillManifestKind;
   activation_ready: boolean;
-  activated_sections: string[];
-  blocked_sections: string[];
-  degraded_reasons: string[];
-  availability: "available" | "partial" | "unavailable" | "disabled" | string;
 }
 
 export interface WebEvidenceProviderInput {
@@ -819,6 +795,8 @@ export interface WebEvidenceProviderInput {
   providerKind: "native" | "mcp" | string;
   enabled: boolean;
   transportKind?: "stdio" | "https" | string | null;
+  transportConfigJson: string;
+  credentialRefsJson: string;
   searchMapping?: string | null;
   fetchMapping?: string | null;
 }
@@ -828,14 +806,32 @@ export interface WebEvidenceProviderSummary {
   name: string;
   providerKind: "native" | "mcp" | string;
   enabled: boolean;
+  transportKind: "native" | "stdio" | "https" | string;
+  transportConfigJson: string;
+  credentialRefsJson: string;
+  searchMapping?: string | null;
+  fetchMapping?: string | null;
+  mappingStatus: "complete" | "partial" | "missing" | string;
+  diagnosticStatus: "ready" | "needs_mapping" | "disabled" | string;
+  isNative: boolean;
+  editable: boolean;
   hasSearchMapping: boolean;
   hasFetchMapping: boolean;
+}
+
+export interface WebEvidenceProviderDiagnosticCheck {
+  label: string;
+  status: "pass" | "fail" | "warn" | string;
+  message: string;
 }
 
 export interface WebEvidenceProviderDiagnostics {
   providerId?: string | null;
   status: string;
   failures: string[];
+  checks: WebEvidenceProviderDiagnosticCheck[];
+  canUseForSearch: boolean;
+  canUseForFetch: boolean;
 }
 
 export interface SkillDraftScopeRule {
@@ -885,10 +881,11 @@ export async function webEvidenceProviderDelete(
 
 export async function webEvidenceProviderDiagnostics(
   providerId?: string,
+  liveCheck?: boolean,
 ): Promise<WebEvidenceProviderDiagnostics> {
   return invoke<WebEvidenceProviderDiagnostics>(
     "web_evidence_provider_diagnostics",
-    { providerId: providerId ?? null },
+    { providerId: providerId ?? null, liveCheck: liveCheck ?? false },
   );
 }
 
@@ -1045,8 +1042,8 @@ export async function sessionEvidenceList(
 
 export async function sessionEvidenceDetail(
   sessionId: number,
-): Promise<SessionEvidenceRecord[]> {
-  return invoke<SessionEvidenceRecord[]>("session_evidence_detail", {
+): Promise<SessionEvidenceDetailRecord[]> {
+  return invoke<SessionEvidenceDetailRecord[]>("session_evidence_detail", {
     sessionId,
   });
 }

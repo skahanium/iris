@@ -159,6 +159,57 @@ pub struct SessionEvidenceItem {
     pub live_excerpt: Option<String>,
 }
 
+/// Safe evidence metadata returned to the ordinary read-only detail view.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionEvidenceDetailItem {
+    pub id: i64,
+    pub session_id: i64,
+    pub citation_index: i64,
+    pub citation_label: String,
+    pub source_type: SessionEvidenceSourceType,
+    pub title: String,
+    pub source_path: Option<String>,
+    pub heading_path: Option<String>,
+    pub retrieval_reason: Option<String>,
+    pub url: Option<String>,
+    pub normalized_url: Option<String>,
+    pub domain: Option<String>,
+    pub failure_reason: Option<String>,
+    pub conflict_group: Option<String>,
+    pub conflict_note: Option<String>,
+    pub created_at: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub detail_status: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub live_excerpt: Option<String>,
+}
+
+impl From<SessionEvidenceItem> for SessionEvidenceDetailItem {
+    fn from(item: SessionEvidenceItem) -> Self {
+        Self {
+            id: item.id,
+            session_id: item.session_id,
+            citation_index: item.citation_index,
+            citation_label: item.citation_label,
+            source_type: item.source_type,
+            title: item.title,
+            source_path: item.source_path,
+            heading_path: item.heading_path,
+            retrieval_reason: item.retrieval_reason,
+            url: item.url,
+            normalized_url: item.normalized_url,
+            domain: item.domain,
+            failure_reason: item.failure_reason,
+            conflict_group: item.conflict_group,
+            conflict_note: item.conflict_note,
+            created_at: item.created_at,
+            detail_status: item.detail_status,
+            live_excerpt: item.live_excerpt,
+        }
+    }
+}
+
 pub(crate) fn register_packets_from_context_packets(
     packets: &[crate::ai_runtime::ContextPacket],
 ) -> Vec<SessionEvidenceRegisterPacket> {

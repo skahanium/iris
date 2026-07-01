@@ -338,6 +338,27 @@ export interface SessionEvidenceRecord {
   liveExcerpt?: string | null;
 }
 
+export interface SessionEvidenceDetailRecord {
+  id: number;
+  sessionId: number;
+  citationIndex: number;
+  citationLabel: string;
+  sourceType: SessionEvidenceSourceType;
+  title: string;
+  sourcePath?: string | null;
+  headingPath?: string | null;
+  retrievalReason?: string | null;
+  url?: string | null;
+  normalizedUrl?: string | null;
+  domain?: string | null;
+  failureReason?: string | null;
+  conflictGroup?: string | null;
+  conflictNote?: string | null;
+  createdAt: string;
+  detailStatus?: string | null;
+  liveExcerpt?: string | null;
+}
+
 export interface SessionEvidenceRegisterPacket {
   sourceType: SessionEvidenceSourceType;
   title: string;

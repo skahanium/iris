@@ -188,13 +188,6 @@ pub struct SkillActivationPlanSummary {
     pub degraded: bool,
 }
 
-impl SkillActivationPlanSummary {
-    /// Tool allowlist produced by activated skills.
-    pub fn allowed_tools(&self) -> Vec<String> {
-        self.requested_tools.clone()
-    }
-}
-
 /// Safe audit summary for Run Plan display.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

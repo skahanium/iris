@@ -366,7 +366,7 @@ pub async fn llm_generate(
 ) -> AppResult<String>
 ```
 
-- **描述**：调用 LLM 生成文本（流式）。`LlmGenerateParams { provider, model, messages, system, stream, custom_base_url, web_search }`。自动解析 provider 配置。
+- **描述**：调用 LLM 生成文本（流式）。`LlmGenerateParams { provider, model, messages, system, stream, custom_base_url }`。自动解析 provider 配置。
 
 ### llm_chat
 
@@ -852,7 +852,7 @@ pub async fn context_assemble(
 ) -> AppResult<AssembledContext>
 ```
 
-- **描述**：组装 AI 上下文——意图检测 + 检索规划。返回 `AssembledContext { provisional, packets, tools, context_status, execution_plan }`。
+- **描述**：组装 AI 上下文——意图检测 + 检索规划。返回 `AssembledContext { provisional, packets, tools, context_status, execution_plan }`。`web_search` 只授权 WebEvidenceBroker 收集联网证据，不属于 `LlmGenerateParams`。
 
 ### ai_send_message
 
@@ -871,7 +871,7 @@ pub async fn ai_send_message(
 ) -> AppResult<serde_json::Value>
 ```
 
-- **描述**：发送 AI 消息（完整 LLM pipeline）。包含：guardrails 注入检测、session 管理、上下文组装、harness 多轮执行、工具调用、trace 记录。返回包含 `request_id`, `session_id`, `status`, `content`, `tool_calls`, `usage` 等的 JSON。harness LLM 重试前会发出 `ai:retry_status` 事件，字段为 `request_id`, `attempt`, `max_attempts`, `delay_ms`，不包含 prompt、上下文包或文档正文。
+- **描述**：发送 AI 消息（完整 LLM pipeline）。包含：guardrails 注入检测、session 管理、上下文组装、harness 多轮执行、工具调用、trace 记录。返回包含 `request_id`, `session_id`, `status`, `content`, `tool_calls`, `usage` 等的 JSON。harness LLM 重试前会发出 `ai:retry_status` 事件，字段为 `request_id`, `attempt`, `max_attempts`, `delay_ms`，不包含 prompt、上下文包或文档正文。`web_search` 只授权 WebEvidenceBroker，URL 深读仍通过 broker URLs 进入证据链。
 
 ### tool_confirm
 
@@ -1323,22 +1323,22 @@ pub fn app_exit(
 
 ## 附录：关键外部类型定义
 
-| 类型                  | 定义位置                                | 字段                                                                                                                                                                           |
-| --------------------- | --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `FileEntry`           | `src-tauri/src/indexer/scan.rs:23`      | `id: i64, path: String, title: String, updated_at: String, word_count: i64`                                                                                                    |
-| `RecycleBinItem`      | `src-tauri/src/recycle/mod.rs:46`       | `id: String, original_path: String, title: String, deleted_at: String, expires_at: String, version_count: usize`                                                               |
-| `SemanticHit`         | `src-tauri/src/embedding/engine.rs:201` | `chunk_id: i64, path: String, title: String, snippet: String, score: f32`                                                                                                      |
-| `LlmGenerateParams`   | `src-tauri/src/llm/mod.rs:44`           | `provider: String, model: Option<String>, messages: Vec<ChatMessage>, system: Option<String>, stream: Option<bool>, custom_base_url: Option<String>, web_search: Option<bool>` |
-| `VersionEntry`        | `src-tauri/src/version/mod.rs:20`       | `id: i64, file_id: i64, version_no: String, label: Option<String>, content_hash: String, word_count: i64, is_finalized: bool, kind: VersionKind, created_at: String`           |
-| `PatchProposal`       | `src-tauri/src/ai_types/mod.rs:325`     | `id, target_path, base_content_hash, range: SourceSpan, original_text, replacement_text, evidence_packet_ids, risk_level, warnings, created_at`                                |
-| `PatchApplyResult`    | `src-tauri/src/ai_types/mod.rs:385`     | `success: bool, new_content_hash: Option<String>, error: Option<String>, warnings: Vec<String>`                                                                                |
-| `CitationCheckInput`  | `src-tauri/src/ai_types/mod.rs:527`     | `paragraph_text, document_path, scope: Option<CitationCheckScope>, web_authorized`                                                                                             |
-| `CitationCheckResult` | `src-tauri/src/ai_types/mod.rs:544`     | `request_id, claims: Vec<FactClaim>, coverage: CitationCoverage, suggestions, evidence_used, total_tokens`                                                                     |
-| `OrganizeTaskInput`   | `src-tauri/src/ai_types/mod.rs:633`     | `scope: Option<OrganizeTaskScope>, task_type: OrganizeTaskType`                                                                                                                |
-| `OrganizeTaskResult`  | `src-tauri/src/ai_types/mod.rs:659`     | `request_id, batch: OrganizeBatch, total_tokens`                                                                                                                               |
-| `ResearchNoteRequest` | `src-tauri/src/ai_types/mod.rs:700`     | `topic, summary, evidence_count, coverage_score, target_path`                                                                                                                  |
-| `ResearchNoteResult`  | `src-tauri/src/ai_types/mod.rs:710`     | `content, suggested_path, section_count`                                                                                                                                       |
-| `TokenUsage`          | `src-tauri/src/ai_types/mod.rs:720`     | `prompt_tokens, completion_tokens, total_tokens, prompt_cache_hit_tokens, prompt_cache_miss_tokens`                                                                            |
+| 类型                  | 定义位置                                | 字段                                                                                                                                                                 |
+| --------------------- | --------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `FileEntry`           | `src-tauri/src/indexer/scan.rs:23`      | `id: i64, path: String, title: String, updated_at: String, word_count: i64`                                                                                          |
+| `RecycleBinItem`      | `src-tauri/src/recycle/mod.rs:46`       | `id: String, original_path: String, title: String, deleted_at: String, expires_at: String, version_count: usize`                                                     |
+| `SemanticHit`         | `src-tauri/src/embedding/engine.rs:201` | `chunk_id: i64, path: String, title: String, snippet: String, score: f32`                                                                                            |
+| `LlmGenerateParams`   | `src-tauri/src/llm/mod.rs:44`           | `provider: String, model: Option<String>, messages: Vec<ChatMessage>, system: Option<String>, stream: Option<bool>, custom_base_url: Option<String>`                 |
+| `VersionEntry`        | `src-tauri/src/version/mod.rs:20`       | `id: i64, file_id: i64, version_no: String, label: Option<String>, content_hash: String, word_count: i64, is_finalized: bool, kind: VersionKind, created_at: String` |
+| `PatchProposal`       | `src-tauri/src/ai_types/mod.rs:325`     | `id, target_path, base_content_hash, range: SourceSpan, original_text, replacement_text, evidence_packet_ids, risk_level, warnings, created_at`                      |
+| `PatchApplyResult`    | `src-tauri/src/ai_types/mod.rs:385`     | `success: bool, new_content_hash: Option<String>, error: Option<String>, warnings: Vec<String>`                                                                      |
+| `CitationCheckInput`  | `src-tauri/src/ai_types/mod.rs:527`     | `paragraph_text, document_path, scope: Option<CitationCheckScope>, web_authorized`                                                                                   |
+| `CitationCheckResult` | `src-tauri/src/ai_types/mod.rs:544`     | `request_id, claims: Vec<FactClaim>, coverage: CitationCoverage, suggestions, evidence_used, total_tokens`                                                           |
+| `OrganizeTaskInput`   | `src-tauri/src/ai_types/mod.rs:633`     | `scope: Option<OrganizeTaskScope>, task_type: OrganizeTaskType`                                                                                                      |
+| `OrganizeTaskResult`  | `src-tauri/src/ai_types/mod.rs:659`     | `request_id, batch: OrganizeBatch, total_tokens`                                                                                                                     |
+| `ResearchNoteRequest` | `src-tauri/src/ai_types/mod.rs:700`     | `topic, summary, evidence_count, coverage_score, target_path`                                                                                                        |
+| `ResearchNoteResult`  | `src-tauri/src/ai_types/mod.rs:710`     | `content, suggested_path, section_count`                                                                                                                             |
+| `TokenUsage`          | `src-tauri/src/ai_types/mod.rs:720`     | `prompt_tokens, completion_tokens, total_tokens, prompt_cache_hit_tokens, prompt_cache_miss_tokens`                                                                  |
 
 ---
 
@@ -1368,9 +1368,9 @@ This section is the stable frontend contract after the Iris AI reign-in.
 
 ### Web Evidence Providers
 
-- MCP is not exposed as arbitrary agent tooling. It is only a Web Evidence Provider when explicitly mapped to `web.search` or `web.fetch`.
+- MCP is not exposed as arbitrary agent tooling. It is only a Web Evidence Provider when explicitly mapped to `web.search` or `web.fetch`. MCP provider input persists `transportConfigJson`, `credentialRefsJson`, `searchMapping`, and `fetchMapping`; credential JSON may contain OS credential service refs only, never raw secrets.
 - Frontend callers use `webEvidenceProvidersList`, `webEvidenceProviderUpsert`, `webEvidenceProviderToggle`, `webEvidenceProviderDelete`, and `webEvidenceProviderDiagnostics`.
-- Provider diagnostics belong in management center UI, not in ordinary AI evidence packets.
+- Provider diagnostics belong in management center UI, not in ordinary AI evidence packets. `webEvidenceProviderDiagnostics(providerId?, liveCheck?)` returns checks, failure categories, credential/mapping readiness, and broker usability booleans; live network probes run only when `liveCheck` is true.
 
 ### Tool Confirmation Outcomes
 

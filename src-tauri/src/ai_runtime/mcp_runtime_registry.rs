@@ -33,6 +33,10 @@ pub struct WebEvidenceProviderSummary {
     pub kind: String,
     pub enabled: bool,
     pub transport_kind: String,
+    pub transport_config_json: String,
+    pub credential_refs_json: String,
+    pub web_search_mapping_json: Option<String>,
+    pub web_fetch_mapping_json: Option<String>,
     pub provider_config_hash: String,
     pub has_search_mapping: bool,
     pub has_fetch_mapping: bool,
@@ -79,26 +83,88 @@ fn validate_provider_identifier(label: &str, value: &str) -> AppResult<String> {
     Ok(value.to_string())
 }
 
-fn validate_provider_json(label: &str, raw: &str) -> AppResult<()> {
-    let value: serde_json::Value = serde_json::from_str(raw)
-        .map_err(|err| AppError::msg(format!("invalid {label} JSON: {err}")))?;
-    let lowered = value.to_string().to_lowercase();
-    for marker in [
+fn is_secretish_key(key: &str) -> bool {
+    let lower = key.to_ascii_lowercase();
+    [
         "api_key",
         "apikey",
         "access_token",
-        "bearer",
+        "authorization",
         "password",
         "secret",
         "token",
-    ] {
-        if lowered.contains(marker) {
-            return Err(AppError::msg(format!(
-                "{label} must contain credential references, not raw secrets"
-            )));
+    ]
+    .iter()
+    .any(|marker| lower.contains(marker))
+}
+
+fn is_credential_ref_string(value: &str) -> bool {
+    let value = value.trim();
+    let service = value.strip_prefix("credential://").unwrap_or(value);
+    service.starts_with("iris.")
+}
+
+fn string_looks_like_secret(value: &str) -> bool {
+    let lower = value.to_ascii_lowercase();
+    lower.starts_with("bearer ")
+        || lower.contains(" as_sk")
+        || lower.starts_with("as_sk")
+        || lower.contains("sk-")
+        || lower.contains("api_key=")
+        || lower.contains("access_token=")
+        || lower.contains("token=")
+        || lower.contains("password=")
+}
+
+fn reject_raw_secret(label: &str) -> AppError {
+    AppError::msg(format!(
+        "{label} must contain credential references, not raw secrets"
+    ))
+}
+
+fn validate_provider_json_value(
+    label: &str,
+    value: &serde_json::Value,
+    current_key: Option<&str>,
+    secret_context: bool,
+) -> AppResult<()> {
+    match value {
+        serde_json::Value::String(raw) => {
+            if current_key
+                .map(|key| key.eq_ignore_ascii_case("scheme"))
+                .unwrap_or(false)
+            {
+                return Ok(());
+            }
+            if is_credential_ref_string(raw) {
+                return Ok(());
+            }
+            if secret_context || string_looks_like_secret(raw) {
+                return Err(reject_raw_secret(label));
+            }
+            Ok(())
         }
+        serde_json::Value::Array(items) => {
+            for item in items {
+                validate_provider_json_value(label, item, current_key, secret_context)?;
+            }
+            Ok(())
+        }
+        serde_json::Value::Object(object) => {
+            for (key, child) in object {
+                let next_secret_context = secret_context || is_secretish_key(key);
+                validate_provider_json_value(label, child, Some(key), next_secret_context)?;
+            }
+            Ok(())
+        }
+        _ => Ok(()),
     }
-    Ok(())
+}
+
+fn validate_provider_json(label: &str, raw: &str) -> AppResult<()> {
+    let value: serde_json::Value = serde_json::from_str(raw)
+        .map_err(|err| AppError::msg(format!("invalid {label} JSON: {err}")))?;
+    validate_provider_json_value(label, &value, None, false)
 }
 
 fn validate_optional_mapping(label: &str, raw: &Option<String>) -> AppResult<()> {
@@ -210,7 +276,10 @@ pub fn upsert_web_evidence_provider(
 pub fn list_web_evidence_providers(db: &Database) -> AppResult<Vec<WebEvidenceProviderSummary>> {
     db.with_conn(|conn| {
         let mut stmt = conn.prepare(
-            "SELECT id, name, kind, enabled, transport_kind, provider_config_hash,
+            "SELECT id, name, kind, enabled, transport_kind,
+                    transport_config_json, credential_refs_json,
+                    web_search_mapping_json, web_fetch_mapping_json,
+                    provider_config_hash,
                     web_search_mapping_json IS NOT NULL,
                     web_fetch_mapping_json IS NOT NULL
              FROM web_evidence_providers
@@ -223,9 +292,13 @@ pub fn list_web_evidence_providers(db: &Database) -> AppResult<Vec<WebEvidencePr
                 kind: row.get(2)?,
                 enabled: row.get::<_, i64>(3)? != 0,
                 transport_kind: row.get(4)?,
-                provider_config_hash: row.get(5)?,
-                has_search_mapping: row.get::<_, i64>(6)? != 0,
-                has_fetch_mapping: row.get::<_, i64>(7)? != 0,
+                transport_config_json: row.get(5)?,
+                credential_refs_json: row.get(6)?,
+                web_search_mapping_json: row.get(7)?,
+                web_fetch_mapping_json: row.get(8)?,
+                provider_config_hash: row.get(9)?,
+                has_search_mapping: row.get::<_, i64>(10)? != 0,
+                has_fetch_mapping: row.get::<_, i64>(11)? != 0,
             })
         })?;
         rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
@@ -348,6 +421,32 @@ mod tests {
         let db = Database::open_in_memory().unwrap();
         let mut input = provider();
         input.credential_refs_json = r#"{"api_key":"plain"}"#.into();
+
+        let err = upsert_web_evidence_provider(&db, &input).unwrap_err();
+        assert!(err.to_string().contains("credential references"));
+    }
+
+    #[test]
+    fn web_evidence_provider_accepts_structured_header_and_env_refs() {
+        let db = Database::open_in_memory().unwrap();
+        let mut input = provider();
+        input.transport_kind = "https".into();
+        input.transport_config_json =
+            r#"{"url":"https://api.anysearch.com/mcp","allow_localhost_dev":false}"#.into();
+        input.credential_refs_json = r#"{"headers":{"Authorization":{"scheme":"bearer","credential":"credential://iris.mcp.anysearch"}},"env":{"ANYSEARCH_API_KEY":"iris.mcp.anysearch"}}"#.into();
+
+        upsert_web_evidence_provider(&db, &input).unwrap();
+
+        let stored = list_web_evidence_providers(&db).unwrap();
+        assert_eq!(stored[0].credential_refs_json, input.credential_refs_json);
+    }
+
+    #[test]
+    fn web_evidence_provider_rejects_raw_authorization_header() {
+        let db = Database::open_in_memory().unwrap();
+        let mut input = provider();
+        input.credential_refs_json =
+            r#"{"headers":{"Authorization":"Bearer as_sk_plain_secret"}}"#.into();
 
         let err = upsert_web_evidence_provider(&db, &input).unwrap_err();
         assert!(err.to_string().contains("credential references"));

@@ -63,14 +63,15 @@ describe("Agent Task Runtime Phase C capability affinity contract", () => {
     expect(policy).not.toContain("SceneMismatch");
   });
 
-  it("skill activation ranks by task intent and capability, with legacy scene only as compatibility", () => {
+  it("skill activation ranks by task intent as prompt-only metadata, with legacy scene only as compatibility", () => {
     const parent = read("src-tauri/src/ai_runtime/skills_impl.rs");
     const activation = read("src-tauri/src/ai_runtime/skills/activation.rs");
 
     expect(parent).toContain("rank_skills_for_task");
     expect(parent).toContain("build_skill_activation_plan_for_task");
     expect(activation).toContain("pub fn rank_skills_for_task");
-    expect(activation).toContain("capability_terms_for_skill");
+    expect(activation).toContain("fn intent_terms");
+    expect(activation).toContain("requested_tools: Vec::new()");
     expect(activation).toContain("legacy_scene_or_vector_match");
     expect(activation).not.toContain("exemplar_learning");
   });

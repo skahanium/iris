@@ -164,6 +164,29 @@ export function MinimaxSearchSection({ open }: MinimaxSearchSectionProps) {
         </p>
       </div>
 
+      <div className="grid gap-2 md:grid-cols-2">
+        <div
+          data-testid="native-provider-card-minimax"
+          className="rounded-md border border-border/65 bg-background/55 px-3 py-2"
+        >
+          <p className="text-xs font-semibold text-foreground">MiniMax</p>
+          <p className="mt-1 text-xs text-muted-foreground">
+            Native web.search provider. Used before DuckDuckGo when configured
+            or selected.
+          </p>
+        </div>
+        <div
+          data-testid="native-provider-card-duckduckgo"
+          className="rounded-md border border-border/65 bg-background/55 px-3 py-2"
+        >
+          <p className="text-xs font-semibold text-foreground">DuckDuckGo</p>
+          <p className="mt-1 text-xs text-muted-foreground">
+            Native fallback provider for broker search when MiniMax is
+            unavailable.
+          </p>
+        </div>
+      </div>
+
       <div className="space-y-2">
         <label className="text-xs font-medium">
           MiniMax Token Plan API Key

@@ -30,12 +30,6 @@ pub fn inject_into_prompt(
         block.push_str(
             "Write ordinary note changes only through the normal user-confirmed note editing flow.\n\n",
         );
-        if !skill.allowed_tools.is_empty() {
-            block.push_str(&format!(
-                "Requested tools: {}\n\n",
-                skill.allowed_tools.join(", ")
-            ));
-        }
         block.push_str(&skill_prompt_body(&skill.content));
         block.push_str("\n\n---\n\n");
     }

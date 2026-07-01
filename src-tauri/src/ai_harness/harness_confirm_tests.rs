@@ -331,7 +331,6 @@ mod tests {
             scene: AiScene::KnowledgeLookup,
             autonomy_level: AutonomyLevel::L2,
             web_search_enabled: true,
-            skill_allowed_tools: vec![],
             depth: 0,
         };
         let web = ToolCall::new("call_web", "web_search", r#"{"query":"chapter 10"}"#);
@@ -421,7 +420,6 @@ mod tests {
             scene: AiScene::KnowledgeLookup,
             autonomy_level: AutonomyLevel::L2,
             web_search_enabled: true,
-            skill_allowed_tools: vec![],
             depth: 0,
         };
         let fetch_a = ToolCall::new(

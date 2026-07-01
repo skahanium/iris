@@ -132,7 +132,6 @@ fn sample_skill(i: usize) -> SkillEntry {
         license: Some("AGPL-3.0-only".to_string()),
         compatibility: None,
         metadata: HashMap::new(),
-        allowed_tools: vec!["read_note".to_string()],
         content: format!(
             "When the user asks about project knowledge, inspect relevant notes first.\n{}",
             "Detailed instruction. ".repeat(300),

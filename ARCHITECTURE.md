@@ -273,19 +273,19 @@ cargo bench --manifest-path src-tauri/Cargo.toml --bench ai_benchmarks
 
 #### Skills 运行时能力边界
 
-| 能力        | 行为                                                                                       |
-| ----------- | ------------------------------------------------------------------------------------------ |
-| Prompt 注入 | `rank_skills_for_scene` 匹配后，将 `SKILL.md` 正文拼入 system message                      |
-| 工具扩权    | `allowed-tools` 与 `ToolPolicy` 硬约束求交；**不注册新 Rust 工具**                         |
-| 场景匹配    | 优先读 `skill_activation_index` 关键词/描述，文件扫描 fallback；embedding cosine rerank    |
-| 确认门禁    | 新建或修改后的 Skill 需要用户确认内容哈希后才会参与注入                                    |
-| UI 语义     | **已启用**（config）≠ **已确认**（hash）≠ **本场景注入**（rank>0），`SkillsPanel` 区分展示 |
+| 能力        | 行为                                                                                           |
+| ----------- | ---------------------------------------------------------------------------------------------- |
+| Prompt 注入 | `rank_skills_for_scene` 匹配后，将 `SKILL.md` 正文拼入 system message                          |
+| Prompt only | Skills only contribute confirmed SKILL.md prompt text and scope rules; they do not open tools. |
+| 场景匹配    | 优先读 `skill_activation_index` 关键词/描述，文件扫描 fallback；embedding cosine rerank        |
+| 确认门禁    | 新建或修改后的 Skill 需要用户确认内容哈希后才会参与注入                                        |
+| UI 语义     | **已启用**（config）≠ **已确认**（hash）≠ **本场景注入**（rank>0），`SkillsPanel` 区分展示     |
 
-| 不能做什么      | 说明                                                                           |
-| --------------- | ------------------------------------------------------------------------------ |
-| 任意插件执行    | 不会运行 skill 内任意脚本、安装依赖、读取资源目录或注册 MCP                    |
-| 突破 ToolPolicy | `requires_confirmation` 工具仍需用户确认；联网工具受 `web_search_enabled` 约束 |
-| Catalog 外工具  | `allowed-tools` 中未在 `ToolCatalog` 实现的名称仅 UI 警告，运行时不可用        |
+| 不能做什么      | 说明                                                                                                   |
+| --------------- | ------------------------------------------------------------------------------------------------------ |
+| 任意插件执行    | 不会运行 skill 内任意脚本、安装依赖、读取资源目录或注册 MCP                                            |
+| 突破 ToolPolicy | `requires_confirmation` 工具仍需用户确认；联网工具受 `web_search_enabled` 约束                         |
+| Tool access     | ToolPolicy is derived from task policy, web-search switch, and confirmation strategy, not from Skills. |
 
 Tool 续聊：`ModelGateway.prepare_tool_api_messages` 在每次 LLM 请求前规范化 messages（含 mixed auto+confirm 批次、`skip_stub_ids` 处理 pending confirm）。
 
@@ -418,7 +418,7 @@ CREATE TABLE regulation_index (…);
 CREATE TABLE genre_templates (…);
 
 -- 其余：knowledge_deposits、user_profile、ai_traces、eval_results、web_page_cache、search_cache、cas_refs
--- 完整 schema 见 src-tauri/migrations/（共 41 组 migration：001_core 到 041_mcp_transport_https_contract，均含 up/down 脚本）
+-- 完整 schema 见 src-tauri/migrations/（当前目标态覆盖 001_core 到 042_web_evidence_provider_registry，均含 up/down 脚本）
 ```
 
 ---
@@ -598,3 +598,7 @@ opt-level = 3; lto = true; codegen-units = 1; strip = true; panic = "abort"
 | [docs/design-system.md](./docs/design-system.md)               | 界面 token、组件规则 |
 | [docs/llm-routing.md](./docs/llm-routing.md)                   | LLM 路由与连通性     |
 | [docs/eval/semantic-search.md](./docs/eval/semantic-search.md) | 语义搜索评测         |
+
+### Web Evidence Provider Boundary
+
+MCP is a persisted Web Evidence Provider only when mapped to `web.search` and/or `web.fetch`. MiniMax and DuckDuckGo remain native synthetic providers surfaced in Management Center for status and fallback explanation. Provider configuration stores transport JSON and OS credential references; raw secrets are rejected. Ordinary evidence detail DTOs omit provider process fields, while audit/diagnostics paths may retain provider id, provider kind, raw result hash, extraction method, mapping status, and circuit state.

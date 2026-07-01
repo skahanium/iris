@@ -230,21 +230,9 @@ export function AgentStatusBadge({
                           </Badge>
                         ) : null}
                       </div>
-                      {skill.allowed_tools.length > 0 ? (
-                        <p className="mt-0.5 text-[10px] text-muted-foreground">
-                          工具：{skill.allowed_tools.join(", ")}
-                        </p>
-                      ) : null}
-                      {skill.confirmation_required_tools.length > 0 ? (
-                        <p className="mt-0.5 text-[10px] text-amber-600">
-                          需确认：{skill.confirmation_required_tools.join(", ")}
-                        </p>
-                      ) : null}
-                      {skill.unrecognized_tools.length > 0 ? (
-                        <p className="mt-0.5 text-[10px] text-red-500">
-                          未识别：{skill.unrecognized_tools.join(", ")}
-                        </p>
-                      ) : null}
+                      <p className="mt-0.5 text-[10px] text-muted-foreground">
+                        hash: {skill.content_hash}
+                      </p>
                     </li>
                   ))}
                 </ul>

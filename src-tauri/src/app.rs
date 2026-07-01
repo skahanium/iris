@@ -28,7 +28,6 @@ pub struct PendingToolCall {
     pub file_id: Option<i64>,
     pub web_search_enabled: bool,
     pub autonomy_level: AutonomyLevel,
-    pub skill_allowed_tools: Vec<String>,
     pub skill_activation_plan: Option<SkillActivationPlanSummary>,
 }
 

@@ -6,7 +6,7 @@ import { ContextPacketDrawer } from "@/components/ai/ContextPacketDrawer";
 import { sessionEvidenceDetail } from "@/lib/ipc";
 import type { AssistantArtifactDraft } from "@/types/assistant-artifact";
 import type { ContextPacket } from "@/types/ai";
-import type { SessionEvidenceRecord } from "@/types/ipc";
+import type { SessionEvidenceDetailRecord } from "@/types/ipc";
 
 vi.mock("@/lib/ipc", () => ({
   sessionEvidenceDetail: vi.fn(),
@@ -28,13 +28,11 @@ const packet: ContextPacket = {
   stale: false,
 };
 
-const ledgerEvidence: SessionEvidenceRecord = {
+const ledgerEvidence: SessionEvidenceDetailRecord = {
   id: 1,
   sessionId: 42,
   citationIndex: 1,
   citationLabel: "[C1]",
-  packetKey: "ledger:key",
-  messageSeqFirst: 2,
   sourceType: "local",
   title: "Ledger Source",
   sourcePath: "Ledger/Source.md",

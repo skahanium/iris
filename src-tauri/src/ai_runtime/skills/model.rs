@@ -3,10 +3,6 @@ use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 
 use super::manifest_impl::SkillManifestKind;
-use crate::ai_runtime::tool_catalog::TOOL_CATALOG;
-
-use crate::ai_types::{BlockedCapabilitySummary, SkillCapabilitySupportStatus};
-
 pub(super) const VALIDATION_MISSING_FRONTMATTER: &str = "_iris_missing_frontmatter";
 pub(super) const VALIDATION_MANIFEST_ERROR: &str = "_iris_manifest_error";
 pub(super) const VALIDATION_NAME_MISMATCH: &str = "_iris_name_mismatch";
@@ -55,7 +51,6 @@ pub struct SkillEntry {
     pub license: Option<String>,
     pub compatibility: Option<String>,
     pub metadata: SkillMetadata,
-    pub allowed_tools: Vec<String>,
     pub content: String,
     pub scope: SkillScope,
     pub enabled: bool,
@@ -80,7 +75,6 @@ impl Default for SkillEntry {
             license: None,
             compatibility: None,
             metadata: SkillMetadata::new(),
-            allowed_tools: Vec::new(),
             content: String::new(),
             scope: SkillScope::Vault,
             enabled: false,
@@ -172,39 +166,6 @@ impl SkillEntry {
         SkillValidationStatus::Valid
     }
 
-    /// Whether all allowed_tools are recognized by the ToolCatalog.
-    pub fn all_allowed_tools_recognized(&self) -> bool {
-        self.allowed_tools.is_empty()
-            || self
-                .allowed_tools
-                .iter()
-                .all(|t| TOOL_CATALOG.iter().any(|e| e.name == t.as_str()))
-    }
-
-    /// Tools requested but NOT in the catalog (for UI display).
-    pub fn unrecognized_tools(&self) -> Vec<String> {
-        self.allowed_tools
-            .iter()
-            .filter(|t| TOOL_CATALOG.iter().all(|e| e.name != t.as_str()))
-            .cloned()
-            .collect()
-    }
-
-    /// Blocked capability summaries for tools that Iris cannot expose.
-    pub fn blocked_capabilities(&self) -> Vec<BlockedCapabilitySummary> {
-        self.unrecognized_tools()
-            .into_iter()
-            .map(|tool| BlockedCapabilitySummary {
-                skill_name: self.name.clone(),
-                capability: tool,
-                status: SkillCapabilitySupportStatus::UnsupportedByProductScope,
-                risk_level: "unknown".into(),
-                permission: None,
-                fallback_guidance: "No matching Iris ToolCatalog entry is available.".into(),
-            })
-            .collect()
-    }
-
     /// Dependencies declared in `metadata.depends` (Iris extension field).
     /// Returns skill names this skill depends on.
     pub fn depends(&self) -> Vec<String> {
@@ -260,8 +221,6 @@ pub struct SkillListEntry {
     pub skill: SkillEntry,
     /// Validation status (valid / legacy / invalid).
     pub validation: SkillValidationStatus,
-    /// Tools not found in the ToolCatalog.
-    pub unrecognized_tools: Vec<String>,
     /// Dependencies that are not installed.
     pub missing_deps: Vec<String>,
     /// Whether this skill would be injected for the requested task (`None` if not scored).
@@ -270,42 +229,23 @@ pub struct SkillListEntry {
     /// Task affinity score (`None` if not scored or skill inactive).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub task_score: Option<f64>,
-    /// Subset of `allowed_tools` that require harness confirmation.
-    pub confirmation_required_tools: Vec<String>,
-    /// SHA-256 of the installed SKILL.md file.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub content_hash: Option<String>,
-    /// Capability summary shown before/after install.
-    pub capability_preview: serde_json::Value,
     /// Manifest/runtime kind for this skill.
     pub kind: SkillManifestKind,
-    /// Whether the skill can be considered during activation.
+    /// Whether the skill can be considered during prompt injection.
     pub activation_ready: bool,
-    /// Human-readable capability status: available / partial / unavailable.
-    pub availability: String,
-    /// Prompt sections currently safe to activate.
-    pub activated_sections: Vec<String>,
-    /// Prompt sections or runtime gates blocked by missing dependencies.
-    pub blocked_sections: Vec<String>,
-    /// Safe degradation reasons for UI and run-plan summaries.
-    pub degraded_reasons: Vec<String>,
-    /// Last match timestamp from Phase4 diagnostics.
+    /// Last match timestamp from diagnostics.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub last_matched_at: Option<String>,
-    /// Last use timestamp from Phase4 diagnostics.
+    /// Last use timestamp from diagnostics.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub last_used_at: Option<String>,
-    /// Last activation score from Phase4 diagnostics.
+    /// Last activation score from diagnostics.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub last_activation_score: Option<f64>,
-    /// Last blocked reason from Phase4 diagnostics.
+    /// Last blocked reason from diagnostics.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub last_blocked_reason: Option<String>,
-    /// Last resource status from Phase4 diagnostics.
+    /// Last resource status from diagnostics.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub last_resource_status: Option<String>,
-    /// Blocked capabilities computed from manifest/tool compatibility.
-    pub blocked_capabilities: Vec<BlockedCapabilitySummary>,
-    /// Compatibility warnings shown in Skills UI.
-    pub compatibility_warnings: Vec<String>,
 }

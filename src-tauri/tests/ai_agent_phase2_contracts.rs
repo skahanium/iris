@@ -29,7 +29,6 @@ fn policy_ctx(scene: AiScene, autonomy_level: AutonomyLevel) -> ToolPolicyContex
         scene,
         autonomy_level,
         web_search_enabled: true,
-        skill_allowed_tools: vec![],
         depth: 0,
     }
 }

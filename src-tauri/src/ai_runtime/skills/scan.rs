@@ -6,14 +6,12 @@ use sha2::{Digest, Sha256};
 
 use crate::error::{AppError, AppResult};
 
-use super::compatibility_impl::blocked_capabilities_for_skill;
 use super::frontmatter_impl::{parse_frontmatter, parse_scope_rules};
 use super::manifest_impl::{load_manifest_for_skill_dir, SkillManifestKind};
 use super::model_impl::{
     VALIDATION_MANIFEST_ERROR, VALIDATION_MISSING_FRONTMATTER, VALIDATION_NAME_MISMATCH,
 };
 use super::path_impl::{global_skills_dir, load_config, skill_key, slugify, vault_skills_dir};
-use super::validation_impl::{capability_preview_for_entry, confirmation_required_tools};
 use super::{
     SkillConfirmationStatus, SkillEntry, SkillListEntry, SkillMetadata, SkillScope,
     SkillValidationStatus,
@@ -125,12 +123,6 @@ pub fn load_skill(path: &Path, scope: SkillScope) -> AppResult<SkillEntry> {
     let normalized_dir = slugify(dir_name);
     let name_matches_dir = normalized_name == normalized_dir || dir_name.is_empty();
 
-    let allowed_tools: Vec<String> = meta
-        .get("allowed-tools")
-        .or_else(|| meta.get("allowed_tools"))
-        .map(|s| s.split_whitespace().map(String::from).collect())
-        .unwrap_or_default();
-
     let mut metadata: SkillMetadata = meta
         .get("metadata")
         .and_then(|s| serde_json::from_str(s).ok())
@@ -186,7 +178,6 @@ pub fn load_skill(path: &Path, scope: SkillScope) -> AppResult<SkillEntry> {
         license: meta.get("license").cloned(),
         compatibility,
         metadata,
-        allowed_tools,
         content: body.trim().to_string(),
         scope,
         enabled: true,
@@ -244,23 +235,8 @@ pub fn scan_all_with_status(vault: &Path) -> AppResult<Vec<SkillListEntry>> {
     Ok(skills
         .into_iter()
         .map(|skill| {
-            let unrecognized_tools = skill.unrecognized_tools();
             let missing_deps = skill.missing_dependencies(&installed_names);
             let validation = skill.validation_status();
-            let confirmation_required_tools = confirmation_required_tools(&skill.allowed_tools);
-            let content_hash = skill_content_hash_for_path(&PathBuf::from(&skill.file_path)).ok();
-            let capability_preview = capability_preview_for_entry(&skill, &installed_names);
-            let blocked_capabilities = blocked_capabilities_for_skill(&skill);
-            let compatibility_warnings = capability_preview
-                .get("compatibility_warnings")
-                .and_then(|value| value.as_array())
-                .map(|items| {
-                    items
-                        .iter()
-                        .filter_map(|item| item.as_str().map(str::to_string))
-                        .collect::<Vec<_>>()
-                })
-                .unwrap_or_default();
             let manifest_outcome = PathBuf::from(&skill.file_path)
                 .parent()
                 .and_then(|skill_dir| load_manifest_for_skill_dir(skill_dir, None).ok());
@@ -268,57 +244,23 @@ pub fn scan_all_with_status(vault: &Path) -> AppResult<Vec<SkillListEntry>> {
             let kind = manifest
                 .map(|manifest| manifest.kind)
                 .unwrap_or(SkillManifestKind::LegacyPromptOnly);
-            let mut degraded_reasons: Vec<String> = manifest_outcome
-                .as_ref()
-                .map(|outcome| outcome.warnings.clone())
-                .unwrap_or_default();
-            degraded_reasons.retain(|reason| !reason.trim().is_empty());
-            let (activated_sections, blocked_sections) = (vec!["skill_overlay".into()], Vec::new());
-            let (activated_sections, blocked_sections) =
-                if matches!(validation, SkillValidationStatus::Invalid(_)) {
-                    (Vec::new(), blocked_sections)
-                } else {
-                    (activated_sections, blocked_sections)
-                };
-            let availability = if !skill.enabled {
-                "disabled"
-            } else if matches!(validation, SkillValidationStatus::Invalid(_)) {
-                "unavailable"
-            } else if !unrecognized_tools.is_empty()
-                || !missing_deps.is_empty()
-                || skill.confirmation_status != SkillConfirmationStatus::Confirmed
-            {
-                "partial"
-            } else {
-                "available"
-            }
-            .to_string();
             let activation_ready = skill.enabled
                 && !matches!(validation, SkillValidationStatus::Invalid(_))
+                && missing_deps.is_empty()
                 && skill.confirmation_status == SkillConfirmationStatus::Confirmed;
             SkillListEntry {
                 skill,
                 validation,
-                unrecognized_tools,
                 missing_deps,
                 task_active: None,
                 task_score: None,
-                confirmation_required_tools,
-                content_hash,
-                capability_preview,
                 kind,
                 activation_ready,
-                availability,
-                activated_sections,
-                blocked_sections,
-                degraded_reasons,
                 last_matched_at: None,
                 last_used_at: None,
                 last_activation_score: None,
                 last_blocked_reason: None,
                 last_resource_status: None,
-                blocked_capabilities,
-                compatibility_warnings,
             }
         })
         .collect())

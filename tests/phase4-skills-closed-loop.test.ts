@@ -50,6 +50,7 @@ describe("Phase4 skills closed-loop contract", () => {
   it("builds a confirmed prompt-only skill activation plan before assistant harness execution", () => {
     const assistant = read("src-tauri/src/commands/assistant_commands.rs");
     const harnessContext = read("src-tauri/src/ai_harness/harness/context.rs");
+    const harnessRun = read("src-tauri/src/ai_harness/harness/run.rs");
     const harnessTask = read("src-tauri/src/ai_harness/harness_task.rs");
     const skills = read("src-tauri/src/ai_runtime/skills_impl.rs");
     const activation = read("src-tauri/src/ai_runtime/skills/activation.rs");
@@ -64,9 +65,10 @@ describe("Phase4 skills closed-loop contract", () => {
     expect(harnessContext).toContain(
       "prepare_environment_and_skills_with_plan",
     );
-    expect(harnessContext).toContain(
+    expect(harnessContext).not.toContain(
       "resolve_active_skill_allowed_tools_with_plan",
     );
+    expect(harnessRun).not.toContain("skill_allowed_tools");
     expect(harnessTask).toContain("legacy_skill_overlay_from_plan");
     expect(harnessTask).toContain("apply_skill_overlay_to_goal");
   });
@@ -77,8 +79,20 @@ describe("Phase4 skills closed-loop contract", () => {
 
     expect(ipc).toContain("lastMatchedAt");
     expect(ipc).toContain("lastUsedAt");
-    expect(ipc).toContain("blockedCapabilities");
-    expect(ipc).toContain("compatibilityWarnings");
+    expect(ipc).toContain("confirmation_status");
+    expect(ipc).toContain("activation_ready");
+
+    for (const token of [
+      "blockedCapabilities",
+      "compatibilityWarnings",
+      "requestedCapabilities",
+      "workspaceRoot",
+      "workspaceReady",
+      "workspaceMissingItems",
+      "mcpDependencies",
+    ]) {
+      expect(ipc).not.toContain(token);
+    }
 
     for (const token of [
       "requestedCapabilities",
@@ -87,7 +101,6 @@ describe("Phase4 skills closed-loop contract", () => {
       "workspaceMissingItems",
       "mcpDependencies",
     ]) {
-      expect(ipc).not.toContain(token);
       expect(aiTypes).not.toContain(token);
     }
 

@@ -97,6 +97,110 @@ describe("management center contract", () => {
     expect(center).toContain("openAiDetail");
   });
 
+  it("renders native and MCP web evidence provider management surfaces", () => {
+    const center = read("src/components/settings/ManagementCenterPanel.tsx");
+    const minimax = read("src/components/settings/MinimaxSearchSection.tsx");
+    const mcpPanel = read("src/components/ai/skills/McpProfilesPanel.tsx");
+    const mcpCard = read("src/components/ai/skills/McpProfileCard.tsx");
+    const mcpPresets = read("src/components/ai/skills/mcpProviderPresets.ts");
+
+    expect(center).toContain("McpProfilesPanel");
+    expect(center).toContain("<McpProfilesPanel open={open}");
+    expect(minimax).toContain('data-testid="native-provider-card-minimax"');
+    expect(minimax).toContain('data-testid="native-provider-card-duckduckgo"');
+    expect(minimax).toContain("MiniMax");
+    expect(minimax).toContain("DuckDuckGo");
+
+    expect(mcpPanel).toContain('data-testid="mcp-provider-panel"');
+    expect(mcpPanel).toContain("webEvidenceProvidersList");
+    expect(mcpPanel).toContain("webEvidenceProviderUpsert");
+    expect(mcpPanel).toContain("webEvidenceProviderDiagnostics");
+    expect(mcpPanel).toContain("McpProfileCard");
+
+    for (const label of [
+      "MCP 联网证据提供方",
+      "添加 MCP 提供方",
+      "MiniMax 和 DuckDuckGo",
+      "仍作为原生候选兜底",
+    ]) {
+      expect(mcpPanel).toContain(label);
+    }
+
+    for (const label of [
+      "提供方名称",
+      "连接方式",
+      "HTTPS 服务地址",
+      "允许连接本机开发服务",
+      "stdio 启动命令",
+      "启动参数",
+      "凭据引用",
+      "搜索工具映射",
+      "网页读取工具映射",
+      "测试连接",
+      "保存 MCP 提供方",
+      "HTTPS 服务",
+      "本地命令 (stdio)",
+      "请求头",
+      "环境变量",
+      "先保存提供方，再测试连接或查看诊断。",
+    ]) {
+      expect(mcpCard).toContain(label);
+    }
+
+    expect(mcpPanel).toContain("persisted={false}");
+
+    for (const leakedLabel of [
+      "MCP web evidence providers",
+      "Add MCP provider",
+      "Provider name",
+      "Search mapping",
+      "Fetch mapping",
+      "Test connection",
+      "Save MCP provider",
+      "HTTPS MCP",
+      "stdio MCP",
+      "Header/Env 名",
+      ">Header</SelectItem>",
+      ">Env</SelectItem>",
+    ]) {
+      expect(mcpPanel + mcpCard + mcpPresets).not.toContain(leakedLabel);
+    }
+    expect(mcpCard).not.toMatch(/>\s*transportKind:/);
+    expect(mcpCard).not.toMatch(/>\s*mappingStatus:/);
+    expect(mcpCard).not.toMatch(/>\s*diagnosticStatus:/);
+    expect(mcpCard).not.toMatch(/>\s*transportConfigJson\s*</);
+    expect(mcpCard).not.toMatch(/>\s*credentialRefsJson\s*</);
+    expect(mcpPanel).not.toContain("return null");
+    expect(mcpCard).not.toContain("return null");
+
+    for (const preset of [
+      "AnySearch",
+      "Brave Search",
+      "Jina Reader",
+      "Firecrawl",
+      "SearXNG",
+      "Tavily",
+      "https://api.anysearch.com/mcp",
+      "search",
+      "extract",
+      "tavily-search",
+      "tavily-extract",
+      "firecrawl_search",
+      "firecrawl_scrape",
+      "brave_web_search",
+      "search_web",
+      "read_url",
+      "searxng_web_search",
+      "web_url_read",
+      "系统凭据",
+      "API Key",
+      "Authorization",
+      "Bearer",
+    ]) {
+      expect(mcpPanel + mcpCard + mcpPresets).toContain(preset);
+    }
+  });
+
   it("anchors management switches so the thumb stays inside the track", () => {
     const center = read("src/components/settings/ManagementCenterPanel.tsx");
 

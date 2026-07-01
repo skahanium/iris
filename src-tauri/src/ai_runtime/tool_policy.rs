@@ -7,15 +7,14 @@
 //!   閳?task capability affinity
 //!   閳?autonomy level
 //!   閳?web_search_enabled
-//!   閳?skill allowed-tools request
 //!   閳?user settings
 //! ```
 //!
 //! Key invariants:
-//! - Skills cannot enable unimplemented tools.
+//! - Skills are prompt-only and cannot widen the tool surface.
 //! - Skills cannot bypass `requires_confirmation`.
 //! - Skills cannot auto-execute write tools at L1 autonomy.
-//! - Without skills, the 8 core read-only tools are always available.
+//! - The 8 core read-only tools are always available.
 
 use crate::ai_runtime::tool_catalog::{
     catalog_find, ToolCatalogEntry, ToolImplementationStatus, TOOL_CATALOG,
@@ -36,8 +35,6 @@ pub struct ToolPolicyContext {
     pub scene: AiScene,
     pub autonomy_level: AutonomyLevel,
     pub web_search_enabled: bool,
-    /// Tools explicitly requested by active skills (via `allowed-tools`).
-    pub skill_allowed_tools: Vec<String>,
     /// Depth of sub-agent nesting (閳?2 hides `spawn_subagent`).
     pub depth: u32,
 }
@@ -66,8 +63,6 @@ pub enum DenialReason {
     WebSearchDisabled,
     /// Sub-agent depth 閳?2 hides spawn_subagent.
     DepthLimit,
-    /// Not in skill allowed-tools when skills are active and tool is non-default.
-    NotInSkillAllowlist,
 }
 
 /// User-facing hint when a tool is denied (also written into tool-role messages).
@@ -85,9 +80,6 @@ pub fn denial_user_message(reason: DenialReason, tool_name: &str) -> String {
         }
         DenialReason::DepthLimit => {
             format!("tool {tool_name} is unavailable at this sub-agent depth")
-        }
-        DenialReason::NotInSkillAllowlist => {
-            format!("active Skills did not allow tool {tool_name}")
         }
     }
 }
@@ -123,7 +115,7 @@ fn evaluate_entry(entry: &ToolCatalogEntry, ctx: &ToolPolicyContext) -> ToolPoli
         return ToolPolicyVerdict::Denied(DenialReason::WebSearchDisabled);
     }
 
-    // 4. Meta skill tools bypass task capability and skill allowlist gates.
+    // 4. Meta skill tools bypass task capability gates.
     if is_meta_skill_tool(entry.name) {
         return if entry.requires_confirmation {
             ToolPolicyVerdict::RequiresConfirmation
@@ -134,8 +126,8 @@ fn evaluate_entry(entry: &ToolCatalogEntry, ctx: &ToolPolicyContext) -> ToolPoli
 
     let task_policy = effective_task_policy(ctx);
 
-    // 5. Capability affinity: task policy, permission preflight and skill
-    // allowlists decide exposure. Legacy scene affinity is metadata only.
+    // 5. Capability affinity: task policy and permission preflight decide exposure.
+    // Legacy scene affinity is metadata only.
     let capability_affinity = entry.capability_affinity();
     if !capability_allowed_for_task(entry, &capability_affinity, &task_policy, ctx) {
         return ToolPolicyVerdict::Denied(DenialReason::CapabilityMismatch);
@@ -148,15 +140,7 @@ fn evaluate_entry(entry: &ToolCatalogEntry, ctx: &ToolPolicyContext) -> ToolPoli
         }
     }
 
-    // 7. Skill allowlist check: if skills are active, non-default tools must be in allowlist
-    if !ctx.skill_allowed_tools.is_empty()
-        && !entry.default_enabled_without_skill
-        && !ctx.skill_allowed_tools.contains(&entry.name.to_string())
-    {
-        return ToolPolicyVerdict::Denied(DenialReason::NotInSkillAllowlist);
-    }
-
-    // 8. Confirmation check
+    // 7. Confirmation check
     if entry.requires_confirmation {
         ToolPolicyVerdict::RequiresConfirmation
     } else {
@@ -219,16 +203,15 @@ fn capability_allowed_for_task(
         return true;
     }
 
-    let skill_requested = ctx.skill_allowed_tools.contains(&entry.name.to_string());
-    capability_affinity.iter().copied().any(|capability| {
-        capability_allowed(capability, policy, skill_requested, ctx.web_search_enabled)
-    })
+    capability_affinity
+        .iter()
+        .copied()
+        .any(|capability| capability_allowed(capability, policy, ctx.web_search_enabled))
 }
 
 fn capability_allowed(
     capability: ToolCapabilityAffinity,
     policy: &AgentTaskPolicy,
-    skill_requested: bool,
     web_search_enabled: bool,
 ) -> bool {
     use crate::ai_runtime::AgentIntent;
@@ -238,16 +221,15 @@ fn capability_allowed(
         ReadNotes | SearchNotes => true,
         WebFetch => policy.web_authorized && web_search_enabled,
         ResearchSynthesis => {
-            skill_requested
-                || policy.research_depth > 0
+            policy.research_depth > 0
                 || matches!(
                     policy.intent,
                     AgentIntent::Research | AgentIntent::CitationCheck | AgentIntent::DocumentCheck
                 )
         }
-        SkillManagement => skill_requested || matches!(policy.intent, AgentIntent::SkillManagement),
-        WriteNotes | PatchDocument => skill_requested || policy.write_permission_required,
-        VaultOrganize => skill_requested || matches!(policy.intent, AgentIntent::Organize),
+        SkillManagement => matches!(policy.intent, AgentIntent::SkillManagement),
+        WriteNotes | PatchDocument => policy.write_permission_required,
+        VaultOrganize => matches!(policy.intent, AgentIntent::Organize),
     }
 }
 
@@ -322,7 +304,6 @@ mod tests {
             scene: AiScene::KnowledgeLookup,
             autonomy_level: task_policy.autonomy_level,
             web_search_enabled: true,
-            skill_allowed_tools: vec![],
             depth: 0,
         }
     }
@@ -334,7 +315,6 @@ mod tests {
             scene: AiScene::DraftingAssist,
             autonomy_level: task_policy.autonomy_level,
             web_search_enabled: true,
-            skill_allowed_tools: vec![],
             depth: 0,
         }
     }
@@ -346,7 +326,6 @@ mod tests {
             scene: AiScene::KnowledgeLookup,
             autonomy_level: task_policy.autonomy_level,
             web_search_enabled,
-            skill_allowed_tools: vec![],
             depth: 0,
         }
     }
@@ -354,13 +333,12 @@ mod tests {
     // 閳光偓閳光偓 Hard gate 閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓
 
     #[test]
-    fn meta_skill_tools_always_available_with_active_skill_allowlist() {
+    fn meta_skill_tools_always_available_without_skill_tool_policy() {
         let ctx = ToolPolicyContext {
             task_policy: None,
             scene: AiScene::KnowledgeLookup,
             autonomy_level: AutonomyLevel::L2,
             web_search_enabled: true,
-            skill_allowed_tools: vec!["search_hybrid".into()],
             depth: 0,
         };
         assert_eq!(
@@ -590,32 +568,19 @@ mod tests {
     // 閳光偓閳光偓 Skill allowlist 閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓
 
     #[test]
-    fn non_default_tool_denied_without_skill_allowlist() {
+    fn non_default_tool_denied_without_task_permission() {
         let ctx = default_ctx();
         assert!(!is_tool_exposed("insert_text_at_cursor", &ctx));
     }
 
     #[test]
-    fn skill_can_enable_non_default_tool_when_capability_allows_it() {
+    fn write_policy_enables_write_tools_without_skill_allowlist() {
         let ctx = ToolPolicyContext {
             task_policy: Some(policy_for(AgentIntent::Write, true)),
             scene: AiScene::DraftingAssist,
-            skill_allowed_tools: vec!["insert_text_at_cursor".to_string()],
             ..default_ctx()
         };
         assert!(is_tool_exposed("insert_text_at_cursor", &ctx));
-    }
-
-    #[test]
-    fn skill_cannot_enable_non_default_tool_not_in_allowlist() {
-        let ctx = ToolPolicyContext {
-            task_policy: Some(policy_for(AgentIntent::Write, true)),
-            scene: AiScene::DraftingAssist,
-            skill_allowed_tools: vec!["some_other_tool".to_string()],
-            ..default_ctx()
-        };
-        // insert_text_at_cursor is not default, not in skill allowlist
-        assert!(!is_tool_exposed("insert_text_at_cursor", &ctx));
     }
 
     // 閳光偓閳光偓 compute_available_tools 閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓閳光偓

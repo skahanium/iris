@@ -29,12 +29,30 @@ pub struct McpStdioLaunch {
     pub max_stdout_line_bytes: usize,
     pub max_stderr_bytes: usize,
 }
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct McpHttpLaunch {
     pub url: String,
+    pub headers: Vec<(String, String)>,
     pub request_timeout: Duration,
     pub max_response_bytes: usize,
     pub allow_localhost_dev: bool,
+}
+
+impl std::fmt::Debug for McpHttpLaunch {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let header_names = self
+            .headers
+            .iter()
+            .map(|(name, _)| name.as_str())
+            .collect::<Vec<_>>();
+        f.debug_struct("McpHttpLaunch")
+            .field("url", &self.url)
+            .field("headers", &header_names)
+            .field("request_timeout", &self.request_timeout)
+            .field("max_response_bytes", &self.max_response_bytes)
+            .field("allow_localhost_dev", &self.allow_localhost_dev)
+            .finish()
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -102,7 +120,7 @@ pub struct McpToolCallResult {
     pub stderr_summary: Option<String>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 struct McpStdioToolCallLaunch {
     command: PathBuf,
     args: Vec<String>,
@@ -403,16 +421,15 @@ fn parse_stdio_args(args_json: &str) -> AppResult<Vec<String>> {
         .collect()
 }
 
-#[derive(Debug)]
 struct StoredStdioProvider {
     command: PathBuf,
     args: Vec<String>,
     env: Vec<(String, String)>,
 }
 
-#[derive(Debug)]
 struct StoredRemoteProvider {
     url: String,
+    headers: Vec<(String, String)>,
     allow_localhost_dev: bool,
 }
 
@@ -430,33 +447,65 @@ fn load_provider_transport(db: &Database, provider_id: &str) -> AppResult<String
 }
 
 fn credential_service_from_binding(value: &serde_json::Value) -> AppResult<Option<String>> {
-    let Some(raw) = value
-        .as_str()
-        .map(str::trim)
-        .filter(|item| !item.is_empty())
-    else {
-        return Ok(None);
+    let raw = if let Some(raw) = value.as_str() {
+        raw.trim()
+    } else if let Some(object) = value.as_object() {
+        object
+            .get("credential")
+            .or_else(|| object.get("service"))
+            .or_else(|| object.get("ref"))
+            .and_then(|item| item.as_str())
+            .map(str::trim)
+            .unwrap_or_default()
+    } else {
+        ""
     };
+    if raw.is_empty() {
+        return Ok(None);
+    }
     let service = raw.strip_prefix("credential://").unwrap_or(raw).trim();
     crate::security::ipc_policy::validate_credential_service(service)?;
     Ok(Some(service.to_string()))
+}
+
+fn parse_json_object(
+    raw: &str,
+    failure_kind: McpRuntimeFailureKind,
+) -> AppResult<serde_json::Value> {
+    serde_json::from_str(raw).map_err(|err| {
+        runtime_error(
+            failure_kind,
+            format!("MCP JSON configuration is invalid: {err}"),
+        )
+    })
+}
+
+fn object_section<'a>(
+    value: &'a serde_json::Value,
+    section: &str,
+) -> Option<&'a serde_json::Map<String, serde_json::Value>> {
+    value.get(section).and_then(|item| item.as_object())
+}
+
+fn legacy_env_bindings(
+    value: &serde_json::Value,
+) -> Option<&serde_json::Map<String, serde_json::Value>> {
+    let object = value.as_object()?;
+    if object.contains_key("headers") || object.contains_key("env") {
+        None
+    } else {
+        Some(object)
+    }
 }
 
 fn resolve_env_bindings(
     db: &Database,
     env_bindings_json: &str,
 ) -> AppResult<Vec<(String, String)>> {
-    let value: serde_json::Value = serde_json::from_str(env_bindings_json).map_err(|err| {
-        runtime_error(
-            McpRuntimeFailureKind::AuthMissing,
-            format!("MCP env bindings are invalid JSON: {err}"),
-        )
-    })?;
-    let Some(bindings) = value.as_object() else {
-        return Err(runtime_error(
-            McpRuntimeFailureKind::AuthMissing,
-            "MCP env bindings must be a JSON object",
-        ));
+    let value = parse_json_object(env_bindings_json, McpRuntimeFailureKind::AuthMissing)?;
+    let Some(bindings) = object_section(&value, "env").or_else(|| legacy_env_bindings(&value))
+    else {
+        return Ok(Vec::new());
     };
     let mut env = Vec::new();
     for (env_name, binding) in bindings {
@@ -477,14 +526,81 @@ fn resolve_env_bindings(
     Ok(env)
 }
 
+fn resolve_plain_env_bindings(transport_config_json: &str) -> AppResult<Vec<(String, String)>> {
+    let value = parse_json_object(
+        transport_config_json,
+        McpRuntimeFailureKind::InvalidResponse,
+    )?;
+    let Some(bindings) = object_section(&value, "env") else {
+        return Ok(Vec::new());
+    };
+    let mut env = Vec::new();
+    for (env_name, value) in bindings {
+        let Some(value) = value
+            .as_str()
+            .map(str::trim)
+            .filter(|item| !item.is_empty())
+        else {
+            continue;
+        };
+        env.push((env_name.clone(), value.to_string()));
+    }
+    Ok(env)
+}
+
+fn resolve_http_header_bindings(
+    db: &Database,
+    credential_refs_json: &str,
+) -> AppResult<Vec<(String, String)>> {
+    let value = parse_json_object(credential_refs_json, McpRuntimeFailureKind::AuthMissing)?;
+    let Some(bindings) = object_section(&value, "headers") else {
+        return Ok(Vec::new());
+    };
+    let mut headers = Vec::new();
+    for (header_name, binding) in bindings {
+        let service = credential_service_from_binding(binding)?.ok_or_else(|| {
+            runtime_error(
+                McpRuntimeFailureKind::AuthMissing,
+                "MCP HTTP header binding omitted named credential service",
+            )
+        })?;
+        let mut value = crate::credentials::get_api_key(db, &service).map_err(|_| {
+            runtime_error(
+                McpRuntimeFailureKind::AuthMissing,
+                format!("MCP credential binding is missing: {service}"),
+            )
+        })?;
+        let scheme = binding
+            .as_object()
+            .and_then(|object| object.get("scheme"))
+            .and_then(|item| item.as_str())
+            .map(str::trim)
+            .filter(|item| !item.is_empty());
+        if let Some(scheme) = scheme {
+            if scheme.eq_ignore_ascii_case("bearer") {
+                value = format!("Bearer {value}");
+            } else {
+                value = format!("{scheme} {value}");
+            }
+        }
+        headers.push((header_name.clone(), value));
+    }
+    Ok(headers)
+}
+
 fn load_remote_provider(db: &Database, provider_id: &str) -> AppResult<StoredRemoteProvider> {
     db.with_read_conn(|conn| {
-        let (enabled, transport, transport_config_json): (i64, String, String) = conn.query_row(
-            "SELECT enabled, transport_kind, transport_config_json
+        let (enabled, transport, transport_config_json, credential_refs_json): (
+            i64,
+            String,
+            String,
+            String,
+        ) = conn.query_row(
+            "SELECT enabled, transport_kind, transport_config_json, credential_refs_json
              FROM web_evidence_providers
              WHERE id = ?1 AND kind = 'mcp'",
             [provider_id],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
         )?;
         if enabled == 0 {
             return Err(runtime_error(
@@ -513,6 +629,7 @@ fn load_remote_provider(db: &Database, provider_id: &str) -> AppResult<StoredRem
         validate_mcp_http_runtime_url(&url, allow_localhost_dev)?;
         Ok(StoredRemoteProvider {
             url,
+            headers: resolve_http_header_bindings(db, &credential_refs_json)?,
             allow_localhost_dev,
         })
     })
@@ -555,10 +672,12 @@ fn load_stdio_provider(db: &Database, provider_id: &str) -> AppResult<StoredStdi
             .get("args")
             .map(serde_json::Value::to_string)
             .unwrap_or_else(|| "[]".to_string());
+        let mut env = resolve_plain_env_bindings(&transport_config_json)?;
+        env.extend(resolve_env_bindings(db, &credential_refs_json)?);
         Ok(StoredStdioProvider {
             command: PathBuf::from(command),
             args: parse_stdio_args(&args_json)?,
-            env: resolve_env_bindings(db, &credential_refs_json)?,
+            env,
         })
     })
 }
@@ -674,9 +793,50 @@ where
     }
 }
 
+fn parse_http_json_rpc_response(
+    raw: &str,
+    max_response_bytes: usize,
+) -> AppResult<serde_json::Value> {
+    if raw.len() > max_response_bytes {
+        return Err(runtime_error(
+            McpRuntimeFailureKind::OutputTooLarge,
+            "MCP HTTP response exceeded configured cap",
+        ));
+    }
+    if raw.trim().is_empty() {
+        return Ok(json!({}));
+    }
+    if let Ok(value) = serde_json::from_str(raw) {
+        return Ok(value);
+    }
+    let mut data = String::new();
+    for line in raw.lines() {
+        let trimmed = line.trim();
+        if let Some(rest) = trimmed.strip_prefix("data:") {
+            let rest = rest.trim();
+            if rest != "[DONE]" {
+                data.push_str(rest);
+            }
+        }
+    }
+    if !data.trim().is_empty() {
+        return serde_json::from_str(&data).map_err(|err| {
+            runtime_error(
+                McpRuntimeFailureKind::InvalidResponse,
+                format!("MCP HTTP SSE data was not valid JSON: {err}"),
+            )
+        });
+    }
+    Err(runtime_error(
+        McpRuntimeFailureKind::InvalidResponse,
+        "MCP HTTP server returned invalid JSON",
+    ))
+}
+
 async fn discover_http_tools(launch: McpHttpLaunch) -> AppResult<McpStdioDiscovery> {
     let parsed = validate_mcp_http_runtime_url(&launch.url, launch.allow_localhost_dev)?;
     let url = parsed.to_string();
+    let headers = launch.headers.clone();
     let max_response_bytes = launch.max_response_bytes;
     let mut builder = reqwest::Client::builder()
         .use_rustls_tls()
@@ -689,13 +849,15 @@ async fn discover_http_tools(launch: McpHttpLaunch) -> AppResult<McpStdioDiscove
     discover_http_tools_with_sender(launch, move |request| {
         let client = client.clone();
         let url = url.clone();
+        let headers = headers.clone();
         async move {
-            let response = client
+            let mut request_builder = client
                 .post(&url)
-                .header(reqwest::header::CONTENT_TYPE, "application/json")
-                .json(&request)
-                .send()
-                .await?;
+                .header(reqwest::header::CONTENT_TYPE, "application/json");
+            for (name, value) in &headers {
+                request_builder = request_builder.header(name.as_str(), value.as_str());
+            }
+            let response = request_builder.json(&request).send().await?;
             let status = response.status();
             if status.is_redirection() {
                 return Err(runtime_error(
@@ -718,21 +880,7 @@ async fn discover_http_tools(launch: McpHttpLaunch) -> AppResult<McpStdioDiscove
                 ));
             }
             let text = response.text().await?;
-            if text.len() > max_response_bytes {
-                return Err(runtime_error(
-                    McpRuntimeFailureKind::OutputTooLarge,
-                    "MCP HTTP response exceeded configured cap",
-                ));
-            }
-            if text.trim().is_empty() {
-                return Ok(json!({}));
-            }
-            serde_json::from_str(&text).map_err(|err| {
-                runtime_error(
-                    McpRuntimeFailureKind::InvalidResponse,
-                    format!("MCP HTTP server returned invalid JSON: {err}"),
-                )
-            })
+            parse_http_json_rpc_response(&text, max_response_bytes)
         }
     })
     .await
@@ -813,6 +961,7 @@ async fn call_http_tool(
 ) -> AppResult<serde_json::Value> {
     let parsed = validate_mcp_http_runtime_url(&launch.url, launch.allow_localhost_dev)?;
     let url = parsed.to_string();
+    let headers = launch.headers.clone();
     let max_response_bytes = launch.max_response_bytes;
     let mut builder = reqwest::Client::builder()
         .use_rustls_tls()
@@ -825,13 +974,15 @@ async fn call_http_tool(
     call_http_tool_with_sender(launch, tool_name, arguments, move |request| {
         let client = client.clone();
         let url = url.clone();
+        let headers = headers.clone();
         async move {
-            let response = client
+            let mut request_builder = client
                 .post(&url)
-                .header(reqwest::header::CONTENT_TYPE, "application/json")
-                .json(&request)
-                .send()
-                .await?;
+                .header(reqwest::header::CONTENT_TYPE, "application/json");
+            for (name, value) in &headers {
+                request_builder = request_builder.header(name.as_str(), value.as_str());
+            }
+            let response = request_builder.json(&request).send().await?;
             let status = response.status();
             if status.is_redirection() {
                 return Err(runtime_error(
@@ -854,21 +1005,7 @@ async fn call_http_tool(
                 ));
             }
             let text = response.text().await?;
-            if text.len() > max_response_bytes {
-                return Err(runtime_error(
-                    McpRuntimeFailureKind::OutputTooLarge,
-                    "MCP HTTP response exceeded configured cap",
-                ));
-            }
-            if text.trim().is_empty() {
-                return Ok(json!({}));
-            }
-            serde_json::from_str(&text).map_err(|err| {
-                runtime_error(
-                    McpRuntimeFailureKind::InvalidResponse,
-                    format!("MCP HTTP server returned invalid JSON: {err}"),
-                )
-            })
+            parse_http_json_rpc_response(&text, max_response_bytes)
         }
     })
     .await
@@ -1179,6 +1316,7 @@ where
     let result = call_http_tool_with_sender(
         McpHttpLaunch {
             url: loaded_provider.url,
+            headers: loaded_provider.headers,
             request_timeout: options.request_timeout,
             max_response_bytes: options.max_stdout_line_bytes,
             allow_localhost_dev: loaded_provider.allow_localhost_dev,
@@ -1212,6 +1350,7 @@ pub async fn call_provider_http_tool(
     let result = call_http_tool(
         McpHttpLaunch {
             url: loaded_provider.url,
+            headers: loaded_provider.headers,
             request_timeout: options.request_timeout,
             max_response_bytes: options.max_stdout_line_bytes,
             allow_localhost_dev: loaded_provider.allow_localhost_dev,
@@ -1289,6 +1428,7 @@ where
     discover_http_tools_with_sender(
         McpHttpLaunch {
             url: provider.url,
+            headers: provider.headers,
             request_timeout: options.request_timeout,
             max_response_bytes: options.max_stdout_line_bytes,
             allow_localhost_dev: provider.allow_localhost_dev,
@@ -1309,6 +1449,7 @@ pub async fn discover_provider_tools(
             let provider = load_remote_provider(db, provider_id)?;
             discover_http_tools(McpHttpLaunch {
                 url: provider.url,
+                headers: provider.headers,
                 request_timeout: options.request_timeout,
                 max_response_bytes: options.max_stdout_line_bytes,
                 allow_localhost_dev: provider.allow_localhost_dev,
@@ -1354,5 +1495,94 @@ mod tests {
     fn http_runtime_url_allows_localhost_only_in_dev_mode() {
         assert!(validate_mcp_http_runtime_url("http://localhost:9000/mcp", true).is_ok());
         assert!(validate_mcp_http_runtime_url("https://localhost:9000/mcp", true).is_ok());
+    }
+
+    #[test]
+    fn http_launch_debug_redacts_header_values() {
+        let launch = McpHttpLaunch {
+            url: "https://api.anysearch.com/mcp".into(),
+            headers: vec![("Authorization".into(), "Bearer as_sk_secret_value".into())],
+            request_timeout: Duration::from_secs(5),
+            max_response_bytes: 1024,
+            allow_localhost_dev: false,
+        };
+
+        let debug = format!("{launch:?}");
+
+        assert!(debug.contains("Authorization"));
+        assert!(!debug.contains("as_sk_secret_value"), "{debug}");
+        assert!(!debug.contains("Bearer"), "{debug}");
+    }
+
+    #[test]
+    fn resolves_http_authorization_header_from_credential_ref() {
+        let db = Database::open_in_memory().unwrap();
+        crate::credentials::set_api_key(&db, "iris.mcp.anysearch", "test-anysearch-key").unwrap();
+
+        let headers = resolve_http_header_bindings(
+            &db,
+            r#"{"headers":{"Authorization":{"scheme":"bearer","credential":"credential://iris.mcp.anysearch"}}}"#,
+        )
+        .unwrap();
+
+        assert_eq!(
+            headers,
+            vec![("Authorization".into(), "Bearer test-anysearch-key".into())]
+        );
+        crate::credentials::delete_api_key(&db, "iris.mcp.anysearch").unwrap();
+    }
+
+    #[test]
+    fn resolves_plain_and_secret_stdio_env_without_mixing_values() {
+        let db = Database::open_in_memory().unwrap();
+        crate::credentials::set_api_key(&db, "iris.mcp.brave", "test-brave-key").unwrap();
+
+        let plain =
+            resolve_plain_env_bindings(r#"{"env":{"SEARXNG_URL":"https://search.example"}}"#)
+                .unwrap();
+        let secret = resolve_env_bindings(
+            &db,
+            r#"{"env":{"BRAVE_API_KEY":"credential://iris.mcp.brave"}}"#,
+        )
+        .unwrap();
+
+        assert_eq!(
+            plain,
+            vec![("SEARXNG_URL".into(), "https://search.example".into())]
+        );
+        assert_eq!(
+            secret,
+            vec![("BRAVE_API_KEY".into(), "test-brave-key".into())]
+        );
+        crate::credentials::delete_api_key(&db, "iris.mcp.brave").unwrap();
+    }
+
+    #[test]
+    fn parses_streamable_http_sse_tool_call_response() {
+        let parsed = parse_http_json_rpc_response(
+            r#"event: message
+data: {"jsonrpc":"2.0","id":2,"result":{"content":[{"type":"text","text":"ok"}]}}
+
+"#,
+            2048,
+        )
+        .unwrap();
+
+        let result = result_or_error(json_rpc_envelope_from_value(parsed).unwrap(), 2).unwrap();
+        assert_eq!(result["content"][0]["text"], "ok");
+    }
+
+    #[test]
+    fn parses_streamable_http_sse_json_rpc_data() {
+        let parsed = parse_http_json_rpc_response(
+            r#"event: message
+data: {"jsonrpc":"2.0","id":1,"result":{"ok":true}}
+
+"#,
+            2048,
+        )
+        .unwrap();
+
+        assert_eq!(parsed["result"]["ok"], true);
     }
 }

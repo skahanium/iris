@@ -20,7 +20,6 @@ fn policy_ctx(depth: u32, web_search_enabled: bool) -> ToolPolicyContext {
         scene: AiScene::KnowledgeLookup,
         autonomy_level: AutonomyLevel::L2,
         web_search_enabled,
-        skill_allowed_tools: vec![],
         depth,
     }
 }
@@ -40,7 +39,6 @@ fn write_policy_ctx() -> ToolPolicyContext {
         scene: AiScene::DraftingAssist,
         autonomy_level: task_policy.autonomy_level,
         web_search_enabled: true,
-        skill_allowed_tools: vec![],
         depth: 0,
     }
 }

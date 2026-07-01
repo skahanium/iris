@@ -1,18 +1,12 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use crate::ai_runtime::{
-    agent_task_policy::intent_from_legacy_scene, tool_catalog::catalog_find, AiScene,
-};
-use crate::ai_types::{
-    AgentIntent, SkillActivationItemSummary, SkillActivationPlanSummary, ToolCapabilityAffinity,
-};
+use crate::ai_runtime::{agent_task_policy::intent_from_legacy_scene, AiScene};
+use crate::ai_types::{AgentIntent, SkillActivationItemSummary, SkillActivationPlanSummary};
 use crate::embedding::engine::{cosine_similarity, embed_text};
 use crate::error::AppResult;
 use crate::storage::db::Database;
 
-use super::compatibility_impl::blocked_capabilities_for_skill;
-use super::validation_impl::confirmation_required_tools;
 use super::{
     load_skill, scan_all_metadata, ActivationIndexMap, ScoredSkill, SkillActivationIndexRow,
     SkillConfirmationStatus, SkillEntry, SkillListEntry, SkillScope,
@@ -215,12 +209,6 @@ fn compute_skill_score(
         }
     }
 
-    for term in capability_terms_for_skill(skill) {
-        if task_terms.contains(&term) {
-            score += 2.5;
-        }
-    }
-
     score
 }
 
@@ -256,34 +244,6 @@ fn task_terms(intent: AgentIntent, user_message: &str, source_hints: &[String]) 
 fn push_term(terms: &mut Vec<String>, term: String) {
     if !terms.contains(&term) {
         terms.push(term);
-    }
-}
-
-fn capability_terms_for_skill(skill: &SkillEntry) -> Vec<String> {
-    let mut terms = Vec::new();
-    for tool in &skill.allowed_tools {
-        let Some(entry) = catalog_find(tool) else {
-            continue;
-        };
-        for capability in entry.capability_affinity() {
-            for term in capability_terms(capability) {
-                push_term(&mut terms, term.to_string());
-            }
-        }
-    }
-    terms
-}
-
-fn capability_terms(capability: ToolCapabilityAffinity) -> &'static [&'static str] {
-    match capability {
-        ToolCapabilityAffinity::ReadNotes => &["read", "notes", "knowledge"],
-        ToolCapabilityAffinity::SearchNotes => &["search", "notes", "knowledge"],
-        ToolCapabilityAffinity::WriteNotes => &["write", "draft", "rewrite"],
-        ToolCapabilityAffinity::PatchDocument => &["patch", "document", "write"],
-        ToolCapabilityAffinity::WebFetch => &["web", "fetch", "research"],
-        ToolCapabilityAffinity::ResearchSynthesis => &["research", "evidence", "synthesis"],
-        ToolCapabilityAffinity::SkillManagement => &["skill", "create", "confirm"],
-        ToolCapabilityAffinity::VaultOrganize => &["organize", "tags", "folders"],
     }
 }
 
@@ -524,9 +484,6 @@ fn build_skill_activation_plan_for_task_inner(
     candidates.truncate(5);
 
     let mut activated = Vec::new();
-    let mut requested_tools = Vec::new();
-    let mut confirmation_required = Vec::new();
-    let mut blocked = Vec::new();
 
     for scored in candidates.into_iter().take(3) {
         let skill = scored.skill;
@@ -536,21 +493,9 @@ fn build_skill_activation_plan_for_task_inner(
                 if options.legacy_scene_hint.is_some() {
                     "legacy_scene_or_vector_match".into()
                 } else {
-                    "task_capability_or_vector_match".into()
+                    "task_prompt_or_vector_match".into()
                 }
             });
-        for tool in &skill.allowed_tools {
-            if !requested_tools.contains(tool) {
-                requested_tools.push(tool.clone());
-            }
-        }
-        for tool in confirmation_required_tools(&skill.allowed_tools) {
-            if !confirmation_required.contains(&tool) {
-                confirmation_required.push(tool);
-            }
-        }
-        let blocked_caps = blocked_capabilities_for_skill(skill);
-        blocked.extend(blocked_caps.clone());
         let _ = (options.enable_manifest_gating, options.db);
         activated.push(SkillActivationItemSummary {
             name: skill.name.clone(),
@@ -560,26 +505,23 @@ fn build_skill_activation_plan_for_task_inner(
             match_reason: reason,
             injected_sections: vec!["skill_overlay".into()],
             degraded_reasons: Vec::new(),
-            requested_tools: skill.allowed_tools.clone(),
-            confirmation_required_tools: confirmation_required_tools(&skill.allowed_tools),
-            blocked_capabilities: blocked_caps,
+            requested_tools: Vec::new(),
+            confirmation_required_tools: Vec::new(),
+            blocked_capabilities: Vec::new(),
         });
     }
 
-    let manifest_degraded = activated
-        .iter()
-        .any(|skill| !skill.degraded_reasons.is_empty());
     SkillActivationPlanSummary {
         skill_overlay_summary: if activated.is_empty() {
             "No skills activated for this run.".into()
         } else {
-            format!("{} skill(s) activated for skill_overlay.", activated.len())
+            format!("{} prompt-only skill(s) activated.", activated.len())
         },
         activated_skills: activated,
-        requested_tools,
-        confirmation_required_tools: confirmation_required,
-        degraded: !blocked.is_empty() || manifest_degraded,
-        blocked_capabilities: blocked,
+        requested_tools: Vec::new(),
+        confirmation_required_tools: Vec::new(),
+        degraded: false,
+        blocked_capabilities: Vec::new(),
     }
 }
 /// Load enabled skills for prompt injection after metadata matching.
@@ -633,41 +575,6 @@ pub fn active_skills_for_task_prompt(
         }
     }
     Ok(out)
-}
-
-/// Union of allowed tools requested by active skills for a scene.
-pub fn active_skill_allowed_tools(
-    vault: &Path,
-    scene: AiScene,
-    db: Option<&Database>,
-    user_message: &str,
-) -> AppResult<Vec<String>> {
-    active_skill_allowed_tools_for_task(
-        vault,
-        intent_from_legacy_scene(scene),
-        db,
-        user_message,
-        &[],
-    )
-}
-
-/// Union of allowed tools requested by active skills for a task.
-pub fn active_skill_allowed_tools_for_task(
-    vault: &Path,
-    intent: AgentIntent,
-    db: Option<&Database>,
-    user_message: &str,
-    source_hints: &[String],
-) -> AppResult<Vec<String>> {
-    let mut tools = Vec::new();
-    for skill in active_skills_for_task_prompt(vault, intent, db, user_message, source_hints)? {
-        for tool in skill.allowed_tools {
-            if !tools.contains(&tool) {
-                tools.push(tool);
-            }
-        }
-    }
-    Ok(tools)
 }
 
 /// Legacy wrapper for annotating list entries from a scene-shaped request.
@@ -727,7 +634,6 @@ mod phase4_tests {
 
     use super::*;
     use crate::ai_runtime::skills::SkillScopeRule;
-    use crate::ai_types::SkillCapabilitySupportStatus;
 
     fn skill(name: &str) -> SkillEntry {
         SkillEntry {
@@ -736,7 +642,6 @@ mod phase4_tests {
             license: Some("AGPL-3.0".into()),
             compatibility: Some("hermes".into()),
             metadata: HashMap::new(),
-            allowed_tools: vec![],
             content: "Use this skill carefully.".into(),
             scope: SkillScope::Vault,
             enabled: true,
@@ -812,12 +717,9 @@ mod phase4_tests {
     }
 
     #[test]
-    fn build_skill_activation_plan_blocks_high_risk_runtime_capabilities() {
-        let mut scripted = skill("scripted-helper");
-        scripted.allowed_tools = vec!["execute_script_sandboxed".into()];
-
+    fn build_skill_activation_plan_does_not_request_tools_from_skills() {
         let plan = build_skill_activation_plan(
-            &[scripted],
+            &[skill("scripted-helper")],
             AiScene::KnowledgeLookup,
             AgentIntent::AskNotes,
             "Use scripted-helper",
@@ -825,15 +727,10 @@ mod phase4_tests {
             None,
         );
 
-        assert!(plan.degraded);
-        assert_eq!(
-            plan.blocked_capabilities[0].status,
-            SkillCapabilitySupportStatus::BlockedByPolicy
-        );
-        assert!(serde_json::to_string(&plan)
-            .unwrap()
-            .contains("execute_script_sandboxed"));
-        assert!(!serde_json::to_string(&plan).unwrap().contains("api_key"));
+        assert!(!plan.degraded);
+        assert!(plan.requested_tools.is_empty());
+        assert!(plan.confirmation_required_tools.is_empty());
+        assert!(plan.blocked_capabilities.is_empty());
     }
 
     #[test]
