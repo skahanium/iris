@@ -373,6 +373,10 @@ function checkLabelText(label: string): string {
       return "实时连接";
     case "searchToolLive":
       return "搜索工具";
+    case "searchSmokeLive":
+      return "搜索调用";
+    case "searchResultParseLive":
+      return "结果解析";
     case "fetchToolLive":
       return "网页读取工具";
     default:

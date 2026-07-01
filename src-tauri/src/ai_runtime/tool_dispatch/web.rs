@@ -23,7 +23,7 @@ pub(super) async fn web_search_tool(
                 .collect()
         })
         .unwrap_or_default();
-    let evidence = crate::ai_runtime::web_evidence_broker::collect_web_evidence(
+    let output = crate::ai_runtime::web_evidence_broker::collect_web_evidence_with_usage(
         &state.db,
         crate::ai_runtime::web_evidence_broker::WebEvidenceBrokerInput {
             query: query.to_string(),
@@ -34,6 +34,7 @@ pub(super) async fn web_search_tool(
         },
     )
     .await?;
+    let evidence = output.items;
     let packets =
         crate::ai_runtime::web_evidence_broker::web_evidence_items_to_packets(query, &evidence);
     Ok(serde_json::json!({
@@ -41,5 +42,6 @@ pub(super) async fn web_search_tool(
         "evidence": evidence,
         "results": packets,
         "count": packets.len(),
+        "webUsage": output.usage,
     }))
 }

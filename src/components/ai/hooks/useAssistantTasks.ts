@@ -40,6 +40,7 @@ import type {
   AssistantActionState,
   AgentIntent,
   AgentRunPlanSummary,
+  AiChatExecutePayload,
   AssistantExecuteResponse,
   AssistantIntent,
   ContextReference,
@@ -57,6 +58,7 @@ import type {
   PermissionPreflightSummary,
   TaskPlan,
   TaskPlanIntent,
+  WebSearchUsage,
 } from "@/types/ai";
 import type { AssistantArtifactDraft } from "@/types/assistant-artifact";
 
@@ -152,6 +154,7 @@ interface AssistantTaskStatePorts {
   setSessionId: Dispatch<SetStateAction<number | null>>;
   setSessionTokenUsage: Dispatch<SetStateAction<TokenUsage | null>>;
   setStreaming: Dispatch<SetStateAction<boolean>>;
+  setWebSearchUsage: Dispatch<SetStateAction<WebSearchUsage | null>>;
   setWritingPatches: Dispatch<SetStateAction<PatchProposal[]>>;
   setWritingState: Dispatch<SetStateAction<WritingState | null>>;
 }
@@ -226,6 +229,68 @@ function lastAssistantContent(messages: ChatLine[]): string {
   return "";
 }
 
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+function readSuccessfulSearchRequests(value: unknown): {
+  mcp: number;
+  duckduckgo: number;
+} | null {
+  const record = asRecord(value);
+  if (!record) return null;
+  const mcp = record.mcp;
+  const duckduckgo = record.duckduckgo;
+  return {
+    mcp: typeof mcp === "number" && Number.isFinite(mcp) ? mcp : 0,
+    duckduckgo:
+      typeof duckduckgo === "number" && Number.isFinite(duckduckgo)
+        ? duckduckgo
+        : 0,
+  };
+}
+
+function extractWebSearchUsage(
+  toolResults: AiChatExecutePayload["tool_results"],
+): WebSearchUsage | null {
+  let mcp = 0;
+  let duckduckgo = 0;
+  let found = false;
+  const providers: NonNullable<WebSearchUsage["providers"]> = [];
+
+  for (const toolResult of toolResults ?? []) {
+    const result = asRecord(toolResult.result);
+    const webUsage = asRecord(result?.webUsage ?? result?.web_usage);
+    const requests = readSuccessfulSearchRequests(
+      webUsage?.successfulSearchRequests ??
+        webUsage?.successful_search_requests,
+    );
+    if (!requests) continue;
+    found = true;
+    mcp += requests.mcp;
+    duckduckgo += requests.duckduckgo;
+    const usageProviders = webUsage?.providers;
+    if (Array.isArray(usageProviders)) {
+      providers.push(
+        ...usageProviders.filter(
+          (
+            provider,
+          ): provider is NonNullable<WebSearchUsage["providers"]>[number] =>
+            asRecord(provider) !== null,
+        ),
+      );
+    }
+  }
+
+  if (!found) return null;
+  return {
+    successfulSearchRequests: { mcp, duckduckgo },
+    providers,
+  };
+}
+
 export function useAssistantTasks({
   runtime,
   context,
@@ -297,6 +362,7 @@ export function useAssistantTasks({
     setSessionId,
     setSessionTokenUsage,
     setStreaming,
+    setWebSearchUsage,
     setWritingPatches,
     setWritingState,
   } = state;
@@ -423,6 +489,7 @@ export function useAssistantTasks({
       },
     ) => {
       setStreaming(true);
+      setWebSearchUsage(null);
       streamBufRef.current = "";
       requestIdRef.current = null;
       setAgentTaskId(null);
@@ -503,6 +570,7 @@ export function useAssistantTasks({
           result.tool_calls,
           result.tool_results,
         );
+        setWebSearchUsage(extractWebSearchUsage(result.tool_results));
         const serverContent = result.content?.trim() ?? "";
         const reconcile = resolveAssistantReconcileContent({
           currentContent: lastAssistantContent(messages),
@@ -635,6 +703,7 @@ export function useAssistantTasks({
       setSessionId,
       setSessionTokenUsage,
       setStreaming,
+      setWebSearchUsage,
       streamBufRef,
       webSearch,
     ],
@@ -1187,6 +1256,7 @@ export function useAssistantTasks({
     if ((!input.trim() && images.length === 0) || composerDisabled) return;
     const rawMessage = input.trim();
     const currentImages = images;
+    setWebSearchUsage(null);
     const pendingWriteAction = pendingWriteConfirmationAction({
       message: rawMessage,
       pendingPatchCount: writingPatches.length,
@@ -1410,6 +1480,7 @@ export function useAssistantTasks({
     setLastError,
     setMessages,
     setStreaming,
+    setWebSearchUsage,
     webSearch,
     writingPatches,
   ]);

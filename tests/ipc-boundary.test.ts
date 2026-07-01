@@ -203,6 +203,11 @@ describe("IPC boundary", () => {
     expect(aiCommands).toContain("discover_provider_tools");
     expect(aiCommands).toContain("liveConnection");
     expect(aiCommands).toContain("searchToolLive");
+    expect(aiCommands).toContain("searchSmokeLive");
+    expect(aiCommands).toContain("searchResultParseLive");
+    expect(aiCommands).toContain("MCP 搜索 smoke test 已返回可解析证据");
+    expect(aiCommands).toContain("MCP 搜索结果无法归一化为联网证据");
+    expect(aiCommands).toContain("MCP 服务要求 OAuth 鉴权流程，当前预设不兼容");
     expect(aiCommands).toContain("fetchToolLive");
     expect(aiCommands).toContain("MCP 服务已响应 tools/list");
     expect(aiCommands).toContain("MCP 实时探测失败");
@@ -212,6 +217,8 @@ describe("IPC boundary", () => {
     expect(aiCommands).not.toContain("MCP server responded to tools/list");
     expect(card).toContain('case "liveConnection"');
     expect(card).toContain('case "searchToolLive"');
+    expect(card).toContain('case "searchSmokeLive"');
+    expect(card).toContain('case "searchResultParseLive"');
     expect(card).toContain('case "fetchToolLive"');
   });
 

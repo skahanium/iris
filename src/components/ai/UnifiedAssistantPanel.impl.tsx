@@ -13,6 +13,7 @@ import type {
   ContextPacket,
   ContextStatus,
   TaskPlanIntent,
+  WebSearchUsage,
 } from "@/types/ai";
 import { buildActionState } from "./unified-assistant-panel-utils";
 import { AssistantComposerDock } from "./AssistantComposerDock";
@@ -66,9 +67,11 @@ export function UnifiedAssistantPanel({
   const [streaming, setStreaming] = useState(false);
   const bubbleSelection = useAiBubbleSelection();
   const [packets, setPackets] = useState<ContextPacket[]>([]);
+  const [webSearchUsage, setWebSearchUsage] = useState<WebSearchUsage | null>(
+    null,
+  );
   const [selectedPacketIds, setSelectedPacketIds] = useState<string[]>([]);
   const [packetsOpen, setPacketsOpen] = useState(false);
-
   const [contextStatusData, setContextStatusData] =
     useState<ContextStatus | null>(null);
   const [activityHint, setActivityHint] = useState<string | null>(null);
@@ -368,6 +371,7 @@ export function UnifiedAssistantPanel({
       setStreaming,
       setWritingPatches,
       setWritingState,
+      setWebSearchUsage,
     },
   });
 
@@ -375,17 +379,17 @@ export function UnifiedAssistantPanel({
     setAgentTaskId(null);
     setPausedTaskId(null);
     setCurrentTaskPlanIntent(null);
+    setWebSearchUsage(null);
     handleNewChat();
   }, [handleNewChat]);
-
   const loadSessionAndResetTaskPlan = useCallback(
     (...args: Parameters<typeof handleLoadSession>) => {
       setCurrentTaskPlanIntent(null);
+      setWebSearchUsage(null);
       handleLoadSession(...args);
     },
     [handleLoadSession],
   );
-
   const stopStreaming = useCallback(() => {
     const taskId = agentTaskId;
     const id = requestIdRef.current;
@@ -398,7 +402,6 @@ export function UnifiedAssistantPanel({
     setStreaming(false);
     setActivityHint(null);
   }, [agentTaskId]);
-
   const togglePacketSelection = useCallback((id: string) => {
     setSelectedPacketIds((prev) =>
       prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id],
@@ -426,6 +429,7 @@ export function UnifiedAssistantPanel({
         taskPlanIntent={currentTaskPlanIntent}
         taskStatus={actionState.status}
         webSearch={webSearch}
+        webSearchUsage={webSearchUsage}
       />
       <ContextPacketDrawer
         open={packetsOpen}

@@ -48,21 +48,60 @@ pub struct WebEvidenceItem {
     pub conflict_note: Option<String>,
 }
 
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct WebEvidenceSearchRequestUsage {
+    pub mcp: u32,
+    pub duckduckgo: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct WebEvidenceProviderUsage {
+    pub provider_id: String,
+    pub provider_kind: String,
+    pub successful_search_requests: u32,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct WebEvidenceUsage {
+    pub successful_search_requests: WebEvidenceSearchRequestUsage,
+    pub providers: Vec<WebEvidenceProviderUsage>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct WebEvidenceBrokerOutput {
+    pub items: Vec<WebEvidenceItem>,
+    pub usage: WebEvidenceUsage,
+}
+
 pub async fn collect_web_evidence(
     db: &Database,
     input: WebEvidenceBrokerInput,
 ) -> AppResult<Vec<WebEvidenceItem>> {
+    Ok(collect_web_evidence_with_usage(db, input).await?.items)
+}
+
+pub async fn collect_web_evidence_with_usage(
+    db: &Database,
+    input: WebEvidenceBrokerInput,
+) -> AppResult<WebEvidenceBrokerOutput> {
     if !input.enabled {
-        return Ok(Vec::new());
+        return Ok(WebEvidenceBrokerOutput {
+            items: Vec::new(),
+            usage: WebEvidenceUsage::default(),
+        });
     }
 
     let mut collected = Vec::new();
+    let mut usage = WebEvidenceUsage::default();
     if !input.query.trim().is_empty() {
         for planned_query in plan_search_queries(&input.query) {
             for fetch in collect_search_provider_fetches(db, &planned_query).await {
                 match fetch {
                     Ok(fetch) => {
-                        collected.extend(web_evidence_items_from_search_fetch(&fetch));
+                        let items = web_evidence_items_from_search_fetch(&fetch);
+                        record_successful_search_usage(&mut usage, &fetch, &items);
+                        collected.extend(items);
                     }
                     Err(error) => {
                         collected.push(failed_evidence_item(
@@ -77,10 +116,12 @@ pub async fn collect_web_evidence(
         }
     }
 
+    suppress_search_provider_failures_if_success(&mut collected);
     collected.extend(input.urls.iter().map(|url| explicit_url_item(url)));
     let mut items = normalize_evidence_items(collected);
     items.truncate(input.max_search_results);
-    enrich_with_page_fetches(db, items, input.max_fetches).await
+    let items = enrich_with_page_fetches(db, items, input.max_fetches).await?;
+    Ok(WebEvidenceBrokerOutput { items, usage })
 }
 
 pub fn web_evidence_items_to_packets(query: &str, items: &[WebEvidenceItem]) -> Vec<ContextPacket> {
@@ -467,7 +508,7 @@ fn merge_mapping_extra_args(
     }
 }
 
-fn build_mcp_search_arguments(
+pub(crate) fn build_mcp_search_arguments(
     mapping_json: &str,
     query: &str,
     max_results: usize,
@@ -511,8 +552,15 @@ fn build_mcp_fetch_arguments(mapping_json: &str, url: &str, max_chars: usize) ->
     serde_json::Value::Object(args)
 }
 
+pub(crate) fn mcp_search_result_has_parseable_rows(result: &serde_json::Value) -> bool {
+    !parse_search_result_rows(&mcp_search_result_body(result)).is_empty()
+}
+
 fn mcp_search_result_body(result: &serde_json::Value) -> String {
     if let Some(text) = result.as_str() {
+        if let Some(body) = json_text_search_rows_body(text) {
+            return body;
+        }
         return text.to_string();
     }
     if let Some(body) = structured_search_rows_body(result) {
@@ -521,9 +569,17 @@ fn mcp_search_result_body(result: &serde_json::Value) -> String {
     if let Some(items) = result.get("content").and_then(|value| value.as_array()) {
         let mut body = String::new();
         for item in items {
-            if let Some(text) = item.get("text").and_then(|value| value.as_str()) {
-                body.push_str(text);
-                body.push('\n');
+            if let Some(text) = item
+                .get("text")
+                .or_else(|| item.get("content"))
+                .and_then(|value| value.as_str())
+            {
+                if let Some(normalized) = json_text_search_rows_body(text) {
+                    body.push_str(&normalized);
+                } else {
+                    body.push_str(text);
+                    body.push('\n');
+                }
             }
         }
         if !body.trim().is_empty() {
@@ -533,12 +589,41 @@ fn mcp_search_result_body(result: &serde_json::Value) -> String {
     result.to_string()
 }
 
+fn json_text_search_rows_body(text: &str) -> Option<String> {
+    serde_json::from_str::<serde_json::Value>(text)
+        .ok()
+        .and_then(|value| structured_search_rows_body(&value))
+}
+
 fn structured_search_rows_body(result: &serde_json::Value) -> Option<String> {
-    let items = result
-        .get("results")
-        .or_else(|| result.get("items"))
-        .or_else(|| result.get("data"))
-        .and_then(|value| value.as_array())?;
+    if let Some(items) = search_result_array_candidates(result)
+        .into_iter()
+        .find(|items| search_rows_body_from_items(items).is_some())
+    {
+        return search_rows_body_from_items(items);
+    }
+
+    if let Some(object) = result.as_object() {
+        for child in object.values() {
+            if let Some(body) = structured_search_rows_body(child) {
+                return Some(body);
+            }
+        }
+    }
+    None
+}
+
+fn search_result_array_candidates(value: &serde_json::Value) -> Vec<&Vec<serde_json::Value>> {
+    let mut candidates = Vec::new();
+    for key in ["results", "items", "data", "web", "news", "images"] {
+        if let Some(items) = value.get(key).and_then(|item| item.as_array()) {
+            candidates.push(items);
+        }
+    }
+    candidates
+}
+
+fn search_rows_body_from_items(items: &[serde_json::Value]) -> Option<String> {
     let mut body = String::new();
     for (index, item) in items.iter().enumerate() {
         let Some(object) = item.as_object() else {
@@ -553,6 +638,7 @@ fn structured_search_rows_body(result: &serde_json::Value) -> Option<String> {
         let url = object
             .get("url")
             .or_else(|| object.get("link"))
+            .or_else(|| object.get("source"))
             .and_then(|value| value.as_str())
             .unwrap_or_default()
             .trim();
@@ -563,6 +649,8 @@ fn structured_search_rows_body(result: &serde_json::Value) -> Option<String> {
             .get("snippet")
             .or_else(|| object.get("content"))
             .or_else(|| object.get("description"))
+            .or_else(|| object.get("markdown"))
+            .or_else(|| object.get("text"))
             .and_then(|value| value.as_str())
             .unwrap_or_default()
             .trim();
@@ -579,10 +667,20 @@ snippet: {}
     }
     (!body.trim().is_empty()).then_some(body)
 }
+
 fn web_evidence_items_from_search_fetch(fetch: &SearchProviderFetch) -> Vec<WebEvidenceItem> {
     let search_backend = fetch.search_backend;
-    parse_search_result_rows(&fetch.body)
-        .into_iter()
+    let rows = parse_search_result_rows(&fetch.body);
+    if rows.is_empty() && fetch.provider_kind == "mcp" {
+        return vec![failed_evidence_item_with_kind(
+            "",
+            &fetch.provider_id,
+            &fetch.provider_kind,
+            "web.search",
+            "mcp_search_parse_empty".into(),
+        )];
+    }
+    rows.into_iter()
         .map(|row| {
             if !is_https_url(&row.url) {
                 return failed_evidence_item(
@@ -618,6 +716,55 @@ fn web_evidence_items_from_search_fetch(fetch: &SearchProviderFetch) -> Vec<WebE
         .collect()
 }
 
+#[cfg(test)]
+fn web_evidence_usage_from_search_fetches<'a>(
+    fetches: impl IntoIterator<Item = &'a SearchProviderFetch>,
+) -> WebEvidenceUsage {
+    let mut usage = WebEvidenceUsage::default();
+    for fetch in fetches {
+        let items = web_evidence_items_from_search_fetch(fetch);
+        record_successful_search_usage(&mut usage, fetch, &items);
+    }
+    usage
+}
+
+fn record_successful_search_usage(
+    usage: &mut WebEvidenceUsage,
+    fetch: &SearchProviderFetch,
+    items: &[WebEvidenceItem],
+) {
+    let has_successful_search_result = items.iter().any(|item| {
+        item.failure_reason.is_none()
+            && item.retrieval_reason == "web.search"
+            && item.provider_id == fetch.provider_id
+            && item.provider_kind == fetch.provider_kind
+    });
+    if !has_successful_search_result {
+        return;
+    }
+
+    match (fetch.provider_kind.as_str(), fetch.provider_id.as_str()) {
+        ("mcp", _) => usage.successful_search_requests.mcp += 1,
+        (_, "native.duckduckgo") => usage.successful_search_requests.duckduckgo += 1,
+        _ => return,
+    }
+
+    if let Some(provider) = usage
+        .providers
+        .iter_mut()
+        .find(|provider| provider.provider_id == fetch.provider_id)
+    {
+        provider.successful_search_requests += 1;
+        return;
+    }
+
+    usage.providers.push(WebEvidenceProviderUsage {
+        provider_id: fetch.provider_id.clone(),
+        provider_kind: fetch.provider_kind.clone(),
+        successful_search_requests: 1,
+    });
+}
+
 #[derive(Debug, Clone)]
 struct SearchResultRow {
     title: String,
@@ -631,6 +778,17 @@ fn parse_search_result_rows(body: &str) -> Vec<SearchResultRow> {
     for line in body.lines() {
         let trimmed = line.trim();
         let lower = trimmed.to_ascii_lowercase();
+        if let Some(title) = markdown_search_heading_title(trimmed) {
+            if let Some(row) = current.take().filter(|row| !row.url.trim().is_empty()) {
+                rows.push(row);
+            }
+            current = Some(SearchResultRow {
+                title,
+                url: String::new(),
+                snippet: String::new(),
+            });
+            continue;
+        }
         if let Some((_, title)) = trimmed
             .split_once("] title:")
             .or_else(|| trimmed.split_once("] 鏍囬:"))
@@ -650,10 +808,26 @@ fn parse_search_result_rows(body: &str) -> Vec<SearchResultRow> {
                 row.url = trimmed[4..].trim().to_string();
             } else if lower.starts_with("snippet:") {
                 row.snippet = trimmed[8..].trim().to_string();
+            } else if let Some(url) = markdown_bold_field_value(trimmed, "url") {
+                row.url = url;
+            } else if let Some(snippet) = markdown_bold_field_value(trimmed, "snippet")
+                .or_else(|| markdown_bold_field_value(trimmed, "description"))
+            {
+                row.snippet = snippet;
             } else if let Some(url) = trimmed.strip_prefix("閾炬帴:") {
                 row.url = url.trim().to_string();
             } else if let Some(snippet) = trimmed.strip_prefix("鎽樿:") {
                 row.snippet = snippet.trim().to_string();
+            } else if row.url.starts_with("http") && row.snippet.is_empty() {
+                let snippet = trimmed
+                    .trim_start_matches('-')
+                    .trim()
+                    .trim_start_matches('*')
+                    .trim()
+                    .to_string();
+                if !snippet.is_empty() {
+                    row.snippet = snippet;
+                }
             }
         }
     }
@@ -661,6 +835,44 @@ fn parse_search_result_rows(body: &str) -> Vec<SearchResultRow> {
         rows.push(row);
     }
     rows
+}
+
+fn markdown_search_heading_title(line: &str) -> Option<String> {
+    let title = line
+        .strip_prefix("### ")
+        .or_else(|| line.strip_prefix("#### "))?
+        .trim();
+    let title = title
+        .split_once(". ")
+        .map(|(_, rest)| rest)
+        .or_else(|| title.split_once(") ").map(|(_, rest)| rest))
+        .unwrap_or(title)
+        .trim();
+    (!title.is_empty()).then(|| title.to_string())
+}
+
+fn markdown_bold_field_value(line: &str, field: &str) -> Option<String> {
+    let line = line.trim_start_matches('-').trim();
+    let rest = line.strip_prefix("**")?;
+    let (label, value) = rest.split_once("**:")?;
+    if !label.trim().eq_ignore_ascii_case(field) {
+        return None;
+    }
+    let value = value.trim();
+    (!value.is_empty()).then(|| value.to_string())
+}
+
+fn suppress_search_provider_failures_if_success(items: &mut Vec<WebEvidenceItem>) {
+    let has_search_success = items
+        .iter()
+        .any(|item| item.retrieval_reason == "web.search" && item.failure_reason.is_none());
+    if has_search_success {
+        items.retain(|item| {
+            item.failure_reason.is_none()
+                || !matches!(item.retrieval_reason.as_str(), "search" | "web.search")
+                || !item.url.trim().is_empty()
+        });
+    }
 }
 
 fn normalize_evidence_items(items: Vec<WebEvidenceItem>) -> Vec<WebEvidenceItem> {
@@ -965,6 +1177,16 @@ fn failed_evidence_item(
     retrieval_reason: impl Into<String>,
     reason: String,
 ) -> WebEvidenceItem {
+    failed_evidence_item_with_kind(url, provider_id, "native", retrieval_reason, reason)
+}
+
+fn failed_evidence_item_with_kind(
+    url: impl Into<String>,
+    provider_id: impl Into<String>,
+    provider_kind: impl Into<String>,
+    retrieval_reason: impl Into<String>,
+    reason: String,
+) -> WebEvidenceItem {
     let url = url.into();
     let canonical_url = canonicalize_url(&url);
     let raw_result_hash = result_hash(&[&url, &reason]);
@@ -980,7 +1202,7 @@ fn failed_evidence_item(
         snippet: String::new(),
         fetched_excerpt: None,
         provider_id: provider_id.into(),
-        provider_kind: "native".into(),
+        provider_kind: provider_kind.into(),
         cost_class: "free".into(),
         raw_result_hash,
         extraction_method: "none".into(),
@@ -1113,6 +1335,50 @@ mod tests {
 
         assert_eq!(item.failure_reason.as_deref(), Some("fetch_failed"));
         assert_eq!(item.url, "https://example.com/a");
+    }
+
+    #[test]
+    fn web_usage_counts_only_successful_search_providers() {
+        let mcp_fetch = SearchProviderFetch {
+            body: "[1] title: MCP result\nurl: https://example.com/mcp\nsnippet: ok".into(),
+            search_backend: WebSearchBackend::Duckduckgo,
+            provider_id: "anysearch".into(),
+            provider_kind: "mcp".into(),
+        };
+        let ddg_fetch = SearchProviderFetch {
+            body: "[1] title: DDG result\nurl: https://example.com/ddg\nsnippet: ok".into(),
+            search_backend: WebSearchBackend::Duckduckgo,
+            provider_id: "native.duckduckgo".into(),
+            provider_kind: "native".into(),
+        };
+        let empty_mcp_fetch = SearchProviderFetch {
+            body: "no parseable rows".into(),
+            search_backend: WebSearchBackend::Duckduckgo,
+            provider_id: "empty-mcp".into(),
+            provider_kind: "mcp".into(),
+        };
+        let invalid_ddg_fetch = SearchProviderFetch {
+            body: "[1] title: Bad result\nurl: http://example.com/ddg\nsnippet: rejected".into(),
+            search_backend: WebSearchBackend::Duckduckgo,
+            provider_id: "native.duckduckgo".into(),
+            provider_kind: "native".into(),
+        };
+
+        let usage = web_evidence_usage_from_search_fetches([
+            &mcp_fetch,
+            &ddg_fetch,
+            &empty_mcp_fetch,
+            &invalid_ddg_fetch,
+        ]);
+
+        assert_eq!(usage.successful_search_requests.mcp, 1);
+        assert_eq!(usage.successful_search_requests.duckduckgo, 1);
+        assert_eq!(usage.providers.len(), 2);
+        assert!(usage.providers.iter().any(|provider| {
+            provider.provider_id == "anysearch"
+                && provider.provider_kind == "mcp"
+                && provider.successful_search_requests == 1
+        }));
     }
 
     #[tokio::test]
@@ -1274,6 +1540,72 @@ mod tests {
         assert_eq!(rows[0].title, "Iris MCP");
         assert_eq!(rows[0].url, "https://example.com/iris");
         assert_eq!(rows[0].snippet, "evidence snippet");
+    }
+
+    #[test]
+    fn mcp_search_body_normalizes_anysearch_markdown_content_text() {
+        let body = mcp_search_result_body(&serde_json::json!({
+            "content": [
+                {
+                    "type": "text",
+                    "text": "## Search Results\n\n### 1. Iris note app\n- **URL**: https://example.com/iris\n- Iris is a local-first note app.\n\n### 2. Iris docs\n- **URL**: https://docs.example.com/iris\n- Documentation snippet."
+                }
+            ]
+        }));
+        let rows = parse_search_result_rows(&body);
+
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].title, "Iris note app");
+        assert_eq!(rows[0].url, "https://example.com/iris");
+        assert_eq!(rows[0].snippet, "Iris is a local-first note app.");
+        assert_eq!(rows[1].title, "Iris docs");
+        assert_eq!(rows[1].url, "https://docs.example.com/iris");
+    }
+
+    #[test]
+    fn mcp_search_body_normalizes_firecrawl_text_json_results() {
+        let body = mcp_search_result_body(&serde_json::json!({
+            "content": [
+                {
+                    "type": "text",
+                    "text": r#"{
+                        "success": true,
+                        "data": {
+                            "web": [
+                                {
+                                    "url": "https://example.com/firecrawl",
+                                    "title": "Firecrawl result",
+                                    "description": "Firecrawl description"
+                                }
+                            ]
+                        }
+                    }"#
+                }
+            ]
+        }));
+        let rows = parse_search_result_rows(&body);
+
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].title, "Firecrawl result");
+        assert_eq!(rows[0].url, "https://example.com/firecrawl");
+        assert_eq!(rows[0].snippet, "Firecrawl description");
+    }
+
+    #[test]
+    fn mcp_search_parse_empty_returns_diagnostic_failure_item() {
+        let items = web_evidence_items_from_search_fetch(&SearchProviderFetch {
+            body: "MCP tool returned prose without links".into(),
+            search_backend: WebSearchBackend::Duckduckgo,
+            provider_id: "mcp.prose".into(),
+            provider_kind: "mcp".into(),
+        });
+
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].provider_id, "mcp.prose");
+        assert_eq!(
+            items[0].failure_reason.as_deref(),
+            Some("mcp_search_parse_empty")
+        );
     }
 
     #[test]

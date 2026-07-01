@@ -6,10 +6,10 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "dev:desktop": "tauri dev",
+    "dev:desktop": "node scripts/tauri-cli.mjs dev",
     "build": "tsc -b && vite build",
     "preview": "vite preview",
-    "tauri": "tauri",
+    "tauri": "node scripts/tauri-cli.mjs",
     "lint": "eslint src --max-warnings 0",
     "lint:fix": "eslint src --fix",
     "format": "prettier --write \"src/**/*.{ts,tsx,css}\" \"tests/**/*.{ts,tsx}\" \"*.{json,md,html}\" \"docs/**/*.md\" \"scripts/**/*.{mjs,js,ts}\" \"*.config.{js,ts,mjs}\"",

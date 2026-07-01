@@ -298,6 +298,11 @@ describe("management center contract", () => {
     expect(diagnostics).toContain("未配置网页读取映射");
     expect(diagnostics).toContain("提供方未启用");
     expect(diagnostics).toContain("连接方式不支持 MCP 联网证据");
+    expect(diagnostics).toContain("MCP 搜索 smoke test 已返回可解析证据");
+    expect(diagnostics).toContain("MCP 搜索结果无法归一化为联网证据");
+    expect(diagnostics).toContain(
+      "MCP 服务要求 OAuth 鉴权流程，当前预设不兼容",
+    );
 
     // The diagnostic line is rendered as label：status · message; the card
     // must keep the status text and message on the same line so users can
@@ -306,6 +311,8 @@ describe("management center contract", () => {
       "{checkLabelText(check.label)}：{checkStatusText(check.status)} ·",
     );
     expect(card).toContain("调度可用性：搜索");
+    expect(card).toContain('case "searchSmokeLive"');
+    expect(card).toContain('case "searchResultParseLive"');
   });
 
   it("waits for restored notes to open before closing recycle views", () => {

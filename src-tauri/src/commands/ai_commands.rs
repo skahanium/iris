@@ -2135,6 +2135,67 @@ fn diagnostic_error_message(error: &AppError) -> String {
     }
 }
 
+fn provider_transport_url(
+    provider: &crate::ai_runtime::mcp_runtime_registry::WebEvidenceProviderSummary,
+) -> Option<String> {
+    serde_json::from_str::<serde_json::Value>(&provider.transport_config_json)
+        .ok()
+        .and_then(|value| {
+            value
+                .get("url")
+                .and_then(|url| url.as_str())
+                .map(str::to_string)
+        })
+}
+
+fn provider_search_smoke_error_message(
+    provider: &crate::ai_runtime::mcp_runtime_registry::WebEvidenceProviderSummary,
+    error: &AppError,
+) -> String {
+    let raw = error.to_string();
+    let lower = raw.to_ascii_lowercase();
+    let url = provider_transport_url(provider).unwrap_or_default();
+    if lower.contains("auth_failed") && url.contains("mcp.tavily.com") {
+        return "MCP 服务要求 OAuth 鉴权流程，当前预设不兼容".into();
+    }
+    diagnostic_error_message(error)
+}
+
+async fn run_mcp_search_smoke_test(
+    db: &crate::storage::db::Database,
+    provider: &crate::ai_runtime::mcp_runtime_registry::WebEvidenceProviderSummary,
+    mapping_json: &str,
+) -> AppResult<bool> {
+    let Some(tool_name) = provider_mapping_tool_name(Some(mapping_json)) else {
+        return Err(AppError::msg("MCP 搜索映射缺少 tool"));
+    };
+    let resolved_provider = crate::ai_runtime::capability_resolver::ResolvedCapabilityProvider {
+        capability: "web.search".into(),
+        provider_kind: "mcp".into(),
+        profile_id: provider.id.clone(),
+        tool_name,
+        schema_hash: provider.provider_config_hash.clone(),
+        requires_confirmation: true,
+    };
+    let call = crate::ai_runtime::mcp_host_runtime::call_provider_tool(
+        db,
+        &resolved_provider,
+        crate::ai_runtime::web_evidence_broker::build_mcp_search_arguments(
+            mapping_json,
+            "Iris note app",
+            1,
+        ),
+        crate::ai_runtime::mcp_host_runtime::McpHostRuntimeOptions {
+            request_timeout: Duration::from_secs(20),
+            max_stdout_line_bytes: 64 * 1024,
+            max_stderr_bytes: 8 * 1024,
+            cwd: None,
+        },
+    )
+    .await?;
+    Ok(crate::ai_runtime::web_evidence_broker::mcp_search_result_has_parseable_rows(&call.result))
+}
+
 async fn provider_diagnostics_for_summary(
     db: &crate::storage::db::Database,
     provider: &crate::ai_runtime::mcp_runtime_registry::WebEvidenceProviderSummary,
@@ -2230,6 +2291,40 @@ async fn provider_diagnostics_for_summary(
                             format!("MCP 服务未报告搜索工具 '{tool}'")
                         },
                     ));
+                    if exists {
+                        if let Some(mapping_json) = provider.web_search_mapping_json.as_deref() {
+                            match run_mcp_search_smoke_test(db, provider, mapping_json).await {
+                                Ok(parseable) => {
+                                    checks.push(provider_diagnostic_check(
+                                        "searchSmokeLive",
+                                        true,
+                                        "MCP 搜索 smoke test 已返回可解析证据",
+                                    ));
+                                    can_use_for_search = can_use_for_search && parseable;
+                                    checks.push(provider_diagnostic_check(
+                                        "searchResultParseLive",
+                                        parseable,
+                                        if parseable {
+                                            "MCP 搜索结果已归一化为联网证据"
+                                        } else {
+                                            "MCP 搜索结果无法归一化为联网证据"
+                                        },
+                                    ));
+                                }
+                                Err(error) => {
+                                    can_use_for_search = false;
+                                    checks.push(provider_diagnostic_check(
+                                        "searchSmokeLive",
+                                        false,
+                                        &format!(
+                                            "MCP 搜索 smoke test 失败：{}",
+                                            provider_search_smoke_error_message(provider, &error)
+                                        ),
+                                    ));
+                                }
+                            }
+                        }
+                    }
                 }
                 if let Some(tool) =
                     provider_mapping_tool_name(provider.web_fetch_mapping_json.as_deref())
@@ -2253,7 +2348,10 @@ async fn provider_diagnostics_for_summary(
                 checks.push(provider_diagnostic_check(
                     "liveConnection",
                     false,
-                    &format!("MCP 实时探测失败：{}", diagnostic_error_message(&error)),
+                    &format!(
+                        "MCP 实时探测失败：{}",
+                        provider_search_smoke_error_message(provider, &error)
+                    ),
                 ));
             }
         }

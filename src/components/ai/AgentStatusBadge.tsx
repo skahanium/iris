@@ -10,10 +10,16 @@ import {
   type SkillListEntryDto,
 } from "@/lib/ipc";
 import { cn } from "@/lib/utils";
-import type { AiScene, AssistantTaskStatus, TaskPlanIntent } from "@/types/ai";
+import type {
+  AiScene,
+  AssistantTaskStatus,
+  TaskPlanIntent,
+  WebSearchUsage,
+} from "@/types/ai";
 
 interface AgentStatusBadgeProps {
   webSearchEnabled?: boolean;
+  webSearchUsage?: WebSearchUsage | null;
   disabled?: boolean;
   scene?: AiScene;
   taskPlanIntent?: TaskPlanIntent | null;
@@ -77,6 +83,21 @@ function sceneForSkillCompatibility(
   }
 }
 
+function webSearchDetailText(
+  webSearchEnabled: boolean,
+  webSearchUsage: WebSearchUsage | null | undefined,
+): string {
+  if (!webSearchEnabled) return "未开启";
+  const requests =
+    webSearchUsage?.successfulSearchRequests ??
+    webSearchUsage?.successful_search_requests;
+  if (!requests) return "已开启";
+  const mcp = requests.mcp ?? 0;
+  const duckduckgo = requests.duckduckgo ?? 0;
+  if (mcp + duckduckgo === 0) return "已开启 · 暂无成功结果";
+  return `已开启 · MCP ${mcp} 次 · DDG ${duckduckgo} 次`;
+}
+
 function PolicyRow({
   icon: Icon,
   label,
@@ -110,6 +131,7 @@ function PolicyRow({
 
 export function AgentStatusBadge({
   webSearchEnabled = false,
+  webSearchUsage,
   disabled,
   scene: sceneProp,
   taskPlanIntent,
@@ -289,7 +311,7 @@ export function AgentStatusBadge({
                 <PolicyRow
                   icon={webSearchEnabled ? Globe : Lock}
                   label="联网搜索"
-                  detail={webSearchEnabled ? "已开启" : "未开启"}
+                  detail={webSearchDetailText(webSearchEnabled, webSearchUsage)}
                   accent={webSearchEnabled ? "success" : "muted"}
                 />
               </div>

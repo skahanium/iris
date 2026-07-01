@@ -172,6 +172,41 @@ describe("assistant per-turn TaskPlan dispatch", () => {
     expect(statusBadge).toContain('return "研究综合"');
   });
 
+  it("surfaces successful MCP and DDG web search counts in agent status", () => {
+    const statusBadge = readFileSync(
+      "src/components/ai/AgentStatusBadge.tsx",
+      "utf8",
+    );
+    const header = readFileSync(
+      "src/components/ai/AssistantPanelHeader.tsx",
+      "utf8",
+    );
+    const panel = readFileSync(
+      "src/components/ai/UnifiedAssistantPanel.impl.tsx",
+      "utf8",
+    );
+    const taskHook = readFileSync(
+      "src/components/ai/hooks/useAssistantTasks.ts",
+      "utf8",
+    );
+    const tool = readFileSync(
+      "src-tauri/src/ai_runtime/tool_dispatch/web.rs",
+      "utf8",
+    );
+    const types = readFileSync("src/types/ai.ts", "utf8");
+
+    expect(statusBadge).toContain("webSearchUsage");
+    expect(statusBadge).toContain("MCP");
+    expect(statusBadge).toContain("DDG");
+    expect(statusBadge).toContain("暂无成功结果");
+    expect(header).toContain("webSearchUsage");
+    expect(panel).toContain("setWebSearchUsage(null)");
+    expect(taskHook).toContain("extractWebSearchUsage");
+    expect(tool).toContain("webUsage");
+    expect(tool).toContain("collect_web_evidence_with_usage");
+    expect(types).toContain("successfulSearchRequests");
+  });
+
   it("does not depend on the whole bubble selection object for selection quotes", () => {
     const panel = readFileSync(
       "src/components/ai/UnifiedAssistantPanel.impl.tsx",

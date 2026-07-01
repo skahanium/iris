@@ -170,6 +170,26 @@ export interface WebEvidenceBrokerItem {
   conflict_note?: string | null;
 }
 
+export interface WebSearchSuccessfulRequestUsage {
+  mcp: number;
+  duckduckgo: number;
+}
+
+export interface WebSearchProviderUsage {
+  provider_id?: string;
+  providerId?: string;
+  provider_kind?: string;
+  providerKind?: string;
+  successful_search_requests?: number;
+  successfulSearchRequests?: number;
+}
+
+export interface WebSearchUsage {
+  successful_search_requests?: WebSearchSuccessfulRequestUsage;
+  successfulSearchRequests?: WebSearchSuccessfulRequestUsage;
+  providers?: WebSearchProviderUsage[];
+}
+
 export interface ContextPacket {
   id: string;
   source_type: SourceType;

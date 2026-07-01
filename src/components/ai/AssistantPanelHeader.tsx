@@ -9,6 +9,7 @@ import type {
   AiScene,
   AssistantTaskStatus,
   TaskPlanIntent,
+  WebSearchUsage,
 } from "@/types/ai";
 
 import type { ChatLine } from "./AiMessageList";
@@ -31,6 +32,7 @@ interface AssistantPanelHeaderProps {
   taskPlanIntent?: TaskPlanIntent | null;
   taskStatus: AssistantTaskStatus;
   webSearch: boolean;
+  webSearchUsage?: WebSearchUsage | null;
 }
 
 export function AssistantPanelHeader({
@@ -46,6 +48,7 @@ export function AssistantPanelHeader({
   taskPlanIntent,
   taskStatus,
   webSearch,
+  webSearchUsage,
 }: AssistantPanelHeaderProps) {
   return (
     <header className="ai-sidecar-header shrink-0 border-b border-border/60 px-3 py-1.5">
@@ -56,6 +59,7 @@ export function AssistantPanelHeader({
         <div className="flex shrink-0 items-center gap-1.5">
           <AgentStatusBadge
             webSearchEnabled={webSearch}
+            webSearchUsage={webSearchUsage}
             scene={scene}
             taskPlanIntent={taskPlanIntent}
             taskStatus={taskStatus}
