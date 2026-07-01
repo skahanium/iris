@@ -14,6 +14,13 @@ pub enum ModelRegistrySource {
     Manual,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Kind of live validation that succeeded for a model.
+pub enum ModelValidationKind {
+    Text,
+    Vision,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 /// Persisted model registry entry exposed to callers.
@@ -151,6 +158,27 @@ pub fn list_registry_entries(db: &Database) -> AppResult<Vec<ModelRegistryEntry>
     })
 }
 
+/// Remove stale vision probe markers for catalog models known not to support vision.
+pub fn clear_invalid_vision_validations(db: &Database) -> AppResult<usize> {
+    db.with_conn(|conn| {
+        let mut cleared = 0;
+        for model in crate::llm::model_catalog::catalog()
+            .iter()
+            .filter(|model| !model.supports_vision)
+        {
+            cleared += conn.execute(
+                "UPDATE llm_model_registry
+                 SET vision_verified_at = NULL
+                 WHERE provider_id = ?1
+                   AND model_id = ?2
+                   AND vision_verified_at IS NOT NULL",
+                params![model.provider_id, model.id],
+            )?;
+        }
+        Ok(cleared)
+    })
+}
+
 /// Mark a model as user-confirmed for a capability slot.
 pub fn confirm_capability(
     db: &Database,
@@ -184,25 +212,67 @@ pub fn confirm_capability(
              (provider_id, model_id, display_name, source, stale, first_seen_at, last_seen_at,
               last_refreshed_at, text_verified_at, vision_verified_at, user_confirmed_capabilities)
              VALUES (?1, ?2, ?2, ?3, 0, datetime('now'), datetime('now'), datetime('now'),
-                     CASE WHEN ?5 = 1 THEN NULL ELSE datetime('now') END,
-                     CASE WHEN ?5 = 1 THEN datetime('now') ELSE NULL END,
+                     NULL,
+                     NULL,
                      ?4)
              ON CONFLICT(provider_id, model_id) DO UPDATE SET
-                user_confirmed_capabilities = excluded.user_confirmed_capabilities,
-                text_verified_at = CASE
-                    WHEN ?5 = 1 THEN llm_model_registry.text_verified_at
-                    ELSE datetime('now')
-                END,
-                vision_verified_at = CASE
-                    WHEN ?5 = 1 THEN datetime('now')
-                    ELSE llm_model_registry.vision_verified_at
-                END",
+                user_confirmed_capabilities = excluded.user_confirmed_capabilities",
             params![
                 provider_id,
                 model_id,
                 ModelRegistrySource::Manual.as_str(),
                 capabilities_json,
-                i64::from(slot == CapabilitySlot::Vision),
+            ],
+        )?;
+
+        let entry = conn.query_row(
+            "SELECT provider_id, model_id, display_name, source, stale,
+                    first_seen_at, last_seen_at, last_refreshed_at,
+                    text_verified_at, vision_verified_at, user_confirmed_capabilities
+             FROM llm_model_registry
+             WHERE provider_id = ?1 AND model_id = ?2",
+            params![provider_id, model_id],
+            map_entry,
+        )?;
+        Ok(entry)
+    })?;
+    Ok(entry)
+}
+
+/// Mark a model as successfully validated by a live probe.
+pub fn mark_model_validated(
+    db: &Database,
+    provider_id: &str,
+    model_id: &str,
+    kind: ModelValidationKind,
+) -> AppResult<ModelRegistryEntry> {
+    let entry = db.with_conn(|conn| {
+        conn.execute(
+            "INSERT INTO llm_model_registry
+             (provider_id, model_id, display_name, source, stale, first_seen_at, last_seen_at,
+              last_refreshed_at, text_verified_at, vision_verified_at, user_confirmed_capabilities)
+             VALUES (?1, ?2, ?2, ?3, 0, datetime('now'), datetime('now'), datetime('now'),
+                     CASE WHEN ?4 = 1 THEN datetime('now') ELSE NULL END,
+                     CASE WHEN ?4 = 2 THEN datetime('now') ELSE NULL END,
+                     '[]')
+             ON CONFLICT(provider_id, model_id) DO UPDATE SET
+                text_verified_at = CASE
+                    WHEN ?4 = 1 THEN datetime('now')
+                    ELSE llm_model_registry.text_verified_at
+                END,
+                vision_verified_at = CASE
+                    WHEN ?4 = 2 THEN datetime('now')
+                    ELSE llm_model_registry.vision_verified_at
+                END,
+                last_seen_at = datetime('now')",
+            params![
+                provider_id,
+                model_id,
+                ModelRegistrySource::Manual.as_str(),
+                match kind {
+                    ModelValidationKind::Text => 1_i64,
+                    ModelValidationKind::Vision => 2_i64,
+                },
             ],
         )?;
 
@@ -222,9 +292,6 @@ pub fn confirm_capability(
 
 /// Return whether a registry row supports the requested capability slot.
 pub fn supports_model_for_slot(entry: &ModelRegistryEntry, slot: CapabilitySlot) -> bool {
-    if entry.user_confirmed_capabilities.contains(&slot) {
-        return true;
-    }
     match slot {
         CapabilitySlot::Fast | CapabilitySlot::Writer => true,
         CapabilitySlot::Vision => entry.vision_verified_at.is_some(),
@@ -341,7 +408,7 @@ mod tests {
     }
 
     #[test]
-    fn provider_discovered_models_default_to_no_vision_until_confirmed() {
+    fn provider_discovered_models_default_to_no_vision_until_validated() {
         let db = migrated_db();
 
         upsert_provider_discovered_models(&db, "openai-compatible", vec!["unknown-vl".to_string()])
@@ -352,16 +419,52 @@ mod tests {
             CapabilitySlot::Vision,
         ));
 
-        let entry = confirm_capability(
+        let entry = mark_model_validated(
             &db,
             "openai-compatible",
             "unknown-vl",
-            CapabilitySlot::Vision,
+            ModelValidationKind::Vision,
         )
         .unwrap();
 
         assert!(supports_model_for_slot(&entry, CapabilitySlot::Vision));
         assert!(entry.vision_verified_at.is_some());
+    }
+
+    #[test]
+    fn confirm_capability_does_not_mark_model_as_live_validated() {
+        let db = migrated_db();
+        upsert_provider_discovered_models(&db, "custom", vec!["model-a".to_string()]).unwrap();
+
+        let entry = confirm_capability(&db, "custom", "model-a", CapabilitySlot::Vision).unwrap();
+
+        assert!(entry
+            .user_confirmed_capabilities
+            .contains(&CapabilitySlot::Vision));
+        assert!(entry.text_verified_at.is_none());
+        assert!(entry.vision_verified_at.is_none());
+    }
+
+    #[test]
+    fn clear_invalid_vision_validations_removes_non_vision_catalog_dirty_state() {
+        let db = migrated_db();
+        let dirty = mark_model_validated(
+            &db,
+            "deepseek",
+            "deepseek-v4-flash",
+            ModelValidationKind::Vision,
+        )
+        .unwrap();
+        assert!(dirty.vision_verified_at.is_some());
+
+        let cleared = clear_invalid_vision_validations(&db).unwrap();
+        let entry = registry_entry(&db, "deepseek", "deepseek-v4-flash")
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(cleared, 1);
+        assert!(entry.vision_verified_at.is_none());
+        assert!(!supports_model_for_slot(&entry, CapabilitySlot::Vision));
     }
 
     #[test]
@@ -391,7 +494,7 @@ mod tests {
         assert_eq!(entry.provider_id, "custom");
         assert_eq!(entry.model_id, "manual-vision");
         assert_eq!(entry.source, ModelRegistrySource::Manual);
-        assert!(supports_model_for_slot(&entry, CapabilitySlot::Vision));
+        assert!(!supports_model_for_slot(&entry, CapabilitySlot::Vision));
     }
 
     #[test]

@@ -19,7 +19,6 @@ import {
   llmConfigGet,
   llmConfigSet,
   llmConfigTestProvider,
-  llmModelConfirmCapability,
   llmModelRegistryRefresh,
   llmModelValidate,
 } from "@/lib/ipc";
@@ -33,7 +32,6 @@ import {
   type LlmConfigGetResponse,
   type LlmRoutingConfig,
   type ModelRegistryEntry,
-  type ModelValidationKind,
   type ModelCatalogEntry,
   type ProviderOverride,
   type SlotRoute,
@@ -107,6 +105,16 @@ function registryKey(providerId: string, modelId: string): string {
   return `${providerId}:${modelId}`;
 }
 
+function findModelCatalogForProvider(
+  catalog: ModelCatalogEntry[] | undefined,
+  providerId: string,
+  modelId: string,
+): ModelCatalogEntry | undefined {
+  return catalog?.find(
+    (model) => model.providerId === providerId && model.id === modelId,
+  );
+}
+
 function modelMatchesCapability(
   catalog: ModelCatalogEntry | undefined,
   slot: CapabilitySlot,
@@ -119,21 +127,30 @@ function modelMatchesCapability(
   return slot === "fast" || slot === "writer";
 }
 
-function supportsModelForSlot(
+function modelSupportsSlot(
   model: EnabledProviderModel,
   slot: CapabilitySlot,
 ): boolean {
-  const registry = model.registry;
-  if (registry?.userConfirmedCapabilities.includes(slot)) return true;
+  if (slot === "vision") {
+    if (model.catalog) return model.catalog.supportsVision;
+    return Boolean(model.registry?.visionVerifiedAt);
+  }
+  if (slot === "fast" || slot === "writer") {
+    return Boolean(model.catalog || model.registry?.textVerifiedAt);
+  }
   if (modelMatchesCapability(model.catalog, slot)) return true;
-  if (slot === "vision") return Boolean(registry?.visionVerifiedAt);
-  if (slot === "fast" || slot === "writer") return registry?.stale !== true;
   return false;
 }
 
-function providerNeedsRefresh(entries: ModelRegistryEntry[]): boolean {
-  if (entries.length === 0) return true;
-  return entries.some((entry) => entry.stale || !entry.lastRefreshedAt);
+function modelCapabilitySummary(
+  model: EnabledProviderModel,
+  result: { ok: boolean; message: string } | undefined,
+): string {
+  if (result) return result.message;
+  const textReady = Boolean(model.catalog || model.registry?.textVerifiedAt);
+  if (!textReady) return "未验证";
+  const visionReady = modelSupportsSlot(model, "vision");
+  return visionReady ? "文本可用 · 视觉可用" : "文本可用 · 视觉不支持";
 }
 
 export function LlmRoutingSection({ open }: LlmRoutingSectionProps) {
@@ -256,16 +273,16 @@ export function LlmRoutingSection({ open }: LlmRoutingSectionProps) {
     [data?.providers, routing?.providers],
   );
 
-  const modelById = (modelId: string): ModelCatalogEntry | undefined =>
-    data?.catalog.find((m) => m.id === modelId);
+  const modelById = (
+    providerId: string,
+    modelId: string,
+  ): ModelCatalogEntry | undefined =>
+    findModelCatalogForProvider(data?.catalog, providerId, modelId);
 
   const baseUrlForProvider = (providerId: string): string =>
     providerBaseUrlInputs[providerId] ??
     routing?.providers[providerId]?.baseUrl ??
     "";
-
-  const registryForProvider = (providerId: string): ModelRegistryEntry[] =>
-    data?.registry.filter((entry) => entry.providerId === providerId) ?? [];
 
   const registryEntryForModel = (
     providerId: string,
@@ -430,9 +447,19 @@ export function LlmRoutingSection({ open }: LlmRoutingSectionProps) {
     const enabled = enabledModelIdsForProvider(providerId);
     return enabled.map((modelId) => ({
       id: modelId,
-      catalog: modelById(modelId),
+      catalog: modelById(providerId, modelId),
       registry: registryEntryForModel(providerId, modelId),
     }));
+  };
+
+  const isProviderConfiguredForRouting = (providerId: string): boolean => {
+    const override = routing?.providers[providerId];
+    return Boolean(
+      keyConfigured[providerId] ||
+      override?.baseUrl?.trim() ||
+      override?.enabledModels?.length ||
+      override?.defaultModel?.trim(),
+    );
   };
 
   const modelsForSlot = (
@@ -440,7 +467,14 @@ export function LlmRoutingSection({ open }: LlmRoutingSectionProps) {
     providerId: string,
   ): EnabledProviderModel[] =>
     enabledModelsForProvider(providerId).filter((model) =>
-      supportsModelForSlot(model, slot),
+      modelSupportsSlot(model, slot),
+    );
+
+  const providersForSlot = (slot: CapabilitySlot): VisibleProvider[] =>
+    visibleProviders.filter(
+      (provider) =>
+        isProviderConfiguredForRouting(provider.id) &&
+        modelsForSlot(slot, provider.id).length > 0,
     );
 
   const modelUsageLabels = (providerId: string, modelId: string) =>
@@ -565,7 +599,6 @@ export function LlmRoutingSection({ open }: LlmRoutingSectionProps) {
   const validateProviderModel = async (
     provider: VisibleProvider,
     model: EnabledProviderModel,
-    kind: ModelValidationKind,
   ) => {
     const key = `${provider.id}:${model.id}`;
     if (provider.id === "mimo" && !baseUrlForProvider(provider.id).trim()) {
@@ -573,7 +606,7 @@ export function LlmRoutingSection({ open }: LlmRoutingSectionProps) {
         ...prev,
         [key]: {
           ok: false,
-          message: "MiMo 需配置 Base URL 后才能测试连接。",
+          message: "MiMo 需配置 Base URL 后才能验证模型。",
         },
       }));
       return;
@@ -585,33 +618,32 @@ export function LlmRoutingSection({ open }: LlmRoutingSectionProps) {
       return next;
     });
     try {
-      const result = await llmModelValidate(provider.id, model.id, kind);
-      setTestResults((prev) => ({ ...prev, [key]: result }));
-      if (result.ok) await load({ preserveRouting: true });
-    } catch (err) {
+      const text = await llmModelValidate(provider.id, model.id, "text");
+      if (!text.ok) {
+        setTestResults((prev) => ({
+          ...prev,
+          [key]: { ok: false, message: "文本不可用" },
+        }));
+        return;
+      }
+
+      const vision = await llmModelValidate(provider.id, model.id, "vision");
+      const message = vision.ok
+        ? "文本可用 · 视觉可用"
+        : "文本可用 · 视觉不支持";
       setTestResults((prev) => ({
         ...prev,
-        [key]: { ok: false, message: invokeErrorMessage(err) },
+        [key]: { ok: true, message },
+      }));
+      await load({ preserveRouting: true });
+    } catch (err) {
+      console.warn("[LlmRouting] model validation failed:", err);
+      setTestResults((prev) => ({
+        ...prev,
+        [key]: { ok: false, message: "验证失败" },
       }));
     } finally {
       setTesting(null);
-    }
-  };
-
-  const confirmProviderModelCapability = async (
-    provider: VisibleProvider,
-    model: EnabledProviderModel,
-    slot: CapabilitySlot,
-  ) => {
-    try {
-      await llmModelConfirmCapability({
-        providerId: provider.id,
-        modelId: model.id,
-        slot,
-      });
-      await load({ preserveRouting: true });
-    } catch (err) {
-      setMessage(invokeErrorMessage(err));
     }
   };
 
@@ -714,9 +746,10 @@ export function LlmRoutingSection({ open }: LlmRoutingSectionProps) {
                       {provider.name}
                     </p>
                     <p className="text-[11px] text-muted-foreground">
+                      {providerModels.length} 个已启用模型
                       {provider.usedSlots.length > 0
-                        ? `用于 ${provider.usedSlots.join(" / ")}`
-                        : `${provider.enabledModels.length} 个模型已启用`}
+                        ? ` · 用于 ${provider.usedSlots.join(" / ")}`
+                        : ""}
                     </p>
                     {provider.custom ? (
                       <Input
@@ -798,7 +831,7 @@ export function LlmRoutingSection({ open }: LlmRoutingSectionProps) {
                         disabled={testing === provider.id}
                         onClick={() => void testProvider(provider)}
                       >
-                        {testing === provider.id ? "测试中…" : "测试连接"}
+                        {testing === provider.id ? "检查中…" : "检查端点"}
                       </Button>
                       <Button
                         type="button"
@@ -874,6 +907,8 @@ export function LlmRoutingSection({ open }: LlmRoutingSectionProps) {
                         const key = registryKey(provider.id, model.id);
                         const result = testResults[key];
                         const usage = modelUsageLabels(provider.id, model.id);
+                        const modelTesting = testing === key;
+                        const summary = modelCapabilitySummary(model, result);
                         return (
                           <div
                             key={model.id}
@@ -904,17 +939,13 @@ export function LlmRoutingSection({ open }: LlmRoutingSectionProps) {
                                   variant="secondary"
                                   className="h-7 text-xs"
                                   disabled={
-                                    testing === key || missingRequiredBaseUrl
+                                    modelTesting || missingRequiredBaseUrl
                                   }
                                   onClick={() =>
-                                    void validateProviderModel(
-                                      provider,
-                                      model,
-                                      "text",
-                                    )
+                                    void validateProviderModel(provider, model)
                                   }
                                 >
-                                  {testing === key ? "诊断中…" : "诊断"}
+                                  {modelTesting ? "验证中…" : "验证模型"}
                                 </Button>
                                 <Button
                                   type="button"
@@ -929,20 +960,18 @@ export function LlmRoutingSection({ open }: LlmRoutingSectionProps) {
                                 </Button>
                               </div>
                             </div>
-                            <div className="mt-2">
-                              <CapabilityTags model={model.catalog} />
-                            </div>
-                            {result ? (
-                              <p
+                            <div className="mt-2 flex flex-wrap items-center gap-2">
+                              <span
                                 className={
-                                  result.ok
-                                    ? "mt-2 text-[11px] text-emerald-600"
-                                    : "mt-2 text-[11px] text-destructive"
+                                  result?.ok === false
+                                    ? "text-[11px] text-destructive"
+                                    : "text-[11px] text-muted-foreground"
                                 }
                               >
-                                {result.message}
-                              </p>
-                            ) : null}
+                                {summary}
+                              </span>
+                              <ModelDebugDetails model={model.catalog} />
+                            </div>
                           </div>
                         );
                       })
@@ -953,147 +982,6 @@ export function LlmRoutingSection({ open }: LlmRoutingSectionProps) {
             })}
           </div>
         )}
-      </section>
-
-      <section className="space-y-2" data-section="llm-model-catalog">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <p className="text-xs font-medium text-muted-foreground">
-            模型目录与能力验证
-          </p>
-        </div>
-        <div className="space-y-2">
-          {visibleProviders.map((provider) => {
-            const entries = registryForProvider(provider.id);
-            const models = enabledModelsForProvider(provider.id);
-            return (
-              <div
-                key={provider.id}
-                className="rounded-md border border-border/50 bg-background/60 p-3"
-              >
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <div className="min-w-0">
-                    <p className="truncate text-xs font-medium text-foreground">
-                      {provider.name}
-                    </p>
-                    <p className="text-[11px] text-muted-foreground">
-                      {entries.length} 个目录模型，{models.length} 个已启用模型
-                    </p>
-                  </div>
-                  {providerNeedsRefresh(entries) ? (
-                    <span className="text-[11px] text-amber-600">
-                      建议刷新目录
-                    </span>
-                  ) : null}
-                </div>
-                {models.length === 0 ? (
-                  <p className="mt-2 rounded-md border border-dashed border-border/50 px-3 py-2 text-[11px] text-muted-foreground">
-                    未添加模型时不会激活或展示任何模型。
-                  </p>
-                ) : (
-                  <div className="mt-2 grid gap-2 lg:grid-cols-2">
-                    {models.map((model) => {
-                      const key = registryKey(provider.id, model.id);
-                      const result = testResults[key];
-                      return (
-                        <div
-                          key={model.id}
-                          className="rounded-md border border-border/45 bg-background/50 p-2"
-                        >
-                          <div className="flex flex-wrap items-start justify-between gap-2">
-                            <div className="min-w-0">
-                              <p className="truncate font-mono text-xs font-medium text-foreground">
-                                {model.id}
-                              </p>
-                              {model.catalog?.displayName ||
-                              model.registry?.displayName ? (
-                                <p className="truncate text-[11px] text-muted-foreground">
-                                  {model.catalog?.displayName ??
-                                    model.registry?.displayName}
-                                </p>
-                              ) : null}
-                            </div>
-                            <div className="flex flex-wrap items-center gap-1.5">
-                              <Button
-                                type="button"
-                                size="sm"
-                                variant="secondary"
-                                className="h-7 text-xs"
-                                disabled={testing === key}
-                                onClick={() =>
-                                  void validateProviderModel(
-                                    provider,
-                                    model,
-                                    "text",
-                                  )
-                                }
-                              >
-                                文本验证
-                              </Button>
-                              <Button
-                                type="button"
-                                size="sm"
-                                variant="outline"
-                                className="h-7 text-xs"
-                                disabled={testing === key}
-                                onClick={() =>
-                                  void validateProviderModel(
-                                    provider,
-                                    model,
-                                    "vision",
-                                  )
-                                }
-                              >
-                                视觉验证
-                              </Button>
-                            </div>
-                          </div>
-                          <div className="mt-2">
-                            <CapabilityTags model={model.catalog} />
-                          </div>
-                          <div className="mt-2 flex flex-wrap gap-1.5">
-                            {USER_CONFIGURABLE_CAPABILITY_SLOTS.map((slot) => (
-                              <Button
-                                key={slot}
-                                type="button"
-                                size="sm"
-                                variant={
-                                  supportsModelForSlot(model, slot)
-                                    ? "secondary"
-                                    : "ghost"
-                                }
-                                className="h-6 px-2 text-[10px]"
-                                onClick={() =>
-                                  void confirmProviderModelCapability(
-                                    provider,
-                                    model,
-                                    slot,
-                                  )
-                                }
-                              >
-                                {SLOT_META[slot].label}
-                              </Button>
-                            ))}
-                          </div>
-                          {result ? (
-                            <p
-                              className={
-                                result.ok
-                                  ? "mt-2 text-[11px] text-emerald-600"
-                                  : "mt-2 text-[11px] text-destructive"
-                              }
-                            >
-                              {result.message}
-                            </p>
-                          ) : null}
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
-            );
-          })}
-        </div>
       </section>
 
       <section className="space-y-2" data-section="llm-capability-routing">
@@ -1107,9 +995,22 @@ export function LlmRoutingSection({ open }: LlmRoutingSectionProps) {
           {USER_CONFIGURABLE_CAPABILITY_SLOTS.map((slot) => {
             const route =
               routing.slots[slot] ?? DEFAULT_LLM_ROUTING.slots[slot];
-            const providerId = route.providerId;
-            const models = modelsForSlot(slot, providerId);
-            const catalogModel = modelById(route.model);
+            const routeProviderOptions = providersForSlot(slot);
+            const routeProviderIds = routeProviderOptions.map(
+              (provider) => provider.id,
+            );
+            const providerId = routeProviderIds.includes(route.providerId)
+              ? route.providerId
+              : (routeProviderOptions[0]?.id ?? "");
+            const routeProviderInvalid =
+              route.providerId && route.providerId !== providerId;
+            const models = providerId ? modelsForSlot(slot, providerId) : [];
+            const modelIds = models.map((model) => model.id);
+            const selectedModel = modelIds.includes(route.model)
+              ? route.model
+              : (models[0]?.id ?? "");
+            const routeModelInvalid =
+              Boolean(route.model) && route.model !== selectedModel;
             return (
               <div
                 key={slot}
@@ -1123,38 +1024,53 @@ export function LlmRoutingSection({ open }: LlmRoutingSectionProps) {
                     {SLOT_META[slot].detail}
                   </p>
                 </div>
-                <Select
-                  value={providerId}
-                  onValueChange={(value) =>
-                    updateSlot(slot, {
-                      providerId: value,
-                      model: modelsForSlot(slot, value)[0]?.id ?? "",
-                    })
-                  }
-                >
-                  <SelectTrigger className="h-8 text-xs">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {data.providers.map((p) => (
-                      <SelectItem key={p.id} value={p.id}>
-                        {p.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                {models.length === 0 ? (
+                {routeProviderOptions.length === 0 ? (
                   <Input
                     className="h-8 text-xs"
-                    placeholder="先在供应商配置中添加模型"
+                    placeholder={
+                      slot === "vision" ? "无可用视觉模型" : "无可用供应商"
+                    }
                     value=""
                     disabled
                   />
                 ) : (
                   <Select
-                    value={route.model}
+                    value={providerId}
                     onValueChange={(value) =>
-                      updateSlot(slot, { model: value })
+                      updateSlot(slot, {
+                        providerId: value,
+                        model: modelsForSlot(slot, value)[0]?.id ?? "",
+                      })
+                    }
+                  >
+                    <SelectTrigger className="h-8 text-xs">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {routeProviderOptions.map((provider) => (
+                        <SelectItem key={provider.id} value={provider.id}>
+                          {provider.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                )}
+                {models.length === 0 ? (
+                  <Input
+                    className="h-8 text-xs"
+                    placeholder={
+                      slot === "vision"
+                        ? "无可用视觉模型"
+                        : "先在供应商配置中添加模型"
+                    }
+                    value=""
+                    disabled
+                  />
+                ) : (
+                  <Select
+                    value={selectedModel}
+                    onValueChange={(value) =>
+                      updateSlot(slot, { providerId, model: value })
                     }
                   >
                     <SelectTrigger className="h-8 text-xs">
@@ -1169,7 +1085,11 @@ export function LlmRoutingSection({ open }: LlmRoutingSectionProps) {
                     </SelectContent>
                   </Select>
                 )}
-                <CapabilityTags model={catalogModel} />
+                <div className="self-center text-[11px] text-muted-foreground">
+                  {routeProviderInvalid || routeModelInvalid
+                    ? "当前路由不可用，请重新选择"
+                    : ""}
+                </div>
               </div>
             );
           })}
@@ -1299,14 +1219,19 @@ function AddModelWizard({
   );
 }
 
-function CapabilityTags({ model }: { model: ModelCatalogEntry | undefined }) {
+function ModelDebugDetails({
+  model,
+}: {
+  model: ModelCatalogEntry | undefined;
+}) {
   if (!model) {
     return (
-      <div className="flex flex-wrap items-center gap-1 text-[10px] text-muted-foreground">
-        <span className="rounded border border-border/50 px-1.5 py-0.5">
+      <details className="text-[10px] text-muted-foreground">
+        <summary className="cursor-pointer select-none">详情</summary>
+        <span className="mt-1 inline-block rounded border border-border/50 px-1.5 py-0.5">
           manual model
         </span>
-      </div>
+      </details>
     );
   }
   const tags = [
@@ -1319,16 +1244,19 @@ function CapabilityTags({ model }: { model: ModelCatalogEntry | undefined }) {
   ].filter((tag): tag is string => Boolean(tag));
 
   return (
-    <div className="flex flex-wrap items-center gap-1">
-      {tags.map((tag) => (
-        <span
-          key={tag}
-          className="rounded border border-border/50 px-1.5 py-0.5 text-[10px] text-muted-foreground"
-        >
-          {tag}
-        </span>
-      ))}
-    </div>
+    <details className="text-[10px] text-muted-foreground">
+      <summary className="cursor-pointer select-none">详情</summary>
+      <div className="mt-1 flex flex-wrap items-center gap-1">
+        {tags.map((tag) => (
+          <span
+            key={tag}
+            className="rounded border border-border/50 px-1.5 py-0.5"
+          >
+            {tag}
+          </span>
+        ))}
+      </div>
+    </details>
   );
 }
 

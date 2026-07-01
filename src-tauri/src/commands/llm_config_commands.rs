@@ -18,6 +18,12 @@ use crate::llm::{model_catalog, model_registry};
 use serde::{Deserialize, Serialize};
 use tauri::State;
 
+const VISION_PROBE_IMAGE_URL: &str = concat!(
+    "data:image/png;base64,",
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1Pe",
+    "AAAADUlEQVR42mP8z8BQDwAFgwJ/lK3Q6wAAAABJRU5ErkJggg=="
+);
+
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LlmConfigGetResponse {
@@ -30,6 +36,7 @@ pub struct LlmConfigGetResponse {
 #[tauri::command]
 pub fn llm_config_get(state: State<'_, Arc<AppState>>) -> AppResult<LlmConfigGetResponse> {
     let routing = load(&state.db)?;
+    model_registry::clear_invalid_vision_validations(&state.db)?;
     let registry = model_registry::entries_from_builtin_and_routing(
         &routing,
         model_registry::list_registry_entries(&state.db)?,
@@ -283,8 +290,13 @@ async fn llm_model_validate_inner(
             } else {
                 crate::ai_types::CapabilitySlot::Writer
             };
+            let kind = if vision {
+                model_registry::ModelValidationKind::Vision
+            } else {
+                model_registry::ModelValidationKind::Text
+            };
             let entry =
-                model_registry::confirm_capability(&state.db, &provider_id, &model_id, slot)?;
+                model_registry::mark_model_validated(&state.db, &provider_id, &model_id, kind)?;
             debug_assert!(model_registry::supports_model_for_slot(&entry, slot));
             Ok(LlmConfigTestResult {
                 ok: true,
@@ -471,7 +483,7 @@ async fn probe_chat_minimal(
     let content = if vision {
         serde_json::json!([
             {"type": "text", "text": "ping"},
-            {"type": "image_url", "image_url": {"url": "data:image/png;base64,iVBORw0KGgo="}}
+            {"type": "image_url", "image_url": {"url": VISION_PROBE_IMAGE_URL}}
         ])
     } else {
         serde_json::json!("ping")
@@ -565,5 +577,13 @@ mod tests {
             }
         );
         assert!(check.allows_chat_probe());
+    }
+
+    #[test]
+    fn vision_probe_uses_complete_png_data_url() {
+        assert!(VISION_PROBE_IMAGE_URL.starts_with("data:image/png;base64,"));
+        assert!(VISION_PROBE_IMAGE_URL.contains("AAAANSUhEUgAAAAEAAAAB"));
+        assert!(VISION_PROBE_IMAGE_URL.ends_with("ErkJggg=="));
+        assert_ne!(VISION_PROBE_IMAGE_URL, "data:image/png;base64,iVBORw0KGgo=");
     }
 }

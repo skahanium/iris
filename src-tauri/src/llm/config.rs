@@ -7,6 +7,7 @@ use crate::ai_types::{
 };
 use crate::error::{AppError, AppResult};
 use crate::llm::model_catalog::{fallback_model, find_model};
+use crate::llm::model_registry::{self, ModelRegistryEntry};
 use crate::llm::providers::{api_base, credential_service, requires_base_url};
 use crate::storage::db::Database;
 
@@ -471,7 +472,12 @@ pub fn resolve_capability_route(
     input: CapabilityRouteInput,
 ) -> AppResult<ResolvedCapabilityRoute> {
     let routing = load(db)?;
-    let mut route = resolve_capability_route_from_config(&routing, input)?;
+    model_registry::clear_invalid_vision_validations(db)?;
+    let registry = model_registry::entries_from_builtin_and_routing(
+        &routing,
+        model_registry::list_registry_entries(db)?,
+    );
+    let mut route = resolve_capability_route_with_registry(&routing, input, &registry)?;
     hydrate_resolved_api_key(db, &mut route.resolved)?;
     Ok(route)
 }
@@ -479,6 +485,14 @@ pub fn resolve_capability_route(
 pub fn resolve_capability_route_from_config(
     routing: &LlmRoutingConfig,
     input: CapabilityRouteInput,
+) -> AppResult<ResolvedCapabilityRoute> {
+    resolve_capability_route_with_registry(routing, input, &[])
+}
+
+fn resolve_capability_route_with_registry(
+    routing: &LlmRoutingConfig,
+    input: CapabilityRouteInput,
+    registry: &[ModelRegistryEntry],
 ) -> AppResult<ResolvedCapabilityRoute> {
     let requested_slot = requested_slot(input);
     let fallback_chain = fallback_chain_for(requested_slot);
@@ -489,7 +503,7 @@ pub fn resolve_capability_route_from_config(
         let Some(route) = routing.slots.get(key) else {
             continue;
         };
-        if !route_satisfies_slot(route, *slot, input.privacy_preference) {
+        if !route_satisfies_slot(route, *slot, input.privacy_preference, registry) {
             continue;
         }
 
@@ -601,7 +615,7 @@ fn requested_slot(input: CapabilityRouteInput) -> CapabilitySlot {
 
 fn fallback_chain_for(slot: CapabilitySlot) -> Vec<CapabilitySlot> {
     match slot {
-        CapabilitySlot::Vision => vec![CapabilitySlot::Vision, CapabilitySlot::Fast],
+        CapabilitySlot::Vision => vec![CapabilitySlot::Vision],
         CapabilitySlot::AgentTools => vec![
             CapabilitySlot::AgentTools,
             CapabilitySlot::Reasoner,
@@ -636,16 +650,39 @@ fn route_satisfies_slot(
     route: &SlotRoute,
     slot: CapabilitySlot,
     privacy_preference: PrivacyPreference,
+    registry: &[ModelRegistryEntry],
 ) -> bool {
     if privacy_preference == PrivacyPreference::LocalOnly {
         return false;
     }
-    let model = find_model(&route.model).unwrap_or_else(|| fallback_model(&route.provider_id));
     match slot {
-        CapabilitySlot::Vision => model.supports_vision,
-        CapabilitySlot::AgentTools => model.supports_tools,
-        CapabilitySlot::Reasoner => model.supports_thinking || model.supports_tools,
-        CapabilitySlot::LongContext => model.context_window >= 128_000,
+        CapabilitySlot::Vision => {
+            if let Some(model) =
+                find_model(&route.model).filter(|model| model.provider_id == route.provider_id)
+            {
+                return model.supports_vision;
+            }
+            registry.iter().any(|entry| {
+                entry.provider_id == route.provider_id
+                    && entry.model_id == route.model
+                    && entry.vision_verified_at.is_some()
+            })
+        }
+        CapabilitySlot::AgentTools => {
+            let model =
+                find_model(&route.model).unwrap_or_else(|| fallback_model(&route.provider_id));
+            model.supports_tools
+        }
+        CapabilitySlot::Reasoner => {
+            let model =
+                find_model(&route.model).unwrap_or_else(|| fallback_model(&route.provider_id));
+            model.supports_thinking || model.supports_tools
+        }
+        CapabilitySlot::LongContext => {
+            let model =
+                find_model(&route.model).unwrap_or_else(|| fallback_model(&route.provider_id));
+            model.context_window >= 128_000
+        }
         _ => true,
     }
 }
@@ -1113,9 +1150,9 @@ mod tests {
     }
 
     #[test]
-    fn route_input_selects_default_vision_slot() {
+    fn route_input_requires_available_vision_slot_without_fast_fallback() {
         let routing = deepseek_defaults();
-        let route = resolve_capability_route_from_config(
+        let err = resolve_capability_route_from_config(
             &routing,
             CapabilityRouteInput {
                 intent: crate::ai_types::AgentIntent::VisionChat,
@@ -1126,21 +1163,52 @@ mod tests {
                 privacy_preference: PrivacyPreference::ExternalAllowed,
             },
         )
-        .expect("route");
+        .expect_err("vision route should not fall back to Fast");
 
-        // MiMo requires base URL — without it, falls back to Fast (DeepSeek).
-        assert_eq!(route.summary.slot, crate::ai_types::CapabilitySlot::Fast);
-        assert!(route.summary.degraded);
-        assert!(route.summary.reason.contains("fallback"));
-        assert!(route.summary.reason.contains("Vision"));
-        assert!(route.summary.reason.contains("Fast"));
-        assert_eq!(
-            route.summary.fallback_chain,
-            vec![
-                crate::ai_types::CapabilitySlot::Vision,
-                crate::ai_types::CapabilitySlot::Fast
-            ]
+        assert!(err.to_string().contains("MiMo"));
+        assert!(!err.to_string().contains("Fast"));
+    }
+
+    #[test]
+    fn vision_route_ignores_dirty_verified_state_for_catalog_non_vision_model() {
+        let mut routing = deepseek_defaults();
+        routing.slots.insert(
+            "vision".into(),
+            SlotRoute {
+                provider_id: "deepseek".into(),
+                model: "deepseek-v4-flash".into(),
+                thinking: false,
+            },
         );
+        let registry = vec![ModelRegistryEntry {
+            provider_id: "deepseek".into(),
+            model_id: "deepseek-v4-flash".into(),
+            display_name: "DeepSeek V4 Flash".into(),
+            source: model_registry::ModelRegistrySource::Manual,
+            stale: false,
+            first_seen_at: None,
+            last_seen_at: None,
+            last_refreshed_at: None,
+            text_verified_at: None,
+            vision_verified_at: Some("dirty".into()),
+            user_confirmed_capabilities: Vec::new(),
+        }];
+
+        let err = resolve_capability_route_with_registry(
+            &routing,
+            CapabilityRouteInput {
+                intent: crate::ai_types::AgentIntent::VisionChat,
+                context_tokens: 1_000,
+                has_images: true,
+                needs_tools: false,
+                needs_reasoning: false,
+                privacy_preference: PrivacyPreference::ExternalAllowed,
+            },
+            &registry,
+        )
+        .expect_err("dirty DeepSeek vision verification must not make it routable");
+
+        assert!(err.to_string().contains("no capability route available"));
     }
 
     #[test]

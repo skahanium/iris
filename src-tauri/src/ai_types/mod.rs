@@ -1545,7 +1545,7 @@ mod phase3_model_persona_route_tests {
             slot: CapabilitySlot::Vision,
             provider_id: "openai".to_string(),
             model: "gpt-4o".to_string(),
-            fallback_chain: vec![CapabilitySlot::Vision, CapabilitySlot::Fast],
+            fallback_chain: vec![CapabilitySlot::Vision],
             reason: "vision_chat requires image-aware model".to_string(),
             probe_status: "unknown".to_string(),
             degraded: false,
