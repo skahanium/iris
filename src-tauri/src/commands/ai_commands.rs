@@ -390,6 +390,7 @@ fn current_model_slot_for_resume(state: &AppState, plan: &AgentTaskResumePlan) -
 fn preflight_agent_task_resume(state: &AppState, plan: &AgentTaskResumePlan) -> AppResult<()> {
     let vault = state.vault_path()?;
     let preflight = AgentTaskResumePreflight {
+        current_session_id: Some(plan.session_id),
         current_vault_scope_hash: Some(vault_scope_hash(&vault)),
         accessible_note_paths: accessible_note_paths_for_resume(&vault, plan),
         available_packet_ids: plan.evidence_refs.clone(),

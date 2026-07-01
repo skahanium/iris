@@ -49,25 +49,18 @@
 
 ## 底栏指示
 
-- 两枚 **8px 圆点 + 简短文案**（LLM · 联网）并排成组，未就绪统一灰（`--status-inactive`），就绪分别为 emerald / sky token
-- **LLM**：emerald 就绪 / red 检测失败 / 灰 未配置或缺 Key
-- **联网**：底栏 sky 圆点开/关；四场景共用。开启后 **仅** AI 场景条底边一条质感蓝线；所有网页证据统一经 `WebEvidenceBroker` 收集为证据包
-  - **主通道**：Broker 在显式 provider 映射内选择 MCP `web.search`，并以 MiniMax Token Plan `POST /v1/coding_plan/search`（国内默认 `https://api.minimaxi.com`，Key 为 `iris.minimax`；可选请求体字段 `model`，设置页「检索模型名称」）和 DuckDuckGo 作为 native provider 兜底
-  - **API Host 约束**：仅接受干净 HTTPS origin（如 `https://api.minimaxi.com`）；拒绝 HTTP、userinfo、query、fragment、空 host 和额外 path。
-  - **降级**：无 Key、API 失败或设置强制 `duckduckgo` 时使用 DuckDuckGo；MCP provider 失败时由 Broker 继续使用可用 native provider
-  - **深读（正文）**：用户明确给出 HTTPS URL 时仍通过 `web_search` 语义进入 Broker，由 MCP `web.fetch` 与 native readability provider 受控抓取正文；不再暴露独立抓取工具
-  - 对话模型不受检索通道影响，仍为 DeepSeek 四场景路由
-
-## MiniMax 联网检索 IPC
-
-- `minimax_config_get` / `minimax_config_set`（Host、`minimax_search_model`、`web_search_backend`：`auto` | `minimax` | `duckduckgo`；Host 保存时会规范化并强制 HTTPS origin）
-- `minimax_config_test`（极简查询探测 Key，不记录 Key）
-- Key 读写：`credential_set` / `credential_has` / `credential_delete`，服务 ID `iris.minimax`
+- 两枚 **8px 圆点 + 简短文案**（LLM · 联网）并排成组，未就绪统一灰（`--status-inactive`），就绪分别为 emerald / sky token。
+- **LLM**：emerald 就绪 / red 检测失败 / 灰 未配置或缺 Key。
+- **联网**：底栏 sky 圆点开/关；开启后 **仅** AI 场景条底边一条质感蓝线；所有网页证据统一经 `WebEvidenceBroker` 收集为证据包。
+- **主通道**：Broker 先选择已启用且显式映射 `web.search` / `web.fetch` 的 MCP provider；失败或缺失时使用 DuckDuckGo 原生托底。
+- **MiniMax**：只保留普通 LLM provider 身份，不再作为 web evidence backend，不再提供 `minimax_config_*` 联网配置 IPC。
+- **深读（正文）**：用户明确给出 HTTPS URL 时仍通过 `web_search` 语义进入 Broker，由 MCP `web.fetch` 与 native readability provider 受控抓取正文；不暴露独立抓取工具。
+- 对话模型不受检索通道影响，仍按能力槽路由。
 
 ## Web Evidence Provider Target Contract
 
 - `web_search` is the only assistant-facing network switch. Search, URL deep-read, and page fetch evidence all enter `WebEvidenceBroker`; explicit URLs are passed as broker URLs rather than through a separate fetch tool.
-- Native providers remain synthetic UI cards: MiniMax and DuckDuckGo are configured by MiniMax/search settings and are not migrated into the persistent provider table.
 - MCP providers are persisted only when explicitly configured as web evidence providers. Supported transport configs are `{"url":"https://...","allow_localhost_dev":false}` for HTTPS and `{"command":"...","args":[...]}` for stdio. Credential fields store OS credential service references only.
-- Broker candidate order is MCP mapping first, then MiniMax when configured/selected, then DuckDuckGo fallback. Provider diagnostics expose mapping completeness and recent circuit state in Management Center.
+- DuckDuckGo is the only native fallback surfaced for web evidence. MiniMax is not a web evidence provider and is not part of broker candidate ordering.
+- Broker candidate order is MCP mapping first, then DuckDuckGo fallback. Provider diagnostics expose mapping completeness and recent circuit state in Management Center.
 - Ordinary evidence details show citation, title, safe URL/domain, retrieval reason, conflict markers, and excerpt. Provider ids, provider kind, raw result hashes, and extraction methods are audit/diagnostic metadata only.

@@ -30,14 +30,6 @@ impl WebSearchBackendMode {
             _ => Self::Auto,
         }
     }
-
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Auto => "auto",
-            Self::Minimax => "minimax",
-            Self::Duckduckgo => "duckduckgo",
-        }
-    }
 }
 
 /// 实际完成检索的后端（写入元数据 / 连通性）。
@@ -106,6 +98,7 @@ fn read_setting(db: &Database, key: &str) -> AppResult<Option<String>> {
 }
 
 /// 保存 MiniMax API Host。
+#[cfg(test)]
 pub fn save_minimax_api_host(db: &Database, host: &str) -> AppResult<()> {
     let normalized = normalize_minimax_api_host(host)?;
     write_setting(db, MINIMAX_API_HOST_KEY, &normalized)
@@ -152,16 +145,13 @@ fn normalize_minimax_api_host(host: &str) -> AppResult<String> {
     Ok(url.as_str().trim_end_matches('/').to_string())
 }
 
-/// 保存检索后端模式。
-pub fn save_web_search_backend(db: &Database, mode: WebSearchBackendMode) -> AppResult<()> {
-    write_setting(db, WEB_SEARCH_BACKEND_KEY, mode.as_str())
-}
-
 /// 保存 MiniMax 联网检索模型名（空字符串表示清除自定义，回退服务端默认）。
+#[cfg(test)]
 pub fn save_minimax_search_model(db: &Database, model: &str) -> AppResult<()> {
     write_setting(db, MINIMAX_SEARCH_MODEL_KEY, model.trim())
 }
 
+#[cfg(test)]
 fn write_setting(db: &Database, key: &str, value: &str) -> AppResult<()> {
     db.with_conn(|conn| {
         conn.execute(

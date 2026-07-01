@@ -383,6 +383,7 @@ fn resume_preflight_rejects_scope_packet_skill_permission_and_model_drift() {
 
     let plan = AgentTaskRuntime::prepare_resume_plan(&db, &task_id).unwrap();
     let preflight = AgentTaskResumePreflight {
+        current_session_id: Some(session_id),
         current_vault_scope_hash: Some("vault-new".into()),
         accessible_note_paths: vec![],
         available_packet_ids: vec!["packet-known".into()],
@@ -401,6 +402,64 @@ fn resume_preflight_rejects_scope_packet_skill_permission_and_model_drift() {
     assert!(message.contains("model capability changed"));
 
     let task = AgentTaskRuntime::get_task(&db, &task_id).unwrap().unwrap();
+    assert_eq!(task.status, AgentTaskStatus::PausedBudget);
+}
+
+#[test]
+fn resume_preflight_rejects_session_mismatch() {
+    let db = Database::open_in_memory().unwrap();
+    let session_a = SessionManager::ensure(&db, AiScene::DraftingAssist, None).unwrap();
+    let session_b = SessionManager::ensure(&db, AiScene::KnowledgeLookup, None).unwrap();
+    let task_id = AgentTaskRuntime::create_task(
+        &db,
+        CreateTaskInput {
+            request_id: "req-runtime-session-preflight".into(),
+            session_id: session_a,
+            kind: AgentTaskKind::Complex,
+            user_input: "rewrite selected text".into(),
+            budget_policy: serde_json::json!({
+                "mode": "complex",
+                "vault_scope_hash": "vault-scope",
+                "required_model_slot": "writer"
+            }),
+        },
+    )
+    .unwrap();
+    AgentTaskRuntime::pause_budget(
+        &db,
+        &task_id,
+        "awaiting safe continuation",
+        AgentTaskRuntime::build_budget_pause_checkpoint(BudgetPauseCheckpointInput {
+            finish_reason: "budget_exhausted",
+            selected_packet_ids: vec![],
+            evidence_packet_ids: vec![],
+            evidence_ledger_summary: "no raw body retained".into(),
+            continuation_goal: "continue write proposal".into(),
+            last_safe_step: "confirmation_pending".into(),
+            next_action: "resume".into(),
+            remaining_budget_hint: serde_json::json!({"input_tokens": 256}),
+        }),
+    )
+    .unwrap();
+
+    let plan = AgentTaskRuntime::prepare_resume_plan(&db, &task_id).unwrap();
+    let err = AgentTaskRuntime::validate_resume_preflight(
+        &plan,
+        &AgentTaskResumePreflight {
+            current_session_id: Some(session_b),
+            current_vault_scope_hash: Some("vault-scope".into()),
+            accessible_note_paths: vec![],
+            available_packet_ids: vec![],
+            enabled_skill_names: vec![],
+            active_permissions: vec![],
+            current_model_slot: Some("writer".into()),
+        },
+    )
+    .unwrap_err();
+
+    assert!(err.to_string().contains("session changed"));
+    let task = AgentTaskRuntime::get_task(&db, &task_id).unwrap().unwrap();
+    assert_eq!(task.session_id, session_a);
     assert_eq!(task.status, AgentTaskStatus::PausedBudget);
 }
 

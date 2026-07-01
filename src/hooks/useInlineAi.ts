@@ -238,6 +238,9 @@ export function useInlineAi({
 
       try {
         const hasSelection = request.originalText.trim().length > 0;
+        const selectionReference = hasSelection
+          ? buildInlineSelectionReference(editor, notePath)
+          : null;
         const response = await assistantExecute({
           aiDomain: "classified",
           agentIntent: hasSelection ? "rewrite_selection" : "chat",
@@ -245,7 +248,7 @@ export function useInlineAi({
           message: request.messages[0]?.content ?? "",
           notePath,
           noteContent: null,
-          contextReferences: [],
+          contextReferences: selectionReference ? [selectionReference] : [],
           selection: hasSelection ? request.originalText : null,
           cursorContext: getNoteContent?.() ?? null,
           webAuthorized: false,

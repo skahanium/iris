@@ -8,7 +8,6 @@ use sha2::{Digest, Sha256};
 use crate::ai_runtime::{
     ContextPacket, SourceType, TrustLevel, WebEvidenceMeta, WebSearchBackend, WebSourceRank,
 };
-use crate::credentials::{self, MINIMAX_CREDENTIAL_SERVICE};
 use crate::error::{AppError, AppResult};
 use crate::llm::fetch_web_page::PageFetchResult;
 use crate::llm::search_web::{fetch_native_provider_context, WebSearchFetchResult};
@@ -288,11 +287,6 @@ fn search_provider_candidates(db: &Database) -> Vec<SearchProviderCandidate> {
         }
     }
 
-    if credentials::api_key_configured(db, MINIMAX_CREDENTIAL_SERVICE).unwrap_or(false) {
-        candidates.push(SearchProviderCandidate::Native(
-            WebSearchEffectiveBackend::Minimax,
-        ));
-    }
     candidates.push(SearchProviderCandidate::Native(
         WebSearchEffectiveBackend::Duckduckgo,
     ));
@@ -1249,7 +1243,7 @@ mod tests {
     }
 
     #[test]
-    fn search_provider_candidates_include_minimax_only_when_configured() {
+    fn search_provider_candidates_ignore_minimax_credentials() {
         let db = Database::open_in_memory().unwrap();
         crate::credentials::mark_api_key_configured(
             &db,
@@ -1261,10 +1255,9 @@ mod tests {
 
         assert_eq!(
             candidates,
-            vec![
-                SearchProviderCandidate::Native(WebSearchEffectiveBackend::Minimax),
-                SearchProviderCandidate::Native(WebSearchEffectiveBackend::Duckduckgo),
-            ]
+            vec![SearchProviderCandidate::Native(
+                WebSearchEffectiveBackend::Duckduckgo
+            )]
         );
     }
 

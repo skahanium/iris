@@ -15,8 +15,7 @@ use crate::storage::db::Database;
 
 use super::minimax_search;
 use super::web_search_config::{
-    load as load_web_search_preferences, WebSearchBackendMode, WebSearchEffectiveBackend,
-    WebSearchPreferences,
+    load as load_web_search_preferences, WebSearchEffectiveBackend, WebSearchPreferences,
 };
 
 pub const SEARCH_CACHE_BROKER_VERSION: &str = "web-evidence-broker.v1";
@@ -231,26 +230,10 @@ async fn fetch_duckduckgo_only(
 
 /// 推断连通性展示用的「预期主后端」（未实际发请求）。
 pub fn expected_search_backend_for_connectivity(
-    db: &Database,
-    prefs: &WebSearchPreferences,
+    _db: &Database,
+    _prefs: &WebSearchPreferences,
 ) -> WebSearchEffectiveBackend {
-    match prefs.backend_mode {
-        WebSearchBackendMode::Minimax => {
-            if credentials::api_key_configured(db, MINIMAX_CREDENTIAL_SERVICE).unwrap_or(false) {
-                WebSearchEffectiveBackend::Minimax
-            } else {
-                WebSearchEffectiveBackend::Duckduckgo
-            }
-        }
-        WebSearchBackendMode::Duckduckgo => WebSearchEffectiveBackend::Duckduckgo,
-        WebSearchBackendMode::Auto => {
-            if credentials::api_key_configured(db, MINIMAX_CREDENTIAL_SERVICE).unwrap_or(false) {
-                WebSearchEffectiveBackend::Minimax
-            } else {
-                WebSearchEffectiveBackend::Duckduckgo
-            }
-        }
-    }
+    WebSearchEffectiveBackend::Duckduckgo
 }
 
 async fn throttle_minimax() -> AppResult<()> {
@@ -596,11 +579,10 @@ fn parse_generic_search_results(document: &Html, out: &mut String) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::llm::web_search_config::WebSearchBackendMode;
 
     #[test]
     fn expected_backend_respects_mode() {
-        use crate::llm::web_search_config::WebSearchBackendMode;
-
         let db = Database::open_in_memory().expect("mem db");
         let prefs = WebSearchPreferences {
             backend_mode: WebSearchBackendMode::Duckduckgo,
@@ -613,7 +595,7 @@ mod tests {
     }
 
     #[test]
-    fn expected_backend_uses_minimax_configured_marker() {
+    fn expected_backend_ignores_minimax_configured_marker() {
         let db = Database::open_in_memory().expect("mem db");
         let prefs = WebSearchPreferences {
             backend_mode: WebSearchBackendMode::Auto,
@@ -630,7 +612,7 @@ mod tests {
 
         assert_eq!(
             expected_search_backend_for_connectivity(&db, &prefs),
-            WebSearchEffectiveBackend::Minimax
+            WebSearchEffectiveBackend::Duckduckgo
         );
     }
 
@@ -647,6 +629,14 @@ mod tests {
         };
         let alternate_config = SearchCacheScope {
             provider_config_hash: "changed-config".into(),
+            ..base.clone()
+        };
+        let alternate_kind = SearchCacheScope {
+            provider_kind: "mcp".into(),
+            ..base.clone()
+        };
+        let alternate_broker = SearchCacheScope {
+            broker_version: "web-evidence-broker.v2".into(),
             ..base.clone()
         };
         let alternate_vault = SearchCacheScope {
@@ -677,6 +667,24 @@ mod tests {
                 WebSearchEffectiveBackend::Duckduckgo,
                 "",
                 &alternate_config
+            )
+        );
+        assert_ne!(
+            base_key,
+            query_hash_key(
+                "private query",
+                WebSearchEffectiveBackend::Duckduckgo,
+                "",
+                &alternate_kind
+            )
+        );
+        assert_ne!(
+            base_key,
+            query_hash_key(
+                "private query",
+                WebSearchEffectiveBackend::Duckduckgo,
+                "",
+                &alternate_broker
             )
         );
         assert_ne!(

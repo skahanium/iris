@@ -213,6 +213,18 @@ export function useAssistantConfirmations({
       decision: ToolDecision,
       modifiedArgs?: unknown,
     ) => {
+      const pendingConfirm = toolConfirmRequest;
+      if (
+        pendingConfirm &&
+        (pendingConfirm.request_id !== requestId ||
+          pendingConfirm.tool_call_id !== toolCallId)
+      ) {
+        return;
+      }
+      if (requestIdRef.current && requestIdRef.current !== requestId) {
+        return;
+      }
+
       const confirmKey = `${requestId}:${toolCallId}`;
       if (
         toolConfirmInFlightRef.current.has(confirmKey) ||
@@ -222,7 +234,6 @@ export function useAssistantConfirmations({
       }
       toolConfirmInFlightRef.current.add(confirmKey);
       const intent = actionIntent;
-      const pendingConfirm = toolConfirmRequest;
       setToolConfirmRequest(null);
       setStreaming(true);
       setActivityHint(

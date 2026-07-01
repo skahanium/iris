@@ -449,38 +449,42 @@ pub async fn llm_config_test(
 
 ---
 
-## 七、MiniMax 配置 (MiniMax Config) — `commands::minimax_config_commands`
+## 七、联网证据配置 (Web Evidence Provider)
 
-### minimax_config_get
+MiniMax 只保留普通 LLM provider 身份，不再公开 `minimax_config_*` 联网检索 IPC。联网证据配置通过 `web_evidence_provider_*` 命令管理 MCP provider；DuckDuckGo 是唯一内置原生托底。
 
-```rust
-pub fn minimax_config_get(
-    state: State<'_, Arc<AppState>>,
-) -> AppResult<MinimaxConfigGetResponse>
-```
-
-- **描述**：获取 MiniMax Token Plan 联网检索配置。返回 `MinimaxConfigGetResponse { minimax_configured, minimax_api_host, minimax_search_model, web_search_backend }`。
-
-### minimax_config_set
+### web_evidence_provider_upsert
 
 ```rust
-pub fn minimax_config_set(
+pub fn web_evidence_provider_upsert(
     state: State<'_, Arc<AppState>>,
-    request: MinimaxConfigSetRequest,
-) -> AppResult<MinimaxConfigGetResponse>
+    input: WebEvidenceProviderInput,
+) -> AppResult<WebEvidenceProviderSummary>
 ```
 
-- **描述**：更新 MiniMax 配置（API Host、搜索模型、后端模式）。部分更新，返回最新配置。
+- **描述**：新增或更新 MCP 联网证据 provider。输入包含 `transport_config_json`、`credential_refs_json`、`search_mapping`、`fetch_mapping`；凭据字段只能保存 OS credential service 引用，不能保存明文 secret。
 
-### minimax_config_test
+### web_evidence_providers_list
 
 ```rust
-pub async fn minimax_config_test(
+pub fn web_evidence_providers_list(
     state: State<'_, Arc<AppState>>,
-) -> AppResult<MinimaxConfigTestResult>
+) -> AppResult<Vec<WebEvidenceProviderSummary>>
 ```
 
-- **描述**：测试 MiniMax 联网检索连接。返回 `MinimaxConfigTestResult { ok, message }`。
+- **描述**：列出可配置 MCP provider；MiniMax 不作为联网 provider 返回。
+
+### web_evidence_provider_diagnostics
+
+```rust
+pub async fn web_evidence_provider_diagnostics(
+    state: State<'_, Arc<AppState>>,
+    provider_id: Option<String>,
+    live_check: Option<bool>,
+) -> AppResult<WebEvidenceProviderDiagnostics>
+```
+
+- **描述**：返回 transport、mapping、credential、broker 可用性和 live probe 诊断。只有 `live_check == true` 时才访问远端 MCP 服务。
 
 ---
 

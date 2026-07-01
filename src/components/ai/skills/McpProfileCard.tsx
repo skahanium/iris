@@ -623,7 +623,7 @@ export function McpProfileCard({
         </div>
       </header>
 
-      <section className="grid gap-3 md:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
+      <section className="max-w-xl">
         <label className="space-y-1 text-xs font-medium text-foreground">
           快速预设
           <Select
@@ -648,20 +648,6 @@ export function McpProfileCard({
             </SelectContent>
           </Select>
         </label>
-        <div className="grid gap-2 sm:grid-cols-3">
-          {MCP_PROVIDER_PRESETS.slice(0, 6).map((preset) => (
-            <Button
-              key={preset.id}
-              type="button"
-              size="sm"
-              variant={presetId === preset.id ? "secondary" : "outline"}
-              disabled={saving}
-              onClick={() => applyPreset(preset)}
-            >
-              {preset.label}
-            </Button>
-          ))}
-        </div>
       </section>
 
       <div className="grid gap-3 md:grid-cols-2">

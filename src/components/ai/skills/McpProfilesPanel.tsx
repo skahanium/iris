@@ -16,10 +16,7 @@ import {
 } from "@/lib/ipc";
 
 import { McpProfileCard, type McpCredentialSave } from "./McpProfileCard";
-import {
-  MCP_PROVIDER_PRESETS,
-  type McpProviderPreset,
-} from "./mcpProviderPresets";
+import type { McpProviderPreset } from "./mcpProviderPresets";
 
 interface McpProfilesPanelProps {
   open: boolean;
@@ -242,8 +239,8 @@ export function McpProfilesPanel({
           <div>
             <h3 className="text-sm font-medium">MCP 联网证据提供方</h3>
             <p className="mt-1 text-xs text-muted-foreground">
-              将 MCP 显式接入 web.search / web.fetch；MiniMax 和 DuckDuckGo
-              仍作为原生候选兜底。
+              将 MCP 显式接入 web.search / web.fetch；DuckDuckGo
+              作为内置原生托底；MiniMax 仅作为普通模型服务，不参与联网证据调度。
             </p>
           </div>
           <Button
@@ -255,24 +252,6 @@ export function McpProfilesPanel({
           >
             添加 MCP 提供方
           </Button>
-        </div>
-        <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-          {MCP_PROVIDER_PRESETS.map((preset) => (
-            <button
-              key={preset.id}
-              type="button"
-              disabled={loading || saving}
-              className="rounded-md border border-border/65 bg-background px-3 py-2 text-left transition-colors hover:border-primary/50 hover:bg-surface-inset/40 disabled:cursor-not-allowed disabled:opacity-60"
-              onClick={() => setDraft(createDraftSummary(preset))}
-            >
-              <span className="block text-xs font-medium text-foreground">
-                {preset.label}
-              </span>
-              <span className="mt-1 block text-[11px] leading-4 text-muted-foreground">
-                {preset.description}
-              </span>
-            </button>
-          ))}
         </div>
       </header>
 
@@ -312,8 +291,7 @@ export function McpProfilesPanel({
         </div>
       ) : !draft ? (
         <p className="rounded-md border border-dashed border-border/70 px-3 py-3 text-xs text-muted-foreground">
-          还没有配置 MCP 提供方。可以直接选择 AnySearch、Brave Search、Jina
-          Reader、Firecrawl、SearXNG 或 Tavily 预设开始。
+          还没有配置 MCP 提供方。点击添加 MCP 提供方后，可选择预设或自定义服务。
         </p>
       ) : null}
 

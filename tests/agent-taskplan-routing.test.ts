@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+﻿import { readFileSync } from "node:fs";
 
 import { describe, expect, it } from "vitest";
 
@@ -6,9 +6,24 @@ import {
   buildAssistantTaskPlan,
   shouldAttachNoteContextToTaskPlan,
 } from "@/lib/assistant-taskplan";
+import type { ContextReference } from "@/types/ai";
 
 function read(path: string): string {
   return readFileSync(path, "utf8");
+}
+
+function selectionReference(filePath = "/notes/a.md"): ContextReference {
+  return {
+    id: "selection-1",
+    kind: "selection",
+    filePath,
+    contentHash: "sha256-selection-base",
+    utf8Range: { start: 0, end: 12 },
+    editorRange: { from: 1, to: 7 },
+    excerpt: "你好，世界。",
+    headingPath: "正文",
+    stale: false,
+  };
 }
 
 interface AssistantRouteInput {
@@ -278,6 +293,76 @@ describe("regression: ordinary chat must not be promoted by open note or fresh w
       expect.objectContaining({ kind: "evidence_sources" }),
     ]);
   });
+});
+
+it("routes fresh external fact questions to short answer with web evidence", () => {
+  const plan = buildAssistantTaskPlan({
+    message: "最新的刑法是哪一年修订的？",
+    hasSelection: false,
+    notePath: null,
+    explicitScope: false,
+    contextReferences: [],
+    webAuthorized: true,
+  });
+
+  expect(plan.intent).toBe("chat");
+  expect(plan.intent).not.toBe("research");
+  expect(plan.webMode).toBe("brokered");
+  expect(plan.executionMode).toBe("direct_answer");
+  expect(plan.outputMode).toBe("markdown_message");
+  expect(plan.artifactPlan).toEqual([]);
+  expect(plan.sourceHints).toContain("web:fresh_required");
+});
+
+it("keeps fresh fact questions direct when web is disabled", () => {
+  const plan = buildAssistantTaskPlan({
+    message: "最新的刑法是哪一年修订的？",
+    hasSelection: false,
+    notePath: null,
+    explicitScope: false,
+    contextReferences: [],
+    webAuthorized: false,
+  });
+
+  expect(plan.intent).toBe("chat");
+  expect(plan.webMode).toBe("disabled");
+  expect(plan.requiresClarification).toBe(false);
+  expect(plan.artifactPlan).toEqual([]);
+});
+
+it("promotes explicit multi-source legal research to research artifacts", () => {
+  const plan = buildAssistantTaskPlan({
+    message: "请联网研究综述中国刑法历次修订，并对比多个来源。",
+    hasSelection: false,
+    notePath: null,
+    explicitScope: false,
+    contextReferences: [],
+    webAuthorized: true,
+  });
+
+  expect(plan.intent).toBe("research");
+  expect(plan.executionMode).toBe("structured_task");
+  expect(plan.outputMode).toBe("artifact_backed_message");
+  expect(plan.artifactPlan).toEqual([
+    expect.objectContaining({ kind: "evidence_sources" }),
+  ]);
+});
+
+it("keeps selected-text translation on rewrite confirmation path", () => {
+  const plan = buildAssistantTaskPlan({
+    message: "翻译成英文",
+    hasSelection: true,
+    notePath: "/notes/a.md",
+    explicitScope: false,
+    contextReferences: [selectionReference()],
+    webAuthorized: false,
+  });
+
+  expect(plan.intent).toBe("rewrite_selection");
+  expect(plan.modelSlot).toBe("writer");
+  expect(plan.executionMode).toBe("patch_proposal");
+  expect(plan.outputMode).toBe("confirmation_required");
+  expect(plan.webMode).toBe("disabled");
 });
 describe("backend compatibility routing fallback", () => {
   it("does not promote legacy requests only because a note is open or sources are requested", () => {

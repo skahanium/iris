@@ -445,3 +445,26 @@ fn permission_audit_records_decision_metadata_only() {
     assert_eq!(row.1, "allow_once");
     assert_eq!(row.2, "path=notes/a.md");
 }
+
+#[test]
+fn mcp_raw_process_and_secret_capabilities_are_not_resolver_supported() {
+    let db = iris_lib::storage::db::Database::open_in_memory().unwrap();
+
+    for capability in [
+        "mcp.raw_tool_call",
+        "mcp_runtime_capability_call",
+        "process.run_readonly",
+        "process.run_mutating",
+        "secret.use_named",
+        "vault.write_file",
+    ] {
+        let err =
+            iris_lib::ai_runtime::capability_resolver::resolve_required_capability(&db, capability)
+                .unwrap_err();
+        assert_eq!(
+            err.reason_code(),
+            "unsupported_capability",
+            "{capability} must not be supported by the MCP capability resolver"
+        );
+    }
+}

@@ -116,6 +116,13 @@ describe("status bar assistant chrome", () => {
     expect(token).not.toContain("本轮");
     expect(token).toContain('data-testid="status-bar-token-usage"');
   });
+  it("ConnectivityIndicators does not present MiniMax as the web evidence backend", () => {
+    const indicators = read("src/components/layout/ConnectivityIndicators.tsx");
+
+    expect(indicators).toContain("MCP 优先 / DuckDuckGo 托底");
+    expect(indicators).not.toContain('effectiveBackend === "minimax"');
+    expect(indicators).not.toContain('"MiniMax"');
+  });
 
   it("AiMessageList does not render tool call bubbles", () => {
     const list = read("src/components/ai/AiMessageList.tsx");

@@ -532,33 +532,6 @@ export async function llmModelConfirmCapability(
   });
 }
 
-export interface MinimaxConfigGetResponse {
-  minimaxConfigured: boolean;
-  minimaxApiHost: string;
-  minimaxSearchModel: string;
-  webSearchBackend: string;
-}
-
-export interface MinimaxConfigSetRequest {
-  minimaxApiHost?: string;
-  minimaxSearchModel?: string;
-  webSearchBackend?: string;
-}
-
-export async function minimaxConfigGet(): Promise<MinimaxConfigGetResponse> {
-  return invoke<MinimaxConfigGetResponse>("minimax_config_get");
-}
-
-export async function minimaxConfigSet(
-  request: MinimaxConfigSetRequest,
-): Promise<MinimaxConfigGetResponse> {
-  return invoke<MinimaxConfigGetResponse>("minimax_config_set", { request });
-}
-
-export async function minimaxConfigTest(): Promise<LlmConfigTestResult> {
-  return invoke<LlmConfigTestResult>("minimax_config_test");
-}
-
 export async function credentialSet(
   service: string,
   value: string,

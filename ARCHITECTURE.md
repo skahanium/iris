@@ -208,30 +208,29 @@ Tauri 的命令式 IPC 基于 JSON 序列化。所有 Rust 函数通过 `#[tauri
 
 ### 命令分类
 
-| 前缀               | 模块        | 示例                                                                   |
-| ------------------ | ----------- | ---------------------------------------------------------------------- |
-| `file_*`           | 文件系统    | `file_list`, `file_read`, `file_write`                                 |
-| `llm_*`            | AI 集成     | `llm_generate`, `llm_chat`, `llm_abort`                                |
-| `search_*`         | 搜索        | `search_keyword`, `search_semantic`                                    |
-| `index_*`          | 索引/元数据 | `index_tags`, `index_links`, `index_stats`                             |
-| `version_*`        | 版本快照    | `version_list`, `version_preview`, `version_restore`                   |
-| `skills_*`         | AI Skills   | `skills_list`, `skills_paths`, `skills_create_draft`, `skills_confirm` |
-| `settings_*`       | 配置        | `settings_get`, `settings_set`                                         |
-| `credential_*`     | 凭据        | `credential_set`, `credential_get`                                     |
-| `template_*`       | 模板        | `template_list`, `template_apply`                                      |
-| `corpus_*`         | 语料库      | `corpus_list`, `corpus_upsert`                                         |
-| `assistant_*`      | AI 助理     | `context_assemble`, `ai_send_message`, `tool_confirm`                  |
-| `citation_*`       | 引用        | `citation_check`                                                       |
-| `research_*`       | 研究        | `research_start`, `research_poll`                                      |
-| `writing_*`        | 写作        | `writing_suggest`, `writing_apply`                                     |
-| `organize_*`       | 整理        | `organize_run`                                                         |
-| `profile_*`        | 个性化      | `profile_set_rule`                                                     |
-| `llm_config_*`     | LLM 配置    | `llm_config_get`, `llm_config_set`                                     |
-| `minimax_config_*` | 联网检索    | `minimax_config_get`, `minimax_config_set`                             |
-| `recycle_*`        | 回收站      | `recycle_list`, `recycle_restore`                                      |
-| `graph_*`          | 知识图谱    | `graph_data`                                                           |
-| `export_*`         | 导出        | `export_html`, `export_markdown`                                       |
-| `document_*`       | 文档级      | `document_check`, `document_apply`                                     |
+| 前缀           | 模块        | 示例                                                                   |
+| -------------- | ----------- | ---------------------------------------------------------------------- |
+| `file_*`       | 文件系统    | `file_list`, `file_read`, `file_write`                                 |
+| `llm_*`        | AI 集成     | `llm_generate`, `llm_chat`, `llm_abort`                                |
+| `search_*`     | 搜索        | `search_keyword`, `search_semantic`                                    |
+| `index_*`      | 索引/元数据 | `index_tags`, `index_links`, `index_stats`                             |
+| `version_*`    | 版本快照    | `version_list`, `version_preview`, `version_restore`                   |
+| `skills_*`     | AI Skills   | `skills_list`, `skills_paths`, `skills_create_draft`, `skills_confirm` |
+| `settings_*`   | 配置        | `settings_get`, `settings_set`                                         |
+| `credential_*` | 凭据        | `credential_set`, `credential_get`                                     |
+| `template_*`   | 模板        | `template_list`, `template_apply`                                      |
+| `corpus_*`     | 语料库      | `corpus_list`, `corpus_upsert`                                         |
+| `assistant_*`  | AI 助理     | `context_assemble`, `ai_send_message`, `tool_confirm`                  |
+| `citation_*`   | 引用        | `citation_check`                                                       |
+| `research_*`   | 研究        | `research_start`, `research_poll`                                      |
+| `writing_*`    | 写作        | `writing_suggest`, `writing_apply`                                     |
+| `organize_*`   | 整理        | `organize_run`                                                         |
+| `profile_*`    | 个性化      | `profile_set_rule`                                                     |
+| `llm_config_*` | LLM 配置    | `llm_config_get`, `llm_config_set`                                     |
+| `recycle_*`    | 回收站      | `recycle_list`, `recycle_restore`                                      |
+| `graph_*`      | 知识图谱    | `graph_data`                                                           |
+| `export_*`     | 导出        | `export_html`, `export_markdown`                                       |
+| `document_*`   | 文档级      | `document_check`, `document_apply`                                     |
 
 ### 事件（Rust → WebView）
 
@@ -526,7 +525,7 @@ src/components/
 │   └── version/（VersionTimeline, version-timeline-groups, version-restore-confirm）
 ├── settings/                 # 设置
 │   ├── SettingsPanel.tsx
-│   ├── LlmRoutingSection.tsx, MinimaxSearchSection.tsx
+│   ├── LlmRoutingSection.tsx
 │   ├── PromptProfileSection.tsx, AssistantIdentitySection.tsx
 ├── graph/                    # 知识图谱
 │   └── GraphView.tsx
@@ -601,4 +600,4 @@ opt-level = 3; lto = true; codegen-units = 1; strip = true; panic = "abort"
 
 ### Web Evidence Provider Boundary
 
-MCP is a persisted Web Evidence Provider only when mapped to `web.search` and/or `web.fetch`. MiniMax and DuckDuckGo remain native synthetic providers surfaced in Management Center for status and fallback explanation. Provider configuration stores transport JSON and OS credential references; raw secrets are rejected. Ordinary evidence detail DTOs omit provider process fields, while audit/diagnostics paths may retain provider id, provider kind, raw result hash, extraction method, mapping status, and circuit state.
+MCP is a persisted Web Evidence Provider only when mapped to `web.search` and/or `web.fetch`. DuckDuckGo is the only native web evidence fallback surfaced in Management Center; MiniMax remains a normal LLM provider and is not a web evidence backend. Provider configuration stores transport JSON and OS credential references; raw secrets are rejected. Ordinary evidence detail DTOs omit provider process fields, while audit/diagnostics paths may retain provider id, provider kind, raw result hash, extraction method, mapping status, and circuit state.

@@ -145,6 +145,21 @@ describe("useAssistantConfirmations", () => {
     expect(runStatuses.at(-1)).toEqual(["completed", "chat"]);
   });
 
+  it("ignores stale confirmation ids that do not match the pending request", async () => {
+    await act(async () => {
+      api.setToolConfirmRequest(request);
+    });
+
+    await act(async () => {
+      await api.handleToolConfirm("req-other", "tool-1", "approve");
+      await api.handleToolConfirm("req-1", "tool-other", "approve");
+    });
+
+    expect(confirmTool).not.toHaveBeenCalled();
+    expect(runStatuses).toEqual([]);
+    expect(api.toolConfirmRequest).toEqual(request);
+  });
+
   it("turns an update_user_rule request into a rule confirmation", async () => {
     let listener: ((req: ToolConfirmRequest) => void) | null = null;
     confirmTool = vi.fn();

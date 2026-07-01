@@ -384,6 +384,27 @@ mod document_open_state_tests {
     use super::*;
 
     #[test]
+    fn embedding_queue_does_not_keep_app_state_alive() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = AppState::new_with_test_cas_key(dir.path().join("data"), [0xA7; 32]).unwrap();
+        let weak = Arc::downgrade(&state);
+
+        state.enqueue_embedding(-1);
+        drop(state);
+
+        for _ in 0..20 {
+            if weak.upgrade().is_none() {
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+
+        assert!(
+            weak.upgrade().is_none(),
+            "embedding queue worker must not keep AppState alive"
+        );
+    }
+    #[test]
     fn document_open_tokens_are_counted_and_duplicate_end_is_ignored() {
         let dir = tempfile::tempdir().unwrap();
         let state = AppState::new_with_test_cas_key(dir.path().join("data"), [0xA5; 32]).unwrap();

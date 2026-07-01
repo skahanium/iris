@@ -337,6 +337,25 @@ mod tests {
     }
 
     #[test]
+    fn sanitize_web_search_args_omits_urls_headers_and_page_body() {
+        let args = serde_json::json!({
+            "query": "完整用户问题不应保存",
+            "urls": ["https://example.com/private/path?token=secret"],
+            "headers": {"Authorization": "Bearer secret"},
+            "page_body": "完整网页正文不应保存"
+        });
+        let summary = sanitize_arguments("web_search", &args).unwrap();
+
+        assert!(summary.contains("query_hash="));
+        assert!(summary.contains("url_count=1"));
+        assert!(!summary.contains("完整用户问题"));
+        assert!(!summary.contains("example.com/private"));
+        assert!(!summary.contains("token=secret"));
+        assert!(!summary.contains("Authorization"));
+        assert!(!summary.contains("完整网页正文"));
+    }
+
+    #[test]
     fn sanitize_read_note_result() {
         let result = serde_json::json!({"path": "test.md", "content": "full note content", "truncated": false});
         let summary = sanitize_result("read_note", &result, true).unwrap();

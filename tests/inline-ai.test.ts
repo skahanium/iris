@@ -370,12 +370,25 @@ describe("useInlineAi with mocked IPC", () => {
     expect(assistantExecute).toHaveBeenCalledWith(
       expect.objectContaining({
         aiDomain: "classified",
+        agentIntent: "rewrite_selection",
         intent: "writing",
         notePath: ".classified/secret.md",
         selection: "原文内容",
         noteContent: null,
-        contextReferences: [],
+        contextReferences: [
+          expect.objectContaining({
+            kind: "selection",
+            filePath: ".classified/secret.md",
+            editorRange: { from: 1, to: 5 },
+            excerpt: "原文内容",
+            stale: false,
+          }),
+        ],
       }),
+    );
+    const classifiedRequest = assistantExecute.mock.calls[0]?.[0];
+    expect(classifiedRequest.contextReferences[0].contentHash).toMatch(
+      /^[0-9a-f]{8}$/,
     );
     expect(editor.getText()).toContain("涉密改写结果");
 

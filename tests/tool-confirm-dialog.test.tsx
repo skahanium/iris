@@ -28,6 +28,7 @@ describe("ToolConfirmDialog", () => {
   });
 
   it("renders markdown writes as a compact permission card", async () => {
+    const onConfirm = vi.fn();
     await act(async () => {
       root.render(
         <ToolConfirmDialog
@@ -36,23 +37,27 @@ describe("ToolConfirmDialog", () => {
             tool_call_id: "tc-1",
             tool_name: "replace_selection",
             arguments: {
+              target_path: "notes/a.md",
               replacement: "新的段落",
               base_content_hash: "abc123",
               risk_level: "medium",
             },
           }}
-          onConfirm={() => {}}
+          onConfirm={onConfirm}
           onClose={() => {}}
         />,
       );
     });
 
     expect(document.body.textContent).toContain("修改笔记");
-    expect(document.body.textContent).toContain("当前选区");
+    expect(document.body.textContent).toContain("a.md");
+    expect(document.body.textContent).toContain("替换当前选区文本");
     expect(document.body.textContent).toContain("会直接修改当前笔记内容。");
     expect(document.body.textContent).not.toContain("Patch 审阅");
     expect(document.body.textContent).not.toContain("base_content_hash");
+    expect(document.body.textContent).not.toContain("abc123");
     expect(document.body.textContent).not.toContain("调用参数");
+    expect(onConfirm).not.toHaveBeenCalled();
   });
 
   it("renders backend-provided confirmation progress", async () => {

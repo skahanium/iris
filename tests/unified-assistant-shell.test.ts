@@ -99,7 +99,7 @@ describe("unified assistant shell", () => {
     const source = read("src/components/settings/ManagementCenterPanel.tsx");
     expect(source).toContain("PersonaSettingsBody");
     expect(source).toContain("AiRulesPanel");
-    expect(source).toContain("MinimaxSearchSection");
+    expect(source).not.toContain("MinimaxSearchSection");
     expect(source).toContain('id: "ai"');
   });
   it("contains local error boundaries around volatile AI panel surfaces", () => {

@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 use std::sync::mpsc::{self, Receiver, SyncSender};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, Weak};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
@@ -26,7 +26,7 @@ impl EmbedQueue {
         let pending_worker = pending.clone();
         let worker = thread::Builder::new()
             .name("iris-embed".into())
-            .spawn(move || embed_worker_loop(state, rx, pending_worker))
+            .spawn(move || embed_worker_loop(Arc::downgrade(&state), rx, pending_worker))
             .expect("embed worker thread");
 
         Self {
@@ -51,8 +51,11 @@ impl EmbedQueue {
     }
 }
 
-fn embed_worker_loop(state: Arc<AppState>, rx: Receiver<i64>, pending: Arc<Mutex<HashSet<i64>>>) {
+fn embed_worker_loop(state: Weak<AppState>, rx: Receiver<i64>, pending: Arc<Mutex<HashSet<i64>>>) {
     while let Ok(first_id) = rx.recv() {
+        let Some(state) = state.upgrade() else {
+            break;
+        };
         let mut batch = vec![first_id];
         {
             let mut guard = pending.lock().expect("embed pending lock");

@@ -1,4 +1,4 @@
-// AI Runtime core types — mirrors Rust ai_runtime::types
+﻿// AI Runtime core types — mirrors Rust ai_runtime::types
 
 export type AiScene =
   | "knowledge_lookup"
@@ -238,6 +238,20 @@ export type TaskPlanIntent =
 
 export type TaskPlanConfidence = "high" | "medium" | "low";
 
+export type EvidenceNeed = "none" | "fresh_web" | "multi_source_research";
+export type ContextNeed =
+  | "none"
+  | "current_reference"
+  | "vault_search"
+  | "long_document";
+export type OperationKind =
+  | "answer"
+  | "patch"
+  | "create"
+  | "organize"
+  | "diagnose";
+export type OutputShape = "chat" | "confirmation" | "artifact" | "diagnostic";
+
 export type RetrievalMode =
   | "none"
   | "current_reference"
@@ -289,6 +303,10 @@ export interface ArtifactPlanItem {
 export interface TaskPlan {
   intent: TaskPlanIntent;
   confidence: TaskPlanConfidence;
+  evidenceNeed?: EvidenceNeed;
+  contextNeed?: ContextNeed;
+  operationKind?: OperationKind;
+  outputShape?: OutputShape;
   contextReferences: ContextReference[];
   retrievalMode: RetrievalMode;
   webMode: WebMode;

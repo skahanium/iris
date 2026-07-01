@@ -201,6 +201,10 @@ fn derive_compat_task_plan(request: &AssistantExecuteRequest) -> TaskPlanSummary
     TaskPlanSummary {
         intent,
         confidence: TaskPlanConfidence::Medium,
+        evidence_need: None,
+        context_need: None,
+        operation_kind: None,
+        output_shape: None,
         context_references: request.context_references.clone(),
         retrieval_mode: RetrievalMode::None,
         web_mode: if request.web_authorized {
@@ -322,6 +326,10 @@ mod tests {
         TaskPlanSummary {
             intent,
             confidence: TaskPlanConfidence::High,
+            evidence_need: None,
+            context_need: None,
+            operation_kind: None,
+            output_shape: None,
             context_references: Vec::new(),
             retrieval_mode: RetrievalMode::None,
             web_mode: WebMode::Disabled,

@@ -586,6 +586,14 @@ mod tests {
             provider_config_hash: "changed-config".into(),
             ..base.clone()
         };
+        let alternate_kind = PageFetchCacheScope {
+            provider_kind: "mcp".into(),
+            ..base.clone()
+        };
+        let alternate_broker = PageFetchCacheScope {
+            broker_version: "web-evidence-broker.v2".into(),
+            ..base.clone()
+        };
         let alternate_vault = PageFetchCacheScope {
             vault_id: Some("vault-b".into()),
             ..base.clone()
@@ -600,6 +608,14 @@ mod tests {
         assert_ne!(
             base_key,
             url_hash("https://example.com/private", &alternate_config)
+        );
+        assert_ne!(
+            base_key,
+            url_hash("https://example.com/private", &alternate_kind)
+        );
+        assert_ne!(
+            base_key,
+            url_hash("https://example.com/private", &alternate_broker)
         );
         assert_ne!(
             base_key,

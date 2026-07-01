@@ -597,6 +597,10 @@ mod tests {
         let task_plan = TaskPlanSummary {
             intent: TaskPlanIntent::Chat,
             confidence: TaskPlanConfidence::Low,
+            evidence_need: None,
+            context_need: None,
+            operation_kind: None,
+            output_shape: None,
             context_references: Vec::new(),
             retrieval_mode: RetrievalMode::None,
             web_mode: WebMode::Disabled,

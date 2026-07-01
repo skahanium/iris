@@ -113,6 +113,26 @@ describe("IPC boundary", () => {
     expect(types).toContain("content_parts?: string | null");
   });
 
+  it("does not expose legacy MiniMax web-search configuration IPC", () => {
+    const ipc = read("src/lib/ipc.ts");
+    const lib = read("src-tauri/src/lib.rs");
+    const commands = read("src-tauri/src/commands/mod.rs");
+    const docs = read("docs/ipc-api-reference.md");
+
+    for (const removed of [
+      "minimax_config_get",
+      "minimax_config_set",
+      "minimax_config_test",
+      "MinimaxConfigGetResponse",
+      "MinimaxConfigSetRequest",
+    ]) {
+      expect(ipc).not.toContain(removed);
+      expect(lib).not.toContain(removed);
+      expect(commands).not.toContain("minimax_config_commands");
+      expect(docs).not.toContain(removed);
+    }
+  });
+
   it("replaces MCP runtime registry IPC with web evidence provider IPC", () => {
     const ipc = read("src/lib/ipc.ts");
     const aiCommands = read("src-tauri/src/commands/ai_commands.rs");
@@ -202,6 +222,8 @@ describe("IPC boundary", () => {
     expect(docs).toContain("SKILL.md scope is the fact source");
     expect(docs).toContain("webEvidenceProvidersList");
     expect(docs).toContain("webEvidenceProviderDiagnostics");
+    expect(docs).toContain("MiniMax 只保留普通 LLM provider 身份");
     expect(docs).not.toContain("mcpRuntimeCapabilityCall");
+    expect(docs).not.toContain("minimax_config_get");
   });
 });

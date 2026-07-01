@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+﻿import { readFileSync } from "node:fs";
 
 import { describe, expect, it } from "vitest";
 
@@ -66,7 +66,7 @@ describe("assistant per-turn TaskPlan dispatch", () => {
     expect(intents).toEqual(sequence.map((turn) => turn.expected));
   });
 
-  it("routes authorized freshness questions to web-backed research without asking again", () => {
+  it("routes authorized freshness questions to brokered short answers without asking again", () => {
     const plan = buildAssistantTaskPlan({
       message:
         "2026年6月最新 Chatbot Arena / SWE-bench Live / LiveBench 榜单是什么？",
@@ -78,8 +78,11 @@ describe("assistant per-turn TaskPlan dispatch", () => {
       webAuthorized: true,
     });
 
-    expect(plan.intent).toBe("research");
+    expect(plan.intent).toBe("chat");
     expect(plan.webMode).toBe("brokered");
+    expect(plan.executionMode).toBe("direct_answer");
+    expect(plan.artifactPlan).toEqual([]);
+    expect(plan.evidenceNeed).toBe("fresh_web");
     expect(plan.requiresClarification).toBe(false);
     expect(plan.sourceHints).toContain("web:fresh_required");
   });

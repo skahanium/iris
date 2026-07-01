@@ -101,16 +101,6 @@ pub async fn search(db: &Database, query: &str, api_host: &str, model: &str) -> 
     Ok(format_search_results(&data))
 }
 
-/// 探测 Key、Host 与模型配置是否可用（极简查询）。
-pub async fn probe(db: &Database, api_host: &str, model: &str) -> AppResult<()> {
-    let body = search(db, "test", api_host, model).await?;
-    if body.contains("(未找到搜索结果)") {
-        // API 可达但无结果仍视为连通成功
-        return Ok(());
-    }
-    Ok(())
-}
-
 fn normalize_api_host(host: &str) -> String {
     host.trim().trim_end_matches('/').to_string()
 }

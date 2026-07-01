@@ -46,7 +46,6 @@ import { cn } from "@/lib/utils";
 import type { FileListItem } from "@/types/ipc";
 
 import { LlmRoutingSection } from "./LlmRoutingSection";
-import { MinimaxSearchSection } from "./MinimaxSearchSection";
 import { PersonaSettingsBody } from "./PersonaSettingsPanel";
 
 interface ManagementCenterPanelProps {
@@ -110,7 +109,7 @@ const AI_DETAIL_META: Record<
   },
   "web-search": {
     label: "联网与证据",
-    detail: "联网检索开关、后端与搜索配置。",
+    detail: "联网检索开关、MCP 提供方与证据配置。",
     icon: Globe2,
   },
   persona: {
@@ -331,10 +330,7 @@ export function ManagementCenterPanel({
     [activeSection],
   );
 
-  const nativeSearchBackend =
-    status?.searchApi.effectiveBackend === "minimax"
-      ? "MiniMax"
-      : "DuckDuckGo / 本地备用";
+  const nativeSearchBackend = "DuckDuckGo / 原生托底";
 
   const refreshWebProviderSummary = useCallback(async () => {
     if (!open || !isTauri()) {
@@ -409,7 +405,7 @@ export function ManagementCenterPanel({
         <SettingRow
           icon={Globe2}
           title="联网"
-          detail={webSearch ? `当前后端：${searchBackend}` : "联网检索已关闭。"}
+          detail={webSearch ? `联网证据：${searchBackend}` : "联网检索已关闭。"}
         >
           <StatusValue ready={Boolean(webSearch && searchBackendReady)}>
             {webSearch ? "开启" : "关闭"}
@@ -700,7 +696,7 @@ export function ManagementCenterPanel({
               <SettingRow
                 icon={Globe2}
                 title={webSearch ? "联网已开启" : "联网已关闭"}
-                detail={`当前后端：${searchBackend}`}
+                detail={`联网证据：${searchBackend}`}
               >
                 <SwitchControl
                   checked={webSearch}
@@ -709,7 +705,6 @@ export function ManagementCenterPanel({
                 />
               </SettingRow>
             </PanelSection>
-            <MinimaxSearchSection open={open} />
             <McpProfilesPanel
               open={open}
               onProvidersChanged={refreshWebProviderSummary}

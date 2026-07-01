@@ -1,4 +1,4 @@
-import type {
+﻿import type {
   ArtifactPlanItem,
   ContextReference,
   TaskPlan,
@@ -294,6 +294,10 @@ function basePlan(
   | "contextReferences"
   | "retrievalMode"
   | "webMode"
+  | "evidenceNeed"
+  | "contextNeed"
+  | "operationKind"
+  | "outputShape"
   | "artifactPlan"
   | "requiresClarification"
   | "sourceHints"
@@ -307,6 +311,13 @@ function basePlan(
         ? "current_reference"
         : "none",
     webMode: input.webAuthorized ? "brokered" : "disabled",
+    evidenceNeed: "none",
+    contextNeed:
+      input.hasSelection || contextReferences.length > 0
+        ? "current_reference"
+        : "none",
+    operationKind: "answer",
+    outputShape: "chat",
     artifactPlan: [],
     requiresClarification: false,
     sourceHints: sourceHintsFor(input),
@@ -320,6 +331,10 @@ function plan(
     | "contextReferences"
     | "retrievalMode"
     | "webMode"
+    | "evidenceNeed"
+    | "contextNeed"
+    | "operationKind"
+    | "outputShape"
     | "artifactPlan"
     | "requiresClarification"
     | "sourceHints"
@@ -331,6 +346,10 @@ function plan(
         | "artifactPlan"
         | "requiresClarification"
         | "clarificationQuestion"
+        | "evidenceNeed"
+        | "contextNeed"
+        | "operationKind"
+        | "outputShape"
       >
     >,
 ): TaskPlan {
@@ -359,6 +378,10 @@ function writerPlan(
         ? "confirmation_required"
         : "markdown_message",
     artifactPlan: [],
+    evidenceNeed: "none",
+    contextNeed: "current_reference",
+    operationKind: intent === "rewrite_selection" ? "patch" : "create",
+    outputShape: intent === "rewrite_selection" ? "confirmation" : "chat",
   });
 }
 
@@ -380,6 +403,10 @@ function researchPlan(input: BuildAssistantTaskPlanInput): TaskPlan {
     executionMode: "structured_task",
     outputMode: "artifact_backed_message",
     artifactPlan,
+    evidenceNeed: "multi_source_research",
+    contextNeed: input.explicitScope ? "vault_search" : "none",
+    operationKind: "diagnose",
+    outputShape: "artifact",
   });
 }
 
@@ -408,6 +435,22 @@ function chatPlan(input: BuildAssistantTaskPlanInput): TaskPlan {
     executionMode: "direct_answer",
     outputMode: "markdown_message",
     artifactPlan: [],
+  });
+}
+
+function freshWebShortAnswerPlan(input: BuildAssistantTaskPlanInput): TaskPlan {
+  return plan(input, {
+    intent: "chat",
+    confidence: "medium",
+    retrievalMode: "none",
+    modelSlot: "fast",
+    executionMode: "direct_answer",
+    outputMode: "markdown_message",
+    artifactPlan: [],
+    evidenceNeed: "fresh_web",
+    contextNeed: "none",
+    operationKind: "answer",
+    outputShape: "chat",
   });
 }
 
@@ -558,6 +601,14 @@ export function buildAssistantTaskPlan(
     return writerPlan(input, "rewrite_selection");
   }
 
+  if (
+    input.hasSelection &&
+    (includesAny(message, REWRITE_KEYWORDS) ||
+      includesAny(message, ["英文", "中文", "翻成", "译成", "translate"]))
+  ) {
+    return writerPlan(input, "rewrite_selection");
+  }
+
   if (input.notePath && hasExplicitNoteWriteIntent(message)) {
     return writerPlan(input, "creative_write");
   }
@@ -608,7 +659,7 @@ export function buildAssistantTaskPlan(
   }
 
   if (input.webAuthorized && needsFreshWebEvidence(message)) {
-    return researchPlan(input);
+    return freshWebShortAnswerPlan(input);
   }
 
   if (includesAny(message, ORGANIZE_KEYWORDS)) {

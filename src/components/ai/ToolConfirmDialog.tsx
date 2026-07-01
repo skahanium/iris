@@ -146,8 +146,8 @@ function buildPermissionCard(request: ToolConfirmRequest): PermissionCard {
     case "insert_text_at_cursor":
       return {
         action: "修改笔记",
-        target: "当前光标位置",
-        detail: "插入文本",
+        target: targetPath(request, "当前笔记"),
+        detail: "在当前光标位置插入文本",
         impact: "会直接修改当前笔记内容。",
         tone: "write",
         Icon: FilePenLine,
@@ -155,8 +155,8 @@ function buildPermissionCard(request: ToolConfirmRequest): PermissionCard {
     case "replace_selection":
       return {
         action: "修改笔记",
-        target: "当前选区",
-        detail: "替换文本",
+        target: targetPath(request, "当前笔记"),
+        detail: "替换当前选区文本",
         impact: "会直接修改当前笔记内容。",
         tone: "write",
         Icon: FilePenLine,

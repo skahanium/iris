@@ -200,3 +200,82 @@ async fn vault_delete_to_trash_moves_note_into_recycle_bin() {
         .unwrap();
     assert_eq!(recycle_count, 1);
 }
+
+#[tokio::test]
+async fn markdown_patch_rejects_hash_mismatch_without_writing() {
+    let (state, _dir) = test_state();
+    index_note(&state, "notes/test.md", "# Test\nHello world");
+
+    let result = dispatch_tool(
+        &state,
+        &ctx(Some("notes/test.md")),
+        "replace_selection",
+        &serde_json::json!({
+            "target_path": "notes/test.md",
+            "replacement": "Hi",
+            "base_content_hash": "sha256-stale",
+            "range": {"start": 7, "end": 12},
+            "original_text": "Hello",
+            "risk_level": "medium"
+        }),
+    )
+    .await;
+
+    assert!(
+        result.success,
+        "tool call should return a structured patch result"
+    );
+    assert_eq!(result.output["result"]["success"], false);
+    let error = result.output["result"]["error"]
+        .as_str()
+        .unwrap_or_default();
+    assert!(!error.trim().is_empty());
+    let content =
+        std::fs::read_to_string(state.vault_path().unwrap().join("notes/test.md")).unwrap();
+    assert_eq!(content, "# Test\nHello world");
+}
+
+#[tokio::test]
+async fn markdown_patch_rejects_out_of_vault_target_without_creating_file() {
+    let (state, dir) = test_state();
+    index_note(&state, "notes/test.md", "# Test\nHello world");
+    let base_hash = writing_workflow::compute_content_hash("# Test\nHello world");
+
+    let result = dispatch_tool(
+        &state,
+        &ctx(Some("notes/test.md")),
+        "replace_selection",
+        &serde_json::json!({
+            "target_path": "../outside.md",
+            "replacement": "Escape",
+            "base_content_hash": base_hash,
+            "range": {"start": 0, "end": 6},
+            "original_text": "# Test",
+            "risk_level": "high"
+        }),
+    )
+    .await;
+
+    assert!(!result.success);
+    assert!(!dir.path().join("outside.md").exists());
+    assert_eq!(
+        std::fs::read_to_string(state.vault_path().unwrap().join("notes/test.md")).unwrap(),
+        "# Test\nHello world"
+    );
+}
+
+#[test]
+fn native_vault_write_tools_stay_confirmation_gated() {
+    for name in [
+        "replace_selection",
+        "vault_create_note",
+        "vault_rename_move",
+        "vault_delete_to_trash",
+    ] {
+        let entry = catalog_find(name).unwrap_or_else(|| panic!("{name} missing from catalog"));
+        assert!(
+            entry.requires_confirmation,
+            "{name} must require confirmation"
+        );
+    }
+}

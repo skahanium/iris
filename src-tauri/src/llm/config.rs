@@ -879,7 +879,7 @@ mod tests {
 
         assert_eq!(status.llm.state, "ready");
         assert!(status.search_api.minimax_configured);
-        assert_eq!(status.search_api.effective_backend, "minimax");
+        assert_eq!(status.search_api.effective_backend, "duckduckgo");
     }
 
     #[test]

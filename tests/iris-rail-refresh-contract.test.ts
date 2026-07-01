@@ -158,7 +158,7 @@ describe("Iris Rail complete interface contracts", () => {
     expect(managementCenter).toContain("activeSection");
     expect(managementCenter).toContain('id: "ai"');
     expect(managementCenter).toContain("LlmRoutingSection");
-    expect(managementCenter).toContain("MinimaxSearchSection");
+    expect(managementCenter).not.toContain("MinimaxSearchSection");
     expect(managementCenter).toContain("PersonaSettingsBody");
     expect(managementCenter).toContain("SkillsPanelBody");
     expect(managementCenter).toContain("AiRulesPanel");

@@ -621,6 +621,14 @@ pub struct ArtifactPlanItemWire {
 pub struct TaskPlanSummary {
     pub intent: TaskPlanIntent,
     pub confidence: TaskPlanConfidence,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub evidence_need: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_need: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub operation_kind: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output_shape: Option<String>,
     pub context_references: Vec<ContextReferenceWire>,
     pub retrieval_mode: RetrievalMode,
     pub web_mode: WebMode,

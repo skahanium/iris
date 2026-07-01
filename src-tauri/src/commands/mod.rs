@@ -9,7 +9,6 @@ pub mod graph;
 pub mod llm;
 pub mod llm_config_commands;
 pub mod media;
-pub mod minimax_config_commands;
 pub mod organize_commands;
 pub mod profile_commands;
 pub mod recycle;

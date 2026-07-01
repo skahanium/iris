@@ -108,7 +108,7 @@ export interface ConnectivityStatus {
   };
   searchApi: {
     minimaxConfigured: boolean;
-    effectiveBackend: "minimax" | "duckduckgo";
+    effectiveBackend: "duckduckgo";
   };
   usageLast?: {
     promptCacheHitTokens: number;

@@ -35,6 +35,16 @@ const webEvidence: SessionEvidenceDetailRecord = {
   createdAt: "2026-06-22T00:00:00Z",
 };
 
+const sensitiveWebEvidence = {
+  ...webEvidence,
+  providerId: "mcp.anysearch.primary",
+  providerKind: "mcp",
+  rawResultHash: "sha256-raw-result",
+  extractionMethod: "provider_raw_extract",
+  fromCache: true,
+  fetchBackend: "mcp.web_fetch",
+} as unknown as SessionEvidenceDetailRecord;
+
 describe("EvidenceDetailArtifactView", () => {
   let container: HTMLDivElement;
   let root: Root;
@@ -54,7 +64,10 @@ describe("EvidenceDetailArtifactView", () => {
     act(() => {
       root.render(
         createElement(EvidenceDetailArtifactView, {
-          payload: { sessionId: 10, evidence: [localEvidence, webEvidence] },
+          payload: {
+            sessionId: 10,
+            evidence: [localEvidence, sensitiveWebEvidence],
+          },
         }),
       );
     });
@@ -69,8 +82,10 @@ describe("EvidenceDetailArtifactView", () => {
     );
     expect(container.textContent).toContain("reported-price");
     expect(container.textContent).toContain("provider disagreement");
-    expect(container.textContent).not.toContain("mcp.primary");
+    expect(container.textContent).not.toContain("mcp.anysearch.primary");
     expect(container.textContent).not.toContain("mcp.web_fetch");
+    expect(container.textContent).not.toContain("sha256-raw-result");
+    expect(container.textContent).not.toContain("provider_raw_extract");
     expect(container.textContent).not.toContain("Provider");
     expect(container.textContent).not.toContain("cache hit");
     expect(container.textContent).not.toContain("fetch backend");

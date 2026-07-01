@@ -1,3 +1,5 @@
+﻿> Superseded by [docs/superpowers/specs/2026-07-01-iris-ai-harness-architecture-design.md](../specs/2026-07-01-iris-ai-harness-architecture-design.md) and [docs/superpowers/plans/2026-07-01-iris-ai-harness-architecture.md](../plans/2026-07-01-iris-ai-harness-architecture.md) for the current AI harness target state. In particular, MiniMax is no longer a web evidence backend; MCP web providers are primary and DuckDuckGo is the native fallback.
+
 # Iris Skills / MCP / 网络能力收口设计
 
 日期：2026-07-01

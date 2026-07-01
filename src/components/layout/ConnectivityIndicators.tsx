@@ -93,8 +93,7 @@ export const ConnectivityIndicators = memo(function ConnectivityIndicators({
     hit + miss > 0 ? Math.round((hit / (hit + miss)) * 100) : null;
 
   const search = status?.searchApi;
-  const searchLabel =
-    search?.effectiveBackend === "minimax" ? "MiniMax" : "DuckDuckGo";
+  const searchLabel = "MCP 优先 / DuckDuckGo 托底";
 
   const llmTitle = [
     llm?.message ?? "LLM 未检测",

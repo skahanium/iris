@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+﻿import { readFileSync } from "node:fs";
 
 import { describe, expect, it } from "vitest";
 
@@ -19,5 +19,18 @@ describe("web evidence broker contract", () => {
     expect(read("src/components/ai/ConversationSurface.tsx")).not.toContain(
       "fetch_web_page",
     );
+  });
+
+  it("does not use MiniMax as a web evidence backend", () => {
+    const broker = read("src-tauri/src/ai_runtime/web_evidence_broker.rs");
+    const candidateBody =
+      broker
+        .split("fn search_provider_candidates")[1]
+        ?.split("async fn collect_search_provider_fetches")[0] ?? "";
+
+    expect(candidateBody).toContain("SearchProviderCandidate::Mcp");
+    expect(candidateBody).toContain("WebSearchEffectiveBackend::Duckduckgo");
+    expect(candidateBody).not.toContain("WebSearchEffectiveBackend::Minimax");
+    expect(candidateBody).not.toContain("MINIMAX_CREDENTIAL_SERVICE");
   });
 });

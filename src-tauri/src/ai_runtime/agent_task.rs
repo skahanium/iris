@@ -259,6 +259,8 @@ pub struct AgentTaskResumePlan {
 /// Runtime facts checked immediately before a paused task is resumed.
 #[derive(Debug, Clone, Default)]
 pub struct AgentTaskResumePreflight {
+    /// Current UI/session context. When supplied, it must match the paused task.
+    pub current_session_id: Option<i64>,
     /// Current vault/task scope hash.
     pub current_vault_scope_hash: Option<String>,
     /// Note paths that still resolve inside the current vault.
@@ -570,6 +572,12 @@ impl AgentTaskRuntime {
         preflight: &AgentTaskResumePreflight,
     ) -> AppResult<()> {
         let mut failures = Vec::new();
+
+        if let Some(current_session_id) = preflight.current_session_id {
+            if current_session_id != plan.session_id {
+                failures.push("session changed");
+            }
+        }
 
         if let Some(expected) = plan.vault_scope_hash.as_deref() {
             if preflight.current_vault_scope_hash.as_deref() != Some(expected) {

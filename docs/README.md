@@ -1,4 +1,4 @@
-# Iris 文档索引
+﻿# Iris 文档索引
 
 阅读顺序建议：**路线图（排期）→ 设计系统（界面）→ 架构（实现）→ 贡献/Agent（施工）**。
 
@@ -23,7 +23,7 @@
 
 ## 当前版本
 
-**v1.2.0**。旧 v0.x / v1.1.x 规划与施工资料已完成归并，不再作为当前事实来源；必要时通过 git 历史查阅。
+**v1.2.1**。旧 v0.x / v1.1.x 规划与施工资料已完成归并，不再作为当前事实来源；必要时通过 git 历史查阅。
 
 ---
 
@@ -40,6 +40,7 @@
 | AI Agent 当前状态        | [audits/2026-06-20-ai-agent-current-readiness.md](./audits/2026-06-20-ai-agent-current-readiness.md)                                                           |
 | AI Agent 问题矩阵        | [audits/2026-06-20-ai-agent-issue-matrix.md](./audits/2026-06-20-ai-agent-issue-matrix.md)                                                                     |
 | AI Harness TaskPlan 蓝图 | [spec](./superpowers/specs/2026-06-21-agent-harness-taskplan-blueprint-design.md) · [plan](./superpowers/plans/2026-06-21-agent-harness-taskplan-blueprint.md) |
+| AI Harness 架构收口      | [spec](./superpowers/specs/2026-07-01-iris-ai-harness-architecture-design.md) · [plan](./superpowers/plans/2026-07-01-iris-ai-harness-architecture.md)         |
 | 语义搜索 Recall@5        | [eval/semantic-search.md](./eval/semantic-search.md)                                                                                                           |
 | 语义评测 fixture vault   | [eval/fixtures/semantic-vault/](./eval/fixtures/semantic-vault/)                                                                                               |
 | 关闭回归手工验收         | [testing/app-close-manual-checklist.md](./testing/app-close-manual-checklist.md)                                                                               |

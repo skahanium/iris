@@ -30,7 +30,7 @@ describe("management center contract", () => {
     expect(center).not.toContain('{ id: "about"');
     expect(center).toContain("ManagementCenterSection");
     expect(center).toContain("LlmRoutingSection");
-    expect(center).toContain("MinimaxSearchSection");
+    expect(center).not.toContain("MinimaxSearchSection");
     expect(center).toContain("PersonaSettingsBody");
     expect(center).toContain("SkillsPanelBody");
     expect(center).toContain("AiRulesPanel");
@@ -89,7 +89,7 @@ describe("management center contract", () => {
     expect(center).toContain('data-testid="management-detail-back"');
     expect(center).toContain("overflow-y-auto");
     expect(center).toContain("LlmRoutingSection");
-    expect(center).toContain("MinimaxSearchSection");
+    expect(center).not.toContain("MinimaxSearchSection");
     expect(center).toContain("PersonaSettingsBody");
     expect(center).toContain("SkillsPanelBody");
     expect(center).toContain("AiRulesPanel");
@@ -99,7 +99,6 @@ describe("management center contract", () => {
 
   it("renders native and MCP web evidence provider management surfaces", () => {
     const center = read("src/components/settings/ManagementCenterPanel.tsx");
-    const minimax = read("src/components/settings/MinimaxSearchSection.tsx");
     const mcpPanel = read("src/components/ai/skills/McpProfilesPanel.tsx");
     const mcpCard = read("src/components/ai/skills/McpProfileCard.tsx");
     const mcpPresets = read("src/components/ai/skills/mcpProviderPresets.ts");
@@ -107,23 +106,33 @@ describe("management center contract", () => {
     expect(center).toContain("McpProfilesPanel");
     expect(center).toContain("<McpProfilesPanel");
     expect(center).toContain("onProvidersChanged={refreshWebProviderSummary}");
-    expect(minimax).toContain('data-testid="native-provider-card-minimax"');
-    expect(minimax).toContain('data-testid="native-provider-card-duckduckgo"');
-    expect(minimax).toContain("MiniMax");
-    expect(minimax).toContain("DuckDuckGo");
+    expect(center).not.toContain('data-testid="native-provider-card-minimax"');
+    expect(center).not.toContain(
+      'data-testid="native-provider-card-duckduckgo"',
+    );
+    expect(center).not.toContain("MinimaxSearchSection");
 
     expect(mcpPanel).toContain('data-testid="mcp-provider-panel"');
     expect(mcpPanel).toContain("webEvidenceProvidersList");
     expect(mcpPanel).toContain("webEvidenceProviderUpsert");
     expect(mcpPanel).toContain("webEvidenceProviderDiagnostics");
+    expect(mcpPanel).not.toContain("MiniMax 和 DuckDuckGo");
+    expect(mcpPanel).toContain("DuckDuckGo");
+    expect(mcpPanel).toContain("作为内置原生托底");
+    expect(mcpPanel).toContain("不参与联网证据调度");
     expect(mcpPanel).toContain("McpProfileCard");
+    expect(mcpPanel).not.toContain("MCP_PROVIDER_PRESETS.map");
+    expect(mcpPanel).not.toContain("setDraft(createDraftSummary(preset))");
+    expect(mcpCard).toContain("MCP_PROVIDER_PRESETS.map");
+    expect(mcpCard).not.toContain("MCP_PROVIDER_PRESETS.slice(0, 6)");
+    expect(mcpCard).not.toContain(
+      'variant={presetId === preset.id ? "secondary" : "outline"}',
+    );
+    expect(mcpPanel).toContain(
+      "点击添加 MCP 提供方后，可选择预设或自定义服务。",
+    );
 
-    for (const label of [
-      "MCP 联网证据提供方",
-      "添加 MCP 提供方",
-      "MiniMax 和 DuckDuckGo",
-      "仍作为原生候选兜底",
-    ]) {
+    for (const label of ["MCP 联网证据提供方", "添加 MCP 提供方"]) {
       expect(mcpPanel).toContain(label);
     }
 
@@ -212,9 +221,7 @@ describe("management center contract", () => {
     expect(center).toContain("原生兜底");
     expect(center).toContain("refreshWebProviderSummary");
     expect(center).toContain("onProvidersChanged={refreshWebProviderSummary}");
-    expect(center).not.toMatch(
-      /const searchBackend =\s*status\?\.searchApi\.effectiveBackend/,
-    );
+    expect(center).not.toMatch(/effectiveBackend === "minimax"/);
     expect(mcpPanel).toContain("onProvidersChanged");
     expect(mcpPanel).toContain("onProvidersChanged?.()");
   });
