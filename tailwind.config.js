@@ -116,7 +116,16 @@ export default {
           '"Microsoft YaHei"',
           "sans-serif",
         ],
-        title: ['"Noto Serif SC"', '"Noto Sans SC"', "Georgia", "serif"],
+        title: [
+          "Inter",
+          "-apple-system",
+          "BlinkMacSystemFont",
+          '"Segoe UI"',
+          '"PingFang SC"',
+          '"Microsoft YaHei"',
+          '"Noto Sans SC"',
+          "sans-serif",
+        ],
         editor: [
           '"Noto Sans SC"',
           "Inter",

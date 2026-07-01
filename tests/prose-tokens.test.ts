@@ -29,12 +29,18 @@ describe("prose polish v2 tokens", () => {
     expect(markdownProse).not.toContain("data-iris-gap-count");
   });
 
-  it("centers document title with serif font", () => {
+  it("centers document title with stable sans title numerals", () => {
     expect(globalsCss).toContain("text-center font-bold");
     expect(globalsCss).toContain(
       "font-size: calc(2.25rem * var(--editor-zoom))",
     );
     expect(globalsCss).toContain("font-family: var(--font-title)");
+    expect(globalsCss).toContain("--font-title: var(--font-sans)");
+    expect(markdownProse).toContain("--font-title: var(--font-ui)");
+    expect(globalsCss).toContain("font-variant-numeric: lining-nums");
+    expect(globalsCss).toContain('"lnum" 1');
+    expect(globalsCss).not.toContain("Noto Serif SC");
+    expect(markdownProse).not.toContain("Noto Serif SC");
     expect(globalsCss).toContain("margin-bottom: var(--prose-title-gap)");
   });
 

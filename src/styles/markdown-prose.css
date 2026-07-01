@@ -9,7 +9,7 @@
       "PingFang SC", sans-serif;
     --font-prose:
       "Noto Sans SC", Inter, "PingFang SC", "Microsoft YaHei", sans-serif;
-    --font-title: "Noto Serif SC", "Noto Sans SC", Georgia, serif;
+    --font-title: var(--font-ui);
     --font-mono: "JetBrains Mono", ui-monospace, monospace;
     --editor-zoom: 1;
 

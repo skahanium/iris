@@ -54,8 +54,7 @@
   --font-sans:
     Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
     "Microsoft YaHei", "Noto Sans SC", sans-serif;
-  --font-title:
-    "Noto Serif SC", "Songti SC", "STSong", "Noto Sans SC", Georgia, serif;
+  --font-title: var(--font-sans);
   --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
@@ -1402,6 +1401,11 @@
     @apply m-0 w-full border-0 bg-transparent text-center font-bold text-editor-ink outline-none;
     font-family: var(--font-title);
     font-size: calc(2.25rem * var(--editor-zoom));
+    font-feature-settings:
+      "kern" 1,
+      "liga" 1,
+      "lnum" 1;
+    font-variant-numeric: lining-nums proportional-nums;
     line-height: var(--doc-title-line-height);
     letter-spacing: 0.02em;
     max-height: calc(

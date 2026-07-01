@@ -93,7 +93,8 @@ describe("design tokens", () => {
     expect(tailwindMapsToken("base", "var(--motion-base)")).toBe(true);
     expect(tailwindConfigSource).toContain('"Inter"');
     expect(tailwindConfigSource).toContain('"Noto Sans SC"');
-    expect(tailwindConfigSource).toContain('"Noto Serif SC"');
+    expect(tailwindConfigSource).toContain("title: [");
+    expect(tailwindConfigSource).not.toContain('"Noto Serif SC"');
     expect(tailwindConfigSource).not.toContain("shadow-paper");
   });
 });
