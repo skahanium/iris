@@ -173,6 +173,28 @@ describe("IPC boundary", () => {
     expect(aiCommands).not.toContain('credential_refs_json: "{}".into()');
   });
 
+  it("makes MCP provider diagnostics prove live tool availability when requested", () => {
+    const aiCommands = read("src-tauri/src/commands/ai_commands.rs");
+    const card = read("src/components/ai/skills/McpProfileCard.tsx");
+
+    expect(aiCommands).toContain(
+      "let live_check = live_check.unwrap_or(false)",
+    );
+    expect(aiCommands).toContain("discover_provider_tools");
+    expect(aiCommands).toContain("liveConnection");
+    expect(aiCommands).toContain("searchToolLive");
+    expect(aiCommands).toContain("fetchToolLive");
+    expect(aiCommands).toContain("MCP 服务已响应 tools/list");
+    expect(aiCommands).toContain("MCP 实时探测失败");
+    expect(aiCommands).not.toContain("let _live_check");
+    expect(aiCommands).not.toContain("provider registry entry exists");
+    expect(aiCommands).not.toContain("provider is enabled");
+    expect(aiCommands).not.toContain("MCP server responded to tools/list");
+    expect(card).toContain('case "liveConnection"');
+    expect(card).toContain('case "searchToolLive"');
+    expect(card).toContain('case "fetchToolLive"');
+  });
+
   it("documents reign-in Skills and web provider IPC semantics", () => {
     const docs = read("docs/ipc-api-reference.md");
 

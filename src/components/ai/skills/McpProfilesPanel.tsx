@@ -23,6 +23,7 @@ import {
 
 interface McpProfilesPanelProps {
   open: boolean;
+  onProvidersChanged?: () => void;
 }
 
 type DiagnosticsByProvider = Record<string, WebEvidenceProviderDiagnostics>;
@@ -113,7 +114,10 @@ function createDraftSummary(
   };
 }
 
-export function McpProfilesPanel({ open }: McpProfilesPanelProps) {
+export function McpProfilesPanel({
+  open,
+  onProvidersChanged,
+}: McpProfilesPanelProps) {
   const [providers, setProviders] = useState<WebEvidenceProviderSummary[]>([]);
   const [diagnostics, setDiagnostics] = useState<DiagnosticsByProvider>({});
   const [draft, setDraft] = useState<WebEvidenceProviderSummary | null>(null);
@@ -170,6 +174,7 @@ export function McpProfilesPanel({ open }: McpProfilesPanelProps) {
       await webEvidenceProviderUpsert(input);
       setDraft(null);
       await load();
+      onProvidersChanged?.();
       setMessage(
         credentialSaves.length > 0
           ? "MCP 提供方已保存，API Key 已写入系统凭据。"
@@ -188,6 +193,7 @@ export function McpProfilesPanel({ open }: McpProfilesPanelProps) {
     try {
       await webEvidenceProviderToggle(providerId, enabled);
       await load();
+      onProvidersChanged?.();
     } catch (error) {
       setMessage(invokeErrorMessage(error));
     } finally {
@@ -201,6 +207,7 @@ export function McpProfilesPanel({ open }: McpProfilesPanelProps) {
     try {
       await webEvidenceProviderDelete(providerId);
       await load();
+      onProvidersChanged?.();
     } catch (error) {
       setMessage(invokeErrorMessage(error));
     } finally {

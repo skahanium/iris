@@ -105,7 +105,8 @@ describe("management center contract", () => {
     const mcpPresets = read("src/components/ai/skills/mcpProviderPresets.ts");
 
     expect(center).toContain("McpProfilesPanel");
-    expect(center).toContain("<McpProfilesPanel open={open}");
+    expect(center).toContain("<McpProfilesPanel");
+    expect(center).toContain("onProvidersChanged={refreshWebProviderSummary}");
     expect(minimax).toContain('data-testid="native-provider-card-minimax"');
     expect(minimax).toContain('data-testid="native-provider-card-duckduckgo"');
     expect(minimax).toContain("MiniMax");
@@ -199,6 +200,23 @@ describe("management center contract", () => {
     ]) {
       expect(mcpPanel + mcpCard + mcpPresets).toContain(preset);
     }
+  });
+
+  it("shows MCP web providers as the prioritized search backend in management overview", () => {
+    const center = read("src/components/settings/ManagementCenterPanel.tsx");
+    const mcpPanel = read("src/components/ai/skills/McpProfilesPanel.tsx");
+
+    expect(center).toContain("webEvidenceProvidersList");
+    expect(center).toContain("webEvidenceProviderDiagnostics");
+    expect(center).toContain("MCP：");
+    expect(center).toContain("原生兜底");
+    expect(center).toContain("refreshWebProviderSummary");
+    expect(center).toContain("onProvidersChanged={refreshWebProviderSummary}");
+    expect(center).not.toMatch(
+      /const searchBackend =\s*status\?\.searchApi\.effectiveBackend/,
+    );
+    expect(mcpPanel).toContain("onProvidersChanged");
+    expect(mcpPanel).toContain("onProvidersChanged?.()");
   });
 
   it("anchors management switches so the thumb stays inside the track", () => {

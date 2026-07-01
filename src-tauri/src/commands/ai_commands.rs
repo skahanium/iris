@@ -28,8 +28,10 @@ use crate::ai_runtime::{
     trace::{TraceRecorder, TraceStatus},
     AgentIntent, AiScene, AssembledContext, ContextPacket, TokenUsage, ToolAccessLevel,
 };
+use std::collections::HashSet;
 use std::path::Path;
 use std::sync::Arc;
+use std::time::Duration;
 
 use crate::app::AppState;
 use crate::error::{AppError, AppResult};
@@ -2010,22 +2012,22 @@ pub async fn web_evidence_provider_diagnostics(
     provider_id: Option<String>,
     live_check: Option<bool>,
 ) -> AppResult<WebEvidenceProviderDiagnostics> {
-    let _live_check = live_check.unwrap_or(false);
+    let live_check = live_check.unwrap_or(false);
     let providers =
         crate::ai_runtime::mcp_runtime_registry::list_web_evidence_providers(&state.db)?;
 
     if let Some(provider_id) = provider_id.as_deref() {
         if let Some(provider) = providers.iter().find(|item| item.id == provider_id) {
-            return Ok(provider_diagnostics_for_summary(provider));
+            return provider_diagnostics_for_summary(&state.db, provider, live_check).await;
         }
         return Ok(WebEvidenceProviderDiagnostics {
             provider_id: Some(provider_id.to_string()),
             status: "missing".into(),
-            failures: vec!["provider not found".into()],
+            failures: vec!["未找到提供方记录".into()],
             checks: vec![provider_diagnostic_check(
                 "configured",
                 false,
-                "provider registry entry is missing",
+                "提供方记录缺失",
             )],
             can_use_for_search: false,
             can_use_for_fetch: false,
@@ -2049,13 +2051,13 @@ pub async fn web_evidence_provider_diagnostics(
         vec![provider_diagnostic_check(
             "registry",
             false,
-            "no MCP web evidence providers configured",
+            "尚未配置 MCP 联网证据提供方",
         )]
     } else {
         vec![provider_diagnostic_check(
             "registry",
             true,
-            "MCP web evidence provider registry is available",
+            "MCP 联网证据提供方注册表可用",
         )]
     };
     let failures = checks
@@ -2103,35 +2105,138 @@ fn provider_diagnostic_check(
     }
 }
 
-fn provider_diagnostics_for_summary(
+fn provider_mapping_tool_name(mapping_json: Option<&str>) -> Option<String> {
+    let value = mapping_json?.trim();
+    if value.is_empty() {
+        return None;
+    }
+    serde_json::from_str::<serde_json::Value>(value)
+        .ok()
+        .and_then(|parsed| {
+            parsed
+                .get("tool")
+                .or_else(|| parsed.get("tool_name"))
+                .and_then(|tool| tool.as_str())
+                .map(str::trim)
+                .filter(|tool| !tool.is_empty())
+                .map(str::to_string)
+        })
+        .or_else(|| Some(value.to_string()))
+}
+
+fn diagnostic_error_message(error: &AppError) -> String {
+    let redacted = crate::ai_runtime::trace::redact_classified_leaks(&error.to_string());
+    const MAX_LEN: usize = 240;
+    if redacted.chars().count() > MAX_LEN {
+        format!("{}...", redacted.chars().take(MAX_LEN).collect::<String>())
+    } else {
+        redacted
+    }
+}
+
+async fn provider_diagnostics_for_summary(
+    db: &crate::storage::db::Database,
     provider: &crate::ai_runtime::mcp_runtime_registry::WebEvidenceProviderSummary,
-) -> WebEvidenceProviderDiagnostics {
+    live_check: bool,
+) -> AppResult<WebEvidenceProviderDiagnostics> {
     let mut checks = vec![
-        provider_diagnostic_check("configured", true, "provider registry entry exists"),
-        provider_diagnostic_check("enabled", provider.enabled, "provider is enabled"),
+        provider_diagnostic_check("configured", true, "提供方记录存在"),
+        provider_diagnostic_check("enabled", provider.enabled, "提供方已启用"),
         provider_diagnostic_check(
             "transport",
             provider.transport_kind == "https" || provider.transport_kind == "stdio",
-            "transport kind is supported for MCP web evidence",
+            "连接方式支持 MCP 联网证据",
         ),
         provider_diagnostic_check(
             "searchMapping",
             provider.has_search_mapping,
-            "web.search mapping is configured",
+            "已配置搜索映射",
         ),
         provider_diagnostic_check(
             "fetchMapping",
             provider.has_fetch_mapping,
-            "web.fetch mapping is configured",
+            "已配置网页读取映射",
         ),
     ];
     if provider.kind != "mcp" {
         checks.push(provider_diagnostic_check(
             "providerKind",
             false,
-            "only MCP providers are editable web evidence providers",
+            "只有 MCP 提供方可作为可编辑联网证据提供方",
         ));
     }
+
+    let mut can_use_for_search = provider.enabled && provider.has_search_mapping;
+    let mut can_use_for_fetch = provider.enabled && provider.has_fetch_mapping;
+
+    if live_check && provider.kind == "mcp" && provider.enabled {
+        let options = crate::ai_runtime::mcp_host_runtime::McpHostRuntimeOptions {
+            request_timeout: Duration::from_secs(20),
+            max_stdout_line_bytes: 64 * 1024,
+            max_stderr_bytes: 8 * 1024,
+            cwd: None,
+        };
+        match crate::ai_runtime::mcp_host_runtime::discover_provider_tools(
+            db,
+            &provider.id,
+            options,
+        )
+        .await
+        {
+            Ok(discovery) => {
+                let tool_names = discovery
+                    .tools
+                    .iter()
+                    .map(|tool| tool.name.as_str())
+                    .collect::<HashSet<_>>();
+                checks.push(provider_diagnostic_check(
+                    "liveConnection",
+                    true,
+                    "MCP 服务已响应 tools/list",
+                ));
+                if let Some(tool) =
+                    provider_mapping_tool_name(provider.web_search_mapping_json.as_deref())
+                {
+                    let exists = tool_names.contains(tool.as_str());
+                    can_use_for_search = can_use_for_search && exists;
+                    checks.push(provider_diagnostic_check(
+                        "searchToolLive",
+                        exists,
+                        &if exists {
+                            format!("已找到搜索工具 '{tool}'")
+                        } else {
+                            format!("MCP 服务未报告搜索工具 '{tool}'")
+                        },
+                    ));
+                }
+                if let Some(tool) =
+                    provider_mapping_tool_name(provider.web_fetch_mapping_json.as_deref())
+                {
+                    let exists = tool_names.contains(tool.as_str());
+                    can_use_for_fetch = can_use_for_fetch && exists;
+                    checks.push(provider_diagnostic_check(
+                        "fetchToolLive",
+                        exists,
+                        &if exists {
+                            format!("已找到网页读取工具 '{tool}'")
+                        } else {
+                            format!("MCP 服务未报告网页读取工具 '{tool}'")
+                        },
+                    ));
+                }
+            }
+            Err(error) => {
+                can_use_for_search = false;
+                can_use_for_fetch = false;
+                checks.push(provider_diagnostic_check(
+                    "liveConnection",
+                    false,
+                    &format!("MCP 实时探测失败：{}", diagnostic_error_message(&error)),
+                ));
+            }
+        }
+    }
+
     let failures = checks
         .iter()
         .filter(|check| check.status != "pass")
@@ -2139,14 +2244,18 @@ fn provider_diagnostics_for_summary(
         .collect::<Vec<_>>();
     let mapping_status =
         provider_mapping_status(provider.has_search_mapping, provider.has_fetch_mapping);
-    WebEvidenceProviderDiagnostics {
+    Ok(WebEvidenceProviderDiagnostics {
         provider_id: Some(provider.id.clone()),
-        status: provider_diagnostic_status(provider.enabled, &mapping_status),
+        status: if failures.is_empty() && provider.enabled {
+            "ready".into()
+        } else {
+            provider_diagnostic_status(provider.enabled, &mapping_status)
+        },
         failures,
         checks,
-        can_use_for_search: provider.enabled && provider.has_search_mapping,
-        can_use_for_fetch: provider.enabled && provider.has_fetch_mapping,
-    }
+        can_use_for_search,
+        can_use_for_fetch,
+    })
 }
 
 fn mapping_json_from_tool_name(value: Option<String>) -> AppResult<Option<String>> {

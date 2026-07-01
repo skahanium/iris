@@ -17,7 +17,14 @@ import {
   SlidersHorizontal,
   type LucideIcon,
 } from "lucide-react";
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { isTauri } from "@tauri-apps/api/core";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  type ReactNode,
+} from "react";
 
 import { AiRulesPanel } from "@/components/ai/AiRulesPanel";
 import { SkillsPanelBody } from "@/components/ai/SkillsPanel";
@@ -31,6 +38,10 @@ import type {
   ManagementCenterDetail,
   ManagementCenterSection,
 } from "@/hooks/useOverlayManager";
+import {
+  webEvidenceProviderDiagnostics,
+  webEvidenceProvidersList,
+} from "@/lib/ipc";
 import { cn } from "@/lib/utils";
 import type { FileListItem } from "@/types/ipc";
 
@@ -297,6 +308,10 @@ export function ManagementCenterPanel({
   const [activeNotesDetail, setActiveNotesDetail] =
     useState<NotesManagementDetail | null>(null);
   const { status } = useConnectivityStatus();
+  const [webProviderRoute, setWebProviderRoute] = useState<{
+    label: string;
+    ready: boolean;
+  } | null>(null);
 
   useEffect(() => {
     if (!open) return;
@@ -316,10 +331,48 @@ export function ManagementCenterPanel({
     [activeSection],
   );
 
-  const searchBackend =
+  const nativeSearchBackend =
     status?.searchApi.effectiveBackend === "minimax"
       ? "MiniMax"
       : "DuckDuckGo / 本地备用";
+
+  const refreshWebProviderSummary = useCallback(async () => {
+    if (!open || !isTauri()) {
+      setWebProviderRoute(null);
+      return;
+    }
+
+    try {
+      const providers = await webEvidenceProvidersList();
+      const provider = providers.find(
+        (item) =>
+          item.providerKind === "mcp" && item.enabled && item.hasSearchMapping,
+      );
+      if (!provider) {
+        setWebProviderRoute(null);
+        return;
+      }
+
+      const diagnostics = await webEvidenceProviderDiagnostics(
+        provider.id,
+        false,
+      );
+      setWebProviderRoute({
+        label: `MCP：${provider.name}（${diagnostics.canUseForSearch ? "优先" : "需诊断"}） · 原生兜底：${nativeSearchBackend}`,
+        ready: diagnostics.canUseForSearch,
+      });
+    } catch {
+      setWebProviderRoute(null);
+    }
+  }, [nativeSearchBackend, open]);
+
+  useEffect(() => {
+    void refreshWebProviderSummary();
+  }, [refreshWebProviderSummary]);
+
+  const searchBackend = webProviderRoute?.label ?? nativeSearchBackend;
+  const searchBackendReady =
+    webProviderRoute?.ready ?? Boolean(status?.searchApi);
   const llmReady = status?.llm.state === "ready";
 
   const openAiDetail = (detail: AiManagementDetail) => {
@@ -358,7 +411,7 @@ export function ManagementCenterPanel({
           title="联网"
           detail={webSearch ? `当前后端：${searchBackend}` : "联网检索已关闭。"}
         >
-          <StatusValue ready={Boolean(webSearch && status?.searchApi)}>
+          <StatusValue ready={Boolean(webSearch && searchBackendReady)}>
             {webSearch ? "开启" : "关闭"}
           </StatusValue>
         </SettingRow>
@@ -657,7 +710,10 @@ export function ManagementCenterPanel({
               </SettingRow>
             </PanelSection>
             <MinimaxSearchSection open={open} />
-            <McpProfilesPanel open={open} />
+            <McpProfilesPanel
+              open={open}
+              onProvidersChanged={refreshWebProviderSummary}
+            />
           </div>
         ) : null}
         {detail === "persona" ? <PersonaSettingsBody open={open} /> : null}

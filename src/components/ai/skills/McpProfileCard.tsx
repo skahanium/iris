@@ -365,6 +365,16 @@ function checkLabelText(label: string): string {
     case "fetchMapping":
     case "fetch_mapping":
       return "网页读取映射";
+    case "providerKind":
+      return "提供方类型";
+    case "registry":
+      return "提供方注册表";
+    case "liveConnection":
+      return "实时连接";
+    case "searchToolLive":
+      return "搜索工具";
+    case "fetchToolLive":
+      return "网页读取工具";
     default:
       return label;
   }
