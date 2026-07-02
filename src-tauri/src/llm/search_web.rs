@@ -1,15 +1,7 @@
 use crate::error::AppResult;
 use crate::storage::db::Database;
 
-use super::web_search_config::WebSearchEffectiveBackend;
-
 const MAX_SEARCH_CACHE_ROWS: usize = 512;
-
-#[derive(Debug, Clone)]
-pub struct WebSearchFetchResult {
-    pub body: String,
-    pub backend: WebSearchEffectiveBackend,
-}
 
 pub fn cleanup_expired_search_cache(db: &Database) -> AppResult<usize> {
     db.with_conn(|conn| {

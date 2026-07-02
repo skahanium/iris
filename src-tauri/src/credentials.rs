@@ -8,9 +8,6 @@ use zeroize::{Zeroize, Zeroizing};
 use crate::error::{AppError, AppResult};
 use crate::storage::db::Database;
 
-/// MiniMax Token Plan 凭据 ID（与前端 `MINIMAX_CREDENTIAL_SERVICE` 一致）。
-pub const MINIMAX_CREDENTIAL_SERVICE: &str = "iris.minimax";
-
 const KEYRING_ACCOUNT: &str = "api_key";
 const API_KEY_BUNDLE_SERVICE: &str = "iris.api_keys";
 const API_KEY_MARKER_PREFIX: &str = "credential_configured.";
@@ -285,13 +282,13 @@ mod tests {
     fn api_key_bundle_serializes_multiple_services() {
         let mut bundle = ApiKeyBundle::default();
         bundle.upsert("iris.llm.deepseek", "deepseek-key");
-        bundle.upsert(MINIMAX_CREDENTIAL_SERVICE, "minimax-key");
+        bundle.upsert("iris.llm.minimax", "minimax-key");
 
         let json = bundle.to_json().expect("serialize");
         let decoded = ApiKeyBundle::from_json(&json).expect("deserialize");
 
         assert_eq!(decoded.get("iris.llm.deepseek"), Some("deepseek-key"));
-        assert_eq!(decoded.get(MINIMAX_CREDENTIAL_SERVICE), Some("minimax-key"));
+        assert_eq!(decoded.get("iris.llm.minimax"), Some("minimax-key"));
         assert_eq!(decoded.get("iris.llm.mimo"), None);
     }
 

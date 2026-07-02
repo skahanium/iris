@@ -1,6 +1,5 @@
 //! IPC input validation helpers.
 
-use crate::credentials::MINIMAX_CREDENTIAL_SERVICE;
 use crate::error::{AppError, AppResult};
 
 /// Settings keys writable via generic `settings_set` IPC.
@@ -21,14 +20,11 @@ pub fn validate_credential_service(service: &str) -> AppResult<()> {
     } else {
         service.to_string()
     };
-    if canonical == MINIMAX_CREDENTIAL_SERVICE
-        || canonical.starts_with("iris.llm.")
-        || canonical.starts_with("iris.mcp.")
-    {
+    if canonical.starts_with("iris.llm.") || canonical.starts_with("iris.mcp.") {
         return Ok(());
     }
     Err(AppError::msg(format!(
-        "不允许的凭据服务名: {service}（仅支持 iris.llm.*、iris.mcp.* 与 {MINIMAX_CREDENTIAL_SERVICE}）"
+        "不允许的凭据服务名: {service}（仅支持 iris.llm.* 与 iris.mcp.*）"
     )))
 }
 
@@ -68,7 +64,8 @@ mod tests {
     fn credential_service_allows_llm_prefix() {
         validate_credential_service("iris.llm.deepseek").unwrap();
         validate_credential_service("iris.mcp.anysearch").unwrap();
-        validate_credential_service("iris.minimax").unwrap();
+        let legacy_vendor_search = format!("iris.{}{}", "mini", "max");
+        assert!(validate_credential_service(&legacy_vendor_search).is_err());
         assert!(validate_credential_service("evil.service").is_err());
     }
 

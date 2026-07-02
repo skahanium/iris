@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use `superpowers:subagent-driven-development` for independent tasks or `superpowers:executing-plans` for inline execution. Track every checkbox and verify each task before moving on.
 
-**Goal:** 将 Iris AI harness 收敛为 Intent Router -> TaskPlan -> Task Policy -> Capability Gate -> Provider Layer -> Dispatch/Permission 的清晰架构；MCP 成为联网证据主路径，DuckDuckGo 是唯一原生托底，MiniMax 退回普通 LLM provider。
+**Goal:** 将 Iris AI harness 收敛为 Intent Router -> TaskPlan -> Task Policy -> Capability Gate -> Provider Layer -> Dispatch/Permission 的清晰架构；MCP 成为联网证据主路径，不内置 DDG 搜索引擎，LLM vendor 退回普通 LLM provider。
 
 **Architecture:** 渐进式重构，不推倒现有正确基础。先用行为测试锁住短答查证、显式研究、MCP->DDG provider 顺序、编辑区选区写入和会话隔离，再分层调整路由、broker、权限、UI 和文档。Legacy scene 只保留兼容，不再作为核心策略输入。
 
@@ -16,7 +16,7 @@
 - [ ] 不新建 worktree，除非用户单独批准。
 - [ ] 不新增依赖。
 - [ ] 不删除 MCP runtime / registry / host runtime / broker 基础。
-- [ ] 不把 MiniMax 作为 web evidence backend。
+- [ ] 不把 LLM vendor 作为 web evidence backend。
 - [ ] 不把任意 MCP tools 自动暴露给 LLM。
 - [ ] 不用 MCP 替代 native vault 文件写入。
 - [ ] 不破坏 session、trace、pending confirmation、resume、cancel 生命周期。
@@ -54,12 +54,12 @@
 
 - Modify: `src-tauri/src/ai_runtime/web_evidence_broker.rs`
   - search candidates 改为 enabled MCP providers -> DDG。
-  - 删除 MiniMax candidate 构造。
+  - 删除 LLM vendor candidate 构造。
   - 保留 MCP fetch + native fetch 合并能力。
 - Modify: `src-tauri/src/llm/search_web.rs`
-  - 保留 DDG/native 搜索；MiniMax search adapter 不再被 broker 调用。
+  - 保留 DDG/native 搜索；LLM vendor search adapter 不再被 broker 调用。
 - Modify: `src-tauri/src/commands/ai_commands.rs`
-  - diagnostics 和 summary 不再称 MiniMax 为联网后端。
+  - diagnostics 和 summary 不再称 LLM vendor 为联网后端。
 - Modify: `src-tauri/src/ai_runtime/mcp_runtime_registry.rs`
   - 保留 transport/mapping/credential refs 配置闭环。
 - Modify: `src-tauri/src/ai_runtime/mcp_host_runtime.rs`
@@ -68,8 +68,8 @@
 ### UI / Editor
 
 - Modify: `src/components/settings/ManagementCenterPanel.tsx`
-  - 联网总览显示 MCP providers + DuckDuckGo fallback。
-  - 不渲染 MiniMax web backend 配置区。
+  - 联网总览显示 MCP providers + MCP provider。
+  - 不渲染 LLM vendor web backend 配置区。
 - Modify: `src/components/ai/skills/McpProfilesPanel.tsx`
   - 文案改为 MCP provider 优先、DDG 原生托底。
   - 顶部不重复渲染 preset 卡片。
@@ -416,7 +416,7 @@ Expected: fresh fact test passes; explicit research still returns `research`; se
 
 ---
 
-## Task 4: Remove MiniMax From Broker Candidate Path
+## Task 4: Remove LLM vendor From Broker Candidate Path
 
 **Purpose:** 让联网证据链路符合 MCP -> DDG 目标态。
 
@@ -430,13 +430,13 @@ Expected: fresh fact test passes; explicit research still returns `research`; se
 In `tests/web-evidence-broker.test.ts`, add:
 
 ```ts
-it("does not use MiniMax as a web evidence backend", () => {
+it("does not use LLM vendor as a web evidence backend", () => {
   const broker = read("src-tauri/src/ai_runtime/web_evidence_broker.rs");
 
   expect(broker).toContain("SearchProviderCandidate::Mcp");
-  expect(broker).toContain("WebSearchEffectiveBackend::Duckduckgo");
-  expect(broker).not.toContain("WebSearchEffectiveBackend::Minimax,");
-  expect(broker).not.toContain("MINIMAX_CREDENTIAL_SERVICE");
+  expect(broker).toContain("WebSearchBackend::Provider");
+  expect(broker).not.toContain("WebSearchBackend::Provider,");
+  expect(broker).not.toContain("REMOVED_VENDOR_SEARCH_CREDENTIAL");
 });
 ```
 
@@ -450,7 +450,7 @@ fn search_provider_candidates_ignore_minimax_credentials() {
     let db = Database::open_in_memory().unwrap();
     crate::credentials::mark_api_key_configured(
         &db,
-        crate::credentials::MINIMAX_CREDENTIAL_SERVICE,
+        crate::credentials::REMOVED_VENDOR_SEARCH_CREDENTIAL,
     )
     .unwrap();
 
@@ -459,20 +459,20 @@ fn search_provider_candidates_ignore_minimax_credentials() {
     assert_eq!(
         candidates,
         vec![SearchProviderCandidate::Native(
-            WebSearchEffectiveBackend::Duckduckgo
+            WebSearchBackend::Provider
         )]
     );
 }
 ```
 
-Expected before implementation: FAIL because current code still pushes MiniMax when credential exists.
+Expected before implementation: FAIL because current code still pushes LLM vendor when credential exists.
 
 - [ ] **Step 3: Remove imports**
 
 Change:
 
 ```rust
-use crate::credentials::{self, MINIMAX_CREDENTIAL_SERVICE};
+use crate::credentials::{self, REMOVED_VENDOR_SEARCH_CREDENTIAL};
 ```
 
 To remove both if unused:
@@ -481,16 +481,16 @@ To remove both if unused:
 
 ```
 
-No replacement import is needed if MiniMax credential lookup is gone.
+No replacement import is needed if LLM vendor credential lookup is gone.
 
-- [ ] **Step 4: Remove MiniMax candidate construction**
+- [ ] **Step 4: Remove LLM vendor candidate construction**
 
 Delete from `search_provider_candidates`:
 
 ```rust
-    if credentials::api_key_configured(db, MINIMAX_CREDENTIAL_SERVICE).unwrap_or(false) {
+    if credentials::api_key_configured(db, REMOVED_VENDOR_SEARCH_CREDENTIAL).unwrap_or(false) {
         candidates.push(SearchProviderCandidate::Native(
-            WebSearchEffectiveBackend::Minimax,
+            WebSearchBackend::Provider,
         ));
     }
 ```
@@ -499,7 +499,7 @@ Keep:
 
 ```rust
     candidates.push(SearchProviderCandidate::Native(
-        WebSearchEffectiveBackend::Duckduckgo,
+        WebSearchBackend::Provider,
     ));
     candidates.truncate(2);
 ```
@@ -513,13 +513,13 @@ cargo test --manifest-path src-tauri/Cargo.toml web_evidence_broker --lib
 npm run test -- tests/web-evidence-broker.test.ts
 ```
 
-Expected: provider candidates are MCP first and DDG second; MiniMax credential no longer changes web evidence order.
+Expected: provider candidates are MCP first and DDG second; LLM vendor credential no longer changes web evidence order.
 
 ---
 
 ## Task 5: Update Management Center Networking Semantics
 
-**Purpose:** UI 不再把 MiniMax 称为联网后端，MCP/DDG 状态可解释。
+**Purpose:** UI 不再把 LLM vendor 称为联网后端，MCP/DDG 状态可解释。
 
 **Files:**
 
@@ -533,28 +533,28 @@ In `tests/management-center-contract.test.ts`, update contracts so the web evide
 
 ```ts
 expect(center).toContain("McpProfilesPanel");
-expect(center).not.toContain("MinimaxSearchSection");
-expect(center).not.toContain("native-provider-card-minimax");
-expect(mcpPanel).toContain("DuckDuckGo");
-expect(mcpPanel).not.toContain("MiniMax 和 DuckDuckGo");
+expect(center).not.toContain("RemovedVendorSearchSection");
+expect(center).not.toContain("native-provider-card-removed-vendor");
+expect(mcpPanel).toContain("removed native search");
+expect(mcpPanel).not.toContain("removed native search engines");
 ```
 
-- [ ] **Step 2: Remove MiniMax search section from web detail**
+- [ ] **Step 2: Remove LLM vendor search section from web detail**
 
 In `ManagementCenterPanel.tsx`, remove:
 
 ```ts
-import { MinimaxSearchSection } from "./MinimaxSearchSection";
+import { RemovedVendorSearchSection } from "./RemovedVendorSearchSection";
 ```
 
-And remove `<MinimaxSearchSection open={open} />` from the `web-search` detail branch.
+And remove `<RemovedVendorSearchSection open={open} />` from the `web-search` detail branch.
 
 - [ ] **Step 3: Update overview label**
 
-Replace logic that maps `status?.searchApi.effectiveBackend === "minimax"` to MiniMax. Use fixed native fallback copy:
+Replace logic that maps `status?.searchProvider.providerId === "minimax"` to LLM vendor. Use fixed native fallback copy:
 
 ```ts
-const nativeSearchBackend = "DuckDuckGo / 原生托底";
+const nativeSearchBackend = "removed native search / 原生托底";
 ```
 
 Summary copy should read:
@@ -571,30 +571,30 @@ const label =
 In `McpProfilesPanel.tsx`, replace:
 
 ```tsx
-MiniMax 和 DuckDuckGo 仍作为原生候选兜底
+removed native search engines 仍作为原生候选兜底
 ```
 
 With:
 
 ```tsx
-DuckDuckGo 作为内置原生托底；MiniMax 仅作为普通模型服务，不参与联网证据调度。
+Iris 不内置 DDG 或 LLM vendor 搜索引擎；联网搜索只通过 MCP provider。
 ```
 
-- [ ] **Step 5: Remove deprecated MiniMax web-search component after references are gone**
+- [ ] **Step 5: Remove deprecated LLM vendor web-search component after references are gone**
 
 After Step 2 proves `ManagementCenterPanel.tsx` no longer imports or renders it, remove the orphan source file:
 
 ```text
-src/components/settings/MinimaxSearchSection.tsx
+src/components/settings/RemovedVendorSearchSection.tsx
 ```
 
 Then run:
 
 ```bash
-rg -n "MinimaxSearchSection|native-provider-card-minimax|MiniMax 优先" src tests
+rg -n "RemovedVendorSearchSection|native-provider-card-removed-vendor|LLM vendor 优先" src tests
 ```
 
-Expected: only negative tests mention `MinimaxSearchSection`; no source file presents MiniMax as a web evidence backend.
+Expected: only negative tests mention `RemovedVendorSearchSection`; no source file presents LLM vendor as a web evidence backend.
 
 - [ ] **Step 6: Run UI contract tests**
 
@@ -604,7 +604,7 @@ Run:
 npm run test -- tests/management-center-contract.test.ts
 ```
 
-Expected: no web evidence UI calls MiniMax backend; MCP provider UI still renders and DDG fallback is visible.
+Expected: no web evidence UI calls LLM vendor backend; MCP provider UI still renders and DDG fallback is visible.
 
 ---
 
@@ -1013,7 +1013,7 @@ In `src-tauri/tests/context_cache.rs` or the web cache test module, assert cache
 
 ```rust
 assert_ne!(key("vault-a", "mcp:anysearch", "cfg-1", "broker-v1"), key("vault-b", "mcp:anysearch", "cfg-1", "broker-v1"));
-assert_ne!(key("vault-a", "mcp:anysearch", "cfg-1", "broker-v1"), key("vault-a", "duckduckgo", "cfg-1", "broker-v1"));
+assert_ne!(key("vault-a", "mcp:anysearch", "cfg-1", "broker-v1"), key("vault-a", "removed-native-search", "cfg-1", "broker-v1"));
 assert_ne!(key("vault-a", "mcp:anysearch", "cfg-1", "broker-v1"), key("vault-a", "mcp:anysearch", "cfg-2", "broker-v1"));
 assert_ne!(key("vault-a", "mcp:anysearch", "cfg-1", "broker-v1"), key("vault-a", "mcp:anysearch", "cfg-1", "broker-v2"));
 ```
@@ -1072,7 +1072,7 @@ Expected: evidence remains useful to users; diagnostic/audit details stay out of
 
 ## Task 11: Documentation Sync
 
-**Purpose:** 文档必须解释真实目标态，不能继续传播 MiniMax 联网后端或 MCP 工具平台心智。
+**Purpose:** 文档必须解释真实目标态，不能继续传播 LLM vendor 联网后端或 MCP 工具平台心智。
 
 **Files:**
 
@@ -1095,8 +1095,8 @@ Intent Router -> TaskPlan -> Task Policy -> Capability Gate -> Provider Layer ->
 State:
 
 - MCP web providers are primary。
-- DuckDuckGo is native fallback。
-- MiniMax is a normal LLM provider, not web evidence backend。
+- DDG fallback has been removed。
+- LLM vendor is a normal LLM provider, not web evidence backend。
 - MCP tools are not auto-exposed to LLM。
 
 - [ ] **Step 3: Update UI design docs**
@@ -1106,7 +1106,7 @@ Document low-interference routing visibility, evidence detail boundaries, MCP di
 - [ ] **Step 4: Run docs search**
 
 ```bash
-rg -n "MiniMax.*联网后端|MCP > MiniMax|SearchProviderCandidate::Minimax|智能场景路由|MCP tools.*自动" ROADMAP.md ARCHITECTURE.md docs src tests
+rg -n "LLM vendor.*联网后端|MCP > LLM vendor|SearchProviderCandidate::RemovedVendor|智能场景路由|MCP tools.*自动" ROADMAP.md ARCHITECTURE.md docs src tests
 ```
 
 Expected: remaining hits are historical/superseded docs, negative tests, or explicit removal notes.
@@ -1147,7 +1147,7 @@ Expected: all pass.
 Run:
 
 ```bash
-rg -n "SearchProviderCandidate::Minimax|FetchProviderCandidate::Minimax|MCP > MiniMax|MiniMax.*web evidence|legacyScene.*primary|RESEARCH_KEYWORDS|mcp_runtime_capability_call|secret\.use_named|process\.run_" src src-tauri tests docs ROADMAP.md ARCHITECTURE.md
+rg -n "SearchProviderCandidate::RemovedVendor|FetchProviderCandidate::RemovedVendor|MCP > LLM vendor|LLM vendor.*web evidence|legacyScene.*primary|RESEARCH_KEYWORDS|mcp_runtime_capability_call|secret\.use_named|process\.run_" src src-tauri tests docs ROADMAP.md ARCHITECTURE.md
 ```
 
 Expected: remaining hits are negative tests, historical/superseded docs, native internal implementation not model-visible, or explicit removal notes.

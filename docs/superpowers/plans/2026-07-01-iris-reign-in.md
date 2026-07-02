@@ -1,6 +1,6 @@
 # Iris AI Reign-In Implementation Plan
 
-> **状态：已被取代（superseded）**。本计划已被 [`2026-07-01-iris-ai-harness-architecture.md`](./2026-07-01-iris-ai-harness-architecture.md) 取代，对应 spec [`2026-07-01-iris-reign-in-design.md`](../specs/2026-07-01-iris-reign-in-design.md) 已标注 superseded。下方内容仅保留作为历史与上下文，请勿据此规划新工作；联网证据目标态以新计划为准（MCP -> DDG，MiniMax 退回普通 LLM provider）。
+> **状态：已被取代（superseded）**。本计划已被 [`2026-07-01-iris-ai-harness-architecture.md`](./2026-07-01-iris-ai-harness-architecture.md) 取代，对应 spec [`2026-07-01-iris-reign-in-design.md`](../specs/2026-07-01-iris-reign-in-design.md) 已标注 superseded。下方内容仅保留作为历史与上下文，请勿据此规划新工作；联网证据目标态以新计划为准（MCP -> DDG，LLM vendor 退回普通 LLM provider）。
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
@@ -82,7 +82,7 @@ Audit/cache never store full query, full URL, full page text, note content, or s
 ### Frontend
 
 - Modify: `src/components/ai/SkillsPanel.tsx`, `src/components/ai/skills/SkillCard.tsx`, `src/components/ai/skills/SkillStatusBadges.tsx` - remove external install/edit/runtime/MCP UI; show prompt-only skill confirmation and scope.
-- Modify: `src/components/settings/ManagementCenterPanel.tsx`, `src/components/settings/MinimaxSearchSection.tsx`, `src/components/ai/skills/McpProfilesPanel.tsx`, `src/components/ai/skills/McpProfileCard.tsx` - present `AI -> 联网与证据` as provider configuration/diagnostics inside existing management center components; do not create a new evidence page.
+- Modify: `src/components/settings/ManagementCenterPanel.tsx`, `src/components/settings/RemovedVendorSearchSection.tsx`, `src/components/ai/skills/McpProfilesPanel.tsx`, `src/components/ai/skills/McpProfileCard.tsx` - present `AI -> 联网与证据` as provider configuration/diagnostics inside existing management center components; do not create a new evidence page.
 - Modify: `src/components/ai/EvidenceDetailArtifact.tsx`, `src-tauri/src/ai_runtime/session_evidence.rs`, `src/types/ipc.ts` - evidence detail temporary tab shows only evidence, excerpt, citation and conflict; no provider process流水.
 - Modify: `src/components/ai/ToolConfirmDialog.tsx`, `src/lib/tool-display-names.ts`, `src/lib/assistant-routing.ts`, `src/lib/assistant-taskplan.ts`, `src/lib/skill-install-notice.ts` - delete old tool/SkillHub UI paths.
 
@@ -383,7 +383,7 @@ fn audit_summary_hashes_query_and_url() {
 
 - [x] **Step 2: Implement provider planning and dispatch**
 
-Provider list is native MiniMax/DDG plus enabled MCP providers with explicit mappings. Choose top-2 by fixed priority `MCP > MiniMax > DDG`, run concurrently, merge successful results, and record failures as diagnostics only.
+Provider list is native LLM vendor/DDG plus enabled MCP providers with explicit mappings. Choose top-2 by fixed priority `MCP > LLM vendor > DDG`, run concurrently, merge successful results, and record failures as diagnostics only.
 
 - [x] **Step 3: Implement fetch and URL deep read**
 
@@ -533,7 +533,7 @@ Current evidence: `tests/evidence-detail-artifact.test.tsx` covers web evidence 
 - Modify: `src/types/ipc.ts`
 - Modify: `src/types/ai.ts`
 - Modify: `src/components/settings/ManagementCenterPanel.tsx`
-- Modify: `src/components/settings/MinimaxSearchSection.tsx`
+- Modify: `src/components/settings/RemovedVendorSearchSection.tsx`
 - Modify: `src/components/ai/skills/McpProfilesPanel.tsx`
 - Modify: `src/components/ai/skills/McpProfileCard.tsx`
 - Modify: `src/components/ai/SkillsPanel.tsx`

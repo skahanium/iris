@@ -8,6 +8,7 @@ import {
   type SetStateAction,
 } from "react";
 
+import { useToast } from "@/components/ui/use-toast";
 import {
   parseMentionTokens,
   stripMentionTokensForDisplay,
@@ -148,6 +149,7 @@ export function useAssistantConversation({
   const [sessionTokenUsage, setSessionTokenUsage] = useState<TokenUsage | null>(
     null,
   );
+  const toast = useToast();
   const messagesRef = useRef(messages);
   messagesRef.current = messages;
   const sessionIdRef = useRef(sessionId);
@@ -265,13 +267,14 @@ export function useAssistantConversation({
     if (result.content) {
       try {
         await navigator.clipboard.writeText(result.content);
+        toast("已复制选中消息", { tone: "success" });
         warnMissingCitations(result.missing, setActivityHint);
       } catch {
-        /* ignore */
+        toast("复制失败", { tone: "error" });
       }
       bubbleSelection.clear();
     }
-  }, [bubbleSelection, setActivityHint]);
+  }, [bubbleSelection, setActivityHint, toast]);
 
   const handleExportSelected = useCallback(() => {
     const lines = selectedMessages(

@@ -21,6 +21,10 @@ describe("startup font loading contract", () => {
     expect(html).toContain('as="font"');
     expect(html).toContain("/src/assets/fonts/inter-latin-400-normal.woff2");
     expect(html).toContain("/src/assets/fonts/inter-latin-600-normal.woff2");
+    expect(html).toContain("/src/assets/fonts/inter-latin-700-normal.woff2");
+    expect(html).toContain(
+      "/src/assets/fonts/jetbrains-mono-latin-400-normal.woff2",
+    );
     expect(html).not.toContain("Noto+Sans+SC");
     expect(html).not.toContain("Noto+Serif+SC");
   });

@@ -1,8 +1,5 @@
 /** 系统凭据 ID，与 Rust credentials/keyring 保持一致。 */
 
-/** MiniMax Token Plan，与 Rust MINIMAX_CREDENTIAL_SERVICE 保持一致。 */
-export const MINIMAX_CREDENTIAL_SERVICE = "iris.minimax";
-
 export function llmCredentialService(provider: string): string {
   return `iris.llm.${provider}`;
 }

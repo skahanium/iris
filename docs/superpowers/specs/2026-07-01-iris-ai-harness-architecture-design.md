@@ -6,7 +6,7 @@
 
 ## 1. 背景与目标
 
-Iris 现在的 AI harness 不是缺少能力，而是概念层叠过多：旧 scene、前端 TaskPlan、Rust AgentIntent、ToolPolicy、MCP runtime、WebEvidenceBroker、写入确认和研究 artifact 都在发挥作用，但边界没有完全收敛。这导致两个用户可见问题：简单问题被误判成“综合研究”，联网后端/Provider 状态不可解释；同时也带来长期架构风险：MCP 容易被误做成通用工具平台，MiniMax 这类历史捷径容易继续占据联网后端语义。
+Iris 现在的 AI harness 不是缺少能力，而是概念层叠过多：旧 scene、前端 TaskPlan、Rust AgentIntent、ToolPolicy、MCP runtime、WebEvidenceBroker、写入确认和研究 artifact 都在发挥作用，但边界没有完全收敛。这导致两个用户可见问题：简单问题被误判成“综合研究”，联网后端/Provider 状态不可解释；同时也带来长期架构风险：MCP 容易被误做成通用工具平台，vendor-specific shortcuts容易继续占据联网后端语义。
 
 本设计目标是把 Iris AI harness 收敛为一条可解释、可测试、可审计的链路：
 
@@ -32,29 +32,29 @@ User / Editor Context
 - ToolPolicy、AgentTaskPolicy、Permission preflight。
 - Native vault dispatch、写入确认、版本快照、回收站、索引刷新。
 - Session、trace、pending confirmation、resume、cancel 生命周期。
-- 已有 MiniMax 普通 LLM provider 配置能力。
+- 已有普通 vendor LLM provider 配置能力。
 
 真正要清理的是：
 
 - 用户可见的“智能场景路由”心智。
 - 字符串关键词把短答升级为研究的行为。
-- MiniMax 作为联网证据后端的历史捷径。
+- vendor-specific search shortcut 作为联网证据后端的历史捷径。
 - 任意 MCP tools 自动进入 LLM 工具面的平台化幻觉。
 - 依赖源码字符串的空转测试。
 
 ## 2. 核心决策
 
-### 2.1 MiniMax 退回普通 LLM provider
+### 2.1 Vendor LLM 退回普通 provider
 
-MiniMax 不再作为 web evidence backend。它只保留普通 LLM provider 身份，用于模型调用、模型路由和模型配置。
+普通 LLM provider 不再作为 web evidence backend，只用于模型调用、模型路由和模型配置。
 
 联网证据目标顺序固定为：
 
 ```text
-enabled MCP web providers -> DuckDuckGo native fallback
+enabled MCP web providers -> MCP-only search provider routing
 ```
 
-MiniMax 不应出现在：
+普通 LLM provider 不应出现在：
 
 - WebEvidenceBroker search/fetch candidate。
 - 管理中心“联网后端/联网证据”状态。
@@ -119,7 +119,7 @@ flowchart TD
   DISP --> WEB["Web Evidence Broker"]
   DISP --> APP["App State Tools"]
   WEB --> MCP["MCP Web Providers"]
-  WEB --> DDG["DuckDuckGo Fallback"]
+  WEB --> DDG["MCP Provider"]
   VAULT --> RES["Normalized Result"]
   WEB --> RES
   APP --> RES
@@ -244,7 +244,7 @@ Provider 顺序：
 
 ```text
 1. enabled MCP providers with explicit web.search / web.fetch mapping
-2. DuckDuckGo native fallback
+2. MCP-only search provider routing
 ```
 
 当 MCP 失败时继续 DDG；当 DDG 也失败时返回分类失败，不把 provider raw response 暴露给普通 UI。
@@ -372,7 +372,7 @@ ContextReference(selection)
 诊断 UI：
 
 - 管理中心显示 MCP providers、DDG fallback、实际 provider 顺序、最近失败原因、mapping 完整性。
-- MiniMax 只出现在模型 provider/LLM 设置中，不出现在联网后端。
+- 普通 LLM provider 只出现在模型设置中，不出现在联网后端。
 - TaskPlan/Policy/tool surface 可在开发/诊断视图查看。
 
 ## 13. 非目标
@@ -398,7 +398,7 @@ ContextReference(selection)
 - “最新的刑法是哪一年修订的？”联网开启时短答查证，不生成研究综述。
 - 同一问题联网关闭时仍短答，不追问是否联网。
 - 明确“研究综述/多来源对比/系统考察”才进入 research。
-- MiniMax 不再作为 web evidence backend。
+- 普通 LLM provider 不再作为 web evidence backend。
 - MCP provider 可证明实际参与 search/fetch。
 - DDG 是唯一 native fallback。
 - AnySearch 等 MCP 预设配置可保存、诊断、测试连接。

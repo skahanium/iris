@@ -276,7 +276,7 @@ pub(super) fn tools() -> Vec<ToolCatalogEntry> {
             input_schema: serde_json::json!({
                 "type": "object",
                 "properties": {
-                    "service": {"type": "string", "description": "仅允许 iris.llm.* 或 iris.minimax"}
+                    "service": {"type": "string", "description": "仅允许 iris.llm.* 或 iris.mcp.*"}
                 },
                 "required": ["service"]
             }),

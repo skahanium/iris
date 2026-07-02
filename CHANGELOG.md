@@ -85,8 +85,8 @@
 
 **联网搜索**
 
-- MiniMax Token Plan `coding_plan/search`（主通道）
-- DuckDuckGo HTML 抓取降级
+- MCP 搜索提供方（主通道）
+- MCP 搜索提供方配置与诊断
 - AI 输入关联网开关，发送前自动注入网页摘要
 - 搜索结果 30 分钟 LRU 缓存
 

@@ -7,14 +7,14 @@
 
 ## 摘要
 
-Iris 需要把联网搜索、网页抓取、MCP 工具生态、缓存、安全、引用和 AI 会话生命周期作为一个整体系统设计，而不是继续把 `search_web`、`fetch_web_page`、MiniMax Token Plan、DuckDuckGo fallback 和后续 MCP provider 分散在不同 workflow 里。
+Iris 需要把联网搜索、网页抓取、MCP 工具生态、缓存、安全、引用和 AI 会话生命周期作为一个整体系统设计，而不是继续把 `search_web`、`fetch_web_page`、removed vendor search、removed native search fallback 和后续 MCP provider 分散在不同 workflow 里。
 
 本设计同时建设两套基础设施：
 
 - `McpHostRuntime`：可靠、安全、可审计的 MCP 客户端和运行时，用来接入 DDG、Brave、Jina、Firecrawl、SearXNG、Tavily、Exa 等搜索/抓取 MCP server。
 - `WebEvidenceBroker`：Iris 内部唯一的网络搜索、抓取、缓存、证据注入、引用和审计能力层。
 
-Agent 不直接调用 MiniMax、DDG、Jina、Firecrawl 或任意 MCP tool。Agent 只向 `WebEvidenceBroker` 提交任务意图、查询、预算、引用需求和必要约束；broker 再选择 native provider、MCP provider、用户自配 provider 或自托管 provider 执行。
+Agent 不直接调用 LLM vendor、DDG、Jina、Firecrawl 或任意 MCP tool。Agent 只向 `WebEvidenceBroker` 提交任务意图、查询、预算、引用需求和必要约束；broker 再选择 native provider、MCP provider、用户自配 provider 或自托管 provider 执行。
 
 底部栏联网开关是所有普通网络证据能力的总闸。联网关闭时，native provider、MCP 网络工具、模型厂商 web search、网页抓取、网页下载和渲染抓取都不能出站。
 
@@ -22,7 +22,7 @@ Agent 不直接调用 MiniMax、DDG、Jina、Firecrawl 或任意 MCP tool。Agen
 
 - 让 Iris 具备开箱即用的免费/低成本联网搜索兜底能力。
 - 允许用户接入强力付费第三方搜索/抓取服务，但不要求用户必须配置 key 才能使用基础联网能力。
-- 把 AnySearch Free、Jina、DDG、MiniMax Token Plan 等低成本路径纳入统一 provider 池。
+- 把 AnySearch Free、Jina、DDG、removed vendor search 等低成本路径纳入统一 provider 池。
 - 把 DDG MCP、Brave MCP、Jina MCP、Firecrawl MCP、SearXNG MCP、Tavily MCP、Exa MCP 等生态接入能力作为本阶段地基，而不是远期附加项。
 - 让所有 provider 输出统一的结构化搜索结果和证据项，废弃“中文文本块再反解析”的旧链路。
 - 把网络缓存和 AI 会话、context cache、packet cache、conversation memory、笔记索引彻底隔离。
@@ -42,8 +42,8 @@ Agent 不直接调用 MiniMax、DDG、Jina、Firecrawl 或任意 MCP tool。Agen
 
 当前 Iris 的联网能力存在几类结构性问题：
 
-- MiniMax Token Plan web search 在语义上过于接近主搜索能力，而不是普通 provider。
-- DuckDuckGo fallback 主要依赖 Instant Answer 或 HTML 解析，稳定性和覆盖范围有限。
+- removed vendor search web search 在语义上过于接近主搜索能力，而不是普通 provider。
+- removed native search fallback 主要依赖 Instant Answer 或 HTML 解析，稳定性和覆盖范围有限。
 - `search_web` 返回人类可读中文文本块，`evidence_mixer` 再按字符串反解析，结构脆弱。
 - `fetch_web_page`、`readability_fetch`、`rendered_fetch`、`web_fetch_batch` 等工具语义分散。
 - workflow 内存在直接调用搜索的路径，agent 工具路径、写作/引用/文档 workflow 路径和旧 LLM prompt-prefix 路径没有统一生命周期。
@@ -231,9 +231,9 @@ Native providers：
 
 - AnySearch Free
 - Jina Search / Reader HTTP
-- DuckDuckGo Instant Answer
-- DuckDuckGo HTML 或 Lite fallback
-- MiniMax Token Plan web search
+- removed native search Instant Answer
+- removed native search HTML 或 Lite fallback
+- removed vendor search web search
 - local static HTTPS fetch
 - vertical open APIs
 
@@ -277,17 +277,17 @@ Jina Search / Reader：
 - 适合把开放网页转为 LLM 友好文本。
 - 受速率限制和地区可用性影响。
 
-DuckDuckGo：
+removed native search：
 
 - Instant Answer 用于快速事实。
 - HTML/Lite fallback 用于更宽泛搜索。
 - 低稳定性承诺。
 
-MiniMax Token Plan：
+removed vendor search：
 
 - 模型厂商附带的低成本搜索。
 - 普通 provider，不再是架构中心。
-- 如果用户已配置 MiniMax，可作为低成本补充。
+- 如果用户已配置 LLM vendor，可作为低成本补充。
 
 Static HTTPS fetch：
 
@@ -762,7 +762,7 @@ AI 消息：
 Management Center：
 
 - 免费兜底 provider。
-- AnySearch/Jina/DDG/MiniMax 健康状态。
+- AnySearch/Jina/DDG/LLM vendor 健康状态。
 - MCP server 注册表。
 - curated MCP 推荐。
 - 付费 provider 配置。
@@ -788,7 +788,7 @@ Management Center：
 
 - legacy tools 暂时保留为兼容 wrapper。
 - wrapper 内部调用 broker。
-- MiniMax-specific search cache 变为 provider-specific cache。
+- LLM vendor-specific search cache 变为 provider-specific cache。
 - 旧 `search_cache.body` 文本格式不再用于新的 structured evidence。
 - web page cache 增加 provider/config/vault/broker key 隔离。
 - direct prompt prefix injection 改为 evidence packet injection。
@@ -824,7 +824,7 @@ Management Center：
    - AnySearch Free
    - Jina HTTP
    - DDG
-   - MiniMax Token Plan
+   - removed vendor search
    - static fetch
 
 5. MCP provider bridge：
@@ -878,7 +878,7 @@ Management Center：
 - provider failure 会触发 fallback。
 - provider health 会影响排序。
 - duplicate URLs 会被去重。
-- 旧 MiniMax-specific path 不再硬编码。
+- 旧 LLM vendor-specific path 不再硬编码。
 
 ### Cache
 

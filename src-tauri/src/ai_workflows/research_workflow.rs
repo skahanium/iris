@@ -1267,7 +1267,7 @@ mod tests {
             extraction_method: "search_snippet".into(),
             trust_level: "external_untrusted".into(),
             retrieval_reason: "web.search".into(),
-            search_backend: crate::ai_runtime::WebSearchBackend::Duckduckgo,
+            search_backend: crate::ai_runtime::WebSearchBackend::Provider,
             source_rank: crate::ai_runtime::WebSourceRank::Unknown,
             freshness_label: None,
             failure_reason: None,

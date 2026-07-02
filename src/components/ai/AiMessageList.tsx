@@ -6,6 +6,7 @@ import { Check, Copy, RotateCcw } from "lucide-react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { AiMessage } from "@/components/ui/ai-message";
 import { AiMessageBubble } from "@/components/ai/AiMessageBubble";
+import { useToast } from "@/components/ui/use-toast";
 import type { MentionToken } from "@/lib/ai-context-scope";
 import {
   citationRecordsFromContextPackets,
@@ -165,8 +166,7 @@ export const AiMessageList = memo(function AiMessageList({
   const [scrollFollow, setScrollFollow] = useState<"following" | "detached">(
     "following",
   );
-  const [copyStatus, setCopyStatus] = useState<string | null>(null);
-  const copyStatusTimerRef = useRef<number | null>(null);
+  const toast = useToast();
   const rows = useMemo<MessageRow[]>(() => {
     if (messages.length === 0) return [{ type: "empty" }];
     return [
@@ -283,10 +283,6 @@ export const AiMessageList = memo(function AiMessageList({
         window.cancelAnimationFrame(measureFrameRef.current);
         measureFrameRef.current = null;
       }
-      if (copyStatusTimerRef.current !== null) {
-        window.clearTimeout(copyStatusTimerRef.current);
-        copyStatusTimerRef.current = null;
-      }
       pendingMeasureNodes.clear();
     };
   }, []);
@@ -320,30 +316,25 @@ export const AiMessageList = memo(function AiMessageList({
     [onSelect],
   );
 
-  const handleCopyMessage = useCallback(async (message: ChatLine) => {
-    const ledger = citationRecordsFromContextPackets(message.evidencePackets);
-    const content =
-      message.role === "assistant"
-        ? replaceAiCitationsForDocument(message.content, ledger).markdown
-        : message.content;
-    try {
-      if (!navigator.clipboard?.writeText) {
-        throw new Error("Clipboard API is unavailable");
+  const handleCopyMessage = useCallback(
+    async (message: ChatLine) => {
+      const ledger = citationRecordsFromContextPackets(message.evidencePackets);
+      const content =
+        message.role === "assistant"
+          ? replaceAiCitationsForDocument(message.content, ledger).markdown
+          : message.content;
+      try {
+        if (!navigator.clipboard?.writeText) {
+          throw new Error("Clipboard API is unavailable");
+        }
+        await navigator.clipboard.writeText(content);
+        toast("已复制回答", { tone: "success" });
+      } catch {
+        toast("复制失败", { tone: "error" });
       }
-      await navigator.clipboard.writeText(content);
-      setCopyStatus("已复制回答");
-    } catch {
-      setCopyStatus("复制失败");
-    }
-
-    if (copyStatusTimerRef.current !== null) {
-      window.clearTimeout(copyStatusTimerRef.current);
-    }
-    copyStatusTimerRef.current = window.setTimeout(() => {
-      setCopyStatus(null);
-      copyStatusTimerRef.current = null;
-    }, 1600);
-  }, []);
+    },
+    [toast],
+  );
 
   const renderRow = (row: MessageRow) => {
     if (row.type === "empty") {
@@ -438,15 +429,6 @@ export const AiMessageList = memo(function AiMessageList({
 
   return (
     <>
-      {copyStatus ? (
-        <div
-          className="px-3 pt-2 text-[11px] text-muted-foreground"
-          aria-live="polite"
-          role="status"
-        >
-          {copyStatus}
-        </div>
-      ) : null}
       <ScrollArea className="min-h-0 flex-1" viewportRef={viewportRef}>
         <div
           className="relative py-3"

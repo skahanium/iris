@@ -7,13 +7,11 @@
  * @deprecated 新功能请扩展 `editor-pm-serialize`；本模块保留给 contract 套件。
  * @module editor-export
  */
-import TurndownService from "turndown";
-import * as turndownPluginGfm from "turndown-plugin-gfm";
-
 import {
   calloutMarkdownFromLines,
   detectCalloutTypeFromElement,
 } from "@/lib/callout-markdown";
+import { TurndownService, turndownPluginGfm } from "@/lib/markdown-vendor";
 import {
   editorBodyHtmlToMarkdown,
   normalizeTurndownEscapes,

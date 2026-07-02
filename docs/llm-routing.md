@@ -52,8 +52,8 @@
 - 两枚 **8px 圆点 + 简短文案**（LLM · 联网）并排成组，未就绪统一灰（`--status-inactive`），就绪分别为 emerald / sky token。
 - **LLM**：emerald 就绪 / red 检测失败 / 灰 未配置或缺 Key。
 - **联网**：底栏 sky 圆点开/关；开启后 **仅** AI 场景条底边一条质感蓝线；所有网页证据统一经 `WebEvidenceBroker` 收集为证据包。
-- **主通道**：Broker 先选择已启用且显式映射 `web.search` / `web.fetch` 的 MCP provider；失败或缺失时使用 DuckDuckGo 原生托底。
-- **MiniMax**：只保留普通 LLM provider 身份，不再作为 web evidence backend，不再提供 `minimax_config_*` 联网配置 IPC。
+- **主通道**：Broker 只选择已启用且显式映射 `web.search` / `web.fetch` 的 MCP provider；缺失时联网搜索不可启用。
+- **模型供应商**：普通 LLM provider 不作为 web evidence backend，不提供厂商搜索配置 IPC。
 - **深读（正文）**：用户明确给出 HTTPS URL 时仍通过 `web_search` 语义进入 Broker，由 MCP `web.fetch` 与 native readability provider 受控抓取正文；不暴露独立抓取工具。
 - 对话模型不受检索通道影响，仍按能力槽路由。
 
@@ -61,8 +61,8 @@
 
 - `web_search` is the only assistant-facing network switch. Search, URL deep-read, and page fetch evidence all enter `WebEvidenceBroker`; explicit URLs are passed as broker URLs rather than through a separate fetch tool.
 - MCP providers are persisted only when explicitly configured as web evidence providers. Supported transport configs are `{"url":"https://...","allow_localhost_dev":false}` for HTTPS and `{"command":"...","args":[...]}` for stdio. Credential fields store OS credential service references only.
-- DuckDuckGo is the only native fallback surfaced for web evidence. MiniMax is not a web evidence provider and is not part of broker candidate ordering.
-- Broker candidate order is MCP mapping first, then DuckDuckGo fallback. Provider diagnostics expose mapping completeness and recent circuit state in Management Center.
+- Iris does not ship a native or vendor-specific search engine fallback for web evidence.
+- Broker candidate ordering is MCP-provider only. Provider diagnostics expose mapping completeness and recent circuit state in Management Center.
 - Ordinary evidence details show citation, title, safe URL/domain, retrieval reason, conflict markers, and excerpt. Provider ids, provider kind, raw result hashes, and extraction methods are audit/diagnostic metadata only.
 
 ## 本地检索加速

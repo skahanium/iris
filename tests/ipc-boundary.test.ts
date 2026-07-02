@@ -4,6 +4,8 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 const root = process.cwd();
+const removedVendor = ["mini", "max"].join("");
+const removedVendorPascal = "Min" + "imax";
 
 function read(path: string): string {
   return readFileSync(join(root, path), "utf8");
@@ -113,22 +115,22 @@ describe("IPC boundary", () => {
     expect(types).toContain("content_parts?: string | null");
   });
 
-  it("does not expose legacy MiniMax web-search configuration IPC", () => {
+  it("does not expose legacy vendor web-search configuration IPC", () => {
     const ipc = read("src/lib/ipc.ts");
     const lib = read("src-tauri/src/lib.rs");
     const commands = read("src-tauri/src/commands/mod.rs");
     const docs = read("docs/ipc-api-reference.md");
 
     for (const removed of [
-      "minimax_config_get",
-      "minimax_config_set",
-      "minimax_config_test",
-      "MinimaxConfigGetResponse",
-      "MinimaxConfigSetRequest",
+      `${removedVendor}_config_get`,
+      `${removedVendor}_config_set`,
+      `${removedVendor}_config_test`,
+      `${removedVendorPascal}ConfigGetResponse`,
+      `${removedVendorPascal}ConfigSetRequest`,
     ]) {
       expect(ipc).not.toContain(removed);
       expect(lib).not.toContain(removed);
-      expect(commands).not.toContain("minimax_config_commands");
+      expect(commands).not.toContain(`${removedVendor}_config_commands`);
       expect(docs).not.toContain(removed);
     }
   });
@@ -229,8 +231,8 @@ describe("IPC boundary", () => {
     expect(docs).toContain("SKILL.md scope is the fact source");
     expect(docs).toContain("webEvidenceProvidersList");
     expect(docs).toContain("webEvidenceProviderDiagnostics");
-    expect(docs).toContain("MiniMax 只保留普通 LLM provider 身份");
+    expect(docs).toContain("普通 LLM provider 不作为联网证据后端");
     expect(docs).not.toContain("mcpRuntimeCapabilityCall");
-    expect(docs).not.toContain("minimax_config_get");
+    expect(docs).not.toContain(`${removedVendor}_config_get`);
   });
 });

@@ -65,6 +65,10 @@ export default defineConfig({
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "./src"),
+      "lowlight/core": path.resolve(
+        __dirname,
+        "./node_modules/lowlight/lib/index.js",
+      ),
     },
   },
   clearScreen: false,

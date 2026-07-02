@@ -1,7 +1,6 @@
 import { Extension } from "@tiptap/core";
 import { ReactRenderer } from "@tiptap/react";
 import Suggestion, { type SuggestionProps } from "@tiptap/suggestion";
-import tippy, { type Instance as TippyInstance } from "tippy.js";
 
 import { buildSlashItemsFromContext } from "@/lib/slash-commands";
 import { editorHasActiveAiStream } from "@/lib/editor-ai-stream";
@@ -11,6 +10,18 @@ import {
   type SlashCommandListRef,
   type SlashItem,
 } from "../SlashCommandList";
+
+interface SuggestionPopup {
+  destroy: () => void;
+  hide: () => void;
+  setProps: (props: { getReferenceClientRect: () => DOMRect }) => void;
+}
+
+async function loadTippy() {
+  void import("tippy.js/dist/tippy.css").catch(() => undefined);
+  const { default: tippy } = await import("tippy.js");
+  return tippy;
+}
 
 export interface SlashCommandOptions {
   onCommand?: (command: string) => void;
@@ -60,7 +71,7 @@ export const SlashCommandExtension = Extension.create<SlashCommandOptions>({
         },
         render: () => {
           let component: ReactRenderer<SlashCommandListRef> | null = null;
-          let popup: TippyInstance[] | null = null;
+          let popup: SuggestionPopup[] | null = null;
 
           return {
             onStart: (props: SuggestionProps<SlashItem>) => {
@@ -77,18 +88,21 @@ export const SlashCommandExtension = Extension.create<SlashCommandOptions>({
 
               if (!props.clientRect) return;
 
-              popup = tippy("body", {
-                getReferenceClientRect: props.clientRect as () => DOMRect,
-                appendTo: () => document.body,
-                content: component.element,
-                showOnCreate: true,
-                interactive: true,
-                trigger: "manual",
-                theme: "iris-suggestion",
-                arrow: false,
-                maxWidth: "none",
-                offset: [0, 6],
-                placement: "bottom-start",
+              void loadTippy().then((tippy) => {
+                if (!component || !props.clientRect) return;
+                popup = tippy("body", {
+                  getReferenceClientRect: props.clientRect as () => DOMRect,
+                  appendTo: () => document.body,
+                  content: component.element,
+                  showOnCreate: true,
+                  interactive: true,
+                  trigger: "manual",
+                  theme: "iris-suggestion",
+                  arrow: false,
+                  maxWidth: "none",
+                  offset: [0, 6],
+                  placement: "bottom-start",
+                });
               });
             },
             onUpdate(props: SuggestionProps<SlashItem>) {

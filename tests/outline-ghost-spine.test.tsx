@@ -137,9 +137,11 @@ describe("outline ghost spine", () => {
     const outline = read("src/components/editor/EditorOutline.tsx");
     const css = read("src/styles/globals.css");
 
-    expect(outline).not.toContain("useVirtualizer");
+    expect(outline).toContain("useVirtualizer");
+    expect(outline).toContain("outlineVirtualizer.getVirtualItems()");
+    expect(outline).toContain("renderedOutlineItems");
+    expect(outline).toContain("outlineTotalSize");
     expect(outline).not.toContain("VIRTUAL_OUTLINE_THRESHOLD");
-    expect(outline).not.toContain("getTotalSize()");
     expect(css).not.toContain("--outline-tick-top");
     expect(css).not.toContain("top: var(--outline-tick-top)");
   });

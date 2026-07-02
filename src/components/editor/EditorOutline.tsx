@@ -105,6 +105,19 @@ export const EditorOutline = memo(function EditorOutline({
     overscan: 12,
   });
   const virtualItems = outlineVirtualizer.getVirtualItems();
+  const renderedOutlineItems =
+    virtualItems.length > 0
+      ? virtualItems
+      : entries.map((entry, index) => ({
+          index,
+          key: `${entry.pos}-${entry.text}`,
+          size: OUTLINE_ROW_ESTIMATE_PX,
+          start: index * OUTLINE_ROW_ESTIMATE_PX,
+        }));
+  const outlineTotalSize =
+    virtualItems.length > 0
+      ? outlineVirtualizer.getTotalSize()
+      : entries.length * OUTLINE_ROW_ESTIMATE_PX;
 
   useEffect(() => {
     if (!editor) return;
@@ -173,7 +186,7 @@ export const EditorOutline = memo(function EditorOutline({
     bar.style.opacity = "1";
     bar.style.transform = `translateY(${top}px)`;
     bar.style.height = `${height}px`;
-  }, [activeIndex, entries.length, virtualItems]);
+  }, [activeIndex, entries.length, renderedOutlineItems]);
 
   const jumpTo = useCallback(
     (pos: number) => {
@@ -333,7 +346,7 @@ export const EditorOutline = memo(function EditorOutline({
 
   useLayoutEffect(() => {
     updatePreviewTop(previewIndex ?? null);
-  }, [entries.length, previewIndex, updatePreviewTop, virtualItems]);
+  }, [entries.length, previewIndex, renderedOutlineItems, updatePreviewTop]);
 
   if (zen) return null;
 
@@ -359,9 +372,9 @@ export const EditorOutline = memo(function EditorOutline({
         <div ref={barRef} className="outline-ghost-bar" aria-hidden />
         <div
           className="outline-ghost-items relative w-full"
-          style={{ height: `${outlineVirtualizer.getTotalSize()}px` }}
+          style={{ height: `${outlineTotalSize}px` }}
         >
-          {virtualItems.map((virtualItem) => {
+          {renderedOutlineItems.map((virtualItem) => {
             const entry = entries[virtualItem.index];
             if (!entry) return null;
             return renderItem(entry, virtualItem.index, virtualItem.start);

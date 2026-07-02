@@ -88,7 +88,7 @@ mod tests {
                 extraction_method: "none".into(),
                 trust_level: "external_untrusted".into(),
                 retrieval_reason: "search".into(),
-                search_backend: WebSearchBackend::Duckduckgo,
+                search_backend: WebSearchBackend::Provider,
                 source_rank: WebSourceRank::Unknown,
                 freshness_label: None,
                 failure_reason: Some(reason.into()),

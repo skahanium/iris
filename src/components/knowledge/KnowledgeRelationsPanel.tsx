@@ -18,6 +18,27 @@ interface KnowledgeRelationsPanelProps {
 
 type KnowledgeRelationsTab = "backlinks" | "tags";
 
+function KnowledgeRelationsLoadingSkeleton() {
+  return (
+    <div
+      className="space-y-2 p-3"
+      aria-live="polite"
+      role="status"
+      aria-label="知识关联加载中"
+    >
+      {Array.from({ length: 5 }).map((_, index) => (
+        <div
+          key={index}
+          className="rounded-md border border-border/50 bg-surface-inset/35 p-2"
+        >
+          <div className="h-3 w-2/5 rounded bg-muted/55" />
+          <div className="mt-2 h-2.5 w-3/4 rounded bg-muted/35" />
+        </div>
+      ))}
+    </div>
+  );
+}
+
 export function KnowledgeRelationsPanel({
   open,
   onClose,
@@ -168,7 +189,7 @@ export function KnowledgeRelationsPanel({
               ))
             )
           ) : tagsLoading ? (
-            <p className="p-3 text-xs text-muted-foreground">加载中...</p>
+            <KnowledgeRelationsLoadingSkeleton />
           ) : filteredTags.length === 0 ? (
             <p className="p-3 text-xs text-muted-foreground">无标签</p>
           ) : (

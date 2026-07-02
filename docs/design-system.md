@@ -56,7 +56,7 @@ Iris Rail Refresh adds semantic surface tokens for the complete interface system
 | **文档标题（扉页）** | `font-title` | 复用 `font-sans`，标题数字强制 lining nums |
 | **代码块**           | `font-mono`  | JetBrains Mono                             |
 
-实现见 `src/styles/markdown-prose.css` 与 `index.html` Google Fonts 链接。
+实现见 `src/styles/markdown-prose.css`、`src/styles/globals.css` 的本地 `@font-face`，以及 `index.html` 的自托管 woff2 preload。
 
 ### 间距与栏宽
 
@@ -126,7 +126,7 @@ Iris Rail Refresh adds semantic surface tokens for the complete interface system
 
 任务型浮层保持快速列表体验：Quick Open、全库搜索、知识关联、版本追踪与知识图谱仍按各自工作流选择尺寸。文件树和回收站归入管理中心 `笔记` 分区，并可在同窗详情页内嵌完整操作面板；文件树保留 `Ctrl+Shift+E` / `Cmd+Shift+E` 直达。知识图谱由底栏直达。涉密能力不出现在管理中心或普通主界面，只保留隐藏特殊直达。
 
-AI 分区的联网与证据配置必须低干扰、可解释：管理中心展示 MCP 联网证据提供方、DuckDuckGo 原生托底、mapping 完整性、凭据引用状态和最近失败分类；MiniMax 只出现在模型供应商/LLM 设置语境中，不作为联网后端展示。MCP 预设只保留卡片内“快速预设”下拉这一个入口，“添加 MCP 提供方”进入草稿卡后由用户选择预设或自定义服务。
+AI 分区的联网与证据配置必须低干扰、可解释：管理中心展示 MCP 联网证据提供方、mapping 完整性、凭据引用状态和最近失败分类；Iris 不展示或内置原生/厂商搜索引擎托底。MCP 预设只保留卡片内“快速预设”下拉这一个入口，“添加 MCP 提供方”进入草稿卡后由用户选择预设或自定义服务。
 
 ---
 

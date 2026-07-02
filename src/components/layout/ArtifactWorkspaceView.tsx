@@ -17,6 +17,7 @@ import { DiffView } from "@/components/ai/PatchPreview";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { useToast } from "@/components/ui/use-toast";
 import { invokeErrorMessage } from "@/lib/credentials";
 import {
   organizeApply as defaultOrganizeApply,
@@ -293,6 +294,7 @@ function WritingChangeArtifactView({
 }: ArtifactWorkspaceViewProps) {
   const [patches, setPatches] = useState(() => patchPayload(tab.payload));
   const [error, setError] = useState<string | null>(null);
+  const toast = useToast();
 
   const acceptPatch = useCallback(
     async (patch: PatchProposal) => {
@@ -319,13 +321,17 @@ function WritingChangeArtifactView({
     [getNoteContent, onPatchApplied],
   );
 
-  const copyPatch = useCallback(async (patch: PatchProposal) => {
-    try {
-      await navigator.clipboard.writeText(patch.replacement_text);
-    } catch {
-      /* ignore */
-    }
-  }, []);
+  const copyPatch = useCallback(
+    async (patch: PatchProposal) => {
+      try {
+        await navigator.clipboard.writeText(patch.replacement_text);
+        toast("已复制替换文本", { tone: "success" });
+      } catch {
+        toast("复制失败", { tone: "error" });
+      }
+    },
+    [toast],
+  );
 
   return (
     <div className="space-y-3">

@@ -13,6 +13,8 @@ vi.mock("@/lib/ipc", () => ({
 }));
 
 const mockFileLinkSummary = vi.mocked(fileLinkSummary);
+const removedDdg = ["duck", "duck", "go"].join("");
+const removedVendor = ["mini", "max"].join("");
 
 function read(path: string): string {
   try {
@@ -124,16 +126,16 @@ describe("status bar assistant chrome", () => {
     expect(token).not.toContain("本轮");
     expect(token).toContain('data-testid="status-bar-token-usage"');
   });
-  it("ConnectivityIndicators presents selected MCP provider state without DDG fallback", () => {
+  it("ConnectivityIndicators presents selected MCP provider state without native fallback", () => {
     const indicators = read("src/components/layout/ConnectivityIndicators.tsx");
 
     expect(indicators).toContain("webSearchStatusDetail");
     expect(indicators).toContain("webSearchAvailability");
-    expect(indicators).not.toContain("DuckDuckGo");
+    expect(indicators.toLowerCase()).not.toContain(removedDdg);
     expect(indicators).not.toContain("DDG");
     expect(indicators).not.toContain("托底");
-    expect(indicators).not.toContain('effectiveBackend === "minimax"');
-    expect(indicators).not.toContain('"MiniMax"');
+    expect(indicators.toLowerCase()).not.toContain("effectivebackend");
+    expect(indicators.toLowerCase()).not.toContain(removedVendor);
   });
 
   it("AiMessageList does not render tool call bubbles", () => {

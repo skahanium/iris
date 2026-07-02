@@ -1,4 +1,4 @@
-﻿> Superseded by [docs/superpowers/specs/2026-07-01-iris-ai-harness-architecture-design.md](../specs/2026-07-01-iris-ai-harness-architecture-design.md) and [docs/superpowers/plans/2026-07-01-iris-ai-harness-architecture.md](../plans/2026-07-01-iris-ai-harness-architecture.md) for the current AI harness target state. In particular, MiniMax is no longer a web evidence backend; MCP web providers are primary and DuckDuckGo is the native fallback.
+﻿> Superseded by [docs/superpowers/specs/2026-07-01-iris-ai-harness-architecture-design.md](../specs/2026-07-01-iris-ai-harness-architecture-design.md) and [docs/superpowers/plans/2026-07-01-iris-ai-harness-architecture.md](../plans/2026-07-01-iris-ai-harness-architecture.md) for the current AI harness target state. In particular, LLM vendor is no longer a web evidence backend; MCP web providers are primary and DDG fallback has been removed.
 
 # Iris Skills / MCP / 网络能力收口设计
 
@@ -77,7 +77,7 @@ Iris 在 v0.5.x 的 AI 建设中，Skills 与 MCP 两条线几乎都参照通用
 
 - **Skills**：完全自产自销。Iris 内置 skill-creator，由对话生成 `SKILL.md` 草稿与 scope；用户确认全文与 scope 后启用。Skill 只是 prompt 级行为包，读写都受同一 scope gate 约束。
 - **MCP**：保留 transport 调用能力，删除管理平台模型；用户在管理中心配置的是"联网 Provider"，不是"给 AI 安装任意工具"。
-- **网络**：`WebEvidenceBroker` 是唯一联网语义层。MiniMax / DDG 是 native provider；MCP server 只有显式映射为 `web.search` / `web.fetch` 后才是 MCP provider。
+- **网络**：`WebEvidenceBroker` 是唯一联网语义层。LLM vendor / DDG 是 native provider；MCP server 只有显式映射为 `web.search` / `web.fetch` 后才是 MCP provider。
 
 ## 块 A — Skills 收口为自产 prompt-only
 
@@ -162,7 +162,7 @@ Iris 在 v0.5.x 的 AI 建设中，Skills 与 MCP 两条线几乎都参照通用
 ### B4 管理中心用户心智
 
 - 管理中心不再把 MCP 呈现为"装工具给 AI 用"。
-- `AI -> 联网与证据` 展示 MiniMax / DDG / MCP Provider、显式映射、启用状态、最近诊断。
+- `AI -> 联网与证据` 展示 LLM vendor / DDG / MCP Provider、显式映射、启用状态、最近诊断。
 - 原始 MCP tool 清单最多作为诊断材料，不作为普通入口。
 - Skills 与 MCP Provider 分属两个子页：`AI -> Skills` 与 `AI -> 联网与证据`。
 
@@ -198,8 +198,8 @@ Iris 在 v0.5.x 的 AI 建设中，Skills 与 MCP 两条线几乎都参照通用
 
 ### C4 Provider 调度
 
-- Provider 列表 = native（MiniMax, DDG）+ MCP（enabled 且显式映射 `web.search` / `web.fetch`）。
-- 默认优先级固定为 `MCP > MiniMax > DDG`。本 spec 不做 provider 排序 UI 或动态质量学习。
+- Provider 列表 = native（LLM vendor, DDG）+ MCP（enabled 且显式映射 `web.search` / `web.fetch`）。
+- 默认优先级固定为 `MCP > LLM vendor > DDG`。本 spec 不做 provider 排序 UI 或动态质量学习。
 - 每次选 top-2 provider 并发执行。
 - 并发不是竞速丢一路；除超时、失败、被 policy 拒绝外，两路结果都收集并合并。
 - 搜索结果按 canonical URL 去重；同 URL 多 provider 命中时保留来源 metadata。
@@ -229,7 +229,7 @@ Iris 在 v0.5.x 的 AI 建设中，Skills 与 MCP 两条线几乎都参照通用
 - canonical_url
 - conflict_group / conflict_note（如适用）
 
-全部外部内容都标为 `external_untrusted`。`web_evidence_items_to_packets` 不再硬编码 DuckDuckGo backend，必须携带真实 provider 信息。
+全部外部内容都标为 `external_untrusted`。`web_evidence_items_to_packets` 不再硬编码 provider backend，必须携带真实 provider 信息。
 
 不同 provider 或不同来源对同一事实给出不一致信息时，broker 不自动裁判。它只标记冲突，并让回答层带来源说明。
 
@@ -338,7 +338,7 @@ Iris 在 v0.5.x 的 AI 建设中，Skills 与 MCP 两条线几乎都参照通用
 - 同 URL 多来源命中保留 provider metadata。
 - 来源冲突被标记，并进入 AI 面板证据包 / 证据详情临时 tab。
 - 证据详情临时 tab 只展示证据与冲突，不展示 provider 调度、缓存、抓取、失败重试等过程流水。
-- `web_evidence_items_to_packets` 携带真实 provider，不硬编码 DuckDuckGo。
+- `web_evidence_items_to_packets` 携带真实 provider，不硬编码 removed native search。
 - cache 按 vault / provider / config / broker version 隔离。
 - 审计不存完整 query、URL、网页正文、笔记内容、凭据。
 - provider 诊断出现在管理中心，不污染普通证据 UI。

@@ -34,6 +34,15 @@ async function flushSuggestionRenderer() {
   await new Promise((resolve) => setTimeout(resolve, 0));
 }
 
+async function waitForTippyBox() {
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    const box = document.querySelector(".tippy-box");
+    if (box) return box;
+    await flushSuggestionRenderer();
+  }
+  return null;
+}
+
 function wikiSuggestionStates(editor: Editor) {
   return editor.state.plugins
     .filter((plugin) =>
@@ -52,7 +61,7 @@ describe("WikiLinkExtension suggestion triggers", () => {
       expect(wikiSuggestionStates(editor).some((state) => state.active)).toBe(
         true,
       );
-      expect(document.querySelector(".tippy-box")).not.toBeNull();
+      expect(await waitForTippyBox()).not.toBeNull();
     } finally {
       editor.destroy();
       document.body.innerHTML = "";
@@ -69,7 +78,7 @@ describe("WikiLinkExtension suggestion triggers", () => {
       expect(wikiSuggestionStates(editor).some((state) => state.active)).toBe(
         true,
       );
-      expect(document.querySelector(".tippy-box")).not.toBeNull();
+      expect(await waitForTippyBox()).not.toBeNull();
     } finally {
       editor.destroy();
       document.body.innerHTML = "";

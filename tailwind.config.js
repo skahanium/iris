@@ -1,5 +1,7 @@
 /** @type {import('tailwindcss').Config} */
 export default {
+  // Iris uses dark-by-default CSS variables; `.light` is the opt-in theme class.
+  // Avoid adding `dark:` utilities unless the theme strategy is changed.
   darkMode: ["class"],
   content: ["./index.html", "./src/**/*.{ts,tsx}"],
   theme: {
@@ -34,6 +36,17 @@ export default {
         destructive: {
           DEFAULT: "hsl(var(--destructive))",
           foreground: "hsl(var(--destructive-foreground))",
+        },
+        warning: "hsl(var(--warning))",
+        "classified-accent": "hsl(var(--classified-accent))",
+        status: {
+          "llm-ready": "hsl(var(--status-llm-ready))",
+          "llm-missing": "hsl(var(--status-llm-missing))",
+          "llm-error": "hsl(var(--status-llm-error))",
+          "search-api": "hsl(var(--status-search-api))",
+          "search-fallback": "hsl(var(--status-search-fallback))",
+          "web-search": "hsl(var(--status-web-search))",
+          inactive: "hsl(var(--status-inactive))",
         },
         overlay: {
           scrim: "hsl(var(--overlay-scrim))",
@@ -92,6 +105,7 @@ export default {
         md: "var(--radius-md)",
         lg: "var(--radius-lg)",
         xl: "var(--radius-xl)",
+        // Radius aliases intentionally cap oversized rounded utilities to Iris tokens.
         "2xl": "var(--radius-lg)",
         "3xl": "var(--radius-xl)",
       },

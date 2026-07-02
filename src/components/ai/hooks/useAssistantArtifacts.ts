@@ -5,6 +5,7 @@ import {
   type SetStateAction,
 } from "react";
 
+import { useToast } from "@/components/ui/use-toast";
 import { invokeErrorMessage } from "@/lib/credentials";
 import {
   organizeApply as defaultOrganizeApply,
@@ -81,6 +82,7 @@ export function useAssistantArtifacts({
   const [organizeSelection, setOrganizeSelection] = useState<Set<string>>(
     new Set(),
   );
+  const toast = useToast();
   const [researchResult, setResearchResult] =
     useState<ResearchFocusPayload | null>(null);
   const [researchState, setResearchState] = useState<ResearchState | null>(
@@ -145,13 +147,17 @@ export function useAssistantArtifacts({
     setWritingPatches((prev) => prev.filter((item) => item.id !== patch.id));
   }, []);
 
-  const handleCopyPatch = useCallback(async (patch: PatchProposal) => {
-    try {
-      await navigator.clipboard.writeText(patch.replacement_text);
-    } catch {
-      /* ignore clipboard failures */
-    }
-  }, []);
+  const handleCopyPatch = useCallback(
+    async (patch: PatchProposal) => {
+      try {
+        await navigator.clipboard.writeText(patch.replacement_text);
+        toast("已复制替换文本", { tone: "success" });
+      } catch {
+        toast("复制失败", { tone: "error" });
+      }
+    },
+    [toast],
+  );
 
   const handleClearOrganizeSelection = useCallback(() => {
     setOrganizeSelection(new Set());

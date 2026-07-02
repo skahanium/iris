@@ -304,7 +304,7 @@ const SENSITIVE_PATTERNS: &[(&str, &str)] = &[
     ("bearer\\s+[A-Za-z0-9_\\-]{20,}", "Bearer Token"),
     ("password\\s*[:=]", "Password"),
     ("sk-[A-Za-z0-9]{20,}", "OpenAI-style API Key"),
-    ("minimax.*key", "MiniMax Key"),
+    ("vendor.*key", "Vendor LLM Key"),
     (
         "-----BEGIN\\s+(RSA|DSA|EC|OPENSSH)\\s+PRIVATE\\s+KEY",
         "Private Key",

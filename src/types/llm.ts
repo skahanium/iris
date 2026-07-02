@@ -106,9 +106,9 @@ export interface ConnectivityStatus {
     scene: AiScene;
     message: string;
   };
-  searchApi: {
-    minimaxConfigured: boolean;
-    effectiveBackend: "duckduckgo";
+  searchProvider: {
+    configured: boolean;
+    providerId?: string | null;
   };
   usageLast?: {
     promptCacheHitTokens: number;

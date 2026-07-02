@@ -324,7 +324,7 @@ Content-Security-Policy:
   script-src 'self';
   style-src 'self' 'unsafe-inline';
   img-src 'self' data: https:;
-  connect-src 'self' https://api.openai.com https://api.anthropic.com https://api.minimaxi.com https://api.deepseek.com https://html.duckduckgo.com;
+  connect-src 'self' https://api.openai.com https://api.anthropic.com https://api.minimaxi.com https://api.deepseek.com;
   font-src 'self';
 ```
 
@@ -602,4 +602,4 @@ opt-level = 3; lto = true; codegen-units = 1; strip = true; panic = "abort"
 
 ### Web Evidence Provider Boundary
 
-MCP is a persisted Web Evidence Provider only when mapped to `web.search` and/or `web.fetch`. DuckDuckGo is the only native web evidence fallback surfaced in Management Center; MiniMax remains a normal LLM provider and is not a web evidence backend. Provider configuration stores transport JSON and OS credential references; raw secrets are rejected. Ordinary evidence detail DTOs omit provider process fields, while audit/diagnostics paths may retain provider id, provider kind, raw result hash, extraction method, mapping status, and circuit state.
+MCP is a persisted Web Evidence Provider only when mapped to `web.search` and/or `web.fetch`. Web search is MCP-provider only; Iris does not ship a native or vendor-specific search engine fallback. Provider configuration stores transport JSON and OS credential references; raw secrets are rejected. Ordinary evidence detail DTOs omit provider process fields, while audit/diagnostics paths may retain provider id, provider kind, raw result hash, extraction method, mapping status, and circuit state.

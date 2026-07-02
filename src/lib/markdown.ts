@@ -1,12 +1,14 @@
-import { Marked, type MarkedExtension } from "marked";
-import TurndownService from "turndown";
-import * as turndownPluginGfm from "turndown-plugin-gfm";
-
 import {
   splitFrontmatter,
   serializeNoteMarkdown,
   titleFromFields,
 } from "@/lib/frontmatter";
+import {
+  Marked,
+  TurndownService,
+  turndownPluginGfm,
+  type MarkedExtension,
+} from "@/lib/markdown-vendor";
 import { sanitizeHtml } from "@/lib/sanitize";
 
 /**

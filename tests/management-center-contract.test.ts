@@ -6,6 +6,9 @@ function read(path: string): string {
   return readFileSync(path, "utf8");
 }
 
+const removedDdg = ["duck", "duck", "go"].join("");
+const removedVendor = ["mini", "max"].join("");
+
 describe("management center contract", () => {
   it("uses top tabs for four management sections without the old sidebar", () => {
     const center = read("src/components/settings/ManagementCenterPanel.tsx");
@@ -30,7 +33,7 @@ describe("management center contract", () => {
     expect(center).not.toContain('{ id: "about"');
     expect(center).toContain("ManagementCenterSection");
     expect(center).toContain("LlmRoutingSection");
-    expect(center).not.toContain("MinimaxSearchSection");
+    expect(center.toLowerCase()).not.toContain(`${removedVendor}searchsection`);
     expect(center).toContain("PersonaSettingsBody");
     expect(center).toContain("SkillsPanelBody");
     expect(center).toContain("AiRulesPanel");
@@ -89,7 +92,7 @@ describe("management center contract", () => {
     expect(center).toContain('data-testid="management-detail-back"');
     expect(center).toContain("overflow-y-auto");
     expect(center).toContain("LlmRoutingSection");
-    expect(center).not.toContain("MinimaxSearchSection");
+    expect(center.toLowerCase()).not.toContain(`${removedVendor}searchsection`);
     expect(center).toContain("PersonaSettingsBody");
     expect(center).toContain("SkillsPanelBody");
     expect(center).toContain("AiRulesPanel");
@@ -108,17 +111,19 @@ describe("management center contract", () => {
     expect(center).toContain(
       "onProvidersChanged={onRefreshWebSearchProviders}",
     );
-    expect(center).not.toContain('data-testid="native-provider-card-minimax"');
-    expect(center).not.toContain(
-      'data-testid="native-provider-card-duckduckgo"',
+    expect(center.toLowerCase()).not.toContain(
+      `data-testid="native-provider-card-${removedVendor}"`,
     );
-    expect(center).not.toContain("MinimaxSearchSection");
+    expect(center).not.toContain(
+      `data-testid="native-provider-card-${removedDdg}"`,
+    );
+    expect(center.toLowerCase()).not.toContain(`${removedVendor}searchsection`);
 
     expect(mcpPanel).toContain('data-testid="mcp-provider-panel"');
     expect(mcpPanel).toContain("webEvidenceProvidersList");
     expect(mcpPanel).toContain("webEvidenceProviderUpsert");
     expect(mcpPanel).toContain("webEvidenceProviderDiagnostics");
-    expect(mcpPanel).not.toContain("DuckDuckGo");
+    expect(mcpPanel.toLowerCase()).not.toContain(removedDdg);
     expect(mcpPanel).not.toContain("原生托底");
     expect(mcpPanel).toContain("当前选择");
     expect(mcpPanel).toContain("McpProfileCard");
@@ -230,7 +235,8 @@ describe("management center contract", () => {
     expect(center).not.toContain("webEvidenceProvidersList");
     expect(center).not.toContain("原生托底");
     expect(center).not.toContain("refreshWebProviderSummary");
-    expect(center).not.toMatch(/effectiveBackend === "minimax"/);
+    expect(center.toLowerCase()).not.toContain("effectivebackend");
+    expect(center.toLowerCase()).not.toContain(removedVendor);
     expect(mcpPanel).toContain("onProvidersChanged");
     expect(mcpPanel).toContain("onProvidersChanged?.()");
   });

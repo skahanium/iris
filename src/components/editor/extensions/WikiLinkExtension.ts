@@ -6,7 +6,6 @@ import Suggestion, {
   type Trigger,
 } from "@tiptap/suggestion";
 import { Plugin, PluginKey } from "@tiptap/pm/state";
-import tippy, { type Instance as TippyInstance } from "tippy.js";
 
 import { fileList } from "@/lib/ipc";
 import {
@@ -20,6 +19,18 @@ import {
   WikiLinkSuggestionList,
   type WikiLinkSuggestionListRef,
 } from "../WikiLinkSuggestionList";
+
+interface SuggestionPopup {
+  destroy: () => void;
+  hide: () => void;
+  setProps: (props: { getReferenceClientRect: () => DOMRect }) => void;
+}
+
+async function loadTippy() {
+  void import("tippy.js/dist/tippy.css").catch(() => undefined);
+  const { default: tippy } = await import("tippy.js");
+  return tippy;
+}
 
 export interface WikiLinkOptions {
   HTMLAttributes: Record<string, unknown>;
@@ -231,7 +242,7 @@ export const WikiLinkExtension = Mark.create<WikiLinkOptions>({
         },
         render: () => {
           let component: ReactRenderer<WikiLinkSuggestionListRef> | null = null;
-          let popup: TippyInstance[] | null = null;
+          let popup: SuggestionPopup[] | null = null;
 
           return {
             onStart: (props: SuggestionProps<WikiLinkSuggestionItem>) => {
@@ -245,18 +256,21 @@ export const WikiLinkExtension = Mark.create<WikiLinkOptions>({
 
               if (!props.clientRect) return;
 
-              popup = tippy("body", {
-                getReferenceClientRect: props.clientRect as () => DOMRect,
-                appendTo: () => document.body,
-                content: component.element,
-                showOnCreate: true,
-                interactive: true,
-                trigger: "manual",
-                theme: "iris-suggestion",
-                arrow: false,
-                maxWidth: "none",
-                offset: [0, 6],
-                placement: "bottom-start",
+              void loadTippy().then((tippy) => {
+                if (!component || !props.clientRect) return;
+                popup = tippy("body", {
+                  getReferenceClientRect: props.clientRect as () => DOMRect,
+                  appendTo: () => document.body,
+                  content: component.element,
+                  showOnCreate: true,
+                  interactive: true,
+                  trigger: "manual",
+                  theme: "iris-suggestion",
+                  arrow: false,
+                  maxWidth: "none",
+                  offset: [0, 6],
+                  placement: "bottom-start",
+                });
               });
             },
             onUpdate(props: SuggestionProps<WikiLinkSuggestionItem>) {

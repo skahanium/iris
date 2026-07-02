@@ -84,6 +84,16 @@ describe("design tokens", () => {
     expect(tailwindConfigSource).toContain(
       'scrim: "hsl(var(--overlay-scrim))"',
     );
+    expect(tailwindConfigSource).toContain('warning: "hsl(var(--warning))"');
+    expect(tailwindConfigSource).toContain(
+      '"classified-accent": "hsl(var(--classified-accent))"',
+    );
+    expect(tailwindConfigSource).toContain(
+      '"llm-ready": "hsl(var(--status-llm-ready))"',
+    );
+    expect(tailwindConfigSource).toContain(
+      '"web-search": "hsl(var(--status-web-search))"',
+    );
     expect(tailwindMapsToken("sm", "var(--radius-sm)")).toBe(true);
     expect(tailwindMapsToken("md", "var(--radius-md)")).toBe(true);
     expect(tailwindMapsToken("lg", "var(--radius-lg)")).toBe(true);
@@ -96,5 +106,10 @@ describe("design tokens", () => {
     expect(tailwindConfigSource).toContain("title: [");
     expect(tailwindConfigSource).not.toContain('"Noto Serif SC"');
     expect(tailwindConfigSource).not.toContain("shadow-paper");
+  });
+
+  it("documents the light-class theme strategy and radius aliases", () => {
+    expect(tailwindConfigSource).toContain("Iris uses dark-by-default CSS");
+    expect(tailwindConfigSource).toContain("Radius aliases intentionally cap");
   });
 });

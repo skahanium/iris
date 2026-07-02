@@ -25,6 +25,10 @@ function readAll(root: string): string {
   return chunks.join("\n");
 }
 
+const removedDdg = ["duck", "duck", "go"].join("");
+const removedVendor = ["mini", "max"].join("");
+const removedVendorCredential = ["MINI", "MAX", "_CREDENTIAL_SERVICE"].join("");
+
 describe("AI harness architecture contracts", () => {
   it("keeps MCP tools/list diagnostic and out of the model tool surface", () => {
     const host = read("src-tauri/src/ai_runtime/mcp_host_runtime.rs");
@@ -66,7 +70,7 @@ describe("AI harness architecture contracts", () => {
     );
   });
 
-  it("keeps MiniMax out of web evidence routing surfaces", () => {
+  it("keeps vendor search out of web evidence routing surfaces", () => {
     const broker = read("src-tauri/src/ai_runtime/web_evidence_broker.rs");
     const management = read(
       "src/components/settings/ManagementCenterPanel.tsx",
@@ -76,7 +80,9 @@ describe("AI harness architecture contracts", () => {
     );
 
     expect(broker).toContain("SearchProviderCandidate::Mcp");
-    expect(broker).toContain("WebSearchEffectiveBackend::Duckduckgo");
+    expect(broker).not.toContain("SearchProviderCandidate::Native");
+    expect(broker.toLowerCase()).not.toContain(removedDdg);
+    expect(broker.toLowerCase()).not.toContain(removedVendor);
     const candidateStart = broker.indexOf("fn search_provider_candidates");
     const candidateEnd = broker.indexOf(
       "async fn collect_search_provider_fetches",
@@ -84,9 +90,11 @@ describe("AI harness architecture contracts", () => {
     );
     const candidateBody = broker.slice(candidateStart, candidateEnd);
 
-    expect(candidateBody).not.toContain("WebSearchEffectiveBackend::Minimax");
-    expect(candidateBody).not.toContain("MINIMAX_CREDENTIAL_SERVICE");
-    expect(management).not.toContain("MinimaxSearchSection");
-    expect(connectivity).not.toContain('effectiveBackend === "minimax"');
+    expect(candidateBody.toLowerCase()).not.toContain(removedVendor);
+    expect(candidateBody).not.toContain(removedVendorCredential);
+    expect(management.toLowerCase()).not.toContain(
+      `${removedVendor}searchsection`,
+    );
+    expect(connectivity.toLowerCase()).not.toContain(removedVendor);
   });
 });

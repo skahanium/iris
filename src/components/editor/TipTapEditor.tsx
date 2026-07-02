@@ -1,7 +1,5 @@
 import CodeBlock from "@tiptap/extension-code-block";
-
-import CodeBlockLowlight from "@tiptap/extension-code-block-lowlight";
-
+import type { AnyExtension } from "@tiptap/core";
 import Placeholder from "@tiptap/extension-placeholder";
 
 import Table from "@tiptap/extension-table";
@@ -20,7 +18,6 @@ import { EditorContent, useEditor, type Editor } from "@tiptap/react";
 
 import StarterKit from "@tiptap/starter-kit";
 
-import { common, createLowlight } from "lowlight";
 import { Lock, LockOpen } from "lucide-react";
 
 import {
@@ -92,8 +89,6 @@ import { SlashCommandExtension } from "./extensions/SlashCommandExtension";
 import { WikiLinkExtension } from "./extensions/WikiLinkExtension";
 import { WikiMediaEmbedExtension } from "./extensions/WikiMediaEmbedExtension";
 
-const lowlight = createLowlight(common);
-
 /** Status bar stats: avoid scanning the full doc on every keystroke. */
 
 const BODY_STATS_DEBOUNCE_MS = 400;
@@ -101,6 +96,61 @@ const BODY_STATS_DEBOUNCE_MS = 400;
 /** Use lighter code blocks + fewer fold widgets above this body size. */
 
 const LARGE_DOC_BODY_THRESHOLD = 12_000;
+
+const LIGHT_CODE_BLOCK_EXTENSION = CodeBlock.configure({
+  HTMLAttributes: { class: "iris-code-block" },
+});
+
+function markdownLikelyHasCodeBlock(markdown: string): boolean {
+  return /(^|\n)(`{3,}|~{3,})/.test(markdown);
+}
+
+async function createLazyCodeBlockLowlightExtension(): Promise<AnyExtension> {
+  const [
+    { default: CodeBlockLowlight },
+    { createLowlight },
+    javascript,
+    typescript,
+    json,
+    bash,
+    css,
+    xml,
+    markdown,
+    rust,
+    python,
+    sql,
+  ] = await Promise.all([
+    import("@tiptap/extension-code-block-lowlight"),
+    import("lowlight/core"),
+    import("highlight.js/lib/languages/javascript"),
+    import("highlight.js/lib/languages/typescript"),
+    import("highlight.js/lib/languages/json"),
+    import("highlight.js/lib/languages/bash"),
+    import("highlight.js/lib/languages/css"),
+    import("highlight.js/lib/languages/xml"),
+    import("highlight.js/lib/languages/markdown"),
+    import("highlight.js/lib/languages/rust"),
+    import("highlight.js/lib/languages/python"),
+    import("highlight.js/lib/languages/sql"),
+  ]);
+  return CodeBlockLowlight.configure({
+    lowlight: createLowlight({
+      bash: bash.default,
+      css: css.default,
+      javascript: javascript.default,
+      js: javascript.default,
+      json: json.default,
+      markdown: markdown.default,
+      md: markdown.default,
+      python: python.default,
+      rust: rust.default,
+      sql: sql.default,
+      typescript: typescript.default,
+      ts: typescript.default,
+      xml: xml.default,
+    }),
+  });
+}
 
 interface TipTapEditorProps {
   /** Body markdown only (frontmatter / document title are separate). */
@@ -318,6 +368,29 @@ function TipTapEditorInner({
 
   const isLargeDoc =
     (initialBodyMarkdown?.length ?? 0) > LARGE_DOC_BODY_THRESHOLD;
+  const [codeBlockExtension, setCodeBlockExtension] = useState<AnyExtension>(
+    LIGHT_CODE_BLOCK_EXTENSION,
+  );
+  const codeBlockLowlightLoadedRef = useRef(false);
+
+  useEffect(() => {
+    if (isLargeDoc || codeBlockLowlightLoadedRef.current) return;
+    if (!markdownLikelyHasCodeBlock(initialBodyMarkdown)) return;
+
+    let cancelled = false;
+    codeBlockLowlightLoadedRef.current = true;
+    void createLazyCodeBlockLowlightExtension()
+      .then((extension) => {
+        if (!cancelled) setCodeBlockExtension(extension);
+      })
+      .catch(() => {
+        codeBlockLowlightLoadedRef.current = false;
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [initialBodyMarkdown, isLargeDoc]);
 
   const extensions = useMemo(
     () => [
@@ -381,11 +454,7 @@ function TipTapEditorInner({
 
       TableCell,
 
-      isLargeDoc
-        ? CodeBlock.configure({
-            HTMLAttributes: { class: "iris-code-block" },
-          })
-        : CodeBlockLowlight.configure({ lowlight }),
+      isLargeDoc ? LIGHT_CODE_BLOCK_EXTENSION : codeBlockExtension,
 
       Placeholder.configure({
         placeholder: "开始写作，或输入 / 唤起 AI…",
@@ -421,7 +490,7 @@ function TipTapEditorInner({
       }),
     ],
 
-    [isLargeDoc, mediaLoading, vaultPath],
+    [codeBlockExtension, isLargeDoc, mediaLoading, vaultPath],
   );
 
   const ingestResultRef = useRef<{
@@ -548,50 +617,81 @@ function TipTapEditorInner({
     }
   });
 
-  const editor = useEditor({
-    extensions,
+  const editor = useEditor(
+    {
+      extensions,
 
-    content: "<p></p>",
+      content: "<p></p>",
 
-    parseOptions: EDITOR_PARSE_OPTIONS,
+      parseOptions: EDITOR_PARSE_OPTIONS,
 
-    immediatelyRender: true,
+      immediatelyRender: true,
 
-    editable: !locked,
+      editable: !locked,
 
-    shouldRerenderOnTransaction: false,
+      shouldRerenderOnTransaction: false,
 
-    onUpdate: ({ editor: updatedEditor }) => {
-      onDirtyRef.current?.();
+      onUpdate: ({ editor: updatedEditor }) => {
+        onDirtyRef.current?.();
 
-      scheduleBodyStats(updatedEditor);
+        scheduleBodyStats(updatedEditor);
 
-      const key = contentCacheKeyRef.current;
-      const namespace = contentCacheNamespaceRef.current;
-      if (key) {
-        const htmlDigest = editorHtmlDigest(initialBodyMarkdown);
-        if (htmlCacheTimerRef.current) clearTimeout(htmlCacheTimerRef.current);
-        htmlCacheTimerRef.current = setTimeout(() => {
-          htmlCacheTimerRef.current = null;
-          setCachedEditorHtml(
-            key,
-            updatedEditor.getHTML(),
-            htmlDigest,
-            namespace,
-          );
-        }, 2000);
-      }
-    },
+        const key = contentCacheKeyRef.current;
+        const namespace = contentCacheNamespaceRef.current;
+        if (key) {
+          const htmlDigest = editorHtmlDigest(initialBodyMarkdown);
+          if (htmlCacheTimerRef.current)
+            clearTimeout(htmlCacheTimerRef.current);
+          htmlCacheTimerRef.current = setTimeout(() => {
+            htmlCacheTimerRef.current = null;
+            setCachedEditorHtml(
+              key,
+              updatedEditor.getHTML(),
+              htmlDigest,
+              namespace,
+            );
+          }, 2000);
+        }
+      },
 
-    editorProps: {
-      transformPastedHTML: normalizePastedEditorHtml,
+      editorProps: {
+        transformPastedHTML: normalizePastedEditorHtml,
 
-      attributes: {
-        class: "iris-markdown-content focus:outline-none",
-        "data-prose-surface": "editor",
+        attributes: {
+          class: "iris-markdown-content focus:outline-none",
+          "data-prose-surface": "editor",
+        },
       },
     },
-  });
+    [extensions],
+  );
+
+  useEffect(() => {
+    if (!editor || isLargeDoc || codeBlockLowlightLoadedRef.current) return;
+    let hasCodeBlock = false;
+    editor.state.doc.descendants((node) => {
+      if (node.type.name === "codeBlock") {
+        hasCodeBlock = true;
+        return false;
+      }
+      return true;
+    });
+    if (!hasCodeBlock) return;
+
+    let cancelled = false;
+    codeBlockLowlightLoadedRef.current = true;
+    void createLazyCodeBlockLowlightExtension()
+      .then((extension) => {
+        if (!cancelled) setCodeBlockExtension(extension);
+      })
+      .catch(() => {
+        codeBlockLowlightLoadedRef.current = false;
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [editor, isLargeDoc, parsedContentRevision]);
 
   useEffect(() => {
     if (!editor) return;

@@ -132,7 +132,7 @@ pub struct LlmUsageLast {
 #[serde(rename_all = "camelCase")]
 pub struct ConnectivityStatusDto {
     pub llm: LlmConnectivityDto,
-    pub search_api: SearchApiConnectivityDto,
+    pub search_provider: SearchProviderConnectivityDto,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub usage_last: Option<LlmUsageLast>,
 }
@@ -149,9 +149,9 @@ pub struct LlmConnectivityDto {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct SearchApiConnectivityDto {
-    pub minimax_configured: bool,
-    pub effective_backend: String,
+pub struct SearchProviderConnectivityDto {
+    pub configured: bool,
+    pub provider_id: Option<String>,
 }
 
 impl Default for LlmRoutingConfig {
@@ -819,11 +819,9 @@ pub fn connectivity_status(
 
     let selected_web_provider =
         crate::ai_runtime::mcp_runtime_registry::resolve_selected_web_search_provider(db).ok();
-    let search_api = SearchApiConnectivityDto {
-        minimax_configured: selected_web_provider.is_some(),
-        effective_backend: selected_web_provider
-            .map(|provider| provider.id)
-            .unwrap_or_else(|| "mcp_unconfigured".into()),
+    let search_provider = SearchProviderConnectivityDto {
+        configured: selected_web_provider.is_some(),
+        provider_id: selected_web_provider.map(|provider| provider.id),
     };
 
     let usage_last = read_usage_last(db)?;
@@ -836,7 +834,7 @@ pub fn connectivity_status(
             scene: active_scene.profile().into(),
             message,
         },
-        search_api,
+        search_provider,
         usage_last,
     })
 }
@@ -922,8 +920,11 @@ mod tests {
         let status = connectivity_status(&db, AiScene::KnowledgeLookup).expect("status");
 
         assert_eq!(status.llm.state, "ready");
-        assert!(status.search_api.minimax_configured);
-        assert_eq!(status.search_api.effective_backend, "anysearch");
+        assert!(status.search_provider.configured);
+        assert_eq!(
+            status.search_provider.provider_id.as_deref(),
+            Some("anysearch")
+        );
     }
 
     #[test]

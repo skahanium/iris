@@ -3,8 +3,8 @@ import { createRoot } from "react-dom/client";
 
 import App from "./App";
 import { ErrorBoundary } from "./components/ErrorBoundary";
+import { ToastProvider } from "./components/ui/toast";
 import { isTauriRuntime } from "@/lib/tauri-runtime";
-import "tippy.js/dist/tippy.css";
 import "./styles/globals.css";
 
 function bootstrapStoredTheme() {
@@ -35,7 +35,9 @@ if (isTauriRuntime()) {
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
     <ErrorBoundary>
-      <App />
+      <ToastProvider>
+        <App />
+      </ToastProvider>
     </ErrorBoundary>
   </StrictMode>,
 );

@@ -15,4 +15,16 @@ describe("graph performance and reduced-motion contract", () => {
     expect(graph).toContain("drawGraphFrame");
     expect(graph).toContain("图谱暂无节点");
   });
+
+  it("keeps force simulation work off the React main-thread component", () => {
+    const graph = read("src/components/graph/GraphView.tsx");
+    const worker = read("src/workers/graph-layout.worker.ts");
+
+    expect(graph).toContain("new Worker");
+    expect(graph).toContain("graph-layout.worker");
+    expect(graph).not.toContain("function forceSimulate");
+    expect(worker).toContain("function forceSimulate");
+    expect(worker).toContain("GraphLayoutRequest");
+    expect(worker).toContain("GraphLayoutResponse");
+  });
 });

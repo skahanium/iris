@@ -122,7 +122,7 @@ export interface SourceSpan {
   end: number;
 }
 
-export type WebSearchBackend = "minimax" | "duckduckgo";
+export type WebSearchBackend = "provider";
 
 export type WebSourceRank =
   | "official"
@@ -172,7 +172,6 @@ export interface WebEvidenceBrokerItem {
 
 export interface WebSearchSuccessfulRequestUsage {
   mcp: number;
-  duckduckgo: number;
 }
 
 export interface WebSearchProviderUsage {

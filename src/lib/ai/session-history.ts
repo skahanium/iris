@@ -97,7 +97,6 @@ function sourceSpanField(
 function webField(record: Record<string, unknown>): ContextPacket["web"] {
   const value = record.web;
   if (!isRecord(value)) return undefined;
-  const searchBackend = stringField(value, "search_backend", "searchBackend");
   const sourceRank = stringField(value, "source_rank", "sourceRank");
   const fallbackFrom = nullableStringField(
     value,
@@ -111,7 +110,7 @@ function webField(record: Record<string, unknown>): ContextPacket["web"] {
     fetched_at:
       stringField(value, "fetched_at", "fetchedAt") ??
       new Date(0).toISOString(),
-    search_backend: searchBackend === "minimax" ? "minimax" : "duckduckgo",
+    search_backend: "provider",
     source_rank:
       sourceRank === "official" ||
       sourceRank === "academic" ||
@@ -124,10 +123,7 @@ function webField(record: Record<string, unknown>): ContextPacket["web"] {
       "failure_reason",
       "failureReason",
     ),
-    fallback_from:
-      fallbackFrom === "minimax" || fallbackFrom === "duckduckgo"
-        ? fallbackFrom
-        : null,
+    fallback_from: fallbackFrom === "provider" ? fallbackFrom : null,
   };
 }
 
@@ -218,7 +214,7 @@ export function evidenceRecordsToContextPackets(
             domain: record.domain ?? null,
             published_at: null,
             fetched_at: record.retrievedAt ?? record.createdAt,
-            search_backend: "duckduckgo",
+            search_backend: "provider",
             source_rank: "unknown",
             failure_reason: record.failureReason ?? null,
           }

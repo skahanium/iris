@@ -3,6 +3,10 @@
 import { IrisOverlay } from "@/components/ui/iris-overlay";
 import { graphData } from "@/lib/ipc";
 import type { GraphData } from "@/types/ipc";
+import type {
+  GraphLayoutRequest,
+  GraphLayoutResponse,
+} from "@/workers/graph-layout.worker";
 
 interface GraphViewProps {
   open: boolean;
@@ -38,6 +42,25 @@ const GRAPH_INIT_ITERATIONS = 60;
 const GRAPH_LARGE_INIT_ITERATIONS = 20;
 const GRAPH_FRAME_ITERATIONS = 3;
 
+function GraphLoadingSkeleton() {
+  return (
+    <div
+      className="absolute inset-0 z-10 flex items-center justify-center"
+      aria-live="polite"
+      role="status"
+      aria-label="知识图谱加载中"
+    >
+      <div className="relative h-44 w-44 rounded-full border border-border/60 bg-surface-inset/30">
+        <span className="absolute left-1/2 top-5 h-3 w-3 -translate-x-1/2 rounded-full bg-muted/70" />
+        <span className="absolute bottom-8 left-8 h-4 w-4 rounded-full bg-muted/50" />
+        <span className="absolute right-7 top-16 h-5 w-5 rounded-full bg-muted/60" />
+        <span className="absolute left-14 top-24 h-px w-20 rotate-12 bg-border" />
+        <span className="absolute left-20 top-14 h-px w-16 -rotate-[35deg] bg-border" />
+      </div>
+    </div>
+  );
+}
+
 function readCssHsl(varName: string, fallback: string): string {
   const raw = getComputedStyle(document.documentElement)
     .getPropertyValue(varName)
@@ -55,73 +78,6 @@ function isGraphAnimationAllowed(sim: GraphSimulation): boolean {
   return (
     !prefersReducedGraphMotion() && sim.nodes.length <= GRAPH_MAX_ANIMATED_NODES
   );
-}
-
-function forceSimulate(
-  nodes: SimNode[],
-  edges: SimEdge[],
-  nodeById: Map<number, SimNode>,
-  width: number,
-  height: number,
-  iterations: number,
-) {
-  const cx = width / 2;
-  const cy = height / 2;
-  const kRepel = 5000;
-  const kAttract = 0.01;
-  const damping = 0.85;
-  const maxSpeed = 5;
-
-  for (let iter = 0; iter < iterations; iter++) {
-    for (let i = 0; i < nodes.length; i++) {
-      for (let j = i + 1; j < nodes.length; j++) {
-        const a = nodes[i]!;
-        const b = nodes[j]!;
-        const dx = b.x - a.x;
-        const dy = b.y - a.y;
-        const dist = Math.sqrt(dx * dx + dy * dy) || 1;
-        const force = kRepel / (dist * dist);
-        const fx = (dx / dist) * force;
-        const fy = (dy / dist) * force;
-        a.vx -= fx;
-        a.vy -= fy;
-        b.vx += fx;
-        b.vy += fy;
-      }
-    }
-
-    for (const edge of edges) {
-      const src = nodeById.get(edge.source);
-      const tgt = nodeById.get(edge.target);
-      if (!src || !tgt) continue;
-      const ex = tgt.x - src.x;
-      const ey = tgt.y - src.y;
-      const edist = Math.sqrt(ex * ex + ey * ey) || 1;
-      const eforce = edist * kAttract;
-      const efx = (ex / edist) * eforce;
-      const efy = (ey / edist) * eforce;
-      src.vx += efx;
-      src.vy += efy;
-      tgt.vx -= efx;
-      tgt.vy -= efy;
-    }
-
-    for (const node of nodes) {
-      node.vx += (cx - node.x) * 0.001;
-      node.vy += (cy - node.y) * 0.001;
-      node.vx *= damping;
-      node.vy *= damping;
-      const speed = Math.sqrt(node.vx * node.vx + node.vy * node.vy);
-      if (speed > maxSpeed) {
-        node.vx = (node.vx / speed) * maxSpeed;
-        node.vy = (node.vy / speed) * maxSpeed;
-      }
-      node.x += node.vx;
-      node.y += node.vy;
-      node.x = Math.max(node.radius, Math.min(width - node.radius, node.x));
-      node.y = Math.max(node.radius, Math.min(height - node.radius, node.y));
-    }
-  }
 }
 
 function buildSimulation(data: GraphData, width: number, height: number) {
@@ -142,6 +98,20 @@ function buildSimulation(data: GraphData, width: number, height: number) {
   }));
   const nodeById = new Map(nodes.map((n) => [n.id, n]));
   return { nodes, edges, nodeById } satisfies GraphSimulation;
+}
+
+function applyGraphLayout(
+  sim: GraphSimulation,
+  nodes: GraphLayoutResponse["nodes"],
+) {
+  for (const layoutNode of nodes) {
+    const node = sim.nodeById.get(layoutNode.id);
+    if (!node) continue;
+    node.x = layoutNode.x;
+    node.y = layoutNode.y;
+    node.vx = layoutNode.vx;
+    node.vy = layoutNode.vy;
+  }
 }
 
 function drawGraphFrame(
@@ -217,10 +187,61 @@ export function GraphView({
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const simRef = useRef<GraphSimulation | null>(null);
   const animRef = useRef<number>(0);
+  const workerRef = useRef<Worker | null>(null);
+  const layoutRequestIdRef = useRef(0);
+  const layoutResolversRef = useRef(
+    new Map<
+      number,
+      {
+        reject: (error: Error) => void;
+        resolve: (response: GraphLayoutResponse) => void;
+      }
+    >(),
+  );
   const lastPreparedPathRef = useRef<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [empty, setEmpty] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const getLayoutWorker = useCallback(() => {
+    if (workerRef.current) return workerRef.current;
+    const worker = new Worker(
+      new URL("../../workers/graph-layout.worker.ts", import.meta.url),
+      { type: "module" },
+    );
+    worker.onmessage = (event: MessageEvent<GraphLayoutResponse>) => {
+      const resolver = layoutResolversRef.current.get(event.data.requestId);
+      if (!resolver) return;
+      layoutResolversRef.current.delete(event.data.requestId);
+      resolver.resolve(event.data);
+    };
+    worker.onerror = (event) => {
+      const error = new Error(event.message || "图谱布局 worker 失败");
+      layoutResolversRef.current.forEach((resolver) => resolver.reject(error));
+      layoutResolversRef.current.clear();
+    };
+    workerRef.current = worker;
+    return worker;
+  }, []);
+
+  const runGraphLayout = useCallback(
+    (sim: GraphSimulation, width: number, height: number, iterations: number) =>
+      new Promise<GraphLayoutResponse>((resolve, reject) => {
+        const requestId = layoutRequestIdRef.current + 1;
+        layoutRequestIdRef.current = requestId;
+        layoutResolversRef.current.set(requestId, { resolve, reject });
+        const request: GraphLayoutRequest = {
+          requestId,
+          nodes: sim.nodes,
+          edges: sim.edges,
+          width,
+          height,
+          iterations,
+        };
+        getLayoutWorker().postMessage(request);
+      }),
+    [getLayoutWorker],
+  );
 
   const resizeCanvas = useCallback(() => {
     const container = containerRef.current;
@@ -260,24 +281,8 @@ export function GraphView({
           ? GRAPH_LARGE_INIT_ITERATIONS
           : GRAPH_INIT_ITERATIONS;
 
-      await new Promise<void>((resolve) => {
-        const run = () => {
-          forceSimulate(
-            sim.nodes,
-            sim.edges,
-            sim.nodeById,
-            w,
-            h,
-            initIterations,
-          );
-          resolve();
-        };
-        if ("requestIdleCallback" in window) {
-          requestIdleCallback(run, { timeout: 500 });
-        } else {
-          requestAnimationFrame(run);
-        }
-      });
+      const layout = await runGraphLayout(sim, w, h, initIterations);
+      applyGraphLayout(sim, layout.nodes);
 
       simRef.current = sim;
       setEmpty(false);
@@ -289,7 +294,7 @@ export function GraphView({
     } finally {
       setLoading(false);
     }
-  }, [paintCurrentGraph, resizeCanvas]);
+  }, [paintCurrentGraph, resizeCanvas, runGraphLayout]);
 
   const startAnimation = useCallback(() => {
     const canvas = canvasRef.current;
@@ -309,38 +314,43 @@ export function GraphView({
       const current = simRef.current;
       if (!current) return;
 
-      forceSimulate(
-        current.nodes,
-        current.edges,
-        current.nodeById,
+      void runGraphLayout(
+        current,
         canvas.width,
         canvas.height,
         GRAPH_FRAME_ITERATIONS,
-      );
-      drawGraphFrame(ctx, canvas, current);
+      )
+        .then((layout) => {
+          if (!running) return;
+          applyGraphLayout(current, layout.nodes);
+          drawGraphFrame(ctx, canvas, current);
 
-      const maxSpeed = current.nodes.reduce(
-        (max, n) => Math.max(max, Math.hypot(n.vx, n.vy)),
-        0,
-      );
-      if (maxSpeed < 0.08) {
-        idleFrames += 1;
-      } else {
-        idleFrames = 0;
-      }
-      if (idleFrames >= 45) {
-        running = false;
-        return;
-      }
+          const maxSpeed = current.nodes.reduce(
+            (max, n) => Math.max(max, Math.hypot(n.vx, n.vy)),
+            0,
+          );
+          if (maxSpeed < 0.08) {
+            idleFrames += 1;
+          } else {
+            idleFrames = 0;
+          }
+          if (idleFrames >= 45) {
+            running = false;
+            return;
+          }
 
-      animRef.current = requestAnimationFrame(tick);
+          animRef.current = requestAnimationFrame(tick);
+        })
+        .catch(() => {
+          running = false;
+        });
     };
 
     animRef.current = requestAnimationFrame(tick);
     return () => {
       running = false;
     };
-  }, []);
+  }, [runGraphLayout]);
 
   const handleMouseMove = useCallback(
     (e: React.MouseEvent<HTMLCanvasElement>) => {
@@ -379,6 +389,9 @@ export function GraphView({
   useEffect(() => {
     if (!open) {
       cancelAnimationFrame(animRef.current);
+      workerRef.current?.terminate();
+      workerRef.current = null;
+      layoutResolversRef.current.clear();
       simRef.current = null;
       setEmpty(false);
       return;
@@ -402,11 +415,15 @@ export function GraphView({
       paintCurrentGraph();
     });
     ro.observe(container);
+    const layoutResolvers = layoutResolversRef.current;
 
     return () => {
       ro.disconnect();
       stopAnim?.();
       cancelAnimationFrame(animRef.current);
+      workerRef.current?.terminate();
+      workerRef.current = null;
+      layoutResolvers.clear();
     };
   }, [open, initGraph, startAnimation, resizeCanvas, paintCurrentGraph]);
 
@@ -423,11 +440,7 @@ export function GraphView({
           {error}
         </p>
       )}
-      {loading && (
-        <p className="absolute inset-0 z-10 flex items-center justify-center text-sm text-muted-foreground">
-          加载中…
-        </p>
-      )}
+      {loading && <GraphLoadingSkeleton />}
       {empty ? (
         <div
           className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-1 text-center text-sm text-muted-foreground"

@@ -49,7 +49,6 @@ pub struct WebEvidenceItem {
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct WebEvidenceSearchRequestUsage {
     pub mcp: u32,
-    pub duckduckgo: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -370,7 +369,7 @@ async fn collect_mcp_search_provider_fetch(
     };
     Ok(SearchProviderFetch {
         body: mcp_search_result_body(&call.result),
-        search_backend: WebSearchBackend::Duckduckgo,
+        search_backend: WebSearchBackend::Provider,
         provider_id: call.provider_id,
         provider_kind: "mcp".into(),
     })
@@ -1121,7 +1120,7 @@ fn explicit_url_item(url: &str) -> WebEvidenceItem {
         extraction_method: "explicit_url".into(),
         trust_level: "external_untrusted".into(),
         retrieval_reason: "explicit_url".into(),
-        search_backend: WebSearchBackend::Duckduckgo,
+        search_backend: WebSearchBackend::Provider,
         source_rank: WebSourceRank::Unknown,
         freshness_label: None,
         failure_reason: None,
@@ -1167,7 +1166,7 @@ fn failed_evidence_item_with_kind(
         extraction_method: "none".into(),
         trust_level: "external_untrusted".into(),
         retrieval_reason: retrieval_reason.into(),
-        search_backend: WebSearchBackend::Duckduckgo,
+        search_backend: WebSearchBackend::Provider,
         source_rank: WebSourceRank::Unknown,
         freshness_label: None,
         failure_reason: Some(reason),
@@ -1227,7 +1226,7 @@ mod tests {
             extraction_method: "search_snippet".into(),
             trust_level: "external_untrusted".into(),
             retrieval_reason: "web.search".into(),
-            search_backend: WebSearchBackend::Duckduckgo,
+            search_backend: WebSearchBackend::Provider,
             source_rank: WebSourceRank::Unknown,
             freshness_label: None,
             failure_reason: None,
@@ -1300,13 +1299,13 @@ mod tests {
     fn web_usage_counts_only_successful_mcp_search_providers() {
         let mcp_fetch = SearchProviderFetch {
             body: "[1] title: MCP result\nurl: https://example.com/mcp\nsnippet: ok".into(),
-            search_backend: WebSearchBackend::Duckduckgo,
+            search_backend: WebSearchBackend::Provider,
             provider_id: "anysearch".into(),
             provider_kind: "mcp".into(),
         };
         let empty_mcp_fetch = SearchProviderFetch {
             body: "no parseable rows".into(),
-            search_backend: WebSearchBackend::Duckduckgo,
+            search_backend: WebSearchBackend::Provider,
             provider_id: "empty-mcp".into(),
             provider_kind: "mcp".into(),
         };
@@ -1314,7 +1313,6 @@ mod tests {
         let usage = web_evidence_usage_from_search_fetches([&mcp_fetch, &empty_mcp_fetch]);
 
         assert_eq!(usage.successful_search_requests.mcp, 1);
-        assert_eq!(usage.successful_search_requests.duckduckgo, 0);
         assert_eq!(usage.providers.len(), 1);
         assert!(usage.providers.iter().any(|provider| {
             provider.provider_id == "anysearch"
@@ -1473,20 +1471,6 @@ mod tests {
     }
 
     #[test]
-    fn search_provider_candidates_ignore_minimax_credentials_without_mcp() {
-        let db = Database::open_in_memory().unwrap();
-        crate::credentials::mark_api_key_configured(
-            &db,
-            crate::credentials::MINIMAX_CREDENTIAL_SERVICE,
-        )
-        .unwrap();
-
-        let err = search_provider_candidates(&db).unwrap_err();
-
-        assert!(err.to_string().contains("web_search_provider_missing"));
-    }
-
-    #[test]
     fn mcp_mapping_builds_provider_specific_search_and_fetch_args() {
         let search = build_mcp_search_arguments(
             r#"{"tool":"tavily-search","queryArg":"query","maxResultsArg":"max_results","extraArgs":{"topic":"general"}}"#,
@@ -1581,7 +1565,7 @@ mod tests {
     fn mcp_search_parse_empty_returns_diagnostic_failure_item() {
         let items = web_evidence_items_from_search_fetch(&SearchProviderFetch {
             body: "MCP tool returned prose without links".into(),
-            search_backend: WebSearchBackend::Duckduckgo,
+            search_backend: WebSearchBackend::Provider,
             provider_id: "mcp.prose".into(),
             provider_kind: "mcp".into(),
         });
@@ -1597,13 +1581,13 @@ mod tests {
     fn mcp_success_suppresses_mcp_search_failure_item() {
         let mut items = web_evidence_items_from_search_fetch(&SearchProviderFetch {
             body: "[1] title: MCP result\nurl: https://example.com/mcp\nsnippet: ok".into(),
-            search_backend: WebSearchBackend::Duckduckgo,
+            search_backend: WebSearchBackend::Provider,
             provider_id: "anysearch".into(),
             provider_kind: "mcp".into(),
         });
         items.extend(web_evidence_items_from_search_fetch(&SearchProviderFetch {
             body: "unparseable mcp body".into(),
-            search_backend: WebSearchBackend::Duckduckgo,
+            search_backend: WebSearchBackend::Provider,
             provider_id: "empty-mcp".into(),
             provider_kind: "mcp".into(),
         }));

@@ -1,4 +1,4 @@
-import DOMPurify from "dompurify";
+import { DOMPurify } from "@/lib/sanitize-vendor";
 
 /** 白名单标签：Markdown 渲染后需要的元素 */
 const ALLOWED_TAGS = [

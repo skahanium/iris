@@ -451,7 +451,7 @@ pub async fn llm_config_test(
 
 ## 七、联网证据配置 (Web Evidence Provider)
 
-MiniMax 只保留普通 LLM provider 身份，不再公开 `minimax_config_*` 联网检索 IPC。联网证据配置通过 `web_evidence_provider_*` 命令管理 MCP provider；DuckDuckGo 是唯一内置原生托底。
+普通 LLM provider 不作为联网证据后端，不再公开厂商搜索配置 IPC。联网证据配置通过 `web_evidence_provider_*` 命令管理 MCP provider；Iris 不内置原生或厂商搜索引擎托底。
 
 ### web_evidence_provider_upsert
 
@@ -472,7 +472,7 @@ pub fn web_evidence_providers_list(
 ) -> AppResult<Vec<WebEvidenceProviderSummary>>
 ```
 
-- **描述**：列出可配置 MCP provider；MiniMax 不作为联网 provider 返回。
+- **描述**：列出可配置 MCP provider；普通 LLM provider 不作为联网 provider 返回。
 
 ### web_evidence_provider_diagnostics
 

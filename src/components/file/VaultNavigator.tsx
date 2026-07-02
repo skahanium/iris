@@ -261,6 +261,28 @@ CORPUS_KIND_OPTIONS.splice(
 const DEFAULT_CORPUS_KIND_OPTION = CORPUS_KIND_OPTIONS[0]!;
 const PREPARE_FOLDER_LIMIT = 8;
 
+function VaultNavigatorLoadingSkeleton() {
+  return (
+    <div
+      className="space-y-2 p-3"
+      aria-live="polite"
+      role="status"
+      aria-label="笔记库加载中"
+    >
+      {Array.from({ length: 8 }).map((_, index) => (
+        <div
+          key={index}
+          className="flex h-9 items-center gap-2 rounded-md border border-border/40 bg-surface-inset/35 px-2"
+        >
+          <span className="h-3.5 w-3.5 rounded bg-muted/60" />
+          <span className="h-2.5 flex-1 rounded bg-muted/50" />
+          <span className="h-2.5 w-10 rounded bg-muted/35" />
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function TreeFolder({
   node,
   depth,
@@ -366,6 +388,7 @@ export function VaultNavigatorBody({
   } | null>(null);
   const [editingTemplate, setEditingTemplate] = useState<string | null>(null);
   const parentRef = useRef<HTMLDivElement>(null);
+  const preparedKeysRef = useRef(new Set<string>());
 
   const tree = useMemo(() => buildVaultTree(files, folders), [files, folders]);
   const folderFiles = useMemo(
@@ -428,6 +451,8 @@ export function VaultNavigatorBody({
       refresh();
       void templateList().then(setTemplates);
       setShowTemplates(false);
+    } else {
+      preparedKeysRef.current.clear();
     }
   }, [open, refresh]);
 
@@ -461,7 +486,11 @@ export function VaultNavigatorBody({
   useEffect(() => {
     folderFiles.slice(0, PREPARE_FOLDER_LIMIT).forEach((file) => {
       const note = noteListItem(file);
-      if (note) onPrepare?.(note, "file-tree");
+      if (!note) return;
+      const key = note.path;
+      if (preparedKeysRef.current.has(key)) return;
+      preparedKeysRef.current.add(key);
+      onPrepare?.(note, "file-tree");
     });
   }, [folderFiles, onPrepare]);
 
@@ -1138,7 +1167,7 @@ export function VaultNavigatorBody({
             </div>
           ) : null}
           {loading ? (
-            <p className="p-3 text-xs text-muted-foreground">加载中…</p>
+            <VaultNavigatorLoadingSkeleton />
           ) : folderFiles.length === 0 ? (
             <p className="p-3 text-xs text-muted-foreground">
               {selectedFolder ? "此文件夹暂无笔记" : "暂无笔记"}

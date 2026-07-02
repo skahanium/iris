@@ -31,7 +31,7 @@ describe("AgentStatusBadge", () => {
           webSearchEnabled
           webSearchProviderName="AnySearch"
           webSearchUsage={{
-            successfulSearchRequests: { mcp: 1, duckduckgo: 1 },
+            successfulSearchRequests: { mcp: 1 },
           }}
           scene="knowledge_lookup"
           taskStatus="completed"
@@ -61,7 +61,7 @@ describe("AgentStatusBadge", () => {
         <AgentStatusBadge
           webSearchEnabled={false}
           webSearchUsage={{
-            successfulSearchRequests: { mcp: 0, duckduckgo: 0 },
+            successfulSearchRequests: { mcp: 0 },
           }}
           scene="knowledge_lookup"
           taskStatus="completed"

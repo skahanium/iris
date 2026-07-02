@@ -10,6 +10,8 @@ function read(path: string): string {
   }
 }
 
+const removedVendor = ["mini", "max"].join("");
+
 describe("unified assistant shell", () => {
   it("App uses a single window chrome and the unified assistant panel", () => {
     const source = read("src/App.tsx");
@@ -99,7 +101,7 @@ describe("unified assistant shell", () => {
     const source = read("src/components/settings/ManagementCenterPanel.tsx");
     expect(source).toContain("PersonaSettingsBody");
     expect(source).toContain("AiRulesPanel");
-    expect(source).not.toContain("MinimaxSearchSection");
+    expect(source.toLowerCase()).not.toContain(`${removedVendor}searchsection`);
     expect(source).toContain('id: "ai"');
   });
   it("contains local error boundaries around volatile AI panel surfaces", () => {

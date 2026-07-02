@@ -6,6 +6,8 @@ function read(path: string): string {
   return readFileSync(path, "utf8");
 }
 
+const removedVendor = ["mini", "max"].join("");
+
 describe("Iris Rail complete interface contracts", () => {
   it("defines semantic tokens for the full Iris Rail interface system", () => {
     const css = read("src/styles/globals.css");
@@ -58,7 +60,7 @@ describe("Iris Rail complete interface contracts", () => {
     expect(welcome).not.toContain("Vault 已连接");
     expect(welcome).not.toContain("篇已索引");
     expect(welcome).not.toContain("LLM 可用");
-    expect(welcome).not.toContain("MiniMax 检索");
+    expect(welcome.toLowerCase()).not.toContain(`${removedVendor} 检索`);
     expect(welcome).not.toContain("shadow-floating");
     expect(welcome).not.toContain("max-w-md");
     expect(welcome).not.toContain("本地优先的知识工作台");
@@ -98,7 +100,8 @@ describe("Iris Rail complete interface contracts", () => {
     expect(outline).not.toContain("隐藏目录");
     expect(outline).not.toContain("outline-ghost-popover-list");
     expect(outline).not.toContain("outline-ghost-popover-item");
-    expect(outline).not.toContain("useVirtualizer");
+    expect(outline).toContain("useVirtualizer");
+    expect(outline).toContain("renderedOutlineItems");
     expect(outline).toContain("ArrowDown");
     expect(outline).not.toContain("Escape");
     expect(outline).not.toContain("onPointerMove");
@@ -158,7 +161,9 @@ describe("Iris Rail complete interface contracts", () => {
     expect(managementCenter).toContain("activeSection");
     expect(managementCenter).toContain('id: "ai"');
     expect(managementCenter).toContain("LlmRoutingSection");
-    expect(managementCenter).not.toContain("MinimaxSearchSection");
+    expect(managementCenter.toLowerCase()).not.toContain(
+      `${removedVendor}searchsection`,
+    );
     expect(managementCenter).toContain("PersonaSettingsBody");
     expect(managementCenter).toContain("SkillsPanelBody");
     expect(managementCenter).toContain("AiRulesPanel");

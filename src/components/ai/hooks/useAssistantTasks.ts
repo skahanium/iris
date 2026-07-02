@@ -237,18 +237,12 @@ function asRecord(value: unknown): Record<string, unknown> | null {
 
 function readSuccessfulSearchRequests(value: unknown): {
   mcp: number;
-  duckduckgo: number;
 } | null {
   const record = asRecord(value);
   if (!record) return null;
   const mcp = record.mcp;
-  const duckduckgo = record.duckduckgo;
   return {
     mcp: typeof mcp === "number" && Number.isFinite(mcp) ? mcp : 0,
-    duckduckgo:
-      typeof duckduckgo === "number" && Number.isFinite(duckduckgo)
-        ? duckduckgo
-        : 0,
   };
 }
 
@@ -256,7 +250,6 @@ function extractWebSearchUsage(
   toolResults: AiChatExecutePayload["tool_results"],
 ): WebSearchUsage | null {
   let mcp = 0;
-  let duckduckgo = 0;
   let found = false;
   const providers: NonNullable<WebSearchUsage["providers"]> = [];
 
@@ -270,7 +263,6 @@ function extractWebSearchUsage(
     if (!requests) continue;
     found = true;
     mcp += requests.mcp;
-    duckduckgo += requests.duckduckgo;
     const usageProviders = webUsage?.providers;
     if (Array.isArray(usageProviders)) {
       providers.push(
@@ -286,7 +278,7 @@ function extractWebSearchUsage(
 
   if (!found) return null;
   return {
-    successfulSearchRequests: { mcp, duckduckgo },
+    successfulSearchRequests: { mcp },
     providers,
   };
 }

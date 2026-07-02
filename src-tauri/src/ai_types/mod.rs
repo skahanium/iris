@@ -383,8 +383,7 @@ pub enum AutonomyLevel {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum WebSearchBackend {
-    Minimax,
-    Duckduckgo,
+    Provider,
 }
 
 /// 网页来源可信等级。
