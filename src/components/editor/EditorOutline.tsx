@@ -1,3 +1,4 @@
+﻿import { useVirtualizer } from "@tanstack/react-virtual";
 import type { Editor } from "@tiptap/react";
 import { TextSelection } from "@tiptap/pm/state";
 import {
@@ -39,6 +40,7 @@ interface EditorOutlineProps {
 }
 
 const OUTLINE_REFRESH_DEBOUNCE_MS = 300;
+const OUTLINE_ROW_ESTIMATE_PX = 22;
 
 function closestHeadingElement(node: Node | null): HTMLElement | null {
   const element =
@@ -96,6 +98,14 @@ export const EditorOutline = memo(function EditorOutline({
     );
   }, [entries]);
 
+  const outlineVirtualizer = useVirtualizer({
+    count: entries.length,
+    getScrollElement: () => listRef.current,
+    estimateSize: () => OUTLINE_ROW_ESTIMATE_PX,
+    overscan: 12,
+  });
+  const virtualItems = outlineVirtualizer.getVirtualItems();
+
   useEffect(() => {
     if (!editor) return;
 
@@ -134,10 +144,9 @@ export const EditorOutline = memo(function EditorOutline({
 
   useEffect(() => {
     if (activeIndex < 0) return;
-    itemRefs.current[activeIndex]?.scrollIntoView({ block: "nearest" });
-  }, [activeIndex]);
+    outlineVirtualizer.scrollToIndex(activeIndex, { align: "auto" });
+  }, [activeIndex, outlineVirtualizer]);
 
-  // Sliding indicator bar position
   useEffect(() => {
     const bar = barRef.current;
     if (!bar) return;
@@ -164,7 +173,7 @@ export const EditorOutline = memo(function EditorOutline({
     bar.style.opacity = "1";
     bar.style.transform = `translateY(${top}px)`;
     bar.style.height = `${height}px`;
-  }, [activeIndex, entries.length]);
+  }, [activeIndex, entries.length, virtualItems]);
 
   const jumpTo = useCallback(
     (pos: number) => {
@@ -194,9 +203,9 @@ export const EditorOutline = memo(function EditorOutline({
       );
       setFocusIndex(next);
       setHoverIndex(null);
-      itemRefs.current[next]?.scrollIntoView({ block: "nearest" });
+      outlineVirtualizer.scrollToIndex(next, { align: "auto" });
     },
-    [activeIndex, entries.length, focusIndex, hoverIndex],
+    [activeIndex, entries.length, focusIndex, hoverIndex, outlineVirtualizer],
   );
 
   const handleKeyDown = useCallback(
@@ -244,7 +253,7 @@ export const EditorOutline = memo(function EditorOutline({
     setPreviewTop(`${Math.round(targetCenter)}px`);
   }, []);
 
-  const renderItem = (entry: OutlineEntry, index: number) => {
+  const renderItem = (entry: OutlineEntry, index: number, start: number) => {
     const active = index === activeIndex;
     const focused = index === focusIndex;
     const hovered = index === hoverIndex;
@@ -257,7 +266,13 @@ export const EditorOutline = memo(function EditorOutline({
     const lvl = LEVEL_STYLES[relativeLevel]!;
     const itemStyle: CSSProperties = {
       "--outline-bar-indent": lvl.indent,
+      height: `${OUTLINE_ROW_ESTIMATE_PX}px`,
+      left: 0,
       paddingLeft: `calc(${lvl.indent} + var(--editor-outline-bar-offset))`,
+      position: "absolute",
+      top: 0,
+      transform: `translateY(${start}px)`,
+      width: "100%",
     } as CSSProperties;
     return (
       <button
@@ -318,7 +333,7 @@ export const EditorOutline = memo(function EditorOutline({
 
   useLayoutEffect(() => {
     updatePreviewTop(previewIndex ?? null);
-  }, [entries.length, previewIndex, updatePreviewTop]);
+  }, [entries.length, previewIndex, updatePreviewTop, virtualItems]);
 
   if (zen) return null;
 
@@ -342,8 +357,15 @@ export const EditorOutline = memo(function EditorOutline({
         onScroll={() => updatePreviewTop(previewIndex ?? null)}
       >
         <div ref={barRef} className="outline-ghost-bar" aria-hidden />
-        <div className="outline-ghost-items">
-          {entries.map((entry, index) => renderItem(entry, index))}
+        <div
+          className="outline-ghost-items relative w-full"
+          style={{ height: `${outlineVirtualizer.getTotalSize()}px` }}
+        >
+          {virtualItems.map((virtualItem) => {
+            const entry = entries[virtualItem.index];
+            if (!entry) return null;
+            return renderItem(entry, virtualItem.index, virtualItem.start);
+          })}
         </div>
       </div>
       {previewEntry ? (

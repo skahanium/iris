@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+﻿import { useCallback, useEffect, useRef, useState } from "react";
 
 import { IrisOverlay } from "@/components/ui/iris-overlay";
 import { graphData } from "@/lib/ipc";
@@ -27,11 +27,34 @@ interface SimEdge {
   target: number;
 }
 
+interface GraphSimulation {
+  nodes: SimNode[];
+  edges: SimEdge[];
+  nodeById: Map<number, SimNode>;
+}
+
+const GRAPH_MAX_ANIMATED_NODES = 140;
+const GRAPH_INIT_ITERATIONS = 60;
+const GRAPH_LARGE_INIT_ITERATIONS = 20;
+const GRAPH_FRAME_ITERATIONS = 3;
+
 function readCssHsl(varName: string, fallback: string): string {
   const raw = getComputedStyle(document.documentElement)
     .getPropertyValue(varName)
     .trim();
   return raw ? `hsl(${raw})` : fallback;
+}
+
+function prefersReducedGraphMotion(): boolean {
+  return (
+    window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false
+  );
+}
+
+function isGraphAnimationAllowed(sim: GraphSimulation): boolean {
+  return (
+    !prefersReducedGraphMotion() && sim.nodes.length <= GRAPH_MAX_ANIMATED_NODES
+  );
 }
 
 function forceSimulate(
@@ -118,7 +141,49 @@ function buildSimulation(data: GraphData, width: number, height: number) {
     target: e.target,
   }));
   const nodeById = new Map(nodes.map((n) => [n.id, n]));
-  return { nodes, edges, nodeById };
+  return { nodes, edges, nodeById } satisfies GraphSimulation;
+}
+
+function drawGraphFrame(
+  ctx: CanvasRenderingContext2D,
+  canvas: HTMLCanvasElement,
+  sim: GraphSimulation,
+) {
+  const w = canvas.width;
+  const h = canvas.height;
+  const edgeColor = readCssHsl("--border", "hsl(30 6% 30%)");
+  const nodeColor = readCssHsl("--primary", "hsl(28 42% 38%)");
+  const labelColor = readCssHsl("--primary-foreground", "hsl(40 33% 94%)");
+
+  ctx.clearRect(0, 0, w, h);
+  ctx.strokeStyle = edgeColor;
+  ctx.lineWidth = 0.5;
+  for (const edge of sim.edges) {
+    const src = sim.nodeById.get(edge.source);
+    const tgt = sim.nodeById.get(edge.target);
+    if (!src || !tgt) continue;
+    ctx.beginPath();
+    ctx.moveTo(src.x, src.y);
+    ctx.lineTo(tgt.x, tgt.y);
+    ctx.stroke();
+  }
+
+  for (const node of sim.nodes) {
+    ctx.fillStyle = nodeColor;
+    ctx.beginPath();
+    ctx.arc(node.x, node.y, node.radius, 0, Math.PI * 2);
+    ctx.fill();
+
+    if (node.radius >= 10) {
+      ctx.fillStyle = labelColor;
+      ctx.font = `${Math.max(9, node.radius * 0.7)}px sans-serif`;
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      const label =
+        node.title.length > 6 ? `${node.title.slice(0, 5)}…` : node.title;
+      ctx.fillText(label, node.x, node.y);
+    }
+  }
 }
 
 function findNodeAtCanvasEvent(
@@ -150,14 +215,11 @@ export function GraphView({
 }: GraphViewProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const simRef = useRef<{
-    nodes: SimNode[];
-    edges: SimEdge[];
-    nodeById: Map<number, SimNode>;
-  } | null>(null);
+  const simRef = useRef<GraphSimulation | null>(null);
   const animRef = useRef<number>(0);
   const lastPreparedPathRef = useRef<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [empty, setEmpty] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const resizeCanvas = useCallback(() => {
@@ -171,104 +233,93 @@ export function GraphView({
     return { w, h };
   }, []);
 
+  const paintCurrentGraph = useCallback(() => {
+    const canvas = canvasRef.current;
+    const sim = simRef.current;
+    if (!canvas || !sim) return;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+    drawGraphFrame(ctx, canvas, sim);
+  }, []);
+
   const initGraph = useCallback(async () => {
     setLoading(true);
     setError(null);
+    setEmpty(false);
     try {
       const data = await graphData();
       if (data.nodes.length === 0) {
         simRef.current = null;
+        setEmpty(true);
         return;
       }
       const { w, h } = resizeCanvas();
       const sim = buildSimulation(data, w, h);
+      const initIterations =
+        sim.nodes.length > GRAPH_MAX_ANIMATED_NODES
+          ? GRAPH_LARGE_INIT_ITERATIONS
+          : GRAPH_INIT_ITERATIONS;
 
       await new Promise<void>((resolve) => {
         const run = () => {
-          forceSimulate(sim.nodes, sim.edges, sim.nodeById, w, h, 50);
-          if (sim.nodes.length > 0) {
-            requestAnimationFrame(() => {
-              forceSimulate(sim.nodes, sim.edges, sim.nodeById, w, h, 50);
-              resolve();
-            });
-          } else {
-            resolve();
-          }
+          forceSimulate(
+            sim.nodes,
+            sim.edges,
+            sim.nodeById,
+            w,
+            h,
+            initIterations,
+          );
+          resolve();
         };
         if ("requestIdleCallback" in window) {
           requestIdleCallback(run, { timeout: 500 });
         } else {
-          run();
+          requestAnimationFrame(run);
         }
       });
 
-      forceSimulate(sim.nodes, sim.edges, sim.nodeById, w, h, 100);
       simRef.current = sim;
+      setEmpty(false);
+      paintCurrentGraph();
     } catch (e) {
       setError(e instanceof Error ? e.message : "加载图谱失败");
       simRef.current = null;
+      setEmpty(false);
     } finally {
       setLoading(false);
     }
-  }, [resizeCanvas]);
+  }, [paintCurrentGraph, resizeCanvas]);
 
   const startAnimation = useCallback(() => {
     const canvas = canvasRef.current;
-    if (!canvas) return;
+    const sim = simRef.current;
+    if (!canvas || !sim) return;
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
 
+    drawGraphFrame(ctx, canvas, sim);
+    if (!isGraphAnimationAllowed(sim)) return;
+
     let running = true;
     let idleFrames = 0;
-    const edgeColor = () => readCssHsl("--border", "hsl(30 6% 30%)");
-    const nodeColor = () => readCssHsl("--primary", "hsl(28 42% 38%)");
-    const labelColor = () =>
-      readCssHsl("--primary-foreground", "hsl(40 33% 94%)");
 
     const tick = () => {
       if (!running) return;
-      const sim = simRef.current;
-      if (!sim) {
-        animRef.current = requestAnimationFrame(tick);
-        return;
-      }
+      const current = simRef.current;
+      if (!current) return;
 
-      const w = canvas.width;
-      const h = canvas.height;
-      ctx.clearRect(0, 0, w, h);
+      forceSimulate(
+        current.nodes,
+        current.edges,
+        current.nodeById,
+        canvas.width,
+        canvas.height,
+        GRAPH_FRAME_ITERATIONS,
+      );
+      drawGraphFrame(ctx, canvas, current);
 
-      ctx.strokeStyle = edgeColor();
-      ctx.lineWidth = 0.5;
-      for (const edge of sim.edges) {
-        const src = sim.nodeById.get(edge.source);
-        const tgt = sim.nodeById.get(edge.target);
-        if (!src || !tgt) continue;
-        ctx.beginPath();
-        ctx.moveTo(src.x, src.y);
-        ctx.lineTo(tgt.x, tgt.y);
-        ctx.stroke();
-      }
-
-      for (const node of sim.nodes) {
-        ctx.fillStyle = nodeColor();
-        ctx.beginPath();
-        ctx.arc(node.x, node.y, node.radius, 0, Math.PI * 2);
-        ctx.fill();
-
-        if (node.radius >= 10) {
-          ctx.fillStyle = labelColor();
-          ctx.font = `${Math.max(9, node.radius * 0.7)}px sans-serif`;
-          ctx.textAlign = "center";
-          ctx.textBaseline = "middle";
-          const label =
-            node.title.length > 6 ? `${node.title.slice(0, 5)}…` : node.title;
-          ctx.fillText(label, node.x, node.y);
-        }
-      }
-
-      forceSimulate(sim.nodes, sim.edges, sim.nodeById, w, h, 3);
-
-      const maxSpeed = sim.nodes.reduce(
+      const maxSpeed = current.nodes.reduce(
         (max, n) => Math.max(max, Math.hypot(n.vx, n.vy)),
         0,
       );
@@ -329,6 +380,7 @@ export function GraphView({
     if (!open) {
       cancelAnimationFrame(animRef.current);
       simRef.current = null;
+      setEmpty(false);
       return;
     }
 
@@ -347,6 +399,7 @@ export function GraphView({
 
     const ro = new ResizeObserver(() => {
       resizeCanvas();
+      paintCurrentGraph();
     });
     ro.observe(container);
 
@@ -355,7 +408,7 @@ export function GraphView({
       stopAnim?.();
       cancelAnimationFrame(animRef.current);
     };
-  }, [open, initGraph, startAnimation, resizeCanvas]);
+  }, [open, initGraph, startAnimation, resizeCanvas, paintCurrentGraph]);
 
   return (
     <IrisOverlay
@@ -375,6 +428,15 @@ export function GraphView({
           加载中…
         </p>
       )}
+      {empty ? (
+        <div
+          className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-1 text-center text-sm text-muted-foreground"
+          role="status"
+        >
+          <div className="font-medium text-foreground">图谱暂无节点</div>
+          <div className="text-xs">创建双向链接后，这里会显示知识关系。</div>
+        </div>
+      ) : null}
       <div
         ref={containerRef}
         className="task-overlay-results relative min-h-0 flex-1"

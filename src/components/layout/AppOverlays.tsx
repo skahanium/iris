@@ -1,4 +1,4 @@
-import { lazy, Suspense } from "react";
+﻿import { lazy, Suspense } from "react";
 
 import { ClassifiedPanel } from "@/components/classified/ClassifiedPanel";
 import { ConflictDialog } from "@/components/file/ConflictDialog";
@@ -42,6 +42,18 @@ const VersionTimeline = lazy(() =>
     default: m.VersionTimeline,
   })),
 );
+
+function OverlayLoadingSurface({ label }: { label: string }) {
+  return (
+    <div
+      className="flex min-h-[18rem] flex-1 items-center justify-center px-6 text-sm text-muted-foreground"
+      aria-live="polite"
+      role="status"
+    >
+      {label}…
+    </div>
+  );
+}
 
 interface OverlayPort {
   quickOpen: boolean;
@@ -239,7 +251,7 @@ export function AppOverlays({
         }
       />
       {overlays.managementCenterOpen ? (
-        <Suspense fallback={null}>
+        <Suspense fallback={<OverlayLoadingSurface label="管理中心加载中" />}>
           <ManagementCenterPanel
             open={overlays.managementCenterOpen}
             onClose={() => overlays.closeOverlay("managementCenter")}
@@ -294,7 +306,7 @@ export function AppOverlays({
         }
       />
       {overlays.versionOpen ? (
-        <Suspense fallback={null}>
+        <Suspense fallback={<OverlayLoadingSurface label="版本记录加载中" />}>
           <VersionTimeline
             open={overlays.versionOpen}
             onClose={() => overlays.closeOverlay("version")}
@@ -317,7 +329,7 @@ export function AppOverlays({
       ) : null}
       {overlays.graphOpen ? (
         <ErrorBoundary scope="知识图谱">
-          <Suspense fallback={null}>
+          <Suspense fallback={<OverlayLoadingSurface label="知识图谱加载中" />}>
             <GraphView
               open={overlays.graphOpen}
               onClose={() => overlays.closeOverlay("graph")}

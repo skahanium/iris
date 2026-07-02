@@ -1,4 +1,4 @@
-import { useVirtualizer } from "@tanstack/react-virtual";
+﻿import { useVirtualizer } from "@tanstack/react-virtual";
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { Check, Copy, RotateCcw } from "lucide-react";
@@ -165,6 +165,8 @@ export const AiMessageList = memo(function AiMessageList({
   const [scrollFollow, setScrollFollow] = useState<"following" | "detached">(
     "following",
   );
+  const [copyStatus, setCopyStatus] = useState<string | null>(null);
+  const copyStatusTimerRef = useRef<number | null>(null);
   const rows = useMemo<MessageRow[]>(() => {
     if (messages.length === 0) return [{ type: "empty" }];
     return [
@@ -281,6 +283,10 @@ export const AiMessageList = memo(function AiMessageList({
         window.cancelAnimationFrame(measureFrameRef.current);
         measureFrameRef.current = null;
       }
+      if (copyStatusTimerRef.current !== null) {
+        window.clearTimeout(copyStatusTimerRef.current);
+        copyStatusTimerRef.current = null;
+      }
       pendingMeasureNodes.clear();
     };
   }, []);
@@ -321,10 +327,22 @@ export const AiMessageList = memo(function AiMessageList({
         ? replaceAiCitationsForDocument(message.content, ledger).markdown
         : message.content;
     try {
+      if (!navigator.clipboard?.writeText) {
+        throw new Error("Clipboard API is unavailable");
+      }
       await navigator.clipboard.writeText(content);
+      setCopyStatus("已复制回答");
     } catch {
-      /* ignore */
+      setCopyStatus("复制失败");
     }
+
+    if (copyStatusTimerRef.current !== null) {
+      window.clearTimeout(copyStatusTimerRef.current);
+    }
+    copyStatusTimerRef.current = window.setTimeout(() => {
+      setCopyStatus(null);
+      copyStatusTimerRef.current = null;
+    }, 1600);
   }, []);
 
   const renderRow = (row: MessageRow) => {
@@ -419,27 +437,38 @@ export const AiMessageList = memo(function AiMessageList({
   };
 
   return (
-    <ScrollArea className="min-h-0 flex-1" viewportRef={viewportRef}>
-      <div
-        className="relative py-3"
-        style={{ height: `${virtualTotalSize}px` }}
-      >
-        {virtualItems.map((virtualRow) => {
-          const row = rows[virtualRow.index];
-          if (!row) return null;
-          return (
-            <div
-              key={virtualRow.key}
-              ref={measureRowElement}
-              data-index={virtualRow.index}
-              className="absolute left-0 top-0 w-full px-3"
-              style={{ transform: `translateY(${virtualRow.start}px)` }}
-            >
-              <div className="pb-4">{renderRow(row)}</div>
-            </div>
-          );
-        })}
-      </div>
-    </ScrollArea>
+    <>
+      {copyStatus ? (
+        <div
+          className="px-3 pt-2 text-[11px] text-muted-foreground"
+          aria-live="polite"
+          role="status"
+        >
+          {copyStatus}
+        </div>
+      ) : null}
+      <ScrollArea className="min-h-0 flex-1" viewportRef={viewportRef}>
+        <div
+          className="relative py-3"
+          style={{ height: `${virtualTotalSize}px` }}
+        >
+          {virtualItems.map((virtualRow) => {
+            const row = rows[virtualRow.index];
+            if (!row) return null;
+            return (
+              <div
+                key={virtualRow.key}
+                ref={measureRowElement}
+                data-index={virtualRow.index}
+                className="absolute left-0 top-0 w-full px-3"
+                style={{ transform: `translateY(${virtualRow.start}px)` }}
+              >
+                <div className="pb-4">{renderRow(row)}</div>
+              </div>
+            );
+          })}
+        </div>
+      </ScrollArea>
+    </>
   );
 });

@@ -1,4 +1,5 @@
-import { UnifiedAssistantPanel } from "@/components/ai/UnifiedAssistantPanel";
+﻿import { lazy, Suspense } from "react";
+
 import type { AssistantSelectionQuote } from "@/components/ai/UnifiedAssistantPanel";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import type { ContextPacket, WritingEditorContext } from "@/types/ai";
@@ -9,6 +10,24 @@ import type {
   DocumentOpenPriority,
   NoteOpenSource,
 } from "@/lib/document-open-runtime";
+
+const UnifiedAssistantPanel = lazy(() =>
+  import("@/components/ai/UnifiedAssistantPanel").then((m) => ({
+    default: m.UnifiedAssistantPanel,
+  })),
+);
+
+function AssistantPanelLoading() {
+  return (
+    <div
+      className="ai-sidecar flex min-h-0 flex-1 items-center justify-center px-4 text-xs text-muted-foreground"
+      aria-live="polite"
+      role="status"
+    >
+      AI 面板加载中…
+    </div>
+  );
+}
 
 interface AppAiPanelSlotProps {
   aiDomain: AiDomain;
@@ -78,26 +97,28 @@ export function AppAiPanelSlot({
 
   return (
     <ErrorBoundary scope="AI面板">
-      <UnifiedAssistantPanel
-        aiDomain={aiDomain}
-        classifiedPath={classifiedPath}
-        notePath={assistantNotePath}
-        getNoteContent={getLiveMarkdown}
-        webSearch={webSearch}
-        webSearchProviderName={webSearchProviderName}
-        getWritingContext={getWritingContext}
-        getParagraphText={getParagraphText}
-        selectionQuote={selectionQuote}
-        prefillMessage={assistantPrefill}
-        onChromeChange={setAssistantChrome}
-        onVaultRefresh={bumpVaultIndex}
-        onInsertToEditor={handleInsertToEditor}
-        onOpenArtifact={onOpenArtifact}
-        onOpenEvidenceSource={openEvidenceSource}
-        onSessionDeleted={onSessionDeleted}
-        onSessionsCleared={onSessionsCleared}
-        onPatchApplied={onPatchApplied}
-      />
+      <Suspense fallback={<AssistantPanelLoading />}>
+        <UnifiedAssistantPanel
+          aiDomain={aiDomain}
+          classifiedPath={classifiedPath}
+          notePath={assistantNotePath}
+          getNoteContent={getLiveMarkdown}
+          webSearch={webSearch}
+          webSearchProviderName={webSearchProviderName}
+          getWritingContext={getWritingContext}
+          getParagraphText={getParagraphText}
+          selectionQuote={selectionQuote}
+          prefillMessage={assistantPrefill}
+          onChromeChange={setAssistantChrome}
+          onVaultRefresh={bumpVaultIndex}
+          onInsertToEditor={handleInsertToEditor}
+          onOpenArtifact={onOpenArtifact}
+          onOpenEvidenceSource={openEvidenceSource}
+          onSessionDeleted={onSessionDeleted}
+          onSessionsCleared={onSessionsCleared}
+          onPatchApplied={onPatchApplied}
+        />
+      </Suspense>
     </ErrorBoundary>
   );
 }

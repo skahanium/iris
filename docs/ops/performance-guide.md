@@ -1,4 +1,4 @@
-# Iris 性能指南
+﻿# Iris 性能指南
 
 本文档包含开发环境性能建议和 CPU/性能基线采样指南。
 
@@ -124,3 +124,16 @@ Use this check before changing `AppEditorWorkspace` caching behavior.
 5. Confirm hidden editor surfaces do not trigger repeated expensive outline, stats, or ingest work while inactive.
 
 If a regression is observed, prefer a small adjustment inside `AppEditorWorkspace` before introducing a new cache owner. Do not add `EditorViewCache.tsx` or a WeakRef editor pool.
+
+## Frontend Audit Optimization Pass
+
+本节用于记录 `FRONTEND-AUDIT.md` 派生的前端优化批次。执行时必须记录改前 / 改后数据；没有数据不得声称性能优化完成。
+
+| 场景                 | 记录项                                                                              |
+| -------------------- | ----------------------------------------------------------------------------------- |
+| AI 面板懒加载        | `index-*.js` 体积、AI 面板 chunk 名称与体积、冷启动未打开 AI 面板时是否加载该 chunk |
+| 大纲虚拟化           | 100+ heading 文档下目录 DOM 节点数、滚动与 active heading 高亮是否正常              |
+| Graph reduced-motion | 系统 reduced-motion 开启时是否停止持续 rAF；大图谱节点数与可交互时间                |
+| Overlay fallback     | Management Center、版本记录、知识图谱懒加载期间是否显示非空 loading surface         |
+
+记录不得包含用户笔记正文、真实路径、prompt、API Key、Token 或解密后的涉密内容。

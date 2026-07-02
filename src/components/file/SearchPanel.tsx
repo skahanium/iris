@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+﻿import { useEffect, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { IrisOverlay } from "@/components/ui/iris-overlay";
@@ -29,7 +29,13 @@ export function SearchPanel({
   const [keywordHits, setKeywordHits] = useState<KeywordHit[]>([]);
   const [semanticHits, setSemanticHits] = useState<SemanticHit[]>([]);
   const [loading, setLoading] = useState(false);
+  const [hasSearched, setHasSearched] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (open) return;
+    setHasSearched(false);
+  }, [open]);
 
   useEffect(() => {
     if (!open) return;
@@ -38,15 +44,20 @@ export function SearchPanel({
   }, [keywordHits, onPrepare, open, semanticHits]);
 
   const runSearch = async () => {
-    if (!query.trim()) return;
+    const trimmedQuery = query.trim();
+    if (!trimmedQuery) {
+      setHasSearched(false);
+      return;
+    }
+    setHasSearched(true);
     setLoading(true);
     setError(null);
     try {
       if (mode === "keyword") {
-        setKeywordHits(await searchKeyword(query, 20));
+        setKeywordHits(await searchKeyword(trimmedQuery, 20));
         setSemanticHits([]);
       } else {
-        setSemanticHits(await searchSemantic(query, 5));
+        setSemanticHits(await searchSemantic(trimmedQuery, 5));
         setKeywordHits([]);
       }
     } catch (e) {
@@ -57,6 +68,9 @@ export function SearchPanel({
       setLoading(false);
     }
   };
+
+  const hasResults = keywordHits.length > 0 || semanticHits.length > 0;
+  const showEmptyResults = hasSearched && !loading && !error && !hasResults;
 
   return (
     <IrisOverlay
@@ -121,6 +135,17 @@ export function SearchPanel({
         }
       >
         <ScrollArea className="task-overlay-results min-h-0 flex-1 px-2 py-2">
+          {showEmptyResults ? (
+            <div
+              className="flex min-h-[12rem] flex-col items-center justify-center gap-1 text-center text-sm text-muted-foreground"
+              role="status"
+            >
+              <div className="font-medium text-foreground">未找到匹配结果</div>
+              <div className="text-xs">
+                试试更具体的关键词，或切换语义搜索。
+              </div>
+            </div>
+          ) : null}
           {keywordHits.map((h) => (
             <button
               key={h.path}

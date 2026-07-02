@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+﻿import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 function read(path: string): string {
@@ -32,5 +32,14 @@ describe("performance guide contract", () => {
     expect(guide).toContain("不得包含用户笔记正文");
     expect(guide).toContain("不得包含 API Key");
     expect(guide).toContain("不得包含解密后的涉密内容");
+  });
+  it("documents this frontend optimization pass", () => {
+    const guide = read("docs/ops/performance-guide.md");
+
+    expect(guide).toContain("Frontend Audit Optimization Pass");
+    expect(guide).toContain("AI 面板懒加载");
+    expect(guide).toContain("大纲虚拟化");
+    expect(guide).toContain("Graph reduced-motion");
+    expect(guide).toContain("Overlay fallback");
   });
 });
