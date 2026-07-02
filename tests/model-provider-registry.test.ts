@@ -81,7 +81,31 @@ describe("model provider registry contract", () => {
     expect(section).toContain("providersForSlot");
     expect(section).toContain("isProviderConfiguredForRouting");
     expect(section).toContain("routeProviderOptions.map");
+    expect(section).toContain("configuredProviderIds");
     expect(section).not.toContain("data.providers.map((p) => (");
+    expect(section).not.toContain("addProvider(route.providerId");
+  });
+
+  it("keeps built-in providers in the add flow and reserves base URLs for custom endpoints", () => {
+    const section = read("src/components/settings/LlmRoutingSection.tsx");
+    const types = read("src/types/llm.ts");
+
+    expect(section).toContain("endpointManaged");
+    expect(section).toContain("providerRequiresBaseUrl");
+    expect(section).toContain("custom ? (");
+    expect(section).not.toContain("Base URL（可选）");
+    expect(section).not.toContain('provider.id === "mimo"');
+    expect(types).toContain('endpointManaged: "builtin" | "custom"');
+  });
+
+  it("starts with no default slot bindings so empty capability slots freeze", () => {
+    const types = read("src/types/llm.ts");
+    const config = read("src-tauri/src/llm/config.rs");
+
+    expect(types).toContain("slots: {}");
+    expect(types).not.toContain('providerId: "deepseek"');
+    expect(types).not.toContain('providerId: "mimo"');
+    expect(config).toContain("empty_slot_defaults");
   });
 
   it("does not expose Ollama in the external provider settings panel", () => {

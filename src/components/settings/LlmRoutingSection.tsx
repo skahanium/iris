@@ -38,14 +38,30 @@ import {
 } from "@/types/llm";
 
 const FALLBACK_PROVIDERS: LlmConfigGetResponse["providers"] = [
-  { id: "deepseek", name: "DeepSeek", default_model: "deepseek-v4-flash" },
-  { id: "openai", name: "OpenAI", default_model: "gpt-4o-mini" },
+  {
+    id: "deepseek",
+    name: "DeepSeek",
+    default_model: "deepseek-v4-flash",
+    endpointManaged: "builtin",
+  },
+  {
+    id: "openai",
+    name: "OpenAI",
+    default_model: "gpt-4o-mini",
+    endpointManaged: "builtin",
+  },
   {
     id: "anthropic",
     name: "Anthropic",
     default_model: "claude-3-5-haiku-20241022",
+    endpointManaged: "builtin",
   },
-  { id: "mimo", name: "MiMo", default_model: "MiMo-V2.5-Pro" },
+  {
+    id: "mimo",
+    name: "MiMo",
+    default_model: "MiMo-V2.5-Pro",
+    endpointManaged: "builtin",
+  },
 ];
 
 const SLOT_META: Record<
@@ -69,9 +85,8 @@ interface VisibleProvider {
   enabledModels: string[];
   usedSlots: string[];
   configured: boolean;
-  keyless: boolean;
   custom: boolean;
-  baseUrl: string | null;
+  endpointManaged: "builtin" | "custom";
 }
 
 interface EnabledProviderModel {
@@ -273,6 +288,31 @@ export function LlmRoutingSection({ open }: LlmRoutingSectionProps) {
     [data?.providers, routing?.providers],
   );
 
+  const providerInfo = (providerId: string) =>
+    data?.providers.find((provider) => provider.id === providerId);
+
+  const providerRequiresBaseUrl = (providerId: string): boolean =>
+    isCustomProviderId(providerId) ||
+    providerInfo(providerId)?.endpointManaged === "custom";
+
+  const providerOverrideForSave = (providerId: string): ProviderOverride => {
+    const existing = routingRef.current?.providers[providerId];
+    if (providerRequiresBaseUrl(providerId)) {
+      return {
+        baseUrl: baseUrlForProvider(providerId).trim() || null,
+        label: existing?.label ?? null,
+        defaultModel: existing?.defaultModel ?? null,
+        enabledModels: existing?.enabledModels ?? [],
+      };
+    }
+    return {
+      baseUrl: null,
+      label: existing?.label ?? null,
+      defaultModel: existing?.defaultModel ?? null,
+      enabledModels: existing?.enabledModels ?? [],
+    };
+  };
+
   const modelById = (
     providerId: string,
     modelId: string,
@@ -303,7 +343,13 @@ export function LlmRoutingSection({ open }: LlmRoutingSectionProps) {
       defaultModel: null,
       enabledModels: null,
     };
-    const next: ProviderOverride = { ...prev, ...patch };
+    const next: ProviderOverride = {
+      ...prev,
+      ...patch,
+      baseUrl: providerRequiresBaseUrl(providerId)
+        ? (patch.baseUrl ?? prev.baseUrl ?? null)
+        : null,
+    };
     const nextRouting = {
       ...routing,
       providers: { ...routing.providers, [providerId]: next },
@@ -333,6 +379,35 @@ export function LlmRoutingSection({ open }: LlmRoutingSectionProps) {
     updateProviderOverride(providerId, { baseUrl: value.trim() || null });
   };
 
+  const persistRouting = async (nextRouting?: LlmRoutingConfig) => {
+    const snapshot = nextRouting ?? routingRef.current;
+    if (!snapshot) return;
+    await llmConfigSet(snapshot);
+    notifyLlmConfigChanged();
+  };
+
+  const persistProviderConfig = async (providerId: string) => {
+    const current = routingRef.current;
+    if (!current) return false;
+    if (
+      providerRequiresBaseUrl(providerId) &&
+      !baseUrlForProvider(providerId).trim()
+    ) {
+      setMessage(`${providerName(providerId)} 需配置 Base URL 后才能保存。`);
+      return false;
+    }
+    const nextRouting: LlmRoutingConfig = {
+      ...current,
+      providers: {
+        ...current.providers,
+        [providerId]: providerOverrideForSave(providerId),
+      },
+    };
+    applyRouting(nextRouting);
+    await persistRouting(nextRouting);
+    return true;
+  };
+
   const ensureCustomProvider = () => {
     if (!routing || !data) return null;
     const id = nextCustomProviderId([
@@ -356,7 +431,15 @@ export function LlmRoutingSection({ open }: LlmRoutingSectionProps) {
     setData({
       ...data,
       routing: nextRouting,
-      providers: [...data.providers, { id, name: label, default_model: "" }],
+      providers: [
+        ...data.providers,
+        {
+          id,
+          name: label,
+          default_model: "",
+          endpointManaged: "custom",
+        },
+      ],
     });
     void refreshKeyStatus([id]);
     return id;
@@ -372,11 +455,13 @@ export function LlmRoutingSection({ open }: LlmRoutingSectionProps) {
     setKeySaving(providerId);
     setMessage(null);
     try {
+      const persisted = await persistProviderConfig(providerId);
+      if (!persisted) return;
       await credentialSet(service, value);
       keyInputsRef.current[providerId] = "";
       setKeyInputTouch((n) => n + 1);
       setKeyConfigured((prev) => ({ ...prev, [providerId]: true }));
-      setMessage(`${label} Key 已保存到系统凭据管理器。`);
+      setMessage(`${label} 已添加，Key 已保存到系统凭据管理器。`);
       notifyLlmConfigChanged();
     } catch (err) {
       setMessage(`保存 ${label} Key 失败：${invokeErrorMessage(err)}`);
@@ -403,19 +488,13 @@ export function LlmRoutingSection({ open }: LlmRoutingSectionProps) {
     patch: Partial<{ providerId: string; model: string; thinking: boolean }>,
   ) => {
     if (!routing) return;
-    const current = routing.slots[slot] ?? DEFAULT_LLM_ROUTING.slots[slot];
+    const current = routing.slots[slot];
+    if (!current && (!patch.providerId || !patch.model)) return;
     const nextRoute = { ...current, ...patch };
     const nextSlots: LlmRoutingConfig["slots"] = {
       ...routing.slots,
-      [slot]: nextRoute,
+      [slot]: nextRoute as SlotRoute,
     };
-    const agentTools = routing.slots.agent_tools;
-    const reasoner =
-      routing.slots.reasoner ?? DEFAULT_LLM_ROUTING.slots.reasoner;
-    if (!agentTools || sameRoute(agentTools, reasoner)) {
-      nextSlots.agent_tools =
-        slot === "reasoner" ? nextRoute : (nextSlots.agent_tools ?? reasoner);
-    }
     applyRouting({
       ...routing,
       slots: nextSlots,
@@ -455,9 +534,7 @@ export function LlmRoutingSection({ open }: LlmRoutingSectionProps) {
   const isProviderConfiguredForRouting = (providerId: string): boolean => {
     const override = routing?.providers[providerId];
     return Boolean(
-      keyConfigured[providerId] ||
-      override?.baseUrl?.trim() ||
-      override?.enabledModels?.length ||
+      (override && override?.enabledModels?.length) ||
       override?.defaultModel?.trim(),
     );
   };
@@ -479,8 +556,8 @@ export function LlmRoutingSection({ open }: LlmRoutingSectionProps) {
 
   const modelUsageLabels = (providerId: string, modelId: string) =>
     USER_CONFIGURABLE_CAPABILITY_SLOTS.filter((slot) => {
-      const route = routing?.slots[slot] ?? DEFAULT_LLM_ROUTING.slots[slot];
-      return route.providerId === providerId && route.model === modelId;
+      const route = routing?.slots[slot];
+      return route?.providerId === providerId && route.model === modelId;
     }).map((slot) => SLOT_META[slot].label);
 
   const addProviderModel = (providerId: string) => {
@@ -519,44 +596,25 @@ export function LlmRoutingSection({ open }: LlmRoutingSectionProps) {
 
   const visibleProviders = (() => {
     if (!routing || !data) return [];
-    const providers = new Map<string, VisibleProvider>();
-    const addProvider = (
-      providerId: string,
-      usage: string | null,
-      configuredOverride = false,
-    ) => {
+    const configuredProviderIds = Object.keys(routing.providers);
+    const providers = configuredProviderIds.map((providerId) => {
       const override = routing.providers[providerId];
-      const row = providers.get(providerId) ?? {
+      const usedSlots = USER_CONFIGURABLE_CAPABILITY_SLOTS.filter((slot) => {
+        const route = routing.slots[slot];
+        return route?.providerId === providerId;
+      }).map((slot) => SLOT_META[slot].label);
+      return {
         id: providerId,
         name: providerName(providerId),
         enabledModels: enabledModelIdsForProvider(providerId),
-        usedSlots: [],
-        configured:
-          configuredOverride ||
-          Boolean(keyConfigured[providerId]) ||
-          Boolean(override),
-        keyless: false,
+        usedSlots,
+        configured: Boolean(override),
         custom: isCustomProviderId(providerId),
-        baseUrl: baseUrlForProvider(providerId) || null,
+        endpointManaged: providerInfo(providerId)?.endpointManaged ?? "custom",
       };
-      if (usage && !row.usedSlots.includes(usage)) row.usedSlots.push(usage);
-      providers.set(providerId, row);
-    };
+    });
 
-    for (const slot of USER_CONFIGURABLE_CAPABILITY_SLOTS) {
-      const route = routing.slots[slot] ?? DEFAULT_LLM_ROUTING.slots[slot];
-      addProvider(route.providerId, SLOT_META[slot].label);
-    }
-
-    for (const provider of data.providers) {
-      const override = routing.providers[provider.id];
-      const configured =
-        Boolean(keyConfigured[provider.id]) || Boolean(override);
-      if (!configured) continue;
-      addProvider(provider.id, null, configured);
-    }
-
-    return Array.from(providers.values()).sort((a, b) => {
+    return providers.sort((a, b) => {
       const score = (provider: VisibleProvider) =>
         provider.usedSlots.length > 0 ? 0 : provider.configured ? 1 : 2;
       return score(a) - score(b) || a.name.localeCompare(b.name);
@@ -564,6 +622,7 @@ export function LlmRoutingSection({ open }: LlmRoutingSectionProps) {
   })();
 
   const testProvider = async (provider: VisibleProvider) => {
+    if (!(await persistProviderConfig(provider.id))) return;
     setTesting(provider.id);
     setProviderResults((prev) => {
       const next = { ...prev };
@@ -584,6 +643,7 @@ export function LlmRoutingSection({ open }: LlmRoutingSectionProps) {
   };
 
   const refreshProviderModels = async (provider: VisibleProvider) => {
+    if (!(await persistProviderConfig(provider.id))) return;
     setRefreshingProvider(provider.id);
     try {
       const result = await llmModelRegistryRefresh(provider.id);
@@ -601,12 +661,12 @@ export function LlmRoutingSection({ open }: LlmRoutingSectionProps) {
     model: EnabledProviderModel,
   ) => {
     const key = `${provider.id}:${model.id}`;
-    if (provider.id === "mimo" && !baseUrlForProvider(provider.id).trim()) {
+    if (!(await persistProviderConfig(provider.id))) {
       setTestResults((prev) => ({
         ...prev,
         [key]: {
           ok: false,
-          message: "MiMo 需配置 Base URL 后才能验证模型。",
+          message: "供应商配置未保存",
         },
       }));
       return;
@@ -712,9 +772,7 @@ export function LlmRoutingSection({ open }: LlmRoutingSectionProps) {
             }}
             onSaveKey={(id) => void saveKey(id)}
             onCreateCustom={ensureCustomProvider}
-            onBaseUrl={(id, url) =>
-              updateProviderOverride(id, { baseUrl: url.trim() || null })
-            }
+            onBaseUrl={(id, url) => updateProviderBaseUrl(id, url)}
             onLabel={(id, label) =>
               updateProviderOverride(id, { label: label.trim() || null })
             }
@@ -729,12 +787,10 @@ export function LlmRoutingSection({ open }: LlmRoutingSectionProps) {
         ) : (
           <div className="space-y-2">
             {visibleProviders.map((provider) => {
-              const providerBaseUrl = baseUrlForProvider(provider.id);
-              const missingRequiredBaseUrl =
-                provider.id === "mimo" && !providerBaseUrl.trim();
               const override = routing.providers[provider.id];
               const providerModels = enabledModelsForProvider(provider.id);
               const providerResult = providerResults[provider.id];
+              const requiresBaseUrl = providerRequiresBaseUrl(provider.id);
               return (
                 <div
                   key={provider.id}
@@ -751,7 +807,7 @@ export function LlmRoutingSection({ open }: LlmRoutingSectionProps) {
                         ? ` · 用于 ${provider.usedSlots.join(" / ")}`
                         : ""}
                     </p>
-                    {provider.custom ? (
+                    {isCustomProviderId(provider.id) ? (
                       <Input
                         className="h-8 text-xs"
                         placeholder="显示名称"
@@ -763,64 +819,58 @@ export function LlmRoutingSection({ open }: LlmRoutingSectionProps) {
                         }
                       />
                     ) : null}
-                    <Input
-                      className="h-8 text-xs"
-                      placeholder={
-                        provider.keyless
-                          ? "本地端点 Base URL（可选）"
-                          : "Base URL（可选）"
-                      }
-                      value={baseUrlForProvider(provider.id)}
-                      onChange={(event) =>
-                        updateProviderBaseUrl(provider.id, event.target.value)
-                      }
-                    />
+                    {requiresBaseUrl ? (
+                      <Input
+                        className="h-8 text-xs"
+                        placeholder="自定义端点 Base URL"
+                        value={baseUrlForProvider(provider.id)}
+                        onChange={(event) =>
+                          updateProviderBaseUrl(provider.id, event.target.value)
+                        }
+                      />
+                    ) : (
+                      <p className="rounded-md border border-border/45 bg-background/45 px-3 py-2 text-[11px] text-muted-foreground">
+                        内置供应商使用系统默认端点
+                      </p>
+                    )}
                     <div className="flex flex-wrap items-center gap-2">
-                      {!provider.keyless ? (
-                        <>
-                          <Input
-                            type="password"
-                            className="h-8 w-44 text-xs"
-                            placeholder="API Key…"
-                            value={keyInputsRef.current?.[provider.id] ?? ""}
-                            onChange={(event) => {
-                              keyInputsRef.current[provider.id] =
-                                event.target.value;
-                              setKeyInputTouch((n) => n + 1);
-                            }}
-                          />
-                          <Button
-                            type="button"
-                            size="sm"
-                            variant="outline"
-                            className="h-8"
-                            disabled={keySaving === provider.id}
-                            onClick={() => void saveKey(provider.id)}
-                          >
-                            保存 Key
-                          </Button>
-                          {keyConfigured[provider.id] ? (
-                            <Button
-                              type="button"
-                              size="sm"
-                              variant="ghost"
-                              className="h-8"
-                              onClick={() => void clearKey(provider.id)}
-                            >
-                              清除
-                            </Button>
-                          ) : null}
-                        </>
+                      <Input
+                        type="password"
+                        className="h-8 w-44 text-xs"
+                        placeholder="API Key…"
+                        value={keyInputsRef.current?.[provider.id] ?? ""}
+                        onChange={(event) => {
+                          keyInputsRef.current[provider.id] =
+                            event.target.value;
+                          setKeyInputTouch((n) => n + 1);
+                        }}
+                      />
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        className="h-8"
+                        disabled={keySaving === provider.id}
+                        onClick={() => void saveKey(provider.id)}
+                      >
+                        保存 Key
+                      </Button>
+                      {keyConfigured[provider.id] ? (
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="ghost"
+                          className="h-8"
+                          onClick={() => void clearKey(provider.id)}
+                        >
+                          清除
+                        </Button>
                       ) : null}
                     </div>
                     <p className="text-[11px] text-muted-foreground">
-                      {missingRequiredBaseUrl
-                        ? "需配置 Base URL"
-                        : provider.keyless
-                          ? "本地端点"
-                          : provider.configured
-                            ? "Key 已配置"
-                            : "需要配置 Key"}
+                      {keyConfigured[provider.id]
+                        ? "Key 已配置"
+                        : "需要配置 Key"}
                     </p>
                     <div className="flex flex-wrap items-center gap-2">
                       <Button
@@ -938,9 +988,7 @@ export function LlmRoutingSection({ open }: LlmRoutingSectionProps) {
                                   size="sm"
                                   variant="secondary"
                                   className="h-7 text-xs"
-                                  disabled={
-                                    modelTesting || missingRequiredBaseUrl
-                                  }
+                                  disabled={modelTesting}
                                   onClick={() =>
                                     void validateProviderModel(provider, model)
                                   }
@@ -993,24 +1041,23 @@ export function LlmRoutingSection({ open }: LlmRoutingSectionProps) {
 
         <div className="space-y-2">
           {USER_CONFIGURABLE_CAPABILITY_SLOTS.map((slot) => {
-            const route =
-              routing.slots[slot] ?? DEFAULT_LLM_ROUTING.slots[slot];
+            const route = routing.slots[slot];
             const routeProviderOptions = providersForSlot(slot);
             const routeProviderIds = routeProviderOptions.map(
               (provider) => provider.id,
             );
-            const providerId = routeProviderIds.includes(route.providerId)
-              ? route.providerId
-              : (routeProviderOptions[0]?.id ?? "");
+            const providerId =
+              route && routeProviderIds.includes(route.providerId)
+                ? route.providerId
+                : "";
             const routeProviderInvalid =
-              route.providerId && route.providerId !== providerId;
+              Boolean(route?.providerId) && route?.providerId !== providerId;
             const models = providerId ? modelsForSlot(slot, providerId) : [];
             const modelIds = models.map((model) => model.id);
-            const selectedModel = modelIds.includes(route.model)
-              ? route.model
-              : (models[0]?.id ?? "");
+            const selectedModel =
+              route && modelIds.includes(route.model) ? route.model : "";
             const routeModelInvalid =
-              Boolean(route.model) && route.model !== selectedModel;
+              Boolean(route?.model) && route?.model !== selectedModel;
             return (
               <div
                 key={slot}
@@ -1044,7 +1091,7 @@ export function LlmRoutingSection({ open }: LlmRoutingSectionProps) {
                     }
                   >
                     <SelectTrigger className="h-8 text-xs">
-                      <SelectValue />
+                      <SelectValue placeholder="选择供应商" />
                     </SelectTrigger>
                     <SelectContent>
                       {routeProviderOptions.map((provider) => (
@@ -1061,7 +1108,9 @@ export function LlmRoutingSection({ open }: LlmRoutingSectionProps) {
                     placeholder={
                       slot === "vision"
                         ? "无可用视觉模型"
-                        : "先在供应商配置中添加模型"
+                        : providerId
+                          ? "先在供应商配置中添加模型"
+                          : "先选择供应商"
                     }
                     value=""
                     disabled
@@ -1137,7 +1186,12 @@ function AddModelWizard({
   onClose: () => void;
 }) {
   const [providerId, setProviderId] = useState(providers[0]?.id ?? "deepseek");
-  const custom = isCustomProviderId(providerId);
+  const selectedProvider = providers.find(
+    (provider) => provider.id === providerId,
+  );
+  const custom =
+    isCustomProviderId(providerId) ||
+    selectedProvider?.endpointManaged === "custom";
 
   const createCustom = () => {
     const id = onCreateCustom();
@@ -1189,7 +1243,7 @@ function AddModelWizard({
           />
           <Input
             className="h-8 text-xs"
-            placeholder="Base URL"
+            placeholder="自定义端点 Base URL"
             onBlur={(event) => onBaseUrl(providerId, event.target.value)}
           />
         </div>
@@ -1277,7 +1331,7 @@ function normalizeRouting(raw: LlmRoutingConfig | undefined): LlmRoutingConfig {
     };
   }
 
-  const slots: LlmRoutingConfig["slots"] = { ...DEFAULT_LLM_ROUTING.slots };
+  const slots: LlmRoutingConfig["slots"] = {};
   const legacyScenes = (
     raw as LlmRoutingConfig & {
       scenes?: Record<string, SlotRoute & { provider_id?: string }>;
@@ -1293,11 +1347,11 @@ function normalizeRouting(raw: LlmRoutingConfig | undefined): LlmRoutingConfig {
   for (const [slot, scene] of Object.entries(legacySceneToSlot)) {
     const route = legacyScenes?.[scene];
     if (!route) continue;
+    const providerId = route.providerId ?? route.provider_id;
+    if (!providerId || !route.model) continue;
     slots[slot as CapabilitySlot] = {
-      providerId: route.providerId ?? route.provider_id ?? "deepseek",
-      model: normalizePersistedModelId(
-        route.model ?? DEFAULT_LLM_ROUTING.slots[slot as CapabilitySlot].model,
-      ),
+      providerId,
+      model: normalizePersistedModelId(route.model),
       thinking: route.thinking ?? false,
     };
   }
@@ -1306,30 +1360,22 @@ function normalizeRouting(raw: LlmRoutingConfig | undefined): LlmRoutingConfig {
     const route = rawSlots?.[slot];
     if (!route) continue;
     const row = route as SlotRoute & { provider_id?: string };
+    const providerId = row.providerId ?? row.provider_id;
+    if (!providerId || !row.model) continue;
     slots[slot] = {
-      providerId: row.providerId ?? row.provider_id ?? "deepseek",
-      model: normalizePersistedModelId(
-        row.model ?? DEFAULT_LLM_ROUTING.slots[slot].model,
-      ),
+      providerId,
+      model: normalizePersistedModelId(row.model),
       thinking: row.thinking ?? false,
     };
   }
 
   return {
     version: raw.version ?? 1,
-    schemaVersion: raw.schemaVersion ?? 2,
+    schemaVersion: raw.schemaVersion ?? 3,
     providers,
     slots,
     contextStrategy: raw.contextStrategy ?? DEFAULT_LLM_ROUTING.contextStrategy,
   };
-}
-
-function sameRoute(a: SlotRoute, b: SlotRoute): boolean {
-  return (
-    a.providerId === b.providerId &&
-    a.model === b.model &&
-    Boolean(a.thinking) === Boolean(b.thinking)
-  );
 }
 
 function normalizePersistedModelId(model: string): string {

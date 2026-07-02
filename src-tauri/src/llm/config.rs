@@ -162,7 +162,7 @@ impl Default for LlmRoutingConfig {
 
 impl LlmRoutingConfig {
     /// 当前 schema 版本
-    const CURRENT_SCHEMA_VERSION: u32 = 2;
+    const CURRENT_SCHEMA_VERSION: u32 = 3;
 
     /// 迁移旧版本配置（就地修改传入的 JSON Value）
     pub fn migrate(config: &mut serde_json::Value) -> AppResult<()> {
@@ -182,6 +182,12 @@ impl LlmRoutingConfig {
             config["schemaVersion"] = serde_json::json!(2);
         }
 
+        if schema_version < 3 {
+            remove_legacy_default_slot_bindings(config);
+            remove_builtin_base_url_overrides(config);
+            config["schemaVersion"] = serde_json::json!(3);
+        }
+
         Ok(())
     }
 }
@@ -189,19 +195,14 @@ impl LlmRoutingConfig {
 fn slots_from_legacy_scenes(
     config: &serde_json::Value,
 ) -> std::collections::HashMap<String, serde_json::Value> {
-    let defaults = deepseek_defaults();
-    let mut slots: std::collections::HashMap<String, serde_json::Value> = defaults
-        .slots
-        .into_iter()
-        .map(|(slot, route)| (slot, serde_json::to_value(route).unwrap_or_default()))
-        .collect();
+    let mut slots: std::collections::HashMap<String, serde_json::Value> =
+        std::collections::HashMap::new();
     let scenes = &config["scenes"];
     let mappings = [
         ("fast", "knowledge_lookup"),
         ("writer", "drafting_assist"),
         ("reasoner", "research_synthesis"),
         ("long_context", "exemplar_learning"),
-        ("agent_tools", "knowledge_lookup"),
     ];
     for (slot, scene) in mappings {
         if scenes[scene].is_object() {
@@ -209,6 +210,78 @@ fn slots_from_legacy_scenes(
         }
     }
     slots
+}
+
+fn remove_legacy_default_slot_bindings(config: &mut serde_json::Value) {
+    let Some(slots) = config["slots"].as_object_mut() else {
+        return;
+    };
+    slots.retain(|slot, route| !is_legacy_default_slot_binding(slot, route));
+}
+
+fn is_legacy_default_slot_binding(slot: &str, route: &serde_json::Value) -> bool {
+    let provider = route
+        .get("providerId")
+        .or_else(|| route.get("provider_id"))
+        .and_then(|value| value.as_str());
+    let model = route.get("model").and_then(|value| value.as_str());
+    let thinking = route
+        .get("thinking")
+        .and_then(|value| value.as_bool())
+        .unwrap_or(false);
+
+    matches!(
+        (slot, provider, model, thinking),
+        ("fast", Some("deepseek"), Some("deepseek-v4-flash"), false)
+            | ("writer", Some("deepseek"), Some("deepseek-v4-pro"), false)
+            | ("reasoner", Some("deepseek"), Some("deepseek-v4-pro"), true)
+            | (
+                "long_context",
+                Some("deepseek"),
+                Some("deepseek-v4-pro"),
+                false
+            )
+            | (
+                "agent_tools",
+                Some("deepseek"),
+                Some("deepseek-v4-pro"),
+                true
+            )
+            | (
+                "embedding",
+                Some("deepseek"),
+                Some("deepseek-v4-flash"),
+                false
+            )
+            | (
+                "reranker",
+                Some("deepseek"),
+                Some("deepseek-v4-flash"),
+                false
+            )
+            | (
+                "local_private",
+                Some("deepseek"),
+                Some("deepseek-v4-flash"),
+                false
+            )
+            | ("vision", Some("mimo"), Some("mimo-v2.5"), false)
+    )
+}
+
+fn remove_builtin_base_url_overrides(config: &mut serde_json::Value) {
+    let Some(providers) = config["providers"].as_object_mut() else {
+        return;
+    };
+    for (provider_id, provider) in providers {
+        if crate::llm::providers::is_custom_provider(provider_id) {
+            continue;
+        }
+        if let Some(row) = provider.as_object_mut() {
+            row.remove("baseUrl");
+            row.remove("base_url");
+        }
+    }
 }
 
 fn merge_legacy_scene_routes(config: &mut LlmRoutingConfig) {
@@ -221,7 +294,6 @@ fn merge_legacy_scene_routes(config: &mut LlmRoutingConfig) {
         ("writer", "drafting_assist"),
         ("reasoner", "research_synthesis"),
         ("long_context", "exemplar_learning"),
-        ("agent_tools", "knowledge_lookup"),
     ];
     for (slot, scene) in mappings {
         if let Some(route) = config.scenes.get(scene).cloned() {
@@ -233,81 +305,20 @@ fn merge_legacy_scene_routes(config: &mut LlmRoutingConfig) {
 
 /// Factory defaults aligned with user preference (DeepSeek V4 Flash / Pro).
 pub fn deepseek_defaults() -> LlmRoutingConfig {
-    let mut slots = std::collections::HashMap::new();
-    slots.insert(
-        "fast".into(),
-        SlotRoute {
-            provider_id: "deepseek".into(),
-            model: "deepseek-v4-flash".into(),
-            thinking: false,
-        },
-    );
-    slots.insert(
-        "writer".into(),
-        SlotRoute {
-            provider_id: "deepseek".into(),
-            model: "deepseek-v4-pro".into(),
-            thinking: false,
-        },
-    );
-    slots.insert(
-        "reasoner".into(),
-        SlotRoute {
-            provider_id: "deepseek".into(),
-            model: "deepseek-v4-pro".into(),
-            thinking: true,
-        },
-    );
-    slots.insert(
-        "long_context".into(),
-        SlotRoute {
-            provider_id: "deepseek".into(),
-            model: "deepseek-v4-pro".into(),
-            thinking: false,
-        },
-    );
-    slots.insert(
-        "agent_tools".into(),
-        SlotRoute {
-            provider_id: "deepseek".into(),
-            model: "deepseek-v4-pro".into(),
-            thinking: true,
-        },
-    );
-    slots.insert(
-        "vision".into(),
-        SlotRoute {
-            provider_id: "mimo".into(),
-            model: "mimo-v2.5".into(),
-            thinking: false,
-        },
-    );
-    slots.insert(
-        "embedding".into(),
-        SlotRoute {
-            provider_id: "deepseek".into(),
-            model: "deepseek-v4-flash".into(),
-            thinking: false,
-        },
-    );
-    slots.insert(
-        "reranker".into(),
-        SlotRoute {
-            provider_id: "deepseek".into(),
-            model: "deepseek-v4-flash".into(),
-            thinking: false,
-        },
-    );
     LlmRoutingConfig {
         version: 1,
         schema_version: LlmRoutingConfig::CURRENT_SCHEMA_VERSION,
         created_at: Some(chrono::Utc::now().to_rfc3339()),
         updated_at: None,
         providers: std::collections::HashMap::new(),
-        slots,
+        slots: empty_slot_defaults(),
         scenes: std::collections::HashMap::new(),
         context_strategy: std::collections::HashMap::new(),
     }
+}
+
+fn empty_slot_defaults() -> std::collections::HashMap<String, SlotRoute> {
+    std::collections::HashMap::new()
 }
 
 pub fn load(db: &Database) -> AppResult<LlmRoutingConfig> {
@@ -348,14 +359,17 @@ pub fn load(db: &Database) -> AppResult<LlmRoutingConfig> {
 
 /// Remove unknown providers while preserving Phase3 built-ins and custom endpoints.
 fn sanitize_routing(config: &mut LlmRoutingConfig) {
-    for route in config.slots.values_mut() {
+    config.slots.retain(|_, route| {
         if !crate::llm::providers::is_allowed_provider(&route.provider_id) {
-            route.provider_id = "deepseek".into();
-            route.model = "deepseek-v4-flash".into();
-            route.thinking = false;
-        } else {
-            route.model = normalize_legacy_model_id(&route.model).into();
+            return false;
         }
+        if !config.providers.contains_key(&route.provider_id) {
+            return false;
+        }
+        !route.model.trim().is_empty()
+    });
+    for route in config.slots.values_mut() {
+        route.model = normalize_legacy_model_id(&route.model).into();
     }
     for provider in config.providers.values_mut() {
         if let Some(model) = provider.default_model.as_deref() {
@@ -373,12 +387,10 @@ fn sanitize_routing(config: &mut LlmRoutingConfig) {
         crate::llm::providers::is_allowed_provider(id)
             || crate::llm::providers::is_custom_provider(id)
     });
-    if config
-        .slots
-        .get("local_private")
-        .is_some_and(|route| route.provider_id == "deepseek")
-    {
-        config.slots.remove("local_private");
+    for (id, provider) in config.providers.iter_mut() {
+        if !crate::llm::providers::is_custom_provider(id) {
+            provider.base_url = None;
+        }
     }
 }
 
@@ -444,10 +456,10 @@ fn read_setting_string(db: &Database, key: &str) -> AppResult<Option<String>> {
 }
 
 fn ensure_slot_keys(config: &mut LlmRoutingConfig) {
-    let defaults = deepseek_defaults();
-    for (key, route) in defaults.slots {
-        config.slots.entry(key).or_insert(route);
-    }
+    let _ = empty_slot_defaults();
+    config
+        .slots
+        .retain(|_, route| !route.model.trim().is_empty());
 }
 
 fn route_input_for_scene(scene: AiScene) -> CapabilityRouteInput {
@@ -538,7 +550,12 @@ fn resolve_capability_route_with_registry(
         }
     }
 
-    Err(last_error.unwrap_or_else(|| AppError::msg("no capability route available")))
+    Err(last_error.unwrap_or_else(|| {
+        AppError::msg(format!(
+            "{} 能力槽未配置可用模型",
+            slot_display_name(requested_slot)
+        ))
+    }))
 }
 
 fn resolve_route(
@@ -547,6 +564,12 @@ fn resolve_route(
     route: SlotRoute,
 ) -> AppResult<ResolvedLlmConfig> {
     let provider_override = routing.providers.get(&route.provider_id);
+    if provider_override.is_none() {
+        return Err(AppError::msg(format!(
+            "{} 供应商尚未添加",
+            provider_label(&route.provider_id)
+        )));
+    }
     let custom_base = provider_override.and_then(configured_base_url);
     if requires_base_url(&route.provider_id) && custom_base.is_none() {
         return Err(AppError::msg(format!(
@@ -614,21 +637,20 @@ fn requested_slot(input: CapabilityRouteInput) -> CapabilitySlot {
 }
 
 fn fallback_chain_for(slot: CapabilitySlot) -> Vec<CapabilitySlot> {
+    vec![slot]
+}
+
+fn slot_display_name(slot: CapabilitySlot) -> &'static str {
     match slot {
-        CapabilitySlot::Vision => vec![CapabilitySlot::Vision],
-        CapabilitySlot::AgentTools => vec![
-            CapabilitySlot::AgentTools,
-            CapabilitySlot::Reasoner,
-            CapabilitySlot::Fast,
-        ],
-        CapabilitySlot::LongContext => vec![
-            CapabilitySlot::LongContext,
-            CapabilitySlot::Reasoner,
-            CapabilitySlot::Fast,
-        ],
-        CapabilitySlot::Writer => vec![CapabilitySlot::Writer, CapabilitySlot::Fast],
-        CapabilitySlot::Reasoner => vec![CapabilitySlot::Reasoner, CapabilitySlot::Fast],
-        other => vec![other],
+        CapabilitySlot::Fast => "Fast",
+        CapabilitySlot::Writer => "Writer",
+        CapabilitySlot::Reasoner => "Reasoner",
+        CapabilitySlot::LongContext => "Long context",
+        CapabilitySlot::Vision => "Vision",
+        CapabilitySlot::AgentTools => "Agent tools",
+        CapabilitySlot::Embedding => "Embedding",
+        CapabilitySlot::Reranker => "Reranker",
+        CapabilitySlot::LocalPrivate => "Local private",
     }
 }
 
@@ -705,6 +727,7 @@ fn configured_base_url(provider: &ProviderOverride) -> Option<&str> {
 fn provider_label(provider_id: &str) -> &str {
     match provider_id {
         "mimo" => "MiMo",
+        id if crate::llm::providers::is_custom_provider(id) => "Custom",
         other => other,
     }
 }
@@ -715,6 +738,12 @@ pub fn resolve_for_provider(
     model: Option<&str>,
 ) -> AppResult<ResolvedLlmConfig> {
     let routing = load(db)?;
+    if !routing.providers.contains_key(provider_id) {
+        return Err(AppError::msg(format!(
+            "{} 供应商尚未添加",
+            provider_label(provider_id)
+        )));
+    }
     let model_id = model.map(|s| s.to_string()).unwrap_or_else(|| {
         routing
             .providers
@@ -797,9 +826,32 @@ pub fn connectivity_status(
     active_scene: AiScene,
 ) -> AppResult<ConnectivityStatusDto> {
     let routing = load(db)?;
-    let resolved =
-        resolve_capability_route_from_config(&routing, route_input_for_scene(active_scene))?
-            .resolved;
+    let route_result =
+        resolve_capability_route_from_config(&routing, route_input_for_scene(active_scene));
+    let selected_web_provider =
+        crate::ai_runtime::mcp_runtime_registry::resolve_selected_web_search_provider(db).ok();
+    let search_provider = SearchProviderConnectivityDto {
+        configured: selected_web_provider.is_some(),
+        provider_id: selected_web_provider.map(|provider| provider.id),
+    };
+    let usage_last = read_usage_last(db)?;
+
+    let resolved = match route_result {
+        Ok(route) => route.resolved,
+        Err(err) => {
+            return Ok(ConnectivityStatusDto {
+                llm: LlmConnectivityDto {
+                    state: "misconfigured".into(),
+                    provider_id: String::new(),
+                    model: String::new(),
+                    scene: active_scene.profile().into(),
+                    message: err.to_string(),
+                },
+                search_provider,
+                usage_last,
+            });
+        }
+    };
     let llm_configured =
         crate::credentials::api_key_configured(db, &credential_service(&resolved.provider_id))?;
     let llm_state =
@@ -816,15 +868,6 @@ pub fn connectivity_status(
         "misconfigured" => "场景未配置有效模型".into(),
         _ => format!("{} / {}", resolved.provider_id, resolved.model),
     };
-
-    let selected_web_provider =
-        crate::ai_runtime::mcp_runtime_registry::resolve_selected_web_search_provider(db).ok();
-    let search_provider = SearchProviderConnectivityDto {
-        configured: selected_web_provider.is_some(),
-        provider_id: selected_web_provider.map(|provider| provider.id),
-    };
-
-    let usage_last = read_usage_last(db)?;
 
     Ok(ConnectivityStatusDto {
         llm: LlmConnectivityDto {
@@ -878,9 +921,17 @@ mod tests {
     }
 
     #[test]
-    fn resolve_uses_deepseek_flash_for_knowledge() {
+    fn default_routing_has_no_capability_slots() {
+        let c = deepseek_defaults();
+        assert_eq!(c.schema_version, 3);
+        assert!(c.slots.is_empty());
+        assert!(c.providers.is_empty());
+    }
+
+    #[test]
+    fn resolve_requires_user_configured_capability_slot() {
         let db = Database::open_in_memory().expect("mem db");
-        let resolved = resolve_capability_route(
+        let err = resolve_capability_route(
             &db,
             CapabilityRouteInput {
                 intent: AgentIntent::AskNotes,
@@ -891,15 +942,34 @@ mod tests {
                 privacy_preference: PrivacyPreference::ExternalAllowed,
             },
         )
-        .expect("resolve")
-        .resolved;
-        assert_eq!(resolved.provider_id, "deepseek");
-        assert_eq!(resolved.model, "deepseek-v4-flash");
+        .expect_err("default routing should not select a model");
+
+        assert!(err.to_string().contains("能力槽"));
+        assert!(err.to_string().contains("未配置"));
     }
 
     #[test]
     fn connectivity_status_reports_selected_mcp_search_provider() {
         let db = Database::open_in_memory().expect("mem db");
+        let mut routing = deepseek_defaults();
+        routing.providers.insert(
+            "deepseek".into(),
+            ProviderOverride {
+                base_url: None,
+                label: None,
+                default_model: Some("deepseek-v4-flash".into()),
+                enabled_models: Some(vec!["deepseek-v4-flash".into()]),
+            },
+        );
+        routing.slots.insert(
+            "fast".into(),
+            SlotRoute {
+                provider_id: "deepseek".into(),
+                model: "deepseek-v4-flash".into(),
+                thinking: false,
+            },
+        );
+        save(&db, &routing).expect("save routing");
         crate::credentials::mark_api_key_configured(&db, "iris.llm.deepseek").expect("mark llm");
         crate::ai_runtime::mcp_runtime_registry::upsert_web_evidence_provider(
             &db,
@@ -1000,7 +1070,7 @@ mod tests {
             "contextStrategy": {}
         });
         LlmRoutingConfig::migrate(&mut v).expect("migrate");
-        assert_eq!(v["schemaVersion"], serde_json::json!(2));
+        assert_eq!(v["schemaVersion"], serde_json::json!(3));
         assert!(v["createdAt"].is_string());
         assert!(v["slots"].is_object());
     }
@@ -1017,7 +1087,7 @@ mod tests {
             "contextStrategy": {}
         });
         LlmRoutingConfig::migrate(&mut v).expect("migrate");
-        assert_eq!(v["schemaVersion"], serde_json::json!(2));
+        assert_eq!(v["schemaVersion"], serde_json::json!(3));
         assert_eq!(v["createdAt"], serde_json::json!(existing));
     }
 
@@ -1025,7 +1095,7 @@ mod tests {
     fn migrate_noop_when_already_current() {
         let mut v = serde_json::json!({
             "version": 1,
-            "schemaVersion": 2,
+            "schemaVersion": 3,
             "createdAt": "2024-01-01T00:00:00Z",
             "providers": {},
             "slots": {},
@@ -1033,40 +1103,25 @@ mod tests {
             "contextStrategy": {}
         });
         LlmRoutingConfig::migrate(&mut v).expect("migrate");
-        assert_eq!(v["schemaVersion"], serde_json::json!(2));
+        assert_eq!(v["schemaVersion"], serde_json::json!(3));
     }
 
     #[test]
     fn default_config_has_schema_version() {
         let c = deepseek_defaults();
-        assert_eq!(c.schema_version, 2);
+        assert_eq!(c.schema_version, 3);
         assert!(c.created_at.is_some());
     }
 
     #[test]
-    fn phase3_defaults_route_by_capability_slots() {
+    fn phase3_defaults_leave_capability_slots_unbound() {
         let c = deepseek_defaults();
-        assert_eq!(c.schema_version, 2);
-        assert_eq!(
-            c.slots.get("fast").map(|r| r.model.as_str()),
-            Some("deepseek-v4-flash")
-        );
-        assert_eq!(
-            c.slots.get("writer").map(|r| r.model.as_str()),
-            Some("deepseek-v4-pro")
-        );
-        assert_eq!(
-            c.slots.get("agent_tools").map(|r| r.provider_id.as_str()),
-            Some("deepseek")
-        );
-        assert!(c
-            .slots
-            .values()
-            .all(|route| route.provider_id.as_str() != "ollama"));
+        assert_eq!(c.schema_version, 3);
+        assert!(c.slots.is_empty());
     }
 
     #[test]
-    fn sanitize_rewrites_legacy_ollama_routes_to_deepseek() {
+    fn sanitize_removes_legacy_ollama_routes() {
         let mut routing = deepseek_defaults();
         routing.slots.insert(
             "fast".into(),
@@ -1088,9 +1143,7 @@ mod tests {
 
         sanitize_routing(&mut routing);
 
-        let fast = routing.slots.get("fast").expect("fast slot");
-        assert_eq!(fast.provider_id, "deepseek");
-        assert_eq!(fast.model, "deepseek-v4-flash");
+        assert!(!routing.slots.contains_key("fast"));
         assert!(!routing.providers.contains_key("ollama"));
     }
 
@@ -1120,11 +1173,39 @@ mod tests {
 
         LlmRoutingConfig::migrate(&mut v).expect("migrate");
 
-        assert_eq!(v["schemaVersion"], serde_json::json!(2));
+        assert_eq!(v["schemaVersion"], serde_json::json!(3));
         assert_eq!(v["slots"]["fast"]["providerId"], "openai");
         assert_eq!(v["slots"]["fast"]["model"], "gpt-4o-mini");
         assert_eq!(v["slots"]["writer"]["providerId"], "anthropic");
-        assert_eq!(v["slots"]["agent_tools"]["providerId"], "openai");
+        assert!(v["slots"].get("agent_tools").is_none());
+    }
+
+    #[test]
+    fn migrate_cleans_legacy_default_slot_bindings() {
+        let mut v = serde_json::json!({
+            "version": 1,
+            "schemaVersion": 2,
+            "createdAt": "2024-01-01T00:00:00Z",
+            "providers": {},
+            "slots": {
+                "fast": {
+                    "providerId": "deepseek",
+                    "model": "deepseek-v4-flash",
+                    "thinking": false
+                },
+                "vision": {
+                    "providerId": "mimo",
+                    "model": "mimo-v2.5",
+                    "thinking": false
+                }
+            },
+            "contextStrategy": {}
+        });
+
+        LlmRoutingConfig::migrate(&mut v).expect("migrate");
+
+        assert_eq!(v["schemaVersion"], serde_json::json!(3));
+        assert_eq!(v["slots"], serde_json::json!({}));
     }
 
     #[test]
@@ -1136,6 +1217,15 @@ mod tests {
                 provider_id: "openai".into(),
                 model: "gpt-4o".into(),
                 thinking: false,
+            },
+        );
+        c.providers.insert(
+            "openai".into(),
+            ProviderOverride {
+                base_url: None,
+                label: None,
+                default_model: Some("gpt-4o".into()),
+                enabled_models: Some(vec!["gpt-4o".into()]),
             },
         );
         c.providers.insert(
@@ -1173,7 +1263,8 @@ mod tests {
         )
         .expect_err("vision route should not fall back to Fast");
 
-        assert!(err.to_string().contains("MiMo"));
+        assert!(err.to_string().contains("Vision"));
+        assert!(err.to_string().contains("未配置"));
         assert!(!err.to_string().contains("Fast"));
     }
 
@@ -1216,15 +1307,43 @@ mod tests {
         )
         .expect_err("dirty DeepSeek vision verification must not make it routable");
 
-        assert!(err.to_string().contains("no capability route available"));
+        assert!(err.to_string().contains("Vision"));
+        assert!(err.to_string().contains("未配置"));
     }
 
     #[test]
-    fn mimo_without_base_url_is_not_resolved_to_openai() {
+    fn builtin_mimo_uses_managed_default_base_url() {
         let db = Database::open_in_memory().expect("mem db");
-        let err = resolve_for_provider(&db, "mimo", None).expect_err("missing MiMo base URL");
+        let mut routing = deepseek_defaults();
+        routing.providers.insert(
+            "mimo".into(),
+            ProviderOverride {
+                base_url: None,
+                label: None,
+                default_model: Some("mimo-v2.5".into()),
+                enabled_models: Some(vec!["mimo-v2.5".into()]),
+            },
+        );
+        save(&db, &routing).expect("save routing");
 
-        assert!(err.to_string().contains("MiMo"));
+        let resolved = resolve_for_provider(&db, "mimo", None).expect("resolve MiMo");
+
+        assert_eq!(resolved.provider_id, "mimo");
+        assert_eq!(resolved.base_url, "https://api.xiaomimimo.com/v1");
+    }
+
+    #[test]
+    fn custom_provider_without_base_url_is_rejected() {
+        let db = Database::open_in_memory().expect("mem db");
+        let mut routing = deepseek_defaults();
+        routing
+            .providers
+            .insert("custom".into(), ProviderOverride::default());
+        save(&db, &routing).expect("save routing");
+
+        let err = resolve_for_provider(&db, "custom", None).expect_err("missing custom base URL");
+
+        assert!(err.to_string().contains("Custom"));
         assert!(err.to_string().contains("Base URL"));
     }
 
@@ -1244,6 +1363,15 @@ mod tests {
                 provider_id: "mimo".into(),
                 model: "mimo-vl-7b-experimental".into(),
                 thinking: false,
+            },
+        );
+        routing.providers.insert(
+            "mimo".into(),
+            ProviderOverride {
+                base_url: None,
+                label: None,
+                default_model: Some("mimo-vl-7b-experimental".into()),
+                enabled_models: Some(vec!["mimo-vl-7b-experimental".into()]),
             },
         );
 

@@ -31,7 +31,9 @@ describe("Phase3 model and persona routing contract", () => {
     expect(aiTypes).toContain("personaLayers");
     expect(llmTypes).toContain("EndpointFamily");
     expect(llmTypes).toContain("ProbeStrategy");
-    expect(llmTypes).toContain("slots: Record<CapabilitySlot, SlotRoute>");
+    expect(llmTypes).toContain(
+      "slots: Partial<Record<CapabilitySlot, SlotRoute>>",
+    );
   });
 
   it("updates model settings from scene routes to capability slots", () => {
@@ -113,17 +115,18 @@ describe("Phase3 model and persona routing contract", () => {
     expect(catalog).not.toContain('id: "mimo-vl-7b-experimental"');
     expect(catalog).not.toContain('display_name: "MiMo VL 7B Experimental"');
     expect(providers).not.toContain("MiMo Experimental");
-    expect(section).toContain("需配置 Base URL");
+    expect(providers).toContain("endpoint_managed: endpoint_managed(id)");
+    expect(section).not.toContain("MiMo 需配置 Base URL");
   });
 
-  it("keeps provider base url input controlled before running MiMo diagnostics", () => {
+  it("keeps base URL editing scoped to custom endpoints", () => {
     const section = read("src/components/settings/LlmRoutingSection.tsx");
 
-    expect(section).toContain("providerBaseUrlInputs");
-    expect(section).toContain("baseUrlForProvider(provider.id)");
-    expect(section).toContain("setProviderBaseUrlInputs");
+    expect(section).toContain("providerRequiresBaseUrl");
+    expect(section).toContain("isCustomProviderId(provider.id)");
+    expect(section).toContain("自定义端点 Base URL");
     expect(section).not.toContain('defaultValue={provider.baseUrl ?? ""}');
-    expect(section).not.toContain("!provider.baseUrl?.trim()");
+    expect(section).not.toContain('provider.id === "mimo"');
   });
 
   it("removes Ollama from public model provider settings and types", () => {

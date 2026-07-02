@@ -529,9 +529,14 @@ fn validate_routing(routing: &LlmRoutingConfig) -> AppResult<()> {
             return Err(AppError::msg(format!("未知厂商配置项: {id}")));
         }
     }
-    for row in routing.providers.values() {
+    for (id, row) in &routing.providers {
         if let Some(url) = row.base_url.as_deref() {
             if !url.trim().is_empty() {
+                if !crate::llm::providers::is_custom_provider(id) {
+                    return Err(AppError::msg(format!(
+                        "内置供应商 {id} 不支持自定义 Base URL，请使用自定义端点"
+                    )));
+                }
                 validate_provider_base_url(url)?;
             }
         }
@@ -546,11 +551,9 @@ fn validate_route(provider_id: &str, model: &str, routing: &LlmRoutingConfig) ->
     if model.trim().is_empty() {
         return Err(AppError::msg("模型 ID 不能为空"));
     }
-    if crate::llm::providers::is_custom_provider(provider_id)
-        && !routing.providers.contains_key(provider_id)
-    {
+    if !routing.providers.contains_key(provider_id) {
         return Err(AppError::msg(format!(
-            "路由引用了未配置的自定义端点: {provider_id}"
+            "路由引用了未添加的供应商: {provider_id}"
         )));
     }
     Ok(())

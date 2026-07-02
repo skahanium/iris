@@ -105,6 +105,7 @@ export interface LlmProviderInfo {
   id: string;
   name: string;
   default_model: string;
+  endpointManaged: "builtin" | "custom";
 }
 
 export type AppExitResult = void;

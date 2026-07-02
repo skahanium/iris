@@ -7,6 +7,8 @@ pub struct LlmProviderInfo {
     pub id: String,
     pub name: String,
     pub default_model: String,
+    #[serde(rename = "endpointManaged")]
+    pub endpoint_managed: String,
 }
 
 const BUILTIN_PROVIDERS: &[(&str, &str, &str)] = &[
@@ -36,7 +38,15 @@ pub fn requires_api_key(provider_id: &str) -> bool {
 }
 
 pub fn requires_base_url(provider_id: &str) -> bool {
-    provider_id == "mimo"
+    is_custom_provider(provider_id)
+}
+
+fn endpoint_managed(provider_id: &str) -> String {
+    if is_custom_provider(provider_id) {
+        "custom".into()
+    } else {
+        "builtin".into()
+    }
 }
 
 pub fn list_providers() -> Vec<LlmProviderInfo> {
@@ -46,6 +56,7 @@ pub fn list_providers() -> Vec<LlmProviderInfo> {
             id: (*id).into(),
             name: (*name).into(),
             default_model: (*default_model).into(),
+            endpoint_managed: endpoint_managed(id),
         })
         .collect()
 }
@@ -83,6 +94,7 @@ fn provider_info_from_override(id: &str, row: &ProviderOverride) -> LlmProviderI
             .clone()
             .filter(|s| !s.trim().is_empty())
             .unwrap_or_else(|| "default".into()),
+        endpoint_managed: endpoint_managed(id),
     }
 }
 
@@ -100,31 +112,15 @@ pub fn credential_service(provider: &str) -> String {
 
 pub fn api_base(provider: &str, custom_base: Option<&str>) -> String {
     match provider {
-        "deepseek" => custom_base
-            .unwrap_or("https://api.deepseek.com")
-            .to_string(),
-        "openai" => custom_base
-            .unwrap_or("https://api.openai.com/v1")
-            .to_string(),
-        "anthropic" => custom_base
-            .unwrap_or("https://api.anthropic.com")
-            .to_string(),
-        "zhipu" => custom_base
-            .unwrap_or("https://open.bigmodel.cn/api/paas/v4")
-            .to_string(),
-        "kimi" => custom_base
-            .unwrap_or("https://api.moonshot.cn/v1")
-            .to_string(),
-        "doubao" => custom_base
-            .unwrap_or("https://ark.cn-beijing.volces.com/api/v3")
-            .to_string(),
-        "mimo" => custom_base.unwrap_or("").to_string(),
-        id if is_custom_provider(id) => custom_base
-            .unwrap_or("https://api.openai.com/v1")
-            .to_string(),
-        _ => custom_base
-            .unwrap_or("https://api.openai.com/v1")
-            .to_string(),
+        "deepseek" => "https://api.deepseek.com".to_string(),
+        "openai" => "https://api.openai.com/v1".to_string(),
+        "anthropic" => "https://api.anthropic.com".to_string(),
+        "zhipu" => "https://open.bigmodel.cn/api/paas/v4".to_string(),
+        "kimi" => "https://api.moonshot.cn/v1".to_string(),
+        "doubao" => "https://ark.cn-beijing.volces.com/api/v3".to_string(),
+        "mimo" => "https://api.xiaomimimo.com/v1".to_string(),
+        id if is_custom_provider(id) => custom_base.unwrap_or("").to_string(),
+        _ => custom_base.unwrap_or("").to_string(),
     }
 }
 
@@ -240,7 +236,20 @@ mod tests {
     }
 
     #[test]
-    fn mimo_provider_is_current_and_has_no_fake_default_base_url() {
+    fn builtin_providers_have_managed_endpoints() {
+        let providers = list_providers();
+        for id in ["deepseek", "kimi", "mimo"] {
+            let provider = providers
+                .iter()
+                .find(|provider| provider.id == id)
+                .expect("builtin provider");
+            assert_eq!(provider.endpoint_managed, "builtin");
+            assert!(!requires_base_url(id));
+        }
+    }
+
+    #[test]
+    fn mimo_provider_is_current_and_has_managed_default_base_url() {
         let mimo = list_providers()
             .into_iter()
             .find(|provider| provider.id == "mimo")
@@ -248,10 +257,22 @@ mod tests {
 
         assert_eq!(mimo.name, "MiMo");
         assert_eq!(mimo.default_model, "MiMo-V2.5-Pro");
-        assert_eq!(api_base("mimo", None), "");
+        assert_eq!(mimo.endpoint_managed, "builtin");
+        assert_eq!(api_base("mimo", None), "https://api.xiaomimimo.com/v1");
         assert_eq!(
             api_base("mimo", Some("https://example.test/v1")),
+            "https://api.xiaomimimo.com/v1"
+        );
+    }
+
+    #[test]
+    fn custom_providers_require_user_managed_base_url() {
+        assert!(requires_base_url("custom"));
+        assert!(requires_base_url("custom_openrouter"));
+        assert_eq!(
+            api_base("custom", Some("https://example.test/v1")),
             "https://example.test/v1"
         );
+        assert_eq!(api_base("custom", None), "");
     }
 }

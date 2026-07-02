@@ -36,7 +36,7 @@ export interface LlmRoutingConfig {
   version: number;
   schemaVersion?: number;
   providers: Record<string, ProviderOverride>;
-  slots: Record<CapabilitySlot, SlotRoute>;
+  slots: Partial<Record<CapabilitySlot, SlotRoute>>;
   contextStrategy: Record<string, ContextStrategy>;
 }
 
@@ -87,7 +87,12 @@ export interface ModelCapabilityConfirmRequest {
 
 export interface LlmConfigGetResponse {
   routing: LlmRoutingConfig;
-  providers: { id: string; name: string; default_model: string }[];
+  providers: {
+    id: string;
+    name: string;
+    default_model: string;
+    endpointManaged: "builtin" | "custom";
+  }[];
   catalog: ModelCatalogEntry[];
   registry: ModelRegistryEntry[];
 }
@@ -145,54 +150,8 @@ export const USER_CONFIGURABLE_CAPABILITY_SLOTS = [
 /** 客户端回退默认（IPC 不可用或解析失败时） */
 export const DEFAULT_LLM_ROUTING: LlmRoutingConfig = {
   version: 1,
-  schemaVersion: 2,
+  schemaVersion: 3,
   providers: {},
-  slots: {
-    fast: {
-      providerId: "deepseek",
-      model: "deepseek-v4-flash",
-      thinking: false,
-    },
-    writer: {
-      providerId: "deepseek",
-      model: "deepseek-v4-pro",
-      thinking: false,
-    },
-    reasoner: {
-      providerId: "deepseek",
-      model: "deepseek-v4-pro",
-      thinking: true,
-    },
-    long_context: {
-      providerId: "deepseek",
-      model: "deepseek-v4-pro",
-      thinking: false,
-    },
-    vision: {
-      providerId: "mimo",
-      model: "mimo-v2.5",
-      thinking: false,
-    },
-    agent_tools: {
-      providerId: "deepseek",
-      model: "deepseek-v4-pro",
-      thinking: true,
-    },
-    embedding: {
-      providerId: "deepseek",
-      model: "deepseek-v4-flash",
-      thinking: false,
-    },
-    reranker: {
-      providerId: "deepseek",
-      model: "deepseek-v4-flash",
-      thinking: false,
-    },
-    local_private: {
-      providerId: "deepseek",
-      model: "deepseek-v4-flash",
-      thinking: false,
-    },
-  },
+  slots: {},
   contextStrategy: {},
 };
