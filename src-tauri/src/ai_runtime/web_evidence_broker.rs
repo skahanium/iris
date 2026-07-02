@@ -309,6 +309,41 @@ struct SearchProviderFetch {
     search_backend: WebSearchBackend,
     provider_id: String,
     provider_kind: String,
+    failure_reason: Option<String>,
+    diagnostic_summary: Option<String>,
+}
+
+impl SearchProviderFetch {
+    fn from_mcp_probe(probe: McpSearchProviderProbe) -> Self {
+        Self {
+            body: probe.diagnostic.body.clone(),
+            search_backend: WebSearchBackend::Provider,
+            provider_id: probe.provider_id.clone(),
+            provider_kind: "mcp".into(),
+            failure_reason: probe.diagnostic.failure_reason.clone(),
+            diagnostic_summary: Some(probe.summary()),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct McpSearchProviderProbe {
+    pub provider_id: String,
+    pub tool_name: String,
+    pub argument_keys: Vec<String>,
+    pub auth_header_present: bool,
+    pub diagnostic: McpSearchResultDiagnostic,
+}
+
+impl McpSearchProviderProbe {
+    pub(crate) fn summary(&self) -> String {
+        self.diagnostic.message(
+            &self.provider_id,
+            &self.tool_name,
+            &self.argument_keys,
+            self.auth_header_present,
+        )
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -347,33 +382,101 @@ async fn collect_mcp_search_provider_fetch(
 ) -> AppResult<SearchProviderFetch> {
     ensure_provider_circuit_allows(provider_id)?;
     let (provider, mapping_json) = resolve_mcp_provider_mapping(db, provider_id, "web.search")?;
-    let call_result = crate::ai_runtime::mcp_host_runtime::call_provider_tool(
+    let probe_result = call_mcp_search_provider(
         db,
         &provider,
-        build_mcp_search_arguments(&mapping_json, query, 10),
-        crate::ai_runtime::mcp_host_runtime::McpHostRuntimeOptions {
-            request_timeout: std::time::Duration::from_secs(20),
-            max_stdout_line_bytes: 64 * 1024,
-            max_stderr_bytes: 4 * 1024,
-            cwd: None,
-        },
+        &mapping_json,
+        query,
+        10,
+        Duration::from_secs(20),
     )
     .await;
-    let call = match call_result {
-        Ok(call) => {
+    let probe = match probe_result {
+        Ok(probe) => {
             record_provider_success(provider_id);
-            call
+            probe
         }
         Err(error) => {
             record_provider_failure(provider_id);
             return Err(error);
         }
     };
-    Ok(SearchProviderFetch {
-        body: mcp_search_result_body(&call.result),
-        search_backend: WebSearchBackend::Provider,
-        provider_id: call.provider_id,
-        provider_kind: "mcp".into(),
+    Ok(SearchProviderFetch::from_mcp_probe(probe))
+}
+
+pub(crate) async fn probe_mcp_search_provider(
+    db: &Database,
+    provider_id: &str,
+    query: &str,
+    max_results: usize,
+    request_timeout: Duration,
+) -> AppResult<McpSearchProviderProbe> {
+    let (provider, mapping_json) = resolve_mcp_provider_mapping(db, provider_id, "web.search")?;
+    call_mcp_search_provider(
+        db,
+        &provider,
+        &mapping_json,
+        query,
+        max_results,
+        request_timeout,
+    )
+    .await
+}
+
+async fn call_mcp_search_provider(
+    db: &Database,
+    provider: &crate::ai_runtime::capability_resolver::ResolvedCapabilityProvider,
+    mapping_json: &str,
+    query: &str,
+    max_results: usize,
+    request_timeout: Duration,
+) -> AppResult<McpSearchProviderProbe> {
+    let arguments = build_mcp_search_arguments(mapping_json, query, max_results);
+    let argument_keys = arguments
+        .as_object()
+        .map(|object| {
+            let mut keys = object.keys().cloned().collect::<Vec<_>>();
+            keys.sort();
+            keys
+        })
+        .unwrap_or_default();
+    let auth_header_present =
+        if mcp_provider_transport_kind(db, &provider.profile_id)?.eq_ignore_ascii_case("https") {
+            crate::ai_runtime::mcp_host_runtime::provider_http_auth_header_present(
+                db,
+                &provider.profile_id,
+            )?
+        } else {
+            false
+        };
+    let call = crate::ai_runtime::mcp_host_runtime::call_provider_tool(
+        db,
+        provider,
+        arguments,
+        crate::ai_runtime::mcp_host_runtime::McpHostRuntimeOptions {
+            request_timeout,
+            max_stdout_line_bytes: 64 * 1024,
+            max_stderr_bytes: 4 * 1024,
+            cwd: None,
+        },
+    )
+    .await?;
+    Ok(McpSearchProviderProbe {
+        provider_id: call.provider_id.clone(),
+        tool_name: provider.tool_name.clone(),
+        argument_keys,
+        auth_header_present,
+        diagnostic: diagnose_mcp_search_result(&call.provider_id, &call.result),
+    })
+}
+
+fn mcp_provider_transport_kind(db: &Database, provider_id: &str) -> AppResult<String> {
+    db.with_read_conn(|conn| {
+        Ok(conn.query_row(
+            "SELECT transport_kind FROM web_evidence_providers WHERE id = ?1 AND kind = 'mcp'",
+            [provider_id],
+            |row| row.get::<_, String>(0),
+        )?)
     })
 }
 
@@ -513,8 +616,130 @@ fn build_mcp_fetch_arguments(mapping_json: &str, url: &str, max_chars: usize) ->
     serde_json::Value::Object(args)
 }
 
-pub(crate) fn mcp_search_result_has_parseable_rows(result: &serde_json::Value) -> bool {
-    !parse_search_result_rows(&mcp_search_result_body(result)).is_empty()
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct McpSearchResultDiagnostic {
+    pub body: String,
+    pub result_shape: String,
+    pub content_text_length: usize,
+    pub contains_url_marker: bool,
+    pub parsed_row_count: usize,
+    pub first_url_domain: Option<String>,
+    pub failure_reason: Option<String>,
+}
+
+impl McpSearchResultDiagnostic {
+    pub(crate) fn message(
+        &self,
+        provider_id: &str,
+        tool_name: &str,
+        argument_keys: &[String],
+        auth_header_present: bool,
+    ) -> String {
+        let first_domain = self.first_url_domain.as_deref().unwrap_or("none");
+        format!(
+            "provider {provider_id}; tool {tool_name}; argument keys [{}]; auth header present: {auth_header_present}; result shape: {}; content text length: {}; URL marker: {}; parsed rows: {}; first domain: {first_domain}",
+            argument_keys.join(","),
+            self.result_shape,
+            self.content_text_length,
+            self.contains_url_marker,
+            self.parsed_row_count,
+        )
+    }
+}
+
+pub(crate) fn diagnose_mcp_search_result(
+    _provider_id: &str,
+    result: &serde_json::Value,
+) -> McpSearchResultDiagnostic {
+    let body = mcp_search_result_body(result);
+    let rows = parse_search_result_rows(&body);
+    let content_text_length = mcp_result_content_text_length(result);
+    let contains_url_marker = body.contains("http://")
+        || body.contains("https://")
+        || body.to_ascii_lowercase().contains("url");
+    let result_shape = mcp_result_shape(result);
+    let first_url_domain = rows.first().and_then(|row| domain_from_url(&row.url));
+    let failure_reason = if mcp_result_is_error(result) {
+        Some("mcp_search_provider_error".into())
+    } else if rows.is_empty() && result.get("content").is_some() && content_text_length == 0 {
+        Some("mcp_search_parse_empty:empty_body".into())
+    } else if rows.is_empty() {
+        Some(classify_mcp_search_parse_empty(&body))
+    } else {
+        None
+    };
+    McpSearchResultDiagnostic {
+        body,
+        result_shape,
+        content_text_length,
+        contains_url_marker,
+        parsed_row_count: rows.len(),
+        first_url_domain,
+        failure_reason,
+    }
+}
+
+fn mcp_result_is_error(result: &serde_json::Value) -> bool {
+    result.get("isError").and_then(|value| value.as_bool()) == Some(true)
+}
+
+fn mcp_result_content_text_length(result: &serde_json::Value) -> usize {
+    result
+        .get("content")
+        .and_then(|value| value.as_array())
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|item| {
+                    item.get("text")
+                        .or_else(|| item.get("content"))
+                        .and_then(|value| value.as_str())
+                })
+                .map(|text| text.trim().chars().count())
+                .sum()
+        })
+        .unwrap_or_else(|| {
+            result
+                .as_str()
+                .map(|text| text.chars().count())
+                .unwrap_or_default()
+        })
+}
+
+fn mcp_result_shape(result: &serde_json::Value) -> String {
+    if result.as_str().is_some() {
+        return "string".into();
+    }
+    let Some(object) = result.as_object() else {
+        return match result {
+            serde_json::Value::Array(_) => "array".into(),
+            serde_json::Value::Null => "null".into(),
+            serde_json::Value::Bool(_) => "bool".into(),
+            serde_json::Value::Number(_) => "number".into(),
+            serde_json::Value::String(_) => "string".into(),
+            serde_json::Value::Object(_) => "object".into(),
+        };
+    };
+    let mut keys = object.keys().map(String::as_str).collect::<Vec<_>>();
+    keys.sort_unstable();
+    format!("object:{}", keys.join(","))
+}
+
+fn classify_mcp_search_parse_empty(body: &str) -> String {
+    let trimmed = body.trim();
+    if trimmed.is_empty() {
+        return "mcp_search_parse_empty:empty_body".into();
+    }
+    if trimmed.starts_with('{') || trimmed.starts_with('[') {
+        return "mcp_search_parse_empty:unrecognized_schema".into();
+    }
+    if !(trimmed.contains("http://")
+        || trimmed.contains("https://")
+        || trimmed.to_ascii_lowercase().contains("url"))
+    {
+        return "mcp_search_parse_empty:text_without_url".into();
+    }
+    "mcp_search_parse_empty:unrecognized_schema".into()
 }
 
 fn mcp_search_result_body(result: &serde_json::Value) -> String {
@@ -631,14 +856,34 @@ snippet: {}
 
 fn web_evidence_items_from_search_fetch(fetch: &SearchProviderFetch) -> Vec<WebEvidenceItem> {
     let search_backend = fetch.search_backend;
-    let rows = parse_search_result_rows(&fetch.body);
-    if rows.is_empty() && fetch.provider_kind == "mcp" {
+    if let Some(failure_reason) = fetch.failure_reason.as_ref() {
+        let reason = fetch
+            .diagnostic_summary
+            .as_ref()
+            .map(|summary| format!("{failure_reason}; diagnostic: {summary}"))
+            .unwrap_or_else(|| failure_reason.clone());
         return vec![failed_evidence_item_with_kind(
             "",
             &fetch.provider_id,
             &fetch.provider_kind,
             "web.search",
-            "mcp_search_parse_empty".into(),
+            reason,
+        )];
+    }
+    let rows = parse_search_result_rows(&fetch.body);
+    if rows.is_empty() && fetch.provider_kind == "mcp" {
+        let failure_reason = classify_mcp_search_parse_empty(&fetch.body);
+        let reason = fetch
+            .diagnostic_summary
+            .as_ref()
+            .map(|summary| format!("{failure_reason}; diagnostic: {summary}"))
+            .unwrap_or(failure_reason);
+        return vec![failed_evidence_item_with_kind(
+            "",
+            &fetch.provider_id,
+            &fetch.provider_kind,
+            "web.search",
+            reason,
         )];
     }
     rows.into_iter()
@@ -1312,12 +1557,16 @@ mod tests {
             search_backend: WebSearchBackend::Provider,
             provider_id: "anysearch".into(),
             provider_kind: "mcp".into(),
+            failure_reason: None,
+            diagnostic_summary: None,
         };
         let empty_mcp_fetch = SearchProviderFetch {
             body: "no parseable rows".into(),
             search_backend: WebSearchBackend::Provider,
             provider_id: "empty-mcp".into(),
             provider_kind: "mcp".into(),
+            failure_reason: None,
+            diagnostic_summary: None,
         };
 
         let usage = web_evidence_usage_from_search_fetches([&mcp_fetch, &empty_mcp_fetch]);
@@ -1543,6 +1792,27 @@ mod tests {
     }
 
     #[test]
+    fn mcp_search_body_normalizes_live_anysearch_multilingual_markdown() {
+        let body = mcp_search_result_body(&serde_json::json!({
+            "content": [
+                {
+                    "type": "text",
+                    "text": "## Search Results (10 results, 4358ms)\n\n### 1. 高市総理がインドのモディ首相と会談へ　重要鉱物や半導体で連携確認\n- **URL**: https://www.fnn.jp/articles/-/1069028\n- 高市総理がインドのモディ首相と会談へ 重要鉱物や半導体で連携確認 対中国見据え協力深化へ協議...\n\n### 2. 中國正打擊日本的痛處，但高市早苗會屈服嗎？ - BBC News 中文\n- **URL**: https://www.bbc.com/zhongwen/articles/c178qrr29d1o/trad\n- 從日本首相高市早苗發表導致日中關係跌至多年來最低點的言論以來，北京方面一直在以各種方式加大對日本的施壓。"
+                }
+            ]
+        }));
+        let rows = parse_search_result_rows(&body);
+
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].url, "https://www.fnn.jp/articles/-/1069028");
+        assert_eq!(
+            rows[1].url,
+            "https://www.bbc.com/zhongwen/articles/c178qrr29d1o/trad"
+        );
+        assert!(rows[1].snippet.contains("北京方面"));
+    }
+
+    #[test]
     fn mcp_search_body_normalizes_firecrawl_text_json_results() {
         let body = mcp_search_result_body(&serde_json::json!({
             "content": [
@@ -1578,13 +1848,81 @@ mod tests {
             search_backend: WebSearchBackend::Provider,
             provider_id: "mcp.prose".into(),
             provider_kind: "mcp".into(),
+            failure_reason: None,
+            diagnostic_summary: None,
         });
 
         assert_eq!(items.len(), 1);
         assert_eq!(items[0].provider_id, "mcp.prose");
         assert_eq!(
             items[0].failure_reason.as_deref(),
-            Some("mcp_search_parse_empty")
+            Some("mcp_search_parse_empty:text_without_url")
+        );
+    }
+
+    #[test]
+    fn mcp_search_parse_empty_diagnostic_classifies_empty_and_schema_failures() {
+        let empty = diagnose_mcp_search_result(
+            "anysearch",
+            &serde_json::json!({
+                "content": [
+                    {
+                        "type": "text",
+                        "text": "   "
+                    }
+                ]
+            }),
+        );
+        assert_eq!(
+            empty.failure_reason.as_deref(),
+            Some("mcp_search_parse_empty:empty_body")
+        );
+
+        let schema = diagnose_mcp_search_result(
+            "anysearch",
+            &serde_json::json!({
+                "content": [
+                    {
+                        "type": "text",
+                        "text": "{\"items\":[{\"title\":\"No URL\"}]}"
+                    }
+                ]
+            }),
+        );
+        assert_eq!(
+            schema.failure_reason.as_deref(),
+            Some("mcp_search_parse_empty:unrecognized_schema")
+        );
+    }
+
+    #[test]
+    fn mcp_search_is_error_result_is_not_reported_as_parse_empty() {
+        let diagnostic = diagnose_mcp_search_result(
+            "anysearch",
+            &serde_json::json!({
+                "content": [
+                    {
+                        "type": "text",
+                        "text": "query is required"
+                    }
+                ],
+                "isError": true
+            }),
+        );
+        let fetch = SearchProviderFetch {
+            body: diagnostic.body,
+            search_backend: WebSearchBackend::Provider,
+            provider_id: "anysearch".into(),
+            provider_kind: "mcp".into(),
+            failure_reason: diagnostic.failure_reason,
+            diagnostic_summary: None,
+        };
+        let items = web_evidence_items_from_search_fetch(&fetch);
+
+        assert_eq!(items.len(), 1);
+        assert_eq!(
+            items[0].failure_reason.as_deref(),
+            Some("mcp_search_provider_error")
         );
     }
     #[test]
@@ -1594,12 +1932,16 @@ mod tests {
             search_backend: WebSearchBackend::Provider,
             provider_id: "anysearch".into(),
             provider_kind: "mcp".into(),
+            failure_reason: None,
+            diagnostic_summary: None,
         });
         items.extend(web_evidence_items_from_search_fetch(&SearchProviderFetch {
             body: "unparseable mcp body".into(),
             search_backend: WebSearchBackend::Provider,
             provider_id: "empty-mcp".into(),
             provider_kind: "mcp".into(),
+            failure_reason: None,
+            diagnostic_summary: None,
         }));
 
         suppress_search_provider_failures_if_success(&mut items);

@@ -197,6 +197,7 @@ describe("IPC boundary", () => {
 
   it("makes MCP provider diagnostics prove live tool availability when requested", () => {
     const aiCommands = read("src-tauri/src/commands/ai_commands.rs");
+    const broker = read("src-tauri/src/ai_runtime/web_evidence_broker.rs");
     const card = read("src/components/ai/skills/McpProfileCard.tsx");
 
     expect(aiCommands).toContain(
@@ -207,7 +208,10 @@ describe("IPC boundary", () => {
     expect(aiCommands).toContain("searchToolLive");
     expect(aiCommands).toContain("searchSmokeLive");
     expect(aiCommands).toContain("searchResultParseLive");
-    expect(aiCommands).toContain("MCP 搜索 smoke test 已返回可解析证据");
+    expect(aiCommands).toContain("probe_mcp_search_provider");
+    expect(aiCommands).toContain("搜索调用正常，解析出");
+    expect(broker).toContain("auth header present");
+    expect(broker).toContain("parsed rows");
     expect(aiCommands).toContain("MCP 搜索结果无法归一化为联网证据");
     expect(aiCommands).toContain("MCP 服务要求 OAuth 鉴权流程，当前预设不兼容");
     expect(aiCommands).toContain("fetchToolLive");

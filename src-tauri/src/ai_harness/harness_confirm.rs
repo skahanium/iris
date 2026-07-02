@@ -441,6 +441,7 @@ pub fn append_rejected_tool_to_checkpoint(
             tool_name,
             arguments: &serde_json::json!({ "tool_call_id": tool_call_id }),
             result: &serde_json::json!({ "error": "rejected" }),
+            error: Some("rejected"),
             success: false,
             duration_ms: 0,
             scene: Some(cp.meta.scene.as_str()),

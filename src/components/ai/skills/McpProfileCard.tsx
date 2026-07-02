@@ -474,6 +474,15 @@ export function McpProfileCard({
     [presetId],
   );
   const diagnosticLines = diagnostics?.checks ?? [];
+  const hasLiveDiagnostics = diagnosticLines.some((check) =>
+    [
+      "liveConnection",
+      "searchToolLive",
+      "searchSmokeLive",
+      "searchResultParseLive",
+      "fetchToolLive",
+    ].includes(check.label),
+  );
   const credentialState = credentialStateText(credentialRows);
 
   const applyPreset = (preset: McpProviderPreset) => {
@@ -976,7 +985,8 @@ export function McpProfileCard({
             </p>
           ))}
           <p>
-            调度可用性：搜索{diagnostics?.canUseForSearch ? "可用" : "不可用"}
+            {hasLiveDiagnostics ? "实时可用性" : "配置可调度性"}：搜索
+            {diagnostics?.canUseForSearch ? "可用" : "不可用"}
             ，网页读取{diagnostics?.canUseForFetch ? "可用" : "不可用"}
           </p>
         </div>
@@ -988,10 +998,10 @@ export function McpProfileCard({
           size="sm"
           variant="outline"
           disabled={saving || !persisted}
-          title={!persisted ? "请先保存提供方，再查看诊断" : undefined}
-          onClick={() => void onDiagnostics(false)}
+          title={!persisted ? "请先保存提供方，再执行实时诊断" : undefined}
+          onClick={() => void onDiagnostics(true)}
         >
-          诊断
+          实时诊断
         </Button>
         <Button
           type="button"

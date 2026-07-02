@@ -15,8 +15,18 @@ fn web_search_tool_response(
             .iter()
             .find_map(|item| item.failure_reason.as_deref())
         {
+            let failure_hint = if reason.starts_with("mcp_search_parse_empty") {
+                "联网搜索链路返回不可解析结果"
+            } else {
+                "联网搜索失败"
+            };
+            let instruction = if reason.starts_with("mcp_search_parse_empty") {
+                "这是 MCP 返回结构/解析链路问题，不代表外部没有相关信息，也不要改写成搜索服务暂时不可用。"
+            } else {
+                "请告知用户搜索未成功，不要基于记忆或猜测给出结论。"
+            };
             return Err(AppError::msg(format!(
-                "联网搜索失败：{reason}。没有可核验的网页证据；请告知用户搜索未成功，不要基于记忆或猜测给出结论。"
+                "{failure_hint}：{reason}。没有可核验的网页证据；{instruction}"
             )));
         }
     }
@@ -72,7 +82,7 @@ mod tests {
     };
     use crate::ai_runtime::{WebSearchBackend, WebSourceRank};
 
-    fn failed_ddg_output(reason: &str) -> WebEvidenceBrokerOutput {
+    fn failed_provider_output(reason: &str) -> WebEvidenceBrokerOutput {
         WebEvidenceBrokerOutput {
             items: vec![WebEvidenceItem {
                 url: String::new(),
@@ -82,7 +92,7 @@ mod tests {
                 snippet: String::new(),
                 fetched_excerpt: None,
                 provider_id: "web.provider".into(),
-                provider_kind: "native".into(),
+                provider_kind: "mcp".into(),
                 cost_class: "free".into(),
                 raw_result_hash: "hash".into(),
                 extraction_method: "none".into(),
@@ -106,11 +116,25 @@ mod tests {
     fn failed_only_web_evidence_is_returned_as_tool_error() {
         let err = web_search_tool_response(
             "武亮 结婚",
-            failed_ddg_output("web_search_failed: HTTP error"),
+            failed_provider_output("web_search_failed: HTTP error"),
         )
         .unwrap_err();
 
         assert!(err.to_string().contains("联网搜索失败"));
         assert!(err.to_string().contains("web_search_failed"));
+    }
+
+    #[test]
+    fn parse_empty_web_evidence_is_reported_as_unparseable_search_chain() {
+        let err = web_search_tool_response(
+            "高市早苗 最近 动向",
+            failed_provider_output("mcp_search_parse_empty:text_without_url"),
+        )
+        .unwrap_err();
+
+        assert!(err.to_string().contains("联网搜索链路返回不可解析结果"));
+        assert!(err
+            .to_string()
+            .contains("mcp_search_parse_empty:text_without_url"));
     }
 }

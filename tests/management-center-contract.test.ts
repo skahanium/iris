@@ -153,6 +153,7 @@ describe("management center contract", () => {
       "搜索工具映射",
       "网页读取工具映射",
       "测试连接",
+      "实时诊断",
       "保存 MCP 提供方",
       "HTTPS 服务",
       "本地命令 (stdio)",
@@ -297,6 +298,7 @@ describe("management center contract", () => {
 
   it("renders MCP provider diagnostic messages that match their pass/fail status", () => {
     const diagnostics = read("src-tauri/src/commands/ai_commands.rs");
+    const broker = read("src-tauri/src/ai_runtime/web_evidence_broker.rs");
     const card = read("src/components/ai/skills/McpProfileCard.tsx");
 
     // Backend must emit status-aware messages for the mapping checks so the
@@ -308,9 +310,11 @@ describe("management center contract", () => {
     expect(diagnostics).toContain("Key 已绑定");
     expect(diagnostics).toContain("可选凭据未绑定，使用匿名模式");
     expect(diagnostics).toContain("必填凭据缺失");
+    expect(diagnostics).toContain("搜索调用正常，解析出");
+    expect(broker).toContain("auth header present");
+    expect(broker).toContain("parsed rows");
     expect(diagnostics).toContain("提供方未启用");
     expect(diagnostics).toContain("连接方式不支持 MCP 联网证据");
-    expect(diagnostics).toContain("MCP 搜索 smoke test 已返回可解析证据");
     expect(diagnostics).toContain("MCP 搜索结果无法归一化为联网证据");
     expect(diagnostics).toContain(
       "MCP 服务要求 OAuth 鉴权流程，当前预设不兼容",
@@ -322,10 +326,13 @@ describe("management center contract", () => {
     expect(card).toContain(
       "{checkLabelText(check.label)}：{checkStatusText(check.status)} ·",
     );
-    expect(card).toContain("调度可用性：搜索");
+    expect(card).toContain("配置可调度性");
+    expect(card).toContain("实时可用性");
     expect(card).toContain('case "credential"');
     expect(card).toContain('case "searchSmokeLive"');
     expect(card).toContain('case "searchResultParseLive"');
+    expect(card).toContain("onClick={() => void onDiagnostics(true)}");
+    expect(card).not.toContain("onClick={() => void onDiagnostics(false)}");
   });
 
   it("waits for restored notes to open before closing recycle views", () => {

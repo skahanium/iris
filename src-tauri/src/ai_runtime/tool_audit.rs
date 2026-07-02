@@ -34,6 +34,7 @@ pub struct ToolAuditInput<'a> {
     pub tool_name: &'a str,
     pub arguments: &'a serde_json::Value,
     pub result: &'a serde_json::Value,
+    pub error: Option<&'a str>,
     pub success: bool,
     pub duration_ms: u64,
     pub scene: Option<&'a str>,
@@ -49,14 +50,14 @@ pub fn record_audit(db: &Database, input: &ToolAuditInput<'_>) -> AppResult<()> 
     // the sanitized arguments so diagnostic/audit readers can triage without
     // ever reading the raw query/url/headers/body that were redacted.
     if !input.success {
-        if let Some(class) = classify_failure(input.result) {
+        if let Some(class) = classify_failure(input.result, input.error) {
             args_summary = Some(match args_summary {
                 Some(existing) => format!("{existing}, failure_class={class}"),
                 None => format!("failure_class={class}"),
             });
         }
     }
-    let result_summary = sanitize_result(input.tool_name, input.result, input.success);
+    let result_summary = sanitize_result(input.tool_name, input.result, input.error, input.success);
 
     db.with_conn(|conn| {
         conn.execute(
@@ -144,11 +145,16 @@ fn sanitize_arguments(tool_name: &str, args: &serde_json::Value) -> Option<Strin
 }
 
 /// Sanitize tool result for audit storage.
-fn sanitize_result(tool_name: &str, result: &serde_json::Value, success: bool) -> Option<String> {
+fn sanitize_result(
+    tool_name: &str,
+    result: &serde_json::Value,
+    error: Option<&str>,
+    success: bool,
+) -> Option<String> {
     if !success {
-        let err = result
-            .get("error")
-            .and_then(|v| v.as_str())
+        let err = error
+            .filter(|value| !value.trim().is_empty())
+            .or_else(|| result.get("error").and_then(|v| v.as_str()))
             .unwrap_or("unknown error");
         return Some(truncate_summary(err, 200));
     }
@@ -253,7 +259,7 @@ fn assess_write_risk(text: &str) -> &'static str {
 /// provider or broker; falls back to classifying the human-readable `error`
 /// string. Always returns a sanitized token (no raw query/url/secret) so it is
 /// safe to persist into `arguments_summary`.
-fn classify_failure(result: &serde_json::Value) -> Option<String> {
+fn classify_failure(result: &serde_json::Value, error: Option<&str>) -> Option<String> {
     for key in ["failure_class", "failure_kind"] {
         if let Some(class) = result.get(key).and_then(|v| v.as_str()) {
             let trimmed = class.trim();
@@ -262,15 +268,19 @@ fn classify_failure(result: &serde_json::Value) -> Option<String> {
             }
         }
     }
-    let err = result
-        .get("error")
-        .and_then(|v| v.as_str())
+    let err = error
+        .filter(|value| !value.trim().is_empty())
+        .or_else(|| result.get("error").and_then(|v| v.as_str()))
         .unwrap_or("")
         .to_ascii_lowercase();
     if err.is_empty() {
         return None;
     }
-    let token = if err.contains("auth") || err.contains("credential") || err.contains("401") {
+    let token = if err.contains("mcp_search_parse_empty") {
+        "mcp_search_parse_empty"
+    } else if err.contains("web_search_failed") {
+        "web_search_failed"
+    } else if err.contains("auth") || err.contains("credential") || err.contains("401") {
         "provider_auth_missing"
     } else if err.contains("timeout") || err.contains("timed out") {
         "provider_timeout"
@@ -421,7 +431,7 @@ mod tests {
     #[test]
     fn sanitize_read_note_result() {
         let result = serde_json::json!({"path": "test.md", "content": "full note content", "truncated": false});
-        let summary = sanitize_result("read_note", &result, true).unwrap();
+        let summary = sanitize_result("read_note", &result, None, true).unwrap();
         assert!(summary.contains("test.md"));
         assert!(!summary.contains("full note content"));
     }
@@ -429,14 +439,14 @@ mod tests {
     #[test]
     fn sanitize_error_result() {
         let result = serde_json::json!({"error": "something failed"});
-        let summary = sanitize_result("any_tool", &result, false).unwrap();
+        let summary = sanitize_result("any_tool", &result, None, false).unwrap();
         assert!(summary.contains("something failed"));
     }
 
     #[test]
     fn sanitize_search_result() {
         let result = serde_json::json!({"results": [], "count": 5});
-        let summary = sanitize_result("search_hybrid", &result, true).unwrap();
+        let summary = sanitize_result("search_hybrid", &result, None, true).unwrap();
         assert!(summary.contains("results=5"));
     }
 
@@ -451,7 +461,7 @@ mod tests {
         });
 
         let args_summary = sanitize_arguments("new_unreviewed_tool", &args);
-        let result_summary = sanitize_result("new_unreviewed_tool", &result, true);
+        let result_summary = sanitize_result("new_unreviewed_tool", &result, None, true);
 
         assert_eq!(args_summary.as_deref(), Some("shape=object, keys=2"));
         assert_eq!(result_summary.as_deref(), Some("shape=object, keys=1"));
@@ -536,6 +546,7 @@ mod tests {
                 tool_name: "read_note",
                 arguments: &serde_json::json!({"path": "test.md", "max_chars": 5000}),
                 result: &serde_json::json!({"path": "test.md", "truncated": false}),
+                error: None,
                 success: true,
                 duration_ms: 150,
                 scene: Some("knowledge_lookup"),
@@ -612,6 +623,7 @@ mod tests {
                     "failure_class": "provider_auth_missing",
                     "error": "provider authentication missing"
                 }),
+                error: Some("provider authentication missing"),
                 success: false,
                 duration_ms: 0,
                 scene: Some("knowledge_lookup"),
@@ -637,11 +649,32 @@ mod tests {
         let args = serde_json::json!({"query": "private query"});
         let result = serde_json::json!({"error": "upstream provider timed out"});
         let mut summary = sanitize_arguments("web_search", &args).unwrap();
-        if let Some(class) = classify_failure(&result) {
+        if let Some(class) = classify_failure(&result, None) {
             summary = format!("{summary}, failure_class={class}");
         }
         assert!(summary.contains("failure_class=provider_timeout"));
         assert!(!summary.contains("private query"));
+    }
+
+    #[test]
+    fn tool_audit_failure_uses_tool_call_error_when_output_is_null() {
+        let summary = sanitize_result(
+            "web_search",
+            &serde_json::Value::Null,
+            Some("mcp_search_parse_empty:unrecognized_schema"),
+            false,
+        )
+        .unwrap();
+
+        assert_eq!(summary, "mcp_search_parse_empty:unrecognized_schema");
+        assert_eq!(
+            classify_failure(
+                &serde_json::Value::Null,
+                Some("mcp_search_parse_empty:unrecognized_schema")
+            )
+            .as_deref(),
+            Some("mcp_search_parse_empty")
+        );
     }
 
     #[test]

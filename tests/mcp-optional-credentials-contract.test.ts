@@ -22,11 +22,14 @@ describe("MCP optional credential contract", () => {
   it("shows anonymous and required credential states distinctly", () => {
     const card = read("src/components/ai/skills/McpProfileCard.tsx");
     const diagnostics = read("src-tauri/src/commands/ai_commands.rs");
+    const runtime = read("src-tauri/src/ai_runtime/mcp_host_runtime.rs");
 
     expect(card).toContain("匿名模式");
     expect(card).toContain("必填凭据缺失");
     expect(card).toContain("本次保存会更新 Key");
     expect(diagnostics).toContain("Key 已绑定");
     expect(diagnostics).toContain("可选凭据未绑定，使用匿名模式");
+    expect(runtime).toContain("凭据标记存在但系统凭据不可读取");
+    expect(diagnostics).toContain("auth header present");
   });
 });

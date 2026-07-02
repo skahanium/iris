@@ -2262,36 +2262,16 @@ fn provider_search_smoke_error_message(
 async fn run_mcp_search_smoke_test(
     db: &crate::storage::db::Database,
     provider: &crate::ai_runtime::mcp_runtime_registry::WebEvidenceProviderSummary,
-    mapping_json: &str,
-) -> AppResult<bool> {
-    let Some(tool_name) = provider_mapping_tool_name(Some(mapping_json)) else {
-        return Err(AppError::msg("MCP 搜索映射缺少 tool"));
-    };
-    let resolved_provider = crate::ai_runtime::capability_resolver::ResolvedCapabilityProvider {
-        capability: "web.search".into(),
-        provider_kind: "mcp".into(),
-        profile_id: provider.id.clone(),
-        tool_name,
-        schema_hash: provider.provider_config_hash.clone(),
-        requires_confirmation: true,
-    };
-    let call = crate::ai_runtime::mcp_host_runtime::call_provider_tool(
+) -> AppResult<(usize, String)> {
+    let probe = crate::ai_runtime::web_evidence_broker::probe_mcp_search_provider(
         db,
-        &resolved_provider,
-        crate::ai_runtime::web_evidence_broker::build_mcp_search_arguments(
-            mapping_json,
-            "Iris note app",
-            1,
-        ),
-        crate::ai_runtime::mcp_host_runtime::McpHostRuntimeOptions {
-            request_timeout: Duration::from_secs(20),
-            max_stdout_line_bytes: 64 * 1024,
-            max_stderr_bytes: 8 * 1024,
-            cwd: None,
-        },
+        &provider.id,
+        "Iris note app",
+        1,
+        Duration::from_secs(20),
     )
     .await?;
-    Ok(crate::ai_runtime::web_evidence_broker::mcp_search_result_has_parseable_rows(&call.result))
+    Ok((probe.diagnostic.parsed_row_count, probe.summary()))
 }
 
 async fn provider_diagnostics_for_summary(
@@ -2392,37 +2372,38 @@ async fn provider_diagnostics_for_summary(
                             format!("MCP 服务未报告搜索工具 '{tool}'")
                         },
                     ));
-                    if exists {
-                        if let Some(mapping_json) = provider.web_search_mapping_json.as_deref() {
-                            match run_mcp_search_smoke_test(db, provider, mapping_json).await {
-                                Ok(parseable) => {
-                                    checks.push(provider_diagnostic_check(
-                                        "searchSmokeLive",
-                                        true,
-                                        "MCP 搜索 smoke test 已返回可解析证据",
-                                    ));
-                                    can_use_for_search = can_use_for_search && parseable;
-                                    checks.push(provider_diagnostic_check(
-                                        "searchResultParseLive",
-                                        parseable,
-                                        if parseable {
-                                            "MCP 搜索结果已归一化为联网证据"
-                                        } else {
-                                            "MCP 搜索结果无法归一化为联网证据"
-                                        },
-                                    ));
-                                }
-                                Err(error) => {
-                                    can_use_for_search = false;
-                                    checks.push(provider_diagnostic_check(
-                                        "searchSmokeLive",
-                                        false,
-                                        &format!(
-                                            "MCP 搜索 smoke test 失败：{}",
-                                            provider_search_smoke_error_message(provider, &error)
-                                        ),
-                                    ));
-                                }
+                    if exists && provider.web_search_mapping_json.is_some() {
+                        match run_mcp_search_smoke_test(db, provider).await {
+                            Ok((parsed_row_count, diagnostic)) => {
+                                let parseable = parsed_row_count > 0;
+                                checks.push(provider_diagnostic_check(
+                                    "searchSmokeLive",
+                                    true,
+                                    &format!(
+                                        "搜索调用正常，解析出 {parsed_row_count} 条网页证据；{diagnostic}"
+                                    ),
+                                ));
+                                can_use_for_search = can_use_for_search && parseable;
+                                checks.push(provider_diagnostic_check(
+                                    "searchResultParseLive",
+                                    parseable,
+                                    if parseable {
+                                        "MCP 搜索结果已归一化为联网证据"
+                                    } else {
+                                        "MCP 搜索结果无法归一化为联网证据"
+                                    },
+                                ));
+                            }
+                            Err(error) => {
+                                can_use_for_search = false;
+                                checks.push(provider_diagnostic_check(
+                                    "searchSmokeLive",
+                                    false,
+                                    &format!(
+                                        "MCP 搜索 smoke test 失败：{}",
+                                        provider_search_smoke_error_message(provider, &error)
+                                    ),
+                                ));
                             }
                         }
                     }
