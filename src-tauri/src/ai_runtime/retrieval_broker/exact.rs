@@ -8,7 +8,7 @@ use crate::error::AppResult;
 use super::truncate;
 
 static RE_REGULATION_ARTICLE: LazyLock<regex::Regex> = LazyLock::new(|| {
-    regex::Regex::new(r"《([^》]+)》\s*第([一二三四五六七八九十百千0-9]+)条")
+    regex::Regex::new(r"《([^》]+)》\s*第?([一二三四五六七八九十百千万0-9]+)条")
         .expect("regulation article regex")
 });
 
@@ -29,6 +29,8 @@ pub(super) fn search_exact_regulation(
          FROM regulation_index ri
          JOIN files f ON f.id = ri.file_id
          WHERE ri.regulation_name = ?1 AND ri.article = ?2
+           AND f.path <> '.classified'
+           AND f.path NOT LIKE '.classified/%'
          LIMIT 5",
     )?;
 

@@ -23,6 +23,64 @@ const WRITE_POOL_SIZE: usize = 2;
 pub fn vector_index_ready() -> bool {
     VECTOR_INDEX_READY.load(Ordering::Relaxed)
 }
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct VectorIndexConsistency {
+    pub chunk_embeddings: i64,
+    pub vec_chunks: i64,
+    pub missing_vec_chunks: i64,
+}
+
+pub fn vector_index_consistency(conn: &Connection) -> AppResult<Option<VectorIndexConsistency>> {
+    let vec_table_exists: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM sqlite_master WHERE name = 'vec_chunks'",
+        [],
+        |row| row.get(0),
+    )?;
+    if vec_table_exists == 0 {
+        return Ok(None);
+    }
+
+    let chunk_embeddings = conn.query_row("SELECT COUNT(*) FROM chunk_embeddings", [], |row| {
+        row.get(0)
+    })?;
+    let vec_chunks = conn.query_row("SELECT COUNT(*) FROM vec_chunks", [], |row| row.get(0))?;
+    let missing_vec_chunks = conn.query_row(
+        "SELECT COUNT(*)
+         FROM chunk_embeddings ce
+         LEFT JOIN vec_chunks vc ON vc.rowid = ce.chunk_id
+         WHERE vc.rowid IS NULL",
+        [],
+        |row| row.get(0),
+    )?;
+
+    Ok(Some(VectorIndexConsistency {
+        chunk_embeddings,
+        vec_chunks,
+        missing_vec_chunks,
+    }))
+}
+
+pub fn log_vector_index_consistency(conn: &Connection) {
+    match vector_index_consistency(conn) {
+        Ok(Some(consistency)) if consistency.missing_vec_chunks > 0 => {
+            tracing::warn!(
+                chunk_embeddings = consistency.chunk_embeddings,
+                vec_chunks = consistency.vec_chunks,
+                missing_vec_chunks = consistency.missing_vec_chunks,
+                "sqlite-vec chunk index is behind chunk_embeddings; run search_reindex to refresh"
+            );
+        }
+        Ok(Some(consistency)) => {
+            tracing::debug!(
+                chunk_embeddings = consistency.chunk_embeddings,
+                vec_chunks = consistency.vec_chunks,
+                "sqlite-vec chunk index is consistent"
+            );
+        }
+        Ok(None) => {}
+        Err(e) => tracing::warn!(error = %e, "sqlite-vec chunk index consistency check failed"),
+    }
+}
 
 /// SQLite connection pool with WAL and performance PRAGMAs from ARCHITECTURE.md.
 ///
@@ -53,6 +111,9 @@ impl Database {
         let vec_ready = false;
         VECTOR_INDEX_READY.store(vec_ready, Ordering::Relaxed);
         migrate_up(&primary)?;
+        if vec_ready {
+            log_vector_index_consistency(&primary);
+        }
 
         let mut write_pool = Vec::with_capacity(WRITE_POOL_SIZE);
         write_pool.push(Mutex::new(primary));
@@ -269,6 +330,51 @@ mod tests {
                 mode.to_lowercase() == "wal" || mode.to_lowercase() == "memory",
                 "expected wal or memory, got {mode}"
             );
+            Ok(())
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn vector_index_consistency_reports_missing_vec_rows() {
+        let db = Database::open_in_memory().unwrap();
+        db.with_conn(|conn| {
+            conn.execute(
+                "INSERT INTO files (path, title, content_hash, word_count, created_at, updated_at)
+                 VALUES ('notes/a.md', 'A', 'hash-a', 1, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')",
+                [],
+            )?;
+            let file_id = conn.last_insert_rowid();
+            conn.execute(
+                "INSERT INTO chunks (file_id, chunk_index, content, char_count)
+                 VALUES (?1, 0, 'one', 3), (?1, 1, 'two', 3)",
+                [file_id],
+            )?;
+            let first_chunk: i64 = conn.query_row(
+                "SELECT id FROM chunks WHERE file_id = ?1 AND chunk_index = 0",
+                [file_id],
+                |row| row.get(0),
+            )?;
+            let second_chunk: i64 = conn.query_row(
+                "SELECT id FROM chunks WHERE file_id = ?1 AND chunk_index = 1",
+                [file_id],
+                |row| row.get(0),
+            )?;
+            conn.execute(
+                "INSERT INTO chunk_embeddings (chunk_id, embedding) VALUES (?1, X'0000'), (?2, X'0000')",
+                rusqlite::params![first_chunk, second_chunk],
+            )?;
+            conn.execute("CREATE TABLE vec_chunks (embedding BLOB)", [])?;
+            conn.execute(
+                "INSERT INTO vec_chunks (rowid, embedding) VALUES (?1, X'0000')",
+                [first_chunk],
+            )?;
+
+            let consistency = vector_index_consistency(conn)?.expect("vec table exists");
+
+            assert_eq!(consistency.chunk_embeddings, 2);
+            assert_eq!(consistency.vec_chunks, 1);
+            assert_eq!(consistency.missing_vec_chunks, 1);
             Ok(())
         })
         .unwrap();

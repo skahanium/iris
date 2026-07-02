@@ -1,13 +1,15 @@
 use std::collections::HashMap;
 use std::path::Path;
 
-use criterion::{black_box, criterion_group, criterion_main, Criterion};
+use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
 use iris_lib::ai_runtime::guardrails::sanitize_query;
 use iris_lib::ai_runtime::model_gateway::{
     build_chat_completions_body, messages_for_api, GatewayRequest, LlmFunctionDef, LlmMessage,
     LlmToolDef, MessageRole, ProviderConfig, ToolCall,
 };
-use iris_lib::ai_runtime::retrieval_broker::{query_hash, RetrievalLayers, RetrievalRequest};
+use iris_lib::ai_runtime::retrieval_broker::{
+    hybrid_retrieve, query_hash, RetrievalLayers, RetrievalRequest,
+};
 use iris_lib::ai_runtime::skills::{
     inject_into_prompt, SkillConfirmationStatus, SkillEntry, SkillScope,
 };
@@ -181,6 +183,77 @@ fn bench_retrieval_request_hash(c: &mut Criterion) {
     });
 }
 
+fn build_retrieval_bench_conn(rows: usize) -> rusqlite::Connection {
+    let mut conn = rusqlite::Connection::open_in_memory().expect("open benchmark db");
+    conn.execute_batch(
+        "CREATE TABLE files (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            path TEXT NOT NULL UNIQUE,
+            title TEXT,
+            content_hash TEXT NOT NULL,
+            word_count INTEGER DEFAULT 0,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+        CREATE VIRTUAL TABLE files_fts USING fts5(path, title, content, tokenize='unicode61');",
+    )
+    .expect("create benchmark schema");
+
+    let tx = conn.transaction().expect("begin benchmark insert");
+    for i in 0..rows {
+        let path = format!("notes/bench-{i}.md");
+        let title = format!("Bench {i}");
+        let content = if i % 10 == 0 {
+            format!("alpha target local retrieval benchmark row {i}")
+        } else {
+            format!("ordinary local retrieval benchmark row {i}")
+        };
+        tx.execute(
+            "INSERT INTO files (path, title, content_hash, word_count, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')",
+            rusqlite::params![path, title, format!("hash-{i}"), 8_i64],
+        )
+        .expect("insert benchmark file");
+        tx.execute(
+            "INSERT INTO files_fts (path, title, content) VALUES (?1, ?2, ?3)",
+            rusqlite::params![format!("notes/bench-{i}.md"), format!("Bench {i}"), content],
+        )
+        .expect("insert benchmark fts row");
+    }
+    tx.commit().expect("commit benchmark insert");
+    conn
+}
+
+fn bench_retrieval_hybrid_synthetic_corpus(c: &mut Criterion) {
+    let mut group = c.benchmark_group("retrieval_hybrid_synthetic_corpus");
+    for rows in [1_000usize, 10_000, 50_000] {
+        let conn = build_retrieval_bench_conn(rows);
+        let request = RetrievalRequest {
+            query: "alpha target".into(),
+            max_results: 10,
+            layers: RetrievalLayers {
+                fts: true,
+                vector: true,
+                graph: false,
+                exact: false,
+                template: false,
+            },
+            note_context: None,
+            file_id_context: None,
+            scope: Default::default(),
+        };
+        group.bench_with_input(
+            BenchmarkId::new("hybrid_vector_not_ready", rows),
+            &rows,
+            |b, _| {
+                b.iter(|| {
+                    black_box(hybrid_retrieve(black_box(&conn), black_box(&request)).unwrap());
+                })
+            },
+        );
+    }
+    group.finish();
+}
 fn bench_chunk_markdown(c: &mut Criterion) {
     let content = "# 标题\n\n段落1内容\n\n## 子标题\n\n段落2内容\n\n- 列表项1\n- 列表项2\n\n### 三级标题\n\n更多段落内容，用于测试分块性能";
 
@@ -198,6 +271,7 @@ criterion_group!(
     bench_chunk_markdown,
     bench_llm_message_serialization,
     bench_skill_prompt_injection,
-    bench_retrieval_request_hash
+    bench_retrieval_request_hash,
+    bench_retrieval_hybrid_synthetic_corpus
 );
 criterion_main!(benches);

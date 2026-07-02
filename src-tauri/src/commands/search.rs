@@ -27,6 +27,7 @@ pub fn search_keyword(
             "SELECT path, title, snippet(files_fts, 2, '<b>', '</b>', '…', 32) as snip
              FROM files_fts
              WHERE files_fts MATCH ?1
+               AND path <> '.classified'
                AND path NOT LIKE '.classified/%'
              LIMIT ?2",
         )?;
@@ -57,7 +58,10 @@ pub fn search_semantic(
 pub fn search_reindex(state: State<'_, Arc<AppState>>) -> AppResult<usize> {
     let vault = state.vault_path()?;
     let entries = state.db.with_conn(|conn| {
-        index_vault_incremental(conn, &vault, IndexEmbeddingMode::Queue(state.inner()))
+        let entries =
+            index_vault_incremental(conn, &vault, IndexEmbeddingMode::Queue(state.inner()))?;
+        crate::storage::db::log_vector_index_consistency(conn);
+        Ok(entries)
     })?;
     Ok(entries.len())
 }

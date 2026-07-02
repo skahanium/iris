@@ -14,6 +14,8 @@ pub(super) fn search_graph_neighbors(
          FROM block_links bl
          JOIN files f ON f.id = bl.target_file_id
          WHERE bl.source_file_id = ?1 AND bl.is_confirmed = 1
+           AND f.path <> '.classified'
+           AND f.path NOT LIKE '.classified/%'
          ORDER BY bl.confidence DESC
          LIMIT ?2",
     )?;

@@ -15,6 +15,12 @@ describe("desktop dev script", () => {
     expect(packageJson.scripts.tauri).toBe(
       "node scripts/with-iris-env.mjs -- node scripts/tauri-cli.mjs",
     );
+    expect(packageJson.scripts["dev:desktop:vec"]).toBe(
+      "node scripts/with-iris-env.mjs -- node scripts/tauri-cli.mjs dev --features sqlite-vec",
+    );
+    expect(packageJson.scripts["tauri:build:vec"]).toBe(
+      "node scripts/with-iris-env.mjs -- node scripts/tauri-cli.mjs build --features sqlite-vec",
+    );
     expect(launcher).toContain("OS_ACTIVITY_MODE");
     expect(launcher).toContain("disable");
     expect(launcher).toContain('process.platform === "darwin"');

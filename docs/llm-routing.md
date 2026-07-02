@@ -64,3 +64,11 @@
 - DuckDuckGo is the only native fallback surfaced for web evidence. MiniMax is not a web evidence provider and is not part of broker candidate ordering.
 - Broker candidate order is MCP mapping first, then DuckDuckGo fallback. Provider diagnostics expose mapping completeness and recent circuit state in Management Center.
 - Ordinary evidence details show citation, title, safe URL/domain, retrieval reason, conflict markers, and excerpt. Provider ids, provider kind, raw result hashes, and extraction methods are audit/diagnostic metadata only.
+
+## 本地检索加速
+
+- 普通 AI Agent 检索通过 `search_hybrid` / `search_semantic` 进入 retrieval broker；默认构建保持 sqlite-vec 关闭，语义向量层未就绪时 `search_hybrid` 仍使用 FTS 等非向量层返回结果。
+- 本地验证 sqlite-vec 时使用 `npm run dev:desktop:vec`；生产验证构建使用 `npm run tauri:build:vec`。这两个脚本都会向 Tauri/Rust 传入 `--features sqlite-vec`。
+- sqlite-vec 仅加速普通笔记索引。`.classified/` 文档不得写入主 SQLite FTS、`chunk_embeddings` 或 `vec_*` 表；涉密 AI 继续使用独立的内存检索索引。
+- 启动和 `search_reindex` 后会记录 `chunk_embeddings` 与 `vec_chunks` 的非敏感计数差异；日志只包含数量，不包含路径、标题、正文、摘要或涉密标识。
+- 性能对比入口在 `cargo bench --manifest-path src-tauri/Cargo.toml --bench ai_benchmarks retrieval_hybrid_synthetic_corpus`，用于观察 1k / 10k / 50k 合成语料下的检索延迟分布。

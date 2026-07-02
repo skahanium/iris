@@ -39,6 +39,7 @@ pub(super) async fn list_vault(
             "SELECT path, title FROM files
              WHERE id IN (SELECT MAX(id) FROM files GROUP BY path)
                AND path NOT LIKE '.iris/%'
+               AND path <> '.classified'
                AND path NOT LIKE '.classified/%'
                AND (?1 = '' OR path LIKE ?2)
              ORDER BY path
@@ -104,7 +105,10 @@ pub(super) async fn get_backlinks(
              JOIN files f ON f.id = l.source_id
              JOIN files t ON t.id = l.target_id
              WHERE t.path = ?1
+               AND f.path <> '.classified'
                AND f.path NOT LIKE '.classified/%'
+               AND t.path <> '.classified'
+               AND t.path NOT LIKE '.classified/%'
              ORDER BY f.title",
         )?;
         let rows = stmt.query_map([path], |row| {
@@ -144,6 +148,7 @@ pub(super) async fn get_block_links(
              FROM block_links bl
              LEFT JOIN files tf ON tf.id = bl.target_file_id
              WHERE bl.source_file_id = ?1
+               AND (tf.path IS NULL OR (tf.path <> '.classified' AND tf.path NOT LIKE '.classified/%'))
              LIMIT 30",
         )?;
         let rows = stmt.query_map([fid], |row| {

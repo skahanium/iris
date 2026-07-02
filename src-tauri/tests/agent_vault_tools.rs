@@ -279,3 +279,135 @@ fn native_vault_write_tools_stay_confirmation_gated() {
         );
     }
 }
+
+#[tokio::test]
+async fn ordinary_agent_retrieval_filters_classified_rows_even_if_indexed() {
+    let (state, _dir) = test_state();
+    index_note(
+        &state,
+        "notes/open.md",
+        "# Open\n\nordinary public project note",
+    );
+
+    state
+        .db
+        .with_conn(|conn| {
+            conn.execute(
+                "INSERT INTO files (path, title, content_hash, word_count, created_at, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?5)",
+                rusqlite::params![
+                    ".classified/secret.md",
+                    "Secret Title",
+                    "hash-secret",
+                    5_i64,
+                    "2026-01-01T00:00:00Z",
+                ],
+            )?;
+            let secret_file_id = conn.last_insert_rowid();
+            conn.execute(
+                "INSERT INTO chunks (file_id, chunk_index, content, char_count)
+                 VALUES (?1, 0, ?2, ?3)",
+                rusqlite::params![secret_file_id, "secret vector payload", 21_i64],
+            )?;
+            conn.execute(
+                "INSERT INTO regulation_index
+                 (file_id, regulation_name, article, content, keywords, source_start, source_end,
+                  content_hash, parser_version, embedding_model, embedding_dim, created_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+                rusqlite::params![
+                    secret_file_id,
+                    "Secret Regulation",
+                    "Article 1",
+                    "secret regulation payload",
+                    "secret",
+                    0_i64,
+                    25_i64,
+                    "hash-reg-secret",
+                    "test",
+                    "test-model",
+                    384_i64,
+                    "2026-01-01T00:00:00Z",
+                ],
+            )?;
+            conn.execute(
+                "INSERT INTO semantic_anchors
+                 (anchor_key, file_id, anchor_type, content, source_start, source_end,
+                  content_hash, extractor_version, embedding_model, embedding_dim, confidence,
+                  created_at, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?12)",
+                rusqlite::params![
+                    "secret-anchor",
+                    secret_file_id,
+                    "claim",
+                    "secret anchor payload",
+                    0_i64,
+                    21_i64,
+                    "hash-anchor-secret",
+                    "test",
+                    "test-model",
+                    384_i64,
+                    1.0_f64,
+                    "2026-01-01T00:00:00Z",
+                ],
+            )?;
+            let open_file_id: i64 = conn.query_row(
+                "SELECT id FROM files WHERE path = 'notes/open.md'",
+                [],
+                |row| row.get(0),
+            )?;
+            conn.execute(
+                "INSERT INTO block_links
+                 (source_file_id, target_file_id, link_type, confidence, is_confirmed, created_by, created_at)
+                 VALUES (?1, ?2, 'related', 1.0, 1, 'test', ?3)",
+                rusqlite::params![open_file_id, secret_file_id, "2026-01-01T00:00:00Z"],
+            )?;
+            Ok(())
+        })
+        .unwrap();
+
+    let mut graph_ctx = ctx(Some("notes/open.md"));
+    graph_ctx.file_id = state
+        .db
+        .with_read_conn(|conn| {
+            Ok(Some(conn.query_row(
+                "SELECT id FROM files WHERE path = 'notes/open.md'",
+                [],
+                |row| row.get(0),
+            )?))
+        })
+        .unwrap();
+
+    for (tool, args, context) in [
+        (
+            "search_hybrid",
+            serde_json::json!({ "query": "secret", "limit": 20 }),
+            &graph_ctx,
+        ),
+        (
+            "search_semantic",
+            serde_json::json!({ "query": "secret", "limit": 20 }),
+            &graph_ctx,
+        ),
+        (
+            "get_regulation",
+            serde_json::json!({ "regulation_name": "Secret Regulation", "article": "Article 1" }),
+            &graph_ctx,
+        ),
+        (
+            "get_backlinks",
+            serde_json::json!({ "path": ".classified/secret.md" }),
+            &graph_ctx,
+        ),
+    ] {
+        let result = dispatch_tool(&state, context, tool, &args).await;
+        let serialized = if result.success {
+            serde_json::to_string(&result.output).unwrap()
+        } else {
+            result.error.clone().unwrap_or_default()
+        };
+        assert!(
+            !serialized.contains(".classified") && !serialized.contains("Secret Title"),
+            "{tool} leaked classified metadata: {serialized}"
+        );
+    }
+}

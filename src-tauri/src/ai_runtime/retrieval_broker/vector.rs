@@ -21,6 +21,7 @@ pub(super) fn search_vector_chunks(
          JOIN chunks c ON c.id = vc.rowid
          JOIN files f ON f.id = c.file_id
          WHERE vc.embedding MATCH ?1
+           AND f.path <> '.classified'
            AND f.path NOT LIKE '.classified/%'
          ORDER BY vc.distance
          LIMIT ?2",
@@ -92,6 +93,8 @@ pub(super) fn search_vector_anchors(
          JOIN semantic_anchors sa ON sa.id = va.rowid
          JOIN files f ON f.id = sa.file_id
          WHERE va.embedding MATCH ?1
+           AND f.path <> '.classified'
+           AND f.path NOT LIKE '.classified/%'
          ORDER BY va.distance
          LIMIT ?2",
     ) {
@@ -163,6 +166,8 @@ pub(super) fn search_vector_regulations(
          JOIN regulation_index ri ON ri.id = vr.rowid
          JOIN files f ON f.id = ri.file_id
          WHERE vr.embedding MATCH ?1
+           AND f.path <> '.classified'
+           AND f.path NOT LIKE '.classified/%'
          ORDER BY vr.distance
          LIMIT ?2",
     ) {
