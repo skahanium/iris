@@ -15,6 +15,7 @@ export interface UnifiedAssistantPanelProps {
   notePath: string | null;
   getNoteContent: () => string;
   webSearch?: boolean;
+  webSearchProviderName?: string | null;
   getWritingContext: () => WritingEditorContext | null;
   getParagraphText: () => string | null;
   onPatchApplied?: (newContent: string) => void;

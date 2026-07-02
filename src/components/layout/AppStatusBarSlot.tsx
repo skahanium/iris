@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { fileLinkSummary } from "@/lib/ipc";
 import type { AssistantChromeSnapshot } from "@/types/assistant-chrome";
 import type { FileLinkSummary } from "@/types/ipc";
+import type { WebSearchAvailability } from "@/lib/web-search-provider-state";
 import type { ConnectivityStatus } from "@/types/llm";
 
 interface AppStatusBarSlotProps {
@@ -23,6 +24,7 @@ interface AppStatusBarSlotProps {
   canUndo: boolean;
   canRedo: boolean;
   webSearch: boolean;
+  webSearchAvailability: WebSearchAvailability | null;
   onWebSearchChange: (enabled: boolean) => void;
   theme: "dark" | "light";
   onThemeChange: (theme: "dark" | "light") => void;
@@ -51,6 +53,7 @@ export function AppStatusBarSlot({
   canUndo,
   canRedo,
   webSearch,
+  webSearchAvailability,
   onWebSearchChange,
   theme,
   onThemeChange,
@@ -108,6 +111,7 @@ export function AppStatusBarSlot({
       canUndo={canUndo}
       canRedo={canRedo}
       webSearch={webSearch}
+      webSearchAvailability={webSearchAvailability}
       onWebSearchChange={onWebSearchChange}
       theme={theme}
       onThemeChange={onThemeChange}

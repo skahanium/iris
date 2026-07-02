@@ -1,4 +1,4 @@
-//! 安全文件删除 - 覆写后删除临时文件
+//! Secure file deletion helpers for sensitive temporary files.
 
 use std::fs::OpenOptions;
 use std::io::{Seek, SeekFrom, Write};
@@ -11,27 +11,25 @@ use std::path::PathBuf;
 use crate::error::AppError;
 use crate::error::AppResult;
 
-/// 获取用户专属的临时目录，优先使用 `HOME/.iris/tmp`，回退到系统 temp dir。
+/// Return the Iris-owned temp directory used by tests and secure temp helpers.
 #[cfg(test)]
 pub fn user_temp_dir() -> PathBuf {
-    let home = std::env::var("HOME")
-        .or_else(|_| std::env::var("USERPROFILE"))
-        .map(PathBuf::from);
-    match home {
-        Ok(h) => h.join(".iris").join("tmp"),
-        Err(_) => std::env::temp_dir().join("iris-tmp"),
+    if let Some(temp) = std::env::var_os("IRIS_TEMP_DIR") {
+        let path = PathBuf::from(temp);
+        if !path.as_os_str().is_empty() {
+            return path;
+        }
     }
+    if let Some(home) = std::env::var_os("IRIS_HOME") {
+        let path = PathBuf::from(home);
+        if !path.as_os_str().is_empty() {
+            return path.join("tmp");
+        }
+    }
+    std::env::temp_dir().join("iris-tmp")
 }
 
-/// 安全删除文件：先用零覆写整个文件内容，再删除
-///
-/// 用于处理包含敏感信息的临时文件（如 API 响应缓存）。
-/// 覆写 + `sync_all` 确保操作系统将覆写操作刷入存储介质，
-/// 随后 `remove_file` 释放目录条目。
-///
-/// 注意：单次零覆写在 SSD 上因 wear leveling 可能不会覆盖到相同的物理单元，
-/// 因此在 SSD 上无法保证物理擦除。但能够防止文件系统级别的数据恢复。
-/// 对于涉密保险库场景，数据本身的 AES-256-GCM 加密才是主要防护层。
+/// Overwrite a file with zero bytes and then remove it.
 pub fn secure_delete(path: &Path) -> AppResult<()> {
     if !path.exists() {
         return Ok(());
@@ -52,13 +50,12 @@ pub fn secure_delete(path: &Path) -> AppResult<()> {
     }
     file.sync_all()?;
 
-    // 正常删除
     std::fs::remove_file(path)?;
 
     Ok(())
 }
 
-/// 安全删除目录：递归覆写所有文件后删除整个目录树。
+/// Recursively overwrite files in a directory before removing the tree.
 #[cfg(test)]
 pub fn secure_remove_dir_all(path: &Path) -> AppResult<()> {
     if !path.exists() {
@@ -75,7 +72,8 @@ pub fn secure_remove_dir_all(path: &Path) -> AppResult<()> {
             }
         }
     }
-    std::fs::remove_dir_all(path).map_err(|e| AppError::msg(format!("无法删除临时目录: {e}")))
+    std::fs::remove_dir_all(path)
+        .map_err(|e| AppError::msg(format!("failed to remove temporary directory: {e}")))
 }
 
 #[cfg(test)]

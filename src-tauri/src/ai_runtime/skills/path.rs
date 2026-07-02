@@ -7,17 +7,20 @@ use super::model_impl::{SkillScope, SkillsConfig};
 
 pub(crate) fn global_skills_dir() -> PathBuf {
     global_skills_dir_from_env(
-        std::env::var("HOME").ok().as_deref(),
-        std::env::var("USERPROFILE").ok().as_deref(),
+        std::env::var("IRIS_GLOBAL_SKILLS_DIR").ok().as_deref(),
+        std::env::var("IRIS_HOME").ok().as_deref(),
     )
 }
 
-fn global_skills_dir_from_env(home: Option<&str>, user_profile: Option<&str>) -> PathBuf {
-    if let Some(home) = home.filter(|value| !value.trim().is_empty()) {
-        return PathBuf::from(home).join(".iris").join("skills");
+fn global_skills_dir_from_env(
+    iris_global_skills_dir: Option<&str>,
+    iris_home: Option<&str>,
+) -> PathBuf {
+    if let Some(dir) = iris_global_skills_dir.filter(|value| !value.trim().is_empty()) {
+        return PathBuf::from(dir);
     }
-    if let Some(user_profile) = user_profile.filter(|value| !value.trim().is_empty()) {
-        return PathBuf::from(user_profile).join(".iris").join("skills");
+    if let Some(home) = iris_home.filter(|value| !value.trim().is_empty()) {
+        return PathBuf::from(home).join("skills");
     }
     PathBuf::from(".iris").join("skills")
 }
@@ -121,7 +124,7 @@ fn copy_dir_recursive(src: &Path, dest: &Path) -> AppResult<()> {
 pub fn validate_skill_path(path: &Path, vault: &Path) -> AppResult<()> {
     let canonical = path
         .canonicalize()
-        .map_err(|_| AppError::msg("Skill 文件路径无效或不存在"))?;
+        .map_err(|_| AppError::msg("Skill file path is invalid or missing"))?;
     let global_dir = global_skills_dir();
     let vault_dir = vault_skills_dir(vault);
 
@@ -133,7 +136,9 @@ pub fn validate_skill_path(path: &Path, vault: &Path) -> AppResult<()> {
         .is_ok_and(|v| canonical.starts_with(&v));
 
     if !under_global && !under_vault {
-        return Err(AppError::msg("Skill 文件路径必须在已知的 skills 目录下"));
+        return Err(AppError::msg(
+            "Skill file path must be under a known skills directory",
+        ));
     }
     Ok(())
 }
@@ -157,17 +162,17 @@ mod tests {
     use super::*;
 
     #[test]
-    fn global_skills_dir_uses_userprofile_when_home_is_empty() {
-        let path = global_skills_dir_from_env(Some(""), Some(r"C:\Users\Iris"));
+    fn global_skills_dir_uses_iris_home_when_explicit_global_dir_is_empty() {
+        let path = global_skills_dir_from_env(Some(""), Some("C:\\IrisHome"));
         let normalized = path.to_string_lossy().replace('/', "\\");
 
-        assert_eq!(normalized, r"C:\Users\Iris\.iris\skills");
+        assert_eq!(normalized, "C:\\IrisHome\\skills");
     }
 
     #[test]
-    fn global_skills_dir_prefers_home_when_available() {
-        let path = global_skills_dir_from_env(Some("/home/iris"), Some(r"C:\Users\Iris"));
+    fn global_skills_dir_prefers_explicit_iris_global_skills_dir() {
+        let path = global_skills_dir_from_env(Some("/portable/skills"), Some("/portable/.iris"));
 
-        assert_eq!(path, PathBuf::from("/home/iris/.iris/skills"));
+        assert_eq!(path, PathBuf::from("/portable/skills"));
     }
 }

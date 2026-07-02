@@ -1,12 +1,17 @@
 import { memo } from "react";
 
 import { cn } from "@/lib/utils";
+import {
+  webSearchStatusDetail,
+  type WebSearchAvailability,
+} from "@/lib/web-search-provider-state";
 import type { ConnectivityStatus, LlmConnectivityState } from "@/types/llm";
 
 interface ConnectivityIndicatorsProps {
   status: ConnectivityStatus | null;
   onOpenSettings?: () => void;
   webSearch?: boolean;
+  webSearchAvailability?: WebSearchAvailability | null;
   onWebSearchChange?: (enabled: boolean) => void;
 }
 
@@ -16,18 +21,19 @@ interface StatusIndicatorProps {
   activeClass: string;
   title: string;
   ariaLabel: string;
+  disabled?: boolean;
   onClick?: () => void;
   role?: "button" | "switch";
   ariaChecked?: boolean;
 }
 
-/** 底栏统一规格：8px 圆点 + 简短文案，未就绪为灰，就绪为各通道 token 色 */
 function StatusIndicator({
   label,
   active,
   activeClass,
   title,
   ariaLabel,
+  disabled = false,
   onClick,
   role = "button",
   ariaChecked,
@@ -39,8 +45,14 @@ function StatusIndicator({
       aria-checked={role === "switch" ? ariaChecked : undefined}
       aria-label={ariaLabel}
       title={title}
-      className="iris-focus-soft inline-flex h-6 shrink-0 items-center gap-1 rounded-sm px-1.5 text-muted-foreground transition-[background-color,color,transform,box-shadow] duration-base ease-iris-out hover:bg-muted/50 focus:outline-none active:scale-[0.98]"
-      onClick={onClick}
+      disabled={disabled}
+      className={cn(
+        "iris-focus-soft inline-flex h-6 shrink-0 items-center gap-1 rounded-sm px-1.5 text-muted-foreground transition-[background-color,color,transform,box-shadow] duration-base ease-iris-out focus:outline-none active:scale-[0.98]",
+        disabled
+          ? "cursor-not-allowed opacity-55"
+          : "hover:bg-muted/50 hover:text-foreground",
+      )}
+      onClick={disabled ? undefined : onClick}
     >
       <span
         className={cn(
@@ -78,10 +90,15 @@ function llmBallActive(state: LlmConnectivityState): boolean {
   return state === "ready" || state === "error";
 }
 
+function fallbackWebSearchDetail(webSearch: boolean): string {
+  return webSearch ? "已开启" : "未开启";
+}
+
 export const ConnectivityIndicators = memo(function ConnectivityIndicators({
   status,
   onOpenSettings,
   webSearch = false,
+  webSearchAvailability = null,
   onWebSearchChange,
 }: ConnectivityIndicatorsProps) {
   const llm = status?.llm;
@@ -92,13 +109,15 @@ export const ConnectivityIndicators = memo(function ConnectivityIndicators({
   const cachePct =
     hit + miss > 0 ? Math.round((hit / (hit + miss)) * 100) : null;
 
-  const search = status?.searchApi;
-  const searchLabel = "MCP 优先 / DuckDuckGo 托底";
+  const webDetail = webSearchAvailability
+    ? webSearchStatusDetail(webSearch, webSearchAvailability)
+    : fallbackWebSearchDetail(webSearch);
+  const canToggleWebSearch = webSearchAvailability?.canEnable ?? true;
+  const webSearchActive = webSearch && canToggleWebSearch;
 
   const llmTitle = [
     llm?.message ?? "LLM 未检测",
     cachePct != null ? `上次缓存命中约 ${cachePct}%` : null,
-    search ? `检索：${searchLabel}` : null,
   ]
     .filter(Boolean)
     .join(" · ");
@@ -107,7 +126,7 @@ export const ConnectivityIndicators = memo(function ConnectivityIndicators({
     <div
       className="inline-flex shrink-0 items-center gap-px rounded-md border border-border/40 bg-surface-inset/30 py-px pl-0.5 pr-1"
       role="group"
-      aria-label="连通性"
+      aria-label="连接状态"
     >
       <StatusIndicator
         label="LLM"
@@ -120,16 +139,13 @@ export const ConnectivityIndicators = memo(function ConnectivityIndicators({
       {onWebSearchChange ? (
         <StatusIndicator
           role="switch"
-          ariaChecked={webSearch}
+          ariaChecked={webSearchActive}
           label="联网"
-          active={webSearch}
+          active={webSearchActive}
           activeClass="bg-[hsl(var(--status-web-search))] shadow-[0_0_0_1px_hsl(var(--status-web-search)/0.35)]"
-          title={
-            webSearch
-              ? `联网搜索：已开启 · 检索：${searchLabel}`
-              : "联网搜索：已关闭"
-          }
-          ariaLabel={webSearch ? "关闭联网搜索" : "开启联网搜索"}
+          title={`联网搜索：${webDetail}`}
+          ariaLabel={webSearchActive ? "关闭联网搜索" : "开启联网搜索"}
+          disabled={!canToggleWebSearch}
           onClick={() => onWebSearchChange(!webSearch)}
         />
       ) : null}

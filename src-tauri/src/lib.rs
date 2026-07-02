@@ -11,10 +11,12 @@ mod commands;
 mod credentials;
 pub mod embedding;
 pub mod error;
+pub mod hygiene;
 pub mod indexer;
 pub mod knowledge;
 mod llm;
 mod network;
+pub mod paths;
 pub mod recycle;
 mod scheduler;
 mod security;
@@ -84,12 +86,11 @@ pub fn run() {
                 tracing::warn!("main window not found at setup start");
             }
 
-            let data_dir = app
-                .path()
-                .app_data_dir()
-                .map_err(|e| crate::error::AppError::msg(format!("无法解析应用数据目录: {e}")))?;
-            std::fs::create_dir_all(&data_dir)?;
-            // `AppState::new` 已返回 `Arc<AppState>`；勿再包一层 Arc，否则 Tauri 无法注入 State。
+            let tauri_app_data_dir = app.path().app_data_dir().ok();
+            let iris_paths = crate::paths::resolve_iris_paths_from_process(tauri_app_data_dir)?;
+            crate::paths::prepare_iris_paths(&iris_paths)?;
+            let data_dir = iris_paths.data_dir.clone();
+            // `AppState::new` returns `Arc<AppState>`; Tauri can inject it directly.
             let state = AppState::new(data_dir)?;
             crate::crypto::vault_key::init_vault_key();
             app.manage(state.clone());
@@ -114,7 +115,9 @@ pub fn run() {
                 window_chrome::apply_main_window_chrome(window);
             }
 
-            tracing::info!("Iris 已启动 — 若未见窗口，请检查任务栏或 WebView2 运行时。");
+            tracing::info!(
+                "Iris started; if no window appears, check the taskbar and WebView2 runtime."
+            );
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![

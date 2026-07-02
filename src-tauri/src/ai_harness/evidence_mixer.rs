@@ -98,7 +98,7 @@ fn extract_domain(url: &str) -> Option<String> {
     }
 }
 
-/// Parse MiniMax / DuckDuckGo unified text block into rows.
+/// Parse a legacy unified web search text block into rows.
 fn parse_search_body(body: &str) -> Vec<ParsedWebRow> {
     let mut rows = Vec::new();
     let mut current: Option<ParsedWebRow> = None;

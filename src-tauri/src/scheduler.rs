@@ -9,7 +9,7 @@ use crate::app::AppState;
 use crate::cas::garbage_collector::GarbageCollector;
 use crate::error::AppResult;
 
-/// 定时任务调度器
+/// Periodic background task scheduler.
 pub struct Scheduler {
     state: Arc<AppState>,
     shutdown_tx: watch::Sender<bool>,
@@ -23,12 +23,11 @@ pub struct ShutdownHandle {
 }
 
 impl Scheduler {
-    /// 创建新的调度器
+    /// Create a new scheduler.
     pub fn new(state: Arc<AppState>) -> Self {
         let (shutdown_tx, shutdown_rx) = watch::channel(false);
         let db = state.db.clone();
 
-        // Spawn periodic WAL checkpoint + optimize every 60 minutes
         let db_checkpoint = db.clone();
         let mut shutdown_rx_checkpoint = shutdown_rx.clone();
         tauri::async_runtime::spawn(async move {
@@ -57,15 +56,15 @@ impl Scheduler {
         }
     }
 
-    /// 启动定时任务，返回一个可用于请求关闭的 handle
+    /// Start periodic tasks and return a shutdown handle.
     pub fn start(&self) -> ShutdownHandle {
         let state = self.state.clone();
         let mut shutdown_rx = self.shutdown_rx.clone();
 
         tauri::async_runtime::spawn(async move {
-            // Run GC once shortly after startup (10s delay to avoid blocking init)
             tokio::select! {
                 _ = sleep(Duration::from_secs(10)) => {
+                    Self::run_hygiene_cleanup("startup");
                     if let Err(e) = Self::run_garbage_collection(&state).await {
                         tracing::warn!("Startup GC failed: {e}");
                     }
@@ -98,6 +97,7 @@ impl Scheduler {
                     }
                 }
 
+                Self::run_hygiene_cleanup("scheduled");
                 if let Err(e) = Self::run_garbage_collection(&state).await {
                     tracing::error!("Garbage collection failed: {e}");
                 }
@@ -109,7 +109,18 @@ impl Scheduler {
         }
     }
 
-    /// 执行垃圾回收
+    fn run_hygiene_cleanup(label: &str) {
+        match crate::hygiene::cleanup_from_environment() {
+            Ok(report) if report.deleted_files > 0 => tracing::info!(
+                "Iris hygiene cleanup ({label}) removed {} files and freed {} bytes",
+                report.deleted_files,
+                report.deleted_bytes
+            ),
+            Ok(_) => {}
+            Err(e) => tracing::warn!("Iris hygiene cleanup ({label}) failed: {e}"),
+        }
+    }
+
     async fn run_garbage_collection(state: &Arc<AppState>) -> AppResult<()> {
         let gc = GarbageCollector::new(state.cas_store()?.clone(), state.db.clone());
         let result = gc.collect().await?;

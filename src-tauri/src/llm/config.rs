@@ -817,16 +817,13 @@ pub fn connectivity_status(
         _ => format!("{} / {}", resolved.provider_id, resolved.model),
     };
 
-    let minimax_configured =
-        crate::credentials::api_key_configured(db, crate::credentials::MINIMAX_CREDENTIAL_SERVICE)?;
-    let prefs = crate::llm::web_search_config::load(db)?;
-    let effective_backend =
-        crate::llm::search_web::expected_search_backend_for_connectivity(db, &prefs)
-            .as_str()
-            .to_string();
+    let selected_web_provider =
+        crate::ai_runtime::mcp_runtime_registry::resolve_selected_web_search_provider(db).ok();
     let search_api = SearchApiConnectivityDto {
-        minimax_configured,
-        effective_backend,
+        minimax_configured: selected_web_provider.is_some(),
+        effective_backend: selected_web_provider
+            .map(|provider| provider.id)
+            .unwrap_or_else(|| "mcp_unconfigured".into()),
     };
 
     let usage_last = read_usage_last(db)?;
@@ -903,20 +900,30 @@ mod tests {
     }
 
     #[test]
-    fn connectivity_status_uses_configured_markers_without_secret_reads() {
+    fn connectivity_status_reports_selected_mcp_search_provider() {
         let db = Database::open_in_memory().expect("mem db");
         crate::credentials::mark_api_key_configured(&db, "iris.llm.deepseek").expect("mark llm");
-        crate::credentials::mark_api_key_configured(
+        crate::ai_runtime::mcp_runtime_registry::upsert_web_evidence_provider(
             &db,
-            crate::credentials::MINIMAX_CREDENTIAL_SERVICE,
+            &crate::ai_runtime::mcp_runtime_registry::WebEvidenceProviderInput {
+                id: "anysearch".into(),
+                name: "AnySearch".into(),
+                kind: "mcp".into(),
+                enabled: true,
+                transport_kind: "stdio".into(),
+                transport_config_json: "{}".into(),
+                credential_refs_json: "{}".into(),
+                web_search_mapping_json: Some(r#"{"tool":"search"}"#.into()),
+                web_fetch_mapping_json: None,
+            },
         )
-        .expect("mark minimax");
+        .expect("provider");
 
         let status = connectivity_status(&db, AiScene::KnowledgeLookup).expect("status");
 
         assert_eq!(status.llm.state, "ready");
         assert!(status.search_api.minimax_configured);
-        assert_eq!(status.search_api.effective_backend, "duckduckgo");
+        assert_eq!(status.search_api.effective_backend, "anysearch");
     }
 
     #[test]

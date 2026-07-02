@@ -1,4 +1,4 @@
-﻿import type { Editor } from "@tiptap/react";
+import type { Editor } from "@tiptap/react";
 import { Moon, Sun } from "lucide-react";
 import {
   useCallback,
@@ -181,9 +181,14 @@ function App() {
     setAiPanelOpen,
     setAssistantChrome,
     setWebSearch,
+    setWebSearchProviderId,
     sendSelectionToAi,
     toggleWebSearch,
+    refreshWebSearchProviders,
+    webSearchAvailability,
     webSearchEnabled: webSearch,
+    webSearchProviderId,
+    webSearchProviders,
   } = useAiSidecarBridge({
     activePathRef,
     editorRef,
@@ -876,6 +881,9 @@ function App() {
             selectionQuote={assistantSelectionQuote}
             setAssistantChrome={setAssistantChrome}
             webSearch={webSearch}
+            webSearchProviderName={
+              webSearchAvailability.effectiveProvider?.name ?? null
+            }
           />
         }
         statusBar={
@@ -907,6 +915,7 @@ function App() {
             canUndo={canUndo}
             canRedo={canRedo}
             webSearch={webSearch}
+            webSearchAvailability={webSearchAvailability}
             onWebSearchChange={setWebSearch}
             theme={theme}
             onThemeChange={(nextTheme) => void setTheme(nextTheme)}
@@ -953,6 +962,11 @@ function App() {
             setClassifiedOpen={setClassifiedOpen}
             setClassifiedWaiting={setClassifiedWaiting}
             setWebSearch={setWebSearch}
+            webSearchAvailability={webSearchAvailability}
+            webSearchProviderId={webSearchProviderId}
+            webSearchProviders={webSearchProviders}
+            setWebSearchProviderId={setWebSearchProviderId}
+            refreshWebSearchProviders={refreshWebSearchProviders}
             openKnowledgeRelations={() =>
               overlays.openOverlay("knowledgeRelations")
             }

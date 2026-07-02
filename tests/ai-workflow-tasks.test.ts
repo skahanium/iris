@@ -1,4 +1,4 @@
-﻿import { readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 
 import { describe, expect, it } from "vitest";
 
@@ -172,7 +172,7 @@ describe("assistant per-turn TaskPlan dispatch", () => {
     expect(statusBadge).toContain('return "研究综合"');
   });
 
-  it("surfaces successful MCP and DDG web search counts in agent status", () => {
+  it("keeps web search usage compatible without showing MCP/DDG counts in agent status", () => {
     const statusBadge = readFileSync(
       "src/components/ai/AgentStatusBadge.tsx",
       "utf8",
@@ -196,9 +196,9 @@ describe("assistant per-turn TaskPlan dispatch", () => {
     const types = readFileSync("src/types/ai.ts", "utf8");
 
     expect(statusBadge).toContain("webSearchUsage");
-    expect(statusBadge).toContain("MCP");
-    expect(statusBadge).toContain("DDG");
-    expect(statusBadge).toContain("暂无成功结果");
+    expect(statusBadge).not.toContain("MCP ${mcp}");
+    expect(statusBadge).not.toContain("DDG");
+    expect(statusBadge).not.toContain("暂无成功结果");
     expect(header).toContain("webSearchUsage");
     expect(panel).toContain("setWebSearchUsage(null)");
     expect(taskHook).toContain("extractWebSearchUsage");

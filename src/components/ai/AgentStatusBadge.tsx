@@ -20,6 +20,7 @@ import type {
 interface AgentStatusBadgeProps {
   webSearchEnabled?: boolean;
   webSearchUsage?: WebSearchUsage | null;
+  webSearchProviderName?: string | null;
   disabled?: boolean;
   scene?: AiScene;
   taskPlanIntent?: TaskPlanIntent | null;
@@ -85,17 +86,10 @@ function sceneForSkillCompatibility(
 
 function webSearchDetailText(
   webSearchEnabled: boolean,
-  webSearchUsage: WebSearchUsage | null | undefined,
+  webSearchProviderName: string | null | undefined,
 ): string {
-  if (!webSearchEnabled) return "未开启";
-  const requests =
-    webSearchUsage?.successfulSearchRequests ??
-    webSearchUsage?.successful_search_requests;
-  if (!requests) return "已开启";
-  const mcp = requests.mcp ?? 0;
-  const duckduckgo = requests.duckduckgo ?? 0;
-  if (mcp + duckduckgo === 0) return "已开启 · 暂无成功结果";
-  return `已开启 · MCP ${mcp} 次 · DDG ${duckduckgo} 次`;
+  if (!webSearchEnabled) return "\u672a\u5f00\u542f";
+  return webSearchProviderName?.trim() || "\u672a\u914d\u7f6e";
 }
 
 function PolicyRow({
@@ -131,7 +125,7 @@ function PolicyRow({
 
 export function AgentStatusBadge({
   webSearchEnabled = false,
-  webSearchUsage,
+  webSearchProviderName,
   disabled,
   scene: sceneProp,
   taskPlanIntent,
@@ -311,7 +305,10 @@ export function AgentStatusBadge({
                 <PolicyRow
                   icon={webSearchEnabled ? Globe : Lock}
                   label="联网搜索"
-                  detail={webSearchDetailText(webSearchEnabled, webSearchUsage)}
+                  detail={webSearchDetailText(
+                    webSearchEnabled,
+                    webSearchProviderName,
+                  )}
                   accent={webSearchEnabled ? "success" : "muted"}
                 />
               </div>

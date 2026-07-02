@@ -167,7 +167,7 @@ describe("AiMessageList real virtualizer regression", () => {
     ).toBe(false);
   });
 
-  it("keeps the conversation surface mounted through a DDG-only high-evidence answer", async () => {
+  it("keeps the conversation surface mounted through a MCP-only high-evidence answer", async () => {
     const consoleError = vi
       .spyOn(console, "error")
       .mockImplementation(() => undefined);
@@ -176,10 +176,10 @@ describe("AiMessageList real virtualizer regression", () => {
     } as React.RefObject<HTMLDivElement | null>;
     const ddgSources = Array.from({ length: 23 }, (_, index) => {
       const citation = `[C${index + 1}]`;
-      return `- ${citation} DuckDuckGo result ${index + 1}: https://example.com/source-${index + 1}`;
+      return `- ${citation} MCP search result ${index + 1}: https://example.com/source-${index + 1}`;
     }).join("\n");
     const answer = [
-      "我用 DuckDuckGo 单独检索后，整理出下面这些来源。",
+      "我用 MCP 搜索提供方检索后，整理出下面这些来源。",
       "",
       "## 来源概览",
       "",
@@ -199,7 +199,7 @@ describe("AiMessageList real virtualizer regression", () => {
             messages={[
               {
                 role: "user",
-                content: "关闭 MCP 后只用 DDG 查一下这个问题",
+                content: "只用当前 MCP 搜索提供方查一下这个问题",
               },
               { role: "assistant", content: "" },
             ]}
@@ -225,7 +225,7 @@ describe("AiMessageList real virtualizer regression", () => {
               messages={[
                 {
                   role: "user",
-                  content: "关闭 MCP 后只用 DDG 查一下这个问题",
+                  content: "只用当前 MCP 搜索提供方查一下这个问题",
                 },
                 { role: "assistant", content: frame },
               ]}

@@ -32,6 +32,7 @@ interface AssistantPanelHeaderProps {
   taskPlanIntent?: TaskPlanIntent | null;
   taskStatus: AssistantTaskStatus;
   webSearch: boolean;
+  webSearchProviderName?: string | null;
   webSearchUsage?: WebSearchUsage | null;
 }
 
@@ -48,6 +49,7 @@ export function AssistantPanelHeader({
   taskPlanIntent,
   taskStatus,
   webSearch,
+  webSearchProviderName,
   webSearchUsage,
 }: AssistantPanelHeaderProps) {
   return (
@@ -59,6 +61,7 @@ export function AssistantPanelHeader({
         <div className="flex shrink-0 items-center gap-1.5">
           <AgentStatusBadge
             webSearchEnabled={webSearch}
+            webSearchProviderName={webSearchProviderName}
             webSearchUsage={webSearchUsage}
             scene={scene}
             taskPlanIntent={taskPlanIntent}

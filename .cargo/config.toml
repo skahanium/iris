@@ -1,2 +1,12 @@
+[build]
+target-dir = ".iris-dev/target"
+
 [env]
-ORT_CACHE_DIR = { value = ".ort-cache", relative = true }
+ORT_CACHE_DIR = { value = ".iris-dev/cache/ort", relative = true }
+HF_HOME = { value = ".iris-dev/cache/huggingface", relative = true }
+HF_HUB_CACHE = { value = ".iris-dev/cache/huggingface/hub", relative = true }
+IRIS_HOME = { value = ".iris-dev", relative = true }
+IRIS_DATA_DIR = { value = ".iris-dev/app-data", relative = true }
+IRIS_CACHE_DIR = { value = ".iris-dev/cache", relative = true }
+IRIS_TEMP_DIR = { value = ".iris-dev/tmp", relative = true }
+IRIS_GLOBAL_SKILLS_DIR = { value = ".iris-dev/skills", relative = true }

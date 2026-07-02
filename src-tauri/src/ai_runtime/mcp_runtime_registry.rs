@@ -11,6 +11,8 @@ use sha2::{Digest, Sha256};
 use crate::error::{AppError, AppResult};
 use crate::storage::db::Database;
 
+pub const WEB_SEARCH_PROVIDER_ID_SETTING: &str = "web_search_provider_id";
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct WebEvidenceProviderInput {
@@ -333,6 +335,95 @@ pub fn list_enabled_web_provider_mappings(
     })
 }
 
+pub fn list_enabled_web_search_provider_mappings(
+    db: &Database,
+) -> AppResult<Vec<WebEvidenceProviderMappingSummary>> {
+    Ok(list_enabled_web_provider_mappings(db)?
+        .into_iter()
+        .filter(|provider| provider.kind == "mcp" && provider.web_search_mapping_json.is_some())
+        .collect())
+}
+
+fn read_selected_web_search_provider_id(db: &Database) -> AppResult<Option<String>> {
+    db.with_conn(|conn| {
+        let raw: Option<String> = conn
+            .query_row(
+                "SELECT value FROM settings WHERE key = ?1",
+                [WEB_SEARCH_PROVIDER_ID_SETTING],
+                |row| row.get(0),
+            )
+            .optional()?;
+        Ok(raw.and_then(|value| normalize_settings_string_value(&value)))
+    })
+}
+
+fn normalize_settings_string_value(raw: &str) -> Option<String> {
+    let parsed = serde_json::from_str::<String>(raw).unwrap_or_else(|_| raw.to_string());
+    let trimmed = parsed.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_string())
+    }
+}
+
+pub fn save_selected_web_search_provider_id(
+    db: &Database,
+    provider_id: Option<&str>,
+) -> AppResult<()> {
+    let provider_id = provider_id.map(str::trim).filter(|value| !value.is_empty());
+    db.with_conn(|conn| {
+        if let Some(provider_id) = provider_id {
+            let provider_id = validate_provider_identifier("provider id", provider_id)?;
+            let json = serde_json::to_string(&provider_id)?;
+            conn.execute(
+                "INSERT INTO settings (key, value) VALUES (?1, ?2)
+                 ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                params![WEB_SEARCH_PROVIDER_ID_SETTING, json],
+            )?;
+        } else {
+            conn.execute(
+                "DELETE FROM settings WHERE key = ?1",
+                [WEB_SEARCH_PROVIDER_ID_SETTING],
+            )?;
+        }
+        Ok(())
+    })
+}
+
+pub fn resolve_selected_web_search_provider(
+    db: &Database,
+) -> AppResult<WebEvidenceProviderMappingSummary> {
+    let providers = list_enabled_web_search_provider_mappings(db)?;
+    if providers.is_empty() {
+        return Err(AppError::msg(
+            "web_search_provider_missing: no enabled MCP web.search provider is configured",
+        ));
+    }
+
+    if let Some(selected_id) = read_selected_web_search_provider_id(db)? {
+        return providers
+            .into_iter()
+            .find(|provider| provider.id == selected_id)
+            .ok_or_else(|| {
+                AppError::msg(
+                    "web_search_provider_unavailable: selected MCP web.search provider is disabled, missing, or lacks a search mapping",
+                )
+            });
+    }
+
+    if providers.len() == 1 {
+        return Ok(providers
+            .into_iter()
+            .next()
+            .expect("checked provider count"));
+    }
+
+    Err(AppError::msg(
+        "web_search_provider_unselected: choose one MCP web.search provider before enabling web search",
+    ))
+}
+
 pub fn toggle_web_evidence_provider(
     db: &Database,
     provider_id: &str,
@@ -450,6 +541,72 @@ mod tests {
 
         let err = upsert_web_evidence_provider(&db, &input).unwrap_err();
         assert!(err.to_string().contains("credential references"));
+    }
+
+    #[test]
+    fn selected_web_search_provider_requires_mcp_provider() {
+        let db = Database::open_in_memory().unwrap();
+
+        let err = resolve_selected_web_search_provider(&db).unwrap_err();
+
+        assert!(err.to_string().contains("web_search_provider_missing"));
+    }
+
+    #[test]
+    fn selected_web_search_provider_requires_choice_when_multiple_are_available() {
+        let db = Database::open_in_memory().unwrap();
+        upsert_web_evidence_provider(&db, &provider()).unwrap();
+        let mut second = provider();
+        second.id = "brave".into();
+        second.name = "Brave Search".into();
+        second.web_search_mapping_json = Some(r#"{"tool":"brave_web_search"}"#.into());
+        upsert_web_evidence_provider(&db, &second).unwrap();
+
+        let err = resolve_selected_web_search_provider(&db).unwrap_err();
+
+        assert!(err.to_string().contains("web_search_provider_unselected"));
+    }
+
+    #[test]
+    fn selected_web_search_provider_uses_single_provider_without_saved_choice() {
+        let db = Database::open_in_memory().unwrap();
+        upsert_web_evidence_provider(&db, &provider()).unwrap();
+
+        let selected = resolve_selected_web_search_provider(&db).unwrap();
+
+        assert_eq!(selected.id, "anysearch");
+        assert_eq!(selected.kind, "mcp");
+    }
+
+    #[test]
+    fn selected_web_search_provider_honors_saved_choice() {
+        let db = Database::open_in_memory().unwrap();
+        upsert_web_evidence_provider(&db, &provider()).unwrap();
+        let mut second = provider();
+        second.id = "brave".into();
+        second.name = "Brave Search".into();
+        second.web_search_mapping_json = Some(r#"{"tool":"brave_web_search"}"#.into());
+        upsert_web_evidence_provider(&db, &second).unwrap();
+        save_selected_web_search_provider_id(&db, Some("brave")).unwrap();
+
+        let selected = resolve_selected_web_search_provider(&db).unwrap();
+
+        assert_eq!(selected.id, "brave");
+        assert_eq!(
+            selected.web_search_mapping_json.as_deref(),
+            Some(r#"{"tool":"brave_web_search"}"#)
+        );
+    }
+
+    #[test]
+    fn selected_web_search_provider_rejects_stale_saved_choice() {
+        let db = Database::open_in_memory().unwrap();
+        upsert_web_evidence_provider(&db, &provider()).unwrap();
+        save_selected_web_search_provider_id(&db, Some("missing-provider")).unwrap();
+
+        let err = resolve_selected_web_search_provider(&db).unwrap_err();
+
+        assert!(err.to_string().contains("web_search_provider_unavailable"));
     }
 
     #[test]

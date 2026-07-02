@@ -18,6 +18,22 @@ declare module "node:path" {
 }
 
 declare module "node:child_process" {
+  export interface SpawnSyncResult {
+    status: number | null;
+    stdout: string;
+    stderr: string;
+  }
+
+  export function spawnSync(
+    file: string,
+    args: string[],
+    options: {
+      cwd?: string;
+      encoding: "utf8";
+      env?: Record<string, string | undefined>;
+    },
+  ): SpawnSyncResult;
+
   export function execFileSync(
     file: string,
     args: string[],
@@ -28,7 +44,9 @@ declare module "node:child_process" {
 declare const __dirname: string;
 declare const process: {
   cwd(): string;
+  execPath: string;
   env: {
     HOME?: string;
+    [key: string]: string | undefined;
   };
 };

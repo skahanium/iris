@@ -97,6 +97,37 @@ pub fn resolve_required_capability(
         ));
     }
 
+    if capability == "web.search" {
+        let provider =
+            crate::ai_runtime::mcp_runtime_registry::resolve_selected_web_search_provider(db)
+                .map_err(|err| {
+                    blocked(
+                        &capability,
+                        CapabilityBlockReason::MissingMcpProfile,
+                        err.to_string(),
+                    )
+                })?;
+        let Some(tool_name) = provider
+            .web_search_mapping_json
+            .as_deref()
+            .and_then(mapping_tool_name)
+        else {
+            return Err(blocked(
+                &capability,
+                CapabilityBlockReason::MissingMcpProfile,
+                "selected MCP web evidence provider has no web.search tool mapping",
+            ));
+        };
+        return Ok(ResolvedCapabilityProvider {
+            capability,
+            provider_kind: "mcp".into(),
+            profile_id: provider.id,
+            tool_name,
+            schema_hash: provider.provider_config_hash,
+            requires_confirmation: true,
+        });
+    }
+
     let providers = crate::ai_runtime::mcp_runtime_registry::list_enabled_web_provider_mappings(db)
         .map_err(|err| {
             blocked(
@@ -110,12 +141,11 @@ pub fn resolve_required_capability(
         if provider.kind != "mcp" {
             continue;
         }
-        let mapping_json = match capability.as_str() {
-            "web.search" => provider.web_search_mapping_json.as_deref(),
-            "web.fetch" => provider.web_fetch_mapping_json.as_deref(),
-            _ => None,
-        };
-        let Some(tool_name) = mapping_json.and_then(mapping_tool_name) else {
+        let Some(tool_name) = provider
+            .web_fetch_mapping_json
+            .as_deref()
+            .and_then(mapping_tool_name)
+        else {
             continue;
         };
         return Ok(ResolvedCapabilityProvider {
@@ -250,6 +280,43 @@ mod tests {
         assert_eq!(resolved.profile_id, "anysearch");
         assert_eq!(resolved.tool_name, "search");
         assert_eq!(resolved.schema_hash.len(), 24);
+    }
+
+    #[test]
+    fn resolves_selected_web_search_provider_when_multiple_are_enabled() {
+        let db = Database::open_in_memory().unwrap();
+        upsert_web_evidence_provider(&db, &provider()).unwrap();
+        let mut second = provider();
+        second.id = "brave".into();
+        second.name = "Brave Search".into();
+        second.web_search_mapping_json = Some(r#"{"tool":"brave_web_search"}"#.into());
+        upsert_web_evidence_provider(&db, &second).unwrap();
+        crate::ai_runtime::mcp_runtime_registry::save_selected_web_search_provider_id(
+            &db,
+            Some("brave"),
+        )
+        .unwrap();
+
+        let resolved = resolve_required_capability(&db, "web.search").unwrap();
+
+        assert_eq!(resolved.profile_id, "brave");
+        assert_eq!(resolved.tool_name, "brave_web_search");
+    }
+
+    #[test]
+    fn web_search_capability_requires_selection_when_multiple_are_enabled() {
+        let db = Database::open_in_memory().unwrap();
+        upsert_web_evidence_provider(&db, &provider()).unwrap();
+        let mut second = provider();
+        second.id = "brave".into();
+        second.name = "Brave Search".into();
+        second.web_search_mapping_json = Some(r#"{"tool":"brave_web_search"}"#.into());
+        upsert_web_evidence_provider(&db, &second).unwrap();
+
+        let err = resolve_required_capability(&db, "web.search").unwrap_err();
+
+        assert_eq!(err.reason, CapabilityBlockReason::MissingMcpProfile);
+        assert!(err.message.contains("web_search_provider_unselected"));
     }
 
     #[test]

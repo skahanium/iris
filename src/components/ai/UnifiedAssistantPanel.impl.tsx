@@ -47,6 +47,7 @@ export function UnifiedAssistantPanel({
   notePath,
   getNoteContent,
   webSearch = false,
+  webSearchProviderName = null,
   getWritingContext,
   getParagraphText,
   onPatchApplied,
@@ -429,6 +430,7 @@ export function UnifiedAssistantPanel({
         taskPlanIntent={currentTaskPlanIntent}
         taskStatus={actionState.status}
         webSearch={webSearch}
+        webSearchProviderName={webSearchProviderName}
         webSearchUsage={webSearchUsage}
       />
       <ContextPacketDrawer

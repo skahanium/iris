@@ -1,14 +1,18 @@
-﻿# =============================================================================
-# Iris — local build artifacts, caches, secrets (see AGENTS.md security rules)
+# =============================================================================
+# Iris - local build artifacts, caches, runtime state, and secrets
+# Cross-platform rules use forward slashes for Git compatibility.
 # =============================================================================
 
-# --- Dependencies & frontend build ---
+# --- Dependencies ---
 node_modules/
+
+# --- Frontend build ---
 dist/
 .vite/
 *.tsbuildinfo
 
-# --- Rust / Tauri ---
+# --- Rust / Tauri build output ---
+target/
 **/target/
 **/target-codex/
 **/target-codex-check*/
@@ -21,31 +25,31 @@ src-tauri/icons-fresh/
 src-tauri/*.html
 src-tauri/**/*.html
 
-# ONNX / embedding model cache (fastembed; any cwd)
-.fastembed_cache/
-**/.fastembed_cache/
-
-# Regenerate branding: npm run icon:gen (do not commit root copy)
+# Regenerate branding: npm run icon:gen (do not commit root copy).
 /app-icon.png
 
-# --- Local app data (dev vault DB under repo, if used) ---
+# --- Iris local runtime state ---
+.iris-dev/
 .iris/
 *.db
 *.db-shm
 *.db-wal
 *.sqlite
 *.sqlite3
+*.sqlite-shm
+*.sqlite-wal
 
-# --- Logs & temp ---
-*.log
-*.tmp
-*.temp
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-pnpm-debug.log*
+# --- Model and tool caches ---
+.npm-cache/
+.ort-cache/
+.fastembed_cache/
+**/.fastembed_cache/
+.hf-cache/
+.cache/
+.eslintcache
+.prettiercache
 
-# --- Test & coverage ---
+# --- Test and coverage artifacts ---
 coverage/
 .nyc_output/
 test-results/
@@ -53,13 +57,17 @@ playwright-report/
 blob-report/
 playwright/.cache/
 
-# --- Tool caches ---
-.npm-cache/
-.ort-cache/
-.eslintcache
-.prettiercache
+# --- Logs and temp files ---
+*.log
+*.tmp
+*.temp
+*.part
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
 
-# --- Secrets & credentials (never commit) ---
+# --- Secrets and credentials (never commit) ---
 .env
 .env.*
 !.env.example
@@ -78,7 +86,7 @@ ehthumbs.db
 Desktop.ini
 $RECYCLE.BIN/
 
-# --- Editor (team may commit shared .vscode/*) ---
+# --- Editor state ---
 .idea/
 *.swp
 *.swo
@@ -89,7 +97,7 @@ $RECYCLE.BIN/
 !.vscode/tasks.json
 *.code-workspace
 
-# --- Cursor / agent local state (rules under .cursor/rules/ may be committed) ---
+# --- Agent local state ---
 .worktrees/
 .cursor/
 .agent/
@@ -97,4 +105,4 @@ $RECYCLE.BIN/
 .codex/
 .learnings/
 .opencode/
-.superpowers/brainstorm/
+.superpowers/

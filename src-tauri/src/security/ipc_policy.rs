@@ -8,13 +8,10 @@ const ALLOWED_SETTINGS_KEYS: &[&str] = &[
     "vault_path",
     "theme",
     "web_search_enabled",
+    "web_search_provider_id",
     "llm_custom_base_url",
     "llm_base_url",
     "llm_usage_last",
-    "web_search_backend",
-    "minimax_api_host",
-    "minimax_search_model",
-    "minimax_search_enabled",
 ];
 
 /// Validate credential service id before keyring access.

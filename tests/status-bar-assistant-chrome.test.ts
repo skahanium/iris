@@ -52,6 +52,14 @@ function renderStatusBarSlot(
         canUndo: false,
         canRedo: false,
         webSearch: false,
+        webSearchAvailability: {
+          canEnable: false,
+          reason: "missing_provider",
+          detail: "未配置可用 MCP 搜索提供方",
+          selectedProviderId: null,
+          effectiveProvider: null,
+          options: [],
+        },
         onWebSearchChange: () => {},
         theme: "dark",
         onThemeChange: () => {},
@@ -116,10 +124,14 @@ describe("status bar assistant chrome", () => {
     expect(token).not.toContain("本轮");
     expect(token).toContain('data-testid="status-bar-token-usage"');
   });
-  it("ConnectivityIndicators does not present MiniMax as the web evidence backend", () => {
+  it("ConnectivityIndicators presents selected MCP provider state without DDG fallback", () => {
     const indicators = read("src/components/layout/ConnectivityIndicators.tsx");
 
-    expect(indicators).toContain("MCP 优先 / DuckDuckGo 托底");
+    expect(indicators).toContain("webSearchStatusDetail");
+    expect(indicators).toContain("webSearchAvailability");
+    expect(indicators).not.toContain("DuckDuckGo");
+    expect(indicators).not.toContain("DDG");
+    expect(indicators).not.toContain("托底");
     expect(indicators).not.toContain('effectiveBackend === "minimax"');
     expect(indicators).not.toContain('"MiniMax"');
   });

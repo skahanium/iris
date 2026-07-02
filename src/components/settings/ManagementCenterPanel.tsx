@@ -17,14 +17,7 @@ import {
   SlidersHorizontal,
   type LucideIcon,
 } from "lucide-react";
-import { isTauri } from "@tauri-apps/api/core";
-import {
-  useCallback,
-  useEffect,
-  useMemo,
-  useState,
-  type ReactNode,
-} from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 
 import { AiRulesPanel } from "@/components/ai/AiRulesPanel";
 import { SkillsPanelBody } from "@/components/ai/SkillsPanel";
@@ -38,8 +31,12 @@ import type {
   ManagementCenterDetail,
   ManagementCenterSection,
 } from "@/hooks/useOverlayManager";
-import { webEvidenceProvidersList } from "@/lib/ipc";
 import { cn } from "@/lib/utils";
+import {
+  webSearchStatusDetail,
+  type WebSearchAvailability,
+  type WebSearchProviderOption,
+} from "@/lib/web-search-provider-state";
 import type { FileListItem } from "@/types/ipc";
 
 import { LlmRoutingSection } from "./LlmRoutingSection";
@@ -51,7 +48,12 @@ interface ManagementCenterPanelProps {
   section: ManagementCenterSection;
   detail: ManagementCenterDetail;
   webSearch: boolean;
+  webSearchAvailability: WebSearchAvailability;
+  webSearchProviderId: string | null;
+  webSearchProviders: WebSearchProviderOption[];
   onWebSearchChange: (enabled: boolean) => void;
+  onWebSearchProviderChange: (providerId: string | null) => void;
+  onRefreshWebSearchProviders: () => Promise<void>;
   onOpenNote: (path: string) => void | Promise<void>;
   onPrepareNote?: (file: FileListItem) => void;
   onOpenKnowledgeRelations: () => void;
@@ -227,10 +229,12 @@ function SwitchControl({
   checked,
   onCheckedChange,
   label,
+  disabled = false,
 }: {
   checked: boolean;
   onCheckedChange: (checked: boolean) => void;
   label: string;
+  disabled?: boolean;
 }) {
   return (
     <button
@@ -238,13 +242,17 @@ function SwitchControl({
       role="switch"
       aria-checked={checked}
       aria-label={label}
+      disabled={disabled}
       className={cn(
         "relative inline-flex h-7 w-12 shrink-0 overflow-hidden rounded-full border p-0 transition-colors duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/45 focus-visible:ring-offset-2 focus-visible:ring-offset-background",
         checked
           ? "border-[hsl(var(--status-llm-ready)/0.72)] bg-[hsl(var(--status-llm-ready))] shadow-[inset_0_1px_0_hsl(0_0%_100%/0.20),0_0_0_1px_hsl(var(--status-llm-ready)/0.12)]"
           : "border-border/70 bg-surface-inset shadow-inner",
+        disabled && "cursor-not-allowed opacity-55",
       )}
-      onClick={() => onCheckedChange(!checked)}
+      onClick={() => {
+        if (!disabled) onCheckedChange(!checked);
+      }}
     >
       <span
         className={cn(
@@ -255,7 +263,6 @@ function SwitchControl({
     </button>
   );
 }
-
 function isAiManagementDetail(
   detail: ManagementCenterDetail,
 ): detail is AiManagementDetail {
@@ -280,7 +287,12 @@ export function ManagementCenterPanel({
   section,
   detail,
   webSearch,
+  webSearchAvailability,
+  webSearchProviderId,
+  webSearchProviders,
   onWebSearchChange,
+  onWebSearchProviderChange,
+  onRefreshWebSearchProviders,
   onOpenNote,
   onPrepareNote,
   onOpenKnowledgeRelations,
@@ -304,10 +316,6 @@ export function ManagementCenterPanel({
   const [activeNotesDetail, setActiveNotesDetail] =
     useState<NotesManagementDetail | null>(null);
   const { status } = useConnectivityStatus();
-  const [webProviderRoute, setWebProviderRoute] = useState<{
-    label: string;
-    ready: boolean;
-  } | null>(null);
 
   useEffect(() => {
     if (!open) return;
@@ -326,44 +334,26 @@ export function ManagementCenterPanel({
       MANAGEMENT_SECTIONS[0]!,
     [activeSection],
   );
-
-  const nativeSearchBackend = "DuckDuckGo";
-
-  const refreshWebProviderSummary = useCallback(async () => {
-    if (!open || !isTauri()) {
-      setWebProviderRoute(null);
-      return;
-    }
-
-    try {
-      const providers = await webEvidenceProvidersList();
-      const mcpSearchProviders = providers.filter(
-        (item) =>
-          item.providerKind === "mcp" && item.enabled && item.hasSearchMapping,
-      );
-      if (mcpSearchProviders.length === 0) {
-        setWebProviderRoute({
-          label: `未配置 MCP 提供方，原生托底 ${nativeSearchBackend}`,
-          ready: false,
-        });
-        return;
-      }
-      setWebProviderRoute({
-        label: `MCP 提供方 ${mcpSearchProviders.length} 个，原生托底 ${nativeSearchBackend}`,
-        ready: true,
-      });
-    } catch {
-      setWebProviderRoute(null);
-    }
-  }, [nativeSearchBackend, open]);
-
   useEffect(() => {
-    void refreshWebProviderSummary();
-  }, [refreshWebProviderSummary]);
+    if (open) void onRefreshWebSearchProviders();
+  }, [onRefreshWebSearchProviders, open]);
 
-  const searchBackend = webProviderRoute?.label ?? nativeSearchBackend;
-  const searchBackendReady =
-    webProviderRoute?.ready ?? Boolean(status?.searchApi);
+  const searchBackend =
+    webSearchAvailability.effectiveProvider?.name ??
+    webSearchAvailability.detail;
+  const searchBackendReady = webSearchAvailability.canEnable;
+  const webSearchDetail = webSearchStatusDetail(
+    webSearch,
+    webSearchAvailability,
+  );
+  const selectedWebSearchProviderId =
+    webSearchProviderId ??
+    (webSearchAvailability.options.length === 1
+      ? (webSearchAvailability.options[0]?.id ?? "")
+      : "");
+  const configuredWebSearchProviderCount = webSearchProviders.filter(
+    (provider) => provider.providerKind === "mcp" && provider.hasSearchMapping,
+  ).length;
   const llmReady = status?.llm.state === "ready";
 
   const openAiDetail = (detail: AiManagementDetail) => {
@@ -687,22 +677,52 @@ export function ManagementCenterPanel({
         {detail === "models" ? <LlmRoutingSection open={open} /> : null}
         {detail === "web-search" ? (
           <div className="space-y-5">
-            <PanelSection title="联网状态">
+            <PanelSection title="联网搜索">
+              <SettingRow
+                icon={Globe2}
+                title="当前搜索提供方"
+                detail={
+                  webSearchAvailability.canEnable
+                    ? `将使用 ${searchBackend} 执行联网搜索。`
+                    : `${webSearchAvailability.detail}。已配置 ${configuredWebSearchProviderCount} 个 MCP 搜索映射。`
+                }
+              >
+                <select
+                  value={selectedWebSearchProviderId}
+                  disabled={webSearchAvailability.options.length === 0}
+                  className="h-8 min-w-40 rounded-md border border-border bg-background px-2 text-xs text-foreground disabled:cursor-not-allowed disabled:opacity-55"
+                  onChange={(event) =>
+                    onWebSearchProviderChange(event.target.value || null)
+                  }
+                >
+                  <option value="">请选择</option>
+                  {webSearchAvailability.options.map((provider) => (
+                    <option key={provider.id} value={provider.id}>
+                      {provider.name}
+                    </option>
+                  ))}
+                </select>
+              </SettingRow>
               <SettingRow
                 icon={Globe2}
                 title={webSearch ? "联网已开启" : "联网已关闭"}
-                detail={`联网证据：${searchBackend}`}
+                detail={`联网：${webSearchDetail}`}
               >
                 <SwitchControl
-                  checked={webSearch}
-                  label="联网检索"
-                  onCheckedChange={onWebSearchChange}
+                  checked={webSearch && webSearchAvailability.canEnable}
+                  disabled={!webSearchAvailability.canEnable}
+                  label="联网搜索"
+                  onCheckedChange={(checked) => {
+                    if (!checked || webSearchAvailability.canEnable) {
+                      onWebSearchChange(checked);
+                    }
+                  }}
                 />
               </SettingRow>
             </PanelSection>
             <McpProfilesPanel
               open={open}
-              onProvidersChanged={refreshWebProviderSummary}
+              onProvidersChanged={onRefreshWebSearchProviders}
             />
           </div>
         ) : null}

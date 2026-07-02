@@ -6,6 +6,7 @@ import { EditorZoomControl } from "@/components/layout/EditorZoomControl";
 import { StatusBarTokenUsage } from "@/components/layout/StatusBarTokenUsage";
 import type { AssistantChromeSnapshot } from "@/types/assistant-chrome";
 import type { FileLinkSummary } from "@/types/ipc";
+import type { WebSearchAvailability } from "@/lib/web-search-provider-state";
 import type { ConnectivityStatus } from "@/types/llm";
 
 interface StatusBarProps {
@@ -27,6 +28,7 @@ interface StatusBarProps {
   canUndo?: boolean;
   canRedo?: boolean;
   webSearch?: boolean;
+  webSearchAvailability?: WebSearchAvailability | null;
   onWebSearchChange?: (enabled: boolean) => void;
   theme: "dark" | "light";
   onThemeChange: (theme: "dark" | "light") => void;
@@ -63,6 +65,7 @@ export const StatusBar = memo(function StatusBar({
   canUndo = false,
   canRedo = false,
   webSearch = false,
+  webSearchAvailability = null,
   onWebSearchChange,
   theme,
   onThemeChange,
@@ -226,6 +229,7 @@ export const StatusBar = memo(function StatusBar({
           status={connectivity}
           onOpenSettings={onOpenConnectivitySettings}
           webSearch={webSearch}
+          webSearchAvailability={webSearchAvailability}
           onWebSearchChange={onWebSearchChange}
         />
         <button

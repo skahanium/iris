@@ -1,4 +1,4 @@
-﻿import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { isTauri } from "@tauri-apps/api/core";
 
 import { Button } from "@/components/ui/button";
@@ -239,8 +239,8 @@ export function McpProfilesPanel({
           <div>
             <h3 className="text-sm font-medium">MCP 联网证据提供方</h3>
             <p className="mt-1 text-xs text-muted-foreground">
-              将 MCP 显式接入 web.search / web.fetch；DuckDuckGo
-              作为内置原生托底；MiniMax 仅作为普通模型服务，不参与联网证据调度。
+              将 MCP 显式接入 web.search / web.fetch；联网搜索只使用当前选择的
+              MCP 提供方。
             </p>
           </div>
           <Button

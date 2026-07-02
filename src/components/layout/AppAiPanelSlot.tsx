@@ -37,6 +37,7 @@ interface AppAiPanelSlotProps {
   selectionQuote: AssistantSelectionQuote | null;
   setAssistantChrome: (snapshot: AssistantChromeSnapshot) => void;
   webSearch: boolean;
+  webSearchProviderName?: string | null;
 }
 
 export function AppAiPanelSlot({
@@ -58,6 +59,7 @@ export function AppAiPanelSlot({
   selectionQuote,
   setAssistantChrome,
   webSearch,
+  webSearchProviderName = null,
 }: AppAiPanelSlotProps) {
   const openEvidenceSource = (packet: ContextPacket) => {
     if (packet.source_type === "web") {
@@ -82,6 +84,7 @@ export function AppAiPanelSlot({
         notePath={assistantNotePath}
         getNoteContent={getLiveMarkdown}
         webSearch={webSearch}
+        webSearchProviderName={webSearchProviderName}
         getWritingContext={getWritingContext}
         getParagraphText={getParagraphText}
         selectionQuote={selectionQuote}

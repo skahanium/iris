@@ -24,11 +24,12 @@ describe("AgentStatusBadge", () => {
     host.remove();
   });
 
-  it("shows successful MCP and DDG web search request counts", async () => {
+  it("shows the selected web search provider instead of a generic enabled state", async () => {
     await act(async () => {
       root.render(
         <AgentStatusBadge
           webSearchEnabled
+          webSearchProviderName="AnySearch"
           webSearchUsage={{
             successfulSearchRequests: { mcp: 1, duckduckgo: 1 },
           }}
@@ -47,14 +48,18 @@ describe("AgentStatusBadge", () => {
     });
 
     expect(document.body.textContent).toContain("联网搜索");
-    expect(document.body.textContent).toContain("已开启 · MCP 1 次 · DDG 1 次");
+    expect(document.body.textContent).toContain("AnySearch");
+    expect(document.body.textContent).not.toContain("已开启");
+    expect(document.body.textContent).not.toContain("MCP");
+    expect(document.body.textContent).not.toContain("DDG");
+    expect(document.body.textContent).not.toContain("次");
   });
 
-  it("does not show success counts when no provider returned valid results", async () => {
+  it("shows a closed web search state without provider statistics", async () => {
     await act(async () => {
       root.render(
         <AgentStatusBadge
-          webSearchEnabled
+          webSearchEnabled={false}
           webSearchUsage={{
             successfulSearchRequests: { mcp: 0, duckduckgo: 0 },
           }}
@@ -72,7 +77,8 @@ describe("AgentStatusBadge", () => {
         ?.click();
     });
 
-    expect(document.body.textContent).toContain("已开启 · 暂无成功结果");
-    expect(document.body.textContent).not.toContain("MCP 0 次");
+    expect(document.body.textContent).toContain("未开启");
+    expect(document.body.textContent).not.toContain("MCP 0");
+    expect(document.body.textContent).not.toContain("DDG");
   });
 });

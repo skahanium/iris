@@ -22,6 +22,10 @@ import type {
   PreparedNoteOpen,
 } from "@/lib/document-open-runtime";
 import type { ClassifiedStatus, FileListItem } from "@/types/ipc";
+import type {
+  WebSearchAvailability,
+  WebSearchProviderOption,
+} from "@/lib/web-search-provider-state";
 
 const GraphView = lazy(() =>
   import("@/components/graph/GraphView").then((m) => ({
@@ -122,6 +126,11 @@ interface AppOverlaysProps {
   setClassifiedOpen: (open: boolean) => void;
   setClassifiedWaiting: (waiting: boolean) => void;
   setWebSearch: (enabled: boolean) => void;
+  webSearchAvailability: WebSearchAvailability;
+  webSearchProviderId: string | null;
+  webSearchProviders: WebSearchProviderOption[];
+  setWebSearchProviderId: (providerId: string | null) => void;
+  refreshWebSearchProviders: () => Promise<void>;
   openKnowledgeRelations: () => void;
   openVersion: () => void;
   rescanVault: () => void;
@@ -163,6 +172,11 @@ export function AppOverlays({
   setClassifiedOpen,
   setClassifiedWaiting,
   setWebSearch,
+  webSearchAvailability,
+  webSearchProviderId,
+  webSearchProviders,
+  setWebSearchProviderId,
+  refreshWebSearchProviders,
   openKnowledgeRelations,
   openVersion,
   rescanVault,
@@ -232,7 +246,12 @@ export function AppOverlays({
             section={overlays.managementCenterSection}
             detail={overlays.managementCenterDetail}
             webSearch={webSearch}
+            webSearchAvailability={webSearchAvailability}
+            webSearchProviderId={webSearchProviderId}
+            webSearchProviders={webSearchProviders}
             onWebSearchChange={setWebSearch}
+            onWebSearchProviderChange={setWebSearchProviderId}
+            onRefreshWebSearchProviders={refreshWebSearchProviders}
             onOpenNote={(path) =>
               openNoteLeavingHome(path, undefined, {
                 priority: "foreground",

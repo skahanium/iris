@@ -105,7 +105,9 @@ describe("management center contract", () => {
 
     expect(center).toContain("McpProfilesPanel");
     expect(center).toContain("<McpProfilesPanel");
-    expect(center).toContain("onProvidersChanged={refreshWebProviderSummary}");
+    expect(center).toContain(
+      "onProvidersChanged={onRefreshWebSearchProviders}",
+    );
     expect(center).not.toContain('data-testid="native-provider-card-minimax"');
     expect(center).not.toContain(
       'data-testid="native-provider-card-duckduckgo"',
@@ -116,10 +118,9 @@ describe("management center contract", () => {
     expect(mcpPanel).toContain("webEvidenceProvidersList");
     expect(mcpPanel).toContain("webEvidenceProviderUpsert");
     expect(mcpPanel).toContain("webEvidenceProviderDiagnostics");
-    expect(mcpPanel).not.toContain("MiniMax 和 DuckDuckGo");
-    expect(mcpPanel).toContain("DuckDuckGo");
-    expect(mcpPanel).toContain("作为内置原生托底");
-    expect(mcpPanel).toContain("不参与联网证据调度");
+    expect(mcpPanel).not.toContain("DuckDuckGo");
+    expect(mcpPanel).not.toContain("原生托底");
+    expect(mcpPanel).toContain("当前选择");
     expect(mcpPanel).toContain("McpProfileCard");
     expect(mcpPanel).not.toContain("MCP_PROVIDER_PRESETS.map");
     expect(mcpPanel).not.toContain("setDraft(createDraftSummary(preset))");
@@ -216,17 +217,19 @@ describe("management center contract", () => {
     }
   });
 
-  it("shows MCP web providers as the prioritized search backend in management overview", () => {
+  it("requires a selected MCP web provider in management overview", () => {
     const center = read("src/components/settings/ManagementCenterPanel.tsx");
     const mcpPanel = read("src/components/ai/skills/McpProfilesPanel.tsx");
 
-    expect(center).toContain("webEvidenceProvidersList");
-    expect(center).not.toContain("webEvidenceProviderDiagnostics");
-    expect(center).toContain("MCP 提供方");
-    expect(center).toContain("原生托底");
-    expect(center).toContain("未配置 MCP 提供方");
-    expect(center).toContain("refreshWebProviderSummary");
-    expect(center).toContain("onProvidersChanged={refreshWebProviderSummary}");
+    expect(center).toContain("webSearchAvailability");
+    expect(center).toContain("webSearchProviderId");
+    expect(center).toContain("onWebSearchProviderChange");
+    expect(center).toContain(
+      "onProvidersChanged={onRefreshWebSearchProviders}",
+    );
+    expect(center).not.toContain("webEvidenceProvidersList");
+    expect(center).not.toContain("原生托底");
+    expect(center).not.toContain("refreshWebProviderSummary");
     expect(center).not.toMatch(/effectiveBackend === "minimax"/);
     expect(mcpPanel).toContain("onProvidersChanged");
     expect(mcpPanel).toContain("onProvidersChanged?.()");

@@ -2841,7 +2841,6 @@ mod tests {
         assert!(validate_ai_note_path(Some("notes/open.md")).is_ok());
         assert!(validate_ai_note_path(None).is_ok());
     }
-
     #[test]
     fn partial_tool_confirm_response_has_structured_outcomes() {
         use crate::ai_harness::harness_support::{

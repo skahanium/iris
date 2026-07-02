@@ -10,8 +10,6 @@ use crate::ai_runtime::{
 };
 use crate::error::{AppError, AppResult};
 use crate::llm::fetch_web_page::PageFetchResult;
-use crate::llm::search_web::fetch_native_provider_context;
-use crate::llm::web_search_config::WebSearchEffectiveBackend;
 use crate::storage::db::Database;
 
 const FETCH_EXCERPT_MAX_CHARS: usize = 12_000;
@@ -315,70 +313,32 @@ struct SearchProviderFetch {
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum SearchProviderCandidate {
     Mcp(String),
-    /// Native DuckDuckGo fallback. The broker never produces a native Minimax
-    /// candidate — MiniMax is an ordinary LLM provider, not a web evidence
-    /// backend (see spec 2.1).
-    Native,
 }
 
-fn search_provider_candidates(db: &Database) -> Vec<SearchProviderCandidate> {
-    let mut candidates = Vec::new();
-    for provider in crate::ai_runtime::mcp_runtime_registry::list_enabled_web_provider_mappings(db)
-        .unwrap_or_default()
-    {
-        if provider.kind == "mcp" && provider.web_search_mapping_json.is_some() {
-            candidates.push(SearchProviderCandidate::Mcp(provider.id));
-        }
-    }
-
-    candidates.push(SearchProviderCandidate::Native);
-    candidates.truncate(2);
-    candidates
+fn search_provider_candidates(db: &Database) -> AppResult<Vec<SearchProviderCandidate>> {
+    let provider =
+        crate::ai_runtime::mcp_runtime_registry::resolve_selected_web_search_provider(db)?;
+    Ok(vec![SearchProviderCandidate::Mcp(provider.id)])
 }
 
 async fn collect_search_provider_fetches(
     db: &Database,
     query: &str,
 ) -> Vec<Result<SearchProviderFetch, String>> {
-    let futures = search_provider_candidates(db)
-        .into_iter()
-        .map(|candidate| async move {
-            match candidate {
-                SearchProviderCandidate::Mcp(provider_id) => {
-                    collect_mcp_search_provider_fetch(db, query, &provider_id).await
-                }
-                SearchProviderCandidate::Native => {
-                    collect_native_search_provider_fetch(db, query).await
-                }
+    let candidates = match search_provider_candidates(db) {
+        Ok(candidates) => candidates,
+        Err(error) => return vec![Err(error.to_string())],
+    };
+    let futures = candidates.into_iter().map(|candidate| async move {
+        match candidate {
+            SearchProviderCandidate::Mcp(provider_id) => {
+                collect_mcp_search_provider_fetch(db, query, &provider_id).await
             }
-            .map_err(|err| err.to_string())
-        });
+        }
+        .map_err(|err| err.to_string())
+    });
     join_all(futures).await
 }
-
-async fn collect_native_search_provider_fetch(
-    db: &Database,
-    query: &str,
-) -> AppResult<SearchProviderFetch> {
-    const PROVIDER_ID: &str = "native.duckduckgo";
-    ensure_provider_circuit_allows(PROVIDER_ID)?;
-    match fetch_native_provider_context(db, query, WebSearchEffectiveBackend::Duckduckgo).await {
-        Ok(fetch) => {
-            record_provider_success(PROVIDER_ID);
-            Ok(SearchProviderFetch {
-                body: fetch.body,
-                search_backend: WebSearchBackend::Duckduckgo,
-                provider_id: PROVIDER_ID.into(),
-                provider_kind: "native".into(),
-            })
-        }
-        Err(error) => {
-            record_provider_failure(PROVIDER_ID);
-            Err(error)
-        }
-    }
-}
-
 async fn collect_mcp_search_provider_fetch(
     db: &Database,
     query: &str,
@@ -742,11 +702,10 @@ fn record_successful_search_usage(
     if !has_successful_search_result {
         return;
     }
-
-    match (fetch.provider_kind.as_str(), fetch.provider_id.as_str()) {
-        ("mcp", _) => usage.successful_search_requests.mcp += 1,
-        (_, "native.duckduckgo") => usage.successful_search_requests.duckduckgo += 1,
-        _ => return,
+    if fetch.provider_kind == "mcp" {
+        usage.successful_search_requests.mcp += 1;
+    } else {
+        return;
     }
 
     if let Some(provider) = usage
@@ -1261,8 +1220,8 @@ mod tests {
             domain: domain_from_url(url).unwrap_or_default(),
             snippet: "Snippet".into(),
             fetched_excerpt: None,
-            provider_id: "native.duckduckgo".into(),
-            provider_kind: "native".into(),
+            provider_id: "mcp.test".into(),
+            provider_kind: "mcp".into(),
             cost_class: "free".into(),
             raw_result_hash: result_hash(&[url]),
             extraction_method: "search_snippet".into(),
@@ -1338,18 +1297,12 @@ mod tests {
     }
 
     #[test]
-    fn web_usage_counts_only_successful_search_providers() {
+    fn web_usage_counts_only_successful_mcp_search_providers() {
         let mcp_fetch = SearchProviderFetch {
             body: "[1] title: MCP result\nurl: https://example.com/mcp\nsnippet: ok".into(),
             search_backend: WebSearchBackend::Duckduckgo,
             provider_id: "anysearch".into(),
             provider_kind: "mcp".into(),
-        };
-        let ddg_fetch = SearchProviderFetch {
-            body: "[1] title: DDG result\nurl: https://example.com/ddg\nsnippet: ok".into(),
-            search_backend: WebSearchBackend::Duckduckgo,
-            provider_id: "native.duckduckgo".into(),
-            provider_kind: "native".into(),
         };
         let empty_mcp_fetch = SearchProviderFetch {
             body: "no parseable rows".into(),
@@ -1357,23 +1310,12 @@ mod tests {
             provider_id: "empty-mcp".into(),
             provider_kind: "mcp".into(),
         };
-        let invalid_ddg_fetch = SearchProviderFetch {
-            body: "[1] title: Bad result\nurl: http://example.com/ddg\nsnippet: rejected".into(),
-            search_backend: WebSearchBackend::Duckduckgo,
-            provider_id: "native.duckduckgo".into(),
-            provider_kind: "native".into(),
-        };
 
-        let usage = web_evidence_usage_from_search_fetches([
-            &mcp_fetch,
-            &ddg_fetch,
-            &empty_mcp_fetch,
-            &invalid_ddg_fetch,
-        ]);
+        let usage = web_evidence_usage_from_search_fetches([&mcp_fetch, &empty_mcp_fetch]);
 
         assert_eq!(usage.successful_search_requests.mcp, 1);
-        assert_eq!(usage.successful_search_requests.duckduckgo, 1);
-        assert_eq!(usage.providers.len(), 2);
+        assert_eq!(usage.successful_search_requests.duckduckgo, 0);
+        assert_eq!(usage.providers.len(), 1);
         assert!(usage.providers.iter().any(|provider| {
             provider.provider_id == "anysearch"
                 && provider.provider_kind == "mcp"
@@ -1448,16 +1390,63 @@ mod tests {
     }
 
     #[test]
-    fn search_provider_candidates_use_ddg_when_minimax_is_not_configured() {
+    fn search_provider_candidates_require_mcp_provider() {
         let db = Database::open_in_memory().unwrap();
 
-        let candidates = search_provider_candidates(&db);
+        let err = search_provider_candidates(&db).unwrap_err();
 
-        assert_eq!(candidates, vec![SearchProviderCandidate::Native]);
+        assert!(err.to_string().contains("web_search_provider_missing"));
     }
 
     #[test]
-    fn search_provider_candidates_select_top_two_with_mcp_priority() {
+    fn search_provider_candidates_use_selected_mcp_only() {
+        let db = Database::open_in_memory().unwrap();
+        crate::ai_runtime::mcp_runtime_registry::upsert_web_evidence_provider(
+            &db,
+            &crate::ai_runtime::mcp_runtime_registry::WebEvidenceProviderInput {
+                id: "anysearch".into(),
+                name: "AnySearch".into(),
+                kind: "mcp".into(),
+                enabled: true,
+                transport_kind: "stdio".into(),
+                transport_config_json: "{}".into(),
+                credential_refs_json: "{}".into(),
+                web_search_mapping_json: Some(r#"{"tool":"search"}"#.into()),
+                web_fetch_mapping_json: None,
+            },
+        )
+        .unwrap();
+        crate::ai_runtime::mcp_runtime_registry::upsert_web_evidence_provider(
+            &db,
+            &crate::ai_runtime::mcp_runtime_registry::WebEvidenceProviderInput {
+                id: "brave".into(),
+                name: "Brave Search".into(),
+                kind: "mcp".into(),
+                enabled: true,
+                transport_kind: "stdio".into(),
+                transport_config_json: "{}".into(),
+                credential_refs_json: "{}".into(),
+                web_search_mapping_json: Some(r#"{"tool":"brave_web_search"}"#.into()),
+                web_fetch_mapping_json: None,
+            },
+        )
+        .unwrap();
+        crate::ai_runtime::mcp_runtime_registry::save_selected_web_search_provider_id(
+            &db,
+            Some("brave"),
+        )
+        .unwrap();
+
+        let candidates = search_provider_candidates(&db).unwrap();
+
+        assert_eq!(
+            candidates,
+            vec![SearchProviderCandidate::Mcp("brave".into())]
+        );
+    }
+
+    #[test]
+    fn search_provider_candidates_use_single_mcp_without_saved_choice() {
         let db = Database::open_in_memory().unwrap();
         crate::ai_runtime::mcp_runtime_registry::upsert_web_evidence_provider(
             &db,
@@ -1475,19 +1464,16 @@ mod tests {
         )
         .unwrap();
 
-        let candidates = search_provider_candidates(&db);
+        let candidates = search_provider_candidates(&db).unwrap();
 
         assert_eq!(
             candidates,
-            vec![
-                SearchProviderCandidate::Mcp("mcp-search".into()),
-                SearchProviderCandidate::Native,
-            ]
+            vec![SearchProviderCandidate::Mcp("mcp-search".into())]
         );
     }
 
     #[test]
-    fn search_provider_candidates_ignore_minimax_credentials() {
+    fn search_provider_candidates_ignore_minimax_credentials_without_mcp() {
         let db = Database::open_in_memory().unwrap();
         crate::credentials::mark_api_key_configured(
             &db,
@@ -1495,9 +1481,9 @@ mod tests {
         )
         .unwrap();
 
-        let candidates = search_provider_candidates(&db);
+        let err = search_provider_candidates(&db).unwrap_err();
 
-        assert_eq!(candidates, vec![SearchProviderCandidate::Native]);
+        assert!(err.to_string().contains("web_search_provider_missing"));
     }
 
     #[test]
@@ -1606,6 +1592,27 @@ mod tests {
             items[0].failure_reason.as_deref(),
             Some("mcp_search_parse_empty")
         );
+    }
+    #[test]
+    fn mcp_success_suppresses_mcp_search_failure_item() {
+        let mut items = web_evidence_items_from_search_fetch(&SearchProviderFetch {
+            body: "[1] title: MCP result\nurl: https://example.com/mcp\nsnippet: ok".into(),
+            search_backend: WebSearchBackend::Duckduckgo,
+            provider_id: "anysearch".into(),
+            provider_kind: "mcp".into(),
+        });
+        items.extend(web_evidence_items_from_search_fetch(&SearchProviderFetch {
+            body: "unparseable mcp body".into(),
+            search_backend: WebSearchBackend::Duckduckgo,
+            provider_id: "empty-mcp".into(),
+            provider_kind: "mcp".into(),
+        }));
+
+        suppress_search_provider_failures_if_success(&mut items);
+
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].provider_id, "anysearch");
+        assert!(items[0].failure_reason.is_none());
     }
 
     #[test]

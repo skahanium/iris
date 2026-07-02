@@ -10,9 +10,11 @@ describe("desktop dev script", () => {
     const launcher = readFileSync("scripts/tauri-cli.mjs", "utf8");
 
     expect(packageJson.scripts["dev:desktop"]).toBe(
-      "node scripts/tauri-cli.mjs dev",
+      "node scripts/with-iris-env.mjs -- node scripts/tauri-cli.mjs dev",
     );
-    expect(packageJson.scripts.tauri).toBe("node scripts/tauri-cli.mjs");
+    expect(packageJson.scripts.tauri).toBe(
+      "node scripts/with-iris-env.mjs -- node scripts/tauri-cli.mjs",
+    );
     expect(launcher).toContain("OS_ACTIVITY_MODE");
     expect(launcher).toContain("disable");
     expect(launcher).toContain('process.platform === "darwin"');
