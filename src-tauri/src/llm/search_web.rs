@@ -396,6 +396,36 @@ async fn duckduckgo_search(query: &str) -> AppResult<String> {
     duckduckgo_html_search(query).await
 }
 
+fn duckduckgo_request_error(stage: &str, error: reqwest::Error) -> AppError {
+    AppError::msg(duckduckgo_failure_message(stage, &error.to_string()))
+}
+
+fn duckduckgo_failure_message(stage: &str, detail: &str) -> String {
+    let lower = detail.to_lowercase();
+    let diagnosis = if lower.contains("connection reset")
+        || lower.contains("reset by peer")
+        || lower.contains("connection closed")
+    {
+        "连接被重置或网络不可达"
+    } else if lower.contains("timed out") || lower.contains("timeout") {
+        "请求超时"
+    } else if lower.contains("dns")
+        || lower.contains("failed to lookup address")
+        || lower.contains("name or service not known")
+    {
+        "DNS 解析失败"
+    } else if lower.contains("certificate") || lower.contains("tls") {
+        "TLS 或证书校验失败"
+    } else if lower.contains("status code: 429") {
+        "请求被限流"
+    } else if lower.contains("status code:") {
+        "HTTP 状态异常"
+    } else {
+        "网络请求失败"
+    };
+    format!("DuckDuckGo {stage} 请求失败：{diagnosis}")
+}
+
 /// DuckDuckGo Instant Answer API — structured, no scraping needed.
 async fn duckduckgo_instant_answer(query: &str) -> AppResult<String> {
     let url = format!(
@@ -407,8 +437,17 @@ async fn duckduckgo_instant_answer(query: &str) -> AppResult<String> {
         .build()
         .map_err(|e| AppError::msg(format!("HTTP client build failed: {e}")))?;
 
-    let resp = client.get(&url).send().await?;
-    let data: serde_json::Value = resp.json().await?;
+    let resp = client
+        .get(&url)
+        .send()
+        .await
+        .map_err(|e| duckduckgo_request_error("Instant Answer", e))?
+        .error_for_status()
+        .map_err(|e| duckduckgo_request_error("Instant Answer", e))?;
+    let data: serde_json::Value = resp
+        .json()
+        .await
+        .map_err(|e| duckduckgo_request_error("Instant Answer 响应解析", e))?;
 
     let mut out = String::from("以下是与问题相关的网页搜索结果：\n\n");
     let mut count = 0;
@@ -459,7 +498,17 @@ async fn duckduckgo_html_search(query: &str) -> AppResult<String> {
         .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
         .build()
         .map_err(|e| AppError::msg(format!("Failed to build HTTP client: {e}")))?;
-    let html = client.get(&url).send().await?.text().await?;
+    let resp = client
+        .get(&url)
+        .send()
+        .await
+        .map_err(|e| duckduckgo_request_error("HTML", e))?
+        .error_for_status()
+        .map_err(|e| duckduckgo_request_error("HTML", e))?;
+    let html = resp
+        .text()
+        .await
+        .map_err(|e| duckduckgo_request_error("HTML 响应读取", e))?;
     parse_ddg_html(&html)
 }
 
@@ -736,6 +785,19 @@ mod tests {
             cache_get_db(&db, &key, &alternate).expect("read alternate"),
             None
         );
+    }
+
+    #[test]
+    fn duckduckgo_failure_message_redacts_query_and_identifies_reset() {
+        let message = duckduckgo_failure_message(
+            "HTML",
+            "error sending request: connection reset by peer while searching 武亮 结婚",
+        );
+
+        assert!(message.contains("DuckDuckGo"));
+        assert!(message.contains("连接被重置"));
+        assert!(!message.contains("武亮"));
+        assert!(!message.contains("结婚"));
     }
 
     #[test]

@@ -221,6 +221,24 @@ describe("assistant per-turn TaskPlan dispatch", () => {
     expect(panel).toContain("useSelectionQuoteReference");
     expect(hook).toContain("quoteSelectionAsReference(");
   });
+
+  it("does not depend on the whole bubble selection object when pruning message selections", () => {
+    const panel = readFileSync(
+      "src/components/ai/UnifiedAssistantPanel.impl.tsx",
+      "utf8",
+    );
+    const pruneEffect =
+      panel
+        .split("useEffect(() => {\n    pruneSelected(messages.length);")[1]
+        ?.split(");")[0] ?? "";
+
+    expect(panel).toContain("const { pruneSelected } = bubbleSelection;");
+    expect(panel).not.toContain(
+      "bubbleSelection.pruneSelected(messages.length)",
+    );
+    expect(pruneEffect).toContain("[pruneSelected, messages.length]");
+    expect(pruneEffect).not.toContain("bubbleSelection");
+  });
 });
 
 describe("assistant state types", () => {

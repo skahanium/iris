@@ -112,7 +112,7 @@ fn capabilities_section(tools: &[ToolSpec]) -> String {
     }
     if has_web_search {
         s.push_str(
-            "\n本轮可调用 `web_search` 进行联网搜索；遇到外部事实、公开人物信息、实时资料或用户要求补充搜索时，应主动调用它。不要声称 Iris 没有搜索能力，也不要把工具名写成 `search_web`。\n",
+            "\n本轮可调用 `web_search` 进行联网搜索；遇到外部事实、公开人物信息、实时资料或用户要求补充搜索时，应主动调用它。不要声称 Iris 没有搜索能力，也不要把工具名写成 `search_web`。如果 web_search 失败或没有返回可核验网页证据，必须明确说明搜索未成功，不要基于记忆或猜测给出结论。\n",
         );
     } else {
         s.push_str(
@@ -279,6 +279,8 @@ mod tests {
         assert!(text.contains("web_search"));
         assert!(text.contains("本轮可调用"));
         assert!(text.contains("不要声称 Iris 没有搜索能力"));
+        assert!(text.contains("如果 web_search 失败"));
+        assert!(text.contains("不要基于记忆或猜测给出结论"));
     }
 
     #[test]

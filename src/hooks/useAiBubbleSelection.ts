@@ -132,10 +132,15 @@ export function useAiBubbleSelection() {
   const pruneSelected = useCallback((messageCount: number) => {
     setSelected((prev) => {
       const next = new Set<number>();
+      let changed = false;
       prev.forEach((index) => {
-        if (index >= 0 && index < messageCount) next.add(index);
+        if (index >= 0 && index < messageCount) {
+          next.add(index);
+        } else {
+          changed = true;
+        }
       });
-      if (next.size === prev.size) return prev;
+      if (!changed) return prev;
       if (lastIndexRef.current >= messageCount) {
         lastIndexRef.current = -1;
       }

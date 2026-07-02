@@ -166,4 +166,86 @@ describe("AiMessageList real virtualizer regression", () => {
         ),
     ).toBe(false);
   });
+
+  it("keeps the conversation surface mounted through a DDG-only high-evidence answer", async () => {
+    const consoleError = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => undefined);
+    const messageListRef = {
+      current: null,
+    } as React.RefObject<HTMLDivElement | null>;
+    const ddgSources = Array.from({ length: 23 }, (_, index) => {
+      const citation = `[C${index + 1}]`;
+      return `- ${citation} DuckDuckGo result ${index + 1}: https://example.com/source-${index + 1}`;
+    }).join("\n");
+    const answer = [
+      "我用 DuckDuckGo 单独检索后，整理出下面这些来源。",
+      "",
+      "## 来源概览",
+      "",
+      ddgSources,
+      "",
+      "## 初步结论",
+      "",
+      "这些来源显示同一个主题在多个页面中反复出现，但需要继续核对正文与发布时间。".repeat(
+        12,
+      ),
+    ].join("\n");
+
+    await act(async () => {
+      root.render(
+        <ErrorBoundary scope="AI对话区">
+          <ConversationSurface
+            messages={[
+              {
+                role: "user",
+                content: "关闭 MCP 后只用 DDG 查一下这个问题",
+              },
+              { role: "assistant", content: "" },
+            ]}
+            streaming
+            messageListRef={messageListRef}
+            onCitationClick={() => undefined}
+            onQuoteToInput={() => undefined}
+          />
+        </ErrorBoundary>,
+      );
+    });
+
+    for (const frame of [
+      answer.slice(0, 160),
+      answer.slice(0, 800),
+      answer.slice(0, 1600),
+      answer,
+    ]) {
+      await act(async () => {
+        root.render(
+          <ErrorBoundary scope="AI对话区">
+            <ConversationSurface
+              messages={[
+                {
+                  role: "user",
+                  content: "关闭 MCP 后只用 DDG 查一下这个问题",
+                },
+                { role: "assistant", content: frame },
+              ]}
+              streaming
+              messageListRef={messageListRef}
+              onCitationClick={() => undefined}
+              onQuoteToInput={() => undefined}
+            />
+          </ErrorBoundary>,
+        );
+      });
+    }
+
+    expect(document.body.textContent).not.toContain("界面出现异常");
+    expect(
+      consoleError.mock.calls
+        .flat()
+        .some((entry) =>
+          String(entry).includes("Maximum update depth exceeded"),
+        ),
+    ).toBe(false);
+  });
 });

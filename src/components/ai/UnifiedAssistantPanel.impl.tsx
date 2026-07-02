@@ -66,6 +66,7 @@ export function UnifiedAssistantPanel({
     useState<TaskPlanIntent | null>(null);
   const [streaming, setStreaming] = useState(false);
   const bubbleSelection = useAiBubbleSelection();
+  const { pruneSelected } = bubbleSelection;
   const [packets, setPackets] = useState<ContextPacket[]>([]);
   const [webSearchUsage, setWebSearchUsage] = useState<WebSearchUsage | null>(
     null,
@@ -179,10 +180,9 @@ export function UnifiedAssistantPanel({
     textareaRef,
     streaming,
   });
-
   useEffect(() => {
-    bubbleSelection.pruneSelected(messages.length);
-  }, [bubbleSelection, messages.length]);
+    pruneSelected(messages.length);
+  }, [pruneSelected, messages.length]);
   const {
     contextScope,
     handleComposerKeyDown,
