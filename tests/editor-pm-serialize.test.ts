@@ -300,6 +300,34 @@ describe("editorDocToMarkdown (prosemirror-markdown hot path)", () => {
     }
   });
 
+  it("does not reintroduce a trailing blank line inside fenced code blocks", () => {
+    const body = [
+      "```bash",
+      "# 一行安装，或通过 npm 安装",
+      "curl -fsSL https://mimo.xiaomi.com/install | bash",
+      "npm install -g @mimo-ai/cli",
+      "```",
+    ].join("\n");
+    const editor = createProductionEditorFromIngestedBody(body);
+    try {
+      const md = pmSerializeBody(editor).replace(/\r\n/g, "\n");
+
+      expect(md).toContain("npm install -g @mimo-ai/cli\n```");
+      expect(md).not.toContain("npm install -g @mimo-ai/cli\n\n```");
+
+      const reopened = createProductionEditorFromIngestedBody(md);
+      try {
+        const reopenedMd = pmSerializeBody(reopened).replace(/\r\n/g, "\n");
+        expect(reopenedMd).toContain("npm install -g @mimo-ai/cli\n```");
+        expect(reopenedMd).not.toContain("npm install -g @mimo-ai/cli\n\n```");
+      } finally {
+        reopened.destroy();
+      }
+    } finally {
+      editor.destroy();
+    }
+  });
+
   it("round-trips Iris indented paragraph HTML as an editable block", () => {
     const editor = createProductionEditorFromIngestedBody(
       '<p data-iris-indent="2"><strong>Bold</strong> text</p>',

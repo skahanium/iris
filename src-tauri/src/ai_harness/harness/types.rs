@@ -31,6 +31,8 @@ pub struct HarnessTraceEvent {
     pub phase: HarnessPhase,
     pub tool_name: String,
     pub status: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub duration_ms: Option<u64>,
     pub message: Option<String>,
     pub output_preview: Option<String>,
 }

@@ -22,7 +22,11 @@ describe("frontend lazy dependency contract", () => {
     expect(editor).not.toContain(
       'import CodeBlockLowlight from "@tiptap/extension-code-block-lowlight"',
     );
-    expect(editor).toContain("createLazyCodeBlockLowlightExtension");
+    expect(editor).not.toContain("createLazyCodeBlockLowlightExtension");
+    expect(editor).not.toContain(
+      'import("@tiptap/extension-code-block-lowlight")',
+    );
+    expect(editor).not.toContain('import("lowlight/core")');
     expect(slash).not.toContain('from "tippy.js"');
     expect(wiki).not.toContain('from "tippy.js"');
     expect(slash).toContain('import("tippy.js")');

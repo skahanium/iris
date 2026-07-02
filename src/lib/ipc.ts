@@ -593,13 +593,9 @@ export async function listenLlmDone(
 }
 
 export async function listenLlmError(
-  handler: (payload: {
-    request_id?: string;
-    error?: string;
-    classified?: boolean;
-  }) => void,
+  handler: (payload: import("@/types/ipc").LlmErrorEvent) => void,
 ): Promise<() => void> {
-  return listen<{ request_id?: string; error?: string; classified?: boolean }>(
+  return listen<import("@/types/ipc").LlmErrorEvent>(
     IPC_EVENTS.LLM_ERROR,
     (e) => handler(e.payload),
   );

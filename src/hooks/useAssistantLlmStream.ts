@@ -9,12 +9,18 @@ import {
 
 import {
   listenAiRetryStatus,
+  listenHarnessTrace,
   listenLlmDone,
   listenLlmError,
   listenLlmReset,
   listenLlmToken,
 } from "@/lib/ipc";
-import type { LlmDoneEvent, LlmTokenEvent, StreamSurface } from "@/types/ipc";
+import type {
+  HarnessTraceEvent,
+  LlmDoneEvent,
+  LlmTokenEvent,
+  StreamSurface,
+} from "@/types/ipc";
 
 import type { ChatLine } from "@/components/ai/AiMessageList";
 import type { AiDomain } from "@/lib/ai-domain";
@@ -28,6 +34,58 @@ function isVisibleAnswerSurface(surface: StreamSurface | undefined | null) {
   return (
     surface === undefined || surface === null || surface === "visible_answer"
   );
+}
+
+function formatDuration(durationMs: number | null | undefined): string | null {
+  if (typeof durationMs !== "number" || !Number.isFinite(durationMs)) {
+    return null;
+  }
+  if (durationMs < 1000) return `${Math.max(0, Math.round(durationMs))} 毫秒`;
+  return `${(durationMs / 1000).toFixed(1)} 秒`;
+}
+
+function harnessToolLabel(toolName: string): string {
+  switch (toolName) {
+    case "web_search":
+      return "联网检索";
+    case "search_hybrid":
+    case "search_semantic":
+    case "search_keyword":
+      return "笔记检索";
+    case "fetch_web_page":
+      return "网页正文抽取";
+    case "reflection":
+      return "证据检查";
+    case "final":
+      return "最终回答";
+    case "spawn_subagent":
+      return "子任务";
+    default:
+      return toolName.replaceAll("_", " ");
+  }
+}
+
+function harnessTraceHint(ev: HarnessTraceEvent): string | null {
+  const label = harnessToolLabel(ev.tool_name);
+  const duration = formatDuration(ev.duration_ms);
+  switch (ev.phase) {
+    case "tool_start":
+      return ev.status === "pending" ? `${label}等待确认…` : `${label}中…`;
+    case "tool_complete":
+      return duration ? `${label}完成，用时 ${duration}。` : `${label}完成。`;
+    case "subagent_spawn":
+      return "正在启动子任务…";
+    case "subagent_complete":
+      return duration ? `子任务完成，用时 ${duration}。` : "子任务完成。";
+    case "reflection":
+      return "正在检查证据充分性…";
+    case "final_stream":
+      return "正在流式输出最终回答…";
+    case "thinking":
+      return "正在思考…";
+    default:
+      return null;
+  }
 }
 
 /**
@@ -66,6 +124,7 @@ export function useAssistantLlmStream(options: {
     let unlistenError: (() => void) | undefined;
     let unlistenReset: (() => void) | undefined;
     let unlistenRetryStatus: (() => void) | undefined;
+    let unlistenHarnessTrace: (() => void) | undefined;
 
     function setMessagesFromBuf(source: string) {
       const snapshot = streamBufRef.current;
@@ -291,24 +350,38 @@ export function useAssistantLlmStream(options: {
       if (domainRef.current !== "classified" && ev.classified) {
         return;
       }
-      panelSendActiveRef.current = false;
-      setStreaming(false);
       recordAiLifecycleEvent(lifecycleRecorder, {
         event: "llm_error",
         phase: "frontend_stream",
         requestId: ev.request_id ?? requestIdRef.current,
         source: "llm:error",
       });
-      streamBufRef.current = "";
+      if (ev.final === false) {
+        setActivityHint("连接中断，正在重试流式响应…");
+        return;
+      }
+
+      panelSendActiveRef.current = false;
+      setStreaming(false);
       requestIdRef.current = null;
       cancelScheduledFlush();
-      setMessages((prev) => [
-        ...prev,
-        {
-          role: "system",
-          content: `错误: ${ev.error ?? "未知错误"}`,
-        },
-      ]);
+      setMessages((prev) => {
+        const last = prev[prev.length - 1];
+        const hasVisiblePartial =
+          last?.role === "assistant" && last.content.trim().length > 0;
+        if (!hasVisiblePartial) {
+          streamBufRef.current = "";
+        }
+        return [
+          ...prev,
+          {
+            role: "system",
+            content: hasVisiblePartial
+              ? `错误: ${ev.error ?? "未知错误"}（已保留部分输出）`
+              : `错误: ${ev.error ?? "未知错误"}`,
+          },
+        ];
+      });
     }).then((fn) => {
       if (disposed) fn();
       else unlistenError = fn;
@@ -340,6 +413,28 @@ export function useAssistantLlmStream(options: {
       else unlistenRetryStatus = fn;
     });
 
+    void listenHarnessTrace((ev) => {
+      if (disposed || !panelSendActiveRef.current) return;
+      if (
+        requestIdRef.current &&
+        ev.request_id &&
+        ev.request_id !== requestIdRef.current
+      ) {
+        return;
+      }
+      const hint = harnessTraceHint(ev);
+      if (hint) setActivityHint(hint);
+      recordAiLifecycleEvent(lifecycleRecorder, {
+        event: "harness_trace",
+        phase: "frontend_stream",
+        requestId: ev.request_id,
+        source: "ai:harness_trace",
+      });
+    }).then((fn) => {
+      if (disposed) fn();
+      else unlistenHarnessTrace = fn;
+    });
+
     return () => {
       disposed = true;
       cancelScheduledFlush();
@@ -348,6 +443,7 @@ export function useAssistantLlmStream(options: {
       unlistenError?.();
       unlistenReset?.();
       unlistenRetryStatus?.();
+      unlistenHarnessTrace?.();
     };
   }, [
     panelSendActiveRef,

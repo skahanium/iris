@@ -125,4 +125,65 @@ describe("AI hang/stuck root-cause fixes contract", () => {
       expect(s).toContain("ABORT_POLL_INTERVAL");
     });
   });
+
+  describe("Fix 8: retryable stream read errors do not kill the frontend stream", () => {
+    it("streaming requests ask providers for uncompressed SSE", () => {
+      const s = read("src-tauri/src/ai_runtime/model_gateway/streaming.rs");
+
+      expect(s).toContain("ACCEPT");
+      expect(s).toContain("text/event-stream");
+      expect(s).toContain("ACCEPT_ENCODING");
+      expect(s).toContain("identity");
+    });
+
+    it("harness retries suppress non-final llm:error events", () => {
+      const s = read("src-tauri/src/ai_harness/harness/run.rs");
+      const retryBlock =
+        s.split("send_llm_streaming_request_with_retry")[1] ?? "";
+
+      expect(retryBlock).toContain("emit_error_event");
+      expect(retryBlock).toContain("attempt == LLM_MAX_RETRIES");
+    });
+
+    it("visible partial stream errors are terminal instead of retried", () => {
+      const streaming = read(
+        "src-tauri/src/ai_runtime/model_gateway/streaming.rs",
+      );
+      const run = read("src-tauri/src/ai_harness/harness/run.rs");
+
+      expect(streaming).toContain("partial_visible_stream_error");
+      expect(streaming).toContain("surface.is_visible() && token_index > 0");
+      expect(run).toContain('msg.contains("partial_visible_stream_error")');
+    });
+
+    it("llm:error payloads carry final=true only for terminal failures", () => {
+      const s = read("src-tauri/src/ai_runtime/model_gateway/streaming.rs");
+
+      expect(s).toContain("stream_error_event(");
+      expect(s).toContain("final_error");
+      expect(s).toContain('"final": final_error');
+    });
+  });
+
+  describe("Fix 9: web evidence fetch has a turn budget", () => {
+    it("web evidence broker stops page extraction when the turn budget is exhausted", () => {
+      const s = read("src-tauri/src/ai_runtime/web_evidence_broker.rs");
+
+      expect(s).toContain("WEB_FETCH_TURN_BUDGET");
+      expect(s).toContain("fetch_deadline");
+      expect(s).toContain("web_page_fetch_budget_exhausted");
+    });
+  });
+
+  describe("Fix 10: harness phase traces expose timings to the UI", () => {
+    it("harness trace events carry duration_ms for timed phases", () => {
+      const types = read("src-tauri/src/ai_harness/harness/types.rs");
+      const trace = read("src-tauri/src/ai_harness/harness/trace_emit.rs");
+      const run = read("src-tauri/src/ai_harness/harness/run.rs");
+
+      expect(types).toContain("duration_ms");
+      expect(trace).toContain("duration_ms");
+      expect(run).toContain("Some(result.duration_ms)");
+    });
+  });
 });

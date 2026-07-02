@@ -32,6 +32,7 @@ pub(crate) fn emit_trace_phase(
     phase: HarnessPhase,
     tool_name: &str,
     status: &str,
+    duration_ms: Option<u64>,
     message: Option<String>,
     output_preview: Option<String>,
 ) -> AppResult<()> {
@@ -44,6 +45,7 @@ pub(crate) fn emit_trace_phase(
                 phase,
                 tool_name: tool_name.to_string(),
                 status: status.to_string(),
+                duration_ms,
                 message,
                 output_preview,
             },

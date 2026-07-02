@@ -153,6 +153,7 @@ fn emit_workflow_trace(app_handle: &AppHandle, request_id: &str, task_name: &str
             phase: HarnessPhase::ToolStart,
             tool_name: task_name.to_string(),
             status: status.to_string(),
+            duration_ms: None,
             message: None,
             output_preview: None,
         },

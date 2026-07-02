@@ -85,7 +85,6 @@ impl ModelGateway {
     pub fn get_provider(&self, slot: CapabilitySlot) -> Option<&ProviderConfig> {
         self.providers.get(&slot)
     }
-
     pub fn slot_for_scene(scene: AiScene) -> CapabilitySlot {
         match scene {
             AiScene::KnowledgeLookup => CapabilitySlot::Fast,
@@ -369,12 +368,12 @@ impl ModelGateway {
         streaming_impl::send_streaming_request(&self.app_handle, &self.client, request_id, request)
             .await
     }
-
     pub async fn send_streaming_request_with_surface(
         &self,
         request_id: &str,
         request: GatewayRequest,
         surface: StreamSurface,
+        emit_error_event: bool,
     ) -> AppResult<GatewayResponse> {
         streaming_impl::send_streaming_request_with_surface(
             &self.app_handle,
@@ -382,6 +381,7 @@ impl ModelGateway {
             request_id,
             request,
             surface,
+            emit_error_event,
         )
         .await
     }

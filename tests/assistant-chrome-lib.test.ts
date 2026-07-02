@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import type { ChatLine } from "@/components/ai/AiMessageList";
 import {
+  assistantChromeSnapshotsEqual,
   buildAssistantChromeSnapshot,
   countWebPageFetchPackets,
   countWebSearchPackets,
@@ -102,6 +103,33 @@ describe("assistant chrome helpers", () => {
       harnessRequestId: "req-1",
     });
     expect(snap.harnessRequestId).toBe("req-1");
+  });
+
+  it("assistantChromeSnapshotsEqual ignores object identity but detects visible fields", () => {
+    const left = buildAssistantChromeSnapshot({
+      sessionTokenUsage: {
+        prompt_tokens: 1,
+        completion_tokens: 2,
+        total_tokens: 3,
+      },
+      activityHint: "正在搜索",
+      streaming: true,
+      messages: [],
+      harnessPhaseLabel: null,
+      packets: [],
+      harnessRequestId: "req-1",
+    });
+    const same = {
+      ...left,
+      sessionTokenUsage: { ...left.sessionTokenUsage! },
+    };
+    const changed = {
+      ...left,
+      toolActivityLabel: "正在生成回答",
+    };
+
+    expect(assistantChromeSnapshotsEqual(left, same)).toBe(true);
+    expect(assistantChromeSnapshotsEqual(left, changed)).toBe(false);
   });
 
   it("splits web search vs page fetch packets", () => {

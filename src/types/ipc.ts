@@ -200,6 +200,16 @@ export interface LlmDoneEvent {
   candidate_kind?: "internal_candidate" | "visible_answer_candidate";
 }
 
+export interface LlmErrorEvent {
+  request_id?: string;
+  error?: string;
+  classified?: boolean;
+  surface?: StreamSurface;
+  candidate_kind?: "internal_candidate" | "visible_answer_candidate";
+  /** False means the backend is retrying and the stream listener must stay active. */
+  final?: boolean;
+}
+
 export interface LlmResetEvent {
   request_id?: string;
   reason_kind?:
@@ -237,6 +247,7 @@ export interface HarnessTraceEvent {
   phase?: string;
   tool_name: string;
   status: string;
+  duration_ms?: number | null;
   message?: string | null;
   output_preview?: string | null;
 }

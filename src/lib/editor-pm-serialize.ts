@@ -65,9 +65,35 @@ const baseParagraphSerialize = defaultMarkdownSerializer.nodes.paragraph!;
 const baseHeadingSerialize = defaultMarkdownSerializer.nodes.heading!;
 const baseImageSerialize = defaultMarkdownSerializer.nodes.image!;
 const baseHardBreakSerialize = defaultMarkdownSerializer.nodes.hard_break!;
-const baseCodeBlockSerialize = defaultMarkdownSerializer.nodes.code_block!;
 const baseHorizontalRuleSerialize =
   defaultMarkdownSerializer.nodes.horizontal_rule!;
+
+function longestBacktickRun(text: string): number {
+  let longest = 0;
+  for (const match of text.matchAll(/`+/g)) {
+    longest = Math.max(longest, match[0].length);
+  }
+  return longest;
+}
+
+function renderCodeBlock(
+  state: MarkdownSerializerState,
+  node: ProseMirrorNode,
+) {
+  const language =
+    typeof node.attrs.language === "string"
+      ? node.attrs.language.trim()
+      : typeof node.attrs.params === "string"
+        ? node.attrs.params.trim()
+        : "";
+  const text = node.textContent.replace(/\n+$/g, "");
+  const fence = "`".repeat(Math.max(3, longestBacktickRun(text) + 1));
+  state.write(`${fence}${language ? language : ""}\n`);
+  if (text) state.text(text, false);
+  state.ensureNewLine();
+  state.write(fence);
+  state.closeBlock(node);
+}
 
 function irisIndent(node: ProseMirrorNode): number {
   const value = node.attrs.irisIndent;
@@ -191,8 +217,8 @@ const irisMarkdownSerializer = new MarkdownSerializer(
     hardBreak(state, node, parent, index) {
       baseHardBreakSerialize(state, node, parent, index);
     },
-    codeBlock(state, node, parent, index) {
-      baseCodeBlockSerialize(state, node, parent, index);
+    codeBlock(state, node, _parent, _index) {
+      renderCodeBlock(state, node);
     },
     horizontalRule(state, node, parent, index) {
       baseHorizontalRuleSerialize(state, node, parent, index);

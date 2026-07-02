@@ -1,11 +1,15 @@
 import {
   useEffect,
+  useRef,
   type Dispatch,
   type MutableRefObject,
   type SetStateAction,
 } from "react";
 
-import { buildAssistantChromeSnapshot } from "@/lib/assistant-chrome";
+import {
+  assistantChromeSnapshotsEqual,
+  buildAssistantChromeSnapshot,
+} from "@/lib/assistant-chrome";
 import { listenAiRequestStarted } from "@/lib/ipc";
 import type {
   AssistantActionState,
@@ -53,18 +57,25 @@ export function useAssistantPanelEffects({
   setSessionId,
   streaming,
 }: UseAssistantPanelEffectsParams) {
+  const lastChromeSnapshotRef = useRef<AssistantChromeSnapshot | null>(null);
+
   useEffect(() => {
-    onChromeChange?.(
-      buildAssistantChromeSnapshot({
-        sessionTokenUsage,
-        activityHint,
-        streaming,
-        messages,
-        harnessPhaseLabel: null,
-        packets,
-        harnessRequestId,
-      }),
-    );
+    if (!onChromeChange) return;
+    const snapshot = buildAssistantChromeSnapshot({
+      sessionTokenUsage,
+      activityHint,
+      streaming,
+      messages,
+      harnessPhaseLabel: null,
+      packets,
+      harnessRequestId,
+    });
+    const previous = lastChromeSnapshotRef.current;
+    if (previous && assistantChromeSnapshotsEqual(previous, snapshot)) {
+      return;
+    }
+    lastChromeSnapshotRef.current = snapshot;
+    onChromeChange(snapshot);
   }, [
     activityHint,
     harnessRequestId,

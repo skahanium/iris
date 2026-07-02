@@ -215,6 +215,47 @@ describe("editor performance regressions", () => {
     container.remove();
   });
 
+  it("keeps the editor instance stable after opening a note with code blocks", async () => {
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root: Root = createRoot(container);
+    const readyEditors: ReactEditor[] = [];
+
+    await act(async () => {
+      root.render(
+        createElement(TipTapEditor, {
+          initialBodyMarkdown: [
+            "```bash",
+            "npm install -g @mimo-ai/cli",
+            "```",
+            "",
+            "After code block.",
+          ].join("\n"),
+          reingestKey: 4,
+          onEditorReady: (editor: ReactEditor | null) => {
+            if (editor) readyEditors.push(editor);
+          },
+        }),
+      );
+    });
+
+    await vi.waitFor(() => {
+      expect(readyEditors.at(-1)?.getText()).toContain("After code block.");
+    });
+
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(new Set(readyEditors).size).toBe(1);
+
+    act(() => {
+      root.unmount();
+    });
+    container.remove();
+  });
+
   it("does not rebuild the whole outline from selectionUpdate events", () => {
     const source = readFileSync(
       "src/components/editor/EditorOutline.tsx",

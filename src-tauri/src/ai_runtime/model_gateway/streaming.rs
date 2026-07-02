@@ -1,4 +1,7 @@
-use reqwest::Client;
+use reqwest::{
+    header::{ACCEPT, ACCEPT_ENCODING},
+    Client,
+};
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter};
 
@@ -69,7 +72,7 @@ pub enum StreamEventData {
     Token { token: String },
     ToolCall { tool_call: ToolCall },
     Done { usage: Option<TokenUsage> },
-    Error { message: String },
+    Error { message: String, final_error: bool },
 }
 
 fn lifecycle_content_hash(value: &str) -> String {
@@ -261,16 +264,32 @@ fn stream_error_event(
     message: &str,
     classified: bool,
     surface: StreamSurface,
+    final_error: bool,
 ) -> StreamEvent {
     StreamEvent {
         request_id: request_id.to_string(),
         event_type: StreamEventType::Error,
         data: StreamEventData::Error {
             message: sanitize_stream_error_message(message),
+            final_error,
         },
         surface,
         classified,
     }
+}
+
+const PARTIAL_VISIBLE_STREAM_ERROR: &str = "partial_visible_stream_error";
+
+fn has_visible_partial(surface: StreamSurface, token_index: u32) -> bool {
+    surface.is_visible() && token_index > 0
+}
+
+fn should_emit_stream_error(
+    emit_error_event: bool,
+    surface: StreamSurface,
+    token_index: u32,
+) -> bool {
+    emit_error_event || has_visible_partial(surface, token_index)
 }
 
 fn finish_stream_with_error(
@@ -280,18 +299,27 @@ fn finish_stream_with_error(
     classified: bool,
     surface: StreamSurface,
     token_index: u32,
+    emit_error_event: bool,
 ) -> AppError {
     let message = message.into();
-    let event = stream_error_event(request_id, &message, classified, surface);
-    if let Err(err) = emit_stream_event(app_handle, &event, token_index) {
-        tracing::warn!(
-            request_id = %request_id,
-            error = %err,
-            "failed to emit llm:error for streaming failure"
-        );
+    let sanitized = sanitize_stream_error_message(&message);
+    let visible_partial = has_visible_partial(surface, token_index);
+    if should_emit_stream_error(emit_error_event, surface, token_index) {
+        let event = stream_error_event(request_id, &message, classified, surface, true);
+        if let Err(err) = emit_stream_event(app_handle, &event, token_index) {
+            tracing::warn!(
+                request_id = %request_id,
+                error = %err,
+                "failed to emit llm:error for streaming failure"
+            );
+        }
     }
     clear_abort(request_id);
-    AppError::msg(sanitize_stream_error_message(&message))
+    if visible_partial && !emit_error_event {
+        AppError::msg(format!("{PARTIAL_VISIBLE_STREAM_ERROR}: {sanitized}"))
+    } else {
+        AppError::msg(sanitized)
+    }
 }
 
 /// Send a streaming request and emit events to frontend.
@@ -319,8 +347,18 @@ pub async fn send_streaming_request_with_surface(
     request_id: &str,
     request: GatewayRequest,
     surface: StreamSurface,
+    emit_error_event: bool,
 ) -> AppResult<GatewayResponse> {
-    send_streaming_request_with_meta(app_handle, _client, request_id, request, false, surface).await
+    send_streaming_request_with_meta_error_mode(
+        app_handle,
+        _client,
+        request_id,
+        request,
+        false,
+        surface,
+        emit_error_event,
+    )
+    .await
 }
 
 /// Send a streaming request and attach domain metadata to emitted events.
@@ -332,6 +370,22 @@ pub async fn send_streaming_request_with_meta(
     classified: bool,
     surface: StreamSurface,
 ) -> AppResult<GatewayResponse> {
+    send_streaming_request_with_meta_error_mode(
+        app_handle, _client, request_id, request, classified, surface, true,
+    )
+    .await
+}
+
+/// Send a streaming request and optionally suppress terminal error events.
+pub async fn send_streaming_request_with_meta_error_mode(
+    app_handle: &AppHandle,
+    _client: &Client,
+    request_id: &str,
+    request: GatewayRequest,
+    classified: bool,
+    surface: StreamSurface,
+    emit_error_event: bool,
+) -> AppResult<GatewayResponse> {
     if is_abort_requested(request_id) {
         return Err(finish_stream_with_error(
             app_handle,
@@ -340,6 +394,7 @@ pub async fn send_streaming_request_with_meta(
             classified,
             surface,
             0,
+            true,
         ));
     }
 
@@ -354,6 +409,7 @@ pub async fn send_streaming_request_with_meta(
             classified,
             surface,
             0,
+            emit_error_event,
         )
     })?;
     body["stream"] = serde_json::json!(true);
@@ -367,10 +423,13 @@ pub async fn send_streaming_request_with_meta(
                 classified,
                 surface,
                 0,
+                emit_error_event,
             )
         })?;
     let mut req_builder = streaming_client
         .post(&url)
+        .header(ACCEPT, "text/event-stream")
+        .header(ACCEPT_ENCODING, "identity")
         .header("Content-Type", "application/json");
 
     if let Some(api_key) = &request.provider.api_key {
@@ -385,6 +444,7 @@ pub async fn send_streaming_request_with_meta(
             classified,
             surface,
             0,
+            emit_error_event,
         )
     })?;
 
@@ -398,6 +458,7 @@ pub async fn send_streaming_request_with_meta(
             classified,
             surface,
             0,
+            emit_error_event,
         ));
     }
 
@@ -449,6 +510,7 @@ pub async fn send_streaming_request_with_meta(
                         classified,
                         surface,
                         token_index,
+                        true,
                     ));
                 }
                 continue 'stream;
@@ -468,6 +530,7 @@ pub async fn send_streaming_request_with_meta(
                 classified,
                 surface,
                 token_index,
+                true,
             ));
         }
 
@@ -479,6 +542,7 @@ pub async fn send_streaming_request_with_meta(
                 classified,
                 surface,
                 token_index,
+                emit_error_event,
             )
         })?;
 
@@ -533,6 +597,7 @@ pub async fn send_streaming_request_with_meta(
                             classified,
                             surface,
                             token_index,
+                            emit_error_event,
                         )
                     })? {
                         let event = StreamEvent {
@@ -629,6 +694,7 @@ pub async fn send_streaming_request_with_meta(
                                         classified,
                                         surface,
                                         token_index,
+                                        emit_error_event,
                                     )
                                 })?
                             {
@@ -811,14 +877,22 @@ pub(super) fn emit_stream_event(
             app_handle.emit("llm:done", payload).map_err(emit_err)?;
         }
         StreamEventType::Error => {
-            let message = if let StreamEventData::Error { message } = &event.data {
-                message.clone()
+            let (message, final_error) = if let StreamEventData::Error {
+                message,
+                final_error,
+            } = &event.data
+            {
+                (message.clone(), *final_error)
             } else {
-                "stream error".to_string()
+                ("stream error".to_string(), true)
             };
+            if !event.surface.is_visible() {
+                return Ok(());
+            }
             let mut payload = serde_json::json!({
                 "request_id": event.request_id,
                 "error": message,
+                "final": final_error,
                 "surface": event.surface.wire(),
                 "candidate_kind": event.surface.candidate_kind(),
             });
@@ -972,16 +1046,45 @@ mod tests {
             "模型请求失败（500）：provider echoed prompt text",
             false,
             StreamSurface::VisibleAnswer,
+            true,
         );
 
         assert_eq!(event.request_id, "req-stream-error");
         assert!(matches!(event.event_type, StreamEventType::Error));
         match event.data {
-            StreamEventData::Error { message } => {
+            StreamEventData::Error {
+                message,
+                final_error,
+            } => {
                 assert!(message.contains("模型请求失败"));
                 assert!(!message.contains("prompt text"));
+                assert!(final_error);
             }
             _ => panic!("expected error payload"),
         }
+    }
+
+    #[test]
+    fn visible_partial_stream_errors_force_terminal_event() {
+        assert!(!should_emit_stream_error(
+            false,
+            StreamSurface::VisibleAnswer,
+            0
+        ));
+        assert!(should_emit_stream_error(
+            false,
+            StreamSurface::VisibleAnswer,
+            1
+        ));
+        assert!(!should_emit_stream_error(
+            false,
+            StreamSurface::InternalCandidate,
+            1
+        ));
+        assert!(should_emit_stream_error(
+            true,
+            StreamSurface::VisibleAnswer,
+            0
+        ));
     }
 }

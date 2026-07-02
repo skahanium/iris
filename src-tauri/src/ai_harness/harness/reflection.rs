@@ -54,6 +54,7 @@ pub(crate) async fn run_reflection_round(
         "running",
         None,
         None,
+        None,
     )?;
     messages.push(LlmMessage {
         role: MessageRole::User,
@@ -78,6 +79,7 @@ pub(crate) async fn run_reflection_round(
             &input.request_id,
             reflect_request,
             StreamSurface::InternalCandidate,
+            true,
         )
         .await
     {

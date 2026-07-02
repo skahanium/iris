@@ -27,6 +27,10 @@ vi.mock("@/lib/ipc", () => ({
     handlers.retry = h;
     return Promise.resolve(() => {});
   }),
+  listenHarnessTrace: vi.fn().mockImplementation((h: (p: unknown) => void) => {
+    handlers.trace = h;
+    return Promise.resolve(() => {});
+  }),
 }));
 
 describe("useAssistantLlmStream reset + done behavior", () => {
@@ -351,6 +355,24 @@ describe("useAssistantLlmStream reset + done behavior", () => {
     expect(activityHintState).toBe("重试中（1/3），约 1 秒后继续。");
   });
 
+  it("ai:harness_trace surfaces phase progress with durations", async () => {
+    await mountHook();
+
+    await act(async () => {
+      handlers.trace?.({
+        request_id: "req-1",
+        round: 2,
+        phase: "tool_complete",
+        tool_name: "web_search",
+        status: "ok",
+        duration_ms: 1530,
+      });
+    });
+
+    expect(activityHintState).toBe("联网检索完成，用时 1.5 秒。");
+    expect(messagesState).toEqual([]);
+  });
+
   it("ai:retry_status ignores mismatched request ids", async () => {
     await mountHook();
 
@@ -437,6 +459,70 @@ describe("useAssistantLlmStream reset + done behavior", () => {
       role: "system",
       content: "错误: boom",
     });
+  });
+
+  it("non-final llm:error keeps the stream listener active for retry tokens", async () => {
+    streamingState = true;
+    await mountHook();
+
+    await act(async () => {
+      handlers.error?.({
+        request_id: "req-1",
+        error: "Stream read error: error decoding response body",
+        final: false,
+      });
+    });
+
+    expect(panelSendActive.current).toBe(true);
+    expect(streamingState).toBe(true);
+    expect(requestId.current).toBe("req-1");
+    expect(messagesState).toEqual([]);
+    expect(activityHintState).toBe("连接中断，正在重试流式响应…");
+
+    await act(async () => {
+      handlers.token?.({
+        request_id: "req-1",
+        token: "重试后继续",
+        index: 0,
+        surface: "visible_answer",
+      });
+    });
+    await act(async () => {
+      flushRaf();
+    });
+
+    expect(streamBuf.current).toBe("重试后继续");
+    expect(messagesState[messagesState.length - 1]).toEqual({
+      role: "assistant",
+      content: "重试后继续",
+    });
+  });
+
+  it("final llm:error preserves visible partial content before stopping", async () => {
+    streamBuf.current = "已经生成的内容";
+    messagesState = [{ role: "assistant", content: "已经生成的内容" }];
+    streamingState = true;
+    await mountHook();
+
+    await act(async () => {
+      handlers.error?.({
+        request_id: "req-1",
+        error: "Stream read error: error decoding response body",
+        final: true,
+      });
+    });
+
+    expect(panelSendActive.current).toBe(false);
+    expect(streamingState).toBe(false);
+    expect(streamBuf.current).toBe("已经生成的内容");
+    expect(messagesState).toEqual([
+      { role: "assistant", content: "已经生成的内容" },
+      {
+        role: "system",
+        content:
+          "错误: Stream read error: error decoding response body（已保留部分输出）",
+      },
+    ]);
   });
 
   it("unmount cancels a pending animation-frame flush", async () => {

@@ -81,3 +81,31 @@ export function buildAssistantChromeSnapshot(options: {
     harnessRequestId: options.harnessRequestId ?? null,
   };
 }
+
+export function assistantChromeSnapshotsEqual(
+  left: AssistantChromeSnapshot,
+  right: AssistantChromeSnapshot,
+): boolean {
+  return (
+    left.toolActivityLabel === right.toolActivityLabel &&
+    left.evidenceCount === right.evidenceCount &&
+    left.webPacketCount === right.webPacketCount &&
+    left.harnessRequestId === right.harnessRequestId &&
+    tokenUsageEqual(left.sessionTokenUsage, right.sessionTokenUsage)
+  );
+}
+
+function tokenUsageEqual(
+  left: AssistantChromeSnapshot["sessionTokenUsage"],
+  right: AssistantChromeSnapshot["sessionTokenUsage"],
+): boolean {
+  if (left === right) return true;
+  if (!left || !right) return false;
+  return (
+    left.prompt_tokens === right.prompt_tokens &&
+    left.completion_tokens === right.completion_tokens &&
+    left.total_tokens === right.total_tokens &&
+    left.prompt_cache_hit_tokens === right.prompt_cache_hit_tokens &&
+    left.prompt_cache_miss_tokens === right.prompt_cache_miss_tokens
+  );
+}

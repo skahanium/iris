@@ -1,5 +1,4 @@
 import CodeBlock from "@tiptap/extension-code-block";
-import type { AnyExtension } from "@tiptap/core";
 import Placeholder from "@tiptap/extension-placeholder";
 
 import Table from "@tiptap/extension-table";
@@ -93,64 +92,9 @@ import { WikiMediaEmbedExtension } from "./extensions/WikiMediaEmbedExtension";
 
 const BODY_STATS_DEBOUNCE_MS = 400;
 
-/** Use lighter code blocks + fewer fold widgets above this body size. */
-
-const LARGE_DOC_BODY_THRESHOLD = 12_000;
-
 const LIGHT_CODE_BLOCK_EXTENSION = CodeBlock.configure({
   HTMLAttributes: { class: "iris-code-block" },
 });
-
-function markdownLikelyHasCodeBlock(markdown: string): boolean {
-  return /(^|\n)(`{3,}|~{3,})/.test(markdown);
-}
-
-async function createLazyCodeBlockLowlightExtension(): Promise<AnyExtension> {
-  const [
-    { default: CodeBlockLowlight },
-    { createLowlight },
-    javascript,
-    typescript,
-    json,
-    bash,
-    css,
-    xml,
-    markdown,
-    rust,
-    python,
-    sql,
-  ] = await Promise.all([
-    import("@tiptap/extension-code-block-lowlight"),
-    import("lowlight/core"),
-    import("highlight.js/lib/languages/javascript"),
-    import("highlight.js/lib/languages/typescript"),
-    import("highlight.js/lib/languages/json"),
-    import("highlight.js/lib/languages/bash"),
-    import("highlight.js/lib/languages/css"),
-    import("highlight.js/lib/languages/xml"),
-    import("highlight.js/lib/languages/markdown"),
-    import("highlight.js/lib/languages/rust"),
-    import("highlight.js/lib/languages/python"),
-    import("highlight.js/lib/languages/sql"),
-  ]);
-  return CodeBlockLowlight.configure({
-    lowlight: createLowlight({
-      bash: bash.default,
-      css: css.default,
-      javascript: javascript.default,
-      js: javascript.default,
-      json: json.default,
-      markdown: markdown.default,
-      md: markdown.default,
-      python: python.default,
-      rust: rust.default,
-      sql: sql.default,
-      typescript: typescript.default,
-      ts: typescript.default,
-      xml: xml.default,
-    }),
-  });
-}
 
 interface TipTapEditorProps {
   /** Body markdown only (frontmatter / document title are separate). */
@@ -366,32 +310,6 @@ function TipTapEditorInner({
     }, BODY_STATS_DEBOUNCE_MS);
   }, []);
 
-  const isLargeDoc =
-    (initialBodyMarkdown?.length ?? 0) > LARGE_DOC_BODY_THRESHOLD;
-  const [codeBlockExtension, setCodeBlockExtension] = useState<AnyExtension>(
-    LIGHT_CODE_BLOCK_EXTENSION,
-  );
-  const codeBlockLowlightLoadedRef = useRef(false);
-
-  useEffect(() => {
-    if (isLargeDoc || codeBlockLowlightLoadedRef.current) return;
-    if (!markdownLikelyHasCodeBlock(initialBodyMarkdown)) return;
-
-    let cancelled = false;
-    codeBlockLowlightLoadedRef.current = true;
-    void createLazyCodeBlockLowlightExtension()
-      .then((extension) => {
-        if (!cancelled) setCodeBlockExtension(extension);
-      })
-      .catch(() => {
-        codeBlockLowlightLoadedRef.current = false;
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [initialBodyMarkdown, isLargeDoc]);
-
   const extensions = useMemo(
     () => [
       IrisDocument,
@@ -454,7 +372,7 @@ function TipTapEditorInner({
 
       TableCell,
 
-      isLargeDoc ? LIGHT_CODE_BLOCK_EXTENSION : codeBlockExtension,
+      LIGHT_CODE_BLOCK_EXTENSION,
 
       Placeholder.configure({
         placeholder: "开始写作，或输入 / 唤起 AI…",
@@ -490,7 +408,7 @@ function TipTapEditorInner({
       }),
     ],
 
-    [codeBlockExtension, isLargeDoc, mediaLoading, vaultPath],
+    [mediaLoading, vaultPath],
   );
 
   const ingestResultRef = useRef<{
@@ -665,33 +583,6 @@ function TipTapEditorInner({
     },
     [extensions],
   );
-
-  useEffect(() => {
-    if (!editor || isLargeDoc || codeBlockLowlightLoadedRef.current) return;
-    let hasCodeBlock = false;
-    editor.state.doc.descendants((node) => {
-      if (node.type.name === "codeBlock") {
-        hasCodeBlock = true;
-        return false;
-      }
-      return true;
-    });
-    if (!hasCodeBlock) return;
-
-    let cancelled = false;
-    codeBlockLowlightLoadedRef.current = true;
-    void createLazyCodeBlockLowlightExtension()
-      .then((extension) => {
-        if (!cancelled) setCodeBlockExtension(extension);
-      })
-      .catch(() => {
-        codeBlockLowlightLoadedRef.current = false;
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [editor, isLargeDoc, parsedContentRevision]);
 
   useEffect(() => {
     if (!editor) return;

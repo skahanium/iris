@@ -195,8 +195,14 @@ async fn send_llm_streaming_request_with_retry(
     }
     let mut last_err: Option<String> = None;
     for attempt in 0..=LLM_MAX_RETRIES {
+        let emit_error_event = attempt == LLM_MAX_RETRIES;
         match gateway
-            .send_streaming_request_with_surface(request_id, request.clone(), surface)
+            .send_streaming_request_with_surface(
+                request_id,
+                request.clone(),
+                surface,
+                emit_error_event,
+            )
             .await
         {
             Ok(response) => {
@@ -205,6 +211,13 @@ async fn send_llm_streaming_request_with_retry(
             }
             Err(e) => {
                 let msg = e.to_string();
+                if msg.contains("request aborted") {
+                    return Err(e);
+                }
+                if msg.contains("partial_visible_stream_error") {
+                    circuit_breaker::record_failure(provider_id);
+                    return Err(e);
+                }
                 if attempt < LLM_MAX_RETRIES {
                     let delay_ms = LLM_RETRY_BASE_DELAY_MS * 2u64.pow(attempt);
                     let retry_reason = classify_retry_reason(&msg);
@@ -715,6 +728,7 @@ async fn run_harness_inner(
                     "running",
                     None,
                     None,
+                    None,
                 )?;
                 let evidence_ids = evidence_ledger
                     .packets()
@@ -847,6 +861,7 @@ async fn run_harness_inner(
                         "spawn_subagent",
                         if ok { "ok" } else { "error" },
                         None,
+                        None,
                         Some(output_str.chars().take(200).collect()),
                     )?;
                 }
@@ -931,6 +946,7 @@ async fn run_harness_inner(
                     "running",
                     None,
                     None,
+                    None,
                 )?;
 
                 let dispatch_ctx = ToolDispatchContext {
@@ -959,6 +975,7 @@ async fn run_harness_inner(
                     HarnessPhase::ToolComplete,
                     tool_name,
                     if result.success { "ok" } else { "error" },
+                    Some(result.duration_ms),
                     None,
                     Some(preview),
                 )?;
@@ -1056,6 +1073,7 @@ async fn run_harness_inner(
         "streaming",
         None,
         None,
+        None,
     )?;
     tracing::debug!(
         request_id = %input.request_id,
@@ -1082,6 +1100,7 @@ async fn run_harness_inner(
                 &input.request_id,
                 stream_request,
                 StreamSurface::VisibleAnswer,
+                true,
             )
             .await?;
         if usage_is_empty(&response.usage) {
@@ -1304,6 +1323,7 @@ async fn pause_for_tool_confirmation(
         HarnessPhase::ToolStart,
         tool_name,
         "pending",
+        None,
         None,
         None,
     )?;

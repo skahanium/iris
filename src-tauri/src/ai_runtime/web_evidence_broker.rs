@@ -4,6 +4,7 @@ use chrono::Utc;
 use futures_util::future::join_all;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use std::time::{Duration, Instant};
 
 use crate::ai_runtime::{
     ContextPacket, SourceType, TrustLevel, WebEvidenceMeta, WebSearchBackend, WebSourceRank,
@@ -13,6 +14,7 @@ use crate::llm::fetch_web_page::PageFetchResult;
 use crate::storage::db::Database;
 
 const FETCH_EXCERPT_MAX_CHARS: usize = 12_000;
+const WEB_FETCH_TURN_BUDGET: Duration = Duration::from_secs(8);
 
 #[derive(Debug, Clone)]
 pub struct WebEvidenceBrokerInput {
@@ -899,12 +901,20 @@ async fn enrich_with_page_fetches(
 
     let mut enriched = Vec::with_capacity(items.len());
     let mut fetched = 0usize;
+    let fetch_deadline = Instant::now() + WEB_FETCH_TURN_BUDGET;
     for mut item in items {
         if fetched < max_fetches && item.failure_reason.is_none() {
+            if Instant::now() >= fetch_deadline {
+                item.failure_reason = Some("web_page_fetch_budget_exhausted".into());
+                enriched.push(item);
+                continue;
+            }
             fetched += 1;
-            match fetch_url_with_providers(db, &item.url).await {
-                Ok(page) => apply_page_provider_fetch(&mut item, page),
-                Err(error) => item.failure_reason = Some(format!("fetch_failed: {error}")),
+            let remaining = fetch_deadline.saturating_duration_since(Instant::now());
+            match tokio::time::timeout(remaining, fetch_url_with_providers(db, &item.url)).await {
+                Ok(Ok(page)) => apply_page_provider_fetch(&mut item, page),
+                Ok(Err(error)) => item.failure_reason = Some(format!("fetch_failed: {error}")),
+                Err(_) => item.failure_reason = Some("web_page_fetch_budget_exhausted".into()),
             }
         }
         enriched.push(item);
