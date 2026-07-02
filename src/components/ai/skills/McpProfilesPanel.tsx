@@ -70,15 +70,27 @@ function createDraftSummary(
       .filter((item) => item.target === "header")
       .map((item) => [
         item.name,
-        item.scheme
-          ? { credential: `credential://${item.service}`, scheme: item.scheme }
-          : { credential: `credential://${item.service}` },
+        {
+          credential: `credential://${item.service}`,
+          ...(item.scheme ? { scheme: item.scheme } : {}),
+          ...(item.optional === true
+            ? { optional: item.optional === true }
+            : {}),
+        },
       ]),
   );
   const credentialEnv = Object.fromEntries(
     (preset?.credentials ?? [])
       .filter((item) => item.target === "env")
-      .map((item) => [item.name, `credential://${item.service}`]),
+      .map((item) => [
+        item.name,
+        item.optional === true
+          ? {
+              credential: `credential://${item.service}`,
+              optional: item.optional === true,
+            }
+          : `credential://${item.service}`,
+      ]),
   );
   const credentialRefsJson = JSON.stringify(
     {

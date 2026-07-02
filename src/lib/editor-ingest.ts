@@ -135,7 +135,21 @@ function markdownToTipTapHtml(md: string): string {
   }) as string;
   html = adaptWikiLinks(html);
   html = adaptTaskLists(html);
+  html = trimCodeBlockTerminalNewlines(html);
   return html;
+}
+
+function trimCodeBlockTerminalNewlines(html: string): string {
+  const doc = new DOMParser().parseFromString(
+    `<div>${html}</div>`,
+    "text/html",
+  );
+  const root = doc.body.firstElementChild;
+  if (!root) return html;
+  root.querySelectorAll("pre > code").forEach((code) => {
+    code.textContent = (code.textContent ?? "").replace(/\n+$/g, "");
+  });
+  return root.innerHTML;
 }
 
 function wikiMediaEmbedHtml(raw: string): string | null {

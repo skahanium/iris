@@ -305,6 +305,9 @@ describe("management center contract", () => {
     expect(diagnostics).toContain("未配置搜索映射");
     expect(diagnostics).toContain("已配置网页读取映射");
     expect(diagnostics).toContain("未配置网页读取映射");
+    expect(diagnostics).toContain("Key 已绑定");
+    expect(diagnostics).toContain("可选凭据未绑定，使用匿名模式");
+    expect(diagnostics).toContain("必填凭据缺失");
     expect(diagnostics).toContain("提供方未启用");
     expect(diagnostics).toContain("连接方式不支持 MCP 联网证据");
     expect(diagnostics).toContain("MCP 搜索 smoke test 已返回可解析证据");
@@ -320,6 +323,7 @@ describe("management center contract", () => {
       "{checkLabelText(check.label)}：{checkStatusText(check.status)} ·",
     );
     expect(card).toContain("调度可用性：搜索");
+    expect(card).toContain('case "credential"');
     expect(card).toContain('case "searchSmokeLive"');
     expect(card).toContain('case "searchResultParseLive"');
   });

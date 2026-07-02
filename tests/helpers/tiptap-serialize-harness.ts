@@ -1,4 +1,4 @@
-import CodeBlockLowlight from "@tiptap/extension-code-block-lowlight";
+import CodeBlock from "@tiptap/extension-code-block";
 import Table from "@tiptap/extension-table";
 import TableCell from "@tiptap/extension-table-cell";
 import TableHeader from "@tiptap/extension-table-header";
@@ -7,7 +7,6 @@ import TaskItem from "@tiptap/extension-task-item";
 import TaskList from "@tiptap/extension-task-list";
 import { Editor } from "@tiptap/core";
 import StarterKit from "@tiptap/starter-kit";
-import { common, createLowlight } from "lowlight";
 
 import { CalloutBlockquoteExtension } from "@/components/editor/extensions/CalloutBlockquoteExtension";
 import { AiStreamExtension } from "@/components/editor/extensions/AiStreamExtension";
@@ -32,8 +31,6 @@ import { EDITOR_PARSE_OPTIONS } from "@/lib/editor-parse-options";
 import { ingestMarkdownForEditor } from "@/lib/editor-ingest";
 import { markdownBodyToEditorHtml, parseNoteForEditor } from "@/lib/markdown";
 import { serializeOpenNote } from "@/lib/serialize-open-note";
-
-const lowlight = createLowlight(common);
 
 function productionExtensions(vaultPath: string | null = null) {
   return [
@@ -61,7 +58,9 @@ function productionExtensions(vaultPath: string | null = null) {
     TableRow,
     TableHeader,
     TableCell,
-    CodeBlockLowlight.configure({ lowlight }),
+    CodeBlock.configure({
+      HTMLAttributes: { class: "iris-code-block" },
+    }),
     CalloutBlockquoteExtension,
     HeadingFoldExtension,
     PreserveBlockExtension,

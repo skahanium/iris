@@ -328,6 +328,31 @@ describe("editorDocToMarkdown (prosemirror-markdown hot path)", () => {
     }
   });
 
+  it("keeps fenced code block content free of trailing newline in the production DOM", () => {
+    const body = [
+      "```bash",
+      "# 一行安装，或通过 npm 安装",
+      "curl -fsSL https://mimo.xiaomi.com/install | bash",
+      "npm install -g @mimo-ai/cli",
+      "```",
+    ].join("\n");
+    const editor = createProductionEditorFromIngestedBody(body);
+    try {
+      const code = editor.view.dom.querySelector("pre code");
+      expect(code).toBeInstanceOf(HTMLElement);
+      expect(code?.textContent).toBe(
+        [
+          "# 一行安装，或通过 npm 安装",
+          "curl -fsSL https://mimo.xiaomi.com/install | bash",
+          "npm install -g @mimo-ai/cli",
+        ].join("\n"),
+      );
+      expect(code?.textContent).not.toMatch(/\n$/);
+    } finally {
+      editor.destroy();
+    }
+  });
+
   it("round-trips Iris indented paragraph HTML as an editable block", () => {
     const editor = createProductionEditorFromIngestedBody(
       '<p data-iris-indent="2"><strong>Bold</strong> text</p>',
@@ -593,5 +618,29 @@ describe("serializeOpenNote integration (PM + ingest)", () => {
     expect(out).toContain("- [x] Done");
     expect(out).toContain("| A | B |");
     expect(out).toContain("[[Architecture Notes]]");
+  });
+
+  it("does not reintroduce a code-block trailing blank line through repeated full-note saves", () => {
+    const md = [
+      "---",
+      'title: "MiMo"',
+      "---",
+      "",
+      "## 6. 使用",
+      "",
+      "```bash",
+      "# 一行安装，或通过 npm 安装",
+      "curl -fsSL https://mimo.xiaomi.com/install | bash",
+      "npm install -g @mimo-ai/cli",
+      "```",
+    ].join("\n");
+
+    const first = fullNoteRoundTrip(md).replace(/\r\n/g, "\n");
+    const second = fullNoteRoundTrip(first).replace(/\r\n/g, "\n");
+
+    expect(first).toContain("npm install -g @mimo-ai/cli\n```");
+    expect(second).toContain("npm install -g @mimo-ai/cli\n```");
+    expect(first).not.toContain("npm install -g @mimo-ai/cli\n\n```");
+    expect(second).not.toContain("npm install -g @mimo-ai/cli\n\n```");
   });
 });

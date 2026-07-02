@@ -2106,6 +2106,104 @@ fn provider_diagnostic_check(
     }
 }
 
+fn provider_credential_service_from_binding(value: &serde_json::Value) -> Option<String> {
+    let raw = if let Some(raw) = value.as_str() {
+        raw.trim()
+    } else if let Some(object) = value.as_object() {
+        object
+            .get("credential")
+            .or_else(|| object.get("service"))
+            .or_else(|| object.get("ref"))
+            .and_then(|item| item.as_str())
+            .map(str::trim)
+            .unwrap_or_default()
+    } else {
+        ""
+    };
+    let service = raw.strip_prefix("credential://").unwrap_or(raw).trim();
+    (!service.is_empty()).then(|| service.to_string())
+}
+
+fn provider_credential_binding_optional(value: &serde_json::Value, service: &str) -> bool {
+    value
+        .as_object()
+        .and_then(|object| object.get("optional"))
+        .and_then(|item| item.as_bool())
+        .unwrap_or(matches!(service, "iris.mcp.anysearch" | "iris.mcp.jina"))
+}
+
+fn provider_credential_bindings(
+    credential_refs_json: &str,
+) -> AppResult<Vec<(String, serde_json::Value)>> {
+    let value: serde_json::Value = serde_json::from_str(credential_refs_json)
+        .map_err(|err| AppError::msg(format!("invalid credential refs JSON: {err}")))?;
+    let mut bindings = Vec::new();
+    if let Some(headers) = value.get("headers").and_then(|item| item.as_object()) {
+        bindings.extend(
+            headers
+                .iter()
+                .map(|(name, binding)| (format!("请求头 {name}"), binding.clone())),
+        );
+    }
+    if let Some(env) = value.get("env").and_then(|item| item.as_object()) {
+        bindings.extend(
+            env.iter()
+                .map(|(name, binding)| (format!("环境变量 {name}"), binding.clone())),
+        );
+    }
+    Ok(bindings)
+}
+
+fn provider_credential_diagnostic_checks(
+    db: &crate::storage::db::Database,
+    provider: &crate::ai_runtime::mcp_runtime_registry::WebEvidenceProviderSummary,
+) -> AppResult<(Vec<WebEvidenceProviderDiagnosticCheck>, bool)> {
+    let bindings = provider_credential_bindings(&provider.credential_refs_json)?;
+    if bindings.is_empty() {
+        return Ok((
+            vec![provider_diagnostic_check("credential", true, "不需要凭据")],
+            true,
+        ));
+    }
+
+    let mut checks = Vec::new();
+    let mut all_required_credentials_available = true;
+    for (label, binding) in bindings {
+        let Some(service) = provider_credential_service_from_binding(&binding) else {
+            checks.push(provider_diagnostic_check(
+                "credential",
+                false,
+                &format!("{label} 缺少凭据引用"),
+            ));
+            all_required_credentials_available = false;
+            continue;
+        };
+        let optional = provider_credential_binding_optional(&binding, &service);
+        let configured = crate::credentials::api_key_configured(db, &service)?;
+        if configured {
+            checks.push(provider_diagnostic_check(
+                "credential",
+                true,
+                &format!("{label} Key 已绑定：{service}"),
+            ));
+        } else if optional {
+            checks.push(provider_diagnostic_check(
+                "credential",
+                true,
+                &format!("{label} 可选凭据未绑定，使用匿名模式：{service}"),
+            ));
+        } else {
+            checks.push(provider_diagnostic_check(
+                "credential",
+                false,
+                &format!("{label} 必填凭据缺失：{service}"),
+            ));
+            all_required_credentials_available = false;
+        }
+    }
+    Ok((checks, all_required_credentials_available))
+}
+
 fn provider_mapping_tool_name(mapping_json: Option<&str>) -> Option<String> {
     let value = mapping_json?.trim();
     if value.is_empty() {
@@ -2249,8 +2347,11 @@ async fn provider_diagnostics_for_summary(
         ));
     }
 
-    let mut can_use_for_search = provider.enabled && provider.has_search_mapping;
-    let mut can_use_for_fetch = provider.enabled && provider.has_fetch_mapping;
+    let (credential_checks, credentials_ok) = provider_credential_diagnostic_checks(db, provider)?;
+    checks.extend(credential_checks);
+
+    let mut can_use_for_search = provider.enabled && provider.has_search_mapping && credentials_ok;
+    let mut can_use_for_fetch = provider.enabled && provider.has_fetch_mapping && credentials_ok;
 
     if live_check && provider.kind == "mcp" && provider.enabled {
         let options = crate::ai_runtime::mcp_host_runtime::McpHostRuntimeOptions {

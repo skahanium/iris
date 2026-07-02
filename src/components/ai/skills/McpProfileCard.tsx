@@ -148,6 +148,15 @@ function credentialScheme(raw: unknown): string | undefined {
     : undefined;
 }
 
+function credentialOptional(raw: unknown): boolean {
+  return (
+    raw != null &&
+    typeof raw === "object" &&
+    !Array.isArray(raw) &&
+    (raw as Record<string, unknown>).optional === true
+  );
+}
+
 function parseCredentialRows(
   raw: string | null | undefined,
 ): CredentialRefRow[] {
@@ -163,6 +172,7 @@ function parseCredentialRows(
           name,
           ref: credentialService(value),
           scheme: credentialScheme(value),
+          optional: credentialOptional(value),
           secretValue: "",
         });
       },
@@ -177,6 +187,7 @@ function parseCredentialRows(
           target: "env",
           name,
           ref: credentialService(value),
+          optional: credentialOptional(value),
           secretValue: "",
         });
       },
@@ -264,17 +275,24 @@ function mappingForSave(raw: string, toolName: string): string | null {
 
 function credentialRowsToJson(rows: CredentialRefRow[]): string {
   const headers: Record<string, unknown> = {};
-  const env: Record<string, string> = {};
+  const env: Record<string, unknown> = {};
   for (const row of rows) {
     const name = row.name.trim();
     const ref = row.ref.trim().replace(/^credential:\/\//, "");
     if (!name || !ref) continue;
     if (row.target === "header") {
-      headers[name] = row.scheme
-        ? { credential: `credential://${ref}`, scheme: row.scheme }
-        : { credential: `credential://${ref}` };
+      headers[name] = {
+        credential: `credential://${ref}`,
+        ...(row.scheme ? { scheme: row.scheme } : {}),
+        ...(row.optional === true ? { optional: row.optional === true } : {}),
+      };
     } else {
-      env[name] = `credential://${ref}`;
+      env[name] = row.optional
+        ? {
+            credential: `credential://${ref}`,
+            optional: row.optional === true,
+          }
+        : `credential://${ref}`;
     }
   }
   return JSON.stringify(
@@ -359,6 +377,8 @@ function checkLabelText(label: string): string {
       return "启用状态";
     case "transport":
       return "连接配置";
+    case "credential":
+      return "凭据状态";
     case "searchMapping":
     case "search_mapping":
       return "搜索映射";
@@ -382,6 +402,14 @@ function checkLabelText(label: string): string {
     default:
       return label;
   }
+}
+
+function credentialStateText(rows: CredentialRefRow[]): string {
+  if (rows.length === 0) return "不需要凭据";
+  const hasPendingKey = rows.some((row) => row.secretValue.trim().length > 0);
+  if (hasPendingKey) return "本次保存会更新 Key";
+  if (rows.every((row) => row.optional)) return "匿名模式";
+  return "必填凭据缺失或待填写";
 }
 
 function presetIdFromProvider(provider: WebEvidenceProviderSummary): string {
@@ -446,6 +474,7 @@ export function McpProfileCard({
     [presetId],
   );
   const diagnosticLines = diagnostics?.checks ?? [];
+  const credentialState = credentialStateText(credentialRows);
 
   const applyPreset = (preset: McpProviderPreset) => {
     setPresetId(preset.id);
@@ -838,7 +867,8 @@ export function McpProfileCard({
             <p className="text-xs font-medium text-foreground">系统凭据引用</p>
             <p className="mt-0.5 text-[11px] text-muted-foreground">
               API Key 只写入系统凭据管理器；Provider
-              配置只保存引用名、请求头/环境变量名和 Bearer 方案。
+              配置只保存引用名、请求头/环境变量名和 Bearer 方案。 当前状态：
+              {credentialState}。
             </p>
           </div>
           <Button
@@ -939,8 +969,8 @@ export function McpProfileCard({
 
       {diagnosticLines.length > 0 ? (
         <div className="rounded-md border border-border/60 bg-surface-inset/40 px-3 py-2 text-xs text-muted-foreground">
-          {diagnosticLines.map((check) => (
-            <p key={`${provider.id}-${check.label}`}>
+          {diagnosticLines.map((check, index) => (
+            <p key={`${provider.id}-${check.label}-${index}`}>
               {checkLabelText(check.label)}：{checkStatusText(check.status)} ·{" "}
               {check.message}
             </p>

@@ -63,10 +63,13 @@ describe("App shell refactor contract", () => {
     expect(component).toContain("overlays.managementCenterOpen ? (");
     expect(component).toContain("overlays.versionOpen ? (");
     expect(component).toContain("overlays.graphOpen ? (");
-    expect(component).toContain("OverlayLoadingSurface");
-    expect(component).toContain("fallback={<OverlayLoadingSurface");
+    expect(component).toContain("LazyOverlayFallback");
+    expect(component).toContain("<IrisOverlay");
+    expect(component).toContain('size="management"');
+    expect(component).toContain('size="wide"');
+    expect(component).toContain('size="graph"');
     expect(component).not.toContain("fallback={null}");
-    expect(component).not.toContain("LazyFallback");
+    expect(component).not.toContain("OverlayLoadingSurface");
   });
   it("moves editor workspace composition behind a layout component", () => {
     const component = read("src/components/layout/AppEditorWorkspace.tsx");

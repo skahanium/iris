@@ -468,6 +468,14 @@ fn credential_service_from_binding(value: &serde_json::Value) -> AppResult<Optio
     Ok(Some(service.to_string()))
 }
 
+fn credential_binding_optional(value: &serde_json::Value, service: &str) -> bool {
+    value
+        .as_object()
+        .and_then(|object| object.get("optional"))
+        .and_then(|item| item.as_bool())
+        .unwrap_or(matches!(service, "iris.mcp.anysearch" | "iris.mcp.jina"))
+}
+
 fn parse_json_object(
     raw: &str,
     failure_kind: McpRuntimeFailureKind,
@@ -498,10 +506,13 @@ fn legacy_env_bindings(
     }
 }
 
-fn resolve_env_bindings(
-    db: &Database,
+fn resolve_env_bindings_with_lookup<F>(
     env_bindings_json: &str,
-) -> AppResult<Vec<(String, String)>> {
+    mut lookup_credential: F,
+) -> AppResult<Vec<(String, String)>>
+where
+    F: FnMut(&str) -> AppResult<String>,
+{
     let value = parse_json_object(env_bindings_json, McpRuntimeFailureKind::AuthMissing)?;
     let Some(bindings) = object_section(&value, "env").or_else(|| legacy_env_bindings(&value))
     else {
@@ -515,15 +526,28 @@ fn resolve_env_bindings(
                 "MCP env binding omitted named credential service",
             )
         })?;
-        let value = crate::credentials::get_api_key(db, &service).map_err(|_| {
-            runtime_error(
-                McpRuntimeFailureKind::AuthMissing,
-                format!("MCP credential binding is missing: {service}"),
-            )
-        })?;
+        let value = match lookup_credential(&service) {
+            Ok(value) => value,
+            Err(_) if credential_binding_optional(binding, &service) => continue,
+            Err(_) => {
+                return Err(runtime_error(
+                    McpRuntimeFailureKind::AuthMissing,
+                    format!("MCP credential binding is missing: {service}"),
+                ));
+            }
+        };
         env.push((env_name.clone(), value));
     }
     Ok(env)
+}
+
+fn resolve_env_bindings(
+    db: &Database,
+    env_bindings_json: &str,
+) -> AppResult<Vec<(String, String)>> {
+    resolve_env_bindings_with_lookup(env_bindings_json, |service| {
+        crate::credentials::get_api_key(db, service)
+    })
 }
 
 fn resolve_plain_env_bindings(transport_config_json: &str) -> AppResult<Vec<(String, String)>> {
@@ -548,10 +572,13 @@ fn resolve_plain_env_bindings(transport_config_json: &str) -> AppResult<Vec<(Str
     Ok(env)
 }
 
-fn resolve_http_header_bindings(
-    db: &Database,
+fn resolve_http_header_bindings_with_lookup<F>(
     credential_refs_json: &str,
-) -> AppResult<Vec<(String, String)>> {
+    mut lookup_credential: F,
+) -> AppResult<Vec<(String, String)>>
+where
+    F: FnMut(&str) -> AppResult<String>,
+{
     let value = parse_json_object(credential_refs_json, McpRuntimeFailureKind::AuthMissing)?;
     let Some(bindings) = object_section(&value, "headers") else {
         return Ok(Vec::new());
@@ -564,12 +591,16 @@ fn resolve_http_header_bindings(
                 "MCP HTTP header binding omitted named credential service",
             )
         })?;
-        let mut value = crate::credentials::get_api_key(db, &service).map_err(|_| {
-            runtime_error(
-                McpRuntimeFailureKind::AuthMissing,
-                format!("MCP credential binding is missing: {service}"),
-            )
-        })?;
+        let mut value = match lookup_credential(&service) {
+            Ok(value) => value,
+            Err(_) if credential_binding_optional(binding, &service) => continue,
+            Err(_) => {
+                return Err(runtime_error(
+                    McpRuntimeFailureKind::AuthMissing,
+                    format!("MCP credential binding is missing: {service}"),
+                ));
+            }
+        };
         let scheme = binding
             .as_object()
             .and_then(|object| object.get("scheme"))
@@ -586,6 +617,15 @@ fn resolve_http_header_bindings(
         headers.push((header_name.clone(), value));
     }
     Ok(headers)
+}
+
+fn resolve_http_header_bindings(
+    db: &Database,
+    credential_refs_json: &str,
+) -> AppResult<Vec<(String, String)>> {
+    resolve_http_header_bindings_with_lookup(credential_refs_json, |service| {
+        crate::credentials::get_api_key(db, service)
+    })
 }
 
 fn load_remote_provider(db: &Database, provider_id: &str) -> AppResult<StoredRemoteProvider> {
@@ -1466,6 +1506,9 @@ pub async fn discover_provider_tools(
 #[cfg(test)]
 mod tests {
     use super::*;
+    fn missing_test_credential(_service: &str) -> AppResult<String> {
+        Err(AppError::msg("missing test credential"))
+    }
 
     #[test]
     fn http_runtime_url_requires_https_for_remote_hosts() {
@@ -1516,33 +1559,85 @@ mod tests {
 
     #[test]
     fn resolves_http_authorization_header_from_credential_ref() {
-        let db = Database::open_in_memory().unwrap();
-        crate::credentials::set_api_key(&db, "iris.mcp.anysearch", "test-anysearch-key").unwrap();
-
-        let headers = resolve_http_header_bindings(
-            &db,
-            r#"{"headers":{"Authorization":{"scheme":"bearer","credential":"credential://iris.mcp.anysearch"}}}"#,
+        let headers = resolve_http_header_bindings_with_lookup(
+            r#"{"headers":{"Authorization":{"scheme":"bearer","credential":"credential://iris.mcp.codex_header_present"}}}"#,
+            |service| match service {
+                "iris.mcp.codex_header_present" => Ok("test-header-key".into()),
+                _ => missing_test_credential(service),
+            },
         )
         .unwrap();
 
         assert_eq!(
             headers,
-            vec![("Authorization".into(), "Bearer test-anysearch-key".into())]
+            vec![("Authorization".into(), "Bearer test-header-key".into())]
         );
-        crate::credentials::delete_api_key(&db, "iris.mcp.anysearch").unwrap();
+    }
+
+    #[test]
+    fn optional_http_authorization_header_is_skipped_when_key_is_missing() {
+        let headers = resolve_http_header_bindings_with_lookup(
+            r#"{"headers":{"Authorization":{"scheme":"bearer","credential":"credential://iris.mcp.codex_optional_missing","optional":true}}}"#,
+            missing_test_credential,
+        )
+        .unwrap();
+
+        assert!(headers.is_empty(), "{headers:?}");
+    }
+
+    #[test]
+    fn legacy_anysearch_binding_is_classified_as_optional() {
+        let binding = json!({
+            "scheme": "bearer",
+            "credential": "credential://iris.mcp.anysearch"
+        });
+
+        assert!(credential_binding_optional(&binding, "iris.mcp.anysearch"));
+    }
+
+    #[test]
+    fn optional_http_authorization_header_is_used_when_key_is_configured() {
+        let headers = resolve_http_header_bindings_with_lookup(
+            r#"{"headers":{"Authorization":{"scheme":"bearer","credential":"credential://iris.mcp.codex_optional_present","optional":true}}}"#,
+            |service| match service {
+                "iris.mcp.codex_optional_present" => Ok("test-optional-key".into()),
+                _ => missing_test_credential(service),
+            },
+        )
+        .unwrap();
+
+        assert_eq!(
+            headers,
+            vec![("Authorization".into(), "Bearer test-optional-key".into())]
+        );
+    }
+
+    #[test]
+    fn required_http_authorization_header_still_fails_when_key_is_missing() {
+        let service = "iris.mcp.codex_required_missing";
+
+        let err = resolve_http_header_bindings_with_lookup(
+            r#"{"headers":{"Authorization":{"scheme":"bearer","credential":"credential://iris.mcp.codex_required_missing"}}}"#,
+            missing_test_credential,
+        )
+        .unwrap_err()
+        .to_string();
+
+        assert!(err.contains("auth_missing"), "{err}");
+        assert!(err.contains(service), "{err}");
     }
 
     #[test]
     fn resolves_plain_and_secret_stdio_env_without_mixing_values() {
-        let db = Database::open_in_memory().unwrap();
-        crate::credentials::set_api_key(&db, "iris.mcp.brave", "test-brave-key").unwrap();
-
         let plain =
             resolve_plain_env_bindings(r#"{"env":{"SEARXNG_URL":"https://search.example"}}"#)
                 .unwrap();
-        let secret = resolve_env_bindings(
-            &db,
-            r#"{"env":{"BRAVE_API_KEY":"credential://iris.mcp.brave"}}"#,
+        let secret = resolve_env_bindings_with_lookup(
+            r#"{"env":{"BRAVE_API_KEY":"credential://iris.mcp.codex_stdio_present"}}"#,
+            |service| match service {
+                "iris.mcp.codex_stdio_present" => Ok("test-stdio-key".into()),
+                _ => missing_test_credential(service),
+            },
         )
         .unwrap();
 
@@ -1552,9 +1647,19 @@ mod tests {
         );
         assert_eq!(
             secret,
-            vec![("BRAVE_API_KEY".into(), "test-brave-key".into())]
+            vec![("BRAVE_API_KEY".into(), "test-stdio-key".into())]
         );
-        crate::credentials::delete_api_key(&db, "iris.mcp.brave").unwrap();
+    }
+
+    #[test]
+    fn optional_secret_stdio_env_is_skipped_when_key_is_missing() {
+        let env = resolve_env_bindings_with_lookup(
+            r#"{"env":{"OPTIONAL_API_KEY":{"credential":"credential://iris.mcp.codex_optional_env_missing","optional":true}}}"#,
+            missing_test_credential,
+        )
+        .unwrap();
+
+        assert!(env.is_empty(), "{env:?}");
     }
 
     #[test]

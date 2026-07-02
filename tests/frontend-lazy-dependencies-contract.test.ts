@@ -9,6 +9,7 @@ describe("frontend lazy dependency contract", () => {
   it("keeps markdown/highlight/tippy libraries out of eager editor and startup imports", () => {
     const main = read("src/main.tsx");
     const editor = read("src/components/editor/TipTapEditor.tsx");
+    const editorHarness = read("tests/helpers/tiptap-serialize-harness.ts");
     const slash = read(
       "src/components/editor/extensions/SlashCommandExtension.ts",
     );
@@ -27,6 +28,8 @@ describe("frontend lazy dependency contract", () => {
       'import("@tiptap/extension-code-block-lowlight")',
     );
     expect(editor).not.toContain('import("lowlight/core")');
+    expect(editorHarness).not.toContain("CodeBlockLowlight");
+    expect(editorHarness).not.toContain('from "lowlight"');
     expect(slash).not.toContain('from "tippy.js"');
     expect(wiki).not.toContain('from "tippy.js"');
     expect(slash).toContain('import("tippy.js")');
