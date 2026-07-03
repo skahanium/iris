@@ -3,6 +3,7 @@ use crate::ai_runtime::{skills::SkillScopeRule, AiScene};
 use crate::ai_types::{SkillActivationItemSummary, SkillActivationPlanSummary};
 use crate::app::AppState;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 fn test_state() -> (Arc<AppState>, tempfile::TempDir) {
     let dir = tempfile::tempdir().unwrap();
@@ -87,6 +88,26 @@ fn dispatch_context_with_plan<'a>(
         skill_activation_plan: plan,
         embedding_state: None,
     }
+}
+
+#[test]
+fn timeout_result_has_retryable_structured_error_shape() {
+    let result = timeout_tool_result("web_search", Instant::now(), Duration::from_secs(30));
+
+    assert!(!result.success);
+    assert_eq!(result.tool_name, "web_search");
+    assert_eq!(result.output["error"], "tool_dispatch_timeout");
+    assert_eq!(result.output["failure_class"], "timeout");
+    assert!(result.output["message"]
+        .as_str()
+        .unwrap_or("")
+        .contains("web_search timed out after 30s"));
+    assert!(result
+        .error
+        .as_deref()
+        .unwrap_or("")
+        .contains("tool_dispatch_timeout: web_search timed out after 30s"));
+    assert!(is_retryable_tool_error("web_search", &result));
 }
 
 #[tokio::test]

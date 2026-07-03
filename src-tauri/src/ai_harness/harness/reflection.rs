@@ -69,6 +69,7 @@ pub(crate) async fn run_reflection_round(
         messages: messages.clone(),
         tools: vec![],
         max_tokens,
+        input_token_budget: input.input_budget,
         temperature: Some(0.5),
         stream: true,
         thinking,

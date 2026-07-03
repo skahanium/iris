@@ -39,7 +39,8 @@ use crate::ai_runtime::tool_execution_pipeline::{
 };
 use crate::ai_runtime::tool_executor::ToolRegistry;
 use crate::ai_runtime::tool_fallback::{
-    parse_tool_calls_from_content, should_retry_tool_parse, strip_tool_markup_from_visible,
+    parse_tool_call_arguments, parse_tool_calls_from_content, should_retry_tool_parse,
+    strip_tool_markup_from_visible,
 };
 use crate::ai_runtime::tool_policy::{self, DenialReason, ToolPolicyContext};
 use crate::ai_runtime::ToolCallResult;
@@ -436,6 +437,7 @@ async fn run_harness_inner(
         endpoint_family: Some(provider_config.endpoint_family),
         thinking: Some(thinking_mode),
         output_budget: max_tokens,
+        input_budget: input.input_budget,
         skill_activation_plan: input.skill_activation_plan.clone(),
         task_policy: Some(input.task_policy.clone()),
     };
@@ -483,6 +485,7 @@ async fn run_harness_inner(
                 messages: messages.clone(),
                 tools: llm_tools.clone(),
                 max_tokens,
+                input_token_budget: input.input_budget,
                 temperature: Some(0.7),
                 stream: true,
                 thinking: thinking_mode,
@@ -636,8 +639,14 @@ async fn run_harness_inner(
             let mut policy_denied: Vec<(ToolCall, ToolCallResult)> = Vec::new();
             let mut policy_allowed: Vec<ToolCall> = Vec::new();
             for tc in tool_calls {
-                let args: serde_json::Value =
-                    serde_json::from_str(&tc.function.arguments).unwrap_or_default();
+                let args = match parse_tool_call_arguments(&tc.function.arguments) {
+                    Ok(args) => args,
+                    Err(err) => {
+                        policy_denied
+                            .push((tc.clone(), tool_argument_parse_error_result(&tc, &err)));
+                        continue;
+                    }
+                };
                 let Some(entry) = catalog_find(&tc.function.name) else {
                     let hint = tool_policy::denial_user_message(
                         DenialReason::NotImplemented,
@@ -893,8 +902,20 @@ async fn run_harness_inner(
                     break;
                 }
                 let tool_name = &tool_call.function.name;
-                let args: serde_json::Value =
-                    serde_json::from_str(&tool_call.function.arguments).unwrap_or_default();
+                let args = match parse_tool_call_arguments(&tool_call.function.arguments) {
+                    Ok(args) => args,
+                    Err(err) => {
+                        let result = tool_argument_parse_error_result(tool_call, &err);
+                        push_tool_result_error(
+                            &mut messages,
+                            &mut tool_results_json,
+                            tool_call,
+                            &result,
+                        );
+                        tools_this_round += 1;
+                        continue;
+                    }
+                };
                 let Some(entry) = catalog_find(tool_name) else {
                     push_tool_policy_error(
                         &mut messages,
@@ -1090,6 +1111,7 @@ async fn run_harness_inner(
             messages: build_final_answer_messages(&messages),
             tools: vec![],
             max_tokens,
+            input_token_budget: input.input_budget,
             temperature: Some(0.7),
             stream: true,
             thinking: thinking_mode,
@@ -1172,6 +1194,24 @@ fn abort_if_requested(request_id: &str) -> AppResult<()> {
     Ok(())
 }
 
+fn tool_argument_parse_error_result(tool_call: &ToolCall, parse_error: &str) -> ToolCallResult {
+    ToolCallResult {
+        tool_name: tool_call.function.name.clone(),
+        success: false,
+        output: serde_json::json!({
+            "error": "tool_arguments_parse_error",
+            "failure_class": "parse_error",
+            "message": "tool arguments must be a valid JSON object",
+        }),
+        duration_ms: 0,
+        tokens_used: None,
+        error: Some(format!(
+            "tool_arguments_parse_error: {}: {}",
+            tool_call.function.name, parse_error
+        )),
+    }
+}
+
 fn push_tool_policy_error(
     messages: &mut Vec<LlmMessage>,
     tool_results_json: &mut Vec<serde_json::Value>,
@@ -1217,12 +1257,23 @@ fn push_tool_result_error(
         tool_calls: None,
         ..Default::default()
     });
-    tool_results_json.push(serde_json::json!({
+    let mut entry = serde_json::json!({
         "tool_call_id": tool_call.id,
         "status": "error",
         "error": err,
-        "policy_denied": true,
-    }));
+    });
+    if result
+        .output
+        .get("policy_denied")
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(false)
+    {
+        entry["policy_denied"] = serde_json::Value::Bool(true);
+    }
+    if let Some(failure_class) = result.output.get("failure_class") {
+        entry["failure_class"] = failure_class.clone();
+    }
+    tool_results_json.push(entry);
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1255,11 +1306,17 @@ async fn pause_for_tool_confirmation(
             file_id,
             web_search_enabled: input.web_search_enabled,
             autonomy_level: input.task_policy.autonomy_level,
+            task_policy: input.task_policy.clone(),
+            depth: input.depth,
             skill_activation_plan: input.skill_activation_plan.clone(),
         },
     );
-    let args = serde_json::from_str::<serde_json::Value>(&tool_call.function.arguments)
-        .unwrap_or_default();
+    let args = parse_tool_call_arguments(&tool_call.function.arguments).map_err(|err| {
+        AppError::msg(format!(
+            "tool_arguments_parse_error: {}: {}",
+            tool_call.function.name, err
+        ))
+    })?;
     let permission_effects = catalog_find(tool_name)
         .map(|entry| preflight_tool_permission(entry, &args, None).effects)
         .unwrap_or_default();
@@ -1367,8 +1424,12 @@ async fn run_subagent_harness(
     thinking: bool,
     tool_call: &ToolCall,
 ) -> AppResult<HarnessRunResult> {
-    let args: serde_json::Value =
-        serde_json::from_str(&tool_call.function.arguments).unwrap_or_default();
+    let args = parse_tool_call_arguments(&tool_call.function.arguments).map_err(|err| {
+        AppError::msg(format!(
+            "tool_arguments_parse_error: {}: {}",
+            tool_call.function.name, err
+        ))
+    })?;
     let task = args
         .get("task")
         .and_then(|v| v.as_str())
@@ -1406,6 +1467,7 @@ async fn run_subagent_harness(
         resume_from_checkpoint: false,
         max_rounds_override: Some(sub_rounds.min(parent.task_policy.max_agentic_rounds)),
         token_budget: Some(sub_budget),
+        input_budget: parent.input_budget,
         skill_activation_plan: parent.skill_activation_plan.clone(),
         task_policy: parent.task_policy.clone(),
     };
@@ -1471,6 +1533,31 @@ mod tests {
             tool_calls: Some(calls),
             ..Default::default()
         }]
+    }
+
+    #[test]
+    fn tool_argument_parse_error_result_is_structured_and_not_policy_denied() {
+        let tool_call = ToolCall {
+            id: "call-bad-json".into(),
+            call_type: "function".into(),
+            function: crate::ai_runtime::model_gateway::FunctionCall {
+                name: "web_search".into(),
+                arguments: r#"{"query":"x""#.into(),
+            },
+        };
+
+        let result = tool_argument_parse_error_result(&tool_call, "expected eof");
+
+        assert!(!result.success);
+        assert_eq!(result.output["error"], "tool_arguments_parse_error");
+        assert_eq!(result.output["failure_class"], "parse_error");
+        assert_eq!(result.output.get("policy_denied"), None);
+        assert!(result
+            .error
+            .as_deref()
+            .unwrap_or("")
+            .contains("tool_arguments_parse_error: web_search"));
+        assert!(!result.error.as_deref().unwrap_or("").contains(r#"{"query"#));
     }
 
     #[test]

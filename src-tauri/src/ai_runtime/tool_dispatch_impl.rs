@@ -1,7 +1,7 @@
 use crate::ai_runtime::ToolCallResult;
 use crate::app::AppState;
 use crate::error::{AppError, AppResult};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 #[path = "tool_dispatch/boundary.rs"]
 mod boundary_impl;
 #[path = "tool_dispatch/context.rs"]
@@ -47,6 +47,28 @@ pub fn is_exposable_tool(name: &str) -> bool {
     })
 }
 
+const DEFAULT_TOOL_DISPATCH_TIMEOUT: Duration = Duration::from_secs(30);
+
+fn tool_dispatch_timeout() -> Duration {
+    DEFAULT_TOOL_DISPATCH_TIMEOUT
+}
+
+fn timeout_tool_result(tool_name: &str, start: Instant, timeout: Duration) -> ToolCallResult {
+    let timeout_message = format!("{tool_name} timed out after {}s", timeout.as_secs());
+    ToolCallResult {
+        tool_name: tool_name.to_string(),
+        success: false,
+        output: serde_json::json!({
+            "error": "tool_dispatch_timeout",
+            "failure_class": "timeout",
+            "message": format!("tool {timeout_message}"),
+        }),
+        duration_ms: start.elapsed().as_millis() as u64,
+        tokens_used: None,
+        error: Some(format!("tool_dispatch_timeout: {timeout_message}")),
+    }
+}
+
 fn is_retryable_tool_error(tool_name: &str, result: &ToolCallResult) -> bool {
     if result.success {
         return false;
@@ -78,7 +100,13 @@ pub async fn dispatch_tool(
     args: &serde_json::Value,
 ) -> ToolCallResult {
     let start = Instant::now();
-    let result = dispatch_tool_inner(state, ctx, tool_name, args).await;
+    let timeout = tool_dispatch_timeout();
+    let result =
+        match tokio::time::timeout(timeout, dispatch_tool_inner(state, ctx, tool_name, args)).await
+        {
+            Ok(result) => result,
+            Err(_) => return timeout_tool_result(tool_name, start, timeout),
+        };
     let duration_ms = start.elapsed().as_millis() as u64;
     match result {
         Ok(output) => ToolCallResult {

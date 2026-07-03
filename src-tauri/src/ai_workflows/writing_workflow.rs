@@ -287,6 +287,7 @@ pub async fn generate_replacement_with_llm(
         ],
         tools: vec![],
         max_tokens: Some(2048),
+        input_token_budget: None,
         temperature: Some(0.4),
         stream: false,
         thinking: false,

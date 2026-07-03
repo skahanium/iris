@@ -109,6 +109,7 @@ fn bench_llm_message_serialization(c: &mut Criterion) {
         messages,
         tools: vec![sample_tool_def()],
         max_tokens: Some(1024),
+        input_token_budget: None,
         temperature: Some(0.2),
         stream: true,
         thinking: false,

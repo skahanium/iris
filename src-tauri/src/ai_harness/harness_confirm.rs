@@ -223,6 +223,7 @@ pub async fn resume_harness_after_tool_confirm(
             depth: cp.meta.depth,
             resume_from_checkpoint: true,
             token_budget: None,
+            input_budget: cp.meta.input_budget,
             max_rounds_override: None,
             skill_activation_plan: cp.meta.skill_activation_plan.clone(),
             task_policy: cp.meta.task_policy.clone().unwrap_or_else(|| {
@@ -284,6 +285,16 @@ pub async fn resume_harness_after_tool_confirm_or_restore(
 }
 
 /// Dispatch an approved tool and append its result to checkpoint (does not resume).
+fn policy_ctx_from_pending(pending: &PendingToolCall) -> ToolPolicyContext {
+    ToolPolicyContext {
+        task_policy: Some(pending.task_policy.clone()),
+        scene: pending.scene,
+        autonomy_level: pending.autonomy_level,
+        web_search_enabled: pending.web_search_enabled,
+        depth: pending.depth,
+    }
+}
+
 pub async fn dispatch_approved_tool_to_checkpoint(
     state: &Arc<AppState>,
     app_handle: &AppHandle,
@@ -291,13 +302,7 @@ pub async fn dispatch_approved_tool_to_checkpoint(
     tool_call_id: &str,
     args: &serde_json::Value,
 ) -> AppResult<()> {
-    let policy_ctx = crate::ai_runtime::tool_policy::ToolPolicyContext {
-        task_policy: None,
-        scene: pending.scene,
-        autonomy_level: pending.autonomy_level,
-        web_search_enabled: pending.web_search_enabled,
-        depth: 0,
-    };
+    let policy_ctx = policy_ctx_from_pending(pending);
 
     let Some(entry) = crate::ai_runtime::tool_catalog::catalog_find(&pending.tool_name) else {
         let payload = serde_json::json!({
@@ -464,4 +469,49 @@ fn checkpoint_tool_name<'a>(cp: &'a HarnessCheckpoint, tool_call_id: &str) -> Op
                 .find(|call| call.id == tool_call_id)
                 .map(|call| call.function.name.as_str())
         })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::policy_ctx_from_pending;
+    use crate::ai_runtime::agent_task::AgentTaskKind;
+    use crate::ai_runtime::agent_task_policy::{
+        AgentTaskPolicy, AgentTaskPolicyInput, AgentTaskScope,
+    };
+    use crate::ai_runtime::AgentIntent;
+    use crate::ai_types::{AiScene, AutonomyLevel};
+    use crate::app::PendingToolCall;
+
+    #[test]
+    fn confirmed_tool_policy_context_preserves_original_task_policy_and_depth() {
+        let task_policy = AgentTaskPolicy::from_input(AgentTaskPolicyInput {
+            intent: AgentIntent::Write,
+            task_kind: AgentTaskKind::Lightweight,
+            scope: AgentTaskScope::Selection,
+            web_authorized: true,
+            has_attachments: false,
+            write_permission_required: true,
+            research_depth: 1,
+        });
+        let pending = PendingToolCall {
+            tool_name: "replace_selection".into(),
+            arguments: "{}".into(),
+            request_id: "req-policy".into(),
+            scene: AiScene::KnowledgeLookup,
+            note_path: Some("notes/a.md".into()),
+            file_id: Some(7),
+            web_search_enabled: true,
+            autonomy_level: AutonomyLevel::L2,
+            task_policy: task_policy.clone(),
+            depth: 2,
+            skill_activation_plan: None,
+        };
+
+        let ctx = policy_ctx_from_pending(&pending);
+
+        assert_eq!(ctx.task_policy.as_ref(), Some(&task_policy));
+        assert_eq!(ctx.depth, 2);
+        assert_eq!(ctx.scene, AiScene::KnowledgeLookup);
+        assert!(ctx.web_search_enabled);
+    }
 }

@@ -30,6 +30,7 @@ pub struct GatewayRequest {
     pub messages: Vec<LlmMessage>,
     pub tools: Vec<LlmToolDef>,
     pub max_tokens: Option<u32>,
+    pub input_token_budget: Option<u32>,
     pub temperature: Option<f64>,
     pub stream: bool,
     /// When true, send provider thinking-mode parameters (DeepSeek-compatible).
@@ -68,6 +69,7 @@ pub(super) fn build_llm_api_body(request: &GatewayRequest) -> AppResult<serde_js
             ));
         }
     }
+    enforce_input_token_budget(&messages, &request.tools, request.input_token_budget)?;
     let mut req = request.clone();
     req.messages = messages;
     Ok(match req.provider.endpoint_family {
@@ -76,6 +78,66 @@ pub(super) fn build_llm_api_body(request: &GatewayRequest) -> AppResult<serde_js
         }
         EndpointFamily::AnthropicMessages => build_anthropic_messages_body_inner(&req),
     })
+}
+
+fn enforce_input_token_budget(
+    messages: &[LlmMessage],
+    tools: &[LlmToolDef],
+    input_token_budget: Option<u32>,
+) -> AppResult<()> {
+    let Some(limit) = input_token_budget else {
+        return Ok(());
+    };
+    let estimated = estimate_gateway_input_tokens(messages, tools);
+    if estimated > limit {
+        return Err(AppError::msg(format!(
+            "llm_input_context_overflow: estimated input tokens {estimated} exceed model input budget {limit}; reduce context or history before retrying"
+        )));
+    }
+    Ok(())
+}
+
+fn estimate_gateway_input_tokens(messages: &[LlmMessage], tools: &[LlmToolDef]) -> u32 {
+    let message_tokens = messages
+        .iter()
+        .map(estimate_message_input_tokens)
+        .fold(0u32, u32::saturating_add);
+    let tool_tokens = if tools.is_empty() {
+        0
+    } else {
+        estimate_text_tokens(&serde_json::to_string(tools).unwrap_or_default())
+    };
+    message_tokens.saturating_add(tool_tokens)
+}
+
+fn estimate_message_input_tokens(message: &LlmMessage) -> u32 {
+    let mut tokens = 4u32;
+    tokens = tokens.saturating_add(estimate_text_tokens(&message.content.text_content()));
+    if let Some(tool_call_id) = &message.tool_call_id {
+        tokens = tokens.saturating_add(estimate_text_tokens(tool_call_id));
+    }
+    if let Some(tool_calls) = &message.tool_calls {
+        tokens = tokens.saturating_add(estimate_text_tokens(
+            &serde_json::to_string(tool_calls).unwrap_or_default(),
+        ));
+    }
+    if let Some(reasoning) = &message.reasoning_content {
+        tokens = tokens.saturating_add(estimate_text_tokens(reasoning));
+    }
+    tokens
+}
+
+fn estimate_text_tokens(text: &str) -> u32 {
+    if text.is_empty() {
+        return 0;
+    }
+    let chars = text.chars().count() as u32;
+    let cjk = text
+        .chars()
+        .filter(|ch| matches!(*ch as u32, 0x4E00..=0x9FFF | 0x3400..=0x4DBF | 0x3040..=0x30FF | 0xAC00..=0xD7AF))
+        .count() as u32;
+    let non_cjk = chars.saturating_sub(cjk);
+    cjk.saturating_add(non_cjk.div_ceil(4)).max(1)
 }
 
 fn build_chat_completions_body_inner(request: &GatewayRequest) -> serde_json::Value {
@@ -229,6 +291,7 @@ mod phase3_adapter_contract_tests {
                 },
             }],
             max_tokens: Some(8),
+            input_token_budget: None,
             temperature: Some(0.2),
             stream: false,
             thinking: false,
@@ -263,6 +326,18 @@ mod phase3_adapter_contract_tests {
     }
 
     #[test]
+    fn build_llm_api_body_rejects_input_budget_overflow_before_provider_call() {
+        let mut request = request_for(EndpointFamily::OpenAiCompatibleChatCompletions);
+        request.input_token_budget = Some(8);
+        request.messages[0].content = "x".repeat(200).into();
+
+        let err = build_llm_api_body(&request).unwrap_err().to_string();
+
+        assert!(err.contains("llm_input_context_overflow"));
+        assert!(!err.contains(&"x".repeat(32)));
+    }
+
+    #[test]
     fn anthropic_body_converts_image_url_to_image_source_block() {
         use crate::ai_types::{ContentPart, ImageUrlPayload, MessageContent};
 
@@ -294,6 +369,7 @@ mod phase3_adapter_contract_tests {
             }],
             tools: vec![],
             max_tokens: Some(100),
+            input_token_budget: None,
             temperature: None,
             stream: false,
             thinking: false,

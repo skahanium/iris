@@ -580,6 +580,7 @@ async fn run_classified_chat_task(
                 ],
                 tools: Vec::new(),
                 max_tokens: Some(route.resolved.output_budget),
+                input_token_budget: Some(route.resolved.input_budget.min(u32::MAX as usize) as u32),
                 temperature: Some(0.2),
                 stream: true,
                 thinking: route.resolved.thinking,

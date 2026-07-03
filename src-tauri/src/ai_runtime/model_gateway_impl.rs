@@ -7,7 +7,6 @@ use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use tauri::AppHandle;
-
 #[path = "model_gateway/abort.rs"]
 mod abort_impl;
 #[path = "model_gateway/anthropic_response.rs"]
@@ -625,6 +624,7 @@ mod tests {
             messages,
             tools: vec![],
             max_tokens: Some(1024),
+            input_token_budget: None,
             temperature: Some(0.7),
             stream: false,
             thinking: true,

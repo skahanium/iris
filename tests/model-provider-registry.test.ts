@@ -146,6 +146,25 @@ describe("model provider registry contract", () => {
     expect(section).not.toContain("routeModelsForProvider(providerId)");
   });
 
+  it("supports deleting unused custom providers through typed IPC", () => {
+    const section = read("src/components/settings/LlmRoutingSection.tsx");
+    const ipc = read("src/lib/ipc.ts");
+    const rust = read("src-tauri/src/commands/llm_config_commands.rs");
+    const lib = read("src-tauri/src/lib.rs");
+
+    expect(ipc).toContain("llmConfigDeleteProvider");
+    expect(ipc).toContain("llm_config_delete_provider");
+    expect(section).toContain("llmConfigDeleteProvider");
+    expect(section).toContain("deleteProvider");
+    expect(section).toContain("isCustomProviderId(provider.id)");
+    expect(section).toContain("provider.usedSlots.length > 0");
+    expect(section).toContain("confirm(");
+    expect(rust).toContain("llm_config_delete_provider");
+    expect(rust).toContain("delete_provider_inner");
+    expect(rust).toContain("model_registry::delete_provider_entries");
+    expect(lib).toContain("llm_config_delete_provider");
+  });
+
   it("treats provider model lists as advisory during validation", () => {
     const rust = read("src-tauri/src/commands/llm_config_commands.rs");
 

@@ -1118,6 +1118,7 @@ pub(crate) async fn execute_ai_send_message_with_routing(
             depth: 0,
             resume_from_checkpoint: false,
             token_budget: None,
+            input_budget: Some(resolved.input_budget.min(u32::MAX as usize) as u32),
             max_rounds_override: None,
             skill_activation_plan,
             task_policy: task_policy.clone(),
@@ -1298,7 +1299,7 @@ fn finalize_chat_harness_run(
         } else {
             Some(serde_json::to_value(&harness_result.evidence_packets).unwrap_or_default())
         };
-    SessionManager::append_message_with_evidence_packets(
+    let assistant_message_row_id = SessionManager::append_message_with_evidence_packets(
         &state.db,
         session_id,
         "assistant",
@@ -1307,6 +1308,21 @@ fn finalize_chat_harness_run(
         tool_calls_value.as_ref(),
         evidence_packets_value.as_ref(),
     )?;
+
+    if !harness_result.evidence_packets.is_empty() {
+        let assistant_message_seq = state.db.with_conn(|conn| {
+            Ok(conn.query_row(
+                "SELECT seq FROM session_messages WHERE id = ?1 AND session_id = ?2",
+                rusqlite::params![assistant_message_row_id, session_id],
+                |row| row.get::<_, i64>(0),
+            )?)
+        })?;
+        let register_packets =
+            register_packets_from_context_packets(&harness_result.evidence_packets);
+        state.db.with_conn(|conn| {
+            register_session_evidence(conn, session_id, assistant_message_seq, &register_packets)
+        })?;
+    }
 
     if harness_result.usage.prompt_cache_hit_tokens > 0
         || harness_result.usage.prompt_cache_miss_tokens > 0
@@ -1429,6 +1445,23 @@ fn sync_agent_task_after_harness(
     AgentTaskRuntime::complete_task(&state.db, &task_id)
 }
 
+fn parse_confirmed_tool_args(
+    pending_arguments: &str,
+    modified_args: Option<serde_json::Value>,
+) -> AppResult<serde_json::Value> {
+    if let Some(args) = modified_args {
+        return if args.is_object() {
+            Ok(args)
+        } else {
+            Err(AppError::msg(
+                "tool_arguments_parse_error: tool arguments must be a valid JSON object",
+            ))
+        };
+    }
+    crate::ai_runtime::tool_fallback::parse_tool_call_arguments(pending_arguments)
+        .map_err(|err| AppError::msg(format!("tool_arguments_parse_error: {err}")))
+}
+
 /// Handle tool confirmation from the user.
 #[tauri::command]
 pub async fn tool_confirm(
@@ -1471,11 +1504,7 @@ pub async fn tool_confirm(
         )));
     };
 
-    let args: serde_json::Value = if let Some(args) = modified_args {
-        args
-    } else {
-        serde_json::from_str(&pending.arguments).unwrap_or_default()
-    };
+    let args = parse_confirmed_tool_args(&pending.arguments, modified_args)?;
 
     dispatch_approved_tool_to_checkpoint(
         state.inner(),
@@ -2376,6 +2405,15 @@ async fn provider_diagnostics_for_summary(
                         match run_mcp_search_smoke_test(db, provider).await {
                             Ok((parsed_row_count, diagnostic)) => {
                                 let parseable = parsed_row_count > 0;
+                                let auth_header_reported =
+                                    diagnostic.contains("auth header present");
+                                checks.push(provider_diagnostic_check(
+                                    "searchSmokeAuthHeader",
+                                    auth_header_reported,
+                                    &format!(
+                                        "MCP search probe reported auth header present state: {auth_header_reported}"
+                                    ),
+                                ));
                                 checks.push(provider_diagnostic_check(
                                     "searchSmokeLive",
                                     true,
@@ -2910,7 +2948,108 @@ pub async fn classified_ai_retrieval_clear() -> AppResult<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::{partial_tool_confirm_response, validate_ai_note_path};
+    use super::{
+        finalize_chat_harness_run, parse_confirmed_tool_args, partial_tool_confirm_response,
+        validate_ai_note_path,
+    };
+
+    #[test]
+    fn finalize_chat_harness_run_registers_evidence_packets_in_ledger() {
+        use crate::ai_runtime::harness::{HarnessFinishReason, HarnessRunResult, UsageSource};
+        use crate::ai_runtime::model_gateway::TokenUsage;
+        use crate::ai_runtime::session::SessionManager;
+        use crate::ai_runtime::session_evidence::list_session_evidence;
+        use crate::ai_runtime::trace::TraceRecorder;
+        use crate::ai_runtime::{
+            AiScene, ContextPacket, SourceSpan, SourceType, TrustLevel, WebEvidenceMeta,
+            WebSearchBackend, WebSourceRank,
+        };
+        use crate::app::AppState;
+
+        let dir = tempfile::tempdir().unwrap();
+        let state = AppState::new(dir.path().to_path_buf()).unwrap();
+        let session_id =
+            SessionManager::create_fresh(&state.db, AiScene::KnowledgeLookup, None).unwrap();
+        let request_id = "finalize-evidence-ledger";
+        TraceRecorder::start(&state.db, request_id, AiScene::KnowledgeLookup).unwrap();
+
+        let packet = ContextPacket {
+            id: "web-packet-1".into(),
+            source_type: SourceType::Web,
+            source_path: Some("https://example.com/source".into()),
+            title: "Example source".into(),
+            heading_path: Some("Section".into()),
+            source_span: Some(SourceSpan { start: 7, end: 42 }),
+            content_hash: "hash-web-1".into(),
+            excerpt: "body must stay out of the evidence ledger".into(),
+            retrieval_reason: "web search".into(),
+            score: 0.91,
+            trust_level: TrustLevel::ExternalWeb,
+            citation_label: "[C?]".into(),
+            stale: false,
+            web: Some(WebEvidenceMeta {
+                url: Some("https://example.com/source".into()),
+                domain: Some("example.com".into()),
+                published_at: None,
+                fetched_at: "2026-07-03T00:00:00Z".into(),
+                search_backend: WebSearchBackend::Provider,
+                source_rank: WebSourceRank::Official,
+                provider_id: Some("provider-a".into()),
+                provider_kind: Some("search".into()),
+                raw_result_hash: Some("raw-hash".into()),
+                extraction_method: Some("html".into()),
+                conflict_group: None,
+                conflict_note: None,
+                failure_reason: None,
+                fallback_from: None,
+            }),
+            corpus: None,
+        };
+
+        let result = HarnessRunResult {
+            request_id: request_id.into(),
+            session_id,
+            content: "answer with evidence".into(),
+            tool_calls: Vec::new(),
+            tool_results: Vec::new(),
+            usage: TokenUsage::default(),
+            citation_valid: true,
+            harness_rounds: 1,
+            pending_confirmation: false,
+            evidence_packets: vec![packet.clone()],
+            usage_source: UsageSource::Estimated,
+            finish_reason: HarnessFinishReason::Completed,
+            deliberation_state: None,
+            verification_summary: None,
+        };
+
+        finalize_chat_harness_run(
+            &state,
+            request_id,
+            session_id,
+            crate::ai_types::CapabilitySlot::Fast,
+            "test-provider",
+            &result,
+            &[],
+        )
+        .unwrap();
+
+        let messages = SessionManager::recent_messages(&state.db, session_id, 10).unwrap();
+        let assistant_seq = messages
+            .iter()
+            .find(|message| message.role == "assistant")
+            .expect("assistant message should be persisted")
+            .seq;
+        let evidence = state
+            .db
+            .with_conn(|conn| list_session_evidence(conn, session_id))
+            .unwrap();
+
+        assert_eq!(evidence.len(), 1);
+        assert_eq!(evidence[0].message_seq_first, assistant_seq);
+        assert_eq!(evidence[0].title, "Example source");
+        assert_eq!(evidence[0].domain.as_deref(), Some("example.com"));
+    }
 
     #[test]
     fn ai_note_path_rejects_classified_notes() {
@@ -2923,6 +3062,19 @@ mod tests {
         assert!(validate_ai_note_path(Some("notes/open.md")).is_ok());
         assert!(validate_ai_note_path(None).is_ok());
     }
+    #[test]
+    fn parse_confirmed_tool_args_rejects_invalid_pending_json() {
+        let err = parse_confirmed_tool_args(r#"{"query":"x""#, None).unwrap_err();
+        assert!(err.to_string().contains("tool_arguments_parse_error"));
+        assert!(!err.to_string().contains(r#"{"query"#));
+    }
+
+    #[test]
+    fn parse_confirmed_tool_args_requires_modified_args_object() {
+        let err = parse_confirmed_tool_args("{}", Some(serde_json::json!(["bad"]))).unwrap_err();
+        assert!(err.to_string().contains("tool_arguments_parse_error"));
+    }
+
     #[test]
     fn partial_tool_confirm_response_has_structured_outcomes() {
         use crate::ai_harness::harness_support::{
@@ -2959,6 +3111,7 @@ mod tests {
                     endpoint_family: None,
                     thinking: None,
                     output_budget: None,
+                    input_budget: None,
                     skill_activation_plan: None,
                     task_policy: None,
                 },

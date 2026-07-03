@@ -3,6 +3,8 @@ export function isUnrecoverableResumeError(message: string | null): boolean {
   const lower = message.toLowerCase();
   return (
     lower.includes("resume_preflight_failed") ||
+    lower.includes("checkpoint_missing") ||
+    lower.includes("未找到可恢复") ||
     lower.includes("vault scope changed") ||
     lower.includes("note path unavailable")
   );

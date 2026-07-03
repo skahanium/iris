@@ -91,23 +91,65 @@ impl ConversationMemory {
             content_hash: content_hash_str(&hash_input),
             goal_summary: extract_summary(
                 summarized,
-                &["目标:", "目标：", "goal:", "Goal:"],
-                "目标",
+                &["goal:", "Goal:"],
+                &[
+                    "goal",
+                    "want",
+                    "need",
+                    "plan",
+                    "\u{60f3}",
+                    "\u{5e0c}\u{671b}",
+                    "\u{9700}\u{8981}",
+                ],
+                "goal",
+                SummaryFallback::Goal,
             ),
             preference_summary: extract_summary(
                 summarized,
-                &["偏好:", "偏好：", "prefer:", "Preference:"],
-                "偏好",
+                &["prefer:", "Preference:"],
+                &[
+                    "prefer",
+                    "style",
+                    "avoid",
+                    "like",
+                    "\u{504f}\u{597d}",
+                    "\u{559c}\u{6b22}",
+                    "\u{4e0d}\u{8981}",
+                ],
+                "preference",
+                SummaryFallback::Optional,
             ),
             decision_summary: extract_summary(
                 summarized,
-                &["决定:", "决定：", "decision:", "Decision:"],
-                "决策",
+                &["decision:", "Decision:"],
+                &[
+                    "decision",
+                    "decided",
+                    "choose",
+                    "use ",
+                    "confirmed",
+                    "\u{51b3}\u{5b9a}",
+                    "\u{9009}\u{62e9}",
+                    "\u{91c7}\u{7528}",
+                ],
+                "decision",
+                SummaryFallback::Optional,
             ),
             open_threads_summary: extract_summary(
                 summarized,
-                &["开放问题:", "开放问题：", "待办:", "待办：", "open:"],
-                "待处理事项",
+                &["open:"],
+                &[
+                    "open",
+                    "todo",
+                    "next",
+                    "follow up",
+                    "question",
+                    "\u{5f85}\u{529e}",
+                    "\u{4e0b}\u{4e00}\u{6b65}",
+                    "\u{95ee}\u{9898}",
+                ],
+                "open",
+                SummaryFallback::Optional,
             ),
         };
         upsert_memory(db, memory)?;
@@ -270,7 +312,19 @@ fn upsert_memory(db: &Database, draft: MemoryDraft) -> AppResult<()> {
     })
 }
 
-fn extract_summary(messages: &[MemoryMessage], markers: &[&str], fallback_label: &str) -> String {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SummaryFallback {
+    Goal,
+    Optional,
+}
+
+fn extract_summary(
+    messages: &[MemoryMessage],
+    markers: &[&str],
+    hints: &[&str],
+    fallback_label: &str,
+    fallback: SummaryFallback,
+) -> String {
     for message in messages {
         for marker in markers {
             if let Some(summary) = extract_after_marker(&message.content, marker) {
@@ -278,12 +332,55 @@ fn extract_summary(messages: &[MemoryMessage], markers: &[&str], fallback_label:
             }
         }
     }
-    let fallback = messages
+    if let Some(summary) = extract_by_hints(messages, hints, fallback_label) {
+        return summary;
+    }
+    match fallback {
+        SummaryFallback::Goal => fallback_goal_summary(messages, fallback_label),
+        SummaryFallback::Optional => not_recorded(),
+    }
+}
+
+fn extract_by_hints(
+    messages: &[MemoryMessage],
+    hints: &[&str],
+    fallback_label: &str,
+) -> Option<String> {
+    messages
         .iter()
+        .find(|msg| !msg.content.trim().is_empty() && contains_any_hint(&msg.content, hints))
+        .map(|msg| bounded_summary(&format!("{fallback_label}: {}", msg.content.trim())))
+}
+
+fn contains_any_hint(content: &str, hints: &[&str]) -> bool {
+    let lower = content.to_ascii_lowercase();
+    hints.iter().any(|hint| {
+        let hint_lower = hint.to_ascii_lowercase();
+        lower.contains(&hint_lower) || content.contains(hint)
+    })
+}
+
+fn fallback_goal_summary(messages: &[MemoryMessage], fallback_label: &str) -> String {
+    let mut user_messages = messages
+        .iter()
+        .filter(|msg| msg.role == "user" && !msg.content.trim().is_empty());
+    let first = user_messages.next().map(|msg| msg.content.trim());
+    let last = messages
+        .iter()
+        .rev()
         .find(|msg| msg.role == "user" && !msg.content.trim().is_empty())
-        .map(|msg| msg.content.as_str())
-        .unwrap_or("未记录");
-    bounded_summary(&format!("{fallback_label}: {fallback}"))
+        .map(|msg| msg.content.trim());
+    match (first, last) {
+        (Some(first), Some(last)) if first != last => {
+            bounded_summary(&format!("{fallback_label}: {first} / latest: {last}"))
+        }
+        (Some(first), _) => bounded_summary(&format!("{fallback_label}: {first}")),
+        _ => not_recorded(),
+    }
+}
+
+fn not_recorded() -> String {
+    "\u{672a}\u{8bb0}\u{5f55}".to_string()
 }
 
 fn extract_after_marker(content: &str, marker: &str) -> Option<String> {
@@ -322,5 +419,78 @@ fn redact_sensitive(text: &str) -> String {
         "[已省略敏感内容]".to_string()
     } else {
         text.to_string()
+    }
+}
+
+#[cfg(test)]
+mod memory_extraction_tests {
+    use super::{extract_summary, MemoryMessage, SummaryFallback};
+
+    fn msg(seq: i64, role: &str, content: &str) -> MemoryMessage {
+        MemoryMessage {
+            seq,
+            role: role.to_string(),
+            content: content.to_string(),
+            content_hash: None,
+        }
+    }
+
+    #[test]
+    fn natural_language_hints_populate_distinct_memory_fields() {
+        let messages = vec![
+            msg(1, "user", "I want a careful harness repair plan."),
+            msg(2, "user", "Please avoid placeholder fixes."),
+            msg(3, "assistant", "We decided to keep the privacy boundary."),
+            msg(4, "user", "Next check frontend recovery."),
+        ];
+
+        let goal = extract_summary(
+            &messages,
+            &["goal:"],
+            &["want"],
+            "goal",
+            SummaryFallback::Goal,
+        );
+        let preference = extract_summary(
+            &messages,
+            &["prefer:"],
+            &["avoid"],
+            "preference",
+            SummaryFallback::Optional,
+        );
+        let decision = extract_summary(
+            &messages,
+            &["decision:"],
+            &["decided"],
+            "decision",
+            SummaryFallback::Optional,
+        );
+        let open = extract_summary(
+            &messages,
+            &["open:"],
+            &["next"],
+            "open",
+            SummaryFallback::Optional,
+        );
+
+        assert!(goal.contains("careful harness"));
+        assert!(preference.contains("placeholder"));
+        assert!(decision.contains("privacy boundary"));
+        assert!(open.contains("frontend recovery"));
+    }
+
+    #[test]
+    fn optional_memory_fields_do_not_duplicate_first_user_message_without_evidence() {
+        let messages = vec![msg(1, "user", "General chat without preference markers.")];
+
+        let preference = extract_summary(
+            &messages,
+            &["prefer:"],
+            &["nonexistent-hint"],
+            "preference",
+            SummaryFallback::Optional,
+        );
+
+        assert_eq!(preference, "\u{672a}\u{8bb0}\u{5f55}");
     }
 }

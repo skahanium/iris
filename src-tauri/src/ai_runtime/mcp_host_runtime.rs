@@ -3,6 +3,7 @@
 //! This module owns MCP protocol execution. Registry modules store metadata;
 //! this runtime performs bounded stdio handshakes and discovery.
 
+use std::collections::HashMap;
 use std::future::Future;
 use std::net::IpAddr;
 use std::path::PathBuf;
@@ -1101,6 +1102,19 @@ async fn call_http_tool(
     })
     .await
 }
+
+fn build_stdio_child_env<I>(
+    host_env: I,
+    provider_env: &[(String, String)],
+) -> HashMap<String, String>
+where
+    I: IntoIterator<Item = (String, String)>,
+{
+    let mut env: HashMap<String, String> = host_env.into_iter().collect();
+    env.extend(provider_env.iter().cloned());
+    env
+}
+
 async fn discover_stdio_tools_inner(
     launch: McpStdioLaunch,
     env: &[(String, String)],
@@ -1117,8 +1131,8 @@ async fn discover_stdio_tools_inner(
     if let Some(cwd) = &launch.cwd {
         command.current_dir(cwd);
     }
-    command.env_clear();
-    command.envs(env.iter().map(|(key, value)| (key, value)));
+    let child_env = build_stdio_child_env(std::env::vars(), env);
+    command.envs(child_env.iter());
     command.stdin(Stdio::piped());
     command.stdout(Stdio::piped());
     command.stderr(Stdio::piped());
@@ -1245,8 +1259,8 @@ async fn call_stdio_tool(
     if let Some(cwd) = &launch.cwd {
         command.current_dir(cwd);
     }
-    command.env_clear();
-    command.envs(launch.env.iter().map(|(key, value)| (key, value)));
+    let child_env = build_stdio_child_env(std::env::vars(), &launch.env);
+    command.envs(child_env.iter());
     command.stdin(Stdio::piped());
     command.stdout(Stdio::piped());
     command.stderr(Stdio::piped());
@@ -1728,6 +1742,29 @@ mod tests {
         .unwrap();
 
         assert!(env.is_empty(), "{env:?}");
+    }
+
+    #[test]
+    fn stdio_env_inherits_host_env_and_overrides_provider_entries() {
+        let host = vec![
+            ("PATH".to_string(), "/usr/local/bin:/usr/bin".to_string()),
+            ("HOME".to_string(), "/Users/iris".to_string()),
+            ("API_KEY".to_string(), "old".to_string()),
+        ];
+        let provider = vec![
+            ("API_KEY".to_string(), "new".to_string()),
+            ("CUSTOM_FLAG".to_string(), "1".to_string()),
+        ];
+
+        let env = build_stdio_child_env(host, &provider);
+
+        assert_eq!(
+            env.get("PATH").map(String::as_str),
+            Some("/usr/local/bin:/usr/bin")
+        );
+        assert_eq!(env.get("HOME").map(String::as_str), Some("/Users/iris"));
+        assert_eq!(env.get("API_KEY").map(String::as_str), Some("new"));
+        assert_eq!(env.get("CUSTOM_FLAG").map(String::as_str), Some("1"));
     }
 
     #[test]

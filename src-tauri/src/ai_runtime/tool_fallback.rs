@@ -10,7 +10,7 @@ static DSML_INVOKE_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r#"invoke\s+name\s*=\s*"([^"]+)""#).expect("dsml invoke regex"));
 
 static DSML_PARAM_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r#"parameter\s+name\s*=\s*"([^"]+)"[^>]*>([^<]*)"#).expect("dsml param regex")
+    Regex::new(r#"parameter\s+name\s*=\s*"([^"]+)"([^>]*)>([^<]*)"#).expect("dsml param regex")
 });
 
 static DSML_TOOL_CALLS_BLOCK_RE: LazyLock<Regex> = LazyLock::new(|| {
@@ -39,12 +39,13 @@ pub fn parse_dsml_tool_calls(content: &str) -> Vec<ToolCall> {
         let mut args_map = serde_json::Map::new();
         for pcap in DSML_PARAM_RE.captures_iter(block) {
             let key = pcap.get(1).map(|m| m.as_str()).unwrap_or_default();
-            let mut val = pcap.get(2).map(|m| m.as_str()).unwrap_or("").trim();
-            if val.len() >= 2 && val.starts_with('"') && val.ends_with('"') {
-                val = &val[1..val.len() - 1];
-            }
+            let attrs = pcap.get(2).map(|m| m.as_str()).unwrap_or_default();
+            let raw_value = pcap.get(3).map(|m| m.as_str()).unwrap_or_default();
             if !key.is_empty() {
-                args_map.insert(key.to_string(), serde_json::Value::String(val.to_string()));
+                args_map.insert(
+                    key.to_string(),
+                    parse_dsml_parameter_value(attrs, raw_value),
+                );
             }
         }
         let args = if args_map.is_empty() {
@@ -55,6 +56,19 @@ pub fn parse_dsml_tool_calls(content: &str) -> Vec<ToolCall> {
         calls.push(ToolCall::new(format!("dsml_{idx}"), name, args));
     }
     calls
+}
+
+fn parse_dsml_parameter_value(attrs: &str, raw_value: &str) -> serde_json::Value {
+    let trimmed = raw_value.trim();
+    let unquoted = trimmed
+        .strip_prefix('"')
+        .and_then(|value| value.strip_suffix('"'))
+        .unwrap_or(trimmed);
+    if attrs.contains(r#"string="true""#) || attrs.contains("string='true'") {
+        return serde_json::Value::String(unquoted.to_string());
+    }
+    serde_json::from_str::<serde_json::Value>(trimmed)
+        .unwrap_or_else(|_| serde_json::Value::String(unquoted.to_string()))
 }
 
 /// Parse ReAct-style tool invocations from plain assistant text.
@@ -122,16 +136,21 @@ pub fn strip_tool_markup_from_visible(content: &str) -> String {
     }
 }
 
-/// Whether tool call arguments JSON looks truncated / invalid.
-pub fn arguments_look_invalid(arguments: &str) -> bool {
+pub fn parse_tool_call_arguments(arguments: &str) -> Result<serde_json::Value, String> {
     let trimmed = arguments.trim();
     if trimmed.is_empty() {
-        return true;
+        return Err("tool arguments must be a valid JSON object".into());
     }
-    if trimmed.starts_with('{') && !trimmed.ends_with('}') {
-        return true;
+    match serde_json::from_str::<serde_json::Value>(trimmed) {
+        Ok(value @ serde_json::Value::Object(_)) => Ok(value),
+        Ok(_) => Err("tool arguments must be a valid JSON object".into()),
+        Err(err) => Err(format!("tool arguments must be a valid JSON object: {err}")),
     }
-    serde_json::from_str::<serde_json::Value>(trimmed).is_err()
+}
+
+/// Whether tool call arguments JSON looks truncated / invalid.
+pub fn arguments_look_invalid(arguments: &str) -> bool {
+    parse_tool_call_arguments(arguments).is_err()
 }
 
 /// Merge streamed tool-call deltas when the final JSON is invalid (retry signal).
@@ -183,6 +202,22 @@ Action Input: {"query": "x"}
     }
 
     #[test]
+    fn dsml_parameters_preserve_json_value_types() {
+        let text = r#"<｜｜DSML｜｜invoke name="list_vault">
+<｜｜DSML｜｜parameter name="limit">10</｜｜DSML｜｜parameter>
+<｜｜DSML｜｜parameter name="include_archived">false</｜｜DSML｜｜parameter>
+<｜｜DSML｜｜parameter name="query" string="true">"notes"</｜｜DSML｜｜parameter>
+</｜｜DSML｜｜invoke>"#;
+
+        let calls = parse_dsml_tool_calls(text);
+        let args: serde_json::Value = serde_json::from_str(&calls[0].function.arguments).unwrap();
+
+        assert_eq!(args["limit"].as_u64(), Some(10));
+        assert_eq!(args["include_archived"].as_bool(), Some(false));
+        assert_eq!(args["query"].as_str(), Some("notes"));
+    }
+
+    #[test]
     fn strip_dsml_markup() {
         let text = r#"好的，我来查一下。
 <｜｜DSML｜｜tool_calls>
@@ -194,6 +229,15 @@ Action Input: {"query": "x"}
         assert!(visible.contains("好的"));
         assert!(!visible.contains("DSML"));
         assert!(!visible.contains("invoke name"));
+    }
+
+    #[test]
+    fn parse_tool_call_arguments_requires_valid_json_object() {
+        let parsed = parse_tool_call_arguments(r#"{"query":"x"}"#).unwrap();
+        assert_eq!(parsed["query"], "x");
+        assert!(parse_tool_call_arguments(r#"{"query":"x""#).is_err());
+        assert!(parse_tool_call_arguments(r#"["not", "object"]"#).is_err());
+        assert!(parse_tool_call_arguments("").is_err());
     }
 
     #[test]

@@ -145,6 +145,16 @@ where
     })
 }
 
+/// Delete all persisted registry rows for a provider.
+pub fn delete_provider_entries(db: &Database, provider_id: &str) -> AppResult<usize> {
+    db.with_conn(|conn| {
+        Ok(conn.execute(
+            "DELETE FROM llm_model_registry WHERE provider_id = ?1",
+            params![provider_id],
+        )?)
+    })
+}
+
 /// List all model registry entries.
 pub fn list_registry_entries(db: &Database) -> AppResult<Vec<ModelRegistryEntry>> {
     let sql = "SELECT provider_id, model_id, display_name, source, stale,

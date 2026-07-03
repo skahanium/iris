@@ -12,7 +12,8 @@ use crate::llm::engine::truncate_error_text;
 use crate::llm::providers::chat_completions_url;
 use crate::llm::providers::models_probe_url;
 use crate::llm::providers::{
-    is_allowed_provider, list_external_providers_from_routing, requires_api_key,
+    credential_service, is_allowed_provider, is_custom_provider,
+    list_external_providers_from_routing, requires_api_key,
 };
 use crate::llm::{model_catalog, model_registry};
 use serde::{Deserialize, Serialize};
@@ -175,6 +176,51 @@ pub async fn llm_model_validate(
     kind: ModelValidationKind,
 ) -> AppResult<LlmConfigTestResult> {
     llm_model_validate_inner(&state, provider_id, model_id, kind).await
+}
+
+#[tauri::command]
+pub fn llm_config_delete_provider(
+    state: State<'_, Arc<AppState>>,
+    provider_id: String,
+) -> AppResult<LlmRoutingConfig> {
+    delete_provider_inner(&state.db, &provider_id)
+}
+
+fn delete_provider_inner(
+    db: &crate::storage::db::Database,
+    provider_id: &str,
+) -> AppResult<LlmRoutingConfig> {
+    let provider_id = provider_id.trim();
+    if provider_id.is_empty() {
+        return Err(AppError::msg("provider id is required"));
+    }
+    if !is_custom_provider(provider_id) {
+        return Err(AppError::msg("only custom providers can be deleted"));
+    }
+
+    let mut routing = load(db)?;
+    if !routing.providers.contains_key(provider_id) {
+        return Err(AppError::msg(format!("provider not found: {provider_id}")));
+    }
+
+    let used_slots: Vec<String> = routing
+        .slots
+        .iter()
+        .filter(|&(_slot, route)| route.provider_id == provider_id)
+        .map(|(slot, _route)| slot.clone())
+        .collect();
+    if !used_slots.is_empty() {
+        return Err(AppError::msg(format!(
+            "provider is still used by slot(s): {}",
+            used_slots.join(", ")
+        )));
+    }
+
+    routing.providers.remove(provider_id);
+    save(db, &routing)?;
+    model_registry::delete_provider_entries(db, provider_id)?;
+    crate::credentials::delete_api_key(db, &credential_service(provider_id))?;
+    Ok(routing)
 }
 
 #[tauri::command]
@@ -567,6 +613,77 @@ fn validate_provider_base_url(url: &str) -> AppResult<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn seed_custom_provider(db: &crate::storage::db::Database, used: bool) {
+        let mut routing = config::deepseek_defaults();
+        routing.providers.insert(
+            "custom_delete".into(),
+            config::ProviderOverride {
+                base_url: Some("https://example.com/v1".into()),
+                label: Some("Delete me".into()),
+                default_model: Some("model-a".into()),
+                enabled_models: Some(vec!["model-a".into()]),
+            },
+        );
+        if used {
+            routing.slots.insert(
+                "fast".into(),
+                config::SlotRoute {
+                    provider_id: "custom_delete".into(),
+                    model: "model-a".into(),
+                    thinking: false,
+                },
+            );
+        }
+        config::save(db, &routing).unwrap();
+    }
+
+    #[test]
+    fn delete_provider_rejects_builtin_provider() {
+        let db = crate::storage::db::Database::open_in_memory().unwrap();
+        let err = delete_provider_inner(&db, "deepseek").unwrap_err();
+        assert!(err.to_string().contains("custom"));
+    }
+
+    #[test]
+    fn delete_provider_rejects_provider_used_by_slot() {
+        let db = crate::storage::db::Database::open_in_memory().unwrap();
+        seed_custom_provider(&db, true);
+
+        let err = delete_provider_inner(&db, "custom_delete").unwrap_err();
+
+        assert!(err.to_string().contains("fast"));
+        assert!(config::load(&db)
+            .unwrap()
+            .providers
+            .contains_key("custom_delete"));
+    }
+
+    #[test]
+    fn delete_provider_removes_custom_provider_registry_and_credential_marker() {
+        let db = crate::storage::db::Database::open_in_memory().unwrap();
+        seed_custom_provider(&db, false);
+        crate::credentials::mark_api_key_configured(&db, "iris.llm.custom_delete").unwrap();
+        model_registry::upsert_provider_discovered_models(
+            &db,
+            "custom_delete",
+            vec!["model-a".to_string()],
+        )
+        .unwrap();
+
+        let routing = delete_provider_inner(&db, "custom_delete").unwrap();
+
+        assert!(!routing.providers.contains_key("custom_delete"));
+        assert!(!config::load(&db)
+            .unwrap()
+            .providers
+            .contains_key("custom_delete"));
+        assert!(!crate::credentials::api_key_configured(&db, "iris.llm.custom_delete").unwrap());
+        assert!(model_registry::list_registry_entries(&db)
+            .unwrap()
+            .into_iter()
+            .all(|entry| entry.provider_id != "custom_delete"));
+    }
 
     #[test]
     fn model_list_missing_id_is_advisory_and_still_allows_chat_probe() {

@@ -379,6 +379,7 @@ pub async fn generate_chapter_content_with_llm(
         ],
         tools: vec![],
         max_tokens: Some(4096),
+        input_token_budget: None,
         temperature: Some(0.4),
         stream: false,
         thinking: false,

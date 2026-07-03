@@ -483,6 +483,12 @@ export async function llmConfigApplyDeepseekDefaults(): Promise<LlmRoutingConfig
   return invoke<LlmRoutingConfig>("llm_config_apply_deepseek_defaults");
 }
 
+export async function llmConfigDeleteProvider(
+  providerId: string,
+): Promise<LlmRoutingConfig> {
+  return invoke<LlmRoutingConfig>("llm_config_delete_provider", { providerId });
+}
+
 export async function connectivityStatus(
   scene?: string,
 ): Promise<ConnectivityStatus> {

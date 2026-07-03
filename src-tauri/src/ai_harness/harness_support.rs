@@ -19,8 +19,24 @@ pub fn compress_history_messages(history: &[(String, String)]) -> Vec<(String, S
     if history.len() <= HISTORY_SUMMARY_THRESHOLD {
         return history.to_vec();
     }
-    let split = history.len().saturating_sub(MAX_FULL_HISTORY);
-    let (old, recent) = history.split_at(split);
+
+    let mut preserved_system = Vec::new();
+    let mut compressible = Vec::with_capacity(history.len());
+    for (role, content) in history {
+        if role == "system" && content.contains("## ConversationMemory") {
+            preserved_system.push((role.clone(), content.clone()));
+        } else {
+            compressible.push((role.clone(), content.clone()));
+        }
+    }
+
+    if compressible.len() <= HISTORY_SUMMARY_THRESHOLD {
+        preserved_system.extend(compressible);
+        return preserved_system;
+    }
+
+    let split = compressible.len().saturating_sub(MAX_FULL_HISTORY);
+    let (old, recent) = compressible.split_at(split);
     let mut summary_parts = Vec::new();
     for (role, content) in old {
         let snippet: String = content.chars().take(80).collect();
@@ -29,10 +45,20 @@ pub fn compress_history_messages(history: &[(String, String)]) -> Vec<(String, S
         } else {
             ""
         };
-        summary_parts.push(format!("{role}: {snippet}{suffix}"));
+        summary_parts.push(format!("- {role}: {snippet}{suffix}"));
     }
-    let summary = summary_parts.join(" | ");
-    let mut out = vec![("system".to_string(), format!("[历史摘要] {summary}"))];
+    let summary = summary_parts.join(
+        "
+",
+    );
+    let mut out = preserved_system;
+    out.push((
+        "system".to_string(),
+        format!(
+            "[历史摘要]
+{summary}"
+        ),
+    ));
     out.extend(recent.iter().cloned());
     out
 }
@@ -132,6 +158,8 @@ pub struct HarnessCheckpointMeta {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub output_budget: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input_budget: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub skill_activation_plan: Option<SkillActivationPlanSummary>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub task_policy: Option<AgentTaskPolicy>,
@@ -163,7 +191,14 @@ pub fn save_harness_checkpoint(
     crate::ai_runtime::trace::TraceRecorder::save_checkpoint(db, request_id, &value)
 }
 
-/// Load checkpoint if present and trace not completed.
+fn is_recoverable_checkpoint_status(status: &str) -> bool {
+    matches!(
+        status,
+        "context_assembled" | "model_called" | "streaming" | "awaiting_tool_confirmation"
+    )
+}
+
+/// Load checkpoint only for trace states that can legitimately resume.
 pub fn load_harness_checkpoint(
     db: &Database,
     request_id: &str,
@@ -175,9 +210,7 @@ pub fn load_harness_checkpoint(
             |r| Ok((r.get(0)?, r.get(1)?)),
         );
         match row {
-            Ok((Some(json), status))
-                if status != "completed" && status != "failed" && status != "aborted" =>
-            {
+            Ok((Some(json), status)) if is_recoverable_checkpoint_status(&status) => {
                 let cp: HarnessCheckpoint = match serde_json::from_str(&json) {
                     Ok(cp) => cp,
                     Err(_) => return Ok(None),
@@ -207,10 +240,103 @@ mod tests {
     }
 
     #[test]
+    fn load_checkpoint_rejects_non_recoverable_started_status() {
+        let db = crate::storage::db::Database::open_in_memory().unwrap();
+        let rid = "cp-started-stale";
+        crate::ai_runtime::trace::TraceRecorder::start(
+            &db,
+            rid,
+            crate::ai_runtime::AiScene::KnowledgeLookup,
+        )
+        .unwrap();
+        let cp = sample_checkpoint(1);
+        save_harness_checkpoint(&db, rid, &cp).unwrap();
+
+        let loaded = load_harness_checkpoint(&db, rid).unwrap();
+
+        assert!(
+            loaded.is_none(),
+            "started traces must not offer stale checkpoint recovery"
+        );
+    }
+
+    #[test]
+    fn load_checkpoint_allows_model_called_budget_pause_checkpoint() {
+        let db = crate::storage::db::Database::open_in_memory().unwrap();
+        let rid = "cp-model-called-budget";
+        crate::ai_runtime::trace::TraceRecorder::start(
+            &db,
+            rid,
+            crate::ai_runtime::AiScene::KnowledgeLookup,
+        )
+        .unwrap();
+        crate::ai_runtime::trace::TraceRecorder::update_status(
+            &db,
+            rid,
+            crate::ai_runtime::trace::TraceStatus::ModelCalled,
+        )
+        .unwrap();
+        let cp = sample_checkpoint(2);
+        save_harness_checkpoint(&db, rid, &cp).unwrap();
+
+        let loaded = load_harness_checkpoint(&db, rid).unwrap();
+
+        assert_eq!(loaded.unwrap().round, 2);
+    }
+
+    #[test]
+    fn compress_history_preserves_conversation_memory_system_message() {
+        let memory = (
+            "system".to_string(),
+            "## ConversationMemory\n目标: 完成 harness 修复并保留所有关键决策\n偏好: 小步提交\n决策: 不持久化正文".to_string(),
+        );
+        let mut history = vec![memory.clone()];
+        history.extend((0..12).map(|i| ("user".to_string(), format!("message {i}"))));
+
+        let out = compress_history_messages(&history);
+
+        assert_eq!(out[0], memory);
+        assert!(out[1].1.contains("[历史摘要]"));
+        assert!(!out[1].1.contains("ConversationMemory"));
+    }
+
+    #[test]
     fn extract_thinking() {
         let (visible, think) = extract_thinking_blocks("答案<thinking>先检索法规</thinking>因此…");
         assert!(visible.contains("答案"));
         assert!(think.unwrap().contains("检索"));
+    }
+
+    fn sample_checkpoint(round: u32) -> HarnessCheckpoint {
+        HarnessCheckpoint {
+            meta: HarnessCheckpointMeta {
+                scene: "knowledge_lookup".into(),
+                session_id: 1,
+                note_path: None,
+                note_title: None,
+                selection_excerpt: None,
+                cold_start_packets: vec![],
+                web_search_enabled: false,
+                depth: 0,
+                capability_slot: None,
+                provider_id: None,
+                model: None,
+                endpoint_family: None,
+                thinking: None,
+                output_budget: None,
+                input_budget: None,
+                skill_activation_plan: None,
+                task_policy: None,
+            },
+            round,
+            messages: vec![],
+            tool_calls: vec![],
+            tool_results: vec![],
+            evidence_packets: vec![],
+            usage: crate::ai_runtime::model_gateway::TokenUsage::default(),
+            usage_source: UsageSource::Provider,
+            bonus_round_used: false,
+        }
     }
 
     #[test]
@@ -229,34 +355,7 @@ mod tests {
             crate::ai_runtime::trace::TraceStatus::AwaitingToolConfirmation,
         )
         .unwrap();
-        let cp = HarnessCheckpoint {
-            meta: HarnessCheckpointMeta {
-                scene: "knowledge_lookup".into(),
-                session_id: 1,
-                note_path: None,
-                note_title: None,
-                selection_excerpt: None,
-                cold_start_packets: vec![],
-                web_search_enabled: false,
-                depth: 0,
-                capability_slot: None,
-                provider_id: None,
-                model: None,
-                endpoint_family: None,
-                thinking: None,
-                output_budget: None,
-                skill_activation_plan: None,
-                task_policy: None,
-            },
-            round: 1,
-            messages: vec![],
-            tool_calls: vec![],
-            tool_results: vec![],
-            evidence_packets: vec![],
-            usage: crate::ai_runtime::model_gateway::TokenUsage::default(),
-            usage_source: UsageSource::Provider,
-            bonus_round_used: false,
-        };
+        let cp = sample_checkpoint(1);
         save_harness_checkpoint(&db, rid, &cp).unwrap();
         let loaded = load_harness_checkpoint(&db, rid).unwrap();
         assert!(loaded.is_some());

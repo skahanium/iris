@@ -434,6 +434,11 @@ export function useAssistantTasks({
     ],
   );
 
+  const clearHarnessRecoveryState = useCallback(() => {
+    requestIdRef.current = null;
+    setHarnessRequestId(null);
+  }, [requestIdRef, setHarnessRequestId]);
+
   const assembleContextForChat = useCallback(
     async (query: string, intent: AssistantIntent) => {
       const agentIntent = agentIntentForAssistantIntent(intent);
@@ -483,9 +488,8 @@ export function useAssistantTasks({
       setStreaming(true);
       setWebSearchUsage(null);
       streamBufRef.current = "";
-      requestIdRef.current = null;
+      clearHarnessRecoveryState();
       setAgentTaskId(null);
-      setHarnessRequestId(null);
       setPausedTaskId(null);
       panelSendActiveRef.current = true;
       setActionState(buildActionState(intent, "running"));
@@ -641,10 +645,12 @@ export function useAssistantTasks({
       } catch (error) {
         const message = invokeErrorMessage(error);
         if (isAbortErrorMessage(message)) {
+          clearHarnessRecoveryState();
           setActionState(buildActionState(intent, "idle"));
           assistantRun.setFromTaskStatus("idle", intent);
           return;
         }
+        clearHarnessRecoveryState();
         setLastError(message);
         setMessages((prev) => [
           ...prev,
@@ -658,8 +664,7 @@ export function useAssistantTasks({
         setActivityHint(null);
         assistantRun.setActivityHint(null);
         if (completedOk) {
-          requestIdRef.current = null;
-          setHarnessRequestId(null);
+          clearHarnessRecoveryState();
         }
         streamBufRef.current = "";
       }
@@ -681,6 +686,7 @@ export function useAssistantTasks({
       recordAssistantArtifacts,
       saveConversationSnapshot,
       getContextReferencesForRequest,
+      clearHarnessRecoveryState,
       requestIdRef,
       selectedPacketIds,
       sessionId,

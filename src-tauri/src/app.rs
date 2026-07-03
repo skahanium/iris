@@ -14,6 +14,7 @@ use crate::error::{AppError, AppResult};
 use crate::storage::db::Database;
 use crate::watcher::FileWatcher;
 
+use crate::ai_runtime::agent_task_policy::AgentTaskPolicy;
 use crate::ai_runtime::context_cache::ContextAssemblyCache;
 use crate::ai_types::{AiScene, AutonomyLevel, SkillActivationPlanSummary};
 use crate::security::brute_force::BruteForceProtection;
@@ -28,6 +29,8 @@ pub struct PendingToolCall {
     pub file_id: Option<i64>,
     pub web_search_enabled: bool,
     pub autonomy_level: AutonomyLevel,
+    pub task_policy: AgentTaskPolicy,
+    pub depth: u32,
     pub skill_activation_plan: Option<SkillActivationPlanSummary>,
 }
 

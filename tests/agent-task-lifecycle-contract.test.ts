@@ -81,4 +81,19 @@ describe("Agent Task Runtime Phase D lifecycle contract", () => {
     expect(panel).toContain("resetAssistantSessionState");
     expect(panel).toContain("setPausedTaskId(null)");
   });
+
+  it("frontend treats missing checkpoints as non-recoverable and clears stale request ids", () => {
+    const recoveryLib = read("src/lib/ai/resume-recovery.ts");
+    const assistantTasks = read("src/components/ai/hooks/useAssistantTasks.ts");
+    const harnessSupport = read("src-tauri/src/ai_harness/harness_support.rs");
+
+    expect(recoveryLib).toContain("checkpoint_missing");
+    expect(recoveryLib).toContain("未找到可恢复");
+    expect(assistantTasks).toContain("clearHarnessRecoveryState");
+    expect(assistantTasks).toContain("clearHarnessRecoveryState();");
+    expect(harnessSupport).toContain("is_recoverable_checkpoint_status");
+    expect(harnessSupport).not.toContain(
+      'status != "completed" && status != "failed" && status != "aborted"',
+    );
+  });
 });

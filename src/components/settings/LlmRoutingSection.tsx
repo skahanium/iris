@@ -16,6 +16,7 @@ import {
   credentialDelete,
   credentialHas,
   credentialSet,
+  llmConfigDeleteProvider,
   llmConfigGet,
   llmConfigSet,
   llmConfigTestProvider,
@@ -642,6 +643,72 @@ export function LlmRoutingSection({ open }: LlmRoutingSectionProps) {
     }
   };
 
+  const deleteProvider = async (provider: VisibleProvider) => {
+    if (!isCustomProviderId(provider.id)) return;
+    if (provider.usedSlots.length > 0) {
+      setMessage(
+        provider.name +
+          " is used by " +
+          provider.usedSlots.join(" / ") +
+          "; adjust routing before deleting it.",
+      );
+      return;
+    }
+    const confirmed = confirm(
+      "Delete " +
+        provider.name +
+        "? This removes its model registry rows and credential marker.",
+    );
+    if (!confirmed || !data) return;
+    setMessage(null);
+    try {
+      const nextRouting = normalizeRouting(
+        await llmConfigDeleteProvider(provider.id),
+      );
+      applyRouting(nextRouting);
+      setData({
+        ...data,
+        routing: nextRouting,
+        providers: data.providers.filter((item) => item.id !== provider.id),
+        registry: data.registry.filter(
+          (entry) => entry.providerId !== provider.id,
+        ),
+      });
+      setProviderBaseUrlInputs((prev) => {
+        const next = { ...prev };
+        delete next[provider.id];
+        return next;
+      });
+      setNewModelInputs((prev) => {
+        const next = { ...prev };
+        delete next[provider.id];
+        return next;
+      });
+      setKeyConfigured((prev) => {
+        const next = { ...prev };
+        delete next[provider.id];
+        return next;
+      });
+      setProviderResults((prev) => {
+        const next = { ...prev };
+        delete next[provider.id];
+        return next;
+      });
+      setTestResults((prev) => {
+        const next: typeof prev = {};
+        for (const [key, value] of Object.entries(prev)) {
+          if (!key.startsWith(provider.id + ":")) next[key] = value;
+        }
+        return next;
+      });
+      setMessage(provider.name + " deleted");
+      notifyLlmConfigChanged();
+    } catch (err) {
+      setMessage(
+        "Delete " + provider.name + " failed: " + invokeErrorMessage(err),
+      );
+    }
+  };
   const refreshProviderModels = async (provider: VisibleProvider) => {
     if (!(await persistProviderConfig(provider.id))) return;
     setRefreshingProvider(provider.id);
@@ -895,6 +962,17 @@ export function LlmRoutingSection({ open }: LlmRoutingSectionProps) {
                           ? "刷新中…"
                           : "刷新模型"}
                       </Button>
+                      {isCustomProviderId(provider.id) ? (
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="ghost"
+                          className="h-7 text-xs text-destructive"
+                          onClick={() => void deleteProvider(provider)}
+                        >
+                          Delete
+                        </Button>
+                      ) : null}
                     </div>
                     {providerResult ? (
                       <p

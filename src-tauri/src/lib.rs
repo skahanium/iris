@@ -176,6 +176,7 @@ pub fn run() {
             commands::llm_config_commands::llm_config_get,
             commands::llm_config_commands::llm_config_set,
             commands::llm_config_commands::llm_config_apply_deepseek_defaults,
+            commands::llm_config_commands::llm_config_delete_provider,
             commands::llm_config_commands::connectivity_status,
             commands::llm_config_commands::llm_config_test,
             commands::llm_config_commands::llm_config_test_provider,
