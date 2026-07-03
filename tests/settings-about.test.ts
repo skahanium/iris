@@ -6,6 +6,11 @@ function read(path: string): string {
   return readFileSync(path, "utf8");
 }
 
+function packageVersion(): string {
+  const pkg = JSON.parse(read("package.json")) as { version: string };
+  return pkg.version;
+}
+
 describe("ManagementCenterPanel system and legal notice", () => {
   it("merges system and about information into one management section", () => {
     const source = read("src/components/settings/ManagementCenterPanel.tsx");
@@ -22,7 +27,13 @@ describe("ManagementCenterPanel system and legal notice", () => {
     expect(source).toContain("系统边界");
     expect(source).toContain("关于 Iris");
     expect(source).toContain("Iris");
-    expect(source).toContain("版本 1.1.0");
+    const aboutLine =
+      source
+        .split("\n")
+        .find((line) =>
+          line.includes("GNU Affero General Public License v3.0"),
+        ) ?? "";
+    expect(aboutLine).toContain(packageVersion());
     expect(source).toContain("GNU Affero General Public License v3.0");
     expect(source).not.toContain("开发者水印");
   });

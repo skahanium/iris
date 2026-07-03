@@ -45,6 +45,7 @@ import {
   EDITOR_INGEST_WORKER_THRESHOLD_BYTES,
   ingestMarkdownForEditorAsync,
 } from "@/lib/editor-ingest-async";
+import { resetEditorContentBaseline } from "@/lib/editor-baseline";
 import { EDITOR_PARSE_OPTIONS } from "@/lib/editor-parse-options";
 import { normalizePastedEditorHtml } from "@/lib/iris-clipboard";
 
@@ -606,7 +607,9 @@ function TipTapEditorInner({
       window.cancelAnimationFrame ?? ((id: number) => window.clearTimeout(id));
     const generation = ++firstFrameGenerationRef.current;
 
-    editor.commands.setContent(content, false, EDITOR_PARSE_OPTIONS);
+    resetEditorContentBaseline(editor, content, {
+      parseOptions: EDITOR_PARSE_OPTIONS,
+    });
     contentReadyRef.current = true;
     onContentReadyRef.current?.(editor);
     flushBodyStats(editor);

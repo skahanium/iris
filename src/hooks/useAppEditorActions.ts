@@ -109,14 +109,14 @@ export function useAppEditorActions({
 
   const handleUndo = useCallback(() => {
     const ed = editorRef.current;
-    if (!ed) return;
+    if (!ed || !ed.can().undo()) return;
     ed.commands.undo();
     scheduleUndoRedoStateRefresh(ed);
   }, [editorRef, scheduleUndoRedoStateRefresh]);
 
   const handleRedo = useCallback(() => {
     const ed = editorRef.current;
-    if (!ed) return;
+    if (!ed || !ed.can().redo()) return;
     ed.commands.redo();
     scheduleUndoRedoStateRefresh(ed);
   }, [editorRef, scheduleUndoRedoStateRefresh]);

@@ -9,8 +9,21 @@ import {
   TipTapEditor,
   type Editor as ReactEditor,
 } from "@/components/editor/TipTapEditor";
+import { resetEditorContentBaseline } from "@/lib/editor-baseline";
+import { EDITOR_PARSE_OPTIONS } from "@/lib/editor-parse-options";
+import {
+  clearCachedEditorHtml,
+  editorHtmlDigest,
+  setCachedEditorHtml,
+} from "@/lib/editor-html-cache";
 import { insertAssistantMarkdownAtCursor } from "@/lib/editor-insert";
 import { createProductionEditorFromIngestedBody } from "./helpers/tiptap-serialize-harness";
+
+function expectReadyEditor(editor: ReactEditor | null): ReactEditor {
+  expect(editor).not.toBeNull();
+  if (!editor) throw new Error("Expected editor to be ready");
+  return editor;
+}
 
 function typeTextThroughInputRules(editor: Editor, text: string) {
   for (const ch of text) {
@@ -69,6 +82,167 @@ describe("editor performance regressions", () => {
     expect(editor.getHTML()).not.toContain("## Section 1\n\n");
 
     editor.destroy();
+  });
+
+  it("resets loaded document content as a clean undo baseline", () => {
+    const editor = createProductionEditorFromIngestedBody("Original body.");
+
+    editor.commands.setTextSelection(editor.state.doc.content.size - 1);
+    editor.commands.insertContent(" Local edit.");
+    expect(editor.can().undo()).toBe(true);
+
+    resetEditorContentBaseline(editor, "<p>Loaded baseline body.</p>", {
+      parseOptions: EDITOR_PARSE_OPTIONS,
+    });
+
+    expect(editor.getText()).toContain("Loaded baseline body.");
+    expect(editor.can().undo()).toBe(false);
+    expect(editor.commands.undo()).toBe(false);
+    expect(editor.getText()).toContain("Loaded baseline body.");
+    expect(editor.state.selection.head).toBeLessThan(
+      editor.state.doc.content.size,
+    );
+
+    editor.destroy();
+  });
+
+  it("keeps TipTapEditor document loads out of undo history", async () => {
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root: Root = createRoot(container);
+    let editor: ReactEditor | null = null;
+
+    await act(async () => {
+      root.render(
+        createElement(TipTapEditor, {
+          initialBodyMarkdown: "Opened body should be the clean baseline.",
+          reingestKey: 11,
+          onEditorReady: (nextEditor: ReactEditor | null) => {
+            editor = nextEditor;
+          },
+        }),
+      );
+    });
+
+    await vi.waitFor(() => {
+      expect(editor?.getText()).toContain(
+        "Opened body should be the clean baseline.",
+      );
+    });
+
+    const loadedEditor = expectReadyEditor(editor);
+    expect(loadedEditor.can().undo()).toBe(false);
+    expect(loadedEditor.commands.undo()).toBe(false);
+    expect(loadedEditor.getText()).toContain(
+      "Opened body should be the clean baseline.",
+    );
+
+    await act(async () => {
+      root.render(
+        createElement(TipTapEditor, {
+          initialBodyMarkdown: "Reingested body is another clean baseline.",
+          reingestKey: 12,
+          onEditorReady: (nextEditor: ReactEditor | null) => {
+            editor = nextEditor;
+          },
+        }),
+      );
+    });
+
+    await vi.waitFor(() => {
+      expect(editor?.getText()).toContain(
+        "Reingested body is another clean baseline.",
+      );
+    });
+
+    const reingestedEditor = expectReadyEditor(editor);
+    expect(reingestedEditor.can().undo()).toBe(false);
+    expect(reingestedEditor.state.selection.head).toBeLessThan(
+      reingestedEditor.state.doc.content.size,
+    );
+
+    act(() => {
+      root.unmount();
+    });
+    container.remove();
+  });
+
+  it("keeps cached editor HTML loads out of undo history", async () => {
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root: Root = createRoot(container);
+    let editor: ReactEditor | null = null;
+    const cacheKey = "cache-hit.md";
+    const markdown = "Fallback body for cache digest.";
+
+    clearCachedEditorHtml(cacheKey);
+    setCachedEditorHtml(
+      cacheKey,
+      "<p>Cached body baseline.</p>",
+      editorHtmlDigest(markdown),
+    );
+
+    await act(async () => {
+      root.render(
+        createElement(TipTapEditor, {
+          initialBodyMarkdown: markdown,
+          contentCacheKey: cacheKey,
+          reingestKey: 14,
+          onEditorReady: (nextEditor: ReactEditor | null) => {
+            editor = nextEditor;
+          },
+        }),
+      );
+    });
+
+    await vi.waitFor(() => {
+      expect(editor?.getText()).toContain("Cached body baseline.");
+    });
+
+    const cachedEditor = expectReadyEditor(editor);
+    expect(cachedEditor.can().undo()).toBe(false);
+    expect(cachedEditor.commands.undo()).toBe(false);
+    expect(cachedEditor.getText()).toContain("Cached body baseline.");
+
+    act(() => {
+      root.unmount();
+    });
+    clearCachedEditorHtml(cacheKey);
+    container.remove();
+  });
+
+  it("keeps prepared editor HTML loads out of undo history", async () => {
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root: Root = createRoot(container);
+    let editor: ReactEditor | null = null;
+
+    await act(async () => {
+      root.render(
+        createElement(TipTapEditor, {
+          initialBodyMarkdown: "Fallback body.",
+          initialEditorHtml: "<p>Prepared body baseline.</p>",
+          reingestKey: 13,
+          onEditorReady: (nextEditor: ReactEditor | null) => {
+            editor = nextEditor;
+          },
+        }),
+      );
+    });
+
+    await vi.waitFor(() => {
+      expect(editor?.getText()).toContain("Prepared body baseline.");
+    });
+
+    const preparedEditor = expectReadyEditor(editor);
+    expect(preparedEditor.can().undo()).toBe(false);
+    expect(preparedEditor.commands.undo()).toBe(false);
+    expect(preparedEditor.getText()).toContain("Prepared body baseline.");
+
+    act(() => {
+      root.unmount();
+    });
+    container.remove();
   });
 
   it("coalesces expensive body stats after edit transactions", async () => {

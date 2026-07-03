@@ -4,6 +4,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { useOpenNote } from "@/hooks/useOpenNote";
+import { createProductionEditorFromIngestedBody } from "./helpers/tiptap-serialize-harness";
 
 const ingestMarkdownForEditorAsync = vi.hoisted(() => vi.fn());
 
@@ -19,6 +20,8 @@ interface MockEditor {
   };
 }
 
+type HarnessEditor = MockEditor | Editor;
+
 function Harness({
   activePath,
   dirtyRef,
@@ -28,7 +31,7 @@ function Harness({
 }: {
   activePath: string | null;
   dirtyRef: RefObject<boolean>;
-  editorRef: RefObject<MockEditor | null>;
+  editorRef: RefObject<HarnessEditor | null>;
   markdownRef: RefObject<string>;
   onReady: (api: HookApi) => void;
 }) {
@@ -53,6 +56,7 @@ describe("useOpenNote async editor load guard", () => {
   let api!: HookApi;
   let resolveIngest!: (value: { tipTapHtml: string }) => void;
   let editor: MockEditor;
+  let editorRef: { current: HarnessEditor | null };
   let dirtyRef: { current: boolean };
   let markdownRef: { current: string };
 
@@ -69,6 +73,7 @@ describe("useOpenNote async editor load guard", () => {
         setContent: vi.fn(),
       },
     };
+    editorRef = { current: editor };
     dirtyRef = { current: false };
     markdownRef = { current: "# Initial\n\nBody" };
     container = document.createElement("div");
@@ -80,7 +85,7 @@ describe("useOpenNote async editor load guard", () => {
         createElement(Harness, {
           activePath: "note.md",
           dirtyRef,
-          editorRef: { current: editor },
+          editorRef,
           markdownRef,
           onReady: (next) => {
             api = next;
@@ -95,6 +100,32 @@ describe("useOpenNote async editor load guard", () => {
       root.unmount();
     });
     container.remove();
+  });
+
+  it("applies delayed ingest HTML as a clean editor baseline", async () => {
+    const realEditor = createProductionEditorFromIngestedBody("Old body.");
+    editorRef.current = realEditor;
+    realEditor.commands.setTextSelection(realEditor.state.doc.content.size - 1);
+    realEditor.commands.insertContent(" Local edit.");
+    expect(realEditor.can().undo()).toBe(true);
+
+    act(() => {
+      api.loadBodyIntoEditor("# External title\n\nFresh body from disk.");
+    });
+    expect(ingestMarkdownForEditorAsync).toHaveBeenCalled();
+
+    await act(async () => {
+      resolveIngest({ tipTapHtml: "<p>Fresh body from disk.</p>" });
+      await Promise.resolve();
+    });
+
+    expect(realEditor.getText()).toContain("Fresh body from disk.");
+    expect(realEditor.can().undo()).toBe(false);
+    expect(realEditor.commands.undo()).toBe(false);
+    expect(realEditor.getText()).toContain("Fresh body from disk.");
+
+    realEditor.destroy();
+    editorRef.current = null;
   });
 
   it("does not apply delayed ingest HTML after the user has edited locally", async () => {

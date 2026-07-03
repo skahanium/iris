@@ -250,6 +250,23 @@ npm run test:watch      # 监听模式
 npm run test:coverage   # 覆盖率报告
 ```
 
+### 版本号同步
+
+更新应用发布版本号时，必须使用受控脚本：
+
+```bash
+npm run version:set -- 1.2.2
+npm run version:check
+```
+
+规则：
+
+- 版本号使用显式 SemVer，不带 `v` 前缀。
+- 禁止手动全仓库替换版本号。
+- 脚本只更新应用发布事实：package、lock、Cargo、Tauri、About、README/ROADMAP/CHANGELOG 当前标签等受控位置。
+- 历史版本、依赖版本、协议版本、数据库 schema/migration version 不得自动替换。
+- 发布前必须通过 `npm run version:check`。
+
 ### 其他
 
 ```bash
