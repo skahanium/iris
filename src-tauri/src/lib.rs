@@ -95,6 +95,13 @@ pub fn run() {
             crate::crypto::vault_key::init_vault_key();
             app.manage(state.clone());
 
+            #[cfg(debug_assertions)]
+            {
+                if let Err(e) = crate::credentials::credential_unlock_session() {
+                    tracing::debug!("dev credential session prewarm skipped: {e}");
+                }
+            }
+
             // Start the scheduler for periodic tasks (GC at 3:00 AM daily)
             // `_scheduler_handle` is intentionally held alive for the app lifetime;
             // dropping it would not stop the spawned task (tokio::spawn detaches).
@@ -127,6 +134,8 @@ pub fn run() {
             commands::settings::credential_set,
             commands::settings::credential_has,
             commands::settings::credential_delete,
+            commands::settings::credential_unlock_session,
+            commands::settings::credential_lock_session,
             commands::file::file_list,
             commands::file::file_signature,
             commands::file::document_open_begin,

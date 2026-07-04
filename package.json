@@ -8,6 +8,7 @@
     "dev": "node scripts/with-iris-env.mjs -- vite",
     "dev:desktop": "node scripts/with-iris-env.mjs -- node scripts/tauri-cli.mjs dev",
     "dev:desktop:vec": "node scripts/with-iris-env.mjs -- node scripts/tauri-cli.mjs dev --features sqlite-vec",
+    "dev:desktop:sign": "node scripts/with-iris-env.mjs -- node scripts/sign-dev-macos.mjs",
     "tauri:build:vec": "node scripts/with-iris-env.mjs -- node scripts/tauri-cli.mjs build --features sqlite-vec",
     "build": "node scripts/with-iris-env.mjs -- tsc -b && node scripts/with-iris-env.mjs -- vite build",
     "preview": "node scripts/with-iris-env.mjs -- vite preview",

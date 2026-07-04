@@ -1,17 +1,55 @@
 use aes_gcm::aead::{Aead, KeyInit, OsRng};
 use aes_gcm::{Aes256Gcm, Key, Nonce};
 use rand::RngCore;
+use std::sync::{LazyLock, Mutex};
+use zeroize::Zeroize;
 
 use crate::credentials;
 use crate::error::{AppError, AppResult};
 
+#[cfg(debug_assertions)]
+const CAS_KEY_SERVICE: &str = "iris.dev.cas_key";
+#[cfg(not(debug_assertions))]
 const CAS_KEY_SERVICE: &str = "iris.cas_key";
 const NONCE_LEN: usize = 12;
 const KEY_LEN: usize = 32;
 
+#[derive(Clone)]
+struct CachedCasKey {
+    key: [u8; KEY_LEN],
+}
+
+impl Drop for CachedCasKey {
+    fn drop(&mut self) {
+        self.key.zeroize();
+    }
+}
+
+static CAS_KEY_CACHE: LazyLock<Mutex<Option<CachedCasKey>>> = LazyLock::new(|| Mutex::new(None));
+
+fn cache_lock() -> AppResult<std::sync::MutexGuard<'static, Option<CachedCasKey>>> {
+    CAS_KEY_CACHE
+        .lock()
+        .map_err(|_| AppError::msg("CAS key cache lock error"))
+}
+
+pub(crate) fn clear_cas_key_cache() -> AppResult<()> {
+    *cache_lock()? = None;
+    Ok(())
+}
+
+fn cache_cas_key(key: [u8; KEY_LEN]) -> AppResult<()> {
+    *cache_lock()? = Some(CachedCasKey { key });
+    Ok(())
+}
+
 /// Get or generate the CAS encryption key from the OS credential store.
 /// The key is derived once on first use and persisted to the keychain.
 pub fn get_or_create_cas_key() -> AppResult<[u8; KEY_LEN]> {
+    if let Some(cached) = cache_lock()?.as_ref() {
+        return Ok(cached.key);
+    }
+
     match credentials::get_secret(CAS_KEY_SERVICE) {
         Ok(hex_key) => {
             let key_bytes = hex::decode(&hex_key)
@@ -21,6 +59,7 @@ pub fn get_or_create_cas_key() -> AppResult<[u8; KEY_LEN]> {
                 return Err(AppError::msg("corrupt CAS key: incorrect length"));
             }
             key.copy_from_slice(&key_bytes);
+            cache_cas_key(key)?;
             Ok(key)
         }
         Err(_) => {
@@ -28,6 +67,7 @@ pub fn get_or_create_cas_key() -> AppResult<[u8; KEY_LEN]> {
             OsRng.fill_bytes(&mut key);
             let hex_key = hex::encode(key);
             credentials::set_secret(CAS_KEY_SERVICE, &hex_key)?;
+            cache_cas_key(key)?;
             tracing::info!("generated new CAS encryption key");
             Ok(key)
         }
@@ -76,6 +116,16 @@ pub fn has_cas_key() -> bool {
 }
 
 #[cfg(test)]
+fn cache_cas_key_for_test(key: [u8; KEY_LEN]) -> AppResult<()> {
+    cache_cas_key(key)
+}
+
+#[cfg(test)]
+fn cas_key_cached_for_test() -> AppResult<bool> {
+    Ok(cache_lock()?.is_some())
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -115,5 +165,14 @@ mod tests {
     fn decrypt_too_short_fails() {
         let key = [0xAAu8; KEY_LEN];
         assert!(decrypt_blob(&[1, 2, 3], &key).is_err());
+    }
+
+    #[test]
+    fn lock_session_clears_cached_cas_key() {
+        cache_cas_key_for_test([0x11u8; KEY_LEN]).expect("cache key");
+
+        crate::credentials::credential_lock_session().expect("lock session");
+
+        assert!(!cas_key_cached_for_test().expect("cache state"));
     }
 }

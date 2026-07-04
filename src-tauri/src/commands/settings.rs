@@ -68,3 +68,13 @@ pub fn credential_delete(state: State<'_, Arc<AppState>>, service: String) -> Ap
     validate_credential_service(&service)?;
     credentials::delete_api_key(&state.db, &service)
 }
+
+#[tauri::command]
+pub fn credential_unlock_session() -> AppResult<()> {
+    credentials::credential_unlock_session()
+}
+
+#[tauri::command]
+pub fn credential_lock_session() -> AppResult<()> {
+    credentials::credential_lock_session()
+}

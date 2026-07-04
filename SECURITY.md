@@ -50,8 +50,11 @@
 
 - Iris 使用操作系统原生凭据管理器存储 API Key（Windows Credential Manager / macOS Keychain / Linux Secret Service）
 - API Key 永不写入明文到磁盘文件、日志或数据库
-- 应用启动时从凭据管理器读取，仅保存在内存中
+- API Key 首次使用或会话解锁时从凭据管理器读取，仅保存在当前 Iris 进程内存中；退出或锁定会话后需要重新读取系统凭据
 - 向 LLM API 发送请求时，Key 仅出现在 HTTPS 请求的 Authorization Header 中
+- macOS 上 Iris 会优先使用带 `USER_PRESENCE` 访问控制的 Keychain 条目，系统可使用 Touch ID、Apple Watch 或设备密码完成认证；旧 Keychain 条目会通过兼容路径读取
+- 开发构建使用独立凭据命名空间（如 `iris.dev.api_keys`、`iris.dev.cas_key`），并通过 `src-tauri/tauri.dev.conf.json` 使用稳定 bundle id `com.iris.notes.dev`，避免污染正式版凭据。若 macOS 反复要求输入电脑密码，可在“钥匙串访问”中只允许 Iris 开发版访问对应条目；不要选择“允许所有应用程序访问”
+- macOS 开发版可在首次生成 dev app 或 debug binary 后运行 `npm run dev:desktop:sign` 做本地签名；默认使用 ad-hoc identity，也可通过 `IRIS_DEV_CODESIGN_IDENTITY` 指定 Apple Development 证书
 
 ## 笔记静态存储
 

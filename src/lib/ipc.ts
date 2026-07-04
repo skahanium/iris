@@ -553,6 +553,14 @@ export async function credentialDelete(service: string): Promise<void> {
   return invoke("credential_delete", { service });
 }
 
+export async function credentialUnlockSession(): Promise<void> {
+  return invoke("credential_unlock_session");
+}
+
+export async function credentialLockSession(): Promise<void> {
+  return invoke("credential_lock_session");
+}
+
 export async function listenFileChanged(
   handler: (payload: FileChangedEvent) => void,
 ): Promise<() => void> {
