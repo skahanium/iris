@@ -981,6 +981,30 @@ describe("ListIndentKeymapExtension", () => {
     });
   });
 
+  it("clears a full-document selection with one Backspace and keeps undo history", () => {
+    editor = createProductionEditorFromIngestedBody(
+      [
+        "# Heading",
+        "",
+        "Paragraph body",
+        "",
+        "- one",
+        "- two",
+        "",
+        "1. alpha",
+        "2. beta",
+      ].join("\n"),
+    );
+    editor.commands.selectAll();
+
+    const event = pressBackspace(editor);
+
+    expect(event.defaultPrevented).toBe(true);
+    expect(pmSerializeBody(editor)).toBe("");
+    expect(editor.commands.undo()).toBe(true);
+    expect(pmSerializeBody(editor)).toContain("Paragraph body");
+  });
+
   it("indents a non-list paragraph on Tab without losing caret position", () => {
     editor = createParagraphEditor();
     placeCursorInText(editor, "plain paragraph");

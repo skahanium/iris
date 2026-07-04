@@ -7,6 +7,7 @@ import {
   prepareNoteOpen,
   prepareNoteOpenFromContent,
 } from "@/lib/document-open-runtime";
+import { clearCachedEditorHtml } from "@/lib/editor-html-cache";
 import {
   documentOpen,
   documentOpenBegin,
@@ -152,7 +153,12 @@ export function usePreparedNoteOpener<
         source,
         titleHint: titleHint ?? remembered?.titleHint,
       };
-      const openTraceRequest = options?.openTraceRequest ?? baseRequest;
+      const requiresFreshSignature =
+        priority === "foreground" || priority === "hot";
+      const lookupRequest = requiresFreshSignature
+        ? await enrichRequestSignature(baseRequest)
+        : baseRequest;
+      const openTraceRequest = options?.openTraceRequest ?? lookupRequest;
       const shouldScopeOpen = priority === "foreground" || priority === "hot";
       let documentOpenToken: string | null = null;
       let documentOpenTokenRetained = false;
@@ -160,8 +166,10 @@ export function usePreparedNoteOpener<
         null;
       const providedPreparedNote = options?.preparedNote;
       const cachedPreparedNote =
-        providedPreparedNote ?? getPreparedNoteOpen(baseRequest);
-      const usePreparationPipeline = Boolean(cachedPreparedNote || remembered);
+        providedPreparedNote ?? getPreparedNoteOpen(lookupRequest);
+      const usePreparationPipeline = Boolean(
+        cachedPreparedNote || (remembered && lookupRequest.signature),
+      );
 
       if (shouldScopeOpen) {
         try {
@@ -203,11 +211,11 @@ export function usePreparedNoteOpener<
         const preparedNote =
           cachedPreparedNote ??
           (documentOpenResult
-            ? await prepareNoteOpenFromContent(baseRequest, {
+            ? await prepareNoteOpenFromContent(lookupRequest, {
                 content: documentOpenResult.content,
                 isLocked: documentOpenResult.isLocked,
               })
-            : await prepareNoteOpen(baseRequest));
+            : await prepareNoteOpen(lookupRequest));
 
         await openNote(path, titleHint, {
           ...openOptionsWithScope,
@@ -228,7 +236,7 @@ export function usePreparedNoteOpener<
         }
       }
     },
-    [openNote, openTabs],
+    [enrichRequestSignature, openNote, openTabs],
   );
   const prepareVisibleNote = useCallback(
     (file: FileListItem, source: NoteOpenSource = "file-tree") => {
@@ -295,6 +303,7 @@ export function usePreparedNoteOpener<
 
   const invalidatePreparedNote = useCallback((path: string) => {
     invalidateNoteOpenPreparation(path);
+    clearCachedEditorHtml(path);
     preparedRequestsRef.current.delete(path);
     prepareTokensRef.current.delete(path);
     setWarmPreparedNotes((previous) =>

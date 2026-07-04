@@ -121,12 +121,20 @@ export function useAppPersistenceLifecycle({
   const enqueueIdleSnapshot = useCallback(
     (snapshot: LastSavedSnapshot) => {
       if (!autoVersionEnabled) return;
+      if (snapshot.path === activePathRef.current && !editorReadyRef.current) {
+        return;
+      }
       const result = versionSnapshotScheduler.enqueueIdle(snapshot);
       if (result.accepted) {
         void result.done;
       }
     },
-    [autoVersionEnabled, versionSnapshotScheduler],
+    [
+      activePathRef,
+      autoVersionEnabled,
+      editorReadyRef,
+      versionSnapshotScheduler,
+    ],
   );
 
   const enqueueLeaveSnapshot = useMemo(
@@ -148,6 +156,10 @@ export function useAppPersistenceLifecycle({
     const reason = options.reason ?? "tab_leave";
     const tab = tabsRef.current.find((t) => t.path === path);
     if (path === activePathRef.current) {
+      if (!editorReadyRef.current) {
+        setAiStatus("文档仍在加载，已跳过自动保存以保护磁盘内容");
+        return null;
+      }
       const markdownSnapshot = getLiveMarkdownRef.current();
       const titleSnapshot = noteTitle;
       const editor = editorRef.current;
@@ -246,12 +258,20 @@ export function useAppPersistenceLifecycle({
       setAiStatus("笔记已锁定，无法保存");
       return;
     }
+    if (activePathRef.current && !editorReadyRef.current) {
+      setAiStatus("文档仍在加载，无法保存；未修改磁盘内容");
+      return;
+    }
     await flushSave();
-  }, [activeFileLocked, flushSave, setAiStatus]);
+  }, [activeFileLocked, activePathRef, editorReadyRef, flushSave, setAiStatus]);
 
   const handleSaveVersion = useCallback(async () => {
     const path = activePathRef.current;
     if (!path) return;
+    if (!editorReadyRef.current) {
+      setAiStatus("文档仍在加载，无法定稿；未修改磁盘内容");
+      return;
+    }
     const md = await flushSave();
     if (!md) return;
     setAiStatus("正在后台创建版本快照…");
@@ -264,7 +284,13 @@ export function useAppPersistenceLifecycle({
       .finally(() => {
         versionSnapshotScheduler.markHighPriorityEnd(path);
       });
-  }, [activePathRef, flushSave, setAiStatus, versionSnapshotScheduler]);
+  }, [
+    activePathRef,
+    editorReadyRef,
+    flushSave,
+    setAiStatus,
+    versionSnapshotScheduler,
+  ]);
 
   return {
     notifyDirty,

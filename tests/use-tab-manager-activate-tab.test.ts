@@ -196,6 +196,27 @@ describe("useTabManager activateTab / openNote", () => {
     expect(apiRef.current!.markdown).toContain("body-b");
   });
 
+  it("rejects openFile when the target note cannot be read", async () => {
+    const apiRef: { current: ReturnType<typeof useTabManager> | null } = {
+      current: null,
+    };
+
+    fileRead.mockRejectedValueOnce(new Error("corrupt markdown"));
+
+    await act(async () => {
+      root.render(createElement(Harness, { apiRef }));
+    });
+
+    await expect(
+      act(async () => {
+        await apiRef.current!.openFile("broken.md", "Broken");
+      }),
+    ).rejects.toThrow("corrupt markdown");
+
+    expect(apiRef.current!.pendingNoteOpen).toBeNull();
+    expect(apiRef.current!.activePath).toBeNull();
+  });
+
   it("openNote uses activateTab when the path is already open", async () => {
     const apiRef: { current: ReturnType<typeof useTabManager> | null } = {
       current: null,

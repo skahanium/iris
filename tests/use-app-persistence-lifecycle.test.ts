@@ -11,12 +11,13 @@ import type { TabItem } from "@/components/layout/TabBar";
 
 const fileWrite = vi.fn();
 const setCachedEditorHtml = vi.fn();
+const versionSaveManual = vi.fn();
 
 vi.mock("@/lib/ipc", () => ({
   appExit: vi.fn(),
   fileWrite: (...args: unknown[]) => fileWrite(...args),
   versionSaveIdle: vi.fn(),
-  versionSaveManual: vi.fn(),
+  versionSaveManual: (...args: unknown[]) => versionSaveManual(...args),
 }));
 
 vi.mock("@/lib/editor-html-cache", () => ({
@@ -30,9 +31,11 @@ vi.mock("@/lib/tauri-runtime", () => ({
 
 function Harness({
   editorReady,
+  onReady,
   persistBeforeLeaveRef,
 }: {
   editorReady: boolean;
+  onReady?: (api: ReturnType<typeof useAppPersistenceLifecycle>) => void;
   persistBeforeLeaveRef: React.MutableRefObject<PersistBeforeLeave>;
 }) {
   const path = "note.md";
@@ -57,7 +60,7 @@ function Harness({
     },
   ]);
 
-  useAppPersistenceLifecycle({
+  const api = useAppPersistenceLifecycle({
     activeFileLocked: false,
     activePath: path,
     activePathRef,
@@ -79,6 +82,7 @@ function Harness({
     syncTabMarkdownCache: vi.fn(),
     tabsRef,
   });
+  onReady?.(api);
   return null;
 }
 
@@ -96,6 +100,8 @@ describe("useAppPersistenceLifecycle", () => {
       word_count: 6,
     });
     setCachedEditorHtml.mockReset();
+    versionSaveManual.mockReset();
+    versionSaveManual.mockResolvedValue(undefined);
     host = document.createElement("div");
     document.body.append(host);
     root = createRoot(host);
@@ -106,7 +112,7 @@ describe("useAppPersistenceLifecycle", () => {
     host.remove();
   });
 
-  it("does not cache editor HTML while the active editor is not ready for persistence", async () => {
+  it("does not write or cache the active note while the editor is not ready for persistence", async () => {
     const persistBeforeLeaveRef = {
       current: async () => null,
     } as React.MutableRefObject<PersistBeforeLeave>;
@@ -124,10 +130,33 @@ describe("useAppPersistenceLifecycle", () => {
       await persistBeforeLeaveRef.current("note.md");
     });
 
-    expect(fileWrite).toHaveBeenCalledWith(
-      "note.md",
-      expect.stringContaining("Original body that must remain authoritative."),
-    );
+    expect(fileWrite).not.toHaveBeenCalled();
     expect(setCachedEditorHtml).not.toHaveBeenCalled();
+  });
+
+  it("does not create a manual version snapshot while the editor is not ready", async () => {
+    const persistBeforeLeaveRef = {
+      current: async () => null,
+    } as React.MutableRefObject<PersistBeforeLeave>;
+    let api!: ReturnType<typeof useAppPersistenceLifecycle>;
+
+    await act(async () => {
+      root.render(
+        createElement(Harness, {
+          editorReady: false,
+          onReady: (next) => {
+            api = next;
+          },
+          persistBeforeLeaveRef,
+        }),
+      );
+    });
+
+    await act(async () => {
+      await api.handleSaveVersion();
+    });
+
+    expect(fileWrite).not.toHaveBeenCalled();
+    expect(versionSaveManual).not.toHaveBeenCalled();
   });
 });

@@ -109,6 +109,42 @@ describe("useHomeWorkspaceTransitions", () => {
     });
   });
 
+  it("recovers to Home with an error when a note open never reaches staging", async () => {
+    const apiRef: {
+      current: ReturnType<typeof useHomeWorkspaceTransitions> | null;
+    } = {
+      current: null,
+    };
+    const stalledOpen = deferred<void>();
+    const openNote = vi.fn(() => stalledOpen.promise);
+    const setHomeActive = vi.fn();
+
+    await act(async () => {
+      root.render(createElement(Harness, { apiRef, openNote, setHomeActive }));
+    });
+
+    await act(async () => {
+      void apiRef.current!.openNoteLeavingHome("stalled.md", "Stalled");
+    });
+
+    await act(async () => {
+      vi.advanceTimersByTime(15_000);
+    });
+
+    expect(setHomeActive).toHaveBeenCalledWith(true);
+    expect(apiRef.current!.pendingOpen).toMatchObject({
+      error: expect.stringContaining("文档打开超时"),
+      path: "stalled.md",
+    });
+
+    await act(async () => {
+      stalledOpen.resolve();
+      await stalledOpen.promise;
+    });
+
+    expect(setHomeActive).not.toHaveBeenLastCalledWith(false);
+  });
+
   it("directly activates an already-open note from Home via activateTab without an openNote detour", async () => {
     const apiRef: {
       current: ReturnType<typeof useHomeWorkspaceTransitions> | null;

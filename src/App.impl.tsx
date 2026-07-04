@@ -85,7 +85,6 @@ function saveOutlineOpen(open: boolean): void {
 
 function App() {
   useMacOSWindowChromeSync();
-
   const { vaultPath, loading, pickVault, error: vaultError } = useVault();
   const { theme, setTheme } = useTheme();
   const [startupSplashVisible, setStartupSplashVisible] =
@@ -146,6 +145,7 @@ function App() {
     updateTabTitle,
     replaceOpenTabPath,
     syncTabMarkdownCache,
+    invalidateDocumentRuntimeState,
     getTabMarkdownCached,
     setMarkdown,
     activeFileLocked,
@@ -389,6 +389,7 @@ function App() {
     handleFileDeleted,
     handleFilePathChanged,
     invalidatePreparedNote,
+    invalidateDocumentRuntimeState,
   });
 
   useEffect(() => {
@@ -985,5 +986,4 @@ function App() {
 }
 
 App.displayName = "App";
-
 export default App;

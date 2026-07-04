@@ -51,6 +51,7 @@ interface HookApi {
       isLocked?: boolean;
       priority?: DocumentOpenPriority;
       source?: NoteOpenSource;
+      useSignature?: boolean;
     },
   ) => void;
   warmPreparedNotes: readonly PreparedNoteOpen[];
@@ -369,6 +370,63 @@ describe("usePreparedNoteOpener", () => {
 
     await vi.waitFor(() => expect(fileRead).toHaveBeenCalledTimes(1));
     expect(fileSignature).not.toHaveBeenCalled();
+  });
+
+  it("does not use a no-signature startup warm payload for a foreground open", async () => {
+    const openNote = vi.fn(async () => undefined);
+    let api!: HookApi;
+    fileRead
+      .mockResolvedValueOnce({
+        content: "# Old\n\nStale startup body",
+        isLocked: false,
+      })
+      .mockResolvedValueOnce({
+        content: "# Fresh\n\nFresh foreground body",
+        isLocked: false,
+      });
+    fileSignature.mockResolvedValueOnce({
+      byteLength: 31,
+      contentHash: "fresh-foreground-hash",
+      isLocked: false,
+      modifiedMs: 99,
+    });
+
+    await act(async () => {
+      root.render(
+        <Harness openNote={openNote} onReady={(next) => (api = next)} />,
+      );
+    });
+
+    await act(async () => {
+      api.warmNotePath("notes/recreated.md", "Recreated", {
+        priority: "background",
+        source: "startup",
+      });
+      await Promise.resolve();
+    });
+    await vi.waitFor(() => expect(fileRead).toHaveBeenCalledTimes(1));
+    expect(fileSignature).not.toHaveBeenCalled();
+
+    await act(async () => {
+      await api.openPreparedNote("notes/recreated.md", "Recreated", {
+        source: "quick-open",
+      });
+    });
+
+    expect(fileSignature).toHaveBeenCalledWith("notes/recreated.md", {
+      allowClassified: false,
+    });
+    expect(fileRead).toHaveBeenCalledTimes(2);
+    expect(openNote).toHaveBeenCalledWith(
+      "notes/recreated.md",
+      "Recreated",
+      expect.objectContaining({
+        preparedNote: expect.objectContaining({
+          bodyMarkdown: expect.stringContaining("Fresh foreground body"),
+          signature: expect.stringContaining("fresh-foreground-hash"),
+        }),
+      }),
+    );
   });
 
   it("keeps foreground document-open tokens alive when the open is retained for first frame", async () => {

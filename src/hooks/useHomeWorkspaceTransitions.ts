@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import {
   beginHomeOpenLoading,
@@ -17,6 +17,8 @@ type MaybePromise<T> = T | Promise<T>;
 function openTransitionNow(): number {
   return globalThis.performance?.now?.() ?? Date.now();
 }
+
+const HOME_OPEN_WATCHDOG_MS = 15_000;
 
 interface UseHomeWorkspaceTransitionsOptions<OpenNoteOptions> {
   activePathRef: CurrentRef<string | null>;
@@ -47,16 +49,53 @@ export function useHomeWorkspaceTransitions<OpenNoteOptions>({
     null,
   );
   const pendingOpenRef = useRef<HomePendingOpen | null>(null);
+  const openWatchdogTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null,
+  );
+
+  const clearOpenWatchdog = useCallback(() => {
+    if (!openWatchdogTimerRef.current) return;
+    clearTimeout(openWatchdogTimerRef.current);
+    openWatchdogTimerRef.current = null;
+  }, []);
 
   const setPendingOpen = useCallback((next: HomePendingOpen | null) => {
     pendingOpenRef.current = next;
     setPendingOpenState(next);
   }, []);
 
+  const scheduleOpenWatchdog = useCallback(
+    (pending: HomePendingOpen) => {
+      clearOpenWatchdog();
+      openWatchdogTimerRef.current = setTimeout(() => {
+        openWatchdogTimerRef.current = null;
+        const current = pendingOpenRef.current;
+        if (
+          homeOpenSequenceRef.current !== pending.sequence ||
+          !current ||
+          current.sequence !== pending.sequence ||
+          current.error
+        ) {
+          return;
+        }
+        homeOpenSequenceRef.current += 1;
+        setPendingOpen({
+          ...current,
+          error: "文档打开超时，未修改文件内容",
+        });
+        setHomeActive(true);
+      }, HOME_OPEN_WATCHDOG_MS);
+    },
+    [clearOpenWatchdog, setHomeActive, setPendingOpen],
+  );
+
   const showHome = useCallback(() => {
+    clearOpenWatchdog();
     cancelHomeOpenTransitions(homeOpenSequenceRef, setPendingOpen);
     setHomeActive(true);
-  }, [setHomeActive, setPendingOpen]);
+  }, [clearOpenWatchdog, setHomeActive, setPendingOpen]);
+
+  useEffect(() => clearOpenWatchdog, [clearOpenWatchdog]);
 
   const openNoteLeavingHome = useCallback(
     (
@@ -97,12 +136,15 @@ export function useHomeWorkspaceTransitions<OpenNoteOptions>({
       };
       setActiveArtifactId(null);
       setHomeActive(false);
+      scheduleOpenWatchdog(pending);
       return openNote(path, titleHint, options)
         .then(() => {
+          clearOpenWatchdog();
           if (homeOpenSequenceRef.current !== sequence) return;
           setActiveArtifactId(null);
         })
         .catch((error: unknown) => {
+          clearOpenWatchdog();
           setHomeActive(true);
           failHomeOpenLoading({
             message: error instanceof Error ? error.message : "无法打开笔记",
@@ -115,8 +157,10 @@ export function useHomeWorkspaceTransitions<OpenNoteOptions>({
     },
     [
       activateTab,
+      clearOpenWatchdog,
       openNote,
       openTabs,
+      scheduleOpenWatchdog,
       setActiveArtifactId,
       setHomeActive,
       setPendingOpen,
@@ -189,12 +233,15 @@ export function useHomeWorkspaceTransitions<OpenNoteOptions>({
     };
     setActiveArtifactId(null);
     setHomeActive(false);
+    scheduleOpenWatchdog(pending);
     return handleNewNote()
       .then(() => {
+        clearOpenWatchdog();
         if (homeOpenSequenceRef.current !== sequence) return;
         setActiveArtifactId(null);
       })
       .catch((error: unknown) => {
+        clearOpenWatchdog();
         setHomeActive(true);
         failHomeOpenLoading({
           message: error instanceof Error ? error.message : "新建笔记失败",
@@ -204,7 +251,14 @@ export function useHomeWorkspaceTransitions<OpenNoteOptions>({
           setPendingOpen,
         });
       });
-  }, [handleNewNote, setActiveArtifactId, setHomeActive, setPendingOpen]);
+  }, [
+    clearOpenWatchdog,
+    handleNewNote,
+    scheduleOpenWatchdog,
+    setActiveArtifactId,
+    setHomeActive,
+    setPendingOpen,
+  ]);
 
   return {
     clearPendingOpenFromWorkspace,
