@@ -146,7 +146,20 @@ describe("model provider registry contract", () => {
     expect(section).not.toContain("routeModelsForProvider(providerId)");
   });
 
-  it("supports deleting unused custom providers through typed IPC", () => {
+  it("keeps text-validated models selectable for all text capability slots", () => {
+    const section = read("src/components/settings/LlmRoutingSection.tsx");
+
+    expect(section).toContain("textValidatedModel");
+    expect(section).toContain('slot === "vision"');
+    expect(section).not.toContain('slot === "reasoner")');
+    expect(section).not.toContain(
+      'slot === "long_context") return catalog.contextWindow',
+    );
+    expect(section).not.toContain(
+      "catalog.supportsThinking || catalog.supportsTools",
+    );
+  });
+  it("supports deleting unused provider configurations through typed IPC", () => {
     const section = read("src/components/settings/LlmRoutingSection.tsx");
     const ipc = read("src/lib/ipc.ts");
     const rust = read("src-tauri/src/commands/llm_config_commands.rs");
@@ -156,7 +169,10 @@ describe("model provider registry contract", () => {
     expect(ipc).toContain("llm_config_delete_provider");
     expect(section).toContain("llmConfigDeleteProvider");
     expect(section).toContain("deleteProvider");
-    expect(section).toContain("isCustomProviderId(provider.id)");
+    expect(section).not.toContain(
+      "if (!isCustomProviderId(provider.id)) return",
+    );
+    expect(section).toContain("provider.configured");
     expect(section).toContain("provider.usedSlots.length > 0");
     expect(section).toContain("confirm(");
     expect(rust).toContain("llm_config_delete_provider");

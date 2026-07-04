@@ -677,33 +677,33 @@ fn route_satisfies_slot(
     if privacy_preference == PrivacyPreference::LocalOnly {
         return false;
     }
+    let catalog_model =
+        find_model(&route.model).filter(|model| model.provider_id == route.provider_id);
+    let registry_entry = || {
+        registry
+            .iter()
+            .find(|entry| entry.provider_id == route.provider_id && entry.model_id == route.model)
+    };
     match slot {
         CapabilitySlot::Vision => {
-            if let Some(model) =
-                find_model(&route.model).filter(|model| model.provider_id == route.provider_id)
-            {
+            if let Some(model) = catalog_model {
                 return model.supports_vision;
             }
-            registry.iter().any(|entry| {
-                entry.provider_id == route.provider_id
-                    && entry.model_id == route.model
-                    && entry.vision_verified_at.is_some()
-            })
+            registry_entry().is_some_and(|entry| entry.vision_verified_at.is_some())
         }
         CapabilitySlot::AgentTools => {
             let model =
                 find_model(&route.model).unwrap_or_else(|| fallback_model(&route.provider_id));
             model.supports_tools
         }
-        CapabilitySlot::Reasoner => {
-            let model =
-                find_model(&route.model).unwrap_or_else(|| fallback_model(&route.provider_id));
-            model.supports_thinking || model.supports_tools
-        }
-        CapabilitySlot::LongContext => {
-            let model =
-                find_model(&route.model).unwrap_or_else(|| fallback_model(&route.provider_id));
-            model.context_window >= 128_000
+        CapabilitySlot::Fast
+        | CapabilitySlot::Writer
+        | CapabilitySlot::Reasoner
+        | CapabilitySlot::LongContext => {
+            catalog_model.is_some()
+                || registry_entry().is_some_and(|entry| {
+                    entry.text_verified_at.is_some() || entry.vision_verified_at.is_some()
+                })
         }
         _ => true,
     }
@@ -1268,6 +1268,74 @@ mod tests {
         assert!(!err.to_string().contains("Fast"));
     }
 
+    #[test]
+    fn custom_text_validated_model_can_route_reasoner_and_long_context_slots() {
+        let mut routing = deepseek_defaults();
+        routing.providers.insert(
+            "custom".into(),
+            ProviderOverride {
+                base_url: Some("https://example.com/v1".into()),
+                label: Some("Custom".into()),
+                default_model: Some("plain-text".into()),
+                enabled_models: Some(vec!["plain-text".into()]),
+            },
+        );
+        for slot in ["reasoner", "long_context"] {
+            routing.slots.insert(
+                slot.into(),
+                SlotRoute {
+                    provider_id: "custom".into(),
+                    model: "plain-text".into(),
+                    thinking: false,
+                },
+            );
+        }
+        let registry = vec![ModelRegistryEntry {
+            provider_id: "custom".into(),
+            model_id: "plain-text".into(),
+            display_name: "plain-text".into(),
+            source: model_registry::ModelRegistrySource::Manual,
+            stale: false,
+            first_seen_at: None,
+            last_seen_at: None,
+            last_refreshed_at: None,
+            text_verified_at: Some("verified".into()),
+            vision_verified_at: None,
+            user_confirmed_capabilities: Vec::new(),
+        }];
+
+        let reasoner = resolve_capability_route_with_registry(
+            &routing,
+            CapabilityRouteInput {
+                intent: AgentIntent::Research,
+                context_tokens: 1_000,
+                has_images: false,
+                needs_tools: false,
+                needs_reasoning: true,
+                privacy_preference: PrivacyPreference::ExternalAllowed,
+            },
+            &registry,
+        )
+        .expect("text-validated model should route reasoner");
+        assert_eq!(reasoner.summary.slot, CapabilitySlot::Reasoner);
+        assert_eq!(reasoner.summary.model, "plain-text");
+
+        let long_context = resolve_capability_route_with_registry(
+            &routing,
+            CapabilityRouteInput {
+                intent: AgentIntent::AskNotes,
+                context_tokens: 240_000,
+                has_images: false,
+                needs_tools: false,
+                needs_reasoning: false,
+                privacy_preference: PrivacyPreference::ExternalAllowed,
+            },
+            &registry,
+        )
+        .expect("text-validated model should route long context");
+        assert_eq!(long_context.summary.slot, CapabilitySlot::LongContext);
+        assert_eq!(long_context.summary.model, "plain-text");
+    }
     #[test]
     fn vision_route_ignores_dirty_verified_state_for_catalog_non_vision_model() {
         let mut routing = deepseek_defaults();

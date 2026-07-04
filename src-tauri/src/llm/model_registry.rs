@@ -303,9 +303,13 @@ pub fn mark_model_validated(
 /// Return whether a registry row supports the requested capability slot.
 pub fn supports_model_for_slot(entry: &ModelRegistryEntry, slot: CapabilitySlot) -> bool {
     match slot {
-        CapabilitySlot::Fast | CapabilitySlot::Writer => true,
+        CapabilitySlot::Fast
+        | CapabilitySlot::Writer
+        | CapabilitySlot::LongContext
+        | CapabilitySlot::Reasoner => {
+            entry.text_verified_at.is_some() || entry.vision_verified_at.is_some()
+        }
         CapabilitySlot::Vision => entry.vision_verified_at.is_some(),
-        CapabilitySlot::LongContext | CapabilitySlot::Reasoner => false,
         CapabilitySlot::AgentTools
         | CapabilitySlot::Embedding
         | CapabilitySlot::Reranker
@@ -441,6 +445,39 @@ mod tests {
         assert!(entry.vision_verified_at.is_some());
     }
 
+    #[test]
+    fn live_validated_text_models_support_all_text_slots() {
+        let db = migrated_db();
+
+        let text_entry =
+            mark_model_validated(&db, "custom", "plain-text", ModelValidationKind::Text).unwrap();
+
+        for slot in [
+            CapabilitySlot::Fast,
+            CapabilitySlot::Writer,
+            CapabilitySlot::Reasoner,
+            CapabilitySlot::LongContext,
+        ] {
+            assert!(supports_model_for_slot(&text_entry, slot), "{slot:?}");
+        }
+        assert!(!supports_model_for_slot(
+            &text_entry,
+            CapabilitySlot::Vision
+        ));
+
+        let vision_entry =
+            mark_model_validated(&db, "custom", "multi-modal", ModelValidationKind::Vision)
+                .unwrap();
+        for slot in [
+            CapabilitySlot::Fast,
+            CapabilitySlot::Writer,
+            CapabilitySlot::Reasoner,
+            CapabilitySlot::LongContext,
+            CapabilitySlot::Vision,
+        ] {
+            assert!(supports_model_for_slot(&vision_entry, slot), "{slot:?}");
+        }
+    }
     #[test]
     fn confirm_capability_does_not_mark_model_as_live_validated() {
         let db = migrated_db();

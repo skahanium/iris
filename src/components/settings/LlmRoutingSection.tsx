@@ -131,16 +131,12 @@ function findModelCatalogForProvider(
   );
 }
 
-function modelMatchesCapability(
-  catalog: ModelCatalogEntry | undefined,
-  slot: CapabilitySlot,
-): boolean {
-  if (!catalog) return false;
-  if (slot === "vision") return catalog.supportsVision;
-  if (slot === "reasoner")
-    return catalog.supportsThinking || catalog.supportsTools;
-  if (slot === "long_context") return catalog.contextWindow >= 128_000;
-  return slot === "fast" || slot === "writer";
+function textValidatedModel(model: EnabledProviderModel): boolean {
+  return Boolean(
+    model.catalog ||
+    model.registry?.textVerifiedAt ||
+    model.registry?.visionVerifiedAt,
+  );
 }
 
 function modelSupportsSlot(
@@ -151,10 +147,14 @@ function modelSupportsSlot(
     if (model.catalog) return model.catalog.supportsVision;
     return Boolean(model.registry?.visionVerifiedAt);
   }
-  if (slot === "fast" || slot === "writer") {
-    return Boolean(model.catalog || model.registry?.textVerifiedAt);
+  if (
+    slot === "fast" ||
+    slot === "writer" ||
+    slot === "reasoner" ||
+    slot === "long_context"
+  ) {
+    return textValidatedModel(model);
   }
-  if (modelMatchesCapability(model.catalog, slot)) return true;
   return false;
 }
 
@@ -163,7 +163,7 @@ function modelCapabilitySummary(
   result: { ok: boolean; message: string } | undefined,
 ): string {
   if (result) return result.message;
-  const textReady = Boolean(model.catalog || model.registry?.textVerifiedAt);
+  const textReady = textValidatedModel(model);
   if (!textReady) return "未验证";
   const visionReady = modelSupportsSlot(model, "vision");
   return visionReady ? "文本可用 · 视觉可用" : "文本可用 · 视觉不支持";
@@ -644,7 +644,6 @@ export function LlmRoutingSection({ open }: LlmRoutingSectionProps) {
   };
 
   const deleteProvider = async (provider: VisibleProvider) => {
-    if (!isCustomProviderId(provider.id)) return;
     if (provider.usedSlots.length > 0) {
       setMessage(
         provider.name +
@@ -657,7 +656,7 @@ export function LlmRoutingSection({ open }: LlmRoutingSectionProps) {
     const confirmed = confirm(
       "Delete " +
         provider.name +
-        "? This removes its model registry rows and credential marker.",
+        "? This removes its provider configuration, enabled models, model validation rows, and credential marker. Built-in providers can be added again later.",
     );
     if (!confirmed || !data) return;
     setMessage(null);
@@ -669,7 +668,9 @@ export function LlmRoutingSection({ open }: LlmRoutingSectionProps) {
       setData({
         ...data,
         routing: nextRouting,
-        providers: data.providers.filter((item) => item.id !== provider.id),
+        providers: isCustomProviderId(provider.id)
+          ? data.providers.filter((item) => item.id !== provider.id)
+          : data.providers,
         registry: data.registry.filter(
           (entry) => entry.providerId !== provider.id,
         ),
@@ -962,7 +963,7 @@ export function LlmRoutingSection({ open }: LlmRoutingSectionProps) {
                           ? "刷新中…"
                           : "刷新模型"}
                       </Button>
-                      {isCustomProviderId(provider.id) ? (
+                      {provider.configured ? (
                         <Button
                           type="button"
                           size="sm"

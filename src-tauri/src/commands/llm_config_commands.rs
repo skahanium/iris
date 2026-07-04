@@ -12,8 +12,7 @@ use crate::llm::engine::truncate_error_text;
 use crate::llm::providers::chat_completions_url;
 use crate::llm::providers::models_probe_url;
 use crate::llm::providers::{
-    credential_service, is_allowed_provider, is_custom_provider,
-    list_external_providers_from_routing, requires_api_key,
+    credential_service, is_allowed_provider, list_external_providers_from_routing, requires_api_key,
 };
 use crate::llm::{model_catalog, model_registry};
 use serde::{Deserialize, Serialize};
@@ -193,9 +192,6 @@ fn delete_provider_inner(
     let provider_id = provider_id.trim();
     if provider_id.is_empty() {
         return Err(AppError::msg("provider id is required"));
-    }
-    if !is_custom_provider(provider_id) {
-        return Err(AppError::msg("only custom providers can be deleted"));
     }
 
     let mut routing = load(db)?;
@@ -639,10 +635,46 @@ mod tests {
     }
 
     #[test]
-    fn delete_provider_rejects_builtin_provider() {
+    fn delete_provider_removes_unused_builtin_provider_configuration() {
+        let db = crate::storage::db::Database::open_in_memory().unwrap();
+        let mut routing = config::deepseek_defaults();
+        routing.providers.insert(
+            "deepseek".into(),
+            config::ProviderOverride {
+                base_url: None,
+                label: None,
+                default_model: Some("deepseek-v4-flash".into()),
+                enabled_models: Some(vec!["deepseek-v4-flash".into()]),
+            },
+        );
+        config::save(&db, &routing).unwrap();
+        crate::credentials::mark_api_key_configured(&db, "iris.llm.deepseek").unwrap();
+        model_registry::upsert_provider_discovered_models(
+            &db,
+            "deepseek",
+            vec!["deepseek-v4-flash".to_string()],
+        )
+        .unwrap();
+
+        let routing = delete_provider_inner(&db, "deepseek").unwrap();
+
+        assert!(!routing.providers.contains_key("deepseek"));
+        assert!(!config::load(&db)
+            .unwrap()
+            .providers
+            .contains_key("deepseek"));
+        assert!(!crate::credentials::api_key_configured(&db, "iris.llm.deepseek").unwrap());
+        assert!(model_registry::list_registry_entries(&db)
+            .unwrap()
+            .into_iter()
+            .all(|entry| entry.provider_id != "deepseek"));
+    }
+
+    #[test]
+    fn delete_provider_rejects_missing_provider_configuration() {
         let db = crate::storage::db::Database::open_in_memory().unwrap();
         let err = delete_provider_inner(&db, "deepseek").unwrap_err();
-        assert!(err.to_string().contains("custom"));
+        assert!(err.to_string().contains("provider not found"));
     }
 
     #[test]
