@@ -2,10 +2,12 @@ import { MarkdownSerializer } from "prosemirror-markdown";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import * as markdownLib from "@/lib/markdown";
+import { createEditorIngestFallback } from "@/lib/editor-ingest";
 
 import {
   createProductionEditorFromBody,
   createProductionEditorFromIngestedBody,
+  createProductionEditorFromHtml,
   fullNoteRoundTrip,
   normalizeMd,
   pmSerializeBody,
@@ -414,6 +416,23 @@ describe("editorDocToMarkdown (prosemirror-markdown hot path)", () => {
       expect(pmSerializeBody(editor)).toContain(
         '<div class="raw">Raw HTML</div>',
       );
+    } finally {
+      editor.destroy();
+    }
+  });
+
+  it("keeps raw fallback markdown through PM serialization", () => {
+    const body = [
+      "# 中华人民共和国监察法实施条例",
+      "",
+      "正文必须保留。",
+      "",
+      '<script>alert("preserve")</script>',
+    ].join("\n");
+    const fallback = createEditorIngestFallback(body, "parser failed");
+    const editor = createProductionEditorFromHtml(fallback.tipTapHtml);
+    try {
+      expect(normalizeMd(pmSerializeBody(editor))).toBe(normalizeMd(body));
     } finally {
       editor.destroy();
     }

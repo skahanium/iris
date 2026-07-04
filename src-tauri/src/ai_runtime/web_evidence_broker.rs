@@ -94,22 +94,20 @@ pub async fn collect_web_evidence_with_usage(
     let mut collected = Vec::new();
     let mut usage = WebEvidenceUsage::default();
     if !input.query.trim().is_empty() {
-        for planned_query in plan_search_queries(&input.query) {
-            for fetch in collect_search_provider_fetches(db, &planned_query).await {
-                match fetch {
-                    Ok(fetch) => {
-                        let items = web_evidence_items_from_search_fetch(&fetch);
-                        record_successful_search_usage(&mut usage, &fetch, &items);
-                        collected.extend(items);
-                    }
-                    Err(error) => {
-                        collected.push(failed_evidence_item(
-                            "",
-                            "web.provider",
-                            "search",
-                            format!("web_search_failed: {error}"),
-                        ));
-                    }
+        for fetch in collect_planned_query_fetches(db, plan_search_queries(&input.query)).await {
+            match fetch {
+                Ok(fetch) => {
+                    let items = web_evidence_items_from_search_fetch(&fetch);
+                    record_successful_search_usage(&mut usage, &fetch, &items);
+                    collected.extend(items);
+                }
+                Err(error) => {
+                    collected.push(failed_evidence_item(
+                        "",
+                        "web.provider",
+                        "search",
+                        format!("web_search_failed: {error}"),
+                    ));
                 }
             }
         }
@@ -355,6 +353,22 @@ fn search_provider_candidates(db: &Database) -> AppResult<Vec<SearchProviderCand
     let provider =
         crate::ai_runtime::mcp_runtime_registry::resolve_selected_web_search_provider(db)?;
     Ok(vec![SearchProviderCandidate::Mcp(provider.id)])
+}
+
+async fn collect_planned_query_fetches(
+    db: &Database,
+    planned_queries: Vec<String>,
+) -> Vec<Result<SearchProviderFetch, String>> {
+    let futures = planned_queries
+        .iter()
+        .map(|query| collect_search_provider_fetches(db, query));
+    flatten_planned_query_fetch_results(join_all(futures).await)
+}
+
+fn flatten_planned_query_fetch_results(
+    batches: Vec<Vec<Result<SearchProviderFetch, String>>>,
+) -> Vec<Result<SearchProviderFetch, String>> {
+    batches.into_iter().flatten().collect()
 }
 
 async fn collect_search_provider_fetches(
@@ -1578,6 +1592,36 @@ mod tests {
                 && provider.provider_kind == "mcp"
                 && provider.successful_search_requests == 1
         }));
+    }
+
+    #[test]
+    fn planned_query_fetch_flatten_preserves_query_order() {
+        let first = SearchProviderFetch {
+            body: "[1] title: first\nurl: https://example.com/first\nsnippet: first".into(),
+            search_backend: WebSearchBackend::Provider,
+            provider_id: "provider-a".into(),
+            provider_kind: "mcp".into(),
+            failure_reason: None,
+            diagnostic_summary: None,
+        };
+        let second = SearchProviderFetch {
+            body: "[1] title: second\nurl: https://example.com/second\nsnippet: second".into(),
+            search_backend: WebSearchBackend::Provider,
+            provider_id: "provider-b".into(),
+            provider_kind: "mcp".into(),
+            failure_reason: None,
+            diagnostic_summary: None,
+        };
+
+        let flattened = flatten_planned_query_fetch_results(vec![
+            vec![Ok(first)],
+            vec![Err("query-two-failed".into()), Ok(second)],
+        ]);
+
+        assert_eq!(flattened.len(), 3);
+        assert_eq!(flattened[0].as_ref().unwrap().provider_id, "provider-a");
+        assert_eq!(flattened[1].as_ref().unwrap_err(), "query-two-failed");
+        assert_eq!(flattened[2].as_ref().unwrap().provider_id, "provider-b");
     }
 
     #[tokio::test]

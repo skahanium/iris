@@ -348,14 +348,14 @@ ToolCatalogEntry -> ToolPolicyContext -> PermissionDecision -> ToolExecutionGate
 
 ## 9. 风险与缓解
 
-| 风险 | 缓解 |
-| --- | --- |
-| 并行读工具改变 evidence 可见顺序 | 批次内使用同一 cold_start 快照，完成后按原始顺序 ingest |
-| 误把写工具分类为并行 | 分类测试强制 `requires_confirmation` 工具不得并行，catalog 覆盖测试防漏 |
-| Web 预取误触发浪费时间 | 只使用强联网信号，10 秒 timeout，失败静默降级 |
-| MCP provider 限流 | planned query 并发数量仅为 `plan_search_queries` 规模，保留现有 provider/fetch 上限 |
-| 审计顺序不稳定 | dispatch 可并行，record 必须按原始 call 顺序 |
-| 用户手选 evidence 被自动扩展 | 有 `selected_packet_ids` 时完全跳过预取 |
+| 风险                             | 缓解                                                                                |
+| -------------------------------- | ----------------------------------------------------------------------------------- |
+| 并行读工具改变 evidence 可见顺序 | 批次内使用同一 cold_start 快照，完成后按原始顺序 ingest                             |
+| 误把写工具分类为并行             | 分类测试强制 `requires_confirmation` 工具不得并行，catalog 覆盖测试防漏             |
+| Web 预取误触发浪费时间           | 只使用强联网信号，10 秒 timeout，失败静默降级                                       |
+| MCP provider 限流                | planned query 并发数量仅为 `plan_search_queries` 规模，保留现有 provider/fetch 上限 |
+| 审计顺序不稳定                   | dispatch 可并行，record 必须按原始 call 顺序                                        |
+| 用户手选 evidence 被自动扩展     | 有 `selected_packet_ids` 时完全跳过预取                                             |
 
 ## 10. 验收标准
 

@@ -38,7 +38,8 @@ import {
 } from "@/lib/editor-html-cache";
 import type { EditorHtmlCacheNamespace } from "@/lib/editor-html-cache";
 import {
-  ingestMarkdownForEditor,
+  createEditorIngestFallback,
+  ingestMarkdownForEditorSafely,
   type EditorIngestResult,
 } from "@/lib/editor-ingest";
 import {
@@ -498,11 +499,9 @@ function TipTapEditorInner({
     }
 
     if (bodyMd.length <= EDITOR_INGEST_WORKER_THRESHOLD_BYTES) {
-      try {
-        rememberIngestResult(ingestMarkdownForEditor({ bodyMarkdown: bodyMd }));
-      } catch {
-        contentReadyRef.current = false;
-      }
+      rememberIngestResult(
+        ingestMarkdownForEditorSafely({ bodyMarkdown: bodyMd }),
+      );
       return;
     }
 
@@ -511,8 +510,10 @@ function TipTapEditorInner({
         if (cancelled) return;
         rememberIngestResult(result);
       })
-      .catch(() => {
-        if (!cancelled) contentReadyRef.current = false;
+      .catch((error: unknown) => {
+        if (!cancelled) {
+          rememberIngestResult(createEditorIngestFallback(bodyMd, error));
+        }
       });
 
     return () => {

@@ -96,6 +96,17 @@ export function createProductionEditorFromBody(
   });
 }
 
+export function createProductionEditorFromHtml(
+  html: string,
+  vaultPath: string | null = null,
+): Editor {
+  return new Editor({
+    extensions: productionExtensions(vaultPath),
+    content: html,
+    parseOptions: EDITOR_PARSE_OPTIONS,
+  });
+}
+
 export function createProductionEditorFromNote(
   md: string,
   vaultPath: string | null = null,

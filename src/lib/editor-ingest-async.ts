@@ -1,5 +1,6 @@
 import {
-  ingestMarkdownForEditor,
+  createEditorIngestFallback,
+  ingestMarkdownForEditorSafely,
   type EditorIngestOptions,
   type EditorIngestResult,
 } from "@/lib/editor-ingest";
@@ -41,24 +42,36 @@ export function ingestMarkdownForEditorAsync(
   asyncOptions: IngestAsyncOptions = {},
 ): Promise<EditorIngestResult> {
   if (!shouldUseWorker(options.bodyMarkdown) && !asyncOptions.createWorker) {
-    return Promise.resolve(ingestMarkdownForEditor(options));
+    return Promise.resolve(ingestMarkdownForEditorSafely(options));
   }
 
   if (
     options.bodyMarkdown.length <= EDITOR_INGEST_WORKER_THRESHOLD_BYTES &&
     asyncOptions.createWorker
   ) {
-    return Promise.resolve(ingestMarkdownForEditor(options));
+    return Promise.resolve(ingestMarkdownForEditorSafely(options));
   }
 
   const requestId = (nextRequestId += 1);
-  const worker = (asyncOptions.createWorker ?? createMarkdownIngestWorker)();
+  let worker: Worker;
+  try {
+    worker = (asyncOptions.createWorker ?? createMarkdownIngestWorker)();
+  } catch (error: unknown) {
+    return Promise.resolve(
+      createEditorIngestFallback(options.bodyMarkdown, error),
+    );
+  }
 
-  return new Promise((resolve, reject) => {
+  return new Promise((resolve) => {
     const finish = () => {
       worker.onmessage = null;
       worker.onerror = null;
       worker.terminate();
+    };
+
+    const resolveFallback = (reason: unknown) => {
+      finish();
+      resolve(createEditorIngestFallback(options.bodyMarkdown, reason));
     };
 
     worker.onmessage = (event: MessageEvent<WorkerIngestResponse>) => {
@@ -66,7 +79,7 @@ export function ingestMarkdownForEditorAsync(
       if (data.requestId !== requestId) return;
       finish();
       if (data.error) {
-        reject(new Error(data.error));
+        resolve(createEditorIngestFallback(options.bodyMarkdown, data.error));
         return;
       }
       resolve({
@@ -77,17 +90,18 @@ export function ingestMarkdownForEditorAsync(
     };
 
     worker.onerror = (event) => {
-      finish();
-      reject(
-        new Error(
-          event.message || "Markdown ingest worker failed before responding",
-        ),
+      resolveFallback(
+        event.message || "Markdown ingest worker failed before responding",
       );
     };
 
-    worker.postMessage({
-      bodyMarkdown: options.bodyMarkdown,
-      requestId,
-    });
+    try {
+      worker.postMessage({
+        bodyMarkdown: options.bodyMarkdown,
+        requestId,
+      });
+    } catch (error: unknown) {
+      resolveFallback(error);
+    }
   });
 }

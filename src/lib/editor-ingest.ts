@@ -360,6 +360,50 @@ export interface EditorIngestResult {
   warnings: MarkdownCapabilityWarning[];
 }
 
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+export function createEditorIngestFallback(
+  bodyMarkdown: string,
+  reason: unknown = "Markdown ingest failed",
+): EditorIngestResult {
+  if (!bodyMarkdown.trim()) {
+    return { tipTapHtml: "<p></p>", preserveFragments: [], warnings: [] };
+  }
+
+  const fragment: MarkdownSyntaxFragment = {
+    capability: "unsupported",
+    endOffset: bodyMarkdown.length,
+    offset: 0,
+    raw: bodyMarkdown,
+    syntaxKind: "unknown",
+  };
+  const escapedRaw = escapeHtml(bodyMarkdown);
+
+  return {
+    tipTapHtml: `<div data-type="preserve-block" data-original-raw="${escapedRaw}" data-syntax-kind="unknown"></div>`,
+    preserveFragments: [fragment],
+    warnings: [
+      {
+        fragment,
+        message: `Markdown ingest fallback: ${errorMessage(reason)}`,
+        severity: "warn",
+      },
+    ],
+  };
+}
+
+export function ingestMarkdownForEditorSafely(
+  options: EditorIngestOptions,
+): EditorIngestResult {
+  try {
+    return ingestMarkdownForEditor(options);
+  } catch (error: unknown) {
+    return createEditorIngestFallback(options.bodyMarkdown, error);
+  }
+}
+
 /**
  * 由 contract 驱动，生成适合 TipTap 的编辑器初始内容。
  *

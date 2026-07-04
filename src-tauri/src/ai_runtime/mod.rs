@@ -42,6 +42,7 @@ pub mod task_plan;
 pub mod tool_audit;
 pub mod tool_catalog;
 pub mod tool_dispatch;
+pub mod tool_effects;
 pub mod tool_execution_pipeline;
 pub mod tool_executor;
 pub mod tool_fallback;

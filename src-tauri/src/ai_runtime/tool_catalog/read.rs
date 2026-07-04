@@ -207,7 +207,7 @@ pub(super) fn tools() -> Vec<ToolCatalogEntry> {
         },
         ToolCatalogEntry {
             name: "spawn_subagent",
-            description: "将子任务委派给独立 agent 并行执行。适用于多角度检索、子问题分解。",
+            description: "将复杂子任务委派给独立 agent 并行执行。适用于需要独立推理、交叉验证、长任务拆分或草稿协作的子问题；普通搜索并行由工具执行层自动处理。",
             input_schema: serde_json::json!({
                 "type": "object",
                 "properties": {

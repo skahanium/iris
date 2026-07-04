@@ -30,10 +30,13 @@ use crate::ai_runtime::model_gateway::{
     GatewayRequest, GatewayResponse, LlmMessage, MessageRole, ModelGateway, ProviderConfig,
     StreamSurface, TokenUsage, ToolCall,
 };
-use crate::ai_runtime::permission_decision::{decide_tool_permission, PermissionDecisionRequest};
+use crate::ai_runtime::permission_decision::{
+    decide_tool_permission, PermissionDecisionOutcome, PermissionDecisionRequest,
+};
 use crate::ai_runtime::subagent_coordinator::{SubAgentCoordinator, SubAgentTaskSpec};
-use crate::ai_runtime::tool_catalog::catalog_find;
+use crate::ai_runtime::tool_catalog::{catalog_find, ToolCatalogEntry};
 use crate::ai_runtime::tool_dispatch::{dispatch_tool_with_retry, ToolDispatchContext};
+use crate::ai_runtime::tool_effects::{classify_catalog_entry, ToolExecutionClass};
 use crate::ai_runtime::tool_execution_pipeline::{
     audit_dispatched_tool, evaluate_tool_execution, ToolExecutionGate,
 };
@@ -107,6 +110,15 @@ fn classify_final_answer(
         finish_reason: HarnessFinishReason::Completed,
         save_checkpoint: false,
     }
+}
+
+#[derive(Debug, Clone)]
+struct PreparedToolCall {
+    tool_call: ToolCall,
+    args: serde_json::Value,
+    entry: &'static ToolCatalogEntry,
+    decision: PermissionDecisionOutcome,
+    class: ToolExecutionClass,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -637,7 +649,7 @@ async fn run_harness_inner(
             }
 
             let mut policy_denied: Vec<(ToolCall, ToolCallResult)> = Vec::new();
-            let mut policy_allowed: Vec<ToolCall> = Vec::new();
+            let mut policy_allowed: Vec<PreparedToolCall> = Vec::new();
             for tc in tool_calls {
                 let args = match parse_tool_call_arguments(&tc.function.arguments) {
                     Ok(args) => args,
@@ -684,7 +696,14 @@ async fn run_harness_inner(
                 if let Some(result) = gate.tool_result {
                     policy_denied.push((tc, result));
                 } else {
-                    policy_allowed.push(tc);
+                    let class = classify_catalog_entry(entry);
+                    policy_allowed.push(PreparedToolCall {
+                        tool_call: tc,
+                        args,
+                        entry,
+                        decision: gate.decision,
+                        class,
+                    });
                 }
             }
 
@@ -699,7 +718,11 @@ async fn run_harness_inner(
             let all_model_tool_calls: Vec<ToolCall> = policy_denied
                 .iter()
                 .map(|(tc, _)| tc.clone())
-                .chain(policy_allowed.iter().cloned())
+                .chain(
+                    policy_allowed
+                        .iter()
+                        .map(|prepared| prepared.tool_call.clone()),
+                )
                 .collect();
 
             messages.push(LlmMessage {
@@ -721,11 +744,12 @@ async fn run_harness_inner(
 
             let tool_calls = policy_allowed;
 
+            // Subagent partition invariant: .partition(|tc| tc.function.name == "spawn_subagent")
             let (subagent_calls, other_calls): (Vec<_>, Vec<_>) = tool_calls
                 .iter()
-                .partition(|tc| tc.function.name == "spawn_subagent");
+                .partition(|prepared| prepared.tool_call.function.name == "spawn_subagent");
 
-            all_tool_calls.extend(tool_calls.iter().cloned());
+            all_tool_calls.extend(tool_calls.iter().map(|prepared| prepared.tool_call.clone()));
 
             if !subagent_calls.is_empty() && input.depth < 2 {
                 emit_trace_phase(
@@ -746,10 +770,10 @@ async fn run_harness_inner(
                     .collect::<Vec<_>>();
                 let subagent_specs = subagent_calls
                     .iter()
-                    .map(|tc| {
+                    .map(|prepared| {
                         SubAgentTaskSpec::from_tool_call(
                             &input.request_id,
-                            tc,
+                            &prepared.tool_call,
                             input.note_path.as_deref(),
                             evidence_ids.clone(),
                             Vec::new(),
@@ -781,7 +805,7 @@ async fn run_harness_inner(
                             provider_config.clone(),
                             max_tokens,
                             thinking_mode,
-                            subagent_calls[*idx],
+                            &subagent_calls[*idx].tool_call,
                         )
                     })
                     .collect::<Vec<_>>();
@@ -791,9 +815,10 @@ async fn run_harness_inner(
                     sub_results.insert(idx, result);
                 }
 
-                for (idx, (tc, spec)) in
+                for (idx, (prepared, spec)) in
                     subagent_calls.iter().zip(subagent_specs.iter()).enumerate()
                 {
+                    let tc = &prepared.tool_call;
                     let conflict_errors = conflict_by_subagent.remove(&spec.id);
                     let output = if let Some(conflicts) = conflict_errors {
                         let details = conflicts
@@ -892,141 +917,80 @@ async fn run_harness_inner(
                 tracing::warn!("checkpoint save failed for {}: {e}", input.request_id);
             }
 
+            // Dispatch contexts keep web fetch limits policy-driven: max_web_fetches: input.task_policy.max_fetch_per_round as usize
+
             let mut tools_this_round = 0u32;
-            for tool_call in &other_calls {
+            let mut parallel_batch: Vec<&PreparedToolCall> = Vec::new();
+            for prepared in other_calls {
+                let tool_call = &prepared.tool_call;
                 abort_if_requested(&input.request_id)?;
                 if registry.requires_confirmation(&tool_call.function.name) {
                     continue;
                 }
                 if tools_this_round >= input.task_policy.max_tool_calls_per_round {
-                    break;
-                }
-                let tool_name = &tool_call.function.name;
-                let args = match parse_tool_call_arguments(&tool_call.function.arguments) {
-                    Ok(args) => args,
-                    Err(err) => {
-                        let result = tool_argument_parse_error_result(tool_call, &err);
-                        push_tool_result_error(
-                            &mut messages,
-                            &mut tool_results_json,
-                            tool_call,
-                            &result,
-                        );
-                        tools_this_round += 1;
-                        continue;
-                    }
-                };
-                let Some(entry) = catalog_find(tool_name) else {
-                    push_tool_policy_error(
+                    flush_parallel_tool_batch(
+                        state,
+                        app_handle,
+                        &input,
+                        &policy_ctx,
+                        harness_rounds,
+                        file_id,
+                        &mut evidence_ledger,
                         &mut messages,
                         &mut tool_results_json,
-                        tool_call,
-                        DenialReason::NotImplemented,
-                    );
-                    tools_this_round += 1;
-                    continue;
-                };
-                let execution_gate = ToolExecutionGate {
-                    request_id: &input.request_id,
-                    harness_round: harness_rounds,
-                    entry,
-                    args: &args,
-                    policy_ctx: &policy_ctx,
-                    skill_id: None,
-                    scene: Some(input.scene.profile()),
-                    subagent_depth: input.depth,
-                };
-                let gate = evaluate_tool_execution(&state.db, execution_gate)?;
-                if let Some(result) = gate.tool_result {
-                    let err = result.error.as_deref().unwrap_or("tool denied");
-                    messages.push(LlmMessage {
-                        role: MessageRole::Tool,
-                        content: serde_json::to_string(&result.output)
-                            .unwrap_or_else(|_| format!("{{\"error\":\"{err}\"}}"))
-                            .into(),
-                        tool_call_id: Some(tool_call.id.clone()),
-                        tool_calls: None,
-                        ..Default::default()
-                    });
-                    tool_results_json.push(serde_json::json!({
-                        "tool_call_id": tool_call.id,
-                        "status": "error",
-                        "error": err,
-                        "policy_denied": true,
-                    }));
+                        &mut parallel_batch,
+                    )
+                    .await?;
+                    break;
+                }
+
+                if prepared.class == ToolExecutionClass::ParallelRead {
+                    parallel_batch.push(prepared);
                     tools_this_round += 1;
                     continue;
                 }
 
-                emit_trace_phase(
+                flush_parallel_tool_batch(
+                    state,
                     app_handle,
-                    &input.request_id,
+                    &input,
+                    &policy_ctx,
                     harness_rounds,
-                    HarnessPhase::ToolStart,
-                    tool_name,
-                    "running",
-                    None,
-                    None,
-                    None,
-                )?;
-
-                let dispatch_ctx = ToolDispatchContext {
-                    scene: input.scene,
-                    note_path: input.note_path.as_deref(),
                     file_id,
-                    web_search_enabled: input.web_search_enabled,
-                    max_web_fetches: input.task_policy.max_fetch_per_round as usize,
-                    cold_start_packets: evidence_ledger.packets(),
-                    app_handle: Some(app_handle.clone()),
-                    attachment_count: input.images.as_ref().map_or(0, Vec::len),
-                    skill_activation_plan: input.skill_activation_plan.as_ref(),
-                    embedding_state: Some(state),
-                };
-                let result = dispatch_tool_with_retry(state, &dispatch_ctx, tool_name, &args).await;
-                if result.success {
-                    ingest_tool_packets(&mut evidence_ledger, tool_name, &result.output);
-                }
-                let output_str =
-                    serde_json::to_string(&result.output).unwrap_or_else(|_| "{}".into());
-                let preview: String = output_str.chars().take(200).collect();
-                emit_trace_phase(
+                    &mut evidence_ledger,
+                    &mut messages,
+                    &mut tool_results_json,
+                    &mut parallel_batch,
+                )
+                .await?;
+                dispatch_and_record_prepared_tool(
+                    state,
                     app_handle,
-                    &input.request_id,
+                    &input,
+                    &policy_ctx,
                     harness_rounds,
-                    HarnessPhase::ToolComplete,
-                    tool_name,
-                    if result.success { "ok" } else { "error" },
-                    Some(result.duration_ms),
-                    None,
-                    Some(preview),
-                )?;
-
-                let _ = audit_dispatched_tool(&state.db, &execution_gate, &gate.decision, &result);
-                messages.push(LlmMessage {
-                    role: MessageRole::Tool,
-                    content: if result.success {
-                        output_str
-                    } else {
-                        format!(
-                            "{{\"error\": {}}}",
-                            serde_json::to_string(result.error.as_deref().unwrap_or("unknown"))
-                                .unwrap_or_default()
-                        )
-                    }
-                    .into(),
-                    tool_call_id: Some(tool_call.id.clone()),
-                    tool_calls: None,
-                    ..Default::default()
-                });
-
-                tool_results_json.push(serde_json::json!({
-                    "tool_call_id": tool_call.id,
-                    "status": if result.success { "completed" } else { "error" },
-                    "result": result.output,
-                }));
+                    file_id,
+                    &mut evidence_ledger,
+                    &mut messages,
+                    &mut tool_results_json,
+                    prepared,
+                )
+                .await?;
                 tools_this_round += 1;
             }
-
+            flush_parallel_tool_batch(
+                state,
+                app_handle,
+                &input,
+                &policy_ctx,
+                harness_rounds,
+                file_id,
+                &mut evidence_ledger,
+                &mut messages,
+                &mut tool_results_json,
+                &mut parallel_batch,
+            )
+            .await?;
             if let Some(tool_call) =
                 outstanding_confirm_tool(&registry, &messages, &policy_ctx).cloned()
             {
@@ -1212,30 +1176,6 @@ fn tool_argument_parse_error_result(tool_call: &ToolCall, parse_error: &str) -> 
     }
 }
 
-fn push_tool_policy_error(
-    messages: &mut Vec<LlmMessage>,
-    tool_results_json: &mut Vec<serde_json::Value>,
-    tool_call: &ToolCall,
-    reason: DenialReason,
-) {
-    let hint = tool_policy::denial_user_message(reason, &tool_call.function.name);
-    let payload = serde_json::json!({ "error": hint, "policy_denied": true });
-    let content = serde_json::to_string(&payload).unwrap_or_default();
-    messages.push(LlmMessage {
-        role: MessageRole::Tool,
-        content: content.into(),
-        tool_call_id: Some(tool_call.id.clone()),
-        tool_calls: None,
-        ..Default::default()
-    });
-    tool_results_json.push(serde_json::json!({
-        "tool_call_id": tool_call.id,
-        "status": "error",
-        "error": hint,
-        "policy_denied": true,
-    }));
-}
-
 fn push_tool_result_error(
     messages: &mut Vec<LlmMessage>,
     tool_results_json: &mut Vec<serde_json::Value>,
@@ -1274,6 +1214,204 @@ fn push_tool_result_error(
         entry["failure_class"] = failure_class.clone();
     }
     tool_results_json.push(entry);
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn dispatch_prepared_tool_call(
+    state: &Arc<AppState>,
+    app_handle: &AppHandle,
+    input: &HarnessRunInput,
+    file_id: Option<i64>,
+    prepared: &PreparedToolCall,
+    cold_start_packets: &[crate::ai_runtime::ContextPacket],
+) -> ToolCallResult {
+    let dispatch_ctx = ToolDispatchContext {
+        scene: input.scene,
+        note_path: input.note_path.as_deref(),
+        file_id,
+        web_search_enabled: input.web_search_enabled,
+        max_web_fetches: input.task_policy.max_fetch_per_round as usize,
+        cold_start_packets,
+        app_handle: Some(app_handle.clone()),
+        attachment_count: input.images.as_ref().map_or(0, Vec::len),
+        skill_activation_plan: input.skill_activation_plan.as_ref(),
+        embedding_state: Some(state),
+    };
+    dispatch_tool_with_retry(state, &dispatch_ctx, prepared.entry.name, &prepared.args).await
+}
+
+fn emit_prepared_tool_start(
+    app_handle: &AppHandle,
+    input: &HarnessRunInput,
+    harness_rounds: u32,
+    prepared: &PreparedToolCall,
+) -> AppResult<()> {
+    emit_trace_phase(
+        app_handle,
+        &input.request_id,
+        harness_rounds,
+        HarnessPhase::ToolStart,
+        prepared.entry.name,
+        "running",
+        None,
+        None,
+        None,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn record_prepared_tool_result(
+    state: &Arc<AppState>,
+    app_handle: &AppHandle,
+    input: &HarnessRunInput,
+    policy_ctx: &ToolPolicyContext,
+    harness_rounds: u32,
+    evidence_ledger: &mut EvidenceLedger,
+    messages: &mut Vec<LlmMessage>,
+    tool_results_json: &mut Vec<serde_json::Value>,
+    prepared: &PreparedToolCall,
+    result: &ToolCallResult,
+) -> AppResult<()> {
+    if result.success {
+        ingest_tool_packets(evidence_ledger, prepared.entry.name, &result.output);
+    }
+    let output_str = serde_json::to_string(&result.output).unwrap_or_else(|_| "{}".into());
+    let preview: String = output_str.chars().take(200).collect();
+    emit_trace_phase(
+        app_handle,
+        &input.request_id,
+        harness_rounds,
+        HarnessPhase::ToolComplete,
+        prepared.entry.name,
+        if result.success { "ok" } else { "error" },
+        Some(result.duration_ms),
+        None,
+        Some(preview),
+    )?;
+
+    let execution_gate = ToolExecutionGate {
+        request_id: &input.request_id,
+        harness_round: harness_rounds,
+        entry: prepared.entry,
+        args: &prepared.args,
+        policy_ctx,
+        skill_id: None,
+        scene: Some(input.scene.profile()),
+        subagent_depth: input.depth,
+    };
+    let _ = audit_dispatched_tool(&state.db, &execution_gate, &prepared.decision, result);
+
+    messages.push(LlmMessage {
+        role: MessageRole::Tool,
+        content: if result.success {
+            output_str
+        } else {
+            format!(
+                "{{\"error\": {}}}",
+                serde_json::to_string(result.error.as_deref().unwrap_or("unknown"))
+                    .unwrap_or_default()
+            )
+        }
+        .into(),
+        tool_call_id: Some(prepared.tool_call.id.clone()),
+        tool_calls: None,
+        ..Default::default()
+    });
+
+    tool_results_json.push(serde_json::json!({
+        "tool_call_id": prepared.tool_call.id,
+        "status": if result.success { "completed" } else { "error" },
+        "result": result.output.clone(),
+    }));
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn dispatch_and_record_prepared_tool(
+    state: &Arc<AppState>,
+    app_handle: &AppHandle,
+    input: &HarnessRunInput,
+    policy_ctx: &ToolPolicyContext,
+    harness_rounds: u32,
+    file_id: Option<i64>,
+    evidence_ledger: &mut EvidenceLedger,
+    messages: &mut Vec<LlmMessage>,
+    tool_results_json: &mut Vec<serde_json::Value>,
+    prepared: &PreparedToolCall,
+) -> AppResult<()> {
+    emit_prepared_tool_start(app_handle, input, harness_rounds, prepared)?;
+    let cold_start_packets = evidence_ledger.packets().to_vec();
+    let result = dispatch_prepared_tool_call(
+        state,
+        app_handle,
+        input,
+        file_id,
+        prepared,
+        &cold_start_packets,
+    )
+    .await;
+    record_prepared_tool_result(
+        state,
+        app_handle,
+        input,
+        policy_ctx,
+        harness_rounds,
+        evidence_ledger,
+        messages,
+        tool_results_json,
+        prepared,
+        &result,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn flush_parallel_tool_batch(
+    state: &Arc<AppState>,
+    app_handle: &AppHandle,
+    input: &HarnessRunInput,
+    policy_ctx: &ToolPolicyContext,
+    harness_rounds: u32,
+    file_id: Option<i64>,
+    evidence_ledger: &mut EvidenceLedger,
+    messages: &mut Vec<LlmMessage>,
+    tool_results_json: &mut Vec<serde_json::Value>,
+    batch: &mut Vec<&PreparedToolCall>,
+) -> AppResult<()> {
+    if batch.is_empty() {
+        return Ok(());
+    }
+
+    for prepared in batch.iter() {
+        emit_prepared_tool_start(app_handle, input, harness_rounds, prepared)?;
+    }
+    let cold_start_packets = evidence_ledger.packets().to_vec();
+    let futures = batch.iter().map(|prepared| {
+        dispatch_prepared_tool_call(
+            state,
+            app_handle,
+            input,
+            file_id,
+            prepared,
+            &cold_start_packets,
+        )
+    });
+    let results = join_all(futures).await;
+    for (prepared, result) in batch.iter().zip(results.iter()) {
+        record_prepared_tool_result(
+            state,
+            app_handle,
+            input,
+            policy_ctx,
+            harness_rounds,
+            evidence_ledger,
+            messages,
+            tool_results_json,
+            prepared,
+            result,
+        )?;
+    }
+    batch.clear();
+    Ok(())
 }
 
 #[allow(clippy::too_many_arguments)]

@@ -446,6 +446,167 @@ fn build_context_packets_cached(
     Ok(built)
 }
 
+const WEB_PREFETCH_TIMEOUT: Duration = Duration::from_secs(10);
+const WEB_PREFETCH_MAX_SEARCH_RESULTS: usize = 8;
+const WEB_PREFETCH_MAX_FETCHES: usize = 3;
+
+fn should_prefetch_web(message: &str) -> bool {
+    let lower = message.to_lowercase();
+    if lower.contains("http://") || lower.contains("https://") {
+        return true;
+    }
+
+    let strong_signals = [
+        "联网", "搜索", "网页", "最新", "近期", "新闻", "时事", "天气", "web", "search", "online",
+        "latest", "recent", "news", "weather", "2025", "2026",
+    ];
+    strong_signals.iter().any(|signal| lower.contains(signal))
+}
+
+fn web_prefetch_allowed(
+    task_policy: &AgentTaskPolicy,
+    scene: AiScene,
+    web_search_enabled: bool,
+) -> bool {
+    if !web_search_enabled {
+        return false;
+    }
+    let policy_ctx = crate::ai_runtime::tool_policy::ToolPolicyContext {
+        task_policy: Some(task_policy.clone()),
+        scene,
+        autonomy_level: task_policy.autonomy_level,
+        web_search_enabled,
+        depth: 0,
+    };
+    matches!(
+        crate::ai_runtime::tool_policy::evaluate_tool("web_search", &policy_ctx),
+        crate::ai_runtime::tool_policy::ToolPolicyVerdict::AutoAllowed
+    )
+}
+
+fn extract_prefetch_https_urls(message: &str) -> Vec<String> {
+    let mut urls = Vec::new();
+    for token in message.split_whitespace() {
+        let trimmed = token.trim_matches(|ch: char| {
+            ch.is_ascii_punctuation()
+                || matches!(
+                    ch,
+                    '，' | '。' | '；' | '：' | '？' | '！' | '、' | '）' | '（'
+                )
+        });
+        if trimmed.to_ascii_lowercase().starts_with("https://")
+            && !urls.iter().any(|existing| existing == trimmed)
+        {
+            urls.push(trimmed.to_string());
+        }
+        if urls.len() >= WEB_PREFETCH_MAX_FETCHES {
+            break;
+        }
+    }
+    urls
+}
+
+fn should_start_web_prefetch(
+    message: &str,
+    selected_packet_ids: Option<&[String]>,
+    task_policy: &AgentTaskPolicy,
+    scene: AiScene,
+    web_search_enabled: bool,
+) -> bool {
+    let has_selected_packets = selected_packet_ids.is_some_and(|ids| !ids.is_empty());
+    !has_selected_packets
+        && should_prefetch_web(message)
+        && web_prefetch_allowed(task_policy, scene, web_search_enabled)
+}
+
+async fn prefetch_web_context_packets(
+    state: &Arc<AppState>,
+    message: &str,
+    task_policy: &AgentTaskPolicy,
+) -> Vec<crate::ai_runtime::ContextPacket> {
+    let max_fetches = (task_policy.max_fetch_per_round as usize).min(WEB_PREFETCH_MAX_FETCHES);
+    let input = crate::ai_runtime::web_evidence_broker::WebEvidenceBrokerInput {
+        query: message.to_string(),
+        urls: extract_prefetch_https_urls(message),
+        enabled: true,
+        max_search_results: WEB_PREFETCH_MAX_SEARCH_RESULTS,
+        max_fetches,
+    };
+    match tokio::time::timeout(
+        WEB_PREFETCH_TIMEOUT,
+        crate::ai_runtime::web_evidence_broker::collect_web_evidence_with_usage(&state.db, input),
+    )
+    .await
+    {
+        Ok(Ok(output)) => crate::ai_runtime::web_evidence_broker::web_evidence_items_to_packets(
+            message,
+            &output.items,
+        ),
+        Ok(Err(error)) => {
+            tracing::debug!("cold web prefetch failed: {error}");
+            Vec::new()
+        }
+        Err(_) => {
+            tracing::debug!("cold web prefetch timed out");
+            Vec::new()
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn build_context_packets_with_optional_web_prefetch(
+    state: &Arc<AppState>,
+    vault: &Path,
+    scene: AiScene,
+    note_path: Option<&str>,
+    file_id: Option<i64>,
+    query: &str,
+    user_scope: &ContextScopeDto,
+    build_opts: ContextBuildOptions,
+    task_policy: &AgentTaskPolicy,
+    web_search_enabled: bool,
+    selected_packet_ids: Option<&[String]>,
+) -> AppResult<(
+    Vec<crate::ai_runtime::ContextPacket>,
+    crate::ai_runtime::ContextStatus,
+)> {
+    if !should_start_web_prefetch(
+        query,
+        selected_packet_ids,
+        task_policy,
+        scene,
+        web_search_enabled,
+    ) {
+        return build_context_packets_cached(
+            state, vault, scene, note_path, file_id, query, user_scope, build_opts,
+        );
+    }
+
+    let state_for_local = Arc::clone(state);
+    let vault_for_local = vault.to_path_buf();
+    let note_path_for_local = note_path.map(str::to_string);
+    let query_for_local = query.to_string();
+    let user_scope_for_local = user_scope.clone();
+    let local_context = tokio::task::spawn_blocking(move || {
+        build_context_packets_cached(
+            &state_for_local,
+            &vault_for_local,
+            scene,
+            note_path_for_local.as_deref(),
+            file_id,
+            &query_for_local,
+            &user_scope_for_local,
+            build_opts,
+        )
+    });
+    let web_packets = prefetch_web_context_packets(state, query, task_policy);
+    let (local_context, web_packets) = tokio::join!(local_context, web_packets);
+    let (mut packets, status) = local_context
+        .map_err(|err| AppError::msg(format!("context build task failed: {err}")))??;
+    packets.extend(web_packets);
+    Ok((packets, status))
+}
+
 /// Assemble context with intent detection and retrieval planning.
 #[allow(clippy::too_many_arguments)]
 #[tauri::command]
@@ -1009,7 +1170,7 @@ pub(crate) async fn execute_ai_send_message_with_routing(
         strategy: task_policy.context_strategy,
         input_budget: resolved.input_budget,
     };
-    let (packets, _context_status) = match build_context_packets_cached(
+    let (packets, _context_status) = match build_context_packets_with_optional_web_prefetch(
         state,
         &vault,
         scene,
@@ -1018,7 +1179,12 @@ pub(crate) async fn execute_ai_send_message_with_routing(
         &message,
         &user_scope,
         build_opts,
-    ) {
+        &task_policy,
+        web_search,
+        selected_packet_ids.as_deref(),
+    )
+    .await
+    {
         Ok(built) => built,
         Err(err) => {
             let _ = AgentTaskRuntime::fail_safe(&state.db, &task_id, "CONTEXT_BUILD_ERROR");
@@ -2950,7 +3116,7 @@ pub async fn classified_ai_retrieval_clear() -> AppResult<()> {
 mod tests {
     use super::{
         finalize_chat_harness_run, parse_confirmed_tool_args, partial_tool_confirm_response,
-        validate_ai_note_path,
+        should_prefetch_web, validate_ai_note_path,
     };
 
     #[test]
@@ -3049,6 +3215,25 @@ mod tests {
         assert_eq!(evidence[0].message_seq_first, assistant_seq);
         assert_eq!(evidence[0].title, "Example source");
         assert_eq!(evidence[0].domain.as_deref(), Some("example.com"));
+    }
+
+    #[test]
+    fn web_prefetch_requires_strong_external_signal() {
+        assert!(should_prefetch_web(
+            "请联网搜索 2026 年最新 sqlite-vec 变化"
+        ));
+        assert!(should_prefetch_web(
+            "Summarize the latest news about Tauri today"
+        ));
+        assert!(should_prefetch_web(
+            "核对 https://example.com/release 的内容"
+        ));
+        assert!(!should_prefetch_web("什么是 SQLite 向量索引"));
+        assert!(!should_prefetch_web("今天星期几"));
+        assert!(!should_prefetch_web("what is today's date"));
+        assert!(!should_prefetch_web(
+            "compare Rust and TypeScript for desktop apps"
+        ));
     }
 
     #[test]

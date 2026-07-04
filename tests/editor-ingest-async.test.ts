@@ -4,6 +4,7 @@ import {
   EDITOR_INGEST_WORKER_THRESHOLD_BYTES,
   ingestMarkdownForEditorAsync,
 } from "@/lib/editor-ingest-async";
+import { createEditorIngestFallback } from "@/lib/editor-ingest";
 
 describe("editor ingest async worker routing", () => {
   it("keeps small documents on the synchronous ingest path", async () => {
@@ -57,5 +58,67 @@ describe("editor ingest async worker routing", () => {
     expect(postMessage).toHaveBeenCalledOnce();
     expect(terminate).toHaveBeenCalledOnce();
     expect(result.tipTapHtml).toBe("<p>fresh</p>");
+  });
+
+  it("returns a raw-preserving fallback when the worker fails", async () => {
+    let onerror: ((event: ErrorEvent) => void) | null = null;
+    const terminate = vi.fn();
+    const postMessage = vi.fn(() => {
+      onerror?.({ message: "worker exploded" } as ErrorEvent);
+    });
+    const worker = {
+      postMessage,
+      terminate,
+      onmessage: null,
+      set onerror(next: ((event: ErrorEvent) => void) | null) {
+        onerror = next;
+      },
+      get onerror() {
+        return onerror;
+      },
+    } as unknown as Worker;
+    const bodyMarkdown =
+      "x".repeat(EDITOR_INGEST_WORKER_THRESHOLD_BYTES + 1) +
+      '\n\n<script>alert("keep raw")</script>';
+
+    const result = await ingestMarkdownForEditorAsync(
+      { bodyMarkdown },
+      { createWorker: () => worker },
+    );
+
+    expect(postMessage).toHaveBeenCalledOnce();
+    expect(terminate).toHaveBeenCalledOnce();
+    expect(result.tipTapHtml).toContain('data-type="preserve-block"');
+    expect(result.tipTapHtml).toContain(
+      "&lt;script&gt;alert(&quot;keep raw&quot;)&lt;/script&gt;",
+    );
+    expect(result.preserveFragments).toEqual([
+      expect.objectContaining({
+        capability: "unsupported",
+        raw: bodyMarkdown,
+        syntaxKind: "unknown",
+      }),
+    ]);
+    expect(result.warnings[0]?.message).toContain("worker exploded");
+  });
+
+  it("builds a fallback that serializes the original markdown body", () => {
+    const bodyMarkdown = [
+      "# 中华人民共和国监察法实施条例",
+      "",
+      "正文必须保留。",
+      "",
+      '<script>alert("preserve")</script>',
+    ].join("\n");
+
+    const fallback = createEditorIngestFallback(bodyMarkdown, "parser failed");
+
+    expect(fallback.tipTapHtml).toContain('data-type="preserve-block"');
+    expect(fallback.tipTapHtml).toContain("正文必须保留");
+    expect(fallback.tipTapHtml).not.toContain("<script>");
+    expect(fallback.preserveFragments).toEqual([
+      expect.objectContaining({ raw: bodyMarkdown, offset: 0 }),
+    ]);
+    expect(fallback.warnings[0]?.message).toContain("parser failed");
   });
 });
