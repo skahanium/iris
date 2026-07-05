@@ -214,6 +214,24 @@ describe("runtime configuration contracts", () => {
     );
   });
 
+  it("does not enable global Trusted Types enforcement until the UI stack is fully compatible", () => {
+    const tauriConfig = JSON.parse(read("src-tauri/tauri.conf.json")) as {
+      app?: { security?: { csp?: string } };
+    };
+    const csp = tauriConfig.app?.security?.csp ?? "";
+
+    expect(csp).not.toContain("require-trusted-types-for");
+    for (const directive of [
+      "default-src 'self'",
+      "script-src 'self'",
+      "object-src 'none'",
+      "base-uri 'self'",
+      "frame-ancestors 'none'",
+    ]) {
+      expect(csp).toContain(directive);
+    }
+  });
+
   it("cleans up the App editor stats debounce timer on unmount", () => {
     const app = read("src/App.tsx");
     const hook = read("src/hooks/useEditorStats.ts");

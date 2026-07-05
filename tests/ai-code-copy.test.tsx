@@ -8,6 +8,7 @@ describe("AiMessageBubble rendered HTML safety", () => {
   let host: HTMLDivElement;
   let root: Root;
   let writeText: ReturnType<typeof vi.fn>;
+  let originalTrustedTypes: unknown;
 
   beforeEach(() => {
     vi.useFakeTimers();
@@ -16,6 +17,8 @@ describe("AiMessageBubble rendered HTML safety", () => {
       configurable: true,
       value: { writeText },
     });
+    originalTrustedTypes = (window as Window & { trustedTypes?: unknown })
+      .trustedTypes;
 
     host = document.createElement("div");
     document.body.append(host);
@@ -25,6 +28,10 @@ describe("AiMessageBubble rendered HTML safety", () => {
   afterEach(() => {
     act(() => root.unmount());
     host.remove();
+    Object.defineProperty(window, "trustedTypes", {
+      configurable: true,
+      value: originalTrustedTypes,
+    });
     vi.runOnlyPendingTimers();
     vi.useRealTimers();
   });
@@ -58,5 +65,30 @@ describe("AiMessageBubble rendered HTML safety", () => {
     });
 
     expect(host.querySelector("strong")?.textContent).toBe("final answer");
+  });
+
+  it("uses a Trusted Types policy for assistant markdown HTML", async () => {
+    const createHTML = vi.fn((html: string) => ({ __trustedHTML: html }));
+    const createPolicy = vi.fn(() => ({ createHTML }));
+    Object.defineProperty(window, "trustedTypes", {
+      configurable: true,
+      value: { createPolicy },
+    });
+
+    await act(async () => {
+      root.render(
+        createElement(AiMessageBubble, {
+          role: "assistant",
+          content: "**trusted**",
+          streaming: false,
+        }),
+      );
+    });
+
+    expect(createPolicy).toHaveBeenCalledWith(
+      "iris-sanitized-html",
+      expect.objectContaining({ createHTML: expect.any(Function) }),
+    );
+    expect(createHTML).toHaveBeenCalledWith(expect.stringContaining("trusted"));
   });
 });

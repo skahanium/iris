@@ -1,7 +1,7 @@
 {
   "name": "iris",
   "private": true,
-  "version": "1.2.2",
+  "version": "1.2.3",
   "license": "AGPL-3.0-only",
   "type": "module",
   "scripts": {
@@ -10,6 +10,9 @@
     "dev:desktop:vec": "node scripts/with-iris-env.mjs -- node scripts/tauri-cli.mjs dev --features sqlite-vec",
     "dev:desktop:sign": "node scripts/with-iris-env.mjs -- node scripts/sign-dev-macos.mjs",
     "tauri:build:vec": "node scripts/with-iris-env.mjs -- node scripts/tauri-cli.mjs build --features sqlite-vec",
+    "package:local:mac": "node scripts/package-local.mjs mac",
+    "package:local:mac:check": "node scripts/package-local.mjs --check mac",
+    "package:local:win": "node scripts/package-local.mjs win",
     "build": "node scripts/with-iris-env.mjs -- tsc -b && node scripts/with-iris-env.mjs -- vite build",
     "preview": "node scripts/with-iris-env.mjs -- vite preview",
     "tauri": "node scripts/with-iris-env.mjs -- node scripts/tauri-cli.mjs",

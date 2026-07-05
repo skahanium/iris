@@ -4,6 +4,7 @@ import { renderMarkdownWithProfile } from "@/lib/markdown-contract";
 import { MarkdownErrorBoundary } from "@/components/ui/markdown-error-boundary";
 import { cn } from "@/lib/utils";
 import type { MarkdownProfile } from "@/lib/markdown-contract/types";
+import { toTrustedHtml } from "@/lib/sanitize";
 
 interface MarkdownRenderableProps {
   content: string;
@@ -52,7 +53,7 @@ export function MarkdownRenderable({
           className,
         )}
         data-prose-surface="conversation"
-        dangerouslySetInnerHTML={{ __html: html }}
+        dangerouslySetInnerHTML={{ __html: toTrustedHtml(html) }}
       />
     </MarkdownErrorBoundary>
   );

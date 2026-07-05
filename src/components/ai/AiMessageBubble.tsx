@@ -20,6 +20,7 @@ import { cn } from "@/lib/utils";
 import { useStreamingContent } from "@/hooks/useStreamingContent";
 import { useMarkdownRenderWorker } from "@/hooks/useMarkdownRenderWorker";
 import type { MentionToken } from "@/lib/ai-context-scope";
+import { toTrustedHtml } from "@/lib/sanitize";
 
 interface AiMessageBubbleProps {
   role: "user" | "assistant";
@@ -253,7 +254,7 @@ const AssistantBody = memo(function AssistantBody({
         streaming && content && "opacity-[0.92]",
       )}
       data-prose-surface="conversation"
-      dangerouslySetInnerHTML={{ __html: html }}
+      dangerouslySetInnerHTML={{ __html: toTrustedHtml(html) }}
       onClick={handleClick}
     />
   );
@@ -350,7 +351,7 @@ export const AiMessageBubble = memo(function AiMessageBubble({
             mentions && mentions.length > 0 && "pt-1.5",
           )}
           data-prose-surface="conversation"
-          dangerouslySetInnerHTML={{ __html: userHtml }}
+          dangerouslySetInnerHTML={{ __html: toTrustedHtml(userHtml) }}
         />
       </div>
     );

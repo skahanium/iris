@@ -1,5 +1,21 @@
 import { DOMPurify } from "@/lib/sanitize-vendor";
 
+export type SafeHtml = string | TrustedHTML;
+
+interface TrustedHtmlPolicy {
+  createHTML(html: string): TrustedHTML;
+}
+
+interface TrustedTypesLike {
+  createPolicy(
+    name: string,
+    rules: { createHTML: (html: string) => string },
+  ): TrustedHtmlPolicy;
+}
+
+let trustedHtmlPolicy: TrustedHtmlPolicy | null = null;
+let trustedHtmlPolicyFactory: TrustedTypesLike | null = null;
+
 /** 白名单标签：Markdown 渲染后需要的元素 */
 const ALLOWED_TAGS = [
   "p",
@@ -85,6 +101,29 @@ export function sanitizeHtml(html: string): string {
     ALLOW_DATA_ATTR: false,
     ALLOW_UNKNOWN_PROTOCOLS: false,
   });
+}
+
+/**
+ * Bridges already-sanitized Markdown HTML into TrustedHTML when a runtime
+ * offers Trusted Types. This is intentionally local to known sanitized HTML
+ * sinks; it does not mean the full React/Radix/TipTap UI stack is ready for
+ * global `require-trusted-types-for` CSP enforcement.
+ */
+export function toTrustedHtml(html: string): SafeHtml {
+  const trustedTypes = (globalThis as { trustedTypes?: TrustedTypesLike })
+    .trustedTypes;
+  if (!trustedTypes) {
+    trustedHtmlPolicy = null;
+    trustedHtmlPolicyFactory = null;
+    return html;
+  }
+  if (!trustedHtmlPolicy || trustedHtmlPolicyFactory !== trustedTypes) {
+    trustedHtmlPolicy = trustedTypes.createPolicy("iris-sanitized-html", {
+      createHTML: (value) => value,
+    });
+    trustedHtmlPolicyFactory = trustedTypes;
+  }
+  return trustedHtmlPolicy.createHTML(html);
 }
 
 /**
