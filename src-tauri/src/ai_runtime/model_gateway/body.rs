@@ -128,16 +128,7 @@ fn estimate_message_input_tokens(message: &LlmMessage) -> u32 {
 }
 
 fn estimate_text_tokens(text: &str) -> u32 {
-    if text.is_empty() {
-        return 0;
-    }
-    let chars = text.chars().count() as u32;
-    let cjk = text
-        .chars()
-        .filter(|ch| matches!(*ch as u32, 0x4E00..=0x9FFF | 0x3400..=0x4DBF | 0x3040..=0x30FF | 0xAC00..=0xD7AF))
-        .count() as u32;
-    let non_cjk = chars.saturating_sub(cjk);
-    cjk.saturating_add(non_cjk.div_ceil(4)).max(1)
+    crate::ai_runtime::harness_support::estimate_tokens(text).min(u32::MAX as usize) as u32
 }
 
 fn build_chat_completions_body_inner(request: &GatewayRequest) -> serde_json::Value {

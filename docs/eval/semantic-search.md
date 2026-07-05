@@ -31,7 +31,10 @@ Iris 语义检索采用**本地嵌入 + 混合存储 + 双路径检索**：
 ## 指标
 
 - **Recall@5**：每条查询的期望笔记是否出现在语义 Top-5 的 `path` 中（按 chunk 命中，同文件多 chunk 任一命中即算成功）。
-- **目标**：≥ **0.6**（20 条中至少 12 条命中）。
+- **Recall@10**：同上，但观察 Top-10，用于判断候选召回是否足够、是否只是排序靠后。
+- **MRR@10**：期望笔记在 Top-10 中的倒数排名均值，用于观察首屏排序质量。
+- **No-answer false positive rate**：对少量不在 fixture vault 中的问题，统计 Top-1 分数超过阈值的比例。当前仅报告，不作为硬门禁。
+- **硬门禁目标**：Recall@5 ≥ **0.6**（20 条中至少 12 条命中）。
 
 ---
 
@@ -72,7 +75,7 @@ cargo test semantic_recall_at_5_on_fixture_vault -- --ignored --nocapture
 | 19  | Recall@5 评测目标                                   | `eval-recall.md`          | `eval-recall.md`          | 是     |
 | 20  | 混合检索 broker 融合                                | `semantic-search-impl.md` | `semantic-search-impl.md` | 是     |
 
-**汇总**：Recall@5 = **20/20 = 1.00**（fixture 集；阈值 ≥ 0.6，达标）
+**汇总**：Recall@5 = **20/20 = 1.00**（fixture 集；阈值 ≥ 0.6，达标）。当前评测脚本还会额外输出 Recall@10、MRR@10 与 no-answer false positive rate，作为成熟化观察指标；历史表格仅保留 Recall@5 的逐条记录。
 
 **说明**：`vault-encryption.md` 为已废弃的规划 fixture，不再参与产品能力假设。过于笼统的中文查询在实测中可能误召回它篇；评测查询宜包含 distinctive 关键词（见 `semantic_recall_eval.rs` 中的 `EVAL_QUERIES`）。
 

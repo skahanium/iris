@@ -105,6 +105,9 @@ const MIGRATION_041_DOWN: &str =
 const MIGRATION_042_UP: &str = include_str!("../../migrations/042_reign_in_ai_capabilities.sql");
 const MIGRATION_042_DOWN: &str =
     include_str!("../../migrations/042_reign_in_ai_capabilities.down.sql");
+const MIGRATION_043_UP: &str = include_str!("../../migrations/043_chunk_retrieval_metadata.sql");
+const MIGRATION_043_DOWN: &str =
+    include_str!("../../migrations/043_chunk_retrieval_metadata.down.sql");
 
 fn is_applied(conn: &Connection, name: &str) -> bool {
     conn.query_row(
@@ -240,6 +243,12 @@ pub fn migrate_up(conn: &Connection) -> AppResult<()> {
         MIGRATION_042_UP,
         false,
     )?;
+    apply_migration(
+        conn,
+        "043_chunk_retrieval_metadata",
+        MIGRATION_043_UP,
+        false,
+    )?;
 
     Ok(())
 }
@@ -251,6 +260,7 @@ fn rollback_migration(conn: &Connection, name: &str, sql: &str) {
 
 /// Roll back all migrations in strict reverse order (for tests).
 pub fn migrate_down(conn: &Connection) -> AppResult<()> {
+    rollback_migration(conn, "043_chunk_retrieval_metadata", MIGRATION_043_DOWN);
     rollback_migration(conn, "042_reign_in_ai_capabilities", MIGRATION_042_DOWN);
     rollback_migration(conn, "041_mcp_transport_https_contract", MIGRATION_041_DOWN);
     rollback_migration(conn, "040_mcp_runtime_registry", MIGRATION_040_DOWN);
@@ -1153,6 +1163,28 @@ mod tests {
             "attachment refs should be unique per source/target/kind"
         );
     }
+
+    #[test]
+    fn migration_043_adds_chunk_retrieval_metadata() {
+        let conn = Connection::open_in_memory().unwrap();
+        migrate_up(&conn).unwrap();
+
+        let columns = conn
+            .prepare("PRAGMA table_info(chunks)")
+            .unwrap()
+            .query_map([], |row| row.get::<_, String>(1))
+            .unwrap()
+            .flatten()
+            .collect::<Vec<_>>();
+
+        for required in ["heading_path", "source_start", "source_end", "content_hash"] {
+            assert!(
+                columns.contains(&required.to_string()),
+                "missing chunks.{required}"
+            );
+        }
+    }
+
     #[test]
     fn migration_032_creates_agent_task_tables_with_session_lifecycle() {
         let conn = Connection::open_in_memory().unwrap();

@@ -7,7 +7,7 @@ use chrono::{DateTime, Utc};
 use rusqlite::{params_from_iter, Connection};
 use walkdir::WalkDir;
 
-use super::chunker::chunk_markdown;
+use super::chunker::{chunk_markdown_with_metadata, MarkdownChunk};
 use super::frontmatter::{parse_note, resolve_display_title};
 use super::fts::{delete_fts, upsert_fts};
 use super::image_ref::index_image_refs;
@@ -182,6 +182,45 @@ fn word_count(content: &str) -> i64 {
     content.split_whitespace().count() as i64
 }
 
+fn insert_chunks(
+    conn: &Connection,
+    file_id: i64,
+    chunks: impl IntoIterator<Item = MarkdownChunk>,
+    source_offset: usize,
+) -> AppResult<()> {
+    for (idx, chunk) in chunks.into_iter().enumerate() {
+        let content = chunk.content;
+        let char_count = content.chars().count() as i64;
+        let source_start = chunk.source_start + source_offset;
+        let source_end = chunk.source_end + source_offset;
+        conn.execute(
+            "INSERT INTO chunks
+                (file_id, chunk_index, content, char_count, heading_path,
+                 source_start, source_end, content_hash)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            rusqlite::params![
+                file_id,
+                idx as i64,
+                content,
+                char_count,
+                chunk.heading_path,
+                source_start as i64,
+                source_end as i64,
+                chunk.content_hash,
+            ],
+        )?;
+    }
+    Ok(())
+}
+
+fn body_start_offset(content: &str, body: &str) -> usize {
+    if body.is_empty() {
+        0
+    } else {
+        content.find(body).unwrap_or(0)
+    }
+}
+
 /// 同步 `tags` / `file_tags`（先清空该文件的关联，再写入）。
 pub fn sync_file_tags(conn: &Connection, file_id: i64, tags: &[String]) -> AppResult<()> {
     conn.execute("DELETE FROM file_tags WHERE file_id = ?1", [file_id])?;
@@ -305,13 +344,12 @@ pub fn index_file_with_embed(
 
     upsert_fts(&tx, &rel, &title, &parsed.body)?;
 
-    let chunks = chunk_markdown(&parsed.body, 2000);
-    for (idx, chunk) in chunks.iter().enumerate() {
-        tx.execute(
-            "INSERT INTO chunks (file_id, chunk_index, content, char_count) VALUES (?1, ?2, ?3, ?4)",
-            rusqlite::params![file_id, idx as i64, chunk, chunk.len() as i64],
-        )?;
-    }
+    insert_chunks(
+        &tx,
+        file_id,
+        chunk_markdown_with_metadata(&parsed.body, 2000),
+        body_start_offset(&content, &parsed.body),
+    )?;
 
     tx.commit()?;
 
@@ -414,13 +452,12 @@ pub fn index_file_from_content(
 
     upsert_fts(&tx, &rel, &title, &parsed.body)?;
 
-    let chunks = chunk_markdown(&parsed.body, 2000);
-    for (idx, chunk) in chunks.iter().enumerate() {
-        tx.execute(
-            "INSERT INTO chunks (file_id, chunk_index, content, char_count) VALUES (?1, ?2, ?3, ?4)",
-            rusqlite::params![file_id, idx as i64, chunk, chunk.len() as i64],
-        )?;
-    }
+    insert_chunks(
+        &tx,
+        file_id,
+        chunk_markdown_with_metadata(&parsed.body, 2000),
+        body_start_offset(content, &parsed.body),
+    )?;
 
     tx.commit()?;
 
@@ -880,6 +917,40 @@ mod tests {
             )?;
             assert!(chunk_count > 0, "should have at least one chunk");
 
+            Ok(())
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn index_file_stores_chunk_retrieval_metadata() {
+        let (_dir, vault, db) = setup_vault();
+        let content =
+            "---\ntitle: Meta\n---\n\n# Root\n\nIntro paragraph.\n\n## Details\n\nAlpha evidence lives here.";
+        write_note(&vault, "meta.md", content);
+
+        db.with_conn(|conn| {
+            let entry = index_file(conn, &vault, &vault.join("meta.md"))?;
+            let (chunk, heading, start, end, hash): (String, String, i64, i64, String) = conn
+                .query_row(
+                    "SELECT content, heading_path, source_start, source_end, content_hash
+                     FROM chunks
+                     WHERE file_id = ?1 AND content LIKE '%Alpha evidence%'",
+                    [entry.id],
+                    |row| {
+                        Ok((
+                            row.get(0)?,
+                            row.get(1)?,
+                            row.get(2)?,
+                            row.get(3)?,
+                            row.get(4)?,
+                        ))
+                    },
+                )?;
+
+            assert_eq!(heading, "Root > Details");
+            assert_eq!(content[start as usize..end as usize].trim(), chunk);
+            assert_eq!(hash.len(), 64);
             Ok(())
         })
         .unwrap();

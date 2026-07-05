@@ -44,7 +44,34 @@ pub(super) fn fuse_and_rank(packets: &mut Vec<ContextPacket>, max_results: usize
     // Deduplicate: keep highest-scoring occurrence of each id (HashSet, not dedup_by)
     let mut seen = HashSet::new();
     packets.retain(|p| seen.insert(p.id.clone()));
-    packets.truncate(max_results);
+    diversify_by_source_path(packets, max_results);
+}
+
+fn diversify_by_source_path(packets: &mut Vec<ContextPacket>, max_results: usize) {
+    if packets.len() <= max_results {
+        return;
+    }
+
+    let mut ranked = std::mem::take(packets);
+    let mut selected = Vec::with_capacity(max_results);
+    let mut seen_paths: HashSet<String> = HashSet::new();
+
+    while selected.len() < max_results && !ranked.is_empty() {
+        let next_idx = ranked
+            .iter()
+            .position(|packet| match packet.source_path.as_ref() {
+                Some(path) => !seen_paths.contains(path),
+                None => true,
+            })
+            .unwrap_or(0);
+        let packet = ranked.remove(next_idx);
+        if let Some(path) = &packet.source_path {
+            seen_paths.insert(path.clone());
+        }
+        selected.push(packet);
+    }
+
+    *packets = selected;
 }
 
 #[cfg(test)]
@@ -87,5 +114,33 @@ mod tests {
 
         assert_eq!(packets[0].id, "authority");
         assert!(packets[0].score > packets[1].score);
+    }
+
+    #[test]
+    fn diversify_keeps_multiple_files_in_top_results() {
+        let mut packets = vec![
+            packet("same-1", "exemplar"),
+            packet("same-2", "exemplar"),
+            packet("same-3", "exemplar"),
+            packet("other", "exemplar"),
+        ];
+        packets[0].source_path = Some("same.md".into());
+        packets[1].source_path = Some("same.md".into());
+        packets[2].source_path = Some("same.md".into());
+        packets[3].source_path = Some("other.md".into());
+        packets[0].score = 1.0;
+        packets[1].score = 0.99;
+        packets[2].score = 0.98;
+        packets[3].score = 0.70;
+
+        fuse_and_rank(&mut packets, 3);
+
+        assert_eq!(packets.len(), 3);
+        assert!(
+            packets
+                .iter()
+                .any(|packet| packet.source_path.as_deref() == Some("other.md")),
+            "top results should avoid all coming from one file"
+        );
     }
 }

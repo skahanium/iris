@@ -1156,6 +1156,25 @@ export interface EvidenceMatrix {
   coverage_score: number;
 }
 
+export interface PropositionCoverage {
+  proposition_id: string;
+  evidence_count: number;
+  user_note_count: number;
+  regulation_count: number;
+  web_count: number;
+  traceable_count: number;
+  gap_count: number;
+}
+
+export interface EvidenceCoverageMatrix {
+  propositions: PropositionCoverage[];
+  uncovered_count: number;
+  weakly_supported_count: number;
+  well_supported_count: number;
+  total_evidence_count: number;
+  coverage_score: number;
+}
+
 /** 论证链中的单条链接 */
 export interface ArgumentLink {
   from_proposition_id: string;
@@ -1177,6 +1196,7 @@ export interface ResearchExecuteResult {
   topic: string;
   rounds: number;
   evidence_matrix: EvidenceMatrix;
+  coverage_matrix?: EvidenceCoverageMatrix;
   argument_chain: ArgumentChain;
   summary: string;
   total_tokens: TokenUsage;

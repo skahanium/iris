@@ -1,6 +1,6 @@
 use rusqlite::Connection;
 
-use crate::ai_runtime::{ContextPacket, SourceType, TrustLevel};
+use crate::ai_runtime::{ContextPacket, SourceSpan, SourceType, TrustLevel};
 use crate::embedding::engine;
 use crate::error::AppResult;
 
@@ -14,9 +14,9 @@ pub(super) fn search_vector_chunks(
     let query_vec = engine::embed_text(query)?;
     let blob = engine::f32_to_bytes(&query_vec);
 
-    let mut stmt = match conn.prepare(
-        "SELECT vc.rowid, c.text, f.path, f.title, c.heading_path,
-                c.char_count, vc.distance
+    let mut stmt = conn.prepare(
+        "SELECT vc.rowid, c.content, f.path, f.title, c.heading_path,
+                c.source_start, c.source_end, c.content_hash, c.char_count, vc.distance
          FROM vec_chunks vc
          JOIN chunks c ON c.id = vc.rowid
          JOIN files f ON f.id = c.file_id
@@ -25,10 +25,7 @@ pub(super) fn search_vector_chunks(
            AND f.path NOT LIKE '.classified/%'
          ORDER BY vc.distance
          LIMIT ?2",
-    ) {
-        Ok(s) => s,
-        Err(_) => return Ok(vec![]), // vec_chunks table may not exist yet
-    };
+    )?;
 
     let rows = stmt.query_map(rusqlite::params![blob, limit as i64], |row| {
         Ok((
@@ -37,8 +34,11 @@ pub(super) fn search_vector_chunks(
             row.get::<_, String>(2)?,
             row.get::<_, String>(3)?,
             row.get::<_, Option<String>>(4)?,
-            row.get::<_, i64>(5)?,
-            row.get::<_, f64>(6)?,
+            row.get::<_, Option<i64>>(5)?,
+            row.get::<_, Option<i64>>(6)?,
+            row.get::<_, Option<String>>(7)?,
+            row.get::<_, i64>(8)?,
+            row.get::<_, f64>(9)?,
         ))
     })?;
 
@@ -52,16 +52,23 @@ pub(super) fn search_vector_chunks(
         })
         .enumerate()
         .map(
-            |(i, (rowid, text, path, title, heading, _char_count, distance))| {
+            |(i, (rowid, text, path, title, heading, start, end, hash, _char_count, distance))| {
                 let score = (1.0 - distance).max(0.0);
+                let source_span = match (start, end) {
+                    (Some(start), Some(end)) if start >= 0 && end >= start => Some(SourceSpan {
+                        start: start as usize,
+                        end: end as usize,
+                    }),
+                    _ => None,
+                };
                 ContextPacket {
                     id: format!("chunk-{rowid}"),
                     source_type: SourceType::Note,
                     source_path: Some(path),
                     title: title.clone(),
                     heading_path: heading,
-                    source_span: None,
-                    content_hash: String::new(),
+                    source_span,
+                    content_hash: hash.unwrap_or_default(),
                     excerpt: truncate(&text, 300),
                     retrieval_reason: "vector_chunk".into(),
                     score,

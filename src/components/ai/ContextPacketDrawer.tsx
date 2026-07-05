@@ -71,6 +71,13 @@ export function ContextPacketDrawer({
     () => packets.filter((p) => p.provisional === true).length,
     [packets],
   );
+  const traceableCount = useMemo(
+    () =>
+      packets.filter(
+        (p) => p.source_span || p.heading_path || Boolean(p.content_hash),
+      ).length,
+    [packets],
+  );
 
   const extraStats = useMemo(() => {
     if (!contextStatus) return [];
@@ -211,6 +218,15 @@ export function ContextPacketDrawer({
             {count} {label}
           </span>
         ))}
+        {traceableCount > 0 ? (
+          <span
+            className="inline-flex shrink-0 items-center gap-0.5 text-[10px] font-normal tabular-nums text-muted-foreground/80"
+            data-testid="evidence-count-traceable"
+          >
+            <Link2 className="h-3 w-3" />
+            {traceableCount} 可追溯
+          </span>
+        ) : null}
         <span className="min-w-0 flex-1" />
         {packets.length > 0 ? (
           <Badge

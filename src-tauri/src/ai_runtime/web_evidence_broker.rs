@@ -14,7 +14,21 @@ use crate::llm::fetch_web_page::PageFetchResult;
 use crate::storage::db::Database;
 
 const FETCH_EXCERPT_MAX_CHARS: usize = 12_000;
+const WEB_PACKET_EXCERPT_MAX_CHARS: usize = 4_000;
+const MERGED_FETCH_MAX_CHARS: usize = 12_000;
+const WEB_CONTEXT_TRUNCATION_MARKER: &str = "\n...（网页正文已按上下文预算截断）";
 const WEB_FETCH_TURN_BUDGET: Duration = Duration::from_secs(8);
+
+fn truncate_web_context_text(text: &str, max_chars: usize) -> String {
+    if text.chars().count() <= max_chars {
+        return text.to_string();
+    }
+    let marker_chars = WEB_CONTEXT_TRUNCATION_MARKER.chars().count();
+    let body_chars = max_chars.saturating_sub(marker_chars).max(1);
+    let mut out = text.chars().take(body_chars).collect::<String>();
+    out.push_str(WEB_CONTEXT_TRUNCATION_MARKER);
+    out
+}
 
 #[derive(Debug, Clone)]
 pub struct WebEvidenceBrokerInput {
@@ -135,10 +149,13 @@ pub fn web_evidence_items_to_packets(query: &str, items: &[WebEvidenceItem]) -> 
             heading_path: None,
             source_span: None,
             content_hash: String::new(),
-            excerpt: item
-                .fetched_excerpt
-                .clone()
-                .unwrap_or_else(|| item.snippet.clone()),
+            excerpt: truncate_web_context_text(
+                &item
+                    .fetched_excerpt
+                    .clone()
+                    .unwrap_or_else(|| item.snippet.clone()),
+                WEB_PACKET_EXCERPT_MAX_CHARS,
+            ),
             retrieval_reason: "web_evidence_broker".into(),
             score: 0.7,
             trust_level: TrustLevel::ExternalWeb,
@@ -1226,12 +1243,13 @@ fn merge_page_provider_fetches(url: &str, fetches: Vec<PageProviderFetch>) -> Pa
         push_unique_string(&mut methods, fetch.extraction_method);
     }
 
+    let merged_text = texts.join("\n\n---\n\n");
     PageProviderFetch {
         title: titles
             .into_iter()
             .find(|title| !title.trim().is_empty())
             .unwrap_or_else(|| url.to_string()),
-        text: texts.join("\n\n---\n\n"),
+        text: truncate_web_context_text(&merged_text, MERGED_FETCH_MAX_CHARS),
         provider_id: provider_ids.join("+"),
         provider_kind: if provider_kinds.len() == 1 {
             provider_kinds.remove(0)
@@ -1664,6 +1682,31 @@ mod tests {
     }
 
     #[test]
+    fn web_packet_excerpt_is_capped_for_large_fetched_pages() {
+        let mut item = item("https://example.com/apple-watch");
+        item.fetched_excerpt = Some("苹".repeat(87_000));
+
+        let packets = web_evidence_items_to_packets("apple最新的手表是什么？", &[item]);
+
+        assert_eq!(packets.len(), 1);
+        assert!(packets[0].excerpt.chars().count() <= 4_000);
+        assert!(packets[0].excerpt.contains("网页正文已按上下文预算截断"));
+    }
+
+    #[test]
+    fn apple_latest_prefetch_packet_stays_under_fast_model_budget() {
+        let mut item = item("https://www.apple.com/tw/apple-watch-series-11/");
+        item.fetched_excerpt = Some("苹".repeat(87_521));
+
+        let packets = web_evidence_items_to_packets("apple最新的手表是什么？", &[item]);
+        let prompt =
+            crate::ai_runtime::model_gateway::ModelGateway::format_evidence_packets(&packets);
+        let estimated = crate::ai_runtime::harness_support::estimate_tokens(&prompt);
+
+        assert!(estimated < 55_808);
+    }
+
+    #[test]
     fn rejects_non_https_fetch_targets() {
         let rejected = failed_evidence_item(
             "http://example.com/a",
@@ -2082,6 +2125,33 @@ mod tests {
         assert_eq!(merged.provider_id, "native.fetch+mcp-fetch");
         assert_eq!(merged.provider_kind, "mixed");
         assert_eq!(merged.extraction_method, "merged_fetch");
+    }
+
+    #[test]
+    fn merged_fetch_provider_text_has_total_cap() {
+        let merged = merge_page_provider_fetches(
+            "https://example.com/a",
+            vec![
+                PageProviderFetch {
+                    title: "Native title".into(),
+                    text: "苹".repeat(12_000),
+                    provider_id: "native.fetch".into(),
+                    provider_kind: "native".into(),
+                    extraction_method: "native_readability".into(),
+                },
+                PageProviderFetch {
+                    title: "MCP title".into(),
+                    text: "表".repeat(12_000),
+                    provider_id: "mcp-fetch".into(),
+                    provider_kind: "mcp".into(),
+                    extraction_method: "mcp_fetch".into(),
+                },
+            ],
+        );
+
+        assert!(merged.text.chars().count() <= 12_000);
+        assert!(merged.text.contains("网页正文已按上下文预算截断"));
+        assert_eq!(merged.provider_kind, "mixed");
     }
 
     #[test]

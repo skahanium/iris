@@ -94,6 +94,25 @@ describe("Rust AI runtime refactor contract", () => {
     expect(rank).toContain("fuse_and_rank");
   });
 
+  it("keeps semantic search classified filters valid SQL", () => {
+    const engine = read("src-tauri/src/embedding/engine.rs");
+
+    expect(engine).not.toContain("''.classified/%''");
+    expect(engine).toContain("f.path <> '.classified'");
+    expect(engine).toContain("f.path NOT LIKE '.classified/%'");
+  });
+
+  it("keeps vector chunk retrieval aligned with the chunks content schema", () => {
+    const vector = read("src-tauri/src/ai_runtime/retrieval_broker/vector.rs");
+
+    expect(vector).toContain("c.content");
+    expect(vector).toContain("c.source_start");
+    expect(vector).toContain("c.source_end");
+    expect(vector).toContain("c.content_hash");
+    expect(vector).toContain("SourceSpan");
+    expect(vector).not.toContain("c.text");
+  });
+
   it("keeps retrieval_broker_impl.rs below the current runtime split checkpoint", () => {
     expect(
       lineCount("src-tauri/src/ai_runtime/retrieval_broker_impl.rs"),

@@ -20,15 +20,16 @@ use super::types::{HarnessFinishReason, HarnessPhase, HarnessRunInput, HarnessRu
 use super::util::accumulate_usage;
 use crate::ai_harness::tool_turn::{outstanding_confirm_tool, pending_confirmation_position};
 use crate::ai_runtime::agent_permissions::preflight_tool_permission;
+use crate::ai_runtime::agent_task::AgentTaskRuntime;
 use crate::ai_runtime::circuit_breaker;
 use crate::ai_runtime::evidence_ledger::EvidenceLedger;
 use crate::ai_runtime::harness_support::{
-    extract_thinking_blocks, load_harness_checkpoint, HarnessCheckpointMeta,
+    estimate_tokens, extract_thinking_blocks, load_harness_checkpoint, HarnessCheckpointMeta,
 };
 use crate::ai_runtime::model_gateway::{
     clear_abort, emit_stream_reset_with_surface, is_abort_requested, prepare_tool_api_messages,
-    GatewayRequest, GatewayResponse, LlmMessage, MessageRole, ModelGateway, ProviderConfig,
-    StreamSurface, TokenUsage, ToolCall,
+    GatewayRequest, GatewayResponse, LlmMessage, LlmToolDef, MessageRole, ModelGateway,
+    ProviderConfig, StreamSurface, TokenUsage, ToolCall,
 };
 use crate::ai_runtime::permission_decision::{
     decide_tool_permission, PermissionDecisionOutcome, PermissionDecisionRequest,
@@ -110,6 +111,62 @@ fn classify_final_answer(
         finish_reason: HarnessFinishReason::Completed,
         save_checkpoint: false,
     }
+}
+
+fn estimate_message_text_tokens(messages: &[LlmMessage]) -> usize {
+    messages
+        .iter()
+        .map(|message| estimate_tokens(&message.content.text_content()))
+        .sum()
+}
+
+fn estimate_tool_schema_tokens(tools: &[LlmToolDef]) -> usize {
+    if tools.is_empty() {
+        return 0;
+    }
+    estimate_tokens(&serde_json::to_string(tools).unwrap_or_default())
+}
+
+fn record_initial_context_budget_diagnostics(
+    state: &AppState,
+    input: &HarnessRunInput,
+    messages: &[LlmMessage],
+    tools: &[LlmToolDef],
+    environment: &str,
+    skills_fragment: &str,
+) {
+    let Ok(Some(task_id)) = AgentTaskRuntime::task_id_for_request(&state.db, &input.request_id)
+    else {
+        return;
+    };
+    let history_tokens = input
+        .history_messages
+        .iter()
+        .map(|(_, content)| estimate_tokens(content))
+        .sum::<usize>();
+    let evidence_tokens = input
+        .cold_start_packets
+        .iter()
+        .map(|packet| estimate_tokens(&packet.excerpt))
+        .sum::<usize>();
+    let tool_tokens = estimate_tool_schema_tokens(tools);
+    let environment_tokens =
+        estimate_tokens(environment).saturating_add(estimate_tokens(skills_fragment));
+    let estimated_total = estimate_message_text_tokens(messages).saturating_add(tool_tokens);
+    let _ = AgentTaskRuntime::record_event(
+        &state.db,
+        &task_id,
+        "context_budget",
+        "harness_initial",
+        serde_json::json!({
+            "input_budget": input.input_budget.unwrap_or_default(),
+            "estimated_total": estimated_total,
+            "history_tokens": history_tokens,
+            "evidence_tokens": evidence_tokens,
+            "tool_tokens": tool_tokens,
+            "environment_tokens": environment_tokens,
+        }),
+    );
 }
 
 #[derive(Debug, Clone)]
@@ -371,6 +428,15 @@ async fn run_harness_inner(
             }
         }
     }
+
+    record_initial_context_budget_diagnostics(
+        state,
+        &input,
+        &messages,
+        &llm_tools,
+        &env_text,
+        &skills_prompt,
+    );
 
     let gateway = ModelGateway::with_defaults(app_handle.clone(), vec![provider_config.clone()])?;
 

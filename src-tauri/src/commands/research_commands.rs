@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use crate::ai_runtime::research_state::ResearchState;
 use crate::ai_runtime::research_workflow::{
-    execute_research, ArgumentChain, EvidenceMatrix, ResearchConfig,
+    execute_research, ArgumentChain, EvidenceCoverageMatrix, EvidenceMatrix, ResearchConfig,
 };
 use crate::ai_runtime::trace::{TraceRecorder, TraceStatus};
 use crate::ai_runtime::{
@@ -39,6 +39,7 @@ pub struct ResearchExecuteResponse {
     pub topic: String,
     pub rounds: usize,
     pub evidence_matrix: EvidenceMatrix,
+    pub coverage_matrix: EvidenceCoverageMatrix,
     pub argument_chain: ArgumentChain,
     pub summary: String,
     pub total_tokens: TokenUsage,
@@ -187,6 +188,7 @@ pub(crate) async fn execute_research_task(
         topic: result.topic,
         rounds: result.rounds.len(),
         evidence_matrix: result.evidence_matrix,
+        coverage_matrix: result.coverage_matrix,
         argument_chain: result.argument_chain,
         summary: result.summary,
         total_tokens: result.total_tokens,

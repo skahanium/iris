@@ -15,9 +15,11 @@ use super::{
 #[serde(rename_all = "snake_case")]
 pub enum RetrievalLayerStatus {
     Ok,
+    Empty,
     IndexNotReady,
     Unavailable,
-    Error,
+    SchemaMismatch,
+    QueryError,
 }
 
 /// Non-sensitive diagnostic for one retrieval layer.
@@ -129,9 +131,14 @@ fn append_layer_result(
 ) {
     match result {
         Ok(mut layer_packets) => {
+            let status = if layer_packets.is_empty() {
+                RetrievalLayerStatus::Empty
+            } else {
+                RetrievalLayerStatus::Ok
+            };
             diagnostics.push(RetrievalLayerDiagnostic {
                 layer: layer.to_string(),
-                status: RetrievalLayerStatus::Ok,
+                status,
                 message: None,
             });
             packets.append(&mut layer_packets);
@@ -151,16 +158,58 @@ fn classify_retrieval_error(err: &AppError) -> RetrievalLayerStatus {
         AppError::Db(db_err) => db_err.to_string().to_lowercase(),
         _ => err.to_string().to_lowercase(),
     };
-    if message.contains("no such table")
-        || message.contains("no such module")
-        || message.contains("no such column")
-    {
+    if message.contains("no such column") {
+        RetrievalLayerStatus::SchemaMismatch
+    } else if message.contains("no such table") || message.contains("no such module") {
         RetrievalLayerStatus::Unavailable
+    } else if message.contains("index")
+        || message.contains("embedding")
+        || message.contains("model")
+        || message.contains("vec")
+    {
+        RetrievalLayerStatus::IndexNotReady
     } else {
-        RetrievalLayerStatus::Error
+        RetrievalLayerStatus::QueryError
     }
 }
 
 fn sanitize_retrieval_error(message: &str) -> String {
     message.chars().take(240).collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn classifies_schema_mismatch_separately_from_missing_tables() {
+        let schema = AppError::msg("no such column: c.text");
+        let unavailable = AppError::msg("no such table: vec_chunks");
+        let query = AppError::msg("malformed MATCH expression");
+
+        assert_eq!(
+            classify_retrieval_error(&schema),
+            RetrievalLayerStatus::SchemaMismatch
+        );
+        assert_eq!(
+            classify_retrieval_error(&unavailable),
+            RetrievalLayerStatus::Unavailable
+        );
+        assert_eq!(
+            classify_retrieval_error(&query),
+            RetrievalLayerStatus::QueryError
+        );
+    }
+
+    #[test]
+    fn empty_layer_result_is_not_reported_as_ok() {
+        let mut packets = Vec::new();
+        let mut diagnostics = Vec::new();
+
+        append_layer_result("fts", Ok(Vec::new()), &mut packets, &mut diagnostics);
+
+        assert!(packets.is_empty());
+        assert_eq!(diagnostics.len(), 1);
+        assert_eq!(diagnostics[0].status, RetrievalLayerStatus::Empty);
+    }
 }

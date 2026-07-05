@@ -55,6 +55,29 @@ pub struct EvidenceMatrix {
     pub coverage_score: f64,
 }
 
+/// Per-proposition evidence coverage diagnostics.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PropositionCoverage {
+    pub proposition_id: String,
+    pub evidence_count: usize,
+    pub user_note_count: usize,
+    pub regulation_count: usize,
+    pub web_count: usize,
+    pub traceable_count: usize,
+    pub gap_count: usize,
+}
+
+/// Compact coverage matrix for research result diagnostics.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EvidenceCoverageMatrix {
+    pub propositions: Vec<PropositionCoverage>,
+    pub uncovered_count: usize,
+    pub weakly_supported_count: usize,
+    pub well_supported_count: usize,
+    pub total_evidence_count: usize,
+    pub coverage_score: f64,
+}
+
 /// Argument chain link between propositions.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ArgumentLink {
@@ -106,6 +129,7 @@ pub struct ResearchResult {
     pub topic: String,
     pub rounds: Vec<ResearchRound>,
     pub evidence_matrix: EvidenceMatrix,
+    pub coverage_matrix: EvidenceCoverageMatrix,
     pub argument_chain: ArgumentChain,
     pub summary: String,
     pub total_tokens: TokenUsage,
@@ -367,6 +391,7 @@ pub async fn execute_research(
             .global_gaps
             .push("联网关闭，未检索外部来源".to_string());
     }
+    let coverage_matrix = build_evidence_coverage_matrix(&evidence_matrix);
 
     // ── Phase 4: Argument chain detection ───────────────
     let argument_chain = detect_argument_chains(
@@ -416,6 +441,7 @@ pub async fn execute_research(
         topic: topic.to_string(),
         rounds,
         evidence_matrix,
+        coverage_matrix,
         argument_chain,
         summary,
         total_tokens: total_usage,
@@ -782,6 +808,75 @@ fn build_evidence_matrix(
         global_gaps,
         total_evidence_count: total_evidence,
         coverage_score,
+    }
+}
+
+fn build_evidence_coverage_matrix(matrix: &EvidenceMatrix) -> EvidenceCoverageMatrix {
+    let propositions = matrix
+        .propositions
+        .iter()
+        .map(|prop| {
+            let user_note_count = prop
+                .evidence
+                .iter()
+                .filter(|packet| matches!(packet.trust_level, TrustLevel::UserNote))
+                .count();
+            let regulation_count = prop
+                .evidence
+                .iter()
+                .filter(|packet| {
+                    matches!(
+                        packet.source_type,
+                        crate::ai_runtime::SourceType::Regulation
+                    )
+                })
+                .count();
+            let web_count = prop
+                .evidence
+                .iter()
+                .filter(|packet| matches!(packet.source_type, crate::ai_runtime::SourceType::Web))
+                .count();
+            let traceable_count = prop
+                .evidence
+                .iter()
+                .filter(|packet| {
+                    packet.source_span.is_some()
+                        || packet.heading_path.is_some()
+                        || !packet.content_hash.is_empty()
+                })
+                .count();
+            PropositionCoverage {
+                proposition_id: prop.id.clone(),
+                evidence_count: prop.evidence.len(),
+                user_note_count,
+                regulation_count,
+                web_count,
+                traceable_count,
+                gap_count: prop.gaps.len(),
+            }
+        })
+        .collect::<Vec<_>>();
+
+    let uncovered_count = propositions
+        .iter()
+        .filter(|prop| prop.evidence_count == 0)
+        .count();
+    let weakly_supported_count = propositions
+        .iter()
+        .filter(|prop| prop.evidence_count > 0 && prop.evidence_count < 2)
+        .count();
+    let well_supported_count = propositions
+        .iter()
+        .filter(|prop| prop.evidence_count >= 2)
+        .count();
+
+    EvidenceCoverageMatrix {
+        propositions,
+        uncovered_count,
+        weakly_supported_count,
+        well_supported_count,
+        total_evidence_count: matrix.total_evidence_count,
+        coverage_score: matrix.coverage_score,
     }
 }
 
@@ -1175,6 +1270,61 @@ mod tests {
 
         assert_eq!(matrix.total_evidence_count, 2);
         assert_eq!(matrix.coverage_score, 1.0);
+    }
+
+    #[test]
+    fn coverage_matrix_counts_source_mix_and_traceability() {
+        let props = vec![SubProposition {
+            id: "P1".into(),
+            statement: "组织纪律".into(),
+            evidence: vec![],
+            gaps: vec![],
+        }];
+        let packets = vec![
+            ContextPacket {
+                id: "pkt-1".into(),
+                source_type: crate::ai_runtime::SourceType::Note,
+                source_path: Some("test.md".into()),
+                title: "组织纪律概述".into(),
+                heading_path: Some("Root".into()),
+                source_span: Some(crate::ai_runtime::SourceSpan { start: 0, end: 8 }),
+                content_hash: "h1".into(),
+                excerpt: "组织纪律是党的纪律的重要组成部分".into(),
+                retrieval_reason: "vector_chunk".into(),
+                score: 0.9,
+                trust_level: TrustLevel::UserNote,
+                citation_label: "[1]".into(),
+                stale: false,
+                web: None,
+                corpus: None,
+            },
+            ContextPacket {
+                id: "pkt-2".into(),
+                source_type: crate::ai_runtime::SourceType::Web,
+                source_path: Some("https://example.com".into()),
+                title: "外部资料".into(),
+                heading_path: None,
+                source_span: None,
+                content_hash: String::new(),
+                excerpt: "组织纪律外部资料".into(),
+                retrieval_reason: "web_evidence_broker".into(),
+                score: 0.6,
+                trust_level: TrustLevel::ExternalWeb,
+                citation_label: "[W1]".into(),
+                stale: false,
+                web: None,
+                corpus: None,
+            },
+        ];
+
+        let matrix = build_evidence_matrix("test topic", &props, &packets);
+        let coverage = build_evidence_coverage_matrix(&matrix);
+
+        assert_eq!(coverage.total_evidence_count, 2);
+        assert_eq!(coverage.well_supported_count, 1);
+        assert_eq!(coverage.propositions[0].user_note_count, 1);
+        assert_eq!(coverage.propositions[0].web_count, 1);
+        assert_eq!(coverage.propositions[0].traceable_count, 1);
     }
 
     #[test]

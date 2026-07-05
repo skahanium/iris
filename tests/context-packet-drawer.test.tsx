@@ -17,8 +17,8 @@ const packet: ContextPacket = {
   source_type: "note",
   source_path: "Draft/Packet.md",
   title: "Packet Source",
-  heading_path: null,
-  source_span: null,
+  heading_path: "Root > Details",
+  source_span: { start: 0, end: 12 },
   content_hash: "packet-hash",
   excerpt: "packet excerpt",
   retrieval_reason: "semantic",
@@ -114,5 +114,36 @@ describe("ContextPacketDrawer evidence detail", () => {
         payload: { sessionId: 42, evidence: [ledgerEvidence] },
       }),
     );
+  });
+
+  it("renders compact traceability diagnostics and chain metadata", async () => {
+    await act(async () => {
+      root.render(
+        createElement(ContextPacketDrawer, {
+          open: true,
+          onOpenChange: vi.fn(),
+          packets: [packet],
+          selectedIds: [],
+          onSelect: vi.fn(),
+          relations: [
+            {
+              sourceId: "packet-1",
+              targetId: "packet-1",
+              relationType: "supports",
+              confidence: 1,
+            },
+          ],
+        }),
+      );
+    });
+
+    expect(
+      container.querySelector("[data-testid='evidence-count-traceable']")
+        ?.textContent,
+    ).toContain("1 可追溯");
+    expect(
+      container.querySelector("[data-testid='evidence-chain-meta']")
+        ?.textContent,
+    ).toContain("Root > Details");
   });
 });

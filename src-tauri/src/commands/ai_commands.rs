@@ -291,6 +291,40 @@ fn budget_pause_checkpoint(
     })
 }
 
+#[derive(Debug, Clone, Copy, Serialize)]
+struct ContextBudgetDiagnostics {
+    input_budget: usize,
+    estimated_total: usize,
+    history_tokens: usize,
+    evidence_tokens: usize,
+    tool_tokens: usize,
+    environment_tokens: usize,
+}
+
+fn cold_start_evidence_budget(input_budget: usize) -> usize {
+    (input_budget / 3).clamp(1, 18_000)
+}
+
+fn compact_cold_start_packets_for_budget(
+    packets: &mut Vec<ContextPacket>,
+    input_budget: usize,
+) -> ContextBudgetDiagnostics {
+    let evidence_budget = cold_start_evidence_budget(input_budget);
+    crate::ai_runtime::harness_support::compact_evidence(packets, evidence_budget);
+    let evidence_tokens = packets
+        .iter()
+        .map(|packet| crate::ai_runtime::harness_support::estimate_tokens(&packet.excerpt))
+        .sum();
+    ContextBudgetDiagnostics {
+        input_budget,
+        estimated_total: evidence_tokens,
+        history_tokens: 0,
+        evidence_tokens,
+        tool_tokens: 0,
+        environment_tokens: 0,
+    }
+}
+
 fn accessible_note_paths_for_resume(vault: &Path, plan: &AgentTaskResumePlan) -> Vec<String> {
     let Some(note_path) = plan
         .budget_policy
@@ -1208,6 +1242,24 @@ pub(crate) async fn execute_ai_send_message_with_routing(
             .cloned()
             .collect()
     };
+    let mut context_budget_diagnostics =
+        compact_cold_start_packets_for_budget(&mut filtered_packets, resolved.input_budget);
+    context_budget_diagnostics.history_tokens = history
+        .iter()
+        .map(|message| crate::ai_runtime::harness_support::estimate_tokens(&message.content))
+        .sum();
+    context_budget_diagnostics.estimated_total = context_budget_diagnostics
+        .history_tokens
+        .saturating_add(context_budget_diagnostics.evidence_tokens)
+        .saturating_add(context_budget_diagnostics.tool_tokens)
+        .saturating_add(context_budget_diagnostics.environment_tokens);
+    AgentTaskRuntime::record_event(
+        &state.db,
+        &task_id,
+        "context_budget",
+        "assembled",
+        serde_json::to_value(context_budget_diagnostics).unwrap_or_default(),
+    )?;
 
     if !filtered_packets.is_empty() {
         let register_packets = register_packets_from_context_packets(&filtered_packets);
@@ -3115,8 +3167,9 @@ pub async fn classified_ai_retrieval_clear() -> AppResult<()> {
 #[cfg(test)]
 mod tests {
     use super::{
-        finalize_chat_harness_run, parse_confirmed_tool_args, partial_tool_confirm_response,
-        should_prefetch_web, validate_ai_note_path,
+        compact_cold_start_packets_for_budget, finalize_chat_harness_run,
+        parse_confirmed_tool_args, partial_tool_confirm_response, should_prefetch_web,
+        validate_ai_note_path,
     };
 
     #[test]
@@ -3234,6 +3287,42 @@ mod tests {
         assert!(!should_prefetch_web(
             "compare Rust and TypeScript for desktop apps"
         ));
+    }
+
+    #[test]
+    fn cold_start_packets_are_compacted_before_harness() {
+        use crate::ai_runtime::{ContextPacket, SourceType, TrustLevel};
+
+        fn packet(id: &str, source_type: SourceType, score: f64, excerpt: String) -> ContextPacket {
+            ContextPacket {
+                id: id.into(),
+                source_type,
+                source_path: None,
+                title: id.into(),
+                heading_path: None,
+                source_span: None,
+                content_hash: String::new(),
+                excerpt,
+                retrieval_reason: String::new(),
+                score,
+                trust_level: TrustLevel::UserNote,
+                citation_label: String::new(),
+                stale: false,
+                web: None,
+                corpus: None,
+            }
+        }
+
+        let mut packets = vec![
+            packet("web", SourceType::Web, 0.99, "网".repeat(30_000)),
+            packet("note", SourceType::Note, 0.5, "本地笔记".repeat(100)),
+        ];
+
+        let diagnostics = compact_cold_start_packets_for_budget(&mut packets, 9_000);
+
+        assert!(diagnostics.evidence_tokens <= 3_000);
+        assert_eq!(packets[0].id, "note");
+        assert!(packets[1].excerpt.contains("已压缩") || packets[1].excerpt.chars().count() < 500);
     }
 
     #[test]

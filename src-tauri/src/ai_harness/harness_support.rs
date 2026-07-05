@@ -13,13 +13,11 @@ use crate::storage::db::Database;
 
 const MAX_FULL_HISTORY: usize = 4;
 const HISTORY_SUMMARY_THRESHOLD: usize = 10;
+const MAX_HISTORY_MESSAGE_TOKENS: usize = 2_000;
+const CONTEXT_TRUNCATION_MARKER: &str = "\n...（已按上下文预算截断）";
 
 /// Compress old history into a single system summary + recent turns.
 pub fn compress_history_messages(history: &[(String, String)]) -> Vec<(String, String)> {
-    if history.len() <= HISTORY_SUMMARY_THRESHOLD {
-        return history.to_vec();
-    }
-
     let mut preserved_system = Vec::new();
     let mut compressible = Vec::with_capacity(history.len());
     for (role, content) in history {
@@ -32,7 +30,7 @@ pub fn compress_history_messages(history: &[(String, String)]) -> Vec<(String, S
 
     if compressible.len() <= HISTORY_SUMMARY_THRESHOLD {
         preserved_system.extend(compressible);
-        return preserved_system;
+        return trim_history_message_bodies(preserved_system);
     }
 
     let split = compressible.len().saturating_sub(MAX_FULL_HISTORY);
@@ -60,12 +58,83 @@ pub fn compress_history_messages(history: &[(String, String)]) -> Vec<(String, S
         ),
     ));
     out.extend(recent.iter().cloned());
-    out
+    trim_history_message_bodies(out)
 }
 
-/// Estimate token count from char length (rough).
+fn trim_history_message_bodies(history: Vec<(String, String)>) -> Vec<(String, String)> {
+    let latest_user_index = history.iter().rposition(|(role, _)| role == "user");
+    history
+        .into_iter()
+        .enumerate()
+        .map(|(index, (role, content))| {
+            if Some(index) == latest_user_index
+                || (role == "system" && content.contains("## ConversationMemory"))
+                || estimate_tokens(&content) <= MAX_HISTORY_MESSAGE_TOKENS
+            {
+                return (role, content);
+            }
+            (
+                role,
+                truncate_text_to_token_budget(
+                    &content,
+                    MAX_HISTORY_MESSAGE_TOKENS,
+                    CONTEXT_TRUNCATION_MARKER,
+                ),
+            )
+        })
+        .collect()
+}
+
+/// Estimate token count using the same CJK-aware heuristic as the gateway guard.
 pub fn estimate_tokens(text: &str) -> usize {
-    (text.chars().count() / 4).max(1)
+    if text.is_empty() {
+        return 0;
+    }
+    let chars = text.chars().count();
+    let cjk = text
+        .chars()
+        .filter(|ch| {
+            matches!(
+                *ch as u32,
+                0x4E00..=0x9FFF | 0x3400..=0x4DBF | 0x3040..=0x30FF | 0xAC00..=0xD7AF
+            )
+        })
+        .count();
+    let non_cjk = chars.saturating_sub(cjk);
+    cjk.saturating_add(non_cjk.div_ceil(4)).max(1)
+}
+
+/// Truncate text to an estimated token budget while preserving UTF-8 boundaries.
+pub fn truncate_text_to_token_budget(text: &str, token_budget: usize, marker: &str) -> String {
+    if estimate_tokens(text) <= token_budget {
+        return text.to_string();
+    }
+    if token_budget == 0 {
+        return String::new();
+    }
+
+    let marker_tokens = estimate_tokens(marker);
+    let body_budget = token_budget.saturating_sub(marker_tokens).max(1);
+    let mut out = String::new();
+    let mut cjk = 0usize;
+    let mut non_cjk = 0usize;
+    for ch in text.chars() {
+        if matches!(
+            ch as u32,
+            0x4E00..=0x9FFF | 0x3400..=0x4DBF | 0x3040..=0x30FF | 0xAC00..=0xD7AF
+        ) {
+            cjk += 1;
+        } else {
+            non_cjk += 1;
+        }
+        let estimated = cjk.saturating_add(non_cjk.div_ceil(4)).max(1);
+        if estimated > body_budget {
+            break;
+        }
+        out.push(ch);
+    }
+    out.push_str(marker);
+    out
 }
 
 const MAX_EVIDENCE_PACKETS: usize = 100;
@@ -86,19 +155,38 @@ pub fn compact_evidence(packets: &mut Vec<ContextPacket>, token_budget: usize) {
     }
     // Trim low-score excerpts to fit within token budget
     packets.sort_by(|a, b| {
-        b.score
-            .partial_cmp(&a.score)
-            .unwrap_or(std::cmp::Ordering::Equal)
+        evidence_source_rank(&a.source_type)
+            .cmp(&evidence_source_rank(&b.source_type))
+            .then(
+                b.score
+                    .partial_cmp(&a.score)
+                    .unwrap_or(std::cmp::Ordering::Equal),
+            )
     });
     let mut used = 0usize;
     for packet in packets.iter_mut() {
         let est = estimate_tokens(&packet.excerpt);
         if used + est > token_budget {
-            packet.excerpt = format!("[已压缩] {}", packet.title);
-            used += 50;
+            let remaining = token_budget.saturating_sub(used);
+            packet.excerpt = if evidence_source_rank(&packet.source_type) >= 3 || remaining <= 64 {
+                format!("[已压缩] {}", packet.title)
+            } else {
+                truncate_text_to_token_budget(&packet.excerpt, remaining, CONTEXT_TRUNCATION_MARKER)
+            };
+            used = used.saturating_add(estimate_tokens(&packet.excerpt));
         } else {
             used += est;
         }
+    }
+}
+
+fn evidence_source_rank(source_type: &crate::ai_runtime::SourceType) -> u8 {
+    use crate::ai_runtime::SourceType;
+    match source_type {
+        SourceType::Note | SourceType::Anchor => 0,
+        SourceType::Regulation => 1,
+        SourceType::Template | SourceType::Session => 2,
+        SourceType::Web => 3,
     }
 }
 
@@ -237,6 +325,32 @@ mod tests {
         assert!(out.len() < history.len());
         assert!(out[0].0 == "system");
         assert!(out.last().unwrap().1.contains("message 11"));
+    }
+
+    #[test]
+    fn estimate_tokens_counts_cjk_close_to_one_token_per_character() {
+        assert!(estimate_tokens(&"汉".repeat(300)) >= 300);
+        assert!(estimate_tokens(&"x".repeat(300)) <= 80);
+    }
+
+    #[test]
+    fn compress_history_trims_single_long_recent_message() {
+        let latest_user = "apple最新的手表是什么？".to_string();
+        let history = vec![
+            ("user".to_string(), "上一轮问题".to_string()),
+            ("assistant".to_string(), "超长网页正文".repeat(10_000)),
+            ("user".to_string(), latest_user.clone()),
+        ];
+
+        let out = compress_history_messages(&history);
+
+        assert_eq!(out.last().unwrap().1, latest_user);
+        assert!(out
+            .iter()
+            .all(|(_, content)| content.chars().count() < 8_000));
+        assert!(out
+            .iter()
+            .any(|(_, content)| content.contains("已按上下文预算截断")));
     }
 
     #[test]

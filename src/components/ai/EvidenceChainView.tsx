@@ -59,6 +59,14 @@ export function EvidenceChainView({
             <p className="mt-1 line-clamp-2 text-[11px] leading-relaxed text-muted-foreground">
               {packet.excerpt}
             </p>
+            {packet.heading_path || packet.retrieval_reason ? (
+              <div
+                className="mt-1 truncate text-[10px] text-muted-foreground/80"
+                data-testid="evidence-chain-meta"
+              >
+                {packet.heading_path ?? packet.retrieval_reason}
+              </div>
+            ) : null}
           </div>
         ))}
       </div>
