@@ -2,7 +2,10 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::ai_types::{EndpointFamily, ProbeStrategy};
+use crate::ai_types::{
+    EndpointFamily, ProbeStrategy, ReasoningAdapter, ReasoningControl, ReasoningMode,
+    ReasoningVisibility,
+};
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -19,6 +22,133 @@ pub struct ModelCatalogEntry {
     pub cache_friendly: bool,
     pub endpoint_family: EndpointFamily,
     pub probe_strategy: ProbeStrategy,
+}
+
+/// Structured reasoning defaults derived from the static model catalog.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CatalogReasoningCapability {
+    pub adapter: ReasoningAdapter,
+    pub control: ReasoningControl,
+    pub visibility: ReasoningVisibility,
+    pub supported_modes: &'static [ReasoningMode],
+    pub default_mode: ReasoningMode,
+    pub disable_supported: bool,
+}
+
+impl ModelCatalogEntry {
+    /// Return the catalog-owned reasoning capability, preserving `supports_thinking` for legacy UI.
+    pub fn reasoning_capability(&self) -> Option<CatalogReasoningCapability> {
+        match self.provider_id {
+            "deepseek" if self.id.contains("reasoner") || self.supports_thinking => {
+                Some(CatalogReasoningCapability {
+                    adapter: ReasoningAdapter::DeepSeekReasoningContent,
+                    control: ReasoningControl::Switch,
+                    visibility: ReasoningVisibility::HiddenChannel,
+                    supported_modes: SWITCH_REASONING_MODES,
+                    default_mode: ReasoningMode::Auto,
+                    disable_supported: true,
+                })
+            }
+            "openai" if is_openai_reasoning_model(self.id) => Some(CatalogReasoningCapability {
+                adapter: ReasoningAdapter::OpenAiResponses,
+                control: ReasoningControl::Effort,
+                visibility: ReasoningVisibility::HiddenChannel,
+                supported_modes: OPENAI_REASONING_MODES,
+                default_mode: ReasoningMode::Medium,
+                disable_supported: true,
+            }),
+            "anthropic" if self.supports_thinking => Some(CatalogReasoningCapability {
+                adapter: ReasoningAdapter::AnthropicExtendedThinking,
+                control: ReasoningControl::Budget,
+                visibility: ReasoningVisibility::HiddenChannel,
+                supported_modes: BUDGET_REASONING_MODES,
+                default_mode: ReasoningMode::Medium,
+                disable_supported: true,
+            }),
+            "mimo" if self.supports_thinking => Some(CatalogReasoningCapability {
+                adapter: ReasoningAdapter::ProviderSpecificStatic,
+                control: ReasoningControl::Switch,
+                visibility: ReasoningVisibility::ContentTag,
+                supported_modes: SWITCH_REASONING_MODES,
+                default_mode: ReasoningMode::Auto,
+                disable_supported: true,
+            }),
+            "zhipu" if is_glm_reasoning_model(self.id) => Some(CatalogReasoningCapability {
+                adapter: ReasoningAdapter::GlmThinking,
+                control: ReasoningControl::Effort,
+                visibility: ReasoningVisibility::HiddenChannel,
+                supported_modes: EFFORT_REASONING_MODES,
+                default_mode: ReasoningMode::Medium,
+                disable_supported: true,
+            }),
+            "qwen" if is_qwen_reasoning_model(self.id) => Some(CatalogReasoningCapability {
+                adapter: ReasoningAdapter::QwenChatTemplate,
+                control: ReasoningControl::Tag,
+                visibility: ReasoningVisibility::ContentTag,
+                supported_modes: TAG_REASONING_MODES,
+                default_mode: ReasoningMode::Auto,
+                disable_supported: true,
+            }),
+            "minimax" if is_minimax_reasoning_risk(self.id) => Some(CatalogReasoningCapability {
+                adapter: ReasoningAdapter::OpenAiCompatibleTagStream,
+                control: ReasoningControl::Tag,
+                visibility: ReasoningVisibility::PlainContentRisk,
+                supported_modes: TAG_REASONING_MODES,
+                default_mode: ReasoningMode::Auto,
+                disable_supported: true,
+            }),
+            _ => None,
+        }
+    }
+}
+
+pub const SWITCH_REASONING_MODES: &[ReasoningMode] = &[ReasoningMode::Off, ReasoningMode::Auto];
+pub const TAG_REASONING_MODES: &[ReasoningMode] = &[ReasoningMode::Off, ReasoningMode::Auto];
+pub const EFFORT_REASONING_MODES: &[ReasoningMode] = &[
+    ReasoningMode::Off,
+    ReasoningMode::Auto,
+    ReasoningMode::Low,
+    ReasoningMode::Medium,
+    ReasoningMode::High,
+];
+pub const OPENAI_REASONING_MODES: &[ReasoningMode] = &[
+    ReasoningMode::Off,
+    ReasoningMode::Auto,
+    ReasoningMode::Minimal,
+    ReasoningMode::Low,
+    ReasoningMode::Medium,
+    ReasoningMode::High,
+    ReasoningMode::Xhigh,
+];
+pub const BUDGET_REASONING_MODES: &[ReasoningMode] = &[
+    ReasoningMode::Off,
+    ReasoningMode::Auto,
+    ReasoningMode::Minimal,
+    ReasoningMode::Low,
+    ReasoningMode::Medium,
+    ReasoningMode::High,
+    ReasoningMode::Xhigh,
+];
+
+fn is_openai_reasoning_model(model: &str) -> bool {
+    model.starts_with("o1")
+        || model.starts_with("o3")
+        || model.starts_with("o4")
+        || model.starts_with("gpt-5")
+}
+
+fn is_glm_reasoning_model(model: &str) -> bool {
+    model.starts_with("glm-4.5") || model.starts_with("glm-5")
+}
+
+fn is_qwen_reasoning_model(model: &str) -> bool {
+    model.to_ascii_lowercase().contains("qwen3")
+}
+
+fn is_minimax_reasoning_risk(model: &str) -> bool {
+    let model = model.to_ascii_lowercase();
+    model.contains("minimax") || model == "minimax-m3"
 }
 
 const ONE_M: u32 = 1_048_576;
@@ -111,6 +241,20 @@ pub fn catalog() -> &'static [ModelCatalogEntry] {
             probe_strategy: ProbeStrategy::OpenAiModelsThenChat,
         },
         ModelCatalogEntry {
+            id: "gpt-5",
+            provider_id: "openai",
+            display_name: "GPT-5",
+            context_window: 400_000,
+            max_output: 128_000,
+            supports_tools: true,
+            supports_thinking: true,
+            supports_vision: true,
+            supports_streaming: true,
+            cache_friendly: true,
+            endpoint_family: EndpointFamily::OpenAiCompatibleChatCompletions,
+            probe_strategy: ProbeStrategy::OpenAiModelsThenChat,
+        },
+        ModelCatalogEntry {
             id: "claude-3-5-haiku-20241022",
             provider_id: "anthropic",
             display_name: "Claude 3.5 Haiku",
@@ -139,6 +283,20 @@ pub fn catalog() -> &'static [ModelCatalogEntry] {
             probe_strategy: ProbeStrategy::OpenAiModelsThenChat,
         },
         ModelCatalogEntry {
+            id: "glm-4.5",
+            provider_id: "zhipu",
+            display_name: "GLM-4.5",
+            context_window: 128_000,
+            max_output: 16_384,
+            supports_tools: true,
+            supports_thinking: true,
+            supports_vision: false,
+            supports_streaming: true,
+            cache_friendly: false,
+            endpoint_family: EndpointFamily::OpenAiCompatibleChatCompletions,
+            probe_strategy: ProbeStrategy::OpenAiModelsThenChat,
+        },
+        ModelCatalogEntry {
             id: "moonshot-v1-128k",
             provider_id: "kimi",
             display_name: "Kimi 128K",
@@ -160,6 +318,34 @@ pub fn catalog() -> &'static [ModelCatalogEntry] {
             max_output: 12_288,
             supports_tools: true,
             supports_thinking: false,
+            supports_vision: false,
+            supports_streaming: true,
+            cache_friendly: false,
+            endpoint_family: EndpointFamily::OpenAiCompatibleChatCompletions,
+            probe_strategy: ProbeStrategy::OpenAiModelsThenChat,
+        },
+        ModelCatalogEntry {
+            id: "qwen3-235b-a22b",
+            provider_id: "qwen",
+            display_name: "Qwen3 235B A22B",
+            context_window: 262_144,
+            max_output: 32_768,
+            supports_tools: true,
+            supports_thinking: true,
+            supports_vision: false,
+            supports_streaming: true,
+            cache_friendly: false,
+            endpoint_family: EndpointFamily::OpenAiCompatibleChatCompletions,
+            probe_strategy: ProbeStrategy::OpenAiModelsThenChat,
+        },
+        ModelCatalogEntry {
+            id: "MiniMax-M3",
+            provider_id: "minimax",
+            display_name: "MiniMax-M3",
+            context_window: 1_048_576,
+            max_output: 65_536,
+            supports_tools: true,
+            supports_thinking: true,
             supports_vision: false,
             supports_streaming: true,
             cache_friendly: false,
@@ -357,6 +543,70 @@ mod tests {
         assert_eq!(
             fallback.probe_strategy,
             crate::ai_types::ProbeStrategy::OpenAiModelsThenChat
+        );
+    }
+
+    #[test]
+    fn catalog_exposes_structured_reasoning_capability() {
+        let deepseek = find_model("deepseek-reasoner").unwrap();
+        let deepseek_capability = deepseek.reasoning_capability().unwrap();
+        assert_eq!(
+            deepseek_capability.adapter,
+            crate::ai_types::ReasoningAdapter::DeepSeekReasoningContent
+        );
+        assert_eq!(
+            deepseek_capability.visibility,
+            crate::ai_types::ReasoningVisibility::HiddenChannel
+        );
+        assert!(deepseek.supports_thinking);
+
+        let mimo = find_model("MiMo-V2.5-Pro").unwrap();
+        let mimo_capability = mimo.reasoning_capability().unwrap();
+        assert_eq!(
+            mimo_capability.adapter,
+            crate::ai_types::ReasoningAdapter::ProviderSpecificStatic
+        );
+        assert_eq!(
+            mimo_capability.visibility,
+            crate::ai_types::ReasoningVisibility::ContentTag
+        );
+    }
+
+    #[test]
+    fn reasoning_manifest_exposes_modes_for_mainstream_models() {
+        let openai = find_model("gpt-5").unwrap().reasoning_capability().unwrap();
+        assert_eq!(openai.control, crate::ai_types::ReasoningControl::Effort);
+        assert!(openai
+            .supported_modes
+            .contains(&crate::ai_types::ReasoningMode::Minimal));
+        assert!(openai
+            .supported_modes
+            .contains(&crate::ai_types::ReasoningMode::Xhigh));
+
+        let glm = find_model("glm-4.5")
+            .unwrap()
+            .reasoning_capability()
+            .unwrap();
+        assert_eq!(glm.adapter, crate::ai_types::ReasoningAdapter::GlmThinking);
+        assert_eq!(glm.control, crate::ai_types::ReasoningControl::Effort);
+
+        let qwen = find_model("qwen3-235b-a22b")
+            .unwrap()
+            .reasoning_capability()
+            .unwrap();
+        assert_eq!(
+            qwen.adapter,
+            crate::ai_types::ReasoningAdapter::QwenChatTemplate
+        );
+        assert_eq!(qwen.control, crate::ai_types::ReasoningControl::Tag);
+
+        let minimax = find_model("MiniMax-M3")
+            .unwrap()
+            .reasoning_capability()
+            .unwrap();
+        assert_eq!(
+            minimax.visibility,
+            crate::ai_types::ReasoningVisibility::PlainContentRisk
         );
     }
 

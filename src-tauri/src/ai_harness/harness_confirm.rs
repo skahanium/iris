@@ -203,6 +203,11 @@ pub async fn resume_harness_after_tool_confirm(
             "Disabling thinking for tool-confirm resume because checkpoint has assistant tool_calls without reasoning_content"
         );
     }
+    let reasoning = if thinking {
+        resolved.reasoning
+    } else {
+        crate::ai_types::ResolvedReasoningRequest::disabled()
+    };
     let user_message = latest_user_message(&cp.messages);
 
     let harness_result = run_harness(
@@ -244,7 +249,7 @@ pub async fn resume_harness_after_tool_confirm(
         },
         provider_config,
         Some(resolved.output_budget),
-        thinking,
+        reasoning,
     )
     .await?;
 

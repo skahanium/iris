@@ -271,6 +271,13 @@ pub fn render_persona(resolved: &ResolvedPersona) -> String {
             .into(),
     );
 
+    parts.push(
+        "最终答案边界：不要在最终回复中展示内部分析、任务策略、人设/模型/Skills 配置说明、\
+         “The user is...”“I should...”一类自我旁白，或工具选择理由；除非用户明确询问这些过程。\
+         保持自然、灵活、有人味的表达，不使用固定问候或固定回答模板。"
+            .into(),
+    );
+
     // Writing style
     if let Some(style) = &resolved.writing_style {
         parts.push(format!("写作风格：{style}"));
@@ -365,6 +372,18 @@ mod tests {
         assert!(!resolved.web_instruction.contains("不要调用"));
         assert!(!resolved.web_instruction.contains("web_search"));
         assert!(!resolved.web_instruction.contains("fetch_web_page"));
+    }
+
+    #[test]
+    fn render_persona_forbids_internal_meta_analysis_without_fixed_template() {
+        let profile = PromptProfile::default();
+        let resolved = resolve_persona(&profile, AiScene::KnowledgeLookup, false);
+        let rendered = render_persona(&resolved);
+
+        assert!(rendered.contains("最终答案边界"));
+        assert!(rendered.contains("不要在最终回复中展示内部分析"));
+        assert!(rendered.contains("I should"));
+        assert!(rendered.contains("不使用固定问候或固定回答模板"));
     }
 
     #[test]

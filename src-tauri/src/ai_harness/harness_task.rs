@@ -584,6 +584,7 @@ async fn run_classified_chat_task(
                 temperature: Some(0.2),
                 stream: true,
                 thinking: route.resolved.thinking,
+                reasoning: route.resolved.reasoning,
                 skip_stub_ids: Vec::new(),
             },
         )

@@ -330,6 +330,186 @@ pub enum ProbeStrategy {
     StaticOnly,
 }
 
+/// User-facing reasoning/thinking strength configured per capability slot.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReasoningMode {
+    #[default]
+    Off,
+    Auto,
+    Minimal,
+    Low,
+    Medium,
+    High,
+    Xhigh,
+}
+
+/// Provider-specific adapter used to translate Iris reasoning intent.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReasoningAdapter {
+    #[default]
+    None,
+    OpenAiResponses,
+    AnthropicExtendedThinking,
+    GeminiThinkingConfig,
+    DeepSeekReasoningContent,
+    GlmThinking,
+    QwenChatTemplate,
+    OpenAiCompatibleTagStream,
+    ProviderSpecificStatic,
+}
+
+/// Degree of runtime control a provider exposes for reasoning.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReasoningControl {
+    #[default]
+    None,
+    Switch,
+    Effort,
+    Level,
+    Budget,
+    Tag,
+}
+
+/// How reasoning arrives back from a provider.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReasoningVisibility {
+    #[default]
+    HiddenChannel,
+    ContentTag,
+    PlainContentRisk,
+}
+
+/// Normalized reasoning request consumed by the gateway and harness.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ResolvedReasoningRequest {
+    pub mode: ReasoningMode,
+    pub adapter: ReasoningAdapter,
+    pub control: ReasoningControl,
+    pub visibility: ReasoningVisibility,
+    pub requested: bool,
+    pub isolate_output: bool,
+}
+
+impl Default for ResolvedReasoningRequest {
+    fn default() -> Self {
+        Self {
+            mode: ReasoningMode::Off,
+            adapter: ReasoningAdapter::None,
+            control: ReasoningControl::None,
+            visibility: ReasoningVisibility::HiddenChannel,
+            requested: false,
+            isolate_output: false,
+        }
+    }
+}
+
+impl ResolvedReasoningRequest {
+    /// Disabled reasoning request used by compatibility paths and unsupported models.
+    pub fn disabled() -> Self {
+        Self::default()
+    }
+
+    /// Compatibility helper for legacy boolean thinking callers.
+    pub fn legacy_enabled(enabled: bool) -> Self {
+        if enabled {
+            Self {
+                mode: ReasoningMode::Auto,
+                adapter: ReasoningAdapter::ProviderSpecificStatic,
+                control: ReasoningControl::Switch,
+                visibility: ReasoningVisibility::ContentTag,
+                requested: true,
+                isolate_output: true,
+            }
+        } else {
+            Self::disabled()
+        }
+    }
+
+    /// Whether this request should send provider-specific reasoning controls.
+    pub fn sends_provider_parameter(&self) -> bool {
+        self.requested
+            && matches!(
+                self.adapter,
+                ReasoningAdapter::OpenAiResponses
+                    | ReasoningAdapter::AnthropicExtendedThinking
+                    | ReasoningAdapter::GeminiThinkingConfig
+                    | ReasoningAdapter::GlmThinking
+                    | ReasoningAdapter::ProviderSpecificStatic
+            )
+    }
+}
+
+#[cfg(test)]
+mod reasoning_request_tests {
+    use super::*;
+
+    #[test]
+    fn chat_template_and_tag_stream_do_not_count_as_provider_parameters() {
+        for adapter in [
+            ReasoningAdapter::QwenChatTemplate,
+            ReasoningAdapter::OpenAiCompatibleTagStream,
+            ReasoningAdapter::DeepSeekReasoningContent,
+            ReasoningAdapter::None,
+        ] {
+            let request = ResolvedReasoningRequest {
+                mode: ReasoningMode::Auto,
+                adapter,
+                control: ReasoningControl::Switch,
+                visibility: ReasoningVisibility::ContentTag,
+                requested: true,
+                isolate_output: true,
+            };
+            assert!(!request.sends_provider_parameter());
+        }
+    }
+
+    #[test]
+    fn native_reasoning_adapters_count_as_provider_parameters() {
+        for adapter in [
+            ReasoningAdapter::OpenAiResponses,
+            ReasoningAdapter::AnthropicExtendedThinking,
+            ReasoningAdapter::GeminiThinkingConfig,
+            ReasoningAdapter::GlmThinking,
+            ReasoningAdapter::ProviderSpecificStatic,
+        ] {
+            let request = ResolvedReasoningRequest {
+                mode: ReasoningMode::Medium,
+                adapter,
+                control: ReasoningControl::Effort,
+                visibility: ReasoningVisibility::HiddenChannel,
+                requested: true,
+                isolate_output: true,
+            };
+            assert!(request.sends_provider_parameter());
+        }
+    }
+
+    #[test]
+    fn reasoning_modes_include_minimal_and_xhigh_strengths() {
+        assert_eq!(
+            serde_json::to_string(&ReasoningMode::Minimal).unwrap(),
+            "\"minimal\""
+        );
+        assert_eq!(
+            serde_json::to_string(&ReasoningMode::Xhigh).unwrap(),
+            "\"xhigh\""
+        );
+        assert_eq!(
+            serde_json::from_str::<ReasoningMode>("\"minimal\"").unwrap(),
+            ReasoningMode::Minimal
+        );
+        assert_eq!(
+            serde_json::from_str::<ReasoningMode>("\"xhigh\"").unwrap(),
+            ReasoningMode::Xhigh
+        );
+    }
+}
+
 /// Safe, explainable model routing metadata for the Run Plan UI.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

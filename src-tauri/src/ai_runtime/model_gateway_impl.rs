@@ -628,6 +628,7 @@ mod tests {
             temperature: Some(0.7),
             stream: false,
             thinking: true,
+            reasoning: crate::ai_types::ResolvedReasoningRequest::legacy_enabled(true),
             skip_stub_ids: vec![],
         });
         assert_eq!(

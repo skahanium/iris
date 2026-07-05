@@ -600,6 +600,7 @@ mod tests {
                 label: None,
                 default_model: None,
                 enabled_models: Some(vec!["custom-deepseek-model".into()]),
+                model_capabilities: std::collections::HashMap::new(),
             },
         );
 

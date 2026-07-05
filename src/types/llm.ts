@@ -12,11 +12,57 @@ export type ProbeStrategy =
   | "anthropic_messages_ping"
   | "static_only";
 
+export type ReasoningMode =
+  | "off"
+  | "auto"
+  | "minimal"
+  | "low"
+  | "medium"
+  | "high"
+  | "xhigh";
+export type ReasoningAdapter =
+  | "none"
+  | "open_ai_responses"
+  | "anthropic_extended_thinking"
+  | "gemini_thinking_config"
+  | "deep_seek_reasoning_content"
+  | "glm_thinking"
+  | "qwen_chat_template"
+  | "open_ai_compatible_tag_stream"
+  | "provider_specific_static";
+export type ReasoningControl =
+  | "none"
+  | "switch"
+  | "effort"
+  | "level"
+  | "budget"
+  | "tag";
+export type ReasoningVisibility =
+  | "hidden_channel"
+  | "content_tag"
+  | "plain_content_risk";
+
+export interface ReasoningSlotConfig {
+  mode: ReasoningMode;
+}
+
+export interface ModelCapabilityOverride {
+  reasoningAdapter?: ReasoningAdapter | null;
+  reasoningControl?: ReasoningControl | null;
+  reasoningVisibility?: ReasoningVisibility | null;
+  supportedModes?: ReasoningMode[];
+  defaultMode?: ReasoningMode | null;
+  disableSupported?: boolean | null;
+  userVerifiedAt?: string | null;
+  probeVerifiedAt?: string | null;
+}
+
 export interface ProviderOverride {
   baseUrl: string | null;
   label?: string | null;
   defaultModel?: string | null;
   enabledModels?: string[] | null;
+  modelCapabilities?: Record<string, ModelCapabilityOverride>;
 }
 
 /** 设置页允许的自定义 OpenAI 兼容端点 ID（`custom` 或 `custom_*`）。 */
@@ -28,6 +74,7 @@ export interface SceneRoute {
   providerId: string;
   model: string;
   thinking?: boolean;
+  reasoning?: ReasoningSlotConfig | null;
 }
 
 export type SlotRoute = SceneRoute;
@@ -150,7 +197,7 @@ export const USER_CONFIGURABLE_CAPABILITY_SLOTS = [
 /** 客户端回退默认（IPC 不可用或解析失败时） */
 export const DEFAULT_LLM_ROUTING: LlmRoutingConfig = {
   version: 1,
-  schemaVersion: 3,
+  schemaVersion: 4,
   providers: {},
   slots: {},
   contextStrategy: {},

@@ -24,7 +24,8 @@ use crate::ai_runtime::agent_task::AgentTaskRuntime;
 use crate::ai_runtime::circuit_breaker;
 use crate::ai_runtime::evidence_ledger::EvidenceLedger;
 use crate::ai_runtime::harness_support::{
-    estimate_tokens, extract_thinking_blocks, load_harness_checkpoint, HarnessCheckpointMeta,
+    estimate_tokens, extract_thinking_blocks, load_harness_checkpoint,
+    sanitize_meta_analysis_prefix, HarnessCheckpointMeta,
 };
 use crate::ai_runtime::model_gateway::{
     clear_abort, emit_stream_reset_with_surface, is_abort_requested, prepare_tool_api_messages,
@@ -337,14 +338,16 @@ pub async fn run_harness(
     input: HarnessRunInput,
     provider_config: crate::ai_runtime::model_gateway::ProviderConfig,
     max_tokens: Option<u32>,
-    thinking_mode: bool,
+    reasoning: crate::ai_types::ResolvedReasoningRequest,
 ) -> AppResult<HarnessRunResult> {
+    let thinking_mode = reasoning.requested;
     run_harness_inner(
         state,
         app_handle,
         input,
         provider_config,
         max_tokens,
+        reasoning,
         thinking_mode,
     )
     .await
@@ -356,6 +359,7 @@ async fn run_harness_inner(
     input: HarnessRunInput,
     provider_config: crate::ai_runtime::model_gateway::ProviderConfig,
     max_tokens: Option<u32>,
+    reasoning: crate::ai_types::ResolvedReasoningRequest,
     thinking_mode: bool,
 ) -> AppResult<HarnessRunResult> {
     let registry = ToolRegistry::new();
@@ -567,6 +571,7 @@ async fn run_harness_inner(
                 temperature: Some(0.7),
                 stream: true,
                 thinking: thinking_mode,
+                reasoning,
                 skip_stub_ids: vec![],
             };
             tracing::debug!(
@@ -665,6 +670,7 @@ async fn run_harness_inner(
                 let raw = response.content.clone().unwrap_or_default();
                 let stripped = strip_tool_markup_from_visible(&raw);
                 let (visible, thinking) = extract_thinking_blocks(&stripped);
+                let visible = sanitize_meta_analysis_prefix(&visible);
                 if let Some(t) = thinking {
                     emit_thinking(app_handle, &input.request_id, harness_rounds, &t)?;
                 }
@@ -776,6 +782,7 @@ async fn run_harness_inner(
             let stripped_assistant =
                 strip_tool_markup_from_visible(&response.content.clone().unwrap_or_default());
             let (visible_content, thinking) = extract_thinking_blocks(&stripped_assistant);
+            let visible_content = sanitize_meta_analysis_prefix(&visible_content);
             if let Some(t) = thinking {
                 emit_thinking(app_handle, &input.request_id, harness_rounds, &t)?;
             }
@@ -870,7 +877,7 @@ async fn run_harness_inner(
                             &input,
                             provider_config.clone(),
                             max_tokens,
-                            thinking_mode,
+                            reasoning,
                             &subagent_calls[*idx].tool_call,
                         )
                     })
@@ -1095,6 +1102,7 @@ async fn run_harness_inner(
             &gateway,
             &provider_config,
             max_tokens,
+            reasoning,
             thinking_mode,
             &mut messages,
             &evidence_ledger,
@@ -1145,13 +1153,19 @@ async fn run_harness_inner(
             temperature: Some(0.7),
             stream: true,
             thinking: thinking_mode,
+            reasoning,
             skip_stub_ids: vec![],
+        };
+        let final_surface = if reasoning.isolate_output {
+            StreamSurface::InternalCandidate
+        } else {
+            StreamSurface::VisibleAnswer
         };
         let response = gateway
             .send_streaming_request_with_surface(
                 &input.request_id,
                 stream_request,
-                StreamSurface::VisibleAnswer,
+                final_surface,
                 true,
             )
             .await?;
@@ -1169,6 +1183,7 @@ async fn run_harness_inner(
         strip_tool_markup_from_visible(&response.content.unwrap_or_default())
     };
     let (final_visible, final_thinking) = extract_thinking_blocks(&final_content);
+    let final_visible = sanitize_meta_analysis_prefix(&final_visible);
     if let Some(t) = final_thinking {
         emit_thinking(app_handle, &input.request_id, harness_rounds, &t)?;
     }
@@ -1625,7 +1640,7 @@ async fn run_subagent_harness(
     parent: &HarnessRunInput,
     provider_config: ProviderConfig,
     max_tokens: Option<u32>,
-    thinking: bool,
+    reasoning: crate::ai_types::ResolvedReasoningRequest,
     tool_call: &ToolCall,
 ) -> AppResult<HarnessRunResult> {
     let args = parse_tool_call_arguments(&tool_call.function.arguments).map_err(|err| {
@@ -1682,7 +1697,7 @@ async fn run_subagent_harness(
         sub_input,
         provider_config,
         max_tokens,
-        thinking,
+        reasoning,
     )
     .await
 }

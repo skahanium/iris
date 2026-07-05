@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::ai_types::{
     ContentPart, EndpointFamily, LlmMessage, MessageContent, MessageRole, ProviderConfig,
+    ReasoningAdapter, ReasoningMode, ResolvedReasoningRequest,
 };
 use crate::error::{AppError, AppResult};
 
@@ -35,6 +36,7 @@ pub struct GatewayRequest {
     pub stream: bool,
     /// When true, send provider thinking-mode parameters (DeepSeek-compatible).
     pub thinking: bool,
+    pub reasoning: ResolvedReasoningRequest,
     /// Tool call IDs still awaiting user confirmation - must not receive error stubs.
     pub skip_stub_ids: Vec<String>,
 }
@@ -55,6 +57,7 @@ pub fn build_chat_completions_body(request: &GatewayRequest) -> serde_json::Valu
     }
     let mut req = request.clone();
     req.messages = messages;
+    apply_reasoning_message_controls(&mut req);
     build_chat_completions_body_inner(&req)
 }
 
@@ -69,9 +72,11 @@ pub(super) fn build_llm_api_body(request: &GatewayRequest) -> AppResult<serde_js
             ));
         }
     }
-    enforce_input_token_budget(&messages, &request.tools, request.input_token_budget)?;
     let mut req = request.clone();
     req.messages = messages;
+    apply_reasoning_message_controls(&mut req);
+    validate_reasoning_endpoint(&req)?;
+    enforce_input_token_budget(&req.messages, &req.tools, req.input_token_budget)?;
     Ok(match req.provider.endpoint_family {
         EndpointFamily::OpenAiCompatibleChatCompletions | EndpointFamily::ResponsesReserved => {
             build_chat_completions_body_inner(&req)
@@ -151,13 +156,156 @@ fn build_chat_completions_body_inner(request: &GatewayRequest) -> serde_json::Va
         body["temperature"] = serde_json::json!(temperature);
     }
 
-    apply_thinking_body(&mut body, request.thinking);
+    apply_reasoning_body(&mut body, request);
     body
 }
 
-fn apply_thinking_body(body: &mut serde_json::Value, thinking: bool) {
-    if thinking {
-        body["thinking"] = serde_json::json!({ "type": "enabled" });
+fn apply_reasoning_body(body: &mut serde_json::Value, request: &GatewayRequest) {
+    let reasoning = effective_reasoning_request(request);
+    if !reasoning.requested {
+        return;
+    }
+    match reasoning.adapter {
+        ReasoningAdapter::DeepSeekReasoningContent
+        | ReasoningAdapter::OpenAiCompatibleTagStream
+        | ReasoningAdapter::None => {}
+        ReasoningAdapter::GlmThinking => {
+            body["thinking"] = serde_json::json!({
+                "type": "enabled",
+                "reasoning_effort": effort_for_mode(reasoning.mode),
+            });
+        }
+        ReasoningAdapter::QwenChatTemplate => {}
+        ReasoningAdapter::ProviderSpecificStatic => {
+            body["thinking"] = serde_json::json!({ "type": "enabled" })
+        }
+        ReasoningAdapter::OpenAiResponses => {
+            body["reasoning_effort"] = serde_json::json!(effort_for_mode(reasoning.mode));
+        }
+        ReasoningAdapter::GeminiThinkingConfig => {
+            body["thinking_config"] = serde_json::json!({
+                "thinking_level": thinking_level_for_mode(reasoning.mode),
+            });
+        }
+        ReasoningAdapter::AnthropicExtendedThinking => {}
+    }
+}
+
+fn effective_reasoning_request(request: &GatewayRequest) -> ResolvedReasoningRequest {
+    if request.reasoning == ResolvedReasoningRequest::disabled() && request.thinking {
+        ResolvedReasoningRequest::legacy_enabled(true)
+    } else {
+        request.reasoning
+    }
+}
+
+fn apply_anthropic_reasoning_body(body: &mut serde_json::Value, request: &GatewayRequest) {
+    let reasoning = effective_reasoning_request(request);
+    if !reasoning.requested || reasoning.adapter != ReasoningAdapter::AnthropicExtendedThinking {
+        return;
+    }
+    if let Some(budget_tokens) = anthropic_thinking_budget(reasoning.mode, request.max_tokens) {
+        body["thinking"] = serde_json::json!({
+            "type": "enabled",
+            "budget_tokens": budget_tokens,
+        });
+    }
+}
+
+fn anthropic_thinking_budget(mode: ReasoningMode, max_tokens: Option<u32>) -> Option<u32> {
+    let desired = match mode {
+        ReasoningMode::Off => return None,
+        ReasoningMode::Minimal => 512,
+        ReasoningMode::Low => 1_024,
+        ReasoningMode::Auto | ReasoningMode::Medium => 2_048,
+        ReasoningMode::High => 4_096,
+        ReasoningMode::Xhigh => 8_192,
+    };
+    let max_output = max_tokens.unwrap_or(crate::llm::providers::ANTHROPIC_DEFAULT_MAX_TOKENS);
+    if max_output <= 1_024 {
+        return None;
+    }
+    Some(desired.min(max_output.saturating_sub(1)))
+}
+
+fn apply_qwen_chat_template_control(
+    messages: &mut [LlmMessage],
+    reasoning: ResolvedReasoningRequest,
+) {
+    if !reasoning.requested || reasoning.adapter != ReasoningAdapter::QwenChatTemplate {
+        return;
+    }
+    let control = if reasoning.mode == ReasoningMode::Off {
+        "/no_think"
+    } else {
+        "/think"
+    };
+    if let Some(last_user) = messages
+        .iter_mut()
+        .rev()
+        .find(|message| matches!(message.role, MessageRole::User))
+    {
+        let original = last_user.content.text_content();
+        last_user.content = format!("{control}\n\n{original}").into();
+    }
+}
+
+fn apply_reasoning_message_controls(request: &mut GatewayRequest) {
+    let reasoning = effective_reasoning_request(request);
+    apply_qwen_chat_template_control(&mut request.messages, reasoning);
+}
+
+fn reasoning_adapter_supported_by_endpoint(
+    adapter: ReasoningAdapter,
+    endpoint_family: EndpointFamily,
+) -> bool {
+    match adapter {
+        ReasoningAdapter::GeminiThinkingConfig => false,
+        ReasoningAdapter::AnthropicExtendedThinking => {
+            endpoint_family == EndpointFamily::AnthropicMessages
+        }
+        ReasoningAdapter::OpenAiResponses
+        | ReasoningAdapter::DeepSeekReasoningContent
+        | ReasoningAdapter::GlmThinking
+        | ReasoningAdapter::QwenChatTemplate
+        | ReasoningAdapter::OpenAiCompatibleTagStream
+        | ReasoningAdapter::ProviderSpecificStatic
+        | ReasoningAdapter::None => true,
+    }
+}
+
+fn validate_reasoning_endpoint(request: &GatewayRequest) -> AppResult<()> {
+    let reasoning = effective_reasoning_request(request);
+    if !reasoning.requested {
+        return Ok(());
+    }
+    if reasoning_adapter_supported_by_endpoint(reasoning.adapter, request.provider.endpoint_family)
+    {
+        return Ok(());
+    }
+    Err(AppError::msg(format!(
+        "reasoning_adapter_unsupported_for_endpoint: adapter {:?} is not available for {:?}",
+        reasoning.adapter, request.provider.endpoint_family
+    )))
+}
+
+fn effort_for_mode(mode: ReasoningMode) -> &'static str {
+    match mode {
+        ReasoningMode::Off => "none",
+        ReasoningMode::Minimal => "minimal",
+        ReasoningMode::Auto | ReasoningMode::Medium => "medium",
+        ReasoningMode::Low => "low",
+        ReasoningMode::High => "high",
+        ReasoningMode::Xhigh => "xhigh",
+    }
+}
+
+fn thinking_level_for_mode(mode: ReasoningMode) -> &'static str {
+    match mode {
+        ReasoningMode::Off | ReasoningMode::Minimal => "minimal",
+        ReasoningMode::Low => "low",
+        ReasoningMode::Auto | ReasoningMode::Medium => "medium",
+        ReasoningMode::High | ReasoningMode::Xhigh => "high",
     }
 }
 
@@ -248,13 +396,16 @@ fn build_anthropic_messages_body_inner(request: &GatewayRequest) -> serde_json::
     if let Some(temperature) = request.temperature {
         body["temperature"] = serde_json::json!(temperature);
     }
+    apply_anthropic_reasoning_body(&mut body, request);
     body
 }
 
 #[cfg(test)]
 mod phase3_adapter_contract_tests {
     use super::*;
-    use crate::ai_types::{CapabilitySlot, EndpointFamily, MessageRole};
+    use crate::ai_types::{
+        CapabilitySlot, EndpointFamily, MessageRole, ReasoningControl, ReasoningVisibility,
+    };
 
     fn request_for(endpoint_family: EndpointFamily) -> GatewayRequest {
         GatewayRequest {
@@ -286,6 +437,7 @@ mod phase3_adapter_contract_tests {
             temperature: Some(0.2),
             stream: false,
             thinking: false,
+            reasoning: ResolvedReasoningRequest::disabled(),
             skip_stub_ids: vec![],
         }
     }
@@ -364,6 +516,7 @@ mod phase3_adapter_contract_tests {
             temperature: None,
             stream: false,
             thinking: false,
+            reasoning: ResolvedReasoningRequest::disabled(),
             skip_stub_ids: vec![],
         };
 
@@ -384,5 +537,115 @@ mod phase3_adapter_contract_tests {
         assert_eq!(arr[1]["source"]["type"], "base64");
         assert_eq!(arr[1]["source"]["media_type"], "image/png");
         assert_eq!(arr[1]["source"]["data"], "abc123");
+    }
+
+    #[test]
+    fn tag_stream_reasoning_does_not_emit_provider_parameter() {
+        let mut request = request_for(EndpointFamily::OpenAiCompatibleChatCompletions);
+        request.reasoning = ResolvedReasoningRequest {
+            mode: ReasoningMode::Auto,
+            adapter: ReasoningAdapter::OpenAiCompatibleTagStream,
+            control: crate::ai_types::ReasoningControl::Switch,
+            visibility: crate::ai_types::ReasoningVisibility::PlainContentRisk,
+            requested: false,
+            isolate_output: true,
+        };
+
+        let body = build_chat_completions_body(&request);
+
+        assert!(body.get("thinking").is_none());
+        assert!(body.get("reasoning").is_none());
+    }
+
+    #[test]
+    fn glm_reasoning_maps_effort_without_using_global_boolean() {
+        let mut request = request_for(EndpointFamily::OpenAiCompatibleChatCompletions);
+        request.thinking = false;
+        request.reasoning = ResolvedReasoningRequest {
+            mode: ReasoningMode::High,
+            adapter: ReasoningAdapter::GlmThinking,
+            control: ReasoningControl::Effort,
+            visibility: ReasoningVisibility::HiddenChannel,
+            requested: true,
+            isolate_output: true,
+        };
+
+        let body = build_chat_completions_body(&request);
+
+        assert_eq!(body["thinking"]["type"], "enabled");
+        assert_eq!(body["thinking"]["reasoning_effort"], "high");
+    }
+
+    #[test]
+    fn anthropic_reasoning_uses_budget_below_output_limit() {
+        let mut request = request_for(EndpointFamily::AnthropicMessages);
+        request.max_tokens = Some(1_200);
+        request.reasoning = ResolvedReasoningRequest {
+            mode: ReasoningMode::High,
+            adapter: ReasoningAdapter::AnthropicExtendedThinking,
+            control: ReasoningControl::Budget,
+            visibility: ReasoningVisibility::HiddenChannel,
+            requested: true,
+            isolate_output: true,
+        };
+
+        let body = build_llm_api_body(&request).unwrap();
+
+        assert_eq!(body["thinking"]["type"], "enabled");
+        assert_eq!(body["thinking"]["budget_tokens"], 1_199);
+    }
+
+    #[test]
+    fn qwen_reasoning_uses_template_control_without_provider_parameter() {
+        let mut request = request_for(EndpointFamily::OpenAiCompatibleChatCompletions);
+        request.reasoning = ResolvedReasoningRequest {
+            mode: ReasoningMode::Auto,
+            adapter: ReasoningAdapter::QwenChatTemplate,
+            control: ReasoningControl::Switch,
+            visibility: ReasoningVisibility::ContentTag,
+            requested: true,
+            isolate_output: true,
+        };
+
+        let body = build_llm_api_body(&request).unwrap();
+
+        assert_eq!(body["messages"][0]["content"], "/think\n\nping");
+        assert!(body.get("thinking").is_none());
+    }
+
+    #[test]
+    fn unsupported_gemini_reasoning_adapter_errors_before_send() {
+        let mut request = request_for(EndpointFamily::OpenAiCompatibleChatCompletions);
+        request.reasoning = ResolvedReasoningRequest {
+            mode: ReasoningMode::Medium,
+            adapter: ReasoningAdapter::GeminiThinkingConfig,
+            control: ReasoningControl::Budget,
+            visibility: ReasoningVisibility::HiddenChannel,
+            requested: true,
+            isolate_output: true,
+        };
+
+        let err = build_llm_api_body(&request).unwrap_err().to_string();
+
+        assert!(err.contains("reasoning_adapter_unsupported_for_endpoint"));
+        assert!(!err.contains("secret"));
+    }
+
+    #[test]
+    fn openai_reasoning_uses_chat_completions_effort_field() {
+        let mut request = request_for(EndpointFamily::OpenAiCompatibleChatCompletions);
+        request.reasoning = ResolvedReasoningRequest {
+            mode: ReasoningMode::Low,
+            adapter: ReasoningAdapter::OpenAiResponses,
+            control: ReasoningControl::Effort,
+            visibility: ReasoningVisibility::HiddenChannel,
+            requested: true,
+            isolate_output: true,
+        };
+
+        let body = build_llm_api_body(&request).unwrap();
+
+        assert_eq!(body["reasoning_effort"], "low");
+        assert!(body.get("thinking").is_none());
     }
 }

@@ -4,6 +4,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::ai_types::{
     AgentIntent, AiScene, CapabilityRouteSummary, CapabilitySlot, EndpointFamily, ProviderConfig,
+    ReasoningAdapter, ReasoningControl, ReasoningMode, ReasoningVisibility,
+    ResolvedReasoningRequest,
 };
 use crate::error::{AppError, AppResult};
 use crate::llm::model_catalog::{fallback_model, find_model};
@@ -51,6 +53,52 @@ pub struct ProviderOverride {
     pub default_model: Option<String>,
     #[serde(default, alias = "enabled_models")]
     pub enabled_models: Option<Vec<String>>,
+    #[serde(
+        default,
+        alias = "model_capabilities",
+        deserialize_with = "deserialize_null_map",
+        skip_serializing_if = "std::collections::HashMap::is_empty"
+    )]
+    pub model_capabilities: std::collections::HashMap<String, ModelCapabilityOverride>,
+}
+
+fn deserialize_null_map<'de, D, K, V>(
+    deserializer: D,
+) -> Result<std::collections::HashMap<K, V>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    K: std::cmp::Eq + std::hash::Hash + Deserialize<'de>,
+    V: Deserialize<'de>,
+{
+    Ok(Option::<std::collections::HashMap<K, V>>::deserialize(deserializer)?.unwrap_or_default())
+}
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReasoningSlotConfig {
+    #[serde(default)]
+    pub mode: ReasoningMode,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelCapabilityOverride {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning_adapter: Option<ReasoningAdapter>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning_control: Option<ReasoningControl>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning_visibility: Option<ReasoningVisibility>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub supported_modes: Option<Vec<ReasoningMode>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_mode: Option<ReasoningMode>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub disable_supported: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub user_verified_at: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub probe_verified_at: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -61,6 +109,8 @@ pub struct SceneRoute {
     pub model: String,
     #[serde(default)]
     pub thinking: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning: Option<ReasoningSlotConfig>,
 }
 
 pub type SlotRoute = SceneRoute;
@@ -76,6 +126,8 @@ pub struct ResolvedLlmConfig {
     #[serde(skip)]
     pub api_key: Option<String>,
     pub thinking: bool,
+    #[serde(default)]
+    pub reasoning: ResolvedReasoningRequest,
     pub input_budget: usize,
     pub output_budget: u32,
     pub context_strategy: ContextStrategy,
@@ -90,6 +142,7 @@ impl std::fmt::Debug for ResolvedLlmConfig {
             .field("base_url", &self.base_url)
             .field("api_key", &"[REDACTED]")
             .field("thinking", &self.thinking)
+            .field("reasoning", &self.reasoning)
             .field("input_budget", &self.input_budget)
             .field("output_budget", &self.output_budget)
             .field("context_strategy", &self.context_strategy)
@@ -162,7 +215,7 @@ impl Default for LlmRoutingConfig {
 
 impl LlmRoutingConfig {
     /// 当前 schema 版本
-    const CURRENT_SCHEMA_VERSION: u32 = 3;
+    const CURRENT_SCHEMA_VERSION: u32 = 4;
 
     /// 迁移旧版本配置（就地修改传入的 JSON Value）
     pub fn migrate(config: &mut serde_json::Value) -> AppResult<()> {
@@ -188,8 +241,43 @@ impl LlmRoutingConfig {
             config["schemaVersion"] = serde_json::json!(3);
         }
 
+        if schema_version < 4 {
+            migrate_slot_reasoning(config);
+            config["schemaVersion"] = serde_json::json!(4);
+        }
+
         Ok(())
     }
+}
+
+fn migrate_slot_reasoning(config: &mut serde_json::Value) {
+    for section in ["slots", "scenes"] {
+        let Some(routes) = config[section].as_object_mut() else {
+            continue;
+        };
+        for route in routes.values_mut() {
+            migrate_route_reasoning(route);
+        }
+    }
+}
+
+fn migrate_route_reasoning(route: &mut serde_json::Value) {
+    let Some(row) = route.as_object_mut() else {
+        return;
+    };
+    if row.get("reasoning").is_some() {
+        return;
+    }
+    let mode = if row
+        .get("thinking")
+        .and_then(|value| value.as_bool())
+        .unwrap_or(false)
+    {
+        "auto"
+    } else {
+        "off"
+    };
+    row.insert("reasoning".into(), serde_json::json!({ "mode": mode }));
 }
 
 fn slots_from_legacy_scenes(
@@ -321,6 +409,110 @@ fn empty_slot_defaults() -> std::collections::HashMap<String, SlotRoute> {
     std::collections::HashMap::new()
 }
 
+fn normalize_routing_json_value(value: &mut serde_json::Value) -> AppResult<bool> {
+    if !value.is_object() {
+        return Err(AppError::msg(format!(
+            "invalid {SETTINGS_KEY} shape: expected object at root"
+        )));
+    }
+
+    let mut changed = false;
+    for field in ["providers", "slots", "scenes", "contextStrategy"] {
+        changed |= normalize_json_map_field(value, field)?;
+    }
+    changed |= normalize_provider_capability_maps(value)?;
+    Ok(changed)
+}
+
+fn normalize_json_map_field(value: &mut serde_json::Value, field: &str) -> AppResult<bool> {
+    let object = value
+        .as_object_mut()
+        .expect("routing shape checked before map normalization");
+    match object.get(field) {
+        Some(serde_json::Value::Object(_)) => Ok(false),
+        Some(serde_json::Value::Null) => {
+            object.insert(field.to_string(), serde_json::json!({}));
+            Ok(true)
+        }
+        None => {
+            object.insert(field.to_string(), serde_json::json!({}));
+            Ok(matches!(field, "providers" | "slots"))
+        }
+        Some(_) => Err(AppError::msg(format!(
+            "invalid {SETTINGS_KEY} map field `{field}`: expected object or null"
+        ))),
+    }
+}
+
+fn normalize_provider_capability_maps(value: &mut serde_json::Value) -> AppResult<bool> {
+    let providers = value
+        .get_mut("providers")
+        .and_then(|field| field.as_object_mut())
+        .expect("providers map normalized before provider entries");
+    let mut changed = false;
+    for (provider_id, provider) in providers {
+        if provider.is_null() {
+            *provider = serde_json::json!({});
+            changed = true;
+        }
+        let Some(row) = provider.as_object_mut() else {
+            return Err(AppError::msg(format!(
+                "invalid {SETTINGS_KEY} provider `{provider_id}`: expected object or null"
+            )));
+        };
+
+        let snake = row.remove("model_capabilities");
+        let camel = row.remove("modelCapabilities");
+        let normalized = match (camel, snake) {
+            (Some(value), Some(_)) => {
+                changed = true;
+                Some(normalized_capability_map(
+                    value,
+                    provider_id,
+                    "modelCapabilities",
+                )?)
+            }
+            (Some(value), None) => Some(normalized_capability_map(
+                value,
+                provider_id,
+                "modelCapabilities",
+            )?),
+            (None, Some(value)) => {
+                changed = true;
+                Some(normalized_capability_map(
+                    value,
+                    provider_id,
+                    "model_capabilities",
+                )?)
+            }
+            (None, None) => None,
+        };
+
+        if let Some(value) = normalized {
+            if value.as_object().is_some_and(|object| object.is_empty()) {
+                changed = true;
+            } else {
+                row.insert("modelCapabilities".into(), value);
+            }
+        }
+    }
+    Ok(changed)
+}
+
+fn normalized_capability_map(
+    value: serde_json::Value,
+    provider_id: &str,
+    field: &str,
+) -> AppResult<serde_json::Value> {
+    match value {
+        serde_json::Value::Null => Ok(serde_json::json!({})),
+        serde_json::Value::Object(_) => Ok(value),
+        _ => Err(AppError::msg(format!(
+            "invalid {SETTINGS_KEY} provider `{provider_id}` map field `{field}`: expected object or null"
+        ))),
+    }
+}
+
 pub fn load(db: &Database) -> AppResult<LlmRoutingConfig> {
     let raw: Option<String> = db.with_conn(|conn| {
         let result: Result<String, _> = conn.query_row(
@@ -339,10 +531,27 @@ pub fn load(db: &Database) -> AppResult<LlmRoutingConfig> {
         Some(json) => {
             let mut value: serde_json::Value = serde_json::from_str(&json)
                 .map_err(|e| AppError::msg(format!("invalid {SETTINGS_KEY} JSON: {e}")))?;
+            let mut should_save = normalize_routing_json_value(&mut value)?;
+            let before_migrate = value.clone();
             LlmRoutingConfig::migrate(&mut value)
                 .map_err(|e| AppError::msg(format!("invalid {SETTINGS_KEY} migration: {e}")))?;
-            serde_json::from_value(value)
-                .map_err(|e| AppError::msg(format!("invalid {SETTINGS_KEY}: {e}")))?
+            if value != before_migrate {
+                should_save = true;
+            }
+            let mut config: LlmRoutingConfig = serde_json::from_value(value).map_err(|e| {
+                AppError::msg(format!("invalid {SETTINGS_KEY} map field or schema: {e}"))
+            })?;
+            let before_sanitize = serde_json::to_value(&config)?;
+            merge_legacy_scene_routes(&mut config);
+            sanitize_routing(&mut config);
+            ensure_slot_keys(&mut config);
+            if serde_json::to_value(&config)? != before_sanitize {
+                should_save = true;
+            }
+            if should_save {
+                save(db, &config)?;
+            }
+            return Ok(config);
         }
         None => {
             let migrated = migrate_legacy(db);
@@ -370,6 +579,7 @@ fn sanitize_routing(config: &mut LlmRoutingConfig) {
     });
     for route in config.slots.values_mut() {
         route.model = normalize_legacy_model_id(&route.model).into();
+        normalize_route_reasoning(route);
     }
     for provider in config.providers.values_mut() {
         if let Some(model) = provider.default_model.as_deref() {
@@ -391,6 +601,18 @@ fn sanitize_routing(config: &mut LlmRoutingConfig) {
         if !crate::llm::providers::is_custom_provider(id) {
             provider.base_url = None;
         }
+    }
+}
+
+fn normalize_route_reasoning(route: &mut SlotRoute) {
+    if route.reasoning.is_none() {
+        route.reasoning = Some(ReasoningSlotConfig {
+            mode: if route.thinking {
+                ReasoningMode::Auto
+            } else {
+                ReasoningMode::Off
+            },
+        });
     }
 }
 
@@ -494,11 +716,27 @@ pub fn resolve_capability_route(
     Ok(route)
 }
 
-pub fn resolve_capability_route_from_config(
+#[cfg(test)]
+fn resolve_capability_route_from_config(
     routing: &LlmRoutingConfig,
     input: CapabilityRouteInput,
 ) -> AppResult<ResolvedCapabilityRoute> {
     resolve_capability_route_with_registry(routing, input, &[])
+}
+
+fn resolve_capability_route_for_status(
+    db: &Database,
+    input: CapabilityRouteInput,
+) -> AppResult<AppResult<ResolvedCapabilityRoute>> {
+    let routing = load(db)?;
+    model_registry::clear_invalid_vision_validations(db)?;
+    let registry = model_registry::entries_from_builtin_and_routing(
+        &routing,
+        model_registry::list_registry_entries(db)?,
+    );
+    Ok(resolve_capability_route_with_registry(
+        &routing, input, &registry,
+    ))
 }
 
 fn resolve_capability_route_with_registry(
@@ -579,8 +817,8 @@ fn resolve_route(
     }
     let base_url = api_base(&route.provider_id, custom_base);
     let model_spec = find_model(&route.model).unwrap_or_else(|| fallback_model(&route.provider_id));
-    let thinking =
-        route.thinking || model_spec.supports_thinking && route.model.contains("reasoner");
+    let reasoning = resolve_reasoning_request(routing, slot, &route, model_spec);
+    let thinking = reasoning.requested;
     let output_budget = model_spec.max_output;
     let input_ratio = if model_spec.context_window >= 256_000 {
         0.85_f32
@@ -601,11 +839,264 @@ fn resolve_route(
         base_url,
         api_key: None,
         thinking,
+        reasoning,
         input_budget,
         output_budget,
         context_strategy,
         endpoint_family: model_spec.endpoint_family,
     })
+}
+
+#[derive(Debug, Clone)]
+struct ReasoningCapability {
+    adapter: ReasoningAdapter,
+    control: ReasoningControl,
+    visibility: ReasoningVisibility,
+    supported_modes: Vec<ReasoningMode>,
+    default_mode: ReasoningMode,
+    disable_supported: bool,
+}
+
+impl ReasoningCapability {
+    fn none() -> Self {
+        Self {
+            adapter: ReasoningAdapter::None,
+            control: ReasoningControl::None,
+            visibility: ReasoningVisibility::HiddenChannel,
+            supported_modes: vec![ReasoningMode::Off],
+            default_mode: ReasoningMode::Off,
+            disable_supported: true,
+        }
+    }
+
+    fn can_request(&self) -> bool {
+        !matches!(self.control, ReasoningControl::None)
+            && !matches!(
+                self.adapter,
+                ReasoningAdapter::None | ReasoningAdapter::OpenAiCompatibleTagStream
+            )
+    }
+
+    fn needs_isolation(&self) -> bool {
+        !matches!(self.visibility, ReasoningVisibility::HiddenChannel)
+            || matches!(
+                self.adapter,
+                ReasoningAdapter::DeepSeekReasoningContent
+                    | ReasoningAdapter::AnthropicExtendedThinking
+                    | ReasoningAdapter::GeminiThinkingConfig
+                    | ReasoningAdapter::OpenAiResponses
+                    | ReasoningAdapter::GlmThinking
+            )
+    }
+}
+
+fn resolve_reasoning_request(
+    routing: &LlmRoutingConfig,
+    slot: CapabilitySlot,
+    route: &SlotRoute,
+    model_spec: &crate::llm::model_catalog::ModelCatalogEntry,
+) -> ResolvedReasoningRequest {
+    if slot == CapabilitySlot::Vision {
+        return ResolvedReasoningRequest::disabled();
+    }
+    let requested_mode = route.reasoning.map(|r| r.mode).unwrap_or_else(|| {
+        if route.thinking {
+            ReasoningMode::Auto
+        } else {
+            ReasoningMode::Off
+        }
+    });
+    if requested_mode == ReasoningMode::Off {
+        return ResolvedReasoningRequest::disabled();
+    }
+
+    let capability = reasoning_capability_for_route(routing, route, model_spec);
+    let effective_mode = resolve_auto_reasoning_mode(slot, requested_mode, &capability);
+    let requested = effective_mode != ReasoningMode::Off && capability.can_request();
+    ResolvedReasoningRequest {
+        mode: effective_mode,
+        adapter: capability.adapter,
+        control: capability.control,
+        visibility: capability.visibility,
+        requested,
+        isolate_output: capability.needs_isolation()
+            || matches!(
+                capability.visibility,
+                ReasoningVisibility::ContentTag | ReasoningVisibility::PlainContentRisk
+            ),
+    }
+}
+
+fn resolve_auto_reasoning_mode(
+    slot: CapabilitySlot,
+    mode: ReasoningMode,
+    capability: &ReasoningCapability,
+) -> ReasoningMode {
+    if mode != ReasoningMode::Auto {
+        return clamp_reasoning_mode(mode, capability);
+    }
+    let mode = match capability.control {
+        ReasoningControl::None => ReasoningMode::Auto,
+        ReasoningControl::Switch => ReasoningMode::Auto,
+        ReasoningControl::Tag => ReasoningMode::Auto,
+        ReasoningControl::Effort | ReasoningControl::Level | ReasoningControl::Budget => match slot
+        {
+            CapabilitySlot::Reasoner | CapabilitySlot::LongContext => ReasoningMode::Medium,
+            CapabilitySlot::Fast | CapabilitySlot::Writer => ReasoningMode::Low,
+            _ => ReasoningMode::Off,
+        },
+    };
+    clamp_reasoning_mode(mode, capability)
+}
+
+fn clamp_reasoning_mode(mode: ReasoningMode, capability: &ReasoningCapability) -> ReasoningMode {
+    if capability.supported_modes.contains(&mode) {
+        return mode;
+    }
+    if mode == ReasoningMode::Off && capability.disable_supported {
+        return ReasoningMode::Off;
+    }
+    capability.default_mode
+}
+
+fn reasoning_capability_for_route(
+    routing: &LlmRoutingConfig,
+    route: &SlotRoute,
+    model_spec: &crate::llm::model_catalog::ModelCatalogEntry,
+) -> ReasoningCapability {
+    let inferred = infer_reasoning_capability(&route.provider_id, &route.model, model_spec);
+    let Some(provider) = routing.providers.get(&route.provider_id) else {
+        return inferred;
+    };
+    let Some(override_row) = provider.model_capabilities.get(&route.model) else {
+        return inferred;
+    };
+    ReasoningCapability {
+        adapter: override_row.reasoning_adapter.unwrap_or(inferred.adapter),
+        control: override_row.reasoning_control.unwrap_or(inferred.control),
+        visibility: override_row
+            .reasoning_visibility
+            .unwrap_or(inferred.visibility),
+        supported_modes: override_row
+            .supported_modes
+            .clone()
+            .unwrap_or_else(|| inferred.supported_modes.clone()),
+        default_mode: override_row.default_mode.unwrap_or(inferred.default_mode),
+        disable_supported: override_row
+            .disable_supported
+            .unwrap_or(inferred.disable_supported),
+    }
+}
+
+fn infer_reasoning_capability(
+    provider_id: &str,
+    model_id: &str,
+    model_spec: &crate::llm::model_catalog::ModelCatalogEntry,
+) -> ReasoningCapability {
+    let provider = provider_id.to_ascii_lowercase();
+    let model = model_id.to_ascii_lowercase();
+    if let Some(catalog_capability) = model_spec.reasoning_capability() {
+        return ReasoningCapability {
+            adapter: catalog_capability.adapter,
+            control: catalog_capability.control,
+            visibility: catalog_capability.visibility,
+            supported_modes: catalog_capability.supported_modes.to_vec(),
+            default_mode: catalog_capability.default_mode,
+            disable_supported: catalog_capability.disable_supported,
+        };
+    }
+    if provider == "deepseek" && (model.contains("reasoner") || model_spec.supports_thinking) {
+        return ReasoningCapability {
+            adapter: ReasoningAdapter::DeepSeekReasoningContent,
+            control: ReasoningControl::Switch,
+            visibility: ReasoningVisibility::HiddenChannel,
+            supported_modes: crate::llm::model_catalog::SWITCH_REASONING_MODES.to_vec(),
+            default_mode: ReasoningMode::Auto,
+            disable_supported: true,
+        };
+    }
+    if provider == "openai" && is_openai_reasoning_model(&model) {
+        return ReasoningCapability {
+            adapter: ReasoningAdapter::OpenAiResponses,
+            control: ReasoningControl::Effort,
+            visibility: ReasoningVisibility::HiddenChannel,
+            supported_modes: crate::llm::model_catalog::OPENAI_REASONING_MODES.to_vec(),
+            default_mode: ReasoningMode::Medium,
+            disable_supported: true,
+        };
+    }
+    if provider == "anthropic" && model_spec.supports_thinking {
+        return ReasoningCapability {
+            adapter: ReasoningAdapter::AnthropicExtendedThinking,
+            control: ReasoningControl::Budget,
+            visibility: ReasoningVisibility::HiddenChannel,
+            supported_modes: crate::llm::model_catalog::BUDGET_REASONING_MODES.to_vec(),
+            default_mode: ReasoningMode::Medium,
+            disable_supported: true,
+        };
+    }
+    if provider == "google" || provider == "gemini" {
+        return ReasoningCapability {
+            adapter: ReasoningAdapter::GeminiThinkingConfig,
+            control: ReasoningControl::Level,
+            visibility: ReasoningVisibility::HiddenChannel,
+            supported_modes: crate::llm::model_catalog::EFFORT_REASONING_MODES.to_vec(),
+            default_mode: ReasoningMode::Medium,
+            disable_supported: true,
+        };
+    }
+    if provider == "zhipu" && (model.starts_with("glm-4.5") || model.starts_with("glm-5")) {
+        return ReasoningCapability {
+            adapter: ReasoningAdapter::GlmThinking,
+            control: ReasoningControl::Effort,
+            visibility: ReasoningVisibility::HiddenChannel,
+            supported_modes: crate::llm::model_catalog::EFFORT_REASONING_MODES.to_vec(),
+            default_mode: ReasoningMode::Medium,
+            disable_supported: true,
+        };
+    }
+    if provider.contains("qwen") || provider.contains("dashscope") || model.contains("qwen3") {
+        return ReasoningCapability {
+            adapter: ReasoningAdapter::QwenChatTemplate,
+            control: ReasoningControl::Tag,
+            visibility: ReasoningVisibility::ContentTag,
+            supported_modes: crate::llm::model_catalog::TAG_REASONING_MODES.to_vec(),
+            default_mode: ReasoningMode::Auto,
+            disable_supported: true,
+        };
+    }
+    if provider == "mimo" && model_spec.supports_thinking {
+        return ReasoningCapability {
+            adapter: ReasoningAdapter::ProviderSpecificStatic,
+            control: ReasoningControl::Switch,
+            visibility: ReasoningVisibility::ContentTag,
+            supported_modes: crate::llm::model_catalog::SWITCH_REASONING_MODES.to_vec(),
+            default_mode: ReasoningMode::Auto,
+            disable_supported: true,
+        };
+    }
+    if is_minimax_reasoning_risk(&provider, &model) {
+        return ReasoningCapability {
+            adapter: ReasoningAdapter::OpenAiCompatibleTagStream,
+            control: ReasoningControl::Tag,
+            visibility: ReasoningVisibility::PlainContentRisk,
+            supported_modes: crate::llm::model_catalog::TAG_REASONING_MODES.to_vec(),
+            default_mode: ReasoningMode::Auto,
+            disable_supported: true,
+        };
+    }
+    ReasoningCapability::none()
+}
+
+fn is_openai_reasoning_model(model: &str) -> bool {
+    model.starts_with("o1")
+        || model.starts_with("o3")
+        || model.starts_with("o4")
+        || model.starts_with("gpt-5")
+}
+
+fn is_minimax_reasoning_risk(provider: &str, model: &str) -> bool {
+    provider.contains("minimax") || model.contains("minimax") || model == "minimax-m3"
 }
 
 fn requested_slot(input: CapabilityRouteInput) -> CapabilitySlot {
@@ -770,6 +1261,7 @@ pub fn resolve_for_provider(
         base_url,
         api_key: None,
         thinking: false,
+        reasoning: ResolvedReasoningRequest::disabled(),
         input_budget: (model_spec.context_window as f32 * 0.85) as usize,
         output_budget: model_spec.max_output,
         context_strategy: ContextStrategy::Hybrid,
@@ -825,9 +1317,8 @@ pub fn connectivity_status(
     db: &Database,
     active_scene: AiScene,
 ) -> AppResult<ConnectivityStatusDto> {
-    let routing = load(db)?;
     let route_result =
-        resolve_capability_route_from_config(&routing, route_input_for_scene(active_scene));
+        resolve_capability_route_for_status(db, route_input_for_scene(active_scene))?;
     let selected_web_provider =
         crate::ai_runtime::mcp_runtime_registry::resolve_selected_web_search_provider(db).ok();
     let search_provider = SearchProviderConnectivityDto {
@@ -923,7 +1414,7 @@ mod tests {
     #[test]
     fn default_routing_has_no_capability_slots() {
         let c = deepseek_defaults();
-        assert_eq!(c.schema_version, 3);
+        assert_eq!(c.schema_version, 4);
         assert!(c.slots.is_empty());
         assert!(c.providers.is_empty());
     }
@@ -959,6 +1450,7 @@ mod tests {
                 label: None,
                 default_model: Some("deepseek-v4-flash".into()),
                 enabled_models: Some(vec!["deepseek-v4-flash".into()]),
+                model_capabilities: std::collections::HashMap::new(),
             },
         );
         routing.slots.insert(
@@ -967,6 +1459,7 @@ mod tests {
                 provider_id: "deepseek".into(),
                 model: "deepseek-v4-flash".into(),
                 thinking: false,
+                reasoning: None,
             },
         );
         save(&db, &routing).expect("save routing");
@@ -995,6 +1488,135 @@ mod tests {
             status.search_provider.provider_id.as_deref(),
             Some("anysearch")
         );
+    }
+
+    #[test]
+    fn connectivity_status_accepts_live_validated_custom_text_model() {
+        let db = Database::open_in_memory().expect("mem db");
+        let mut routing = deepseek_defaults();
+        routing.providers.insert(
+            "custom".into(),
+            ProviderOverride {
+                base_url: Some("https://example.com/v1".into()),
+                label: Some("Custom".into()),
+                default_model: Some("MiniMax-M3".into()),
+                enabled_models: Some(vec!["MiniMax-M3".into()]),
+                model_capabilities: std::collections::HashMap::new(),
+            },
+        );
+        routing.slots.insert(
+            "fast".into(),
+            SlotRoute {
+                provider_id: "custom".into(),
+                model: "MiniMax-M3".into(),
+                thinking: false,
+                reasoning: None,
+            },
+        );
+        save(&db, &routing).expect("save routing");
+        model_registry::mark_model_validated(
+            &db,
+            "custom",
+            "MiniMax-M3",
+            model_registry::ModelValidationKind::Text,
+        )
+        .expect("validate model");
+        crate::credentials::mark_api_key_configured(&db, "iris.llm.custom").expect("mark llm");
+
+        let status = connectivity_status(&db, AiScene::KnowledgeLookup).expect("status");
+
+        assert_eq!(status.llm.state, "ready");
+        assert_eq!(status.llm.provider_id, "custom");
+        assert_eq!(status.llm.model, "MiniMax-M3");
+    }
+
+    #[test]
+    fn connectivity_status_reports_missing_key_for_validated_custom_model() {
+        let db = Database::open_in_memory().expect("mem db");
+        let mut routing = deepseek_defaults();
+        routing.providers.insert(
+            "custom".into(),
+            ProviderOverride {
+                base_url: Some("https://example.com/v1".into()),
+                label: Some("Custom".into()),
+                default_model: Some("MiniMax-M3".into()),
+                enabled_models: Some(vec!["MiniMax-M3".into()]),
+                model_capabilities: std::collections::HashMap::new(),
+            },
+        );
+        routing.slots.insert(
+            "fast".into(),
+            SlotRoute {
+                provider_id: "custom".into(),
+                model: "MiniMax-M3".into(),
+                thinking: false,
+                reasoning: None,
+            },
+        );
+        save(&db, &routing).expect("save routing");
+        model_registry::mark_model_validated(
+            &db,
+            "custom",
+            "MiniMax-M3",
+            model_registry::ModelValidationKind::Text,
+        )
+        .expect("validate model");
+
+        let status = connectivity_status(&db, AiScene::KnowledgeLookup).expect("status");
+
+        assert_eq!(status.llm.state, "missing_key");
+        assert_eq!(status.llm.provider_id, "custom");
+        assert_eq!(status.llm.model, "MiniMax-M3");
+    }
+
+    #[test]
+    fn connectivity_status_rejects_unvalidated_custom_model() {
+        let db = Database::open_in_memory().expect("mem db");
+        let mut routing = deepseek_defaults();
+        routing.providers.insert(
+            "custom".into(),
+            ProviderOverride {
+                base_url: Some("https://example.com/v1".into()),
+                label: Some("Custom".into()),
+                default_model: Some("MiniMax-M3".into()),
+                enabled_models: Some(vec!["MiniMax-M3".into()]),
+                model_capabilities: std::collections::HashMap::new(),
+            },
+        );
+        routing.slots.insert(
+            "fast".into(),
+            SlotRoute {
+                provider_id: "custom".into(),
+                model: "MiniMax-M3".into(),
+                thinking: false,
+                reasoning: None,
+            },
+        );
+        save(&db, &routing).expect("save routing");
+
+        let status = connectivity_status(&db, AiScene::KnowledgeLookup).expect("status");
+
+        assert_eq!(status.llm.state, "misconfigured");
+        assert!(status.llm.message.contains("Fast"));
+        assert!(status.llm.message.contains("未配置"));
+    }
+
+    #[test]
+    fn connectivity_status_propagates_invalid_routing_errors() {
+        let db = Database::open_in_memory().expect("mem db");
+        db.with_conn(|conn| {
+            conn.execute(
+                "INSERT INTO settings (key, value) VALUES (?1, ?2)",
+                rusqlite::params![SETTINGS_KEY, r#"{"version":"bad"}"#],
+            )?;
+            Ok(())
+        })
+        .expect("seed invalid routing");
+
+        let err = connectivity_status(&db, AiScene::KnowledgeLookup)
+            .expect_err("invalid routing should remain an error");
+
+        assert!(err.to_string().contains("llm_routing"));
     }
 
     #[test]
@@ -1070,7 +1692,7 @@ mod tests {
             "contextStrategy": {}
         });
         LlmRoutingConfig::migrate(&mut v).expect("migrate");
-        assert_eq!(v["schemaVersion"], serde_json::json!(3));
+        assert_eq!(v["schemaVersion"], serde_json::json!(4));
         assert!(v["createdAt"].is_string());
         assert!(v["slots"].is_object());
     }
@@ -1087,7 +1709,7 @@ mod tests {
             "contextStrategy": {}
         });
         LlmRoutingConfig::migrate(&mut v).expect("migrate");
-        assert_eq!(v["schemaVersion"], serde_json::json!(3));
+        assert_eq!(v["schemaVersion"], serde_json::json!(4));
         assert_eq!(v["createdAt"], serde_json::json!(existing));
     }
 
@@ -1095,7 +1717,7 @@ mod tests {
     fn migrate_noop_when_already_current() {
         let mut v = serde_json::json!({
             "version": 1,
-            "schemaVersion": 3,
+            "schemaVersion": 4,
             "createdAt": "2024-01-01T00:00:00Z",
             "providers": {},
             "slots": {},
@@ -1103,21 +1725,307 @@ mod tests {
             "contextStrategy": {}
         });
         LlmRoutingConfig::migrate(&mut v).expect("migrate");
-        assert_eq!(v["schemaVersion"], serde_json::json!(3));
+        assert_eq!(v["schemaVersion"], serde_json::json!(4));
     }
 
     #[test]
     fn default_config_has_schema_version() {
         let c = deepseek_defaults();
-        assert_eq!(c.schema_version, 3);
+        assert_eq!(c.schema_version, 4);
         assert!(c.created_at.is_some());
     }
 
     #[test]
     fn phase3_defaults_leave_capability_slots_unbound() {
         let c = deepseek_defaults();
-        assert_eq!(c.schema_version, 3);
+        assert_eq!(c.schema_version, 4);
         assert!(c.slots.is_empty());
+    }
+
+    #[test]
+    fn legacy_thinking_true_resolves_to_auto_reasoning() {
+        let mut routing = deepseek_defaults();
+        routing.providers.insert(
+            "deepseek".into(),
+            ProviderOverride {
+                base_url: None,
+                label: None,
+                default_model: Some("deepseek-reasoner".into()),
+                enabled_models: Some(vec!["deepseek-reasoner".into()]),
+                model_capabilities: std::collections::HashMap::new(),
+            },
+        );
+        routing.slots.insert(
+            "reasoner".into(),
+            SlotRoute {
+                provider_id: "deepseek".into(),
+                model: "deepseek-reasoner".into(),
+                thinking: true,
+                reasoning: None,
+            },
+        );
+
+        let route = resolve_capability_route_from_config(
+            &routing,
+            CapabilityRouteInput {
+                intent: AgentIntent::Research,
+                context_tokens: 0,
+                has_images: false,
+                needs_tools: false,
+                needs_reasoning: true,
+                privacy_preference: PrivacyPreference::ExternalAllowed,
+            },
+        )
+        .expect("legacy thinking route resolves");
+
+        assert_eq!(route.resolved.reasoning.mode, ReasoningMode::Auto);
+        assert_eq!(
+            route.resolved.reasoning.adapter,
+            ReasoningAdapter::DeepSeekReasoningContent
+        );
+        assert!(route.resolved.reasoning.requested);
+    }
+
+    #[test]
+    fn minimax_unknown_reasoning_uses_output_isolation_without_provider_params() {
+        let mut routing = deepseek_defaults();
+        routing.providers.insert(
+            "custom".into(),
+            ProviderOverride {
+                base_url: Some("https://api.minimax.example/v1".into()),
+                label: Some("MiniMax".into()),
+                default_model: Some("MiniMax-M3".into()),
+                enabled_models: Some(vec!["MiniMax-M3".into()]),
+                model_capabilities: std::collections::HashMap::new(),
+            },
+        );
+        routing.slots.insert(
+            "fast".into(),
+            SlotRoute {
+                provider_id: "custom".into(),
+                model: "MiniMax-M3".into(),
+                thinking: false,
+                reasoning: Some(ReasoningSlotConfig {
+                    mode: ReasoningMode::Auto,
+                }),
+            },
+        );
+        let registry = vec![ModelRegistryEntry {
+            provider_id: "custom".into(),
+            model_id: "MiniMax-M3".into(),
+            display_name: "MiniMax-M3".into(),
+            source: model_registry::ModelRegistrySource::Manual,
+            stale: false,
+            first_seen_at: None,
+            last_seen_at: None,
+            last_refreshed_at: None,
+            text_verified_at: Some("verified".into()),
+            vision_verified_at: None,
+            user_confirmed_capabilities: Vec::new(),
+        }];
+
+        let route = resolve_capability_route_with_registry(
+            &routing,
+            CapabilityRouteInput {
+                intent: AgentIntent::AskNotes,
+                context_tokens: 0,
+                has_images: false,
+                needs_tools: false,
+                needs_reasoning: false,
+                privacy_preference: PrivacyPreference::ExternalAllowed,
+            },
+            &registry,
+        )
+        .expect("validated MiniMax route resolves");
+
+        assert_eq!(
+            route.resolved.reasoning.adapter,
+            ReasoningAdapter::OpenAiCompatibleTagStream
+        );
+        assert!(!route.resolved.reasoning.requested);
+        assert!(route.resolved.reasoning.isolate_output);
+    }
+
+    #[test]
+    fn provider_overrides_can_enable_glm_reasoning() {
+        let mut routing = deepseek_defaults();
+        let mut zhipu_caps = std::collections::HashMap::new();
+        zhipu_caps.insert(
+            "glm-5-plus".into(),
+            ModelCapabilityOverride {
+                reasoning_adapter: Some(ReasoningAdapter::GlmThinking),
+                reasoning_control: Some(ReasoningControl::Effort),
+                reasoning_visibility: Some(ReasoningVisibility::HiddenChannel),
+                supported_modes: Some(crate::llm::model_catalog::EFFORT_REASONING_MODES.to_vec()),
+                default_mode: Some(ReasoningMode::Medium),
+                disable_supported: Some(true),
+                user_verified_at: Some("manual".into()),
+                probe_verified_at: None,
+            },
+        );
+        routing.providers.insert(
+            "zhipu".into(),
+            ProviderOverride {
+                base_url: None,
+                label: None,
+                default_model: Some("glm-5-plus".into()),
+                enabled_models: Some(vec!["glm-5-plus".into()]),
+                model_capabilities: zhipu_caps,
+            },
+        );
+        routing.slots.insert(
+            "reasoner".into(),
+            SlotRoute {
+                provider_id: "zhipu".into(),
+                model: "glm-5-plus".into(),
+                thinking: false,
+                reasoning: Some(ReasoningSlotConfig {
+                    mode: ReasoningMode::High,
+                }),
+            },
+        );
+
+        let registry = vec![ModelRegistryEntry {
+            provider_id: "zhipu".into(),
+            model_id: "glm-5-plus".into(),
+            display_name: "glm-5-plus".into(),
+            source: model_registry::ModelRegistrySource::Manual,
+            stale: false,
+            first_seen_at: None,
+            last_seen_at: None,
+            last_refreshed_at: None,
+            text_verified_at: Some("verified".into()),
+            vision_verified_at: None,
+            user_confirmed_capabilities: Vec::new(),
+        }];
+        let glm = resolve_capability_route_with_registry(
+            &routing,
+            CapabilityRouteInput {
+                intent: AgentIntent::Research,
+                context_tokens: 0,
+                has_images: false,
+                needs_tools: false,
+                needs_reasoning: true,
+                privacy_preference: PrivacyPreference::ExternalAllowed,
+            },
+            &registry,
+        )
+        .expect("glm route");
+        assert_eq!(
+            glm.resolved.reasoning.adapter,
+            ReasoningAdapter::GlmThinking
+        );
+        assert_eq!(glm.resolved.reasoning.mode, ReasoningMode::High);
+        assert!(glm.resolved.reasoning.requested);
+    }
+
+    #[test]
+    fn qwen3_uses_chat_template_and_tag_isolation() {
+        let mut routing = deepseek_defaults();
+        routing.providers.insert(
+            "custom".into(),
+            ProviderOverride {
+                base_url: Some("https://dashscope.example/compatible-mode/v1".into()),
+                label: Some("Qwen".into()),
+                default_model: Some("qwen3-32b".into()),
+                enabled_models: Some(vec!["qwen3-32b".into()]),
+                model_capabilities: std::collections::HashMap::new(),
+            },
+        );
+        routing.slots.insert(
+            "reasoner".into(),
+            SlotRoute {
+                provider_id: "custom".into(),
+                model: "qwen3-32b".into(),
+                thinking: false,
+                reasoning: Some(ReasoningSlotConfig {
+                    mode: ReasoningMode::Auto,
+                }),
+            },
+        );
+        let registry = vec![ModelRegistryEntry {
+            provider_id: "custom".into(),
+            model_id: "qwen3-32b".into(),
+            display_name: "qwen3-32b".into(),
+            source: model_registry::ModelRegistrySource::Manual,
+            stale: false,
+            first_seen_at: None,
+            last_seen_at: None,
+            last_refreshed_at: None,
+            text_verified_at: Some("verified".into()),
+            vision_verified_at: None,
+            user_confirmed_capabilities: Vec::new(),
+        }];
+
+        let qwen = resolve_capability_route_with_registry(
+            &routing,
+            CapabilityRouteInput {
+                intent: AgentIntent::Research,
+                context_tokens: 0,
+                has_images: false,
+                needs_tools: false,
+                needs_reasoning: true,
+                privacy_preference: PrivacyPreference::ExternalAllowed,
+            },
+            &registry,
+        )
+        .expect("qwen route");
+
+        assert_eq!(
+            qwen.resolved.reasoning.adapter,
+            ReasoningAdapter::QwenChatTemplate
+        );
+        assert_eq!(
+            qwen.resolved.reasoning.visibility,
+            ReasoningVisibility::ContentTag
+        );
+        assert!(qwen.resolved.reasoning.requested);
+        assert!(qwen.resolved.reasoning.isolate_output);
+    }
+
+    #[test]
+    fn vision_slot_ignores_reasoning_configuration() {
+        let mut routing = deepseek_defaults();
+        routing.providers.insert(
+            "openai".into(),
+            ProviderOverride {
+                base_url: None,
+                label: None,
+                default_model: Some("gpt-4o".into()),
+                enabled_models: Some(vec!["gpt-4o".into()]),
+                model_capabilities: std::collections::HashMap::new(),
+            },
+        );
+        routing.slots.insert(
+            "vision".into(),
+            SlotRoute {
+                provider_id: "openai".into(),
+                model: "gpt-4o".into(),
+                thinking: true,
+                reasoning: Some(ReasoningSlotConfig {
+                    mode: ReasoningMode::High,
+                }),
+            },
+        );
+
+        let route = resolve_capability_route_from_config(
+            &routing,
+            CapabilityRouteInput {
+                intent: AgentIntent::VisionChat,
+                context_tokens: 0,
+                has_images: true,
+                needs_tools: false,
+                needs_reasoning: true,
+                privacy_preference: PrivacyPreference::ExternalAllowed,
+            },
+        )
+        .expect("vision route");
+
+        assert_eq!(
+            route.resolved.reasoning,
+            ResolvedReasoningRequest::disabled()
+        );
+        assert!(!route.resolved.thinking);
     }
 
     #[test]
@@ -1129,6 +2037,7 @@ mod tests {
                 provider_id: "ollama".into(),
                 model: "llama3.2".into(),
                 thinking: false,
+                reasoning: None,
             },
         );
         routing.providers.insert(
@@ -1138,6 +2047,7 @@ mod tests {
                 label: Some("Ollama".into()),
                 default_model: Some("llama3.2".into()),
                 enabled_models: Some(vec!["llama3.2".into()]),
+                model_capabilities: std::collections::HashMap::new(),
             },
         );
 
@@ -1173,11 +2083,207 @@ mod tests {
 
         LlmRoutingConfig::migrate(&mut v).expect("migrate");
 
-        assert_eq!(v["schemaVersion"], serde_json::json!(3));
+        assert_eq!(v["schemaVersion"], serde_json::json!(4));
         assert_eq!(v["slots"]["fast"]["providerId"], "openai");
         assert_eq!(v["slots"]["fast"]["model"], "gpt-4o-mini");
+        assert_eq!(v["slots"]["fast"]["reasoning"]["mode"], "off");
         assert_eq!(v["slots"]["writer"]["providerId"], "anthropic");
         assert!(v["slots"].get("agent_tools").is_none());
+    }
+
+    #[test]
+    fn load_treats_null_model_capabilities_as_empty_map() {
+        let db = Database::open_in_memory().expect("mem db");
+        let dirty = serde_json::json!({
+            "version": 1,
+            "schemaVersion": 4,
+            "createdAt": "2026-07-05T00:00:00Z",
+            "providers": {
+                "custom": {
+                    "baseUrl": "https://api.example.com/v1",
+                    "label": "Custom",
+                    "defaultModel": "model-a",
+                    "enabledModels": ["model-a"],
+                    "modelCapabilities": null
+                },
+                "custom_snake": {
+                    "baseUrl": "https://api.example.com/v1",
+                    "label": "Custom Snake",
+                    "defaultModel": "model-b",
+                    "enabledModels": ["model-b"],
+                    "model_capabilities": null
+                }
+            },
+            "slots": {},
+            "scenes": {},
+            "contextStrategy": {}
+        })
+        .to_string();
+        db.with_conn(|conn| {
+            conn.execute(
+                "INSERT INTO settings (key, value) VALUES (?1, ?2)",
+                rusqlite::params![SETTINGS_KEY, dirty],
+            )?;
+            Ok(())
+        })
+        .expect("seed dirty routing");
+
+        let routing = load(&db).expect("null model capabilities should be normalized");
+
+        assert!(routing.providers["custom"].model_capabilities.is_empty());
+        assert!(routing.providers["custom_snake"]
+            .model_capabilities
+            .is_empty());
+    }
+
+    #[test]
+    fn load_treats_null_routing_maps_as_empty_maps() {
+        let db = Database::open_in_memory().expect("mem db");
+        let dirty = serde_json::json!({
+            "version": 1,
+            "schemaVersion": 4,
+            "createdAt": "2026-07-05T00:00:00Z",
+            "providers": null,
+            "slots": null,
+            "scenes": null,
+            "contextStrategy": null
+        })
+        .to_string();
+        db.with_conn(|conn| {
+            conn.execute(
+                "INSERT INTO settings (key, value) VALUES (?1, ?2)",
+                rusqlite::params![SETTINGS_KEY, dirty],
+            )?;
+            Ok(())
+        })
+        .expect("seed dirty routing");
+
+        let routing = load(&db).expect("null routing maps should be normalized");
+
+        assert!(routing.providers.is_empty());
+        assert!(routing.slots.is_empty());
+        assert!(routing.scenes.is_empty());
+        assert!(routing.context_strategy.is_empty());
+    }
+
+    #[test]
+    fn load_rewrites_dirty_v3_routing_to_clean_v4() {
+        let db = Database::open_in_memory().expect("mem db");
+        let dirty = serde_json::json!({
+            "version": 1,
+            "schemaVersion": 3,
+            "createdAt": "2026-07-05T00:00:00Z",
+            "providers": {
+                "custom": {
+                    "baseUrl": "https://api.example.com/v1",
+                    "label": "Custom",
+                    "defaultModel": "model-a",
+                    "enabledModels": ["model-a"],
+                    "modelCapabilities": null
+                }
+            },
+            "slots": {
+                "fast": {
+                    "providerId": "custom",
+                    "model": "model-a",
+                    "thinking": true
+                }
+            },
+            "scenes": null,
+            "contextStrategy": null
+        })
+        .to_string();
+        db.with_conn(|conn| {
+            conn.execute(
+                "INSERT INTO settings (key, value) VALUES (?1, ?2)",
+                rusqlite::params![SETTINGS_KEY, dirty],
+            )?;
+            Ok(())
+        })
+        .expect("seed dirty routing");
+
+        let routing = load(&db).expect("dirty v3 routing should load");
+
+        assert_eq!(routing.schema_version, 4);
+        assert_eq!(
+            routing.slots["fast"].reasoning.map(|value| value.mode),
+            Some(ReasoningMode::Auto)
+        );
+
+        let stored = db
+            .with_conn(|conn| {
+                conn.query_row(
+                    "SELECT value FROM settings WHERE key = ?1",
+                    [SETTINGS_KEY],
+                    |row| row.get::<_, String>(0),
+                )
+                .map_err(Into::into)
+            })
+            .expect("stored routing");
+        let value: serde_json::Value = serde_json::from_str(&stored).expect("stored json");
+        assert_eq!(value["schemaVersion"], serde_json::json!(4));
+        assert!(value["providers"]["custom"]
+            .get("modelCapabilities")
+            .is_none());
+        assert!(value
+            .get("contextStrategy")
+            .is_none_or(serde_json::Value::is_object));
+        assert!(value["slots"]["fast"]["reasoning"].is_object());
+    }
+
+    #[test]
+    fn load_rejects_non_object_routing_with_clear_shape_error() {
+        let db = Database::open_in_memory().expect("mem db");
+        db.with_conn(|conn| {
+            conn.execute(
+                "INSERT INTO settings (key, value) VALUES (?1, ?2)",
+                rusqlite::params![SETTINGS_KEY, "null"],
+            )?;
+            Ok(())
+        })
+        .expect("seed non-object routing");
+
+        let err = load(&db).expect_err("non-object routing should remain invalid");
+
+        assert!(err.to_string().contains("llm_routing"));
+        assert!(err.to_string().contains("object"));
+    }
+
+    #[test]
+    fn load_does_not_rewrite_current_routing_only_missing_optional_maps() {
+        let db = Database::open_in_memory().expect("mem db");
+        let current = serde_json::json!({
+            "version": 1,
+            "schemaVersion": 4,
+            "createdAt": "2026-07-05T00:00:00Z",
+            "providers": {},
+            "slots": {}
+        })
+        .to_string();
+        db.with_conn(|conn| {
+            conn.execute(
+                "INSERT INTO settings (key, value) VALUES (?1, ?2)",
+                rusqlite::params![SETTINGS_KEY, current],
+            )?;
+            Ok(())
+        })
+        .expect("seed current routing");
+
+        let _routing = load(&db).expect("current routing should load");
+
+        let stored = db
+            .with_conn(|conn| {
+                conn.query_row(
+                    "SELECT value FROM settings WHERE key = ?1",
+                    [SETTINGS_KEY],
+                    |row| row.get::<_, String>(0),
+                )
+                .map_err(Into::into)
+            })
+            .expect("stored routing");
+        let value: serde_json::Value = serde_json::from_str(&stored).expect("stored json");
+        assert!(value.get("scenes").is_none());
+        assert!(value.get("contextStrategy").is_none());
     }
 
     #[test]
@@ -1204,7 +2310,7 @@ mod tests {
 
         LlmRoutingConfig::migrate(&mut v).expect("migrate");
 
-        assert_eq!(v["schemaVersion"], serde_json::json!(3));
+        assert_eq!(v["schemaVersion"], serde_json::json!(4));
         assert_eq!(v["slots"], serde_json::json!({}));
     }
 
@@ -1217,6 +2323,7 @@ mod tests {
                 provider_id: "openai".into(),
                 model: "gpt-4o".into(),
                 thinking: false,
+                reasoning: None,
             },
         );
         c.providers.insert(
@@ -1226,6 +2333,7 @@ mod tests {
                 label: None,
                 default_model: Some("gpt-4o".into()),
                 enabled_models: Some(vec!["gpt-4o".into()]),
+                model_capabilities: std::collections::HashMap::new(),
             },
         );
         c.providers.insert(
@@ -1235,6 +2343,7 @@ mod tests {
                 label: None,
                 default_model: Some("claude-3-5-haiku-20241022".into()),
                 enabled_models: Some(vec!["claude-3-5-haiku-20241022".into()]),
+                model_capabilities: std::collections::HashMap::new(),
             },
         );
 
@@ -1278,6 +2387,7 @@ mod tests {
                 label: Some("Custom".into()),
                 default_model: Some("plain-text".into()),
                 enabled_models: Some(vec!["plain-text".into()]),
+                model_capabilities: std::collections::HashMap::new(),
             },
         );
         for slot in ["reasoner", "long_context"] {
@@ -1287,6 +2397,7 @@ mod tests {
                     provider_id: "custom".into(),
                     model: "plain-text".into(),
                     thinking: false,
+                    reasoning: None,
                 },
             );
         }
@@ -1345,6 +2456,7 @@ mod tests {
                 provider_id: "deepseek".into(),
                 model: "deepseek-v4-flash".into(),
                 thinking: false,
+                reasoning: None,
             },
         );
         let registry = vec![ModelRegistryEntry {
@@ -1390,6 +2502,7 @@ mod tests {
                 label: None,
                 default_model: Some("mimo-v2.5".into()),
                 enabled_models: Some(vec!["mimo-v2.5".into()]),
+                model_capabilities: std::collections::HashMap::new(),
             },
         );
         save(&db, &routing).expect("save routing");
@@ -1431,6 +2544,7 @@ mod tests {
                 provider_id: "mimo".into(),
                 model: "mimo-vl-7b-experimental".into(),
                 thinking: false,
+                reasoning: None,
             },
         );
         routing.providers.insert(
@@ -1440,6 +2554,7 @@ mod tests {
                 label: None,
                 default_model: Some("mimo-vl-7b-experimental".into()),
                 enabled_models: Some(vec!["mimo-vl-7b-experimental".into()]),
+                model_capabilities: std::collections::HashMap::new(),
             },
         );
 

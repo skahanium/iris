@@ -32,6 +32,7 @@ pub(crate) async fn run_reflection_round(
     gateway: &ModelGateway,
     provider_config: &crate::ai_runtime::model_gateway::ProviderConfig,
     max_tokens: Option<u32>,
+    reasoning: crate::ai_types::ResolvedReasoningRequest,
     thinking: bool,
     messages: &mut Vec<LlmMessage>,
     _evidence_ledger: &EvidenceLedger,
@@ -73,6 +74,7 @@ pub(crate) async fn run_reflection_round(
         temperature: Some(0.5),
         stream: true,
         thinking,
+        reasoning,
         skip_stub_ids: vec![],
     };
     if let Ok(reflect_resp) = gateway

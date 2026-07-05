@@ -271,6 +271,7 @@ pub async fn execute_research(
             temperature: Some(0.3),
             stream: false,
             thinking: false,
+            reasoning: crate::ai_types::ResolvedReasoningRequest::disabled(),
             skip_stub_ids: vec![],
         };
 
@@ -657,6 +658,7 @@ async fn decompose_topic(
         temperature: Some(0.3),
         stream: false,
         thinking: false,
+        reasoning: crate::ai_types::ResolvedReasoningRequest::disabled(),
         skip_stub_ids: vec![],
     };
 
@@ -945,6 +947,7 @@ async fn detect_argument_chains(
         temperature: Some(0.2),
         stream: false,
         thinking: false,
+        reasoning: crate::ai_types::ResolvedReasoningRequest::disabled(),
         skip_stub_ids: vec![],
     };
 
@@ -1110,6 +1113,7 @@ async fn synthesize_summary(
         temperature: Some(0.5),
         stream: true,
         thinking: false,
+        reasoning: crate::ai_types::ResolvedReasoningRequest::disabled(),
         skip_stub_ids: vec![],
     };
 

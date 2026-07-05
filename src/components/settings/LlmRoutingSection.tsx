@@ -34,6 +34,9 @@ import {
   type LlmRoutingConfig,
   type ModelRegistryEntry,
   type ModelCatalogEntry,
+  type ReasoningControl,
+  type ReasoningMode,
+  type ReasoningSlotConfig,
   type ProviderOverride,
   type SlotRoute,
 } from "@/types/llm";
@@ -76,6 +79,45 @@ const SLOT_META: Record<
   vision: { label: "Vision", detail: "图片输入与视觉问答" },
 };
 
+const REASONING_LABELS: Record<ReasoningMode, string> = {
+  off: "关闭",
+  auto: "自动",
+  minimal: "极简",
+  low: "低",
+  medium: "中",
+  high: "高",
+  xhigh: "极高",
+};
+
+const REASONING_STRENGTH_OPTIONS: ReasoningMode[] = [
+  "off",
+  "auto",
+  "minimal",
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+];
+
+const REASONING_EFFORT_OPTIONS: ReasoningMode[] = [
+  "off",
+  "auto",
+  "low",
+  "medium",
+  "high",
+];
+
+const REASONING_SWITCH_OPTIONS: ReasoningMode[] = ["off", "auto"];
+
+const UNSUPPORTED_REASONING_CAPABILITY: ReasoningUiCapability = {
+  supported: false,
+  control: "none",
+  tagOnly: false,
+  supportedModes: [],
+  defaultMode: "off",
+  disableSupported: true,
+};
+
 interface LlmRoutingSectionProps {
   open: boolean;
 }
@@ -94,6 +136,15 @@ interface EnabledProviderModel {
   id: string;
   catalog: ModelCatalogEntry | undefined;
   registry: ModelRegistryEntry | undefined;
+}
+
+interface ReasoningUiCapability {
+  supported: boolean;
+  control: ReasoningControl;
+  tagOnly: boolean;
+  supportedModes: ReasoningMode[];
+  defaultMode: ReasoningMode;
+  disableSupported: boolean;
 }
 
 function nextCustomProviderId(existing: Iterable<string>): string {
@@ -167,6 +218,143 @@ function modelCapabilitySummary(
   if (!textReady) return "未验证";
   const visionReady = modelSupportsSlot(model, "vision");
   return visionReady ? "文本可用 · 视觉可用" : "文本可用 · 视觉不支持";
+}
+
+function normalizeReasoningSlot(
+  route: Pick<SlotRoute, "thinking" | "reasoning"> | undefined,
+): ReasoningSlotConfig {
+  if (route?.reasoning?.mode) return route.reasoning;
+  return { mode: route?.thinking ? "auto" : "off" };
+}
+
+function modelLooksTagReasoningRisk(
+  providerId: string,
+  modelId: string,
+): boolean {
+  const provider = providerId.toLowerCase();
+  const model = modelId.toLowerCase();
+  return (
+    provider.includes("minimax") ||
+    model.includes("minimax") ||
+    model === "minimax-m3"
+  );
+}
+
+function modelLooksOpenAiReasoning(
+  providerId: string,
+  modelId: string,
+): boolean {
+  const provider = providerId.toLowerCase();
+  const model = modelId.toLowerCase();
+  return (
+    provider === "openai" &&
+    (model.startsWith("o1") ||
+      model.startsWith("o3") ||
+      model.startsWith("o4") ||
+      model.startsWith("gpt-5"))
+  );
+}
+
+function modelLooksGlmReasoning(providerId: string, modelId: string): boolean {
+  const provider = providerId.toLowerCase();
+  const model = modelId.toLowerCase();
+  return (
+    provider === "zhipu" &&
+    (model.startsWith("glm-4.5") || model.startsWith("glm-5"))
+  );
+}
+
+function modelLooksQwenReasoning(providerId: string, modelId: string): boolean {
+  const provider = providerId.toLowerCase();
+  const model = modelId.toLowerCase();
+  return (
+    provider.includes("qwen") ||
+    provider.includes("dashscope") ||
+    model.includes("qwen3")
+  );
+}
+
+function catalogReasoningCapability(
+  providerId: string,
+  modelId: string,
+  catalog: ModelCatalogEntry | undefined,
+): ReasoningUiCapability | null {
+  if (modelLooksOpenAiReasoning(providerId, modelId)) {
+    return {
+      supported: true,
+      control: "effort",
+      tagOnly: false,
+      supportedModes: REASONING_STRENGTH_OPTIONS,
+      defaultMode: "medium",
+      disableSupported: true,
+    };
+  }
+  if (catalog?.providerId === "anthropic" && catalog.supportsThinking) {
+    return {
+      supported: true,
+      control: "budget",
+      tagOnly: false,
+      supportedModes: REASONING_STRENGTH_OPTIONS,
+      defaultMode: "medium",
+      disableSupported: true,
+    };
+  }
+  if (modelLooksGlmReasoning(providerId, modelId)) {
+    return {
+      supported: true,
+      control: "effort",
+      tagOnly: false,
+      supportedModes: REASONING_EFFORT_OPTIONS,
+      defaultMode: "medium",
+      disableSupported: true,
+    };
+  }
+  if (modelLooksQwenReasoning(providerId, modelId)) {
+    return {
+      supported: true,
+      control: "tag",
+      tagOnly: true,
+      supportedModes: REASONING_SWITCH_OPTIONS,
+      defaultMode: "auto",
+      disableSupported: true,
+    };
+  }
+  if (catalog?.providerId === "deepseek" && catalog.supportsThinking) {
+    return {
+      supported: true,
+      control: "switch",
+      tagOnly: false,
+      supportedModes: REASONING_SWITCH_OPTIONS,
+      defaultMode: "auto",
+      disableSupported: true,
+    };
+  }
+  if (catalog?.providerId === "mimo" && catalog.supportsThinking) {
+    return {
+      supported: true,
+      control: "switch",
+      tagOnly: true,
+      supportedModes: REASONING_SWITCH_OPTIONS,
+      defaultMode: "auto",
+      disableSupported: true,
+    };
+  }
+  return null;
+}
+
+function reasoningOptionsForCapability(
+  capability: ReasoningUiCapability,
+): ReasoningMode[] {
+  if (!capability.supported) return [];
+  if (capability.supportedModes.length > 0) return capability.supportedModes;
+  if (
+    capability.control === "effort" ||
+    capability.control === "level" ||
+    capability.control === "budget"
+  ) {
+    return REASONING_STRENGTH_OPTIONS;
+  }
+  return REASONING_SWITCH_OPTIONS;
 }
 
 export function LlmRoutingSection({ open }: LlmRoutingSectionProps) {
@@ -296,23 +484,76 @@ export function LlmRoutingSection({ open }: LlmRoutingSectionProps) {
     isCustomProviderId(providerId) ||
     providerInfo(providerId)?.endpointManaged === "custom";
 
+  const sanitizeProviderOverride = (
+    provider: ProviderOverride,
+    providerId: string,
+  ): ProviderOverride => {
+    const modelCapabilities =
+      provider.modelCapabilities &&
+      Object.keys(provider.modelCapabilities).length > 0
+        ? provider.modelCapabilities
+        : undefined;
+    return {
+      baseUrl: providerRequiresBaseUrl(providerId)
+        ? (provider.baseUrl ?? null)
+        : null,
+      label: provider.label ?? null,
+      defaultModel: provider.defaultModel ?? null,
+      enabledModels: provider.enabledModels ?? [],
+      ...(modelCapabilities ? { modelCapabilities } : {}),
+    };
+  };
+
+  const sanitizeRoutingForSave = (
+    source: LlmRoutingConfig,
+  ): LlmRoutingConfig => {
+    const normalized = normalizeRouting(source);
+    const providers: LlmRoutingConfig["providers"] = {};
+    for (const [id, provider] of Object.entries(normalized.providers)) {
+      providers[id] = sanitizeProviderOverride(provider, id);
+    }
+    const slots: LlmRoutingConfig["slots"] = {};
+    for (const slot of CAPABILITY_SLOTS) {
+      const route = normalized.slots[slot];
+      if (!route?.providerId || !route.model) continue;
+      slots[slot] = route;
+    }
+    return {
+      ...normalized,
+      providers,
+      slots,
+      contextStrategy: normalized.contextStrategy,
+    };
+  };
+
   const providerOverrideForSave = (providerId: string): ProviderOverride => {
     const existing = routingRef.current?.providers[providerId];
-    if (providerRequiresBaseUrl(providerId)) {
-      return {
-        baseUrl: baseUrlForProvider(providerId).trim() || null,
+    return sanitizeProviderOverride(
+      {
+        baseUrl: providerRequiresBaseUrl(providerId)
+          ? baseUrlForProvider(providerId).trim() || null
+          : null,
         label: existing?.label ?? null,
         defaultModel: existing?.defaultModel ?? null,
         enabledModels: existing?.enabledModels ?? [],
-      };
-    }
-    return {
-      baseUrl: null,
-      label: existing?.label ?? null,
-      defaultModel: existing?.defaultModel ?? null,
-      enabledModels: existing?.enabledModels ?? [],
-    };
+        modelCapabilities: existing?.modelCapabilities,
+      },
+      providerId,
+    );
   };
+
+  const emptyProviderOverride = (providerId: string): ProviderOverride =>
+    sanitizeProviderOverride(
+      {
+        baseUrl: providerRequiresBaseUrl(providerId)
+          ? baseUrlForProvider(providerId).trim() || null
+          : null,
+        label: null,
+        defaultModel: null,
+        enabledModels: [],
+      },
+      providerId,
+    );
 
   const modelById = (
     providerId: string,
@@ -338,19 +579,9 @@ export function LlmRoutingSection({ open }: LlmRoutingSectionProps) {
     patch: Partial<ProviderOverride>,
   ) => {
     if (!routing || !data) return;
-    const prev = routing.providers[providerId] ?? {
-      baseUrl: null,
-      label: null,
-      defaultModel: null,
-      enabledModels: null,
-    };
-    const next: ProviderOverride = {
-      ...prev,
-      ...patch,
-      baseUrl: providerRequiresBaseUrl(providerId)
-        ? (patch.baseUrl ?? prev.baseUrl ?? null)
-        : null,
-    };
+    const prev =
+      routing.providers[providerId] ?? emptyProviderOverride(providerId);
+    const next = sanitizeProviderOverride({ ...prev, ...patch }, providerId);
     const nextRouting = {
       ...routing,
       providers: { ...routing.providers, [providerId]: next },
@@ -383,7 +614,8 @@ export function LlmRoutingSection({ open }: LlmRoutingSectionProps) {
   const persistRouting = async (nextRouting?: LlmRoutingConfig) => {
     const snapshot = nextRouting ?? routingRef.current;
     if (!snapshot) return;
-    await llmConfigSet(snapshot);
+    await llmConfigSet(sanitizeRoutingForSave(snapshot));
+    setLoadError(null);
     notifyLlmConfigChanged();
   };
 
@@ -397,13 +629,13 @@ export function LlmRoutingSection({ open }: LlmRoutingSectionProps) {
       setMessage(`${providerName(providerId)} 需配置 Base URL 后才能保存。`);
       return false;
     }
-    const nextRouting: LlmRoutingConfig = {
+    const nextRouting: LlmRoutingConfig = sanitizeRoutingForSave({
       ...current,
       providers: {
         ...current.providers,
         [providerId]: providerOverrideForSave(providerId),
       },
-    };
+    });
     applyRouting(nextRouting);
     await persistRouting(nextRouting);
     return true;
@@ -426,7 +658,10 @@ export function LlmRoutingSection({ open }: LlmRoutingSectionProps) {
     };
     const nextRouting = {
       ...routing,
-      providers: { ...routing.providers, [id]: entry },
+      providers: {
+        ...routing.providers,
+        [id]: sanitizeProviderOverride(entry, id),
+      },
     };
     applyRouting(nextRouting);
     setData({
@@ -443,6 +678,7 @@ export function LlmRoutingSection({ open }: LlmRoutingSectionProps) {
       ],
     });
     void refreshKeyStatus([id]);
+    setWizardOpen(false);
     return id;
   };
 
@@ -462,6 +698,7 @@ export function LlmRoutingSection({ open }: LlmRoutingSectionProps) {
       keyInputsRef.current[providerId] = "";
       setKeyInputTouch((n) => n + 1);
       setKeyConfigured((prev) => ({ ...prev, [providerId]: true }));
+      setLoadError(null);
       setMessage(`${label} 已添加，Key 已保存到系统凭据管理器。`);
       notifyLlmConfigChanged();
     } catch (err) {
@@ -477,6 +714,7 @@ export function LlmRoutingSection({ open }: LlmRoutingSectionProps) {
     try {
       await credentialDelete(llmCredentialService(providerId));
       setKeyConfigured((prev) => ({ ...prev, [providerId]: false }));
+      setLoadError(null);
       setMessage(`${label} Key 已清除`);
       notifyLlmConfigChanged();
     } catch (err) {
@@ -486,7 +724,12 @@ export function LlmRoutingSection({ open }: LlmRoutingSectionProps) {
 
   const updateSlot = (
     slot: CapabilitySlot,
-    patch: Partial<{ providerId: string; model: string; thinking: boolean }>,
+    patch: Partial<{
+      providerId: string;
+      model: string;
+      thinking: boolean;
+      reasoning: ReasoningSlotConfig;
+    }>,
   ) => {
     if (!routing) return;
     const current = routing.slots[slot];
@@ -507,7 +750,10 @@ export function LlmRoutingSection({ open }: LlmRoutingSectionProps) {
     setSaving(true);
     setMessage(null);
     try {
-      await llmConfigSet(routing);
+      const sanitized = sanitizeRoutingForSave(routing);
+      await llmConfigSet(sanitized);
+      applyRouting(sanitized);
+      setLoadError(null);
       setMessage("能力槽路由已保存");
       notifyLlmConfigChanged();
     } finally {
@@ -547,6 +793,84 @@ export function LlmRoutingSection({ open }: LlmRoutingSectionProps) {
     enabledModelsForProvider(providerId).filter((model) =>
       modelSupportsSlot(model, slot),
     );
+
+  const reasoningCapabilityForModel = (
+    slot: CapabilitySlot,
+    providerId: string,
+    modelId: string,
+  ): ReasoningUiCapability => {
+    if (slot === "vision" || !providerId || !modelId) {
+      return UNSUPPORTED_REASONING_CAPABILITY;
+    }
+    const override =
+      routing?.providers[providerId]?.modelCapabilities?.[modelId] ?? null;
+    if (override?.reasoningControl && override.reasoningControl !== "none") {
+      return {
+        supported: true,
+        control: override.reasoningControl,
+        tagOnly:
+          override.reasoningAdapter === "open_ai_compatible_tag_stream" ||
+          override.reasoningControl === "tag" ||
+          override.reasoningVisibility === "content_tag" ||
+          override.reasoningVisibility === "plain_content_risk",
+        supportedModes:
+          override.supportedModes && override.supportedModes.length > 0
+            ? override.supportedModes
+            : reasoningOptionsForCapability({
+                supported: true,
+                control: override.reasoningControl,
+                tagOnly: false,
+                supportedModes: [],
+                defaultMode: override.defaultMode ?? "auto",
+                disableSupported: override.disableSupported ?? true,
+              }),
+        defaultMode: override.defaultMode ?? "auto",
+        disableSupported: override.disableSupported ?? true,
+      };
+    }
+    if (
+      override?.reasoningAdapter === "open_ai_compatible_tag_stream" ||
+      modelLooksTagReasoningRisk(providerId, modelId)
+    ) {
+      return {
+        supported: true,
+        control: "tag",
+        tagOnly: true,
+        supportedModes: REASONING_SWITCH_OPTIONS,
+        defaultMode: "auto",
+        disableSupported: true,
+      };
+    }
+    const catalog = modelById(providerId, modelId);
+    return (
+      catalogReasoningCapability(providerId, modelId, catalog) ??
+      UNSUPPORTED_REASONING_CAPABILITY
+    );
+  };
+
+  const reasoningOptionsForModel = (
+    slot: CapabilitySlot,
+    providerId: string,
+    modelId: string,
+  ): ReasoningMode[] =>
+    reasoningOptionsForCapability(
+      reasoningCapabilityForModel(slot, providerId, modelId),
+    );
+
+  const clampReasoningForModel = (
+    slot: CapabilitySlot,
+    providerId: string,
+    modelId: string,
+    current?: ReasoningSlotConfig,
+  ): ReasoningSlotConfig => {
+    const options = reasoningOptionsForModel(slot, providerId, modelId);
+    if (options.length === 0) return { mode: "off" };
+    const capability = reasoningCapabilityForModel(slot, providerId, modelId);
+    const mode = current?.mode ?? capability.defaultMode;
+    return {
+      mode: options.includes(mode) ? mode : capability.defaultMode,
+    };
+  };
 
   const providersForSlot = (slot: CapabilitySlot): VisibleProvider[] =>
     visibleProviders.filter(
@@ -595,6 +919,136 @@ export function LlmRoutingSection({ open }: LlmRoutingSectionProps) {
     });
   };
 
+  const modelReasoningOverrideValue = (
+    providerId: string,
+    modelId: string,
+  ): string => {
+    const override =
+      routing?.providers[providerId]?.modelCapabilities?.[modelId];
+    if (!override?.reasoningAdapter) return "auto";
+    if (override.reasoningAdapter === "none") return "none";
+    if (override.reasoningAdapter === "deep_seek_reasoning_content") {
+      return "reasoning_content";
+    }
+    if (override.reasoningAdapter === "open_ai_compatible_tag_stream") {
+      return "tag_stream";
+    }
+    if (override.reasoningAdapter === "qwen_chat_template") {
+      return "tag_template";
+    }
+    if (override.reasoningControl === "effort") return "native_effort";
+    if (override.reasoningControl === "budget") return "native_budget";
+    if (override.reasoningControl === "level") return "native_level";
+    return "native_switch";
+  };
+
+  const updateModelReasoningOverride = (
+    providerId: string,
+    modelId: string,
+    value: string,
+  ) => {
+    if (!routing) return;
+    const provider = routing.providers[providerId];
+    if (!provider) return;
+    const nextCapabilities = { ...(provider.modelCapabilities ?? {}) };
+    if (value === "auto") {
+      delete nextCapabilities[modelId];
+    } else {
+      nextCapabilities[modelId] =
+        value === "none"
+          ? {
+              reasoningAdapter: "none",
+              reasoningControl: "none",
+              reasoningVisibility: "hidden_channel",
+              supportedModes: ["off"],
+              defaultMode: "off",
+              disableSupported: true,
+              userVerifiedAt: new Date().toISOString(),
+              probeVerifiedAt: null,
+            }
+          : value === "reasoning_content"
+            ? {
+                reasoningAdapter: "deep_seek_reasoning_content",
+                reasoningControl: "switch",
+                reasoningVisibility: "hidden_channel",
+                supportedModes: REASONING_SWITCH_OPTIONS,
+                defaultMode: "auto",
+                disableSupported: true,
+                userVerifiedAt: new Date().toISOString(),
+                probeVerifiedAt: null,
+              }
+            : value === "tag_stream"
+              ? {
+                  reasoningAdapter: "open_ai_compatible_tag_stream",
+                  reasoningControl: "tag",
+                  reasoningVisibility: "plain_content_risk",
+                  supportedModes: REASONING_SWITCH_OPTIONS,
+                  defaultMode: "auto",
+                  disableSupported: true,
+                  userVerifiedAt: new Date().toISOString(),
+                  probeVerifiedAt: null,
+                }
+              : value === "tag_template"
+                ? {
+                    reasoningAdapter: "qwen_chat_template",
+                    reasoningControl: "tag",
+                    reasoningVisibility: "content_tag",
+                    supportedModes: REASONING_SWITCH_OPTIONS,
+                    defaultMode: "auto",
+                    disableSupported: true,
+                    userVerifiedAt: new Date().toISOString(),
+                    probeVerifiedAt: null,
+                  }
+                : value === "native_effort"
+                  ? {
+                      reasoningAdapter: "glm_thinking",
+                      reasoningControl: "effort",
+                      reasoningVisibility: "hidden_channel",
+                      supportedModes: REASONING_EFFORT_OPTIONS,
+                      defaultMode: "medium",
+                      disableSupported: true,
+                      userVerifiedAt: new Date().toISOString(),
+                      probeVerifiedAt: null,
+                    }
+                  : value === "native_budget"
+                    ? {
+                        reasoningAdapter: "anthropic_extended_thinking",
+                        reasoningControl: "budget",
+                        reasoningVisibility: "hidden_channel",
+                        supportedModes: REASONING_STRENGTH_OPTIONS,
+                        defaultMode: "medium",
+                        disableSupported: true,
+                        userVerifiedAt: new Date().toISOString(),
+                        probeVerifiedAt: null,
+                      }
+                    : value === "native_level"
+                      ? {
+                          reasoningAdapter: "gemini_thinking_config",
+                          reasoningControl: "level",
+                          reasoningVisibility: "hidden_channel",
+                          supportedModes: REASONING_EFFORT_OPTIONS,
+                          defaultMode: "medium",
+                          disableSupported: true,
+                          userVerifiedAt: new Date().toISOString(),
+                          probeVerifiedAt: null,
+                        }
+                      : {
+                          reasoningAdapter: "provider_specific_static",
+                          reasoningControl: "switch",
+                          reasoningVisibility: "hidden_channel",
+                          supportedModes: REASONING_SWITCH_OPTIONS,
+                          defaultMode: "auto",
+                          disableSupported: true,
+                          userVerifiedAt: new Date().toISOString(),
+                          probeVerifiedAt: null,
+                        };
+    }
+    updateProviderOverride(providerId, {
+      modelCapabilities:
+        Object.keys(nextCapabilities).length > 0 ? nextCapabilities : undefined,
+    });
+  };
+
   const visibleProviders = (() => {
     if (!routing || !data) return [];
     const configuredProviderIds = Object.keys(routing.providers);
@@ -632,6 +1086,7 @@ export function LlmRoutingSection({ open }: LlmRoutingSectionProps) {
     });
     try {
       const result = await llmConfigTestProvider(provider.id);
+      setLoadError(null);
       setProviderResults((prev) => ({ ...prev, [provider.id]: result }));
     } catch (err) {
       setProviderResults((prev) => ({
@@ -665,6 +1120,7 @@ export function LlmRoutingSection({ open }: LlmRoutingSectionProps) {
         await llmConfigDeleteProvider(provider.id),
       );
       applyRouting(nextRouting);
+      setLoadError(null);
       setData({
         ...data,
         routing: nextRouting,
@@ -715,6 +1171,7 @@ export function LlmRoutingSection({ open }: LlmRoutingSectionProps) {
     setRefreshingProvider(provider.id);
     try {
       const result = await llmModelRegistryRefresh(provider.id);
+      setLoadError(null);
       setMessage(result.message);
       await load({ preserveRouting: true });
     } catch (err) {
@@ -759,6 +1216,7 @@ export function LlmRoutingSection({ open }: LlmRoutingSectionProps) {
       const message = vision.ok
         ? "文本可用 · 视觉可用"
         : "文本可用 · 视觉不支持";
+      setLoadError(null);
       setTestResults((prev) => ({
         ...prev,
         [key]: { ok: true, message },
@@ -1062,6 +1520,55 @@ export function LlmRoutingSection({ open }: LlmRoutingSectionProps) {
                                 </span>
                               </div>
                               <div className="flex items-center gap-2">
+                                <Select
+                                  value={modelReasoningOverrideValue(
+                                    provider.id,
+                                    model.id,
+                                  )}
+                                  onValueChange={(value) =>
+                                    updateModelReasoningOverride(
+                                      provider.id,
+                                      model.id,
+                                      value,
+                                    )
+                                  }
+                                >
+                                  <SelectTrigger
+                                    aria-label={`${model.id} 思考能力覆盖`}
+                                    className="h-7 w-28 text-xs"
+                                  >
+                                    <SelectValue placeholder="思考能力" />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    <SelectItem value="auto">
+                                      自动识别
+                                    </SelectItem>
+                                    <SelectItem value="none">
+                                      不支持思考
+                                    </SelectItem>
+                                    <SelectItem value="native_switch">
+                                      开关思考
+                                    </SelectItem>
+                                    <SelectItem value="native_effort">
+                                      强度思考
+                                    </SelectItem>
+                                    <SelectItem value="native_budget">
+                                      预算思考
+                                    </SelectItem>
+                                    <SelectItem value="native_level">
+                                      等级思考
+                                    </SelectItem>
+                                    <SelectItem value="reasoning_content">
+                                      reasoning_content
+                                    </SelectItem>
+                                    <SelectItem value="tag_template">
+                                      tag 模板
+                                    </SelectItem>
+                                    <SelectItem value="tag_stream">
+                                      标签隔离
+                                    </SelectItem>
+                                  </SelectContent>
+                                </Select>
                                 <Button
                                   type="button"
                                   size="sm"
@@ -1137,10 +1644,24 @@ export function LlmRoutingSection({ open }: LlmRoutingSectionProps) {
               route && modelIds.includes(route.model) ? route.model : "";
             const routeModelInvalid =
               Boolean(route?.model) && route?.model !== selectedModel;
+            const reasoningOptions =
+              slot !== "vision" && providerId && selectedModel
+                ? reasoningOptionsForModel(slot, providerId, selectedModel)
+                : [];
+            const reasoningCapability =
+              slot !== "vision" && providerId && selectedModel
+                ? reasoningCapabilityForModel(slot, providerId, selectedModel)
+                : UNSUPPORTED_REASONING_CAPABILITY;
+            const selectedReasoning = clampReasoningForModel(
+              slot,
+              providerId,
+              selectedModel,
+              normalizeReasoningSlot(route),
+            ).mode;
             return (
               <div
                 key={slot}
-                className="grid gap-2 rounded-md border border-border/50 bg-background/60 p-2 xl:grid-cols-[minmax(8rem,0.85fr)_1fr_1.2fr_1.5fr]"
+                className="grid gap-2 rounded-md border border-border/50 bg-background/60 p-2 xl:grid-cols-[minmax(8rem,0.85fr)_1fr_1.2fr_0.8fr_1fr]"
               >
                 <div className="min-w-0 self-center">
                   <p className="text-xs font-medium text-foreground">
@@ -1166,6 +1687,11 @@ export function LlmRoutingSection({ open }: LlmRoutingSectionProps) {
                       updateSlot(slot, {
                         providerId: value,
                         model: modelsForSlot(slot, value)[0]?.id ?? "",
+                        reasoning: clampReasoningForModel(
+                          slot,
+                          value,
+                          modelsForSlot(slot, value)[0]?.id ?? "",
+                        ),
                       })
                     }
                   >
@@ -1198,7 +1724,16 @@ export function LlmRoutingSection({ open }: LlmRoutingSectionProps) {
                   <Select
                     value={selectedModel}
                     onValueChange={(value) =>
-                      updateSlot(slot, { providerId, model: value })
+                      updateSlot(slot, {
+                        providerId,
+                        model: value,
+                        reasoning: clampReasoningForModel(
+                          slot,
+                          providerId,
+                          value,
+                          normalizeReasoningSlot(route),
+                        ),
+                      })
                     }
                   >
                     <SelectTrigger className="h-8 text-xs">
@@ -1213,10 +1748,48 @@ export function LlmRoutingSection({ open }: LlmRoutingSectionProps) {
                     </SelectContent>
                   </Select>
                 )}
+                {slot === "vision" ? (
+                  <div className="self-center text-[11px] text-muted-foreground" />
+                ) : reasoningOptions.length === 0 ? (
+                  <Input
+                    aria-label={`${SLOT_META[slot].label} 思考模式`}
+                    className="h-8 text-xs"
+                    value="不支持"
+                    disabled
+                    readOnly
+                  />
+                ) : (
+                  <Select
+                    value={selectedReasoning}
+                    onValueChange={(value) =>
+                      updateSlot(slot, {
+                        providerId,
+                        model: selectedModel,
+                        reasoning: { mode: value as ReasoningMode },
+                      })
+                    }
+                  >
+                    <SelectTrigger
+                      aria-label={`${SLOT_META[slot].label} 思考模式`}
+                      className="h-8 text-xs"
+                    >
+                      <SelectValue placeholder="思考模式" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {reasoningOptions.map((mode) => (
+                        <SelectItem key={mode} value={mode}>
+                          {REASONING_LABELS[mode]}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                )}
                 <div className="self-center text-[11px] text-muted-foreground">
                   {routeProviderInvalid || routeModelInvalid
                     ? "当前路由不可用，请重新选择"
-                    : ""}
+                    : reasoningCapability.tagOnly
+                      ? "可能以正文标签形式返回思考"
+                      : ""}
                 </div>
               </div>
             );
@@ -1393,29 +1966,48 @@ function ModelDebugDetails({
   );
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
 function normalizeRouting(raw: LlmRoutingConfig | undefined): LlmRoutingConfig {
-  if (!raw) return DEFAULT_LLM_ROUTING;
+  const rawRecord: Record<string, unknown> = isRecord(raw)
+    ? raw
+    : (DEFAULT_LLM_ROUTING as unknown as Record<string, unknown>);
+  const rawProviders = isRecord(rawRecord.providers) ? rawRecord.providers : {};
   const providers: LlmRoutingConfig["providers"] = {};
-  for (const [id, provider] of Object.entries(raw.providers ?? {})) {
-    const row = provider as ProviderOverride & {
+  for (const [id, provider] of Object.entries(rawProviders)) {
+    const row = (isRecord(provider)
+      ? provider
+      : {}) as unknown as ProviderOverride & {
       base_url?: string | null;
       default_model?: string | null;
       enabled_models?: string[] | null;
+      model_capabilities?: ProviderOverride["modelCapabilities"] | null;
+      modelCapabilities?: ProviderOverride["modelCapabilities"] | null;
     };
+    const rawModelCapabilities =
+      row.modelCapabilities ?? row.model_capabilities;
+    const modelCapabilities = isRecord(rawModelCapabilities)
+      ? (rawModelCapabilities as ProviderOverride["modelCapabilities"])
+      : undefined;
     providers[id] = {
       baseUrl: row.baseUrl ?? row.base_url ?? null,
       label: row.label ?? null,
       defaultModel: row.defaultModel ?? row.default_model ?? null,
-      enabledModels: row.enabledModels ?? row.enabled_models ?? null,
+      enabledModels: Array.isArray(row.enabledModels)
+        ? row.enabledModels
+        : Array.isArray(row.enabled_models)
+          ? row.enabled_models
+          : [],
+      ...(modelCapabilities && Object.keys(modelCapabilities).length > 0
+        ? { modelCapabilities }
+        : {}),
     };
   }
 
   const slots: LlmRoutingConfig["slots"] = {};
-  const legacyScenes = (
-    raw as LlmRoutingConfig & {
-      scenes?: Record<string, SlotRoute & { provider_id?: string }>;
-    }
-  ).scenes;
+  const legacyScenes = isRecord(rawRecord.scenes) ? rawRecord.scenes : {};
   const legacySceneToSlot: Partial<Record<CapabilitySlot, string>> = {
     fast: "knowledge_lookup",
     writer: "drafting_assist",
@@ -1424,36 +2016,44 @@ function normalizeRouting(raw: LlmRoutingConfig | undefined): LlmRoutingConfig {
     agent_tools: "knowledge_lookup",
   };
   for (const [slot, scene] of Object.entries(legacySceneToSlot)) {
-    const route = legacyScenes?.[scene];
-    if (!route) continue;
-    const providerId = route.providerId ?? route.provider_id;
-    if (!providerId || !route.model) continue;
+    const route = legacyScenes[scene];
+    if (!isRecord(route)) continue;
+    const row = route as unknown as SlotRoute & { provider_id?: string };
+    const providerId = row.providerId ?? row.provider_id;
+    if (!providerId || !row.model) continue;
     slots[slot as CapabilitySlot] = {
       providerId,
-      model: normalizePersistedModelId(route.model),
-      thinking: route.thinking ?? false,
+      model: normalizePersistedModelId(row.model),
+      thinking: row.thinking ?? false,
+      reasoning: normalizeReasoningSlot(row),
     };
   }
+  const rawSlots = isRecord(rawRecord.slots) ? rawRecord.slots : {};
   for (const slot of CAPABILITY_SLOTS) {
-    const rawSlots = raw.slots as Partial<Record<CapabilitySlot, SlotRoute>>;
-    const route = rawSlots?.[slot];
-    if (!route) continue;
-    const row = route as SlotRoute & { provider_id?: string };
+    const route = rawSlots[slot];
+    if (!isRecord(route)) continue;
+    const row = route as unknown as SlotRoute & { provider_id?: string };
     const providerId = row.providerId ?? row.provider_id;
     if (!providerId || !row.model) continue;
     slots[slot] = {
       providerId,
       model: normalizePersistedModelId(row.model),
       thinking: row.thinking ?? false,
+      reasoning: normalizeReasoningSlot(row),
     };
   }
 
+  const contextStrategy = isRecord(rawRecord.contextStrategy)
+    ? (rawRecord.contextStrategy as LlmRoutingConfig["contextStrategy"])
+    : DEFAULT_LLM_ROUTING.contextStrategy;
+
   return {
-    version: raw.version ?? 1,
-    schemaVersion: raw.schemaVersion ?? 3,
+    version: typeof rawRecord.version === "number" ? rawRecord.version : 1,
+    schemaVersion:
+      typeof rawRecord.schemaVersion === "number" ? rawRecord.schemaVersion : 4,
     providers,
     slots,
-    contextStrategy: raw.contextStrategy ?? DEFAULT_LLM_ROUTING.contextStrategy,
+    contextStrategy,
   };
 }
 

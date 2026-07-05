@@ -190,36 +190,121 @@ fn evidence_source_rank(source_type: &crate::ai_runtime::SourceType) -> u8 {
     }
 }
 
-/// Extract `<thinking>...</thinking>` blocks for UI (stripped from visible content).
+/// Extract reasoning tags for UI (stripped from visible content).
 pub fn extract_thinking_blocks(content: &str) -> (String, Option<String>) {
-    const OPEN: &str = "<thinking>";
-    const CLOSE: &str = "</thinking>";
-    if !content.contains(OPEN) {
+    if !contains_reasoning_open_tag(content) {
         return (content.to_string(), None);
     }
     let mut thinking = String::new();
     let mut visible = String::new();
-    let mut rest = content;
-    while let Some(start) = rest.find(OPEN) {
-        visible.push_str(&rest[..start]);
-        rest = &rest[start + OPEN.len()..];
-        if let Some(end) = rest.find(CLOSE) {
-            thinking.push_str(rest[..end].trim());
+    let mut cursor = 0usize;
+    while let Some(open) = find_next_reasoning_open(content, cursor) {
+        visible.push_str(&content[cursor..open.start]);
+        let body_start = open.start + open.open_len;
+        if let Some(close_start) = find_ascii_case_insensitive(content, open.close_tag, body_start)
+        {
+            thinking.push_str(content[body_start..close_start].trim());
             thinking.push('\n');
-            rest = &rest[end + CLOSE.len()..];
+            cursor = close_start + open.close_tag.len();
         } else {
-            thinking.push_str(rest.trim());
-            rest = "";
+            thinking.push_str(content[body_start..].trim());
+            cursor = content.len();
             break;
         }
     }
-    visible.push_str(rest);
+    visible.push_str(&content[cursor..]);
     let thinking_opt = if thinking.trim().is_empty() {
         None
     } else {
         Some(thinking.trim().to_string())
     };
     (visible.trim().to_string(), thinking_opt)
+}
+
+#[derive(Debug, Clone, Copy)]
+struct ReasoningOpen {
+    start: usize,
+    open_len: usize,
+    close_tag: &'static str,
+}
+
+fn contains_reasoning_open_tag(content: &str) -> bool {
+    find_next_reasoning_open(content, 0).is_some()
+}
+
+fn find_next_reasoning_open(content: &str, from: usize) -> Option<ReasoningOpen> {
+    const TAGS: [(&str, &str); 3] = [
+        ("<thinking>", "</thinking>"),
+        ("<think>", "</think>"),
+        ("<reasoning>", "</reasoning>"),
+    ];
+    let mut best: Option<ReasoningOpen> = None;
+    for (open, close) in TAGS {
+        if let Some(start) = find_ascii_case_insensitive(content, open, from) {
+            if best.map_or(true, |candidate| start < candidate.start) {
+                best = Some(ReasoningOpen {
+                    start,
+                    open_len: open.len(),
+                    close_tag: close,
+                });
+            }
+        }
+    }
+    best
+}
+
+fn find_ascii_case_insensitive(haystack: &str, needle: &str, from: usize) -> Option<usize> {
+    let bytes = haystack.as_bytes();
+    let needle = needle.as_bytes();
+    if needle.is_empty() || bytes.len() < needle.len() || from > bytes.len() - needle.len() {
+        return None;
+    }
+    (from..=bytes.len() - needle.len())
+        .find(|&idx| bytes[idx..idx + needle.len()].eq_ignore_ascii_case(needle))
+}
+
+/// Remove opening paragraphs that are model-internal planning rather than an answer.
+pub fn sanitize_meta_analysis_prefix(text: &str) -> String {
+    let trimmed = text.trim();
+    if trimmed.is_empty() || !looks_like_meta_analysis_prefix(trimmed) {
+        return trimmed.to_string();
+    }
+
+    let mut kept = Vec::new();
+    let mut dropping = true;
+    for paragraph in trimmed.split("\n\n") {
+        let paragraph = paragraph.trim();
+        if paragraph.is_empty() {
+            continue;
+        }
+        if dropping && looks_like_meta_analysis_paragraph(paragraph) {
+            continue;
+        }
+        dropping = false;
+        kept.push(paragraph);
+    }
+    if kept.is_empty() {
+        String::new()
+    } else {
+        kept.join("\n\n")
+    }
+}
+
+fn looks_like_meta_analysis_prefix(text: &str) -> bool {
+    looks_like_meta_analysis_paragraph(text.lines().next().unwrap_or(text))
+}
+
+fn looks_like_meta_analysis_paragraph(paragraph: &str) -> bool {
+    let lower = paragraph.trim_start().to_ascii_lowercase();
+    lower.starts_with("the user ")
+        || lower.starts_with("the user is ")
+        || lower.starts_with("this is a ")
+        || lower.starts_with("the current task ")
+        || lower.starts_with("i should ")
+        || lower.starts_with("i'll ")
+        || lower.starts_with("the persona ")
+        || lower.contains("current task focus")
+        || lower.contains("persona is")
 }
 
 /// Serializable harness input snapshot for resume.
@@ -419,6 +504,41 @@ mod tests {
         let (visible, think) = extract_thinking_blocks("答案<thinking>先检索法规</thinking>因此…");
         assert!(visible.contains("答案"));
         assert!(think.unwrap().contains("检索"));
+    }
+
+    #[test]
+    fn extract_think_and_reasoning_tags_case_insensitively() {
+        let (visible, think) =
+            extract_thinking_blocks("答<THINK>hidden</THINK>案<reasoning>plan</reasoning>");
+
+        assert_eq!(visible, "答案");
+        let think = think.unwrap();
+        assert!(think.contains("hidden"));
+        assert!(think.contains("plan"));
+    }
+
+    #[test]
+    fn extract_unclosed_think_tag_does_not_leak() {
+        let (visible, think) = extract_thinking_blocks("可见<think>内部推理未闭合");
+
+        assert_eq!(visible, "可见");
+        assert_eq!(think.as_deref(), Some("内部推理未闭合"));
+    }
+
+    #[test]
+    fn sanitize_meta_analysis_removes_minimax_style_prefix() {
+        let raw = "The user is greeting me with a simple \"你好?\".\n\nI should respond warmly.\n\n你好呀！\n\n我在。";
+
+        let cleaned = sanitize_meta_analysis_prefix(raw);
+
+        assert_eq!(cleaned, "你好呀！\n\n我在。");
+    }
+
+    #[test]
+    fn sanitize_meta_analysis_preserves_normal_chinese_answer() {
+        let raw = "我觉得这个问题可以分两步看。\n\n第一步是确认事实。";
+
+        assert_eq!(sanitize_meta_analysis_prefix(raw), raw);
     }
 
     fn sample_checkpoint(round: u32) -> HarnessCheckpoint {

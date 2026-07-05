@@ -226,6 +226,7 @@ mod tests {
             temperature: Some(0.7),
             stream: false,
             thinking: true,
+            reasoning: crate::ai_types::ResolvedReasoningRequest::legacy_enabled(true),
             skip_stub_ids: vec![],
         });
         assert_eq!(
@@ -303,6 +304,7 @@ mod tests {
             temperature: Some(0.7),
             stream: false,
             thinking,
+            reasoning: crate::ai_types::ResolvedReasoningRequest::disabled(),
             skip_stub_ids: vec![],
         });
         assert!(body.get("thinking").is_none());
@@ -388,6 +390,7 @@ mod tests {
             temperature: Some(0.7),
             stream: false,
             thinking: true,
+            reasoning: crate::ai_types::ResolvedReasoningRequest::legacy_enabled(true),
             skip_stub_ids: vec![],
         });
         let api_msgs = body["messages"].as_array().unwrap();
@@ -478,6 +481,7 @@ mod tests {
             temperature: Some(0.7),
             stream: false,
             thinking: true,
+            reasoning: crate::ai_types::ResolvedReasoningRequest::legacy_enabled(true),
             skip_stub_ids: still_pending,
         });
         assert_eq!(body["messages"].as_array().unwrap().len(), 2);
@@ -528,6 +532,7 @@ mod tests {
             temperature: Some(0.7),
             stream: false,
             thinking: false,
+            reasoning: crate::ai_types::ResolvedReasoningRequest::disabled(),
             skip_stub_ids: vec![],
         });
         let api_msgs = body["messages"].as_array().unwrap();

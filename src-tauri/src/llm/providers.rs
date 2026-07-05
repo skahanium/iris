@@ -197,6 +197,7 @@ mod tests {
                 label: Some("Groq".into()),
                 default_model: Some("llama-3.1-8b-instant".into()),
                 enabled_models: Some(vec!["llama-3.1-8b-instant".into()]),
+                model_capabilities: std::collections::HashMap::new(),
             },
         );
         let ids: Vec<_> = list_providers_from_routing(&routing)
@@ -221,6 +222,7 @@ mod tests {
                 label: Some("Groq".into()),
                 default_model: Some("llama-3.1-8b-instant".into()),
                 enabled_models: Some(vec!["llama-3.1-8b-instant".into()]),
+                model_capabilities: std::collections::HashMap::new(),
             },
         );
 

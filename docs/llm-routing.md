@@ -2,7 +2,7 @@
 
 ## 配置存储
 
-- **路由表**：`settings.llm_routing`（JSON），含能力槽 `providerId` / `model`、`contextStrategy`（`hybrid` | `long_context`）、各厂商 `baseUrl` 覆盖与手动启用模型。
+- **路由表**：`settings.llm_routing`（JSON，schema v4），含能力槽 `providerId` / `model` / `reasoning.mode`、`contextStrategy`（`hybrid` | `long_context`）、各厂商 `baseUrl` 覆盖、手动启用模型与模型级 `modelCapabilities` 覆盖。
 - **模型注册表**：`llm_model_registry` 合并内置目录、供应商 `/models` 发现结果和用户手动模型；未知模型默认只进入文本候选，Vision / Long context / Reasoner 需要内置目录、专项验证或用户确认。
 - **API Key**：系统凭据 `iris.llm.{provider_id}`（勿含 `/`，兼容 Windows），禁止写入设置文件或日志。
 
@@ -14,6 +14,29 @@
 | 文稿创作、学术研究 | `deepseek-v4-pro`   |
 
 设置页按 **供应商连接 / 模型目录 / 能力路由** 分层：供应商级测试只检查凭据和端点；模型级验证会对指定模型发起文本或视觉探测；能力路由只展示已启用且满足该能力的模型。
+
+## Reasoning / Thinking
+
+- Fast / Writer / Reasoner / Long context 能力槽可配置 `关闭`、`自动`、`低`、`中`、`高`；Vision 不显示思考强度控件。
+- 旧 `thinking: true` 路由读取时兼容为 `reasoning.mode = "auto"`；新配置保存结构化 `reasoning`，不依赖单一布尔值表达模型能力。
+- `自动` 按能力槽解析：Fast / Writer 偏低强度或关闭，Reasoner / Long context 偏中强度；不支持原生参数的模型不会被强塞 thinking 字段。
+- 自定义 OpenAI-compatible 模型默认不发送未知 provider-specific 参数；验证模型后 Iris 只记录安全元数据，如 adapter、control、visibility 和验证时间，不记录 prompt 或原始 reasoning。
+- Agent task 诊断事件只记录 provider、model、capability slot、endpoint、reasoning mode / adapter / visibility、是否输出隔离和预算估算，不记录 API Key、笔记正文、网页正文或完整 prompt。
+- 原始 chain-of-thought、`reasoning_content`、`<think>` / `<thinking>` / `<reasoning>` 标签内容不会作为普通 assistant 回复保存。标签风险模型会先走内部候选，清洗后再进入可见答案。
+
+首批兼容目标：
+
+| Provider / 模型族           | 默认策略                                                                             |
+| --------------------------- | ------------------------------------------------------------------------------------ |
+| OpenAI reasoning models     | 明确支持时发送 reasoning effort；普通 OpenAI-compatible 不盲发                       |
+| Anthropic extended thinking | 在 Anthropic Messages endpoint 写入 extended thinking budget，并保证预算小于输出上限 |
+| Gemini thinking             | adapter 保留为独立 endpoint 能力；当前不会复用 OpenAI-compatible 请求体              |
+| DeepSeek reasoner           | 消费 `reasoning_content`，多轮历史只回放最终 `content`                               |
+| GLM 4.5+/5.x                | 支持 `thinking.reasoning_effort` 映射                                                |
+| Qwen3                       | 使用临时 chat-template/tag 控制与隔离路径，支持 `/think` / `/no_think` 类模型        |
+| Doubao / Volc Ark           | 默认安全关闭，后续由 catalog / probe / 用户覆盖启用                                  |
+| MiniMax / MiniMax-M3        | 默认标签/元分析风险隔离，不把 M3 能力等同于 API 参数能力                             |
+| MiMo                        | 以内置 catalog 为准，走 provider-specific static adapter                             |
 
 **DeepSeek Base URL** 推荐 `https://api.deepseek.com`（无 `/v1` 后缀）。Iris 会自动请求 `/v1/chat/completions` 与 `/models`；若在设置里填写带 `/v1` 的地址也能兼容。LLM provider 仅支持 HTTPS 端点；Ollama / localhost HTTP 通道已移除，旧 `ollama` 路由会在读取时回退到 DeepSeek 默认模型。
 

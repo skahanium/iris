@@ -383,6 +383,7 @@ pub async fn generate_chapter_content_with_llm(
         temperature: Some(0.4),
         stream: false,
         thinking: false,
+        reasoning: crate::ai_types::ResolvedReasoningRequest::disabled(),
         skip_stub_ids: vec![],
     };
 

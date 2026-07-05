@@ -113,6 +113,7 @@ fn bench_llm_message_serialization(c: &mut Criterion) {
         temperature: Some(0.2),
         stream: true,
         thinking: false,
+        reasoning: iris_lib::ai_types::ResolvedReasoningRequest::disabled(),
         skip_stub_ids: vec![],
     };
 

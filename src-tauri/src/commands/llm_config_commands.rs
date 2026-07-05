@@ -339,6 +339,9 @@ async fn llm_model_validate_inner(
             };
             let entry =
                 model_registry::mark_model_validated(&state.db, &provider_id, &model_id, kind)?;
+            if !vision {
+                record_reasoning_probe_result(&state.db, &provider_id, &model_id)?;
+            }
             debug_assert!(model_registry::supports_model_for_slot(&entry, slot));
             Ok(LlmConfigTestResult {
                 ok: true,
@@ -356,6 +359,75 @@ async fn llm_model_validate_inner(
             message: format!("模型验证失败：{e}"),
         }),
     }
+}
+
+fn record_reasoning_probe_result(
+    db: &crate::storage::db::Database,
+    provider_id: &str,
+    model_id: &str,
+) -> AppResult<()> {
+    let Some(capability) = inferred_reasoning_probe_capability(provider_id, model_id) else {
+        return Ok(());
+    };
+    let mut routing = load(db)?;
+    let provider = routing
+        .providers
+        .entry(provider_id.to_string())
+        .or_default();
+    provider
+        .model_capabilities
+        .insert(model_id.to_string(), capability);
+    save(db, &routing)
+}
+
+fn inferred_reasoning_probe_capability(
+    provider_id: &str,
+    model_id: &str,
+) -> Option<config::ModelCapabilityOverride> {
+    let provider = provider_id.to_ascii_lowercase();
+    let model = model_id.to_ascii_lowercase();
+    let now = chrono::Utc::now().to_rfc3339();
+    if is_minimax_reasoning_risk(&provider, &model) {
+        return Some(config::ModelCapabilityOverride {
+            reasoning_adapter: Some(crate::ai_types::ReasoningAdapter::OpenAiCompatibleTagStream),
+            reasoning_control: Some(crate::ai_types::ReasoningControl::Tag),
+            reasoning_visibility: Some(crate::ai_types::ReasoningVisibility::PlainContentRisk),
+            supported_modes: Some(crate::llm::model_catalog::TAG_REASONING_MODES.to_vec()),
+            default_mode: Some(crate::ai_types::ReasoningMode::Auto),
+            disable_supported: Some(true),
+            user_verified_at: None,
+            probe_verified_at: Some(now),
+        });
+    }
+    if provider.contains("qwen") || provider.contains("dashscope") || model.contains("qwen3") {
+        return Some(config::ModelCapabilityOverride {
+            reasoning_adapter: Some(crate::ai_types::ReasoningAdapter::QwenChatTemplate),
+            reasoning_control: Some(crate::ai_types::ReasoningControl::Tag),
+            reasoning_visibility: Some(crate::ai_types::ReasoningVisibility::ContentTag),
+            supported_modes: Some(crate::llm::model_catalog::TAG_REASONING_MODES.to_vec()),
+            default_mode: Some(crate::ai_types::ReasoningMode::Auto),
+            disable_supported: Some(true),
+            user_verified_at: None,
+            probe_verified_at: Some(now),
+        });
+    }
+    if provider == "zhipu" && (model.starts_with("glm-4.5") || model.starts_with("glm-5")) {
+        return Some(config::ModelCapabilityOverride {
+            reasoning_adapter: Some(crate::ai_types::ReasoningAdapter::GlmThinking),
+            reasoning_control: Some(crate::ai_types::ReasoningControl::Effort),
+            reasoning_visibility: Some(crate::ai_types::ReasoningVisibility::HiddenChannel),
+            supported_modes: Some(crate::llm::model_catalog::EFFORT_REASONING_MODES.to_vec()),
+            default_mode: Some(crate::ai_types::ReasoningMode::Medium),
+            disable_supported: Some(true),
+            user_verified_at: None,
+            probe_verified_at: Some(now),
+        });
+    }
+    None
+}
+
+fn is_minimax_reasoning_risk(provider: &str, model: &str) -> bool {
+    provider.contains("minimax") || model.contains("minimax") || model == "minimax-m3"
 }
 
 fn check_model_list_for_validation(model_id: &str, ids: &[String]) -> ModelListValidationCheck {
@@ -619,6 +691,7 @@ mod tests {
                 label: Some("Delete me".into()),
                 default_model: Some("model-a".into()),
                 enabled_models: Some(vec!["model-a".into()]),
+                model_capabilities: std::collections::HashMap::new(),
             },
         );
         if used {
@@ -628,6 +701,7 @@ mod tests {
                     provider_id: "custom_delete".into(),
                     model: "model-a".into(),
                     thinking: false,
+                    reasoning: None,
                 },
             );
         }
@@ -645,6 +719,7 @@ mod tests {
                 label: None,
                 default_model: Some("deepseek-v4-flash".into()),
                 enabled_models: Some(vec!["deepseek-v4-flash".into()]),
+                model_capabilities: std::collections::HashMap::new(),
             },
         );
         config::save(&db, &routing).unwrap();
@@ -718,6 +793,99 @@ mod tests {
     }
 
     #[test]
+    fn delete_provider_tolerates_null_model_capabilities_in_stored_routing() {
+        let db = crate::storage::db::Database::open_in_memory().unwrap();
+        let dirty = serde_json::json!({
+            "version": 1,
+            "schemaVersion": 4,
+            "createdAt": "2026-07-05T00:00:00Z",
+            "providers": {
+                "custom_delete": {
+                    "baseUrl": "https://example.com/v1",
+                    "label": "Delete me",
+                    "defaultModel": "model-a",
+                    "enabledModels": ["model-a"],
+                    "modelCapabilities": null
+                }
+            },
+            "slots": {},
+            "scenes": {},
+            "contextStrategy": {}
+        })
+        .to_string();
+        db.with_conn(|conn| {
+            conn.execute(
+                "INSERT INTO settings (key, value) VALUES (?1, ?2)",
+                rusqlite::params![config::SETTINGS_KEY, dirty],
+            )?;
+            Ok(())
+        })
+        .unwrap();
+        crate::credentials::mark_api_key_configured(&db, "iris.llm.custom_delete").unwrap();
+        model_registry::upsert_provider_discovered_models(
+            &db,
+            "custom_delete",
+            vec!["model-a".to_string()],
+        )
+        .unwrap();
+
+        let routing = delete_provider_inner(&db, "custom_delete").unwrap();
+
+        assert!(!routing.providers.contains_key("custom_delete"));
+        assert!(!crate::credentials::api_key_configured(&db, "iris.llm.custom_delete").unwrap());
+        assert!(model_registry::list_registry_entries(&db)
+            .unwrap()
+            .into_iter()
+            .all(|entry| entry.provider_id != "custom_delete"));
+    }
+
+    #[test]
+    fn delete_provider_tolerates_null_top_level_maps_in_stored_routing() {
+        let db = crate::storage::db::Database::open_in_memory().unwrap();
+        let dirty = serde_json::json!({
+            "version": 1,
+            "schemaVersion": 4,
+            "createdAt": "2026-07-05T00:00:00Z",
+            "providers": {
+                "custom_delete": {
+                    "baseUrl": "https://example.com/v1",
+                    "label": "Delete me",
+                    "defaultModel": "model-a",
+                    "enabledModels": ["model-a"]
+                }
+            },
+            "slots": null,
+            "scenes": null,
+            "contextStrategy": null
+        })
+        .to_string();
+        db.with_conn(|conn| {
+            conn.execute(
+                "INSERT INTO settings (key, value) VALUES (?1, ?2)",
+                rusqlite::params![config::SETTINGS_KEY, dirty],
+            )?;
+            Ok(())
+        })
+        .unwrap();
+        crate::credentials::mark_api_key_configured(&db, "iris.llm.custom_delete").unwrap();
+        model_registry::upsert_provider_discovered_models(
+            &db,
+            "custom_delete",
+            vec!["model-a".to_string()],
+        )
+        .unwrap();
+
+        let routing = delete_provider_inner(&db, "custom_delete").unwrap();
+
+        assert!(!routing.providers.contains_key("custom_delete"));
+        assert!(!crate::credentials::api_key_configured(&db, "iris.llm.custom_delete").unwrap());
+        assert!(model_registry::list_registry_entries(&db)
+            .unwrap()
+            .into_iter()
+            .all(|entry| entry.provider_id != "custom_delete"));
+    }
+
+    #[test]
     fn model_list_missing_id_is_advisory_and_still_allows_chat_probe() {
         let check =
             check_model_list_for_validation("custom-model-a", &["custom-model-b".to_string()]);
@@ -737,5 +905,60 @@ mod tests {
         assert!(VISION_PROBE_IMAGE_URL.contains("AAAANSUhEUgAAAAEAAAAB"));
         assert!(VISION_PROBE_IMAGE_URL.ends_with("ErkJggg=="));
         assert_ne!(VISION_PROBE_IMAGE_URL, "data:image/png;base64,iVBORw0KGgo=");
+    }
+
+    #[test]
+    fn reasoning_probe_records_minimax_tag_stream_without_prompt_body() {
+        let db = crate::storage::db::Database::open_in_memory().unwrap();
+        let mut routing = config::deepseek_defaults();
+        routing.providers.insert(
+            "custom".into(),
+            config::ProviderOverride {
+                base_url: Some("https://api.minimax.example/v1".into()),
+                label: Some("MiniMax".into()),
+                default_model: Some("MiniMax-M3".into()),
+                enabled_models: Some(vec!["MiniMax-M3".into()]),
+                model_capabilities: std::collections::HashMap::new(),
+            },
+        );
+        config::save(&db, &routing).unwrap();
+
+        record_reasoning_probe_result(&db, "custom", "MiniMax-M3").unwrap();
+
+        let routing = config::load(&db).unwrap();
+        let capability = routing.providers["custom"].model_capabilities["MiniMax-M3"].clone();
+        assert_eq!(
+            capability.reasoning_adapter,
+            Some(crate::ai_types::ReasoningAdapter::OpenAiCompatibleTagStream)
+        );
+        assert_eq!(
+            capability.reasoning_visibility,
+            Some(crate::ai_types::ReasoningVisibility::PlainContentRisk)
+        );
+        let stored = serde_json::to_string(&routing).unwrap();
+        assert!(!stored.contains("ping"));
+        assert!(!stored.contains("prompt"));
+    }
+
+    #[test]
+    fn reasoning_probe_leaves_plain_custom_model_unmarked() {
+        let db = crate::storage::db::Database::open_in_memory().unwrap();
+        let mut routing = config::deepseek_defaults();
+        routing.providers.insert(
+            "custom".into(),
+            config::ProviderOverride {
+                base_url: Some("https://example.com/v1".into()),
+                label: Some("Custom".into()),
+                default_model: Some("plain-model".into()),
+                enabled_models: Some(vec!["plain-model".into()]),
+                model_capabilities: std::collections::HashMap::new(),
+            },
+        );
+        config::save(&db, &routing).unwrap();
+
+        record_reasoning_probe_result(&db, "custom", "plain-model").unwrap();
+
+        let routing = config::load(&db).unwrap();
+        assert!(routing.providers["custom"].model_capabilities.is_empty());
     }
 }

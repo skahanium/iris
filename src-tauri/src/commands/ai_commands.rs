@@ -70,6 +70,42 @@ fn capability_slot_wire(slot: crate::ai_types::CapabilitySlot) -> &'static str {
     }
 }
 
+fn reasoning_route_diagnostics(
+    resolved: &ResolvedLlmConfig,
+    slot: crate::ai_types::CapabilitySlot,
+) -> serde_json::Value {
+    serde_json::json!({
+        "provider": resolved.provider_id,
+        "model": resolved.model,
+        "capability_slot": capability_slot_wire(slot),
+        "endpoint_family": resolved.endpoint_family,
+        "input_budget": resolved.input_budget,
+        "output_budget": resolved.output_budget,
+        "reasoning_mode": resolved.reasoning.mode,
+        "reasoning_adapter": resolved.reasoning.adapter,
+        "reasoning_visibility": resolved.reasoning.visibility,
+        "reasoning_requested": resolved.reasoning.requested,
+        "output_isolation": resolved.reasoning.isolate_output,
+        "estimated_reasoning_budget": estimated_reasoning_budget(resolved),
+    })
+}
+
+fn estimated_reasoning_budget(resolved: &ResolvedLlmConfig) -> u32 {
+    use crate::ai_types::ReasoningMode;
+
+    if !resolved.reasoning.requested {
+        return 0;
+    }
+    match resolved.reasoning.mode {
+        ReasoningMode::Off => 0,
+        ReasoningMode::Minimal => resolved.output_budget.min(512),
+        ReasoningMode::Low => resolved.output_budget.min(1_024),
+        ReasoningMode::Auto | ReasoningMode::Medium => resolved.output_budget.min(2_048),
+        ReasoningMode::High => resolved.output_budget.min(4_096),
+        ReasoningMode::Xhigh => resolved.output_budget.min(8_192),
+    }
+}
+
 fn prompt_profile_fingerprint(
     profile: &crate::ai_runtime::prompt_profile::PromptProfile,
 ) -> String {
@@ -1195,6 +1231,13 @@ pub(crate) async fn execute_ai_send_message_with_routing(
             "output_budget": resolved.output_budget,
         }),
     )?;
+    AgentTaskRuntime::record_event(
+        &state.db,
+        &task_id,
+        "model_route",
+        "resolved",
+        reasoning_route_diagnostics(&resolved, route_slot),
+    )?;
     let build_opts = ContextBuildOptions {
         max_results: max_results_from_budget(
             resolved.input_budget,
@@ -1343,7 +1386,7 @@ pub(crate) async fn execute_ai_send_message_with_routing(
         },
         provider_config,
         Some(resolved.output_budget),
-        resolved.thinking,
+        resolved.reasoning,
     )
     .await
     {
@@ -3168,8 +3211,8 @@ pub async fn classified_ai_retrieval_clear() -> AppResult<()> {
 mod tests {
     use super::{
         compact_cold_start_packets_for_budget, finalize_chat_harness_run,
-        parse_confirmed_tool_args, partial_tool_confirm_response, should_prefetch_web,
-        validate_ai_note_path,
+        parse_confirmed_tool_args, partial_tool_confirm_response, reasoning_route_diagnostics,
+        should_prefetch_web, validate_ai_note_path,
     };
 
     #[test]
@@ -3323,6 +3366,42 @@ mod tests {
         assert!(diagnostics.evidence_tokens <= 3_000);
         assert_eq!(packets[0].id, "note");
         assert!(packets[1].excerpt.contains("已压缩") || packets[1].excerpt.chars().count() < 500);
+    }
+
+    #[test]
+    fn reasoning_route_diagnostics_excludes_sensitive_content() {
+        let resolved = crate::llm::config::ResolvedLlmConfig {
+            provider_id: "minimax".into(),
+            model: "MiniMax-M3".into(),
+            base_url: "https://api.example.test/v1".into(),
+            api_key: Some("sk-secret-should-not-leak".into()),
+            thinking: false,
+            reasoning: crate::ai_types::ResolvedReasoningRequest {
+                mode: crate::ai_types::ReasoningMode::Auto,
+                adapter: crate::ai_types::ReasoningAdapter::OpenAiCompatibleTagStream,
+                control: crate::ai_types::ReasoningControl::None,
+                visibility: crate::ai_types::ReasoningVisibility::PlainContentRisk,
+                requested: false,
+                isolate_output: true,
+            },
+            input_budget: 55_808,
+            output_budget: 8_192,
+            context_strategy: crate::ai_types::ContextStrategy::Hybrid,
+            endpoint_family: crate::ai_types::EndpointFamily::OpenAiCompatibleChatCompletions,
+        };
+
+        let value = reasoning_route_diagnostics(&resolved, crate::ai_types::CapabilitySlot::Fast);
+        let text = serde_json::to_string(&value).unwrap();
+
+        assert_eq!(value["provider"], "minimax");
+        assert_eq!(value["model"], "MiniMax-M3");
+        assert_eq!(value["capability_slot"], "fast");
+        assert_eq!(value["reasoning_adapter"], "open_ai_compatible_tag_stream");
+        assert_eq!(value["output_isolation"], true);
+        assert!(!text.contains("sk-secret"));
+        assert!(!text.contains("base_url"));
+        assert!(!text.contains("prompt"));
+        assert!(!text.contains("正文"));
     }
 
     #[test]

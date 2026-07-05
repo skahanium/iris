@@ -991,6 +991,7 @@ async fn generate_llm_document_patches(
         temperature: Some(0.25),
         stream: false,
         thinking: false,
+        reasoning: crate::ai_types::ResolvedReasoningRequest::disabled(),
         skip_stub_ids: vec![],
     };
 
@@ -1099,6 +1100,7 @@ pub async fn enhance_document_check_with_llm(
         temperature: Some(0.3),
         stream: true,
         thinking: false,
+        reasoning: crate::ai_types::ResolvedReasoningRequest::disabled(),
         skip_stub_ids: vec![],
     };
 

@@ -29,25 +29,26 @@
 
 ## 专题
 
-| 主题                     | 文档                                                                                                                                                           |
-| ------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 使用指南（用户向）       | Notion 官方文档站（无限期延后，URL 待发布）                                                                                                                    |
-| IPC API 参考             | [ipc-api-reference.md](./ipc-api-reference.md)                                                                                                                 |
-| 设计系统 / Iris Rail     | [design-system.md](./design-system.md)                                                                                                                         |
-| 品牌图标                 | [design-system/brand.md](./design-system/brand.md)                                                                                                             |
-| 编辑器 Markdown 导出     | [markdown-export.md](./markdown-export.md)                                                                                                                     |
-| LLM 路由与连通性         | [llm-routing.md](./llm-routing.md)                                                                                                                             |
-| AI Agent 当前状态        | [audits/2026-06-20-ai-agent-current-readiness.md](./audits/2026-06-20-ai-agent-current-readiness.md)                                                           |
-| AI Agent 问题矩阵        | [audits/2026-06-20-ai-agent-issue-matrix.md](./audits/2026-06-20-ai-agent-issue-matrix.md)                                                                     |
-| AI Harness TaskPlan 蓝图 | [spec](./superpowers/specs/2026-06-21-agent-harness-taskplan-blueprint-design.md) · [plan](./superpowers/plans/2026-06-21-agent-harness-taskplan-blueprint.md) |
-| AI Harness 架构收口      | [spec](./superpowers/specs/2026-07-01-iris-ai-harness-architecture-design.md) · [plan](./superpowers/plans/2026-07-01-iris-ai-harness-architecture.md)         |
-| Agent 搜索并行与证据链   | [spec](./superpowers/specs/2026-07-03-agent-search-concurrency-design.md) · [plan](./superpowers/plans/2026-07-03-agent-search-concurrency.md)                 |
-| 语义搜索 Recall@5        | [eval/semantic-search.md](./eval/semantic-search.md)                                                                                                           |
-| 语义评测 fixture vault   | [eval/fixtures/semantic-vault/](./eval/fixtures/semantic-vault/)                                                                                               |
-| 关闭回归手工验收         | [testing/app-close-manual-checklist.md](./testing/app-close-manual-checklist.md)                                                                               |
-| Iris Rail 手工验收       | [testing/iris-rail-refresh-manual-checklist.md](./testing/iris-rail-refresh-manual-checklist.md)                                                               |
-| 性能排查                 | [ops/performance-guide.md](./ops/performance-guide.md)                                                                                                         |
-| 品牌素材                 | [../scripts/assets/README.md](../scripts/assets/README.md)                                                                                                     |
+| 主题                      | 文档                                                                                                                                                           |
+| ------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 使用指南（用户向）        | Notion 官方文档站（无限期延后，URL 待发布）                                                                                                                    |
+| IPC API 参考              | [ipc-api-reference.md](./ipc-api-reference.md)                                                                                                                 |
+| 设计系统 / Iris Rail      | [design-system.md](./design-system.md)                                                                                                                         |
+| 品牌图标                  | [design-system/brand.md](./design-system/brand.md)                                                                                                             |
+| 编辑器 Markdown 导出      | [markdown-export.md](./markdown-export.md)                                                                                                                     |
+| LLM 路由与连通性          | [llm-routing.md](./llm-routing.md)                                                                                                                             |
+| AI Agent 当前状态         | [audits/2026-06-20-ai-agent-current-readiness.md](./audits/2026-06-20-ai-agent-current-readiness.md)                                                           |
+| AI Agent 问题矩阵         | [audits/2026-06-20-ai-agent-issue-matrix.md](./audits/2026-06-20-ai-agent-issue-matrix.md)                                                                     |
+| AI Harness TaskPlan 蓝图  | [spec](./superpowers/specs/2026-06-21-agent-harness-taskplan-blueprint-design.md) · [plan](./superpowers/plans/2026-06-21-agent-harness-taskplan-blueprint.md) |
+| AI Harness 架构收口       | [spec](./superpowers/specs/2026-07-01-iris-ai-harness-architecture-design.md) · [plan](./superpowers/plans/2026-07-01-iris-ai-harness-architecture.md)         |
+| Agent 搜索并行与证据链    | [spec](./superpowers/specs/2026-07-03-agent-search-concurrency-design.md) · [plan](./superpowers/plans/2026-07-03-agent-search-concurrency.md)                 |
+| RAG 系统深度优化 (v1.2.6) | [specs/v1.2.6-rag-deep-optimization.md](./specs/v1.2.6-rag-deep-optimization.md)                                                                               |
+| 语义搜索 Recall@5         | [eval/semantic-search.md](./eval/semantic-search.md)                                                                                                           |
+| 语义评测 fixture vault    | [eval/fixtures/semantic-vault/](./eval/fixtures/semantic-vault/)                                                                                               |
+| 关闭回归手工验收          | [testing/app-close-manual-checklist.md](./testing/app-close-manual-checklist.md)                                                                               |
+| Iris Rail 手工验收        | [testing/iris-rail-refresh-manual-checklist.md](./testing/iris-rail-refresh-manual-checklist.md)                                                               |
+| 性能排查                  | [ops/performance-guide.md](./ops/performance-guide.md)                                                                                                         |
+| 品牌素材                  | [../scripts/assets/README.md](../scripts/assets/README.md)                                                                                                     |
 
 ---
 
