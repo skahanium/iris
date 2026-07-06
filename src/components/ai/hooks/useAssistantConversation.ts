@@ -1,4 +1,4 @@
-import {
+﻿import {
   useCallback,
   useRef,
   useState,
@@ -17,6 +17,12 @@ import {
   citationRecordsFromContextPackets,
   replaceAiCitationsForDocument,
 } from "@/lib/ai/evidence-citations";
+import {
+  compactChatLinesForState,
+  getAiPayloadStore,
+  restoreChatLineContent,
+  restoreChatLinesForPersistence,
+} from "@/lib/ai-payload-store";
 import { mergeContextPackets } from "@/lib/ai/merge-context-packets";
 import {
   classifiedAiThreadLoad,
@@ -87,13 +93,13 @@ interface DocumentContentResult {
 
 function documentContentForMessage(message: ChatLine): DocumentContentResult {
   if (message.role === "user") {
-    return { content: `> ${message.content}`, missing: [] };
+    return { content: `> ${restoreChatLineContent(message)}`, missing: [] };
   }
   if (message.role !== "assistant") {
-    return { content: message.content, missing: [] };
+    return { content: restoreChatLineContent(message), missing: [] };
   }
   const result = replaceAiCitationsForDocument(
-    message.content,
+    restoreChatLineContent(message),
     citationRecordsFromContextPackets(message.evidencePackets),
   );
   return { content: result.markdown, missing: result.missing };
@@ -141,7 +147,17 @@ export function useAssistantConversation({
   streaming = false,
   deps,
 }: UseAssistantConversationParams) {
-  const [messages, setMessages] = useState<ChatLine[]>([]);
+  const payloadStoreRef = useRef(getAiPayloadStore());
+  const [messages, setMessagesState] = useState<ChatLine[]>([]);
+  const setMessages: Dispatch<SetStateAction<ChatLine[]>> = useCallback(
+    (action) => {
+      setMessagesState((prev) => {
+        const next = typeof action === "function" ? action(prev) : action;
+        return compactChatLinesForState(payloadStoreRef.current, next);
+      });
+    },
+    [],
+  );
   const [sessionId, setSessionId] = useState<number | null>(null);
   const [classifiedThreadId, setClassifiedThreadId] = useState<string | null>(
     null,
@@ -190,6 +206,7 @@ export function useAssistantConversation({
     setInput,
     setPackets,
     setSelectedPacketIds,
+    setMessages,
     setStreaming,
     streamBufRef,
   ]);
@@ -243,6 +260,7 @@ export function useAssistantConversation({
       classifiedThreadIdRef,
       requestIdRef,
       retractSession,
+      setMessages,
       setStreaming,
       streaming,
     ],
@@ -281,11 +299,12 @@ export function useAssistantConversation({
       messagesRef.current,
       bubbleSelection.selected,
     ).map((message) => {
-      if (message.role === "user") return `## 用户\n\n${message.content}`;
+      if (message.role === "user")
+        return `## 用户\n\n${restoreChatLineContent(message)}`;
       if (message.role === "assistant") {
-        return `## 助手\n\n${message.content}`;
+        return `## 助手\n\n${restoreChatLineContent(message)}`;
       }
-      return `## ${message.role}\n\n${message.content}`;
+      return `## ${message.role}\n\n${restoreChatLineContent(message)}`;
     });
     if (lines.length === 0) return;
     const md = lines.join("\n\n---\n\n");
@@ -321,7 +340,7 @@ export function useAssistantConversation({
 
       setMessages((prev) => [...prev, nextMessage]);
     },
-    [],
+    [setMessages],
   );
 
   const ensureAssistantStreamSlot = useCallback(() => {
@@ -330,7 +349,7 @@ export function useAssistantConversation({
       if (last?.role === "assistant") return prev;
       return [...prev, { role: "assistant", content: "" }];
     });
-  }, []);
+  }, [setMessages]);
 
   const appendAssistantSummary = useCallback(
     (intent: AssistantIntent, count?: number) => {
@@ -342,7 +361,7 @@ export function useAssistantConversation({
         },
       ]);
     },
-    [],
+    [setMessages],
   );
 
   const handleQuoteToInput = useCallback(
@@ -377,7 +396,9 @@ export function useAssistantConversation({
         setClassifiedThreadId(null);
       }
 
-      setMessages(loaded);
+      setMessages(
+        restoreChatLinesForPersistence(loaded, payloadStoreRef.current),
+      );
       setPackets(mergeContextPackets([], loadedPackets));
       setSelectedPacketIds([]);
       forceNewSessionRef.current = false;
@@ -394,6 +415,7 @@ export function useAssistantConversation({
       clearTaskSurfaces,
       forceNewSessionRef,
       setActionState,
+      setMessages,
       setPackets,
       setSelectedPacketIds,
     ],
@@ -410,7 +432,7 @@ export function useAssistantConversation({
         (msg, idx) => ({
           seq: idx + 1,
           role: msg.role,
-          content: msg.content,
+          content: restoreChatLineContent(msg),
           contentParts: msg.images?.length
             ? msg.images.map((img) => ({
                 type: "image_url",

@@ -1,6 +1,7 @@
 ﻿import type {
   ArtifactPlanItem,
   ContextReference,
+  EditTarget,
   TaskPlan,
   TaskPlanIntent,
 } from "@/types/ai";
@@ -217,6 +218,111 @@ function hasExplicitNoteWriteIntent(message: string): boolean {
   );
 }
 
+function parseMentionedMarkdownPath(message: string): string | null {
+  const match = /@([^\s，,。；;）)\]]+\.md)/i.exec(message);
+  return match?.[1] ?? null;
+}
+
+function parseQuotedHeadingText(message: string): string | null {
+  const match = /["“'‘]([^"”'’]+)["”'’]/.exec(message);
+  return match?.[1]?.trim() || null;
+}
+
+function parseOrdinal(message: string): number | null {
+  const digitMatch = /第\s*(\d+)\s*个\s*(?:大标题|标题|章节)/.exec(message);
+  if (digitMatch) return Number(digitMatch[1]);
+  const chineseMatch =
+    /第\s*([一二三四五六七八九十])\s*个\s*(?:大标题|标题|章节)/.exec(message);
+  const ordinalMap: Record<string, number> = {
+    一: 1,
+    二: 2,
+    三: 3,
+    四: 4,
+    五: 5,
+    六: 6,
+    七: 7,
+    八: 8,
+    九: 9,
+    十: 10,
+  };
+  const chineseOrdinal = chineseMatch?.[1];
+  return chineseOrdinal ? (ordinalMap[chineseOrdinal] ?? null) : null;
+}
+
+function editSourceForMessage(
+  input: BuildAssistantTaskPlanInput,
+  message: string,
+): EditTarget["source"] {
+  if (
+    includesAny(message, [
+      "刚刚",
+      "刚才",
+      "以上内容",
+      "上述内容",
+      "回答",
+      "对话",
+    ])
+  ) {
+    return "conversation";
+  }
+  return input.hasSelection ? "selection" : "prompt";
+}
+
+function buildEditTargetForMessage(
+  input: BuildAssistantTaskPlanInput,
+  rawMessage: string,
+  message: string,
+): EditTarget | null {
+  const mentionedPath = parseMentionedMarkdownPath(rawMessage);
+  const hasWriteVerb = includesAny(message, NOTE_WRITE_VERBS);
+  const hasConversationSource = includesAny(message, [
+    "刚刚",
+    "刚才",
+    "以上内容",
+    "上述内容",
+    "回答",
+    "对话",
+    "总结",
+    "整理",
+  ]);
+  const explicitWriteTarget =
+    hasExplicitNoteWriteIntent(message) ||
+    Boolean(mentionedPath && hasWriteVerb) ||
+    (Boolean(mentionedPath || input.notePath) &&
+      hasWriteVerb &&
+      hasConversationSource);
+
+  if (!explicitWriteTarget) return null;
+
+  const targetPath = mentionedPath ?? input.notePath ?? null;
+  if (!targetPath) return null;
+
+  const ordinal = parseOrdinal(rawMessage);
+  const headingText = parseQuotedHeadingText(rawMessage);
+  const placement: EditTarget["placement"] = ordinal
+    ? "insert_heading_at_ordinal"
+    : includesAny(message, [
+          "当前标题",
+          "标题下",
+          "标题下方",
+          "标题下面",
+          "本标题",
+        ])
+      ? "after_heading"
+      : "append_document";
+
+  return {
+    targetPath,
+    source: editSourceForMessage(input, message),
+    placement,
+    headingText,
+    headingLevel: placement === "insert_heading_at_ordinal" ? 1 : null,
+    ordinal,
+    range: null,
+    baseContentHash: null,
+  };
+}
+
 function isSimpleDateQuestion(message: string): boolean {
   return /^(今天|现在|此刻)?(是)?(几月几日|什么日期|星期几|哪一天|日期)[？?。\s]*$/.test(
     message,
@@ -363,9 +469,21 @@ function plan(
 function writerPlan(
   input: BuildAssistantTaskPlanInput,
   intent: "creative_write" | "rewrite_selection",
+  editTarget?: EditTarget | null,
 ): TaskPlan {
   const executionMode =
     intent === "rewrite_selection" ? "patch_proposal" : "writing_candidate";
+  const target =
+    editTarget ??
+    (intent === "rewrite_selection" && input.notePath
+      ? {
+          targetPath: input.notePath,
+          source: "selection" as const,
+          placement: "replace_selection" as const,
+          range: null,
+          baseContentHash: null,
+        }
+      : null);
 
   return plan(input, {
     intent,
@@ -374,14 +492,16 @@ function writerPlan(
     modelSlot: "writer",
     executionMode,
     outputMode:
-      intent === "rewrite_selection"
+      intent === "rewrite_selection" || target
         ? "confirmation_required"
         : "markdown_message",
     artifactPlan: [],
     evidenceNeed: "none",
     contextNeed: "current_reference",
     operationKind: intent === "rewrite_selection" ? "patch" : "create",
-    outputShape: intent === "rewrite_selection" ? "confirmation" : "chat",
+    outputShape:
+      intent === "rewrite_selection" || target ? "confirmation" : "chat",
+    editTarget: target,
   });
 }
 
@@ -575,7 +695,8 @@ export function shouldAttachNoteContextToTaskPlan(plan: TaskPlan): boolean {
 export function buildAssistantTaskPlan(
   input: BuildAssistantTaskPlanInput,
 ): TaskPlan {
-  const message = input.message.trim().toLowerCase();
+  const rawMessage = input.message.trim();
+  const message = rawMessage.toLowerCase();
   const uiPlan = planForUiAction(input);
   if (uiPlan) return uiPlan;
 
@@ -595,6 +716,21 @@ export function buildAssistantTaskPlan(
     return input.hasSelection
       ? writerPlan(input, "rewrite_selection")
       : chatPlan(input);
+  }
+
+  if (
+    hasExplicitNoteWriteIntent(message) &&
+    includesAny(message, ["光标", "此处", "这里"])
+  ) {
+    return clarifyPlan(
+      input,
+      "当前还没有可确认的光标字节位置。请先选中文本，或指定标题/文末等明确插入位置。",
+    );
+  }
+
+  const editTarget = buildEditTargetForMessage(input, rawMessage, message);
+  if (editTarget) {
+    return writerPlan(input, "creative_write", editTarget);
   }
 
   if (input.hasPendingWriteProposal && isWritingConfirmationMessage(message)) {

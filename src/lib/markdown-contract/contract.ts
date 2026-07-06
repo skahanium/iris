@@ -22,6 +22,7 @@ import {
   createMarkedInstance,
 } from "@/lib/markdown";
 import { sanitizeHtml } from "@/lib/sanitize";
+import { assistantContentHash as markdownContentHash } from "@/lib/assistant-stream-buffer";
 
 import type {
   ClassifyOptions,
@@ -64,22 +65,48 @@ const contractMarked = createMarkedInstance({ gfm: true, breaks: true });
 // false or omitted) renders are cached.
 
 const RENDER_CACHE_MAX = 64;
-const renderCache = new Map<string, MarkdownContractResult>();
+const RENDER_CACHE_ENTRY_BYTES_MAX = 240_000;
+const RENDER_CACHE_TOTAL_BYTES_MAX = 1_500_000;
 
-/** Build a cache key from the render inputs. */
+interface RenderCacheEntry {
+  estimatedBytes: number;
+  result: MarkdownContractResult;
+}
+
+const renderCache = new Map<string, RenderCacheEntry>();
+let renderCacheEstimatedBytes = 0;
+
+/** Build a cache key from the render inputs without retaining raw source text. */
 function renderCacheKey(
   source: string,
   profile: MarkdownProfile,
   streaming: boolean,
   context?: string,
 ): string {
-  // Include context (if provided) so context-sensitive renders don't collide.
-  return `${profile}\u0000${streaming ? "1" : "0"}\u0000${context ?? ""}\u0000${source}`;
+  const contextHash = context ? markdownContentHash(context) : "no-context";
+  return [
+    profile,
+    streaming ? "1" : "0",
+    contextHash,
+    source.length,
+    markdownContentHash(source),
+  ].join("\u0000");
 }
 
 /** Clear the render cache (for tests). */
 export function clearMarkdownRenderCache(): void {
   renderCache.clear();
+  renderCacheEstimatedBytes = 0;
+}
+
+export function getMarkdownRenderCacheStats(): {
+  entryCount: number;
+  estimatedBytes: number;
+} {
+  return {
+    entryCount: renderCache.size,
+    estimatedBytes: renderCacheEstimatedBytes,
+  };
 }
 
 /**
@@ -92,19 +119,75 @@ function getCachedResult(key: string): MarkdownContractResult | undefined {
   // Map preserves insertion order; delete + re-insert = move to end (MRU).
   renderCache.delete(key);
   renderCache.set(key, cached);
-  return cached;
+  return cached.result;
 }
 
-/** Store a render result, evicting the oldest entry if over capacity. */
-function setCachedResult(key: string, result: MarkdownContractResult): void {
-  if (renderCache.size >= RENDER_CACHE_MAX) {
-    // Evict the oldest (first-inserted) entry — Map iteration is insertion order.
-    const oldestKey = renderCache.keys().next().value;
-    if (oldestKey !== undefined) {
-      renderCache.delete(oldestKey);
-    }
+function estimatedStringBytes(value: string): number {
+  return value.length * 2;
+}
+
+function estimatedRenderResultBytes(result: MarkdownContractResult): number {
+  let total = estimatedStringBytes(result.output);
+  for (const fragment of result.preserveFragments) {
+    total += estimatedStringBytes(fragment.raw);
   }
-  renderCache.set(key, result);
+  for (const warning of result.warnings) {
+    total += estimatedStringBytes(warning.message);
+  }
+  for (const repair of result.streamRepairs) {
+    total +=
+      estimatedStringBytes(repair.before) + estimatedStringBytes(repair.after);
+  }
+  return total;
+}
+
+function evictOldestCacheEntry(): boolean {
+  const oldestKey = renderCache.keys().next().value;
+  if (oldestKey === undefined) return false;
+  const oldest = renderCache.get(oldestKey);
+  if (oldest) {
+    renderCacheEstimatedBytes = Math.max(
+      0,
+      renderCacheEstimatedBytes - oldest.estimatedBytes,
+    );
+  }
+  renderCache.delete(oldestKey);
+  return true;
+}
+
+/** Store a render result within the LRU byte budget. */
+function setCachedResult(key: string, result: MarkdownContractResult): void {
+  const estimatedBytes = estimatedRenderResultBytes(result);
+  if (estimatedBytes > RENDER_CACHE_ENTRY_BYTES_MAX) return;
+
+  const existing = renderCache.get(key);
+  if (existing) {
+    renderCacheEstimatedBytes = Math.max(
+      0,
+      renderCacheEstimatedBytes - existing.estimatedBytes,
+    );
+    renderCache.delete(key);
+  }
+
+  while (renderCache.size >= RENDER_CACHE_MAX) {
+    if (!evictOldestCacheEntry()) break;
+  }
+  while (
+    renderCacheEstimatedBytes + estimatedBytes >
+    RENDER_CACHE_TOTAL_BYTES_MAX
+  ) {
+    if (!evictOldestCacheEntry()) break;
+  }
+
+  if (
+    renderCacheEstimatedBytes + estimatedBytes >
+    RENDER_CACHE_TOTAL_BYTES_MAX
+  ) {
+    return;
+  }
+
+  renderCache.set(key, { estimatedBytes, result });
+  renderCacheEstimatedBytes += estimatedBytes;
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -570,6 +653,11 @@ function buildWarnings(
   return warnings;
 }
 
+function summarizeRepairText(value: string): string {
+  if (value.length <= 20_000) return value;
+  return `[omitted:${value.length}:${markdownContentHash(value)}]`;
+}
+
 function buildStreamRepairs(
   source: string,
   streaming: boolean,
@@ -581,8 +669,8 @@ function buildStreamRepairs(
 
   return [
     {
-      before: source,
-      after: repaired,
+      before: summarizeRepairText(source),
+      after: summarizeRepairText(repaired),
       repairKind: "streaming_repaired",
       offset: source.length,
     },

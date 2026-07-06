@@ -498,6 +498,31 @@ describe("useAssistantLlmStream reset + done behavior", () => {
     });
   });
 
+  it("final llm:error removes an empty assistant placeholder before showing the error", async () => {
+    messagesState = [
+      { role: "user", content: "question" },
+      { role: "assistant", content: "" },
+    ];
+    streamingState = true;
+    await mountHook();
+
+    await act(async () => {
+      handlers.error?.({
+        request_id: "req-1",
+        error: "boom",
+        final: true,
+      });
+    });
+
+    expect(panelSendActive.current).toBe(false);
+    expect(streamingState).toBe(false);
+    expect(streamBuf.current).toBe("");
+    expect(messagesState).toEqual([
+      { role: "user", content: "question" },
+      { role: "system", content: "错误: boom" },
+    ]);
+  });
+
   it("final llm:error preserves visible partial content before stopping", async () => {
     streamBuf.current = "已经生成的内容";
     messagesState = [{ role: "assistant", content: "已经生成的内容" }];

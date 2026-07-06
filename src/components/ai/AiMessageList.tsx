@@ -9,6 +9,10 @@ import { AiMessageBubble } from "@/components/ai/AiMessageBubble";
 import { useToast } from "@/components/ui/use-toast";
 import type { MentionToken } from "@/lib/ai-context-scope";
 import {
+  restoreChatLineContent,
+  type AiPayloadRef,
+} from "@/lib/ai-payload-store";
+import {
   citationRecordsFromContextPackets,
   replaceAiCitationsForDocument,
 } from "@/lib/ai/evidence-citations";
@@ -25,6 +29,8 @@ export interface ImageAttachment {
 export interface ChatLine {
   role: "user" | "assistant" | "system";
   content: string;
+  /** Reference to full content when React state only keeps a bounded projection. */
+  contentRef?: AiPayloadRef;
   /** 多模态原始数据（传给后端）；纯文本时为 undefined */
   contentParts?: ContentPart[];
   /** 前端渲染用图片列表 */
@@ -56,6 +62,17 @@ type MessageRow =
   | { type: "message"; message: ChatLine; messageIndex: number };
 
 const SCROLL_WRITE_EPSILON_PX = 1;
+
+function isRenderableMessageRow(
+  message: ChatLine,
+  messageIndex: number,
+  messages: ChatLine[],
+  streaming: boolean,
+): boolean {
+  if (message.role !== "assistant") return true;
+  if (message.content.trim()) return true;
+  return streaming && messageIndex === messages.length - 1;
+}
 
 function MessageSelectControl({
   selected,
@@ -171,13 +188,19 @@ export const AiMessageList = memo(function AiMessageList({
     if (messages.length === 0) return [{ type: "empty" }];
     return [
       ...(showStandaloneThinking ? [{ type: "thinking" } as const] : []),
-      ...messages.map((message, messageIndex) => ({
-        type: "message" as const,
-        message,
-        messageIndex,
-      })),
+      ...messages.flatMap((message, messageIndex) =>
+        isRenderableMessageRow(message, messageIndex, messages, streaming)
+          ? [
+              {
+                type: "message" as const,
+                message,
+                messageIndex,
+              },
+            ]
+          : [],
+      ),
     ];
-  }, [messages, showStandaloneThinking]);
+  }, [messages, showStandaloneThinking, streaming]);
 
   // Content-aware row height estimate. The old fixed `() => 112` was wrong
   // by up to 10× for tall assistant messages, causing the virtualizer to
@@ -321,8 +344,11 @@ export const AiMessageList = memo(function AiMessageList({
       const ledger = citationRecordsFromContextPackets(message.evidencePackets);
       const content =
         message.role === "assistant"
-          ? replaceAiCitationsForDocument(message.content, ledger).markdown
-          : message.content;
+          ? replaceAiCitationsForDocument(
+              restoreChatLineContent(message),
+              ledger,
+            ).markdown
+          : restoreChatLineContent(message);
       try {
         if (!navigator.clipboard?.writeText) {
           throw new Error("Clipboard API is unavailable");

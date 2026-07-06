@@ -794,6 +794,46 @@ pub struct ArtifactPlanItemWire {
     pub value_gate: String,
 }
 
+/// Source content used for a controlled Markdown edit.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EditTargetSource {
+    Selection,
+    Conversation,
+    Prompt,
+}
+
+/// Placement strategy for a controlled Markdown edit.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EditTargetPlacement {
+    ReplaceSelection,
+    Cursor,
+    AppendDocument,
+    AfterHeading,
+    InsertHeadingAtOrdinal,
+}
+
+/// Contract describing where a writing task may propose Markdown changes.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EditTarget {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target_path: Option<String>,
+    pub source: EditTargetSource,
+    pub placement: EditTargetPlacement,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub heading_text: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub heading_level: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ordinal: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub range: Option<SourceSpan>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub base_content_hash: Option<String>,
+}
+
 /// Per-turn TaskPlan summary exchanged over the assistant IPC boundary.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -819,6 +859,8 @@ pub struct TaskPlanSummary {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub clarification_question: Option<String>,
     pub source_hints: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub edit_target: Option<EditTarget>,
 }
 
 /// 证据信任等级，按可信度从高到低排列。
@@ -1128,6 +1170,8 @@ pub struct WritingTaskInput {
     pub cursor_context: String,
     pub writing_goal: String,
     pub web_authorized: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub edit_target: Option<EditTarget>,
 }
 
 /// 写作任务结果。

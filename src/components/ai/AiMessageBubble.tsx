@@ -13,6 +13,7 @@ import { MarkdownErrorBoundary } from "@/components/ui/markdown-error-boundary";
 
 import { AiThinkingIndicator } from "@/components/ui/ai-message-stream-pulse";
 
+import { createRenderableAssistantContent } from "@/lib/assistant-render-budget";
 import { renderMarkdownWithProfile } from "@/lib/markdown-contract";
 
 import { cn } from "@/lib/utils";
@@ -39,7 +40,7 @@ interface AiMessageBubbleProps {
 
   onCitationClick?: (ref: string) => void;
 
-  /** 用户附加的图片列表 */
+  /** User-attached image list. */
   images?: import("./AiMessageList").ImageAttachment[];
 
   /** User-visible @ document/folder references, rendered outside message text. */
@@ -49,9 +50,9 @@ interface AiMessageBubbleProps {
 const proseConversation =
   "iris-markdown-content select-text [&_a.ai-citation]:font-medium [&_a.ai-citation]:text-ai-citation [&_a.ai-citation]:underline [&_a.ai-citation]:decoration-ai-citation/40 [&_a.ai-citation]:underline-offset-2 hover:[&_a.ai-citation]:text-ai-citation-hover";
 
-const codeCopyDefaultLabel = "复制";
-const codeCopyDoneLabel = "已复制";
-const codeCopyFailedLabel = "复制失败";
+const codeCopyDefaultLabel = "\u590d\u5236";
+const codeCopyDoneLabel = "\u5df2\u590d\u5236";
+const codeCopyFailedLabel = "\u590d\u5236\u5931\u8d25";
 
 function summarizeLogContent(value: string) {
   let hash = 0x811c9dc5;
@@ -111,7 +112,6 @@ function MentionMetadataRow({ mentions }: { mentions?: MentionToken[] }) {
     </div>
   );
 }
-
 const AssistantBody = memo(function AssistantBody({
   content,
 
@@ -125,13 +125,20 @@ const AssistantBody = memo(function AssistantBody({
 
   onCitationClick?: (ref: string) => void;
 }) {
-  const renderContent = useStreamingContent(content, streaming);
+  const renderable = useMemo(
+    () => createRenderableAssistantContent(content, { streaming }),
+    [content, streaming],
+  );
+  const renderContent = useStreamingContent(renderable.content, streaming);
 
   const deferredRenderContent = useDeferredValue(renderContent);
   const markdownContent = streaming ? deferredRenderContent : content;
+  const boundedMarkdownContent = streaming
+    ? markdownContent
+    : renderable.content;
 
   const workerRender = useMarkdownRenderWorker({
-    content: markdownContent,
+    content: boundedMarkdownContent,
     enabled: streaming,
     streaming,
   });
@@ -143,7 +150,7 @@ const AssistantBody = memo(function AssistantBody({
 
     try {
       const result = renderMarkdownWithProfile(
-        markdownContent || "",
+        boundedMarkdownContent || "",
 
         "chat_assistant",
 
@@ -155,7 +162,7 @@ const AssistantBody = memo(function AssistantBody({
       return result.output;
     } catch (err) {
       console.warn("[ai-message] Markdown render failed", {
-        contentSummary: summarizeLogContent(markdownContent || ""),
+        contentSummary: summarizeLogContent(boundedMarkdownContent || ""),
 
         error:
           err instanceof Error
@@ -163,7 +170,7 @@ const AssistantBody = memo(function AssistantBody({
             : { name: typeof err, messageLength: String(err).length },
       });
 
-      const escaped = (markdownContent || "")
+      const escaped = (boundedMarkdownContent || "")
 
         .replace(/&/g, "&amp;")
 
@@ -175,7 +182,12 @@ const AssistantBody = memo(function AssistantBody({
 
       return `<p class="text-muted-foreground whitespace-pre-wrap">${escaped}</p>`;
     }
-  }, [markdownContent, streaming, workerRender.failed, workerRender.html]);
+  }, [
+    boundedMarkdownContent,
+    streaming,
+    workerRender.failed,
+    workerRender.html,
+  ]);
 
   const handleCodeCopy = useCallback(async (button: HTMLButtonElement) => {
     const code = button.closest(".ai-code-block")?.querySelector("pre code");
@@ -260,7 +272,7 @@ const AssistantBody = memo(function AssistantBody({
   );
 });
 
-/** AI 对话消息（选区限制在 `.ai-message-body` 内） */
+/** AI conversation message; selection is limited to `.ai-message-body`. */
 
 export const AiMessageBubble = memo(function AiMessageBubble({
   role,

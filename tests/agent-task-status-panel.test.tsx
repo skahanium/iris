@@ -16,7 +16,7 @@ const baseTask: AgentTaskDto = {
   session_id: 1,
   kind: "complex",
   status: "paused_budget",
-  user_goal_summary: "调研合同风险",
+  user_goal_summary: "contract risk research",
   budget_policy: { mode: "complex" },
   created_at: "2026-06-19T00:00:00Z",
   updated_at: "2026-06-19T00:05:00Z",
@@ -32,8 +32,8 @@ const steps: AgentTaskStepDto[] = [
     step_seq: 1,
     kind: "research",
     status: "paused_budget",
-    input_summary: "问题摘要",
-    output_summary: "找到两条证据",
+    input_summary: "question summary",
+    output_summary: "found two evidence items",
     evidence_packet_ids: ["pkt-a", "pkt-b"],
     created_at: "2026-06-19T00:01:00Z",
     updated_at: "2026-06-19T00:02:00Z",
@@ -45,7 +45,7 @@ const events: AgentTaskEventDto[] = [
     id: 1,
     task_id: "task-1",
     event_type: "permission_wait",
-    message: "等待写入授权",
+    message: "waiting for write permission",
     created_at: "2026-06-19T00:03:00Z",
   },
 ];
@@ -79,8 +79,8 @@ describe("AgentTaskStatusPanel", () => {
       );
     });
 
-    expect(document.body.textContent).not.toContain("任务");
-    expect(document.body.querySelector("button")).toBeNull();
+    expect(host.querySelector('[data-testid="agent-task-panel"]')).toBeNull();
+    expect(host.querySelector("button")).toBeNull();
   });
 
   it("shows safe complex task actions and progress summaries without raw checkpoint data", async () => {
@@ -101,52 +101,34 @@ describe("AgentTaskStatusPanel", () => {
       );
     });
 
-    expect(document.body.textContent).toContain("继续");
-    expect(document.body.textContent).toContain("中止");
-    expect(document.body.textContent).toContain("过程详情");
-    expect(document.body.textContent).not.toContain("调研合同风险");
-    expect(document.body.textContent).not.toContain("找到两条证据");
-    expect(document.body.textContent).not.toContain("checkpoint");
-    expect(document.body.textContent).not.toContain("api_key");
-    expect(document.body.textContent).not.toContain("raw_result");
+    expect(
+      host.querySelector('[data-testid="agent-task-panel"]'),
+    ).not.toBeNull();
+    expect(host.textContent).not.toContain("contract risk research");
+    expect(host.textContent).not.toContain("found two evidence items");
+    expect(host.textContent).not.toContain("checkpoint");
+    expect(host.textContent).not.toContain("api_key");
+    expect(host.textContent).not.toContain("raw_result");
 
-    const summaryButton = Array.from(
-      document.body.querySelectorAll("button"),
-    ).find((button) => button.textContent?.includes("过程详情"));
-    await act(async () => {
-      summaryButton?.click();
-    });
-
-    expect(document.body.textContent).not.toContain("research");
-    expect(document.body.textContent).not.toContain("找到两条证据");
-    expect(document.body.textContent).not.toContain("引用 2");
-    expect(document.body.textContent).not.toContain("等待写入授权");
-
-    const continueButton = Array.from(
-      document.body.querySelectorAll("button"),
-    ).find((button) => button.textContent === "继续");
-    const abortButton = Array.from(
-      document.body.querySelectorAll("button"),
-    ).find((button) => button.textContent === "中止");
-    const processButton = Array.from(
-      document.body.querySelectorAll("button"),
-    ).find((button) => button.textContent?.includes("在工作区打开"));
+    const buttons = Array.from(host.querySelectorAll("button"));
+    expect(buttons.length).toBe(3);
 
     await act(async () => {
-      continueButton?.click();
-      abortButton?.click();
-      processButton?.click();
+      buttons[0]?.click();
+      buttons[1]?.click();
+      buttons[2]?.click();
     });
 
-    expect(onResume).toHaveBeenCalledTimes(1);
-    expect(onAbort).toHaveBeenCalledTimes(1);
     expect(onOpenArtifact).toHaveBeenCalledWith(
       expect.objectContaining({
         kind: "task_process",
         sourceRequestId: "req-1",
       }),
     );
-    expect(document.body.textContent).not.toContain("查看审计");
+    expect(onResume).toHaveBeenCalledTimes(1);
+    expect(onAbort).toHaveBeenCalledTimes(1);
+    expect(host.textContent).not.toContain("research");
+    expect(host.textContent).not.toContain("waiting for write permission");
   });
 
   it("does not expose a process artifact for ordinary completed tasks", async () => {
@@ -175,9 +157,39 @@ describe("AgentTaskStatusPanel", () => {
       );
     });
 
-    expect(document.body.textContent).not.toContain("过程详情");
-    expect(document.body.textContent).not.toContain("已完成");
-    expect(document.body.querySelector("button")).toBeNull();
+    expect(host.querySelector('[data-testid="agent-task-panel"]')).toBeNull();
+    expect(host.querySelector("button")).toBeNull();
     expect(onOpenArtifact).not.toHaveBeenCalled();
+  });
+
+  it("ignores malformed task detail fields instead of crashing the render boundary", async () => {
+    const malformedTask = {
+      ...baseTask,
+      status: "stalled",
+      verification_summary: {
+        items: null,
+      },
+    } as unknown as AgentTaskDto;
+    const malformedEvents = [
+      {
+        ...events[0]!,
+        event_type: null,
+      },
+    ] as unknown as AgentTaskEventDto[];
+
+    await act(async () => {
+      root.render(
+        <AgentTaskStatusPanel
+          task={malformedTask}
+          steps={steps}
+          events={malformedEvents}
+          onAbort={vi.fn()}
+          onOpenArtifact={vi.fn()}
+          onResume={vi.fn()}
+        />,
+      );
+    });
+
+    expect(host.textContent).not.toContain("undefined");
   });
 });

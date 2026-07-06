@@ -31,8 +31,9 @@ describe("assistant streaming lifecycle contract", () => {
       expect(src).toContain(
         "const markdownContent = streaming ? deferredRenderContent : content",
       );
+      expect(src).toContain("const boundedMarkdownContent = streaming");
       expect(src).toContain("renderMarkdownWithProfile(");
-      expect(src).toContain('markdownContent || ""');
+      expect(src).toContain('boundedMarkdownContent || ""');
     });
 
     it("AiMessageBubble uses the markdown render worker only for streaming assistant content", () => {

@@ -13,9 +13,12 @@ use crate::ai_runtime::web_evidence_broker::{
 };
 use crate::ai_runtime::writing_state::{save_writing_state, WritingState, WritingStateInput};
 use crate::ai_runtime::writing_workflow::{self, WritingTaskOutput};
-use crate::ai_runtime::{AiScene, PatchApplyResult, PatchProposal, TokenUsage, WritingIntent};
+use crate::ai_runtime::{
+    AiScene, PatchApplyResult, PatchProposal, SourceSpan, TokenUsage, WritingIntent,
+};
+use crate::ai_types::{EditTarget, EditTargetPlacement};
 use crate::app::AppState;
-use crate::error::AppResult;
+use crate::error::{AppError, AppResult};
 use crate::indexer::scan::FileEntry;
 
 /// Writing task input from frontend.
@@ -33,6 +36,9 @@ pub struct WritingTaskInputIpc {
     pub writing_goal: String,
     /// Whether web search is authorized
     pub web_authorized: bool,
+    /// Controlled edit target for no-selection insertion tasks.
+    #[serde(default)]
+    pub edit_target: Option<EditTarget>,
 }
 
 /// Apply a validated patch to a file (read → validate → write).
@@ -131,6 +137,225 @@ fn file_write_inner(
                 vec!["文档已写入，但索引刷新失败。可继续编辑，稍后可重新索引。".into()],
             ))
         }
+    }
+}
+
+fn file_read_inner_state(state: &AppState, path: &str) -> AppResult<String> {
+    use crate::storage::paths::is_user_note_path;
+
+    if !is_user_note_path(path) {
+        return Err(AppError::msg("只能读取用户笔记，不允许读取内部元数据路径"));
+    }
+    let vault = state.vault_path()?;
+    let abs = crate::storage::paths::resolve_vault_path(&vault, path)?;
+    Ok(std::fs::read_to_string(abs)?)
+}
+
+fn validate_edit_range(content: &str, range: SourceSpan) -> AppResult<SourceSpan> {
+    if range.start > range.end || range.end > content.len() {
+        return Err(AppError::msg("编辑目标范围超出文档边界"));
+    }
+    if !content.is_char_boundary(range.start) || !content.is_char_boundary(range.end) {
+        return Err(AppError::msg("编辑目标范围不在 UTF-8 字符边界上"));
+    }
+    Ok(range)
+}
+
+fn markdown_heading(line: &str) -> Option<(usize, &str)> {
+    let trimmed = line.trim_end_matches(['\r', '\n']);
+    let hashes = trimmed
+        .as_bytes()
+        .iter()
+        .take_while(|b| **b == b'#')
+        .count();
+    if hashes == 0 || hashes > 6 || !trimmed.as_bytes().get(hashes).is_some_and(|b| *b == b' ') {
+        return None;
+    }
+    Some((hashes, trimmed[hashes + 1..].trim()))
+}
+
+fn iter_markdown_lines_with_offsets(content: &str) -> impl Iterator<Item = (usize, &str)> {
+    let mut offset = 0usize;
+    content.split_inclusive('\n').map(move |line| {
+        let start = offset;
+        offset += line.len();
+        (start, line)
+    })
+}
+
+fn insertion_after_heading(content: &str, target: &EditTarget) -> AppResult<SourceSpan> {
+    let heading_text = target
+        .heading_text
+        .as_deref()
+        .ok_or_else(|| AppError::msg("after_heading 需要 headingText"))?;
+    for (start, line) in iter_markdown_lines_with_offsets(content) {
+        let Some((level, text)) = markdown_heading(line) else {
+            continue;
+        };
+        if target
+            .heading_level
+            .is_none_or(|expected| expected == level)
+            && text == heading_text
+        {
+            let end = start + line.len();
+            return validate_edit_range(content, SourceSpan { start: end, end });
+        }
+    }
+    Err(AppError::msg(format!("未找到编辑目标标题：{heading_text}")))
+}
+
+fn insertion_at_heading_ordinal(content: &str, target: &EditTarget) -> AppResult<SourceSpan> {
+    let level = target.heading_level.unwrap_or(1);
+    let ordinal = target
+        .ordinal
+        .ok_or_else(|| AppError::msg("insert_heading_at_ordinal 需要 ordinal"))?;
+    if ordinal == 0 {
+        return Err(AppError::msg("标题序号必须从 1 开始"));
+    }
+
+    let mut seen = 0usize;
+    for (start, line) in iter_markdown_lines_with_offsets(content) {
+        let Some((line_level, _)) = markdown_heading(line) else {
+            continue;
+        };
+        if line_level == level {
+            seen += 1;
+            if seen == ordinal {
+                return validate_edit_range(content, SourceSpan { start, end: start });
+            }
+        }
+    }
+
+    if seen + 1 == ordinal {
+        let end = content.len();
+        return validate_edit_range(content, SourceSpan { start: end, end });
+    }
+
+    Err(AppError::msg(format!(
+        "第 {ordinal} 个 {level} 级标题超出当前文档范围"
+    )))
+}
+
+pub(crate) fn resolve_edit_target_range(
+    content: &str,
+    target: &EditTarget,
+) -> AppResult<SourceSpan> {
+    if let Some(range) = target.range.clone() {
+        return validate_edit_range(content, range);
+    }
+
+    match target.placement {
+        EditTargetPlacement::ReplaceSelection => {
+            Err(AppError::msg("replace_selection 需要显式 range 或选区"))
+        }
+        EditTargetPlacement::Cursor => Err(AppError::msg(
+            "cursor placement 需要显式 range；当前请求没有提供光标字节位置",
+        )),
+        EditTargetPlacement::AppendDocument => {
+            let end = content.len();
+            validate_edit_range(content, SourceSpan { start: end, end })
+        }
+        EditTargetPlacement::AfterHeading => insertion_after_heading(content, target),
+        EditTargetPlacement::InsertHeadingAtOrdinal => {
+            insertion_at_heading_ordinal(content, target)
+        }
+    }
+}
+
+fn read_edit_target_content(
+    state: &AppState,
+    input: &WritingTaskInputIpc,
+    target_path: &str,
+) -> AppResult<String> {
+    if target_path == input.target_path && !input.cursor_context.is_empty() {
+        return Ok(input.cursor_context.clone());
+    }
+    file_read_inner_state(state, target_path)
+}
+
+fn insertion_fallback_text(target: &EditTarget, goal: &str) -> String {
+    let body = goal.trim();
+    match target.placement {
+        EditTargetPlacement::InsertHeadingAtOrdinal => {
+            let level = target.heading_level.unwrap_or(1).clamp(1, 6);
+            let heading = target.heading_text.as_deref().unwrap_or("新增内容");
+            if body.is_empty() {
+                format!(
+                    "{} {}
+
+",
+                    "#".repeat(level),
+                    heading
+                )
+            } else {
+                format!(
+                    "{} {}
+
+{}
+",
+                    "#".repeat(level),
+                    heading,
+                    body
+                )
+            }
+        }
+        _ if body.is_empty() => "
+"
+        .to_string(),
+        _ => format!(
+            "
+{}
+",
+            body
+        ),
+    }
+}
+
+fn normalize_insertion_text(target: &EditTarget, draft: String) -> String {
+    let trimmed = draft.trim();
+    if matches!(
+        target.placement,
+        EditTargetPlacement::InsertHeadingAtOrdinal
+    ) {
+        let level = target.heading_level.unwrap_or(1).clamp(1, 6);
+        let heading = target.heading_text.as_deref().unwrap_or("新增内容");
+        if trimmed.starts_with('#') {
+            format!(
+                "{}
+
+",
+                trimmed
+            )
+        } else if trimmed.is_empty() {
+            format!(
+                "{} {}
+
+",
+                "#".repeat(level),
+                heading
+            )
+        } else {
+            format!(
+                "{} {}
+
+{}
+",
+                "#".repeat(level),
+                heading,
+                trimmed
+            )
+        }
+    } else if trimmed.is_empty() {
+        "
+"
+        .to_string()
+    } else {
+        format!(
+            "
+{}
+",
+            trimmed
+        )
     }
 }
 
@@ -256,6 +481,62 @@ pub(crate) async fn execute_writing_task(
         } else {
             vec![]
         }
+    } else if let Some(ref edit_target) = input.edit_target {
+        let target_path = edit_target
+            .target_path
+            .clone()
+            .unwrap_or_else(|| input.target_path.clone());
+        let target_content = read_edit_target_content(state, &input, &target_path)?;
+        let range = resolve_edit_target_range(&target_content, edit_target)?;
+        let original_text = target_content
+            .get(range.start..range.end)
+            .ok_or_else(|| AppError::msg("编辑目标范围不是有效 UTF-8"))?;
+        let base_hash = edit_target
+            .base_content_hash
+            .as_deref()
+            .filter(|hash| !hash.is_empty())
+            .unwrap_or_else(|| {
+                if target_path == input.target_path && !input.base_content_hash.is_empty() {
+                    &input.base_content_hash
+                } else {
+                    ""
+                }
+            });
+        let computed_hash;
+        let base_content_hash = if base_hash.is_empty() {
+            computed_hash = writing_workflow::compute_content_hash(&target_content);
+            computed_hash.as_str()
+        } else {
+            base_hash
+        };
+        let (draft, usage) = writing_workflow::generate_replacement_with_llm(
+            &state.db,
+            app_handle,
+            &provider_config,
+            &intent,
+            "",
+            &target_content,
+            &input.writing_goal,
+            &evidence,
+        )
+        .await
+        .unwrap_or_else(|e| {
+            tracing::warn!("Writing insertion LLM failed: {e}");
+            (
+                insertion_fallback_text(edit_target, &input.writing_goal),
+                TokenUsage::default(),
+            )
+        });
+        total_tokens = usage;
+        let replacement = normalize_insertion_text(edit_target, draft);
+        vec![writing_workflow::build_patch_proposal(
+            &target_path,
+            base_content_hash,
+            original_text,
+            &replacement,
+            range,
+            evidence_ids.clone(),
+        )]
     } else {
         vec![]
     };
@@ -358,6 +639,86 @@ mod tests {
     use super::*;
     use std::fs;
     use tempfile::tempdir;
+
+    #[test]
+    fn edit_target_insert_heading_at_ordinal_resolves_utf8_boundary() {
+        let content = "# 一、事实
+
+甲乙。
+
+# 二、分析
+
+丙丁。
+
+# 四、其他
+
+戊己。
+";
+        let target = crate::ai_types::EditTarget {
+            target_path: Some("case.md".to_string()),
+            source: crate::ai_types::EditTargetSource::Conversation,
+            placement: crate::ai_types::EditTargetPlacement::InsertHeadingAtOrdinal,
+            heading_text: Some("三、核查思路".to_string()),
+            heading_level: Some(1),
+            ordinal: Some(3),
+            range: None,
+            base_content_hash: Some(writing_workflow::compute_content_hash(content)),
+        };
+
+        let range = resolve_edit_target_range(content, &target).unwrap();
+        assert_eq!(range.start, content.find("# 四、其他").unwrap());
+        assert_eq!(range.start, range.end);
+        assert!(content.is_char_boundary(range.start));
+    }
+
+    #[test]
+    fn edit_target_after_heading_resolves_empty_insert_range_after_section_heading() {
+        let content = "# 案件办理
+
+## 问题线索工作思路
+
+旧内容。
+";
+        let target = crate::ai_types::EditTarget {
+            target_path: Some("case.md".to_string()),
+            source: crate::ai_types::EditTargetSource::Prompt,
+            placement: crate::ai_types::EditTargetPlacement::AfterHeading,
+            heading_text: Some("问题线索工作思路".to_string()),
+            heading_level: Some(2),
+            ordinal: None,
+            range: None,
+            base_content_hash: Some(writing_workflow::compute_content_hash(content)),
+        };
+
+        let range = resolve_edit_target_range(content, &target).unwrap();
+        assert_eq!(
+            range.start,
+            "# 案件办理
+
+## 问题线索工作思路
+"
+            .len()
+        );
+        assert_eq!(range.start, range.end);
+        assert!(content.is_char_boundary(range.start));
+    }
+
+    #[test]
+    fn edit_target_cursor_without_range_returns_clarifying_error() {
+        let target = crate::ai_types::EditTarget {
+            target_path: Some("case.md".to_string()),
+            source: crate::ai_types::EditTargetSource::Prompt,
+            placement: crate::ai_types::EditTargetPlacement::Cursor,
+            heading_text: None,
+            heading_level: None,
+            ordinal: None,
+            range: None,
+            base_content_hash: None,
+        };
+
+        let error = resolve_edit_target_range("# 标题\n", &target).unwrap_err();
+        assert!(error.to_string().contains("cursor placement"));
+    }
 
     #[test]
     fn file_write_inner_returns_warning_when_reindex_fails() {

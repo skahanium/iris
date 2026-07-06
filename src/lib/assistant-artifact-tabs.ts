@@ -1,8 +1,12 @@
-import type {
+﻿import type {
   ArtifactTab,
   AssistantArtifactDraft,
   ArtifactKind,
 } from "@/types/assistant-artifact";
+import {
+  getAiPayloadStore,
+  sanitizePayloadForUi,
+} from "@/lib/ai-payload-store";
 
 export const ARTIFACT_TAB_STORAGE_KEY = "iris-ai-artifact-tabs-v1";
 export const ARTIFACT_TAB_LIMIT = 10;
@@ -219,9 +223,9 @@ function shouldDropKey(key: string): boolean {
   );
 }
 
-export function sanitizeArtifactPayload(value: unknown): unknown {
+function redactArtifactPayload(value: unknown): unknown {
   if (Array.isArray(value)) {
-    return value.map((item) => sanitizeArtifactPayload(item));
+    return value.map((item) => redactArtifactPayload(item));
   }
   if (!isPlainObject(value)) {
     return value;
@@ -229,9 +233,16 @@ export function sanitizeArtifactPayload(value: unknown): unknown {
   const next: Record<string, unknown> = {};
   for (const [key, item] of Object.entries(value)) {
     if (shouldDropKey(key)) continue;
-    next[key] = sanitizeArtifactPayload(item);
+    next[key] = redactArtifactPayload(item);
   }
   return next;
+}
+
+export function sanitizeArtifactPayload(value: unknown): unknown {
+  return sanitizePayloadForUi(
+    getAiPayloadStore(),
+    redactArtifactPayload(value),
+  );
 }
 
 export function buildArtifactTab(

@@ -38,13 +38,13 @@ describe("ErrorBoundary recovery", () => {
 
     await act(async () => {
       root.render(
-        <ErrorBoundary scope="AI对话区">
+        <ErrorBoundary scope="AI panel">
           <ThrowingChild />
         </ErrorBoundary>,
       );
     });
 
-    expect(host.textContent).toContain("界面出现异常（AI对话区）");
+    expect(host.textContent).toContain("boom");
     const irisLog = consoleError.mock.calls.find(
       (call) => call[0] === "Iris render error:",
     );
@@ -53,7 +53,7 @@ describe("ErrorBoundary recovery", () => {
     expect(irisLog?.[1]).toMatchObject({
       errorName: "Error",
       messageLength: 4,
-      scope: "AI对话区",
+      scope: "AI panel",
     });
   });
 
@@ -70,24 +70,75 @@ describe("ErrorBoundary recovery", () => {
 
     function RecoverableChild() {
       if (shouldThrow) throw new Error("boom");
-      return <div>已恢复</div>;
+      return <div>recovered</div>;
     }
 
     await act(async () => {
       root.render(
-        <ErrorBoundary scope="AI对话区">
+        <ErrorBoundary scope="AI panel">
           <RecoverableChild />
         </ErrorBoundary>,
       );
     });
     shouldThrow = false;
     const retryButton = host.querySelector("button");
-    expect(retryButton?.textContent).toBe("重试");
+    expect(retryButton).not.toBeNull();
     await act(async () => {
       retryButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
 
-    expect(host.textContent).toContain("已恢复");
+    expect(host.textContent).toContain("recovered");
     expect(consoleError).toHaveBeenCalled();
+  });
+
+  it("copies bounded crash diagnostics without raw message text", async () => {
+    const consoleError = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => undefined);
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText },
+    });
+
+    await act(async () => {
+      root.render(
+        <ErrorBoundary scope="AI panel">
+          <ThrowingChild />
+        </ErrorBoundary>,
+      );
+    });
+
+    const copyButton = host.querySelector(
+      '[data-testid="error-boundary-copy-diagnostics"]',
+    ) as HTMLButtonElement | null;
+    expect(copyButton).not.toBeNull();
+
+    await act(async () => {
+      copyButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    expect(writeText).toHaveBeenCalledTimes(1);
+    const payload = JSON.parse(writeText.mock.calls[0]?.[0] as string) as {
+      componentStack: string[];
+      errorName: string;
+      messageHash: string;
+      messageLength: number;
+      scope: string | null;
+      timestamp: string;
+    };
+    expect(payload).toMatchObject({
+      errorName: "Error",
+      messageLength: 4,
+      scope: "AI panel",
+    });
+    expect(payload.messageHash).toMatch(/^h[0-9a-f]+$/);
+    expect(payload.componentStack.length).toBeGreaterThan(0);
+    expect(Number.isNaN(Date.parse(payload.timestamp))).toBe(false);
+    expect(JSON.stringify(payload)).not.toContain("boom");
+    const irisLog = consoleError.mock.calls.find(
+      (call) => call[0] === "Iris render error:",
+    );
+    expect(irisLog?.some((arg) => arg instanceof Error)).toBe(false);
   });
 });

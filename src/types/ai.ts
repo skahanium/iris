@@ -257,6 +257,26 @@ export type TaskPlanIntent =
 
 export type TaskPlanConfidence = "high" | "medium" | "low";
 
+export type EditTargetSource = "selection" | "conversation" | "prompt";
+
+export type EditTargetPlacement =
+  | "replace_selection"
+  | "cursor"
+  | "append_document"
+  | "after_heading"
+  | "insert_heading_at_ordinal";
+
+export interface EditTarget {
+  targetPath?: string | null;
+  source: EditTargetSource;
+  placement: EditTargetPlacement;
+  headingText?: string | null;
+  headingLevel?: number | null;
+  ordinal?: number | null;
+  range?: SourceSpan | null;
+  baseContentHash?: string | null;
+}
+
 export type EvidenceNeed = "none" | "fresh_web" | "multi_source_research";
 export type ContextNeed =
   | "none"
@@ -336,6 +356,7 @@ export interface TaskPlan {
   requiresClarification: boolean;
   clarificationQuestion?: string | null;
   sourceHints: string[];
+  editTarget?: EditTarget | null;
 }
 
 export interface CapabilityRouteSummary {
@@ -892,6 +913,7 @@ export interface WritingTaskInput {
   writing_goal: string;
   /** 是否允许联网 */
   web_authorized: boolean;
+  edit_target?: EditTarget | null;
 }
 
 /** 写作意图 */

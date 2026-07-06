@@ -97,6 +97,7 @@ pub fn legacy_intent_for_task_plan(plan: &TaskPlanSummary) -> AssistantIntent {
             AssistantIntent::Chat
         }
         TaskPlanIntent::AskNotes => AssistantIntent::Knowledge,
+        TaskPlanIntent::CreativeWrite if plan.edit_target.is_some() => AssistantIntent::Writing,
         TaskPlanIntent::CreativeWrite => AssistantIntent::Chat,
         TaskPlanIntent::RewriteSelection => AssistantIntent::Writing,
         TaskPlanIntent::CitationCheck => AssistantIntent::Citation,
@@ -219,6 +220,7 @@ fn derive_compat_task_plan(request: &AssistantExecuteRequest) -> TaskPlanSummary
         requires_clarification: false,
         clarification_question: None,
         source_hints,
+        edit_target: None,
     }
 }
 
@@ -270,6 +272,9 @@ fn execution_mode_for_task_plan(plan: &TaskPlanSummary) -> ExecutionMode {
 fn output_mode_for_task_plan(plan: &TaskPlanSummary) -> OutputMode {
     match plan.execution_mode {
         ExecutionMode::PatchProposal => OutputMode::ConfirmationRequired,
+        ExecutionMode::WritingCandidate if plan.edit_target.is_some() => {
+            OutputMode::ConfirmationRequired
+        }
         ExecutionMode::StructuredTask | ExecutionMode::LongTask
             if !plan.artifact_plan.is_empty() =>
         {
@@ -291,9 +296,22 @@ mod tests {
     use super::*;
     use crate::ai_runtime::agent_task_policy::AgentTaskPolicy;
     use crate::ai_types::{
-        CapabilitySlot, ExecutionMode, RetrievalMode, TaskPlanConfidence, TaskPlanIntent,
-        TaskPlanSummary, WebMode,
+        CapabilitySlot, EditTarget, EditTargetPlacement, EditTargetSource, ExecutionMode,
+        RetrievalMode, TaskPlanConfidence, TaskPlanIntent, TaskPlanSummary, WebMode,
     };
+
+    fn edit_target_for_test() -> EditTarget {
+        EditTarget {
+            target_path: Some("notes/draft.md".into()),
+            source: EditTargetSource::Prompt,
+            placement: EditTargetPlacement::AppendDocument,
+            heading_text: None,
+            heading_level: None,
+            ordinal: None,
+            range: None,
+            base_content_hash: None,
+        }
+    }
 
     fn request_with_plan(plan: TaskPlanSummary) -> AssistantExecuteRequest {
         AssistantExecuteRequest {
@@ -340,6 +358,7 @@ mod tests {
             requires_clarification: false,
             clarification_question: None,
             source_hints: Vec::new(),
+            edit_target: None,
         }
     }
 
@@ -356,6 +375,24 @@ mod tests {
         assert_eq!(
             legacy_intent_for_task_plan(&task_plan),
             AssistantIntent::Chat
+        );
+    }
+
+    #[test]
+    fn creative_write_with_edit_target_uses_writing_executor() {
+        let mut task_plan = plan(TaskPlanIntent::CreativeWrite);
+        task_plan.execution_mode = ExecutionMode::WritingCandidate;
+        task_plan.edit_target = Some(edit_target_for_test());
+
+        let task_plan = build_or_validate_task_plan(&request_with_plan(task_plan)).unwrap();
+
+        assert_eq!(
+            legacy_intent_for_task_plan(&task_plan),
+            AssistantIntent::Writing
+        );
+        assert_eq!(
+            task_plan.output_mode,
+            crate::ai_types::OutputMode::ConfirmationRequired
         );
     }
 

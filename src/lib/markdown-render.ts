@@ -4,6 +4,7 @@ import { common, createLowlight } from "lowlight";
 import { repairTightStrongPunctuationBoundaries } from "@/lib/markdown";
 
 const lowlight = createLowlight(common);
+const CODE_HIGHLIGHT_MAX_CHARS = 40_000;
 
 interface AiMarkdownRenderOptions {
   streaming?: boolean;
@@ -221,6 +222,10 @@ export const proseMarked = new Marked({
   renderer: {
     code({ text, lang }: { text: string; lang?: string }): string {
       const language = lang || "";
+      const plainLangAttr = language ? ` class="language-${language}"` : "";
+      if (text.length > CODE_HIGHLIGHT_MAX_CHARS) {
+        return `<pre><code${plainLangAttr}>${escapeText(text)}</code></pre>`;
+      }
       try {
         let highlightedHtml: string;
         if (language && lowlight.registered(language)) {

@@ -64,15 +64,19 @@ export function useAgentTaskStatus({
 
     let cancelled = false;
     let intervalId: ReturnType<typeof window.setInterval> | null = null;
+    let refreshSequence = 0;
 
     const refresh = async () => {
+      const sequence = refreshSequence + 1;
+      refreshSequence = sequence;
+
       try {
         const [task, steps, events] = await Promise.all([
           agentTaskGet(taskId),
           agentTaskSteps(taskId),
           agentTaskEvents(taskId),
         ]);
-        if (cancelled) return;
+        if (cancelled || sequence !== refreshSequence) return;
         if (!task) {
           setAgentTask(null);
           setAgentTaskStepsState([]);
@@ -80,8 +84,8 @@ export function useAgentTaskStatus({
           return;
         }
         setAgentTask(task);
-        setAgentTaskStepsState(steps);
-        setAgentTaskEventsState(events);
+        setAgentTaskStepsState(Array.isArray(steps) ? steps : []);
+        setAgentTaskEventsState(Array.isArray(events) ? events : []);
 
         if (TERMINAL_TASK_STATUSES.has(task.status) && intervalId) {
           window.clearInterval(intervalId);
@@ -93,7 +97,7 @@ export function useAgentTaskStatus({
           }, POLL_INTERVAL_MS);
         }
       } catch (error: unknown) {
-        if (cancelled) return;
+        if (cancelled || sequence !== refreshSequence) return;
         const message = error instanceof Error ? error.message : String(error);
         setLastError(message);
       }

@@ -202,6 +202,28 @@ describe("AI message left rail layout contract", () => {
     });
   });
 
+  describe("empty assistant placeholder lifecycle", () => {
+    it("does not render a finalized empty assistant placeholder as a bubble", async () => {
+      await act(async () => {
+        root.render(
+          <AiMessageList
+            messages={[
+              { role: "user", content: "question" },
+              { role: "assistant", content: "" },
+            ]}
+            streaming={false}
+            selectedIndices={new Set()}
+            onSelect={vi.fn()}
+            onRetract={vi.fn()}
+          />,
+        );
+      });
+
+      expect(host.querySelector(".ai-message-bubble-assistant")).toBeNull();
+      expect(host.querySelector('button[title="复制此消息"]')).toBeNull();
+    });
+  });
+
   describe("ai-message-body text selection does not trigger message select", () => {
     it("clicking on message body does not call onSelect", async () => {
       const onSelect = vi.fn();

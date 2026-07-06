@@ -1,10 +1,14 @@
-import type {
+﻿import type {
   CitationCheckResult,
   OrganizeSuggestion,
   PatchProposal,
   WritingState,
 } from "@/types/ai";
 import { artifactPassesValueGate } from "@/lib/assistant-artifact-tabs";
+import {
+  getAiPayloadStore,
+  sanitizePayloadForUi,
+} from "@/lib/ai-payload-store";
 import type { AssistantArtifactDraft } from "@/types/assistant-artifact";
 
 import { AssistantArtifactTagStrip } from "./AssistantArtifactTagStrip";
@@ -38,7 +42,11 @@ export function AssistantTaskSurfaces({
 }: AssistantTaskSurfacesProps) {
   const artifacts: AssistantArtifactDraft[] = [];
   const pushArtifact = (draft: AssistantArtifactDraft) => {
-    if (artifactPassesValueGate(draft)) artifacts.push(draft);
+    const safeDraft = {
+      ...draft,
+      payload: sanitizePayloadForUi(getAiPayloadStore(), draft.payload),
+    };
+    if (artifactPassesValueGate(safeDraft)) artifacts.push(safeDraft);
   };
 
   if (assistantArtifacts.length > 0) {
@@ -69,7 +77,7 @@ export function AssistantTaskSurfaces({
   if (organizeSuggestions.length > 0) {
     pushArtifact({
       kind: "structured_result",
-      title: "整理建议",
+      title: "鏁寸悊寤鸿",
       sourceRequestId: organizeSuggestions.map((item) => item.id).join("-"),
       payload: {
         schema: "organize_result",

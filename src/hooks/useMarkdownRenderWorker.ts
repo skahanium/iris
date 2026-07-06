@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 
+import { createWorkerRenderableContent } from "@/lib/assistant-render-budget";
 import type {
   MarkdownRenderWorkerRequest,
   MarkdownRenderWorkerResponse,
@@ -24,6 +25,15 @@ function createMarkdownRenderWorker(): Worker {
   );
 }
 
+function safeTerminate(worker: Worker | null): void {
+  if (!worker) return;
+  try {
+    worker.terminate();
+  } catch {
+    // Ignore worker shutdown errors from a half-closed WebView worker port.
+  }
+}
+
 export function useMarkdownRenderWorker({
   content,
   enabled,
@@ -40,8 +50,9 @@ export function useMarkdownRenderWorker({
 
   useEffect(() => {
     if (!enabled || !streaming) {
-      workerRef.current?.terminate();
+      safeTerminate(workerRef.current);
       workerRef.current = null;
+      lastHtmlRef.current = null;
       setState({
         failed: false,
         html: null,
@@ -50,19 +61,36 @@ export function useMarkdownRenderWorker({
       return;
     }
 
-    if (typeof Worker === "undefined") {
-      workerRef.current?.terminate();
-      workerRef.current = null;
+    let disposed = false;
+    const failRender = () => {
+      if (disposed) return;
       setState({
         failed: true,
         html: lastHtmlRef.current,
         pending: false,
       });
-      return;
+    };
+
+    if (typeof Worker === "undefined") {
+      safeTerminate(workerRef.current);
+      workerRef.current = null;
+      lastHtmlRef.current = null;
+      failRender();
+      return () => {
+        disposed = true;
+      };
     }
 
     if (!workerRef.current) {
-      workerRef.current = createMarkdownRenderWorker();
+      try {
+        workerRef.current = createMarkdownRenderWorker();
+      } catch {
+        workerRef.current = null;
+        failRender();
+        return () => {
+          disposed = true;
+        };
+      }
     }
 
     const worker = workerRef.current;
@@ -75,6 +103,7 @@ export function useMarkdownRenderWorker({
     }));
 
     worker.onmessage = (event: MessageEvent<MarkdownRenderWorkerResponse>) => {
+      if (disposed) return;
       const response = event.data;
       if (response.id !== requestIdRef.current) return;
 
@@ -89,11 +118,7 @@ export function useMarkdownRenderWorker({
       }
 
       if (response.type === "error") {
-        setState({
-          failed: true,
-          html: lastHtmlRef.current,
-          pending: false,
-        });
+        failRender();
         return;
       }
 
@@ -105,31 +130,50 @@ export function useMarkdownRenderWorker({
     };
 
     worker.onerror = () => {
-      setState({
-        failed: true,
-        html: lastHtmlRef.current,
-        pending: false,
-      });
+      failRender();
+      if (workerRef.current === worker) {
+        safeTerminate(workerRef.current);
+        workerRef.current = null;
+      }
     };
 
+    const renderable = createWorkerRenderableContent(content);
     const request: MarkdownRenderWorkerRequest = {
       type: "render",
       id,
       profile: "chat_assistant",
-      content,
+      content: renderable.content,
       streaming,
     };
-    worker.postMessage(request);
+
+    try {
+      worker.postMessage(request);
+    } catch {
+      failRender();
+      if (workerRef.current === worker) {
+        safeTerminate(workerRef.current);
+        workerRef.current = null;
+      }
+    }
 
     return () => {
-      worker.postMessage({ type: "abort", id });
+      disposed = true;
+      try {
+        worker.postMessage({ type: "abort", id });
+      } catch {
+        if (workerRef.current === worker) {
+          safeTerminate(workerRef.current);
+          workerRef.current = null;
+        }
+      }
     };
   }, [content, enabled, streaming]);
 
   useEffect(() => {
     return () => {
-      workerRef.current?.terminate();
+      safeTerminate(workerRef.current);
       workerRef.current = null;
+      lastHtmlRef.current = null;
     };
   }, []);
 

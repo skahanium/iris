@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from "react";
+﻿import { useCallback, useMemo, useState } from "react";
 import {
   AlertTriangle,
   Check,
@@ -49,15 +49,24 @@ interface ProcessArtifactPayload {
   task?: AgentTaskDto | null;
   steps?: AgentTaskStepDto[];
   events?: AgentTaskEventDto[];
-  plan?: string[];
-  evidenceGaps?: string[];
-  verificationFailures?: string[];
+  plan?: unknown[];
+  evidenceGaps?: unknown[];
+  verificationFailures?: unknown[];
 }
 
 function asRecord(value: unknown): Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : {};
+}
+
+function displayText(value: unknown): string {
+  if (typeof value === "string") return value;
+  const record = asRecord(value);
+  if (typeof record.preview === "string") return record.preview;
+  const ref = asRecord(record.contentRef);
+  if (typeof ref.preview === "string") return ref.preview;
+  return "";
 }
 
 function asResearchPayload(value: unknown): ResearchFocusPayload | null {
@@ -70,8 +79,7 @@ function asResearchPayload(value: unknown): ResearchFocusPayload | null {
 }
 
 function patchPayload(value: unknown): PatchProposal[] {
-  const record = asRecord(value);
-  const patches = record.patches;
+  const patches = asRecord(value).patches;
   return Array.isArray(patches) ? (patches as PatchProposal[]) : [];
 }
 
@@ -82,8 +90,7 @@ function citationPayload(value: unknown): CitationCheckResult | null {
 }
 
 function organizePayload(value: unknown): OrganizeSuggestion[] {
-  const record = asRecord(value);
-  const suggestions = record.suggestions;
+  const suggestions = asRecord(value).suggestions;
   return Array.isArray(suggestions)
     ? (suggestions as OrganizeSuggestion[])
     : [];
@@ -114,7 +121,9 @@ function EvidenceSourcesArtifactView({ tab }: { tab: ArtifactTab }) {
   if (!result) {
     return <p className="text-sm text-muted-foreground">暂无研究结果。</p>;
   }
-  const propositions = result.evidence_matrix.propositions;
+  const matrix = result.evidence_matrix;
+  const propositions = matrix.propositions;
+
   return (
     <div className="space-y-4">
       <Card>
@@ -148,21 +157,21 @@ function EvidenceSourcesArtifactView({ tab }: { tab: ArtifactTab }) {
             </div>
             <div>
               <div className="text-lg font-semibold">
-                {result.evidence_matrix.total_evidence_count}
+                {matrix.total_evidence_count}
               </div>
               <div className="text-xs text-muted-foreground">证据条目</div>
             </div>
             <div>
               <div className="text-lg font-semibold">
-                {Math.round(result.evidence_matrix.coverage_score * 100)}%
+                {Math.round(matrix.coverage_score * 100)}%
               </div>
               <div className="text-xs text-muted-foreground">覆盖率</div>
             </div>
           </div>
-          {result.evidence_matrix.global_gaps.length ? (
+          {matrix.global_gaps.length ? (
             <div className="rounded-md border border-border/60 px-3 py-2">
               <p className="text-sm font-medium">证据缺口</p>
-              {result.evidence_matrix.global_gaps.map((gap) => (
+              {matrix.global_gaps.map((gap) => (
                 <p key={gap} className="mt-1 text-sm text-muted-foreground">
                   {gap}
                 </p>
@@ -209,81 +218,86 @@ function TaskProcessArtifactView({ tab }: { tab: ArtifactTab }) {
       : null;
 
   return (
-    <div className="space-y-4">
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2 text-base">
-            <ListChecks className="h-4 w-4" />
-            过程详情
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          {plan.length ? (
-            <section>
-              <h2 className="text-sm font-medium">计划</h2>
-              {plan.map((item) => (
-                <p key={item} className="mt-1 text-sm text-muted-foreground">
-                  {item}
-                </p>
-              ))}
-            </section>
-          ) : null}
-          {gaps.length ? (
-            <section>
-              <h2 className="text-sm font-medium">证据缺口</h2>
-              {gaps.map((item) => (
-                <p key={item} className="mt-1 text-sm text-muted-foreground">
-                  {item}
-                </p>
-              ))}
-            </section>
-          ) : null}
-          {failures.length ? (
-            <section>
-              <h2 className="text-sm font-medium">验证未通过</h2>
-              {failures.map((item) => (
-                <p key={item} className="mt-1 text-sm text-muted-foreground">
-                  {item}
-                </p>
-              ))}
-            </section>
-          ) : null}
-          {pauseReason ? (
-            <section>
-              <h2 className="text-sm font-medium">暂停原因</h2>
-              <p className="mt-1 text-sm text-muted-foreground">
-                {pauseReason}
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2 text-base">
+          <ListChecks className="h-4 w-4" />
+          过程详情
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        {plan.length ? (
+          <section>
+            <h2 className="text-sm font-medium">计划</h2>
+            {plan.map((item, index) => (
+              <p
+                key={`${index}:${displayText(item)}`}
+                className="mt-1 text-sm text-muted-foreground"
+              >
+                {displayText(item)}
               </p>
-            </section>
-          ) : null}
-          {payload.steps?.length ? (
-            <section>
-              <h2 className="text-sm font-medium">步骤摘要</h2>
-              {payload.steps.map((step) => (
-                <p key={step.id} className="mt-1 text-sm text-muted-foreground">
-                  {step.output_summary || step.input_summary}
+            ))}
+          </section>
+        ) : null}
+        {gaps.length ? (
+          <section>
+            <h2 className="text-sm font-medium">证据缺口</h2>
+            {gaps.map((item, index) => (
+              <p
+                key={`${index}:${displayText(item)}`}
+                className="mt-1 text-sm text-muted-foreground"
+              >
+                {displayText(item)}
+              </p>
+            ))}
+          </section>
+        ) : null}
+        {failures.length ? (
+          <section>
+            <h2 className="text-sm font-medium">验证未通过</h2>
+            {failures.map((item, index) => (
+              <p
+                key={`${index}:${displayText(item)}`}
+                className="mt-1 text-sm text-muted-foreground"
+              >
+                {displayText(item)}
+              </p>
+            ))}
+          </section>
+        ) : null}
+        {pauseReason ? (
+          <section>
+            <h2 className="text-sm font-medium">暂停原因</h2>
+            <p className="mt-1 text-sm text-muted-foreground">{pauseReason}</p>
+          </section>
+        ) : null}
+        {payload.steps?.length ? (
+          <section>
+            <h2 className="text-sm font-medium">步骤摘要</h2>
+            {payload.steps.map((step) => (
+              <p key={step.id} className="mt-1 text-sm text-muted-foreground">
+                {displayText(step.output_summary || step.input_summary)}
+              </p>
+            ))}
+          </section>
+        ) : null}
+        {payload.events?.length ? (
+          <section>
+            <h2 className="text-sm font-medium">事件</h2>
+            {payload.events
+              .filter((event) => displayText(event.message).trim().length > 0)
+              .map((event) => (
+                <p
+                  key={event.id}
+                  className="mt-1 text-sm text-muted-foreground"
+                >
+                  {displayText(event.message)}
                 </p>
               ))}
-            </section>
-          ) : null}
-          {payload.events?.length ? (
-            <section>
-              <h2 className="text-sm font-medium">事件</h2>
-              {payload.events
-                .filter((event) => event.message.trim().length > 0)
-                .map((event) => (
-                  <p
-                    key={event.id}
-                    className="mt-1 text-sm text-muted-foreground"
-                  >
-                    {event.message}
-                  </p>
-                ))}
-            </section>
-          ) : null}
-        </CardContent>
-      </Card>
-    </div>
+          </section>
+        ) : null}
+      </CardContent>
+    </Card>
   );
 }
 
@@ -512,9 +526,9 @@ function OrganizeStructuredResultView({
 function DocumentIssuesStructuredResultView({ tab }: { tab: ArtifactTab }) {
   const record = asRecord(tab.payload);
   const issues = Array.isArray(record.issues)
-    ? (record.issues as string[])
+    ? (record.issues as unknown[]).map(displayText).filter(Boolean)
     : [];
-  const summary = typeof record.summary === "string" ? record.summary : null;
+  const summary = displayText(record.summary) || null;
 
   return (
     <Card>

@@ -57,9 +57,13 @@ fn is_placeholder_title(title: &str) -> bool {
     PLACEHOLDER_TITLES.iter().any(|p| title_lower.contains(p)) || title.trim().is_empty()
 }
 
-/// Check if a title is too long (over 100 characters).
+/// Check if a title is too long for compact display.
 fn is_title_too_long(title: &str) -> bool {
-    title.len() > 100
+    title.chars().count() > 100
+}
+
+fn truncate_chars(value: &str, max_chars: usize) -> String {
+    value.chars().take(max_chars).collect()
 }
 
 /// Check if a title is too short (under 2 characters).
@@ -89,7 +93,7 @@ fn generate_title_suggestions(path: &str, title: &str, _content: &str) -> Vec<Or
             suggestion_type: OrganizeSuggestionType::RenameTitle,
             target_path: path.to_string(),
             current_value: Some(title.to_string()),
-            suggested_value: format!("{}...", &title[..50]),
+            suggested_value: format!("{}...", truncate_chars(title, 50)),
             reason: "标题过长（超过100字符），建议精简".to_string(),
             source: "pattern_analysis".to_string(),
             confidence: 0.7,
@@ -384,6 +388,17 @@ mod tests {
         );
         assert_eq!(extract_tag_from_title("笔记"), None);
         assert_eq!(extract_tag_from_title("项目总结"), Some("项目".to_string()));
+    }
+
+    #[test]
+    fn title_suggestion_truncates_long_chinese_title_without_panicking() {
+        let title = "李希在中央纪委常委会会议上强调深入学习贯彻习近平党建思想 纵深推进纪检监察工作高质量发展".repeat(3);
+        let suggestions = generate_title_suggestions("case.md", &title, "");
+
+        assert_eq!(suggestions.len(), 1);
+        assert!(suggestions[0].suggested_value.ends_with("..."));
+        assert!(std::str::from_utf8(suggestions[0].suggested_value.as_bytes()).is_ok());
+        assert!(suggestions[0].suggested_value.chars().count() <= 53);
     }
 
     #[test]

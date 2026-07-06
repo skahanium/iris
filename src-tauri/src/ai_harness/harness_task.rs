@@ -697,31 +697,43 @@ pub(crate) async fn run_harness_task(
     };
     let outcome = match legacy_intent {
         AssistantIntent::Writing => {
-            let note_path = request
-                .note_path
-                .clone()
-                .ok_or_else(|| AppError::msg("写作任务需要 notePath"))?;
+            let edit_target = task_plan.edit_target.clone();
+            let note_path = edit_target
+                .as_ref()
+                .and_then(|target| target.target_path.clone())
+                .or_else(|| request.note_path.clone())
+                .ok_or_else(|| AppError::msg("写作任务需要 notePath 或 editTarget.targetPath"))?;
             let selection = request
                 .selection
                 .as_ref()
                 .filter(|s| !s.is_empty())
-                .ok_or_else(|| AppError::msg("写作任务需要选区"))?
-                .clone();
+                .cloned();
+            if selection.is_none() && edit_target.is_none() {
+                return Err(AppError::msg("写作任务需要选区或 editTarget"));
+            }
             let cursor_context = request
                 .cursor_context
                 .clone()
                 .or(request.note_content.clone())
                 .unwrap_or_default();
+            let base_content_hash = edit_target
+                .as_ref()
+                .and_then(|target| target.base_content_hash.clone())
+                .filter(|hash| !hash.is_empty())
+                .unwrap_or_else(|| {
+                    resolve_content_hash(
+                        request.note_content.as_deref(),
+                        request.base_content_hash.as_deref(),
+                    )
+                });
             let input = WritingTaskInputIpc {
                 target_path: note_path,
-                base_content_hash: resolve_content_hash(
-                    request.note_content.as_deref(),
-                    request.base_content_hash.as_deref(),
-                ),
-                selection: Some(selection),
+                base_content_hash,
+                selection,
                 cursor_context,
                 writing_goal: apply_skill_overlay_to_goal(&request.message, &skill_overlay),
                 web_authorized: request.web_authorized,
+                edit_target,
             };
             let trace_id = uuid::Uuid::new_v4().to_string();
             emit_workflow_trace(app_handle, &trace_id, "writing", "running");

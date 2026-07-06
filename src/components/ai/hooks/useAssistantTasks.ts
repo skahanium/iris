@@ -1,4 +1,4 @@
-import {
+﻿import {
   useCallback,
   useState,
   type Dispatch,
@@ -18,6 +18,16 @@ import {
   type AiLifecycleRecorder,
 } from "@/lib/ai-lifecycle-trace";
 import { pendingWriteConfirmationAction } from "@/lib/assistant-write-confirmation";
+import {
+  getAiPayloadStore,
+  projectTextForUi,
+  restoreChatLineContent,
+  restoreChatLinesForPersistence,
+} from "@/lib/ai-payload-store";
+import {
+  appendSystemMessageAfterDroppingEmptyAssistant,
+  dropTrailingEmptyAssistantPlaceholder,
+} from "@/lib/assistant-transcript";
 import {
   agentIntentForTaskPlan,
   intentDetectionForTaskPlan,
@@ -223,7 +233,7 @@ function lastAssistantContent(messages: ChatLine[]): string {
   for (let index = messages.length - 1; index >= 0; index -= 1) {
     const message = messages[index];
     if (message?.role === "assistant") {
-      return message.content;
+      return restoreChatLineContent(message);
     }
   }
   return "";
@@ -495,8 +505,8 @@ export function useAssistantTasks({
       setActionState(buildActionState(intent, "running"));
       assistantRun.setFromTaskStatus("running", intent);
       ensureAssistantStreamSlot();
-      setActivityHint("正在连接模型并处理工具调用…");
-      assistantRun.setActivityHint("正在连接模型并处理工具调用…");
+      setActivityHint("正在连接模型并处理工具调用...");
+      assistantRun.setActivityHint("正在连接模型并处理工具调用...");
       let completedOk = false;
 
       try {
@@ -600,7 +610,9 @@ export function useAssistantTasks({
           const last = next[next.length - 1];
           if (last?.role === "assistant") {
             if (reconcile.mutation === "noop" && last.toolCalls === toolCalls) {
-              void saveConversationSnapshot?.(next);
+              void saveConversationSnapshot?.(
+                restoreChatLinesForPersistence(next),
+              );
               return prev;
             }
             next[next.length - 1] = {
@@ -615,7 +627,7 @@ export function useAssistantTasks({
               toolCalls,
             });
           }
-          void saveConversationSnapshot?.(next);
+          void saveConversationSnapshot?.(restoreChatLinesForPersistence(next));
           return next;
         });
         const pendingTools =
@@ -646,16 +658,19 @@ export function useAssistantTasks({
         const message = invokeErrorMessage(error);
         if (isAbortErrorMessage(message)) {
           clearHarnessRecoveryState();
+          setMessages(dropTrailingEmptyAssistantPlaceholder);
           setActionState(buildActionState(intent, "idle"));
           assistantRun.setFromTaskStatus("idle", intent);
           return;
         }
         clearHarnessRecoveryState();
         setLastError(message);
-        setMessages((prev) => [
-          ...prev,
-          { role: "system", content: `错误: ${message}` },
-        ]);
+        setMessages((prev) =>
+          appendSystemMessageAfterDroppingEmptyAssistant(
+            prev,
+            `\u9519\u8bef: ${message}`,
+          ),
+        );
         setActionState(buildActionState(intent, "error", message));
         assistantRun.setFromTaskStatus("error", intent);
       } finally {
@@ -724,8 +739,8 @@ export function useAssistantTasks({
       setActionState(buildActionState(intent, "running"));
       setActivityHint(
         aiDomain === "classified"
-          ? "正在准备涉密上下文…"
-          : "正在检索知识库与本地笔记…",
+          ? "正在准备涉密上下文"
+          : "正在检索知识库与本地笔记",
       );
 
       try {
@@ -736,15 +751,18 @@ export function useAssistantTasks({
       } catch (error) {
         const message = invokeErrorMessage(error);
         if (isAbortErrorMessage(message)) {
+          setMessages(dropTrailingEmptyAssistantPlaceholder);
           setActionState(buildActionState(intent, "idle"));
           setActivityHint(null);
           return;
         }
         setLastError(message);
-        setMessages((prev) => [
-          ...prev,
-          { role: "system", content: `错误: ${message}` },
-        ]);
+        setMessages((prev) =>
+          appendSystemMessageAfterDroppingEmptyAssistant(
+            prev,
+            `\u9519\u8bef: ${message}`,
+          ),
+        );
         setActionState(buildActionState(intent, "error", message));
         setActivityHint(null);
       }
@@ -763,31 +781,46 @@ export function useAssistantTasks({
 
   const runWriting = useCallback(
     async (rawMessage: string, taskPlan?: TaskPlan) => {
+      const editTarget = taskPlan?.editTarget ?? null;
       const ctx = getWritingContext();
-      if (!notePath || !ctx) {
+      const targetPath = editTarget?.targetPath ?? notePath;
+      if (!targetPath) {
+        throw new Error(
+          "请先打开一篇笔记，或在请求中用 @xxx.md 指定目标文档。",
+        );
+      }
+      if (!ctx && !editTarget) {
         throw new Error("请先在编辑器中选中需要处理的内容。");
       }
+      const targetIsCurrentNote = targetPath === notePath;
+      const targetNoteContent = targetIsCurrentNote
+        ? getNoteContentForRequest()
+        : null;
       setActionState(buildActionState("writing", "running"));
       assistantRun.setFromTaskStatus("running", "writing");
       clearTaskSurfaces();
       const response = await assistantExecute({
-        agentIntent: "rewrite_selection",
+        agentIntent: editTarget ? "write" : "rewrite_selection",
         intent: "writing",
         intentDetection: explicitIntentDetection(
-          "rewrite_selection",
-          "Inline writing action explicitly requested a selected-text rewrite.",
-          ["ui_action:rewrite", "context:selection"],
+          editTarget ? "write" : "rewrite_selection",
+          editTarget
+            ? "TaskPlan resolved to a controlled Markdown edit target."
+            : "Inline writing action explicitly requested a selected-text rewrite.",
+          editTarget
+            ? ["ui_action:write", "context:edit_target"]
+            : ["ui_action:rewrite", "context:selection"],
           ["write", "chat"],
         ),
         message: rawMessage,
         aiDomain,
         contextReferences: getContextReferencesForRequest(),
         taskPlan,
-        notePath,
-        noteContent: getNoteContentForRequest(),
+        notePath: targetPath,
+        noteContent: targetNoteContent,
         webAuthorized: webSearch,
-        selection: ctx.selection,
-        cursorContext: ctx.cursorContext,
+        selection: ctx?.selection ?? null,
+        cursorContext: ctx?.cursorContext ?? targetNoteContent ?? "",
       });
       recordRunPlan(response);
       recordAssistantArtifacts(response);
@@ -1074,7 +1107,14 @@ export function useAssistantTasks({
         }
         const result = response.payload;
         // The authoritative summary wins over any streamed snapshot.
-        setDocSummary(result.analysis_summary ?? null);
+        setDocSummary(
+          result.analysis_summary
+            ? projectTextForUi(getAiPayloadStore(), result.analysis_summary, {
+                kind: "document_summary",
+                maxPreviewChars: 36_000,
+              }).content
+            : null,
+        );
         const issues: string[] = [];
         if (result.outline_result) {
           for (const issue of result.outline_result.issues) {
@@ -1276,7 +1316,7 @@ export function useAssistantTasks({
           {
             role: "assistant",
             content:
-              "当前有多条待确认修改。请在写作修改面板中逐条接受或拒绝，以避免多条补丁互相覆盖。",
+              "当前有多条待确认修改。请在写作修改面板中逐条接受或拒绝，避免多条补丁互相覆盖。",
           },
         ]);
         setActivityHint(null);
@@ -1298,7 +1338,7 @@ export function useAssistantTasks({
 
       setActionState(buildActionState("writing", "running"));
       assistantRun.setFromTaskStatus("running", "writing");
-      setActivityHint("正在应用已确认的文档修改…");
+      setActivityHint("正在应用已确认的文档修改...");
       const applied = await acceptWritingPatch(patch);
       setMessages((prev) => [
         ...prev,
@@ -1352,7 +1392,7 @@ export function useAssistantTasks({
     );
     clearCitationMiss();
     appendUserMessage(rawMessage, currentImages);
-    setActivityHint("正在理解你的问题…");
+    setActivityHint("正在理解你的问题...");
 
     try {
       if (taskPlan.requiresClarification) {
@@ -1382,6 +1422,10 @@ export function useAssistantTasks({
           await runWriting(rawMessage, taskPlan);
           break;
         case "creative_write":
+          if (taskPlan.editTarget) {
+            await runWriting(rawMessage, taskPlan);
+            break;
+          }
           await runKnowledgeChat(rawMessage, "chat", {
             startNewSession,
             agentIntent,
@@ -1426,15 +1470,18 @@ export function useAssistantTasks({
     } catch (error) {
       const message = invokeErrorMessage(error);
       if (isAbortErrorMessage(message)) {
+        setMessages(dropTrailingEmptyAssistantPlaceholder);
         setActionState(buildActionState(intent, "idle"));
         assistantRun.setFromTaskStatus("idle", intent);
         return;
       }
       setLastError(message);
-      setMessages((prev) => [
-        ...prev,
-        { role: "system", content: `错误: ${message}` },
-      ]);
+      setMessages((prev) =>
+        appendSystemMessageAfterDroppingEmptyAssistant(
+          prev,
+          `\u9519\u8bef: ${message}`,
+        ),
+      );
       setActionState(buildActionState(intent, "error", message));
       assistantRun.setFromTaskStatus("error", intent);
     } finally {

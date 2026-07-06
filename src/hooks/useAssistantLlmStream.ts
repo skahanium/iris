@@ -1,4 +1,4 @@
-import {
+﻿import {
   startTransition,
   useEffect,
   useRef,
@@ -23,7 +23,10 @@ import type {
 } from "@/types/ipc";
 
 import type { ChatLine } from "@/components/ai/AiMessageList";
+import { AssistantStreamBuffer } from "@/lib/assistant-stream-buffer";
 import type { AiDomain } from "@/lib/ai-domain";
+import { appendSystemMessageAfterDroppingEmptyAssistant } from "@/lib/assistant-transcript";
+import { restoreChatLineContent } from "@/lib/ai-payload-store";
 import {
   recordAiLifecycleEvent,
   summarizeLifecycleContent,
@@ -40,26 +43,27 @@ function formatDuration(durationMs: number | null | undefined): string | null {
   if (typeof durationMs !== "number" || !Number.isFinite(durationMs)) {
     return null;
   }
-  if (durationMs < 1000) return `${Math.max(0, Math.round(durationMs))} 毫秒`;
-  return `${(durationMs / 1000).toFixed(1)} 秒`;
+  if (durationMs < 1000)
+    return `${Math.max(0, Math.round(durationMs))} \u6beb\u79d2`;
+  return `${(durationMs / 1000).toFixed(1)} \u79d2`;
 }
 
 function harnessToolLabel(toolName: string): string {
   switch (toolName) {
     case "web_search":
-      return "联网检索";
+      return "\u8054\u7f51\u68c0\u7d22";
     case "search_hybrid":
     case "search_semantic":
     case "search_keyword":
-      return "笔记检索";
+      return "\u7b14\u8bb0\u68c0\u7d22";
     case "fetch_web_page":
-      return "网页正文抽取";
+      return "\u7f51\u9875\u6b63\u6587\u6293\u53d6";
     case "reflection":
-      return "证据检查";
+      return "\u8bc1\u636e\u68c0\u67e5";
     case "final":
-      return "最终回答";
+      return "\u6700\u7ec8\u56de\u7b54";
     case "spawn_subagent":
-      return "子任务";
+      return "\u5b50\u4efb\u52a1";
     default:
       return toolName.replaceAll("_", " ");
   }
@@ -70,27 +74,31 @@ function harnessTraceHint(ev: HarnessTraceEvent): string | null {
   const duration = formatDuration(ev.duration_ms);
   switch (ev.phase) {
     case "tool_start":
-      return ev.status === "pending" ? `${label}等待确认…` : `${label}中…`;
+      return ev.status === "pending"
+        ? `${label}\u7b49\u5f85\u786e\u8ba4...`
+        : `${label}\u4e2d...`;
     case "tool_complete":
-      return duration ? `${label}完成，用时 ${duration}。` : `${label}完成。`;
+      return duration
+        ? `${label}\u5b8c\u6210\uff0c\u7528\u65f6 ${duration}\u3002`
+        : `${label}\u5b8c\u6210\u3002`;
     case "subagent_spawn":
-      return "正在启动子任务…";
+      return "\u6b63\u5728\u542f\u52a8\u5b50\u4efb\u52a1...";
     case "subagent_complete":
-      return duration ? `子任务完成，用时 ${duration}。` : "子任务完成。";
+      return duration
+        ? `\u5b50\u4efb\u52a1\u5b8c\u6210\uff0c\u7528\u65f6 ${duration}\u3002`
+        : "\u5b50\u4efb\u52a1\u5b8c\u6210\u3002";
     case "reflection":
-      return "正在检查证据充分性…";
+      return "\u6b63\u5728\u68c0\u67e5\u8bc1\u636e\u5145\u5206\u6027...";
     case "final_stream":
-      return "正在流式输出最终回答…";
+      return "\u6b63\u5728\u6d41\u5f0f\u8f93\u51fa\u6700\u7ec8\u56de\u7b54...";
     case "thinking":
-      return "正在思考…";
+      return "\u6b63\u5728\u601d\u8003...";
     default:
       return null;
   }
 }
-
 /**
- * 统一助手 LLM 流式事件监听（RAF 节流 + request_id 过滤）。
- */
+ * 缂備胶鍠嶇粩鎾礉閳哄倸顤?LLM 婵炵繝绀佺槐鈩冪鐎ｂ晜顐介柣鈺傚灥閹鏁嶉崷顪嘑 闁煎搫鍊圭粊?+ request_id 閺夆晛娲﹂幎銈夋晬婢跺牃鍋? */
 export function useAssistantLlmStream(options: {
   panelSendActiveRef: MutableRefObject<boolean>;
   requestIdRef: MutableRefObject<string | null>;
@@ -116,6 +124,8 @@ export function useAssistantLlmStream(options: {
   domainRef.current = domain;
 
   const rafRef = useRef<number | undefined>(undefined);
+  const streamBufferRef = useRef(new AssistantStreamBuffer());
+  const streamBufferRequestIdRef = useRef<string | null>(null);
 
   useEffect(() => {
     let disposed = false;
@@ -126,18 +136,30 @@ export function useAssistantLlmStream(options: {
     let unlistenRetryStatus: (() => void) | undefined;
     let unlistenHarnessTrace: (() => void) | undefined;
 
+    function currentStreamSnapshot(): string {
+      if (
+        streamBufferRef.current.length > 0 ||
+        streamBufRef.current.length === 0
+      ) {
+        return streamBufferRef.current.toString();
+      }
+      return streamBufRef.current;
+    }
+
     function setMessagesFromBuf(source: string) {
-      const snapshot = streamBufRef.current;
+      const snapshot = currentStreamSnapshot();
+      streamBufRef.current = snapshot;
       setMessages((prev) => {
         const last = prev[prev.length - 1];
         if (last?.role === "assistant") {
-          if (last.content === snapshot) {
+          const previousContent = restoreChatLineContent(last);
+          if (previousContent === snapshot) {
             recordAiLifecycleEvent(lifecycleRecorder, {
               event: "message_mutation",
               mutation: "noop",
               nextSummary: summarizeLifecycleContent(snapshot),
               phase: "frontend_stream",
-              previousSummary: summarizeLifecycleContent(last.content),
+              previousSummary: summarizeLifecycleContent(previousContent),
               requestId: requestIdRef.current,
               source,
             });
@@ -150,7 +172,7 @@ export function useAssistantLlmStream(options: {
             mutation: "replace_assistant",
             nextSummary: summarizeLifecycleContent(snapshot),
             phase: "frontend_stream",
-            previousSummary: summarizeLifecycleContent(last.content),
+            previousSummary: summarizeLifecycleContent(previousContent),
             requestId: requestIdRef.current,
             source,
           });
@@ -174,13 +196,14 @@ export function useAssistantLlmStream(options: {
       setMessages((prev) => {
         const last = prev[prev.length - 1];
         if (last?.role === "assistant") {
-          if (last.content === "") {
+          const previousContent = restoreChatLineContent(last);
+          if (previousContent === "") {
             recordAiLifecycleEvent(lifecycleRecorder, {
               event: "message_mutation",
               mutation: "noop",
               nextSummary: summarizeLifecycleContent(""),
               phase: "frontend_stream",
-              previousSummary: summarizeLifecycleContent(last.content),
+              previousSummary: summarizeLifecycleContent(previousContent),
               reasonKind,
               requestId: requestIdRef.current,
               source: "llm_reset",
@@ -194,7 +217,7 @@ export function useAssistantLlmStream(options: {
             mutation: "clear_assistant",
             nextSummary: summarizeLifecycleContent(""),
             phase: "frontend_stream",
-            previousSummary: summarizeLifecycleContent(last.content),
+            previousSummary: summarizeLifecycleContent(previousContent),
             reasonKind,
             requestId: requestIdRef.current,
             source: "llm_reset",
@@ -216,7 +239,7 @@ export function useAssistantLlmStream(options: {
       });
     }
 
-    /** rAF 回调中的中间流式更新，用 startTransition 降低优先级。 */
+    /** Intermediate streaming updates flushed inside rAF with lower priority. */
     function flushSnapshot() {
       startTransition(() => {
         setMessagesFromBuf("llm_token_raf");
@@ -253,7 +276,12 @@ export function useAssistantLlmStream(options: {
       if (!isVisibleAnswerSurface(ev.surface)) {
         return;
       }
-      streamBufRef.current += ev.token;
+      if (streamBufferRequestIdRef.current !== ev.request_id) {
+        streamBufferRef.current.clear();
+        streamBufferRequestIdRef.current = ev.request_id;
+        streamBufRef.current = "";
+      }
+      streamBufferRef.current.append(ev.token);
 
       if (rafRef.current === undefined) {
         rafRef.current = window.requestAnimationFrame(() => {
@@ -281,7 +309,7 @@ export function useAssistantLlmStream(options: {
       }
       recordAiLifecycleEvent(lifecycleRecorder, {
         candidateKind: ev.candidate_kind,
-        contentSummary: summarizeLifecycleContent(streamBufRef.current),
+        contentSummary: summarizeLifecycleContent(currentStreamSnapshot()),
         event: "llm_done",
         phase: "frontend_stream",
         requestId: ev.request_id ?? requestIdRef.current,
@@ -312,7 +340,7 @@ export function useAssistantLlmStream(options: {
       }
       recordAiLifecycleEvent(lifecycleRecorder, {
         candidateKind: ev.candidate_kind,
-        contentSummary: summarizeLifecycleContent(streamBufRef.current),
+        contentSummary: summarizeLifecycleContent(currentStreamSnapshot()),
         event: "llm_reset",
         phase: "frontend_stream",
         reasonKind: ev.reason_kind ?? null,
@@ -322,15 +350,23 @@ export function useAssistantLlmStream(options: {
       });
       if (!isVisibleAnswerSurface(ev.surface)) {
         if (ev.reason_kind === "tool_round") {
-          setActivityHint("正在处理工具结果…");
+          setActivityHint(
+            "\u6b63\u5728\u5904\u7406\u5de5\u5177\u7ed3\u679c...",
+          );
         } else if (ev.reason_kind === "need_more_evidence") {
-          setActivityHint("证据不足，正在补充检索…");
+          setActivityHint(
+            "\u8bc1\u636e\u4e0d\u8db3\uff0c\u6b63\u5728\u8865\u5145\u68c0\u7d22...",
+          );
         } else if (ev.reason_kind === "parse_retry") {
-          setActivityHint("模型工具参数异常，正在重试…");
+          setActivityHint(
+            "\u6a21\u578b\u5de5\u5177\u53c2\u6570\u5f02\u5e38\uff0c\u6b63\u5728\u91cd\u8bd5...",
+          );
         }
         return;
       }
       cancelScheduledFlush();
+      streamBufferRef.current.clear();
+      streamBufferRequestIdRef.current = null;
       streamBufRef.current = "";
       clearAssistantSlot(ev.reason_kind ?? null);
     }).then((fn) => {
@@ -357,7 +393,9 @@ export function useAssistantLlmStream(options: {
         source: "llm:error",
       });
       if (ev.final === false) {
-        setActivityHint("连接中断，正在重试流式响应…");
+        setActivityHint(
+          "\u8fde\u63a5\u4e2d\u65ad\uff0c\u6b63\u5728\u91cd\u8bd5\u6d41\u5f0f\u54cd\u5e94\u2026",
+        );
         return;
       }
 
@@ -368,19 +406,21 @@ export function useAssistantLlmStream(options: {
       setMessages((prev) => {
         const last = prev[prev.length - 1];
         const hasVisiblePartial =
-          last?.role === "assistant" && last.content.trim().length > 0;
+          last?.role === "assistant" &&
+          restoreChatLineContent(last).trim().length > 0;
         if (!hasVisiblePartial) {
+          streamBufferRef.current.clear();
+          streamBufferRequestIdRef.current = null;
           streamBufRef.current = "";
         }
-        return [
-          ...prev,
-          {
-            role: "system",
-            content: hasVisiblePartial
-              ? `错误: ${ev.error ?? "未知错误"}（已保留部分输出）`
-              : `错误: ${ev.error ?? "未知错误"}`,
-          },
-        ];
+        const baseError = `\u9519\u8bef: ${ev.error ?? "\u672a\u77e5\u9519\u8bef"}`;
+        const errorContent = hasVisiblePartial
+          ? `${baseError}\uff08\u5df2\u4fdd\u7559\u90e8\u5206\u8f93\u51fa\uff09`
+          : baseError;
+        return appendSystemMessageAfterDroppingEmptyAssistant(
+          prev,
+          errorContent,
+        );
       });
     }).then((fn) => {
       if (disposed) fn();

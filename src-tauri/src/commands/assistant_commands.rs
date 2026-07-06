@@ -611,6 +611,7 @@ mod tests {
             requires_clarification: true,
             clarification_question: Some("你希望我先查笔记还是直接回答？".into()),
             source_hints: vec!["test:clarification".into()],
+            edit_target: None,
         };
         let intent_detection = IntentDetectionSummary {
             detected_intent: AgentIntent::Chat,

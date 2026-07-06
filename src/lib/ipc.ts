@@ -1218,6 +1218,7 @@ export async function writingExecute(params: {
   cursor_context: string;
   writing_goal: string;
   web_authorized?: boolean;
+  edit_target?: import("@/types/ai").EditTarget | null;
 }): Promise<WritingExecuteResult> {
   return invoke<WritingExecuteResult>("writing_execute", {
     input: {
@@ -1227,6 +1228,7 @@ export async function writingExecute(params: {
       cursor_context: params.cursor_context,
       writing_goal: params.writing_goal,
       web_authorized: params.web_authorized ?? false,
+      edit_target: params.edit_target ?? null,
     },
   });
 }

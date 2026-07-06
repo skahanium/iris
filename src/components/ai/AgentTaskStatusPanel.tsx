@@ -1,8 +1,12 @@
-import { ChevronDown, Play, ShieldAlert, StopCircle } from "lucide-react";
+﻿import { ChevronDown, Play, ShieldAlert, StopCircle } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { artifactPassesValueGate } from "@/lib/assistant-artifact-tabs";
+import {
+  getAiPayloadStore,
+  sanitizePayloadForUi,
+} from "@/lib/ai-payload-store";
 import type { AssistantArtifactDraft } from "@/types/assistant-artifact";
 import type {
   AgentRunPlanSummary,
@@ -41,11 +45,22 @@ const STATUS_LABELS: Record<AgentTaskStatus, string> = {
   aborted: "已中止",
 };
 
-function canResume(status: AgentTaskStatus): boolean {
+const PROCESS_EVENT_LIMIT = 40;
+const PROCESS_STEP_LIMIT = 30;
+
+function isKnownStatus(status: unknown): status is AgentTaskStatus {
+  return typeof status === "string" && status in STATUS_LABELS;
+}
+
+function statusLabel(status: unknown): string {
+  return isKnownStatus(status) ? STATUS_LABELS[status] : "状态异常";
+}
+
+function canResume(status: unknown): boolean {
   return status === "paused_budget" || status === "paused_recoverable";
 }
 
-function canAbort(status: AgentTaskStatus): boolean {
+function canAbort(status: unknown): boolean {
   return (
     status === "queued" ||
     status === "running" ||
@@ -58,16 +73,26 @@ function canAbort(status: AgentTaskStatus): boolean {
 function permissionWaiting(task: AgentTaskDto, events: AgentTaskEventDto[]) {
   return (
     task.status === "awaiting_confirmation" ||
-    events.some((event) => event.event_type.includes("permission"))
+    events.some(
+      (event) =>
+        typeof event.event_type === "string" &&
+        event.event_type.includes("permission"),
+    )
   );
 }
 
 function failedVerificationItems(task: AgentTaskDto): string[] {
-  return (
-    task.verification_summary?.items
-      .filter((item) => item.status === "failed")
-      .map((item) => item.description) ?? []
-  );
+  const items = task.verification_summary?.items;
+  if (!Array.isArray(items)) return [];
+
+  return items
+    .filter(
+      (item) =>
+        item &&
+        item.status === "failed" &&
+        typeof item.description === "string",
+    )
+    .map((item) => item.description);
 }
 
 function hasTaskDetails(task: AgentTaskDto | null): boolean {
@@ -76,6 +101,26 @@ function hasTaskDetails(task: AgentTaskDto | null): boolean {
     task?.verification_summary ||
     (task && task.status !== "completed"),
   );
+}
+
+function normalizeSteps(steps: AgentTaskStepDto[]): AgentTaskStepDto[] {
+  return (Array.isArray(steps) ? steps : []).slice(-PROCESS_STEP_LIMIT);
+}
+
+function normalizeEvents(events: AgentTaskEventDto[]): AgentTaskEventDto[] {
+  const safeEvents = Array.isArray(events) ? events : [];
+  const deduped: AgentTaskEventDto[] = [];
+  let previousKey = "";
+  for (const event of safeEvents) {
+    const eventType =
+      typeof event.event_type === "string" ? event.event_type : "unknown";
+    const message = typeof event.message === "string" ? event.message : "";
+    const key = `${eventType}:${message}`;
+    if (key === previousKey) continue;
+    previousKey = key;
+    deduped.push({ ...event, event_type: eventType, message });
+  }
+  return deduped.slice(-PROCESS_EVENT_LIMIT);
 }
 
 export function AgentTaskStatusPanel({
@@ -90,10 +135,12 @@ export function AgentTaskStatusPanel({
   researchState,
   runPlanSummary,
 }: AgentTaskStatusPanelProps) {
+  const safeSteps = normalizeSteps(steps);
+  const safeEvents = normalizeEvents(events);
   const hasDetails =
     hasTaskDetails(task) ||
-    steps.length > 0 ||
-    events.length > 0 ||
+    safeSteps.length > 0 ||
+    safeEvents.length > 0 ||
     Boolean(
       intentDetection ||
       permissionPreflightSummary ||
@@ -103,29 +150,32 @@ export function AgentTaskStatusPanel({
 
   if (!hasDetails || (task && task.kind !== "complex")) return null;
 
-  const waitingForPermission = task ? permissionWaiting(task, events) : false;
+  const waitingForPermission = task
+    ? permissionWaiting(task, safeEvents)
+    : false;
   const canResumeTask = task ? canResume(task.status) : false;
   const canAbortTask = task ? canAbort(task.status) : false;
   const deliberation = task ? (task.deliberation_state ?? null) : null;
   const failedItems = task ? failedVerificationItems(task) : [];
   const sourceRequestId =
     task?.request_id ?? runPlanSummary?.requestId ?? "process";
+  const payload = sanitizePayloadForUi(getAiPayloadStore(), {
+    task,
+    steps: safeSteps,
+    events: safeEvents,
+    intentDetection,
+    permissionPreflightSummary,
+    researchState,
+    runPlanSummary,
+    plan: deliberation?.plan_outline ?? runPlanSummary?.contextSummary ?? [],
+    evidenceGaps: deliberation?.evidence_gaps ?? [],
+    verificationFailures: failedItems,
+  });
   const processArtifact: AssistantArtifactDraft = {
     kind: "task_process",
     title: "过程详情",
     sourceRequestId,
-    payload: {
-      task,
-      steps,
-      events,
-      intentDetection,
-      permissionPreflightSummary,
-      researchState,
-      runPlanSummary,
-      plan: deliberation?.plan_outline ?? runPlanSummary?.contextSummary ?? [],
-      evidenceGaps: deliberation?.evidence_gaps ?? [],
-      verificationFailures: failedItems,
-    },
+    payload,
   };
   const canOpenProcessArtifact = artifactPassesValueGate(processArtifact);
 
@@ -158,8 +208,12 @@ export function AgentTaskStatusPanel({
             </Button>
           ) : null}
           {task ? (
-            <Badge variant="outline" className="text-[10px]">
-              {STATUS_LABELS[task.status]}
+            <Badge
+              variant="outline"
+              className="text-[10px]"
+              data-testid="agent-task-status-badge"
+            >
+              {statusLabel(task.status)}
             </Badge>
           ) : null}
           {waitingForPermission ? (

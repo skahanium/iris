@@ -1,4 +1,4 @@
-import {
+﻿import {
   useEffect,
   useRef,
   type Dispatch,
@@ -7,6 +7,8 @@ import {
 } from "react";
 
 import { listenLlmDone, listenLlmError, listenLlmToken } from "@/lib/ipc";
+import { getAiPayloadStore, projectTextForUi } from "@/lib/ai-payload-store";
+import { AssistantStreamBuffer } from "@/lib/assistant-stream-buffer";
 import type { LlmTokenEvent } from "@/types/ipc";
 
 /**
@@ -21,7 +23,8 @@ export function useDocSummaryStream(options: {
 }) {
   const { docStreamActiveRef, requestIdRef, setDocSummary } = options;
 
-  const bufRef = useRef("");
+  const bufRef = useRef(new AssistantStreamBuffer());
+  const payloadStoreRef = useRef(getAiPayloadStore());
   const rafRef = useRef<number | undefined>(undefined);
   const lastFlushRef = useRef<number>(0);
 
@@ -32,8 +35,12 @@ export function useDocSummaryStream(options: {
     let unlistenError: (() => void) | undefined;
 
     function flushSnapshot() {
-      const snapshot = bufRef.current;
-      setDocSummary(snapshot);
+      const snapshot = bufRef.current.toString();
+      const projection = projectTextForUi(payloadStoreRef.current, snapshot, {
+        kind: "document_summary",
+        maxPreviewChars: 36_000,
+      });
+      setDocSummary(projection.content);
     }
 
     void listenLlmToken((ev: LlmTokenEvent) => {
@@ -43,7 +50,7 @@ export function useDocSummaryStream(options: {
       } else if (ev.request_id !== requestIdRef.current) {
         return;
       }
-      bufRef.current += ev.token;
+      bufRef.current.append(ev.token);
 
       if (rafRef.current === undefined) {
         const elapsed = performance.now() - lastFlushRef.current;
@@ -91,7 +98,7 @@ export function useDocSummaryStream(options: {
         return;
       }
       docStreamActiveRef.current = false;
-      bufRef.current = "";
+      bufRef.current.clear();
       requestIdRef.current = null;
       if (rafRef.current !== undefined) {
         clearTimeout(rafRef.current);

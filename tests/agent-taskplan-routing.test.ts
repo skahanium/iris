@@ -143,7 +143,53 @@ describe("assistant TaskPlan routing contract", () => {
     expect(plan.intent).toBe("creative_write");
     expect(plan.modelSlot).toBe("writer");
     expect(plan.executionMode).toBe("writing_candidate");
+    expect(plan.outputMode).toBe("confirmation_required");
+    expect(plan.editTarget).toMatchObject({
+      targetPath: "/notes/work.md",
+      source: "prompt",
+      placement: "after_heading",
+    });
     expect(plan.sourceHints).toContain("context:note");
+  });
+
+  it("routes summarize-then-insert requests to a patch-backed edit target", () => {
+    const plan = buildAssistantTaskPlan({
+      message: "把刚刚的回答插入 @A.md 作为第三个大标题 ‘三、核查思路’",
+      hasSelection: false,
+      notePath: "/notes/work.md",
+      explicitScope: false,
+      contextReferences: [],
+      webAuthorized: false,
+    });
+
+    expect(plan.intent).toBe("creative_write");
+    expect(plan.modelSlot).toBe("writer");
+    expect(plan.executionMode).toBe("writing_candidate");
+    expect(plan.outputMode).toBe("confirmation_required");
+    expect(plan.outputShape).toBe("confirmation");
+    expect(plan.editTarget).toMatchObject({
+      targetPath: "A.md",
+      source: "conversation",
+      placement: "insert_heading_at_ordinal",
+      headingLevel: 1,
+      headingText: "三、核查思路",
+      ordinal: 3,
+    });
+  });
+
+  it("asks for clarification instead of pretending to know cursor byte position", () => {
+    const plan = buildAssistantTaskPlan({
+      message: "把刚刚的回答插入这里",
+      hasSelection: false,
+      notePath: "/notes/work.md",
+      explicitScope: false,
+      contextReferences: [],
+      webAuthorized: false,
+    });
+
+    expect(plan.requiresClarification).toBe(true);
+    expect(plan.editTarget).toBeUndefined();
+    expect(plan.clarificationQuestion).toContain("光标字节位置");
   });
 
   it("does not treat bare confirmation text as writing without a pending proposal", () => {
