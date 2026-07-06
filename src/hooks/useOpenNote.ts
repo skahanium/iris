@@ -243,6 +243,7 @@ export function useOpenNote({
             if (editor) {
               resetEditorContentBaseline(editor, tipTapHtml, {
                 parseOptions: EDITOR_PARSE_OPTIONS,
+                selection: "preserve",
               });
             }
           })
@@ -254,6 +255,7 @@ export function useOpenNote({
             if (editor) {
               resetEditorContentBaseline(editor, "<p></p>", {
                 parseOptions: EDITOR_PARSE_OPTIONS,
+                selection: "preserve",
               });
             }
           });

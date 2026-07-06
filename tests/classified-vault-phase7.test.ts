@@ -104,11 +104,13 @@ describe("classified vault phase 7", () => {
   it("App wires file lock state and classified panel", () => {
     const app = read("src/App.impl.tsx");
     const overlays = read("src/components/layout/AppOverlays.tsx");
+    const persistence = read("src/hooks/useAppPersistenceLifecycle.ts");
     const workspace = read("src/components/layout/AppEditorWorkspace.tsx");
     const ipc = read("src/lib/ipc.ts");
     const events = read("src/lib/ipc-events.ts");
 
-    expect(app).toContain("fileSetLock");
+    expect(app).toContain("handleLockToggle");
+    expect(persistence).toContain("fileSetLock");
     expect(app).toContain("classifiedOpen");
     expect(app).toContain("listenClassifiedFileTaken");
     expect(ipc).toContain("IPC_EVENTS.CLASSIFIED_FILE_TAKEN");

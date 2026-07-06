@@ -426,6 +426,7 @@ function TipTapEditorInner({
   const parsedContentRevisionRef = useRef(0);
   const [parsedContentRevision, setParsedContentRevision] = useState(0);
   const contentReadyRef = useRef(false);
+  const baselineAppliedRef = useRef(false);
   const firstFrameGenerationRef = useRef(0);
 
   useEffect(() => {
@@ -610,7 +611,9 @@ function TipTapEditorInner({
 
     resetEditorContentBaseline(editor, content, {
       parseOptions: EDITOR_PARSE_OPTIONS,
+      selection: baselineAppliedRef.current ? "preserve" : "start",
     });
+    baselineAppliedRef.current = true;
     contentReadyRef.current = true;
     onContentReadyRef.current?.(editor);
     flushBodyStats(editor);

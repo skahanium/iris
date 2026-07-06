@@ -68,6 +68,10 @@ export function useEditorSave(
     const md = getMarkdownRef.current();
     const last = lastSavedSnapshotRef.current;
     if (last && last.path === target && last.markdown === md) {
+      if (last.dirtyGeneration !== dirtyGenerationRef.current) {
+        recordSavedSnapshot(target, md);
+        onSavedRef.current?.(md);
+      }
       return last.markdown;
     }
     const saved = await writeNoteAtPath(target, md);
@@ -170,5 +174,6 @@ export function useEditorSave(
     cancelPendingSave,
     awaitSaveInFlight,
     getLastSavedSnapshot,
+    recordSavedSnapshot,
   };
 }

@@ -23,10 +23,12 @@ vi.mock("@/lib/ipc", () => ({
 function TestHarness({
   path = "note.md",
   getMarkdown,
+  onSaved,
   onReady,
 }: {
   path?: string;
   getMarkdown?: () => string;
+  onSaved?: (markdown: string) => void;
   onReady: (api: {
     notifyDirty: () => void;
     flushSave: () => Promise<string | null>;
@@ -42,6 +44,7 @@ function TestHarness({
       targetPath: string,
       getMarkdownOverride?: () => string,
     ) => Promise<string | null>;
+    recordSavedSnapshot: (targetPath: string, markdown: string) => void;
   }) => void;
 }) {
   const {
@@ -51,9 +54,11 @@ function TestHarness({
     awaitSaveInFlight,
     getLastSavedSnapshot,
     flushSaveForPath,
+    recordSavedSnapshot,
   } = useEditorSave(
     path,
     getMarkdown ?? (() => '---\ntitle: "x"\n---\n\nSubstantive body.'),
+    onSaved,
   );
   onReady({
     notifyDirty,
@@ -62,6 +67,7 @@ function TestHarness({
     awaitSaveInFlight,
     getLastSavedSnapshot,
     flushSaveForPath,
+    recordSavedSnapshot,
   });
   return null;
 }
@@ -230,6 +236,82 @@ describe("useEditorSave", () => {
       markdown: '---\ntitle: "x"\n---\n\nSubstantive body.',
       dirtyGeneration: 2,
     });
+  });
+
+  it("skips the first flush when opened content is already recorded as saved", async () => {
+    const opened = '---\ntitle: "x"\n---\n\nOpened body.';
+    const getMarkdown = vi.fn(() => opened);
+    const onSaved = vi.fn();
+    let flushSave!: () => Promise<string | null>;
+    let recordSavedSnapshot!: (targetPath: string, markdown: string) => void;
+
+    await act(async () => {
+      root.render(
+        createElement(TestHarness, {
+          getMarkdown,
+          onSaved,
+          onReady: (api) => {
+            flushSave = api.flushSave;
+            recordSavedSnapshot = api.recordSavedSnapshot;
+          },
+        }),
+      );
+    });
+
+    act(() => {
+      recordSavedSnapshot("note.md", opened);
+    });
+
+    let saved: string | null = null;
+    await act(async () => {
+      saved = await flushSave();
+    });
+
+    expect(saved).toBe(opened);
+    expect(getMarkdown).toHaveBeenCalledTimes(1);
+    expect(fileWrite).not.toHaveBeenCalled();
+    expect(onSaved).not.toHaveBeenCalled();
+  });
+
+  it("writes after a recorded baseline when dirty content changes", async () => {
+    const opened = '---\ntitle: "x"\n---\n\nOpened body.';
+    const edited = '---\ntitle: "x"\n---\n\nEdited body.';
+    let current = opened;
+    const getMarkdown = vi.fn(() => current);
+    const onSaved = vi.fn();
+    let notifyDirty!: () => void;
+    let flushSave!: () => Promise<string | null>;
+    let recordSavedSnapshot!: (targetPath: string, markdown: string) => void;
+
+    await act(async () => {
+      root.render(
+        createElement(TestHarness, {
+          getMarkdown,
+          onSaved,
+          onReady: (api) => {
+            notifyDirty = api.notifyDirty;
+            flushSave = api.flushSave;
+            recordSavedSnapshot = api.recordSavedSnapshot;
+          },
+        }),
+      );
+    });
+
+    act(() => {
+      recordSavedSnapshot("note.md", opened);
+      current = edited;
+      notifyDirty();
+    });
+
+    let saved: string | null = null;
+    await act(async () => {
+      saved = await flushSave();
+    });
+
+    expect(saved).toBe(edited);
+    expect(fileWrite).toHaveBeenCalledTimes(1);
+    expect(fileWrite).toHaveBeenCalledWith("note.md", edited);
+    expect(onSaved).toHaveBeenCalledWith(edited);
   });
 
   it("flushSaveForPath writes the leaving path while active path is already B", async () => {

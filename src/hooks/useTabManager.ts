@@ -63,6 +63,10 @@ interface PendingNoteOpenCommit extends PendingNoteOpen {
   resolve: () => void;
 }
 
+export interface CommitPendingNoteOpenOptions {
+  skipContentTick?: boolean;
+}
+
 const OPEN_SUPERSEDED = "IRIS_OPEN_SUPERSEDED";
 
 function createSupersededError(): Error {
@@ -366,14 +370,22 @@ export function useTabManager(options: UseTabManagerOptions = {}) {
   );
 
   const commitPendingNoteOpen = useCallback(
-    (path: string, sequence: number): boolean => {
+    (
+      path: string,
+      sequence: number,
+      options: CommitPendingNoteOpenOptions = {},
+    ): boolean => {
       const pending = pendingNoteOpenCommitRef.current;
       if (!pending || pending.path !== path || pending.sequence !== sequence) {
         return false;
       }
 
       pendingNoteOpenCommitRef.current = null;
-      applyCommittedNoteOpen(pending, pending.discardedPreviousPath);
+      applyCommittedNoteOpen(
+        pending,
+        pending.discardedPreviousPath,
+        options.skipContentTick === true,
+      );
       pending.resolve();
       return true;
     },

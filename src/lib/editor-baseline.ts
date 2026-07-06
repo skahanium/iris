@@ -1,10 +1,47 @@
 import { createDocument, type Content } from "@tiptap/core";
 import type { Editor } from "@tiptap/react";
-import type { ParseOptions } from "@tiptap/pm/model";
-import { EditorState, TextSelection } from "@tiptap/pm/state";
+import type { Node as ProseMirrorNode, ParseOptions } from "@tiptap/pm/model";
+import { EditorState, Selection, TextSelection } from "@tiptap/pm/state";
+
+type ResetEditorBaselineSelection =
+  | "start"
+  | "preserve"
+  | { from: number; to?: number };
 
 interface ResetEditorBaselineOptions {
   parseOptions?: ParseOptions;
+  selection?: ResetEditorBaselineSelection;
+}
+
+function clampTextSelectionPosition(doc: ProseMirrorNode, position: number) {
+  const max = Math.max(1, doc.content.size - 1);
+  return Math.min(Math.max(1, position), max);
+}
+
+function resolveBaselineSelection(
+  editor: Editor,
+  doc: ProseMirrorNode,
+  selection: ResetEditorBaselineSelection = "start",
+): Selection {
+  if (selection === "start") {
+    return TextSelection.atStart(doc);
+  }
+
+  const source =
+    selection === "preserve"
+      ? {
+          from: editor.state.selection.anchor,
+          to: editor.state.selection.head,
+        }
+      : selection;
+  const from = clampTextSelectionPosition(doc, source.from);
+  const to = clampTextSelectionPosition(doc, source.to ?? source.from);
+
+  try {
+    return TextSelection.create(doc, from, to);
+  } catch {
+    return TextSelection.near(doc.resolve(to), -1);
+  }
 }
 
 /**
@@ -26,7 +63,7 @@ export function resetEditorContentBaseline(
     doc,
     plugins: editor.state.plugins,
     schema: editor.schema,
-    selection: TextSelection.atStart(doc),
+    selection: resolveBaselineSelection(editor, doc, options.selection),
   });
 
   editor.view.updateState(nextState);

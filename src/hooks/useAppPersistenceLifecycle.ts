@@ -1,7 +1,9 @@
 import type { Editor } from "@tiptap/react";
 import {
   useCallback,
+  useEffect,
   useMemo,
+  useRef,
   type MutableRefObject,
   type RefObject,
 } from "react";
@@ -10,7 +12,12 @@ import type { TabItem } from "@/components/layout/TabBar";
 import { useEditorSave } from "@/hooks/useEditorSave";
 import { useTauriCloseSave } from "@/hooks/useTauriCloseSave";
 import { useVersionIdle } from "@/hooks/useVersionIdle";
-import { fileWrite, versionSaveIdle, versionSaveManual } from "@/lib/ipc";
+import {
+  fileSetLock,
+  fileWrite,
+  versionSaveIdle,
+  versionSaveManual,
+} from "@/lib/ipc";
 import { editorHtmlDigest, setCachedEditorHtml } from "@/lib/editor-html-cache";
 import { isClassifiedVaultPath } from "@/lib/classified-path";
 import { splitFrontmatter } from "@/lib/frontmatter";
@@ -45,18 +52,22 @@ interface UseAppPersistenceLifecycleParams {
   autoVersionEnabled: boolean;
   autoVersionIdleMinutes: number;
   dirtyRef: MutableRefObject<boolean>;
+  editorContentTick: number;
   editorRef: RefObject<Editor | null>;
   editorReadyRef: RefObject<boolean>;
   getLiveMarkdownRef: MutableRefObject<() => string>;
   getTabMarkdownCached: (path: string) => string | undefined;
   markClean: (path: string, title: string) => void;
+  markdown: string;
   noteTitle: string;
   persistBeforeLeaveRef: MutableRefObject<PersistBeforeLeave>;
   schedulePathSync: (path: string, title: string) => void;
   setAiStatus: (status: string) => void;
+  setFileLocked: (path: string, locked: boolean) => void;
   setMarkdown: (markdown: string) => void;
   syncTabMarkdownCache: (path: string, markdown: string) => void;
   tabsRef: MutableRefObject<TabItem[]>;
+  invalidatePreparedNote: (path: string) => void;
 }
 
 export function useAppPersistenceLifecycle({
@@ -68,18 +79,22 @@ export function useAppPersistenceLifecycle({
   autoVersionEnabled,
   autoVersionIdleMinutes,
   dirtyRef,
+  editorContentTick,
   editorRef,
   editorReadyRef,
   getLiveMarkdownRef,
   getTabMarkdownCached,
   markClean,
+  markdown,
   noteTitle,
   persistBeforeLeaveRef,
   schedulePathSync,
   setAiStatus,
+  setFileLocked,
   setMarkdown,
   syncTabMarkdownCache,
   tabsRef,
+  invalidatePreparedNote,
 }: UseAppPersistenceLifecycleParams) {
   const {
     notifyDirty,
@@ -88,6 +103,7 @@ export function useAppPersistenceLifecycle({
     cancelPendingSave,
     awaitSaveInFlight,
     getLastSavedSnapshot,
+    recordSavedSnapshot,
   } = useEditorSave(
     activePath,
     () => getLiveMarkdownRef.current(),
@@ -105,6 +121,14 @@ export function useAppPersistenceLifecycle({
       }
     },
   );
+
+  const markdownBaselineRef = useRef(markdown);
+  markdownBaselineRef.current = markdown;
+
+  useEffect(() => {
+    if (!activePath) return;
+    recordSavedSnapshot(activePath, markdownBaselineRef.current);
+  }, [activePath, editorContentTick, recordSavedSnapshot]);
 
   const versionSnapshotScheduler = useMemo(
     () =>
@@ -253,17 +277,51 @@ export function useAppPersistenceLifecycle({
     },
   });
 
+  const flushWhenEditorReady = useCallback(
+    async (
+      actionLabel: string,
+    ): Promise<{ ok: boolean; markdown: string | null }> => {
+      if (activeFileLocked) {
+        setAiStatus("笔记已锁定，无法保存");
+        return { ok: false, markdown: null };
+      }
+      if (activePathRef.current && !editorReadyRef.current) {
+        setAiStatus(`文档仍在加载，无法${actionLabel}；未修改磁盘内容`);
+        return { ok: false, markdown: null };
+      }
+      const markdown = await flushSave();
+      return { ok: true, markdown };
+    },
+    [activeFileLocked, activePathRef, editorReadyRef, flushSave, setAiStatus],
+  );
+
   const handleSaveNote = useCallback(async () => {
-    if (activeFileLocked) {
-      setAiStatus("笔记已锁定，无法保存");
-      return;
-    }
-    if (activePathRef.current && !editorReadyRef.current) {
-      setAiStatus("文档仍在加载，无法保存；未修改磁盘内容");
-      return;
-    }
-    await flushSave();
-  }, [activeFileLocked, activePathRef, editorReadyRef, flushSave, setAiStatus]);
+    await flushWhenEditorReady("保存");
+  }, [flushWhenEditorReady]);
+
+  const handleLockToggle = useCallback(
+    async (locked: boolean) => {
+      const path = activePathRef.current;
+      if (!path || isClassifiedVaultPath(path)) return;
+      try {
+        if (locked && !(await flushWhenEditorReady("锁定保存")).ok) return;
+        setFileLocked(path, locked);
+        await fileSetLock(path, locked);
+        invalidatePreparedNote(path);
+      } catch (err: unknown) {
+        setFileLocked(path, !locked);
+        const msg = err instanceof Error ? err.message : String(err);
+        setAiStatus(`锁定状态保存失败：${msg}`);
+      }
+    },
+    [
+      activePathRef,
+      flushWhenEditorReady,
+      invalidatePreparedNote,
+      setAiStatus,
+      setFileLocked,
+    ],
+  );
 
   const handleSaveVersion = useCallback(async () => {
     const path = activePathRef.current;
@@ -295,10 +353,12 @@ export function useAppPersistenceLifecycle({
   return {
     notifyDirty,
     flushSave,
+    flushWhenEditorReady,
     cancelPendingSave,
     awaitSaveInFlight,
     resetVersionIdle,
     handleSaveNote,
+    handleLockToggle,
     handleSaveVersion,
     versionSnapshotScheduler,
   };

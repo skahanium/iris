@@ -208,6 +208,51 @@ describe("useTabManager handleNewNote", () => {
     expect(apiRef.current!.pendingNoteOpen).toBeNull();
   });
 
+  it("does not bump editorContentTick when committing a staged prepared note", async () => {
+    const apiRef: { current: ReturnType<typeof useTabManager> | null } = {
+      current: null,
+    };
+
+    await act(async () => {
+      root.render(createElement(Harness, { apiRef }));
+    });
+
+    const initialTick = apiRef.current!.editorContentTick;
+
+    await act(async () => {
+      await apiRef.current!.handleNewNote();
+    });
+
+    const pending = apiRef.current!.pendingNoteOpen!;
+    await act(async () => {
+      apiRef.current!.commitPendingNoteOpen(pending.path, pending.sequence, {
+        skipContentTick: true,
+      });
+    });
+
+    expect(apiRef.current!.activePath).toBe("未命名文档.md");
+    expect(apiRef.current!.editorContentTick).toBe(initialTick);
+  });
+
+  it("still bumps editorContentTick when committing a direct disk open", async () => {
+    const apiRef: { current: ReturnType<typeof useTabManager> | null } = {
+      current: null,
+    };
+
+    fileRead.mockResolvedValueOnce(fileReadResult("# Disk\n\nBody"));
+
+    await act(async () => {
+      root.render(createElement(Harness, { apiRef }));
+    });
+
+    const initialTick = apiRef.current!.editorContentTick;
+
+    await openAndCommit(apiRef, "disk.md", "Disk");
+
+    expect(apiRef.current!.activePath).toBe("disk.md");
+    expect(apiRef.current!.editorContentTick).toBe(initialTick + 1);
+  });
+
   it("discards an empty active tab before creating the next note", async () => {
     const apiRef: { current: ReturnType<typeof useTabManager> | null } = {
       current: null,

@@ -106,6 +106,66 @@ describe("editor performance regressions", () => {
     editor.destroy();
   });
 
+  it("preserves selection during same-editor baseline replacement without restoring undo history", () => {
+    const editor = createProductionEditorFromIngestedBody(
+      "Alpha paragraph.\n\nBeta paragraph.",
+    );
+
+    editor.commands.setTextSelection(editor.state.doc.content.size - 1);
+    editor.commands.insertContent(" Local edit.");
+    const previousHead = editor.state.selection.head;
+    expect(editor.can().undo()).toBe(true);
+
+    resetEditorContentBaseline(
+      editor,
+      "<p>Alpha paragraph updated.</p><p>Beta paragraph updated.</p>",
+      {
+        parseOptions: EDITOR_PARSE_OPTIONS,
+        selection: "preserve",
+      },
+    );
+
+    expect(editor.getText()).toContain("Beta paragraph updated.");
+    expect(editor.can().undo()).toBe(false);
+    expect(editor.commands.undo()).toBe(false);
+    expect(editor.state.selection.head).toBe(previousHead);
+
+    editor.destroy();
+  });
+
+  it("clamps preserved selection when the replacement document is shorter", () => {
+    const editor = createProductionEditorFromIngestedBody(
+      "A long document body with enough text for a late cursor.",
+    );
+
+    editor.commands.setTextSelection(editor.state.doc.content.size - 1);
+
+    resetEditorContentBaseline(editor, "<p>Short.</p>", {
+      parseOptions: EDITOR_PARSE_OPTIONS,
+      selection: "preserve",
+    });
+
+    expect(editor.getText()).toBe("Short.");
+    expect(editor.state.selection.head).toBe(editor.state.doc.content.size - 1);
+    expect(editor.can().undo()).toBe(false);
+
+    editor.destroy();
+  });
+
+  it("keeps the default baseline replacement selection at the document start", () => {
+    const editor = createProductionEditorFromIngestedBody("Original body.");
+
+    editor.commands.setTextSelection(editor.state.doc.content.size - 1);
+
+    resetEditorContentBaseline(editor, "<p>Loaded baseline body.</p>", {
+      parseOptions: EDITOR_PARSE_OPTIONS,
+    });
+
+    expect(editor.state.selection.head).toBe(1);
+
+    editor.destroy();
+  });
+
   it("keeps TipTapEditor document loads out of undo history", async () => {
     const container = document.createElement("div");
     document.body.appendChild(container);

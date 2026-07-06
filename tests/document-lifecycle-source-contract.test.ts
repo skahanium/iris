@@ -112,11 +112,15 @@ describe("document lifecycle source contracts", () => {
     expect(app).toContain("clearVersionIdleTimer");
   });
 
-  it("locking a note flushes pending editor content before changing the lock state", () => {
+  it("locking a note flushes through the editor-ready guard before changing lock state", () => {
     const app = read("src/App.impl.tsx");
-    expect(app).toMatch(
-      /if \(locked\) \{[\s\S]*?await flushSave\(\);[\s\S]*?\}[\s\S]*?setFileLocked\(path, locked\);/,
+    const lifecycle = read("src/hooks/useAppPersistenceLifecycle.ts");
+    expect(lifecycle).toMatch(
+      /if \(locked && !\(await flushWhenEditorReady\("锁定保存"\)\)\.ok\) return;[\s\S]*?setFileLocked\(path, locked\);/,
     );
+    expect(lifecycle).toContain("await fileSetLock(path, locked)");
+    expect(app).toContain("handleLockToggle");
+    expect(app).not.toContain("fileSetLock");
   });
 
   it("tab switching relies on digest-guarded editor HTML cache instead of clearing every open", () => {

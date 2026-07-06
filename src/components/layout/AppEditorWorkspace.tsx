@@ -24,7 +24,10 @@ import type {
   PreparedNoteOpen,
 } from "@/lib/document-open-runtime";
 import { DOCUMENT_OPEN_BUDGETS } from "@/lib/document-open-runtime";
-import type { PendingNoteOpen } from "@/hooks/useTabManager";
+import type {
+  CommitPendingNoteOpenOptions,
+  PendingNoteOpen,
+} from "@/hooks/useTabManager";
 import type { EditorHtmlCacheNamespace } from "@/lib/editor-html-cache";
 import type { FileListItem } from "@/types/ipc";
 
@@ -117,7 +120,11 @@ interface AppEditorWorkspaceProps {
   pendingOpen: HomePendingOpen | null;
   pendingNoteOpen: PendingNoteOpen | null;
   onPendingOpenSettled?: (pending: HomePendingOpen) => boolean;
-  commitPendingNoteOpen: (path: string, sequence: number) => boolean;
+  commitPendingNoteOpen: (
+    path: string,
+    sequence: number,
+    options?: CommitPendingNoteOpenOptions,
+  ) => boolean;
   runEditorActionById: (actionId: string) => void;
   setFindReplaceMode: Dispatch<SetStateAction<"find" | "replace">>;
   setFindReplaceOpen: (open: boolean) => void;
@@ -362,7 +369,11 @@ export function AppEditorWorkspace({
   }, []);
 
   const scheduleDocumentLoadingVisibility = useCallback(
-    (identityKey: string, startedAt: number) => {
+    (
+      identityKey: string,
+      startedAt: number,
+      isReady: () => boolean = () => false,
+    ) => {
       clearLoadingVisibilityTimer();
       const elapsed = Math.max(0, performance.now() - startedAt);
       const remaining = DOCUMENT_OPEN_BUDGETS.coldLoadingVisibleMs - elapsed;
@@ -373,6 +384,14 @@ export function AppEditorWorkspace({
       };
 
       if (remaining <= 0) {
+        if (isReady()) {
+          syncDocumentLoadingGate({
+            identityKey: null,
+            shownAt: null,
+            visible: false,
+          });
+          return;
+        }
         syncDocumentLoadingGate({
           ...hiddenGate,
           visible: true,
@@ -384,6 +403,14 @@ export function AppEditorWorkspace({
       loadingVisibilityTimerRef.current = window.setTimeout(() => {
         loadingVisibilityTimerRef.current = null;
         if (documentLoadingGateRef.current.identityKey !== identityKey) return;
+        if (isReady()) {
+          syncDocumentLoadingGate({
+            identityKey: null,
+            shownAt: null,
+            visible: false,
+          });
+          return;
+        }
         syncDocumentLoadingGate({
           identityKey,
           shownAt: startedAt,
@@ -554,6 +581,7 @@ export function AppEditorWorkspace({
         const committed = commitPendingNoteOpenRef.current(
           snapshotSafePath(path),
           pending.sequence,
+          { skipContentTick: true },
         );
         const homePending = pendingOpenRef.current;
         endDocumentOpenToken(pending.documentOpenToken);
@@ -644,6 +672,7 @@ export function AppEditorWorkspace({
       scheduleDocumentLoadingVisibility(
         currentSurfaceIdentity,
         pendingForCurrentSurface.startedAt,
+        () => activeSurfaceReadyRef.current,
       );
       return;
     }
@@ -651,6 +680,7 @@ export function AppEditorWorkspace({
     scheduleDocumentLoadingVisibility(
       currentSurfaceIdentity,
       performance.now(),
+      () => activeSurfaceReadyRef.current,
     );
 
     return () => {

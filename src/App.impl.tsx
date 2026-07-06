@@ -60,7 +60,6 @@ import { useVault } from "@/hooks/useVault";
 import { displayTitleForChrome } from "@/lib/note-display";
 import { isClassifiedVaultPath } from "@/lib/classified-path";
 import {
-  fileSetLock,
   listenClassifiedFileTaken,
   listenVersionSaveComplete,
 } from "@/lib/ipc";
@@ -336,6 +335,7 @@ function App() {
     cancelPendingSave,
     awaitSaveInFlight,
     resetVersionIdle,
+    handleLockToggle,
     handleSaveNote,
     versionSnapshotScheduler,
   } = useAppPersistenceLifecycle({
@@ -347,15 +347,19 @@ function App() {
     autoVersionEnabled: autoVersionSettings.autoVersionEnabled,
     autoVersionIdleMinutes: autoVersionSettings.autoVersionIdleMinutes,
     dirtyRef,
+    editorContentTick,
     editorRef,
     editorReadyRef: editorReadyForPersistenceRef,
     getLiveMarkdownRef,
     getTabMarkdownCached,
+    invalidatePreparedNote,
     markClean,
+    markdown,
     noteTitle,
     persistBeforeLeaveRef,
     schedulePathSync,
     setAiStatus,
+    setFileLocked,
     setMarkdown,
     syncTabMarkdownCache,
     tabsRef,
@@ -459,26 +463,6 @@ function App() {
       setMarkdown(content);
     },
     [loadBodyIntoEditor, markdownRef, setMarkdown],
-  );
-
-  const handleLockToggle = useCallback(
-    async (locked: boolean) => {
-      const path = activePathRef.current;
-      if (!path || isClassifiedVaultPath(path)) return;
-      try {
-        if (locked) {
-          await flushSave();
-        }
-        setFileLocked(path, locked);
-        await fileSetLock(path, locked);
-        invalidatePreparedNote(path);
-      } catch (err: unknown) {
-        setFileLocked(path, !locked);
-        const msg = err instanceof Error ? err.message : String(err);
-        setAiStatus(`锁定状态保存失败：${msg}`);
-      }
-    },
-    [activePathRef, flushSave, invalidatePreparedNote, setFileLocked],
   );
 
   const {
@@ -986,4 +970,5 @@ function App() {
 }
 
 App.displayName = "App";
+
 export default App;

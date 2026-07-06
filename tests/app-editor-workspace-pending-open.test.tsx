@@ -265,7 +265,9 @@ describe("AppEditorWorkspace complete-frame note opens", () => {
       firstFrameCallbacks.get("new.md")?.({ path: "new.md" });
     });
 
-    expect(commitPendingNoteOpen).toHaveBeenCalledWith("new.md", 7);
+    expect(commitPendingNoteOpen).toHaveBeenCalledWith("new.md", 7, {
+      skipContentTick: true,
+    });
     expect(document.querySelector('[data-testid="home-workbench"]')).toBeNull();
   });
 
@@ -339,7 +341,9 @@ describe("AppEditorWorkspace complete-frame note opens", () => {
       firstFrame?.({ can: () => ({ undo: () => false, redo: () => false }) });
     });
 
-    expect(commitPendingNoteOpen).toHaveBeenCalledWith("new.md", 7);
+    expect(commitPendingNoteOpen).toHaveBeenCalledWith("new.md", 7, {
+      skipContentTick: true,
+    });
     expect(documentOpenEnd).toHaveBeenCalledWith("open-token");
   });
 
