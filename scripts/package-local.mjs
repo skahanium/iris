@@ -18,23 +18,28 @@ const appPath = path.join(bundleRoot, "macos", "Iris.app");
 function usage() {
   return [
     "Usage:",
-    "  node scripts/package-local.mjs [--check] [--no-sqlite-vec] mac",
-    "  node scripts/package-local.mjs [--check] [--no-sqlite-vec] win",
+    "  node scripts/package-local.mjs [--check] [--sqlite-vec|--no-sqlite-vec] mac",
+    "  node scripts/package-local.mjs [--check] [--sqlite-vec|--no-sqlite-vec] win",
     "",
     "Creates local self-use packages only. No Developer ID, notarization, CI, or Windows code signing.",
+    "Windows defaults to sqlite-vec disabled; use --sqlite-vec for experimental vec0 builds.",
   ].join("\n");
 }
 
 function parseArgs(argv) {
   const options = {
     check: false,
-    sqliteVec: true,
+    sqliteVec: null,
     target: null,
   };
 
   for (const arg of argv) {
     if (arg === "--check") {
       options.check = true;
+      continue;
+    }
+    if (arg === "--sqlite-vec") {
+      options.sqliteVec = true;
       continue;
     }
     if (arg === "--no-sqlite-vec") {
@@ -54,6 +59,10 @@ function parseArgs(argv) {
 
   if (!options.target) {
     throw new Error("Missing target: expected mac or win");
+  }
+
+  if (options.sqliteVec === null) {
+    options.sqliteVec = options.target === "win" ? false : true;
   }
 
   return options;
@@ -204,6 +213,7 @@ function packageWin(options) {
     [
       "",
       "[package-local] Windows NSIS build finished",
+      "  installer: NSIS setup.exe",
       `  bundle dir: ${path.join(bundleRoot, "nsis")}`,
       `  version: ${packageVersion()}`,
       `  arch: ${archLabel()}`,

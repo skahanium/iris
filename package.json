@@ -1,7 +1,7 @@
 {
   "name": "iris",
   "private": true,
-  "version": "1.2.3",
+  "version": "1.2.4",
   "license": "AGPL-3.0-only",
   "type": "module",
   "scripts": {
@@ -13,6 +13,8 @@
     "package:local:mac": "node scripts/package-local.mjs mac",
     "package:local:mac:check": "node scripts/package-local.mjs --check mac",
     "package:local:win": "node scripts/package-local.mjs win",
+    "package:local:win:check": "node scripts/package-local.mjs --check win",
+    "package:local:win:vec": "node scripts/package-local.mjs --sqlite-vec win",
     "build": "node scripts/with-iris-env.mjs -- tsc -b && node scripts/with-iris-env.mjs -- vite build",
     "preview": "node scripts/with-iris-env.mjs -- vite preview",
     "tauri": "node scripts/with-iris-env.mjs -- node scripts/tauri-cli.mjs",

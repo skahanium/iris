@@ -10,6 +10,9 @@ describe("local packaging script contract", () => {
       "package:local:mac": "node scripts/package-local.mjs mac",
       "package:local:mac:check": "node scripts/package-local.mjs --check mac",
       "package:local:win": "node scripts/package-local.mjs win",
+      "package:local:win:check": "node scripts/package-local.mjs --check win",
+      "package:local:win:vec":
+        "node scripts/package-local.mjs --sqlite-vec win",
     });
   });
 
@@ -26,11 +29,16 @@ describe("local packaging script contract", () => {
     expect(source).not.toContain("bundle_dmg.sh");
   });
 
-  it("defaults to sqlite-vec and supports an explicit no-sqlite-vec escape hatch", () => {
+  it("defaults Windows packaging away from sqlite-vec and keeps explicit vec opt-in", () => {
     const source = script();
 
     expect(source).toContain("sqlite-vec");
+    expect(source).toContain("--sqlite-vec");
     expect(source).toContain("--no-sqlite-vec");
+    expect(source).toContain('target === "win" ? false : true');
+    expect(pkg().scripts["package:local:win:vec"]).toBe(
+      "node scripts/package-local.mjs --sqlite-vec win",
+    );
   });
 
   it("prints the production Trusted Types enforcement state in package output", () => {
