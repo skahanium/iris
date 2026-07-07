@@ -166,9 +166,11 @@ fn apply_reasoning_body(body: &mut serde_json::Value, request: &GatewayRequest) 
         return;
     }
     match reasoning.adapter {
-        ReasoningAdapter::DeepSeekReasoningContent
-        | ReasoningAdapter::OpenAiCompatibleTagStream
-        | ReasoningAdapter::None => {}
+        ReasoningAdapter::DeepSeekReasoningContent => {
+            body["extra_body"]["thinking"] = serde_json::json!({ "type": "enabled" });
+            body["reasoning_effort"] = serde_json::json!(deepseek_effort_for_mode(reasoning.mode));
+        }
+        ReasoningAdapter::OpenAiCompatibleTagStream | ReasoningAdapter::None => {}
         ReasoningAdapter::GlmThinking => {
             body["thinking"] = serde_json::json!({
                 "type": "enabled",
@@ -183,7 +185,7 @@ fn apply_reasoning_body(body: &mut serde_json::Value, request: &GatewayRequest) 
             body["reasoning_effort"] = serde_json::json!(effort_for_mode(reasoning.mode));
         }
         ReasoningAdapter::GeminiThinkingConfig => {
-            body["thinking_config"] = serde_json::json!({
+            body["extra_body"]["google"]["thinking_config"] = serde_json::json!({
                 "thinking_level": thinking_level_for_mode(reasoning.mode),
             });
         }
@@ -260,7 +262,9 @@ fn reasoning_adapter_supported_by_endpoint(
     endpoint_family: EndpointFamily,
 ) -> bool {
     match adapter {
-        ReasoningAdapter::GeminiThinkingConfig => false,
+        ReasoningAdapter::GeminiThinkingConfig => {
+            endpoint_family == EndpointFamily::OpenAiCompatibleChatCompletions
+        }
         ReasoningAdapter::AnthropicExtendedThinking => {
             endpoint_family == EndpointFamily::AnthropicMessages
         }
@@ -297,6 +301,18 @@ fn effort_for_mode(mode: ReasoningMode) -> &'static str {
         ReasoningMode::Low => "low",
         ReasoningMode::High => "high",
         ReasoningMode::Xhigh => "xhigh",
+    }
+}
+
+fn deepseek_effort_for_mode(mode: ReasoningMode) -> &'static str {
+    match mode {
+        ReasoningMode::Xhigh => "max",
+        ReasoningMode::Off
+        | ReasoningMode::Auto
+        | ReasoningMode::Minimal
+        | ReasoningMode::Low
+        | ReasoningMode::Medium
+        | ReasoningMode::High => "high",
     }
 }
 
@@ -558,6 +574,42 @@ mod phase3_adapter_contract_tests {
     }
 
     #[test]
+    fn deepseek_reasoning_sends_thinking_and_high_effort() {
+        let mut request = request_for(EndpointFamily::OpenAiCompatibleChatCompletions);
+        request.reasoning = ResolvedReasoningRequest {
+            mode: ReasoningMode::High,
+            adapter: ReasoningAdapter::DeepSeekReasoningContent,
+            control: ReasoningControl::Effort,
+            visibility: ReasoningVisibility::HiddenChannel,
+            requested: true,
+            isolate_output: true,
+        };
+
+        let body = build_chat_completions_body(&request);
+
+        assert_eq!(body["extra_body"]["thinking"]["type"], "enabled");
+        assert_eq!(body["reasoning_effort"], "high");
+    }
+
+    #[test]
+    fn deepseek_reasoning_maps_xhigh_to_max_effort() {
+        let mut request = request_for(EndpointFamily::OpenAiCompatibleChatCompletions);
+        request.reasoning = ResolvedReasoningRequest {
+            mode: ReasoningMode::Xhigh,
+            adapter: ReasoningAdapter::DeepSeekReasoningContent,
+            control: ReasoningControl::Effort,
+            visibility: ReasoningVisibility::HiddenChannel,
+            requested: true,
+            isolate_output: true,
+        };
+
+        let body = build_chat_completions_body(&request);
+
+        assert_eq!(body["extra_body"]["thinking"]["type"], "enabled");
+        assert_eq!(body["reasoning_effort"], "max");
+    }
+
+    #[test]
     fn glm_reasoning_maps_effort_without_using_global_boolean() {
         let mut request = request_for(EndpointFamily::OpenAiCompatibleChatCompletions);
         request.thinking = false;
@@ -614,21 +666,24 @@ mod phase3_adapter_contract_tests {
     }
 
     #[test]
-    fn unsupported_gemini_reasoning_adapter_errors_before_send() {
+    fn gemini_reasoning_uses_google_extra_body_thinking_config() {
         let mut request = request_for(EndpointFamily::OpenAiCompatibleChatCompletions);
         request.reasoning = ResolvedReasoningRequest {
             mode: ReasoningMode::Medium,
             adapter: ReasoningAdapter::GeminiThinkingConfig,
-            control: ReasoningControl::Budget,
+            control: ReasoningControl::Level,
             visibility: ReasoningVisibility::HiddenChannel,
             requested: true,
             isolate_output: true,
         };
 
-        let err = build_llm_api_body(&request).unwrap_err().to_string();
+        let body = build_llm_api_body(&request).unwrap();
 
-        assert!(err.contains("reasoning_adapter_unsupported_for_endpoint"));
-        assert!(!err.contains("secret"));
+        assert_eq!(
+            body["extra_body"]["google"]["thinking_config"]["thinking_level"],
+            "medium"
+        );
+        assert!(body.get("thinking_config").is_none());
     }
 
     #[test]

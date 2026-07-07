@@ -438,6 +438,7 @@ impl ResolvedReasoningRequest {
                 ReasoningAdapter::OpenAiResponses
                     | ReasoningAdapter::AnthropicExtendedThinking
                     | ReasoningAdapter::GeminiThinkingConfig
+                    | ReasoningAdapter::DeepSeekReasoningContent
                     | ReasoningAdapter::GlmThinking
                     | ReasoningAdapter::ProviderSpecificStatic
             )
@@ -453,7 +454,6 @@ mod reasoning_request_tests {
         for adapter in [
             ReasoningAdapter::QwenChatTemplate,
             ReasoningAdapter::OpenAiCompatibleTagStream,
-            ReasoningAdapter::DeepSeekReasoningContent,
             ReasoningAdapter::None,
         ] {
             let request = ResolvedReasoningRequest {
@@ -474,6 +474,7 @@ mod reasoning_request_tests {
             ReasoningAdapter::OpenAiResponses,
             ReasoningAdapter::AnthropicExtendedThinking,
             ReasoningAdapter::GeminiThinkingConfig,
+            ReasoningAdapter::DeepSeekReasoningContent,
             ReasoningAdapter::GlmThinking,
             ReasoningAdapter::ProviderSpecificStatic,
         ] {

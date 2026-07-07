@@ -35,11 +35,15 @@ describe("model provider registry contract", () => {
     expect(section).toContain("文本可用");
     expect(section).toContain("视觉可用");
     expect(section).toContain("视觉不支持");
+    expect(section).toContain("推理可用");
+    expect(section).toContain("推理未知");
     expect(section).toContain("未验证");
     expect(section).not.toContain("文本实测通过");
     expect(section).not.toContain("视觉实测通过");
     expect(section).not.toContain("文本已验证");
     expect(section).not.toContain("视觉已验证");
+    expect(section).not.toContain("reasoning_content");
+    expect(section).not.toContain("tag 模板");
   });
 
   it("does not show provider discovery refresh warnings as persistent UI copy", () => {
@@ -96,6 +100,19 @@ describe("model provider registry contract", () => {
     expect(section).not.toContain("Base URL（可选）");
     expect(section).not.toContain('provider.id === "mimo"');
     expect(types).toContain('endpointManaged: "builtin" | "custom"');
+  });
+
+  it("validation reports merged reasoning capability without downgrading catalog models", () => {
+    const section = read("src/components/settings/LlmRoutingSection.tsx");
+    const rust = read("src-tauri/src/commands/llm_config_commands.rs");
+
+    expect(section).toContain("reasoningCapabilitySummary");
+    expect(section).toContain("来源：内置目录");
+    expect(section).toContain("来源：验证探测");
+    expect(section).toContain("来源：未知");
+    expect(rust).toContain("reasoning_validation_summary");
+    expect(rust).toContain("reasoning_catalog_summary");
+    expect(rust).toContain("推理：");
   });
 
   it("starts with no default slot bindings so empty capability slots freeze", () => {

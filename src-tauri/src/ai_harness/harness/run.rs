@@ -24,7 +24,7 @@ use crate::ai_runtime::agent_task::AgentTaskRuntime;
 use crate::ai_runtime::circuit_breaker;
 use crate::ai_runtime::evidence_ledger::EvidenceLedger;
 use crate::ai_runtime::harness_support::{
-    estimate_tokens, extract_thinking_blocks, load_harness_checkpoint,
+    estimate_tokens, extract_thinking_blocks_for_event, load_harness_checkpoint,
     sanitize_meta_analysis_prefix, HarnessCheckpointMeta,
 };
 use crate::ai_runtime::model_gateway::{
@@ -673,7 +673,8 @@ async fn run_harness_inner(
                 );
                 let raw = response.content.clone().unwrap_or_default();
                 let stripped = strip_tool_markup_from_visible(&raw);
-                let (visible, thinking) = extract_thinking_blocks(&stripped);
+                let (visible, thinking) =
+                    extract_thinking_blocks_for_event(&stripped, thinking_mode);
                 let visible = sanitize_meta_analysis_prefix(&visible);
                 if let Some(t) = thinking {
                     emit_thinking(app_handle, &input.request_id, harness_rounds, &t)?;
@@ -785,7 +786,8 @@ async fn run_harness_inner(
 
             let stripped_assistant =
                 strip_tool_markup_from_visible(&response.content.clone().unwrap_or_default());
-            let (visible_content, thinking) = extract_thinking_blocks(&stripped_assistant);
+            let (visible_content, thinking) =
+                extract_thinking_blocks_for_event(&stripped_assistant, thinking_mode);
             let visible_content = sanitize_meta_analysis_prefix(&visible_content);
             if let Some(t) = thinking {
                 emit_thinking(app_handle, &input.request_id, harness_rounds, &t)?;
@@ -1186,7 +1188,8 @@ async fn run_harness_inner(
         }
         strip_tool_markup_from_visible(&response.content.unwrap_or_default())
     };
-    let (final_visible, final_thinking) = extract_thinking_blocks(&final_content);
+    let (final_visible, final_thinking) =
+        extract_thinking_blocks_for_event(&final_content, thinking_mode);
     let final_visible = sanitize_meta_analysis_prefix(&final_visible);
     if let Some(t) = final_thinking {
         emit_thinking(app_handle, &input.request_id, harness_rounds, &t)?;

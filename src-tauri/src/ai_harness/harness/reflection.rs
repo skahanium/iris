@@ -7,7 +7,7 @@ use super::trace_emit::{emit_thinking, emit_trace_phase};
 use super::types::{HarnessPhase, HarnessRunInput};
 use super::util::accumulate_usage;
 use crate::ai_runtime::evidence_ledger::EvidenceLedger;
-use crate::ai_runtime::harness_support::extract_thinking_blocks;
+use crate::ai_runtime::harness_support::extract_thinking_blocks_for_event;
 use crate::ai_runtime::model_gateway::{
     emit_stream_reset_with_surface, GatewayRequest, LlmMessage, MessageRole, ModelGateway,
     StreamSurface, TokenUsage, ToolCall,
@@ -137,8 +137,8 @@ pub(crate) async fn run_reflection_round(
                 return Ok(ReflectionOutcome::BonusRound);
             }
             let stripped = strip_tool_markup_from_visible(&text);
-            let (visible, thinking) = extract_thinking_blocks(&stripped);
-            if let Some(t) = thinking {
+            let (visible, thinking_block) = extract_thinking_blocks_for_event(&stripped, thinking);
+            if let Some(t) = thinking_block {
                 emit_thinking(app_handle, &input.request_id, harness_rounds, &t)?;
             }
             if sanitize_reflection_visible(&visible).is_some() {

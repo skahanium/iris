@@ -43,10 +43,10 @@ impl ModelCatalogEntry {
             "deepseek" if self.id.contains("reasoner") || self.supports_thinking => {
                 Some(CatalogReasoningCapability {
                     adapter: ReasoningAdapter::DeepSeekReasoningContent,
-                    control: ReasoningControl::Switch,
+                    control: ReasoningControl::Effort,
                     visibility: ReasoningVisibility::HiddenChannel,
-                    supported_modes: SWITCH_REASONING_MODES,
-                    default_mode: ReasoningMode::Auto,
+                    supported_modes: DEEPSEEK_REASONING_MODES,
+                    default_mode: ReasoningMode::High,
                     disable_supported: true,
                 })
             }
@@ -63,6 +63,14 @@ impl ModelCatalogEntry {
                 control: ReasoningControl::Budget,
                 visibility: ReasoningVisibility::HiddenChannel,
                 supported_modes: BUDGET_REASONING_MODES,
+                default_mode: ReasoningMode::Medium,
+                disable_supported: true,
+            }),
+            "google" if self.supports_thinking => Some(CatalogReasoningCapability {
+                adapter: ReasoningAdapter::GeminiThinkingConfig,
+                control: ReasoningControl::Level,
+                visibility: ReasoningVisibility::HiddenChannel,
+                supported_modes: EFFORT_REASONING_MODES,
                 default_mode: ReasoningMode::Medium,
                 disable_supported: true,
             }),
@@ -98,6 +106,22 @@ impl ModelCatalogEntry {
                 default_mode: ReasoningMode::Auto,
                 disable_supported: true,
             }),
+            "hunyuan" if self.supports_thinking => Some(CatalogReasoningCapability {
+                adapter: ReasoningAdapter::OpenAiCompatibleTagStream,
+                control: ReasoningControl::Tag,
+                visibility: ReasoningVisibility::ContentTag,
+                supported_modes: TAG_REASONING_MODES,
+                default_mode: ReasoningMode::Auto,
+                disable_supported: true,
+            }),
+            "ernie" if self.supports_thinking => Some(CatalogReasoningCapability {
+                adapter: ReasoningAdapter::OpenAiCompatibleTagStream,
+                control: ReasoningControl::Tag,
+                visibility: ReasoningVisibility::PlainContentRisk,
+                supported_modes: TAG_REASONING_MODES,
+                default_mode: ReasoningMode::Auto,
+                disable_supported: true,
+            }),
             _ => None,
         }
     }
@@ -105,6 +129,12 @@ impl ModelCatalogEntry {
 
 pub const SWITCH_REASONING_MODES: &[ReasoningMode] = &[ReasoningMode::Off, ReasoningMode::Auto];
 pub const TAG_REASONING_MODES: &[ReasoningMode] = &[ReasoningMode::Off, ReasoningMode::Auto];
+pub const DEEPSEEK_REASONING_MODES: &[ReasoningMode] = &[
+    ReasoningMode::Off,
+    ReasoningMode::Auto,
+    ReasoningMode::High,
+    ReasoningMode::Xhigh,
+];
 pub const EFFORT_REASONING_MODES: &[ReasoningMode] = &[
     ReasoningMode::Off,
     ReasoningMode::Auto,
@@ -119,7 +149,6 @@ pub const OPENAI_REASONING_MODES: &[ReasoningMode] = &[
     ReasoningMode::Low,
     ReasoningMode::Medium,
     ReasoningMode::High,
-    ReasoningMode::Xhigh,
 ];
 pub const BUDGET_REASONING_MODES: &[ReasoningMode] = &[
     ReasoningMode::Off,
@@ -163,7 +192,7 @@ pub fn catalog() -> &'static [ModelCatalogEntry] {
             context_window: ONE_M,
             max_output: 384_000,
             supports_tools: true,
-            supports_thinking: false,
+            supports_thinking: true,
             supports_vision: false,
             supports_streaming: true,
             cache_friendly: true,
@@ -191,7 +220,7 @@ pub fn catalog() -> &'static [ModelCatalogEntry] {
             context_window: ONE_M,
             max_output: 384_000,
             supports_tools: true,
-            supports_thinking: false,
+            supports_thinking: true,
             supports_vision: false,
             supports_streaming: true,
             cache_friendly: true,
@@ -255,6 +284,34 @@ pub fn catalog() -> &'static [ModelCatalogEntry] {
             probe_strategy: ProbeStrategy::OpenAiModelsThenChat,
         },
         ModelCatalogEntry {
+            id: "o3",
+            provider_id: "openai",
+            display_name: "OpenAI o3",
+            context_window: 200_000,
+            max_output: 100_000,
+            supports_tools: true,
+            supports_thinking: true,
+            supports_vision: true,
+            supports_streaming: true,
+            cache_friendly: true,
+            endpoint_family: EndpointFamily::OpenAiCompatibleChatCompletions,
+            probe_strategy: ProbeStrategy::OpenAiModelsThenChat,
+        },
+        ModelCatalogEntry {
+            id: "o4-mini",
+            provider_id: "openai",
+            display_name: "OpenAI o4 mini",
+            context_window: 200_000,
+            max_output: 100_000,
+            supports_tools: true,
+            supports_thinking: true,
+            supports_vision: true,
+            supports_streaming: true,
+            cache_friendly: true,
+            endpoint_family: EndpointFamily::OpenAiCompatibleChatCompletions,
+            probe_strategy: ProbeStrategy::OpenAiModelsThenChat,
+        },
+        ModelCatalogEntry {
             id: "claude-3-5-haiku-20241022",
             provider_id: "anthropic",
             display_name: "Claude 3.5 Haiku",
@@ -267,6 +324,48 @@ pub fn catalog() -> &'static [ModelCatalogEntry] {
             cache_friendly: false,
             endpoint_family: EndpointFamily::AnthropicMessages,
             probe_strategy: ProbeStrategy::AnthropicMessagesPing,
+        },
+        ModelCatalogEntry {
+            id: "claude-sonnet-4-20250514",
+            provider_id: "anthropic",
+            display_name: "Claude Sonnet 4",
+            context_window: 200_000,
+            max_output: 64_000,
+            supports_tools: true,
+            supports_thinking: true,
+            supports_vision: true,
+            supports_streaming: true,
+            cache_friendly: false,
+            endpoint_family: EndpointFamily::AnthropicMessages,
+            probe_strategy: ProbeStrategy::AnthropicMessagesPing,
+        },
+        ModelCatalogEntry {
+            id: "gemini-2.5-flash",
+            provider_id: "google",
+            display_name: "Gemini 2.5 Flash",
+            context_window: ONE_M,
+            max_output: 65_536,
+            supports_tools: true,
+            supports_thinking: true,
+            supports_vision: true,
+            supports_streaming: true,
+            cache_friendly: true,
+            endpoint_family: EndpointFamily::OpenAiCompatibleChatCompletions,
+            probe_strategy: ProbeStrategy::OpenAiModelsThenChat,
+        },
+        ModelCatalogEntry {
+            id: "gemini-2.5-pro",
+            provider_id: "google",
+            display_name: "Gemini 2.5 Pro",
+            context_window: ONE_M,
+            max_output: 65_536,
+            supports_tools: true,
+            supports_thinking: true,
+            supports_vision: true,
+            supports_streaming: true,
+            cache_friendly: true,
+            endpoint_family: EndpointFamily::OpenAiCompatibleChatCompletions,
+            probe_strategy: ProbeStrategy::OpenAiModelsThenChat,
         },
         ModelCatalogEntry {
             id: "glm-4-flash",
@@ -339,6 +438,20 @@ pub fn catalog() -> &'static [ModelCatalogEntry] {
             probe_strategy: ProbeStrategy::OpenAiModelsThenChat,
         },
         ModelCatalogEntry {
+            id: "qwen3-32b",
+            provider_id: "qwen",
+            display_name: "Qwen3 32B",
+            context_window: 131_072,
+            max_output: 32_768,
+            supports_tools: true,
+            supports_thinking: true,
+            supports_vision: false,
+            supports_streaming: true,
+            cache_friendly: false,
+            endpoint_family: EndpointFamily::OpenAiCompatibleChatCompletions,
+            probe_strategy: ProbeStrategy::OpenAiModelsThenChat,
+        },
+        ModelCatalogEntry {
             id: "MiniMax-M3",
             provider_id: "minimax",
             display_name: "MiniMax-M3",
@@ -347,6 +460,62 @@ pub fn catalog() -> &'static [ModelCatalogEntry] {
             supports_tools: true,
             supports_thinking: true,
             supports_vision: false,
+            supports_streaming: true,
+            cache_friendly: false,
+            endpoint_family: EndpointFamily::OpenAiCompatibleChatCompletions,
+            probe_strategy: ProbeStrategy::OpenAiModelsThenChat,
+        },
+        ModelCatalogEntry {
+            id: "hunyuan-t1-latest",
+            provider_id: "hunyuan",
+            display_name: "Hunyuan T1",
+            context_window: 256_000,
+            max_output: 32_768,
+            supports_tools: true,
+            supports_thinking: true,
+            supports_vision: false,
+            supports_streaming: true,
+            cache_friendly: false,
+            endpoint_family: EndpointFamily::OpenAiCompatibleChatCompletions,
+            probe_strategy: ProbeStrategy::OpenAiModelsThenChat,
+        },
+        ModelCatalogEntry {
+            id: "hunyuan-lite",
+            provider_id: "hunyuan",
+            display_name: "Hunyuan Lite",
+            context_window: 256_000,
+            max_output: 16_384,
+            supports_tools: true,
+            supports_thinking: false,
+            supports_vision: false,
+            supports_streaming: true,
+            cache_friendly: false,
+            endpoint_family: EndpointFamily::OpenAiCompatibleChatCompletions,
+            probe_strategy: ProbeStrategy::OpenAiModelsThenChat,
+        },
+        ModelCatalogEntry {
+            id: "ernie-x1",
+            provider_id: "ernie",
+            display_name: "ERNIE X1",
+            context_window: 131_072,
+            max_output: 32_768,
+            supports_tools: true,
+            supports_thinking: true,
+            supports_vision: false,
+            supports_streaming: true,
+            cache_friendly: false,
+            endpoint_family: EndpointFamily::OpenAiCompatibleChatCompletions,
+            probe_strategy: ProbeStrategy::OpenAiModelsThenChat,
+        },
+        ModelCatalogEntry {
+            id: "ernie-4.5-turbo",
+            provider_id: "ernie",
+            display_name: "ERNIE 4.5 Turbo",
+            context_window: 131_072,
+            max_output: 16_384,
+            supports_tools: true,
+            supports_thinking: false,
+            supports_vision: true,
             supports_streaming: true,
             cache_friendly: false,
             endpoint_family: EndpointFamily::OpenAiCompatibleChatCompletions,
@@ -509,9 +678,14 @@ mod tests {
             "deepseek",
             "openai",
             "anthropic",
+            "google",
+            "qwen",
             "zhipu",
             "kimi",
             "doubao",
+            "minimax",
+            "hunyuan",
+            "ernie",
             "custom",
             "mimo",
         ] {
@@ -548,11 +722,24 @@ mod tests {
 
     #[test]
     fn catalog_exposes_structured_reasoning_capability() {
+        let deepseek_flash = find_model("deepseek-v4-flash").unwrap();
+        assert!(deepseek_flash.supports_thinking);
+        let flash_capability = deepseek_flash.reasoning_capability().unwrap();
+        assert_eq!(
+            flash_capability.control,
+            crate::ai_types::ReasoningControl::Effort
+        );
+        assert_eq!(flash_capability.supported_modes, DEEPSEEK_REASONING_MODES);
+
         let deepseek = find_model("deepseek-reasoner").unwrap();
         let deepseek_capability = deepseek.reasoning_capability().unwrap();
         assert_eq!(
             deepseek_capability.adapter,
             crate::ai_types::ReasoningAdapter::DeepSeekReasoningContent
+        );
+        assert_eq!(
+            deepseek_capability.control,
+            crate::ai_types::ReasoningControl::Effort
         );
         assert_eq!(
             deepseek_capability.visibility,
@@ -579,7 +766,7 @@ mod tests {
         assert!(openai
             .supported_modes
             .contains(&crate::ai_types::ReasoningMode::Minimal));
-        assert!(openai
+        assert!(!openai
             .supported_modes
             .contains(&crate::ai_types::ReasoningMode::Xhigh));
 
@@ -606,6 +793,54 @@ mod tests {
             .unwrap();
         assert_eq!(
             minimax.visibility,
+            crate::ai_types::ReasoningVisibility::PlainContentRisk
+        );
+    }
+
+    #[test]
+    fn reasoning_catalog_covers_core_mainstream_provider_families() {
+        let expected = [
+            "openai",
+            "anthropic",
+            "google",
+            "deepseek",
+            "qwen",
+            "zhipu",
+            "doubao",
+            "minimax",
+            "kimi",
+            "hunyuan",
+            "ernie",
+        ];
+        for provider in expected {
+            assert!(
+                catalog_for_settings()
+                    .iter()
+                    .any(|model| model.provider_id == provider),
+                "missing mainstream provider {provider}"
+            );
+        }
+
+        let gemini = find_model("gemini-2.5-pro")
+            .expect("gemini reasoning model")
+            .reasoning_capability()
+            .expect("gemini thinking capability");
+        assert_eq!(
+            gemini.adapter,
+            crate::ai_types::ReasoningAdapter::GeminiThinkingConfig
+        );
+        assert_eq!(gemini.control, crate::ai_types::ReasoningControl::Level);
+
+        let ernie = find_model("ernie-x1")
+            .expect("ernie reasoning model")
+            .reasoning_capability()
+            .expect("ernie reasoning capability");
+        assert_eq!(
+            ernie.adapter,
+            crate::ai_types::ReasoningAdapter::OpenAiCompatibleTagStream
+        );
+        assert_eq!(
+            ernie.visibility,
             crate::ai_types::ReasoningVisibility::PlainContentRisk
         );
     }

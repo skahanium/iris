@@ -122,7 +122,7 @@ mod tests {
     }
 
     #[test]
-    fn checkpoint_round_trip_preserves_reasoning_content() {
+    fn checkpoint_round_trip_scrubs_reasoning_content() {
         let db = Database::open_in_memory().unwrap();
         let rid = "reasoning-cp-1";
         TraceRecorder::start(&db, rid, AiScene::KnowledgeLookup).unwrap();
@@ -140,13 +140,21 @@ mod tests {
             reasoning_content: Some("internal chain of thought".into()),
         }];
         save_harness_checkpoint(&db, rid, &cp).unwrap();
+        let raw: String = db
+            .with_conn(|conn| {
+                Ok(conn.query_row(
+                    "SELECT checkpoint FROM ai_traces WHERE request_id = ?1",
+                    [rid],
+                    |row| row.get(0),
+                )?)
+            })
+            .unwrap();
+        assert!(!raw.contains("internal chain of thought"));
+
         let loaded = load_harness_checkpoint(&db, rid).unwrap().unwrap();
-        assert_eq!(
-            loaded.messages[0].reasoning_content.as_deref(),
-            Some("internal chain of thought")
-        );
+        assert!(loaded.messages[0].reasoning_content.is_none());
         let api = crate::ai_runtime::model_gateway::messages_for_api(&loaded.messages);
-        assert_eq!(api[0]["reasoning_content"], "internal chain of thought");
+        assert!(api[0].get("reasoning_content").is_none());
     }
 
     #[test]
@@ -172,8 +180,10 @@ mod tests {
     }
 
     #[test]
-    fn tool_confirm_resume_api_body_includes_reasoning_after_tool_result() {
-        use crate::ai_runtime::harness_confirm::append_tool_message_to_checkpoint;
+    fn tool_confirm_resume_disables_thinking_after_scrubbed_reasoning() {
+        use crate::ai_runtime::harness_confirm::{
+            append_tool_message_to_checkpoint, thinking_mode_for_resume_checkpoint,
+        };
         use crate::ai_runtime::model_gateway::{
             build_chat_completions_body, GatewayRequest, ProviderConfig,
         };
@@ -210,6 +220,9 @@ mod tests {
         .unwrap();
 
         let loaded = load_harness_checkpoint(&db, rid).unwrap().unwrap();
+        assert!(loaded.messages[0].reasoning_content.is_none());
+        let thinking = thinking_mode_for_resume_checkpoint(&loaded.messages, true);
+        assert!(!thinking);
         let body = build_chat_completions_body(&GatewayRequest {
             provider: ProviderConfig {
                 name: "deepseek".into(),
@@ -225,15 +238,12 @@ mod tests {
             input_token_budget: None,
             temperature: Some(0.7),
             stream: false,
-            thinking: true,
-            reasoning: crate::ai_types::ResolvedReasoningRequest::legacy_enabled(true),
+            thinking,
+            reasoning: crate::ai_types::ResolvedReasoningRequest::disabled(),
             skip_stub_ids: vec![],
         });
-        assert_eq!(
-            body["messages"][0]["reasoning_content"],
-            "internal chain of thought"
-        );
-        assert_eq!(body["thinking"]["type"], "enabled");
+        assert!(body["messages"][0].get("reasoning_content").is_none());
+        assert!(body.get("thinking").is_none());
         assert_eq!(body["messages"].as_array().unwrap().len(), 2);
     }
 

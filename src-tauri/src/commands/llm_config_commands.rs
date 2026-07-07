@@ -339,18 +339,36 @@ async fn llm_model_validate_inner(
             };
             let entry =
                 model_registry::mark_model_validated(&state.db, &provider_id, &model_id, kind)?;
-            if !vision {
+            let reasoning_summary = if !vision {
                 record_reasoning_probe_result(&state.db, &provider_id, &model_id)?;
-            }
+                let routing = load(&state.db)?;
+                let override_row = routing
+                    .providers
+                    .get(&provider_id)
+                    .and_then(|provider| provider.model_capabilities.get(&model_id));
+                Some(reasoning_validation_summary(
+                    &provider_id,
+                    &model_id,
+                    override_row,
+                ))
+            } else {
+                None
+            };
             debug_assert!(model_registry::supports_model_for_slot(&entry, slot));
             Ok(LlmConfigTestResult {
                 ok: true,
                 message: if vision {
                     "视觉模型验证通过".into()
                 } else if let Some(advisory) = model_list_advisory {
-                    format!("模型验证通过（{advisory}）")
+                    format!(
+                        "模型验证通过（{advisory}） · {}",
+                        reasoning_summary.unwrap_or_else(|| "推理：未知（来源：未知）".into())
+                    )
                 } else {
-                    "模型验证通过".into()
+                    format!(
+                        "模型验证通过 · {}",
+                        reasoning_summary.unwrap_or_else(|| "推理：未知（来源：未知）".into())
+                    )
                 },
             })
         }
@@ -359,6 +377,73 @@ async fn llm_model_validate_inner(
             message: format!("模型验证失败：{e}"),
         }),
     }
+}
+
+fn reasoning_validation_summary(
+    provider_id: &str,
+    model_id: &str,
+    override_row: Option<&config::ModelCapabilityOverride>,
+) -> String {
+    if let Some(override_row) = override_row {
+        let source = if override_row.user_verified_at.is_some() {
+            "用户确认"
+        } else if override_row.probe_verified_at.is_some() {
+            "验证探测"
+        } else {
+            "用户确认"
+        };
+        return reasoning_capability_summary_from_parts(
+            override_row.reasoning_adapter,
+            override_row.reasoning_control,
+            source,
+        );
+    }
+    if let Some(summary) = reasoning_catalog_summary(provider_id, model_id) {
+        return summary;
+    }
+    "推理：未知（来源：未知）".into()
+}
+
+fn reasoning_catalog_summary(provider_id: &str, model_id: &str) -> Option<String> {
+    let model = model_catalog::catalog()
+        .iter()
+        .find(|model| model.provider_id == provider_id && model.id == model_id)?;
+    Some(match model.reasoning_capability() {
+        Some(capability) => reasoning_capability_summary_from_parts(
+            Some(capability.adapter),
+            Some(capability.control),
+            "内置目录",
+        ),
+        None => reasoning_capability_summary_from_parts(
+            Some(crate::ai_types::ReasoningAdapter::None),
+            Some(crate::ai_types::ReasoningControl::None),
+            "内置目录",
+        ),
+    })
+}
+
+fn reasoning_capability_summary_from_parts(
+    adapter: Option<crate::ai_types::ReasoningAdapter>,
+    control: Option<crate::ai_types::ReasoningControl>,
+    source: &str,
+) -> String {
+    if matches!(adapter, Some(crate::ai_types::ReasoningAdapter::None))
+        || matches!(
+            control,
+            Some(crate::ai_types::ReasoningControl::None) | None
+        )
+    {
+        return format!("推理：不支持（来源：{source}）");
+    }
+    let detail = match control {
+        Some(crate::ai_types::ReasoningControl::Effort)
+        | Some(crate::ai_types::ReasoningControl::Budget)
+        | Some(crate::ai_types::ReasoningControl::Level) => "支持强度",
+        Some(crate::ai_types::ReasoningControl::Tag)
+        | Some(crate::ai_types::ReasoningControl::Switch) => "无强度控制",
+        Some(crate::ai_types::ReasoningControl::None) | None => "不支持",
+    };
+    format!("推理：可用（{detail}，来源：{source}）")
 }
 
 fn record_reasoning_probe_result(
@@ -387,6 +472,18 @@ fn inferred_reasoning_probe_capability(
     let provider = provider_id.to_ascii_lowercase();
     let model = model_id.to_ascii_lowercase();
     let now = chrono::Utc::now().to_rfc3339();
+    if provider == "deepseek" && (model.starts_with("deepseek-") || model.contains("reasoner")) {
+        return Some(config::ModelCapabilityOverride {
+            reasoning_adapter: Some(crate::ai_types::ReasoningAdapter::DeepSeekReasoningContent),
+            reasoning_control: Some(crate::ai_types::ReasoningControl::Effort),
+            reasoning_visibility: Some(crate::ai_types::ReasoningVisibility::HiddenChannel),
+            supported_modes: Some(crate::llm::model_catalog::DEEPSEEK_REASONING_MODES.to_vec()),
+            default_mode: Some(crate::ai_types::ReasoningMode::High),
+            disable_supported: Some(true),
+            user_verified_at: None,
+            probe_verified_at: Some(now),
+        });
+    }
     if is_minimax_reasoning_risk(&provider, &model) {
         return Some(config::ModelCapabilityOverride {
             reasoning_adapter: Some(crate::ai_types::ReasoningAdapter::OpenAiCompatibleTagStream),
@@ -960,5 +1057,23 @@ mod tests {
 
         let routing = config::load(&db).unwrap();
         assert!(routing.providers["custom"].model_capabilities.is_empty());
+    }
+
+    #[test]
+    fn reasoning_validation_summary_prefers_catalog_over_unknown_probe() {
+        let summary = reasoning_validation_summary("deepseek", "deepseek-v4-pro", None);
+
+        assert!(summary.contains("推理：可用"));
+        assert!(summary.contains("来源：内置目录"));
+        assert!(!summary.contains("未知"));
+    }
+
+    #[test]
+    fn reasoning_validation_summary_marks_catalog_non_reasoning_model_unsupported() {
+        let summary = reasoning_validation_summary("openai", "gpt-4o", None);
+
+        assert!(summary.contains("推理：不支持"));
+        assert!(summary.contains("来源：内置目录"));
+        assert!(!summary.contains("未知"));
     }
 }

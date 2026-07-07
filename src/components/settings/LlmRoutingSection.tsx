@@ -61,6 +61,54 @@ const FALLBACK_PROVIDERS: LlmConfigGetResponse["providers"] = [
     endpointManaged: "builtin",
   },
   {
+    id: "google",
+    name: "Gemini / Google",
+    default_model: "gemini-2.5-flash",
+    endpointManaged: "builtin",
+  },
+  {
+    id: "qwen",
+    name: "Qwen / DashScope",
+    default_model: "qwen3-235b-a22b",
+    endpointManaged: "builtin",
+  },
+  {
+    id: "zhipu",
+    name: "GLM / Zhipu",
+    default_model: "glm-4-flash",
+    endpointManaged: "builtin",
+  },
+  {
+    id: "kimi",
+    name: "Kimi",
+    default_model: "moonshot-v1-128k",
+    endpointManaged: "builtin",
+  },
+  {
+    id: "doubao",
+    name: "Doubao / Volcengine",
+    default_model: "doubao-1-5-pro-256k",
+    endpointManaged: "builtin",
+  },
+  {
+    id: "minimax",
+    name: "MiniMax",
+    default_model: "MiniMax-M3",
+    endpointManaged: "builtin",
+  },
+  {
+    id: "hunyuan",
+    name: "Hunyuan / Tencent",
+    default_model: "hunyuan-t1-latest",
+    endpointManaged: "builtin",
+  },
+  {
+    id: "ernie",
+    name: "ERNIE / Baidu",
+    default_model: "ernie-x1",
+    endpointManaged: "builtin",
+  },
+  {
     id: "mimo",
     name: "MiMo",
     default_model: "MiMo-V2.5-Pro",
@@ -99,6 +147,22 @@ const REASONING_STRENGTH_OPTIONS: ReasoningMode[] = [
   "xhigh",
 ];
 
+const DEEPSEEK_REASONING_OPTIONS: ReasoningMode[] = [
+  "off",
+  "auto",
+  "high",
+  "xhigh",
+];
+
+const OPENAI_REASONING_OPTIONS: ReasoningMode[] = [
+  "off",
+  "auto",
+  "minimal",
+  "low",
+  "medium",
+  "high",
+];
+
 const REASONING_EFFORT_OPTIONS: ReasoningMode[] = [
   "off",
   "auto",
@@ -108,6 +172,15 @@ const REASONING_EFFORT_OPTIONS: ReasoningMode[] = [
 ];
 
 const REASONING_SWITCH_OPTIONS: ReasoningMode[] = ["off", "auto"];
+const REASONING_SWITCH_VALUES = ["off", "on", "auto"] as const;
+
+type ReasoningSwitchValue = (typeof REASONING_SWITCH_VALUES)[number];
+
+const REASONING_SWITCH_LABELS: Record<ReasoningSwitchValue, string> = {
+  off: "关闭",
+  on: "开启",
+  auto: "自动",
+};
 
 const UNSUPPORTED_REASONING_CAPABILITY: ReasoningUiCapability = {
   supported: false,
@@ -116,6 +189,7 @@ const UNSUPPORTED_REASONING_CAPABILITY: ReasoningUiCapability = {
   supportedModes: [],
   defaultMode: "off",
   disableSupported: true,
+  source: "unknown",
 };
 
 interface LlmRoutingSectionProps {
@@ -145,6 +219,7 @@ interface ReasoningUiCapability {
   supportedModes: ReasoningMode[];
   defaultMode: ReasoningMode;
   disableSupported: boolean;
+  source: "catalog" | "probe" | "user" | "unknown";
 }
 
 function nextCustomProviderId(existing: Iterable<string>): string {
@@ -212,12 +287,14 @@ function modelSupportsSlot(
 function modelCapabilitySummary(
   model: EnabledProviderModel,
   result: { ok: boolean; message: string } | undefined,
+  reasoningSummary: string,
 ): string {
   if (result) return result.message;
   const textReady = textValidatedModel(model);
   if (!textReady) return "未验证";
   const visionReady = modelSupportsSlot(model, "vision");
-  return visionReady ? "文本可用 · 视觉可用" : "文本可用 · 视觉不支持";
+  const base = visionReady ? "文本可用 · 视觉可用" : "文本可用 · 视觉不支持";
+  return `${base} · ${reasoningSummary}`;
 }
 
 function normalizeReasoningSlot(
@@ -247,6 +324,14 @@ function modelLooksOpenAiReasoning(
   return provider === "openai" && /^(o1|o3|o4|gpt-5)/i.test(modelId);
 }
 
+function modelLooksDeepSeekReasoning(
+  providerId: string,
+  modelId: string,
+): boolean {
+  const provider = providerId.toLowerCase();
+  return provider === "deepseek" || /^deepseek-/i.test(modelId);
+}
+
 function modelLooksGlmReasoning(providerId: string, modelId: string): boolean {
   const provider = providerId.toLowerCase();
   return provider === "zhipu" && /^(glm-4\.5|glm-5)/i.test(modelId);
@@ -261,19 +346,58 @@ function modelLooksQwenReasoning(providerId: string, modelId: string): boolean {
   );
 }
 
+function modelLooksGeminiReasoning(
+  providerId: string,
+  modelId: string,
+): boolean {
+  const provider = providerId.toLowerCase();
+  return (
+    (provider === "google" || provider === "gemini") &&
+    /gemini-2\.5/i.test(modelId)
+  );
+}
+
+function modelLooksHunyuanReasoning(
+  providerId: string,
+  modelId: string,
+): boolean {
+  const provider = providerId.toLowerCase();
+  return provider === "hunyuan" && /hunyuan-t1/i.test(modelId);
+}
+
+function modelLooksErnieReasoning(
+  providerId: string,
+  modelId: string,
+): boolean {
+  const provider = providerId.toLowerCase();
+  return provider === "ernie" && /ernie-x1/i.test(modelId);
+}
+
 function catalogReasoningCapability(
   providerId: string,
   modelId: string,
   catalog: ModelCatalogEntry | undefined,
 ): ReasoningUiCapability | null {
+  if (modelLooksDeepSeekReasoning(providerId, modelId)) {
+    return {
+      supported: true,
+      control: "effort",
+      tagOnly: false,
+      supportedModes: DEEPSEEK_REASONING_OPTIONS,
+      defaultMode: "high",
+      disableSupported: true,
+      source: "catalog",
+    };
+  }
   if (modelLooksOpenAiReasoning(providerId, modelId)) {
     return {
       supported: true,
       control: "effort",
       tagOnly: false,
-      supportedModes: REASONING_STRENGTH_OPTIONS,
+      supportedModes: OPENAI_REASONING_OPTIONS,
       defaultMode: "medium",
       disableSupported: true,
+      source: "catalog",
     };
   }
   if (catalog?.providerId === "anthropic" && catalog.supportsThinking) {
@@ -284,6 +408,7 @@ function catalogReasoningCapability(
       supportedModes: REASONING_STRENGTH_OPTIONS,
       defaultMode: "medium",
       disableSupported: true,
+      source: "catalog",
     };
   }
   if (modelLooksGlmReasoning(providerId, modelId)) {
@@ -294,6 +419,18 @@ function catalogReasoningCapability(
       supportedModes: REASONING_EFFORT_OPTIONS,
       defaultMode: "medium",
       disableSupported: true,
+      source: "catalog",
+    };
+  }
+  if (modelLooksGeminiReasoning(providerId, modelId)) {
+    return {
+      supported: true,
+      control: "level",
+      tagOnly: false,
+      supportedModes: REASONING_EFFORT_OPTIONS,
+      defaultMode: "medium",
+      disableSupported: true,
+      source: "catalog",
     };
   }
   if (modelLooksQwenReasoning(providerId, modelId)) {
@@ -304,16 +441,40 @@ function catalogReasoningCapability(
       supportedModes: REASONING_SWITCH_OPTIONS,
       defaultMode: "auto",
       disableSupported: true,
+      source: "catalog",
     };
   }
-  if (catalog?.providerId === "deepseek" && catalog.supportsThinking) {
+  if (catalog?.providerId === "minimax" && catalog.supportsThinking) {
     return {
       supported: true,
-      control: "switch",
-      tagOnly: false,
+      control: "tag",
+      tagOnly: true,
       supportedModes: REASONING_SWITCH_OPTIONS,
       defaultMode: "auto",
       disableSupported: true,
+      source: "catalog",
+    };
+  }
+  if (modelLooksHunyuanReasoning(providerId, modelId)) {
+    return {
+      supported: true,
+      control: "tag",
+      tagOnly: true,
+      supportedModes: REASONING_SWITCH_OPTIONS,
+      defaultMode: "auto",
+      disableSupported: true,
+      source: "catalog",
+    };
+  }
+  if (modelLooksErnieReasoning(providerId, modelId)) {
+    return {
+      supported: true,
+      control: "tag",
+      tagOnly: true,
+      supportedModes: REASONING_SWITCH_OPTIONS,
+      defaultMode: "auto",
+      disableSupported: true,
+      source: "catalog",
     };
   }
   if (catalog?.providerId === "mimo" && catalog.supportsThinking) {
@@ -324,6 +485,18 @@ function catalogReasoningCapability(
       supportedModes: REASONING_SWITCH_OPTIONS,
       defaultMode: "auto",
       disableSupported: true,
+      source: "catalog",
+    };
+  }
+  if (catalog) {
+    return {
+      supported: false,
+      control: "none",
+      tagOnly: false,
+      supportedModes: ["off"],
+      defaultMode: "off",
+      disableSupported: true,
+      source: "catalog",
     };
   }
   return null;
@@ -342,6 +515,115 @@ function reasoningOptionsForCapability(
     return REASONING_STRENGTH_OPTIONS;
   }
   return REASONING_SWITCH_OPTIONS;
+}
+
+const REASONING_SOURCE_LABELS: Record<ReasoningUiCapability["source"], string> =
+  {
+    catalog: "来源：内置目录",
+    probe: "来源：验证探测",
+    user: "来源：用户确认",
+    unknown: "来源：未知",
+  };
+
+function reasoningSourceLabel(source: ReasoningUiCapability["source"]): string {
+  return REASONING_SOURCE_LABELS[source];
+}
+
+function reasoningCapabilitySummary(capability: ReasoningUiCapability): string {
+  const source = reasoningSourceLabel(capability.source);
+  if (capability.source === "unknown") return `推理未知（${source}）`;
+  if (!capability.supported) return `推理不支持（${source}）`;
+  const detail =
+    capability.control === "effort" ||
+    capability.control === "budget" ||
+    capability.control === "level"
+      ? "支持强度"
+      : "无强度控制";
+  return `推理可用（${detail}，${source}）`;
+}
+
+function reasoningSwitchOptionsForModel(
+  capability: ReasoningUiCapability,
+): ReasoningSwitchValue[] {
+  if (capability.source === "unknown") return ["off", "auto"];
+  if (!capability.supported) return ["off"];
+  return [...REASONING_SWITCH_VALUES];
+}
+
+function reasoningStrengthOptionsForModel(
+  capability: ReasoningUiCapability,
+): ReasoningMode[] {
+  if (!capability.supported) return [];
+  if (
+    capability.control !== "effort" &&
+    capability.control !== "budget" &&
+    capability.control !== "level"
+  ) {
+    return [];
+  }
+  return reasoningOptionsForCapability(capability).filter(
+    (mode) => mode !== "off",
+  );
+}
+
+function reasoningModeHasStrengthControl(
+  capability: ReasoningUiCapability,
+): boolean {
+  return (
+    capability.control === "effort" ||
+    capability.control === "budget" ||
+    capability.control === "level"
+  );
+}
+
+function reasoningSwitchValueForMode(
+  mode: ReasoningMode,
+): ReasoningSwitchValue {
+  if (mode === "off") return "off";
+  if (mode === "auto") return "auto";
+  return "on";
+}
+
+function defaultStrengthModeForCapability(
+  capability: ReasoningUiCapability,
+): ReasoningMode {
+  const strengthOptions = reasoningStrengthOptionsForModel(capability);
+  if (
+    capability.defaultMode !== "off" &&
+    capability.defaultMode !== "auto" &&
+    strengthOptions.includes(capability.defaultMode)
+  ) {
+    return capability.defaultMode;
+  }
+  const firstExplicit = strengthOptions.find((mode) => mode !== "auto");
+  return firstExplicit ?? (strengthOptions.includes("auto") ? "auto" : "off");
+}
+
+function reasoningModeForSwitchValue(
+  value: ReasoningSwitchValue,
+  capability: ReasoningUiCapability,
+  currentMode: ReasoningMode,
+): ReasoningMode {
+  if (value === "off") return "off";
+  if (value === "auto") return "auto";
+  if (!capability.supported || capability.source === "unknown") return "auto";
+  if (!reasoningModeHasStrengthControl(capability)) {
+    return capability.defaultMode === "off" ? "auto" : capability.defaultMode;
+  }
+  if (currentMode !== "off" && currentMode !== "auto") return currentMode;
+  return defaultStrengthModeForCapability(capability);
+}
+
+function reasoningLabelForModel(
+  mode: ReasoningMode,
+  providerId: string,
+  modelId: string,
+): string {
+  if (modelLooksDeepSeekReasoning(providerId, modelId)) {
+    if (mode === "high") return "High";
+    if (mode === "xhigh") return "Max";
+  }
+  return REASONING_LABELS[mode];
 }
 
 export function LlmRoutingSection({ open }: LlmRoutingSectionProps) {
@@ -791,7 +1073,21 @@ export function LlmRoutingSection({ open }: LlmRoutingSectionProps) {
     }
     const override =
       routing?.providers[providerId]?.modelCapabilities?.[modelId] ?? null;
-    if (override?.reasoningControl && override.reasoningControl !== "none") {
+    if (
+      override?.reasoningAdapter === "none" ||
+      override?.reasoningControl === "none"
+    ) {
+      return {
+        supported: false,
+        control: "none",
+        tagOnly: false,
+        supportedModes: ["off"],
+        defaultMode: "off",
+        disableSupported: true,
+        source: override.userVerifiedAt ? "user" : "probe",
+      };
+    }
+    if (override?.reasoningControl) {
       return {
         supported: true,
         control: override.reasoningControl,
@@ -810,9 +1106,11 @@ export function LlmRoutingSection({ open }: LlmRoutingSectionProps) {
                 supportedModes: [],
                 defaultMode: override.defaultMode ?? "auto",
                 disableSupported: override.disableSupported ?? true,
+                source: override.userVerifiedAt ? "user" : "probe",
               }),
         defaultMode: override.defaultMode ?? "auto",
         disableSupported: override.disableSupported ?? true,
+        source: override.userVerifiedAt ? "user" : "probe",
       };
     }
     if (
@@ -826,6 +1124,7 @@ export function LlmRoutingSection({ open }: LlmRoutingSectionProps) {
         supportedModes: REASONING_SWITCH_OPTIONS,
         defaultMode: "auto",
         disableSupported: true,
+        source: override?.probeVerifiedAt ? "probe" : "catalog",
       };
     }
     const catalog = modelById(providerId, modelId);
@@ -839,10 +1138,16 @@ export function LlmRoutingSection({ open }: LlmRoutingSectionProps) {
     slot: CapabilitySlot,
     providerId: string,
     modelId: string,
-  ): ReasoningMode[] =>
-    reasoningOptionsForCapability(
-      reasoningCapabilityForModel(slot, providerId, modelId),
+  ): ReasoningMode[] => {
+    const capability = reasoningCapabilityForModel(slot, providerId, modelId);
+    if (capability.source === "unknown") return REASONING_SWITCH_OPTIONS;
+    if (!capability.supported) return ["off"];
+    const strengthOptions = reasoningStrengthOptionsForModel(capability);
+    if (strengthOptions.length === 0) return REASONING_SWITCH_OPTIONS;
+    return Array.from(
+      new Set([...REASONING_SWITCH_OPTIONS, ...strengthOptions]),
     );
+  };
 
   const clampReasoningForModel = (
     slot: CapabilitySlot,
@@ -903,136 +1208,6 @@ export function LlmRoutingSection({ open }: LlmRoutingSectionProps) {
         routing.providers[providerId]?.defaultModel === modelId
           ? (nextEnabled[0] ?? null)
           : routing.providers[providerId]?.defaultModel,
-    });
-  };
-
-  const modelReasoningOverrideValue = (
-    providerId: string,
-    modelId: string,
-  ): string => {
-    const override =
-      routing?.providers[providerId]?.modelCapabilities?.[modelId];
-    if (!override?.reasoningAdapter) return "auto";
-    if (override.reasoningAdapter === "none") return "none";
-    if (override.reasoningAdapter === "deep_seek_reasoning_content") {
-      return "reasoning_content";
-    }
-    if (override.reasoningAdapter === "open_ai_compatible_tag_stream") {
-      return "tag_stream";
-    }
-    if (override.reasoningAdapter === "qwen_chat_template") {
-      return "tag_template";
-    }
-    if (override.reasoningControl === "effort") return "native_effort";
-    if (override.reasoningControl === "budget") return "native_budget";
-    if (override.reasoningControl === "level") return "native_level";
-    return "native_switch";
-  };
-
-  const updateModelReasoningOverride = (
-    providerId: string,
-    modelId: string,
-    value: string,
-  ) => {
-    if (!routing) return;
-    const provider = routing.providers[providerId];
-    if (!provider) return;
-    const nextCapabilities = { ...(provider.modelCapabilities ?? {}) };
-    if (value === "auto") {
-      delete nextCapabilities[modelId];
-    } else {
-      nextCapabilities[modelId] =
-        value === "none"
-          ? {
-              reasoningAdapter: "none",
-              reasoningControl: "none",
-              reasoningVisibility: "hidden_channel",
-              supportedModes: ["off"],
-              defaultMode: "off",
-              disableSupported: true,
-              userVerifiedAt: new Date().toISOString(),
-              probeVerifiedAt: null,
-            }
-          : value === "reasoning_content"
-            ? {
-                reasoningAdapter: "deep_seek_reasoning_content",
-                reasoningControl: "switch",
-                reasoningVisibility: "hidden_channel",
-                supportedModes: REASONING_SWITCH_OPTIONS,
-                defaultMode: "auto",
-                disableSupported: true,
-                userVerifiedAt: new Date().toISOString(),
-                probeVerifiedAt: null,
-              }
-            : value === "tag_stream"
-              ? {
-                  reasoningAdapter: "open_ai_compatible_tag_stream",
-                  reasoningControl: "tag",
-                  reasoningVisibility: "plain_content_risk",
-                  supportedModes: REASONING_SWITCH_OPTIONS,
-                  defaultMode: "auto",
-                  disableSupported: true,
-                  userVerifiedAt: new Date().toISOString(),
-                  probeVerifiedAt: null,
-                }
-              : value === "tag_template"
-                ? {
-                    reasoningAdapter: "qwen_chat_template",
-                    reasoningControl: "tag",
-                    reasoningVisibility: "content_tag",
-                    supportedModes: REASONING_SWITCH_OPTIONS,
-                    defaultMode: "auto",
-                    disableSupported: true,
-                    userVerifiedAt: new Date().toISOString(),
-                    probeVerifiedAt: null,
-                  }
-                : value === "native_effort"
-                  ? {
-                      reasoningAdapter: "glm_thinking",
-                      reasoningControl: "effort",
-                      reasoningVisibility: "hidden_channel",
-                      supportedModes: REASONING_EFFORT_OPTIONS,
-                      defaultMode: "medium",
-                      disableSupported: true,
-                      userVerifiedAt: new Date().toISOString(),
-                      probeVerifiedAt: null,
-                    }
-                  : value === "native_budget"
-                    ? {
-                        reasoningAdapter: "anthropic_extended_thinking",
-                        reasoningControl: "budget",
-                        reasoningVisibility: "hidden_channel",
-                        supportedModes: REASONING_STRENGTH_OPTIONS,
-                        defaultMode: "medium",
-                        disableSupported: true,
-                        userVerifiedAt: new Date().toISOString(),
-                        probeVerifiedAt: null,
-                      }
-                    : value === "native_level"
-                      ? {
-                          reasoningAdapter: "gemini_thinking_config",
-                          reasoningControl: "level",
-                          reasoningVisibility: "hidden_channel",
-                          supportedModes: REASONING_EFFORT_OPTIONS,
-                          defaultMode: "medium",
-                          disableSupported: true,
-                          userVerifiedAt: new Date().toISOString(),
-                          probeVerifiedAt: null,
-                        }
-                      : {
-                          reasoningAdapter: "provider_specific_static",
-                          reasoningControl: "switch",
-                          reasoningVisibility: "hidden_channel",
-                          supportedModes: REASONING_SWITCH_OPTIONS,
-                          defaultMode: "auto",
-                          disableSupported: true,
-                          userVerifiedAt: new Date().toISOString(),
-                          probeVerifiedAt: null,
-                        };
-    }
-    updateProviderOverride(providerId, {
-      modelCapabilities:
-        Object.keys(nextCapabilities).length > 0 ? nextCapabilities : undefined,
     });
   };
 
@@ -1200,9 +1375,14 @@ export function LlmRoutingSection({ open }: LlmRoutingSectionProps) {
       }
 
       const vision = await llmModelValidate(provider.id, model.id, "vision");
+      const reasoningFromValidation = text.message.includes("推理：")
+        ? text.message.slice(text.message.indexOf("推理："))
+        : reasoningCapabilitySummary(
+            reasoningCapabilityForModel("writer", provider.id, model.id),
+          );
       const message = vision.ok
-        ? "文本可用 · 视觉可用"
-        : "文本可用 · 视觉不支持";
+        ? `文本可用 · 视觉可用 · ${reasoningFromValidation}`
+        : `文本可用 · 视觉不支持 · ${reasoningFromValidation}`;
       setLoadError(null);
       setTestResults((prev) => ({
         ...prev,
@@ -1482,7 +1662,18 @@ export function LlmRoutingSection({ open }: LlmRoutingSectionProps) {
                         const result = testResults[key];
                         const usage = modelUsageLabels(provider.id, model.id);
                         const modelTesting = testing === key;
-                        const summary = modelCapabilitySummary(model, result);
+                        const reasoningSummary = reasoningCapabilitySummary(
+                          reasoningCapabilityForModel(
+                            "writer",
+                            provider.id,
+                            model.id,
+                          ),
+                        );
+                        const summary = modelCapabilitySummary(
+                          model,
+                          result,
+                          reasoningSummary,
+                        );
                         return (
                           <div
                             key={model.id}
@@ -1507,55 +1698,6 @@ export function LlmRoutingSection({ open }: LlmRoutingSectionProps) {
                                 </span>
                               </div>
                               <div className="flex items-center gap-2">
-                                <Select
-                                  value={modelReasoningOverrideValue(
-                                    provider.id,
-                                    model.id,
-                                  )}
-                                  onValueChange={(value) =>
-                                    updateModelReasoningOverride(
-                                      provider.id,
-                                      model.id,
-                                      value,
-                                    )
-                                  }
-                                >
-                                  <SelectTrigger
-                                    aria-label={`${model.id} 思考能力覆盖`}
-                                    className="h-7 w-28 text-xs"
-                                  >
-                                    <SelectValue placeholder="思考能力" />
-                                  </SelectTrigger>
-                                  <SelectContent>
-                                    <SelectItem value="auto">
-                                      自动识别
-                                    </SelectItem>
-                                    <SelectItem value="none">
-                                      不支持思考
-                                    </SelectItem>
-                                    <SelectItem value="native_switch">
-                                      开关思考
-                                    </SelectItem>
-                                    <SelectItem value="native_effort">
-                                      强度思考
-                                    </SelectItem>
-                                    <SelectItem value="native_budget">
-                                      预算思考
-                                    </SelectItem>
-                                    <SelectItem value="native_level">
-                                      等级思考
-                                    </SelectItem>
-                                    <SelectItem value="reasoning_content">
-                                      reasoning_content
-                                    </SelectItem>
-                                    <SelectItem value="tag_template">
-                                      tag 模板
-                                    </SelectItem>
-                                    <SelectItem value="tag_stream">
-                                      标签隔离
-                                    </SelectItem>
-                                  </SelectContent>
-                                </Select>
                                 <Button
                                   type="button"
                                   size="sm"
@@ -1631,10 +1773,6 @@ export function LlmRoutingSection({ open }: LlmRoutingSectionProps) {
               route && modelIds.includes(route.model) ? route.model : "";
             const routeModelInvalid =
               Boolean(route?.model) && route?.model !== selectedModel;
-            const reasoningOptions =
-              slot !== "vision" && providerId && selectedModel
-                ? reasoningOptionsForModel(slot, providerId, selectedModel)
-                : [];
             const reasoningCapability =
               slot !== "vision" && providerId && selectedModel
                 ? reasoningCapabilityForModel(slot, providerId, selectedModel)
@@ -1645,10 +1783,30 @@ export function LlmRoutingSection({ open }: LlmRoutingSectionProps) {
               selectedModel,
               normalizeReasoningSlot(route),
             ).mode;
+            const reasoningSwitchOptions =
+              slot !== "vision"
+                ? reasoningSwitchOptionsForModel(reasoningCapability)
+                : [];
+            const reasoningStrengthOptions =
+              slot !== "vision"
+                ? reasoningStrengthOptionsForModel(reasoningCapability)
+                : [];
+            const selectedReasoningSwitch =
+              reasoningSwitchValueForMode(selectedReasoning);
+            const selectedReasoningStrength = reasoningStrengthOptions.includes(
+              selectedReasoning,
+            )
+              ? selectedReasoning
+              : reasoningStrengthOptions.includes("auto")
+                ? "auto"
+                : (reasoningStrengthOptions[0] ?? "auto");
+            const strengthDisabled =
+              selectedReasoningSwitch === "off" ||
+              reasoningStrengthOptions.length === 0;
             return (
               <div
                 key={slot}
-                className="grid gap-2 rounded-md border border-border/50 bg-background/60 p-2 xl:grid-cols-[minmax(8rem,0.85fr)_1fr_1.2fr_0.8fr_1fr]"
+                className="grid gap-2 rounded-md border border-border/50 bg-background/60 p-2 xl:grid-cols-[minmax(8rem,0.85fr)_1fr_1.2fr_0.8fr_0.8fr_1fr]"
               >
                 <div className="min-w-0 self-center">
                   <p className="text-xs font-medium text-foreground">
@@ -1736,10 +1894,13 @@ export function LlmRoutingSection({ open }: LlmRoutingSectionProps) {
                   </Select>
                 )}
                 {slot === "vision" ? (
-                  <div className="self-center text-[11px] text-muted-foreground" />
-                ) : reasoningOptions.length === 0 ? (
+                  <>
+                    <div className="self-center text-[11px] text-muted-foreground" />
+                    <div className="self-center text-[11px] text-muted-foreground" />
+                  </>
+                ) : reasoningSwitchOptions.length <= 1 ? (
                   <Input
-                    aria-label={`${SLOT_META[slot].label} 思考模式`}
+                    aria-label={`${SLOT_META[slot].label} 推理开关`}
                     className="h-8 text-xs"
                     value="不支持"
                     disabled
@@ -1747,7 +1908,47 @@ export function LlmRoutingSection({ open }: LlmRoutingSectionProps) {
                   />
                 ) : (
                   <Select
-                    value={selectedReasoning}
+                    value={selectedReasoningSwitch}
+                    onValueChange={(value) =>
+                      updateSlot(slot, {
+                        providerId,
+                        model: selectedModel,
+                        reasoning: {
+                          mode: reasoningModeForSwitchValue(
+                            value as ReasoningSwitchValue,
+                            reasoningCapability,
+                            selectedReasoning,
+                          ),
+                        },
+                      })
+                    }
+                  >
+                    <SelectTrigger
+                      aria-label={`${SLOT_META[slot].label} 推理开关`}
+                      className="h-8 text-xs"
+                    >
+                      <SelectValue placeholder="推理开关" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {reasoningSwitchOptions.map((mode) => (
+                        <SelectItem key={mode} value={mode}>
+                          {REASONING_SWITCH_LABELS[mode]}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                )}
+                {slot === "vision" ? null : strengthDisabled ? (
+                  <Input
+                    aria-label={`${SLOT_META[slot].label} 推理强度`}
+                    className="h-8 text-xs"
+                    value="不可配置"
+                    disabled
+                    readOnly
+                  />
+                ) : (
+                  <Select
+                    value={selectedReasoningStrength}
                     onValueChange={(value) =>
                       updateSlot(slot, {
                         providerId,
@@ -1757,15 +1958,19 @@ export function LlmRoutingSection({ open }: LlmRoutingSectionProps) {
                     }
                   >
                     <SelectTrigger
-                      aria-label={`${SLOT_META[slot].label} 思考模式`}
+                      aria-label={`${SLOT_META[slot].label} 推理强度`}
                       className="h-8 text-xs"
                     >
-                      <SelectValue placeholder="思考模式" />
+                      <SelectValue placeholder="推理强度" />
                     </SelectTrigger>
                     <SelectContent>
-                      {reasoningOptions.map((mode) => (
+                      {reasoningStrengthOptions.map((mode) => (
                         <SelectItem key={mode} value={mode}>
-                          {REASONING_LABELS[mode]}
+                          {reasoningLabelForModel(
+                            mode,
+                            providerId,
+                            selectedModel,
+                          )}
                         </SelectItem>
                       ))}
                     </SelectContent>
@@ -1775,8 +1980,11 @@ export function LlmRoutingSection({ open }: LlmRoutingSectionProps) {
                   {routeProviderInvalid || routeModelInvalid
                     ? "当前路由不可用，请重新选择"
                     : reasoningCapability.tagOnly
-                      ? "可能以正文标签形式返回思考"
-                      : ""}
+                      ? "无强度控制"
+                      : reasoningCapability.source === "unknown" &&
+                          selectedReasoning !== "off"
+                        ? "推理未知，不发送推理参数"
+                        : ""}
                 </div>
               </div>
             );

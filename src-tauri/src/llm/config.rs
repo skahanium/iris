@@ -911,7 +911,13 @@ fn resolve_reasoning_request(
     }
 
     let capability = reasoning_capability_for_route(routing, route, model_spec);
-    let effective_mode = resolve_auto_reasoning_mode(slot, requested_mode, &capability);
+    let unknown_reasoning = matches!(capability.adapter, ReasoningAdapter::None)
+        && matches!(capability.control, ReasoningControl::None);
+    let effective_mode = if unknown_reasoning && requested_mode == ReasoningMode::Auto {
+        ReasoningMode::Auto
+    } else {
+        resolve_auto_reasoning_mode(slot, requested_mode, &capability)
+    };
     let requested = effective_mode != ReasoningMode::Off && capability.can_request();
     ResolvedReasoningRequest {
         mode: effective_mode,
@@ -919,7 +925,8 @@ fn resolve_reasoning_request(
         control: capability.control,
         visibility: capability.visibility,
         requested,
-        isolate_output: capability.needs_isolation()
+        isolate_output: (unknown_reasoning && effective_mode != ReasoningMode::Off)
+            || capability.needs_isolation()
             || matches!(
                 capability.visibility,
                 ReasoningVisibility::ContentTag | ReasoningVisibility::PlainContentRisk
@@ -933,6 +940,14 @@ fn resolve_auto_reasoning_mode(
     capability: &ReasoningCapability,
 ) -> ReasoningMode {
     if mode != ReasoningMode::Auto {
+        return clamp_reasoning_mode(mode, capability);
+    }
+    if capability.adapter == ReasoningAdapter::DeepSeekReasoningContent {
+        let mode = match slot {
+            CapabilitySlot::Reasoner | CapabilitySlot::LongContext => ReasoningMode::Xhigh,
+            CapabilitySlot::Fast | CapabilitySlot::Writer => ReasoningMode::High,
+            _ => ReasoningMode::Off,
+        };
         return clamp_reasoning_mode(mode, capability);
     }
     let mode = match capability.control {
@@ -1005,13 +1020,17 @@ fn infer_reasoning_capability(
             disable_supported: catalog_capability.disable_supported,
         };
     }
-    if provider == "deepseek" && (model.contains("reasoner") || model_spec.supports_thinking) {
+    if provider == "deepseek"
+        && (model.starts_with("deepseek-")
+            || model.contains("reasoner")
+            || model_spec.supports_thinking)
+    {
         return ReasoningCapability {
             adapter: ReasoningAdapter::DeepSeekReasoningContent,
-            control: ReasoningControl::Switch,
+            control: ReasoningControl::Effort,
             visibility: ReasoningVisibility::HiddenChannel,
-            supported_modes: crate::llm::model_catalog::SWITCH_REASONING_MODES.to_vec(),
-            default_mode: ReasoningMode::Auto,
+            supported_modes: crate::llm::model_catalog::DEEPSEEK_REASONING_MODES.to_vec(),
+            default_mode: ReasoningMode::High,
             disable_supported: true,
         };
     }
@@ -1035,7 +1054,7 @@ fn infer_reasoning_capability(
             disable_supported: true,
         };
     }
-    if provider == "google" || provider == "gemini" {
+    if (provider == "google" || provider == "gemini") && model_spec.supports_thinking {
         return ReasoningCapability {
             adapter: ReasoningAdapter::GeminiThinkingConfig,
             control: ReasoningControl::Level,
@@ -1778,7 +1797,7 @@ mod tests {
         )
         .expect("legacy thinking route resolves");
 
-        assert_eq!(route.resolved.reasoning.mode, ReasoningMode::Auto);
+        assert_eq!(route.resolved.reasoning.mode, ReasoningMode::Xhigh);
         assert_eq!(
             route.resolved.reasoning.adapter,
             ReasoningAdapter::DeepSeekReasoningContent
@@ -2447,6 +2466,64 @@ mod tests {
         .expect("text-validated model should route long context");
         assert_eq!(long_context.summary.slot, CapabilitySlot::LongContext);
         assert_eq!(long_context.summary.model, "plain-text");
+    }
+
+    #[test]
+    fn unknown_custom_reasoning_auto_only_enables_output_isolation() {
+        let mut routing = deepseek_defaults();
+        routing.providers.insert(
+            "custom".into(),
+            ProviderOverride {
+                base_url: Some("https://example.com/v1".into()),
+                label: Some("Custom".into()),
+                default_model: Some("plain-text".into()),
+                enabled_models: Some(vec!["plain-text".into()]),
+                model_capabilities: std::collections::HashMap::new(),
+            },
+        );
+        routing.slots.insert(
+            "reasoner".into(),
+            SlotRoute {
+                provider_id: "custom".into(),
+                model: "plain-text".into(),
+                thinking: false,
+                reasoning: Some(ReasoningSlotConfig {
+                    mode: ReasoningMode::Auto,
+                }),
+            },
+        );
+        let registry = vec![ModelRegistryEntry {
+            provider_id: "custom".into(),
+            model_id: "plain-text".into(),
+            display_name: "plain-text".into(),
+            source: model_registry::ModelRegistrySource::Manual,
+            stale: false,
+            first_seen_at: None,
+            last_seen_at: None,
+            last_refreshed_at: None,
+            text_verified_at: Some("verified".into()),
+            vision_verified_at: None,
+            user_confirmed_capabilities: Vec::new(),
+        }];
+
+        let route = resolve_capability_route_with_registry(
+            &routing,
+            CapabilityRouteInput {
+                intent: AgentIntent::Research,
+                context_tokens: 1_000,
+                has_images: false,
+                needs_tools: false,
+                needs_reasoning: true,
+                privacy_preference: PrivacyPreference::ExternalAllowed,
+            },
+            &registry,
+        )
+        .expect("text-validated model should route");
+
+        assert_eq!(route.resolved.reasoning.mode, ReasoningMode::Auto);
+        assert_eq!(route.resolved.reasoning.adapter, ReasoningAdapter::None);
+        assert!(!route.resolved.reasoning.requested);
+        assert!(route.resolved.reasoning.isolate_output);
     }
     #[test]
     fn vision_route_ignores_dirty_verified_state_for_catalog_non_vision_model() {

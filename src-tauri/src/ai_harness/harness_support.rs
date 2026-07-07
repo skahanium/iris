@@ -221,6 +221,19 @@ pub fn extract_thinking_blocks(content: &str) -> (String, Option<String>) {
     (visible.trim().to_string(), thinking_opt)
 }
 
+/// Strip reasoning tags from visible output and optionally surface safe event metadata.
+pub fn extract_thinking_blocks_for_event(
+    content: &str,
+    allow_thinking_event: bool,
+) -> (String, Option<String>) {
+    let (visible, thinking) = extract_thinking_blocks(content);
+    if allow_thinking_event {
+        (visible, thinking)
+    } else {
+        (visible, None)
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 struct ReasoningOpen {
     start: usize,
@@ -353,13 +366,21 @@ pub struct HarnessCheckpoint {
     pub bonus_round_used: bool,
 }
 
+fn scrub_checkpoint_internal_reasoning(checkpoint: &mut HarnessCheckpoint) {
+    for message in &mut checkpoint.messages {
+        message.reasoning_content = None;
+    }
+}
+
 /// Save harness checkpoint to `ai_traces`.
 pub fn save_harness_checkpoint(
     db: &Database,
     request_id: &str,
     checkpoint: &HarnessCheckpoint,
 ) -> AppResult<()> {
-    let value = serde_json::to_value(checkpoint)
+    let mut checkpoint = checkpoint.clone();
+    scrub_checkpoint_internal_reasoning(&mut checkpoint);
+    let value = serde_json::to_value(&checkpoint)
         .map_err(|e| crate::error::AppError::msg(format!("checkpoint: {e}")))?;
     crate::ai_runtime::trace::TraceRecorder::save_checkpoint(db, request_id, &value)
 }
@@ -384,10 +405,11 @@ pub fn load_harness_checkpoint(
         );
         match row {
             Ok((Some(json), status)) if is_recoverable_checkpoint_status(&status) => {
-                let cp: HarnessCheckpoint = match serde_json::from_str(&json) {
+                let mut cp: HarnessCheckpoint = match serde_json::from_str(&json) {
                     Ok(cp) => cp,
                     Err(_) => return Ok(None),
                 };
+                scrub_checkpoint_internal_reasoning(&mut cp);
                 Ok(Some(cp))
             }
             Ok(_) => Ok(None),
@@ -523,6 +545,24 @@ mod tests {
 
         assert_eq!(visible, "可见");
         assert_eq!(think.as_deref(), Some("内部推理未闭合"));
+    }
+
+    #[test]
+    fn suppresses_thinking_event_when_reasoning_is_off_but_still_cleans_visible_text() {
+        let (visible, think) =
+            extract_thinking_blocks_for_event("答复<think>hidden plan</think>", false);
+
+        assert_eq!(visible, "答复");
+        assert!(think.is_none());
+    }
+
+    #[test]
+    fn keeps_thinking_event_when_reasoning_is_requested() {
+        let (visible, think) =
+            extract_thinking_blocks_for_event("答复<think>hidden plan</think>", true);
+
+        assert_eq!(visible, "答复");
+        assert_eq!(think.as_deref(), Some("hidden plan"));
     }
 
     #[test]

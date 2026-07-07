@@ -11,7 +11,8 @@ describe("llm reasoning routing contract", () => {
     const section = read("src/components/settings/LlmRoutingSection.tsx");
     const types = read("src/types/llm.ts");
 
-    expect(section).toContain("思考模式");
+    expect(section).toContain("推理开关");
+    expect(section).toContain("推理强度");
     expect(section).toContain("reasoningOptionsForModel");
     expect(section).toContain('slot === "vision"');
     expect(section).toContain('value="不支持"');
@@ -34,19 +35,21 @@ describe("llm reasoning routing contract", () => {
     expect(types).toContain("reasoning?: ReasoningSlotConfig");
     expect(section).toContain("normalizeReasoningSlot(route)");
     expect(section).toContain("reasoning: { mode: value as ReasoningMode }");
-    expect(section).toContain("updateModelReasoningOverride");
-    expect(section).toContain("自动识别");
-    expect(section).toContain("标签隔离");
+    expect(section).not.toContain("updateModelReasoningOverride");
+    expect(section).not.toContain("reasoning_content");
+    expect(section).not.toContain("tag 模板");
+    expect(section).not.toContain("标签隔离");
     expect(types).toContain("supportedModes?: ReasoningMode[]");
     expect(types).toContain("defaultMode?: ReasoningMode | null");
     expect(types).toContain("disableSupported?: boolean | null");
-    expect(section).toContain("native_effort");
-    expect(section).toContain("native_budget");
-    expect(section).toContain("tag_template");
+    expect(section).not.toContain("native_effort");
+    expect(section).not.toContain("native_budget");
+    expect(section).not.toContain("tag_template");
   });
 
   it("uses capability mode lists instead of supportsThinking boolean only", () => {
     const section = read("src/components/settings/LlmRoutingSection.tsx");
+    const catalog = read("src-tauri/src/llm/model_catalog.rs");
 
     expect(section).toContain("supportedModes");
     expect(section).toContain("catalogReasoningCapability");
@@ -55,7 +58,41 @@ describe("llm reasoning routing contract", () => {
     expect(section).toContain("modelLooksGlmReasoning");
     expect(section).toContain("modelLooksQwenReasoning");
     expect(section).toContain("tagOnly");
-    expect(section).toContain("可能以正文标签形式返回思考");
+    expect(section).toContain("无强度控制");
+    expect(section).not.toContain("已启用内部思考隔离");
+    expect(catalog).toContain("DEEPSEEK_REASONING_MODES");
+    expect(catalog).toContain("ReasoningMode::Xhigh");
+  });
+
+  it("renders separate reasoning switch and strength controls for non-vision slots", () => {
+    const section = read("src/components/settings/LlmRoutingSection.tsx");
+
+    expect(section).toContain("推理开关");
+    expect(section).toContain("推理强度");
+    expect(section).toContain("reasoningSwitchOptionsForModel");
+    expect(section).toContain("reasoningStrengthOptionsForModel");
+    expect(section).toContain("reasoningLabelForModel");
+    expect(section).toContain("不支持");
+    expect(section).toContain("不可配置");
+    expect(section).toContain("Max");
+    expect(section).toContain('slot === "vision"');
+  });
+
+  it("keeps model card reasoning status user-facing", () => {
+    const section = read("src/components/settings/LlmRoutingSection.tsx");
+
+    expect(section).toContain("reasoningCapabilitySummary");
+    expect(section).toContain("推理可用");
+    expect(section).toContain("推理未知");
+    expect(section).toContain("推理不支持");
+    expect(section).toContain("支持强度");
+    expect(section).toContain("无强度控制");
+    expect(section).toContain("来源：内置目录");
+    expect(section).toContain("来源：验证探测");
+    expect(section).toContain("来源：用户确认");
+    expect(section).not.toContain("仅隔离");
+    expect(section).not.toContain("思考能力覆盖");
+    expect(section).toContain("if (catalog)");
   });
 
   it("does not persist null model capability maps", () => {
