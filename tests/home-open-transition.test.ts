@@ -23,6 +23,7 @@ describe("home open transition", () => {
     expect(sequence).toBe(1);
     expect(setPendingOpen).toHaveBeenCalledWith({
       kind: "note",
+      loadingPolicy: "defer",
       path: "new.md",
       sequence: 1,
       title: "New",
@@ -57,6 +58,7 @@ describe("home open transition", () => {
     ).toBe(false);
     expect(setPendingOpen).toHaveBeenLastCalledWith({
       kind: "note",
+      loadingPolicy: "defer",
       path: "c.md",
       sequence: second,
       title: "C",
@@ -104,6 +106,7 @@ describe("home open transition", () => {
     const setPendingOpen = vi.fn();
     const pending: HomePendingOpen = {
       kind: "note",
+      loadingPolicy: "defer",
       path: "missing.md",
       sequence: 1,
       startedAt: 123,
@@ -137,6 +140,7 @@ describe("home open transition", () => {
 
     const sequence = beginHomeOpenLoading({
       kind: "new-note",
+      loadingPolicy: "defer",
       path: null,
       title: "新建笔记",
       sequenceRef,
@@ -146,6 +150,7 @@ describe("home open transition", () => {
     expect(sequence).toBe(1);
     expect(setPendingOpen).toHaveBeenCalledWith({
       kind: "new-note",
+      loadingPolicy: "defer",
       path: null,
       sequence: 1,
       title: "新建笔记",

@@ -14,6 +14,10 @@ interface CurrentRef<T> {
 
 type MaybePromise<T> = T | Promise<T>;
 
+interface HomeNewNoteOpenOptions {
+  homeOpenSequence: number;
+}
+
 function openTransitionNow(): number {
   return globalThis.performance?.now?.() ?? Date.now();
 }
@@ -24,7 +28,7 @@ interface UseHomeWorkspaceTransitionsOptions<OpenNoteOptions> {
   activePathRef: CurrentRef<string | null>;
   activateArtifact: (id: string) => void;
   activateTab: (path: string, options?: OpenNoteOptions) => MaybePromise<void>;
-  handleNewNote: () => Promise<void>;
+  handleNewNote: (options?: HomeNewNoteOpenOptions) => Promise<void>;
   openNote: (
     path: string,
     titleHint?: string,
@@ -129,6 +133,7 @@ export function useHomeWorkspaceTransitions<OpenNoteOptions>({
       });
       const pending = pendingOpenRef.current ?? {
         kind: "note" as const,
+        loadingPolicy: "defer" as const,
         path,
         sequence,
         startedAt: openTransitionNow(),
@@ -219,6 +224,7 @@ export function useHomeWorkspaceTransitions<OpenNoteOptions>({
     const title = "新建笔记";
     const sequence = beginHomeOpenLoading({
       kind: "new-note",
+      loadingPolicy: "disabled",
       path: null,
       sequenceRef: homeOpenSequenceRef,
       setPendingOpen,
@@ -226,6 +232,7 @@ export function useHomeWorkspaceTransitions<OpenNoteOptions>({
     });
     const pending = pendingOpenRef.current ?? {
       kind: "new-note" as const,
+      loadingPolicy: "disabled" as const,
       path: null,
       sequence,
       startedAt: openTransitionNow(),
@@ -234,7 +241,7 @@ export function useHomeWorkspaceTransitions<OpenNoteOptions>({
     setActiveArtifactId(null);
     setHomeActive(false);
     scheduleOpenWatchdog(pending);
-    return handleNewNote()
+    return handleNewNote({ homeOpenSequence: sequence })
       .then(() => {
         clearOpenWatchdog();
         if (homeOpenSequenceRef.current !== sequence) return;

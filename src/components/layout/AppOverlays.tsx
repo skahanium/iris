@@ -1,4 +1,4 @@
-﻿import { lazy, Suspense } from "react";
+import { lazy, Suspense } from "react";
 
 import { ClassifiedPanel } from "@/components/classified/ClassifiedPanel";
 import { ConflictDialog } from "@/components/file/ConflictDialog";
@@ -15,6 +15,7 @@ import type {
   OverlayId,
 } from "@/hooks/useOverlayManager";
 import type { IrisOverlaySize } from "@/lib/overlay-sizes";
+import { loadManagementCenterPanel } from "@/lib/preload-overlays";
 import type { TabItem } from "@/components/layout/TabBar";
 import type {
   DocumentOpenPriority,
@@ -24,6 +25,7 @@ import type {
   PreparedNoteOpen,
 } from "@/lib/document-open-runtime";
 import type { ClassifiedStatus, FileListItem } from "@/types/ipc";
+import type { ConnectivityStatus } from "@/types/llm";
 import type {
   WebSearchAvailability,
   WebSearchProviderOption,
@@ -34,11 +36,7 @@ const GraphView = lazy(() =>
     default: m.GraphView,
   })),
 );
-const ManagementCenterPanel = lazy(() =>
-  import("@/components/settings/ManagementCenterPanel").then((m) => ({
-    default: m.ManagementCenterPanel,
-  })),
-);
+const ManagementCenterPanel = lazy(loadManagementCenterPanel);
 const VersionTimeline = lazy(() =>
   import("@/components/version/VersionTimeline").then((m) => ({
     default: m.VersionTimeline,
@@ -109,6 +107,7 @@ interface AppOverlaysProps {
   classifiedOpen: boolean;
   classifiedVaultStatus: ClassifiedStatus;
   classifiedWaiting: boolean;
+  connectivityStatus: ConnectivityStatus | null;
   conflictState: ConflictState | null;
   getCurrentContent: () => string;
   onBeforeFinalizeCurrent: () => Promise<string | null>;
@@ -175,6 +174,7 @@ export function AppOverlays({
   classifiedOpen,
   classifiedVaultStatus,
   classifiedWaiting,
+  connectivityStatus,
   conflictState,
   getCurrentContent,
   onBeforeFinalizeCurrent,
@@ -284,6 +284,7 @@ export function AppOverlays({
             webSearchAvailability={webSearchAvailability}
             webSearchProviderId={webSearchProviderId}
             webSearchProviders={webSearchProviders}
+            connectivityStatus={connectivityStatus}
             onWebSearchChange={setWebSearch}
             onWebSearchProviderChange={setWebSearchProviderId}
             onRefreshWebSearchProviders={refreshWebSearchProviders}

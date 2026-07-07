@@ -1,8 +1,11 @@
 ﻿import { describe, expect, it } from "vitest";
 
 import {
+  compactChatLinesForState,
   createAiPayloadStore,
   projectTextForUi,
+  reconcileChatLinePayloadRefs,
+  releaseChatLinePayloadRefs,
   restoreProjectedText,
   sanitizePayloadForUi,
 } from "@/lib/ai-payload-store";
@@ -45,5 +48,34 @@ describe("AI payload store", () => {
     expect(serialized).not.toContain("B".repeat(50_000));
     expect(serialized).toContain("contentRef");
     expect(store.snapshot().entryCount).toBe(1);
+  });
+
+  it("releases payload refs when chat messages leave state", () => {
+    const store = createAiPayloadStore();
+    const long = "A".repeat(100_000);
+    const messages = compactChatLinesForState(store, [
+      { role: "assistant", content: long },
+    ]);
+
+    expect(store.snapshot().entryCount).toBe(1);
+
+    releaseChatLinePayloadRefs(store, messages);
+
+    expect(store.snapshot().entryCount).toBe(0);
+  });
+
+  it("reconciles shared payload refs without releasing refs still present in next state", () => {
+    const store = createAiPayloadStore();
+    const long = "B".repeat(100_000);
+    const previous = compactChatLinesForState(store, [
+      { role: "assistant", content: long },
+      { role: "assistant", content: long },
+    ]);
+    const next = previous.slice(0, 1);
+
+    reconcileChatLinePayloadRefs(store, previous, next);
+
+    expect(store.snapshot()).toMatchObject({ entryCount: 1 });
+    expect(store.snapshot().entries[0]?.refCount).toBe(1);
   });
 });

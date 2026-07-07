@@ -3,10 +3,12 @@ interface CurrentRef<T> {
 }
 
 export type HomePendingOpenKind = "note" | "new-note";
+export type HomePendingOpenLoadingPolicy = "defer" | "disabled";
 
 export interface HomePendingOpen {
   error?: string;
   kind: HomePendingOpenKind;
+  loadingPolicy: HomePendingOpenLoadingPolicy;
   path: string | null;
   sequence: number;
   startedAt: number;
@@ -15,6 +17,7 @@ export interface HomePendingOpen {
 
 interface BeginHomeOpenLoadingOptions {
   kind?: HomePendingOpenKind;
+  loadingPolicy?: HomePendingOpenLoadingPolicy;
   path: string | null;
   sequenceRef: CurrentRef<number>;
   setPendingOpen: (pending: HomePendingOpen | null) => void;
@@ -51,6 +54,7 @@ function openTransitionNow(): number {
 
 export function beginHomeOpenLoading({
   kind = "note",
+  loadingPolicy,
   path,
   sequenceRef,
   setPendingOpen,
@@ -59,6 +63,7 @@ export function beginHomeOpenLoading({
   sequenceRef.current += 1;
   setPendingOpen({
     kind,
+    loadingPolicy: loadingPolicy ?? "defer",
     path,
     sequence: sequenceRef.current,
     startedAt: openTransitionNow(),

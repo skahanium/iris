@@ -9,6 +9,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { useAssistantConversation } from "@/components/ai/hooks/useAssistantConversation";
+import { getAiPayloadStore } from "@/lib/ai-payload-store";
 import type { ChatLine, ImageAttachment } from "@/components/ai/AiMessageList";
 import type { ContextPacket } from "@/types/ai";
 
@@ -323,6 +324,41 @@ describe("useAssistantConversation", () => {
 
     expect(onInsertToEditor).toHaveBeenCalledWith("answer [C99]");
     expect(setActivityHint).toHaveBeenCalledWith("有引用未找到：[C99]");
+  });
+
+  it("releases long payload refs when starting a new chat", async () => {
+    const store = getAiPayloadStore();
+    store.clear();
+
+    await act(async () => {
+      api.setMessages([{ role: "assistant", content: "A".repeat(100_000) }]);
+    });
+
+    expect(store.snapshot().entryCount).toBe(1);
+
+    await act(async () => {
+      api.handleNewChat();
+    });
+
+    expect(store.snapshot().entryCount).toBe(0);
+  });
+
+  it("bounds the UI message window and releases trimmed long payloads", async () => {
+    const store = getAiPayloadStore();
+    store.clear();
+
+    await act(async () => {
+      api.setMessages(
+        Array.from({ length: 245 }, (_, index) => ({
+          role: "assistant" as const,
+          content: String(index) + ":" + "Z".repeat(100_000),
+        })),
+      );
+    });
+
+    expect(api.messages).toHaveLength(240);
+    expect(api.messages[0]?.content).toContain("5:");
+    expect(store.snapshot().entryCount).toBeLessThanOrEqual(240);
   });
 
   it("resets conversation state for a new chat", async () => {

@@ -87,6 +87,18 @@ describe("AiMessageBubble markdown worker pending behavior", () => {
     expect(container.innerHTML).toContain("previous-worker-render");
   });
 
+  it("does not synchronously render a long streaming first frame while worker output is pending", () => {
+    workerState.value = {
+      failed: false,
+      html: null,
+      pending: true,
+    };
+
+    renderBubble({ content: "L".repeat(90_000), streaming: true });
+
+    expect(renderMarkdownWithProfileMock).not.toHaveBeenCalled();
+  });
+
   it("renders final assistant content synchronously", () => {
     renderBubble({ content: "**final**", streaming: false });
 

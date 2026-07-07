@@ -13,6 +13,7 @@ import { DocumentTitleField } from "@/components/editor/DocumentTitleField";
 import { AppAiPanelSlot } from "@/components/layout/AppAiPanelSlot";
 import { AppEditorWorkspace } from "@/components/layout/AppEditorWorkspace";
 import { AppOverlays } from "@/components/layout/AppOverlays";
+import { preloadManagementCenter } from "@/lib/preload-overlays";
 import { AppShell } from "@/components/layout/AppShell";
 import { AppStatusBarSlot } from "@/components/layout/AppStatusBarSlot";
 import { DesktopFrame } from "@/components/layout/DesktopFrame";
@@ -82,6 +83,26 @@ function saveOutlineOpen(open: boolean): void {
   }
 }
 
+interface IdlePreloadScheduler {
+  requestIdleCallback?: (callback: () => void) => number;
+  cancelIdleCallback?: (handle: number) => void;
+  setTimeout: Window["setTimeout"];
+  clearTimeout: Window["clearTimeout"];
+}
+
+function scheduleManagementCenterPreload(): () => void {
+  const scheduler = window as unknown as IdlePreloadScheduler;
+  if (scheduler.requestIdleCallback) {
+    const handle = scheduler.requestIdleCallback(() =>
+      preloadManagementCenter(),
+    );
+    return () => scheduler.cancelIdleCallback?.(handle);
+  }
+
+  const handle = scheduler.setTimeout(() => preloadManagementCenter(), 0);
+  return () => scheduler.clearTimeout(handle);
+}
+
 function App() {
   useMacOSWindowChromeSync();
   const { vaultPath, loading, pickVault, error: vaultError } = useVault();
@@ -115,6 +136,11 @@ function App() {
   const overlays = useOverlayManager();
   const { provider: llmProvider } = useLlmProvider();
   const { status: connectivityStatus } = useConnectivityStatus();
+
+  useEffect(() => {
+    if (!vaultPath) return undefined;
+    return scheduleManagementCenterPreload();
+  }, [vaultPath]);
 
   const bumpVaultIndex = useCallback(
     () => setVaultIndexEpoch((n) => n + 1),
@@ -274,6 +300,7 @@ function App() {
     openNoteLeavingHome,
     setActiveArtifactId,
     setHomeActive,
+    showHome,
     tabs,
   });
 
@@ -352,7 +379,6 @@ function App() {
     editorReadyRef: editorReadyForPersistenceRef,
     getLiveMarkdownRef,
     getTabMarkdownCached,
-    invalidatePreparedNote,
     markClean,
     markdown,
     noteTitle,
@@ -924,6 +950,7 @@ function App() {
             classifiedOpen={classifiedOpen}
             classifiedVaultStatus={classifiedVaultStatus}
             classifiedWaiting={classifiedWaiting}
+            connectivityStatus={connectivityStatus}
             conflictState={conflictState}
             getCurrentContent={() => getLiveMarkdownRef.current()}
             onBeforeFinalizeCurrent={handleBeforeFinalizeCurrent}

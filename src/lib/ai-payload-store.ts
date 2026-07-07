@@ -338,11 +338,64 @@ export function compactChatLineForState(
   };
 }
 
+function chatLinePayloadRef(message: ChatLine): AiPayloadRef | undefined {
+  return (message as ChatLineWithPayloadRef).contentRef;
+}
+
+function payloadRefCounts(
+  messages: readonly ChatLine[],
+): Map<string, { count: number; ref: AiPayloadRef }> {
+  const counts = new Map<string, { count: number; ref: AiPayloadRef }>();
+  for (const message of messages) {
+    const ref = chatLinePayloadRef(message);
+    if (!ref) continue;
+    const current = counts.get(ref.id);
+    if (current) {
+      current.count += 1;
+    } else {
+      counts.set(ref.id, { count: 1, ref });
+    }
+  }
+  return counts;
+}
+
+export function releaseChatLinePayloadRefs(
+  store: AiPayloadStore,
+  messages: readonly ChatLine[],
+): void {
+  for (const { count, ref } of payloadRefCounts(messages).values()) {
+    for (let index = 0; index < count; index += 1) {
+      store.release(ref);
+    }
+  }
+}
+
+export function reconcileChatLinePayloadRefs(
+  store: AiPayloadStore,
+  previous: readonly ChatLine[],
+  next: readonly ChatLine[],
+): void {
+  const previousCounts = payloadRefCounts(previous);
+  const nextCounts = payloadRefCounts(next);
+  for (const [id, previousEntry] of previousCounts) {
+    const nextCount = nextCounts.get(id)?.count ?? 0;
+    const releaseCount = Math.max(0, previousEntry.count - nextCount);
+    for (let index = 0; index < releaseCount; index += 1) {
+      store.release(previousEntry.ref);
+    }
+  }
+}
+
 export function compactChatLinesForState(
   store: AiPayloadStore,
   messages: ChatLine[],
+  previous: readonly ChatLine[] = [],
 ): ChatLineWithPayloadRef[] {
-  return messages.map((message) => compactChatLineForState(store, message));
+  const compacted = messages.map((message) =>
+    compactChatLineForState(store, message),
+  );
+  reconcileChatLinePayloadRefs(store, previous, compacted);
+  return compacted;
 }
 
 export function restoreChatLineContent(

@@ -26,7 +26,6 @@ import { RecycleBinBody } from "@/components/file/RecycleBinSheet";
 import { VaultNavigatorBody } from "@/components/file/VaultNavigator";
 import { Button } from "@/components/ui/button";
 import { IrisOverlay } from "@/components/ui/iris-overlay";
-import { useConnectivityStatus } from "@/hooks/useConnectivityStatus";
 import type {
   ManagementCenterDetail,
   ManagementCenterSection,
@@ -38,6 +37,7 @@ import {
   type WebSearchProviderOption,
 } from "@/lib/web-search-provider-state";
 import type { FileListItem } from "@/types/ipc";
+import type { ConnectivityStatus } from "@/types/llm";
 
 import { LlmRoutingSection } from "./LlmRoutingSection";
 import { PersonaSettingsBody } from "./PersonaSettingsPanel";
@@ -51,6 +51,7 @@ interface ManagementCenterPanelProps {
   webSearchAvailability: WebSearchAvailability;
   webSearchProviderId: string | null;
   webSearchProviders: WebSearchProviderOption[];
+  connectivityStatus: ConnectivityStatus | null;
   onWebSearchChange: (enabled: boolean) => void;
   onWebSearchProviderChange: (providerId: string | null) => void;
   onRefreshWebSearchProviders: () => Promise<void>;
@@ -290,6 +291,7 @@ export function ManagementCenterPanel({
   webSearchAvailability,
   webSearchProviderId,
   webSearchProviders,
+  connectivityStatus,
   onWebSearchChange,
   onWebSearchProviderChange,
   onRefreshWebSearchProviders,
@@ -315,7 +317,7 @@ export function ManagementCenterPanel({
     useState<AiManagementDetail | null>(null);
   const [activeNotesDetail, setActiveNotesDetail] =
     useState<NotesManagementDetail | null>(null);
-  const { status } = useConnectivityStatus();
+  const status = connectivityStatus;
 
   useEffect(() => {
     if (!open) return;
@@ -334,9 +336,6 @@ export function ManagementCenterPanel({
       MANAGEMENT_SECTIONS[0]!,
     [activeSection],
   );
-  useEffect(() => {
-    if (open) void onRefreshWebSearchProviders();
-  }, [onRefreshWebSearchProviders, open]);
 
   const searchBackend =
     webSearchAvailability.effectiveProvider?.name ??

@@ -38,6 +38,49 @@ pub struct ClassifiedSearchHit {
 
 static CLASSIFIED_INDEX: Mutex<Vec<ClassifiedChunk>> = Mutex::new(Vec::new());
 
+const MAX_CLASSIFIED_INDEX_CHUNKS: usize = 5_000;
+const MAX_CLASSIFIED_INDEX_CHARS: usize = 2_000_000;
+
+fn truncate_to_char_boundary(value: &mut String, max_len: usize) {
+    if value.len() <= max_len {
+        return;
+    }
+
+    let mut end = max_len;
+    while end > 0 && !value.is_char_boundary(end) {
+        end -= 1;
+    }
+    value.truncate(end);
+}
+
+fn cap_classified_chunks(chunks: Vec<ClassifiedChunk>) -> Vec<ClassifiedChunk> {
+    let mut capped = Vec::with_capacity(chunks.len().min(MAX_CLASSIFIED_INDEX_CHUNKS));
+    let mut total_chars = 0usize;
+
+    for mut chunk in chunks {
+        if capped.len() >= MAX_CLASSIFIED_INDEX_CHUNKS {
+            break;
+        }
+
+        let remaining = MAX_CLASSIFIED_INDEX_CHARS.saturating_sub(total_chars);
+        if remaining == 0 {
+            break;
+        }
+
+        if chunk.content.len() > remaining {
+            truncate_to_char_boundary(&mut chunk.content, remaining);
+        }
+        if chunk.content.is_empty() {
+            continue;
+        }
+
+        total_chars = total_chars.saturating_add(chunk.content.len());
+        capped.push(chunk);
+    }
+
+    capped
+}
+
 fn vault_key_read() -> AppResult<std::sync::RwLockReadGuard<'static, VaultKey>> {
     VAULT_KEY
         .get()
@@ -199,11 +242,13 @@ pub fn build_classified_index(vault: &Path) -> AppResult<Vec<ClassifiedChunk>> {
         all_chunks.extend(chunks);
     }
 
+    let capped_chunks = cap_classified_chunks(all_chunks);
+
     if let Ok(mut index) = CLASSIFIED_INDEX.lock() {
-        *index = all_chunks.clone();
+        *index = capped_chunks.clone();
     }
 
-    Ok(all_chunks)
+    Ok(capped_chunks)
 }
 
 /// Search the given chunks (or the global index if empty) and return ranked hits.
@@ -344,6 +389,35 @@ mod tests {
     fn split_into_chunks_empty_content() {
         let chunks = split_into_chunks("", "empty.md", 3000);
         assert!(chunks.is_empty());
+    }
+
+    #[test]
+    fn cap_classified_chunks_enforces_chunk_and_character_budgets() {
+        let chunks: Vec<ClassifiedChunk> = (0..(MAX_CLASSIFIED_INDEX_CHUNKS + 5))
+            .map(|i| ClassifiedChunk {
+                document_path: format!("doc{i}.md"),
+                heading: None,
+                content: "x".into(),
+                start_line: 1,
+                modified_epoch: 1_700_000_000,
+            })
+            .collect();
+        let capped = cap_classified_chunks(chunks);
+        assert_eq!(capped.len(), MAX_CLASSIFIED_INDEX_CHUNKS);
+
+        let huge = ClassifiedChunk {
+            document_path: "huge.md".into(),
+            heading: None,
+            content: "界".repeat(MAX_CLASSIFIED_INDEX_CHARS),
+            start_line: 1,
+            modified_epoch: 1_700_000_000,
+        };
+        let capped_huge = cap_classified_chunks(vec![huge]);
+        assert_eq!(capped_huge.len(), 1);
+        assert!(capped_huge[0].content.len() <= MAX_CLASSIFIED_INDEX_CHARS);
+        assert!(capped_huge[0]
+            .content
+            .is_char_boundary(capped_huge[0].content.len()));
     }
 
     #[test]

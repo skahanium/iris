@@ -3,8 +3,9 @@
 //! Exposes the L3 research pipeline with per-round progress events,
 //! abort/pause support, and research note generation.
 
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use crate::ai_runtime::research_state::ResearchState;
 use crate::ai_runtime::research_workflow::{
@@ -46,6 +47,31 @@ pub struct ResearchExecuteResponse {
     pub research_state: ResearchState,
 }
 
+struct ActiveResearchGuard<'a> {
+    active_research: &'a Mutex<HashMap<String, Arc<AtomicBool>>>,
+    request_id: String,
+}
+
+impl<'a> ActiveResearchGuard<'a> {
+    fn new(
+        active_research: &'a Mutex<HashMap<String, Arc<AtomicBool>>>,
+        request_id: String,
+    ) -> Self {
+        Self {
+            active_research,
+            request_id,
+        }
+    }
+}
+
+impl Drop for ActiveResearchGuard<'_> {
+    fn drop(&mut self) {
+        if let Ok(mut guard) = self.active_research.lock() {
+            guard.remove(&self.request_id);
+        }
+    }
+}
+
 /// Execute a full research workflow (shared by IPC and assistant facade).
 pub(crate) async fn execute_research_task(
     state: &AppState,
@@ -69,6 +95,8 @@ pub(crate) async fn execute_research_task(
             .map_err(|_| crate::error::AppError::msg("Lock error"))?;
         guard.insert(request_id.clone(), cancel_token.clone());
     }
+    let _active_research_guard =
+        ActiveResearchGuard::new(&state.ai.active_research, request_id.clone());
 
     let task_policy = crate::ai_runtime::agent_task_policy::AgentTaskPolicy::from_input(
         crate::ai_runtime::agent_task_policy::AgentTaskPolicyInput {
@@ -123,16 +151,6 @@ pub(crate) async fn execute_research_task(
         Some(cancel_token.clone()),
     )
     .await?;
-
-    // Clean up cancel token
-    {
-        let mut guard = state
-            .ai
-            .active_research
-            .lock()
-            .map_err(|_| crate::error::AppError::msg("Lock error"))?;
-        guard.remove(&request_id);
-    }
 
     // Complete trace
     TraceRecorder::complete(
@@ -369,4 +387,24 @@ pub fn research_status(state: State<'_, Arc<AppState>>) -> AppResult<ResearchSta
     Ok(ResearchStatusResponse {
         recent_research: research_traces,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn active_research_guard_removes_token_on_drop() {
+        let active_research = Mutex::new(HashMap::new());
+        active_research
+            .lock()
+            .unwrap()
+            .insert("req-cleanup".into(), Arc::new(AtomicBool::new(false)));
+
+        {
+            let _guard = ActiveResearchGuard::new(&active_research, "req-cleanup".into());
+        }
+
+        assert!(!active_research.lock().unwrap().contains_key("req-cleanup"));
+    }
 }

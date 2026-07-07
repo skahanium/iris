@@ -511,7 +511,10 @@ export function AppEditorWorkspace({
     pendingNoteOpen?.title ??
     pendingOpen?.title ??
     (loadingPath ? displayTitleFromPath(loadingPath) : null);
+  const loadingPolicyAllowsSurface =
+    !pendingOpen || pendingOpen.loadingPolicy !== "disabled";
   const showDocumentLoading = Boolean(
+    loadingPolicyAllowsSurface &&
     !activeArtifactTab &&
     !activeMediaTab &&
     !homeActive &&
@@ -589,7 +592,11 @@ export function AppEditorWorkspace({
           committed &&
           homePending &&
           !homePending.error &&
-          homePendingMatchesPath(homePending, path, pending.sequence)
+          homePendingMatchesPath(
+            homePending,
+            path,
+            pending.homeOpenSequence ?? pending.sequence,
+          )
         ) {
           onPendingOpenSettledRef.current?.(homePending);
         }

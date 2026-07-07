@@ -50,6 +50,8 @@ interface AiMessageBubbleProps {
 const proseConversation =
   "iris-markdown-content select-text [&_a.ai-citation]:font-medium [&_a.ai-citation]:text-ai-citation [&_a.ai-citation]:underline [&_a.ai-citation]:decoration-ai-citation/40 [&_a.ai-citation]:underline-offset-2 hover:[&_a.ai-citation]:text-ai-citation-hover";
 
+const STREAMING_SYNC_FALLBACK_CHAR_LIMIT = 40_000;
+
 const codeCopyDefaultLabel = "\u590d\u5236";
 const codeCopyDoneLabel = "\u5df2\u590d\u5236";
 const codeCopyFailedLabel = "\u590d\u5236\u5931\u8d25";
@@ -144,8 +146,16 @@ const AssistantBody = memo(function AssistantBody({
   });
 
   const html = useMemo(() => {
-    if (streaming && !workerRender.failed && workerRender.html !== null) {
-      return workerRender.html;
+    if (streaming && !workerRender.failed) {
+      if (workerRender.html !== null) {
+        return workerRender.html;
+      }
+      if (
+        workerRender.pending &&
+        content.length > STREAMING_SYNC_FALLBACK_CHAR_LIMIT
+      ) {
+        return '<p class="text-muted-foreground whitespace-pre-wrap">Rendering...</p>';
+      }
     }
 
     try {
@@ -184,9 +194,11 @@ const AssistantBody = memo(function AssistantBody({
     }
   }, [
     boundedMarkdownContent,
+    content.length,
     streaming,
     workerRender.failed,
     workerRender.html,
+    workerRender.pending,
   ]);
 
   const handleCodeCopy = useCallback(async (button: HTMLButtonElement) => {

@@ -1,5 +1,6 @@
 ﻿import {
   useCallback,
+  useEffect,
   useRef,
   useState,
   type Dispatch,
@@ -20,6 +21,7 @@ import {
 import {
   compactChatLinesForState,
   getAiPayloadStore,
+  releaseChatLinePayloadRefs,
   restoreChatLineContent,
   restoreChatLinesForPersistence,
 } from "@/lib/ai-payload-store";
@@ -39,10 +41,13 @@ import type {
 import type { ClassifiedAiThread, ClassifiedAiMessage } from "@/types/ipc";
 
 import type { ChatLine } from "../AiMessageList";
+
 import {
   buildActionState,
   buildTaskSummary,
 } from "../unified-assistant-panel-utils";
+
+const MAX_CONVERSATION_UI_MESSAGES = 240;
 
 interface BubbleSelectionPort {
   selected: Set<number>;
@@ -153,7 +158,15 @@ export function useAssistantConversation({
     (action) => {
       setMessagesState((prev) => {
         const next = typeof action === "function" ? action(prev) : action;
-        return compactChatLinesForState(payloadStoreRef.current, next);
+        const boundedNext =
+          next.length > MAX_CONVERSATION_UI_MESSAGES
+            ? next.slice(-MAX_CONVERSATION_UI_MESSAGES)
+            : next;
+        return compactChatLinesForState(
+          payloadStoreRef.current,
+          boundedNext,
+          prev,
+        );
       });
     },
     [],
@@ -170,6 +183,13 @@ export function useAssistantConversation({
   messagesRef.current = messages;
   const sessionIdRef = useRef(sessionId);
   sessionIdRef.current = sessionId;
+
+  useEffect(() => {
+    const store = payloadStoreRef.current;
+    return () => {
+      releaseChatLinePayloadRefs(store, messagesRef.current);
+    };
+  }, []);
   const classifiedThreadIdRef = useRef(classifiedThreadId);
   classifiedThreadIdRef.current = classifiedThreadId;
 

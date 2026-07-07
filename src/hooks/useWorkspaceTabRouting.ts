@@ -29,6 +29,7 @@ interface UseWorkspaceTabRoutingOptions<OpenOptions> {
   ) => MaybePromise<void>;
   setActiveArtifactId: (id: string | null) => void;
   setHomeActive: (active: boolean) => void;
+  showHome: () => void;
   tabs: readonly NoteTabLike[];
 }
 
@@ -44,6 +45,7 @@ export function useWorkspaceTabRouting<OpenOptions>({
   openNoteLeavingHome,
   setActiveArtifactId,
   setHomeActive,
+  showHome,
   tabs,
 }: UseWorkspaceTabRoutingOptions<OpenOptions>) {
   const {
@@ -117,9 +119,26 @@ export function useWorkspaceTabRouting<OpenOptions>({
         closeArtifact(path);
         return;
       }
-      void closeTab(path);
+      const willCloseLastActiveNote =
+        activePath === path &&
+        tabs.length === 1 &&
+        mediaTabs.length === 0 &&
+        artifactTabs.length === 0;
+      const closeResult = closeTab(path);
+      if (willCloseLastActiveNote) {
+        Promise.resolve(closeResult).then(() => showHome());
+      }
     },
-    [closeArtifact, closeMedia, closeTab],
+    [
+      activePath,
+      artifactTabs.length,
+      closeArtifact,
+      closeMedia,
+      closeTab,
+      mediaTabs.length,
+      showHome,
+      tabs.length,
+    ],
   );
 
   const workspaceTabs: TabItem[] = useMemo(

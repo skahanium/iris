@@ -228,6 +228,86 @@ describe("AppEditorWorkspace complete-frame note opens", () => {
     ).toBe("visible");
   });
 
+  it("does not show a loading surface for new-note pending opens with disabled loading policy", () => {
+    vi.useFakeTimers();
+
+    act(() => {
+      root.render(
+        <AppEditorWorkspace
+          {...baseProps()}
+          activePath={null}
+          homeActive={false}
+          openNotePaths={[]}
+          pendingOpen={
+            {
+              kind: "new-note",
+              loadingPolicy: "disabled",
+              path: null,
+              sequence: 11,
+              startedAt: 1000,
+              title: "新建笔记",
+            } as HomePendingOpen
+          }
+        />,
+      );
+    });
+
+    act(() => {
+      vi.advanceTimersByTime(DOCUMENT_OPEN_BUDGETS.coldLoadingVisibleMs + 50);
+    });
+
+    expect(
+      document.querySelector('[data-testid="document-open-loading"]'),
+    ).toBeNull();
+    expect(document.querySelector('[data-testid="home-workbench"]')).toBeNull();
+  });
+
+  it("clears a home new-note pending open by home sequence after first frame", () => {
+    vi.useFakeTimers();
+    const commitPendingNoteOpen = vi.fn(() => true);
+    const onPendingOpenSettled = vi.fn(() => true);
+    const pendingOpen = {
+      kind: "new-note",
+      loadingPolicy: "disabled",
+      path: null,
+      sequence: 11,
+      startedAt: 1000,
+      title: "新建笔记",
+    } as HomePendingOpen;
+
+    act(() => {
+      root.render(
+        <AppEditorWorkspace
+          {...baseProps()}
+          pendingOpen={pendingOpen}
+          pendingNoteOpen={{
+            bodyMarkdown: "new staged body",
+            content: "# New\n\nnew staged body",
+            frontmatterYaml: null,
+            homeOpenSequence: 11,
+            isLocked: false,
+            namespace: "normal",
+            path: "new.md",
+            sequence: 27,
+            title: "New",
+          }}
+          commitPendingNoteOpen={commitPendingNoteOpen}
+          onPendingOpenSettled={onPendingOpenSettled}
+          openNotePaths={["old.md", "new.md"]}
+        />,
+      );
+    });
+
+    act(() => {
+      firstFrameCallbacks.get("new.md")?.({ path: "new.md" });
+    });
+
+    expect(commitPendingNoteOpen).toHaveBeenCalledWith("new.md", 27, {
+      skipContentTick: true,
+    });
+    expect(onPendingOpenSettled).toHaveBeenCalledWith(pendingOpen);
+  });
+
   it("commits a new-note pending open after the new document first frame is ready", () => {
     vi.useFakeTimers();
     const commitPendingNoteOpen = vi.fn(() => true);

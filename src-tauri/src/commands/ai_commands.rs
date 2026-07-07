@@ -1019,6 +1019,7 @@ pub(crate) async fn execute_ai_send_message(
     web_search: Option<bool>,
     new_session: Option<bool>,
 ) -> AppResult<AiChatResponse> {
+    state.ai.prune_pending_tool_calls();
     execute_ai_send_message_with_routing(
         state,
         app_handle,
@@ -1737,6 +1738,8 @@ pub async fn tool_confirm(
         append_rejected_tool_to_checkpoint, dispatch_approved_tool_to_checkpoint,
         resume_harness_after_tool_confirm_or_restore,
     };
+
+    state.ai.prune_pending_tool_calls();
 
     if decision == "reject" {
         crate::llm::safe_lock(&state.ai.pending_tool_calls).remove(&tool_call_id);

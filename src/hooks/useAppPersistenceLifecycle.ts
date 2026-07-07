@@ -67,7 +67,6 @@ interface UseAppPersistenceLifecycleParams {
   setMarkdown: (markdown: string) => void;
   syncTabMarkdownCache: (path: string, markdown: string) => void;
   tabsRef: MutableRefObject<TabItem[]>;
-  invalidatePreparedNote: (path: string) => void;
 }
 
 export function useAppPersistenceLifecycle({
@@ -94,7 +93,6 @@ export function useAppPersistenceLifecycle({
   setMarkdown,
   syncTabMarkdownCache,
   tabsRef,
-  invalidatePreparedNote,
 }: UseAppPersistenceLifecycleParams) {
   const {
     notifyDirty,
@@ -307,20 +305,13 @@ export function useAppPersistenceLifecycle({
         if (locked && !(await flushWhenEditorReady("锁定保存")).ok) return;
         setFileLocked(path, locked);
         await fileSetLock(path, locked);
-        invalidatePreparedNote(path);
       } catch (err: unknown) {
         setFileLocked(path, !locked);
         const msg = err instanceof Error ? err.message : String(err);
         setAiStatus(`锁定状态保存失败：${msg}`);
       }
     },
-    [
-      activePathRef,
-      flushWhenEditorReady,
-      invalidatePreparedNote,
-      setAiStatus,
-      setFileLocked,
-    ],
+    [activePathRef, flushWhenEditorReady, setAiStatus, setFileLocked],
   );
 
   const handleSaveVersion = useCallback(async () => {

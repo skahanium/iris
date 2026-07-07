@@ -28,6 +28,7 @@ interface UseTabManagerOptions {
 
 interface OpenNoteOptions {
   allowClassified?: boolean;
+  homeOpenSequence?: number;
   documentOpenToken?: string;
   onDocumentOpenTokenRetained?: () => void;
   openBudgetKind?: NoteOpenBudgetKind;
@@ -45,6 +46,7 @@ export interface PendingNoteOpen {
   documentOpenToken?: string;
   editorHtmlStatus?: PreparedNoteOpen["editorHtmlStatus"];
   frontmatterYaml: string | null;
+  homeOpenSequence?: number;
   isLocked: boolean;
   namespace: "normal" | "classified";
   openBudgetKind?: NoteOpenBudgetKind;
@@ -230,6 +232,7 @@ export function useTabManager(options: UseTabManagerOptions = {}) {
     ({
       content,
       documentOpenToken,
+      homeOpenSequence,
       isLocked,
       openBudgetKind,
       openStartedAt,
@@ -241,6 +244,7 @@ export function useTabManager(options: UseTabManagerOptions = {}) {
     }: {
       content: string;
       documentOpenToken?: string;
+      homeOpenSequence?: number;
       isLocked: boolean;
       openBudgetKind?: NoteOpenBudgetKind;
       openStartedAt?: number;
@@ -272,6 +276,7 @@ export function useTabManager(options: UseTabManagerOptions = {}) {
         editorHtmlDigest: preparedNote?.editorHtmlDigest,
         editorHtmlStatus: preparedNote?.editorHtmlStatus,
         frontmatterYaml,
+        homeOpenSequence,
         isLocked,
         namespace: namespaceForPath(path),
         openBudgetKind,
@@ -445,6 +450,7 @@ export function useTabManager(options: UseTabManagerOptions = {}) {
         const pending = buildPendingNoteOpen({
           content,
           documentOpenToken: options?.documentOpenToken,
+          homeOpenSequence: options?.homeOpenSequence,
           isLocked,
           openBudgetKind,
           openStartedAt,
@@ -518,6 +524,7 @@ export function useTabManager(options: UseTabManagerOptions = {}) {
       if (cached !== undefined) {
         const pending = buildPendingNoteOpen({
           content: cached,
+          homeOpenSequence: options?.homeOpenSequence,
           isLocked: tabLockCacheRef.current.get(path) ?? false,
           openBudgetKind: options?.openBudgetKind ?? "hot",
           openStartedAt: options?.openStartedAt ?? openStartedAt,
@@ -682,54 +689,61 @@ export function useTabManager(options: UseTabManagerOptions = {}) {
     ],
   );
 
-  const handleNewNote = useCallback(async () => {
-    try {
-      cancelOpenTransaction();
-      const current = activePathRef.current;
-      if (current) {
-        await persistAndCacheTab(current);
-        const discarded = await maybeDiscardOnLeave(current);
-        if (discarded) {
-          setTabs((prev) => prev.filter((t) => t.path !== current));
+  const handleNewNote = useCallback(
+    async (options: { homeOpenSequence?: number } = {}) => {
+      try {
+        cancelOpenTransaction();
+        const current = activePathRef.current;
+        if (current) {
+          await persistAndCacheTab(current);
+          const discarded = await maybeDiscardOnLeave(current);
+          if (discarded) {
+            setTabs((prev) => prev.filter((t) => t.path !== current));
+          }
         }
+        const created = await createDefaultNote({
+          extraTakenTitles: tabsRef.current
+            .filter((t) => t.path !== current)
+            .map((t) => t.title),
+        });
+        onVaultIndexBump?.();
+        const openStartedAt = performance.now();
+        const openTraceRequest: PrepareNoteOpenRequest = {
+          path: created.path,
+          priority: "hot",
+          source: "new-note",
+          titleHint: created.title,
+        };
+        const preparedNote = await prepareNoteOpenFromContent(
+          openTraceRequest,
+          {
+            content: created.content,
+            isLocked: false,
+          },
+        );
+        await openFile(created.path, created.title, {
+          homeOpenSequence: options.homeOpenSequence,
+          openBudgetKind: "hot",
+          openStartedAt,
+          openTraceRequest,
+          preparedNote,
+          skipDiscardPrevious: true,
+        });
+      } catch (e) {
+        if (isSupersededError(e)) return;
+        const msg = e instanceof Error ? e.message : String(e);
+        onStatusChange?.(`新建笔记失败：${msg}`);
       }
-      const created = await createDefaultNote({
-        extraTakenTitles: tabsRef.current
-          .filter((t) => t.path !== current)
-          .map((t) => t.title),
-      });
-      onVaultIndexBump?.();
-      const openStartedAt = performance.now();
-      const openTraceRequest: PrepareNoteOpenRequest = {
-        path: created.path,
-        priority: "hot",
-        source: "new-note",
-        titleHint: created.title,
-      };
-      const preparedNote = await prepareNoteOpenFromContent(openTraceRequest, {
-        content: created.content,
-        isLocked: false,
-      });
-      await openFile(created.path, created.title, {
-        openBudgetKind: "hot",
-        openStartedAt,
-        openTraceRequest,
-        preparedNote,
-        skipDiscardPrevious: true,
-      });
-    } catch (e) {
-      if (isSupersededError(e)) return;
-      const msg = e instanceof Error ? e.message : String(e);
-      onStatusChange?.(`新建笔记失败：${msg}`);
-    }
-  }, [
-    maybeDiscardOnLeave,
-    cancelOpenTransaction,
-    openFile,
-    onStatusChange,
-    onVaultIndexBump,
-    persistAndCacheTab,
-  ]);
+    },
+    [
+      maybeDiscardOnLeave,
+      cancelOpenTransaction,
+      openFile,
+      onStatusChange,
+      onVaultIndexBump,
+      persistAndCacheTab,
+    ],
+  );
 
   const markDirty = useCallback(() => {
     setTabs((t) =>

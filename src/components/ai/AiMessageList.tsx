@@ -322,12 +322,14 @@ export const AiMessageList = memo(function AiMessageList({
     messagesRef.current = messages;
   }, [messages]);
 
-  // Prune stale entries when the message list shrinks (e.g., retract/session
-  // switch) so the Maps don't retain dead-index callbacks indefinitely.
-  if (retractCallbackRef.current.size > messages.length) {
-    retractCallbackRef.current = new Map();
-    copyCallbackRef.current = new Map();
-  }
+  useEffect(() => {
+    for (const key of retractCallbackRef.current.keys()) {
+      if (key >= messages.length) retractCallbackRef.current.delete(key);
+    }
+    for (const key of copyCallbackRef.current.keys()) {
+      if (key >= messages.length) copyCallbackRef.current.delete(key);
+    }
+  }, [messages.length]);
 
   const handleMessageSelect = useCallback(
     (

@@ -208,6 +208,26 @@ describe("useTabManager handleNewNote", () => {
     expect(apiRef.current!.pendingNoteOpen).toBeNull();
   });
 
+  it("preserves the home open sequence separately from the tab open sequence", async () => {
+    const apiRef: { current: ReturnType<typeof useTabManager> | null } = {
+      current: null,
+    };
+
+    await act(async () => {
+      root.render(createElement(Harness, { apiRef }));
+    });
+
+    await act(async () => {
+      await apiRef.current!.handleNewNote({ homeOpenSequence: 41 });
+    });
+
+    expect(apiRef.current!.pendingNoteOpen).toMatchObject({
+      homeOpenSequence: 41,
+      path: "未命名文档.md",
+    });
+    expect(apiRef.current!.pendingNoteOpen?.sequence).not.toBe(41);
+  });
+
   it("does not bump editorContentTick when committing a staged prepared note", async () => {
     const apiRef: { current: ReturnType<typeof useTabManager> | null } = {
       current: null,

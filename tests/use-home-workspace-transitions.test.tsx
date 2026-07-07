@@ -12,6 +12,7 @@ type OpenNoteFn = (
 ) => Promise<void>;
 type SetHomeActiveFn = (active: boolean) => void;
 type ActivateTabFn = (path: string, options?: unknown) => Promise<void> | void;
+type HandleNewNoteFn = (options?: unknown) => Promise<void>;
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -27,6 +28,7 @@ function Harness({
   activePath = null,
   activateTab = vi.fn(),
   apiRef,
+  handleNewNote = vi.fn(async () => undefined),
   openTabs = [],
   openNote,
   setHomeActive,
@@ -34,6 +36,7 @@ function Harness({
   activePath?: string | null;
   activateTab?: ActivateTabFn;
   apiRef: { current: ReturnType<typeof useHomeWorkspaceTransitions> | null };
+  handleNewNote?: HandleNewNoteFn;
   openTabs?: Array<{ path: string }>;
   openNote: OpenNoteFn;
   setHomeActive: SetHomeActiveFn;
@@ -42,7 +45,7 @@ function Harness({
     activePathRef: { current: activePath },
     activateArtifact: vi.fn(),
     activateTab,
-    handleNewNote: vi.fn(async () => undefined),
+    handleNewNote,
     openNote,
     openTabs,
     setActiveArtifactId: vi.fn(),
@@ -143,6 +146,40 @@ describe("useHomeWorkspaceTransitions", () => {
     });
 
     expect(setHomeActive).not.toHaveBeenLastCalledWith(false);
+  });
+
+  it("starts welcome new-note opens with disabled loading and passes the home sequence forward", async () => {
+    const apiRef: {
+      current: ReturnType<typeof useHomeWorkspaceTransitions> | null;
+    } = {
+      current: null,
+    };
+    const handleNewNote = vi.fn(async () => undefined);
+    const openNote = vi.fn(async () => undefined);
+    const setHomeActive = vi.fn();
+
+    await act(async () => {
+      root.render(
+        createElement(Harness, {
+          apiRef,
+          handleNewNote,
+          openNote,
+          setHomeActive,
+        }),
+      );
+    });
+
+    await act(async () => {
+      await apiRef.current!.handleNewNoteLeavingHome();
+    });
+
+    expect(apiRef.current!.pendingOpen).toMatchObject({
+      kind: "new-note",
+      loadingPolicy: "disabled",
+      path: null,
+      sequence: 1,
+    });
+    expect(handleNewNote).toHaveBeenCalledWith({ homeOpenSequence: 1 });
   });
 
   it("directly activates an already-open note from Home via activateTab without an openNote detour", async () => {

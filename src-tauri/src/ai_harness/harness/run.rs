@@ -1527,6 +1527,7 @@ async fn pause_for_tool_confirmation(
     tool_call: &ToolCall,
 ) -> AppResult<HarnessRunResult> {
     let tool_name = &tool_call.function.name;
+    state.ai.prune_pending_tool_calls();
     crate::llm::safe_lock(&state.ai.pending_tool_calls).insert(
         tool_call.id.clone(),
         crate::app::PendingToolCall {
@@ -1541,6 +1542,7 @@ async fn pause_for_tool_confirmation(
             task_policy: input.task_policy.clone(),
             depth: input.depth,
             skill_activation_plan: input.skill_activation_plan.clone(),
+            created_at: std::time::Instant::now(),
         },
     );
     let args = parse_tool_call_arguments(&tool_call.function.arguments).map_err(|err| {

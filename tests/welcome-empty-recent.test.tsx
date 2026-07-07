@@ -206,6 +206,7 @@ describe("WelcomeEmpty recent notes", () => {
           onSearch={vi.fn()}
           pendingOpen={{
             kind: "note",
+            loadingPolicy: "defer",
             path: "pending.md",
             sequence: 1,
             startedAt: Date.now(),

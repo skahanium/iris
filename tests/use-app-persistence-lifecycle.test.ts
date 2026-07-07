@@ -37,12 +37,14 @@ function Harness({
   markdown = '---\ntitle: "Note"\n---\n\nOriginal body that must remain authoritative.',
   onReady,
   persistBeforeLeaveRef,
+  setFileLocked,
 }: {
   editorContentTick?: number;
   editorReady: boolean;
   markdown?: string;
   onReady?: (api: ReturnType<typeof useAppPersistenceLifecycle>) => void;
   persistBeforeLeaveRef: React.MutableRefObject<PersistBeforeLeave>;
+  setFileLocked?: (path: string, locked: boolean) => void;
 }) {
   const path = "note.md";
   const activePathRef = useRef<string | null>(path);
@@ -79,14 +81,13 @@ function Harness({
     editorRef,
     getLiveMarkdownRef,
     getTabMarkdownCached: vi.fn(),
-    invalidatePreparedNote: vi.fn(),
     markClean: vi.fn(),
     markdown,
     noteTitle: "Note",
     persistBeforeLeaveRef,
     schedulePathSync: vi.fn(),
     setAiStatus: vi.fn(),
-    setFileLocked: vi.fn(),
+    setFileLocked: setFileLocked ?? vi.fn(),
     setMarkdown: vi.fn(),
     syncTabMarkdownCache: vi.fn(),
     tabsRef,
@@ -195,6 +196,34 @@ describe("useAppPersistenceLifecycle", () => {
 
     expect(fileWrite).not.toHaveBeenCalled();
     expect(fileSetLock).not.toHaveBeenCalled();
+  });
+
+  it("persists lock changes without invalidating prepared editor html", async () => {
+    const persistBeforeLeaveRef = {
+      current: async () => null,
+    } as React.MutableRefObject<PersistBeforeLeave>;
+    const setFileLocked = vi.fn();
+    let api!: ReturnType<typeof useAppPersistenceLifecycle>;
+
+    await act(async () => {
+      root.render(
+        createElement(Harness, {
+          editorReady: true,
+          onReady: (next) => {
+            api = next;
+          },
+          persistBeforeLeaveRef,
+          setFileLocked,
+        }),
+      );
+    });
+
+    await act(async () => {
+      await api.handleLockToggle(true);
+    });
+
+    expect(setFileLocked).toHaveBeenCalledWith("note.md", true);
+    expect(fileSetLock).toHaveBeenCalledWith("note.md", true);
   });
 
   it("records same-path loaded markdown as the saved baseline", async () => {

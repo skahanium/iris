@@ -2,6 +2,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64};
 use std::sync::{Arc, Mutex, OnceLock};
+use std::time::{Duration, Instant};
 
 use serde_json::Value;
 use tauri::AppHandle;
@@ -19,6 +20,9 @@ use crate::ai_runtime::context_cache::ContextAssemblyCache;
 use crate::ai_types::{AiScene, AutonomyLevel, SkillActivationPlanSummary};
 use crate::security::brute_force::BruteForceProtection;
 
+const PENDING_TOOL_CALL_TTL: Duration = Duration::from_secs(30 * 60);
+const MAX_PENDING_TOOL_CALLS: usize = 128;
+
 #[derive(Debug, Clone)]
 pub struct PendingToolCall {
     pub tool_name: String,
@@ -32,6 +36,7 @@ pub struct PendingToolCall {
     pub task_policy: AgentTaskPolicy,
     pub depth: u32,
     pub skill_activation_plan: Option<SkillActivationPlanSummary>,
+    pub created_at: Instant,
 }
 
 // 鈹€鈹€鈹€ Sub-state: Storage 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
@@ -154,6 +159,32 @@ impl AiRuntimeState {
             context_cache: Mutex::new(ContextAssemblyCache::new(64, 30)),
             vector_index_ready: AtomicBool::new(vector_ready),
             embed_queue: OnceLock::new(),
+        }
+    }
+
+    pub fn prune_pending_tool_calls(&self) {
+        if let Ok(mut pending) = self.pending_tool_calls.lock() {
+            Self::prune_pending_tool_calls_locked(&mut pending, Instant::now());
+        }
+    }
+
+    fn prune_pending_tool_calls_locked(
+        pending: &mut HashMap<String, PendingToolCall>,
+        now: Instant,
+    ) {
+        pending.retain(|_, call| now.duration_since(call.created_at) <= PENDING_TOOL_CALL_TTL);
+        let overflow = pending.len().saturating_sub(MAX_PENDING_TOOL_CALLS);
+        if overflow == 0 {
+            return;
+        }
+
+        let mut oldest: Vec<(String, Instant)> = pending
+            .iter()
+            .map(|(id, call)| (id.clone(), call.created_at))
+            .collect();
+        oldest.sort_by_key(|(_, created_at)| *created_at);
+        for (id, _) in oldest.into_iter().take(overflow) {
+            pending.remove(&id);
         }
     }
 
@@ -385,6 +416,37 @@ impl AppState {
 #[cfg(test)]
 mod document_open_state_tests {
     use super::*;
+    use crate::ai_runtime::agent_task::AgentTaskKind;
+    use crate::ai_runtime::agent_task_policy::{
+        AgentTaskPolicy, AgentTaskPolicyInput, AgentTaskScope,
+    };
+    use crate::ai_runtime::AgentIntent;
+
+    fn pending_tool_call(id: usize, created_at: Instant) -> PendingToolCall {
+        let task_policy = AgentTaskPolicy::from_input(AgentTaskPolicyInput {
+            intent: AgentIntent::Write,
+            task_kind: AgentTaskKind::Lightweight,
+            scope: AgentTaskScope::Selection,
+            web_authorized: false,
+            has_attachments: false,
+            write_permission_required: false,
+            research_depth: 1,
+        });
+        PendingToolCall {
+            tool_name: format!("tool-{id}"),
+            arguments: "{}".into(),
+            request_id: format!("req-{id}"),
+            scene: AiScene::KnowledgeLookup,
+            note_path: None,
+            file_id: None,
+            web_search_enabled: false,
+            autonomy_level: AutonomyLevel::L1,
+            task_policy,
+            depth: 0,
+            skill_activation_plan: None,
+            created_at,
+        }
+    }
 
     #[test]
     fn embedding_queue_does_not_keep_app_state_alive() {
@@ -407,6 +469,31 @@ mod document_open_state_tests {
             "embedding queue worker must not keep AppState alive"
         );
     }
+    #[test]
+    fn pending_tool_calls_prune_expired_and_over_capacity_entries() {
+        let now = Instant::now();
+        let mut pending = HashMap::new();
+        pending.insert(
+            "expired".into(),
+            pending_tool_call(999, now - PENDING_TOOL_CALL_TTL - Duration::from_secs(1)),
+        );
+        for i in 0..(MAX_PENDING_TOOL_CALLS + 4) {
+            pending.insert(
+                format!("call-{i}"),
+                pending_tool_call(
+                    i,
+                    now - Duration::from_secs((MAX_PENDING_TOOL_CALLS + 4 - i) as u64),
+                ),
+            );
+        }
+
+        AiRuntimeState::prune_pending_tool_calls_locked(&mut pending, now);
+
+        assert_eq!(pending.len(), MAX_PENDING_TOOL_CALLS);
+        assert!(!pending.contains_key("expired"));
+        assert!(!pending.contains_key("call-0"));
+    }
+
     #[test]
     fn document_open_tokens_are_counted_and_duplicate_end_is_ignored() {
         let dir = tempfile::tempdir().unwrap();

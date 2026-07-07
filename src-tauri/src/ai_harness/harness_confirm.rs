@@ -510,6 +510,7 @@ mod tests {
             task_policy: task_policy.clone(),
             depth: 2,
             skill_activation_plan: None,
+            created_at: std::time::Instant::now(),
         };
 
         let ctx = policy_ctx_from_pending(&pending);
