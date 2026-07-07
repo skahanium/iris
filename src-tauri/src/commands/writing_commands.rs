@@ -192,11 +192,11 @@ fn insertion_after_heading(content: &str, target: &EditTarget) -> AppResult<Sour
         let Some((level, text)) = markdown_heading(line) else {
             continue;
         };
-        if target
-            .heading_level
-            .is_none_or(|expected| expected == level)
-            && text == heading_text
-        {
+        let level_matches = match target.heading_level {
+            Some(expected) => expected == level,
+            None => true,
+        };
+        if level_matches && text == heading_text {
             let end = start + line.len();
             return validate_edit_range(content, SourceSpan { start: end, end });
         }

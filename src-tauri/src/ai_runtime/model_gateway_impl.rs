@@ -515,7 +515,6 @@ mod tests {
 
         let prompt =
             ModelGateway::build_system_prompt(AiScene::KnowledgeLookup, &packets, &[], false);
-
         assert!(prompt.contains("砚"));
         assert!(prompt.contains("知识查阅"));
         assert!(prompt.contains("[1]"));

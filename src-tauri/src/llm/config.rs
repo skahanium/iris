@@ -2225,9 +2225,10 @@ mod tests {
         assert!(value["providers"]["custom"]
             .get("modelCapabilities")
             .is_none());
-        assert!(value
-            .get("contextStrategy")
-            .is_none_or(serde_json::Value::is_object));
+        assert!(match value.get("contextStrategy") {
+            Some(value) => value.is_object(),
+            None => true,
+        });
         assert!(value["slots"]["fast"]["reasoning"].is_object());
     }
 

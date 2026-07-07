@@ -232,11 +232,10 @@ function modelLooksTagReasoningRisk(
   modelId: string,
 ): boolean {
   const provider = providerId.toLowerCase();
-  const model = modelId.toLowerCase();
   return (
     provider.includes("minimax") ||
-    model.includes("minimax") ||
-    model === "minimax-m3"
+    /minimax/i.test(modelId) ||
+    /^minimax-m3$/i.test(modelId)
   );
 }
 
@@ -245,32 +244,20 @@ function modelLooksOpenAiReasoning(
   modelId: string,
 ): boolean {
   const provider = providerId.toLowerCase();
-  const model = modelId.toLowerCase();
-  return (
-    provider === "openai" &&
-    (model.startsWith("o1") ||
-      model.startsWith("o3") ||
-      model.startsWith("o4") ||
-      model.startsWith("gpt-5"))
-  );
+  return provider === "openai" && /^(o1|o3|o4|gpt-5)/i.test(modelId);
 }
 
 function modelLooksGlmReasoning(providerId: string, modelId: string): boolean {
   const provider = providerId.toLowerCase();
-  const model = modelId.toLowerCase();
-  return (
-    provider === "zhipu" &&
-    (model.startsWith("glm-4.5") || model.startsWith("glm-5"))
-  );
+  return provider === "zhipu" && /^(glm-4\.5|glm-5)/i.test(modelId);
 }
 
 function modelLooksQwenReasoning(providerId: string, modelId: string): boolean {
   const provider = providerId.toLowerCase();
-  const model = modelId.toLowerCase();
   return (
     provider.includes("qwen") ||
     provider.includes("dashscope") ||
-    model.includes("qwen3")
+    /qwen3/i.test(modelId)
   );
 }
 
