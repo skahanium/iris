@@ -31,9 +31,48 @@ describe("GitHub Actions workflows", () => {
       "node scripts/package-local.mjs --no-sqlite-vec mac",
     );
     expect(workflow).toContain(".iris-dev/target/release/bundle/dmg/*.dmg");
-    expect(workflow).toContain("actions/upload-artifact@v4");
+    expect(workflow).toContain("actions/upload-artifact@v6");
+    expect(workflow).not.toContain("actions/upload-artifact@v4");
     expect(workflow).not.toContain("package:local:win:vec");
     expect(workflow).not.toContain("releaseDraft");
+  });
+
+  it("creates a draft GitHub Release with packaged assets for v tags", () => {
+    const workflow = readWorkflow(".github/workflows/package-desktop.yml");
+
+    expect(workflow).toContain("draft-release:");
+    expect(workflow).toContain("needs: [package-windows, package-macos-arm64]");
+    expect(workflow).toContain("if: startsWith(github.ref, 'refs/tags/v')");
+    expect(workflow).toContain("contents: write");
+    expect(workflow).toContain("actions/download-artifact@v7");
+    expect(workflow).toContain("name: iris-windows-x64-nsis");
+    expect(workflow).toContain("name: iris-macos-arm64-dmg");
+    expect(workflow).toContain("GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}");
+    expect(workflow).toContain('gh release create "$GITHUB_REF_NAME"');
+    expect(workflow).toContain("--draft");
+    expect(workflow).toContain("--generate-notes");
+    expect(workflow).toContain("--verify-tag");
+    expect(workflow).toContain("gh release upload");
+    expect(workflow).toContain("--clobber");
+    expect(workflow).not.toContain("softprops/action-gh-release");
+  });
+
+  it("uses Node 24-compatible official actions while keeping project Node 20", () => {
+    const ci = readWorkflow(".github/workflows/ci.yml");
+    const packageDesktop = readWorkflow(
+      ".github/workflows/package-desktop.yml",
+    );
+    const combined = `${ci}\n${packageDesktop}`;
+
+    expect(combined).toContain("actions/checkout@v7");
+    expect(combined).toContain("actions/setup-node@v6");
+    expect(combined).toContain("actions/upload-artifact@v6");
+    expect(combined).toContain("actions/download-artifact@v7");
+    expect(combined).toContain("node-version: 20");
+    expect(combined).not.toContain("actions/checkout@v4");
+    expect(combined).not.toContain("actions/setup-node@v4");
+    expect(combined).not.toContain("actions/upload-artifact@v4");
+    expect(combined).not.toContain("actions/download-artifact@v4");
   });
 
   it("keeps lightweight CI separate from desktop packaging", () => {

@@ -21,10 +21,10 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: 20
           cache: npm
@@ -39,7 +39,7 @@ jobs:
         run: npm run package:local:win
 
       - name: Upload Windows installer
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: iris-windows-x64-nsis
           path: .iris-dev/target/release/bundle/nsis/*setup.exe
@@ -53,10 +53,10 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: 20
           cache: npm
@@ -71,9 +71,50 @@ jobs:
         run: node scripts/package-local.mjs --no-sqlite-vec mac
 
       - name: Upload macOS DMG
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: iris-macos-arm64-dmg
           path: .iris-dev/target/release/bundle/dmg/*.dmg
           if-no-files-found: error
           retention-days: 14
+
+  draft-release:
+    name: Draft GitHub Release
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    needs: [package-windows, package-macos-arm64]
+    if: startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download Windows installer artifact
+        uses: actions/download-artifact@v7
+        with:
+          name: iris-windows-x64-nsis
+          path: release-assets/windows
+
+      - name: Download macOS DMG artifact
+        uses: actions/download-artifact@v7
+        with:
+          name: iris-macos-arm64-dmg
+          path: release-assets/macos
+
+      - name: Create or update draft release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          assets=(release-assets/windows/*setup.exe release-assets/macos/*.dmg)
+
+          if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            is_draft="$(gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft)"
+            if [ "$is_draft" != "true" ]; then
+              echo "::error::Release $GITHUB_REF_NAME already exists and is not a draft. Refusing to modify a published release."
+              exit 1
+            fi
+
+            gh release upload "$GITHUB_REF_NAME" "${assets[@]}" --repo "$GITHUB_REPOSITORY" --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" "${assets[@]}" --repo "$GITHUB_REPOSITORY" --title "$GITHUB_REF_NAME" --draft --generate-notes --verify-tag
+          fi
