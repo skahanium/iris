@@ -1,6 +1,7 @@
 export interface TabOverflowInput {
   gapPx: number;
   moreButtonPx: number;
+  trailingButtonPx?: number;
   railWidthPx: number;
   tabCount: number;
   tabMinPx: number;
@@ -16,6 +17,7 @@ export interface TabOverflowInput {
 export function computeVisibleTabCount({
   gapPx,
   moreButtonPx,
+  trailingButtonPx = 0,
   railWidthPx,
   tabCount,
   tabMinPx,
@@ -23,11 +25,14 @@ export function computeVisibleTabCount({
   if (tabCount <= 0 || railWidthPx <= 0) {
     return 0;
   }
-  const allAtMin = tabCount * tabMinPx + (tabCount - 1) * gapPx;
+  const trailingActionWidth =
+    trailingButtonPx > 0 ? trailingButtonPx + gapPx : 0;
+  const allAtMin =
+    tabCount * tabMinPx + (tabCount - 1) * gapPx + trailingActionWidth;
   if (allAtMin <= railWidthPx) {
     return tabCount;
   }
-  const usable = railWidthPx - (moreButtonPx + gapPx);
+  const usable = railWidthPx - (moreButtonPx + gapPx + trailingActionWidth);
   if (usable <= 0) {
     return 0;
   }

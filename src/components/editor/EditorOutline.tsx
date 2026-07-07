@@ -1,4 +1,4 @@
-﻿import { useVirtualizer } from "@tanstack/react-virtual";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import type { Editor } from "@tiptap/react";
 import { TextSelection } from "@tiptap/pm/state";
 import {
@@ -363,6 +363,11 @@ export const EditorOutline = memo(function EditorOutline({
         setHoverIndex(null);
       }}
     >
+      <div
+        data-testid="outline-ghost-spine"
+        className="outline-ghost-spine"
+        aria-hidden
+      />
       <div
         ref={listRef}
         className="outline-ghost-list outline-ghost-bar-track flex flex-col"

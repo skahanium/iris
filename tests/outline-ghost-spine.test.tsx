@@ -345,6 +345,30 @@ describe("outline ghost spine", () => {
     expect(focusSpy).not.toHaveBeenCalled();
   });
 
+  it("keeps the long ghost spine fixed outside the scrollable outline list", () => {
+    editor = makeEditor(["Intro", "Scroll Target", "After"], [1, 1, 1]);
+
+    renderOutline(editor);
+
+    const rail = document.querySelector<HTMLElement>(
+      '[data-testid="outline-rail"]',
+    );
+    const list = document.querySelector<HTMLElement>(".outline-ghost-list");
+    const spine = document.querySelector<HTMLElement>(
+      '[data-testid="outline-ghost-spine"]',
+    );
+
+    expect(rail).not.toBeNull();
+    expect(list).not.toBeNull();
+    expect(spine).not.toBeNull();
+    expect(spine?.parentElement).toBe(rail);
+    expect(list?.contains(spine!)).toBe(false);
+
+    const css = read("src/styles/globals.css");
+    expect(css).toMatch(/\.outline-ghost-spine \{[\s\S]*top: 0;/);
+    expect(css).toMatch(/\.outline-ghost-spine \{[\s\S]*bottom: 0;/);
+    expect(css).not.toContain(".outline-ghost-list::before");
+  });
   it("keeps adjacent top-level headings as compact animated rail bars", () => {
     editor = makeEditor(
       ["chidafan", "Shui大叫", "sha d j k na s j k d"],
@@ -631,7 +655,7 @@ describe("outline ghost spine", () => {
     expect(css).toContain("height: 4px");
     expect(css).toContain("height: min(74.4dvh, 33.6rem)");
     expect(css).toMatch(/\.outline-ghost-list \{[\s\S]*overflow-y: auto;/);
-    expect(css).toMatch(/\.outline-ghost-list::before \{[\s\S]*bottom: 0;/);
+    expect(css).toMatch(/\.outline-ghost-spine \{[\s\S]*bottom: 0;/);
     expect(css).toMatch(/\.outline-ghost-items \{[\s\S]*margin-block: auto;/);
     expect(css).toMatch(
       /\.outline-ghost-items \{[\s\S]*row-gap: var\(--outline-row-gap\);/,

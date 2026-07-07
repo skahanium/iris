@@ -128,13 +128,14 @@ describe("Iris Rail complete interface contracts", () => {
     expect(css).toContain("--outline-bar-candidate-width: 3.5rem");
     expect(css).toMatch(/\.outline-ghost-list \{[\s\S]*min-height: 100%;/);
     expect(css).toMatch(/\.outline-ghost-list \{[\s\S]*overflow-y: auto;/);
-    expect(css).toMatch(/\.outline-ghost-list::before \{[\s\S]*bottom: 0;/);
+    expect(css).toMatch(/\.outline-ghost-spine \{[\s\S]*bottom: 0;/);
     expect(css).toMatch(/\.outline-ghost-items \{[\s\S]*margin-block: auto;/);
     expect(css).toMatch(
       /\.outline-ghost-items \{[\s\S]*row-gap: var\(--outline-row-gap\);/,
     );
     expect(css).toContain(".outline-ghost-item-line");
     expect(css).toContain(".outline-ghost");
+    expect(css).not.toContain(".outline-ghost-list::before");
     expect(css).not.toContain(".outline-ghost-handle");
     expect(css).not.toContain(".outline-ghost-popover-list");
     expect(css).not.toContain(".outline-ghost-popover-item");

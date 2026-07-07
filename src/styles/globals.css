@@ -848,7 +848,7 @@
     margin-block: auto;
   }
 
-  .outline-ghost-list::before {
+  .outline-ghost-spine {
     position: absolute;
     left: 0;
     top: 0;
@@ -856,7 +856,6 @@
     width: 3px;
     border-radius: 999px;
     background: hsl(var(--outline-rail-active) / 0.22);
-    content: "";
     pointer-events: none;
   }
 

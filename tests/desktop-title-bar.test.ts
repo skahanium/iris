@@ -1,8 +1,8 @@
-﻿import { readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 
 import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   DesktopTitleBar,
@@ -20,6 +20,12 @@ function read(path: string): string {
 const originalUserAgent = window.navigator.userAgent;
 let root: Root | null = null;
 let host: HTMLDivElement | null = null;
+
+async function flushEffects(): Promise<void> {
+  await act(async () => {
+    await Promise.resolve();
+  });
+}
 
 function setTauriRuntime(enabled: boolean): void {
   const runtimeWindow = window as typeof window & {
@@ -334,27 +340,99 @@ describe("desktop title bar", () => {
     expect(css).toContain("min-width: 4.5rem");
   });
 
-  it("pins the new-note button outside the tab rail and spills overflow into a 更多 menu", () => {
+  it("keeps the new-note button as the trailing action inside the tab rail", () => {
     const bar = read("src/components/layout/DesktopTitleBar.tsx");
 
     expect(bar).toContain("computeVisibleTabCount");
     expect(bar).toContain("MoreHorizontal");
     expect(bar).toContain("IrisSurfaceMenuPanel");
     expect(bar).toContain("更多笔记");
-    expect(bar).not.toContain("shrink-0 items-center gap-1 px-2 py-1");
-  });
+    expect(bar).toContain('data-testid="rail-new-note-button"');
 
-  it("keeps source order as brand rail, new-note button, then tab rail", () => {
-    const bar = read("src/components/layout/DesktopTitleBar.tsx");
     const brandIndex = bar.indexOf('data-testid="iris-brand-rail"');
-    const newButtonIndex = bar.indexOf('aria-label="新建笔记"');
     const tabRailIndex = bar.indexOf("iris-titlebar-tab-rail");
+    const newButtonIndex = bar.indexOf('data-testid="rail-new-note-button"');
 
     expect(brandIndex).toBeGreaterThanOrEqual(0);
-    expect(newButtonIndex).toBeGreaterThan(brandIndex);
-    expect(tabRailIndex).toBeGreaterThan(newButtonIndex);
+    expect(tabRailIndex).toBeGreaterThan(brandIndex);
+    expect(newButtonIndex).toBeGreaterThan(tabRailIndex);
   });
 
+  it("renders the new-note button after tab segments inside the tab rail", () => {
+    renderTitleBar([
+      { path: "/vault/a.md", title: "Alpha" },
+      { path: "/vault/b.md", title: "Beta" },
+    ]);
+
+    const rail = document.querySelector<HTMLElement>(".iris-titlebar-tab-rail");
+    const segments = Array.from(
+      document.querySelectorAll<HTMLElement>(
+        '[data-testid="rail-segment-tab"]',
+      ),
+    );
+    const newButton = document.querySelector<HTMLButtonElement>(
+      '[data-testid="rail-new-note-button"]',
+    );
+
+    expect(rail).not.toBeNull();
+    expect(newButton).not.toBeNull();
+    expect(newButton?.parentElement).toBe(rail);
+    expect(segments).toHaveLength(2);
+    expect(segments[0]?.parentElement).toBe(rail);
+    expect(segments[1]?.parentElement).toBe(rail);
+    expect(Array.from(rail!.children).indexOf(newButton!)).toBeGreaterThan(
+      Array.from(rail!.children).indexOf(segments[1]!),
+    );
+  });
+
+  it("keeps the new-note button after the overflow trigger when tabs spill", async () => {
+    const clientWidthSpy = vi
+      .spyOn(HTMLElement.prototype, "clientWidth", "get")
+      .mockImplementation(function (this: HTMLElement) {
+        return this.className.toString().includes("iris-titlebar-tab-rail")
+          ? 240
+          : 0;
+      });
+    const scrollWidthSpy = vi
+      .spyOn(HTMLElement.prototype, "scrollWidth", "get")
+      .mockImplementation(function (this: HTMLElement) {
+        return this.className.toString().includes("iris-titlebar-tab-rail")
+          ? 900
+          : 0;
+      });
+
+    try {
+      renderTitleBar(
+        Array.from({ length: 8 }, (_, index) => ({
+          path: `/vault/${index}.md`,
+          title: `Tab ${index}`,
+        })),
+      );
+      await flushEffects();
+
+      const rail = document.querySelector<HTMLElement>(
+        ".iris-titlebar-tab-rail",
+      );
+      const overflowButton = document.querySelector<HTMLButtonElement>(
+        'button[aria-label="更多笔记"]',
+      );
+      const newButton = document.querySelector<HTMLButtonElement>(
+        '[data-testid="rail-new-note-button"]',
+      );
+
+      expect(rail).not.toBeNull();
+      expect(overflowButton).not.toBeNull();
+      expect(newButton).not.toBeNull();
+      expect(overflowButton?.parentElement?.parentElement).toBe(rail);
+      expect(newButton?.parentElement).toBe(rail);
+      expect(Array.from(rail!.children).indexOf(newButton!)).toBeGreaterThan(
+        Array.from(rail!.children).indexOf(overflowButton!.parentElement!),
+      );
+    } finally {
+      clientWidthSpy.mockRestore();
+      scrollWidthSpy.mockRestore();
+    }
+  });
   it("lets tabs compress instead of locking a 7rem minimum width", () => {
     renderTitleBar([
       { path: "/vault/a.md", title: "Alpha" },

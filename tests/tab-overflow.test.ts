@@ -17,13 +17,26 @@ describe("computeVisibleTabCount", () => {
   it("compresses and reserves space for the more button when tabs overflow", () => {
     expect(
       computeVisibleTabCount({
-        railWidthPx: 400,
+        railWidthPx: 360,
         tabMinPx: 72,
         moreButtonPx: 32,
         gapPx: 4,
         tabCount: 10,
       }),
     ).toBe(4);
+  });
+
+  it("lets callers reserve both the more button and a trailing new-note button", () => {
+    expect(
+      computeVisibleTabCount({
+        railWidthPx: 360,
+        tabMinPx: 72,
+        moreButtonPx: 32,
+        trailingButtonPx: 32,
+        gapPx: 4,
+        tabCount: 10,
+      }),
+    ).toBe(3);
   });
 
   it("keeps at least one tab in the more menu when overflowing", () => {

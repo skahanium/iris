@@ -1,4 +1,4 @@
-﻿import { getCurrentWindow } from "@tauri-apps/api/window";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
   FileImage,
   Lock,
@@ -57,6 +57,7 @@ interface DesktopTitleBarProps {
 const TAB_MIN_PX = 72;
 const TAB_GAP_PX = 4;
 const MORE_BUTTON_PX = 32;
+const NEW_BUTTON_PX = 32;
 
 export const DesktopTitleBar = memo(function DesktopTitleBar({
   variant = "document",
@@ -123,6 +124,7 @@ export const DesktopTitleBar = memo(function DesktopTitleBar({
         computeVisibleTabCount({
           gapPx: TAB_GAP_PX,
           moreButtonPx: MORE_BUTTON_PX,
+          trailingButtonPx: NEW_BUTTON_PX,
           railWidthPx: available,
           tabCount: tabs.length,
           tabMinPx: TAB_MIN_PX,
@@ -296,20 +298,6 @@ export const DesktopTitleBar = memo(function DesktopTitleBar({
 
           {showTabStrip ? (
             <>
-              <div className="shrink-0" data-tauri-drag-region-exclude>
-                <button
-                  type="button"
-                  data-tauri-drag-region-exclude
-                  className="iris-focus-soft inline-flex h-8 w-8 items-center justify-center rounded-[10px] text-muted-foreground transition-all duration-fast hover:bg-muted/60 hover:text-foreground focus:outline-none"
-                  aria-label="新建笔记"
-                  onMouseDown={(event) => {
-                    event.stopPropagation();
-                  }}
-                  onClick={onNew}
-                >
-                  <Plus className="h-4 w-4" />
-                </button>
-              </div>
               <div
                 ref={railRef}
                 className="iris-titlebar-tab-rail flex min-w-0 flex-1 items-center gap-1 overflow-x-hidden px-2"
@@ -356,6 +344,19 @@ export const DesktopTitleBar = memo(function DesktopTitleBar({
                     ) : null}
                   </div>
                 ) : null}
+                <button
+                  type="button"
+                  data-testid="rail-new-note-button"
+                  data-tauri-drag-region-exclude
+                  className="iris-focus-soft inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-[10px] text-muted-foreground transition-all duration-fast hover:bg-muted/60 hover:text-foreground focus:outline-none"
+                  aria-label="新建笔记"
+                  onMouseDown={(event) => {
+                    event.stopPropagation();
+                  }}
+                  onClick={onNew}
+                >
+                  <Plus className="h-4 w-4" />
+                </button>
               </div>
             </>
           ) : (
