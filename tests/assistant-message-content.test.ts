@@ -67,6 +67,46 @@ describe("resolveAssistantDisplayContent", () => {
     });
   });
 
+  it("does not render internal read_note parameter fragments during reconcile", () => {
+    const result = resolveAssistantReconcileContent({
+      currentContent: "",
+      serverContent: "15000 党纪国法/政府采购货物和服务招标投标管理办法.md",
+      streamBuffer: "",
+      toolCalls: undefined,
+    });
+
+    expect(result.content).not.toContain("政府采购货物和服务");
+    expect(result.reason).toBe("empty_fallback");
+  });
+
+  it("falls back when both server and stream are internal artifacts", () => {
+    const result = resolveAssistantReconcileContent({
+      currentContent: "",
+      serverContent:
+        '{"path":"党纪国法/政府采购货物和服务招标投标管理办法.md","max_chars":15000}',
+      streamBuffer:
+        "max_chars=15000 path=党纪国法/政府采购货物和服务招标投标管理办法.md",
+      toolCalls: undefined,
+    });
+
+    expect(result.content).toContain("模型未返回正文");
+    expect(result.content).not.toContain("max_chars");
+    expect(result.reason).toBe("empty_fallback");
+  });
+
+  it("keeps normal markdown and cited answers during reconcile", () => {
+    expect(
+      resolveAssistantReconcileContent({
+        currentContent: "",
+        serverContent: "# 结论\n\n邀请招标需要满足特定条件。[C1]",
+        streamBuffer: "",
+        toolCalls: undefined,
+      }),
+    ).toMatchObject({
+      content: "# 结论\n\n邀请招标需要满足特定条件。[C1]",
+      reason: "server_fills_empty_stream",
+    });
+  });
   it("fills an empty visible stream from server content", () => {
     expect(
       resolveAssistantReconcileContent({

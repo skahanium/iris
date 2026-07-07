@@ -1,6 +1,69 @@
 import type { ToolCallInfo } from "@/types/ai";
 
 const EMPTY_ASSISTANT_FALLBACK = "模型未返回正文，请重试或检查网络与模型配置。";
+const INTERNAL_TOOL_SUMMARY_NAMES = new Set([
+  "read_note",
+  "search_hybrid",
+  "search_semantic",
+  "search_keyword",
+  "get_context_packets",
+  "conclude_reasoning",
+]);
+
+function isInternalToolArtifactText(content: string): boolean {
+  const trimmed = content.trim();
+  if (!trimmed) return false;
+  const lower = trimmed.toLowerCase();
+  if (
+    lower.startsWith("action:") ||
+    lower.includes("action input:") ||
+    lower.includes("invoke name=") ||
+    lower.includes("parameter name=")
+  ) {
+    return true;
+  }
+
+  try {
+    const parsed: unknown = JSON.parse(trimmed);
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      const record = parsed as Record<string, unknown>;
+      if (
+        "path" in record ||
+        "source_path" in record ||
+        "sourcePath" in record ||
+        "max_chars" in record ||
+        "maxChars" in record
+      ) {
+        return true;
+      }
+    }
+  } catch {
+    // Plain text is checked below.
+  }
+
+  if (!lower.includes(".md")) return false;
+  if (
+    lower.includes("max_chars") ||
+    lower.includes("maxchars") ||
+    lower.includes("path=") ||
+    lower.includes("source_path=") ||
+    lower.includes("sourcepath=")
+  ) {
+    return true;
+  }
+
+  const parts = trimmed.split(/\s+/u);
+  return (
+    parts.length === 2 &&
+    /^\d+$/u.test(parts[0] ?? "") &&
+    (parts[1] ?? "").toLowerCase().endsWith(".md")
+  );
+}
+
+function visibleAssistantContent(content: string): string {
+  const trimmed = content.trim();
+  return isInternalToolArtifactText(trimmed) ? "" : trimmed;
+}
 
 export type AssistantReconcileMutation = "noop" | "replace";
 
@@ -31,8 +94,12 @@ export function toolCallsFallbackContent(
 ): string {
   if (!toolCalls?.length) return "";
   const parts = toolCalls
+    .filter((tc) => !INTERNAL_TOOL_SUMMARY_NAMES.has(tc.name ?? ""))
     .map((tc) => tc.result_summary?.trim())
-    .filter((s): s is string => Boolean(s));
+    .filter(
+      (s): s is string =>
+        typeof s === "string" && Boolean(s) && !isInternalToolArtifactText(s),
+    );
   return parts.join("\n\n");
 }
 
@@ -42,7 +109,10 @@ export function resolveAssistantDisplayContent(
   streamBuffer: string,
   toolCalls: ToolCallInfo[] | undefined,
 ): string {
-  const merged = (serverContent.trim() || streamBuffer.trim()).trim();
+  const merged = (
+    visibleAssistantContent(serverContent) ||
+    visibleAssistantContent(streamBuffer)
+  ).trim();
   if (merged) return merged;
   const fromTools = toolCallsFallbackContent(toolCalls);
   if (fromTools) return fromTools;
@@ -57,8 +127,8 @@ export function resolveAssistantReconcileContent({
   toolCalls,
 }: AssistantReconcileInput): AssistantReconcileResult {
   const current = currentContent.trim();
-  const server = serverContent.trim();
-  const stream = streamBuffer.trim();
+  const server = visibleAssistantContent(serverContent);
+  const stream = visibleAssistantContent(streamBuffer);
 
   if (server && server === current) {
     return {

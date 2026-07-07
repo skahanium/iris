@@ -12,7 +12,9 @@ use crate::ai_runtime::model_gateway::{
     emit_stream_reset_with_surface, GatewayRequest, LlmMessage, MessageRole, ModelGateway,
     StreamSurface, TokenUsage, ToolCall,
 };
-use crate::ai_runtime::tool_fallback::strip_tool_markup_from_visible;
+use crate::ai_runtime::tool_fallback::{
+    is_internal_tool_artifact_text, strip_tool_markup_from_visible,
+};
 use crate::app::AppState;
 use crate::error::AppResult;
 
@@ -173,8 +175,9 @@ pub(crate) async fn run_reflection_round(
 
 pub(crate) fn sanitize_reflection_visible(text: &str) -> Option<String> {
     let cleaned = text.replace("NEED_MORE_EVIDENCE", "");
-    let trimmed = cleaned.trim();
-    if trimmed.is_empty() {
+    let stripped = strip_tool_markup_from_visible(&cleaned);
+    let trimmed = stripped.trim();
+    if trimmed.is_empty() || is_internal_tool_artifact_text(trimmed) {
         None
     } else {
         Some(trimmed.to_string())

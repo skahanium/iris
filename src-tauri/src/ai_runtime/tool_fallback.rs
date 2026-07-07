@@ -18,6 +18,18 @@ static DSML_TOOL_CALLS_BLOCK_RE: LazyLock<Regex> = LazyLock::new(|| {
         .expect("dsml tool_calls block regex")
 });
 
+static DSML_ORPHAN_TAG_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(
+        r"(?s)<[^>]*DSML[^>]*(?:invoke|parameter)[^>]*>.*?</[^>]*DSML[^>]*(?:invoke|parameter)>",
+    )
+    .expect("dsml orphan tag regex")
+});
+
+static REACT_TOOL_BLOCK_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?m)^\s*Action:\s*[^\r\n]+(?:\r?\n\s*Action Input:\s*[^\r\n]*)?\r?\n?")
+        .expect("react tool block regex")
+});
+
 /// Parse DeepSeek DSML-style tool invocations embedded in assistant text.
 pub fn parse_dsml_tool_calls(content: &str) -> Vec<ToolCall> {
     if !content.contains("invoke") && !content.contains("DSML") {
@@ -125,15 +137,70 @@ pub fn strip_tool_markup_from_visible(content: &str) -> String {
     let mut out = DSML_TOOL_CALLS_BLOCK_RE
         .replace_all(content, "")
         .into_owned();
+    out = DSML_ORPHAN_TAG_RE.replace_all(&out, "").into_owned();
+    out = REACT_TOOL_BLOCK_RE.replace_all(&out, "").into_owned();
     if out.contains("DSML") || out.contains("invoke name=") {
         out = DSML_INVOKE_RE.replace_all(&out, "").into_owned();
     }
     let trimmed = out.trim();
-    if trimmed.is_empty() && (content.contains("DSML") || content.contains("invoke name=")) {
+    if trimmed.is_empty()
+        && (content.contains("DSML")
+            || content.contains("invoke name=")
+            || content.contains("Action:"))
+    {
         String::new()
     } else {
         trimmed.to_string()
     }
+}
+
+/// Detect short internal tool-call argument fragments that must not become final chat text.
+pub fn is_internal_tool_artifact_text(content: &str) -> bool {
+    let trimmed = content.trim();
+    if trimmed.is_empty() {
+        return false;
+    }
+
+    let lower = trimmed.to_ascii_lowercase();
+    if lower.contains("action input:")
+        || lower.starts_with("action:")
+        || lower.contains("invoke name=")
+        || lower.contains("parameter name=")
+    {
+        return true;
+    }
+
+    if let Ok(serde_json::Value::Object(map)) = serde_json::from_str::<serde_json::Value>(trimmed) {
+        if map.contains_key("path")
+            || map.contains_key("source_path")
+            || map.contains_key("max_chars")
+            || map.contains_key("maxChars")
+        {
+            return true;
+        }
+    }
+
+    if lower.contains(".md") {
+        if lower.contains("max_chars")
+            || lower.contains("maxchars")
+            || lower.contains("path=")
+            || lower.contains("source_path=")
+            || lower.contains("sourcepath=")
+        {
+            return true;
+        }
+
+        let mut parts = trimmed.split_whitespace();
+        if let (Some(first), Some(second), None) = (parts.next(), parts.next(), parts.next()) {
+            if first.chars().all(|c| c.is_ascii_digit())
+                && second.to_ascii_lowercase().ends_with(".md")
+            {
+                return true;
+            }
+        }
+    }
+
+    false
 }
 
 pub fn parse_tool_call_arguments(arguments: &str) -> Result<serde_json::Value, String> {
@@ -231,6 +298,30 @@ Action Input: {"query": "x"}
         assert!(!visible.contains("invoke name"));
     }
 
+    #[test]
+    fn strip_react_read_note_block_from_visible_text() {
+        let text = r#"Action: read_note
+Action Input: {"path":"党纪国法/政府采购货物和服务招标投标管理办法.md","max_chars":15000}
+"#;
+
+        let visible = strip_tool_markup_from_visible(text);
+
+        assert!(visible.is_empty());
+    }
+
+    #[test]
+    fn strip_react_tool_block_preserves_user_facing_preamble() {
+        let text = r#"我先查一下本地材料。
+Action: read_note
+Action Input: {"path":"党纪国法/政府采购货物和服务招标投标管理办法.md","max_chars":15000}
+"#;
+
+        let visible = strip_tool_markup_from_visible(text);
+
+        assert_eq!(visible, "我先查一下本地材料。");
+        assert!(!visible.contains("max_chars"));
+        assert!(!visible.contains(".md"));
+    }
     #[test]
     fn parse_tool_call_arguments_requires_valid_json_object() {
         let parsed = parse_tool_call_arguments(r#"{"query":"x"}"#).unwrap();

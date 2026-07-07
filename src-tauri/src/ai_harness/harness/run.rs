@@ -44,8 +44,8 @@ use crate::ai_runtime::tool_execution_pipeline::{
 };
 use crate::ai_runtime::tool_executor::ToolRegistry;
 use crate::ai_runtime::tool_fallback::{
-    parse_tool_call_arguments, parse_tool_calls_from_content, should_retry_tool_parse,
-    strip_tool_markup_from_visible,
+    is_internal_tool_artifact_text, parse_tool_call_arguments, parse_tool_calls_from_content,
+    should_retry_tool_parse, strip_tool_markup_from_visible,
 };
 use crate::ai_runtime::tool_policy::{self, DenialReason, ToolPolicyContext};
 use crate::ai_runtime::ToolCallResult;
@@ -87,11 +87,15 @@ fn classify_final_answer(
     max_rounds: u32,
 ) -> FinalAnswerDecision {
     if let Some(content) = sanitized_final {
-        return FinalAnswerDecision {
-            content,
-            finish_reason: HarnessFinishReason::Completed,
-            save_checkpoint: false,
-        };
+        let visible = strip_tool_markup_from_visible(&content);
+        let trimmed = visible.trim();
+        if !trimmed.is_empty() && !is_internal_tool_artifact_text(trimmed) {
+            return FinalAnswerDecision {
+                content: trimmed.to_string(),
+                finish_reason: HarnessFinishReason::Completed,
+                save_checkpoint: false,
+            };
+        }
     }
 
     if total_tokens >= token_budget {
@@ -1188,8 +1192,17 @@ async fn run_harness_inner(
         emit_thinking(app_handle, &input.request_id, harness_rounds, &t)?;
     }
 
+    let sanitized_final = sanitize_reflection_visible(&final_visible);
+    if sanitized_final.is_none() && !final_visible.trim().is_empty() {
+        tracing::debug!(
+            request_id = %input.request_id,
+            event = "final_content_rejected_as_internal_tool_artifact",
+            content_chars = final_visible.chars().count(),
+            "AI lifecycle rejected non-user-visible final content"
+        );
+    }
     let decision = classify_final_answer(
-        sanitize_reflection_visible(&final_visible),
+        sanitized_final,
         total_usage.total_tokens,
         token_budget,
         harness_rounds,
@@ -1909,6 +1922,29 @@ mod tests {
         assert!(decision.save_checkpoint);
     }
 
+    #[test]
+    fn final_answer_rejects_internal_tool_parameter_fragments() {
+        for artifact in [
+            "15000 党纪国法/政府采购货物和服务招标投标管理办法.md",
+            r#"{"path":"党纪国法/政府采购货物和服务招标投标管理办法.md","max_chars":15000}"#,
+            "max_chars=15000 path=党纪国法/政府采购货物和服务招标投标管理办法.md",
+        ] {
+            let decision = classify_final_answer(Some(artifact.to_string()), 10, 100, 1, 3);
+
+            assert_eq!(decision.finish_reason, HarnessFinishReason::Completed);
+            assert_eq!(decision.content, FINAL_EMPTY_FALLBACK);
+            assert!(!decision.content.contains("政府采购货物和服务"));
+        }
+    }
+
+    #[test]
+    fn final_answer_keeps_normal_legal_analysis() {
+        let answer = "根据《政府采购货物和服务招标投标管理办法》，邀请招标应当符合特定适用条件。";
+        let decision = classify_final_answer(Some(answer.to_string()), 10, 100, 1, 3);
+
+        assert_eq!(decision.finish_reason, HarnessFinishReason::Completed);
+        assert_eq!(decision.content, answer);
+    }
     #[test]
     fn final_answer_messages_force_no_tool_direct_answer() {
         let messages = vec![LlmMessage {
