@@ -1,22 +1,17 @@
 import { useRef } from "react";
 
-const MIN_FLUSH_INTERVAL_MS = 80;
+const MIN_FLUSH_INTERVAL_MS = 32;
 const STREAMING_SHORT_CONTENT_LIMIT = 200;
-const STREAMING_BIG_JUMP_CHARS = 240;
 
 /**
- * 流式输出期间节流渲染内容。
+ * Streaming content throttle.
  *
- * 在 streaming=true 时，仅在满足以下条件之一时更新返回值：
- * 1. 新增内容超过 240 字符
- * 2. 距上次更新超过 80ms
- * 3. 遇到段落分隔符（双换行）
- * 4. 总内容不足 200 字符（短文本不节流）
+ * When streaming, returns content only when at least one of:
+ * 1. 32ms has elapsed since the last flush (roughly 2 frames)
+ * 2. A paragraph break (\\n\\n) is detected
+ * 3. Content is shorter than 200 chars (bypass throttle for short text)
  *
- * 非流式状态下始终返回最新内容。
- *
- * 与下游 useMemo([content]) 配合，降低流式 Markdown 重解析频率，
- * 同时避免 120ms 级固定顿挫。
+ * Non-streaming content is always returned immediately.
  */
 export function useStreamingContent(
   content: string,
@@ -44,12 +39,11 @@ export function useStreamingContent(
   }
 
   const shortContent = content.length < STREAMING_SHORT_CONTENT_LIMIT;
-  const bigJump = added > STREAMING_BIG_JUMP_CHARS;
   const timeUp = timeSince > MIN_FLUSH_INTERVAL_MS;
   const paragraphBreak =
     content.indexOf("\n\n", cacheRef.current.content.length) >= 0;
 
-  if (shortContent || bigJump || timeUp || paragraphBreak) {
+  if (shortContent || timeUp || paragraphBreak) {
     lastUpdateRef.current = now;
     cacheRef.current = { content, rendered: content };
     return content;

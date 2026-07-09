@@ -97,6 +97,31 @@ describe("assistant markdown-first message stream", () => {
     expect(document.body.textContent).toContain("第一段内容");
   });
 
+  it("updates streaming assistant content when the message count is unchanged", async () => {
+    await act(async () => {
+      root.render(
+        <AiMessageList
+          messages={[{ role: "assistant", content: "initial token" }]}
+          streaming={true}
+        />,
+      );
+    });
+
+    expect(document.body.textContent).toContain("initial token");
+
+    await act(async () => {
+      root.render(
+        <AiMessageList
+          messages={[{ role: "assistant", content: "updated token" }]}
+          streaming={true}
+        />,
+      );
+    });
+
+    expect(document.body.textContent).not.toContain("initial token");
+    expect(document.body.textContent).toContain("updated token");
+  });
+
   it("renders the complete final assistant content after streaming throttling", async () => {
     const finalContent = `起${"中".repeat(210)}最终内容`;
 

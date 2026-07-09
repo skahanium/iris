@@ -1,6 +1,5 @@
 import {
   useCallback,
-  useDeferredValue,
   useEffect,
   useMemo,
   memo,
@@ -225,8 +224,7 @@ const AssistantBody = memo(function AssistantBody({
   );
   const renderContent = useStreamingContent(renderable.content, streaming);
 
-  const deferredRenderContent = useDeferredValue(renderContent);
-  const markdownContent = streaming ? deferredRenderContent : content;
+  const markdownContent = streaming ? renderContent : content;
   const boundedMarkdownContent = streaming
     ? markdownContent
     : renderable.content;
@@ -237,19 +235,28 @@ const AssistantBody = memo(function AssistantBody({
     streaming,
   });
 
+  /** Last successfully rendered HTML — reused while worker is pending. */
+  const lastHtmlRef = useRef<string>("");
+
   const html = useMemo(() => {
     if (streaming && !workerRender.failed) {
       if (workerRender.html !== null) {
+        lastHtmlRef.current = workerRender.html;
         return workerRender.html;
       }
-      if (
-        workerRender.pending &&
-        content.length > STREAMING_SYNC_FALLBACK_CHAR_LIMIT
-      ) {
-        return '<p class="text-muted-foreground whitespace-pre-wrap">Rendering...</p>';
+      // Worker is still computing. Reuse a previous frame when one exists;
+      // otherwise render short first frames synchronously so streaming is visible.
+      if (workerRender.pending) {
+        if (lastHtmlRef.current) {
+          return lastHtmlRef.current;
+        }
+        if (content.length > STREAMING_SYNC_FALLBACK_CHAR_LIMIT) {
+          return '<p class="text-muted-foreground whitespace-pre-wrap">Rendering...</p>';
+        }
       }
     }
 
+    // Non-streaming or worker failed: render synchronously.
     try {
       const result = renderMarkdownWithProfile(
         boundedMarkdownContent || "",
@@ -261,7 +268,9 @@ const AssistantBody = memo(function AssistantBody({
         },
       );
 
-      return result.output;
+      const out = result.output;
+      if (streaming) lastHtmlRef.current = out;
+      return out;
     } catch (err) {
       console.warn("[ai-message] Markdown render failed", {
         contentSummary: summarizeLogContent(boundedMarkdownContent || ""),

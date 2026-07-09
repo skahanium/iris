@@ -17,6 +17,10 @@ pub const SETTINGS_KEY: &str = "llm_routing";
 const LEGACY_CUSTOM_BASE: &str = "llm_custom_base_url";
 const LEGACY_BASE_URL: &str = "llm_base_url";
 const USAGE_LAST_KEY: &str = "llm_usage_last";
+/// Hard cap on computed input budget to prevent runaway values for
+/// very-large-context models (1M+). 200K tokens is roughly equivalent
+/// to a 500-page book and covers virtually all realistic chat contexts.
+const MAX_INPUT_BUDGET_TOKENS: usize = 200_000;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -823,10 +827,11 @@ fn resolve_route(
     let input_ratio = if model_spec.context_window >= 256_000 {
         0.85_f32
     } else {
-        0.5_f32
+        0.75_f32
     };
     let input_budget = ((model_spec.context_window as f32) * input_ratio) as usize;
     let input_budget = input_budget.saturating_sub(output_budget as usize);
+    let input_budget = input_budget.min(MAX_INPUT_BUDGET_TOKENS);
     let context_strategy = if slot == CapabilitySlot::LongContext {
         ContextStrategy::LongContext
     } else {
@@ -1291,7 +1296,7 @@ pub fn resolve_for_provider_without_secret(
         api_key: None,
         thinking: false,
         reasoning: ResolvedReasoningRequest::disabled(),
-        input_budget: (model_spec.context_window as f32 * 0.85) as usize,
+        input_budget: (model_spec.context_window as f32 * 0.75) as usize,
         output_budget: model_spec.max_output,
         context_strategy: ContextStrategy::Hybrid,
         endpoint_family: model_spec.endpoint_family,

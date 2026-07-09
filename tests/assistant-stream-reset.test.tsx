@@ -398,6 +398,45 @@ describe("useAssistantLlmStream reset + done behavior", () => {
     });
   });
 
+  it("coalesces reset and tool trace events for the same round and tool", async () => {
+    await mountHook();
+
+    await act(async () => {
+      handlers.reset?.({
+        request_id: "req-1",
+        reason_kind: "tool_round",
+        round: 2,
+        surface: "internal_candidate",
+      });
+      handlers.trace?.({
+        request_id: "req-1",
+        round: 2,
+        phase: "tool_start",
+        tool_name: "web_search",
+        status: "running",
+      });
+      handlers.trace?.({
+        request_id: "req-1",
+        round: 2,
+        phase: "tool_complete",
+        tool_name: "web_search",
+        status: "ok",
+        duration_ms: 1530,
+      });
+    });
+
+    expect(messagesState).toEqual([]);
+    expect(processEventsState).toHaveLength(1);
+    expect(processEventsState[0]).toMatchObject({
+      kind: "trace",
+      requestId: "req-1",
+      round: 2,
+      status: "ok",
+      durationMs: 1530,
+    });
+    expect(processEventsState[0]?.label).toContain("1.5");
+  });
+
   it("ai:thinking records safe process metadata without transcript content", async () => {
     await mountHook();
 

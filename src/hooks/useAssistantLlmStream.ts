@@ -1,5 +1,4 @@
 ﻿import {
-  startTransition,
   useEffect,
   useRef,
   type Dispatch,
@@ -164,8 +163,29 @@ export function useAssistantLlmStream(options: {
     let unlistenHarnessTrace: (() => void) | undefined;
     let unlistenAiThinking: (() => void) | undefined;
 
+    function roundKey(round: number | null | undefined): string {
+      return round === null || round === undefined ? "none" : String(round);
+    }
+
+    function resetEventKey(
+      requestId: string,
+      round: number | null | undefined,
+      reasonKind: string | null | undefined,
+    ): string {
+      return `${requestId}:reset:${roundKey(round)}:${reasonKind ?? "unknown"}`;
+    }
+
+    function toolTraceEventKey(
+      requestId: string,
+      round: number | null | undefined,
+      toolName: string,
+    ): string {
+      return `${requestId}:tool:${roundKey(round)}:${toolName}`;
+    }
+
     function appendProcessEvent(
       event: Omit<AssistantProcessEvent, "id" | "createdAt">,
+      options: { replaceEventKeys?: string[] } = {},
     ) {
       if (!setProcessEvents) return;
       const requestId = event.requestId;
@@ -183,7 +203,46 @@ export function useAssistantLlmStream(options: {
         const sameRequest = processEventsRequestIdRef.current === requestId;
         processEventsRequestIdRef.current = requestId;
         const base = sameRequest ? prev : [];
-        return [...base, nextEvent].slice(-32);
+        const replaceKeys = new Set(options.replaceEventKeys ?? []);
+        const filtered = replaceKeys.size
+          ? base.filter(
+              (item) => !item.eventKey || !replaceKeys.has(item.eventKey),
+            )
+          : base;
+
+        if (nextEvent.eventKey) {
+          const existingIndex = filtered.findIndex(
+            (item) => item.eventKey === nextEvent.eventKey,
+          );
+          if (existingIndex >= 0) {
+            const copy = [...filtered];
+            const existing = copy[existingIndex];
+            if (existing) {
+              copy[existingIndex] = {
+                ...existing,
+                ...nextEvent,
+                id: existing.id,
+              };
+            }
+            return copy.slice(-32);
+          }
+        }
+
+        const last = filtered[filtered.length - 1];
+        if (
+          !nextEvent.eventKey &&
+          last &&
+          last.kind === nextEvent.kind &&
+          last.label === nextEvent.label &&
+          last.round === nextEvent.round &&
+          last.status === nextEvent.status
+        ) {
+          const copy = [...filtered];
+          copy[copy.length - 1] = { ...last, ...nextEvent, id: last.id };
+          return copy.slice(-32);
+        }
+
+        return [...filtered, nextEvent].slice(-32);
       });
     }
 
@@ -290,11 +349,11 @@ export function useAssistantLlmStream(options: {
       });
     }
 
-    /** Intermediate streaming updates flushed inside rAF with lower priority. */
+    /** Flush buffered tokens on the next animation frame.
+     *  rAF batching (max ~16ms) is the only throttle needed —
+     *  React state updates during streaming are normal priority. */
     function flushSnapshot() {
-      startTransition(() => {
-        setMessagesFromBuf("llm_token_raf");
-      });
+      setMessagesFromBuf("llm_token_raf");
     }
 
     function cancelScheduledFlush() {
@@ -401,12 +460,19 @@ export function useAssistantLlmStream(options: {
       });
       if (!isVisibleAnswerSurface(ev.surface)) {
         if (ev.reason_kind === "tool_round") {
+          const resetRequestId =
+            ev.request_id ?? requestIdRef.current ?? "unknown";
           appendProcessEvent({
-            requestId: ev.request_id ?? requestIdRef.current ?? "unknown",
+            requestId: resetRequestId,
             kind: "reset",
             label: "正在处理工具结果",
             round: ev.round ?? null,
             status: ev.reason_kind,
+            eventKey: resetEventKey(
+              resetRequestId,
+              ev.round ?? null,
+              ev.reason_kind,
+            ),
           });
         } else if (ev.reason_kind === "need_more_evidence") {
           appendProcessEvent({
@@ -562,14 +628,24 @@ export function useAssistantLlmStream(options: {
       const hint = harnessTraceHint(ev);
       if (hint) setActivityHint(hint);
       if (hint) {
-        appendProcessEvent({
-          requestId: ev.request_id,
-          kind: "trace",
-          label: hint,
-          round: ev.round,
-          status: ev.status,
-          durationMs: ev.duration_ms ?? null,
-        });
+        appendProcessEvent(
+          {
+            requestId: ev.request_id,
+            kind: "trace",
+            label: hint,
+            round: ev.round,
+            status: ev.status,
+            durationMs: ev.duration_ms ?? null,
+            eventKey: toolTraceEventKey(ev.request_id, ev.round, ev.tool_name),
+            toolName: ev.tool_name,
+            phase: ev.phase ?? null,
+          },
+          {
+            replaceEventKeys: [
+              resetEventKey(ev.request_id, ev.round, "tool_round"),
+            ],
+          },
+        );
       }
       recordAiLifecycleEvent(lifecycleRecorder, {
         event: "harness_trace",
@@ -598,6 +674,7 @@ export function useAssistantLlmStream(options: {
         label: "模型正在推理",
         round: ev.round,
         status: "isolated",
+        eventKey: `${ev.request_id}:thinking:${roundKey(ev.round)}`,
       });
       recordAiLifecycleEvent(lifecycleRecorder, {
         event: "harness_trace",

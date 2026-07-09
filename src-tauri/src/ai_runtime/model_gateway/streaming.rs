@@ -388,6 +388,12 @@ impl StreamReadFailureDiagnostic {
     }
 }
 
+/// Maximum number of raw characters the sanitizer will suppress before
+/// allowing content through regardless of meta-analysis detection.
+/// Prevents the "no visible text for several seconds" symptom when a
+/// reasoning model opens with an extended meta-analysis preamble.
+const MAX_SUPPRESSION_BUDGET: usize = 300;
+
 #[derive(Default)]
 struct VisibleStreamSanitizer {
     raw: String,
@@ -401,7 +407,7 @@ impl VisibleStreamSanitizer {
 
     fn sanitize_delta(&mut self, delta: &str, done: bool) -> String {
         self.raw.push_str(delta);
-        let next_visible = sanitize_visible_stream_prefix(&self.raw, done);
+        let next_visible = self.sanitize_visible_stream_prefix(&self.raw, done);
         if !next_visible.starts_with(&self.emitted) {
             tracing::warn!(
                 emitted_len = self.emitted.len(),
@@ -416,7 +422,7 @@ impl VisibleStreamSanitizer {
     }
 
     fn finish(&mut self) -> String {
-        let next_visible = sanitize_visible_stream_prefix(&self.raw, true);
+        let next_visible = self.sanitize_visible_stream_prefix(&self.raw, true);
         if !next_visible.starts_with(&self.emitted) {
             tracing::warn!(
                 emitted_len = self.emitted.len(),
@@ -429,15 +435,34 @@ impl VisibleStreamSanitizer {
         self.emitted = next_visible;
         delta
     }
-}
 
-fn sanitize_visible_stream_prefix(raw: &str, done: bool) -> String {
-    let without_reasoning = strip_reasoning_tags_for_stream(raw);
-    let without_meta = sanitize_meta_analysis_prefix_for_stream(&without_reasoning, done);
-    if done {
-        without_meta
-    } else {
-        withhold_partial_reasoning_open_suffix(&without_meta)
+    /// Strip reasoning tags and meta-analysis from the visible stream,
+    /// with a suppression budget to prevent long stalls.
+    ///
+    /// When the raw input has grown more than [`MAX_SUPPRESSION_BUDGET`]
+    /// characters beyond what has been emitted, meta-analysis suppression
+    /// is relaxed — content is allowed through even if it starts with
+    /// meta-analysis patterns.
+    fn sanitize_visible_stream_prefix(&self, raw: &str, done: bool) -> String {
+        let without_reasoning = strip_reasoning_tags_for_stream(raw);
+
+        let suppressed_chars = self.raw.len().saturating_sub(self.emitted.len());
+        let budget_exceeded = suppressed_chars >= MAX_SUPPRESSION_BUDGET;
+
+        let without_meta = if done || budget_exceeded {
+            // Done or budget exhausted: use the full sanitize (which strips
+            // leading meta paragraphs but won't suppress everything since
+            // by this point the model has likely moved past meta content).
+            crate::ai_runtime::harness_support::sanitize_meta_analysis_prefix(&without_reasoning)
+        } else {
+            sanitize_meta_analysis_prefix_for_stream(&without_reasoning, done)
+        };
+
+        if done {
+            without_meta
+        } else {
+            withhold_partial_reasoning_open_suffix(&without_meta)
+        }
     }
 }
 
@@ -463,9 +488,7 @@ fn looks_like_partial_meta_analysis_start(text: &str) -> bool {
         "i'll ",
         "the persona ",
     ];
-    PREFIXES
-        .iter()
-        .any(|prefix| prefix.starts_with(lower.as_str()))
+    PREFIXES.iter().any(|prefix| lower.starts_with(prefix))
 }
 
 fn strip_reasoning_tags_for_stream(content: &str) -> String {

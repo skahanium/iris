@@ -23,13 +23,14 @@ describe("assistant streaming lifecycle contract", () => {
       expect(src).toContain("streaming");
     });
 
-    it("AiMessageBubble defers streamed markdown snapshots but renders final content immediately", () => {
+    it("AiMessageBubble streams markdown directly without deferred-value stalling", () => {
       const src = read("src/components/ai/AiMessageBubble.tsx");
 
-      expect(src).toContain("useDeferredValue");
-      expect(src).toContain("const deferredRenderContent = useDeferredValue");
+      // useDeferredValue was removed to prevent multi-second rendering stalls
+      // during streaming; react state + useStreamingContent throttling is sufficient.
+      expect(src).not.toContain("useDeferredValue");
       expect(src).toContain(
-        "const markdownContent = streaming ? deferredRenderContent : content",
+        "const markdownContent = streaming ? renderContent : content",
       );
       expect(src).toContain("const boundedMarkdownContent = streaming");
       expect(src).toContain("renderMarkdownWithProfile(");

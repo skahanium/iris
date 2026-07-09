@@ -97,10 +97,86 @@ describe("markdown list inline bold", () => {
 
     try {
       const strong = editor.view.dom.querySelector("strong");
-      expect(strong?.textContent).toBe("匹配规则升级为“窗口安全长度”：");
-      expect(editor.view.dom.textContent).not.toContain("**匹配规则");
+      expect(strong?.textContent).toBe('匹配规则升级为“窗口安全长度”：');
+      expect(editor.view.dom.textContent).not.toContain('**匹配规则');
     } finally {
       editor.destroy();
     }
+  });
+});
+
+// --- Phase 0-A1: double-underscore bold (__) ---
+
+describe("double-underscore bold (__)", () => {
+  it("renders __bold__ inside unordered list items", () => {
+    const md = "- __解散议会争议__：马克龙在2025年解散国民议会。";
+    const html = parseMarkdownToHtml(md);
+    expect(html).toContain("<strong>解散议会争议</strong>");
+    expect(html).not.toContain("__解散议会争议__");
+  });
+
+  it("renders tight __ bold labels that include a Chinese colon", () => {
+    const md = "- __CUDA Graph 显存调优：__优化 CUDA Graph 捕获范围。";
+    const html = parseMarkdownToHtml(md);
+    expect(html).toContain("<strong>CUDA Graph 显存调优：</strong>");
+    expect(html).not.toContain("__CUDA Graph 显存调优：__");
+  });
+
+  it("renders __bold__ with link after colon", () => {
+    const md = "- __标题：__[链接](https://example.com)";
+    const html = parseMarkdownToHtml(md);
+    expect(html).toContain("<strong>标题：</strong>");
+    expect(html).toContain('href="https://example.com"');
+  });
+
+  it("chat_assistant renders __bold__ correctly", () => {
+    const md = "__重要通知：__请查看更新。";
+    const { output } = renderMarkdownWithProfile(md, "chat_assistant");
+    expect(output).toContain("<strong>重要通知：</strong>");
+    expect(output).not.toContain("__重要通知：__");
+  });
+});
+
+// --- Phase 0-A2: bare ** isolation per paragraph ---
+
+describe("bare ** isolation per paragraph", () => {
+  it("bare ** in one paragraph does not poison bold in the next", () => {
+    const md = [
+      "Some text with a standalone ** decoration.",
+      "",
+      "**Bold text in next paragraph** should work.",
+    ].join("\n");
+    const html = parseMarkdownToHtml(md);
+    expect(html).toContain("<strong>Bold text in next paragraph</strong>");
+  });
+
+  it("bare ** mid-document, bold at end still works", () => {
+    const md = [
+      "First paragraph.",
+      "",
+      "Line with ** decorative stars.",
+      "",
+      "Third paragraph with **actual bold** at end.",
+    ].join("\n");
+    const html = parseMarkdownToHtml(md);
+    expect(html).toContain("<strong>actual bold</strong>");
+  });
+});
+
+// --- Phase 0-A3: chat_user profile bold repair ---
+
+describe("chat_user profile bold repair", () => {
+  it("chat_user renders **bold with colon** correctly", () => {
+    const md = "**问题：**这个怎么解决？";
+    const { output } = renderMarkdownWithProfile(md, "chat_user");
+    expect(output).toContain("<strong>问题：</strong>");
+    expect(output).not.toContain("**问题：**");
+  });
+
+  it("chat_user handles mixed ** and __ bold patterns", () => {
+    const md = "**重点：**这是加粗。__另外：__这也是加粗。";
+    const { output } = renderMarkdownWithProfile(md, "chat_user");
+    expect(output).toContain("<strong>重点：</strong>");
+    expect(output).toContain("<strong>另外：</strong>");
   });
 });

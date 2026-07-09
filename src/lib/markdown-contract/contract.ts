@@ -46,6 +46,7 @@ import {
 } from "./types";
 import { reconcileFragmentsWithSource } from "./fragment-reconcile";
 import { isDangerousHtml } from "./html-safety";
+import { repairTightStrongPunctuationBoundaries } from "@/lib/markdown";
 
 const contractMarked = createMarkedInstance({ gfm: true, breaks: true });
 
@@ -691,8 +692,13 @@ function renderByProfile(
         renderAiMarkdownToHtml(md, { streaming: false, codeCopy: false }),
       );
     case "chat_user":
-      // User messages: render Markdown with sanitization, no citation linkification
-      return sanitizeHtml(contractMarked.parse(md, { async: false }) as string);
+      // Apply bold boundary repair so **text：** and __text：__ render correctly.
+      return sanitizeHtml(
+        contractMarked.parse(
+          repairTightStrongPunctuationBoundaries(md),
+          { async: false },
+        ) as string,
+      );
     case "editor_ingest":
       return markdownBodyToEditorHtml(md);
     case "editor_export":

@@ -52,6 +52,10 @@ export interface AssistantProcessEvent {
   round?: number | null;
   status?: string | null;
   durationMs?: number | null;
+  /** Runtime-only merge key for coalescing progress events. */
+  eventKey?: string;
+  toolName?: string | null;
+  phase?: string | null;
   createdAt: number;
 }
 
@@ -71,7 +75,7 @@ interface AiMessageListProps {
 type MessageRow =
   | { type: "empty" }
   | { type: "thinking" }
-  | { type: "message"; message: ChatLine; messageIndex: number };
+  | { type: "message"; messageIndex: number };
 
 const SCROLL_WRITE_EPSILON_PX = 1;
 
@@ -206,14 +210,17 @@ export const AiMessageList = memo(function AiMessageList({
           ? [
               {
                 type: "message" as const,
-                message,
                 messageIndex,
               },
             ]
           : [],
       ),
     ];
-  }, [messages, showStandaloneThinking, streaming]);
+    // Use messages.length instead of messages to avoid full recomputation
+    // on every streaming token flush; streaming content is handled by
+    // the individual message bubble's internal useStreamingContent throttle.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [messages.length, showStandaloneThinking, streaming]);
 
   // Content-aware row height estimate. The old fixed `() => 112` was wrong
   // by up to 10× for tall assistant messages, causing the virtualizer to
@@ -225,7 +232,7 @@ export const AiMessageList = memo(function AiMessageList({
     (index: number): number => {
       const row = rows[index];
       if (!row || row.type !== "message") return 80;
-      const content = row.message.content || "";
+      const content = messages[row.messageIndex]?.content || "";
       // Base 56px (bubble chrome) + ~0.55px per char (wrapping at ~42 chars/
       // line at 11px font in a ~480px-wide panel → ~13px line height). Code
       // blocks (``` fences) add extra height — count them roughly.
@@ -235,7 +242,7 @@ export const AiMessageList = memo(function AiMessageList({
       // Cap at 2000 to avoid absurd estimates for very long messages.
       return Math.min(2000, textHeight + codeBlockExtra + 24);
     },
-    [rows],
+    [messages, rows],
   );
 
   const rowVirtualizer = useVirtualizer({
@@ -294,22 +301,38 @@ export const AiMessageList = memo(function AiMessageList({
     };
   }, [handleScroll, isNearBottom]);
 
+  /** Ref for deferred scroll-to-bottom to avoid forced synchronous layout. */
+  const pendingScrollRef = useRef<number | null>(null);
+
   useEffect(() => {
-    const viewport = viewportRef.current;
-    if (!viewport || scrollFollow !== "following") return;
-
-    const nextScrollTop = Math.max(
-      0,
-      viewport.scrollHeight - viewport.clientHeight,
-    );
-    if (
-      Math.abs(viewport.scrollTop - nextScrollTop) <= SCROLL_WRITE_EPSILON_PX
-    ) {
-      return;
+    if (scrollFollow !== "following") return;
+    // Defer the scrollTop write to the next rAF so the browser can
+    // complete layout before we read scrollHeight.
+    if (pendingScrollRef.current !== null) {
+      window.cancelAnimationFrame(pendingScrollRef.current);
     }
-
-    viewport.scrollTop = nextScrollTop;
-  }, [messages, rows.length, virtualTotalSize, scrollFollow, streaming]);
+    pendingScrollRef.current = window.requestAnimationFrame(() => {
+      pendingScrollRef.current = null;
+      const viewport = viewportRef.current;
+      if (!viewport) return;
+      const nextScrollTop = Math.max(
+        0,
+        viewport.scrollHeight - viewport.clientHeight,
+      );
+      if (
+        Math.abs(viewport.scrollTop - nextScrollTop) <= SCROLL_WRITE_EPSILON_PX
+      ) {
+        return;
+      }
+      viewport.scrollTop = nextScrollTop;
+    });
+    return () => {
+      if (pendingScrollRef.current !== null) {
+        window.cancelAnimationFrame(pendingScrollRef.current);
+        pendingScrollRef.current = null;
+      }
+    };
+  }, [messages.length, rows.length, virtualTotalSize, scrollFollow, streaming]);
 
   useEffect(() => {
     const pendingMeasureNodes = pendingMeasureNodesRef.current;
@@ -396,8 +419,9 @@ export const AiMessageList = memo(function AiMessageList({
       );
     }
 
-    const m = row.message;
     const i = row.messageIndex;
+    const m = messages[i];
+    if (!m) return null;
     const isLast = i === messages.length - 1;
     const assistantStreaming = streaming && m.role === "assistant" && isLast;
     const isSelected = selectedIndices?.has(i) ?? false;

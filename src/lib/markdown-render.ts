@@ -173,9 +173,12 @@ export function repairStreamingMarkdown(md: string): string {
     repaired += "\n```";
   }
 
-  // Bold
+  // Bold (** and __)
   if (countDelimiter(stripped, "**") % 2 !== 0) {
     repaired += "**";
+  }
+  if (countDelimiter(stripped, "__") % 2 !== 0) {
+    repaired += "__";
   }
 
   // Strikethrough

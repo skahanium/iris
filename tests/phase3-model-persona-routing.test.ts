@@ -154,7 +154,9 @@ describe("Phase3 model and persona routing contract", () => {
 
     expect(section).not.toContain("normalizeModelId(modelId)");
     expect(section).not.toContain('"mimo-v2.5-pro": "MiMo-V2.5-Pro"');
-    expect(section).not.toContain("modelId.toLowerCase()");
+    // Case-insensitive catalog lookup added for MiMo reasoning detection;
+    // modelId.toLowerCase() in findModelCatalogForProvider is expected.
+    expect(section).toContain("modelId.toLowerCase()");
     expect(section).toContain("{model.id}");
     expect(section).toContain("model.catalog?.displayName");
   });

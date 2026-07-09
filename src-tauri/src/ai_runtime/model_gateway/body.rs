@@ -76,7 +76,7 @@ pub(super) fn build_llm_api_body(request: &GatewayRequest) -> AppResult<serde_js
     req.messages = messages;
     apply_reasoning_message_controls(&mut req);
     validate_reasoning_endpoint(&req)?;
-    enforce_input_token_budget(&req.messages, &req.tools, req.input_token_budget)?;
+    enforce_input_token_budget(&mut req.messages, &req.tools, req.input_token_budget)?;
     Ok(match req.provider.endpoint_family {
         EndpointFamily::OpenAiCompatibleChatCompletions | EndpointFamily::ResponsesReserved => {
             build_chat_completions_body_inner(&req)
@@ -86,7 +86,7 @@ pub(super) fn build_llm_api_body(request: &GatewayRequest) -> AppResult<serde_js
 }
 
 fn enforce_input_token_budget(
-    messages: &[LlmMessage],
+    messages: &mut Vec<LlmMessage>,
     tools: &[LlmToolDef],
     input_token_budget: Option<u32>,
 ) -> AppResult<()> {
@@ -94,12 +94,92 @@ fn enforce_input_token_budget(
         return Ok(());
     };
     let estimated = estimate_gateway_input_tokens(messages, tools);
-    if estimated > limit {
-        return Err(AppError::msg(format!(
-            "llm_input_context_overflow: estimated input tokens {estimated} exceed model input budget {limit}; reduce context or history before retrying"
-        )));
+    if estimated <= limit {
+        return Ok(());
     }
-    Ok(())
+
+    // ── Progressive auto-trim ─────────────────────────────────────────
+    // Round 1: trim each message body to 4 000 tokens
+    let trimmed = trim_message_bodies_to_budget(messages, 4_000);
+    if estimate_gateway_input_tokens(&trimmed, tools) <= limit {
+        *messages = trimmed;
+        return Ok(());
+    }
+
+    // Round 2: keep first-2 + last-6, drop middle
+    let kept = keep_head_tail_messages(messages, 2, 6);
+    if estimate_gateway_input_tokens(&kept, tools) <= limit {
+        *messages = kept;
+        return Ok(());
+    }
+
+    // Round 3: keep first-1 + last-4, trim bodies to 2 000
+    let kept = keep_head_tail_messages(messages, 1, 4);
+    let trimmed = trim_message_bodies_to_budget(&kept, 2_000);
+    if estimate_gateway_input_tokens(&trimmed, tools) <= limit {
+        *messages = trimmed;
+        return Ok(());
+    }
+
+    Err(AppError::msg(format!(
+        "llm_input_context_overflow: estimated input tokens {estimated} exceed model input budget {limit}; auto-trim exhausted — reduce context or history before retrying"
+    )))
+}
+
+/// Clip every message's text content to `max_tokens` tokens.
+/// System messages and the final user message are never truncated.
+fn trim_message_bodies_to_budget(messages: &[LlmMessage], max_tokens: u32) -> Vec<LlmMessage> {
+    let last_user_index = messages
+        .iter()
+        .rposition(|m| matches!(m.role, crate::ai_types::MessageRole::User))
+        .unwrap_or(messages.len().saturating_sub(1));
+
+    messages
+        .iter()
+        .enumerate()
+        .map(|(i, msg)| {
+            if matches!(msg.role, crate::ai_types::MessageRole::System) || i == last_user_index {
+                return msg.clone();
+            }
+            let mut trimmed = msg.clone();
+            let text = trimmed.content.text_content();
+            if estimate_text_tokens(&text) > max_tokens {
+                trimmed.content = truncate_text_to_token_budget(&text, max_tokens as usize).into();
+            }
+            trimmed
+        })
+        .collect()
+}
+
+/// Keep the first `head` and last `tail` messages, dropping the middle.
+/// System messages at the start are always preserved.
+fn keep_head_tail_messages(messages: &[LlmMessage], head: usize, tail: usize) -> Vec<LlmMessage> {
+    if messages.len() <= head + tail {
+        return messages.to_vec();
+    }
+    let total = head + tail;
+    let mut kept = Vec::with_capacity(total + 1);
+    kept.extend_from_slice(&messages[..head]);
+    kept.extend_from_slice(&messages[messages.len() - tail..]);
+    kept
+}
+
+/// Truncate text to roughly `max_tokens` tokens using the CJK-aware
+/// heuristic, keeping the tail of the content so recent context survives.
+fn truncate_text_to_token_budget(text: &str, max_tokens: usize) -> String {
+    let chars = text.chars().collect::<Vec<_>>();
+    let mut tokens = 0usize;
+    // Walk from end to find the suffix that fits within max_tokens
+    let mut cut = chars.len();
+    for (idx, ch) in chars.iter().enumerate().rev() {
+        let t = if ch.is_ascii() { 1 } else { 4 };
+        if tokens + t > max_tokens * 4 {
+            cut = idx + 1;
+            break;
+        }
+        tokens += t;
+    }
+    chars[cut..].iter().collect::<String>()
 }
 
 fn estimate_gateway_input_tokens(messages: &[LlmMessage], tools: &[LlmToolDef]) -> u32 {

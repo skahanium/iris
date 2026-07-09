@@ -198,10 +198,20 @@ function repairStrongDelimitersInDocument(markdown: string): string {
   let repaired = "";
   let inlineCodeFence = "";
   let strongOpen = false;
+  let underscoreOpen = false;
 
   for (let lineIndex = 0; lineIndex < lines.length; lineIndex++) {
     if (lineIndex > 0) repaired += "\n";
     const line = lines[lineIndex]!;
+
+    // Reset per-paragraph on blank lines so a bare delimiter in one
+    // paragraph does not poison emphasis in subsequent paragraphs.
+    if (line.trim() === "") {
+      strongOpen = false;
+      underscoreOpen = false;
+      repaired += line;
+      continue;
+    }
 
     if (/^[ \t]{0,3}(```|~~~)/.test(line)) {
       inFence = !inFence;
@@ -228,6 +238,7 @@ function repairStrongDelimitersInDocument(markdown: string): string {
         continue;
       }
 
+      // ── ** (asterisk bold) ──────────────────────────────────
       if (!inlineCodeFence && line[i] === "*" && line[i + 1] === "*") {
         if (strongOpen) {
           const trailingWhitespace = repaired.match(/[ \t]+$/)?.[0] ?? "";
@@ -249,6 +260,28 @@ function repairStrongDelimitersInDocument(markdown: string): string {
         continue;
       }
 
+      // ── __ (underscore bold) ────────────────────────────────
+      if (!inlineCodeFence && line[i] === "_" && line[i + 1] === "_") {
+        if (underscoreOpen) {
+          const trailingWhitespace = repaired.match(/[ \t]+$/)?.[0] ?? "";
+          const before =
+            repaired[repaired.length - trailingWhitespace.length - 1] ?? "";
+          const after = nextContentChar(lines, lineIndex, i + 2);
+          const insertBoundary = needsStrongCloseBoundary(before, after);
+
+          if (trailingWhitespace && insertBoundary) {
+            repaired = repaired.slice(0, -trailingWhitespace.length);
+          }
+          repaired += insertBoundary ? "__ " : "__";
+          underscoreOpen = false;
+        } else {
+          repaired += "__";
+          underscoreOpen = true;
+        }
+        i += 2;
+        continue;
+      }
+
       repaired += line[i];
       i++;
     }
@@ -258,7 +291,7 @@ function repairStrongDelimitersInDocument(markdown: string): string {
 }
 
 function repairEscapedStrongDelimiters(markdown: string): string {
-  if (!markdown.includes("\\*\\*")) return markdown;
+  if (!markdown.includes("\\*\\*") && !markdown.includes("\\_\\_")) return markdown;
 
   const lines = markdown.split("\n");
   let inFence = false;
@@ -269,10 +302,9 @@ function repairEscapedStrongDelimiters(markdown: string): string {
     }
     if (inFence) return line;
 
-    return line.replace(
-      /\\\*\\\*([^\\\n]+?)\\\*\\\*/g,
-      (_match, inner: string) => `**${inner}**`,
-    );
+    return line
+      .replace(/\\\*\\\*([^\\\n]+?)\\\*\\\*/g, (_match, inner: string) => `**${inner}**`)
+      .replace(/\\_\\_([^\\\n]+?)\\_\\_/g, (_match, inner: string) => `__${inner}__`);
   });
 
   return repairedLines.join("\n");
@@ -286,7 +318,13 @@ function repairEscapedStrongDelimiters(markdown: string): string {
 export function repairTightStrongPunctuationBoundaries(
   markdown: string,
 ): string {
-  if (!markdown.includes("**") && !markdown.includes("\\*\\*")) return markdown;
+  if (
+    !markdown.includes("**") &&
+    !markdown.includes("__") &&
+    !markdown.includes("\\*\\*") &&
+    !markdown.includes("\\_\\_")
+  )
+    return markdown;
 
   const unescaped = repairEscapedStrongDelimiters(markdown);
   const repaired = repairStrongDelimitersInDocument(unescaped);
