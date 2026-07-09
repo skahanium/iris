@@ -288,8 +288,9 @@ describe("runtime configuration contracts", () => {
     const credentials = read("src-tauri/src/credentials.rs");
     const classified = read("src-tauri/src/commands/classified.rs");
 
-    expect(credentials).toContain("impl Drop for ApiKeyBundle");
-    expect(credentials).toContain("value.zeroize()");
+    expect(credentials).toContain("Zeroizing<String>");
+    expect(credentials).toContain("get_runtime_secret");
+    expect(credentials).not.toContain("ApiKeyBundle");
     expect(classified).toContain("Zeroizing::new(password)");
   });
 

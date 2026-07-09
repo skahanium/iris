@@ -230,6 +230,30 @@ describe("assistant streaming lifecycle contract", () => {
       expect(reflection).toContain("StreamSurface::InternalCandidate");
       expect(reflection).not.toContain("ReflectionOutcome::Done");
     });
+
+    it("harness final stream is never hidden solely because output isolation is enabled", () => {
+      const run = read("src-tauri/src/ai_harness/harness/run.rs");
+      const finalBranch = run.split('event = "final_stream_started"')[1] ?? "";
+
+      expect(finalBranch).toContain("final_answer_stream_surface");
+      expect(finalBranch).not.toContain(
+        "if reasoning.isolate_output {\n            StreamSurface::InternalCandidate",
+      );
+      expect(finalBranch).not.toContain(
+        "if reasoning.isolate_output {\r\n            StreamSurface::InternalCandidate",
+      );
+    });
+
+    it("streaming gateway has a sanitized visible-answer surface for risky final streams", () => {
+      const streaming = read(
+        "src-tauri/src/ai_runtime/model_gateway/streaming.rs",
+      );
+
+      expect(streaming).toContain("VisibleAnswerSanitized");
+      expect(streaming).toContain("VisibleStreamSanitizer");
+      expect(streaming).toContain("sanitize_delta");
+      expect(streaming).toContain('"<think>"');
+    });
   });
 
   describe("classified chat uses the unified streaming lifecycle", () => {

@@ -2,7 +2,10 @@ import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import type { ChatLine } from "@/components/ai/AiMessageList";
+import type {
+  AssistantProcessEvent,
+  ChatLine,
+} from "@/components/ai/AiMessageList";
 
 const handlers: Record<string, ((payload: unknown) => void) | undefined> = {};
 
@@ -31,6 +34,10 @@ vi.mock("@/lib/ipc", () => ({
     handlers.trace = h;
     return Promise.resolve(() => {});
   }),
+  listenAiThinking: vi.fn().mockImplementation((h: (p: unknown) => void) => {
+    handlers.thinking = h;
+    return Promise.resolve(() => {});
+  }),
 }));
 
 describe("useAssistantLlmStream reset + done behavior", () => {
@@ -39,6 +46,7 @@ describe("useAssistantLlmStream reset + done behavior", () => {
   let messagesState: ChatLine[];
   let streamingState: boolean;
   let activityHintState: string | null;
+  let processEventsState: AssistantProcessEvent[];
   let panelSendActive: { current: boolean };
   let requestId: { current: string | null };
   let streamBuf: { current: string };
@@ -85,6 +93,14 @@ describe("useAssistantLlmStream reset + done behavior", () => {
               ? (v as (p: string | null) => string | null)(activityHintState)
               : (v as string | null);
         },
+        setProcessEvents: (v) => {
+          processEventsState =
+            typeof v === "function"
+              ? (v as (p: AssistantProcessEvent[]) => AssistantProcessEvent[])(
+                  processEventsState,
+                )
+              : (v as AssistantProcessEvent[]);
+        },
       });
       return null;
     }
@@ -101,6 +117,7 @@ describe("useAssistantLlmStream reset + done behavior", () => {
     messagesState = [];
     streamingState = false;
     activityHintState = null;
+    processEventsState = [];
     lifecycleEvents = [];
     panelSendActive = { current: true };
     requestId = { current: "req-1" };
@@ -371,6 +388,37 @@ describe("useAssistantLlmStream reset + done behavior", () => {
 
     expect(activityHintState).toBe("联网检索完成，用时 1.5 秒。");
     expect(messagesState).toEqual([]);
+    expect(processEventsState).toHaveLength(1);
+    expect(processEventsState[0]).toMatchObject({
+      kind: "trace",
+      label: "联网检索完成，用时 1.5 秒。",
+      requestId: "req-1",
+      round: 2,
+      durationMs: 1530,
+    });
+  });
+
+  it("ai:thinking records safe process metadata without transcript content", async () => {
+    await mountHook();
+
+    await act(async () => {
+      handlers.thinking?.({
+        request_id: "req-1",
+        round: 3,
+        has_internal_thinking: true,
+        content_chars: 128,
+      });
+    });
+
+    expect(messagesState).toEqual([]);
+    expect(processEventsState).toHaveLength(1);
+    expect(processEventsState[0]).toMatchObject({
+      kind: "thinking",
+      label: "模型正在推理",
+      requestId: "req-1",
+      round: 3,
+    });
+    expect(JSON.stringify(processEventsState)).not.toContain("content");
   });
 
   it("ai:retry_status ignores mismatched request ids", async () => {
@@ -545,9 +593,19 @@ describe("useAssistantLlmStream reset + done behavior", () => {
       {
         role: "system",
         content:
-          "错误: Stream read error: error decoding response body（已保留部分输出）",
+          "错误: 模型流式连接中断，请稍后重试或切换模型。（已保留部分输出）",
       },
     ]);
+    expect(processEventsState).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "error",
+          label: "stream body read failed",
+          requestId: "req-1",
+          status: "stream_body_read_failed",
+        }),
+      ]),
+    );
   });
 
   it("unmount cancels a pending animation-frame flush", async () => {

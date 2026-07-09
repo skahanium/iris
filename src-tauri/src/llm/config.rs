@@ -1247,6 +1247,16 @@ pub fn resolve_for_provider(
     provider_id: &str,
     model: Option<&str>,
 ) -> AppResult<ResolvedLlmConfig> {
+    let mut resolved = resolve_for_provider_without_secret(db, provider_id, model)?;
+    hydrate_resolved_api_key(db, &mut resolved)?;
+    Ok(resolved)
+}
+
+pub fn resolve_for_provider_without_secret(
+    db: &Database,
+    provider_id: &str,
+    model: Option<&str>,
+) -> AppResult<ResolvedLlmConfig> {
     let routing = load(db)?;
     if !routing.providers.contains_key(provider_id) {
         return Err(AppError::msg(format!(
@@ -1274,7 +1284,7 @@ pub fn resolve_for_provider(
     let base_url = api_base(provider_id, custom_base);
     let model_spec = find_model(&model_id).unwrap_or_else(|| fallback_model(provider_id));
 
-    let mut resolved = ResolvedLlmConfig {
+    let resolved = ResolvedLlmConfig {
         provider_id: provider_id.to_string(),
         model: model_id,
         base_url,
@@ -1286,7 +1296,6 @@ pub fn resolve_for_provider(
         context_strategy: ContextStrategy::Hybrid,
         endpoint_family: model_spec.endpoint_family,
     };
-    hydrate_resolved_api_key(db, &mut resolved)?;
     Ok(resolved)
 }
 
@@ -1319,10 +1328,8 @@ fn slot_for_legacy_scene(scene: AiScene) -> CapabilitySlot {
 #[cfg(not(test))]
 fn hydrate_resolved_api_key(db: &Database, resolved: &mut ResolvedLlmConfig) -> AppResult<()> {
     if crate::llm::providers::requires_api_key(&resolved.provider_id) {
-        resolved.api_key = Some(crate::credentials::get_api_key(
-            db,
-            &credential_service(&resolved.provider_id),
-        )?);
+        let service = credential_service(&resolved.provider_id);
+        resolved.api_key = Some(crate::credentials::get_runtime_secret(&service)?.to_string());
     }
     Ok(())
 }
@@ -1330,6 +1337,41 @@ fn hydrate_resolved_api_key(db: &Database, resolved: &mut ResolvedLlmConfig) -> 
 #[cfg(test)]
 fn hydrate_resolved_api_key(_db: &Database, _resolved: &mut ResolvedLlmConfig) -> AppResult<()> {
     Ok(())
+}
+
+#[cfg(not(test))]
+fn llm_credential_available_for_status(_db: &Database, service: &str) -> AppResult<bool> {
+    crate::credentials::credential_available(service)
+}
+
+#[cfg(test)]
+fn test_credential_key(service: &str) -> String {
+    crate::credentials::credential_marker_key(service).expect("valid test credential service")
+}
+
+#[cfg(test)]
+fn mark_test_credential_available(db: &Database, service: &str) -> AppResult<()> {
+    db.with_conn(|conn| {
+        conn.execute(
+            "INSERT INTO settings (key, value) VALUES (?1, ?2)
+             ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            rusqlite::params![test_credential_key(service), "true"],
+        )?;
+        Ok(())
+    })
+}
+
+#[cfg(test)]
+fn llm_credential_available_for_status(db: &Database, service: &str) -> AppResult<bool> {
+    let key = test_credential_key(service);
+    db.with_read_conn(|conn| {
+        let count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM settings WHERE key = ?1",
+            [key],
+            |row| row.get(0),
+        )?;
+        Ok(count > 0)
+    })
 }
 
 pub fn connectivity_status(
@@ -1363,7 +1405,7 @@ pub fn connectivity_status(
         }
     };
     let llm_configured =
-        crate::credentials::api_key_configured(db, &credential_service(&resolved.provider_id))?;
+        llm_credential_available_for_status(db, &credential_service(&resolved.provider_id))?;
     let llm_state =
         if crate::llm::providers::requires_api_key(&resolved.provider_id) && !llm_configured {
             "missing_key"
@@ -1482,7 +1524,7 @@ mod tests {
             },
         );
         save(&db, &routing).expect("save routing");
-        crate::credentials::mark_api_key_configured(&db, "iris.llm.deepseek").expect("mark llm");
+        mark_test_credential_available(&db, "iris.llm.deepseek").expect("mark llm");
         crate::ai_runtime::mcp_runtime_registry::upsert_web_evidence_provider(
             &db,
             &crate::ai_runtime::mcp_runtime_registry::WebEvidenceProviderInput {
@@ -1540,7 +1582,7 @@ mod tests {
             model_registry::ModelValidationKind::Text,
         )
         .expect("validate model");
-        crate::credentials::mark_api_key_configured(&db, "iris.llm.custom").expect("mark llm");
+        mark_test_credential_available(&db, "iris.llm.custom").expect("mark llm");
 
         let status = connectivity_status(&db, AiScene::KnowledgeLookup).expect("status");
 

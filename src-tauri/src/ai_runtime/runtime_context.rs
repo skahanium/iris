@@ -6,7 +6,6 @@ use std::path::Path;
 
 use crate::ai_runtime::{CapabilitySlot, ToolSpec};
 use crate::app::AppState;
-use crate::credentials;
 use crate::error::AppResult;
 use crate::llm::providers::credential_service;
 use crate::storage::db::Database;
@@ -271,7 +270,7 @@ fn model_slot_snapshots(db: &Database) -> Vec<ModelSlotSnapshot> {
         .iter()
         .map(|(slot, route)| {
             let service = credential_service(&route.provider_id);
-            let configured = credentials::api_key_configured(db, &service).unwrap_or(false)
+            let configured = crate::credentials::credential_available(&service).unwrap_or(false)
                 || !crate::llm::providers::requires_api_key(&route.provider_id);
             ModelSlotSnapshot {
                 slot: slot.clone(),

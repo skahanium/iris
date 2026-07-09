@@ -557,7 +557,7 @@ pub(super) fn git_read_log_tool(
 }
 
 pub(super) fn secret_exists_tool(
-    state: &AppState,
+    _state: &AppState,
     args: &serde_json::Value,
 ) -> AppResult<serde_json::Value> {
     let service = args
@@ -568,7 +568,7 @@ pub(super) fn secret_exists_tool(
     Ok(serde_json::json!({
         "type": "secret_exists",
         "service": service,
-        "exists": crate::credentials::api_key_configured(&state.db, service)?,
+        "exists": crate::credentials::credential_available(service)?,
     }))
 }
 

@@ -54,7 +54,7 @@ pub fn credential_set(
 ) -> AppResult<()>
 ```
 
-- **描述**：通过操作系统凭据管理器（Windows Credential Manager / macOS Keychain）存储敏感凭证。禁止明文存储。
+- **描述**：通过 Iris 本地加密凭据存储敏感凭证，不调用操作系统凭据服务。禁止明文存储。
 
 ### credential_has
 
@@ -462,7 +462,7 @@ pub fn web_evidence_provider_upsert(
 ) -> AppResult<WebEvidenceProviderSummary>
 ```
 
-- **描述**：新增或更新 MCP 联网证据 provider。输入包含 `transport_config_json`、`credential_refs_json`、`search_mapping`、`fetch_mapping`；凭据字段只能保存 OS credential service 引用，不能保存明文 secret。
+- **描述**：新增或更新 MCP 联网证据 provider。输入包含 `transport_config_json`、`credential_refs_json`、`search_mapping`、`fetch_mapping`；凭据字段只能保存 Iris 本地加密凭据 service 引用，不能保存明文 secret。
 
 ### web_evidence_providers_list
 
@@ -1379,7 +1379,7 @@ This section is the stable frontend contract after the Iris AI reign-in.
 
 ### Web Evidence Providers
 
-- MCP is not exposed as arbitrary agent tooling. It is only a Web Evidence Provider when explicitly mapped to `web.search` or `web.fetch`. MCP provider input persists `transportConfigJson`, `credentialRefsJson`, `searchMapping`, and `fetchMapping`; credential JSON may contain OS credential service refs only, never raw secrets.
+- MCP is not exposed as arbitrary agent tooling. It is only a Web Evidence Provider when explicitly mapped to `web.search` or `web.fetch`. MCP provider input persists `transportConfigJson`, `credentialRefsJson`, `searchMapping`, and `fetchMapping`; credential JSON may contain Iris local encrypted credential service refs only, never raw secrets.
 - Frontend callers use `webEvidenceProvidersList`, `webEvidenceProviderUpsert`, `webEvidenceProviderToggle`, `webEvidenceProviderDelete`, and `webEvidenceProviderDiagnostics`.
 - Provider diagnostics belong in management center UI, not in ordinary AI evidence packets. `webEvidenceProviderDiagnostics(providerId?, liveCheck?)` returns checks, failure categories, credential/mapping readiness, and broker usability booleans; live network probes run only when `liveCheck` is true.
 

@@ -1,545 +1,585 @@
-use std::collections::BTreeMap;
-use std::sync::{LazyLock, Mutex};
-
-use keyring::Entry;
-use serde::{Deserialize, Serialize};
-use zeroize::{Zeroize, Zeroizing};
+use aes_gcm::aead::{Aead, KeyInit, OsRng, Payload};
+use aes_gcm::{Aes256Gcm, Key, Nonce};
+use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
+use rand::RngCore;
+use serde::Serialize;
+use sha2::{Digest, Sha256};
+use std::fs;
+use std::io::Write;
+use std::path::{Path, PathBuf};
+use zeroize::Zeroizing;
 
 use crate::error::{AppError, AppResult};
-use crate::storage::db::Database;
+use crate::security::ipc_policy::validate_credential_service;
 
-const KEYRING_ACCOUNT: &str = "api_key";
-#[cfg(debug_assertions)]
-const API_KEY_BUNDLE_SERVICE: &str = "iris.dev.api_keys";
-#[cfg(not(debug_assertions))]
-const API_KEY_BUNDLE_SERVICE: &str = "iris.api_keys";
-#[cfg(debug_assertions)]
-const API_KEY_MARKER_PREFIX: &str = "credential_configured.dev.";
-#[cfg(not(debug_assertions))]
-const API_KEY_MARKER_PREFIX: &str = "credential_configured.";
+const SECRET_ACCOUNT: &str = "api_key";
+const LOCAL_CREDENTIAL_DIR: &str = "credentials";
+const LOCAL_MASTER_KEY_FILE: &str = "master.key";
+const LOCAL_KEY_LEN: usize = 32;
+const LOCAL_NONCE_LEN: usize = 12;
 
-static API_KEY_BUNDLE_CACHE: LazyLock<Mutex<Option<ApiKeyBundle>>> =
-    LazyLock::new(|| Mutex::new(None));
-
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(transparent)]
-struct ApiKeyBundle {
-    keys: BTreeMap<String, String>,
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CredentialState {
+    Available,
+    Missing,
 }
 
-impl ApiKeyBundle {
-    fn from_json(json: &str) -> AppResult<Self> {
-        serde_json::from_str(json)
-            .map_err(|e| AppError::msg(format!("API Key bundle corrupted: {e}")))
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CredentialStatus {
+    pub service: String,
+    pub state: CredentialState,
+    pub configured: bool,
+    pub checked_at: String,
+}
+
+trait CredentialBackend {
+    fn set_password(&self, service: &str, account: &str, value: &str) -> AppResult<()>;
+    fn get_password(&self, service: &str, account: &str) -> AppResult<Zeroizing<String>>;
+    fn delete_password(&self, service: &str, account: &str) -> AppResult<()>;
+}
+
+struct LocalEncryptedCredentialBackend {
+    root: PathBuf,
+}
+
+#[derive(serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct LocalCredentialRecord {
+    version: u8,
+    service_hash: String,
+    ciphertext: String,
+}
+
+impl LocalEncryptedCredentialBackend {
+    fn default() -> AppResult<Self> {
+        let data_dir = std::env::var_os("IRIS_DATA_DIR")
+            .map(PathBuf::from)
+            .ok_or_else(|| AppError::msg("IRIS_DATA_DIR is not configured"))?;
+        Ok(Self {
+            root: data_dir.join(LOCAL_CREDENTIAL_DIR),
+        })
     }
 
-    fn to_json(&self) -> AppResult<String> {
-        serde_json::to_string(self).map_err(Into::into)
+    #[cfg(test)]
+    fn new_for_test(root: PathBuf) -> Self {
+        Self { root }
     }
 
-    fn get(&self, service: &str) -> Option<&str> {
-        self.keys
-            .get(&canonical_service_id(service))
-            .map(String::as_str)
-            .filter(|value| !value.trim().is_empty())
+    fn ensure_root(&self) -> AppResult<()> {
+        fs::create_dir_all(&self.root)?;
+        set_private_dir_permissions(&self.root)?;
+        Ok(())
     }
 
-    fn upsert(&mut self, service: &str, value: &str) {
-        if let Some(mut old) = self
-            .keys
-            .insert(canonical_service_id(service), value.to_string())
-        {
-            old.zeroize();
+    fn master_key(&self) -> AppResult<[u8; LOCAL_KEY_LEN]> {
+        self.ensure_root()?;
+        let path = self.root.join(LOCAL_MASTER_KEY_FILE);
+        if path.is_file() {
+            let encoded = fs::read_to_string(&path)?;
+            let decoded = B64
+                .decode(encoded.trim())
+                .map_err(|_| AppError::Credential("local master key is corrupt".into()))?;
+            if decoded.len() != LOCAL_KEY_LEN {
+                return Err(AppError::Credential(
+                    "local master key has invalid length".into(),
+                ));
+            }
+            let mut key = [0u8; LOCAL_KEY_LEN];
+            key.copy_from_slice(&decoded);
+            return Ok(key);
         }
+
+        let mut key = [0u8; LOCAL_KEY_LEN];
+        OsRng.fill_bytes(&mut key);
+        write_private_file(&path, B64.encode(key).as_bytes())?;
+        Ok(key)
     }
 
-    fn remove(&mut self, service: &str) {
-        if let Some(mut value) = self.keys.remove(&canonical_service_id(service)) {
-            value.zeroize();
-        }
+    fn credential_path(&self, service: &str, account: &str) -> AppResult<PathBuf> {
+        let digest = Sha256::digest(format!("{service}:{account}").as_bytes());
+        Ok(self.root.join(format!("{}.json", hex::encode(digest))))
     }
 
-    fn is_empty(&self) -> bool {
-        self.keys.is_empty()
+    fn service_hash(service: &str, account: &str) -> String {
+        let digest = Sha256::digest(format!("{service}:{account}").as_bytes());
+        hex::encode(digest)
     }
 }
 
-impl Drop for ApiKeyBundle {
-    fn drop(&mut self) {
-        for value in self.keys.values_mut() {
-            value.zeroize();
+impl CredentialBackend for LocalEncryptedCredentialBackend {
+    fn set_password(&self, service: &str, account: &str, value: &str) -> AppResult<()> {
+        self.ensure_root()?;
+        let key = self.master_key()?;
+        let cipher = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(&key));
+        let mut nonce_bytes = [0u8; LOCAL_NONCE_LEN];
+        OsRng.fill_bytes(&mut nonce_bytes);
+        let nonce = Nonce::from_slice(&nonce_bytes);
+        let ciphertext = cipher
+            .encrypt(
+                nonce,
+                Payload {
+                    msg: value.as_bytes(),
+                    aad: service.as_bytes(),
+                },
+            )
+            .map_err(|_| AppError::Credential("local credential encryption failed".into()))?;
+        let mut payload = Vec::with_capacity(LOCAL_NONCE_LEN + ciphertext.len());
+        payload.extend_from_slice(&nonce_bytes);
+        payload.extend_from_slice(&ciphertext);
+        let record = LocalCredentialRecord {
+            version: 1,
+            service_hash: Self::service_hash(service, account),
+            ciphertext: B64.encode(payload),
+        };
+        let json = serde_json::to_vec(&record)?;
+        write_private_file(&self.credential_path(service, account)?, &json)
+    }
+
+    fn get_password(&self, service: &str, account: &str) -> AppResult<Zeroizing<String>> {
+        let path = self.credential_path(service, account)?;
+        if !path.is_file() {
+            return Err(missing_credential_error(service));
+        }
+        let record: LocalCredentialRecord = serde_json::from_slice(&fs::read(path)?)?;
+        if record.version != 1 || record.service_hash != Self::service_hash(service, account) {
+            return Err(AppError::Credential(
+                "local credential record is corrupt".into(),
+            ));
+        }
+        let encrypted = B64
+            .decode(record.ciphertext)
+            .map_err(|_| AppError::Credential("local credential record is corrupt".into()))?;
+        if encrypted.len() < LOCAL_NONCE_LEN {
+            return Err(AppError::Credential(
+                "local credential record is corrupt".into(),
+            ));
+        }
+        let (nonce_bytes, ciphertext) = encrypted.split_at(LOCAL_NONCE_LEN);
+        let key = self.master_key()?;
+        let cipher = Aes256Gcm::new(Key::<Aes256Gcm>::from_slice(&key));
+        let plaintext = cipher
+            .decrypt(
+                Nonce::from_slice(nonce_bytes),
+                Payload {
+                    msg: ciphertext,
+                    aad: service.as_bytes(),
+                },
+            )
+            .map_err(|_| AppError::Credential("local credential decryption failed".into()))?;
+        let value = String::from_utf8(plaintext).map_err(|_| {
+            AppError::Credential("local credential value is not valid UTF-8".into())
+        })?;
+        Ok(Zeroizing::new(value))
+    }
+
+    fn delete_password(&self, service: &str, account: &str) -> AppResult<()> {
+        let path = self.credential_path(service, account)?;
+        match fs::remove_file(path) {
+            Ok(()) => Ok(()),
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(err) => Err(err.into()),
         }
     }
+}
+
+fn local_backend() -> AppResult<LocalEncryptedCredentialBackend> {
+    LocalEncryptedCredentialBackend::default()
+}
+
+fn set_private_dir_permissions(path: &Path) -> AppResult<()> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(path, fs::Permissions::from_mode(0o700))?;
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = path;
+    }
+    Ok(())
+}
+
+fn write_private_file(path: &Path, bytes: &[u8]) -> AppResult<()> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+        let mut file = fs::OpenOptions::new()
+            .create(true)
+            .truncate(true)
+            .write(true)
+            .mode(0o600)
+            .open(path)?;
+        file.write_all(bytes)?;
+        file.sync_all()?;
+        fs::set_permissions(path, fs::Permissions::from_mode(0o600))?;
+    }
+    #[cfg(not(unix))]
+    {
+        fs::write(path, bytes)?;
+    }
+    Ok(())
 }
 
 /// LLM 厂商凭据 ID（与前端 `llmCredentialService` 一致）。
 pub fn llm_credential_service(provider: &str) -> String {
-    format!("iris.llm.{provider}")
+    format!("iris.llm.{}", provider.trim())
 }
 
-/// 将旧版 `iris/llm/openai` 等形式规范为 `iris.llm.openai`（Windows 凭据目标名不宜含 `/`）。
-fn canonical_service_id(service: &str) -> String {
-    if service.contains('/') {
-        service.replace('/', ".")
-    } else {
-        service.to_string()
+#[cfg(test)]
+fn mcp_credential_service(provider: &str) -> String {
+    format!("iris.mcp.{}", provider.trim())
+}
+
+fn missing_credential_error(service: &str) -> AppError {
+    AppError::Credential(format!("credential missing: {service}"))
+}
+
+fn is_missing_credential_error(error: &AppError) -> bool {
+    matches!(error, AppError::Credential(message) if message.starts_with("credential missing: "))
+}
+
+fn checked_at_now() -> String {
+    chrono::Utc::now().to_rfc3339()
+}
+
+fn canonical_api_key_service(service: &str) -> AppResult<String> {
+    let service = service.trim();
+    validate_credential_service(service)?;
+    Ok(service.to_string())
+}
+
+pub(crate) fn credential_status_dto(service: String, state: CredentialState) -> CredentialStatus {
+    CredentialStatus {
+        service,
+        state,
+        configured: state == CredentialState::Available,
+        checked_at: checked_at_now(),
     }
 }
 
-fn entry_canonical(canonical: &str) -> AppResult<Entry> {
-    Entry::new(canonical, KEYRING_ACCOUNT).map_err(Into::into)
+pub(crate) fn credential_marker_key(service: &str) -> AppResult<String> {
+    let canonical = canonical_api_key_service(service)?;
+    Ok(format!("credential.configured.{canonical}"))
 }
 
-fn entry_legacy(service: &str) -> AppResult<Entry> {
-    Entry::new("iris", service).map_err(Into::into)
+fn set_api_key_with_backend<B: CredentialBackend>(
+    backend: &B,
+    service: &str,
+    value: &str,
+) -> AppResult<CredentialStatus> {
+    let canonical = canonical_api_key_service(service)?;
+    if value.trim().is_empty() {
+        return Err(AppError::msg("API Key 不能为空"));
+    }
+
+    backend.set_password(&canonical, SECRET_ACCOUNT, value)?;
+    tracing::debug!("credential stored for {canonical}");
+    Ok(credential_status_dto(canonical, CredentialState::Available))
 }
 
-fn entry_error_to_keyring(error: AppError) -> keyring::Error {
-    match error {
-        AppError::Keyring(err) => err,
-        other => {
-            keyring::Error::PlatformFailure(Box::new(std::io::Error::other(other.to_string())))
+fn get_runtime_secret_with_backend<B: CredentialBackend>(
+    backend: &B,
+    service: &str,
+) -> AppResult<Zeroizing<String>> {
+    let canonical = canonical_api_key_service(service)?;
+    backend.get_password(&canonical, SECRET_ACCOUNT)
+}
+
+fn credential_status_with_backend<B: CredentialBackend>(
+    backend: &B,
+    service: &str,
+) -> AppResult<CredentialStatus> {
+    let canonical = canonical_api_key_service(service)?;
+    match backend.get_password(&canonical, SECRET_ACCOUNT) {
+        Ok(value) if !value.trim().is_empty() => {
+            Ok(credential_status_dto(canonical, CredentialState::Available))
         }
-    }
-}
-
-#[cfg(target_os = "macos")]
-fn set_secret_material(canonical: &str, value: &str) -> Result<(), keyring::Error> {
-    match macos_protected_keychain::set_password(canonical, KEYRING_ACCOUNT, value) {
-        Ok(()) => Ok(()),
-        Err(_) => entry_canonical(canonical)
-            .map_err(entry_error_to_keyring)?
-            .set_password(value),
-    }
-}
-
-#[cfg(not(target_os = "macos"))]
-fn set_secret_material(canonical: &str, value: &str) -> Result<(), keyring::Error> {
-    entry_canonical(canonical)
-        .map_err(entry_error_to_keyring)?
-        .set_password(value)
-}
-
-#[cfg(target_os = "macos")]
-fn get_secret_material(canonical: &str) -> Result<String, keyring::Error> {
-    match macos_protected_keychain::get_password(canonical, KEYRING_ACCOUNT) {
-        Ok(value) => Ok(value),
-        Err(keyring::Error::NoEntry) => entry_canonical(canonical)
-            .map_err(entry_error_to_keyring)?
-            .get_password(),
+        Ok(_) => Ok(credential_status_dto(canonical, CredentialState::Missing)),
+        Err(err) if is_missing_credential_error(&err) => {
+            Ok(credential_status_dto(canonical, CredentialState::Missing))
+        }
         Err(err) => Err(err),
     }
 }
 
-#[cfg(not(target_os = "macos"))]
-fn get_secret_material(canonical: &str) -> Result<String, keyring::Error> {
-    entry_canonical(canonical)
-        .map_err(entry_error_to_keyring)?
-        .get_password()
+fn credential_available_with_backend<B: CredentialBackend>(
+    backend: &B,
+    service: &str,
+) -> AppResult<bool> {
+    Ok(credential_status_with_backend(backend, service)?.configured)
 }
 
-#[cfg(target_os = "macos")]
-fn delete_secret_material(canonical: &str) -> Result<(), keyring::Error> {
-    let protected = macos_protected_keychain::delete_password(canonical, KEYRING_ACCOUNT);
-    let legacy = entry_canonical(canonical)
-        .map_err(entry_error_to_keyring)?
-        .delete_credential();
-    protected.or(legacy).or_else(|err| {
-        if matches!(err, keyring::Error::NoEntry) {
-            Ok(())
-        } else {
-            Err(err)
-        }
-    })
+fn delete_api_key_with_backend<B: CredentialBackend>(
+    backend: &B,
+    service: &str,
+) -> AppResult<CredentialStatus> {
+    let canonical = canonical_api_key_service(service)?;
+    backend.delete_password(&canonical, SECRET_ACCOUNT)?;
+    Ok(credential_status_dto(canonical, CredentialState::Missing))
 }
 
-#[cfg(not(target_os = "macos"))]
-fn delete_secret_material(canonical: &str) -> Result<(), keyring::Error> {
-    entry_canonical(canonical)
-        .map_err(entry_error_to_keyring)?
-        .delete_credential()
+/// Store or replace one LLM/MCP API key in Iris' local encrypted credential store.
+pub fn set_api_key(service: &str, value: &str) -> AppResult<CredentialStatus> {
+    set_api_key_with_backend(&local_backend()?, service, value)
 }
 
-fn get_canonical_password_optional(canonical: &str) -> AppResult<Option<String>> {
-    match get_secret_material(canonical) {
-        Ok(password) => Ok(Some(password)),
-        Err(keyring::Error::NoEntry) => Ok(None),
-        Err(e) => Err(e.into()),
-    }
+/// Read one API key for runtime request assembly. The value must never be logged or persisted.
+pub fn get_runtime_secret(service: &str) -> AppResult<Zeroizing<String>> {
+    get_runtime_secret_with_backend(&local_backend()?, service)
 }
 
-#[cfg(target_os = "macos")]
-mod macos_protected_keychain {
-    use security_framework::base::Error as SecError;
-    use security_framework::passwords::{
-        delete_generic_password_options, generic_password, set_generic_password_options,
-        AccessControlOptions, PasswordOptions,
-    };
-    use zeroize::Zeroizing;
-
-    const ERR_SEC_ITEM_NOT_FOUND: i32 = -25300;
-
-    fn options(service: &str, account: &str) -> PasswordOptions {
-        PasswordOptions::new_generic_password(service, account)
-    }
-
-    fn protected_options(service: &str, account: &str) -> PasswordOptions {
-        let mut options = options(service, account);
-        options.set_access_control_options(AccessControlOptions::USER_PRESENCE);
-        options
-    }
-
-    fn map_error(err: SecError) -> keyring::Error {
-        if err.code() == ERR_SEC_ITEM_NOT_FOUND {
-            keyring::Error::NoEntry
-        } else {
-            keyring::Error::PlatformFailure(Box::new(err))
-        }
-    }
-
-    pub(super) fn set_password(
-        service: &str,
-        account: &str,
-        value: &str,
-    ) -> Result<(), keyring::Error> {
-        set_generic_password_options(value.as_bytes(), protected_options(service, account))
-            .map_err(map_error)
-    }
-
-    pub(super) fn get_password(service: &str, account: &str) -> Result<String, keyring::Error> {
-        let bytes = Zeroizing::new(generic_password(options(service, account)).map_err(map_error)?);
-        String::from_utf8(bytes.to_vec())
-            .map_err(|err| keyring::Error::BadEncoding(err.into_bytes()))
-    }
-
-    pub(super) fn delete_password(service: &str, account: &str) -> Result<(), keyring::Error> {
-        delete_generic_password_options(options(service, account)).map_err(map_error)
-    }
+/// Read the real local encrypted credential state for one LLM/MCP service.
+pub fn credential_status(service: &str) -> AppResult<CredentialStatus> {
+    credential_status_with_backend(&local_backend()?, service)
 }
 
-/// Store a secret in the OS credential manager.
+/// Check whether one LLM/MCP API key exists in Iris' local encrypted credential store.
+pub fn credential_available(service: &str) -> AppResult<bool> {
+    credential_available_with_backend(&local_backend()?, service)
+}
+
+/// Delete one LLM/MCP API key from Iris' local encrypted credential store.
+pub fn delete_api_key(service: &str) -> AppResult<CredentialStatus> {
+    delete_api_key_with_backend(&local_backend()?, service)
+}
+
+/// Store a generic application secret in Iris' local encrypted credential store.
 pub fn set_secret(service: &str, value: &str) -> AppResult<()> {
-    let canonical = canonical_service_id(service);
-    set_secret_material(&canonical, value)?;
-    tracing::debug!("credential stored for {canonical}");
+    if service.trim().is_empty() {
+        return Err(AppError::msg("凭据服务名不能为空"));
+    }
+    if value.trim().is_empty() {
+        return Err(AppError::msg("凭据不能为空"));
+    }
+    local_backend()?.set_password(service.trim(), SECRET_ACCOUNT, value)?;
+    tracing::debug!("credential stored for {}", service.trim());
     Ok(())
 }
 
-/// Read a secret from the OS credential manager.
+/// Read a generic application secret from Iris' local encrypted credential store.
 pub fn get_secret(service: &str) -> AppResult<String> {
-    let canonical = canonical_service_id(service);
-    match get_secret_material(&canonical) {
-        Ok(password) => return Ok(password),
-        Err(keyring::Error::NoEntry) => {}
-        Err(e) => return Err(e.into()),
+    if service.trim().is_empty() {
+        return Err(AppError::msg("凭据服务名不能为空"));
     }
-    if service.contains('/') {
-        return entry_legacy(service)?.get_password().map_err(Into::into);
-    }
-    Err(AppError::msg(format!("凭据不存在: {canonical}")))
+    Ok(local_backend()?
+        .get_password(service.trim(), SECRET_ACCOUNT)?
+        .to_string())
 }
 
-/// Delete a stored secret.
-pub fn delete_secret(service: &str) -> AppResult<()> {
-    let canonical = canonical_service_id(service);
-    let _ = delete_secret_material(&canonical);
-    if service.contains('/') {
-        if let Ok(entry) = entry_legacy(service) {
-            let _ = entry.delete_credential();
-        }
-    }
-    Ok(())
-}
-
-/// Check if a secret exists without logging its value.
+/// Check whether a generic application secret exists without exposing its value.
 pub fn has_secret(service: &str) -> bool {
     get_secret(service).is_ok()
 }
 
-fn cache_lock() -> AppResult<std::sync::MutexGuard<'static, Option<ApiKeyBundle>>> {
-    API_KEY_BUNDLE_CACHE
-        .lock()
-        .map_err(|_| AppError::msg("Credential cache lock error"))
-}
-
-fn read_api_key_bundle_uncached() -> AppResult<ApiKeyBundle> {
-    match get_canonical_password_optional(API_KEY_BUNDLE_SERVICE)? {
-        Some(json) => {
-            let json = Zeroizing::new(json);
-            let bundle = ApiKeyBundle::from_json(&json)?;
-            migrate_api_key_bundle_storage_policy(&json);
-            Ok(bundle)
-        }
-        None => Ok(ApiKeyBundle::default()),
-    }
-}
-
-#[cfg(target_os = "macos")]
-fn migrate_api_key_bundle_storage_policy(json: &str) {
-    let _ = macos_protected_keychain::set_password(API_KEY_BUNDLE_SERVICE, KEYRING_ACCOUNT, json);
-}
-
-#[cfg(not(target_os = "macos"))]
-fn migrate_api_key_bundle_storage_policy(_json: &str) {}
-
-fn read_api_key_bundle_cached() -> AppResult<ApiKeyBundle> {
-    let mut guard = cache_lock()?;
-    if let Some(bundle) = guard.as_ref() {
-        return Ok(bundle.clone());
-    }
-    let bundle = read_api_key_bundle_uncached()?;
-    *guard = Some(bundle.clone());
-    Ok(bundle)
-}
-
-fn store_api_key_bundle(bundle: &ApiKeyBundle) -> AppResult<()> {
-    if bundle.is_empty() {
-        delete_secret(API_KEY_BUNDLE_SERVICE)?;
-    } else {
-        let json = Zeroizing::new(bundle.to_json()?);
-        set_secret(API_KEY_BUNDLE_SERVICE, &json)?;
-    }
-    *cache_lock()? = Some(bundle.clone());
-    Ok(())
-}
-
+/// API keys no longer have an unlockable in-memory session; this is kept as a no-op IPC bridge.
 pub fn credential_unlock_session() -> AppResult<()> {
-    let bundle = read_api_key_bundle_uncached()?;
-    *cache_lock()? = Some(bundle);
     Ok(())
 }
 
+/// Clear runtime-only credential caches. API keys are not cached by the credential layer.
 pub fn credential_lock_session() -> AppResult<()> {
-    *cache_lock()? = None;
     crate::cas::encryption::clear_cas_key_cache()?;
     Ok(())
-}
-
-fn api_key_marker_key(service: &str) -> String {
-    format!("{API_KEY_MARKER_PREFIX}{}", canonical_service_id(service))
-}
-
-#[cfg(debug_assertions)]
-fn get_legacy_api_key_secret(_canonical: &str) -> AppResult<String> {
-    Err(AppError::msg("凭据不存在"))
-}
-
-#[cfg(not(debug_assertions))]
-fn get_legacy_api_key_secret(canonical: &str) -> AppResult<String> {
-    get_secret(canonical)
-}
-
-pub fn mark_api_key_configured(db: &Database, service: &str) -> AppResult<()> {
-    let key = api_key_marker_key(service);
-    db.with_conn(|conn| {
-        conn.execute(
-            "INSERT INTO settings (key, value) VALUES (?1, ?2)
-             ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-            rusqlite::params![key, "true"],
-        )?;
-        Ok(())
-    })
-}
-
-pub fn clear_api_key_configured(db: &Database, service: &str) -> AppResult<()> {
-    let key = api_key_marker_key(service);
-    db.with_conn(|conn| {
-        conn.execute("DELETE FROM settings WHERE key = ?1", [key])?;
-        Ok(())
-    })
-}
-
-pub fn api_key_configured(db: &Database, service: &str) -> AppResult<bool> {
-    let key = api_key_marker_key(service);
-    db.with_read_conn(|conn| {
-        let count: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM settings WHERE key = ?1",
-            [key],
-            |row| row.get(0),
-        )?;
-        Ok(count > 0)
-    })
-}
-
-pub fn set_api_key(db: &Database, service: &str, value: &str) -> AppResult<()> {
-    let canonical = canonical_service_id(service);
-    let mut bundle = read_api_key_bundle_cached()?;
-    bundle.upsert(&canonical, value);
-    store_api_key_bundle(&bundle)?;
-    let stored = read_api_key_bundle_cached()?;
-    if stored.get(&canonical).is_none() {
-        return Err(AppError::msg(format!(
-            "API Key 写入后校验失败: {canonical}"
-        )));
-    }
-    mark_api_key_configured(db, &canonical)
-}
-
-pub fn get_api_key(db: &Database, service: &str) -> AppResult<String> {
-    let canonical = canonical_service_id(service);
-    let mut bundle = match read_api_key_bundle_cached() {
-        Ok(bundle) => bundle,
-        Err(bundle_err) => {
-            return match get_legacy_api_key_secret(&canonical) {
-                Ok(value) => {
-                    mark_api_key_configured(db, &canonical)?;
-                    Ok(value)
-                }
-                Err(_) => Err(bundle_err),
-            };
-        }
-    };
-    if let Some(value) = bundle.get(&canonical) {
-        mark_api_key_configured(db, &canonical)?;
-        return Ok(value.to_string());
-    }
-
-    let legacy = match get_legacy_api_key_secret(&canonical) {
-        Ok(value) => value,
-        Err(e) => {
-            clear_api_key_configured(db, &canonical)?;
-            return Err(e);
-        }
-    };
-    bundle.upsert(&canonical, &legacy);
-    store_api_key_bundle(&bundle)?;
-    mark_api_key_configured(db, &canonical)?;
-    Ok(legacy)
-}
-
-pub fn delete_api_key(db: &Database, service: &str) -> AppResult<()> {
-    let canonical = canonical_service_id(service);
-    let mut bundle = read_api_key_bundle_cached()?;
-    bundle.remove(&canonical);
-    store_api_key_bundle(&bundle)?;
-    let _ = delete_secret(&canonical);
-    clear_api_key_configured(db, &canonical)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::storage::db::Database;
+    use std::cell::RefCell;
+    use std::collections::BTreeMap;
+    use std::sync::{LazyLock, Mutex};
+
+    static TEST_ENV_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
+
+    #[derive(Default)]
+    struct MemoryCredentialBackend {
+        secrets: RefCell<BTreeMap<String, String>>,
+        deleted_services: RefCell<Vec<String>>,
+        get_calls: RefCell<Vec<String>>,
+    }
+
+    impl CredentialBackend for MemoryCredentialBackend {
+        fn set_password(&self, service: &str, account: &str, value: &str) -> AppResult<()> {
+            self.secrets
+                .borrow_mut()
+                .insert(format!("{service}:{account}"), value.to_string());
+            Ok(())
+        }
+
+        fn get_password(&self, service: &str, account: &str) -> AppResult<Zeroizing<String>> {
+            self.get_calls
+                .borrow_mut()
+                .push(format!("{service}:{account}"));
+            self.secrets
+                .borrow()
+                .get(&format!("{service}:{account}"))
+                .cloned()
+                .map(Zeroizing::new)
+                .ok_or_else(|| missing_credential_error(service))
+        }
+
+        fn delete_password(&self, service: &str, account: &str) -> AppResult<()> {
+            self.secrets
+                .borrow_mut()
+                .remove(&format!("{service}:{account}"));
+            self.deleted_services.borrow_mut().push(service.to_string());
+            Ok(())
+        }
+    }
 
     #[test]
-    fn canonical_id_replaces_slashes() {
+    fn llm_and_mcp_services_use_separate_canonical_targets() {
+        assert_eq!(llm_credential_service("deepseek"), "iris.llm.deepseek");
+        assert_eq!(mcp_credential_service("anysearch"), "iris.mcp.anysearch");
+    }
+
+    #[test]
+    fn api_key_upsert_overwrites_one_service_without_touching_others() {
+        let backend = MemoryCredentialBackend::default();
+
+        set_api_key_with_backend(&backend, "iris.llm.deepseek", "old-key").expect("set old");
+        set_api_key_with_backend(&backend, "iris.mcp.anysearch", "mcp-key").expect("set mcp");
+        set_api_key_with_backend(&backend, "iris.llm.deepseek", "new-key").expect("overwrite llm");
+
         assert_eq!(
-            canonical_service_id("iris/llm/deepseek"),
-            "iris.llm.deepseek"
+            get_runtime_secret_with_backend(&backend, "iris.llm.deepseek")
+                .expect("get llm")
+                .as_str(),
+            "new-key"
+        );
+        assert_eq!(
+            get_runtime_secret_with_backend(&backend, "iris.mcp.anysearch")
+                .expect("get mcp")
+                .as_str(),
+            "mcp-key"
         );
     }
 
     #[test]
-    fn api_key_bundle_serializes_multiple_services() {
-        let mut bundle = ApiKeyBundle::default();
-        bundle.upsert("iris.llm.deepseek", "deepseek-key");
-        bundle.upsert("iris.llm.minimax", "minimax-key");
+    fn api_key_set_does_not_read_secret_back_after_write() {
+        let backend = MemoryCredentialBackend::default();
 
-        let json = bundle.to_json().expect("serialize");
-        let decoded = ApiKeyBundle::from_json(&json).expect("deserialize");
+        set_api_key_with_backend(&backend, "iris.llm.deepseek", "new-key").expect("set key");
 
-        assert_eq!(decoded.get("iris.llm.deepseek"), Some("deepseek-key"));
-        assert_eq!(decoded.get("iris.llm.minimax"), Some("minimax-key"));
-        assert_eq!(decoded.get("iris.llm.mimo"), None);
+        assert!(backend.get_calls.borrow().is_empty());
     }
 
     #[test]
-    fn api_key_configured_marker_roundtrips_without_secret_value() {
-        let db = Database::open_in_memory().expect("mem db");
-
-        mark_api_key_configured(&db, "iris.llm.deepseek").expect("mark");
-        assert!(api_key_configured(&db, "iris.llm.deepseek").expect("configured"));
-
-        let stored = db
-            .with_conn(|conn| {
-                conn.query_row(
-                    "SELECT value FROM settings WHERE key = ?1",
-                    [api_key_marker_key("iris.llm.deepseek")],
-                    |row| row.get::<_, String>(0),
-                )
-                .map_err(Into::into)
-            })
-            .expect("stored marker");
-        assert!(!stored.contains("deepseek-key"));
-
-        clear_api_key_configured(&db, "iris.llm.deepseek").expect("clear");
-        assert!(!api_key_configured(&db, "iris.llm.deepseek").expect("configured"));
+    fn credential_marker_key_is_non_secret_and_scoped_per_service() {
+        assert_eq!(
+            credential_marker_key("iris.llm.deepseek").expect("marker"),
+            "credential.configured.iris.llm.deepseek"
+        );
+        assert_eq!(
+            credential_marker_key("iris.mcp.anysearch").expect("marker"),
+            "credential.configured.iris.mcp.anysearch"
+        );
     }
 
     #[test]
-    fn get_api_key_clears_stale_marker_when_bundle_and_legacy_secret_are_missing() {
-        let db = Database::open_in_memory().expect("mem db");
-        let service = format!("iris.llm.missing_{}", uuid::Uuid::new_v4());
-        *cache_lock().expect("cache") = Some(ApiKeyBundle::default());
+    fn deleting_credential_removes_only_that_service() {
+        let backend = MemoryCredentialBackend::default();
+        set_api_key_with_backend(&backend, "iris.llm.deepseek", "deepseek-key").expect("set llm");
+        set_api_key_with_backend(&backend, "iris.mcp.anysearch", "mcp-key").expect("set mcp");
 
-        mark_api_key_configured(&db, &service).expect("mark");
-        let err = get_api_key(&db, &service).expect_err("missing secret");
+        delete_api_key_with_backend(&backend, "iris.llm.deepseek").expect("delete llm");
 
-        assert!(err.to_string().contains("凭据不存在"));
-        assert!(!api_key_configured(&db, &service).expect("marker cleared"));
+        assert!(get_runtime_secret_with_backend(&backend, "iris.llm.deepseek").is_err());
+        assert_eq!(
+            get_runtime_secret_with_backend(&backend, "iris.mcp.anysearch")
+                .expect("mcp remains")
+                .as_str(),
+            "mcp-key"
+        );
     }
 
     #[test]
-    fn credential_lock_session_clears_api_key_bundle_cache() {
-        let db = Database::open_in_memory().expect("mem db");
-        let service = format!("iris.llm.locked_{}", uuid::Uuid::new_v4());
-        let mut bundle = ApiKeyBundle::default();
-        bundle.upsert(&service, "cached-key");
-        *cache_lock().expect("cache") = Some(bundle);
+    fn local_encrypted_backend_roundtrips_without_plaintext_secret_file() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let backend = LocalEncryptedCredentialBackend::new_for_test(dir.path().join("credentials"));
+
+        set_api_key_with_backend(&backend, "iris.llm.deepseek", "sk-secret-value")
+            .expect("set local key");
 
         assert_eq!(
-            get_api_key(&db, &service).expect("cached key"),
-            "cached-key"
+            get_runtime_secret_with_backend(&backend, "iris.llm.deepseek")
+                .expect("read local key")
+                .as_str(),
+            "sk-secret-value"
         );
 
-        credential_lock_session().expect("lock session");
-        let err = get_api_key(&db, &service).expect_err("cache cleared");
+        let store_dump = std::fs::read_dir(dir.path().join("credentials"))
+            .expect("credential dir")
+            .filter_map(Result::ok)
+            .filter_map(|entry| std::fs::read_to_string(entry.path()).ok())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(!store_dump.contains("sk-secret-value"));
 
-        assert!(err.to_string().contains("凭据不存在"));
+        delete_api_key_with_backend(&backend, "iris.llm.deepseek").expect("delete local key");
+        assert!(get_runtime_secret_with_backend(&backend, "iris.llm.deepseek").is_err());
     }
 
     #[test]
-    fn credential_unlock_session_warms_empty_api_key_bundle_cache() {
-        *cache_lock().expect("cache") = None;
+    fn credential_status_comes_from_local_encrypted_store() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let backend = LocalEncryptedCredentialBackend::new_for_test(dir.path().join("credentials"));
 
-        credential_unlock_session().expect("unlock session");
+        assert_eq!(
+            credential_status_with_backend(&backend, "iris.llm.deepseek")
+                .expect("missing status")
+                .state,
+            CredentialState::Missing
+        );
 
-        assert!(cache_lock().expect("cache").is_some());
+        set_api_key_with_backend(&backend, "iris.llm.deepseek", "real-key").expect("set key");
+
+        assert_eq!(
+            credential_status_with_backend(&backend, "iris.llm.deepseek")
+                .expect("available status")
+                .state,
+            CredentialState::Available
+        );
+
+        delete_api_key_with_backend(&backend, "iris.llm.deepseek").expect("delete key");
+        assert!(!credential_available_with_backend(&backend, "iris.llm.deepseek")
+            .expect("available check"));
     }
 
     #[test]
-    #[ignore = "requires OS credential store; run locally: cargo test credential_roundtrip -- --ignored"]
+    fn canonical_service_rejects_legacy_slashes() {
+        assert!(canonical_api_key_service("iris/llm/deepseek").is_err());
+    }
+
+    #[test]
     fn credential_roundtrip() {
+        let _guard = TEST_ENV_LOCK.lock().expect("env lock");
+        let dir = tempfile::tempdir().expect("temp dir");
+        std::env::set_var("IRIS_DATA_DIR", dir.path());
+        let id = format!("iris.llm.test_{}", uuid::Uuid::new_v4());
+        set_api_key(&id, "test-secret-value").expect("set");
+        assert_eq!(
+            get_runtime_secret(&id).expect("get").as_str(),
+            "test-secret-value"
+        );
+        delete_api_key(&id).expect("delete");
+    }
+
+    #[test]
+    fn generic_secret_roundtrip() {
+        let _guard = TEST_ENV_LOCK.lock().expect("env lock");
+        let dir = tempfile::tempdir().expect("temp dir");
+        std::env::set_var("IRIS_DATA_DIR", dir.path());
         let id = format!("iris.test.{}", uuid::Uuid::new_v4());
         set_secret(&id, "test-secret-value").expect("set");
         assert!(has_secret(&id));
         assert_eq!(get_secret(&id).expect("get"), "test-secret-value");
-        delete_secret(&id).expect("delete");
+        local_backend()
+            .expect("backend")
+            .delete_password(&id, SECRET_ACCOUNT)
+            .expect("delete");
         assert!(!has_secret(&id));
-    }
-
-    #[cfg(target_os = "macos")]
-    #[test]
-    #[ignore = "requires macOS Keychain user-presence prompt; run locally with --ignored"]
-    fn macos_user_presence_credential_roundtrip() {
-        let id = format!("iris.test.touchid.{}", uuid::Uuid::new_v4());
-        set_secret(&id, "test-secret-value").expect("set protected");
-        assert_eq!(get_secret(&id).expect("get protected"), "test-secret-value");
-        delete_secret(&id).expect("delete protected");
-    }
-
-    #[cfg(target_os = "macos")]
-    #[test]
-    #[ignore = "requires macOS Keychain access; run locally with --ignored"]
-    fn macos_legacy_keyring_secret_remains_readable() {
-        let id = format!("iris.test.legacy.{}", uuid::Uuid::new_v4());
-        entry_canonical(&id)
-            .expect("legacy entry")
-            .set_password("legacy-secret-value")
-            .expect("set legacy");
-
-        assert_eq!(get_secret(&id).expect("get legacy"), "legacy-secret-value");
-
-        delete_secret(&id).expect("delete");
     }
 }

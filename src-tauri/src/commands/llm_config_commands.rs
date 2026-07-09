@@ -131,31 +131,40 @@ pub async fn llm_config_test(
     state: State<'_, Arc<AppState>>,
     provider_id: String,
     model: Option<String>,
+    api_key_override: Option<String>,
 ) -> AppResult<LlmConfigTestResult> {
     // Compatibility path: legacy callers still enter here.
     // New UI calls llm_config_test_provider or llm_model_validate directly.
     if let Some(model_id) = model {
-        return llm_model_validate_inner(&state, provider_id, model_id, ModelValidationKind::Text)
-            .await;
+        return llm_model_validate_inner(
+            &state,
+            provider_id,
+            model_id,
+            ModelValidationKind::Text,
+            api_key_override,
+        )
+        .await;
     }
-    llm_config_test_provider_inner(&state, provider_id).await
+    llm_config_test_provider_inner(&state, provider_id, api_key_override).await
 }
 
 #[tauri::command]
 pub async fn llm_config_test_provider(
     state: State<'_, Arc<AppState>>,
     provider_id: String,
+    api_key_override: Option<String>,
 ) -> AppResult<LlmConfigTestResult> {
-    llm_config_test_provider_inner(&state, provider_id).await
+    llm_config_test_provider_inner(&state, provider_id, api_key_override).await
 }
 
 #[tauri::command]
 pub async fn llm_model_registry_refresh(
     state: State<'_, Arc<AppState>>,
     provider_id: String,
+    api_key_override: Option<String>,
 ) -> AppResult<LlmModelRegistryRefreshResult> {
-    let resolved = config::resolve_for_provider(&state.db, &provider_id, None)?;
-    let api_key = api_key_for_probe(&provider_id, resolved.api_key)?;
+    let resolved = config::resolve_for_provider_without_secret(&state.db, &provider_id, None)?;
+    let api_key = api_key_for_probe(&provider_id, api_key_override)?;
     let client = probe_client()?;
     let model_ids =
         fetch_provider_model_ids(&client, &provider_id, &resolved.base_url, &api_key).await?;
@@ -173,21 +182,24 @@ pub async fn llm_model_validate(
     provider_id: String,
     model_id: String,
     kind: ModelValidationKind,
+    api_key_override: Option<String>,
 ) -> AppResult<LlmConfigTestResult> {
-    llm_model_validate_inner(&state, provider_id, model_id, kind).await
+    llm_model_validate_inner(&state, provider_id, model_id, kind, api_key_override).await
 }
 
 #[tauri::command]
 pub fn llm_config_delete_provider(
     state: State<'_, Arc<AppState>>,
     provider_id: String,
+    delete_credential: Option<bool>,
 ) -> AppResult<LlmRoutingConfig> {
-    delete_provider_inner(&state.db, &provider_id)
+    delete_provider_inner(&state.db, &provider_id, delete_credential.unwrap_or(false))
 }
 
 fn delete_provider_inner(
     db: &crate::storage::db::Database,
     provider_id: &str,
+    delete_credential: bool,
 ) -> AppResult<LlmRoutingConfig> {
     let provider_id = provider_id.trim();
     if provider_id.is_empty() {
@@ -215,7 +227,9 @@ fn delete_provider_inner(
     routing.providers.remove(provider_id);
     save(db, &routing)?;
     model_registry::delete_provider_entries(db, provider_id)?;
-    crate::credentials::delete_api_key(db, &credential_service(provider_id))?;
+    if delete_credential {
+        crate::credentials::delete_api_key(&credential_service(provider_id))?;
+    }
     Ok(routing)
 }
 
@@ -235,9 +249,10 @@ pub fn llm_model_confirm_capability(
 async fn llm_config_test_provider_inner(
     state: &AppState,
     provider_id: String,
+    api_key_override: Option<String>,
 ) -> AppResult<LlmConfigTestResult> {
-    let resolved = config::resolve_for_provider(&state.db, &provider_id, None)?;
-    let api_key = api_key_for_probe(&provider_id, resolved.api_key)?;
+    let resolved = config::resolve_for_provider_without_secret(&state.db, &provider_id, None)?;
+    let api_key = api_key_for_probe(&provider_id, api_key_override)?;
     let client = probe_client()?;
     let probe_url = models_probe_url(&provider_id, &resolved.base_url);
     let mut req = client.get(&probe_url);
@@ -289,6 +304,7 @@ async fn llm_model_validate_inner(
     provider_id: String,
     model_id: String,
     kind: ModelValidationKind,
+    api_key_override: Option<String>,
 ) -> AppResult<LlmConfigTestResult> {
     let model_id = model_id.trim().to_string();
     if model_id.is_empty() {
@@ -297,10 +313,9 @@ async fn llm_model_validate_inner(
             message: "模型 ID 不能为空".into(),
         });
     }
-    // Keep this exact legacy contract visible for static tests:
-    // resolve_for_provider(&state.db, &provider_id, model.as_deref())
-    let resolved = config::resolve_for_provider(&state.db, &provider_id, Some(&model_id))?;
-    let api_key = api_key_for_probe(&provider_id, resolved.api_key)?;
+    let resolved =
+        config::resolve_for_provider_without_secret(&state.db, &provider_id, Some(&model_id))?;
+    let api_key = api_key_for_probe(&provider_id, api_key_override)?;
     let client = probe_client()?;
     let mut model_list_advisory: Option<String> = None;
 
@@ -541,7 +556,9 @@ fn api_key_for_probe(provider_id: &str, api_key: Option<String>) -> AppResult<St
     match api_key {
         Some(k) if !k.trim().is_empty() => Ok(k.trim().to_string()),
         _ if !requires_api_key(provider_id) => Ok(String::new()),
-        _ => Err(AppError::msg("请先保存该供应商的 API Key")),
+        _ => Err(AppError::msg(
+            "请先在当前输入框填写 API Key；检查端点不会读取系统凭据",
+        )),
     }
 }
 
@@ -606,75 +623,6 @@ fn extract_model_ids_from_models_body(text: &str) -> AppResult<Vec<String>> {
         }
     }
     Ok(out)
-}
-
-#[allow(dead_code)]
-async fn legacy_llm_config_test_body(
-    state: &AppState,
-    provider_id: String,
-    model: Option<String>,
-) -> AppResult<LlmConfigTestResult> {
-    let resolved = config::resolve_for_provider(&state.db, &provider_id, model.as_deref())?;
-    let api_key = match resolved.api_key {
-        Some(k) if !k.trim().is_empty() => k.trim().to_string(),
-        _ if !requires_api_key(&provider_id) => String::new(),
-        _ => {
-            return Ok(LlmConfigTestResult {
-                ok: false,
-                message: "请先在上方保存该厂商的 API Key".into(),
-            });
-        }
-    };
-
-    let client = crate::network::cert_pinning::https_client_builder()
-        .timeout(std::time::Duration::from_secs(20))
-        .build()
-        .map_err(|e| AppError::msg(format!("HTTP client: {e}")))?;
-
-    let probe_url = models_probe_url(&provider_id, &resolved.base_url);
-    let mut req = client.get(&probe_url);
-    if !api_key.is_empty() {
-        req = req.header("Authorization", format!("Bearer {api_key}"));
-    }
-
-    match req.send().await {
-        Ok(response) if response.status().is_success() => Ok(LlmConfigTestResult {
-            ok: true,
-            message: "连接成功（模型列表）".into(),
-        }),
-        Ok(response) if response.status().as_u16() == 401 => Ok(LlmConfigTestResult {
-            ok: false,
-            message: "API Key 无效或未授权（401）".into(),
-        }),
-        Ok(response) => {
-            let status = response.status();
-            let body = truncate_error_text(&response.text().await.unwrap_or_default());
-            // /models 探测失败时用最小对话请求复核 Key
-            match probe_chat_minimal(
-                &client,
-                &provider_id,
-                &resolved.base_url,
-                &resolved.model,
-                &api_key,
-                false,
-            )
-            .await
-            {
-                Ok(()) => Ok(LlmConfigTestResult {
-                    ok: true,
-                    message: format!("连接成功（对话接口；列表探测返回 HTTP {status}）"),
-                }),
-                Err(chat_err) => Ok(LlmConfigTestResult {
-                    ok: false,
-                    message: format!("列表探测 HTTP {status}（{body}）；对话探测：{chat_err}"),
-                }),
-            }
-        }
-        Err(e) => Ok(LlmConfigTestResult {
-            ok: false,
-            message: format!("网络错误：{e}"),
-        }),
-    }
 }
 
 async fn probe_chat_minimal(
@@ -820,7 +768,6 @@ mod tests {
             },
         );
         config::save(&db, &routing).unwrap();
-        crate::credentials::mark_api_key_configured(&db, "iris.llm.deepseek").unwrap();
         model_registry::upsert_provider_discovered_models(
             &db,
             "deepseek",
@@ -828,14 +775,13 @@ mod tests {
         )
         .unwrap();
 
-        let routing = delete_provider_inner(&db, "deepseek").unwrap();
+        let routing = delete_provider_inner(&db, "deepseek", false).unwrap();
 
         assert!(!routing.providers.contains_key("deepseek"));
         assert!(!config::load(&db)
             .unwrap()
             .providers
             .contains_key("deepseek"));
-        assert!(!crate::credentials::api_key_configured(&db, "iris.llm.deepseek").unwrap());
         assert!(model_registry::list_registry_entries(&db)
             .unwrap()
             .into_iter()
@@ -845,7 +791,7 @@ mod tests {
     #[test]
     fn delete_provider_rejects_missing_provider_configuration() {
         let db = crate::storage::db::Database::open_in_memory().unwrap();
-        let err = delete_provider_inner(&db, "deepseek").unwrap_err();
+        let err = delete_provider_inner(&db, "deepseek", false).unwrap_err();
         assert!(err.to_string().contains("provider not found"));
     }
 
@@ -854,7 +800,7 @@ mod tests {
         let db = crate::storage::db::Database::open_in_memory().unwrap();
         seed_custom_provider(&db, true);
 
-        let err = delete_provider_inner(&db, "custom_delete").unwrap_err();
+        let err = delete_provider_inner(&db, "custom_delete", false).unwrap_err();
 
         assert!(err.to_string().contains("fast"));
         assert!(config::load(&db)
@@ -864,10 +810,9 @@ mod tests {
     }
 
     #[test]
-    fn delete_provider_removes_custom_provider_registry_and_credential_marker() {
+    fn delete_provider_removes_custom_provider_registry_and_keeps_credential_by_default() {
         let db = crate::storage::db::Database::open_in_memory().unwrap();
         seed_custom_provider(&db, false);
-        crate::credentials::mark_api_key_configured(&db, "iris.llm.custom_delete").unwrap();
         model_registry::upsert_provider_discovered_models(
             &db,
             "custom_delete",
@@ -875,14 +820,13 @@ mod tests {
         )
         .unwrap();
 
-        let routing = delete_provider_inner(&db, "custom_delete").unwrap();
+        let routing = delete_provider_inner(&db, "custom_delete", false).unwrap();
 
         assert!(!routing.providers.contains_key("custom_delete"));
         assert!(!config::load(&db)
             .unwrap()
             .providers
             .contains_key("custom_delete"));
-        assert!(!crate::credentials::api_key_configured(&db, "iris.llm.custom_delete").unwrap());
         assert!(model_registry::list_registry_entries(&db)
             .unwrap()
             .into_iter()
@@ -918,7 +862,6 @@ mod tests {
             Ok(())
         })
         .unwrap();
-        crate::credentials::mark_api_key_configured(&db, "iris.llm.custom_delete").unwrap();
         model_registry::upsert_provider_discovered_models(
             &db,
             "custom_delete",
@@ -926,10 +869,9 @@ mod tests {
         )
         .unwrap();
 
-        let routing = delete_provider_inner(&db, "custom_delete").unwrap();
+        let routing = delete_provider_inner(&db, "custom_delete", false).unwrap();
 
         assert!(!routing.providers.contains_key("custom_delete"));
-        assert!(!crate::credentials::api_key_configured(&db, "iris.llm.custom_delete").unwrap());
         assert!(model_registry::list_registry_entries(&db)
             .unwrap()
             .into_iter()
@@ -964,7 +906,6 @@ mod tests {
             Ok(())
         })
         .unwrap();
-        crate::credentials::mark_api_key_configured(&db, "iris.llm.custom_delete").unwrap();
         model_registry::upsert_provider_discovered_models(
             &db,
             "custom_delete",
@@ -972,10 +913,9 @@ mod tests {
         )
         .unwrap();
 
-        let routing = delete_provider_inner(&db, "custom_delete").unwrap();
+        let routing = delete_provider_inner(&db, "custom_delete", false).unwrap();
 
         assert!(!routing.providers.contains_key("custom_delete"));
-        assert!(!crate::credentials::api_key_configured(&db, "iris.llm.custom_delete").unwrap());
         assert!(model_registry::list_registry_entries(&db)
             .unwrap()
             .into_iter()

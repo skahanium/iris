@@ -9,6 +9,7 @@
 
 import {
   listenAiRetryStatus,
+  listenAiThinking,
   listenHarnessTrace,
   listenLlmDone,
   listenLlmError,
@@ -22,7 +23,10 @@ import type {
   StreamSurface,
 } from "@/types/ipc";
 
-import type { ChatLine } from "@/components/ai/AiMessageList";
+import type {
+  AssistantProcessEvent,
+  ChatLine,
+} from "@/components/ai/AiMessageList";
 import { AssistantStreamBuffer } from "@/lib/assistant-stream-buffer";
 import type { AiDomain } from "@/lib/ai-domain";
 import { appendSystemMessageAfterDroppingEmptyAssistant } from "@/lib/assistant-transcript";
@@ -97,6 +101,25 @@ function harnessTraceHint(ev: HarnessTraceEvent): string | null {
       return null;
   }
 }
+
+const streamBodyReadFailureMessage = "模型流式连接中断，请稍后重试或切换模型。";
+
+function isStreamBodyReadFailure(error: string | undefined): boolean {
+  return Boolean(
+    error &&
+    (error.startsWith("Stream read error:") ||
+      error.startsWith("stream body read failed")),
+  );
+}
+
+function visibleLlmErrorMessage(error: string | undefined): string {
+  if (!error) return "未知错误";
+  if (isStreamBodyReadFailure(error)) {
+    return streamBodyReadFailureMessage;
+  }
+  return error;
+}
+
 /**
  * 缂備胶鍠嶇粩鎾礉閳哄倸顤?LLM 婵炵繝绀佺槐鈩冪鐎ｂ晜顐介柣鈺傚灥閹鏁嶉崷顪嘑 闁煎搫鍊圭粊?+ request_id 閺夆晛娲﹂幎銈夋晬婢跺牃鍋? */
 export function useAssistantLlmStream(options: {
@@ -105,6 +128,7 @@ export function useAssistantLlmStream(options: {
   streamBufRef: MutableRefObject<string>;
   setActivityHint: Dispatch<SetStateAction<string | null>>;
   setMessages: Dispatch<SetStateAction<ChatLine[]>>;
+  setProcessEvents?: Dispatch<SetStateAction<AssistantProcessEvent[]>>;
   setStreaming: Dispatch<SetStateAction<boolean>>;
   domain?: AiDomain;
   lifecycleRecorder?: AiLifecycleRecorder;
@@ -115,6 +139,7 @@ export function useAssistantLlmStream(options: {
     streamBufRef,
     setActivityHint,
     setMessages,
+    setProcessEvents,
     setStreaming,
     domain,
     lifecycleRecorder,
@@ -126,6 +151,8 @@ export function useAssistantLlmStream(options: {
   const rafRef = useRef<number | undefined>(undefined);
   const streamBufferRef = useRef(new AssistantStreamBuffer());
   const streamBufferRequestIdRef = useRef<string | null>(null);
+  const processEventsRequestIdRef = useRef<string | null>(null);
+  const processEventSeqRef = useRef(0);
 
   useEffect(() => {
     let disposed = false;
@@ -135,6 +162,30 @@ export function useAssistantLlmStream(options: {
     let unlistenReset: (() => void) | undefined;
     let unlistenRetryStatus: (() => void) | undefined;
     let unlistenHarnessTrace: (() => void) | undefined;
+    let unlistenAiThinking: (() => void) | undefined;
+
+    function appendProcessEvent(
+      event: Omit<AssistantProcessEvent, "id" | "createdAt">,
+    ) {
+      if (!setProcessEvents) return;
+      const requestId = event.requestId;
+      if (requestIdRef.current === null) {
+        requestIdRef.current = requestId;
+      }
+      const sequence = processEventSeqRef.current + 1;
+      processEventSeqRef.current = sequence;
+      const nextEvent: AssistantProcessEvent = {
+        ...event,
+        id: `${requestId}:${sequence}`,
+        createdAt: Date.now(),
+      };
+      setProcessEvents((prev) => {
+        const sameRequest = processEventsRequestIdRef.current === requestId;
+        processEventsRequestIdRef.current = requestId;
+        const base = sameRequest ? prev : [];
+        return [...base, nextEvent].slice(-32);
+      });
+    }
 
     function currentStreamSnapshot(): string {
       if (
@@ -350,6 +401,31 @@ export function useAssistantLlmStream(options: {
       });
       if (!isVisibleAnswerSurface(ev.surface)) {
         if (ev.reason_kind === "tool_round") {
+          appendProcessEvent({
+            requestId: ev.request_id ?? requestIdRef.current ?? "unknown",
+            kind: "reset",
+            label: "正在处理工具结果",
+            round: ev.round ?? null,
+            status: ev.reason_kind,
+          });
+        } else if (ev.reason_kind === "need_more_evidence") {
+          appendProcessEvent({
+            requestId: ev.request_id ?? requestIdRef.current ?? "unknown",
+            kind: "reset",
+            label: "证据不足，正在补充检索",
+            round: ev.round ?? null,
+            status: ev.reason_kind,
+          });
+        } else if (ev.reason_kind === "parse_retry") {
+          appendProcessEvent({
+            requestId: ev.request_id ?? requestIdRef.current ?? "unknown",
+            kind: "reset",
+            label: "工具参数异常，正在重试",
+            round: ev.round ?? null,
+            status: ev.reason_kind,
+          });
+        }
+        if (ev.reason_kind === "tool_round") {
           setActivityHint(
             "\u6b63\u5728\u5904\u7406\u5de5\u5177\u7ed3\u679c...",
           );
@@ -396,7 +472,22 @@ export function useAssistantLlmStream(options: {
         setActivityHint(
           "\u8fde\u63a5\u4e2d\u65ad\uff0c\u6b63\u5728\u91cd\u8bd5\u6d41\u5f0f\u54cd\u5e94\u2026",
         );
+        appendProcessEvent({
+          requestId: ev.request_id ?? requestIdRef.current ?? "unknown",
+          kind: "error",
+          label: "连接中断，正在重试流式响应",
+          status: "retrying",
+        });
         return;
+      }
+
+      if (isStreamBodyReadFailure(ev.error)) {
+        appendProcessEvent({
+          requestId: ev.request_id ?? requestIdRef.current ?? "unknown",
+          kind: "error",
+          label: "stream body read failed",
+          status: "stream_body_read_failed",
+        });
       }
 
       panelSendActiveRef.current = false;
@@ -413,7 +504,7 @@ export function useAssistantLlmStream(options: {
           streamBufferRequestIdRef.current = null;
           streamBufRef.current = "";
         }
-        const baseError = `\u9519\u8bef: ${ev.error ?? "\u672a\u77e5\u9519\u8bef"}`;
+        const baseError = `错误: ${visibleLlmErrorMessage(ev.error)}`;
         const errorContent = hasVisiblePartial
           ? `${baseError}\uff08\u5df2\u4fdd\u7559\u90e8\u5206\u8f93\u51fa\uff09`
           : baseError;
@@ -441,6 +532,12 @@ export function useAssistantLlmStream(options: {
           ev.delay_ms / 1000,
         )} 秒后继续。`,
       );
+      appendProcessEvent({
+        requestId: ev.request_id,
+        kind: "retry",
+        label: `重试中（${ev.attempt}/${ev.max_attempts}）`,
+        status: ev.reason_kind ?? null,
+      });
       recordAiLifecycleEvent(lifecycleRecorder, {
         event: "retry_status",
         phase: "frontend_stream",
@@ -464,6 +561,16 @@ export function useAssistantLlmStream(options: {
       }
       const hint = harnessTraceHint(ev);
       if (hint) setActivityHint(hint);
+      if (hint) {
+        appendProcessEvent({
+          requestId: ev.request_id,
+          kind: "trace",
+          label: hint,
+          round: ev.round,
+          status: ev.status,
+          durationMs: ev.duration_ms ?? null,
+        });
+      }
       recordAiLifecycleEvent(lifecycleRecorder, {
         event: "harness_trace",
         phase: "frontend_stream",
@@ -475,6 +582,34 @@ export function useAssistantLlmStream(options: {
       else unlistenHarnessTrace = fn;
     });
 
+    void listenAiThinking((ev) => {
+      if (disposed || !panelSendActiveRef.current) return;
+      if (
+        requestIdRef.current &&
+        ev.request_id &&
+        ev.request_id !== requestIdRef.current
+      ) {
+        return;
+      }
+      if (!ev.has_internal_thinking) return;
+      appendProcessEvent({
+        requestId: ev.request_id,
+        kind: "thinking",
+        label: "模型正在推理",
+        round: ev.round,
+        status: "isolated",
+      });
+      recordAiLifecycleEvent(lifecycleRecorder, {
+        event: "harness_trace",
+        phase: "frontend_stream",
+        requestId: ev.request_id,
+        source: "ai:thinking",
+      });
+    }).then((fn) => {
+      if (disposed) fn();
+      else unlistenAiThinking = fn;
+    });
+
     return () => {
       disposed = true;
       cancelScheduledFlush();
@@ -484,6 +619,7 @@ export function useAssistantLlmStream(options: {
       unlistenReset?.();
       unlistenRetryStatus?.();
       unlistenHarnessTrace?.();
+      unlistenAiThinking?.();
     };
   }, [
     panelSendActiveRef,
@@ -491,6 +627,7 @@ export function useAssistantLlmStream(options: {
     streamBufRef,
     setActivityHint,
     setMessages,
+    setProcessEvents,
     setStreaming,
     lifecycleRecorder,
   ]);

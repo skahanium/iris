@@ -133,6 +133,7 @@ pub fn run() {
             commands::settings::settings_reset,
             commands::settings::credential_set,
             commands::settings::credential_has,
+            commands::settings::credential_status,
             commands::settings::credential_delete,
             commands::settings::credential_unlock_session,
             commands::settings::credential_lock_session,

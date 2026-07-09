@@ -22,6 +22,7 @@ describe("credential session IPC contract", () => {
 
     expect(lib).toContain("commands::settings::credential_unlock_session");
     expect(lib).toContain("commands::settings::credential_lock_session");
+    expect(lib).toContain("commands::settings::credential_status");
   });
 
   it("invokes credential unlock and lock without exposing secret args", async () => {
@@ -34,5 +35,45 @@ describe("credential session IPC contract", () => {
 
     expect(invoke).toHaveBeenNthCalledWith(1, "credential_unlock_session");
     expect(invoke).toHaveBeenNthCalledWith(2, "credential_lock_session");
+  });
+
+  it("wraps credential status without exposing secret values", async () => {
+    const { credentialStatus } = await import("@/lib/ipc");
+    invoke.mockResolvedValue({
+      service: "iris.llm.deepseek",
+      state: "missing",
+      configured: false,
+      checkedAt: "2026-07-08T00:00:00Z",
+    });
+
+    await credentialStatus("iris.llm.deepseek");
+
+    expect(invoke).toHaveBeenCalledWith("credential_status", {
+      service: "iris.llm.deepseek",
+    });
+  });
+
+  it("backend availability checks use the local encrypted credential store instead of marker-only state", () => {
+    const settings = readFileSync("src-tauri/src/commands/settings.rs", "utf8");
+    const statusCommand = settings.split("pub fn credential_status")[1] ?? "";
+    const hasCommand = settings.split("pub fn credential_has")[1] ?? "";
+    const config = readFileSync("src-tauri/src/llm/config.rs", "utf8");
+    const runtimeContext = readFileSync(
+      "src-tauri/src/ai_runtime/runtime_context.rs",
+      "utf8",
+    );
+    const mcpRuntime = readFileSync(
+      "src-tauri/src/ai_runtime/mcp_host_runtime.rs",
+      "utf8",
+    );
+
+    expect(settings).toContain("credential_available_for_runtime");
+    expect(settings).toContain("set_credential_marker");
+    expect(statusCommand).toContain("credentials::credential_status(&service)");
+    expect(hasCommand).toContain("credentials::credential_available(&service)");
+    expect(config).toContain("credentials::credential_available(service)");
+    expect(config).not.toContain("credential_marker_configured(db, service)");
+    expect(runtimeContext).toContain("credentials::credential_available(&service)");
+    expect(mcpRuntime).toContain("credentials::credential_available(service)");
   });
 });

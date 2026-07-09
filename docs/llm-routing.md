@@ -45,7 +45,7 @@
 - `llm_config_get` 返回的 provider 列表不包含 `ollama`。
 - `llm_config_set` 会拒绝任何 `http://` base URL，包括 localhost、127.0.0.1 和 IPv6 loopback。
 - 通用 `settings_set` 不允许写入 `llm_routing`；LLM 路由必须通过 `llm_config_set` 保存，以保证 provider 与 HTTPS 校验始终生效。
-- 自定义 provider 必须使用 HTTPS OpenAI-compatible endpoint，API Key 仅保存在系统凭据管理器 `iris.llm.{provider_id}`。
+- 自定义 provider 必须使用 HTTPS OpenAI-compatible endpoint，API Key 仅保存在 Iris 本地加密凭据 `iris.llm.{provider_id}`。
 
 ## 长上下文
 
@@ -83,7 +83,7 @@
 ## Web Evidence Provider Target Contract
 
 - `web_search` is the only assistant-facing network switch. Search, URL deep-read, and page fetch evidence all enter `WebEvidenceBroker`; explicit URLs are passed as broker URLs rather than through a separate fetch tool.
-- MCP providers are persisted only when explicitly configured as web evidence providers. Supported transport configs are `{"url":"https://...","allow_localhost_dev":false}` for HTTPS and `{"command":"...","args":[...]}` for stdio. Credential fields store OS credential service references only.
+- MCP providers are persisted only when explicitly configured as web evidence providers. Supported transport configs are `{"url":"https://...","allow_localhost_dev":false}` for HTTPS and `{"command":"...","args":[...]}` for stdio. Credential fields store Iris local encrypted credential service references only.
 - Iris does not ship a native or vendor-specific search engine fallback for web evidence.
 - Broker candidate ordering is MCP-provider only. Provider diagnostics expose mapping completeness and recent circuit state in Management Center.
 - Ordinary evidence details show citation, title, safe URL/domain, retrieval reason, conflict markers, and excerpt. Provider ids, provider kind, raw result hashes, and extraction methods are audit/diagnostic metadata only.

@@ -108,6 +108,15 @@ export interface LlmProviderInfo {
   endpointManaged: "builtin" | "custom";
 }
 
+export type CredentialState = "available" | "missing";
+
+export interface CredentialStatus {
+  service: string;
+  state: CredentialState;
+  configured: boolean;
+  checkedAt: string;
+}
+
 export type AppExitResult = void;
 
 export interface KeywordHit {
@@ -238,6 +247,13 @@ export interface AiRetryStatusEvent {
     | "timeout_or_stall"
     | "unknown";
   status_code?: number | null;
+}
+
+export interface AiThinkingEvent {
+  request_id: string;
+  round: number;
+  has_internal_thinking?: boolean;
+  content_chars?: number;
 }
 
 /** Harness agent loop tool execution trace (backend `ai:harness_trace`). */

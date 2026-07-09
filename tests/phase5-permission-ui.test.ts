@@ -13,7 +13,7 @@ describe("Phase5 permission UI", () => {
     expect(source).toContain("系统边界");
     expect(source).toContain("权限边界");
     expect(source).toContain("凭据边界");
-    expect(source).toContain("API Key 保存在系统凭据管理器");
+    expect(source).toContain("API Key 保存在本地加密凭据");
     expect(source).not.toContain("permissions:");
     expect(source).not.toContain('data-testid="agent-permission-settings"');
   });

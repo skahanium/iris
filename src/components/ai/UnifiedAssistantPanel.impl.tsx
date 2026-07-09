@@ -39,6 +39,7 @@ import { AssistantConfirmDialogs } from "./AssistantConfirmDialogs";
 import { useAssistantRunPlan } from "./hooks/useAssistantRunPlan";
 import { useSelectionQuoteReference } from "./hooks/useSelectionQuoteReference";
 import { AssistantErrorRecovery } from "./AssistantErrorRecovery";
+import type { AssistantProcessEvent } from "./AiMessageList";
 import type { UnifiedAssistantPanelProps } from "./types";
 
 export function UnifiedAssistantPanel({
@@ -77,6 +78,9 @@ export function UnifiedAssistantPanel({
   const [contextStatusData, setContextStatusData] =
     useState<ContextStatus | null>(null);
   const [activityHint, setActivityHint] = useState<string | null>(null);
+  const [processEvents, setProcessEvents] = useState<AssistantProcessEvent[]>(
+    [],
+  );
   const streamBuf = useRef("");
   const requestIdRef = useRef<string | null>(null);
   const [harnessRequestId, setHarnessRequestId] = useState<string | null>(null);
@@ -137,6 +141,7 @@ export function UnifiedAssistantPanel({
   const clearTaskSurfaces = useCallback(() => {
     clearArtifactSurfaces();
     clearResearchProgressRef.current?.();
+    setProcessEvents([]);
     setAgentTaskId(null);
   }, [clearArtifactSurfaces]);
 
@@ -206,7 +211,6 @@ export function UnifiedAssistantPanel({
   const {
     abortResearch,
     clearResearchProgress,
-    researchProgress,
     researchRequestIdRef,
     researchRunning,
     setResearchPanelExpanded,
@@ -244,6 +248,7 @@ export function UnifiedAssistantPanel({
     streamBufRef: streamBuf,
     setActivityHint,
     setMessages,
+    setProcessEvents,
     setStreaming,
   });
 
@@ -471,6 +476,7 @@ export function UnifiedAssistantPanel({
           messages={messages}
           contextReferences={bubbleSelection.contextReferences}
           streaming={streaming}
+          processEvents={processEvents}
           selectedIndices={bubbleSelection.selected}
           messageListRef={messageListRef}
           onCitationClick={handleCitationClick}
@@ -503,10 +509,7 @@ export function UnifiedAssistantPanel({
       />
       <ContextScopeChips tokens={mentionTokens} onRemove={removeMentionToken} />
       <AssistantComposerDock
-        activityHint={activityHint}
-        agentTask={agentTaskStatus.agentTask}
         composerDisabled={composerDisabled}
-        hasError={Boolean(lastError)}
         images={images}
         input={input}
         mentionCandidates={mentionCandidates}
@@ -514,21 +517,18 @@ export function UnifiedAssistantPanel({
         mentionNavDeltaRef={mentionNavDeltaRef}
         mentionOpen={mentionOpen}
         mentionQuery={mentionQuery}
-        researchProgress={researchProgress}
-        researchRunning={researchRunning}
         streaming={streaming}
         textareaRef={textareaRef}
-        onAbort={() => {
-          if (researchRunning) void abortResearch();
-          else if (streaming) stopStreaming();
-          else void agentTaskStatus.abortAgentTask();
-        }}
         onComposerKeyDown={handleComposerKeyDown}
         onImagesChange={setImages}
         onMentionHighlight={setMentionHighlight}
         onMentionSelect={selectMention}
         onSelect={syncMentionFromInput}
-        onStop={stopStreaming}
+        onStop={() => {
+          if (researchRunning) void abortResearch();
+          else if (streaming) stopStreaming();
+          else void agentTaskStatus.abortAgentTask();
+        }}
         onSubmit={() => void send()}
         onValueChange={setInput}
       />

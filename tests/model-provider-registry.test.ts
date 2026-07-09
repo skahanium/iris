@@ -152,6 +152,31 @@ describe("model provider registry contract", () => {
     expect(rust).toContain("llm_model_confirm_capability");
   });
 
+  it("settings probe commands use explicit api key override instead of reading saved keychain secrets", () => {
+    const rust = read("src-tauri/src/commands/llm_config_commands.rs");
+    const probeSection =
+      rust.split("async fn llm_config_test_provider_inner")[1] ?? "";
+    const validateSection =
+      rust.split("async fn llm_model_validate_inner")[1] ?? "";
+
+    expect(rust).toContain("api_key_override");
+    expect(probeSection).toContain("resolve_for_provider_without_secret");
+    expect(validateSection).toContain("resolve_for_provider_without_secret");
+    expect(probeSection).not.toContain("config::resolve_for_provider(");
+    expect(validateSection).not.toContain("config::resolve_for_provider(");
+  });
+
+  it("saves the typed provider key before provider probes so status and probes stay aligned", () => {
+    const section = read("src/components/settings/LlmRoutingSection.tsx");
+
+    expect(section).toContain("saveProviderKeyValue");
+    expect(section).toContain("ensureProviderKeySavedForProbe");
+    expect(section).toContain(
+      "await ensureProviderKeySavedForProbe(provider.id, apiKeyOverride)",
+    );
+    expect(section).toContain("notifyLlmConfigChanged()");
+  });
+
   it("filters capability route candidates by verified capability", () => {
     const section = read("src/components/settings/LlmRoutingSection.tsx");
 
@@ -186,9 +211,8 @@ describe("model provider registry contract", () => {
     expect(ipc).toContain("llm_config_delete_provider");
     expect(section).toContain("llmConfigDeleteProvider");
     expect(section).toContain("deleteProvider");
-    expect(section).not.toContain(
-      "if (!isCustomProviderId(provider.id)) return",
-    );
+    expect(ipc).toContain("deleteCredential = false");
+    expect(section).toContain("The stored API Key is kept");
     expect(section).toContain("provider.configured");
     expect(section).toContain("provider.usedSlots.length > 0");
     expect(section).toContain("confirm(");

@@ -49,6 +49,7 @@ use crate::ai_runtime::tool_fallback::{
 };
 use crate::ai_runtime::tool_policy::{self, DenialReason, ToolPolicyContext};
 use crate::ai_runtime::ToolCallResult;
+use crate::ai_types::{ReasoningVisibility, ResolvedReasoningRequest};
 use crate::app::AppState;
 use crate::error::{AppError, AppResult};
 
@@ -115,6 +116,18 @@ fn classify_final_answer(
         content: fallback.into(),
         finish_reason: HarnessFinishReason::Completed,
         save_checkpoint: false,
+    }
+}
+
+fn final_answer_stream_surface(reasoning: &ResolvedReasoningRequest) -> StreamSurface {
+    if !reasoning.isolate_output {
+        return StreamSurface::VisibleAnswer;
+    }
+    match reasoning.visibility {
+        ReasoningVisibility::HiddenChannel => StreamSurface::VisibleAnswer,
+        ReasoningVisibility::ContentTag | ReasoningVisibility::PlainContentRisk => {
+            StreamSurface::VisibleAnswerSanitized
+        }
     }
 }
 
@@ -666,36 +679,18 @@ async fn run_harness_inner(
             if tool_calls.is_empty() {
                 tracing::debug!(
                     request_id = %input.request_id,
-                    event = "agent_round_promoted_to_final",
+                    event = "agent_round_entering_final_stream",
                     candidate_kind = "visible_answer_candidate",
                     round = harness_rounds,
-                    "AI lifecycle agent round promoted to final answer"
+                    "AI lifecycle agent round had no tool calls; entering final stream"
                 );
                 let raw = response.content.clone().unwrap_or_default();
                 let stripped = strip_tool_markup_from_visible(&raw);
-                let (visible, thinking) =
-                    extract_thinking_blocks_for_event(&stripped, thinking_mode);
-                let visible = sanitize_meta_analysis_prefix(&visible);
+                let (_, thinking) = extract_thinking_blocks_for_event(&stripped, thinking_mode);
                 if let Some(t) = thinking {
                     emit_thinking(app_handle, &input.request_id, harness_rounds, &t)?;
                 }
-                let final_content = visible;
-                return finish_run(
-                    state,
-                    input,
-                    FinishRunParams {
-                        content: final_content,
-                        tool_calls: all_tool_calls,
-                        tool_results: tool_results_json,
-                        usage: total_usage,
-                        harness_rounds,
-                        pending_confirmation: false,
-                        evidence_packets: ledger_to_packets(&evidence_ledger, token_budget),
-                        usage_source,
-                        finish_reason: HarnessFinishReason::Completed,
-                    },
-                )
-                .await;
+                break 'agent;
             }
 
             // Non-terminal round: tool calls were produced (either to dispatch
@@ -1162,11 +1157,7 @@ async fn run_harness_inner(
             reasoning,
             skip_stub_ids: vec![],
         };
-        let final_surface = if reasoning.isolate_output {
-            StreamSurface::InternalCandidate
-        } else {
-            StreamSurface::VisibleAnswer
-        };
+        let final_surface = final_answer_stream_surface(&reasoning);
         let response = gateway
             .send_streaming_request_with_surface(
                 &input.request_id,
@@ -1950,6 +1941,40 @@ mod tests {
         assert_eq!(decision.finish_reason, HarnessFinishReason::Completed);
         assert_eq!(decision.content, answer);
     }
+
+    #[test]
+    fn final_answer_surface_streams_hidden_channel_reasoning_visibly() {
+        let reasoning = ResolvedReasoningRequest {
+            isolate_output: true,
+            visibility: ReasoningVisibility::HiddenChannel,
+            ..ResolvedReasoningRequest::legacy_enabled(true)
+        };
+
+        assert_eq!(
+            final_answer_stream_surface(&reasoning),
+            StreamSurface::VisibleAnswer
+        );
+    }
+
+    #[test]
+    fn final_answer_surface_sanitizes_content_tag_and_plain_risk_models() {
+        for visibility in [
+            ReasoningVisibility::ContentTag,
+            ReasoningVisibility::PlainContentRisk,
+        ] {
+            let reasoning = ResolvedReasoningRequest {
+                isolate_output: true,
+                visibility,
+                ..ResolvedReasoningRequest::legacy_enabled(true)
+            };
+
+            assert_eq!(
+                final_answer_stream_surface(&reasoning),
+                StreamSurface::VisibleAnswerSanitized
+            );
+        }
+    }
+
     #[test]
     fn final_answer_messages_force_no_tool_direct_answer() {
         let messages = vec![LlmMessage {

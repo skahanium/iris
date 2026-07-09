@@ -422,7 +422,7 @@ export function ManagementCenterPanel({
         <SettingRow
           icon={KeyRound}
           title="凭据边界"
-          detail="API Key 保存在系统凭据管理器；不写入 Markdown、SQLite 正文或日志。"
+          detail="API Key 保存在本地加密凭据；不写入 Markdown、SQLite 正文或日志。"
         />
         <SettingRow
           icon={Info}

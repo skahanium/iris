@@ -11,8 +11,8 @@ pub enum AppError {
     Json(#[from] serde_json::Error),
     #[error("HTTP error")]
     Http(#[from] reqwest::Error),
-    #[error("Keyring error")]
-    Keyring(#[from] keyring::Error),
+    #[error("Credential error")]
+    Credential(String),
     #[error("Embedding error")]
     Embed(String),
     #[error("{0}")]
@@ -30,7 +30,7 @@ impl AppError {
             Self::Db(_) => "database",
             Self::Json(_) => "json",
             Self::Http(_) => "http",
-            Self::Keyring(_) => "credential",
+            Self::Credential(_) => "credential",
             Self::Embed(_) => "embedding",
             Self::Message(_) => "message",
         }
@@ -42,7 +42,7 @@ impl AppError {
             Self::Db(_) => "Database error".to_string(),
             Self::Json(_) => "JSON error".to_string(),
             Self::Http(_) => "HTTP error".to_string(),
-            Self::Keyring(_) => credential_access_message().to_string(),
+            Self::Credential(_) => credential_access_message().to_string(),
             Self::Embed(_) => "Embedding error".to_string(),
             Self::Message(s) => s.clone(),
         }
@@ -62,7 +62,7 @@ impl Serialize for AppError {
 }
 
 fn credential_access_message() -> &'static str {
-    "无法访问系统凭据管理器，请解锁系统钥匙串，或在设置中重新保存对应供应商的 API Key。"
+    "无法访问本地加密凭据，请在 Iris 中重新输入并保存对应供应商的 API Key。"
 }
 
 fn redacted_log_detail(detail: &str) -> String {
@@ -85,8 +85,8 @@ pub fn log_error(error: &AppError) {
         AppError::Db(e) => tracing::error!(kind = "db", detail = %e, "Database error"),
         AppError::Json(e) => tracing::error!(kind = "json", detail = %e, "JSON error"),
         AppError::Http(e) => tracing::error!(kind = "http", detail = %e, "HTTP error"),
-        AppError::Keyring(e) => {
-            tracing::error!(kind = "keyring", detail = %e, "Keyring error")
+        AppError::Credential(s) => {
+            tracing::error!(kind = "credential", detail = %redacted_log_detail(s), "Credential error")
         }
         AppError::Embed(s) => {
             tracing::error!(kind = "embed", detail = %redacted_log_detail(s), "Embedding error")
@@ -149,12 +149,10 @@ mod tests {
     }
 
     #[test]
-    fn keyring_error_serializes_as_actionable_credential_message() {
-        let err = AppError::Keyring(keyring::Error::NoStorageAccess(Box::new(
-            std::io::Error::new(std::io::ErrorKind::PermissionDenied, "locked"),
-        )));
+    fn credential_error_serializes_as_actionable_message() {
+        let err = AppError::Credential("locked local credential store".into());
         let serialized = serde_json::to_string(&err).unwrap();
-        assert!(serialized.contains("系统凭据管理器"));
+        assert!(serialized.contains("本地加密凭据"));
         assert!(serialized.contains("API Key"));
         assert!(!serialized.contains("locked"));
     }

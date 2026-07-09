@@ -47,20 +47,13 @@ describe("AI hang/stuck root-cause fixes contract", () => {
   });
 
   describe("Fix 4: ordinary streaming abort stays in the composer", () => {
-    it("AssistantProcessStatusBar does not treat streaming alone as active", () => {
-      const s = read("src/components/ai/AssistantProcessStatusBar.tsx");
-      // Ordinary streaming already has the thinking bubble, composer stop
-      // button, and status bar footer; this strip must not duplicate them.
-      expect(s).toContain(
-        'const terminalError = hasError || agentTask?.status === "failed_safe"',
-      );
-      expect(s).toContain("const active = researchRunning || terminalError");
-      expect(s).not.toContain("function isActiveStatus");
-      expect(s).not.toContain("longRunning");
-      expect(s).not.toContain(
-        "\u4ecd\u5728\u5904\u7406\uff0c\u53ef\u7ee7\u7eed\u7b49\u5f85\u6216\u4e2d\u6b62",
-      );
-      expect(s).not.toMatch(/const active[\s\S]*\|\|\s*streaming[\s\S]*;/);
+    it("assistant composer dock does not mount a footer status strip", () => {
+      const s = read("src/components/ai/AssistantComposerDock.tsx");
+
+      expect(s).not.toContain("AssistantProcessStatusBar");
+      expect(s).not.toContain("assistant-process-status");
+      expect(s).not.toContain("activityHint=");
+      expect(s).not.toContain("onAbort=");
     });
 
     it("AiComposer keeps the streaming stop button", () => {
@@ -162,6 +155,27 @@ describe("AI hang/stuck root-cause fixes contract", () => {
       expect(s).toContain("stream_error_event(");
       expect(s).toContain("final_error");
       expect(s).toContain('"final": final_error');
+    });
+
+    it("stream body read failures record safe diagnostics before surfacing a friendly error", () => {
+      const s = read("src-tauri/src/ai_runtime/model_gateway/streaming.rs");
+
+      expect(s).toContain("StreamReadFailureDiagnostic");
+      expect(s).toContain('"event": "stream_body_read_failed"');
+      expect(s).toContain("content_encoding");
+      expect(s).toContain("transfer_encoding");
+      expect(s).toContain("chunk_count");
+      expect(s).toContain("byte_count");
+      expect(s).toContain("sse_line_count");
+      expect(s).toContain("saw_done");
+      expect(s).toContain("visible_partial");
+      expect(s).toContain("StreamReadErrorDiagnostic::from_reqwest");
+      expect(s).toContain("is_timeout");
+      expect(s).toContain("is_body");
+      expect(s).toContain("is_connect");
+      expect(s).toContain("is_decode");
+      expect(s).toContain("stream body read failed");
+      expect(s).toContain("模型流式连接中断，请稍后重试或切换模型。");
     });
   });
 

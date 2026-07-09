@@ -144,6 +144,7 @@ pub async fn llm_generate_stream(
     db: &Database,
     params: LlmGenerateParams,
 ) -> AppResult<String> {
+    let _ = db;
     let request_id = Uuid::new_v4().to_string();
     let abort_flag = Arc::new(Mutex::new(false));
     {
@@ -155,7 +156,7 @@ pub async fn llm_generate_stream(
     if let Some(url) = params.custom_base_url.as_deref() {
         crate::security::ipc_policy::validate_llm_base_url(url)?;
     }
-    let api_key = credentials::get_api_key(db, &credential_service(&params.provider))?;
+    let api_key = credentials::get_runtime_secret(&credential_service(&params.provider))?;
     let base = api_base(&params.provider, params.custom_base_url.as_deref());
     let model = resolve_model(&params.provider, params.model.clone());
 

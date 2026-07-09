@@ -2472,26 +2472,30 @@ fn provider_credential_diagnostic_checks(
             continue;
         };
         let optional = provider_credential_binding_optional(&binding, &service);
-        let configured = crate::credentials::api_key_configured(db, &service)?;
-        if configured {
-            checks.push(provider_diagnostic_check(
-                "credential",
-                true,
-                &format!("{label} Key 已绑定：{service}"),
-            ));
-        } else if optional {
-            checks.push(provider_diagnostic_check(
-                "credential",
-                true,
-                &format!("{label} 可选凭据未绑定，使用匿名模式：{service}"),
-            ));
-        } else {
-            checks.push(provider_diagnostic_check(
-                "credential",
-                false,
-                &format!("{label} 必填凭据缺失：{service}"),
-            ));
-            all_required_credentials_available = false;
+        let configured = crate::credentials::credential_available(&service)?;
+        match configured {
+            true => {
+                checks.push(provider_diagnostic_check(
+                    "credential",
+                    true,
+                    &format!("{label} Key 已绑定：{service}"),
+                ));
+            }
+            false if optional => {
+                checks.push(provider_diagnostic_check(
+                    "credential",
+                    true,
+                    &format!("{label} 可选凭据未绑定，使用匿名模式：{service}"),
+                ));
+            }
+            false => {
+                checks.push(provider_diagnostic_check(
+                    "credential",
+                    false,
+                    &format!("{label} 必填凭据缺失：{service}"),
+                ));
+                all_required_credentials_available = false;
+            }
         }
     }
     Ok((checks, all_required_credentials_available))

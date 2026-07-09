@@ -559,7 +559,7 @@ fn reversible_by(atom: AgentPermissionAtom) -> String {
         | AgentPermissionAtom::VaultRenameMove
         | AgentPermissionAtom::VaultVersioning => "version history".into(),
         AgentPermissionAtom::VaultDeleteToTrash => "recycle bin restore".into(),
-        AgentPermissionAtom::SecretCreateUpdate => "system credential manager".into(),
+        AgentPermissionAtom::SecretCreateUpdate => "local encrypted credentials".into(),
         _ => "permission settings".into(),
     }
 }

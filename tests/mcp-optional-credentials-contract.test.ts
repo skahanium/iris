@@ -29,7 +29,8 @@ describe("MCP optional credential contract", () => {
     expect(card).toContain("本次保存会更新 Key");
     expect(diagnostics).toContain("Key 已绑定");
     expect(diagnostics).toContain("可选凭据未绑定，使用匿名模式");
-    expect(runtime).toContain("凭据标记存在但系统凭据不可读取");
+    expect(runtime).toContain("credential_unreadable");
+    expect(runtime).toContain("系统凭据不可读取");
     expect(diagnostics).toContain("auth header present");
   });
 });

@@ -37,6 +37,7 @@ import type {
   FileListItem,
   ClassifiedFileEntry,
   ClassifiedStatus,
+  CredentialStatus,
   FileReadResult,
   FileSignatureResult,
   DocumentOpenScopeResult,
@@ -485,8 +486,12 @@ export async function llmConfigApplyDeepseekDefaults(): Promise<LlmRoutingConfig
 
 export async function llmConfigDeleteProvider(
   providerId: string,
+  deleteCredential = false,
 ): Promise<LlmRoutingConfig> {
-  return invoke<LlmRoutingConfig>("llm_config_delete_provider", { providerId });
+  return invoke<LlmRoutingConfig>("llm_config_delete_provider", {
+    providerId,
+    deleteCredential,
+  });
 }
 
 export async function connectivityStatus(
@@ -498,23 +503,32 @@ export async function connectivityStatus(
 export async function llmConfigTest(
   providerId: string,
   model?: string,
+  apiKeyOverride?: string,
 ): Promise<LlmConfigTestResult> {
-  return invoke<LlmConfigTestResult>("llm_config_test", { providerId, model });
+  return invoke<LlmConfigTestResult>("llm_config_test", {
+    providerId,
+    model,
+    apiKeyOverride,
+  });
 }
 
 export async function llmConfigTestProvider(
   providerId: string,
+  apiKeyOverride?: string,
 ): Promise<LlmConfigTestResult> {
   return invoke<LlmConfigTestResult>("llm_config_test_provider", {
     providerId,
+    apiKeyOverride,
   });
 }
 
 export async function llmModelRegistryRefresh(
   providerId: string,
+  apiKeyOverride?: string,
 ): Promise<LlmModelRegistryRefreshResult> {
   return invoke<LlmModelRegistryRefreshResult>("llm_model_registry_refresh", {
     providerId,
+    apiKeyOverride,
   });
 }
 
@@ -522,11 +536,13 @@ export async function llmModelValidate(
   providerId: string,
   modelId: string,
   kind: ModelValidationKind = "text",
+  apiKeyOverride?: string,
 ): Promise<LlmConfigTestResult> {
   return invoke<LlmConfigTestResult>("llm_model_validate", {
     providerId,
     modelId,
     kind,
+    apiKeyOverride,
   });
 }
 
@@ -541,16 +557,24 @@ export async function llmModelConfirmCapability(
 export async function credentialSet(
   service: string,
   value: string,
-): Promise<void> {
-  return invoke("credential_set", { service, value });
+): Promise<CredentialStatus> {
+  return invoke<CredentialStatus>("credential_set", { service, value });
 }
 
 export async function credentialHas(service: string): Promise<boolean> {
   return invoke<boolean>("credential_has", { service });
 }
 
-export async function credentialDelete(service: string): Promise<void> {
-  return invoke("credential_delete", { service });
+export async function credentialStatus(
+  service: string,
+): Promise<CredentialStatus> {
+  return invoke<CredentialStatus>("credential_status", { service });
+}
+
+export async function credentialDelete(
+  service: string,
+): Promise<CredentialStatus> {
+  return invoke<CredentialStatus>("credential_delete", { service });
 }
 
 export async function credentialUnlockSession(): Promise<void> {
@@ -642,17 +666,12 @@ export async function listenHarnessTrace(
   );
 }
 
-export interface AiThinkingEvent {
-  request_id: string;
-  round: number;
-  content: string;
-}
-
 export async function listenAiThinking(
-  handler: (payload: AiThinkingEvent) => void,
+  handler: (payload: import("@/types/ipc").AiThinkingEvent) => void,
 ): Promise<() => void> {
-  return listen<AiThinkingEvent>(IPC_EVENTS.AI_THINKING, (e) =>
-    handler(e.payload),
+  return listen<import("@/types/ipc").AiThinkingEvent>(
+    IPC_EVENTS.AI_THINKING,
+    (e) => handler(e.payload),
   );
 }
 

@@ -43,8 +43,8 @@ fn cache_cas_key(key: [u8; KEY_LEN]) -> AppResult<()> {
     Ok(())
 }
 
-/// Get or generate the CAS encryption key from the OS credential store.
-/// The key is derived once on first use and persisted to the keychain.
+/// Get or generate the CAS encryption key from Iris' local encrypted credential store.
+/// The key is derived once on first use and persisted without using OS keychain prompts.
 pub fn get_or_create_cas_key() -> AppResult<[u8; KEY_LEN]> {
     if let Some(cached) = cache_lock()?.as_ref() {
         return Ok(cached.key);

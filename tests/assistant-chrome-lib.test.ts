@@ -10,14 +10,16 @@ import {
 } from "@/lib/assistant-chrome";
 
 describe("assistant chrome helpers", () => {
-  it("prefers activityHint over tool name when streaming", () => {
-    const label = resolveToolActivityLabel({
+  it("buildAssistantChromeSnapshot keeps process hints out of the bottom status bar", () => {
+    const snap = buildAssistantChromeSnapshot({
+      sessionTokenUsage: null,
       activityHint: "正在检索知识库与本地笔记…",
       streaming: true,
       messages: [],
       harnessPhaseLabel: null,
+      packets: [],
     });
-    expect(label).toBe("正在检索知识库与本地笔记…");
+    expect(snap.toolActivityLabel).toBeNull();
   });
 
   it("uses pending tool display name when no hint", () => {
@@ -123,10 +125,7 @@ describe("assistant chrome helpers", () => {
       ...left,
       sessionTokenUsage: { ...left.sessionTokenUsage! },
     };
-    const changed = {
-      ...left,
-      toolActivityLabel: "正在生成回答",
-    };
+    const changed = { ...left, evidenceCount: left.evidenceCount + 1 };
 
     expect(assistantChromeSnapshotsEqual(left, same)).toBe(true);
     expect(assistantChromeSnapshotsEqual(left, changed)).toBe(false);

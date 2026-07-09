@@ -14,7 +14,7 @@ import { isTauri } from "@tauri-apps/api/core";
 import { invokeErrorMessage, llmCredentialService } from "@/lib/credentials";
 import {
   credentialDelete,
-  credentialHas,
+  credentialStatus,
   credentialSet,
   llmConfigDeleteProvider,
   llmConfigGet,
@@ -672,7 +672,9 @@ export function LlmRoutingSection({ open }: LlmRoutingSectionProps) {
       await Promise.all(
         providerIds.map(async (id) => {
           try {
-            configured[id] = await credentialHas(llmCredentialService(id));
+            configured[id] = (
+              await credentialStatus(llmCredentialService(id))
+            ).configured;
           } catch (e) {
             console.warn(`[LlmRouting] credential check failed for ${id}:`, e);
             configured[id] = false;
@@ -951,25 +953,44 @@ export function LlmRoutingSection({ open }: LlmRoutingSectionProps) {
     return id;
   };
 
-  const saveKey = async (providerId: string) => {
-    const value = keyInputsRef.current[providerId]?.trim();
-    if (!value) return;
-    const service = llmCredentialService(providerId);
+  const saveProviderKeyValue = async (
+    providerId: string,
+    value: string,
+    options: { silent?: boolean } = {},
+  ) => {
+    const trimmed = value.trim();
+    if (!trimmed) return false;
     const label = providerName(providerId);
 
     keyStatusEpochRef.current += 1;
+    const persisted = await persistProviderConfig(providerId);
+    if (!persisted) return false;
+    const status = await credentialSet(
+      llmCredentialService(providerId),
+      trimmed,
+    );
+    setKeyInputTouch((n) => n + 1);
+    setKeyConfigured((prev) => ({
+      ...prev,
+      [providerId]: status.configured,
+    }));
+    setLoadError(null);
+    if (!options.silent) {
+      setMessage(`${label} 已添加，Key 已保存到本地加密凭据。`);
+    }
+    notifyLlmConfigChanged();
+    return status.configured;
+  };
+
+  const saveKey = async (providerId: string) => {
+    const value = keyInputsRef.current[providerId]?.trim();
+    if (!value) return;
+    const label = providerName(providerId);
+
     setKeySaving(providerId);
     setMessage(null);
     try {
-      const persisted = await persistProviderConfig(providerId);
-      if (!persisted) return;
-      await credentialSet(service, value);
-      keyInputsRef.current[providerId] = "";
-      setKeyInputTouch((n) => n + 1);
-      setKeyConfigured((prev) => ({ ...prev, [providerId]: true }));
-      setLoadError(null);
-      setMessage(`${label} 已添加，Key 已保存到系统凭据管理器。`);
-      notifyLlmConfigChanged();
+      await saveProviderKeyValue(providerId, value);
     } catch (err) {
       setMessage(`保存 ${label} Key 失败：${invokeErrorMessage(err)}`);
     } finally {
@@ -977,12 +998,35 @@ export function LlmRoutingSection({ open }: LlmRoutingSectionProps) {
     }
   };
 
+  const ensureProviderKeySavedForProbe = async (
+    providerId: string,
+    apiKeyOverride: string | undefined,
+  ) => {
+    const typedKey = apiKeyOverride?.trim();
+    if (typedKey) {
+      try {
+        return await saveProviderKeyValue(providerId, typedKey, {
+          silent: true,
+        });
+      } catch (err) {
+        setMessage(
+          `保存 ${providerName(providerId)} Key 失败：${invokeErrorMessage(err)}`,
+        );
+        return false;
+      }
+    }
+    return persistProviderConfig(providerId);
+  };
+
   const clearKey = async (providerId: string) => {
     const label = providerName(providerId);
     keyStatusEpochRef.current += 1;
     try {
-      await credentialDelete(llmCredentialService(providerId));
-      setKeyConfigured((prev) => ({ ...prev, [providerId]: false }));
+      const status = await credentialDelete(llmCredentialService(providerId));
+      setKeyConfigured((prev) => ({
+        ...prev,
+        [providerId]: status.configured,
+      }));
       setLoadError(null);
       setMessage(`${label} Key 已清除`);
       notifyLlmConfigChanged();
@@ -1239,7 +1283,10 @@ export function LlmRoutingSection({ open }: LlmRoutingSectionProps) {
   })();
 
   const testProvider = async (provider: VisibleProvider) => {
-    if (!(await persistProviderConfig(provider.id))) return;
+    const apiKeyOverride = keyInputsRef.current[provider.id]?.trim();
+    if (!(await ensureProviderKeySavedForProbe(provider.id, apiKeyOverride))) {
+      return;
+    }
     setTesting(provider.id);
     setProviderResults((prev) => {
       const next = { ...prev };
@@ -1247,7 +1294,7 @@ export function LlmRoutingSection({ open }: LlmRoutingSectionProps) {
       return next;
     });
     try {
-      const result = await llmConfigTestProvider(provider.id);
+      const result = await llmConfigTestProvider(provider.id, apiKeyOverride);
       setLoadError(null);
       setProviderResults((prev) => ({ ...prev, [provider.id]: result }));
     } catch (err) {
@@ -1273,7 +1320,7 @@ export function LlmRoutingSection({ open }: LlmRoutingSectionProps) {
     const confirmed = confirm(
       "Delete " +
         provider.name +
-        "? This removes its provider configuration, enabled models, model validation rows, and credential marker. Built-in providers can be added again later.",
+        "? This removes its provider configuration, enabled models, and model validation rows. The stored API Key is kept unless you clear it separately.",
     );
     if (!confirmed || !data) return;
     setMessage(null);
@@ -1304,6 +1351,7 @@ export function LlmRoutingSection({ open }: LlmRoutingSectionProps) {
         return next;
       });
       setKeyConfigured((prev) => {
+        if (!isCustomProviderId(provider.id)) return prev;
         const next = { ...prev };
         delete next[provider.id];
         return next;
@@ -1329,10 +1377,13 @@ export function LlmRoutingSection({ open }: LlmRoutingSectionProps) {
     }
   };
   const refreshProviderModels = async (provider: VisibleProvider) => {
-    if (!(await persistProviderConfig(provider.id))) return;
+    const apiKeyOverride = keyInputsRef.current[provider.id]?.trim();
+    if (!(await ensureProviderKeySavedForProbe(provider.id, apiKeyOverride))) {
+      return;
+    }
     setRefreshingProvider(provider.id);
     try {
-      const result = await llmModelRegistryRefresh(provider.id);
+      const result = await llmModelRegistryRefresh(provider.id, apiKeyOverride);
       setLoadError(null);
       setMessage(result.message);
       await load({ preserveRouting: true });
@@ -1348,7 +1399,8 @@ export function LlmRoutingSection({ open }: LlmRoutingSectionProps) {
     model: EnabledProviderModel,
   ) => {
     const key = `${provider.id}:${model.id}`;
-    if (!(await persistProviderConfig(provider.id))) {
+    const apiKeyOverride = keyInputsRef.current[provider.id]?.trim();
+    if (!(await ensureProviderKeySavedForProbe(provider.id, apiKeyOverride))) {
       setTestResults((prev) => ({
         ...prev,
         [key]: {
@@ -1365,7 +1417,12 @@ export function LlmRoutingSection({ open }: LlmRoutingSectionProps) {
       return next;
     });
     try {
-      const text = await llmModelValidate(provider.id, model.id, "text");
+      const text = await llmModelValidate(
+        provider.id,
+        model.id,
+        "text",
+        apiKeyOverride,
+      );
       if (!text.ok) {
         setTestResults((prev) => ({
           ...prev,
@@ -1374,7 +1431,12 @@ export function LlmRoutingSection({ open }: LlmRoutingSectionProps) {
         return;
       }
 
-      const vision = await llmModelValidate(provider.id, model.id, "vision");
+      const vision = await llmModelValidate(
+        provider.id,
+        model.id,
+        "vision",
+        apiKeyOverride,
+      );
       const reasoningFromValidation = text.message.includes("推理：")
         ? text.message.slice(text.message.indexOf("推理："))
         : reasoningCapabilitySummary(
@@ -1564,6 +1626,10 @@ export function LlmRoutingSection({ open }: LlmRoutingSectionProps) {
                       {keyConfigured[provider.id]
                         ? "Key 已配置"
                         : "需要配置 Key"}
+                    </p>
+                    <p className="text-[11px] text-muted-foreground">
+                      检查、刷新、验证只使用当前输入框
+                      Key；填写后会先保存再探测。
                     </p>
                     <div className="flex flex-wrap items-center gap-2">
                       <Button

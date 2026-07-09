@@ -54,7 +54,7 @@ export const StatusBar = memo(function StatusBar({
   unsaved = false,
   characterCount,
   readingMinutes,
-  aiStatus,
+  aiStatus: _aiStatus,
   editorZoom = 1,
   onEditorZoomIn,
   onEditorZoomOut,
@@ -81,11 +81,9 @@ export const StatusBar = memo(function StatusBar({
   const trimmedTitle = documentTitle?.trim();
   const label = trimmedTitle || (path ? "无标题" : "未打开文件");
 
-  const toolLabel = assistantChrome?.toolActivityLabel?.trim() ?? null;
-  const rawStatusLine = toolLabel || aiStatus;
-  const safeStatusLine = isClassifiedStatusLine(rawStatusLine)
-    ? ""
-    : rawStatusLine;
+  const rawStatusLine: string | null = null;
+  const safeStatusLine =
+    rawStatusLine && isClassifiedStatusLine(rawStatusLine) ? "" : rawStatusLine;
   const statusTitle = [safeStatusLine].filter(Boolean).join(" · ") || undefined;
 
   return (

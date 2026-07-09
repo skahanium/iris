@@ -10,6 +10,7 @@ import { LlmRoutingSection } from "@/components/settings/LlmRoutingSection";
 const ipcMocks = vi.hoisted(() => ({
   credentialDelete: vi.fn(),
   credentialHas: vi.fn(),
+  credentialStatus: vi.fn(),
   credentialSet: vi.fn(),
   llmConfigDeleteProvider: vi.fn(),
   llmConfigGet: vi.fn(),
@@ -78,6 +79,12 @@ describe("production TrustedHTML crash regression", () => {
     });
     vi.clearAllMocks();
     ipcMocks.credentialHas.mockResolvedValue(false);
+    ipcMocks.credentialStatus.mockResolvedValue({
+      service: "iris.llm.deepseek",
+      state: "missing",
+      configured: false,
+      checkedAt: "2026-07-08T00:00:00Z",
+    });
     ipcMocks.llmConfigGet.mockResolvedValue({
       routing,
       providers,

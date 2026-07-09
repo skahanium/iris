@@ -6,21 +6,15 @@ import type {
   SetStateAction,
 } from "react";
 
-import { AssistantProcessStatusBar } from "@/components/ai/AssistantProcessStatusBar";
-import type { ResearchProgressData } from "@/components/ai/AssistantProcessStatusBar";
 import { AiComposer } from "@/components/ui/ai-composer";
 import type { MentionCandidate } from "@/lib/ai-context-scope";
-import type { AgentTaskDto } from "@/types/ipc";
 
 import type { ImageAttachment } from "./AiMessageList";
 import { AiComposerContextMenu } from "./AiComposerContextMenu";
 import { AiMentionPopover } from "./AiMentionPopover";
 
 interface AssistantComposerDockProps {
-  activityHint: string | null;
-  agentTask: AgentTaskDto | null;
   composerDisabled: boolean;
-  hasError: boolean;
   images: ImageAttachment[];
   input: string;
   mentionCandidates: MentionCandidate[];
@@ -28,11 +22,8 @@ interface AssistantComposerDockProps {
   mentionNavDeltaRef: MutableRefObject<1 | -1 | 0>;
   mentionOpen: boolean;
   mentionQuery: string;
-  researchProgress: ResearchProgressData | null;
-  researchRunning: boolean;
   streaming: boolean;
   textareaRef: RefObject<HTMLTextAreaElement | null>;
-  onAbort: () => void;
   onComposerKeyDown: (e: KeyboardEvent<HTMLTextAreaElement>) => void;
   onImagesChange: Dispatch<SetStateAction<ImageAttachment[]>>;
   onMentionHighlight: (index: number) => void;
@@ -44,10 +35,7 @@ interface AssistantComposerDockProps {
 }
 
 export function AssistantComposerDock({
-  activityHint,
-  agentTask,
   composerDisabled,
-  hasError,
   images,
   input,
   mentionCandidates,
@@ -55,11 +43,8 @@ export function AssistantComposerDock({
   mentionNavDeltaRef,
   mentionOpen,
   mentionQuery,
-  researchProgress,
-  researchRunning,
   streaming,
   textareaRef,
-  onAbort,
   onComposerKeyDown,
   onImagesChange,
   onMentionHighlight,
@@ -71,15 +56,6 @@ export function AssistantComposerDock({
 }: AssistantComposerDockProps) {
   return (
     <div data-testid="ai-input">
-      <AssistantProcessStatusBar
-        activityHint={activityHint}
-        agentTask={agentTask}
-        hasError={hasError}
-        researchProgress={researchProgress}
-        researchRunning={researchRunning}
-        streaming={streaming}
-        onAbort={onAbort}
-      />
       <AiComposerContextMenu
         textareaRef={textareaRef}
         value={input}

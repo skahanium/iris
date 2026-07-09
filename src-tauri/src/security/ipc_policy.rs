@@ -13,16 +13,36 @@ const ALLOWED_SETTINGS_KEYS: &[&str] = &[
     "llm_usage_last",
 ];
 
-/// Validate credential service id before keyring access.
+/// Validate credential service id before local encrypted credential access.
 pub fn validate_credential_service(service: &str) -> AppResult<()> {
-    let canonical = if service.contains('/') {
-        service.replace('/', ".")
-    } else {
-        service.to_string()
-    };
-    if canonical.starts_with("iris.llm.") || canonical.starts_with("iris.mcp.") {
-        return Ok(());
+    let service = service.trim();
+    let suffix = service
+        .strip_prefix("iris.llm.")
+        .or_else(|| service.strip_prefix("iris.mcp."));
+
+    if let Some(suffix) = suffix {
+        if suffix.is_empty()
+            || suffix.starts_with('.')
+            || suffix.ends_with('.')
+            || suffix.contains("..")
+        {
+            return Err(AppError::msg(format!(
+                "不允许的凭据服务名: {service}（服务后缀不能为空）"
+            )));
+        }
+        if suffix.bytes().all(|byte| {
+            matches!(
+                byte,
+                b'a'..=b'z' | b'0'..=b'9' | b'.' | b'_' | b'-'
+            )
+        }) {
+            return Ok(());
+        }
+        return Err(AppError::msg(format!(
+            "不允许的凭据服务名: {service}（仅允许小写字母、数字、点、下划线和短横线）"
+        )));
     }
+
     Err(AppError::msg(format!(
         "不允许的凭据服务名: {service}（仅支持 iris.llm.* 与 iris.mcp.*）"
     )))
@@ -67,6 +87,18 @@ mod tests {
         let legacy_vendor_search = format!("iris.{}{}", "mini", "max");
         assert!(validate_credential_service(&legacy_vendor_search).is_err());
         assert!(validate_credential_service("evil.service").is_err());
+    }
+
+    #[test]
+    fn credential_service_accepts_only_canonical_llm_and_mcp_ids() {
+        validate_credential_service("iris.llm.deepseek").unwrap();
+        validate_credential_service("iris.llm.custom_2").unwrap();
+        validate_credential_service("iris.mcp.anysearch").unwrap();
+
+        assert!(validate_credential_service("iris/llm/deepseek").is_err());
+        assert!(validate_credential_service("iris.llm.").is_err());
+        assert!(validate_credential_service("iris.llm.deepseek secret").is_err());
+        assert!(validate_credential_service("evil.llm.deepseek").is_err());
     }
 
     #[test]

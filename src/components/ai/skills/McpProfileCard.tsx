@@ -875,7 +875,7 @@ export function McpProfileCard({
           <div>
             <p className="text-xs font-medium text-foreground">系统凭据引用</p>
             <p className="mt-0.5 text-[11px] text-muted-foreground">
-              API Key 只写入系统凭据管理器；Provider
+              API Key 只写入本地加密凭据；Provider
               配置只保存引用名、请求头/环境变量名和 Bearer 方案。 当前状态：
               {credentialState}。
             </p>

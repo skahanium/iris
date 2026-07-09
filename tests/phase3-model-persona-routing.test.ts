@@ -77,8 +77,11 @@ describe("Phase3 model and persona routing contract", () => {
     expect(section.indexOf("供应商配置")).toBeLessThan(
       section.indexOf("能力槽模型路由"),
     );
-    expect(section).toContain("llmConfigTestProvider(provider.id)");
-    expect(section).toContain("llmModelValidate(provider.id, model.id");
+    expect(section).toContain(
+      "llmConfigTestProvider(provider.id, apiKeyOverride)",
+    );
+    expect(section).toContain("llmModelValidate(");
+    expect(section).toContain("apiKeyOverride");
     expect(section).not.toContain("llmConfigTest(provider.id, model.id)");
     expect(section).not.toContain("llmConfigTest(provider.id, defaultModel)");
     expect(section).not.toContain("catalogModelsForProvider");
@@ -96,9 +99,8 @@ describe("Phase3 model and persona routing contract", () => {
     expect(ipc).toContain("model?: string");
     expect(ipc).toContain("llm_config_test");
     expect(rust).toContain("model: Option<String>");
-    expect(rust).toContain(
-      "resolve_for_provider(&state.db, &provider_id, model.as_deref())",
-    );
+    expect(rust).toContain("api_key_override: Option<String>");
+    expect(rust).toContain("resolve_for_provider_without_secret");
   });
 
   it("uses current MiMo v2.5 catalog labels instead of the old experimental placeholder", () => {

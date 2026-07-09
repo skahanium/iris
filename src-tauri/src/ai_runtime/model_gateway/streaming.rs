@@ -1,8 +1,10 @@
 use reqwest::{
-    header::{ACCEPT, ACCEPT_ENCODING},
+    header::{ACCEPT, ACCEPT_ENCODING, CONTENT_ENCODING, TRANSFER_ENCODING},
     Client,
 };
 use serde::{Deserialize, Serialize};
+use std::error::Error as StdError;
+use std::time::Instant;
 use tauri::{AppHandle, Emitter};
 
 use crate::ai_types::{EndpointFamily, FunctionCall, TokenUsage, ToolCall};
@@ -43,25 +45,37 @@ pub enum StreamEventType {
 pub enum StreamSurface {
     InternalCandidate,
     VisibleAnswer,
+    VisibleAnswerSanitized,
 }
 
 impl StreamSurface {
     fn wire(self) -> &'static str {
         match self {
             StreamSurface::InternalCandidate => "internal_candidate",
-            StreamSurface::VisibleAnswer => "visible_answer",
+            StreamSurface::VisibleAnswer | StreamSurface::VisibleAnswerSanitized => {
+                "visible_answer"
+            }
         }
     }
 
     fn candidate_kind(self) -> &'static str {
         match self {
             StreamSurface::InternalCandidate => "internal_candidate",
-            StreamSurface::VisibleAnswer => "visible_answer_candidate",
+            StreamSurface::VisibleAnswer | StreamSurface::VisibleAnswerSanitized => {
+                "visible_answer_candidate"
+            }
         }
     }
 
     fn is_visible(self) -> bool {
-        matches!(self, StreamSurface::VisibleAnswer)
+        matches!(
+            self,
+            StreamSurface::VisibleAnswer | StreamSurface::VisibleAnswerSanitized
+        )
+    }
+
+    fn sanitizes_visible_output(self) -> bool {
+        matches!(self, StreamSurface::VisibleAnswerSanitized)
     }
 }
 
@@ -249,6 +263,9 @@ fn normalize_tool_arguments(input_json: String) -> String {
 
 fn sanitize_stream_error_message(message: &str) -> String {
     let redacted = crate::ai_runtime::trace::redact_classified_leaks(message);
+    if redacted.starts_with("Stream read error:") {
+        return "模型流式连接中断，请稍后重试或切换模型。".to_string();
+    }
     if let Some((prefix, _)) = redacted.split_once("）：") {
         return format!("{prefix}）");
     }
@@ -257,6 +274,276 @@ fn sanitize_stream_error_message(message: &str) -> String {
         return redacted;
     }
     redacted.chars().take(MAX_ERROR_CHARS).collect::<String>() + "…"
+}
+
+fn endpoint_family_label(endpoint_family: EndpointFamily) -> &'static str {
+    match endpoint_family {
+        EndpointFamily::OpenAiCompatibleChatCompletions => "openai_compatible_chat_completions",
+        EndpointFamily::AnthropicMessages => "anthropic_messages",
+        EndpointFamily::ResponsesReserved => "responses_reserved",
+    }
+}
+
+fn redacted_error_detail(value: &str) -> serde_json::Value {
+    let redacted = crate::ai_runtime::trace::redact_classified_leaks(value);
+    let lower = value.to_ascii_lowercase();
+    let has_sensitive_marker = [
+        "sk-", "bearer ", "api_key", "apikey", "key=", "token=", "secret=",
+    ]
+    .iter()
+    .any(|marker| lower.contains(marker));
+    let detail = if has_sensitive_marker || redacted.contains("[REDACTED") {
+        None
+    } else if redacted.chars().count() > 240 {
+        Some(redacted.chars().take(240).collect::<String>() + "...")
+    } else {
+        Some(redacted.clone())
+    };
+
+    serde_json::json!({
+        "detail": detail,
+        "len": redacted.len(),
+        "hash": lifecycle_content_hash(&redacted),
+    })
+}
+
+#[derive(Debug, Clone)]
+struct StreamReadErrorDiagnostic {
+    is_timeout: bool,
+    is_body: bool,
+    is_connect: bool,
+    is_decode: bool,
+    source_chain: Vec<String>,
+}
+
+impl StreamReadErrorDiagnostic {
+    fn from_reqwest(error: &reqwest::Error) -> Self {
+        let mut source_chain = vec![error.to_string()];
+        let mut source = error.source();
+        while let Some(error) = source {
+            source_chain.push(error.to_string());
+            if source_chain.len() >= 6 {
+                break;
+            }
+            source = error.source();
+        }
+
+        Self {
+            is_timeout: error.is_timeout(),
+            is_body: error.is_body(),
+            is_connect: error.is_connect(),
+            is_decode: error.is_decode(),
+            source_chain,
+        }
+    }
+
+    fn to_safe_json(&self) -> serde_json::Value {
+        serde_json::json!({
+            "is_timeout": self.is_timeout,
+            "is_body": self.is_body,
+            "is_connect": self.is_connect,
+            "is_decode": self.is_decode,
+            "source_chain": self.source_chain.iter().map(|item| redacted_error_detail(item)).collect::<Vec<_>>(),
+        })
+    }
+}
+
+#[derive(Debug, Clone)]
+struct StreamReadFailureDiagnostic {
+    provider_id: String,
+    model: String,
+    endpoint_family: EndpointFamily,
+    http_version: String,
+    status: u16,
+    content_encoding: Option<String>,
+    transfer_encoding: Option<String>,
+    elapsed_ms: u128,
+    chunk_count: u64,
+    byte_count: u64,
+    sse_line_count: u64,
+    saw_done: bool,
+    visible_partial: bool,
+    error: StreamReadErrorDiagnostic,
+}
+
+impl StreamReadFailureDiagnostic {
+    fn to_safe_json(&self) -> serde_json::Value {
+        serde_json::json!({
+            "event": "stream_body_read_failed",
+            "provider": self.provider_id,
+            "model": self.model,
+            "endpoint_family": endpoint_family_label(self.endpoint_family),
+            "http_version": self.http_version,
+            "status": self.status,
+            "content_encoding": self.content_encoding,
+            "transfer_encoding": self.transfer_encoding,
+            "elapsed_ms": self.elapsed_ms,
+            "chunk_count": self.chunk_count,
+            "byte_count": self.byte_count,
+            "sse_line_count": self.sse_line_count,
+            "saw_done": self.saw_done,
+            "visible_partial": self.visible_partial,
+            "error": self.error.to_safe_json(),
+        })
+    }
+}
+
+#[derive(Default)]
+struct VisibleStreamSanitizer {
+    raw: String,
+    emitted: String,
+}
+
+impl VisibleStreamSanitizer {
+    fn new() -> Self {
+        Self::default()
+    }
+
+    fn sanitize_delta(&mut self, delta: &str, done: bool) -> String {
+        self.raw.push_str(delta);
+        let next_visible = sanitize_visible_stream_prefix(&self.raw, done);
+        if !next_visible.starts_with(&self.emitted) {
+            tracing::warn!(
+                emitted_len = self.emitted.len(),
+                next_len = next_visible.len(),
+                "visible stream sanitizer refused to retract emitted text"
+            );
+            return String::new();
+        }
+        let delta = next_visible[self.emitted.len()..].to_string();
+        self.emitted = next_visible;
+        delta
+    }
+
+    fn finish(&mut self) -> String {
+        let next_visible = sanitize_visible_stream_prefix(&self.raw, true);
+        if !next_visible.starts_with(&self.emitted) {
+            tracing::warn!(
+                emitted_len = self.emitted.len(),
+                next_len = next_visible.len(),
+                "visible stream sanitizer refused to retract emitted text on finish"
+            );
+            return String::new();
+        }
+        let delta = next_visible[self.emitted.len()..].to_string();
+        self.emitted = next_visible;
+        delta
+    }
+}
+
+fn sanitize_visible_stream_prefix(raw: &str, done: bool) -> String {
+    let without_reasoning = strip_reasoning_tags_for_stream(raw);
+    let without_meta = sanitize_meta_analysis_prefix_for_stream(&without_reasoning, done);
+    if done {
+        without_meta
+    } else {
+        withhold_partial_reasoning_open_suffix(&without_meta)
+    }
+}
+
+fn sanitize_meta_analysis_prefix_for_stream(text: &str, done: bool) -> String {
+    let trimmed = text.trim_start();
+    if !done && looks_like_partial_meta_analysis_start(trimmed) {
+        return String::new();
+    }
+    crate::ai_runtime::harness_support::sanitize_meta_analysis_prefix(text)
+}
+
+fn looks_like_partial_meta_analysis_start(text: &str) -> bool {
+    if text.trim().is_empty() {
+        return false;
+    }
+    let lower = text.to_ascii_lowercase();
+    const PREFIXES: [&str; 7] = [
+        "the user ",
+        "the user is ",
+        "the current task ",
+        "this is a ",
+        "i should ",
+        "i'll ",
+        "the persona ",
+    ];
+    PREFIXES
+        .iter()
+        .any(|prefix| prefix.starts_with(lower.as_str()))
+}
+
+fn strip_reasoning_tags_for_stream(content: &str) -> String {
+    let mut visible = String::new();
+    let mut cursor = 0usize;
+    while let Some(open) = find_next_reasoning_open_for_stream(content, cursor) {
+        visible.push_str(&content[cursor..open.start]);
+        let body_start = open.start + open.open_len;
+        if let Some(close_start) =
+            find_ascii_case_insensitive_for_stream(content, open.close_tag, body_start)
+        {
+            cursor = close_start + open.close_tag.len();
+        } else {
+            cursor = content.len();
+            break;
+        }
+    }
+    visible.push_str(&content[cursor..]);
+    visible
+}
+
+#[derive(Debug, Clone, Copy)]
+struct ReasoningOpenForStream {
+    start: usize,
+    open_len: usize,
+    close_tag: &'static str,
+}
+
+fn find_next_reasoning_open_for_stream(
+    content: &str,
+    from: usize,
+) -> Option<ReasoningOpenForStream> {
+    const TAGS: [(&str, &str); 3] = [
+        ("<thinking>", "</thinking>"),
+        ("<think>", "</think>"),
+        ("<reasoning>", "</reasoning>"),
+    ];
+    let mut best: Option<ReasoningOpenForStream> = None;
+    for (open, close) in TAGS {
+        if let Some(start) = find_ascii_case_insensitive_for_stream(content, open, from) {
+            if best.map_or(true, |candidate| start < candidate.start) {
+                best = Some(ReasoningOpenForStream {
+                    start,
+                    open_len: open.len(),
+                    close_tag: close,
+                });
+            }
+        }
+    }
+    best
+}
+
+fn find_ascii_case_insensitive_for_stream(
+    haystack: &str,
+    needle: &str,
+    from: usize,
+) -> Option<usize> {
+    let bytes = haystack.as_bytes();
+    let needle = needle.as_bytes();
+    if needle.is_empty() || bytes.len() < needle.len() || from > bytes.len() - needle.len() {
+        return None;
+    }
+    (from..=bytes.len() - needle.len())
+        .find(|&idx| bytes[idx..idx + needle.len()].eq_ignore_ascii_case(needle))
+}
+
+fn withhold_partial_reasoning_open_suffix(visible: &str) -> String {
+    const OPEN_TAGS: [&str; 3] = ["<thinking>", "<think>", "<reasoning>"];
+    let lower = visible.to_ascii_lowercase();
+    let mut keep_len = visible.len();
+    for tag in OPEN_TAGS {
+        for prefix_len in 1..tag.len() {
+            if lower.ends_with(&tag[..prefix_len]) {
+                keep_len = keep_len.min(visible.len().saturating_sub(prefix_len));
+            }
+        }
+    }
+    visible[..keep_len].to_string()
 }
 
 fn stream_error_event(
@@ -320,6 +607,48 @@ fn finish_stream_with_error(
     } else {
         AppError::msg(sanitized)
     }
+}
+
+fn visible_token_delta(
+    visible_sanitizer: &mut Option<VisibleStreamSanitizer>,
+    delta: &str,
+) -> String {
+    if let Some(sanitizer) = visible_sanitizer.as_mut() {
+        sanitizer.sanitize_delta(delta, false)
+    } else {
+        delta.to_string()
+    }
+}
+
+fn visible_token_finish(visible_sanitizer: &mut Option<VisibleStreamSanitizer>) -> String {
+    if let Some(sanitizer) = visible_sanitizer.as_mut() {
+        sanitizer.finish()
+    } else {
+        String::new()
+    }
+}
+
+fn emit_visible_token_delta(
+    app_handle: &AppHandle,
+    request_id: &str,
+    token: String,
+    surface: StreamSurface,
+    classified: bool,
+    token_index: &mut u32,
+) -> AppResult<()> {
+    if token.is_empty() {
+        return Ok(());
+    }
+    let event = StreamEvent {
+        request_id: request_id.to_string(),
+        event_type: StreamEventType::Token,
+        data: StreamEventData::Token { token },
+        surface,
+        classified,
+    };
+    emit_stream_event(app_handle, &event, *token_index)?;
+    *token_index += 1;
+    Ok(())
 }
 
 /// Send a streaming request and emit events to frontend.
@@ -400,6 +729,7 @@ pub async fn send_streaming_request_with_meta_error_mode(
 
     let endpoint_family = request.provider.endpoint_family;
     let url = streaming_endpoint_url(request.provider.base_url.as_str(), endpoint_family);
+    let request_started_at = Instant::now();
 
     let mut body = build_llm_api_body(&request).map_err(|e| {
         finish_stream_with_error(
@@ -462,11 +792,31 @@ pub async fn send_streaming_request_with_meta_error_mode(
         ));
     }
 
+    let http_version = format!("{:?}", response.version());
+    let status = response.status().as_u16();
+    let content_encoding = response
+        .headers()
+        .get(CONTENT_ENCODING)
+        .and_then(|value| value.to_str().ok())
+        .map(str::to_string);
+    let transfer_encoding = response
+        .headers()
+        .get(TRANSFER_ENCODING)
+        .and_then(|value| value.to_str().ok())
+        .map(str::to_string);
+    let provider_id = request.provider.name.clone();
+    let model = request.provider.model.clone();
+
     let mut full_content = String::new();
     let mut full_reasoning = String::new();
     let mut usage = TokenUsage::default();
     let mut token_index: u32 = 0;
     let mut anthropic_state = AnthropicStreamState::default();
+    let mut visible_sanitizer = if surface.sanitizes_visible_output() {
+        Some(VisibleStreamSanitizer::new())
+    } else {
+        None
+    };
 
     // Incremental tool call accumulator: index -> (id, name, args_buf).
     // OpenAI streams tool calls as deltas: id+name arrive first, then
@@ -492,6 +842,10 @@ pub async fn send_streaming_request_with_meta_error_mode(
     use futures_util::StreamExt;
     let mut carry = String::new();
     let mut carry_truncated = false;
+    let mut chunk_count: u64 = 0;
+    let mut byte_count: u64 = 0;
+    let mut sse_line_count: u64 = 0;
+    let saw_done = false;
     const MAX_CARRY_BYTES: usize = 1_048_576;
     const ABORT_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(500);
 
@@ -535,6 +889,27 @@ pub async fn send_streaming_request_with_meta_error_mode(
         }
 
         let chunk = chunk_result.map_err(|e| {
+            let diagnostic = StreamReadFailureDiagnostic {
+                provider_id: provider_id.clone(),
+                model: model.clone(),
+                endpoint_family,
+                http_version: http_version.clone(),
+                status,
+                content_encoding: content_encoding.clone(),
+                transfer_encoding: transfer_encoding.clone(),
+                elapsed_ms: request_started_at.elapsed().as_millis(),
+                chunk_count,
+                byte_count,
+                sse_line_count,
+                saw_done,
+                visible_partial: has_visible_partial(surface, token_index),
+                error: StreamReadErrorDiagnostic::from_reqwest(&e),
+            };
+            tracing::warn!(
+                request_id = %request_id,
+                diagnostic = %diagnostic.to_safe_json(),
+                "stream body read failed"
+            );
             finish_stream_with_error(
                 app_handle,
                 request_id,
@@ -545,6 +920,8 @@ pub async fn send_streaming_request_with_meta_error_mode(
                 emit_error_event,
             )
         })?;
+        chunk_count = chunk_count.saturating_add(1);
+        byte_count = byte_count.saturating_add(chunk.len() as u64);
 
         let chunk_text = String::from_utf8_lossy(&chunk);
         if carry.len() + chunk_text.len() > MAX_CARRY_BYTES {
@@ -563,6 +940,7 @@ pub async fn send_streaming_request_with_meta_error_mode(
         while let Some(pos) = carry.find('\n') {
             let line: String = carry.drain(..=pos).collect();
             let line = line.trim_end_matches('\n').trim_end_matches('\r');
+            sse_line_count = sse_line_count.saturating_add(1);
 
             if !line.starts_with("data: ") {
                 continue;
@@ -570,6 +948,15 @@ pub async fn send_streaming_request_with_meta_error_mode(
 
             let data = &line[6..];
             if data == "[DONE]" {
+                let token = visible_token_finish(&mut visible_sanitizer);
+                emit_visible_token_delta(
+                    app_handle,
+                    request_id,
+                    token,
+                    surface,
+                    classified,
+                    &mut token_index,
+                )?;
                 let event = StreamEvent {
                     request_id: request_id.to_string(),
                     event_type: StreamEventType::Done,
@@ -600,17 +987,26 @@ pub async fn send_streaming_request_with_meta_error_mode(
                             emit_error_event,
                         )
                     })? {
-                        let event = StreamEvent {
-                            request_id: request_id.to_string(),
-                            event_type: StreamEventType::Token,
-                            data: StreamEventData::Token { token: delta },
+                        let token = visible_token_delta(&mut visible_sanitizer, &delta);
+                        emit_visible_token_delta(
+                            app_handle,
+                            request_id,
+                            token,
                             surface,
                             classified,
-                        };
-                        emit_stream_event(app_handle, &event, token_index)?;
-                        token_index += 1;
+                            &mut token_index,
+                        )?;
                     }
                     if json["type"].as_str() == Some("message_stop") {
+                        let token = visible_token_finish(&mut visible_sanitizer);
+                        emit_visible_token_delta(
+                            app_handle,
+                            request_id,
+                            token,
+                            surface,
+                            classified,
+                            &mut token_index,
+                        )?;
                         let event = StreamEvent {
                             request_id: request_id.to_string(),
                             event_type: StreamEventType::Done,
@@ -631,17 +1027,15 @@ pub async fn send_streaming_request_with_meta_error_mode(
                 // Process content delta
                 if let Some(delta) = json["choices"][0]["delta"]["content"].as_str() {
                     full_content.push_str(delta);
-                    let event = StreamEvent {
-                        request_id: request_id.to_string(),
-                        event_type: StreamEventType::Token,
-                        data: StreamEventData::Token {
-                            token: delta.to_string(),
-                        },
+                    let token = visible_token_delta(&mut visible_sanitizer, delta);
+                    emit_visible_token_delta(
+                        app_handle,
+                        request_id,
+                        token,
                         surface,
                         classified,
-                    };
-                    emit_stream_event(app_handle, &event, token_index)?;
-                    token_index += 1;
+                        &mut token_index,
+                    )?;
                 }
 
                 if let Some(reasoning) = json["choices"][0]["delta"]["reasoning_content"].as_str() {
@@ -699,8 +1093,26 @@ pub async fn send_streaming_request_with_meta_error_mode(
                                 })?
                             {
                                 full_content.push_str(delta.as_str());
+                                let token = visible_token_delta(&mut visible_sanitizer, &delta);
+                                emit_visible_token_delta(
+                                    app_handle,
+                                    request_id,
+                                    token,
+                                    surface,
+                                    classified,
+                                    &mut token_index,
+                                )?;
                             }
                             if json["type"].as_str() == Some("message_stop") {
+                                let token = visible_token_finish(&mut visible_sanitizer);
+                                emit_visible_token_delta(
+                                    app_handle,
+                                    request_id,
+                                    token,
+                                    surface,
+                                    classified,
+                                    &mut token_index,
+                                )?;
                                 let event = StreamEvent {
                                     request_id: request_id.to_string(),
                                     event_type: StreamEventType::Done,
@@ -718,6 +1130,15 @@ pub async fn send_streaming_request_with_meta_error_mode(
 
                         if let Some(delta) = json["choices"][0]["delta"]["content"].as_str() {
                             full_content.push_str(delta);
+                            let token = visible_token_delta(&mut visible_sanitizer, delta);
+                            emit_visible_token_delta(
+                                app_handle,
+                                request_id,
+                                token,
+                                surface,
+                                classified,
+                                &mut token_index,
+                            )?;
                         }
                         if let Some(tc_deltas) =
                             json["choices"][0]["delta"]["tool_calls"].as_array()
@@ -1086,5 +1507,96 @@ mod tests {
             StreamSurface::VisibleAnswer,
             0
         ));
+    }
+
+    #[test]
+    fn stream_body_failure_diagnostic_is_structured_and_redacted() {
+        let diagnostic = StreamReadFailureDiagnostic {
+            provider_id: "deepseek".into(),
+            model: "deepseek-v4-pro".into(),
+            endpoint_family: EndpointFamily::OpenAiCompatibleChatCompletions,
+            http_version: "HTTP/2.0".into(),
+            status: 200,
+            content_encoding: Some("identity".into()),
+            transfer_encoding: None,
+            elapsed_ms: 12_345,
+            chunk_count: 7,
+            byte_count: 4096,
+            sse_line_count: 12,
+            saw_done: false,
+            visible_partial: true,
+            error: StreamReadErrorDiagnostic {
+                is_timeout: false,
+                is_body: true,
+                is_connect: false,
+                is_decode: true,
+                source_chain: vec![
+                    "body error".into(),
+                    "secret sk-test-123456789012 request body should not appear".into(),
+                ],
+            },
+        };
+
+        let value = diagnostic.to_safe_json();
+        let rendered = value.to_string();
+
+        assert_eq!(value["provider"], "deepseek");
+        assert_eq!(value["model"], "deepseek-v4-pro");
+        assert_eq!(
+            value["endpoint_family"],
+            "openai_compatible_chat_completions"
+        );
+        assert_eq!(value["http_version"], "HTTP/2.0");
+        assert_eq!(value["status"], 200);
+        assert_eq!(value["content_encoding"], "identity");
+        assert_eq!(value["chunk_count"], 7);
+        assert_eq!(value["byte_count"], 4096);
+        assert_eq!(value["sse_line_count"], 12);
+        assert_eq!(value["saw_done"], false);
+        assert_eq!(value["visible_partial"], true);
+        assert_eq!(value["error"]["is_body"], true);
+        assert_eq!(value["error"]["is_decode"], true);
+        assert_eq!(value["error"]["source_chain"][0]["detail"], "body error");
+        assert!(rendered.contains("stream_body_read_failed"));
+        assert!(!rendered.contains("sk-test"));
+        assert!(!rendered.contains("request body"));
+    }
+
+    #[test]
+    fn visible_stream_sanitizer_holds_split_think_tag_until_safe_text() {
+        let mut sanitizer = VisibleStreamSanitizer::new();
+
+        assert_eq!(sanitizer.sanitize_delta("答复<thi", false), "答复");
+        assert_eq!(sanitizer.sanitize_delta("nk>hidden", false), "");
+        assert_eq!(
+            sanitizer.sanitize_delta("</think>正文开始", false),
+            "正文开始"
+        );
+        assert_eq!(sanitizer.finish(), "");
+    }
+
+    #[test]
+    fn visible_stream_sanitizer_suppresses_unclosed_reasoning_tail() {
+        let mut sanitizer = VisibleStreamSanitizer::new();
+
+        assert_eq!(
+            sanitizer.sanitize_delta("可以先看结论。", false),
+            "可以先看结论。"
+        );
+        assert_eq!(sanitizer.sanitize_delta("<reasoning>internal", false), "");
+        assert_eq!(sanitizer.finish(), "");
+    }
+
+    #[test]
+    fn sanitized_surface_is_visible_to_the_frontend() {
+        assert!(StreamSurface::VisibleAnswerSanitized.is_visible());
+        assert_eq!(
+            StreamSurface::VisibleAnswerSanitized.wire(),
+            "visible_answer"
+        );
+        assert_eq!(
+            StreamSurface::VisibleAnswerSanitized.candidate_kind(),
+            "visible_answer_candidate"
+        );
     }
 }

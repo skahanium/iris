@@ -1,11 +1,15 @@
-/** 系统凭据 ID，与 Rust credentials/keyring 保持一致。 */
+/** 本地加密凭据 ID，与 Rust credentials 模块保持一致。 */
 
 export function llmCredentialService(provider: string): string {
   return `iris.llm.${provider}`;
 }
 
+export function mcpCredentialService(provider: string): string {
+  return `iris.mcp.${provider}`;
+}
+
 const CREDENTIAL_ACCESS_MESSAGE =
-  "无法访问系统凭据管理器，请解锁系统钥匙串，或在设置中重新保存对应供应商的 API Key。";
+  "无法访问已保存的 API Key。请在 Iris 中重新输入并保存对应供应商的 API Key。";
 
 interface InvokeErrorPayload {
   code?: string;
@@ -23,7 +27,7 @@ function asInvokeErrorPayload(err: unknown): InvokeErrorPayload | null {
 
 function friendlyLlmError(raw: string, code?: string): string | null {
   const normalizedCode = code?.toLowerCase();
-  if (normalizedCode === "credential" || normalizedCode === "keyring") {
+  if (normalizedCode === "credential") {
     return CREDENTIAL_ACCESS_MESSAGE;
   }
 
@@ -41,7 +45,7 @@ function friendlyLlmError(raw: string, code?: string): string | null {
   if (lower.includes("401") || lower.includes("invalid_api_key")) {
     return "API Key 无效或未配置，请在设置中检查。";
   }
-  if (lower.includes("keyring error") || lower.includes("系统凭据管理器")) {
+  if (lower.includes("local credential") || lower.includes("本地加密凭据")) {
     return CREDENTIAL_ACCESS_MESSAGE;
   }
   return null;

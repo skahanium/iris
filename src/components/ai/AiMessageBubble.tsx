@@ -1,13 +1,16 @@
 import {
   useCallback,
   useDeferredValue,
+  useEffect,
   useMemo,
   memo,
+  useRef,
+  useState,
   type MouseEvent,
   type ReactNode,
 } from "react";
 
-import { FileText, Folder } from "lucide-react";
+import { ChevronDown, FileText, Folder } from "lucide-react";
 
 import { MarkdownErrorBoundary } from "@/components/ui/markdown-error-boundary";
 
@@ -20,6 +23,7 @@ import { cn } from "@/lib/utils";
 
 import { useStreamingContent } from "@/hooks/useStreamingContent";
 import { useMarkdownRenderWorker } from "@/hooks/useMarkdownRenderWorker";
+import type { AssistantProcessEvent } from "./AiMessageList";
 import type { MentionToken } from "@/lib/ai-context-scope";
 import { toTrustedHtml } from "@/lib/sanitize";
 
@@ -45,6 +49,9 @@ interface AiMessageBubbleProps {
 
   /** User-visible @ document/folder references, rendered outside message text. */
   mentions?: MentionToken[];
+
+  /** Runtime-only safe process events. Never persisted as message content. */
+  processEvents?: AssistantProcessEvent[];
 }
 
 const proseConversation =
@@ -111,6 +118,91 @@ function MentionMetadataRow({ mentions }: { mentions?: MentionToken[] }) {
           </span>
         ) : null}
       </span>
+    </div>
+  );
+}
+
+function formatProcessDuration(durationMs: number | null | undefined): string {
+  if (typeof durationMs !== "number" || !Number.isFinite(durationMs)) {
+    return "";
+  }
+  if (durationMs < 1000) return `${Math.max(0, Math.round(durationMs))}ms`;
+  return `${(durationMs / 1000).toFixed(1)}s`;
+}
+
+function AssistantProcessTimeline({
+  events,
+  streaming,
+  hasContent,
+}: {
+  events: AssistantProcessEvent[];
+  streaming: boolean;
+  hasContent: boolean;
+}) {
+  const [open, setOpen] = useState(() => streaming && !hasContent);
+  const autoCollapsedRef = useRef(false);
+
+  useEffect(() => {
+    if (events.length === 0) return;
+    if (streaming && !hasContent && !autoCollapsedRef.current) {
+      setOpen(true);
+      return;
+    }
+    if (hasContent && !autoCollapsedRef.current) {
+      setOpen(false);
+      autoCollapsedRef.current = true;
+    }
+  }, [events.length, hasContent, streaming]);
+
+  if (events.length === 0) return null;
+
+  const visibleEvents = events.slice(-8);
+  const latest = visibleEvents[visibleEvents.length - 1];
+
+  return (
+    <div
+      className="border-b border-border/40 px-3 py-2 text-[11px] text-muted-foreground"
+      data-testid="assistant-process-timeline"
+    >
+      <button
+        type="button"
+        className="flex w-full min-w-0 items-center gap-1.5 text-left"
+        onClick={() => setOpen((value) => !value)}
+        aria-expanded={open}
+      >
+        <ChevronDown
+          className={cn(
+            "h-3.5 w-3.5 shrink-0 transition-transform",
+            !open && "-rotate-90",
+          )}
+        />
+        <span className="shrink-0 font-medium text-foreground/75">
+          处理过程
+        </span>
+        {latest ? (
+          <span className="min-w-0 truncate text-muted-foreground">
+            {latest.label}
+          </span>
+        ) : null}
+      </button>
+      {open ? (
+        <ol className="mt-2 space-y-1.5 pl-5">
+          {visibleEvents.map((event) => {
+            const duration = formatProcessDuration(event.durationMs);
+            return (
+              <li key={event.id} className="list-disc pl-0.5">
+                <span>{event.label}</span>
+                {duration ? (
+                  <span className="text-muted-foreground/70">
+                    {" "}
+                    · {duration}
+                  </span>
+                ) : null}
+              </li>
+            );
+          })}
+        </ol>
+      ) : null}
     </div>
   );
 }
@@ -306,6 +398,8 @@ export const AiMessageBubble = memo(function AiMessageBubble({
   images,
 
   mentions,
+
+  processEvents = [],
 }: AiMessageBubbleProps) {
   const isUser = role === "user";
 
@@ -381,7 +475,8 @@ export const AiMessageBubble = memo(function AiMessageBubble({
     );
   }
 
-  const showThinking = streaming && !content;
+  const hasProcessEvents = processEvents.length > 0;
+  const showThinking = streaming && !content && !hasProcessEvents;
 
   return (
     <div
@@ -398,6 +493,14 @@ export const AiMessageBubble = memo(function AiMessageBubble({
       data-streaming={streaming ? "" : undefined}
       data-selected={selected ? "" : undefined}
     >
+      {hasProcessEvents ? (
+        <AssistantProcessTimeline
+          events={processEvents}
+          streaming={streaming}
+          hasContent={Boolean(content)}
+        />
+      ) : null}
+
       {showThinking ? <AiThinkingIndicator /> : null}
 
       {content ? (

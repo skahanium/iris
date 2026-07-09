@@ -117,6 +117,73 @@ describe("AI message selection behavior", () => {
     ).not.toBeNull();
   });
 
+  it("renders process events in the assistant bubble without copying them as answer text", async () => {
+    await act(async () => {
+      root.render(
+        <AiMessageList
+          messages={[{ role: "assistant", content: "最终正文" }]}
+          streaming={true}
+          processEvents={[
+            {
+              id: "req-1:1",
+              requestId: "req-1",
+              kind: "trace",
+              label: "正在检索笔记",
+              round: 1,
+              createdAt: 1,
+            },
+          ]}
+          selectedIndices={new Set([0])}
+          onSelect={vi.fn()}
+        />,
+      );
+    });
+
+    expect(host.textContent).toContain("处理过程");
+    expect(host.textContent).toContain("正在检索笔记");
+
+    const copyButton = host.querySelector<HTMLButtonElement>(
+      'button[title="复制此消息"]',
+    );
+    expect(copyButton).not.toBeNull();
+
+    await act(async () => {
+      copyButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    expect(writeText).toHaveBeenCalledWith("最终正文");
+    expect(writeText).not.toHaveBeenCalledWith(
+      expect.stringContaining("正在检索笔记"),
+    );
+  });
+
+  it("hides the standalone thinking indicator when process events are visible", async () => {
+    await act(async () => {
+      root.render(
+        <AiMessageList
+          messages={[{ role: "user", content: "MOE架构是什么意思？" }]}
+          streaming={true}
+          processEvents={[
+            {
+              id: "req-1:1",
+              requestId: "req-1",
+              kind: "trace",
+              label: "正在流式输出最终回答...",
+              round: 1,
+              createdAt: 1,
+            },
+          ]}
+          selectedIndices={new Set()}
+          onSelect={vi.fn()}
+        />,
+      );
+    });
+
+    expect(host.textContent).toContain("处理过程");
+    expect(host.textContent).toContain("正在流式输出最终回答...");
+    expect(host.textContent).not.toContain("正在思考");
+  });
+
   it("copies the context-menu selection snapshot even if the DOM selection is cleared", async () => {
     const messageListRef = { current: null as HTMLDivElement | null };
     const onQuoteToInput = vi.fn();

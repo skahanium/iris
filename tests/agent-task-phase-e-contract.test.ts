@@ -52,7 +52,7 @@ describe("Agent Task Runtime Phase E UI contract", () => {
     expect(surfaces).not.toContain("<AssistantProcessStatusBar");
     expect(surfaces).toContain("AssistantArtifactTagStrip");
     expect(unified).toContain("AgentTaskStatusPanel");
-    expect(composerDock).toContain("AssistantProcessStatusBar");
+    expect(composerDock).not.toContain("AssistantProcessStatusBar");
     expect(unified).toContain("agentTaskId");
     expect(unified).toContain("useAgentTaskStatus");
     expect(assistantTasks).toContain("setAgentTaskId(response.taskId");

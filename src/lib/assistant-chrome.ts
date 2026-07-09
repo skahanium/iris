@@ -70,12 +70,7 @@ export function buildAssistantChromeSnapshot(options: {
   const webPacketCount = countWebPackets(options.packets);
   return {
     sessionTokenUsage: options.sessionTokenUsage,
-    toolActivityLabel: resolveToolActivityLabel({
-      activityHint: options.activityHint,
-      streaming: options.streaming,
-      messages: options.messages,
-      harnessPhaseLabel: options.harnessPhaseLabel,
-    }),
+    toolActivityLabel: null,
     evidenceCount: options.packets.length,
     webPacketCount,
     harnessRequestId: options.harnessRequestId ?? null,

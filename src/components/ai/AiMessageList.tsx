@@ -44,9 +44,21 @@ export interface ChatLine {
   evidencePackets?: ContextPacket[];
 }
 
+export interface AssistantProcessEvent {
+  id: string;
+  requestId: string;
+  label: string;
+  kind: "trace" | "retry" | "thinking" | "reset" | "error";
+  round?: number | null;
+  status?: string | null;
+  durationMs?: number | null;
+  createdAt: number;
+}
+
 interface AiMessageListProps {
   messages: ChatLine[];
   streaming: boolean;
+  processEvents?: AssistantProcessEvent[];
   selectedIndices?: Set<number>;
   onCitationClick?: (ref: string) => void;
   onRetract?: (index: number) => void;
@@ -167,6 +179,7 @@ function AssistantMessageActions({
 export const AiMessageList = memo(function AiMessageList({
   messages,
   streaming,
+  processEvents = [],
   selectedIndices,
   onCitationClick,
   onRetract,
@@ -368,13 +381,19 @@ export const AiMessageList = memo(function AiMessageList({
     if (row.type === "empty") {
       return (
         <p className="py-8 text-center text-xs text-muted-foreground">
-          输入问题开始对话。证据包在上方，工具与 Token 状态见底栏。
+          输入问题开始对话。证据包在上方，处理过程会显示在回答气泡内。
         </p>
       );
     }
 
     if (row.type === "thinking") {
-      return <AiMessageBubble role="assistant" streaming />;
+      return (
+        <AiMessageBubble
+          role="assistant"
+          streaming
+          processEvents={processEvents}
+        />
+      );
     }
 
     const m = row.message;
@@ -421,6 +440,11 @@ export const AiMessageList = memo(function AiMessageList({
               role="assistant"
               content={msgContent || undefined}
               streaming={assistantStreaming}
+              processEvents={
+                assistantStreaming || (isLast && processEvents.length > 0)
+                  ? processEvents
+                  : undefined
+              }
               selected={isSelected}
               createdAt={m.created_at}
               onCitationClick={onCitationClick}

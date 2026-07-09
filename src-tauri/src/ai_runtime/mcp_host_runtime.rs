@@ -481,7 +481,7 @@ fn credential_missing_error(service: &str, configured: bool) -> AppError {
     if configured {
         runtime_error(
             McpRuntimeFailureKind::AuthMissing,
-            format!("credential_stale: 凭据标记存在但系统凭据不可读取: {service}"),
+            format!("credential_unreadable: 系统凭据不可读取: {service}"),
         )
     } else {
         runtime_error(
@@ -489,6 +489,10 @@ fn credential_missing_error(service: &str, configured: bool) -> AppError {
             format!("MCP credential binding is missing: {service}"),
         )
     }
+}
+
+fn credential_available_for_binding(_db: &Database, service: &str) -> AppResult<bool> {
+    crate::credentials::credential_available(service)
 }
 
 fn parse_json_object(
@@ -535,7 +539,7 @@ where
 fn resolve_env_bindings_with_lookup_and_config<F, C>(
     env_bindings_json: &str,
     mut lookup_credential: F,
-    mut credential_configured: C,
+    mut credential_available: C,
 ) -> AppResult<Vec<(String, String)>>
 where
     F: FnMut(&str) -> AppResult<String>,
@@ -554,7 +558,7 @@ where
                 "MCP env binding omitted named credential service",
             )
         })?;
-        let configured = credential_configured(&service)?;
+        let configured = credential_available(&service)?;
         let value = match lookup_credential(&service) {
             Ok(value) => value,
             Err(_) if credential_binding_optional(binding, &service) && !configured => continue,
@@ -571,8 +575,8 @@ fn resolve_env_bindings(
 ) -> AppResult<Vec<(String, String)>> {
     resolve_env_bindings_with_lookup_and_config(
         env_bindings_json,
-        |service| crate::credentials::get_api_key(db, service),
-        |service| crate::credentials::api_key_configured(db, service),
+        |service| Ok(crate::credentials::get_runtime_secret(service)?.to_string()),
+        |service| credential_available_for_binding(db, service),
     )
 }
 
@@ -616,7 +620,7 @@ where
 fn resolve_http_header_bindings_with_lookup_and_config<F, C>(
     credential_refs_json: &str,
     mut lookup_credential: F,
-    mut credential_configured: C,
+    mut credential_available: C,
 ) -> AppResult<Vec<(String, String)>>
 where
     F: FnMut(&str) -> AppResult<String>,
@@ -634,7 +638,7 @@ where
                 "MCP HTTP header binding omitted named credential service",
             )
         })?;
-        let configured = credential_configured(&service)?;
+        let configured = credential_available(&service)?;
         let mut value = match lookup_credential(&service) {
             Ok(value) => value,
             Err(_) if credential_binding_optional(binding, &service) && !configured => continue,
@@ -664,8 +668,8 @@ fn resolve_http_header_bindings(
 ) -> AppResult<Vec<(String, String)>> {
     resolve_http_header_bindings_with_lookup_and_config(
         credential_refs_json,
-        |service| crate::credentials::get_api_key(db, service),
-        |service| crate::credentials::api_key_configured(db, service),
+        |service| Ok(crate::credentials::get_runtime_secret(service)?.to_string()),
+        |service| credential_available_for_binding(db, service),
     )
 }
 
@@ -1651,7 +1655,7 @@ mod tests {
     }
 
     #[test]
-    fn legacy_anysearch_binding_with_configured_marker_is_not_anonymous() {
+    fn optional_anysearch_binding_with_unreadable_credential_is_not_anonymous() {
         let err = resolve_http_header_bindings_with_lookup_and_config(
             r#"{"headers":{"Authorization":{"scheme":"bearer","credential":"credential://iris.mcp.anysearch"}}}"#,
             missing_test_credential,
@@ -1661,7 +1665,7 @@ mod tests {
         .to_string();
 
         assert!(err.contains("auth_missing"), "{err}");
-        assert!(err.contains("credential_stale"), "{err}");
+        assert!(err.contains("credential_unreadable"), "{err}");
         assert!(err.contains("iris.mcp.anysearch"), "{err}");
     }
 

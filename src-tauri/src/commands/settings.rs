@@ -52,21 +52,39 @@ pub fn credential_set(
     state: State<'_, Arc<AppState>>,
     service: String,
     value: String,
-) -> AppResult<()> {
+) -> AppResult<credentials::CredentialStatus> {
     validate_credential_service(&service)?;
-    credentials::set_api_key(&state.db, &service, &value)
+    let status = credentials::set_api_key(&service, &value)?;
+    set_credential_marker(&state.db, &service, true)?;
+    Ok(status)
 }
 
 #[tauri::command]
 pub fn credential_has(state: State<'_, Arc<AppState>>, service: String) -> AppResult<bool> {
     validate_credential_service(&service)?;
-    credentials::api_key_configured(&state.db, &service)
+    credential_available_for_runtime(&state.db, &service)
 }
 
 #[tauri::command]
-pub fn credential_delete(state: State<'_, Arc<AppState>>, service: String) -> AppResult<()> {
+pub fn credential_status(
+    state: State<'_, Arc<AppState>>,
+    service: String,
+) -> AppResult<credentials::CredentialStatus> {
     validate_credential_service(&service)?;
-    credentials::delete_api_key(&state.db, &service)
+    let status = credentials::credential_status(&service)?;
+    set_credential_marker(&state.db, &service, status.configured)?;
+    Ok(status)
+}
+
+#[tauri::command]
+pub fn credential_delete(
+    state: State<'_, Arc<AppState>>,
+    service: String,
+) -> AppResult<credentials::CredentialStatus> {
+    validate_credential_service(&service)?;
+    let status = credentials::delete_api_key(&service)?;
+    set_credential_marker(&state.db, &service, false)?;
+    Ok(status)
 }
 
 #[tauri::command]
@@ -77,4 +95,48 @@ pub fn credential_unlock_session() -> AppResult<()> {
 #[tauri::command]
 pub fn credential_lock_session() -> AppResult<()> {
     credentials::credential_lock_session()
+}
+
+pub(crate) fn credential_available_for_runtime(
+    db: &crate::storage::db::Database,
+    service: &str,
+) -> AppResult<bool> {
+    let available = credentials::credential_available(service)?;
+    set_credential_marker(db, service, available)?;
+    Ok(available)
+}
+
+pub(crate) fn credential_marker_configured(
+    db: &crate::storage::db::Database,
+    service: &str,
+) -> AppResult<bool> {
+    let key = credentials::credential_marker_key(service)?;
+    db.with_read_conn(|conn| {
+        let count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM settings WHERE key = ?1",
+            [key],
+            |row| row.get(0),
+        )?;
+        Ok(count > 0)
+    })
+}
+
+pub(crate) fn set_credential_marker(
+    db: &crate::storage::db::Database,
+    service: &str,
+    configured: bool,
+) -> AppResult<()> {
+    let key = credentials::credential_marker_key(service)?;
+    db.with_conn(|conn| {
+        if configured {
+            conn.execute(
+                "INSERT INTO settings (key, value) VALUES (?1, ?2)
+                 ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                rusqlite::params![key, "true"],
+            )?;
+        } else {
+            conn.execute("DELETE FROM settings WHERE key = ?1", [key])?;
+        }
+        Ok(())
+    })
 }
