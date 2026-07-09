@@ -129,6 +129,7 @@ const SLOT_META: Record<
 
 const REASONING_LABELS: Record<ReasoningMode, string> = {
   off: "关闭",
+  on: "开启",
   auto: "自动",
   minimal: "极简",
   low: "低",
@@ -171,7 +172,7 @@ const REASONING_EFFORT_OPTIONS: ReasoningMode[] = [
   "high",
 ];
 
-const REASONING_SWITCH_OPTIONS: ReasoningMode[] = ["off", "auto"];
+const REASONING_SWITCH_OPTIONS: ReasoningMode[] = ["off", "on", "auto"];
 const REASONING_SWITCH_VALUES = ["off", "on", "auto"] as const;
 
 type ReasoningSwitchValue = (typeof REASONING_SWITCH_VALUES)[number];
@@ -253,7 +254,9 @@ function findModelCatalogForProvider(
   modelId: string,
 ): ModelCatalogEntry | undefined {
   return catalog?.find(
-    (model) => model.providerId === providerId && model.id === modelId,
+    (model) =>
+      model.providerId === providerId &&
+      model.id.toLowerCase() === modelId.toLowerCase(),
   );
 }
 
@@ -477,13 +480,24 @@ function catalogReasoningCapability(
       source: "catalog",
     };
   }
+  if (providerId === "mimo") {
+    return {
+      supported: true,
+      control: "switch",
+      tagOnly: true,
+      supportedModes: REASONING_SWITCH_OPTIONS,
+      defaultMode: "on",
+      disableSupported: true,
+      source: "catalog",
+    };
+  }
   if (catalog?.providerId === "mimo" && catalog.supportsThinking) {
     return {
       supported: true,
       control: "switch",
       tagOnly: true,
       supportedModes: REASONING_SWITCH_OPTIONS,
-      defaultMode: "auto",
+      defaultMode: "on",
       disableSupported: true,
       source: "catalog",
     };
@@ -545,7 +559,6 @@ function reasoningCapabilitySummary(capability: ReasoningUiCapability): string {
 function reasoningSwitchOptionsForModel(
   capability: ReasoningUiCapability,
 ): ReasoningSwitchValue[] {
-  if (capability.source === "unknown") return ["off", "auto"];
   if (!capability.supported) return ["off"];
   return [...REASONING_SWITCH_VALUES];
 }

@@ -79,7 +79,7 @@ impl ModelCatalogEntry {
                 control: ReasoningControl::Switch,
                 visibility: ReasoningVisibility::ContentTag,
                 supported_modes: SWITCH_REASONING_MODES,
-                default_mode: ReasoningMode::Auto,
+                default_mode: ReasoningMode::On,
                 disable_supported: true,
             }),
             "zhipu" if is_glm_reasoning_model(self.id) => Some(CatalogReasoningCapability {
@@ -127,7 +127,8 @@ impl ModelCatalogEntry {
     }
 }
 
-pub const SWITCH_REASONING_MODES: &[ReasoningMode] = &[ReasoningMode::Off, ReasoningMode::Auto];
+pub const SWITCH_REASONING_MODES: &[ReasoningMode] =
+    &[ReasoningMode::Off, ReasoningMode::On, ReasoningMode::Auto];
 pub const TAG_REASONING_MODES: &[ReasoningMode] = &[ReasoningMode::Off, ReasoningMode::Auto];
 pub const DEEPSEEK_REASONING_MODES: &[ReasoningMode] = &[
     ReasoningMode::Off,

@@ -420,9 +420,9 @@ fn reasoning_validation_summary(
 }
 
 fn reasoning_catalog_summary(provider_id: &str, model_id: &str) -> Option<String> {
-    let model = model_catalog::catalog()
-        .iter()
-        .find(|model| model.provider_id == provider_id && model.id == model_id)?;
+    let model = model_catalog::catalog().iter().find(|model| {
+        model.provider_id == provider_id && model.id.eq_ignore_ascii_case(model_id)
+    })?;
     Some(match model.reasoning_capability() {
         Some(capability) => reasoning_capability_summary_from_parts(
             Some(capability.adapter),
@@ -487,6 +487,21 @@ fn inferred_reasoning_probe_capability(
     let provider = provider_id.to_ascii_lowercase();
     let model = model_id.to_ascii_lowercase();
     let now = chrono::Utc::now().to_rfc3339();
+
+    // MiMo: switch-controlled content-tag reasoning (thinking mode).
+    if provider == "mimo" && is_mimo_thinking_model(&model) {
+        return Some(config::ModelCapabilityOverride {
+            reasoning_adapter: Some(crate::ai_types::ReasoningAdapter::ProviderSpecificStatic),
+            reasoning_control: Some(crate::ai_types::ReasoningControl::Switch),
+            reasoning_visibility: Some(crate::ai_types::ReasoningVisibility::ContentTag),
+            supported_modes: Some(crate::llm::model_catalog::SWITCH_REASONING_MODES.to_vec()),
+            default_mode: Some(crate::ai_types::ReasoningMode::On),
+            disable_supported: Some(true),
+            user_verified_at: None,
+            probe_verified_at: Some(now),
+        });
+    }
+
     if provider == "deepseek" && (model.starts_with("deepseek-") || model.contains("reasoner")) {
         return Some(config::ModelCapabilityOverride {
             reasoning_adapter: Some(crate::ai_types::ReasoningAdapter::DeepSeekReasoningContent),
@@ -536,6 +551,16 @@ fn inferred_reasoning_probe_capability(
         });
     }
     None
+}
+
+/// MiMo models that support the `thinking` API parameter.
+fn is_mimo_thinking_model(model: &str) -> bool {
+    // All current-generation MiMo chat models support thinking.
+    // ASR/TTS models are excluded — they use ResponsesReserved endpoint.
+    let model = model.to_ascii_lowercase();
+    model.starts_with("mimo-v2.5") && !model.contains("asr") && !model.contains("tts")
+        || model == "mimo-v2.5-pro"
+        || model == "mimo-v2.5-pro-ultraspeed"
 }
 
 fn is_minimax_reasoning_risk(provider: &str, model: &str) -> bool {

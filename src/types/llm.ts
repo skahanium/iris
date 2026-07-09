@@ -14,6 +14,7 @@ export type ProbeStrategy =
 
 export type ReasoningMode =
   | "off"
+  | "on"
   | "auto"
   | "minimal"
   | "low"

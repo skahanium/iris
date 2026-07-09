@@ -2,7 +2,7 @@ use aes_gcm::aead::{Aead, KeyInit, OsRng};
 use aes_gcm::{Aes256Gcm, Key, Nonce};
 use rand::RngCore;
 use std::sync::{LazyLock, Mutex};
-use zeroize::Zeroize;
+use zeroize::{Zeroize, Zeroizing};
 
 use crate::credentials;
 use crate::error::{AppError, AppResult};
@@ -45,6 +45,7 @@ fn cache_cas_key(key: [u8; KEY_LEN]) -> AppResult<()> {
 
 /// Get or generate the CAS encryption key from Iris' local encrypted credential store.
 /// The key is derived once on first use and persisted without using OS keychain prompts.
+/// All intermediate key material is wrapped in [`Zeroizing`] for automatic zeroing on drop.
 pub fn get_or_create_cas_key() -> AppResult<[u8; KEY_LEN]> {
     if let Some(cached) = cache_lock()?.as_ref() {
         return Ok(cached.key);
@@ -52,13 +53,17 @@ pub fn get_or_create_cas_key() -> AppResult<[u8; KEY_LEN]> {
 
     match credentials::get_secret(CAS_KEY_SERVICE) {
         Ok(hex_key) => {
-            let key_bytes = hex::decode(&hex_key)
-                .map_err(|e| AppError::msg(format!("corrupt CAS key: {e}")))?;
-            let mut key = [0u8; KEY_LEN];
+            // hex_key: Zeroizing<String> — auto-zeroed on drop
+            let key_bytes: Zeroizing<Vec<u8>> = Zeroizing::new(
+                hex::decode(hex_key.as_str())
+                    .map_err(|e| AppError::msg(format!("corrupt CAS key: {e}")))?,
+            );
             if key_bytes.len() != KEY_LEN {
                 return Err(AppError::msg("corrupt CAS key: incorrect length"));
             }
+            let mut key = [0u8; KEY_LEN];
             key.copy_from_slice(&key_bytes);
+            // key_bytes zeroized here on drop
             cache_cas_key(key)?;
             Ok(key)
         }

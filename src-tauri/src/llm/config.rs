@@ -1090,7 +1090,7 @@ fn infer_reasoning_capability(
             control: ReasoningControl::Switch,
             visibility: ReasoningVisibility::ContentTag,
             supported_modes: crate::llm::model_catalog::SWITCH_REASONING_MODES.to_vec(),
-            default_mode: ReasoningMode::Auto,
+            default_mode: ReasoningMode::On,
             disable_supported: true,
         };
     }
@@ -1326,7 +1326,7 @@ fn slot_for_legacy_scene(scene: AiScene) -> CapabilitySlot {
 }
 
 #[cfg(not(test))]
-fn hydrate_resolved_api_key(db: &Database, resolved: &mut ResolvedLlmConfig) -> AppResult<()> {
+fn hydrate_resolved_api_key(_db: &Database, resolved: &mut ResolvedLlmConfig) -> AppResult<()> {
     if crate::llm::providers::requires_api_key(&resolved.provider_id) {
         let service = credential_service(&resolved.provider_id);
         resolved.api_key = Some(crate::credentials::get_runtime_secret(&service)?.to_string());

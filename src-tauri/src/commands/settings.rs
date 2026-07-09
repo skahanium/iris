@@ -88,11 +88,6 @@ pub fn credential_delete(
 }
 
 #[tauri::command]
-pub fn credential_unlock_session() -> AppResult<()> {
-    credentials::credential_unlock_session()
-}
-
-#[tauri::command]
 pub fn credential_lock_session() -> AppResult<()> {
     credentials::credential_lock_session()
 }
@@ -106,6 +101,7 @@ pub(crate) fn credential_available_for_runtime(
     Ok(available)
 }
 
+#[allow(dead_code)]
 pub(crate) fn credential_marker_configured(
     db: &crate::storage::db::Database,
     service: &str,

@@ -20,21 +20,28 @@ describe("credential session IPC contract", () => {
   it("registers credential session commands in Tauri lib.rs", () => {
     const lib = readFileSync("src-tauri/src/lib.rs", "utf8");
 
-    expect(lib).toContain("commands::settings::credential_unlock_session");
     expect(lib).toContain("commands::settings::credential_lock_session");
     expect(lib).toContain("commands::settings::credential_status");
   });
 
-  it("invokes credential unlock and lock without exposing secret args", async () => {
-    const { credentialLockSession, credentialUnlockSession } =
-      await import("@/lib/ipc");
+  it("credential_unlock_session has been removed (was a misleading no-op)", () => {
+    const lib = readFileSync("src-tauri/src/lib.rs", "utf8");
+    const credentials = readFileSync("src-tauri/src/credentials.rs", "utf8");
+    const ipc = readFileSync("src/lib/ipc.ts", "utf8");
+
+    // Must NOT exist anymore
+    expect(lib).not.toContain("credential_unlock_session");
+    expect(credentials).not.toContain("pub fn credential_unlock_session");
+    expect(ipc).not.toContain("credentialUnlockSession");
+  });
+
+  it("invokes credential lock without exposing secret args", async () => {
+    const { credentialLockSession } = await import("@/lib/ipc");
     invoke.mockResolvedValue(undefined);
 
-    await credentialUnlockSession();
     await credentialLockSession();
 
-    expect(invoke).toHaveBeenNthCalledWith(1, "credential_unlock_session");
-    expect(invoke).toHaveBeenNthCalledWith(2, "credential_lock_session");
+    expect(invoke).toHaveBeenCalledWith("credential_lock_session");
   });
 
   it("wraps credential status without exposing secret values", async () => {
@@ -70,7 +77,7 @@ describe("credential session IPC contract", () => {
     expect(settings).toContain("credential_available_for_runtime");
     expect(settings).toContain("set_credential_marker");
     expect(statusCommand).toContain("credentials::credential_status(&service)");
-    expect(hasCommand).toContain("credentials::credential_available(&service)");
+    expect(hasCommand).toContain("credential_available_for_runtime");
     expect(config).toContain("credentials::credential_available(service)");
     expect(config).not.toContain("credential_marker_configured(db, service)");
     expect(runtimeContext).toContain("credentials::credential_available(&service)");

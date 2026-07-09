@@ -48,13 +48,15 @@
 
 ## API Key 处理
 
-- Iris 使用操作系统原生凭据管理器存储 API Key（Windows Credential Manager / macOS Keychain / Linux Secret Service）
-- API Key 永不写入明文到磁盘文件、日志或数据库
-- API Key 首次使用或会话解锁时从凭据管理器读取，仅保存在当前 Iris 进程内存中；退出或锁定会话后需要重新读取系统凭据
-- 向 LLM API 发送请求时，Key 仅出现在 HTTPS 请求的 Authorization Header 中
-- macOS 上 Iris 会优先使用带 `USER_PRESENCE` 访问控制的 Keychain 条目，系统可使用 Touch ID、Apple Watch 或设备密码完成认证；旧 Keychain 条目会通过兼容路径读取
-- 开发构建使用独立凭据命名空间（如 `iris.dev.api_keys`、`iris.dev.cas_key`），并通过 `src-tauri/tauri.dev.conf.json` 使用稳定 bundle id `com.iris.notes.dev`，避免污染正式版凭据。若 macOS 反复要求输入电脑密码，可在“钥匙串访问”中只允许 Iris 开发版访问对应条目；不要选择“允许所有应用程序访问”
-- macOS 开发版可在首次生成 dev app 或 debug binary 后运行 `npm run dev:desktop:sign` 做本地签名；默认使用 ad-hoc identity，也可通过 `IRIS_DEV_CODESIGN_IDENTITY` 指定 Apple Development 证书
+- Iris 使用 **AES-256-GCM 本地加密凭据存储**，不使用操作系统凭据管理器。这是有意为之的设计决策：避免 macOS Keychain / Windows CredUIPrompt 等系统级弹窗打断用户流畅度，实现全程无感使用 LLM/MCP 功能。
+- 每个 API Key 独立加密：12 字节随机 nonce，服务名作为 AAD（Additional Authenticated Data），密文以 Base64 编码存入本地文件。每个凭据的加密文件通过 `SHA-256(“{service}:{account}”)` 命名。
+- **主密钥**：32 字节随机密钥，由 `OsRng` 生成，存储于平台配置目录（`%LOCALAPPDATA%\Iris\config\` / `~/Library/Application Support/Iris/config/` / `~/.config/iris/`），与加密的凭据数据目录分离。无主密钥则无法解密任何凭据。
+- **文件权限**：macOS/Linux 上凭据和主密钥文件设为 `0600` 权限，目录设为 `0700`；Windows 上通过 ACL 设置仅当前用户可读写。
+- **内存保护**：API Key 解密后以 `Zeroizing<String>` 持有，Drop 时自动清零内存。错误序列化、日志 tracing、调试输出均对凭据内容执行脱敏。
+- API Key 永不写入明文到磁盘文件、日志或数据库。
+- 向 LLM API 发送请求时，Key 仅出现在 HTTPS 请求的 Authorization Header 中。
+- 开发构建使用独立凭据命名空间（如 `iris.dev.cas_key`），通过独立的 `IRIS_DATA_DIR` 避免污染正式版凭据。
+- 凭据删除时调用 `std::fs::remove_file` 移除密文文件和标记键，不留残留。
 
 ## 笔记静态存储
 

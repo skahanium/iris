@@ -100,7 +100,9 @@ fn estimated_reasoning_budget(resolved: &ResolvedLlmConfig) -> u32 {
         ReasoningMode::Off => 0,
         ReasoningMode::Minimal => resolved.output_budget.min(512),
         ReasoningMode::Low => resolved.output_budget.min(1_024),
-        ReasoningMode::Auto | ReasoningMode::Medium => resolved.output_budget.min(2_048),
+        ReasoningMode::On | ReasoningMode::Auto | ReasoningMode::Medium => {
+            resolved.output_budget.min(2_048)
+        }
         ReasoningMode::High => resolved.output_budget.min(4_096),
         ReasoningMode::Xhigh => resolved.output_budget.min(8_192),
     }
@@ -2448,7 +2450,7 @@ fn provider_credential_bindings(
 }
 
 fn provider_credential_diagnostic_checks(
-    db: &crate::storage::db::Database,
+    _db: &crate::storage::db::Database,
     provider: &crate::ai_runtime::mcp_runtime_registry::WebEvidenceProviderSummary,
 ) -> AppResult<(Vec<WebEvidenceProviderDiagnosticCheck>, bool)> {
     let bindings = provider_credential_bindings(&provider.credential_refs_json)?;

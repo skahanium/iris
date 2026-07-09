@@ -336,6 +336,8 @@ pub enum ProbeStrategy {
 pub enum ReasoningMode {
     #[default]
     Off,
+    /// Explicitly enable reasoning (for switch-controlled providers like MiMo).
+    On,
     Auto,
     Minimal,
     Low,

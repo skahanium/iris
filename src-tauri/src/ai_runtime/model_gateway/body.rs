@@ -219,7 +219,7 @@ fn anthropic_thinking_budget(mode: ReasoningMode, max_tokens: Option<u32>) -> Op
         ReasoningMode::Off => return None,
         ReasoningMode::Minimal => 512,
         ReasoningMode::Low => 1_024,
-        ReasoningMode::Auto | ReasoningMode::Medium => 2_048,
+        ReasoningMode::On | ReasoningMode::Auto | ReasoningMode::Medium => 2_048,
         ReasoningMode::High => 4_096,
         ReasoningMode::Xhigh => 8_192,
     };
@@ -297,7 +297,7 @@ fn effort_for_mode(mode: ReasoningMode) -> &'static str {
     match mode {
         ReasoningMode::Off => "none",
         ReasoningMode::Minimal => "minimal",
-        ReasoningMode::Auto | ReasoningMode::Medium => "medium",
+        ReasoningMode::On | ReasoningMode::Auto | ReasoningMode::Medium => "medium",
         ReasoningMode::Low => "low",
         ReasoningMode::High => "high",
         ReasoningMode::Xhigh => "xhigh",
@@ -308,6 +308,7 @@ fn deepseek_effort_for_mode(mode: ReasoningMode) -> &'static str {
     match mode {
         ReasoningMode::Xhigh => "max",
         ReasoningMode::Off
+        | ReasoningMode::On
         | ReasoningMode::Auto
         | ReasoningMode::Minimal
         | ReasoningMode::Low
@@ -318,7 +319,7 @@ fn deepseek_effort_for_mode(mode: ReasoningMode) -> &'static str {
 
 fn thinking_level_for_mode(mode: ReasoningMode) -> &'static str {
     match mode {
-        ReasoningMode::Off | ReasoningMode::Minimal => "minimal",
+        ReasoningMode::Off | ReasoningMode::Minimal | ReasoningMode::On => "minimal",
         ReasoningMode::Low => "low",
         ReasoningMode::Auto | ReasoningMode::Medium => "medium",
         ReasoningMode::High | ReasoningMode::Xhigh => "high",

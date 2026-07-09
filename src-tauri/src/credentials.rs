@@ -5,7 +5,6 @@ use rand::RngCore;
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 use std::fs;
-use std::io::Write;
 use std::path::{Path, PathBuf};
 use zeroize::Zeroizing;
 
@@ -38,10 +37,15 @@ trait CredentialBackend {
     fn set_password(&self, service: &str, account: &str, value: &str) -> AppResult<()>;
     fn get_password(&self, service: &str, account: &str) -> AppResult<Zeroizing<String>>;
     fn delete_password(&self, service: &str, account: &str) -> AppResult<()>;
+    /// Check existence without decrypting the value.
+    fn has_password(&self, service: &str, account: &str) -> bool;
 }
 
 struct LocalEncryptedCredentialBackend {
     root: PathBuf,
+    /// Platform config directory that holds `master.key`, separated from
+    /// the encrypted credential blobs in `root`.
+    config_dir: PathBuf,
 }
 
 #[derive(serde::Deserialize, serde::Serialize)]
@@ -52,6 +56,39 @@ struct LocalCredentialRecord {
     ciphertext: String,
 }
 
+/// Platform-specific Iris config directory (holds `master.key`).
+///
+/// This is intentionally separate from `IRIS_DATA_DIR` so that an attacker
+/// who gains access to the credential ciphertext directory still needs the
+/// master key from a different location.
+fn iris_config_dir() -> AppResult<PathBuf> {
+    #[cfg(windows)]
+    {
+        let local_app_data = std::env::var("LOCALAPPDATA").unwrap_or_else(|_| {
+            let home = std::env::var("USERPROFILE").unwrap_or_default();
+            format!("{home}\\AppData\\Local")
+        });
+        Ok(PathBuf::from(local_app_data).join("Iris").join("config"))
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let home = std::env::var("HOME").map_err(|_| AppError::msg("HOME 环境变量未设置"))?;
+        Ok(PathBuf::from(home)
+            .join("Library")
+            .join("Application Support")
+            .join("Iris")
+            .join("config"))
+    }
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        let config_home = std::env::var("XDG_CONFIG_HOME").unwrap_or_else(|_| {
+            let home = std::env::var("HOME").unwrap_or_default();
+            format!("{home}/.config")
+        });
+        Ok(PathBuf::from(config_home).join("iris"))
+    }
+}
+
 impl LocalEncryptedCredentialBackend {
     fn default() -> AppResult<Self> {
         let data_dir = std::env::var_os("IRIS_DATA_DIR")
@@ -59,12 +96,16 @@ impl LocalEncryptedCredentialBackend {
             .ok_or_else(|| AppError::msg("IRIS_DATA_DIR is not configured"))?;
         Ok(Self {
             root: data_dir.join(LOCAL_CREDENTIAL_DIR),
+            config_dir: iris_config_dir()?,
         })
     }
 
     #[cfg(test)]
     fn new_for_test(root: PathBuf) -> Self {
-        Self { root }
+        Self {
+            config_dir: root.join("iris_config"),
+            root,
+        }
     }
 
     fn ensure_root(&self) -> AppResult<()> {
@@ -73,9 +114,45 @@ impl LocalEncryptedCredentialBackend {
         Ok(())
     }
 
+    fn ensure_config_dir(&self) -> AppResult<()> {
+        fs::create_dir_all(&self.config_dir)?;
+        set_private_dir_permissions(&self.config_dir)?;
+        Ok(())
+    }
+
+    fn master_key_path(&self) -> PathBuf {
+        self.config_dir.join(LOCAL_MASTER_KEY_FILE)
+    }
+
+    /// Old location (pre-separation): `{root}/master.key`.
+    fn legacy_master_key_path(&self) -> PathBuf {
+        self.root.join(LOCAL_MASTER_KEY_FILE)
+    }
+
     fn master_key(&self) -> AppResult<[u8; LOCAL_KEY_LEN]> {
         self.ensure_root()?;
-        let path = self.root.join(LOCAL_MASTER_KEY_FILE);
+        self.ensure_config_dir()?;
+        let path = self.master_key_path();
+        let legacy_path = self.legacy_master_key_path();
+
+        // Auto-migrate: if master.key exists in old location but not in new,
+        // move it to the config directory.
+        if !path.is_file() && legacy_path.is_file() {
+            if let Err(e) = fs::rename(&legacy_path, &path) {
+                tracing::warn!(
+                    "failed to migrate master key from {} to {}: {e}",
+                    legacy_path.display(),
+                    path.display(),
+                );
+            } else {
+                tracing::info!(
+                    "migrated master key from {} → {}",
+                    legacy_path.display(),
+                    path.display(),
+                );
+            }
+        }
+
         if path.is_file() {
             let encoded = fs::read_to_string(&path)?;
             let decoded = B64
@@ -91,9 +168,30 @@ impl LocalEncryptedCredentialBackend {
             return Ok(key);
         }
 
+        // Also check legacy path (in case the rename above failed silently)
+        if legacy_path.is_file() {
+            return self.master_key_from_path(&legacy_path);
+        }
+
+        // Generate new master key in the config directory
         let mut key = [0u8; LOCAL_KEY_LEN];
         OsRng.fill_bytes(&mut key);
         write_private_file(&path, B64.encode(key).as_bytes())?;
+        Ok(key)
+    }
+
+    fn master_key_from_path(&self, path: &Path) -> AppResult<[u8; LOCAL_KEY_LEN]> {
+        let encoded = fs::read_to_string(path)?;
+        let decoded = B64
+            .decode(encoded.trim())
+            .map_err(|_| AppError::Credential("local master key is corrupt".into()))?;
+        if decoded.len() != LOCAL_KEY_LEN {
+            return Err(AppError::Credential(
+                "local master key has invalid length".into(),
+            ));
+        }
+        let mut key = [0u8; LOCAL_KEY_LEN];
+        key.copy_from_slice(&decoded);
         Ok(key)
     }
 
@@ -142,6 +240,7 @@ impl CredentialBackend for LocalEncryptedCredentialBackend {
         if !path.is_file() {
             return Err(missing_credential_error(service));
         }
+        tracing::debug!("credential accessed for {service}");
         let record: LocalCredentialRecord = serde_json::from_slice(&fs::read(path)?)?;
         if record.version != 1 || record.service_hash != Self::service_hash(service, account) {
             return Err(AppError::Credential(
@@ -177,10 +276,19 @@ impl CredentialBackend for LocalEncryptedCredentialBackend {
     fn delete_password(&self, service: &str, account: &str) -> AppResult<()> {
         let path = self.credential_path(service, account)?;
         match fs::remove_file(path) {
-            Ok(()) => Ok(()),
+            Ok(()) => {
+                tracing::debug!("credential deleted for {service}");
+                Ok(())
+            }
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
             Err(err) => Err(err.into()),
         }
+    }
+
+    fn has_password(&self, service: &str, account: &str) -> bool {
+        self.credential_path(service, account)
+            .map(|p| p.is_file())
+            .unwrap_or(false)
     }
 }
 
@@ -189,14 +297,12 @@ fn local_backend() -> AppResult<LocalEncryptedCredentialBackend> {
 }
 
 fn set_private_dir_permissions(path: &Path) -> AppResult<()> {
+    #[cfg(windows)]
+    crate::security::platform_win::set_user_only_permissions(path, true)?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
         fs::set_permissions(path, fs::Permissions::from_mode(0o700))?;
-    }
-    #[cfg(not(unix))]
-    {
-        let _ = path;
     }
     Ok(())
 }
@@ -204,6 +310,7 @@ fn set_private_dir_permissions(path: &Path) -> AppResult<()> {
 fn write_private_file(path: &Path, bytes: &[u8]) -> AppResult<()> {
     #[cfg(unix)]
     {
+        use std::io::Write;
         use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
         let mut file = fs::OpenOptions::new()
             .create(true)
@@ -215,9 +322,10 @@ fn write_private_file(path: &Path, bytes: &[u8]) -> AppResult<()> {
         file.sync_all()?;
         fs::set_permissions(path, fs::Permissions::from_mode(0o600))?;
     }
-    #[cfg(not(unix))]
+    #[cfg(windows)]
     {
         fs::write(path, bytes)?;
+        crate::security::platform_win::set_user_only_permissions(path, false)?;
     }
     Ok(())
 }
@@ -234,10 +342,6 @@ fn mcp_credential_service(provider: &str) -> String {
 
 fn missing_credential_error(service: &str) -> AppError {
     AppError::Credential(format!("credential missing: {service}"))
-}
-
-fn is_missing_credential_error(error: &AppError) -> bool {
-    matches!(error, AppError::Credential(message) if message.starts_with("credential missing: "))
 }
 
 fn checked_at_now() -> String {
@@ -292,16 +396,12 @@ fn credential_status_with_backend<B: CredentialBackend>(
     service: &str,
 ) -> AppResult<CredentialStatus> {
     let canonical = canonical_api_key_service(service)?;
-    match backend.get_password(&canonical, SECRET_ACCOUNT) {
-        Ok(value) if !value.trim().is_empty() => {
-            Ok(credential_status_dto(canonical, CredentialState::Available))
-        }
-        Ok(_) => Ok(credential_status_dto(canonical, CredentialState::Missing)),
-        Err(err) if is_missing_credential_error(&err) => {
-            Ok(credential_status_dto(canonical, CredentialState::Missing))
-        }
-        Err(err) => Err(err),
-    }
+    let state = if backend.has_password(&canonical, SECRET_ACCOUNT) {
+        CredentialState::Available
+    } else {
+        CredentialState::Missing
+    };
+    Ok(credential_status_dto(canonical, state))
 }
 
 fn credential_available_with_backend<B: CredentialBackend>(
@@ -359,23 +459,22 @@ pub fn set_secret(service: &str, value: &str) -> AppResult<()> {
 }
 
 /// Read a generic application secret from Iris' local encrypted credential store.
-pub fn get_secret(service: &str) -> AppResult<String> {
+/// The returned value is wrapped in [`Zeroizing`] and will be zeroed on drop.
+pub fn get_secret(service: &str) -> AppResult<Zeroizing<String>> {
     if service.trim().is_empty() {
         return Err(AppError::msg("凭据服务名不能为空"));
     }
-    Ok(local_backend()?
-        .get_password(service.trim(), SECRET_ACCOUNT)?
-        .to_string())
+    local_backend()?.get_password(service.trim(), SECRET_ACCOUNT)
 }
 
-/// Check whether a generic application secret exists without exposing its value.
+/// Check whether a generic application secret exists without decrypting its value.
 pub fn has_secret(service: &str) -> bool {
-    get_secret(service).is_ok()
-}
-
-/// API keys no longer have an unlockable in-memory session; this is kept as a no-op IPC bridge.
-pub fn credential_unlock_session() -> AppResult<()> {
-    Ok(())
+    if service.trim().is_empty() {
+        return false;
+    }
+    local_backend()
+        .map(|b| b.has_password(service.trim(), SECRET_ACCOUNT))
+        .unwrap_or(false)
 }
 
 /// Clear runtime-only credential caches. API keys are not cached by the credential layer.
@@ -426,6 +525,12 @@ mod tests {
                 .remove(&format!("{service}:{account}"));
             self.deleted_services.borrow_mut().push(service.to_string());
             Ok(())
+        }
+
+        fn has_password(&self, service: &str, account: &str) -> bool {
+            self.secrets
+                .borrow()
+                .contains_key(&format!("{service}:{account}"))
         }
     }
 
@@ -544,13 +649,78 @@ mod tests {
         );
 
         delete_api_key_with_backend(&backend, "iris.llm.deepseek").expect("delete key");
-        assert!(!credential_available_with_backend(&backend, "iris.llm.deepseek")
-            .expect("available check"));
+        assert!(
+            !credential_available_with_backend(&backend, "iris.llm.deepseek")
+                .expect("available check")
+        );
     }
 
     #[test]
     fn canonical_service_rejects_legacy_slashes() {
         assert!(canonical_api_key_service("iris/llm/deepseek").is_err());
+    }
+
+    // ── Phase 3: master-key separation tests ─────────────────────────────
+
+    #[test]
+    fn master_key_is_stored_in_config_dir_not_credential_dir() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let backend = LocalEncryptedCredentialBackend::new_for_test(dir.path().join("credentials"));
+
+        // Trigger master key generation
+        backend.master_key().expect("generate master key");
+
+        let mk_path = backend.master_key_path();
+        let legacy_path = backend.legacy_master_key_path();
+
+        assert!(mk_path.is_file(), "master.key must exist in config dir");
+        assert!(
+            !legacy_path.is_file(),
+            "master.key must NOT exist in credential dir"
+        );
+    }
+
+    #[test]
+    fn legacy_master_key_is_migrated_to_config_dir() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let backend = LocalEncryptedCredentialBackend::new_for_test(dir.path().join("credentials"));
+        backend.ensure_root().expect("ensure root");
+        backend.ensure_config_dir().expect("ensure config");
+
+        let legacy_path = backend.legacy_master_key_path();
+        let mk_path = backend.master_key_path();
+
+        // Write a master key in the LEGACY location
+        std::fs::write(&legacy_path, B64.encode([0x42u8; 32])).expect("write legacy key");
+
+        assert!(legacy_path.is_file());
+        assert!(!mk_path.is_file());
+
+        // Reading the master key should trigger migration
+        let key = backend
+            .master_key()
+            .expect("read master key after migration");
+        assert_eq!(key, [0x42u8; 32]);
+
+        assert!(
+            !legacy_path.is_file(),
+            "legacy master.key should be moved away"
+        );
+        assert!(mk_path.is_file(), "master.key should now be in config dir");
+    }
+
+    #[test]
+    fn new_install_creates_master_key_only_in_config_dir() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let backend = LocalEncryptedCredentialBackend::new_for_test(dir.path().join("credentials"));
+
+        // Both dirs are empty — fresh install
+        let mk = backend.master_key().expect("create master key");
+        assert_eq!(mk.len(), 32);
+
+        // Verify ONLY in config dir
+        assert!(backend.master_key_path().is_file());
+        assert!(!backend.legacy_master_key_path().is_file());
     }
 
     #[test]
@@ -575,7 +745,7 @@ mod tests {
         let id = format!("iris.test.{}", uuid::Uuid::new_v4());
         set_secret(&id, "test-secret-value").expect("set");
         assert!(has_secret(&id));
-        assert_eq!(get_secret(&id).expect("get"), "test-secret-value");
+        assert_eq!(get_secret(&id).expect("get").as_str(), "test-secret-value");
         local_backend()
             .expect("backend")
             .delete_password(&id, SECRET_ACCOUNT)
