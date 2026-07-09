@@ -273,8 +273,14 @@ function modelSupportsSlot(
   slot: CapabilitySlot,
 ): boolean {
   if (slot === "vision") {
+    // Live probe results (real timestamps, not the "built_in" catalog sentinel)
+    // are authoritative — they reflect actual API capability, not static defaults.
+    const probeTimestamp = model.registry?.visionVerifiedAt;
+    if (probeTimestamp && probeTimestamp !== "built_in") return true;
+    // Catalog is fallback when no live probe exists.
     if (model.catalog) return model.catalog.supportsVision;
-    return Boolean(model.registry?.visionVerifiedAt);
+    // "built_in" sentinel (backward compatibility) or no data at all.
+    return Boolean(probeTimestamp);
   }
   if (
     slot === "fast" ||
@@ -296,7 +302,19 @@ function modelCapabilitySummary(
   const textReady = textValidatedModel(model);
   if (!textReady) return "未验证";
   const visionReady = modelSupportsSlot(model, "vision");
-  const base = visionReady ? "文本可用 · 视觉可用" : "文本可用 · 视觉不支持";
+  // When a live probe confirmed vision but the catalog disagrees,
+  // surface the probe result with a clarifying label.
+  const probeVision =
+    model.registry?.visionVerifiedAt &&
+    model.registry.visionVerifiedAt !== "built_in";
+  const catalogSaysNo =
+    model.catalog && !model.catalog.supportsVision;
+  const visionLabel = visionReady
+    ? probeVision && catalogSaysNo
+      ? "视觉可用 (探测确认)"
+      : "视觉可用"
+    : "视觉不支持";
+  const base = `文本可用 · ${visionLabel}`;
   return `${base} · ${reasoningSummary}`;
 }
 

@@ -7,7 +7,9 @@ use super::trace_emit::{emit_thinking, emit_trace_phase};
 use super::types::{HarnessPhase, HarnessRunInput};
 use super::util::accumulate_usage;
 use crate::ai_runtime::evidence_ledger::EvidenceLedger;
-use crate::ai_runtime::harness_support::extract_thinking_blocks_for_event;
+use crate::ai_runtime::harness_support::{
+    extract_thinking_blocks_for_event, looks_like_incomplete_final_answer,
+};
 use crate::ai_runtime::model_gateway::{
     emit_stream_reset_with_surface, GatewayRequest, LlmMessage, MessageRole, ModelGateway,
     StreamSurface, TokenUsage, ToolCall,
@@ -177,7 +179,10 @@ pub(crate) fn sanitize_reflection_visible(text: &str) -> Option<String> {
     let cleaned = text.replace("NEED_MORE_EVIDENCE", "");
     let stripped = strip_tool_markup_from_visible(&cleaned);
     let trimmed = stripped.trim();
-    if trimmed.is_empty() || is_internal_tool_artifact_text(trimmed) {
+    if trimmed.is_empty()
+        || is_internal_tool_artifact_text(trimmed)
+        || looks_like_incomplete_final_answer(trimmed)
+    {
         None
     } else {
         Some(trimmed.to_string())

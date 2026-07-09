@@ -308,8 +308,14 @@ fn looks_like_meta_analysis_prefix(text: &str) -> bool {
 }
 
 fn looks_like_meta_analysis_paragraph(paragraph: &str) -> bool {
-    let lower = paragraph.trim_start().to_ascii_lowercase();
-    lower.starts_with("the user ")
+    let trimmed = paragraph.trim_start();
+    if trimmed.is_empty() {
+        return false;
+    }
+
+    // English patterns — use ASCII lowercase for case-insensitive matching.
+    let lower = trimmed.to_ascii_lowercase();
+    if lower.starts_with("the user ")
         || lower.starts_with("the user is ")
         || lower.starts_with("this is a ")
         || lower.starts_with("the current task ")
@@ -318,6 +324,53 @@ fn looks_like_meta_analysis_paragraph(paragraph: &str) -> bool {
         || lower.starts_with("the persona ")
         || lower.contains("current task focus")
         || lower.contains("persona is")
+    {
+        return true;
+    }
+
+    // Chinese patterns — Chinese characters are unaffected by ASCII lowercasing,
+    // so we match against the original trimmed text.
+    //
+    // 用户意图描述 / user-intent restatements
+    if trimmed.starts_with("用户的问题是")
+        || trimmed.starts_with("用户想要")
+        || trimmed.starts_with("用户询问")
+        || trimmed.starts_with("用户希望")
+        || trimmed.starts_with("用户的需求")
+        || trimmed.starts_with("用户要求")
+    {
+        return true;
+    }
+    // 自我规划 / self-planning
+    if trimmed.starts_with("我需要")
+        || trimmed.starts_with("我应该")
+        || trimmed.starts_with("我将")
+        || trimmed.starts_with("让我")
+        || trimmed.starts_with("我来")
+        || trimmed.starts_with("我先")
+        || trimmed.starts_with("首先我")
+        || trimmed.starts_with("接下来我")
+        || trimmed.starts_with("然后我")
+    {
+        return true;
+    }
+    // 任务理解 / task comprehension
+    if trimmed.starts_with("当前任务")
+        || trimmed.starts_with("任务重点")
+        || trimmed.starts_with("根据系统提示")
+    {
+        return true;
+    }
+    // 自我确认 / self-acknowledgement
+    if trimmed.starts_with("好的，")
+        || trimmed.starts_with("明白了")
+        || trimmed.starts_with("收到，")
+        || trimmed.starts_with("了解，")
+    {
+        return true;
+    }
+
+    false
 }
 
 /// Serializable harness input snapshot for resume.
@@ -417,6 +470,83 @@ pub fn load_harness_checkpoint(
             Err(e) => Err(e.into()),
         }
     })
+}
+
+/// Heuristic check for answers that look like incomplete fragments,
+/// document excerpts, or truncated output rather than complete responses.
+///
+/// This is intentionally conservative — it only flags obvious fragments
+/// and should not interfere with normal short answers (greetings,
+/// confirmations, etc.).
+pub fn looks_like_incomplete_final_answer(text: &str) -> bool {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return true;
+    }
+
+    // Very short content that looks like a raw document excerpt
+    // rather than a conversational answer.
+    if trimmed.chars().count() < 30 {
+        // Legal clause number pattern: "第X条" or "刑法第X条"
+        if trimmed.starts_with('《')
+            || trimmed.contains("第") && trimmed.contains("条")
+            || trimmed.contains("第") && trimmed.contains("款")
+        {
+            return true;
+        }
+        // Pure heading / title without body text
+        if trimmed.starts_with('#') && !trimmed.contains('\n') {
+            return true;
+        }
+        // Isolated blockquote without analysis
+        if trimmed.starts_with('>') && !trimmed.contains('\n') {
+            return true;
+        }
+        // Only contains citation references like "[1]" or "[法规]"
+        // with no surrounding analysis text.
+        let without_citations = trimmed.replace(&['[', ']'][..], "").trim().to_string();
+        if without_citations
+            .chars()
+            .all(|c| c.is_ascii_digit() || c.is_whitespace())
+        {
+            return true;
+        }
+    }
+
+    // Moderately short content that lacks sentence-ending punctuation
+    // is likely a truncated or mid-thought fragment.
+    if trimmed.chars().count() < 50 {
+        let last_char = trimmed.chars().last().unwrap_or(' ');
+        let has_end_punct = matches!(last_char, '。' | '！' | '？' | '.' | '!' | '?' | '…');
+        if !has_end_punct {
+            return true;
+        }
+    }
+
+    // Sentence appears truncated: ends with a comma or enumeration marker
+    // but no proper sentence-ending punctuation.
+    let ends_truncated = trimmed.ends_with(',')
+        || trimmed.ends_with('，')
+        || trimmed.ends_with(';')
+        || trimmed.ends_with('；')
+        || trimmed.ends_with("等等")
+        || trimmed.ends_with("等");
+    if ends_truncated {
+        // Only flag if there's no sentence-ending punctuation anywhere
+        // in the last 50 characters (allow "A, B, and C。" style endings).
+        let tail: String = trimmed.chars().rev().take(50).collect();
+        let has_end_punct = tail.contains('。')
+            || tail.contains('！')
+            || tail.contains('？')
+            || tail.contains('.')
+            || tail.contains('!')
+            || tail.contains('?');
+        if !has_end_punct {
+            return true;
+        }
+    }
+
+    false
 }
 
 #[cfg(test)]
@@ -579,6 +709,90 @@ mod tests {
         let raw = "我觉得这个问题可以分两步看。\n\n第一步是确认事实。";
 
         assert_eq!(sanitize_meta_analysis_prefix(raw), raw);
+    }
+
+    #[test]
+    fn sanitize_meta_analysis_removes_chinese_self_talk_prefix() {
+        // Chinese meta-analysis patterns that should be stripped.
+        let cases = [
+            (
+                "用户的问题是《刑法》第三百八十五条的适用范围。\n\n让我来分析一下。\n\n该条款规定…",
+                "该条款规定…",
+            ),
+            (
+                "用户想要分析这个案例。\n\n我需要先查阅相关法规。\n\n根据《刑法》第385条…",
+                "根据《刑法》第385条…",
+            ),
+            (
+                "当前任务是进行纪法案例分析。\n\n首先我需要检索相关法律条文。\n\n分析如下：…",
+                "分析如下：…",
+            ),
+            (
+                "好的，我来帮您分析这个纪法案例。\n\n这涉及以下法律条款…",
+                "这涉及以下法律条款…",
+            ),
+            (
+                "明白了。用户的需求是案例法律分析。\n\n我先梳理关键事实。\n\n本案中…",
+                "本案中…",
+            ),
+        ];
+
+        for (raw, expected) in cases {
+            let cleaned = sanitize_meta_analysis_prefix(raw);
+            assert_eq!(
+                cleaned, expected,
+                "Failed to strip Chinese meta-analysis prefix.\nInput: {raw}\nExpected: {expected}\nGot: {cleaned}"
+            );
+        }
+    }
+
+    #[test]
+    fn looks_incomplete_flags_legal_clause_fragment() {
+        assert!(looks_like_incomplete_final_answer("《刑法》第三百八十五条"));
+        assert!(looks_like_incomplete_final_answer("刑法第385条规定"));
+        assert!(looks_like_incomplete_final_answer("  第三百八十五条  "));
+    }
+
+    #[test]
+    fn looks_incomplete_flags_pure_heading() {
+        assert!(looks_like_incomplete_final_answer("# 第三章 刑罚"));
+    }
+
+    #[test]
+    fn looks_incomplete_flags_isolated_quote() {
+        assert!(looks_like_incomplete_final_answer(
+            "> 国家工作人员利用职务上的便利"
+        ));
+    }
+
+    #[test]
+    fn looks_incomplete_flags_truncated_sentence() {
+        assert!(looks_like_incomplete_final_answer("根据上述分析，本案涉及"));
+        assert!(looks_like_incomplete_final_answer(
+            "需要考虑以下几个方面：第一，主体要件；第二，"
+        ));
+        assert!(looks_like_incomplete_final_answer(
+            "相关规定包括刑法、监察法等等"
+        ));
+    }
+
+    #[test]
+    fn looks_incomplete_allows_normal_short_answers() {
+        assert!(!looks_like_incomplete_final_answer("好的。"));
+        assert!(!looks_like_incomplete_final_answer(
+            "你好！请问有什么可以帮助你的？"
+        ));
+        assert!(!looks_like_incomplete_final_answer("收到。"));
+    }
+
+    #[test]
+    fn looks_incomplete_allows_complete_answers() {
+        assert!(!looks_like_incomplete_final_answer(
+            "本案涉及贪污罪的认定。根据《刑法》第三百八十二条，贪污罪是指国家工作人员利用职务上的便利，侵吞、窃取、骗取或者以其他手段非法占有公共财物的行为。本案中，被告人的行为符合该罪的构成要件。"
+        ));
+        assert!(!looks_like_incomplete_final_answer(
+            "根据相关法律规定，我建议从以下几个方面进行辩护：第一，证据不足；第二，程序违法。"
+        ));
     }
 
     fn sample_checkpoint(round: u32) -> HarnessCheckpoint {

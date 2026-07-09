@@ -390,7 +390,7 @@ pub fn catalog() -> &'static [ModelCatalogEntry] {
             max_output: 16_384,
             supports_tools: true,
             supports_thinking: true,
-            supports_vision: false,
+            supports_vision: true,
             supports_streaming: true,
             cache_friendly: false,
             endpoint_family: EndpointFamily::OpenAiCompatibleChatCompletions,
@@ -460,7 +460,7 @@ pub fn catalog() -> &'static [ModelCatalogEntry] {
             max_output: 65_536,
             supports_tools: true,
             supports_thinking: true,
-            supports_vision: false,
+            supports_vision: true,
             supports_streaming: true,
             cache_friendly: false,
             endpoint_family: EndpointFamily::OpenAiCompatibleChatCompletions,
@@ -544,7 +544,7 @@ pub fn catalog() -> &'static [ModelCatalogEntry] {
             max_output: 8_192,
             supports_tools: false,
             supports_thinking: true,
-            supports_vision: false,
+            supports_vision: true,
             supports_streaming: true,
             cache_friendly: false,
             endpoint_family: EndpointFamily::OpenAiCompatibleChatCompletions,
@@ -558,7 +558,7 @@ pub fn catalog() -> &'static [ModelCatalogEntry] {
             max_output: 8_192,
             supports_tools: false,
             supports_thinking: true,
-            supports_vision: false,
+            supports_vision: true,
             supports_streaming: true,
             cache_friendly: false,
             endpoint_family: EndpointFamily::OpenAiCompatibleChatCompletions,
@@ -863,5 +863,23 @@ mod tests {
         assert!(ids.contains(&"MiMo-V2.5-TTS-VoiceDesign"));
         assert!(!ids.contains(&"mimo-vl-7b-experimental"));
         assert_eq!(fallback_model("mimo").id, "MiMo-V2.5-Pro");
+    }
+
+    #[test]
+    fn vision_capable_models_have_supports_vision_true() {
+        let models_to_check = [
+            "MiniMax-M3",
+            "glm-4.5",
+            "MiMo-V2.5-Pro",
+            "MiMo-V2.5-Pro-UltraSpeed",
+        ];
+        for model_id in models_to_check {
+            let model = find_model(model_id)
+                .unwrap_or_else(|| panic!("model {model_id} not found in catalog"));
+            assert!(
+                model.supports_vision,
+                "{model_id} should support vision but catalog says false"
+            );
+        }
     }
 }

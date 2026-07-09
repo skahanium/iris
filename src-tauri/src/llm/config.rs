@@ -1201,6 +1201,16 @@ fn route_satisfies_slot(
     };
     match slot {
         CapabilitySlot::Vision => {
+            // Live probe results are authoritative; catalog is fallback.
+            if let Some(entry) = registry_entry() {
+                if let Some(ref ts) = entry.vision_verified_at {
+                    if ts != "built_in" {
+                        return true;
+                    }
+                    // "built_in" sentinel means the catalog said so — fall through
+                    // to catalog check in case the catalog has been corrected since.
+                }
+            }
             if let Some(model) = catalog_model {
                 return model.supports_vision;
             }
@@ -2573,8 +2583,20 @@ mod tests {
         assert!(route.resolved.reasoning.isolate_output);
     }
     #[test]
-    fn vision_route_ignores_dirty_verified_state_for_catalog_non_vision_model() {
+    fn vision_route_respects_live_probe_over_catalog_non_vision_model() {
+        // When a live vision probe succeeded on a model whose catalog entry
+        // says supports_vision=false, the probe result is authoritative.
         let mut routing = deepseek_defaults();
+        routing.providers.insert(
+            "deepseek".into(),
+            ProviderOverride {
+                base_url: None,
+                label: None,
+                default_model: Some("deepseek-v4-flash".into()),
+                enabled_models: Some(vec!["deepseek-v4-flash".into()]),
+                model_capabilities: std::collections::HashMap::new(),
+            },
+        );
         routing.slots.insert(
             "vision".into(),
             SlotRoute {
@@ -2594,11 +2616,12 @@ mod tests {
             last_seen_at: None,
             last_refreshed_at: None,
             text_verified_at: None,
-            vision_verified_at: Some("dirty".into()),
+            vision_verified_at: Some("2026-07-09T12:00:00Z".into()),
             user_confirmed_capabilities: Vec::new(),
         }];
 
-        let err = resolve_capability_route_with_registry(
+        // Live probe result is authoritative — routing must succeed.
+        let route = resolve_capability_route_with_registry(
             &routing,
             CapabilityRouteInput {
                 intent: crate::ai_types::AgentIntent::VisionChat,
@@ -2610,10 +2633,10 @@ mod tests {
             },
             &registry,
         )
-        .expect_err("dirty DeepSeek vision verification must not make it routable");
+        .expect("live vision probe result must make model routable for Vision");
 
-        assert!(err.to_string().contains("Vision"));
-        assert!(err.to_string().contains("未配置"));
+        assert_eq!(route.resolved.provider_id, "deepseek");
+        assert_eq!(route.resolved.model, "deepseek-v4-flash");
     }
 
     #[test]

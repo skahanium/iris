@@ -168,24 +168,37 @@ pub fn list_registry_entries(db: &Database) -> AppResult<Vec<ModelRegistryEntry>
     })
 }
 
-/// Remove stale vision probe markers for catalog models known not to support vision.
+/// Warn about catalog models whose live vision probe contradicts the static
+/// catalog declaration.  Probe results are authoritative — the function no
+/// longer deletes data; it only logs warnings so operators can review
+/// catalog accuracy.
 pub fn clear_invalid_vision_validations(db: &Database) -> AppResult<usize> {
     db.with_conn(|conn| {
-        let mut cleared = 0;
+        let mut conflicts = 0;
         for model in crate::llm::model_catalog::catalog()
             .iter()
             .filter(|model| !model.supports_vision)
         {
-            cleared += conn.execute(
-                "UPDATE llm_model_registry
-                 SET vision_verified_at = NULL
+            let count: i64 = conn.query_row(
+                "SELECT COUNT(*) FROM llm_model_registry
                  WHERE provider_id = ?1
                    AND model_id = ?2
-                   AND vision_verified_at IS NOT NULL",
+                   AND vision_verified_at IS NOT NULL
+                   AND vision_verified_at != 'built_in'",
                 params![model.provider_id, model.id],
+                |row| row.get(0),
             )?;
+            if count > 0 {
+                conflicts += 1;
+                tracing::warn!(
+                    provider_id = %model.provider_id,
+                    model_id = %model.id,
+                    "Catalog declares no vision support but a live vision probe succeeded; \
+                     probe result is authoritative — consider updating the catalog entry"
+                );
+            }
         }
-        Ok(cleared)
+        Ok(conflicts as usize)
     })
 }
 
@@ -493,25 +506,31 @@ mod tests {
     }
 
     #[test]
-    fn clear_invalid_vision_validations_removes_non_vision_catalog_dirty_state() {
+    fn clear_invalid_vision_validations_preserves_live_probe_results() {
         let db = migrated_db();
-        let dirty = mark_model_validated(
+        // Simulate a live vision probe that succeeded on a model whose catalog
+        // entry says supports_vision=false.  The probe result is authoritative
+        // and must not be deleted by the cleanup routine.
+        let probed = mark_model_validated(
             &db,
             "deepseek",
             "deepseek-v4-flash",
             ModelValidationKind::Vision,
         )
         .unwrap();
-        assert!(dirty.vision_verified_at.is_some());
+        assert!(probed.vision_verified_at.is_some());
 
-        let cleared = clear_invalid_vision_validations(&db).unwrap();
+        let conflicts = clear_invalid_vision_validations(&db).unwrap();
         let entry = registry_entry(&db, "deepseek", "deepseek-v4-flash")
             .unwrap()
             .unwrap();
 
-        assert_eq!(cleared, 1);
-        assert!(entry.vision_verified_at.is_none());
-        assert!(!supports_model_for_slot(&entry, CapabilitySlot::Vision));
+        // Live probe results are authoritative – must never be cleared.
+        // The function returns the count of catalog-probe conflicts found
+        // (1 in this case: catalog says no vision, but a live probe succeeded).
+        assert_eq!(conflicts, 1);
+        assert!(entry.vision_verified_at.is_some());
+        assert!(supports_model_for_slot(&entry, CapabilitySlot::Vision));
     }
 
     #[test]

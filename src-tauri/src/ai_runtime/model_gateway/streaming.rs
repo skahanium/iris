@@ -392,7 +392,11 @@ impl StreamReadFailureDiagnostic {
 /// allowing content through regardless of meta-analysis detection.
 /// Prevents the "no visible text for several seconds" symptom when a
 /// reasoning model opens with an extended meta-analysis preamble.
-const MAX_SUPPRESSION_BUDGET: usize = 300;
+/// Maximum characters the sanitizer will suppress before relaxing
+/// meta-analysis blocking.  Raised from 300 to 500 to accommodate
+/// Chinese-language models that tend to produce longer self-talk
+/// preambles in multi-paragraph form.
+const MAX_SUPPRESSION_BUDGET: usize = 500;
 
 #[derive(Default)]
 struct VisibleStreamSanitizer {
@@ -475,11 +479,14 @@ fn sanitize_meta_analysis_prefix_for_stream(text: &str, done: bool) -> String {
 }
 
 fn looks_like_partial_meta_analysis_start(text: &str) -> bool {
-    if text.trim().is_empty() {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
         return false;
     }
-    let lower = text.to_ascii_lowercase();
-    const PREFIXES: [&str; 7] = [
+
+    // English prefixes (case-insensitive via ASCII lowering).
+    let lower = trimmed.to_ascii_lowercase();
+    const EN_PREFIXES: [&str; 7] = [
         "the user ",
         "the user is ",
         "the current task ",
@@ -488,7 +495,37 @@ fn looks_like_partial_meta_analysis_start(text: &str) -> bool {
         "i'll ",
         "the persona ",
     ];
-    PREFIXES.iter().any(|prefix| lower.starts_with(prefix))
+    if EN_PREFIXES.iter().any(|prefix| lower.starts_with(prefix)) {
+        return true;
+    }
+
+    // Chinese prefixes (case folding is a no-op for CJK, match original).
+    if trimmed.starts_with("用户的问题是")
+        || trimmed.starts_with("用户想要")
+        || trimmed.starts_with("用户询问")
+        || trimmed.starts_with("用户希望")
+        || trimmed.starts_with("用户的需求")
+        || trimmed.starts_with("用户要求")
+        || trimmed.starts_with("我需要")
+        || trimmed.starts_with("我应该")
+        || trimmed.starts_with("我将")
+        || trimmed.starts_with("让我")
+        || trimmed.starts_with("我来")
+        || trimmed.starts_with("首先我")
+        || trimmed.starts_with("接下来我")
+        || trimmed.starts_with("然后我")
+        || trimmed.starts_with("当前任务")
+        || trimmed.starts_with("任务重点")
+        || trimmed.starts_with("根据系统提示")
+        || trimmed.starts_with("好的，")
+        || trimmed.starts_with("明白了")
+        || trimmed.starts_with("收到，")
+        || trimmed.starts_with("了解，")
+    {
+        return true;
+    }
+
+    false
 }
 
 fn strip_reasoning_tags_for_stream(content: &str) -> String {

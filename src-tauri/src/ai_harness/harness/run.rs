@@ -25,7 +25,7 @@ use crate::ai_runtime::circuit_breaker;
 use crate::ai_runtime::evidence_ledger::EvidenceLedger;
 use crate::ai_runtime::harness_support::{
     estimate_tokens, extract_thinking_blocks_for_event, load_harness_checkpoint,
-    sanitize_meta_analysis_prefix, HarnessCheckpointMeta,
+    looks_like_incomplete_final_answer, sanitize_meta_analysis_prefix, HarnessCheckpointMeta,
 };
 use crate::ai_runtime::model_gateway::{
     clear_abort, emit_stream_reset_with_surface, is_abort_requested, prepare_tool_api_messages,
@@ -686,9 +686,41 @@ async fn run_harness_inner(
                 );
                 let raw = response.content.clone().unwrap_or_default();
                 let stripped = strip_tool_markup_from_visible(&raw);
-                let (_, thinking) = extract_thinking_blocks_for_event(&stripped, thinking_mode);
+                let sanitized = sanitize_meta_analysis_prefix(&stripped);
+                let (visible, thinking) =
+                    extract_thinking_blocks_for_event(&sanitized, thinking_mode);
                 if let Some(t) = thinking {
                     emit_thinking(app_handle, &input.request_id, harness_rounds, &t)?;
+                }
+
+                // Guard against incomplete / fragment answers: if the model
+                // issues a no-tool-call text that looks like a document excerpt
+                // or truncated sentence, push a continuation prompt and give
+                // the model one more chance rather than treating the fragment
+                // as the final answer.
+                if looks_like_incomplete_final_answer(&visible) && !bonus_round_used {
+                    tracing::warn!(
+                        request_id = %input.request_id,
+                        round = harness_rounds,
+                        fragment_len = visible.chars().count(),
+                        "no-tool-call response looks incomplete; pushing continuation prompt"
+                    );
+                    bonus_round_used = true;
+                    messages.push(LlmMessage {
+                        role: MessageRole::User,
+                        content: "请基于已检索到的信息继续完成你的分析，不要只输出文档片段。如果证据不足，请说明现有局限。".into(),
+                        tool_call_id: None,
+                        tool_calls: None,
+                        ..Default::default()
+                    });
+                    emit_stream_reset_with_surface(
+                        app_handle,
+                        &input.request_id,
+                        "fragment_continuation",
+                        StreamSurface::InternalCandidate,
+                        Some(harness_rounds),
+                    )?;
+                    continue 'agent;
                 }
                 break 'agent;
             }
