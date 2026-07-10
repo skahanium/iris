@@ -1,10 +1,27 @@
 ---
-title: "Fixture editor 12"
-aliases: ["alias-eval-12"]
-tags: ["area-editor", "fixture"]
+title: "编辑器渲染管线与性能优化"
+aliases: ["渲染管线", "editor-rendering-pipeline"]
+tags: ["area-editor", "fixture", "编辑器架构", "渲染", "性能优化"]
 ---
 
-# Fixture editor 12
+# 编辑器渲染管线与性能优化
 
-This deterministic RAG evaluation note owns the unique evidence token evaltok12.
-It exists to validate hybrid broker retrieval, metadata filtering, and ContextPacket construction.
+编辑器渲染管线是将内存中的文本模型转换为屏幕上可见像素的完整处理流程。与游戏引擎的渲染管线不同，编辑器渲染的核心挑战在于文本的增量更新效率、字体光栅化质量和亚像素精度的布局计算。
+
+## 文本布局引擎
+
+文本布局是渲染管线中最复杂的环节。编辑器需要处理双向文本（从左到右和从右到左的混合排版）、字距调整（Kerning）、连字（Ligature）以及复杂的 CJK（中日韩）字符宽度计算。HarfBuzz 是目前广泛使用的开源文本整形引擎，它接收 Unicode 文本和字体信息，输出精确的字形定位数据。编辑器在此基础上构建行缓存，避免每次重绘时重新计算整篇文档的布局。
+
+证据令牌: evaltok12
+
+## 增量重绘策略
+
+全量重绘整篇文档在大文件中会导致明显的输入延迟。增量重绘策略通过脏区域（Dirty Region）跟踪机制只重绘发生变化的屏幕区域。当用户在文档中间插入一行时，渲染引擎只需重绘当前行以及所有由于换行而向下推移的后续行对应的屏幕区域。GPU 加速的编辑器（如 Neovide、Zed）更是利用图形硬件大幅提升重绘吞吐量，将渲染操作卸载到 GPU 着色器中并行执行。
+
+## 虚拟滚动与视口管理
+
+对于包含数万行代码的大文件，将所有行都创建对应的 DOM 节点或绘制命令是不可行的。虚拟滚动（Virtual Scrolling）技术仅渲染当前视口内可见的行以及上下各一小段缓冲区行，滚动时动态回收和创建渲染对象。为实现平滑的滚动体验，编辑器需要精确估算未渲染区域的总高度，通常通过维护行高缓存来实现。
+
+## 语法高亮的渲染调度
+
+语法高亮的计算量可能很大，尤其是在正则表达式匹配或 Tree-sitter 查询涉及深层嵌套的语法规则时。渲染管线通常将语法高亮放在异步工作线程中执行，主线程只负责将已计算的高亮标记映射到屏幕上的颜色属性。当用户快速滚动时，若语法高亮计算尚未完成，编辑器首先使用无高亮的纯文本占位渲染，待高亮数据就绪后再进行增量更新。

@@ -123,11 +123,35 @@ fn extract_link_context(content: &str, title: &str) -> String {
     let pattern = format!("[[{title}]]");
     if let Some(start_match) = content.find(&pattern) {
         let end_match = start_match + pattern.len();
-        let start = start_match.saturating_sub(30);
-        let end = (end_match + 30).min(content.len());
+        let raw_start = start_match.saturating_sub(30);
+        let raw_end = (end_match + 30).min(content.len());
+        // Ensure we slice on valid UTF-8 character boundaries.
+        let start = floor_char_boundary(content, raw_start);
+        let end = ceil_char_boundary(content, raw_end);
         content[start..end].to_string()
     } else {
         String::new()
+    }
+}
+
+fn floor_char_boundary(s: &str, index: usize) -> usize {
+    if s.is_char_boundary(index) {
+        index
+    } else {
+        (0..index)
+            .rev()
+            .find(|&i| s.is_char_boundary(i))
+            .unwrap_or(0)
+    }
+}
+
+fn ceil_char_boundary(s: &str, index: usize) -> usize {
+    if s.is_char_boundary(index) {
+        index
+    } else {
+        ((index + 1)..=s.len())
+            .find(|&i| s.is_char_boundary(i))
+            .unwrap_or(s.len())
     }
 }
 

@@ -21,6 +21,7 @@ interface AssistantComposerDockProps {
   mentionHighlight: number;
   mentionNavDeltaRef: MutableRefObject<1 | -1 | 0>;
   mentionOpen: boolean;
+  mentionPrefix: "@" | "#";
   mentionQuery: string;
   streaming: boolean;
   textareaRef: RefObject<HTMLTextAreaElement | null>;
@@ -42,6 +43,7 @@ export function AssistantComposerDock({
   mentionHighlight,
   mentionNavDeltaRef,
   mentionOpen,
+  mentionPrefix,
   mentionQuery,
   streaming,
   textareaRef,
@@ -78,6 +80,7 @@ export function AssistantComposerDock({
             <AiMentionPopover
               open={mentionOpen}
               query={mentionQuery}
+              prefix={mentionPrefix}
               candidates={mentionCandidates}
               highlight={mentionHighlight}
               onHighlight={onMentionHighlight}

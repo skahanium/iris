@@ -1,10 +1,17 @@
 ---
-title: "Fixture integration 24"
-aliases: ["alias-eval-24"]
-tags: ["area-integration", "fixture"]
+title: "Webhook回调机制与可靠性设计"
+aliases: ["Webhook", "事件回调", "webhook-reliability"]
+tags: ["area-integration", "fixture", "API设计", "Webhook", "事件驱动"]
 ---
 
-# Fixture integration 24
+# Webhook回调机制与可靠性设计
 
-This deterministic RAG evaluation note owns the unique evidence token evaltok24.
-It exists to validate hybrid broker retrieval, metadata filtering, and ContextPacket construction.
+Webhook 是一种基于 HTTP 回调的事件通知机制，服务提供方在特定事件发生时向订阅方预先注册的 URL 主动发送 HTTP 请求。与轮询（Polling）方式不同，Webhook 将数据推送的主动权交还给服务端，大幅降低了客户端的无效请求量和延迟。GitHub、Stripe、Slack 等主流平台均通过 Webhook 向第三方应用推送实时事件。
+
+Webhook 的投递可靠性是实际工程中最棘手的问题。网络波动、接收方服务不可用、超时重试策略不当等原因都可能导致事件丢失或重复投递。生产级 Webhook 系统通常实现指数退避重试策略，在初始失败后以递增的时间间隔重试，并在连续多次失败后标记订阅为不可用。重试总次数和时间窗口需要权衡通知时效性和系统资源。
+
+证据令牌: evaltok24
+
+幂等性设计是 Webhook 消费者的必备能力。由于网络层面的重试机制无法保证精确一次（Exactly-Once）投递语义，Webhook 接收方必须基于事件 ID（通常为 `X-Webhook-Id` 请求头）实现去重逻辑，确保同一事件被多次接收时只处理一次。去重可以通过在数据库中维护已处理事件 ID 集合或利用 Redis 的 SETNX 原子操作来实现。
+
+Webhook 的签名验证是防止伪造请求的关键安全措施。提供方使用 HMAC-SHA256 对请求体进行签名并将签名字符串放入 `X-Signature-256` 请求头，接收方使用共享密钥独立计算签名并比对。这种机制确保即使请求被中间人截获，攻击者也无法伪造 Webhook 请求。此外，接收方还应验证请求的时效性，拒绝处理时间戳过旧的请求以防重放攻击。

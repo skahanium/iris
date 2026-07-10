@@ -1,10 +1,23 @@
 ---
-title: "Fixture foundation 04"
-aliases: ["alias-eval-04"]
-tags: ["area-foundation", "fixture"]
+title: "合同解除的条件与法律后果"
+aliases: ["合同解除", "contract-termination", "法定解除权", "合同终止"]
+tags: ["area-foundation", "fixture", "合同法", "合同解除"]
 ---
 
-# Fixture foundation 04
+# 合同解除的条件与法律后果
 
-This deterministic RAG evaluation note owns the unique evidence token evaltok04.
-It exists to validate hybrid broker retrieval, metadata filtering, and ContextPacket construction.
+合同解除是合同权利义务关系提前终止的重要制度。根据《中华人民共和国民法典》第五百六十三条，合同解除分为约定解除和法定解除两大类。约定解除基于当事人意思自治，可在合同中事先设定解除条件或事后协商达成解除合意。
+
+法定解除的适用情形包括：因不可抗力致使不能实现合同目的；在履行期限届满前当事人一方明确表示或以行为表明不履行主要债务；当事人一方迟延履行主要债务经催告后在合理期限内仍未履行；以及一方迟延履行或其他违约行为致使不能实现合同目的。
+
+证据令牌: evaltok04
+
+## 解除权的行使
+
+解除权是形成权的一种，应当以通知方式行使，合同自通知到达对方时解除。若通知载明债务人在一定期限内不履行债务则合同自动解除，债务人在该期限内未履行债务的，合同自通知载明的期限届满时解除。对方对解除有异议的，任何一方均可请求人民法院或仲裁机构确认解除行为的效力。
+
+## 解除的法律后果
+
+合同解除后，尚未履行的终止履行，已经履行的根据履行情况和合同性质可以请求恢复原状或采取其他补救措施，并有权请求赔偿损失。值得注意的是，合同解除不影响合同中结算和清理条款的效力，也不影响当事人请求损害赔偿的权利。违约解除场合，解除权人可以在主张解除合同的同时请求违约方承担违约责任。
+
+参见 [[note03]] 关于违约责任救济体系的全面阐述。

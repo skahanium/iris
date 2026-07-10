@@ -1,12 +1,12 @@
 use std::sync::Arc;
 
 use serde::Serialize;
-use tauri::State;
+use tauri::{Emitter, State};
 
 use crate::app::AppState;
 use crate::embedding::engine::{semantic_search, SemanticHit};
 use crate::embedding::rebuild::{
-    embedding_index_status, rebuild_v2_embeddings, EmbeddingIndexStatus,
+    embedding_index_status, rebuild_v2_embeddings_with, EmbeddingIndexStatus, BgeEmbeddingBatcher,
 };
 use crate::error::AppResult;
 use crate::indexer::scan::{index_vault_incremental, IndexEmbeddingMode};
@@ -58,7 +58,10 @@ pub fn search_semantic(
 }
 
 #[tauri::command]
-pub fn search_reindex(state: State<'_, Arc<AppState>>) -> AppResult<usize> {
+pub fn search_reindex(
+    state: State<'_, Arc<AppState>>,
+    app_handle: tauri::AppHandle,
+) -> AppResult<usize> {
     let vault = state.vault_path()?;
     let entries = state.db.with_conn(|conn| {
         let entries =
@@ -66,8 +69,25 @@ pub fn search_reindex(state: State<'_, Arc<AppState>>) -> AppResult<usize> {
         crate::storage::db::log_vector_index_consistency(conn);
         Ok(entries)
     })?;
-    state.db.with_conn(rebuild_v2_embeddings)?;
+    state.db.with_conn(|conn| {
+        rebuild_v2_embeddings_with(conn, &BgeEmbeddingBatcher, &|indexed, total| {
+            let _ = app_handle.emit(
+                "embedding-index-progress",
+                EmbeddingProgressPayload {
+                    indexed_items: indexed as i64,
+                    total_items: total as i64,
+                },
+            );
+        })
+    })?;
     Ok(entries.len())
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct EmbeddingProgressPayload {
+    indexed_items: i64,
+    total_items: i64,
 }
 
 #[tauri::command]

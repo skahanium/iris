@@ -42,6 +42,7 @@ export function useAssistantContextScope({
   const [mentionOpen, setMentionOpen] = useState(false);
   const [mentionStart, setMentionStart] = useState(0);
   const [mentionQuery, setMentionQuery] = useState("");
+  const [mentionPrefix, setMentionPrefix] = useState<"@" | "#">("@");
   const loadSeqRef = useRef(0);
 
   const mentionTokens = useMemo(() => parseMentionTokens(input), [input]);
@@ -100,6 +101,7 @@ export function useAssistantContextScope({
       setMentionOpen(true);
       setMentionStart(active.start);
       setMentionQuery(active.query);
+      setMentionPrefix(active.prefix);
     } else {
       setMentionOpen(false);
     }
@@ -170,6 +172,7 @@ export function useAssistantContextScope({
     mentionHighlight,
     mentionNavDeltaRef,
     mentionOpen,
+    mentionPrefix,
     mentionQuery,
     mentionTokens,
     removeMentionToken,

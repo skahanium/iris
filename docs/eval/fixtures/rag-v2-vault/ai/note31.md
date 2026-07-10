@@ -1,10 +1,17 @@
 ---
-title: "Fixture ai 31"
-aliases: ["alias-eval-31"]
-tags: ["area-ai", "fixture"]
+title: "机器学习中的数据治理与合规要求"
+aliases: ["ML数据治理", "data-governance-ml", "AI合规"]
+tags: ["area-ai", "fixture", "MLOps", "数据治理", "合规"]
 ---
 
-# Fixture ai 31
+# 机器学习中的数据治理与合规要求
 
-This deterministic RAG evaluation note owns the unique evidence token evaltok31.
-It exists to validate hybrid broker retrieval, metadata filtering, and ContextPacket construction.
+机器学习系统的生命周期与数据密不可分，从训练数据的采集标注到特征工程的加工处理，再到推理数据的实时消费，每个环节都涉及数据治理问题。根据《中华人民共和国数据安全法》第二十七条，开展数据处理活动应当依照法律法规的规定建立健全全流程数据安全管理制度，组织开展数据安全教育培训，采取相应的技术措施和其他必要措施保障数据安全。这为机器学习的数据治理提供了法律框架。
+
+训练数据的合规性审查是模型开发的前置条件。涉及个人信息的数据需要满足《个人信息保护法》）的合法性基础要求，包括"告知-同意"规则、最小必要原则和目的限制原则。使用开源数据集时，应审查数据集许可证（如 CC-BY、ODC-BY）与商业应用场景的兼容性。从互联网爬取的数据则需要评估爬虫的合规性和 robots.txt 协议遵守情况。
+
+证据令牌: evaltok31
+
+特征工程环节的数据泄露（Data Leakage）是机器学习项目中排名最高的工程错误之一。当训练过程中无意使用了本应在预测时不可用的信息（如未来时间的标签、测试集的统计量），模型在离线评估中表现异常优秀但上线后效果急剧下降。特征存储（Feature Store）通过集中管理特征定义、特征注册和特征计算逻辑，有效降低了特征泄露和训练-服务数据偏斜（Training-Serving Skew）的风险。
+
+数据偏见（Data Bias）是机器学习的伦理与合规双重挑战。训练数据中的历史偏见可能被模型学习并放大，导致对不同人群的不公平对待。数据偏见不仅违反伦理准则，在某些管辖区域（如欧盟 AI Act）也构成法律风险。治理实践包括训练前进行数据集偏见审计、训练中引入公平性约束（如 Equalized Odds）、以及部署后持续监控不同人口统计维度上的模型表现差异。

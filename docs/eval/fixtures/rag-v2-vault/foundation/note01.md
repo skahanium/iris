@@ -1,10 +1,23 @@
 ---
-title: "Fixture foundation 01"
-aliases: ["alias-eval-01"]
-tags: ["area-foundation", "fixture"]
+title: "合同成立要件分析"
+aliases: ["合同成立条件", "contract-formation", "要约承诺规则"]
+tags: ["area-foundation", "fixture", "合同法"]
 ---
 
-# Fixture foundation 01
+# 合同成立要件分析
 
-This deterministic RAG evaluation note owns the unique evidence token evaltok01.
-It exists to validate hybrid broker retrieval, metadata filtering, and ContextPacket construction.
+合同成立是合同法的基础概念，涉及要约与承诺两个核心环节。根据《中华人民共和国民法典》第四百七十一条，当事人订立合同可以采取要约、承诺方式或者其他方式。
+
+要约是希望与他人订立合同的意思表示，应当内容具体确定，并表明经受要约人承诺后即受该意思表示约束。要约邀请则不构成要约，商业广告、价目表等通常视为要约邀请。
+
+承诺是受要约人同意要约的意思表示，应当在要约确定的期限内到达要约人。逾期承诺视为新要约，除非要约人及时通知受要约人该承诺有效。
+
+证据令牌: evaltok01
+
+沉默一般不构成承诺，但法律规定、当事人约定或交易习惯允许的除外。交叉要约情况下，若双方互不知悉对方意思表示而内容一致，通说认为合同成立。
+
+## 实务要点
+
+实务中常见争议集中在要约撤回与撤销的区别。撤回通知应当在要约到达受要约人之前或同时到达；撤销通知则应在受要约人发出承诺通知之前到达。要约确定了承诺期限或以其他形式明示不可撤销的，不得撤销。
+
+参见 [[note02]] 关于合同效力的进一步讨论。

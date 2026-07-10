@@ -149,6 +149,11 @@ export interface EmbeddingIndexStatus {
   lastError: string | null;
 }
 
+export interface EmbeddingIndexProgress {
+  indexedItems: number;
+  totalItems: number;
+}
+
 export interface FileChangedEvent {
   path: string;
   hash?: string;

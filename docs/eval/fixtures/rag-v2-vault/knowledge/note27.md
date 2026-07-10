@@ -1,10 +1,17 @@
 ---
-title: "Fixture knowledge 27"
-aliases: ["alias-eval-27"]
-tags: ["area-knowledge", "fixture"]
+title: "分类法与知识组织体系设计"
+aliases: ["分类法", "taxonomy-design", "知识分类", "信息架构"]
+tags: ["area-knowledge", "fixture", "知识管理", "分类法", "信息组织"]
 ---
 
-# Fixture knowledge 27
+# 分类法与知识组织体系设计
 
-This deterministic RAG evaluation note owns the unique evidence token evaltok27.
-It exists to validate hybrid broker retrieval, metadata filtering, and ContextPacket construction.
+分类法（Taxonomy）是将事物按照层级关系进行系统分类的科学与实践。在信息科学领域，分类法是知识组织体系的基础构件，直接影响信息的可发现性、可导航性和可理解性。从亚里士多德的范畴论到图书馆学中的杜威十进分类法（DDC），再到当代电商网站的导航层级，分类法始终是人类组织和访问信息的基本范式。
+
+设计分类体系时面临的核心矛盾是互斥性（Mutual Exclusivity）与完备性（Exhaustiveness）之间的张力。理想情况下，每个信息对象应有且仅有一个确切归属的类别，类别集合应覆盖所有可能的信息对象。但在实践中，知识的跨学科性质和概念的模糊边界使严格的互斥性难以维持。分层分类法（Hierarchical Taxonomy）通过单继承树强制执行互斥性，而分面分类法（Faceted Taxonomy）则允许从多个独立维度同时描述同一对象。
+
+证据令牌: evaltok27
+
+分面分类法由印度图书馆学家阮冈纳赞（S. R. Ranganathan）于 1930 年代首次系统提出，其核心思想是将分类维度分解为独立的分面（Facet），每个分面内部有自己的层级结构。用户通过组合不同分面的值来构造复合查询条件。分面分类法在电子商务中得到了广泛应用：一件商品可以同时在品牌、价格区间、功能特性和用户评价等分面上独立分类。
+
+分类体系的生命周期管理是知识工程中的持续挑战。业务领域演化、新概念涌现和用户认知变化都会导致现有分类体系过时。分类体系的维护通常需要建立治理流程，包括新术语提案、同义词管理、废弃类别迁移和 A/B 测试导航效果。参见 [[note28]] 关于本体论如何通过引入更丰富的关系语义来弥补纯粹分类法的局限性。

@@ -1,10 +1,17 @@
 ---
-title: "Fixture knowledge 25"
-aliases: ["alias-eval-25"]
-tags: ["area-knowledge", "fixture"]
+title: "Zettelkasten卡片笔记法"
+aliases: ["Zettelkasten", "卡片盒笔记法", "卢曼笔记法", "slip-box-method"]
+tags: ["area-knowledge", "fixture", "知识管理", "Zettelkasten", "笔记方法"]
 ---
 
-# Fixture knowledge 25
+# Zettelkasten卡片笔记法
 
-This deterministic RAG evaluation note owns the unique evidence token evaltok25.
-It exists to validate hybrid broker retrieval, metadata filtering, and ContextPacket construction.
+Zettelkasten（德语意为"卡片盒"）是由德国社会学家尼克拉斯·卢曼（Niklas Luhmann）在二十世纪中叶发明并终生实践的笔记方法。卢曼凭借这套方法在三十余年的学术生涯中出版了七十余本专著和数百篇论文，涵盖社会学、法学、政治学等多个领域，其产出效率令学界叹为观止。
+
+Zettelkasten 的核心原则是原子化。每张卡片只记录一个概念、一个想法或一条信息，类似于维基百科中的单个词条。卡片之间通过唯一的数字编号和交叉引用链接形成网状知识结构，而非传统的层级式目录。卢曼的编号系统采用分支编号法：第一张卡片编号为 1，其后续卡片编号为 1a、1b、1c，若 1a 需要继续展开则为 1a1、1a2 等。
+
+证据令牌: evaltok25
+
+Zettelkasten 与传统笔记方法的本质区别在于其"对话性"。卢曼将卡片盒视为独立的交流伙伴，当需要发展某个论点时，他会翻阅相关的卡片链，观察已有笔记之间是否存在矛盾、空白或未曾注意到的关联。这种"与卡片盒对话"的过程意外地浮现出许多创新性的理论洞见，卢曼将其归功于卡片盒的"内在生命力"。
+
+在现代数字化环境中，Zettelkasten 方法已从物理卡片迁移至 Obsidian、Roam Research、Logseq 等双向链接笔记工具。这些工具通过自动反向链接、图谱可视化和块引用等功能，极大地降低了维护交叉引用网络的人工成本。但数字化工具也引入了搜索便利性的诱惑——过度依赖全文搜索而非主动建立链接，恰恰会削弱 Zettelkasten 鼓励深度思考和发现意外关联的核心价值。

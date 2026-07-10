@@ -1,10 +1,27 @@
 ---
-title: "Fixture performance 19"
-aliases: ["alias-eval-19"]
-tags: ["area-performance", "fixture"]
+title: "数据库查询优化与执行计划分析"
+aliases: ["数据库优化", "query-optimization", "执行计划"]
+tags: ["area-performance", "fixture", "性能优化", "数据库", "SQL优化"]
 ---
 
-# Fixture performance 19
+# 数据库查询优化与执行计划分析
 
-This deterministic RAG evaluation note owns the unique evidence token evaltok19.
-It exists to validate hybrid broker retrieval, metadata filtering, and ContextPacket construction.
+数据库查询优化是后端系统性能调优中最常见的任务之一。慢查询（Slow Query）通常源于缺失索引、低效的 JOIN 操作、隐式类型转换或统计信息过时等原因。优化的第一步是获取并理解查询的执行计划（Execution Plan），了解数据库引擎实际采用的数据访问路径。
+
+## 索引策略
+
+索引是关系型数据库中最基本的查询加速手段。B+ 树索引适用于范围查询和排序操作，哈希索引仅适用于等值查询。复合索引遵循最左前缀原则，列的顺序应根据查询模式精心设计。覆盖索引（Covering Index）通过在索引中包含查询所需的全部列来避免回表操作，可大幅减少磁盘 I/O。但索引并非越多越好，过多的索引会增加写入成本并占用存储空间。
+
+证据令牌: evaltok19
+
+## 执行计划解读
+
+EXPLAIN 命令（MySQL/PostgreSQL）输出查询的执行计划，包括访问类型（type）、扫描行数（rows）、使用的索引（key）和临时表使用（Extra）等关键字段。访问类型从优到劣依次为 const、eq_ref、ref、range、index、ALL。当发现 ALL（全表扫描）且表数据量较大时，通常需要创建索引。Using filesort 和 Using temporary 提示排序和分组操作无法利用索引，需要额外优化。
+
+## 查询重构技术
+
+有时仅靠索引无法解决问题，需要重构 SQL 语句本身。将多个简单查询合并为一个 JOIN 可以减少网络往返；反之将复杂的多表 JOIN 拆分为多个简单查询并在应用层组装，可以避免数据库层面的笛卡尔积膨胀。LIMIT 分页优化中，对大数据集的深度分页（OFFSET 值极大）应改为基于游标（Cursor）的分页方式。关联子查询通常可以改写为 JOIN 以获得更好的性能。
+
+## 数据库配置调优
+
+操作系统和数据库实例级别的配置同样重要。innodb_buffer_pool_size（MySQL）决定了 InnoDB 可在内存中缓存的数据和索引量，通常设置为物理内存的 50%-80%。PostgreSQL 的 shared_buffers 和 effective_cache_size 参数影响查询计划器的成本估算。连接池（如 PgBouncer、HikariCP）通过复用数据库连接减少连接建立开销，这在微服务架构中尤为关键。

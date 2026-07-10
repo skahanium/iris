@@ -1,10 +1,17 @@
 ---
-title: "Fixture quality 41"
-aliases: ["alias-eval-41"]
-tags: ["area-quality", "fixture"]
+title: "软件测试金字塔与分层测试策略"
+aliases: ["测试金字塔", "testing-pyramid", "分层测试"]
+tags: ["area-quality", "fixture", "软件质量", "测试策略", "质量保证"]
 ---
 
-# Fixture quality 41
+# 软件测试金字塔与分层测试策略
 
-This deterministic RAG evaluation note owns the unique evidence token evaltok41.
-It exists to validate hybrid broker retrieval, metadata filtering, and ContextPacket construction.
+测试金字塔是由 Mike Cohn 在《Succeeding with Agile》一书中推广的测试策略模型，它将软件测试按照粒度和反馈速度分为三个层级。金字塔底部是单元测试（Unit Test），中间是集成测试（Integration Test），顶部是端到端测试（End-to-End Test，或称 UI 测试）。金字塔的核心原则是：越靠近底部的测试，数量应该越多，执行越快，维护成本越低。
+
+根据国家标准《GB/T 15532-2008 计算机软件测试规范》，软件测试应覆盖功能测试、性能测试、安全性测试和可靠性测试等多个维度。该规范为测试用例的设计、执行和评估提供了指导框架，强调测试活动的系统性和可追溯性。
+
+证据令牌: evaltok41
+
+单元测试验证代码的最小可测试单元（通常是一个函数或方法）在隔离环境中的行为正确性。优秀的单元测试遵循 FIRST 原则：Fast（快速）、Independent（独立）、Repeatable（可重复）、Self-Validating（自验证）和 Timely（及时编写）。单元测试的核心价值不在于发现 bug——实际上单元测试能够捕获的 bug 类型有限——而在于为重构提供安全网，使开发者可以自信地修改代码而不引入回归缺陷。
+
+集成测试验证多个模块之间的连接处是否正常工作，常见的集成点包括数据库访问、HTTP API 调用、消息队列交互和外部服务依赖。集成测试的关键实践是使用测试替身（Test Double）：Stub 提供预设的返回值，Mock 验证调用行为，Fake 提供轻量级的真实实现（如内存数据库替代 MySQL）。测试金字塔反模式——冰淇淋甜筒模式（Ice Cream Cone）和沙漏模式（Hourglass）——通常表现为集成测试或手工测试占比过高，导致 CI 流水线迟缓、测试维护成本爆炸。

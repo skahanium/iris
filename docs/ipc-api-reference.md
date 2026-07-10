@@ -35,7 +35,7 @@ Tauri 命令注册在 [`src-tauri/src/lib.rs`](../src-tauri/src/lib.rs)，前端
 
 ### 检索
 
-`search_keyword`、`search_semantic`、`search_reindex` 服务于普通搜索；`search_hybrid` 返回 AI `ContextPacket`。v1.2.6 将新增嵌入索引状态与进度契约，必须同步本文件、Rust/TS 类型和测试后才可使用。
+`search_keyword`、`search_semantic`、`search_reindex` 服务于普通搜索；`search_hybrid` 返回 AI `ContextPacket`。`search_embedding_status` 返回当前嵌入模型、维度与重建进度（`EmbeddingIndexStatus`），供管理中心和调试面板展示。v1.2.6 将新增嵌入索引进度事件契约，必须同步本文件、Rust/TS 类型和测试后才可使用。
 
 ### 事件
 

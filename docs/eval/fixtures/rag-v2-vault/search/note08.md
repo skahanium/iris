@@ -1,10 +1,17 @@
 ---
-title: "Fixture search 08"
-aliases: ["alias-eval-08"]
-tags: ["area-search", "fixture"]
+title: "向量检索与语义搜索技术"
+aliases: ["向量检索", "语义搜索", "dense-retrieval", "embedding-search", "ANN检索", "相似度搜索", "神经信息检索"]
+tags: ["area-search", "fixture", "信息检索", "向量检索", "语义搜索", "ANN"]
 ---
 
-# Fixture search 08
+# 向量检索与语义搜索技术
 
-This deterministic RAG evaluation note owns the unique evidence token evaltok08.
-It exists to validate hybrid broker retrieval, metadata filtering, and ContextPacket construction.
+向量检索（Vector Search），又称稠密检索（Dense Retrieval）或语义搜索，是近年来信息检索领域最重要的范式转变。不同于基于关键词匹配的稀疏检索方法，向量检索通过将查询和文档分别编码为固定维度的稠密向量（Embedding），并在向量空间中计算余弦相似度或内积来确定相关性。
+
+向量检索的核心优势在于语义泛化能力。使用预训练语言模型（如 BERT、Sentence-T5）生成的文本嵌入能够捕捉近义词、同义改写和上下文语义关系。例如，查询 "如何治疗高血压" 可以匹配到标题为 "降压药物的临床应用指南" 的文档，尽管两者没有重叠的关键词。这种语义理解能力是传统 BM25 算法无法实现的。
+
+证据令牌: evaltok08
+
+近似最近邻（Approximate Nearest Neighbor, ANN）索引是向量检索工程化的关键技术。主流的 ANN 算法包括基于图的 HNSW（Hierarchical Navigable Small World）、基于量化的 Product Quantization（PQ）和基于树的 Annoy 等。HNSW 通过构建多层可导航小世界图实现了对数复杂度的近似检索，在召回率和速度之间取得了优秀的平衡。
+
+向量检索并非万能方案。它在处理精确匹配查询（如 ISBN、身份证号）、专有名词和低频实体的检索上可能不如稀疏检索可靠。因此，工业界的主流实践是采用混合检索策略：将 BM25 的稀疏检索结果与向量检索的稠密检索结果通过融合算法（如倒数排名融合 RRF）合并，以兼顾精确匹配和语义泛化的双重需求。

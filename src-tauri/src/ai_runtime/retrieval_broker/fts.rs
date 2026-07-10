@@ -59,15 +59,13 @@ pub(super) fn chunk_evidence_for_path(
     }))
 }
 
-pub(super) fn escape_fts5_query(query: &str) -> String {
+pub fn escape_fts5_query(query: &str) -> String {
     let tokens: Vec<String> = query
         .split_whitespace()
         .map(|token| {
             let cleaned: String = token
                 .chars()
-                .filter(|c| {
-                    c.is_alphanumeric() || *c == '_' || *c == '-' || c.is_ascii_punctuation()
-                })
+                .filter(|c| !c.is_control() && *c != '"')
                 .collect();
             if cleaned.is_empty() {
                 String::new()

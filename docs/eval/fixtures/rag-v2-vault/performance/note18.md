@@ -1,10 +1,17 @@
 ---
-title: "Fixture performance 18"
-aliases: ["alias-eval-18"]
-tags: ["area-performance", "fixture"]
+title: "多级缓存架构与失效策略"
+aliases: ["缓存策略", "cache-architecture", "缓存失效"]
+tags: ["area-performance", "fixture", "性能优化", "缓存", "CDN"]
 ---
 
-# Fixture performance 18
+# 多级缓存架构与失效策略
 
-This deterministic RAG evaluation note owns the unique evidence token evaltok18.
-It exists to validate hybrid broker retrieval, metadata filtering, and ContextPacket construction.
+缓存是提升系统性能最有效的手段之一，通过用空间换时间的方式将频繁访问的数据存储在高速度的存储介质中，避免重复计算或慢速 I/O 操作。现代 Web 应用通常采用多级缓存架构：浏览器缓存、CDN 边缘缓存、反向代理缓存（如 Nginx、Varnish）、应用层缓存（如 Redis、Memcached）和数据库缓存。
+
+每一级缓存的容量、速度和命中率各不相同，形成了经典的缓存层级金字塔。浏览器缓存通过 Cache-Control 和 ETag 等 HTTP 头控制，CDN 缓存将静态资源分发至全球边缘节点显著降低网络延迟，应用层缓存用于存储数据库查询结果和计算密集型的中间结果。合理配置每一层的 TTL（Time-To-Live）是缓存架构设计的核心权衡。
+
+证据令牌: evaltok18
+
+缓存失效（Cache Invalidation）是缓存系统中最棘手的问题之一，Phil Karlton 曾言"计算机科学中只有两件难事：缓存失效和命名"。主流的缓存失效策略包括 TTL 到期删除、主动失效（Cache Invalidation）和写穿透（Write-Through）、写回（Write-Behind）等模式。Cache-Aside 模式是最常用的缓存更新策略：读时先查缓存，未命中则查数据库并回填缓存；写时更新数据库并删除缓存条目。
+
+缓存一致性在分布式环境中尤为复杂。当多个服务实例各自维护本地缓存时，数据变更需要广播失效消息。Redis Pub/Sub 或消息队列可用于实现缓存失效通知，但需要容忍短暂的缓存不一致窗口。对于强一致性要求的场景，可牺牲部分性能采用读穿透（Read-Through）策略，或将数据一致性压力转移至数据库层面。

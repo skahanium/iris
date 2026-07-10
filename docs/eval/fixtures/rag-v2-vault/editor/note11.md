@@ -1,10 +1,17 @@
 ---
-title: "Fixture editor 11"
-aliases: ["alias-eval-11"]
-tags: ["area-editor", "fixture"]
+title: "光标定位与选区管理机制"
+aliases: ["光标管理", "selection-management"]
+tags: ["area-editor", "fixture", "编辑器架构", "光标", "选区"]
 ---
 
-# Fixture editor 11
+# 光标定位与选区管理机制
 
-This deterministic RAG evaluation note owns the unique evidence token evaltok11.
-It exists to validate hybrid broker retrieval, metadata filtering, and ContextPacket construction.
+光标定位是文本编辑器中最频繁执行的操作之一，它需要将用户的鼠标点击或键盘操作映射到文档中的确切位置。光标的逻辑位置由行号和列号表示，但底层数据结构通常使用字符偏移量来精确定位。在支持多字节字符（如中文、Emoji）的编辑器中，还需要区分字素簇（Grapheme Cluster）边界与代码点（Code Point）边界，避免光标落在组合字符的中间位置。
+
+选区（Selection）是光标的自然扩展，由锚点（Anchor）和活动点（Active）两个位置定义。锚点是选区开始拖动时的固定端点，活动点随着鼠标或键盘移动而变化。这种双端点的设计允许用户在保持选区一端不动的情况下精确调整选区的另一端。大多数现代编辑器同时支持多个不相交的选区（Multi-Cursor），用于批量编辑操作。
+
+证据令牌: evaltok11
+
+选区的坐标变换是编辑器实现中的棘手问题。用户编辑文档时插入和删除文本，所有后续的锚点和活动点位置都需要根据编辑操作进行偏移调整。这种变换在协同编辑场景中更加复杂，因为远程用户的编辑同样会改变本地光标引用的文本位置。通常采用 OT（操作变换）或 CRDT（无冲突复制数据类型）来保证多光标在编辑过程中的一致性。
+
+现代编辑器还引入了虚拟光标和块状光标等高级概念。虚拟光标允许光标在行尾之外的空格区域定位，便于对齐编辑；块状光标（Block Cursor）则覆盖一个完整的字素簇宽度而非字符宽度，在处理全角字符、制表符和对齐格线时提供更直观的视觉反馈。

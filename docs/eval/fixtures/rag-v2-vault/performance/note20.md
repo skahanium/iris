@@ -1,10 +1,17 @@
 ---
-title: "Fixture performance 20"
-aliases: ["alias-eval-20"]
-tags: ["area-performance", "fixture"]
+title: "信息系统性能基准与合规标准"
+aliases: ["性能基准", "performance-benchmark-compliance"]
+tags: ["area-performance", "fixture", "性能优化", "合规", "基准测试"]
 ---
 
-# Fixture performance 20
+# 信息系统性能基准与合规标准
 
-This deterministic RAG evaluation note owns the unique evidence token evaltok20.
-It exists to validate hybrid broker retrieval, metadata filtering, and ContextPacket construction.
+信息系统性能不仅影响用户体验，在某些行业中也是监管合规的重要组成部分。根据《信息安全技术 信息系统安全等级保护基本要求》（等保2.0）的规定，三级及以上信息系统应具备性能监控和容量规划能力，确保在峰值负载下系统的响应时间和吞吐量满足业务需求。
+
+性能基准测试（Benchmarking）通过模拟典型和极端负载来评估系统在当前硬件配置下的能力上限。TPC-C（在线事务处理基准）和 TPC-H（决策支持基准）分别是 OLTP 和 OLAP 领域的行业标准。YCSB（Yahoo! Cloud Serving Benchmark）则广泛用于 NoSQL 数据库的性能对比。基准测试应当在与生产环境一致的硬件和网络条件下进行，避免得出误导性结论。
+
+证据令牌: evaltok20
+
+根据《关键信息基础设施安全保护条例》第二十一条，关键信息基础设施运营者应当对重要系统和数据库进行容灾备份，并定期进行应急演练。这意味着系统的恢复时间目标（RTO）和恢复点目标（RPO）不仅是性能指标，更是合规要求。金融行业通常要求 RTO 不超过 30 分钟，RPO 不超过 5 分钟。
+
+负载测试（Load Testing）和压力测试（Stress Testing）是性能合规验证的两种基本手段。负载测试验证系统在预期负载下的性能表现，压力测试寻找系统的性能拐点和崩溃边界。Apache JMeter、Gatling 和 k6 是常用的开源性能测试工具。测试结果应形成正式的性能测试报告，作为等保测评和安全审计的佐证材料。

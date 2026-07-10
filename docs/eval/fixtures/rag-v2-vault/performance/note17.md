@@ -1,10 +1,17 @@
 ---
-title: "Fixture performance 17"
-aliases: ["alias-eval-17"]
-tags: ["area-performance", "fixture"]
+title: "应用性能剖析方法论"
+aliases: ["性能剖析", "profiling-methodology", "性能分析"]
+tags: ["area-performance", "fixture", "性能优化", "profiling", "性能分析"]
 ---
 
-# Fixture performance 17
+# 应用性能剖析方法论
 
-This deterministic RAG evaluation note owns the unique evidence token evaltok17.
-It exists to validate hybrid broker retrieval, metadata filtering, and ContextPacket construction.
+性能剖析（Profiling）是系统性能优化的前置步骤，其核心原则是"先测量、后优化"。在没有实证数据支撑的情况下进行"优化"往往会导致时间浪费在低收益的环节，甚至引入不必要的复杂度而恶化整体性能。Donald Knuth 的名言"过早优化是万恶之源"正是在强调测量优先的重要性。
+
+性能剖析可按照观测粒度分为三类。采样剖析（Sampling Profiler）以固定频率中断程序记录当前调用栈，开销低但可能遗漏短生命周期函数。插桩剖析（Instrumentation Profiler）在每个函数入口和出口插入计时代码，精确但开销大。追踪剖析（Tracing Profiler）记录每个事件的起止时间戳，提供了最丰富的时间线信息，Chrome DevTools 和 Jaeger 均属于此类。
+
+证据令牌: evaltok17
+
+火焰图（Flame Graph）是 Brendan Gregg 发明的可视化工具，它将调用栈数据以矩形堆叠的方式呈现，宽度代表 CPU 采样占比。火焰图使得开发者可以一目了然地识别热点路径（"宽"的矩形）和深层调用链问题。perf 工具生成的 perf.data 文件配合 FlameGraph 脚本是 Linux 平台上最常用的 CPU 剖析方案。
+
+性能优化的重点应从系统瓶颈的最顶层开始，遵循 Amdahl 定律：优化对整体加速比的贡献受限于该优化所影响代码的执行时间占比。简而言之，将一个占运行时间 1% 的函数加速 100 倍，整体性能仅提升约 1%；而将一个占运行时间 50% 的函数加速 2 倍，整体性能可提升 33%。

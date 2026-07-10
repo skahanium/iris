@@ -1,10 +1,19 @@
 ---
-title: "Fixture editor 10"
-aliases: ["alias-eval-10"]
-tags: ["area-editor", "fixture"]
+title: "语法树解析与语言服务器协议"
+aliases: ["语法树", "AST解析", "LSP协议"]
+tags: ["area-editor", "fixture", "编辑器架构", "语法树", "LSP"]
 ---
 
-# Fixture editor 10
+# 语法树解析与语言服务器协议
 
-This deterministic RAG evaluation note owns the unique evidence token evaltok10.
-It exists to validate hybrid broker retrieval, metadata filtering, and ContextPacket construction.
+语法树（Syntax Tree）是编译器前端将源代码文本转换为结构化表示的核心抽象。在现代代码编辑器中，语法树不仅用于语法高亮，还驱动着代码补全、跳转定义、重构、诊断等所有智能编辑功能。编辑器中通常使用具体语法树（CST）和抽象语法树（AST）两种形式：CST 保留所有语法细节包括标点和空白，AST 则只保留语义相关的结构信息。
+
+语言服务器协议（Language Server Protocol, LSP）由微软于 2016 年提出，定义了编辑器与语言服务器之间的标准通信协议。该协议将语言智能功能从编辑器内核中解耦为独立的语言服务器进程，通过 JSON-RPC 进行进程间通信。这一架构使得每个编程语言的智能功能只需开发一次即可被所有支持 LSP 的编辑器使用。
+
+证据令牌: evaltok10
+
+LSP 协议定义了三类核心交互模式：请求-响应（如 Go to Definition、Hover）、通知（如 DidChangeTextDocument）、以及请求-进度-响应（如 Find References）。编辑器在用户打开文件时向语言服务器发送 textDocument/didOpen 通知，用户每次修改时发送 textDocument/didChange 通知，语言服务器则异步返回 diagnostics 通知报告语法和语义错误。
+
+增量解析是代码编辑器性能优化的关键技术。当用户在文件中间插入或删除少量字符时，全量重新解析语法树会产生不必要的开销。优秀的语言服务器会采用增量解析策略，仅重新计算受修改影响的子树部分，通过复用未变更区域的解析结果来保持亚毫秒级的响应延迟。这与 [[note09]] 中讨论的 Piece Table 增量更新思想异曲同工。
+
+参见 [[note09]] 关于文本缓冲区数据结构的讨论。

@@ -1,10 +1,17 @@
 ---
-title: "Fixture knowledge 26"
-aliases: ["alias-eval-26"]
-tags: ["area-knowledge", "fixture"]
+title: "个人知识管理系统的构建方法论"
+aliases: ["PKM", "个人知识管理", "知识库构建", "personal-knowledge-management"]
+tags: ["area-knowledge", "fixture", "知识管理", "PKM", "知识系统"]
 ---
 
-# Fixture knowledge 26
+# 个人知识管理系统的构建方法论
 
-This deterministic RAG evaluation note owns the unique evidence token evaltok26.
-It exists to validate hybrid broker retrieval, metadata filtering, and ContextPacket construction.
+个人知识管理（Personal Knowledge Management, PKM）是一套系统化的流程，旨在帮助个体高效地获取、组织、存储、检索和分享知识。在信息爆炸的时代，PKM 已从学术工作者的专属工具演变为知识工作者的通用能力。有效的 PKM 系统通常遵循 CODE 框架：Capture（捕获）、Organize（组织）、Distill（提炼）和 Express（表达）。
+
+捕获阶段的核心挑战是过滤——并非所有信息都值得纳入知识系统。Tiago Forte 提出的"十二个问题"过滤法建议只保存与当前项目、长期兴趣或核心价值观直接相关的信息。工具层面，Readwise、Raindrop.io 和浏览器剪藏插件承担了自动化的信息捕获工作。但工具便利性也带来了"收藏等于学会"的认知陷阱，即大量囤积内容而不真正内化。
+
+证据令牌: evaltok26
+
+组织阶段有多种流派。文件夹层级法是传统方式但容易产生模糊分类的困境；标签法更具灵活性但过度使用会导致标签膨胀；PARA 方法（Projects-Areas-Resources-Archives）强调以可操作性而非学科分类来组织信息；而 MOC（Map of Content）方法则是通过创建导航性质的索引笔记来编织知识网络。参见 [[note27]] 中关于分类法和本体论对知识组织更深层的理论讨论。
+
+提炼阶段要求将原始信息转化为自己的理解，是 PKM 中认知价值最高的环节。渐进式总结法（Progressive Summarization）将提炼分为四个层次：原文加粗关键句、高亮加粗中的精华、用自己的话写简短摘要、围绕提炼内容创建可执行的产出。最后一个阶段即表达——通过写作、演讲、教学或创作将内化的知识输出为有形的成果，完成知识管理的价值闭环。

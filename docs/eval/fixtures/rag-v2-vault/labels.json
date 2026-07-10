@@ -1,944 +1,829 @@
 {
-    "version":  "v1.2.6",
-    "notes":  [
-                  {
-                      "path":  "foundation/note01.md"
-                  },
-                  {
-                      "path":  "foundation/note02.md"
-                  },
-                  {
-                      "path":  "foundation/note03.md"
-                  },
-                  {
-                      "path":  "foundation/note04.md"
-                  },
-                  {
-                      "path":  "search/note05.md"
-                  },
-                  {
-                      "path":  "search/note06.md"
-                  },
-                  {
-                      "path":  "search/note07.md"
-                  },
-                  {
-                      "path":  "search/note08.md"
-                  },
-                  {
-                      "path":  "editor/note09.md"
-                  },
-                  {
-                      "path":  "editor/note10.md"
-                  },
-                  {
-                      "path":  "editor/note11.md"
-                  },
-                  {
-                      "path":  "editor/note12.md"
-                  },
-                  {
-                      "path":  "security/note13.md"
-                  },
-                  {
-                      "path":  "security/note14.md"
-                  },
-                  {
-                      "path":  "security/note15.md"
-                  },
-                  {
-                      "path":  "security/note16.md"
-                  },
-                  {
-                      "path":  "performance/note17.md"
-                  },
-                  {
-                      "path":  "performance/note18.md"
-                  },
-                  {
-                      "path":  "performance/note19.md"
-                  },
-                  {
-                      "path":  "performance/note20.md"
-                  },
-                  {
-                      "path":  "integration/note21.md"
-                  },
-                  {
-                      "path":  "integration/note22.md"
-                  },
-                  {
-                      "path":  "integration/note23.md"
-                  },
-                  {
-                      "path":  "integration/note24.md"
-                  },
-                  {
-                      "path":  "knowledge/note25.md"
-                  },
-                  {
-                      "path":  "knowledge/note26.md"
-                  },
-                  {
-                      "path":  "knowledge/note27.md"
-                  },
-                  {
-                      "path":  "knowledge/note28.md"
-                  },
-                  {
-                      "path":  "ai/note29.md"
-                  },
-                  {
-                      "path":  "ai/note30.md"
-                  },
-                  {
-                      "path":  "ai/note31.md"
-                  },
-                  {
-                      "path":  "ai/note32.md"
-                  },
-                  {
-                      "path":  "sync/note33.md"
-                  },
-                  {
-                      "path":  "sync/note34.md"
-                  },
-                  {
-                      "path":  "sync/note35.md"
-                  },
-                  {
-                      "path":  "sync/note36.md"
-                  },
-                  {
-                      "path":  "storage/note37.md"
-                  },
-                  {
-                      "path":  "storage/note38.md"
-                  },
-                  {
-                      "path":  "storage/note39.md"
-                  },
-                  {
-                      "path":  "storage/note40.md"
-                  },
-                  {
-                      "path":  "quality/note41.md"
-                  },
-                  {
-                      "path":  "quality/note42.md"
-                  },
-                  {
-                      "path":  "quality/note43.md"
-                  },
-                  {
-                      "path":  "quality/note44.md"
-                  },
-                  {
-                      "path":  "product/note45.md"
-                  },
-                  {
-                      "path":  "product/note46.md"
-                  },
-                  {
-                      "path":  "product/note47.md"
-                  },
-                  {
-                      "path":  "product/note48.md"
-                  }
-              ],
-    "queries":  [
-                    {
-                        "id":  "token-01",
-                        "query":  "evaltok01",
-                        "expectedPaths":  [
-                                              "foundation/note01.md"
-                                          ],
-                        "scope":  {
-
-                                  },
-                        "subsets":  [
-                                        "body_token"
-                                    ]
-                    },
-                    {
-                        "id":  "token-02",
-                        "query":  "evaltok02",
-                        "expectedPaths":  [
-                                              "foundation/note02.md"
-                                          ],
-                        "scope":  {
-
-                                  },
-                        "subsets":  [
-                                        "body_token"
-                                    ]
-                    },
-                    {
-                        "id":  "token-03",
-                        "query":  "evaltok03",
-                        "expectedPaths":  [
-                                              "foundation/note03.md"
-                                          ],
-                        "scope":  {
-
-                                  },
-                        "subsets":  [
-                                        "body_token"
-                                    ]
-                    },
-                    {
-                        "id":  "token-04",
-                        "query":  "evaltok04",
-                        "expectedPaths":  [
-                                              "foundation/note04.md"
-                                          ],
-                        "scope":  {
-
-                                  },
-                        "subsets":  [
-                                        "body_token"
-                                    ]
-                    },
-                    {
-                        "id":  "token-05",
-                        "query":  "evaltok05",
-                        "expectedPaths":  [
-                                              "search/note05.md"
-                                          ],
-                        "scope":  {
-                                      "pathPrefixes":  [
-                                                           "search/"
-                                                       ]
-                                  },
-                        "subsets":  [
-                                        "body_token",
-                                        "hard_scope"
-                                    ]
-                    },
-                    {
-                        "id":  "token-06",
-                        "query":  "evaltok06",
-                        "expectedPaths":  [
-                                              "search/note06.md"
-                                          ],
-                        "scope":  {
-                                      "requiredTags":  [
-                                                           "area-search"
-                                                       ]
-                                  },
-                        "subsets":  [
-                                        "body_token",
-                                        "hard_scope"
-                                    ]
-                    },
-                    {
-                        "id":  "token-07",
-                        "query":  "evaltok07",
-                        "expectedPaths":  [
-                                              "search/note07.md"
-                                          ],
-                        "scope":  {
-
-                                  },
-                        "subsets":  [
-                                        "body_token"
-                                    ]
-                    },
-                    {
-                        "id":  "token-08",
-                        "query":  "evaltok08",
-                        "expectedPaths":  [
-                                              "search/note08.md"
-                                          ],
-                        "scope":  {
-
-                                  },
-                        "subsets":  [
-                                        "body_token"
-                                    ]
-                    },
-                    {
-                        "id":  "token-09",
-                        "query":  "evaltok09",
-                        "expectedPaths":  [
-                                              "editor/note09.md"
-                                          ],
-                        "scope":  {
-
-                                  },
-                        "subsets":  [
-                                        "body_token"
-                                    ]
-                    },
-                    {
-                        "id":  "token-10",
-                        "query":  "evaltok10",
-                        "expectedPaths":  [
-                                              "editor/note10.md"
-                                          ],
-                        "scope":  {
-                                      "paths":  [
-                                                    "editor/note10.md"
-                                                ]
-                                  },
-                        "subsets":  [
-                                        "body_token",
-                                        "hard_scope"
-                                    ]
-                    },
-                    {
-                        "id":  "token-11",
-                        "query":  "evaltok11",
-                        "expectedPaths":  [
-                                              "editor/note11.md"
-                                          ],
-                        "scope":  {
-
-                                  },
-                        "subsets":  [
-                                        "body_token"
-                                    ]
-                    },
-                    {
-                        "id":  "token-12",
-                        "query":  "evaltok12",
-                        "expectedPaths":  [
-                                              "editor/note12.md"
-                                          ],
-                        "scope":  {
-
-                                  },
-                        "subsets":  [
-                                        "body_token"
-                                    ]
-                    },
-                    {
-                        "id":  "token-13",
-                        "query":  "evaltok13",
-                        "expectedPaths":  [
-                                              "security/note13.md"
-                                          ],
-                        "scope":  {
-                                      "requiredTags":  [
-                                                           "area-security",
-                                                           "fixture"
-                                                       ]
-                                  },
-                        "subsets":  [
-                                        "body_token",
-                                        "hard_scope"
-                                    ]
-                    },
-                    {
-                        "id":  "token-14",
-                        "query":  "evaltok14",
-                        "expectedPaths":  [
-                                              "security/note14.md"
-                                          ],
-                        "scope":  {
-
-                                  },
-                        "subsets":  [
-                                        "body_token"
-                                    ]
-                    },
-                    {
-                        "id":  "token-15",
-                        "query":  "evaltok15",
-                        "expectedPaths":  [
-                                              "security/note15.md"
-                                          ],
-                        "scope":  {
-
-                                  },
-                        "subsets":  [
-                                        "body_token"
-                                    ]
-                    },
-                    {
-                        "id":  "token-16",
-                        "query":  "evaltok16",
-                        "expectedPaths":  [
-                                              "security/note16.md"
-                                          ],
-                        "scope":  {
-
-                                  },
-                        "subsets":  [
-                                        "body_token"
-                                    ]
-                    },
-                    {
-                        "id":  "token-17",
-                        "query":  "evaltok17",
-                        "expectedPaths":  [
-                                              "performance/note17.md"
-                                          ],
-                        "scope":  {
-
-                                  },
-                        "subsets":  [
-                                        "body_token"
-                                    ]
-                    },
-                    {
-                        "id":  "token-18",
-                        "query":  "evaltok18",
-                        "expectedPaths":  [
-                                              "performance/note18.md"
-                                          ],
-                        "scope":  {
-
-                                  },
-                        "subsets":  [
-                                        "body_token"
-                                    ]
-                    },
-                    {
-                        "id":  "token-19",
-                        "query":  "evaltok19",
-                        "expectedPaths":  [
-                                              "performance/note19.md"
-                                          ],
-                        "scope":  {
-
-                                  },
-                        "subsets":  [
-                                        "body_token"
-                                    ]
-                    },
-                    {
-                        "id":  "token-20",
-                        "query":  "evaltok20",
-                        "expectedPaths":  [
-                                              "performance/note20.md"
-                                          ],
-                        "scope":  {
-
-                                  },
-                        "subsets":  [
-                                        "body_token"
-                                    ]
-                    },
-                    {
-                        "id":  "token-21",
-                        "query":  "evaltok21",
-                        "expectedPaths":  [
-                                              "integration/note21.md"
-                                          ],
-                        "scope":  {
-
-                                  },
-                        "subsets":  [
-                                        "body_token"
-                                    ]
-                    },
-                    {
-                        "id":  "token-22",
-                        "query":  "evaltok22",
-                        "expectedPaths":  [
-                                              "integration/note22.md"
-                                          ],
-                        "scope":  {
-
-                                  },
-                        "subsets":  [
-                                        "body_token"
-                                    ]
-                    },
-                    {
-                        "id":  "token-23",
-                        "query":  "evaltok23",
-                        "expectedPaths":  [
-                                              "integration/note23.md"
-                                          ],
-                        "scope":  {
-
-                                  },
-                        "subsets":  [
-                                        "body_token"
-                                    ]
-                    },
-                    {
-                        "id":  "token-24",
-                        "query":  "evaltok24",
-                        "expectedPaths":  [
-                                              "integration/note24.md"
-                                          ],
-                        "scope":  {
-
-                                  },
-                        "subsets":  [
-                                        "body_token"
-                                    ]
-                    },
-                    {
-                        "id":  "token-25",
-                        "query":  "evaltok25",
-                        "expectedPaths":  [
-                                              "knowledge/note25.md"
-                                          ],
-                        "scope":  {
-
-                                  },
-                        "subsets":  [
-                                        "body_token"
-                                    ]
-                    },
-                    {
-                        "id":  "token-26",
-                        "query":  "evaltok26",
-                        "expectedPaths":  [
-                                              "knowledge/note26.md"
-                                          ],
-                        "scope":  {
-
-                                  },
-                        "subsets":  [
-                                        "body_token"
-                                    ]
-                    },
-                    {
-                        "id":  "token-27",
-                        "query":  "evaltok27",
-                        "expectedPaths":  [
-                                              "knowledge/note27.md"
-                                          ],
-                        "scope":  {
-
-                                  },
-                        "subsets":  [
-                                        "body_token"
-                                    ]
-                    },
-                    {
-                        "id":  "token-28",
-                        "query":  "evaltok28",
-                        "expectedPaths":  [
-                                              "knowledge/note28.md"
-                                          ],
-                        "scope":  {
-
-                                  },
-                        "subsets":  [
-                                        "body_token"
-                                    ]
-                    },
-                    {
-                        "id":  "token-29",
-                        "query":  "evaltok29",
-                        "expectedPaths":  [
-                                              "ai/note29.md"
-                                          ],
-                        "scope":  {
-
-                                  },
-                        "subsets":  [
-                                        "body_token"
-                                    ]
-                    },
-                    {
-                        "id":  "token-30",
-                        "query":  "evaltok30",
-                        "expectedPaths":  [
-                                              "ai/note30.md"
-                                          ],
-                        "scope":  {
-
-                                  },
-                        "subsets":  [
-                                        "body_token"
-                                    ]
-                    },
-                    {
-                        "id":  "token-31",
-                        "query":  "evaltok31",
-                        "expectedPaths":  [
-                                              "ai/note31.md"
-                                          ],
-                        "scope":  {
-
-                                  },
-                        "subsets":  [
-                                        "body_token"
-                                    ]
-                    },
-                    {
-                        "id":  "token-32",
-                        "query":  "evaltok32",
-                        "expectedPaths":  [
-                                              "ai/note32.md"
-                                          ],
-                        "scope":  {
-
-                                  },
-                        "subsets":  [
-                                        "body_token"
-                                    ]
-                    },
-                    {
-                        "id":  "token-33",
-                        "query":  "evaltok33",
-                        "expectedPaths":  [
-                                              "sync/note33.md"
-                                          ],
-                        "scope":  {
-
-                                  },
-                        "subsets":  [
-                                        "body_token"
-                                    ]
-                    },
-                    {
-                        "id":  "token-34",
-                        "query":  "evaltok34",
-                        "expectedPaths":  [
-                                              "sync/note34.md"
-                                          ],
-                        "scope":  {
-
-                                  },
-                        "subsets":  [
-                                        "body_token"
-                                    ]
-                    },
-                    {
-                        "id":  "token-35",
-                        "query":  "evaltok35",
-                        "expectedPaths":  [
-                                              "sync/note35.md"
-                                          ],
-                        "scope":  {
-
-                                  },
-                        "subsets":  [
-                                        "body_token"
-                                    ]
-                    },
-                    {
-                        "id":  "token-36",
-                        "query":  "evaltok36",
-                        "expectedPaths":  [
-                                              "sync/note36.md"
-                                          ],
-                        "scope":  {
-
-                                  },
-                        "subsets":  [
-                                        "body_token"
-                                    ]
-                    },
-                    {
-                        "id":  "token-37",
-                        "query":  "evaltok37",
-                        "expectedPaths":  [
-                                              "storage/note37.md"
-                                          ],
-                        "scope":  {
-
-                                  },
-                        "subsets":  [
-                                        "body_token"
-                                    ]
-                    },
-                    {
-                        "id":  "token-38",
-                        "query":  "evaltok38",
-                        "expectedPaths":  [
-                                              "storage/note38.md"
-                                          ],
-                        "scope":  {
-
-                                  },
-                        "subsets":  [
-                                        "body_token"
-                                    ]
-                    },
-                    {
-                        "id":  "token-39",
-                        "query":  "evaltok39",
-                        "expectedPaths":  [
-                                              "storage/note39.md"
-                                          ],
-                        "scope":  {
-
-                                  },
-                        "subsets":  [
-                                        "body_token"
-                                    ]
-                    },
-                    {
-                        "id":  "token-40",
-                        "query":  "evaltok40",
-                        "expectedPaths":  [
-                                              "storage/note40.md"
-                                          ],
-                        "scope":  {
-
-                                  },
-                        "subsets":  [
-                                        "body_token"
-                                    ]
-                    },
-                    {
-                        "id":  "token-41",
-                        "query":  "evaltok41",
-                        "expectedPaths":  [
-                                              "quality/note41.md"
-                                          ],
-                        "scope":  {
-
-                                  },
-                        "subsets":  [
-                                        "body_token"
-                                    ]
-                    },
-                    {
-                        "id":  "token-42",
-                        "query":  "evaltok42",
-                        "expectedPaths":  [
-                                              "quality/note42.md"
-                                          ],
-                        "scope":  {
-
-                                  },
-                        "subsets":  [
-                                        "body_token"
-                                    ]
-                    },
-                    {
-                        "id":  "token-43",
-                        "query":  "evaltok43",
-                        "expectedPaths":  [
-                                              "quality/note43.md"
-                                          ],
-                        "scope":  {
-
-                                  },
-                        "subsets":  [
-                                        "body_token"
-                                    ]
-                    },
-                    {
-                        "id":  "token-44",
-                        "query":  "evaltok44",
-                        "expectedPaths":  [
-                                              "quality/note44.md"
-                                          ],
-                        "scope":  {
-
-                                  },
-                        "subsets":  [
-                                        "body_token"
-                                    ]
-                    },
-                    {
-                        "id":  "token-45",
-                        "query":  "evaltok45",
-                        "expectedPaths":  [
-                                              "product/note45.md"
-                                          ],
-                        "scope":  {
-
-                                  },
-                        "subsets":  [
-                                        "body_token"
-                                    ]
-                    },
-                    {
-                        "id":  "token-46",
-                        "query":  "evaltok46",
-                        "expectedPaths":  [
-                                              "product/note46.md"
-                                          ],
-                        "scope":  {
-
-                                  },
-                        "subsets":  [
-                                        "body_token"
-                                    ]
-                    },
-                    {
-                        "id":  "token-47",
-                        "query":  "evaltok47",
-                        "expectedPaths":  [
-                                              "product/note47.md"
-                                          ],
-                        "scope":  {
-
-                                  },
-                        "subsets":  [
-                                        "body_token"
-                                    ]
-                    },
-                    {
-                        "id":  "token-48",
-                        "query":  "evaltok48",
-                        "expectedPaths":  [
-                                              "product/note48.md"
-                                          ],
-                        "scope":  {
-
-                                  },
-                        "subsets":  [
-                                        "body_token"
-                                    ]
-                    },
-                    {
-                        "id":  "alias-01",
-                        "query":  "alias-eval-01",
-                        "expectedPaths":  [
-                                              "foundation/note01.md"
-                                          ],
-                        "scope":  {
-
-                                  },
-                        "subsets":  [
-                                        "metadata_alias"
-                                    ]
-                    },
-                    {
-                        "id":  "alias-02",
-                        "query":  "alias-eval-02",
-                        "expectedPaths":  [
-                                              "foundation/note02.md"
-                                          ],
-                        "scope":  {
-
-                                  },
-                        "subsets":  [
-                                        "metadata_alias"
-                                    ]
-                    },
-                    {
-                        "id":  "alias-03",
-                        "query":  "alias-eval-03",
-                        "expectedPaths":  [
-                                              "foundation/note03.md"
-                                          ],
-                        "scope":  {
-
-                                  },
-                        "subsets":  [
-                                        "metadata_alias"
-                                    ]
-                    },
-                    {
-                        "id":  "alias-04",
-                        "query":  "alias-eval-04",
-                        "expectedPaths":  [
-                                              "foundation/note04.md"
-                                          ],
-                        "scope":  {
-
-                                  },
-                        "subsets":  [
-                                        "metadata_alias"
-                                    ]
-                    },
-                    {
-                        "id":  "alias-05",
-                        "query":  "alias-eval-05",
-                        "expectedPaths":  [
-                                              "search/note05.md"
-                                          ],
-                        "scope":  {
-
-                                  },
-                        "subsets":  [
-                                        "metadata_alias"
-                                    ]
-                    },
-                    {
-                        "id":  "alias-06",
-                        "query":  "alias-eval-06",
-                        "expectedPaths":  [
-                                              "search/note06.md"
-                                          ],
-                        "scope":  {
-
-                                  },
-                        "subsets":  [
-                                        "metadata_alias"
-                                    ]
-                    },
-                    {
-                        "id":  "no-answer-01",
-                        "query":  "noanswertoken01",
-                        "expectedPaths":  [
-
-                                          ],
-                        "scope":  {
-
-                                  },
-                        "subsets":  [
-                                        "no_answer"
-                                    ]
-                    },
-                    {
-                        "id":  "no-answer-02",
-                        "query":  "noanswertoken02",
-                        "expectedPaths":  [
-
-                                          ],
-                        "scope":  {
-
-                                  },
-                        "subsets":  [
-                                        "no_answer"
-                                    ]
-                    },
-                    {
-                        "id":  "no-answer-03",
-                        "query":  "noanswertoken03",
-                        "expectedPaths":  [
-
-                                          ],
-                        "scope":  {
-
-                                  },
-                        "subsets":  [
-                                        "no_answer"
-                                    ]
-                    },
-                    {
-                        "id":  "no-answer-04",
-                        "query":  "noanswertoken04",
-                        "expectedPaths":  [
-
-                                          ],
-                        "scope":  {
-
-                                  },
-                        "subsets":  [
-                                        "no_answer"
-                                    ]
-                    },
-                    {
-                        "id":  "no-answer-05",
-                        "query":  "noanswertoken05",
-                        "expectedPaths":  [
-
-                                          ],
-                        "scope":  {
-
-                                  },
-                        "subsets":  [
-                                        "no_answer"
-                                    ]
-                    },
-                    {
-                        "id":  "no-answer-06",
-                        "query":  "noanswertoken06",
-                        "expectedPaths":  [
-
-                                          ],
-                        "scope":  {
-
-                                  },
-                        "subsets":  [
-                                        "no_answer"
-                                    ]
-                    }
+    "version": "v1.2.6",
+    "notes": [
+        {
+            "path": "foundation/note01.md"
+        },
+        {
+            "path": "foundation/note02.md"
+        },
+        {
+            "path": "foundation/note03.md"
+        },
+        {
+            "path": "foundation/note04.md"
+        },
+        {
+            "path": "search/note05.md"
+        },
+        {
+            "path": "search/note06.md"
+        },
+        {
+            "path": "search/note07.md"
+        },
+        {
+            "path": "search/note08.md"
+        },
+        {
+            "path": "editor/note09.md"
+        },
+        {
+            "path": "editor/note10.md"
+        },
+        {
+            "path": "editor/note11.md"
+        },
+        {
+            "path": "editor/note12.md"
+        },
+        {
+            "path": "security/note13.md"
+        },
+        {
+            "path": "security/note14.md"
+        },
+        {
+            "path": "security/note15.md"
+        },
+        {
+            "path": "security/note16.md"
+        },
+        {
+            "path": "performance/note17.md"
+        },
+        {
+            "path": "performance/note18.md"
+        },
+        {
+            "path": "performance/note19.md"
+        },
+        {
+            "path": "performance/note20.md"
+        },
+        {
+            "path": "integration/note21.md"
+        },
+        {
+            "path": "integration/note22.md"
+        },
+        {
+            "path": "integration/note23.md"
+        },
+        {
+            "path": "integration/note24.md"
+        },
+        {
+            "path": "knowledge/note25.md"
+        },
+        {
+            "path": "knowledge/note26.md"
+        },
+        {
+            "path": "knowledge/note27.md"
+        },
+        {
+            "path": "knowledge/note28.md"
+        },
+        {
+            "path": "ai/note29.md"
+        },
+        {
+            "path": "ai/note30.md"
+        },
+        {
+            "path": "ai/note31.md"
+        },
+        {
+            "path": "ai/note32.md"
+        },
+        {
+            "path": "sync/note33.md"
+        },
+        {
+            "path": "sync/note34.md"
+        },
+        {
+            "path": "sync/note35.md"
+        },
+        {
+            "path": "sync/note36.md"
+        },
+        {
+            "path": "storage/note37.md"
+        },
+        {
+            "path": "storage/note38.md"
+        },
+        {
+            "path": "storage/note39.md"
+        },
+        {
+            "path": "storage/note40.md"
+        },
+        {
+            "path": "quality/note41.md"
+        },
+        {
+            "path": "quality/note42.md"
+        },
+        {
+            "path": "quality/note43.md"
+        },
+        {
+            "path": "quality/note44.md"
+        },
+        {
+            "path": "product/note45.md"
+        },
+        {
+            "path": "product/note46.md"
+        },
+        {
+            "path": "product/note47.md"
+        },
+        {
+            "path": "product/note48.md"
+        }
+    ],
+    "queries": [
+        {
+            "id": "hn-01",
+            "query": "要约 承诺 要约 邀请",
+            "expectedPaths": [
+                "foundation/note01.md"
+            ],
+            "scope": {},
+            "subsets": [
+                "hard_negative"
+            ]
+        },
+        {
+            "id": "hn-02",
+            "query": "无效 合同 可撤 撤销 公序 良俗",
+            "expectedPaths": [
+                "foundation/note02.md"
+            ],
+            "scope": {},
+            "subsets": [
+                "hard_negative"
+            ]
+        },
+        {
+            "id": "hn-03",
+            "query": "损害 赔偿 可得 利益 可预 见性",
+            "expectedPaths": [
+                "foundation/note03.md"
+            ],
+            "scope": {},
+            "subsets": [
+                "hard_negative"
+            ]
+        },
+        {
+            "id": "hn-04",
+            "query": "法定 解除 通知 形成 除权",
+            "expectedPaths": [
+                "foundation/note04.md"
+            ],
+            "scope": {},
+            "subsets": [
+                "hard_negative"
+            ]
+        },
+        {
+            "id": "hn-05",
+            "query": "倒排 索引 分词 词干 提取",
+            "expectedPaths": [
+                "search/note05.md"
+            ],
+            "scope": {
+                "pathPrefixes": [
+                    "search/"
                 ]
+            },
+            "subsets": [
+                "hard_negative"
+            ]
+        },
+        {
+            "id": "hn-06",
+            "query": "BM25 词频 饱和 逆文 档频",
+            "expectedPaths": [
+                "search/note06.md"
+            ],
+            "scope": {},
+            "subsets": [
+                "hard_negative"
+            ]
+        },
+        {
+            "id": "hn-07",
+            "query": "Gap Buffer Piece Table Rope",
+            "expectedPaths": [
+                "editor/note09.md"
+            ],
+            "scope": {},
+            "subsets": [
+                "hard_negative"
+            ]
+        },
+        {
+            "id": "hn-08",
+            "query": "语法 AST LSP JSON-RPC",
+            "expectedPaths": [
+                "editor/note10.md"
+            ],
+            "scope": {},
+            "subsets": [
+                "hard_negative"
+            ]
+        },
+        {
+            "id": "hn-09",
+            "query": "授权 码流 PKCE code challenge",
+            "expectedPaths": [
+                "security/note15.md"
+            ],
+            "scope": {},
+            "subsets": [
+                "hard_negative"
+            ]
+        },
+        {
+            "id": "hn-10",
+            "query": "客户 端凭 M2M TLS 令牌",
+            "expectedPaths": [
+                "security/note16.md"
+            ],
+            "scope": {},
+            "subsets": [
+                "hard_negative"
+            ]
+        },
+        {
+            "id": "hn-11",
+            "query": "MemTable 跳表 布隆 Bloom Filter",
+            "expectedPaths": [
+                "storage/note37.md"
+            ],
+            "scope": {},
+            "subsets": [
+                "hard_negative"
+            ]
+        },
+        {
+            "id": "hn-12",
+            "query": "Leveled Compaction 写放 空间",
+            "expectedPaths": [
+                "storage/note38.md"
+            ],
+            "scope": {},
+            "subsets": [
+                "hard_negative"
+            ]
+        },
+        {
+            "id": "hn-13",
+            "query": "分面 分类 互斥 阮冈 纳赞",
+            "expectedPaths": [
+                "knowledge/note27.md"
+            ],
+            "scope": {},
+            "subsets": [
+                "hard_negative"
+            ]
+        },
+        {
+            "id": "hn-14",
+            "query": "GraphQL DataLoader N+1 query",
+            "expectedPaths": [
+                "integration/note22.md"
+            ],
+            "scope": {},
+            "subsets": [
+                "hard_negative"
+            ]
+        },
+        {
+            "id": "hn-15",
+            "query": "RESTful HATEOAS 统一 接口",
+            "expectedPaths": [
+                "integration/note21.md"
+            ],
+            "scope": {},
+            "subsets": [
+                "hard_negative"
+            ]
+        },
+        {
+            "id": "hn-16",
+            "query": "操作 转换 OT 包含 函数",
+            "expectedPaths": [
+                "sync/note34.md"
+            ],
+            "scope": {},
+            "subsets": [
+                "hard_negative"
+            ]
+        },
+        {
+            "id": "hn-17",
+            "query": "漂移 检测 MMD 分布 Drift KS",
+            "expectedPaths": [
+                "ai/note30.md"
+            ],
+            "scope": {},
+            "subsets": [
+                "hard_negative"
+            ]
+        },
+        {
+            "id": "hn-18",
+            "query": "Cache-Aside Write-Through 缓存 策略",
+            "expectedPaths": [
+                "performance/note18.md"
+            ],
+            "scope": {},
+            "subsets": [
+                "hard_negative"
+            ]
+        },
+        {
+            "id": "hn-19",
+            "query": "红绿 TDD 单元 测试 重构 Beck",
+            "expectedPaths": [
+                "quality/note42.md"
+            ],
+            "scope": {},
+            "subsets": [
+                "hard_negative"
+            ]
+        },
+        {
+            "id": "hn-20",
+            "query": "INVEST 验收 标准 Backlog Sprint",
+            "expectedPaths": [
+                "product/note46.md"
+            ],
+            "scope": {},
+            "subsets": [
+                "hard_negative"
+            ]
+        },
+        {
+            "id": "kw-01",
+            "query": "第五 百七 十七 继续 履行 赔偿",
+            "expectedPaths": [
+                "foundation/note03.md"
+            ],
+            "scope": {},
+            "subsets": [
+                "keyword_exact"
+            ]
+        },
+        {
+            "id": "kw-02",
+            "query": "档案 全宗 案卷 密级 扫描",
+            "expectedPaths": [
+                "search/note07.md"
+            ],
+            "scope": {},
+            "subsets": [
+                "keyword_exact"
+            ]
+        },
+        {
+            "id": "kw-03",
+            "query": "认证 密码 盐值 MFA 会话",
+            "expectedPaths": [
+                "security/note13.md"
+            ],
+            "scope": {},
+            "subsets": [
+                "keyword_exact"
+            ]
+        },
+        {
+            "id": "kw-04",
+            "query": "数据 安全 评估 处理 治理",
+            "expectedPaths": [
+                "ai/note31.md"
+            ],
+            "scope": {},
+            "subsets": [
+                "keyword_exact"
+            ]
+        },
+        {
+            "id": "kw-05",
+            "query": "GB/T 15532 测试 规范 软件",
+            "expectedPaths": [
+                "quality/note41.md"
+            ],
+            "scope": {},
+            "subsets": [
+                "keyword_exact"
+            ]
+        },
+        {
+            "id": "kw-06",
+            "query": "等保 三级 测评 RTO 容灾",
+            "expectedPaths": [
+                "performance/note20.md"
+            ],
+            "scope": {},
+            "subsets": [
+                "keyword_exact"
+            ]
+        },
+        {
+            "id": "kw-07",
+            "query": "HNSW Product Quantization 检索",
+            "expectedPaths": [
+                "search/note08.md"
+            ],
+            "scope": {},
+            "subsets": [
+                "keyword_exact"
+            ]
+        },
+        {
+            "id": "kw-08",
+            "query": "RS256 HS256 HMAC 签名 算法",
+            "expectedPaths": [
+                "security/note14.md"
+            ],
+            "scope": {},
+            "subsets": [
+                "keyword_exact"
+            ]
+        },
+        {
+            "id": "kw-09",
+            "query": "Webhook 签名 HMAC 幂等 X-Signature",
+            "expectedPaths": [
+                "integration/note24.md"
+            ],
+            "scope": {},
+            "subsets": [
+                "keyword_exact"
+            ]
+        },
+        {
+            "id": "kw-10",
+            "query": "预写 日志 LSN Fuzzy Checkpoint",
+            "expectedPaths": [
+                "storage/note40.md"
+            ],
+            "scope": {},
+            "subsets": [
+                "keyword_exact"
+            ]
+        },
+        {
+            "id": "alias-01",
+            "query": "contract-formation",
+            "expectedPaths": [
+                "foundation/note01.md"
+            ],
+            "scope": {},
+            "subsets": [
+                "metadata_alias"
+            ]
+        },
+        {
+            "id": "alias-02",
+            "query": "contract-validity",
+            "expectedPaths": [
+                "foundation/note02.md"
+            ],
+            "scope": {},
+            "subsets": [
+                "metadata_alias"
+            ]
+        },
+        {
+            "id": "alias-03",
+            "query": "breach-of-contract",
+            "expectedPaths": [
+                "foundation/note03.md"
+            ],
+            "scope": {},
+            "subsets": [
+                "metadata_alias"
+            ]
+        },
+        {
+            "id": "alias-04",
+            "query": "craft-beer-brewing",
+            "expectedPaths": [
+                "quality/note44.md"
+            ],
+            "scope": {},
+            "subsets": [
+                "metadata_alias"
+            ]
+        },
+        {
+            "id": "alias-05",
+            "query": "contract-termination",
+            "expectedPaths": [
+                "foundation/note04.md"
+            ],
+            "scope": {},
+            "subsets": [
+                "metadata_alias"
+            ]
+        },
+        {
+            "id": "alias-06",
+            "query": "product-requirements-document",
+            "expectedPaths": [
+                "product/note45.md"
+            ],
+            "scope": {},
+            "subsets": [
+                "metadata_alias"
+            ]
+        },
+        {
+            "id": "alias-07",
+            "query": "slip-box-method",
+            "expectedPaths": [
+                "knowledge/note25.md"
+            ],
+            "scope": {},
+            "subsets": [
+                "metadata_alias"
+            ]
+        },
+        {
+            "id": "alias-08",
+            "query": "ML-deployment",
+            "expectedPaths": [
+                "ai/note29.md"
+            ],
+            "scope": {},
+            "subsets": [
+                "metadata_alias"
+            ]
+        },
+        {
+            "id": "alias-09",
+            "query": "classical-guitar-technique",
+            "expectedPaths": [
+                "product/note47.md"
+            ],
+            "scope": {
+                "requiredTags": [
+                    "area-product"
+                ]
+            },
+            "subsets": [
+                "metadata_alias"
+            ]
+        },
+        {
+            "id": "alias-10",
+            "query": "craft-beer-brewing",
+            "expectedPaths": [
+                "quality/note44.md"
+            ],
+            "scope": {
+                "requiredTags": [
+                    "fixture"
+                ]
+            },
+            "subsets": [
+                "metadata_alias"
+            ]
+        },
+        {
+            "id": "link-01",
+            "query": "意思 表示 撤销 民法",
+            "expectedPaths": [
+                "foundation/note01.md",
+                "foundation/note02.md"
+            ],
+            "scope": {
+                "pathPrefixes": [
+                    "foundation/"
+                ]
+            },
+            "subsets": [
+                "link_multidoc"
+            ]
+        },
+        {
+            "id": "link-02",
+            "query": "文本 编辑 代码 增量",
+            "expectedPaths": [
+                "editor/note09.md",
+                "editor/note10.md"
+            ],
+            "scope": {},
+            "subsets": [
+                "link_multidoc"
+            ]
+        },
+        {
+            "id": "link-03",
+            "query": "OAuth2 令牌 授权 服务",
+            "expectedPaths": [
+                "security/note15.md",
+                "security/note16.md"
+            ],
+            "scope": {},
+            "subsets": [
+                "link_multidoc"
+            ]
+        },
+        {
+            "id": "link-04",
+            "query": "LSM SSTable RocksDB LevelDB",
+            "expectedPaths": [
+                "storage/note37.md",
+                "storage/note38.md"
+            ],
+            "scope": {},
+            "subsets": [
+                "link_multidoc"
+            ]
+        },
+        {
+            "id": "link-05",
+            "query": "API 端点 客户 REST",
+            "expectedPaths": [
+                "integration/note21.md",
+                "integration/note22.md"
+            ],
+            "scope": {},
+            "subsets": [
+                "link_multidoc"
+            ]
+        },
+        {
+            "id": "link-06",
+            "query": "知识 管理 分类 组织",
+            "expectedPaths": [
+                "knowledge/note26.md",
+                "knowledge/note27.md"
+            ],
+            "scope": {},
+            "subsets": [
+                "link_multidoc"
+            ]
+        },
+        {
+            "id": "link-07",
+            "query": "协同 编辑 操作 数据 同步",
+            "expectedPaths": [
+                "sync/note33.md",
+                "sync/note34.md"
+            ],
+            "scope": {},
+            "subsets": [
+                "link_multidoc"
+            ]
+        },
+        {
+            "id": "link-08",
+            "query": "ML 模型 预测 训练 流水",
+            "expectedPaths": [
+                "ai/note29.md",
+                "ai/note30.md"
+            ],
+            "scope": {},
+            "subsets": [
+                "link_multidoc"
+            ]
+        },
+        {
+            "id": "link-09",
+            "query": "民法 当事 订立 合同",
+            "expectedPaths": [
+                "foundation/note01.md",
+                "foundation/note03.md"
+            ],
+            "scope": {},
+            "subsets": [
+                "link_multidoc"
+            ]
+        },
+        {
+            "id": "link-10",
+            "query": "认证 令牌 哈希 密码 会话",
+            "expectedPaths": [
+                "security/note13.md",
+                "security/note14.md"
+            ],
+            "scope": {},
+            "subsets": [
+                "link_multidoc"
+            ]
+        },
+        {
+            "id": "no-ans-01",
+            "query": "量子 计算 薛定 谔方",
+            "expectedPaths": [],
+            "scope": {},
+            "subsets": [
+                "no_answer"
+            ]
+        },
+        {
+            "id": "no-ans-02",
+            "query": "中世 纪欧 封建 采邑",
+            "expectedPaths": [],
+            "scope": {},
+            "subsets": [
+                "no_answer"
+            ]
+        },
+        {
+            "id": "no-ans-03",
+            "query": "深海 热泉 化能 合成",
+            "expectedPaths": [],
+            "scope": {},
+            "subsets": [
+                "no_answer"
+            ]
+        },
+        {
+            "id": "no-ans-04",
+            "query": "古埃 胡夫 金字",
+            "expectedPaths": [],
+            "scope": {},
+            "subsets": [
+                "no_answer"
+            ]
+        },
+        {
+            "id": "no-ans-05",
+            "query": "火星 大气 成分 改造",
+            "expectedPaths": [],
+            "scope": {},
+            "subsets": [
+                "no_answer"
+            ]
+        },
+        {
+            "id": "no-ans-06",
+            "query": "印象 派绘 光色 莫奈",
+            "expectedPaths": [],
+            "scope": {
+                "requiredTags": [
+                    "fixture"
+                ]
+            },
+            "subsets": [
+                "no_answer"
+            ]
+        },
+        {
+            "id": "no-ans-07",
+            "query": "黎曼 几何 相对 张量",
+            "expectedPaths": [],
+            "scope": {
+                "pathPrefixes": [
+                    "foundation/"
+                ]
+            },
+            "subsets": [
+                "no_answer"
+            ]
+        },
+        {
+            "id": "no-ans-08",
+            "query": "古希 腊哲 存在 柏拉",
+            "expectedPaths": [],
+            "scope": {
+                "paths": [
+                    "ai/note29.md"
+                ]
+            },
+            "subsets": [
+                "no_answer"
+            ]
+        },
+        {
+            "id": "no-ans-09",
+            "query": "碳循 温室 冰芯 记录",
+            "expectedPaths": [],
+            "scope": {},
+            "subsets": [
+                "no_answer"
+            ]
+        },
+        {
+            "id": "no-ans-10",
+            "query": "日本 茶道 千利 侘寂",
+            "expectedPaths": [],
+            "scope": {},
+            "subsets": [
+                "no_answer"
+            ]
+        }
+    ]
 }

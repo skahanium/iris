@@ -36,7 +36,8 @@
     "hygiene:clean": "node scripts/hygiene-clean.mjs",
     "hygiene:gitignore-check": "node scripts/hygiene-gitignore-check.mjs",
     "version:set": "node scripts/set-version.mjs",
-    "version:check": "node scripts/set-version.mjs --check"
+    "version:check": "node scripts/set-version.mjs --check",
+    "docs:check": "node scripts/docs-facts-check.mjs"
   },
   "dependencies": {
     "@radix-ui/react-dialog": "^1.1.14",

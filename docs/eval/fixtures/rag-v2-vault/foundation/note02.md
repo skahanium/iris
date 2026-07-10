@@ -1,10 +1,19 @@
 ---
-title: "Fixture foundation 02"
-aliases: ["alias-eval-02"]
-tags: ["area-foundation", "fixture"]
+title: "合同效力类型与认定标准"
+aliases: ["合同效力", "contract-validity", "无效合同认定"]
+tags: ["area-foundation", "fixture", "合同法", "合同效力"]
 ---
 
-# Fixture foundation 02
+# 合同效力类型与认定标准
 
-This deterministic RAG evaluation note owns the unique evidence token evaltok02.
-It exists to validate hybrid broker retrieval, metadata filtering, and ContextPacket construction.
+合同的效力状态直接决定了当事人能否依据合同主张权利。根据《中华人民共和国民法典》第五百零二条，依法成立的合同自成立时生效，但法律另有规定或当事人另有约定的除外。合同效力分为有效、无效、可撤销和效力待定四种类型。
+
+有效合同须同时满足三个要件：行为人具有相应的民事行为能力、意思表示真实、不违反法律和行政法规的强制性规定且不违背公序良俗。欠缺任一要件均可能导致效力瑕疵。
+
+证据令牌: evaltok02
+
+无效合同是自始、当然、确定无效的合同类型。根据民法典第一百五十三条，违反法律、行政法规的强制性规定的民事法律行为无效，但该强制性规定不导致该民事法律行为无效的除外。违背公序良俗的民事法律行为同样无效。
+
+可撤销合同则是指因意思表示瑕疵而赋予一方撤销权的合同类型，包括重大误解、欺诈、胁迫以及显失公平等情形。撤销权需在知道或应当知道撤销事由之日起一年内行使，自民事法律行为发生之日起五年内未行使的撤销权消灭。
+
+参见 [[note01]] 关于合同成立要件的讨论，以及 [[note03]] 关于违约责任体系的详细分析。

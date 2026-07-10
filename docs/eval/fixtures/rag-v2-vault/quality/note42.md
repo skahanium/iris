@@ -1,10 +1,17 @@
 ---
-title: "Fixture quality 42"
-aliases: ["alias-eval-42"]
-tags: ["area-quality", "fixture"]
+title: "测试驱动开发TDD的实践与争议"
+aliases: ["TDD", "测试驱动开发", "test-driven-development"]
+tags: ["area-quality", "fixture", "软件质量", "TDD", "开发方法"]
 ---
 
-# Fixture quality 42
+# 测试驱动开发TDD的实践与争议
 
-This deterministic RAG evaluation note owns the unique evidence token evaltok42.
-It exists to validate hybrid broker retrieval, metadata filtering, and ContextPacket construction.
+测试驱动开发（Test-Driven Development, TDD）是由 Kent Beck 在极限编程（Extreme Programming）方法中系统化并提出的一种软件开发实践。TDD 遵循一个简短而刻意的循环周期——红-绿-重构（Red-Green-Refactor）：首先编写一个会失败的测试用例（Red），然后编写恰好足够的代码使测试通过（Green），最后在不改变外部行为的前提下改善代码结构（Refactor）。
+
+TDD 的核心理念是"测试即规范"。传统开发流程中测试往往是对已写代码的事后验证，而 TDD 将测试的地位前置——测试不再是验证工具，而是设计的驱动力量。编写测试时，开发者被迫站在调用方角度思考接口设计，这种换位思考自然催生出高内聚、低耦合的 API 设计。
+
+证据令牌: evaltok42
+
+关于 TDD 效用的学术研究和业界争议持续至今。支持方的实证研究表明 TDD 能够将生产代码的缺陷密度降低 40%-80%，虽然初期开发时间增加 15%-35%，但长期维护成本的降低足以补偿前期投入。反对意见指出 TDD 在探索性质强、需求高度不确定的领域可能抑制创造性试错，且对用户界面和数据库 Schema 等难以在单元层面测试的组件适用性有限。
+
+行为驱动开发（BDD）是 TDD 的演进形态，它将测试表述的粒度从技术细节提升至业务行为。通过 Given-When-Then 模板以自然语言描述系统行为，BDD 使非技术干系人能够理解和参与测试用例的编写审查。Cucumber、SpecFlow 和 Behave 是不同编程语言生态中的主流 BDD 框架。TDD 和 BDD 的关系可以理解为：TDD 回答"代码写对了没有"，BDD 回答"写的是对的代码没有"。

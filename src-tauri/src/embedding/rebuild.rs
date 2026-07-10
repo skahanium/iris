@@ -80,7 +80,7 @@ pub trait EmbeddingBatcher {
     fn embed_batch(&self, texts: &[&str]) -> AppResult<Vec<Vec<f32>>>;
 }
 
-struct BgeEmbeddingBatcher;
+pub struct BgeEmbeddingBatcher;
 
 impl EmbeddingBatcher for BgeEmbeddingBatcher {
     fn embed_batch(&self, texts: &[&str]) -> AppResult<Vec<Vec<f32>>> {
@@ -95,16 +95,17 @@ impl EmbeddingBatcher for BgeEmbeddingBatcher {
 /// The legacy table is never changed. Until this function atomically marks the
 /// generation `ready`, semantic retrieval stays on non-vector fallbacks.
 pub fn rebuild_v2_embeddings(conn: &Connection) -> AppResult<usize> {
-    rebuild_v2_embeddings_with(conn, &BgeEmbeddingBatcher)
+    rebuild_v2_embeddings_with(conn, &BgeEmbeddingBatcher, &|_indexed, _total| {})
 }
 
-/// Rebuild v2 embeddings using an injected batcher.
+/// Rebuild v2 embeddings using an injected batcher and optional progress callback.
 ///
 /// Exposed for deterministic tests; production must call
 /// [`rebuild_v2_embeddings`] so it only uses the verified bundled BGE model.
 pub fn rebuild_v2_embeddings_with(
     conn: &Connection,
     batcher: &impl EmbeddingBatcher,
+    on_progress: &dyn Fn(usize, usize),
 ) -> AppResult<usize> {
     let chunks = load_chunk_snapshot(conn)?;
     let anchors = load_auxiliary_snapshot(conn, "semantic_anchors")?;
@@ -113,7 +114,7 @@ pub fn rebuild_v2_embeddings_with(
 
     begin_rebuild(conn, total)?;
 
-    let rebuild_result = rebuild_snapshot(conn, &chunks, batcher)
+    let rebuild_result = rebuild_snapshot(conn, &chunks, batcher, on_progress)
         .and_then(|()| {
             rebuild_auxiliary_snapshot(
                 conn,
@@ -147,7 +148,20 @@ pub fn rebuild_v2_embeddings_with(
 }
 
 fn load_chunk_snapshot(conn: &Connection) -> AppResult<Vec<(i64, String)>> {
-    let mut statement = conn.prepare("SELECT id, content FROM chunks ORDER BY id")?;
+    // Embedding document text = title + heading_path + aliases + tags + chunk content.
+    // This gives the embedding model richer semantic context for retrieval.
+    let mut statement = conn.prepare(
+        "SELECT c.id,
+                COALESCE(f.title, '') || char(10) ||
+                COALESCE(c.heading_path, '') || char(10) ||
+                COALESCE(m.aliases, '') || char(10) ||
+                COALESCE(m.tags, '') || char(10) ||
+                c.content
+         FROM chunks AS c
+         INNER JOIN files AS f ON f.id = c.file_id
+         LEFT JOIN files_metadata_fts AS m ON m.path = f.path
+         ORDER BY c.id",
+    )?;
     let rows = statement.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?;
     Ok(rows.flatten().collect())
 }
@@ -212,7 +226,9 @@ fn rebuild_snapshot(
     conn: &Connection,
     chunks: &[(i64, String)],
     batcher: &impl EmbeddingBatcher,
+    on_progress: &dyn Fn(usize, usize),
 ) -> AppResult<()> {
+    let total = chunks.len();
     let mut indexed = 0usize;
     for chunk_batch in chunks.chunks(REBUILD_BATCH_SIZE) {
         let texts = chunk_batch
@@ -238,6 +254,7 @@ fn rebuild_snapshot(
 
         indexed += chunk_batch.len();
         store_batch_progress(conn, chunk_batch, &embeddings, indexed)?;
+        on_progress(indexed, total);
     }
     Ok(())
 }

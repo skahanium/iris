@@ -187,6 +187,7 @@ export function UnifiedAssistantPanel({
     mentionHighlight,
     mentionNavDeltaRef,
     mentionOpen,
+    mentionPrefix,
     mentionQuery,
     mentionTokens,
     removeMentionToken,
@@ -514,6 +515,7 @@ export function UnifiedAssistantPanel({
         mentionHighlight={mentionHighlight}
         mentionNavDeltaRef={mentionNavDeltaRef}
         mentionOpen={mentionOpen}
+        mentionPrefix={mentionPrefix}
         mentionQuery={mentionQuery}
         streaming={streaming}
         textareaRef={textareaRef}

@@ -1,10 +1,17 @@
 ---
-title: "Fixture security 15"
-aliases: ["alias-eval-15"]
-tags: ["area-security", "fixture"]
+title: "OAuth2授权码流程的安全分析"
+aliases: ["OAuth2授权码", "authorization-code-flow"]
+tags: ["area-security", "fixture", "应用安全", "OAuth2", "授权码流程"]
 ---
 
-# Fixture security 15
+# OAuth2授权码流程的安全分析
 
-This deterministic RAG evaluation note owns the unique evidence token evaltok15.
-It exists to validate hybrid broker retrieval, metadata filtering, and ContextPacket construction.
+OAuth2 授权码流程（Authorization Code Flow）是 OAuth2 协议中安全级别最高的授权方式，专为具有后端服务器的机密客户端设计。该流程的核心思想是将用户代理（浏览器）作为中介，通过前端信道获取临时的授权码（Authorization Code），再由后端服务器使用该授权码通过安全的后端信道换取访问令牌（Access Token）。
+
+完整流程包含六个关键步骤：客户端将用户重定向到授权服务器、用户在授权服务器上完成身份认证并授权、授权服务器通过浏览器重定向返回授权码、客户端后端使用授权码和客户端密钥向授权服务器的令牌端点请求访问令牌、授权服务器验证后颁发令牌、客户端使用令牌访问受保护资源。这种前端获取授权码与后端兑换令牌分离的设计，确保令牌永远不会暴露在浏览器环境中。
+
+证据令牌: evaltok15
+
+授权码流程的关键安全特性在于 PKCE（Proof Key for Code Exchange，发音"pixy"）扩展。PKCE 要求客户端在发起授权请求时生成一个 code_verifier，并将 code_challenge 发送给授权服务器。在令牌兑换阶段，客户端必须提交原始 code_verifier，授权服务器验证两者匹配后才颁发令牌。PKCE 有效防御了授权码拦截攻击，原本专为移动和单页应用设计，但 OAuth 2.1 草案已推荐所有客户端类型均使用 PKCE。
+
+此外，授权服务器必须验证 redirect_uri 参数与注册的回调地址精确匹配，防止攻击者将授权码重定向到恶意服务器。State 参数用于防止跨站请求伪造（CSRF）攻击，客户端应生成加密随机的 state 值并在回调时严格验证。

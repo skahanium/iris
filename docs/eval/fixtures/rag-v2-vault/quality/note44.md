@@ -1,10 +1,17 @@
 ---
-title: "Fixture quality 44"
-aliases: ["alias-eval-44"]
-tags: ["area-quality", "fixture"]
+title: "精酿啤酒的发酵工艺与风味控制"
+aliases: ["精酿啤酒", "craft-beer-brewing", "啤酒发酵"]
+tags: ["area-quality", "fixture", "酿酒工艺", "发酵", "精酿"]
 ---
 
-# Fixture quality 44
+# 精酿啤酒的发酵工艺与风味控制
 
-This deterministic RAG evaluation note owns the unique evidence token evaltok44.
-It exists to validate hybrid broker retrieval, metadata filtering, and ContextPacket construction.
+精酿啤酒（Craft Beer）与工业啤酒的核心区别在于原料选择、发酵工艺和风味多样性的追求。精酿啤酒严格遵循德国《啤酒纯酿法》的精神，只使用水、麦芽、啤酒花和酵母四种基础原料，不添加大米、玉米淀粉等辅料来降低成本。精选的特种麦芽——如水晶麦芽、巧克力麦芽和烟熏麦芽——为啤酒提供了从金黄到漆黑的丰富色谱和从焦糖到咖啡的复杂风味层次。
+
+啤酒发酵分为上层发酵（Ale）和下层发酵（Lager）两大类。艾尔酵母（Saccharomyces cerevisiae）在 18-24 摄氏度的相对高温下发酵，发酵时酵母聚集在发酵液表面，产生丰富的酯类和酚类化合物，赋予艾尔啤酒标志性的果香和辛香。拉格酵母（Saccharomyces pastorianus）则在 7-13 摄氏度的低温下进行下层发酵，发酵周期长但产生的酯类较少，口感更为清爽纯净。
+
+证据令牌: evaltok44
+
+啤酒花（Hops）是啤酒风味的灵魂，不同品种贡献截然不同的风味谱系。苦花（如 Magnum、Nugget）在煮沸阶段添加，通过异构化α酸提供苦味骨架。香花（如 Citra、Mosaic、Galaxy）在煮沸末期或回旋沉淀阶段添加以保留挥发性精油，贡献柑橘、松脂、热带水果等香气。近年来流行的干投（Dry Hopping）技术将啤酒花直接投入发酵液中进行冷萃取，几乎不产生苦味但释放出极为爆炸性的芳香化合物。
+
+发酵温度控制是家庭酿造中最关键也最易出问题的环节。温度过高导致酵母产生高级醇和酯类过量的"溶剂味"，温度过低则酵母活性不足导致发酵停滞。双乙酰休止（Diacetyl Rest）是拉格啤酒酿造特有的工艺步骤：在主发酵即将结束时将温度升高 2-3 度维持 24-48 小时，促使酵母重新吸收并代谢发酵过程中产生的双乙酰（黄油味），从而获得更干净的风味。

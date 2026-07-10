@@ -1,10 +1,17 @@
 ---
-title: "Fixture knowledge 28"
-aliases: ["alias-eval-28"]
-tags: ["area-knowledge", "fixture"]
+title: "本体论与语义知识表示"
+aliases: ["本体论", "ontology-modeling", "语义网络", "知识表示", "OWL", "RDF"]
+tags: ["area-knowledge", "fixture", "知识管理", "本体论", "语义网"]
 ---
 
-# Fixture knowledge 28
+# 本体论与语义知识表示
 
-This deterministic RAG evaluation note owns the unique evidence token evaltok28.
-It exists to validate hybrid broker retrieval, metadata filtering, and ContextPacket construction.
+本体论（Ontology）在计算机科学中特指对特定领域概念及其关系的显式形式化规范。与分类法仅描述层级关系不同，本体论允许定义概念间的多种语义关系（如"部分-整体"、"原因-结果"、"属性-值"），并支持基于逻辑推理的隐含知识发现。语义网（Semantic Web）技术栈中的 RDF、RDFS 和 OWL 是实现本体的核心标准语言。
+
+RDF（Resource Description Framework）将知识表示为一系列三元组：主体-谓词-客体。这种看似简单的数据结构可以表达任意复杂的语义图。RDFS（RDF Schema）在 RDF 基础上增加了类、子类和属性定义的基本词汇。OWL（Web Ontology Language）进一步提供了更丰富的公理系统，包括等价类、不相交类、属性特征（传递性、对称性、函数性）和基数限制等。
+
+证据令牌: evaltok28
+
+本体论在生物医学、法律和制造业中已有成熟的工业应用。基因本体论（Gene Ontology, GO）使用受控词汇描述基因产物的分子功能、生物过程和细胞组分三个维度，是生物信息学领域最广泛使用的本体资源。在法律领域，本体论被用于构建法律知识图谱，通过形式化法律条文的逻辑结构来支持智能法律检索和合规推理。
+
+本体论与分类法的互补关系在知识管理中尤为重要。分类法提供了简单直观的信息浏览路径，适合终端用户的日常导航需求；本体论则提供了精确的关系语义和推理能力，适合机器处理和智能应用场景。实践中，组织通常先建立分类法作为基础骨架，再逐步丰富为轻量级本体，避免一次性构建完整本体的高成本和长周期问题。

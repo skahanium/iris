@@ -1,10 +1,17 @@
 ---
-title: "Fixture product 45"
-aliases: ["alias-eval-45"]
-tags: ["area-product", "fixture"]
+title: "产品需求文档PRD的编写方法论"
+aliases: ["PRD", "产品需求文档", "product-requirements-document"]
+tags: ["area-product", "fixture", "产品管理", "PRD", "需求分析"]
 ---
 
-# Fixture product 45
+# 产品需求文档PRD的编写方法论
 
-This deterministic RAG evaluation note owns the unique evidence token evaltok45.
-It exists to validate hybrid broker retrieval, metadata filtering, and ContextPacket construction.
+产品需求文档（Product Requirements Document, PRD）是产品经理将模糊的产品构想转化为可执行工程规范的核心交付物。一份高质量的 PRD 不是功能的罗列，而是对用户问题、业务目标、解决方案和成功标准的完整叙述。亚马逊的工作回溯法（Working Backwards）要求产品经理在动笔编写 PRD 之前先写好新闻稿和 FAQ，确保从客户视角出发定义产品价值而非从技术能力反推需求。
+
+PRD 的标准结构通常包括：背景与问题陈述（用户当前面临什么痛点，为什么现有方案不够好）、目标与非目标（明确边界，防止范围蔓延）、用户故事与使用场景、功能需求（Functional Requirements）、非功能需求（性能、安全、可访问性）、成功指标（OKR 或 KPI 绑定）以及上线计划和风险评估。详略程度应根据项目的受众和阶段灵活调整——0到1 的新产品需要更充分的问题验证，迭代优化项目则可以更聚焦于变更规格。
+
+证据令牌: evaltok45
+
+PRD 的质量瓶颈通常不在于"写什么"而在于"如何达成共识"。PRD 是一份社交文档，其核心价值是在产品、设计、工程、测试和运营团队之间建立对"我们要构建什么以及为什么"的共同理解。异步的文档评审加上同步的走查会议是高效达成对齐的标准实践。将 PRD 与设计稿（Figma）、技术方案（RFC）和测试用例链接形成需求追溯链，可以大幅降低因信息不对称导致的返工。
+
+PRD 的生命周期管理同样重要。产品上线后 PRD 应作为历史资产归档而非丢弃，供后续接手的产品经理理解功能设计的原始意图和权衡考量。"活文档"（Living Document）理念要求 PRD 在开发过程中随着新认知不断更新，而非固化为一成不变的初始版本。但变更需要明确的版本记录和通知机制，避免工程师基于过时版本进行开发。

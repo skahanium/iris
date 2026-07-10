@@ -14,9 +14,9 @@ use sha2::{Digest, Sha256};
 /// Current extractor version — bump when extraction logic changes.
 pub const EXTRACTOR_VERSION: &str = "0.1.0";
 
-/// Current embedding model identifier.
-pub const EMBEDDING_MODEL: &str = "fastembed/AllMiniLML6V2";
-pub const EMBEDDING_DIM: i32 = 384;
+/// Current embedding model identifier (mirrors embedding::engine::EMBEDDING_MODEL_ID).
+pub const EMBEDDING_MODEL: &str = "Xenova/bge-small-zh-v1.5";
+pub const EMBEDDING_DIM: i32 = 512;
 
 /// Generate a stable `anchor_key` from file path, source span, and content hash.
 ///

@@ -110,7 +110,7 @@ iris/
 │   │   ├── security/       # 安全删除
 │   │   ├── network/        # 证书固定
 │   │   ├── recycle/        # 回收站
-│   │   └── credentials.rs  # OS 凭据管理器
+│   │   └── credentials.rs  # AES-256-GCM 本地加密凭据存储
 │   ├── migrations/         # SQLite 迁移文件
 │   ├── tests/              # Rust 集成测试
 │   ├── benches/            # 性能基准测试

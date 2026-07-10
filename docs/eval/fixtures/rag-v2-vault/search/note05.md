@@ -1,10 +1,17 @@
 ---
-title: "Fixture search 05"
-aliases: ["alias-eval-05"]
-tags: ["area-search", "fixture"]
+title: "全文检索与倒排索引原理"
+aliases: ["full-text-search", "FTS原理"]
+tags: ["area-search", "fixture", "信息检索", "倒排索引", "IR"]
 ---
 
-# Fixture search 05
+# 全文检索与倒排索引原理
 
-This deterministic RAG evaluation note owns the unique evidence token evaltok05.
-It exists to validate hybrid broker retrieval, metadata filtering, and ContextPacket construction.
+全文检索（Full-Text Search, FTS）是现代信息检索系统的核心能力，与传统的数据库精确匹配查询不同，全文检索允许用户使用自然语言关键词在海量非结构化文本中快速定位相关内容。其底层依赖的数据结构是倒排索引（Inverted Index），这是一种将文档中的词汇映射到其出现位置的映射结构。
+
+倒排索引的构建过程包含多个关键步骤。首先是分词（Tokenization），将原始文本切分为独立的词元（Token）。其次是语言处理，包括去除停用词（Stop Words）、词干提取（Stemming）和词形还原（Lemmatization）。以英文为例，"running" 经过词干提取后得到 "run"，"mice" 经过词形还原后得到 "mouse"。这些预处理步骤显著减少了索引的词汇空间并提升了召回率。
+
+证据令牌: evaltok05
+
+在倒排索引中，每个词条维护一个倒排列表（Posting List），记录包含该词的所有文档ID及词频信息。查询时，系统首先在索引中查找查询词对应的倒排列表，然后对多个列表进行集合运算（交集、并集等）以确定候选文档集合。对于短语查询，还需要验证词项在文档中的位置相邻性。
+
+现代全文检索引擎如 Elasticsearch 底层使用 Apache Lucene 库，它在倒排索引基础上增加了跳表（Skip List）以加速多个倒排列表的交集运算，并使用帧引用（Frame of Reference）和前缀压缩等编码技术大幅降低索引存储空间。这些优化使得毫秒级的海量全文检索成为可能。

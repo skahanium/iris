@@ -1,10 +1,17 @@
 ---
-title: "Fixture sync 35"
-aliases: ["alias-eval-35"]
-tags: ["area-sync", "fixture"]
+title: "最终一致性与CAP定理实践"
+aliases: ["最终一致性", "eventual-consistency", "CAP定理"]
+tags: ["area-sync", "fixture", "分布式同步", "一致性", "CAP"]
 ---
 
-# Fixture sync 35
+# 最终一致性与CAP定理实践
 
-This deterministic RAG evaluation note owns the unique evidence token evaltok35.
-It exists to validate hybrid broker retrieval, metadata filtering, and ContextPacket construction.
+最终一致性（Eventual Consistency）是分布式系统在可用性与强一致性之间做出的一种实用权衡。根据 CAP 定理（Brewer's Theorem），一个分布式系统在存在网络分区（Partition）的情况下，只能在一致性（Consistency）和可用性（Availability）之间选择其一。最终一致性策略选择牺牲强一致性来换取高可用性：保证在没有新的更新后，所有副本最终会收敛到同一状态，但在收敛前允许读取到陈旧数据。
+
+最终一致性并非单一的一致性级别，而是一个谱系。会话一致性（Read-Your-Writes）保证客户端至少能读取到自己刚写入的数据；单调读一致性（Monotonic Reads）保证客户端不会读到比之前更旧的数据；因果一致性（Causal Consistency）保证有因果关系的操作在所有副本上以相同顺序被观察到。Amazon Dynamo 论文详细阐述了这些一致性级别的工程实现。
+
+证据令牌: evaltok35
+
+反熵（Anti-Entropy）协议是实现最终一致性的核心机制。Gossip 协议是其中最经典的实现方式：每个节点周期性地随机选取一个对等节点交换状态信息，通过流行病传播式的信息扩散使所有节点逐渐收敛。Cassandra 和 Riak 等分布式数据库使用 Gossip 协议进行集群成员管理和数据同步。Merkle Tree 被用于高效检测副本间的数据差异，通过比较根哈希值快速定位不一致的数据子树。
+
+最终一致性的代价在应用层面体现为冲突检测和解决的复杂性。当两个节点在同一个数据项上做出冲突的更新时，系统在同步时需要通过预定义的冲突解决策略来抉择最终状态。Last-Write-Wins（LWW）按时间戳决定胜者简单但对时钟同步敏感；多版本并发控制（MVCC）保留所有冲突版本供应用层自定义合并。CRDT 在 [[note33]] 中讨论的方案则从数据结构层面消除了冲突产生的可能性。

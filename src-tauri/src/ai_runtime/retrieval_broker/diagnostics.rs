@@ -34,6 +34,15 @@ pub struct RetrievalLayerDiagnostic {
     pub layer: String,
     pub status: RetrievalLayerStatus,
     pub message: Option<String>,
+    /// Backend used for this layer (e.g. "cosine-rust", "sqlite-vec").
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub backend: Option<String>,
+    /// Active embedding model identifier when the layer ran.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model_id: Option<String>,
+    /// Active embedding generation identifier when the layer ran.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub generation_id: Option<String>,
 }
 
 /// Retrieval result plus per-layer diagnostics.
@@ -73,29 +82,39 @@ pub fn hybrid_retrieve_with_diagnostics(
 
     if request.layers.vector {
         if crate::embedding::engine::embedding_generation_ready(conn)? {
-            append_layer_result(
+            let model_id = crate::embedding::engine::EMBEDDING_MODEL_ID.to_string();
+            append_layer_result_with_meta(
                 "vector_chunks",
                 search_vector_chunks(conn, &request.query, candidate_limit),
                 &mut packets,
                 &mut diagnostics,
+                Some("cosine-rust".into()),
+                Some(model_id.clone()),
             );
-            append_layer_result(
+            append_layer_result_with_meta(
                 "vector_anchors",
                 search_vector_anchors(conn, &request.query, candidate_limit),
                 &mut packets,
                 &mut diagnostics,
+                Some("cosine-rust".into()),
+                Some(model_id.clone()),
             );
-            append_layer_result(
+            append_layer_result_with_meta(
                 "vector_regulations",
                 search_vector_regulations(conn, &request.query, candidate_limit),
                 &mut packets,
                 &mut diagnostics,
+                Some("cosine-rust".into()),
+                Some(model_id),
             );
         } else {
             diagnostics.push(RetrievalLayerDiagnostic {
                 layer: "vector".to_string(),
                 status: RetrievalLayerStatus::IndexNotReady,
                 message: Some("BGE v2 embedding generation is rebuilding".to_string()),
+                backend: Some("cosine-rust".into()),
+                model_id: Some(crate::embedding::engine::EMBEDDING_MODEL_ID.into()),
+                generation_id: None,
             });
         }
     }
@@ -285,6 +304,17 @@ fn append_layer_result(
     packets: &mut Vec<ContextPacket>,
     diagnostics: &mut Vec<RetrievalLayerDiagnostic>,
 ) {
+    append_layer_result_with_meta(layer, result, packets, diagnostics, None, None);
+}
+
+fn append_layer_result_with_meta(
+    layer: &str,
+    result: AppResult<Vec<ContextPacket>>,
+    packets: &mut Vec<ContextPacket>,
+    diagnostics: &mut Vec<RetrievalLayerDiagnostic>,
+    backend: Option<String>,
+    model_id: Option<String>,
+) {
     match result {
         Ok(mut layer_packets) => {
             let status = if layer_packets.is_empty() {
@@ -296,6 +326,9 @@ fn append_layer_result(
                 layer: layer.to_string(),
                 status,
                 message: None,
+                backend,
+                model_id,
+                generation_id: None,
             });
             packets.append(&mut layer_packets);
         }
@@ -304,6 +337,9 @@ fn append_layer_result(
                 layer: layer.to_string(),
                 status: classify_retrieval_error(&err),
                 message: Some(sanitize_retrieval_error(&err.to_string())),
+                backend,
+                model_id,
+                generation_id: None,
             });
         }
     }

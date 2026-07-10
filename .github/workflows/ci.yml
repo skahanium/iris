@@ -13,8 +13,8 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  checks:
-    name: Lightweight checks
+  frontend:
+    name: Frontend checks
     runs-on: ubuntu-24.04
     timeout-minutes: 20
 
@@ -34,6 +34,9 @@ jobs:
       - name: Check version facts
         run: npm run version:check
 
+      - name: Check document facts
+        run: npm run docs:check
+
       - name: Check formatting
         run: npm run format:check
 
@@ -44,4 +47,42 @@ jobs:
         run: npm run typecheck
 
       - name: Run stable contract tests
-        run: npm run test -- tests/package-local-script-contract.test.ts tests/github-actions-workflows.test.ts
+        run: npm run test -- tests/package-local-script-contract.test.ts tests/github-actions-workflows.test.ts tests/docs-facts-check.test.ts
+
+  rust-tests:
+    name: Rust tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust
+        uses: Swatinem/rust-cache@v2
+
+      - name: Run Rust unit tests
+        working-directory: src-tauri
+        run: cargo test --lib -- --skip indexer
+
+  rag-eval:
+    name: RAG evaluation gates
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust
+        uses: Swatinem/rust-cache@v2
+
+      - name: Run RAG broker eval (FTS-only)
+        working-directory: src-tauri
+        run: cargo test --test rag_broker_eval -- --nocapture

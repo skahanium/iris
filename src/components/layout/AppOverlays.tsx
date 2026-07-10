@@ -1,4 +1,4 @@
-import { lazy, Suspense } from "react";
+import { lazy, Suspense, useCallback, useEffect, useState } from "react";
 
 import { ClassifiedPanel } from "@/components/classified/ClassifiedPanel";
 import { ConflictDialog } from "@/components/file/ConflictDialog";
@@ -24,12 +24,13 @@ import type {
   PrepareNoteOpenRequest,
   PreparedNoteOpen,
 } from "@/lib/document-open-runtime";
-import type { ClassifiedStatus, FileListItem } from "@/types/ipc";
+import type { ClassifiedStatus, EmbeddingIndexStatus, FileListItem } from "@/types/ipc";
 import type { ConnectivityStatus } from "@/types/llm";
 import type {
   WebSearchAvailability,
   WebSearchProviderOption,
 } from "@/lib/web-search-provider-state";
+import { searchEmbeddingStatus, searchReindex } from "@/lib/ipc";
 
 const GraphView = lazy(() =>
   import("@/components/graph/GraphView").then((m) => ({
@@ -211,6 +212,25 @@ export function AppOverlays({
   versionSnapshotScheduler,
   webSearch,
 }: AppOverlaysProps) {
+  const [embeddingStatus, setEmbeddingStatus] =
+    useState<EmbeddingIndexStatus | null>(null);
+
+  const refreshEmbeddingStatus = useCallback(() => {
+    searchEmbeddingStatus()
+      .then(setEmbeddingStatus)
+      .catch(() => setEmbeddingStatus(null));
+  }, []);
+
+  const handleReindexEmbeddings = useCallback(() => {
+    searchReindex()
+      .then(() => refreshEmbeddingStatus())
+      .catch(() => {});
+  }, [refreshEmbeddingStatus]);
+
+  useEffect(() => {
+    refreshEmbeddingStatus();
+  }, [refreshEmbeddingStatus]);
+
   return (
     <>
       <QuickOpen
@@ -312,6 +332,8 @@ export function AppOverlays({
             onAutoVersionIdleMinutesChange={
               autoVersionSettings.setAutoVersionIdleMinutes
             }
+            embeddingStatus={embeddingStatus}
+            onReindexEmbeddings={handleReindexEmbeddings}
           />
         </Suspense>
       ) : null}

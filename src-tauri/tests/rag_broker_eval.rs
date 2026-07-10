@@ -22,7 +22,7 @@ const POSITIVE_RECALL_AT_5_MIN: f64 = 0.80;
 const POSITIVE_RECALL_AT_30_MIN: f64 = 0.95;
 const NO_ANSWER_FALSE_POSITIVE_RATE_MAX: f64 = 0.10;
 const NDCG_AT_10_MIN: f64 = 0.85;
-const METADATA_MATCH_QUERY_MIN: usize = 6;
+const METADATA_MATCH_QUERY_MIN: usize = 10;
 const SCOPE_LEAK_COUNT_MAX: usize = 0;
 
 #[derive(Debug, Deserialize)]
@@ -243,6 +243,26 @@ fn rag_v2_fixture_contract_has_48_notes_and_60_labeled_queries() {
         .queries
         .iter()
         .any(|query| query.expected_paths.is_empty()));
+
+    // Verify FTS CJK matching: index a known fixture and probe it.
+    let conn = Connection::open_in_memory().expect("open in-memory database");
+    migrate_up(&conn).expect("migrate database");
+    index_vault_incremental(&conn, &fixture_root(), IndexEmbeddingMode::Skip)
+        .expect("index fixture vault without embeddings");
+
+    let probe_safe = iris_lib::ai_runtime::retrieval_broker::escape_fts5_query("要约");
+    let match_count: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM files_fts WHERE files_fts MATCH ?1",
+            [&probe_safe],
+            |row| row.get(0),
+        )
+        .unwrap_or(0);
+    assert!(
+        match_count > 0,
+        "FTS5 must match Chinese bigrams from fixture notes (probe={})",
+        probe_safe
+    );
 }
 
 #[test]

@@ -1,10 +1,19 @@
 ---
-title: "Fixture editor 09"
-aliases: ["alias-eval-09"]
-tags: ["area-editor", "fixture"]
+title: "文本缓冲区的数据结构设计"
+aliases: ["文本缓冲区", "text-buffer-data-structure"]
+tags: ["area-editor", "fixture", "编辑器架构", "数据结构", "文本处理"]
 ---
 
-# Fixture editor 09
+# 文本缓冲区的数据结构设计
 
-This deterministic RAG evaluation note owns the unique evidence token evaltok09.
-It exists to validate hybrid broker retrieval, metadata filtering, and ContextPacket construction.
+文本缓冲区是编辑器中最底层也是最核心的数据结构，它负责存储和管理用户正在编辑的所有文本内容。缓冲区数据结构的设计直接影响编辑器的插入、删除和查找等基本操作的性能，是编辑器架构决策中最需要慎重考量的环节。
+
+经典的文本缓冲区实现有三种主流方案。第一种是 Gap Buffer（间隙缓冲区），它在一块连续内存中维护两个区域：光标前的文本和光标后的文本，中间留有一段空白间隙。当光标移动时，文本从间隙的一端移动到另一端。Gap Buffer 的优势在于局部编辑的高效性，Emacs 编辑器即采用此方案。
+
+证据令牌: evaltok09
+
+第二种方案是 Piece Table（片段表），它将原始文件内容和增量修改分别存储，用描述符链表来组装当前文档视图。Piece Table 天然支持无限撤销且无需复制大量数据，Visual Studio Code 的早期版本曾采用此结构。第三种方案是 Rope（绳），一种基于平衡二叉树的数据结构，每个叶子节点存储一个短字符串片段。Rope 在超大文件编辑中表现优异，即使处理数百兆字节的文件也能保持插入和删除操作的对数复杂度。
+
+选择缓冲区数据结构时需要综合考虑编辑器的主要使用场景。代码编辑器以局部编辑为主，Gap Buffer 通常是合理选择；日志文件查看器需要处理只读的超大文件，Rope 更为合适；而需要支持复杂协作编辑的场景则需要在此基础上叠加 [[note10]] 中讨论的 CRDT 或 OT 等协同数据结构。
+
+参见 [[note10]] 关于语法树与语言服务器的深入讨论。

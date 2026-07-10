@@ -13,6 +13,7 @@ export const IPC_EVENTS = {
   AI_THINKING: "ai:thinking",
   AI_REQUEST_STARTED: "ai:request_started",
   RESEARCH_PROGRESS: "ai:research_progress",
+  EMBEDDING_INDEX_PROGRESS: "embedding-index-progress",
 } as const;
 
 export type IpcEventName = (typeof IPC_EVENTS)[keyof typeof IPC_EVENTS];

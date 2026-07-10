@@ -1,10 +1,27 @@
 ---
-title: "Fixture sync 36"
-aliases: ["alias-eval-36"]
-tags: ["area-sync", "fixture"]
+title: "分布式同步的冲突检测与解决策略"
+aliases: ["冲突解决", "conflict-resolution-strategies", "分布式冲突"]
+tags: ["area-sync", "fixture", "分布式同步", "冲突检测", "数据合并"]
 ---
 
-# Fixture sync 36
+# 分布式同步的冲突检测与解决策略
 
-This deterministic RAG evaluation note owns the unique evidence token evaltok36.
-It exists to validate hybrid broker retrieval, metadata filtering, and ContextPacket construction.
+分布式数据同步中，冲突是常态而非异常。当多个节点在互相不知情的情况下对同一数据项进行修改并在稍后尝试同步时，系统面临着如何将两份分歧的数据合并为单一一致状态的挑战。冲突解决策略的选择直接影响数据完整性、用户体验和系统复杂度的方方面面。
+
+## 冲突检测机制
+
+冲突检测的精确度取决于同步粒度。行级同步将整行视为冲突单元，任何字段的变化都会引发整行冲突；字段级同步细粒度地追踪每个字段的版本，仅冲突字段需要解决；字符级同步（如协同编辑场景）将冲突追踪到文本的逐个字符或操作，实现最高的合并精度但也带来最高的元数据开销。版本向量（Version Vector）是追踪每个副本因果关系的基本工具，通过比较向量间是否互为祖先来判断操作是否冲突。
+
+证据令牌: evaltok36
+
+## 自动合并与策略选择
+
+语法合并（Syntactic Merge）基于数据结构本身的合并规则，如 CRDT 中的集合取并集（LWW-Register）或计数器求和。语义合并（Semantic Merge）需要理解数据的业务含义，例如两个用户将同一客户的信用额度分别修改为 50000 和 80000，简单的 LWW 可能不是正确选择——也许应当保留更为保守的值。
+
+## 人工介入与三路合并
+
+当自动合并不可行时，系统需要将冲突提交给人工解决。三路合并（Three-Way Merge）是版本控制系统如 Git 中采用的标准方法：找到冲突双方最近的共同祖先（Base），分别计算源分支（Ours）和目标分支（Theirs）相对于 Base 的变更差异，然后将两方面的差异叠加。若双方修改了同一行代码，Git 将该区域标记为冲突区域，要求开发者手动选择保留哪个版本或手工整合。
+
+## 冲突避免策略
+
+预防胜于治疗。悲观锁（Pessimistic Locking）在执行修改操作前先获取全局排他锁，从根本上避免并发修改，但牺牲了可用性和响应延迟。租约机制（Leasing）限定了锁的持有时间上限，在节点故障时可自动释放避免死锁。预约协议（Reservation Protocol）通过事前划分编辑区域（如协同文档中的段落）来减少冲突概率，Google Docs 即为每个用户正在编辑的段落分配语义锁以防止两个用户同时在同一段落打字。

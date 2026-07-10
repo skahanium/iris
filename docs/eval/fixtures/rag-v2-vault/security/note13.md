@@ -1,10 +1,17 @@
 ---
-title: "Fixture security 13"
-aliases: ["alias-eval-13"]
-tags: ["area-security", "fixture"]
+title: "应用安全认证体系设计"
+aliases: ["认证体系", "身份认证设计"]
+tags: ["area-security", "fixture", "应用安全", "认证", "身份验证"]
 ---
 
-# Fixture security 13
+# 应用安全认证体系设计
 
-This deterministic RAG evaluation note owns the unique evidence token evaltok13.
-It exists to validate hybrid broker retrieval, metadata filtering, and ContextPacket construction.
+认证（Authentication）是应用安全的第一道防线，其目标是验证用户或服务的身份真实性。根据《中华人民共和国网络安全法》第二十四条，网络运营者为用户提供信息发布、即时通讯等服务时，应当要求用户提供真实身份信息。这一法律要求推动了中国互联网应用全面采用实名认证机制。
+
+认证因素通常分为三类：知识因素（用户知道的，如密码）、持有因素（用户拥有的，如硬件令牌或手机）和固有因素（用户本身的，如指纹或面部特征）。单因素认证仅依赖其中一种，多因素认证（MFA）则结合两种或以上因素以显著提升安全强度。现代应用普遍要求至少双因素认证来保护敏感操作。
+
+证据令牌: evaltok13
+
+密码作为最传统的认证因素，其存储安全性一直是行业关注焦点。明文存储密码是严重的安全事故。实践中应当使用 bcrypt、scrypt 或 Argon2 等专门设计的密码哈希函数，这些算法通过内置盐值（Salt）和可配置的工作因子（Cost Factor）来对抗彩虹表攻击和暴力破解。Argon2 作为 2015 年密码哈希竞赛的获胜者，在内存硬度和并行化抗性方面表现尤为突出。
+
+会话管理是认证体系的另一个关键环节。用户认证成功后生成的 Session Token 或 JWT（JSON Web Token）需要在服务端或客户端安全存储，并设置合理的过期时间、支持主动吊销机制。Token 的传输必须通过 HTTPS 加密通道，且应设置 HttpOnly 和 Secure 等 Cookie 属性以防止跨站脚本（XSS）攻击窃取凭证。

@@ -1,10 +1,17 @@
 ---
-title: "Fixture product 47"
-aliases: ["alias-eval-47"]
-tags: ["area-product", "fixture"]
+title: "古典吉他右手指法训练体系"
+aliases: ["古典吉他", "classical-guitar-technique", "吉他指法"]
+tags: ["area-product", "fixture", "音乐演奏", "古典吉他", "指法训练"]
 ---
 
-# Fixture product 47
+# 古典吉他右手指法训练体系
 
-This deterministic RAG evaluation note owns the unique evidence token evaltok47.
-It exists to validate hybrid broker retrieval, metadata filtering, and ContextPacket construction.
+古典吉他的右手指法体系是区别于民谣吉他和电吉他的核心技艺之一。右手不持拨片，而是通过拇指（p）、食指（i）、中指（m）和无名指（a）四指的独立运动来弹奏琴弦。这种"指弹"（Fingerstyle）技术赋予古典吉他丰富的多声部表达能力，使其能够独立演奏旋律、伴奏和低音线条，实现小型管弦乐队的音乐效果。
+
+靠弦奏法（Apoyando，又称 Rest Stroke）是古典吉他的标志性技法。演奏时手指拨弦后顺势停靠在相邻的琴弦上，利用手腕和前臂的自然重力而非单纯的手指力量发音。靠弦奏法产生的音色饱满而富有穿透力，常用于突出旋律线条。与之相对的是勾弦奏法（Tirando 或 Free Stroke），手指拨弦后向掌心方向收拢不触及邻弦，音色轻盈适用于和弦与琶音演奏。
+
+证据令牌: evaltok47
+
+琶音（Arpeggio）是右手技术训练的基石。卡鲁里（Ferdinando Carulli）和马特奥·卡尔卡西（Matteo Carcassi）的经典练习曲至今仍是训练右手独立性和均匀度的必修教材。现代训练体系中，维拉-罗伯斯（Heitor Villa-Lobos）的十二首练习曲将琶音技巧推向了表现力的极致——第一号练习曲以持续不断的琶音织体模仿大提琴的无伴奏组曲，挑战演奏者在高速运动中保持每个音粒的均匀清晰。
+
+颤音（Tremolo）是古典吉他的最高阶技巧之一，通过 p-a-m-i 的快速循环在单一旋律音上创造出延续歌唱的效果。高质量的颤音要求四个音粒在音量、音色和时值上完全均匀，且旋律音与伴奏声部的主次关系清晰分明。弗朗西斯科·塔雷加（Francisco Tarrega）的《阿尔罕布拉宫的回忆》是颤音技法的试金石曲目，整曲以持续的颤音旋律描绘西班牙阿尔罕布拉宫的喷泉流水。颤音训练需要数月乃至数年的渐进式速度提升——从每分钟 60 拍的四个音粒开始，每日使用节拍器以 2-3 拍的增量匀速推进。

@@ -5,14 +5,15 @@ import {
 import type { ContextScope } from "@/types/ai";
 import type { FileListItem } from "@/types/ipc";
 
-/** Token inserted in the composer: `@[path or prefix]` */
+/** Token inserted in the composer: `@[path or prefix]` or `#[tag]` */
 const MENTION_TOKEN_RE = /@\[([^\]]+)\]/g;
+const TAG_TOKEN_RE = /#\[([^\]]+)\]/g;
 
 export interface MentionToken {
   raw: string;
-  /** Folder prefix (ends with `/`) or file path */
+  /** Folder prefix (ends with `/`), file path, or tag name */
   value: string;
-  kind: "folder" | "file";
+  kind: "folder" | "file" | "tag";
   label: string;
 }
 
@@ -43,28 +44,46 @@ export function parseMentionTokens(text: string): MentionToken[] {
       label: value.replace(/\\/g, "/").replace(/\/$/, "") || value,
     });
   }
+  // Parse #tag tokens
+  for (const match of text.matchAll(TAG_TOKEN_RE)) {
+    const value = match[1]?.trim() ?? "";
+    if (!value) continue;
+    tokens.push({
+      raw: match[0] ?? "",
+      value: value.toLowerCase(),
+      kind: "tag",
+      label: value,
+    });
+  }
   return tokens;
 }
 
 export function tokensToContextScope(tokens: MentionToken[]): ContextScope {
   const paths: string[] = [];
   const pathPrefixes: string[] = [];
+  const requiredTags: string[] = [];
   for (const t of tokens) {
     if (t.kind === "file") {
       if (!paths.includes(t.value)) paths.push(t.value);
-    } else if (!pathPrefixes.includes(t.value)) {
-      pathPrefixes.push(t.value);
+    } else if (t.kind === "folder") {
+      if (!pathPrefixes.includes(t.value)) pathPrefixes.push(t.value);
+    } else if (t.kind === "tag") {
+      if (!requiredTags.includes(t.value)) requiredTags.push(t.value);
     }
   }
-  return { paths, pathPrefixes };
+  return { paths, pathPrefixes, requiredTags };
 }
 
-/** User-visible message with `@[...]` tokens rendered as readable `@label` text. */
+/** User-visible message with `@[...]` and `#[...]` tokens rendered as readable text. */
 export function stripMentionTokensForDisplay(text: string): string {
   return text
     .replace(MENTION_TOKEN_RE, (_raw, value: string) => {
       const label = value.replace(/\\/g, "/").replace(/\/$/, "").trim();
       return label ? `@${label}` : "";
+    })
+    .replace(TAG_TOKEN_RE, (_raw, value: string) => {
+      const label = value.trim();
+      return label ? `#${label}` : "";
     })
     .replace(/[ \t]{2,}/g, " ")
     .replace(/[ \t]+\n/g, "\n")
@@ -74,7 +93,7 @@ export function stripMentionTokensForDisplay(text: string): string {
 
 export interface MentionCandidate {
   id: string;
-  kind: "folder" | "file";
+  kind: "folder" | "file" | "tag";
   label: string;
   subtitle?: string;
   value: string;
@@ -135,16 +154,20 @@ export function buildMentionCandidates(
 export function findActiveMentionQuery(
   text: string,
   cursor: number,
-): { start: number; query: string } | null {
+): { start: number; query: string; prefix: "@" | "#" } | null {
   const before = text.slice(0, cursor);
+  // Check @ mention
   const at = before.lastIndexOf("@");
-  if (at < 0) return null;
-  const segment = before.slice(at + 1);
+  const hash = before.lastIndexOf("#");
+  const latest = Math.max(at, hash);
+  if (latest < 0) return null;
+  const prefix: "@" | "#" = latest === at ? "@" : "#";
+  const segment = before.slice(latest + 1);
   if (segment.includes("\n") || segment.includes(" ")) return null;
-  if (at > 0 && !/[\s([{「]/.test(before[at - 1] ?? "")) {
+  if (latest > 0 && !/[\s([{「]/.test(before[latest - 1] ?? "")) {
     return null;
   }
-  return { start: at, query: segment };
+  return { start: latest, query: segment, prefix };
 }
 
 export function insertMentionToken(
@@ -157,7 +180,8 @@ export function insertMentionToken(
     candidate.kind === "folder"
       ? normalizeFolderPrefix(candidate.value)
       : candidate.value;
-  const token = `@[${tokenValue}]`;
+  const bracket = candidate.kind === "tag" ? "#" : "@";
+  const token = `${bracket}[${tokenValue}]`;
   const next = `${text.slice(0, mentionStart)}${token} ${text.slice(cursor)}`;
   const nextCursor = mentionStart + token.length + 1;
   return { text: next, cursor: nextCursor };

@@ -1,10 +1,19 @@
 ---
-title: "Fixture foundation 03"
-aliases: ["alias-eval-03"]
-tags: ["area-foundation", "fixture"]
+title: "违约责任体系与救济路径"
+aliases: ["违约责任", "breach-of-contract", "损害赔偿计算"]
+tags: ["area-foundation", "fixture", "合同法", "违约责任"]
 ---
 
-# Fixture foundation 03
+# 违约责任体系与救济路径
 
-This deterministic RAG evaluation note owns the unique evidence token evaltok03.
-It exists to validate hybrid broker retrieval, metadata filtering, and ContextPacket construction.
+违约责任是合同法中保障债权实现的核心机制。根据《中华人民共和国民法典》第五百七十七条，当事人不履行合同义务或者履行合同义务不符合约定的，应当承担继续履行、采取补救措施或者赔偿损失等违约责任。
+
+继续履行是违约责任的首要救济方式，体现了合同法鼓励交易、维护合同约束力的价值取向。但法律上或事实上不能履行、债务标的不适于强制履行或履行费用过高的情形除外。债权人可以在合理期限内请求债务人继续履行。
+
+证据令牌: evaltok03
+
+损害赔偿的范围包括实际损失和可得利益损失，但不得超过违约方订立合同时预见到或应当预见到的因违约可能造成的损失，即适用可预见性规则。违约金与实际损失之间的关系受司法调整，约定的违约金过分高于造成的损失的，当事人可以请求人民法院或仲裁机构予以适当减少。
+
+定金罚则与违约金不能并行适用，当事人既约定违约金又约定定金的，一方违约时对方可以选择适用违约金或定金条款。此外，民法典还规定了减损规则、与有过失规则等违约损害赔偿的限制原则。
+
+参见 [[note02]] 关于合同效力的分析，以及 [[note04]] 关于合同解除制度的讨论。

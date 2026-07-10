@@ -86,7 +86,7 @@ fn rebuild_marks_v2_ready_only_after_complete_512_dimensional_coverage() {
     let embedding = vec![0.5_f32; EMBEDDING_DIMENSION];
     let batcher = ScriptedBatcher::new(vec![Ok(vec![embedding.clone(), embedding])]);
 
-    let rebuilt = rebuild_v2_embeddings_with(&conn, &batcher).expect("rebuild v2 embeddings");
+    let rebuilt = rebuild_v2_embeddings_with(&conn, &batcher, &|_, _| {}).expect("rebuild v2 embeddings");
 
     assert_eq!(rebuilt, 2);
     let state = generation_state(&conn);
@@ -130,7 +130,7 @@ fn rebuild_with_invalid_dimension_never_activates_v2() {
     seed_chunks(&conn, 1);
     let batcher = ScriptedBatcher::new(vec![Ok(vec![vec![0.5_f32; EMBEDDING_DIMENSION - 1]])]);
 
-    let error = rebuild_v2_embeddings_with(&conn, &batcher).expect_err("invalid vectors must fail");
+    let error = rebuild_v2_embeddings_with(&conn, &batcher, &|_, _| {}).expect_err("invalid vectors must fail");
 
     assert!(matches!(error, AppError::Embed(_)));
     let state = generation_state(&conn);
@@ -157,7 +157,7 @@ fn rebuild_failure_persists_only_sanitized_error_summary() {
     ))]);
 
     let _ =
-        rebuild_v2_embeddings_with(&conn, &batcher).expect_err("backend failure must propagate");
+        rebuild_v2_embeddings_with(&conn, &batcher, &|_, _| {}).expect_err("backend failure must propagate");
 
     let state = generation_state(&conn);
     assert_eq!(state.1, "failed");
@@ -191,7 +191,7 @@ fn partial_rebuild_never_activates_v2_after_a_later_batch_fails() {
         Err(AppError::Embed("second batch failed".into())),
     ]);
 
-    let error = rebuild_v2_embeddings_with(&conn, &batcher)
+    let error = rebuild_v2_embeddings_with(&conn, &batcher, &|_, _| {})
         .expect_err("a partial generation must not be activated");
 
     assert!(matches!(error, AppError::Embed(_)));
@@ -249,7 +249,7 @@ fn rebuild_v2_embeds_structured_anchor_and_regulation_records() {
         Ok(vec![embedding]),
     ]);
 
-    rebuild_v2_embeddings_with(&conn, &batcher).expect("rebuild all v2 records");
+    rebuild_v2_embeddings_with(&conn, &batcher, &|_, _| {}).expect("rebuild all v2 records");
 
     for table in [
         "chunk_embeddings_v2",
@@ -278,7 +278,7 @@ fn corrupted_auxiliary_v2_vector_prevents_generation_readiness() {
     ).expect("seed anchor");
     let embedding = vec![0.25_f32; EMBEDDING_DIMENSION];
     let batcher = ScriptedBatcher::new(vec![Ok(vec![embedding.clone()]), Ok(vec![embedding])]);
-    rebuild_v2_embeddings_with(&conn, &batcher).expect("rebuild v2");
+    rebuild_v2_embeddings_with(&conn, &batcher, &|_, _| {}).expect("rebuild v2");
     assert!(embedding_generation_ready(&conn).expect("ready before corruption"));
 
     conn.execute(

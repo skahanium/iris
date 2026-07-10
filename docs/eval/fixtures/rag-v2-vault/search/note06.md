@@ -1,10 +1,17 @@
 ---
-title: "Fixture search 06"
-aliases: ["alias-eval-06"]
-tags: ["area-search", "fixture"]
+title: "BM25评分算法与相关性排序"
+aliases: ["BM25算法", "Okapi-BM25", "概率检索模型"]
+tags: ["area-search", "fixture", "信息检索", "BM25", "排序算法"]
 ---
 
-# Fixture search 06
+# BM25评分算法与相关性排序
 
-This deterministic RAG evaluation note owns the unique evidence token evaltok06.
-It exists to validate hybrid broker retrieval, metadata filtering, and ContextPacket construction.
+BM25（Best Match 25）是信息检索领域中最经典的概率相关性评分函数，属于经典的 TF-IDF 概率检索模型。它由 Stephen Robertson 和 Karen Sparck Jones 等人在 1970 年代至 1990 年代逐步发展完善，至今仍是 Elasticsearch 等主流搜索引擎的默认相关性算法。
+
+BM25 的核心公式由三个因子组成：词频饱和度因子、逆文档频率因子和文档长度归一化因子。其中词频饱和度因子使用非线性变换 `tf / (tf + k1)`，参数 k1 控制词频对评分的贡献曲线的陡峭程度。这种设计反映了检索中的关键洞察：一个词在文档中出现两次比出现一次重要得多，但出现二十次并不比出现十次重要二十倍。
+
+证据令牌: evaltok06
+
+逆文档频率（IDF）因子衡量的是词的稀有程度：出现在少数文档中的词具有更高的区分度。文档长度归一化因子则通过参数 b 调节文档长度对评分的影响，b 越大表示对长文档的惩罚越重。这两个参数 k1 和 b 通常通过网格搜索在基准测试集上调优，典型值为 k1=1.2 和 b=0.75。
+
+与传统的 TF-IDF 向量空间模型相比，BM25 具有更坚实的概率理论基础和更优的实证表现。近年来，虽然基于 Transformer 的神经检索模型（如 ColBERT、SPLADE）在某些基准上超越了 BM25，但由于 BM25 的高效性、可解释性和无需训练的特点，它仍然是工业界信息检索系统的基石，并常作为混合检索系统中稀疏检索组件的首选算法。

@@ -1,10 +1,27 @@
 ---
-title: "Fixture ai 29"
-aliases: ["alias-eval-29"]
-tags: ["area-ai", "fixture"]
+title: "机器学习模型部署与服务化架构"
+aliases: ["模型部署", "ML-deployment", "模型服务化"]
+tags: ["area-ai", "fixture", "MLOps", "模型部署", "服务架构"]
 ---
 
-# Fixture ai 29
+# 机器学习模型部署与服务化架构
 
-This deterministic RAG evaluation note owns the unique evidence token evaltok29.
-It exists to validate hybrid broker retrieval, metadata filtering, and ContextPacket construction.
+模型部署是将训练好的机器学习模型转化为可对外提供推理服务的生产系统的全过程。与传统的软件部署不同，模型部署面临模型格式多样性、推理硬件异构性、延迟与服务级别协议（SLA）约束、A/B 实验流量调度以及模型热切换等特有挑战。
+
+## 模型序列化与格式标准
+
+模型序列化格式的选择直接影响部署的灵活性和推理性能。ONNX（Open Neural Network Exchange）作为开放的跨框架模型交换格式，支持从 PyTorch、TensorFlow、scikit-learn 等主流框架导出的模型在不同推理引擎间迁移。TorchScript 和 TensorFlow SavedModel 则是框架原生的序列化方案，在特定框架生态系统内提供最完整的算子支持。选择标准格式时需要权衡框架特性保真度和互操作性需求。
+
+证据令牌: evaltok29
+
+## 推理服务架构模式
+
+模型推理服务架构有多种模式。嵌入式推理将模型直接加载到业务服务进程内，推理延迟最低但缺乏资源隔离；独立推理服务将模型部署为独立的微服务，通过 RPC 或 HTTP 通信，便于独立扩缩容和多模型管理。模型服务网格（Model Mesh）进一步支持多个模型共享同一个推理服务运行时，通过请求路由将推理请求分派到不同的模型版本或实验组。
+
+## 推理优化技术
+
+生产环境的推理性能优化是成本控制的关键。模型量化（Quantization）将 FP32 参数转换为 INT8 或 FP16 精度，在精度损失可控的前提下将推理延迟降低 2-4 倍。Torch 的动态量化、TensorRT 的层融合和 CUDA 图优化等编译时优化可以进一步利用 GPU 硬件的并行能力。模型蒸馏（Knowledge Distillation）则通过用大模型（Teacher）训练小模型（Student）来获得更快的推理速度。
+
+## 发布策略与流量管理
+
+模型发布的渐进式策略对于风险控制至关重要。金丝雀发布（Canary Deployment）将少量流量导入新模型版本，在新旧版本之间实时对比关键指标（准确率、延迟、错误率），达标后逐步扩大新版本流量比例。影子模式（Shadow Mode）将生产请求同时发送给现有模型和候选模型，但只使用现有模型的输出，候选模型的预测结果仅用于离线评估，是一种无风险的模型效果验证手段。

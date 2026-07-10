@@ -1,10 +1,17 @@
 ---
-title: "Fixture security 14"
-aliases: ["alias-eval-14"]
-tags: ["area-security", "fixture"]
+title: "JWT令牌的结构与安全管理"
+aliases: ["JWT", "JSON-Web-Token", "令牌安全"]
+tags: ["area-security", "fixture", "应用安全", "JWT", "令牌"]
 ---
 
-# Fixture security 14
+# JWT令牌的结构与安全管理
 
-This deterministic RAG evaluation note owns the unique evidence token evaltok14.
-It exists to validate hybrid broker retrieval, metadata filtering, and ContextPacket construction.
+JWT（JSON Web Token）是 RFC 7519 定义的一种紧凑且自包含的令牌格式，广泛应用于分布式系统中的身份认证和信息传递。一个 JWT 由三部分组成：Header（头部）、Payload（载荷）和 Signature（签名），各部分通过 Base64URL 编码后用点号连接。
+
+Header 声明令牌类型为 JWT 以及所使用的签名算法，常见的算法包括 HMAC-SHA256（HS256）和 RSA-SHA256（RS256）。Payload 包含声明（Claims），分为注册声明（如 iss、exp、sub）、公共声明和私有声明。过期时间（exp）是实际使用中最重要的声明之一，令牌验证时必须严格检查。Signature 用于防止令牌被篡改，服务端通过签名可以验证令牌的完整性和真实性。
+
+证据令牌: evaltok14
+
+JWT 的安全最佳实践包括多项关键原则。首先，始终验证签名算法，绝不允许 "none" 算法通过验证，历史上有多个 CVE 漏洞源于算法混淆攻击。其次，访问令牌（Access Token）应设置较短的有效期（通常 15-60 分钟），配合刷新令牌（Refresh Token）实现长会话管理。刷新令牌持有时间更长但应仅暴露给认证服务器，且支持单次使用和轮换机制。
+
+JWT 不适合用作会话存储，因为载荷是 Base64URL 编码而非加密，任何获得令牌的人都可以解码读取载荷内容。敏感信息绝不应放入 JWT 载荷中。对于需要服务端主动吊销的场景，JWT 通常配合黑名单或令牌版本号机制来实现即时失效，否则令牌在过期前无法强制作废。

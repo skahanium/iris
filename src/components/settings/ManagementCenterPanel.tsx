@@ -4,6 +4,7 @@ import {
   ChevronLeft,
   CheckCircle2,
   Clock3,
+  Cpu,
   Database,
   FileClock,
   FolderTree,
@@ -13,6 +14,7 @@ import {
   KeyRound,
   Link2,
   Puzzle,
+  RefreshCw,
   ShieldCheck,
   SlidersHorizontal,
   type LucideIcon,
@@ -37,6 +39,7 @@ import {
   type WebSearchProviderOption,
 } from "@/lib/web-search-provider-state";
 import type { FileListItem } from "@/types/ipc";
+import type { EmbeddingIndexStatus } from "@/types/ipc";
 import type { ConnectivityStatus } from "@/types/llm";
 
 import { LlmRoutingSection } from "./LlmRoutingSection";
@@ -74,6 +77,8 @@ interface ManagementCenterPanelProps {
   autoVersionIdleMinutes: number;
   onAutoVersionEnabledChange: (enabled: boolean) => void;
   onAutoVersionIdleMinutesChange: (minutes: number) => void;
+  embeddingStatus: EmbeddingIndexStatus | null;
+  onReindexEmbeddings: () => void;
 }
 
 interface ManagementSectionMeta {
@@ -310,6 +315,8 @@ export function ManagementCenterPanel({
   autoVersionIdleMinutes,
   onAutoVersionEnabledChange,
   onAutoVersionIdleMinutesChange,
+  embeddingStatus,
+  onReindexEmbeddings,
 }: ManagementCenterPanelProps) {
   const [activeSection, setActiveSection] =
     useState<ManagementCenterSection>(section);
@@ -605,6 +612,69 @@ export function ManagementCenterPanel({
             打开关联
           </Button>
         </SettingRow>
+      </PanelSection>
+
+      <PanelSection title="搜索与嵌入">
+        <SettingRow
+          icon={Cpu}
+          title="嵌入模型"
+          detail={
+            embeddingStatus
+              ? `${embeddingStatus.targetModelId} · ${embeddingStatus.dimension} 维 · ${embeddingStatus.indexedItems}/${embeddingStatus.totalItems} 项`
+              : "正在读取嵌入索引状态…"
+          }
+        >
+          <StatusValue
+            ready={
+              embeddingStatus?.phase === "ready" ||
+              embeddingStatus?.phase === "legacy_ready"
+            }
+          >
+            {embeddingStatus?.phase === "ready"
+              ? "就绪"
+              : embeddingStatus?.phase === "rebuilding"
+                ? "重建中"
+                : embeddingStatus?.phase === "failed"
+                  ? "失败"
+                  : embeddingStatus?.phase === "legacy_ready"
+                    ? "旧版可用"
+                    : "未知"}
+          </StatusValue>
+        </SettingRow>
+        {embeddingStatus?.phase === "failed" ||
+        embeddingStatus?.phase === "rebuilding" ? (
+          <SettingRow
+            icon={RefreshCw}
+            title="嵌入重建"
+            detail={
+              embeddingStatus.lastError
+                ? `错误：${embeddingStatus.lastError}`
+                : "重建嵌入向量以提高搜索质量。"
+            }
+          >
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={onReindexEmbeddings}
+            >
+              重试重建
+            </Button>
+          </SettingRow>
+        ) : (
+          <SettingRow
+            icon={RefreshCw}
+            title="嵌入重建"
+            detail="重新生成全部 BGE v2 嵌入向量。"
+          >
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={onReindexEmbeddings}
+            >
+              重建嵌入
+            </Button>
+          </SettingRow>
+        )}
       </PanelSection>
 
       <PanelSection title="边界">

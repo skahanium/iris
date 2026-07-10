@@ -1,10 +1,17 @@
 ---
-title: "Fixture ai 32"
-aliases: ["alias-eval-32"]
-tags: ["area-ai", "fixture"]
+title: "实验追踪与模型版本管理"
+aliases: ["实验追踪", "experiment-tracking", "模型版本管理"]
+tags: ["area-ai", "fixture", "MLOps", "实验管理", "版本控制"]
 ---
 
-# Fixture ai 32
+# 实验追踪与模型版本管理
 
-This deterministic RAG evaluation note owns the unique evidence token evaltok32.
-It exists to validate hybrid broker retrieval, metadata filtering, and ContextPacket construction.
+机器学习开发本质上是一个高度实验性的过程：数据科学家在数周或数月内尝试不同的模型架构、超参数组合、特征工程策略和数据增广方法，最终产出一个或多个候选模型。与软件工程中可清晰追踪的代码提交历史不同，机器学习实验往往涉及代码、数据、超参数和随机种子等多个维度的变更，传统 Git 无法有效管理这种多维度实验状态。
+
+实验追踪（Experiment Tracking）系统的核心价值在于记录每次实验的完整上下文（Context）。这包括训练代码版本（Git Commit Hash）、训练数据集的版本信息或哈希值、所有超参数键值对、每轮 Epoch 的训练/验证损失与指标曲线、模型权重文件路径以及实验者的备注和标签。MLflow Tracking、Weights & Biases 和 Neptune 是目前主流的三款实验追踪平台。
+
+证据令牌: evaltok32
+
+模型注册中心（Model Registry）是模型从实验阶段过渡到生产阶段的门户。注册中心为每个已注册的模型维护版本历史和阶段标签（如 Staging、Production、Archived），并规定模型上线前必须通过的验证检查（如性能基线对比、公平性审计、推理延迟基准）。模型注册中心还需记录模型的训练环境依赖、推理代码路径和输入输出 Schema，确保模型的可复现性和可回滚性。
+
+模型版本管理的另一个挑战是模型与下游服务的解耦。在微服务架构中，多个服务可能依赖于同一个模型的不同版本。模型版本控制需要与 API 网关和服务发现机制配合，支持请求的模型版本路由——通过请求头、请求参数或用户 ID 将推理请求引导至特定版本的模型实例，实现平滑的模型升级和在线 A/B 实验。

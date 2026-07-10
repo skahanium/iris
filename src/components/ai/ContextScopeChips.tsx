@@ -1,4 +1,4 @@
-import { Folder, FileText, X } from "lucide-react";
+import { Folder, FileText, Hash, X } from "lucide-react";
 
 import type { MentionToken } from "@/lib/ai-context-scope";
 import { cn } from "@/lib/utils";
@@ -25,6 +25,8 @@ export function ContextScopeChips({
         >
           {t.kind === "folder" ? (
             <Folder className="h-3 w-3 shrink-0 text-muted-foreground/70" />
+          ) : t.kind === "tag" ? (
+            <Hash className="h-3 w-3 shrink-0 text-muted-foreground/70" />
           ) : (
             <FileText className="h-3 w-3 shrink-0 text-muted-foreground/70" />
           )}
